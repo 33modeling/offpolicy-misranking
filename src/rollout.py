@@ -1,0 +1,150 @@
+"""rollout 수집과 drift 체크포인트 생성 (LoRA RFT).
+
+행동 정책 β = base instruct 모델.
+현재 정책 π = β의 정답 rollout으로 LoRA SFT(RFT)를 n step 돌린 모델.
+drift 수준은 step 수(50/100/200)로 제어한다 — concept 10절의 drift 축.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import torch
+
+from data import PROMPT_TEMPLATE, reward
+
+
+def auto_device() -> str:
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def load_model(name_or_path: str, device: str | None = None, dtype: str | None = None):
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    device = device or auto_device()
+    if dtype is None:
+        dtype = "bfloat16" if device == "cuda" else "float32"
+    tok = AutoTokenizer.from_pretrained(name_or_path)
+    model = AutoModelForCausalLM.from_pretrained(
+        name_or_path, torch_dtype=getattr(torch, dtype), device_map=device
+    )
+    model.eval()
+    return model, tok
+
+
+def chat_ids(tok, question: str) -> torch.Tensor:
+    msgs = [{"role": "user", "content": PROMPT_TEMPLATE.format(question=question)}]
+    return tok.apply_chat_template(
+        msgs, add_generation_prompt=True, return_tensors="pt"
+    )[0]
+
+
+@torch.no_grad()
+def collect_rollouts(
+    model,
+    tok,
+    prompts: list[dict],
+    k: int,
+    max_new_tokens: int,
+    temperature: float,
+    out_path: Path,
+    batch_prompts: int = 8,
+) -> None:
+    """프롬프트별 K개 응답 생성 → jsonl (token id·reward 저장, logp는 나중에 재계산)."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w") as f:
+        for i, item in enumerate(prompts):
+            ids = chat_ids(tok, item["question"]).to(model.device)
+            gen = model.generate(
+                ids.unsqueeze(0).expand(k, -1),
+                do_sample=True,
+                temperature=temperature,
+                top_p=0.95,
+                max_new_tokens=max_new_tokens,
+                pad_token_id=tok.eos_token_id,
+            )
+            resp_start = ids.numel()
+            for j in range(k):
+                seq = gen[j]
+                # 뒤쪽 padding(eos 반복) 제거
+                text = tok.decode(seq[resp_start:], skip_special_tokens=True)
+                f.write(
+                    json.dumps(
+                        {
+                            "prompt_idx": i,
+                            "rollout_idx": j,
+                            "input_ids": seq.tolist(),
+                            "resp_start": resp_start,
+                            "reward": reward(text, item["answer"]),
+                        }
+                    )
+                    + "\n"
+                )
+            if (i + 1) % 10 == 0:
+                print(f"  rollout {i + 1}/{len(prompts)}", flush=True)
+
+
+def train_drift_lora(
+    base: str,
+    rollout_path: Path,
+    out_dir: Path,
+    steps: int,
+    lr: float = 1e-4,
+    batch_size: int = 4,
+    device: str | None = None,
+) -> None:
+    """정답 rollout에 대한 LoRA SFT — checkpoint를 out_dir에 저장 (병합 없이 adapter)."""
+    from peft import LoraConfig, get_peft_model
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    device = device or auto_device()
+    tok = AutoTokenizer.from_pretrained(base)
+    model = AutoModelForCausalLM.from_pretrained(
+        base,
+        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+        device_map=device,
+    )
+    model = get_peft_model(
+        model,
+        LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.0),
+    )
+    rows = [json.loads(l) for l in rollout_path.open()]
+    correct = [r for r in rows if r["reward"] > 0.5]
+    if not correct:
+        raise RuntimeError("정답 rollout이 없어 drift를 만들 수 없다")
+    print(f"drift SFT: 정답 rollout {len(correct)}개, {steps} steps")
+
+    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
+    model.train()
+    i = 0
+    for step in range(steps):
+        opt.zero_grad()
+        loss_acc = 0.0
+        for _ in range(batch_size):
+            r = correct[i % len(correct)]
+            i += 1
+            ids = torch.tensor(r["input_ids"], device=model.device).unsqueeze(0)
+            labels = ids.clone()
+            labels[0, : r["resp_start"]] = -100
+            loss = model(ids, labels=labels).loss / batch_size
+            loss.backward()
+            loss_acc += float(loss)
+        opt.step()
+        if (step + 1) % 20 == 0:
+            print(f"  step {step + 1}/{steps} loss={loss_acc:.4f}", flush=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(out_dir)
+    tok.save_pretrained(out_dir)
+
+
+def load_policy(base: str, adapter: Path | None, device: str | None = None):
+    """π 로드 — adapter가 있으면 base+LoRA 병합, 없으면 base 그대로 (=β)."""
+    model, tok = load_model(base, device=device)
+    if adapter is not None:
+        from peft import PeftModel
+
+        model = PeftModel.from_pretrained(model, str(adapter))
+        model = model.merge_and_unload()
+        model.eval()
+    return model, tok
