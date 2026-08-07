@@ -12,11 +12,21 @@
 export GROUP_VOLUME="${GROUP_VOLUME:-/group-volume}"
 export OM_USER="${OM_USER:-minsoo3.kim}"
 export OM_REPO="${OM_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
-export OM_WORK="${OM_WORK:-$GROUP_VOLUME/$OM_USER/offpolicy-misranking}"
+if [[ -d "$GROUP_VOLUME" ]]; then
+  export OM_WORK="${OM_WORK:-$GROUP_VOLUME/$OM_USER/offpolicy-misranking}"
+else
+  # group-volume 없는 머신(로컬 등) — 레포 옆 .work로 자동 폴백해 어디서든 돈다
+  export OM_WORK="${OM_WORK:-$OM_REPO/.work}"
+  echo "[setup_env] group-volume 없음 → 로컬 폴백: OM_WORK=$OM_WORK"
+fi
 export STORAGE_ROOT="$OM_WORK"
 
 # ---- 모델 (failure-atlas와 같은 고정 스냅샷 경로 공유) -------------------
-export MODELS_DIR="${MODELS_DIR:-$GROUP_VOLUME/models}"
+if [[ -d "$GROUP_VOLUME/models" ]]; then
+  export MODELS_DIR="${MODELS_DIR:-$GROUP_VOLUME/models}"
+else
+  export MODELS_DIR="${MODELS_DIR:-$OM_WORK/models}"
+fi
 export MODEL_QWEN25_05B="${MODEL_QWEN25_05B:-$MODELS_DIR/Qwen2.5-0.5B-Instruct}"
 export MODEL_QWEN25_7B="${MODEL_QWEN25_7B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 
