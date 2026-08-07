@@ -15,3 +15,13 @@ python3 src/experiment.py --stage drift            --run "$RUN" --model "$MODEL"
 python3 src/experiment.py --stage oracle           --run "$RUN" --model "$MODEL" --adapter "$RUN/drift_$DRIFT"
 python3 src/experiment.py --stage score            --run "$RUN" --model "$MODEL" --adapter "$RUN/drift_$DRIFT"
 python3 src/experiment.py --stage report           --run "$RUN"
+# 처치축: 2×2 hybrid (prefix 절단 25/50/75%)
+for CUT in 0.25 0.5 0.75; do
+  python3 src/experiment.py --stage hybrid --run "$RUN" --model "$MODEL" \
+    --adapter "$RUN/drift_$DRIFT" --cut-frac "$CUT"
+done
+# downstream 200-step 비교 (핵심 4개 소스)
+for SRC in oracle g10 g01 random; do
+  python3 src/experiment.py --stage downstream --run "$RUN" --model "$MODEL" \
+    --downstream-source "$SRC"
+done

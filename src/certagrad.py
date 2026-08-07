@@ -57,9 +57,9 @@ class Candidate:
         self.used += 1
         return True
 
-    def stats(self, delta: float) -> tuple[torch.Tensor, float]:
+    def stats(self, delta: float, mode: str = "gaussian") -> tuple[torch.Tensor, float]:
         x = torch.stack(self.obs)
-        return x.mean(dim=0), eb_radius(x, delta)
+        return x.mean(dim=0), eb_radius(x, delta, mode)
 
 
 def score_interval(mu_i, alpha_i, mu_v, alpha_v) -> tuple[float, float]:
@@ -77,6 +77,7 @@ def certagrad(
     delta: float = 0.05,
     init_groups: int = 1,
     max_rounds: int = 10_000,
+    radius_mode: str = "gaussian",
 ) -> dict:
     """순차 인증. 반환: 선택 집합, 사용 micro-group 수, 인증 성공 여부."""
     m = len(cand_pools)
@@ -90,11 +91,11 @@ def certagrad(
     val.draw()
 
     for _ in range(max_rounds):
-        mu_v, r_v = val.stats(per)
+        mu_v, r_v = val.stats(per, radius_mode)
         a_v = angle_radius(mu_v, r_v)
         intervals = []
         for c in cands:
-            mu, r = c.stats(per)
+            mu, r = c.stats(per, radius_mode)
             intervals.append(score_interval(mu, angle_radius(mu, r), mu_v, a_v))
         mid = sorted(range(m), key=lambda i: -(intervals[i][0] + intervals[i][1]))
         sel, rest = set(mid[:k]), mid[k:]
@@ -112,7 +113,7 @@ def certagrad(
         ]
         boundary_alphas = []
         for i in boundary:
-            mu_i, r_i = cands[i].stats(per)
+            mu_i, r_i = cands[i].stats(per, radius_mode)
             boundary_alphas.append((angle_radius(mu_i, r_i), i))
         if boundary_alphas and a_v >= max(a for a, _ in boundary_alphas):
             if val.draw():

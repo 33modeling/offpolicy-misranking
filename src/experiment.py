@@ -168,7 +168,7 @@ def stage_report(args, run: Path) -> None:
     val_groups = torch.load(run / "val_groups.pt", weights_only=True)
     order = sorted(micro)
     pools = [micro[i].float() for i in order]
-    cg = certagrad(pools, val_groups.float(), k)
+    cg = certagrad(pools, val_groups.float(), k, radius_mode=args.radius_mode)
     total_pool = sum(p.shape[0] for p in pools)
     uni = uniform_baseline(pools, val_groups.float(), k, groups_each=pools[0].shape[0])
     cg_sel = {order[i] for i in cg["selected"]}
@@ -194,7 +194,8 @@ def stage_report(args, run: Path) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--stage", required=True,
-                   choices=["prep", "rollout-behavior", "drift", "score", "oracle", "report"])
+                   choices=["prep", "rollout-behavior", "drift", "score", "oracle",
+                            "report", "hybrid", "downstream"])
     p.add_argument("--run", default="outputs/pilot")
     p.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     p.add_argument("--adapter", default=None, help="π LoRA adapter 경로 (없으면 β=π)")
@@ -212,6 +213,12 @@ def main() -> None:
     p.add_argument("--grad-layers", type=int, default=4)
     p.add_argument("--clip-cap", type=float, default=10.0)
     p.add_argument("--topk-frac", type=float, default=0.10)
+    p.add_argument("--radius-mode", default="gaussian", choices=["gaussian", "hoeffding"])
+    p.add_argument("--cut-frac", type=float, default=0.5, help="hybrid prefix 절단점")
+    p.add_argument("--hybrid-prompts", type=int, default=32)
+    p.add_argument("--downstream-source", default="oracle",
+                   help="oracle|g00|g10|g01|g11|random")
+    p.add_argument("--downstream-steps", type=int, default=200)
     args = p.parse_args()
 
     run = Path(args.run)
@@ -239,6 +246,39 @@ def main() -> None:
         stage_oracle(args, run)
     elif args.stage == "report":
         stage_report(args, run)
+    elif args.stage == "hybrid":
+        from hybrid import make_hybrid_cells, score_cells
+
+        spec = ProjectionSpec(dim=args.proj_dim)
+        pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+        beta, _ = load_policy(args.model, None)
+        prompts = json.loads((run / "prompts.json").read_text())["train"]
+        behavior = read_rollouts(run / "rollouts_behavior_train.jsonl")
+        fresh = read_rollouts(run / "rollouts_fresh_train.jsonl")
+        hy_path = run / f"rollouts_hybrid_{args.cut_frac}.jsonl"
+        if not hy_path.exists():
+            make_hybrid_cells(beta, pi, tok, behavior, fresh, prompts, args.cut_frac,
+                              args.max_new_tokens, args.temperature,
+                              args.hybrid_prompts, hy_path)
+        hy = read_rollouts(hy_path)  # prompt_idx 기준 — cell 분리 다시
+        cells: dict[str, dict[int, list[dict]]] = {"bp": {}, "pb": {}}
+        for idx, rows in hy.items():
+            for r in rows:
+                cells[r["cell"]].setdefault(idx, []).append(r)
+        sub = set(cells["bp"])
+        cells["bb"] = {i: behavior[i] for i in sub}
+        cells["pp"] = {i: fresh[i] for i in sub}
+        params = grad_params(pi, args.grad_layers)
+        val = torch.load(run / "val_gradient.pt", weights_only=True)
+        scores = score_cells(pi, params, cells, val, spec)
+        (run / f"scores_hybrid_{args.cut_frac}.json").write_text(json.dumps(scores, indent=1))
+        print(f"hybrid cells 저장: {sorted(scores)}")
+    elif args.stage == "downstream":
+        from train_downstream import run_downstream
+
+        run_downstream(run, args.model, args.downstream_source, args.downstream_steps,
+                       args.behavior_k, args.max_new_tokens, args.temperature,
+                       args.topk_frac)
 
 
 if __name__ == "__main__":

@@ -47,9 +47,16 @@ bash scripts/run_gate.sh outputs/h100-pilot 100   # 1.5B, 256+50, drift 100 step
 산출물: `outputs/<run>/report.md` — 추정량별 precision 표 + CertaGrad 비교.
 drift 스윕은 `run_gate.sh RUN 50|100|200`을 별도 RUN으로.
 
-## 파일럿에서 확정하지 않는 것
+## 전체 스테이지 (2026-08-07 완성)
 
-- `eb_radius`는 보수적 근사판 — 본실험은 concept 7절의 clip+coordinate Hoeffding
-  정식 판본과 empirical-Bernstein confidence sequence를 둘 다 보고.
-- 2×2 hybrid rollout(prefix 절단점 처치)은 파일럿 이후 추가.
-- downstream 200-step 학습 비교는 게이트 통과 축이 서고 나서.
+`run_gate.sh`가 순서대로 실행: prep → rollout-behavior → drift → oracle → score →
+report → **hybrid**(prefix 절단 25/50/75% 2×2 처치) → **downstream**(선택 소스별
+200-step GRPO-lite 학습 → val 정확도). H100 일괄 실행은 `scripts/run_h100_all.sh`
+(기본 **Qwen2.5-7B-Instruct**, drift 50/100/200 스윕; `HF_ENDPOINT`·`OUT_ROOT` 필수).
+데이터셋: 파일럿 GSM8K, `--dataset math500|dapo-math` 지원(DAPO 스키마는 첫 실행 확인).
+
+## 파일럿 근사 (본실험에서 정식화)
+
+- confidence 반경 기본값은 χ² 근사(`--radius-mode gaussian`) — coverage는 게이트
+  반복실험으로 실측. `hoeffding`은 보수 판본 비교용.
+- downstream은 clip 없는 GRPO-lite(LOO baseline REINFORCE) — 인증 관측치와 동일.

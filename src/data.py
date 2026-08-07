@@ -26,6 +26,20 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     elif dataset == "math500":
         ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
         items = [{"question": row["problem"], "answer": str(row["answer"])} for row in ds]
+    elif dataset == "dapo-math":
+        # 본실험용. 스키마가 릴리스마다 달라 방어적으로 파싱한다 — 첫 실행에서 확인할 것.
+        ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
+        items = []
+        for row in ds:
+            q = row.get("prompt") or row.get("question") or row.get("problem")
+            if isinstance(q, list):  # chat 형식이면 user 내용만
+                q = next((m["content"] for m in q if m.get("role") == "user"), None)
+            rm = row.get("reward_model") or {}
+            a = rm.get("ground_truth") or row.get("answer") or row.get("solution")
+            if q and a is not None:
+                items.append({"question": str(q), "answer": str(a)})
+        if not items:
+            raise ValueError("DAPO-Math-17k 스키마 파싱 실패 — 필드명을 확인할 것")
     else:
         raise ValueError(f"unknown dataset {dataset}")
 
