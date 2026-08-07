@@ -6,6 +6,7 @@
 # 모델은 고정 revision 스냅샷 + hf-mirror.com 폴백, GSM8K는 로컬 jsonl로 저장
 # (컴퓨트 노드 오프라인 대비). 끝에 로직 테스트까지 돌린다.
 set -Eeuo pipefail
+step() { echo "[provision $(date '+%T')] $*"; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 [[ -n "${STORAGE_ROOT:-}" ]] || { echo "setup_env.sh 를 먼저 source 하라" >&2; exit 1; }
 unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE || true
@@ -18,11 +19,12 @@ if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   echo "[provision] venv 생성: $VENV_DIR"
   "$PYTHON_BOOTSTRAP" -m venv "$VENV_DIR" 2>/dev/null || {
     "$PYTHON_BOOTSTRAP" -m venv --without-pip "$VENV_DIR"
-    curl -sS https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - \
+    curl -sS --connect-timeout 15 --max-time 180 https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - \
       || { echo "[provision] get-pip 실패 — PIP_INDEX_URL=<인트라넷 미러> 지정 후 재실행" >&2; exit 1; }
   }
 fi
-"$VENV_DIR/bin/pip" install -q -c constraints/h100-cu126.txt -r requirements.txt \
+step "pip 설치 시작 (진행 표시 — 멈춰 보이면 pypi 접근 불가, PIP_INDEX_URL=<인트라넷 미러> 지정)"
+"$VENV_DIR/bin/pip" install --timeout 60 --retries 2 -c constraints/h100-cu126.txt -r requirements.txt \
   ${PIP_INDEX_URL:+-i "$PIP_INDEX_URL"} \
   || { echo "[provision] pip 설치 실패 — PIP_INDEX_URL 지정 또는 로컬 wheel 필요" >&2; exit 1; }
 "$VENV_DIR/bin/python" -c "import torch, transformers, peft, datasets; \
@@ -38,7 +40,8 @@ fetch_model() {
   mkdir -p "$dest"
   echo "[provision] 모델 다운로드: $repo@$revision -> $dest"
   _dl() {
-    "$VENV_DIR/bin/python" - "$repo" "$revision" "$dest" <<'EOF'
+    HF_HUB_ETAG_TIMEOUT=15 timeout "${OM_FETCH_TIMEOUT:-3600}" \
+      "$VENV_DIR/bin/python" - "$repo" "$revision" "$dest" <<'EOF'
 import sys
 from huggingface_hub import snapshot_download
 snapshot_download(sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[3],
@@ -58,7 +61,7 @@ if [[ -f "$OM_DATA/gsm8k_train.jsonl" ]]; then
   echo "[provision] 데이터 확인, 스킵: $OM_DATA/gsm8k_train.jsonl"
 else
   _fetch_data() {
-    "$VENV_DIR/bin/python" - "$OM_DATA" <<'EOF'
+    HF_HUB_ETAG_TIMEOUT=15 timeout 900 "$VENV_DIR/bin/python" - "$OM_DATA" <<'EOF'
 import json, sys
 from datasets import load_dataset
 ds = load_dataset("openai/gsm8k", "main", split="train")
