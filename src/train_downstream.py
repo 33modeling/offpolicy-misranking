@@ -45,6 +45,10 @@ def grpo_lite_train(
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     pool = [prompts[i] for i in selected_idx]
     rng = random.Random(0)
+    from grads import ts
+    import time as _time
+    print(f"[{ts()}] downstream 학습 시작: {steps} steps, 선택 {len(pool)}개, K={k}", flush=True)
+    t0 = _time.time()
 
     for step in range(steps):
         item = rng.choice(pool)
@@ -73,8 +77,9 @@ def grpo_lite_train(
             resp = logp[ids.numel() - 1:]
             (-(float(advs[j]) / k) * resp.sum()).backward()
         opt.step()
-        if (step + 1) % 20 == 0:
-            from grads import ts; print(f"[{ts()}]  train {step + 1}/{steps} mean_r={float(rewards.mean()):.2f}", flush=True)
+        if (step + 1) % 5 == 0:
+            print(f"[{ts()}]  train {step + 1}/{steps} mean_r={float(rewards.mean()):.2f} "
+                  f"({(_time.time() - t0) / (step + 1):.0f}s/step)", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(out_dir)
 
@@ -85,6 +90,8 @@ def eval_accuracy(base: str, adapter: Path | None, prompts: list[dict],
     from rollout import load_policy
 
     model, tok = load_policy(base, adapter)
+    from grads import ts
+    print(f"[{ts()}] eval 시작: {len(prompts)} prompts (greedy)", flush=True)
     correct = 0
     for item in prompts:
         ids = chat_ids(tok, item["question"]).unsqueeze(0).to(model.device)
