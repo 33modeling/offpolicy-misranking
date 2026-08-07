@@ -30,6 +30,8 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
         name_or_path, torch_dtype=getattr(torch, dtype), device_map=device
     )
     model.eval()
+    gpu = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
+    print(f"model loaded: {name_or_path} → {device} ({gpu}, {dtype})", flush=True)
     return model, tok
 
 
