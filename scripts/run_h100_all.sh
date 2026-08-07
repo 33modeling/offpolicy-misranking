@@ -73,6 +73,20 @@ else
   log "phase0 완료: $(wc -l < "$SHARED/rollouts_behavior_train.jsonl") rollouts (4샤드 병합)"
 fi
 
+# ---------- 진행 하트비트 (10분 간격, 종료 시 자동 정리) ----------
+( while true; do
+    sleep 600
+    {
+      echo "[$(date '+%F %T')] ---- heartbeat ----"
+      nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader 2>/dev/null | sed 's/^/  GPU /'
+      for lf in "$LOGS"/drift*.log "$LOGS"/downstream-*.log; do
+        [ -f "$lf" ] && echo "  $(basename "$lf" .log): $(tail -n 1 "$lf")"
+      done
+    } >> "$LOGS/main.log"
+  done ) &
+HEARTBEAT_PID=$!
+trap 'kill $HEARTBEAT_PID 2>/dev/null' EXIT
+
 # ---------- phase 1: drift 병렬 (GPU 0/1/2) ----------
 drift_pipeline() {  # drift_pipeline <gpu> <drift>
   local gpu="$1" drift="$2"
