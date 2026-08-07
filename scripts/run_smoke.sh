@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH=src
 RUN="outputs/smoke"
-MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
+MODEL="${MODEL:-${MODEL_QWEN25_05B:-Qwen/Qwen2.5-0.5B-Instruct}}"
+if [ -n "${MODEL_QWEN25_05B:-}" ] && [ ! -d "$MODEL" ]; then MODEL="Qwen/Qwen2.5-0.5B-Instruct"; fi
 COMMON=(--run "$RUN" --model "$MODEL" --n-train 8 --n-val 4
         --behavior-k 4 --fresh-k 8 --val-k 4 --micro-group 2
         --max-new-tokens 384 --temperature 0.7

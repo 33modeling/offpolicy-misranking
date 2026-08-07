@@ -8,19 +8,20 @@
 #   phase 2  downstream 4소스(oracle/g10/g01/random)를 GPU 0~3에 병렬 (drift100 기준)
 #
 # 사용 (클러스터 노드):
-#   export HF_ENDPOINT=<HF 미러>                                  # 폐쇄망 필수
-#   export OUT_ROOT=/group-volume/minsoo3.kim/offpolicy-misranking # 산출 경로
-#   bash scripts/run_h100_all.sh
+#   source scripts/setup_env.sh && bash scripts/provision.sh   # 최초 1회 (온라인 머신)
+#   bash scripts/run_h100_all.sh                                # 이후 이것만
 #
 # 로그: $OUT_ROOT/logs/ 아래 스테이지별 파일 + main.log 타임라인.
 # 실패 시: 해당 로그 tail을 main.log에 남기고 종료 코드 1.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-: "${HF_ENDPOINT:?HF_ENDPOINT 미러를 설정할 것}"
-OUT_ROOT="${OUT_ROOT:-outputs/h100}"
-MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"
+source scripts/setup_env.sh
+PY="$VENV_DIR/bin/python"
+[ -x "$PY" ] || { echo "venv 없음 — 'source scripts/setup_env.sh && bash scripts/provision.sh' 먼저"; exit 1; }
+# 모델·데이터는 provision이 group-volume에 받아둔 로컬 스냅샷 사용 (미러 설정 불필요)
+if [ -d "$MODEL_QWEN25_7B" ]; then MODEL="${MODEL:-$MODEL_QWEN25_7B}"; else MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"; fi
+OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate}"
 DRIFTS=(${DRIFTS:-50 100 200})
-export PYTHONUNBUFFERED=1 PYTHONPATH=src
 LOGS="$OUT_ROOT/logs"
 mkdir -p "$LOGS"
 
@@ -28,7 +29,7 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOGS/main.log"; }
 run_stage() {  # run_stage <gpu> <logfile> <args...>
   local gpu="$1" lf="$2"; shift 2
   log "GPU$gpu ▶ experiment.py $* (log: $(basename "$lf"))"
-  CUDA_VISIBLE_DEVICES="$gpu" python3 src/experiment.py "$@" >> "$lf" 2>&1
+  CUDA_VISIBLE_DEVICES="$gpu" "$PY" src/experiment.py "$@" >> "$lf" 2>&1
 }
 
 log "=== 시작: MODEL=$MODEL, DRIFTS=${DRIFTS[*]}, OUT_ROOT=$OUT_ROOT ==="

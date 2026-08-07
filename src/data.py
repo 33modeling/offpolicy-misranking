@@ -15,6 +15,20 @@ def _gsm8k_answer(ans: str) -> str:
 
 
 def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
+    import json
+    import os
+    from pathlib import Path
+
+    local = Path(os.environ.get("OM_DATA", "")) / "gsm8k_train.jsonl"
+    if dataset == "gsm8k" and local.is_file():
+        # provision.sh가 받아둔 로컬 사본 — 오프라인 컴퓨트 노드 경로
+        rows = [json.loads(l) for l in local.open()]
+        items = [
+            {"question": r["question"], "answer": _gsm8k_answer(r["answer"])}
+            for r in rows
+        ]
+        return _split(items, n_train, n_val, seed, "gsm8k(local)")
+
     from datasets import load_dataset
 
     if dataset == "gsm8k":
@@ -43,11 +57,15 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     else:
         raise ValueError(f"unknown dataset {dataset}")
 
+    return _split(items, n_train, n_val, seed, dataset)
+
+
+def _split(items: list[dict], n_train: int, n_val: int, seed: int, name: str) -> dict:
     rng = random.Random(seed)
     rng.shuffle(items)
     need = n_train + n_val
     if len(items) < need:
-        raise ValueError(f"{dataset}: {len(items)} < 필요 {need}")
+        raise ValueError(f"{name}: {len(items)} < 필요 {need}")
     return {"train": items[:n_train], "val": items[n_train : n_train + n_val]}
 
 

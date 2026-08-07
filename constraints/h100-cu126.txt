@@ -1,0 +1,13 @@
+# H100 runtime based on the FDMU-validated torch 2.7.1 CUDA 12.6 stack.
+torch==2.7.1
+transformers==5.14.1
+datasets==5.0.1
+accelerate==1.14.0
+peft==0.20.0
+numpy==2.5.1
+PyYAML==6.0.3
+huggingface-hub==1.25.1
+safetensors==0.8.0
+tokenizers==0.22.2
+pytest==9.1.1
+ruff==0.16.0
