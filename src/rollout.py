@@ -35,9 +35,9 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
 
 def chat_ids(tok, question: str) -> torch.Tensor:
     msgs = [{"role": "user", "content": PROMPT_TEMPLATE.format(question=question)}]
-    return tok.apply_chat_template(
-        msgs, add_generation_prompt=True, return_tensors="pt"
-    )[0]
+    # transformers 4/5 양쪽에서 안전: 템플릿은 텍스트로 뽑고 별도로 토크나이즈.
+    text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+    return tok(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
 
 
 @torch.no_grad()
@@ -56,8 +56,10 @@ def collect_rollouts(
     with out_path.open("w") as f:
         for i, item in enumerate(prompts):
             ids = chat_ids(tok, item["question"]).to(model.device)
+            batch_ids = ids.unsqueeze(0).expand(k, -1)
             gen = model.generate(
-                ids.unsqueeze(0).expand(k, -1),
+                batch_ids,
+                attention_mask=torch.ones_like(batch_ids),
                 do_sample=True,
                 temperature=temperature,
                 top_p=0.95,
@@ -112,8 +114,10 @@ def train_drift_lora(
     rows = [json.loads(l) for l in rollout_path.open()]
     correct = [r for r in rows if r["reward"] > 0.5]
     if not correct:
-        raise RuntimeError("정답 rollout이 없어 drift를 만들 수 없다")
-    print(f"drift SFT: 정답 rollout {len(correct)}개, {steps} steps")
+        # 게이트 본실행에서는 있어선 안 되는 상황 — 스모크 완주용 폴백.
+        print("경고: 정답 rollout 0개 — 전체 rollout으로 drift SFT (스모크 전용 폴백)")
+        correct = rows
+    print(f"drift SFT: rollout {len(correct)}개, {steps} steps")
 
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     model.train()

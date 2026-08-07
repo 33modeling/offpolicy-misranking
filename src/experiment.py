@@ -222,11 +222,14 @@ def main() -> None:
         (run / "prompts.json").write_text(json.dumps(prompts, ensure_ascii=False, indent=1))
         print(f"prep: train {len(prompts['train'])} / val {len(prompts['val'])}")
     elif args.stage == "rollout-behavior":
-        beta, tok = load_policy(args.model, None)
-        prompts = json.loads((run / "prompts.json").read_text())
-        collect_rollouts(beta, tok, prompts["train"], args.behavior_k,
-                         args.max_new_tokens, args.temperature,
-                         run / "rollouts_behavior_train.jsonl")
+        out = run / "rollouts_behavior_train.jsonl"
+        if out.exists():
+            print("rollout-behavior: 이미 존재 — 스킵")
+        else:
+            beta, tok = load_policy(args.model, None)
+            prompts = json.loads((run / "prompts.json").read_text())
+            collect_rollouts(beta, tok, prompts["train"], args.behavior_k,
+                             args.max_new_tokens, args.temperature, out)
     elif args.stage == "drift":
         train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
                          run / f"drift_{args.drift_steps}", steps=args.drift_steps)

@@ -103,6 +103,11 @@ def grad_params(model, last_n_layers: int) -> list[torch.Tensor]:
     for layer in layers[len(layers) - last_n_layers :]:
         chosen += [p for p in layer.parameters()]
     chosen += list(model.model.norm.parameters())
+    # LoRA merge_and_unload 이후엔 전체가 requires_grad=False일 수 있다 —
+    # 대상만 켜고 나머지는 동결(backward 메모리 절약 겸용).
+    model.requires_grad_(False)
+    for p in chosen:
+        p.requires_grad_(True)
     return chosen
 
 

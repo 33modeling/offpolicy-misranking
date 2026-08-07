@@ -7,7 +7,8 @@ RUN="outputs/smoke"
 MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
 COMMON=(--run "$RUN" --model "$MODEL" --n-train 8 --n-val 4
         --behavior-k 4 --fresh-k 8 --val-k 4 --micro-group 2
-        --max-new-tokens 128 --drift-steps 10 --proj-dim 512 --grad-layers 2
+        --max-new-tokens 384 --temperature 0.7
+        --drift-steps 10 --proj-dim 512 --grad-layers 2
         --topk-frac 0.25)
 
 python3 src/experiment.py --stage prep             "${COMMON[@]}"
