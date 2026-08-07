@@ -44,7 +44,18 @@ else
     [ -d "$run" ] || continue
     $RM "$run"/val_gradient.pt "$run"/val_groups.pt "$run"/oracle_micro_groups.pt \
         "$run"/scores_*.json "$run"/report.md "$run"/report.json \
-        "$run"/rollouts_hybrid_*.jsonl "$run"/downstream_* 2>/dev/null || true
+        "$run"/rollouts_hybrid_*.jsonl "$run"/downstream_* "$run"/*.tmp 2>/dev/null || true
+    # 미완성 fresh rollout 검사 — 프롬프트 수가 prompts.json과 다르면 부분 파일이므로 삭제
+    for f in "$run"/rollouts_fresh_*.jsonl; do
+      [ -f "$f" ] || continue
+      python3 - "$f" "$run/prompts.json" <<'PY' || $RM "$f"
+import json, sys
+seen = {json.loads(l)["prompt_idx"] for l in open(sys.argv[1])}
+p = json.load(open(sys.argv[2]))
+need = len(p["train"]) if "train" in sys.argv[1] else len(p["val"])
+sys.exit(0 if len(seen) >= need else 1)
+PY
+    done
   done
   echo "보존됨: shared/ (β rollout), drift*/rollouts_fresh_*.jsonl, drift*/drift_* (adapter)"
 fi
