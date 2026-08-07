@@ -22,20 +22,29 @@ from grads import ProjectionSpec, cosine, loo_advantages, prompt_gradient
 
 
 @torch.no_grad()
-def continue_rollout(model, tok, input_ids: torch.Tensor, cut: int, max_new_tokens: int,
-                     temperature: float) -> torch.Tensor:
-    """input_ids[:cut]를 프리픽스로 반대 정책이 이어서 생성."""
-    prefix = input_ids[:cut].unsqueeze(0).to(model.device)
+def continue_rollouts_batch(model, tok, prefixes: list[torch.Tensor],
+                            max_new_tokens: int, temperature: float) -> list[torch.Tensor]:
+    """프리픽스 묶음을 left-padding 배치로 이어 생성 — 배치1 대비 GPU 활용 대폭 개선.
+
+    반환: 각 항목의 (원 프리픽스 + 생성 토큰) 시퀀스 (pad 제거).
+    """
+    max_len = max(p.numel() for p in prefixes)
+    pad_id = tok.pad_token_id or tok.eos_token_id
+    batch = torch.full((len(prefixes), max_len), pad_id, dtype=torch.long)
+    mask = torch.zeros_like(batch)
+    for b, p in enumerate(prefixes):  # left padding — 생성 시작 위치를 정렬
+        batch[b, max_len - p.numel():] = p
+        mask[b, max_len - p.numel():] = 1
+    batch, mask = batch.to(model.device), mask.to(model.device)
     out = model.generate(
-        prefix,
-        attention_mask=torch.ones_like(prefix),
-        do_sample=True,
-        temperature=temperature,
-        top_p=0.95,
-        max_new_tokens=max_new_tokens,
-        pad_token_id=tok.eos_token_id,
+        batch, attention_mask=mask, do_sample=True, temperature=temperature,
+        top_p=0.95, max_new_tokens=max_new_tokens, pad_token_id=pad_id,
     )
-    return out[0].cpu()
+    seqs = []
+    for b, p in enumerate(prefixes):
+        gen_part = out[b, max_len:].cpu()
+        seqs.append(torch.cat([p, gen_part]))
+    return seqs
 
 
 def make_hybrid_cells(
@@ -57,11 +66,15 @@ def make_hybrid_cells(
                 ("bp", behavior_rollouts[pi_idx], pi),
                 ("pb", fresh_rollouts[pi_idx], beta),
             ):
-                for r in src_rows[:8]:  # cell당 소표본 (concept: '소표본으로 만든다')
+                rows = src_rows[:8]  # cell당 소표본 (concept: '소표본으로 만든다')
+                prefixes = []
+                for r in rows:
                     resp_len = r["input_ids"].numel() - r["resp_start"]
                     cut = r["resp_start"] + max(1, int(resp_len * cut_frac))
-                    seq = continue_rollout(cont_model, tok, r["input_ids"], cut,
-                                           max_new_tokens, temperature)
+                    prefixes.append(r["input_ids"][:cut])
+                seqs = continue_rollouts_batch(cont_model, tok, prefixes,
+                                               max_new_tokens, temperature)
+                for r, seq in zip(rows, seqs):
                     text = tok.decode(seq[r["resp_start"]:], skip_special_tokens=True)
                     f.write(json.dumps({
                         "cell": cell, "prompt_idx": pi_idx,

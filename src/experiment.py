@@ -41,11 +41,13 @@ def read_rollouts(path: Path) -> dict[int, list[dict]]:
     return by_prompt
 
 
-def stage_score(args, run: Path) -> None:
+def stage_score(args, run: Path, pi=None, beta=None) -> None:
     """β rollout에 대해 π/β 로그확률 → 4개 추정량 → projected gradient → 점수."""
     spec = ProjectionSpec(dim=args.proj_dim)
-    pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
-    beta, _ = load_policy(args.model, None)
+    if pi is None:
+        pi, _ = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+    if beta is None:
+        beta, _ = load_policy(args.model, None)
     params = grad_params(pi, args.grad_layers)
     rollouts = read_rollouts(run / "rollouts_behavior_train.jsonl")
 
@@ -73,10 +75,11 @@ def stage_score(args, run: Path) -> None:
     (run / "scores_offpolicy.json").write_text(json.dumps(out, indent=1))
 
 
-def stage_oracle(args, run: Path) -> None:
+def stage_oracle(args, run: Path, pi=None, tok=None) -> None:
     """π fresh rollout으로 oracle 점수·noise floor·CertaGrad용 micro-group 저장."""
     spec = ProjectionSpec(dim=args.proj_dim)
-    pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+    if pi is None:
+        pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
     params = grad_params(pi, args.grad_layers)
     prompts = json.loads((run / "prompts.json").read_text())
 
@@ -195,7 +198,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--stage", required=True,
                    choices=["prep", "rollout-behavior", "drift", "score", "oracle",
-                            "report", "hybrid", "downstream"])
+                            "report", "hybrid", "analyze", "downstream"])
     p.add_argument("--run", default="outputs/pilot")
     p.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     p.add_argument("--adapter", default=None, help="π LoRA adapter 경로 (없으면 β=π)")
@@ -255,17 +258,47 @@ def main() -> None:
     elif args.stage == "report":
         stage_report(args, run)
     elif args.stage == "hybrid":
-        from hybrid import make_hybrid_cells, score_cells
-
-        spec = ProjectionSpec(dim=args.proj_dim)
+        run_hybrid(args, run, None, None, None, args.cut_frac)
+    elif args.stage == "analyze":
+        # oracle→score→report→hybrid×3 을 한 프로세스로 — 7B 재로드 제거 (GPU 유휴 최소화)
         pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
         beta, _ = load_policy(args.model, None)
+        if not (run / "scores_oracle.json").exists():
+            stage_oracle(args, run, pi=pi, tok=tok)
+        else:
+            print("analyze: oracle 산출물 존재 — 스킵")
+        if not (run / "scores_offpolicy.json").exists():
+            stage_score(args, run, pi=pi, beta=beta)
+        else:
+            print("analyze: score 산출물 존재 — 스킵")
+        stage_report(args, run)
+        for cut in (0.25, 0.5, 0.75):
+            run_hybrid(args, run, pi, beta, tok, cut)
+    elif args.stage == "downstream":
+        from train_downstream import run_downstream
+
+        run_downstream(run, args.model, args.downstream_source, args.downstream_steps,
+                       args.behavior_k, args.max_new_tokens, args.temperature,
+                       args.topk_frac)
+
+
+def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
+    from hybrid import make_hybrid_cells, score_cells
+
+    spec = ProjectionSpec(dim=args.proj_dim)
+    if pi is None:
+        pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+        beta, _ = load_policy(args.model, None)
+    if (run / f"scores_hybrid_{cut_frac}.json").exists():
+        print(f"hybrid cut={cut_frac}: 이미 존재 — 스킵")
+        return
+    if True:
         prompts = json.loads((run / "prompts.json").read_text())["train"]
         behavior = read_rollouts(run / "rollouts_behavior_train.jsonl")
         fresh = read_rollouts(run / "rollouts_fresh_train.jsonl")
-        hy_path = run / f"rollouts_hybrid_{args.cut_frac}.jsonl"
+        hy_path = run / f"rollouts_hybrid_{cut_frac}.jsonl"
         if not hy_path.exists():
-            make_hybrid_cells(beta, pi, tok, behavior, fresh, prompts, args.cut_frac,
+            make_hybrid_cells(beta, pi, tok, behavior, fresh, prompts, cut_frac,
                               args.max_new_tokens, args.temperature,
                               args.hybrid_prompts, hy_path)
         hy = read_rollouts(hy_path)  # prompt_idx 기준 — cell 분리 다시
@@ -279,14 +312,8 @@ def main() -> None:
         params = grad_params(pi, args.grad_layers)
         val = torch.load(run / "val_gradient.pt", weights_only=True)
         scores = score_cells(pi, params, cells, val, spec)
-        (run / f"scores_hybrid_{args.cut_frac}.json").write_text(json.dumps(scores, indent=1))
-        print(f"hybrid cells 저장: {sorted(scores)}")
-    elif args.stage == "downstream":
-        from train_downstream import run_downstream
-
-        run_downstream(run, args.model, args.downstream_source, args.downstream_steps,
-                       args.behavior_k, args.max_new_tokens, args.temperature,
-                       args.topk_frac)
+        (run / f"scores_hybrid_{cut_frac}.json").write_text(json.dumps(scores, indent=1))
+        print(f"hybrid cut={cut_frac} 저장: {sorted(scores)}")
 
 
 if __name__ == "__main__":

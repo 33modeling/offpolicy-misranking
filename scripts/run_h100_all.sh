@@ -4,7 +4,7 @@
 # 배치:
 #   phase 0  공유: prep + β rollout 1회 (GPU0) — drift와 무관하므로 재사용
 #   phase 1  drift 50/100/200 파이프라인을 GPU 0/1/2에 병렬
-#            (drift SFT → π fresh oracle → 2×2 score → report → hybrid 25/50/75%)
+#            (drift SFT → analyze[oracle·score·report·hybrid — 모델 1회 로드])
 #   phase 2  downstream 4소스(oracle/g10/g01/random)를 GPU 0~3에 병렬 (drift100 기준)
 #
 # 사용 (클러스터 노드):
@@ -78,14 +78,8 @@ drift_pipeline() {  # drift_pipeline <gpu> <drift>
   mkdir -p "$run"
   ln -sf "$(realpath "$SHARED/prompts.json")" "$run/prompts.json"
   ln -sf "$(realpath "$SHARED/rollouts_behavior_train.jsonl")" "$run/rollouts_behavior_train.jsonl"
-  run_stage "$gpu" "$lf" --stage drift  --run "$run" --model "$MODEL" --drift-steps "$drift" && \
-  run_stage "$gpu" "$lf" --stage oracle --run "$run" --model "$MODEL" --adapter "$run/drift_$drift" && \
-  run_stage "$gpu" "$lf" --stage score  --run "$run" --model "$MODEL" --adapter "$run/drift_$drift" && \
-  run_stage "$gpu" "$lf" --stage report --run "$run" && \
-  for cut in 0.25 0.5 0.75; do
-    run_stage "$gpu" "$lf" --stage hybrid --run "$run" --model "$MODEL" \
-      --adapter "$run/drift_$drift" --cut-frac "$cut" || return 1
-  done
+  run_stage "$gpu" "$lf" --stage drift   --run "$run" --model "$MODEL" --drift-steps "$drift" && \
+  run_stage "$gpu" "$lf" --stage analyze --run "$run" --model "$MODEL" --adapter "$run/drift_$drift"
 }
 pids=(); names=()
 gpu=0
