@@ -40,6 +40,8 @@ def grpo_lite_train(
     )
     model = get_peft_model(model, LoraConfig(
         r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.0))
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    model.enable_input_require_grads()
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     pool = [prompts[i] for i in selected_idx]
     rng = random.Random(0)

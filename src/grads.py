@@ -70,25 +70,35 @@ class ProjectionSpec:
 
 @torch.no_grad()
 def project_grads(params: list[torch.Tensor], spec: ProjectionSpec) -> torch.Tensor:
-    """현재 .grad 를 flatten → 고정 시드 가우시안 JL 투영 (float32, (dim,) 반환).
+    """현재 .grad 를 flatten → 고정 시드 CountSketch(sparse JL) 투영 ((dim,) 반환).
 
-    청크별로 (chunk, dim) 투영 행렬을 같은 시드 순서로 재생성하므로 호출 간 일관된다.
+    out[h(i)] += σ(i)·g_i — 좌표당 해시 인덱스·부호만 생성하므로 추가 메모리가
+    청크당 수 MB다 (밀집 JL은 chunk×dim 행렬이 수십 GB라 OOM). 내적/cosine을
+    기대값에서 보존하며(CROPI sparse projection 계열), 시드 소비 순서가 고정이라
+    호출 간 일관된다. 청크 크기와 무관하게 param별 원소 순서로 결정된다.
     """
-    out = torch.zeros(spec.dim, dtype=torch.float32, device=params[0].device)
-    gen = torch.Generator(device=params[0].device)
-    gen.manual_seed(spec.seed)
-    scale = 1.0 / math.sqrt(spec.dim)
+    device = params[0].device
+    out = torch.zeros(spec.dim, dtype=torch.float32, device=device)
+    offset = 0
     for p in params:
-        if p.grad is None:
-            # 투영 행렬 재생성 순서를 지키기 위해 zero여도 소비한다.
-            flat = torch.zeros(p.numel(), device=p.device, dtype=torch.float32)
-        else:
-            flat = p.grad.detach().float().reshape(-1)
-        for start in range(0, flat.numel(), spec.chunk):
-            piece = flat[start : start + spec.chunk]
-            mat = torch.randn(piece.numel(), spec.dim, generator=gen, device=piece.device)
-            out += scale * (piece @ mat)
-            del mat
+        n = p.numel()
+        flat = None if p.grad is None else p.grad.detach().float().reshape(-1)
+        if flat is not None:
+            for start in range(0, n, spec.chunk):
+                m = min(spec.chunk, n - start)
+                # 전역 원소 위치의 정수 해시(splitmix형) — RNG 스트림과 무관해
+                # 청크 크기·호출 순서가 결과를 바꾸지 않는다.
+                pos = torch.arange(offset + start, offset + start + m,
+                                   device=device, dtype=torch.int64)
+                x = (pos + spec.seed) * 6364136223846793005 + 1442695040888963407
+                x = x ^ (x >> 33)
+                x = x * -7046029254386353131  # 0x9E3779B97F4A7C15 (int64 wrap)
+                x = x ^ (x >> 29)
+                idx = (x & 0x7FFFFFFF) % spec.dim
+                sign = ((x >> 31) & 1).to(torch.float32) * 2 - 1
+                out.scatter_add_(0, idx, flat[start : start + m].to(device) * sign)
+                del pos, x, idx, sign
+        offset += n
     return out.cpu()
 
 
@@ -117,7 +127,7 @@ def prompt_gradient(
     sequences: list[dict],
     weights: list[torch.Tensor],
     spec: ProjectionSpec,
-    micro_batch: int = 4,
+    micro_batch: int = 2,
 ) -> torch.Tensor:
     """ĝ = (1/K) Σ_j Σ_t w_{j,t} ∇logπ(a_t|h) 를 한 프롬프트에 대해 계산해 투영.
 

@@ -41,7 +41,15 @@ run_stage() {  # run_stage <gpu> <logfile> <args...>
 }
 
 log "=== 시작: MODEL=$MODEL, DRIFTS=${DRIFTS[*]}, OUT_ROOT=$OUT_ROOT ==="
-nvidia-smi --query-gpu=index,name,memory.total --format=csv | tee -a "$LOGS/main.log" || true
+nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
+# 좀비 점유 검사 — 이전 실행이 GPU를 잡고 있으면 OOM 나므로 여기서 멈춘다
+BUSY=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '$1 > 2000' | wc -l)
+if [ "${BUSY:-0}" -gt 0 ]; then
+  log "[abort] GPU ${BUSY}개가 이미 2GB+ 점유 중 — 이전 프로세스를 먼저 종료할 것:"
+  nvidia-smi --query-compute-apps=pid,used_memory --format=csv | tee -a "$LOGS/main.log" || true
+  log "        예: kill <PID>  후 재실행 (OM_SKIP_GPU_CHECK=1 로 무시 가능)"
+  [ "${OM_SKIP_GPU_CHECK:-0}" = "1" ] || exit 1
+fi
 
 # ---------- phase 0: 공유 (prep + β rollout, 4-GPU 샤딩) ----------
 SHARED="$OUT_ROOT/shared"

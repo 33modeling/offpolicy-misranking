@@ -122,6 +122,9 @@ def train_drift_lora(
         model,
         LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.0),
     )
+    # 활성값 메모리 절감 — 7B 학습 OOM 방지
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    model.enable_input_require_grads()
     rows = [json.loads(l) for l in rollout_path.open()]
     correct = [r for r in rows if r["reward"] > 0.5]
     if not correct:
@@ -139,9 +142,9 @@ def train_drift_lora(
         for _ in range(batch_size):
             r = correct[i % len(correct)]
             i += 1
-            ids = torch.tensor(r["input_ids"], device=model.device).unsqueeze(0)
+            ids = torch.tensor(r["input_ids"][:1280], device=model.device).unsqueeze(0)
             labels = ids.clone()
-            labels[0, : r["resp_start"]] = -100
+            labels[0, : min(r["resp_start"], 1279)] = -100
             loss = model(ids, labels=labels).loss / batch_size
             loss.backward()
             loss_acc += float(loss)
