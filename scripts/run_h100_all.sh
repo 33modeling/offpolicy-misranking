@@ -28,8 +28,16 @@ mkdir -p "$LOGS"
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOGS/main.log"; }
 run_stage() {  # run_stage <gpu> <logfile> <args...>
   local gpu="$1" lf="$2"; shift 2
-  log "GPU$gpu ▶ experiment.py $* (log: $(basename "$lf"))"
-  CUDA_VISIBLE_DEVICES="$gpu" "$PY" src/experiment.py "$@" >> "$lf" 2>&1
+  local t0=$SECONDS
+  log "GPU$gpu ▶ $* (log: $(basename "$lf"))"
+  if CUDA_VISIBLE_DEVICES="$gpu" "$PY" src/experiment.py "$@" >> "$lf" 2>&1; then
+    log "GPU$gpu ✔ $1 $2 완료 ($((SECONDS - t0))s)"
+  else
+    local rc=$?
+    log "GPU$gpu ✘ $1 $2 실패 rc=$rc ($((SECONDS - t0))s) — tail:"
+    tail -8 "$lf" | tee -a "$LOGS/main.log"
+    return "$rc"
+  fi
 }
 
 log "=== 시작: MODEL=$MODEL, DRIFTS=${DRIFTS[*]}, OUT_ROOT=$OUT_ROOT ==="

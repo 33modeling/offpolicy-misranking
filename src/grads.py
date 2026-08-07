@@ -159,3 +159,8 @@ def cosine(a: torch.Tensor, b: torch.Tensor) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return float((a @ b) / (na * nb))
+
+
+def ts() -> str:
+    import time as _t
+    return _t.strftime("%H:%M:%S")

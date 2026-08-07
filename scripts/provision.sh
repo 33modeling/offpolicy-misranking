@@ -6,9 +6,16 @@
 # 모델은 고정 revision 스냅샷 + hf-mirror.com 폴백, GSM8K는 로컬 jsonl로 저장
 # (컴퓨트 노드 오프라인 대비). 끝에 로직 테스트까지 돌린다.
 set -Eeuo pipefail
-step() { echo "[provision $(date '+%T')] $*"; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 [[ -n "${STORAGE_ROOT:-}" ]] || { echo "setup_env.sh 를 먼저 source 하라" >&2; exit 1; }
+mkdir -p "$OM_WORK/logs"
+PLOG="$OM_WORK/logs/provision-$(date '+%m%d-%H%M%S').log"
+exec > >(tee -a "$PLOG") 2>&1
+step() { echo "[provision $(date '+%T')] $*"; }
+trap 'echo "[provision][ERROR] line $LINENO: $BASH_COMMAND (exit $?) — 로그: $PLOG" >&2' ERR
+step "시작 — 로그: $PLOG"
+step "env: OM_WORK=$OM_WORK MODELS_DIR=$MODELS_DIR VENV=$VENV_DIR"
+step "disk: $(df -h "$OM_WORK" | tail -1 | awk '{print $4" free ("$5" used)"}')"
 unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE || true
 
 PYTHON_BOOTSTRAP="${PYTHON_BOOTSTRAP:-python3.12}"
@@ -52,8 +59,10 @@ EOF
            HF_ENDPOINT=https://hf-mirror.com _dl; } \
       || { echo "[provision] 모델 확보 실패: $repo" >&2; return 1; }
 }
-fetch_model "Qwen/Qwen2.5-0.5B-Instruct" "main" "$MODEL_QWEN25_05B"
-fetch_model "Qwen/Qwen2.5-7B-Instruct" "a09a35458c702b33eeacc393d103063234e8bc28" "$MODEL_QWEN25_7B"
+# PROVISION_MODELS="0.5b" 로 제한 가능 (기본: 0.5b 7b)
+PROVISION_MODELS="${PROVISION_MODELS:-0.5b 7b}"
+[[ " $PROVISION_MODELS " == *" 0.5b "* ]] && fetch_model "Qwen/Qwen2.5-0.5B-Instruct" "main" "$MODEL_QWEN25_05B"
+[[ " $PROVISION_MODELS " == *" 7b "* ]] && fetch_model "Qwen/Qwen2.5-7B-Instruct" "a09a35458c702b33eeacc393d103063234e8bc28" "$MODEL_QWEN25_7B"
 
 # 3) 데이터 — GSM8K 로컬 jsonl (오프라인 노드에서 datasets 없이 읽게)
 mkdir -p "$OM_DATA"
@@ -78,4 +87,4 @@ fi
 # 4) 로직 테스트 (모델 불필요)
 "$VENV_DIR/bin/python" tests/test_core.py
 
-echo "[provision] done — 다음: bash scripts/run_h100_all.sh"
+step "done — 다음: bash scripts/run_h100_all.sh (로그: $PLOG)"

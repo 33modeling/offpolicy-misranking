@@ -72,7 +72,7 @@ def grpo_lite_train(
             (-(float(advs[j]) / k) * resp.sum()).backward()
         opt.step()
         if (step + 1) % 20 == 0:
-            print(f"  train {step + 1}/{steps} mean_r={float(rewards.mean()):.2f}", flush=True)
+            from grads import ts; print(f"[{ts()}]  train {step + 1}/{steps} mean_r={float(rewards.mean()):.2f}", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(out_dir)
 

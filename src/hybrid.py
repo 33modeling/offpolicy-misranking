@@ -68,7 +68,7 @@ def make_hybrid_cells(
                         "input_ids": seq.tolist(), "resp_start": r["resp_start"],
                         "reward": reward(text, gold), "cut_frac": cut_frac,
                     }) + "\n")
-            print(f"  hybrid {pi_idx} (cut={cut_frac})", flush=True)
+            from grads import ts; print(f"[{ts()}]  hybrid {pi_idx} (cut={cut_frac})", flush=True)
 
 
 def score_cells(

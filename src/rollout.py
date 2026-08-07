@@ -83,8 +83,8 @@ def collect_rollouts(
                     )
                     + "\n"
                 )
-            if (i + 1) % 10 == 0:
-                print(f"  rollout {i + 1}/{len(prompts)}", flush=True)
+            if (i + 1) % 5 == 0:
+                from grads import ts; print(f"[{ts()}]  rollout {i + 1}/{len(prompts)} (K={k})", flush=True)
 
 
 def train_drift_lora(
@@ -136,7 +136,7 @@ def train_drift_lora(
             loss_acc += float(loss)
         opt.step()
         if (step + 1) % 20 == 0:
-            print(f"  step {step + 1}/{steps} loss={loss_acc:.4f}", flush=True)
+            from grads import ts; print(f"[{ts()}]  drift step {step + 1}/{steps} loss={loss_acc:.4f}", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(out_dir)
     tok.save_pretrained(out_dir)

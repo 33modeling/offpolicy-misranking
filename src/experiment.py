@@ -68,8 +68,8 @@ def stage_score(args, run: Path) -> None:
             ]
             g = prompt_gradient(pi, params, rows, weights, spec)
             out[est][pi_idx] = {"score": cosine(g, val), "norm": float(g.norm())}
-        if (pi_idx + 1) % 10 == 0:
-            print(f"  score {pi_idx + 1}/{len(rollouts)}", flush=True)
+        if (pi_idx + 1) % 5 == 0:
+            from grads import ts; print(f"[{ts()}]  score {pi_idx + 1}/{len(rollouts)}", flush=True)
     (run / "scores_offpolicy.json").write_text(json.dumps(out, indent=1))
 
 
@@ -127,8 +127,8 @@ def stage_oracle(args, run: Path) -> None:
             "a": cosine(stack[:h].mean(dim=0), val_grad),
             "b": cosine(stack[h:].mean(dim=0), val_grad),
         }
-        if (pi_idx + 1) % 10 == 0:
-            print(f"  oracle {pi_idx + 1}", flush=True)
+        if (pi_idx + 1) % 5 == 0:
+            from grads import ts; print(f"[{ts()}]  oracle {pi_idx + 1}", flush=True)
     (run / "scores_oracle.json").write_text(json.dumps(oracle, indent=1))
     (run / "scores_splithalf.json").write_text(json.dumps(halves, indent=1))
     torch.save(micro, run / "oracle_micro_groups.pt")
