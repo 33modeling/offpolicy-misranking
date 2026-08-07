@@ -22,6 +22,8 @@ PY="$VENV_DIR/bin/python"
 if [ -d "$MODEL_QWEN25_7B" ]; then MODEL="${MODEL:-$MODEL_QWEN25_7B}"; else MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"; fi
 OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate}"
 DRIFTS=(${DRIFTS:-50 100 200})
+# 실행 시간 손잡이: FRESH_K=16 이면 oracle 수집 절반, DRIFTS="100" 이면 단일 파이프라인
+EXTRA=(--fresh-k "${FRESH_K:-32}" --val-k "${VAL_K:-8}" --hybrid-prompts "${HYBRID_PROMPTS:-32}")
 LOGS="$OUT_ROOT/logs"
 mkdir -p "$LOGS"
 
@@ -79,7 +81,7 @@ drift_pipeline() {  # drift_pipeline <gpu> <drift>
   ln -sf "$(realpath "$SHARED/prompts.json")" "$run/prompts.json"
   ln -sf "$(realpath "$SHARED/rollouts_behavior_train.jsonl")" "$run/rollouts_behavior_train.jsonl"
   run_stage "$gpu" "$lf" --stage drift   --run "$run" --model "$MODEL" --drift-steps "$drift" && \
-  run_stage "$gpu" "$lf" --stage analyze --run "$run" --model "$MODEL" --adapter "$run/drift_$drift"
+  run_stage "$gpu" "$lf" --stage analyze --run "$run" --model "$MODEL" --adapter "$run/drift_$drift" "${EXTRA[@]}"
 }
 pids=(); names=()
 gpu=0
