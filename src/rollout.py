@@ -50,6 +50,7 @@ def collect_rollouts(
     temperature: float,
     out_path: Path,
     batch_prompts: int = 8,
+    idx_offset: int = 0,
 ) -> None:
     """프롬프트별 K개 응답 생성 → jsonl (token id·reward 저장, logp는 나중에 재계산)."""
     import time
@@ -84,7 +85,7 @@ def collect_rollouts(
                 f.write(
                     json.dumps(
                         {
-                            "prompt_idx": i,
+                            "prompt_idx": idx_offset + i,
                             "rollout_idx": j,
                             "input_ids": seq.tolist(),
                             "resp_start": resp_start,

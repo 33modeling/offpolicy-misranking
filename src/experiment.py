@@ -219,6 +219,7 @@ def main() -> None:
     p.add_argument("--downstream-source", default="oracle",
                    help="oracle|g00|g10|g01|g11|random")
     p.add_argument("--downstream-steps", type=int, default=200)
+    p.add_argument("--shard", default=None, help="rollout-behavior 샤딩 'i:n' (예: 0:4)")
     args = p.parse_args()
 
     run = Path(args.run)
@@ -229,14 +230,21 @@ def main() -> None:
         (run / "prompts.json").write_text(json.dumps(prompts, ensure_ascii=False, indent=1))
         print(f"prep: train {len(prompts['train'])} / val {len(prompts['val'])}")
     elif args.stage == "rollout-behavior":
-        out = run / "rollouts_behavior_train.jsonl"
+        if args.shard:
+            i, n = map(int, args.shard.split(":"))
+            out = run / f"rollouts_behavior_train.shard{i}.jsonl"
+        else:
+            i, n, out = 0, 1, run / "rollouts_behavior_train.jsonl"
         if out.exists():
-            print("rollout-behavior: 이미 존재 — 스킵")
+            print(f"rollout-behavior: {out.name} 이미 존재 — 스킵")
         else:
             beta, tok = load_policy(args.model, None)
-            prompts = json.loads((run / "prompts.json").read_text())
-            collect_rollouts(beta, tok, prompts["train"], args.behavior_k,
-                             args.max_new_tokens, args.temperature, out)
+            train = json.loads((run / "prompts.json").read_text())["train"]
+            per = (len(train) + n - 1) // n
+            lo, hi = i * per, min((i + 1) * per, len(train))
+            collect_rollouts(beta, tok, train[lo:hi], args.behavior_k,
+                             args.max_new_tokens, args.temperature, out,
+                             idx_offset=lo)
     elif args.stage == "drift":
         train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
                          run / f"drift_{args.drift_steps}", steps=args.drift_steps)

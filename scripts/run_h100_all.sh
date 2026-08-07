@@ -43,14 +43,24 @@ run_stage() {  # run_stage <gpu> <logfile> <args...>
 log "=== 시작: MODEL=$MODEL, DRIFTS=${DRIFTS[*]}, OUT_ROOT=$OUT_ROOT ==="
 nvidia-smi --query-gpu=index,name,memory.total --format=csv | tee -a "$LOGS/main.log" || true
 
-# ---------- phase 0: 공유 (prep + β rollout) ----------
+# ---------- phase 0: 공유 (prep + β rollout, 4-GPU 샤딩) ----------
 SHARED="$OUT_ROOT/shared"
 if [ -f "$SHARED/rollouts_behavior_train.jsonl" ]; then
   log "phase0: 공유 산출물 존재 — 스킵"
 else
-  run_stage 0 "$LOGS/phase0-prep.log"    --stage prep             --run "$SHARED" --model "$MODEL" || { log "phase0 prep 실패"; tail -20 "$LOGS/phase0-prep.log" | tee -a "$LOGS/main.log"; exit 1; }
-  run_stage 0 "$LOGS/phase0-rollout.log" --stage rollout-behavior --run "$SHARED" --model "$MODEL" || { log "phase0 rollout 실패"; tail -20 "$LOGS/phase0-rollout.log" | tee -a "$LOGS/main.log"; exit 1; }
-  log "phase0 완료: $(wc -l < "$SHARED/rollouts_behavior_train.jsonl") rollouts"
+  run_stage 0 "$LOGS/phase0-prep.log" --stage prep --run "$SHARED" --model "$MODEL" || { log "phase0 prep 실패"; exit 1; }
+  pids=()
+  for i in 0 1 2 3; do
+    ( run_stage "$i" "$LOGS/phase0-rollout-shard$i.log" --stage rollout-behavior         --run "$SHARED" --model "$MODEL" --shard "$i:4" ) &
+    pids+=($!)
+  done
+  p0fail=0
+  for i in "${!pids[@]}"; do
+    wait "${pids[$i]}" || { log "phase0 shard$i 실패"; p0fail=1; }
+  done
+  [ "$p0fail" -eq 0 ] || exit 1
+  cat "$SHARED"/rollouts_behavior_train.shard*.jsonl > "$SHARED/rollouts_behavior_train.jsonl"
+  log "phase0 완료: $(wc -l < "$SHARED/rollouts_behavior_train.jsonl") rollouts (4샤드 병합)"
 fi
 
 # ---------- phase 1: drift 병렬 (GPU 0/1/2) ----------
@@ -76,6 +86,11 @@ for drift in "${DRIFTS[@]}"; do
   pids+=($!); names+=("drift$drift(GPU$gpu)")
   gpu=$((gpu + 1))
 done
+# GPU3: downstream-random은 점수가 필요 없어 phase1과 동시 실행 (prompts.json 대기)
+( RUN_R="$OUT_ROOT/drift${DRIFTS[1]:-${DRIFTS[0]}}"
+  for _ in $(seq 60); do [ -f "$RUN_R/prompts.json" ] && break; sleep 5; done
+  run_stage 3 "$LOGS/downstream-random.log" --stage downstream --run "$RUN_R"     --model "$MODEL" --downstream-source random ) &
+pids+=($!); names+=("downstream-random(GPU3)")
 fail=0
 for i in "${!pids[@]}"; do
   if wait "${pids[$i]}"; then
@@ -92,7 +107,8 @@ done
 DS_RUN="$OUT_ROOT/drift100"
 pids=(); srcs=()
 gpu=0
-for src in oracle g10 g01 random; do
+for src in oracle g10 g01; do
+  [ -f "$DS_RUN/downstream_$src.json" ] && { log "phase2 $src 이미 완료 — 스킵"; continue; }
   ( run_stage "$gpu" "$LOGS/downstream-$src.log" --stage downstream --run "$DS_RUN" \
       --model "$MODEL" --downstream-source "$src" ) &
   pids+=($!); srcs+=("$src")
