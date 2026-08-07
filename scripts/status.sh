@@ -11,8 +11,8 @@ echo "=== offpolicy-misranking 상태 ($(date '+%F %T')) — $OUT_ROOT"
 echo
 echo "-- GPU"
 nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader 2>/dev/null || echo "  (nvidia-smi 없음)"
-RUNNING=$(pgrep -fc "src/experiment.py" 2>/dev/null || echo 0)
-echo "  실행 중인 experiment.py: ${RUNNING}개"
+RUNNING=$(pgrep -fc "src/experiment.py" 2>/dev/null || true)
+echo "  실행 중인 experiment.py: ${RUNNING:-0}개"
 echo
 echo "-- 파이프라인 마지막 로그"
 for lf in "$LOGS"/phase0-*.log "$LOGS"/drift*.log "$LOGS"/downstream-*.log; do
