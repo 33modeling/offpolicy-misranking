@@ -52,9 +52,16 @@ def collect_rollouts(
     batch_prompts: int = 8,
 ) -> None:
     """프롬프트별 K개 응답 생성 → jsonl (token id·reward 저장, logp는 나중에 재계산)."""
+    import time
+
+    from grads import ts
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[{ts()}] rollout 시작: {len(prompts)} prompts × K={k}, "
+          f"max_new={max_new_tokens}, temp={temperature} → {out_path.name}", flush=True)
     with out_path.open("w") as f:
         for i, item in enumerate(prompts):
+            t0 = time.time()
             ids = chat_ids(tok, item["question"]).to(model.device)
             batch_ids = ids.unsqueeze(0).expand(k, -1)
             gen = model.generate(
@@ -67,10 +74,13 @@ def collect_rollouts(
                 pad_token_id=tok.eos_token_id,
             )
             resp_start = ids.numel()
+            n_correct = 0
             for j in range(k):
                 seq = gen[j]
                 # 뒤쪽 padding(eos 반복) 제거
                 text = tok.decode(seq[resp_start:], skip_special_tokens=True)
+                r = reward(text, item["answer"])
+                n_correct += r > 0.5
                 f.write(
                     json.dumps(
                         {
@@ -78,13 +88,13 @@ def collect_rollouts(
                             "rollout_idx": j,
                             "input_ids": seq.tolist(),
                             "resp_start": resp_start,
-                            "reward": reward(text, item["answer"]),
+                            "reward": r,
                         }
                     )
                     + "\n"
                 )
-            if (i + 1) % 5 == 0:
-                from grads import ts; print(f"[{ts()}]  rollout {i + 1}/{len(prompts)} (K={k})", flush=True)
+            print(f"[{ts()}]  rollout {i + 1}/{len(prompts)} "
+                  f"({time.time() - t0:.0f}s, 정답 {n_correct}/{k})", flush=True)
 
 
 def train_drift_lora(
