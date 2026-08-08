@@ -75,7 +75,7 @@ fi
 
 # ---------- 진행 하트비트 (10분 간격, 종료 시 자동 정리) ----------
 # GPU 유휴 킬 회피 — 모든 GPU에 5분마다 소형 연산 (클러스터 idle-kill 정책 대응)
-"$PY" scripts/gpu_keepalive.py 300 >> "$LOGS/keepalive.log" 2>&1 &
+"$PY" scripts/gpu_keepalive.py 15 >> "$LOGS/keepalive.log" 2>&1 &
 KEEPALIVE_PID=$!
 
 ( while true; do
