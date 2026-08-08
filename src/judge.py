@@ -29,7 +29,9 @@ def load(path: Path):
 
 def main() -> int:
     out_root = Path(sys.argv[1] if len(sys.argv) > 1 else "outputs/pilot")
-    runs = sorted(out_root.glob("drift*"))
+    # drift100(run)만 — drift_100(adapter 폴더)은 제외
+    runs = sorted(d for d in out_root.glob("drift*")
+                  if d.is_dir() and not d.name.startswith("drift_"))
     if not runs:
         runs = [out_root]
     verdicts: dict[str, bool | None] = {"C1_g10": None, "C1_g01": None,
