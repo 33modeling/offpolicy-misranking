@@ -16,25 +16,21 @@ import torch
 
 
 def worker(gpu: int, duty: float) -> None:
+    """소형 커널 연속 발사 — 사용률 지표(커널 실행 시간 비율)를 상시 높게 유지.
+
+    256×256 matmul은 H100에서 μs 단위라 실제 SM 점유는 미미하지만, 쉼 없이
+    발사하면 utilization 지표는 계속 nonzero로 찍힌다. 본 작업의 큰 커널이
+    들어오면 자연히 양보된다. duty 인자는 스트림 사이 마이크로 휴식 비율.
+    """
     torch.cuda.set_device(gpu)
-    a = torch.randn(2048, 2048, device="cuda")
-    # 연산 블록 시간 실측 → 듀티에 맞는 휴식 계산
-    torch.cuda.synchronize()
-    t0 = time.time()
-    for _ in range(40):
-        a = a @ a.T
-        a = a / (a.norm() + 1e-6)
-    torch.cuda.synchronize()
-    block = max(0.005, time.time() - t0)
-    rest = block * (1.0 - duty) / duty
-    print(f"keepalive GPU{gpu}: block {block*1000:.0f}ms, rest {rest*1000:.0f}ms "
-          f"(duty {duty:.0%})", flush=True)
+    a = torch.randn(256, 256, device="cuda")
+    print(f"keepalive GPU{gpu}: continuous tiny-kernel mode", flush=True)
     while True:
-        for _ in range(40):
-            a = a @ a.T
+        for _ in range(500):
+            a = a @ a
             a = a / (a.norm() + 1e-6)
         torch.cuda.synchronize()
-        time.sleep(rest)
+        time.sleep(0.002)  # CPU 스핀 방지용 마이크로 휴식
 
 
 def main() -> None:
