@@ -3,6 +3,11 @@
 #   git pull && bash scripts/go.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
+if [ "${1:-}" = "fast" ]; then
+  # 빠른 모드: drift 1수준 + fresh 절반 + downstream 절반 — 판정력 유지, 시간 ~1/4
+  export DRIFTS="100" FRESH_K=16 HYBRID_PROMPTS=24 DOWNSTREAM_STEPS=100
+  echo "== FAST 모드: DRIFTS=100, FRESH_K=16, DOWNSTREAM_STEPS=100"
+fi
 source scripts/setup_env.sh
 OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate}"; export OUT_ROOT
 

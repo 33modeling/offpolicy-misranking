@@ -132,7 +132,7 @@ gpu=0
 for src in oracle g10 g01; do
   [ -f "$DS_RUN/downstream_$src.json" ] && { log "phase2 $src 이미 완료 — 스킵"; continue; }
   ( run_stage "$gpu" "$LOGS/downstream-$src.log" --stage downstream --run "$DS_RUN" \
-      --model "$MODEL" --downstream-source "$src" ) &
+      --model "$MODEL" --downstream-source "$src" --downstream-steps "${DOWNSTREAM_STEPS:-200}" ) &
   pids+=($!); srcs+=("$src")
   gpu=$((gpu + 1))
 done
