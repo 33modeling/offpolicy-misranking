@@ -10,3 +10,5 @@ for r in "$OUT_ROOT"/drift*/report.md; do
   [ -f "$r" ] && { echo "──── $r"; cat "$r"; echo; }
 done
 "$PY" src/judge.py "$OUT_ROOT"
+echo
+echo "(선택된 문제 상세는:  bash scripts/selection.sh)"

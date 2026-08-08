@@ -45,6 +45,22 @@ for f in "$OUT_ROOT"/drift*/downstream_*.json; do
   [ -f "$f" ] && echo "  downstream: $(basename "$f") ✔"
 done
 echo
+echo "-- 학습 건전성 (loss/보상 추세)"
+python3 - "$LOGS" <<'PY'
+import glob, re, sys
+for lf in sorted(glob.glob(sys.argv[1] + "/*.log")):
+    text = open(lf, errors="replace").read()
+    losses = re.findall(r"drift step (\d+)/\d+ loss=([\d.]+)", text)
+    if losses:
+        first, last = losses[0], losses[-1]
+        trend = "감소 ✓" if float(last[1]) < float(first[1]) else "정체/증가 ⚠"
+        print(f"  {lf.split('/')[-1]}: drift loss {first[1]} (step {first[0]}) → {last[1]} (step {last[0]}) — {trend}")
+    rs = re.findall(r"train (\d+)/\d+ mean_r=([\d.]+)", text)
+    if rs:
+        first, last = rs[0], rs[-1]
+        print(f"  {lf.split('/')[-1]}: downstream 보상 {first[1]} (step {first[0]}) → {last[1]} (step {last[0]})")
+PY
+echo
 echo "-- report 있으면 요약"
 for r in "$OUT_ROOT"/drift*/report.md; do
   [ -f "$r" ] && { echo "  --- $r"; sed -n '1,12p' "$r" | sed 's/^/  /'; }
