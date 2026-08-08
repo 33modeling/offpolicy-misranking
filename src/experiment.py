@@ -55,8 +55,14 @@ def stage_score(args, run: Path, pi=None, beta=None) -> None:
     # stage 산출물을 쓴다 (oracle을 먼저 돌릴 것).
     val = torch.load(run / "val_gradient.pt", weights_only=True)
 
+    import time as _time
+
+    from rollout import _eta
+    t_start = _time.time()
+    n_done = 0
     out = {est: {} for est in ESTIMATORS}
     for pi_idx, rows in sorted(rollouts.items()):
+        n_done += 1
         rewards = torch.tensor([r["reward"] for r in rows])
         advs = loo_advantages(rewards)
         logps_pi, logps_beta = [], []
@@ -70,8 +76,10 @@ def stage_score(args, run: Path, pi=None, beta=None) -> None:
             ]
             g = prompt_gradient(pi, params, rows, weights, spec)
             out[est][pi_idx] = {"score": cosine(g, val), "norm": float(g.norm())}
-        if (pi_idx + 1) % 5 == 0:
-            from grads import ts; print(f"[{ts()}]  score {pi_idx + 1}/{len(rollouts)}", flush=True)
+        if n_done % 5 == 0:
+            from grads import ts
+            print(f"[{ts()}]  score {n_done}/{len(rollouts)} "
+                  f"({100 * n_done // len(rollouts)}%, ETA {_eta(n_done, len(rollouts), t_start)})", flush=True)
     (run / "scores_offpolicy.json").write_text(json.dumps(out, indent=1))
 
 
@@ -109,8 +117,15 @@ def stage_oracle(args, run: Path, pi=None, tok=None) -> None:
     torch.save(torch.stack(groups_v), run / "val_groups.pt")
 
     # oracle 점수 + split-half + micro-group 저장
+    import time as _time
+
+    from rollout import _eta
+    t_start = _time.time()
+    n_done = 0
     oracle, halves, micro = {}, {}, {}
-    for pi_idx, rows in sorted(read_rollouts(fresh_path).items()):
+    fresh_by_prompt = read_rollouts(fresh_path)
+    for pi_idx, rows in sorted(fresh_by_prompt.items()):
+        n_done += 1
         gsize = args.micro_group
         group_grads = []
         for s in range(0, len(rows), gsize):
@@ -130,8 +145,10 @@ def stage_oracle(args, run: Path, pi=None, tok=None) -> None:
             "a": cosine(stack[:h].mean(dim=0), val_grad),
             "b": cosine(stack[h:].mean(dim=0), val_grad),
         }
-        if (pi_idx + 1) % 5 == 0:
-            from grads import ts; print(f"[{ts()}]  oracle {pi_idx + 1}", flush=True)
+        if n_done % 5 == 0:
+            from grads import ts
+            print(f"[{ts()}]  oracle {n_done}/{len(fresh_by_prompt)} "
+                  f"({100 * n_done // len(fresh_by_prompt)}%, ETA {_eta(n_done, len(fresh_by_prompt), t_start)})", flush=True)
     (run / "scores_oracle.json").write_text(json.dumps(oracle, indent=1))
     (run / "scores_splithalf.json").write_text(json.dumps(halves, indent=1))
     torch.save(micro, run / "oracle_micro_groups.pt")

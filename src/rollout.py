@@ -15,6 +15,15 @@ import torch
 from data import PROMPT_TEMPLATE, reward
 
 
+def _eta(done: int, total: int, t_start: float) -> str:
+    import time as _t
+    if done == 0:
+        return "?"
+    rem = (total - done) * (_t.time() - t_start) / done
+    h, m = int(rem // 3600), int(rem % 3600 // 60)
+    return f"{h}h{m:02d}m" if h else f"{m}m"
+
+
 def auto_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -62,6 +71,7 @@ def collect_rollouts(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"[{ts()}] rollout 시작: {len(prompts)} prompts × K={k}, "
           f"max_new={max_new_tokens}, temp={temperature} → {out_path.name}", flush=True)
+    t_start = time.time()
     tmp_path = out_path.with_suffix(".tmp")
     with tmp_path.open("w") as f:
         for i, item in enumerate(prompts):
@@ -98,7 +108,8 @@ def collect_rollouts(
                     + "\n"
                 )
             print(f"[{ts()}]  rollout {i + 1}/{len(prompts)} "
-                  f"({time.time() - t0:.0f}s, 정답 {n_correct}/{k})", flush=True)
+                  f"({100 * (i + 1) // len(prompts)}%, {time.time() - t0:.0f}s/개, "
+                  f"정답 {n_correct}/{k}, ETA {_eta(i + 1, len(prompts), t_start)})", flush=True)
     tmp_path.rename(out_path)  # 원자적 완료 표시 — 중단된 부분 파일은 .tmp로 남는다
 
 
