@@ -31,6 +31,8 @@ while true; do
     break
   fi
   if pgrep -f "scripts/run_h100_all.sh" >/dev/null || pgrep -f "src/experiment.py" >/dev/null; then
+    LAST=$(tail -qn 1 "$OUT_ROOT"/logs/drift*.log "$OUT_ROOT"/logs/phase0-*.log 2>/dev/null | tail -1 | cut -c1-80)
+    blog "생존 확인 — 진행: [$LAST]"
     sleep 300
     continue
   fi
@@ -45,5 +47,11 @@ while true; do
   bash scripts/reset_run.sh >> "$BLOG" 2>&1 || true
   nohup bash scripts/run_h100_all.sh > "$OUT_ROOT/logs/nohup-$restarts.out" 2>&1 &
   blog "재시작됨 (pid $!)"
-  sleep 300
+  sleep 60
+  if ! pgrep -f "scripts/run_h100_all.sh" >/dev/null; then
+    blog "재시작 직후 사망 — 사유:"
+    tail -n 6 "$OUT_ROOT/logs/nohup-$restarts.out" 2>/dev/null | tee -a "$BLOG"
+    tail -n 4 "$OUT_ROOT/logs/main.log" 2>/dev/null | tee -a "$BLOG"
+  fi
+  sleep 240
 done

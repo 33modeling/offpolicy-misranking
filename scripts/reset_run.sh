@@ -21,6 +21,7 @@ RM="rm -rfv"; [ "$DRY" = 1 ] && RM="echo [dry-run] would remove:"
 echo "== 1) 실행 프로세스 종료"
 pkill -f "src/experiment.py" 2>/dev/null && echo "experiment.py 종료" || echo "실행 중인 experiment.py 없음"
 pkill -f "run_h100_all.sh" 2>/dev/null || true
+pkill -f "gpu_keepalive.py" 2>/dev/null && echo "고아 keepalive 종료" || true
 sleep 2
 
 echo "== 2) GPU 점유 확인"
