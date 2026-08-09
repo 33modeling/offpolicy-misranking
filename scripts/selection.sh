@@ -4,9 +4,5 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="${VENV_DIR:+$VENV_DIR/bin/python}"; [ -x "${PY:-/none}" ] || PY=python3
-ROOT="${OUT_ROOT:-$OM_WORK/runs/gate}"
-for c in "$ROOT" "$OM_WORK"/runs/* outputs/h100 outputs/*; do
-  [ -d "$c" ] && ls "$c"/drift*/scores_oracle.json "$c"/scores_oracle.json >/dev/null 2>&1 && { ROOT="$c"; break; }
-done
-echo "== 산출물 위치: $ROOT"
-"$PY" src/show_selection.py "$ROOT" "$@"
+source scripts/_find_root.sh
+"$PY" src/show_selection.py "$OUT_ROOT" "$@"
