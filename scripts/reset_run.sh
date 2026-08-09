@@ -57,6 +57,16 @@ sys.exit(0 if len(seen) >= need else 1)
 PY
     done
   done
+  # 공유 β rollout 완결성 검증 (프롬프트 수 대조 — 부분 파일이면 삭제해 재수집 유도)
+  SB="$OUT_ROOT/shared/rollouts_behavior_train.jsonl"
+  if [ -f "$SB" ] && [ -f "$OUT_ROOT/shared/prompts.json" ]; then
+    python3 - "$SB" "$OUT_ROOT/shared/prompts.json" <<'PY' || { $RM "$SB" "$OUT_ROOT"/shared/*.tmp "$OUT_ROOT"/shared/rollouts_behavior_train.shard*.jsonl; }
+import json, sys
+seen = {json.loads(l)["prompt_idx"] for l in open(sys.argv[1])}
+need = len(json.load(open(sys.argv[2]))["train"])
+sys.exit(0 if len(seen) >= need else 1)
+PY
+  fi
   echo "보존됨: shared/ (β rollout), drift*/rollouts_fresh_*.jsonl, drift*/drift_* (adapter)"
 fi
 

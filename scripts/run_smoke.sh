@@ -17,7 +17,5 @@ COMMON=(--run "$RUN" --model "$MODEL" --n-train 8 --n-val 4
 "$PY" src/experiment.py --stage prep             "${COMMON[@]}"
 "$PY" src/experiment.py --stage rollout-behavior "${COMMON[@]}"
 "$PY" src/experiment.py --stage drift            "${COMMON[@]}"
-"$PY" src/experiment.py --stage oracle           "${COMMON[@]}" --adapter "$RUN/drift_10"
-"$PY" src/experiment.py --stage score            "${COMMON[@]}" --adapter "$RUN/drift_10"
-"$PY" src/experiment.py --stage report           "${COMMON[@]}"
+"$PY" src/experiment.py --stage analyze          "${COMMON[@]}" --adapter "$RUN/drift_10" --hybrid-prompts 4
 echo "SMOKE OK"

@@ -25,7 +25,7 @@ python3 - "$LOGS" <<'PY'
 import glob, re, sys
 for lf in sorted(glob.glob(sys.argv[1] + "/*.log")):
     lines = open(lf, errors="replace").readlines()[-200:]
-    prog = [m for l in lines if (m := re.search(r"rollout (\d+)/(\d+) \((\d+)s", l))]
+    prog = [m for l in lines if (m := re.search(r"rollout (\d+)/(\d+) \((?:\d+%, )?(\d+)s", l))]
     if not prog:
         continue
     done, total, sec = int(prog[-1][1]), int(prog[-1][2]), int(prog[-1][3])

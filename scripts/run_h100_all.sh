@@ -5,7 +5,7 @@
 #   phase 0  공유: prep + β rollout 1회 (GPU0) — drift와 무관하므로 재사용
 #   phase 1  drift 50/100/200 파이프라인을 GPU 0/1/2에 병렬
 #            (drift SFT → analyze[oracle·score·report·hybrid — 모델 1회 로드])
-#   phase 2  downstream 4소스(oracle/g10/g01/random)를 GPU 0~3에 병렬 (drift100 기준)
+#   phase 2  downstream 4소스(oracle/g10/g01/random)를 GPU 0~3에 병렬 (중간 drift 기준)
 #
 # 사용 (클러스터 노드):
 #   source scripts/setup_env.sh && bash scripts/provision.sh   # 최초 1회 (온라인 머신)
@@ -21,7 +21,22 @@ PY="$VENV_DIR/bin/python"
 # 모델·데이터는 provision이 group-volume에 받아둔 로컬 스냅샷 사용 (미러 설정 불필요)
 if [ -d "$MODEL_QWEN25_7B" ]; then MODEL="${MODEL:-$MODEL_QWEN25_7B}"; else MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"; fi
 OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate}"
-DRIFTS=(${DRIFTS:-50 100 200})
+read -r -a DRIFTS <<< "${DRIFTS:-50 100 200}"
+[ "${#DRIFTS[@]}" -ge 1 ] && [ "${#DRIFTS[@]}" -le 3 ] || {
+  echo "DRIFTS는 1~3개만 지정 가능 (GPU0~2 사용): ${DRIFTS[*]}"; exit 2;
+}
+# downstream은 기본적으로 100-step을 쓰고, 없으면 정렬 순서의 중간 drift를 쓴다.
+DS_DRIFT="${DOWNSTREAM_DRIFT:-}"
+if [ -z "$DS_DRIFT" ]; then
+  DS_DRIFT="${DRIFTS[$((${#DRIFTS[@]} / 2))]}"
+  for drift in "${DRIFTS[@]}"; do [ "$drift" = "100" ] && DS_DRIFT=100; done
+fi
+found_ds=0
+for drift in "${DRIFTS[@]}"; do [ "$drift" = "$DS_DRIFT" ] && found_ds=1; done
+[ "$found_ds" -eq 1 ] || {
+  echo "DOWNSTREAM_DRIFT=$DS_DRIFT가 DRIFTS(${DRIFTS[*]})에 없음"; exit 2;
+}
+DS_RUN="${OUT_ROOT:-$OM_WORK/runs/gate}/drift$DS_DRIFT"
 # 실행 시간 손잡이: FRESH_K=16 이면 oracle 수집 절반, DRIFTS="100" 이면 단일 파이프라인
 EXTRA=(--fresh-k "${FRESH_K:-32}" --val-k "${VAL_K:-8}" --hybrid-prompts "${HYBRID_PROMPTS:-32}")
 LOGS="$OUT_ROOT/logs"
@@ -42,7 +57,7 @@ run_stage() {  # run_stage <gpu> <logfile> <args...>
   fi
 }
 
-log "=== 시작: MODEL=$MODEL, DRIFTS=${DRIFTS[*]}, OUT_ROOT=$OUT_ROOT ==="
+log "=== 시작: MODEL=$MODEL, DRIFTS=${DRIFTS[*]}, DOWNSTREAM_DRIFT=$DS_DRIFT, OUT_ROOT=$OUT_ROOT ==="
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
 # 좀비 점유 검사 — 이전 실행이 GPU를 잡고 있으면 OOM 나므로 여기서 멈춘다
 BUSY=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '$1 > 2000' | wc -l)
@@ -109,9 +124,9 @@ for drift in "${DRIFTS[@]}"; do
   gpu=$((gpu + 1))
 done
 # GPU3: downstream-random은 점수가 필요 없어 phase1과 동시 실행 (prompts.json 대기)
-( RUN_R="$OUT_ROOT/drift${DRIFTS[1]:-${DRIFTS[0]}}"
-  for _ in $(seq 60); do [ -f "$RUN_R/prompts.json" ] && break; sleep 5; done
-  run_stage 3 "$LOGS/downstream-random.log" --stage downstream --run "$RUN_R"     --model "$MODEL" --downstream-source random ) &
+( for _ in $(seq 60); do [ -f "$DS_RUN/prompts.json" ] && break; sleep 5; done
+  run_stage 3 "$LOGS/downstream-random.log" --stage downstream --run "$DS_RUN" \
+    --model "$MODEL" --downstream-source random ) &
 pids+=($!); names+=("downstream-random(GPU3)")
 fail=0
 for i in "${!pids[@]}"; do
@@ -125,8 +140,7 @@ for i in "${!pids[@]}"; do
 done
 [ "$fail" -eq 0 ] || { log "phase1 실패 — 중단"; exit 1; }
 
-# ---------- phase 2: downstream 병렬 (GPU 0~3, drift100 점수 기준) ----------
-DS_RUN="$OUT_ROOT/drift100"
+# ---------- phase 2: downstream 병렬 (GPU 0~2, 선택한 drift 점수 기준) ----------
 pids=(); srcs=()
 gpu=0
 for src in oracle g10 g01; do

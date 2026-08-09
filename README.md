@@ -82,6 +82,7 @@ src/experiment.py       stage orchestrator — analyze가 oracle→score→repor
 src/judge.py            게이트 5조건(C1·C1'·C2·C3) 자동 PASS/FAIL 판정
 src/show_selection.py   방법별 top-k 선택 내용·β정답률·겹침 행렬
 tests/test_core.py      모델 없는 핵심 로직 테스트 (2×2 항등식·CertaGrad 동작)
+tests/test_judge.py     drift 집계·hybrid 축별 회복 판정 회귀 테스트
 ```
 
 구현 노트:
@@ -141,7 +142,7 @@ soft는 투영 산출물만 지우고 rollout·adapter 보존, 미완성 fresh �
 - **keepalive 상주**: 클러스터의 "GPU 유휴 3시간 → 잡 킬" 정책 대응 — 모든 GPU에
   소형 커널을 연속 발사해 사용률이 상시 36%+ 로 찍힘 (실측; 실연산 미미, 본
   작업 커널에 자연 양보). `scripts/gpu_keepalive.py`
-- 손잡이(환경변수): `DRIFTS="50 100"`, `FRESH_K=16`, `VAL_K`, `HYBRID_PROMPTS`,
+- 손잡이(환경변수): `DRIFTS="50 100"`, `DOWNSTREAM_DRIFT=100`, `FRESH_K=16`, `VAL_K`, `HYBRID_PROMPTS`,
   `DOWNSTREAM_STEPS`, `MODEL`, `OUT_ROOT`, `OM_SKIP_GPU_CHECK=1`
 - 시작 전 **GPU 점유 검사**(2GB+ 잡 발견 시 PID 출력 후 중단 — 좀비 위 재시작 OOM 방지)
 

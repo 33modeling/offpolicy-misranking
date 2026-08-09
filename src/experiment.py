@@ -193,18 +193,20 @@ def stage_report(args, run: Path) -> None:
     uni = uniform_baseline(pools, val_groups.float(), k, groups_each=pools[0].shape[0])
     cg_sel = {order[i] for i in cg["selected"]}
     uni_sel = {order[i] for i in uni["selected"]}
+    uniform_precision = len(uni_sel & o_top) / k
     results["certagrad"] = {
         "certified": cg["certified"],
         "fresh_groups": cg["fresh_groups"],
         "fresh_frac_of_uniform": cg["fresh_groups"] / uni["fresh_groups"],
         "precision_vs_oracle": len(cg_sel & o_top) / k,
+        "uniform_precision_vs_oracle": uniform_precision,
     }
     lines += [
         "",
         f"CertaGrad: certified={cg['certified']} fresh={cg['fresh_groups']}/{uni['fresh_groups']} "
         f"({results['certagrad']['fresh_frac_of_uniform']:.2f}× of uniform), "
         f"precision={results['certagrad']['precision_vs_oracle']:.3f} "
-        f"(uniform precision={len(uni_sel & o_top) / k:.3f})",
+        f"(uniform precision={uniform_precision:.3f})",
     ]
     (run / "report.md").write_text("\n".join(lines))
     (run / "report.json").write_text(json.dumps(results, indent=1))
