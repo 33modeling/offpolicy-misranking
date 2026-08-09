@@ -41,6 +41,19 @@ while true; do
   fi
   if pgrep -f "scripts/run_h100_all.sh" >/dev/null || pgrep -f "src/experiment.py" >/dev/null; then
     LAST=$(tail -qn 1 "$OUT_ROOT"/logs/drift*.log "$OUT_ROOT"/logs/phase0-*.log 2>/dev/null | tail -1 | cut -c1-80)
+    # 행(hang) 감지 — 프로세스는 살아있는데 로그가 STALL_MIN분째 조용하면 강제 재시작
+    NEWEST=$(ls -t "$OUT_ROOT"/logs/drift*.log "$OUT_ROOT"/logs/phase0-*.log "$OUT_ROOT"/logs/downstream-*.log 2>/dev/null | head -1)
+    if [ -n "${NEWEST:-}" ]; then
+      AGE=$(( ($(date +%s) - $(stat -c %Y "$NEWEST")) / 60 ))
+      if [ "$AGE" -ge "${STALL_MIN:-45}" ]; then
+        blog "행 감지 — 로그 ${AGE}분째 정지 [$LAST] → 강제 재시작"
+        pkill -f "src/experiment.py" 2>/dev/null || true
+        pkill -f "scripts/run_h100_all.sh" 2>/dev/null || true
+        pkill -f "gpu_keepalive.py" 2>/dev/null || true
+        sleep 10
+        continue
+      fi
+    fi
     blog "생존 확인 — 진행: [$LAST]"
     sleep 300
     continue
