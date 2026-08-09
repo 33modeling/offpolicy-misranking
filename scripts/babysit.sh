@@ -17,6 +17,15 @@ else
 fi
 source scripts/setup_env.sh
 OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate$SUFFIX}"; export OUT_ROOT
+
+# 싱글턴 — babysit이 여러 개 뜨면 서로의 실행을 죽였다고 오판해 재시작 폭풍이 난다
+LOCK="$OM_WORK/.babysit.lock"
+if [ -f "$LOCK/pid" ] && kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; then
+  echo "이미 babysit 실행 중 (pid $(cat "$LOCK/pid")) — 추가 실행하지 않음. 상태는 scripts/check.sh"
+  exit 0
+fi
+mkdir -p "$LOCK"; echo $$ > "$LOCK/pid"
+trap 'rm -rf "$LOCK"' EXIT
 mkdir -p "$OUT_ROOT/logs"
 BLOG="$OUT_ROOT/logs/babysit.log"
 blog() { echo "[$(date '+%F %T')] $*" | tee -a "$BLOG"; }
