@@ -160,7 +160,12 @@ soft는 투영 산출물만 지우고 rollout·adapter 보존, 미완성 fresh �
 `scores_hybrid_*.json`, `downstream_*.json`, `oracle_micro_groups.pt` 등 —
 읽는 법은 `result.sh`가 대신한다.
 
-## 7. 직접 선행 (전체 목록은 컨셉 문서)
+## 7. 트러블슈팅
+
+구축 중 잡은 주요 에러(투영 OOM, 유휴 킬, 다중 감시자 폭풍, 재개 오염 등)와
+교훈은 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)에 정본으로 기록했다.
+
+## 8. 직접 선행 (전체 목록은 컨셉 문서)
 
 CROPI [2510.26491](https://arxiv.org/abs/2510.26491) ·
 GradAlign [2602.21492](https://arxiv.org/abs/2602.21492) ·
