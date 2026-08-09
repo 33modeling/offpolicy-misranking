@@ -217,7 +217,8 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--stage", required=True,
                    choices=["prep", "rollout-behavior", "drift", "score", "oracle",
-                            "report", "hybrid", "analyze", "downstream"])
+                            "report", "hybrid", "analyze", "downstream",
+                            "rollout-fresh"])
     p.add_argument("--run", default="outputs/pilot")
     p.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     p.add_argument("--adapter", default=None, help="π LoRA adapter 경로 (없으면 β=π)")
@@ -269,6 +270,29 @@ def main() -> None:
             collect_rollouts(beta, tok, train[lo:hi], args.behavior_k,
                              args.max_new_tokens, args.temperature, out,
                              idx_offset=lo)
+    elif args.stage == "rollout-fresh":
+        # π(adapter) fresh rollout을 샤딩 수집 — analyze는 완성 파일이 있으면 생성 스킵
+        if args.shard:
+            i, n = map(int, args.shard.split(":"))
+            out = run / f"rollouts_fresh_train.shard{i}.jsonl"
+        else:
+            i, n, out = 0, 1, run / "rollouts_fresh_train.jsonl"
+        if out.exists():
+            print(f"rollout-fresh: {out.name} 이미 존재 — 스킵")
+        else:
+            pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+            train = json.loads((run / "prompts.json").read_text())["train"]
+            per = (len(train) + n - 1) // n
+            lo, hi = i * per, min((i + 1) * per, len(train))
+            collect_rollouts(pi, tok, train[lo:hi], args.fresh_k,
+                             args.max_new_tokens, args.temperature, out,
+                             idx_offset=lo)
+            # shard 0이 val fresh도 담당
+            val_out = run / "rollouts_fresh_val.jsonl"
+            if i == 0 and not val_out.exists():
+                prompts = json.loads((run / "prompts.json").read_text())
+                collect_rollouts(pi, tok, prompts["val"], args.val_k,
+                                 args.max_new_tokens, args.temperature, val_out)
     elif args.stage == "drift":
         train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
                          run / f"drift_{args.drift_steps}", steps=args.drift_steps)
