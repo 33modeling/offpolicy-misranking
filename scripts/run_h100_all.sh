@@ -168,4 +168,5 @@ for src in oracle g10 g01 random; do
   cat "$DS_RUN/downstream_$src.json" 2>/dev/null | tee -a "$LOGS/main.log" || true
 done
 log "=== 종료 (fail=$fail) ==="
+[ "$fail" -eq 0 ] && touch "$OUT_ROOT/DONE"
 exit "$fail"

@@ -32,6 +32,7 @@ if command -v nvidia-smi >/dev/null; then
     echo "  → 'kill <PID>' 후 다시 실행"; }
 fi
 
+rm -f "$OUT_ROOT/DONE" 2>/dev/null || true
 echo "== 3) 산출물 정리 ($OUT_ROOT)"
 if [ ! -d "$OUT_ROOT" ]; then
   echo "run 디렉토리 없음 — 정리할 것 없음"
