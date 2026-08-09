@@ -9,9 +9,14 @@ cd "$(dirname "$0")/.."
 MODE="${1:-}"
 if [ "$MODE" = "fast" ]; then
   export DRIFTS="100" FRESH_K=16 HYBRID_PROMPTS=24 DOWNSTREAM_STEPS=100
+  SUFFIX="-fast"
+  echo "== 모드: FAST (경로: runs/gate-fast)"
+else
+  SUFFIX=""
+  echo "== 모드: FULL — drift 50/100/200, FRESH_K=32, downstream 200 (경로: runs/gate)"
 fi
 source scripts/setup_env.sh
-OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate}"; export OUT_ROOT
+OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate$SUFFIX}"; export OUT_ROOT
 mkdir -p "$OUT_ROOT/logs"
 BLOG="$OUT_ROOT/logs/babysit.log"
 blog() { echo "[$(date '+%F %T')] $*" | tee -a "$BLOG"; }

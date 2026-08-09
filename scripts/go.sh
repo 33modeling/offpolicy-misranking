@@ -4,12 +4,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 if [ "${1:-}" = "fast" ]; then
-  # 빠른 모드: drift 1수준 + fresh 절반 + downstream 절반 — 판정력 유지, 시간 ~1/4
+  # 빠른 모드 — 산출물 경로를 분리해 full과 절대 섞이지 않는다
   export DRIFTS="100" FRESH_K=16 HYBRID_PROMPTS=24 DOWNSTREAM_STEPS=100
-  echo "== FAST 모드: DRIFTS=100, FRESH_K=16, DOWNSTREAM_STEPS=100"
+  export OUT_ROOT_SUFFIX="-fast"
+  echo "== 모드: FAST (경로: runs/gate-fast)"
+else
+  echo "== 모드: FULL — drift 50/100/200, FRESH_K=32, downstream 200 (경로: runs/gate)"
 fi
 source scripts/setup_env.sh
-OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate}"; export OUT_ROOT
+OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate${OUT_ROOT_SUFFIX:-}}"; export OUT_ROOT
 
 bash scripts/reset_run.sh
 echo
