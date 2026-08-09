@@ -241,6 +241,8 @@ def main() -> None:
     p.add_argument("--downstream-source", default="oracle",
                    help="oracle|g00|g10|g01|g11|random")
     p.add_argument("--downstream-steps", type=int, default=200)
+    p.add_argument("--budget-rollouts", type=int, default=0,
+                   help=">0이면 선택 비용 차감 후 남는 예산으로 학습 스텝 결정 (총연산 통일)")
     p.add_argument("--shard", default=None, help="rollout-behavior 샤딩 'i:n' (예: 0:4)")
     args = p.parse_args()
 
@@ -298,7 +300,7 @@ def main() -> None:
 
         run_downstream(run, args.model, args.downstream_source, args.downstream_steps,
                        args.behavior_k, args.max_new_tokens, args.temperature,
-                       args.topk_frac)
+                       args.topk_frac, budget_rollouts=args.budget_rollouts)
 
 
 def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:

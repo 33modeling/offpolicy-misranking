@@ -102,9 +102,32 @@ def eval_accuracy(base: str, adapter: Path | None, prompts: list[dict],
     return correct / len(prompts)
 
 
+def selection_rollout_cost(run: Path, source: str) -> int:
+    """그 선택 방법이 소비한 fresh rollout 수 (총연산 통일용).
+
+    stale 점수(g00/g10/g01/g11)와 random은 0, oracle은 fresh pool 전체,
+    certagrad는 report.json의 fresh_groups × micro_group.
+    """
+    if source == "oracle":
+        fresh = run / "rollouts_fresh_train.jsonl"
+        return sum(1 for _ in fresh.open()) if fresh.exists() else 0
+    if source == "certagrad":
+        rep = run / "report.json"
+        if rep.exists():
+            cg = json.loads(rep.read_text()).get("certagrad", {})
+            return int(cg.get("fresh_groups", 0)) * 4
+    return 0
+
+
 def run_downstream(run: Path, base: str, source: str, steps: int, k: int,
-                   max_new_tokens: int, temperature: float, topk_frac: float) -> dict:
-    """source ∈ {oracle, g00, g10, g01, g11, random} 선택으로 학습→val 정확도."""
+                   max_new_tokens: int, temperature: float, topk_frac: float,
+                   budget_rollouts: int = 0) -> dict:
+    """source ∈ {oracle, g00, g10, g01, g11, random} 선택으로 학습→val 정확도.
+
+    budget_rollouts > 0 이면 '선택+학습 총 rollout 예산'을 통일한다 —
+    선택에 쓴 rollout을 차감한 나머지로 학습 스텝 수를 정한다 (concept 5절
+    '같은 총연산' 조건의 구현).
+    """
     prompts = json.loads((run / "prompts.json").read_text())
     n = len(prompts["train"])
     kk = max(1, int(n * topk_frac))
@@ -117,11 +140,17 @@ def run_downstream(run: Path, base: str, source: str, steps: int, k: int,
         off = json.loads((run / "scores_offpolicy.json").read_text())[source]
         scores = {int(i): v for i, v in off.items()}
         sel = sorted(scores, key=lambda i: -scores[i]["score"])[:kk]
+    sel_cost = selection_rollout_cost(run, source)
+    if budget_rollouts > 0:
+        steps = max(1, (budget_rollouts - sel_cost) // k)
+        print(f"[budget] 총예산 {budget_rollouts} rollouts — 선택 소비 {sel_cost} → 학습 {steps} steps")
     out_dir = run / f"downstream_{source}"
     grpo_lite_train(base, prompts["train"], sel, steps, k, max_new_tokens, temperature, out_dir)
     acc = eval_accuracy(base, out_dir, prompts["val"], max_new_tokens)
     base_acc = eval_accuracy(base, None, prompts["val"], max_new_tokens)
-    result = {"source": source, "selected": sel, "val_acc": acc, "base_acc": base_acc}
+    result = {"source": source, "selected": sel, "val_acc": acc, "base_acc": base_acc,
+              "selection_rollout_cost": sel_cost, "train_steps": steps,
+              "budget_rollouts": budget_rollouts}
     (run / f"downstream_{source}.json").write_text(json.dumps(result, indent=1))
     print(f"downstream[{source}]: val {base_acc:.3f} → {acc:.3f}")
     return result
