@@ -41,8 +41,10 @@ def read_rollouts(path: Path) -> dict[int, list[dict]]:
     return by_prompt
 
 
-def stage_score(args, run: Path, pi=None, beta=None) -> None:
-    """β rollout에 대해 π/β 로그확률 → 4개 추정량 → projected gradient → 점수."""
+def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | None = None) -> None:
+    """β rollout에 대해 π/β 로그확률 → 4개 추정량 → projected gradient → 점수.
+
+    shard=(i,n)이면 프롬프트를 인터리브(i::n)로 나눠 scores_offpolicy.shard{i}.json에 쓴다."""
     spec = ProjectionSpec(dim=args.proj_dim)
     if pi is None:
         pi, _ = load_policy(args.model, Path(args.adapter) if args.adapter else None)
@@ -50,6 +52,9 @@ def stage_score(args, run: Path, pi=None, beta=None) -> None:
         beta, _ = load_policy(args.model, None)
     params = grad_params(pi, args.grad_layers)
     rollouts = read_rollouts(run / "rollouts_behavior_train.jsonl")
+    if shard is not None:
+        keys = sorted(rollouts)[shard[0]::shard[1]]
+        rollouts = {k: rollouts[k] for k in keys}
 
     # validation 방향은 π fresh가 정본이지만, score stage에서는 우선 저장된 oracle
     # stage 산출물을 쓴다 (oracle을 먼저 돌릴 것).
@@ -80,11 +85,15 @@ def stage_score(args, run: Path, pi=None, beta=None) -> None:
             from grads import ts
             print(f"[{ts()}]  score {n_done}/{len(rollouts)} "
                   f"({100 * n_done // len(rollouts)}%, ETA {_eta(n_done, len(rollouts), t_start)})", flush=True)
-    (run / "scores_offpolicy.json").write_text(json.dumps(out, indent=1))
+    out_name = ("scores_offpolicy.json" if shard is None
+                else f"scores_offpolicy.shard{shard[0]}.json")
+    (run / out_name).write_text(json.dumps(out, indent=1))
 
 
-def stage_oracle(args, run: Path, pi=None, tok=None) -> None:
-    """π fresh rollout으로 oracle 점수·noise floor·CertaGrad용 micro-group 저장."""
+def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | None = None) -> None:
+    """π fresh rollout으로 oracle 점수·noise floor·CertaGrad용 micro-group 저장.
+
+    shard=(i,n)이면 gradient 계산을 프롬프트 인터리브로 분담 — val 방향은 shard 0만."""
     spec = ProjectionSpec(dim=args.proj_dim)
     if pi is None:
         pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
@@ -104,17 +113,22 @@ def stage_oracle(args, run: Path, pi=None, tok=None) -> None:
             args.temperature, val_path,
         )
 
-    # validation 방향 v — val 프롬프트 전체 LOO gradient 평균
-    v_sum, groups_v = None, []
-    for pi_idx, rows in sorted(read_rollouts(val_path).items()):
-        advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
-        weights = [torch.full((r["input_ids"].numel() - r["resp_start"],), float(a)) for r, a in zip(rows, advs)]
-        g = prompt_gradient(pi, params, rows, weights, spec)
-        groups_v.append(g)
-        v_sum = g if v_sum is None else v_sum + g
-    val_grad = v_sum / len(groups_v)
-    torch.save(val_grad, run / "val_gradient.pt")
-    torch.save(torch.stack(groups_v), run / "val_groups.pt")
+    # validation 방향 v — 비샤드 경로 전담 (샤드 모드는 val-grads 스테이지가 담당)
+    if shard is None:
+        if not (run / "val_gradient.pt").exists():
+            v_sum, groups_v = None, []
+            for pi_idx, rows in sorted(read_rollouts(val_path).items()):
+                advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
+                weights = [
+                    torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
+                    for r, a in zip(rows, advs)
+                ]
+                g = prompt_gradient(pi, params, rows, weights, spec)
+                groups_v.append(g)
+                v_sum = g if v_sum is None else v_sum + g
+            val_grad = v_sum / len(groups_v)
+            torch.save(val_grad, run / "val_gradient.pt")
+            torch.save(torch.stack(groups_v), run / "val_groups.pt")
 
     # oracle 점수 + split-half + micro-group 저장
     import time as _time
@@ -124,6 +138,9 @@ def stage_oracle(args, run: Path, pi=None, tok=None) -> None:
     n_done = 0
     oracle, halves, micro = {}, {}, {}
     fresh_by_prompt = read_rollouts(fresh_path)
+    if shard is not None:
+        keys = sorted(fresh_by_prompt)[shard[0]::shard[1]]
+        fresh_by_prompt = {k: fresh_by_prompt[k] for k in keys}
     for pi_idx, rows in sorted(fresh_by_prompt.items()):
         n_done += 1
         gsize = args.micro_group
@@ -138,20 +155,24 @@ def stage_oracle(args, run: Path, pi=None, tok=None) -> None:
             group_grads.append(prompt_gradient(pi, params, chunk, weights, spec))
         stack = torch.stack(group_grads)
         micro[pi_idx] = stack
-        mu = stack.mean(dim=0)
-        oracle[pi_idx] = {"score": cosine(mu, val_grad), "norm": float(mu.norm())}
-        h = stack.shape[0] // 2
-        halves[pi_idx] = {
-            "a": cosine(stack[:h].mean(dim=0), val_grad),
-            "b": cosine(stack[h:].mean(dim=0), val_grad),
-        }
+        if shard is None:
+            mu = stack.mean(dim=0)
+            oracle[pi_idx] = {"score": cosine(mu, val_grad), "norm": float(mu.norm())}
+            h = stack.shape[0] // 2
+            halves[pi_idx] = {
+                "a": cosine(stack[:h].mean(dim=0), val_grad),
+                "b": cosine(stack[h:].mean(dim=0), val_grad),
+            }
         if n_done % 5 == 0:
             from grads import ts
             print(f"[{ts()}]  oracle {n_done}/{len(fresh_by_prompt)} "
                   f"({100 * n_done // len(fresh_by_prompt)}%, ETA {_eta(n_done, len(fresh_by_prompt), t_start)})", flush=True)
-    (run / "scores_oracle.json").write_text(json.dumps(oracle, indent=1))
-    (run / "scores_splithalf.json").write_text(json.dumps(halves, indent=1))
-    torch.save(micro, run / "oracle_micro_groups.pt")
+    if shard is None:
+        (run / "scores_oracle.json").write_text(json.dumps(oracle, indent=1))
+        (run / "scores_splithalf.json").write_text(json.dumps(halves, indent=1))
+        torch.save(micro, run / "oracle_micro_groups.pt")
+    else:
+        torch.save(micro, run / f"oracle_micro_groups.shard{shard[0]}.pt")
 
 
 def topk(scores: dict, frac: float) -> set:
@@ -218,7 +239,8 @@ def main() -> None:
     p.add_argument("--stage", required=True,
                    choices=["prep", "rollout-behavior", "drift", "score", "oracle",
                             "report", "hybrid", "analyze", "downstream",
-                            "rollout-fresh"])
+                            "rollout-fresh", "oracle-grads", "score-shard",
+                            "merge-grads", "val-grads"])
     p.add_argument("--run", default="outputs/pilot")
     p.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     p.add_argument("--adapter", default=None, help="π LoRA adapter 경로 (없으면 β=π)")
@@ -300,6 +322,72 @@ def main() -> None:
         stage_score(args, run)
     elif args.stage == "oracle":
         stage_oracle(args, run)
+    elif args.stage == "val-grads":
+        pi, _ = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+        params = grad_params(pi, args.grad_layers)
+        spec = ProjectionSpec(dim=args.proj_dim)
+        v_sum, groups_v = None, []
+        for pi_idx, rows in sorted(read_rollouts(run / "rollouts_fresh_val.jsonl").items()):
+            advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
+            weights = [
+                torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
+                for r, a in zip(rows, advs)
+            ]
+            g = prompt_gradient(pi, params, rows, weights, spec)
+            groups_v.append(g)
+            v_sum = g if v_sum is None else v_sum + g
+        torch.save(v_sum / len(groups_v), run / "val_gradient.pt")
+        torch.save(torch.stack(groups_v), run / "val_groups.pt")
+        print(f"val-grads: {len(groups_v)} prompts")
+    elif args.stage == "oracle-grads":
+        i, n = map(int, args.shard.split(":"))
+        stage_oracle(args, run, shard=(i, n))
+    elif args.stage == "score-shard":
+        i, n = map(int, args.shard.split(":"))
+        stage_score(args, run, shard=(i, n))
+    elif args.stage == "merge-grads":
+        # 샤드 산출물 병합 → 최종 파일
+        for base, is_pt in (("scores_oracle", False), ("scores_splithalf", False),
+                            ("oracle_micro_groups", True), ("scores_offpolicy", False)):
+            shards = sorted(run.glob(f"{base}.shard*.{'pt' if is_pt else 'json'}"))
+            if not shards:
+                continue
+            if is_pt:
+                merged: dict = {}
+                for p in shards:
+                    merged.update(torch.load(p, weights_only=True))
+                torch.save(merged, run / f"{base}.pt")
+            elif base == "scores_offpolicy":
+                merged = {}
+                for p in shards:
+                    part = json.loads(p.read_text())
+                    for est, sc in part.items():
+                        merged.setdefault(est, {}).update(sc)
+                (run / f"{base}.json").write_text(json.dumps(merged, indent=1))
+            else:
+                merged = {}
+                for p in shards:
+                    merged.update(json.loads(p.read_text()))
+                (run / f"{base}.json").write_text(json.dumps(merged, indent=1))
+            print(f"merge: {base} ← {len(shards)} shards")
+        # 병합된 micro + val 방향에서 oracle 점수·split-half 도출 (비샤드 경로와 동일 수식)
+        micro_p = run / "oracle_micro_groups.pt"
+        val_p = run / "val_gradient.pt"
+        if micro_p.exists() and val_p.exists() and not (run / "scores_oracle.json").exists():
+            micro = torch.load(micro_p, weights_only=True)
+            val_grad = torch.load(val_p, weights_only=True)
+            oracle, halves = {}, {}
+            for pi_idx, stack in sorted(micro.items()):
+                mu = stack.mean(dim=0)
+                oracle[pi_idx] = {"score": cosine(mu, val_grad), "norm": float(mu.norm())}
+                h = stack.shape[0] // 2
+                halves[pi_idx] = {
+                    "a": cosine(stack[:h].mean(dim=0), val_grad),
+                    "b": cosine(stack[h:].mean(dim=0), val_grad),
+                }
+            (run / "scores_oracle.json").write_text(json.dumps(oracle, indent=1))
+            (run / "scores_splithalf.json").write_text(json.dumps(halves, indent=1))
+            print(f"merge: oracle 점수 도출 {len(oracle)} prompts")
     elif args.stage == "report":
         stage_report(args, run)
     elif args.stage == "hybrid":

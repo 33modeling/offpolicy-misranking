@@ -45,7 +45,26 @@ pids=(); for i in 0 1 2 3; do
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
 [ -f "$OUT_ROOT/rollouts_fresh_train.jsonl" ] || cat "$OUT_ROOT"/rollouts_fresh_train.shard*.jsonl > "$OUT_ROOT/rollouts_fresh_train.jsonl"
-# analyze (생성은 스킵되고 gradient·report·hybrid만)
-run_stage 0 "$LOGS/analyze.log" --stage analyze "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT"
+# GPU3: val 방향 ∥ GPU0-2: oracle micro 3샤딩
+pids=()
+( run_stage 3 "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" ) & pids+=($!)
+for i in 0 1 2; do
+  ( run_stage "$i" "$LOGS/ograds-shard$i.log" --stage oracle-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:3" ) & pids+=($!)
+done
+for p in "${pids[@]}"; do wait "$p" || exit 1; done
+# 2×2 score 4샤딩
+pids=(); for i in 0 1 2 3; do
+  ( run_stage "$i" "$LOGS/score-shard$i.log" --stage score-shard "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:4" ) & pids+=($!)
+done
+for p in "${pids[@]}"; do wait "$p" || exit 1; done
+run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}"
+run_stage 0 "$LOGS/report.log" --stage report "${COMMON[@]}"
+# hybrid 3절단점 병렬 (GPU 0/1/2)
+pids=(); gpu=0
+for cut in 0.25 0.5 0.75; do
+  ( run_stage "$gpu" "$LOGS/hybrid-$cut.log" --stage hybrid "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --cut-frac "$cut" ) & pids+=($!)
+  gpu=$((gpu + 1))
+done
+for p in "${pids[@]}"; do wait "$p" || exit 1; done
 log "=== 14B 완료 — bash scripts/result.sh 로 판정 (OUT_ROOT=$OUT_ROOT) ==="
 touch "$OUT_ROOT/DONE"
