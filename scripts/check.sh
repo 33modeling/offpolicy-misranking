@@ -6,8 +6,8 @@ cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
 source scripts/_find_root.sh
 
-NPROC=$(pgrep -fc "src/experiment.py" 2>/dev/null || true); NPROC=${NPROC:-0}
-NBABY=$(pgrep -fc "scripts/babysit.sh" 2>/dev/null || true); NBABY=${NBABY:-0}
+NPROC=$(pgrep -fc "python.*src/experiment.py" 2>/dev/null || true); NPROC=${NPROC:-0}
+NBABY=$(pgrep -fc "bash.*scripts/babysit.sh" 2>/dev/null || true); NBABY=${NBABY:-0}
 
 # 가장 최근 로그 파일과 나이(분)
 NEWEST=$(ls -t "$OUT_ROOT"/logs/*.log 2>/dev/null | head -1)
