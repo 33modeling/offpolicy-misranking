@@ -124,9 +124,17 @@ def certagrad(
                 progressed = True
                 break
         if not progressed and not val.draw():
+            # 예산 소진 — 인증 실패를 숨기지 않되, 선택 자체는 구간 중점이 아니라
+            # 지금까지 관측한 전체 평균 점수로 반환한다 (uniform과 동일 기준).
+            mu_v_f, _ = val.stats(per, radius_mode)
+            final_scores = []
+            for c in cands:
+                mu, _ = c.stats(per, radius_mode)
+                final_scores.append(float((mu @ mu_v_f) / (mu.norm() * mu_v_f.norm() + 1e-12)))
+            sel = set(sorted(range(m), key=lambda i: -final_scores[i])[:k])
             return {
                 "selected": sorted(sel),
-                "certified": False,  # 예산 소진 — 인증 실패를 숨기지 않는다
+                "certified": False,
                 "fresh_groups": sum(c.used for c in cands) + val.used,
             }
     return {"selected": sorted(sel), "certified": False, "fresh_groups": sum(c.used for c in cands) + val.used}
