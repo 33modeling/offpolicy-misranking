@@ -90,13 +90,25 @@ def certagrad(
             c.draw()
     val.draw()
 
+    # 후보별 (mu, alpha) 캐시 — 관측이 늘어난 후보만 재계산 (O(라운드×후보) 방지)
+    mus: list = [None] * m
+    alphas: list = [0.0] * m
+    dirty = set(range(m))
+    val_dirty = True
+    mu_v = None
+    a_v = 0.0
+
     for _ in range(max_rounds):
-        mu_v, r_v = val.stats(per, radius_mode)
-        a_v = angle_radius(mu_v, r_v)
-        intervals = []
-        for c in cands:
-            mu, r = c.stats(per, radius_mode)
-            intervals.append(score_interval(mu, angle_radius(mu, r), mu_v, a_v))
+        if val_dirty:
+            mu_v, r_v = val.stats(per, radius_mode)
+            a_v = angle_radius(mu_v, r_v)
+            val_dirty = False
+        for i in dirty:
+            mu, r = cands[i].stats(per, radius_mode)
+            mus[i] = mu
+            alphas[i] = angle_radius(mu, r)
+        dirty.clear()
+        intervals = [score_interval(mus[i], alphas[i], mu_v, a_v) for i in range(m)]
         mid = sorted(range(m), key=lambda i: -(intervals[i][0] + intervals[i][1]))
         sel, rest = set(mid[:k]), mid[k:]
         lo_min = min(intervals[i][0] for i in sel)
@@ -111,19 +123,21 @@ def certagrad(
         boundary = [i for i in sel if intervals[i][0] <= hi_max] + [
             i for i in rest if intervals[i][1] >= lo_min
         ]
-        boundary_alphas = []
-        for i in boundary:
-            mu_i, r_i = cands[i].stats(per, radius_mode)
-            boundary_alphas.append((angle_radius(mu_i, r_i), i))
+        boundary_alphas = [(alphas[i], i) for i in boundary]
         if boundary_alphas and a_v >= max(a for a, _ in boundary_alphas):
             if val.draw():
+                val_dirty = True
                 continue
         progressed = False
         for _, i in sorted(boundary_alphas, reverse=True):
             if cands[i].draw():
+                dirty.add(i)
                 progressed = True
                 break
-        if not progressed and not val.draw():
+        if not progressed:
+            if val.draw():
+                val_dirty = True
+                continue
             # 예산 소진 — 인증 실패를 숨기지 않되, 선택 자체는 구간 중점이 아니라
             # 지금까지 관측한 전체 평균 점수로 반환한다 (uniform과 동일 기준).
             mu_v_f, _ = val.stats(per, radius_mode)
