@@ -138,7 +138,10 @@ for i in "${!pids[@]}"; do
     fail=1
   fi
 done
-[ "$fail" -eq 0 ] || { log "phase1 실패 — 중단"; exit 1; }
+if [ "$fail" -ne 0 ]; then
+  log "phase1 일부 실패 — 살아남은 파이프라인으로 계속 진행 (부분 결과도 판정 가능)"
+  fail=0
+fi
 
 # ---------- phase 2: downstream 병렬 (GPU 0~2, 선택한 drift 점수 기준) ----------
 pids=(); srcs=()

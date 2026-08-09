@@ -43,7 +43,12 @@ if [ "$FOUND" = 0 ]; then
     [ -f "$lf" ] && { echo "  ── $(basename "$lf")"; tail -n 3 "$lf" | sed 's/^/  /'; }
   done
   echo
-  echo "→ 이 출력 전체를 분석 담당에게 전달할 것"
+  echo
+  LAST=$(tail -n 1 "$OUT_ROOT"/logs/drift*.log 2>/dev/null | tail -1 | cut -c1-60)
+  ALIVE=$(pgrep -fc "src/experiment.py" 2>/dev/null || echo 0)
+  NREP=$(ls "$OUT_ROOT"/drift*/report.json 2>/dev/null | wc -l)
+  NORC=$(ls "$OUT_ROOT"/drift*/scores_oracle.json 2>/dev/null | wc -l)
+  echo "한줄: 실행중=$ALIVE개, report=$NREP, oracle=$NORC, 마지막로그=[$LAST]"
   exit 0
 fi
 "$PY" src/judge.py "$OUT_ROOT"
