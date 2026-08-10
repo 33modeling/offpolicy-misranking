@@ -131,10 +131,23 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         if not items:
             raise ValueError(f"kk 스키마 파싱 실패 (root={root}) — quiz/names/solution 필드 확인")
     elif dataset == "dapo-math":
-        # 본실험용. 스키마가 릴리스마다 달라 방어적으로 파싱한다 — 첫 실행에서 확인할 것.
-        ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
+        # 본실험용. 사전 배치본 우선. 스키마가 릴리스마다 달라 방어적으로 파싱한다.
+        tried = [Path(os.environ["DAPO_DIR"])] if os.environ.get("DAPO_DIR") \
+            else [b / n for b in _dataset_bases()
+                  for n in ("dapo-math", "dapo-math-17k", "DAPO-Math-17k", "dapo_math")]
+        root = next((c for c in tried if c.exists()), None)
+        rows = _load_rows_any(root) if root else None
+        if rows is None:
+            try:
+                rows = list(load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train"))
+            except Exception as e:
+                raise ValueError(
+                    "dapo-math 로컬 사본을 못 찾았고 허브도 실패. 찾아본 위치:\n  "
+                    + "\n  ".join(str(t) for t in tried)
+                    + f"\nDAPO_DIR=<경로>로 지정 가능. (허브 오류: {e})"
+                ) from e
         items = []
-        for row in ds:
+        for row in rows:
             q = row.get("prompt") or row.get("question") or row.get("problem")
             if isinstance(q, list):  # chat 형식이면 user 내용만
                 q = next((m["content"] for m in q if m.get("role") == "user"), None)
