@@ -44,23 +44,11 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 DATASET="${DATASET:-gsm8k}"
 [ "$DATASET" != "gsm8k" ] && OUT_ROOT="${OUT_ROOT}-${DATASET}" && LOGS="$OUT_ROOT/logs" && mkdir -p "$LOGS"
 # 데이터 사전 검사 — 오프라인 노드에서 허브 직행으로 죽는 것을 시작 전에 잡는다
-case "$DATASET" in
-  gsm8k)   DATA_FILE="$OM_DATA/gsm8k_train.jsonl" ;;
-  math500)
-    DATA_FILE=""
-    found=""
-    [ -f "$OM_DATA/math500_test.jsonl" ] && found=1
-    [ -n "${MATH500_DIR:-}" ] && [ -e "$MATH500_DIR" ] && found=1
-    for n in math500 MATH-500 math-500 math_500 math; do
-      [ -e "$DATASETS_DIR/$n" ] && found=1
-    done
-    [ -n "$found" ] || { echo "[abort] math500 데이터 없음 — 'bash scripts/fetch_datasets.sh math500' 또는 MATH500_DIR=<경로> 지정"; exit 1; } ;;
-  mbpp)    DATA_FILE="" ; [ -d "$DATASETS_DIR/mbpp" ] || { echo "[abort] $DATASETS_DIR/mbpp 없음 — 'bash scripts/fetch_datasets.sh mbpp' 먼저"; exit 1; } ;;
-  kk)      DATA_FILE="" ; [ -d "$DATASETS_DIR/kk" ] || [ -n "${KK_DIR:-}" ] || { echo "[abort] $DATASETS_DIR/kk 없음 — 'bash scripts/fetch_datasets.sh kk' 또는 KK_DIR=<경로>"; exit 1; } ;;
-  *)       DATA_FILE="" ;;
-esac
-if [ -n "$DATA_FILE" ] && [ ! -f "$DATA_FILE" ]; then
-  echo "[abort] 로컬 데이터 없음: $DATA_FILE — 온라인/미러 되는 셸에서 'bash scripts/provision.sh' 먼저 (모델은 스킵됨, 데이터만 받음)"
+# 데이터 사전 검사 — 로더 자신을 그대로 실행 (검사·실제 로드가 같은 코드 경로)
+# 실패 시 로더가 '찾아본 위치' 목록을 출력하므로 원인 자가진단됨. GPU 잡기 전에 죽는다.
+if ! "$PY" -c "import sys; sys.path.insert(0, 'src'); from data import load_prompts; \
+r = load_prompts('$DATASET', 1, 1); print('[preflight] $DATASET 데이터 OK')"; then
+  echo "[abort] $DATASET 데이터 로드 실패 — 위 '찾아본 위치'를 확인하거나 fetch_datasets.sh 실행"
   exit 1
 fi
 COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1)
