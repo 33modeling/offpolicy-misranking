@@ -31,6 +31,12 @@ def auto_device() -> str:
 def load_model(name_or_path: str, device: str | None = None, dtype: str | None = None):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    # torch 2.7 + Hopper에서 cuDNN SDPA가 attention에서 'unspecified launch
+    # failure'를 내는 사례가 있어 비활성화 — flash/efficient/math로 폴백된다.
+    try:
+        torch.backends.cuda.enable_cudnn_sdp(False)
+    except AttributeError:
+        pass
     device = device or auto_device()
     if dtype is None:
         dtype = "bfloat16" if device == "cuda" else "float32"

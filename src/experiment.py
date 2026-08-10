@@ -46,15 +46,32 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
 
     shard=(i,n)이면 프롬프트를 인터리브(i::n)로 나눠 scores_offpolicy.shard{i}.json에 쓴다."""
     spec = ProjectionSpec(dim=args.proj_dim)
-    if pi is None:
-        pi, _ = load_policy(args.model, Path(args.adapter) if args.adapter else None)
-    if beta is None:
-        beta, _ = load_policy(args.model, None)
-    params = grad_params(pi, args.grad_layers)
     rollouts = read_rollouts(run / "rollouts_behavior_train.jsonl")
     if shard is not None:
         keys = sorted(rollouts)[shard[0]::shard[1]]
         rollouts = {k: rollouts[k] for k in keys}
+
+    # 대형 모델 대응 2-pass: 두 모델을 동시에 올리지 않는다 (π+β 동시 로드가
+    # 14B에서 attention OOM의 원인). β 로그확률을 먼저 전부 계산해 두고 β를
+    # 내린 뒤 π를 올려 gradient까지 계산한다. 모델이 주입된 경우(analyze)는
+    # 기존 동시 경로 유지.
+    two_pass = pi is None and beta is None
+    beta_logps: dict[int, list] = {}
+    if two_pass:
+        beta, _ = load_policy(args.model, None)
+        for pi_idx, rows in sorted(rollouts.items()):
+            beta_logps[pi_idx] = [
+                sequence_logprobs(beta, r["input_ids"], r["resp_start"]) for r in rows
+            ]
+        del beta
+        beta = None
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+        print(f"score 2-pass: β 로그확률 {len(beta_logps)} prompts 완료 — β 언로드 후 π 로드")
+    if pi is None:
+        pi, _ = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+    if beta is None and not two_pass:
+        beta, _ = load_policy(args.model, None)
+    params = grad_params(pi, args.grad_layers)
 
     # validation 방향은 π fresh가 정본이지만, score stage에서는 우선 저장된 oracle
     # stage 산출물을 쓴다 (oracle을 먼저 돌릴 것).
@@ -70,10 +87,10 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
         n_done += 1
         rewards = torch.tensor([r["reward"] for r in rows])
         advs = loo_advantages(rewards)
-        logps_pi, logps_beta = [], []
-        for r in rows:
-            logps_pi.append(sequence_logprobs(pi, r["input_ids"], r["resp_start"]))
-            logps_beta.append(sequence_logprobs(beta, r["input_ids"], r["resp_start"]))
+        logps_pi = [sequence_logprobs(pi, r["input_ids"], r["resp_start"]) for r in rows]
+        logps_beta = beta_logps[pi_idx] if two_pass else [
+            sequence_logprobs(beta, r["input_ids"], r["resp_start"]) for r in rows
+        ]
         for est in ESTIMATORS:
             weights = [
                 token_weights(lp, lb, float(a), est, clip_cap=args.clip_cap)
