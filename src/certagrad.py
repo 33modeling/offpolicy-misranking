@@ -251,7 +251,9 @@ def certagrad_scalar(
         if not progressed:
             stats = [ci(i) for i in range(m)]
             mids = sorted(range(m), key=lambda i: -stats[i][0])
-            return {"selected": sorted(mids[:k]), "certified": False, "fresh_groups": sum(used)}
+            return {"selected": sorted(mids[:k]), "certified": False,
+                    "fresh_groups": sum(used), "eps": eps}
     stats = [ci(i) for i in range(m)]
     mids = sorted(range(m), key=lambda i: -stats[i][0])
-    return {"selected": sorted(mids[:k]), "certified": False, "fresh_groups": sum(used)}
+    return {"selected": sorted(mids[:k]), "certified": False,
+            "fresh_groups": sum(used), "eps": eps}
