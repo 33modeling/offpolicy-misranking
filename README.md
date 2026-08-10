@@ -130,6 +130,18 @@ soft는 투영 산출물만 지우고 rollout·adapter 보존, 미완성 fresh �
 수 대조로 자동 삭제), `run_smoke.sh`(0.5B 완주 확인), `run_gate.sh RUN DRIFT`
 (단일 파이프라인 수동 실행).
 
+### C2(인증) 후속 분석 3종
+
+```bash
+bash scripts/c2_sweep.sh 7b     # 저장된 관측에서 CPU 재판정 — FRACS="0.05 0.10 0.20"로 k 스캔
+bash scripts/fix_c2.sh          # val 관측 심화(+K=24) 후 재판정 (진단이 α_v 병목일 때)
+bash scripts/retry_c2.sh        # drift 400스텝 run 추가 (GPU 1장) — margin이 drift 부족 탓인지 판별
+```
+
+`c2_sweep`은 frac(top-k 비율)마다 경계 margin을 먼저 계산해 margin > 2·α_v 인
+frac만 인증을 시도한다(게이트 기준 0.10은 항상 판정). 어떤 frac에서도 margin이
+α_v 아래면 관측을 더 부어도 인증 불가 — 그 자체가 논문의 부정적 결과 재료다.
+
 ### run_h100_all.sh 병렬 배치 (4×H100)
 
 - **phase 0**: β rollout을 **4-GPU 샤딩**(`--shard i:4`, 전역 prompt_idx 유지)으로
