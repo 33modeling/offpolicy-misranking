@@ -108,6 +108,21 @@
   rollout을 import). 교훈: 프로세스 전역이어야 하는 설정을 특정 로더 함수 안에
   두지 말 것 — 보고 라인이 달라도 같은 병일 수 있다.
 
+### C6. ULF 3차 재발 — cuDNN이 아니라 그 노드의 fused SDPA 커널 전체
+- **증상**: cuDNN SDPA 전역 비활성(C5) 후에도 특정 14B 인스턴스에서 **생성 시작
+  직후** `this_peer_finished: CUDA error: unspecified launch failure` (transformers
+  generate 루프 내부에서 보고).
+- **진단 도구**: `scripts/gpu_check.sh` — GPU마다 ① 순수 matmul ② SDPA를 분리
+  실행해 "하드웨어/드라이버 병"과 "attention 커널 병"을 즉석 판정.
+- **수정**: `OM_ATTN=eager` 환경변수 (신규 스위치 — 생성·drift 학습·downstream의
+  모든 모델 로드에 `attn_implementation` 강제). eager는 fused 커널을 아예 안 쓰므로
+  느리지만 확실. **해당 노드에서 eager로 에러 소멸 확인(2026-08-10)** → cuDNN만이
+  아니라 그 노드의 fused SDPA 커널 계열(flash/efficient 포함) 전체가 불안정했던 것.
+- 교훈: 같은 증상이 수정 후 재발하면 "같은 원인의 잔재"보다 **한 층 아래의 더
+  넓은 원인**(개별 커널 → 커널 계열 → 드라이버/하드웨어)을 의심하고, 층별로
+  분리 판정하는 진단부터 만들 것. matmul까지 실패하는 날은 코드가 아니라 노드를
+  바꿔야 한다.
+
 ## E. 데이터셋 확장(math500/mbpp/kk)에서의 시행착오 — 2026-08-10 하루치
 
 ### E1. math500 허브 직행 → 오프라인 노드 즉사
