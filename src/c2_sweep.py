@@ -9,12 +9,21 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import torch
 
 from certagrad import certagrad, uniform_baseline
+
+
+def _one(job):
+    pools, val_pool, k, delta, init = job
+    torch.set_num_threads(1)
+    r = certagrad(pools, val_pool, k, delta=delta, init_groups=init)
+    return delta, init, r
 
 
 def main() -> int:
@@ -34,24 +43,25 @@ def main() -> int:
         n_pool = pools[0].shape[0]
         print(f"\n===== {run.name}: 후보 {len(pools)}개 × micro-group {n_pool} =====")
         best = None
-        for frac in (0.10, 0.25):
-            k = max(1, int(len(pools) * frac))
-            o_top = set(sorted(oracle, key=lambda i: -oracle[i])[:k])
-            uni = uniform_baseline(pools, val_pool, k, groups_each=n_pool)
-            uni_prec = len({order[i] for i in uni["selected"]} & o_top) / k
-            for delta in (0.05, 0.10, 0.20, 0.32):
-                for init in (1, 2):
-                    r = certagrad(pools, val_pool, k, delta=delta, init_groups=init)
-                    sel = {order[i] for i in r["selected"]}
-                    prec = len(sel & o_top) / k
-                    frac_fresh = r["fresh_groups"] / uni["fresh_groups"]
-                    ok = r["certified"] and frac_fresh <= 0.5 and prec >= uni_prec - 0.02
-                    line = (f"  frac={frac} δ={delta} init={init}: certified={r['certified']} "
-                            f"fresh={frac_fresh:.2f}× prec={prec:.3f} (uniform {uni_prec:.3f})"
-                            + ("  ← C2 PASS" if ok else ""))
-                    print(line)
-                    if ok and (best is None or frac_fresh < best[0]):
-                        best = (frac_fresh, line)
+        frac = 0.10  # 게이트 기준은 top-10% — 판정에 필요한 축만 돈다
+        k = max(1, int(len(pools) * frac))
+        o_top = set(sorted(oracle, key=lambda i: -oracle[i])[:k])
+        uni = uniform_baseline(pools, val_pool, k, groups_each=n_pool)
+        uni_prec = len({order[i] for i in uni["selected"]} & o_top) / k
+        jobs = [(pools, val_pool, k, delta, init)
+                for delta in (0.05, 0.20, 0.32) for init in (1, 2)]
+        with ProcessPoolExecutor(max_workers=min(len(jobs), os.cpu_count() or 4)) as ex:
+            for delta, init, r in ex.map(_one, jobs):
+                sel = {order[i] for i in r["selected"]}
+                prec = len(sel & o_top) / k
+                frac_fresh = r["fresh_groups"] / uni["fresh_groups"]
+                ok = r["certified"] and frac_fresh <= 0.5 and prec >= uni_prec - 0.02
+                line = (f"  frac={frac} δ={delta} init={init}: certified={r['certified']} "
+                        f"fresh={frac_fresh:.2f}× prec={prec:.3f} (uniform {uni_prec:.3f})"
+                        + ("  ← C2 PASS" if ok else ""))
+                print(line, flush=True)
+                if ok and (best is None or frac_fresh < best[0]):
+                    best = (frac_fresh, line)
         print("→ " + ("통과 조합 존재: " + best[1].strip() if best else
                       "통과 조합 없음 — margin/신호 자체가 부족 (설계 한계 판정 재료)"))
     return 0

@@ -139,11 +139,14 @@ def certagrad(
                 val_dirty = True
                 continue
         progressed = False
+        drawn = 0
         for i in boundary[torch.argsort(ALPHA[boundary], descending=True)].tolist():
             if cands[i].draw():
                 dirty.add(i)
                 progressed = True
-                break
+                drawn += 1
+                if drawn >= 4:  # 라운드당 경계 상위 4곳 동시 관측 — 라운드 수 1/4
+                    break
         if not progressed:
             if val.draw():
                 val_dirty = True
