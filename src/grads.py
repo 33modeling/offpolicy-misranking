@@ -143,9 +143,9 @@ def prompt_gradient(
         for seq, w in zip(batch, ws):
             ids = seq["input_ids"].unsqueeze(0).to(model.device)
             logits = model(ids).logits[0, :-1].float()
-            logp = torch.log_softmax(logits, dim=-1)
             tgt = ids[0, 1:]
-            tok_logp = logp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
+            tok_logp = (logits.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
+                        - logits.logsumexp(dim=-1))
             resp = tok_logp[seq["resp_start"] - 1 :]
             t = min(resp.numel(), w.numel())
             loss = loss + (w[:t].to(resp.device) * resp[:t]).sum() / k
@@ -158,9 +158,9 @@ def sequence_logprobs(model, input_ids: torch.Tensor, resp_start: int) -> torch.
     """주어진 시퀀스의 응답 구간 토큰 로그확률 (T,) — teacher forcing, no grad."""
     ids = input_ids.unsqueeze(0).to(model.device)
     logits = model(ids).logits[0, :-1].float()
-    logp = torch.log_softmax(logits, dim=-1)
     tgt = ids[0, 1:]
-    tok = logp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
+    tok = (logits.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
+           - logits.logsumexp(dim=-1))
     return tok[resp_start - 1 :].cpu()
 
 

@@ -79,7 +79,7 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
                 token_weights(lp, lb, float(a), est, clip_cap=args.clip_cap)
                 for lp, lb, a in zip(logps_pi, logps_beta, advs)
             ]
-            g = prompt_gradient(pi, params, rows, weights, spec)
+            g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
             out[est][pi_idx] = {"score": cosine(g, val), "norm": float(g.norm())}
         if n_done % 5 == 0:
             from grads import ts
@@ -123,7 +123,7 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
                     torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
                     for r, a in zip(rows, advs)
                 ]
-                g = prompt_gradient(pi, params, rows, weights, spec)
+                g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
                 groups_v.append(g)
                 v_sum = g if v_sum is None else v_sum + g
             val_grad = v_sum / len(groups_v)
@@ -152,7 +152,7 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
                 torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
                 for r, a in zip(chunk, advs)
             ]
-            group_grads.append(prompt_gradient(pi, params, chunk, weights, spec))
+            group_grads.append(prompt_gradient(pi, params, chunk, weights, spec, micro_batch=args.micro_batch))
         stack = torch.stack(group_grads)
         micro[pi_idx] = stack
         if shard is None:
@@ -264,6 +264,8 @@ def main() -> None:
     p.add_argument("--downstream-source", default="oracle",
                    help="oracle|g00|g10|g01|g11|random")
     p.add_argument("--downstream-steps", type=int, default=200)
+    p.add_argument("--micro-batch", type=int, default=2,
+                   help="prompt_gradient 동시 시퀀스 수 (14B는 1 권장)")
     p.add_argument("--budget-rollouts", type=int, default=0,
                    help=">0이면 선택 비용 차감 후 남는 예산으로 학습 스텝 결정 (총연산 통일)")
     p.add_argument("--shard", default=None, help="rollout-behavior 샤딩 'i:n' (예: 0:4)")
@@ -333,7 +335,7 @@ def main() -> None:
                 torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
                 for r, a in zip(rows, advs)
             ]
-            g = prompt_gradient(pi, params, rows, weights, spec)
+            g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
             groups_v.append(g)
             v_sum = g if v_sum is None else v_sum + g
         torch.save(v_sum / len(groups_v), run / "val_gradient.pt")

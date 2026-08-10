@@ -25,7 +25,7 @@ run_stage() { local gpu="$1" lf="$2"; shift 2
   else local rc=$?; log "GPU$gpu ✘ $* rc=$rc"; tail -8 "$lf" | tee -a "$LOGS/main.log"; return $rc; fi
 }
 DRIFT=100
-COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}")
+COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1)
 
 "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
 KEEP=$!; trap 'kill $KEEP 2>/dev/null' EXIT
