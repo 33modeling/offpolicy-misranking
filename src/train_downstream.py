@@ -34,9 +34,11 @@ def grpo_lite_train(
 
     device = auto_device()
     tok = AutoTokenizer.from_pretrained(base)
+    from rollout import _attn_kwargs
     model = AutoModelForCausalLM.from_pretrained(
         base, torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
         device_map=device,
+        **_attn_kwargs(),
     )
     model = get_peft_model(model, LoraConfig(
         r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.0))

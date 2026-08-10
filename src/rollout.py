@@ -37,6 +37,13 @@ def auto_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def _attn_kwargs() -> dict:
+    """OM_ATTN=eager|sdpa|flash_attention_2 — CUDA 커널 문제 시 코드 수정 없이 우회."""
+    import os
+    attn = os.environ.get("OM_ATTN")
+    return {"attn_implementation": attn} if attn else {}
+
+
 def load_model(name_or_path: str, device: str | None = None, dtype: str | None = None):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -45,7 +52,8 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
         dtype = "bfloat16" if device == "cuda" else "float32"
     tok = AutoTokenizer.from_pretrained(name_or_path)
     model = AutoModelForCausalLM.from_pretrained(
-        name_or_path, torch_dtype=getattr(torch, dtype), device_map=device
+        name_or_path, torch_dtype=getattr(torch, dtype), device_map=device,
+        **_attn_kwargs(),
     )
     model.eval()
     gpu = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
@@ -141,6 +149,7 @@ def train_drift_lora(
         base,
         torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
         device_map=device,
+        **_attn_kwargs(),
     )
     model = get_peft_model(
         model,
