@@ -19,6 +19,13 @@ LOGS="$OUT_ROOT/logs"; mkdir -p "$LOGS"
 # GPU 수 자동 감지 — 인스턴스마다 다름 (4장 하드코딩이 invalid device ordinal의 원인)
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
 [ "$NGPU" -ge 1 ] || { echo "[abort] GPU 미감지"; exit 1; }
+# OM_GPUS="0,1" 지정 시 그 GPU들만 사용 — 한 노드에서 두 실험 동시 실행용
+if [ -n "${OM_GPUS:-}" ]; then
+  IFS=',' read -r -a GPUS <<< "$OM_GPUS"
+  NGPU=${#GPUS[@]}
+else
+  GPUS=($(seq 0 $((NGPU - 1))))
+fi
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOGS/main.log"; }
 # 다른 실행(7B babysit/run)과의 GPU 충돌 차단
 if pgrep -f "bash.*scripts/babysit.sh" >/dev/null || pgrep -f "scripts/run_h100_all.sh" >/dev/null; then
@@ -26,7 +33,10 @@ if pgrep -f "bash.*scripts/babysit.sh" >/dev/null || pgrep -f "scripts/run_h100_
   echo "        먼저:  pkill -f babysit.sh; pkill -f run_h100_all; pkill -f 'src/experiment.py'; pkill -f gpu_keepalive"
   exit 1
 fi
-BUSY=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '$1 > 2000' | wc -l)
+# 점유 검사는 내가 쓸 GPU만 대상 (OM_GPUS 분할 실행 시 서로 간섭 금지)
+BUSY=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
+  | awk -F', ' -v g="${OM_GPUS:-}" 'BEGIN{n=split(g,a,","); for(i=1;i<=n;i++) sel[a[i]]=1}
+       { if ((n==0 || ($1 in sel)) && $2 > 2000) c++ } END{print c+0}')
 if [ "${BUSY:-0}" -gt 0 ] && [ "${OM_SKIP_GPU_CHECK:-0}" != "1" ]; then
   echo "[abort] GPU ${BUSY}개가 이미 점유 중:"
   nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv || true
@@ -64,12 +74,12 @@ tmp.rename(root / (base + ".jsonl"))
 print(f"[merge] {base}: {n_train} prompts, {sum(len(v) for v in seen.values())} rollouts OK")
 PYEOF
 }
-run_stage() { local gpu="$1" lf="$2"; shift 2
+run_stage() { local dev="${GPUS[$1]:-$1}" lf="$2"; shift 2
   local t0=$SECONDS
-  log "GPU$gpu ▶ $*"
-  if CUDA_VISIBLE_DEVICES="$gpu" "$PY" src/experiment.py "$@" >> "$lf" 2>&1; then
-    log "GPU$gpu ✔ $1 $2 ($((SECONDS - t0))s)"
-  else local rc=$?; log "GPU$gpu ✘ $* rc=$rc"; tail -8 "$lf" | tee -a "$LOGS/main.log"; return $rc; fi
+  log "GPU$dev ▶ $*"
+  if CUDA_VISIBLE_DEVICES="$dev" "$PY" src/experiment.py "$@" >> "$lf" 2>&1; then
+    log "GPU$dev ✔ $1 $2 ($((SECONDS - t0))s)"
+  else local rc=$?; log "GPU$dev ✘ $* rc=$rc"; tail -8 "$lf" | tee -a "$LOGS/main.log"; return $rc; fi
 }
 DRIFT=100
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -85,7 +95,8 @@ r = load_prompts('$DATASET', 1, 1); print('[preflight] $DATASET 데이터 OK')";
 fi
 COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1)
 
-"$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
+KA_DEV=$(IFS=,; echo "${GPUS[*]}")
+CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
 KEEP=$!
 # 종료(정상·에러 모두) 시 이 실행이 띄운 모든 자식 정리 — 고아 샤드가 GPU를 점유한 채
 # 남아 "계속 실행되는 것처럼" 보이고 재시작 OOM을 일으키는 버그의 수정
