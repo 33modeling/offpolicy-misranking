@@ -32,6 +32,19 @@ from grads import (
 from rollout import collect_rollouts, load_policy, train_drift_lora
 
 
+def _atomic_text(path: Path, text: str) -> None:
+    """쓰다 죽어도 완성본만 남는다 — 부분 파일이 exists() 재개 검사를 통과하는 오염 방지."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def _atomic_save(obj, path: Path) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(obj, tmp)
+    tmp.replace(path)
+
+
 def read_rollouts(path: Path) -> dict[int, list[dict]]:
     by_prompt: dict[int, list[dict]] = defaultdict(list)
     for line in path.open():
@@ -104,7 +117,7 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
                   f"({100 * n_done // len(rollouts)}%, ETA {_eta(n_done, len(rollouts), t_start)})", flush=True)
     out_name = ("scores_offpolicy.json" if shard is None
                 else f"scores_offpolicy.shard{shard[0]}.json")
-    (run / out_name).write_text(json.dumps(out, indent=1))
+    _atomic_text(run / out_name, json.dumps(out, indent=1))
 
 
 def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | None = None) -> None:
@@ -132,7 +145,8 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
 
     # validation 방향 v — 비샤드 경로 전담 (샤드 모드는 val-grads 스테이지가 담당)
     if shard is None:
-        if not (run / "val_gradient.pt").exists():
+        # 산출물 2개(gradient+groups) — 둘 다 있어야 스킵 (부분 상태 오인 방지, B5류)
+        if not ((run / "val_gradient.pt").exists() and (run / "val_groups.pt").exists()):
             v_sum, groups_v = None, []
             for pi_idx, rows in sorted(read_rollouts(val_path).items()):
                 advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
@@ -144,8 +158,8 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
                 groups_v.append(g)
                 v_sum = g if v_sum is None else v_sum + g
             val_grad = v_sum / len(groups_v)
-            torch.save(val_grad, run / "val_gradient.pt")
-            torch.save(torch.stack(groups_v), run / "val_groups.pt")
+            _atomic_save(torch.stack(groups_v), run / "val_groups.pt")
+            _atomic_save(val_grad, run / "val_gradient.pt")
 
     # oracle 점수 + split-half + micro-group 저장
     import time as _time
@@ -185,11 +199,12 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
             print(f"[{ts()}]  oracle {n_done}/{len(fresh_by_prompt)} "
                   f"({100 * n_done // len(fresh_by_prompt)}%, ETA {_eta(n_done, len(fresh_by_prompt), t_start)})", flush=True)
     if shard is None:
-        (run / "scores_oracle.json").write_text(json.dumps(oracle, indent=1))
-        (run / "scores_splithalf.json").write_text(json.dumps(halves, indent=1))
-        torch.save(micro, run / "oracle_micro_groups.pt")
+        # 산출물 3개 — 완료 마커 역할인 scores_oracle.json을 마지막에 쓴다
+        _atomic_save(micro, run / "oracle_micro_groups.pt")
+        _atomic_text(run / "scores_splithalf.json", json.dumps(halves, indent=1))
+        _atomic_text(run / "scores_oracle.json", json.dumps(oracle, indent=1))
     else:
-        torch.save(micro, run / f"oracle_micro_groups.shard{shard[0]}.pt")
+        _atomic_save(micro, run / f"oracle_micro_groups.shard{shard[0]}.pt")
 
 
 def topk(scores: dict, frac: float) -> set:
@@ -246,8 +261,8 @@ def stage_report(args, run: Path) -> None:
         f"precision={results['certagrad']['precision_vs_oracle']:.3f} "
         f"(uniform precision={uniform_precision:.3f})",
     ]
-    (run / "report.md").write_text("\n".join(lines))
-    (run / "report.json").write_text(json.dumps(results, indent=1))
+    _atomic_text(run / "report.md", "\n".join(lines))
+    _atomic_text(run / "report.json", json.dumps(results, indent=1))
     print("\n".join(lines))
 
 
@@ -375,8 +390,8 @@ def main() -> None:
             g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
             groups_v.append(g)
             v_sum = g if v_sum is None else v_sum + g
-        torch.save(v_sum / len(groups_v), run / "val_gradient.pt")
-        torch.save(torch.stack(groups_v), run / "val_groups.pt")
+        _atomic_save(torch.stack(groups_v), run / "val_groups.pt")
+        _atomic_save(v_sum / len(groups_v), run / "val_gradient.pt")
         print(f"val-grads: {len(groups_v)} prompts")
     elif args.stage == "oracle-grads":
         i, n = map(int, args.shard.split(":"))
@@ -395,24 +410,27 @@ def main() -> None:
                 merged: dict = {}
                 for p in shards:
                     merged.update(torch.load(p, weights_only=True))
-                torch.save(merged, run / f"{base}.pt")
+                _atomic_save(merged, run / f"{base}.pt")
             elif base == "scores_offpolicy":
                 merged = {}
                 for p in shards:
                     part = json.loads(p.read_text())
                     for est, sc in part.items():
                         merged.setdefault(est, {}).update(sc)
-                (run / f"{base}.json").write_text(json.dumps(merged, indent=1))
+                _atomic_text(run / f"{base}.json", json.dumps(merged, indent=1))
             else:
                 merged = {}
                 for p in shards:
                     merged.update(json.loads(p.read_text()))
-                (run / f"{base}.json").write_text(json.dumps(merged, indent=1))
+                _atomic_text(run / f"{base}.json", json.dumps(merged, indent=1))
             print(f"merge: {base} ← {len(shards)} shards")
         # 병합된 micro + val 방향에서 oracle 점수·split-half 도출 (비샤드 경로와 동일 수식)
         micro_p = run / "oracle_micro_groups.pt"
         val_p = run / "val_gradient.pt"
-        if micro_p.exists() and val_p.exists() and not (run / "scores_oracle.json").exists():
+        # 산출물 2개(oracle+splithalf) — 둘 다 있어야 스킵 (부분 상태 오인 방지)
+        if micro_p.exists() and val_p.exists() and not (
+                (run / "scores_oracle.json").exists()
+                and (run / "scores_splithalf.json").exists()):
             micro = torch.load(micro_p, weights_only=True)
             val_grad = torch.load(val_p, weights_only=True)
             oracle, halves = {}, {}
@@ -424,8 +442,8 @@ def main() -> None:
                     "a": cosine(stack[:h].mean(dim=0), val_grad),
                     "b": cosine(stack[h:].mean(dim=0), val_grad),
                 }
-            (run / "scores_oracle.json").write_text(json.dumps(oracle, indent=1))
-            (run / "scores_splithalf.json").write_text(json.dumps(halves, indent=1))
+            _atomic_text(run / "scores_splithalf.json", json.dumps(halves, indent=1))
+            _atomic_text(run / "scores_oracle.json", json.dumps(oracle, indent=1))
             print(f"merge: oracle 점수 도출 {len(oracle)} prompts")
     elif args.stage == "report":
         stage_report(args, run)
@@ -435,7 +453,9 @@ def main() -> None:
         # oracle→score→report→hybrid×3 을 한 프로세스로 — 7B 재로드 제거 (GPU 유휴 최소화)
         pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
         beta, _ = load_policy(args.model, None)
-        if not (run / "scores_oracle.json").exists():
+        # oracle 산출물 3개 전부 있어야 스킵 (부분 상태 오인 방지)
+        if not all((run / f).exists() for f in
+                   ("scores_oracle.json", "scores_splithalf.json", "oracle_micro_groups.pt")):
             stage_oracle(args, run, pi=pi, tok=tok)
         else:
             print("analyze: oracle 산출물 존재 — 스킵")

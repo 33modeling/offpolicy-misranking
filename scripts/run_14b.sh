@@ -32,6 +32,38 @@ if [ "${BUSY:-0}" -gt 0 ] && [ "${OM_SKIP_GPU_CHECK:-0}" != "1" ]; then
   nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv || true
   exit 1
 fi
+# 샤드 병합 + 커버리지 검증 — GPU 수가 바뀐 재시작이면 샤드 분할이 어긋나
+# 조용한 누락/중복이 생기므로, prompt 전수·무중복을 확인하고 원자적으로 쓴다.
+merge_rollouts() {  # merge_rollouts <base이름>
+  local base="$1"
+  [ -f "$OUT_ROOT/$base.jsonl" ] && return 0
+  "$PY" - "$OUT_ROOT" "$base" <<'PYEOF'
+import json, sys
+from pathlib import Path
+root, base = Path(sys.argv[1]), sys.argv[2]
+shards = sorted(root.glob(base + ".shard*.jsonl"))
+n_train = len(json.loads((root / "prompts.json").read_text())["train"])
+seen = {}
+for s in shards:
+    for line in s.open():
+        r = json.loads(line)
+        seen.setdefault(r["prompt_idx"], []).append((r["rollout_idx"], line))
+missing = [i for i in range(n_train) if i not in seen]
+dup = [i for i, v in seen.items() if len({j for j, _ in v}) != len(v)]
+if missing or dup:
+    print(f"[merge-abort] {base}: 누락 {len(missing)}개(예 {missing[:5]}) 중복 {len(dup)}개 — "
+          f"GPU 수 변경 등으로 샤드 분할이 어긋남. 정리 후 재실행:\n"
+          f"  rm {root}/{base}.shard*.jsonl", flush=True)
+    sys.exit(1)
+tmp = root / (base + ".jsonl.tmp")
+with tmp.open("w") as f:
+    for i in range(n_train):
+        for _, line in sorted(seen[i]):
+            f.write(line)
+tmp.rename(root / (base + ".jsonl"))
+print(f"[merge] {base}: {n_train} prompts, {sum(len(v) for v in seen.values())} rollouts OK")
+PYEOF
+}
 run_stage() { local gpu="$1" lf="$2"; shift 2
   local t0=$SECONDS
   log "GPU$gpu ▶ $*"
@@ -71,14 +103,14 @@ pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
-[ -f "$OUT_ROOT/rollouts_behavior_train.jsonl" ] || cat "$OUT_ROOT"/rollouts_behavior_train.shard*.jsonl > "$OUT_ROOT/rollouts_behavior_train.jsonl"
+merge_rollouts rollouts_behavior_train || exit 1
 run_stage 0 "$LOGS/drift.log" --stage drift "${COMMON[@]}" --drift-steps "$DRIFT"
 # π fresh N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
-[ -f "$OUT_ROOT/rollouts_fresh_train.jsonl" ] || cat "$OUT_ROOT"/rollouts_fresh_train.shard*.jsonl > "$OUT_ROOT/rollouts_fresh_train.jsonl"
+merge_rollouts rollouts_fresh_train || exit 1
 # val 방향 ∥ oracle micro 샤딩 (GPU 여유가 있으면 마지막 GPU를 val 전용으로)
 pids=()
 if [ "$NGPU" -ge 2 ]; then
