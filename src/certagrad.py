@@ -90,13 +90,15 @@ def certagrad(
             c.draw()
     val.draw()
 
-    # 후보별 (mu, alpha) 캐시 — 관측이 늘어난 후보만 재계산 (O(라운드×후보) 방지)
-    mus: list = [None] * m
-    alphas: list = [0.0] * m
+    # 후보 통계를 (m,d) 행렬로 유지, 라운드당 계산을 전부 벡터화 (느린 CPU 대응)
+    dim = cand_pools[0].shape[1]
+    MU = torch.zeros(m, dim)
+    ALPHA = torch.zeros(m)
     dirty = set(range(m))
     val_dirty = True
     mu_v = None
     a_v = 0.0
+    _pi = math.pi
 
     for _ in range(max_rounds):
         if val_dirty:
@@ -105,31 +107,39 @@ def certagrad(
             val_dirty = False
         for i in dirty:
             mu, r = cands[i].stats(per, radius_mode)
-            mus[i] = mu
-            alphas[i] = angle_radius(mu, r)
+            MU[i] = mu
+            ALPHA[i] = angle_radius(mu, r)
         dirty.clear()
-        intervals = [score_interval(mus[i], alphas[i], mu_v, a_v) for i in range(m)]
-        mid = sorted(range(m), key=lambda i: -(intervals[i][0] + intervals[i][1]))
-        sel, rest = set(mid[:k]), mid[k:]
-        lo_min = min(intervals[i][0] for i in sel)
-        hi_max = max(intervals[i][1] for i in rest)
+        norms = MU.norm(dim=1)
+        vn = float(mu_v.norm())
+        cosphi = (MU @ mu_v) / (norms * vn + 1e-12)
+        phi = torch.arccos(cosphi.clamp(-1.0, 1.0))
+        width = ALPHA + a_v
+        lo = torch.cos((phi + width).clamp(max=_pi))
+        hi = torch.cos((phi - width).clamp(min=0.0))
+        mid_order = torch.argsort(lo + hi, descending=True)
+        sel_idx = mid_order[:k]
+        rest_idx = mid_order[k:]
+        lo_min = float(lo[sel_idx].min())
+        hi_max = float(hi[rest_idx].max()) if rest_idx.numel() else float("-inf")
         if lo_min > hi_max:
             return {
-                "selected": sorted(sel),
+                "selected": sorted(int(i) for i in sel_idx),
                 "certified": True,
                 "fresh_groups": sum(c.used for c in cands) + val.used,
             }
         # 경계에 걸린 후보 / 공유 validation 중 불확실성 기여가 큰 쪽에 배분 (concept 6절 5항)
-        boundary = [i for i in sel if intervals[i][0] <= hi_max] + [
-            i for i in rest if intervals[i][1] >= lo_min
-        ]
-        boundary_alphas = [(alphas[i], i) for i in boundary]
-        if boundary_alphas and a_v >= max(a for a, _ in boundary_alphas):
+        sel_mask = torch.zeros(m, dtype=torch.bool)
+        sel_mask[sel_idx] = True
+        boundary_mask = (sel_mask & (lo <= hi_max)) | (~sel_mask & (hi >= lo_min))
+        boundary = boundary_mask.nonzero(as_tuple=True)[0]
+        sel = {int(i) for i in sel_idx}
+        if boundary.numel() and a_v >= float(ALPHA[boundary].max()):
             if val.draw():
                 val_dirty = True
                 continue
         progressed = False
-        for _, i in sorted(boundary_alphas, reverse=True):
+        for i in boundary[torch.argsort(ALPHA[boundary], descending=True)].tolist():
             if cands[i].draw():
                 dirty.add(i)
                 progressed = True
