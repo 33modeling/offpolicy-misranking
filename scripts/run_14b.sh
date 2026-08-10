@@ -43,6 +43,16 @@ DRIFT=100
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 DATASET="${DATASET:-gsm8k}"
 [ "$DATASET" != "gsm8k" ] && OUT_ROOT="${OUT_ROOT}-${DATASET}" && LOGS="$OUT_ROOT/logs" && mkdir -p "$LOGS"
+# 데이터 사전 검사 — 오프라인 노드에서 허브 직행으로 죽는 것을 시작 전에 잡는다
+case "$DATASET" in
+  gsm8k)   DATA_FILE="$OM_DATA/gsm8k_train.jsonl" ;;
+  math500) DATA_FILE="$OM_DATA/math500_test.jsonl" ;;
+  *)       DATA_FILE="" ;;
+esac
+if [ -n "$DATA_FILE" ] && [ ! -f "$DATA_FILE" ]; then
+  echo "[abort] 로컬 데이터 없음: $DATA_FILE — 온라인/미러 되는 셸에서 'bash scripts/provision.sh' 먼저 (모델은 스킵됨, 데이터만 받음)"
+  exit 1
+fi
 COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1)
 
 "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &

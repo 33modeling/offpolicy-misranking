@@ -84,6 +84,25 @@ EOF
     || { echo "[provision] GSM8K 확보 실패" >&2; exit 1; }
 fi
 
+# 3b) MATH-500 로컬 jsonl (14B 스케일 게이트용 — GSM8K 포화 대응)
+if [[ -f "$OM_DATA/math500_test.jsonl" ]]; then
+  echo "[provision] 데이터 확인, 스킵: $OM_DATA/math500_test.jsonl"
+else
+  _fetch_math500() {
+    HF_HUB_ETAG_TIMEOUT=15 timeout 900 "$VENV_DIR/bin/python" - "$OM_DATA" <<'EOF'
+import json, sys
+from datasets import load_dataset
+ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
+with open(sys.argv[1] + "/math500_test.jsonl", "w") as f:
+    for row in ds:
+        f.write(json.dumps({"problem": row["problem"], "answer": str(row["answer"])}) + "\n")
+print("math500_test.jsonl:", len(ds), "rows")
+EOF
+  }
+  _fetch_math500 || { echo "[provision] MATH-500 실패 — 미러 재시도"; HF_ENDPOINT=https://hf-mirror.com _fetch_math500; } \
+    || { echo "[provision] MATH-500 확보 실패 (gsm8k만 쓸 거면 무시 가능)" >&2; }
+fi
+
 # 4) 로직 테스트 (모델 불필요)
 "$VENV_DIR/bin/python" tests/test_core.py
 

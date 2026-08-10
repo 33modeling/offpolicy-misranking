@@ -19,15 +19,19 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     import os
     from pathlib import Path
 
-    local = Path(os.environ.get("OM_DATA", "")) / "gsm8k_train.jsonl"
-    if dataset == "gsm8k" and local.is_file():
-        # provision.sh가 받아둔 로컬 사본 — 오프라인 컴퓨트 노드 경로
+    # provision.sh가 받아둔 로컬 사본 — 오프라인 컴퓨트 노드 경로
+    local_names = {"gsm8k": "gsm8k_train.jsonl", "math500": "math500_test.jsonl"}
+    local = Path(os.environ.get("OM_DATA", "")) / local_names.get(dataset, "_none_")
+    if local.is_file():
         rows = [json.loads(l) for l in local.open()]
-        items = [
-            {"question": r["question"], "answer": _gsm8k_answer(r["answer"])}
-            for r in rows
-        ]
-        return _split(items, n_train, n_val, seed, "gsm8k(local)")
+        if dataset == "gsm8k":
+            items = [
+                {"question": r["question"], "answer": _gsm8k_answer(r["answer"])}
+                for r in rows
+            ]
+        else:  # math500
+            items = [{"question": r["problem"], "answer": str(r["answer"])} for r in rows]
+        return _split(items, n_train, n_val, seed, f"{dataset}(local)")
 
     from datasets import load_dataset
 
