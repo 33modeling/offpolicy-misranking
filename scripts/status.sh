@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
-source scripts/_find_root.sh
+source scripts/_find_root.sh "${1:-}"
 LOGS="$OUT_ROOT/logs"
 
 echo "=== offpolicy-misranking 상태 ($(date '+%F %T')) — $OUT_ROOT"

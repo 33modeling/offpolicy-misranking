@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
-source scripts/_find_root.sh
+source scripts/_find_root.sh "${1:-}"
 
 NPROC=$(pgrep -fc "python.*src/experiment.py" 2>/dev/null || true); NPROC=${NPROC:-0}
 NBABY=$(pgrep -fc "bash.*scripts/babysit.sh" 2>/dev/null || true); NBABY=${NBABY:-0}

@@ -4,5 +4,5 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="${VENV_DIR:+$VENV_DIR/bin/python}"; [ -x "${PY:-/none}" ] || PY=python3
-source scripts/_find_root.sh
+source scripts/_find_root.sh "${1:-}"
 "$PY" src/show_selection.py "$OUT_ROOT" "$@"
