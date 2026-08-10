@@ -16,6 +16,9 @@ MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-14B-Instruct}"
 [ -f "$MODEL_14B/config.json" ] || { echo "[abort] 14B 로컬 스냅샷 없음: $MODEL_14B — failure-atlas 규약대로 미러 경로를 MODEL_14B로 지정하거나 자산을 먼저 확보할 것"; exit 1; }
 OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate-14b}"; export OUT_ROOT
 LOGS="$OUT_ROOT/logs"; mkdir -p "$LOGS"
+# GPU 수 자동 감지 — 인스턴스마다 다름 (4장 하드코딩이 invalid device ordinal의 원인)
+NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
+[ "$NGPU" -ge 1 ] || { echo "[abort] GPU 미감지"; exit 1; }
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOGS/main.log"; }
 # 다른 실행(7B babysit/run)과의 GPU 충돌 차단
 if pgrep -f "bash.*scripts/babysit.sh" >/dev/null || pgrep -f "scripts/run_h100_all.sh" >/dev/null; then
@@ -49,40 +52,48 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "=== 14B 시작: $MODEL_14B → $OUT_ROOT ==="
+log "=== 14B 시작: $MODEL_14B → $OUT_ROOT (GPU ${NGPU}장) ==="
+nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
 run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"
-# β rollout 4샤딩
-pids=(); for i in 0 1 2 3; do
-  ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:4" ) & pids+=($!)
+# β rollout N샤딩
+pids=(); for i in $(seq 0 $((NGPU - 1))); do
+  ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
 [ -f "$OUT_ROOT/rollouts_behavior_train.jsonl" ] || cat "$OUT_ROOT"/rollouts_behavior_train.shard*.jsonl > "$OUT_ROOT/rollouts_behavior_train.jsonl"
 run_stage 0 "$LOGS/drift.log" --stage drift "${COMMON[@]}" --drift-steps "$DRIFT"
-# π fresh 4샤딩
-pids=(); for i in 0 1 2 3; do
-  ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:4" ) & pids+=($!)
+# π fresh N샤딩
+pids=(); for i in $(seq 0 $((NGPU - 1))); do
+  ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
 [ -f "$OUT_ROOT/rollouts_fresh_train.jsonl" ] || cat "$OUT_ROOT"/rollouts_fresh_train.shard*.jsonl > "$OUT_ROOT/rollouts_fresh_train.jsonl"
-# GPU3: val 방향 ∥ GPU0-2: oracle micro 3샤딩
+# val 방향 ∥ oracle micro 샤딩 (GPU 여유가 있으면 마지막 GPU를 val 전용으로)
 pids=()
-( run_stage 3 "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" ) & pids+=($!)
-for i in 0 1 2; do
-  ( run_stage "$i" "$LOGS/ograds-shard$i.log" --stage oracle-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:3" ) & pids+=($!)
+if [ "$NGPU" -ge 2 ]; then
+  NM=$((NGPU - 1))
+  ( run_stage "$NM" "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" ) & pids+=($!)
+else
+  NM=1
+  run_stage 0 "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" || exit 1
+fi
+for i in $(seq 0 $((NM - 1))); do
+  ( run_stage "$i" "$LOGS/ograds-shard$i.log" --stage oracle-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NM" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
-# 2×2 score 4샤딩
-pids=(); for i in 0 1 2 3; do
-  ( run_stage "$i" "$LOGS/score-shard$i.log" --stage score-shard "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:4" ) & pids+=($!)
+# 2×2 score N샤딩
+pids=(); for i in $(seq 0 $((NGPU - 1))); do
+  ( run_stage "$i" "$LOGS/score-shard$i.log" --stage score-shard "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
 run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}"
 run_stage 0 "$LOGS/report.log" --stage report "${COMMON[@]}"
-# hybrid 3절단점 병렬 (GPU 0/1/2)
+# hybrid 3절단점 — GPU 수만큼 병렬 (모자라면 라운드로빈 순차)
 pids=(); gpu=0
 for cut in 0.25 0.5 0.75; do
-  ( run_stage "$gpu" "$LOGS/hybrid-$cut.log" --stage hybrid "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --cut-frac "$cut" ) & pids+=($!)
+  ( run_stage "$((gpu % NGPU))" "$LOGS/hybrid-$cut.log" --stage hybrid "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --cut-frac "$cut" ) & pids+=($!)
   gpu=$((gpu + 1))
+  [ $((gpu % NGPU)) -eq 0 ] && for p in "${pids[@]}"; do wait "$p" || exit 1; done && pids=()
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
 log "=== 14B 완료 — bash scripts/result.sh 로 판정 (OUT_ROOT=$OUT_ROOT) ==="
