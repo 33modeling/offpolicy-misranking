@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || PY=python3
-TARGETS="${*:-mbpp math500 gsm8k}"
+TARGETS="${*:-mbpp math500 gsm8k kk}"   # apps·dapo-math는 이름 명시 시에만
 mkdir -p "$DATASETS_DIR"
 echo "[fetch] DATASETS_DIR=$DATASETS_DIR → $TARGETS"
 
@@ -64,7 +64,56 @@ with open(out / "gsm8k_train.jsonl", "w") as f:
     for r in ds:
         f.write(json.dumps({"question": r["question"], "answer": r["answer"]}) + "\n")
 print("gsm8k_train.jsonl:", len(ds), "rows")' || fail=1 ;;
-    *) echo "[fetch] 모르는 데이터셋: $t (mbpp|math500|gsm8k)"; fail=1 ;;
+    kk)
+      if [ -e "$DATASETS_DIR/kk/kk.jsonl" ]; then echo "[fetch] kk 있음, 스킵"; continue; fi
+      _fetch kk '
+import json, sys
+from pathlib import Path
+from datasets import get_dataset_config_names, load_dataset
+out = Path(sys.argv[1]) / "kk"; out.mkdir(parents=True, exist_ok=True)
+repo = "K-and-K/knights-and-knaves"
+try:
+    configs = get_dataset_config_names(repo)
+except Exception:
+    configs = [None]
+n = 0
+with open(out / "kk.jsonl", "w") as f:
+    for cfg in configs:
+        ds = load_dataset(repo, cfg) if cfg else load_dataset(repo)
+        for split in ds:
+            for r in ds[split]:
+                r = dict(r); r["_config"], r["_split"] = cfg, split
+                f.write(json.dumps(r) + "\n"); n += 1
+print("kk.jsonl:", n, "rows")' || fail=1 ;;
+    apps)
+      if [ -e "$DATASETS_DIR/apps/apps.jsonl" ]; then echo "[fetch] apps 있음, 스킵"; continue; fi
+      _fetch apps '
+import json, sys
+from pathlib import Path
+from datasets import load_dataset
+out = Path(sys.argv[1]) / "apps"; out.mkdir(parents=True, exist_ok=True)
+n = 0
+with open(out / "apps.jsonl", "w") as f:
+    for split in ("train", "test"):
+        ds = load_dataset("codeparrot/apps", split=split, trust_remote_code=True)
+        for r in ds:
+            f.write(json.dumps({"question": r["question"], "input_output": r["input_output"],
+                                "difficulty": r["difficulty"], "_split": split}) + "\n")
+            n += 1
+print("apps.jsonl:", n, "rows")' || fail=1 ;;
+    dapo-math)
+      if [ -e "$DATASETS_DIR/dapo-math/dapo_math.jsonl" ]; then echo "[fetch] dapo-math 있음, 스킵"; continue; fi
+      _fetch dapo-math '
+import json, sys
+from pathlib import Path
+from datasets import load_dataset
+out = Path(sys.argv[1]) / "dapo-math"; out.mkdir(parents=True, exist_ok=True)
+ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
+with open(out / "dapo_math.jsonl", "w") as f:
+    for r in ds:
+        f.write(json.dumps(dict(r)) + "\n")
+print("dapo_math.jsonl:", len(ds), "rows")' || fail=1 ;;
+    *) echo "[fetch] 모르는 데이터셋: $t (mbpp|math500|gsm8k|kk|apps|dapo-math)"; fail=1 ;;
   esac
 done
 exit "$fail"
