@@ -40,7 +40,14 @@ DRIFT=100
 COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1)
 
 "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
-KEEP=$!; trap 'kill $KEEP 2>/dev/null' EXIT
+KEEP=$!
+# 종료(정상·에러 모두) 시 이 실행이 띄운 모든 자식 정리 — 고아 샤드가 GPU를 점유한 채
+# 남아 "계속 실행되는 것처럼" 보이고 재시작 OOM을 일으키는 버그의 수정
+cleanup() {
+  kill "$KEEP" 2>/dev/null || true
+  pkill -f -- "--run $OUT_ROOT" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 
 log "=== 14B 시작: $MODEL_14B → $OUT_ROOT ==="
 run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"
