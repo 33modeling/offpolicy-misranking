@@ -142,6 +142,23 @@ def _load_rows_any(root) -> list[dict] | None:
     if pq:
         from datasets import load_dataset
         return list(load_dataset("parquet", data_files=pq, split="train"))
+    # 원본 MATH 등 문제당 개별 .json 파일 트리 (HF 메타 파일은 제외)
+    meta = {"dataset_info.json", "dataset_infos.json", "dataset_dict.json",
+            "state.json", "config.json"}
+    jf = [p for p in sorted(root.rglob("*.json")) if p.name not in meta]
+    if jf:
+        rows = []
+        for p in jf:
+            try:
+                obj = json.loads(p.read_text())
+            except (ValueError, OSError):
+                continue
+            if isinstance(obj, list):
+                rows += [r for r in obj if isinstance(r, dict)]
+            elif isinstance(obj, dict):
+                rows.append(obj)
+        if rows:
+            return rows
     try:
         from datasets import load_from_disk
         obj = load_from_disk(str(root))
