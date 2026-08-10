@@ -30,8 +30,10 @@ fi
 export MODEL_QWEN25_05B="${MODEL_QWEN25_05B:-$MODELS_DIR/Qwen2.5-0.5B-Instruct}"
 export MODEL_QWEN25_7B="${MODEL_QWEN25_7B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 
-# ---- 공용 데이터셋 (group-volume/datasets 아래 mbpp 등 사전 배치본) ------
-if [[ -d "$GROUP_VOLUME/datasets" ]]; then
+# ---- 공용 데이터셋 (사전 배치본: 사용자 폴더 우선, 공용 폴더 폴백) -------
+if [[ -d "$GROUP_VOLUME/$OM_USER/datasets" ]]; then
+  export DATASETS_DIR="${DATASETS_DIR:-$GROUP_VOLUME/$OM_USER/datasets}"
+elif [[ -d "$GROUP_VOLUME/datasets" ]]; then
   export DATASETS_DIR="${DATASETS_DIR:-$GROUP_VOLUME/datasets}"
 else
   export DATASETS_DIR="${DATASETS_DIR:-$OM_WORK/data}"

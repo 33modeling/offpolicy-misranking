@@ -45,16 +45,24 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             for row in ds
         ]
     elif dataset == "math500":
-        # 사전 배치본 우선 — $MATH500_DIR 또는 $DATASETS_DIR 아래 통상 이름들
+        # 사전 배치본 우선 — $MATH500_DIR 또는 데이터셋 베이스들 아래 통상 이름들
+        names = ("math500", "MATH-500", "math-500", "math_500", "math", "MATH")
+        tried = []
         root = os.environ.get("MATH500_DIR")
         if not root:
-            base = Path(os.environ.get("DATASETS_DIR", ""))
-            root = next((base / n for n in
-                         ("math500", "MATH-500", "math-500", "math_500", "math")
-                         if (base / n).exists()), None)
+            for base in _dataset_bases():
+                tried += [base / n for n in names]
+            root = next((c for c in tried if c.exists()), None)
         rows = _load_rows_any(root) if root else None
         if rows is None:
-            ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
+            try:
+                ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
+            except Exception as e:
+                raise ValueError(
+                    "math500 로컬 사본을 못 찾았고 허브도 실패. 찾아본 위치:\n  "
+                    + "\n  ".join(str(t) for t in tried)
+                    + f"\n실제 위치가 다르면 MATH500_DIR=<경로> 지정. (허브 오류: {e})"
+                ) from e
             rows = list(ds)
         items = []
         for r in rows:
@@ -68,11 +76,19 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             raise ValueError(f"math500 스키마 파싱 실패 (root={root})")
     elif dataset == "mbpp":
         # 클러스터 사전 배치본($DATASETS_DIR/mbpp) 우선 — jsonl/parquet/HF 스냅샷 전부 수용
-        root = Path(os.environ.get("MBPP_DIR")
-                    or Path(os.environ.get("DATASETS_DIR", "")) / "mbpp")
-        rows = _load_rows_any(root) if root.exists() else None
+        tried = [Path(os.environ["MBPP_DIR"])] if os.environ.get("MBPP_DIR") \
+            else [b / "mbpp" for b in _dataset_bases()]
+        root = next((c for c in tried if c.exists()), None)
+        rows = _load_rows_any(root) if root else None
         if rows is None:
-            ds = load_dataset("google-research-datasets/mbpp", "full")
+            try:
+                ds = load_dataset("google-research-datasets/mbpp", "full")
+            except Exception as e:
+                raise ValueError(
+                    "mbpp 로컬 사본을 못 찾았고 허브도 실패. 찾아본 위치:\n  "
+                    + "\n  ".join(str(t) for t in tried)
+                    + f"\nMBPP_DIR=<경로>로 지정 가능. (허브 오류: {e})"
+                ) from e
             rows = [r for split in ds for r in ds[split]]
         items = []
         for r in rows:
@@ -108,6 +124,22 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         raise ValueError(f"unknown dataset {dataset}")
 
     return _split(items, n_train, n_val, seed, dataset)
+
+
+def _dataset_bases() -> list:
+    """사전 배치본을 찾을 베이스 경로들 — 환경변수·공용·사용자 폴더 전부."""
+    import os
+    from pathlib import Path
+
+    gv = os.environ.get("GROUP_VOLUME", "/group-volume")
+    user = os.environ.get("OM_USER", "minsoo3.kim")
+    cand = [os.environ.get("DATASETS_DIR"), f"{gv}/datasets", f"{gv}/{user}/datasets"]
+    out, seen = [], set()
+    for c in cand:
+        if c and c not in seen:
+            seen.add(c)
+            out.append(Path(c))
+    return out
 
 
 def _boxed(solution: str) -> str | None:
