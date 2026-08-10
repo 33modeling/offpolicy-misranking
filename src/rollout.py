@@ -12,7 +12,7 @@ from pathlib import Path
 
 import torch
 
-from data import PROMPT_TEMPLATE, reward
+from data import build_user_msg, reward
 
 # torch 2.7 + Hopper: cuDNN SDPA가 산발적 'unspecified launch failure'를 낸다
 # (비동기라 보고 지점은 attention이 아닐 수도 있음 — modeling_qwen2.py:47 사례).
@@ -54,7 +54,7 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
 
 
 def chat_ids(tok, question: str) -> torch.Tensor:
-    msgs = [{"role": "user", "content": PROMPT_TEMPLATE.format(question=question)}]
+    msgs = [{"role": "user", "content": build_user_msg(question)}]
     # transformers 4/5 양쪽에서 안전: 템플릿은 텍스트로 뽑고 별도로 토크나이즈.
     text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
     return tok(text, return_tensors="pt", add_special_tokens=False).input_ids[0]

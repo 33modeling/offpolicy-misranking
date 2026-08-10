@@ -19,10 +19,13 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     import os
     from pathlib import Path
 
-    # provision.sh가 받아둔 로컬 사본 — 오프라인 컴퓨트 노드 경로
+    # 로컬 사본 — provision.sh($OM_DATA) 또는 fetch_datasets.sh($DATASETS_DIR/<이름>/)
     local_names = {"gsm8k": "gsm8k_train.jsonl", "math500": "math500_test.jsonl"}
-    local = Path(os.environ.get("OM_DATA", "")) / local_names.get(dataset, "_none_")
-    if local.is_file():
+    fname = local_names.get(dataset, "_none_")
+    local = next((c for c in (Path(os.environ.get("OM_DATA", "")) / fname,
+                              Path(os.environ.get("DATASETS_DIR", "")) / dataset / fname)
+                  if c.is_file()), None)
+    if local is not None:
         rows = [json.loads(l) for l in local.open()]
         if dataset == "gsm8k":
             items = [
@@ -44,6 +47,30 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     elif dataset == "math500":
         ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
         items = [{"question": row["problem"], "answer": str(row["answer"])} for row in ds]
+    elif dataset == "mbpp":
+        # 클러스터 사전 배치본($DATASETS_DIR/mbpp) 우선 — jsonl/parquet/HF 스냅샷 전부 수용
+        root = Path(os.environ.get("MBPP_DIR")
+                    or Path(os.environ.get("DATASETS_DIR", "")) / "mbpp")
+        rows = _load_rows_any(root) if root.exists() else None
+        if rows is None:
+            ds = load_dataset("google-research-datasets/mbpp", "full")
+            rows = [r for split in ds for r in ds[split]]
+        items = []
+        for r in rows:
+            text = r.get("text") or r.get("prompt") or r.get("description")
+            tests = r.get("test_list") or r.get("tests") or r.get("test")
+            if isinstance(tests, str):
+                tests = [tests]
+            if not (text and tests):
+                continue
+            tests_str = "\n".join(tests)
+            q = (f"Write a Python function for the task below.\n\n{text}\n\n"
+                 f"Your code should satisfy these tests:\n{tests_str}\n\n"
+                 "Return the complete function in a ```python code block.")
+            # answer 자리에 assert 테스트를 넣는다 — reward()가 실행 채점으로 분기
+            items.append({"question": q, "answer": tests_str})
+        if not items:
+            raise ValueError(f"mbpp 스키마 파싱 실패 (root={root}) — 필드명을 확인할 것")
     elif dataset == "dapo-math":
         # 본실험용. 스키마가 릴리스마다 달라 방어적으로 파싱한다 — 첫 실행에서 확인할 것.
         ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
@@ -64,6 +91,31 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     return _split(items, n_train, n_val, seed, dataset)
 
 
+def _load_rows_any(root) -> list[dict] | None:
+    """디렉토리/파일에서 형식 무관하게 행을 읽는다 — jsonl > parquet > HF 스냅샷."""
+    import json
+    from pathlib import Path
+
+    root = Path(root)
+    if root.is_file():
+        return [json.loads(l) for l in root.open()]
+    files = sorted(root.rglob("*.jsonl"))
+    if files:
+        return [json.loads(l) for f in files for l in f.open()]
+    pq = sorted(str(p) for p in root.rglob("*.parquet"))
+    if pq:
+        from datasets import load_dataset
+        return list(load_dataset("parquet", data_files=pq, split="train"))
+    try:
+        from datasets import load_from_disk
+        obj = load_from_disk(str(root))
+    except Exception:
+        return None
+    if hasattr(obj, "keys") and not hasattr(obj, "features"):  # DatasetDict
+        return [r for k in obj.keys() for r in obj[k]]
+    return list(obj)
+
+
 def _split(items: list[dict], n_train: int, n_val: int, seed: int, name: str) -> dict:
     rng = random.Random(seed)
     rng.shuffle(items)
@@ -78,6 +130,15 @@ PROMPT_TEMPLATE = (
     "answer after '####'.\n\nProblem: {question}\n"
 )
 
+_CODE_MARKER = "Your code should satisfy these tests"
+
+
+def build_user_msg(question: str) -> str:
+    """수학 문제는 #### 템플릿으로 감싸고, mbpp는 이미 완전한 지시문이라 그대로."""
+    if _CODE_MARKER in question:
+        return question
+    return PROMPT_TEMPLATE.format(question=question)
+
 
 ANSWER_RE = re.compile(r"####\s*([^\n]+)")
 
@@ -91,7 +152,34 @@ def extract_answer(text: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+def _extract_code(text: str) -> str:
+    m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.S)
+    if m:
+        return m.group(1)
+    i = text.find("def ")
+    return text[i:] if i != -1 else text
+
+
+def _code_reward(text: str, tests: str) -> float:
+    """생성 코드 + assert 테스트를 서브프로세스로 실행 — 전부 통과해야 1.0.
+
+    타임아웃 8초(무한루프 방지), 실행은 -I(isolated)로 사용자 site 격리.
+    """
+    import subprocess
+    import sys
+
+    src = _extract_code(text) + "\n\n" + tests + "\n"
+    try:
+        p = subprocess.run([sys.executable, "-I", "-c", src],
+                           capture_output=True, timeout=8)
+        return 1.0 if p.returncode == 0 else 0.0
+    except (subprocess.TimeoutExpired, OSError):
+        return 0.0
+
+
 def reward(text: str, gold: str) -> float:
+    if gold.lstrip().startswith("assert"):  # mbpp — 실행 채점
+        return _code_reward(text, gold)
     pred = extract_answer(text)
     if pred is None:
         return 0.0

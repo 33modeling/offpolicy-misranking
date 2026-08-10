@@ -30,6 +30,13 @@ fi
 export MODEL_QWEN25_05B="${MODEL_QWEN25_05B:-$MODELS_DIR/Qwen2.5-0.5B-Instruct}"
 export MODEL_QWEN25_7B="${MODEL_QWEN25_7B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 
+# ---- 공용 데이터셋 (group-volume/datasets 아래 mbpp 등 사전 배치본) ------
+if [[ -d "$GROUP_VOLUME/datasets" ]]; then
+  export DATASETS_DIR="${DATASETS_DIR:-$GROUP_VOLUME/datasets}"
+else
+  export DATASETS_DIR="${DATASETS_DIR:-$OM_WORK/data}"
+fi
+
 # ---- venv·캐시 (group-volume, FDMU 검증 torch 2.7.1+cu126 스택) ---------
 export VENV_DIR="${VENV_DIR:-$OM_WORK/.venv-cu126}"
 export HF_HOME="${HF_HOME:-$OM_WORK/cache/huggingface}"

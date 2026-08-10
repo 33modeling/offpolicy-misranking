@@ -47,6 +47,7 @@ DATASET="${DATASET:-gsm8k}"
 case "$DATASET" in
   gsm8k)   DATA_FILE="$OM_DATA/gsm8k_train.jsonl" ;;
   math500) DATA_FILE="$OM_DATA/math500_test.jsonl" ;;
+  mbpp)    DATA_FILE="" ; [ -d "$DATASETS_DIR/mbpp" ] || { echo "[abort] $DATASETS_DIR/mbpp 없음 — 'bash scripts/fetch_datasets.sh mbpp' 먼저"; exit 1; } ;;
   *)       DATA_FILE="" ;;
 esac
 if [ -n "$DATA_FILE" ] && [ ! -f "$DATA_FILE" ]; then
