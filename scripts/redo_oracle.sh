@@ -10,6 +10,9 @@ RUN="${RUN:-$OM_WORK/runs/gate-14b-math500}"
 [ -f "$RUN/prompts.json" ] || { echo "[abort] run 아님: $RUN (prompts.json 없음)"; exit 1; }
 DATASET="${DATASET:-math500}"
 export FRESH_K="${FRESH_K:-32}"
+# 이 14B 노드는 fused SDPA 커널이 ULF를 내는 이력(C6)이 있어 eager가 기본.
+# 빠른 커널을 쓰고 싶을 때만 OM_ATTN=sdpa 로 명시.
+export OM_ATTN="${OM_ATTN:-eager}"
 
 # 이전 실행 잔재 정리 (있으면)
 pkill -f run_14b.sh 2>/dev/null || true
