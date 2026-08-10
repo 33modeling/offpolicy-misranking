@@ -20,9 +20,12 @@ from certagrad import certagrad, uniform_baseline
 
 
 def _one(job):
-    pools, val_pool, k, delta, init = job
+    import time
+    pools, val_pool, k, delta, init, max_fresh = job
     torch.set_num_threads(1)
-    r = certagrad(pools, val_pool, k, delta=delta, init_groups=init)
+    t0 = time.time()
+    r = certagrad(pools, val_pool, k, delta=delta, init_groups=init, max_fresh=max_fresh)
+    r["elapsed"] = time.time() - t0
     return delta, init, r
 
 
@@ -48,7 +51,8 @@ def main() -> int:
         o_top = set(sorted(oracle, key=lambda i: -oracle[i])[:k])
         uni = uniform_baseline(pools, val_pool, k, groups_each=n_pool)
         uni_prec = len({order[i] for i in uni["selected"]} & o_top) / k
-        jobs = [(pools, val_pool, k, delta, init)
+        cap = int(uni["fresh_groups"] * 0.55)  # 0.5× 초과 = FAIL 확정 → 조기 중단
+        jobs = [(pools, val_pool, k, delta, init, cap)
                 for delta in (0.05, 0.20, 0.32) for init in (1, 2)]
         with ProcessPoolExecutor(max_workers=min(len(jobs), os.cpu_count() or 4)) as ex:
             for delta, init, r in ex.map(_one, jobs):
@@ -57,7 +61,8 @@ def main() -> int:
                 frac_fresh = r["fresh_groups"] / uni["fresh_groups"]
                 ok = r["certified"] and frac_fresh <= 0.5 and prec >= uni_prec - 0.02
                 line = (f"  frac={frac} δ={delta} init={init}: certified={r['certified']} "
-                        f"fresh={frac_fresh:.2f}× prec={prec:.3f} (uniform {uni_prec:.3f})"
+                        f"fresh={frac_fresh:.2f}× prec={prec:.3f} (uniform {uni_prec:.3f}) "
+                        f"[{r.get('elapsed', 0):.0f}s]"
                         + ("  ← C2 PASS" if ok else ""))
                 print(line, flush=True)
                 if ok and (best is None or frac_fresh < best[0]):

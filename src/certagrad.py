@@ -78,6 +78,7 @@ def certagrad(
     init_groups: int = 1,
     max_rounds: int = 10_000,
     radius_mode: str = "gaussian",
+    max_fresh: int | None = None,
 ) -> dict:
     """순차 인증. 반환: 선택 집합, 사용 micro-group 수, 인증 성공 여부."""
     m = len(cand_pools)
@@ -101,6 +102,8 @@ def certagrad(
     _pi = math.pi
 
     for _ in range(max_rounds):
+        if max_fresh is not None and sum(c.used for c in cands) + val.used > max_fresh:
+            break  # 예산 상한 초과 — C2 기준(≤0.5×)상 이미 실패 확정이므로 조기 종료
         if val_dirty:
             mu_v, r_v = val.stats(per, radius_mode)
             a_v = angle_radius(mu_v, r_v)
