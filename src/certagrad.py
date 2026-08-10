@@ -182,3 +182,76 @@ def uniform_baseline(cand_pools: list[torch.Tensor], val_pool: torch.Tensor, k: 
         "selected": sorted(sel),
         "fresh_groups": groups_each * len(cand_pools) + max(1, groups_each),
     }
+
+
+def certagrad_scalar(
+    cand_pools: list[torch.Tensor],
+    val_pool: torch.Tensor,
+    k: int,
+    delta: float = 0.05,
+    init_groups: int = 2,
+    max_rounds: int = 100_000,
+    max_fresh: int | None = None,
+    eps: float = 0.0,
+) -> dict:
+    """스칼라 인증기 — 관측을 '각 micro-group의 val 정렬 점수(1차원)'로 두고
+    그 신뢰구간으로 top-k 경계를 분리한다.
+
+    벡터 confidence ball은 4096차원 분산을 통째로 물어 α가 포화(180°)되지만,
+    실제 결정에 필요한 통계량은 s_{i,g} = <g_{i,g}, v̂>/(‖g_{i,g}‖‖v̂‖) 스칼라뿐이다.
+    top-k는 v̂(관측된 검증 방향) 기준 결정 문제로 정의한다 — v̂의 공통 오차는
+    모든 후보에 같은 타깃으로 작용하므로 후보 간 순위 인증에는 스칼라 CI로 충분하다.
+    """
+    m = len(cand_pools)
+    v = val_pool.mean(dim=0)
+    v = v / (v.norm() + 1e-12)
+
+    # 후보별 스칼라 관측 풀 (미리 계산 — draw는 인덱스만 소비)
+    scal = []
+    for pool in cand_pools:
+        p = pool / (pool.norm(dim=1, keepdim=True) + 1e-12)
+        scal.append((p @ v))
+    used = [0] * m
+    per = delta / m
+
+    def ci(i):
+        x = scal[i][: used[i]]
+        n = x.numel()
+        if n < 2:
+            return float(x.mean()) if n else 0.0, float("inf")
+        mean = float(x.mean())
+        sd = float(x.std(unbiased=True))
+        t = math.log(2.0 / per)
+        # sub-gaussian 근사 반경 (경계 [-1,1] 클립 뒤 Hoeffding 상한과 병기 가능)
+        r = sd * math.sqrt(2.0 * t / n) + 3.0 * 2.0 * t / n * 0.0
+        return mean, r
+
+    for i in range(m):
+        used[i] = min(init_groups, scal[i].numel())
+
+    for _ in range(max_rounds):
+        total = sum(used)
+        if max_fresh is not None and total > max_fresh:
+            break
+        stats = [ci(i) for i in range(m)]
+        mids = sorted(range(m), key=lambda i: -stats[i][0])
+        sel, rest = mids[:k], mids[k:]
+        lo_min = min(stats[i][0] - stats[i][1] for i in sel)
+        hi_max = max(stats[i][0] + stats[i][1] for i in rest) if rest else float("-inf")
+        if lo_min > hi_max:
+            return {"selected": sorted(sel), "certified": True, "fresh_groups": total}
+        boundary = [i for i in sel if stats[i][0] - stats[i][1] <= hi_max] +                    [i for i in rest if stats[i][0] + stats[i][1] >= lo_min]
+        # 반경 큰 순으로 최대 4곳 추가 관측
+        boundary.sort(key=lambda i: -stats[i][1] if math.isfinite(stats[i][1]) else -1e9)
+        progressed = False
+        for i in boundary[:4]:
+            if used[i] < scal[i].numel():
+                used[i] += 1
+                progressed = True
+        if not progressed:
+            stats = [ci(i) for i in range(m)]
+            mids = sorted(range(m), key=lambda i: -stats[i][0])
+            return {"selected": sorted(mids[:k]), "certified": False, "fresh_groups": sum(used)}
+    stats = [ci(i) for i in range(m)]
+    mids = sorted(range(m), key=lambda i: -stats[i][0])
+    return {"selected": sorted(mids[:k]), "certified": False, "fresh_groups": sum(used)}

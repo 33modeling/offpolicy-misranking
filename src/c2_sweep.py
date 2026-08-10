@@ -16,16 +16,21 @@ from pathlib import Path
 
 import torch
 
-from certagrad import certagrad, uniform_baseline
+from certagrad import certagrad, certagrad_scalar, uniform_baseline
 
 
 def _one(job):
     import time
-    pools, val_pool, k, delta, init, max_fresh = job
+    pools, val_pool, k, delta, init, max_fresh, mode, eps = job
     torch.set_num_threads(1)
     t0 = time.time()
-    r = certagrad(pools, val_pool, k, delta=delta, init_groups=init, max_fresh=max_fresh)
+    if mode == "scalar":
+        r = certagrad_scalar(pools, val_pool, k, delta=delta, init_groups=init,
+                             max_fresh=max_fresh, eps=eps)
+    else:
+        r = certagrad(pools, val_pool, k, delta=delta, init_groups=init, max_fresh=max_fresh)
     r["elapsed"] = time.time() - t0
+    r["mode"] = mode
     return delta, init, r
 
 
@@ -59,15 +64,17 @@ def main() -> int:
         uni = uniform_baseline(pools, val_pool, k, groups_each=n_pool)
         uni_prec = len({order[i] for i in uni["selected"]} & o_top) / k
         cap = int(uni["fresh_groups"] * 0.55)  # 0.5× 초과 = FAIL 확정 → 조기 중단
-        jobs = [(pools, val_pool, k, delta, init, cap)
-                for delta in (0.05, 0.20, 0.32) for init in (1, 2)]
+        jobs = ([(pools, val_pool, k, delta, 2, cap, "scalar", eps)
+                 for delta in (0.05, 0.20) for eps in (0.0, 0.02, 0.05)]
+                + [(pools, val_pool, k, 0.05, 2, cap, "ball", 0.0)])
         with ProcessPoolExecutor(max_workers=min(len(jobs), os.cpu_count() or 4)) as ex:
             for delta, init, r in ex.map(_one, jobs):
                 sel = {order[i] for i in r["selected"]}
                 prec = len(sel & o_top) / k
                 frac_fresh = r["fresh_groups"] / uni["fresh_groups"]
                 ok = r["certified"] and frac_fresh <= 0.5 and prec >= uni_prec - 0.02
-                line = (f"  frac={frac} δ={delta} init={init}: certified={r['certified']} "
+                eps_tag = f" ε={r.get('eps', 0)}" if r.get("mode") == "scalar" else ""
+                line = (f"  [{r.get('mode','ball')}{eps_tag}] frac={frac} δ={delta}: certified={r['certified']} "
                         f"fresh={frac_fresh:.2f}× prec={prec:.3f} (uniform {uni_prec:.3f}) "
                         f"[{r.get('elapsed', 0):.0f}s]"
                         + ("  ← C2 PASS" if ok else ""))
