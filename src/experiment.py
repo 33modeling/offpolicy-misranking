@@ -319,6 +319,7 @@ def main() -> None:
             out = run / f"rollouts_fresh_train.shard{i}.jsonl"
         else:
             i, n, out = 0, 1, run / "rollouts_fresh_train.jsonl"
+        pi = tok = None
         if out.exists():
             print(f"rollout-fresh: {out.name} 이미 존재 — 스킵")
         else:
@@ -329,12 +330,16 @@ def main() -> None:
             collect_rollouts(pi, tok, train[lo:hi], args.fresh_k,
                              args.max_new_tokens, args.temperature, out,
                              idx_offset=lo)
-            # shard 0이 val fresh도 담당
-            val_out = run / "rollouts_fresh_val.jsonl"
-            if i == 0 and not val_out.exists():
-                prompts = json.loads((run / "prompts.json").read_text())
-                collect_rollouts(pi, tok, prompts["val"], args.val_k,
-                                 args.max_new_tokens, args.temperature, val_out)
+        # shard 0이 val fresh도 담당 — train 샤드 스킵 여부와 **무관하게** 검사.
+        # (else 안에 있던 시절: 재시작하면 train과 함께 val 수집도 건너뛰어
+        #  rollouts_fresh_val.jsonl 영구 누락 → val-grads가 line 37에서 사망)
+        val_out = run / "rollouts_fresh_val.jsonl"
+        if i == 0 and not val_out.exists():
+            if pi is None:
+                pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+            prompts = json.loads((run / "prompts.json").read_text())
+            collect_rollouts(pi, tok, prompts["val"], args.val_k,
+                             args.max_new_tokens, args.temperature, val_out)
     elif args.stage == "drift":
         train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
                          run / f"drift_{args.drift_steps}", steps=args.drift_steps)
