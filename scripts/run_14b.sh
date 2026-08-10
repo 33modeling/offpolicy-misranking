@@ -46,7 +46,15 @@ DATASET="${DATASET:-gsm8k}"
 # 데이터 사전 검사 — 오프라인 노드에서 허브 직행으로 죽는 것을 시작 전에 잡는다
 case "$DATASET" in
   gsm8k)   DATA_FILE="$OM_DATA/gsm8k_train.jsonl" ;;
-  math500) DATA_FILE="$OM_DATA/math500_test.jsonl" ;;
+  math500)
+    DATA_FILE=""
+    found=""
+    [ -f "$OM_DATA/math500_test.jsonl" ] && found=1
+    [ -n "${MATH500_DIR:-}" ] && [ -e "$MATH500_DIR" ] && found=1
+    for n in math500 MATH-500 math-500 math_500 math; do
+      [ -e "$DATASETS_DIR/$n" ] && found=1
+    done
+    [ -n "$found" ] || { echo "[abort] math500 데이터 없음 — 'bash scripts/fetch_datasets.sh math500' 또는 MATH500_DIR=<경로> 지정"; exit 1; } ;;
   mbpp)    DATA_FILE="" ; [ -d "$DATASETS_DIR/mbpp" ] || { echo "[abort] $DATASETS_DIR/mbpp 없음 — 'bash scripts/fetch_datasets.sh mbpp' 먼저"; exit 1; } ;;
   *)       DATA_FILE="" ;;
 esac

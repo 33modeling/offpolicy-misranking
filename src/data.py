@@ -45,8 +45,27 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             for row in ds
         ]
     elif dataset == "math500":
-        ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
-        items = [{"question": row["problem"], "answer": str(row["answer"])} for row in ds]
+        # 사전 배치본 우선 — $MATH500_DIR 또는 $DATASETS_DIR 아래 통상 이름들
+        root = os.environ.get("MATH500_DIR")
+        if not root:
+            base = Path(os.environ.get("DATASETS_DIR", ""))
+            root = next((base / n for n in
+                         ("math500", "MATH-500", "math-500", "math_500", "math")
+                         if (base / n).exists()), None)
+        rows = _load_rows_any(root) if root else None
+        if rows is None:
+            ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
+            rows = list(ds)
+        items = []
+        for r in rows:
+            q = r.get("problem") or r.get("question")
+            a = r.get("answer")
+            if a is None and r.get("solution"):  # 원본 MATH 형식 — \boxed에서 추출
+                a = _boxed(r["solution"])
+            if q and a is not None:
+                items.append({"question": q, "answer": str(a)})
+        if not items:
+            raise ValueError(f"math500 스키마 파싱 실패 (root={root})")
     elif dataset == "mbpp":
         # 클러스터 사전 배치본($DATASETS_DIR/mbpp) 우선 — jsonl/parquet/HF 스냅샷 전부 수용
         root = Path(os.environ.get("MBPP_DIR")
@@ -89,6 +108,23 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         raise ValueError(f"unknown dataset {dataset}")
 
     return _split(items, n_train, n_val, seed, dataset)
+
+
+def _boxed(solution: str) -> str | None:
+    """\\boxed{...}의 내용물 — 중괄호 중첩을 세면서 뽑는다 (원본 MATH 정답 형식)."""
+    i = solution.rfind("\\boxed{")
+    if i == -1:
+        return None
+    depth, j = 1, i + len("\\boxed{")
+    out = []
+    while j < len(solution) and depth:
+        ch = solution[j]
+        depth += ch == "{"
+        depth -= ch == "}"
+        if depth:
+            out.append(ch)
+        j += 1
+    return "".join(out) or None
 
 
 def _load_rows_any(root) -> list[dict] | None:
