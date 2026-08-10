@@ -82,6 +82,16 @@
 - **수정**: venv+pip 경로(constraints 고정), pip `--timeout 60`·curl 타임아웃·
   `HF_HUB_ETAG_TIMEOUT=15`+미러 폴백 — "멈춘 것처럼 보임"을 "명확한 에러"로 전환.
 
+### C5. cuDNN SDPA 'unspecified launch failure' — 두 번 잡은 버그
+- **증상**: Hopper(H100)에서 forward 중 `CUDA error: unspecified launch failure`.
+  비동기 에러라 보고 지점이 매번 다름(modeling_qwen2.py:261 → 재발 때는 :47).
+- **1차 수정**: `load_model()` 안에서 `torch.backends.cuda.enable_cudnn_sdp(False)`.
+  **그러나 재발** — drift 학습(rollout.py의 직접 `from_pretrained`)과
+  downstream(train_downstream.py)은 load_model을 안 거쳐 미적용이었다.
+- **최종 수정**: rollout.py **모듈 import 시점** 전역 비활성(모든 스테이지가
+  rollout을 import). 교훈: 프로세스 전역이어야 하는 설정을 특정 로더 함수 안에
+  두지 말 것 — 보고 라인이 달라도 같은 병일 수 있다.
+
 ## D. 관측성 — 버그는 아니지만 버그처럼 보이게 하던 것들
 
 - 첫 진행 로그가 5건 처리 후에야 출력 → 7B에서 수 분 침묵 = 멈춤 오인.
