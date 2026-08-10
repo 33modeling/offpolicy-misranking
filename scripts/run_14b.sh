@@ -17,6 +17,18 @@ MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-14B-Instruct}"
 OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate-14b}"; export OUT_ROOT
 LOGS="$OUT_ROOT/logs"; mkdir -p "$LOGS"
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOGS/main.log"; }
+# 다른 실행(7B babysit/run)과의 GPU 충돌 차단
+if pgrep -f "bash.*scripts/babysit.sh" >/dev/null || pgrep -f "scripts/run_h100_all.sh" >/dev/null; then
+  echo "[abort] 7B babysit/run_h100_all 이 아직 실행 중 — 14B와 GPU가 충돌한다."
+  echo "        먼저:  pkill -f babysit.sh; pkill -f run_h100_all; pkill -f 'src/experiment.py'; pkill -f gpu_keepalive"
+  exit 1
+fi
+BUSY=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '$1 > 2000' | wc -l)
+if [ "${BUSY:-0}" -gt 0 ] && [ "${OM_SKIP_GPU_CHECK:-0}" != "1" ]; then
+  echo "[abort] GPU ${BUSY}개가 이미 점유 중:"
+  nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv || true
+  exit 1
+fi
 run_stage() { local gpu="$1" lf="$2"; shift 2
   local t0=$SECONDS
   log "GPU$gpu ▶ $*"
