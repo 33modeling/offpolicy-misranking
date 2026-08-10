@@ -106,6 +106,30 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             items.append({"question": q, "answer": tests_str})
         if not items:
             raise ValueError(f"mbpp 스키마 파싱 실패 (root={root}) — 필드명을 확인할 것")
+    elif dataset == "kk":
+        # Knights & Knaves 논리 퍼즐 — 사전 배치본($DATASETS_DIR/kk 등)
+        tried = [Path(os.environ["KK_DIR"])] if os.environ.get("KK_DIR") \
+            else [b / n for b in _dataset_bases()
+                  for n in ("kk", "knights-and-knaves", "knights_and_knaves")]
+        root = next((c for c in tried if c.exists()), None)
+        rows = _load_rows_any(root) if root else None
+        if rows is None:
+            raise ValueError("kk 로컬 사본 없음. 찾아본 위치:\n  "
+                             + "\n  ".join(str(t) for t in tried)
+                             + "\nKK_DIR=<경로>로 지정 가능.")
+        items = []
+        for r in rows:
+            quiz, names, sol = r.get("quiz"), r.get("names"), r.get("solution")
+            if not (quiz and names and isinstance(sol, list) and len(sol) == len(names)):
+                continue
+            gold = "KK:" + ";".join(
+                f"{n}={'knight' if s else 'knave'}" for n, s in zip(names, sol))
+            q = (f"{quiz}\n\nDetermine each person's identity. Reason step by step, "
+                 "then after '####' state your final answer as e.g. "
+                 "'Zoey is a knight, Oliver is a knave.'")
+            items.append({"question": q, "answer": gold})
+        if not items:
+            raise ValueError(f"kk 스키마 파싱 실패 (root={root}) — quiz/names/solution 필드 확인")
     elif dataset == "dapo-math":
         # 본실험용. 스키마가 릴리스마다 달라 방어적으로 파싱한다 — 첫 실행에서 확인할 것.
         ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
@@ -219,8 +243,8 @@ _CODE_MARKER = "Your code should satisfy these tests"
 
 
 def build_user_msg(question: str) -> str:
-    """수학 문제는 #### 템플릿으로 감싸고, mbpp는 이미 완전한 지시문이라 그대로."""
-    if _CODE_MARKER in question:
+    """수학 문제는 #### 템플릿으로 감싸고, 이미 완전한 지시문(mbpp/kk)은 그대로."""
+    if _CODE_MARKER in question or "####" in question:
         return question
     return PROMPT_TEMPLATE.format(question=question)
 
@@ -262,9 +286,23 @@ def _code_reward(text: str, tests: str) -> float:
         return 0.0
 
 
+def _kk_reward(text: str, gold: str) -> float:
+    """이름별 knight/knave 전원 정답이어야 1.0 — 각 이름의 마지막 언급으로 판정."""
+    pairs = [p.split("=", 1) for p in gold[3:].split(";") if "=" in p]
+    seg = text.split("####")[-1] if "####" in text else text
+    for name, role in pairs:
+        ms = list(re.finditer(
+            rf"\b{re.escape(name)}\b\s+is\s+(?:a|an)\s+(knight|knave)", seg, re.I))
+        if not ms or ms[-1].group(1).lower() != role:
+            return 0.0
+    return 1.0
+
+
 def reward(text: str, gold: str) -> float:
     if gold.lstrip().startswith("assert"):  # mbpp — 실행 채점
         return _code_reward(text, gold)
+    if gold.startswith("KK:"):  # knights & knaves — 전원 신원 매치
+        return _kk_reward(text, gold)
     pred = extract_answer(text)
     if pred is None:
         return 0.0

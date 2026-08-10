@@ -56,6 +56,7 @@ case "$DATASET" in
     done
     [ -n "$found" ] || { echo "[abort] math500 데이터 없음 — 'bash scripts/fetch_datasets.sh math500' 또는 MATH500_DIR=<경로> 지정"; exit 1; } ;;
   mbpp)    DATA_FILE="" ; [ -d "$DATASETS_DIR/mbpp" ] || { echo "[abort] $DATASETS_DIR/mbpp 없음 — 'bash scripts/fetch_datasets.sh mbpp' 먼저"; exit 1; } ;;
+  kk)      DATA_FILE="" ; [ -d "$DATASETS_DIR/kk" ] || [ -n "${KK_DIR:-}" ] || { echo "[abort] $DATASETS_DIR/kk 없음 — 'bash scripts/fetch_datasets.sh kk' 또는 KK_DIR=<경로>"; exit 1; } ;;
   *)       DATA_FILE="" ;;
 esac
 if [ -n "$DATA_FILE" ] && [ ! -f "$DATA_FILE" ]; then
