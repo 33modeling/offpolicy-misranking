@@ -41,7 +41,9 @@ run_stage() { local gpu="$1" lf="$2"; shift 2
 }
 DRIFT=100
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1)
+DATASET="${DATASET:-gsm8k}"
+[ "$DATASET" != "gsm8k" ] && OUT_ROOT="${OUT_ROOT}-${DATASET}" && LOGS="$OUT_ROOT/logs" && mkdir -p "$LOGS"
+COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1)
 
 "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
 KEEP=$!
