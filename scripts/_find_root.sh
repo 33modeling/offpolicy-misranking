@@ -3,8 +3,10 @@
 #   인자가 있으면 그 대상 고정, 없으면 최근 산출물 자동 탐색(후보 목록 출력).
 _arg="${1:-${OM_TARGET:-}}"
 case "$_arg" in
-  7b)   OUT_ROOT="$OM_WORK/runs/gate" ;;
-  14b)  OUT_ROOT="$OM_WORK/runs/gate-14b" ;;
+  7b)   OUT_ROOT="$OM_WORK/runs/gate" ;;            # 7B GSM8K (원 게이트)
+  14b)  OUT_ROOT="$OM_WORK/runs/gate-14b" ;;        # 14B GSM8K (포화 퇴화 run)
+  7bm)  OUT_ROOT="$OM_WORK/runs/gate-7b-math500" ;; # 7B MATH-500
+  14bm) OUT_ROOT="$OM_WORK/runs/gate-14b-math500" ;;# 14B MATH-500
   fast) OUT_ROOT="$OM_WORK/runs/gate-fast" ;;
   "")   ;;
   *)    OUT_ROOT="$_arg" ;;
