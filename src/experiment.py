@@ -257,7 +257,7 @@ def main() -> None:
                    choices=["prep", "rollout-behavior", "drift", "score", "oracle",
                             "report", "hybrid", "analyze", "downstream",
                             "rollout-fresh", "oracle-grads", "score-shard",
-                            "merge-grads", "val-grads"])
+                            "merge-grads", "val-grads", "val-deepen"])
     p.add_argument("--run", default="outputs/pilot")
     p.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     p.add_argument("--adapter", default=None, help="π LoRA adapter 경로 (없으면 β=π)")
@@ -341,6 +341,20 @@ def main() -> None:
         stage_score(args, run)
     elif args.stage == "oracle":
         stage_oracle(args, run)
+    elif args.stage == "val-deepen":
+        # val fresh를 K만큼 추가 수집(append) 후 val gradient 재계산 — α_v 심화용
+        pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+        prompts = json.loads((run / "prompts.json").read_text())
+        extra = run / "rollouts_fresh_val.extra.jsonl"
+        collect_rollouts(pi, tok, prompts["val"], args.val_k,
+                         args.max_new_tokens, args.temperature, extra)
+        with (run / "rollouts_fresh_val.jsonl").open("a") as f:
+            for line in extra.open():
+                f.write(line)
+        extra.unlink()
+        for p in ("val_gradient.pt", "val_groups.pt"):
+            (run / p).unlink(missing_ok=True)
+        print(f"val-deepen: +K={args.val_k} 추가 완료 → val-grads 재계산 필요")
     elif args.stage == "val-grads":
         pi, _ = load_policy(args.model, Path(args.adapter) if args.adapter else None)
         params = grad_params(pi, args.grad_layers)
