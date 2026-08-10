@@ -51,11 +51,23 @@ def diagnose_run(run: Path) -> None:
         vars_.append(float(stack.var(dim=0).sum()))
         norms.append(float(mu.norm()))
 
+    # 무신호(gradient 노름 ≈ 0 = 보상 분산 0) 프롬프트 — GRPO도 버리는 데이터
+    live = [j for j in range(m) if norms[j] > 1e-6]
+    print(f"[{run.name}] 유신호 {len(live)}/{m} prompts (무신호 {m - len(live)}개 = 전부 정답/오답 그룹)")
+
     frac = 0.10
     k = max(1, int(m * frac))
     srt = sorted(range(m), key=lambda j: phis[j])
     gap = phis[srt[k]] - phis[srt[k - 1]]
-    band = srt[max(0, k - 10): k + 10]
+    # 유신호만의 경계 margin (실질 인증 문제)
+    if len(live) > k:
+        srt_l = sorted(live, key=lambda j: phis[j])
+        gap_live = phis[srt_l[k]] - phis[srt_l[k - 1]]
+        print(f"[{run.name}] 유신호 한정 margin={gap_live:.2f}° (전체 포함 {gap:.2f}°)")
+        gap = gap_live
+        band = srt_l[max(0, k - 10): k + 10]
+    else:
+        band = srt[max(0, k - 10): k + 10]
     med_var = sorted(vars_[j] for j in band)[len(band) // 2]
     med_norm = sorted(norms[j] for j in band)[len(band) // 2]
     a_req = (gap - 2.0 * a_v) / 2.0

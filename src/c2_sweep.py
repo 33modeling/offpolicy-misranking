@@ -41,14 +41,21 @@ def main() -> int:
         micro = torch.load(mg, weights_only=True)
         val_pool = torch.load(vg, weights_only=True).float()
         oracle = {int(i): v["score"] for i, v in json.loads(oc.read_text()).items()}
-        order = sorted(micro)
+        order_all = sorted(micro)
+        # 무신호(보상 분산 0 → gradient 0) 프롬프트 제외 — GRPO 학습도 버리는 표본이라
+        # 인증 유니버스에서 빼는 것이 실무 정의에 맞다. k는 원 유니버스의 10% 유지.
+        order = [i for i in order_all if float(micro[i].float().mean(dim=0).norm()) > 1e-6]
         pools = [micro[i].float() for i in order]
         n_pool = pools[0].shape[0]
-        print(f"\n===== {run.name}: 후보 {len(pools)}개 × micro-group {n_pool} =====")
+        print(f"\n===== {run.name}: 유신호 후보 {len(pools)}/{len(order_all)}개 × micro-group {n_pool} =====")
         best = None
-        frac = 0.10  # 게이트 기준은 top-10% — 판정에 필요한 축만 돈다
-        k = max(1, int(len(pools) * frac))
-        o_top = set(sorted(oracle, key=lambda i: -oracle[i])[:k])
+        frac = 0.10  # 게이트 기준은 top-10% — k는 원 유니버스 기준 유지
+        k = max(1, int(len(order_all) * frac))
+        if k >= len(pools):
+            print("  유신호 후보가 k 이하 — 인증 문제 자체가 퇴화 (데이터 난이도 문제)")
+            continue
+        o_top = set(sorted((i for i in oracle if i in set(order)),
+                           key=lambda i: -oracle[i])[:k])
         uni = uniform_baseline(pools, val_pool, k, groups_each=n_pool)
         uni_prec = len({order[i] for i in uni["selected"]} & o_top) / k
         cap = int(uni["fresh_groups"] * 0.55)  # 0.5× 초과 = FAIL 확정 → 조기 중단
