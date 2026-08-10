@@ -356,8 +356,14 @@ def main() -> None:
             collect_rollouts(pi, tok, prompts["val"], args.val_k,
                              args.max_new_tokens, args.temperature, val_out)
     elif args.stage == "drift":
-        train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
-                         run / f"drift_{args.drift_steps}", steps=args.drift_steps)
+        # 재개 시 재학습 금지 — LoRA 초기화가 랜덤이라 π가 바뀌면 이전에 계산된
+        # 점수들과의 비교 일관성이 깨진다. 다시 학습하려면 adapter 폴더를 지울 것.
+        adapter_dir = run / f"drift_{args.drift_steps}"
+        if (adapter_dir / "adapter_config.json").exists():
+            print(f"drift: {adapter_dir.name} 이미 존재 — 스킵 (재학습하려면 폴더 삭제)")
+        else:
+            train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
+                             adapter_dir, steps=args.drift_steps)
     elif args.stage == "score":
         stage_score(args, run)
     elif args.stage == "oracle":
