@@ -85,6 +85,83 @@ class Run:
     def obs_score(self, i: int, m: int) -> float:
         return cos(self.obs[i][:m].mean(0), self.val)
 
+    def features(self, i: int) -> list[float]:
+        """2D-REFRESH 특징: 셀 점수 3종 + 축별 불일치 + β 난이도."""
+        s00, s10, s01 = (self.stale[e][i] for e in ("g00", "g10", "g01"))
+        p = self.passrate[i]
+        return [s00, s10, s01,
+                abs(s10 - s00), abs(s01 - s00), abs(s10 - s01),
+                p, p * (1 - p)]
+
+    def pol_2d_refresh(self, budget_groups: int, mode: str, rng) -> tuple[set, int]:
+        """감사-보정 + 획득함수 기반 fresh 배분 (concept '2D-REFRESH' v0 시뮬).
+
+        mode: full | margin_only | disagree_only  (획득함수 ablation)
+        예산 회계: audit(층화 5%, m=2) + refresh(m=2) 전부 budget_groups에서 차감.
+        """
+        m_a = 2
+        spent = 0
+        # ① 층화 audit — passrate 3분위에서 균등 추출
+        n_a = max(6, int(0.05 * self.n))
+        n_a = min(n_a, budget_groups // (2 * m_a))  # 예산 절반 이상을 audit에 안 씀
+        if n_a < 3:
+            return topk_ids(self.stale["g00"], self.k, rng), 0  # 예산 부족 → stale
+        by_p = sorted(self.ids, key=lambda i: self.passrate[i])
+        terciles = [by_p[j::3] for j in range(3)]
+        audit: list[int] = []
+        for t in terciles:
+            audit += rng.sample(t, min(len(t), max(1, n_a // 3)))
+        audit = audit[:n_a]
+        spent += len(audit) * m_a
+        y = {i: self.obs_score(i, m_a) for i in audit}
+        # ② ridge 보정 ŝ + 3분위 잔차 r_i
+        X = torch.tensor([self.features(i) for i in audit], dtype=torch.float64)
+        Y = torch.tensor([y[i] for i in audit], dtype=torch.float64)
+        Xm, Xs = X.mean(0), X.std(0).clamp_min(1e-6)
+        Z = (X - Xm) / Xs
+        A = Z.T @ Z + 1e-1 * torch.eye(Z.shape[1], dtype=torch.float64)
+        w = torch.linalg.solve(A, Z.T @ (Y - Y.mean()))
+        def pred(i: int) -> float:
+            z = (torch.tensor(self.features(i), dtype=torch.float64) - Xm) / Xs
+            return float(z @ w + Y.mean())
+        shat = {i: pred(i) for i in self.ids}
+        res_by_t = []
+        for t in terciles:
+            rs = [abs(shat[i] - y[i]) for i in t if i in y]
+            res_by_t.append(sum(rs) / len(rs) if rs else 0.1)
+        tvix = {i: j for j, t in enumerate(terciles) for i in t}
+        r_i = {i: res_by_t[tvix[i]] for i in self.ids}
+        d_i = {i: max(self.features(i)[3:6]) for i in self.ids}
+        # ③ 획득 루프 — 라운드마다 τ 재계산, 상위 8개에 m=2 refresh
+        score = dict(shat)
+        for i in audit:
+            score[i] = y[i]
+        refreshed = set(audit)
+        while spent + m_a <= budget_groups:
+            kth = sorted(score.values(), reverse=True)[self.k - 1]
+            def acq(i: int) -> float:
+                gap = abs(score[i] - kth) + 1e-3
+                if mode == "margin_only":
+                    return 1.0 / gap
+                if mode == "disagree_only":
+                    return d_i[i]
+                return (r_i[i] + 0.5 * d_i[i]) / gap
+            cand = [i for i in self.ids if i not in refreshed]
+            if not cand:
+                break
+            batch = sorted(cand, key=acq, reverse=True)[:8]
+            took = False
+            for i in batch:
+                if spent + m_a > budget_groups:
+                    break
+                score[i] = self.obs_score(i, m_a)
+                refreshed.add(i)
+                spent += m_a
+                took = True
+            if not took:
+                break
+        return topk_ids(score, self.k, rng), spent
+
     def pol_stale(self, est: str, rng) -> tuple[set, int]:
         return topk_ids(self.stale[est], self.k, rng), 0
 
@@ -154,6 +231,13 @@ def simulate(run: Run) -> list[dict]:
                 lambda rng, p=p, m=m: run.pol_audit(base_est, p, m, False, rng), True)
             add(f"audit_bnd_p{int(p*100)}_m{m}",
                 lambda rng, p=p, m=m: run.pol_audit(base_est, p, m, True, rng), True)
+    # 2D-REFRESH와 획득함수 ablation — audit_*와 동일 예산 격자(B = p·n·2)
+    for p in AUDIT_FRACS:
+        B = max(1, int(p * run.n)) * 2
+        for mode, tagm in (("full", "2dref"), ("margin_only", "2dref_marginonly"),
+                           ("disagree_only", "2dref_disagreeonly")):
+            add(f"{tagm}_p{int(p*100)}",
+                lambda rng, B=B, mode=mode: run.pol_2d_refresh(B, mode, rng), True)
     return rows
 
 
@@ -209,6 +293,7 @@ def to_md(all_rows: list[dict], conds: list[dict]) -> str:
 
     lines.append("\n## F3. family 비교 (run별 최고 정책)")
     fam = {"gradient(stale)": lambda p: p.startswith("stale_"),
+           "2D-REFRESH": lambda p: p.startswith("2dref_p") or p.startswith("2dref_") and "only" not in p,
            "predictor(passrate)": lambda p: p.startswith("passrate"),
            "audit(random)": lambda p: p.startswith("audit_rand"),
            "audit(boundary)": lambda p: p.startswith("audit_bnd"),
