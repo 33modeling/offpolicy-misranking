@@ -123,6 +123,7 @@ bash scripts/go.sh fast     # 빠른 판정: drift 100만 + fresh 절반 + downs
 bash scripts/status.sh      # 진행 위치·ETA 자동계산·산출물 체크리스트·학습 건전성(loss/보상 추세)
 bash scripts/result.sh      # report 원문 + judge.py 게이트 5조건 자동 PASS/FAIL
 bash scripts/selection.sh   # 방법별로 실제 뽑힌 문제·난이도·겹침 행렬
+bash scripts/tables.sh      # 논문용 결과 테이블 7종 (요약·정규화 재판정·floor곡선·live·hybrid·margin·downstream) → results/TABLES.md
 ```
 
 보조: `reset_run.sh [--hard|--dry-run]`(프로세스 종료+GPU 확인+산출물 정리 —
