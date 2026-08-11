@@ -42,15 +42,32 @@ OM_GPUS="$G14" DATASET=math500 bash scripts/run_14b.sh > 14b-math.log 2>&1 &
 P14=$!
 trap 'echo "== 중단 요청 — 둘 다 정리"; kill $P7 $P14 2>/dev/null; exit 130' INT TERM
 
-echo "== [3/3] 실시간 로그 (7b:/14b: 접두) — 완주까지 이 창 유지"
+echo "== [3/3] 실시간 로그 — 스테이지 전환은 즉시, 상세 진행(문항·ETA·loss)은 15초마다"
 ( tail -n 2 -f 7b-math.log  | sed -u 's/^/[7b ] /' ) &
 T1=$!
 ( tail -n 2 -f 14b-math.log | sed -u 's/^/[14b] /' ) &
 T2=$!
+# 스테이지 내부의 상세 진행은 runs/<run>/logs/*.log에 쌓인다 — 활동 중인 로그의
+# 마지막 줄을 주기적으로 화면에 올려 "침묵 = 멈춤 오인"을 없앤다.
+watch_detail() {  # watch_detail <태그> <logs디렉토리>
+  local prev=""
+  while :; do
+    sleep 15
+    local lf line
+    lf=$(ls -t "$2"/*.log 2>/dev/null | head -1)
+    [ -n "$lf" ] || continue
+    line=$(tail -n 1 "$lf" 2>/dev/null | cut -c1-120)
+    [ -n "$line" ] && [ "$line" != "$prev" ] && { echo "[$1·$(basename "$lf" .log)] $line"; prev="$line"; }
+  done
+}
+watch_detail "7b " "$OM_WORK/runs/gate-7b-math500/logs" &
+W1=$!
+watch_detail "14b" "$OM_WORK/runs/gate-14b-math500/logs" &
+W2=$!
 R7=0; R14=0
 wait "$P7" || R7=$?
 wait "$P14" || R14=$?
-kill "$T1" "$T2" 2>/dev/null
+kill "$T1" "$T2" "$W1" "$W2" 2>/dev/null
 echo
 echo "== 종료: 7B rc=$R7 / 14B rc=$R14  (0=완주)"
 [ "$R7" -eq 0 ] && echo "-- 7B 판정:  bash scripts/result.sh 7bm"
