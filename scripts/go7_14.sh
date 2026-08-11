@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 7B+14B MATH-500 동시 실행 (한 노드, GPU 반반) + 자가진단:  bash scripts/go7_14.sh
-#   ① GPU 건강검사(matmul) ② 둘 다 실행 ③ 45초 후 생존 확인·사인 출력
+# 7B+14B MATH-500 동시 실행 — tmux 포그라운드용:  bash scripts/go7_14.sh
+#   ① GPU 건강검사 ② 반반 분할로 둘 다 실행 ③ 두 로그를 실시간 출력하며 완주까지 대기
+# Ctrl+C 하면 둘 다 정리 종료. (백그라운드로 원하면 go7m.sh/go14m.sh 개별 사용)
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
@@ -24,25 +25,28 @@ done
 H=$((N / 2))
 G7=$(seq -s, 0 $((H - 1)))
 G14=$(seq -s, "$H" $((N - 1)))
-echo "== [2/3] 실행: 7B=[GPU $G7]  14B=[GPU $G14]"
-OM_GPUS="$G7" bash scripts/go7m.sh
-OM_GPUS="$G14" bash scripts/go14m.sh
+echo "== [2/3] 실행: 7B=[GPU $G7]  14B=[GPU $G14]  (로그: 7b-math.log / 14b-math.log)"
 
-echo "== [3/3] 45초 후 생존 확인..."
-sleep 45
-ok=1
-if pgrep -f -- "--run .*gate-7b-math500" >/dev/null; then
-  echo "  7B  ✔ 실행 중 — $(tail -1 7b-math.log | cut -c1-70)"
-else
-  ok=0; echo "  7B  ✘ 죽음 — 사인:"; tail -6 7b-math.log | sed 's/^/    /'
-fi
-if pgrep -f -- "--run .*gate-14b-math500" >/dev/null; then
-  echo "  14B ✔ 실행 중 — $(tail -1 14b-math.log | cut -c1-70)"
-else
-  ok=0; echo "  14B ✘ 죽음 — 사인:"; tail -6 14b-math.log | sed 's/^/    /'
-fi
-if [ "$ok" -eq 1 ]; then
-  echo "== 둘 다 정상 — 이제 접속 끊어도 됨. 결과: bash scripts/result.sh 7bm / 14bm"
-else
-  echo "== 위 '사인' 부분을 사진으로 찍어 전달할 것"
-fi
+OM_GPUS="$G7" MODEL_14B="$MODELS_DIR/Qwen2.5-7B-Instruct" DATASET=math500 \
+  FRESH_K=32 OUT_ROOT="$OM_WORK/runs/gate-7b" \
+  bash scripts/run_14b.sh > 7b-math.log 2>&1 &
+P7=$!
+OM_GPUS="$G14" DATASET=math500 bash scripts/run_14b.sh > 14b-math.log 2>&1 &
+P14=$!
+trap 'echo "== 중단 요청 — 둘 다 정리"; kill $P7 $P14 2>/dev/null; exit 130' INT TERM
+
+echo "== [3/3] 실시간 로그 (7b:/14b: 접두) — 완주까지 이 창 유지"
+( tail -n 2 -f 7b-math.log  | sed -u 's/^/[7b ] /' ) &
+T1=$!
+( tail -n 2 -f 14b-math.log | sed -u 's/^/[14b] /' ) &
+T2=$!
+R7=0; R14=0
+wait "$P7" || R7=$?
+wait "$P14" || R14=$?
+kill "$T1" "$T2" 2>/dev/null
+echo
+echo "== 종료: 7B rc=$R7 / 14B rc=$R14  (0=완주)"
+[ "$R7" -eq 0 ] && echo "-- 7B 판정:  bash scripts/result.sh 7bm"
+[ "$R7" -ne 0 ] && { echo "-- 7B 사인:"; tail -6 7b-math.log | sed 's/^/   /'; }
+[ "$R14" -eq 0 ] && echo "-- 14B 판정: bash scripts/result.sh 14bm"
+[ "$R14" -ne 0 ] && { echo "-- 14B 사인:"; tail -6 14b-math.log | sed 's/^/   /'; }
