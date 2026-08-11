@@ -81,7 +81,7 @@ run_stage() { local dev="${GPUS[$1]:-$1}" lf="$2"; shift 2
     log "GPU$dev ✔ $1 $2 ($((SECONDS - t0))s)"
   else local rc=$?; log "GPU$dev ✘ $* rc=$rc"; tail -8 "$lf" | tee -a "$LOGS/main.log"; return $rc; fi
 }
-DRIFT=100
+DRIFT="${DRIFT:-100}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # 클러스터 노드들의 fused SDPA ULF 이력(C5·C6) — 어떤 경로로 실행해도 eager 기본.
 # 빠른 커널을 검증한 노드에서만 OM_ATTN=sdpa 로 명시 해제.
