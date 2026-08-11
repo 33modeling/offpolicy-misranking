@@ -92,8 +92,9 @@ DATASET="${DATASET:-gsm8k}"
 # 데이터 사전 검사 — 로더 자신을 그대로 실행 (검사·실제 로드가 같은 코드 경로)
 # 실패 시 로더가 '찾아본 위치' 목록을 출력하므로 원인 자가진단됨. GPU 잡기 전에 죽는다.
 if ! "$PY" -c "import sys; sys.path.insert(0, 'src'); from data import load_prompts; \
-r = load_prompts('$DATASET', 1, 1); print('[preflight] $DATASET 데이터 OK')"; then
-  echo "[abort] $DATASET 데이터 로드 실패 — 위 '찾아본 위치'를 확인하거나 fetch_datasets.sh 실행"
+r = load_prompts('$DATASET', ${N_TRAIN:-256}, ${N_VAL:-50}); \
+print('[preflight] $DATASET 데이터 OK — train', len(r['train']), '/ val', len(r['val']))"; then
+  echo "[abort] $DATASET 데이터 로드 실패(스키마·크기 포함) — 위 메시지 확인 / fetch_datasets.sh"
   exit 1
 fi
 COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1 --n-train "${N_TRAIN:-256}" --n-val "${N_VAL:-50}")
