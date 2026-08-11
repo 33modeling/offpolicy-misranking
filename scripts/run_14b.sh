@@ -83,6 +83,9 @@ run_stage() { local dev="${GPUS[$1]:-$1}" lf="$2"; shift 2
 }
 DRIFT=100
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# 클러스터 노드들의 fused SDPA ULF 이력(C5·C6) — 어떤 경로로 실행해도 eager 기본.
+# 빠른 커널을 검증한 노드에서만 OM_ATTN=sdpa 로 명시 해제.
+export OM_ATTN="${OM_ATTN:-eager}"
 DATASET="${DATASET:-gsm8k}"
 [ "$DATASET" != "gsm8k" ] && OUT_ROOT="${OUT_ROOT}-${DATASET}" && LOGS="$OUT_ROOT/logs" && mkdir -p "$LOGS"
 # 데이터 사전 검사 — 오프라인 노드에서 허브 직행으로 죽는 것을 시작 전에 잡는다
