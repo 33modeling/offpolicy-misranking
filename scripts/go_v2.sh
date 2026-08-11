@@ -82,7 +82,7 @@ for SEED in "${SEEDS[@]}"; do
     for try in 1 2; do
       echo "==== [$KEY] 시도 $try/2"
       cleanup_strays
-      if DATASET="$DS" OUT_ROOT="$BASE-s$SEED" SEED="$SEED" bash scripts/run_14b.sh >> "$LOG" 2>&1; then
+      if DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" bash scripts/run_14b.sh >> "$LOG" 2>&1; then
         ok=1; echo "==== [$KEY] ✔ 완주"; break
       fi
       echo "==== [$KEY] ✘ 실패 — tail:"; tail -4 "$LOG" | sed 's/^/     /'

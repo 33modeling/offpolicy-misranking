@@ -71,7 +71,7 @@ for DS in "${DATASETS[@]}"; do
   for try in $(seq 1 "$MAX_TRY"); do
     echo "==== [$DS] 시도 $try/$MAX_TRY"
     cleanup_strays
-    if DATASET="$DS" OUT_ROOT="$BASE_ROOT" bash scripts/run_14b.sh >> "$LOG" 2>&1; then
+    if DATASET="$DS" OUT_ROOT="$RUN_DIR" bash scripts/run_14b.sh >> "$LOG" 2>&1; then
       ok=1; echo "==== [$DS] ✔ 완주"; break
     fi
     echo "==== [$DS] ✘ 시도 $try 실패 — 마지막 로그:"
