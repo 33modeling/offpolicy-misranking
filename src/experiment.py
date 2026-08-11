@@ -312,7 +312,7 @@ def main() -> None:
     p.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     p.add_argument("--adapter", default=None, help="π LoRA adapter 경로 (없으면 β=π)")
     p.add_argument("--dataset", default="gsm8k",
-                   choices=["gsm8k", "math500", "mbpp", "kk", "dapo-math"])
+                   choices=["gsm8k", "math500", "mbpp", "kk", "dapo-math", "apps"])
     p.add_argument("--n-train", type=int, default=256)
     p.add_argument("--n-val", type=int, default=50)
     p.add_argument("--behavior-k", type=int, default=8)

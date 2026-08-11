@@ -67,10 +67,25 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
     return model, tok
 
 
+def _lora_targets() -> list | str:
+    """OM_LORA_TARGETS: 콤마 목록 또는 'all-linear' — DeltaNet류 신아키텍처는
+    q/v_proj가 일부 층에만 있어 all-linear가 안전하다 (27B G블록용)."""
+    v = os.environ.get("OM_LORA_TARGETS", "")
+    if not v:
+        return ["q_proj", "v_proj"]
+    return v if v == "all-linear" else [s.strip() for s in v.split(",") if s.strip()]
+
+
 def chat_ids(tok, question: str) -> torch.Tensor:
     msgs = [{"role": "user", "content": build_user_msg(question)}]
     # transformers 4/5 양쪽에서 안전: 템플릿은 텍스트로 뽑고 별도로 토크나이즈.
-    text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+    # thinking 계열(Qwen3+)은 기본 OFF — 짧은 rollout이라는 추정량 정의를 보존.
+    # (해당 인자를 모르는 템플릿에서는 TypeError 폴백)
+    kw = {} if os.environ.get("OM_THINKING") == "on" else {"enable_thinking": False}
+    try:
+        text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False, **kw)
+    except TypeError:
+        text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
     return tok(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
 
 
@@ -159,7 +174,7 @@ def train_drift_lora(
     )
     model = get_peft_model(
         model,
-        LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.0),
+        LoraConfig(r=16, lora_alpha=32, target_modules=_lora_targets(), lora_dropout=0.0),
     )
     # 활성값 메모리 절감 — 7B 학습 OOM 방지
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})

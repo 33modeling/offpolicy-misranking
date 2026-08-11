@@ -15,7 +15,7 @@ import torch
 
 from data import reward
 from grads import loo_advantages
-from rollout import SAMPLING, auto_device, chat_ids
+from rollout import SAMPLING, _lora_targets, auto_device, chat_ids
 
 
 def grpo_lite_train(
@@ -41,7 +41,7 @@ def grpo_lite_train(
         **_attn_kwargs(),
     )
     model = get_peft_model(model, LoraConfig(
-        r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0.0))
+        r=16, lora_alpha=32, target_modules=_lora_targets(), lora_dropout=0.0))
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)

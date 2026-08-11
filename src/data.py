@@ -19,6 +19,17 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     import os
     from pathlib import Path
 
+    # 사전 구성 풀 오버라이드 (예: 27B hard-slice) — {"question","answer"} jsonl.
+    # dataset 이름은 reward 분기용으로 그대로 쓰이고, 풀 내용만 이 파일이 대체한다.
+    pool = os.environ.get("OM_POOL_FILE")
+    if pool:
+        pf = Path(pool)
+        if not pf.is_file():
+            raise ValueError(f"OM_POOL_FILE 없음: {pool}")
+        rows = [json.loads(l) for l in pf.open()]
+        items = [{"question": r["question"], "answer": str(r["answer"])} for r in rows]
+        return _split(items, n_train, n_val, seed, f"pool({pf.name})")
+
     # 로컬 사본 — provision.sh($OM_DATA) 또는 fetch_datasets.sh($DATASETS_DIR/<이름>/)
     local_names = {"gsm8k": "gsm8k_train.jsonl", "math500": "math500_test.jsonl"}
     fname = local_names.get(dataset, "_none_")
@@ -157,6 +168,38 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
                 items.append({"question": str(q), "answer": str(a)})
         if not items:
             raise ValueError("DAPO-Math-17k 스키마 파싱 실패 — 필드명을 확인할 것")
+    elif dataset == "apps":
+        # 경쟁 프로그래밍 — stdin/stdout 실행 채점. 사전 배치본만 (fetch_datasets.sh apps).
+        tried = [Path(os.environ["APPS_DIR"])] if os.environ.get("APPS_DIR") \
+            else [b / "apps" for b in _dataset_bases()]
+        root = next((c for c in tried if c.exists()), None)
+        rows = _load_rows_any(root) if root else None
+        if rows is None:
+            raise ValueError("apps 로컬 사본 없음. 찾아본 위치:\n  "
+                             + "\n  ".join(str(t) for t in tried)
+                             + "\nAPPS_DIR=<경로>로 지정 가능. (fetch_datasets.sh apps)")
+        items = []
+        for r in rows:
+            io = r.get("input_output")
+            if isinstance(io, str):
+                try:
+                    io = json.loads(io)
+                except ValueError:
+                    continue
+            if not isinstance(io, dict) or io.get("fn_name"):
+                continue  # call-based 문제 제외 — stdin/stdout형만 채점 지원
+            ins, outs = io.get("inputs") or [], io.get("outputs") or []
+            if not ins or len(ins) != len(outs) or not all(isinstance(x, str) for x in ins):
+                continue
+            q = ("Write a Python program that reads from standard input and writes "
+                 "the answer to standard output.\n\n" + str(r.get("question", ""))
+                 + "\n\nReturn the complete program in a ```python code block.")
+            # 테스트 8개 캡 — 채점 비용 상한 (APPS는 문제당 수십~수백 테스트)
+            gold = "APPS:" + json.dumps(
+                {"inputs": ins[:8], "outputs": [str(o) for o in outs[:8]]})
+            items.append({"question": q, "answer": gold})
+        if not items:
+            raise ValueError(f"apps 스키마 파싱 실패 (root={root}) — input_output 필드 확인")
     else:
         raise ValueError(f"unknown dataset {dataset}")
 
@@ -253,11 +296,12 @@ PROMPT_TEMPLATE = (
 )
 
 _CODE_MARKER = "Your code should satisfy these tests"
+_APPS_MARKER = "reads from standard input"
 
 
 def build_user_msg(question: str) -> str:
-    """수학 문제는 #### 템플릿으로 감싸고, 이미 완전한 지시문(mbpp/kk)은 그대로."""
-    if _CODE_MARKER in question or "####" in question:
+    """수학 문제는 #### 템플릿으로 감싸고, 이미 완전한 지시문(mbpp/kk/apps)은 그대로."""
+    if _CODE_MARKER in question or "####" in question or _APPS_MARKER in question:
         return question
     return PROMPT_TEMPLATE.format(question=question)
 
@@ -301,6 +345,36 @@ def _code_reward(text: str, tests: str) -> float:
         return 0.0
 
 
+def _apps_reward(text: str, gold: str) -> float:
+    """APPS stdin/stdout 채점 — 캡된 테스트 전부에서 stdout이 일치해야 1.0.
+
+    타임아웃 8초/테스트. stdout 비교는 줄 단위 우측 공백·전체 앞뒤 공백 무시.
+    (capture라 print 폭주 시 메모리 위험이 있으나 타임아웃이 상한 — mbpp와 달리
+    출력 자체가 채점 대상이라 DEVNULL 불가.)
+    """
+    import json as _json
+    import subprocess
+    import sys
+
+    io = _json.loads(gold[5:])
+    code = _extract_code(text)
+    if not code.strip():
+        return 0.0
+    for inp, want in zip(io["inputs"], io["outputs"]):
+        try:
+            p = subprocess.run([sys.executable, "-I", "-c", code],
+                               input=inp, capture_output=True, text=True, timeout=8)
+        except (subprocess.TimeoutExpired, OSError):
+            return 0.0
+        if p.returncode != 0:
+            return 0.0
+        got = "\n".join(l.rstrip() for l in p.stdout.strip().splitlines())
+        exp = "\n".join(l.rstrip() for l in str(want).strip().splitlines())
+        if got != exp:
+            return 0.0
+    return 1.0
+
+
 def _kk_reward(text: str, gold: str) -> float:
     """이름별 knight/knave 전원 정답이어야 1.0 — 각 이름의 마지막 언급으로 판정."""
     pairs = [p.split("=", 1) for p in gold[3:].split(";") if "=" in p]
@@ -316,6 +390,8 @@ def _kk_reward(text: str, gold: str) -> float:
 def reward(text: str, gold: str) -> float:
     if gold.lstrip().startswith("assert"):  # mbpp — 실행 채점
         return _code_reward(text, gold)
+    if gold.startswith("APPS:"):  # apps — stdin/stdout 실행 채점
+        return _apps_reward(text, gold)
     if gold.startswith("KK:"):  # knights & knaves — 전원 신원 매치
         return _kk_reward(text, gold)
     pred = extract_answer(text)
