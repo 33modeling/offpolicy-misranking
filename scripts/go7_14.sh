@@ -12,9 +12,16 @@ N=$(nvidia-smi -L 2>/dev/null | wc -l)
 echo "== [1/3] GPU 건강검사 (장당 ~10초)"
 sick=0
 for i in $(seq 0 $((N - 1))); do
-  if CUDA_VISIBLE_DEVICES="$i" timeout 60 "$PY" -c "
-import torch; a=torch.randn(2048,2048,device='cuda',dtype=torch.bfloat16)
-(a@a).sum().item(); torch.cuda.synchronize()" 2>/dev/null; then
+  if CUDA_VISIBLE_DEVICES="$i" timeout 120 "$PY" -c "
+import torch
+a = torch.randn(4096, 4096, device='cuda', dtype=torch.bfloat16)
+for _ in range(20):            # matmul 부하
+    a = (a @ a).clamp(-1, 1)
+torch.cuda.synchronize()
+s = torch.randn(32, 2048, 2048, device='cuda', dtype=torch.bfloat16)
+for _ in range(30):            # 실제 사망 이력 커널(softmax) 부하
+    s.softmax(dim=-1).sum().item()
+torch.cuda.synchronize()" 2>/dev/null; then
     echo "  GPU$i OK"
   else
     echo "  GPU$i ✘ FAIL — 이 GPU는 병듦"; sick=1
