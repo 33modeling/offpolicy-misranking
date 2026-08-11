@@ -87,18 +87,28 @@ with open(out / "kk.jsonl", "w") as f:
 print("kk.jsonl:", n, "rows")' || fail=1 ;;
     apps)
       if [ -e "$DATASETS_DIR/apps/apps.jsonl" ]; then echo "[fetch] apps 있음, 스킵"; continue; fi
+      # 스크립트형 데이터셋이라 최신 datasets 라이브러리로는 load_dataset 불가 —
+      # parquet 변환본(refs/convert/parquet)을 hub에서 직접 받아 파싱한다.
       _fetch apps '
 import json, sys
 from pathlib import Path
-from datasets import load_dataset
+from huggingface_hub import HfApi, hf_hub_download
+import pyarrow.parquet as pq
 out = Path(sys.argv[1]) / "apps"; out.mkdir(parents=True, exist_ok=True)
+files = [f for f in HfApi().list_repo_files("codeparrot/apps", repo_type="dataset",
+                                            revision="refs/convert/parquet")
+         if f.endswith(".parquet")]
+assert files, "parquet 변환본 목록이 비었음"
 n = 0
 with open(out / "apps.jsonl", "w") as f:
-    for split in ("train", "test"):
-        ds = load_dataset("codeparrot/apps", split=split, trust_remote_code=True)
-        for r in ds:
-            f.write(json.dumps({"question": r["question"], "input_output": r["input_output"],
-                                "difficulty": r["difficulty"], "_split": split}) + "\n")
+    for rf in sorted(files):
+        local = hf_hub_download("codeparrot/apps", rf, repo_type="dataset",
+                                revision="refs/convert/parquet")
+        for r in pq.read_table(local).to_pylist():
+            f.write(json.dumps({"question": r.get("question"),
+                                "input_output": r.get("input_output"),
+                                "difficulty": r.get("difficulty"),
+                                "_split": ("test" if "test" in rf else "train")}) + "\n")
             n += 1
 print("apps.jsonl:", n, "rows")' || fail=1 ;;
     dapo-math)
