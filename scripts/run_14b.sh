@@ -96,7 +96,7 @@ r = load_prompts('$DATASET', 1, 1); print('[preflight] $DATASET 데이터 OK')";
   echo "[abort] $DATASET 데이터 로드 실패 — 위 '찾아본 위치'를 확인하거나 fetch_datasets.sh 실행"
   exit 1
 fi
-COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1)
+COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1 --n-train "${N_TRAIN:-256}" --n-val "${N_VAL:-50}")
 
 KA_DEV=$(IFS=,; echo "${GPUS[*]}")
 CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
