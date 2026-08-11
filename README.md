@@ -1,15 +1,19 @@
 # offpolicy-misranking
 
-**Half-corrected importance ratios can reverse RLVR data influence.** This repo
-contains the pilot/gate experiments for that claim: when stale (behavior-policy)
-rollouts are reused to rank training prompts for critic-free RLVR, correcting
-only the prefix occupancy *or* only the continuation outcome can flip the
-per-prompt gradient direction — at arbitrarily small policy KL — and therefore
-flip top-k data selection. We also test **CertaGrad**, a sequential procedure
-that certifies the top-k decision by spending fresh on-policy rollouts only near
-the ranking boundary.
+**Stale Rollouts Can Pick the Wrong Prompts** (ICLR 2027 target) — 실행 레포.
+stale(behavior-policy) rollout을 재사용해 RLVR 학습 프롬프트를 top-k 선택할 때,
+prefix occupancy *또는* continuation outcome 중 **한쪽만 교정하면** 임의로 작은
+policy KL에서도 per-prompt gradient 부호가 뒤집힐 수 있고, 그 오류는 KL·ESS·
+cosine 대시보드로 탐지되지 않으며, 신뢰구간으로 top-k 결정을 인증하는 것도
+구조적으로 불가능하다 — 이 주장과 그 경계 조건(언제 stale로 골라도 되는가,
+fresh 감사에 얼마를 내야 하는가)의 게이트/본실험 코드.
 
-> 상태: 연구 진행 중 (게이트 실험 전). 결과·주장은 실측 전이며 언제든 바뀔 수 있다.
+> 상태 (2026-08-11): **7B 게이트 종결** — C1(관찰)·C1′(개입)·C3(downstream)
+> PASS, C2(인증)는 구조적 FAIL → 부정 결과로 수록. 14B GSM8K는 포화 퇴화,
+> MATH-500 2종은 관찰 순위 역전 확인. 현재 **감사 P0 교정판 v2 본실행**
+> (3-seed × {GSM8K, DAPO-Math}, n=512) 진행 중. 원고는
+> [new-paper-ideas #68](https://github.com/33modeling/new-paper-ideas/tree/master/68-one-sided-offpolicy-misranking)
+> `paper/`(제목 확정, v2 수치 대기 슬롯만 남음).
 
 ## 1. 문제와 주장
 
@@ -23,7 +27,9 @@ g_π(x) = Σ_t E_{H_t, A_t ~ π} [ Q_t^π(H_t, A_t) · ∇log π(A_t|H_t) ]
 인데, β의 궤적으로 이걸 추정하려면 두 분포를 모두 복원해야 한다 —
 **prefix occupancy** (그 토큰까지 π가 어떻게 오는가)와 **continuation outcome**
 (그 토큰 뒤를 π가 어떻게 마무리하는가). 토큰 비율 `r_j = π(A_j|H_j)/β(A_j|H_j)`,
-`P_t = Π_{j<t} r_j`, `S_t = Π_{j>t} r_j`로 쓰면 네 추정량이 2×2 사각형을 이룬다:
+`P_t = Π_{j<t} r_j`, `S_t = Π_{j>t} r_j`로 쓰면 importance correction이 두 인자로
+인수분해되고, 각 인자를 켜고 끄는 **2×2 추정량 가족(estimator family)**이 나온다.
+기존 방법들이 네 칸을 하나씩 점유한다:
 
 | | continuation = β | continuation = π |
 |---|---|---|
@@ -39,49 +45,96 @@ one-sided 추정량은 trajectory KL이 `O(ε²)`로 0에 가면서도 gradient 
 **top-10% 이웃 보존율은 28.8%**. 평균 방향이 아니라 실제 채택되는 top-k 결정이
 estimand여야 한다는 것이 이 레포의 관점이다.
 
-## 2. CertaGrad — 순위 경계만 현재 정책으로 확인
+## 2. 게이트 결과 요약 (v1, 단일 seed)
 
-새 importance ratio가 아니라 배분 절차다: 모든 후보에 작은 fresh micro-group을
-주고, projected gradient의 confidence ball로 score 구간 `[L_i, U_i]`를 만들어
-`min_{i∈S} L_i > max_{j∉S} U_j`가 될 때까지 **경계에 걸린 후보에만** fresh를
-추가한다. 공유 validation 방향의 오차 `α_v`는 모든 후보에 함께 더한다(독립 취급
-금지). 인증에 실패하면 실패했다고 보고한다 — 저렴한 점수로 고른 결과와 현재
-정책 기준으로 확인된 결과를 구분하는 것이 목적이다.
+- **C1 관찰 (7B GSM8K)**: one-sided가 chance 아래로 붕괴 — `g10` precision
+  0.000(drift 50)·0.040(drift 400) vs chance 0.098, 정규화 retention은 음수
+  (−0.26 등) = **역선택**. 무보정 `g00`·full `g11`은 살아남는다.
+- **C1′ 개입 (hybrid rollout)**: β 궤적을 절단점(25/50/75%)에서 자르고 나머지
+  반쪽을 π가 이어 쓰게 해 네 칸을 **데이터로 직접 생성**. 잘린 반쪽을 복원하면
+  순위가 회복 — 21/21 비교에서 비열등, 평균 회복 +0.46/+0.49. 반쪽 구조
+  자체가 원인이라는 인과 증거.
+- **C3 downstream**: 잘못 뽑힌 명단으로 GRPO-lite 학습 시 val 정확도 손실
+  (drift 100에서 0.84/0.84/0.88/0.82 = oracle/g10/g01/random, base 0.74).
+- **C2 인증: 구조적 FAIL** — 3절 참조. 부정 결과로 논문에 수록.
+- **체제 의존**: MATH-500에서는 관찰 순위가 **역전** — 무보정 `g00`이 최악.
+  어떤 추정량이 최악인지는 태스크에 따라 뒤집히고, 불변인 것은 C1′의 개입
+  결과와 "혼합 셀이 순수 셀보다 낮다"(mixed-cell dip)이다.
+- **14B GSM8K 포화 퇴화**: 정답률 ~95%에서 oracle split-half floor 0.080 <
+  chance 0.098 — 고를 것 자체가 없다. 선택 파이프라인은 모델 성장에 맞춰
+  후보 난이도를 올려야 한다는 실무 교훈.
 
-기하: `||μ̂-μ|| ≤ r`, `r < ||μ̂||`이면 방향 오차는 `α = arcsin(r/||μ̂||)`,
-score 구간은 `[cos(φ+α_i+α_v), cos(φ-α_i-α_v)]`.
+## 3. top-k 인증 — 시도와 구조적 실패 (C2)
 
-## 3. 실험 설계 (게이트)
+stale 점수를 prior로 두고, top-k **경계에 걸린 후보에만** fresh rollout을 부어
+confidence 구간 `[L_i, U_i]`가 `min_{i∈S} L_i > max_{j∉S} U_j`로 분리될 때까지
+반복하는 순차 인증 절차를 구현·시험했다(`src/certagrad.py` — 코드명이며 논문
+본문에서는 서술형으로만 표기). 기하:
+`||μ̂-μ|| ≤ r`, `r < ||μ̂||`이면 방향 오차 `α = arcsin(r/||μ̂||)`,
+score 구간 `[cos(φ+α_i+α_v), cos(φ-α_i-α_v)]`.
 
-- 모델: Qwen2.5-**7B**-Instruct 기본 (`MODEL`로 변경). β = base, π = 정답 rollout
-  LoRA RFT 50/100/200 step (drift 축).
-- 데이터: GSM8K 256 train + 50 val (`--dataset math500 | dapo-math` 지원).
-  binary verifiable reward (`####` 추출·수치 동등).
-- 판정: oracle(π fresh rollout) top-10% 대비 각 추정량의 precision/Jaccard,
-  split-half noise floor 병기. **처치축**은 hybrid 2×2 — prefix 절단
-  25/50/75%에서 β/π-prefix × β/π-continuation cell을 직접 생성.
-- downstream: 선택 소스별(oracle/g10/g01/random) 200-step GRPO-lite
-  (LOO-baseline REINFORCE) 학습 후 val 정확도.
+결과는 **일관된 불가능**: 경계 margin이 0.00–0.24°인데 도달 가능한 validation
+방향 반경 `α_v`는 51–83°(14B/MATH-500에서는 180°로 퇴화) — 두세 자릿수 격차.
+drift 8배·선택 비율 5–25%·val 심화·(ε,δ)-PAC 완화 전부에서 유지된다. 경계
+근처 프롬프트 가치는 본질적으로 밀집해 있어 **선택이 중요한 그 지점에서 선택을
+인증할 수 없다.** 후속 CPU 재판정: `scripts/c2_sweep.sh`, `fix_c2.sh`,
+`retry_c2.sh`.
 
-통과/사망 조건은 `new-paper-ideas` 컨셉 문서 10절에 고정되어 있다 (예: one-sided
-추정량 각각이 noise floor 대비 −0.15, CertaGrad fresh ≤50%·precision 차 ≤0.02).
+## 4. v2 본실행 — 감사 P0 교정판 (진행 중)
 
-## 4. 코드 구성
+독립 감사에서 나온 P0를 전면 반영한 재실행: sampling `top_p=1.0` 통일, seed
+관통, hybrid 4셀 **독립 equal-K 재설계**, seeded tie-break, divergence/clipfrac
+통계 자동 실측, 인증 ε 실반영, run manifest 기록.
+
+```bash
+bash scripts/go_v2.sh    # GPU 건강검사 → 30분 스모크 게이트(실패 시 본실행 미진입)
+                         # → 3-seed × {gsm8k, dapo-math}, n=512·val 100·fresh K=32
+                         #   ·hybrid 64 (drift 100 단일, 기본 7B)
+                         # 재시도 2회·DONE 스킵·죽어도 재개, 끝나면 results/v2 수집
+```
+
+- sweep 축: **seed × dataset** (v2의 목적 = 주결과 오차대 + DAPO-Math 확보).
+  drift 스윕·14B·MATH-500은 v1 결과를 인용한다. 필요 시
+  `DATASETS="gsm8k dapo-math math500" SEEDS="0 1 2"`로 확장 — DONE 스킵 덕에
+  완주 후 재실행하면 추가분만 돈다.
+- 산출: run별 `report.json`·`manifest.json`·judge 판정 +
+  `results/v2/TABLES.md`(표 생성기)·`FRONTIER.md`(아래 5절).
+
+## 5. fresh-audit frontier — 비용–품질 사후 분석
+
+v2 산출물만으로 selection 정책 스펙트럼을 CPU에서 replay한다 (GPU 불필요,
+go_v2 말미 자동 실행, 수동은 `bash scripts/frontier.sh`):
+
+- **정책**: stale 4셀 · pass-rate 난이도(Beta posterior) · random ·
+  fresh(m∈{1,2,4}) 전수 재채점 · **audit** — stale 순위 유지 + p∈{1,5,10,25}%
+  만 fresh로 교체 (uniform random vs top-k 경계 근접) · sequential 변형
+  (margin 획득 + 추정량 셀 불일치 + ranker switch; 코드명 `2dref`, ablation 2종)
+- **누수 차단**: oracle micro-group을 짝/홀 반으로 분리 — 짝수 = 정책 관측,
+  홀수 = truth 전용. fresh-heavy 정책이 자기 채점하는 것을 방지.
+- **출력** (`results/v2/FRONTIER.md` + `frontier.json`): F1 run별 정책×예산
+  precision/regret · F2 dataset 집계(seed 평균±sd) · F3 predictor-family vs
+  gradient-family · F4 조건 지표(KL̂·ESS·clipfrac·live·floor·margin — "언제
+  stale로 골라도 되는가" 위상도 재료)
+
+## 6. 코드 구성
 
 ```
-src/data.py             데이터 로딩(GSM8K·MATH-500·DAPO-Math)·정답 추출·binary reward
+src/data.py             데이터 로딩(GSM8K·MATH-500·DAPO-Math·mbpp·kk)·정답 추출·binary reward
                         — provision이 받아둔 로컬 jsonl($OM_DATA) 우선 (오프라인 노드)
 src/rollout.py          rollout 수집(β, 원자적 .tmp→rename 쓰기), drift 생성(LoRA RFT
                         + gradient checkpointing), 정책 로드(디바이스 로그)
 src/grads.py            2×2 토큰 가중치, LOO advantage, 위치해시 CountSketch 투영
-src/certagrad.py        confidence-ball 순차 top-k 인증 + uniform baseline
+src/certagrad.py        confidence-ball 순차 top-k 인증 + uniform baseline (C2, 부정 결과)
 src/hybrid.py           2×2 hybrid rollout — left-padding 배치 이어쓰기 생성·채점
+src/frontier.py         fresh-audit 비용–품질 replay (5절) — 정책 스펙트럼·짝/홀
+                        누수 차단·F1~F4 생성
 src/train_downstream.py GRPO-lite 학습(checkpointing)·greedy 평가
 src/experiment.py       stage orchestrator — analyze가 oracle→score→report→hybrid를
                         단일 프로세스로 묶어 7B 재로드 제거
 src/judge.py            게이트 5조건(C1·C1'·C2·C3) 자동 PASS/FAIL 판정
+src/make_tables.py      논문용 표 생성 → results/TABLES.md
 src/show_selection.py   방법별 top-k 선택 내용·β정답률·겹침 행렬
-tests/test_core.py      모델 없는 핵심 로직 테스트 (2×2 항등식·CertaGrad 동작)
+tests/test_core.py      모델 없는 핵심 로직 테스트 (2×2 항등식·인증 동작)
 tests/test_judge.py     drift 집계·hybrid 축별 회복 판정 회귀 테스트
 ```
 
@@ -93,11 +146,11 @@ tests/test_judge.py     drift 집계·hybrid 축별 회복 판정 회귀 테스�
   대상은 마지막 `--grad-layers`개 decoder block + final norm — `grad_params()`가
   나머지를 동결해 LoRA `merge_and_unload()` 후 requires_grad 소실도 함께 복구.
 - 가중치는 log-공간 누적 후 `clip_cap`으로 양측 클리핑.
-- CertaGrad 반경 기본값은 χ² 근사(`--radius-mode gaussian`) — coverage는 게이트의
-  반복실험 항목으로 실측하고, 보수적 Hoeffding 판본(`hoeffding`)을 비교 보고.
+- 인증 반경 기본값은 χ² 근사(`--radius-mode gaussian`), 보수적 Hoeffding 판본
+  (`hoeffding`) 비교 보고.
 - 7B 학습(단계 drift·downstream)은 gradient checkpointing + 시퀀스 1280 상한.
 
-## 5. 클러스터 셋업 (1회)
+## 7. 클러스터 셋업 (1회)
 
 무거운 것(venv·모델·데이터·산출물)은 전부 group-volume, 체크아웃에는 코드만.
 group-volume이 없는 머신은 레포 옆 `.work/`로 자동 폴백된다.
@@ -114,50 +167,25 @@ bash scripts/provision.sh       # venv(torch 2.7.1+cu126 constraints 고정)
   (`PIP_INDEX_URL=<사내 미러>`로 우회).
 - 컴퓨트 노드는 기본 오프라인(HF_HUB_OFFLINE=1); 다운로드 머신에서만
   `OM_ONLINE=1 source scripts/setup_env.sh`.
+- 노드별 GPU 진단: `scripts/gpu_check.sh` (matmul/SDPA 분리 판정 — fused SDPA
+  커널이 병든 노드는 `OM_ATTN=eager`로 우회).
 
-## 6. 실행 — 일상 명령 4개
+## 8. 실행
+
+**현재 주 진입점은 4절의 `go_v2.sh`.** 보조 명령:
 
 ```bash
-bash scripts/go.sh          # 리셋→백그라운드 실행→로그 tail (원샷)
-bash scripts/go.sh fast     # 빠른 판정: drift 100만 + fresh 절반 + downstream 절반 (~1/4 시간)
-bash scripts/status.sh      # 진행 위치·ETA 자동계산·산출물 체크리스트·학습 건전성(loss/보상 추세)
-bash scripts/result.sh      # report 원문 + judge.py 게이트 5조건 자동 PASS/FAIL
+bash scripts/status.sh      # 진행 위치·ETA·산출물 체크리스트·학습 건전성
+bash scripts/result.sh      # report 원문 + judge.py 게이트 자동 PASS/FAIL
 bash scripts/selection.sh   # 방법별로 실제 뽑힌 문제·난이도·겹침 행렬
-bash scripts/tables.sh      # 논문용 결과 테이블 7종 (요약·정규화 재판정·floor곡선·live·hybrid·margin·downstream) → results/TABLES.md
+bash scripts/tables.sh      # 논문용 결과 테이블 → results/TABLES.md
+bash scripts/frontier.sh    # frontier replay 수동 실행 (5절)
 ```
 
-보조: `reset_run.sh [--hard|--dry-run]`(프로세스 종료+GPU 확인+산출물 정리 —
-soft는 투영 산출물만 지우고 rollout·adapter 보존, 미완성 fresh 파일은 프롬프트
-수 대조로 자동 삭제), `run_smoke.sh`(0.5B 완주 확인), `run_gate.sh RUN DRIFT`
-(단일 파이프라인 수동 실행).
-
-### C2(인증) 후속 분석 3종
-
-```bash
-bash scripts/c2_sweep.sh 7b     # 저장된 관측에서 CPU 재판정 — FRACS="0.05 0.10 0.20"로 k 스캔
-bash scripts/fix_c2.sh          # val 관측 심화(+K=24) 후 재판정 (진단이 α_v 병목일 때)
-bash scripts/retry_c2.sh        # drift 400스텝 run 추가 (GPU 1장) — margin이 drift 부족 탓인지 판별
-```
-
-`c2_sweep`은 frac(top-k 비율)마다 경계 margin을 먼저 계산해 margin > 2·α_v 인
-frac만 인증을 시도한다(게이트 기준 0.10은 항상 판정). 어떤 frac에서도 margin이
-α_v 아래면 관측을 더 부어도 인증 불가 — 그 자체가 논문의 부정적 결과 재료다.
-
-### run_h100_all.sh 병렬 배치 (4×H100)
-
-- **phase 0**: β rollout을 **4-GPU 샤딩**(`--shard i:4`, 전역 prompt_idx 유지)으로
-  수집 후 병합 — 최장 직렬 구간 ~1/4
-- **phase 1**: drift 50/100/200 파이프라인(drift SFT → **analyze**)을 GPU 0/1/2에
-  병렬. analyze는 oracle·score·report·hybrid(절단 25/50/75%)를 한 프로세스에서
-  실행해 모델 로드를 파이프라인당 7회→2회로 줄였다. 동시에 GPU 3에서
-  downstream-random(점수 불필요)을 선실행
-- **phase 2**: 남은 downstream(oracle/g10/g01)을 GPU 병렬, 완료분 스킵
-- **keepalive 상주**: 클러스터의 "GPU 유휴 3시간 → 잡 킬" 정책 대응 — 모든 GPU에
-  소형 커널을 연속 발사해 사용률이 상시 36%+ 로 찍힘 (실측; 실연산 미미, 본
-  작업 커널에 자연 양보). `scripts/gpu_keepalive.py`
-- 손잡이(환경변수): `DRIFTS="50 100"`, `DOWNSTREAM_DRIFT=100`, `FRESH_K=16`, `VAL_K`, `HYBRID_PROMPTS`,
-  `DOWNSTREAM_STEPS`, `MODEL`, `OUT_ROOT`, `OM_SKIP_GPU_CHECK=1`
-- 시작 전 **GPU 점유 검사**(2GB+ 잡 발견 시 PID 출력 후 중단 — 좀비 위 재시작 OOM 방지)
+v1 게이트용 스크립트(`go.sh`, `run_h100_all.sh` 4×H100 병렬 배치, `go7_14.sh`
+7B+14B 원샷, `run_14b.sh` 단일 run — go_v2가 내부에서 재사용)와 리셋·스모크
+(`reset_run.sh`, `run_smoke.sh`)는 그대로 유지. 클러스터의 "GPU 유휴 3시간 →
+잡 킬" 정책은 `scripts/gpu_keepalive.py` 상주로 대응.
 
 ### 로그
 
@@ -169,16 +197,13 @@ frac만 인증을 시도한다(게이트 기준 0.10은 항상 판정). 어떤 f
 - 모든 stage는 산출물 존재 시 스킵(재개); rollout 파일은 원자적 쓰기라 중단
   잔재(.tmp)가 완성본으로 오인되지 않는다
 
-산출물: `report.md/json`(추정량 표·CertaGrad), `scores_*.json`,
-`scores_hybrid_*.json`, `downstream_*.json`, `oracle_micro_groups.pt` 등 —
-읽는 법은 `result.sh`가 대신한다.
+## 9. 트러블슈팅
 
-## 7. 트러블슈팅
+구축 중 잡은 주요 에러(투영 OOM, 유휴 킬, 다중 감시자 폭풍, 재개 오염, cuDNN/
+SDPA 커널 계열 등)와 교훈은
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)에 정본으로 기록했다.
 
-구축 중 잡은 주요 에러(투영 OOM, 유휴 킬, 다중 감시자 폭풍, 재개 오염 등)와
-교훈은 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)에 정본으로 기록했다.
-
-## 8. 직접 선행 (전체 목록은 컨셉 문서)
+## 10. 직접 선행 (전체 목록은 컨셉 문서)
 
 CROPI [2510.26491](https://arxiv.org/abs/2510.26491) ·
 GradAlign [2602.21492](https://arxiv.org/abs/2602.21492) ·
@@ -189,5 +214,6 @@ TIC-GRPO [2508.02833](https://arxiv.org/abs/2508.02833) ·
 M2PO [2510.01161](https://arxiv.org/abs/2510.01161) ·
 VIP [2606.05606](https://arxiv.org/abs/2606.05606)
 
-이 레포는 위 방법들의 재구현이 목적이 아니라, one-sided 교정이 남기는 순위 오류의
-실측과 top-k 결정 인증이 목적이다.
+이 레포는 위 방법들의 재구현이 목적이 아니라, one-sided 교정이 남기는 순위
+오류의 실측, 그 인증 불가능성의 입증, 그리고 fresh 감사의 비용–품질 경계 측정이
+목적이다.
