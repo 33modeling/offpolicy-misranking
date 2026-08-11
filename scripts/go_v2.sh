@@ -114,5 +114,7 @@ for d in "${DIRS[@]}"; do
   "$PY" src/judge.py "$d" > "$RD/judge-$tag.txt" 2>&1 || true
 done
 [ "${#DIRS[@]}" -gt 0 ] && OM_RESULTS="$RD" "$PY" src/make_tables.py "${DIRS[@]}" | tail -3
-echo "== 끝 — $RD 의 TABLES.md·report·judge·manifest 뽑아서 전달"
+echo "==== frontier 사후 분석 (비용–품질 Pareto·audit 정책·predictor baseline) ===="
+[ "${#DIRS[@]}" -gt 0 ] && OM_RESULTS="$RD" "$PY" src/frontier.py "${DIRS[@]}" | tail -3
+echo "== 끝 — $RD 의 TABLES.md·FRONTIER.md·report·judge·manifest 뽑아서 전달"
 ls "$RD" 2>/dev/null | head
