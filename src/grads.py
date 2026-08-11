@@ -31,6 +31,24 @@ def loo_advantages(rewards: torch.Tensor) -> torch.Tensor:
     return rewards - (total - rewards) / (k - 1)
 
 
+def log_weights(logp_pi: torch.Tensor, logp_beta: torch.Tensor,
+                estimator: str) -> torch.Tensor:
+    """클리핑 전의 토큰별 log 가중치 — population 정의 그대로 (진단용으로도 사용)."""
+    log_r = (logp_pi - logp_beta).detach()  # (T,)
+    if estimator == "g00":
+        return log_r
+    if estimator == "g10":
+        # P_t * r_t = exp( Σ_{u<=t} log r_u )  (누적 prefix, 현재 토큰 포함)
+        return torch.cumsum(log_r, dim=0)
+    if estimator == "g01":
+        # r_t * S_t = exp( Σ_{u>=t} log r_u )  (현재 토큰 포함 미래 곱)
+        total = log_r.sum()
+        return total - torch.cumsum(log_r, dim=0) + log_r
+    if estimator == "g11":
+        return log_r.sum().expand_as(log_r)
+    raise ValueError(f"unknown estimator {estimator}")
+
+
 def token_weights(
     logp_pi: torch.Tensor,
     logp_beta: torch.Tensor,
@@ -40,25 +58,28 @@ def token_weights(
 ) -> torch.Tensor:
     """한 rollout의 토큰별 가중치 w_t (grad에 곱해질 계수, detach 상태로 반환).
 
-    logp_pi/logp_beta: (T,) 응답 토큰의 로그확률 (teacher forcing).
-    clip_cap: 곱 비율의 상한 (하한은 1/cap). 안정화용 — population 정의엔 없음.
+    clip_cap: 곱 비율의 상한(하한 1/cap) — 분산 통제용 구현 선택이며 population
+    정의에는 없다. 논문 표기에서는 clipped 변형임을 명시할 것 (감사 blocker B).
     """
-    log_r = (logp_pi - logp_beta).detach()  # (T,)
-    if estimator == "g00":
-        log_w = log_r
-    elif estimator == "g10":
-        # P_t * r_t = exp( Σ_{u<=t} log r_u )  (누적 prefix, 현재 토큰 포함)
-        log_w = torch.cumsum(log_r, dim=0)
-    elif estimator == "g01":
-        # r_t * S_t = exp( Σ_{u>=t} log r_u )  (현재 토큰 포함 미래 곱)
-        total = log_r.sum()
-        log_w = total - torch.cumsum(log_r, dim=0) + log_r
-    elif estimator == "g11":
-        log_w = log_r.sum().expand_as(log_r)
-    else:
-        raise ValueError(f"unknown estimator {estimator}")
+    log_w = log_weights(logp_pi, logp_beta, estimator)
     cap = math.log(clip_cap)
     return torch.exp(log_w.clamp(-cap, cap)) * advantage
+
+
+def weight_stats(logp_pi: torch.Tensor, logp_beta: torch.Tensor,
+                 clip_cap: float = 10.0) -> dict:
+    """진단 통계 (감사 §6·§16): 추정량별 클리핑 비율, 궤적 log-ratio, 토큰 KL̂.
+
+    KL̂(β‖π) = mean(logβ − logπ) — β 표본에서의 plug-in 추정.
+    """
+    cap = math.log(clip_cap)
+    out: dict = {"tokens": int(logp_pi.numel()),
+                 "kl_sum": float((logp_beta - logp_pi).sum()),
+                 "traj_logratio": float((logp_pi - logp_beta).sum())}
+    for est in ESTIMATORS:
+        lw = log_weights(logp_pi, logp_beta, est)
+        out[f"clipfrac_{est}"] = float((lw.abs() > cap).float().mean())
+    return out
 
 
 @dataclass

@@ -28,6 +28,7 @@ from grads import (
     prompt_gradient,
     sequence_logprobs,
     token_weights,
+    weight_stats,
 )
 from rollout import collect_rollouts, load_policy, train_drift_lora
 
@@ -96,6 +97,7 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
     t_start = _time.time()
     n_done = 0
     out = {est: {} for est in ESTIMATORS}
+    div_rows: list[dict] = []
     for pi_idx, rows in sorted(rollouts.items()):
         n_done += 1
         rewards = torch.tensor([r["reward"] for r in rows])
@@ -104,6 +106,8 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
         logps_beta = beta_logps[pi_idx] if two_pass else [
             sequence_logprobs(beta, r["input_ids"], r["resp_start"]) for r in rows
         ]
+        for lp, lb in zip(logps_pi, logps_beta):
+            div_rows.append(weight_stats(lp, lb, clip_cap=args.clip_cap))
         for est in ESTIMATORS:
             weights = [
                 token_weights(lp, lb, float(a), est, clip_cap=args.clip_cap)
@@ -118,6 +122,19 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
     out_name = ("scores_offpolicy.json" if shard is None
                 else f"scores_offpolicy.shard{shard[0]}.json")
     _atomic_text(run / out_name, json.dumps(out, indent=1))
+    # 진단 통계 (감사 §5·§6·§16): 토큰 KL̂(β‖π)·궤적 ESS·추정량별 clip 비율
+    if div_rows:
+        n_tok = sum(d["tokens"] for d in div_rows)
+        lr = torch.tensor([d["traj_logratio"] for d in div_rows], dtype=torch.float64)
+        w = torch.exp(lr - lr.max())
+        ess = float(w.sum() ** 2 / (w ** 2).sum() / len(w))
+        stats = {"token_kl_beta_pi": sum(d["kl_sum"] for d in div_rows) / max(1, n_tok),
+                 "traj_ess_frac_g11": ess, "rollouts": len(div_rows)}
+        for est in ESTIMATORS:
+            stats[f"clipfrac_{est}"] = sum(d[f"clipfrac_{est}"] for d in div_rows) / len(div_rows)
+        dname = ("divergence_stats.json" if shard is None
+                 else f"divergence_stats.shard{shard[0]}.json")
+        _atomic_text(run / dname, json.dumps(stats, indent=1))
 
 
 def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | None = None) -> None:
@@ -207,9 +224,13 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         _atomic_save(micro, run / f"oracle_micro_groups.shard{shard[0]}.pt")
 
 
-def topk(scores: dict, frac: float) -> set:
+def topk(scores: dict, frac: float, seed: int = 0) -> set:
+    """동률은 seeded 난수로 무작위 절단 — index-순 절단의 임의성 제거 (감사 §11)."""
+    import random as _r
+    rng = _r.Random(seed ^ 0x5EED)
+    jit = {i: rng.random() for i in scores}
     k = max(1, int(len(scores) * frac))
-    return set(sorted(scores, key=lambda i: -scores[i]["score"])[:k])
+    return set(sorted(scores, key=lambda i: (-scores[i]["score"], jit[i]))[:k])
 
 
 def stage_report(args, run: Path) -> None:
@@ -218,19 +239,33 @@ def stage_report(args, run: Path) -> None:
     halves = {int(k): v for k, v in json.loads((run / "scores_splithalf.json").read_text()).items()}
 
     frac = args.topk_frac
-    o_top = topk(oracle, frac)
+    seed = getattr(args, "seed", 0)
+    o_top = topk(oracle, frac, seed)
     k = len(o_top)
-    ha = topk({i: {"score": h["a"]} for i, h in halves.items()}, frac)
-    hb = topk({i: {"score": h["b"]} for i, h in halves.items()}, frac)
+    ha = topk({i: {"score": h["a"]} for i, h in halves.items()}, frac, seed)
+    hb = topk({i: {"score": h["b"]} for i, h in halves.items()}, frac, seed)
     noise_floor = len(ha & hb) / k
 
-    lines = [f"# report  (top-{int(frac*100)}%, k={k}, noise_floor(split-half precision)={noise_floor:.3f})", ""]
+    def _ties_and_zeros(sc: dict) -> tuple[int, int]:
+        vals = sorted((v["score"] for v in sc.values()), reverse=True)
+        kth = vals[k - 1] if len(vals) >= k else vals[-1]
+        ties = sum(1 for v in vals if abs(v - kth) < 1e-9)
+        zeros = sum(1 for v in sc.values() if v.get("norm", 1.0) < 1e-6)
+        return ties, zeros
+
+    lines = [f"# report  (top-{int(frac*100)}%, k={k}, "
+             f"split_half_reliability={noise_floor:.3f} — 참조치이며 상한 아님)", ""]
     lines.append("| estimator | top-k precision | Jaccard | Δ vs floor |")
     lines.append("|---|---|---|---|")
-    results = {"noise_floor": noise_floor, "k": k}
+    results = {"noise_floor": noise_floor, "split_half_reliability": noise_floor,
+               "k": k, "seed": seed, "boundary_ties": {}, "zero_grad": {}}
+    ot, oz = _ties_and_zeros(oracle)
+    results["boundary_ties"]["oracle"], results["zero_grad"]["oracle"] = ot, oz
     for est in ESTIMATORS:
         scores = {int(i): v for i, v in off[est].items()}
-        e_top = topk(scores, frac)
+        t_, z_ = _ties_and_zeros(scores)
+        results["boundary_ties"][est], results["zero_grad"][est] = t_, z_
+        e_top = topk(scores, frac, seed)
         prec = len(e_top & o_top) / k
         jac = len(e_top & o_top) / len(e_top | o_top)
         results[est] = {"precision": prec, "jaccard": jac}
@@ -302,7 +337,16 @@ def main() -> None:
     p.add_argument("--budget-rollouts", type=int, default=0,
                    help=">0이면 선택 비용 차감 후 남는 예산으로 학습 스텝 결정 (총연산 통일)")
     p.add_argument("--shard", default=None, help="rollout-behavior 샤딩 'i:n' (예: 0:4)")
+    p.add_argument("--seed", type=int, default=0,
+                   help="생성 샘플링·LoRA init·tie-break 시드 (프롬프트 분할은 고정)")
     args = p.parse_args()
+
+    # 시드 관통 — 샤드마다 다른 스트림 (같은 시드면 샤드 간 표본 상관 방지)
+    import random as _random
+    _shard_i = int(args.shard.split(":")[0]) if args.shard else 0
+    _base = (args.seed * 1_000_003 + _shard_i * 7919 + 17) & 0x7FFFFFFF
+    torch.manual_seed(_base)
+    _random.seed(_base)
 
     run = Path(args.run)
     run.mkdir(parents=True, exist_ok=True)
@@ -493,20 +537,23 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
     if True:
         prompts = json.loads((run / "prompts.json").read_text())["train"]
         behavior = read_rollouts(run / "rollouts_behavior_train.jsonl")
-        fresh = read_rollouts(run / "rollouts_fresh_train.jsonl")
         hy_path = run / f"rollouts_hybrid_{cut_frac}.jsonl"
         if not hy_path.exists():
-            make_hybrid_cells(beta, pi, tok, behavior, fresh, prompts, cut_frac,
+            # subset: live(β 보상 혼합) 프롬프트에서 seeded random — cut 간 동일 (감사 §7)
+            import random as _r
+            live = [i for i in behavior
+                    if len({r["reward"] > 0.5 for r in behavior[i]}) > 1]
+            rng = _r.Random(getattr(args, "seed", 0) * 104_729 + 11)
+            pool = live if len(live) >= args.hybrid_prompts else sorted(behavior)
+            subset = sorted(rng.sample(pool, min(args.hybrid_prompts, len(pool))))
+            make_hybrid_cells(beta, pi, tok, behavior, prompts, cut_frac,
                               args.max_new_tokens, args.temperature,
-                              args.hybrid_prompts, hy_path)
+                              subset, hy_path)
         hy = read_rollouts(hy_path)  # prompt_idx 기준 — cell 분리 다시
-        cells: dict[str, dict[int, list[dict]]] = {"bp": {}, "pb": {}}
+        cells: dict[str, dict[int, list[dict]]] = {"bb": {}, "bp": {}, "pb": {}, "pp": {}}
         for idx, rows in hy.items():
             for r in rows:
                 cells[r["cell"]].setdefault(idx, []).append(r)
-        sub = set(cells["bp"])
-        cells["bb"] = {i: behavior[i] for i in sub}
-        cells["pp"] = {i: fresh[i] for i in sub}
         params = grad_params(pi, args.grad_layers)
         val = torch.load(run / "val_gradient.pt", weights_only=True)
         scores = score_cells(pi, params, cells, val, spec)

@@ -15,7 +15,7 @@ import torch
 
 from data import reward
 from grads import loo_advantages
-from rollout import auto_device, chat_ids
+from rollout import SAMPLING, auto_device, chat_ids
 
 
 def grpo_lite_train(
@@ -59,7 +59,7 @@ def grpo_lite_train(
             batch = ids.unsqueeze(0).expand(k, -1)
             gen = model.generate(
                 batch, attention_mask=torch.ones_like(batch), do_sample=True,
-                temperature=temperature, top_p=0.95,
+                temperature=temperature, **SAMPLING,
                 max_new_tokens=max_new_tokens, pad_token_id=tok.eos_token_id)
         rewards = torch.tensor([
             reward(tok.decode(gen[j, ids.numel():], skip_special_tokens=True), item["answer"])

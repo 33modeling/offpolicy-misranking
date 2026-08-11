@@ -223,7 +223,8 @@ def certagrad_scalar(
         sd = float(x.std(unbiased=True))
         t = math.log(2.0 / per)
         # sub-gaussian 근사 반경 (경계 [-1,1] 클립 뒤 Hoeffding 상한과 병기 가능)
-        r = sd * math.sqrt(2.0 * t / n) + 3.0 * 2.0 * t / n * 0.0
+        # empirical-Bernstein bounded 항 복원 (score 범위 ≤2, 감사 §8)
+        r = sd * math.sqrt(2.0 * t / n) + 3.0 * 2.0 * t / n
         return mean, r
 
     for i in range(m):
@@ -238,8 +239,10 @@ def certagrad_scalar(
         sel, rest = mids[:k], mids[k:]
         lo_min = min(stats[i][0] - stats[i][1] for i in sel)
         hi_max = max(stats[i][0] + stats[i][1] for i in rest) if rest else float("-inf")
-        if lo_min > hi_max:
-            return {"selected": sorted(sel), "certified": True, "fresh_groups": total}
+        # (ε,δ) 완화: ε-최적 집합 허용 — ε을 정지 조건에 실제 반영 (감사 §8)
+        if lo_min > hi_max - eps:
+            return {"selected": sorted(sel), "certified": True,
+                    "fresh_groups": total, "eps": eps}
         boundary = [i for i in sel if stats[i][0] - stats[i][1] <= hi_max] +                    [i for i in rest if stats[i][0] + stats[i][1] >= lo_min]
         # 반경 큰 순으로 최대 4곳 추가 관측
         boundary.sort(key=lambda i: -stats[i][1] if math.isfinite(stats[i][1]) else -1e9)

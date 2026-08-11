@@ -97,7 +97,28 @@ print('[preflight] $DATASET 데이터 OK — train', len(r['train']), '/ val', l
   echo "[abort] $DATASET 데이터 로드 실패(스키마·크기 포함) — 위 메시지 확인 / fetch_datasets.sh"
   exit 1
 fi
-COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1 --n-train "${N_TRAIN:-256}" --n-val "${N_VAL:-50}")
+# run manifest — 재현성 기록 (감사 §17)
+"$PY" - "$OUT_ROOT" <<PYEOF
+import json, os, subprocess, sys, time
+from pathlib import Path
+root = Path(sys.argv[1]); root.mkdir(parents=True, exist_ok=True)
+def sh(c):
+    try: return subprocess.check_output(c, shell=True, text=True).strip()
+    except Exception: return "?"
+import torch, transformers
+m = {"time": time.strftime("%F %T"), "git": sh("git rev-parse HEAD"),
+     "model": os.environ.get("MODEL_14B", ""), "dataset": os.environ.get("DATASET", "gsm8k"),
+     "n_train": os.environ.get("N_TRAIN", "256"), "n_val": os.environ.get("N_VAL", "50"),
+     "fresh_k": os.environ.get("FRESH_K", "16"), "hybrid_prompts": os.environ.get("HYBRID_PROMPTS", "24"),
+     "seed": os.environ.get("SEED", "0"), "top_p": os.environ.get("OM_TOP_P", "1.0"),
+     "attn": os.environ.get("OM_ATTN", "eager(default)"),
+     "torch": torch.__version__, "transformers": transformers.__version__,
+     "cuda": torch.version.cuda}
+(root / "manifest.json").write_text(json.dumps(m, indent=1))
+print("[manifest]", m["git"][:8], m["dataset"], "n=", m["n_train"], "seed=", m["seed"], "top_p=", m["top_p"])
+PYEOF
+
+COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1 --n-train "${N_TRAIN:-256}" --n-val "${N_VAL:-50}" --seed "${SEED:-0}")
 
 KA_DEV=$(IFS=,; echo "${GPUS[*]}")
 CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &

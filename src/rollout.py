@@ -8,6 +8,7 @@ drift 수준은 step 수(50/100/200)로 제어한다 — concept 10절의 drift 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import torch
@@ -22,6 +23,11 @@ try:
     torch.backends.cuda.enable_cudnn_sdp(False)
 except AttributeError:
     pass
+
+# 샘플링 분포 — 감사 blocker A: top-p 절단 분포에서 표본을 뽑고 raw-softmax로
+# ratio를 계산하면 정의한 IS estimand가 아니다. 기본을 full softmax(top_p=1.0)로
+# 통일한다. 예전 조건 재현 시에만 OM_TOP_P=0.95 지정.
+SAMPLING = {"top_p": float(os.environ.get("OM_TOP_P", "1.0"))}
 
 
 def _eta(done: int, total: int, t_start: float) -> str:
@@ -100,9 +106,9 @@ def collect_rollouts(
                 attention_mask=torch.ones_like(batch_ids),
                 do_sample=True,
                 temperature=temperature,
-                top_p=0.95,
                 max_new_tokens=max_new_tokens,
                 pad_token_id=tok.eos_token_id,
+                **SAMPLING,
             )
             resp_start = ids.numel()
             n_correct = 0
