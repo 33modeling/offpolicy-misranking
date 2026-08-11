@@ -94,49 +94,78 @@ class Run:
                 p, p * (1 - p)]
 
     def pol_2d_refresh(self, budget_groups: int, mode: str, rng) -> tuple[set, int]:
-        """감사-보정 + 획득함수 기반 fresh 배분 (concept '2D-REFRESH' v0 시뮬).
+        """감사(랭커 선택)+획득함수 refresh — concept '2D-REFRESH' v0.1 시뮬.
 
-        mode: full | margin_only | disagree_only  (획득함수 ablation)
-        예산 회계: audit(층화 5%, m=2) + refresh(m=2) 전부 budget_groups에서 차감.
+        v0 교훈(합성 seed1): 소표본 ridge로 전체 순위를 대체하면 멀쩡한 stale을
+        망가뜨린다. v0.1: audit은 **랭커 선택기** — 후보(셀 3종·passrate·ridge[
+        audit≥12일 때만])의 audit 실측 상관을 재서 최고를 base로 쓰고, 그 위에
+        불확실·불일치·경계 획득함수로 refresh. 최악에도 최선-stale 수준 보장.
+        mode: full | margin_only | disagree_only (획득함수 ablation)
         """
         m_a = 2
         spent = 0
-        # ① 층화 audit — passrate 3분위에서 균등 추출
-        n_a = max(6, int(0.05 * self.n))
-        n_a = min(n_a, budget_groups // (2 * m_a))  # 예산 절반 이상을 audit에 안 씀
+        n_a = min(max(8, budget_groups // (4 * m_a)), budget_groups // (2 * m_a))
         if n_a < 3:
-            return topk_ids(self.stale["g00"], self.k, rng), 0  # 예산 부족 → stale
+            return topk_ids(self.stale["g00"], self.k, rng), 0
         by_p = sorted(self.ids, key=lambda i: self.passrate[i])
         terciles = [by_p[j::3] for j in range(3)]
+        # audit 이중 목적: 층화(선택기 정보) + 각 층에서 g00 경계 근접 우선(경계 교정)
+        kth00 = sorted(self.stale["g00"].values(), reverse=True)[self.k - 1]
         audit: list[int] = []
         for t in terciles:
-            audit += rng.sample(t, min(len(t), max(1, n_a // 3)))
+            near = sorted(t, key=lambda i: abs(self.stale["g00"][i] - kth00))
+            pool_t = near[:max(2, 2 * (n_a // 3 + 1))]
+            audit += rng.sample(pool_t, min(len(pool_t), max(1, n_a // 3)))
         audit = audit[:n_a]
         spent += len(audit) * m_a
         y = {i: self.obs_score(i, m_a) for i in audit}
-        # ② ridge 보정 ŝ + 3분위 잔차 r_i
-        X = torch.tensor([self.features(i) for i in audit], dtype=torch.float64)
-        Y = torch.tensor([y[i] for i in audit], dtype=torch.float64)
-        Xm, Xs = X.mean(0), X.std(0).clamp_min(1e-6)
-        Z = (X - Xm) / Xs
-        A = Z.T @ Z + 1e-1 * torch.eye(Z.shape[1], dtype=torch.float64)
-        w = torch.linalg.solve(A, Z.T @ (Y - Y.mean()))
-        def pred(i: int) -> float:
-            z = (torch.tensor(self.features(i), dtype=torch.float64) - Xm) / Xs
-            return float(z @ w + Y.mean())
-        shat = {i: pred(i) for i in self.ids}
+
+        # ---- 후보 랭커와 audit 상관 ----
+        def corr(sc: dict) -> float:
+            xs = torch.tensor([sc[i] for i in audit], dtype=torch.float64)
+            ys = torch.tensor([y[i] for i in audit], dtype=torch.float64)
+            xs, ys = xs - xs.mean(), ys - ys.mean()
+            d = xs.norm() * ys.norm()
+            return float((xs @ ys) / d) if d > 0 else 0.0
+
+        cands: dict[str, dict] = {e: self.stale[e] for e in ("g00", "g10", "g01")}
+        cands["passrate"] = {i: -abs(self.passrate[i] - 0.5) for i in self.ids}
+        if len(audit) >= 12:  # ridge는 표본이 있을 때만 후보에 진입
+            X = torch.tensor([self.features(i) for i in audit], dtype=torch.float64)
+            Y = torch.tensor([y[i] for i in audit], dtype=torch.float64)
+            Xm, Xs = X.mean(0), X.std(0).clamp_min(1e-6)
+            Z = (X - Xm) / Xs
+            A = Z.T @ Z + 1.0 * torch.eye(Z.shape[1], dtype=torch.float64)
+            w = torch.linalg.solve(A, Z.T @ (Y - Y.mean()))
+            b0 = float(Y.mean())
+            F = torch.tensor([self.features(i) for i in self.ids], dtype=torch.float64)
+            P = ((F - Xm) / Xs) @ w + b0
+            cands["ridge"] = {i: float(P[j]) for j, i in enumerate(self.ids)}
+        # 스위치 문턱: 소표본 상관 노이즈로 멀쩡한 기본 랭커를 갈아타는 것 방지
+        corrs = {nm: corr(sc) for nm, sc in cands.items()}
+        base_name = "g00"
+        best = max(corrs, key=corrs.get)
+        if corrs[best] >= corrs["g00"] + 0.15:
+            base_name = best
+        base = cands[base_name]
+        base_corr = corrs[base_name]
+        # audit 잔차 규모(불확실도 대용) — 3분위별
         res_by_t = []
         for t in terciles:
-            rs = [abs(shat[i] - y[i]) for i in t if i in y]
+            rs = [abs(base[i] - y[i]) for i in t if i in y]
             res_by_t.append(sum(rs) / len(rs) if rs else 0.1)
         tvix = {i: j for j, t in enumerate(terciles) for i in t}
         r_i = {i: res_by_t[tvix[i]] for i in self.ids}
         d_i = {i: max(self.features(i)[3:6]) for i in self.ids}
-        # ③ 획득 루프 — 라운드마다 τ 재계산, 상위 8개에 m=2 refresh
-        score = dict(shat)
+
+        # ---- 획득 루프: base 순위 위에 fresh 교체 ----
+        score = dict(base)
         for i in audit:
             score[i] = y[i]
         refreshed = set(audit)
+        # corr-적응 지수: audit이 base 순위를 신뢰할수록 경계(gap)에 집중하고,
+        # 신뢰가 낮으면 gap을 무시하고 불일치·불확실 쪽을 탐색한다 (anti-순위 체제 대응)
+        w_gap = min(1.0, max(0.0, base_corr))
         while spent + m_a <= budget_groups:
             kth = sorted(score.values(), reverse=True)[self.k - 1]
             def acq(i: int) -> float:
@@ -145,7 +174,7 @@ class Run:
                     return 1.0 / gap
                 if mode == "disagree_only":
                     return d_i[i]
-                return (r_i[i] + 0.5 * d_i[i]) / gap
+                return (r_i[i] + 0.5 * d_i[i]) / (gap ** w_gap + 1e-3)
             cand = [i for i in self.ids if i not in refreshed]
             if not cand:
                 break
@@ -160,7 +189,9 @@ class Run:
                 took = True
             if not took:
                 break
-        return topk_ids(score, self.k, rng), spent
+        sel = topk_ids(score, self.k, rng)
+        self.last_base = (base_name, round(base_corr, 3))  # 진단용
+        return sel, spent
 
     def pol_stale(self, est: str, rng) -> tuple[set, int]:
         return topk_ids(self.stale[est], self.k, rng), 0
