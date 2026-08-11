@@ -112,6 +112,72 @@ trap cleanup EXIT INT TERM
 log "=== 14B 시작: $MODEL_14B → $OUT_ROOT (GPU ${NGPU}장) ==="
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
 run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"
+
+# ---- 정합성 사전 검사: 옛 실행 잔재가 이번 실행과 섞이는 것을 원천 차단 ----
+# ① π(drift adapter)보다 오래된 π-의존 산출물 격리 — 재학습 후 옛 점수/rollout이
+#    병합에 섞여 조용히 오염되는 경로 차단 (B6 확장)
+AD=$(ls -t "$OUT_ROOT"/drift_*/adapter_config.json 2>/dev/null | head -1)
+if [ -n "${AD:-}" ]; then
+  SDIR="$OUT_ROOT/stale-$(date +%s)"; moved=0
+  for f in "$OUT_ROOT"/rollouts_fresh_train*.jsonl "$OUT_ROOT"/rollouts_fresh_val.jsonl \
+           "$OUT_ROOT"/oracle_micro_groups*.pt "$OUT_ROOT"/scores_oracle.json \
+           "$OUT_ROOT"/scores_splithalf.json "$OUT_ROOT"/scores_offpolicy*.json \
+           "$OUT_ROOT"/scores_hybrid_*.json "$OUT_ROOT"/rollouts_hybrid_*.jsonl \
+           "$OUT_ROOT"/val_gradient.pt "$OUT_ROOT"/val_groups.pt \
+           "$OUT_ROOT"/report.md "$OUT_ROOT"/report.json; do
+    if [ -f "$f" ] && [ "$f" -ot "$AD" ]; then
+      mkdir -p "$SDIR"; mv "$f" "$SDIR/"; moved=$((moved + 1))
+    fi
+  done
+  [ "${moved:-0}" -gt 0 ] && log "[정합성] π 재학습 이전 산출물 ${moved}개 격리 → $SDIR"
+fi
+# ② 현재 GPU 분할(n)과 안 맞는 샤드 격리 — 다른 n으로 만든 샤드를 재사용하면
+#    스킵→병합에서 누락/중복으로 죽거나(멈춤) 옛 값이 덮어써진다(오염)
+"$PY" - "$OUT_ROOT" "$NGPU" <<'PYEOF' | tee -a "$LOGS/main.log"
+import json, sys, time
+from pathlib import Path
+root, n = Path(sys.argv[1]), int(sys.argv[2])
+nm = n - 1 if n >= 2 else 1
+pj = root / "prompts.json"
+if not pj.exists():
+    sys.exit(0)
+n_train = len(json.loads(pj.read_text())["train"])
+per = (n_train + n - 1) // n
+stale = []
+for base in ("rollouts_behavior_train", "rollouts_fresh_train"):
+    if (root / (base + ".jsonl")).exists():
+        continue  # 병합 완료 — 샤드는 더 안 쓰임
+    for p in root.glob(base + ".shard*.jsonl"):
+        try:
+            i = int(p.name.split("shard")[1].split(".")[0])
+            lo, hi = i * per, min((i + 1) * per, n_train)
+            idx = {json.loads(l)["prompt_idx"] for l in p.open()}
+            ok = i < n and idx == set(range(lo, hi))
+        except Exception:
+            ok = False
+        if not ok:
+            stale.append(p)
+for p in root.glob("scores_offpolicy.shard*.json"):
+    try:
+        ok = int(p.name.split("shard")[1].split(".")[0]) < n
+    except Exception:
+        ok = False
+    if not ok:
+        stale.append(p)
+for p in root.glob("oracle_micro_groups.shard*.pt"):
+    try:
+        ok = int(p.name.split("shard")[1].split(".")[0]) < nm
+    except Exception:
+        ok = False
+    if not ok:
+        stale.append(p)
+if stale:
+    d = root / f"stale-shards-{int(time.time())}"
+    d.mkdir(exist_ok=True)
+    for p in stale:
+        p.rename(d / p.name)
+    print(f"[정합성] 현재 분할(n={n})과 안 맞는 샤드 {len(stale)}개 격리 → {d.name}")
+PYEOF
 # β rollout N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)

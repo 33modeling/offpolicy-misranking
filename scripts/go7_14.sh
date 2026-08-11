@@ -6,6 +6,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
+[ -x "$PY" ] || { echo "[abort] venv python 없음: $PY — group-volume 마운트/provision 확인"; exit 1; }
 N=$(nvidia-smi -L 2>/dev/null | wc -l)
 [ "$N" -ge 2 ] || { echo "[abort] GPU 2장 이상 필요 (감지: $N)"; exit 1; }
 
@@ -21,10 +22,10 @@ torch.cuda.synchronize()
 s = torch.randn(32, 2048, 2048, device='cuda', dtype=torch.bfloat16)
 for _ in range(30):            # 실제 사망 이력 커널(softmax) 부하
     s.softmax(dim=-1).sum().item()
-torch.cuda.synchronize()" 2>/dev/null; then
+torch.cuda.synchronize()" 2>"$TMPDIR/hc$i.err"; then
     echo "  GPU$i OK"
   else
-    echo "  GPU$i ✘ FAIL — 이 GPU는 병듦"; sick=1
+    echo "  GPU$i ✘ FAIL — $(tail -1 "$TMPDIR/hc$i.err" 2>/dev/null | cut -c1-100)"; sick=1
   fi
 done
 [ "$sick" -eq 0 ] || { echo "== [중단] 병든 GPU 있음 — 이 노드 버리고 다른 인스턴스에서 재실행할 것"; exit 1; }
@@ -38,7 +39,7 @@ OM_GPUS="$G7" MODEL_14B="$MODELS_DIR/Qwen2.5-7B-Instruct" DATASET=math500 \
   FRESH_K=32 OUT_ROOT="$OM_WORK/runs/gate-7b" \
   bash scripts/run_14b.sh > 7b-math.log 2>&1 &
 P7=$!
-OM_GPUS="$G14" DATASET=math500 bash scripts/run_14b.sh > 14b-math.log 2>&1 &
+OM_GPUS="$G14" DATASET=math500 FRESH_K=32 bash scripts/run_14b.sh > 14b-math.log 2>&1 &
 P14=$!
 trap 'echo "== 중단 요청 — 둘 다 정리"; kill $P7 $P14 2>/dev/null; exit 130' INT TERM
 
@@ -64,6 +65,7 @@ watch_detail "7b " "$OM_WORK/runs/gate-7b-math500/logs" &
 W1=$!
 watch_detail "14b" "$OM_WORK/runs/gate-14b-math500/logs" &
 W2=$!
+trap 'echo "== 중단 요청 — 전부 정리"; kill $P7 $P14 $T1 $T2 $W1 $W2 2>/dev/null; exit 130' INT TERM
 R7=0; R14=0
 wait "$P7" || R7=$?
 wait "$P14" || R14=$?
