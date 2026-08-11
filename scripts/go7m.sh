@@ -3,6 +3,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+# 클러스터 노드들의 fused SDPA ULF 이력(C5·C6) — 느려도 확실한 eager가 기본
+export OM_ATTN="${OM_ATTN:-eager}"
 export MODEL_14B="$MODELS_DIR/Qwen2.5-7B-Instruct"
 export DATASET=math500 FRESH_K="${FRESH_K:-32}" OUT_ROOT="$OM_WORK/runs/gate-7b"
 nohup bash scripts/run_14b.sh > 7b-math.log 2>&1 &
