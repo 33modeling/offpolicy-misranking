@@ -18,10 +18,6 @@ NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
 mkdir -p "$RUN"
 
 COMMON=(--run "$RUN" --model "$MODEL" --dataset "$DS" --n-train "$POOL_N" --n-val 8 --micro-batch 1)
-# 사용률 기준 잡 킬 대응 — prep(CPU)·풀 생성 구간 커버
-CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NGPU - 1))) "$PY" scripts/gpu_keepalive.py > /dev/null 2>&1 &
-KA=$!
-trap 'kill $KA 2>/dev/null' EXIT
 echo "== prescreen: $DS × $POOL_N, model=$TAG, GPU ${NGPU}장"
 "$PY" src/experiment.py --stage prep "${COMMON[@]}" || exit 1
 

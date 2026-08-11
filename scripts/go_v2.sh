@@ -94,12 +94,6 @@ for SEED in "${SEEDS[@]}"; do
 done
 
 cleanup_strays; kill "$W" 2>/dev/null
-# 사용률 기준 잡 킬 대응 — 이후 수집·표·frontier는 CPU 구간이라 GPU 사용률이
-# 0으로 떨어지면 잡이 죽는다. 끝날 때까지 저강도 keepalive 유지.
-ALLDEV=$(seq -s, 0 $((N - 1)))
-CUDA_VISIBLE_DEVICES="$ALLDEV" "$PY" scripts/gpu_keepalive.py > /dev/null 2>&1 &
-KA2=$!
-trap 'kill $KA2 2>/dev/null' EXIT
 echo
 echo "==== 종료 요약 ===="
 DIRS=()

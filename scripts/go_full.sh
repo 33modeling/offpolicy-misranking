@@ -40,11 +40,6 @@ fi
 
 echo "== [C] downstream 4소스 × gsm8k seeds — drift 100 기준"
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
-# 사용률 기준 잡 킬 대응 — C단계는 run_14b 밖이라 keepalive가 없다. 소스 4개보다
-# GPU가 많거나 로딩·평가 사이 사용률이 꺼지는 창을 저강도 커널로 막는다.
-CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NGPU - 1))) "$PY" scripts/gpu_keepalive.py > /dev/null 2>&1 &
-KA_C=$!
-trap 'kill $KA_C 2>/dev/null' EXIT
 for s in $SEEDS_ALL; do
   d="$OM_WORK/runs/v2-s$s"
   [ -f "$d/DONE" ] || { echo "  [skip] v2-s$s 미완주 — downstream 생략"; continue; }
