@@ -64,6 +64,9 @@ for DS in "${DATASETS[@]}"; do
   LOG="big-$DS.log"
   echo
   echo "==== [$DS] 시작 → $RUN_DIR (n=$N_TRAIN, fresh=$FRESH_K, hybrid=$HYBRID_PROMPTS, log: $LOG)"
+  if [ -f "$RUN_DIR/DONE" ]; then
+    echo "==== [$DS] ✔ 이미 완주(DONE) — 스킵"; RESULT[$DS]=1; continue
+  fi
   ok=0
   for try in $(seq 1 "$MAX_TRY"); do
     echo "==== [$DS] 시도 $try/$MAX_TRY"

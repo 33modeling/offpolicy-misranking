@@ -292,8 +292,10 @@ def _code_reward(text: str, tests: str) -> float:
 
     src = _extract_code(text) + "\n\n" + tests + "\n"
     try:
+        # returncode만 필요 — 출력은 버린다 (print 폭주 코드의 메모리 폭발 방지)
         p = subprocess.run([sys.executable, "-I", "-c", src],
-                           capture_output=True, timeout=8)
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=8)
         return 1.0 if p.returncode == 0 else 0.0
     except (subprocess.TimeoutExpired, OSError):
         return 0.0
