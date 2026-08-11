@@ -356,12 +356,17 @@ def main() -> None:
         (run / "prompts.json").write_text(json.dumps(prompts, ensure_ascii=False, indent=1))
         print(f"prep: train {len(prompts['train'])} / val {len(prompts['val'])}")
     elif args.stage == "rollout-behavior":
+        merged = run / "rollouts_behavior_train.jsonl"
         if args.shard:
             i, n = map(int, args.shard.split(":"))
             out = run / f"rollouts_behavior_train.shard{i}.jsonl"
         else:
-            i, n, out = 0, 1, run / "rollouts_behavior_train.jsonl"
-        if out.exists():
+            i, n, out = 0, 1, merged
+        # 병합본이 있으면 샤드도 스킵 — 다른 run에서 복사해 온 β 재사용(go_boost·
+        # real_drift_check)과 병합 후 재시작 양쪽을 커버한다.
+        if merged.exists():
+            print("rollout-behavior: 병합본 존재 — 스킵 (재사용)")
+        elif out.exists():
             print(f"rollout-behavior: {out.name} 이미 존재 — 스킵")
         else:
             beta, tok = load_policy(args.model, None)
@@ -373,13 +378,18 @@ def main() -> None:
                              idx_offset=lo)
     elif args.stage == "rollout-fresh":
         # π(adapter) fresh rollout을 샤딩 수집 — analyze는 완성 파일이 있으면 생성 스킵
+        merged = run / "rollouts_fresh_train.jsonl"
         if args.shard:
             i, n = map(int, args.shard.split(":"))
             out = run / f"rollouts_fresh_train.shard{i}.jsonl"
         else:
-            i, n, out = 0, 1, run / "rollouts_fresh_train.jsonl"
+            i, n, out = 0, 1, merged
         pi = tok = None
-        if out.exists():
+        # 병합본 존재 시 샤드 스킵 (병합 후 재시작 케이스 — 낡은 π 병합본은
+        # run_14b의 adapter 시각 격리가 먼저 치우므로 여기 도달하면 현재 π 것)
+        if merged.exists():
+            print("rollout-fresh: 병합본 존재 — 스킵")
+        elif out.exists():
             print(f"rollout-fresh: {out.name} 이미 존재 — 스킵")
         else:
             pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
