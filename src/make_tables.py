@@ -309,8 +309,12 @@ def main() -> int:
         except Exception as e:  # 표 하나가 죽어도 나머지는 계속
             lines.append(f"⚠️ 생성 실패: {type(e).__name__}: {e}")
         lines.append("")
-    out = Path("results")
-    out.mkdir(exist_ok=True)
+    import os
+    # 저장 위치: OM_RESULTS > $OM_WORK/results (group-volume) > ./results
+    base = os.environ.get("OM_RESULTS") or (
+        os.environ.get("OM_WORK", "") and os.environ["OM_WORK"] + "/results") or "results"
+    out = Path(base)
+    out.mkdir(parents=True, exist_ok=True)
     md = "\n".join(lines)
     (out / "TABLES.md").write_text(md)
     print(md)
