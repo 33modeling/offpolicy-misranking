@@ -19,7 +19,7 @@ OUT="READOUT.md"
     echo "## $(basename "$d")"
     echo
     echo '```'
-    "$PY" src/judge.py "$d" 2>&1 | tail -15
+    "$PY" src/judge.py "$d" 2>&1
     echo '```'
     echo
     echo "통계 (precision · 우연 p · 부트스트랩 CI):"
