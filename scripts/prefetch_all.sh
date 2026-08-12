@@ -11,7 +11,35 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh 2>/dev/null || true
-command -v aria2c >/dev/null || echo "[info] aria2c 없음 — curl 8병렬 폴백으로 진행 (설치 불필요)"
+# aria2c 확보 3단계: ① PATH·사용자 bin 탐색 ② sudo 없이 정적 바이너리 설치
+# ③ 그래도 없으면 curl 8병렬 폴백 (아무것도 설치 안 해도 동작은 한다)
+ensure_aria2() {
+  command -v aria2c >/dev/null && return 0
+  local c
+  for c in "$HOME/.local/bin/aria2c" "$HOME/bin/aria2c" "${OM_WORK:-/nonexist}/bin/aria2c"; do
+    if [ -x "$c" ]; then
+      export PATH="$(dirname "$c"):$PATH"
+      echo "[aria2] 기존 바이너리 발견: $c"; return 0
+    fi
+  done
+  local BIN="${OM_WORK:-$HOME}/bin" V="1.36.0" TD
+  TD=$(mktemp -d)
+  local URL="https://github.com/q3aql/aria2-static-builds/releases/download/v${V}/aria2-${V}-linux-gnu-64bit-build1.tar.bz2"
+  echo "[aria2] 미설치 — 정적 바이너리 설치 시도 (sudo 불필요)"
+  if curl -fL -m 180 -o "$TD/a.tar.bz2" "$URL" 2>/dev/null \
+     && tar xjf "$TD/a.tar.bz2" -C "$TD" 2>/dev/null \
+     && [ -f "$TD/aria2-${V}-linux-gnu-64bit-build1/aria2c" ]; then
+    mkdir -p "$BIN"
+    cp "$TD/aria2-${V}-linux-gnu-64bit-build1/aria2c" "$BIN/aria2c"
+    chmod +x "$BIN/aria2c"
+    export PATH="$BIN:$PATH"
+    echo "[aria2] 설치 완료: $BIN/aria2c"
+  else
+    echo "[aria2] 정적 설치 실패(네트워크/GitHub 차단?) — curl 8병렬 폴백으로 진행"
+  fi
+  rm -rf "$TD"
+}
+ensure_aria2
 
 # 다운로드 동안 GPU 사용률 유지 (GPU 없는 머신이면 자동 생략)
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
