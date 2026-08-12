@@ -11,7 +11,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh 2>/dev/null || true
-command -v aria2c >/dev/null || { echo "[abort] aria2c 없음 — apt install aria2"; exit 1; }
+command -v aria2c >/dev/null || echo "[info] aria2c 없음 — curl 8병렬 폴백으로 진행 (설치 불필요)"
 
 # 다운로드 동안 GPU 사용률 유지 (GPU 없는 머신이면 자동 생략)
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
@@ -49,10 +49,40 @@ for f in tree:
 PYEOF
   n=$(grep -c "out=" "$LIST" || true)
   [ "${n:-0}" -gt 0 ] || { echo "[모델] ✘ 파일 목록 비었음: $REPO"; return 1; }
-  echo "[모델] $REPO — ${n}개 파일 (aria2c -x16 -s16 -j4, 이어받기 -c)"
-  aria2c -x16 -s16 -j4 -c --file-allocation=none --console-log-level=warn \
-    --summary-interval=60 -d "$DEST" -i "$LIST" \
-    || { echo "[모델] ✘ $REPO 중단 — 같은 명령으로 이어받기"; return 1; }
+  if command -v aria2c >/dev/null; then
+    echo "[모델] $REPO — ${n}개 파일 (aria2c -x16 -s16 -j4, 이어받기 -c)"
+    aria2c -x16 -s16 -j4 -c --file-allocation=none --console-log-level=warn \
+      --summary-interval=60 -d "$DEST" -i "$LIST" \
+      || { echo "[모델] ✘ $REPO 중단 — 같은 명령으로 이어받기"; return 1; }
+  else
+    echo "[모델] $REPO — ${n}개 파일 (curl 8병렬 폴백, 이어받기 -C -)"
+    python3 - "$LIST" "$DEST" <<'PYFALLBACK'
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
+dest = sys.argv[2]
+pairs = []
+for i in range(0, len(lines), 2):
+    url, out = lines[i], lines[i + 1].strip().split("out=", 1)[1]
+    pairs.append((url, out))
+
+def dl(p):
+    url, out = p
+    r = subprocess.run(
+        ["curl", "-fL", "-C", "-", "--retry", "3", "--retry-delay", "5",
+         "--create-dirs", "-o", f"{dest}/{out}", url],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(("  OK  " if r.returncode == 0 else "  FAIL"), out, flush=True)
+    return r.returncode
+
+with ThreadPoolExecutor(8) as ex:
+    codes = list(ex.map(dl, pairs))
+sys.exit(1 if any(codes) else 0)
+PYFALLBACK
+    [ $? -eq 0 ] || { echo "[모델] ✘ $REPO 일부 실패 — 같은 명령 재실행(이어받기)"; return 1; }
+  fi
   rm -f "$LIST" "$TREE"
   echo "[모델] ✔ $(basename "$REPO") ($(du -sh "$DEST" | cut -f1))"
 }
