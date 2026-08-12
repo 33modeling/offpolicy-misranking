@@ -1,24 +1,46 @@
 #!/usr/bin/env bash
-# 즉시 판독 원샷 — 완주(DONE)된 v2 run 전부에 judge 자동 판정 + 핵심 수치.
-# 출력은 화면과 READOUT.txt 양쪽에 남는다 (사진은 화면 아무거나).
+# 즉시 판독 원샷 — 완주(DONE)된 v2 run 전부에 judge 판정 + 핵심 통계를
+# READOUT.md 로 저장하고, 자동으로 커밋·push까지 시도한다.
+# push가 되면 사람이 옮길 것이 없다 — Claude가 GitHub에서 받아 판독한다.
 #   bash scripts/read_now.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
+OUT="READOUT.md"
 
 {
-  echo "===== 즉시 판독 $(date '+%F %T') ====="
+  echo "# 즉시 판독 — $(date '+%F %T')"
+  echo
   n=0
   for d in "$OM_WORK"/runs/v2-*; do
     [ -f "$d/DONE" ] || continue
     n=$((n + 1))
+    echo "## $(basename "$d")"
     echo
-    echo "======== $(basename "$d") ========"
+    echo '```'
     "$PY" src/judge.py "$d" 2>&1 | tail -15
-    echo "-- 통계 (precision·우연 p·부트스트랩 CI):"
-    "$PY" src/stats_extra.py "$d" 0.10 300 2>&1 | sed -n '2,8p'
+    echo '```'
+    echo
+    echo "통계 (precision · 우연 p · 부트스트랩 CI):"
+    echo
+    echo '```'
+    "$PY" src/stats_extra.py "$d" 0.10 300 2>&1 | sed -n '1,9p'
+    echo '```'
+    echo
   done
-  echo
-  echo "===== 완주 ${n}개 판독 끝 — 이 출력 전체를 사진으로 전달 ====="
-} | tee READOUT.txt
+  echo "---"
+  echo "완주 ${n}개 판독 완료."
+} | tee "$OUT"
+
+git -c safe.directory='*' add "$OUT" 2>/dev/null || true
+if git -c safe.directory='*' -c user.name=33modeling -c user.email=33modeling@gmail.com \
+     commit -m "READOUT $(date +%F-%H%M)" >/dev/null 2>&1; then
+  if git -c safe.directory='*' push origin master >/dev/null 2>&1; then
+    echo "== push 완료 — Claude에게 '판독 올렸다'고만 알리면 됨"
+  else
+    echo "== 커밋됨, push 실패 — 온라인 되는 셸에서 git push 한 번"
+  fi
+else
+  echo "== READOUT.md 저장됨 (변경 없음 또는 커밋 불가)"
+fi
