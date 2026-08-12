@@ -44,3 +44,28 @@ rollout 원본(대용량)은 백업하지 않는다 — 재현 가능(seed 고�
 - **경로 결정점 9/10**: 이날까지 v2+보강이 불안하면 상황 3 분기 발동
 - 실행 순서: go_full → go_boost → go_35(Qwen3.5 스케일 스윕) → go_27b —
   뒤쪽 블록은 시간 없으면 자른다 (27b가 첫 번째 삭제 후보, full이 최후 보루)
+
+## 재실험 사다리 (R-plan, 2026-08-13 — 원인 불명이어도 작동)
+
+전제: 어느 단계에 서 있든 완주분(DONE)은 보존되고, 각 단은 논문 티어와 대응한다.
+
+| 단 | 실험 범위 | 논문 티어 |
+|---|---|---|
+| 완전 | 5-seed × {gsm8k, dapo, math500} + downstream | 주 경로 (오차대 완비) |
+| 표준 | 3-seed × {gsm8k, math500} | 충분 (dapo 없이 성립) |
+| 최소 | 3-seed × gsm8k | 주표 오차대만 확보 |
+| 바닥 | 0 (전량 실패) | v1 수치 경로 — 원고 이미 완결 |
+
+절차:
+
+```bash
+bash scripts/go_retry.sh     # R1: 같은 노드+cublasLt 폴백 검증런(gsm8k s0)
+                             #  통과 → 같은 env로 전체 자동 재개
+                             #  실패 → DIAGNOSIS.txt 자동 생성·중단 → 노드 교체
+bash scripts/diagnose.sh     # 언제든 원샷 진단 리포트 (사진 한 장으로 전달)
+```
+
+노드 교체 시(R2): 새 인스턴스에서 `git pull → provision.sh → preflight.sh →
+go_full.sh` — group-volume이 상태를 들고 있어 완주분 전부 스킵. R2도 실패하면
+세 번째 인스턴스 유형(B300 등)으로 — 이 계열 커널 문제는 노드 의존이 정설.
+시간이 없으면 표에서 한 단씩 내려간다: `SEEDS_ALL="0 1 2"`, `DATASETS` 축소.
