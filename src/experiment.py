@@ -329,6 +329,7 @@ def main() -> None:
     p.add_argument("--radius-mode", default="gaussian", choices=["gaussian", "hoeffding"])
     p.add_argument("--cut-frac", type=float, default=0.5, help="hybrid prefix 절단점")
     p.add_argument("--hybrid-prompts", type=int, default=32)
+    p.add_argument("--k-cell", type=int, default=8)
     p.add_argument("--downstream-source", default="oracle",
                    help="oracle|g00|g10|g01|g11|random")
     p.add_argument("--downstream-steps", type=int, default=200)
@@ -558,7 +559,7 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
             subset = sorted(rng.sample(pool, min(args.hybrid_prompts, len(pool))))
             make_hybrid_cells(beta, pi, tok, behavior, prompts, cut_frac,
                               args.max_new_tokens, args.temperature,
-                              subset, hy_path)
+                              subset, hy_path, k_cell=args.k_cell)
         hy = read_rollouts(hy_path)  # prompt_idx 기준 — cell 분리 다시
         cells: dict[str, dict[int, list[dict]]] = {"bb": {}, "bp": {}, "pb": {}, "pp": {}}
         for idx, rows in hy.items():
