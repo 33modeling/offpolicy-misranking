@@ -3,12 +3,12 @@
 # 배경(A0 코드 대조): v1의 21/21은 pp가 oracle 표본을 재사용한 누수 설계였고,
 # v2 무누수판은 K=8 소표본이라 작은 진짜 효과는 미검출일 수 있다. 이 실험이 최종 판정.
 #   bash scripts/go_decisive.sh        # 완주 run 전부 × cut=0.5, K=32, 프롬프트 96
-# env: K_CELL(32) HYB_N(96) CUTS("0.5") TARGETS("경로 ...")   — run당 수 시간(GPU 1장)
+# env: K_CELL(8 — equal-K 상한) HYB_N(96) CUTS("0.5") TARGETS("경로 ...")   — run당 수 시간(GPU 1장)
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
-K_CELL="${K_CELL:-32}"; HYB_N="${HYB_N:-96}"; CUTS="${CUTS:-0.5}"
+K_CELL="${K_CELL:-8}"; HYB_N="${HYB_N:-96}"   # K는 8 고정이 정설계 — behavior rollout이 프롬프트당 8개라 K>8이면 bb·bp만 부족해져 equal-K가 깨진다(v1 재발). 검정력은 프롬프트 수(96)가 지배.; CUTS="${CUTS:-0.5}"
 MODEL="${MODEL_14B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 
 targets=()
