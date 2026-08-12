@@ -33,4 +33,11 @@ OUT="READOUT.md"
   echo "완주 ${n}개 판독 완료."
 } | tee "$OUT"
 
-echo "== 저장 완료: $(pwd)/$OUT"
+# 그룹볼륨에 날짜·시간 폴더로도 보관 (전달·아카이브용)
+STAMP_DIR="$OM_WORK/readouts/$(date '+%Y-%m-%d_%H%M')"
+mkdir -p "$STAMP_DIR"
+cp "$OUT" "$STAMP_DIR/"
+cp "$OM_WORK"/results/v2/TABLES.md "$OM_WORK"/results/v2/FRONTIER.md \
+   results/TABLES.md "$STAMP_DIR/" 2>/dev/null || true
+echo "== 저장 완료: $STAMP_DIR/READOUT.md  (사본: $(pwd)/$OUT)"
+ls "$STAMP_DIR"
