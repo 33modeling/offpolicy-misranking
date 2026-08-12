@@ -31,6 +31,10 @@ for d in "${targets[@]}"; do
     for f in "$d/scores_hybrid_${cut}.json" "$d/rollouts_hybrid_${cut}.jsonl"; do
       [ -f "$f" ] && [ ! -f "$f.lowK" ] && mv "$f" "$f.lowK"
     done
+    # FRESH=1 — 잘못된 설정(K=32 등)으로 만든 현재 파일 폐기 후 재생성 (.lowK 백업은 보존)
+    if [ "${FRESH:-0}" = "1" ]; then
+      rm -f "$d/scores_hybrid_${cut}.json" "$d/rollouts_hybrid_${cut}.jsonl"
+    fi
     echo "== $(basename "$d") cut=$cut (K=$K_CELL, n=$HYB_N)"
     if ! CUDA_VISIBLE_DEVICES="${GPU:-0}" "$PY" src/experiment.py --stage hybrid \
         --run "$d" --model "$MODEL" --dataset "$DS" --adapter "$AD" \
