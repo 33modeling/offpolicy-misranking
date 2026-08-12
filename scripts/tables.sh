@@ -23,6 +23,10 @@ else
   for a in 7b 14b 7bm 14bm; do
     p="$(resolve "$a")"; [ -d "$p" ] && targets+=("$p")
   done
+  # v2 계열 완주분도 기본 포함 (부분 완주 안전 — DONE만)
+  for d in $(ls -d "$OM_WORK"/runs/v2-* 2>/dev/null | grep -v smoke); do
+    [ -f "$d/DONE" ] && targets+=("$d")
+  done
 fi
 [ "${#targets[@]}" -gt 0 ] || { echo "[abort] 대상 run 없음"; exit 1; }
 "$PY" src/make_tables.py "${targets[@]}"
