@@ -67,9 +67,13 @@ if [[ " $PHASES " == *" E "* ]]; then
 fi
 
 if [[ " $PHASES " == *" F "* ]]; then
-  echo "== [F] mbpp × 3-seed (n=512, 실행 채점)"
-  for s in 0 1 2; do
-    run_one "$OM_WORK/runs/v2-s$s-mbpp" DATASET=mbpp DRIFT=100 SEED="$s" N_TRAIN=512 N_VAL=100 || true
+  echo "== [F] mbpp·kk × 3-seed — 코드·논리 도메인 (n=512, 풀 부족 시 256+50 폴백)"
+  for DS in mbpp kk; do
+    for s in 0 1 2; do
+      dir="$OM_WORK/runs/v2-s$s-$DS"
+      run_one "$dir" DATASET="$DS" DRIFT=100 SEED="$s" N_TRAIN=512 N_VAL=100 \
+        || run_one "$dir" DATASET="$DS" DRIFT=100 SEED="$s" N_TRAIN=256 N_VAL=50 || true
+    done
   done
 fi
 
@@ -79,7 +83,7 @@ for pat in v2-d50-s v2-d200-s v2-d400-s v2-14bm-s; do
     [ -d "$d" ] && echo "  $(basename "$d"): $([ -f "$d/DONE" ] && echo ✔ || echo ✘)"
   done
 done
-for s in 0 1 2; do d="$OM_WORK/runs/v2-s$s-mbpp"
+for DS in mbpp kk; do for s in 0 1 2; do d="$OM_WORK/runs/v2-s$s-$DS"
   [ -d "$d" ] && echo "  $(basename "$d"): $([ -f "$d/DONE" ] && echo ✔ || echo ✘)"
-done
+done; done
 echo "== 끝 — 표는 tables.sh, frontier는 frontier.sh (mbpp만 자동 포함)"

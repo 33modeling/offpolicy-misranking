@@ -25,7 +25,7 @@
 ## 트랙 B — 실험 블록 (앞 블록 완주 후 순서대로, 🖥)
 
 - [ ] B1. go_full 완주 (A: gsm8k+dapo 5-seed / B: math500 5-seed / C: downstream 4소스)
-- [ ] B2. go_boost (D: drift 50/200/400×3seed — β 재사용 / E: 14B math500×3seed / F: mbpp×3seed)
+- [ ] B2. go_boost (D: drift 50/200/400×3seed — β 재사용 / E: 14B math500×3seed / F: mbpp·kk×3seed — 코드·논리 도메인)
 - [ ] B3. go_35 (Qwen3.5 0.8/2/4B — 능력 스윕 + 신세대 게이트)
 - [ ] B4. go_27b (스모크 관문 → DAPO hard-slice 프리스크린 → 3-seed; 코드는 DATASETS_27B에 apps)
 - [ ] B5. real_drift_check.sh (D1 — B1의 downstream_random 어댑터 필요)
