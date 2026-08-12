@@ -85,6 +85,7 @@ PYEOF
   else
     echo "[모델] $REPO — ${n}개 파일 (curl 8병렬 폴백, 이어받기 -C -)"
     python3 - "$LIST" "$DEST" <<'PYFALLBACK'
+import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -96,14 +97,34 @@ for i in range(0, len(lines), 2):
     url, out = lines[i], lines[i + 1].strip().split("out=", 1)[1]
     pairs.append((url, out))
 
+def remote_size(url):
+    try:
+        h = subprocess.run(["curl", "-sIL", "-m", "30", url],
+                           capture_output=True, text=True, timeout=40).stdout
+        sizes = [l.split(":", 1)[1].strip() for l in h.splitlines()
+                 if l.lower().startswith("content-length")]
+        return int(sizes[-1]) if sizes else -1
+    except Exception:
+        return -1
+
 def dl(p):
     url, out = p
+    path = f"{dest}/{out}"
+    if os.path.exists(path):
+        rs = remote_size(url)
+        if rs >= 0 and os.path.getsize(path) == rs:
+            print("  SKIP", out, flush=True)
+            return 0
     r = subprocess.run(
         ["curl", "-fL", "-C", "-", "--retry", "3", "--retry-delay", "5",
-         "--create-dirs", "-o", f"{dest}/{out}", url],
+         "--create-dirs", "-o", path, url],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print(("  OK  " if r.returncode == 0 else "  FAIL"), out, flush=True)
-    return r.returncode
+    ok = r.returncode == 0
+    if not ok and os.path.exists(path):
+        rs = remote_size(url)
+        ok = rs >= 0 and os.path.getsize(path) == rs  # 416(이미 완료) 케이스
+    print(("  OK  " if ok else "  FAIL"), out, flush=True)
+    return 0 if ok else 1
 
 with ThreadPoolExecutor(8) as ex:
     codes = list(ex.map(dl, pairs))
