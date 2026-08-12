@@ -33,14 +33,4 @@ OUT="READOUT.md"
   echo "완주 ${n}개 판독 완료."
 } | tee "$OUT"
 
-git -c safe.directory='*' add "$OUT" 2>/dev/null || true
-if git -c safe.directory='*' -c user.name=33modeling -c user.email=33modeling@gmail.com \
-     commit -m "READOUT $(date +%F-%H%M)" >/dev/null 2>&1; then
-  if git -c safe.directory='*' push origin master >/dev/null 2>&1; then
-    echo "== push 완료 — Claude에게 '판독 올렸다'고만 알리면 됨"
-  else
-    echo "== 커밋됨, push 실패 — 온라인 되는 셸에서 git push 한 번"
-  fi
-else
-  echo "== READOUT.md 저장됨 (변경 없음 또는 커밋 불가)"
-fi
+echo "== 저장 완료: $(pwd)/$OUT"
