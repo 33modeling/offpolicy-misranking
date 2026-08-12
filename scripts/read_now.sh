@@ -17,7 +17,7 @@ PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
     echo "======== $(basename "$d") ========"
     "$PY" src/judge.py "$d" 2>&1 | tail -15
     echo "-- 통계 (precision·우연 p·부트스트랩 CI):"
-    "$PY" src/stats_extra.py "$d" 2>&1 | sed -n '2,8p'
+    "$PY" src/stats_extra.py "$d" 0.10 300 2>&1 | sed -n '2,8p'
   done
   echo
   echo "===== 완주 ${n}개 판독 끝 — 이 출력 전체를 사진으로 전달 ====="
