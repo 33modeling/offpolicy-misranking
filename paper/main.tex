@@ -96,6 +96,19 @@ oversight, but because correcting both multiplies hundreds of token ratios and
 explodes the variance. The implicit bet behind this truncation is that the
 remaining half induces a small bias that roughly preserves \emph{ranking}.
 
+The bet is already cracking in public. The method that popularized
+token-ratio influence scoring reports, in its own appendix, that on- and
+off-policy per-prompt gradients maintain high pointwise cosine (40 of 50
+prompts above $0.6$) while the top-$10\%$ neighborhood structure of the same
+gradients survives at only $28.8\%$~\citep{cropi}. We treat this number as a
+symptom, not as evidence for our mechanism: it is not decomposed over the two
+correction axes, and competing explanations---validation noise, difficulty
+clustering, score calibration---can damage rank structure too. What this
+paper supplies is the mechanism class that can produce exactly this
+dissociation (sign reversal invisible to the diagnostics reported alongside
+it), the decomposition under which the competing explanations become
+testable, and a measured map of where the failure does and does not realize.
+
 This paper audits that bet end to end and reports that the situation is worse,
 and stranger, than the bias--variance framing suggests. Our claims come in
 three tiers, in decreasing order of generality and increasing order of
