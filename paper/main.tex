@@ -260,6 +260,13 @@ doubly-robust policy gradients~\citep{huang20}, and information-complexity
 lower bounds for top-$k$ identification~\citep{kaufmann13}. Our certification
 impossibility (Section~\ref{sec:cert}) is an empirical instance of the latter's
 warning: when value gaps at the boundary vanish, identification cost diverges.
+Both failure ingredients we study also surface in adjacent post-training
+literature: in on-policy distillation, token-level agreement can be driven to
+near-zero divergence by degenerate repetition loops while outputs
+collapse---a pointwise dashboard blind to the consumed object---and raw
+token log-ratio signals are dominated by the extreme tail (the top 1\% of
+tokens carrying roughly half the gradient), the same heavy-tail pathology we
+measure as $0.1\%$ ESS for the full correction~\citep{tide}.
 
 \paragraph{Reliability of noisy rankings.}
 Our floor and ceiling analysis imports split-half reliability and the
@@ -812,6 +819,8 @@ RLVR. \url{https://arxiv.org/abs/2605.20865}
 GRPO. \url{https://arxiv.org/abs/2508.02833}
 \bibitem[GradAlign]{gradalign} GradAlign. COLM 2026.
 \url{https://arxiv.org/abs/2602.21492}
+\bibitem[TIDE]{tide} Mismatch Matters: On-Policy Distillation Beyond Token
+Agreement. \url{https://arxiv.org/abs/2608.09836}
 \bibitem[LearnAlign]{learnalign} LearnAlign.
 \url{https://arxiv.org/abs/2506.11480}
 \bibitem[Rowland et al.]{rowland20} Rowland et al. Conditional Importance
