@@ -47,11 +47,14 @@ double reversal was accompanied by disagreement between the two one-sided
 estimators.
 \textbf{(ii)~Realization map (measured).} Across Qwen2.5 7B/14B and three math
 tasks under controlled LoRA drift, whether reversal materializes depends on the
-signal regime, which we measure by a corrected split-half oracle floor. The
-only regime with measurable ranking signal (floor $0.32$ vs.\ chance $0.10$)
-shows one-sided precision loss, while in weak-signal regimes stale scores track
-the oracle (Fisher-combined exact $p=1.0{\times}10^{-6}$), and on a saturated
-task the selection problem itself degenerates (floor $0.080$, below chance).
+signal regime, which we measure by a corrected split-half oracle floor.
+Corrected floors across all twelve completed conditions lie between $0.11$ and
+$0.29$ against chance $0.10$; the strongest regimes (floor $0.21$--$0.29$)
+show one-sided precision loss (down to $0.04$ at maximum drift), in
+weak-signal regimes stale scores track the oracle (Fisher-combined exact
+$p=1.0{\times}10^{-6}$)---where a zero-cost pass-rate heuristic matches every
+gradient estimator---and on a saturated task the selection problem itself
+degenerates (all estimators at chance; the oracle disagrees with itself).
 \textbf{(iii)~Impossibility (proved + measured).} Two impossibility results
 close the loop. First, certifying the top-$k$ decision is out of reach:
 alignment margins at the ranking boundary ($0.00$--$0.24^\circ$) sit
@@ -342,21 +345,28 @@ verdicts, and the pre-registered analysis will be re-run on arrival.
 
 \subsection{Where signal exists, one-sided selection can lose it}
 
-The v1 gate (7B GSM8K, floor $0.32$---the strongest signal regime we ever
-measured) passed its pre-registered criteria: one-sided estimators lose top-10\%
-precision against the uncorrected baseline, and at the largest drift (400 LoRA
-steps) the prefix-corrected estimator collapses to precision $0.040$ against a
-floor of $0.320$ (overlap $1/25$; exact hypergeometric $P(X\le 1)=0.27$, so we
+The v1 gate (7B GSM8K) passed its pre-registered criteria: one-sided
+estimators lose top-10\% precision against the uncorrected baseline, and at the
+largest drift (400 LoRA steps) the prefix-corrected estimator collapses to
+precision $0.040$ (overlap $1/25$; exact hypergeometric $P(X\le 1)=0.27$, so we
 flag this as a directional observation, not an individually significant
-below-chance claim). The misranking propagates: selecting by one-sided scores
+below-chance claim). A transparency note with teeth: the v1 floors were
+originally computed with the shared-jitter estimator later diagnosed as pitfall
+P2, which had inflated them to $0.32$; the corrected re-estimation
+(Table~\ref{tab:kcurve-ext}) puts the drift-400 floor at $0.206$---still the
+$2\times$-chance signal regime in which the $0.040$ collapse sits far below
+both floor and chance, but a reminder that even ``the regime where our thesis
+works'' had to survive our own guards. The misranking propagates: selecting by one-sided scores
 changes downstream fine-tuned accuracy (base $0.740$: oracle-selected $0.840$
 vs.\ one-sided $0.840$/$0.880$ vs.\ random $0.820$)---though in this
 saturation-adjacent regime the spread is small, foreshadowing what follows.
-On 7B MATH-500 (floor $0.320$) the \emph{ordering flips}: the uncorrected
-$\goo$ is worst ($0.160$) and every stale estimator degrades broadly
-($0.28$--$0.64$ of available signal); at 14B MATH-500 (floor $0.240$) the loss
-concentrates on the suffix axis (signal retention $\got{=}0.44$ vs.\
-$\gto{=}1.00$). Which cell fails is regime-dependent; \emph{that some cell
+On 7B MATH-500 (corrected floor $0.288$, the strongest and cleanest signal
+regime: a \emph{rising} $K'$-curve, Table~\ref{tab:kcurve-ext}) the
+\emph{ordering flips}: the uncorrected $\goo$ is worst ($0.160$) and every
+stale estimator degrades broadly ($0.28$--$0.64$ of available signal); at 14B
+MATH-500 the loss concentrates on the suffix axis (signal retention
+$\got{=}0.44$ vs.\ $\gto{=}1.00$), though its declining $K'$-curve counsels
+caution on the absolute floor there. Which cell fails is regime-dependent; \emph{that some cell
 fails while dashboards stay green} is the invariant, exactly as
 Theorem~\ref{thm:reversal} licenses and no more.
 
@@ -450,9 +460,11 @@ and oracle (odd/even micro-group separation), enforced structurally.
 broke score ties with a jitter shared across the two halves. On a
 tie-degenerate pool (DAPO, margins $0.0$) this inflated the floor from
 $0.176$ to $0.804$---which for a week supported a dramatic (and wrong)
-``inverse correlation'' headline. \emph{Guard:} independent per-half jitter
-streams, 20 seeded pairs, plus reporting precision \emph{bands} under jitter on
-tie-heavy pools.
+``inverse correlation'' headline---and it had quietly inflated the v1 floors
+too ($0.32$ reported vs.\ $0.15$--$0.21$ corrected), which means every
+absolute floor in this literature computed with tie-unaware agreement deserves
+suspicion. \emph{Guard:} independent per-half jitter streams, 20 seeded pairs,
+plus reporting precision \emph{bands} under jitter on tie-heavy pools.
 
 \paragraph{P3: Cell-budget imbalance.} Comparing estimator cells with unequal
 effective rollout counts silently favors the better-funded cell; our v1 hybrid
@@ -520,7 +532,62 @@ DAPO s2 & $-0.038$ & 0.119 & 0.148 & 0.158 & 0.158 & 0.094 & 0.094\\
 Table~\ref{tab:kcurve} shows the result: one GSM8K seed extrapolates to
 $2\times$ chance at $K'{=}128$ from $r_1{=}0.045$; the other is flat at
 chance; both DAPO runs never reach it. Majority not met: \emph{structural
-absence}. Two honest caveats are pre-registered with the method. The
+absence}.
+
+\begin{table}[t]
+\centering
+\caption{Extended $K$-scaling evidence over all twelve completed conditions
+(corrected floors; ``shape'' is the observed $K'{=}8\!\to\!32$ direction, with
+$\downarrow$ marking the P4 artifact signature). The pre-registered verdict is
+computed only on the v2 rows and is unchanged; the extension shows how rare
+signal regimes are: three conditions clear $2\times$ chance at $K'{=}32$, and
+only two of those with a rising curve. Floors here use random half-assignment
+resampling and may differ slightly from the fixed odd/even-split floors of
+Table~\ref{tab:v2}.}
+\label{tab:kcurve-ext}
+\begin{tabular}{llcccc}
+\toprule
+condition & task & $r_1$ & floor @ $K'{=}32$ & reaches $2\times$c & shape\\
+\midrule
+v1 drift-50 & GSM8K & 0.020 & 0.177 & pred.\ $K'{=}256$ & $\uparrow$\\
+v1 drift-100 & GSM8K & 0.053 & 0.146 & pred.\ $K'{=}128$ & $\downarrow$\\
+v1 drift-200 & GSM8K & 0.067 & 0.147 & pred.\ $K'{=}64$ & $\downarrow$\\
+v1 drift-400 & GSM8K & 0.065 & \textbf{0.206} & at $K'{=}32$ & $\uparrow$\\
+v1 14B & GSM8K & 0.018 & 0.113 & never & $\downarrow$\\
+v1 7B & MATH-500 & 0.070 & \textbf{0.288} & at $K'{=}32$ & $\uparrow$\\
+v1 14B & MATH-500 & 0.075 & 0.221 & at $K'{=}32$ & $\downarrow$\\
+v2 s1/s2 & GSM8K & 0.045/$-$0.005 & 0.182/0.156 & pred.\ 128/never & $\downarrow\downarrow$\\
+v2 s1/s2 & DAPO & 0.009/$-$0.038 & 0.146/0.158 & never & $\uparrow\uparrow$\\
+v2 s2 & MATH-500 & 0.001 & 0.181 & never & $\downarrow$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Running the same analysis over every artifact-complete run in the project
+(twelve conditions including the v1 gate family; Table~\ref{tab:kcurve-ext})
+widens the evidence base without touching the pre-registered vote: signal
+regimes are rare (2--3 of 12), the two credible ones are exactly where the
+realization map's one-sided losses live (7B MATH-500 and maximum-drift GSM8K),
+and half of all observed curves \emph{decline} in $K'$---the P4 artifact
+signature---so absolute floors elsewhere are best read as upper bounds.
+
+\paragraph{Stage 3 (replay): the ceiling made visible in budget space.} As a
+final check we replayed all fresh-budget allocation policies on the completed
+v2 runs against a sample-disjoint truth (odd micro-groups only): stale cells,
+a pass-rate heuristic, random, uniform and boundary audits at 1--25\% budgets,
+a sequential disagreement-guided audit, full-fresh at up to 100\% budget, and
+our own pre-registered floor-gated protocol. The result is the measurement
+ceiling in action. On weak-signal GSM8K no budget buys a win: full-fresh at
+$100\%$ budget scores \emph{lower} ($0.167$) than the zero-cost stale baseline
+($0.235$), the floor-gated protocol loses ($0.172$)---by its pre-registered
+loss condition it is hereby retired to the diagnostic role this section
+describes---and the best zero-cost policy is not a gradient method at all but
+the behavior pass-rate heuristic ($0.255$). On DAPO everything lands at
+chance ($0.08$--$0.16$, truth margins $0.0$). Meanwhile the dashboards stay
+green precisely as Corollary~\ref{cor:blind} warns, and the full correction's
+effective sample size is $0.1\%$ (clip fraction $0.94$--$1.00$)---the
+variance-side reason one-sided truncations exist in the first place, measured
+in the same runs that show what the truncation costs. Two honest caveats are pre-registered with the method. The
 calibration check shows the Gaussian model under-predicts observed floors at
 $K'{=}32$ (e.g.\ $0.094$ predicted vs.\ $0.156$ observed)---consistent with the
 P4 artifact inflating the \emph{observed} values, which makes the verdict
@@ -534,8 +601,10 @@ grounds for a GPU expansion.
 
 \paragraph{For practitioners.} (1)~\emph{Measure the floor first.} A
 48-prompt fresh probe suffices to estimate the split-half floor; below
-$2\times$ chance (a threshold to fix \emph{before} looking), retire selection
-and spend nothing---random selection is free and provably indistinguishable.
+$2\times$ chance (a threshold to fix \emph{before} looking), retire gradient
+selection and spend nothing---in our replays the best weak-signal policy was
+the free behavior pass-rate heuristic, with random close behind, and no fresh
+budget up to $100\%$ bought an improvement.
 (2)~\emph{Never budget for boundary certification}; the 5--8 order gap is
 structural. (3)~\emph{Scale candidate difficulty with capability}, or
 selection degenerates regardless of estimator. (4)~\emph{Report floor and
