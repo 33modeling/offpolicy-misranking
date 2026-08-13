@@ -100,6 +100,9 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 
 ## 완료 (참고)
 
+- ✅ 제목 부제 보강(8/13, 사용자 선택): "... : A Measurement-First Audit of
+  Off-Policy Prompt Selection in RLVR" — wrong prompts 중의성 해소·재편
+  스파인 반영·검색 키워드 확보 (본제목은 확정 이력 유지)
 - ✅ 그록 리뷰 대조(8/13): 치명 지적 선반영 확인, 잔여 5건 분류(A6·A7·B4·B5·
   안전 단락), 안전/보상 해킹 단락 §9 반영, `src/reversal_freq.py` 작성
   (로컬 산출물 2벌 검증 완주)
