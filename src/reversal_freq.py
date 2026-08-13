@@ -11,7 +11,9 @@
   2) 경계 대역 반전율 — oracle 순위 k±w 대역(w=round(k/2))의 반전율.
      "top-k 경계 후보 중 반전 피해자 비율"의 직접 측정.
   3) 결정 피해 — oracle top-k인데 est가 음수(부호 뒤집혀 배제 방향),
-     est top-k인데 oracle이 음수(잘못된 방향으로 승격).
+     est top-k인데 oracle이 음수(잘못된 방향 승격 — est 점수가 양수인 것만
+     집계: 무신호 우세 pool에서 동점 jitter로 편입된 0점 프롬프트 제외).
+     est top-k 동점 처리는 readout_summary와 같은 단일 jitter 스트림.
   4) 불일치 경보 성능 — g10/g01 부호 불일치 시 vs 일치 시의 조건부 반전율
      + Fisher 정확검정. 주의: 스칼라 점수에서 이중 반전(둘 다 oracle 반대)이면
      두 셀은 서로 "일치"한다 — 즉 일치 시 반전율이 곧 경보의 사각지대 크기다.
@@ -123,12 +125,13 @@ def analyze_run(run: Path) -> dict | None:
         rev = [i for i in both if sc[i] * oracle[i] < 0]
         band_both = [i for i in both if i in band]
         band_rev = [i for i in band_both if sc[i] * oracle[i] < 0]
-        e_top = topk_ids(sc, k, random.Random(0))
+        e_top = topk_ids(sc, k, rng)
         out["est"][e] = {
             "nonzero": len(both), "rev": len(rev),
             "band_n": len(band_both), "band_rev": len(band_rev),
             "otop_flipped": sum(1 for i in o_top if sc.get(i, 0.0) < 0 < oracle[i]),
-            "etop_wrongdir": sum(1 for i in e_top if oracle.get(i, 0.0) < 0),
+            "etop_wrongdir": sum(1 for i in e_top
+                                 if sc[i] > 0 and oracle.get(i, 0.0) < 0),
         }
 
     # g11 대비 짝지은 초과 반전 — 같은 프롬프트에서 one-sided만 반전(b) vs
