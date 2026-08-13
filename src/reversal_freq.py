@@ -49,6 +49,14 @@ def ranks_desc(scores: dict[int, float], rng: random.Random) -> dict[int, int]:
     return {i: r + 1 for r, i in enumerate(order)}
 
 
+def binom_2sided(b: int, n: int) -> float:
+    """McNemar 정확검정 — 불일치쌍 n 중 b, 양측(관측 확률 이하 합산)."""
+    if n == 0:
+        return 1.0
+    pmf = [comb(n, i) / 2 ** n for i in range(n + 1)]
+    return min(1.0, sum(p for p in pmf if p <= pmf[b] * (1 + 1e-9)))
+
+
 def fisher_exact_2x2(a: int, b: int, c: int, d: int) -> float:
     """양측 Fisher 정확검정 p — 초기하 열거(관측 확률 이하 표 합산)."""
     n = a + b + c + d
@@ -123,6 +131,23 @@ def analyze_run(run: Path) -> dict | None:
             "etop_wrongdir": sum(1 for i in e_top if oracle.get(i, 0.0) < 0),
         }
 
+    # g11 대비 짝지은 초과 반전 — 같은 프롬프트에서 one-sided만 반전(b) vs
+    # g11만 반전(c), McNemar 정확검정. oracle 노이즈가 양변에 동일하게 걸려
+    # 닻 없이도 성립하는 대비.
+    if "g11" in ests:
+        vs_full = {}
+        for e in ("g00", "g10", "g01"):
+            if e not in ests:
+                continue
+            both = [i for i in o_nz
+                    if ests[e].get(i, 0.0) != 0.0 and ests["g11"].get(i, 0.0) != 0.0]
+            b = sum(1 for i in both
+                    if ests[e][i] * oracle[i] < 0 <= ests["g11"][i] * oracle[i])
+            c = sum(1 for i in both
+                    if ests["g11"][i] * oracle[i] < 0 <= ests[e][i] * oracle[i])
+            vs_full[e] = {"b": b, "c": c, "p": binom_2sided(b, b + c)}
+        out["vs_full"] = vs_full
+
     # 불일치 경보 — g10 vs g01 부호 불일치가 (각 셀의) oracle 대비 반전을 예측하는가
     if "g10" in ests and "g01" in ests:
         base = [i for i in o_nz
@@ -167,6 +192,10 @@ def report(results: list[dict]) -> str:
             L.append("")
             L.append("† 비영 프롬프트 10개 미만 — top-k가 동점 jitter로 채워져 "
                      "결정 칸은 인공물, 해석 금지.")
+        if "vs_full" in r:
+            L += ["", "g11 대비 짝지은 초과 반전 (McNemar 정확, one-sided만 반전 b vs g11만 반전 c):"]
+            for e, v in r["vs_full"].items():
+                L.append(f"- {e}: b={v['b']} vs c={v['c']} — 양측 p={v['p']:.3g}")
         if "alarm" in r:
             al = r["alarm"]
             L += ["", f"불일치 경보 (g10↔g01, 분모 {al['base']}, 불일치 {al['disagree']}):"]

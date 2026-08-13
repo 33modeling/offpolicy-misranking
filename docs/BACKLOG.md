@@ -38,6 +38,19 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       (그록 D7·B10 — 9/20 수치 동결 직전 실행)
 - [ ] A7. 재현 부록: CROPI step-200 checkpoint 버전·라이선스 pin, seed·config
       hash 표 (그록 B14)
+- [ ] A8. 자체 리뷰어 통독(8/13) 발견 보강 — 우선순위순:
+      (a) **§5.1 신호 체제 주장의 통계 보강**: 7B MATH-500 ordering flip과
+      drift-400 붕괴가 각 1-seed·정확검정 없이 서술됨 — 자체 진단이
+      "신호 체제 2~3/12"라 이 두 조건이 tier-(ii) 전부. stats_extra
+      초기하 p·부트스트랩 CI를 v1 계열 산출물에서 뽑아 본문 병기
+      (닻과 같은 편승 원칙: harvest 동봉 검토)
+      (b) Fisher 결합 p=1.0e-6의 독립성 방어 한 줄: 두 seed가 프롬프트 풀
+      공유 — 풀 조건부 seed 무작위성으로 조건부 독립 논거 명시
+      (c) tab:reversal g11 대비 초과 반전에 짝지은 McNemar p 병기
+      (스크립트 반영 완료 — s3 수확분에서 수치 수령)
+      (d) Fig.1 disagreement 상자에 §5 실측 지지 반영 (선택)
+- [ ] A9. 제출 포맷 압축: 현재 article 13p → ICLR 본문 9~10p 예산
+      (pitfalls §7 일부 appendix 강등이 유력한 절약처, 9/20 이후)
 
 ## 트랙 B — 보강 실험 (약점 제거 효과순)
 

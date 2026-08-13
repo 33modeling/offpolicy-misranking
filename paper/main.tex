@@ -24,7 +24,7 @@
 \textcolor{gray!60!black}{\textbf{[PENDING --- #1]} #2}}}\end{center}}
 
 \title{\bf Stale Rollouts Can Pick the Wrong Prompts}
-\author{Anonymous\thanks{Draft v0.1 (2026-08-13). Reframed structure following the
+\author{Anonymous\thanks{Draft v0.4 (2026-08-13). Reframed structure following the
 pre-registered ``structural absence'' branch; numbers are from completed runs
 (v1 gate + v2 corrected, 2 seeds); pending seed harvests will update
 Sections~\ref{sec:map} and \ref{sec:diagnosis} only.}}
@@ -445,10 +445,11 @@ P2, which had inflated them to $0.32$; the corrected re-estimation
 (Table~\ref{tab:kcurve-ext}) puts the drift-400 floor at $0.206$---still the
 $2\times$-chance signal regime in which the $0.040$ collapse sits far below
 both floor and chance, but a reminder that even ``the regime where our thesis
-works'' had to survive our own guards. The misranking propagates: selecting by one-sided scores
-changes downstream fine-tuned accuracy (base $0.740$: oracle-selected $0.840$
-vs.\ one-sided $0.840$/$0.880$ vs.\ random $0.820$)---though in this
-saturation-adjacent regime the spread is small, foreshadowing what follows.
+works'' had to survive our own guards. Downstream, we report the honest version: fine-tuned accuracy after selection
+(base $0.740$) spans $0.820$--$0.880$ across oracle-, one-sided-, and
+random-selected pools with no consistent ordering---in this
+saturation-adjacent regime misranking has little downstream room to propagate,
+foreshadowing what follows.
 On 7B MATH-500 (corrected floor $0.288$, the strongest and cleanest signal
 regime: a \emph{rising} $K'$-curve, Table~\ref{tab:kcurve-ext}) the
 \emph{ordering flips}: the uncorrected $\goo$ is worst ($0.160$) and every
