@@ -23,7 +23,7 @@
 \newcommand{\pending}[2]{\begin{center}\fbox{\parbox{0.93\textwidth}{%
 \textcolor{gray!60!black}{\textbf{[PENDING --- #1]} #2}}}\end{center}}
 
-\title{\bf Stale Rollouts Can Pick the Wrong Prompts:\\[2pt]
+\title{\bf FIRST: Stale Rollouts Can Pick the Wrong Prompts\\[2pt]
 {\large A Measurement-First Audit of Off-Policy Prompt Selection in RLVR}}
 \author{Anonymous\thanks{Draft v0.4 (2026-08-13). Reframed structure following the
 pre-registered ``structural absence'' branch; numbers are from completed runs
@@ -69,9 +69,9 @@ Second, we prove a \emph{measurement ceiling}: the precision of \emph{any}
 estimator measured against a $K$-rollout oracle is bounded by a function of the
 split-half floor, so when the floor is near chance no method can measurably
 win---our own stale baseline already sits at this ceiling ($0.294$ observed
-vs.\ ${\approx}0.30$ ceiling). We therefore contribute a GPU-free diagnosis
-procedure that decides, from existing artifacts alone, whether a prompt pool
-supports selection at all (conditional-subset precheck plus a $K$-scaling floor
+vs.\ ${\approx}0.30$ ceiling). We therefore contribute FIRST (Floor-Informed Reliability of
+SelecTion), a GPU-free diagnosis procedure that decides, from existing
+artifacts alone, whether a prompt pool supports selection at all (conditional-subset precheck plus a $K$-scaling floor
 curve with Spearman--Brown extrapolation), and report its pre-registered
 verdict on our pools: structural absence. Along the way we document four
 evaluation pitfalls that our own pipeline caught---an oracle-sample reuse leak,
@@ -180,7 +180,7 @@ $\begin{array}{c|cc}
 \draw[arr, gray] (guards.north) -- (floor.south);
 
 % ---- layer 3: decision
-\node[box, below=13mm of guards, fill=yellow!10] (gate) {\textbf{measure the floor first}\\(48-prompt probe, GPU-free precheck + $K$-scaling curve, \S\ref{sec:diagnosis})};
+\node[box, below=13mm of guards, fill=yellow!10] (gate) {\textbf{FIRST: measure the floor first}\\(48-prompt probe, GPU-free precheck + $K$-scaling curve, \S\ref{sec:diagnosis})};
 \node[green box, below left=5mm and -14mm of gate] (signal) {floor $\ge 2\times$chance: selection meaningful\\--- but \textbf{uncertifiable} (5--8 orders, \S\ref{sec:cert});\\audit, don't certify};
 \node[red box, below=5mm of gate] (weak) {floor $\approx$ chance: \textbf{retire selection}\\pass-rate/random match all\\gradient machinery (\S\ref{sec:map})};
 \node[gray box, below right=5mm and -16mm of gate] (sat) {task saturated: selection\\problem \textbf{degenerates}\\(scale difficulty, \S\ref{sec:map})};
@@ -214,8 +214,9 @@ independent halves of the oracle's own rollouts. The floor measures how much
 prompt-ranking signal is recoverable at a given rollout budget; our measurement
 ceiling result (Proposition~\ref{prop:ceiling}) makes it the quantity that
 decides whether comparative claims about selection methods are meaningful at
-all. Applying the same standard to ourselves, we ran a pre-registered, GPU-free diagnosis on
-our prompt pools (Section~\ref{sec:diagnosis}) and obtained the verdict
+all. Applying the same standard to ourselves, we ran FIRST
+(Floor-Informed Reliability of SelecTion), our pre-registered, GPU-free
+diagnosis, on our prompt pools (Section~\ref{sec:diagnosis}) and obtained the verdict
 \emph{structural absence}: on saturated or tie-degenerate pools, no increase of
 the oracle budget up to $K{=}256$ rollouts per prompt is predicted to create a
 signal regime. That verdict, rather than a new estimator, is
@@ -638,12 +639,12 @@ means even our reported weak-signal floors are best read as upper bounds.
 \emph{Guard:} always report the floor as a function of $K'$; treat a
 non-increasing floor curve as artifact evidence, and report tie mass alongside.
 
-\section{Diagnosing signal absence without GPUs}
+\section{FIRST: diagnosing signal absence without GPUs}
 \label{sec:diagnosis}
 
-The pitfalls motivate the final contribution: a pre-registered, GPU-free
-procedure that decides whether a pool supports selection \emph{before} any new
-experiment is funded. It has two stages, both computed from artifacts every
+The pitfalls motivate the final contribution: FIRST, a pre-registered,
+GPU-free procedure that decides whether a pool supports selection
+\emph{before} any new experiment is funded. It has two stages, both computed from artifacts every
 RLVR selection run already produces.
 
 \paragraph{Stage 1: conditional-subset precheck.} Any proposed pool
@@ -761,7 +762,8 @@ here; if not, the map remains observational, as stated in Limitations.
 \section{Practical guidance, limitations, and outlook}
 \label{sec:takeaways}
 
-\paragraph{For practitioners.} (1)~\emph{Measure the floor first.} A
+\paragraph{For practitioners.} (1)~\emph{Measure the floor first}---run
+FIRST (\S\ref{sec:diagnosis}). A
 48-prompt fresh probe suffices to estimate the split-half floor; below
 $2\times$ chance (a threshold to fix \emph{before} looking), retire gradient
 selection and spend nothing---in our replays the best weak-signal policy was
