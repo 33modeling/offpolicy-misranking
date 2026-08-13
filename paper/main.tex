@@ -7,6 +7,8 @@
 \usepackage{xcolor}
 \usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
 \usepackage[numbers,sort&compress]{natbib}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds}
 
 \newtheorem{theorem}{Theorem}
 \newtheorem{proposition}{Proposition}
@@ -18,6 +20,8 @@
 \newcommand{\gtt}{g_{11}}
 \newcommand{\gpi}{g_{\pi}}
 \newcommand{\todoref}[1]{\textcolor{red}{[REF: #1]}}
+\newcommand{\pending}[2]{\begin{center}\fbox{\parbox{0.93\textwidth}{%
+\textcolor{gray!60!black}{\textbf{[PENDING --- #1]} #2}}}\end{center}}
 
 \title{\bf Stale Rollouts Can Pick the Wrong Prompts}
 \author{Anonymous\thanks{Draft v0.1 (2026-08-13). Reframed structure following the
@@ -116,6 +120,78 @@ practical (Section~\ref{sec:cert}), and a measurement ceiling caps what any
 estimator can even \emph{demonstrate} against a noisy oracle
 (Section~\ref{sec:floor}).
 \end{enumerate}
+
+Figure~\ref{fig:framework} summarizes the framework and how the sections fit
+together.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=4pt, fill=blue!4},
+  red box/.style={draw=red!60!black, rounded corners=2pt, align=center, inner sep=4pt, fill=red!6},
+  green box/.style={draw=green!45!black, rounded corners=2pt, align=center, inner sep=4pt, fill=green!7},
+  gray box/.style={draw=gray, rounded corners=2pt, align=center, inner sep=3pt, fill=gray!8},
+  lbl/.style={font=\scriptsize\itshape, text=gray!50!black},
+  arr/.style={-{Stealth[length=2mm]}, thick},
+  node distance=4mm and 6mm]
+
+% ---- layer 1: estimation
+\node[box] (stale) {stale rollouts\\from earlier policy $\beta$};
+\node[box, right=8mm of stale] (grid) {%
+$\begin{array}{c|cc}
+ & \text{cont.\,}\beta & \text{cont.\,}\pi\\\hline
+\text{occ.\,}\beta & \goo & \got\\
+\text{occ.\,}\pi & \gto & \gtt{=}\gpi
+\end{array}$\\ one-sided importance corrections};
+\node[box, right=8mm of grid] (topk) {prompt scores\\$\to$ top-$k$ selection};
+\node[red box, below=3.5mm of grid] (thm) {\textbf{Thm.~1:} any one-sided cell can flip a prompt's\\gradient sign at arbitrarily small KL};
+\node[gray box, right=5mm of thm] (dash) {KL / ESS / cosine\\dashboards: \textbf{blind} (Cor.~1)};
+\node[gray box, left=5mm of thm] (disagree) {$\cos(\gto,\got)$ disagreement\\= free warning (Prop.~2)};
+\draw[arr] (stale) -- (grid);
+\draw[arr] (grid) -- (topk);
+\draw[arr, red!60!black] (thm) -- (grid);
+
+% ---- layer 2: measurement
+\node[box, below=11mm of thm, xshift=-32mm] (oracle) {on-policy oracle\\($K$ rollouts/prompt)};
+\node[box, right=6mm of oracle] (floor) {corrected split-half \textbf{floor}\\= recoverable ranking signal};
+\node[red box, right=6mm of floor] (ceiling) {\textbf{measurement ceiling} (Prop.~3):\\caps what \emph{any} method can show};
+\node[gray box, below=3mm of floor, xshift=4mm, text width=112mm] (guards)
+  {guards from the four self-caught pitfalls (\S\ref{sec:pitfalls}):\enspace
+   P1 disjoint samples · P2 independent tie-jitter · P3 equal budgets ·
+   P4 $K'$-monotonicity};
+\draw[arr] (oracle) -- (floor);
+\draw[arr] (floor) -- (ceiling);
+\draw[arr, gray] (guards.north) -- (floor.south);
+
+% ---- layer 3: decision
+\node[box, below=13mm of guards, fill=yellow!10] (gate) {\textbf{measure the floor first}\\(48-prompt probe, GPU-free precheck + $K$-scaling curve, \S\ref{sec:diagnosis})};
+\node[green box, below left=5mm and -14mm of gate] (signal) {floor $\ge 2\times$chance: selection meaningful\\--- but \textbf{uncertifiable} (5--8 orders, \S\ref{sec:cert});\\audit, don't certify};
+\node[red box, below=5mm of gate] (weak) {floor $\approx$ chance: \textbf{retire selection}\\pass-rate/random match all\\gradient machinery (\S\ref{sec:map})};
+\node[gray box, below right=5mm and -16mm of gate] (sat) {task saturated: selection\\problem \textbf{degenerates}\\(scale difficulty, \S\ref{sec:map})};
+\draw[arr] (gate) -- (signal);
+\draw[arr] (gate) -- (weak);
+\draw[arr] (gate) -- (sat);
+\draw[arr] (ceiling.south) to[out=-90,in=20] (gate.east);
+
+% layer labels
+\begin{scope}[on background layer]
+\node[lbl, left=1mm of stale.west, anchor=east] {estimate};
+\node[lbl, left=1mm of oracle.west, anchor=east] {measure};
+\node[lbl, left=1mm of gate.west, anchor=east, xshift=-24mm] {decide};
+\end{scope}
+\end{tikzpicture}
+\caption{Framework overview. \emph{Estimate:} stale-rollout prompt ranking
+uses one of four corrections in a $2{\times}2$ decomposition; one-sided cells
+can silently reverse rankings and dashboards cannot see it
+(\S\ref{sec:theory}). \emph{Measure:} the split-half floor of the oracle,
+computed under four guards, quantifies recoverable signal and induces a
+ceiling on what any method can demonstrate (\S\ref{sec:floor}).
+\emph{Decide:} a GPU-free, pre-registered diagnosis routes each pool to one of
+three regimes; in ours the verdict was structural absence
+(\S\ref{sec:diagnosis}).}
+\label{fig:framework}
+\end{figure}
 
 The empirical protagonist of the paper is not an estimator but a measurement:
 the \emph{split-half oracle floor}, the top-$k$ agreement between two
@@ -404,6 +480,12 @@ DAPO s2 & 0.176 & \multicolumn{4}{c}{$0.04$--$0.16$ (tie-degenerate)} & margin $
 \end{tabular}
 \end{table}
 
+\pending{v2 seed 3, running}{Additional GSM8K/DAPO seeds are being harvested;
+Tables~\ref{tab:v2} and \ref{tab:kcurve-ext} will gain one row group each and
+all seed-pooled statistics will be recomputed under the pre-registered rules.
+Verdict logic is frozen; only numbers change. \emph{Reserved space: half a
+page (updated tables + two sentences).}}
+
 \subsection{Where capability saturates, selection degenerates}
 
 At 14B on GSM8K (${\sim}95\%$ accuracy) the pool contains 132/256 zero-reward-variance
@@ -595,6 +677,14 @@ conservative in the safe direction. And the single positive extrapolation
 rests on an $r_1$ small enough to be within the P4 artifact's reach, so we
 treat it as motivation for a cheap re-check when further seeds land, not as
 grounds for a GPU expansion.
+
+\pending{capability--difficulty sweep (decision gate 9/10)}{A small-model
+sweep (Qwen3.5 0.8B/2B/4B on the same pools) would chart the floor as a
+function of the capability--difficulty gap---the one controllable knob that
+could \emph{create} a signal regime and turn the realization map into a causal
+phase diagram. If run, it adds one figure (floor phase map) and one paragraph
+here; if not, the map remains observational, as stated in Limitations.
+\emph{Reserved space: one figure + half a page.}}
 
 \section{Practical guidance, limitations, and outlook}
 \label{sec:takeaways}
