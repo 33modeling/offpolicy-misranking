@@ -222,6 +222,33 @@ class Run:
             sc[i] = self.obs_score(i, m)
         return topk_ids(sc, self.k, rng), n_audit * m
 
+    def pol_floor_gated(self, rng, diag_prompts: int = 48,
+                        tau_mult: float = 2.0, p: float = 0.10, m: int = 2) -> tuple[set, int]:
+        """제안 절차(floor-gated audit): ① 진단 — 소표본(diag_prompts)에 fresh를
+        부어 짝수-절반 split-half로 floor(회복 가능 신호 크기)를 추정
+        ② 분기 — floor_est < tau_mult×chance면 선택 은퇴(random, 추가 비용 0);
+        아니면 stale(g00) 순위의 top-k 경계만 audit(p, m)으로 재채점.
+
+        비용 = 진단(diag_prompts×max_obs) + 분기별 추가. 홀수 절반(truth)은 결코
+        쓰지 않는다(누수 없음). tau_mult=2.0은 사전 지정 규칙 — 관찰된 두 체제
+        (0.14~0.18 vs 0.75~0.80)로 튜닝한 것이 아니라 chance의 배수로 고정.
+        """
+        diag = rng.sample(self.ids, min(diag_prompts, self.n))
+        h = self.max_obs // 2
+        if h >= 1:
+            ka = {i: cos(self.obs[i][:h].mean(0), self.val) for i in diag}
+            kb = {i: cos(self.obs[i][h:].mean(0), self.val) for i in diag}
+            kd = max(1, int(len(diag) * FRAC))
+            floor_est = len(topk_ids(ka, kd, rng) & topk_ids(kb, kd, rng)) / kd
+        else:
+            floor_est = 0.0
+        diag_cost = len(diag) * self.max_obs
+        if floor_est < tau_mult * FRAC:
+            sel, _ = self.pol_random(rng)
+            return sel, diag_cost
+        sel, cost = self.pol_audit("g00", p, m, True, rng)
+        return sel, diag_cost + cost
+
     # ---- 평가 ----
     def evaluate(self, sel: set) -> dict:
         rng = random.Random(11)
@@ -253,6 +280,7 @@ def simulate(run: Run) -> list[dict]:
         add(f"stale_{e}", lambda rng, e=e: run.pol_stale(e, rng), True)
     add("passrate_beta", run.pol_passrate, True)
     add("random", run.pol_random, True)
+    add("floor_gated(제안)", lambda rng: run.pol_floor_gated(rng), True)
     for m in FRESH_MS:
         add(f"fresh_m{m}", lambda rng, m=m: run.pol_fresh(m, rng), True)
     base_est = "g00"  # 실무 기본(무보정)을 audit의 stale 기반으로
