@@ -486,6 +486,55 @@ all seed-pooled statistics will be recomputed under the pre-registered rules.
 Verdict logic is frozen; only numbers change. \emph{Reserved space: half a
 page (updated tables + two sentences).}}
 
+\begin{table}[t]
+\centering
+\caption{Prompt-level sign reversal against the fresh oracle (completed v2
+GSM8K seeds; zero-signal prompts excluded, denominators shown). Raw rates are
+\emph{upper bounds}---the oracle itself is noisy; an anchored version (oracle
+split-half self-disagreement baseline) ships with the seed-3 harvest. Decision
+band $=$ oracle ranks $k\pm 26$.}
+\label{tab:reversal}
+\begin{tabular}{lcccc}
+\toprule
+ & \multicolumn{2}{c}{overall reversal} & \multicolumn{2}{c}{decision-band reversal}\\
+ & s1 & s2 & s1 & s2\\
+\midrule
+$\goo$ & $67/163$ & $80/168$ & $12/37$ & $12/34$\\
+$\gto$ & $68/163$ & $73/168$ & $13/37$ & $10/34$\\
+$\got$ & $61/163$ & $63/168$ & $10/37$ & $8/34$\\
+$\gtt$ (full) & $59/163$ & $64/168$ & $9/37$ & $8/34$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Prompt-level reversal prevalence (preliminary).} Top-$k$ overlap is
+a coarse summary; the natural reviewer question---\emph{how often does the
+sign actually flip?}---has a finer-grained, prompt-level answer.
+Table~\ref{tab:reversal} re-aggregates the completed v2 GSM8K seeds: stale
+scores disagree in sign with the fresh oracle on $36$--$48\%$ of
+signal-bearing prompts overall, $24$--$35\%$ inside the decision band, and
+$6$--$15$ of the oracle's top-$51$ prompts receive a sign-flipped stale score.
+Because the oracle is itself noisy these raw rates are upper bounds, so we
+read only two contrasts that place the same oracle noise on both sides.
+First, the one-sided cells pay a sign-level premium over the full correction:
+pooled decision-band reversal is $0.34$ ($\goo$) and $0.32$ ($\gto$) against
+$0.24$ for $\gtt$, with $\got$ indistinguishable from full ($0.25$)---pooling
+is over a shared prompt pool, so we present this as replication across seeds,
+not independent evidence. Notably this resolution exceeds what top-$k$
+precision offers in the same regime (Table~\ref{tab:v2}), where the ceiling
+hides any separation. Second, the theory's warning sign operates at the
+prompt level: conditioned on the two one-sided cells disagreeing in sign, the
+prefix-corrected cell $\gto$ is the reversed one in $59\%$/$62\%$ of cases
+(seeds 1/2) against a $37\%$ reversal rate under agreement (Fisher exact
+$p=0.015$/$0.007$, replicated)---realized-LLM support for the disagreement
+signal of Proposition~\ref{prop:disagree}, with one estimand caveat stated
+explicitly: for scalar per-prompt scores a \emph{double} reversal manifests
+as cell \emph{agreement}, so the $37\%$ under agreement is exactly the
+alarm's blind spot---consistent with ``agreement guarantees nothing,'' and
+distinct from the proposition's vector-cosine statement. The DAPO seeds
+contribute $2$--$4$ signal-bearing prompts each (tie degeneracy,
+\S\ref{sec:map}) and are excluded.
+
 \subsection{Where capability saturates, selection degenerates}
 
 At 14B on GSM8K (${\sim}95\%$ accuracy) the pool contains 132/256 zero-reward-variance
