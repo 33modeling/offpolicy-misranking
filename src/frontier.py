@@ -66,9 +66,9 @@ class Run:
         h = next(iter(tru.values())).shape[0] // 2
         ha = {i: cos(tru[i][:h].mean(0), self.val) for i in self.ids}
         hb = {i: cos(tru[i][h:].mean(0), self.val) for i in self.ids}
-        r0 = random.Random(7)
-        self.truth_reliability = len(topk_ids(ha, self.k, r0)
-                                     & topk_ids(hb, self.k, random.Random(7))) / self.k
+        # 절반별 독립 jitter — 같은 seed면 동점 체제에서 reliability 인위 부풀림
+        self.truth_reliability = len(topk_ids(ha, self.k, random.Random(7))
+                                     & topk_ids(hb, self.k, random.Random(104729))) / self.k
         off = json.loads((root / "scores_offpolicy.json").read_text())
         self.stale = {e: {int(i): v["score"] for i, v in off[e].items()} for e in EST}
         # β pass-rate (behavior rollout 재사용 — fresh 비용 0)

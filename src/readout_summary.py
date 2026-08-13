@@ -54,6 +54,18 @@ def main() -> int:
         except Exception:
             pass
         floor = rep.get("noise_floor")
+        # 교정 floor — scores_splithalf에서 절반별 독립 jitter로 재계산
+        floor_fixed = None
+        try:
+            hv = {int(i): v for i, v in
+                  json.loads((d / "scores_splithalf.json").read_text()).items()}
+            ra, rb = random.Random(1), random.Random(104729)
+            kk = max(1, round(0.10 * len(hv)))
+            ta = topk({i: h["a"] for i, h in hv.items()}, kk, ra)
+            tb = topk({i: h["b"] for i, h in hv.items()}, kk, rb)
+            floor_fixed = len(ta & tb) / kk
+        except Exception:
+            pass
         pr = precisions(d)
         if pr is None:
             continue
@@ -84,6 +96,8 @@ def main() -> int:
             hyb, dip = "데이터 없음", "-"
 
         f_str = f"{floor:.3f}" if isinstance(floor, (int, float)) else "?"
+        if floor_fixed is not None:
+            f_str += f"→{floor_fixed:.3f}(교정)"
         rows.append(
             f"| {d.name} | {f_str} | {chance:.2f} | "
             + " | ".join(f"{prec.get(e, float('nan')):.3f}" for e in ("g00", "g10", "g01", "g11"))
@@ -112,7 +126,7 @@ def main() -> int:
     print("\n(주의: run 수가 적으면 위 관찰은 통계적 확정이 아님 — 5-seed 전승이 유의선)")
 
     print("\n## 용어 — 표를 읽는 법\n")
-    print("- **floor**: oracle 절반끼리의 일치도(회복 가능한 신호 크기의 보수적 지표). 추정량이 floor를 넘을 수도 있음(split-half가 보수적이라서) — 해석 기준은 Δfloor")
+    print("- **floor**: oracle 절반끼리의 일치도. `구값→교정값` 표기 — 구값은 동점 절단 공유-jitter 버그로 부풀려질 수 있음(동점 많은 체제), **교정값(독립 jitter)이 정본**")
     print("- **chance**: 아무거나 찍었을 때의 기대 precision")
     print("- **g00/g10/g01/g11**: 무보정 / prefix만 / suffix만 / 전부 보정의 top-k precision")
     print("- **one-sided가 더 나쁜가**: g10·g01 둘 다 g00보다 낮으면 '예' = 논문 주장 방향")

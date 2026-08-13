@@ -242,8 +242,10 @@ def stage_report(args, run: Path) -> None:
     seed = getattr(args, "seed", 0)
     o_top = topk(oracle, frac, seed)
     k = len(o_top)
+    # 동점 절단 jitter는 절반별로 독립이어야 한다 — 같은 seed면 동점이 많은
+    # 체제에서 양쪽이 같은 임의 선택을 해 floor가 인위로 부풀려진다(2026-08-13 발견).
     ha = topk({i: {"score": h["a"]} for i, h in halves.items()}, frac, seed)
-    hb = topk({i: {"score": h["b"]} for i, h in halves.items()}, frac, seed)
+    hb = topk({i: {"score": h["b"]} for i, h in halves.items()}, frac, seed + 104729)
     noise_floor = len(ha & hb) / k
 
     def _ties_and_zeros(sc: dict) -> tuple[int, int]:
