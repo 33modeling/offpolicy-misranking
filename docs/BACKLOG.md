@@ -1,63 +1,69 @@
-# 백로그 — 컨셉 #68 (2026-08-13 기준, 마감 역산 포함)
+# 백로그 — 컨셉 #68 (2026-08-13 오후 기준, 마감 역산 포함)
 
 담당: 🖥 = 클러스터(사용자 실행), 🤖 = 로컬(Claude 작업). 순서는 위→아래.
 
-## 상태 (2026-08-13): 판정 완료 — 신 헤드라인으로 원고 개정 국면
+## 상태 (2026-08-13 오후): 재편 분기 발동 — 원고 v0.1 push 완료
 
-hybrid 인과 축 사망 확정적(v1 21/21=누수 아티팩트, 결정실험 K=32 무회복).
-**신규 헤드라인: 신호-신뢰 역상관** — dapo floor 0.75~0.80에서 전 stale chance
-붕괴 vs gsm8k(저신호) 추적. 논리 구조 9절 확정(concept "종합 기록" 참조).
-실험: P1 잔여 seed(진행)→P2 dapo downstream(구현됨)→P3 go_hard 준-개입(신설)
-→P4 go_35→P5 go_boost. 원고 트랙 A는 P1~P3 수치 들어오는 대로 개정 착수.
+P3-0 precheck **NO-GO** + P4-0 kcurve **구조적 부재** → 사전 등록 재편 분기
+(concept.md "P4 설계서" 절) 발동. go_hard 폐기. 원고 v0.1(`paper/main.tex`,
+`505c83f`)은 3단 주장 계층(possibility/realization map/impossibility)으로
+전면 재작성 — 신규 보강 3종 반영: **측정 상한 명제**(floor→ceiling, gsm8k
+g00 0.294가 ceiling≈0.30 도달), Fisher 결합 p=1.0e-6(gsm8k 추적),
+**함정 4호**(포화-공유 인공 겹침, 합성 실증 — kcurve 하강 곡선의 정체).
+v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 
 ## 트랙 0 — 지금 돌고 있는 것
 
-- [ ] 🖥 v2 재실행 수확 (go_retry.sh / go_full.sh 반복 — DONE 누적, s1 완주 확인됨)
-- [ ] 🖥 완주분 나올 때마다 `bash scripts/backup_results.sh`
-- [ ] 🖥→🤖 **결과 파일 전달**: 종료 요약 + results/v2의 TABLES.md·FRONTIER.md·judge-*.txt
-      (부분 완주 상태라도 s1 judge 먼저 보내면 조기 판독 가능)
+- [ ] 🖥 go_retry 수확 (s3 gsm8k/dapo — 사용자 실행 중)
+- [ ] 🖥 s3 완주 시 `bash scripts/kcurve.sh` 재실행 (GPU 0) → KCURVE.md 전달
+      (표결 2→3개: 뒤집히면 트랙 C1, 유지되면 원고 표만 갱신)
 
-## 트랙 A — 원고 (결과 수령 시 즉시, 🤖)
+## 트랙 A — 원고 (🤖)
 
-- [ ] A1. judge 검증 → **사전 판정 규칙 3분기** 확정 (concept.md 등록분 — 결과 보기 전 고정됨)
-- [ ] A2. 본문 수치 일괄 교체: 메인 표(seed mean±sd)·인라인 수치·"21 of 21"류 집계·부록 표
-- [ ] A3. **D5 문구 반영**: 규칙(1) 재서술 + 편향 귀속 문장 + below-chance 서술 조정
-      (단독 과판매 금지 — 부호검정 p=1.9e-6·다조건 결합이 주 방어, D6 발견)
-- [ ] A4. **D6 수치 삽입**: stats_extra.py로 초기하 p·부트스트랩 CI 산출 → 표 각주/부록
-- [ ] A5. frontier 절 병합: sec_frontier.tex의 \todo를 FRONTIER.md(F1~F4)로 채워
-      main.tex sec:limits/sec:discuss 사이에 병합, main_frontier.* 삭제
-- [ ] A6. 재컴파일·검수 → 발표자료 메인 덱 RESULTS/OUTLOOK 수치 갱신
-- [ ] A7. (선택) 축 앵커 인용 추가: per-decision IS(Precup)·DICE 계열 → refs.bib
-- [ ] A8. (선택) intro에 CTPO/MinPRO "정리 전제 위반" 승격 문장
+- [ ] A1. 원고 v0.1 사용자 피드백 반영 (구조·주장 수위·분량)
+- [ ] A2. s3 수확 시 수치 일괄 갱신: 표 2(v2)·표 3(kcurve)·본문 인라인 —
+      사전 등록 판정 로직은 고정, 수치만 교체
+- [ ] A3. 서지 확정: prefix/future 계열 arXiv 매핑 재검증(현재 검증된 링크만
+      수록), VIP·M2PO 등 추가 인용 여부 결정
+- [ ] A4. 발표자료 19덱을 재편 구조로 갱신 (원고 안정화 후 일괄 — 먼저 하지 말 것)
+- [ ] A5. (선택) 이론 보강: B8 오차분해 remark, ceiling 명제 해석적 증명 시도
 
-## 트랙 B — 실험 블록 (앞 블록 완주 후 순서대로, 🖥)
+## 트랙 B — 보강 실험 (약점 제거 효과순)
 
-- [ ] B1. go_full 완주 (A: gsm8k+dapo 5-seed / B: math500 5-seed / C: downstream 4소스)
-- [ ] B2. go_boost (D: drift 50/200/400×3seed — β 재사용 / E: 14B math500×3seed / F: mbpp·kk×3seed — 코드·논리 도메인)
-- [ ] B3. go_35 (Qwen3.5 0.8/2/4B — 능력 스윕 + 신세대 게이트)
-- [ ] B4. go_27b (스모크 관문 → DAPO hard-slice 프리스크린 → 3-seed; 코드는 DATASETS_27B에 apps)
-- [ ] B5. real_drift_check.sh (D1 — B1의 downstream_random 어댑터 필요)
-- 시간 부족 시 삭제 순서: B4 → B3 → B2의 E → ... (B1이 최후 보루, RECOVERY.md 티어표)
+- [ ] B1. 🤖 v1 run 대응 kcurve·조건부 floor 확장 스크립트 작성 → 🖥 실행 (GPU 0)
+      — 판정 표본을 2 run에서 ~7조건(v1 게이트·math500 포함)으로 확대,
+      "1/2 표결" 취약점 제거. **최우선 보강.**
+- [ ] B2. 🖥 E1 frontier replay를 교정 floor로 재실행 (CPU) — floor-gated
+      프로토콜 승리 시 처방(§9)에 양성 결과 추가, 패배 시 진단 프로토콜 유지
+- [ ] B3. 🖥 D7/go_35 소형 스윕 (Qwen3.5 0.8/2/4B) — 능력-난이도 위상도.
+      floor를 조절하는 손잡이를 보이면 인과 서사 부활. **유일한 GPU 레버,
+      9/10 결정점 전 판단.**
+- 폐기 확정: go_hard(NO-GO), go_full 신규 확장·go_boost·go_27b(구조적 부재
+  판정으로 동일 풀 추가 수치는 결론 불변 — 수확만 받고 신규 착수 금지)
 
 ## 트랙 C — 조건부 (트리거 발생 시에만)
 
-- [ ] C1. 실패 반복 → go_retry.sh, 그래도 실패 → DIAGNOSIS.txt 전달 + 노드 교체 (RECOVERY 상황 1)
-- [ ] C2. 클러스터 전면 불능 → **D7**: Qwen3.5-0.8B/2B를 아무 안정 GPU에서 (go_35 그대로, n 축소 가능)
-- [ ] C3. v2 결과가 v1과 모순 → 사전 판정 분기 3 (병기 + 교정 민감성 보고, hybrid 축 유지)
-- [ ] C4. 2D-REFRESH(순차 audit)가 replay에서 audit_* 격파 → 방법 기여 승격 + GPU 본실험 검토
+- [ ] C1. s3 포함 kcurve가 "확장 권고"로 뒤집힘 → P4-1(FRESH_K 증량 oracle
+      재실행) 검토 — 단 s1 r1=0.045가 함정 4호 사정권임을 감안, 보수적으로
+- [ ] C2. 클러스터 불능 → D7을 아무 안정 GPU에서 (n 축소 가능)
+- [ ] C3. D7에서 고신호 체제(floor ≥ 2×chance) 발견 → stale 붕괴 검정
+      본실험 부활 검토 (사전 등록 후)
 
 ## 마감 게이트 (ICLR 2027 공식)
 
 | 날짜 | 게이트 |
 |---|---|
-| **9/10** | 경로 결정점 — v2+보강 불안하면 축소 티어/v1 폴백 발동 |
-| **9/18 AOE** | abstract 마감 |
-| **9/20** | 내부 수치 동결 (표·frontier 반영 여유 5일) |
+| **9/10** | 경로 결정점 — B3 착수 여부 최종 판단 |
+| **9/18 AOE** | abstract 마감 (현 원고로 충족 가능 상태) |
+| **9/20** | 내부 수치 동결 (표·kcurve 반영 여유 5일) |
 | **9/25 AOE** | full paper 마감 |
 
 ## 완료 (참고)
 
-- ✅ 원고: 제목 확정·용어 정규화·서지 16편 전수 검증·9p/11p 클린 빌드
-- ✅ 인프라: go_* 스택 전부, preflight·diagnose·retry·backup, 버그 픽스 3건
-- ✅ 방어: 리뷰어 공격 포인트·D1~D7 설계(D6 구현), 사전 판정 규칙, 이론 전수 검증 통과
-- ✅ 발표자료: 메인 14섹션 상세판 + 레퍼런스 18덱 + 허브 (렌더 검증)
+- ✅ 판별: P3-0 precheck NO-GO·P4-0 kcurve 구조적 부재 (코드 감사 양쪽 통과 —
+  독립 jitter 정상, 사전 등록 규칙 일치)
+- ✅ 원고 v0.1: 재편 골격 전면 초안 + PDF (pdflatex 무에러, push됨)
+- ✅ 보강 계산: 측정 상한 명제 시뮬·초기하 정확검정·Fisher 결합·함정 4호 합성
+  (스크립트는 세션 스크래치 — 원고 부록 수치로 반영됨)
+- ✅ 이전: 제목 확정·용어 정규화·서지 검증·go_* 스택·D1~D7 설계·이론 전수 검증·
+  발표자료 19덱 (재편 전 기준 — A4에서 갱신 예정)
