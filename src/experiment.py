@@ -59,6 +59,15 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
     """β rollout에 대해 π/β 로그확률 → 4개 추정량 → projected gradient → 점수.
 
     shard=(i,n)이면 프롬프트를 인터리브(i::n)로 나눠 scores_offpolicy.shard{i}.json에 쓴다."""
+    out_name = ("scores_offpolicy.json" if shard is None
+                else f"scores_offpolicy.shard{shard[0]}.json")
+    dname = ("divergence_stats.json" if shard is None
+             else f"divergence_stats.shard{shard[0]}.json")
+    # 재시작 스킵 — 산출물 2종이 모두 있어야 (부분 상태 오인 방지). 이게 없어서
+    # 재시작마다 β 2-pass(장시간 무출력 구간)를 처음부터 다시 돌았다.
+    if (run / out_name).exists() and (run / dname).exists():
+        print(f"score: {out_name}·{dname} 존재 — 스킵")
+        return
     spec = ProjectionSpec(dim=args.proj_dim)
     rollouts = read_rollouts(run / "rollouts_behavior_train.jsonl")
     if shard is not None:
@@ -72,11 +81,19 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
     two_pass = pi is None and beta is None
     beta_logps: dict[int, list] = {}
     if two_pass:
+        import time as _time
+
+        from grads import ts
+        from rollout import _eta
         beta, _ = load_policy(args.model, None)
-        for pi_idx, rows in sorted(rollouts.items()):
+        _t0 = _time.time()
+        for _n, (pi_idx, rows) in enumerate(sorted(rollouts.items()), 1):
             beta_logps[pi_idx] = [
                 sequence_logprobs(beta, r["input_ids"], r["resp_start"]) for r in rows
             ]
+            if _n % 25 == 0:
+                print(f"[{ts()}]  score β-pass {_n}/{len(rollouts)} "
+                      f"(ETA {_eta(_n, len(rollouts), _t0)})", flush=True)
         del beta
         beta = None
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
@@ -119,8 +136,6 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
             from grads import ts
             print(f"[{ts()}]  score {n_done}/{len(rollouts)} "
                   f"({100 * n_done // len(rollouts)}%, ETA {_eta(n_done, len(rollouts), t_start)})", flush=True)
-    out_name = ("scores_offpolicy.json" if shard is None
-                else f"scores_offpolicy.shard{shard[0]}.json")
     _atomic_text(run / out_name, json.dumps(out, indent=1))
     # 진단 통계 (감사 §5·§6·§16): 토큰 KL̂(β‖π)·궤적 ESS·추정량별 clip 비율
     if div_rows:
@@ -132,8 +147,6 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
                  "traj_ess_frac_g11": ess, "rollouts": len(div_rows)}
         for est in ESTIMATORS:
             stats[f"clipfrac_{est}"] = sum(d[f"clipfrac_{est}"] for d in div_rows) / len(div_rows)
-        dname = ("divergence_stats.json" if shard is None
-                 else f"divergence_stats.shard{shard[0]}.json")
         _atomic_text(run / dname, json.dumps(stats, indent=1))
 
 
@@ -141,6 +154,10 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
     """π fresh rollout으로 oracle 점수·noise floor·CertaGrad용 micro-group 저장.
 
     shard=(i,n)이면 gradient 계산을 프롬프트 인터리브로 분담 — val 방향은 shard 0만."""
+    # 재시작 스킵 — 샤드 산출물이 이미 있으면 모델 로드 전에 종료
+    if shard is not None and (run / f"oracle_micro_groups.shard{shard[0]}.pt").exists():
+        print(f"oracle-grads: shard{shard[0]} 산출물 존재 — 스킵")
+        return
     spec = ProjectionSpec(dim=args.proj_dim)
     if pi is None:
         pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
@@ -165,7 +182,7 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         # 산출물 2개(gradient+groups) — 둘 다 있어야 스킵 (부분 상태 오인 방지, B5류)
         if not ((run / "val_gradient.pt").exists() and (run / "val_groups.pt").exists()):
             v_sum, groups_v = None, []
-            for pi_idx, rows in sorted(read_rollouts(val_path).items()):
+            for _vn, (pi_idx, rows) in enumerate(sorted(read_rollouts(val_path).items()), 1):
                 advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
                 weights = [
                     torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
@@ -174,6 +191,8 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
                 g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
                 groups_v.append(g)
                 v_sum = g if v_sum is None else v_sum + g
+                if _vn % 20 == 0:
+                    print(f"  val 방향 {_vn}개 완료", flush=True)
             val_grad = v_sum / len(groups_v)
             _atomic_save(torch.stack(groups_v), run / "val_groups.pt")
             _atomic_save(val_grad, run / "val_gradient.pt")
@@ -440,22 +459,29 @@ def main() -> None:
             (run / p).unlink(missing_ok=True)
         print(f"val-deepen: +K={args.val_k} 추가 완료 → val-grads 재계산 필요")
     elif args.stage == "val-grads":
-        pi, _ = load_policy(args.model, Path(args.adapter) if args.adapter else None)
-        params = grad_params(pi, args.grad_layers)
-        spec = ProjectionSpec(dim=args.proj_dim)
-        v_sum, groups_v = None, []
-        for pi_idx, rows in sorted(read_rollouts(run / "rollouts_fresh_val.jsonl").items()):
-            advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
-            weights = [
-                torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
-                for r, a in zip(rows, advs)
-            ]
-            g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
-            groups_v.append(g)
-            v_sum = g if v_sum is None else v_sum + g
-        _atomic_save(torch.stack(groups_v), run / "val_groups.pt")
-        _atomic_save(v_sum / len(groups_v), run / "val_gradient.pt")
-        print(f"val-grads: {len(groups_v)} prompts")
+        # 재시작 스킵 — 이게 없어서 재시작마다 무출력 15~40분 구간을 다시 돌았다
+        if (run / "val_gradient.pt").exists() and (run / "val_groups.pt").exists():
+            print("val-grads: 산출물 2종 존재 — 스킵")
+        else:
+            pi, _ = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+            params = grad_params(pi, args.grad_layers)
+            spec = ProjectionSpec(dim=args.proj_dim)
+            v_sum, groups_v = None, []
+            for _vn, (pi_idx, rows) in enumerate(
+                    sorted(read_rollouts(run / "rollouts_fresh_val.jsonl").items()), 1):
+                advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
+                weights = [
+                    torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
+                    for r, a in zip(rows, advs)
+                ]
+                g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
+                groups_v.append(g)
+                v_sum = g if v_sum is None else v_sum + g
+                if _vn % 20 == 0:
+                    print(f"  val-grads {_vn}개 완료", flush=True)
+            _atomic_save(torch.stack(groups_v), run / "val_groups.pt")
+            _atomic_save(v_sum / len(groups_v), run / "val_gradient.pt")
+            print(f"val-grads: {len(groups_v)} prompts")
     elif args.stage == "oracle-grads":
         i, n = map(int, args.shard.split(":"))
         stage_oracle(args, run, shard=(i, n))

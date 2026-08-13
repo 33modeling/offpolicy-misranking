@@ -10,7 +10,8 @@ source scripts/setup_env.sh
 LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv python 없음: $PY"; exit 1; }
-N=$(nvidia-smi -L 2>/dev/null | wc -l)
+N=$(timeout 20 nvidia-smi -L 2>/dev/null | wc -l)
+[ "${N:-0}" -ge 1 ] || { echo "[abort] nvidia-smi 무응답/GPU 0장 — 드라이버 wedge 의심, 노드 교체(RECOVERY 상황 1)"; exit 1; }
 echo "== GPU ${N}장 감지"
 
 echo "== [0] GPU 건강검사"
@@ -38,13 +39,21 @@ BASE="$OM_WORK/runs/v2"
 DATASETS=(${DATASETS:-gsm8k dapo-math})
 SEEDS=(${SEEDS:-0 1 2})
 
-# 상세 진행 워처
-( prev=""
+# 상세 진행 워처 — 5분 무변화마다 심장박동(무출력 스테이지 vs 진짜 hang 판별용)
+( prev=""; still=0
   while :; do
     sleep 15
     lf=$(ls -t "$BASE"*/logs/*.log 2>/dev/null | head -1); [ -n "$lf" ] || continue
     line=$(tail -n 1 "$lf" 2>/dev/null | cut -c1-120)
-    [ -n "$line" ] && [ "$line" != "$prev" ] && { echo "[detail·$(basename "$lf" .log)] $line"; prev="$line"; }
+    if [ -n "$line" ] && [ "$line" != "$prev" ]; then
+      echo "[detail·$(basename "$lf" .log)] $line"; prev="$line"; still=0
+    else
+      still=$((still + 1))
+      if [ $((still % 20)) -eq 0 ]; then
+        util=$(timeout 10 nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | paste -sd, -)
+        echo "[워처] 로그 $((still * 15 / 60))분째 그대로 (GPU util ${util:-측정불가}%) — util>0이면 무출력 스테이지 진행 중(놔둘 것), 0%가 계속이면 hang → Ctrl+C 후 같은 명령 재실행(저장분 스킵)"
+      fi
+    fi
   done ) &
 W=$!
 cleanup_strays() { pkill -f -- "--run $BASE" 2>/dev/null || true; pkill -f gpu_keepalive 2>/dev/null || true; sleep 5; }

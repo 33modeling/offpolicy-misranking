@@ -17,7 +17,7 @@ MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-14B-Instruct}"
 OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate-14b}"; export OUT_ROOT
 LOGS="$OUT_ROOT/logs"; mkdir -p "$LOGS"
 # GPU 수 자동 감지 — 인스턴스마다 다름 (4장 하드코딩이 invalid device ordinal의 원인)
-NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
+NGPU=$(timeout 20 nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
 [ "$NGPU" -ge 1 ] || { echo "[abort] GPU 미감지"; exit 1; }
 # OM_GPUS="0,1" 지정 시 그 GPU들만 사용 — 한 노드에서 두 실험 동시 실행용
 if [ -n "${OM_GPUS:-}" ]; then
@@ -34,7 +34,7 @@ if pgrep -f "bash.*scripts/babysit.sh" >/dev/null || pgrep -f "scripts/run_h100_
   exit 1
 fi
 # 점유 검사는 내가 쓸 GPU만 대상 (OM_GPUS 분할 실행 시 서로 간섭 금지)
-BUSY=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
+BUSY=$(timeout 20 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
   | awk -F', ' -v g="${OM_GPUS:-}" 'BEGIN{n=split(g,a,","); for(i=1;i<=n;i++) sel[a[i]]=1}
        { if ((n==0 || ($1 in sel)) && $2 > 2000) c++ } END{print c+0}')
 if [ "${BUSY:-0}" -gt 0 ] && [ "${OM_SKIP_GPU_CHECK:-0}" != "1" ]; then
