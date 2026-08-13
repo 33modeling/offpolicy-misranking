@@ -16,6 +16,13 @@
      + Fisher 정확검정. 주의: 스칼라 점수에서 이중 반전(둘 다 oracle 반대)이면
      두 셀은 서로 "일치"한다 — 즉 일치 시 반전율이 곧 경보의 사각지대 크기다.
      (본문 Prop. disagreement의 벡터 코사인 판과 estimand가 다름을 명시할 것.)
+  5) 닻 — oracle 자기 부호 불일치율(scores_splithalf의 a·b 반부호 비율).
+     추정량 반전율은 이 값 이하로 내려갈 이유가 없다(oracle 노이즈 기여분).
+     닻과의 차이만 추정량 결함으로 읽을 것 — below-chance 단독 과판매 금지
+     원칙과 같은 취지.
+
+비영 프롬프트가 10개 미만인 run(무신호 우세)의 결정 칸(top-k 두 열)은 동점
+jitter 인공물이므로 †로 표시하고 해석하지 않는다.
 
 top-k 동점 처리는 readout_summary와 동일(Random(0) jitter) — 판정 무결성 보존.
 """
@@ -88,6 +95,21 @@ def analyze_run(run: Path) -> dict | None:
     out = {"run": run.name, "n": n, "k": k, "w": w,
            "oracle_zero": n - len(o_nz), "est": {}}
 
+    # 닻 — oracle 자기 부호 불일치 (split-half a·b 반부호)
+    try:
+        half = {int(i): v for i, v in
+                json.loads((run / "scores_splithalf.json").read_text()).items()}
+        hb = [i for i, v in half.items() if v["a"] != 0.0 and v["b"] != 0.0]
+        out["anchor"] = {
+            "n": len(hb),
+            "flip": sum(1 for i in hb if half[i]["a"] * half[i]["b"] < 0),
+            "band_n": len([i for i in hb if i in band]),
+            "band_flip": sum(1 for i in hb
+                             if i in band and half[i]["a"] * half[i]["b"] < 0),
+        }
+    except Exception:
+        pass
+
     for e, sc in ests.items():
         both = [i for i in o_nz if sc.get(i, 0.0) != 0.0]
         rev = [i for i in both if sc[i] * oracle[i] < 0]
@@ -131,10 +153,20 @@ def report(results: list[dict]) -> str:
                   f"oracle 무신호 {r['oracle_zero']}개", "",
               "| est | 전체 반전 | 경계 대역 반전 | oracle top-k 중 부호 뒤집혀 배제 방향 | est top-k 중 잘못된 방향 승격 |",
               "|---|---|---|---|---|"]
+        degen = any(s["nonzero"] < 10 for s in r["est"].values())
         for e, s in r["est"].items():
+            dg = "†" if s["nonzero"] < 10 else ""
             L.append(f"| {e} | {pct(s['rev'], s['nonzero'])} "
                      f"| {pct(s['band_rev'], s['band_n'])} "
-                     f"| {s['otop_flipped']}/{r['k']} | {s['etop_wrongdir']}/{r['k']} |")
+                     f"| {s['otop_flipped']}/{r['k']}{dg} | {s['etop_wrongdir']}/{r['k']}{dg} |")
+        if "anchor" in r:
+            a = r["anchor"]
+            L.append(f"| **닻: oracle 자기 불일치** | {pct(a['flip'], a['n'])} "
+                     f"| {pct(a['band_flip'], a['band_n'])} | — | — |")
+        if degen:
+            L.append("")
+            L.append("† 비영 프롬프트 10개 미만 — top-k가 동점 jitter로 채워져 "
+                     "결정 칸은 인공물, 해석 금지.")
         if "alarm" in r:
             al = r["alarm"]
             L += ["", f"불일치 경보 (g10↔g01, 분모 {al['base']}, 불일치 {al['disagree']}):"]
@@ -153,6 +185,14 @@ def report(results: list[dict]) -> str:
             if rows:
                 L.append(f"| {e} | {pct(sum(s['rev'] for s in rows), sum(s['nonzero'] for s in rows))} "
                          f"| {pct(sum(s['band_rev'] for s in rows), sum(s['band_n'] for s in rows))} |")
+        anchors = [r["anchor"] for r in results if "anchor" in r]
+        if anchors:
+            L.append(f"| **닻: oracle 자기 불일치** | "
+                     f"{pct(sum(a['flip'] for a in anchors), sum(a['n'] for a in anchors))} | "
+                     f"{pct(sum(a['band_flip'] for a in anchors), sum(a['band_n'] for a in anchors))} |")
+        L.append("")
+        L.append("풀링 주의: 같은 프롬프트 풀의 seed 반복이면 독립 표본이 아니다 — "
+                 "재현성 확인용이지 p-값 결합 근거가 아님.")
     L += ["", "```json", json.dumps(results, ensure_ascii=False), "```"]
     return "\n".join(L)
 
