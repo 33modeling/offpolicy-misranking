@@ -38,11 +38,18 @@ else
   echo "[warn] math500 데이터 없음 — B 건너뜀. 온라인 셸: bash scripts/fetch_datasets.sh math500"
 fi
 
-echo "== [C] downstream 4소스 × gsm8k seeds — drift 100 기준"
+echo "== [C] downstream 4소스 × {gsm8k, dapo} seeds — drift 100 기준"
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
+# dapo 포함 — 신호 큰 체제에서 선택의 실제 가치(신-헤드라인의 downstream 증거)
+C_DIRS=()
 for s in $SEEDS_ALL; do
-  d="$OM_WORK/runs/v2-s$s"
-  [ -f "$d/DONE" ] || { echo "  [skip] v2-s$s 미완주 — downstream 생략"; continue; }
+  for suf in "" "-dapo-math" "-dapo-math-dapo-math"; do
+    dd="$OM_WORK/runs/v2-s$s$suf"
+    [ -f "$dd/DONE" ] && C_DIRS+=("$dd")
+  done
+done
+for d in "${C_DIRS[@]}"; do
+  true
   mkdir -p "$d/logs"
   pids=(); i=0
   for src in oracle g10 g01 random; do
