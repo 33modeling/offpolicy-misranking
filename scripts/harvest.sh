@@ -12,6 +12,12 @@ mkdir -p "$STAMP_DIR"
 "$PY" src/kcurve_floor.py "$OM_WORK/runs" | tee "$STAMP_DIR/KCURVE.md" || true
 "$PY" src/readout_summary.py "$OM_WORK/runs" | tee "$STAMP_DIR/READOUT.md"
 "$PY" src/reversal_freq.py "$OM_WORK/runs" > "$STAMP_DIR/REVERSAL.md" 2>/dev/null || true
+# 원고 A8a — run별 정확 p·부트스트랩 CI (v1 계열 포함, CPU)
+{ for d in "$OM_WORK"/runs/*/; do
+    [ -f "$d/scores_oracle.json" ] || continue
+    case "$(basename "$d")" in *smoke*) continue;; esac
+    echo "## $(basename "$d")"; "$PY" src/stats_extra.py "$d" 2>/dev/null || true; echo
+  done; } > "$STAMP_DIR/STATS.md" || true
 cp "$OM_WORK"/results/v2/TABLES.md "$OM_WORK"/results/v2/FRONTIER.md \
    results/TABLES.md "$STAMP_DIR/" 2>/dev/null || true
 echo

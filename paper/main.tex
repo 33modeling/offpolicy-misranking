@@ -162,7 +162,7 @@ $\begin{array}{c|cc}
 \node[box, right=8mm of grid] (topk) {prompt scores\\$\to$ top-$k$ selection};
 \node[red box, below=3.5mm of grid] (thm) {\textbf{Thm.~1:} any one-sided cell can flip a prompt's\\gradient sign at arbitrarily small KL};
 \node[gray box, right=5mm of thm] (dash) {KL / ESS / cosine\\dashboards: \textbf{blind} (Cor.~1)};
-\node[gray box, left=5mm of thm] (disagree) {$\cos(\gto,\got)$ disagreement\\= free warning (Prop.~2)};
+\node[gray box, left=5mm of thm] (disagree) {$\cos(\gto,\got)$ disagreement\\= free warning (Prop.~2; realized, \S\ref{sec:map})};
 \draw[arr] (stale) -- (grid);
 \draw[arr] (grid) -- (topk);
 \draw[arr, red!60!black] (thm) -- (grid);
@@ -477,7 +477,9 @@ against chance $0.100$ (Table~\ref{tab:v2}). Here stale scores are \emph{not}
 distinguishable from the oracle---in fact they track it: on GSM8K the
 uncorrected stale baseline achieves precision $0.294$/$0.235$ (seeds 1/2),
 upper-tail exact $p=2.8\times10^{-5}$ and $2.1\times10^{-3}$, Fisher-combined
-$p=1.0\times10^{-6}$. Crucially, $0.294$ is \emph{at the measurement ceiling}
+$p=1.0\times10^{-6}$ (the two seeds share the prompt pool; conditional on the
+pool, the hypergeometric nulls are driven by independent rollout randomness,
+which is what the combination assumes). Crucially, $0.294$ is \emph{at the measurement ceiling}
 (${\approx}0.30$ at floor $0.137$; Table~\ref{tab:ceiling}): the stale
 estimator has exhausted what the oracle can resolve, so neither its one-sided
 competitors' losses nor any method's gains are measurable in this regime. The
