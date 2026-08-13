@@ -112,7 +112,7 @@ def main() -> int:
     print("\n(주의: run 수가 적으면 위 관찰은 통계적 확정이 아님 — 5-seed 전승이 유의선)")
 
     print("\n## 용어 — 표를 읽는 법\n")
-    print("- **floor**: oracle이 자기 자신과 일치하는 정도(잡음 바닥). 추정량 숫자는 floor를 넘을 수 없음")
+    print("- **floor**: oracle 절반끼리의 일치도(회복 가능한 신호 크기의 보수적 지표). 추정량이 floor를 넘을 수도 있음(split-half가 보수적이라서) — 해석 기준은 Δfloor")
     print("- **chance**: 아무거나 찍었을 때의 기대 precision")
     print("- **g00/g10/g01/g11**: 무보정 / prefix만 / suffix만 / 전부 보정의 top-k precision")
     print("- **one-sided가 더 나쁜가**: g10·g01 둘 다 g00보다 낮으면 '예' = 논문 주장 방향")
