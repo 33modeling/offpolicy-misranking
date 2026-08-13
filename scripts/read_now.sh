@@ -11,8 +11,10 @@ STAMP_DIR="$OM_WORK/readouts/$(date '+%Y-%m-%d_%H%M')"
 mkdir -p "$STAMP_DIR"
 
 "$PY" src/readout_summary.py "$OM_WORK/runs" | tee "$STAMP_DIR/READOUT.md"
+# 부호반전 재집계(닻 포함)를 같은 폴더에 동봉 — READOUT 전달 한 번이면 됨
+"$PY" src/reversal_freq.py "$OM_WORK/runs" > "$STAMP_DIR/REVERSAL.md" 2>/dev/null || true
 cp "$OM_WORK"/results/v2/TABLES.md "$OM_WORK"/results/v2/FRONTIER.md \
    results/TABLES.md "$STAMP_DIR/" 2>/dev/null || true
 echo
-echo "== 저장 완료: $STAMP_DIR/READOUT.md"
+echo "== 저장 완료: $STAMP_DIR/READOUT.md (+REVERSAL.md 동봉)"
 ls "$STAMP_DIR"

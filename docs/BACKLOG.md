@@ -20,8 +20,9 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 ## 트랙 0 — 지금 돌고 있는 것
 
 - [ ] 🖥 go_retry 수확 (s3 gsm8k/dapo — 사용자 실행 중)
-- [ ] 🖥 s3 완주 시 `bash scripts/kcurve.sh` 재실행 (GPU 0) → KCURVE.md 전달
-      (표결 2→3개: 뒤집히면 트랙 C1, 유지되면 원고 표만 갱신)
+- [ ] 🖥 s3 완주 시 `git pull && bash scripts/harvest.sh` **한 번** →
+      마지막 줄에 찍히는 폴더 **하나만** 전달 (KCURVE·READOUT·REVERSAL 동봉;
+      kcurve 표결 2→3개: 뒤집히면 트랙 C1, 유지되면 원고 표만 갱신)
 
 ## 트랙 A — 원고 (🤖)
 
@@ -54,8 +55,10 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       existence↔prevalence 갭을 실측으로 닫는 최저비용 보강 (그록 D4·B3).
       **1차 수확 판독 완료(8/13, v2 4개 run)** — 신호 run 경계 반전 24~35%,
       불일치→g10 반전 Fisher p=0.015/0.007 (s1·s2 재현). 단 oracle 자기
-      불일치 닻이 없던 판이라 수치 확정 보류 → **닻 추가판으로 재실행 대기**
-      (같은 명령). "불일치 시 범인은 주로 g10" 풀링 48/79는 이항 양측
+      불일치 닻이 없던 판이라 수치 확정 보류 — **별도 재실행·재전달 불요**,
+      닻 포함판은 s3 수확 harvest.sh에 자동 동봉. 그 전까지는 g11을 내부
+      기준선으로 한 상대 비교(one-sided 초과 반전 6~10pp)만 사용.
+      "불일치 시 범인은 주로 g10" 풀링 48/79는 이항 양측
       p=0.071 — 방향성 관찰로만, 과판매 금지.
 - [ ] B5. (9/10 결정점에서 B3와 묶어 판단) GradAlign k_r-matched·full IS(g11)·
       uncorrected 동일 그림 head-to-head — A+B 환원 방어의 마지막 조각
