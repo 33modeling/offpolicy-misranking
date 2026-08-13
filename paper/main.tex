@@ -714,6 +714,17 @@ counterexamples are two-token constructions---deliberately: they show what
 \emph{cannot} be excluded by dashboards, not what typically happens; the
 realization map is the empirical complement.
 
+\paragraph{Safety relevance.} Data selection is a curation channel: whatever
+a misranked estimator systematically promotes gets amplified by subsequent
+training. Corollary~\ref{cor:blind} then has a safety reading---if stale
+selection happens to favor prompts that reward shortcut or reward-hacking
+behavior, the drift dashboards a team watches cannot flag the promotion any
+more than they can flag the sign reversal itself, so the selection layer is an
+effectively unaudited input to the reward loop. The measurement-first
+protocol applies unchanged when the selection target is a safety metric
+rather than accuracy, and we recommend running it there before trusting any
+stale-scored curation.
+
 \paragraph{Outlook.} We view the negative results as load-bearing: they
 delimit where the field's growing investment in stale-rollout selection can
 possibly pay off (unsaturated, tie-free, signal-bearing pools---which our

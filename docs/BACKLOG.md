@@ -12,6 +12,11 @@ g00 0.294가 ceiling≈0.30 도달), Fisher 결합 p=1.0e-6(gsm8k 추적),
 **함정 4호**(포화-공유 인공 겹침, 합성 실증 — kcurve 하강 곡선의 정체).
 v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 
+그록 리뷰 수신(8/12 작성, new-paper-ideas `658ecec`,
+`68-.../grok/`) — 구조 지적(시제 모순·처방↔한계 포지션·CertaGrad)은 v0.3
+재편이 선반영했음을 대조 확인. 잔여 반영분은 A6·A7(원고)·B4·B5(실험),
+안전 단락(B12)은 즉시 반영 완료.
+
 ## 트랙 0 — 지금 돌고 있는 것
 
 - [ ] 🖥 go_retry 수확 (s3 gsm8k/dapo — 사용자 실행 중)
@@ -26,7 +31,12 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 - [ ] A3. 서지 확정: prefix/future 계열 arXiv 매핑 재검증(현재 검증된 링크만
       수록), VIP·M2PO 등 추가 인용 여부 결정
 - [ ] A4. 발표자료 19덱을 재편 구조로 갱신 (원고 안정화 후 일괄 — 먼저 하지 말 것)
-- [ ] A5. (선택) 이론 보강: B8 오차분해 remark, ceiling 명제 해석적 증명 시도
+- [ ] A5. (선택) 이론 보강: B8 오차분해 remark, ceiling 명제 해석적 증명 시도,
+      group normalization K→∞ 점근 한 줄 (그록 Theory 지적)
+- [ ] A6. 제출 직전 문장 단위 스쿱 재검색 재실행 + 검색 로그 appendix 수록
+      (그록 D7·B10 — 9/20 수치 동결 직전 실행)
+- [ ] A7. 재현 부록: CROPI step-200 checkpoint 버전·라이선스 pin, seed·config
+      hash 표 (그록 B14)
 
 ## 트랙 B — 보강 실험 (약점 제거 효과순)
 
@@ -38,6 +48,14 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 - [ ] B3. 🖥 D7/go_35 소형 스윕 (Qwen3.5 0.8/2/4B) — 능력-난이도 위상도.
       floor를 조절하는 손잡이를 보이면 인과 서사 부활. **유일한 GPU 레버,
       9/10 결정점 전 판단.**
+- [ ] B4. 🖥 `bash scripts/reversal_freq.sh` (CPU, 기존 산출물 재집계 —
+      GPU·신규 롤아웃 불필요) — 프롬프트 단위 부호반전율·경계 대역 피해자
+      비율·불일치 경보 조건부 반전율 → 원고 primary table 후보.
+      existence↔prevalence 갭을 실측으로 닫는 최저비용 보강 (그록 D4·B3).
+      **s3 수확 전에도 실행 가능 — B1보다 먼저.**
+- [ ] B5. (9/10 결정점에서 B3와 묶어 판단) GradAlign k_r-matched·full IS(g11)·
+      uncorrected 동일 그림 head-to-head — A+B 환원 방어의 마지막 조각
+      (그록 D3·B2). GPU 필요, 단독 착수 금지.
 - 폐기 확정: go_hard(NO-GO), go_full 신규 확장·go_boost·go_27b(구조적 부재
   판정으로 동일 풀 추가 수치는 결론 불변 — 수확만 받고 신규 착수 금지)
 
@@ -60,6 +78,9 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 
 ## 완료 (참고)
 
+- ✅ 그록 리뷰 대조(8/13): 치명 지적 선반영 확인, 잔여 5건 분류(A6·A7·B4·B5·
+  안전 단락), 안전/보상 해킹 단락 §9 반영, `src/reversal_freq.py` 작성
+  (로컬 산출물 2벌 검증 완주)
 - ✅ 판별: P3-0 precheck NO-GO·P4-0 kcurve 구조적 부재 (코드 감사 양쪽 통과 —
   독립 jitter 정상, 사전 등록 규칙 일치)
 - ✅ 원고 v0.1: 재편 골격 전면 초안 + PDF (pdflatex 무에러, push됨)
