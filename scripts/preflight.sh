@@ -41,4 +41,4 @@ PYEOF
 rc=$?
 [ "$rc" = 0 ] || { echo "✘ 필수 데이터(gsm8k/dapo) 문제 — fetch_datasets.sh 후 재점검"; exit 1; }
 
-echo "== 전부 OK — 실행: bash scripts/go_full.sh 2>&1 | tee go_full.console.log"
+echo "== 전부 OK — 실행: bash scripts/go_full.sh   (로그는 group-volume console-logs/)"

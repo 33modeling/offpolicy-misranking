@@ -12,6 +12,7 @@ if pgrep -f "scripts/go_v2.sh" >/dev/null || pgrep -f "scripts/go_full.sh" >/dev
   echo "[abort] 다른 go_* 실행 중 — 완주 후 재실행"; exit 1
 fi
 source scripts/setup_env.sh
+LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
 export OM_LORA_TARGETS="${OM_LORA_TARGETS:-all-linear}"   # 신아키텍처 대비 (thinking은 기본 OFF)
 SEEDS_35="${SEEDS_35:-0 1 2}"
 
@@ -34,9 +35,9 @@ for M in $MODELS_35; do
   if [ -f "$SMK/report.json" ]; then
     echo "   스모크 산출물 존재 — 스킵"
   elif ! DATASET=gsm8k OUT_ROOT="$SMK" N_TRAIN=8 N_VAL=4 FRESH_K=4 HYBRID_PROMPTS=4 \
-        SEED=0 MODEL_14B="$M" bash scripts/run_14b.sh > "smoke-$TAG.log" 2>&1; then
+        SEED=0 MODEL_14B="$M" bash scripts/run_14b.sh > "$LOGDIR/smoke-$TAG.log" 2>&1; then
     echo "== [$TAG] 스모크 실패 — 이 모델 스킵 (호환성 문제). tail:"
-    tail -6 "smoke-$TAG.log" | sed 's/^/   /'
+    tail -6 "$LOGDIR/smoke-$TAG.log" | sed 's/^/   /'
     continue
   else
     echo "   스모크 ✔"
@@ -47,10 +48,10 @@ for M in $MODELS_35; do
     dir="$OM_WORK/runs/v2-$TAG-s$s"
     [ -f "$dir/DONE" ] && { echo "  ✔ $TAG/s$s 완주 — 스킵"; continue; }
     if DATASET=gsm8k MODEL_14B="$M" SEED="$s" N_TRAIN=512 N_VAL=100 OUT_ROOT="$dir" \
-       bash scripts/run_14b.sh >> "35-$TAG-s$s.log" 2>&1; then
+       bash scripts/run_14b.sh >> "$LOGDIR/35-$TAG-s$s.log" 2>&1; then
       echo "  ✔ $TAG/s$s"
     else
-      echo "  ✘ $TAG/s$s — tail:"; tail -4 "35-$TAG-s$s.log" | sed 's/^/     /'
+      echo "  ✘ $TAG/s$s — tail:"; tail -4 "$LOGDIR/35-$TAG-s$s.log" | sed 's/^/     /'
     fi
   done
 done

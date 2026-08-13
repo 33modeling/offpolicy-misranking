@@ -7,6 +7,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv python 없음: $PY"; exit 1; }
 N=$(nvidia-smi -L 2>/dev/null | wc -l)
@@ -57,9 +58,9 @@ if [ -f "$SMOKE/report.json" ] && ls "$SMOKE"/scores_hybrid_*.json >/dev/null 2>
 else
   cleanup_strays
   if ! DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
-       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh > v2-smoke.log 2>&1; then
+       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh > "$LOGDIR/v2-smoke.log" 2>&1; then
     echo "== [중단] 스모크 실패 — 본실행 진입 안 함. 사인:"
-    tail -8 v2-smoke.log | sed 's/^/   /'
+    tail -8 "$LOGDIR/v2-smoke.log" | sed 's/^/   /'
     cleanup_strays; kill $W 2>/dev/null; exit 1
   fi
   for want in report.json scores_hybrid_0.5.json divergence_stats.shard0.json manifest.json; do
@@ -74,7 +75,7 @@ declare -A RESULT
 for SEED in "${SEEDS[@]}"; do
   for DS in "${DATASETS[@]}"; do
     RUN_DIR="$BASE-s$SEED"; [ "$DS" != "gsm8k" ] && RUN_DIR="$RUN_DIR-$DS"
-    KEY="$DS/s$SEED"; LOG="v2-$DS-s$SEED.log"
+    KEY="$DS/s$SEED"; LOG="$LOGDIR/v2-$DS-s$SEED.log"
     echo
     echo "==== [$KEY] → $RUN_DIR (log: $LOG)"
     if [ -f "$RUN_DIR/DONE" ]; then echo "==== [$KEY] ✔ 완주(DONE) — 스킵"; RESULT[$KEY]=1; continue; fi
@@ -101,7 +102,7 @@ for SEED in "${SEEDS[@]}"; do for DS in "${DATASETS[@]}"; do
   RUN_DIR="$BASE-s$SEED"; [ "$DS" != "gsm8k" ] && RUN_DIR="$RUN_DIR-$DS"
   KEY="$DS/s$SEED"
   if [ "${RESULT[$KEY]:-0}" = "1" ]; then echo "  $KEY ✔"; [ -f "$RUN_DIR/report.json" ] && DIRS+=("$RUN_DIR")
-  else echo "  $KEY ✘ (v2-$DS-s$SEED.log 확인)"; fi
+  else echo "  $KEY ✘ ($LOGDIR/v2-$DS-s$SEED.log 확인)"; fi
 done; done
 
 echo "==== 결과 수집: $OM_WORK/results/v2 ===="

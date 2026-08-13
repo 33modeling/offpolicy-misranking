@@ -9,6 +9,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv python 없음: $PY"; exit 1; }
 N=$(nvidia-smi -L 2>/dev/null | wc -l)
@@ -61,7 +62,7 @@ W=$!
 declare -A RESULT
 for DS in "${DATASETS[@]}"; do
   RUN_DIR="$BASE_ROOT"; [ "$DS" != "gsm8k" ] && RUN_DIR="$BASE_ROOT-$DS"
-  LOG="big-$DS.log"
+  LOG="$LOGDIR/big-$DS.log"
   echo
   echo "==== [$DS] 시작 → $RUN_DIR (n=$N_TRAIN, fresh=$FRESH_K, hybrid=$HYBRID_PROMPTS, log: $LOG)"
   if [ -f "$RUN_DIR/DONE" ]; then
@@ -94,7 +95,7 @@ for DS in "${DATASETS[@]}"; do
   if [ "${RESULT[$DS]:-0}" = "1" ]; then
     echo "  $DS: ✔ 완주 → $RUN_DIR"
   else
-    echo "  $DS: ✘ 미완 (big-$DS.log 마지막 사인 확인)"
+    echo "  $DS: ✘ 미완 ($LOGDIR/big-$DS.log 마지막 사인 확인)"
   fi
 done
 echo

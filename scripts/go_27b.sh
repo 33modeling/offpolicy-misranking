@@ -13,6 +13,7 @@ if pgrep -f "scripts/go_v2.sh" >/dev/null || pgrep -f "scripts/go_full.sh" >/dev
   echo "[abort] 다른 go_* 실행 중 — 완주 후 재실행"; exit 1
 fi
 source scripts/setup_env.sh
+LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
 PY="$VENV_DIR/bin/python"
 M27="${MODEL27B:-$MODELS_DIR/Qwen3.6-27B}"
 [ -f "$M27/config.json" ] || {
@@ -27,9 +28,9 @@ if [ -f "$SMK/report.json" ]; then
   echo "   스모크 산출물 존재 — 스킵"
 else
   if ! DATASET=gsm8k OUT_ROOT="$SMK" N_TRAIN=8 N_VAL=4 FRESH_K=4 HYBRID_PROMPTS=4 \
-       SEED=0 MODEL_14B="$M27" bash scripts/run_14b.sh > smoke-27b.log 2>&1; then
+       SEED=0 MODEL_14B="$M27" bash scripts/run_14b.sh > "$LOGDIR/smoke-27b.log" 2>&1; then
     echo "== [중단] 27B 스모크 실패 — 신아키텍처 호환성(transformers/PEFT/checkpointing) 의심. tail:"
-    tail -12 smoke-27b.log | sed 's/^/   /'
+    tail -12 "$LOGDIR/smoke-27b.log" | sed 's/^/   /'
     echo "   transformers 업그레이드가 필요하면 constraints 확인 후 provision 재실행."
     exit 1
   fi
@@ -49,10 +50,10 @@ for DS in $DATASETS_27B; do
     dir="$OM_WORK/runs/v2-27b-$DS-s$s"
     [ -f "$dir/DONE" ] && { echo "  ✔ $DS/s$s 완주 — 스킵"; continue; }
     if DATASET="$DS" OM_POOL_FILE="$POOL" MODEL_14B="$M27" SEED="$s" \
-       N_TRAIN=512 N_VAL=100 OUT_ROOT="$dir" bash scripts/run_14b.sh >> "27b-$DS-s$s.log" 2>&1; then
+       N_TRAIN=512 N_VAL=100 OUT_ROOT="$dir" bash scripts/run_14b.sh >> "$LOGDIR/27b-$DS-s$s.log" 2>&1; then
       echo "  ✔ $DS/s$s"
     else
-      echo "  ✘ $DS/s$s — tail:"; tail -4 "27b-$DS-s$s.log" | sed 's/^/     /'
+      echo "  ✘ $DS/s$s — tail:"; tail -4 "$LOGDIR/27b-$DS-s$s.log" | sed 's/^/     /'
     fi
   done
 done

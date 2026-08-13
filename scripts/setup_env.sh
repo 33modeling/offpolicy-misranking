@@ -62,6 +62,12 @@ export PYTHONPATH="$OM_REPO/src${PYTHONPATH:+:$PYTHONPATH}"
 # ---- 데이터 (오프라인 노드용 로컬 사본 — provision이 만든다) -------------
 export OM_DATA="${OM_DATA:-$OM_WORK/data}"
 
+# ---- 레포 체크아웃 로그 청소 (로그는 group-volume에만 남긴다) -----------
+mkdir -p "$OM_WORK/console-logs" 2>/dev/null || true
+for _f in "$OM_REPO"/*.log "$OM_REPO"/READOUT.md "$OM_REPO"/DIAGNOSIS.txt; do
+  [[ -f "$_f" ]] && mv -f "$_f" "$OM_WORK/console-logs/" 2>/dev/null || true
+done
+
 # ---- 점검 (경고만) ------------------------------------------------------
 _om_warn() { echo "[setup_env][warn] $1" >&2; }
 [[ -d "$GROUP_VOLUME" ]] || _om_warn "group-volume 없음: $GROUP_VOLUME — 'export GROUP_VOLUME=<mount>' 후 다시 source"

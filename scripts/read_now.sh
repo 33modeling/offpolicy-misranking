@@ -7,13 +7,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
-OUT="READOUT.md"
-
-"$PY" src/readout_summary.py "$OM_WORK/runs" | tee "$OUT"
-
 STAMP_DIR="$OM_WORK/readouts/$(date '+%Y-%m-%d_%H%M')"
 mkdir -p "$STAMP_DIR"
-cp "$OUT" "$STAMP_DIR/"
+
+"$PY" src/readout_summary.py "$OM_WORK/runs" | tee "$STAMP_DIR/READOUT.md"
 cp "$OM_WORK"/results/v2/TABLES.md "$OM_WORK"/results/v2/FRONTIER.md \
    results/TABLES.md "$STAMP_DIR/" 2>/dev/null || true
 echo

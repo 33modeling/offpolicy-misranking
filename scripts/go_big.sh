@@ -7,6 +7,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv python 없음: $PY"; exit 1; }
 N=$(nvidia-smi -L 2>/dev/null | wc -l)
@@ -37,7 +38,7 @@ export N_TRAIN="${N_TRAIN:-512}" N_VAL="${N_VAL:-100}"
 export FRESH_K="${FRESH_K:-32}" HYBRID_PROMPTS="${HYBRID_PROMPTS:-64}"
 export MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 export OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/big-7b}"
-LOG="big-${DATASET}.log"
+LOG="$LOGDIR/big-${DATASET}.log"
 RUN_DIR="$OUT_ROOT"; [ "$DATASET" != "gsm8k" ] && RUN_DIR="$OUT_ROOT-$DATASET"
 echo "== [2/3] 실행: 7B $DATASET n=$N_TRAIN(+val $N_VAL) fresh=$FRESH_K hybrid=$HYBRID_PROMPTS → $RUN_DIR"
 

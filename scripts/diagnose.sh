@@ -5,7 +5,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh 2>/dev/null || true
-OUT="DIAGNOSIS.txt"
+LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
+OUT="$LOGDIR/DIAGNOSIS.txt"
 {
   echo "===== 진단 리포트 $(date '+%F %T') ====="
   echo "-- 코드: $(git -c safe.directory='*' log --oneline -1 2>/dev/null || echo 'git 정보 없음')"
@@ -19,12 +20,12 @@ OUT="DIAGNOSIS.txt"
   done
   echo "-- 에러 시그니처 집계 (전 로그, 빈도순):"
   grep -hiE "cublas|cuda error|out of memory|illegal|launch fail|xid|no space|killed|assert" \
-    ./*.log "${OM_WORK:-.}"/runs/v2-*/logs/*.log 2>/dev/null \
+    "$LOGDIR"/*.log "${OM_WORK:-.}"/runs/v2-*/logs/*.log 2>/dev/null \
     | sed 's/^[[:space:]]*//' | cut -c1-110 | sort | uniq -c | sort -rn | head -12
   echo "-- dmesg Xid (하드웨어 판정, 권한 없으면 생략):"
   dmesg 2>/dev/null | grep -i xid | tail -5 || echo "  (dmesg 접근 불가)"
   echo "-- 최근 로그 tail:"
-  lf=$(ls -t go_full.console.log v2-*.log boost-*.log 2>/dev/null | head -1)
+  lf=$(ls -t "$LOGDIR"/*.log 2>/dev/null | head -1)
   if [ -n "${lf:-}" ]; then echo "  [$lf]"; tail -12 "$lf" | sed 's/^/  /'; fi
-  echo "===== 끝 — 이 출력 전체를 사진으로 전달 ====="
+  echo "===== 끝 — 이 파일을 전달 ====="
 } | tee "$OUT"

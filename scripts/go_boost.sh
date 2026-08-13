@@ -20,13 +20,14 @@ if pgrep -f "scripts/go_v2.sh" >/dev/null || pgrep -f "scripts/go_full.sh" >/dev
   echo "[abort] go_v2/go_full 실행 중 — 완주 후 재실행"; exit 1
 fi
 source scripts/setup_env.sh
+LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
 PHASES="${PHASES:-D E F}"
 
 run_one() {  # run_one <OUT_ROOT> <ENV=V...>  — DONE 스킵 + 재시도 2회 + 데이터 문제 즉시 포기
   local dir="$1"; shift
   local tag; tag="$(basename "$dir")"
   if [ -f "$dir/DONE" ]; then echo "  ✔ $tag 완주분 — 스킵"; return 0; fi
-  local lg="boost-$tag.log"
+  local lg="$LOGDIR/boost-$tag.log"
   for try in 1 2; do
     if env "$@" OUT_ROOT="$dir" bash scripts/run_14b.sh >> "$lg" 2>&1; then
       echo "  ✔ $tag"; return 0
