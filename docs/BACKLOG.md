@@ -49,6 +49,16 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       (d) ✅ Fig.1 disagreement 상자 실측 지지 표기 (8/14)
 - [ ] A9. 제출 포맷 압축: 현재 article 13p → ICLR 본문 9~10p 예산
       (pitfalls §7 일부 appendix 강등이 유력한 절약처, 9/20 이후)
+- [x] A10. ✅ v0.4 심사 감사(new-paper-ideas `REVIEWER-AUDIT-v04-2026-08-14.md`)
+      언어·정합 수정 반영(8/14): Fig.1 명제 번호 교정, two→three stages,
+      GPU-free→artifact-only 전면, "the one"→"a" warning sign, structural
+      absence 조건화(epistemic/ontic 구분 명문), certification 표현 하향+
+      approximate/indifference-zone 범위 명시, ceiling 모델-조건부 명시,
+      spend nothing→withhold 완화, 0.04 방향성 병기, Prop1 증명/탐색 분리,
+      판정 재계산 문구. **잔여(문구류)**: 관련 연구 확장(§7 요구), floor
+      명칭 각주 검토 — A2 수치 반영 때 일괄
+- [ ] A11. 감사 P0-5: prompt-pool clustered bootstrap·cell-vs-full paired
+      검정을 STATS 산출에 추가(🤖 스크립트 확장, 수확 편승) + 표에 CI 병기
 
 ## 트랙 B — 보강 실험 (약점 제거 효과순)
 
@@ -76,6 +86,16 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 - [ ] B5. (9/10 결정점에서 B3와 묶어 판단) GradAlign k_r-matched·full IS(g11)·
       uncorrected 동일 그림 head-to-head — A+B 환원 방어의 마지막 조각
       (그록 D3·B2). GPU 필요, 단독 착수 금지.
+- [ ] B6. 🖥 **[감사 P0]** 대표 1조건에서 K'=64(가능하면 128) oracle 직접 관측 —
+      Spearman-Brown 외삽의 calibration 검증(예측구간 적중 여부). 실패 시
+      결론을 budget-limited absence로 하향 (REVIEWER-AUDIT-v04 §3)
+- [ ] B7. 🖥 **[감사 P0]** 고신호 체제(7B MATH-500 또는 drift-400) equal-budget
+      반복 downstream: oracle·4셀·pass-rate·random — 실전 피해 입증 실패 시
+      논문 범위를 selection-evaluation audit으로 명시 축소 (§6·§P0-4)
+- [ ] B8. 🖥 비수학 태스크 1종 외적 타당성 probe — **mbpp 확보 완료** 활용,
+      floor·kcurve만 1 seed (§10). check_data.sh mbpp로 위치 확인 후
+- [ ] B9. (B3 승격 메모) capability-difficulty sweep은 감사 P0-2로 승격 —
+      9/10 결정점에서 "선택"이 아니라 "필수" 취급
 - 폐기 확정: go_hard(NO-GO), go_full 신규 확장·go_boost·go_27b(구조적 부재
   판정으로 동일 풀 추가 수치는 결론 불변 — 수확만 받고 신규 착수 금지)
 
