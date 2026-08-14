@@ -98,6 +98,9 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 
 ## 완료 (참고)
 
+- ✅ 본제목 명사 교체(8/14, 사용자 선택): "Wrong Prompts" → "Wrong Training
+  Data" — 분야 상위 명칭(data selection) 정합·프롬프트 엔지니어링 오독 제거,
+  정밀도는 부제(Prompt Selection)가 유지
 - ✅ 제목 부제 보강(8/13, 사용자 선택): "... : A Measurement-First Audit of
   Off-Policy Prompt Selection in RLVR" — wrong prompts 중의성 해소·재편
   스파인 반영·검색 키워드 확보 (본제목은 확정 이력 유지)
