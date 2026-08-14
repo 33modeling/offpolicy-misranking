@@ -47,9 +47,11 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             items = [{"question": r["problem"], "answer": str(r["answer"])} for r in rows]
         return _split(items, n_train, n_val, seed, f"{dataset}(local)")
 
-    from datasets import load_dataset
+    # datasets 라이브러리는 허브 폴백에서만 지연 import — 로컬 사본 경로는
+    # 라이브러리 상태(미설치·구버전 오프라인 미지원)와 무관하게 동작해야 한다
 
     if dataset == "gsm8k":
+        from datasets import load_dataset
         ds = load_dataset("openai/gsm8k", "main", split="train")
         items = [
             {"question": row["question"], "answer": _gsm8k_answer(row["answer"])}
@@ -67,6 +69,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         rows = _load_rows_any(root) if root else None
         if rows is None:
             try:
+                from datasets import load_dataset
                 ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
             except Exception as e:
                 raise ValueError(
@@ -93,6 +96,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         rows = _load_rows_any(root) if root else None
         if rows is None:
             try:
+                from datasets import load_dataset
                 ds = load_dataset("google-research-datasets/mbpp", "full")
             except Exception as e:
                 raise ValueError(
@@ -150,6 +154,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         rows = _load_rows_any(root) if root else None
         if rows is None:
             try:
+                from datasets import load_dataset
                 rows = list(load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train"))
             except Exception as e:
                 raise ValueError(
@@ -213,7 +218,9 @@ def _dataset_bases() -> list:
 
     gv = os.environ.get("GROUP_VOLUME", "/group-volume")
     user = os.environ.get("OM_USER", "minsoo3.kim")
-    cand = [os.environ.get("DATASETS_DIR"), f"{gv}/datasets", f"{gv}/{user}/datasets"]
+    om_work = os.environ.get("OM_WORK")
+    cand = [os.environ.get("DATASETS_DIR"), f"{gv}/datasets", f"{gv}/{user}/datasets",
+            f"{om_work}/data" if om_work else None]
     out, seen = [], set()
     for c in cand:
         if c and c not in seen:

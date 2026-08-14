@@ -50,9 +50,12 @@ mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" 2>/dev/null || true
 # 클러스터는 HF egress 불안정 — 기본 오프라인, 다운로드 머신에서만:
 #   OM_ONLINE=1 source scripts/setup_env.sh
 if [[ "${OM_ONLINE:-0}" == "1" ]]; then
-  export HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0
+  export HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 HF_DATASETS_OFFLINE=0
 else
-  export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}" TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+  # HF_DATASETS_OFFLINE — 구버전 datasets는 HF_HUB_OFFLINE을 무시하고 허브를
+  # 찔러 무한 대기할 수 있다("조용히 멈춤"의 한 갈래). 레거시 변수까지 명시.
+  export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}" TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}" \
+         HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
 fi
 export HF_HUB_DISABLE_TELEMETRY=1 TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
 export TRANSFORMERS_VERBOSITY=error HF_HUB_DISABLE_PROGRESS_BARS=1  # 로그 잡음 제거
