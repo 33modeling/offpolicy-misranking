@@ -56,7 +56,8 @@ SEEDS=(${SEEDS:-0 1 2})
     fi
   done ) &
 W=$!
-cleanup_strays() { pkill -f -- "--run $BASE" 2>/dev/null || true; pkill -f gpu_keepalive 2>/dev/null || true; sleep 5; }
+cleanup_strays() { pkill -f -- "--run $BASE" 2>/dev/null || true; pkill -f gpu_keepalive 2>/dev/null || true; \
+  find "${HF_HOME:-/nonexistent}" -name '*.lock' -mmin +30 -delete 2>/dev/null || true; sleep 5; }
 trap 'echo "== 중단 — 전체 정리"; cleanup_strays; kill $W 2>/dev/null; exit 130' INT TERM
 
 echo

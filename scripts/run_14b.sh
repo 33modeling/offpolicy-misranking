@@ -91,10 +91,22 @@ DATASET="${DATASET:-gsm8k}"
 # 데이터 사전 검사 — 오프라인 노드에서 허브 직행으로 죽는 것을 시작 전에 잡는다
 # 데이터 사전 검사 — 로더 자신을 그대로 실행 (검사·실제 로드가 같은 코드 경로)
 # 실패 시 로더가 '찾아본 위치' 목록을 출력하므로 원인 자가진단됨. GPU 잡기 전에 죽는다.
-if ! "$PY" -c "import sys; sys.path.insert(0, 'src'); from data import load_prompts; \
+# 반복 kill이 남긴 HF datasets 캐시 stale lock 청소 — flock 무한 대기가
+# "gsm8k만 완주하고 dapo-math에서 조용히 멈춤"의 유력 원인 (gsm8k는 로컬
+# jsonl 경로라 datasets 라이브러리를 안 탐). 30분 넘은 lock만 지운다.
+find "${HF_HOME:-/nonexistent}" -name '*.lock' -mmin +30 -delete 2>/dev/null || true
+# timeout — 데이터 계층이 어떤 이유로든 멈추면 무한 침묵 대신 진단 메시지
+if ! timeout 600 "$PY" -c "import sys; sys.path.insert(0, 'src'); from data import load_prompts; \
 r = load_prompts('$DATASET', ${N_TRAIN:-256}, ${N_VAL:-50}); \
 print('[preflight] $DATASET 데이터 OK — train', len(r['train']), '/ val', len(r['val']))"; then
-  echo "[abort] $DATASET 데이터 로드 실패(스키마·크기 포함) — 위 메시지 확인 / fetch_datasets.sh"
+  rc=$?
+  if [ "$rc" -eq 124 ]; then
+    echo "[abort] $DATASET 데이터 로드 600초 초과 — 데이터셋 계층 스톨(HF lock/허브 대기)."
+    echo "        진단: bash scripts/check_data.sh $DATASET"
+    echo "        해법: 온라인 셸에서 bash scripts/fetch_datasets.sh $DATASET (로컬 jsonl 확보 시 라이브러리 우회)"
+  else
+    echo "[abort] $DATASET 데이터 로드 실패(스키마·크기 포함) — 위 메시지 확인 / fetch_datasets.sh"
+  fi
   exit 1
 fi
 # run manifest — 재현성 기록 (감사 §17)
