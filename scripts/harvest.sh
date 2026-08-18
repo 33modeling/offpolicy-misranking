@@ -18,8 +18,13 @@ mkdir -p "$STAMP_DIR"
     case "$(basename "$d")" in *smoke*) continue;; esac
     echo "## $(basename "$d")"; "$PY" src/stats_extra.py "$d" 2>/dev/null || true; echo
   done; } > "$STAMP_DIR/STATS.md" || true
-cp "$OM_WORK"/results/v2/TABLES.md "$OM_WORK"/results/v2/FRONTIER.md \
-   results/TABLES.md "$STAMP_DIR/" 2>/dev/null || true
+# 결과 폴더는 세대별(v2·qwen3.8-27b 등)로 분리될 수 있다 — 전부 태그 붙여 동봉
+for rd in "$OM_WORK"/results/*/; do
+  rtag=$(basename "$rd")
+  cp "$rd/TABLES.md"   "$STAMP_DIR/TABLES-$rtag.md"   2>/dev/null || true
+  cp "$rd/FRONTIER.md" "$STAMP_DIR/FRONTIER-$rtag.md" 2>/dev/null || true
+done
+cp results/TABLES.md "$STAMP_DIR/" 2>/dev/null || true
 echo
 echo "== 전달할 폴더 하나: $STAMP_DIR"
 ls "$STAMP_DIR"

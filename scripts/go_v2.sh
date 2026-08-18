@@ -35,7 +35,7 @@ done
 [ "$sick" -eq 0 ] || { echo "== [중단] 병든 GPU — 다른 인스턴스에서"; exit 1; }
 
 export MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
-BASE="$OM_WORK/runs/v2"
+BASE="${RUN_BASE:-$OM_WORK/runs/v2}"   # 다른 모델 세대 런은 RUN_BASE로 폴더 분리 (7B 산출물 충돌 방지)
 DATASETS=(${DATASETS:-gsm8k dapo-math})
 SEEDS=(${SEEDS:-0 1 2})
 
@@ -115,8 +115,8 @@ for SEED in "${SEEDS[@]}"; do for DS in "${DATASETS[@]}"; do
   else echo "  $KEY ✘ ($LOGDIR/v2-$DS-s$SEED.log 확인)"; fi
 done; done
 
-echo "==== 결과 수집: $OM_WORK/results/v2 ===="
-RD="$OM_WORK/results/v2"; mkdir -p "$RD"
+RD="${RESULTS_BASE:-$OM_WORK/results/v2}"; mkdir -p "$RD"
+echo "==== 결과 수집: $RD ===="
 for d in "${DIRS[@]}"; do
   tag=$(basename "$d")
   cp "$d/report.json" "$RD/report-$tag.json" 2>/dev/null || true

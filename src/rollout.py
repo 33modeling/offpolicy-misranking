@@ -57,10 +57,14 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
     if dtype is None:
         dtype = "bfloat16" if device == "cuda" else "float32"
     tok = AutoTokenizer.from_pretrained(name_or_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        name_or_path, torch_dtype=getattr(torch, dtype), device_map=device,
-        **_attn_kwargs(),
-    )
+    kw = dict(torch_dtype=getattr(torch, dtype), device_map=device, **_attn_kwargs())
+    try:
+        model = AutoModelForCausalLM.from_pretrained(name_or_path, **kw)
+    except (ValueError, KeyError):
+        # Qwen3.6/3.8 계열은 멀티모달 automap이라 CausalLM 매핑에 없다 —
+        # MM 클래스로 폴백 (텍스트 전용 사용, vision 경로는 안 탄다)
+        from transformers import AutoModelForMultimodalLM
+        model = AutoModelForMultimodalLM.from_pretrained(name_or_path, **kw)
     model.eval()
     gpu = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
     print(f"model loaded: {name_or_path} → {device} ({gpu}, {dtype})", flush=True)
