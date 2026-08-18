@@ -57,7 +57,11 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
     if dtype is None:
         dtype = "bfloat16" if device == "cuda" else "float32"
     tok = AutoTokenizer.from_pretrained(name_or_path)
-    kw = dict(torch_dtype=getattr(torch, dtype), device_map=device, **_attn_kwargs())
+    # device_map 대신 CPU 로드 → .to(cuda) 2단계: 신아키텍처(Qwen3.8 등)가
+    # meta-init을 못 타면 device_map 경로가 GPU에 스켈레톤+체크포인트 이중
+    # 상주(27B에서 ~52+49GB)로 OOM — CPU 경유는 GPU에 정확히 한 벌만 올린다.
+    # (GPU 선택은 CUDA_VISIBLE_DEVICES가 담당하므로 기능 동일)
+    kw = dict(torch_dtype=getattr(torch, dtype), low_cpu_mem_usage=True, **_attn_kwargs())
     try:
         model = AutoModelForCausalLM.from_pretrained(name_or_path, **kw)
     except (ValueError, KeyError):
@@ -65,6 +69,8 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
         # MM 클래스로 폴백 (텍스트 전용 사용, vision 경로는 안 탄다)
         from transformers import AutoModelForMultimodalLM
         model = AutoModelForMultimodalLM.from_pretrained(name_or_path, **kw)
+    if device == "cuda":
+        model.to("cuda")
     model.eval()
     gpu = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
     print(f"model loaded: {name_or_path} → {device} ({gpu}, {dtype})", flush=True)
@@ -185,12 +191,15 @@ def train_drift_lora(
 
     device = device or auto_device()
     tok = AutoTokenizer.from_pretrained(base)
+    # CPU 로드 → .to(cuda): device_map 이중 상주 OOM 방지 (load_model과 동일 사유)
     model = AutoModelForCausalLM.from_pretrained(
         base,
         torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
-        device_map=device,
+        low_cpu_mem_usage=True,
         **_attn_kwargs(),
     )
+    if device == "cuda":
+        model.to("cuda")
     model = get_peft_model(
         model,
         LoraConfig(r=16, lora_alpha=32, target_modules=_lora_targets(), lora_dropout=0.0),
