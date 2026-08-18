@@ -103,6 +103,15 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       floor·kcurve만 1 seed (§10). check_data.sh mbpp로 위치 확인 후
 - [ ] B9. (B3 승격 메모) capability-difficulty sweep은 감사 P0-2로 승격 —
       9/10 결정점에서 "선택"이 아니라 "필수" 취급
+- [ ] B10. 🖥 도메인 다각화 (사용자 지시 8/18) — MBPP(코드, 테스트 실행 채점)
+      3-seed, go_v2 동일 프로토콜: `SEEDS="0 1 2" DATASETS="mbpp" bash
+      scripts/go_v2.sh` (착수 전 `check_data.sh mbpp`, **별도 노드 — 수학
+      5-seed 노드 불가침**, 수량 부족 시 N_TRAIN=400 N_VAL=100). 판정 기준
+      사전 등록: v2와 동일 게이트 + 닻 대비 반전율·불일치 경보 재현 여부 —
+      재현=일반화 증거, 비재현=도메인 조건성 발견, 양쪽 다 원고 "beyond
+      math" 절 반영. kk(논리, Logic-RL 근거)는 MBPP 판독 후 선택.
+      ※ 아래 "동일 풀 신규 착수 금지"와 구분 — 신규 도메인 풀이므로
+      결론 불변 논리에 저촉 없음.
 - 폐기 확정: go_hard(NO-GO), go_full 신규 확장·go_boost·go_27b(구조적 부재
   판정으로 동일 풀 추가 수치는 결론 불변 — 수확만 받고 신규 착수 금지)
 
