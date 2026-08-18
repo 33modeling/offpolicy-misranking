@@ -73,10 +73,12 @@ else
     tail -8 "$LOGDIR/v2-smoke.log" | sed 's/^/   /'
     cleanup_strays; kill $W 2>/dev/null; exit 1
   fi
-  for want in report.json scores_hybrid_0.5.json divergence_stats.shard0.json manifest.json; do
+  WANTS="report.json divergence_stats.shard0.json manifest.json"
+  [ "${OM_SKIP_HYBRID:-0}" = "1" ] || WANTS="$WANTS scores_hybrid_0.5.json"
+  for want in $WANTS; do
     ls "$SMOKE"/$want >/dev/null 2>&1 || { echo "== [중단] 스모크 산출물 누락: $want"; kill $W 2>/dev/null; exit 1; }
   done
-  echo "   스모크 ✔ (report·hybrid 4cell·divergence·manifest 확인)"
+  echo "   스모크 ✔ ($WANTS 확인)"
 fi
 
 # 본실행 전 좀비 정리 — 반드시 무조건 실행 (스모크 스킵 경로 포함).

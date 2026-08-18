@@ -246,6 +246,12 @@ for p in "${pids[@]}"; do wait "$p" || exit 1; done
 run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}"
 run_stage 0 "$LOGS/report.log" --stage report "${COMMON[@]}"
 # hybrid 3절단점 — GPU 수만큼 병렬 (모자라면 라운드로빈 순차)
+# 주의: hybrid는 π+β 두 모델을 한 GPU에 동시 상주시키는 유일한 스테이지 —
+# 27B급(57GB×2>80GB)은 구조적 불가 → OM_SKIP_HYBRID=1로 생략
+# (B11 탐색 판정엔 반전율·경보만 필요, C1' 인과는 7B 본편 담당)
+if [ "${OM_SKIP_HYBRID:-0}" = "1" ]; then
+  log "hybrid 스킵 (OM_SKIP_HYBRID=1 — 대형 모델 π+β 동시 상주 불가)"
+else
 pids=(); gpu=0
 for cut in 0.25 0.5 0.75; do
   ( run_stage "$((gpu % NGPU))" "$LOGS/hybrid-$cut.log" --stage hybrid "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --cut-frac "$cut" ) & pids+=($!)
@@ -253,5 +259,6 @@ for cut in 0.25 0.5 0.75; do
   [ $((gpu % NGPU)) -eq 0 ] && for p in "${pids[@]}"; do wait "$p" || exit 1; done && pids=()
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
+fi
 log "=== 14B 완료 — bash scripts/result.sh 로 판정 (OUT_ROOT=$OUT_ROOT) ==="
 touch "$OUT_ROOT/DONE"
