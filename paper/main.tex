@@ -44,9 +44,9 @@ continuation, or a single token. Can such stale rankings be trusted? We show
 that the answer depends on a quantity today's pipelines never measure. In
 theory, any one-sided correction can flip the sign of a prompt's gradient at
 arbitrarily small policy divergence, and the metrics teams monitor (KL, ESS,
-gradient cosine) provably cannot see the flip. In practice, across Qwen2.5
-7B/14B and three math tasks, what decides the outcome is how much ranking
-signal the prompt pool carries. We measure that signal with a split-half
+gradient cosine) provably cannot see the flip. In practice, across three
+math tasks and multiple model scales, what decides the outcome is how much
+ranking signal the prompt pool carries. We measure that signal with a split-half
 oracle floor, and all twelve of our conditions turn out weak: floors of
 $0.11$--$0.29$ against chance $0.10$. In this regime stale scores track the
 oracle (Fisher-combined $p=10^{-6}$), and a zero-cost pass-rate heuristic does as
