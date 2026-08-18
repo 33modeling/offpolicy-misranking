@@ -79,6 +79,11 @@ else
   echo "   스모크 ✔ (report·hybrid 4cell·divergence·manifest 확인)"
 fi
 
+# 본실행 전 좀비 정리 — 반드시 무조건 실행 (스모크 스킵 경로 포함).
+# 죽은 런의 experiment.py가 모델 한 벌(27B≈52GB)을 문 채 남아 있으면
+# drift 재로드가 "48.63GB 할당 실패/27.57GB 잔여" 꼴로 같은 자리 OOM 반복.
+cleanup_strays
+
 export N_TRAIN="${N_TRAIN:-512}" N_VAL="${N_VAL:-100}"
 export FRESH_K="${FRESH_K:-32}" HYBRID_PROMPTS="${HYBRID_PROMPTS:-64}"
 declare -A RESULT
