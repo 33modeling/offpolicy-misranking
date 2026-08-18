@@ -8,7 +8,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 
-REPO="${REPO27B:-Qwen/Qwen3.8-27B}"
+REPO="${REPO27B:-Qwen/Qwen3.8-27B-BF16}"
 NAME="$(basename "$REPO")"
 export MODEL_14B="$MODELS_DIR/$NAME"
 if [ ! -f "$MODEL_14B/config.json" ]; then
