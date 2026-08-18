@@ -105,13 +105,15 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       9/10 결정점에서 "선택"이 아니라 "필수" 취급
 - [ ] B10. 🖥 도메인 다각화 (사용자 지시 8/18) — MBPP(코드, 테스트 실행 채점)
       **1-seed 고정**(사용자 결정 8/18: 비수학 도메인은 seed 1개만),
-      go_v2 동일 프로토콜: `SEEDS="0" DATASETS="mbpp" bash scripts/go_v2.sh`
-      (착수 전 `check_data.sh mbpp`, **별도 노드 — 수학 5-seed 노드 불가침**,
-      수량 부족 시 N_TRAIN=400 N_VAL=100). 판정 기준 사전 등록: v2와 동일
-      게이트 + 닻 대비 반전율·불일치 경보 재현 여부. **단일 seed이므로 원고
-      표기는 "exploratory, single-seed" 방향성 관찰로 한정**(통계 주장 금지,
-      과판매 금지 원칙) — 재현=일반화 시사, 비재현=도메인 조건성 시사.
-      kk(논리, Logic-RL 근거)도 같은 규칙(1-seed), MBPP 판독 후 선택.
+      go_v2 동일 프로토콜, **kk(논리, Logic-RL 근거)와 동시 착수**(8/18 확정):
+      `SEEDS="0" DATASETS="mbpp kk" bash scripts/go_v2.sh`
+      (착수 전 `check_data.sh mbpp`·`check_data.sh kk`, **별도 노드 — 수학
+      5-seed 노드 불가침**, 수량 부족 시 N_TRAIN=400 N_VAL=100). 판정 기준
+      사전 등록: v2와 동일 게이트 + 닻 대비 반전율·불일치 경보 재현 여부.
+      **단일 seed이므로 원고 표기는 "exploratory, single-seed" 방향성 관찰로
+      한정**(통계 주장 금지, 과판매 금지 원칙) — 재현=일반화 시사,
+      비재현=도메인 조건성 시사. 완성 시 도메인 3축: 수학(5-seed 통계)·
+      코드(MBPP)·논리(kk).
       ※ 아래 "동일 풀 신규 착수 금지"와 구분 — 신규 도메인 풀이므로
       결론 불변 논리에 저촉 없음.
 - 폐기 확정: go_hard(NO-GO), go_full 신규 확장·go_boost·go_27b(구조적 부재
