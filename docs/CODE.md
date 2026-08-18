@@ -70,6 +70,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | `go_retry.sh` | **표준 재시작 진입점**: gsm8k 프로브 → 전 seed·데이터셋 스윕(DONE 스킵). `SEEDS_ALL="3"`으로 seed 지정 |
 | `go_v2.sh` | 본실행: GPU 건강검사 → 30분 스모크 게이트 → `SEEDS`×`DATASETS` 루프. **무출력 워처**(15분 단위, util>0이면 정상·0% 지속이면 hang) 내장 |
 | `run_14b.sh` | 단일 (seed,dataset) 실행기: GPU 자동감지·`OM_GPUS` 분할·점유 검사·샤드 병합·preflight(HF stale lock 청소 포함)·keepalive |
+| `go_new.sh` | **B11 최신 세대 검증**: 기본 Qwen3.8-27B(REPO27B로 교체 가능) 1-seed, 스냅샷 자동 fetch, `RUN_BASE`/`RESULTS_BASE`로 v2와 폴더 격리. rollout.py의 MM automap 폴백(CausalLM 실패 시 AutoModelForMultimodalLM)과 세트 |
 | `go_full.sh`/`go_boost.sh`/`go_27b.sh`/`go_hard.sh` | 확장 스택 — **신규 착수 금지**(BACKLOG 폐기절, go_hard는 NO-GO 폐기) |
 
 ### 진단·데이터

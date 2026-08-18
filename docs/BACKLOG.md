@@ -116,6 +116,18 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       코드(MBPP)·논리(kk).
       ※ 아래 "동일 풀 신규 착수 금지"와 구분 — 신규 도메인 풀이므로
       결론 불변 논리에 저촉 없음.
+- [ ] B11. 🖥 최신 세대 모델 검증 (사용자 지시 8/18: "최신 모델에서도 제대로
+      동작함"을 설득) — **Qwen3.8-27B**(2026-08-14 출시, 27.8B dense·hybrid
+      Gated DeltaNet·멀티모달·Apache 2.0) 1-seed, 메인 v2 동일 프로토콜:
+      `bash scripts/go_new.sh` (스냅샷 자동 fetch → gsm8k+dapo → math500,
+      run 폴더 runs/qwen3.8-27b-* 격리). 30분 스모크 실패 시 폴백:
+      `REPO27B=Qwen/Qwen3.6-27B bash scripts/go_new.sh` (자산 기확보, 동일
+      아키 계열, AIME26 94.1·GSM8K 97.7). 판정 사전 등록: v2 동일 게이트+
+      닻+경보, **exploratory 1-seed 표기**. 예상 그림: GSM8K 초포화(97.7%+)
+      → 퇴화 체제로 이동, DAPO live↑ 가능 — "체제 지도가 능력축 따라
+      이동한다"는 본문 서사의 최신 모델 실증으로 서술. ※ go_27b 폐기와 구분:
+      폐기 사유는 '동일 풀 추가 수치로 결론 변경'이었고 이번 목적은 세대
+      방어(exploratory) — 저촉 없음.
 - 폐기 확정: go_hard(NO-GO), go_full 신규 확장·go_boost·go_27b(구조적 부재
   판정으로 동일 풀 추가 수치는 결론 불변 — 수확만 받고 신규 착수 금지)
 
