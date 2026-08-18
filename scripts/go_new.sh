@@ -21,6 +21,20 @@ export RUN_BASE="$OM_WORK/runs/$TAG" RESULTS_BASE="$OM_WORK/results/$TAG"
 export OM_LORA_TARGETS="${OM_LORA_TARGETS:-all-linear}"   # DeltaNet 층 대응
 S="${SEEDS_NEW:-0}"
 
-SEEDS="$S" DATASETS="gsm8k dapo-math" bash scripts/go_v2.sh || exit 1
+# 1) gsm8k — 자연 풀 그대로. 27B가 거의 다 맞추는 게 정상(포화 표본):
+#    "능력이 오르면 체제가 포화로 이동한다"는 본문 서사의 최신 모델 실증용.
+SEEDS="$S" DATASETS="gsm8k" bash scripts/go_v2.sh || exit 1
+
+# 2) dapo-math — 자연 풀은 27B가 다 풀어 신호가 죽는다 → hard-slice 프리스크린
+#    (모델로 선채점해 못 푸는 문제만 추려 풀 구성) 후 주입. 유신호 체제 담당.
+POOL="$OM_WORK/pools/dapo-math-hard.jsonl"
+if [ ! -s "$POOL" ]; then
+  echo "== dapo-math hard-slice 프리스크린 (POOL_N=${POOL_N:-2000})"
+  MODEL="$MODEL_14B" bash scripts/prescreen_pool.sh dapo-math "${POOL_N:-2000}" || exit 1
+fi
+OM_POOL_FILE="$POOL" RUN_BASE="$OM_WORK/runs/$TAG-hard" RESULTS_BASE="$OM_WORK/results/$TAG-hard" \
+  SEEDS="$S" DATASETS="dapo-math" bash scripts/go_v2.sh || exit 1
+
+# 3) math500 — 총 500문제뿐이라 hard-slice 불가, 자연 풀로 나오는 체제 그대로 기록.
 SEEDS="$S" DATASETS="math500" N_TRAIN=400 N_VAL=100 bash scripts/go_v2.sh
 echo "== 완료 — 수확은 평소대로: bash scripts/harvest.sh (한 폴더에 v2와 함께 동봉됨)"
