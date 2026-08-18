@@ -33,20 +33,14 @@ def grpo_lite_train(
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     device = auto_device()
-    tok = AutoTokenizer.from_pretrained(base)
-    from rollout import _attn_kwargs
-    # CPU 로드 → .to(cuda): device_map 이중 상주 OOM 방지 (rollout.load_model과 동일 사유)
-    model = AutoModelForCausalLM.from_pretrained(
-        base, torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
-        low_cpu_mem_usage=True,
-        **_attn_kwargs(),
-    )
-    if device == "cuda":
-        model.to("cuda")
+    from rollout import load_model
+    # 로드는 load_model로 일원화 — dtype 보장·CPU 경유 단일 사본·MM 폴백 공유
+    model, tok = load_model(base, device=device)
     model = get_peft_model(model, LoraConfig(
         r=16, lora_alpha=32, target_modules=_lora_targets(), lora_dropout=0.0))
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
+    model.train()
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     pool = [prompts[i] for i in selected_idx]
     rng = random.Random(0)

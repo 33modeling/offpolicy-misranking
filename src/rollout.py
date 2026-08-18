@@ -61,14 +61,26 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
     # meta-init을 못 타면 device_map 경로가 GPU에 스켈레톤+체크포인트 이중
     # 상주(27B에서 ~52+49GB)로 OOM — CPU 경유는 GPU에 정확히 한 벌만 올린다.
     # (GPU 선택은 CUDA_VISIBLE_DEVICES가 담당하므로 기능 동일)
-    kw = dict(torch_dtype=getattr(torch, dtype), low_cpu_mem_usage=True, **_attn_kwargs())
+    want = getattr(torch, dtype)
+    kw = dict(low_cpu_mem_usage=True, **_attn_kwargs())
+
+    def _load(cls):
+        try:
+            return cls.from_pretrained(name_or_path, dtype=want, **kw)
+        except TypeError:  # 구버전 transformers: dtype 인자 미지원 → 옛 이름
+            return cls.from_pretrained(name_or_path, torch_dtype=want, **kw)
+
     try:
-        model = AutoModelForCausalLM.from_pretrained(name_or_path, **kw)
+        model = _load(AutoModelForCausalLM)
     except (ValueError, KeyError):
         # Qwen3.6/3.8 계열은 멀티모달 automap이라 CausalLM 매핑에 없다 —
         # MM 클래스로 폴백 (텍스트 전용 사용, vision 경로는 안 탄다)
         from transformers import AutoModelForMultimodalLM
-        model = AutoModelForMultimodalLM.from_pretrained(name_or_path, **kw)
+        model = _load(AutoModelForMultimodalLM)
+    # dtype 인자가 무시된 버전 방어 — fp32(27B=111GB)로 GPU에 올리면 .to에서 즉사
+    if next(model.parameters()).dtype != want:
+        print(f"[load_model] dtype {next(model.parameters()).dtype} → {want} 강제 캐스트", flush=True)
+        model = model.to(want)
     if device == "cuda":
         model.to("cuda")
     model.eval()
@@ -190,16 +202,8 @@ def train_drift_lora(
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     device = device or auto_device()
-    tok = AutoTokenizer.from_pretrained(base)
-    # CPU 로드 → .to(cuda): device_map 이중 상주 OOM 방지 (load_model과 동일 사유)
-    model = AutoModelForCausalLM.from_pretrained(
-        base,
-        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
-        low_cpu_mem_usage=True,
-        **_attn_kwargs(),
-    )
-    if device == "cuda":
-        model.to("cuda")
+    # 로드는 load_model로 일원화 — dtype 보장·CPU 경유 단일 사본·MM 폴백 전부 공유
+    model, tok = load_model(base, device=device)
     model = get_peft_model(
         model,
         LoraConfig(r=16, lora_alpha=32, target_modules=_lora_targets(), lora_dropout=0.0),
