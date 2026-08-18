@@ -59,8 +59,10 @@ achievable confidence radii) nor even measurably won: any estimator's
 measurable precision is bounded by a ceiling set by the floor itself. We
 package the diagnosis as FIRST (Floor-Informed Reliability of SelecTion),
 which decides from existing artifacts alone---no new rollouts---whether a
-prompt pool supports selection at all; its pre-registered verdict on our pools
-is \emph{structural absence}. The prescription: measure the floor first---%
+prompt pool supports selection at all, and prescribes the policy for each
+regime: abstain, rank by the free pass rate, or use stale scores with the
+disagreeing prompts routed to a small fresh audit. Its pre-registered verdict
+on our pools is \emph{structural absence}. The prescription: measure the floor first---%
 selection is only meaningful where recoverable ranking signal exists, and
 today's dashboards do not tell you.
 \end{abstract}
@@ -234,6 +236,11 @@ reweight the sampled continuation~\citep{multistep} restore the outcome axis
 occupancy when used for per-prompt gradient ranking. Full-trajectory
 corrections~\citep{ticgrpo} are exact but variance-explosive on long
 responses; they serve as the cost anchor, not a practical selector.
+The same tension---valuation scores failing to beat random selection until
+the selector is redesigned---has played out for Data Shapley in supervised
+data selection~\citep{rethinkshapley,nash}; our protocol
+(\S\ref{sec:protocol}) is the RLVR analogue, with the repair driven by a
+reliability measurement rather than a new estimator.
 
 \paragraph{Rollout allocation and learning stability.}
 Allocation methods~\citep{gradalign,learnalign} decide where to spend fresh
@@ -764,6 +771,52 @@ rests on an $r_1$ small enough to be within the P4 artifact's reach, so we
 treat it as motivation for a cheap re-check when further seeds land, not as
 grounds for a GPU expansion.
 
+\subsection{From diagnosis to decision: the FIRST protocol}
+\label{sec:protocol}
+
+The verdict is not the end of the pipeline but its first branch. Each regime
+the map distinguishes comes with a selection policy that our own replays
+already price, so the diagnosis composes into a decision procedure---the
+constructive counterpart of the negative results, in the same spirit in which
+the supervised data-valuation literature answered ``Shapley-based selection
+can be no better than random'' with a repaired selector rather than a
+retreat~\citep{rethinkshapley,nash}.
+
+\begin{center}\fbox{\parbox{0.93\textwidth}{%
+\textbf{The FIRST protocol} \quad inputs: the behavior rollouts the run
+already has (optionally a 48-prompt fresh probe); fix the threshold
+$\tau = 2\times$chance \emph{before} looking.
+\begin{enumerate}\setlength{\itemsep}{2pt}
+\item \textbf{Measure.} Compute the corrected split-half floor (independent
+jitter) and the $K$-scaling curve with its Spearman--Brown budget estimate
+$K^*$ (\S\ref{sec:diagnosis}); run the four pitfall guards
+(\S\ref{sec:pitfalls}).
+\item \textbf{Branch.}
+\begin{itemize}\setlength{\itemsep}{1pt}
+\item[(a)] \emph{No reachable signal} (floor $\approx$ chance, no finite
+$K^*$): abstain---sample uniformly and spend nothing on scoring. Every
+estimator we measured sits at chance here, and the oracle disagrees with
+itself (\S\ref{sec:saturation}).
+\item[(b)] \emph{Weak signal} (chance $<$ floor $< \tau$): rank by the free
+behavior pass rate. In our replays it matched or beat every gradient
+estimator ($0.255$ vs.\ $0.235$ best stale), and the measurement ceiling
+shows nothing can \emph{measurably} beat it in this regime
+(\S\ref{sec:floor}).
+\item[(c)] \emph{Measurable signal} (floor $\ge \tau$): stale scores may be
+used, but compute both one-sided cells and route the prompts on which they
+disagree in sign to a fresh audit (or exclude them): under disagreement the
+observed reversal rate rises to $59$--$81\%$, against $37$--$45\%$ under
+agreement (replicated in three runs, $p \le 0.015$; agreement itself
+guarantees nothing---the stated blind spot).
+\end{itemize}
+\item \textbf{Report.} Attach the floor, the ceiling, and the branch taken
+to any downstream selection claim; a result above its own oracle's ceiling
+is an artifact by Proposition~\ref{prop:ceiling}.
+\end{enumerate}
+The verdict costs no new rollouts; branch (c)'s audit spends fresh budget
+only on the disagreement set, which in our runs was $14$--$25\%$ of
+signal-bearing prompts.}}\end{center}
+
 \pending{capability--difficulty sweep (decision gate 9/10)}{A small-model
 sweep (Qwen3.5 0.8B/2B/4B on the same pools) would chart the floor as a
 function of the capability--difficulty gap---the one controllable knob that
@@ -776,7 +829,7 @@ here; if not, the map remains observational, as stated in Limitations.
 \label{sec:takeaways}
 
 \paragraph{For practitioners.} (1)~\emph{Measure the floor first}---run
-FIRST (\S\ref{sec:diagnosis}). A
+FIRST and take the branch its protocol prescribes (\S\ref{sec:protocol}). A
 48-prompt fresh probe suffices to estimate the split-half floor; below
 $2\times$ chance (a threshold to fix \emph{before} looking), withhold
 selection budget pending a stronger reliability probe---in our replays the best weak-signal policy was
@@ -790,7 +843,8 @@ ceiling with any selection comparison}; a claimed improvement above the
 measurement ceiling of its own oracle indicates assumption violation,
 estimator--oracle dependence, or an evaluation artifact.
 (5)~\emph{Distrust one-sided rankings when the two one-sided cells disagree};
-agreement guarantees nothing, but disagreement is a free warning.
+agreement guarantees nothing, but disagreement is a free warning---formalized
+as branch (c) of the protocol.
 
 \paragraph{Limitations.} Empirics are Qwen2.5 (7B/14B), math tasks, and LoRA
 drift; two completed v2 seeds (remaining seeds and a small-model
@@ -851,6 +905,11 @@ Complexity in Bandit Subset Selection. COLT 2013.
 data. 1910.
 \bibitem[Brown]{brown1910} Brown. Some experimental results in the correlation
 of mental abilities. 1910.
+\bibitem[Rethinking-Shapley]{rethinkshapley} Rethinking Data Shapley for Data
+Selection Tasks: Misleads and Merits. ICML 2024.
+\url{https://arxiv.org/abs/2405.03875}
+\bibitem[NASH]{nash} Is Data Shapley Not Better than Random in Data
+Selection? Ask NASH. ICML 2026. \url{https://arxiv.org/abs/2605.10684}
 \end{thebibliography}
 
 \appendix
