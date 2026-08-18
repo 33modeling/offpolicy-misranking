@@ -80,6 +80,17 @@ def _lora_targets() -> list | str:
     return v if v == "all-linear" else [s.strip() for s in v.split(",") if s.strip()]
 
 
+def _gen_batch_size(total: int) -> int:
+    """OM_GEN_BATCH: generate 배치 상한 (0/미설정 = 전체 한 배치 — 기존 동작 그대로).
+    27B처럼 가중치가 GPU를 거의 채우는 모델은 8 정도로 제한해 KV 캐시/프리필
+    활성값 OOM을 막는다 — 긴 프롬프트에서 한참 돌다 터지는 그 경로."""
+    try:
+        v = int(os.environ.get("OM_GEN_BATCH", "0"))
+    except ValueError:
+        v = 0
+    return total if v <= 0 else max(1, min(total, v))
+
+
 def chat_ids(tok, question: str) -> torch.Tensor:
     msgs = [{"role": "user", "content": build_user_msg(question)}]
     # transformers 4/5 양쪽에서 안전: 템플릿은 텍스트로 뽑고 별도로 토크나이즈.
@@ -119,36 +130,40 @@ def collect_rollouts(
         for i, item in enumerate(prompts):
             t0 = time.time()
             ids = chat_ids(tok, item["question"]).to(model.device)
-            batch_ids = ids.unsqueeze(0).expand(k, -1)
-            gen = model.generate(
-                batch_ids,
-                attention_mask=torch.ones_like(batch_ids),
-                do_sample=True,
-                temperature=temperature,
-                max_new_tokens=max_new_tokens,
-                pad_token_id=tok.eos_token_id,
-                **SAMPLING,
-            )
             resp_start = ids.numel()
             n_correct = 0
-            for j in range(k):
-                seq = gen[j]
-                # 뒤쪽 padding(eos 반복) 제거
-                text = tok.decode(seq[resp_start:], skip_special_tokens=True)
-                r = reward(text, item["answer"])
-                n_correct += r > 0.5
-                f.write(
-                    json.dumps(
-                        {
-                            "prompt_idx": idx_offset + i,
-                            "rollout_idx": j,
-                            "input_ids": seq.tolist(),
-                            "resp_start": resp_start,
-                            "reward": r,
-                        }
-                    )
-                    + "\n"
+            bs = _gen_batch_size(k)
+            j = 0
+            for s in range(0, k, bs):
+                nb = min(bs, k - s)
+                batch_ids = ids.unsqueeze(0).expand(nb, -1)
+                gen = model.generate(
+                    batch_ids,
+                    attention_mask=torch.ones_like(batch_ids),
+                    do_sample=True,
+                    temperature=temperature,
+                    max_new_tokens=max_new_tokens,
+                    pad_token_id=tok.eos_token_id,
+                    **SAMPLING,
                 )
+                for seq in gen:
+                    # 뒤쪽 padding(eos 반복) 제거
+                    text = tok.decode(seq[resp_start:], skip_special_tokens=True)
+                    r = reward(text, item["answer"])
+                    n_correct += r > 0.5
+                    f.write(
+                        json.dumps(
+                            {
+                                "prompt_idx": idx_offset + i,
+                                "rollout_idx": j,
+                                "input_ids": seq.tolist(),
+                                "resp_start": resp_start,
+                                "reward": r,
+                            }
+                        )
+                        + "\n"
+                    )
+                    j += 1
             print(f"[{ts()}]  rollout {i + 1}/{len(prompts)} "
                   f"({100 * (i + 1) // len(prompts)}%, {time.time() - t0:.0f}s/개, "
                   f"정답 {n_correct}/{k}, ETA {_eta(i + 1, len(prompts), t_start)})", flush=True)

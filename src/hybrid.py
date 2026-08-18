@@ -19,29 +19,33 @@ import torch
 
 from data import reward
 from grads import ProjectionSpec, cosine, loo_advantages, prompt_gradient
-from rollout import SAMPLING, chat_ids
+from rollout import SAMPLING, _gen_batch_size, chat_ids
 
 
 @torch.no_grad()
 def continue_rollouts_batch(model, tok, prefixes: list[torch.Tensor],
                             max_new_tokens: int, temperature: float) -> list[torch.Tensor]:
-    """프리픽스 묶음을 left-padding 배치로 이어 생성 (샘플링 분포는 SAMPLING 공유)."""
-    max_len = max(p.numel() for p in prefixes)
+    """프리픽스 묶음을 left-padding 배치로 이어 생성 (샘플링 분포는 SAMPLING 공유).
+    OM_GEN_BATCH 설정 시 그 크기로 쪼개 생성 (27B KV 캐시 OOM 방어)."""
     pad_id = tok.pad_token_id or tok.eos_token_id
-    batch = torch.full((len(prefixes), max_len), pad_id, dtype=torch.long)
-    mask = torch.zeros_like(batch)
-    for b, p in enumerate(prefixes):  # left padding — 생성 시작 위치를 정렬
-        batch[b, max_len - p.numel():] = p
-        mask[b, max_len - p.numel():] = 1
-    batch, mask = batch.to(model.device), mask.to(model.device)
-    out = model.generate(
-        batch, attention_mask=mask, do_sample=True, temperature=temperature,
-        max_new_tokens=max_new_tokens, pad_token_id=pad_id, **SAMPLING,
-    )
+    bs = _gen_batch_size(len(prefixes))
     seqs = []
-    for b, p in enumerate(prefixes):
-        gen_part = out[b, max_len:].cpu()
-        seqs.append(torch.cat([p, gen_part]))
+    for s in range(0, len(prefixes), bs):
+        chunk = prefixes[s:s + bs]
+        max_len = max(p.numel() for p in chunk)
+        batch = torch.full((len(chunk), max_len), pad_id, dtype=torch.long)
+        mask = torch.zeros_like(batch)
+        for b, p in enumerate(chunk):  # left padding — 생성 시작 위치를 정렬
+            batch[b, max_len - p.numel():] = p
+            mask[b, max_len - p.numel():] = 1
+        batch, mask = batch.to(model.device), mask.to(model.device)
+        out = model.generate(
+            batch, attention_mask=mask, do_sample=True, temperature=temperature,
+            max_new_tokens=max_new_tokens, pad_token_id=pad_id, **SAMPLING,
+        )
+        for b, p in enumerate(chunk):
+            gen_part = out[b, max_len:].cpu()
+            seqs.append(torch.cat([p, gen_part]))
     return seqs
 
 
