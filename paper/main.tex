@@ -247,7 +247,13 @@ correction~\citep{liu19}, doubly-robust policy gradients~\citep{huang20},
 and information-complexity lower bounds for top-$k$
 identification~\citep{kaufmann13}. Our certification result
 (Section~\ref{sec:cert}) is an empirical instance of the last of these: when
-value gaps at the ranking boundary vanish, identification cost diverges. The
+value gaps at the ranking boundary vanish, identification cost diverges.
+A general budgeted algorithm for top-$k$ certification also exists: it
+concentrates expensive queries at the ranking boundary and assumes the cheap
+scores are valid up to noise~\citep{ace}. Our results identify the case this
+assumption excludes. A stale one-sided score can be systematically biased
+(sign-flipped), and then certification fails through bias, not through
+budget. The
 two failure ingredients we study also appear in adjacent work on on-policy
 distillation~\citep{tide}. There, degenerate repetition loops drive
 token-level agreement to near-zero divergence while outputs collapse, so a
@@ -259,7 +265,11 @@ $0.1\%$ ESS for the full correction.
 \paragraph{Reliability of noisy rankings.}
 Our floor and ceiling analysis imports split-half reliability and the
 Spearman--Brown prophecy~\citep{spearman1910,brown1910} into RLVR selection
-evaluation. To our knowledge, no prior work in this literature reports the
+evaluation. Concurrent work applies the same split-half logic as a
+performance ceiling in a different domain (crowd
+reading)~\citep{floorceiling}; our contribution is therefore the transplant
+of this reliability logic into RLVR selection evaluation and its
+pre-registered self-application, not the ceiling idea itself. To our knowledge, no prior work in this literature reports the
 reliability of its own oracle, and Section~\ref{sec:floor} shows that
 several of our initially promising comparisons no longer hold once it is
 reported.
@@ -918,6 +928,10 @@ Complexity in Bandit Subset Selection. COLT 2013.
 data. 1910.
 \bibitem[Brown]{brown1910} Brown. Some experimental results in the correlation
 of mental abilities. 1910.
+\bibitem[ACE]{ace} Top-$k$ on a Budget: Adaptive Certification at the
+Boundary. \url{https://arxiv.org/abs/2601.20989}
+\bibitem[Floor-Ceiling]{floorceiling} Floor, Ceiling, Fusion Gap: Split-Half
+Oracles for Crowd Reading. \url{https://arxiv.org/abs/2608.01704}
 \bibitem[Rethinking-Shapley]{rethinkshapley} Rethinking Data Shapley for Data
 Selection Tasks: Misleads and Merits. ICML 2024.
 \url{https://arxiv.org/abs/2405.03875}
