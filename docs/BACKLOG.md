@@ -44,8 +44,8 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       수확 시 본문 병기만 남음. reversal_freq도 v1 계열(drift*/gate-*)로
       확장 — MATH-500 강신호 체제의 반전 유병률까지 자동 수확
       (b) ✅ Fisher 결합 독립성 방어 한 줄 (§5.2, 8/14)
-      (c) tab:reversal g11 대비 초과 반전에 짝지은 McNemar p 병기
-      (스크립트 반영 완료 — s3 수확분에서 수치 수령)
+      (c) ✅ tab:reversal g11 대비 초과 반전에 짝지은 McNemar p 병기
+      (8/18 수확분 본문 병기 — s2 g00 p=0.014 유일 유의, 나머지 p≥0.13)
       (d) ✅ Fig.1 disagreement 상자 실측 지지 표기 (8/14)
 - [ ] A9. 제출 포맷 압축: 현재 article 13p → ICLR 본문 9~10p 예산
       (pitfalls §7 일부 appendix 강등이 유력한 절약처, 9/20 이후)
@@ -70,7 +70,7 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 - [ ] B3. 🖥 D7/go_35 소형 스윕 (Qwen3.5 0.8/2/4B) — 능력-난이도 위상도.
       floor를 조절하는 손잡이를 보이면 인과 서사 부활. **유일한 GPU 레버,
       9/10 결정점 전 판단.**
-- [ ] B4. 🖥 `bash scripts/reversal_freq.sh` (CPU, 기존 산출물 재집계 —
+- [x] B4. ✅(8/18 확정) 🖥 `bash scripts/reversal_freq.sh` (CPU, 기존 산출물 재집계 —
       GPU·신규 롤아웃 불필요) — 프롬프트 단위 부호반전율·경계 대역 피해자
       비율·불일치 경보 조건부 반전율 → 원고 primary table 후보.
       existence↔prevalence 갭을 실측으로 닫는 최저비용 보강 (그록 D4·B3).
@@ -83,6 +83,13 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       앵커 행 추가·수치 확정 교체.
       "불일치 시 범인은 주로 g10" 풀링 48/79는 이항 양측
       p=0.071 — 방향성 관찰로만, 과판매 금지.
+      **✅ 확정(8/18 수확: 닻+McNemar+v1 도착)** — 닻(oracle split-half 자기
+      불일치) 전체 39%/43%·대역 27%/20%. 전체 반전은 전 셀이 닻 ±수 pp로
+      잡음 지배(실패 증거 불독해로 명문화). 대역은 one-sided 0.34/0.32 >
+      닻 0.24 = g11 0.24. McNemar 유일 유의: s2 g00 b=27/c=11 p=0.014
+      (나머지 p≥0.13). 불일치 경보 3-run 재현: s1/s2 p=0.015/0.007 +
+      v1 gate-7b-math500 81% vs 45% p=0.012; 포화 14B는 무신호 p≥0.44
+      (퇴화 서사와 정합). §5 확정 반영 완료(앵커 행·캡션·본문 교체).
 - [ ] B5. (9/10 결정점에서 B3와 묶어 판단) GradAlign k_r-matched·full IS(g11)·
       uncorrected 동일 그림 head-to-head — A+B 환원 방어의 마지막 조각
       (그록 D3·B2). GPU 필요, 단독 착수 금지.
