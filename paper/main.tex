@@ -24,8 +24,8 @@
 \textcolor{gray!60!black}{\textbf{[PENDING --- #1]} #2}}}\end{center}}
 
 \title{\bf FIRST: Stale Rollouts Can Pick the Wrong Training Data\\[2pt]
-{\large A Measurement-First Audit of Off-Policy Prompt Selection in RLVR}}
-\author{Anonymous\thanks{Draft v0.4 (2026-08-13). Reframed structure following the
+{\large A Measurement-First Audit of Off-Policy Data Selection in RLVR}}
+\author{Anonymous\thanks{Draft v0.5 (2026-08-18). Reframed structure following the
 pre-registered ``structural absence'' branch; numbers are from completed runs
 (v1 gate + v2 corrected, 2 seeds); pending seed harvests will update
 Sections~\ref{sec:map} and \ref{sec:diagnosis} only.}}
@@ -200,7 +200,7 @@ $\begin{array}{c|cc}
 \node[lbl, left=1mm of gate.west, anchor=east, xshift=-24mm] {decide};
 \end{scope}
 \end{tikzpicture}
-\caption{Framework overview. \emph{Estimate:} stale-rollout prompt ranking
+\caption{Framework overview. \emph{Estimate:} stale-rollout training-data ranking
 uses one of four corrections in a $2{\times}2$ decomposition; one-sided cells
 can silently reverse rankings and dashboards cannot see it
 (\S\ref{sec:theory}). \emph{Measure:} the split-half floor of the oracle,
@@ -238,7 +238,7 @@ rollout reuse and data selection for RLVR.
 \section{Related work}
 \label{sec:related}
 
-\paragraph{Off-policy influence and prompt selection.}
+\paragraph{Off-policy influence and data selection.}
 Token-ratio influence scores rank prompts from offline trajectories with a
 single-token correction~\citep{cropi}; in our decomposition this is $\goo$
 (neither axis restored). Its own appendix already shows the symptom that
