@@ -77,11 +77,16 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
         # MM 클래스로 폴백 (텍스트 전용 사용, vision 경로는 안 탄다)
         from transformers import AutoModelForMultimodalLM
         model = _load(AutoModelForMultimodalLM)
-    # dtype 인자가 무시된 버전 방어 — fp32(27B=111GB)로 GPU에 올리면 .to에서 즉사
-    if next(model.parameters()).dtype != want:
-        print(f"[load_model] dtype {next(model.parameters()).dtype} → {want} 강제 캐스트", flush=True)
-        model = model.to(want)
+    # dtype 무조건 통일 — 첫 파라미터만 bf16이고 일부 모듈(vision·MTP 등)이
+    # fp32로 남는 혼합 로드까지 방어 (이미 맞는 텐서는 no-op라 비용 없음)
+    model = model.to(want)
+    n_bytes = sum(p.numel() * p.element_size() for p in model.parameters()) \
+        + sum(b.numel() * b.element_size() for b in model.buffers())
+    print(f"[load_model] 파라미터+버퍼 총 {n_bytes / 1e9:.1f}GB ({want})", flush=True)
     if device == "cuda":
+        free, total = torch.cuda.mem_get_info()
+        print(f"[load_model] GPU free {free / 1e9:.1f}/{total / 1e9:.1f}GB, "
+              f"필요 {n_bytes / 1e9:.1f}GB", flush=True)
         model.to("cuda")
     model.eval()
     gpu = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
