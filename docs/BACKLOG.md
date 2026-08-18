@@ -135,6 +135,47 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       이동한다"는 본문 서사의 최신 모델 실증으로 서술. ※ go_27b 폐기와 구분:
       폐기 사유는 '동일 풀 추가 수치로 결론 변경'이었고 이번 목적은 세대
       방어(exploratory) — 저촉 없음.
+### 그록 08-18 재감사 반영 (수신 f8c2da2, 판독 8/19)
+
+전제: 그록 문서는 **8/18 수확(닻·McNemar) 반영 전** 기준 — A2(닻 대기)는 기완료,
+원고-실험-대조의 철회 요구(21/21·anti-select·역상관)는 v0.5가 기반영. 아래는
+그 대조 후 **살아남은 신규 항목**만.
+
+- [ ] A12. 🤖 선행 2건 인용·포지션 수정 (선행-전수검색) — ① ACE(arXiv
+      2601.20989, top-k on a budget): §2·§6에 인용 + "약 oracle이 잡음이
+      아니라 **계통 편향**(부호반전)이면 ACE 하한이 부적용 — 인증 실패는
+      예산이 아니라 편향 탓" 한 문장. ② Floor/Ceiling/Fusion(arXiv
+      2608.01704, 8월 신간): split-half ceiling 용어 선행 — 인용 + ceiling
+      기여를 "발명"이 아니라 **RLVR 선택 평가로의 이식+자기 적용**으로 명시
+      (QNA Q1의 '문헌 전체 적용' 표현도 하향).
+- [ ] A13. 🤖 범위 한정 표(리뷰어-일반화 §7) 최종 반영 — 수확(27B·mbpp·kk)
+      후 실범위 확정과 함께: stale='controlled LoRA-RFT twins' 명시,
+      'within evaluated pools and this CI procedure' 견지, 도메인·모델
+      명사는 실측 있는 것만. (v0.5가 상당 반영, 최종 일괄 점검용)
+- [ ] A14. 🤖 new-paper-ideas **문서 정합** (재검증 §5·§8 — "한 레포에 세
+      논문") — concept.md 상태 헤더·Abstract 시제, QNA Q16의 '15위' 인용,
+      구판 paper/(v0.3) 폴더에 '철회 반영 전 구판' 표지 또는 v0.5 동기화,
+      P4 readout·PRECHECK 첨부. 순위(2위 vs 그록 권고 4위)는 사용자 판단
+      사항으로 기록만.
+- [ ] B13. 🤖 pass-rate 베이스라인 확장 (그록 C1·R17·R18 — "C1이 A4보다
+      싸다") — 저장 점수만으로 **|p−0.5| (MoPPS형) top-k 재순위**를
+      frontier에 추가, 원고에 pass-rate/random/4셀 한 표 승격. alignment가
+      pass-rate를 못 이기면 downstream GPU(B7) 집행 금지, 범위 축소가 정답.
+- [ ] B14. 🤖 ceiling 경험 분포 재보정 (그록 C4) — Gaussian 가정 공격 +
+      2608.01704 대비: 저장 점수 resample로 '모형 천장 vs 경험 천장' 병기.
+- [ ] B15. 🤖 verify_theory 정합 (그록 B4) — 샘플 5만→20만, 본문/스크립트
+      수치 일치. CPU 분 단위, 즉시 가능.
+- [ ] B16. 🖥 drift 풀 ∩ 평가 풀 분리 ablation (그록 R14 — "R1보다 싸고
+      신뢰에 더 중요") — disjoint split 1 run으로 난이도 누수 공격 방어.
+      9/10 결정점에서 B6·B7과 함께 판단.
+- 매핑 메모: 그록 A1=기존 B6(대형 K), A5=A11(clustered bootstrap),
+  R7=B10(mbpp — **진행 중**), A2(닻)=B4 **✅기완료**, C3(경계 부호 일치율)은
+  B4 REVERSAL 대역 분석이 부분 커버. R2(KL 리라벨)는 A2 수치 반영 때 manifest
+  divergence로 일괄.
+- ⚠ 긴장 기록: 그록 08-18 §D는 27B 본실행을 기간 리스크로 **반대**. B12는
+  사용자 결정(8/19)으로 진행 — 스모크 게이트·5노드 병렬·DONE 스킵으로 리스크
+  완화, 9/10 결정점에서 중간 점검(미완이면 1-seed 탐색으로 축소 폴백).
+
 - 폐기 확정: go_hard(NO-GO), go_full 신규 확장·go_boost·go_27b(구조적 부재
   판정으로 동일 풀 추가 수치는 결론 불변 — 수확만 받고 신규 착수 금지)
 
