@@ -20,7 +20,7 @@ TAG="$(echo "$NAME" | tr '[:upper:]' '[:lower:]')"
 export RUN_BASE="$OM_WORK/runs/$TAG" RESULTS_BASE="$OM_WORK/results/$TAG"
 export OM_LORA_TARGETS="${OM_LORA_TARGETS:-all-linear}"   # DeltaNet 층 대응
 export OM_GEN_BATCH="${OM_GEN_BATCH:-8}"                  # 27B: K=32 통짜 generate가 OOM → 8씩 분할
-export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"  # 장시간 단편화 방어
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF-expandable_segments:True}"  # 장시간 단편화 방어
 S="${SEEDS_NEW:-0}"
 
 # 1) gsm8k — 자연 풀 그대로. 27B가 거의 다 맞추는 게 정상(포화 표본):
