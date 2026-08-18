@@ -49,14 +49,14 @@ gradient cosine) provably cannot see the flip. In practice, across Qwen2.5
 signal the prompt pool carries. We measure that signal with a split-half
 oracle floor, and all twelve of our conditions turn out weak: floors of
 $0.11$--$0.29$ against chance $0.10$. In this regime stale scores track the
-oracle (Fisher-combined $p=10^{-6}$), and a free pass-rate heuristic does as
+oracle (Fisher-combined $p=10^{-6}$), and a zero-cost pass-rate heuristic does as
 well as every gradient method. We also prove two limits. Certifying a
 top-$k$ choice needs 5--8 orders of magnitude more rollouts than anyone
-spends. And no estimator can measurably beat the floor of the oracle it is
+spends. And no estimator can measurably exceed the floor of the oracle it is
 judged against. We package these findings as FIRST (Floor-Informed
 Reliability of SelecTion). It reads the artifacts a run already has and
 answers, with no new rollouts: is there signal at all, and what should you
-use---uniform sampling, the free pass rate, or stale scores with the
+use---uniform sampling, the zero-cost pass rate, or stale scores with the
 disagreeing prompts sent to a small fresh audit? On our pools its
 pre-registered verdict is \emph{structural absence}. Our recommendation is simple:
 measure the floor first.
@@ -78,9 +78,9 @@ multiplies hundreds of token ratios, and the variance explodes. The implicit
 assumption is that the uncorrected half adds only a small bias---small
 enough to leave the \emph{ranking} intact.
 
-Published evidence already strains this assumption. The method that
-popularized single-token influence scoring reports, in its own appendix, a
-telling pair of numbers: on- and off-policy per-prompt gradients agree
+Published evidence already challenges this assumption. The method that
+popularized single-token influence scoring reports, in its own appendix, two
+relevant numbers: on- and off-policy per-prompt gradients agree
 pointwise (cosine above $0.6$ on 40 of 50 prompts), yet only $28.8\%$ of
 their top-$10\%$ neighborhood structure survives~\citep{cropi}. We treat this
 as a symptom, not as proof of our mechanism. The number is not decomposed
@@ -141,7 +141,7 @@ $\begin{array}{c|cc}
 \node[box, right=8mm of grid] (topk) {prompt scores\\$\to$ top-$k$ selection};
 \node[red box, below=3.5mm of grid] (thm) {\textbf{Thm.~1:} any one-sided cell can flip a prompt's\\gradient sign at arbitrarily small KL};
 \node[gray box, right=5mm of thm] (dash) {KL / ESS / cosine\\metrics: \textbf{blind} (Cor.~1)};
-\node[gray box, left=5mm of thm] (disagree) {$\cos(\gto,\got)$ disagreement\\= free warning (Prop.~1; realized, \S\ref{sec:map})};
+\node[gray box, left=5mm of thm] (disagree) {$\cos(\gto,\got)$ disagreement\\= zero-cost warning (Prop.~1; realized, \S\ref{sec:map})};
 \draw[arr] (stale) -- (grid);
 \draw[arr] (grid) -- (topk);
 \draw[arr, red!60!black] (thm) -- (grid);
@@ -151,7 +151,7 @@ $\begin{array}{c|cc}
 \node[box, right=6mm of oracle] (floor) {corrected split-half \textbf{floor}\\= recoverable ranking signal};
 \node[red box, right=6mm of floor] (ceiling) {\textbf{measurement ceiling} (Prop.~2):\\caps what \emph{any} method can show};
 \node[gray box, below=3mm of floor, xshift=4mm, text width=112mm] (guards)
-  {guards from the four self-caught pitfalls (\S\ref{sec:pitfalls}):\enspace
+  {guards from the four self-detected pitfalls (\S\ref{sec:pitfalls}):\enspace
    P1 disjoint samples · P2 independent tie-jitter · P3 equal budgets ·
    P4 $K'$-monotonicity};
 \draw[arr] (oracle) -- (floor);
@@ -204,7 +204,7 @@ for practitioners deciding where their fresh-rollout budget should go.
 
 A final theme runs through the experimental sections. Selection evaluation is
 easy to get silently wrong in the optimistic direction: over the course of this
-project our own pipeline produced---and then caught---four distinct evaluation
+project our own pipeline produced---and then detected---four distinct evaluation
 artifacts, each of which had initially produced a publishable-looking
 positive result (Section~\ref{sec:pitfalls}). We document each mechanism and
 its guard, because we believe they are endemic to the growing literature on
@@ -228,8 +228,8 @@ reweight the sampled continuation~\citep{multistep} restore the outcome axis
 ($\got$) but not
 occupancy when used for per-prompt gradient ranking. Full-trajectory
 corrections~\citep{ticgrpo} are exact but variance-explosive on long
-responses; they serve as the cost anchor, not a practical selector.
-The same tension---valuation scores failing to beat random selection until
+responses; they serve as the cost reference, not a practical selector.
+The same tension---valuation scores failing to outperform random selection until
 the selector is redesigned---has played out for Data Shapley in supervised
 data selection~\citep{rethinkshapley,nash}; our protocol
 (\S\ref{sec:protocol}) is the RLVR analogue, with the repair driven by a
@@ -388,7 +388,7 @@ Table~\ref{tab:ceiling} gives the mapping at our experimental geometry
 ($n{=}512$, $k{=}51$), validated by simulation (Appendix~\ref{app:ceiling}).
 Two consequences organize everything that follows. First, when the floor is
 near chance the ceiling collapses toward chance: \emph{under the proposition's
-model, no estimator can measurably win, and comparative evaluation of
+model, no estimator can measurably outperform, and comparative evaluation of
 selection methods is void}.
 Second, an estimator observed \emph{at} the ceiling has plausibly exhausted the
 measurable signal---further method development cannot show gains without first
@@ -400,7 +400,7 @@ raising the floor (more oracle rollouts, or a pool with more signal).
 ($n{=}512$, $k{=}51$, chance $0.100$; simulation, 600--800 replicates/cell).
 The v2 weak-signal regime (floors $0.137$--$0.176$) caps \emph{any} method's
 measurable precision at ${\approx}0.30$--$0.37$; the observed stale baseline
-already sits there.}
+is already at this ceiling.}
 \label{tab:ceiling}
 \begin{tabular}{lccccccc}
 \toprule
@@ -442,14 +442,14 @@ below-chance claim). A transparency note: the v1 floors were
 originally computed with the shared-jitter estimator later diagnosed as pitfall
 P2, which had inflated them to $0.32$; the corrected re-estimation
 (Table~\ref{tab:kcurve-ext}) puts the drift-400 floor at $0.206$---still the
-$2\times$-chance signal regime in which the $0.040$ collapse sits far below
+$2\times$-chance signal regime in which the $0.040$ collapse lies far below
 both floor and chance; even the regime most favorable to our thesis had to
 survive our own guards. Downstream, fine-tuned accuracy after selection
 (base $0.740$) spans $0.820$--$0.880$ across oracle-, one-sided-, and
 random-selected pools with no consistent ordering---in this
 saturation-adjacent regime misranking has little room to propagate downstream,
 consistent with the results below.
-On 7B MATH-500 (corrected floor $0.288$, the strongest and cleanest signal
+On 7B MATH-500 (corrected floor $0.288$, the strongest and least noisy signal
 regime: a \emph{rising} $K'$-curve, Table~\ref{tab:kcurve-ext}) the
 \emph{ordering flips}: the uncorrected $\goo$ is worst ($0.160$) and every
 stale estimator retains only $0.28$--$0.64$ of the available signal; at 14B
@@ -474,7 +474,7 @@ estimator has exhausted what the oracle can resolve, so neither its one-sided
 competitors' losses nor any method's gains are measurable in this regime. The
 DAPO pool is tie-degenerate (boundary margins exactly $0.0$; precision itself
 moves by $\pm 0.08$ under tie-break jitter, so we report bands): all stale
-estimators sit at chance, and so does everything else.
+estimators are at chance, and so does everything else.
 
 \begin{table}[t]
 \centering
@@ -505,7 +505,7 @@ page (updated tables + two sentences).}}
 \centering
 \caption{Prompt-level sign reversal against the fresh oracle (completed v2
 GSM8K seeds; zero-signal prompts excluded, denominators shown). Raw rates must
-be read against the anchor row---the oracle's split-half self-disagreement on
+be read against the reference row---the oracle's split-half self-disagreement on
 the same prompts---not against zero. Decision band $=$ oracle ranks
 $k\pm 26$.}
 \label{tab:reversal}
@@ -519,7 +519,7 @@ $\gto$ & $68/163$ & $73/168$ & $13/37$ & $10/34$\\
 $\got$ & $61/163$ & $63/168$ & $10/37$ & $8/34$\\
 $\gtt$ (full) & $59/163$ & $64/168$ & $9/37$ & $8/34$\\
 \midrule
-oracle self-disagreement (anchor) & $66/168$ & $77/180$ & $10/37$ & $7/35$\\
+oracle self-disagreement (reference) & $66/168$ & $77/180$ & $10/37$ & $7/35$\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -531,15 +531,15 @@ Table~\ref{tab:reversal} re-aggregates the completed v2 GSM8K seeds: stale
 scores disagree in sign with the fresh oracle on $36$--$48\%$ of
 signal-bearing prompts overall, $24$--$35\%$ inside the decision band, and
 $6$--$15$ of the oracle's top-$51$ prompts receive a sign-flipped stale score.
-The anchor row calibrates these rates: an independent half of the oracle
+The reference row calibrates these rates: an independent half of the oracle
 disagrees in sign with the other half on $39\%$/$43\%$ of the same prompts
-(decision band: $27\%$/$20\%$). Overall reversal for every cell sits within a
-few points of this anchor, so the overall rates are dominated by oracle noise
+(decision band: $27\%$/$20\%$). Overall reversal for every cell lies within a
+few points of this reference, so the overall rates are dominated by oracle noise
 and we do not read them as estimator failure; the information is in two
 contrasts that place the same oracle noise on both sides.
-First, inside the decision band the one-sided cells sit above the anchor
-while the full correction sits on it: pooled band reversal is $0.34$ ($\goo$)
-and $0.32$ ($\gto$) against $0.24$ for $\gtt$ and $0.24$ for the anchor, with
+First, inside the decision band the one-sided cells lie above the reference
+while the full correction lies on it: pooled band reversal is $0.34$ ($\goo$)
+and $0.32$ ($\gto$) against $0.24$ for $\gtt$ and $0.24$ for the reference, with
 $\got$ indistinguishable from full ($0.25$); prompt-paired McNemar tests
 against $\gtt$ (exact, over all signal-bearing prompts) reach significance
 for $\goo$ in seed 2 ($27$ vs.\ $11$ discordant prompts, $p=0.014$), with the
@@ -554,12 +554,12 @@ prefix-corrected cell $\gto$ is the reversed one in $59\%$/$62\%$ of cases
 $p=0.015$/$0.007$), and the same pattern replicates in the strong-signal v1
 condition (7B, MATH-500): $81\%$ against $45\%$, $p=0.012$. In the saturated
 14B regime, where selection itself degenerates (\S\ref{sec:saturation}), the
-alarm is correspondingly uninformative ($p\ge 0.44$)---as it should be, since
+warning is correspondingly uninformative ($p\ge 0.44$)---as it should be, since
 there is no signal left to protect. This is support from real LLM runs for
 the disagreement signal of Proposition~\ref{prop:disagree}, with one estimand
 caveat stated explicitly: for scalar per-prompt scores a \emph{double}
 reversal manifests as cell \emph{agreement}, so the $37$--$45\%$ under
-agreement is exactly the alarm's blind spot---consistent with ``agreement
+agreement is exactly the case this warning cannot detect---consistent with ``agreement
 guarantees nothing,'' and distinct from the proposition's vector-cosine
 statement. The DAPO seeds
 contribute $2$--$4$ signal-bearing prompts each (tie degeneracy,
@@ -574,7 +574,7 @@ prompts; every estimator's precision equals the chance level
 below chance (floor $0.080<0.098$). Selection, ranking, and certification all
 degenerate together: no method, and no certificate, can matter here. The
 practical corollary is that selection pipelines must scale candidate difficulty
-with model capability, or silently pay for machinery that cannot change the
+with model capability, or silently spend on machinery that cannot change the
 outcome.
 
 \section{Certification is out of reach where it matters}
@@ -603,7 +603,7 @@ rollouts spent on exact certification yielded no improvement in any condition we
 measured; Section~\ref{sec:takeaways} argues they belong in floor measurement
 instead.
 
-\section{Four evaluation pitfalls our own pipeline caught}
+\section{Four evaluation pitfalls our own pipeline detected}
 \label{sec:pitfalls}
 
 Every mechanism below produced, at some point in this project, a clean
@@ -751,7 +751,7 @@ $100\%$ budget scores \emph{lower} ($0.167$) than the zero-cost stale baseline
 ($0.235$), the floor-gated protocol loses ($0.172$)---by its pre-registered
 loss condition it is retired to the diagnostic role this section
 describes---and the best zero-cost policy is not a gradient method at all but
-the behavior pass-rate heuristic ($0.255$). On DAPO everything lands at
+the behavior pass-rate heuristic ($0.255$). On DAPO every estimator is at
 chance ($0.08$--$0.16$, truth margins $0.0$). Meanwhile the monitored
 metrics stay in their normal ranges, precisely as Corollary~\ref{cor:blind}
 warns, and the full correction's
@@ -772,7 +772,7 @@ grounds for a GPU expansion.
 The verdict is not the end of the pipeline. It is the first branch of a
 decision. Each regime in the map comes with a selection policy, and our own
 replays already measure the cost of each one. So the diagnosis composes into a protocol.
-The data-valuation literature followed the same path for supervised
+The data-valuation literature encountered the same problem in supervised
 learning: when Shapley-based selection proved no better than random, the
 response was a corrected selection method, not abandonment of
 selection~\citep{rethinkshapley,nash}.
@@ -790,19 +790,19 @@ $K^*$ (\S\ref{sec:diagnosis}); run the four pitfall guards
 \begin{itemize}\setlength{\itemsep}{1pt}
 \item[(a)] \emph{No reachable signal} (floor $\approx$ chance, no finite
 $K^*$): abstain---sample uniformly and spend nothing on scoring. Every
-estimator we measured sits at chance here, and the oracle disagrees with
+estimator we measured is at chance here, and the oracle disagrees with
 itself (\S\ref{sec:saturation}).
-\item[(b)] \emph{Weak signal} (chance $<$ floor $< \tau$): rank by the free
-behavior pass rate. In our replays it matched or beat every gradient
+\item[(b)] \emph{Weak signal} (chance $<$ floor $< \tau$): rank by the zero-cost
+behavior pass rate. In our replays it matched or outperformed every gradient
 estimator ($0.255$ vs.\ $0.235$ best stale), and the measurement ceiling
-shows nothing can \emph{measurably} beat it in this regime
+shows no method can \emph{measurably} exceed it in this regime
 (\S\ref{sec:floor}).
 \item[(c)] \emph{Measurable signal} (floor $\ge \tau$): stale scores are
 usable. Compute both one-sided cells anyway, and send the prompts where they
 disagree in sign to a fresh audit (or drop them). Under disagreement the
 reversal rate was $59$--$81\%$; under agreement, $37$--$45\%$ (three runs,
-$p \le 0.015$). Agreement guarantees nothing---that is the stated blind
-spot.
+$p \le 0.015$). Agreement guarantees nothing---this is the case the
+warning cannot detect, and it is stated as such.
 \end{itemize}
 \item \textbf{Report.} Attach the floor, the ceiling, and the branch taken
 to any downstream selection claim; a result above its own oracle's ceiling
@@ -827,7 +827,7 @@ here; if not, the map remains observational, as stated in Limitations.
 FIRST and take the branch its protocol prescribes (\S\ref{sec:protocol}). A
 48-prompt fresh probe is enough to estimate the split-half floor. Below
 $2\times$ chance (fix the threshold \emph{before} looking), do not spend on
-selection. In our replays the best weak-signal policy was the free pass-rate
+selection. In our replays the best weak-signal policy was the zero-cost pass-rate
 heuristic, random was close behind, and no fresh budget up to $100\%$
 produced an improvement.
 (2)~\emph{Never budget for boundary certification}; the 5--8
@@ -838,7 +838,7 @@ ceiling with any selection comparison}; a claimed improvement above the
 measurement ceiling of its own oracle indicates assumption violation,
 estimator--oracle dependence, or an evaluation artifact.
 (5)~\emph{Distrust one-sided rankings when the two one-sided cells disagree};
-agreement guarantees nothing, but disagreement is a free warning---formalized
+agreement guarantees nothing, but disagreement is a zero-cost warning---formalized
 as branch (c) of the protocol.
 
 \paragraph{Limitations.} Empirics are Qwen2.5 (7B/14B), math tasks, and LoRA
