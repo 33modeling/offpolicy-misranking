@@ -124,6 +124,12 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 6. 생성 길이 128은 GSM8K `####` 도달 전 절단 — 384 필요.
 7. 재시작 시 GPU 수 변경 — 샤드 어긋남은 merge_rollouts 전수 검증이 방어.
 8. oracle 표본 재사용 누수(v1 hybrid 21/21 사건) — fresh는 항상 표본 비공유.
+9. HF 스냅샷의 다중 설정 폴더(mbpp full/·sanitized/처럼 컬럼이 다른 parquet
+   혼재) — 통짜 `load_dataset("parquet", ...)`이 CastError로 죽음.
+   `_load_rows_any`가 폴더 그룹별 로드(full 우선)→파일별 병합 순으로 방어
+   (2026-08-18, 실데이터 재현 검증). 리스트 필드가 문자열로 변형된 사본은
+   `_maybe_json_list`가 복원, kk solution의 'knight'/'true' 문자열 변형은
+   `_kk_truthy`가 수용. 스키마 실패 에러에 첫 행 필드명 자동 출력.
 
 ## 7. 판정 체계 요약
 

@@ -107,10 +107,12 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             rows = [r for split in ds for r in ds[split]]
         items = []
         for r in rows:
-            text = r.get("text") or r.get("prompt") or r.get("description")
-            tests = r.get("test_list") or r.get("tests") or r.get("test")
+            text = (r.get("text") or r.get("prompt") or r.get("description")
+                    or r.get("instruction") or r.get("task_description"))
+            tests = (r.get("test_list") or r.get("tests") or r.get("test")
+                     or r.get("challenge_test_list"))
             if isinstance(tests, str):
-                tests = [tests]
+                tests = _maybe_json_list(tests) or [tests]
             if not (text and tests):
                 continue
             tests_str = "\n".join(tests)
@@ -120,7 +122,9 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             # answer 자리에 assert 테스트를 넣는다 — reward()가 실행 채점으로 분기
             items.append({"question": q, "answer": tests_str})
         if not items:
-            raise ValueError(f"mbpp 스키마 파싱 실패 (root={root}) — 필드명을 확인할 것")
+            keys = sorted(rows[0].keys()) if rows else []
+            raise ValueError(f"mbpp 스키마 파싱 실패 (root={root}, rows={len(rows or [])}, "
+                             f"첫 행 필드={keys}) — 필드명을 확인할 것")
     elif dataset == "kk":
         # Knights & Knaves 논리 퍼즐 — 사전 배치본($DATASETS_DIR/kk 등)
         tried = [Path(os.environ["KK_DIR"])] if os.environ.get("KK_DIR") \
@@ -135,16 +139,23 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         items = []
         for r in rows:
             quiz, names, sol = r.get("quiz"), r.get("names"), r.get("solution")
+            if isinstance(names, str):
+                names = _maybe_json_list(names)
+            if isinstance(sol, str):
+                sol = _maybe_json_list(sol)
             if not (quiz and names and isinstance(sol, list) and len(sol) == len(names)):
                 continue
             gold = "KK:" + ";".join(
-                f"{n}={'knight' if s else 'knave'}" for n, s in zip(names, sol))
+                f"{n}={'knight' if _kk_truthy(s) else 'knave'}"
+                for n, s in zip(names, sol))
             q = (f"{quiz}\n\nDetermine each person's identity. Reason step by step, "
                  "then after '####' state your final answer as e.g. "
                  "'Zoey is a knight, Oliver is a knave.'")
             items.append({"question": q, "answer": gold})
         if not items:
-            raise ValueError(f"kk 스키마 파싱 실패 (root={root}) — quiz/names/solution 필드 확인")
+            keys = sorted(rows[0].keys()) if rows else []
+            raise ValueError(f"kk 스키마 파싱 실패 (root={root}, rows={len(rows or [])}, "
+                             f"첫 행 필드={keys}) — quiz/names/solution 필드 확인")
     elif dataset == "dapo-math":
         # 본실험용. 사전 배치본 우선. 스키마가 릴리스마다 달라 방어적으로 파싱한다.
         tried = [Path(os.environ["DAPO_DIR"])] if os.environ.get("DAPO_DIR") \
@@ -246,6 +257,30 @@ def _boxed(solution: str) -> str | None:
     return "".join(out) or None
 
 
+def _maybe_json_list(s: str) -> list | None:
+    """'["a", "b"]' 꼴 문자열-인코딩 리스트 복원 — parquet/jsonl 내보내기 시
+    리스트 필드가 문자열로 변형된 사본(pandas to_json 등)을 수용한다."""
+    s = s.strip()
+    if not (s.startswith("[") and s.endswith("]")):
+        return None
+    try:
+        v = json.loads(s)
+    except ValueError:
+        try:
+            import ast
+            v = ast.literal_eval(s)
+        except (ValueError, SyntaxError):
+            return None
+    return v if isinstance(v, list) else None
+
+
+def _kk_truthy(s) -> bool:
+    """kk solution 원소 — bool/int 외에 'knight'/'true' 문자열 변형 수용."""
+    if isinstance(s, str):
+        return s.strip().lower() in ("knight", "true", "1")
+    return bool(s)
+
+
 def _load_rows_any(root) -> list[dict] | None:
     """디렉토리/파일에서 형식 무관하게 행을 읽는다 — jsonl > parquet > HF 스냅샷."""
     import json
@@ -260,7 +295,28 @@ def _load_rows_any(root) -> list[dict] | None:
     pq = sorted(str(p) for p in root.rglob("*.parquet"))
     if pq:
         from datasets import load_dataset
-        return list(load_dataset("parquet", data_files=pq, split="train"))
+        # HF 스냅샷은 설정 폴더별(full/·sanitized/ 등)로 컬럼이 달라 통짜 로드가
+        # CastError로 죽는다 — 폴더 그룹별로 시도(full 우선), 최후엔 파일별 병합.
+        groups: dict[str, list[str]] = {}
+        for f in pq:
+            top = str(Path(f).parent.relative_to(root))
+            groups.setdefault(top, []).append(f)
+        order = sorted(groups, key=lambda g: (not g.startswith("full"), g))
+        rows: list[dict] = []
+        for g in order:
+            try:
+                rows = list(load_dataset("parquet", data_files=groups[g], split="train"))
+                break
+            except Exception:
+                continue
+        if not rows:
+            for f in pq:
+                try:
+                    rows += list(load_dataset("parquet", data_files=f, split="train"))
+                except Exception:
+                    continue
+        if rows:
+            return rows
     # 원본 MATH 등 문제당 개별 .json 파일 트리 (HF 메타 파일은 제외)
     meta = {"dataset_info.json", "dataset_infos.json", "dataset_dict.json",
             "state.json", "config.json"}
