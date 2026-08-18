@@ -58,7 +58,7 @@ Reliability of SelecTion). It reads the artifacts a run already has and
 answers, with no new rollouts: is there signal at all, and what should you
 use---uniform sampling, the free pass rate, or stale scores with the
 disagreeing prompts sent to a small fresh audit? On our pools its
-pre-registered verdict is \emph{structural absence}. The takeaway is simple:
+pre-registered verdict is \emph{structural absence}. Our recommendation is simple:
 measure the floor first.
 \end{abstract}
 
@@ -92,7 +92,7 @@ testable against each other, and a measured map of where the failure does
 and does not appear.
 
 We audit the assumption end to end. The situation turns out worse, and more
-structural, than a bias--variance story suggests. Our claims come in three
+structural, than a bias--variance account suggests. Our claims come in three
 tiers:
 
 \begin{enumerate}
@@ -199,7 +199,7 @@ diagnosis, on our prompt pools (Section~\ref{sec:diagnosis}) and obtained the ve
 \emph{structural absence}: on saturated or tie-degenerate pools, no increase of
 the oracle budget up to $K{=}256$ rollouts per prompt is predicted to create a
 signal regime. That verdict, rather than a new estimator, is
-the paper's empirical headline---and, we argue, the more useful contribution
+the paper's main empirical finding---and, we argue, the more useful contribution
 for practitioners deciding where their fresh-rollout budget should go.
 
 A final theme runs through the experimental sections. Selection evaluation is
@@ -354,7 +354,7 @@ agree, which the decomposition makes non-generic.
 consume: the top-$k$ set by $s_i=\cos(\mu_i,v)$, where $\mu_i$ is the prompt's
 mean current-policy gradient and $v$ a validation mean gradient. We report
 top-$k$ precision against an on-policy oracle, boundary margins, and rollout
-budgets. Pointwise cosine averages are diagnostics, never headlines.
+budgets. Pointwise cosine averages are diagnostics, never primary results.
 
 \paragraph{The split-half floor.} The oracle itself is a $K$-rollout Monte
 Carlo estimate. We therefore report, for every run, the \emph{corrected
@@ -448,7 +448,7 @@ survive our own guards. Downstream, fine-tuned accuracy after selection
 (base $0.740$) spans $0.820$--$0.880$ across oracle-, one-sided-, and
 random-selected pools with no consistent ordering---in this
 saturation-adjacent regime misranking has little room to propagate downstream,
-foreshadowing what follows.
+consistent with the results below.
 On 7B MATH-500 (corrected floor $0.288$, the strongest and cleanest signal
 regime: a \emph{rising} $K'$-curve, Table~\ref{tab:kcurve-ext}) the
 \emph{ordering flips}: the uncorrected $\goo$ is worst ($0.160$) and every
@@ -534,7 +534,7 @@ $6$--$15$ of the oracle's top-$51$ prompts receive a sign-flipped stale score.
 The anchor row calibrates these rates: an independent half of the oracle
 disagrees in sign with the other half on $39\%$/$43\%$ of the same prompts
 (decision band: $27\%$/$20\%$). Overall reversal for every cell sits within a
-few points of this anchor, so the headline rates are dominated by oracle noise
+few points of this anchor, so the overall rates are dominated by oracle noise
 and we do not read them as estimator failure; the information is in two
 contrasts that place the same oracle noise on both sides.
 First, inside the decision band the one-sided cells sit above the anchor
@@ -599,7 +599,7 @@ Prompt values are intrinsically dense at the selection boundary: \emph{selection
 decisions resist exact certification precisely where selection matters---at
 every margin we observed}. Approximate-membership and indifference-zone
 formulations are weaker demands our measurements do not exclude. Fresh
-rollouts spent on exact certification bought nothing in any condition we
+rollouts spent on exact certification yielded no improvement in any condition we
 measured; Section~\ref{sec:takeaways} argues they belong in floor measurement
 instead.
 
@@ -771,10 +771,11 @@ grounds for a GPU expansion.
 
 The verdict is not the end of the pipeline. It is the first branch of a
 decision. Each regime in the map comes with a selection policy, and our own
-replays already price each one. So the diagnosis composes into a protocol.
-The data-valuation literature made the same move for supervised learning:
-when Shapley-based selection proved no better than random, the answer was a
-repaired selector, not a retreat~\citep{rethinkshapley,nash}.
+replays already measure the cost of each one. So the diagnosis composes into a protocol.
+The data-valuation literature followed the same path for supervised
+learning: when Shapley-based selection proved no better than random, the
+response was a corrected selection method, not abandonment of
+selection~\citep{rethinkshapley,nash}.
 
 \begin{center}\fbox{\parbox{0.93\textwidth}{%
 \textbf{The FIRST protocol} \quad inputs: the behavior rollouts the run
@@ -827,8 +828,8 @@ FIRST and take the branch its protocol prescribes (\S\ref{sec:protocol}). A
 48-prompt fresh probe is enough to estimate the split-half floor. Below
 $2\times$ chance (fix the threshold \emph{before} looking), do not spend on
 selection. In our replays the best weak-signal policy was the free pass-rate
-heuristic, random was close behind, and no fresh budget up to $100\%$ bought
-an improvement.
+heuristic, random was close behind, and no fresh budget up to $100\%$
+produced an improvement.
 (2)~\emph{Never budget for boundary certification}; the 5--8
 order-of-magnitude gap is
 structural. (3)~\emph{Scale candidate difficulty with capability}, or
@@ -862,10 +863,10 @@ protocol applies unchanged when the selection target is a safety metric
 rather than accuracy, and we recommend running it there before trusting any
 stale-scored curation.
 
-\paragraph{Outlook.} We view the negative results as load-bearing: they
-delimit where the field's growing investment in stale-rollout data selection can
-possibly pay off (unsaturated, tie-free, signal-bearing pools---which our
-diagnosis identifies for free) and where it cannot. The measurement-first
+\paragraph{Outlook.} The negative results are central rather than incidental: they
+delimit where the field's growing investment in stale-rollout data selection
+can succeed (unsaturated, tie-free, signal-bearing pools---which our
+diagnosis identifies at no extra cost) and where it cannot. The measurement-first
 protocol---floor, ceiling, preregistration, and the four guards---is applicable
 to any selection-method paper, including ours.
 
