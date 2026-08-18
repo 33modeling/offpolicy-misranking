@@ -43,7 +43,7 @@ correction reweights only one side of the trajectory: the prefix, the
 continuation, or a single token. Can such stale rankings be trusted? We show
 that the answer depends on a quantity today's pipelines never measure. In
 theory, any one-sided correction can flip the sign of a prompt's gradient at
-arbitrarily small policy divergence, and the dashboards teams watch (KL, ESS,
+arbitrarily small policy divergence, and the metrics teams monitor (KL, ESS,
 gradient cosine) provably cannot see the flip. In practice, across Qwen2.5
 7B/14B and three math tasks, what decides the outcome is how much ranking
 signal the prompt pool carries. We measure that signal with a split-half
@@ -99,7 +99,7 @@ tiers:
 \item \textbf{Possibility (proved).} One-sided corrections can flip the sign
 of a prompt's gradient at arbitrarily small policy divergence
 (Section~\ref{sec:theory}). Group normalization does not fix the sign. The
-dashboards practitioners watch---KL, ESS, gradient cosine---provably cannot
+metrics practitioners monitor---KL, ESS, gradient cosine---provably cannot
 detect it. One warning sign survives on stale data alone: the two one-sided
 cells disagreeing with each other.
 \item \textbf{Regime map (measured).} Whether the flip actually happens
@@ -140,7 +140,7 @@ $\begin{array}{c|cc}
 \end{array}$\\ one-sided importance corrections};
 \node[box, right=8mm of grid] (topk) {prompt scores\\$\to$ top-$k$ selection};
 \node[red box, below=3.5mm of grid] (thm) {\textbf{Thm.~1:} any one-sided cell can flip a prompt's\\gradient sign at arbitrarily small KL};
-\node[gray box, right=5mm of thm] (dash) {KL / ESS / cosine\\dashboards: \textbf{blind} (Cor.~1)};
+\node[gray box, right=5mm of thm] (dash) {KL / ESS / cosine\\metrics: \textbf{blind} (Cor.~1)};
 \node[gray box, left=5mm of thm] (disagree) {$\cos(\gto,\got)$ disagreement\\= free warning (Prop.~1; realized, \S\ref{sec:map})};
 \draw[arr] (stale) -- (grid);
 \draw[arr] (grid) -- (topk);
@@ -177,7 +177,7 @@ $\begin{array}{c|cc}
 \end{tikzpicture}
 \caption{Framework overview. \emph{Estimate:} stale-rollout training-data ranking
 uses one of four corrections in a $2{\times}2$ decomposition; one-sided cells
-can silently reverse rankings and dashboards cannot see it
+can silently reverse rankings and the monitored metrics cannot see it
 (\S\ref{sec:theory}). \emph{Measure:} the split-half floor of the oracle,
 computed under four guards, quantifies recoverable signal and induces a
 ceiling on what any method can demonstrate (\S\ref{sec:floor}).
@@ -250,7 +250,7 @@ warning: when value gaps at the boundary vanish, identification cost diverges.
 Both failure ingredients we study also surface in adjacent post-training
 literature: in on-policy distillation, token-level agreement can be driven to
 near-zero divergence by degenerate repetition loops while outputs
-collapse---a pointwise dashboard blind to the consumed object---and raw
+collapse---a pointwise metric blind to the consumed object---and raw
 token log-ratio signals are dominated by the extreme tail (the top 1\% of
 tokens carrying roughly half the gradient), the same heavy-tail pathology we
 measure as $0.1\%$ ESS for the full correction~\citep{tide}.
@@ -262,7 +262,7 @@ evaluation. To our knowledge, no prior work in this literature reports the
 reliability of its own oracle, and Section~\ref{sec:floor} shows several of our
 initially-promising comparisons dissolve once it is reported.
 
-\section{Theory: one-sided corrections and what dashboards cannot see}
+\section{Theory: one-sided corrections and what the monitored metrics cannot see}
 \label{sec:theory}
 
 \subsection{A $2\times 2$ decomposition of stale-gradient estimators}
@@ -312,7 +312,7 @@ Both are machine-checked (raw gradients, exact enumeration of group
 normalization for $K\in\{2,4,8\}$ and $\epsilon\in\{0.4,0.1,0.01\}$) by a
 self-contained verification script shipped with the code.
 
-\begin{corollary}[Dashboard blindness]
+\begin{corollary}[Metric blindness]
 \label{cor:blind}
 No bound on trajectory KL, no lower bound on ESS, and no norm-blind,
 scale-invariant single-estimator diagnostic (e.g.\ pointwise cosine of the
@@ -456,7 +456,7 @@ stale estimator retains only $0.28$--$0.64$ of the available signal; at 14B
 MATH-500 the loss concentrates on the suffix axis (signal retention
 $\got{=}0.44$ vs.\ $\gto{=}1.00$), though its declining $K'$-curve counsels
 caution on the absolute floor there. Which cell fails is regime-dependent; \emph{that some cell
-fails while dashboards stay green} is the invariant, exactly as
+fails while every monitored metric looks normal} is the invariant, exactly as
 Theorem~\ref{thm:reversal} licenses and no more.
 
 \subsection{Where signal is weak, stale selection tracks the oracle}
@@ -752,8 +752,9 @@ $100\%$ budget scores \emph{lower} ($0.167$) than the zero-cost stale baseline
 loss condition it is retired to the diagnostic role this section
 describes---and the best zero-cost policy is not a gradient method at all but
 the behavior pass-rate heuristic ($0.255$). On DAPO everything lands at
-chance ($0.08$--$0.16$, truth margins $0.0$). Meanwhile the dashboards stay
-green precisely as Corollary~\ref{cor:blind} warns, and the full correction's
+chance ($0.08$--$0.16$, truth margins $0.0$). Meanwhile the monitored
+metrics stay in their normal ranges, precisely as Corollary~\ref{cor:blind}
+warns, and the full correction's
 effective sample size is $0.1\%$ (clip fraction $0.94$--$1.00$)---the
 variance-side reason one-sided truncations exist in the first place, measured
 in the same runs that show what the truncation costs. Two pre-registered caveats accompany the method. The
@@ -847,14 +848,14 @@ Gaussian score model (simulation-validated at our geometry; the analytic
 program of proving it distribution-free is open). The disagreement result is
 an existence-plus-search finding, not a general sufficiency theorem. Theory
 counterexamples are two-token constructions---deliberately: they show what
-\emph{cannot} be excluded by dashboards, not what typically happens; the
+\emph{cannot} be excluded by the monitored metrics, not what typically happens; the
 regime map is the empirical complement.
 
 \paragraph{Safety relevance.} Data selection is a curation channel: whatever
 a misranked estimator systematically promotes gets amplified by subsequent
 training. Corollary~\ref{cor:blind} then has a safety reading---if stale
 selection happens to promote prompts on which shortcut or reward-hacking behavior
-scores well, the drift dashboards a team watches cannot flag the promotion any
+scores well, the drift metrics a team monitors cannot flag the promotion any
 more than they can flag the sign reversal itself, so the selection layer is an
 effectively unaudited input to the reward loop. The measurement-first
 protocol applies unchanged when the selection target is a safety metric
