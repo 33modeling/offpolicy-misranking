@@ -11,6 +11,7 @@ lo < mean-reward < hi 인 프롬프트만 {"question","answer"} jsonl로 내보�
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -55,10 +56,24 @@ def main() -> int:
         if lo < rate < hi:
             rows.append(item)
 
+    covered = len(acc)
+    if covered < len(prompts):
+        print(f"[warn] rollout 커버리지 {covered}/{len(prompts)} — 샤드 누락/부분 완료 의심")
+        if not rows:
+            # 커버리지가 불완전한 0건은 '전 문제 포화'의 증거가 아니다 — pool을
+            # 기록하면 go_27b의 -f 게이트가 포화로 오진하므로 기록 없이 실패 반환
+            print("[abort] hard-slice 0건 + 커버리지 불완전 — 포화 단정 불가. "
+                  "프리스크린 rollout 샤드 완주 후 재실행할 것 (pool 미기록)")
+            return 3
+
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w") as f:
+    # 원자적 기록 — 중간 사망이 남긴 부분/0바이트 pool이 '있음'으로 채택되거나
+    # 포화로 오진되는 것 방지 (완성된 파일만 최종 이름을 가진다)
+    tmp = out.with_name(out.name + f".tmp.{os.getpid()}")
+    with tmp.open("w") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    tmp.replace(out)
     print("pass-rate 분포:", dict(sorted(hist.items())))
     print(f"hard-slice: {len(rows)}/{len(prompts)} → {out}")
     if not rows:

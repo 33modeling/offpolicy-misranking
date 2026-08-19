@@ -17,6 +17,17 @@ OUT="${OUT:-$OM_WORK/pools/$DS-hard.jsonl}"
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
 mkdir -p "$RUN"
 
+# POOL_N이 기존 prep과 다르면 옛 산출물 격리 — prompts.json·rollout 샤드가
+# 남아 있으면 스킵 로직 때문에 POOL_N 증량이 조용히 무효가 된다
+if [ -f "$RUN/prompts.json" ]; then
+  OLD_N=$("$PY" -c "import json,sys; print(len(json.load(open(sys.argv[1]))['train']))" "$RUN/prompts.json" 2>/dev/null || echo "?")
+  if [ "$OLD_N" != "$POOL_N" ]; then
+    SD="$RUN/stale-pooln-$(date +%s)"; mkdir -p "$SD"
+    mv "$RUN"/prompts.json "$RUN"/rollouts_behavior_train*.jsonl "$SD"/ 2>/dev/null || true
+    echo "== prescreen: POOL_N 변경(${OLD_N}→${POOL_N}) — 옛 prep/rollout 격리 → $SD"
+  fi
+fi
+
 COMMON=(--run "$RUN" --model "$MODEL" --dataset "$DS" --n-train "$POOL_N" --n-val 8 --micro-batch 1)
 echo "== prescreen: $DS × $POOL_N, model=$TAG, GPU ${NGPU}장"
 "$PY" src/experiment.py --stage prep "${COMMON[@]}" || exit 1

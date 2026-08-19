@@ -45,6 +45,8 @@ C_DIRS=()
 for s in $SEEDS_ALL; do
   for suf in "" "-dapo-math" "-dapo-math-dapo-math"; do
     dd="$OM_WORK/runs/v2-s$s$suf"
+    # legacy 이중 접미사는 신형 완주가 있으면 제외 — 같은 seed의 downstream 중복 실행 방지
+    [ "$suf" = "-dapo-math-dapo-math" ] && [ -f "$OM_WORK/runs/v2-s$s-dapo-math/DONE" ] && continue
     [ -f "$dd/DONE" ] && C_DIRS+=("$dd")
   done
 done

@@ -59,8 +59,10 @@ if [[ " $PHASES " == *" E "* ]]; then
   echo "== [E] 14B MATH-500 × 3-seed (n=400+100)"
   M14="${MODEL_14B:-$MODELS_DIR/Qwen2.5-14B-Instruct}"
   if [ -f "$M14/config.json" ]; then
+    # 디렉터리에 데이터셋명 포함 — run_14b가 math500 접미사를 붙이므로 접미사
+    # 없는 경로로 DONE을 검사하면 완주를 영구 미인식한다
     for s in 0 1 2; do
-      run_one "$OM_WORK/runs/v2-14bm-s$s" MODEL_14B="$M14" DATASET=math500 DRIFT=100 SEED="$s" N_TRAIN=400 N_VAL=100 || true
+      run_one "$OM_WORK/runs/v2-14bm-s$s-math500" MODEL_14B="$M14" DATASET=math500 DRIFT=100 SEED="$s" N_TRAIN=400 N_VAL=100 || true
     done
   else
     echo "  [skip] 14B 스냅샷 없음: $M14 — provision 후 PHASES=E 재실행"
@@ -79,10 +81,13 @@ if [[ " $PHASES " == *" F "* ]]; then
 fi
 
 echo "== 종료 요약 =="
-for pat in v2-d50-s v2-d200-s v2-d400-s v2-14bm-s; do
+for pat in v2-d50-s v2-d200-s v2-d400-s; do
   for s in 0 1 2; do d="$OM_WORK/runs/$pat$s"
     [ -d "$d" ] && echo "  $(basename "$d"): $([ -f "$d/DONE" ] && echo ✔ || echo ✘)"
   done
+done
+for s in 0 1 2; do d="$OM_WORK/runs/v2-14bm-s$s-math500"
+  [ -d "$d" ] && echo "  $(basename "$d"): $([ -f "$d/DONE" ] && echo ✔ || echo ✘)"
 done
 for DS in mbpp kk; do for s in 0 1 2; do d="$OM_WORK/runs/v2-s$s-$DS"
   [ -d "$d" ] && echo "  $(basename "$d"): $([ -f "$d/DONE" ] && echo ✔ || echo ✘)"

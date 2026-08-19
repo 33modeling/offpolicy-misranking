@@ -39,7 +39,11 @@ export FRESH_K="${FRESH_K:-32}" HYBRID_PROMPTS="${HYBRID_PROMPTS:-64}"
 export MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 export OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/big-7b}"
 LOG="$LOGDIR/big-${DATASET}.log"
-RUN_DIR="$OUT_ROOT"; [ "$DATASET" != "gsm8k" ] && RUN_DIR="$OUT_ROOT-$DATASET"
+# run_14b와 같은 멱등 규칙 — OUT_ROOT에 데이터셋명이 이미 있으면 안 붙인다
+RUN_DIR="$OUT_ROOT"
+if [ "$DATASET" != "gsm8k" ]; then
+  case "$(basename "$OUT_ROOT")" in *"$DATASET"*) ;; *) RUN_DIR="$OUT_ROOT-$DATASET" ;; esac
+fi
 echo "== [2/3] 실행: 7B $DATASET n=$N_TRAIN(+val $N_VAL) fresh=$FRESH_K hybrid=$HYBRID_PROMPTS → $RUN_DIR"
 
 bash scripts/run_14b.sh > "$LOG" 2>&1 &

@@ -33,19 +33,27 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     # 로컬 사본 — provision.sh($OM_DATA) 또는 fetch_datasets.sh($DATASETS_DIR/<이름>/)
     local_names = {"gsm8k": "gsm8k_train.jsonl", "math500": "math500_test.jsonl"}
     fname = local_names.get(dataset, "_none_")
-    local = next((c for c in (Path(os.environ.get("OM_DATA", "")) / fname,
-                              Path(os.environ.get("DATASETS_DIR", "")) / dataset / fname)
-                  if c.is_file()), None)
-    if local is not None:
-        rows = [json.loads(l) for l in local.open()]
-        if dataset == "gsm8k":
-            items = [
-                {"question": r["question"], "answer": _gsm8k_answer(r["answer"])}
-                for r in rows
-            ]
-        else:  # math500
-            items = [{"question": r["problem"], "answer": str(r["answer"])} for r in rows]
-        return _split(items, n_train, n_val, seed, f"{dataset}(local)")
+    for local in (Path(os.environ.get("OM_DATA", "")) / fname,
+                  Path(os.environ.get("DATASETS_DIR", "")) / dataset / fname):
+        # '존재하는 첫 파일' 채택은 손상/빈 사본이 정상 사본을 가린다(E4형) —
+        # 판독까지 성공해야 채택, 실패하면 다음 후보→일반 탐색으로 넘어간다
+        if not local.is_file():
+            continue
+        try:
+            rows = [json.loads(l) for l in local.open()]
+            if dataset == "gsm8k":
+                items = [
+                    {"question": r["question"], "answer": _gsm8k_answer(r["answer"])}
+                    for r in rows
+                ]
+            else:  # math500
+                items = [{"question": r["problem"], "answer": str(r["answer"])} for r in rows]
+        except (ValueError, KeyError, OSError) as e:
+            print(f"[data] 로컬 사본 판독 실패, 건너뜀: {local} ({type(e).__name__}: {e})")
+            continue
+        if items:
+            return _split(items, n_train, n_val, seed, f"{dataset}(local)")
+        print(f"[data] 로컬 사본 0행, 건너뜀: {local}")
 
     # datasets 라이브러리는 허브 폴백에서만 지연 import — 로컬 사본 경로는
     # 라이브러리 상태(미설치·구버전 오프라인 미지원)와 무관하게 동작해야 한다
@@ -286,19 +294,24 @@ def _load_rows_any(root) -> list[dict] | None:
     if pq:
         from datasets import load_dataset
         # HF 스냅샷은 설정 폴더별(full/·sanitized/ 등)로 컬럼이 달라 통짜 로드가
-        # CastError로 죽는다 — 폴더 그룹별로 시도(full 우선), 최후엔 파일별 병합.
+        # CastError로 죽는다 — 그룹 키는 마지막 폴더명(중첩 스냅샷의
+        # snapshots/<해시>/<설정>도 설정명으로 잡힘). full/이 있으면 그것만
+        # (sanitized 등 부분집합 뷰와 중복 방지), 없으면 로드되는 그룹 전부 병합
+        # (kk처럼 설정=분할인 데이터셋의 침묵 부분 로드 방지).
         groups: dict[str, list[str]] = {}
         for f in pq:
-            top = str(Path(f).parent.relative_to(root))
-            groups.setdefault(top, []).append(f)
+            parent = Path(f).parent
+            groups.setdefault("." if parent == root else parent.name, []).append(f)
         order = sorted(groups, key=lambda g: (not g.startswith("full"), g))
         rows: list[dict] = []
         for g in order:
             try:
-                rows = list(load_dataset("parquet", data_files=groups[g], split="train"))
-                break
+                part = list(load_dataset("parquet", data_files=groups[g], split="train"))
             except Exception:
                 continue
+            rows += part
+            if g.startswith("full"):
+                break
         if not rows:
             for f in pq:
                 try:
@@ -370,10 +383,15 @@ def _load_rows_first(tried: list) -> tuple:
     from pathlib import Path
 
     for c in tried:
-        if Path(c).exists():
+        if not Path(c).exists():
+            continue
+        try:
             rows = _load_rows_any(c)
-            if rows:
-                return c, rows
+        except Exception as e:  # 손상/부분 파일(비원자 쓰기 잔재)은 다음 후보로
+            print(f"[data] 후보 판독 실패, 건너뜀: {c} ({type(e).__name__}: {e})")
+            continue
+        if rows:
+            return c, rows
     return None, None
 
 

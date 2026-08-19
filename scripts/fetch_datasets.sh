@@ -30,13 +30,13 @@ for t in $TARGETS; do
     mbpp)
       if [ -e "$DATASETS_DIR/mbpp/mbpp.jsonl" ]; then echo "[fetch] mbpp 있음, 스킵"; continue; fi
       _fetch mbpp '
-import json, sys
+import json, os, sys
 from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "mbpp"; out.mkdir(parents=True, exist_ok=True)
 ds = load_dataset("google-research-datasets/mbpp", "full")
 n = 0
-tmp = out / "mbpp.jsonl.tmp"
+tmp = out / ("mbpp.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for split in ds:
         for r in ds[split]:
@@ -48,12 +48,12 @@ print("mbpp.jsonl:", n, "rows")' || fail=1 ;;
     math500)
       if [ -e "$DATASETS_DIR/math500/math500_test.jsonl" ]; then echo "[fetch] math500 있음, 스킵"; continue; fi
       _fetch math500 '
-import json, sys
+import json, os, sys
 from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "math500"; out.mkdir(parents=True, exist_ok=True)
 ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
-tmp = out / "math500_test.jsonl.tmp"
+tmp = out / ("math500_test.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for r in ds:
         f.write(json.dumps({"problem": r["problem"], "answer": str(r["answer"])}) + "\n")
@@ -62,12 +62,12 @@ print("math500_test.jsonl:", len(ds), "rows")' || fail=1 ;;
     gsm8k)
       if [ -e "$DATASETS_DIR/gsm8k/gsm8k_train.jsonl" ]; then echo "[fetch] gsm8k 있음, 스킵"; continue; fi
       _fetch gsm8k '
-import json, sys
+import json, os, sys
 from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "gsm8k"; out.mkdir(parents=True, exist_ok=True)
 ds = load_dataset("openai/gsm8k", "main", split="train")
-tmp = out / "gsm8k_train.jsonl.tmp"
+tmp = out / ("gsm8k_train.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for r in ds:
         f.write(json.dumps({"question": r["question"], "answer": r["answer"]}) + "\n")
@@ -76,7 +76,7 @@ print("gsm8k_train.jsonl:", len(ds), "rows")' || fail=1 ;;
     kk)
       if [ -e "$DATASETS_DIR/kk/kk.jsonl" ]; then echo "[fetch] kk 있음, 스킵"; continue; fi
       _fetch kk '
-import json, sys
+import json, os, sys
 from pathlib import Path
 from datasets import get_dataset_config_names, load_dataset
 out = Path(sys.argv[1]) / "kk"; out.mkdir(parents=True, exist_ok=True)
@@ -86,7 +86,7 @@ try:
 except Exception:
     configs = [None]
 n = 0
-tmp = out / "kk.jsonl.tmp"
+tmp = out / ("kk.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for cfg in configs:
         ds = load_dataset(repo, cfg) if cfg else load_dataset(repo)
@@ -101,7 +101,7 @@ print("kk.jsonl:", n, "rows")' || fail=1 ;;
       # 스크립트형 데이터셋이라 최신 datasets 라이브러리로는 load_dataset 불가 —
       # parquet 변환본(refs/convert/parquet)을 hub에서 직접 받아 파싱한다.
       _fetch apps '
-import json, sys
+import json, os, sys
 from pathlib import Path
 from huggingface_hub import HfApi, hf_hub_download
 import pyarrow.parquet as pq
@@ -111,7 +111,7 @@ files = [f for f in HfApi().list_repo_files("codeparrot/apps", repo_type="datase
          if f.endswith(".parquet")]
 assert files, "parquet 변환본 목록이 비었음"
 n = 0
-tmp = out / "apps.jsonl.tmp"
+tmp = out / ("apps.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for rf in sorted(files):
         local = hf_hub_download("codeparrot/apps", rf, repo_type="dataset",
@@ -127,12 +127,12 @@ print("apps.jsonl:", n, "rows")' || fail=1 ;;
     dapo-math)
       if [ -e "$DATASETS_DIR/dapo-math/dapo_math.jsonl" ]; then echo "[fetch] dapo-math 있음, 스킵"; continue; fi
       _fetch dapo-math '
-import json, sys
+import json, os, sys
 from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "dapo-math"; out.mkdir(parents=True, exist_ok=True)
 ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
-tmp = out / "dapo_math.jsonl.tmp"
+tmp = out / ("dapo_math.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for r in ds:
         f.write(json.dumps(dict(r)) + "\n")

@@ -15,8 +15,20 @@ targets=()
 if [ -n "${TARGETS:-}" ]; then
   targets=($TARGETS)
 else
+# 구버전 이중 접미사 run은 신형(단일 접미사) 완주가 있으면 제외 — 같은
+# (dataset, seed)가 두 디렉터리로 이중 집계되는 것 방지
+_legacy_dup() { case "$1" in
+    *-dapo-math-dapo-math) echo "${1%-dapo-math}";;
+    *-math500-math500)     echo "${1%-math500}";;
+    *-mbpp-mbpp)           echo "${1%-mbpp}";;
+    *-kk-kk)               echo "${1%-kk}";;
+    *-apps-apps)           echo "${1%-apps}";;
+    *) echo "";;
+  esac; }
   for d in "$OM_WORK"/runs/v2-*; do
     case "$d" in *smoke*) continue;; esac
+    dup=$(_legacy_dup "$d")
+    [ -n "$dup" ] && [ -f "$dup/DONE" ] && { echo "  [skip] legacy 이중 접미사: $(basename "$d") (신형 완주 존재)"; continue; }
     [ -f "$d/DONE" ] && targets+=("$d")
   done
 fi
