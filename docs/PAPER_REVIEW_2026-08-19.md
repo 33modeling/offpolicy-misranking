@@ -499,10 +499,10 @@ worktree에 `paper/main.aux`, `paper/main.out`이 untracked로 남는다. build 
 | P0-7 CertaGrad 서술·구현 불일치 | **재확인 — 확정** | `certagrad()` 시그니처가 `(cand_pools, val_pool, k, …)` — stale prior 입력 자체가 없다. 원고 후반 two-stage 서술과 다른 알고리즘이다. |
 | P0-8 27B 포화 풀 | **동의** | 기존 B12/B17 게이트와 동일 결론. 추가로 §14.4의 27B 재시작 권고 참조. |
 | E5 live-frac 항상 1 | **재확인 — 확정** | `frontier.py:81` `passrate=(1+s)/(2+n)` 스무딩 후 `0.05<p<0.95` 판정 → n=8이면 전패=0.1, 전승=0.9로 전부 live. F4 전 행 `live_frac_beta=1.0`이 그 증거다. |
-| T1 ε 범위 누락 | **부분 동의 — 경계값 정정** | 범위 누락 지적은 맞다. 다만 본문 구성은 `1/2±ε/2`(gradient ±ε/2)이므로 필요한 제약은 **0<ε<1**이다. 원 점검의 `0<ε<1/2`는 `1/2±ε` 가정으로, 본문 표기와 다르다. |
+| T1 ε 범위 누락 | **재확인 — 확정** | 부록 `paper/main.tex:941-943,949-953`은 성공확률·방문확률을 `1/2±ε`로 정의하고, 그 결과 gradient가 `±ε/2`가 된다. 따라서 필요한 범위는 **`0<ε<1/2`**이다. `ε=1/2`에서는 support가 깨지고 KL이 무한대이며, 그보다 크면 확률 자체가 아니다. |
 | T3 일반 K 증명 공백 | **동의** | 정리는 "any K≥2", 기계 검증은 K∈{2,4,8} 열거. 일반 K 대수 증명을 추가하거나 주장을 좁혀야 한다. |
 | M5 FIRST 철회 vs 처방 모순 | **동의 (정리 방향 제안)** | `main.tex:775-777` "withdrawn from prescriptive use" vs abstract "prescribes one of three policies" 공존 확인. 다만 철회된 것은 downstream **floor-gated 선택 정책**이고 FIRST의 1차 산출은 신뢰도 진단이다. "진단은 유지, 3분기 처방은 가설로 강등"으로 양쪽 문장을 통일하면 모순 없이 수습된다. |
-| R1 서지 제목 오류 | **판정 보류 (온라인 재확인 필요)** | 이 재검증에서는 arXiv 원문 대조를 하지 않았다. A3(서지 확정) 작업에서 4건 모두 원문 대조로 처리할 것. |
+| R1 서지 제목 오류 | **재확인 — 확정** | arXiv 공식 레코드와 다시 대조했다. TIC-GRPO(2508.02833), Multi-Step(2605.20865), ACE(2601.20989), Floor/Ceiling(2608.01704) 네 항목 모두 §7 R1에 적은 원제가 맞고 현재 manuscript entry가 축약·변형되어 있다. |
 | 나머지 (T4–T10, E1–E4, E6–E9, S1–S6, M1–M4, M6–M12, D1–D4) | **대체로 동의** | 표현·범위 축소 및 재현성 요구로, 원고·분석 수정으로 처리 가능하다. 개별 반박 없음. |
 
 ### 14.2 원 점검에 대한 정정 2건
@@ -513,7 +513,7 @@ worktree에 `paper/main.aux`, `paper/main.out`이 untracked로 남는다. build 
    충분하고 rollout 재생성은 불필요하다. 다만 P0-1이 어차피 재생성을 강제하므로
    실무 결론(재생성)은 달라지지 않는다 — 귀속만 정확히 해 둔다: 재생성의
    근거는 P0-1이고, P0-2는 mask 저장 계약 추가로 해결된다.
-2. **T1 경계값**: 위 표 참조 (0<ε<1).
+2. **T1 경계값**: 위 표 참조 (`0<ε<1/2`).
 
 ### 14.3 실무 트리아지 (수정 비용 기준)
 
@@ -537,3 +537,650 @@ worktree에 `paper/main.aux`, `paper/main.out`이 untracked로 남는다. build 
 - 최소 경로: (A) 수정 → §11 체크리스트 1–4를 스모크로 통과(0.5B/7B 소규모)
   → 7B 전면 재실행 → 표·그림 재생성 → 그 수치로 9/3 결정점 판정.
 - (C)·(D)는 재실행과 병렬로 지금 진행 가능하다.
+
+## 15. 추가 전수조사 (3차, 2026-08-19)
+
+이번 절은 §14 이후 repository의 Python 전 파일, shell 실행기, 결과 수확기,
+원고의 수치 생성 경로를 다시 훑어 새로 확인한 사항이다. 단순 스타일 경고는 제외하고,
+논문 결론·실험 비용·재현성 또는 실행 안전성에 영향을 주는 항목만 기록한다.
+
+### 15.1 추가 제출 차단 항목(P0)
+
+#### P0-9. 정본 estimator precision도 shared-jitter로 부풀려짐: 확정 결함
+
+- `src/experiment.py:246-252`의 `topk()`는 seed마다 prompt ID에 고정 jitter를
+  배정한다. `stage_report()`는 oracle과 모든 estimator에 **동일한 seed**를 넘긴다
+  (`src/experiment.py:262,285-290`).
+- 따라서 oracle와 estimator가 같은 tie block을 가지면 서로 독립인 임의 top-k가
+  아니라 같은 prompt를 고른다. 전 점수가 0인 `n=256, k=25` 재현에서 chance는
+  `0.0977`인데 동일 seed precision은 정확히 `1.0`, 독립 seed 한 번은 `0.08`이었다.
+- P2 방어는 split-half floor의 두 seed만 분리했을 뿐, estimator-vs-oracle
+  precision에는 적용되지 않았다. DAPO처럼 유신호 prompt가 2--4개이고 나머지가
+  0점인 조건은 이 결함의 영향을 크게 받는다.
+- `src/judge.py:21-23`와 `src/make_tables.py:56-82`는 jitter 없이 동일한 dict/index
+  순서를 써 같은 인공 overlap을 다시 만든다. 분석 도구마다 결과도 달라진다.
+
+**영향:** DAPO·포화 조건의 stale precision, ceiling 도달, zero-cost baseline 우위,
+regime-map 수치를 현재 값으로 인용할 수 없다. raw score에서 독립 tie randomization을
+여러 번 반복해 평균·구간을 다시 계산하고 모든 표·판정을 한 canonical 함수로 통일해야
+한다. GPU rerun은 필요 없지만 현재 repository에는 해당 대형 run raw score가 없다.
+
+#### P0-10. hybrid mixed cell의 생성 horizon이 더 길어 equal-budget가 아님: 확정 결함
+
+- `bb`와 `pp`는 최대 `max_new_tokens` 응답이다(`src/hybrid.py:88-98`).
+- `bp`와 `pb`는 이미 보존한 response prefix 뒤에 다시 **전체**
+  `max_new_tokens`를 생성한다(`src/hybrid.py:100-110`). cut=0.75면 mixed response는
+  pure cell보다 이론상 약 1.75배 길 수 있다.
+- rollout 수 K만 같을 뿐 생성 token, horizon, 정답 기회, gradient token 수, KV
+  compute가 다르다. `paper/main.tex:638-646,658-661`의 disjoint equal-budget decisive
+  experiment와 인과 해석을 직접 깨뜨린다.
+
+**조치:** 각 sequence별 남은 budget을 `max_new_tokens-prefix_response_tokens`로 제한하고,
+EOS mask를 적용한 실제 response token 수·종료율·보상률을 cell별로 맞춰야 한다.
+기존 hybrid 결과는 P0-1/P0-2와 별개로 폐기 대상이다.
+
+#### P0-11. K-curve가 문자열 manifest를 못 읽어 14B K를 32로 오표기할 수 있음: 확정 결함
+
+- `scripts/run_14b.sh:131-139`는 `fresh_k`를 환경변수 문자열로 저장한다.
+- `src/kcurve_floor.py:107-123`은 값이 Python `int`일 때만 읽고 아니면 32를
+  반환한다. 최소 재현에서 `{"fresh_k":"16"}`은 32, `{"fresh_k":16}`은 16으로
+  해석됐다. `src/kcurve_all.py:53-66`도 이 함수로 micro-group당 rollout 수와 K' 축을
+  만든다.
+- `run_14b.sh`의 단독 기본은 실제 `FRESH_K=16`이다(`scripts/run_14b.sh:134,143`).
+  반면 원고는 모든 oracle이 K=32라고 쓰고(`paper/main.tex:436-439`), 확장표도 14B
+  행을 K'=32로 표시한다(`paper/main.tex:729-755`). v2는 wrapper가 32를 명시해서
+  우연히 fallback과 일치하지만, 기본 실행으로 만든 v1 14B GSM8K에는 적용되지 않는다.
+- 현재 repository/`Downloads/0818`에는 대형 run manifest·raw rollout이 없어 실제
+  14B GSM8K가 K16인지 K32인지 사후 확정할 수 없다.
+
+**영향:** 14B floor 지점과 K=64/128/256 외삽의 가로축이 최대 2배 틀릴 수 있다.
+manifest 문자열을 느슨하게 변환하는 수준이 아니라, 실제 prompt별 rollout 개수와
+micro-group size에서 K를 검증해 기록해야 한다. 원자료 확인 전 표의 14B K 표기를
+보류한다.
+
+#### P0-12. manifest가 artifact를 구속하지 않아 서로 다른 실행이 조용히 섞임: 확정 결함
+
+- manifest는 매 실행 덮어쓰지만(`scripts/run_14b.sh:122-140`), stage는 output 존재만
+  보고 건너뛴다(`src/experiment.py:68-70,158-160,389-415,438-442`).
+- `prep`은 prompts를 다시 쓰고(`src/experiment.py:376-379`), 기존 merged behavior
+  rollout은 그대로 재사용한다. model, revision, dataset pool, seed, N, K, generation
+  config, adapter, projection, clip cap, code가 바뀌어도 content hash 검사가 없다.
+- mtime 기반 stale 이동(`scripts/run_14b.sh:160-224`)은 최신 adapter 한 파일과 shard
+  index만 볼 뿐 설정·내용 동일성을 확인하지 않는다.
+- `merge-grads`는 기대 shard 수, prompt ID 전집합, 정책/config hash를 검사하지 않고
+  발견한 shard만 합쳐 final file을 만든다(`src/experiment.py:491-535`).
+
+**영향:** 성공한 것처럼 보이는 한 run 안에 서로 다른 prompt/model/policy/K의 artifact가
+섞일 수 있고, 덮어쓴 manifest는 이를 오히려 현재 설정으로 위장한다. immutable run ID와
+config digest를 모든 artifact에 넣고, model/tokenizer revision·prompt hash·adapter hash·
+generation config·projection spec을 검증한 뒤에만 재사용해야 한다.
+
+#### P0-13. CertaGrad의 보증·비용·평가 대상이 서로 다름: 확정 결함
+
+1. `certagrad()`와 `certagrad_scalar()`는 매 adaptive draw 뒤 fixed-n interval을 반복
+   검사한다(`src/certagrad.py:104-169,233-262`). candidate Bonferroni만 있고 시간축
+   보정이 없어 optional stopping 하에서 advertised delta coverage가 성립하지 않는다.
+2. scalar 관측치는 group별 cosine의 평균이다(`src/certagrad.py:205-227`). oracle은
+   `cos(mean(group gradients), mean validation gradient)`이다
+   (`src/experiment.py:226-232`). 두 값은 일반적으로 다르며, 재현 예에서는 각각
+   `0.4502`와 `0.0`이었다.
+3. scalar는 `val_pool.mean()`으로 validation group 전체를 처음부터 사용하면서
+   `fresh_groups`에는 candidate draw만 센다(`src/certagrad.py:205-215,233-262`). vector
+   CertaGrad와 uniform은 validation cost를 센다(`src/certagrad.py:132,173-184`).
+4. sweep은 이 서로 다른 estimand와 비용을 그대로 oracle/uniform에 비교한다
+   (`src/c2_sweep.py:92-107`). selection과 truth가 같은 micro-group pool을 쓰는 기존
+   P0-7 leakage도 남아 있다.
+
+**영향:** `paper/main.tex:603-627,985-993`의 “certification measuring instrument”,
+delta 보증, 5--8 orders 결론은 현재 구현으로 뒷받침되지 않는다. confidence sequence
+또는 time-uniform union bound, 하나의 명시적 estimand, validation 관측 비용 포함,
+selection/truth 독립 split으로 재설계해야 한다.
+
+#### P0-14. 27B 실행기는 유효하지 않은 smoke와 구조적 OOM stage를 실행함: 확정 결함
+
+- `scripts/go_27b.sh:30-31`은 `FRESH_K=4`로 smoke를 돌린다. 기본
+  `micro_group=4`라 prompt당 group이 하나뿐이고, oracle split은 `h=0`이 되어
+  empty mean/NaN을 만든다(`src/experiment.py:213-232,526-533`). smoke report 존재는
+  floor/report 경로의 유효성을 검증하지 못한다.
+- 같은 script는 smoke와 본실행 모두 `OM_SKIP_HYBRID=1`을 설정하지 않는다
+  (`scripts/go_27b.sh:30-31,61-62`). 그러나 runner 자체가 27B hybrid의 pi+beta 동시
+  상주가 80GB에서 불가능하다고 명시한다(`scripts/run_14b.sh:258-263`).
+- `run_14b.sh`는 `set -uo pipefail`만 사용하고 merge/report `run_stage` 실패를 확인하지
+  않은 채(`scripts/run_14b.sh:256-257`) 마지막에 `DONE`을 만든다
+  (`scripts/run_14b.sh:273-274`). hybrid를 skip하는 대형 모델 경로에서는 부분 결과가
+  완주로 표시될 수 있다.
+
+**조치:** smoke는 `fresh_k >= 2*micro_group` 및 나눗셈 조건을 강제하고 27B에서는
+hybrid를 명시적으로 제외한다. 모든 필수 stage를 `|| exit 1`로 묶고 최종 artifact
+schema·coverage 검증을 통과한 경우에만 원자적으로 DONE을 써야 한다. `go_new.sh`의
+`OM_SKIP_HYBRID=1` 경로를 정본으로 합치는 편이 안전하다.
+
+### 15.2 추가 주요 구현·재현성 문제(P1)
+
+#### E10. rollout/shard 완결성 검사가 정확한 K를 보장하지 않음
+
+- `merge_rollouts()`는 prompt 존재와 중복 rollout ID만 검사하고, prompt마다 정확히
+  K개인지와 ID가 `0..K-1`인지 검사하지 않는다(`scripts/run_14b.sh:47-75`).
+- `make_hard_pool.py:59-67`도 prompt coverage가 불완전해도 live row가 하나라도 있으면
+  partial pool을 기록한다. prompt별 prescreen K는 확인하지 않는다.
+- behavior K가 `k_cell`보다 작아도 hybrid는 `b_rows[:k_cell]`을 그대로 사용해 bb/bp와
+  pp/pb의 K가 달라질 수 있다(`src/hybrid.py:84-110`).
+
+각 artifact에 기대 prompt ID와 정확한 K·rollout ID 집합을 검증하고, 하나라도 다르면
+merge/DONE을 거부해야 한다.
+
+#### E11. hard pool provenance가 모델 간 충돌하고 선택 불확실성을 버림
+
+- prescreen run 디렉터리는 model tag를 포함하지만 output은 공통
+  `$OM_WORK/pools/$DS-hard.jsonl`이다(`scripts/prescreen_pool.sh:14-16`). 다른 모델·revision이
+  이전 모델의 pool을 그대로 사용할 수 있다(`scripts/go_27b.sh:42-47`,
+  `scripts/go_new.sh:33-38`).
+- pool row에는 원본 dataset ID, prescreen model/revision, K, seed, pass-rate, 설정 hash가
+  없다(`src/make_hard_pool.py:49-76`).
+- K=8에서 우연히 mixed reward였던 prompt를 고르는 절차는 winner's curse/regression-to-
+  mean을 만든다. 본실행 liveness는 별도 표본으로 다시 qualification해야 한다.
+- `go_new.sh:34`는 0-byte 포화 pool을 “미실행”으로 보고 호출 때마다 prescreen을 반복한다.
+  이 문제를 고친 `go_27b.sh:43-53`과 동작이 다르다.
+
+#### E12. 결과 수확이 run별 divergence 파일을 덮어씀
+
+`scripts/go_v2.sh:125-133`은 모든 run의 `divergence_stats.shard*.json`을 같은 결과
+폴더·같은 basename으로 복사한다. 뒤 run이 앞 run을 덮어써 artifact bundle에서 KL,
+ESS, clip fraction의 run provenance가 사라진다. run별 하위 폴더 또는 tag prefix와
+checksum이 필요하다.
+
+#### E13. judge/readout의 인과 gate가 하나의 일관된 조건을 요구하지 않음
+
+- C1은 g10과 g01 실패가 서로 다른 run에서 나와도 통과한다
+  (`src/judge.py:53-96`).
+- C1'은 각 축이 실패한 run들 중 **어느 한 cut**에서 한 번만 strict improvement를
+  보이면 OR로 누적한다(`src/judge.py:98-140`). 두 축의 회복이 같은 run·같은 cut에서
+  일어날 필요가 없고 세 cut 탐색의 다중비교 보정도 없다.
+- `readout_summary.py:74-94`는 두 one-sided cell이 같은 run에서 모두 나빠야 하고,
+  pp가 두 mixed cell을 같은 cut에서 이겨야 한다. judge와 의미가 다르다.
+- C3 문서는 oracle/인증 선택을 말하지만 코드는 oracle과 random만 비교한다
+  (`src/judge.py:147-160`).
+
+사전 등록 gate는 run×cut 단위의 하나의 사건으로 정의하고 seed 반복 및 다중비교를
+처리해야 한다. judge, readout, table generator가 같은 판정 함수를 호출해야 한다.
+
+#### E14. downstream budget·seed·tie 처리에 추가 결함이 있음
+
+- selector top-k는 jitter 없이 index/dict order로 tie를 자른다
+  (`src/train_downstream.py:132-141`).
+- random selector와 학습 prompt RNG가 모든 run에서 `Random(0)`으로 고정되고
+  (`src/train_downstream.py:46,133-134`), `scripts/go_full.sh:61-63`도 run seed를 넘기지
+  않는다. random baseline의 seed 분산을 잴 수 없다.
+- `max(1, (budget-selection_cost)//k)` 때문에 selection cost가 총예산을 이미 넘겨도
+  학습 한 step을 실행한다(`src/train_downstream.py:142-145`).
+- `go_full.sh:56-70`은 source 네 개를 동시에 띄워 GPU가 4장보다 적으면 같은 GPU에
+  모델 여러 벌을 올린다.
+
+#### E15. frontier의 비용과 요약 통계가 비교 기준과 다름
+
+- behavior rollout이 없으면 모든 prompt를 smoothed pass-rate 0.5로 채운다
+  (`src/frontier.py:74-82`). 누락 artifact가 가장 informative한 predictor처럼 보일 수 있다.
+- fresh 비용은 micro-group 수로 세지만 원고와 일부 출력은 rollout 수로 읽힌다
+  (`src/frontier.py:206-223`). 기본 group size 4만큼 절대 비용 단위가 다르다.
+- divergence shard를 token/rollout 수로 가중하지 않고 단순 평균한다
+  (`src/frontier.py:309-318`).
+- F3는 budget이 다른 정책 중 family별 최고 precision만 비교한다
+  (`src/frontier.py:353-368`). budget-matched 우위가 아니다.
+- 48-prompt floor gate는 top-k가 약 4개이고 한 진단 split에 의존해 임계값 분산이 매우
+  크다(`src/frontier.py:225-250`). “48이면 충분”에는 별도 power/calibration이 필요하다.
+
+#### E16. code-domain loader는 확정 crash와 host code-execution 위험이 있음
+
+- `src/data.py:258-272`의 `_maybe_json_list()`는 `json`을 import하지 않는다. 문자열로
+  저장된 MBPP tests 또는 KK names/solution에서 실제 호출하면 `NameError`가 재현된다.
+- MBPP/APPS reward는 모델 생성 코드를 host Python으로 실행한다
+  (`src/data.py:443-489`). `python -I`는 Python path 격리일 뿐 filesystem, network,
+  subprocess, fork, CPU/memory를 격리하지 않는다. APPS `capture_output=True`에는 output
+  크기 제한도 없다.
+
+code-domain 실험은 container/seccomp, non-root UID, read-only filesystem, network off,
+cgroup CPU/memory/PID/output 제한 안에서 실행해야 한다.
+
+#### E17. reset·harvest가 실패 또는 정리 누락을 숨김
+
+- soft reset은 `$OUT_ROOT/drift*` 자식만 순회해 v2처럼 artifact가 run root에 있는 구조를
+  정리하지 못한다(`scripts/reset_run.sh:43-61`). 완료 메시지 뒤에도 score/floor가 남는다.
+- `pkill -f "src/experiment.py"`와 전역 `gpu_keepalive` kill은 다른 run까지 종료한다
+  (`scripts/reset_run.sh:21-24`).
+- `harvest.sh`는 kcurve/reversal/stats 실패를 `|| true`와 stderr 폐기로 숨긴다
+  (`scripts/harvest.sh:12-20`). 빈·부분 보고서도 전달 폴더에 들어갈 수 있다.
+- `make_tables.py`는 표 생성 예외를 문장 하나로 넣고 exit 0을 반환한다
+  (`src/make_tables.py:305-322`). 자동 수확기가 partial table을 성공으로 오인한다.
+
+#### E18. 통계 도구의 tie·zero·K 규칙이 통일되지 않음
+
+- `experiment/judge/frontier/make_tables`는 `int`, `stats/readout/reversal/kcurve`는
+  `round`를 쓴다. P0-5가 분석 도구 전체에 퍼져 있다.
+- report는 ID-correlated same-seed jitter, stats/readout은 한 RNG stream을 순차 소비,
+  kcurve/precheck는 독립 seed, judge/make_tables/downstream은 deterministic order다.
+- `stats_extra.py:37-40`의 sign interface는 loss 수를 받지 않고 `0.5**wins`를 출력한다.
+  모든 non-tie가 win일 때만 맞는 식이다.
+- `reversal_freq.py:103-128`은 exact `score==0`으로 signal을 판정하지만 다른 도구는
+  gradient norm `<1e-6`을 쓴다. 수치상 작은 noise가 signal로 분류될 수 있다.
+- `tag_of()`는 dapo/math500/hard/27b가 아닌 MBPP·KK·APPS·신규 모델 run을 GSM8K로
+  분류한다(`src/kcurve_floor.py:126-133`, `src/precheck_hard.py:118-125`). 사전 등록
+  majority vote가 다른 task run으로 오염될 수 있다.
+
+### 15.3 원고에 직접 미치는 추가 영향
+
+1. `paper/main.tex:371-377`의 “20 jitter pairs”는 정본 report의 floor 1쌍 및
+   estimator precision same-jitter와 모두 다르다.
+2. `paper/main.tex:436-441,729-755`의 전 조건 K=32와 K-curve 표는 P0-11 원자료
+   확인 전 확정 수치로 둘 수 없다.
+3. `paper/main.tex:638-661`의 equal-budget hybrid guard는 P0-10 때문에 구현되지 않았다.
+4. `paper/main.tex:603-627,985-993`의 certification 보증·비용 결론은 P0-13을 해결한
+   뒤 다시 산출해야 한다.
+5. `paper/main.tex:680-682`의 “every RLVR run already produces”는 micro-group gradient와
+   split artifacts가 일반 run의 기본 산출물이 아니므로 사실과 다르다.
+6. `paper/main.tex:441,661,998-1003`의 manifest 검증·배포 주장은 현재 manifest가
+   artifact hash를 구속하지 않고 repository에 대형 raw result가 없다는 사실과 충돌한다.
+7. 서지 4건의 제목 오류는 arXiv 공식 레코드로 재확인했다. §14.1 R1의 보류 판정을
+   확정으로 갱신했다.
+
+### 15.4 수정 우선순위 갱신
+
+1. **즉시 중단/격리:** 현재 generation 계약으로 돌고 있는 27B 결과를 제출용 수치로
+   승격하지 않는다. 기존 run directory를 수정된 설정과 재사용하지 않는다.
+2. **CPU 우선 복구:** raw score가 있는 서버에서 P0-9 tie-independent precision과
+   P0-5 동일 k를 먼저 재계산한다. 이 결과가 핵심 regime 결론을 바꾸는지 확인한다.
+3. **runner 계약 수정:** P0-12/P0-14/E10을 먼저 고쳐 실패·혼합 run이 DONE이 되는
+   경로를 막는다. 이후에만 비싼 GPU rerun을 시작한다.
+4. **rollout/hybrid 수정:** P0-1/P0-2 generation·mask 계약과 P0-10 remaining-horizon를
+   함께 고치고 unit test를 만든다.
+5. **인증 주장 보류:** P0-13이 해결될 때까지 CertaGrad를 certified procedure나
+   5--8-order lower-bound instrument로 부르지 않는다.
+6. **27B 가설 검증:** model-specific hard-pool manifest와 독립 qualification gate를
+   통과한 pool에서만 B17을 수행한다. 포화 pool은 포화 사례로만 기록한다.
+
+### 15.5 추가 완료 판정 체크리스트
+
+- [ ] all-tie synthetic에서 estimator-vs-oracle expected precision이 chance로 수렴함
+- [ ] hybrid 4 cell의 실제 response-token 분포와 최대 horizon이 일치함
+- [ ] manifest/config를 하나라도 바꾸면 stale artifact 재사용이 거부됨
+- [ ] 모든 rollout artifact가 prompt별 정확 K와 `rollout_idx=0..K-1`을 만족함
+- [ ] K-curve 축이 manifest 문자열이 아니라 raw artifact count와 일치함
+- [ ] CertaGrad CI가 time-uniform coverage simulation을 통과하고 validation 비용을 포함함
+- [ ] scalar/vector/oracle이 같은 estimand를 사용하고 selection/truth가 독립임
+- [ ] 27B smoke가 최소 2 micro-group/half를 가지며 hybrid 없이 완료됨
+- [ ] 필수 stage 실패 시 DONE이 생성되지 않음
+- [ ] hard pool 파일명이 model/revision/config hash를 포함하고 독립 liveness 재검증을 통과함
+- [ ] MBPP/KK string-field loader test와 sandboxed code-reward integration test가 통과함
+- [ ] table/harvest 도구가 partial artifact에서 nonzero exit하며 run별 파일을 덮어쓰지 않음
+
+### 15.6 이번 추가 점검의 실행 검증
+
+- `.work/.venv-cu126/bin/python -m compileall -q src tests scripts`: 통과.
+- 전체 `scripts/*.sh`에 대한 `bash -n`: 통과.
+- `ruff check src tests`: 90 diagnostics. 대부분 스타일/유지보수 항목이며, 실제 실행
+  결함 `src/data.py:265 F821 Undefined name json`은 E16으로 승격했다.
+- `find_fresh_k()` 문자열/int manifest 최소 재현: 각각 32/16 반환(P0-11).
+- all-tie top-k 최소 재현: same-seed precision 1.0, independent-seed 0.08,
+  chance 0.0977(P0-9).
+- scalar estimand 최소 재현: mean group cosine 0.4502, cosine of mean gradient 0.0(P0-13).
+- repository와 `/home/kms/Downloads` 검색: 대형 run manifest/raw rollout 없음. local smoke
+  artifact만 존재해 14B K와 대형 precision을 이 머신에서 재산출할 수 없었다.
+
+---
+
+## 16. 실험을 제외한 수식·본문·인용 전수 점검 (4차, 2026-08-19)
+
+이번 절은 실험 수치의 진위와 구현 결함을 판정 대상에서 빼고, `paper/main.tex`의
+population 수식, theorem/corollary/proposition, measurement ceiling, certification 수식,
+관련연구 설명과 참고문헌만 다시 검토한 결과다. 결론부터 말하면 **2x2 change-of-measure와
+두 반례의 부호는 맞지만, 현재 정리의 양화 범위, metric-blindness corollary, measurement
+ceiling 증명은 그대로 제출할 수 없다.**
+
+### 16.1 수식별 최종 판정
+
+| 대상 | 판정 | 핵심 이유 |
+|---|---|---|
+| `g00/g10/g01/g11` change-of-measure (`282-307`) | **조건부 타당** | exact unclipped ratio, support, 동일 환경, 적분가능성이 있으면 항등식과 두 error decomposition이 맞다. |
+| continuation/occupancy 반례 (`939-955`) | **타당** | 직접 재유도와 verifier가 모두 `g_pi=-epsilon/2`, 실패 cell `=+epsilon/2`를 확인한다. |
+| arbitrarily small KL | **타당하나 문장 오류** | 정확한 KL은 `2 epsilon log((1/2+epsilon)/(1/2-epsilon)) = 8 epsilon^2 + O(epsilon^4)`이다. 단 `0<epsilon<1/2`, `epsilon -> 0`인 family로 써야 한다. |
+| 모든 `K>=2` group normalization | **결론은 타당, 증명 누락** | 이진 보상과 현재 두 construction에는 일반 K 폐형식 증명이 가능하다. K=2,4,8 열거만으로 현재 문장의 일반성은 증명되지 않는다. |
+| Metric blindness corollary (`327-337`) | **현재 형태는 수학적으로 성립하지 않음** | diagnostic class가 정의되지 않았고, pointwise true-gradient cosine은 오히려 `-1`로 실패를 탐지한다. norm/margin lower bound가 필요하다는 결론도 단독으로는 나오지 않는다. |
+| Disagreement proposition (`339-360`) | **예제 명제만 타당, 제목·후속 설명 과장** | continuation 예제에서 `cos(g10,g01)=-1`은 맞지만 두 one-sided cell의 동시 실패 정리가 아니다. |
+| Measurement ceiling (`385-407,967-980`) | **증명 결함 및 가정 누락** | Spearman-Brown 조건, estimator의 Gaussian/Markov 조건, iid prompt 조건이 빠졌고 correlation에서 top-k overlap으로 넘어가는 단계가 임의 estimator에는 성립하지 않는다. |
+| angular radius `arcsin(r/||mu_hat||)` (`617`) | **deterministic ball 아래 타당** | `r<||mu_hat||`일 때 ball 안 vector의 최대 방향각이다. 다만 그 ball 자체의 coverage와 순차 재사용은 별도 문제다. |
+| 5-8 orders certification 결론 | **일반 정리 아님** | `alpha(m)=arcsin(c/sqrt(m))` 외삽과 특정 CI가 맞다는 조건 아래의 산수일 뿐, 모든 top-k 인증 알고리즘의 lower bound가 아니다. |
+
+### 16.2 2x2 항등식에서 빠진 가정과 정의
+
+`paper/main.tex:282-307`의 식은 다음 조건을 명시하면 맞다.
+
+1. 유한 horizon이거나 score-weighted return이 적분가능하고 미분과 기대값 교환이 가능하다.
+2. target trajectory measure가 behavior measure에 절대연속이다. 즉 `pi(a|h)>0`인
+   target-reachable `(h,a)`에서는 `beta(a|h)>0`이어야 한다.
+3. 두 정책은 같은 initial-state distribution, transition dynamics, reward function을 쓴다.
+4. `r_j`는 clipping, truncation, self-normalization이 없는 정확한 likelihood ratio다.
+5. `Q_t^beta(h,a)=E[R|H_t=h,A_t=a, A_{t+1:T}~beta]`, `d_pi`, `d_beta`를
+   명시해야 한다. 현재 원고는 이 기호들을 정의하지 않는다.
+6. variable-length response에서는 EOS를 trajectory action으로 포함할지와 ratio product의
+   종료점을 정의해야 한다.
+
+이 조건 아래 `P_t r_t`는 prefix와 현재 action을 target measure로 바꾸므로
+`g10=Sum_t E_{d_pi,pi}[Q_t^beta z_t]`이고, `r_t S_t`는 action과 continuation만
+바꾸므로 `g01=Sum_t E_{d_beta,pi}[Q_t^pi z_t]`이다. 따라서 본문의 두 error
+decomposition은 대수적으로 맞다. `P_t r_t S_t`는 전체 trajectory ratio이므로
+`g11=g_pi`도 맞다.
+
+다만 `g_pi`는 앞에서 vector로 정의했는데 Theorem 1에서는 갑자기
+`g_pi=-epsilon/2`인 scalar처럼 쓴다. 반례는 “첫 logit에 대한 한 좌표” 또는 “고정
+방향으로 투영한 directional gradient”에 대한 결과임을 theorem statement에서 밝혀야 한다.
+
+### 16.3 반례 정리의 정확한 수식
+
+부록은 확률을 `1/2 +/- epsilon`으로 정의한다. 따라서 Theorem 1의 “for every
+`epsilon>0`”은 틀리고 정확한 범위는 `0<epsilon<1/2`다. 두 construction에서 정책을
+바꾼 Bernoulli의 trajectory KL은 정확히
+
+```text
+D_KL(pi || beta)
+  = 2 epsilon log((1/2 + epsilon)/(1/2 - epsilon))
+  = 8 epsilon^2 + O(epsilon^4),  epsilon -> 0.
+```
+
+그러므로 고정된 하나의 `epsilon`에 “KL is `O(epsilon^2)`”라고 쓰기보다,
+`epsilon downarrow 0`으로 가는 policy family와 상수 범위를 명시해야 한다. KL 방향도
+`D_KL(pi || beta)`로 고정한다.
+
+일반 group size는 열거 대신 다음 한 줄로 닫을 수 있다. `M`을 K개 rollout 중 성공 수,
+`Delta=E[z|R=1]-E[z|R=0]`라 하자. 두 construction 모두 `P(R=1)=1/2`이고
+`E[z]=0`이므로 raw gradient는 `g=Delta/4`다. population-denominator group std를 쓰고
+동일보상 group의 update를 0으로 정의하면
+
+```text
+E[g_group | M]
+  = sqrt((M/K)(1-M/K)) Delta,
+E[g_group]
+  = 4 E[sqrt((M/K)(1-M/K))] g.
+```
+
+마지막 계수는 모든 `K>=2`에서 양수이므로 부호가 보존된다. sample-std나 denominator
+epsilon을 쓰더라도 계수만 양수로 바뀐다. 원고에는 zero-variance group의 `0/0` 처리
+convention과 이 일반 K 증명을 넣어야 한다.
+
+### 16.4 Metric-blindness와 disagreement의 논리 오류
+
+1. `norm-blind, scale-invariant single-estimator diagnostic`가 함수의 정의역, 관측 정보,
+   연속성까지 전혀 정의되지 않았다. 이 상태에서는 “모든 그러한 diagnostic”이라는
+   보편명제를 증명할 수 없다.
+2. 원고가 넓게 말하는 “gradient cosine은 blind”는 거짓이다. 반례에서 실패 estimator와
+   true current gradient의 cosine은 `-1`이므로, fresh oracle과 비교하는 cosine은 즉시
+   탐지한다. 성립 가능한 주장은 “stale estimator의 checkpoint self-cosine만으로는
+   배제할 수 없다”처럼 실제 관측 가능한 특정 metric으로 좁혀야 한다.
+3. KL upper bound와 ESS lower bound만으로 실패를 배제할 수 없다는 결론은 살릴 수 있다.
+   continuation 반례의 retained prefix weight는 정확히 1이라 one-sided ESS가 최대인데도
+   부호가 뒤집히고, full ratio ESS도 `epsilon -> 0`에서 최대값으로 간다.
+4. construction은 신호 norm과 두-prompt ranking margin도 `epsilon`과 함께 0으로 보낸다.
+   따라서 “어떤 signal-strength/error-control 가정이 필요하다”까지는 말할 수 있지만,
+   **gradient-norm lower bound나 margin lower bound 자체가 필요하고 충분하다는 결론은
+   나오지 않는다.** 양의 norm도 큰 bias로 뒤집힐 수 있고, margin은 estimator error의
+   upper bound와 함께 있어야 순위를 보장한다.
+5. Proposition 제목의 “double failure”는 continuation 예제의 `g00`과 `g10`을 뜻할 뿐,
+   `g10`과 `g01`의 동시 실패가 아니다. 제목을 “Cell disagreement in the continuation
+   construction” 정도로 바꿔야 한다.
+6. `358-360`의 “both one-sided가 크게 실패하려면 두 bias term이 agree하므로
+   non-generic”도 일반 vector에서는 틀리다. 두 bias는 true gradient에 대해 각각 adverse
+   projection만 가지면 되고 서로 같은 방향일 필요가 없다. 50k random search는 지정한
+   proposal에서의 음성 관찰이지 이 문장의 증명이 아니다.
+7. theorem은 한 prompt의 scalar directional gradient reversal을 보인다. 논문 제목의
+   top-k misranking으로 연결하려면 verifier에만 있는 two-prompt top-1 construction을
+   원고에 넣고, 그 ranking margin도 `epsilon`과 함께 사라진다는 한계를 밝혀야 한다.
+
+안전한 corollary는 다음 정도다: “임의의 `delta>0`에 대해 `D_KL(pi||beta)<delta`이고
+retained-weight ESS가 최대에 임의로 가까우면서도 각 one-sided estimator의 한 방향 성분이
+true gradient와 반대인 예제가 존재한다. 따라서 KL과 ESS만으로 sign safety를 보장할 수
+없다.” 이 문장은 현재 construction으로 직접 증명된다.
+
+### 16.5 Measurement ceiling의 수학적 결함
+
+Spearman-Brown 식 자체는 parallel-test model에서 맞다. 즉
+`a=t+e_a`, `b=t+e_b`, `e_a,e_b`가 iid이고 `t`와 독립이며 full oracle이
+`o=(a+b)/2`일 때
+
+```text
+rho_h = Corr(a,b) = Var(t)/(Var(t)+Var(e)),
+rho_f = Corr(o,t)^2 = 2 rho_h/(1+rho_h).
+```
+
+현재 Proposition 2의 “exchangeable Gaussians”와 `Corr(a,b)=rho_h`만으로는 이 구조가
+나오지 않는다. 최소한 다음을 고쳐야 한다.
+
+1. `t_i`와 half errors가 prompt별 iid Gaussian이고, halves가 equal-variance parallel
+   measurements이며, `o_i=(a_i+b_i)/2`라고 명시한다. “exchangeable”만으로는 부족하다.
+2. reliability가 `Corr(o,t)^2`인지 correlation 자체인지 정의한다. 현재 식은 reliability를
+   squared correlation으로 쓰고 다음 줄에서 `sqrt(rho_f)`를 correlation으로 쓴다.
+3. `0<=rho_h<=1`을 가정한다. 유한표본에서 관측되는 음수 half-correlation에는 이
+   reliability model과 역변환을 그대로 적용할 수 없다.
+4. `Ovl(c)`가 오직 c의 함수가 되려면 prompt 간 pair가 iid이고 tie가 없는 연속분포여야
+   한다. 일반 exchangeability나 cross-prompt dependence에서는 전체 covariance가 필요하다.
+
+부록의 proof도 현재 형태로는 닫히지 않는다. `s`가 standardized이고 oracle noise와
+독립이면 `Corr(s,o)=Corr(s,t)sqrt(rho_f)`라는 correlation bound는 맞다. 그러나 다음
+문장의 Gaussian top-k overlap 함수를 적용하려면 `(s,o)`가 jointly Gaussian이어야 한다.
+Proposition은 `s`를 “any estimator”로 두므로 이 조건이 없다. 예를 들어 `s=f(t)`인
+strictly increasing nonlinear transform은 `t`와 top-k가 완전히 같지만 Pearson
+correlation은 1보다 작고 `(s,o)`도 jointly Gaussian이 아니다. 이 예는 correlation 기반
+proof step이 임의 estimator에 적용되지 않음을 바로 보여준다.
+
+또한 `Corr(s,t)=1`의 equality condition은 “monotone transform”이 아니라 거의 확실하게
+**positive affine transform**일 때다. 임의 estimator까지 포함하는 ceiling을 유지하려면
+`s <- t -> o` Markov/no-extra-information 조건 아래 top-k의 Bayes-optimal selector가
+`TopK(t)`임을 별도로 증명해야 한다. 더 간단한 수습은 proposition을 jointly Gaussian
+`(s,t,o)`에 한정하는 것이다.
+
+마지막으로 `floor = Ovl(rho_h)`와 ceiling은 population **expected overlap** 식이다. 한
+번 관측한 유한 `n` split-half overlap은 그 기대값과 같지 않고, discrete하며 불확실성이
+있다. 따라서 “observed floor를 invert하면 well-posed”, “ceiling에 도달했다”, “ceiling
+위 결과는 artifact”라고 단정할 수 없다. CI를 통해 `rho_h`와 ceiling의 구간을 전파해야
+한다. 낮은 ceiling은 noisy oracle과의 기대 agreement를 제한할 뿐 latent utility recovery나
+두 방법 간 통계적 비교를 자동으로 무효화하지도 않는다.
+
+`978-980`의 heavy-tail caveat와 P4 연결도 잘못됐다. P4는 saturation, zero/tied score,
+shared liveness가 만드는 overlap artifact이고 heavy-tail Gaussian-model violation은 별도
+failure mode다.
+
+### 16.6 Certification 수식에서 유지할 것과 버릴 것
+
+`||mu_hat-mu||<=r`, `r<||mu_hat||`일 때 최대 방향각
+`alpha=arcsin(r/||mu_hat||)`은 맞다. 두 vector ball의 cosine interval에
+`alpha_i+alpha_v`를 쓰는 것도 deterministic simultaneous balls가 참이면 보수적으로
+유효하다.
+
+문제는 ball을 만드는 통계와 반복 사용이다.
+
+- 구현의 Gaussian radius는 covariance를 isotropic으로 치환한다. anisotropic Gaussian의
+  norm bound에는 trace뿐 아니라 Frobenius/operator norm 항이 필요하다.
+- adaptive draw마다 fixed-n interval을 다시 보고 멈추므로 time-uniform confidence
+  sequence나 시간축 union bound 없이는 advertised delta coverage가 아니다.
+- `alpha(m)=arcsin(c/sqrt(m))`은 covariance와 c가 sample size에 따라 고정되고 iid
+  `1/sqrt(m)` scaling이 유지된다는 가정이다. candidate radius와 validation radius의 합,
+  estimated variance의 변화도 별도로 반영해야 한다.
+- 따라서 `4.1e5`에서 `1.0e8` 배라는 비율은 해당 extrapolation의 계산값일 수는 있어도
+  “structural”, “proved impossibility”, “never certify”의 근거는 아니다. bandit lower
+  bound와 연결하려면 gap-dependent instance-wise lower bound를 별도로 제시해야 한다.
+
+### 16.7 인용 원문 대조
+
+**원문과 맞는 부분**
+
+- CROPI의 40/50 cosine `>0.6`과 top-10% consistency `28.80%`는 공식 논문 부록 수치와
+  일치한다. CROPI의 practical estimator가 current-token ratio와 behavior group reward를
+  쓰므로 axis 표에서 `g00` 계열로 분류하는 것도 타당하다.
+- Cumulative Token/CTPO는 exact cumulative prefix ratio의 occupancy correction을
+  이론적으로 보이고, practical objective에서는 group outcome reward surrogate와 clipping을
+  쓴다고 명시한다. 원고 `223-226`의 핵심 문제 제기는 이 구분을 유지하면 맞다.
+- TIC-GRPO가 trajectory-level ratio로 current-policy gradient를 겨냥한다는 설명,
+  Data Shapley와 NASH의 random-selection 문제 및 재설계, ACE의 jointly valid weak-CI
+  조건, crowd-reading 논문의 split-half ceiling 설명은 원문 방향과 맞다.
+
+**고쳐야 하는 인용 설명**
+
+1. Multi-Step/NFPO는 다음 `N-1`개 token ratio를 쓰는 연속적인 partial correction이다.
+   `N`이 남은 horizon 전체를 덮을 때만 정확한 `g01`이다. `227-229`의 “restore the
+   outcome axis”는 “interpolates toward `g01`”로 낮춰야 한다.
+2. A Step Back의 theorem은 exact prefix ratio를 쓰지만 실제 제안법 MinPRO는 minimum
+   prefix proxy다. CTPO도 practical clipping 이후에는 population `g10`과 같지 않다.
+   관련연구 표에서 theorem quantity와 implemented algorithm을 같은 cell로 단정하지 않는다.
+3. TIDE 원문은 **가장 negative한 1% token**이 gradient의 거의 절반을 차지한다고 한다.
+   `261-263`의 일반 “top 1%”는 방향 정보를 잃었고, 이를 본 논문의 `0.1% ESS`와 “same
+   behavior”라고 동일시할 근거도 없다. “analogous tail concentration” 정도가 정확하다.
+4. Kaufmann의 top-k bandit lower bound는 gap-dependent identification 배경이다. 현재
+   CertaGrad 측정치를 그 lower bound의 “empirical instance”라고 부를 수는 있어도,
+   본문의 5-8 orders를 그 논문이 보증하는 lower bound처럼 읽히게 하면 안 된다.
+
+**참고문헌 자체의 오류·누락**
+
+- TIC-GRPO, Multi-Step, ACE, Floor/Ceiling 네 제목 오류는 §7 R1과 §15.3에서 이미
+  확정했다.
+- `GradAlign`의 정식 제목은 *GradAlign: Gradient-Aligned Data Selection for LLM
+  Reinforcement Learning*이고 COLM 2026이다. `LearnAlign`의 정식 제목은
+  *LearnAlign: Data Selection for LLM Reinforcement Learning with Improved Gradient
+  Alignment*이고 ACL 2026 Findings다. 현재 항목은 제목과 venue가 불완전하다.
+- Liu et al. 항목은 PMLR 정식 레코드상 2020 출판물이다. UAI 행사 연도 2019를 쓸 경우
+  proceedings year와 혼동되지 않게 정식 BibTeX를 사용해야 한다.
+- arXiv 항목 대부분에 저자와 연도가 없고 Spearman/Brown에는 journal, volume, pages가
+  없다. 현재 manual bibliography는 검색 가능한 최소 서지정보를 충족하지 못한다.
+- setup의 Qwen2.5, GSM8K, MATH-500, DAPO-Math-17k, LoRA, GRPO, JL projection에 원 출처
+  인용이 없다. 특히 `MATH-500`은 원 MATH dataset과 어떤 curated subset을 썼는지
+  dataset ID와 revision까지 밝혀야 한다.
+- `272-274`의 “prior work가 oracle reliability를 보고하지 않았다”는 novelty absence
+  claim은 문헌검색 범위와 날짜를 제시하지 않으면 검증할 수 없다. “To our knowledge”가
+  있어도 systematic-search appendix가 안전하다.
+
+공식 대조 출처: [CROPI](https://aclanthology.org/2026.acl-long.2141/),
+[A Step Back](https://arxiv.org/abs/2601.22718),
+[Cumulative Token](https://arxiv.org/abs/2605.07331),
+[Multi-Step](https://arxiv.org/abs/2605.20865),
+[TIC-GRPO](https://arxiv.org/abs/2508.02833),
+[GradAlign](https://arxiv.org/abs/2602.21492),
+[LearnAlign](https://arxiv.org/abs/2506.11480),
+[TIDE](https://arxiv.org/abs/2608.09836),
+[ACE](https://arxiv.org/abs/2601.20989),
+[Floor/Ceiling](https://arxiv.org/abs/2608.01704),
+[Data Shapley](https://proceedings.mlr.press/v235/wang24cg.html),
+[NASH](https://arxiv.org/abs/2605.10684),
+[Liu et al.](https://proceedings.mlr.press/v115/liu20a.html),
+[Huang and Jiang](https://proceedings.mlr.press/v119/huang20b.html),
+[Kaufmann and Kalyanakrishnan](https://proceedings.mlr.press/v30/Kaufmann13.html).
+
+### 16.8 본문 내부의 비실험적 오류·과장
+
+1. `40-48,95-101,139-141,175-180`의 “any one-sided”, “every monitored metric”,
+   “KL/ESS/cosine blind”는 theorem보다 넓다. “each of the two one-sided population
+   quantities has a counterexample; KL and retained-weight ESS alone do not rule it out”로
+   제한한다.
+2. `67`의 “Exact scores need fresh rollouts”는 finite rollout도 exact score가 아니라
+   on-policy Monte Carlo estimate다. “Estimating the target score requires current-policy
+   rollouts”가 정확하다.
+3. `72-74`의 “Existing estimators correct exactly one axis”는 full trajectory TIC와
+   finite-step partial corrections를 스스로 뒤에서 인용하므로 내부적으로 거짓이다.
+   “Several practical estimators correct at most one axis”로 바꾼다.
+4. split-half overlap을 정의만으로 “recoverable ranking signal”, “conservative floor”라고
+   부를 수 없다. 그것은 지정된 split, budget, tie rule, shared validation target에 대한
+   oracle self-agreement statistic이며, signal interpretation은 추가 noise model에
+   조건부다.
+5. `401-407`의 low ceiling에서 “comparative evaluation is void”와 “further method
+   development cannot show gains”는 Proposition 2가 주지 않는 결론이다. 기대 overlap의
+   상한과 방법 간 검정력은 다른 문제다.
+6. `835-837`은 ceiling 위 결과를 곧바로 artifact라고 하지만 `857-859`는 assumption
+   violation이나 dependence일 수도 있다고 쓴다. 뒤 문장이 맞고 protocol box를 그에
+   맞춰야 한다.
+7. `882-884`의 safety target에 protocol이 “unchanged” 적용된다는 말은 검증되지 않았다.
+   safety score의 noise, partial observability, adversarial reward 조건을 별도 가정으로
+   두어야 한다.
+
+### 16.9 제출 전 수식·인용 수정 우선순위
+
+1. Theorem 1을 scalar/directional statement, `0<epsilon<1/2`, `epsilon -> 0`, exact KL,
+   support 조건으로 다시 쓴다.
+2. 일반 K group-normalization 폐형식 증명과 zero-variance convention을 부록에 넣는다.
+3. Corollary 1을 KL+ESS 단독 불충분 명제로 축소하고 cosine 보편명제 및 norm/margin
+   necessity 문장을 삭제한다.
+4. Proposition 1 제목과 `non-generic` 설명을 고치고 two-prompt ranking construction을
+   원고에 포함한다.
+5. Proposition 2를 parallel iid Gaussian model로 다시 정의하고, jointly Gaussian
+   estimator로 좁히거나 Bayes-optimal top-k 증명을 새로 쓴다. finite-floor uncertainty를
+   ceiling까지 전파한다.
+6. Certification을 theorem/lower bound가 아니라 특정 CI extrapolation으로 명명한다.
+7. 관련연구의 partial/exact/practical correction을 구분하고 정식 BibTeX와 setup 인용을
+   복원한다.
+
+### 16.10 이번 수식 검산
+
+- 외부 theory verifier 재실행: 통과. 두 반례의 전 cell, `KL/epsilon^2 -> 8`,
+  K=2/4/8 group normalization, two-prompt top-1 reversal을 재확인했다.
+- verifier의 50k search는 theorem 증명이 아니라 proposal-dependent 음성 관찰로만 판정했다.
+- 일반 K 식과 Spearman-Brown 식은 위와 같이 손으로 재유도했다.
+- `sympy`는 현재 system Python에 설치되어 있지 않아 symbolic CAS 출력은 만들지 못했다.
+  이 점은 폐형식 유도 자체의 판정에는 영향을 주지 않는다.
+
+## 17. 강한 주장 유지형 이론 개정 (2026-08-19)
+
+§16의 판정 뒤 `paper/main.tex`을 직접 개정했다. 이번 개정은 문제 명제를 단순 삭제한 것이
+아니라, 실제 배포에서 one-sided selector가 사용하는 정보 집합을 정의하고 그 정보 전체에
+대한 no-free-lunch로 강화한 것이다. 아래 상태가 §16의 해당 항목을 대체한다.
+
+### 17.1 One-sided impossibility
+
+- `c in {10,01}` 각각에 대해 `c`-only selector를 정의했다. 임의의 후처리, calibration,
+  threshold, randomized top-k rule, KL, nonzero directional summand의 retained-weight
+  moments, ESS, directional norm, stale self-similarity를 모두 허용하고 omitted ratio
+  axis만 금지한다.
+- 임의의 rollout 수 `N`과 `delta>0`에 대해, 전체 `c`-only 관측 law와 정확한 KL이 같지만
+  true top-1이 반대인 두 pool `W0,W1`을 구성했다.
+- 따라서 randomized selector의 worst-case top-1 error는 최소 `1/2`이고 deterministic
+  selector는 두 pool 중 하나에서 반드시 틀린다. 고정 prompt를 추가하면 임의 top-k
+  boundary에도 그대로 embedding된다.
+- canonical sign reversal은 별도 특수 경우로 유지했다. 정확한 범위 `0<epsilon<1/2`,
+  exact KL, scalar directional statement를 본문에 반영했다.
+- binary group normalization은 모든 `K>=2`에 대해 양의 상수배가 된다는 폐형식 lemma를
+  추가했다.
+
+### 17.2 Measurement ceiling
+
+- estimator 자체가 Gaussian이라는 잘못된 proof를 제거했다.
+- iid latent Gaussian과 equal-variance parallel oracle noise 아래, estimator 정보 `Z`가
+  held-out oracle noise와 latent truth 조건부 독립이면 임의의 nonlinear/randomized
+  selector `S(Z)`를 허용한다.
+- fixed latent vector에서 `TopK(t)`가 oracle top-k inclusion probability를 최대화한다는
+  exchange coupling을 사용해 Bayes-optimality를 증명했다.
+- floor는 population expected overlap으로 정의하고 finite observed floor의 uncertainty를
+  ceiling까지 전파하도록 본문, 표 caption, protocol을 수정했다.
+- ceiling 초과를 곧바로 artifact로 단정하지 않고 parallel-noise model, held-out-noise
+  independence, evaluation pipeline 중 최소 하나의 premise가 깨졌다는 falsification으로
+  바꿨다.
+
+### 17.3 Certification lower bound
+
+- 두 Gaussian boundary prompt의 mean을 swap하는 change-of-measure proposition을 추가했다.
+- 모든 uniformly delta-correct adaptive exact top-k algorithm에 대해
+  `E[N_k+N_{k+1}] >= 2 sigma^2 Delta^{-2} kl(1-delta,delta)`를 증명했다.
+- 기존 5--8 orders 수치는 CI instrument의 plug-in factor로 구분하되, inverse-square
+  dependence 자체는 algorithm-independent minimax obstruction으로 유지했다.
+
+### 17.4 인용·본문 동기화
+
+- Multi-Step/NFPO를 full outcome restoration이 아니라 remaining horizon 길이에 따라
+  `g01`로 수렴하는 partial correction으로 수정했다.
+- TIDE를 일반 top 1%가 아니라 most-negative 1%로 수정하고 ESS와는 analogy라고 구분했다.
+- TIC-GRPO, Multi-Step, ACE, Floor/Ceiling, GradAlign, LearnAlign의 정식 제목과 Liu의
+  proceedings year 표기를 수정했다.
+- true-gradient cosine은 stale-only information이 아니라는 경계를 명시하고, 안전 target은
+  partial observability와 adversarial/misspecified reward를 별도 점검하도록 수정했다.
+
+### 17.5 검증
+
+- `python3 scripts/verify_theory.py`: 통과. 기존 sign reversal, exact IS cells, KL limit,
+  ranking flip, group normalization과 새 indistinguishable-pool construction을 검산했다.
+- `python3 tests/test_reversal_freq.py`: 통과.
+- `latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex`: 통과. undefined reference와
+  overfull box를 제거했고 18-page `paper/main.pdf`를 재생성했다.
+- `tests/test_core.py`는 현재 system Python에 `torch`가 없어 실행하지 못했다. 이번 변경은
+  paper와 standalone theory verifier에 한정되므로 이 미실행은 이론 검산 결과와 분리한다.

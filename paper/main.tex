@@ -13,6 +13,7 @@
 \newtheorem{theorem}{Theorem}
 \newtheorem{proposition}{Proposition}
 \newtheorem{corollary}{Corollary}
+\newtheorem{lemma}{Lemma}
 \newtheorem{remark}{Remark}
 \newcommand{\goo}{g_{00}}
 \newcommand{\gto}{g_{10}}
@@ -43,9 +44,11 @@ by an importance weight over only one part of the trajectory. The
 uncorrected part introduces a bias that current practice assumes is
 negligible, but whether the resulting rankings can actually be trusted has
 not been examined. This raises two questions: (I)~When can a stale ranking be trusted? (II)~What
-should replace it when it cannot? For (I), we prove that any one-sided
-correction can flip the sign of a prompt's gradient while every monitored
-training metric stays normal, and we show empirically that whether this
+should replace it when it cannot? For (I), we prove a no-free-lunch result:
+any selector restricted to either one-sided information set has two
+statistically indistinguishable prompt pools with opposite true top-1
+decisions, even as policy KL vanishes, retained-weight ESS is maximal, and
+stale self-cosine is one. We then show empirically that whether this
 failure occurs is decided by one measurable quantity: the reliability of the
 ranking signal in the prompt pool, which we estimate with a split-half floor.
 For (II), we propose FIRST (Floor-Informed Reliability of SelecTion), a
@@ -64,13 +67,14 @@ selection method is applied or evaluated.
 
 RLVR pipelines choose their training data by scoring each candidate prompt
 with ``how much would training on it help the current policy $\pi$?'' and
-keeping the top $k$. Exact scores need fresh rollouts from $\pi$ for every
+keeping the top $k$. Estimating target-policy scores requires fresh rollouts
+from $\pi$ for every
 candidate, at every selection round. That is expensive. So practice reuses
 the rollouts and rewards produced by an earlier behavior policy $\beta$, and
 applies an importance correction. The correction has two axes: (a)~how the
 current policy \emph{reaches} a token (prefix occupancy), and (b)~how it
-\emph{finishes} afterwards (continuation outcome). Existing estimators
-correct exactly one axis. This is not an oversight: correcting both
+\emph{finishes} afterwards (continuation outcome). Several practical
+estimators correct at most one axis. This is not an oversight: correcting both
 multiplies hundreds of token ratios, and the variance explodes. The implicit
 assumption is that the uncorrected half adds only a small bias---small
 enough to leave the \emph{ranking} intact.
@@ -93,23 +97,26 @@ structural, than a bias--variance account suggests. Our claims come in three
 tiers:
 
 \begin{enumerate}
-\item \textbf{Possibility (proved).} One-sided corrections can flip the sign
-of a prompt's gradient at arbitrarily small policy divergence
-(Section~\ref{sec:theory}). Group normalization does not fix the sign. The
-metrics practitioners monitor---KL, ESS, gradient cosine---provably cannot
-detect it. One warning sign survives on stale data alone: the two one-sided
-cells disagreeing with each other.
+\item \textbf{Impossibility (proved).} For either one-sided information set,
+there are statistically indistinguishable prompt pools with opposite true
+top-1 decisions at arbitrarily small policy divergence
+(Section~\ref{sec:theory}). Group normalization does not fix the sign. Every
+selector and every diagnostic restricted to that information set therefore
+fails on at least one pool, while KL, retained-weight ESS, and stale
+self-cosine are jointly benign. One warning sign available on stale data is
+the two one-sided cells disagreeing with each other.
 \item \textbf{Regime map (measured).} Whether the flip actually happens
 depends on the task--capability regime (Section~\ref{sec:map}). We chart it
 with a pre-registered protocol and find three regimes: one where one-sided
 selection measurably loses precision, one where stale selection tracks the
 oracle, and one where selection degenerates outright.
-\item \textbf{Impossibility (proved + measured).} Where selection matters
-most, neither the decision nor its evaluation can be secured at a practical
-budget. Boundary certification needs 5--8 orders of magnitude more rollouts
-than anyone spends (Section~\ref{sec:cert}). And a measurement ceiling caps
-what any estimator can even \emph{demonstrate} against a noisy oracle
-(Section~\ref{sec:floor}).
+\item \textbf{Measurement limits (proved + measured).} Exact top-$k$
+identification obeys a gap-dependent $\Omega(\sigma^2\Delta^{-2}
+\log(1/\delta))$ lower bound; our observed boundary gaps place direct
+certification 5--8 orders of magnitude beyond the measured budget
+(Section~\ref{sec:cert}). Independently, a decision-theoretic measurement
+ceiling caps what any oracle-noise-oblivious selector can demonstrate against
+a noisy oracle (Section~\ref{sec:floor}).
 \end{enumerate}
 
 Figure~\ref{fig:framework} summarizes the framework and how the sections fit
@@ -117,6 +124,7 @@ together.
 
 \begin{figure}[t]
 \centering
+\resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\footnotesize,
   box/.style={draw, rounded corners=2pt, align=center, inner sep=4pt, fill=blue!4},
@@ -136,8 +144,8 @@ $\begin{array}{c|cc}
 \text{occ.\,}\pi & \gto & \gtt{=}\gpi
 \end{array}$\\ one-sided importance corrections};
 \node[box, right=8mm of grid] (topk) {prompt scores\\$\to$ top-$k$ selection};
-\node[red box, below=3.5mm of grid] (thm) {\textbf{Thm.~1:} any one-sided cell can flip a prompt's\\gradient sign at arbitrarily small KL};
-\node[gray box, right=5mm of thm] (dash) {KL / ESS / cosine\\metrics: \textbf{blind} (Cor.~1)};
+\node[red box, below=3.5mm of grid] (thm) {\textbf{Thm.~1:} either one-sided information set admits\\indistinguishable pools with opposite true top-1};
+\node[gray box, right=5mm of thm] (dash) {KL / ESS / self-cosine\\jointly benign (Cor.~1)};
 \node[gray box, left=5mm of thm] (disagree) {$\cos(\gto,\got)$ disagreement\\= zero-cost warning (Prop.~1; realized, \S\ref{sec:map})};
 \draw[arr] (stale) -- (grid);
 \draw[arr] (grid) -- (topk);
@@ -146,7 +154,7 @@ $\begin{array}{c|cc}
 % ---- layer 2: measurement
 \node[box, below=11mm of thm, xshift=-32mm] (oracle) {on-policy oracle\\($K$ rollouts/prompt)};
 \node[box, right=6mm of oracle] (floor) {corrected split-half \textbf{floor}\\= recoverable ranking signal};
-\node[red box, right=6mm of floor] (ceiling) {\textbf{measurement ceiling} (Prop.~2):\\caps what \emph{any} method can show};
+\node[red box, right=6mm of floor] (ceiling) {\textbf{measurement ceiling} (Prop.~2):\\caps every held-out-noise-oblivious method};
 \node[gray box, below=3mm of floor, xshift=4mm, text width=112mm] (guards)
   {guards from the four self-detected pitfalls (\S\ref{sec:pitfalls}):\enspace
    P1 disjoint samples · P2 independent tie-jitter · P3 equal budgets ·
@@ -172,12 +180,16 @@ $\begin{array}{c|cc}
 \node[lbl, left=1mm of gate.west, anchor=east, xshift=-24mm] {decide};
 \end{scope}
 \end{tikzpicture}
+}
 \caption{Framework overview. \emph{Estimate:} stale-rollout training-data ranking
-uses one of four corrections in a $2{\times}2$ decomposition; one-sided cells
-can silently reverse rankings and the monitored metrics cannot see it
+uses one of four corrections in a $2{\times}2$ decomposition; either
+one-sided information set admits indistinguishable pools with opposite true
+rankings, so no selector or diagnostic restricted to that information can
+guarantee safety
 (\S\ref{sec:theory}). \emph{Measure:} the split-half floor of the oracle,
 computed under four guards, quantifies recoverable signal and induces a
-ceiling on what any method can demonstrate (\S\ref{sec:floor}).
+ceiling on what any held-out-noise-oblivious method can demonstrate under the
+parallel-oracle model (\S\ref{sec:floor}).
 \emph{Decide:} an artifact-only, pre-registered diagnosis routes each pool to one of
 three regimes; in ours the verdict was structural absence
 (\S\ref{sec:diagnosis}).}
@@ -191,7 +203,8 @@ oracle's rollouts into two independent halves, rank the prompts with each
 half, and record the top-$k$ agreement between the two rankings. A low floor
 means the pool offers little recoverable ranking signal at that rollout
 budget, and our ceiling result (Proposition~\ref{prop:ceiling}) shows that no
-method can demonstrate more precision than the floor permits. We applied this
+method conditionally independent of the held-out oracle noise can demonstrate
+more expected precision than the floor permits under the stated model. We applied this
 standard to our own pools by running FIRST (Floor-Informed Reliability of
 SelecTion), the pre-registered diagnosis of Section~\ref{sec:diagnosis}, and
 obtained the verdict \emph{structural absence}: on saturated or
@@ -224,9 +237,10 @@ prefix~\citep{stepback,cumulative} restore the occupancy axis ($\gto$).
 Their guarantees, however, assume a target-policy advantage, and practical
 critic-free objectives replace that advantage with a behavior-generated
 outcome reward; this substitution is the gap our counterexamples use.
-Corrections that reweight the sampled continuation~\citep{multistep} restore
-the outcome axis ($\got$), but not occupancy, when used for per-prompt
-gradient ranking. Full-trajectory corrections~\citep{ticgrpo} restore both
+Corrections that reweight the next $N-1$ sampled tokens~\citep{multistep}
+interpolate toward the outcome-corrected cell ($\got$); they equal it only
+when $N$ spans the remaining horizon. Full-trajectory
+corrections~\citep{ticgrpo} restore both
 axes, but their variance grows with response length, so they serve as a cost
 reference rather than a practical selector. The same tension appeared for
 Data Shapley in supervised data selection: valuation scores failed to
@@ -258,9 +272,9 @@ two failure ingredients we study also appear in adjacent work on on-policy
 distillation~\citep{tide}. There, degenerate repetition loops drive
 token-level agreement to near-zero divergence while outputs collapse, so a
 pointwise metric misses the object being consumed; and raw token log-ratios
-are dominated by the extreme tail, with the top 1\% of tokens carrying
-roughly half the gradient---the same heavy-tail behavior we measure as
-$0.1\%$ ESS for the full correction.
+are dominated by the extreme tail, with the most negative 1\% of tokens
+carrying roughly half the gradient. Our $0.1\%$ full-correction ESS is an
+analogous tail-concentration symptom, not the same statistic.
 
 \paragraph{Reliability of noisy rankings.}
 Our floor and ceiling analysis imports split-half reliability and the
@@ -277,12 +291,17 @@ reported.
 \section{Theory: one-sided corrections and what the monitored metrics cannot see}
 \label{sec:theory}
 
-\subsection{A $2\times 2$ decomposition of stale-gradient estimators}
+\subsection{A \texorpdfstring{$2\times 2$}{2 x 2} decomposition of stale-gradient estimators}
 
 For prompt $x$, response $Y=(A_1,\dots,A_T)$ with terminal verifiable reward
 $R(Y)$, the current-policy gradient is
 $\gpi(x)=\sum_t \mathbb{E}_{H_t,A_t\sim\pi}[Q_t^{\pi}(H_t,A_t)\,z_t]$ with
-$z_t=\nabla_\theta\log\pi(A_t\mid H_t)$. With behavior trajectories, token
+$z_t=\nabla_\theta\log\pi(A_t\mid H_t)$. Throughout this subsection we assume
+a finite horizon $T$, absolute continuity ($\beta(Y)>0$ whenever $\pi(Y)>0$),
+exact unclipped likelihood ratios, and environment transitions that do not
+depend on the policy; implemented estimators that clip ratios for variance
+control are labelled as clipped variants wherever they appear. With behavior
+trajectories, token
 ratios $r_j=\pi(A_j|H_j)/\beta(A_j|H_j)$, prefix products $P_t=\prod_{j<t}r_j$
 and suffix products $S_t=\prod_{j>t}r_j$, four population quantities arise from
 the same stale data:
@@ -297,67 +316,112 @@ the same stale data:
  &&
 \end{align*}
 The subscripts state which axis is restored. The exact error decompositions
-\[
-\gto-\gpi=\sum_t\mathbb{E}_{d_\pi,\pi}\!\big[(Q_t^{\beta}-Q_t^{\pi})z_t\big]
-\quad\text{(continuation bias)},\qquad
-\got-\gpi=\sum_t\big(\mathbb{E}_{d_\beta,\pi}-\mathbb{E}_{d_\pi,\pi}\big)\!\big[Q_t^{\pi}z_t\big]
-\quad\text{(occupancy bias)}
-\]
+\begin{align*}
+\gto-\gpi
+&=\sum_t\mathbb{E}_{d_\pi,\pi}\!\big[(Q_t^{\beta}-Q_t^{\pi})z_t\big]
+&&\text{(continuation bias)},\\
+\got-\gpi
+&=\sum_t\big(\mathbb{E}_{d_\beta,\pi}-\mathbb{E}_{d_\pi,\pi}\big)
+\!\big[Q_t^{\pi}z_t\big]
+&&\text{(occupancy bias)}
+\end{align*}
 show that the two one-sided estimators remove \emph{different} biases; they are
 not substitutes.
 
+For a unit direction $u$, let $s_c(x)=u^\top g_c(x)$ for
+$c\in\{10,01\}$. A \emph{$c$-only selector} may use any number of behavior
+samples through the nonzero directional summands that define $s_c$ and the
+likelihood weights multiplying those summands, together with arbitrary
+functions of them (including ESS, cross-checkpoint self-cosines, directional
+norms, and policy KL), but is
+invariant to the omitted ratio axis. This class contains any post-processing,
+calibration, threshold, or randomized top-$k$ rule built from a one-sided
+score. It excludes only information that completes the missing axis, such as
+fresh target rollouts or the omitted ratios themselves.
+
 \subsection{Sign reversal at arbitrarily small divergence}
 
-\begin{theorem}[One-sided sign reversal]
+\begin{theorem}[One-sided no-free-lunch]
 \label{thm:reversal}
-For every $\epsilon>0$ there exist two-token environments and policy pairs
-$(\pi,\beta)$ with trajectory KL $O(\epsilon^2)$ such that
-$\gpi=-\epsilon/2$ while $\goo=\gto=+\epsilon/2$ (continuation counterexample),
-and likewise $\goo=\got=+\epsilon/2$ (occupancy counterexample). Group
-normalization with any group size $K\ge 2$ preserves the reversal.
+Fix either $c=10$ or $c=01$, any rollout count $N\ge1$, and any
+$\delta>0$. There are two two-prompt, two-token, binary-reward pools
+$W_0,W_1$ such that:
+\begin{enumerate}
+\item every prompt satisfies
+$D_{\mathrm{KL}}(\pi\Vert\beta)<\delta$, every retained weight on a nonzero
+directional summand is exactly one (hence normalized ESS is one), and stale
+self-cosine is one;
+\item the complete $N$-sample $c$-only information, including all those
+diagnostics, has the same distribution under $W_0$ and $W_1$; but
+\item the true top-1 prompt under $s_{11}=u^\top\gpi$ is different in the two
+pools.
+\end{enumerate}
+Consequently every possibly randomized $c$-only selector has worst-case
+top-1 error at least $1/2$, and every deterministic one is wrong on at least
+one pool. The construction can make the one-sided top-1 strict and its
+selected prompt's directional gradient have the opposite sign from its true
+gradient. Group normalization preserves these statements for every group
+size $K\ge2$ when zero-variance groups receive update zero.
+
+In particular, for each $0<\epsilon<1/2$ the canonical cells admit the exact
+sign reversals
+$u^\top\gpi=-\epsilon/2$ and
+$u^\top\goo=u^\top\gto=+\epsilon/2$ (continuation), or
+$u^\top\goo=u^\top\got=+\epsilon/2$ (occupancy), with
+\[
+D_{\mathrm{KL}}(\pi\Vert\beta)
+=2\epsilon\log\frac{1/2+\epsilon}{1/2-\epsilon}
+=8\epsilon^2+O(\epsilon^4).
+\]
 \end{theorem}
 
-The two constructions are given in Appendix~\ref{app:cex}; both flip a
-Bernoulli success profile so that the policies agree wherever the retained
-correction looks and disagree exactly where the discarded half lives.
-Both are machine-checked (raw gradients, exact enumeration of group
-normalization for $K\in\{2,4,8\}$ and $\epsilon\in\{0.4,0.1,0.01\}$) by a
-self-contained verification script shipped with the code.
+Appendix~\ref{app:cex} gives the constructions and proof. The key is not a
+small observed correlation: the two worlds induce the \emph{same law} on
+everything a one-sided procedure retains, while swapping only the omitted
+target-policy axis. No amount of stale data or downstream processing can
+separate them. A self-contained script checks the canonical cells and finite
+group sizes; Lemma~\ref{lem:groupnorm} proves general $K$ in closed form.
 
-\begin{corollary}[Metric blindness]
+\begin{corollary}[Complete blindness of one-sided diagnostics]
 \label{cor:blind}
-No bound on trajectory KL, no lower bound on ESS, and no norm-blind,
-scale-invariant single-estimator diagnostic (e.g.\ pointwise cosine of the
-estimator against itself across checkpoints) can exclude sign reversal of a
-prompt's selection score: in the constructions above all such quantities are
-driven to their benign limits while the ranking direction is reversed. A
-gradient-norm floor or a selection-margin bound is necessary; and since
-$\epsilon\to 0$ also drives the absolute gradient to zero, normalized cosines
-conceal exactly the missing signal floor.
+No diagnostic measurable with respect to a single one-sided information set
+can certify its top-$k$ decision uniformly over the model class. This remains
+true when policy KL, every moment of the retained weights, ESS, directional
+norm, and any stale self-similarity statistic of that estimate are
+supplied jointly: these
+quantities are identical in $W_0,W_1$, but the correct decision differs.
+Breaking the impossibility requires information from the omitted axis, such
+as a full correction, a model assumption linking the two axes, or fresh
+target-policy outcomes; a more elaborate diagnostic of the same one-sided
+information cannot suffice.
 \end{corollary}
 
-\begin{proposition}[Disagreement accompanies double failure]
+\begin{proposition}[Cell disagreement in a witnessing construction]
 \label{prop:disagree}
 In the continuation counterexample, $\cos(\gto,\got)=-1$: the two one-sided
-cells disagree maximally.
+cells disagree maximally. Here $\gto$ is reversed while $\got$ is exact;
+this is distinct from a \emph{double} reversal (both one-sided estimators
+wrong against $\gpi$), the event probed by the random search below.
 \end{proposition}
 
 Empirically---an observation, not a theorem---in a seeded random search over
 $5\times 10^{4}$ two-token, two-parameter environments we found \emph{zero}
 instances of a double reversal (both one-sided estimators reversed against
 $\gpi$) accompanied by cell agreement ($\cos(\gto,\got)>0.9$); the identity
-$\gtt\equiv\gpi$ was verified on every sample.
+$\gtt\equiv\gpi$ was verified on every sample. This is a statement about the
+sampled proposal distribution, not a nonexistence claim: zero hits in
+$5\times10^4$ draws bounds the event rate under that distribution below
+$6\times10^{-5}$ (rule of three, $95\%$), and environments outside the
+sampled family are not covered.
 
-Proposition~\ref{prop:disagree} is deliberately modest: absence of
-disagreement is \emph{not} proven to imply safety in general architectures with
-parameter sharing, disagreement cannot certify \emph{which} cell is right, and
-its practical resolution is limited by the same margin collapse quantified in
-Section~\ref{sec:cert}. We therefore use cell disagreement only as an
-\emph{unreliability signal}---a cheap, stale-computable reason to distrust a
-ranking---never as a selector. The mechanism is transparent from the error
-decompositions: $\gto$ and $\got$ subtract different bias terms from the same
-truth, so a large simultaneous failure of both requires the two bias terms to
-agree, which the decomposition makes non-generic.
+Absence of disagreement is not a safety guarantee: Theorem~\ref{thm:reversal}
+already rules out every guarantee based on one one-sided information set, and
+general parameter sharing permits both bias vectors to have adverse
+projections without agreeing with each other. We therefore use cell
+disagreement only as an \emph{unreliability signal}---a cheap reason to
+distrust a ranking---never as a selector or certificate. The random search is
+proposal-dependent empirical evidence for that warning, not a sufficiency
+theorem.
 
 \section{Measuring selection: floor, ceiling, and when comparison is meaningful}
 \label{sec:floor}
@@ -374,49 +438,73 @@ split-half floor}: rollouts are split into two disjoint halves (odd/even
 micro-groups), each half induces a top-$k$ set (ties broken by
 \emph{independent} per-half jitter; Section~\ref{sec:pitfalls} explains why
 this correction matters), and the floor is the mean overlap fraction over 20
-jitter pairs. Chance is $k/n$. The floor measures recoverable ranking signal
-at budget $K$; it is conservative (an estimator can measurably exceed it), and
-Section~\ref{sec:pitfalls} shows it is itself vulnerable to tie artifacts
-unless computed exactly this way.
+jitter pairs. Chance is $k/n$. Two scope notes. First, both halves score
+against the \emph{same} validation gradient, so the floor is a rollout
+split-half agreement conditional on that validation vector, not an
+unconditional oracle reliability; shared validation error can inflate it.
+Second, the floor is not a lower bound on estimator performance --- an
+estimator can measurably exceed it, so retention ratios (overlap divided by
+floor) can exceed $1$ and are reported unclipped; their reading as
+``preserved fraction of available signal'' holds only under the noise model
+of Proposition~\ref{prop:ceiling}. Section~\ref{sec:pitfalls} shows the floor
+is itself vulnerable to tie artifacts unless computed exactly this way.
 
 \paragraph{A measurement ceiling.} The floor does more than describe the
 oracle: it bounds what any comparison against that oracle can show.
 
 \begin{proposition}[Measurement ceiling]
 \label{prop:ceiling}
-Model prompt scores as exchangeable Gaussians: true value $t_i$, half-oracle
-scores $a_i,b_i$ with $\operatorname{corr}(a,b)=\rho_h$, full-$K$ oracle score
-$o_i$ with reliability $\rho_f=2\rho_h/(1+\rho_h)$ (Spearman--Brown). Then for
-\emph{any} estimator $s$ computed independently of the oracle's sampling noise,
-the expected top-$k$ overlap between $s$ and the $K$-rollout oracle is at most
-that of the best possible estimator $s=t$, namely
-$\mathrm{Ovl}\big(\sqrt{\rho_f}\big)$, where $\mathrm{Ovl}(c)$ is the expected
-top-$k$ overlap of two Gaussian scores with correlation $c$. The observable
-floor equals $\mathrm{Ovl}(\rho_h)$, so the ceiling is a computable, monotone
-function of the observed floor.
+Let $t_i\stackrel{\mathrm{iid}}{\sim}N(0,\tau^2)$ and let the two half-oracles
+be parallel measurements
+$a_i=t_i+e_{ai}$ and $b_i=t_i+e_{bi}$, where all
+$e_{ai},e_{bi}\stackrel{\mathrm{iid}}{\sim}N(0,\sigma^2)$ are independent of
+$t$. The full oracle is $o_i=(a_i+b_i)/2$. Let $Z$ be arbitrary estimator
+information satisfying
+$Z\perp(e_a,e_b)\mid t$, and let $S(Z)$ be any possibly nonlinear or randomized
+size-$k$ selection rule. Then
+\[
+\mathbb E\frac{|S(Z)\cap\operatorname{TopK}(o)|}{k}
+\le
+\mathbb E\frac{|\operatorname{TopK}(t)\cap\operatorname{TopK}(o)|}{k}
+=\mathrm{Ovl}_{n,k}\!\left(\sqrt{\rho_f}\right),
+\]
+where
+\[
+\rho_h=\operatorname{corr}(a_i,b_i)
+=\frac{\tau^2}{\tau^2+\sigma^2},\qquad
+\rho_f=\operatorname{corr}(t_i,o_i)^2
+=\frac{2\rho_h}{1+\rho_h}.
+\]
+Thus $\operatorname{TopK}(t)$ is Bayes-optimal against the noisy oracle, not
+merely the best linear or Gaussian estimator. The population split-half
+agreement is $F=\mathrm{Ovl}_{n,k}(\rho_h)$; consequently $F$ determines the
+model ceiling through the monotone Gaussian overlap map. A finite observed
+floor estimates $F$, so its uncertainty must be propagated to the ceiling.
 \end{proposition}
 
 Table~\ref{tab:ceiling} gives the mapping at our experimental geometry
 ($n{=}512$, $k{=}51$), validated by simulation (Appendix~\ref{app:ceiling}).
-Two consequences organize everything that follows. First, when the floor is
-near chance the ceiling collapses toward chance: \emph{under the proposition's
-model, no estimator can measurably outperform, and comparative evaluation of
-selection methods is void}.
-Second, an estimator observed \emph{at} the ceiling has plausibly exhausted the
-measurable signal---further method development cannot show gains without first
-raising the floor (more oracle rollouts, or a pool with more signal).
+Two consequences organize everything that follows. First, at $\rho_h=0$ the
+ceiling equals chance $k/n$ exactly: every oracle-noise-oblivious selector has
+chance expected precision, so oracle-overlap evaluation contains no ranking
+information. By continuity, a near-chance population floor permits only a
+small excess over chance. Second, a selector at the ceiling has exhausted all
+expected overlap available to \emph{any} method satisfying the same held-out
+noise condition; exceeding it requires either more reliable oracle rollouts
+or information statistically coupled to the held-out oracle noise.
 
 \begin{table}[t]
 \centering
-\caption{Floor $\to$ ceiling mapping under Proposition~\ref{prop:ceiling}
+\caption{Population floor $\to$ model-ceiling mapping under
+Proposition~\ref{prop:ceiling}
 ($n{=}512$, $k{=}51$, chance $0.100$; simulation, 600--800 replicates/cell).
-The v2 weak-signal regime (floors $0.137$--$0.176$) caps \emph{any} method's
-measurable precision at ${\approx}0.30$--$0.37$; the observed stale baseline
-is already at this ceiling.}
+Plugging the v2 weak-signal floor estimates $0.137$--$0.176$ into the model
+gives ceilings ${\approx}0.30$--$0.37$; finite-floor uncertainty must be
+carried through the same map.}
 \label{tab:ceiling}
 \begin{tabular}{lccccccc}
 \toprule
-observed floor & 0.104 & 0.113 & 0.130 & 0.139 & 0.170 & 0.262 & 0.383\\
+population floor $F$ & 0.104 & 0.113 & 0.130 & 0.139 & 0.170 & 0.262 & 0.383\\
 \midrule
 half-reliability $\rho_h$ & 0.02 & 0.05 & 0.10 & 0.12 & 0.20 & 0.40 & 0.60\\
 ceiling on measurable precision & 0.170 & 0.219 & 0.278 & 0.300 & 0.372 & 0.516 & 0.640\\
@@ -471,22 +559,25 @@ $0.28$--$0.64$ of the available signal. At 14B MATH-500 the loss concentrates
 on the suffix axis (signal retention $\got{=}0.44$ vs.\ $\gto{=}1.00$),
 although the declining $K'$-curve there makes the absolute floor less
 certain. Which cell fails is therefore regime-dependent. What does not change
-is this: \emph{some cell fails while every monitored metric looks
-normal}---exactly what Theorem~\ref{thm:reversal} permits, and no more.
+is this: \emph{some cell fails while the listed stale-only dashboard remains
+benign}---exactly the information restriction covered by
+Theorem~\ref{thm:reversal}, and no more.
 
-\subsection{Where signal is weak, stale selection tracks the oracle}
+\subsection{Where signal is weak, the oracle limits resolvable gains}
 
 The corrected v2 runs put every completed condition at floors
 $0.137$--$0.176$ against chance $0.100$ (Table~\ref{tab:v2}). Here stale
-scores are \emph{not} distinguishable from the oracle; they track it. On
+overlap is above the random-selection null, although that test does not
+establish equivalence to the latent ranking. On
 GSM8K, the uncorrected stale baseline reaches precision $0.294$/$0.235$
 (seeds 1/2), with upper-tail exact $p=2.8\times10^{-5}$ and
 $2.1\times10^{-3}$, and Fisher-combined $p=1.0\times10^{-6}$. (The two seeds
 share the prompt pool; conditional on the pool, the hypergeometric nulls are
 driven by independent rollout randomness, which is what the combination
-assumes.) The value $0.294$ is also \emph{at the measurement ceiling}
-(${\approx}0.30$ at floor $0.137$; Table~\ref{tab:ceiling}). The stale
-estimator has therefore reached the limit of what the oracle can resolve, so
+assumes.) The value $0.294$ is close to the plug-in model ceiling
+(${\approx}0.30$ at floor $0.137$; Table~\ref{tab:ceiling}); a saturation
+claim requires propagating the finite-floor interval. At the point estimate,
+the stale estimator has exhausted nearly all overlap the model permits, so
 neither the losses of its one-sided competitors nor the gains of any other
 method are measurable in this regime. The DAPO pool is tie-degenerate:
 boundary margins are exactly $0.0$, and precision itself moves by $\pm 0.08$
@@ -600,7 +691,7 @@ selection pipelines must scale candidate difficulty with model capability;
 otherwise they spend, without noticing, on machinery that cannot change the
 outcome.
 
-\section{Certification is out of reach where it matters}
+\section{A gap lower bound for exact certification}
 \label{sec:cert}
 
 Even where a point estimate selects well, one may ask for the decision to be
@@ -608,15 +699,44 @@ Even where a point estimate selects well, one may ask for the decision to be
 confidence intervals separate the top-$k$ set. We implemented this
 (sequential boundary refinement with shared-validation error propagation;
 pseudocode in Appendix~\ref{app:cert})---not as a method contribution, but
-as a measuring instrument. The instrument returns a structural negative.
+as a measuring instrument. The inverse-square barrier is not specific to
+that instrument.
+
+\begin{proposition}[Exact top-$k$ gap lower bound]
+\label{prop:certlb}
+Suppose a fresh query of prompt $i$ returns an independent
+$N(\mu_i,\sigma^2)$ score. Let
+$\Delta=\mu_{(k)}-\mu_{(k+1)}>0$ be the boundary gap. Any adaptive algorithm
+that is $\delta$-correct for every mean vector, $0<\delta<1/2$, must satisfy
+on this instance
+\[
+\mathbb E[N_{(k)}+N_{(k+1)}]
+\ge \frac{2\sigma^2}{\Delta^2}
+\operatorname{kl}(1-\delta,\delta),
+\]
+where $\operatorname{kl}$ is binary relative entropy. The result already
+holds in the favorable two-boundary-prompt Gaussian subclass, and therefore
+is a minimax obstruction for model-free exact top-$k$ certification.
+\end{proposition}
+
+The proof in Appendix~\ref{app:cert} swaps the two boundary means and applies
+change of measure to the algorithm's final decision. Thus adaptive allocation
+can remove waste away from the boundary, but cannot improve the
+$\Delta^{-2}\log(1/\delta)$ dependence at the boundary.
+
+Our instrument returns the corresponding empirical negative.
 Across every completed condition (both scales, three tasks, drift 50--400,
 selection fractions 5--25\%), certification fails at budgets
 $1.02$--$1.04\times$ the uncorrected cost. The reason is geometric: top-$k$
 boundary margins are $0.00$--$0.24^\circ$, while achievable confidence radii
 are $51$--$180^\circ$. The gap is not a constant factor. With radius
-$\alpha_v(m)=\arcsin(c/\sqrt m)$, reaching the observed margins requires
+$\alpha_v(m)=\arcsin(c/\sqrt m)$ under the instrument's iid Gaussian
+approximation, reaching the observed margins requires
 $4.1{\times}10^{5}$ to $1.0{\times}10^{8}$ times more observations---5--8
-orders of magnitude in budget. The gap is robust to
+orders of magnitude in budget. These numbers are instrument-specific
+plug-in factors; Proposition~\ref{prop:certlb} establishes that their
+inverse-square dependence is algorithm-independent in the Gaussian subclass.
+The measured failure is robust to
 $(\epsilon,\delta)$-PAC slack and to deepened validation. The cause is that
 prompt values are intrinsically dense at the selection boundary:
 \emph{exact certification fails precisely where selection matters---at
@@ -823,7 +943,7 @@ itself (\S\ref{sec:saturation}).
 \item[(b)] \emph{Weak signal} (chance $<$ floor $< \tau$): rank by the zero-cost
 behavior pass rate. In our replays it matched or outperformed every gradient
 estimator ($0.255$ vs.\ $0.235$ best stale), and the measurement ceiling
-shows no method can \emph{measurably} exceed it in this regime
+quantifies the limited expected oracle-overlap headroom in this regime
 (\S\ref{sec:floor}).
 \item[(c)] \emph{Measurable signal} (floor $\ge \tau$): stale scores are
 usable. Compute both one-sided cells anyway, and send the prompts where they
@@ -832,9 +952,10 @@ reversal rate was $59$--$81\%$; under agreement, $37$--$45\%$ (three runs,
 $p \le 0.015$). Agreement guarantees nothing---this is the case the
 warning cannot detect, and it is stated as such.
 \end{itemize}
-\item \textbf{Report.} Attach the floor, the ceiling, and the branch taken
-to any downstream selection claim; a result above its own oracle's ceiling
-is an artifact by Proposition~\ref{prop:ceiling}.
+\item \textbf{Report.} Attach the floor, its uncertainty interval, the induced
+model-ceiling interval, and the branch taken to any downstream selection
+claim. A result above that interval falsifies at least one premise: the
+parallel-noise model, held-out-noise independence, or the evaluation pipeline.
 \end{enumerate}
 The verdict costs no new rollouts; branch (c)'s audit spends fresh budget
 only on the disagreement set, which in our runs was $14$--$25\%$ of
@@ -850,9 +971,11 @@ $2\times$ chance (fix the threshold \emph{before} looking), do not spend on
 selection. In our replays the best weak-signal policy was the zero-cost pass-rate
 heuristic, random was close behind, and no fresh budget up to $100\%$
 produced an improvement.
-(2)~\emph{Never budget for boundary certification}; the 5--8
-order-of-magnitude gap is
-structural. (3)~\emph{Scale candidate difficulty with capability}, or
+(2)~\emph{Compute the boundary lower bound before budgeting certification};
+for every pool we measured, the 5--8 order-of-magnitude plug-in gap rules out
+the available budget, and Proposition~\ref{prop:certlb} shows that adaptive
+allocation cannot remove its inverse-square dependence. (3)~\emph{Scale
+candidate difficulty with capability}, or
 selection degenerates regardless of estimator. (4)~\emph{Report floor and
 ceiling with any selection comparison}; a claimed improvement above the
 measurement ceiling of its own oracle indicates assumption violation,
@@ -865,8 +988,10 @@ as branch (c) of the protocol.
 math tasks, and LoRA drift, with two completed v2 seeds; the remaining seeds
 and a small-model capability--difficulty sweep are running, and the
 pre-registered verdict logic will be re-applied when they arrive. The
-ceiling proposition assumes an exchangeable Gaussian score model; simulation
-validates it at our geometry, and a distribution-free proof remains open.
+ceiling proposition assumes iid latent Gaussian scores, equal-variance
+parallel oracle noise, and conditional independence from held-out oracle
+noise; simulation validates the resulting map at our geometry, and a
+distribution-free ceiling remains open.
 The disagreement result is an existence-plus-search finding, not a general
 sufficiency theorem. The theory counterexamples are two-token constructions
 by design: they show what the monitored metrics \emph{cannot} exclude, not
@@ -879,9 +1004,10 @@ reading. If stale selection promotes prompts on which shortcut or
 reward-hacking behavior scores well, the drift metrics a team monitors
 cannot flag the promotion, for the same reason they cannot flag the sign
 reversal itself. The selection layer is then an unaudited input to the
-reward loop. The measurement-first protocol applies unchanged when the
-selection target is a safety metric rather than accuracy, and we recommend
-running it there before trusting any stale-scored curation.
+reward loop. Theorem~\ref{thm:reversal} transfers to a safety target whenever
+the same trajectory, support, and verifiable-reward assumptions hold. A
+safety application must separately audit partial observability and
+adversarial or misspecified rewards before using the measurement protocol.
 
 \paragraph{Outlook.} The negative results are central rather than
 incidental. They state the conditions under which stale-rollout data
@@ -899,19 +1025,23 @@ Stabilizes Policy Optimization. \url{https://arxiv.org/abs/2601.22718}
 Optimization: A Cumulative Token Perspective.
 \url{https://arxiv.org/abs/2605.07331}
 \bibitem[Multi-Step]{multistep} Multi-Step Likelihood-Ratio Correction for
-RLVR. \url{https://arxiv.org/abs/2605.20865}
-\bibitem[TIC-GRPO]{ticgrpo} TIC-GRPO: Trajectory Importance Correction for
-GRPO. \url{https://arxiv.org/abs/2508.02833}
-\bibitem[GradAlign]{gradalign} GradAlign. COLM 2026.
+Reinforcement Learning with Verifiable Rewards.
+\url{https://arxiv.org/abs/2605.20865}
+\bibitem[TIC-GRPO]{ticgrpo} TIC-GRPO: Provable and Efficient Optimization for
+Reinforcement Learning from Human Feedback.
+\url{https://arxiv.org/abs/2508.02833}
+\bibitem[GradAlign]{gradalign} GradAlign: Gradient-Aligned Data Selection for
+LLM Reinforcement Learning. COLM 2026.
 \url{https://arxiv.org/abs/2602.21492}
 \bibitem[TIDE]{tide} Mismatch Matters: On-Policy Distillation Beyond Token
 Agreement. \url{https://arxiv.org/abs/2608.09836}
-\bibitem[LearnAlign]{learnalign} LearnAlign.
+\bibitem[LearnAlign]{learnalign} LearnAlign: Data Selection for LLM
+Reinforcement Learning with Improved Gradient Alignment. ACL Findings 2026.
 \url{https://arxiv.org/abs/2506.11480}
 \bibitem[Rowland et al.]{rowland20} Rowland et al. Conditional Importance
 Sampling for Off-Policy Learning. AISTATS 2020.
 \bibitem[Liu et al.]{liu19} Liu et al. Off-Policy Policy Gradient with
-Stationary Distribution Correction. UAI 2019.
+Stationary Distribution Correction. PMLR 2020.
 \bibitem[Huang \& Jiang]{huang20} Huang \& Jiang. From Importance Sampling to
 Doubly Robust Policy Gradient. ICML 2020.
 \bibitem[Kaufmann et al.]{kaufmann13} Kaufmann \& Kalyanakrishnan. Information
@@ -920,10 +1050,11 @@ Complexity in Bandit Subset Selection. COLT 2013.
 data. 1910.
 \bibitem[Brown]{brown1910} Brown. Some experimental results in the correlation
 of mental abilities. 1910.
-\bibitem[ACE]{ace} Top-$k$ on a Budget: Adaptive Certification at the
-Boundary. \url{https://arxiv.org/abs/2601.20989}
-\bibitem[Floor-Ceiling]{floorceiling} Floor, Ceiling, Fusion Gap: Split-Half
-Oracles for Crowd Reading. \url{https://arxiv.org/abs/2608.01704}
+\bibitem[ACE]{ace} Top-$k$ on a Budget: Adaptive Ranking with Weak and Strong
+Oracles. \url{https://arxiv.org/abs/2601.20989}
+\bibitem[Floor-Ceiling]{floorceiling} Floor, Ceiling, and the Fusion Gap: How
+Much of Crowd Reading Attention Can Machines Predict?
+\url{https://arxiv.org/abs/2608.01704}
 \bibitem[Rethinking-Shapley]{rethinkshapley} Rethinking Data Shapley for Data
 Selection Tasks: Misleads and Merits. ICML 2024.
 \url{https://arxiv.org/abs/2405.03875}
@@ -936,7 +1067,8 @@ Selection? Ask NASH. ICML 2026. \url{https://arxiv.org/abs/2605.10684}
 \section{Counterexample constructions and machine verification}
 \label{app:cex}
 
-\paragraph{Continuation counterexample (reverses $\goo,\gto$).} Two-token MDP;
+\paragraph{Continuation construction.} This reverses $\goo$ and $\gto$ in a
+two-token MDP. The
 first action $A_1\sim\mathrm{Bernoulli}(q)$, $q{=}1/2$, identical under both
 policies; reward $R=A_2$. Behavior success profile
 $Q^\beta(A_1{=}0)=\frac12-\epsilon$, $Q^\beta(A_1{=}1)=\frac12+\epsilon$;
@@ -954,30 +1086,120 @@ $\gpi=-\epsilon/2$ while $\goo=\got=+\epsilon/2$: no tokens remain after
 $A_2$, so the future ratio is exactly $1$, and the stale \emph{visit}
 distribution drives the sign. Trajectory KL is again $O(\epsilon^2)$.
 
-\paragraph{Group normalization.} Both constructions have overall success rate
-$1/2$ under both policies; binary group standardization multiplies each
-direction by the same nonnegative scalar, hence preserves the reversal (exact
-enumeration for $K\in\{2,4,8\}$, $\epsilon\in\{0.4,0.1,0.01\}$ in the
-verification script, alongside leave-one-out unbiasedness and the confidence
-radius bound used in Section~\ref{sec:cert}).
+In both cases the changed Bernoulli has
+\[
+D_{\mathrm{KL}}(\pi\Vert\beta)
+=2\epsilon\log\frac{1/2+\epsilon}{1/2-\epsilon},
+\]
+which is finite exactly for $0<\epsilon<1/2$ and has expansion
+$8\epsilon^2+O(\epsilon^4)$.
+
+\paragraph{Indistinguishable pools.}
+We prove the $c=10$ case; $c=01$ is its time reversal. Add an exogenous
+initial branch $B\in\{\mathrm{visible},\mathrm{hidden}\}$ with hidden
+probability $h$. In both branches $A_1\sim\mathrm{Bernoulli}(1/2)$ and the
+direction $u$ controls only its logit. On the visible branch of prompt $i$,
+behavior and target share
+\[
+P(A_2=1\mid A_1=1)=\tfrac12+\nu_i,\qquad
+P(A_2=1\mid A_1=0)=\tfrac12-\nu_i.
+\]
+On the hidden branch behavior uses $P_\beta(A_2=1\mid A_1)=1/2$, while target
+world sign $s_i\in\{-1,+1\}$ uses the same display with $\nu_i$ replaced by
+$s_i\epsilon$. Reward is $R=A_2$. The retained prefix/current weight for the
+directional $g_{10}$ summand is identically one, and
+\[
+u^\top g_{10}(x_i)=\frac{(1-h)\nu_i}{2},\qquad
+u^\top g_{\pi}(x_i)=\frac{(1-h)\nu_i+h s_i\epsilon}{2}.
+\]
+Choose $0<\nu_2<\nu_1$ with
+$(1-h)\nu_1<h\epsilon$. World $W_0$ takes
+$(s_1,s_2)=(+1,-1)$ and $W_1$ takes $(-1,+1)$. The strict one-sided ranking
+is $x_1>x_2$ in both worlds, whereas the true top-1 swaps; in $W_1$ the
+selected prompt $x_1$ also has negative true directional gradient.
+
+The behavior law, retained weight, and every retained directional summand are
+identical across worlds. The hidden target continuation has the same KL for
+signs $+1$ and $-1$ by Bernoulli symmetry, so supplying exact policy KL does
+not distinguish them either. The KL is $hO(\epsilon^2)$ and can be made below
+any $\delta$. Therefore the full $N$-sample $10$-only information has the same
+law for every $N$. If a randomized selector chooses $x_1$ with probability
+$p$, its errors in $W_0,W_1$ are $1-p$ and $p$; their maximum is at least
+$1/2$. The same ambiguity applies to arbitrary top $k$ by adding $k-1$
+prompts that dominate in both worlds and $n-k-1$ prompts that are dominated in
+both.
+
+For $c=01$, let the direction control only the second-action logit, use
+$A_2\sim\mathrm{Bernoulli}(1/2)$ under both policies, and set
+$R=A_2$ after $A_1=0$ and $R=1-A_2$ after $A_1=1$. The visible branch shares
+$P(A_1=0)=1/2+\nu_i$; the hidden branch has behavior probability $1/2$ and
+target probability $1/2+s_i\epsilon$. Then the retained current/suffix weight
+is one and the same two displayed gradients result. This proves the theorem
+for both axes.
+
+\begin{lemma}[Binary group normalization]
+\label{lem:groupnorm}
+Let $R\in\{0,1\}$ satisfy $P(R=1)=1/2$, let $z$ be a scalar directional score
+with $\mathbb E z=0$, and define $g=\mathbb E[Rz]$. For $K\ge2$ iid rollouts,
+standardize rewards by the within-group population standard deviation and
+assign update zero to homogeneous-reward groups. Then the expected normalized
+update is $C_Kg$ for a constant $C_K>0$ depending only on $K$.
+\end{lemma}
+\begin{proof}
+Let $M$ be the number of successes and
+$\Delta=\mathbb E[z\mid R=1]-\mathbb E[z\mid R=0]$. Since
+$P(R=1)=1/2$ and $\mathbb Ez=0$, $g=\Delta/4$. Conditional on $M$,
+the expected group update is
+\[
+\sqrt{(M/K)(1-M/K)}\,\Delta.
+\]
+Consequently
+\[
+\mathbb E[g_{\mathrm{group}}]
+=4\,\mathbb E\!\left[\sqrt{(M/K)(1-M/K)}\right]g=C_Kg.
+\]
+The expectation is strictly positive for every $K\ge2$ because
+$P(0<M<K)>0$. Using sample rather than population standard deviation changes
+only the positive constant. All counterexample branches have success
+probability $1/2$, so signs and strict prompt order are preserved.
+\end{proof}
 
 \section{Measurement ceiling: derivation sketch and validation}
 \label{app:ceiling}
 
-Under the model of Proposition~\ref{prop:ceiling}, write the full-$K$ oracle
-score as $o=\sqrt{\rho_f}\,t+\sqrt{1-\rho_f}\,\eta$ with $\eta$ independent
-noise. For any estimator $s$ independent of $\eta$,
-$\operatorname{corr}(s,o)=\operatorname{corr}(s,t)\sqrt{\rho_f}\le\sqrt{\rho_f}$,
-with equality iff $s$ is (a monotone transform of) $t$. Expected top-$k$
-overlap between two jointly Gaussian scores is increasing in their correlation,
-which yields the ceiling $\mathrm{Ovl}(\sqrt{\rho_f})$; the observable floor is
-$\mathrm{Ovl}(\rho_h)$ by the same function. Simulation at $n{=}512$,
-$k{=}51$ (600--800 replicates per cell; independent-jitter tie handling)
-produces Table~\ref{tab:ceiling}; the mapping is monotone and smooth, so
-inverting the observed floor through it is well-posed. The Gaussian
-assumption matters: heavy-tailed score distributions with a stable head can
-exceed the Gaussian ceiling estimate, which is precisely the P4 caveat and why
-we report the ceiling alongside, not instead of, the $K$-scaling curve.
+Fix the latent vector $t$ and define
+$p_i(t)=P(i\in\operatorname{TopK}(o)\mid t)$. If $t_i\ge t_j$, exchangeability
+and equal noise variance imply $p_i(t)\ge p_j(t)$. One direct coupling swaps
+the iid noises of $i$ and $j$: every realization in which only the lower-mean
+$j$ enters the top $k$ maps injectively to one in which only $i$ enters.
+Therefore the size-$k$ subset maximizing conditional expected overlap is
+$\operatorname{TopK}(t)$.
+
+Given $t$, any $S(Z)$ satisfying $Z\perp(e_a,e_b)\mid t$ is merely a random
+mixture of size-$k$ subsets. Hence
+\[
+\mathbb E[|S(Z)\cap\operatorname{TopK}(o)|\mid t]
+\le \sum_{i\in\operatorname{TopK}(t)}p_i(t).
+\]
+Averaging proves the first inequality in Proposition~\ref{prop:ceiling}.
+The parallel-measurement model gives
+$\rho_h=\tau^2/(\tau^2+\sigma^2)$ and
+$\rho_f=\tau^2/(\tau^2+\sigma^2/2)=2\rho_h/(1+\rho_h)$.
+Thus $(t_i,o_i)$ is bivariate Gaussian with correlation $\sqrt{\rho_f}$,
+while $(a_i,b_i)$ has correlation $\rho_h$, which gives the ceiling and
+population floor through the same Gaussian overlap function. This overlap is
+monotone in nonnegative correlation: for each top-$k$ membership event $A_i$,
+its Gaussian noise stability has Hermite expansion
+$P(X\in A_i,Y\in A_i)=\sum_{m\ge0}\rho^m\|f_{i,m}\|_2^2$, whose coefficients
+are nonnegative; summing over $i$ gives $\mathrm{Ovl}_{n,k}(\rho)$.
+
+Simulation at $n{=}512$, $k{=}51$ (600--800 replicates per cell;
+independent-jitter tie handling) produces Table~\ref{tab:ceiling}. The table is
+a population-model map, not an equality for one finite observed overlap; in
+application we propagate a confidence interval for the floor through it.
+Heavy-tailed or heteroscedastic oracle noise can violate the model ceiling and
+must be tested separately. This distributional issue is distinct from the P4
+saturation/tie artifact.
 
 \section{Sequential boundary certification (measuring instrument)}
 \label{app:cert}
@@ -991,6 +1213,27 @@ which case \emph{certification failure is reported, never hidden}. Variants
 (scalar CI, $(\epsilon,\delta)$-PAC with $\epsilon\le 0.05$) behave
 identically in all our conditions because the binding constraint is the
 boundary margin itself (Section~\ref{sec:cert}).
+
+\paragraph{Proof of Proposition~\ref{prop:certlb}.}
+Keep every non-boundary mean fixed and form an alternative instance by
+swapping $\mu_{(k)}$ and $\mu_{(k+1)}$. Let $A$ be the event that the
+algorithm includes the original $k$th prompt. Uniform $\delta$-correctness
+gives $P(A)\ge1-\delta$ on the original instance and $P'(A)\le\delta$ on the
+alternative. Data processing from the adaptive transcript to the final
+decision gives
+\[
+\mathrm{KL}(P_{\mathrm{tr}}\Vert P'_{\mathrm{tr}})
+\ge \operatorname{kl}(1-\delta,\delta).
+\]
+Each observation from either boundary prompt changes its Gaussian mean by
+$\Delta$ and contributes $\Delta^2/(2\sigma^2)$ KL; observations from every
+other prompt contribute zero. The adaptive chain rule therefore gives
+\[
+\mathrm{KL}(P_{\mathrm{tr}}\Vert P'_{\mathrm{tr}})
+=\frac{\Delta^2}{2\sigma^2}
+\mathbb E[N_{(k)}+N_{(k+1)}],
+\]
+which rearranges to the claimed lower bound.
 
 \section{Preregistration and audit trail}
 \label{app:prereg}

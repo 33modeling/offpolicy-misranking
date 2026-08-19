@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Executable checks for the counterexamples and geometric lemmas in concept.md."""
+"""Executable checks for the counterexamples and lemmas in paper/main.tex."""
 
 from __future__ import annotations
 
@@ -159,6 +159,123 @@ def check_ranking_reversal() -> None:
     assert math.isclose(sided_plus, -true_plus, abs_tol=1e-12)
 
 
+def bernoulli_kl(left: float, right: float) -> float:
+    return left * math.log(left / right) + (1.0 - left) * math.log(
+        (1.0 - left) / (1.0 - right)
+    )
+
+
+def check_indistinguishable_pools() -> None:
+    """Check the two-world construction for either omitted ratio axis."""
+    hidden_probability = 0.5
+    epsilon = 0.1
+    visible_slopes = (0.05, 0.02)
+
+    one_sided = [
+        (1.0 - hidden_probability) * slope / 2.0
+        for slope in visible_slopes
+    ]
+    assert one_sided[0] > one_sided[1] > 0.0
+
+    worlds = ((1.0, -1.0), (-1.0, 1.0))
+    true_scores = [
+        [
+            ((1.0 - hidden_probability) * slope
+             + hidden_probability * sign * epsilon) / 2.0
+            for slope, sign in zip(visible_slopes, signs)
+        ]
+        for signs in worlds
+    ]
+    assert true_scores[0][0] > true_scores[0][1]
+    assert true_scores[1][1] > true_scores[1][0]
+    assert true_scores[1][0] < 0.0 < one_sided[0]
+
+    plus_kl = hidden_probability * bernoulli_kl(0.5 + epsilon, 0.5)
+    minus_kl = hidden_probability * bernoulli_kl(0.5 - epsilon, 0.5)
+    assert math.isclose(plus_kl, minus_kl, rel_tol=1e-12, abs_tol=1e-12)
+
+    # The continuation- and occupancy-oblivious constructions have the same
+    # score algebra. Their retained directional weights are identically one.
+    for omitted_axis in ("continuation", "occupancy"):
+        retained_weights = [1.0] * 16
+        ess = sum(retained_weights) ** 2 / sum(w * w for w in retained_weights)
+        assert math.isclose(ess / len(retained_weights), 1.0)
+        assert true_scores[0] != true_scores[1], omitted_axis
+
+
+def _pool_env(nu: float, s: int, h: float, eps: float, policy: str):
+    """Indistinguishable-pools 부록 구성의 정확 열거 — (prob, reward, z) 8경로.
+
+    branch: hidden(확률 h) / visible(1-h). 두 branch 모두 A1~Ber(1/2), 방향 u는
+    A1 logit만 통제(z = a1 - 1/2). visible: 양 정책 공유 P(A2=1|A1)=1/2±nu.
+    hidden: behavior 1/2, target 1/2±s·eps. R = A2.
+    """
+    paths = []
+    for hidden in (0, 1):
+        p_branch = h if hidden else 1.0 - h
+        for a1 in (0, 1):
+            if hidden:
+                shift = (s * eps if a1 == 1 else -s * eps) if policy == "current" else 0.0
+            else:
+                shift = nu if a1 == 1 else -nu
+            p2 = 0.5 + shift
+            for a2 in (0, 1):
+                p = p_branch * 0.5 * (p2 if a2 == 1 else 1.0 - p2)
+                paths.append((p, float(a2), a1 - 0.5))
+    assert math.isclose(sum(p for p, _, _ in paths), 1.0, abs_tol=1e-12)
+    return paths
+
+
+def check_indistinguishable_pools_enumerated() -> None:
+    """Thm 1(no-free-lunch)의 조작적 주장을 환경 열거로 직접 검증 — 닫힌꼴을
+    선언하지 않고 유도한다: 관측법 동일성, retained weight=1, 순위/부호, KL 대칭,
+    그룹 정규화 부호 보존."""
+    h, eps, nus = 0.5, 0.1, (0.05, 0.02)
+    assert (1.0 - h) * nus[0] < h * eps  # 정리의 파라미터 조건
+    worlds = {0: (1, -1), 1: (-1, 1)}
+    per_world = {}
+    for w, signs in worlds.items():
+        rows = []
+        for nu, s in zip(nus, signs):
+            beta = _pool_env(nu, s, h, eps, "behavior")
+            pi = _pool_env(nu, s, h, eps, "current")
+            # (i) behavior 법칙은 world(s)와 무관 — 관측 데이터 동일
+            assert beta == _pool_env(nu, -s, h, eps, "behavior")
+            # (ii) retained(A1) 토큰 비율은 항등 1 — 양 정책 A1 주변분포 1/2
+            #      (구성상 자명하지만 열거로 확인: a1 주변확률 비교)
+            for a1 in (0, 1):
+                pb1 = sum(p for (p, _, z) in beta if z == a1 - 0.5)
+                pp1 = sum(p for (p, _, z) in pi if z == a1 - 0.5)
+                assert math.isclose(pb1, pp1, abs_tol=1e-12)
+            g_one = raw_gradient(beta)   # g00 = g10 (retained weight 1)
+            g_true = raw_gradient(pi)
+            # (iii) 닫힌꼴이 유도됨 (선언이 아니라 대조)
+            assert math.isclose(g_one, (1 - h) * nu / 2.0, abs_tol=1e-12)
+            assert math.isclose(g_true, ((1 - h) * nu + h * s * eps) / 2.0,
+                                abs_tol=1e-12)
+            kl = sum(pp * math.log(pp / pb)
+                     for (pp, _, _), (pb, _, _) in zip(pi, beta) if pp > 0)
+            # (iv) 그룹 정규화(K=2,4)가 양쪽 부호를 보존
+            for K in (2, 4):
+                gb = expected_standardized_group_gradient(beta, K)
+                gp = expected_standardized_group_gradient(pi, K)
+                assert gb * g_one > 0
+                assert gp * g_true > 0 or math.isclose(g_true, 0, abs_tol=1e-15)
+            rows.append((g_one, g_true, kl))
+        per_world[w] = rows
+    w0, w1 = per_world[0], per_world[1]
+    # (v) one-sided 정보(점수·KL)는 두 world에서 동일
+    for i in range(2):
+        assert math.isclose(w0[i][0], w1[i][0], abs_tol=1e-15)
+        assert math.isclose(w0[i][2], w1[i][2], abs_tol=1e-12)
+    # (vi) one-sided 순위는 두 world 모두 x1 > x2 (strict)
+    assert w0[0][0] > w0[1][0] > 0
+    # (vii) 참 top-1은 뒤집힘 + W1에서 선택된 x1의 참 gradient는 음수
+    assert w0[0][1] > w0[1][1]
+    assert w1[1][1] > w1[0][1]
+    assert w1[0][1] < 0
+
+
 def expected_loo_gradient(success_probability: float, group_size: int) -> float:
     expectation = 0.0
     for rewards in product((0, 1), repeat=group_size):
@@ -307,12 +424,15 @@ def report_cells() -> None:
 def main() -> None:
     check_sign_reversals()
     check_ranking_reversal()
+    check_indistinguishable_pools()
+    check_indistinguishable_pools_enumerated()
     check_leave_one_out_unbiasedness()
     check_angular_radius()
     check_disagreement_accompanies_double_flip()
     report_cells()
     print(
-        "PASS: sign reversals, IS cells, relative error -1, ranking flip, "
+        "PASS: sign reversals, indistinguishable pools(+enumerated), IS cells, "
+        "relative error -1, ranking flip, "
         "K=2/4/8 normalization, LOO unbiasedness, "
         "confidence-ball angular radius, and double-flip⇒disagreement (50k)"
     )

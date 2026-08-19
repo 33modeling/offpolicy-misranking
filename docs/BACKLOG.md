@@ -122,7 +122,11 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       매트릭스 본실행**으로 승격 (B11의 1-seed 탐색을 대체). 노드당 seed 1개:
       `SEEDS_NEW="k" bash scripts/go_new.sh` (k=0..4), B300 노드는
       `OM_SKIP_HYBRID=0`으로 hybrid 포함. GSM8K 자연 풀(포화 표본)·DAPO
-      hard-slice(유신호)·MATH500 자연 풀. 소요 ~3일(8/22 전후). 수확 시 논문
+      hard-slice(유신호 목표)·MATH500 자연 풀. 소요 ~3일(8/22 전후). **실행 중
+      관찰(8/19): 27B behavior model이 현재 DAPO 후보를 전부 맞혀 pass-rate가
+      1로 포화됐고 hard-slice가 0건이다. 이는 강한 기본 모델 때문에 선택 신호가
+      사라진 포화 체제의 증거이지, one-sided misranking 가설의 반증이나 검증이
+      아니다. 현재 DAPO 풀로는 27B 가설 검정 자체가 성립하지 않는다.** 수확 시 논문
       재구성: 메인=3.8-27B, Qwen2.5 7B/14B 5-seed는 이전 세대 재현 축으로
       강등 배치(초록·셋업 문구 교체는 수확 후 — 수치 선기록 금지).
 - [ ] B11. 🖥 최신 세대 모델 검증 (사용자 지시 8/18: "최신 모델에서도 제대로
@@ -182,6 +186,18 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       "겹쳐도 결론 불변" 실측 — 종결 조건, ⓑ 반박 문장(실제 RLVR도 선택
       대상 풀에 학습 → 실무 조건 모사) — 보조. 비용 run 1개, 9/10 전
       집행이 정답. B6·B7과 함께 판단.
+- [ ] **B17. 🖥 [P0] 27B 능력-난이도 정합 가설 검증 (사용자 지시 8/19)** —
+      논문의 one-sided off-policy misranking 가설은 27B에서도 직접 검증되어야
+      한다. 현재 DAPO 전량 정답은 포화 진단만 제공하므로, 더 어려운 데이터셋이나
+      27B 실패 기반 생성·선별 풀로 교체한다. 착수 게이트: behavior prescreen에서
+      최소 `N_TRAIN + N_VAL`개의 live prompt(`0 < pass-rate < 1`) 확보, reward
+      variance와 비영(非零) top-k boundary margin 확인. 검증 종결 조건: 동일한
+      fresh oracle·equal-K·sample-disjoint 프로토콜에서 (i) corrected floor가
+      chance를 충분히 상회해 순위 비교가 가능하고, (ii) 최소 한 one-sided cell의
+      순위 손실/부호반전이 full/fresh 기준 대비 재현되며, (iii) KL·ESS·평균
+      cosine 대시보드는 정상 범위에 머무는 현상을 seed 간 확인한다. 이 조건을
+      못 채우면 27B 결과는 **포화 체제 사례**로만 보고하고, “27B에서 가설 검증”
+      문구는 초록·본문에 쓰지 않는다. 후보 풀 확보가 27B 메인 승격의 blocker다.
 - 매핑 메모: 그록 A1=기존 B6(대형 K), A5=A11(clustered bootstrap),
   R7=B10(mbpp — **진행 중**), A2(닻)=B4 **✅기완료**, C3(경계 부호 일치율)은
   B4 REVERSAL 대역 분석이 부분 커버. R2(KL 리라벨)는 A2 수치 반영 때 manifest
