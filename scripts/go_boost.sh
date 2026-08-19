@@ -26,7 +26,10 @@ PHASES="${PHASES:-D E F}"
 run_one() {  # run_one <OUT_ROOT> <ENV=V...>  — DONE 스킵 + 재시도 2회 + 데이터 문제 즉시 포기
   local dir="$1"; shift
   local tag; tag="$(basename "$dir")"
-  if [ -f "$dir/DONE" ]; then echo "  ✔ $tag 완주분 — 스킵"; return 0; fi
+  if [ -f "$dir/DONE" ] && [ -f "$dir/score_protocol.json" ] \
+     && [ -f "$dir/oracle_protocol.json" ]; then
+    echo "  ✔ $tag 완주분 — 스킵"; return 0
+  fi
   local lg="$LOGDIR/boost-$tag.log"
   for try in 1 2; do
     if env "$@" OUT_ROOT="$dir" bash scripts/run_14b.sh >> "$lg" 2>&1; then
@@ -46,9 +49,13 @@ if [[ " $PHASES " == *" D "* ]]; then
     for d in 50 200 400; do
       dir="$OM_WORK/runs/v2-d$d-s$s"
       mkdir -p "$dir"
-      if [ -f "$src/DONE" ]; then
+      if [ -f "$src/DONE" ] && [ -f "$src/score_protocol.json" ] \
+         && [ -f "$src/oracle_protocol.json" ]; then
         cp -n "$src/prompts.json" "$dir/" 2>/dev/null || true
         cp -n "$src/rollouts_behavior_train.jsonl" "$dir/" 2>/dev/null || true
+        for f in "$src"/rollouts_behavior_train*.manifest.json; do
+          [ -f "$f" ] && cp -n "$f" "$dir/"
+        done
       fi
       run_one "$dir" DATASET=gsm8k DRIFT="$d" SEED="$s" N_TRAIN=512 N_VAL=100 || true
     done

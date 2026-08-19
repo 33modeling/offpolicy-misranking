@@ -17,19 +17,23 @@ from pathlib import Path
 import torch
 
 from certagrad import angle_radius, eb_radius
+from gate_rules import has_valid_analysis_protocol
 
 
-def diagnose_run(run: Path) -> None:
+def diagnose_run(run: Path) -> bool:
+    if not has_valid_analysis_protocol(run):
+        print(f"[{run.name}] corrected score/oracle protocol 없음 — 진단 거부")
+        return False
     mg = run / "oracle_micro_groups.pt"
     vg = run / "val_groups.pt"
     oc = run / "scores_oracle.json"
     missing = [p.name for p in (mg, vg, oc) if not p.exists()]
     if missing:
         print(f"[{run.name}] 산출물 누락으로 진단 불가: {missing}")
-        return
+        return False
 
     micro = torch.load(mg, weights_only=True)
-    val_pool = torch.load(vg, weights_only=True).float()
+    val_pool = torch.load(vg, weights_only=True).float()[0::2]
     order = sorted(micro)
     m = len(order)
     per = 0.05 / (m + 1)
@@ -78,19 +82,22 @@ def diagnose_run(run: Path) -> None:
         need = f"경계 후보당 필요 관측 ≈ {n_req:.0f} micro-groups (현재 {ns[0]})"
     print(f"[{run.name}] frac={frac}: k경계 margin={gap:.2f}° · "
           f"후보 α(n={ns[0]})={sorted(alphas)[m // 2]:.2f}° · α_v={a_v:.2f}° → {need}")
+    return True
 
 
 def main() -> int:
     out_root = Path(sys.argv[1] if len(sys.argv) > 1 else "outputs/pilot")
     runs = sorted(d for d in out_root.glob("drift*")
                   if d.is_dir() and not d.name.startswith("drift_")) or [out_root]
+    failed = False
     for run in runs:
         try:
-            diagnose_run(run)
+            failed |= not diagnose_run(run)
         except Exception:
+            failed = True
             print(f"[{run.name}] 진단 중 예외 — 아래 traceback을 그대로 전달할 것")
             traceback.print_exc()
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

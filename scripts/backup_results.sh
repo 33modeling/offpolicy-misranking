@@ -18,11 +18,13 @@ for d in "$OM_WORK"/results/*/; do
 done
 # run별 정본(완주분만, 소형 json만)
 for r in "$OM_WORK"/runs/v2-*/; do
-  [ -f "$r/DONE" ] || continue
+  [ -f "$r/DONE" ] && [ -f "$r/score_protocol.json" ] \
+    && [ -f "$r/oracle_protocol.json" ] || continue
   t="$DEST/runs/$(basename "$r")"; mkdir -p "$t"
   for f in report.json manifest.json scores_oracle.json scores_offpolicy.json \
            scores_splithalf.json scores_hybrid_*.json divergence_stats*.json \
-           downstream_*.json; do
+           score_protocol.json oracle_protocol.json hybrid_protocol_*.json \
+           postprocess_manifest.json downstream_*.json; do
     cp "$r"/$f "$t/" 2>/dev/null || true
   done
 done

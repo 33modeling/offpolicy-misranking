@@ -2,6 +2,36 @@
 
 담당: 🖥 = 클러스터(사용자 실행), 🤖 = 로컬(Claude 작업). 순서는 위→아래.
 
+## 2026-08-20 전수 감사 후 제출 게이트
+
+- [x] 이론 식과 2×2 셀을 독립 열거 검산하고 일반 $K$ group normalization을
+      $K=2\ldots1024$에서 확인
+- [x] stale selection score와 evaluation oracle이 공유하던 validation 방향을
+      홀짝 절반으로 분리하고 score/oracle 프로토콜 마커를 fail-closed로 적용
+- [x] oracle split-half의 candidate/validation 표본 독립성 복구
+- [x] K-curve와 frontier의 validation 재사용 제거 및 rollout 예산 단위 교정
+- [x] hard-pool을 모델/config hash, 정확한 $K$, 독립 liveness 재검증으로 잠금
+- [x] C1/C1′를 동일 run, 사전고정 cut 0.5의 joint witness로 판정
+- [x] 코드 스냅샷 잠금, run별 프로세스 정리, 오류 전파, 생성 코드 sandbox 추가
+- [x] 생성 계약 검사를 score/oracle 단계 자체에 내장하고 manifest 범위·EOS·정확 K를
+      통과하지 못한 복사/부분 rollout의 protocol 마커 생성을 차단
+- [x] 신규 직접 경쟁 문헌 9편과 setup 원전 인용을 원고에 추가
+- [ ] 현재 공유 코드 작업이 모두 끝날 때까지 `git pull` 금지. 완료 후 각 run에
+      GPU 환경에서 `python3 src/rescore_completed_run.py RUN_DIR` 실행. 이 명령은 생성
+      계약을 먼저 검증하고 off-policy score를 재계산한 뒤 oracle/floor/report를 재생성;
+      계약 검증 실패 run은 폐기
+- [ ] 교정 commit으로 confirmatory seed matrix를 완주하고 TABLES/KCURVE/FRONTIER/
+      READOUT/REVERSAL/STATS를 전부 새로 생성
+- [ ] math verifier를 symbolic equivalence 또는 공식 verifier로 교체하고 표본 오류 감사
+- [ ] drift-training prompt와 selection-evaluation prompt를 분리한 ablation 추가
+- [ ] CountSketch/last-layer projection이 top-k 경계 순위를 보존하는지 full-gradient
+      소표본 calibration 추가
+- [ ] downstream 비교를 실제 성공 update 수와 생성 token 수까지 맞추고 반복 seed 실행
+- [ ] GPU 환경에서 `test_contract.py`, `test_core.py`, `test_protocol.py` 재실행
+- [ ] ICLR 공식 스타일, 본문 분량, 익명화, artifact appendix를 제출 포맷으로 정리
+
+상세 판정과 결과 파일 hash는 `docs/FULL_AUDIT_2026-08-20.md` 참조.
+
 ## 상태 (2026-08-13 오후): 재편 분기 발동 — 원고 v0.1 push 완료
 
 P3-0 precheck **NO-GO** + P4-0 kcurve **구조적 부재** → 사전 등록 재편 분기

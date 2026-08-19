@@ -28,6 +28,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from gate_rules import has_valid_analysis_protocol
+
 N_JITTER = 20
 N_BOOT = 200
 MIN_H = 80          # 이보다 작으면 floor 추정 자체가 불안정 → 대상 제외
@@ -136,6 +138,8 @@ def main() -> int:
 
     rows, votes = [], []
     for d in runs:
+        if not has_valid_analysis_protocol(d):
+            continue
         try:
             hv = {int(i): v for i, v in
                   json.loads((d / "scores_splithalf.json").read_text()).items()}

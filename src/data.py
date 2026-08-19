@@ -441,35 +441,69 @@ def _extract_code(text: str) -> str:
     return text[i:] if i != -1 else text
 
 
-def _code_reward(text: str, tests: str) -> float:
-    """생성 코드 + assert 테스트를 서브프로세스로 실행 — 전부 통과해야 1.0.
-
-    타임아웃 8초(무한루프 방지), 실행은 -I(isolated)로 사용자 site 격리.
-    """
+def _run_untrusted_python(code: str, stdin: str = "", timeout: int = 8):
+    """Run generated code in a fail-closed bubblewrap sandbox."""
+    import os
+    import shutil
     import subprocess
-    import sys
+    import tempfile
+    from pathlib import Path
 
-    src = _extract_code(text) + "\n\n" + tests + "\n"
+    bwrap = shutil.which("bwrap")
+    python = "/usr/bin/python3"
+    runner = Path(__file__).resolve().parents[1] / "scripts" / "code_sandbox.py"
+    if not bwrap or not os.path.isfile(python) or not runner.is_file():
+        return None
+
+    command = [
+        bwrap,
+        "--unshare-all", "--die-with-parent", "--new-session",
+        "--clearenv", "--setenv", "PATH", "/usr/bin", "--setenv", "LANG", "C.UTF-8",
+        "--ro-bind", "/usr", "/usr",
+        "--ro-bind", "/lib", "/lib",
+        "--ro-bind", str(runner), "/runner.py",
+    ]
+    for path in ("/lib64", "/etc/ld.so.cache"):
+        if os.path.exists(path):
+            command += ["--ro-bind", path, path]
+    command += [
+        "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+        "--chdir", "/tmp", python, "-I", "/runner.py", str(timeout), code,
+    ]
+
     try:
-        # returncode만 필요 — 출력은 버린다 (print 폭주 코드의 메모리 폭발 방지)
-        p = subprocess.run([sys.executable, "-I", "-c", src],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=8)
-        return 1.0 if p.returncode == 0 else 0.0
-    except (subprocess.TimeoutExpired, OSError):
-        return 0.0
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.run(
+                command,
+                input=stdin.encode(),
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False,
+            )
+            output.seek(0)
+            stdout = output.read(1024 * 1024 + 1)
+        if len(stdout) > 1024 * 1024:
+            return None
+        return process.returncode, stdout.decode(errors="replace")
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return None
+
+
+def _code_reward(text: str, tests: str) -> float:
+    """Run generated functions and asserts in an isolated sandbox."""
+    src = _extract_code(text) + "\n\n" + tests + "\n"
+    result = _run_untrusted_python(src)
+    return 1.0 if result is not None and result[0] == 0 else 0.0
 
 
 def _apps_reward(text: str, gold: str) -> float:
     """APPS stdin/stdout 채점 — 캡된 테스트 전부에서 stdout이 일치해야 1.0.
 
     타임아웃 8초/테스트. stdout 비교는 줄 단위 우측 공백·전체 앞뒤 공백 무시.
-    (capture라 print 폭주 시 메모리 위험이 있으나 타임아웃이 상한 — mbpp와 달리
-    출력 자체가 채점 대상이라 DEVNULL 불가.)
+    출력은 1 MiB로 제한하고 호스트 파일·네트워크 접근을 허용하지 않는다.
     """
     import json as _json
-    import subprocess
-    import sys
 
     io = _json.loads(gold[5:])
     code = _extract_code(text)
@@ -479,14 +513,10 @@ def _apps_reward(text: str, gold: str) -> float:
     if len(inputs) != len(outputs):
         return 0.0
     for inp, want in zip(inputs, outputs, strict=True):
-        try:
-            p = subprocess.run([sys.executable, "-I", "-c", code],
-                               input=inp, capture_output=True, text=True, timeout=8)
-        except (subprocess.TimeoutExpired, OSError):
+        result = _run_untrusted_python(code, stdin=inp)
+        if result is None or result[0] != 0:
             return 0.0
-        if p.returncode != 0:
-            return 0.0
-        got = "\n".join(l.rstrip() for l in p.stdout.strip().splitlines())
+        got = "\n".join(l.rstrip() for l in result[1].strip().splitlines())
         exp = "\n".join(l.rstrip() for l in str(want).strip().splitlines())
         if got != exp:
             return 0.0

@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
 import torch
 
+from artifact_contract import validate_generation_contract
 from certagrad import certagrad, uniform_baseline
 from data import load_prompts
 from rollout_contract import trim_row
@@ -35,6 +37,10 @@ from rollout import SAMPLING, collect_rollouts, load_policy, train_drift_lora
 from select_rules import (fixed_selection_overlap, jittered_topk,
                           overlap_under_independent_ties, topk_count)
 
+SCORE_PROTOCOL_SCHEMA = "offpolicy-score-validation-split/v1"
+ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v1"
+HYBRID_PROTOCOL_SCHEMA = "offpolicy-hybrid-validation-split/v1"
+
 
 def _atomic_text(path: Path, text: str) -> None:
     """쓰다 죽어도 완성본만 남는다 — 부분 파일이 exists() 재개 검사를 통과하는 오염 방지."""
@@ -49,8 +55,50 @@ def _atomic_save(obj, path: Path) -> None:
     tmp.replace(path)
 
 
-def score_oracle_microgroups(stack: torch.Tensor, val_grad: torch.Tensor) -> tuple[dict, dict]:
-    """Score a full oracle and equal-budget odd/even rollout halves."""
+def split_validation_directions(val_groups: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return disjoint selection/evaluation validation directions."""
+    if val_groups.ndim != 2 or val_groups.shape[0] < 2:
+        raise ValueError(
+            "split-half scoring requires at least two validation prompt gradients"
+        )
+    return val_groups[0::2].mean(dim=0), val_groups[1::2].mean(dim=0)
+
+
+def _has_protocol(path: Path, schema: str) -> bool:
+    try:
+        document = json.loads(path.read_text())
+        if document.get("schema") != schema:
+            return False
+        if schema in (SCORE_PROTOCOL_SCHEMA, ORACLE_PROTOCOL_SCHEMA):
+            return int(document.get("generation_validation", {}).get("validated_rows", 0)) > 0
+        return True
+    except (OSError, AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def oracle_protocol_document(
+    val_groups: torch.Tensor,
+    generation_validation: dict | None = None,
+) -> dict:
+    document = {
+        "schema": ORACLE_PROTOCOL_SCHEMA,
+        "candidate_partition": "a=micro_groups[0::2], b=micro_groups[1::2]",
+        "validation_partition": "a=val_groups[0::2], b=val_groups[1::2]",
+        "evaluation_oracle": "all candidate micro-groups scored on val_groups[1::2]",
+        "validation_group_count": int(val_groups.shape[0]),
+    }
+    if generation_validation is not None:
+        document["generation_validation"] = generation_validation
+    return document
+
+
+def score_oracle_microgroups(
+    stack: torch.Tensor,
+    evaluation_val: torch.Tensor,
+    val_half_a: torch.Tensor,
+    val_half_b: torch.Tensor,
+) -> tuple[dict, dict]:
+    """Score a full oracle and sample-disjoint candidate/validation halves."""
     if stack.ndim != 2:
         raise ValueError(f"micro-group stack must be 2D, got shape={tuple(stack.shape)}")
     groups = stack.shape[0]
@@ -58,10 +106,10 @@ def score_oracle_microgroups(stack: torch.Tensor, val_grad: torch.Tensor) -> tup
         raise ValueError(f"split-half requires an even number of groups >=2, got {groups}")
     mu = stack.mean(dim=0)
     halves = {
-        "a": cosine(stack[0::2].mean(dim=0), val_grad),
-        "b": cosine(stack[1::2].mean(dim=0), val_grad),
+        "a": cosine(stack[0::2].mean(dim=0), val_half_a),
+        "b": cosine(stack[1::2].mean(dim=0), val_half_b),
     }
-    return {"score": cosine(mu, val_grad), "norm": float(mu.norm())}, halves
+    return {"score": cosine(mu, evaluation_val), "norm": float(mu.norm())}, halves
 
 
 def read_rollouts(path: Path) -> dict[int, list[dict]]:
@@ -94,11 +142,17 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
                 else f"scores_offpolicy.shard{shard[0]}.json")
     dname = ("divergence_stats.json" if shard is None
              else f"divergence_stats.shard{shard[0]}.json")
-    # 재시작 스킵 — 산출물 2종이 모두 있어야 (부분 상태 오인 방지). 이게 없어서
+    pname = ("score_protocol.json" if shard is None
+             else f"score_protocol.shard{shard[0]}.json")
+    # 재시작 스킵 — 산출물 3종이 모두 있어야 (부분 상태/구계약 오인 방지). 이게 없어서
     # 재시작마다 β 2-pass(장시간 무출력 구간)를 처음부터 다시 돌았다.
-    if (run / out_name).exists() and (run / dname).exists():
-        print(f"score: {out_name}·{dname} 존재 — 스킵")
+    if ((run / out_name).exists() and (run / dname).exists()
+            and _has_protocol(run / pname, SCORE_PROTOCOL_SCHEMA)):
+        print(f"score: {out_name}·{dname}·{pname} 존재 — 스킵")
         return
+    generation_validation = validate_generation_contract(
+        run, ("rollouts_behavior_train",)
+    )
     spec = ProjectionSpec(dim=args.proj_dim)
     rollouts = read_rollouts(run / "rollouts_behavior_train.jsonl")
     if shard is not None:
@@ -135,9 +189,9 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
         beta, _ = load_policy(args.model, None)
     params = grad_params(pi, args.grad_layers)
 
-    # validation 방향은 π fresh가 정본이지만, score stage에서는 우선 저장된 oracle
-    # stage 산출물을 쓴다 (oracle을 먼저 돌릴 것).
-    val = torch.load(run / "val_gradient.pt", weights_only=True)
+    # Selection score와 evaluation oracle이 validation rollout noise를 공유하지 않는다.
+    val_groups = torch.load(run / "val_groups.pt", weights_only=True)
+    selection_val, _ = split_validation_directions(val_groups)
 
     import time as _time
 
@@ -162,7 +216,7 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
                 for lp, lb, a in zip(logps_pi, logps_beta, advs, strict=True)
             ]
             g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
-            out[est][pi_idx] = {"score": cosine(g, val), "norm": float(g.norm())}
+            out[est][pi_idx] = {"score": cosine(g, selection_val), "norm": float(g.norm())}
         if n_done % 5 == 0:
             from grads import ts
             print(f"[{ts()}]  score {n_done}/{len(rollouts)} "
@@ -175,10 +229,27 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
         w = torch.exp(lr - lr.max())
         ess = float(w.sum() ** 2 / (w ** 2).sum() / len(w))
         stats = {"token_kl_beta_pi": sum(d["kl_sum"] for d in div_rows) / max(1, n_tok),
-                 "traj_ess_frac_g11": ess, "rollouts": len(div_rows)}
+                 "traj_ess_frac_g11": ess, "rollouts": len(div_rows),
+                 "tokens": n_tok,
+                 "traj_logw_logsumexp": float(torch.logsumexp(lr, dim=0)),
+                 "traj_logw2_logsumexp": float(torch.logsumexp(2 * lr, dim=0))}
         for est in ESTIMATORS:
             stats[f"clipfrac_{est}"] = sum(d[f"clipfrac_{est}"] for d in div_rows) / len(div_rows)
         _atomic_text(run / dname, json.dumps(stats, indent=1))
+    protocol = {
+        "schema": SCORE_PROTOCOL_SCHEMA,
+        "validation_partition": "selection=val_groups[0::2], evaluation=val_groups[1::2]",
+        "validation_group_count": int(val_groups.shape[0]),
+        "shard": shard[0] if shard is not None else None,
+        "score_git": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True
+        ).strip(),
+        "generation_validation": generation_validation,
+    }
+    config_path = run / "run_config.json"
+    if config_path.exists():
+        protocol["source_run_git"] = json.loads(config_path.read_text()).get("git")
+    _atomic_text(run / pname, json.dumps(protocol, indent=1))
 
 
 def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | None = None) -> None:
@@ -206,6 +277,11 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         collect_rollouts(
             pi, tok, prompts["val"], args.val_k, args.max_new_tokens,
             args.temperature, val_path,
+        )
+    generation_validation = None
+    if shard is None:
+        generation_validation = validate_generation_contract(
+            run, ("rollouts_fresh_train", "rollouts_fresh_val")
         )
 
     # validation 방향 v — 비샤드 경로 전담 (샤드 모드는 val-grads 스테이지가 담당)
@@ -240,9 +316,8 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         keys = sorted(fresh_by_prompt)[shard[0]::shard[1]]
         fresh_by_prompt = {k: fresh_by_prompt[k] for k in keys}
     if shard is None:
-        # 본문의 estimand와 sharded merge 경로는 같은 validation target을 공유한다.
-        # 공유 validation 오차의 조건부성은 floor의 scope note로 보고한다.
-        val_grad = torch.load(run / "val_gradient.pt", weights_only=True)
+        val_groups = torch.load(run / "val_groups.pt", weights_only=True)
+        val_half_a, val_half_b = split_validation_directions(val_groups)
     for pi_idx, rows in sorted(fresh_by_prompt.items()):
         n_done += 1
         gsize = args.micro_group
@@ -268,7 +343,9 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         stack = torch.stack(group_grads)
         micro[pi_idx] = stack
         if shard is None:
-            oracle[pi_idx], halves[pi_idx] = score_oracle_microgroups(stack, val_grad)
+            oracle[pi_idx], halves[pi_idx] = score_oracle_microgroups(
+                stack, val_half_b, val_half_a, val_half_b
+            )
         if n_done % 5 == 0:
             from grads import ts
             print(f"[{ts()}]  oracle {n_done}/{len(fresh_by_prompt)} "
@@ -278,6 +355,12 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         _atomic_save(micro, run / "oracle_micro_groups.pt")
         _atomic_text(run / "scores_splithalf.json", json.dumps(halves, indent=1))
         _atomic_text(run / "scores_oracle.json", json.dumps(oracle, indent=1))
+        _atomic_text(
+            run / "oracle_protocol.json",
+            json.dumps(
+                oracle_protocol_document(val_groups, generation_validation), indent=1
+            ),
+        )
     else:
         _atomic_save(micro, run / f"oracle_micro_groups.shard{shard[0]}.pt")
 
@@ -290,6 +373,10 @@ def topk(scores: dict, frac: float, seed: int = 0) -> set:
 
 
 def stage_report(args, run: Path) -> None:
+    if not _has_protocol(run / "score_protocol.json", SCORE_PROTOCOL_SCHEMA):
+        raise ValueError("corrected off-policy score protocol is missing")
+    if not _has_protocol(run / "oracle_protocol.json", ORACLE_PROTOCOL_SCHEMA):
+        raise ValueError("corrected oracle validation protocol is missing")
     oracle = {int(k): v for k, v in json.loads((run / "scores_oracle.json").read_text()).items()}
     off = json.loads((run / "scores_offpolicy.json").read_text())
     halves = {int(k): v for k, v in json.loads((run / "scores_splithalf.json").read_text()).items()}
@@ -371,6 +458,7 @@ def stage_report(args, run: Path) -> None:
         "uniform_rollouts": uni_rollouts,
         "evaluation": "selection=even groups, evaluation=odd groups",
         "radius_mode": args.radius_mode,
+        "coverage": cg["coverage"],
         "fresh_frac_of_uniform": cg_rollouts / uni_rollouts,
         "precision_vs_oracle": cg_overlap.mean,
         "precision_jitter_range": [cg_overlap.low, cg_overlap.high],
@@ -622,22 +710,46 @@ def main() -> None:
                     merged.update(json.loads(p.read_text()))
                 _atomic_text(run / f"{base}.json", json.dumps(merged, indent=1))
             print(f"merge: {base} ← {len(shards)} shards")
+        score_protocols = sorted(run.glob("score_protocol.shard*.json"))
+        score_shards = sorted(run.glob("scores_offpolicy.shard*.json"))
+        if score_shards:
+            if len(score_protocols) != len(score_shards):
+                raise ValueError("score protocol shard coverage mismatch")
+            protocols = [json.loads(path.read_text()) for path in score_protocols]
+            canonical = {k: v for k, v in protocols[0].items() if k != "shard"}
+            if canonical.get("schema") != SCORE_PROTOCOL_SCHEMA or any(
+                    {k: v for k, v in doc.items() if k != "shard"} != canonical
+                    for doc in protocols[1:]):
+                raise ValueError("score protocol shards disagree")
+            canonical["shards"] = len(protocols)
+            _atomic_text(run / "score_protocol.json", json.dumps(canonical, indent=1))
         # 병합된 micro + val 방향에서 oracle 점수·split-half 도출 (비샤드 경로와 동일 수식)
         micro_p = run / "oracle_micro_groups.pt"
-        val_p = run / "val_gradient.pt"
-        # 산출물 2개(oracle+splithalf) — 둘 다 있어야 스킵 (부분 상태 오인 방지)
-        if micro_p.exists() and val_p.exists() and not (
+        val_groups_p = run / "val_groups.pt"
+        # 점수 2개와 프로토콜 마커까지 있어야 스킵한다.
+        if micro_p.exists() and val_groups_p.exists() and not (
                 (run / "scores_oracle.json").exists()
-                and (run / "scores_splithalf.json").exists()):
+                and (run / "scores_splithalf.json").exists()
+                and _has_protocol(run / "oracle_protocol.json", ORACLE_PROTOCOL_SCHEMA)):
             micro = torch.load(micro_p, weights_only=True)
-            val_grad = torch.load(val_p, weights_only=True)
+            val_groups = torch.load(val_groups_p, weights_only=True)
+            val_half_a, val_half_b = split_validation_directions(val_groups)
+            generation_validation = validate_generation_contract(
+                run, ("rollouts_fresh_train", "rollouts_fresh_val")
+            )
             oracle, halves = {}, {}
             for pi_idx, stack in sorted(micro.items()):
                 oracle[pi_idx], halves[pi_idx] = score_oracle_microgroups(
-                    stack, val_grad
+                    stack, val_half_b, val_half_a, val_half_b
                 )
             _atomic_text(run / "scores_splithalf.json", json.dumps(halves, indent=1))
             _atomic_text(run / "scores_oracle.json", json.dumps(oracle, indent=1))
+            _atomic_text(
+                run / "oracle_protocol.json",
+                json.dumps(
+                    oracle_protocol_document(val_groups, generation_validation), indent=1
+                ),
+            )
             print(f"merge: oracle 점수 도출 {len(oracle)} prompts")
     elif args.stage == "report":
         stage_report(args, run)
@@ -648,12 +760,14 @@ def main() -> None:
         pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
         beta, _ = load_policy(args.model, None)
         # oracle 산출물 3개 전부 있어야 스킵 (부분 상태 오인 방지)
-        if not all((run / f).exists() for f in
-                   ("scores_oracle.json", "scores_splithalf.json", "oracle_micro_groups.pt")):
+        if not (all((run / f).exists() for f in
+                    ("scores_oracle.json", "scores_splithalf.json", "oracle_micro_groups.pt"))
+                and _has_protocol(run / "oracle_protocol.json", ORACLE_PROTOCOL_SCHEMA)):
             stage_oracle(args, run, pi=pi, tok=tok)
         else:
             print("analyze: oracle 산출물 존재 — 스킵")
-        if not (run / "scores_offpolicy.json").exists():
+        if not ((run / "scores_offpolicy.json").exists()
+                and _has_protocol(run / "score_protocol.json", SCORE_PROTOCOL_SCHEMA)):
             stage_score(args, run, pi=pi, beta=beta)
         else:
             print("analyze: score 산출물 존재 — 스킵")
@@ -670,13 +784,18 @@ def main() -> None:
 
 
 def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
-    from hybrid import make_hybrid_cells, score_cells
+    from hybrid import HYBRID_ROLLOUT_SCHEMA, make_hybrid_cells, score_cells
 
     spec = ProjectionSpec(dim=args.proj_dim)
     if pi is None:
         pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
         beta, _ = load_policy(args.model, None)
-    if (run / f"scores_hybrid_{cut_frac}.json").exists():
+    protocol_path = run / f"hybrid_protocol_{cut_frac}.json"
+    if not (_has_protocol(run / "score_protocol.json", SCORE_PROTOCOL_SCHEMA)
+            and _has_protocol(run / "oracle_protocol.json", ORACLE_PROTOCOL_SCHEMA)):
+        raise ValueError("hybrid scoring requires corrected score and oracle protocols")
+    if ((run / f"scores_hybrid_{cut_frac}.json").exists()
+            and _has_protocol(protocol_path, HYBRID_PROTOCOL_SCHEMA)):
         print(f"hybrid cut={cut_frac}: 이미 존재 — 스킵")
         return
     if True:
@@ -694,15 +813,30 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
             make_hybrid_cells(beta, pi, tok, behavior, prompts, cut_frac,
                               args.max_new_tokens, args.temperature,
                               subset, hy_path, k_cell=args.k_cell)
+        rollout_manifest_path = hy_path.with_name(hy_path.name + ".manifest.json")
+        if not rollout_manifest_path.exists():
+            raise ValueError("hybrid rollouts predate the equal-budget/horizon contract")
+        rollout_manifest = json.loads(rollout_manifest_path.read_text())
+        if (rollout_manifest.get("schema") != HYBRID_ROLLOUT_SCHEMA
+                or int(rollout_manifest.get("k_cell", -1)) != args.k_cell
+                or float(rollout_manifest.get("cut_frac", -1)) != cut_frac):
+            raise ValueError("hybrid rollout contract mismatch")
         hy = read_rollouts(hy_path)  # prompt_idx 기준 — cell 분리 다시
         cells: dict[str, dict[int, list[dict]]] = {"bb": {}, "bp": {}, "pb": {}, "pp": {}}
         for idx, rows in hy.items():
             for r in rows:
                 cells[r["cell"]].setdefault(idx, []).append(r)
         params = grad_params(pi, args.grad_layers)
-        val = torch.load(run / "val_gradient.pt", weights_only=True)
-        scores = score_cells(pi, params, cells, val, spec)
+        val_groups = torch.load(run / "val_groups.pt", weights_only=True)
+        selection_val, _ = split_validation_directions(val_groups)
+        scores = score_cells(pi, params, cells, selection_val, spec)
         _atomic_text(run / f"scores_hybrid_{cut_frac}.json", json.dumps(scores, indent=1))
+        _atomic_text(protocol_path, json.dumps({
+            "schema": HYBRID_PROTOCOL_SCHEMA,
+            "validation_partition": "selection=val_groups[0::2]",
+            "cut": cut_frac,
+            "rollout_protocol": HYBRID_ROLLOUT_SCHEMA,
+        }, indent=1))
         print(f"hybrid cut={cut_frac} 저장: {sorted(scores)}")
 
 

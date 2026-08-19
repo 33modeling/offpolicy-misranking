@@ -8,32 +8,6 @@ cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 RUN="${RUN:-$OM_WORK/runs/gate-14b-math500}"
 [ -f "$RUN/prompts.json" ] || { echo "[abort] run 아님: $RUN (prompts.json 없음)"; exit 1; }
-DATASET="${DATASET:-math500}"
-export FRESH_K="${FRESH_K:-32}"
-# 이 14B 노드는 fused SDPA 커널이 ULF를 내는 이력(C6)이 있어 eager가 기본.
-# 빠른 커널을 쓰고 싶을 때만 OM_ATTN=sdpa 로 명시.
-export OM_ATTN="${OM_ATTN:-eager}"
-
-# 이전 실행 잔재 정리 (있으면)
-pkill -f run_14b.sh 2>/dev/null || true
-pkill -f gpu_keepalive 2>/dev/null || true
-sleep 3
-
-echo "== oracle 심화: $RUN (FRESH_K=$FRESH_K, DATASET=$DATASET, OM_ATTN=${OM_ATTN:-기본})"
-echo "== 삭제 대상(oracle 계열만):"
-ls -1 "$RUN"/rollouts_fresh_train*.jsonl "$RUN"/oracle_micro_groups*.pt \
-      "$RUN"/scores_oracle.json "$RUN"/scores_splithalf.json \
-      "$RUN"/report.md "$RUN"/report.json 2>/dev/null || true
-rm -f "$RUN"/rollouts_fresh_train*.jsonl "$RUN"/oracle_micro_groups*.pt \
-      "$RUN"/scores_oracle.json "$RUN"/scores_splithalf.json \
-      "$RUN"/report.md "$RUN"/report.json
-
-# run_14b는 OUT_ROOT에 DATASET 접미사를 붙이므로 접미사 없는 밑동을 넘긴다
-BASE_ROOT="$RUN"
-case "$RUN" in *-"$DATASET") BASE_ROOT="${RUN%-$DATASET}";; esac
-LOG="14b-oracle-redo.log"
-OUT_ROOT="$BASE_ROOT" DATASET="$DATASET" nohup bash scripts/run_14b.sh > "$LOG" 2>&1 &
-sleep 8
-echo "== 재실행 시작 (log: $LOG) — 완료 스테이지는 스킵, fresh부터 재생성"
-head -5 "$LOG"
-echo "== 끝나면: bash scripts/result.sh '$RUN' 에서 floor+precision 4개 확인"
+echo "[abort] redo_oracle.sh는 config-locked run의 일부만 바꿔 artifact를 혼합하므로 비활성화됨."
+echo "        FRESH_K를 바꿀 때는 새 OUT_ROOT로 scripts/run_14b.sh를 실행할 것."
+exit 2

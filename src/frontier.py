@@ -9,8 +9,8 @@ v2 산출물만으로 selection 정책 스펙트럼을 시뮬레이션한다:
   · audit_boundary(p, m)   — stale 순위 + top-k 경계 근접 p-부분집합만 교체
 
 누수 차단 프로토콜: oracle micro-group을 반으로 갈라 **짝수 그룹 = 정책 관측**,
-**홀수 그룹 = 진실(truth)** 로만 쓴다 — 정책이 진실과 표본을 공유하지 않는다
-(감사 blocker C의 교훈). 진실 top-k는 홀수-절반 평균 gradient의 val 정렬 순위.
+**홀수 그룹 = 진실(truth)** 로만 쓴다. Validation prompt gradients도 짝/홀로
+나눠 정책과 진실이 candidate 또는 validation 표본을 공유하지 않는다.
 
 출력: $OM_RESULTS(없으면 $OM_WORK/results)/FRONTIER.md + frontier.json
   F1 run별 정책×예산 precision/regret   F2 dataset 집계(seed 평균±sd)
@@ -20,6 +20,7 @@ v2 산출물만으로 selection 정책 스펙트럼을 시뮬레이션한다:
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import sys
@@ -28,6 +29,7 @@ from pathlib import Path
 
 import torch
 
+from gate_rules import has_valid_analysis_protocol
 from select_rules import topk_count
 
 EST = ("g00", "g10", "g01", "g11")
@@ -53,20 +55,48 @@ class Run:
     """한 run의 산출물 로드 + 짝/홀 분리 점수."""
 
     def __init__(self, root: Path):
+        if not has_valid_analysis_protocol(root):
+            raise ValueError("frontier requires corrected independent-validation scores")
         self.root = root
         self.name = root.name
         micro = torch.load(root / "oracle_micro_groups.pt", weights_only=True)
-        self.val = torch.load(root / "val_gradient.pt", weights_only=True).float()
+        val_groups = torch.load(root / "val_groups.pt", weights_only=True).float()
+        if val_groups.ndim != 2 or val_groups.shape[0] < 4:
+            raise ValueError("frontier needs at least four validation prompt gradients")
+        obs_val_groups = val_groups[0::2]
+        self.obs_val = obs_val_groups.mean(dim=0)
+        obs_vh = obs_val_groups.shape[0] // 2
+        if obs_vh < 1:
+            raise ValueError("frontier selection diagnostics need two validation halves")
+        self.obs_val_a = obs_val_groups[:obs_vh].mean(dim=0)
+        self.obs_val_b = obs_val_groups[obs_vh:].mean(dim=0)
+        truth_val_groups = val_groups[1::2]
+        truth_val = truth_val_groups.mean(dim=0)
         self.ids = sorted(micro)
         self.n = len(self.ids)
         self.k = topk_count(self.n, FRAC)
+        group_counts = {int(stack.shape[0]) for stack in micro.values()}
+        if len(group_counts) != 1:
+            raise ValueError(f"inconsistent micro-group counts: {sorted(group_counts)}")
+        self.total_groups = group_counts.pop()
+        if self.total_groups < 4 or self.total_groups % 2:
+            raise ValueError(
+                f"frontier reliability split needs an even group count >=4, "
+                f"got {self.total_groups}"
+            )
+        self.rollouts_per_group = self._rollouts_per_group()
         # 짝수 그룹 = 정책 관측 풀, 홀수 그룹 = 진실 전용
         self.obs = {i: micro[i][0::2].float() for i in self.ids}
         tru = {i: micro[i][1::2].float() for i in self.ids}
-        self.truth_score = {i: cos(tru[i].mean(0), self.val) for i in self.ids}
+        self.truth_score = {i: cos(tru[i].mean(0), truth_val) for i in self.ids}
         h = next(iter(tru.values())).shape[0] // 2
-        ha = {i: cos(tru[i][:h].mean(0), self.val) for i in self.ids}
-        hb = {i: cos(tru[i][h:].mean(0), self.val) for i in self.ids}
+        vh = truth_val_groups.shape[0] // 2
+        if h < 1 or vh < 1:
+            raise ValueError("frontier truth reliability needs two truth halves")
+        val_a = truth_val_groups[:vh].mean(dim=0)
+        val_b = truth_val_groups[vh:].mean(dim=0)
+        ha = {i: cos(tru[i][:h].mean(0), val_a) for i in self.ids}
+        hb = {i: cos(tru[i][h:].mean(0), val_b) for i in self.ids}
         # 절반별 독립 jitter — 같은 seed면 동점 체제에서 reliability 인위 부풀림
         self.truth_reliability = len(topk_ids(ha, self.k, random.Random(7))
                                      & topk_ids(hb, self.k, random.Random(104729))) / self.k
@@ -92,9 +122,35 @@ class Run:
                           for i in self.ids}
         self.max_obs = next(iter(self.obs.values())).shape[0]
 
+    def _rollouts_per_group(self) -> int:
+        raw = self.root / "rollouts_fresh_train.jsonl"
+        if raw.exists():
+            counts: dict[int, set[int]] = defaultdict(set)
+            for line in raw.open():
+                row = json.loads(line)
+                counts[int(row["prompt_idx"])].add(int(row["rollout_idx"]))
+            missing = set(self.ids) - set(counts)
+            sizes = {len(counts[i]) for i in self.ids if i in counts}
+            if missing or len(sizes) != 1:
+                raise ValueError(
+                    f"fresh rollout coverage/count mismatch: missing={sorted(missing)[:5]}, "
+                    f"sizes={sorted(sizes)}"
+                )
+            fresh_k = sizes.pop()
+        else:
+            manifest = self.root / "manifest.json"
+            if not manifest.exists():
+                raise ValueError("fresh rollout cost provenance is missing")
+            fresh_k = int(json.loads(manifest.read_text())["fresh_k"])
+        if fresh_k % self.total_groups:
+            raise ValueError(
+                f"fresh_k={fresh_k} is not divisible by groups={self.total_groups}"
+            )
+        return fresh_k // self.total_groups
+
     # ---- 정책들: (선택집합, fresh 관측 수) ----
     def obs_score(self, i: int, m: int) -> float:
-        return cos(self.obs[i][:m].mean(0), self.val)
+        return cos(self.obs[i][:m].mean(0), self.obs_val)
 
     def features(self, i: int) -> list[float]:
         """2D-REFRESH 특징: 셀 점수 3종 + 축별 불일치 + β 난이도."""
@@ -247,8 +303,8 @@ class Run:
         diag = rng.sample(self.ids, min(diag_prompts, self.n))
         h = self.max_obs // 2
         if h >= 1:
-            ka = {i: cos(self.obs[i][:h].mean(0), self.val) for i in diag}
-            kb = {i: cos(self.obs[i][h:].mean(0), self.val) for i in diag}
+            ka = {i: cos(self.obs[i][:h].mean(0), self.obs_val_a) for i in diag}
+            kb = {i: cos(self.obs[i][h:].mean(0), self.obs_val_b) for i in diag}
             kd = topk_count(len(diag), FRAC)
             floor_est = len(topk_ids(ka, kd, rng) & topk_ids(kb, kd, rng)) / kd
         else:
@@ -283,6 +339,7 @@ def simulate(run: Run) -> list[dict]:
         mean = lambda xs: sum(xs) / len(xs)
         sd = lambda xs: (sum((x - mean(xs)) ** 2 for x in xs) / max(1, len(xs) - 1)) ** 0.5
         rows.append({"run": run.name, "policy": policy, "fresh_groups": cost,
+                     "fresh_rollouts": cost * run.rollouts_per_group,
                      "budget_frac": cost / (run.n * run.max_obs),
                      "precision": mean(ps), "precision_sd": sd(ps) if stochastic else 0.0,
                      "regret": mean(rs)})
@@ -311,6 +368,58 @@ def simulate(run: Run) -> list[dict]:
     return rows
 
 
+def aggregate_divergence(paths: list[Path]) -> dict:
+    """Combine shard diagnostics without treating unequal shards equally."""
+    docs = [json.loads(path.read_text()) for path in paths]
+    out: dict[str, float | str] = {}
+    rollout_total = sum(int(doc.get("rollouts", 0)) for doc in docs)
+    token_total = sum(int(doc.get("tokens", 0)) for doc in docs)
+    if token_total:
+        out["token_kl_beta_pi"] = sum(
+            float(doc["token_kl_beta_pi"]) * int(doc.get("tokens", 0))
+            for doc in docs
+        ) / token_total
+        out["divergence_aggregation"] = "token/rollout-weighted"
+    elif rollout_total:
+        available = [doc for doc in docs if "token_kl_beta_pi" in doc]
+        denom = sum(int(doc.get("rollouts", 0)) for doc in available)
+        if denom:
+            out["token_kl_beta_pi"] = sum(
+                float(doc["token_kl_beta_pi"]) * int(doc.get("rollouts", 0))
+                for doc in available
+            ) / denom
+            out["divergence_aggregation"] = "legacy-rollout-weighted"
+    for key in ("clipfrac_g11", "clipfrac_g10"):
+        available = [doc for doc in docs if key in doc]
+        denom = sum(int(doc.get("rollouts", 0)) for doc in available)
+        if denom:
+            out[key] = sum(
+                float(doc[key]) * int(doc.get("rollouts", 0)) for doc in available
+            ) / denom
+
+    sufficient = all(
+        "traj_logw_logsumexp" in doc and "traj_logw2_logsumexp" in doc
+        for doc in docs
+    )
+    if sufficient and rollout_total:
+        def logaddexp(values: list[float]) -> float:
+            maximum = max(values)
+            return maximum + math.log(sum(math.exp(value - maximum) for value in values))
+
+        log_s1 = logaddexp([float(doc["traj_logw_logsumexp"]) for doc in docs])
+        log_s2 = logaddexp([float(doc["traj_logw2_logsumexp"]) for doc in docs])
+        out["traj_ess_frac_g11"] = math.exp(2 * log_s1 - log_s2) / rollout_total
+    elif len(docs) == 1 and "traj_ess_frac_g11" in docs[0]:
+        out["traj_ess_frac_g11"] = float(docs[0]["traj_ess_frac_g11"])
+    else:
+        shard_ess = [float(doc["traj_ess_frac_g11"]) for doc in docs
+                     if "traj_ess_frac_g11" in doc]
+        if shard_ess:
+            out["traj_ess_shard_min"] = min(shard_ess)
+            out["traj_ess_shard_max"] = max(shard_ess)
+    return out
+
+
 def condition_row(run: Run) -> dict:
     row = {"run": run.name, "n": run.n, "k": run.k,
            "truth_reliability": round(run.truth_reliability, 3)}
@@ -319,14 +428,8 @@ def condition_row(run: Run) -> dict:
     row["live_frac_beta"] = round(live / run.n, 3)
     ds = sorted(run.root.glob("divergence_stats*.json"))
     if ds:
-        agg: dict[str, list] = defaultdict(list)
-        for p in ds:
-            for kk, vv in json.loads(p.read_text()).items():
-                if isinstance(vv, (int, float)):
-                    agg[kk].append(vv)
-        for kk in ("token_kl_beta_pi", "traj_ess_frac_g11", "clipfrac_g11", "clipfrac_g10"):
-            if kk in agg:
-                row[kk] = round(sum(agg[kk]) / len(agg[kk]), 4)
+        for key, value in aggregate_divergence(ds).items():
+            row[key] = round(value, 4) if isinstance(value, float) else value
     # 진실 점수의 k-경계 margin
     vals = sorted(run.truth_score.values(), reverse=True)
     row["truth_margin_k"] = round(vals[run.k - 1] - vals[run.k], 4) if len(vals) > run.k else None
@@ -340,10 +443,11 @@ def to_md(all_rows: list[dict], conds: list[dict]) -> str:
     runs = sorted({r["run"] for r in all_rows})
 
     lines.append("\n## F1. run별 정책 × 예산")
-    lines.append("| run | policy | fresh(관측) | 예산% | precision | ±sd | regret |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("| run | policy | fresh rollouts | micro-groups | 예산% | precision | ±sd | regret |")
+    lines.append("|---|---|---|---|---|---|---|---|")
     for r in all_rows:
-        lines.append(f"| {r['run']} | {r['policy']} | {r['fresh_groups']} | "
+        lines.append(f"| {r['run']} | {r['policy']} | {r['fresh_rollouts']} | "
+                     f"{r['fresh_groups']} | "
                      f"{r['budget_frac']:.0%} | {r['precision']:.3f} | "
                      f"{r['precision_sd']:.3f} | {r['regret']:.4f} |")
 
@@ -361,7 +465,7 @@ def to_md(all_rows: list[dict], conds: list[dict]) -> str:
         sd = (sum((x - m) ** 2 for x in xs) / max(1, len(xs) - 1)) ** 0.5
         lines.append(f"| {t} | {pol} | {m:.3f} | {sd:.3f} | {len(xs)} |")
 
-    lines.append("\n## F3. family 비교 (run별 최고 정책)")
+    lines.append("\n## F3. family 비교 (동일 fresh-rollout 예산 한도)")
     fam = {"gradient(stale)": lambda p: p.startswith("stale_"),
            "2D-REFRESH": lambda p: p.startswith("2dref_p") or p.startswith("2dref_") and "only" not in p,
            "predictor(passrate)": lambda p: p.startswith("passrate"),
@@ -369,14 +473,18 @@ def to_md(all_rows: list[dict], conds: list[dict]) -> str:
            "audit(boundary)": lambda p: p.startswith("audit_bnd"),
            "fresh": lambda p: p.startswith("fresh_"),
            "random": lambda p: p == "random"}
-    lines.append("| run | " + " | ".join(fam) + " |")
-    lines.append("|---|" + "---|" * len(fam))
+    lines.append("| run | budget≤rollouts | " + " | ".join(fam) + " |")
+    lines.append("|---|---|" + "---|" * len(fam))
     for rn in runs:
-        cells = []
-        for _, match in fam.items():
-            xs = [r["precision"] for r in all_rows if r["run"] == rn and match(r["policy"])]
-            cells.append(f"{max(xs):.3f}" if xs else "—")
-        lines.append(f"| {rn} | " + " | ".join(cells) + " |")
+        run_rows = [r for r in all_rows if r["run"] == rn]
+        budgets = sorted({r["fresh_rollouts"] for r in run_rows})
+        for budget in budgets:
+            cells = []
+            for _, match in fam.items():
+                xs = [r["precision"] for r in run_rows
+                      if r["fresh_rollouts"] <= budget and match(r["policy"])]
+                cells.append(f"{max(xs):.3f}" if xs else "—")
+            lines.append(f"| {rn} | {budget} | " + " | ".join(cells) + " |")
 
     lines.append("\n## F4. 조건 지표 (Q1 위상도 재료)")
     if conds:
@@ -392,13 +500,14 @@ def main() -> int:
     roots = [Path(p) for p in sys.argv[1:]]
     all_rows, conds = [], []
     for root in roots:
-        need = ["oracle_micro_groups.pt", "val_gradient.pt", "scores_offpolicy.json"]
+        need = ["oracle_micro_groups.pt", "val_groups.pt", "scores_offpolicy.json"]
         missing = [f for f in need if not (root / f).exists()]
         if missing:
             print(f"[skip] {root.name}: 산출물 누락 {missing}")
             continue
         run = Run(root)
         print(f"[run] {run.name}: n={run.n} k={run.k} obs_max={run.max_obs} "
+              f"group_size={run.rollouts_per_group} rollouts "
               f"truth_rel={run.truth_reliability:.3f}")
         all_rows += simulate(run)
         conds.append(condition_row(run))

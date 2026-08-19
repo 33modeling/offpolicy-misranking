@@ -6,9 +6,8 @@
 분해 못 하는 것인지, (b) 프롬프트 간 순위 신호가 구조적으로 없는 것인지 판별.
 
 재료: run마다 저장된 oracle_micro_groups.pt(프롬프트당 G개 micro-group
-gradient, JL 투영)와 val_gradient.pt. split-half floor의 정의(절반 평균
-gradient의 val 방향 cosine → top-k 겹침)를 임의의 절반 크기 m(그룹 수)으로
-정확히 재계산한다 — K'=2·m·(그룹당 롤아웃 수) 롤아웃의 floor와 동일.
+gradient)와 val_groups.pt. Candidate와 validation을 모두 독립 분할하여
+split-half floor를 임의의 절반 크기 m(그룹 수)으로 재표집한다.
 
 확장 예측: 절반 크기 m=1의 split-half 상관 r1에 Spearman–Brown
   r_m = m·r1 / (1 + (m-1)·r1)
@@ -33,6 +32,8 @@ import sys
 from pathlib import Path
 
 import torch
+
+from gate_rules import has_valid_oracle_protocol
 
 T_REP = 30          # 관측 floor: 그룹 배정 재표집 횟수
 S_SIM = 40          # 예측 floor: 이변량 정규 시뮬 횟수
@@ -59,12 +60,13 @@ def pearson(a: torch.Tensor, b: torch.Tensor) -> float:
     return float((a @ b) / d) if d > 0 else 0.0
 
 
-def observed_curve(stack: torch.Tensor, v: torch.Tensor):
-    """stack [P,G,D], v [D] → {m: (floor_mean, lo, hi, r_mean)} for m=1..G//2."""
+def observed_curve(stack: torch.Tensor, val_groups: torch.Tensor):
+    """Recompute floors with independent candidate and validation halves."""
     P, G, _ = stack.shape
+    if val_groups.ndim != 2 or val_groups.shape[0] < 2:
+        raise ValueError("K-curve requires at least two validation prompt gradients")
     from select_rules import topk_count
     k = topk_count(P, 0.10)
-    vn = v / v.norm()
     out = {}
     for m in range(1, G // 2 + 1):
         floors, rs = [], []
@@ -75,8 +77,15 @@ def observed_curve(stack: torch.Tensor, v: torch.Tensor):
             picked = torch.gather(stack, 1, idx)
             ma = picked[:, :m].mean(dim=1)
             mb = picked[:, m:].mean(dim=1)
-            a = (ma @ vn) / ma.norm(dim=1).clamp_min(1e-12)
-            b = (mb @ vn) / mb.norm(dim=1).clamp_min(1e-12)
+            vg = torch.Generator().manual_seed(19000 + j)
+            vp = torch.randperm(val_groups.shape[0], generator=vg)
+            vh = val_groups.shape[0] // 2
+            va = val_groups[vp[:vh]].mean(dim=0)
+            vb = val_groups[vp[vh:]].mean(dim=0)
+            va = va / va.norm().clamp_min(1e-12)
+            vb = vb / vb.norm().clamp_min(1e-12)
+            a = (ma @ va) / ma.norm(dim=1).clamp_min(1e-12)
+            b = (mb @ vb) / mb.norm(dim=1).clamp_min(1e-12)
             floors.append(overlap(a.tolist(), b.tolist(), k, j))
             rs.append(pearson(a, b))
         out[m] = (sum(floors) / T_REP, min(floors), max(floors), sum(rs) / T_REP)
@@ -169,15 +178,16 @@ def main() -> int:
     runs = [d for d in sorted(root.glob("v2-*"))
             if (d / "DONE").exists() and "smoke" not in d.name
             and (d / "oracle_micro_groups.pt").exists()
-            and (d / "val_gradient.pt").exists()]
+            and (d / "val_groups.pt").exists()
+            and has_valid_oracle_protocol(d)]
 
     reports, votes = [], []
     for d in runs:
-        micro = torch.load(d / "oracle_micro_groups.pt", map_location="cpu")
-        v = torch.load(d / "val_gradient.pt", map_location="cpu").float()
+        micro = torch.load(d / "oracle_micro_groups.pt", map_location="cpu", weights_only=True)
+        val_groups = torch.load(d / "val_groups.pt", map_location="cpu", weights_only=True).float()
         G = min(t.shape[0] for t in micro.values())
         stack = torch.stack([micro[i][:G].float() for i in sorted(micro)])
-        curve, k, chance = observed_curve(stack, v)
+        curve, k, chance = observed_curve(stack, val_groups)
         P = stack.shape[0]
         gsize = max(1, find_fresh_k(d, G) // G)
         r1 = curve[1][3]
@@ -209,7 +219,7 @@ def main() -> int:
 
     print("# P4-0 — oracle K-스케일링 floor 곡선 (기존 산출물, GPU 0)\n")
     print("질문: floor≈chance 는 'oracle 표본 K 부족'인가 '순위 신호의 구조적 부재'인가.")
-    print("micro-group gradient 재조합으로 K'별 floor를 정확 재계산하고, K=64~256은")
+    print("micro-group과 validation 방향을 독립 재분할해 K'별 floor를 재계산하고, K=64~256은")
     print("Spearman–Brown+정규 시뮬로 예측한다(관측 최대점에서 보정 오차 병기).\n")
     for name, tag, P, G, gsize, chance, curve, r1, pm, om, preds, k_need in reports:
         print(f"## {name}  ({tag}, n={P}, 그룹 {G}×{gsize}롤아웃, chance={chance:.3f})\n")

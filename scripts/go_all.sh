@@ -44,7 +44,6 @@ MAX_TRY=3
 
 cleanup_strays() {  # 죽은 시도의 잔재 프로세스 정리 (이 실험 것만)
   pkill -f -- "--run $BASE_ROOT" 2>/dev/null || true
-  pkill -f gpu_keepalive 2>/dev/null || true
   sleep 5
 }
 trap 'echo "== 중단 요청 — 전체 정리"; cleanup_strays; kill $W 2>/dev/null; exit 130' INT TERM
@@ -65,7 +64,8 @@ for DS in "${DATASETS[@]}"; do
   LOG="$LOGDIR/big-$DS.log"
   echo
   echo "==== [$DS] 시작 → $RUN_DIR (n=$N_TRAIN, fresh=$FRESH_K, hybrid=$HYBRID_PROMPTS, log: $LOG)"
-  if [ -f "$RUN_DIR/DONE" ]; then
+  if [ -f "$RUN_DIR/DONE" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
+     && [ -f "$RUN_DIR/oracle_protocol.json" ]; then
     echo "==== [$DS] ✔ 이미 완주(DONE) — 스킵"; RESULT[$DS]=1; continue
   fi
   ok=0
@@ -105,7 +105,8 @@ mkdir -p "$RESULTS_DIR"
 DIRS=()
 for DS in "${DATASETS[@]}"; do
   RUN_DIR="$BASE_ROOT"; [ "$DS" != "gsm8k" ] && RUN_DIR="$BASE_ROOT-$DS"
-  [ -f "$RUN_DIR/report.json" ] || continue
+  [ -f "$RUN_DIR/report.json" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
+    && [ -f "$RUN_DIR/oracle_protocol.json" ] || continue
   DIRS+=("$RUN_DIR")
   cp "$RUN_DIR/report.json" "$RESULTS_DIR/report-big-$DS.json" 2>/dev/null || true
   cp "$RUN_DIR/report.md"   "$RESULTS_DIR/report-big-$DS.md"   2>/dev/null || true

@@ -23,6 +23,8 @@ from grads import ProjectionSpec, cosine, loo_advantages, prompt_gradient
 from rollout import SAMPLING, _gen_batch_size, chat_ids
 from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 
+HYBRID_ROLLOUT_SCHEMA = "offpolicy-hybrid-rollouts/v1"
+
 
 @torch.no_grad()
 def continue_rollouts_batch(model, tok, prefixes: list[torch.Tensor],
@@ -146,6 +148,26 @@ def make_hybrid_cells(
 
             print(f"[{ts()}]  hybrid {pi_idx} (cut={cut_frac}, 4cells×K={k_cell})", flush=True)
     tmp_path.replace(out_path)
+    manifest = {
+        "schema": HYBRID_ROLLOUT_SCHEMA,
+        "cut_frac": cut_frac,
+        "k_cell": k_cell,
+        "max_new_tokens": max_new_tokens,
+        "sampling": {
+            "temperature": float(temperature),
+            "top_p": float(SAMPLING["top_p"]),
+            "top_k": 0,
+            "repetition_penalty": 1.0,
+            "no_repeat_ngram_size": 0,
+        },
+        "cells": ["bb", "bp", "pb", "pp"],
+        "sample_disjoint_from_oracle": True,
+        "equal_total_response_horizon": True,
+    }
+    manifest_path = out_path.with_name(out_path.name + ".manifest.json")
+    manifest_tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+    manifest_tmp.write_text(json.dumps(manifest, indent=1))
+    manifest_tmp.replace(manifest_path)
 
 
 def score_cells(

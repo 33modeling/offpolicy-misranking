@@ -8,6 +8,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+echo "[abort] retry_c2.sh는 config-locked run을 부분 재사용해 계약을 우회하므로 비활성화됨."
+echo "        corrected 신규 OUT_ROOT에서 run_14b.sh를 실행할 것."
+exit 2
 source scripts/_find_root.sh 7b
 PY="$VENV_DIR/bin/python"
 MODEL="${MODEL:-$MODELS_DIR/Qwen2.5-7B-Instruct}"

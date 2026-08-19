@@ -9,6 +9,7 @@ import json
 import sys
 from pathlib import Path
 
+from gate_rules import has_valid_analysis_protocol
 from select_rules import jittered_topk, topk_count
 
 
@@ -25,9 +26,14 @@ def main() -> int:
     runs = sorted(d for d in root.glob("drift*")
                   if d.is_dir() and not d.name.startswith("drift_")) or [root]
 
+    invalid = False
     for run in runs:
         pj = run / "prompts.json"
         if not pj.exists():
+            continue
+        if not has_valid_analysis_protocol(run):
+            print(f"[{run.name}] corrected score/oracle protocol 없음 — 열람 거부")
+            invalid = True
             continue
         prompts = json.loads(pj.read_text())["train"]
         def question_preview(idx: int, rows: list[dict] = prompts) -> str:
@@ -82,7 +88,7 @@ def main() -> int:
         for a in names:
             row = " ".join(f"{len(set(sel[a]) & set(sel[b])):7d}" for b in names)
             print(f"{a[:7]:>7} {row}")
-    return 0
+    return 2 if invalid else 0
 
 
 if __name__ == "__main__":

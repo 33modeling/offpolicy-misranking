@@ -22,8 +22,11 @@ _legacy_dup() { case "$1" in
   esac; }
   for d in $(ls -d "$OM_WORK"/runs/v2-s* 2>/dev/null | grep -v smoke); do
     dup=$(_legacy_dup "$d")
-    [ -n "$dup" ] && [ -f "$dup/DONE" ] && { echo "  [skip] legacy 이중 접미사: $(basename "$d") (신형 완주 존재)"; continue; }
-    [ -f "$d/DONE" ] && targets+=("$d")
+    [ -n "$dup" ] && [ -f "$dup/DONE" ] && [ -f "$dup/score_protocol.json" ] \
+      && [ -f "$dup/oracle_protocol.json" ] \
+      && { echo "  [skip] legacy 이중 접미사: $(basename "$d") (신형 완주 존재)"; continue; }
+    [ -f "$d/DONE" ] && [ -f "$d/score_protocol.json" ] \
+      && [ -f "$d/oracle_protocol.json" ] && targets+=("$d")
   done
 fi
 [ "${#targets[@]}" -gt 0 ] || { echo "[abort] 대상 run 없음 (v2-s*)"; exit 1; }

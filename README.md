@@ -8,10 +8,20 @@ cosine 대시보드로 탐지되지 않으며, 신뢰구간으로 top-k 결정�
 구조적으로 불가능하다 — 이 주장과 그 경계 조건(언제 stale로 골라도 되는가,
 fresh 감사에 얼마를 내야 하는가)의 게이트/본실험 코드.
 
-> 상태 (2026-08-11): **7B 게이트 종결** — C1(관찰)·C1′(개입)·C3(downstream)
+> **2026-08-20 감사 상태:** 8월 18일 수치와 아래 v1/v2 결과는 생성 계약 및
+> 독립 validation 교정 이전의 역사적 탐색 결과다. 제출용 근거로 사용하지 않는다.
+> 교정 내용, 결과 계보, 재실행 조건은
+> [`docs/FULL_AUDIT_2026-08-20.md`](docs/FULL_AUDIT_2026-08-20.md)에 있다.
+> confirmatory 실행은 `go_v2.sh`/`run_14b.sh`만 사용하며 legacy
+> `run_h100_all.sh`/`babysit.sh`는 기본 비활성화했다.
+> 교정 전 코드로 완주한 run은 공유 checkout을 갱신한 뒤 GPU 환경에서
+> `python3 src/rescore_completed_run.py RUN_DIR`로 score와 oracle/report를 함께 재생성한다.
+
+> 역사적 상태 (2026-08-11): **7B 게이트 종결** — C1(관찰)·C1′(개입)·C3(downstream)
 > PASS, C2(인증)는 구조적 FAIL → 부정 결과로 수록. 14B GSM8K는 포화 퇴화,
-> MATH-500 2종은 관찰 순위 역전 확인. 현재 **감사 P0 교정판 v2 본실행**
-> (3-seed × {GSM8K, DAPO-Math}, n=512) 진행 중. 원고는 별도 비공개 레포
+> MATH-500 2종은 관찰 순위 역전 확인. 당시 **감사 P0 교정판 v2 본실행**이
+> 진행 중으로 기록됐으나, 2026-08-20 감사 기준으로 그 결과도 계약 확인과
+> 후처리 재생성이 필요하다. 원고는 별도 비공개 레포
 > [offpolicy-misranking-paper](https://github.com/33modeling/offpolicy-misranking-paper)에서
 > 관리하며, 이 레포에는 실행 코드와 검증 기록만 둔다.
 
@@ -45,7 +55,7 @@ one-sided 추정량은 trajectory KL이 `O(ε²)`로 0에 가면서도 gradient 
 **top-10% 이웃 보존율은 28.8%**. 평균 방향이 아니라 실제 채택되는 top-k 결정이
 estimand여야 한다는 것이 이 레포의 관점이다.
 
-## 2. 게이트 결과 요약 (v1, 단일 seed)
+## 2. 역사적 게이트 결과 요약 (v1, 단일 seed; 제출 증거 아님)
 
 - **C1 관찰 (7B GSM8K)**: one-sided가 chance 아래로 붕괴 — `g10` precision
   0.000(drift 50)·0.040(drift 400) vs chance 0.098, 정규화 retention은 음수
@@ -80,9 +90,10 @@ drift 8배·선택 비율 5–25%·val 심화·(ε,δ)-PAC 완화 전부에서 �
 인증할 수 없다.** 후속 CPU 재판정: `scripts/c2_sweep.sh`, `fix_c2.sh`,
 `retry_c2.sh`.
 
-## 4. v2 본실행 — 감사 P0 교정판 (진행 중)
+## 4. confirmatory 신규 실행 경로 (2026-08-20 계약)
 
-독립 감사에서 나온 P0를 전면 반영한 재실행: raw-softmax sampling
+아래 명령은 2026-08-20 감사 branch를 병합한 뒤 새 `OUT_ROOT`에서 실행한다.
+기존 v2 폴더를 이 계약으로 완료된 결과라고 간주하면 안 된다. raw-softmax sampling
 (`temperature=1.0`, `top_p=1.0`, `top_k=0`) 통일, seed
 관통, hybrid 4셀 **독립 equal-K 재설계**, seeded tie-break, divergence/clipfrac
 통계 자동 실측, 인증 ε 실반영, run manifest 기록.
@@ -100,6 +111,8 @@ bash scripts/go_v2.sh    # GPU 건강검사 → 30분 스모크 게이트(실패
   완주 후 재실행하면 추가분만 돈다.
 - 산출: run별 `report.json`·`manifest.json`·judge 판정 +
   `results/v2/TABLES.md`(표 생성기)·`FRONTIER.md`(아래 5절).
+- `score_protocol.json`과 `oracle_protocol.json`이 모두 없는 run은 모든 판정·표 생성기가
+  거부한다. 두 마커를 수동으로 만들지 말고 교정 코드로 해당 단계를 실행한다.
 
 ## 5. fresh-audit frontier — 비용–품질 사후 분석
 

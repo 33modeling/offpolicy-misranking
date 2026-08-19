@@ -28,11 +28,13 @@ else
 fi
 
 M7="${MODEL_14B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
-POOL="$OM_WORK/pools/gsm8k-hard.jsonl"
-if [ ! -s "$POOL" ]; then
+POOL="$(om_hard_pool_path gsm8k "$M7")" || exit 1
+if [ ! -f "$POOL" ]; then
   echo "== [1] GSM8K hard-slice 프리스크린 (β pass-rate로 live만)"
   MODEL="$M7" OUT="$POOL" bash scripts/prescreen_pool.sh gsm8k "${POOL_N:-2000}" || exit 1
 fi
+[ -f "$POOL" ] && "$PY" src/make_hard_pool.py --validate "$POOL" \
+  --model "$M7" --dataset gsm8k || exit 1
 [ -s "$POOL" ] || { echo "[abort] 풀 생성 실패"; exit 1; }
 NP=$(wc -l < "$POOL")
 NT=512; NV=100
@@ -40,7 +42,8 @@ NT=512; NV=100
 echo "== [2] hard-pool 3-seed (n=$NT+$NV)"
 for s in 0 1 2; do
   dir="$OM_WORK/runs/v2-hard-s$s"
-  [ -f "$dir/DONE" ] && { echo "  ✔ s$s 스킵"; continue; }
+  [ -f "$dir/DONE" ] && [ -f "$dir/score_protocol.json" ] \
+    && [ -f "$dir/oracle_protocol.json" ] && { echo "  ✔ s$s 스킵"; continue; }
   if DATASET=gsm8k OM_POOL_FILE="$POOL" MODEL_14B="$M7" SEED="$s" \
      N_TRAIN=$NT N_VAL=$NV OUT_ROOT="$dir" bash scripts/run_14b.sh >> "$LOGDIR/hard-s$s.log" 2>&1; then
     echo "  ✔ s$s"

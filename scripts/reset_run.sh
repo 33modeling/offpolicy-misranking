@@ -19,9 +19,16 @@ esac; done
 RM="rm -rfv"; [ "$DRY" = 1 ] && RM="echo [dry-run] would remove:"
 
 echo "== 1) 실행 프로세스 종료"
-pkill -f "src/experiment.py" 2>/dev/null && echo "experiment.py 종료" || echo "실행 중인 experiment.py 없음"
-pkill -f "run_h100_all.sh" 2>/dev/null || true
-pkill -f "gpu_keepalive.py" 2>/dev/null && echo "고아 keepalive 종료" || true
+pkill -f -- "--run $OUT_ROOT" 2>/dev/null && echo "$OUT_ROOT 실행 종료" || echo "이 run의 experiment.py 없음"
+if [ -f "$OUT_ROOT/keepalive.pid" ]; then
+  KEEP=$(cat "$OUT_ROOT/keepalive.pid" 2>/dev/null || true)
+  if [[ "$KEEP" =~ ^[0-9]+$ ]] && [ -r "/proc/$KEEP/cmdline" ] \
+     && tr '\0' ' ' < "/proc/$KEEP/cmdline" | grep -q 'scripts/gpu_keepalive.py'; then
+    kill "$KEEP" 2>/dev/null || true
+    echo "이 run의 keepalive 종료"
+  fi
+  rm -f "$OUT_ROOT/keepalive.pid"
+fi
 sleep 2
 
 echo "== 2) GPU 점유 확인"
@@ -42,11 +49,13 @@ elif [ "$HARD" = 1 ]; then
 else
   # 투영(gradient)이 들어간 산출물만 — 신·구 투영 혼입 방지.
   # 보존: prompts.json, rollouts_*.jsonl, drift_* adapter, logs/
-  for run in "$OUT_ROOT"/drift*; do
+  for run in "$OUT_ROOT" "$OUT_ROOT"/drift*; do
     [ -d "$run" ] || continue
     $RM "$run"/val_gradient.pt "$run"/val_groups.pt "$run"/oracle_micro_groups.pt \
-        "$run"/scores_*.json "$run"/report.md "$run"/report.json \
-        "$run"/rollouts_hybrid_*.jsonl "$run"/downstream_* "$run"/*.tmp 2>/dev/null || true
+        "$run"/scores_*.json "$run"/*_protocol*.json "$run"/postprocess_manifest.json \
+        "$run"/report.md "$run"/report.json "$run"/rollouts_hybrid_*.jsonl \
+        "$run"/rollouts_hybrid_*.manifest.json "$run"/downstream_* "$run"/*.tmp \
+        2>/dev/null || true
     # 미완성 fresh rollout 검사 — 프롬프트 수가 prompts.json과 다르면 부분 파일이므로 삭제
     for f in "$run"/rollouts_fresh_*.jsonl; do
       [ -f "$f" ] || continue
@@ -69,7 +78,7 @@ need = len(json.load(open(sys.argv[2]))["train"])
 sys.exit(0 if len(seen) >= need else 1)
 PY
   fi
-  echo "보존됨: shared/ (β rollout), drift*/rollouts_fresh_*.jsonl, drift*/drift_* (adapter)"
+  echo "보존됨: β/fresh rollout, drift adapter, prompts, logs"
 fi
 
-echo "== 완료. 다음: git pull && bash scripts/run_h100_all.sh"
+echo "== 완료. 다음: 해당 run 실행 명령을 다시 시작"

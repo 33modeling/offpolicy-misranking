@@ -20,7 +20,12 @@ fi
 echo "상태: 프로세스=${NPROC}개, babysit=${NBABY}개, 최신로그=${AGE}분 전 [$(basename "${NEWEST:-없음}")]"
 echo "마지막: $LASTLINE"
 
-if [ -f "$OUT_ROOT/DONE" ] || ls "$OUT_ROOT"/drift*/report.json "$OUT_ROOT"/report.json >/dev/null 2>&1; then
+COMPLETE=0
+for run in "$OUT_ROOT" "$OUT_ROOT"/drift*; do
+  [ -f "$run/report.json" ] && [ -f "$run/score_protocol.json" ] \
+    && [ -f "$run/oracle_protocol.json" ] && COMPLETE=1
+done
+if [ "$COMPLETE" -eq 1 ]; then
   echo "결론: ✅ 완료 — bash scripts/result.sh 실행"
 elif [ "$NPROC" -gt 0 ] && [ "$AGE" -le 15 ]; then
   echo "결론: 🟢 정상 진행 중 — 아무것도 하지 말 것"

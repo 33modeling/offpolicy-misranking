@@ -5,7 +5,7 @@
 kcurve_floor.py(P4-0)의 확장판. 차이 두 가지:
 
 1) run 발견: 이름 규약 대신 **산출물 존재**로 찾는다 — runs_root 아래 깊이 2까지
-   oracle_micro_groups.pt + val_gradient.pt + scores_splithalf.json 이 모두 있는
+   oracle_micro_groups.pt + val_groups.pt + scores_splithalf.json 이 모두 있는
    디렉토리 전부(smoke 제외). v1 게이트(gate*, DONE 없음)·math500·drift 스윕이
    전부 포함된다.
 
@@ -23,13 +23,14 @@ from pathlib import Path
 
 import torch
 
+from gate_rules import has_valid_oracle_protocol
 from kcurve_floor import GO_MULT, find_fresh_k, observed_curve, predicted_floor, sb, tag_of
 
-ARTIFACTS = ("oracle_micro_groups.pt", "val_gradient.pt", "scores_splithalf.json")
+ARTIFACTS = ("oracle_micro_groups.pt", "val_groups.pt", "scores_splithalf.json")
 
 
 def has_artifacts(d: Path) -> bool:
-    return all((d / a).exists() for a in ARTIFACTS)
+    return has_valid_oracle_protocol(d) and all((d / a).exists() for a in ARTIFACTS)
 
 
 def discover(root: Path) -> list[Path]:
@@ -42,13 +43,13 @@ def discover(root: Path) -> list[Path]:
 
 
 def analyze(d: Path):
-    micro = torch.load(d / "oracle_micro_groups.pt", map_location="cpu")
-    v = torch.load(d / "val_gradient.pt", map_location="cpu").float()
+    micro = torch.load(d / "oracle_micro_groups.pt", map_location="cpu", weights_only=True)
+    val_groups = torch.load(d / "val_groups.pt", map_location="cpu", weights_only=True).float()
     G = min(t.shape[0] for t in micro.values())
     if G < 2:
         return None
     stack = torch.stack([micro[i][:G].float() for i in sorted(micro)])
-    curve, k, chance = observed_curve(stack, v)
+    curve, k, chance = observed_curve(stack, val_groups)
     P = stack.shape[0]
     gsize = max(1, find_fresh_k(d, G) // G)
     r1 = curve[1][3]

@@ -39,35 +39,71 @@ else
 fi
 
 echo "== [C] downstream 4소스 × {gsm8k, dapo} seeds — drift 100 기준"
-NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); NGPU=${NGPU:-1}
+NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
+[ "${NGPU:-0}" -ge 1 ] || NGPU=1
+if [ -n "${OM_GPUS:-}" ]; then
+  IFS=',' read -r -a GPUS <<< "$OM_GPUS"
+else
+  GPUS=($(seq 0 $((NGPU - 1))))
+fi
+NGPU=${#GPUS[@]}
 # dapo 포함 — 신호 큰 체제에서 선택의 실제 가치(신-헤드라인의 downstream 증거)
 C_DIRS=()
 for s in $SEEDS_ALL; do
   for suf in "" "-dapo-math" "-dapo-math-dapo-math"; do
     dd="$OM_WORK/runs/v2-s$s$suf"
     # legacy 이중 접미사는 신형 완주가 있으면 제외 — 같은 seed의 downstream 중복 실행 방지
-    [ "$suf" = "-dapo-math-dapo-math" ] && [ -f "$OM_WORK/runs/v2-s$s-dapo-math/DONE" ] && continue
-    [ -f "$dd/DONE" ] && C_DIRS+=("$dd")
+    newer="$OM_WORK/runs/v2-s$s-dapo-math"
+    [ "$suf" = "-dapo-math-dapo-math" ] && [ -f "$newer/DONE" ] \
+      && [ -f "$newer/score_protocol.json" ] && [ -f "$newer/oracle_protocol.json" ] \
+      && continue
+    [ -f "$dd/DONE" ] && [ -f "$dd/score_protocol.json" ] \
+      && [ -f "$dd/oracle_protocol.json" ] && C_DIRS+=("$dd")
   done
 done
 for d in "${C_DIRS[@]}"; do
-  true
   mkdir -p "$d/logs"
-  pids=(); i=0
+  mapfile -t RUN_META < <("$PY" - "$d/run_config.json" <<'PYEOF'
+import json, sys
+config = json.load(open(sys.argv[1]))
+for key in ("dataset", "n_train", "n_val"):
+    print(config[key])
+PYEOF
+  ) || { echo "[abort] run metadata 읽기 실패: $d/run_config.json"; exit 1; }
+  [ "${#RUN_META[@]}" -eq 3 ] || { echo "[abort] run metadata 불완전: $d"; exit 1; }
+  RUN_DATASET="${RUN_META[0]}"
+  RUN_N_TRAIN="${RUN_META[1]}"
+  RUN_N_VAL="${RUN_META[2]}"
+  pids=(); names=(); slot=0; failed=0
+  wait_wave() {
+    local j
+    for j in "${!pids[@]}"; do
+      if ! wait "${pids[$j]}"; then
+        echo "  ✘ $(basename "$d")/${names[$j]} — downstream 실패"
+        failed=1
+      fi
+    done
+    pids=(); names=(); slot=0
+  }
   for src in oracle g10 g01 random; do
     out="$d/downstream_${src}.json"
-    [ -f "$out" ] && { echo "  [skip] s$s/$src 완료분 존재"; continue; }
-    gpu=$((i % NGPU)); i=$((i + 1))
+    [ -f "$out" ] && { echo "  [skip] $(basename "$d")/$src 완료분 존재"; continue; }
+    gpu="${GPUS[$slot]}"; slot=$((slot + 1))
     ( if CUDA_VISIBLE_DEVICES=$gpu "$PY" src/experiment.py --stage downstream \
-          --run "$d" --model "$MODEL" --dataset gsm8k --n-train 512 --n-val 100 \
+          --run "$d" --model "$MODEL" --dataset "$RUN_DATASET" \
+          --n-train "$RUN_N_TRAIN" --n-val "$RUN_N_VAL" \
           --downstream-source "$src" > "$d/logs/downstream-$src.log" 2>&1; then
-        echo "  ✔ s$s/$src"
+        echo "  ✔ $(basename "$d")/$src"
       else
-        echo "  ✘ s$s/$src — tail: $(tail -1 "$d/logs/downstream-$src.log" 2>/dev/null | cut -c1-80)"
+        echo "  ✘ $(basename "$d")/$src — tail: $(tail -1 "$d/logs/downstream-$src.log" 2>/dev/null | cut -c1-80)"
+        exit 1
       fi ) &
     pids+=($!)
+    names+=("$src")
+    [ "${#pids[@]}" -ge "$NGPU" ] && wait_wave
   done
-  [ "${#pids[@]}" -gt 0 ] && wait "${pids[@]}" 2>/dev/null
+  [ "${#pids[@]}" -gt 0 ] && wait_wave
+  [ "$failed" -eq 0 ] || exit 1
 done
 
 echo "== 종료 요약 =="

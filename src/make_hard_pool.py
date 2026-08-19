@@ -1,86 +1,283 @@
-"""β pass-rate로 hard-slice 풀 생성 — 전량 정답/전량 오답 제외(live 프롬프트만).
+"""Build and validate a model-specific hard-slice prompt pool.
 
-    python3 src/make_hard_pool.py <run_dir> <out.jsonl> [lo=0.0] [hi=1.0]
+Build:
+    python3 src/make_hard_pool.py RUN OUT [LO=0.0] [HI=1.0] \
+        --model MODEL --dataset DATASET --expected-k 8 --seed 0
 
-<run_dir>: prep + rollout-behavior까지 끝난 폴더
-  (prompts.json + rollouts_behavior_train*.jsonl — 샤드/병합본 모두 지원)
-lo < mean-reward < hi 인 프롬프트만 {"question","answer"} jsonl로 내보낸다.
-산출 파일은 OM_POOL_FILE로 본실행에 주입한다 (27B G블록의 난이도 매칭).
+Validate before a downstream run:
+    python3 src/make_hard_pool.py --validate OUT --model MODEL --dataset DATASET
+
+The JSONL remains directly consumable by ``OM_POOL_FILE``.  A required
+``OUT.manifest.json`` sidecar binds it to the source prompts, behavior model,
+sampling count, and selection thresholds.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
+import math
 import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 
-def main() -> int:
-    if len(sys.argv) < 3:
-        print(__doc__)
-        return 2
-    run, out = Path(sys.argv[1]), Path(sys.argv[2])
-    lo = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0
-    hi = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
+SCHEMA = "offpolicy-hard-pool/v1"
 
-    prompts = json.loads((run / "prompts.json").read_text())["train"]
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def manifest_path(pool: Path) -> Path:
+    return pool.with_name(pool.name + ".manifest.json")
+
+
+def model_identity(model: Path) -> dict[str, str | None]:
+    config = model / "config.json"
+    if not config.is_file():
+        raise ValueError(f"model config not found: {config}")
+    return {
+        "model": str(model),
+        "model_resolved": str(model.resolve()),
+        "model_config_sha256": sha256_file(config),
+    }
+
+
+def _rollout_files(run: Path) -> list[Path]:
     shards = sorted(run.glob("rollouts_behavior_train*.jsonl"))
-    if not shards:
-        print(f"[abort] rollout 파일 없음: {run}/rollouts_behavior_train*.jsonl")
-        return 1
-    # 병합본이 있으면 그것만 (샤드와 중복 집계 방지)
     merged = run / "rollouts_behavior_train.jsonl"
     if merged in shards:
-        shards = [merged]
+        return [merged]
+    return shards
 
-    acc: dict[int, list[float]] = defaultdict(list)
-    seen: set[tuple[int, int]] = set()
-    for sh in shards:
-        for line in sh.open():
-            r = json.loads(line)
-            key = (r["prompt_idx"], r.get("rollout_idx", len(acc[r["prompt_idx"]])))
-            if key in seen:
-                continue
-            seen.add(key)
-            acc[r["prompt_idx"]].append(float(r["reward"]))
 
-    rows, hist = [], defaultdict(int)
-    for i, item in enumerate(prompts):
-        rs = acc.get(i)
-        if not rs:
-            continue
-        rate = sum(rs) / len(rs)
-        hist[round(rate, 1)] += 1
+def _rollout_manifest_info(run: Path) -> tuple[int | None, dict[str, str]]:
+    values: set[int] = set()
+    contracts: set[str] = set()
+    hashes: dict[str, str] = {}
+    for path in sorted(run.glob("rollouts_behavior_train*.manifest.json")):
+        doc = json.loads(path.read_text())
+        value = doc.get("k")
+        if value is not None:
+            values.add(int(value))
+        contract = {
+            key: doc.get(key)
+            for key in (
+                "explicit_kwargs",
+                "eos_token_ids",
+                "model_name_or_path",
+                "contract",
+            )
+        }
+        contracts.add(json.dumps(contract, sort_keys=True))
+        hashes[path.name] = sha256_file(path)
+    if len(values) > 1:
+        raise ValueError(f"rollout manifests disagree on K: {sorted(values)}")
+    if len(contracts) > 1:
+        raise ValueError("rollout manifests disagree on the generation contract")
+    return (next(iter(values)) if values else None), hashes
+
+
+def build_pool(
+    run: Path,
+    out: Path,
+    lo: float,
+    hi: float,
+    *,
+    model: Path,
+    dataset: str,
+    expected_k: int | None,
+    seed: int,
+) -> dict:
+    if not 0.0 <= lo < hi <= 1.0:
+        raise ValueError(f"invalid open pass-rate interval: ({lo}, {hi})")
+    prompt_path = run / "prompts.json"
+    prompt_doc = json.loads(prompt_path.read_text())
+    prompts = prompt_doc["train"]
+    shards = _rollout_files(run)
+    if not shards:
+        raise ValueError(f"rollout files not found: {run}/rollouts_behavior_train*.jsonl")
+
+    recorded_k, rollout_manifest_hashes = _rollout_manifest_info(run)
+    if expected_k is None:
+        expected_k = recorded_k
+    elif recorded_k is not None and recorded_k != expected_k:
+        raise ValueError(
+            f"requested K={expected_k}, but rollout manifest records K={recorded_k}"
+        )
+    if expected_k is None or expected_k < 1:
+        raise ValueError("expected K is unknown; pass --expected-k or retain rollout manifests")
+
+    acc: dict[int, dict[int, float]] = defaultdict(dict)
+    for shard in shards:
+        for lineno, line in enumerate(shard.open(), 1):
+            row = json.loads(line)
+            if "rollout_idx" not in row:
+                raise ValueError(f"{shard}:{lineno}: rollout_idx is required")
+            prompt_idx = int(row["prompt_idx"])
+            rollout_idx = int(row["rollout_idx"])
+            if not 0 <= prompt_idx < len(prompts):
+                raise ValueError(f"{shard}:{lineno}: unexpected prompt_idx={prompt_idx}")
+            if rollout_idx in acc[prompt_idx]:
+                raise ValueError(
+                    f"duplicate rollout key: prompt_idx={prompt_idx}, rollout_idx={rollout_idx}"
+                )
+            reward = float(row["reward"])
+            if not math.isfinite(reward):
+                raise ValueError(f"{shard}:{lineno}: non-finite reward")
+            acc[prompt_idx][rollout_idx] = reward
+
+    expected_rollouts = set(range(expected_k))
+    for prompt_idx in range(len(prompts)):
+        got = set(acc.get(prompt_idx, {}))
+        if got != expected_rollouts:
+            missing = sorted(expected_rollouts - got)
+            extra = sorted(got - expected_rollouts)
+            raise ValueError(
+                f"prompt_idx={prompt_idx}: expected rollout_idx 0..{expected_k - 1}; "
+                f"missing={missing[:8]}, extra={extra[:8]}"
+            )
+
+    rows: list[dict] = []
+    hist: dict[float, int] = defaultdict(int)
+    for prompt_idx, item in enumerate(prompts):
+        rewards = [acc[prompt_idx][i] for i in range(expected_k)]
+        successes = sum(rewards)
+        rate = successes / expected_k
+        hist[round(rate, 3)] += 1
         if lo < rate < hi:
-            rows.append(item)
-
-    covered = len(acc)
-    if covered < len(prompts):
-        print(f"[warn] rollout 커버리지 {covered}/{len(prompts)} — 샤드 누락/부분 완료 의심")
-        if not rows:
-            # 커버리지가 불완전한 0건은 '전 문제 포화'의 증거가 아니다 — pool을
-            # 기록하면 go_27b의 -f 게이트가 포화로 오진하므로 기록 없이 실패 반환
-            print("[abort] hard-slice 0건 + 커버리지 불완전 — 포화 단정 불가. "
-                  "프리스크린 rollout 샤드 완주 후 재실행할 것 (pool 미기록)")
-            return 3
+            row = dict(item)
+            question = str(item.get("question", ""))
+            row["_prescreen"] = {
+                "source_prompt_idx": prompt_idx,
+                "question_sha256": hashlib.sha256(question.encode()).hexdigest(),
+                "pass_rate": rate,
+                "successes": successes,
+                "rollout_count": expected_k,
+            }
+            rows.append(row)
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    # 원자적 기록 — 중간 사망이 남긴 부분/0바이트 pool이 '있음'으로 채택되거나
-    # 포화로 오진되는 것 방지 (완성된 파일만 최종 이름을 가진다)
     tmp = out.with_name(out.name + f".tmp.{os.getpid()}")
     with tmp.open("w") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
     tmp.replace(out)
-    print("pass-rate 분포:", dict(sorted(hist.items())))
-    print(f"hard-slice: {len(rows)}/{len(prompts)} → {out}")
+
+    source_manifest = run / "manifest.json"
+    metadata = {
+        "schema": SCHEMA,
+        "dataset": dataset,
+        **model_identity(model),
+        "source_run": str(run.resolve()),
+        "source_run_manifest_sha256": (
+            sha256_file(source_manifest) if source_manifest.is_file() else None
+        ),
+        "source_rollout_manifest_sha256": rollout_manifest_hashes,
+        "source_prompts_sha256": sha256_file(prompt_path),
+        "source_prompt_count": len(prompts),
+        "behavior_k": expected_k,
+        "seed": seed,
+        "selection": {"pass_rate_gt": lo, "pass_rate_lt": hi},
+        "selected_count": len(rows),
+        "saturated": not rows,
+        "pool_sha256": sha256_file(out),
+    }
+    sidecar = manifest_path(out)
+    sidecar_tmp = sidecar.with_name(sidecar.name + f".tmp.{os.getpid()}")
+    sidecar_tmp.write_text(json.dumps(metadata, indent=1, ensure_ascii=False))
+    sidecar_tmp.replace(sidecar)
+    print("pass-rate distribution:", dict(sorted(hist.items())))
+    print(f"hard-slice: {len(rows)}/{len(prompts)} -> {out}")
+    print(f"provenance: {sidecar}")
     if not rows:
-        print("[warn] hard-slice 0건 — β pass-rate가 전 프롬프트에서 경계 밖(전량 정답/오답). "
-              "POOL_N 증량으로는 해결되지 않음 — 데이터셋 난이도 재검토 필요")
+        print("[warn] hard-slice is empty: all behavior pass rates are at an interval boundary")
     elif len(rows) < 620:
-        print(f"[warn] 풀 {len(rows)} < 620 (n=512+val 100+여유) — POOL_N을 키워 재실행 권장")
+        print(f"[warn] pool has {len(rows)} rows < 620 (512 train + 100 val + margin)")
+    return metadata
+
+
+def validate_pool(pool: Path, *, model: Path, dataset: str) -> dict:
+    sidecar = manifest_path(pool)
+    if not pool.is_file() or not sidecar.is_file():
+        raise ValueError(f"pool or provenance sidecar missing: {pool}, {sidecar}")
+    metadata = json.loads(sidecar.read_text())
+    identity = model_identity(model)
+    expected = {
+        "schema": SCHEMA,
+        "dataset": dataset,
+        "model_resolved": identity["model_resolved"],
+        "model_config_sha256": identity["model_config_sha256"],
+        "pool_sha256": sha256_file(pool),
+    }
+    mismatches = {
+        key: {"expected": value, "recorded": metadata.get(key)}
+        for key, value in expected.items()
+        if metadata.get(key) != value
+    }
+    row_count = sum(1 for line in pool.open() if line.strip())
+    if metadata.get("selected_count") != row_count:
+        mismatches["selected_count"] = {
+            "expected": row_count,
+            "recorded": metadata.get("selected_count"),
+        }
+    if bool(metadata.get("saturated")) != (row_count == 0):
+        mismatches["saturated"] = {
+            "expected": row_count == 0,
+            "recorded": metadata.get("saturated"),
+        }
+    if mismatches:
+        raise ValueError(f"hard-pool provenance mismatch: {json.dumps(mismatches)}")
+    print(
+        f"hard-pool valid: dataset={dataset}, rows={row_count}, "
+        f"K={metadata.get('behavior_k')}, model={model.name}"
+    )
+    return metadata
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("run", nargs="?", type=Path)
+    parser.add_argument("out", type=Path)
+    parser.add_argument("lo", nargs="?", type=float, default=0.0)
+    parser.add_argument("hi", nargs="?", type=float, default=1.0)
+    parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--expected-k", type=int)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--validate", action="store_true")
+    args = parser.parse_args(argv)
+    if not args.validate and args.run is None:
+        parser.error("RUN is required when building a pool")
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        if args.validate:
+            validate_pool(args.out, model=args.model, dataset=args.dataset)
+        else:
+            build_pool(
+                args.run,
+                args.out,
+                args.lo,
+                args.hi,
+                model=args.model,
+                dataset=args.dataset,
+                expected_k=args.expected_k,
+                seed=args.seed,
+            )
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"[abort] {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

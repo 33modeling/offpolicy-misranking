@@ -32,7 +32,8 @@ for M in $MODELS_35; do
   echo
   echo "== [$TAG] 호환성 스모크 (8+4, 전 스테이지)"
   SMK="$OM_WORK/runs/smoke-$TAG"
-  if [ -f "$SMK/report.json" ]; then
+  if [ -f "$SMK/report.json" ] && [ -f "$SMK/score_protocol.json" ] \
+     && [ -f "$SMK/oracle_protocol.json" ]; then
     echo "   스모크 산출물 존재 — 스킵"
   elif ! DATASET=gsm8k OUT_ROOT="$SMK" N_TRAIN=8 N_VAL=4 FRESH_K=8 HYBRID_PROMPTS=4 \
         SEED=0 MODEL_14B="$M" bash scripts/run_14b.sh > "$LOGDIR/smoke-$TAG.log" 2>&1; then
@@ -46,7 +47,9 @@ for M in $MODELS_35; do
   echo "== [$TAG] 본실행 seeds($SEEDS_35), gsm8k n=512"
   for s in $SEEDS_35; do
     dir="$OM_WORK/runs/v2-$TAG-s$s"
-    [ -f "$dir/DONE" ] && { echo "  ✔ $TAG/s$s 완주 — 스킵"; continue; }
+    [ -f "$dir/DONE" ] && [ -f "$dir/score_protocol.json" ] \
+      && [ -f "$dir/oracle_protocol.json" ] \
+      && { echo "  ✔ $TAG/s$s 완주 — 스킵"; continue; }
     if DATASET=gsm8k MODEL_14B="$M" SEED="$s" N_TRAIN=512 N_VAL=100 OUT_ROOT="$dir" \
        bash scripts/run_14b.sh >> "$LOGDIR/35-$TAG-s$s.log" 2>&1; then
       echo "  ✔ $TAG/s$s"

@@ -18,9 +18,10 @@ source scripts/setup_env.sh
 LOGDIR="${OM_WORK:-.}/console-logs"; mkdir -p "$LOGDIR"
 export DISABLE_ADDMM_CUDA_LT=1
 echo "== [R1] cublasLt 폴백 검증런 — gsm8k seed0 단독 (완주분 스킵)"
-SEEDS="0" DATASETS="gsm8k" bash scripts/go_v2.sh 2>&1 | tee "$LOGDIR/retry-probe.log" || true
+SEEDS="0" DATASETS="gsm8k" bash scripts/go_v2.sh 2>&1 | tee "$LOGDIR/retry-probe.log"
+probe_rc=${PIPESTATUS[0]}
 
-if grep -q "gsm8k/s0 ✔" "$LOGDIR/retry-probe.log"; then
+if [ "$probe_rc" -eq 0 ] && grep -q "gsm8k/s0 ✔" "$LOGDIR/retry-probe.log"; then
   echo
   echo "== [R1 통과] 같은 env(cublasLt 폴백)로 전체 재개"
   SEEDS="${SEEDS_ALL:-0 1 2 3 4}" DATASETS="gsm8k dapo-math" bash scripts/go_v2.sh 2>&1 | tee -a "$LOGDIR/go_full.console.log"
