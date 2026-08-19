@@ -61,7 +61,10 @@ def main() -> int:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     print("pass-rate 분포:", dict(sorted(hist.items())))
     print(f"hard-slice: {len(rows)}/{len(prompts)} → {out}")
-    if len(rows) < 620:
+    if not rows:
+        print("[warn] hard-slice 0건 — β pass-rate가 전 프롬프트에서 경계 밖(전량 정답/오답). "
+              "POOL_N 증량으로는 해결되지 않음 — 데이터셋 난이도 재검토 필요")
+    elif len(rows) < 620:
         print(f"[warn] 풀 {len(rows)} < 620 (n=512+val 100+여유) — POOL_N을 키워 재실행 권장")
     return 0
 

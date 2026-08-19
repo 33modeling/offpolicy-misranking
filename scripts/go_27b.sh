@@ -40,10 +40,19 @@ fi
 for DS in $DATASETS_27B; do
   echo "== [1/$DS] hard-slice 프리스크린 (β pass-rate, 전량 정답/오답 제외)"
   POOL="$OM_WORK/pools/$DS-hard.jsonl"
-  if [ ! -s "$POOL" ]; then
+  # 존재 여부(-f)와 비어 있음(-s 실패)을 구분 — 0바이트 풀은 "β가 전 문제를 풀어서
+  # hard 구간이 빈" 포화의 증거물이지 프리스크린 미실행이 아니다. -s로 검사하면
+  # 재시도마다 프리스크린을 다시 돌고 같은 0바이트만 재작성한다.
+  if [ ! -f "$POOL" ]; then
     MODEL="$M27" bash scripts/prescreen_pool.sh "$DS" "${POOL_N:-2000}" || { echo "[abort] $DS 프리스크린 실패"; exit 1; }
   fi
-  [ -s "$POOL" ] || { echo "[abort] 풀 없음: $POOL"; exit 1; }
+  [ -f "$POOL" ] || { echo "[abort] 풀 없음: $POOL"; exit 1; }
+  if [ ! -s "$POOL" ]; then
+    echo "[abort] hard pool 0건: $POOL — β pass-rate가 전 문제 0 또는 1(포화)이라 0<rate<1 구간이 비었다."
+    echo "        결정 필요: ① DATASETS_27B를 더 어려운 데이터셋으로 교체  ② 포화 자체를 규칙(3) 사례로 수록하고 이 블록 생략"
+    echo "        (프리스크린을 강제로 다시 돌리려면: rm $POOL)"
+    exit 1
+  fi
 
   echo "== [2/$DS] 본실행 seeds($SEEDS_27B), n=512 (hard pool)"
   for s in $SEEDS_27B; do
