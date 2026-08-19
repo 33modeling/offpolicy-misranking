@@ -1,14 +1,16 @@
 """2×2 추정량과 projected per-prompt gradient.
 
-concept #68의 population 정의를 그대로 구현한다:
+concept #68의 population 정의를 구현한다. 아래 식은 unclipped population 식이며,
+실험값은 완성된 토큰별 곱을 ``[1/clip_cap, clip_cap]``으로 자른 clipped variant다:
   g00 = Σ_t E_β[ r_t      R z_t ]   (CROPI token-ratio, raw outcome)
   g10 = Σ_t E_β[ P_t r_t  R z_t ]   (prefix만 교정)
   g01 = Σ_t E_β[ r_t S_t  R z_t ]   (suffix만 교정)
   g11 = Σ_t E_β[ P_t r_t S_t R z_t ] = g_π  (full trajectory IS)
   oracle/val = on-policy fresh rollout의 LOO group gradient (unbiased for E[Rz])
 
-R 자리는 전부 leave-one-out 비정규화 advantage A_j = R_j - mean_{l≠j} R_l 를 쓴다
-(baseline은 score expectation에서 소거 — verify_theory.py의 LOO unbiasedness 참조).
+R 자리는 전부 leave-one-out 비정규화 advantage A_j = R_j - mean_{l≠j} R_l 를 쓴다.
+unclipped 네 IS weight에서는 weighted score의 기대가 0이라 baseline이 소거된다.
+클리핑 후에는 이 항등식이 일반적으로 깨지므로 clipping bias에 포함해 해석한다.
 """
 
 from __future__ import annotations
@@ -34,6 +36,11 @@ def loo_advantages(rewards: torch.Tensor) -> torch.Tensor:
 def log_weights(logp_pi: torch.Tensor, logp_beta: torch.Tensor,
                 estimator: str) -> torch.Tensor:
     """클리핑 전의 토큰별 log 가중치 — population 정의 그대로 (진단용으로도 사용)."""
+    if logp_pi.shape != logp_beta.shape:
+        raise ValueError(
+            f"pi/beta log-prob shapes differ: {tuple(logp_pi.shape)} vs "
+            f"{tuple(logp_beta.shape)}"
+        )
     log_r = (logp_pi - logp_beta).detach()  # (T,)
     if estimator == "g00":
         return log_r
@@ -61,7 +68,11 @@ def token_weights(
     clip_cap: 곱 비율의 상한(하한 1/cap) — 분산 통제용 구현 선택이며 population
     정의에는 없다. 논문 표기에서는 clipped 변형임을 명시할 것 (감사 blocker B).
     """
+    if clip_cap < 1.0:
+        raise ValueError(f"clip_cap must be >= 1, got {clip_cap}")
     log_w = log_weights(logp_pi, logp_beta, estimator)
+    if clip_cap < 1.0:
+        raise ValueError(f"clip_cap must be >= 1, got {clip_cap}")
     cap = math.log(clip_cap)
     return torch.exp(log_w.clamp(-cap, cap)) * advantage
 
@@ -161,7 +172,7 @@ def prompt_gradient(
         batch = sequences[start : start + micro_batch]
         ws = weights[start : start + micro_batch]
         loss = 0.0
-        for seq, w in zip(batch, ws):
+        for seq, w in zip(batch, ws, strict=True):
             ids = seq["input_ids"].unsqueeze(0).to(model.device)
             logits = model(ids).logits[0, :-1].float()
             tgt = ids[0, 1:]

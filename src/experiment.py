@@ -31,7 +31,9 @@ from grads import (
     token_weights,
     weight_stats,
 )
-from rollout import collect_rollouts, load_policy, train_drift_lora
+from rollout import SAMPLING, collect_rollouts, load_policy, train_drift_lora
+from select_rules import (fixed_selection_overlap, jittered_topk,
+                          overlap_under_independent_ties, topk_count)
 
 
 def _atomic_text(path: Path, text: str) -> None:
@@ -45,6 +47,21 @@ def _atomic_save(obj, path: Path) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     torch.save(obj, tmp)
     tmp.replace(path)
+
+
+def score_oracle_microgroups(stack: torch.Tensor, val_grad: torch.Tensor) -> tuple[dict, dict]:
+    """Score a full oracle and equal-budget odd/even rollout halves."""
+    if stack.ndim != 2:
+        raise ValueError(f"micro-group stack must be 2D, got shape={tuple(stack.shape)}")
+    groups = stack.shape[0]
+    if groups < 2 or groups % 2:
+        raise ValueError(f"split-half requires an even number of groups >=2, got {groups}")
+    mu = stack.mean(dim=0)
+    halves = {
+        "a": cosine(stack[0::2].mean(dim=0), val_grad),
+        "b": cosine(stack[1::2].mean(dim=0), val_grad),
+    }
+    return {"score": cosine(mu, val_grad), "norm": float(mu.norm())}, halves
 
 
 def read_rollouts(path: Path) -> dict[int, list[dict]]:
@@ -137,12 +154,12 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
         logps_beta = beta_logps[pi_idx] if two_pass else [
             sequence_logprobs(beta, r["input_ids"], r["resp_start"]) for r in rows
         ]
-        for lp, lb in zip(logps_pi, logps_beta):
+        for lp, lb in zip(logps_pi, logps_beta, strict=True):
             div_rows.append(weight_stats(lp, lb, clip_cap=args.clip_cap))
         for est in ESTIMATORS:
             weights = [
                 token_weights(lp, lb, float(a), est, clip_cap=args.clip_cap)
-                for lp, lb, a in zip(logps_pi, logps_beta, advs)
+                for lp, lb, a in zip(logps_pi, logps_beta, advs, strict=True)
             ]
             g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
             out[est][pi_idx] = {"score": cosine(g, val), "norm": float(g.norm())}
@@ -196,11 +213,11 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         # 산출물 2개(gradient+groups) — 둘 다 있어야 스킵 (부분 상태 오인 방지, B5류)
         if not ((run / "val_gradient.pt").exists() and (run / "val_groups.pt").exists()):
             v_sum, groups_v = None, []
-            for _vn, (pi_idx, rows) in enumerate(sorted(read_rollouts(val_path).items()), 1):
+            for _vn, (_pi_idx, rows) in enumerate(sorted(read_rollouts(val_path).items()), 1):
                 advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
                 weights = [
                     torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
-                    for r, a in zip(rows, advs)
+                    for r, a in zip(rows, advs, strict=True)
                 ]
                 g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
                 groups_v.append(g)
@@ -222,39 +239,36 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
     if shard is not None:
         keys = sorted(fresh_by_prompt)[shard[0]::shard[1]]
         fresh_by_prompt = {k: fresh_by_prompt[k] for k in keys}
-    # P0-6(후반): split-half의 두 반쪽이 같은 validation 방향을 공유하면 공유
-    # 추정오차가 overlap을 부풀린다 — val 프롬프트 gradient도 짝/홀로 갈라
-    # 반쪽 a↔val_a, b↔val_b로 완전 독립 분할. oracle 전체 점수는 전체 val 유지.
     if shard is None:
-        vg = torch.load(run / "val_groups.pt", weights_only=True)
-        if vg.shape[0] >= 2:
-            val_a = vg[0::2].mean(dim=0)
-            val_b = vg[1::2].mean(dim=0)
-        else:
-            print("oracle: val 그룹 1개뿐 — 독립 분할 불가, 공유 val로 폴백", flush=True)
-            val_a = val_b = val_grad
+        # 본문의 estimand와 sharded merge 경로는 같은 validation target을 공유한다.
+        # 공유 validation 오차의 조건부성은 floor의 scope note로 보고한다.
+        val_grad = torch.load(run / "val_gradient.pt", weights_only=True)
     for pi_idx, rows in sorted(fresh_by_prompt.items()):
         n_done += 1
         gsize = args.micro_group
+        if len(rows) % gsize:
+            raise ValueError(
+                f"prompt {pi_idx}: fresh rollouts {len(rows)} not divisible by "
+                f"micro_group={gsize}"
+            )
+        if len(rows) // gsize < 2 or (len(rows) // gsize) % 2:
+            raise ValueError(
+                f"prompt {pi_idx}: split-half needs an even number of micro-groups >=2; "
+                f"got {len(rows) // gsize}"
+            )
         group_grads = []
         for s in range(0, len(rows), gsize):
             chunk = rows[s : s + gsize]
             advs = loo_advantages(torch.tensor([r["reward"] for r in chunk]))
             weights = [
                 torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
-                for r, a in zip(chunk, advs)
+                for r, a in zip(chunk, advs, strict=True)
             ]
             group_grads.append(prompt_gradient(pi, params, chunk, weights, spec, micro_batch=args.micro_batch))
         stack = torch.stack(group_grads)
         micro[pi_idx] = stack
         if shard is None:
-            mu = stack.mean(dim=0)
-            oracle[pi_idx] = {"score": cosine(mu, val_grad), "norm": float(mu.norm())}
-            h = stack.shape[0] // 2
-            halves[pi_idx] = {
-                "a": cosine(stack[:h].mean(dim=0), val_a),
-                "b": cosine(stack[h:].mean(dim=0), val_b),
-            }
+            oracle[pi_idx], halves[pi_idx] = score_oracle_microgroups(stack, val_grad)
         if n_done % 5 == 0:
             from grads import ts
             print(f"[{ts()}]  oracle {n_done}/{len(fresh_by_prompt)} "
@@ -270,12 +284,9 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
 
 def topk(scores: dict, frac: float, seed: int = 0) -> set:
     """동률은 seeded 난수로 무작위 절단 — index-순 절단의 임의성 제거 (감사 §11)."""
-    import random as _r
-    rng = _r.Random(seed ^ 0x5EED)
-    jit = {i: rng.random() for i in scores}
-    from select_rules import topk_count
     k = topk_count(len(scores), frac)
-    return set(sorted(scores, key=lambda i: (-scores[i]["score"], jit[i]))[:k])
+    scalar = {i: value["score"] for i, value in scores.items()}
+    return jittered_topk(scalar, k, seed ^ 0x5EED)
 
 
 def stage_report(args, run: Path) -> None:
@@ -285,18 +296,12 @@ def stage_report(args, run: Path) -> None:
 
     frac = args.topk_frac
     seed = getattr(args, "seed", 0)
-    o_top = topk(oracle, frac, seed)
-    k = len(o_top)
-    # 동점 절단 jitter는 절반별로 독립이어야 한다 — 같은 seed면 동점이 많은
-    # 체제에서 양쪽이 같은 임의 선택을 해 floor가 인위로 부풀려진다(2026-08-13 발견).
-    # P0-6(부분): 본문 정의와 일치 — 독립 지터 20쌍 평균 (동률 절단 잡음 평균화).
-    # 남는 조건부성(양쪽 half가 같은 val_gradient 공유)은 본문 §floor에 명시.
-    sa = {i: {"score": h["a"]} for i, h in halves.items()}
-    sb = {i: {"score": h["b"]} for i, h in halves.items()}
-    _pairs = [len(topk(sa, frac, seed + 7919 * j)
-                  & topk(sb, frac, seed + 104729 + 7919 * j)) / k
-              for j in range(20)]
-    noise_floor = sum(_pairs) / len(_pairs)
+    k = topk_count(len(oracle), frac)
+    oracle_scores = {i: value["score"] for i, value in oracle.items()}
+    sa = {i: h["a"] for i, h in halves.items()}
+    sb = {i: h["b"] for i, h in halves.items()}
+    floor_summary = overlap_under_independent_ties(sa, sb, k, seed=seed)
+    noise_floor = floor_summary.mean
 
     def _ties_and_zeros(sc: dict) -> tuple[int, int]:
         vals = sorted((v["score"] for v in sc.values()), reverse=True)
@@ -310,6 +315,8 @@ def stage_report(args, run: Path) -> None:
     lines.append("| estimator | top-k precision | Jaccard | Δ vs floor |")
     lines.append("|---|---|---|---|")
     results = {"noise_floor": noise_floor, "split_half_reliability": noise_floor,
+               "split_half_jitter_range": [floor_summary.low, floor_summary.high],
+               "split_half_jitter_sd": floor_summary.sd,
                "k": k, "seed": seed, "boundary_ties": {}, "zero_grad": {}}
     ot, oz = _ties_and_zeros(oracle)
     results["boundary_ties"]["oracle"], results["zero_grad"]["oracle"] = ot, oz
@@ -317,33 +324,61 @@ def stage_report(args, run: Path) -> None:
         scores = {int(i): v for i, v in off[est].items()}
         t_, z_ = _ties_and_zeros(scores)
         results["boundary_ties"][est], results["zero_grad"][est] = t_, z_
-        e_top = topk(scores, frac, seed)
-        prec = len(e_top & o_top) / k
-        jac = len(e_top & o_top) / len(e_top | o_top)
-        results[est] = {"precision": prec, "jaccard": jac}
+        est_scores = {i: value["score"] for i, value in scores.items()}
+        overlap = overlap_under_independent_ties(
+            oracle_scores, est_scores, k, seed=seed
+        )
+        prec = overlap.mean
+        jac = sum(value / (2.0 - value) for value in overlap.values) / len(overlap.values)
+        results[est] = {
+            "precision": prec,
+            "jaccard": jac,
+            "precision_jitter_range": [overlap.low, overlap.high],
+            "precision_jitter_sd": overlap.sd,
+        }
         lines.append(f"| {est} | {prec:.3f} | {jac:.3f} | {prec - noise_floor:+.3f} |")
 
     # CertaGrad vs uniform (fresh micro-group 시뮬레이션)
     micro = torch.load(run / "oracle_micro_groups.pt", weights_only=True)
     val_groups = torch.load(run / "val_groups.pt", weights_only=True)
     order = sorted(micro)
-    pools = [micro[i].float() for i in order]
-    cg = certagrad(pools, val_groups.float(), k, radius_mode=args.radius_mode)
-    total_pool = sum(p.shape[0] for p in pools)
-    uni = uniform_baseline(pools, val_groups.float(), k, groups_each=pools[0].shape[0])
+    if min(stack.shape[0] for stack in micro.values()) < 2 or val_groups.shape[0] < 2:
+        raise ValueError("CertaGrad evaluation requires disjoint candidate and validation halves")
+    pools = [micro[i][0::2].float() for i in order]
+    selection_val = val_groups[0::2].float()
+    truth_val = val_groups[1::2].float().mean(dim=0)
+    cert_truth = {
+        i: cosine(micro[i][1::2].float().mean(dim=0), truth_val) for i in order
+    }
+    cg = certagrad(pools, selection_val, k, radius_mode=args.radius_mode)
+    uni = uniform_baseline(pools, selection_val, k, groups_each=pools[0].shape[0])
     cg_sel = {order[i] for i in cg["selected"]}
     uni_sel = {order[i] for i in uni["selected"]}
-    uniform_precision = len(uni_sel & o_top) / k
+    cg_overlap = fixed_selection_overlap(cg_sel, cert_truth, k, seed=seed)
+    uni_overlap = fixed_selection_overlap(uni_sel, cert_truth, k, seed=seed)
+    uniform_precision = uni_overlap.mean
+    cg_rollouts = (cg["candidate_groups"] * args.micro_group
+                   + cg["validation_groups"] * args.val_k)
+    uni_rollouts = (uni["candidate_groups"] * args.micro_group
+                    + uni["validation_groups"] * args.val_k)
     results["certagrad"] = {
         "certified": cg["certified"],
+        "selected": sorted(cg_sel),
         "fresh_groups": cg["fresh_groups"],
-        "fresh_frac_of_uniform": cg["fresh_groups"] / uni["fresh_groups"],
-        "precision_vs_oracle": len(cg_sel & o_top) / k,
+        "candidate_groups": cg["candidate_groups"],
+        "validation_groups": cg["validation_groups"],
+        "fresh_rollouts": cg_rollouts,
+        "uniform_rollouts": uni_rollouts,
+        "evaluation": "selection=even groups, evaluation=odd groups",
+        "radius_mode": args.radius_mode,
+        "fresh_frac_of_uniform": cg_rollouts / uni_rollouts,
+        "precision_vs_oracle": cg_overlap.mean,
+        "precision_jitter_range": [cg_overlap.low, cg_overlap.high],
         "uniform_precision_vs_oracle": uniform_precision,
     }
     lines += [
         "",
-        f"CertaGrad: certified={cg['certified']} fresh={cg['fresh_groups']}/{uni['fresh_groups']} "
+        f"CertaGrad: certified={cg['certified']} fresh={cg_rollouts}/{uni_rollouts} rollouts "
         f"({results['certagrad']['fresh_frac_of_uniform']:.2f}× of uniform), "
         f"precision={results['certagrad']['precision_vs_oracle']:.3f} "
         f"(uniform precision={uniform_precision:.3f})",
@@ -394,6 +429,14 @@ def main() -> None:
                    help="생성 샘플링·LoRA init·tie-break 시드 (프롬프트 분할은 고정)")
     args = p.parse_args()
 
+    if args.temperature != 1.0 or SAMPLING["top_p"] != 1.0:
+        raise ValueError(
+            "off-policy ratios use raw model softmax; exact protocol requires "
+            "--temperature 1.0 and OM_TOP_P=1.0"
+        )
+    if args.clip_cap < 1.0:
+        raise ValueError(f"--clip-cap must be >= 1, got {args.clip_cap}")
+
     # 시드 관통 — 샤드마다 다른 스트림 (같은 시드면 샤드 간 표본 상관 방지)
     import random as _random
     _shard_i = int(args.shard.split(":")[0]) if args.shard else 0
@@ -406,7 +449,16 @@ def main() -> None:
 
     if args.stage == "prep":
         prompts = load_prompts(args.dataset, args.n_train, args.n_val)
-        (run / "prompts.json").write_text(json.dumps(prompts, ensure_ascii=False, indent=1))
+        prompt_path = run / "prompts.json"
+        if prompt_path.exists():
+            existing = json.loads(prompt_path.read_text())
+            if existing != prompts:
+                raise ValueError(
+                    "prompts.json differs from the requested dataset/split; use a new run directory"
+                )
+            print("prep: existing prompts match requested split")
+        else:
+            _atomic_text(prompt_path, json.dumps(prompts, ensure_ascii=False, indent=1))
         print(f"prep: train {len(prompts['train'])} / val {len(prompts['val'])}")
     elif args.stage == "rollout-behavior":
         merged = run / "rollouts_behavior_train.jsonl"
@@ -498,12 +550,12 @@ def main() -> None:
             params = grad_params(pi, args.grad_layers)
             spec = ProjectionSpec(dim=args.proj_dim)
             v_sum, groups_v = None, []
-            for _vn, (pi_idx, rows) in enumerate(
+            for _vn, (_pi_idx, rows) in enumerate(
                     sorted(read_rollouts(run / "rollouts_fresh_val.jsonl").items()), 1):
                 advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
                 weights = [
                     torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
-                    for r, a in zip(rows, advs)
+                    for r, a in zip(rows, advs, strict=True)
                 ]
                 g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
                 groups_v.append(g)
@@ -521,6 +573,7 @@ def main() -> None:
         stage_score(args, run, shard=(i, n))
     elif args.stage == "merge-grads":
         # 샤드 산출물 병합 → 최종 파일
+        expected_ids = set(range(len(json.loads((run / "prompts.json").read_text())["train"])))
         for base, is_pt in (("scores_oracle", False), ("scores_splithalf", False),
                             ("oracle_micro_groups", True), ("scores_offpolicy", False)):
             shards = sorted(run.glob(f"{base}.shard*.{'pt' if is_pt else 'json'}"))
@@ -529,14 +582,39 @@ def main() -> None:
             if is_pt:
                 merged: dict = {}
                 for p in shards:
-                    merged.update(torch.load(p, weights_only=True))
+                    part = torch.load(p, weights_only=True)
+                    overlap = set(merged) & set(part)
+                    if overlap:
+                        raise ValueError(f"{base}: duplicate prompt IDs across shards: {sorted(overlap)[:5]}")
+                    merged.update(part)
+                if set(merged) != expected_ids:
+                    raise ValueError(
+                        f"{base}: prompt coverage mismatch, missing="
+                        f"{sorted(expected_ids - set(merged))[:5]}, "
+                        f"extra={sorted(set(merged) - expected_ids)[:5]}"
+                    )
                 _atomic_save(merged, run / f"{base}.pt")
             elif base == "scores_offpolicy":
                 merged = {}
                 for p in shards:
                     part = json.loads(p.read_text())
                     for est, sc in part.items():
-                        merged.setdefault(est, {}).update(sc)
+                        target = merged.setdefault(est, {})
+                        overlap = set(target) & set(sc)
+                        if overlap:
+                            raise ValueError(
+                                f"{base}/{est}: duplicate prompt IDs across shards: "
+                                f"{sorted(overlap)[:5]}"
+                            )
+                        target.update(sc)
+                for est in ESTIMATORS:
+                    got = {int(idx) for idx in merged.get(est, {})}
+                    if got != expected_ids:
+                        raise ValueError(
+                            f"{base}/{est}: prompt coverage mismatch, missing="
+                            f"{sorted(expected_ids - got)[:5]}, "
+                            f"extra={sorted(got - expected_ids)[:5]}"
+                        )
                 _atomic_text(run / f"{base}.json", json.dumps(merged, indent=1))
             else:
                 merged = {}
@@ -555,13 +633,9 @@ def main() -> None:
             val_grad = torch.load(val_p, weights_only=True)
             oracle, halves = {}, {}
             for pi_idx, stack in sorted(micro.items()):
-                mu = stack.mean(dim=0)
-                oracle[pi_idx] = {"score": cosine(mu, val_grad), "norm": float(mu.norm())}
-                h = stack.shape[0] // 2
-                halves[pi_idx] = {
-                    "a": cosine(stack[:h].mean(dim=0), val_grad),
-                    "b": cosine(stack[h:].mean(dim=0), val_grad),
-                }
+                oracle[pi_idx], halves[pi_idx] = score_oracle_microgroups(
+                    stack, val_grad
+                )
             _atomic_text(run / "scores_splithalf.json", json.dumps(halves, indent=1))
             _atomic_text(run / "scores_oracle.json", json.dumps(oracle, indent=1))
             print(f"merge: oracle 점수 도출 {len(oracle)} prompts")
@@ -591,7 +665,8 @@ def main() -> None:
 
         run_downstream(run, args.model, args.downstream_source, args.downstream_steps,
                        args.behavior_k, args.max_new_tokens, args.temperature,
-                       args.topk_frac, budget_rollouts=args.budget_rollouts)
+                       args.topk_frac, budget_rollouts=args.budget_rollouts,
+                       seed=args.seed)
 
 
 def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
@@ -627,7 +702,7 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
         params = grad_params(pi, args.grad_layers)
         val = torch.load(run / "val_gradient.pt", weights_only=True)
         scores = score_cells(pi, params, cells, val, spec)
-        (run / f"scores_hybrid_{cut_frac}.json").write_text(json.dumps(scores, indent=1))
+        _atomic_text(run / f"scores_hybrid_{cut_frac}.json", json.dumps(scores, indent=1))
         print(f"hybrid cut={cut_frac} 저장: {sorted(scores)}")
 
 

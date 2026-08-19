@@ -7,8 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from rollout_contract import (eos_ids_of, gen_kwargs, resolved_manifest,
-                              resp_end_index, trim_row)
+from rollout_contract import gen_kwargs, resolved_manifest, resp_end_index, trim_row
 
 EOS = 151645          # Qwen2.5 <|im_end|>
 EOS2 = 151643         # Qwen2.5 <|endoftext|> (generation_config eos 리스트의 둘째)

@@ -6,6 +6,7 @@ H100 클러스터는 GitHub egress가 없으므로 HF 미러를 쓴다:
 
 from __future__ import annotations
 
+import json
 import random
 import re
 
@@ -148,7 +149,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
                 continue
             gold = "KK:" + ";".join(
                 f"{n}={'knight' if _kk_truthy(s) else 'knave'}"
-                for n, s in zip(names, sol))
+                for n, s in zip(names, sol, strict=True))
             q = (f"{quiz}\n\nDetermine each person's identity. Reason step by step, "
                  "then after '####' state your final answer as e.g. "
                  "'Zoey is a knight, Oliver is a knave.'")
@@ -474,7 +475,10 @@ def _apps_reward(text: str, gold: str) -> float:
     code = _extract_code(text)
     if not code.strip():
         return 0.0
-    for inp, want in zip(io["inputs"], io["outputs"]):
+    inputs, outputs = io["inputs"], io["outputs"]
+    if len(inputs) != len(outputs):
+        return 0.0
+    for inp, want in zip(inputs, outputs, strict=True):
         try:
             p = subprocess.run([sys.executable, "-I", "-c", code],
                                input=inp, capture_output=True, text=True, timeout=8)

@@ -34,7 +34,7 @@ for M in $MODELS_35; do
   SMK="$OM_WORK/runs/smoke-$TAG"
   if [ -f "$SMK/report.json" ]; then
     echo "   스모크 산출물 존재 — 스킵"
-  elif ! DATASET=gsm8k OUT_ROOT="$SMK" N_TRAIN=8 N_VAL=4 FRESH_K=4 HYBRID_PROMPTS=4 \
+  elif ! DATASET=gsm8k OUT_ROOT="$SMK" N_TRAIN=8 N_VAL=4 FRESH_K=8 HYBRID_PROMPTS=4 \
         SEED=0 MODEL_14B="$M" bash scripts/run_14b.sh > "$LOGDIR/smoke-$TAG.log" 2>&1; then
     echo "== [$TAG] 스모크 실패 — 이 모델 스킵 (호환성 문제). tail:"
     tail -6 "$LOGDIR/smoke-$TAG.log" | sed 's/^/   /'

@@ -213,8 +213,6 @@ def train_drift_lora(
 ) -> None:
     """정답 rollout에 대한 LoRA SFT — checkpoint를 out_dir에 저장 (병합 없이 adapter)."""
     from peft import LoraConfig, get_peft_model
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
     device = device or auto_device()
     # 로드는 load_model로 일원화 — dtype 보장·CPU 경유 단일 사본·MM 폴백 전부 공유
     model, tok = load_model(base, device=device)

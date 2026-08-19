@@ -19,9 +19,9 @@ from pathlib import Path
 
 
 def topk_set(scores: dict, frac: float = 0.10) -> set:
-    from select_rules import topk_count
+    from select_rules import jittered_topk, topk_count
     k = topk_count(len(scores), frac)
-    return set(sorted(scores, key=lambda i: -scores[i])[:k])
+    return jittered_topk(scores, k, seed=0)
 
 
 def load(path: Path):
@@ -111,11 +111,14 @@ def judge(out_root: Path) -> dict[str, bool | None]:
                 continue
             sub = set(cells["bb"])  # hybrid 서브셋 프롬프트만 비교
             o_sub = {i: oracle[i]["score"] for i in sub if i in oracle}
-            o_top = topk_set(o_sub, 0.25)
+            from select_rules import overlap_under_independent_ties, topk_count
+            k_sub = topk_count(len(o_sub), 0.25)
             prec = {}
             for cell, sc in cells.items():
-                c_top = topk_set({i: v for i, v in sc.items() if i in o_sub}, 0.25)
-                prec[cell] = len(c_top & o_top) / max(1, len(o_top))
+                c_scores = {i: v for i, v in sc.items() if i in o_sub}
+                prec[cell] = overlap_under_independent_ties(
+                    o_sub, c_scores, k_sub, seed=0
+                ).mean
             recovered = {
                 "g10": prec["pp"] > prec["pb"],  # continuation: β → π
                 "g01": prec["pp"] > prec["bp"],  # occupancy: β → π

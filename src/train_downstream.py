@@ -17,6 +17,7 @@ from data import reward
 from grads import loo_advantages
 from rollout import SAMPLING, _lora_targets, auto_device, chat_ids
 from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
+from select_rules import jittered_topk, topk_count
 
 
 def grpo_lite_train(
@@ -29,10 +30,9 @@ def grpo_lite_train(
     temperature: float,
     out_dir: Path,
     lr: float = 1e-5,
+    seed: int = 0,
 ) -> None:
     from peft import LoraConfig, get_peft_model
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
     device = auto_device()
     from rollout import load_model
     # 로드는 load_model로 일원화 — dtype 보장·CPU 경유 단일 사본·MM 폴백 공유
@@ -44,7 +44,7 @@ def grpo_lite_train(
     model.train()
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     pool = [prompts[i] for i in selected_idx]
-    rng = random.Random(0)
+    rng = random.Random(seed)
     from grads import ts
     import time as _time
     print(f"[{ts()}] downstream 학습 시작: {steps} steps, 선택 {len(pool)}개, K={k}", flush=True)
@@ -121,13 +121,34 @@ def selection_rollout_cost(run: Path, source: str) -> int:
         rep = run / "report.json"
         if rep.exists():
             cg = json.loads(rep.read_text()).get("certagrad", {})
-            return int(cg.get("fresh_groups", 0)) * 4
+            micro_path = run / "oracle_micro_groups.pt"
+            if not micro_path.exists():
+                raise ValueError("certagrad cost requires oracle_micro_groups.pt")
+            micro = torch.load(micro_path, map_location="cpu", weights_only=True)
+            groups = min(stack.shape[0] for stack in micro.values())
+            from kcurve_floor import find_fresh_k
+            group_size = find_fresh_k(run, groups) // groups
+            cand_groups = int(cg.get("candidate_groups", cg.get("fresh_groups", 0)))
+            val_groups = int(cg.get("validation_groups", 0))
+            val_k = 0
+            val_rollouts = run / "rollouts_fresh_val.jsonl"
+            if val_groups and val_rollouts.exists():
+                counts: dict[int, int] = {}
+                for line in val_rollouts.open():
+                    row = json.loads(line)
+                    idx = int(row["prompt_idx"])
+                    counts[idx] = counts.get(idx, 0) + 1
+                if counts:
+                    val_k = min(counts.values())
+            if val_groups and val_k == 0:
+                raise ValueError("cannot infer validation rollout cost for certagrad")
+            return cand_groups * group_size + val_groups * val_k
     return 0
 
 
 def run_downstream(run: Path, base: str, source: str, steps: int, k: int,
                    max_new_tokens: int, temperature: float, topk_frac: float,
-                   budget_rollouts: int = 0) -> dict:
+                   budget_rollouts: int = 0, seed: int = 0) -> dict:
     """source ∈ {oracle, g00, g10, g01, g11, random} 선택으로 학습→val 정확도.
 
     budget_rollouts > 0 이면 '선택+학습 총 rollout 예산'을 통일한다 —
@@ -136,27 +157,46 @@ def run_downstream(run: Path, base: str, source: str, steps: int, k: int,
     """
     prompts = json.loads((run / "prompts.json").read_text())
     n = len(prompts["train"])
-    kk = max(1, int(n * topk_frac))
+    kk = topk_count(n, topk_frac)
     if source == "random":
-        sel = random.Random(0).sample(range(n), kk)
+        sel = random.Random(seed).sample(range(n), kk)
+    elif source == "certagrad":
+        report = json.loads((run / "report.json").read_text()).get("certagrad", {})
+        sel = [int(idx) for idx in report.get("selected", [])]
+        if len(sel) != kk:
+            raise ValueError(
+                f"certagrad selection missing or wrong size: expected {kk}, got {len(sel)}"
+            )
     elif source == "oracle":
         scores = {int(i): v for i, v in json.loads((run / "scores_oracle.json").read_text()).items()}
-        sel = sorted(scores, key=lambda i: -scores[i]["score"])[:kk]
+        sel = sorted(jittered_topk(
+            {idx: value["score"] for idx, value in scores.items()}, kk, seed
+        ))
     else:
         off = json.loads((run / "scores_offpolicy.json").read_text())[source]
         scores = {int(i): v for i, v in off.items()}
-        sel = sorted(scores, key=lambda i: -scores[i]["score"])[:kk]
+        sel = sorted(jittered_topk(
+            {idx: value["score"] for idx, value in scores.items()}, kk, seed
+        ))
     sel_cost = selection_rollout_cost(run, source)
     if budget_rollouts > 0:
-        steps = max(1, (budget_rollouts - sel_cost) // k)
+        remaining = budget_rollouts - sel_cost
+        if remaining < k:
+            raise ValueError(
+                f"selection cost {sel_cost} leaves {remaining} rollouts, below one train step K={k}"
+            )
+        steps = remaining // k
         print(f"[budget] 총예산 {budget_rollouts} rollouts — 선택 소비 {sel_cost} → 학습 {steps} steps")
     out_dir = run / f"downstream_{source}"
-    grpo_lite_train(base, prompts["train"], sel, steps, k, max_new_tokens, temperature, out_dir)
+    grpo_lite_train(
+        base, prompts["train"], sel, steps, k, max_new_tokens, temperature, out_dir,
+        seed=seed,
+    )
     acc = eval_accuracy(base, out_dir, prompts["val"], max_new_tokens)
     base_acc = eval_accuracy(base, None, prompts["val"], max_new_tokens)
     result = {"source": source, "selected": sel, "val_acc": acc, "base_acc": base_acc,
               "selection_rollout_cost": sel_cost, "train_steps": steps,
-              "budget_rollouts": budget_rollouts}
+              "budget_rollouts": budget_rollouts, "seed": seed}
     (run / f"downstream_{source}.json").write_text(json.dumps(result, indent=1))
     print(f"downstream[{source}]: val {base_acc:.3f} → {acc:.3f}")
     return result

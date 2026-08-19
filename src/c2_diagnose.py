@@ -9,7 +9,6 @@ run 하나에서 예외가 나도 나머지는 계속 진단한다.
 
 from __future__ import annotations
 
-import json
 import math
 import sys
 import traceback

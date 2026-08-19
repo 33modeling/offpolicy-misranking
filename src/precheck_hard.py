@@ -60,7 +60,8 @@ def topk(scores: dict, k: int, rng: random.Random) -> set:
 
 def floor_on(hv: dict[int, dict], idxs: list[int]) -> tuple[float, float, float, int, float]:
     """부분집합 조건부 교정 floor — 20개 독립 jitter쌍 평균과 범위."""
-    k = max(1, round(0.10 * len(idxs)))
+    from select_rules import topk_count
+    k = topk_count(len(idxs), 0.10)
     a = {i: hv[i]["a"] for i in idxs}
     b = {i: hv[i]["b"] for i in idxs}
     vals = []
@@ -79,7 +80,8 @@ def floor_boot_ci(hv: dict[int, dict], idxs: list[int]) -> tuple[float, float]:
         sample = [rng.choice(idxs) for _ in idxs]      # 위치 키로 중복 허용
         a = {p: hv[i]["a"] for p, i in enumerate(sample)}
         b = {p: hv[i]["b"] for p, i in enumerate(sample)}
-        k = max(1, round(0.10 * len(sample)))
+        from select_rules import topk_count
+        k = topk_count(len(sample), 0.10)
         ta = topk(a, k, random.Random(60000 + bidx))
         tb = topk(b, k, random.Random(70000 + bidx))
         vals.append(len(ta & tb) / k)
@@ -98,7 +100,8 @@ def precisions_on(run: Path, idxs: list[int]) -> dict[str, float] | None:
     sub = [i for i in idxs if i in oracle]
     if len(sub) < MIN_H:
         return None
-    k = max(1, round(0.10 * len(sub)))
+    from select_rules import topk_count
+    k = topk_count(len(sub), 0.10)
     out = {}
     for est in ("g00", "g10", "g01", "g11"):
         if est not in off:
@@ -120,7 +123,7 @@ def tag_of(name: str) -> str:
         return "dapo"
     if "math500" in name:
         return "math500"
-    if "hard" in name or "27b" in name:
+    if any(tag in name for tag in ("hard", "27b", "mbpp", "apps", "-kk")):
         return "other"
     return "gsm8k"
 
@@ -175,7 +178,7 @@ def main() -> int:
     print("여기서 floor가 오르지 않으면 새 풀에서도 오를 근거가 없다.\n")
     print("| run | 계열 | n | live | floor(전체) | floor(live) | live 95% CI | floor(중간대 0.25~0.75) |")
     print("|---|---|---|---|---|---|---|---|")
-    for name, tag, n, nl, nm, fa, fl, ci, fm, _ in rows:
+    for name, tag, n, nl, _nm, fa, fl, ci, fm, _ in rows:
         ci_s = f"[{ci[0]:.3f}, {ci[1]:.3f}]" if ci else "-"
         print(f"| {name} | {tag} | {n} | {nl} | {fmt(fa)} | {fmt(fl)} | {ci_s} | {fmt(fm)} |")
 

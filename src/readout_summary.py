@@ -9,17 +9,10 @@
 from __future__ import annotations
 
 import json
-import random
 import re
 import subprocess
 import sys
 from pathlib import Path
-
-
-def topk(scores: dict, k: int, rng: random.Random) -> set:
-    jit = {i: rng.random() for i in scores}
-    return set(sorted(scores, key=lambda i: (-scores[i], jit[i]))[:k])
-
 
 def precisions(run: Path) -> tuple[dict, int, float] | None:
     try:
@@ -29,16 +22,14 @@ def precisions(run: Path) -> tuple[dict, int, float] | None:
     except Exception:
         return None
     n = len(oracle)
-    from select_rules import topk_count
+    from select_rules import overlap_under_independent_ties, topk_count
     k = topk_count(n, 0.10)
-    rng = random.Random(0)
-    otop = topk(oracle, k, rng)
     out = {}
     for est in ("g00", "g10", "g01", "g11"):
         if est not in off:
             continue
         sc = {int(i): v["score"] for i, v in off[est].items() if int(i) in oracle}
-        out[est] = len(otop & topk(sc, k, rng)) / k
+        out[est] = overlap_under_independent_ties(oracle, sc, k, seed=0).mean
     return out, k, k / n
 
 
@@ -60,11 +51,13 @@ def main() -> int:
         try:
             hv = {int(i): v for i, v in
                   json.loads((d / "scores_splithalf.json").read_text()).items()}
-            ra, rb = random.Random(1), random.Random(104729)
-            kk = max(1, round(0.10 * len(hv)))
-            ta = topk({i: h["a"] for i, h in hv.items()}, kk, ra)
-            tb = topk({i: h["b"] for i, h in hv.items()}, kk, rb)
-            floor_fixed = len(ta & tb) / kk
+            from select_rules import overlap_under_independent_ties, topk_count
+            kk = topk_count(len(hv), 0.10)
+            floor_fixed = overlap_under_independent_ties(
+                {i: h["a"] for i, h in hv.items()},
+                {i: h["b"] for i, h in hv.items()},
+                kk, seed=0,
+            ).mean
         except Exception:
             pass
         pr = precisions(d)

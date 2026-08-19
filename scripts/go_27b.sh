@@ -19,6 +19,7 @@ M27="${MODEL27B:-$MODELS_DIR/Qwen3.6-27B}"
 [ -f "$M27/config.json" ] || {
   echo "[abort] 27B 스냅샷 없음: $M27 — 온라인 머신에서 bash scripts/fetch_27b.sh"; exit 1; }
 export OM_LORA_TARGETS="${OM_LORA_TARGETS:-all-linear}"
+export OM_SKIP_HYBRID=1
 SEEDS_27B="${SEEDS_27B:-0 1 2}"
 DATASETS_27B="${DATASETS_27B:-dapo-math}"
 
@@ -27,7 +28,7 @@ SMK="$OM_WORK/runs/smoke-27b"
 if [ -f "$SMK/report.json" ]; then
   echo "   스모크 산출물 존재 — 스킵"
 else
-  if ! DATASET=gsm8k OUT_ROOT="$SMK" N_TRAIN=8 N_VAL=4 FRESH_K=4 HYBRID_PROMPTS=4 \
+  if ! DATASET=gsm8k OUT_ROOT="$SMK" N_TRAIN=8 N_VAL=4 FRESH_K=8 HYBRID_PROMPTS=4 \
        SEED=0 MODEL_14B="$M27" bash scripts/run_14b.sh > "$LOGDIR/smoke-27b.log" 2>&1; then
     echo "== [중단] 27B 스모크 실패 — 신아키텍처 호환성(transformers/PEFT/checkpointing) 의심. tail:"
     tail -12 "$LOGDIR/smoke-27b.log" | sed 's/^/   /'

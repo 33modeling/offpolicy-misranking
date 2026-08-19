@@ -29,6 +29,7 @@ from pathlib import Path
 import torch
 
 from certagrad import angle_radius, eb_radius
+from select_rules import overlap_under_independent_ties, topk_count
 
 FRAC = 0.10
 EST = ("g00", "g10", "g01", "g11")
@@ -52,11 +53,6 @@ def collect_runs(roots: list[str]) -> list[tuple[str, Path]]:
 def jload(p: Path):
     return json.loads(p.read_text()) if p.exists() else None
 
-
-def topk(scores: dict, k: int) -> set:
-    return set(sorted(scores, key=lambda i: -scores[i])[:k])
-
-
 def gate_numbers(run: Path) -> dict | None:
     """report.json 우선, 없으면 원시 점수에서 재계산."""
     rep = jload(run / "report.json")
@@ -69,17 +65,22 @@ def gate_numbers(run: Path) -> dict | None:
         return None
     oracle = {int(i): v for i, v in oracle.items()}
     halves = {int(i): v for i, v in halves.items()}
-    k = max(1, int(len(oracle) * FRAC))
-    o_top = topk({i: v["score"] for i, v in oracle.items()}, k)
-    ha = topk({i: h["a"] for i, h in halves.items()}, k)
-    hb = topk({i: h["b"] for i, h in halves.items()}, k)
-    out = {"noise_floor": len(ha & hb) / k, "k": k, "_recomputed": True}
+    k = topk_count(len(oracle), FRAC)
+    oracle_scores = {i: v["score"] for i, v in oracle.items()}
+    floor = overlap_under_independent_ties(
+        {i: h["a"] for i, h in halves.items()},
+        {i: h["b"] for i, h in halves.items()},
+        k, seed=0,
+    )
+    out = {"noise_floor": floor.mean, "k": k, "_recomputed": True}
     for est in EST:
         sc = {int(i): v["score"] for i, v in off.get(est, {}).items()}
         if sc:
-            e_top = topk(sc, k)
-            out[est] = {"precision": len(e_top & o_top) / k,
-                        "jaccard": len(e_top & o_top) / len(e_top | o_top)}
+            overlap = overlap_under_independent_ties(oracle_scores, sc, k, seed=0)
+            out[est] = {
+                "precision": overlap.mean,
+                "jaccard": sum(v / (2 - v) for v in overlap.values) / len(overlap.values),
+            }
     return out
 
 
@@ -152,7 +153,7 @@ def t3_floor_curve(runs) -> list[str]:
         micro = torch.load(mg, weights_only=True)
         val = torch.load(vg, weights_only=True).float()
         n_pool = min(s.shape[0] for s in micro.values())
-        k = max(1, int(len(micro) * FRAC))
+        k = topk_count(len(micro), FRAC)
         pts = []
         for m in range(2, n_pool + 1, 2):
             a_sc, b_sc = {}, {}
@@ -162,7 +163,7 @@ def t3_floor_curve(runs) -> list[str]:
                 a_mu, b_mu = st[:h].mean(0), st[h:].mean(0)
                 a_sc[i] = float((a_mu @ val) / (a_mu.norm() * val.norm() + 1e-12))
                 b_sc[i] = float((b_mu @ val) / (b_mu.norm() * val.norm() + 1e-12))
-            fl = len(topk(a_sc, k) & topk(b_sc, k)) / k
+            fl = overlap_under_independent_ties(a_sc, b_sc, k, seed=0).mean
             pts.append(f"m={m}: {fl:.3f}")
         rows.append(f"| {name} | " + " · ".join(pts) + " |")
     rows += ["", "split-half floor를 관측 그룹 수 m으로 subsample 재계산 — 곡선이 늦게 "
@@ -209,12 +210,13 @@ def t5_hybrid(runs) -> list[str]:
                 continue
             sub = set(cells["bb"])
             o_sub = {i: oracle[i]["score"] for i in sub if i in oracle}
-            k = max(1, int(len(o_sub) * 0.25))
-            o_top = topk(o_sub, k)
+            k = topk_count(len(o_sub), 0.25)
             prec = {}
             for cell in ("bb", "bp", "pb", "pp"):
-                c_top = topk({i: v for i, v in cells[cell].items() if i in o_sub}, k)
-                prec[cell] = len(c_top & o_top) / k
+                c_scores = {i: v for i, v in cells[cell].items() if i in o_sub}
+                prec[cell] = overlap_under_independent_ties(
+                    o_sub, c_scores, k, seed=0
+                ).mean
             cut = hf.stem.split("_")[-1]
             rows.append(f"| {name} | {cut} | " +
                         " | ".join(f"{prec[c]:.2f}" for c in ("bb", "bp", "pb", "pp")) +
@@ -252,7 +254,7 @@ def t6_c2_margin(runs) -> list[str]:
                 phis[i] = math.degrees(math.acos(max(-1.0, min(1.0, c))))
                 norms[i] = float(mu.norm())
             live = [i for i in micro if norms[i] > 1e-6]
-            k = max(1, int(len(micro) * FRAC))
+            k = topk_count(len(micro), FRAC)
             if len(live) > k:
                 srt = sorted(live, key=lambda i: phis[i])
                 margin_s = f"{phis[srt[k]] - phis[srt[k - 1]]:.2f}°"

@@ -82,9 +82,34 @@ def certagrad(
 ) -> dict:
     """순차 인증. 반환: 선택 집합, 사용 micro-group 수, 인증 성공 여부."""
     m = len(cand_pools)
+    if m < 1:
+        raise ValueError("cand_pools must not be empty")
+    if not 1 <= k <= m:
+        raise ValueError(f"k must be in [1, {m}], got {k}")
+    if init_groups < 1 or max_rounds < 1:
+        raise ValueError("init_groups and max_rounds must be positive")
+    if not 0 < delta < 1:
+        raise ValueError(f"delta must be in (0, 1), got {delta}")
+    if val_pool.ndim != 2 or val_pool.shape[0] < 1:
+        raise ValueError("val_pool must contain at least one group")
+    dim = cand_pools[0].shape[1] if cand_pools[0].ndim == 2 else None
+    if dim is None or any(pool.ndim != 2 or pool.shape[1] != dim for pool in cand_pools):
+        raise ValueError("candidate pools must be 2D with a shared feature dimension")
+    if val_pool.shape[1] != dim:
+        raise ValueError("candidate and validation feature dimensions must match")
+    if any(pool.shape[0] < init_groups for pool in cand_pools):
+        raise ValueError("every candidate pool must cover init_groups")
+    initial_cost = m * init_groups + 1
+    if max_fresh is not None and max_fresh < initial_cost:
+        raise ValueError(
+            f"max_fresh={max_fresh} is below the required initial cost {initial_cost}"
+        )
     cands = [Candidate(pool) for pool in cand_pools]
     val = Candidate(val_pool)
-    per = delta / (m + 1)
+    # Allocate delta across every possible adaptive look, not only streams.
+    max_looks = sum(pool.shape[0] - init_groups + 1 for pool in cand_pools)
+    max_looks += val_pool.shape[0]
+    per = delta / max_looks
 
     for c in cands:
         for _ in range(init_groups):
@@ -92,7 +117,6 @@ def certagrad(
     val.draw()
 
     # 후보 통계를 (m,d) 행렬로 유지, 라운드당 계산을 전부 벡터화 (느린 CPU 대응)
-    dim = cand_pools[0].shape[1]
     MU = torch.zeros(m, dim)
     ALPHA = torch.zeros(m)
     dirty = set(range(m))
@@ -101,9 +125,8 @@ def certagrad(
     a_v = 0.0
     _pi = math.pi
 
+    sel: set[int] = set(range(k))
     for _ in range(max_rounds):
-        if max_fresh is not None and sum(c.used for c in cands) + val.used > max_fresh:
-            break  # 예산 상한 초과 — C2 기준(≤0.5×)상 이미 실패 확정이므로 조기 종료
         if val_dirty:
             mu_v, r_v = val.stats(per, radius_mode)
             a_v = angle_radius(mu_v, r_v)
@@ -130,7 +153,13 @@ def certagrad(
                 "selected": sorted(int(i) for i in sel_idx),
                 "certified": True,
                 "fresh_groups": sum(c.used for c in cands) + val.used,
+                "candidate_groups": sum(c.used for c in cands),
+                "validation_groups": val.used,
             }
+        used_now = sum(c.used for c in cands) + val.used
+        if max_fresh is not None and used_now >= max_fresh:
+            sel = {int(i) for i in sel_idx}
+            break
         # 경계에 걸린 후보 / 공유 validation 중 불확실성 기여가 큰 쪽에 배분 (concept 6절 5항)
         sel_mask = torch.zeros(m, dtype=torch.bool)
         sel_mask[sel_idx] = True
@@ -138,12 +167,14 @@ def certagrad(
         boundary = boundary_mask.nonzero(as_tuple=True)[0]
         sel = {int(i) for i in sel_idx}
         if boundary.numel() and a_v >= float(ALPHA[boundary].max()):
-            if val.draw():
+            if (max_fresh is None or used_now < max_fresh) and val.draw():
                 val_dirty = True
                 continue
         progressed = False
         drawn = 0
         for i in boundary[torch.argsort(ALPHA[boundary], descending=True)].tolist():
+            if max_fresh is not None and sum(c.used for c in cands) + val.used >= max_fresh:
+                break
             if cands[i].draw():
                 dirty.add(i)
                 progressed = True
@@ -151,7 +182,8 @@ def certagrad(
                 if drawn >= 4:  # 라운드당 경계 상위 4곳 동시 관측 — 라운드 수 1/4
                     break
         if not progressed:
-            if val.draw():
+            if (max_fresh is None
+                    or sum(c.used for c in cands) + val.used < max_fresh) and val.draw():
                 val_dirty = True
                 continue
             # 예산 소진 — 인증 실패를 숨기지 않되, 선택 자체는 구간 중점이 아니라
@@ -166,13 +198,22 @@ def certagrad(
                 "selected": sorted(sel),
                 "certified": False,
                 "fresh_groups": sum(c.used for c in cands) + val.used,
+                "candidate_groups": sum(c.used for c in cands),
+                "validation_groups": val.used,
             }
-    return {"selected": sorted(sel), "certified": False, "fresh_groups": sum(c.used for c in cands) + val.used}
+    return {
+        "selected": sorted(sel),
+        "certified": False,
+        "fresh_groups": sum(c.used for c in cands) + val.used,
+        "candidate_groups": sum(c.used for c in cands),
+        "validation_groups": val.used,
+    }
 
 
 def uniform_baseline(cand_pools: list[torch.Tensor], val_pool: torch.Tensor, k: int, groups_each: int) -> dict:
     """GradAlign matched — 모든 후보에 같은 수의 fresh micro-group 균등 배분."""
-    mu_v = val_pool[: max(1, groups_each)].mean(dim=0)
+    validation_groups = min(val_pool.shape[0], max(1, groups_each))
+    mu_v = val_pool[:validation_groups].mean(dim=0)
     scores = []
     for pool in cand_pools:
         mu = pool[:groups_each].mean(dim=0)
@@ -180,7 +221,9 @@ def uniform_baseline(cand_pools: list[torch.Tensor], val_pool: torch.Tensor, k: 
     sel = sorted(range(len(cand_pools)), key=lambda i: -scores[i])[:k]
     return {
         "selected": sorted(sel),
-        "fresh_groups": groups_each * len(cand_pools) + max(1, groups_each),
+        "fresh_groups": groups_each * len(cand_pools) + validation_groups,
+        "candidate_groups": groups_each * len(cand_pools),
+        "validation_groups": validation_groups,
     }
 
 
@@ -203,7 +246,20 @@ def certagrad_scalar(
     모든 후보에 같은 타깃으로 작용하므로 후보 간 순위 인증에는 스칼라 CI로 충분하다.
     """
     m = len(cand_pools)
-    v = val_pool.mean(dim=0)
+    if m < 1 or not 1 <= k <= m:
+        raise ValueError(f"k must be in [1, {m}], got {k}")
+    if init_groups < 2 or max_rounds < 1:
+        raise ValueError("scalar mode requires init_groups >=2 and positive max_rounds")
+    if not 0 < delta < 1:
+        raise ValueError(f"delta must be in (0, 1), got {delta}")
+    if val_pool.ndim != 2 or val_pool.shape[0] < 1:
+        raise ValueError("val_pool must contain at least one group")
+    if any(pool.ndim != 2 or pool.shape[0] < init_groups for pool in cand_pools):
+        raise ValueError("every candidate pool must be 2D and cover init_groups")
+    # Scalar mode keeps a fixed validation target; only the groups actually
+    # used to construct it are charged to the selection budget.
+    validation_groups = min(init_groups, val_pool.shape[0])
+    v = val_pool[:validation_groups].mean(dim=0)
     v = v / (v.norm() + 1e-12)
 
     # 후보별 스칼라 관측 풀 (미리 계산 — draw는 인덱스만 소비)
@@ -212,7 +268,13 @@ def certagrad_scalar(
         p = pool / (pool.norm(dim=1, keepdim=True) + 1e-12)
         scal.append((p @ v))
     used = [0] * m
-    per = delta / m
+    max_looks = sum(pool.numel() - init_groups + 1 for pool in scal)
+    per = delta / max_looks
+    initial_cost = m * init_groups + validation_groups
+    if max_fresh is not None and max_fresh < initial_cost:
+        raise ValueError(
+            f"max_fresh={max_fresh} is below the required initial cost {initial_cost}"
+        )
 
     def ci(i):
         x = scal[i][: used[i]]
@@ -231,8 +293,9 @@ def certagrad_scalar(
         used[i] = min(init_groups, scal[i].numel())
 
     for _ in range(max_rounds):
-        total = sum(used)
-        if max_fresh is not None and total > max_fresh:
+        candidate_groups = sum(used)
+        total = candidate_groups + validation_groups
+        if max_fresh is not None and total >= max_fresh:
             break
         stats = [ci(i) for i in range(m)]
         mids = sorted(range(m), key=lambda i: -stats[i][0])
@@ -242,12 +305,16 @@ def certagrad_scalar(
         # (ε,δ) 완화: ε-최적 집합 허용 — ε을 정지 조건에 실제 반영 (감사 §8)
         if lo_min > hi_max - eps:
             return {"selected": sorted(sel), "certified": True,
-                    "fresh_groups": total, "eps": eps}
+                    "fresh_groups": total, "candidate_groups": candidate_groups,
+                    "validation_groups": validation_groups, "eps": eps,
+                    "estimand": "mean_group_cosine"}
         boundary = [i for i in sel if stats[i][0] - stats[i][1] <= hi_max] +                    [i for i in rest if stats[i][0] + stats[i][1] >= lo_min]
         # 반경 큰 순으로 최대 4곳 추가 관측
         boundary.sort(key=lambda i: -stats[i][1] if math.isfinite(stats[i][1]) else -1e9)
         progressed = False
         for i in boundary[:4]:
+            if max_fresh is not None and sum(used) + validation_groups >= max_fresh:
+                break
             if used[i] < scal[i].numel():
                 used[i] += 1
                 progressed = True
@@ -255,8 +322,14 @@ def certagrad_scalar(
             stats = [ci(i) for i in range(m)]
             mids = sorted(range(m), key=lambda i: -stats[i][0])
             return {"selected": sorted(mids[:k]), "certified": False,
-                    "fresh_groups": sum(used), "eps": eps}
+                    "fresh_groups": sum(used) + validation_groups,
+                    "candidate_groups": sum(used),
+                    "validation_groups": validation_groups, "eps": eps,
+                    "estimand": "mean_group_cosine"}
     stats = [ci(i) for i in range(m)]
     mids = sorted(range(m), key=lambda i: -stats[i][0])
     return {"selected": sorted(mids[:k]), "certified": False,
-            "fresh_groups": sum(used), "eps": eps}
+            "fresh_groups": sum(used) + validation_groups,
+            "candidate_groups": sum(used),
+            "validation_groups": validation_groups, "eps": eps,
+            "estimand": "mean_group_cosine"}

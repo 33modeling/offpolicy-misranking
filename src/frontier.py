@@ -20,7 +20,6 @@ v2 산출물만으로 selection 정책 스펙트럼을 시뮬레이션한다:
 from __future__ import annotations
 
 import json
-import math
 import os
 import random
 import sys
@@ -28,6 +27,8 @@ from collections import defaultdict
 from pathlib import Path
 
 import torch
+
+from select_rules import topk_count
 
 EST = ("g00", "g10", "g01", "g11")
 FRAC = 0.10
@@ -58,7 +59,7 @@ class Run:
         self.val = torch.load(root / "val_gradient.pt", weights_only=True).float()
         self.ids = sorted(micro)
         self.n = len(self.ids)
-        self.k = max(1, int(self.n * FRAC))
+        self.k = topk_count(self.n, FRAC)
         # 짝수 그룹 = 정책 관측 풀, 홀수 그룹 = 진실 전용
         self.obs = {i: micro[i][0::2].float() for i in self.ids}
         tru = {i: micro[i][1::2].float() for i in self.ids}
@@ -74,10 +75,17 @@ class Run:
         # β pass-rate (behavior rollout 재사용 — fresh 비용 0)
         agg: dict[int, list[float]] = defaultdict(list)
         bpath = root / "rollouts_behavior_train.jsonl"
-        if bpath.exists():
-            for line in bpath.open():
-                r = json.loads(line)
-                agg[r["prompt_idx"]].append(r["reward"])
+        if not bpath.exists():
+            raise FileNotFoundError(f"frontier requires {bpath}")
+        for line in bpath.open():
+            r = json.loads(line)
+            agg[r["prompt_idx"]].append(r["reward"])
+        missing_behavior = [idx for idx in self.ids if not agg[idx]]
+        if missing_behavior:
+            raise ValueError(
+                f"behavior rollouts missing for {len(missing_behavior)} prompts: "
+                f"{missing_behavior[:5]}"
+            )
         self.passrate = {i: (1 + sum(agg[i])) / (2 + len(agg[i])) for i in self.ids}
         # E5: live 판정은 스무딩 없는 원시 성공 수 기준 (스무딩은 난이도 점수용만)
         self.raw_mixed = {i: (0 < sum(agg[i]) < len(agg[i])) if agg[i] else False
@@ -171,8 +179,8 @@ class Run:
         w_gap = min(1.0, max(0.0, base_corr))
         while spent + m_a <= budget_groups:
             kth = sorted(score.values(), reverse=True)[self.k - 1]
-            def acq(i: int) -> float:
-                gap = abs(score[i] - kth) + 1e-3
+            def acq(i: int, boundary_score: float = kth) -> float:
+                gap = abs(score[i] - boundary_score) + 1e-3
                 if mode == "margin_only":
                     return 1.0 / gap
                 if mode == "disagree_only":
@@ -241,7 +249,7 @@ class Run:
         if h >= 1:
             ka = {i: cos(self.obs[i][:h].mean(0), self.val) for i in diag}
             kb = {i: cos(self.obs[i][h:].mean(0), self.val) for i in diag}
-            kd = max(1, int(len(diag) * FRAC))
+            kd = topk_count(len(diag), FRAC)
             floor_est = len(topk_ids(ka, kd, rng) & topk_ids(kb, kd, rng)) / kd
         else:
             floor_est = 0.0

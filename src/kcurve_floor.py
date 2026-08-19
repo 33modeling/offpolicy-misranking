@@ -106,7 +106,29 @@ def sb(r1: float, m: int) -> float:
 
 
 def find_fresh_k(run: Path, G: int) -> int:
-    for name in ("manifest.json", "report.json"):
+    raw = run / "rollouts_fresh_train.jsonl"
+    if raw.exists():
+        counts: dict[int, set[int]] = {}
+        for line in raw.open():
+            row = json.loads(line)
+            counts.setdefault(int(row["prompt_idx"]), set()).add(int(row["rollout_idx"]))
+        sizes = {len(ids) for ids in counts.values()}
+        if len(sizes) != 1:
+            raise ValueError(f"{raw}: inconsistent rollout counts {sorted(sizes)}")
+        if sizes:
+            fresh_k = sizes.pop()
+            if fresh_k % G:
+                raise ValueError(f"{raw}: fresh_k={fresh_k} is not divisible by groups={G}")
+            return fresh_k
+
+    def positive_int(value) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    for name in ("rollouts_fresh_train.manifest.json", "manifest.json", "report.json"):
         try:
             obj = json.loads((run / name).read_text())
         except Exception:
@@ -116,12 +138,19 @@ def find_fresh_k(run: Path, G: int) -> int:
             o = stack.pop()
             if isinstance(o, dict):
                 for kk, vv in o.items():
-                    if kk in ("fresh_k", "fresh-k") and isinstance(vv, int):
-                        return vv
+                    accepted = ("fresh_k", "fresh-k", "k") if name.startswith(
+                        "rollouts_fresh_train."
+                    ) else ("fresh_k", "fresh-k")
+                    if kk in accepted:
+                        parsed = positive_int(vv)
+                        if parsed is not None:
+                            return parsed
                     stack.append(vv)
             elif isinstance(o, list):
                 stack.extend(o)
-    return 32
+    # oracle_micro_groups are generated from the default micro-group size 4.
+    # This preserves the observable artifact geometry without silently forcing K=32.
+    return 4 * G
 
 
 def tag_of(name: str) -> str:
@@ -129,7 +158,7 @@ def tag_of(name: str) -> str:
         return "dapo"
     if "math500" in name:
         return "math500"
-    if "hard" in name or "27b" in name:
+    if any(tag in name for tag in ("hard", "27b", "mbpp", "apps", "-kk")):
         return "other"
     return "gsm8k"
 

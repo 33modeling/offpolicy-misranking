@@ -9,10 +9,12 @@ import json
 import sys
 from pathlib import Path
 
+from select_rules import jittered_topk, topk_count
+
 
 def topk(scores: dict[int, float], frac: float) -> list[int]:
-    k = max(1, int(len(scores) * frac))
-    return sorted(scores, key=lambda i: -scores[i])[:k]
+    k = topk_count(len(scores), frac)
+    return sorted(jittered_topk(scores, k, seed=0))
 
 
 def main() -> int:
@@ -28,7 +30,8 @@ def main() -> int:
         if not pj.exists():
             continue
         prompts = json.loads(pj.read_text())["train"]
-        q = lambda i: prompts[i]["question"].replace("\n", " ")[:70]
+        def question_preview(idx: int, rows: list[dict] = prompts) -> str:
+            return rows[idx]["question"].replace("\n", " ")[:70]
 
         sel: dict[str, list[int]] = {}
         op = run / "scores_oracle.json"
@@ -62,7 +65,7 @@ def main() -> int:
         if "oracle" in sel:
             print(f"\n[oracle 선택 {len(sel['oracle'])}개] (idx · β정답률 · 문제)")
             for i in sel["oracle"]:
-                print(f"  {i:4d} · {acc.get(i, float('nan')):.2f} · {q(i)}")
+                print(f"  {i:4d} · {acc.get(i, float('nan')):.2f} · {question_preview(i)}")
         for name in ("g00", "g10", "g01", "g11"):
             if name not in sel or "oracle" not in sel:
                 continue
@@ -71,7 +74,7 @@ def main() -> int:
             print(f"\n[{name}] oracle과 겹침 {len(inter)}/{len(sel[name])}"
                   + (f" — {name}만 뽑은 예: " + ", ".join(str(i) for i in only) if only else ""))
             for i in only[:3]:
-                print(f"    {i:4d} · β정답률 {acc.get(i, float('nan')):.2f} · {q(i)}")
+                print(f"    {i:4d} · β정답률 {acc.get(i, float('nan')):.2f} · {question_preview(i)}")
 
         names = list(sel)
         print("\n[겹침 행렬] (교집합 크기)")

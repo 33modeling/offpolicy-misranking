@@ -44,34 +44,48 @@ if [ "${BUSY:-0}" -gt 0 ] && [ "${OM_SKIP_GPU_CHECK:-0}" != "1" ]; then
 fi
 # 샤드 병합 + 커버리지 검증 — GPU 수가 바뀐 재시작이면 샤드 분할이 어긋나
 # 조용한 누락/중복이 생기므로, prompt 전수·무중복을 확인하고 원자적으로 쓴다.
-merge_rollouts() {  # merge_rollouts <base이름>
-  local base="$1"
-  [ -f "$OUT_ROOT/$base.jsonl" ] && return 0
-  "$PY" - "$OUT_ROOT" "$base" <<'PYEOF'
+merge_rollouts() {  # merge_rollouts <base이름> <prompt당 K>
+  local base="$1" expected_k="$2"
+  "$PY" - "$OUT_ROOT" "$base" "$expected_k" <<'PYEOF'
 import json, sys
 from pathlib import Path
-root, base = Path(sys.argv[1]), sys.argv[2]
-shards = sorted(root.glob(base + ".shard*.jsonl"))
+root, base, expected_k = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+merged = root / (base + ".jsonl")
+sources = [merged] if merged.exists() else sorted(root.glob(base + ".shard*.jsonl"))
+if not sources:
+    print(f"[merge-abort] {base}: shard files not found", flush=True)
+    sys.exit(1)
 n_train = len(json.loads((root / "prompts.json").read_text())["train"])
 seen = {}
-for s in shards:
+for s in sources:
     for line in s.open():
         r = json.loads(line)
         seen.setdefault(r["prompt_idx"], []).append((r["rollout_idx"], line))
 missing = [i for i in range(n_train) if i not in seen]
+unexpected = sorted(i for i in seen if i < 0 or i >= n_train)
 dup = [i for i, v in seen.items() if len({j for j, _ in v}) != len(v)]
-if missing or dup:
-    print(f"[merge-abort] {base}: 누락 {len(missing)}개(예 {missing[:5]}) 중복 {len(dup)}개 — "
+bad_k = [i for i, v in seen.items() if 0 <= i < n_train
+         if sorted(j for j, _ in v) != list(range(expected_k))]
+if missing or unexpected or dup or bad_k:
+    cleanup = merged if merged.exists() else root / f"{base}.shard*.jsonl"
+    print(f"[merge-abort] {base}: 누락 {len(missing)}개(예 {missing[:5]}) "
+          f"범위 밖 {len(unexpected)}개(예 {unexpected[:5]}) 중복 {len(dup)}개 "
+          f"exact-K 실패 {len(bad_k)}개(예 {bad_k[:5]}) — "
           f"GPU 수 변경 등으로 샤드 분할이 어긋남. 정리 후 재실행:\n"
-          f"  rm {root}/{base}.shard*.jsonl", flush=True)
+          f"  rm {cleanup}", flush=True)
     sys.exit(1)
+if merged.exists():
+    print(f"[validate] {base}: {n_train} prompts x K={expected_k}, "
+          f"{sum(len(v) for v in seen.values())} rollouts OK")
+    sys.exit(0)
 tmp = root / (base + ".jsonl.tmp")
 with tmp.open("w") as f:
     for i in range(n_train):
         for _, line in sorted(seen[i]):
             f.write(line)
 tmp.rename(root / (base + ".jsonl"))
-print(f"[merge] {base}: {n_train} prompts, {sum(len(v) for v in seen.values())} rollouts OK")
+print(f"[merge] {base}: {n_train} prompts x K={expected_k}, "
+      f"{sum(len(v) for v in seen.values())} rollouts OK")
 PYEOF
 }
 run_stage() { local dev="${GPUS[$1]:-$1}" lf="$2"; shift 2
@@ -82,11 +96,13 @@ run_stage() { local dev="${GPUS[$1]:-$1}" lf="$2"; shift 2
   else local rc=$?; log "GPU$dev ✘ $* rc=$rc"; tail -8 "$lf" | tee -a "$LOGS/main.log"; return $rc; fi
 }
 DRIFT="${DRIFT:-100}"
+export DRIFT
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # 클러스터 노드들의 fused SDPA ULF 이력(C5·C6) — 어떤 경로로 실행해도 eager 기본.
 # 빠른 커널을 검증한 노드에서만 OM_ATTN=sdpa 로 명시 해제.
 export OM_ATTN="${OM_ATTN:-eager}"
 DATASET="${DATASET:-gsm8k}"
+export MODEL_14B DATASET OUT_ROOT
 # 데이터셋 접미사는 멱등 — 호출자가 v2-s0-dapo-math·v2-27b-dapo-math-s0처럼 데이터셋명이
 # 이미 든 경로를 넘기면 그대로 쓴다. 무조건 덧붙이면 v2-s0-dapo-math-dapo-math에 산출물이
 # 쌓여 호출자의 DONE 체크(go_v2.sh:98 등)가 완주를 영구 미인식 → 매 루프 전체 재실행.
@@ -106,10 +122,11 @@ fi
 # jsonl 경로라 datasets 라이브러리를 안 탐). 30분 넘은 lock만 지운다.
 find "${HF_HOME:-/nonexistent}" -name '*.lock' -mmin +30 -delete 2>/dev/null || true
 # timeout — 데이터 계층이 어떤 이유로든 멈추면 무한 침묵 대신 진단 메시지
-if ! timeout 600 "$PY" -c "import sys; sys.path.insert(0, 'src'); from data import load_prompts; \
+timeout 600 "$PY" -c "import sys; sys.path.insert(0, 'src'); from data import load_prompts; \
 r = load_prompts('$DATASET', ${N_TRAIN:-256}, ${N_VAL:-50}); \
-print('[preflight] $DATASET 데이터 OK — train', len(r['train']), '/ val', len(r['val']))"; then
-  rc=$?
+print('[preflight] $DATASET 데이터 OK — train', len(r['train']), '/ val', len(r['val']))"
+rc=$?
+if [ "$rc" -ne 0 ]; then
   if [ "$rc" -eq 124 ]; then
     echo "[abort] $DATASET 데이터 로드 600초 초과 — 데이터셋 계층 스톨(HF lock/허브 대기)."
     echo "        진단: bash scripts/check_data.sh $DATASET"
@@ -120,27 +137,85 @@ print('[preflight] $DATASET 데이터 OK — train', len(r['train']), '/ val', l
   exit 1
 fi
 # run manifest — 재현성 기록 (감사 §17)
-"$PY" - "$OUT_ROOT" <<PYEOF
-import json, os, subprocess, sys, time
+"$PY" - "$OUT_ROOT" <<'PYEOF' || exit 1
+import hashlib, json, os, subprocess, sys, time
 from pathlib import Path
 root = Path(sys.argv[1]); root.mkdir(parents=True, exist_ok=True)
 def sh(c):
     try: return subprocess.check_output(c, shell=True, text=True).strip()
     except Exception: return "?"
+def digest_file(path):
+    p = Path(path) if path else None
+    return hashlib.sha256(p.read_bytes()).hexdigest() if p and p.is_file() else None
+def env_int(name, default):
+    return int(os.environ.get(name, str(default)))
 import torch, transformers
-m = {"time": time.strftime("%F %T"), "git": sh("git rev-parse HEAD"),
-     "model": os.environ.get("MODEL_14B", ""), "dataset": os.environ.get("DATASET", "gsm8k"),
-     "n_train": os.environ.get("N_TRAIN", "256"), "n_val": os.environ.get("N_VAL", "50"),
-     "fresh_k": os.environ.get("FRESH_K", "16"), "hybrid_prompts": os.environ.get("HYBRID_PROMPTS", "24"),
-     "seed": os.environ.get("SEED", "0"), "top_p": os.environ.get("OM_TOP_P", "1.0"),
-     "attn": os.environ.get("OM_ATTN", "eager(default)"),
+model = os.environ["MODEL_14B"]
+pool = os.environ.get("OM_POOL_FILE")
+git_head = sh("git rev-parse HEAD")
+git_diff_hash = hashlib.sha256(
+    subprocess.check_output(["git", "diff", "--no-ext-diff", "--binary"])
+).hexdigest()
+config = {
+    "git": git_head, "git_diff_sha256": git_diff_hash,
+    "model": model, "model_resolved": str(Path(model).resolve()),
+    "model_config_sha256": digest_file(Path(model) / "config.json"),
+    "tokenizer_config_sha256": digest_file(Path(model) / "tokenizer_config.json"),
+    "generation_config_sha256": digest_file(Path(model) / "generation_config.json"),
+    "dataset": os.environ["DATASET"], "pool": pool,
+    "pool_sha256": digest_file(pool),
+    "n_train": env_int("N_TRAIN", 256), "n_val": env_int("N_VAL", 50),
+    "behavior_k": env_int("BEHAVIOR_K", 8), "fresh_k": env_int("FRESH_K", 16),
+    "val_k": env_int("VAL_K", 8), "micro_group": env_int("MICRO_GROUP", 4),
+    "hybrid_prompts": env_int("HYBRID_PROMPTS", 24),
+    "k_cell": env_int("K_CELL", 8),
+    "seed": env_int("SEED", 0), "drift": env_int("DRIFT", 100),
+    "max_new_tokens": env_int("MAX_NEW_TOKENS", 512),
+    "proj_dim": env_int("PROJ_DIM", 4096), "grad_layers": env_int("GRAD_LAYERS", 4),
+    "clip_cap": float(os.environ.get("CLIP_CAP", "10.0")),
+    "temperature": float(os.environ.get("TEMPERATURE", "1.0")),
+    "topk_frac": float(os.environ.get("TOPK_FRAC", "0.10")),
+    "radius_mode": os.environ.get("RADIUS_MODE", "gaussian"),
+    "top_p": float(os.environ.get("OM_TOP_P", "1.0")),
+    "thinking": os.environ.get("OM_THINKING", "off"),
+    "attn": os.environ.get("OM_ATTN", "eager"),
+    "gen_batch": os.environ.get("OM_GEN_BATCH"),
+    "lora_targets": os.environ.get("OM_LORA_TARGETS"),
+    "skip_hybrid": os.environ.get("OM_SKIP_HYBRID", "0"),
+}
+encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+config["digest"] = hashlib.sha256(encoded).hexdigest()
+lock = root / "run_config.json"
+if lock.exists():
+    previous = json.loads(lock.read_text())
+    if previous.get("digest") != config["digest"]:
+        changed = sorted(k for k in set(previous) | set(config)
+                         if k != "digest" and previous.get(k) != config.get(k))
+        print(f"[config-abort] existing artifacts use a different run config: {changed}")
+        sys.exit(2)
+else:
+    tmp = lock.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(config, indent=1))
+    tmp.replace(lock)
+m = {"time": time.strftime("%F %T"), **config,
      "torch": torch.__version__, "transformers": transformers.__version__,
      "cuda": torch.version.cuda}
-(root / "manifest.json").write_text(json.dumps(m, indent=1))
-print("[manifest]", m["git"][:8], m["dataset"], "n=", m["n_train"], "seed=", m["seed"], "top_p=", m["top_p"])
+tmp = root / "manifest.json.tmp"
+tmp.write_text(json.dumps(m, indent=1))
+tmp.replace(root / "manifest.json")
+print("[manifest]", git_head[:8], config["dataset"], "n=", config["n_train"],
+      "seed=", config["seed"], "config=", config["digest"][:12])
 PYEOF
 
-COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET" --fresh-k "${FRESH_K:-16}" --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1 --n-train "${N_TRAIN:-256}" --n-val "${N_VAL:-50}" --seed "${SEED:-0}")
+COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET"
+        --behavior-k "${BEHAVIOR_K:-8}" --fresh-k "${FRESH_K:-16}"
+        --val-k "${VAL_K:-8}" --micro-group "${MICRO_GROUP:-4}"
+        --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1
+        --n-train "${N_TRAIN:-256}" --n-val "${N_VAL:-50}" --seed "${SEED:-0}"
+        --max-new-tokens "${MAX_NEW_TOKENS:-512}" --proj-dim "${PROJ_DIM:-4096}"
+        --grad-layers "${GRAD_LAYERS:-4}" --clip-cap "${CLIP_CAP:-10.0}"
+        --temperature "${TEMPERATURE:-1.0}" --topk-frac "${TOPK_FRAC:-0.10}"
+        --radius-mode "${RADIUS_MODE:-gaussian}" --k-cell "${K_CELL:-8}")
 
 KA_DEV=$(IFS=,; echo "${GPUS[*]}")
 CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
@@ -155,7 +230,7 @@ trap cleanup EXIT INT TERM
 
 log "=== 14B 시작: $MODEL_14B → $OUT_ROOT (GPU ${NGPU}장) ==="
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
-run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"
+run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}" || exit 1
 
 # ---- 정합성 사전 검사: 옛 실행 잔재가 이번 실행과 섞이는 것을 원천 차단 ----
 # ① π(drift adapter)보다 오래된 π-의존 산출물 격리 — 재학습 후 옛 점수/rollout이
@@ -227,14 +302,14 @@ pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
-merge_rollouts rollouts_behavior_train || exit 1
-run_stage 0 "$LOGS/drift.log" --stage drift "${COMMON[@]}" --drift-steps "$DRIFT"
+merge_rollouts rollouts_behavior_train "${BEHAVIOR_K:-8}" || exit 1
+run_stage 0 "$LOGS/drift.log" --stage drift "${COMMON[@]}" --drift-steps "$DRIFT" || exit 1
 # π fresh N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
-merge_rollouts rollouts_fresh_train || exit 1
+merge_rollouts rollouts_fresh_train "${FRESH_K:-16}" || exit 1
 # val 방향 ∥ oracle micro 샤딩 (GPU 여유가 있으면 마지막 GPU를 val 전용으로)
 pids=()
 if [ "$NGPU" -ge 2 ]; then
@@ -253,8 +328,8 @@ pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/score-shard$i.log" --stage score-shard "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
-run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}"
-run_stage 0 "$LOGS/report.log" --stage report "${COMMON[@]}"
+run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}" || exit 1
+run_stage 0 "$LOGS/report.log" --stage report "${COMMON[@]}" || exit 1
 # hybrid 3절단점 — GPU 수만큼 병렬 (모자라면 라운드로빈 순차)
 # 주의: hybrid는 π+β 두 모델을 한 GPU에 동시 상주시키는 유일한 스테이지 —
 # 27B급(57GB×2>80GB)은 구조적 불가 → OM_SKIP_HYBRID=1로 생략
@@ -270,5 +345,12 @@ for cut in 0.25 0.5 0.75; do
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
 fi
+required=(prompts.json rollouts_behavior_train.jsonl rollouts_fresh_train.jsonl
+          val_gradient.pt val_groups.pt oracle_micro_groups.pt scores_oracle.json
+          scores_splithalf.json scores_offpolicy.json report.json)
+for artifact in "${required[@]}"; do
+  [ -s "$OUT_ROOT/$artifact" ] || { log "[abort] 필수 산출물 누락/빈 파일: $artifact"; exit 1; }
+done
+printf '%s\n' "completed $(date -Is)" > "$OUT_ROOT/DONE.tmp"
+mv "$OUT_ROOT/DONE.tmp" "$OUT_ROOT/DONE"
 log "=== 14B 완료 — bash scripts/result.sh 로 판정 (OUT_ROOT=$OUT_ROOT) ==="
-touch "$OUT_ROOT/DONE"

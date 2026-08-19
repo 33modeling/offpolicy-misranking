@@ -11,9 +11,9 @@ fresh 감사에 얼마를 내야 하는가)의 게이트/본실험 코드.
 > 상태 (2026-08-11): **7B 게이트 종결** — C1(관찰)·C1′(개입)·C3(downstream)
 > PASS, C2(인증)는 구조적 FAIL → 부정 결과로 수록. 14B GSM8K는 포화 퇴화,
 > MATH-500 2종은 관찰 순위 역전 확인. 현재 **감사 P0 교정판 v2 본실행**
-> (3-seed × {GSM8K, DAPO-Math}, n=512) 진행 중. 원고는
-> [new-paper-ideas #68](https://github.com/33modeling/new-paper-ideas/tree/master/68-one-sided-offpolicy-misranking)
-> `paper/`(제목 확정, v2 수치 대기 슬롯만 남음).
+> (3-seed × {GSM8K, DAPO-Math}, n=512) 진행 중. 원고는 별도 비공개 레포
+> [offpolicy-misranking-paper](https://github.com/33modeling/offpolicy-misranking-paper)에서
+> 관리하며, 이 레포에는 실행 코드와 검증 기록만 둔다.
 
 ## 1. 문제와 주장
 
@@ -82,7 +82,8 @@ drift 8배·선택 비율 5–25%·val 심화·(ε,δ)-PAC 완화 전부에서 �
 
 ## 4. v2 본실행 — 감사 P0 교정판 (진행 중)
 
-독립 감사에서 나온 P0를 전면 반영한 재실행: sampling `top_p=1.0` 통일, seed
+독립 감사에서 나온 P0를 전면 반영한 재실행: raw-softmax sampling
+(`temperature=1.0`, `top_p=1.0`, `top_k=0`) 통일, seed
 관통, hybrid 4셀 **독립 equal-K 재설계**, seeded tie-break, divergence/clipfrac
 통계 자동 실측, 인증 ε 실반영, run manifest 기록.
 
@@ -131,10 +132,12 @@ src/frontier.py         fresh-audit 비용–품질 replay (5절) — 정책 스
 src/train_downstream.py GRPO-lite 학습(checkpointing)·greedy 평가
 src/experiment.py       stage orchestrator — analyze가 oracle→score→report→hybrid를
                         단일 프로세스로 묶어 7B 재로드 제거
+src/select_rules.py     top-k 크기·seeded tie-break·독립 tie overlap 정본
 src/judge.py            게이트 5조건(C1·C1'·C2·C3) 자동 PASS/FAIL 판정
 src/make_tables.py      논문용 표 생성 → results/TABLES.md
 src/show_selection.py   방법별 top-k 선택 내용·β정답률·겹침 행렬
 tests/test_core.py      모델 없는 핵심 로직 테스트 (2×2 항등식·인증 동작)
+tests/test_protocol.py  tie·oracle split·hybrid horizon·artifact metadata 회귀 테스트
 tests/test_judge.py     drift 집계·hybrid 축별 회복 판정 회귀 테스트
 ```
 

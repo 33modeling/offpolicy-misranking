@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Executable checks for the counterexamples and lemmas in paper/main.tex."""
+"""Executable checks for the counterexamples and lemmas in the paper repository."""
 
 from __future__ import annotations
 

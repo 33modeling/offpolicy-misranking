@@ -1185,3 +1185,66 @@ failure mode다.
   재생성했다.
 - `tests/test_core.py`는 현재 system Python에 `torch`가 없어 실행하지 못했다. 이번 변경은
   paper와 standalone theory verifier에 한정되므로 이 미실행은 이론 검산 결과와 분리한다.
+
+## 18. 실행 코드 교정 및 재검증 (2026-08-20)
+
+원고를 비공개 `33modeling/offpolicy-misranking-paper`로 분리한 뒤 실행 레포를 다시
+검사했다. 이 절이 §15의 구현 결함 상태와 §17.5의 코드 테스트 상태를 갱신한다.
+
+### 18.1 수정 완료
+
+- **P0-6/E10:** top-k 크기와 tie-break를 `select_rules.py`로 통일했다. floor와 estimator
+  precision은 20개 독립 tie stream 평균이며, all-tie 체제는 chance로 수렴한다.
+- **P0-10:** hybrid continuation은 보존한 response prefix를 `max_new_tokens`에서 차감한다.
+  네 cell의 K와 전체 response horizon을 검사하고 산출물을 원자적으로 기록한다.
+- **P0-11:** fresh K는 raw rollout ID를 우선 읽고 metadata 문자열도 처리한다. 근거 없는
+  K=32 fallback을 제거했다.
+- **P0-12/E10/P0-14:** run config digest를 고정하고, 기존 병합본까지 prompt 범위와 정확한
+  K/ID를 검증한다. shard merge의 중복·누락을 거부하고 stage 실패를 전파하며, 필수
+  artifact가 모두 존재할 때만 `DONE`을 원자적으로 만든다.
+- **P0-13 부분 해결:** adaptive look 전체에 delta를 배분하고 candidate/validation 비용을
+  분리 계상했다. CertaGrad 선택은 짝수 candidate/validation group만 보고, precision은
+  홀수 held-out group만으로 평가한다. scalar mode는 estimand가 다르므로 C2 PASS 판정에서
+  제외했다.
+- **P0-14:** 27B smoke를 유효한 `fresh_k=8`로 바꾸고 구조적으로 불가능한 hybrid를 끈다.
+- **E14:** downstream selector의 seed/tie를 통일하고, 예산이 한 train step보다 적으면
+  실행을 거부하며 실제 CertaGrad 명단과 validation 비용을 사용한다.
+
+### 18.2 남은 한계
+
+- `radius_mode=gaussian`은 명시된 Gaussian 근사에 조건부다. 시간축 delta 재사용은
+  수정했지만 분포무관 coverage를 새로 증명한 것은 아니다. 따라서 empirical
+  certification 결과는 이 가정 아래의 진단량이며, 원고의 minimax lower bound와
+  구분한다.
+- 로컬에는 대형 모델과 해당 run 원자료가 없어 GPU/model 통합 실행은 하지 않았다.
+  다른 머신에서 진행 중인 behavior/fresh/oracle/score 원자료 생성은 계속해도 된다.
+  수정 전 생성된 `rollouts_hybrid_*`, `scores_hybrid_*`, `scores_splithalf.json`,
+  `report.*`, `DONE`은 pull 후 재생성해야 한다.
+
+### 18.3 검증
+
+- `tests/test_core.py`, `tests/test_contract.py`, `tests/test_judge.py`,
+  `tests/test_reversal_freq.py`, `tests/test_protocol.py`: 전부 통과.
+- `ruff check src tests --select F,E9,B`, `compileall`, `git diff --check`, 전체
+  `scripts/*.sh`의 `bash -n`: 통과.
+
+### 18.4 수식-코드 재대조
+
+- `grads.log_weights()`의 지수는 원고와 정확히 일치한다: `g10`은
+  `sum_{u<=t} log r_u`, `g01`은 `sum_{u>=t} log r_u`, `g11`은 전 trajectory
+  `sum_u log r_u`다. 따라서 unclipped 상태에서 `g10*g01/g00=g11`이다.
+- 반례의 `g_pi=-epsilon/2`, 실패 cell `=+epsilon/2`, exact
+  `KL=2 epsilon log((1/2+epsilon)/(1/2-epsilon))`, `KL/epsilon^2 -> 8`을
+  `scripts/verify_theory.py`로 다시 확인했다. 일반 K group-normalization 양의 상수배와
+  two-prompt ranking flip도 통과했다.
+- Gaussian boundary swap에서 각 boundary observation의 KL은
+  `Delta^2/(2 sigma^2)`이므로 lower bound의 계수
+  `2 sigma^2 Delta^{-2} kl(1-delta,delta)`가 맞다.
+- 새로 발견한 구현 조건을 고정했다. raw-softmax ratio와 생성분포가 달라지지 않도록
+  temperature/top-p를 1로 강제하고, `clip_cap<1`을 거부한다. 원고 setup에는 실제
+  `[0.1,10]` product clipping과 unstandardized LOO convention, clipping 이후 baseline
+  bias를 명시했다.
+- 원고가 CertaGrad에 off-policy prior가 있다고 서술했지만 구현에는 해당 입력이 없다.
+  알고리즘을 허위로 설명하지 않도록 appendix를 fresh-only measuring instrument로
+  정정했다. 이 수정은 one-sided impossibility theorem이나 Gaussian lower bound를
+  약화하지 않는다.

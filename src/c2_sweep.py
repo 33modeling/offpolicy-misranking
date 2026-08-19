@@ -11,7 +11,6 @@ frac마다 경계 margin을 먼저 계산해(공짜) margin > 2·α_v 인 frac�
 
 from __future__ import annotations
 
-import json
 import math
 import os
 import sys
@@ -21,6 +20,7 @@ from pathlib import Path
 import torch
 
 from certagrad import angle_radius, certagrad, certagrad_scalar, eb_radius, uniform_baseline
+from select_rules import jittered_topk, topk_count
 
 GATE_FRAC = 0.10
 
@@ -46,19 +46,36 @@ def main() -> int:
                   if d.is_dir() and not d.name.startswith("drift_")) or [out_root]
     for run in runs:
         mg, vg = run / "oracle_micro_groups.pt", run / "val_groups.pt"
-        oc = run / "scores_oracle.json"
-        if not (mg.exists() and vg.exists() and oc.exists()):
+        if not (mg.exists() and vg.exists()):
             continue
         micro = torch.load(mg, weights_only=True)
-        val_pool = torch.load(vg, weights_only=True).float()
-        oracle = {int(i): v["score"] for i, v in json.loads(oc.read_text()).items()}
+        val_all = torch.load(vg, weights_only=True).float()
+        if min(stack.shape[0] for stack in micro.values()) < 2 or val_all.shape[0] < 2:
+            print(f"\n===== {run.name}: disjoint selection/truth split 불가 — 스킵 =====")
+            continue
+        val_pool = val_all[0::2]
+        truth_val = val_all[1::2].mean(dim=0)
         order_all = sorted(micro)
-        # 무신호(보상 분산 0 → gradient 0) 프롬프트 제외 — GRPO 학습도 버리는 표본이라
-        # 인증 유니버스에서 빼는 것이 실무 정의에 맞다. k는 원 유니버스의 10% 유지.
-        order = [i for i in order_all if float(micro[i].float().mean(dim=0).norm()) > 1e-6]
-        pools = [micro[i].float() for i in order]
+        selection_micro = {i: micro[i][0::2].float() for i in order_all}
+        truth_score = {
+            i: float((micro[i][1::2].float().mean(dim=0) @ truth_val)
+                     / (micro[i][1::2].float().mean(dim=0).norm()
+                        * truth_val.norm() + 1e-12))
+            for i in order_all
+        }
+        # Selection-side observations alone decide liveness; held-out groups are evaluation only.
+        order = [i for i in order_all
+                 if float(selection_micro[i].mean(dim=0).norm()) > 1e-6]
+        if not order:
+            print(f"\n===== {run.name}: selection-side 유신호 후보 없음 — 스킵 =====")
+            continue
+        pools = [selection_micro[i] for i in order]
         n_pool = pools[0].shape[0]
-        print(f"\n===== {run.name}: 유신호 후보 {len(pools)}/{len(order_all)}개 × micro-group {n_pool} =====")
+        if n_pool < 2:
+            print(f"\n===== {run.name}: selection micro-group {n_pool}개로 scalar sweep 불가 — 스킵 =====")
+            continue
+        print(f"\n===== {run.name}: 유신호 후보 {len(pools)}/{len(order_all)}개 × "
+              f"selection micro-group {n_pool} (held-out truth 분리) =====")
 
         # ---- frac별 경계 margin 사전 스캔 (산술만, 공짜) ----
         mu_v = val_pool.mean(dim=0)
@@ -77,7 +94,7 @@ def main() -> int:
         todo = []
         print(f"  α_v={a_v:.2f}° — frac별 유신호 경계 margin:")
         for frac in sorted(fracs):
-            k = max(1, int(len(order_all) * frac))
+            k = topk_count(len(order_all), frac)
             if k >= len(pools):
                 print(f"    frac={frac}: k={k} ≥ 유신호 {len(pools)} — 퇴화, 스킵")
                 continue
@@ -91,8 +108,7 @@ def main() -> int:
 
         best = None
         for frac, k in todo:
-            o_top = set(sorted((i for i in oracle if i in set(order)),
-                               key=lambda i: -oracle[i])[:k])
+            o_top = jittered_topk({i: truth_score[i] for i in order}, k, seed=0)
             uni = uniform_baseline(pools, val_pool, k, groups_each=n_pool)
             uni_prec = len({order[i] for i in uni["selected"]} & o_top) / k
             cap = int(uni["fresh_groups"] * 0.55)  # 0.5× 초과 = FAIL 확정 → 조기 중단
@@ -100,11 +116,14 @@ def main() -> int:
                      for delta in (0.05, 0.20) for eps in (0.0, 0.02, 0.05)]
                     + [(pools, val_pool, k, 0.05, 2, cap, "ball", 0.0)])
             with ProcessPoolExecutor(max_workers=min(len(jobs), os.cpu_count() or 4)) as ex:
-                for delta, init, r in ex.map(_one, jobs):
+                for delta, _init, r in ex.map(_one, jobs):
                     sel = {order[i] for i in r["selected"]}
                     prec = len(sel & o_top) / k
                     frac_fresh = r["fresh_groups"] / uni["fresh_groups"]
-                    ok = r["certified"] and frac_fresh <= 0.5 and prec >= uni_prec - 0.02
+                    # Scalar mode targets mean(group cosine), not cosine(mean gradient),
+                    # so it remains a diagnostic and cannot satisfy the C2 gate.
+                    ok = (r.get("mode") == "ball" and r["certified"]
+                          and frac_fresh <= 0.5 and prec >= uni_prec - 0.02)
                     eps_tag = f" ε={r.get('eps', 0)}" if r.get("mode") == "scalar" else ""
                     line = (f"  [{r.get('mode','ball')}{eps_tag}] frac={frac} δ={delta}: certified={r['certified']} "
                             f"fresh={frac_fresh:.2f}× prec={prec:.3f} (uniform {uni_prec:.3f}) "

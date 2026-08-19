@@ -1,7 +1,7 @@
 """D6 — GPU 0 통계 보강: 기존 산출물만으로 정확 p-값과 부트스트랩 CI.
 
     python3 src/stats_extra.py <run_dir> [frac] [boot] [seed]   # 기본 0.10 2000 0
-    python3 src/stats_extra.py --sign <wins> <ties>             # 부호검정만
+    python3 src/stats_extra.py --sign <wins> <losses> [ties]    # 부호검정만
 
 출력 3종 (전부 CPU, 표준 라이브러리만):
   1) 추정량별 top-k precision + 초기하 p-값 P(overlap <= 관측 | 무작위 선택)
@@ -9,7 +9,7 @@
      k=25에서 overlap 0의 p=0.067) — 다조건 결합·부호검정과 함께 쓸 것.
   2) 프롬프트 부트스트랩 95% CI — seed 반복 없이 프롬프트 재표집으로 오차대
      (seed 분산과 다른 분산원임을 본문에 명시할 것).
-  3) 부호검정: hybrid 축별 회복 w승 t동률 → one-sided p = 0.5^w.
+  3) 부호검정: hybrid 축별 회복 w승/l패/t동률의 exact one-sided binomial p.
 """
 
 from __future__ import annotations
@@ -35,8 +35,14 @@ def topk(scores: dict, k: int, rng: random.Random) -> set:
 
 def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] == "--sign":
-        w, t = int(sys.argv[2]), int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        print(f"부호검정: {w}승 {t}동률(제외) → one-sided p = {0.5 ** w:.3e}")
+        if len(sys.argv) < 4:
+            raise ValueError("--sign requires wins and losses; ties are optional")
+        w, loss = int(sys.argv[2]), int(sys.argv[3])
+        ties = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+        n = w + loss
+        p_value = sum(comb(n, i) for i in range(w, n + 1)) / (2 ** n) if n else 1.0
+        print(f"부호검정: {w}승 {loss}패 {ties}동률(제외) → "
+              f"one-sided p = {p_value:.3e}")
         return 0
     if len(sys.argv) < 2:
         print(__doc__)
@@ -54,18 +60,18 @@ def main() -> int:
     n = len(oracle)
     from select_rules import topk_count
     k = topk_count(n, frac)
-    otop = topk(oracle, k, rng)
     print(f"run={run.name}  n={n}  k={k}  chance={k / n:.3f}")
-    print(f"{'est':>6} {'prec':>6} {'overlap':>7} {'P(<=x|rand)':>12}   bootstrap95%CI")
+    print(f"{'est':>6} {'prec':>6} {'overlap':>9} {'P(<=x|rand)':>16}   bootstrap95%CI")
 
     idx = list(oracle)
     for est in ("g00", "g10", "g01", "g11"):
         if est not in off:
             continue
         sc = {int(i): v["score"] for i, v in off[est].items() if int(i) in oracle}
-        etop = topk(sc, k, rng)
-        x = len(otop & etop)
-        p = hyp_p_le(n, k, k, x)
+        from select_rules import overlap_under_independent_ties
+        overlap = overlap_under_independent_ties(oracle, sc, k, seed=seed)
+        xs = [round(value * k) for value in overlap.values]
+        ps = [hyp_p_le(n, k, k, x) for x in xs]
         # 프롬프트 부트스트랩: (oracle, est) 점수 쌍을 재표집해 precision 분포
         bs = []
         for _ in range(boot):
@@ -75,7 +81,10 @@ def main() -> int:
             bs.append(len(topk(o2, k, rng) & topk(e2, k, rng)) / k)
         bs.sort()
         lo, hi = bs[int(0.025 * boot)], bs[int(0.975 * boot) - 1]
-        print(f"{est:>6} {x / k:>6.3f} {x:>4}/{k:<3} {p:>12.4f}   [{lo:.3f}, {hi:.3f}]")
+        x_text = f"{sum(xs) / len(xs):.1f}/{k}"
+        p_text = f"{sum(ps) / len(ps):.4f}[{min(ps):.4f},{max(ps):.4f}]"
+        print(f"{est:>6} {overlap.mean:>6.3f} {x_text:>9} {p_text:>16}   "
+              f"[{lo:.3f}, {hi:.3f}]")
 
     print("\n해석 지침: 단독 셀 p는 약할 수 있음 — 다조건 결합과 hybrid 부호검정"
           "(--sign)을 주 방어로, below-chance는 음수 retention과 함께 서술할 것.")
