@@ -45,10 +45,9 @@ uncorrected part introduces a bias that current practice assumes is
 negligible, but whether the resulting rankings can actually be trusted has
 not been examined. This raises two questions: (I)~When can a stale ranking be trusted? (II)~What
 should replace it when it cannot? For (I), we prove a no-free-lunch result:
-any selector restricted to either one-sided information set has two
-statistically indistinguishable prompt pools with opposite true top-1
-decisions, even as policy KL vanishes, retained-weight ESS is maximal, and
-stale self-cosine is one. We then show empirically that whether this
+either one-sided information set admits statistically indistinguishable pools
+with opposite true top-$k$ decisions, forcing worst-case selection error at
+least $1/2$ while standard stale diagnostics remain benign. We then show empirically that whether this
 failure occurs is decided by one measurable quantity: the reliability of the
 ranking signal in the prompt pool, which we estimate with a split-half floor.
 For (II), we propose FIRST (Floor-Informed Reliability of SelecTion), a
@@ -97,14 +96,12 @@ structural, than a bias--variance account suggests. Our claims come in three
 tiers:
 
 \begin{enumerate}
-\item \textbf{Impossibility (proved).} For either one-sided information set,
-there are statistically indistinguishable prompt pools with opposite true
-top-1 decisions at arbitrarily small policy divergence
-(Section~\ref{sec:theory}). Group normalization does not fix the sign. Every
-selector and every diagnostic restricted to that information set therefore
-fails on at least one pool, while KL, retained-weight ESS, and stale
-self-cosine are jointly benign. One warning sign available on stale data is
-the two one-sided cells disagreeing with each other.
+\item \textbf{Impossibility (proved).} Either one-sided information set is
+compatible with opposite true top-$k$ decisions, forcing minimax error at
+least $1/2$ even at arbitrarily small policy divergence
+(Section~\ref{sec:theory}). Group normalization does not help, and KL, ESS,
+and stale self-cosine remain benign. Cell disagreement is a useful warning,
+not a certificate.
 \item \textbf{Regime map (measured).} Whether the flip actually happens
 depends on the task--capability regime (Section~\ref{sec:map}). We chart it
 with a pre-registered protocol and find three regimes: one where one-sided
@@ -144,8 +141,8 @@ $\begin{array}{c|cc}
 \text{occ.\,}\pi & \gto & \gtt{=}\gpi
 \end{array}$\\ one-sided importance corrections};
 \node[box, right=8mm of grid] (topk) {prompt scores\\$\to$ top-$k$ selection};
-\node[red box, below=3.5mm of grid] (thm) {\textbf{Thm.~1:} either one-sided information set admits\\indistinguishable pools with opposite true top-1};
-\node[gray box, right=5mm of thm] (dash) {KL / ESS / self-cosine\\jointly benign (Cor.~1)};
+\node[red box, below=3.5mm of grid] (thm) {same one-sided observations,\\opposite true top-$k$ (Thm.~1)};
+\node[gray box, right=5mm of thm] (dash) {all one-sided diagnostics\\information-theoretically blind};
 \node[gray box, left=5mm of thm] (disagree) {$\cos(\gto,\got)$ disagreement\\= zero-cost warning (Prop.~1; realized, \S\ref{sec:map})};
 \draw[arr] (stale) -- (grid);
 \draw[arr] (grid) -- (topk);
@@ -328,72 +325,53 @@ The subscripts state which axis is restored. The exact error decompositions
 show that the two one-sided estimators remove \emph{different} biases; they are
 not substitutes.
 
-For a unit direction $u$, let $s_c(x)=u^\top g_c(x)$ for
-$c\in\{10,01\}$. A \emph{$c$-only selector} may use any number of behavior
-samples through the nonzero directional summands that define $s_c$ and the
-likelihood weights multiplying those summands, together with arbitrary
-functions of them (including ESS, cross-checkpoint self-cosines, directional
-norms, and policy KL), but is
-invariant to the omitted ratio axis. This class contains any post-processing,
-calibration, threshold, or randomized top-$k$ rule built from a one-sided
-score. It excludes only information that completes the missing axis, such as
-fresh target rollouts or the omitted ratios themselves.
+For a unit direction $u$, write $s_c(x)=u^\top g_c(x)$,
+$c\in\{10,01\}$, and let $\mathcal I_c^{(N)}$ denote everything retained by
+that one-sided score from $N$ stale trajectories: its nonzero directional
+summands, their weights, and arbitrary summaries such as KL, ESS, norms, and
+self-similarity. A $c$-only selector is any possibly randomized top-$k$ rule
+measurable with respect to $\mathcal I_c^{(N)}$; it does not use the omitted
+ratio axis or fresh target rollouts.
 
 \subsection{Sign reversal at arbitrarily small divergence}
 
 \begin{theorem}[One-sided no-free-lunch]
 \label{thm:reversal}
-Fix either $c=10$ or $c=01$, any rollout count $N\ge1$, and any
-$\delta>0$. There are two two-prompt, two-token, binary-reward pools
-$W_0,W_1$ such that:
-\begin{enumerate}
-\item every prompt satisfies
-$D_{\mathrm{KL}}(\pi\Vert\beta)<\delta$, every retained weight on a nonzero
-directional summand is exactly one (hence normalized ESS is one), and stale
-self-cosine is one;
-\item the complete $N$-sample $c$-only information, including all those
-diagnostics, has the same distribution under $W_0$ and $W_1$; but
-\item the true top-1 prompt under $s_{11}=u^\top\gpi$ is different in the two
-pools.
-\end{enumerate}
-Consequently every possibly randomized $c$-only selector has worst-case
-top-1 error at least $1/2$, and every deterministic one is wrong on at least
-one pool. The construction can make the one-sided top-1 strict and its
-selected prompt's directional gradient have the opposite sign from its true
-gradient. Group normalization preserves these statements for every group
-size $K\ge2$ when zero-variance groups receive update zero.
-
-In particular, for each $0<\epsilon<1/2$ the canonical cells admit the exact
-sign reversals
-$u^\top\gpi=-\epsilon/2$ and
-$u^\top\goo=u^\top\gto=+\epsilon/2$ (continuation), or
-$u^\top\goo=u^\top\got=+\epsilon/2$ (occupancy), with
+Fix $c\in\{10,01\}$, $N\ge1$, $0<k<n$, and $\delta>0$. There exist two
+binary-reward pools $W_0,W_1$ with different true top-$k$ sets
+$S_0^\star,S_1^\star$ but
 \[
+\mathcal L_{W_0}(\mathcal I_c^{(N)})
+=\mathcal L_{W_1}(\mathcal I_c^{(N)}),\qquad
+\max_{j\in\{0,1\}}\max_{x\in W_j}
+D_{\mathrm{KL}}(\pi_{j,x}\Vert\beta_x)<\delta.
+\]
+Hence the $c$-only minimax risk obeys
+\[
+\inf_{\widehat S:\,\mathcal I_c^{(N)}\text{-meas.}}\ \max_{j\in\{0,1\}}
+P_{W_j}(\widehat S\ne S_j^\star)\ge\frac12.
+\]
+The witnesses have unit normalized ESS and stale self-cosine, can make the
+selected directional gradient reverse sign, and remain valid after group
+normalization for every $K\ge2$.
+\end{theorem}
+
+The canonical two-token witnesses make the reversal explicit: for
+$0<\epsilon<1/2$, each one-sided cell $c$ has a construction with
+\[
+u^\top\gpi=-\frac\epsilon2,\qquad u^\top g_c=+\frac\epsilon2,\qquad
 D_{\mathrm{KL}}(\pi\Vert\beta)
 =2\epsilon\log\frac{1/2+\epsilon}{1/2-\epsilon}
 =8\epsilon^2+O(\epsilon^4).
 \]
-\end{theorem}
-
-Appendix~\ref{app:cex} gives the constructions and proof. The key is not a
-small observed correlation: the two worlds induce the \emph{same law} on
-everything a one-sided procedure retains, while swapping only the omitted
-target-policy axis. No amount of stale data or downstream processing can
-separate them. A self-contained script checks the canonical cells and finite
-group sizes; Lemma~\ref{lem:groupnorm} proves general $K$ in closed form.
+Appendix~\ref{app:cex} gives both pools, the general top-$k$ embedding, and
+the group-normalization proof.
 
 \begin{corollary}[Complete blindness of one-sided diagnostics]
 \label{cor:blind}
-No diagnostic measurable with respect to a single one-sided information set
-can certify its top-$k$ decision uniformly over the model class. This remains
-true when policy KL, every moment of the retained weights, ESS, directional
-norm, and any stale self-similarity statistic of that estimate are
-supplied jointly: these
-quantities are identical in $W_0,W_1$, but the correct decision differs.
-Breaking the impossibility requires information from the omitted axis, such
-as a full correction, a model assumption linking the two axes, or fresh
-target-policy outcomes; a more elaborate diagnostic of the same one-sided
-information cannot suffice.
+No $\mathcal I_c^{(N)}$-measurable diagnostic can uniformly certify the
+resulting top-$k$ set. Certification requires information from the omitted
+axis, a structural assumption linking the axes, or fresh target outcomes.
 \end{corollary}
 
 \begin{proposition}[Cell disagreement in a witnessing construction]
@@ -454,32 +432,21 @@ oracle: it bounds what any comparison against that oracle can show.
 
 \begin{proposition}[Measurement ceiling]
 \label{prop:ceiling}
-Let $t_i\stackrel{\mathrm{iid}}{\sim}N(0,\tau^2)$ and let the two half-oracles
-be parallel measurements
-$a_i=t_i+e_{ai}$ and $b_i=t_i+e_{bi}$, where all
-$e_{ai},e_{bi}\stackrel{\mathrm{iid}}{\sim}N(0,\sigma^2)$ are independent of
-$t$. The full oracle is $o_i=(a_i+b_i)/2$. Let $Z$ be arbitrary estimator
-information satisfying
-$Z\perp(e_a,e_b)\mid t$, and let $S(Z)$ be any possibly nonlinear or randomized
-size-$k$ selection rule. Then
-\[
+Let $t_i\stackrel{\mathrm{iid}}{\sim}N(0,\tau^2)$,
+$a_i=t_i+e_{ai}$, $b_i=t_i+e_{bi}$, and $o_i=(a_i+b_i)/2$, with iid
+$e_{ai},e_{bi}\sim N(0,\sigma^2)$ independent of $t$. For any nonlinear or
+randomized size-$k$ rule $S(Z)$ satisfying $Z\perp(e_a,e_b)\mid t$,
+\begin{align*}
 \mathbb E\frac{|S(Z)\cap\operatorname{TopK}(o)|}{k}
-\le
-\mathbb E\frac{|\operatorname{TopK}(t)\cap\operatorname{TopK}(o)|}{k}
-=\mathrm{Ovl}_{n,k}\!\left(\sqrt{\rho_f}\right),
-\]
-where
-\[
+&\le \mathrm{Ovl}_{n,k}\!\left(\sqrt{\rho_f}\right),\\
 \rho_h=\operatorname{corr}(a_i,b_i)
-=\frac{\tau^2}{\tau^2+\sigma^2},\qquad
+&=\frac{\tau^2}{\tau^2+\sigma^2},\qquad
 \rho_f=\operatorname{corr}(t_i,o_i)^2
 =\frac{2\rho_h}{1+\rho_h}.
-\]
-Thus $\operatorname{TopK}(t)$ is Bayes-optimal against the noisy oracle, not
-merely the best linear or Gaussian estimator. The population split-half
-agreement is $F=\mathrm{Ovl}_{n,k}(\rho_h)$; consequently $F$ determines the
-model ceiling through the monotone Gaussian overlap map. A finite observed
-floor estimates $F$, so its uncertainty must be propagated to the ceiling.
+\end{align*}
+Equality is attained by $S=\operatorname{TopK}(t)$. Since the population
+split-half agreement is $F=\mathrm{Ovl}_{n,k}(\rho_h)$, $F$ determines the
+ceiling; finite-floor uncertainty is propagated through the same map.
 \end{proposition}
 
 Table~\ref{tab:ceiling} gives the mapping at our experimental geometry
@@ -714,15 +681,12 @@ on this instance
 \ge \frac{2\sigma^2}{\Delta^2}
 \operatorname{kl}(1-\delta,\delta),
 \]
-where $\operatorname{kl}$ is binary relative entropy. The result already
-holds in the favorable two-boundary-prompt Gaussian subclass, and therefore
-is a minimax obstruction for model-free exact top-$k$ certification.
+where $\operatorname{kl}$ is binary relative entropy.
 \end{proposition}
 
-The proof in Appendix~\ref{app:cert} swaps the two boundary means and applies
-change of measure to the algorithm's final decision. Thus adaptive allocation
-can remove waste away from the boundary, but cannot improve the
-$\Delta^{-2}\log(1/\delta)$ dependence at the boundary.
+The bound already holds in the two-boundary-prompt Gaussian subclass. The
+change-of-measure proof is in Appendix~\ref{app:cert}; adaptive allocation can
+remove off-boundary waste but not the $\Delta^{-2}\log(1/\delta)$ dependence.
 
 Our instrument returns the corresponding empirical negative.
 Across every completed condition (both scales, three tasks, drift 50--400,

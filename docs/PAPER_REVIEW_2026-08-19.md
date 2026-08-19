@@ -1181,6 +1181,7 @@ failure mode다.
   ranking flip, group normalization과 새 indistinguishable-pool construction을 검산했다.
 - `python3 tests/test_reversal_freq.py`: 통과.
 - `latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex`: 통과. undefined reference와
-  overfull box를 제거했고 18-page `paper/main.pdf`를 재생성했다.
+  overfull box를 제거했고, 본문 핵심식과 부록 증명을 분리한 17-page `paper/main.pdf`를
+  재생성했다.
 - `tests/test_core.py`는 현재 system Python에 `torch`가 없어 실행하지 못했다. 이번 변경은
   paper와 standalone theory verifier에 한정되므로 이 미실행은 이론 검산 결과와 분리한다.
