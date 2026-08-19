@@ -59,14 +59,11 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         ]
     elif dataset == "math500":
         # 사전 배치본 우선 — $MATH500_DIR 또는 데이터셋 베이스들 아래 통상 이름들
-        names = ("math500", "MATH-500", "math-500", "math_500", "math", "MATH")
-        tried = []
-        root = os.environ.get("MATH500_DIR")
-        if not root:
-            for base in _dataset_bases():
-                tried += [base / n for n in names]
-            root = next((c for c in tried if c.exists()), None)
-        rows = _load_rows_any(root) if root else None
+        # fuzzy에서 "math"를 빼는 이유: dapo-math 폴더가 부분 일치로 잡힌다
+        tried = _candidate_roots("MATH500_DIR",
+                                 ("math500", "MATH-500", "math-500", "math_500", "math", "MATH"),
+                                 fuzzy=("math500", "math-500", "math_500"))
+        root, rows = _load_rows_first(tried)
         if rows is None:
             try:
                 from datasets import load_dataset
@@ -90,10 +87,8 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             raise ValueError(f"math500 스키마 파싱 실패 (root={root})")
     elif dataset == "mbpp":
         # 클러스터 사전 배치본($DATASETS_DIR/mbpp) 우선 — jsonl/parquet/HF 스냅샷 전부 수용
-        tried = [Path(os.environ["MBPP_DIR"])] if os.environ.get("MBPP_DIR") \
-            else [b / "mbpp" for b in _dataset_bases()]
-        root = next((c for c in tried if c.exists()), None)
-        rows = _load_rows_any(root) if root else None
+        tried = _candidate_roots("MBPP_DIR", ("mbpp",))
+        root, rows = _load_rows_first(tried)
         if rows is None:
             try:
                 from datasets import load_dataset
@@ -127,11 +122,9 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
                              f"첫 행 필드={keys}) — 필드명을 확인할 것")
     elif dataset == "kk":
         # Knights & Knaves 논리 퍼즐 — 사전 배치본($DATASETS_DIR/kk 등)
-        tried = [Path(os.environ["KK_DIR"])] if os.environ.get("KK_DIR") \
-            else [b / n for b in _dataset_bases()
-                  for n in ("kk", "knights-and-knaves", "knights_and_knaves")]
-        root = next((c for c in tried if c.exists()), None)
-        rows = _load_rows_any(root) if root else None
+        tried = _candidate_roots("KK_DIR", ("kk", "knights-and-knaves", "knights_and_knaves"),
+                                 fuzzy=("knights",))
+        root, rows = _load_rows_first(tried)
         if rows is None:
             raise ValueError("kk 로컬 사본 없음. 찾아본 위치:\n  "
                              + "\n  ".join(str(t) for t in tried)
@@ -158,11 +151,10 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
                              f"첫 행 필드={keys}) — quiz/names/solution 필드 확인")
     elif dataset == "dapo-math":
         # 본실험용. 사전 배치본 우선. 스키마가 릴리스마다 달라 방어적으로 파싱한다.
-        tried = [Path(os.environ["DAPO_DIR"])] if os.environ.get("DAPO_DIR") \
-            else [b / n for b in _dataset_bases()
-                  for n in ("dapo-math", "dapo-math-17k", "DAPO-Math-17k", "dapo_math")]
-        root = next((c for c in tried if c.exists()), None)
-        rows = _load_rows_any(root) if root else None
+        tried = _candidate_roots("DAPO_DIR",
+                                 ("dapo-math", "dapo-math-17k", "DAPO-Math-17k", "dapo_math"),
+                                 fuzzy=("dapo",))
+        root, rows = _load_rows_first(tried)
         if rows is None:
             try:
                 from datasets import load_dataset
@@ -186,10 +178,8 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             raise ValueError("DAPO-Math-17k 스키마 파싱 실패 — 필드명을 확인할 것")
     elif dataset == "apps":
         # 경쟁 프로그래밍 — stdin/stdout 실행 채점. 사전 배치본만 (fetch_datasets.sh apps).
-        tried = [Path(os.environ["APPS_DIR"])] if os.environ.get("APPS_DIR") \
-            else [b / "apps" for b in _dataset_bases()]
-        root = next((c for c in tried if c.exists()), None)
-        rows = _load_rows_any(root) if root else None
+        tried = _candidate_roots("APPS_DIR", ("apps",))
+        root, rows = _load_rows_first(tried)
         if rows is None:
             raise ValueError("apps 로컬 사본 없음. 찾아본 위치:\n  "
                              + "\n  ".join(str(t) for t in tried)
@@ -342,6 +332,49 @@ def _load_rows_any(root) -> list[dict] | None:
     if hasattr(obj, "keys") and not hasattr(obj, "features"):  # DatasetDict
         return [r for k in obj.keys() for r in obj[k]]
     return list(obj)
+
+
+def _candidate_roots(env_var: str, names: tuple, fuzzy: tuple | None = None) -> list:
+    """<ENV> 지정 시 그 경로만. 아니면 베이스 아래 통상 이름 + 이름이 든 하위
+    폴더(깊이 2)까지 — hf download가 만드는 datasets--org--name/snapshots/<해시>/
+    같은 중첩·변형 구조도 후보로 잡는다. fuzzy로 부분 일치 키를 좁힐 수 있다
+    (예: math500이 "math" 매칭으로 dapo-math를 잡는 오인 방지)."""
+    import os
+    from pathlib import Path
+
+    if os.environ.get(env_var):
+        return [Path(os.environ[env_var])]
+    bases = _dataset_bases()
+    tried = [b / n for b in bases for n in names]
+    keys = tuple(k.lower() for k in (fuzzy or names))
+    found = set()
+    for b in bases:
+        if not b.is_dir():
+            continue
+        for pat in ("*", "*/*"):
+            for p in b.glob(pat):
+                try:
+                    if p.is_dir() and any(k in p.name.lower() for k in keys) \
+                            and p not in tried:
+                        found.add(p)
+                except OSError:
+                    continue
+    return tried + sorted(found, key=lambda p: (len(p.name), str(p)))
+
+
+def _load_rows_first(tried: list) -> tuple:
+    """후보를 순서대로 실제로 읽어, 행이 나오는 첫 경로를 채택한다.
+
+    '존재하는 첫 경로' 선택은 중단된 fetch가 남긴 빈 디렉터리가 뒤의 실사본을
+    가리는 버그를 만든다(E4 재발형) — 존재가 아니라 읽기 성공이 기준이어야 한다."""
+    from pathlib import Path
+
+    for c in tried:
+        if Path(c).exists():
+            rows = _load_rows_any(c)
+            if rows:
+                return c, rows
+    return None, None
 
 
 def _split(items: list[dict], n_train: int, n_val: int, seed: int, name: str) -> dict:

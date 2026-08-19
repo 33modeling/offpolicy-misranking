@@ -33,12 +33,14 @@ from datasets import load_dataset
 out = Path(sys.argv[1]) / "mbpp"; out.mkdir(parents=True, exist_ok=True)
 ds = load_dataset("google-research-datasets/mbpp", "full")
 n = 0
-with open(out / "mbpp.jsonl", "w") as f:
+tmp = out / "mbpp.jsonl.tmp"
+with open(tmp, "w") as f:
     for split in ds:
         for r in ds[split]:
             f.write(json.dumps({"task_id": r["task_id"], "text": r["text"],
                                 "code": r["code"], "test_list": r["test_list"]}) + "\n")
             n += 1
+tmp.replace(out / "mbpp.jsonl")
 print("mbpp.jsonl:", n, "rows")' || fail=1 ;;
     math500)
       if [ -e "$DATASETS_DIR/math500/math500_test.jsonl" ]; then echo "[fetch] math500 있음, 스킵"; continue; fi
@@ -48,9 +50,11 @@ from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "math500"; out.mkdir(parents=True, exist_ok=True)
 ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
-with open(out / "math500_test.jsonl", "w") as f:
+tmp = out / "math500_test.jsonl.tmp"
+with open(tmp, "w") as f:
     for r in ds:
         f.write(json.dumps({"problem": r["problem"], "answer": str(r["answer"])}) + "\n")
+tmp.replace(out / "math500_test.jsonl")
 print("math500_test.jsonl:", len(ds), "rows")' || fail=1 ;;
     gsm8k)
       if [ -e "$DATASETS_DIR/gsm8k/gsm8k_train.jsonl" ]; then echo "[fetch] gsm8k 있음, 스킵"; continue; fi
@@ -60,9 +64,11 @@ from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "gsm8k"; out.mkdir(parents=True, exist_ok=True)
 ds = load_dataset("openai/gsm8k", "main", split="train")
-with open(out / "gsm8k_train.jsonl", "w") as f:
+tmp = out / "gsm8k_train.jsonl.tmp"
+with open(tmp, "w") as f:
     for r in ds:
         f.write(json.dumps({"question": r["question"], "answer": r["answer"]}) + "\n")
+tmp.replace(out / "gsm8k_train.jsonl")
 print("gsm8k_train.jsonl:", len(ds), "rows")' || fail=1 ;;
     kk)
       if [ -e "$DATASETS_DIR/kk/kk.jsonl" ]; then echo "[fetch] kk 있음, 스킵"; continue; fi
@@ -77,13 +83,15 @@ try:
 except Exception:
     configs = [None]
 n = 0
-with open(out / "kk.jsonl", "w") as f:
+tmp = out / "kk.jsonl.tmp"
+with open(tmp, "w") as f:
     for cfg in configs:
         ds = load_dataset(repo, cfg) if cfg else load_dataset(repo)
         for split in ds:
             for r in ds[split]:
                 r = dict(r); r["_config"], r["_split"] = cfg, split
                 f.write(json.dumps(r) + "\n"); n += 1
+tmp.replace(out / "kk.jsonl")
 print("kk.jsonl:", n, "rows")' || fail=1 ;;
     apps)
       if [ -e "$DATASETS_DIR/apps/apps.jsonl" ]; then echo "[fetch] apps 있음, 스킵"; continue; fi
@@ -100,7 +108,8 @@ files = [f for f in HfApi().list_repo_files("codeparrot/apps", repo_type="datase
          if f.endswith(".parquet")]
 assert files, "parquet 변환본 목록이 비었음"
 n = 0
-with open(out / "apps.jsonl", "w") as f:
+tmp = out / "apps.jsonl.tmp"
+with open(tmp, "w") as f:
     for rf in sorted(files):
         local = hf_hub_download("codeparrot/apps", rf, repo_type="dataset",
                                 revision="refs/convert/parquet")
@@ -110,6 +119,7 @@ with open(out / "apps.jsonl", "w") as f:
                                 "difficulty": r.get("difficulty"),
                                 "_split": ("test" if "test" in rf else "train")}) + "\n")
             n += 1
+tmp.replace(out / "apps.jsonl")
 print("apps.jsonl:", n, "rows")' || fail=1 ;;
     dapo-math)
       if [ -e "$DATASETS_DIR/dapo-math/dapo_math.jsonl" ]; then echo "[fetch] dapo-math 있음, 스킵"; continue; fi
@@ -119,9 +129,11 @@ from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "dapo-math"; out.mkdir(parents=True, exist_ok=True)
 ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
-with open(out / "dapo_math.jsonl", "w") as f:
+tmp = out / "dapo_math.jsonl.tmp"
+with open(tmp, "w") as f:
     for r in ds:
         f.write(json.dumps(dict(r)) + "\n")
+tmp.replace(out / "dapo_math.jsonl")
 print("dapo_math.jsonl:", len(ds), "rows")' || fail=1 ;;
     *) echo "[fetch] 모르는 데이터셋: $t (mbpp|math500|gsm8k|kk|apps|dapo-math)"; fail=1 ;;
   esac
