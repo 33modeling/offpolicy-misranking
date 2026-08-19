@@ -20,6 +20,7 @@ import torch
 from data import reward
 from grads import ProjectionSpec, cosine, loo_advantages, prompt_gradient
 from rollout import SAMPLING, _gen_batch_size, chat_ids
+from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 
 
 @torch.no_grad()
@@ -40,8 +41,8 @@ def continue_rollouts_batch(model, tok, prefixes: list[torch.Tensor],
             mask[b, max_len - p.numel():] = 1
         batch, mask = batch.to(model.device), mask.to(model.device)
         out = model.generate(
-            batch, attention_mask=mask, do_sample=True, temperature=temperature,
-            max_new_tokens=max_new_tokens, pad_token_id=pad_id, **SAMPLING,
+            batch, attention_mask=mask,
+            **gen_kwargs(temperature, SAMPLING["top_p"], max_new_tokens, pad_id),
         )
         for b, p in enumerate(chunk):
             gen_part = out[b, max_len:].cpu()
@@ -72,12 +73,17 @@ def make_hybrid_cells(
     """subset 프롬프트마다 bb/pp/bp/pb 네 cell(각 K=k_cell)을 jsonl로 저장."""
     from grads import ts
 
+    eos_set = eos_ids_of(beta, tok) | eos_ids_of(pi, tok)
     with out_path.open("w") as f:
         def emit(cell: str, pi_idx: int, seq: torch.Tensor, resp_start: int, gold: str):
+            # P0-2: 첫 EOS(포함)에서 절단해 저장
+            end = resp_end_index(seq, resp_start, eos_set)
+            seq = seq[:end]
             text = tok.decode(seq[resp_start:], skip_special_tokens=True)
             f.write(json.dumps({
                 "cell": cell, "prompt_idx": pi_idx,
                 "input_ids": seq.tolist(), "resp_start": resp_start,
+                "resp_end": end,
                 "reward": reward(text, gold), "cut_frac": cut_frac,
             }) + "\n")
 

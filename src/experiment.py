@@ -19,6 +19,7 @@ import torch
 
 from certagrad import certagrad, uniform_baseline
 from data import load_prompts
+from rollout_contract import trim_row
 from grads import (
     ESTIMATORS,
     ProjectionSpec,
@@ -47,11 +48,24 @@ def _atomic_save(obj, path: Path) -> None:
 
 
 def read_rollouts(path: Path) -> dict[int, list[dict]]:
+    """P0-2 계약: resp_end가 저장돼 있으면 그 위치에서 절단(신형 산출물은 이미
+    잘려 있어 멱등). 구버전 산출물은 OM_EOS_IDS="151645,151643"처럼 EOS id를
+    지정하면 재유도해 절단하고, 미지정이면 원본 그대로(레거시 동작) 둔다."""
+    import os as _os
+    env = _os.environ.get("OM_EOS_IDS", "")
+    eos_ids = {int(x) for x in env.split(",") if x.strip()} or None
+    legacy = 0
     by_prompt: dict[int, list[dict]] = defaultdict(list)
     for line in path.open():
         r = json.loads(line)
         r["input_ids"] = torch.tensor(r["input_ids"])
+        trim_row(r, eos_ids)
+        if "resp_end" not in r:
+            legacy += 1
         by_prompt[r["prompt_idx"]].append(r)
+    if legacy:
+        print(f"[read_rollouts] 경고: {path.name} — resp_end 없는 구버전 행 "
+              f"{legacy}개를 절단 없이 로드 (OM_EOS_IDS로 절단 가능)", flush=True)
     return by_prompt
 
 

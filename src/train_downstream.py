@@ -16,6 +16,7 @@ import torch
 from data import reward
 from grads import loo_advantages
 from rollout import SAMPLING, _lora_targets, auto_device, chat_ids
+from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 
 
 def grpo_lite_train(
@@ -55,11 +56,15 @@ def grpo_lite_train(
         with torch.no_grad():
             batch = ids.unsqueeze(0).expand(k, -1)
             gen = model.generate(
-                batch, attention_mask=torch.ones_like(batch), do_sample=True,
-                temperature=temperature, **SAMPLING,
-                max_new_tokens=max_new_tokens, pad_token_id=tok.eos_token_id)
+                batch, attention_mask=torch.ones_like(batch),
+                **gen_kwargs(temperature, SAMPLING["top_p"],
+                             max_new_tokens, tok.eos_token_id))
+        # P0-2: 행별 응답 끝 — padding 토큰을 보상 디코드·logp 어디에도 넣지 않는다
+        eos_set = eos_ids_of(model, tok, pad_id=tok.eos_token_id)
+        ends = [resp_end_index(gen[j], ids.numel(), eos_set) for j in range(k)]
         rewards = torch.tensor([
-            reward(tok.decode(gen[j, ids.numel():], skip_special_tokens=True), item["answer"])
+            reward(tok.decode(gen[j, ids.numel():ends[j]], skip_special_tokens=True),
+                   item["answer"])
             for j in range(k)
         ])
         advs = loo_advantages(rewards)
@@ -69,7 +74,7 @@ def grpo_lite_train(
         for j in range(k):
             if float(advs[j]) == 0.0:
                 continue
-            seq = gen[j].unsqueeze(0)
+            seq = gen[j, :ends[j]].unsqueeze(0)
             logits = model(seq).logits[0, :-1].float()
             logp = torch.log_softmax(logits, dim=-1).gather(
                 -1, seq[0, 1:].unsqueeze(-1)).squeeze(-1)
@@ -94,7 +99,9 @@ def eval_accuracy(base: str, adapter: Path | None, prompts: list[dict],
     correct = 0
     for item in prompts:
         ids = chat_ids(tok, item["question"]).unsqueeze(0).to(model.device)
+        # repetition_penalty는 greedy에도 적용된다 — generation_config 기본값 차단
         out = model.generate(ids, attention_mask=torch.ones_like(ids), do_sample=False,
+                             repetition_penalty=1.0, no_repeat_ngram_size=0,
                              max_new_tokens=max_new_tokens, pad_token_id=tok.eos_token_id)
         text = tok.decode(out[0, ids.shape[1]:], skip_special_tokens=True)
         correct += reward(text, item["answer"]) > 0.5

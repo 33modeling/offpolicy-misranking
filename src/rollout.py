@@ -14,6 +14,8 @@ from pathlib import Path
 import torch
 
 from data import build_user_msg, reward
+from rollout_contract import (eos_ids_of, gen_kwargs, resolved_manifest,
+                              resp_end_index)
 
 # torch 2.7 + Hopper: cuDNN SDPA가 산발적 'unspecified launch failure'를 낸다
 # (비동기라 보고 지점은 attention이 아닐 수도 있음 — modeling_qwen2.py:47 사례).
@@ -148,6 +150,14 @@ def collect_rollouts(
     print(f"[{ts()}] rollout 시작: {len(prompts)} prompts × K={k}, "
           f"max_new={max_new_tokens}, temp={temperature} → {out_path.name}", flush=True)
     t_start = time.time()
+    # P0-1: 샘플링 인자 전체 명시(generation_config 병합 차단) + manifest 기록
+    gkw = gen_kwargs(temperature, SAMPLING["top_p"], max_new_tokens,
+                     tok.eos_token_id)
+    eos_set = eos_ids_of(model, tok, pad_id=tok.eos_token_id)
+    manifest_path = out_path.parent / (out_path.stem + ".manifest.json")
+    manifest = resolved_manifest(model, tok, gkw)
+    manifest.update({"k": k, "n_prompts": len(prompts), "idx_offset": idx_offset})
+    manifest_path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
     tmp_path = out_path.with_suffix(".tmp")
     with tmp_path.open("w") as f:
         for i, item in enumerate(prompts):
@@ -163,14 +173,12 @@ def collect_rollouts(
                 gen = model.generate(
                     batch_ids,
                     attention_mask=torch.ones_like(batch_ids),
-                    do_sample=True,
-                    temperature=temperature,
-                    max_new_tokens=max_new_tokens,
-                    pad_token_id=tok.eos_token_id,
-                    **SAMPLING,
+                    **gkw,
                 )
                 for seq in gen:
-                    # 뒤쪽 padding(eos 반복) 제거
+                    # P0-2: 첫 EOS(포함)에서 절단 — padding을 저장하지 않는다
+                    end = resp_end_index(seq, resp_start, eos_set)
+                    seq = seq[:end]
                     text = tok.decode(seq[resp_start:], skip_special_tokens=True)
                     r = reward(text, item["answer"])
                     n_correct += r > 0.5
@@ -181,6 +189,7 @@ def collect_rollouts(
                                 "rollout_idx": j,
                                 "input_ids": seq.tolist(),
                                 "resp_start": resp_start,
+                                "resp_end": end,
                                 "reward": r,
                             }
                         )
@@ -233,7 +242,11 @@ def train_drift_lora(
         for _ in range(batch_size):
             r = correct[i % len(correct)]
             i += 1
-            ids = torch.tensor(r["input_ids"][:1280], device=model.device).unsqueeze(0)
+            # P0-2: 응답 끝 이후 padding을 SFT 라벨에 넣지 않는다
+            ids_list = r["input_ids"]
+            if r.get("resp_end"):
+                ids_list = ids_list[: int(r["resp_end"])]
+            ids = torch.as_tensor(ids_list[:1280]).to(model.device).unsqueeze(0)
             labels = ids.clone()
             labels[0, : min(r["resp_start"], 1279)] = -100
             loss = model(ids, labels=labels).loss / batch_size
