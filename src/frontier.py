@@ -79,6 +79,9 @@ class Run:
                 r = json.loads(line)
                 agg[r["prompt_idx"]].append(r["reward"])
         self.passrate = {i: (1 + sum(agg[i])) / (2 + len(agg[i])) for i in self.ids}
+        # E5: live 판정은 스무딩 없는 원시 성공 수 기준 (스무딩은 난이도 점수용만)
+        self.raw_mixed = {i: (0 < sum(agg[i]) < len(agg[i])) if agg[i] else False
+                          for i in self.ids}
         self.max_obs = next(iter(self.obs.values())).shape[0]
 
     # ---- 정책들: (선택집합, fresh 관측 수) ----
@@ -304,7 +307,7 @@ def condition_row(run: Run) -> dict:
     row = {"run": run.name, "n": run.n, "k": run.k,
            "truth_reliability": round(run.truth_reliability, 3)}
     # live: β 보상이 혼합인 프롬프트 비율 (Beta 사후평균이 0/1 경계에서 떨어짐)
-    live = sum(1 for i in run.ids if 0.05 < run.passrate[i] < 0.95)
+    live = sum(1 for i in run.ids if run.raw_mixed[i])
     row["live_frac_beta"] = round(live / run.n, 3)
     ds = sorted(run.root.glob("divergence_stats*.json"))
     if ds:

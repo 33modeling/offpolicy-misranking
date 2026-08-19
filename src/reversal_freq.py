@@ -94,7 +94,8 @@ def analyze_run(run: Path) -> dict | None:
         return None
     oracle, ests = loaded
     n = len(oracle)
-    k = max(1, round(0.10 * n))
+    from select_rules import topk_count
+    k = topk_count(n, 0.10)
     w = max(1, round(k / 2))
     rng = random.Random(0)
     o_top = topk_ids(oracle, k, rng)

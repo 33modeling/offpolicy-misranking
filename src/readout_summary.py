@@ -29,7 +29,8 @@ def precisions(run: Path) -> tuple[dict, int, float] | None:
     except Exception:
         return None
     n = len(oracle)
-    k = max(1, round(0.10 * n))
+    from select_rules import topk_count
+    k = topk_count(n, 0.10)
     rng = random.Random(0)
     otop = topk(oracle, k, rng)
     out = {}

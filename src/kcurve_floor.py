@@ -62,7 +62,8 @@ def pearson(a: torch.Tensor, b: torch.Tensor) -> float:
 def observed_curve(stack: torch.Tensor, v: torch.Tensor):
     """stack [P,G,D], v [D] → {m: (floor_mean, lo, hi, r_mean)} for m=1..G//2."""
     P, G, _ = stack.shape
-    k = max(1, round(0.10 * P))
+    from select_rules import topk_count
+    k = topk_count(P, 0.10)
     vn = v / v.norm()
     out = {}
     for m in range(1, G // 2 + 1):

@@ -52,7 +52,8 @@ def main() -> int:
               json.loads((run / "scores_oracle.json").read_text()).items()}
     off = json.loads((run / "scores_offpolicy.json").read_text())
     n = len(oracle)
-    k = max(1, round(frac * n))
+    from select_rules import topk_count
+    k = topk_count(n, frac)
     otop = topk(oracle, k, rng)
     print(f"run={run.name}  n={n}  k={k}  chance={k / n:.3f}")
     print(f"{'est':>6} {'prec':>6} {'overlap':>7} {'P(<=x|rand)':>12}   bootstrap95%CI")

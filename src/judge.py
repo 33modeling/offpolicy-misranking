@@ -19,7 +19,8 @@ from pathlib import Path
 
 
 def topk_set(scores: dict, frac: float = 0.10) -> set:
-    k = max(1, int(len(scores) * frac))
+    from select_rules import topk_count
+    k = topk_count(len(scores), frac)
     return set(sorted(scores, key=lambda i: -scores[i])[:k])
 
 

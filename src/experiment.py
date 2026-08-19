@@ -262,7 +262,8 @@ def topk(scores: dict, frac: float, seed: int = 0) -> set:
     import random as _r
     rng = _r.Random(seed ^ 0x5EED)
     jit = {i: rng.random() for i in scores}
-    k = max(1, int(len(scores) * frac))
+    from select_rules import topk_count
+    k = topk_count(len(scores), frac)
     return set(sorted(scores, key=lambda i: (-scores[i]["score"], jit[i]))[:k])
 
 
@@ -277,9 +278,14 @@ def stage_report(args, run: Path) -> None:
     k = len(o_top)
     # 동점 절단 jitter는 절반별로 독립이어야 한다 — 같은 seed면 동점이 많은
     # 체제에서 양쪽이 같은 임의 선택을 해 floor가 인위로 부풀려진다(2026-08-13 발견).
-    ha = topk({i: {"score": h["a"]} for i, h in halves.items()}, frac, seed)
-    hb = topk({i: {"score": h["b"]} for i, h in halves.items()}, frac, seed + 104729)
-    noise_floor = len(ha & hb) / k
+    # P0-6(부분): 본문 정의와 일치 — 독립 지터 20쌍 평균 (동률 절단 잡음 평균화).
+    # 남는 조건부성(양쪽 half가 같은 val_gradient 공유)은 본문 §floor에 명시.
+    sa = {i: {"score": h["a"]} for i, h in halves.items()}
+    sb = {i: {"score": h["b"]} for i, h in halves.items()}
+    _pairs = [len(topk(sa, frac, seed + 7919 * j)
+                  & topk(sb, frac, seed + 104729 + 7919 * j)) / k
+              for j in range(20)]
+    noise_floor = sum(_pairs) / len(_pairs)
 
     def _ties_and_zeros(sc: dict) -> tuple[int, int]:
         vals = sorted((v["score"] for v in sc.values()), reverse=True)
