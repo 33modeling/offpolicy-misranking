@@ -6,6 +6,9 @@
 # 이미 있으면 스킵. HF 실패 시 hf-mirror.com 폴백.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# 다운로드 전용 스크립트 — setup_env의 기본 오프라인(HF_HUB_OFFLINE=1)을 그대로
+# 물려받으면 모든 fetch가 OfflineModeIsEnabled로 즉사한다. 항상 온라인으로 탄다.
+export OM_ONLINE=1
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || PY=python3
