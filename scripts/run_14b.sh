@@ -87,7 +87,17 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # 빠른 커널을 검증한 노드에서만 OM_ATTN=sdpa 로 명시 해제.
 export OM_ATTN="${OM_ATTN:-eager}"
 DATASET="${DATASET:-gsm8k}"
-[ "$DATASET" != "gsm8k" ] && OUT_ROOT="${OUT_ROOT}-${DATASET}" && LOGS="$OUT_ROOT/logs" && mkdir -p "$LOGS"
+# 데이터셋 접미사는 멱등 — 호출자가 v2-s0-dapo-math·v2-27b-dapo-math-s0처럼 데이터셋명이
+# 이미 든 경로를 넘기면 그대로 쓴다. 무조건 덧붙이면 v2-s0-dapo-math-dapo-math에 산출물이
+# 쌓여 호출자의 DONE 체크(go_v2.sh:98 등)가 완주를 영구 미인식 → 매 루프 전체 재실행.
+if [ "$DATASET" != "gsm8k" ]; then
+  case "$(basename "$OUT_ROOT")" in
+    *"$DATASET"*) ;;
+    *) OUT_ROOT="${OUT_ROOT}-${DATASET}" ;;
+  esac
+  LOGS="$OUT_ROOT/logs"; mkdir -p "$LOGS"
+  [ -d "${OUT_ROOT}-${DATASET}" ] && echo "[주의] 구버전 이중 접미사 디렉터리 존재: ${OUT_ROOT}-${DATASET} — DONE·report가 그쪽에 있으면 수동 이관 판단 필요" | tee -a "$LOGS/main.log"
+fi
 # 데이터 사전 검사 — 오프라인 노드에서 허브 직행으로 죽는 것을 시작 전에 잡는다
 # 데이터 사전 검사 — 로더 자신을 그대로 실행 (검사·실제 로드가 같은 코드 경로)
 # 실패 시 로더가 '찾아본 위치' 목록을 출력하므로 원인 자가진단됨. GPU 잡기 전에 죽는다.
