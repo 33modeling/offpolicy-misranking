@@ -9,7 +9,13 @@ PY="${VENV_DIR:+$VENV_DIR/bin/python}"; [ -x "${PY:-/none}" ] || PY=python3
 
 FOUND=0
 for r in "$OUT_ROOT"/drift*/report.md "$OUT_ROOT"/report.md; do
-  [ -f "$r" ] && { echo "──── $r"; cat "$r"; echo; FOUND=1; }
+  [ -f "$r" ] || continue
+  run=$(dirname "$r")
+  if [ ! -f "$run/score_protocol.json" ] || [ ! -f "$run/oracle_protocol.json" ]; then
+    echo "[거부] 교정 protocol 없는 역사적 report: $r" >&2
+    continue
+  fi
+  echo "──── $r"; cat "$r"; echo; FOUND=1
 done
 if [ "$FOUND" = 0 ]; then
   echo "!! report 없음 — 게이트 미완료. 자동 진단:"
@@ -31,7 +37,7 @@ if [ "$FOUND" = 0 ]; then
   NREP=$(ls "$OUT_ROOT"/drift*/report.json 2>/dev/null | wc -l)
   NORC=$(ls "$OUT_ROOT"/drift*/scores_oracle.json 2>/dev/null | wc -l)
   echo "한줄: 실행중=$ALIVE개, report=$NREP, oracle=$NORC, 마지막로그=[$LAST]"
-  exit 0
+  exit 2
 fi
 "$PY" src/judge.py "$OUT_ROOT"
 echo

@@ -28,8 +28,11 @@ _legacy_dup() { case "$1" in
   for d in "$OM_WORK"/runs/v2-*; do
     case "$d" in *smoke*) continue;; esac
     dup=$(_legacy_dup "$d")
-    [ -n "$dup" ] && [ -f "$dup/DONE" ] && { echo "  [skip] legacy 이중 접미사: $(basename "$d") (신형 완주 존재)"; continue; }
-    [ -f "$d/DONE" ] && targets+=("$d")
+    [ -n "$dup" ] && [ -f "$dup/DONE" ] && [ -f "$dup/score_protocol.json" ] \
+      && [ -f "$dup/oracle_protocol.json" ] \
+      && { echo "  [skip] legacy 이중 접미사: $(basename "$d") (신형 완주 존재)"; continue; }
+    [ -f "$d/DONE" ] && [ -f "$d/score_protocol.json" ] \
+      && [ -f "$d/oracle_protocol.json" ] && targets+=("$d")
   done
 fi
 echo "== 결정 실험: ${#targets[@]}개 run × cuts($CUTS), K=$K_CELL, 프롬프트 $HYB_N"

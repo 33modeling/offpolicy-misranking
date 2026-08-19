@@ -3,12 +3,14 @@
     python3 src/judge.py <OUT_ROOT>   (예: $OM_WORK/runs/gate)
 
 조건 (concept 10절):
-  C1  one-sided 실패: g10·g01 각각, 어느 drift에서든 oracle top-k precision이
+  C1  one-sided 실패: 동일 run에서 g10·g01 모두 oracle top-k precision이
       noise floor보다 0.15 이상 낮다
   C1' hybrid 인과: g10(pb)의 빠진 continuation을 복원한 pp, g01(bp)의 빠진
-      occupancy를 복원한 pp의 top-k precision이 각각 엄격히 오른다
-  C2  CertaGrad: certified=True, fresh ≤ 0.5× uniform, precision 손실 ≤ 0.02
-  C3  downstream: oracle/인증 선택이 random보다 나쁘지 않다 (-0.02 허용)
+      occupancy를 복원한 pp의 top-k precision이 동일 run·사전고정 cut=0.5에서
+      모두 오른다
+  C2  boundary criterion: separated=True, fresh ≤ 0.5× uniform,
+      precision 손실 ≤ 0.02 (default Gaussian radius is model-based)
+  C3  downstream: oracle 선택이 random보다 나쁘지 않다 (-0.02 허용)
 """
 
 from __future__ import annotations
@@ -17,11 +19,7 @@ import json
 import sys
 from pathlib import Path
 
-
-def topk_set(scores: dict, frac: float = 0.10) -> set:
-    from select_rules import jittered_topk, topk_count
-    k = topk_count(len(scores), frac)
-    return jittered_topk(scores, k, seed=0)
+from gate_rules import evaluate_causal_run
 
 
 def load(path: Path):
@@ -44,16 +42,18 @@ def judge(out_root: Path) -> dict[str, bool | None]:
     if not runs:
         runs = [out_root]
     verdicts: dict[str, bool | None] = {"C1_g10": None, "C1_g01": None,
+                                        "C1_joint": None,
                                         "C1'_hybrid": None, "C2_certagrad": None,
                                         "C3_downstream": None}
-    one_sided_failures = {"g10": set(), "g01": set()}
+    joint_failure_runs: set[str] = set()
     complete_reports = 0
     c2_results: list[bool] = []
+    causal = {run.name: evaluate_causal_run(run) for run in runs}
     print(f"=== 게이트 판정: {out_root} (파이프라인 {len(runs)}개) ===\n")
 
     # ---- C1: one-sided 실패 + C2 ----
     for run in runs:
-        rep = load(run / "report.json")
+        rep = causal[run.name]["report"]
         if not rep:
             print(f"[{run.name}] report.json 없음 — 미완료")
             continue
@@ -71,9 +71,11 @@ def judge(out_root: Path) -> dict[str, bool | None]:
                 key = f"C1_{est}"
                 if fail_here:
                     verdicts[key] = True
-                    one_sided_failures[est].add(run.name)
                 mark = "  ← one-sided 실패 실증" if fail_here else ""
             print(f"    {est}: precision={p:.3f} (Δfloor={delta:+.3f}){mark}")
+        if causal[run.name]["joint_failure"]:
+            joint_failure_runs.add(run.name)
+            print("    C1 joint: 두 one-sided 실패가 이 run에서 동시 성립")
         cg = rep.get("certagrad")
         if cg:
             fresh = float(cg.get("fresh_frac_of_uniform", 9.0))
@@ -85,7 +87,7 @@ def judge(out_root: Path) -> dict[str, bool | None]:
             loss_ok = precision >= reference - 0.02
             c2_results.append(bool(ok and loss_ok))
             legacy = " (legacy: uniform=1.0 가정)" if uniform_precision is None else ""
-            print(f"    CertaGrad: certified={cg.get('certified')} fresh={fresh:.2f}× "
+            print(f"    boundary diagnostic: separated={cg.get('certified')} fresh={fresh:.2f}× "
                   f"precision={precision:.3f} uniform={reference:.3f}{legacy} "
                   f"→ {'OK' if ok and loss_ok else 'FAIL'}")
         print()
@@ -94,63 +96,53 @@ def judge(out_root: Path) -> dict[str, bool | None]:
         key = f"C1_{est}"
         if verdicts[key] is not True:
             verdicts[key] = False if complete_reports == len(runs) else None
+    if joint_failure_runs:
+        verdicts["C1_joint"] = True
+    elif complete_reports == len(runs):
+        verdicts["C1_joint"] = False
     verdicts["C2_certagrad"] = _complete_verdict(c2_results, len(runs))
 
-    # ---- C1': hybrid 인과 (cell별 oracle 대비 top-k precision) ----
-    hybrid_seen = {"g10": False, "g01": False}
-    hybrid_recovered = {"g10": False, "g01": False}
+    # ---- C1': 동일 run·cut의 joint one-sided failure + joint recovery ----
+    eligible_hybrid_seen = False
+    joint_recovered = False
     for run in runs:
-        oracle = load(run / "scores_oracle.json")
-        if not oracle:
-            continue
-        for hf in sorted(run.glob("scores_hybrid_*.json")):
-            cells = load(hf)
-            required = {"bb", "bp", "pb", "pp"}
-            if not cells or not required.issubset(cells):
-                print(f"[{run.name}] {hf.name}: hybrid cell 부족 — 미판정")
+        state = causal[run.name]
+        for result in state["hybrid_results"]:
+            if "error" in result:
+                print(f"[{run.name}] {result['path'].name}: {result['error']} — 미판정")
                 continue
-            sub = set(cells["bb"])  # hybrid 서브셋 프롬프트만 비교
-            o_sub = {i: oracle[i]["score"] for i in sub if i in oracle}
-            from select_rules import overlap_under_independent_ties, topk_count
-            k_sub = topk_count(len(o_sub), 0.25)
-            prec = {}
-            for cell, sc in cells.items():
-                c_scores = {i: v for i, v in sc.items() if i in o_sub}
-                prec[cell] = overlap_under_independent_ties(
-                    o_sub, c_scores, k_sub, seed=0
-                ).mean
-            recovered = {
-                "g10": prec["pp"] > prec["pb"],  # continuation: β → π
-                "g01": prec["pp"] > prec["bp"],  # occupancy: β → π
-            }
-            marks = []
-            for est in ("g10", "g01"):
-                if run.name not in one_sided_failures[est]:
-                    continue
-                hybrid_seen[est] = True
-                hybrid_recovered[est] |= recovered[est]
-                marks.append(f"{est} {'회복' if recovered[est] else '미회복'}")
-            cut = hf.stem.split("_")[-1]
-            print(f"[{run.name}] hybrid cut={cut}: " +
+            prec = result["precision"]
+            recovered = result["recovery"]
+            eligible = bool(state["joint_failure"] and result["eligible"])
+            if eligible:
+                eligible_hybrid_seen = True
+                joint_recovered |= bool(result["joint_recovery"])
+            marks = ", ".join(
+                f"{est} {'회복' if recovered[est] else '미회복'}"
+                for est in ("g10", "g01")
+            )
+            print(f"[{run.name}] hybrid cut={result['cut']}: " +
                   " ".join(f"{c}={prec.get(c, float('nan')):.2f}" for c in ("bb", "bp", "pb", "pp")) +
-                  (f"  ← {', '.join(marks)}" if marks else ""))
-    axis_verdicts = {
-        est: (hybrid_recovered[est] if hybrid_seen[est] else None)
-        for est in ("g10", "g01")
-    }
-    if any(v is False for v in axis_verdicts.values()):
-        verdicts["C1'_hybrid"] = False
-    elif all(v is True for v in axis_verdicts.values()):
+                  f"  ← {marks}" + (
+                      "; C1 동일 run·사전고정 cut"
+                      if eligible
+                      else "; 진단용 cut 또는 C1 미충족"
+                  ))
+    if joint_recovered:
         verdicts["C1'_hybrid"] = True
-    print("    hybrid 축별: " + ", ".join(
-        f"{est}={'PASS' if value else ('FAIL' if value is False else '미판정')}"
-        for est, value in axis_verdicts.items()
+    elif eligible_hybrid_seen:
+        verdicts["C1'_hybrid"] = False
+    print("    hybrid joint: " + (
+        "PASS" if verdicts["C1'_hybrid"] is True else
+        "FAIL" if verdicts["C1'_hybrid"] is False else "미판정"
     ))
     print()
 
     # ---- C3: downstream ----
     c3_results: list[bool] = []
     for run in runs:
+        if not causal[run.name]["report"]:
+            continue
         ds = {f.stem.replace("downstream_", ""): load(f) for f in run.glob("downstream_*.json")}
         ds = {k: v for k, v in ds.items() if v}
         if not ds:
@@ -167,12 +159,13 @@ def judge(out_root: Path) -> dict[str, bool | None]:
     # ---- 종합 ----
     print("=== 종합 ===")
     labels = {"C1_g10": "C1 g10(prefix만) 실패 실증", "C1_g01": "C1 g01(suffix만) 실패 실증",
-              "C1'_hybrid": "C1' hybrid 축 교체로 회복", "C2_certagrad": "C2 CertaGrad 인증·절약",
+              "C1_joint": "C1 동일 run에서 두 축 실패",
+              "C1'_hybrid": "C1' 사전고정 cut에서 hybrid 축 교체로 회복", "C2_certagrad": "C2 경계 분리·비용 진단",
               "C3_downstream": "C3 downstream 비열등"}
     for key, label in labels.items():
         v = verdicts[key]
         print(f"  {'PASS' if v else ('FAIL' if v is False else '미판정')}  {label}")
-    core = [verdicts["C1_g10"], verdicts["C1_g01"],
+    core = [verdicts["C1_joint"],
             verdicts["C1'_hybrid"], verdicts["C2_certagrad"]]
     if all(core) and verdicts["C3_downstream"] is True:
         print("\n→ 전체 게이트 조건 충족 — 원고 착수 조건 성립.")
@@ -189,7 +182,10 @@ def judge(out_root: Path) -> dict[str, bool | None]:
 
 def main() -> int:
     out_root = Path(sys.argv[1] if len(sys.argv) > 1 else "outputs/pilot")
-    judge(out_root)
+    verdicts = judge(out_root)
+    if all(value is None for value in verdicts.values()):
+        print("[abort] corrected protocol을 만족하는 report가 없음", file=sys.stderr)
+        return 2
     return 0
 
 

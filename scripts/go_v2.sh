@@ -56,14 +56,16 @@ SEEDS=(${SEEDS:-0 1 2})
     fi
   done ) &
 W=$!
-cleanup_strays() { pkill -f -- "--run $BASE" 2>/dev/null || true; pkill -f gpu_keepalive 2>/dev/null || true; \
+cleanup_strays() { pkill -f -- "--run $BASE" 2>/dev/null || true; \
   find "${HF_HOME:-/nonexistent}" -name '*.lock' -mmin +30 -delete 2>/dev/null || true; sleep 5; }
 trap 'echo "== 중단 — 전체 정리"; cleanup_strays; kill $W 2>/dev/null; exit 130' INT TERM
 
 echo
 echo "== [1] 스모크 (~30분): 교정 파이프라인 전 스테이지가 실제로 완주하는지 먼저 확인"
 SMOKE="$BASE-smoke"
-if [ -f "$SMOKE/report.json" ] && ls "$SMOKE"/scores_hybrid_*.json >/dev/null 2>&1; then
+if [ -f "$SMOKE/report.json" ] && [ -f "$SMOKE/score_protocol.json" ] \
+   && [ -f "$SMOKE/oracle_protocol.json" ] \
+   && ls "$SMOKE"/scores_hybrid_*.json >/dev/null 2>&1; then
   echo "   스모크 산출물 존재 — 스킵"
 else
   cleanup_strays
@@ -73,7 +75,7 @@ else
     tail -8 "$LOGDIR/v2-smoke.log" | sed 's/^/   /'
     cleanup_strays; kill $W 2>/dev/null; exit 1
   fi
-  WANTS="report.json divergence_stats.shard0.json manifest.json"
+  WANTS="report.json score_protocol.json oracle_protocol.json divergence_stats.shard0.json manifest.json"
   [ "${OM_SKIP_HYBRID:-0}" = "1" ] || WANTS="$WANTS scores_hybrid_0.5.json"
   for want in $WANTS; do
     ls "$SMOKE"/$want >/dev/null 2>&1 || { echo "== [중단] 스모크 산출물 누락: $want"; kill $W 2>/dev/null; exit 1; }
@@ -95,7 +97,10 @@ for SEED in "${SEEDS[@]}"; do
     KEY="$DS/s$SEED"; LOG="$LOGDIR/v2-$DS-s$SEED.log"
     echo
     echo "==== [$KEY] → $RUN_DIR (log: $LOG)"
-    if [ -f "$RUN_DIR/DONE" ]; then echo "==== [$KEY] ✔ 완주(DONE) — 스킵"; RESULT[$KEY]=1; continue; fi
+    if [ -f "$RUN_DIR/DONE" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
+       && [ -f "$RUN_DIR/oracle_protocol.json" ]; then
+      echo "==== [$KEY] ✔ 완주(DONE+protocols) — 스킵"; RESULT[$KEY]=1; continue
+    fi
     ok=0
     for try in 1 2; do
       echo "==== [$KEY] 시도 $try/2"
@@ -118,7 +123,10 @@ DIRS=()
 for SEED in "${SEEDS[@]}"; do for DS in "${DATASETS[@]}"; do
   RUN_DIR="$BASE-s$SEED"; [ "$DS" != "gsm8k" ] && RUN_DIR="$RUN_DIR-$DS"
   KEY="$DS/s$SEED"
-  if [ "${RESULT[$KEY]:-0}" = "1" ]; then echo "  $KEY ✔"; [ -f "$RUN_DIR/report.json" ] && DIRS+=("$RUN_DIR")
+  if [ "${RESULT[$KEY]:-0}" = "1" ]; then
+    echo "  $KEY ✔"
+    [ -f "$RUN_DIR/report.json" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
+      && [ -f "$RUN_DIR/oracle_protocol.json" ] && DIRS+=("$RUN_DIR")
   else echo "  $KEY ✘ ($LOGDIR/v2-$DS-s$SEED.log 확인)"; fi
 done; done
 
@@ -126,13 +134,23 @@ RD="${RESULTS_BASE:-$OM_WORK/results/v2}"; mkdir -p "$RD"
 echo "==== 결과 수집: $RD ===="
 for d in "${DIRS[@]}"; do
   tag=$(basename "$d")
-  cp "$d/report.json" "$RD/report-$tag.json" 2>/dev/null || true
-  cp "$d/manifest.json" "$RD/manifest-$tag.json" 2>/dev/null || true
-  cp "$d"/divergence_stats*.json "$RD/" 2>/dev/null || true
-  "$PY" src/judge.py "$d" > "$RD/judge-$tag.txt" 2>&1 || true
+  cp "$d/report.json" "$RD/report-$tag.json" || exit 1
+  cp "$d/manifest.json" "$RD/manifest-$tag.json" || exit 1
+  for f in "$d"/divergence_stats*.json; do
+    [ -f "$f" ] || { echo "[abort] divergence stats 없음: $d"; exit 1; }
+    base=$(basename "$f" .json)
+    cp "$f" "$RD/$base-$tag.json" || exit 1
+  done
+  "$PY" src/judge.py "$d" > "$RD/judge-$tag.txt" 2>&1 || exit 1
 done
-[ "${#DIRS[@]}" -gt 0 ] && OM_RESULTS="$RD" "$PY" src/make_tables.py "${DIRS[@]}" | tail -3
+post_fail=0
+if [ "${#DIRS[@]}" -gt 0 ]; then
+  OM_RESULTS="$RD" "$PY" src/make_tables.py "${DIRS[@]}" | tail -3 || post_fail=1
+fi
 echo "==== frontier 사후 분석 (비용–품질 Pareto·audit 정책·predictor baseline) ===="
-[ "${#DIRS[@]}" -gt 0 ] && OM_RESULTS="$RD" "$PY" src/frontier.py "${DIRS[@]}" | tail -3
+if [ "${#DIRS[@]}" -gt 0 ]; then
+  OM_RESULTS="$RD" "$PY" src/frontier.py "${DIRS[@]}" | tail -3 || post_fail=1
+fi
+[ "$post_fail" -eq 0 ] || { echo "[abort] 결과 표/frontier 생성 실패"; exit 1; }
 echo "== 끝 — $RD 의 TABLES.md·FRONTIER.md·report·judge·manifest 뽑아서 전달"
 ls "$RD" 2>/dev/null | head

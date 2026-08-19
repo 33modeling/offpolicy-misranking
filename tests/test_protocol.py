@@ -15,7 +15,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from data import _maybe_json_list  # noqa: E402
-from experiment import score_oracle_microgroups  # noqa: E402
+from experiment import score_oracle_microgroups, split_validation_directions  # noqa: E402
 from hybrid import continue_rollouts_batch  # noqa: E402
 from kcurve_floor import find_fresh_k  # noqa: E402
 from select_rules import overlap_under_independent_ties, topk_count  # noqa: E402
@@ -33,15 +33,21 @@ def test_all_tie_overlap_is_chance():
 def test_oracle_uses_equal_odd_even_halves():
     stack = torch.tensor([
         [1.0, 0.0],
-        [0.0, 1.0],
         [1.0, 0.0],
-        [0.0, -1.0],
+        [1.0, 0.0],
+        [1.0, 0.0],
     ])
-    oracle, halves = score_oracle_microgroups(stack, torch.tensor([1.0, 0.0]))
+    val_groups = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+    val_a, val_b = split_validation_directions(val_groups)
+    oracle, halves = score_oracle_microgroups(
+        stack, torch.tensor([1.0, 0.0]), val_a, val_b
+    )
     assert halves == {"a": 1.0, "b": 0.0}
     assert oracle["score"] == 1.0
     try:
-        score_oracle_microgroups(stack[:3], torch.tensor([1.0, 0.0]))
+        score_oracle_microgroups(
+            stack[:3], torch.tensor([1.0, 0.0]), val_a, val_b
+        )
     except ValueError:
         pass
     else:

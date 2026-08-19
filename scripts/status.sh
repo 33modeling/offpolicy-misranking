@@ -39,7 +39,7 @@ for run in "$OUT_ROOT"/drift*; do
   [ -d "$run" ] || continue
   d=$(basename "$run")
   ck() { [ -e "$run/$1" ] && echo "✔" || echo "·"; }
-  echo "  $d: adapter $(ck "drift_${d#drift}") fresh $(ck rollouts_fresh_train.jsonl) oracle $(ck scores_oracle.json) 2×2 $(ck scores_offpolicy.json) report $(ck report.md) hybrid $(ck scores_hybrid_0.5.json)"
+  echo "  $d: adapter $(ck "drift_${d#drift}") fresh $(ck rollouts_fresh_train.jsonl) oracle $(ck scores_oracle.json) 2×2 $(ck scores_offpolicy.json) protocols $(ck score_protocol.json)/$(ck oracle_protocol.json) report $(ck report.md) hybrid $(ck scores_hybrid_0.5.json)"
 done
 for f in "$OUT_ROOT"/drift*/downstream_*.json; do
   [ -f "$f" ] && echo "  downstream: $(basename "$f") ✔"

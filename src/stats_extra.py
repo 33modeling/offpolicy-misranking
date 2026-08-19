@@ -20,6 +20,8 @@ import sys
 from math import comb
 from pathlib import Path
 
+from gate_rules import has_valid_analysis_protocol
+
 
 def hyp_p_le(n: int, big_k: int, k: int, x: int) -> float:
     """P(X <= x), X ~ Hypergeom(모집단 n, 성공 big_k, 추출 k)."""
@@ -49,6 +51,8 @@ def main() -> int:
         return 2
 
     run = Path(sys.argv[1])
+    if not has_valid_analysis_protocol(run):
+        raise ValueError("corrected independent-validation score protocol is missing")
     frac = float(sys.argv[2]) if len(sys.argv) > 2 else 0.10
     boot = int(sys.argv[3]) if len(sys.argv) > 3 else 2000
     seed = int(sys.argv[4]) if len(sys.argv) > 4 else 0

@@ -62,6 +62,18 @@ export TRANSFORMERS_VERBOSITY=error HF_HUB_DISABLE_PROGRESS_BARS=1  # 로그 잡
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="$OM_REPO/src${PYTHONPATH:+:$PYTHONPATH}"
 
+# Model-specific hard-pool names prevent one model/revision from silently
+# consuming another model's prescreen selection.
+om_hard_pool_path() {
+  local dataset="$1" model="$2" tag config_hash pool_seed
+  [ -f "$model/config.json" ] || { echo "model config 없음: $model/config.json" >&2; return 1; }
+  tag=$(printf '%s' "$(basename "$model")" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')
+  config_hash=$(sha256sum "$model/config.json" | cut -c1-12)
+  pool_seed="${PRESCREEN_SEED:-104729}"
+  printf '%s/pools/%s-hard-%s-%s-ps%s.jsonl\n' \
+    "$OM_WORK" "$dataset" "$tag" "$config_hash" "$pool_seed"
+}
+
 # ---- 데이터 (오프라인 노드용 로컬 사본 — provision이 만든다) -------------
 export OM_DATA="${OM_DATA:-$OM_WORK/data}"
 

@@ -25,7 +25,8 @@ DATASETS_27B="${DATASETS_27B:-dapo-math}"
 
 echo "== [0] 호환성 스모크 (8+4, 전 스테이지 — DeltaNet/checkpointing/LoRA 관문)"
 SMK="$OM_WORK/runs/smoke-27b"
-if [ -f "$SMK/report.json" ]; then
+if [ -f "$SMK/report.json" ] && [ -f "$SMK/score_protocol.json" ] \
+   && [ -f "$SMK/oracle_protocol.json" ]; then
   echo "   스모크 산출물 존재 — 스킵"
 else
   if ! DATASET=gsm8k OUT_ROOT="$SMK" N_TRAIN=8 N_VAL=4 FRESH_K=8 HYBRID_PROMPTS=4 \
@@ -40,7 +41,7 @@ fi
 
 for DS in $DATASETS_27B; do
   echo "== [1/$DS] hard-slice 프리스크린 (β pass-rate, 전량 정답/오답 제외)"
-  POOL="$OM_WORK/pools/$DS-hard.jsonl"
+  POOL="$(om_hard_pool_path "$DS" "$M27")" || exit 1
   # 존재 여부(-f)와 비어 있음(-s 실패)을 구분 — 0바이트 풀은 "β가 전 문제를 풀어서
   # hard 구간이 빈" 포화의 증거물이지 프리스크린 미실행이 아니다. -s로 검사하면
   # 재시도마다 프리스크린을 다시 돌고 같은 0바이트만 재작성한다.
@@ -48,6 +49,7 @@ for DS in $DATASETS_27B; do
     MODEL="$M27" bash scripts/prescreen_pool.sh "$DS" "${POOL_N:-2000}" || { echo "[abort] $DS 프리스크린 실패"; exit 1; }
   fi
   [ -f "$POOL" ] || { echo "[abort] 풀 없음: $POOL"; exit 1; }
+  "$PY" src/make_hard_pool.py --validate "$POOL" --model "$M27" --dataset "$DS" || exit 1
   if [ ! -s "$POOL" ]; then
     echo "[abort] hard pool 0건: $POOL — β pass-rate가 전 문제 0 또는 1(포화)이라 0<rate<1 구간이 비었다."
     echo "        결정 필요: ① DATASETS_27B를 더 어려운 데이터셋으로 교체  ② 포화 자체를 규칙(3) 사례로 수록하고 이 블록 생략"
@@ -58,7 +60,9 @@ for DS in $DATASETS_27B; do
   echo "== [2/$DS] 본실행 seeds($SEEDS_27B), n=512 (hard pool)"
   for s in $SEEDS_27B; do
     dir="$OM_WORK/runs/v2-27b-$DS-s$s"
-    [ -f "$dir/DONE" ] && { echo "  ✔ $DS/s$s 완주 — 스킵"; continue; }
+    [ -f "$dir/DONE" ] && [ -f "$dir/score_protocol.json" ] \
+      && [ -f "$dir/oracle_protocol.json" ] \
+      && { echo "  ✔ $DS/s$s 완주 — 스킵"; continue; }
     if DATASET="$DS" OM_POOL_FILE="$POOL" MODEL_14B="$M27" SEED="$s" \
        N_TRAIN=512 N_VAL=100 OUT_ROOT="$dir" bash scripts/run_14b.sh >> "$LOGDIR/27b-$DS-s$s.log" 2>&1; then
       echo "  ✔ $DS/s$s"

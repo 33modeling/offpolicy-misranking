@@ -6,6 +6,11 @@
 # 완료($OUT_ROOT/DONE) 또는 최대 재시작 횟수(기본 12회)까지 5분 간격 감시.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+if [ "${OM_ENABLE_LEGACY_RUNNER:-0}" != "1" ]; then
+  echo "[abort] babysit.sh는 legacy run_h100_all.sh 전용이라 confirmatory 실행에 사용할 수 없음."
+  echo "        scripts/go_v2.sh는 자체 재시도/재개 경로를 사용함."
+  exit 2
+fi
 MODE="${1:-}"
 if [ "$MODE" = "fast" ]; then
   export DRIFTS="100" FRESH_K=16 HYBRID_PROMPTS=24 DOWNSTREAM_STEPS=100
@@ -32,14 +37,17 @@ blog() { echo "[$(date '+%F %T')] $*" | tee -a "$BLOG"; }
 
 MAX_RESTARTS="${MAX_RESTARTS:-12}"
 restarts=0
+RUN_PID=""
 blog "babysit 시작 (mode=${MODE:-full}, max_restarts=$MAX_RESTARTS)"
 
 while true; do
-  if [ -f "$OUT_ROOT/DONE" ]; then
+  if [ -f "$OUT_ROOT/DONE" ] && [ -f "$OUT_ROOT/score_protocol.json" ] \
+     && [ -f "$OUT_ROOT/oracle_protocol.json" ]; then
     blog "완료 감지 — result.sh 실행 가능. babysit 종료"
     break
   fi
-  if pgrep -f "scripts/run_h100_all.sh" >/dev/null || pgrep -f "src/experiment.py" >/dev/null; then
+  if pgrep -f -- "--run $OUT_ROOT" >/dev/null \
+     || { [ -n "$RUN_PID" ] && kill -0 "$RUN_PID" 2>/dev/null; }; then
     LAST=$(tail -qn 1 "$OUT_ROOT"/logs/drift*.log "$OUT_ROOT"/logs/phase0-*.log 2>/dev/null | tail -1 | cut -c1-80)
     # 행(hang) 감지 — 프로세스는 살아있는데 로그가 STALL_MIN분째 조용하면 강제 재시작
     NEWEST=$(ls -t "$OUT_ROOT"/logs/drift*.log "$OUT_ROOT"/logs/phase0-*.log "$OUT_ROOT"/logs/downstream-*.log 2>/dev/null | head -1)
@@ -47,9 +55,8 @@ while true; do
       AGE=$(( ($(date +%s) - $(stat -c %Y "$NEWEST")) / 60 ))
       if [ "$AGE" -ge "${STALL_MIN:-45}" ]; then
         blog "행 감지 — 로그 ${AGE}분째 정지 [$LAST] → 강제 재시작"
-        pkill -f "src/experiment.py" 2>/dev/null || true
-        pkill -f "scripts/run_h100_all.sh" 2>/dev/null || true
-        pkill -f "gpu_keepalive.py" 2>/dev/null || true
+        pkill -f -- "--run $OUT_ROOT" 2>/dev/null || true
+        [ -n "$RUN_PID" ] && kill "$RUN_PID" 2>/dev/null || true
         sleep 10
         continue
       fi
@@ -68,9 +75,10 @@ while true; do
   blog "죽음 감지 → 재시작 #$restarts (미완성 산출물 정리 후 이어서)"
   bash scripts/reset_run.sh >> "$BLOG" 2>&1 || true
   nohup bash scripts/run_h100_all.sh > "$OUT_ROOT/logs/nohup-$restarts.out" 2>&1 &
-  blog "재시작됨 (pid $!)"
+  RUN_PID=$!
+  blog "재시작됨 (pid $RUN_PID)"
   sleep 60
-  if ! pgrep -f "scripts/run_h100_all.sh" >/dev/null; then
+  if ! kill -0 "$RUN_PID" 2>/dev/null; then
     blog "재시작 직후 사망 — 사유:"
     tail -n 6 "$OUT_ROOT/logs/nohup-$restarts.out" 2>/dev/null | tee -a "$BLOG"
     tail -n 4 "$OUT_ROOT/logs/main.log" 2>/dev/null | tee -a "$BLOG"

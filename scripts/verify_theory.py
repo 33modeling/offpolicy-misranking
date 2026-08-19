@@ -70,7 +70,7 @@ def trajectory_kl(example: str, epsilon: float) -> float:
     current = trajectories(example, "current", epsilon)
     behavior = trajectories(example, "behavior", epsilon)
     kl = 0.0
-    for (p_pi, _, _), (p_b, _, _) in zip(current, behavior):
+    for (p_pi, _, _), (p_b, _, _) in zip(current, behavior, strict=True):
         if p_pi > 0.0:
             kl += p_pi * math.log(p_pi / max(p_b, 1e-15))
     return kl
@@ -81,7 +81,7 @@ def is_cells(example: str, epsilon: float) -> dict[str, float]:
     behavior = trajectories(example, "behavior", epsilon)
     current = trajectories(example, "current", epsilon)
     cells = {key: 0.0 for key in ("pi", "00", "10", "01", "11")}
-    for (p_b, reward, score), (p_pi, _, _) in zip(behavior, current):
+    for (p_b, reward, score), (p_pi, _, _) in zip(behavior, current, strict=True):
         ratio = p_pi / p_b
         cells["pi"] += p_pi * reward * score
         # One-step families: prefix_only has r1=1, r2=π/β on suffix;
@@ -182,7 +182,7 @@ def check_indistinguishable_pools() -> None:
         [
             ((1.0 - hidden_probability) * slope
              + hidden_probability * sign * epsilon) / 2.0
-            for slope, sign in zip(visible_slopes, signs)
+            for slope, sign in zip(visible_slopes, signs, strict=True)
         ]
         for signs in worlds
     ]
@@ -236,7 +236,7 @@ def check_indistinguishable_pools_enumerated() -> None:
     per_world = {}
     for w, signs in worlds.items():
         rows = []
-        for nu, s in zip(nus, signs):
+        for nu, s in zip(nus, signs, strict=True):
             beta = _pool_env(nu, s, h, eps, "behavior")
             pi = _pool_env(nu, s, h, eps, "current")
             # (i) behavior 법칙은 world(s)와 무관 — 관측 데이터 동일
@@ -254,7 +254,7 @@ def check_indistinguishable_pools_enumerated() -> None:
             assert math.isclose(g_true, ((1 - h) * nu + h * s * eps) / 2.0,
                                 abs_tol=1e-12)
             kl = sum(pp * math.log(pp / pb)
-                     for (pp, _, _), (pb, _, _) in zip(pi, beta) if pp > 0)
+                     for (pp, _, _), (pb, _, _) in zip(pi, beta, strict=True) if pp > 0)
             # (iv) 그룹 정규화(K=2,4)가 양쪽 부호를 보존
             for K in (2, 4):
                 gb = expected_standardized_group_gradient(beta, K)
@@ -305,7 +305,7 @@ def norm(vector: list[float]) -> float:
 
 
 def angle(left: list[float], right: list[float]) -> float:
-    cosine = sum(a * b for a, b in zip(left, right)) / (norm(left) * norm(right))
+    cosine = sum(a * b for a, b in zip(left, right, strict=True)) / (norm(left) * norm(right))
     return math.acos(max(-1.0, min(1.0, cosine)))
 
 

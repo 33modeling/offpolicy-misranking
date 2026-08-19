@@ -22,7 +22,7 @@ def eb_radius(samples: torch.Tensor, delta: float, mode: str = "gaussian") -> fl
 
     mode="gaussian" (파일럿 기본): 평균 오차를 등방 가우시안으로 근사하고
       Laurent–Massart χ² 꼬리 r² = (tr(Σ̂)/(d·n))·(d + 2√(d·t) + 2t), t=ln(1/δ).
-      근사이므로 coverage는 게이트의 반복실험 검증 항목(≥0.90)으로 실측한다.
+      근사이므로 분포무관 coverage를 제공하지 않는다.
     mode="hoeffding" (보수): concept 7절 방향의 노름 Hoeffding 판본. 가산 B항이
       지배해 파일럿 규모에서는 거의 인증 불가 — 본실험 정식 보증 비교용.
     """
@@ -80,7 +80,7 @@ def certagrad(
     radius_mode: str = "gaussian",
     max_fresh: int | None = None,
 ) -> dict:
-    """순차 인증. 반환: 선택 집합, 사용 micro-group 수, 인증 성공 여부."""
+    """Adaptive boundary diagnostic with a union bound over all possible looks."""
     m = len(cand_pools)
     if m < 1:
         raise ValueError("cand_pools must not be empty")
@@ -155,6 +155,7 @@ def certagrad(
                 "fresh_groups": sum(c.used for c in cands) + val.used,
                 "candidate_groups": sum(c.used for c in cands),
                 "validation_groups": val.used,
+                "coverage": f"{radius_mode}-model/look-union-bound",
             }
         used_now = sum(c.used for c in cands) + val.used
         if max_fresh is not None and used_now >= max_fresh:
@@ -200,6 +201,7 @@ def certagrad(
                 "fresh_groups": sum(c.used for c in cands) + val.used,
                 "candidate_groups": sum(c.used for c in cands),
                 "validation_groups": val.used,
+                "coverage": f"{radius_mode}-model/look-union-bound",
             }
     return {
         "selected": sorted(sel),
@@ -207,6 +209,7 @@ def certagrad(
         "fresh_groups": sum(c.used for c in cands) + val.used,
         "candidate_groups": sum(c.used for c in cands),
         "validation_groups": val.used,
+        "coverage": f"{radius_mode}-model/look-union-bound",
     }
 
 

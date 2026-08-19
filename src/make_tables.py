@@ -29,6 +29,10 @@ from pathlib import Path
 import torch
 
 from certagrad import angle_radius, eb_radius
+from gate_rules import (
+    HYBRID_PROTOCOL_SCHEMA,
+    has_valid_analysis_protocol,
+)
 from select_rules import overlap_under_independent_ties, topk_count
 
 FRAC = 0.10
@@ -55,6 +59,8 @@ def jload(p: Path):
 
 def gate_numbers(run: Path) -> dict | None:
     """report.json 우선, 없으면 원시 점수에서 재계산."""
+    if not has_valid_analysis_protocol(run):
+        return None
     rep = jload(run / "report.json")
     if rep and "noise_floor" in rep:
         return rep
@@ -146,23 +152,27 @@ def t2_relative(runs) -> list[str]:
 def t3_floor_curve(runs) -> list[str]:
     rows = ["| run | 관측 그룹 m (× micro-group) → floor |", "|---|---|"]
     for name, run in runs:
-        mg, vg = run / "oracle_micro_groups.pt", run / "val_gradient.pt"
+        mg, vg = run / "oracle_micro_groups.pt", run / "val_groups.pt"
         if not (mg.exists() and vg.exists()):
             rows.append(f"| {name} | (micro/val 산출물 없음) |")
             continue
         micro = torch.load(mg, weights_only=True)
-        val = torch.load(vg, weights_only=True).float()
+        val_groups = torch.load(vg, weights_only=True).float()
+        if val_groups.ndim != 2 or val_groups.shape[0] < 2:
+            rows.append(f"| {name} | (독립 validation 절반 부족) |")
+            continue
+        val_a = val_groups[0::2].mean(0)
+        val_b = val_groups[1::2].mean(0)
         n_pool = min(s.shape[0] for s in micro.values())
         k = topk_count(len(micro), FRAC)
         pts = []
         for m in range(2, n_pool + 1, 2):
             a_sc, b_sc = {}, {}
-            h = m // 2
             for i, stack in micro.items():
                 st = stack[:m].float()
-                a_mu, b_mu = st[:h].mean(0), st[h:].mean(0)
-                a_sc[i] = float((a_mu @ val) / (a_mu.norm() * val.norm() + 1e-12))
-                b_sc[i] = float((b_mu @ val) / (b_mu.norm() * val.norm() + 1e-12))
+                a_mu, b_mu = st[0::2].mean(0), st[1::2].mean(0)
+                a_sc[i] = float((a_mu @ val_a) / (a_mu.norm() * val_a.norm() + 1e-12))
+                b_sc[i] = float((b_mu @ val_b) / (b_mu.norm() * val_b.norm() + 1e-12))
             fl = overlap_under_independent_ties(a_sc, b_sc, k, seed=0).mean
             pts.append(f"m={m}: {fl:.3f}")
         rows.append(f"| {name} | " + " · ".join(pts) + " |")
@@ -205,6 +215,10 @@ def t5_hybrid(runs) -> list[str]:
         if not oracle:
             continue
         for hf in sorted(run.glob("scores_hybrid_*.json")):
+            cut = hf.stem.split("_")[-1]
+            protocol = jload(run / f"hybrid_protocol_{cut}.json")
+            if not protocol or protocol.get("schema") != HYBRID_PROTOCOL_SCHEMA:
+                continue
             cells = jload(hf)
             if not cells or not {"bb", "bp", "pb", "pp"}.issubset(cells):
                 continue
@@ -217,7 +231,6 @@ def t5_hybrid(runs) -> list[str]:
                 prec[cell] = overlap_under_independent_ties(
                     o_sub, c_scores, k, seed=0
                 ).mean
-            cut = hf.stem.split("_")[-1]
             rows.append(f"| {name} | {cut} | " +
                         " | ".join(f"{prec[c]:.2f}" for c in ("bb", "bp", "pb", "pp")) +
                         f" | {prec['pp'] - prec['pb']:+.2f} | {prec['pp'] - prec['bp']:+.2f} |")
@@ -243,7 +256,7 @@ def t6_c2_margin(runs) -> list[str]:
         live_s = margin_s = av_s = "—"
         if mg.exists() and vg.exists():
             micro = torch.load(mg, weights_only=True)
-            val_pool = torch.load(vg, weights_only=True).float()
+            val_pool = torch.load(vg, weights_only=True).float()[0::2]
             mu_v = val_pool.mean(0)
             per = 0.05 / (len(micro) + 1)
             av = math.degrees(angle_radius(mu_v, eb_radius(val_pool, per)))
@@ -300,16 +313,24 @@ TABLES = [
 def main() -> int:
     roots = sys.argv[1:] or ["outputs/pilot"]
     runs = collect_runs(roots)
+    invalid = [name for name, run in runs
+               if (run / "scores_offpolicy.json").exists()
+               and not has_valid_analysis_protocol(run)]
+    if invalid:
+        print(f"[abort] corrected score protocol 없는 run: {invalid}", file=sys.stderr)
+        return 2
     lines = [f"# 게이트 결과 테이블  ({time.strftime('%F %T')})", ""]
     lines.append("대상 run: " + ", ".join(f"`{n}`" for n, _ in runs) if runs
                  else "대상 run 없음")
     lines.append("")
+    errors = []
     for title, fn in TABLES:
         lines.append(f"## {title}")
         try:
             lines += fn(runs)
         except Exception as e:  # 표 하나가 죽어도 나머지는 계속
             lines.append(f"⚠️ 생성 실패: {type(e).__name__}: {e}")
+            errors.append((title, e))
         lines.append("")
     import os
     # 저장 위치: OM_RESULTS > $OM_WORK/results (group-volume) > ./results
@@ -321,6 +342,9 @@ def main() -> int:
     (out / "TABLES.md").write_text(md)
     print(md)
     print(f"\n[저장됨] {out / 'TABLES.md'}")
+    if errors:
+        print(f"[abort] {len(errors)}개 표 생성 실패", file=sys.stderr)
+        return 1
     return 0
 
 

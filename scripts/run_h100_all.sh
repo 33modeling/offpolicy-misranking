@@ -15,6 +15,12 @@
 # 실패 시: 해당 로그 tail을 main.log에 남기고 종료 코드 1.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+if [ "${OM_ENABLE_LEGACY_RUNNER:-0}" != "1" ]; then
+  echo "[abort] run_h100_all.sh는 manifest/code-snapshot/exact-merge 계약 이전 runner라 비활성화됨."
+  echo "        confirmatory run은 scripts/go_v2.sh 또는 scripts/run_14b.sh를 사용할 것."
+  echo "        과거 재현에만 OM_ENABLE_LEGACY_RUNNER=1을 명시할 수 있음."
+  exit 2
+fi
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "venv 없음 — 'source scripts/setup_env.sh && bash scripts/provision.sh' 먼저"; exit 1; }

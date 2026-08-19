@@ -155,6 +155,9 @@ def run_downstream(run: Path, base: str, source: str, steps: int, k: int,
     선택에 쓴 rollout을 차감한 나머지로 학습 스텝 수를 정한다 (concept 5절
     '같은 총연산' 조건의 구현).
     """
+    from gate_rules import has_valid_analysis_protocol
+    if not has_valid_analysis_protocol(run):
+        raise ValueError("downstream requires corrected score and oracle protocols")
     prompts = json.loads((run / "prompts.json").read_text())
     n = len(prompts["train"])
     kk = topk_count(n, topk_frac)

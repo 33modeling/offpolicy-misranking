@@ -30,7 +30,7 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOGS/main.log"; }
 # 다른 실행(7B babysit/run)과의 GPU 충돌 차단
 if pgrep -f "bash.*scripts/babysit.sh" >/dev/null || pgrep -f "scripts/run_h100_all.sh" >/dev/null; then
   echo "[abort] 7B babysit/run_h100_all 이 아직 실행 중 — 14B와 GPU가 충돌한다."
-  echo "        먼저:  pkill -f babysit.sh; pkill -f run_h100_all; pkill -f 'src/experiment.py'; pkill -f gpu_keepalive"
+  echo "        해당 작업을 시작한 tmux 창에서 중단하거나 그 run의 PID만 종료할 것."
   exit 1
 fi
 # 점유 검사는 내가 쓸 GPU만 대상 (OM_GPUS 분할 실행 시 서로 간섭 금지)
@@ -88,8 +88,27 @@ print(f"[merge] {base}: {n_train} prompts x K={expected_k}, "
       f"{sum(len(v) for v in seen.values())} rollouts OK")
 PYEOF
 }
+verify_code_snapshot() {
+  "$PY" - "$OUT_ROOT/run_config.json" <<'PYEOF'
+import hashlib, json, subprocess, sys
+config = json.load(open(sys.argv[1]))
+head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+status = subprocess.check_output(
+    ["git", "status", "--porcelain", "--", "src", "scripts"], text=True
+).strip()
+diff = hashlib.sha256(subprocess.check_output(
+    ["git", "diff", "HEAD", "--no-ext-diff", "--binary", "--", "src", "scripts"]
+)).hexdigest()
+if (head != config.get("git") or status != config.get("git_status")
+        or diff != config.get("git_diff_sha256")):
+    print("[code-abort] repository changed after this run was initialized", flush=True)
+    print(f"  initial={config.get('git')} current={head}", flush=True)
+    sys.exit(1)
+PYEOF
+}
 run_stage() { local dev="${GPUS[$1]:-$1}" lf="$2"; shift 2
   local t0=$SECONDS
+  verify_code_snapshot || return 1
   log "GPU$dev ▶ $*"
   if CUDA_VISIBLE_DEVICES="$dev" "$PY" src/experiment.py "$@" >> "$lf" 2>&1; then
     log "GPU$dev ✔ $1 $2 ($((SECONDS - t0))s)"
@@ -152,18 +171,29 @@ def env_int(name, default):
 import torch, transformers
 model = os.environ["MODEL_14B"]
 pool = os.environ.get("OM_POOL_FILE")
+pool_manifest = pool + ".manifest.json" if pool else None
 git_head = sh("git rev-parse HEAD")
+git_status = sh("git status --porcelain -- src scripts")
+if git_status and os.environ.get("OM_ALLOW_DIRTY", "0") != "1":
+    print("[config-abort] src/scripts worktree is dirty; commit first or set OM_ALLOW_DIRTY=1")
+    print(git_status)
+    sys.exit(2)
 git_diff_hash = hashlib.sha256(
-    subprocess.check_output(["git", "diff", "--no-ext-diff", "--binary"])
+    subprocess.check_output(
+        ["git", "diff", "HEAD", "--no-ext-diff", "--binary", "--", "src", "scripts"]
+    )
 ).hexdigest()
 config = {
     "git": git_head, "git_diff_sha256": git_diff_hash,
+    "git_status": git_status,
     "model": model, "model_resolved": str(Path(model).resolve()),
     "model_config_sha256": digest_file(Path(model) / "config.json"),
     "tokenizer_config_sha256": digest_file(Path(model) / "tokenizer_config.json"),
     "generation_config_sha256": digest_file(Path(model) / "generation_config.json"),
     "dataset": os.environ["DATASET"], "pool": pool,
     "pool_sha256": digest_file(pool),
+    "pool_manifest": pool_manifest,
+    "pool_manifest_sha256": digest_file(pool_manifest),
     "n_train": env_int("N_TRAIN", 256), "n_val": env_int("N_VAL", 50),
     "behavior_k": env_int("BEHAVIOR_K", 8), "fresh_k": env_int("FRESH_K", 16),
     "val_k": env_int("VAL_K", 8), "micro_group": env_int("MICRO_GROUP", 4),
@@ -220,10 +250,12 @@ COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET"
 KA_DEV=$(IFS=,; echo "${GPUS[*]}")
 CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
 KEEP=$!
+printf '%s\n' "$KEEP" > "$OUT_ROOT/keepalive.pid"
 # 종료(정상·에러 모두) 시 이 실행이 띄운 모든 자식 정리 — 고아 샤드가 GPU를 점유한 채
 # 남아 "계속 실행되는 것처럼" 보이고 재시작 OOM을 일으키는 버그의 수정
 cleanup() {
   kill "$KEEP" 2>/dev/null || true
+  rm -f "$OUT_ROOT/keepalive.pid"
   pkill -f -- "--run $OUT_ROOT" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -243,6 +275,8 @@ if [ -n "${AD:-}" ]; then
            "$OUT_ROOT"/scores_splithalf.json "$OUT_ROOT"/scores_offpolicy*.json \
            "$OUT_ROOT"/scores_hybrid_*.json "$OUT_ROOT"/rollouts_hybrid_*.jsonl \
            "$OUT_ROOT"/val_gradient.pt "$OUT_ROOT"/val_groups.pt \
+           "$OUT_ROOT"/score_protocol*.json "$OUT_ROOT"/oracle_protocol.json \
+           "$OUT_ROOT"/hybrid_protocol_*.json \
            "$OUT_ROOT"/report.md "$OUT_ROOT"/report.json; do
     if [ -f "$f" ] && [ "$f" -ot "$AD" ]; then
       mkdir -p "$SDIR"; mv "$f" "$SDIR/"; moved=$((moved + 1))
@@ -303,6 +337,10 @@ pids=(); for i in $(seq 0 $((NGPU - 1))); do
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
 merge_rollouts rollouts_behavior_train "${BEHAVIOR_K:-8}" || exit 1
+if [ -n "${OM_POOL_FILE:-}" ]; then
+  "$PY" src/qualify_pool.py "$OUT_ROOT" "$OM_POOL_FILE" \
+    --topk-frac "${TOPK_FRAC:-0.10}" | tee -a "$LOGS/main.log" || exit 1
+fi
 run_stage 0 "$LOGS/drift.log" --stage drift "${COMMON[@]}" --drift-steps "$DRIFT" || exit 1
 # π fresh N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
@@ -347,7 +385,8 @@ for p in "${pids[@]}"; do wait "$p" || exit 1; done
 fi
 required=(prompts.json rollouts_behavior_train.jsonl rollouts_fresh_train.jsonl
           val_gradient.pt val_groups.pt oracle_micro_groups.pt scores_oracle.json
-          scores_splithalf.json scores_offpolicy.json report.json)
+          scores_splithalf.json scores_offpolicy.json score_protocol.json
+          oracle_protocol.json report.json)
 for artifact in "${required[@]}"; do
   [ -s "$OUT_ROOT/$artifact" ] || { log "[abort] 필수 산출물 누락/빈 파일: $artifact"; exit 1; }
 done

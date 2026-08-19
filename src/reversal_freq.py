@@ -37,6 +37,8 @@ import sys
 from math import comb
 from pathlib import Path
 
+from gate_rules import has_valid_analysis_protocol
+
 ESTS = ("g00", "g10", "g01", "g11")
 
 
@@ -77,6 +79,8 @@ def fisher_exact_2x2(a: int, b: int, c: int, d: int) -> float:
 
 
 def load_run(run: Path) -> tuple[dict[int, float], dict[str, dict[int, float]]] | None:
+    if not has_valid_analysis_protocol(run):
+        return None
     try:
         oracle = {int(i): v["score"] for i, v in
                   json.loads((run / "scores_oracle.json").read_text()).items()}

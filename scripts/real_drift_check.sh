@@ -24,6 +24,9 @@ DEST="$OM_WORK/runs/v2-realrl"
 mkdir -p "$DEST"
 cp -n "$SRC/prompts.json" "$DEST/" 2>/dev/null || true
 cp -n "$SRC/rollouts_behavior_train.jsonl" "$DEST/" 2>/dev/null || true
+for f in "$SRC"/rollouts_behavior_train*.manifest.json; do
+  [ -f "$f" ] && cp -n "$f" "$DEST/"
+done
 # GRPO 어댑터를 drift_100 자리에 — run_14b가 drift 학습을 스킵하고 이걸 π로 쓴다
 if [ ! -f "$DEST/drift_100/adapter_config.json" ]; then
   mkdir -p "$DEST/drift_100"
@@ -35,7 +38,9 @@ DATASET=gsm8k OUT_ROOT="$DEST" N_TRAIN=512 N_VAL=100 SEED=0 bash scripts/run_14b
   echo "[abort] 파이프라인 실패 — $DEST/logs 확인"; exit 1; }
 
 echo "== 판정 재료 =="
-[ -f "$DEST/report.json" ] && "$VENV_DIR/bin/python" - "$DEST" <<'PYEOF'
+[ -f "$DEST/report.json" ] && [ -f "$DEST/score_protocol.json" ] \
+  && [ -f "$DEST/oracle_protocol.json" ] \
+  && "$VENV_DIR/bin/python" - "$DEST" <<'PYEOF'
 import json, sys
 from pathlib import Path
 r = json.loads((Path(sys.argv[1]) / "report.json").read_text())
