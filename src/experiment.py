@@ -222,6 +222,17 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
     if shard is not None:
         keys = sorted(fresh_by_prompt)[shard[0]::shard[1]]
         fresh_by_prompt = {k: fresh_by_prompt[k] for k in keys}
+    # P0-6(후반): split-half의 두 반쪽이 같은 validation 방향을 공유하면 공유
+    # 추정오차가 overlap을 부풀린다 — val 프롬프트 gradient도 짝/홀로 갈라
+    # 반쪽 a↔val_a, b↔val_b로 완전 독립 분할. oracle 전체 점수는 전체 val 유지.
+    if shard is None:
+        vg = torch.load(run / "val_groups.pt", weights_only=True)
+        if vg.shape[0] >= 2:
+            val_a = vg[0::2].mean(dim=0)
+            val_b = vg[1::2].mean(dim=0)
+        else:
+            print("oracle: val 그룹 1개뿐 — 독립 분할 불가, 공유 val로 폴백", flush=True)
+            val_a = val_b = val_grad
     for pi_idx, rows in sorted(fresh_by_prompt.items()):
         n_done += 1
         gsize = args.micro_group
@@ -241,8 +252,8 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
             oracle[pi_idx] = {"score": cosine(mu, val_grad), "norm": float(mu.norm())}
             h = stack.shape[0] // 2
             halves[pi_idx] = {
-                "a": cosine(stack[:h].mean(dim=0), val_grad),
-                "b": cosine(stack[h:].mean(dim=0), val_grad),
+                "a": cosine(stack[:h].mean(dim=0), val_a),
+                "b": cosine(stack[h:].mean(dim=0), val_b),
             }
         if n_done % 5 == 0:
             from grads import ts

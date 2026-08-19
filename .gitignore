@@ -6,3 +6,8 @@ __pycache__/
 READOUT.md
 DIAGNOSIS.txt
 console-logs/
+paper/main.aux
+paper/main.out
+paper/main.fdb_latexmk
+paper/main.fls
+paper/main.log
