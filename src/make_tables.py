@@ -132,19 +132,22 @@ def t2_relative(runs) -> list[str]:
         f, k = rep["noise_floor"], rep["k"]
         rand = k / n
         sig = f - rand
+        # 원고 §floor 사전 등록 규칙: floor−chance ≤ 0.02면 retention은 undefined
+        # (포화 셀에서 분모가 0에 붙어 부호 반전·폭주하는 비율을 표에 싣지 않는다)
         rels = {}
         for est in EST:
-            if est in rep and sig > 1e-9:
+            if est in rep and sig > 0.02:
                 rels[est] = (rep[est]["precision"] - rand) / sig
         cells = [f"{rels[e]:+.2f}" if e in rels else "판정불능" for e in EST]
         a_v = [f"{'FAIL실증' if rep[e]['precision'] <= f - 0.15 else '미달'}"
                for e in ("g10", "g01") if e in rep]
         r_v = [f"{'FAIL실증' if rels.get(e, 9) <= 0.5 else '미달'}"
-               if sig > 1e-9 else "판정불능" for e in ("g10", "g01")]
+               if sig > 0.02 else "판정불능" for e in ("g10", "g01")]
         rows.append(f"| {name} | {f:.3f} | {rand:.3f} | " + " | ".join(cells)
                     + f" | {'/'.join(a_v) or '—'} | {'/'.join(r_v)} |")
     rows += ["", "신호보존 = (precision−rand)/(floor−rand): 1.0=oracle급, 0=무작위급, "
-                 "음수=무작위보다 못함. 상대문턱은 보존율 ≤0.5(신호 절반 상실)를 실증으로 본다 "
+                 "음수=무작위보다 못함. floor−rand ≤ 0.02면 판정불능(원고 §floor 규칙 — "
+                 "포화 셀의 비산 방지). 상대문턱은 보존율 ≤0.5(신호 절반 상실)를 실증으로 본다 "
                  "— **사후 분석**이므로 원고에는 사전 문턱과 구분해 표기."]
     return rows
 
