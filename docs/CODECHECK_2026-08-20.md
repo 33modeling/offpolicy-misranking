@@ -15,6 +15,8 @@
 - 점검 중 `origin/master`가 `56a4edc`로 이동했다. 이 커밋은 세대 일반화를 추가했지만
   실패 산출물을 최종 경로에 먼저 쓰고 harvest가 실패 시에도 0으로 끝날 수 있어 그대로
   채택하지 않는다. `run_select`와 관련 스크립트의 세대 일반화만 통합 대상으로 삼는다.
+- `56a4edc`를 병합해 backup/diagnose/frontier/tables/K-curve/precheck의 세대 일반화를
+  포함했다. 충돌 구간은 corrected protocol과 원자적 publish 규칙을 우선해 수동 해결했다.
 
 ## READOUT 0-byte 원인 판정
 
@@ -53,6 +55,8 @@
 5. `readout_summary.py`는 run별 artifact 오류를 문맥이 포함된 오류로 바꾸고, 유효한
    corrected run이 하나도 없으면 nonzero로 끝낸다.
 6. 성공, Python 실패, 빈 stdout, stats 부분 실패, 동시 디렉터리 생성을 회귀 테스트한다.
+7. `read_now.sh`, 개별 K-curve, reversal 실행기도 공통 `_report_io.sh`를 사용해 같은
+   0-byte 최종 파일 경로를 차단한다.
 
 ## 추가 코드 판정
 
@@ -65,6 +69,13 @@
 - `readout_summary.py`는 `v2-*`만 보지 않고 완료 또는 corrected protocol이 있는 모든
   직접 run을 검사한다. 한 corrected run이라도 malformed이면 partial 보고서를 출력하고
   nonzero로 끝낸다.
+- `run_select.py`는 `v<N>-` 전 세대, legacy gate/drift, 새 이름의 corrected run을 한
+  규칙으로 찾는다. `DONE` 없는 재점수화 run도 protocol 쌍이 있으면 포함하고, skip
+  진단은 호출자가 실제 요구한 파일만 보고한다.
+- 세대 일반화를 K-curve 사전등록 표결까지 적용하면 모집단이 사후 변경된다. 따라서
+  `kcurve_floor.py`의 P4-0 표결은 v2에 고정하고, v3 이후는 `kcurve_all.py`의 확장
+  증거에만 넣는다. P3-0 precheck의 사전등록 표결도 v2로 유지한다. readout 자동
+  결론은 `v2/gsm8k`, `v3/gsm8k`처럼 세대별 분모로 분리한다.
 - 다른 Codex의 `56a4edc`가 주장한 “v2 하드코딩이 0-byte의 직접 원인”은 단독으로는
   성립하지 않는다. 대상이 0건이어도 구 코드는 Markdown 헤더를 출력한다. 하드코딩은
   누락 원인이고, 0-byte 자체는 첫 출력 전 예외와 `tee` 선생성·오류 은폐가 결합한 결과다.
@@ -72,7 +83,7 @@
 ## 검증 현황
 
 - 통과: artifact contract, data sandbox, frontier, hard pool, pool qualification,
-  reversal, judge, readout, harvest 회귀 테스트
+  reversal, judge, run selector, readout, harvest/report I/O 회귀 테스트
 - 통과: theory verifier, 전체 Python `py_compile`, 전체 shell `bash -n`, Ruff `F/E9/B`,
   `git diff --check`
 - 로컬 미실행: `test_core.py`, `test_protocol.py`는 `torch` 없음;
@@ -88,5 +99,5 @@
 | readout run 단위 검증 | 완료 |
 | 회귀 테스트 | 완료 |
 | 전체 테스트·정적 검사 | CPU 범위 완료 |
-| 최신 master 세대 일반화 통합 | 진행 중 |
+| 최신 master 세대 일반화 통합 | 완료, 재검증 통과 |
 | push | 대기 |

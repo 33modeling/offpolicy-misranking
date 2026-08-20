@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# frontier 사후 분석 원샷:  bash scripts/frontier.sh [run경로...]
-# 인자 없으면 v2 run 전부. 출력: $OM_WORK/results/v2/FRONTIER.md
+# frontier 사후 분석 원샷: bash scripts/frontier.sh [run경로...]
+# 한 세대면 results/v<N>, 여러 세대면 results/all에 저장한다.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
@@ -20,7 +20,7 @@ _legacy_dup() { case "$1" in
     *-apps-apps)           echo "${1%-apps}";;
     *) echo "";;
   esac; }
-  for d in $(ls -d "$OM_WORK"/runs/v2-s* 2>/dev/null | grep -v smoke); do
+  for d in $(ls -d "$OM_WORK"/runs/v[0-9]*-s* 2>/dev/null | grep -v smoke); do
     dup=$(_legacy_dup "$d")
     [ -n "$dup" ] && [ -f "$dup/DONE" ] && [ -f "$dup/score_protocol.json" ] \
       && [ -f "$dup/oracle_protocol.json" ] \
@@ -29,5 +29,17 @@ _legacy_dup() { case "$1" in
       && [ -f "$d/oracle_protocol.json" ] && targets+=("$d")
   done
 fi
-[ "${#targets[@]}" -gt 0 ] || { echo "[abort] 대상 run 없음 (v2-s*)"; exit 1; }
-OM_RESULTS="${OM_RESULTS:-$OM_WORK/results/v2}" "$PY" src/frontier.py "${targets[@]}"
+[ "${#targets[@]}" -gt 0 ] || { echo "[abort] 대상 run 없음 (v<세대>-s*)"; exit 1; }
+if [ -z "${OM_RESULTS:-}" ]; then
+  declare -A generations=()
+  for target in "${targets[@]}"; do
+    name=$(basename "$target")
+    [[ "$name" =~ ^(v[0-9]+)- ]] && generations["${BASH_REMATCH[1]}"]=1
+  done
+  if [ "${#generations[@]}" -eq 1 ]; then
+    for generation in "${!generations[@]}"; do OM_RESULTS="$OM_WORK/results/$generation"; done
+  else
+    OM_RESULTS="$OM_WORK/results/all"
+  fi
+fi
+OM_RESULTS="$OM_RESULTS" "$PY" src/frontier.py "${targets[@]}"

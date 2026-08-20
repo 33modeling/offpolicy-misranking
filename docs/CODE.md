@@ -57,6 +57,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | `make_tables.py` | TABLES.md | T1~T7 표 생성 (게이트·신호보존·floor 곡선·live fraction·hybrid·C2·downstream) |
 | `readout_summary.py` | READOUT.md | 사람용 판독 요약 (한눈 표+자동 결론+원시 출력) |
 | `score_artifacts.py` | 내부 계약 | oracle·4 estimator·split-half의 schema, finite 값, prompt ID coverage를 공통 검증 |
+| `run_select.py` | 내부 계약 | 전 세대·legacy·protocol-only run의 공통 탐색과 미선택 사유 진단 |
 | `show_selection.py` / `make_hard_pool.py` / `c2_diagnose.py` / `c2_sweep.py` | — | 보조 유틸 (선택 내역 출력 / hard 풀 구성 / C2 진단·스윕) |
 
 ### 2×2 추정량 표기 (전 코드 공통)
@@ -97,6 +98,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | 스크립트 | 용도 |
 |---|---|
 | `harvest.sh` | **수확 원스톱**: KCURVE·READOUT·REVERSAL(닻·McNemar 포함)·STATS·TABLES·FRONTIER를 고유 폴더에 원자적으로 publish. 실패 stdout/stderr는 partial/error로 격리하고 nonzero 종료 |
+| `_report_io.sh` | 개별 보고서 I/O | read_now·K-curve·reversal 실행기의 고유 폴더 생성, nonempty 검사, 원자적 publish |
 | `reversal_freq.sh`/`kcurve.sh`/`kcurve_all.sh`/`frontier.sh` | 개별 분석 러너 (harvest가 전부 포함하므로 단독 실행은 조기 확인용) |
 | `read_now.sh` | judge 전체 출력 즉석 판독 |
 

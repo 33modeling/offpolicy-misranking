@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # 수확 원스톱 — 분석 산출물을 검증한 뒤 하나의 고유 폴더에 원자적으로 publish한다.
+#   KCURVE(GPU 0, 수 분) + READOUT + REVERSAL(닻 포함) + STATS + 표 사본을 같은 폴더에.
 #   bash scripts/harvest.sh
+#
+# 0820 수확 교훈: 실패를 숨기면(2>/dev/null, || true) 빈 파일이 성공처럼 전달된다
+# (READOUT.md 0바이트). stderr와 partial stdout을 보존하고, 검증을 통과한 파일만
+# 최종 Markdown 경로로 publish한다.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
-
 READOUTS_ROOT="$OM_WORK/readouts"
 mkdir -p "$READOUTS_ROOT" || {
   echo "[harvest-abort] readouts 경로 생성 실패: $READOUTS_ROOT" >&2
@@ -107,8 +111,9 @@ else
 fi
 [ -s "$stats_err" ] || rm -f "$stats_err"
 
-# 결과 폴더는 세대별(v2·qwen3.8-27b 등)로 분리될 수 있다.
+# 결과 폴더는 세대별(v2·v3·qwen3.8-27b 등)로 분리될 수 있다.
 for rd in "$OM_WORK"/results/*/; do
+  [ -d "$rd" ] || continue
   rtag=$(basename "$rd")
   [ -s "$rd/TABLES.md" ] \
     && cp "$rd/TABLES.md" "$STAMP_DIR/TABLES-$rtag.md"

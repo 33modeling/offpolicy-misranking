@@ -1,27 +1,33 @@
 #!/usr/bin/env bash
-# 즉시 판독 — 사람이 읽는 보고서(READOUT.md) 생성:
-#   ① 한눈 요약 표(수치+평문 판정) ② 자동 결론 ③ 용어 설명 ④ 상세(원시 출력)
-# 그룹볼륨 날짜·시간 폴더에 보관하고 경로를 마지막 줄에 찍는다.
+# 즉시 판독 — READOUT과 reversal을 검증 후 하나의 고유 폴더에 publish한다.
 #   bash scripts/read_now.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+source scripts/_report_io.sh
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
-STAMP_DIR="$OM_WORK/readouts/$(date '+%Y-%m-%d_%H%M')"
-mkdir -p "$STAMP_DIR"
+make_report_dir readout || { echo "[readout-abort] 출력 폴더 생성 실패" >&2; exit 1; }
 
-"$PY" src/readout_summary.py "$OM_WORK/runs" | tee "$STAMP_DIR/READOUT.md"
-readout_rc=${PIPESTATUS[0]}
-# 부호반전 재집계(닻 포함)를 같은 폴더에 동봉 — READOUT 전달 한 번이면 됨
-"$PY" src/reversal_freq.py "$OM_WORK/runs" \
-  > "$STAMP_DIR/REVERSAL.md" 2> "$STAMP_DIR/REVERSAL.err"
-reversal_rc=$?
-cp "$OM_WORK"/results/v2/TABLES.md "$OM_WORK"/results/v2/FRONTIER.md \
-   results/TABLES.md "$STAMP_DIR/" 2>/dev/null || true
+failures=0
+publish_report "$REPORT_DIR/READOUT.md" "0" yes \
+  "$PY" src/readout_summary.py "$OM_WORK/runs" || failures=$((failures + 1))
+publish_report "$REPORT_DIR/REVERSAL.md" "0" no \
+  "$PY" src/reversal_freq.py "$OM_WORK/runs" || failures=$((failures + 1))
+
+shopt -s nullglob
+for result_dir in "$OM_WORK"/results/*/; do
+  tag=$(basename "$result_dir")
+  [ -s "$result_dir/TABLES.md" ] \
+    && cp "$result_dir/TABLES.md" "$REPORT_DIR/TABLES-$tag.md"
+  [ -s "$result_dir/FRONTIER.md" ] \
+    && cp "$result_dir/FRONTIER.md" "$REPORT_DIR/FRONTIER-$tag.md"
+done
+
 echo
-echo "== 저장 완료: $STAMP_DIR/READOUT.md (+REVERSAL.md 동봉)"
-ls "$STAMP_DIR"
-[ "$readout_rc" -eq 0 ] && [ "$reversal_rc" -eq 0 ] || {
-  echo "[readout-abort] readout=$readout_rc reversal=$reversal_rc" >&2
+if [ "$failures" -gt 0 ]; then
+  echo "[readout-abort] 실패 $failures건: $REPORT_DIR" >&2
+  ls "$REPORT_DIR"
   exit 1
-}
+fi
+echo "== 저장 완료: $REPORT_DIR"
+ls "$REPORT_DIR"

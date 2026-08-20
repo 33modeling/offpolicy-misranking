@@ -68,6 +68,10 @@ case "$name" in
     echo 'g11 1.0'
     exit 0
     ;;
+  frontier.py|make_tables.py)
+    echo "OM_RESULTS=$OM_RESULTS"
+    exit 0
+    ;;
   *)
     echo "unexpected script: $1" >&2
     exit 99
@@ -89,10 +93,18 @@ esac
 
 
 def run_harvest(work: Path, env: dict[str, str]) -> tuple[subprocess.CompletedProcess, Path]:
+    return run_report_script(work, env, "scripts/harvest.sh")
+
+
+def run_report_script(
+    work: Path,
+    env: dict[str, str],
+    script: str,
+) -> tuple[subprocess.CompletedProcess, Path]:
     readouts = work / "readouts"
     before = set(readouts.iterdir()) if readouts.exists() else set()
     result = subprocess.run(
-        ["bash", "scripts/harvest.sh"],
+        ["bash", script],
         cwd=REPO,
         env=env,
         text=True,
@@ -150,6 +162,51 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     check("partial stats are not published as final", not (output / "STATS.md").exists())
     check("successful stats remain diagnostic-only", "## good" in partial and "## bad" not in partial)
     check("failed stats stderr is preserved", "bad stats" in (output / "STATS.err").read_text())
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "good")
+    env["FAKE_READOUT_MODE"] = "empty"
+    result, output = run_report_script(work, env, "scripts/read_now.sh")
+    check("read_now also rejects an empty readout", result.returncode == 1)
+    check("read_now never publishes a zero-byte final", not (output / "READOUT.md").exists())
+    check("read_now preserves empty stdout as partial", (output / "READOUT.partial.md").exists())
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "good")
+    result, output = run_report_script(work, env, "scripts/kcurve.sh")
+    check("standalone kcurve accepts scientific exit 3", result.returncode == 0)
+    check("standalone kcurve publishes nonempty output", (output / "KCURVE.md").stat().st_size > 0)
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "v3-s0")
+    (work / "runs" / "v3-s0" / "DONE").touch()
+    frontier = subprocess.run(
+        ["bash", "scripts/frontier.sh"],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    tables = subprocess.run(
+        ["bash", "scripts/tables.sh"],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    expected = f"OM_RESULTS={work}/results/v3"
+    check("frontier output follows its single generation", frontier.returncode == 0 and expected in frontier.stdout)
+    check("tables output follows its single generation", tables.returncode == 0 and expected in tables.stdout)
 
 
 print(("PASS" if FAILURES == 0 else "FAIL") + f" (failures {FAILURES})")

@@ -236,14 +236,15 @@ def main() -> int:
     if (root / "scores_oracle.json").exists():
         runs = [root]
     else:
-        # v2-*는 DONE 필수, v1 계열(drift*/gate-*)은 산출물 존재로 완결 판정
-        runs = [d for d in sorted(root.iterdir()) if d.is_dir()
-                and "smoke" not in d.name
-                and (d / "scores_oracle.json").exists()
-                and ((d / "DONE").exists() or not d.name.startswith("v2-"))]
+        from run_select import iter_runs
+        runs = iter_runs(
+            root,
+            need=("scores_oracle.json",),
+            include_legacy=True,
+        )
     results = [a for d in runs if (a := analyze_run(d))]
     if not results:
-        print(f"산출물 없음: {root} (scores_oracle.json 또는 v2-*/DONE 필요)")
+        print(f"산출물 없음: {root} (corrected score protocol 필요)")
         return 1
     print(report(results))
     return 0

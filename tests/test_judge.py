@@ -197,5 +197,16 @@ with tempfile.TemporaryDirectory() as tmp:
     check("malformed oracle protocol fails closed", canonical_gate_report(run) is None)
 
 
+with tempfile.TemporaryDirectory() as tmp:
+    run = Path(tmp)
+    mark_score_protocol(run)
+    write_json(run / "report.json", report())
+    offpolicy = json.loads((run / "scores_offpolicy.json").read_text())
+    offpolicy["g10"].pop("19")
+    write_json(run / "scores_offpolicy.json", offpolicy)
+    check("partial score coverage cannot fall back to stored report",
+          canonical_gate_report(run) is None)
+
+
 print(("PASS" if FAIL == 0 else "FAIL") + f" (failures {FAIL})")
 sys.exit(1 if FAIL else 0)

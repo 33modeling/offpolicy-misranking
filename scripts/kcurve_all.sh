@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# B1 — K-스케일링 floor 곡선 전 조건 확장 (GPU 0, 수 분).
+# B1 — K-scaling floor curves for preregistered and extended conditions.
 #   bash scripts/kcurve_all.sh
-# 사전 등록 P4-0 판정은 불변, v1 게이트 포함 전 run을 확장 증거로 보고.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+source scripts/_report_io.sh
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
-STAMP_DIR="$OM_WORK/readouts/$(date '+%Y-%m-%d_%H%M')-kcurve-all"
-mkdir -p "$STAMP_DIR"
-PYTHONPATH=src "$PY" src/kcurve_all.py "$OM_WORK/runs" | tee "$STAMP_DIR/KCURVE_ALL.md"
+make_report_dir kcurve-all || { echo "[kcurve-all-abort] 출력 폴더 생성 실패" >&2; exit 1; }
+publish_report "$REPORT_DIR/KCURVE_ALL.md" "0" yes \
+  env PYTHONPATH=src "$PY" src/kcurve_all.py "$OM_WORK/runs" || exit 1
 echo
-echo "== 저장: $STAMP_DIR/KCURVE_ALL.md"
+echo "== 저장: $REPORT_DIR/KCURVE_ALL.md"

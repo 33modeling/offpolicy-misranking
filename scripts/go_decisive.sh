@@ -25,7 +25,7 @@ _legacy_dup() { case "$1" in
     *-apps-apps)           echo "${1%-apps}";;
     *) echo "";;
   esac; }
-  for d in "$OM_WORK"/runs/v2-*; do
+  for d in "$OM_WORK"/runs/v[0-9]*-*; do
     case "$d" in *smoke*) continue;; esac
     dup=$(_legacy_dup "$d")
     [ -n "$dup" ] && [ -f "$dup/DONE" ] && [ -f "$dup/score_protocol.json" ] \

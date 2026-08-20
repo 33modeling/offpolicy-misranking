@@ -133,8 +133,9 @@ def tag_of(name: str) -> str:
 def main() -> int:
     gate = "--gate" in sys.argv
     root = Path([a for a in sys.argv[1:] if not a.startswith("--")][0])
-    runs = [d for d in sorted(root.glob("v2-*"))
-            if (d / "DONE").exists() and "smoke" not in d.name]
+    from run_select import iter_runs
+    runs = [d for d in iter_runs(root, require_done=False)
+            if d.name.startswith("v2-") and (d / "DONE").exists()]
 
     rows, votes = [], []
     for d in runs:

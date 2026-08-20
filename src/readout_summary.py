@@ -18,6 +18,7 @@ from score_artifacts import (
     ScoreArtifactError,
     load_complete_score_artifacts,
 )
+from run_select import is_generation_run, iter_runs
 from select_rules import overlap_under_independent_ties, topk_count
 
 
@@ -38,25 +39,20 @@ def precisions(run: Path) -> tuple[dict[str, float], int, float]:
 def _completed_runs(root: Path) -> list[Path]:
     if not root.is_dir():
         raise ScoreArtifactError(f"runs root does not exist: {root}")
-    if (root / "DONE").exists() or has_valid_analysis_protocol(root):
-        return [root]
-    return [
-        run
-        for run in sorted(root.iterdir())
-        if run.is_dir()
-        and "smoke" not in run.name
-        and ((run / "DONE").exists() or has_valid_analysis_protocol(run))
-    ]
+    return iter_runs(root, include_legacy=True)
 
 
 def _dataset_tag(name: str) -> str:
+    generation = name.split("-", 1)[0] if is_generation_run(name) else "legacy"
     if "dapo" in name:
-        return "dapo"
-    if "math500" in name:
-        return "math500"
-    if "gsm8k" in name or name.startswith("v2-"):
-        return "gsm8k"
-    return "other"
+        dataset = "dapo"
+    elif "math500" in name:
+        dataset = "math500"
+    elif "gsm8k" in name or is_generation_run(name):
+        dataset = "gsm8k"
+    else:
+        dataset = "other"
+    return f"{generation}/{dataset}"
 
 
 def main() -> int:

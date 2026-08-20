@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 결과 테이블 원샷:  bash scripts/tables.sh [7b|14b|7bm|14bm|<경로> ...]
-# 인자 없으면 존재하는 표준 run 전부. 출력: results/TABLES.md + 화면.
+# 인자 없으면 존재하는 corrected run 전부. 한 세대면 results/v<N>, 혼합이면 results/all.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
@@ -21,7 +21,9 @@ if [ "$#" -gt 0 ]; then
   for a in "$@"; do targets+=("$(resolve "$a")"); done
 else
   for a in 7b 14b 7bm 14bm; do
-    p="$(resolve "$a")"; [ -d "$p" ] && targets+=("$p")
+    p="$(resolve "$a")"
+    [ -d "$p" ] && [ -f "$p/score_protocol.json" ] \
+      && [ -f "$p/oracle_protocol.json" ] && targets+=("$p")
   done
   # v2 계열 완주분도 기본 포함 (부분 완주 안전 — DONE만)
 # 구버전 이중 접미사 run은 신형(단일 접미사) 완주가 있으면 제외 — 같은
@@ -34,7 +36,7 @@ _legacy_dup() { case "$1" in
     *-apps-apps)           echo "${1%-apps}";;
     *) echo "";;
   esac; }
-  for d in $(ls -d "$OM_WORK"/runs/v2-* 2>/dev/null | grep -v smoke); do
+  for d in $(ls -d "$OM_WORK"/runs/v[0-9]*-* 2>/dev/null | grep -v smoke); do
     dup=$(_legacy_dup "$d")
     [ -n "$dup" ] && [ -f "$dup/DONE" ] && [ -f "$dup/score_protocol.json" ] \
       && [ -f "$dup/oracle_protocol.json" ] \
@@ -44,4 +46,16 @@ _legacy_dup() { case "$1" in
   done
 fi
 [ "${#targets[@]}" -gt 0 ] || { echo "[abort] 대상 run 없음"; exit 1; }
-"$PY" src/make_tables.py "${targets[@]}"
+if [ -z "${OM_RESULTS:-}" ]; then
+  declare -A generations=()
+  for target in "${targets[@]}"; do
+    name=$(basename "$target")
+    [[ "$name" =~ ^(v[0-9]+)- ]] && generations["${BASH_REMATCH[1]}"]=1
+  done
+  if [ "${#generations[@]}" -eq 1 ]; then
+    for generation in "${!generations[@]}"; do OM_RESULTS="$OM_WORK/results/$generation"; done
+  else
+    OM_RESULTS="$OM_WORK/results/all"
+  fi
+fi
+OM_RESULTS="$OM_RESULTS" "$PY" src/make_tables.py "${targets[@]}"
