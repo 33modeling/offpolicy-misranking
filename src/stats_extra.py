@@ -64,9 +64,12 @@ def main() -> int:
     print(f"{'est':>6} {'prec':>6} {'overlap':>9} {'P(<=x|rand)':>16}   bootstrap95%CI")
 
     idx = list(oracle)
-    for est in ("g00", "g10", "g01", "g11"):
-        if est not in off:
-            continue
+    usable = [e for e in ("g00", "g10", "g01", "g11") if e in off]
+    if not usable:
+        print(f"  [경고] {run.name}: scores_offpolicy.json에 추정량 키가 없다 "
+              f"(발견된 키: {sorted(off)[:6]}) — 샤드 병합 누락 의심", flush=True)
+        return 1
+    for est in usable:
         sc = {int(i): v["score"] for i, v in off[est].items() if int(i) in oracle}
         from select_rules import overlap_under_independent_ties
         overlap = overlap_under_independent_ties(oracle, sc, k, seed=seed)

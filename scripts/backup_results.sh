@@ -17,7 +17,7 @@ for d in "$OM_WORK"/results/*/; do
     -exec cp {} "$t/" \; 2>/dev/null || true
 done
 # run별 정본(완주분만, 소형 json만)
-for r in "$OM_WORK"/runs/v2-*/; do
+for r in "$OM_WORK"/runs/v[0-9]*-*/; do
   [ -f "$r/DONE" ] || continue
   t="$DEST/runs/$(basename "$r")"; mkdir -p "$t"
   for f in report.json manifest.json scores_oracle.json scores_offpolicy.json \

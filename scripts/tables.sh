@@ -34,7 +34,7 @@ _legacy_dup() { case "$1" in
     *-apps-apps)           echo "${1%-apps}";;
     *) echo "";;
   esac; }
-  for d in $(ls -d "$OM_WORK"/runs/v2-* 2>/dev/null | grep -v smoke); do
+  for d in $(ls -d "$OM_WORK"/runs/v[0-9]*-* 2>/dev/null | grep -v smoke); do
     dup=$(_legacy_dup "$d")
     [ -n "$dup" ] && [ -f "$dup/DONE" ] && { echo "  [skip] legacy 이중 접미사: $(basename "$d") (신형 완주 존재)"; continue; }
     [ -f "$d/DONE" ] && targets+=("$d")

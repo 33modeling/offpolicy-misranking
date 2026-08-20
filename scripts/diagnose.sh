@@ -15,12 +15,12 @@ OUT="$LOGDIR/DIAGNOSIS.txt"
     --format=csv,noheader 2>/dev/null | sed 's/^/  /' || echo "  (nvidia-smi 불가)"
   echo "-- 디스크: $(df -h "${OM_WORK:-.}" 2>/dev/null | tail -1)"
   echo "-- 완주 현황:"
-  for d in "${OM_WORK:-.}"/runs/v2-*; do
+  for d in "${OM_WORK:-.}"/runs/v[0-9]*-*; do
     [ -d "$d" ] && echo "  $(basename "$d"): $([ -f "$d/DONE" ] && echo DONE || echo 미완)"
   done
   echo "-- 에러 시그니처 집계 (전 로그, 빈도순):"
   grep -hiE "cublas|cuda error|out of memory|illegal|launch fail|xid|no space|killed|assert" \
-    "$LOGDIR"/*.log "${OM_WORK:-.}"/runs/v2-*/logs/*.log 2>/dev/null \
+    "$LOGDIR"/*.log "${OM_WORK:-.}"/runs/v[0-9]*-*/logs/*.log 2>/dev/null \
     | sed 's/^[[:space:]]*//' | cut -c1-110 | sort | uniq -c | sort -rn | head -12
   echo "-- dmesg Xid (하드웨어 판정, 권한 없으면 생략):"
   dmesg 2>/dev/null | grep -i xid | tail -5 || echo "  (dmesg 접근 불가)"

@@ -20,11 +20,11 @@ _legacy_dup() { case "$1" in
     *-apps-apps)           echo "${1%-apps}";;
     *) echo "";;
   esac; }
-  for d in $(ls -d "$OM_WORK"/runs/v2-s* 2>/dev/null | grep -v smoke); do
+  for d in $(ls -d "$OM_WORK"/runs/v[0-9]*-s* 2>/dev/null | grep -v smoke); do
     dup=$(_legacy_dup "$d")
     [ -n "$dup" ] && [ -f "$dup/DONE" ] && { echo "  [skip] legacy 이중 접미사: $(basename "$d") (신형 완주 존재)"; continue; }
     [ -f "$d/DONE" ] && targets+=("$d")
   done
 fi
-[ "${#targets[@]}" -gt 0 ] || { echo "[abort] 대상 run 없음 (v2-s*)"; exit 1; }
+[ "${#targets[@]}" -gt 0 ] || { echo "[abort] 대상 run 없음 (v<세대>-s*)"; exit 1; }
 OM_RESULTS="${OM_RESULTS:-$OM_WORK/results/v2}" "$PY" src/frontier.py "${targets[@]}"

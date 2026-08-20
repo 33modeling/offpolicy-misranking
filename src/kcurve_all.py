@@ -71,7 +71,8 @@ def main() -> int:
     root = Path(sys.argv[1])
     all_runs = discover(root)
     prereg = [d for d in all_runs
-              if d.parent == root and d.name.startswith("v2-") and (d / "DONE").exists()]
+              if d.parent == root and __import__("run_select").is_generation_run(d.name)
+              and (d / "DONE").exists()]
     extra = [d for d in all_runs if d not in prereg]
 
     rows_pre = [r for r in (analyze(d) for d in prereg) if r]

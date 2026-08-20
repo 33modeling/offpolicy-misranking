@@ -35,8 +35,13 @@ def precisions(run: Path) -> tuple[dict, int, float] | None:
 
 def main() -> int:
     root = Path(sys.argv[1])
-    runs = [d for d in sorted(root.glob("v2-*"))
-            if (d / "DONE").exists() and "smoke" not in d.name]
+    from run_select import describe_skips, iter_runs
+    runs = iter_runs(root)
+    if not runs:
+        print(f"# 판독 대상 없음 — {root}", file=sys.stderr)
+        for line in describe_skips(root, runs):
+            print(f"#   {line}", file=sys.stderr)
+        return 1
 
     rows, details, concl = [], [], []
     for d in runs:
@@ -94,7 +99,8 @@ def main() -> int:
             f_str += f"→{floor_fixed:.3f}(교정)"
         rows.append(
             f"| {d.name} | {f_str} | {chance:.2f} | "
-            + " | ".join(f"{prec.get(e, float('nan')):.3f}" for e in ("g00", "g10", "g01", "g11"))
+            + " | ".join(f"{prec[e]:.3f}" if e in prec else "산출없음"
+                         for e in ("g00", "g10", "g01", "g11"))
             + f" | {onesided} | {hyb} | {dip} |")
         details.append(f"<details><summary>{d.name} 원시 출력</summary>\n\n```\n{jd.strip()}\n```\n</details>\n")
 

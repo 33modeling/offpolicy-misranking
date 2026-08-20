@@ -166,10 +166,13 @@ def tag_of(name: str) -> str:
 def main() -> int:
     gate = "--gate" in sys.argv
     root = Path([a for a in sys.argv[1:] if not a.startswith("--")][0])
-    runs = [d for d in sorted(root.glob("v2-*"))
-            if (d / "DONE").exists() and "smoke" not in d.name
-            and (d / "oracle_micro_groups.pt").exists()
-            and (d / "val_gradient.pt").exists()]
+    from run_select import describe_skips, iter_runs
+    runs = iter_runs(root, need=("oracle_micro_groups.pt", "val_gradient.pt"))
+    if not runs:
+        print(f"# K-곡선 대상 없음 — {root}", file=sys.stderr)
+        for line in describe_skips(root, runs):
+            print(f"#   {line}", file=sys.stderr)
+        return 1
 
     reports, votes = [], []
     for d in runs:
