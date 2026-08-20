@@ -64,9 +64,15 @@ trap 'echo "== 중단 — 전체 정리"; cleanup_strays; kill $W 2>/dev/null; e
 echo
 echo "== [1] 스모크 (~30분): 교정 파이프라인 전 스테이지가 실제로 완주하는지 먼저 확인"
 SMOKE="${RUN_BASE_SMOKE:-$BASE-smoke}"
+smoke_ready=0
 if [ -f "$SMOKE/report.json" ] && [ -f "$SMOKE/score_protocol.json" ] \
-   && [ -f "$SMOKE/oracle_protocol.json" ] \
-   && ls "$SMOKE"/scores_hybrid_*.json >/dev/null 2>&1; then
+   && [ -f "$SMOKE/oracle_protocol.json" ]; then
+  if [ "${OM_SKIP_HYBRID:-0}" = "1" ] \
+     || ls "$SMOKE"/scores_hybrid_*.json >/dev/null 2>&1; then
+    smoke_ready=1
+  fi
+fi
+if [ "$smoke_ready" -eq 1 ]; then
   echo "   스모크 산출물 존재 — 스킵"
 else
   cleanup_strays
