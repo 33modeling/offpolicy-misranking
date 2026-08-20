@@ -192,6 +192,7 @@ run_model_worker() {
     export RUN_LABEL="v4-$label-worker-s${worker_tag:-unknown}"
     export RUN_BASE_SMOKE="$OM_WORK/runs/v4-$label-smoke-s${worker_tag:-unknown}"
     export OM_SKIP_POSTPROCESS=1 OM_GPUS=0,1,2,3
+    export OM_STALL_MINUTES=5 OM_MAX_RETRIES=5
     if [ "$label" = "27b" ]; then
       export OM_LORA_TARGETS=all-linear OM_GEN_BATCH=8 OM_SKIP_HYBRID=1
     else

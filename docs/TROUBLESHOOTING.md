@@ -207,8 +207,10 @@ E절(데이터셋 확장 하루치)의 추가 교훈: **(4) 같은 판단(경로
   (진행 print 부재 + 워처는 변화 시만 출력)이라 정상 진행이 hang과 구별 불가 →
   사용자가 재시작 → 다시 같은 무출력 구간 → 무한루프.
 - **수정**: 세 스테이지 exists-스킵(모델 로드 전 종료), β-pass 25개·val 20개
-  단위 진행 print, 워처 5분 심장박동([워처] N분째 그대로 + GPU util — util>0면
-  진행 중이니 놔둘 것), nvidia-smi 전 호출 timeout 20(드라이버 wedge 즉시 판정).
+  단위 진행 print, nvidia-smi 전 호출 timeout 20(드라이버 wedge 즉시 판정).
+  **v4 운영 정책(8/21 변경)**은 로그 파일의 크기·mtime이 5분 동안 그대로면 GPU
+  utilization과 무관하게 해당 run의 `experiment.py`만 종료하고 저장분부터 자동
+  재시작한다. 스모크와 본 run 모두 최대 5회 재시도한다.
 - **잔여 경계**: util 0%가 지속되면 진짜 hang — 이 노드군의 fused 커널병(C5·C6)
   이 에러 대신 동결로 나타나는 케이스 또는 group-volume 스톨(D-state).
   그때는 RECOVERY 상황 1(노드 교체)이 정답. 진단: ps -eo pid,stat,wchan | awk

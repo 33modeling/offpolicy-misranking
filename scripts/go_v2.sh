@@ -40,19 +40,26 @@ RUN_LABEL="${RUN_LABEL:-$(basename "$BASE")}"  # v4 등 호출 세대별 console
 DATASETS=(${DATASETS:-gsm8k dapo-math})
 SEEDS=(${SEEDS:-0 1 2})
 
-# 상세 진행 워처 — 5분 무변화마다 심장박동(무출력 스테이지 vs 진짜 hang 판별용)
-( prev=""; still=0
+# 상세 진행 워처 — 로그가 5분 멈추면 현재 experiment만 종료한다.
+# run_14b의 산출물별 스킵과 아래 retry loop가 마지막 완료 지점부터 재개한다.
+( prev=""; still=0; stall_ticks=$(( ${OM_STALL_MINUTES:-5} * 4 ))
   while :; do
     sleep 15
     lf=$(ls -t "$BASE"*/logs/*.log 2>/dev/null | head -1); [ -n "$lf" ] || continue
     line=$(tail -n 1 "$lf" 2>/dev/null | cut -c1-120)
-    if [ -n "$line" ] && [ "$line" != "$prev" ]; then
-      echo "[detail·$(basename "$lf" .log)] $line"; prev="$line"; still=0
+    sig=$(stat -c '%n:%Y:%s' "$lf" 2>/dev/null || true)
+    if [ -n "$sig" ] && [ "$sig" != "$prev" ]; then
+      [ -n "$line" ] && echo "[detail·$(basename "$lf" .log)] $line"
+      prev="$sig"; still=0
     else
       still=$((still + 1))
-      if [ $((still % 20)) -eq 0 ]; then
-        util=$(timeout 10 nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | paste -sd, -)
-        echo "[워처] 로그 $((still * 15 / 60))분째 그대로 (GPU util ${util:-측정불가}%) — util>0이면 무출력 스테이지 진행 중(놔둘 것), 0%가 계속이면 hang → Ctrl+C 후 같은 명령 재실행(저장분 스킵)"
+      if [ "$still" -ge "$stall_ticks" ] \
+         && pgrep -f -- "src/experiment.py .*--run $BASE" >/dev/null; then
+        echo "[워처] 로그 ${OM_STALL_MINUTES:-5}분 무변화 — 현재 stage 종료 후 저장분부터 자동 재시작"
+        pkill -TERM -f -- "src/experiment.py .*--run $BASE" 2>/dev/null || true
+        sleep 5
+        pkill -KILL -f -- "src/experiment.py .*--run $BASE" 2>/dev/null || true
+        still=0
       fi
     fi
   done ) &
@@ -76,8 +83,17 @@ if [ "$smoke_ready" -eq 1 ]; then
   echo "   스모크 산출물 존재 — 스킵"
 else
   cleanup_strays
-  if ! DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
-       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh > "$LOGDIR/$RUN_LABEL-smoke.log" 2>&1; then
+  smoke_ok=0
+  for smoke_try in $(seq 1 "${OM_MAX_RETRIES:-2}"); do
+    if DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
+       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh >> "$LOGDIR/$RUN_LABEL-smoke.log" 2>&1; then
+      smoke_ok=1
+      break
+    fi
+    echo "   스모크 자동 재시작 $smoke_try/${OM_MAX_RETRIES:-2}"
+    cleanup_strays
+  done
+  if [ "$smoke_ok" -ne 1 ]; then
     echo "== [중단] 스모크 실패 — 본실행 진입 안 함. 사인:"
     tail -8 "$LOGDIR/$RUN_LABEL-smoke.log" | sed 's/^/   /'
     cleanup_strays; kill $W 2>/dev/null; exit 1
@@ -109,8 +125,8 @@ for SEED in "${SEEDS[@]}"; do
       echo "==== [$KEY] ✔ 완주(DONE+protocols) — 스킵"; RESULT[$KEY]=1; continue
     fi
     ok=0
-    for try in 1 2; do
-      echo "==== [$KEY] 시도 $try/2"
+    for try in $(seq 1 "${OM_MAX_RETRIES:-2}"); do
+      echo "==== [$KEY] 시도 $try/${OM_MAX_RETRIES:-2}"
       cleanup_strays
       if DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" bash scripts/run_14b.sh >> "$LOG" 2>&1; then
         ok=1; echo "==== [$KEY] ✔ 완주"; break
