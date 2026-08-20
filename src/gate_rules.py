@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from score_artifacts import ScoreArtifactError, load_complete_score_artifacts
 from select_rules import overlap_under_independent_ties, topk_count
 
 
@@ -51,43 +52,29 @@ def has_valid_analysis_protocol(run: Path) -> bool:
 
 
 def canonical_gate_report(run: Path, frac: float = 0.10, seed: int = 0) -> dict | None:
-    """Prefer recomputation from raw scores; fall back to a stored report."""
+    """Recompute the gate report from complete, coverage-matched raw scores."""
     if not has_valid_analysis_protocol(run):
         return None
     stored = load_json(run / "report.json")
-    oracle = load_json(run / "scores_oracle.json")
-    off = load_json(run / "scores_offpolicy.json")
-    halves = load_json(run / "scores_splithalf.json")
-    if not (oracle and off and halves):
-        return stored
+    try:
+        artifacts = load_complete_score_artifacts(run)
+    except ScoreArtifactError:
+        return None
 
-    oracle_scores = {str(i): float(value["score"]) for i, value in oracle.items()}
-    half_scores = {str(i): value for i, value in halves.items()}
-    common = set(oracle_scores) & set(half_scores)
-    if not common:
-        return stored
-    k = topk_count(len(common), frac)
+    oracle_scores = artifacts.oracle
+    half_scores = artifacts.splithalf
+    k = topk_count(len(oracle_scores), frac)
     floor = overlap_under_independent_ties(
-        {i: float(half_scores[i]["a"]) for i in common},
-        {i: float(half_scores[i]["b"]) for i in common},
+        {i: value["a"] for i, value in half_scores.items()},
+        {i: value["b"] for i, value in half_scores.items()},
         k,
         seed=seed,
     ).mean
-    report = dict(stored or {})
+    report = dict(stored) if isinstance(stored, dict) else {}
     report.update({"noise_floor": floor, "k": k, "_recomputed": True})
-    for estimator in ("g00", "g10", "g01", "g11"):
-        values = off.get(estimator)
-        if not values:
-            continue
-        scores = {
-            str(i): float(value["score"])
-            for i, value in values.items()
-            if str(i) in common
-        }
-        if set(scores) != common:
-            continue
+    for estimator, scores in artifacts.offpolicy.items():
         overlap = overlap_under_independent_ties(
-            {i: oracle_scores[i] for i in common}, scores, k, seed=seed
+            oracle_scores, scores, k, seed=seed
         )
         report[estimator] = {"precision": overlap.mean}
     return report

@@ -146,12 +146,15 @@ src/train_downstream.py GRPO-lite 학습(checkpointing)·greedy 평가
 src/experiment.py       stage orchestrator — analyze가 oracle→score→report→hybrid를
                         단일 프로세스로 묶어 7B 재로드 제거
 src/select_rules.py     top-k 크기·seeded tie-break·독립 tie overlap 정본
+src/score_artifacts.py  oracle·4 estimator·split-half의 schema·finite 값·ID coverage 검증
 src/judge.py            게이트 5조건(C1·C1'·C2·C3) 자동 PASS/FAIL 판정
 src/make_tables.py      논문용 표 생성 → results/TABLES.md
 src/show_selection.py   방법별 top-k 선택 내용·β정답률·겹침 행렬
 tests/test_core.py      모델 없는 핵심 로직 테스트 (2×2 항등식·인증 동작)
 tests/test_protocol.py  tie·oracle split·hybrid horizon·artifact metadata 회귀 테스트
 tests/test_judge.py     drift 집계·hybrid 축별 회복 판정 회귀 테스트
+tests/test_readout_summary.py  corrected run 탐색·부분 artifact 거부 회귀 테스트
+tests/test_harvest.py   원자적 수확·stderr 보존·부분 산출물 격리 shell 회귀 테스트
 ```
 
 구현 노트:

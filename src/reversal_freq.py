@@ -38,6 +38,7 @@ from math import comb
 from pathlib import Path
 
 from gate_rules import has_valid_analysis_protocol
+from score_artifacts import ScoreArtifactError, load_complete_score_artifacts
 
 ESTS = ("g00", "g10", "g01", "g11")
 
@@ -82,14 +83,10 @@ def load_run(run: Path) -> tuple[dict[int, float], dict[str, dict[int, float]]] 
     if not has_valid_analysis_protocol(run):
         return None
     try:
-        oracle = {int(i): v["score"] for i, v in
-                  json.loads((run / "scores_oracle.json").read_text()).items()}
-        off = json.loads((run / "scores_offpolicy.json").read_text())
-    except Exception:
+        artifacts = load_complete_score_artifacts(run)
+    except ScoreArtifactError:
         return None
-    ests = {e: {int(i): v["score"] for i, v in off[e].items() if int(i) in oracle}
-            for e in ESTS if e in off}
-    return oracle, ests
+    return artifacts.oracle, artifacts.offpolicy
 
 
 def analyze_run(run: Path) -> dict | None:

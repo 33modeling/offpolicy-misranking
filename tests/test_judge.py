@@ -29,7 +29,12 @@ def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value))
 
 
-def mark_score_protocol(run: Path) -> None:
+def mark_score_protocol(
+    run: Path,
+    *,
+    g10_fail: bool = True,
+    g01_fail: bool = True,
+) -> None:
     write_json(run / "score_protocol.json", {
         "schema": "offpolicy-score-validation-split/v1",
         "generation_validation": {"validated_rows": 1},
@@ -37,6 +42,26 @@ def mark_score_protocol(run: Path) -> None:
     write_json(run / "oracle_protocol.json", {
         "schema": "offpolicy-oracle-validation-split/v1",
         "generation_validation": {"validated_rows": 1},
+    })
+    oracle_scores = {str(i): float(20 - i) for i in range(20)}
+    reversed_scores = {str(i): float(i) for i in range(20)}
+    write_json(run / "scores_oracle.json", {
+        idx: {"score": score} for idx, score in oracle_scores.items()
+    })
+    write_json(run / "scores_splithalf.json", {
+        idx: {"a": score, "b": score} for idx, score in oracle_scores.items()
+    })
+    write_json(run / "scores_offpolicy.json", {
+        "g00": {idx: {"score": score} for idx, score in oracle_scores.items()},
+        "g10": {
+            idx: {"score": score}
+            for idx, score in (reversed_scores if g10_fail else oracle_scores).items()
+        },
+        "g01": {
+            idx: {"score": score}
+            for idx, score in (reversed_scores if g01_fail else oracle_scores).items()
+        },
+        "g11": {idx: {"score": score} for idx, score in oracle_scores.items()},
     })
 
 
@@ -77,10 +102,6 @@ with tempfile.TemporaryDirectory() as tmp:
     run.mkdir()
     mark_score_protocol(run)
     write_json(run / "report.json", report())
-    write_json(run / "scores_oracle.json", {
-        "0": {"score": 4.0}, "1": {"score": 3.0},
-        "2": {"score": 2.0}, "3": {"score": 1.0},
-    })
     recovering_cells = {
         "bb": {"0": 0.0, "1": 1.0, "2": 2.0, "3": 3.0},
         "bp": {"0": 0.0, "1": 1.0, "2": 4.0, "3": 2.0},
@@ -107,11 +128,6 @@ with tempfile.TemporaryDirectory() as tmp:
     run.mkdir()
     mark_score_protocol(run)
     write_json(run / "report.json", report())
-    oracle = {
-        "0": {"score": 4.0}, "1": {"score": 3.0},
-        "2": {"score": 2.0}, "3": {"score": 1.0},
-    }
-    write_json(run / "scores_oracle.json", oracle)
     correct = {"0": 4.0, "1": 3.0, "2": 2.0, "3": 1.0}
     wrong = {"0": 0.0, "1": 1.0, "2": 2.0, "3": 3.0}
     write_json(run / "scores_hybrid_0.3.json", {
@@ -145,8 +161,8 @@ with tempfile.TemporaryDirectory() as tmp:
     run100 = root / "drift100"
     run50.mkdir()
     run100.mkdir()
-    mark_score_protocol(run50)
-    mark_score_protocol(run100)
+    mark_score_protocol(run50, g10_fail=True, g01_fail=False)
+    mark_score_protocol(run100, g10_fail=False, g01_fail=True)
     write_json(run50 / "report.json", report(g10_fail=True, g01_fail=False))
     write_json(run100 / "report.json", report(g10_fail=False, g01_fail=True))
     verdicts = run_judge(root)

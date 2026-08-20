@@ -14,13 +14,13 @@
 
 from __future__ import annotations
 
-import json
 import random
 import sys
 from math import comb
 from pathlib import Path
 
 from gate_rules import has_valid_analysis_protocol
+from score_artifacts import ESTIMATORS, load_complete_score_artifacts
 
 
 def hyp_p_le(n: int, big_k: int, k: int, x: int) -> float:
@@ -58,9 +58,8 @@ def main() -> int:
     seed = int(sys.argv[4]) if len(sys.argv) > 4 else 0
     rng = random.Random(seed)
 
-    oracle = {int(i): v["score"] for i, v in
-              json.loads((run / "scores_oracle.json").read_text()).items()}
-    off = json.loads((run / "scores_offpolicy.json").read_text())
+    artifacts = load_complete_score_artifacts(run)
+    oracle = artifacts.oracle
     n = len(oracle)
     from select_rules import topk_count
     k = topk_count(n, frac)
@@ -68,10 +67,8 @@ def main() -> int:
     print(f"{'est':>6} {'prec':>6} {'overlap':>9} {'P(<=x|rand)':>16}   bootstrap95%CI")
 
     idx = list(oracle)
-    for est in ("g00", "g10", "g01", "g11"):
-        if est not in off:
-            continue
-        sc = {int(i): v["score"] for i, v in off[est].items() if int(i) in oracle}
+    for est in ESTIMATORS:
+        sc = artifacts.offpolicy[est]
         from select_rules import overlap_under_independent_ties
         overlap = overlap_under_independent_ties(oracle, sc, k, seed=seed)
         xs = [round(value * k) for value in overlap.values]

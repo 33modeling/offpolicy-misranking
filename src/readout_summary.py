@@ -8,95 +8,148 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
 
 from gate_rules import evaluate_causal_run, has_valid_analysis_protocol
+from score_artifacts import (
+    ESTIMATORS,
+    ScoreArtifactError,
+    load_complete_score_artifacts,
+)
+from select_rules import overlap_under_independent_ties, topk_count
 
-def precisions(run: Path) -> tuple[dict, int, float] | None:
+
+def precisions(run: Path) -> tuple[dict[str, float], int, float]:
     if not has_valid_analysis_protocol(run):
-        return None
-    try:
-        oracle = {int(i): v["score"] for i, v in
-                  json.loads((run / "scores_oracle.json").read_text()).items()}
-        off = json.loads((run / "scores_offpolicy.json").read_text())
-    except Exception:
-        return None
+        raise ScoreArtifactError("corrected score/oracle protocol is missing")
+    artifacts = load_complete_score_artifacts(run)
+    oracle = artifacts.oracle
     n = len(oracle)
-    from select_rules import overlap_under_independent_ties, topk_count
     k = topk_count(n, 0.10)
-    out = {}
-    for est in ("g00", "g10", "g01", "g11"):
-        if est not in off:
-            continue
-        sc = {int(i): v["score"] for i, v in off[est].items() if int(i) in oracle}
+    out: dict[str, float] = {}
+    for est in ESTIMATORS:
+        sc = artifacts.offpolicy[est]
         out[est] = overlap_under_independent_ties(oracle, sc, k, seed=0).mean
     return out, k, k / n
 
 
+def _completed_runs(root: Path) -> list[Path]:
+    if not root.is_dir():
+        raise ScoreArtifactError(f"runs root does not exist: {root}")
+    if (root / "DONE").exists() or has_valid_analysis_protocol(root):
+        return [root]
+    return [
+        run
+        for run in sorted(root.iterdir())
+        if run.is_dir()
+        and "smoke" not in run.name
+        and ((run / "DONE").exists() or has_valid_analysis_protocol(run))
+    ]
+
+
+def _dataset_tag(name: str) -> str:
+    if "dapo" in name:
+        return "dapo"
+    if "math500" in name:
+        return "math500"
+    if "gsm8k" in name or name.startswith("v2-"):
+        return "gsm8k"
+    return "other"
+
+
 def main() -> int:
+    if len(sys.argv) < 2:
+        print("usage: readout_summary.py RUNS_ROOT", file=sys.stderr)
+        return 2
     root = Path(sys.argv[1])
-    runs = [d for d in sorted(root.glob("v2-*"))
-            if (d / "DONE").exists() and "smoke" not in d.name]
+    try:
+        runs = _completed_runs(root)
+    except ScoreArtifactError as exc:
+        print(f"[abort] {exc}", file=sys.stderr)
+        return 2
 
     rows, details, concl = [], [], []
+    skipped: list[str] = []
+    errors: list[str] = []
     for d in runs:
-        state = evaluate_causal_run(d)
-        rep = state["report"] or {}
-        floor = rep.get("noise_floor")
-        pr = precisions(d)
-        if pr is None:
+        if not has_valid_analysis_protocol(d):
+            skipped.append(f"{d.name}: corrected score/oracle protocol 없음")
             continue
-        prec, k, chance = pr
-
-        # judge와 같은 사전 문턱, 같은 run의 joint predicate를 그대로 사용한다.
-        if state["axis_failures"] is not None:
-            onesided = "예 (사전 문턱)" if state["joint_failure"] else "아니오"
-        else:
-            onesided = "판정 불가"
-
-        valid_hybrid = [r for r in state["hybrid_results"] if "error" not in r]
-        eligible_hybrid = [r for r in valid_hybrid if r["eligible"]]
-        if valid_hybrid:
-            dip_votes = [
-                max(r["precision"]["bp"], r["precision"]["pb"])
-                < r["precision"]["bb"]
-                for r in valid_hybrid
+        try:
+            prec, _, chance = precisions(d)
+            state = evaluate_causal_run(d)
+            rep = state["report"] or {}
+            if not rep.get("_recomputed") or not isinstance(
+                rep.get("noise_floor"), (int, float)
+            ):
+                raise ScoreArtifactError(
+                    "raw split-half 기반 canonical report 재계산 실패"
+                )
+            hybrid_errors = [
+                result["error"]
+                for result in state["hybrid_results"]
+                if "error" in result
             ]
-            if not state["joint_failure"]:
-                hyb = "C1 미충족"
-            elif state["witnesses"]:
-                hyb = f"예 (cut={state['causal_cut']})"
-            elif not eligible_hybrid:
-                hyb = "사전고정 cut 없음"
+            if hybrid_errors:
+                raise ScoreArtifactError(
+                    "hybrid artifact 오류: " + "; ".join(hybrid_errors)
+                )
+            floor = float(rep["noise_floor"])
+
+            # judge와 같은 사전 문턱, 같은 run의 joint predicate를 그대로 사용한다.
+            if state["axis_failures"] is not None:
+                onesided = "예 (사전 문턱)" if state["joint_failure"] else "아니오"
             else:
-                hyb = "아니오"
-            dip = "예" if all(dip_votes) else ("일부" if any(dip_votes) else "아니오")
-        else:
-            hyb, dip = "데이터 없음", "-"
+                onesided = "판정 불가"
 
-        jd = subprocess.run(
-            [sys.executable, "src/judge.py", str(d)],
-            capture_output=True,
-            text=True,
-            timeout=600,
-            check=False,
-        ).stdout
+            valid_hybrid = state["hybrid_results"]
+            eligible_hybrid = [r for r in valid_hybrid if r["eligible"]]
+            if valid_hybrid:
+                dip_votes = [
+                    max(r["precision"]["bp"], r["precision"]["pb"])
+                    < r["precision"]["bb"]
+                    for r in valid_hybrid
+                ]
+                if not state["joint_failure"]:
+                    hyb = "C1 미충족"
+                elif state["witnesses"]:
+                    hyb = f"예 (cut={state['causal_cut']})"
+                elif not eligible_hybrid:
+                    hyb = "사전고정 cut 없음"
+                else:
+                    hyb = "아니오"
+                dip = "예" if all(dip_votes) else ("일부" if any(dip_votes) else "아니오")
+            else:
+                hyb, dip = "데이터 없음", "-"
 
-        f_str = f"{floor:.3f}" if isinstance(floor, (int, float)) else "?"
-        if rep.get("_recomputed"):
-            f_str += "†"
-        rows.append(
-            f"| {d.name} | {f_str} | {chance:.2f} | "
-            + " | ".join(f"{prec.get(e, float('nan')):.3f}" for e in ("g00", "g10", "g01", "g11"))
-            + f" | {onesided} | {hyb} | {dip} |")
-        details.append(f"<details><summary>{d.name} 원시 출력</summary>\n\n```\n{jd.strip()}\n```\n</details>\n")
+            judge = subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("judge.py")), str(d)],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+            if judge.returncode != 0 or not judge.stdout.strip():
+                reason = judge.stderr.strip() or "judge stdout 없음"
+                raise ScoreArtifactError(
+                    f"judge 실패(exit={judge.returncode}): {reason}"
+                )
+            jd = judge.stdout
 
-        tag = "gsm8k" if "dapo" not in d.name and "math500" not in d.name else \
-              ("dapo" if "dapo" in d.name else "math500")
-        concl.append((tag, onesided.startswith("예"), hyb))
+            rows.append(
+                f"| {d.name} | {floor:.3f}† | {chance:.2f} | "
+                + " | ".join(f"{prec[e]:.3f}" for e in ESTIMATORS)
+                + f" | {onesided} | {hyb} | {dip} |"
+            )
+            details.append(
+                f"<details><summary>{d.name} 원시 출력</summary>\n\n"
+                f"```\n{jd.strip()}\n```\n</details>\n"
+            )
+            concl.append((_dataset_tag(d.name), onesided.startswith("예"), hyb))
+        except (ScoreArtifactError, subprocess.TimeoutExpired, ValueError) as exc:
+            errors.append(f"{d.name}: {type(exc).__name__}: {exc}")
 
     print("# 판독 보고서\n")
     print("## 한눈 요약\n")
@@ -106,10 +159,8 @@ def main() -> int:
         print(r)
 
     print("\n## 자동 결론\n")
-    for tag in ("gsm8k", "dapo", "math500"):
+    for tag in sorted({item[0] for item in concl}):
         sub = [c for c in concl if c[0] == tag]
-        if not sub:
-            continue
         yes = sum(1 for c in sub if c[1])
         print(f"- **{tag}**: one-sided 열세 {yes}/{len(sub)} run에서 관찰. "
               f"hybrid 회복: {', '.join(c[2] for c in sub)}")
@@ -123,12 +174,25 @@ def main() -> int:
     print("- **hybrid 회복**: C1을 만족한 동일 run의 사전고정 cut=0.5에서 pp가 pb·bp보다 모두 높으면 '예'")
     print("- **mixed-dip**: 혼합 셀(bp·pb)이 순수 stale(bb)보다 낮으면 '예'")
 
+    if skipped:
+        print("\n## 제외된 historical run\n")
+        for reason in skipped:
+            print(f"- {reason}")
+
+    if errors:
+        print("\n## 산출물 오류\n")
+        for error in errors:
+            print(f"- {error}")
+
     print("\n## 상세 (원시 출력)\n")
     for dt in details:
         print(dt)
     if not rows:
         print("[abort] corrected protocol을 만족하는 run이 없음", file=sys.stderr)
         return 2
+    if errors:
+        print(f"[abort] corrected run 산출물 오류 {len(errors)}개", file=sys.stderr)
+        return 1
     return 0
 
 
