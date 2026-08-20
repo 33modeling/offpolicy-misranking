@@ -270,10 +270,12 @@ run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}" || exit 1
 AD=$(ls -t "$OUT_ROOT"/drift_*/adapter_config.json 2>/dev/null | head -1)
 if [ -n "${AD:-}" ]; then
   SDIR="$OUT_ROOT/stale-$(date +%s)"; moved=0
-  for f in "$OUT_ROOT"/rollouts_fresh_train*.jsonl "$OUT_ROOT"/rollouts_fresh_val.jsonl \
+  for f in "$OUT_ROOT"/rollouts_fresh_train*.jsonl "$OUT_ROOT"/rollouts_fresh_train*.manifest.json \
+           "$OUT_ROOT"/rollouts_fresh_val.jsonl "$OUT_ROOT"/rollouts_fresh_val.manifest.json \
            "$OUT_ROOT"/oracle_micro_groups*.pt "$OUT_ROOT"/scores_oracle.json \
            "$OUT_ROOT"/scores_splithalf.json "$OUT_ROOT"/scores_offpolicy*.json \
            "$OUT_ROOT"/scores_hybrid_*.json "$OUT_ROOT"/rollouts_hybrid_*.jsonl \
+           "$OUT_ROOT"/rollouts_hybrid_*.manifest.json \
            "$OUT_ROOT"/val_gradient.pt "$OUT_ROOT"/val_groups.pt \
            "$OUT_ROOT"/score_protocol*.json "$OUT_ROOT"/oracle_protocol.json \
            "$OUT_ROOT"/hybrid_protocol_*.json \
@@ -325,6 +327,13 @@ for p in root.glob("oracle_micro_groups.shard*.pt"):
     if not ok:
         stale.append(p)
 if stale:
+    sidecars = []
+    for p in stale:
+        if p.suffix == ".jsonl":
+            sidecar = p.with_name(p.stem + ".manifest.json")
+            if sidecar.exists():
+                sidecars.append(sidecar)
+    stale = list(dict.fromkeys(stale + sidecars))
     d = root / f"stale-shards-{int(time.time())}"
     d.mkdir(exist_ok=True)
     for p in stale:

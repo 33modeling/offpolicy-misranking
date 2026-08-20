@@ -10,7 +10,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from make_hard_pool import build_pool, manifest_path, validate_pool  # noqa: E402
 
-
 FAIL = 0
 
 
@@ -129,4 +128,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
 
 print(("PASS" if FAIL == 0 else "FAIL") + f" (failures {FAIL})")
-sys.exit(1 if FAIL else 0)
+
+
+def test_hard_pool_regressions() -> None:
+    assert FAIL == 0
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAIL else 0)

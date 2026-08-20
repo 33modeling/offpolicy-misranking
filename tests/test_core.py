@@ -100,4 +100,11 @@ check("scalar validation 비용 포함", scalar["fresh_groups"] == scalar_initia
 check("scalar fresh budget 경계 초과 없음", scalar["fresh_groups"] <= scalar_initial)
 
 print(("PASS" if FAIL == 0 else "FAIL") + f" (실패 {FAIL})")
-sys.exit(1 if FAIL else 0)
+
+
+def test_core_regressions() -> None:
+    assert FAIL == 0
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAIL else 0)

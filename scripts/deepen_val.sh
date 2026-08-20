@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# val 방향 심화 — fresh K 추가 수집 + val gradient 재계산 (GPU 1장, 7B ~1시간)
-#   bash scripts/deepen_val.sh 7b [drift100] [추가K=24]
+# Legacy in-place validation deepening is intentionally disabled. It changes
+# immutable val_k and invalidates every dependent score/protocol artifact.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+echo "[abort] in-place val deepening is invalid; start a new run with the intended larger VAL_K"
+exit 2
 source scripts/setup_env.sh
 source scripts/_find_root.sh "${1:-7b}"
 DRIFT_DIR="${2:-drift100}"

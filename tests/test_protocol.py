@@ -10,15 +10,25 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from data import _maybe_json_list  # noqa: E402
-from experiment import score_oracle_microgroups, split_validation_directions  # noqa: E402
-from hybrid import continue_rollouts_batch  # noqa: E402
-from kcurve_floor import find_fresh_k  # noqa: E402
-from select_rules import overlap_under_independent_ties, topk_count  # noqa: E402
+from data import _maybe_json_list
+from experiment import (
+    score_oracle_microgroups,
+    split_validation_directions,
+)
+from grads import ProjectionSpec, prompt_gradient
+from hybrid import (
+    _cut_prefixes,
+    continue_rollouts_batch,
+    validate_hybrid_cells,
+)
+from kcurve_floor import find_fresh_k
+from rollout import response_only_training_example, select_drift_training_rows
+from select_rules import overlap_under_independent_ties, topk_count
 
 
 def test_all_tie_overlap_is_chance():
@@ -80,6 +90,62 @@ def test_hybrid_preserves_total_response_horizon():
     )
     assert [seq.numel() - 3 for seq in out] == [5, 5]
     assert sorted(model.budgets) == [2, 3]
+
+
+def test_hybrid_prefix_excludes_terminal_source_token():
+    rows = [
+        {"input_ids": torch.tensor([1, 2, 99]), "resp_start": 2},
+        {"input_ids": torch.tensor([1, 2, 7, 8, 99]), "resp_start": 2},
+    ]
+    prefixes = _cut_prefixes(rows, 0.75)
+    assert prefixes[0].tolist() == [1, 2]
+    assert prefixes[1].tolist() == [1, 2, 7, 8]
+
+
+def test_hybrid_cells_require_common_prompts_and_exact_k():
+    cells = {
+        cell: {
+            prompt_idx: [{"cell": cell}, {"cell": cell}]
+            for prompt_idx in (3, 5)
+        }
+        for cell in ("bb", "bp", "pb", "pp")
+    }
+    validate_hybrid_cells(cells, {3, 5}, 2)
+    cells["pb"][5].pop()
+    with pytest.raises(ValueError, match="expected K=2"):
+        validate_hybrid_cells(cells, {3, 5}, 2)
+
+
+def test_gradient_rejects_response_weight_truncation():
+    sequences = [{"input_ids": torch.tensor([1, 2, 3, 4]), "resp_start": 2}]
+    with pytest.raises(ValueError, match="response/weight length mismatch"):
+        prompt_gradient(
+            None, [], sequences, [torch.ones(1)], ProjectionSpec(dim=4)
+        )
+
+
+def test_response_only_sft_never_labels_prompt_after_truncation():
+    ids, labels = response_only_training_example({
+        "input_ids": [1, 2, 3, 4, 5],
+        "resp_start": 3,
+        "resp_end": 5,
+    })
+    assert ids.tolist() == [1, 2, 3, 4, 5]
+    assert labels.tolist() == [-100, -100, -100, 4, 5]
+    with pytest.raises(ValueError, match="outside max_length"):
+        response_only_training_example({
+            "input_ids": [1, 2, 3, 4, 5, 6],
+            "resp_start": 4,
+            "resp_end": 6,
+        }, max_length=4)
+
+
+def test_drift_training_rejects_an_all_wrong_pool():
+    assert select_drift_training_rows([
+        {"reward": 0.0}, {"reward": 1.0}, {"reward": 0.0}
+    ]) == [{"reward": 1.0}]
+    with pytest.raises(ValueError, match="at least one correct behavior rollout"):
+        select_drift_training_rows([{"reward": 0.0}, {"reward": 0.0}])
 
 
 def test_artifact_metadata_parsing():

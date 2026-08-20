@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# C2 처방 원샷: val 심화(+K=24, GPU 자동선택) → 스윕 재판정 → 진단 → 결론.
-#   bash scripts/fix_c2.sh          # 7B 대상, drift 3개 전부 val 심화 후 재판정
+# Legacy C2 replay depended on invalid in-place validation deepening.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+echo "[abort] legacy C2 replay mutates immutable val_k; use a new run with larger VAL_K"
+exit 2
 source scripts/setup_env.sh
 source scripts/_find_root.sh 7b
 PY="$VENV_DIR/bin/python"

@@ -93,4 +93,11 @@ check("binom_2sided(0,0)=1", binom_2sided(0, 0) == 1.0)
 check("fisher 빈 표=1", fisher_exact_2x2(0, 0, 0, 0) == 1.0)
 
 print(("\n전체 통과" if FAIL == 0 else f"\n실패 {FAIL}건"))
-sys.exit(1 if FAIL else 0)
+
+
+def test_reversal_frequency_regressions() -> None:
+    assert FAIL == 0
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAIL else 0)

@@ -18,10 +18,9 @@ from pathlib import Path
 
 import torch
 
-from artifact_contract import validate_generation_contract
+from artifact_contract import sha256_file, validate_generation_contract
 from certagrad import certagrad, uniform_baseline
 from data import load_prompts
-from rollout_contract import trim_row
 from grads import (
     ESTIMATORS,
     ProjectionSpec,
@@ -34,12 +33,17 @@ from grads import (
     weight_stats,
 )
 from rollout import SAMPLING, collect_rollouts, load_policy, train_drift_lora
-from select_rules import (fixed_selection_overlap, jittered_topk,
-                          overlap_under_independent_ties, topk_count)
+from rollout_contract import trim_row
+from select_rules import (
+    fixed_selection_overlap,
+    jittered_topk,
+    overlap_under_independent_ties,
+    topk_count,
+)
 
 SCORE_PROTOCOL_SCHEMA = "offpolicy-score-validation-split/v1"
 ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v1"
-HYBRID_PROTOCOL_SCHEMA = "offpolicy-hybrid-validation-split/v1"
+HYBRID_PROTOCOL_SCHEMA = "offpolicy-hybrid-validation-split/v2"
 
 
 def _atomic_text(path: Path, text: str) -> None:
@@ -377,6 +381,18 @@ def stage_report(args, run: Path) -> None:
         raise ValueError("corrected off-policy score protocol is missing")
     if not _has_protocol(run / "oracle_protocol.json", ORACLE_PROTOCOL_SCHEMA):
         raise ValueError("corrected oracle validation protocol is missing")
+    score_protocol = json.loads((run / "score_protocol.json").read_text())
+    oracle_protocol = json.loads((run / "oracle_protocol.json").read_text())
+    for protocol, source_names in (
+        (score_protocol, ("rollouts_behavior_train",)),
+        (oracle_protocol, ("rollouts_fresh_train", "rollouts_fresh_val")),
+    ):
+        recorded = protocol.get("generation_validation", {})
+        if recorded.get("artifact_sha256"):
+            current = validate_generation_contract(run, source_names)
+            for key in ("manifest_sha256", "artifact_sha256"):
+                if recorded.get(key) != current.get(key):
+                    raise ValueError(f"generation provenance changed after scoring: {key}")
     oracle = {int(k): v for k, v in json.loads((run / "scores_oracle.json").read_text()).items()}
     off = json.loads((run / "scores_offpolicy.json").read_text())
     halves = {int(k): v for k, v in json.loads((run / "scores_splithalf.json").read_text()).items()}
@@ -405,6 +421,14 @@ def stage_report(args, run: Path) -> None:
                "split_half_jitter_range": [floor_summary.low, floor_summary.high],
                "split_half_jitter_sd": floor_summary.sd,
                "k": k, "seed": seed, "boundary_ties": {}, "zero_grad": {}}
+    report_inputs = (
+        "scores_oracle.json", "scores_offpolicy.json", "scores_splithalf.json",
+        "oracle_micro_groups.pt", "val_groups.pt", "score_protocol.json",
+        "oracle_protocol.json",
+    )
+    results["input_sha256"] = {
+        name: sha256_file(run / name) for name in report_inputs
+    }
     ot, oz = _ties_and_zeros(oracle)
     results["boundary_ties"]["oracle"], results["zero_grad"]["oracle"] = ot, oz
     for est in ESTIMATORS:
@@ -616,19 +640,11 @@ def main() -> None:
     elif args.stage == "oracle":
         stage_oracle(args, run)
     elif args.stage == "val-deepen":
-        # val fresh를 K만큼 추가 수집(append) 후 val gradient 재계산 — α_v 심화용
-        pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
-        prompts = json.loads((run / "prompts.json").read_text())
-        extra = run / "rollouts_fresh_val.extra.jsonl"
-        collect_rollouts(pi, tok, prompts["val"], args.val_k,
-                         args.max_new_tokens, args.temperature, extra)
-        with (run / "rollouts_fresh_val.jsonl").open("a") as f:
-            for line in extra.open():
-                f.write(line)
-        extra.unlink()
-        for p in ("val_gradient.pt", "val_groups.pt"):
-            (run / p).unlink(missing_ok=True)
-        print(f"val-deepen: +K={args.val_k} 추가 완료 → val-grads 재계산 필요")
+        raise ValueError(
+            "in-place val-deepen is disabled: appending rollouts changes the immutable "
+            "val_k contract and invalidates score/oracle artifacts; start a new run with "
+            "the intended larger VAL_K"
+        )
     elif args.stage == "val-grads":
         # 재시작 스킵 — 이게 없어서 재시작마다 무출력 15~40분 구간을 다시 돌았다
         if (run / "val_gradient.pt").exists() and (run / "val_groups.pt").exists():
@@ -821,6 +837,11 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
                 or int(rollout_manifest.get("k_cell", -1)) != args.k_cell
                 or float(rollout_manifest.get("cut_frac", -1)) != cut_frac):
             raise ValueError("hybrid rollout contract mismatch")
+        if rollout_manifest.get("artifact_sha256") != sha256_file(hy_path):
+            raise ValueError("hybrid rollout artifact hash mismatch")
+        expected_prompts = {int(i) for i in rollout_manifest.get("prompt_indices", [])}
+        if not expected_prompts:
+            raise ValueError("hybrid rollout manifest has no prompt_indices")
         hy = read_rollouts(hy_path)  # prompt_idx 기준 — cell 분리 다시
         cells: dict[str, dict[int, list[dict]]] = {"bb": {}, "bp": {}, "pb": {}, "pp": {}}
         for idx, rows in hy.items():
@@ -829,13 +850,19 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
         params = grad_params(pi, args.grad_layers)
         val_groups = torch.load(run / "val_groups.pt", weights_only=True)
         selection_val, _ = split_validation_directions(val_groups)
-        scores = score_cells(pi, params, cells, selection_val, spec)
-        _atomic_text(run / f"scores_hybrid_{cut_frac}.json", json.dumps(scores, indent=1))
+        scores = score_cells(
+            pi, params, cells, selection_val, spec, expected_prompts, args.k_cell
+        )
+        score_path = run / f"scores_hybrid_{cut_frac}.json"
+        _atomic_text(score_path, json.dumps(scores, indent=1))
+        hybrid_inputs = (hy_path, rollout_manifest_path, run / "val_groups.pt")
         _atomic_text(protocol_path, json.dumps({
             "schema": HYBRID_PROTOCOL_SCHEMA,
             "validation_partition": "selection=val_groups[0::2]",
             "cut": cut_frac,
             "rollout_protocol": HYBRID_ROLLOUT_SCHEMA,
+            "input_sha256": {path.name: sha256_file(path) for path in hybrid_inputs},
+            "output_sha256": {score_path.name: sha256_file(score_path)},
         }, indent=1))
         print(f"hybrid cut={cut_frac} 저장: {sorted(scores)}")
 

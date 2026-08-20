@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from gate_rules import canonical_gate_report  # noqa: E402
 from judge import judge  # noqa: E402
 
-
 FAIL = 0
 
 
@@ -67,7 +66,7 @@ def mark_score_protocol(
 
 def mark_hybrid_protocol(run: Path, cut: str) -> None:
     write_json(run / f"hybrid_protocol_{cut}.json", {
-        "schema": "offpolicy-hybrid-validation-split/v1",
+        "schema": "offpolicy-hybrid-validation-split/v2",
     })
 
 
@@ -209,4 +208,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
 
 print(("PASS" if FAIL == 0 else "FAIL") + f" (failures {FAIL})")
-sys.exit(1 if FAIL else 0)
+
+
+def test_judge_regressions() -> None:
+    assert FAIL == 0
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAIL else 0)

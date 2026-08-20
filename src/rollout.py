@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """rollout 수집과 drift 체크포인트 생성 (LoRA RFT).
 
 행동 정책 β = base instruct 모델.
@@ -13,9 +14,9 @@ from pathlib import Path
 
 import torch
 
+from artifact_contract import sha256_file
 from data import build_user_msg, reward
-from rollout_contract import (eos_ids_of, gen_kwargs, resolved_manifest,
-                              resp_end_index)
+from rollout_contract import eos_ids_of, gen_kwargs, resolved_manifest, resp_end_index
 
 # torch 2.7 + Hopper: cuDNN SDPA가 산발적 'unspecified launch failure'를 낸다
 # (비동기라 보고 지점은 attention이 아닐 수도 있음 — modeling_qwen2.py:47 사례).
@@ -155,9 +156,12 @@ def collect_rollouts(
                      tok.eos_token_id)
     eos_set = eos_ids_of(model, tok, pad_id=tok.eos_token_id)
     manifest_path = out_path.parent / (out_path.stem + ".manifest.json")
+    manifest_tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
     manifest = resolved_manifest(model, tok, gkw)
     manifest.update({"k": k, "n_prompts": len(prompts), "idx_offset": idx_offset})
-    manifest_path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
+    # Keep an in-progress record without replacing a previously valid sidecar.
+    # The final manifest is published only after the JSONL and its hash exist.
+    manifest_tmp.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
     tmp_path = out_path.with_suffix(".tmp")
     with tmp_path.open("w") as f:
         for i, item in enumerate(prompts):
@@ -200,6 +204,48 @@ def collect_rollouts(
                   f"({100 * (i + 1) // len(prompts)}%, {time.time() - t0:.0f}s/개, "
                   f"정답 {n_correct}/{k}, ETA {_eta(i + 1, len(prompts), t_start)})", flush=True)
     tmp_path.rename(out_path)  # 원자적 완료 표시 — 중단된 부분 파일은 .tmp로 남는다
+    manifest.update({
+        "artifact_file": out_path.name,
+        "artifact_sha256": sha256_file(out_path),
+    })
+    manifest_tmp.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
+    manifest_tmp.replace(manifest_path)
+
+
+def response_only_training_example(
+    row: dict,
+    max_length: int = 1280,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build one SFT example and reject rows whose response is truncated away."""
+    input_ids = list(row["input_ids"])
+    response_end = int(row.get("resp_end", len(input_ids)))
+    response_start = int(row["resp_start"])
+    if not 0 < response_start < response_end <= len(input_ids):
+        raise ValueError(
+            f"invalid response boundary: start={response_start}, end={response_end}, "
+            f"length={len(input_ids)}"
+        )
+    truncated = input_ids[:response_end][:max_length]
+    if response_start >= len(truncated):
+        raise ValueError(
+            f"response starts at {response_start}, outside max_length={max_length}; "
+            "increase the training horizon instead of training on prompt tokens"
+        )
+    ids = torch.as_tensor(truncated)
+    labels = ids.clone()
+    labels[:response_start] = -100
+    return ids, labels
+
+
+def select_drift_training_rows(rows: list[dict]) -> list[dict]:
+    """Select verified-positive SFT rows; no-signal runs cannot define this drift."""
+    correct = [row for row in rows if float(row["reward"]) > 0.5]
+    if not correct:
+        raise ValueError(
+            "drift SFT requires at least one correct behavior rollout; "
+            "the current pool has no positive training target"
+        )
+    return correct
 
 
 def train_drift_lora(
@@ -223,12 +269,8 @@ def train_drift_lora(
     # 활성값 메모리 절감 — 7B 학습 OOM 방지
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
-    rows = [json.loads(l) for l in rollout_path.open()]
-    correct = [r for r in rows if r["reward"] > 0.5]
-    if not correct:
-        # 게이트 본실행에서는 있어선 안 되는 상황 — 스모크 완주용 폴백.
-        print("경고: 정답 rollout 0개 — 전체 rollout으로 drift SFT (스모크 전용 폴백)")
-        correct = rows
+    rows = [json.loads(line) for line in rollout_path.open()]
+    correct = select_drift_training_rows(rows)
     print(f"drift SFT: rollout {len(correct)}개, {steps} steps")
 
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
@@ -240,19 +282,21 @@ def train_drift_lora(
         for _ in range(batch_size):
             r = correct[i % len(correct)]
             i += 1
-            # P0-2: 응답 끝 이후 padding을 SFT 라벨에 넣지 않는다
-            ids_list = r["input_ids"]
-            if r.get("resp_end"):
-                ids_list = ids_list[: int(r["resp_end"])]
-            ids = torch.as_tensor(ids_list[:1280]).to(model.device).unsqueeze(0)
-            labels = ids.clone()
-            labels[0, : min(r["resp_start"], 1279)] = -100
+            # P0-2: 응답 끝 이후 padding과 응답 전 prompt를 SFT 라벨에서 제외한다.
+            ids, labels = response_only_training_example(r)
+            ids = ids.to(model.device).unsqueeze(0)
+            labels = labels.to(model.device).unsqueeze(0)
             loss = model(ids, labels=labels).loss / batch_size
             loss.backward()
             loss_acc += float(loss)
         opt.step()
         if (step + 1) % 20 == 0:
-            from grads import ts; print(f"[{ts()}]  drift step {step + 1}/{steps} loss={loss_acc:.4f}", flush=True)
+            from grads import ts
+
+            print(
+                f"[{ts()}]  drift step {step + 1}/{steps} loss={loss_acc:.4f}",
+                flush=True,
+            )
     out_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(out_dir)
     tok.save_pretrained(out_dir)

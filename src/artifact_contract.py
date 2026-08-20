@@ -6,7 +6,6 @@ import hashlib
 import json
 from pathlib import Path
 
-
 PRIMARY_SOURCES = (
     "rollouts_behavior_train",
     "rollouts_fresh_train",
@@ -25,7 +24,7 @@ def sha256_file(path: Path) -> str:
 def validate_generation_contract(
     run: Path,
     source_names: tuple[str, ...] = PRIMARY_SOURCES,
-) -> dict[str, list[str] | int]:
+) -> dict[str, object]:
     config = json.loads((run / "run_config.json").read_text())
     prompts = json.loads((run / "prompts.json").read_text())
     expected_kwargs = {
@@ -48,6 +47,9 @@ def validate_generation_contract(
         raise ValueError(f"unknown primary rollout sources: {unknown}")
     sources = {name: all_sources[name] for name in source_names}
 
+    manifest_artifacts: dict[Path, Path] = {}
+    unbound_manifests: list[str] = []
+
     def source_manifests(prefix: str, n_prompts: int, k: int) -> list[Path]:
         merged = run / f"{prefix}.manifest.json"
         manifests = [merged] if merged.exists() else sorted(
@@ -58,6 +60,23 @@ def validate_generation_contract(
         covered: set[int] = set()
         for path in manifests:
             document = json.loads(path.read_text())
+            expected_artifact_name = path.name.removesuffix(".manifest.json") + ".jsonl"
+            recorded_artifact_name = document.get("artifact_file")
+            if (recorded_artifact_name is not None
+                    and recorded_artifact_name != expected_artifact_name):
+                raise ValueError(
+                    f"{path.name}: artifact_file mismatch: expected "
+                    f"{expected_artifact_name!r}, got {document.get('artifact_file')!r}"
+                )
+            artifact = run / expected_artifact_name
+            if not artifact.is_file():
+                raise ValueError(f"{path.name}: bound artifact is missing: {artifact.name}")
+            recorded_hash = document.get("artifact_sha256")
+            if recorded_hash and recorded_hash != sha256_file(artifact):
+                raise ValueError(f"{path.name}: rollout artifact hash mismatch")
+            if not recorded_hash:
+                unbound_manifests.append(path.name)
+            manifest_artifacts[path] = artifact
             if int(document.get("k", -1)) != k:
                 raise ValueError(f"{path.name}: expected K={k}, got {document.get('k')}")
             lo = int(document.get("idx_offset", -1))
@@ -75,11 +94,11 @@ def validate_generation_contract(
             )
         return manifests
 
-    manifests = [
-        path
+    manifests_by_source = {
+        prefix: source_manifests(prefix, n_prompts, k)
         for prefix, (n_prompts, k) in sources.items()
-        for path in source_manifests(prefix, n_prompts, k)
-    ]
+    }
+    manifests = [path for paths in manifests_by_source.values() for path in paths]
     for path in manifests:
         document = json.loads(path.read_text())
         kwargs = document.get("explicit_kwargs", {})
@@ -99,12 +118,36 @@ def validate_generation_contract(
                 f"recorded {recorded_model!r}"
             )
 
+    # A merged JSONL must contain exactly the rows bound by its shard manifests.
+    # Coverage alone would not detect a modified reward/token sequence.
+    shard_rows: dict[str, dict[tuple[int, int], dict]] = {}
+    for prefix, source_manifests_for_prefix in manifests_by_source.items():
+        artifacts = [manifest_artifacts[path] for path in source_manifests_for_prefix]
+        merged_path = run / f"{prefix}.jsonl"
+        if artifacts == [merged_path]:
+            continue
+        expected: dict[tuple[int, int], dict] = {}
+        for artifact in artifacts:
+            for lineno, line in enumerate(artifact.open(), 1):
+                row = json.loads(line)
+                key = (int(row["prompt_idx"]), int(row["rollout_idx"]))
+                if key in expected:
+                    raise ValueError(
+                        f"{artifact.name}:{lineno}: duplicate rollout key {key} in shards"
+                    )
+                expected[key] = row
+        shard_rows[prefix] = expected
+
     rows = 0
     merged = [run / f"{prefix}.jsonl" for prefix in sources]
-    for path, (n_prompts, expected_k) in zip(merged, sources.values(), strict=True):
+    for (prefix, (n_prompts, expected_k)), path in zip(
+        sources.items(), merged, strict=True
+    ):
         if not path.is_file():
             raise ValueError(f"merged rollout file is missing: {path.name}")
-        counts: dict[int, int] = {}
+        rollout_indices: dict[int, set[int]] = {}
+        seen_keys: set[tuple[int, int]] = set()
+        expected_rows = shard_rows.get(prefix)
         for lineno, line in enumerate(path.open(), 1):
             row = json.loads(line)
             if "resp_end" not in row:
@@ -114,20 +157,44 @@ def validate_generation_contract(
             if not 0 <= int(row["resp_start"]) < int(row["resp_end"]):
                 raise ValueError(f"{path.name}:{lineno}: invalid response boundary")
             prompt_idx = int(row["prompt_idx"])
-            counts[prompt_idx] = counts.get(prompt_idx, 0) + 1
+            rollout_idx = int(row["rollout_idx"])
+            key = (prompt_idx, rollout_idx)
+            if key in seen_keys:
+                raise ValueError(f"{path.name}:{lineno}: duplicate rollout key {key}")
+            seen_keys.add(key)
+            rollout_indices.setdefault(prompt_idx, set()).add(rollout_idx)
+            if expected_rows is not None and expected_rows.get(key) != row:
+                raise ValueError(
+                    f"{path.name}:{lineno}: merged row differs from bound shard {key}"
+                )
             rows += 1
-        expected_counts = {idx: expected_k for idx in range(n_prompts)}
-        if counts != expected_counts:
-            bad = sorted(
-                idx for idx in set(counts) | set(expected_counts)
-                if counts.get(idx) != expected_counts.get(idx)
-            )
+        if expected_rows is not None and seen_keys != set(expected_rows):
+            missing = sorted(set(expected_rows) - seen_keys)
+            extra = sorted(seen_keys - set(expected_rows))
             raise ValueError(
-                f"{path.name}: prompt/K coverage mismatch at {bad[:5]} "
+                f"{path.name}: merged/shard row-set mismatch; "
+                f"missing={missing[:5]}, extra={extra[:5]}"
+            )
+        expected_indices = set(range(expected_k))
+        bad = sorted(
+            idx for idx in set(rollout_indices) | set(range(n_prompts))
+            if rollout_indices.get(idx) != expected_indices
+        )
+        if bad:
+            raise ValueError(
+                f"{path.name}: prompt/exact-K coverage mismatch at {bad[:5]} "
                 f"(expected K={expected_k})"
             )
     return {
         "manifests": [path.name for path in manifests],
         "rollout_files": [path.name for path in merged],
         "validated_rows": rows,
+        "manifest_sha256": {
+            path.name: sha256_file(path) for path in manifests
+        },
+        "artifact_sha256": {
+            path.name: sha256_file(path)
+            for path in dict.fromkeys([*manifest_artifacts.values(), *merged])
+        },
+        "generation_hash_missing": sorted(unbound_manifests),
     }

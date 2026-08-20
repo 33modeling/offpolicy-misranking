@@ -18,12 +18,13 @@ from pathlib import Path
 
 import torch
 
+from artifact_contract import sha256_file
 from data import reward
 from grads import ProjectionSpec, cosine, loo_advantages, prompt_gradient
 from rollout import SAMPLING, _gen_batch_size, chat_ids
 from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 
-HYBRID_ROLLOUT_SCHEMA = "offpolicy-hybrid-rollouts/v1"
+HYBRID_ROLLOUT_SCHEMA = "offpolicy-hybrid-rollouts/v2"
 
 
 @torch.no_grad()
@@ -74,9 +75,46 @@ def _cut_prefixes(rows: list[dict], cut_frac: float) -> list[torch.Tensor]:
     out = []
     for r in rows:
         resp_len = r["input_ids"].numel() - r["resp_start"]
-        cut = r["resp_start"] + max(1, int(resp_len * cut_frac))
+        if resp_len < 1:
+            raise ValueError("hybrid source row has no response tokens")
+        # The final source token can be EOS (and a one-token response is often
+        # only EOS). Never preserve that terminal token before continuation.
+        max_prefix_tokens = resp_len - 1
+        keep = (0 if max_prefix_tokens == 0 else
+                min(max_prefix_tokens, max(1, int(resp_len * cut_frac))))
+        cut = r["resp_start"] + keep
         out.append(r["input_ids"][:cut])
     return out
+
+
+def validate_hybrid_cells(
+    cell_rows: dict[str, dict[int, list[dict]]],
+    expected_prompts: set[int],
+    k_cell: int,
+) -> None:
+    """Enforce the equal-K/common-prompt intervention contract."""
+    required = {"bb", "bp", "pb", "pp"}
+    if set(cell_rows) != required:
+        raise ValueError(
+            f"hybrid cells mismatch: missing={sorted(required - set(cell_rows))}, "
+            f"extra={sorted(set(cell_rows) - required)}"
+        )
+    for cell, by_prompt in cell_rows.items():
+        observed = set(by_prompt)
+        if observed != expected_prompts:
+            raise ValueError(
+                f"hybrid cell {cell}: prompt coverage mismatch; "
+                f"missing={sorted(expected_prompts - observed)[:5]}, "
+                f"extra={sorted(observed - expected_prompts)[:5]}"
+            )
+        for prompt_idx, rows in by_prompt.items():
+            if len(rows) != k_cell:
+                raise ValueError(
+                    f"hybrid cell {cell}, prompt {prompt_idx}: expected K={k_cell}, "
+                    f"got {len(rows)}"
+                )
+            if any(row.get("cell") != cell for row in rows):
+                raise ValueError(f"hybrid cell label mismatch in {cell}/{prompt_idx}")
 
 
 def make_hybrid_cells(
@@ -161,8 +199,11 @@ def make_hybrid_cells(
             "no_repeat_ngram_size": 0,
         },
         "cells": ["bb", "bp", "pb", "pp"],
+        "prompt_indices": subset,
         "sample_disjoint_from_oracle": True,
         "equal_total_response_horizon": True,
+        "artifact_file": out_path.name,
+        "artifact_sha256": sha256_file(out_path),
     }
     manifest_path = out_path.with_name(out_path.name + ".manifest.json")
     manifest_tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
@@ -173,8 +214,10 @@ def make_hybrid_cells(
 def score_cells(
     grad_model, params, cell_rows: dict[str, dict[int, list[dict]]],
     val_grad: torch.Tensor, spec: ProjectionSpec,
+    expected_prompts: set[int], k_cell: int,
 ) -> dict:
     """cell별 프롬프트 점수 (gradient는 항상 π에서 계산 — 처치는 데이터 분포뿐)."""
+    validate_hybrid_cells(cell_rows, expected_prompts, k_cell)
     out: dict[str, dict[int, float]] = {}
     for cell, by_prompt in cell_rows.items():
         out[cell] = {}

@@ -8,7 +8,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 REPO = Path(__file__).resolve().parents[1]
 FAILURES = 0
 
@@ -210,4 +209,11 @@ with tempfile.TemporaryDirectory() as raw_tmp:
 
 
 print(("PASS" if FAILURES == 0 else "FAIL") + f" (failures {FAILURES})")
-sys.exit(1 if FAILURES else 0)
+
+
+def test_harvest_regressions() -> None:
+    assert FAILURES == 0
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAILURES else 0)

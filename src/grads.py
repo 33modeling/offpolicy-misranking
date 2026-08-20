@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """2×2 추정량과 projected per-prompt gradient.
 
 concept #68의 population 정의를 구현한다. 아래 식은 unclipped population 식이며,
@@ -19,7 +20,6 @@ import math
 from dataclasses import dataclass
 
 import torch
-
 
 ESTIMATORS = ("g00", "g10", "g01", "g11")
 
@@ -166,6 +166,29 @@ def prompt_gradient(
     sequences[j]: {"input_ids": (L,), "resp_start": int} — 전체 시퀀스와 응답 시작.
     weights[j]: (T_j,) 토큰 가중치 (detach).
     """
+    if not sequences:
+        raise ValueError("prompt_gradient requires at least one sequence")
+    if len(sequences) != len(weights):
+        raise ValueError(
+            f"sequence/weight count mismatch: {len(sequences)} != {len(weights)}"
+        )
+    if micro_batch < 1:
+        raise ValueError(f"micro_batch must be >= 1, got {micro_batch}")
+    for index, (seq, weight) in enumerate(zip(sequences, weights, strict=True)):
+        response_start = int(seq["resp_start"])
+        sequence_length = int(seq["input_ids"].numel())
+        if not 0 < response_start < sequence_length:
+            raise ValueError(
+                f"sequence {index}: invalid response boundary "
+                f"{response_start}/{sequence_length}"
+            )
+        response_length = sequence_length - response_start
+        if int(weight.numel()) != response_length:
+            raise ValueError(
+                f"sequence {index}: response/weight length mismatch: "
+                f"{response_length} != {weight.numel()}"
+            )
+
     model.zero_grad(set_to_none=True)
     k = len(sequences)
     for start in range(0, k, micro_batch):
@@ -179,8 +202,7 @@ def prompt_gradient(
             tok_logp = (logits.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
                         - logits.logsumexp(dim=-1))
             resp = tok_logp[seq["resp_start"] - 1 :]
-            t = min(resp.numel(), w.numel())
-            loss = loss + (w[:t].to(resp.device) * resp[:t]).sum() / k
+            loss = loss + (w.to(resp.device) * resp).sum() / k
         loss.backward()
     return project_grads(params, spec)
 

@@ -32,6 +32,25 @@
 
 상세 판정과 결과 파일 hash는 `docs/FULL_AUDIT_2026-08-20.md` 참조.
 
+### 2026-08-21 재감사 반영
+
+- [x] token-weight silent truncation, response가 사라지는 drift-SFT truncation,
+      one-token/EOS hybrid prefix, hybrid common-prompt/exact-K 누락을 fail-closed로 수정
+- [x] rollout generation-time SHA-256, legacy validation-time snapshot,
+      shard↔merged row identity, report/hybrid input-output hash 검증 추가
+- [x] corrected postprocess의 `val_k` 누락과 pytest collection 종료 문제 수정
+- [x] positive rollout 0개에서 오답 전체를 drift SFT하던 fallback 제거
+- [x] generation manifest를 완료 시점에만 원자 게시하고, 계약을 깨는 in-place
+      `val-deepen` 비활성화
+- [x] v2 reversal/McNemar/Fisher 경험적 지지 철회: v3 비재현과 oracle
+      self-disagreement overlap을 원고에 반영
+- [x] 신규 근접 선행 Zuk et al. (noisy top-k reliability), M2PO(stale RL stability)
+      추가 및 본 연구와의 차이 명시
+- [ ] corrected v4 수확 전에는 historical p-value, cell ordering, frontier 수치를
+      confirmatory claim이나 현재 정책 우위로 복원하지 말 것
+
+상세 수정·검증·잔여 blocker는 `docs/RE_AUDIT_2026-08-21.md`를 정본으로 삼는다.
+
 ### 2026-08-21 v4 재시작 장애 및 수정 기록
 
 - [x] **증상**: `git pull` 후 스모크/본실행이

@@ -71,6 +71,7 @@ def recompute(run: Path) -> dict:
     args = Namespace(
         topk_frac=float(config["topk_frac"]),
         seed=int(config["seed"]),
+        val_k=int(config["val_k"]),
         micro_group=int(config["micro_group"]),
         radius_mode=str(config.get("radius_mode", "gaussian")),
     )

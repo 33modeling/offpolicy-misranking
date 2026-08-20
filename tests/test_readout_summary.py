@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from readout_summary import main, precisions  # noqa: E402
 from score_artifacts import ScoreArtifactError  # noqa: E402
 
-
 FAILURES = 0
 
 
@@ -124,4 +123,11 @@ with tempfile.TemporaryDirectory() as tmp:
 
 
 print(("PASS" if FAILURES == 0 else "FAIL") + f" (failures {FAILURES})")
-sys.exit(1 if FAILURES else 0)
+
+
+def test_readout_summary_regressions() -> None:
+    assert FAILURES == 0
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAILURES else 0)

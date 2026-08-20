@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 from score_artifacts import ScoreArtifactError, load_complete_score_artifacts
 from select_rules import overlap_under_independent_ties, topk_count
 
-
 ONE_SIDED_DROP = 0.15
 CAUSAL_CUT = "0.5"
 SCORE_PROTOCOL_SCHEMA = "offpolicy-score-validation-split/v1"
 ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v1"
-HYBRID_PROTOCOL_SCHEMA = "offpolicy-hybrid-validation-split/v1"
+HYBRID_PROTOCOL_SCHEMA = "offpolicy-hybrid-validation-split/v2"
 
 
 def load_json(path: Path):
@@ -23,6 +23,26 @@ def load_json(path: Path):
         return None
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _hash_snapshot_is_current(run: Path, snapshot: dict | None) -> bool:
+    if not snapshot:
+        return True
+    try:
+        return all(
+            (run / name).is_file() and _sha256_file(run / name) == expected
+            for name, expected in snapshot.items()
+        )
+    except (AttributeError, OSError, TypeError):
+        return False
+
+
 def has_valid_score_protocol(run: Path) -> bool:
     protocol = load_json(run / "score_protocol.json")
     try:
@@ -30,6 +50,12 @@ def has_valid_score_protocol(run: Path) -> bool:
             protocol
             and protocol.get("schema") == SCORE_PROTOCOL_SCHEMA
             and int(protocol.get("generation_validation", {}).get("validated_rows", 0)) > 0
+            and _hash_snapshot_is_current(
+                run, protocol.get("generation_validation", {}).get("manifest_sha256")
+            )
+            and _hash_snapshot_is_current(
+                run, protocol.get("generation_validation", {}).get("artifact_sha256")
+            )
         )
     except (AttributeError, TypeError, ValueError):
         return False
@@ -42,6 +68,12 @@ def has_valid_oracle_protocol(run: Path) -> bool:
             protocol
             and protocol.get("schema") == ORACLE_PROTOCOL_SCHEMA
             and int(protocol.get("generation_validation", {}).get("validated_rows", 0)) > 0
+            and _hash_snapshot_is_current(
+                run, protocol.get("generation_validation", {}).get("manifest_sha256")
+            )
+            and _hash_snapshot_is_current(
+                run, protocol.get("generation_validation", {}).get("artifact_sha256")
+            )
         )
     except (AttributeError, TypeError, ValueError):
         return False
@@ -56,6 +88,10 @@ def canonical_gate_report(run: Path, frac: float = 0.10, seed: int = 0) -> dict 
     if not has_valid_analysis_protocol(run):
         return None
     stored = load_json(run / "report.json")
+    if isinstance(stored, dict) and not _hash_snapshot_is_current(
+        run, stored.get("input_sha256")
+    ):
+        return None
     try:
         artifacts = load_complete_score_artifacts(run)
     except ScoreArtifactError:
@@ -136,6 +172,11 @@ def evaluate_causal_run(
                 protocol = load_json(run / f"hybrid_protocol_{cut}.json")
                 if not protocol or protocol.get("schema") != HYBRID_PROTOCOL_SCHEMA:
                     raise ValueError("corrected hybrid validation protocol is missing")
+                if (not _hash_snapshot_is_current(run, protocol.get("input_sha256"))
+                        or not _hash_snapshot_is_current(
+                            run, protocol.get("output_sha256")
+                        )):
+                    raise ValueError("hybrid artifact hash snapshot is stale")
                 precision = hybrid_precisions(oracle, cells or {})
                 recovery = {
                     "g10": precision["pp"] > precision["pb"],
