@@ -12,7 +12,8 @@ fresh 감사에 얼마를 내야 하는가)의 게이트/본실험 코드.
 > 독립 validation 교정 이전의 역사적 탐색 결과다. 제출용 근거로 사용하지 않는다.
 > 교정 내용, 결과 계보, 재실행 조건은
 > [`docs/FULL_AUDIT_2026-08-20.md`](docs/FULL_AUDIT_2026-08-20.md)에 있다.
-> confirmatory 실행은 `go_v2.sh`/`run_14b.sh`만 사용하며 legacy
+> confirmatory 재실행은 `go_v4.sh`를 사용하며, 단일 run 복구/진단에는
+> `go_v2.sh`/`run_14b.sh`를 사용한다. legacy
 > `run_h100_all.sh`/`babysit.sh`는 기본 비활성화했다.
 > 교정 전 코드로 완주한 run은 공유 checkout을 갱신한 뒤 GPU 환경에서
 > `python3 src/rescore_completed_run.py RUN_DIR`로 score와 oracle/report를 함께 재생성한다.
@@ -90,7 +91,7 @@ drift 8배·선택 비율 5–25%·val 심화·(ε,δ)-PAC 완화 전부에서 �
 인증할 수 없다.** 후속 CPU 재판정: `scripts/c2_sweep.sh`, `fix_c2.sh`,
 `retry_c2.sh`.
 
-## 4. confirmatory 신규 실행 경로 (2026-08-20 계약)
+## 4. confirmatory v4 실행 경로 (2026-08-20 계약)
 
 아래 명령은 2026-08-20 감사 branch를 병합한 뒤 새 `OUT_ROOT`에서 실행한다.
 기존 v2 폴더를 이 계약으로 완료된 결과라고 간주하면 안 된다. raw-softmax sampling
@@ -99,18 +100,21 @@ drift 8배·선택 비율 5–25%·val 심화·(ε,δ)-PAC 완화 전부에서 �
 통계 자동 실측, 인증 ε 실반영, run manifest 기록.
 
 ```bash
-bash scripts/go_v2.sh    # GPU 건강검사 → 30분 스모크 게이트(실패 시 본실행 미진입)
-                         # → 3-seed × {gsm8k, dapo-math}, n=512·val 100·fresh K=32
-                         #   ·hybrid 64 (drift 100 단일, 기본 7B)
-                         # 재시도 2회·DONE 스킵·죽어도 재개, 끝나면 results/v2 수집
+bash scripts/go_v4.sh    # GPU 건강검사 → 스모크 게이트 → seed 0..4
+                         # × {GSM8K, MATH500}; runs/v4와 results/v4에 격리
+                         # 마지막에 전체 10 run의 TABLES/FRONTIER를 함께 재생성
+
+# 공유 스토리지의 여러 클라우드 머신에서 seed 하나씩 병렬 실행
+SEEDS_V4="0" bash scripts/go_v4.sh   # 머신별로 0..4
+# 모든 worker가 끝난 뒤 한 번만
+OM_V4_FINALIZE_ONLY=1 bash scripts/go_v4.sh
 ```
 
-- sweep 축: **seed × dataset** (v2의 목적 = 주결과 오차대 + DAPO-Math 확보).
-  drift 스윕·14B·MATH-500은 v1 결과를 인용한다. 필요 시
-  `DATASETS="gsm8k dapo-math math500" SEEDS="0 1 2"`로 확장 — DONE 스킵 덕에
-  완주 후 재실행하면 추가분만 돈다.
+- sweep 축: **seed × dataset**. GSM8K는 과거 v2 유의 신호를 같은 데이터셋에서
+  재검정하고, MATH500은 seed별 cell ordering 반전을 재검정한다. 기본 seed는
+  `0 1 2 3 4`이며 cloud worker마다 `SEEDS_V4="0"`처럼 하나씩 맡길 수 있다.
 - 산출: run별 `report.json`·`manifest.json`·judge 판정 +
-  `results/v2/TABLES.md`(표 생성기)·`FRONTIER.md`(아래 5절).
+  `results/v4/TABLES.md`(표 생성기)·`FRONTIER.md`(아래 5절).
 - `score_protocol.json`과 `oracle_protocol.json`이 모두 없는 run은 모든 판정·표 생성기가
   거부한다. 두 마커를 수동으로 만들지 말고 교정 코드로 해당 단계를 실행한다.
 
@@ -192,7 +196,7 @@ bash scripts/provision.sh       # venv(torch 2.7.1+cu126 constraints 고정)
 
 ## 8. 실행
 
-**현재 주 진입점은 4절의 `go_v2.sh`.** 보조 명령:
+**현재 주 진입점은 4절의 `go_v4.sh`.** 보조 명령:
 
 ```bash
 bash scripts/status.sh      # 진행 위치·ETA·산출물 체크리스트·학습 건전성

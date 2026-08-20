@@ -107,6 +107,25 @@ corrected rerun 전에는 abstract/conclusion의 empirical support로 사용하�
   oracle/floor/report/readout을 재생성한다. 계약이 실패하거나 generation commit이
   `c6ca013` 이전이면 해당 결과는 탐색용으로만 보존하고 새 `OUT_ROOT`에서 재실행한다.
 
+### v4 clean rerun
+
+생성 계약과 독립 validation 수정이 모두 들어간 clean commit에서는 기존 v2/v3 폴더를
+재사용하지 않고 `scripts/go_v4.sh`를 사용한다. 이 경로는 GSM8K와 MATH500을 각각
+seed 0..4로 실행해 `runs/v4-s*`와 `results/v4`에 격리한다. 공유 스토리지의 여러
+클라우드 머신에서는 seed 하나씩 다음처럼 맡긴다.
+
+```bash
+SEEDS_V4="0" bash scripts/go_v4.sh  # 머신별로 seed 0..4
+```
+
+worker는 공용 TABLES/FRONTIER를 쓰지 않는다. 전체 10 run이 끝난 뒤 한 머신에서만
+다음 명령으로 protocol-complete 행렬을 검증하고 집계한다.
+
+```bash
+OM_V4_FINALIZE_ONLY=1 bash scripts/go_v4.sh
+bash scripts/harvest.sh
+```
+
 ## 레퍼런스 감사
 
 기존 off-policy correction, data selection, top-k identification, reliability 원전과 setup

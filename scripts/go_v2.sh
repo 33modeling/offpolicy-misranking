@@ -36,6 +36,7 @@ done
 
 export MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 BASE="${RUN_BASE:-$OM_WORK/runs/v2}"   # 다른 모델 세대 런은 RUN_BASE로 폴더 분리 (7B 산출물 충돌 방지)
+RUN_LABEL="${RUN_LABEL:-$(basename "$BASE")}"  # v4 등 호출 세대별 console log 격리
 DATASETS=(${DATASETS:-gsm8k dapo-math})
 SEEDS=(${SEEDS:-0 1 2})
 
@@ -62,7 +63,7 @@ trap 'echo "== 중단 — 전체 정리"; cleanup_strays; kill $W 2>/dev/null; e
 
 echo
 echo "== [1] 스모크 (~30분): 교정 파이프라인 전 스테이지가 실제로 완주하는지 먼저 확인"
-SMOKE="$BASE-smoke"
+SMOKE="${RUN_BASE_SMOKE:-$BASE-smoke}"
 if [ -f "$SMOKE/report.json" ] && [ -f "$SMOKE/score_protocol.json" ] \
    && [ -f "$SMOKE/oracle_protocol.json" ] \
    && ls "$SMOKE"/scores_hybrid_*.json >/dev/null 2>&1; then
@@ -70,9 +71,9 @@ if [ -f "$SMOKE/report.json" ] && [ -f "$SMOKE/score_protocol.json" ] \
 else
   cleanup_strays
   if ! DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
-       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh > "$LOGDIR/v2-smoke.log" 2>&1; then
+       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh > "$LOGDIR/$RUN_LABEL-smoke.log" 2>&1; then
     echo "== [중단] 스모크 실패 — 본실행 진입 안 함. 사인:"
-    tail -8 "$LOGDIR/v2-smoke.log" | sed 's/^/   /'
+    tail -8 "$LOGDIR/$RUN_LABEL-smoke.log" | sed 's/^/   /'
     cleanup_strays; kill $W 2>/dev/null; exit 1
   fi
   WANTS="report.json score_protocol.json oracle_protocol.json divergence_stats.shard0.json manifest.json"
@@ -94,7 +95,7 @@ declare -A RESULT
 for SEED in "${SEEDS[@]}"; do
   for DS in "${DATASETS[@]}"; do
     RUN_DIR="$BASE-s$SEED"; [ "$DS" != "gsm8k" ] && RUN_DIR="$RUN_DIR-$DS"
-    KEY="$DS/s$SEED"; LOG="$LOGDIR/v2-$DS-s$SEED.log"
+    KEY="$DS/s$SEED"; LOG="$LOGDIR/$RUN_LABEL-$DS-s$SEED.log"
     echo
     echo "==== [$KEY] → $RUN_DIR (log: $LOG)"
     if [ -f "$RUN_DIR/DONE" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
@@ -127,8 +128,13 @@ for SEED in "${SEEDS[@]}"; do for DS in "${DATASETS[@]}"; do
     echo "  $KEY ✔"
     [ -f "$RUN_DIR/report.json" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
       && [ -f "$RUN_DIR/oracle_protocol.json" ] && DIRS+=("$RUN_DIR")
-  else echo "  $KEY ✘ ($LOGDIR/v2-$DS-s$SEED.log 확인)"; fi
+  else echo "  $KEY ✘ ($LOGDIR/$RUN_LABEL-$DS-s$SEED.log 확인)"; fi
 done; done
+
+if [ "${OM_SKIP_POSTPROCESS:-0}" = "1" ]; then
+  echo "==== 후처리 생략 (OM_SKIP_POSTPROCESS=1) — 병렬 worker 종료 후 한 번만 집계할 것"
+  exit 0
+fi
 
 RD="${RESULTS_BASE:-$OM_WORK/results/v2}"; mkdir -p "$RD"
 echo "==== 결과 수집: $RD ===="
