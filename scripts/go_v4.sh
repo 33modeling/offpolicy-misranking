@@ -57,6 +57,46 @@ for model in "$MODEL_7B" "$MODEL_27B"; do
 done
 MODEL_HASH_7B=$(sha256sum "$MODEL_7B/config.json" | cut -d' ' -f1)
 MODEL_HASH_27B=$(sha256sum "$MODEL_27B/config.json" | cut -d' ' -f1)
+CURRENT_GIT=$(git rev-parse HEAD)
+code_tag=${CURRENT_GIT:0:12}
+
+echo "== 이전 v4 프로세스 및 GPU 점유 정리"
+"$PY" src/cleanup_run_processes.py --run-prefix "$OM_WORK/runs/v4-" || exit 1
+# Handle any child that raced with the process snapshot above.
+pkill -TERM -f -- "--run $OM_WORK/runs/v4-" 2>/dev/null || true
+sleep 3
+pkill -KILL -f -- "--run $OM_WORK/runs/v4-" 2>/dev/null || true
+
+gpu_clear=0
+for _ in $(seq 1 30); do
+  busy=$(timeout 20 nvidia-smi --query-gpu=memory.used \
+    --format=csv,noheader,nounits 2>/dev/null | awk '$1 > 2000 {n++} END {print n+0}')
+  if [ "${busy:-1}" -eq 0 ]; then
+    gpu_clear=1
+    break
+  fi
+  sleep 2
+done
+if [ "$gpu_clear" -ne 1 ]; then
+  echo "[abort] v4 프로세스 정리 후에도 GPU 점유가 남아 있음"
+  nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv || true
+  exit 1
+fi
+echo "   GPU 메모리 해제 확인"
+
+prepare_worker_paths() {
+  local label=$1 run_base=$2 seeds=$3 seed run
+  local quarantine="$OM_WORK/quarantine/v4"
+  local smoke="$OM_WORK/runs/v4-$label-smoke-$code_tag-scluster$V4_WORKER_SLOT"
+  "$PY" src/prepare_run_path.py "$smoke" \
+    --expected-git "$CURRENT_GIT" --quarantine-root "$quarantine" || return 1
+  for seed in $seeds; do
+    for run in "$run_base-s$seed" "$run_base-s$seed-math500"; do
+      "$PY" src/prepare_run_path.py "$run" \
+        --expected-git "$CURRENT_GIT" --quarantine-root "$quarantine" || return 1
+    done
+  done
+}
 
 collect_targets() {
   local run_base=$1 expected_model_hash=$2 seed run artifact
@@ -177,7 +217,6 @@ finalize_v4_once() {
 }
 
 worker_tag="cluster$V4_WORKER_SLOT"
-code_tag=$(git rev-parse --short=12 HEAD)
 
 echo "== v4 confirmatory rerun"
 echo "   commit=$(git rev-parse HEAD)"
@@ -188,6 +227,7 @@ echo "   27B seeds=[$SEEDS_27B], 7B seeds=[$SEEDS_7B]"
 
 run_model_worker() {
   local label=$1 model=$2 run_base=$3 results_base=$4 seeds=$5
+  prepare_worker_paths "$label" "$run_base" "$seeds" || return 1
   (
     export MODEL_14B="$model" RUN_BASE="$run_base" RESULTS_BASE="$results_base"
     export RUN_LABEL="v4-$label-worker-s${worker_tag:-unknown}"

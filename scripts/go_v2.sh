@@ -89,13 +89,28 @@ run_pipeline() {  # run_pipeline <console-log> <command...>
   done ) &
 W=$!
 cleanup_strays() {
+  active_pid=""
   if [ -s "$ACTIVE_FILE" ]; then
     active_pid=$(sed -n '1p' "$ACTIVE_FILE" 2>/dev/null)
     [ -z "$active_pid" ] || kill -TERM -- "-$active_pid" 2>/dev/null || true
-    rm -f "$ACTIVE_FILE"
   fi
-  pkill -f -- "--run $BASE" 2>/dev/null || true; \
-  find "${HF_HOME:-/nonexistent}" -name '*.lock' -mmin +30 -delete 2>/dev/null || true; sleep 5; }
+  pkill -TERM -f -- "--run $BASE" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    group_alive=0
+    if [ -n "$active_pid" ] && kill -0 -- "-$active_pid" 2>/dev/null; then
+      group_alive=1
+    fi
+    if [ "$group_alive" -eq 0 ] && ! pgrep -f -- "--run $BASE" >/dev/null; then
+      break
+    fi
+    sleep 0.5
+  done
+  [ -z "$active_pid" ] || kill -KILL -- "-$active_pid" 2>/dev/null || true
+  pkill -KILL -f -- "--run $BASE" 2>/dev/null || true
+  rm -f "$ACTIVE_FILE"
+  find "${HF_HOME:-/nonexistent}" -name '*.lock' -mmin +30 -delete 2>/dev/null || true
+  sleep 2
+}
 trap 'echo "== 중단 — 전체 정리"; cleanup_strays; kill $W 2>/dev/null; exit 130' INT TERM
 
 echo
@@ -131,7 +146,7 @@ else
   done
   if [ "$smoke_ok" -ne 1 ]; then
     echo "== [중단] 스모크 실패 — 본실행 진입 안 함"
-    echo "   상세 사인: $SMOKE/FAILURE_DIAGNOSTIC.txt"
+    echo "   원인은 위 자동 진단 출력에 표시됨"
     cleanup_strays; kill $W 2>/dev/null; exit 1
   fi
   WANTS="report.json score_protocol.json oracle_protocol.json divergence_stats.shard0.json manifest.json"

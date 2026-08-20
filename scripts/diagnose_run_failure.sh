@@ -70,4 +70,3 @@ fi
 
 mv "$TMP" "$OUT"
 cat "$OUT"
-echo "== diagnostic saved: $OUT"
