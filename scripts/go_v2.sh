@@ -39,13 +39,36 @@ BASE="${RUN_BASE:-$OM_WORK/runs/v2}"   # 다른 모델 세대 런은 RUN_BASE로
 RUN_LABEL="${RUN_LABEL:-$(basename "$BASE")}"  # v4 등 호출 세대별 console log 격리
 DATASETS=(${DATASETS:-gsm8k dapo-math})
 SEEDS=(${SEEDS:-0 1 2})
+command -v setsid >/dev/null 2>&1 || { echo "[abort] setsid 없음"; exit 1; }
+ACTIVE_FILE="$TMPDIR/go-v2-$RUN_LABEL-$$.active"
 
-# 상세 진행 워처 — 로그가 5분 멈추면 현재 experiment만 종료한다.
-# run_14b의 산출물별 스킵과 아래 retry loop가 마지막 완료 지점부터 재개한다.
+run_pipeline() {  # run_pipeline <console-log> <command...>
+  local console_log=$1 pid rc tmp
+  shift
+  setsid "$@" >> "$console_log" 2>&1 &
+  pid=$!
+  tmp="$ACTIVE_FILE.tmp"
+  printf '%s\n%s\n' "$pid" "$console_log" > "$tmp"
+  mv "$tmp" "$ACTIVE_FILE"
+  wait "$pid"
+  rc=$?
+  rm -f "$ACTIVE_FILE"
+  return "$rc"
+}
+
+# 상세 진행 워처 — stage 진입 전을 포함해 전체 pipeline 로그가 5분 멈추면
+# process group을 종료한다. 산출물별 스킵과 retry loop가 마지막 완료 지점부터 재개한다.
 ( prev=""; still=0; stall_ticks=$(( ${OM_STALL_MINUTES:-5} * 4 ))
   while :; do
     sleep 15
-    lf=$(ls -t "$BASE"*/logs/*.log 2>/dev/null | head -1); [ -n "$lf" ] || continue
+    if [ ! -s "$ACTIVE_FILE" ]; then prev=""; still=0; continue; fi
+    runner_pid=$(sed -n '1p' "$ACTIVE_FILE" 2>/dev/null)
+    console_log=$(sed -n '2p' "$ACTIVE_FILE" 2>/dev/null)
+    if [ -z "$runner_pid" ] || ! kill -0 "$runner_pid" 2>/dev/null; then
+      prev=""; still=0; continue
+    fi
+    lf=$(ls -t "$console_log" "$BASE"*/logs/*.log 2>/dev/null | head -1)
+    [ -n "$lf" ] || continue
     line=$(tail -n 1 "$lf" 2>/dev/null | cut -c1-120)
     sig=$(stat -c '%n:%Y:%s' "$lf" 2>/dev/null || true)
     if [ -n "$sig" ] && [ "$sig" != "$prev" ]; then
@@ -53,18 +76,23 @@ SEEDS=(${SEEDS:-0 1 2})
       prev="$sig"; still=0
     else
       still=$((still + 1))
-      if [ "$still" -ge "$stall_ticks" ] \
-         && pgrep -f -- "src/experiment.py .*--run $BASE" >/dev/null; then
-        echo "[워처] 로그 ${OM_STALL_MINUTES:-5}분 무변화 — 현재 stage 종료 후 저장분부터 자동 재시작"
-        pkill -TERM -f -- "src/experiment.py .*--run $BASE" 2>/dev/null || true
+      if [ "$still" -ge "$stall_ticks" ]; then
+        echo "[워처] 로그 ${OM_STALL_MINUTES:-5}분 무변화 — smoke/run process group 종료 후 자동 재시작"
+        kill -TERM -- "-$runner_pid" 2>/dev/null || true
         sleep 5
-        pkill -KILL -f -- "src/experiment.py .*--run $BASE" 2>/dev/null || true
+        kill -KILL -- "-$runner_pid" 2>/dev/null || true
         still=0
       fi
     fi
   done ) &
 W=$!
-cleanup_strays() { pkill -f -- "--run $BASE" 2>/dev/null || true; \
+cleanup_strays() {
+  if [ -s "$ACTIVE_FILE" ]; then
+    active_pid=$(sed -n '1p' "$ACTIVE_FILE" 2>/dev/null)
+    [ -z "$active_pid" ] || kill -TERM -- "-$active_pid" 2>/dev/null || true
+    rm -f "$ACTIVE_FILE"
+  fi
+  pkill -f -- "--run $BASE" 2>/dev/null || true; \
   find "${HF_HOME:-/nonexistent}" -name '*.lock' -mmin +30 -delete 2>/dev/null || true; sleep 5; }
 trap 'echo "== 중단 — 전체 정리"; cleanup_strays; kill $W 2>/dev/null; exit 130' INT TERM
 
@@ -85,8 +113,9 @@ else
   cleanup_strays
   smoke_ok=0
   for smoke_try in $(seq 1 "${OM_MAX_RETRIES:-2}"); do
-    if DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
-       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh >> "$LOGDIR/$RUN_LABEL-smoke.log" 2>&1; then
+    if run_pipeline "$LOGDIR/$RUN_LABEL-smoke.log" env \
+       DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
+       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh; then
       smoke_ok=1
       break
     fi
@@ -128,7 +157,8 @@ for SEED in "${SEEDS[@]}"; do
     for try in $(seq 1 "${OM_MAX_RETRIES:-2}"); do
       echo "==== [$KEY] 시도 $try/${OM_MAX_RETRIES:-2}"
       cleanup_strays
-      if DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" bash scripts/run_14b.sh >> "$LOG" 2>&1; then
+      if run_pipeline "$LOG" env DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" \
+         bash scripts/run_14b.sh; then
         ok=1; echo "==== [$KEY] ✔ 완주"; break
       fi
       echo "==== [$KEY] ✘ 실패 — tail:"; tail -4 "$LOG" | sed 's/^/     /'
