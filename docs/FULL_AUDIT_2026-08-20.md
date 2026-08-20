@@ -113,13 +113,14 @@ corrected rerun 전에는 abstract/conclusion의 empirical support로 사용하�
 재사용하지 않고 `scripts/go_v4.sh`를 사용한다. 이 경로는 Qwen3.8-27B-BF16 메인과
 Qwen2.5-7B-Instruct 재현 축에서 GSM8K와 MATH500을 각각 seed 0..4로 실행한다.
 산출물은 `runs/v4-27b-*`·`runs/v4-7b-*` 및 대응 results 폴더로 격리한다.
-공유 스토리지의 여러 클라우드 머신에서는 seed 하나씩 다음처럼 맡긴다.
+공유 스토리지를 보는 H100 4장 노드 세 개에서 같은 명령을 실행한다.
 
 ```bash
-SEEDS_V4="0" bash scripts/go_v4.sh  # 머신별로 seed 0..4
+bash scripts/go_v4.sh
 ```
 
-worker는 실행 중 공용 TABLES/FRONTIER를 쓰지 않는다. 전체 20 run이 모이면 마지막으로
+공유 잠금이 세 worker를 seed `0,1`·`2,3`·`4`로 자동 배정한다. worker는 실행 중
+공용 TABLES/FRONTIER를 쓰지 않는다. 전체 20 run이 모이면 마지막으로
 완주한 worker가 공유 잠금을 획득해 protocol-complete 행렬과 provenance 일치를 검증하고
 TABLES/FRONTIER/harvest를 자동 생성한다. 별도 finalize 명령은 없다.
 

@@ -8,9 +8,9 @@
 #
 # Cloud usage, after the currently running jobs finish and the shared checkout is updated:
 #   bash scripts/go_v4.sh
-# Overrides:
-#   SEEDS_V4="0" bash scripts/go_v4.sh
-# Run one command per cloud worker. The last completed worker aggregates automatically.
+# Run the same command on three shared-storage nodes. Slots are claimed automatically:
+#   slot 0 -> seeds 0,1; slot 1 -> seeds 2,3; slot 2 -> seed 4.
+# The last completed worker aggregates automatically.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
@@ -24,7 +24,6 @@ if [ -n "$(git status --porcelain -- src scripts)" ]; then
 fi
 
 EXPECTED_V4_SEEDS="${EXPECTED_V4_SEEDS:-0 1 2 3 4}"
-SEEDS_V4="${SEEDS_V4:-$EXPECTED_V4_SEEDS}"
 MODEL_7B="${MODEL_7B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 MODEL_27B="${MODEL_27B:-$MODELS_DIR/Qwen3.8-27B-BF16}"
 RUN_BASE_7B="$OM_WORK/runs/v4-7b"
@@ -32,6 +31,43 @@ RUN_BASE_27B="$OM_WORK/runs/v4-27b"
 RESULTS_BASE_7B="$OM_WORK/results/v4-7b"
 RESULTS_BASE_27B="$OM_WORK/results/v4-27b"
 V4_STATUS_ROOT="$OM_WORK/results/v4"
+
+command -v flock >/dev/null 2>&1 || {
+  echo "[abort] flock is required for shared-cloud v4 workers"
+  exit 1
+}
+
+if [ -n "${SEEDS_V4:-}" ]; then
+  V4_WORKER_SLOT=manual
+else
+  claim_root="$OM_WORK/runs/v4-worker-claims"
+  mkdir -p "$claim_root" || exit 1
+  V4_WORKER_SLOT=
+  for slot in 0 1 2; do
+    exec {claim_fd}>"$claim_root/slot-$slot.lock"
+    if flock -n "$claim_fd"; then
+      V4_WORKER_SLOT=$slot
+      V4_CLAIM_FD=$claim_fd
+      break
+    fi
+    exec {claim_fd}>&-
+  done
+  [ -n "$V4_WORKER_SLOT" ] || {
+    echo "[abort] v4 worker slots 0,1,2 are already occupied"
+    exit 1
+  }
+  case "$V4_WORKER_SLOT" in
+    0) SEEDS_V4="0 1" ;;
+    1) SEEDS_V4="2 3" ;;
+    2) SEEDS_V4="4" ;;
+  esac
+fi
+
+NGPU_V4=$(timeout 20 nvidia-smi -L 2>/dev/null | wc -l)
+[ "${NGPU_V4:-0}" -ge 4 ] || {
+  echo "[abort] v4 requires a 4-GPU node; detected ${NGPU_V4:-0}"
+  exit 1
+}
 
 for model in "$MODEL_7B" "$MODEL_27B"; do
   [ -f "$model/config.json" ] || {
@@ -169,7 +205,7 @@ echo "== v4 confirmatory rerun"
 echo "   commit=$(git rev-parse HEAD)"
 echo "   27B=$MODEL_27B -> $RUN_BASE_27B-s*"
 echo "   7B=$MODEL_7B -> $RUN_BASE_7B-s*"
-echo "   seeds=[$SEEDS_V4]"
+echo "   worker_slot=$V4_WORKER_SLOT, GPUs=0,1,2,3, seeds=[$SEEDS_V4]"
 
 run_model_worker() {
   local label=$1 model=$2 run_base=$3 results_base=$4
@@ -177,7 +213,7 @@ run_model_worker() {
     export MODEL_14B="$model" RUN_BASE="$run_base" RESULTS_BASE="$results_base"
     export RUN_LABEL="v4-$label-worker-s${worker_tag:-unknown}"
     export RUN_BASE_SMOKE="$OM_WORK/runs/v4-$label-smoke-s${worker_tag:-unknown}"
-    export OM_SKIP_POSTPROCESS=1
+    export OM_SKIP_POSTPROCESS=1 OM_GPUS=0,1,2,3
     if [ "$label" = "27b" ]; then
       export OM_LORA_TARGETS=all-linear OM_GEN_BATCH=8 OM_SKIP_HYBRID=1
     else
