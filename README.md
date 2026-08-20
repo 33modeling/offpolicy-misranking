@@ -104,15 +104,18 @@ bash scripts/go_v4.sh    # GPU 건강검사 → 스모크 게이트 → seed 0..
                          # × {27B main, 7B replication} × {GSM8K, MATH500}
                          # 모델별 runs/results 격리, 마지막 worker가 자동 수확
 
-# 공유 스토리지를 보는 H100 4장 노드 3개에서 같은 명령을 각각 실행
-bash scripts/go_v4.sh   # 자동 배정: seeds 0,1 | seeds 2,3 | seed 4
+# 서로 독립된 H100 4장 클러스터 세 곳에서 각각 실행
+bash scripts/go_v4.sh 1   # 27B: 0,1 / 7B: 0
+bash scripts/go_v4.sh 2   # 27B: 2,3 / 7B: 1
+bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
 ```
 
 - sweep 축: **seed × dataset**. GSM8K는 과거 v2 유의 신호를 같은 데이터셋에서
   재검정하고, MATH500은 seed별 cell ordering 반전을 재검정한다. Qwen3.8-27B-BF16을
   메인 모델로, Qwen2.5-7B-Instruct를 동일조건 재현 축으로 실행한다. 기본 seed는
-  `0 1 2 3 4`이며 세 cloud worker가 공유 잠금으로 `0,1`·`2,3`·`4`를 자동 배정받는다.
-  마지막으로 완주한 worker가 잠금을 잡아 전체 표·frontier·harvest를 자동 생성한다.
+  `0 1 2 3 4`다. 27B는 클러스터 `1`·`2`·`3`에 `0,1`·`2,3`·`4`를 배정하고,
+  더 가벼운 7B는 종료시간 균형을 위해 `0`·`1`·`2,3,4`로 배정한다.
+  저장소가 공유되지 않으므로 세 결과를 한곳에 모은 뒤 전체 표·frontier를 생성한다.
 - 산출: run별 `report.json`·`manifest.json`·judge 판정 +
   `results/v4-27b`와 `results/v4-7b`의 `TABLES.md`·`FRONTIER.md`.
 - `score_protocol.json`과 `oracle_protocol.json`이 모두 없는 run은 모든 판정·표 생성기가

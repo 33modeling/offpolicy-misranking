@@ -113,16 +113,17 @@ corrected rerun 전에는 abstract/conclusion의 empirical support로 사용하�
 재사용하지 않고 `scripts/go_v4.sh`를 사용한다. 이 경로는 Qwen3.8-27B-BF16 메인과
 Qwen2.5-7B-Instruct 재현 축에서 GSM8K와 MATH500을 각각 seed 0..4로 실행한다.
 산출물은 `runs/v4-27b-*`·`runs/v4-7b-*` 및 대응 results 폴더로 격리한다.
-공유 스토리지를 보는 H100 4장 노드 세 개에서 같은 명령을 실행한다.
+서로 독립된 H100 4장 클러스터 세 곳에서 번호를 달리해 실행한다.
 
 ```bash
-bash scripts/go_v4.sh
+bash scripts/go_v4.sh 1  # 27B: seeds 0,1 / 7B: seed 0
+bash scripts/go_v4.sh 2  # 27B: seeds 2,3 / 7B: seed 1
+bash scripts/go_v4.sh 3  # 27B: seed 4 / 7B: seeds 2,3,4
 ```
 
-공유 잠금이 세 worker를 seed `0,1`·`2,3`·`4`로 자동 배정한다. worker는 실행 중
-공용 TABLES/FRONTIER를 쓰지 않는다. 전체 20 run이 모이면 마지막으로
-완주한 worker가 공유 잠금을 획득해 protocol-complete 행렬과 provenance 일치를 검증하고
-TABLES/FRONTIER/harvest를 자동 생성한다. 별도 finalize 명령은 없다.
+클러스터별 저장소가 공유되지 않으므로 worker는 실행 중 전역 TABLES/FRONTIER를 만들지
+않는다. 전체 20 run을 한 저장소에 모은 뒤 protocol-complete 행렬과 provenance 일치를
+검증하고 TABLES/FRONTIER/harvest를 생성한다.
 
 27B가 전부 맞힌 현재 DAPO 후보는 live prompt가 없어 가설 검정에 사용할 수 없으므로
 v4 기본 행렬에서 제외한다. 27B 실패 기반 hard pool 확보는 B17의 blocker로 유지한다.

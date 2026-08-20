@@ -6,11 +6,11 @@
 #   - Qwen2.5-7B-Instruct seeds 0..4: same-condition historical replication
 #   - GSM8K and MATH500 for both; saturated 27B DAPO is not a valid test pool
 #
-# Cloud usage, after the currently running jobs finish and the shared checkout is updated:
-#   bash scripts/go_v4.sh
-# Run the same command on three shared-storage nodes. Slots are claimed automatically:
-#   slot 0 -> seeds 0,1; slot 1 -> seeds 2,3; slot 2 -> seed 4.
-# The last completed worker aggregates automatically.
+# Cloud usage, after the currently running jobs finish and each checkout is updated:
+# Run on three independent clusters (four H100s each):
+#   cluster 1: 27B seeds 0,1; 7B seed 0
+#   cluster 2: 27B seeds 2,3; 7B seed 1
+#   cluster 3: 27B seed 4;    7B seeds 2,3,4
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
@@ -32,36 +32,16 @@ RESULTS_BASE_7B="$OM_WORK/results/v4-7b"
 RESULTS_BASE_27B="$OM_WORK/results/v4-27b"
 V4_STATUS_ROOT="$OM_WORK/results/v4"
 
-command -v flock >/dev/null 2>&1 || {
-  echo "[abort] flock is required for shared-cloud v4 workers"
-  exit 1
-}
-
-if [ -n "${SEEDS_V4:-}" ]; then
-  V4_WORKER_SLOT=manual
-else
-  claim_root="$OM_WORK/runs/v4-worker-claims"
-  mkdir -p "$claim_root" || exit 1
-  V4_WORKER_SLOT=
-  for slot in 0 1 2; do
-    exec {claim_fd}>"$claim_root/slot-$slot.lock"
-    if flock -n "$claim_fd"; then
-      V4_WORKER_SLOT=$slot
-      V4_CLAIM_FD=$claim_fd
-      break
-    fi
-    exec {claim_fd}>&-
-  done
-  [ -n "$V4_WORKER_SLOT" ] || {
-    echo "[abort] v4 worker slots 0,1,2 are already occupied"
-    exit 1
-  }
-  case "$V4_WORKER_SLOT" in
-    0) SEEDS_V4="0 1" ;;
-    1) SEEDS_V4="2 3" ;;
-    2) SEEDS_V4="4" ;;
-  esac
-fi
+V4_WORKER_SLOT="${1:-}"
+case "$V4_WORKER_SLOT" in
+  1) SEEDS_27B="0 1"; SEEDS_7B="0" ;;
+  2) SEEDS_27B="2 3"; SEEDS_7B="1" ;;
+  3) SEEDS_27B="4";   SEEDS_7B="2 3 4" ;;
+  *)
+    echo "usage: bash scripts/go_v4.sh <cluster: 1|2|3>"
+    exit 2
+    ;;
+esac
 
 NGPU_V4=$(timeout 20 nvidia-smi -L 2>/dev/null | wc -l)
 [ "${NGPU_V4:-0}" -ge 4 ] || {
@@ -182,10 +162,7 @@ finalize_v4() {
 finalize_v4_once() {
   local marker="$V4_STATUS_ROOT/V4_COMPLETE"
   mkdir -p "$V4_STATUS_ROOT" || return 1
-  command -v flock >/dev/null 2>&1 || {
-    echo "[abort] flock is required for shared-cloud v4 finalization"
-    return 1
-  }
+  command -v flock >/dev/null 2>&1 || return 1
   exec 9>"$OM_WORK/runs/v4-finalize.lock"
   flock 9 || return 1
   if [ -s "$marker" ] \
@@ -199,16 +176,17 @@ finalize_v4_once() {
   mv "$marker.tmp" "$marker"
 }
 
-worker_tag=$(printf '%s' "$SEEDS_V4" | tr -cs '0-9' '-' | sed 's/^-//; s/-$//')
+worker_tag="cluster$V4_WORKER_SLOT"
 
 echo "== v4 confirmatory rerun"
 echo "   commit=$(git rev-parse HEAD)"
 echo "   27B=$MODEL_27B -> $RUN_BASE_27B-s*"
 echo "   7B=$MODEL_7B -> $RUN_BASE_7B-s*"
-echo "   worker_slot=$V4_WORKER_SLOT, GPUs=0,1,2,3, seeds=[$SEEDS_V4]"
+echo "   cluster=$V4_WORKER_SLOT, GPUs=0,1,2,3"
+echo "   27B seeds=[$SEEDS_27B], 7B seeds=[$SEEDS_7B]"
 
 run_model_worker() {
-  local label=$1 model=$2 run_base=$3 results_base=$4
+  local label=$1 model=$2 run_base=$3 results_base=$4 seeds=$5
   (
     export MODEL_14B="$model" RUN_BASE="$run_base" RESULTS_BASE="$results_base"
     export RUN_LABEL="v4-$label-worker-s${worker_tag:-unknown}"
@@ -220,20 +198,21 @@ run_model_worker() {
       unset OM_LORA_TARGETS OM_GEN_BATCH
       export OM_SKIP_HYBRID=0
     fi
-    SEEDS="$SEEDS_V4" DATASETS="gsm8k" N_TRAIN=512 N_VAL=100 \
+    SEEDS="$seeds" DATASETS="gsm8k" N_TRAIN=512 N_VAL=100 \
       bash scripts/go_v2.sh || exit 1
-    SEEDS="$SEEDS_V4" DATASETS="math500" N_TRAIN=400 N_VAL=100 \
+    SEEDS="$seeds" DATASETS="math500" N_TRAIN=400 N_VAL=100 \
       bash scripts/go_v2.sh || exit 1
   )
 }
 
 # Current main model first; 7B follows as the same-condition replication axis.
-run_model_worker 27b "$MODEL_27B" "$RUN_BASE_27B" "$RESULTS_BASE_27B" || exit 1
-run_model_worker 7b "$MODEL_7B" "$RUN_BASE_7B" "$RESULTS_BASE_7B" || exit 1
+run_model_worker 27b "$MODEL_27B" "$RUN_BASE_27B" "$RESULTS_BASE_27B" "$SEEDS_27B" || exit 1
+run_model_worker 7b "$MODEL_7B" "$RUN_BASE_7B" "$RESULTS_BASE_7B" "$SEEDS_7B" || exit 1
 
 # Verify only this worker's outputs. Global aggregation waits for all expected seeds.
-for run_base in "$RUN_BASE_27B" "$RUN_BASE_7B"; do
-  for seed in $SEEDS_V4; do
+verify_worker_outputs() {
+  local run_base=$1 seeds=$2 seed run artifact
+  for seed in $seeds; do
     for run in "$run_base-s$seed" "$run_base-s$seed-math500"; do
       for artifact in DONE run_config.json manifest.json score_protocol.json oracle_protocol.json report.json; do
         [ -s "$run/$artifact" ] || {
@@ -243,11 +222,13 @@ for run_base in "$RUN_BASE_27B" "$RUN_BASE_7B"; do
       done
     done
   done
-done
+}
+verify_worker_outputs "$RUN_BASE_27B" "$SEEDS_27B"
+verify_worker_outputs "$RUN_BASE_7B" "$SEEDS_7B"
 
 if matrix_complete; then
   finalize_v4_once || exit 1
 else
-  echo "== v4 worker complete: seeds=[$SEEDS_V4]"
-  echo "   남은 seed worker가 끝나면 마지막 worker가 자동 집계합니다."
+  echo "== v4 worker complete: 27B seeds=[$SEEDS_27B], 7B seeds=[$SEEDS_7B]"
+  echo "   cluster $V4_WORKER_SLOT 완료. 다른 클러스터 결과와 합친 뒤 최종 집계합니다."
 fi
