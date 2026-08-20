@@ -9,8 +9,7 @@
 #   bash scripts/go_v4.sh
 # Overrides:
 #   SEEDS_V4="0" bash scripts/go_v4.sh
-# Run one command per cloud worker, then aggregate once from any checkout:
-#   OM_V4_FINALIZE_ONLY=1 bash scripts/go_v4.sh
+# Run one command per cloud worker. The last completed worker aggregates automatically.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
@@ -82,6 +81,17 @@ print(f"[v4 provenance] {len(runs)} runs, commit={reference['git'][:12]}, model=
 PYEOF
 }
 
+matrix_complete() {
+  local seed run artifact
+  for seed in $EXPECTED_V4_SEEDS; do
+    for run in "$RUN_BASE-s$seed" "$RUN_BASE-s$seed-math500"; do
+      for artifact in DONE run_config.json manifest.json score_protocol.json oracle_protocol.json report.json; do
+        [ -s "$run/$artifact" ] || return 1
+      done
+    done
+  done
+}
+
 finalize_v4() {
   local run tag file base
   collect_targets || return 1
@@ -103,13 +113,28 @@ finalize_v4() {
   done
   OM_RESULTS="$RESULTS_BASE" bash scripts/tables.sh "${targets[@]}" || return 1
   OM_RESULTS="$RESULTS_BASE" bash scripts/frontier.sh "${targets[@]}" || return 1
+  bash scripts/harvest.sh || return 1
   echo "== v4 aggregate complete: $RESULTS_BASE"
 }
 
-if [ "${OM_V4_FINALIZE_ONLY:-0}" = "1" ]; then
-  finalize_v4
-  exit $?
-fi
+finalize_v4_once() {
+  local marker="$RESULTS_BASE/V4_COMPLETE"
+  mkdir -p "$RESULTS_BASE" || return 1
+  command -v flock >/dev/null 2>&1 || {
+    echo "[abort] flock is required for shared-cloud v4 finalization"
+    return 1
+  }
+  exec 9>"$RUN_BASE-finalize.lock"
+  flock 9 || return 1
+  if [ -s "$marker" ] && [ -s "$RESULTS_BASE/TABLES.md" ] \
+     && [ -s "$RESULTS_BASE/FRONTIER.md" ]; then
+    echo "== v4 aggregate already complete: $RESULTS_BASE"
+    return 0
+  fi
+  finalize_v4 || return 1
+  printf 'completed %s\n' "$(date -Is)" > "$marker.tmp"
+  mv "$marker.tmp" "$marker"
+}
 
 worker_tag=$(printf '%s' "$SEEDS_V4" | tr -cs '0-9' '-' | sed 's/^-//; s/-$//')
 export RUN_LABEL="v4-worker-s${worker_tag:-unknown}"
@@ -140,9 +165,9 @@ for seed in $SEEDS_V4; do
   done
 done
 
-if [ "$SEEDS_V4" = "$EXPECTED_V4_SEEDS" ]; then
-  finalize_v4 || exit 1
+if matrix_complete; then
+  finalize_v4_once || exit 1
 else
   echo "== v4 worker complete: seeds=[$SEEDS_V4]"
-  echo "   모든 worker 완료 후: OM_V4_FINALIZE_ONLY=1 bash scripts/go_v4.sh"
+  echo "   남은 seed worker가 끝나면 마지막 worker가 자동 집계합니다."
 fi

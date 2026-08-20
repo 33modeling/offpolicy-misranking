@@ -118,13 +118,9 @@ seed 0..4로 실행해 `runs/v4-s*`와 `results/v4`에 격리한다. 공유 스�
 SEEDS_V4="0" bash scripts/go_v4.sh  # 머신별로 seed 0..4
 ```
 
-worker는 공용 TABLES/FRONTIER를 쓰지 않는다. 전체 10 run이 끝난 뒤 한 머신에서만
-다음 명령으로 protocol-complete 행렬을 검증하고 집계한다.
-
-```bash
-OM_V4_FINALIZE_ONLY=1 bash scripts/go_v4.sh
-bash scripts/harvest.sh
-```
+worker는 실행 중 공용 TABLES/FRONTIER를 쓰지 않는다. 전체 10 run이 모이면 마지막으로
+완주한 worker가 공유 잠금을 획득해 protocol-complete 행렬과 provenance 일치를 검증하고
+TABLES/FRONTIER/harvest를 자동 생성한다. 별도 finalize 명령은 없다.
 
 ## 레퍼런스 감사
 

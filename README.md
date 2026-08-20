@@ -106,13 +106,12 @@ bash scripts/go_v4.sh    # GPU 건강검사 → 스모크 게이트 → seed 0..
 
 # 공유 스토리지의 여러 클라우드 머신에서 seed 하나씩 병렬 실행
 SEEDS_V4="0" bash scripts/go_v4.sh   # 머신별로 0..4
-# 모든 worker가 끝난 뒤 한 번만
-OM_V4_FINALIZE_ONLY=1 bash scripts/go_v4.sh
 ```
 
 - sweep 축: **seed × dataset**. GSM8K는 과거 v2 유의 신호를 같은 데이터셋에서
   재검정하고, MATH500은 seed별 cell ordering 반전을 재검정한다. 기본 seed는
   `0 1 2 3 4`이며 cloud worker마다 `SEEDS_V4="0"`처럼 하나씩 맡길 수 있다.
+  마지막으로 완주한 worker가 잠금을 잡아 전체 표·frontier·harvest를 자동 생성한다.
 - 산출: run별 `report.json`·`manifest.json`·judge 판정 +
   `results/v4/TABLES.md`(표 생성기)·`FRONTIER.md`(아래 5절).
 - `score_protocol.json`과 `oracle_protocol.json`이 모두 없는 run은 모든 판정·표 생성기가
