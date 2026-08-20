@@ -69,8 +69,17 @@ pkill -KILL -f -- "--run $OM_WORK/runs/v4-" 2>/dev/null || true
 
 gpu_clear=0
 for _ in $(seq 1 30); do
-  busy=$(timeout 20 nvidia-smi --query-gpu=memory.used \
-    --format=csv,noheader,nounits 2>/dev/null | awk '$1 > 2000 {n++} END {print n+0}')
+  gpu_memory=$(timeout 20 nvidia-smi --query-gpu=memory.used \
+    --format=csv,noheader,nounits 2>/dev/null) || {
+    sleep 2
+    continue
+  }
+  gpu_rows=$(printf '%s\n' "$gpu_memory" | awk 'NF {n++} END {print n+0}')
+  [ "$gpu_rows" -eq "$NGPU_V4" ] || {
+    sleep 2
+    continue
+  }
+  busy=$(printf '%s\n' "$gpu_memory" | awk '$1 > 2000 {n++} END {print n+0}')
   if [ "${busy:-1}" -eq 0 ]; then
     gpu_clear=1
     break

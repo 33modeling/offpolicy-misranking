@@ -214,10 +214,13 @@ E절(데이터셋 확장 하루치)의 추가 교훈: **(4) 같은 판단(경로
   범위에 들어간다. 임계값은 7B 5분, 동시 snapshot load가 긴 27B 20분이며 스모크와
   본 run 모두 최대 5회 재시도한다. 27B에 5분을 적용하면 정상 모델 로딩을 반복해서
   죽이는 재시작 루프가 발생한다.
-- **v4 smoke 계보**: `git pull` 뒤 이전 smoke를 같은 경로에서 재사용하면 immutable
-  `run_config.json`의 `git`이 달라 `existing artifacts use a different run config: ['git']`
-  으로 중단된다. v4는 smoke 경로에 현재 12자리 commit hash를 넣어 커밋별로 격리한다.
-  이전 smoke 폴더를 삭제하거나 섞지 않는다.
+- **v4 전체 run 계보(8/21 최종 수정)**: `git pull` 뒤 이전 run을 같은 경로에서
+  재사용하면 immutable `run_config.json`의 `git`이 달라
+  `existing artifacts use a different run config: ['git']`으로 중단된다. smoke는 현재
+  12자리 commit hash를 경로에 포함하고, canonical 본실행 경로의 이전 commit 산출물은
+  시작 전에 `$OM_WORK/quarantine/v4/`로 자동 보존 이동한다. 시작 시 stale v4 worker를
+  종료하고 GPU 메모리 해제까지 확인한다. 상세 postmortem은
+  `docs/V4_RUNNER_INCIDENT_2026-08-21.md` 참조.
 - **잔여 경계**: util 0%가 지속되면 진짜 hang — 이 노드군의 fused 커널병(C5·C6)
   이 에러 대신 동결로 나타나는 케이스 또는 group-volume 스톨(D-state).
   그때는 RECOVERY 상황 1(노드 교체)이 정답. 진단: ps -eo pid,stat,wchan | awk

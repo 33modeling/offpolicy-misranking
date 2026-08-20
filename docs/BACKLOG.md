@@ -32,6 +32,32 @@
 
 상세 판정과 결과 파일 hash는 `docs/FULL_AUDIT_2026-08-20.md` 참조.
 
+### 2026-08-21 v4 재시작 장애 및 수정 기록
+
+- [x] **증상**: `git pull` 후 스모크/본실행이
+      `existing artifacts use a different run config: ['git']`로 반복 중단되고,
+      실패한 이전 자식 프로세스가 GPU를 계속 점유해 다음 실행의 GPU 검사도 실패.
+- [x] **원인**: immutable `run_config.json` 검사는 정상 동작했으나, smoke만
+      commit별 경로로 바꾸고 본실행의 `v4-27b-s*`/`v4-7b-s*` 경로는 그대로
+      재사용했다. 또한 watchdog 재시도 정리가 TERM 이후 자식 종료와 GPU 메모리
+      해제를 확정적으로 기다리지 않아 잔류 CUDA 프로세스와 다음 시도가 경합했다.
+- [x] **수정** (`abe9dbb`): `go_v4.sh` 시작 시 같은 사용자의 이전 v4 worker와
+      `--run $OM_WORK/runs/v4-` 프로세스를 종료하고, 명시적 `pkill` 후 모든 GPU의
+      사용 메모리가 2GB 이하가 될 때까지 최대 60초 확인한다. 다른 작업의 점유가
+      남으면 해당 PID/프로세스/메모리를 출력하고 중단하며 무관한 작업은 종료하지 않는다.
+- [x] **산출물 보존**: 현재 HEAD와 `run_config.json.git`이 다른 smoke/본실행
+      디렉터리는 삭제하거나 섞지 않고 `$OM_WORK/quarantine/v4/`로 원자 이동한 뒤
+      원래 canonical 경로에서 새 run을 시작한다. 따라서 `['git']` 충돌을 사용자가
+      파일을 직접 확인하거나 삭제하지 않아도 자동 해소한다.
+- [x] **재시도 정리**: `go_v2.sh`도 활성 process group과 같은 run 경로 자식에
+      TERM을 보낸 뒤 종료를 기다리고, 남은 프로세스에는 KILL을 보장한 후 재시도한다.
+- [x] **검증**: stale v4 worker 종료 실동작, shell syntax, Python compile,
+      run-path 보존/격리, failure diagnostic, run selection, harvest 회귀 테스트 통과.
+      각 클러스터 실행 명령은 `git pull` 후 각각 `bash scripts/go_v4.sh 1`, `2`, `3`.
+
+상세 장애 타임라인, 불완전했던 중간 수정, 현재 실행 순서와 잔여 경계는
+`docs/V4_RUNNER_INCIDENT_2026-08-21.md`를 정본으로 삼는다.
+
 ## 상태 (2026-08-13 오후): 재편 분기 발동 — 원고 v0.1 push 완료
 
 P3-0 precheck **NO-GO** + P4-0 kcurve **구조적 부재** → 사전 등록 재편 분기

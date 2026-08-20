@@ -79,7 +79,8 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | 스크립트 | 용도 |
 |---|---|
 | `go_retry.sh` | **표준 재시작 진입점**: gsm8k 프로브 → 전 seed·데이터셋 스윕(DONE 스킵). `SEEDS_ALL="3"`으로 seed 지정 |
-| `go_v2.sh` | 본실행: GPU 건강검사 → 30분 스모크 게이트 → `SEEDS`×`DATASETS` 루프. **무출력 워처**(15분 단위, util>0이면 정상·0% 지속이면 hang) 내장 |
+| `go_v4.sh` | 현재 confirmatory 진입점: 독립 3-cluster seed 배정, 시작 전 stale v4 process/GPU 정리, Git 불일치 run 자동 quarantine, commit별 smoke, 27B→7B 실행. 전체 matrix가 한 storage에 모이면 자동 집계 |
+| `go_v2.sh` | 모델별 worker: GPU 건강검사 → 스모크 게이트 → `SEEDS`×`DATASETS` 루프. console/stage 로그 무변화 watchdog, process-group 자동 종료·최대 재시도, 실패 원인 콘솔 진단 내장 |
 | `run_14b.sh` | 단일 (seed,dataset) 실행기: config digest lock, GPU 자동감지, exact-K 병합 검증, 실패 전파, 최종 필수 artifact 검사 후 원자적 `DONE` 생성 |
 | `go_new.sh` | **B11 최신 세대 검증**: 기본 Qwen3.8-27B(REPO27B로 교체 가능) 1-seed, 스냅샷 자동 fetch, `RUN_BASE`/`RESULTS_BASE`로 v2와 폴더 격리. rollout.py의 MM automap 폴백(CausalLM 실패 시 AutoModelForMultimodalLM)과 세트 |
 | `go_full.sh`/`go_boost.sh`/`go_27b.sh`/`go_hard.sh` | 확장 스택 — **신규 착수 금지**(BACKLOG 폐기절, go_hard는 NO-GO 폐기) |
@@ -89,6 +90,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | 스크립트 | 용도 |
 |---|---|
 | `diagnose.sh` | 멈춤 원인 원샷 리포트 |
+| `diagnose_run_failure.sh` | smoke/run 실패 시 console 및 nested stage 오류, artifact 누락, 잔류 process, GPU 상태를 자동 출력·보존 |
 | `gpu_check.sh` | matmul/SDPA 분리 판정 (ULF 계열) |
 | `check_data.sh <dataset>` | 데이터 위치·스키마 자가진단 |
 | `fetch_datasets.sh` | 데이터셋 수동 다운로드 |

@@ -100,15 +100,16 @@ drift 8배·선택 비율 5–25%·val 심화·(ε,δ)-PAC 완화 전부에서 �
 통계 자동 실측, 인증 ε 실반영, run manifest 기록.
 
 ```bash
-bash scripts/go_v4.sh    # GPU 건강검사 → 스모크 게이트 → seed 0..4
-                         # × {27B main, 7B replication} × {GSM8K, MATH500}
-                         # 모델별 runs/results 격리, 마지막 worker가 자동 수확
-
 # 서로 독립된 H100 4장 클러스터 세 곳에서 각각 실행
 bash scripts/go_v4.sh 1   # 27B: 0,1 / 7B: 0
 bash scripts/go_v4.sh 2   # 27B: 2,3 / 7B: 1
 bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
 ```
+
+각 실행은 stale v4 process를 종료하고 GPU 메모리 해제를 확인한 뒤 commit별 smoke로
+진입한다. 다른 Git commit의 canonical run은 삭제하지 않고
+`$OM_WORK/quarantine/v4/`로 보존 이동한다. 장애 이력과 제한사항은
+`docs/V4_RUNNER_INCIDENT_2026-08-21.md` 참조.
 
 - sweep 축: **seed × dataset**. GSM8K는 과거 v2 유의 신호를 같은 데이터셋에서
   재검정하고, MATH500은 seed별 cell ordering 반전을 재검정한다. Qwen3.8-27B-BF16을

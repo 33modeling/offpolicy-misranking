@@ -76,9 +76,10 @@ def matching_processes(run_prefix: str) -> dict[int, Process]:
             process.environ.get("RUN_BASE_SMOKE", ""),
         )
         is_v4_worker = process.environ.get("RUN_LABEL", "").startswith("v4-")
+        is_v4_launcher = "scripts/go_v4.sh" in process.command
         if run_prefix in process.command or any(
             path.startswith(run_prefix) for path in environment_paths
-        ) or is_v4_worker:
+        ) or is_v4_worker or is_v4_launcher:
             targets.add(pid)
 
     # Include descendants so launchers cannot leave CUDA children behind.
