@@ -77,7 +77,9 @@ run_pipeline() {  # run_pipeline <console-log> <command...>
     else
       still=$((still + 1))
       if [ "$still" -ge "$stall_ticks" ]; then
-        echo "[워처] 로그 ${OM_STALL_MINUTES:-5}분 무변화 — smoke/run process group 종료 후 자동 재시작"
+        message="[워처] 로그 ${OM_STALL_MINUTES:-5}분 무변화 — smoke/run process group 종료 후 자동 재시작"
+        echo "$message"
+        printf '%s\n' "$message" >> "$console_log"
         kill -TERM -- "-$runner_pid" 2>/dev/null || true
         sleep 5
         kill -KILL -- "-$runner_pid" 2>/dev/null || true
@@ -112,19 +114,24 @@ if [ "$smoke_ready" -eq 1 ]; then
 else
   cleanup_strays
   smoke_ok=0
+  smoke_rc=0
   for smoke_try in $(seq 1 "${OM_MAX_RETRIES:-2}"); do
     if run_pipeline "$LOGDIR/$RUN_LABEL-smoke.log" env \
        DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
        HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh; then
       smoke_ok=1
       break
+    else
+      smoke_rc=$?
     fi
     echo "   스모크 자동 재시작 $smoke_try/${OM_MAX_RETRIES:-2}"
+    bash scripts/diagnose_run_failure.sh \
+      "$SMOKE" "$LOGDIR/$RUN_LABEL-smoke.log" "$smoke_rc"
     cleanup_strays
   done
   if [ "$smoke_ok" -ne 1 ]; then
-    echo "== [중단] 스모크 실패 — 본실행 진입 안 함. 사인:"
-    tail -8 "$LOGDIR/$RUN_LABEL-smoke.log" | sed 's/^/   /'
+    echo "== [중단] 스모크 실패 — 본실행 진입 안 함"
+    echo "   상세 사인: $SMOKE/FAILURE_DIAGNOSTIC.txt"
     cleanup_strays; kill $W 2>/dev/null; exit 1
   fi
   WANTS="report.json score_protocol.json oracle_protocol.json divergence_stats.shard0.json manifest.json"
@@ -160,8 +167,11 @@ for SEED in "${SEEDS[@]}"; do
       if run_pipeline "$LOG" env DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" \
          bash scripts/run_14b.sh; then
         ok=1; echo "==== [$KEY] ✔ 완주"; break
+      else
+        run_rc=$?
       fi
-      echo "==== [$KEY] ✘ 실패 — tail:"; tail -4 "$LOG" | sed 's/^/     /'
+      echo "==== [$KEY] ✘ 실패 — 진단:"
+      bash scripts/diagnose_run_failure.sh "$RUN_DIR" "$LOG" "$run_rc"
       grep -q "\[abort\].*데이터" "$LOG" && { echo "==== [$KEY] 데이터 문제 — 스킵"; break; }
       sleep 20
     done

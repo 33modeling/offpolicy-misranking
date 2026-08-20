@@ -177,6 +177,7 @@ finalize_v4_once() {
 }
 
 worker_tag="cluster$V4_WORKER_SLOT"
+code_tag=$(git rev-parse --short=12 HEAD)
 
 echo "== v4 confirmatory rerun"
 echo "   commit=$(git rev-parse HEAD)"
@@ -190,14 +191,17 @@ run_model_worker() {
   (
     export MODEL_14B="$model" RUN_BASE="$run_base" RESULTS_BASE="$results_base"
     export RUN_LABEL="v4-$label-worker-s${worker_tag:-unknown}"
-    export RUN_BASE_SMOKE="$OM_WORK/runs/v4-$label-smoke-s${worker_tag:-unknown}"
-    export OM_SKIP_POSTPROCESS=1 OM_GPUS=0,1,2,3
-    export OM_STALL_MINUTES=5 OM_MAX_RETRIES=5
+    # A smoke run is code-specific. Reusing one after git pull must not trip the
+    # immutable run_config lock or mix artifacts from two implementations.
+    export RUN_BASE_SMOKE="$OM_WORK/runs/v4-$label-smoke-$code_tag-s${worker_tag:-unknown}"
+    export OM_SKIP_POSTPROCESS=1 OM_GPUS=0,1,2,3 OM_MAX_RETRIES=5
     if [ "$label" = "27b" ]; then
+      # Four concurrent 27B snapshot loads can legitimately be silent for >5 min.
       export OM_LORA_TARGETS=all-linear OM_GEN_BATCH=8 OM_SKIP_HYBRID=1
+      export OM_STALL_MINUTES=20
     else
       unset OM_LORA_TARGETS OM_GEN_BATCH
-      export OM_SKIP_HYBRID=0
+      export OM_SKIP_HYBRID=0 OM_STALL_MINUTES=5
     fi
     SEEDS="$seeds" DATASETS="gsm8k" N_TRAIN=512 N_VAL=100 \
       bash scripts/go_v2.sh || exit 1
