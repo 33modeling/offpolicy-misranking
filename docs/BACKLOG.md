@@ -89,10 +89,10 @@
       run만 score/oracle/report 단계로 넘길 것
 - [ ] 공유 worktree 변경 후 실행된 단계는 `source_run_git`, `score_git`,
       `postprocess_git`을 함께 보존하고 단일 commit 실행으로 표기하지 말 것
-- [ ] v4 수확 시 behavior/fresh 각각 prompt별 정답 수가 `0`, `K`, `1..K-1`인
-      비율을 출력해 27B GSM8K all-correct와 MATH-500 all-wrong 포화를 정량화
-- [ ] full-dataset에서 mixed-reward prompt가 부족하면 추가 seed를 먼저 늘리지 말고,
-      분석 seed와 분리된 prescreen으로 model-calibrated pool을 고정한 뒤 재실행
+- [ ] v4 수확 시 behavior/fresh 각각 전체 prompt별 정답 수와 `0`, `K`, `1..K-1`
+      비율을 출력; progress log tail은 aggregate 통계로 사용하지 말 것
+- [ ] 전체 reward 분포와 protocol-complete 결과를 확인한 뒤에만 추가 seed,
+      dataset 변경 또는 model-calibrated pool 필요 여부를 결정
 - [ ] protocol-complete v4 수확본을 받은 뒤에만 원고 표와 결론을 갱신
 
 상세 판정은 `docs/V4_PROGRESS_2026-08-21.md`를 정본으로 삼는다.
