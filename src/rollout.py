@@ -130,6 +130,33 @@ def chat_ids(tok, question: str) -> torch.Tensor:
     return tok(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
 
 
+def salvage_partial(part_path: Path, k: int) -> set[int]:
+    """중단된 shard의 .partial에서 K개를 전부 갖춘 프롬프트만 남기고 재개 집합을 반환.
+
+    ULF류 간헐 크래시 노드에서 수 시간짜리 shard를 프롬프트 0부터 다시 돌지 않기
+    위한 장치 — 강제 종료로 찢긴 마지막 줄부터는 버리고, K개 미달 프롬프트는
+    통째로 제거해 중복 행·부분 행이 최종 산출물에 들어갈 수 없게 한다."""
+    if not part_path.exists():
+        return set()
+    rows_by_prompt: dict[int, list[str]] = {}
+    with part_path.open() as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                break  # 찢긴 꼬리 줄 — 이 지점부터는 신뢰하지 않는다
+            rows_by_prompt.setdefault(int(row["prompt_idx"]), []).append(
+                line if line.endswith("\n") else line + "\n"
+            )
+    complete = {p: rows for p, rows in rows_by_prompt.items() if len(rows) == k}
+    tmp = part_path.with_suffix(part_path.suffix + ".rewrite")
+    with tmp.open("w") as f:
+        for p in sorted(complete):
+            f.writelines(complete[p])
+    tmp.replace(part_path)
+    return set(complete)
+
+
 @torch.no_grad()
 def collect_rollouts(
     model,
@@ -162,9 +189,22 @@ def collect_rollouts(
     # Keep an in-progress record without replacing a previously valid sidecar.
     # The final manifest is published only after the JSONL and its hash exist.
     manifest_tmp.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
-    tmp_path = out_path.with_suffix(".tmp")
-    with tmp_path.open("w") as f:
+    # 프롬프트 단위 내구 저장 + 중간 재개 — 간헐 크래시(ULF) 노드에서 shard 전체를
+    # 처음부터 다시 돌지 않는다. 구버전이 남긴 .tmp가 있으면 진행분을 승계한다.
+    part_path = out_path.with_suffix(".partial")
+    legacy_tmp = out_path.with_suffix(".tmp")
+    if not part_path.exists() and legacy_tmp.exists():
+        legacy_tmp.rename(part_path)
+    done = salvage_partial(part_path, k)
+    if done:
+        print(f"[{ts()}] rollout 재개: 완료 프롬프트 {len(done)}개 스킵 "
+              f"({part_path.name})", flush=True)
+    todo_total = sum(1 for i in range(len(prompts)) if idx_offset + i not in done)
+    session_done = 0
+    with part_path.open("a") as f:
         for i, item in enumerate(prompts):
+            if idx_offset + i in done:
+                continue
             t0 = time.time()
             ids = chat_ids(tok, item["question"]).to(model.device)
             resp_start = ids.numel()
@@ -200,10 +240,20 @@ def collect_rollouts(
                         + "\n"
                     )
                     j += 1
-            print(f"[{ts()}]  rollout {i + 1}/{len(prompts)} "
-                  f"({100 * (i + 1) // len(prompts)}%, {time.time() - t0:.0f}s/개, "
-                  f"정답 {n_correct}/{k}, ETA {_eta(i + 1, len(prompts), t_start)})", flush=True)
-    tmp_path.rename(out_path)  # 원자적 완료 표시 — 중단된 부분 파일은 .tmp로 남는다
+            f.flush()  # 프롬프트 단위 내구 지점 — 크래시 시 여기까지는 재개 가능
+            session_done += 1
+            n_have = len(done) + session_done
+            print(f"[{ts()}]  rollout {n_have}/{len(prompts)} "
+                  f"({100 * n_have // len(prompts)}%, {time.time() - t0:.0f}s/개, "
+                  f"정답 {n_correct}/{k}, ETA {_eta(session_done, todo_total, t_start)})",
+                  flush=True)
+    # fail-closed 발행: 행 수가 정확히 n_prompts×K일 때만 최종 이름을 얻는다
+    n_rows = sum(1 for _ in part_path.open())
+    if n_rows != len(prompts) * k:
+        raise RuntimeError(
+            f"rollout 산출물 행 수 불일치: {n_rows} != {len(prompts)}×{k} — "
+            f"{part_path} 보존, 발행 중단")
+    part_path.rename(out_path)  # 원자적 완료 표시 — 중단된 부분 파일은 .partial로 남는다
     manifest.update({
         "artifact_file": out_path.name,
         "artifact_sha256": sha256_file(out_path),
