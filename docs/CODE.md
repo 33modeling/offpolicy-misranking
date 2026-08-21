@@ -36,7 +36,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | 파일 | 역할 |
 |---|---|
 | `experiment.py` | 스테이지 오케스트레이터. oracle micro-group은 짝/홀 equal-budget split, report의 floor·precision은 20개 독립 tie stream 평균. CertaGrad 평가는 candidate와 validation 모두 선택용 짝수/평가용 홀수 group으로 분리한다. |
-| `rollout.py` (222줄) | 모델 로드(`load_model` — `OM_ATTN=eager` 지원, ULF 대응), `rollout_prompts`(104): 프롬프트별 K개 생성 + reward 저장 (logp는 score 단계에서 재계산). `train_drift_lora`(154): **rejection FT** — reward>0.5 rollout만 SFT(LoRA r=16 α=32), 정답이 하나도 없으면 전체로 폴백(183~187). |
+| `rollout.py` | 모델 로드(`load_model` — `OM_ATTN=eager` 지원, ULF 대응), `collect_rollouts`: 프롬프트별 K개 생성 + reward 저장 (logp는 score 단계에서 재계산) — **프롬프트 단위 `.partial` 내구 저장·중간 재개**(`salvage_partial`, ULF 4차 C7 대응, K개 완주 프롬프트만 승계·행수 n×K 검증 후 발행). `train_drift_lora`(154): **rejection FT** — reward>0.5 rollout만 SFT(LoRA r=16 α=32), 정답이 하나도 없으면 전체로 폴백(183~187). |
 | `grads.py` (197줄) | 추정량 수학. `loo_advantages`(25): 그룹 leave-one-out advantage. `log_weights`/`token_weights`: prefix·suffix·token IS 가중치 (2×2의 실체). `prompt_gradient`(145)+`project_grads`(93): JL 투영 프롬프트 gradient. `grad_params`(126): LoRA merge 후 requires_grad 복원 함정 처리. |
 | `data.py` (413줄) | 로더+보상. `load_prompts`(17): gsm8k / dapo-math / math500 / **mbpp** / **kk** / apps(데이터만). 로컬 우선 탐색(`_dataset_bases` 3곳: `$DATASETS_DIR`·`/group-volume/datasets`·사용자 폴더) → HF 폴백. 보상: 수학=최종 수치 매칭(`extract_answer`/`_boxed`), `_code_reward`(336)=테스트 실행 채점(mbpp), `_kk_reward`(385)=전원 신원 매치, `_apps_reward`(355, 하네스 미구현). |
 | `hybrid.py` | C1′ 인과 검증. β/π 경로 × β/π 마무리 4셀을 equal-K로 만들며, 보존 response prefix 길이를 전체 생성 horizon에서 차감해 cell 간 토큰 예산을 맞춘다. |

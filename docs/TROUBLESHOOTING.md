@@ -147,6 +147,28 @@
   분리 판정하는 진단부터 만들 것. matmul까지 실패하는 날은 코드가 아니라 노드를
   바꿔야 한다.
 
+### C7. ULF 4차 — 27B(Qwen3.8) linear-attention 경로 + shard 전량 재시작 (2026-08-21)
+- **증상**: v4-27b-s4 fresh rollout이 46/128 지점에서
+  `CUDA error: unspecified launch failure`. 트레이스는 `modeling_qwen3_5.py`의
+  `torch_recurrent_gated_delta_rule`(linear attention torch 폴백)을 가리키나
+  비동기 보고라 발생 지점 불확정. 모델 재로드 후 재시도에서도 다른 지점에서 재발.
+- **C6과 다른 점**: `OM_ATTN=eager`는 full-attention 레이어의
+  `attn_implementation`만 바꾼다. Qwen3.8의 Gated DeltaNet 재귀는 그 스위치
+  관할 밖이고 이미 torch 폴백에서 죽고 있어 "fused 커널 우회" 카드가 없다.
+  노드 병 판정은 C6의 층별 진단(`gpu_check.sh`) 그대로 — matmul까지 죽으면 노드 교체.
+- **우리 코드의 실제 버그**: `collect_rollouts`가 shard 전체를 `.tmp`에 쓰고
+  마지막에 rename했기 때문에 크래시 시 수 시간 진행분이 통째로 버려지고
+  재시도가 프롬프트 0부터 다시 돌았다. 간헐 ULF 노드에서는 2.5시간짜리 shard가
+  영원히 완주하지 못하는 구조.
+- **수정**(`bbf884e`): 프롬프트 단위 `.partial` 내구 저장(매 프롬프트 flush) +
+  재시작 시 `salvage_partial()`이 K개 완주 프롬프트만 남기고(찢긴 꼬리 줄·미완
+  프롬프트 제거) 그 지점부터 재개. 구버전 `.tmp` 진행분 승계. 발행은 행수
+  = n_prompts×K 검증 통과 시에만(fail-closed). `.partial` 확장자는 merge·stale
+  청소기의 `.jsonl` 글롭에 안 걸리게 선택.
+- 교훈: "원자적 발행"과 "내구 진행"은 상충하지 않는다 — 발행 원자성은 rename
+  1회로 유지하고 내구성은 부분 파일+구제 규칙으로 얻는다. 크래시가 일상인
+  환경에서 all-or-nothing 쓰기는 그 자체가 가용성 버그다.
+
 ## E. 데이터셋 확장(math500/mbpp/kk)에서의 시행착오 — 2026-08-10 하루치
 
 ### E1. math500 허브 직행 → 오프라인 노드 즉사
