@@ -77,6 +77,22 @@
 상세 장애 타임라인, 불완전했던 중간 수정, 현재 실행 순서와 잔여 경계는
 `docs/V4_RUNNER_INCIDENT_2026-08-21.md`를 정본으로 삼는다.
 
+### 2026-08-21 v4 27B 진행 스냅샷 수신
+
+- [x] `0821-0716-clusterrun270721-first-v4-3.tar.gz` 압축 해제 및 시드별
+      진행률, generation contract, commit 계보 점검
+- [x] 다섯 run 모두 score/oracle protocol, report, DONE이 없음을 확인;
+      논문에 반영 가능한 신규 결과 수치는 아직 0개
+- [x] `abe9dbb` manifest는 생성 시작 시 먼저 게시되고 generation-time artifact
+      hash가 없으므로 manifest 존재를 완료 판정으로 쓰지 않도록 기록
+- [ ] current validator로 exact-K, 전체 `resp_end`, shard/merged identity를 통과한
+      run만 score/oracle/report 단계로 넘길 것
+- [ ] 공유 worktree 변경 후 실행된 단계는 `source_run_git`, `score_git`,
+      `postprocess_git`을 함께 보존하고 단일 commit 실행으로 표기하지 말 것
+- [ ] protocol-complete v4 수확본을 받은 뒤에만 원고 표와 결론을 갱신
+
+상세 판정은 `docs/V4_PROGRESS_2026-08-21.md`를 정본으로 삼는다.
+
 ## 상태 (2026-08-13 오후): 재편 분기 발동 — 원고 v0.1 push 완료
 
 P3-0 precheck **NO-GO** + P4-0 kcurve **구조적 부재** → 사전 등록 재편 분기
