@@ -101,7 +101,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 |---|---|
 | `harvest.sh` | **수확 원스톱**: v4가 있으면 2모델×5-seed×2데이터셋의 20-run 완결성을 먼저 검사한다. 사전등록 `KCURVE.md`와 전 세대 확장 `KCURVE_ALL.md`, READOUT·REVERSAL(닻·McNemar 포함)·STATS·TABLES·FRONTIER를 고유 폴더에 원자적으로 publish. 실패 stdout/stderr는 partial/error로 격리하고 nonzero 종료 |
 | `collect_v4.sh` | **v4 결과 자동 취합**: 공유 `runs/`의 20개 run과 필수 산출물을 검사하고 27B·7B TABLES/FRONTIER를 staging에서 따로 생성·게시한 뒤 `harvest.sh` 실행. GPU 및 run 디렉터리는 건드리지 않음 |
-| `resume_v4.sh` | **중단된 v4 안전 재개**: 기존 `run_config.json`의 단일 generation commit을 찾아 격리 worktree에서 해당 cluster slot을 재개. 완료 run과 해당 커밋이 지원하는 기존 shard/`.partial`을 재사용하며 analysis-only pull로 인한 quarantine·전면 재실행을 방지. snapshot 진입 시 호출 checkout의 `OM_REPO`/`PYTHONPATH`는 제거해 코드 혼합 차단 |
+| `resume_v4.sh` | **중단된 v4 안전 재개**: 완료 run은 스킵하고 각 미완료 `run_config.json`에 기록된 generation commit의 격리 worktree에서 run별로 재개. 커밋이 여러 개여도 서로 섞지 않으며 기존 shard/`.partial`을 재사용. 없는 commit은 자동 fetch하고 snapshot 진입 시 호출 checkout의 `OM_REPO`/`PYTHONPATH`를 제거 |
 | `_report_io.sh` | 개별 보고서 I/O | read_now·K-curve·reversal 실행기의 고유 폴더 생성, nonempty 검사, 원자적 publish |
 | `reversal_freq.sh`/`kcurve.sh`/`kcurve_all.sh`/`frontier.sh` | 개별 분석 러너 (harvest가 전부 포함하므로 단독 실행은 조기 확인용) |
 | `read_now.sh` | judge 전체 출력 즉석 판독 |

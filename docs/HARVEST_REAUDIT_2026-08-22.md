@@ -55,11 +55,11 @@ to model-separated TABLES/FRONTIER generation and final harvest.
 
 If GPU workers have exited and these checks show absent or incomplete runs, the
 affected cluster slots must resume `go_v4.sh` from the same generation commit.
-`go_v4.sh` now delegates to `resume_v4.sh`, which reads the original commit from
-the existing run configs and executes that snapshot in an isolated worktree.
+`go_v4.sh` now delegates to `resume_v4.sh`, which reads each incomplete run's
+original commit and executes that run in its isolated worktree.
 This permits pulling analysis-only fixes without changing the immutable run
 contract or quarantining multi-day partial artifacts. Mixed recorded commits
-fail closed instead of merging incompatible runs.
+are resumed separately rather than being merged into one execution process.
 After all slots finish, `bash scripts/collect_v4.sh` performs the collection;
 the user does not copy run directories manually.
 

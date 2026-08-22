@@ -343,9 +343,13 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 
 - [x] 수신한 진행 스냅샷에서 기대한 20-run 중 11-run만 완료됐고 9-run이
       absent/incomplete임을 확인. 부분 matrix의 수치는 논문 결론으로 확정하지 않는다.
-- [x] `go_v4.sh`가 active run config의 원래 generation commit을 자동 선택하고
-      detached worktree에서 실행하도록 보강. 최신 Git pull 뒤에도 완료 run은 스킵하고
+- [x] `go_v4.sh`가 각 active run config의 원래 generation commit을 자동 선택하고
+      run별 detached worktree에서 실행하도록 보강. 혼합 commit도 서로 섞지 않고
+      최신 Git pull 뒤에도 완료 run은 스킵하고
       미완료 stage/shard를 이어서 실행하며 canonical 결과를 quarantine하지 않는다.
+- [x] 초기 재개 래퍼가 전체 matrix를 단일 commit으로 가정해
+      `mixed v4 generation commits`에서 즉시 종료된 결함을 제거. cluster slot의
+      미완료 run을 각자 기록된 commit으로 계획하고 순차 재개하도록 회귀 테스트 추가.
 - [x] snapshot 진입 시 최신 checkout의 `OM_REPO`/`PYTHONPATH` 상속을 제거해 Git은
       과거 revision인데 Python import는 최신 revision인 혼합 실행을 차단한다.
 - [x] `collect_v4.sh`가 결과 디렉터리 없음, DONE 없음, 후처리 산출물 누락을 분리해
