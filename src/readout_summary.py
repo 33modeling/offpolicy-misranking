@@ -8,17 +8,18 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 from gate_rules import evaluate_causal_run, has_valid_analysis_protocol
+from run_select import is_generation_run, iter_runs
 from score_artifacts import (
     ESTIMATORS,
     ScoreArtifactError,
     load_complete_score_artifacts,
 )
-from run_select import is_generation_run, iter_runs
 from select_rules import overlap_under_independent_ties, topk_count
 
 
@@ -44,6 +45,8 @@ def _completed_runs(root: Path) -> list[Path]:
 
 def _dataset_tag(name: str) -> str:
     generation = name.split("-", 1)[0] if is_generation_run(name) else "legacy"
+    model_match = re.match(r"^v\d+-(.+)-s\d+(?:-|$)", name)
+    model = model_match.group(1) if model_match else None
     if "dapo" in name:
         dataset = "dapo"
     elif "math500" in name:
@@ -52,7 +55,11 @@ def _dataset_tag(name: str) -> str:
         dataset = "gsm8k"
     else:
         dataset = "other"
-    return f"{generation}/{dataset}"
+    parts = [generation]
+    if model:
+        parts.append(model)
+    parts.append(dataset)
+    return "/".join(parts)
 
 
 def main() -> int:

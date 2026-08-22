@@ -23,12 +23,35 @@ partial-output preservation, result-table copying, and shell regressions.
    checked only its exit code, so it could not detect omission of the all-run
    report. The test now requires separate nonempty preregistered and extended
    reports and exercises extended-report failure and empty result-table cases.
+5. A received screenshot contained only 11 of the expected 20 v4 runs, but a
+   manually invoked harvest still wrote `HARVEST_STATUS.md`. When any non-smoke
+   v4 run is visible, harvest now requires nonempty completion, configuration,
+   manifest, score/oracle protocol, and report artifacts for all
+   2 models x 5 seeds x 2 datasets. An incomplete matrix exits nonzero and
+   records every missing artifact in `V4_MATRIX.err`.
+6. `readout_summary.py` grouped conclusions only by generation and dataset.
+   Consequently the screenshot's `v4/gsm8k 0/5` combined one 27B run with four
+   7B runs, and `v4/math500 0/6` combined one 27B run with five 7B runs. Model
+   families are now separate tags such as `v4/27b/gsm8k` and `v4/7b/gsm8k`.
+
+## Screenshot triage
+
+The screenshot is a partial readout, not a final confirmatory result. It shows
+11 rows: two of ten expected 27B conditions and nine of ten expected 7B
+conditions. Missing rows are eight 27B conditions and `v4-7b-s0`. Across the
+visible rows the preregistered one-sided-loss criterion is met in zero runs.
+The two visible 27B rows have `g00` highest and `g11` lowest, but each represents
+only one seed/dataset condition and cannot establish a model-level ordering.
+No paper claim should be updated until the complete artifacts are merged and
+the corrected model-separated reports, confidence intervals, and reversal
+audits are available.
 
 ## Verification
 
 - `bash -n scripts/harvest.sh`: pass
 - `python3 -m py_compile tests/test_harvest.py`: pass
-- `python3 tests/test_harvest.py`: pass, 29 checks
+- `python3 tests/test_harvest.py`: pass, 34 checks
+- `python3 tests/test_readout_summary.py`: pass, 13 checks
 - Full local `pytest` cannot be collected with the system Python because this
   checkout has no real PyTorch installation. GPU/torch-dependent tests must be
   run in `$VENV_DIR`; this does not affect the shell regression above, which

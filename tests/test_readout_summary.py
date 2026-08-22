@@ -82,6 +82,8 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     make_run(root, "v2-s0")
     make_run(root, "v3-s2-math500")
+    make_run(root, "v4-27b-s1")
+    make_run(root, "v4-7b-s1")
     make_run(root, "gate-corrected-no-done", done=False)
     historical = root / "v2-historical"
     historical.mkdir()
@@ -89,6 +91,11 @@ with tempfile.TemporaryDirectory() as tmp:
     code, stdout, stderr = run_main(root)
     check("readout includes corrected v3 runs", code == 0 and "v3-s2-math500" in stdout)
     check("automatic conclusions do not pool generations", "**v2/gsm8k**" in stdout and "**v3/math500**" in stdout)
+    check("automatic conclusions do not pool v4 model families", (
+        "**v4/27b/gsm8k**" in stdout
+        and "**v4/7b/gsm8k**" in stdout
+        and "**v4/gsm8k**" not in stdout
+    ))
     check("protocol-complete run does not require legacy DONE", "gate-corrected-no-done" in stdout)
     check("historical runs are reported as excluded", "v2-historical" in stdout)
     check("successful readout has no stderr", stderr == "")

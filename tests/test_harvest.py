@@ -102,6 +102,24 @@ def run_harvest(work: Path, env: dict[str, str]) -> tuple[subprocess.CompletedPr
     return run_report_script(work, env, "scripts/harvest.sh")
 
 
+def complete_v4_matrix(work: Path) -> None:
+    for model in ("27b", "7b"):
+        for seed in range(5):
+            for suffix in ("", "-math500"):
+                run = work / "runs" / f"v4-{model}-s{seed}{suffix}"
+                run.mkdir(exist_ok=True)
+                for artifact in (
+                    "DONE",
+                    "run_config.json",
+                    "manifest.json",
+                    "score_protocol.json",
+                    "oracle_protocol.json",
+                    "report.json",
+                    "scores_oracle.json",
+                ):
+                    (run / artifact).write_text("{}\n", encoding="utf-8")
+
+
 def run_report_script(
     work: Path,
     env: dict[str, str],
@@ -147,6 +165,32 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     ).read_text().strip() == "# kcurve all")
     check("successful harvest records source status", (first_dir / "HARVEST_STATUS.md").exists())
     check("rapid harvests use distinct directories", second.returncode == 0 and first_dir != second_dir)
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "good")
+    partial = work / "runs" / "v4-27b-s1"
+    partial.mkdir()
+    (partial / "DONE").write_text("complete\n", encoding="utf-8")
+    result, output = run_harvest(work, env)
+    matrix_error = (output / "V4_MATRIX.err").read_text(encoding="utf-8")
+    check("partial v4 matrix aborts final harvest", result.returncode == 1)
+    check("v4 matrix failure is recorded", "v4-matrix:incomplete" in (
+        output / "HARVEST_FAILURES.md"
+    ).read_text(encoding="utf-8"))
+    check("v4 matrix diagnostic names missing runs", "v4-7b-s0" in matrix_error)
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp)
+    complete_v4_matrix(work)
+    result, output = run_harvest(work, env)
+    check("complete 20-run v4 matrix passes harvest guard", result.returncode == 0)
+    check("complete matrix leaves no matrix error file", not (
+        output / "V4_MATRIX.err"
+    ).exists())
 
 
 with tempfile.TemporaryDirectory() as raw_tmp:

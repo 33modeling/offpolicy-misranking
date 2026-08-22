@@ -22,6 +22,43 @@ STAMP_DIR=$(mktemp -d "$READOUTS_ROOT/$(date '+%Y-%m-%d_%H%M%S')-harvest.XXXXXX"
 }
 failures=()
 
+validate_v4_matrix() {
+  local seen=0 missing=0 model seed suffix run artifact
+  local err="$STAMP_DIR/V4_MATRIX.err"
+  local required=(DONE run_config.json manifest.json score_protocol.json oracle_protocol.json report.json)
+
+  for run in "$OM_WORK"/runs/v4-27b-s* "$OM_WORK"/runs/v4-7b-s*; do
+    [ -d "$run" ] || continue
+    case "$(basename "$run")" in *smoke*) continue;; esac
+    seen=1
+    break
+  done
+  [ "$seen" -eq 1 ] || return 0
+
+  : > "$err"
+  for model in 27b 7b; do
+    for seed in 0 1 2 3 4; do
+      for suffix in "" -math500; do
+        run="$OM_WORK/runs/v4-$model-s$seed$suffix"
+        for artifact in "${required[@]}"; do
+          if [ ! -s "$run/$artifact" ]; then
+            printf '%s: %s missing or empty\n' "$(basename "$run")" "$artifact" >> "$err"
+            missing=$((missing + 1))
+          fi
+        done
+      done
+    done
+  done
+  if [ "$missing" -gt 0 ]; then
+    failures+=("v4-matrix:incomplete-$missing-artifacts")
+    echo "[harvest] v4 matrix 불완전 ($missing개 필수 산출물 누락); stderr=$err" >&2
+    return 1
+  fi
+  rm -f "$err"
+}
+
+validate_v4_matrix || :
+
 publish_markdown() {
   local label=$1 output=$2 allowed=$3 display=$4
   shift 4

@@ -99,7 +99,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 
 | 스크립트 | 용도 |
 |---|---|
-| `harvest.sh` | **수확 원스톱**: 사전등록 `KCURVE.md`와 전 세대 확장 `KCURVE_ALL.md`, READOUT·REVERSAL(닻·McNemar 포함)·STATS·TABLES·FRONTIER를 고유 폴더에 원자적으로 publish. 실패 stdout/stderr는 partial/error로 격리하고 nonzero 종료 |
+| `harvest.sh` | **수확 원스톱**: v4가 있으면 2모델×5-seed×2데이터셋의 20-run 완결성을 먼저 검사한다. 사전등록 `KCURVE.md`와 전 세대 확장 `KCURVE_ALL.md`, READOUT·REVERSAL(닻·McNemar 포함)·STATS·TABLES·FRONTIER를 고유 폴더에 원자적으로 publish. 실패 stdout/stderr는 partial/error로 격리하고 nonzero 종료 |
 | `_report_io.sh` | 개별 보고서 I/O | read_now·K-curve·reversal 실행기의 고유 폴더 생성, nonempty 검사, 원자적 publish |
 | `reversal_freq.sh`/`kcurve.sh`/`kcurve_all.sh`/`frontier.sh` | 개별 분석 러너 (harvest가 전부 포함하므로 단독 실행은 조기 확인용) |
 | `read_now.sh` | judge 전체 출력 즉석 판독 |

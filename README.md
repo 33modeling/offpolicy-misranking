@@ -162,7 +162,7 @@ tests/test_core.py      모델 없는 핵심 로직 테스트 (2×2 항등식·�
 tests/test_protocol.py  tie·oracle split·hybrid horizon·artifact metadata 회귀 테스트
 tests/test_judge.py     drift 집계·hybrid 축별 회복 판정 회귀 테스트
 tests/test_readout_summary.py  corrected run 탐색·부분 artifact 거부 회귀 테스트
-tests/test_harvest.py   원자적 수확·전 세대 K-curve·stderr 보존·부분 산출물 격리 shell 회귀 테스트
+tests/test_harvest.py   v4 20-run 완결성·원자적 수확·전 세대 K-curve·stderr 보존·부분 산출물 격리 shell 회귀 테스트
 tests/test_run_select.py  v2/v3 이후 세대·legacy·protocol-only run 탐색 회귀 테스트
 ```
 
