@@ -17,6 +17,13 @@ source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || PY=python3
 
+# A post-run git pull may contain analysis-only changes. Re-enter through the
+# immutable generation snapshot recorded by existing run configs, so multi-day
+# partial artifacts resume instead of being quarantined as a new experiment.
+if [ "${OM_V4_RESUME_WRAPPED:-0}" != "1" ]; then
+  exec bash scripts/resume_v4.sh "$@"
+fi
+
 if [ -n "$(git status --porcelain -- src scripts)" ]; then
   echo "[abort] src/scripts worktree is dirty; v4 requires a committed code snapshot"
   git status --short -- src scripts

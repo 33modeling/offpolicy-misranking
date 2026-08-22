@@ -339,6 +339,19 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 
 ## 완료 (참고)
 
+### 2026-08-22 v4 외부 중단 복구
+
+- [x] 수신한 진행 스냅샷에서 기대한 20-run 중 11-run만 완료됐고 9-run이
+      absent/incomplete임을 확인. 부분 matrix의 수치는 논문 결론으로 확정하지 않는다.
+- [x] `go_v4.sh`가 active run config의 원래 generation commit을 자동 선택하고
+      detached worktree에서 실행하도록 보강. 최신 Git pull 뒤에도 완료 run은 스킵하고
+      미완료 stage/shard를 이어서 실행하며 canonical 결과를 quarantine하지 않는다.
+- [x] snapshot 진입 시 최신 checkout의 `OM_REPO`/`PYTHONPATH` 상속을 제거해 Git은
+      과거 revision인데 Python import는 최신 revision인 혼합 실행을 차단한다.
+- [x] `collect_v4.sh`가 결과 디렉터리 없음, DONE 없음, 후처리 산출물 누락을 분리해
+      출력하고 완전한 20-run에서만 27B/7B 보고서와 harvest를 생성한다.
+- [ ] 세 클러스터 slot `1`, `2`, `3`을 재개하고 20-run 완결성 검사를 통과할 것.
+
 - ✅ 본제목 명사 교체(8/14, 사용자 선택): "Wrong Prompts" → "Wrong Training
   Data" — 분야 상위 명칭(data selection) 정합·프롬프트 엔지니어링 오독 제거,
   정밀도는 부제(Prompt Selection)가 유지

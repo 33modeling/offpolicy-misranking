@@ -46,12 +46,31 @@ No paper claim should be updated until the complete artifacts are merged and
 the corrected model-separated reports, confidence intervals, and reversal
 audits are available.
 
+`scripts/collect_v4.sh` is the single-command collection path. It does not run
+or stop GPU work. Before aggregation it lists and counts three states
+separately: a missing run directory (experiment result absent), a run without a
+nonempty `DONE` marker (experiment incomplete), and missing postprocess
+artifacts in an otherwise present run. Only a complete 20-run matrix proceeds
+to model-separated TABLES/FRONTIER generation and final harvest.
+
+If GPU workers have exited and these checks show absent or incomplete runs, the
+affected cluster slots must resume `go_v4.sh` from the same generation commit.
+`go_v4.sh` now delegates to `resume_v4.sh`, which reads the original commit from
+the existing run configs and executes that snapshot in an isolated worktree.
+This permits pulling analysis-only fixes without changing the immutable run
+contract or quarantining multi-day partial artifacts. Mixed recorded commits
+fail closed instead of merging incompatible runs.
+After all slots finish, `bash scripts/collect_v4.sh` performs the collection;
+the user does not copy run directories manually.
+
 ## Verification
 
 - `bash -n scripts/harvest.sh`: pass
 - `python3 -m py_compile tests/test_harvest.py`: pass
-- `python3 tests/test_harvest.py`: pass, 34 checks
+- `python3 tests/test_harvest.py`: pass, 39 checks
 - `python3 tests/test_readout_summary.py`: pass, 13 checks
+- `PYTHONPATH=src python3 tests/test_v4_resume_commit.py`: pass
+- `python3 tests/test_v4_resume_shell.py`: pass (temporary Git worktree integration)
 - Full local `pytest` cannot be collected with the system Python because this
   checkout has no real PyTorch installation. GPU/torch-dependent tests must be
   run in `$VENV_DIR`; this does not affect the shell regression above, which

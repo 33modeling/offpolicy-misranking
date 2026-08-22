@@ -1,6 +1,6 @@
 # v4 runner 장애 및 수정 기록 (2026-08-21)
 
-상태: **해결** (`abe9dbb`, `master` push 완료)
+상태: **해결** (`abe9dbb`; 중단 재개 경로는 2026-08-22 보강)
 
 이 문서는 3개 독립 H100 4-GPU 클러스터에서 v4 confirmatory matrix를 실행하는
 과정에서 발생한 재시작, config 계보, GPU 잔류 문제를 기록한다. 실험 계산식이나
@@ -91,10 +91,12 @@ KILL을 보장한다.
 
 5. 모든 GPU의 사용 메모리가 2GB 이하가 될 때까지 최대 60초 기다린다. 남은 점유가
    있으면 PID, process name, memory를 콘솔에 출력하고 중단한다.
-6. `src/prepare_run_path.py`가 배정된 smoke/GSM8K/MATH500 경로의
-   `run_config.json.git`을 현재 HEAD와 비교한다.
-7. Git이 다르면 전체 run 디렉터리를 `$OM_WORK/quarantine/v4/`로 원자 이동한다.
-   삭제하지 않으며 active `runs/` namespace 밖으로 옮겨 harvest 혼입도 막는다.
+6. 최신 `go_v4.sh`는 `resume_v4.sh`를 거쳐 active v4 `run_config.json`의 단일
+   generation commit을 선택한다. 현재 HEAD와 다르면 `$OM_WORK/code-snapshots/`의
+   detached worktree에서 원래 코드를 실행한다.
+7. 해당 snapshot의 `prepare_run_path.py`가 같은 Git을 확인하므로 canonical run은
+   격리되지 않는다. `go_v2.sh`는 DONE run을 건너뛰고 미완료 run의 기존 stage/shard를
+   재사용한다. 서로 다른 generation commit이 섞여 있으면 자동 병합하지 않고 중단한다.
 8. 스모크를 통과한 뒤 본실행으로 진입한다. 실패 시 오류 서명과 로그 tail은 콘솔에
    자동 출력되고, 재시도 전 process group 종료를 기다린다.
 
@@ -138,3 +140,13 @@ KILL을 보장한다.
 
 관련 문서: `docs/BACKLOG.md`, `docs/TROUBLESHOOTING.md`,
 `docs/FULL_AUDIT_2026-08-20.md`.
+
+## 9. 2026-08-22 운영자 중단 뒤 재개 보강
+
+약 이틀 실행 뒤 모든 GPU worker가 외부 요인으로 종료된 경우, 완료된 결과를 새 Git
+HEAD로 덮거나 전체 matrix를 다시 시작하면 안 된다. 최신 checkout에서 각 클러스터는
+기존과 동일하게 `bash scripts/go_v4.sh <1|2|3>`만 실행한다. launcher가 원래
+generation commit으로 자동 진입하며, 호출 checkout의 `OM_REPO`와 `PYTHONPATH`를
+제거한 뒤 snapshot의 `setup_env.sh`로 다시 설정해 두 revision의 Python 코드가 섞이지
+않게 한다. 모든 worker 종료 후 `bash scripts/collect_v4.sh` 한 번으로 20-run의
+missing/incomplete/artifact 상태를 검사하고 최종 결과를 생성한다.

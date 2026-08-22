@@ -74,7 +74,16 @@ case "$name" in
     echo 'g11 1.0'
     exit 0
     ;;
-  frontier.py|make_tables.py)
+  frontier.py)
+    mkdir -p "$OM_RESULTS"
+    echo '# frontier' > "$OM_RESULTS/FRONTIER.md"
+    echo '{}' > "$OM_RESULTS/frontier.json"
+    echo "OM_RESULTS=$OM_RESULTS"
+    exit 0
+    ;;
+  make_tables.py)
+    mkdir -p "$OM_RESULTS"
+    echo '# tables' > "$OM_RESULTS/TABLES.md"
     echo "OM_RESULTS=$OM_RESULTS"
     exit 0
     ;;
@@ -116,8 +125,13 @@ def complete_v4_matrix(work: Path) -> None:
                     "oracle_protocol.json",
                     "report.json",
                     "scores_oracle.json",
+                    "scores_offpolicy.json",
+                    "scores_splithalf.json",
+                    "oracle_micro_groups.pt",
+                    "val_groups.pt",
                 ):
                     (run / artifact).write_text("{}\n", encoding="utf-8")
+                (run / "divergence_stats.json").write_text("{}\n", encoding="utf-8")
 
 
 def run_report_script(
@@ -190,6 +204,44 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     check("complete 20-run v4 matrix passes harvest guard", result.returncode == 0)
     check("complete matrix leaves no matrix error file", not (
         output / "V4_MATRIX.err"
+    ).exists())
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp)
+    missing = subprocess.run(
+        ["bash", "scripts/collect_v4.sh"],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    check("collect_v4 reports experiments that have no result directory", (
+        missing.returncode == 1
+        and "[missing-run] v4-27b-s0" in missing.stderr
+        and "결과 없는 run=20" in missing.stderr
+    ))
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp)
+    complete_v4_matrix(work)
+    result, output = run_report_script(work, env, "scripts/collect_v4.sh")
+    check("collect_v4 completes without entering a GPU runner", result.returncode == 0)
+    check("collect_v4 publishes separate 27B reports", all(
+        (work / "results" / "v4-27b" / name).stat().st_size > 0
+        for name in ("TABLES.md", "FRONTIER.md", "frontier.json")
+    ))
+    check("collect_v4 publishes separate 7B reports", all(
+        (work / "results" / "v4-7b" / name).stat().st_size > 0
+        for name in ("TABLES.md", "FRONTIER.md", "frontier.json")
+    ))
+    check("collect_v4 finishes with a valid harvest bundle", (
+        output / "HARVEST_STATUS.md"
     ).exists())
 
 

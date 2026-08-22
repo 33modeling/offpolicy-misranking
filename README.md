@@ -107,8 +107,9 @@ bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
 ```
 
 각 실행은 stale v4 process를 종료하고 GPU 메모리 해제를 확인한 뒤 commit별 smoke로
-진입한다. 다른 Git commit의 canonical run은 삭제하지 않고
-`$OM_WORK/quarantine/v4/`로 보존 이동한다. 장애 이력과 제한사항은
+진입한다. 중단 뒤 최신 코드를 pull해도 기존 `run_config.json`의 generation commit을
+자동 선택해 격리 worktree에서 재개하므로, Git 차이만으로 canonical run을 격리하거나
+처음부터 다시 계산하지 않는다. 장애 이력과 제한사항은
 `docs/V4_RUNNER_INCIDENT_2026-08-21.md` 참조.
 
 - sweep 축: **seed × dataset**. GSM8K는 과거 v2 유의 신호를 같은 데이터셋에서
@@ -116,7 +117,9 @@ bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
   메인 모델로, Qwen2.5-7B-Instruct를 동일조건 재현 축으로 실행한다. 기본 seed는
   `0 1 2 3 4`다. 27B는 클러스터 `1`·`2`·`3`에 `0,1`·`2,3`·`4`를 배정하고,
   더 가벼운 7B는 종료시간 균형을 위해 `0`·`1`·`2,3,4`로 배정한다.
-  저장소가 공유되지 않으므로 세 결과를 한곳에 모은 뒤 전체 표·frontier를 생성한다.
+  세 worker가 같은 `$OM_WORK/runs`를 사용하므로 seed별 canonical 경로에 결과가 바로
+  모인다. 수동 복사 없이 모든 worker가 끝난 뒤 한 번 `bash scripts/collect_v4.sh`를
+  실행해 누락을 검사하고 모델별 표·frontier와 최종 harvest를 생성한다.
 - 산출: run별 `report.json`·`manifest.json`·judge 판정 +
   `results/v4-27b`와 `results/v4-7b`의 `TABLES.md`·`FRONTIER.md`.
 - `score_protocol.json`과 `oracle_protocol.json`이 모두 없는 run은 모든 판정·표 생성기가
@@ -164,6 +167,8 @@ tests/test_judge.py     drift 집계·hybrid 축별 회복 판정 회귀 테스�
 tests/test_readout_summary.py  corrected run 탐색·부분 artifact 거부 회귀 테스트
 tests/test_harvest.py   v4 20-run 완결성·원자적 수확·전 세대 K-curve·stderr 보존·부분 산출물 격리 shell 회귀 테스트
 tests/test_run_select.py  v2/v3 이후 세대·legacy·protocol-only run 탐색 회귀 테스트
+tests/test_v4_resume_commit.py  중단된 v4의 단일 generation commit 선택·혼합 차단 테스트
+tests/test_v4_resume_shell.py  최신 checkout에서 기록된 generation worktree로 전환하는 shell 통합 테스트
 ```
 
 구현 노트:
