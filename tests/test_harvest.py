@@ -44,6 +44,13 @@ case "$name" in
     echo '# kcurve'
     exit "${FAKE_KCURVE_RC:-3}"
     ;;
+  kcurve_all.py)
+    case "${FAKE_KCURVE_ALL_MODE:-ok}" in
+      fail) echo 'kcurve all exploded' >&2; exit 8;;
+      empty) exit 0;;
+      *) echo '# kcurve all'; exit 0;;
+    esac
+    ;;
   readout_summary.py)
     case "${FAKE_READOUT_MODE:-ok}" in
       fail) echo 'readout exploded' >&2; exit 7;;
@@ -125,10 +132,53 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     check("scientific kcurve exit 3 is accepted", first.returncode == 0)
     check("successful markdown outputs are nonempty", all(
         (first_dir / name).stat().st_size > 0
-        for name in ("KCURVE.md", "READOUT.md", "REVERSAL.md", "STATS.md")
+        for name in (
+            "KCURVE.md",
+            "KCURVE_ALL.md",
+            "READOUT.md",
+            "REVERSAL.md",
+            "STATS.md",
+        )
     ))
+    check("preregistered and all-generation kcurves stay separate", (
+        first_dir / "KCURVE.md"
+    ).read_text().strip() == "# kcurve" and (
+        first_dir / "KCURVE_ALL.md"
+    ).read_text().strip() == "# kcurve all")
     check("successful harvest records source status", (first_dir / "HARVEST_STATUS.md").exists())
     check("rapid harvests use distinct directories", second.returncode == 0 and first_dir != second_dir)
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "good")
+    env["FAKE_KCURVE_ALL_MODE"] = "fail"
+    result, output = run_harvest(work, env)
+    check("all-generation kcurve failure aborts harvest", result.returncode == 1)
+    check("failed all-generation kcurve is not published", not (
+        output / "KCURVE_ALL.md"
+    ).exists())
+    check("all-generation kcurve stderr is preserved", "kcurve all exploded" in (
+        output / "KCURVE_ALL.err"
+    ).read_text())
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "good")
+    result_dir = work / "results" / "v4-27b"
+    result_dir.mkdir(parents=True)
+    (result_dir / "TABLES.md").touch()
+    (result_dir / "FRONTIER.md").write_text("# frontier\n", encoding="utf-8")
+    result, output = run_harvest(work, env)
+    failures = (output / "HARVEST_FAILURES.md").read_text(encoding="utf-8")
+    check("empty existing result report aborts harvest", result.returncode == 1)
+    check("empty result report is named in failure manifest", (
+        "tables:v4-27b:empty-source" in failures
+    ))
+    check("valid sibling result report is still copied", (
+        output / "FRONTIER-v4-27b.md"
+    ).read_text(encoding="utf-8") == "# frontier\n")
 
 
 with tempfile.TemporaryDirectory() as raw_tmp:

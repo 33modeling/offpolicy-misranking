@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 수확 원스톱 — 분석 산출물을 검증한 뒤 하나의 고유 폴더에 원자적으로 publish한다.
-#   KCURVE(GPU 0, 수 분) + READOUT + REVERSAL(닻 포함) + STATS + 표 사본을 같은 폴더에.
+#   KCURVE(사전등록) + KCURVE_ALL(전 세대) + READOUT + REVERSAL(닻 포함)
+#   + STATS + 표 사본을 같은 폴더에.
 #   bash scripts/harvest.sh
 #
 # 0820 수확 교훈: 실패를 숨기면(2>/dev/null, || true) 빈 파일이 성공처럼 전달된다
@@ -56,6 +57,8 @@ publish_markdown() {
 # 3/4 are scientific k-curve verdicts (unreachable/no eligible run), not crashes.
 publish_markdown kcurve "$STAMP_DIR/KCURVE.md" "0 3 4" yes \
   "$PY" src/kcurve_floor.py "$OM_WORK/runs" || :
+publish_markdown kcurve-all "$STAMP_DIR/KCURVE_ALL.md" "0" no \
+  "$PY" src/kcurve_all.py "$OM_WORK/runs" || :
 publish_markdown readout "$STAMP_DIR/READOUT.md" "0" yes \
   "$PY" src/readout_summary.py "$OM_WORK/runs" || :
 publish_markdown reversal "$STAMP_DIR/REVERSAL.md" "0" no \
@@ -111,16 +114,34 @@ else
 fi
 [ -s "$stats_err" ] || rm -f "$stats_err"
 
+# 결과 표는 선택 사항이지만, 파일이 존재하면 비어 있거나 복사에 실패한 상태를
+# 정상 수확으로 숨기지 않는다.
+copy_optional_report() {
+  local label=$1 source=$2 destination=$3
+  [ -e "$source" ] || return 0
+  if [ ! -s "$source" ]; then
+    failures+=("$label:empty-source")
+    echo "[harvest] $label 실패 (empty-source): $source" >&2
+    return 1
+  fi
+  if ! cp -- "$source" "$destination"; then
+    failures+=("$label:copy-failed")
+    echo "[harvest] $label 실패 (copy-failed): $source" >&2
+    return 1
+  fi
+}
+
 # 결과 폴더는 세대별(v2·v3·qwen3.8-27b 등)로 분리될 수 있다.
 for rd in "$OM_WORK"/results/*/; do
   [ -d "$rd" ] || continue
   rtag=$(basename "$rd")
-  [ -s "$rd/TABLES.md" ] \
-    && cp "$rd/TABLES.md" "$STAMP_DIR/TABLES-$rtag.md"
-  [ -s "$rd/FRONTIER.md" ] \
-    && cp "$rd/FRONTIER.md" "$STAMP_DIR/FRONTIER-$rtag.md"
+  copy_optional_report "tables:$rtag" "$rd/TABLES.md" \
+    "$STAMP_DIR/TABLES-$rtag.md" || :
+  copy_optional_report "frontier:$rtag" "$rd/FRONTIER.md" \
+    "$STAMP_DIR/FRONTIER-$rtag.md" || :
 done
-[ -s results/TABLES.md ] && cp results/TABLES.md "$STAMP_DIR/"
+copy_optional_report "tables:legacy-repo" results/TABLES.md \
+  "$STAMP_DIR/TABLES.md" || :
 
 if [ "${#failures[@]}" -gt 0 ]; then
   {
