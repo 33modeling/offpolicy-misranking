@@ -89,6 +89,22 @@
       보존하면서 watchdog 수정 적용
 - [x] 로그 무변화만으로 종료하지 않고 GPU/CPU 활동까지 모두 멈춘 경우에만 재시작
 
+### 2026-08-24 v4 중간 결과 수신
+
+- [x] `/home/kms/Downloads/0824.zip` 무결성을 검사하고 내부 10개 보고서를
+      `docs/results/2026-08-24/`에 원본 그대로 보존; ZIP 및 파일별 SHA-256 기록
+- [x] 수확 실패 표식 `v4-matrix:incomplete-20-artifacts` 확인: 전체 20개 중
+      15개 완료, 7B 10/10 완료, 27B 5/10 완료
+- [x] 27B 누락분 확정: GSM8K s0/s2/s3/s4, MATH-500 s4
+- [x] 잠정 판독: 27B MATH-500의 사전등록 one-sided 동시 열세 문턱은 완료분
+      2/4에서 관찰됐으나 GSM8K는 0/1뿐이고, selector bootstrap CI가 겹치며
+      one-sided 대 g11 McNemar는 모두 비유의. 27B hybrid도 없어 C1'은 미검정
+- [x] `g00` 대 `g11` 유의 신호 2건은 무보정 대 완전보정 비교일 뿐 one-sided
+      열세의 직접 검정이 아니며, 전체 반전율도 oracle 자기 불일치 닻과 비슷함을 기록
+- [ ] 누락된 27B 5개를 복구한 뒤 20/20 contract/lineage 검사를 통과한 단일
+      matrix에서 보고서를 재생성할 것. 그전에는 이 묶음을 원고 확정 표나 5-seed
+      결론에 사용하지 않는다.
+
 ### 2026-08-21 v4 27B 진행 스냅샷 수신
 
 - [x] `0821-0716-clusterrun270721-first-v4-3.tar.gz` 압축 해제 및 시드별
