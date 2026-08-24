@@ -2,6 +2,27 @@
 
 담당: 🖥 = 클러스터(사용자 실행), 🤖 = 로컬(Claude 작업). 순서는 위→아래.
 
+## 2026-08-24 regime characterization 재구성
+
+- [x] blanket negative 결론을 폐기하고 primary estimand를 random 대비 utility gain과
+      independent-fresh gain retention으로 변경
+- [x] `usable / unsafe / unresolved`의 3영역 규칙과 최소 3 seed·80% 재현 조건 고정
+- [x] `d=0` 양성 대조군, `d=25/100/400` drift sweep, `learnable/saturated` pool 분해 추가
+- [x] 동일 behavior artifact를 drift family 전체에 재사용하되 model/prompt/sampling/
+      exact-K 계약을 재검증하는 `reuse_behavior.py` 구현
+- [x] 여러 클러스터에서 같은 명령을 실행하는 shared-family queue `go_regime.sh` 구현
+- [ ] 7B discovery 3 seed × 2 dataset × 4 drift를 완주하고 `FINAL_REPORT.md` 수확
+- [x] discovery 결과를 보기 전에 FIRST floor·utility gain·retention의 fixed-pool
+      hierarchical interval을 regime label에 연결하고 tie stream을 draw 사이에 고정
+- [ ] synthetic coverage·tie sensitivity calibration을 통과한 JSON을 만든 뒤에만
+      `provisional_*` 접두사를 제거; numerical freeze는 10,000 bootstrap replicate 사용
+- [ ] boundary를 동결한 뒤 7B seed 3-4와 27B 선택 drift의 held-back confirmation 실행
+- [ ] 동결된 7B transition 양쪽에서 candidate와 hash-disjoint한 same-domain pool로
+      drift를 만든 closed-loop robustness ablation 구현·실행
+- [ ] usable/unsafe 각 1조건에서 Prompt Replay 포함 matched downstream contrast 실행
+- [ ] 기존 v4 generation은 commit `2244e89`에서 별도로 완주하고 post-hoc d=100
+      supporting evidence로만 재분석
+
 ## 2026-08-20 전수 감사 후 제출 게이트
 
 - [x] 이론 식과 2×2 셀을 독립 열거 검산하고 일반 $K$ group normalization을

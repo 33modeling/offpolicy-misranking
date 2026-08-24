@@ -239,6 +239,8 @@ config = {
     "linear_attention_backend": "fla" if package_version("fla-core") else "torch",
     "fla_core_version": package_version("fla-core"),
 }
+if os.environ.get("OM_BEHAVIOR_SOURCE"):
+    config["behavior_source"] = os.environ["OM_BEHAVIOR_SOURCE"]
 encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
 config["digest"] = hashlib.sha256(encoded).hexdigest()
 lock = root / "run_config.json"
@@ -289,6 +291,18 @@ trap cleanup EXIT INT TERM
 log "=== 14B 시작: $MODEL_14B → $OUT_ROOT (GPU ${NGPU}장) ==="
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
 run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}" || exit 1
+
+# A drift sweep must hold the behavior sample fixed.  Copy only after both
+# runs have immutable configs and identical prompt files, then revalidate the
+# generation manifests and exact prompt x K coverage in the target directory.
+if [ -n "${OM_BEHAVIOR_SOURCE:-}" ]; then
+  log "[regime] behavior rollout 재사용 검증: $OM_BEHAVIOR_SOURCE"
+  "$PY" src/reuse_behavior.py "$OM_BEHAVIOR_SOURCE" "$OUT_ROOT" \
+    >> "$LOGS/behavior-reuse.log" 2>&1 || {
+      tail -20 "$LOGS/behavior-reuse.log" | tee -a "$LOGS/main.log"
+      exit 1
+    }
+fi
 
 # ---- 정합성 사전 검사: 옛 실행 잔재가 이번 실행과 섞이는 것을 원천 차단 ----
 # ① π(drift adapter)보다 오래된 π-의존 산출물 격리 — 재학습 후 옛 점수/rollout이
@@ -366,12 +380,17 @@ if stale:
         p.rename(d / p.name)
     print(f"[정합성] 현재 분할(n={n})과 안 맞는 샤드 {len(stale)}개 격리 → {d.name}")
 PYEOF
-# β rollout N샤딩
-pids=(); for i in $(seq 0 $((NGPU - 1))); do
-  ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
-done
-wait_all_stages "${pids[@]}" || exit 1
-merge_rollouts rollouts_behavior_train "${BEHAVIOR_K:-8}" || exit 1
+# β rollout N샤딩.  A validated merged artifact may come from an earlier
+# point in the same drift family; in that case generation is skipped entirely.
+if "$PY" src/reuse_behavior.py --check "$OUT_ROOT"; then
+  log "[regime] behavior rollout 계약 확인됨 — 생성 스킵"
+else
+  pids=(); for i in $(seq 0 $((NGPU - 1))); do
+    ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
+  done
+  wait_all_stages "${pids[@]}" || exit 1
+  merge_rollouts rollouts_behavior_train "${BEHAVIOR_K:-8}" || exit 1
+fi
 if [ -n "${OM_POOL_FILE:-}" ]; then
   "$PY" src/qualify_pool.py "$OUT_ROOT" "$OM_POOL_FILE" \
     --topk-frac "${TOPK_FRAC:-0.10}" | tee -a "$LOGS/main.log" || exit 1

@@ -8,7 +8,8 @@
 ## 1. 한눈 개요
 
 **질문**: 옛 정책 β가 만든 stale rollout으로 프롬프트 순위를 매길 때,
-one-sided importance 보정(g10/g01)이 순위를 얼마나 망치는가.
+어느 drift·prompt-pool·oracle reliability 영역에서 current-policy utility를
+보존하고 어느 영역에서 실패하는가.
 
 **파이프라인** (seed × dataset 조합마다 반복):
 
@@ -53,6 +54,9 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | `kcurve_floor.py` / `kcurve_all.py` | KCURVE.md | micro_groups.pt 재조합으로 K′별 floor 정확 재계산 + Spearman-Brown 외삽 → 확장권고/구조적부재 판정 |
 | `stats_extra.py` | STATS.md | run별 초기하 정확 p·bootstrap CI (A8a) |
 | `frontier.py` | FRONTIER.md | 비용–품질 frontier: stale/passrate/random/fresh/audit/2dref 정책 비교 (표본 비공유 프로토콜) |
+| `regime_map.py` | REGIME.json/CSV, FINAL_REPORT.md | fresh half A로 ranking하고 half B로만 평가해 random 대비 utility gain과 fresh-gain retention을 계산. `all/learnable/saturated`와 seed replication으로 usable/unsafe/unresolved를 집계 |
+| `first_interval.py` | REGIME.json 내부 구간 | candidate micro-group과 validation prompt를 half별로 독립 재표집해 FIRST floor, fresh gain, stale gain, retention의 고정-pool 계층 bootstrap 구간을 계산. tie stream은 bootstrap draw 사이에 고정 |
+| `reuse_behavior.py` | behavior_reuse.json | drift sweep의 source/target model·dataset·prompt hash·sampling manifest·exact-K를 대조하고 immutable behavior artifact만 복제 |
 | `precheck_hard.py` | PRECHECK.md | go_hard GO/NO-GO 선판정 (P3-0에서 NO-GO → go_hard 폐기) |
 | `make_tables.py` | TABLES.md | T1~T7 표 생성 (게이트·신호보존·floor 곡선·live fraction·hybrid·C2·downstream) |
 | `readout_summary.py` | READOUT.md | 사람용 판독 요약 (한눈 표+자동 결론+원시 출력) |
@@ -80,6 +84,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 |---|---|
 | `go_retry.sh` | **표준 재시작 진입점**: gsm8k 프로브 → 전 seed·데이터셋 스윕(DONE 스킵). `SEEDS_ALL="3"`으로 seed 지정 |
 | `go_v4.sh` | 현재 confirmatory 진입점: 독립 3-cluster seed 배정, 시작 전 stale v4 process/GPU 정리, Git 불일치 run 자동 quarantine, commit별 smoke, 27B→7B 실행. 전체 matrix가 한 storage에 모이면 자동 집계 |
+| `go_regime.sh` | 신규 주실험: 모든 클러스터에서 같은 명령을 실행하면 shared flock queue가 seed×dataset family를 분배. 한 behavior pool을 drift 0/25/100/400에 고정하고 완료 후 regime map을 단일 보고서로 집계 |
 | `go_v2.sh` | 모델별 worker: GPU 건강검사 → 스모크 게이트 → `SEEDS`×`DATASETS` 루프. console/stage 로그 무변화 watchdog, process-group 자동 종료·최대 재시도, 실패 원인 콘솔 진단 내장 |
 | `run_14b.sh` | 단일 (seed,dataset) 실행기: config digest lock, GPU 자동감지, exact-K 병합 검증, 실패 전파, 최종 필수 artifact 검사 후 원자적 `DONE` 생성 |
 | `go_new.sh` | **B11 최신 세대 검증**: 기본 Qwen3.8-27B(REPO27B로 교체 가능) 1-seed, 스냅샷 자동 fetch, `RUN_BASE`/`RESULTS_BASE`로 v2와 폴더 격리. rollout.py의 MM automap 폴백(CausalLM 실패 시 AutoModelForMultimodalLM)과 세트 |
@@ -112,6 +117,9 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 |---|---|---|
 | `SEEDS_ALL` (go_retry) / `SEEDS` (go_v2) | `0 1 2 3 4` | 돌릴 seed 목록. 노드 분산 시 겹치지 않게 배정 |
 | `DATASETS` | `gsm8k dapo-math` | go_v2 데이터셋 목록 (mbpp·kk 가능) |
+| `REGIME_SEEDS` / `REGIME_DATASETS` / `REGIME_DRIFTS` | `0 1 2` / `gsm8k math500` / `0 25 100 400` | regime discovery matrix. confirmation은 결과 동결 뒤 별도 값으로 실행 |
+| `REGIME_ROOT` / `REGIME_RESULTS` / `REGIME_MODEL_TAG` | `$OM_WORK/runs/...` / `$OM_WORK/results/...` / model basename | regime shared queue·artifact·모델별 결과 경로 |
+| `REGIME_FIRST_BOOTSTRAP` / `REGIME_FIRST_CALIBRATION` | `2000` / 없음 | discovery 재표집 수와 coverage calibration JSON. 최종 freeze는 10000회와 passing calibration을 요구하며, 없으면 label은 `provisional_*` |
 | `N_TRAIN`/`N_VAL` | 512/100 (math500은 400/100) | 프롬프트 수 |
 | `OM_GPUS` | 전 GPU | 사용 GPU 제한 (`"0,1"` — 한 노드 두 실험 분할용) |
 | `OM_WORK` | — | 작업 루트 (산출물 `$OM_WORK/results/v2/`, 로그 `$OM_WORK/console-logs/` — 레포에 로그 금지) |

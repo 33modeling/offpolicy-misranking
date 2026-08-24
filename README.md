@@ -1,12 +1,12 @@
 # offpolicy-misranking
 
-**Stale Rollouts Can Pick the Wrong Prompts** (ICLR 2027 target) — 실행 레포.
-stale(behavior-policy) rollout을 재사용해 RLVR 학습 프롬프트를 top-k 선택할 때,
-prefix occupancy *또는* continuation outcome 중 **한쪽만 교정하면** 임의로 작은
-policy KL에서도 per-prompt gradient 부호가 뒤집힐 수 있고, 그 오류는 KL·ESS·
-cosine 대시보드로 탐지되지 않으며, 신뢰구간으로 top-k 결정을 인증하는 것도
-구조적으로 불가능하다 — 이 주장과 그 경계 조건(언제 stale로 골라도 되는가,
-fresh 감사에 얼마를 내야 하는가)의 게이트/본실험 코드.
+**When Do Stale Rollouts Select Useful Training Data?** (ICLR 2027 target) — 실행 레포.
+stale(behavior-policy) rollout이 RLVR prompt selection에 유용한 영역과 실패하는
+영역을 `policy drift × prompt-pool state × oracle reliability`로 분리한다. 이론은
+top-k margin이 score error의 두 배보다 클 때 정확한 선택을 보장하는 양성 조건과,
+one-sided stale 정보만으로 그 조건을 보편적으로 인증할 수 없다는 음성 조건을 함께
+제시한다. 실험의 주결과는 blanket failure가 아니라 `usable / unsafe / unresolved`
+regime map이다.
 
 > **2026-08-20 감사 상태:** 8월 18일 수치와 아래 v1/v2 결과는 생성 계약 및
 > 독립 validation 교정 이전의 역사적 탐색 결과다. 제출용 근거로 사용하지 않는다.
@@ -102,6 +102,33 @@ drift 8배·선택 비율 5–25%·val 심화·(ε,δ)-PAC 완화 전부에서 �
 인증할 수 없다.** 후속 CPU 재판정: `scripts/c2_sweep.sh`, `fix_c2.sh`,
 `retry_c2.sh`.
 
+## 3.1 regime characterization — 신규 주실험
+
+기존 top-k overlap만으로 stale selector를 실패 처리하지 않는다. `regime_map.py`는
+fresh micro-group을 두 독립 절반으로 나눠 A로 current-policy ranking을 만들고 B로만
+평가한 뒤, stale selector가 random 대비 fresh utility gain의 몇 %를 보존하는지
+계산한다. Behavior pass rate가 mixed인 `learnable` pool과 all-zero/all-one인
+`saturated` pool도 분리한다.
+
+Discovery sweep은 같은 명령을 독립 클러스터마다 실행한다:
+
+```bash
+git pull
+bash scripts/go_regime.sh
+```
+
+공유 `flock` queue가 `seed × dataset` family를 자동 분할한다. 각 family는 behavior
+rollout을 한 번만 만들고 drift `0,25,100,400`에서 동일 artifact를 사용한다.
+`reuse_behavior.py`가 model·prompt hash·sampling manifest·정확한 `prompt × K`
+coverage를 모두 검증한 뒤에만 복제한다. 기본 discovery는 7B, seed 0-2,
+GSM8K/MATH-500이고 `REGIME_SEEDS`, `REGIME_DRIFTS`, `REGIME_DATASETS`,
+`MODEL_14B`로 confirmation matrix를 지정한다. 산출물은 machine-readable
+`REGIME.json`/CSV와 단일 `FINAL_REPORT.md`다. Coverage calibration JSON이 없으면
+판정은 자동으로 `provisional_*`로 제한되며 최종 주장으로 승격되지 않는다.
+
+기존 v4는 중단하거나 재생성하지 않는다. v4 generation은 해당 run에 기록된 commit을
+계속 사용하고, 신규 regime sweep만 현재 commit에서 별도 경로로 실행한다.
+
 ## 4. confirmatory v4 실행 경로 (2026-08-20 계약)
 
 아래 명령은 2026-08-20 감사 branch를 병합한 뒤 새 `OUT_ROOT`에서 실행한다.
@@ -196,6 +223,9 @@ src/certagrad.py        confidence-ball 순차 top-k 인증 + uniform baseline (
 src/hybrid.py           2×2 hybrid rollout — left-padding 배치 이어쓰기 생성·채점
 src/frontier.py         fresh-audit 비용–품질 replay (5절) — 정책 스펙트럼·짝/홀
                         누수 차단·F1~F4 생성
+src/regime_map.py       독립 fresh A/B로 utility retention 계산·3영역 regime 집계
+src/first_interval.py   FIRST floor·utility gain·retention 계층 bootstrap 구간
+src/reuse_behavior.py   drift family의 behavior artifact 계약 검증·안전 복제
 src/train_downstream.py GRPO-lite 학습(checkpointing)·greedy 평가
 src/experiment.py       stage orchestrator — analyze가 oracle→score→report→hybrid를
                         단일 프로세스로 묶어 7B 재로드 제거
@@ -213,6 +243,9 @@ tests/test_run_select.py  v2/v3 이후 세대·legacy·protocol-only run 탐색 
 tests/test_v4_resume_commit.py  혼합 generation에서도 run별 원래 commit을 선택하는 테스트
 tests/test_v4_resume_shell.py  run별 generation worktree 전환·실패 격리·미완료 전용 재시도 통합 테스트
 tests/test_go_v2_exit_status.py  postprocess 생략 worker가 run 실패를 성공으로 숨기지 않는 회귀 테스트
+tests/test_regime_map.py  양성/음성 utility regime·margin 충분조건 회귀 테스트
+tests/test_first_interval.py  FIRST·utility 구간과 고정 tie-stream 회귀 테스트
+tests/test_reuse_behavior.py  prompt/config 불일치와 behavior artifact 복제 회귀 테스트
 ```
 
 구현 노트:
