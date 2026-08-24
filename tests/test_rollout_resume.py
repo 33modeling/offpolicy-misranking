@@ -145,4 +145,11 @@ def test_crash_resume(monkeypatched_reward=True):
 test_salvage()
 test_crash_resume()
 print(f"\nPASS {PASS} / FAIL {FAIL}")
-sys.exit(1 if FAIL else 0)
+
+
+def test_rollout_resume_regressions() -> None:
+    assert FAIL == 0
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAIL else 0)
