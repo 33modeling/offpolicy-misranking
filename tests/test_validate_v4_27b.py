@@ -7,7 +7,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from validate_v4_27b import FIXED_CONFIG, validate_matrix
+from validate_v4_27b import FIXED_CONFIG, validate_matrix, validate_run
 
 
 def write_config(
@@ -41,6 +41,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
             write_config(root, seed, dataset, git, model_hash)
 
     assert len(validate_matrix(root, git, model_hash)) == 10
+    validate_run(root / "v4-27b-s0", git, model_hash, 0, "gsm8k")
 
     path = root / "v4-27b-s3-math500/run_config.json"
     config = json.loads(path.read_text())

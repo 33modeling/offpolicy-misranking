@@ -117,19 +117,17 @@ bash scripts/go_v4.sh 2   # 27B: 2,3 / 7B: 1
 bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
 ```
 
-7B가 완료된 뒤 27B만 새 코드로 재실행할 때는 아래 전용 진입점을 쓴다. 총 10개
-`seed × dataset` run을 `N`개 클러스터에 중복 없이 균등 분배한다. 예를 들어 H100 4장
-클러스터 5개라면 각 클러스터에서 worker 번호만 다르게 실행한다.
+7B가 완료된 뒤 27B만 새 코드로 재실행할 때는 아래 전용 진입점을 쓴다. 사용할 모든
+H100 4장 클러스터에서 **같은 명령**을 실행한다.
 
 ```bash
-# cluster 1..5에서 각각 한 줄씩
-bash scripts/go_v4_27b.sh 1 5
-bash scripts/go_v4_27b.sh 2 5
-bash scripts/go_v4_27b.sh 3 5
-bash scripts/go_v4_27b.sh 4 5
-bash scripts/go_v4_27b.sh 5 5
+# 모든 클러스터에서 동일
+bash scripts/go_v4_27b.sh
 ```
 
+각 worker는 공유 `flock` queue에서 아직 완료되지 않은 `seed × dataset` run 하나를
+자동 선점한다. 완료하면 다음 미완료 run을 가져가므로 클러스터 수를 지정할 필요가 없다.
+클러스터가 종료되면 lock이 풀리고 다른 worker가 해당 부분 산출물부터 재시도한다.
 이 경로는 이전 commit의 불완전 27B run을 `$OM_WORK/quarantine/v4-27b-rerun/`에
 보존하고 현재 clean commit으로 다시 시작한다. 한 shard의 CUDA 실패가 다른 shard를
 종료하지 않으며, 정상 shard는 완료까지 저장한다. 실패 shard의 `.partial`만 다음

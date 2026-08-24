@@ -251,9 +251,10 @@ E절(데이터셋 확장 하루치)의 추가 교훈: **(4) 같은 판단(경로
   보내던 증상이다. `143=128+15`이므로 형제 shard의 독립 CUDA 실패가 아니다. 현재는
   모든 shard가 끝날 때까지 기다려 정상 결과를 보존하고, 실패 shard만 `.partial`에서
   재시도한다. 재시도마다 shard의 물리 GPU 배정을 회전해 특정 GPU 반복 실패도 피한다.
-- **27B clean rerun**: 7B가 이미 완료된 경우 `go_v4_27b.sh WORKER TOTAL`을 사용한다.
-  10개 27B run을 최대 10개 4-H100 클러스터로 분배하며, 과거 불완전 run은 삭제하지
-  않고 quarantine한 뒤 최신 commit으로 실행한다.
+- **27B clean rerun**: 7B가 이미 완료된 경우 `go_v4_27b.sh`를 사용한다.
+  현재는 인자 없이 모든 4-H100 클러스터에서 같은 `go_v4_27b.sh`를 실행한다. 공유
+  `flock` queue가 10개 run을 자동 분배하며 노드가 죽으면 lock이 풀려 다른 worker가
+  이어받는다. 과거 불완전 run은 삭제하지 않고 quarantine한 뒤 최신 commit으로 실행한다.
 - **27B linear-attention backend**: 과거 ULF trace는 Qwen3.8 Gated DeltaNet의
   `torch_recurrent_gated_delta_rule` fallback을 가리켰다. 전용 rerun은 FLA 0.5.2의
   fused recurrent/chunk kernel을 자동 설치하고 import를 확인한다. fallback이면 시작하지

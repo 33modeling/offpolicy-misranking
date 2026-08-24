@@ -77,6 +77,11 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         "report.json",
         "score_protocol.json",
         "oracle_protocol.json",
+        "scores_oracle.json",
+        "scores_offpolicy.json",
+        "scores_splithalf.json",
+        "oracle_micro_groups.pt",
+        "val_groups.pt",
     ):
         (smoke / artifact).write_text("{}\n", encoding="utf-8")
 
@@ -113,7 +118,9 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         "/bin/sleep 1\n"
         'mkdir -p "$OUT_ROOT"\n'
         'for artifact in DONE run_config.json manifest.json score_protocol.json '
-        'oracle_protocol.json report.json; do printf \'{}\\n\' > "$OUT_ROOT/$artifact"; done\n',
+        'oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json '
+        'scores_splithalf.json oracle_micro_groups.pt val_groups.pt; do '
+        'printf \'{}\\n\' > "$OUT_ROOT/$artifact"; done\n',
     )
     active_base = work / "runs/v4-active"
     active_smoke = Path(str(active_base) + "-smoke")
@@ -125,6 +132,11 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         "report.json",
         "score_protocol.json",
         "oracle_protocol.json",
+        "scores_oracle.json",
+        "scores_offpolicy.json",
+        "scores_splithalf.json",
+        "oracle_micro_groups.pt",
+        "val_groups.pt",
     ):
         (active_smoke / artifact).write_text("{}\n", encoding="utf-8")
     active_env = env.copy()

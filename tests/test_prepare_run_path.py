@@ -45,4 +45,15 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert not unconfigured.exists()
     assert (destination / "logs").is_dir()
 
+    wrong_settings = tmp / "v4-27b-s3"
+    wrong_settings.mkdir()
+    (wrong_settings / "run_config.json").write_text(
+        json.dumps({"git": "current", "gen_batch": "8"})
+    )
+    destination = prepare_run_path(
+        wrong_settings, "current", quarantine, force_quarantine=True
+    )
+    assert destination is not None
+    assert not wrong_settings.exists()
+
 print("PASS incompatible run paths are preserved outside the active namespace")

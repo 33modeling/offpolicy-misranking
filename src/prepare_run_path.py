@@ -15,10 +15,15 @@ def prepare_run_path(
     expected_git: str,
     quarantine_root: Path,
     quarantine_unconfigured: bool = False,
+    force_quarantine: bool = False,
 ) -> Path | None:
     config_path = run / "run_config.json"
     if not config_path.exists():
-        if not quarantine_unconfigured or not run.is_dir() or not any(run.iterdir()):
+        if (
+            not (quarantine_unconfigured or force_quarantine)
+            or not run.is_dir()
+            or not any(run.iterdir())
+        ):
             return None
         recorded_git = "unconfigured"
     else:
@@ -28,7 +33,7 @@ def prepare_run_path(
         except (OSError, ValueError, TypeError):
             recorded_git = "unreadable"
 
-    if recorded_git == expected_git:
+    if recorded_git == expected_git and not force_quarantine:
         return None
 
     quarantine_root.mkdir(parents=True, exist_ok=True)
@@ -53,6 +58,11 @@ def main() -> int:
         action="store_true",
         help="also preserve a non-empty run directory without run_config.json",
     )
+    parser.add_argument(
+        "--force-quarantine",
+        action="store_true",
+        help="preserve any non-empty run directory regardless of recorded git",
+    )
     args = parser.parse_args()
 
     destination = prepare_run_path(
@@ -60,6 +70,7 @@ def main() -> int:
         args.expected_git,
         args.quarantine_root,
         quarantine_unconfigured=args.quarantine_unconfigured,
+        force_quarantine=args.force_quarantine,
     )
     if destination is not None:
         print(f"[run-path] previous artifacts preserved at {destination}")
