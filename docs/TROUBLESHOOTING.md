@@ -246,6 +246,21 @@ E절(데이터셋 확장 하루치)의 추가 교훈: **(4) 같은 판단(경로
 - **기존 run에 최신 복구 로직 적용**: 계산 파일은 `run_config.json`에 기록된 commit의
   격리 worktree에서 실행하지만 감시·재시도 supervisor는 현재 checkout 버전을 사용한다.
   이 분리가 없으면 `git pull` 뒤에도 옛 watchdog 버그가 그대로 재현된다.
+- **27B `rc=1` 뒤 다른 shard `rc=143`**: 첫 shard의 CUDA ULF로 `wait`가 실패하자
+  `run_14b.sh`가 즉시 exit하고 EXIT cleanup이 정상 계산 중인 형제 shard에 SIGTERM을
+  보내던 증상이다. `143=128+15`이므로 형제 shard의 독립 CUDA 실패가 아니다. 현재는
+  모든 shard가 끝날 때까지 기다려 정상 결과를 보존하고, 실패 shard만 `.partial`에서
+  재시도한다. 재시도마다 shard의 물리 GPU 배정을 회전해 특정 GPU 반복 실패도 피한다.
+- **27B clean rerun**: 7B가 이미 완료된 경우 `go_v4_27b.sh WORKER TOTAL`을 사용한다.
+  10개 27B run을 최대 10개 4-H100 클러스터로 분배하며, 과거 불완전 run은 삭제하지
+  않고 quarantine한 뒤 최신 commit으로 실행한다.
+- **27B linear-attention backend**: 과거 ULF trace는 Qwen3.8 Gated DeltaNet의
+  `torch_recurrent_gated_delta_rule` fallback을 가리켰다. 전용 rerun은 FLA 0.5.2의
+  fused recurrent/chunk kernel을 자동 설치하고 import를 확인한다. fallback이면 시작하지
+  않으며 backend와 FLA version을 run config에 기록해 run 간 혼입을 차단한다.
+- **과거 완료 표식 재사용**: 27B clean rerun 전의 `V4_COMPLETE`와 결과 표가 남아 있어도
+  현재 generation commit이 표식과 다르면 다시 수집한다. 수집 전 27B 10개 run의 commit,
+  모델 hash, FLA backend, 고정 설정 및 run-config digest를 전수 검증한다.
 - **잔여 경계**: util 0%가 지속되면 진짜 hang — 이 노드군의 fused 커널병(C5·C6)
   이 에러 대신 동결로 나타나는 케이스 또는 group-volume 스톨(D-state).
   그때는 RECOVERY 상황 1(노드 교체)이 정답. 진단: ps -eo pid,stat,wchan | awk

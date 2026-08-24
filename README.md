@@ -117,6 +117,30 @@ bash scripts/go_v4.sh 2   # 27B: 2,3 / 7B: 1
 bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
 ```
 
+7B가 완료된 뒤 27B만 새 코드로 재실행할 때는 아래 전용 진입점을 쓴다. 총 10개
+`seed × dataset` run을 `N`개 클러스터에 중복 없이 균등 분배한다. 예를 들어 H100 4장
+클러스터 5개라면 각 클러스터에서 worker 번호만 다르게 실행한다.
+
+```bash
+# cluster 1..5에서 각각 한 줄씩
+bash scripts/go_v4_27b.sh 1 5
+bash scripts/go_v4_27b.sh 2 5
+bash scripts/go_v4_27b.sh 3 5
+bash scripts/go_v4_27b.sh 4 5
+bash scripts/go_v4_27b.sh 5 5
+```
+
+이 경로는 이전 commit의 불완전 27B run을 `$OM_WORK/quarantine/v4-27b-rerun/`에
+보존하고 현재 clean commit으로 다시 시작한다. 한 shard의 CUDA 실패가 다른 shard를
+종료하지 않으며, 정상 shard는 완료까지 저장한다. 실패 shard의 `.partial`만 다음
+시도에서 이어받고 물리 GPU 배정을 회전한다. 27B 생성 batch는 4, 재시도는 10회다.
+Qwen3.8 Gated DeltaNet이 불안정했던 PyTorch recurrent fallback으로 들어가지 않도록
+FLA 0.5.2 fused kernel을 공유 venv에 한 번만 자동 설치·검증하고, backend/version을
+`run_config.json`에 잠근다. 설치 또는 kernel import가 실패하면 GPU 실험 전에 중단한다.
+마지막 worker는 27B 10개 run의 commit·모델 hash·FLA backend·고정 실험 설정을 다시
+검증하고 집계한다. 예전 `V4_COMPLETE` 표식은 현재 generation commit과 다르면 재사용하지
+않는다.
+
 각 실행은 stale v4 process를 종료하고 GPU 메모리 해제를 확인한 뒤 commit별 smoke로
 진입한다. 중단 뒤 최신 코드를 pull해도 기존 `run_config.json`의 generation commit을
 계산 코드로 유지하면서 최신 supervisor로 재개한다. 따라서 기존 부분 산출물을 버리지

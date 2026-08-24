@@ -11,6 +11,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
+go_v2_source = (REPO / "scripts/go_v2.sh").read_text(encoding="utf-8")
+assert '"$active_run"/logs/*.log' in go_v2_source
+assert '"$BASE"*/logs/*.log' not in go_v2_source
+
 
 def executable(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
@@ -104,8 +108,9 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     executable(
         snapshot / "scripts/run_14b.sh",
         "#!/bin/sh\n"
-        'printf "%s|%s\\n" "$OM_REPO" "$PYTHONPATH" > "$ACTIVITY_CAPTURE"\n'
-        "/bin/sleep 0.3\n"
+        'printf "%s|%s|%s\\n" "$OM_REPO" "$PYTHONPATH" "$OM_RETRY_INDEX" '
+        '> "$ACTIVITY_CAPTURE"\n'
+        "/bin/sleep 1\n"
         'mkdir -p "$OUT_ROOT"\n'
         'for artifact in DONE run_config.json manifest.json score_protocol.json '
         'oracle_protocol.json report.json; do printf \'{}\\n\' > "$OUT_ROOT/$artifact"; done\n',
@@ -143,9 +148,12 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     )
     assert active.returncode == 0, active.stdout + active.stderr
     assert "계산 활동 확인" in active.stdout
-    pipeline_repo, pythonpath = activity_capture.read_text(encoding="utf-8").strip().split("|")
+    pipeline_repo, pythonpath, retry_index = (
+        activity_capture.read_text(encoding="utf-8").strip().split("|")
+    )
     assert pipeline_repo == str(snapshot)
     assert pythonpath == str(snapshot / "src")
+    assert retry_index == "1"
 
 print("PASS go_v2 preserves failures and active snapshot computation")
 

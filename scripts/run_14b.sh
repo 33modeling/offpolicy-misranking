@@ -27,6 +27,27 @@ else
   GPUS=($(seq 0 $((NGPU - 1))))
 fi
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOGS/main.log"; }
+# CUDA ULF가 특정 GPU에서 반복될 때 같은 shard를 같은 GPU에 계속 재투입하지 않는다.
+retry_index=${OM_RETRY_INDEX:-1}
+rotation=$(( (retry_index - 1) % NGPU ))
+if [ "$rotation" -gt 0 ]; then
+  rotated=("${GPUS[@]:rotation}" "${GPUS[@]:0:rotation}")
+  GPUS=("${rotated[@]}")
+fi
+log "retry=$retry_index GPU order=${GPUS[*]}"
+
+wait_all_stages() {
+  local pid rc failed=0
+  for pid in "$@"; do
+    wait "$pid"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      log "[stage-fail] pid=$pid rc=$rc — 다른 shard 완료까지 대기"
+      failed=1
+    fi
+  done
+  return "$failed"
+}
 # 다른 실행(7B babysit/run)과의 GPU 충돌 차단
 if pgrep -f "bash.*scripts/babysit.sh" >/dev/null || pgrep -f "scripts/run_h100_all.sh" >/dev/null; then
   echo "[abort] 7B babysit/run_h100_all 이 아직 실행 중 — 14B와 GPU가 충돌한다."
@@ -157,7 +178,7 @@ if [ "$rc" -ne 0 ]; then
 fi
 # run manifest — 재현성 기록 (감사 §17)
 "$PY" - "$OUT_ROOT" <<'PYEOF' || exit 1
-import hashlib, json, os, subprocess, sys, time
+import hashlib, importlib.metadata, json, os, subprocess, sys, time
 from pathlib import Path
 root = Path(sys.argv[1]); root.mkdir(parents=True, exist_ok=True)
 def sh(c):
@@ -168,6 +189,9 @@ def digest_file(path):
     return hashlib.sha256(p.read_bytes()).hexdigest() if p and p.is_file() else None
 def env_int(name, default):
     return int(os.environ.get(name, str(default)))
+def package_version(name):
+    try: return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError: return None
 import torch, transformers
 model = os.environ["MODEL_14B"]
 pool = os.environ.get("OM_POOL_FILE")
@@ -212,6 +236,8 @@ config = {
     "gen_batch": os.environ.get("OM_GEN_BATCH"),
     "lora_targets": os.environ.get("OM_LORA_TARGETS"),
     "skip_hybrid": os.environ.get("OM_SKIP_HYBRID", "0"),
+    "linear_attention_backend": "fla" if package_version("fla-core") else "torch",
+    "fla_core_version": package_version("fla-core"),
 }
 encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
 config["digest"] = hashlib.sha256(encoded).hexdigest()
@@ -344,7 +370,7 @@ PYEOF
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
 done
-for p in "${pids[@]}"; do wait "$p" || exit 1; done
+wait_all_stages "${pids[@]}" || exit 1
 merge_rollouts rollouts_behavior_train "${BEHAVIOR_K:-8}" || exit 1
 if [ -n "${OM_POOL_FILE:-}" ]; then
   "$PY" src/qualify_pool.py "$OUT_ROOT" "$OM_POOL_FILE" \
@@ -355,7 +381,7 @@ run_stage 0 "$LOGS/drift.log" --stage drift "${COMMON[@]}" --drift-steps "$DRIFT
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
 done
-for p in "${pids[@]}"; do wait "$p" || exit 1; done
+wait_all_stages "${pids[@]}" || exit 1
 merge_rollouts rollouts_fresh_train "${FRESH_K:-16}" || exit 1
 # val 방향 ∥ oracle micro 샤딩 (GPU 여유가 있으면 마지막 GPU를 val 전용으로)
 pids=()
@@ -369,12 +395,12 @@ fi
 for i in $(seq 0 $((NM - 1))); do
   ( run_stage "$i" "$LOGS/ograds-shard$i.log" --stage oracle-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NM" ) & pids+=($!)
 done
-for p in "${pids[@]}"; do wait "$p" || exit 1; done
+wait_all_stages "${pids[@]}" || exit 1
 # 2×2 score N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/score-shard$i.log" --stage score-shard "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
 done
-for p in "${pids[@]}"; do wait "$p" || exit 1; done
+wait_all_stages "${pids[@]}" || exit 1
 run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}" || exit 1
 run_stage 0 "$LOGS/report.log" --stage report "${COMMON[@]}" || exit 1
 # hybrid 3절단점 — GPU 수만큼 병렬 (모자라면 라운드로빈 순차)
@@ -388,9 +414,12 @@ pids=(); gpu=0
 for cut in 0.25 0.5 0.75; do
   ( run_stage "$((gpu % NGPU))" "$LOGS/hybrid-$cut.log" --stage hybrid "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --cut-frac "$cut" ) & pids+=($!)
   gpu=$((gpu + 1))
-  [ $((gpu % NGPU)) -eq 0 ] && for p in "${pids[@]}"; do wait "$p" || exit 1; done && pids=()
+  if [ $((gpu % NGPU)) -eq 0 ]; then
+    wait_all_stages "${pids[@]}" || exit 1
+    pids=()
+  fi
 done
-for p in "${pids[@]}"; do wait "$p" || exit 1; done
+[ "${#pids[@]}" -eq 0 ] || wait_all_stages "${pids[@]}" || exit 1
 fi
 required=(prompts.json rollouts_behavior_train.jsonl rollouts_fresh_train.jsonl
           val_gradient.pt val_groups.pt oracle_micro_groups.pt scores_oracle.json

@@ -53,13 +53,13 @@ run_complete() {
   done
 }
 
-run_pipeline() {  # run_pipeline <console-log> <command...>
-  local console_log=$1 pid rc tmp
-  shift
+run_pipeline() {  # run_pipeline <console-log> <run-dir> <command...>
+  local console_log=$1 active_run=$2 pid rc tmp
+  shift 2
   setsid "$@" >> "$console_log" 2>&1 &
   pid=$!
   tmp="$ACTIVE_FILE.tmp"
-  printf '%s\n%s\n' "$pid" "$console_log" > "$tmp"
+  printf '%s\n%s\n%s\n' "$pid" "$console_log" "$active_run" > "$tmp"
   mv "$tmp" "$ACTIVE_FILE"
   wait "$pid"
   rc=$?
@@ -95,6 +95,7 @@ gpu_peak_util() {
     fi
     runner_pid=$(sed -n '1p' "$ACTIVE_FILE" 2>/dev/null)
     console_log=$(sed -n '2p' "$ACTIVE_FILE" 2>/dev/null)
+    active_run=$(sed -n '3p' "$ACTIVE_FILE" 2>/dev/null)
     if [ -z "$runner_pid" ] || ! kill -0 "$runner_pid" 2>/dev/null; then
       prev=""; still=0; watched_pid=""; cpu_mark=0; continue
     fi
@@ -102,7 +103,8 @@ gpu_peak_util() {
       prev=""; still=0; watched_pid=$runner_pid
       cpu_mark=$(group_cpu_seconds "$runner_pid")
     fi
-    lf=$(ls -t "$console_log" "$BASE"*/logs/*.log 2>/dev/null | head -1)
+    # 공유 볼륨의 다른 클러스터 로그를 진행 신호로 오인하지 않는다.
+    lf=$(ls -t -- "$console_log" "$active_run"/logs/*.log 2>/dev/null | head -1)
     [ -n "$lf" ] || continue
     line=$(tail -n 1 "$lf" 2>/dev/null | cut -c1-120)
     sig=$(stat -c '%n:%Y:%s' "$lf" 2>/dev/null || true)
@@ -175,9 +177,9 @@ else
   smoke_ok=0
   smoke_rc=0
   for smoke_try in $(seq 1 "${OM_MAX_RETRIES:-2}"); do
-    if run_pipeline "$LOGDIR/$RUN_LABEL-smoke.log" env \
+    if run_pipeline "$LOGDIR/$RUN_LABEL-smoke.log" "$SMOKE" env \
        DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
-       HYBRID_PROMPTS=8 SEED=0 OM_REPO="$PIPELINE_REPO" \
+       HYBRID_PROMPTS=8 SEED=0 OM_RETRY_INDEX="$smoke_try" OM_REPO="$PIPELINE_REPO" \
        PYTHONPATH="$PIPELINE_REPO/src" bash "$PIPELINE_SCRIPT"; then
       smoke_ok=1
       break
@@ -224,7 +226,8 @@ for SEED in "${SEEDS[@]}"; do
       echo "==== [$KEY] 시도 $try/${OM_MAX_RETRIES:-2}"
       cleanup_strays
       run_rc=0
-      if run_pipeline "$LOG" env DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" \
+      if run_pipeline "$LOG" "$RUN_DIR" env DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" \
+         OM_RETRY_INDEX="$try" \
          OM_REPO="$PIPELINE_REPO" PYTHONPATH="$PIPELINE_REPO/src" \
          bash "$PIPELINE_SCRIPT"; then
         if run_complete "$RUN_DIR"; then

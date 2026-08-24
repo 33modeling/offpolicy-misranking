@@ -158,7 +158,8 @@ same_keys = (
     "fresh_k", "val_k", "micro_group", "hybrid_prompts", "k_cell",
     "drift", "max_new_tokens", "proj_dim", "grad_layers", "clip_cap",
     "temperature", "topk_frac", "radius_mode", "top_p", "thinking",
-    "attn", "lora_targets", "skip_hybrid",
+    "attn", "lora_targets", "skip_hybrid", "linear_attention_backend",
+    "fla_core_version",
 )
 reference = configs[0]
 for key in same_keys:

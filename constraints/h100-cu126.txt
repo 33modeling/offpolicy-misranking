@@ -5,6 +5,9 @@ datasets==5.0.1
 accelerate==1.14.0
 peft==0.20.0
 numpy==2.5.1
+einops==0.8.2
+fla-core==0.5.2
+flash-linear-attention==0.5.2
 PyYAML==6.0.3
 huggingface-hub==1.25.1
 safetensors==0.8.0

@@ -3,3 +3,4 @@ transformers>=4.44
 peft>=0.12
 datasets>=2.20
 numpy
+flash-linear-attention[cuda]==0.5.2

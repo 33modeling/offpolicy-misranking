@@ -8,7 +8,6 @@ from pathlib import Path
 
 from prepare_run_path import prepare_run_path
 
-
 with tempfile.TemporaryDirectory() as raw_tmp:
     tmp = Path(raw_tmp)
     quarantine = tmp / "quarantine"
@@ -34,5 +33,16 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     destination = prepare_run_path(malformed, "current", quarantine)
     assert destination is not None
     assert "unreadable" in destination.name
+
+    unconfigured = tmp / "v4-27b-s2"
+    unconfigured.mkdir()
+    (unconfigured / "logs").mkdir()
+    assert prepare_run_path(unconfigured, "current", quarantine) is None
+    destination = prepare_run_path(
+        unconfigured, "current", quarantine, quarantine_unconfigured=True
+    )
+    assert destination is not None
+    assert not unconfigured.exists()
+    assert (destination / "logs").is_dir()
 
 print("PASS incompatible run paths are preserved outside the active namespace")
