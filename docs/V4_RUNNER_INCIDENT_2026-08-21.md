@@ -1,6 +1,7 @@
 # v4 runner 장애 및 수정 기록 (2026-08-21)
 
-상태: **해결** (`abe9dbb`; 중단 재개 경로는 2026-08-22 보강)
+상태: **해결** (`abe9dbb`; 중단 재개 경로는 2026-08-22, false-success는
+2026-08-24 보강)
 
 이 문서는 3개 독립 H100 4-GPU 클러스터에서 v4 confirmatory matrix를 실행하는
 과정에서 발생한 재시작, config 계보, GPU 잔류 문제를 기록한다. 실험 계산식이나
@@ -150,3 +151,52 @@ run마다 기록된 generation commit으로 자동 진입하며, 호출 checkout
 제거한 뒤 snapshot의 `setup_env.sh`로 다시 설정해 두 revision의 Python 코드가 섞이지
 않게 한다. 모든 worker 종료 후 `bash scripts/collect_v4.sh` 한 번으로 20-run의
 missing/incomplete/artifact 상태를 검사하고 최종 결과를 생성한다.
+
+## 10. 2026-08-24 주말 실행의 false-success 종료
+
+### 증상
+
+클러스터 `1`, `2`, `3`을 주말 동안 실행했지만 GPU process가 모두 종료된 뒤에도
+배정 matrix가 완성되지 않았다. Launcher 마지막 메시지는 run을 재개했다고 표시할 수
+있어 정상 종료와 미완료 종료를 구분할 수 없었다.
+
+### 직접 원인
+
+`go_v2.sh`는 내부 retry를 모두 소진해 `RESULT[$KEY]=0`인 run이 남아도
+`OM_SKIP_POSTPROCESS=1`이면 무조건 `exit 0`을 반환했다. V4 worker는 후처리를 한 번만
+수행하기 위해 이 변수를 항상 설정한다. `resume_v4.sh`도 child exit만 신뢰하고
+`DONE`이나 protocol/report를 다시 검사하지 않은 채 "재개 완료"를 출력했다. 따라서
+실제 계산이 실패한 상태가 shell success로 바뀌고, 클러스터 launcher가 스스로 끝나는
+경로가 있었다.
+
+### 수정
+
+1. `go_v2.sh`는 선택된 run 중 하나라도 미완료면 후처리 생략 여부와 무관하게
+   non-zero로 종료한다.
+2. `resume_v4.sh`는 한 run 실패로 slot 전체를 즉시 중단하지 않는다. 같은 pass의
+   나머지 run을 계속 실행해 주말 GPU 시간을 보존한다.
+3. 각 run은 `DONE`, `run_config.json`, `manifest.json`, `score_protocol.json`,
+   `oracle_protocol.json`, `report.json`이 모두 nonempty일 때만 완료로 인정한다.
+4. Pass 종료마다 plan을 새로 만들고 완료된 run은 제외한다. 남은 run만 기본 3개의
+   supervisor pass 동안 다시 실행한다.
+5. 마지막 pass에도 미완료가 있으면 run 이름을 출력하고 launcher 자체가 non-zero로
+   종료한다. 성공 메시지는 완전한 배정 계약을 만족한 경우에만 나온다.
+
+기존 partial artifact는 삭제하거나 새 commit과 섞지 않는다. 각 run의
+`run_config.json.git`이 가리키는 detached worktree에서 기존 shard와 `.partial`부터
+재개하며, 최신 launcher가 바깥에서 완료 계약을 검증한다.
+
+### 검증과 운영 경계
+
+- `test_go_v2_exit_status.py`: 실패한 단일 worker가 `OM_SKIP_POSTPROCESS=1`에서도
+  exit 1을 유지하는지 검증한다.
+- `test_v4_resume_shell.py`: 한 run을 의도적으로 계속 실패시켜도 나머지 다섯 run이
+  실행되고, 다음 pass에서는 실패 run만 재시도되며 최종 exit가 1인지 검증한다.
+- `test_v4_resume_commit.py`: 여섯 필수 artifact를 모두 갖춰야 complete인지 검증한다.
+- Artifact contract, failure diagnostic, cleanup, run-path preservation, run selection,
+  readout, harvest 회귀 테스트를 함께 통과했다.
+- 로컬 system Python에는 PyTorch/Transformers가 없어 GPU-dependent 전체 suite는
+  collection할 수 없었다. 실제 H100 integration은 클러스터 재개 시 확인한다.
+- Supervisor는 살아 있는 노드 안의 child failure를 복구한다. 운영자가 VM·pod·최상위
+  batch job을 종료하면 supervisor도 사라지므로, 노드가 다시 준비된 뒤 같은
+  `bash scripts/go_v4.sh <1|2|3>` 명령을 한 번 다시 실행해야 한다.

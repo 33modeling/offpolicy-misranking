@@ -70,7 +70,10 @@ the user does not copy run directories manually.
 - `python3 tests/test_harvest.py`: pass, 39 checks
 - `python3 tests/test_readout_summary.py`: pass, 13 checks
 - `PYTHONPATH=src python3 tests/test_v4_resume_commit.py`: pass
-- `python3 tests/test_v4_resume_shell.py`: pass (temporary Git worktree integration)
+- `python3 tests/test_v4_resume_shell.py`: pass (worktree 전환, 실패 격리,
+  미완료 run 전용 supervisor 재시도)
+- `python3 tests/test_go_v2_exit_status.py`: pass (`OM_SKIP_POSTPROCESS=1`의
+  false-success 방지)
 - Full local `pytest` cannot be collected with the system Python because this
   checkout has no real PyTorch installation. GPU/torch-dependent tests must be
   run in `$VENV_DIR`; this does not affect the shell regression above, which

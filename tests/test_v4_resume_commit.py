@@ -42,7 +42,13 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert by_name["v4-27b-s1-math500"]["commit"] == "generation-b"
 
     run = root / "v4-27b-s0"
-    for artifact in ("DONE", "score_protocol.json", "oracle_protocol.json"):
+    for artifact in (
+        "DONE",
+        "manifest.json",
+        "score_protocol.json",
+        "oracle_protocol.json",
+        "report.json",
+    ):
         (run / artifact).write_text("ok\n", encoding="utf-8")
     plan, skipped = resume_plan(root, 1, "current")
     assert skipped == 1

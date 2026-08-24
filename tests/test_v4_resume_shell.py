@@ -21,12 +21,15 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     tmp = Path(raw_tmp)
     checkout = tmp / "checkout"
     work = tmp / "work"
+    failed_work = tmp / "failed-work"
     fake_bin = tmp / "bin"
     capture = tmp / "capture.txt"
+    failed_capture = tmp / "failed-capture.txt"
     checkout.mkdir()
     (checkout / "scripts").mkdir()
     (checkout / "src").mkdir()
     (work / "runs" / "v4-27b-s2").mkdir(parents=True)
+    (failed_work / "runs" / "v4-27b-s2").mkdir(parents=True)
     fake_bin.mkdir()
 
     shutil.copy(REPO / "scripts/resume_v4.sh", checkout / "scripts/resume_v4.sh")
@@ -48,8 +51,18 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     )
     (checkout / "scripts/go_v2.sh").write_text(
         "#!/bin/sh\n"
+        'suffix=""; [ "$DATASETS" = gsm8k ] || suffix="-$DATASETS"\n'
+        'run="$RUN_BASE-s$SEEDS$suffix"\n'
         'printf "%s|%s|%s|%s|%s\\n" "$PWD" "$(git rev-parse HEAD)" '
-        '"$OM_REPO" "$SEEDS" "$DATASETS" >> "$RESUME_CAPTURE"\n',
+        '"$OM_REPO" "$SEEDS" "$DATASETS" >> "$RESUME_CAPTURE"\n'
+        '[ "$(basename "$run")" = "${RESUME_FAIL_RUN:-}" ] && exit 9\n'
+        'mkdir -p "$run"\n'
+        'head=$(git rev-parse HEAD)\n'
+        '[ -s "$run/run_config.json" ] || printf \'{"git":"%s"}\\n\' "$head" '
+        '> "$run/run_config.json"\n'
+        'for artifact in manifest.json score_protocol.json oracle_protocol.json report.json; do '
+        'printf \'{}\\n\' > "$run/$artifact"; done\n'
+        'printf \'ok\\n\' > "$run/DONE"\n',
         encoding="utf-8",
     )
 
@@ -65,6 +78,9 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     run(["git", "commit", "-qm", "analysis"], checkout)
 
     (work / "runs/v4-27b-s2/run_config.json").write_text(
+        json.dumps({"git": generation}), encoding="utf-8"
+    )
+    (failed_work / "runs/v4-27b-s2/run_config.json").write_text(
         json.dumps({"git": generation}), encoding="utf-8"
     )
     fake_sleep = fake_bin / "sleep"
@@ -95,7 +111,30 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         assert head == generation
         assert om_repo == cwd
 
-print("PASS mixed v4 resume enters the recorded snapshot per run")
+    failed_env = env.copy()
+    failed_env.update({
+        "OM_WORK": str(failed_work),
+        "RESUME_CAPTURE": str(failed_capture),
+        "RESUME_FAIL_RUN": "v4-27b-s2",
+    })
+    failed = subprocess.run(
+        ["/bin/bash", "scripts/resume_v4.sh", "2"],
+        cwd=checkout,
+        env=failed_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert failed.returncode == 1, failed.stdout + failed.stderr
+    failed_rows = failed_capture.read_text(encoding="utf-8").splitlines()
+    assert len(failed_rows) == 8
+    attempted = [(row.split("|")[-2], row.split("|")[-1]) for row in failed_rows]
+    assert attempted.count(("2", "gsm8k")) == 3
+    assert len(set(attempted)) == 6
+    assert "나머지 run 계속 진행" in failed.stdout
+    assert "supervisor 3회 뒤에도 미완료 run 존재" in failed.stderr
+
+print("PASS v4 resume verifies completion and retries only failed runs")
 
 
 def test_v4_resume_shell() -> None:

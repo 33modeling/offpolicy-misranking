@@ -198,6 +198,7 @@ cleanup_strays; kill "$W" 2>/dev/null
 echo
 echo "==== 종료 요약 ===="
 DIRS=()
+FAILED_RUNS=0
 for SEED in "${SEEDS[@]}"; do for DS in "${DATASETS[@]}"; do
   RUN_DIR="$BASE-s$SEED"; [ "$DS" != "gsm8k" ] && RUN_DIR="$RUN_DIR-$DS"
   KEY="$DS/s$SEED"
@@ -205,8 +206,16 @@ for SEED in "${SEEDS[@]}"; do for DS in "${DATASETS[@]}"; do
     echo "  $KEY ✔"
     [ -f "$RUN_DIR/report.json" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
       && [ -f "$RUN_DIR/oracle_protocol.json" ] && DIRS+=("$RUN_DIR")
-  else echo "  $KEY ✘ ($LOGDIR/$RUN_LABEL-$DS-s$SEED.log 확인)"; fi
+  else
+    echo "  $KEY ✘ ($LOGDIR/$RUN_LABEL-$DS-s$SEED.log 확인)"
+    FAILED_RUNS=$((FAILED_RUNS + 1))
+  fi
 done; done
+
+if [ "$FAILED_RUNS" -gt 0 ]; then
+  echo "==== [실패] ${FAILED_RUNS}개 run 미완료 — 성공으로 종료하지 않음"
+  exit 1
+fi
 
 if [ "${OM_SKIP_POSTPROCESS:-0}" = "1" ]; then
   echo "==== 후처리 생략 (OM_SKIP_POSTPROCESS=1) — 병렬 worker 종료 후 한 번만 집계할 것"

@@ -70,11 +70,15 @@ def all_configs(runs_root: Path) -> dict[tuple[str, int, str], tuple[Path, dict[
 
 
 def complete(run: Path) -> bool:
-    return all((run / name).stat().st_size > 0 for name in (
-        "DONE", "score_protocol.json", "oracle_protocol.json"
-    ) if (run / name).exists()) and all(
-        (run / name).is_file() for name in (
-            "DONE", "score_protocol.json", "oracle_protocol.json"
+    return all(
+        (run / name).is_file() and (run / name).stat().st_size > 0
+        for name in (
+            "DONE",
+            "run_config.json",
+            "manifest.json",
+            "score_protocol.json",
+            "oracle_protocol.json",
+            "report.json",
         )
     )
 

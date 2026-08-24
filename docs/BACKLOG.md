@@ -77,6 +77,16 @@
 상세 장애 타임라인, 불완전했던 중간 수정, 현재 실행 순서와 잔여 경계는
 `docs/V4_RUNNER_INCIDENT_2026-08-21.md`를 정본으로 삼는다.
 
+### 2026-08-24 v4 worker false-success 수정
+
+- [x] `go_v2.sh`가 실패 run을 남기고도 `OM_SKIP_POSTPROCESS=1`에서 exit 0을
+      반환하던 경로 제거
+- [x] `resume_v4.sh`가 child exit만 믿지 않고 여섯 필수 artifact를 재검증하도록 수정
+- [x] 한 run 실패 후에도 같은 slot의 나머지 run을 계속 실행하고, 완료 plan을 다시
+      계산해 미완료만 기본 3 pass 재시도
+- [x] 마지막 pass의 미완료 run 이름과 non-zero exit를 보존해 정상 종료와 구분
+- [x] false-success, 실패 격리, 미완료 전용 재시도 회귀 테스트 추가
+
 ### 2026-08-21 v4 27B 진행 스냅샷 수신
 
 - [x] `0821-0716-clusterrun270721-first-v4-3.tar.gz` 압축 해제 및 시드별

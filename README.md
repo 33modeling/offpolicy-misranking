@@ -112,6 +112,14 @@ bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
 처음부터 다시 계산하지 않는다. 장애 이력과 제한사항은
 `docs/V4_RUNNER_INCIDENT_2026-08-21.md` 참조.
 
+Worker 내부 실패는 성공으로 숨기지 않는다. 각 클러스터 launcher는 한 run이 실패해도
+나머지 배정 run을 계속 진행하고, 완료 목록을 다시 계산해 미완료 run만 기본 3 pass로
+재시도한다. `DONE`뿐 아니라 `run_config.json`, `manifest.json`, 두 protocol과
+`report.json`이 모두 있어야 완료다. 세 pass 뒤에도 미완료가 있으면 해당 run 이름과
+non-zero exit를 남긴다. 단, 클라우드 운영자가 노드나 최상위 job 자체를 종료한 경우
+노드 안의 supervisor도 함께 사라지므로 같은 `go_v4.sh <slot>` 명령을 다시 실행해야
+한다. 기존 shard와 `.partial`부터 재개되며 완료 run은 다시 계산하지 않는다.
+
 - sweep 축: **seed × dataset**. GSM8K는 과거 v2 유의 신호를 같은 데이터셋에서
   재검정하고, MATH500은 seed별 cell ordering 반전을 재검정한다. Qwen3.8-27B-BF16을
   메인 모델로, Qwen2.5-7B-Instruct를 동일조건 재현 축으로 실행한다. 기본 seed는
@@ -168,7 +176,8 @@ tests/test_readout_summary.py  corrected run 탐색·부분 artifact 거부 회�
 tests/test_harvest.py   v4 20-run 완결성·원자적 수확·전 세대 K-curve·stderr 보존·부분 산출물 격리 shell 회귀 테스트
 tests/test_run_select.py  v2/v3 이후 세대·legacy·protocol-only run 탐색 회귀 테스트
 tests/test_v4_resume_commit.py  혼합 generation에서도 run별 원래 commit을 선택하는 테스트
-tests/test_v4_resume_shell.py  run별 기록된 generation worktree로 전환하는 shell 통합 테스트
+tests/test_v4_resume_shell.py  run별 generation worktree 전환·실패 격리·미완료 전용 재시도 통합 테스트
+tests/test_go_v2_exit_status.py  postprocess 생략 worker가 run 실패를 성공으로 숨기지 않는 회귀 테스트
 ```
 
 구현 노트:
