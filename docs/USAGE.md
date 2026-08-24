@@ -739,7 +739,7 @@ python3 src/c2_sweep.py / src/c2_diagnose.py # C2 재판정
 
 ### 8.1 테스트
 
-`tests/` 22개는 전부 모델·GPU 없이 돈다(GPU를 쓰는 셸 스크립트는 fake
+`tests/`의 CPU 회귀 테스트는 전부 모델·GPU 없이 돈다(GPU를 쓰는 셸 스크립트는 fake
 `nvidia-smi`로 대체한다). 다만 **`pytest tests/`를 한 번에 돌리면 안 된다** —
 `tests/test_rollout_resume.py`에 모듈 최상위 `sys.exit(...)`가 있어 pytest 수집이
 `INTERNALERROR`로 죽고 **테스트가 하나도 실행되지 않는다**.
@@ -749,7 +749,7 @@ export OM_WORK=/tmp/om-test GROUP_VOLUME=/nonexistent CUDA_VISIBLE_DEVICES=""
 export PYTHONPATH=$PWD/src
 PY=.work/.venv-cu126/bin/python      # 또는 $VENV_DIR/bin/python
 
-# 1) pytest 수집형 15개 파일 (테스트 29건)
+# 1) pytest 수집형 테스트 (2026-08-24 실행: 48 passed)
 $PY -m pytest tests/ -q --ignore=tests/test_rollout_resume.py
 
 # 2) 스크립트형 7개는 직접 실행

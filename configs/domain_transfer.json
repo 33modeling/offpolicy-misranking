@@ -21,6 +21,23 @@
   "experiment": {
     "datasets": ["mbpp", "kk", "arc-challenge"],
     "seeds": [0, 1, 2],
-    "drifts": [0, 25, 100, 400]
+    "drifts": [0, 25, 100, 400],
+    "n_train": 512,
+    "n_val": 100,
+    "behavior_k": 8,
+    "fresh_k": 32,
+    "val_k": 8,
+    "micro_group": 4,
+    "max_new_tokens": 512,
+    "proj_dim": 4096,
+    "grad_layers": 4,
+    "clip_cap": 10.0,
+    "topk_frac": 0.1,
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "thinking": "off",
+    "attn": "eager",
+    "skip_hybrid": true,
+    "first_bootstrap": 2000
   }
 }

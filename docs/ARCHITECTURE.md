@@ -20,7 +20,7 @@
 | 추적 파일 | 144 | `git ls-files` |
 | `src/*.py` | 33개 · 7,356줄 | 최대 `experiment.py` 871줄, `data.py` 554줄, `frontier.py` 531줄 |
 | `scripts/` | 70개 (`.sh` 66 · `.py` 4) | 최대 `run_14b.sh` 21,704 B, `verify_theory.py` 20,218 B |
-| `tests/*.py` | 22개 · 2,750줄 | pytest 수집형 15개(테스트 29건) + 스크립트형 7개 |
+| `tests/*.py` | 29개 · 3,576줄 | pytest 회귀 테스트 + 직접 실행하는 스크립트형 테스트 |
 | `docs/*.md` | 9개(이 문서 포함) | 별도로 `docs/results/2026-08-24/` 아래 결과 번들 11개 |
 
 계층은 네 개다.
@@ -1012,14 +1012,14 @@ one Git commit for the matrix**." 반면 `collect_targets()`의 `same_keys`에�
 ## 14. 검증 상태
 
 이 문서를 쓰면서 **CPU에서 안전한 테스트만** 실행했다. GPU가 필요한 테스트는
-실행하지 않았고, 실행이 필요한 것도 없었다 — `tests/` 22개는 전부 모델·GPU 없이
+실행하지 않았고, 실행이 필요한 것도 없었다 — `tests/` CPU 회귀는 전부 모델·GPU 없이
 도는 설계다(GPU를 쓰는 스크립트는 `nvidia-smi` 셸 shim으로 대체한다).
 
 실행 환경: `.work/.venv-cu126`(torch 2.7.1+cu126, transformers 5.14.1),
 `CUDA_VISIBLE_DEVICES=""`, `OM_WORK`는 임시 스크래치로 지정.
 
 ```
-pytest tests/ --ignore=tests/test_rollout_resume.py   →  29 passed
+pytest tests/ --ignore=tests/test_rollout_resume.py   →  48 passed
 python tests/test_rollout_resume.py                    →  PASS 18 / FAIL 0
 python tests/test_cleanup_run_processes.py             →  PASS
 python tests/test_data_sandbox.py                      →  PASS
@@ -1031,9 +1031,7 @@ python tests/test_prepare_run_path.py                  →  PASS
 
 `--ignore` 없이 `pytest tests/`를 돌리면 12.8의 `SystemExit` 때문에
 `INTERNALERROR`로 **테스트가 하나도 실행되지 않는다**. 파일별 실행 시
-pytest가 수집하는 것은 15개 파일 29건이고, 나머지 7개는 `def test_`가 없는
-스크립트형이라 `no tests ran`으로 나온다 — 그 7개는 `python tests/<파일>`로
-직접 실행해야 한다.
+`def test_`가 없는 스크립트형 7개는 `python tests/<파일>`로 직접 실행해야 한다.
 
 `tests/test_frontier.py`는 torch가 아직 import되지 않았을 때만
 `sys.modules["torch"]`를 빈 모듈로 채운다. 알파벳 순서상 `test_contract`·

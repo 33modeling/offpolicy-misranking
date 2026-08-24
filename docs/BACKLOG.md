@@ -33,7 +33,16 @@
       chat template·weight shard·LoRA target 사전 검사를 구현
 - [x] 모든 클러스터에서 `bash scripts/go_domain_transfer.sh` 한 명령으로 기존 shared
       family queue를 재사용하는 2 model × 3 domain × 3 seed × 4 drift 행렬 구성
+- [x] 모델 config만이 아니라 tokenizer와 모든 safetensors shard의 size·SHA-256을
+      검증하고, 호스트별 실제 CUDA 생성·LoRA backward/save/reload/merge 스모크 추가
+- [x] MBPP bubblewrap reference 실행과 KK/ARC positive-negative reward self-test를
+      데이터 qualification에 포함해 무효 reward 환경을 GPU 시작 전에 차단
+- [x] clean Git·config·model·data를 `MATRIX.json`에 고정하고 config 불일치/손상 run은
+      삭제 없이 quarantine, 완료 run과 최종 분석은 artifact hash 계약으로 검증
+- [x] 3개 동시 worker의 단일 claim, 일시 실패 재시도, 단일 최종 수집 및 분석 실패
+      nonzero 전파를 shell 통합 테스트로 고정
 - [ ] 공유 볼륨에서 `prepare_domain_datasets.sh`, `fetch_transfer_models.sh` 완료
+- [ ] 각 실제 H100 클러스터에서 host별 runtime smoke를 통과한 뒤 전이 행렬 시작
 - [ ] 전이 행렬을 완주하고 Qwen에서 동결한 usable/unsafe 경계의 model/domain
       재현율을 보고. APPS는 기본 행렬 이후 고난도 코드 확장으로만 실행
 

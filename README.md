@@ -154,8 +154,16 @@ bash scripts/go_domain_transfer.sh
 기본 행렬은 Mistral-7B-Instruct-v0.3/OLMo-2-7B-Instruct × MBPP/KK/ARC-Challenge ×
 seed 0-2 × drift 0/25/100/400이다. 기존 `go_regime.sh`의 공유 family lock이 작업을
 분배하므로 클러스터 번호를 따로 지정하지 않는다. 모델 및 데이터 스냅샷, split
-재현성, train/validation prompt 비중복, chat template, weight shard, LoRA target
-검사가 하나라도 실패하면 GPU를 잡기 전에 중단한다.
+재현성, train/validation prompt 비중복, 실제 reward 실행, chat template, 전체 weight
+shard SHA-256, LoRA target 검사를 통과해야 한다. 이어 각 호스트에서 BF16 CUDA,
+실제 생성, LoRA backward/save/reload/merge 스모크를 통과한 뒤에만 본 행렬을 시작한다.
+
+행렬은 clean Git commit·설정·모델·데이터 qualification hash를 `MATRIX.json`에 고정한다.
+완료 run은 generation exact-K와 score/oracle protocol까지 심층 검증해 마커를 만든다.
+설정이 다르거나 손상된 기존 run은 삭제하지 않고 `$OM_WORK/quarantine/`으로 옮긴 뒤
+같은 명령에서 재시작한다. 최종 REGIME 출력도 행렬과 모든 run 검증 마커의 hash에
+묶으므로 여러 클러스터가 같은 분석을 중복 게시하거나 이전 출력을 성공으로 오인하지
+않는다.
 
 ## 4. confirmatory v4 실행 경로 (2026-08-20 계약)
 
@@ -254,6 +262,10 @@ src/frontier.py         fresh-audit 비용–품질 replay (5절) — 정책 스
 src/regime_map.py       독립 fresh A/B로 utility retention 계산·3영역 regime 집계
 src/first_interval.py   FIRST floor·utility gain·retention 계층 bootstrap 구간
 src/reuse_behavior.py   drift family의 behavior artifact 계약 검증·안전 복제
+src/model_matrix.py     전이 모델 revision·tokenizer·전체 weight 파일 hash 검증
+src/qualify_domain_data.py  전이 데이터 provenance·split·실제 reward 실행 검증
+src/regime_contract.py  행렬/run/최종 수집의 불변 계약·손상 run 격리
+src/transfer_smoke.py   실제 모델 CUDA 생성·LoRA backward/save/reload/merge 스모크
 src/train_downstream.py GRPO-lite 학습(checkpointing)·greedy 평가
 src/experiment.py       stage orchestrator — analyze가 oracle→score→report→hybrid를
                         단일 프로세스로 묶어 7B 재로드 제거
@@ -274,6 +286,9 @@ tests/test_go_v2_exit_status.py  postprocess 생략 worker가 run 실패를 성�
 tests/test_regime_map.py  양성/음성 utility regime·margin 충분조건 회귀 테스트
 tests/test_first_interval.py  FIRST·utility 구간과 고정 tie-stream 회귀 테스트
 tests/test_reuse_behavior.py  prompt/config 불일치와 behavior artifact 복제 회귀 테스트
+tests/test_model_matrix.py  모델 파일 손상·설정 타입·shard 경로 검증 테스트
+tests/test_regime_contract.py  행렬/run 격리·최종 출력 hash 계약 테스트
+tests/test_regime_queue.py  3-worker 중복 방지·재시도·분석 실패 전파 통합 테스트
 ```
 
 구현 노트:

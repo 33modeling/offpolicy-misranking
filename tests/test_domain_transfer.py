@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from data import build_user_msg, load_prompts, reward
+from data import _dedupe_items, build_user_msg, load_prompts, reward
 from qualify_domain_data import qualify
 
 with tempfile.TemporaryDirectory() as td:
@@ -32,7 +32,10 @@ with tempfile.TemporaryDirectory() as td:
     data_file.write_text("".join(json.dumps(row) + "\n" for row in rows))
     revision = "210d026faf9955653af8916fad021475a3f00453"
     (dataset_root / "dataset_manifest.json").write_text(json.dumps({
+        "dataset": "arc-challenge",
+        "source_repository": "allenai/ai2_arc",
         "source_revision": revision,
+        "artifact": "arc_challenge.jsonl",
         "sha256": hashlib.sha256(data_file.read_bytes()).hexdigest(),
         "rows": len(rows),
     }))
@@ -59,14 +62,37 @@ with tempfile.TemporaryDirectory() as td:
     assert report["snapshot_rows"] == 6
     assert report["prompt_split"]["seed"] == 0
     assert report["experiment_seeds"] == [0, 1, 2]
+    assert report["reward_runtime"]["kind"] == "exact-structured-match"
+
+deduped = _dedupe_items([
+    {"question": "same", "answer": "one"},
+    {"question": "same", "answer": "one"},
+    {"question": "other", "answer": "two"},
+], "fixture")
+assert len(deduped) == 2
+try:
+    _dedupe_items([
+        {"question": "same", "answer": "one"},
+        {"question": "same", "answer": "different"},
+    ], "fixture")
+except ValueError as exc:
+    assert "conflicting" in str(exc)
+else:
+    raise AssertionError("conflicting duplicate prompt was accepted")
 
 config = json.loads((ROOT / "configs" / "domain_transfer.json").read_text())
 models = {row["key"]: row for row in config["models"]}
 assert set(models) == {"mistral7b", "olmo2-7b"}
 assert all(len(row["revision"]) == 40 for row in models.values())
 assert config["experiment"]["datasets"] == ["mbpp", "kk", "arc-challenge"]
+assert config["experiment"]["fresh_k"] == 32
+assert config["experiment"]["fresh_k"] % config["experiment"]["micro_group"] == 0
 runner = (ROOT / "scripts" / "go_domain_transfer.sh").read_text()
 assert "bash scripts/go_regime.sh" in runner
 assert "qualify_domain_data.py" in runner
+assert "transfer_smoke.py" in runner
+assert "regime_contract.py init" in runner
+assert '${REGIME_DATASETS:-' not in runner
+assert 'REGIME_FIRST_BOOTSTRAP="$(config_field first_bootstrap)"' in runner
 
 print("PASS")

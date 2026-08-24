@@ -15,6 +15,19 @@ def _gsm8k_answer(ans: str) -> str:
     return ans.split("####")[-1].strip().replace(",", "")
 
 
+def _dedupe_items(items: list[dict], name: str) -> list[dict]:
+    """Remove exact prompt duplicates and reject conflicting gold answers."""
+    unique: dict[str, dict] = {}
+    for item in items:
+        question = str(item["question"]).strip()
+        normalized = {"question": question, "answer": str(item["answer"])}
+        previous = unique.get(question)
+        if previous is not None and previous["answer"] != normalized["answer"]:
+            raise ValueError(f"{name}: duplicate prompt has conflicting answers: {question[:120]}")
+        unique.setdefault(question, normalized)
+    return list(unique.values())
+
+
 def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     import json
     import os
@@ -129,6 +142,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             keys = sorted(rows[0].keys()) if rows else []
             raise ValueError(f"mbpp 스키마 파싱 실패 (root={root}, rows={len(rows or [])}, "
                              f"첫 행 필드={keys}) — 필드명을 확인할 것")
+        items = _dedupe_items(items, "mbpp")
     elif dataset == "kk":
         # Knights & Knaves 논리 퍼즐 — 사전 배치본($DATASETS_DIR/kk 등)
         tried = _candidate_roots("KK_DIR", ("kk", "knights-and-knaves", "knights_and_knaves"),
@@ -158,6 +172,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             keys = sorted(rows[0].keys()) if rows else []
             raise ValueError(f"kk 스키마 파싱 실패 (root={root}, rows={len(rows or [])}, "
                              f"첫 행 필드={keys}) — quiz/names/solution 필드 확인")
+        items = _dedupe_items(items, "kk")
     elif dataset == "arc-challenge":
         # ARC-Challenge 과학 객관식 — train+validation의 공개 정답만 사용한다.
         tried = _candidate_roots(
