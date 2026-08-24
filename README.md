@@ -28,14 +28,14 @@ regime map이다.
 
 ## 문서 지도
 
-- 실행: 이 README의 `confirmatory v4 실행 경로`
-- 장애·복구: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md), [`docs/RECOVERY.md`](docs/RECOVERY.md)
-- 코드 구조: [`docs/CODE.md`](docs/CODE.md)
+- 전체 분류와 우선순위: [`docs/README.md`](docs/README.md)
+- 실행·재개·복구·수확: [`docs/USAGE.md`](docs/USAGE.md)
+- 설계와 코드: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/CODE.md`](docs/CODE.md)
+- 장애 기록: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
 - 현재 할 일: [`docs/BACKLOG.md`](docs/BACKLOG.md)
-- 논문 감사: [`docs/FULL_AUDIT_2026-08-20.md`](docs/FULL_AUDIT_2026-08-20.md), [`docs/PAPER_REVIEW_2026-08-19.md`](docs/PAPER_REVIEW_2026-08-19.md)
-- 결과 판독: [`docs/RESULTS_0820_ANALYSIS.md`](docs/RESULTS_0820_ANALYSIS.md)
 
-날짜별 중간 로그는 정본에 합친 뒤 삭제한다. 과거 내용은 Git history에서 확인한다.
+날짜가 붙은 감사·결과 문서는 당시 판정의 provenance다. 현재 절차와 섞어 합치거나
+사후 수정하지 않으며, `docs/README.md`에서 역할과 최신 정본을 확인한다.
 
 ## 1. 문제와 주장
 
@@ -202,11 +202,13 @@ FLA 0.5.2 fused kernel을 공유 venv에 한 번만 자동 설치·검증하고,
 검증하고 집계한다. 예전 `V4_COMPLETE` 표식은 현재 generation commit과 다르면 재사용하지
 않는다.
 
-각 실행은 stale v4 process를 종료하고 GPU 메모리 해제를 확인한 뒤 commit별 smoke로
-진입한다. 중단 뒤 최신 코드를 pull해도 기존 `run_config.json`의 generation commit을
-계산 코드로 유지하면서 최신 supervisor로 재개한다. 따라서 기존 부분 산출물을 버리지
-않고 감시·재시도 수정만 즉시 적용한다. 장애 이력과 제한사항은
-[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) 참조.
+`go_v4.sh <slot>`은 실제로 `resume_v4.sh`에 위임해 이전 v4 프로세스를 정리하고,
+기존 `run_config.json`의 generation commit을 계산 코드로 유지하면서 최신 supervisor로
+재개한다. 이 호환 경로는 GPU 메모리 해제 대기와 최종 자동 집계를 수행하지 않으므로
+시작 전 `nvidia-smi` 확인과 완료 후 `collect_v4.sh`가 필요하다. 현재 코드로 27B를 새로
+실행하는 `go_v4_27b.sh`만 FLA 스모크, GPU 해제 확인, current-commit provenance 검증,
+마지막 worker 자동 집계를 수행한다. 상세 절차는 [`docs/USAGE.md`](docs/USAGE.md),
+장애 이력은 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)를 따른다.
 
 Worker 내부 실패는 성공으로 숨기지 않는다. 각 클러스터 launcher는 한 run이 실패해도
 나머지 배정 run을 계속 진행하고, 완료 목록을 다시 계산해 미완료 run만 기본 3 pass로

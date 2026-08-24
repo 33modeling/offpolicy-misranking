@@ -1,6 +1,19 @@
-# 백로그 — 컨셉 #68 (2026-08-13 오후 기준, 마감 역산 포함)
+# 백로그 — 현재 우선순위와 역사적 작업 기록
 
-담당: 🖥 = 클러스터(사용자 실행), 🤖 = 로컬(Claude 작업). 순서는 위→아래.
+> **정본 규칙 (2026-08-25):** 맨 위의 regime characterization과 transfer 항목이
+> 현재 작업이다. 2026-08-20 이후 절은 감사·장애·부분 결과의 provenance이고,
+> 2026-08-13 트랙은 폐기되거나 대체된 역사적 계획이다. 과거 절의 “현재 실행”,
+> 모델 순위, 허용 범위를 새 작업 지시로 사용하지 않는다. 논문 실험 설계는 private
+> paper 레포의 `EXPERIMENT_PLAN.md`, 실행 명령은 [`USAGE.md`](USAGE.md)를 우선한다.
+
+## 현재 우선순위
+
+1. 기존 v4의 누락 27B 5개를 완주하고 20/20 contract·lineage 검증 뒤 결과를 재생성한다.
+2. 7B regime discovery를 완주하고 FIRST calibration을 통과하기 전에는
+   `provisional_*` label을 승격하지 않는다.
+3. discovery 경계를 동결한 뒤 held-back seed와 27B confirmation을 실행한다.
+4. 모델·도메인 전이는 위 경계를 바꾸지 않고 적용하는 외적 검증으로 수행한다.
+5. 완결 matrix와 동결 분석만 paper 레포에 반영한다.
 
 ## 2026-08-24 regime characterization 재구성
 
@@ -46,7 +59,12 @@
 - [ ] 전이 행렬을 완주하고 Qwen에서 동결한 usable/unsafe 경계의 model/domain
       재현율을 보고. APPS는 기본 행렬 이후 고난도 코드 확장으로만 실행
 
-## 2026-08-20 전수 감사 후 제출 게이트
+## 역사적 감사·실행 기록
+
+아래 날짜별 항목은 해당 시점의 판정과 재발 방지 기록이다. 미완료 체크박스가
+현재 우선순위를 자동으로 의미하지 않는다.
+
+### 2026-08-20 전수 감사 후 제출 게이트
 
 - [x] 이론 식과 2×2 셀을 독립 열거 검산하고 일반 $K$ group normalization을
       $K=2\ldots1024$에서 확인
@@ -76,7 +94,7 @@
 
 상세 판정과 결과 파일 hash는 `docs/FULL_AUDIT_2026-08-20.md` 참조.
 
-### 2026-08-21 재감사 반영
+#### 2026-08-21 재감사 반영
 
 - [x] token-weight silent truncation, response가 사라지는 drift-SFT truncation,
       one-token/EOS hybrid prefix, hybrid common-prompt/exact-K 누락을 fail-closed로 수정
@@ -95,7 +113,7 @@
 
 상세 수정·검증·잔여 blocker는 `docs/FULL_AUDIT_2026-08-20.md`를 정본으로 삼는다.
 
-### 2026-08-21 v4 재시작 장애 및 수정 기록
+#### 2026-08-21 v4 재시작 장애 및 수정 기록
 
 - [x] **증상**: `git pull` 후 스모크/본실행이
       `existing artifacts use a different run config: ['git']`로 반복 중단되고,
@@ -120,7 +138,7 @@
 
 실행 장애와 현재 복구 계약은 `docs/TROUBLESHOOTING.md`를 정본으로 삼는다.
 
-### 2026-08-24 v4 worker false-success 수정
+#### 2026-08-24 v4 worker false-success 수정
 
 - [x] `go_v2.sh`가 실패 run을 남기고도 `OM_SKIP_POSTPROCESS=1`에서 exit 0을
       반환하던 경로 제거
@@ -133,7 +151,7 @@
       보존하면서 watchdog 수정 적용
 - [x] 로그 무변화만으로 종료하지 않고 GPU/CPU 활동까지 모두 멈춘 경우에만 재시작
 
-### 2026-08-24 v4 중간 결과 수신
+#### 2026-08-24 v4 중간 결과 수신
 
 - [x] `/home/kms/Downloads/0824.zip` 무결성을 검사하고 내부 10개 보고서를
       `docs/results/2026-08-24/`에 원본 그대로 보존; ZIP 및 파일별 SHA-256 기록
@@ -149,7 +167,7 @@
       matrix에서 보고서를 재생성할 것. 그전에는 이 묶음을 원고 확정 표나 5-seed
       결론에 사용하지 않는다.
 
-### 2026-08-21 v4 27B 진행 스냅샷 수신
+#### 2026-08-21 v4 27B 진행 스냅샷 수신
 
 - [x] `0821-0716-clusterrun270721-first-v4-3.tar.gz` 압축 해제 및 시드별
       진행률, generation contract, commit 계보 점검
@@ -169,7 +187,9 @@
 
 진행 수치 판독은 `docs/RESULTS_0820_ANALYSIS.md`, 실행 상태는 이 백로그를 정본으로 삼는다.
 
-## 상태 (2026-08-13 오후): 재편 분기 발동 — 원고 v0.1 push 완료
+## 폐기·대체된 2026-08-13 계획
+
+### 상태 (2026-08-13 오후): 재편 분기 발동 — 원고 v0.1 push 완료
 
 P3-0 precheck **NO-GO** + P4-0 kcurve **구조적 부재** → 사전 등록 재편 분기
 (concept.md "P4 설계서" 절) 발동. go_hard 폐기. 원고 v0.1(`paper/main.tex`,
@@ -184,14 +204,14 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 재편이 선반영했음을 대조 확인. 잔여 반영분은 A6·A7(원고)·B4·B5(실험),
 안전 단락(B12)은 즉시 반영 완료.
 
-## 트랙 0 — 지금 돌고 있는 것
+### 트랙 0 — 당시 실행 중이던 것
 
 - [ ] 🖥 go_retry 수확 (s3 gsm8k/dapo — 사용자 실행 중)
 - [ ] 🖥 s3 완주 시 `git pull && bash scripts/harvest.sh` **한 번** →
       마지막 줄에 찍히는 폴더 **하나만** 전달 (KCURVE·READOUT·REVERSAL 동봉;
       kcurve 표결 2→3개: 뒤집히면 트랙 C1, 유지되면 원고 표만 갱신)
 
-## 트랙 A — 원고 (🤖)
+### 트랙 A — 원고
 
 - [ ] A1. 원고 v0.1 사용자 피드백 반영 (구조·주장 수위·분량)
 - [ ] A2. 잔여 seed 수확 시 수치 일괄 갱신: 표 2(v2)·표 3(kcurve)·본문 인라인 —
@@ -229,7 +249,7 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 - [ ] A11. 감사 P0-5: prompt-pool clustered bootstrap·cell-vs-full paired
       검정을 STATS 산출에 추가(🤖 스크립트 확장, 수확 편승) + 표에 CI 병기
 
-## 트랙 B — 보강 실험 (약점 제거 효과순)
+### 트랙 B — 보강 실험 (약점 제거 효과순)
 
 - [ ] B1. 🤖 v1 run 대응 kcurve·조건부 floor 확장 스크립트 작성 → 🖥 실행 (GPU 0)
       — 판정 표본을 2 run에서 ~7조건(v1 게이트·math500 포함)으로 확대,
@@ -296,7 +316,7 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
       이동한다"는 본문 서사의 최신 모델 실증으로 서술. ※ go_27b 폐기와 구분:
       폐기 사유는 '동일 풀 추가 수치로 결론 변경'이었고 이번 목적은 세대
       방어(exploratory) — 저촉 없음.
-### 그록 08-18 재감사 반영 (수신 f8c2da2, 판독 8/19)
+#### 그록 08-18 재감사 반영 (수신 f8c2da2, 판독 8/19)
 
 전제: 그록 문서는 **8/18 수확(닻·McNemar) 반영 전** 기준 — A2(닻 대기)는 기완료,
 원고-실험-대조의 철회 요구(21/21·anti-select·역상관)는 v0.5가 기반영. 아래는
@@ -375,7 +395,7 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 - 폐기 확정: go_hard(NO-GO), go_full 신규 확장·go_boost·go_27b(구조적 부재
   판정으로 동일 풀 추가 수치는 결론 불변 — 수확만 받고 신규 착수 금지)
 
-## 트랙 C — 조건부 (트리거 발생 시에만)
+### 트랙 C — 조건부 (트리거 발생 시에만)
 
 - [ ] C1. s3 포함 kcurve가 "확장 권고"로 뒤집힘 → P4-1(FRESH_K 증량 oracle
       재실행) 검토 — 단 s1 r1=0.045가 함정 4호 사정권임을 감안, 보수적으로
@@ -383,7 +403,7 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 - [ ] C3. D7에서 고신호 체제(floor ≥ 2×chance) 발견 → stale 붕괴 검정
       본실험 부활 검토 (사전 등록 후)
 
-## 마감 게이트 (ICLR 2027 공식 — **8/19 정정**, 출처 ICLR2027-AUTHOR-GUIDELINES.md)
+### 당시 마감 게이트 (ICLR 2027 공식 — **8/19 정정**, 출처 ICLR2027-AUTHOR-GUIDELINES.md)
 
 ⚠ 구표(9/18 초록·9/25 본문)는 오기였음 — 그록 08-18 지적으로 검증·정정.
 
@@ -397,9 +417,9 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 역산(8/19 기준): 초록까지 23일. 27B 5-seed 수확(~8/22)·2.5 완주·mbpp/kk는
 일정 내. B-track GPU 실험은 9/3까지 착수분만 본문行.
 
-## 완료 (참고)
+### 완료 기록
 
-### 2026-08-22 v4 외부 중단 복구
+#### 2026-08-22 v4 외부 중단 복구
 
 - [x] 수신한 진행 스냅샷에서 기대한 20-run 중 11-run만 완료됐고 9-run이
       absent/incomplete임을 확인. 부분 matrix의 수치는 논문 결론으로 확정하지 않는다.

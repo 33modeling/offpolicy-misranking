@@ -1,8 +1,9 @@
 # USAGE.md — 사용 방법
 
-> 실행·재개·수확·진단 절차서. 설계 구조는 [`ARCHITECTURE.md`](ARCHITECTURE.md),
-> 장애 사례 정본은 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md), 복구 분기는
-> [`RECOVERY.md`](RECOVERY.md), 모듈 목록은 [`CODE.md`](CODE.md)에 있다.
+> 실행·재개·복구·수확·진단 절차서. 설계 구조는
+> [`ARCHITECTURE.md`](ARCHITECTURE.md), 장애 사례 정본은
+> [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md), 모듈 목록은 [`CODE.md`](CODE.md),
+> 전체 문서 우선순위는 [`README.md`](README.md)에 있다.
 > 겹치는 내용은 여기서 요약만 하고 링크한다.
 >
 > 작성 기준 커밋: `2244e89` (2026-08-24). 아래 기본값은 전부 코드에서 읽은
@@ -631,7 +632,7 @@ python3 src/recompute_oracle_scores.py RUN_DIR     # GPU 불필요 — oracle/re
 | `OM_PIPELINE_REPO` | `$PWD` | 계산 코드 worktree |
 | `OM_PIPELINE_SCRIPT` | `$OM_PIPELINE_REPO/scripts/run_14b.sh` | 실제 실행할 파이프라인 |
 | `OM_V4_SUPERVISOR_PASSES` | `3` | `resume_v4.sh` 재계획 pass 수 |
-| `OM_V4_RESUME_WRAPPED` | `0` | `1`이어야 `go_v4.sh` 본문이 실행된다 (설정하는 코드 없음) |
+| `OM_V4_RESUME_WRAPPED` | `0` | 내부의 도달 불가 legacy gate. 사용자가 설정하지 않는다. `go_v4.sh`는 `resume_v4.sh`에 위임한다 |
 | `OM_ENABLE_LEGACY_RUNNER` | `0` | `1`이어야 `run_h100_all.sh`·`babysit.sh` 실행 |
 | `MODEL_7B` / `MODEL_27B` | `$MODELS_DIR/Qwen2.5-7B-Instruct` / `$MODELS_DIR/Qwen3.8-27B-BF16` | `go_v4.sh` 모델 |
 | `REPO27B` | `Qwen/Qwen3.6-27B` | `fetch_27b.sh`·`go_new.sh` 다운로드 대상 |
@@ -706,17 +707,20 @@ bash scripts/diagnose.sh     # $OM_WORK/console-logs/DIAGNOSIS.txt 하나로
 | `[harvest-abort] ... v4-matrix:incomplete-N-artifacts` | 20 run이 안 찼다. `V4_MATRIX.err`에 run별 누락 목록 |
 | `[collect-v4-abort]` | 5.2절의 세 카테고리 출력을 본다. GPU는 재실행되지 않았다 |
 
-### 4단계 — 그래도 안 되면
+### 4단계 — 복구 분기
 
-[`RECOVERY.md`](RECOVERY.md)의 분기를 따른다. 요약하면:
-
-1. `DISABLE_ADDMM_CUDA_LT=1`로 cublasLt 폴백을 시도한다.
-2. 반복되면 **노드 교체**. 새 인스턴스에서
-   `git pull → provision.sh → preflight.sh → go_v4.sh <slot>`.
-   group-volume이 상태를 들고 있어 완주분은 전부 스킵된다.
-3. `dmesg | grep -i xid`에 이벤트가 있으면 하드웨어 — 관리자 보고.
-4. 시간이 없으면 완주(DONE)분만으로 진행한다. `tables.sh`·`frontier.sh`에
-   DONE 필터가 있어 부분 상태에서 안전하게 돈다.
+1. `gpu_check.sh`에서 matmul 또는 여러 커널이 실패하거나 `dmesg`에 Xid가 있으면
+   코드 옵션을 바꾸지 말고 **노드를 교체**한다. 새 노드에서 `git pull`,
+   `provision.sh`, `preflight.sh` 뒤 사용하던 동일 진입점을 다시 실행한다.
+2. SDPA만 실패하면 `OM_ATTN=eager`를 쓴다(v4 기본값). 27B Gated DeltaNet 실패는
+   `go_v4_27b.sh`의 FLA 0.5.2 스모크를 통과한 노드에서만 재개한다.
+3. 설정·commit 불일치는 파일을 직접 지우지 않는다. `go_v4_27b.sh`와 regime runner가
+   기존 run을 quarantine한 뒤 canonical 경로를 다시 만든다. 고정 v4의 부분 run은
+   `go_v4.sh <slot>`이 기록된 generation commit에서 재개한다.
+4. 클라우드 운영자가 top-level job을 종료하면 노드 안 supervisor도 사라진다. 공유
+   볼륨의 완주 artifact와 `.partial`은 남으므로 같은 명령을 다시 실행한다.
+5. 부분 matrix는 진행 확인용 표만 만들 수 있다. 제출용 수치는 필수 artifact와
+   lineage 검사를 모두 통과한 완결 matrix에서만 동결한다.
 
 ---
 
@@ -749,7 +753,7 @@ export OM_WORK=/tmp/om-test GROUP_VOLUME=/nonexistent CUDA_VISIBLE_DEVICES=""
 export PYTHONPATH=$PWD/src
 PY=.work/.venv-cu126/bin/python      # 또는 $VENV_DIR/bin/python
 
-# 1) pytest 수집형 테스트 (2026-08-24 실행: 48 passed)
+# 1) pytest 수집형 테스트
 $PY -m pytest tests/ -q --ignore=tests/test_rollout_resume.py
 
 # 2) 스크립트형 7개는 직접 실행

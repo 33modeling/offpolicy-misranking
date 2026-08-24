@@ -37,11 +37,11 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | 파일 | 역할 |
 |---|---|
 | `experiment.py` | 스테이지 오케스트레이터. oracle micro-group은 짝/홀 equal-budget split, report의 floor·precision은 20개 독립 tie stream 평균. CertaGrad 평가는 candidate와 validation 모두 선택용 짝수/평가용 홀수 group으로 분리한다. |
-| `rollout.py` | 모델 로드(`load_model` — `OM_ATTN=eager` 지원, ULF 대응), `collect_rollouts`: 프롬프트별 K개 생성 + reward 저장 (logp는 score 단계에서 재계산) — **프롬프트 단위 `.partial` 내구 저장·중간 재개**(`salvage_partial`, ULF 4차 C7 대응, K개 완주 프롬프트만 승계·행수 n×K 검증 후 발행). `train_drift_lora`(154): **rejection FT** — reward>0.5 rollout만 SFT(LoRA r=16 α=32), 정답이 하나도 없으면 전체로 폴백(183~187). |
-| `grads.py` (197줄) | 추정량 수학. `loo_advantages`(25): 그룹 leave-one-out advantage. `log_weights`/`token_weights`: prefix·suffix·token IS 가중치 (2×2의 실체). `prompt_gradient`(145)+`project_grads`(93): JL 투영 프롬프트 gradient. `grad_params`(126): LoRA merge 후 requires_grad 복원 함정 처리. |
-| `data.py` (413줄) | 로더+보상. `load_prompts`(17): gsm8k / dapo-math / math500 / **mbpp** / **kk** / apps(데이터만). 로컬 우선 탐색(`_dataset_bases` 3곳: `$DATASETS_DIR`·`/group-volume/datasets`·사용자 폴더) → HF 폴백. 보상: 수학=최종 수치 매칭(`extract_answer`/`_boxed`), `_code_reward`(336)=테스트 실행 채점(mbpp), `_kk_reward`(385)=전원 신원 매치, `_apps_reward`(355, 하네스 미구현). |
+| `rollout.py` | 모델 로드(`load_model` — `OM_ATTN=eager` 지원, ULF 대응), `collect_rollouts`: 프롬프트별 K개 생성 + reward 저장 (logp는 score 단계에서 재계산) — **프롬프트 단위 `.partial` 내구 저장·중간 재개**(`salvage_partial`, ULF 4차 C7 대응, K개 완주 프롬프트만 승계·행수 n×K 검증 후 발행). `train_drift_lora`: **rejection FT** — reward>0.5 rollout만 SFT(LoRA r=16 α=32)하며, 정답 rollout이 없으면 잘못된 drift를 만들지 않고 중단한다. |
+| `grads.py` | 추정량 수학. `loo_advantages`: 그룹 leave-one-out advantage. `log_weights`/`token_weights`: prefix·suffix·token IS 가중치 (2×2의 실체). `prompt_gradient`+`project_grads`: CountSketch 투영 프롬프트 gradient. `grad_params`: LoRA merge 후 requires_grad 복원 함정 처리. |
+| `data.py` | 로더+보상. `load_prompts`: gsm8k / dapo-math / math500 / **mbpp** / **kk** / **apps** / **arc-challenge**. 명시 경로와 로컬 snapshot을 우선하고 허용된 경우에만 HF를 사용한다. 수학 최종답, MBPP/APPS 격리 코드 실행, KK 신원, ARC option-label reward를 각각 검증한다. |
 | `hybrid.py` | C1′ 인과 검증. β/π 경로 × β/π 마무리 4셀을 equal-K로 만들며, 보존 response prefix 길이를 전체 생성 horizon에서 차감해 cell 간 토큰 예산을 맞춘다. |
-| `train_downstream.py` (158줄) | C3 검증. `grpo_lite_train`(21): 선택된 프롬프트로 GRPO 간이판(LOO advantage) 학습, `eval_accuracy`(90): val 정확도, `selection_rollout_cost`(107): 선택 방식별 rollout 예산 집계. |
+| `train_downstream.py` | C3 검증. `grpo_lite_train`: 선택된 프롬프트로 GRPO 간이판(LOO advantage) 학습, `eval_accuracy`: val 정확도, `selection_rollout_cost`: 선택 방식별 rollout 예산 집계. |
 | `certagrad.py` | C2 인증 진단. 후보·validation 비용을 따로 계상하고, 가능한 모든 adaptive look에 delta를 배분해 fixed-n interval의 시간축 재사용을 막는다. `gaussian` 반경은 여전히 모델 기반 근사이며 분포무관 보증이 아니다. |
 | `select_rules.py` | 전 분석기의 `topk_count`, seeded tie-break, 독립 tie stream overlap 정본. 동점 점수가 전부 같을 때 기대 precision은 1이 아니라 chance다. |
 
@@ -80,14 +80,15 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
   자른 clipped variant다. LOO baseline은 unclipped 식에서는 소거되지만 clipping 뒤
   남는 항은 clipping bias의 일부다.
 
-## 3. scripts/ 카탈로그 (52개 중 현역)
+## 3. 주요 scripts 카탈로그
 
 ### 실행 (GPU)
 
 | 스크립트 | 용도 |
 |---|---|
-| `go_retry.sh` | **표준 재시작 진입점**: gsm8k 프로브 → 전 seed·데이터셋 스윕(DONE 스킵). `SEEDS_ALL="3"`으로 seed 지정 |
-| `go_v4.sh` | 현재 confirmatory 진입점: 독립 3-cluster seed 배정, 시작 전 stale v4 process/GPU 정리, Git 불일치 run 자동 quarantine, commit별 smoke, 27B→7B 실행. 전체 matrix가 한 storage에 모이면 자동 집계 |
+| `go_retry.sh` | legacy fixed-drift 복구 경로. 신규 regime/transfer 실험의 진입점으로 쓰지 않음 |
+| `go_v4.sh` | 고정 slot v4 호환·재개 진입점. 즉시 `resume_v4.sh`로 위임해 run별 generation commit을 보존한다. GPU 해제 대기와 자동 집계는 하지 않음 |
+| `go_v4_27b.sh` | 현재 코드의 27B 전용 공유 큐. FLA/GPU 스모크, current-commit 계약, quarantine, 10-run 검증과 마지막 worker 자동 집계를 수행 |
 | `go_regime.sh` | 신규 주실험: 모든 클러스터에서 같은 명령을 실행하면 shared flock queue가 seed×dataset family를 분배. 한 behavior pool을 drift 0/25/100/400에 고정하고 완료 후 regime map을 단일 보고서로 집계 |
 | `go_domain_transfer.sh` | 비Qwen·비수학 전이 행렬: Mistral/OLMo2 × MBPP/KK/ARC-Challenge를 고정 설정·host runtime smoke·불변 matrix 계약 아래 3-seed shared queue로 실행 |
 | `go_v2.sh` | 모델별 worker: GPU 건강검사 → 스모크 게이트 → `SEEDS`×`DATASETS` 루프. console/stage 로그 무변화 watchdog, process-group 자동 종료·최대 재시도, 실패 원인 콘솔 진단 내장 |

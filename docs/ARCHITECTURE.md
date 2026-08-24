@@ -2,7 +2,7 @@
 
 > 이 문서는 **구조와 이유**를 다룬다. 모듈별 한 줄 설명은
 > [`CODE.md`](CODE.md), 장애 사례는 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md),
-> 복구 경로는 [`RECOVERY.md`](RECOVERY.md), 감사 판정은
+> 실행·복구 경로는 [`USAGE.md`](USAGE.md), 감사 판정은
 > [`FULL_AUDIT_2026-08-20.md`](FULL_AUDIT_2026-08-20.md)·
 > [`PAPER_REVIEW_2026-08-19.md`](PAPER_REVIEW_2026-08-19.md), 실행 절차는
 > [`USAGE.md`](USAGE.md)가 정본이다. 중복 서술은 요약하고 링크한다.
@@ -861,10 +861,12 @@ PAPER_REVIEW E5의 지적이다. 스무딩 값은 난이도 점수에만 쓴다.
 
 ---
 
-## 12. 실측 — 기존 문서 서술과 구현이 어긋나는 곳
+## 12. 실측 — 구현 제약과 역사적 문서 불일치
 
-아래는 이 문서를 쓰면서 코드를 직접 읽어 확인한 불일치다. **기존 문서를
-고치지 않고 여기에만 기록한다.**
+아래는 코드를 직접 읽어 확인한 구현 제약과 2026-08-24 당시 문서 불일치다.
+현재 정본인 `README.md`·`docs/README.md`·`USAGE.md`·`CODE.md`에는 실행에 영향을
+주는 항목을 반영했다. 날짜가 붙은 감사 스냅샷은 provenance 보존을 위해 수정하지
+않는다.
 
 ### 12.1 `go_v4.sh` 본문 대부분이 실행되지 않는다 (영향 큼)
 
@@ -935,25 +937,11 @@ one Git commit for the matrix**." 반면 `collect_targets()`의 `same_keys`에�
 `report.json`이 점수 파일 없이 만들어지지 않으므로 현재 위험은 낮지만, 기준이
 한 곳에 모여 있지 않다.
 
-### 12.5 `CODE.md`의 줄 수·줄 번호가 현재 코드와 다르다
+### 12.5 `CODE.md`의 줄 번호·제거 동작 서술 (2026-08-25 해소)
 
-| CODE.md 서술 | 실제 |
-|---|---|
-| `grads.py` (197줄) | 230줄 |
-| `data.py` (413줄) | 554줄 |
-| `train_downstream.py` (158줄) | 205줄 |
-| `train_drift_lora`(154) | `rollout.py:301` |
-| `_code_reward`(336) / `_apps_reward`(355) / `_kk_reward`(385) | 493 / 500 / 526 |
-| `scripts/ 카탈로그 (52개 중 현역)` | `scripts/`에 70개 (`.sh` 66 + `.py` 4) |
-
-### 12.6 `CODE.md`가 이미 제거된 동작을 기술한다
-
-- "정답이 하나도 없으면 전체로 폴백(183~187)" — `select_drift_training_rows()`가
-  **예외를 던진다**. 2026-08-21 재감사에서 제거됐고 BACKLOG에도 반영돼 있으나
-  CODE.md만 옛 서술이 남았다.
-- "`_apps_reward`(355, 하네스 미구현)", "apps(데이터만)" — `data.py`에 apps
-  로더(188~215행)와 `_apps_reward`(500~523행, 테스트 8개 캡·stdout 비교)가
-  **둘 다 구현돼 있다**. `experiment.py`의 `--dataset` choices에도 `apps`가 있다.
+모듈 줄 수와 함수 줄 번호는 코드 변경 때마다 무효가 되어 `CODE.md`에서 제거했다.
+정답 rollout이 없을 때 drift SFT를 중단하는 현재 동작, APPS 실행 하네스와 ARC
+reward까지 현재 모듈 책임 표에 반영했다. 이 항목은 재발 방지 기록으로만 남긴다.
 
 ### 12.7 `check.sh`가 비활성화된 스크립트를 재시작 방법으로 안내한다
 
@@ -1028,6 +1016,9 @@ python tests/test_frontier.py                          →  PASS
 python tests/test_pool_qualification.py                →  PASS
 python tests/test_prepare_run_path.py                  →  PASS
 ```
+
+2026-08-25 문서 정리 후 같은 격리 환경에서 다시 실행해 pytest **48 passed**와
+스크립트형 7개(rollout resume **PASS 18 / FAIL 0** 포함)를 재확인했다.
 
 `--ignore` 없이 `pytest tests/`를 돌리면 12.8의 `SystemExit` 때문에
 `INTERNALERROR`로 **테스트가 하나도 실행되지 않는다**. 파일별 실행 시
