@@ -158,6 +158,58 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
             keys = sorted(rows[0].keys()) if rows else []
             raise ValueError(f"kk 스키마 파싱 실패 (root={root}, rows={len(rows or [])}, "
                              f"첫 행 필드={keys}) — quiz/names/solution 필드 확인")
+    elif dataset == "arc-challenge":
+        # ARC-Challenge 과학 객관식 — train+validation의 공개 정답만 사용한다.
+        tried = _candidate_roots(
+            "ARC_CHALLENGE_DIR",
+            ("arc-challenge", "ai2_arc", "ai2-arc"),
+            fuzzy=("arc-challenge", "ai2_arc", "ai2-arc"),
+        )
+        root, rows = _load_rows_first(tried)
+        if rows is None:
+            try:
+                from datasets import load_dataset
+                ds = load_dataset("allenai/ai2_arc", "ARC-Challenge")
+            except Exception as e:
+                raise ValueError(
+                    "arc-challenge 로컬 사본을 못 찾았고 허브도 실패. 찾아본 위치:\n  "
+                    + "\n  ".join(str(t) for t in tried)
+                    + f"\nARC_CHALLENGE_DIR=<경로>로 지정 가능. (허브 오류: {e})"
+                ) from e
+            rows = [r for split in ("train", "validation") for r in ds[split]]
+        items_by_question = {}
+        for r in rows:
+            question, choices, answer = r.get("question"), r.get("choices"), r.get("answerKey")
+            if isinstance(choices, dict):
+                labels, texts = choices.get("label") or [], choices.get("text") or []
+            elif isinstance(choices, list):
+                labels = [c.get("label") for c in choices if isinstance(c, dict)]
+                texts = [c.get("text") for c in choices if isinstance(c, dict)]
+            else:
+                continue
+            labels = [str(x).strip() for x in labels]
+            texts = [str(x).strip() for x in texts]
+            answer = str(answer).strip() if answer is not None else ""
+            if not question or len(labels) != len(texts) or answer not in labels:
+                continue
+            options = "\n".join(f"{label}. {text}" for label, text in zip(labels, texts, strict=True))
+            q = (
+                "Answer the following multiple-choice science question. Reason step by step, "
+                "then write only the option label after '####'.\n\n"
+                f"Question: {question}\n\nChoices:\n{options}"
+            )
+            item = {"question": q, "answer": f"ARC:{answer}"}
+            previous = items_by_question.get(str(question).strip())
+            if previous is not None and previous["answer"] != item["answer"]:
+                raise ValueError(f"arc-challenge 중복 질문의 정답 충돌: {question}")
+            items_by_question[str(question).strip()] = item
+        items = list(items_by_question.values())
+        if not items:
+            keys = sorted(rows[0].keys()) if rows else []
+            raise ValueError(
+                f"arc-challenge 스키마 파싱 실패 (root={root}, rows={len(rows or [])}, "
+                f"첫 행 필드={keys}) — question/choices/answerKey 필드 확인"
+            )
     elif dataset == "dapo-math":
         # 본실험용. 사전 배치본 우선. 스키마가 릴리스마다 달라 방어적으로 파싱한다.
         tried = _candidate_roots("DAPO_DIR",
@@ -535,6 +587,12 @@ def _kk_reward(text: str, gold: str) -> float:
     return 1.0
 
 
+def _arc_reward(text: str, gold: str) -> float:
+    """ARC option label exact match; free-form choice text is not accepted."""
+    pred = extract_answer(text)
+    return 1.0 if pred is not None and pred.upper() == gold[4:].upper() else 0.0
+
+
 def reward(text: str, gold: str) -> float:
     if gold.lstrip().startswith("assert"):  # mbpp — 실행 채점
         return _code_reward(text, gold)
@@ -542,6 +600,8 @@ def reward(text: str, gold: str) -> float:
         return _apps_reward(text, gold)
     if gold.startswith("KK:"):  # knights & knaves — 전원 신원 매치
         return _kk_reward(text, gold)
+    if gold.startswith("ARC:"):  # ARC-Challenge — option label exact match
+        return _arc_reward(text, gold)
     pred = extract_answer(text)
     if pred is None:
         return 0.0

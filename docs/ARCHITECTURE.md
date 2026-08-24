@@ -415,6 +415,7 @@ group-volume이 없는 머신에서는 `OM_WORK`가 `$OM_REPO/.work`로 자동 �
 
 reward는 `gold` 문자열의 접두사로 분기한다: `assert`로 시작하면 mbpp
 실행 채점, `APPS:`면 stdin/stdout 채점, `KK:`면 knight/knave 전원 매치,
+`ARC:`면 ARC-Challenge option label exact match,
 그 외는 `####`/`\boxed{}` 수치 매칭이다. 코드 채점은 **bubblewrap 샌드박스**
 (`--unshare-all --die-with-parent --new-session --clearenv`, `/usr`·`/lib`만
 읽기 전용 바인드, `/tmp`는 tmpfs, 출력 1 MiB 상한, 기본 8초 타임아웃)에서

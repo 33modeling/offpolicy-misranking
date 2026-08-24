@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "key": "mistral7b",
+      "repository": "mistralai/Mistral-7B-Instruct-v0.3",
+      "revision": "c170c708c41dac9275d15a8fff4eca08d52bab71",
+      "local_directory": "Mistral-7B-Instruct-v0.3-c170c708c41d",
+      "model_type": "mistral",
+      "lora_targets": ["q_proj", "v_proj"]
+    },
+    {
+      "key": "olmo2-7b",
+      "repository": "allenai/OLMo-2-1124-7B-Instruct",
+      "revision": "470b1fba1ae01581f270116362ee4aa1b97f4c84",
+      "local_directory": "OLMo-2-1124-7B-Instruct-470b1fba1ae0",
+      "model_type": "olmo2",
+      "lora_targets": ["q_proj", "v_proj"]
+    }
+  ],
+  "experiment": {
+    "datasets": ["mbpp", "kk", "arc-challenge"],
+    "seeds": [0, 1, 2],
+    "drifts": [0, 25, 100, 400]
+  }
+}

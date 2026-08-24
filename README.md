@@ -129,6 +129,34 @@ GSM8K/MATH-500이고 `REGIME_SEEDS`, `REGIME_DRIFTS`, `REGIME_DATASETS`,
 기존 v4는 중단하거나 재생성하지 않는다. v4 generation은 해당 run에 기록된 commit을
 계속 사용하고, 신규 regime sweep만 현재 commit에서 별도 경로로 실행한다.
 
+### 3.2 비Qwen·비수학 전이 행렬
+
+이전 검토에서 구현한 MBPP(코드 실행 채점), Knights & Knaves(형식 논리), APPS를
+재사용한다. 단일-seed probe였던 MBPP/KK는 3-seed regime matrix로 승격하고,
+새 도메인은 정확한 option-label reward를 쓰는 ARC-Challenge(과학 객관식)만 추가한다.
+APPS는 테스트 실행 비용이 크므로 기본 행렬이 아니라 후속 난도 확장이다.
+
+온라인 공유 볼륨에서 한 번 준비한다:
+
+```bash
+bash scripts/prepare_domain_datasets.sh
+bash scripts/fetch_transfer_models.sh
+```
+
+데이터와 모델은 각각 Hugging Face commit SHA와 로컬 SHA-256을 검사한다. 이후 독립
+클러스터마다 같은 명령을 실행한다:
+
+```bash
+git pull
+bash scripts/go_domain_transfer.sh
+```
+
+기본 행렬은 Mistral-7B-Instruct-v0.3/OLMo-2-7B-Instruct × MBPP/KK/ARC-Challenge ×
+seed 0-2 × drift 0/25/100/400이다. 기존 `go_regime.sh`의 공유 family lock이 작업을
+분배하므로 클러스터 번호를 따로 지정하지 않는다. 모델 및 데이터 스냅샷, split
+재현성, train/validation prompt 비중복, chat template, weight shard, LoRA target
+검사가 하나라도 실패하면 GPU를 잡기 전에 중단한다.
+
 ## 4. confirmatory v4 실행 경로 (2026-08-20 계약)
 
 아래 명령은 2026-08-20 감사 branch를 병합한 뒤 새 `OUT_ROOT`에서 실행한다.

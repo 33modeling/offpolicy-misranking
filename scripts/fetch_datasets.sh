@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 공용 데이터셋을 $DATASETS_DIR(기본 /group-volume/datasets)에 jsonl로 받아둔다.
 # 오프라인 컴퓨트 노드가 그대로 읽는 배치본 — 온라인/미러 되는 셸에서 실행.
-#   bash scripts/fetch_datasets.sh              # 전부 (mbpp math500 gsm8k)
+#   bash scripts/fetch_datasets.sh              # 기본 (mbpp math500 gsm8k kk)
 #   bash scripts/fetch_datasets.sh mbpp         # 골라서
 # 이미 있으면 스킵. HF 실패 시 hf-mirror.com 폴백.
 set -uo pipefail
@@ -24,17 +24,61 @@ _fetch() {  # _fetch <name> <python-snippet>
     || { echo "[fetch] $name 확보 실패" >&2; return 1; }
 }
 
+_snapshot_ok() {  # _snapshot_ok <manifest> <revision> <jsonl>
+  "$PY" - "$1" "$2" "$3" <<'PYEOF' >/dev/null 2>&1
+import hashlib, json, sys
+from pathlib import Path
+manifest, revision, data = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+if not manifest.is_file() or not data.is_file():
+    raise SystemExit(1)
+m = json.loads(manifest.read_text())
+digest = hashlib.sha256(data.read_bytes()).hexdigest()
+raise SystemExit(0 if m.get("source_revision") == revision and m.get("sha256") == digest else 1)
+PYEOF
+}
+
+_manifest() {  # _manifest <name> <repo> <revision> <jsonl> <selection>
+  "$PY" - "$1" "$2" "$3" "$4" "$5" <<'PYEOF'
+import datetime, hashlib, json, os, sys
+from pathlib import Path
+name, repo, revision, filename, selection = sys.argv[1:]
+data = Path(filename)
+rows = sum(1 for line in data.open() if line.strip())
+manifest = {
+    "schema_version": 1,
+    "dataset": name,
+    "source_repository": repo,
+    "source_revision": revision,
+    "selection": selection,
+    "artifact": data.name,
+    "rows": rows,
+    "sha256": hashlib.sha256(data.read_bytes()).hexdigest(),
+    "created_at_utc": datetime.datetime.now(datetime.UTC).isoformat(),
+}
+target = data.parent / "dataset_manifest.json"
+tmp = target.with_name(target.name + f".tmp.{os.getpid()}")
+tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+tmp.replace(target)
+print(f"[manifest] {name}: rows={rows} sha256={manifest['sha256'][:12]} revision={revision[:12]}")
+PYEOF
+}
+
 fail=0
 for t in $TARGETS; do
   case "$t" in
     mbpp)
-      if [ -e "$DATASETS_DIR/mbpp/mbpp.jsonl" ]; then echo "[fetch] mbpp 있음, 스킵"; continue; fi
-      _fetch mbpp '
+      rev=4bb6404fdc6cacfda99d4ac4205087b89d32030c
+      file="$DATASETS_DIR/mbpp/mbpp.jsonl"
+      manifest="$DATASETS_DIR/mbpp/dataset_manifest.json"
+      if _snapshot_ok "$manifest" "$rev" "$file"; then
+        echo "[fetch] mbpp 고정 스냅샷 있음, 스킵"
+      elif ! _fetch mbpp '
 import json, os, sys
 from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "mbpp"; out.mkdir(parents=True, exist_ok=True)
-ds = load_dataset("google-research-datasets/mbpp", "full")
+ds = load_dataset("google-research-datasets/mbpp", "full",
+                  revision="4bb6404fdc6cacfda99d4ac4205087b89d32030c")
 n = 0
 tmp = out / ("mbpp.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
@@ -44,7 +88,8 @@ with open(tmp, "w") as f:
                                 "code": r["code"], "test_list": r["test_list"]}) + "\n")
             n += 1
 tmp.replace(out / "mbpp.jsonl")
-print("mbpp.jsonl:", n, "rows")' || fail=1 ;;
+print("mbpp.jsonl:", n, "rows")'; then fail=1; continue; fi
+      _manifest mbpp google-research-datasets/mbpp "$rev" "$file" "all published splits, full config" ;;
     math500)
       if [ -e "$DATASETS_DIR/math500/math500_test.jsonl" ]; then echo "[fetch] math500 있음, 스킵"; continue; fi
       _fetch math500 '
@@ -74,28 +119,59 @@ with open(tmp, "w") as f:
 tmp.replace(out / "gsm8k_train.jsonl")
 print("gsm8k_train.jsonl:", len(ds), "rows")' || fail=1 ;;
     kk)
-      if [ -e "$DATASETS_DIR/kk/kk.jsonl" ]; then echo "[fetch] kk 있음, 스킵"; continue; fi
-      _fetch kk '
+      rev=2f68547989981b1af37cb3dde5fdefa847aa8619
+      file="$DATASETS_DIR/kk/kk.jsonl"
+      manifest="$DATASETS_DIR/kk/dataset_manifest.json"
+      if _snapshot_ok "$manifest" "$rev" "$file"; then
+        echo "[fetch] kk 고정 스냅샷 있음, 스킵"
+      elif ! _fetch kk '
 import json, os, sys
 from pathlib import Path
 from datasets import get_dataset_config_names, load_dataset
 out = Path(sys.argv[1]) / "kk"; out.mkdir(parents=True, exist_ok=True)
 repo = "K-and-K/knights-and-knaves"
+revision = "2f68547989981b1af37cb3dde5fdefa847aa8619"
 try:
-    configs = get_dataset_config_names(repo)
+    configs = get_dataset_config_names(repo, revision=revision)
 except Exception:
     configs = [None]
 n = 0
 tmp = out / ("kk.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for cfg in configs:
-        ds = load_dataset(repo, cfg) if cfg else load_dataset(repo)
+        ds = load_dataset(repo, cfg, revision=revision) if cfg else load_dataset(repo, revision=revision)
         for split in ds:
             for r in ds[split]:
                 r = dict(r); r["_config"], r["_split"] = cfg, split
                 f.write(json.dumps(r) + "\n"); n += 1
 tmp.replace(out / "kk.jsonl")
-print("kk.jsonl:", n, "rows")' || fail=1 ;;
+print("kk.jsonl:", n, "rows")'; then fail=1; continue; fi
+      _manifest kk K-and-K/knights-and-knaves "$rev" "$file" "all published configs and splits" ;;
+    arc-challenge)
+      rev=210d026faf9955653af8916fad021475a3f00453
+      file="$DATASETS_DIR/arc-challenge/arc_challenge.jsonl"
+      manifest="$DATASETS_DIR/arc-challenge/dataset_manifest.json"
+      if _snapshot_ok "$manifest" "$rev" "$file"; then
+        echo "[fetch] arc-challenge 고정 스냅샷 있음, 스킵"
+      elif ! _fetch arc-challenge '
+import json, os, sys
+from pathlib import Path
+from datasets import load_dataset
+out = Path(sys.argv[1]) / "arc-challenge"; out.mkdir(parents=True, exist_ok=True)
+revision = "210d026faf9955653af8916fad021475a3f00453"
+ds = load_dataset("allenai/ai2_arc", "ARC-Challenge", revision=revision)
+n = 0
+tmp = out / ("arc_challenge.jsonl.tmp." + str(os.getpid()))
+with open(tmp, "w") as f:
+    for split in ("train", "validation"):
+        for r in ds[split]:
+            f.write(json.dumps({"id": r["id"], "question": r["question"],
+                                "choices": r["choices"], "answerKey": r["answerKey"],
+                                "_split": split}) + "\n")
+            n += 1
+tmp.replace(out / "arc_challenge.jsonl")
+print("arc_challenge.jsonl:", n, "rows")'; then fail=1; continue; fi
+      _manifest arc-challenge allenai/ai2_arc "$rev" "$file" "ARC-Challenge train+validation (labeled only)" ;;
     apps)
       if [ -e "$DATASETS_DIR/apps/apps.jsonl" ]; then echo "[fetch] apps 있음, 스킵"; continue; fi
       # 스크립트형 데이터셋이라 최신 datasets 라이브러리로는 load_dataset 불가 —
@@ -138,7 +214,7 @@ with open(tmp, "w") as f:
         f.write(json.dumps(dict(r)) + "\n")
 tmp.replace(out / "dapo_math.jsonl")
 print("dapo_math.jsonl:", len(ds), "rows")' || fail=1 ;;
-    *) echo "[fetch] 모르는 데이터셋: $t (mbpp|math500|gsm8k|kk|apps|dapo-math)"; fail=1 ;;
+    *) echo "[fetch] 모르는 데이터셋: $t (mbpp|math500|gsm8k|kk|arc-challenge|apps|dapo-math)"; fail=1 ;;
   esac
 done
 exit "$fail"

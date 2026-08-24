@@ -23,6 +23,20 @@
 - [ ] 기존 v4 generation은 commit `2244e89`에서 별도로 완주하고 post-hoc d=100
       supporting evidence로만 재분석
 
+### 비Qwen·비수학 전이 검증 (기존 B8/B10 승격)
+
+- [x] 기존 검토의 MBPP·Knights & Knaves·APPS 구현을 재감사하고 중복 구현 제외
+- [x] 신규 과학 QA 축으로 ARC-Challenge train+validation 정확 label 채점 추가
+- [x] MBPP/KK/ARC 데이터 revision·artifact SHA, 고정 prompt split과 3개 generation
+      seed 계약을 fail-closed로 고정
+- [x] Apache-2.0 7B 독립 계열 Mistral-v0.3/OLMo2의 immutable revision과
+      chat template·weight shard·LoRA target 사전 검사를 구현
+- [x] 모든 클러스터에서 `bash scripts/go_domain_transfer.sh` 한 명령으로 기존 shared
+      family queue를 재사용하는 2 model × 3 domain × 3 seed × 4 drift 행렬 구성
+- [ ] 공유 볼륨에서 `prepare_domain_datasets.sh`, `fetch_transfer_models.sh` 완료
+- [ ] 전이 행렬을 완주하고 Qwen에서 동결한 usable/unsafe 경계의 model/domain
+      재현율을 보고. APPS는 기본 행렬 이후 고난도 코드 확장으로만 실행
+
 ## 2026-08-20 전수 감사 후 제출 게이트
 
 - [x] 이론 식과 2×2 셀을 독립 열거 검산하고 일반 $K$ group normalization을
@@ -245,23 +259,11 @@ v1 drift400 below-chance는 단독 p=0.27 확인, 방향성 관찰로 강등됨.
 - [ ] B7. 🖥 **[감사 P0]** 고신호 체제(7B MATH-500 또는 drift-400) equal-budget
       반복 downstream: oracle·4셀·pass-rate·random — 실전 피해 입증 실패 시
       논문 범위를 selection-evaluation audit으로 명시 축소 (§6·§P0-4)
-- [ ] B8. 🖥 비수학 태스크 1종 외적 타당성 probe — **mbpp 확보 완료** 활용,
-      floor·kcurve만 1 seed (§10). check_data.sh mbpp로 위치 확인 후
+- [x] B8. 비수학 1종 single-seed probe 계획은 위 3-domain × 3-seed 전이 행렬로 승격
 - [ ] B9. (B3 승격 메모) capability-difficulty sweep은 감사 P0-2로 승격 —
       9/10 결정점에서 "선택"이 아니라 "필수" 취급
-- [ ] B10. 🖥 도메인 다각화 (사용자 지시 8/18) — MBPP(코드, 테스트 실행 채점)
-      **1-seed 고정**(사용자 결정 8/18: 비수학 도메인은 seed 1개만),
-      go_v2 동일 프로토콜, **kk(논리, Logic-RL 근거)와 동시 착수**(8/18 확정):
-      `SEEDS="0" DATASETS="mbpp kk" bash scripts/go_v2.sh`
-      (착수 전 `check_data.sh mbpp`·`check_data.sh kk`, **별도 노드 — 수학
-      5-seed 노드 불가침**, 수량 부족 시 N_TRAIN=400 N_VAL=100). 판정 기준
-      사전 등록: v2와 동일 게이트 + 닻 대비 반전율·불일치 경보 재현 여부.
-      **단일 seed이므로 원고 표기는 "exploratory, single-seed" 방향성 관찰로
-      한정**(통계 주장 금지, 과판매 금지 원칙) — 재현=일반화 시사,
-      비재현=도메인 조건성 시사. 완성 시 도메인 3축: 수학(5-seed 통계)·
-      코드(MBPP)·논리(kk).
-      ※ 아래 "동일 풀 신규 착수 금지"와 구분 — 신규 도메인 풀이므로
-      결론 불변 논리에 저촉 없음.
+- [x] B10. MBPP+KK single-seed 계획은 ARC-Challenge를 포함한 3-seed regime
+      characterization으로 승격. 구현·실행 계약은 상단 전이 검증 절을 정본으로 삼음
 - [ ] **B12. 메인 세대 교체 (사용자 결정 8/19)** — Qwen3.8-27B **5-seed 풀
       매트릭스 본실행**으로 승격 (B11의 1-seed 탐색을 대체). 노드당 seed 1개:
       `SEEDS_NEW="k" bash scripts/go_new.sh` (k=0..4), B300 노드는

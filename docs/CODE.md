@@ -85,6 +85,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | `go_retry.sh` | **표준 재시작 진입점**: gsm8k 프로브 → 전 seed·데이터셋 스윕(DONE 스킵). `SEEDS_ALL="3"`으로 seed 지정 |
 | `go_v4.sh` | 현재 confirmatory 진입점: 독립 3-cluster seed 배정, 시작 전 stale v4 process/GPU 정리, Git 불일치 run 자동 quarantine, commit별 smoke, 27B→7B 실행. 전체 matrix가 한 storage에 모이면 자동 집계 |
 | `go_regime.sh` | 신규 주실험: 모든 클러스터에서 같은 명령을 실행하면 shared flock queue가 seed×dataset family를 분배. 한 behavior pool을 drift 0/25/100/400에 고정하고 완료 후 regime map을 단일 보고서로 집계 |
+| `go_domain_transfer.sh` | 비Qwen·비수학 전이 행렬: Mistral/OLMo2 × MBPP/KK/ARC-Challenge를 3-seed regime shared queue로 실행 |
 | `go_v2.sh` | 모델별 worker: GPU 건강검사 → 스모크 게이트 → `SEEDS`×`DATASETS` 루프. console/stage 로그 무변화 watchdog, process-group 자동 종료·최대 재시도, 실패 원인 콘솔 진단 내장 |
 | `run_14b.sh` | 단일 (seed,dataset) 실행기: config digest lock, GPU 자동감지, exact-K 병합 검증, 실패 전파, 최종 필수 artifact 검사 후 원자적 `DONE` 생성 |
 | `go_new.sh` | **B11 최신 세대 검증**: 기본 Qwen3.8-27B(REPO27B로 교체 가능) 1-seed, 스냅샷 자동 fetch, `RUN_BASE`/`RESULTS_BASE`로 v2와 폴더 격리. rollout.py의 MM automap 폴백(CausalLM 실패 시 AutoModelForMultimodalLM)과 세트 |
@@ -99,6 +100,8 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | `gpu_check.sh` | matmul/SDPA 분리 판정 (ULF 계열) |
 | `check_data.sh <dataset>` | 데이터 위치·스키마 자가진단 |
 | `fetch_datasets.sh` | 데이터셋 수동 다운로드 |
+| `prepare_domain_datasets.sh` | MBPP/KK/ARC-Challenge 고정 revision을 내려받고 SHA·행 수·split 결정성·train/validation 비중복을 검증 |
+| `fetch_transfer_models.sh` | Mistral 7B/OLMo2 7B 고정 revision 스냅샷을 받아 config·chat template·shard·LoRA target 검사 |
 
 ### 수확·분석 (CPU)
 
@@ -116,7 +119,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | 변수 | 기본값 | 의미 |
 |---|---|---|
 | `SEEDS_ALL` (go_retry) / `SEEDS` (go_v2) | `0 1 2 3 4` | 돌릴 seed 목록. 노드 분산 시 겹치지 않게 배정 |
-| `DATASETS` | `gsm8k dapo-math` | go_v2 데이터셋 목록 (mbpp·kk 가능) |
+| `DATASETS` | `gsm8k dapo-math` | go_v2 데이터셋 목록 (mbpp·kk·arc-challenge 가능) |
 | `REGIME_SEEDS` / `REGIME_DATASETS` / `REGIME_DRIFTS` | `0 1 2` / `gsm8k math500` / `0 25 100 400` | regime discovery matrix. confirmation은 결과 동결 뒤 별도 값으로 실행 |
 | `REGIME_ROOT` / `REGIME_RESULTS` / `REGIME_MODEL_TAG` | `$OM_WORK/runs/...` / `$OM_WORK/results/...` / model basename | regime shared queue·artifact·모델별 결과 경로 |
 | `REGIME_FIRST_BOOTSTRAP` / `REGIME_FIRST_CALIBRATION` | `2000` / 없음 | discovery 재표집 수와 coverage calibration JSON. 최종 freeze는 10000회와 passing calibration을 요구하며, 없으면 label은 `provisional_*` |

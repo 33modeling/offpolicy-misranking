@@ -214,6 +214,7 @@ config = {
     "model_config_sha256": digest_file(Path(model) / "config.json"),
     "tokenizer_config_sha256": digest_file(Path(model) / "tokenizer_config.json"),
     "generation_config_sha256": digest_file(Path(model) / "generation_config.json"),
+    "model_snapshot_manifest_sha256": digest_file(Path(model) / ".om_snapshot.json"),
     "dataset": os.environ["DATASET"], "pool": pool,
     "pool_sha256": digest_file(pool),
     "pool_manifest": pool_manifest,

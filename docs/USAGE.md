@@ -74,6 +74,8 @@ hf-mirror.com 폴백이 내장돼 있고 pip/curl/HF 전부 타임아웃이 걸�
 ```bash
 bash scripts/fetch_datasets.sh              # 전부
 bash scripts/fetch_datasets.sh mbpp         # 골라서
+bash scripts/prepare_domain_datasets.sh     # 비수학 주행렬 3종 고정·검증
+bash scripts/fetch_transfer_models.sh       # 비Qwen 7B 두 모델 고정·검증
 OM_ONLINE=1 source scripts/setup_env.sh     # 다운로드 머신에서만 오프라인 해제
 ```
 
@@ -574,7 +576,7 @@ python3 src/recompute_oracle_scores.py RUN_DIR     # GPU 불필요 — oracle/re
 |---|---|---|---|
 | `MODEL_14B` | `$MODELS_DIR/Qwen2.5-14B-Instruct` | 27B 또는 7B 경로 | 모델 스냅샷 (없으면 abort) |
 | `OUT_ROOT` | `$OM_WORK/runs/gate-14b` | `$OM_WORK/runs/v4-<모델>-s<seed>[-<ds>]` | run 디렉터리 |
-| `DATASET` | `gsm8k` | `gsm8k` \| `math500` | 데이터셋 (`dapo-math`·`mbpp`·`kk`·`apps` 가능) |
+| `DATASET` | `gsm8k` | `gsm8k` \| `math500` | 데이터셋 (`dapo-math`·`mbpp`·`kk`·`arc-challenge`·`apps` 가능) |
 | `SEED` | `0` | `0..4` | 생성 샘플링·LoRA init·tie-break (프롬프트 분할은 고정) |
 | `N_TRAIN` | `256` | `512` (gsm8k) / `400` (math500) | 후보 프롬프트 수 |
 | `N_VAL` | `50` | `100` | validation 프롬프트 수 |
