@@ -40,7 +40,18 @@ RUN_LABEL="${RUN_LABEL:-$(basename "$BASE")}"  # v4 등 호출 세대별 console
 DATASETS=(${DATASETS:-gsm8k dapo-math})
 SEEDS=(${SEEDS:-0 1 2})
 command -v setsid >/dev/null 2>&1 || { echo "[abort] setsid 없음"; exit 1; }
+PIPELINE_REPO="${OM_PIPELINE_REPO:-$PWD}"
+PIPELINE_SCRIPT="${OM_PIPELINE_SCRIPT:-$PIPELINE_REPO/scripts/run_14b.sh}"
+[ -f "$PIPELINE_SCRIPT" ] || { echo "[abort] pipeline script 없음: $PIPELINE_SCRIPT"; exit 1; }
 ACTIVE_FILE="$TMPDIR/go-v2-$RUN_LABEL-$$.active"
+
+run_complete() {
+  local run=$1 artifact
+  for artifact in DONE run_config.json manifest.json score_protocol.json \
+      oracle_protocol.json report.json; do
+    [ -s "$run/$artifact" ] || return 1
+  done
+}
 
 run_pipeline() {  # run_pipeline <console-log> <command...>
   local console_log=$1 pid rc tmp
@@ -56,16 +67,40 @@ run_pipeline() {  # run_pipeline <console-log> <command...>
   return "$rc"
 }
 
-# 상세 진행 워처 — stage 진입 전을 포함해 전체 pipeline 로그가 5분 멈추면
-# process group을 종료한다. 산출물별 스킵과 retry loop가 마지막 완료 지점부터 재개한다.
-( prev=""; still=0; stall_ticks=$(( ${OM_STALL_MINUTES:-5} * 4 ))
+group_cpu_seconds() {
+  ps -eo pgid=,cputimes= 2>/dev/null \
+    | awk -v pgid="$1" '$1 == pgid { total += $2 } END { print total + 0 }'
+}
+
+gpu_peak_util() {
+  local peak=0 util sample
+  for sample in 1 2 3; do
+    util=$(timeout 10 nvidia-smi --query-gpu=utilization.gpu \
+      --format=csv,noheader,nounits 2>/dev/null \
+      | awk '$1 > peak { peak=$1 } END { print peak + 0 }')
+    [ "${util:-0}" -le "$peak" ] || peak=$util
+    [ "$sample" -eq 3 ] || sleep 2
+  done
+  printf '%s\n' "$peak"
+}
+
+# 로그 정지만으로 정상 장시간 계산을 죽이지 않는다. 로그가 임계시간 동안
+# 멈췄고 GPU와 process group CPU도 함께 정지했을 때만 마지막 체크포인트부터 재개한다.
+( prev=""; still=0; watched_pid=""; cpu_mark=0
+  stall_ticks=$(( ${OM_STALL_MINUTES:-5} * 4 ))
   while :; do
     sleep 15
-    if [ ! -s "$ACTIVE_FILE" ]; then prev=""; still=0; continue; fi
+    if [ ! -s "$ACTIVE_FILE" ]; then
+      prev=""; still=0; watched_pid=""; cpu_mark=0; continue
+    fi
     runner_pid=$(sed -n '1p' "$ACTIVE_FILE" 2>/dev/null)
     console_log=$(sed -n '2p' "$ACTIVE_FILE" 2>/dev/null)
     if [ -z "$runner_pid" ] || ! kill -0 "$runner_pid" 2>/dev/null; then
-      prev=""; still=0; continue
+      prev=""; still=0; watched_pid=""; cpu_mark=0; continue
+    fi
+    if [ "$runner_pid" != "$watched_pid" ]; then
+      prev=""; still=0; watched_pid=$runner_pid
+      cpu_mark=$(group_cpu_seconds "$runner_pid")
     fi
     lf=$(ls -t "$console_log" "$BASE"*/logs/*.log 2>/dev/null | head -1)
     [ -n "$lf" ] || continue
@@ -73,16 +108,26 @@ run_pipeline() {  # run_pipeline <console-log> <command...>
     sig=$(stat -c '%n:%Y:%s' "$lf" 2>/dev/null || true)
     if [ -n "$sig" ] && [ "$sig" != "$prev" ]; then
       [ -n "$line" ] && echo "[detail·$(basename "$lf" .log)] $line"
-      prev="$sig"; still=0
+      prev="$sig"; still=0; cpu_mark=$(group_cpu_seconds "$runner_pid")
     else
       still=$((still + 1))
       if [ "$still" -ge "$stall_ticks" ]; then
-        message="[워처] 로그 ${OM_STALL_MINUTES:-5}분 무변화 — smoke/run process group 종료 후 자동 재시작"
-        echo "$message"
-        printf '%s\n' "$message" >> "$console_log"
-        kill -TERM -- "-$runner_pid" 2>/dev/null || true
-        sleep 5
-        kill -KILL -- "-$runner_pid" 2>/dev/null || true
+        cpu_now=$(group_cpu_seconds "$runner_pid")
+        cpu_delta=$((cpu_now > cpu_mark ? cpu_now - cpu_mark : 0))
+        gpu_peak=$(gpu_peak_util)
+        if [ "$gpu_peak" -gt 0 ] || [ "$cpu_delta" -gt 2 ]; then
+          message="[워처] 로그 ${OM_STALL_MINUTES:-5}분 무변화지만 계산 활동 확인 (GPU ${gpu_peak}%, CPU +${cpu_delta}s) — 계속 실행"
+          echo "$message"
+          printf '%s\n' "$message" >> "$console_log"
+          cpu_mark=$cpu_now
+        else
+          message="[워처] 로그·GPU·CPU 모두 ${OM_STALL_MINUTES:-5}분 정지 — process group 종료 후 자동 재시작"
+          echo "$message"
+          printf '%s\n' "$message" >> "$console_log"
+          kill -TERM -- "-$runner_pid" 2>/dev/null || true
+          sleep 5
+          kill -KILL -- "-$runner_pid" 2>/dev/null || true
+        fi
         still=0
       fi
     fi
@@ -117,8 +162,7 @@ echo
 echo "== [1] 스모크 (~30분): 교정 파이프라인 전 스테이지가 실제로 완주하는지 먼저 확인"
 SMOKE="${RUN_BASE_SMOKE:-$BASE-smoke}"
 smoke_ready=0
-if [ -f "$SMOKE/report.json" ] && [ -f "$SMOKE/score_protocol.json" ] \
-   && [ -f "$SMOKE/oracle_protocol.json" ]; then
+if run_complete "$SMOKE"; then
   if [ "${OM_SKIP_HYBRID:-0}" = "1" ] \
      || ls "$SMOKE"/scores_hybrid_*.json >/dev/null 2>&1; then
     smoke_ready=1
@@ -133,7 +177,8 @@ else
   for smoke_try in $(seq 1 "${OM_MAX_RETRIES:-2}"); do
     if run_pipeline "$LOGDIR/$RUN_LABEL-smoke.log" env \
        DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
-       HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh; then
+       HYBRID_PROMPTS=8 SEED=0 OM_REPO="$PIPELINE_REPO" \
+       PYTHONPATH="$PIPELINE_REPO/src" bash "$PIPELINE_SCRIPT"; then
       smoke_ok=1
       break
     else
@@ -149,7 +194,7 @@ else
     echo "   원인은 위 자동 진단 출력에 표시됨"
     cleanup_strays; kill $W 2>/dev/null; exit 1
   fi
-  WANTS="report.json score_protocol.json oracle_protocol.json divergence_stats.shard0.json manifest.json"
+  WANTS="DONE run_config.json report.json score_protocol.json oracle_protocol.json divergence_stats.shard0.json manifest.json"
   [ "${OM_SKIP_HYBRID:-0}" = "1" ] || WANTS="$WANTS scores_hybrid_0.5.json"
   for want in $WANTS; do
     ls "$SMOKE"/$want >/dev/null 2>&1 || { echo "== [중단] 스모크 산출물 누락: $want"; kill $W 2>/dev/null; exit 1; }
@@ -171,17 +216,22 @@ for SEED in "${SEEDS[@]}"; do
     KEY="$DS/s$SEED"; LOG="$LOGDIR/$RUN_LABEL-$DS-s$SEED.log"
     echo
     echo "==== [$KEY] → $RUN_DIR (log: $LOG)"
-    if [ -f "$RUN_DIR/DONE" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
-       && [ -f "$RUN_DIR/oracle_protocol.json" ]; then
-      echo "==== [$KEY] ✔ 완주(DONE+protocols) — 스킵"; RESULT[$KEY]=1; continue
+    if run_complete "$RUN_DIR"; then
+      echo "==== [$KEY] ✔ 완주(필수 artifact 6종) — 스킵"; RESULT[$KEY]=1; continue
     fi
     ok=0
     for try in $(seq 1 "${OM_MAX_RETRIES:-2}"); do
       echo "==== [$KEY] 시도 $try/${OM_MAX_RETRIES:-2}"
       cleanup_strays
+      run_rc=0
       if run_pipeline "$LOG" env DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" \
-         bash scripts/run_14b.sh; then
-        ok=1; echo "==== [$KEY] ✔ 완주"; break
+         OM_REPO="$PIPELINE_REPO" PYTHONPATH="$PIPELINE_REPO/src" \
+         bash "$PIPELINE_SCRIPT"; then
+        if run_complete "$RUN_DIR"; then
+          ok=1; echo "==== [$KEY] ✔ 완주"; break
+        fi
+        run_rc=3
+        echo "==== [$KEY] ✘ child는 성공했지만 필수 artifact가 불완전"
       else
         run_rc=$?
       fi

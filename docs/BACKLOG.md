@@ -49,7 +49,7 @@
 - [ ] corrected v4 수확 전에는 historical p-value, cell ordering, frontier 수치를
       confirmatory claim이나 현재 정책 우위로 복원하지 말 것
 
-상세 수정·검증·잔여 blocker는 `docs/RE_AUDIT_2026-08-21.md`를 정본으로 삼는다.
+상세 수정·검증·잔여 blocker는 `docs/FULL_AUDIT_2026-08-20.md`를 정본으로 삼는다.
 
 ### 2026-08-21 v4 재시작 장애 및 수정 기록
 
@@ -74,8 +74,7 @@
       run-path 보존/격리, failure diagnostic, run selection, harvest 회귀 테스트 통과.
       각 클러스터 실행 명령은 `git pull` 후 각각 `bash scripts/go_v4.sh 1`, `2`, `3`.
 
-상세 장애 타임라인, 불완전했던 중간 수정, 현재 실행 순서와 잔여 경계는
-`docs/V4_RUNNER_INCIDENT_2026-08-21.md`를 정본으로 삼는다.
+실행 장애와 현재 복구 계약은 `docs/TROUBLESHOOTING.md`를 정본으로 삼는다.
 
 ### 2026-08-24 v4 worker false-success 수정
 
@@ -86,6 +85,9 @@
       계산해 미완료만 기본 3 pass 재시도
 - [x] 마지막 pass의 미완료 run 이름과 non-zero exit를 보존해 정상 종료와 구분
 - [x] false-success, 실패 격리, 미완료 전용 재시도 회귀 테스트 추가
+- [x] 최신 supervisor와 run별 기록 commit의 계산 코드를 분리해 기존 부분 결과를
+      보존하면서 watchdog 수정 적용
+- [x] 로그 무변화만으로 종료하지 않고 GPU/CPU 활동까지 모두 멈춘 경우에만 재시작
 
 ### 2026-08-21 v4 27B 진행 스냅샷 수신
 
@@ -105,7 +107,7 @@
       dataset 변경 또는 model-calibrated pool 필요 여부를 결정
 - [ ] protocol-complete v4 수확본을 받은 뒤에만 원고 표와 결론을 갱신
 
-상세 판정은 `docs/V4_PROGRESS_2026-08-21.md`를 정본으로 삼는다.
+진행 수치 판독은 `docs/RESULTS_0820_ANALYSIS.md`, 실행 상태는 이 백로그를 정본으로 삼는다.
 
 ## 상태 (2026-08-13 오후): 재편 분기 발동 — 원고 v0.1 push 완료
 

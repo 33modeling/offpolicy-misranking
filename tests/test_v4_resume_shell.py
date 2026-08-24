@@ -1,4 +1,4 @@
-"""End-to-end check that v4 resume enters each run's recorded snapshot."""
+"""v4 resume uses the latest supervisor with each run's recorded pipeline."""
 
 from __future__ import annotations
 
@@ -53,8 +53,9 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         "#!/bin/sh\n"
         'suffix=""; [ "$DATASETS" = gsm8k ] || suffix="-$DATASETS"\n'
         'run="$RUN_BASE-s$SEEDS$suffix"\n'
-        'printf "%s|%s|%s|%s|%s\\n" "$PWD" "$(git rev-parse HEAD)" '
-        '"$OM_REPO" "$SEEDS" "$DATASETS" >> "$RESUME_CAPTURE"\n'
+        'printf "%s|%s|%s|%s|%s|%s|%s\\n" "$PWD" "$(git rev-parse HEAD)" '
+        '"$OM_REPO" "$OM_PIPELINE_REPO" "$OM_PIPELINE_SCRIPT" '
+        '"$SEEDS" "$DATASETS" >> "$RESUME_CAPTURE"\n'
         '[ "$(basename "$run")" = "${RESUME_FAIL_RUN:-}" ] && exit 9\n'
         'mkdir -p "$run"\n'
         'head=$(git rev-parse HEAD)\n'
@@ -76,6 +77,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     (checkout / "marker").write_text("new analysis\n", encoding="utf-8")
     run(["git", "add", "."], checkout)
     run(["git", "commit", "-qm", "analysis"], checkout)
+    current = run(["git", "rev-parse", "HEAD"], checkout)
 
     (work / "runs/v4-27b-s2/run_config.json").write_text(
         json.dumps({"git": generation}), encoding="utf-8"
@@ -106,10 +108,13 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     rows = capture.read_text(encoding="utf-8").splitlines()
     assert len(rows) == 6
     for row in rows:
-        cwd, head, om_repo, _, _ = row.split("|")
-        assert cwd.endswith(f"offpolicy-misranking-{generation[:12]}")
-        assert head == generation
+        cwd, head, om_repo, pipeline_repo, pipeline_script, _, _ = row.split("|")
+        assert Path(cwd) == checkout
+        assert head == current
         assert om_repo == cwd
+        assert pipeline_repo.endswith(f"offpolicy-misranking-{generation[:12]}")
+        assert pipeline_script == f"{pipeline_repo}/scripts/run_14b.sh"
+        assert run(["git", "rev-parse", "HEAD"], Path(pipeline_repo)) == generation
 
     failed_env = env.copy()
     failed_env.update({
@@ -134,7 +139,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert "나머지 run 계속 진행" in failed.stdout
     assert "supervisor 3회 뒤에도 미완료 run 존재" in failed.stderr
 
-print("PASS v4 resume verifies completion and retries only failed runs")
+print("PASS v4 resume keeps current supervisor and recorded pipeline snapshot")
 
 
 def test_v4_resume_shell() -> None:

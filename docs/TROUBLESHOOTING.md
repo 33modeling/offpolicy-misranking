@@ -230,19 +230,22 @@ E절(데이터셋 확장 하루치)의 추가 교훈: **(4) 같은 판단(경로
   사용자가 재시작 → 다시 같은 무출력 구간 → 무한루프.
 - **수정**: 세 스테이지 exists-스킵(모델 로드 전 종료), β-pass 25개·val 20개
   단위 진행 print, nvidia-smi 전 호출 timeout 20(드라이버 wedge 즉시 판정).
-  **v4 운영 정책(8/21 변경)**은 stage 로그와 console 로그의 크기·mtime이 임계 시간 동안
-  그대로면 해당 `run_14b.sh` process group 전체를 종료하고
-  저장분부터 자동 재시작한다. 따라서 데이터 사전검사·모델 로딩·스모크 stage도 감시
-  범위에 들어간다. 임계값은 7B 5분, 동시 snapshot load가 긴 27B 20분이며 스모크와
-  본 run 모두 최대 5회 재시도한다. 27B에 5분을 적용하면 정상 모델 로딩을 반복해서
-  죽이는 재시작 루프가 발생한다.
+  **v4 운영 정책(8/24 변경)**은 로그가 임계 시간 동안 조용하더라도 GPU utilization 또는
+  해당 process group의 CPU 누적 시간이 증가하면 정상 계산으로 보고 유지한다. 로그·GPU·
+  CPU가 함께 정지한 경우에만 process group을 종료하고 저장분부터 자동 재시작한다.
+  임계값은 7B 5분, 27B 20분이며 스모크와 본 run 모두 최대 5회 재시도한다.
 - **v4 전체 run 계보(8/21 최종 수정)**: `git pull` 뒤 이전 run을 같은 경로에서
   재사용하면 immutable `run_config.json`의 `git`이 달라
   `existing artifacts use a different run config: ['git']`으로 중단된다. smoke는 현재
   12자리 commit hash를 경로에 포함하고, canonical 본실행 경로의 이전 commit 산출물은
   시작 전에 `$OM_WORK/quarantine/v4/`로 자동 보존 이동한다. 시작 시 stale v4 worker를
-  종료하고 GPU 메모리 해제까지 확인한다. 상세 postmortem은
-  `docs/V4_RUNNER_INCIDENT_2026-08-21.md` 참조.
+  종료하고 GPU 메모리 해제까지 확인한다.
+- **8/24 false-success 원인**: `OM_SKIP_POSTPROCESS=1` 경로가 실패 run을 남기고도 exit 0을
+  반환했고 상위 launcher가 child exit만 믿어 전체 완료로 오인했다. 현재는 필수 artifact
+  6종을 직접 검사하고, 한 run이 실패해도 나머지를 실행한 뒤 미완료 run만 3 pass 재시도한다.
+- **기존 run에 최신 복구 로직 적용**: 계산 파일은 `run_config.json`에 기록된 commit의
+  격리 worktree에서 실행하지만 감시·재시도 supervisor는 현재 checkout 버전을 사용한다.
+  이 분리가 없으면 `git pull` 뒤에도 옛 watchdog 버그가 그대로 재현된다.
 - **잔여 경계**: util 0%가 지속되면 진짜 hang — 이 노드군의 fused 커널병(C5·C6)
   이 에러 대신 동결로 나타나는 케이스 또는 group-volume 스톨(D-state).
   그때는 RECOVERY 상황 1(노드 교체)이 정답. 진단: ps -eo pid,stat,wchan | awk

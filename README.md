@@ -26,6 +26,17 @@ fresh 감사에 얼마를 내야 하는가)의 게이트/본실험 코드.
 > [offpolicy-misranking-paper](https://github.com/33modeling/offpolicy-misranking-paper)에서
 > 관리하며, 이 레포에는 실행 코드와 검증 기록만 둔다.
 
+## 문서 지도
+
+- 실행: 이 README의 `confirmatory v4 실행 경로`
+- 장애·복구: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md), [`docs/RECOVERY.md`](docs/RECOVERY.md)
+- 코드 구조: [`docs/CODE.md`](docs/CODE.md)
+- 현재 할 일: [`docs/BACKLOG.md`](docs/BACKLOG.md)
+- 논문 감사: [`docs/FULL_AUDIT_2026-08-20.md`](docs/FULL_AUDIT_2026-08-20.md), [`docs/PAPER_REVIEW_2026-08-19.md`](docs/PAPER_REVIEW_2026-08-19.md)
+- 결과 판독: [`docs/RESULTS_0820_ANALYSIS.md`](docs/RESULTS_0820_ANALYSIS.md)
+
+날짜별 중간 로그는 정본에 합친 뒤 삭제한다. 과거 내용은 Git history에서 확인한다.
+
 ## 1. 문제와 주장
 
 RLVR 데이터 선택은 비용 때문에 예전 정책 `β`의 rollout을 현재 정책 `π`의 데이터
@@ -108,9 +119,9 @@ bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
 
 각 실행은 stale v4 process를 종료하고 GPU 메모리 해제를 확인한 뒤 commit별 smoke로
 진입한다. 중단 뒤 최신 코드를 pull해도 기존 `run_config.json`의 generation commit을
-자동 선택해 격리 worktree에서 재개하므로, Git 차이만으로 canonical run을 격리하거나
-처음부터 다시 계산하지 않는다. 장애 이력과 제한사항은
-`docs/V4_RUNNER_INCIDENT_2026-08-21.md` 참조.
+계산 코드로 유지하면서 최신 supervisor로 재개한다. 따라서 기존 부분 산출물을 버리지
+않고 감시·재시도 수정만 즉시 적용한다. 장애 이력과 제한사항은
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) 참조.
 
 Worker 내부 실패는 성공으로 숨기지 않는다. 각 클러스터 launcher는 한 run이 실패해도
 나머지 배정 run을 계속 진행하고, 완료 목록을 다시 계산해 미완료 run만 기본 3 pass로
@@ -119,6 +130,8 @@ Worker 내부 실패는 성공으로 숨기지 않는다. 각 클러스터 launc
 non-zero exit를 남긴다. 단, 클라우드 운영자가 노드나 최상위 job 자체를 종료한 경우
 노드 안의 supervisor도 함께 사라지므로 같은 `go_v4.sh <slot>` 명령을 다시 실행해야
 한다. 기존 shard와 `.partial`부터 재개되며 완료 run은 다시 계산하지 않는다.
+로그가 7B 5분 또는 27B 20분 조용해도 GPU/CPU 계산 활동이 있으면 정상 실행으로 유지하고,
+로그·GPU·CPU가 함께 정지한 경우에만 process group을 재시작한다.
 
 - sweep 축: **seed × dataset**. GSM8K는 과거 v2 유의 신호를 같은 데이터셋에서
   재검정하고, MATH500은 seed별 cell ordering 반전을 재검정한다. Qwen3.8-27B-BF16을

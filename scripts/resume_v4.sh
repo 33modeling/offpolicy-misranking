@@ -95,9 +95,13 @@ for pass in $(seq 1 "$max_passes"); do
     echo "== [$name] commit ${target:0:12}에서 재개"
     run_rc=0
     (
-      cd "$SNAPSHOT" || exit 1
+      # 계산 코드는 run_config의 snapshot을 유지하되 supervisor는 최신 버전을 쓴다.
+      # 그래야 과거 부분 산출물을 보존하면서 감시·재시도 버그만 즉시 교체할 수 있다.
+      cd "$CURRENT_REPO" || exit 1
       unset OM_REPO PYTHONPATH OM_POOL_FILE OM_GEN_BATCH OM_LORA_TARGETS
       source scripts/setup_env.sh
+      export OM_PIPELINE_REPO="$SNAPSHOT"
+      export OM_PIPELINE_SCRIPT="$SNAPSHOT/scripts/run_14b.sh"
 
       export BEHAVIOR_K=8 FRESH_K=32 VAL_K=8 MICRO_GROUP=4 HYBRID_PROMPTS=64
       export K_CELL=8 DRIFT=100 MAX_NEW_TOKENS=512 PROJ_DIM=4096 GRAD_LAYERS=4
@@ -124,7 +128,7 @@ for pass in $(seq 1 "$max_passes"); do
       export RUN_LABEL="v4-$model-resume-cluster$slot"
       export RUN_BASE_SMOKE="$OM_WORK/runs/v4-$model-smoke-${target:0:12}-scluster$slot"
       export OM_SKIP_POSTPROCESS=1 OM_GPUS=0,1,2,3 OM_MAX_RETRIES=5
-      SEEDS="$seed" DATASETS="$dataset" bash scripts/go_v2.sh
+      SEEDS="$seed" DATASETS="$dataset" bash "$CURRENT_REPO/scripts/go_v2.sh"
     ) || run_rc=$?
 
     run_dir="$OM_WORK/runs/$name"
