@@ -951,12 +951,11 @@ reward까지 현재 모듈 책임 표에 반영했다. 이 항목은 재발 방�
 `$OM_WORK/runs/gate`(v1 경로)로 잡으므로, v4 run을 보려면 경로를 인자로 넘겨야
 한다.
 
-### 12.8 `tests/` 전체를 pytest로 한 번에 수집할 수 없다
+### 12.8 pytest 전체 수집 문제 (2026-08-25 해소)
 
-`tests/test_rollout_resume.py:148`에 **모듈 최상위** `sys.exit(1 if FAIL else 0)`가
-있어 pytest 수집 중 `SystemExit`이 올라오고 세션이 `INTERNALERROR`로 죽는다
-(테스트가 하나도 실행되지 않는다). BACKLOG의 "pytest collection 종료 문제
-수정"은 이 파일에는 적용되지 않았다. 회피 방법은 13절에 적었다.
+`tests/test_rollout_resume.py`의 모듈 최상위 `sys.exit`가 pytest 수집 중
+`INTERNALERROR`를 일으켰다. `91025ca`에서 종료를 `__main__` 아래로 옮기고
+회귀 case를 추가했으며, 전체 `pytest tests/ -q`가 51건을 통과한다.
 
 ### 12.9 그 밖의 작은 것
 
@@ -1007,7 +1006,7 @@ reward까지 현재 모듈 책임 표에 반영했다. 이 항목은 재발 방�
 `CUDA_VISIBLE_DEVICES=""`, `OM_WORK`는 임시 스크래치로 지정.
 
 ```
-pytest tests/ --ignore=tests/test_rollout_resume.py   →  48 passed
+pytest tests/                                          →  51 passed
 python tests/test_rollout_resume.py                    →  PASS 18 / FAIL 0
 python tests/test_cleanup_run_processes.py             →  PASS
 python tests/test_data_sandbox.py                      →  PASS
@@ -1017,12 +1016,9 @@ python tests/test_pool_qualification.py                →  PASS
 python tests/test_prepare_run_path.py                  →  PASS
 ```
 
-2026-08-25 문서 정리 후 같은 격리 환경에서 다시 실행해 pytest **48 passed**와
-스크립트형 7개(rollout resume **PASS 18 / FAIL 0** 포함)를 재확인했다.
-
-`--ignore` 없이 `pytest tests/`를 돌리면 12.8의 `SystemExit` 때문에
-`INTERNALERROR`로 **테스트가 하나도 실행되지 않는다**. 파일별 실행 시
-`def test_`가 없는 스크립트형 7개는 `python tests/<파일>`로 직접 실행해야 한다.
+2026-08-25 `91025ca` 뒤 같은 격리 환경에서 전체 pytest **51 passed**와
+스크립트형 7개(rollout resume **PASS 18 / FAIL 0** 포함)를 재확인했다. 개별
+스크립트 실행은 상세 PASS 로그가 필요할 때만 사용한다.
 
 `tests/test_frontier.py`는 torch가 아직 import되지 않았을 때만
 `sys.modules["torch"]`를 빈 모듈로 채운다. 알파벳 순서상 `test_contract`·

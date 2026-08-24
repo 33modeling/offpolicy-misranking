@@ -744,19 +744,18 @@ python3 src/c2_sweep.py / src/c2_diagnose.py # C2 재판정
 ### 8.1 테스트
 
 `tests/`의 CPU 회귀 테스트는 전부 모델·GPU 없이 돈다(GPU를 쓰는 셸 스크립트는 fake
-`nvidia-smi`로 대체한다). 다만 **`pytest tests/`를 한 번에 돌리면 안 된다** —
-`tests/test_rollout_resume.py`에 모듈 최상위 `sys.exit(...)`가 있어 pytest 수집이
-`INTERNALERROR`로 죽고 **테스트가 하나도 실행되지 않는다**.
+`nvidia-smi`로 대체한다). `test_rollout_resume.py`의 최상위 `sys.exit`도
+`91025ca`에서 `__main__` 아래로 이동해 전체 pytest 수집이 가능하다.
 
 ```bash
 export OM_WORK=/tmp/om-test GROUP_VOLUME=/nonexistent CUDA_VISIBLE_DEVICES=""
 export PYTHONPATH=$PWD/src
 PY=.work/.venv-cu126/bin/python      # 또는 $VENV_DIR/bin/python
 
-# 1) pytest 수집형 테스트
-$PY -m pytest tests/ -q --ignore=tests/test_rollout_resume.py
+# 전체 회귀 테스트 (2026-08-25: 51 passed)
+$PY -m pytest tests/ -q
 
-# 2) 스크립트형 7개는 직접 실행
+# 개별 스크립트의 상세 PASS 로그가 필요할 때만 직접 실행
 for f in tests/test_cleanup_run_processes.py tests/test_data_sandbox.py \
          tests/test_failure_diagnostic.py tests/test_frontier.py \
          tests/test_pool_qualification.py tests/test_prepare_run_path.py \
