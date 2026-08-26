@@ -86,6 +86,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 
 | 스크립트 | 용도 |
 |---|---|
+| `go_additional.sh` | 4×H100 discovery 단일 진입점. 모델·전체 행렬을 고정하고 노드 싱글턴, GPU 해제 확인, 최대 12회 worker 자동 재시작을 담당한다 |
 | `go_retry.sh` | legacy fixed-drift 복구 경로. 신규 regime/transfer 실험의 진입점으로 쓰지 않음 |
 | `go_v4.sh` | 고정 slot v4 호환·재개 진입점. 즉시 `resume_v4.sh`로 위임해 run별 generation commit을 보존한다. GPU 해제 대기와 자동 집계는 하지 않음 |
 | `go_v4_27b.sh` | 현재 코드의 27B 전용 공유 큐. FLA/GPU 스모크, current-commit 계약, quarantine, 10-run 검증과 마지막 worker 자동 집계를 수행 |

@@ -22,6 +22,7 @@ fi
 
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv missing: $PY"; exit 1; }
+command -v flock >/dev/null 2>&1 || { echo "[abort] flock command missing"; exit 1; }
 export MODEL_14B="$MODELS_DIR/Qwen2.5-7B-Instruct"
 [ -f "$MODEL_14B/config.json" ] || {
   echo "[abort] Qwen2.5-7B snapshot missing: $MODEL_14B"
@@ -73,18 +74,81 @@ unset OM_POOL_FILE OM_EOS_IDS
 
 mkdir -p "$OM_WORK/console-logs"
 LOG="$OM_WORK/console-logs/regime-discovery-$(hostname)-$(date +%F-%H%M%S).log"
+LOCK_DIR="$OM_WORK/locks"
+NODE_TAG=$(hostname 2>/dev/null || printf node)
+NODE_TAG=$(printf '%s' "$NODE_TAG" | tr -cs 'a-zA-Z0-9._-' '-')
+mkdir -p "$LOCK_DIR"
+exec 9>"$LOCK_DIR/regime-discovery-$NODE_TAG.lock"
+flock -n 9 || {
+  echo "[abort] a discovery worker is already running on this node"
+  exit 1
+}
+
+# A point already gets three attempts inside go_regime.sh. If all three hit a
+# transient CUDA failure, restart the worker and let the shared queue plus
+# durable .partial files resume the unfinished family.
+MAX_WORKER_RESTARTS=12
+WORKER_RESTARTS=0
+
+wait_for_gpu_release() {
+  local gpu_memory gpu_rows busy
+  for _ in $(seq 1 30); do
+    gpu_memory=$(timeout 20 nvidia-smi --query-gpu=memory.used \
+      --format=csv,noheader,nounits 2>/dev/null) || {
+        sleep 2
+        continue
+      }
+    gpu_rows=$(printf '%s\n' "$gpu_memory" | awk 'NF {n++} END {print n+0}')
+    [ "$gpu_rows" -eq 4 ] || {
+      sleep 2
+      continue
+    }
+    busy=$(printf '%s\n' "$gpu_memory" | awk '$1 > 2000 {n++} END {print n+0}')
+    [ "$busy" -eq 0 ] && return 0
+    sleep 2
+  done
+  echo "[abort] GPU memory did not clear after worker failure" | tee -a "$LOG"
+  nvidia-smi --query-compute-apps=pid,process_name,used_memory \
+    --format=csv 2>/dev/null | tee -a "$LOG" || true
+  return 1
+}
 
 echo "[discovery] Qwen2.5-7B / GSM8K+MATH-500 / seeds 0-2 / drift 0,25,100,400"
 echo "[discovery] log: $LOG"
 
-set +e
-bash scripts/go_regime.sh 2>&1 | tee "$LOG"
-rc=${PIPESTATUS[0]}
-set -e
+while :; do
+  attempt=$((WORKER_RESTARTS + 1))
+  echo "[$(date '+%F %T')] [supervisor] worker attempt $attempt/$((MAX_WORKER_RESTARTS + 1))" \
+    | tee -a "$LOG"
+
+  set +e
+  bash scripts/go_regime.sh 2>&1 | tee -a "$LOG"
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  rc=${pipeline_status[0]}
+  tee_rc=${pipeline_status[1]}
+
+  [ "$tee_rc" -eq 0 ] || {
+    echo "[abort] console log write failed (rc=$tee_rc): $LOG"
+    exit "$tee_rc"
+  }
+  [ "$rc" -ne 0 ] || break
+
+  if [ "$WORKER_RESTARTS" -ge "$MAX_WORKER_RESTARTS" ]; then
+    echo "[supervisor] restart limit reached ($MAX_WORKER_RESTARTS)" | tee -a "$LOG"
+    break
+  fi
+
+  WORKER_RESTARTS=$((WORKER_RESTARTS + 1))
+  echo "[supervisor] worker failed (rc=$rc); waiting for GPU release before restart $WORKER_RESTARTS/$MAX_WORKER_RESTARTS" \
+    | tee -a "$LOG"
+  wait_for_gpu_release || exit "$rc"
+  sleep 15
+done
 
 if [ "$rc" -eq 0 ]; then
-  echo "[discovery] complete"
+  echo "[discovery] complete (worker restarts=$WORKER_RESTARTS)"
 else
-  echo "[discovery] failed (rc=$rc): $LOG"
+  echo "[discovery] failed after $WORKER_RESTARTS worker restarts (rc=$rc): $LOG"
 fi
 exit "$rc"

@@ -114,15 +114,18 @@ Discovery sweep은 같은 명령을 독립 클러스터마다 실행한다:
 
 ```bash
 git pull
-bash scripts/go_regime.sh
+./scripts/go_additional.sh
 ```
 
-공유 `flock` queue가 `seed × dataset` family를 자동 분할한다. 각 family는 behavior
+이 진입점은 4×H100, Qwen2.5-7B, GSM8K/MATH-500, seed 0-2, drift
+0/25/100/400을 고정해 축소 실행으로 바뀌는 것을 막는다. 공유 `flock` queue가
+`seed × dataset` family를 자동 분할한다. 각 family는 behavior
 rollout을 한 번만 만들고 drift `0,25,100,400`에서 동일 artifact를 사용한다.
 `reuse_behavior.py`가 model·prompt hash·sampling manifest·정확한 `prompt × K`
 coverage를 모두 검증한 뒤에만 복제한다. 기본 discovery는 7B, seed 0-2,
-GSM8K/MATH-500이고 `REGIME_SEEDS`, `REGIME_DRIFTS`, `REGIME_DATASETS`,
-`MODEL_14B`로 confirmation matrix를 지정한다. 산출물은 machine-readable
+GSM8K/MATH-500이다. 각 지점은 최대 3회 재시도하며, 모두 실패하면 최상위
+supervisor가 GPU 메모리 해제를 확인한 뒤 worker를 최대 12회 다시 시작한다.
+완료된 family와 프롬프트 단위 `.partial` 결과는 재사용한다. 산출물은 machine-readable
 `REGIME.json`/CSV와 단일 `FINAL_REPORT.md`다. Coverage calibration JSON이 없으면
 판정은 자동으로 `provisional_*`로 제한되며 최종 주장으로 승격되지 않는다.
 
