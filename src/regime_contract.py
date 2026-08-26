@@ -38,6 +38,7 @@ REQUIRED_ARTIFACTS = (
     "scores_oracle.json",
     "scores_offpolicy.json",
     "scores_splithalf.json",
+    "divergence_stats.json",
     "oracle_micro_groups.pt",
     "val_groups.pt",
 )
@@ -52,6 +53,7 @@ SMALL_BOUND_FILES = (
     "scores_oracle.json",
     "scores_offpolicy.json",
     "scores_splithalf.json",
+    "divergence_stats.json",
 )
 RUN_CONFIG_FIELDS = (
     "git",

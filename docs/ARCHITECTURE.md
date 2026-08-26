@@ -361,11 +361,11 @@ group-volume이 없는 머신에서는 `OM_WORK`가 `$OM_REPO/.work`로 자동 �
 | `manifest.json` | run_config + torch/transformers/cuda 버전 + 시각 |
 | `rollouts_*.jsonl` (+`.manifest.json`) | rollout 원본과 생성 설정 스냅샷 |
 | `rollouts_*.partial` | 진행 중 내구 저장분 (병합·청소 대상 아님) |
-| `drift_<steps>/` | π LoRA adapter |
+| `drift_<steps>/` | π LoRA adapter 설정·가중치. base tokenizer는 중복 저장하지 않음 |
 | `val_groups.pt` / `val_gradient.pt` | validation prompt gradient 스택 / 평균 |
 | `oracle_micro_groups.pt` | 프롬프트별 micro-group gradient 스택 (K-curve 재조합 재료) |
 | `scores_oracle.json` / `scores_splithalf.json` / `scores_offpolicy.json` | 점수 정본 |
-| `divergence_stats[.shardI].json` | KL̂·ESS·clip 비율 |
+| `divergence_stats.json` | shard 통계를 정확히 합친 KL̂·ESS·clip 비율 정본 |
 | `score_protocol.json` / `oracle_protocol.json` | **프로토콜 마커** (없으면 전 판정기가 거부) |
 | `scores_hybrid_<cut>.json` / `hybrid_protocol_<cut>.json` | hybrid 점수와 마커 |
 | `report.md` / `report.json` | 게이트 수치 정본 |
@@ -931,7 +931,7 @@ one Git commit for the matrix**." 반면 `collect_targets()`의 `same_keys`에�
 |---|---|
 | `v4_resume_commit.complete()`, `go_v4.sh`, `harvest.sh` | 6종 |
 | `go_v2.sh run_complete()`, `collect_v4.sh`, `go_v4_27b.sh run_complete_27b()` | 11종 (6종 + `scores_oracle.json`, `scores_offpolicy.json`, `scores_splithalf.json`, `oracle_micro_groups.pt`, `val_groups.pt`) |
-| `run_14b.sh` 종료 검사 | 12종 (11종 중 `DONE`·`manifest.json` 대신 `prompts.json`·`rollouts_*.jsonl`·`val_gradient.pt` 포함) |
+| `run_14b.sh` 종료 검사 | 위 분석 정본에 `prompts.json`·`rollouts_*.jsonl`·`val_gradient.pt`·`divergence_stats.json`을 더한 실행 필수 산출물 |
 
 6종만 보는 경로는 점수 파일이 없어도 "완료"로 판단할 수 있다. 실제로는
 `report.json`이 점수 파일 없이 만들어지지 않으므로 현재 위험은 낮지만, 기준이
@@ -964,8 +964,8 @@ reward까지 현재 모듈 책임 표에 반영했다. 이 항목은 재발 방�
 - `readout_summary.precisions()`는 `topk_frac`을 `run_config.json`에서 읽지 않고
   `0.10`으로 고정한다. `make_tables.py`(`FRAC = 0.10`), `frontier.py`
   (`FRAC = 0.10`)도 같다. v4는 `topk_frac=0.10`이라 현재는 일치한다.
-- `run_14b.sh`의 종료 검사 목록에 `divergence_stats*.json`이 없다. 반면
-  `go_v2.sh`의 결과 수집과 `collect_v4.sh`는 그 파일이 없으면 abort한다.
+- `run_14b.sh`는 병합된 `divergence_stats.json`을 종료 조건으로 검사한다. 과거
+  generation snapshot을 재개하는 `go_v2.sh`만 shard 형식도 읽는 호환 경로를 유지한다.
 - `experiment.run_hybrid()`에 `if True:` 블록(817행)이 남아 있다 — 이전 조건이
   제거된 흔적이다. 동작에는 영향이 없다.
 - `grads.token_weights()`에 `clip_cap < 1.0` 검사가 두 번 있다(72행, 75행).

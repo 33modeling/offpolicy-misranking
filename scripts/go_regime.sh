@@ -61,7 +61,7 @@ run_complete() {
   local run=$1 dataset=$2 seed=$3 drift=$4 source=$5 artifact
   for artifact in DONE run_config.json manifest.json score_protocol.json \
       oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json \
-      scores_splithalf.json oracle_micro_groups.pt val_groups.pt; do
+      scores_splithalf.json divergence_stats.json oracle_micro_groups.pt val_groups.pt; do
     [ -s "$run/$artifact" ] || return 1
   done
   [ -z "$CONTRACT" ] || contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \

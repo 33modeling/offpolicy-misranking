@@ -70,6 +70,8 @@ merge_rollouts() {  # merge_rollouts <base이름> <prompt당 K>
   "$PY" - "$OUT_ROOT" "$base" "$expected_k" <<'PYEOF'
 import json, sys
 from pathlib import Path
+from compact_artifacts import compact_rollout_shards
+
 root, base, expected_k = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 merged = root / (base + ".jsonl")
 sources = [merged] if merged.exists() else sorted(root.glob(base + ".shard*.jsonl"))
@@ -96,8 +98,10 @@ if missing or unexpected or dup or bad_k:
           f"  rm {cleanup}", flush=True)
     sys.exit(1)
 if merged.exists():
+    removed = compact_rollout_shards(root, base)
     print(f"[validate] {base}: {n_train} prompts x K={expected_k}, "
-          f"{sum(len(v) for v in seen.values())} rollouts OK")
+          f"{sum(len(v) for v in seen.values())} rollouts OK; "
+          f"removed {len(removed)} redundant shard files")
     sys.exit(0)
 tmp = root / (base + ".jsonl.tmp")
 with tmp.open("w") as f:
@@ -105,8 +109,10 @@ with tmp.open("w") as f:
         for _, line in sorted(seen[i]):
             f.write(line)
 tmp.rename(root / (base + ".jsonl"))
+removed = compact_rollout_shards(root, base)
 print(f"[merge] {base}: {n_train} prompts x K={expected_k}, "
-      f"{sum(len(v) for v in seen.values())} rollouts OK")
+      f"{sum(len(v) for v in seen.values())} rollouts OK; "
+      f"removed {len(removed)} redundant shard files")
 PYEOF
 }
 verify_code_snapshot() {
@@ -444,7 +450,7 @@ fi
 required=(prompts.json rollouts_behavior_train.jsonl rollouts_fresh_train.jsonl
           val_gradient.pt val_groups.pt oracle_micro_groups.pt scores_oracle.json
           scores_splithalf.json scores_offpolicy.json score_protocol.json
-          oracle_protocol.json report.json)
+          oracle_protocol.json divergence_stats.json report.json)
 for artifact in "${required[@]}"; do
   [ -s "$OUT_ROOT/$artifact" ] || { log "[abort] 필수 산출물 누락/빈 파일: $artifact"; exit 1; }
 done

@@ -20,6 +20,11 @@ import torch
 
 from artifact_contract import sha256_file, validate_generation_contract
 from certagrad import certagrad, uniform_baseline
+from compact_artifacts import (
+    compact_adapter,
+    compact_analysis_shards,
+    merge_divergence_shards,
+)
 from data import load_prompts
 from grads import (
     ESTIMATORS,
@@ -632,6 +637,9 @@ def main() -> None:
         # 점수들과의 비교 일관성이 깨진다. 다시 학습하려면 adapter 폴더를 지울 것.
         adapter_dir = run / f"drift_{args.drift_steps}"
         if (adapter_dir / "adapter_config.json").exists():
+            removed = compact_adapter(adapter_dir)
+            if removed:
+                print(f"drift: redundant adapter files removed: {len(removed)}")
             print(f"drift: {adapter_dir.name} 이미 존재 — 스킵 (재학습하려면 폴더 삭제)")
         else:
             train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
@@ -740,6 +748,7 @@ def main() -> None:
                 raise ValueError("score protocol shards disagree")
             canonical["shards"] = len(protocols)
             _atomic_text(run / "score_protocol.json", json.dumps(canonical, indent=1))
+        merge_divergence_shards(run)
         # 병합된 micro + val 방향에서 oracle 점수·split-half 도출 (비샤드 경로와 동일 수식)
         micro_p = run / "oracle_micro_groups.pt"
         val_groups_p = run / "val_groups.pt"
@@ -768,6 +777,9 @@ def main() -> None:
                 ),
             )
             print(f"merge: oracle 점수 도출 {len(oracle)} prompts")
+        removed = compact_analysis_shards(run)
+        if removed:
+            print(f"merge: redundant score/gradient shards removed: {len(removed)}")
     elif args.stage == "report":
         stage_report(args, run)
     elif args.stage == "hybrid":

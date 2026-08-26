@@ -197,11 +197,17 @@ else
     echo "   원인은 위 자동 진단 출력에 표시됨"
     cleanup_strays; kill $W 2>/dev/null; exit 1
   fi
-  WANTS="DONE run_config.json report.json score_protocol.json oracle_protocol.json divergence_stats.shard0.json manifest.json"
+  WANTS="DONE run_config.json report.json score_protocol.json oracle_protocol.json manifest.json"
   [ "${OM_SKIP_HYBRID:-0}" = "1" ] || WANTS="$WANTS scores_hybrid_0.5.json"
   for want in $WANTS; do
     ls "$SMOKE"/$want >/dev/null 2>&1 || { echo "== [중단] 스모크 산출물 누락: $want"; kill $W 2>/dev/null; exit 1; }
   done
+  if [ ! -s "$SMOKE/divergence_stats.json" ] \
+     && [ ! -s "$SMOKE/divergence_stats.shard0.json" ]; then
+    echo "== [중단] 스모크 산출물 누락: divergence_stats.json"
+    kill $W 2>/dev/null
+    exit 1
+  fi
   echo "   스모크 ✔ ($WANTS 확인)"
 fi
 

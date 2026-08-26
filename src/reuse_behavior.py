@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 
 from artifact_contract import sha256_file, validate_generation_contract
+from compact_artifacts import compact_rollout_shards
 
 MATCHED_CONFIG = (
     "model_resolved",
@@ -43,11 +45,14 @@ def compatibility_errors(source: Path, target: Path) -> list[str]:
 
 
 def behavior_files(run: Path) -> list[Path]:
-    files = []
-    for path in sorted(run.glob("rollouts_behavior_train*")):
-        if path.is_file() and not path.name.endswith((".partial", ".tmp", ".rewrite")):
-            files.append(path)
-    return files
+    return [
+        path
+        for path in (
+            run / "rollouts_behavior_train.jsonl",
+            run / "rollouts_behavior_train.manifest.json",
+        )
+        if path.is_file()
+    ]
 
 
 def check(run: Path) -> bool:
@@ -64,6 +69,7 @@ def reuse(source: Path, target: Path) -> dict:
     if source == target:
         raise ValueError("source and target run must differ")
     validate_generation_contract(source, ("rollouts_behavior_train",))
+    compact_rollout_shards(source, "rollouts_behavior_train")
     errors = compatibility_errors(source, target)
     if errors:
         raise ValueError("behavior reuse contract mismatch: " + "; ".join(errors))
@@ -72,6 +78,7 @@ def reuse(source: Path, target: Path) -> dict:
         raise ValueError("source has no merged behavior rollout artifact")
     source_by_name = {path.name: path for path in sources}
     if check(target):
+        compact_rollout_shards(target, "rollouts_behavior_train")
         target_by_name = {path.name: path for path in behavior_files(target)}
         if set(target_by_name) != set(source_by_name) or any(
             sha256_file(path) != sha256_file(target_by_name[name])
@@ -95,14 +102,23 @@ def reuse(source: Path, target: Path) -> dict:
             "target contains incomplete or invalid behavior artifacts; use a new run "
             f"directory instead of overwriting them: {mismatched}"
         )
+    storage = {}
     for path in sources:
         destination = target / path.name
         if destination.exists():
+            storage[path.name] = "existing"
             continue
         temporary = target / f"{path.name}.reuse.tmp"
-        shutil.copy2(path, temporary)
+        temporary.unlink(missing_ok=True)
+        try:
+            os.link(path, temporary)
+            storage[path.name] = "hardlink"
+        except OSError:
+            shutil.copy2(path, temporary)
+            storage[path.name] = "copy"
         temporary.replace(destination)
     validation = validate_generation_contract(target, ("rollouts_behavior_train",))
+    compact_rollout_shards(target, "rollouts_behavior_train")
     record = {
         "schema": "offpolicy-behavior-reuse/v1",
         "status": "copied-and-validated",
@@ -114,6 +130,7 @@ def reuse(source: Path, target: Path) -> dict:
         "validated_rows": validation["validated_rows"],
         "artifact_sha256": validation["artifact_sha256"],
         "manifest_sha256": validation["manifest_sha256"],
+        "storage": storage,
     }
     tmp = target / "behavior_reuse.json.tmp"
     tmp.write_text(json.dumps(record, indent=1))

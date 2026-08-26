@@ -48,7 +48,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             'mkdir -p "$OUT_ROOT"\n'
             'for name in DONE run_config.json manifest.json score_protocol.json '
             'oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json '
-            'scores_splithalf.json oracle_micro_groups.pt val_groups.pt; do '
+            'scores_splithalf.json divergence_stats.json oracle_micro_groups.pt val_groups.pt; do '
             'printf "{}\\n" > "$OUT_ROOT/$name"; done\n',
         )
         executable(

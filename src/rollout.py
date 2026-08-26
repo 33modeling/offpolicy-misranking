@@ -311,7 +311,7 @@ def train_drift_lora(
     from peft import LoraConfig, get_peft_model
     device = device or auto_device()
     # 로드는 load_model로 일원화 — dtype 보장·CPU 경유 단일 사본·MM 폴백 전부 공유
-    model, tok = load_model(base, device=device)
+    model, _ = load_model(base, device=device)
     model = get_peft_model(
         model,
         LoraConfig(r=16, lora_alpha=32, target_modules=_lora_targets(), lora_dropout=0.0),
@@ -349,7 +349,9 @@ def train_drift_lora(
             )
     out_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(out_dir)
-    tok.save_pretrained(out_dir)
+    from compact_artifacts import compact_adapter
+
+    compact_adapter(out_dir)
 
 
 def load_policy(base: str, adapter: Path | None, device: str | None = None):

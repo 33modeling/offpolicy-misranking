@@ -90,8 +90,40 @@ def test_reuse_copies_and_revalidates(tmp_path: Path) -> None:
     result = reuse(source, target)
     assert result["status"] == "copied-and-validated"
     assert result["validated_rows"] == 4
+    assert set(result["storage"].values()) == {"hardlink"}
     assert (target / "behavior_reuse.json").exists()
+    for name in (
+        "rollouts_behavior_train.jsonl",
+        "rollouts_behavior_train.manifest.json",
+    ):
+        assert (source / name).stat().st_ino == (target / name).stat().st_ino
+    (target / "rollouts_behavior_train.shard0.partial").write_text("obsolete")
     assert reuse(source, target)["status"] == "already-valid"
+    assert not list(target.glob("rollouts_behavior_train.shard*"))
+
+
+def test_reuse_does_not_copy_obsolete_shards(tmp_path: Path) -> None:
+    source = make_run(tmp_path, "source", 0)
+    target = make_run(tmp_path, "target", 100)
+    add_behavior(source)
+    for suffix in ("jsonl", "manifest.json", "partial"):
+        (source / f"rollouts_behavior_train.shard0.{suffix}").write_text("obsolete")
+    reuse(source, target)
+    assert not list(source.glob("rollouts_behavior_train.shard*"))
+    assert not list(target.glob("rollouts_behavior_train.shard*"))
+
+
+def test_reuse_recovers_a_stale_hardlink_temporary(tmp_path: Path) -> None:
+    source = make_run(tmp_path, "source", 0)
+    target = make_run(tmp_path, "target", 100)
+    add_behavior(source)
+    artifact = source / "rollouts_behavior_train.jsonl"
+    temporary = target / "rollouts_behavior_train.jsonl.reuse.tmp"
+    temporary.hardlink_to(artifact)
+    original = artifact.read_bytes()
+    reuse(source, target)
+    assert artifact.read_bytes() == original
+    assert (target / artifact.name).stat().st_ino == artifact.stat().st_ino
 
 
 def test_reuse_rejects_prompt_drift(tmp_path: Path) -> None:

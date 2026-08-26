@@ -65,6 +65,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | `make_tables.py` | TABLES.md | T1~T7 표 생성 (게이트·신호보존·floor 곡선·live fraction·hybrid·C2·downstream) |
 | `readout_summary.py` | READOUT.md | 사람용 판독 요약 (한눈 표+자동 결론+원시 출력) |
 | `score_artifacts.py` | 내부 계약 | oracle·4 estimator·split-half의 schema, finite 값, prompt ID coverage를 공통 검증 |
+| `compact_artifacts.py` | 내부 저장 관리 | 검증된 merged rollout manifest와 divergence 정본을 발행한 뒤 중복 shard를 삭제하고, adapter tokenizer 중복과 drift 간 behavior 물리 복제를 제거 |
 | `run_select.py` | 내부 계약 | 전 세대·legacy·protocol-only run의 공통 탐색과 미선택 사유 진단 |
 | `show_selection.py` / `make_hard_pool.py` / `c2_diagnose.py` / `c2_sweep.py` | — | 보조 유틸 (선택 내역 출력 / hard 풀 구성 / C2 진단·스윕) |
 

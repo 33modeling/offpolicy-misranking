@@ -129,6 +129,11 @@ supervisor가 GPU 메모리 해제를 확인한 뒤 worker를 최대 12회 다�
 `REGIME.json`/CSV와 단일 `FINAL_REPORT.md`다. Coverage calibration JSON이 없으면
 판정은 자동으로 `provisional_*`로 제한되며 최종 주장으로 승격되지 않는다.
 
+완료 전에는 재개용 shard와 `.partial`을 보존한다. 병합본의 해시와 exact-K coverage가
+검증되면 canonical manifest를 발행하고 중복 shard를 삭제한다. Drift 간 동일한 behavior
+rollout은 같은 볼륨에서 hard link로 공유하며, LoRA 폴더에는 adapter 설정과 가중치만
+저장한다. 로그와 최종 분석 재현에 필요한 rollout·gradient 정본은 삭제하지 않는다.
+
 기존 v4는 중단하거나 재생성하지 않는다. v4 generation은 해당 run에 기록된 commit을
 계속 사용하고, 신규 regime sweep만 현재 commit에서 별도 경로로 실행한다.
 
