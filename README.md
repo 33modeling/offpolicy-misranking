@@ -31,7 +31,9 @@ The command runs:
   held-out utility reference, and A versus B sets the reliability floor. Final
   labels use 10,000 hierarchical bootstrap replicates per run.
 - A hash-bound harvest that packages existing matrix reports without rerunning
-  rollouts or bootstrap analysis.
+  rollouts or bootstrap analysis. Publication revalidates the analysis-cache
+  hashes, exact registered cells and selectors, final bootstrap status, and
+  JSON/CSV agreement before atomically replacing the readout.
 
 The only user-facing result bundle is replaced in place at:
 
@@ -40,8 +42,9 @@ $OM_WORK/readouts/rlvr-grpo/
 ```
 
 It contains exactly `REPORT.md`, `RESULTS.json`, `RESULTS.csv`, and
-`MANIFEST.sha256`. Unchanged inputs reuse that bundle. Additional experiments
-write only to their separate method-specific roots.
+`MANIFEST.sha256`. Unchanged inputs reuse that bundle; extra, partial, stale,
+or internally inconsistent files cause rejection or a clean replacement.
+Additional experiments write only to their separate method-specific roots.
 
 ## Objective Contract
 

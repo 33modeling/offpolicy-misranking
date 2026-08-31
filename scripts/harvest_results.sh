@@ -20,92 +20,80 @@ command -v flock >/dev/null 2>&1 || { echo "[harvest-abort] flock missing"; exit
 exec 8>"$OM_WORK/locks/rlvr-harvest.lock"
 flock 8
 
-inputs=("$PWD/scripts/harvest_results.sh")
-for root in "$RESULTS_7B" "$RESULTS_27B"; do
-  for name in REGIME.json REGIME.csv REGIME_SUMMARY.csv FINAL_REPORT.md .regime_analysis.key; do
-    path="$root/$name"
-    [ -s "$path" ] || { echo "[harvest-abort] missing or empty: $path"; exit 1; }
-    inputs+=("$path")
-  done
-done
-
-KEY=$(sha256sum "${inputs[@]}" | sha256sum | cut -d' ' -f1)
 target="$READOUTS/$READOUT_ID"
-if [ -s "$target/RESULTS.json" ] && [ -s "$target/MANIFEST.sha256" ] \
-    && (cd "$target" && sha256sum -c MANIFEST.sha256 >/dev/null 2>&1); then
-  old_key=$("$PY" - "$target/RESULTS.json" <<'PYEOF'
-import json
-import sys
-
-try:
-    print(json.load(open(sys.argv[1], encoding="utf-8"))["input_digest"])
-except (OSError, KeyError, TypeError, ValueError):
-    raise SystemExit(1)
-PYEOF
-  ) || old_key=""
-  if [ "$old_key" = "$KEY" ]; then
-    echo "[harvest] inputs unchanged; reuse $target"
-    exit 0
-  fi
-fi
-
 temporary=$(mktemp -d "$READOUTS/.$READOUT_ID.XXXXXX")
+previous=""
+publish_cleanup() {
+  rc=$?
+  trap - EXIT HUP INT TERM
+  rm -rf "$temporary"
+  if [ -n "$previous" ] && { [ -e "$previous" ] || [ -L "$previous" ]; }; then
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      rm -rf "$previous"
+    else
+      mv "$previous" "$target"
+    fi
+  fi
+  exit "$rc"
+}
+trap publish_cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 GIT_HEAD=$(git rev-parse HEAD)
-"$PY" - "$RESULTS_27B" "$RESULTS_7B" "$temporary" "$GIT_HEAD" "$KEY" <<'PYEOF'
-import csv
-import json
-import sys
-from pathlib import Path
-
-primary, replication, output = map(Path, sys.argv[1:4])
-git, digest = sys.argv[4:6]
-(output / "REPORT.md").write_text(
-    "# RLVR Experiment Results\n\n"
-    "## Primary: Qwen3.8-27B\n\n"
-    + (primary / "FINAL_REPORT.md").read_text().strip()
-    + "\n\n## Scale replication: Qwen2.5-7B\n\n"
-    + (replication / "FINAL_REPORT.md").read_text().strip()
-    + "\n"
-)
-(output / "RESULTS.json").write_text(json.dumps({
-    "schema": "offpolicy-rlvr-harvest/v1",
-    "git": git,
-    "input_digest": digest,
-    "primary_27b": json.loads((primary / "REGIME.json").read_text()),
-    "replication_7b": json.loads((replication / "REGIME.json").read_text()),
-}, indent=2, sort_keys=True) + "\n")
-
-rows = []
-fieldnames = ["experiment"]
-for label, root in (("primary_27b", primary), ("replication_7b", replication)):
-    with (root / "REGIME.csv").open(newline="") as stream:
-        for row in csv.DictReader(stream):
-            rows.append({"experiment": label, **row})
-            for key in row:
-                if key not in fieldnames:
-                    fieldnames.append(key)
-with (output / "RESULTS.csv").open("w", newline="") as stream:
-    writer = csv.DictWriter(stream, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    writer.writerows(rows)
-PYEOF
+"$PY" src/harvest_results.py \
+  --primary "$RESULTS_27B" \
+  --replication "$RESULTS_7B" \
+  --output "$temporary" \
+  --git "$GIT_HEAD" \
+  --code scripts/harvest_results.sh \
+  --code src/harvest_results.py
 (
   cd "$temporary"
   sha256sum REPORT.md RESULTS.json RESULTS.csv > MANIFEST.sha256
   sha256sum -c MANIFEST.sha256 >/dev/null
 )
 
-previous="$READOUTS/.$READOUT_ID.previous.$$"
-trap 'rm -rf "$temporary"; [ ! -e "$previous" ] || { rm -rf "$target"; mv "$previous" "$target"; }' ERR
-[ ! -e "$target" ] || mv "$target" "$previous"
-mv "$temporary" "$target"
-rm -rf "$previous"
-trap - ERR
+bundle_current() {
+  local expected actual name manifest_names
+  [ -d "$target" ] && [ ! -L "$target" ] || return 1
+  expected=$(printf '%s\n' MANIFEST.sha256 REPORT.md RESULTS.csv RESULTS.json)
+  actual=$(find "$target" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+  [ "$actual" = "$expected" ] || return 1
+  for name in MANIFEST.sha256 REPORT.md RESULTS.csv RESULTS.json; do
+    [ -f "$target/$name" ] && [ ! -L "$target/$name" ] && [ -s "$target/$name" ] \
+      || return 1
+  done
+  manifest_names=$(awk 'NF == 2 {print $2}' "$target/MANIFEST.sha256" | sort)
+  [ "$manifest_names" = "$(printf '%s\n' REPORT.md RESULTS.csv RESULTS.json)" ] \
+    || return 1
+  (cd "$target" && sha256sum -c MANIFEST.sha256 >/dev/null 2>&1) || return 1
+  cmp -s "$target/MANIFEST.sha256" "$temporary/MANIFEST.sha256"
+}
 
-# Remove bundles and the pointer created by the superseded timestamped layout.
-if [ "$READOUT_ID" = "rlvr-grpo" ]; then
+cleanup_legacy() {
+  [ "$READOUT_ID" = "rlvr-grpo" ] || return 0
   find "$READOUTS" -mindepth 1 -maxdepth 1 -type d \
     -name 'rlvr-grpo-[0-9]*' -exec rm -rf -- {} +
   rm -f "$OM_WORK/results/.rlvr-harvest-current"
+}
+
+if bundle_current; then
+  cleanup_legacy
+  echo "[harvest] inputs unchanged; reuse $target"
+  exit 0
 fi
+
+previous="$READOUTS/.$READOUT_ID.previous.$$"
+[ ! -e "$target" ] && [ ! -L "$target" ] || mv "$target" "$previous"
+if ! mv "$temporary" "$target"; then
+  [ ! -e "$previous" ] && [ ! -L "$previous" ] || mv "$previous" "$target"
+  exit 1
+fi
+rm -rf "$previous"
+previous=""
+trap - EXIT HUP INT TERM
+
+# Remove bundles and the pointer created by the superseded timestamped layout.
+cleanup_legacy
 echo "[harvest] published $target"
