@@ -25,14 +25,21 @@ for root in "$RESULTS_7B" "$RESULTS_27B"; do
 done
 
 KEY=$(sha256sum "${inputs[@]}" | sha256sum | cut -d' ' -f1)
-CURRENT="$OM_WORK/results/.rlvr-harvest-current"
-if [ -s "$CURRENT" ]; then
-  old_key=$(sed -n '1p' "$CURRENT")
-  old_dir=$(sed -n '2p' "$CURRENT")
-  if [ "$old_key" = "$KEY" ] && [[ "$old_dir" == "$READOUTS/"* ]] \
-      && [ -s "$old_dir/MANIFEST.sha256" ] \
-      && (cd "$old_dir" && sha256sum -c MANIFEST.sha256 >/dev/null 2>&1); then
-    echo "[harvest] inputs unchanged; reuse $old_dir"
+target="$READOUTS/rlvr-grpo"
+if [ -s "$target/RESULTS.json" ] && [ -s "$target/MANIFEST.sha256" ] \
+    && (cd "$target" && sha256sum -c MANIFEST.sha256 >/dev/null 2>&1); then
+  old_key=$("$PY" - "$target/RESULTS.json" <<'PYEOF'
+import json
+import sys
+
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8"))["input_digest"])
+except (OSError, KeyError, TypeError, ValueError):
+    raise SystemExit(1)
+PYEOF
+  ) || old_key=""
+  if [ "$old_key" = "$KEY" ]; then
+    echo "[harvest] inputs unchanged; reuse $target"
     exit 0
   fi
 fi
@@ -83,9 +90,15 @@ PYEOF
   sha256sum -c MANIFEST.sha256 >/dev/null
 )
 
-target="$READOUTS/rlvr-grpo-$(date +%Y%m%d-%H%M%S)-${GIT_HEAD:0:8}"
+previous="$READOUTS/.rlvr-grpo.previous.$$"
+trap 'rm -rf "$temporary"; [ ! -e "$previous" ] || { rm -rf "$target"; mv "$previous" "$target"; }' ERR
+[ ! -e "$target" ] || mv "$target" "$previous"
 mv "$temporary" "$target"
-pointer="$CURRENT.tmp"
-printf '%s\n%s\n' "$KEY" "$target" > "$pointer"
-mv "$pointer" "$CURRENT"
+rm -rf "$previous"
+trap - ERR
+
+# Remove bundles and the pointer created by the superseded timestamped layout.
+find "$READOUTS" -mindepth 1 -maxdepth 1 -type d \
+  -name 'rlvr-grpo-[0-9]*' -exec rm -rf -- {} +
+rm -f "$OM_WORK/results/.rlvr-harvest-current"
 echo "[harvest] published $target"

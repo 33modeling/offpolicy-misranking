@@ -25,13 +25,15 @@ The command runs:
 - A hash-bound harvest that packages existing matrix reports without rerunning
   rollouts or bootstrap analysis.
 
-Final reports are published under:
+The only user-facing result bundle is replaced in place at:
 
 ```text
-$OM_WORK/results/regime-qwen2.5-7b-grpo-v1/FINAL_REPORT.md
-$OM_WORK/results/regime-qwen3.8-27b-grpo-v1/FINAL_REPORT.md
-$OM_WORK/readouts/rlvr-grpo-*/
+$OM_WORK/readouts/rlvr-grpo/
 ```
+
+It contains exactly `REPORT.md`, `RESULTS.json`, `RESULTS.csv`, and
+`MANIFEST.sha256`. Unchanged inputs reuse this bundle; changed inputs replace
+it instead of creating another timestamped directory.
 
 ## Objective Contract
 

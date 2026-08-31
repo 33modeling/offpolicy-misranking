@@ -15,8 +15,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from artifact_contract import sha256_file
 from train_policy_grpo import (
+    CHECKPOINT_SCHEMA,
     POLICY_SCHEMA,
+    _checkpoint_step,
     _latest_checkpoint,
+    _save_checkpoint,
     clipped_grpo_loss,
     standardized_group_advantages,
     validate_policy_manifest,
@@ -94,18 +97,65 @@ def test_policy_manifest_rejects_sft_and_no_reward_variation(tmp_path: Path) -> 
 
 
 def test_latest_checkpoint_ignores_partial_and_target_checkpoint(tmp_path: Path) -> None:
+    contract = {
+        "schema": CHECKPOINT_SCHEMA,
+        "training_objective": "grpo",
+        "seed": 7,
+    }
     for step in (5, 10, 25):
         checkpoint = tmp_path / f"checkpoint-{step:06d}"
         checkpoint.mkdir()
         for name in ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt"):
             (checkpoint / name).write_text("x")
         (checkpoint / "checkpoint_state.json").write_text(
-            json.dumps({"schema": "offpolicy-grpo-checkpoint/v1", "completed_steps": step})
+            json.dumps({
+                **contract,
+                "completed_steps": step,
+                "adapter_sha256": sha256_file(checkpoint / "adapter_model.safetensors"),
+                "optimizer_sha256": sha256_file(checkpoint / "optimizer.pt"),
+            })
         )
     (tmp_path / "checkpoint-000020").mkdir()
-    path, step = _latest_checkpoint(tmp_path, 25)
+    path, step = _latest_checkpoint(tmp_path, 25, contract)
     assert step == 10
     assert path.name == "checkpoint-000010"
+
+    path, step = _latest_checkpoint(tmp_path, 25, {**contract, "seed": 8})
+    assert path is None
+    assert step == 0
+
+    (tmp_path / "checkpoint-000010/optimizer.pt").write_text("corrupt")
+    path, step = _latest_checkpoint(tmp_path, 25, contract)
+    assert step == 5
+    assert path.name == "checkpoint-000005"
+
+
+def test_checkpoint_publish_replaces_an_invalid_same_step_directory(tmp_path: Path) -> None:
+    class Model:
+        @staticmethod
+        def save_pretrained(path: Path, *, safe_serialization: bool) -> None:
+            assert safe_serialization
+            (path / "adapter_config.json").write_text("{}\n")
+            (path / "adapter_model.safetensors").write_bytes(b"valid-adapter")
+
+    class Optimizer:
+        @staticmethod
+        def state_dict() -> dict:
+            return {"state": {}, "param_groups": []}
+
+    contract = {
+        "schema": CHECKPOINT_SCHEMA,
+        "training_objective": "grpo",
+        "seed": 7,
+    }
+    stale = tmp_path / "checkpoint-000005"
+    stale.mkdir()
+    (stale / "checkpoint_state.json").write_text("{}\n")
+
+    _save_checkpoint(Model(), Optimizer(), tmp_path, 5, 0, contract)
+
+    assert _checkpoint_step(stale, contract) == 5
+    assert (stale / "adapter_model.safetensors").read_bytes() == b"valid-adapter"
 
 
 def test_canonical_path_contains_no_supervised_drift() -> None:

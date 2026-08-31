@@ -151,5 +151,4 @@ run_phase 7b
 
 bash scripts/harvest_results.sh | tee -a "$LOG"
 echo "[rlvr] all matrices complete" | tee -a "$LOG"
-echo "[rlvr] 7B: $OM_WORK/results/regime-qwen2.5-7b-grpo-v1/FINAL_REPORT.md"
-echo "[rlvr] 27B: $OM_WORK/results/regime-qwen3.8-27b-grpo-v1/FINAL_REPORT.md"
+echo "[rlvr] final bundle: $OM_WORK/readouts/rlvr-grpo" | tee -a "$LOG"

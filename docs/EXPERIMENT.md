@@ -21,7 +21,7 @@ controlled by the old-policy ratio clip and the policy-step sweep.
 
 ## Checkpoint chain
 
-Within each 7B seed/dataset family, policy steps are a single continuous chain:
+Within each seed/dataset family, policy steps are a single continuous chain:
 
 ```text
 base -> step 25 -> step 100 -> step 400
@@ -59,3 +59,5 @@ oracle protocols, exact prompt coverage, and required artifacts pass.
 simultaneously against the same `GROUP_VOLUME`; `run_matrix.sh` locks an entire
 seed/dataset family, preserving the ordered checkpoint chain and preventing
 duplicate jobs. Report collection is separately locked and content-addressed.
+It updates the single `readouts/rlvr-grpo` bundle in place and does not retain
+timestamped harvest directories.

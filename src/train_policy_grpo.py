@@ -211,21 +211,82 @@ def _atomic_json(path: Path, document: dict) -> None:
     temporary.replace(path)
 
 
-def _save_checkpoint(model, optimizer, out_dir: Path, completed_steps: int, rank: int) -> None:
+def _checkpoint_contract(
+    args: argparse.Namespace, config: GrpoConfig, world_size: int
+) -> dict:
+    return {
+        "schema": CHECKPOINT_SCHEMA,
+        "training_objective": "grpo",
+        "base_model": str(Path(args.model).resolve()),
+        "seed": args.seed,
+        "world_size": world_size,
+        "start_step": args.start_step,
+        "target_steps": args.target_steps,
+        "max_new_tokens": args.max_new_tokens,
+        "resume_adapter": (
+            str(Path(args.resume_adapter).resolve()) if args.resume_adapter else None
+        ),
+        "resume_optimizer": (
+            str(Path(args.resume_optimizer).resolve()) if args.resume_optimizer else None
+        ),
+        "config": asdict(config),
+    }
+
+
+def _checkpoint_step(path: Path, expected_contract: dict) -> int | None:
+    try:
+        state = json.loads((path / "checkpoint_state.json").read_text())
+        if not isinstance(state, dict):
+            return None
+        step = int(state["completed_steps"])
+        if not all(state.get(key) == value for key, value in expected_contract.items()):
+            return None
+        for name in ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt"):
+            artifact = path / name
+            if not artifact.is_file() or artifact.stat().st_size == 0:
+                return None
+        if state.get("adapter_sha256") != sha256_file(
+            path / "adapter_model.safetensors"
+        ) or state.get("optimizer_sha256") != sha256_file(path / "optimizer.pt"):
+            return None
+        return step
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _save_checkpoint(
+    model,
+    optimizer,
+    out_dir: Path,
+    completed_steps: int,
+    rank: int,
+    contract: dict,
+) -> None:
     if rank != 0:
         return
     target = out_dir / f"checkpoint-{completed_steps:06d}"
-    if target.is_dir():
-        return
+    if target.exists():
+        if target.is_dir() and _checkpoint_step(target, contract) == completed_steps:
+            return
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
     temporary = out_dir / f".checkpoint-{completed_steps:06d}.tmp"
     shutil.rmtree(temporary, ignore_errors=True)
     temporary.mkdir(parents=True)
     model.save_pretrained(temporary, safe_serialization=True)
     compact_adapter(temporary)
     torch.save(optimizer.state_dict(), temporary / "optimizer.pt")
+    state = {
+        **contract,
+        "completed_steps": completed_steps,
+        "adapter_sha256": sha256_file(temporary / "adapter_model.safetensors"),
+        "optimizer_sha256": sha256_file(temporary / "optimizer.pt"),
+    }
     _atomic_json(
         temporary / "checkpoint_state.json",
-        {"schema": CHECKPOINT_SCHEMA, "completed_steps": completed_steps},
+        state,
     )
     temporary.rename(target)
     checkpoints = sorted(out_dir.glob("checkpoint-*"))
@@ -233,22 +294,14 @@ def _save_checkpoint(model, optimizer, out_dir: Path, completed_steps: int, rank
         shutil.rmtree(stale)
 
 
-def _latest_checkpoint(out_dir: Path, upper_bound: int) -> tuple[Path | None, int]:
+def _latest_checkpoint(
+    out_dir: Path, upper_bound: int, expected_contract: dict
+) -> tuple[Path | None, int]:
     candidates: list[tuple[int, Path]] = []
     for path in out_dir.glob("checkpoint-*"):
-        try:
-            state = json.loads((path / "checkpoint_state.json").read_text())
-            step = int(state["completed_steps"])
-            if (
-                state.get("schema") == CHECKPOINT_SCHEMA
-                and 0 < step < upper_bound
-                and (path / "adapter_config.json").is_file()
-                and (path / "adapter_model.safetensors").is_file()
-                and (path / "optimizer.pt").is_file()
-            ):
-                candidates.append((step, path))
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-            continue
+        step = _checkpoint_step(path, expected_contract)
+        if step is not None and 0 < step < upper_bound:
+            candidates.append((step, path))
     candidates.sort(key=lambda item: item[0])
     return (candidates[-1][1], candidates[-1][0]) if candidates else (None, 0)
 
@@ -308,7 +361,10 @@ def train(args: argparse.Namespace) -> None:
     if args.start_step == 0 and (has_parent_adapter or has_parent_optimizer):
         raise ValueError("parent adapter/optimizer require a positive start step")
 
-    local_checkpoint, local_step = _latest_checkpoint(out_dir, args.target_steps)
+    checkpoint_contract = _checkpoint_contract(args, config, world_size)
+    local_checkpoint, local_step = _latest_checkpoint(
+        out_dir, args.target_steps, checkpoint_contract
+    )
     resume_adapter = local_checkpoint or (Path(args.resume_adapter) if args.resume_adapter else None)
     completed_steps = local_step or args.start_step
     if completed_steps >= args.target_steps:
@@ -501,7 +557,14 @@ def train(args: argparse.Namespace) -> None:
             if world_size > 1:
                 dist.barrier()
             if (step + 1) % config.checkpoint_every == 0:
-                _save_checkpoint(model, optimizer, out_dir, step + 1, rank)
+                _save_checkpoint(
+                    model,
+                    optimizer,
+                    out_dir,
+                    step + 1,
+                    rank,
+                    checkpoint_contract,
+                )
             if world_size > 1:
                 dist.barrier()
 
