@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,11 +28,16 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     (work / "models/m1").mkdir(parents=True)
     (work / "models/m2").mkdir(parents=True)
     fake_bin.mkdir()
-    (root / "scripts/run_generalization.sh").write_text(
-        (ROOT / "scripts/run_generalization.sh").read_text(encoding="utf-8"),
+    (root / "scripts/run_additional_experiments.sh").write_text(
+        (ROOT / "scripts/run_additional_experiments.sh").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    (root / "configs/domain_transfer.json").write_text("{}\n", encoding="utf-8")
+    for name in (
+        "domain_transfer.json",
+        "generalization_dr_grpo.json",
+        "generalization_rloo.json",
+    ):
+        (root / "configs" / name).write_text("{}\n", encoding="utf-8")
     (root / "scripts/setup_env.sh").write_text(
         'export GROUP_VOLUME="$TEST_WORK"\n'
         'export OM_WORK="$TEST_WORK"\n'
@@ -47,7 +54,10 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "  src/model_matrix.py)\n"
         "    case \" $* \" in\n"
         "      *' list-models '*) printf 'm1\\nm2\\n' ;;\n"
+        "      *'domain_transfer.json experiment-field datasets '*) printf 'gsm8k mbpp kk arc-challenge\\n' ;;\n"
         "      *' experiment-field datasets '*) printf 'gsm8k mbpp\\n' ;;\n"
+        "      *'generalization_dr_grpo.json experiment-field policy_method '*) printf 'dr_grpo\\n' ;;\n"
+        "      *'generalization_rloo.json experiment-field policy_method '*) printf 'rloo\\n' ;;\n"
         "      *' experiment-field policy_method '*) printf 'grpo\\n' ;;\n"
         "      *' experiment-field seeds '*) printf '0 1 2\\n' ;;\n"
         "      *' experiment-field drifts '*) printf '0 25 100 400\\n' ;;\n"
@@ -73,6 +83,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "      *' grpo-field clip_epsilon '*) printf '0.2\\n' ;;\n"
         "      *' grpo-field learning_rate '*) printf '1e-5\\n' ;;\n"
         "      *' grpo-field reference_kl_beta '*) printf '0.0\\n' ;;\n"
+        "      *'generalization_rloo.json grpo-field epochs_per_batch '*) printf '1\\n' ;;\n"
         "      *' grpo-field epochs_per_batch '*) printf '2\\n' ;;\n"
         "      *' grpo-field max_grad_norm '*) printf '1.0\\n' ;;\n"
         "      *' grpo-field advantage_epsilon '*) printf '1e-4\\n' ;;\n"
@@ -101,7 +112,12 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     executable(
         fake_bin / "nvidia-smi",
         "#!/usr/bin/env bash\n"
-        + "printf 'NVIDIA H100 80GB HBM3\\n'\n" * gpu_count,
+        "case \"$*\" in\n"
+        "  *memory.used*) "
+        + "printf '0\\n'\n" * gpu_count
+        + "    ;;\n  *) "
+        + "printf 'NVIDIA H100 80GB HBM3\\n'\n" * gpu_count
+        + "    ;;\nesac\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "fixture@example.com"], cwd=root, check=True)
@@ -112,13 +128,15 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "TEST_WORK": str(work),
+        "ADDITIONAL_NODE_TAG": "test-node",
+        "ADDITIONAL_SKIP_PROVISION": "1",
     }
 
 
-def test_launcher_runs_every_pinned_model_with_one_shared_matrix(tmp_path: Path) -> None:
+def test_launcher_runs_all_generalization_strata_in_order(tmp_path: Path) -> None:
     root, env = checkout(tmp_path)
     result = subprocess.run(
-        ["/bin/bash", "scripts/run_generalization.sh"],
+        ["/bin/bash", "scripts/run_additional_experiments.sh"],
         cwd=root,
         env=env,
         text=True,
@@ -128,17 +146,21 @@ def test_launcher_runs_every_pinned_model_with_one_shared_matrix(tmp_path: Path)
     )
     assert result.returncode == 0, result.stdout + result.stderr
     phases = (Path(env["TEST_WORK"]) / "phases").read_text().splitlines()
-    assert len(phases) == 2
+    assert len(phases) == 6
     assert phases[0].startswith("generalization-grpo-v1-grpo-m1|")
     assert phases[1].startswith("generalization-grpo-v1-grpo-m2|")
-    assert all("|gsm8k mbpp|0 1 2|0 25 100 400|" in row for row in phases)
-    assert all("/contracts/generalization-grpo-v1-" in row for row in phases)
+    assert phases[2].startswith("method-dr-grpo-v1-dr_grpo-m1|")
+    assert phases[3].startswith("method-dr-grpo-v1-dr_grpo-m2|")
+    assert phases[4].startswith("method-rloo-v1-rloo-m1|")
+    assert phases[5].startswith("method-rloo-v1-rloo-m2|")
+    assert "|gsm8k mbpp kk arc-challenge|0 1 2|0 25 100 400|" in phases[0]
+    assert all("|gsm8k mbpp|0 1 2|0 25 100 400|" in row for row in phases[2:])
 
 
 def test_launcher_rejects_non_four_h100_node(tmp_path: Path) -> None:
     root, env = checkout(tmp_path, gpu_count=3)
     result = subprocess.run(
-        ["/bin/bash", "scripts/run_generalization.sh"],
+        ["/bin/bash", "scripts/run_additional_experiments.sh"],
         cwd=root,
         env=env,
         text=True,
@@ -149,3 +171,28 @@ def test_launcher_rejects_non_four_h100_node(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "exactly four H100 GPUs required" in result.stdout
     assert not (Path(env["TEST_WORK"]) / "phases").exists()
+
+
+def test_launcher_does_nothing_until_primary_lock_is_released(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    lock_path = Path(env["TEST_WORK"]) / "locks/rlvr-test-node.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_stream = lock_path.open("w")
+    fcntl.flock(lock_stream, fcntl.LOCK_EX)
+    process = subprocess.Popen(
+        ["/bin/bash", "scripts/run_additional_experiments.sh"],
+        cwd=root,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    time.sleep(0.2)
+    assert process.poll() is None
+    assert not (Path(env["TEST_WORK"]) / "phases").exists()
+
+    fcntl.flock(lock_stream, fcntl.LOCK_UN)
+    lock_stream.close()
+    output, _ = process.communicate(timeout=20)
+    assert process.returncode == 0, output
+    assert len((Path(env["TEST_WORK"]) / "phases").read_text().splitlines()) == 6

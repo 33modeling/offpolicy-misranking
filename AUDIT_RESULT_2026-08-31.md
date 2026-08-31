@@ -58,10 +58,10 @@ Date: 2026-08-31 KST
    broad generalization. The registered extension adds Mistral and OLMo 2,
    arithmetic/code/logic/science verifiers, and distinct GRPO, Dr.GRPO, and
    sequence-level RLOO objectives without pooling unlike methods.
-6. **Missing launch provisioning.** The generalization launcher assumed its
-   snapshots existed while the old provisioner prepared only the primary Qwen
-   study. `scripts/provision_generalization.sh` now downloads pinned model/data
-   snapshots and qualifies them before GPU launch.
+6. **Fragmented additional launch.** Model/domain and method checks are distinct
+   generalization factors, but separate public launch/provision wrappers made
+   them look like unrelated objectives. `scripts/run_additional_experiments.sh`
+   now queues, provisions, qualifies, and runs the entire registered extension.
 
 ## Verification evidence
 
@@ -69,12 +69,12 @@ Executed after the final fixes:
 
 ```text
 python -m pytest -q
-76 passed in 10.38s
+77 passed in 11.15s
 
 python -m pytest -q tests/test_generalization_launcher.py \
   tests/test_model_matrix.py tests/test_grpo_policy.py \
   tests/test_regime_contract.py tests/test_rlvr_launcher.py
-22 passed in 1.17s
+23 passed in 2.02s
 
 python -m compileall -q src tests
 ruff check --select E9,F63,F7,F82 src tests
@@ -101,26 +101,17 @@ Additional runtime/data evidence:
 ## Launch boundaries
 
 The audit host has one 6 GB RTX 3050, not four H100s, so it must not start or
-pretend to validate a production training cell. On an online shared-volume
-shell, prepare the new snapshots once:
+pretend to validate a production training cell. Do not modify the checkout that
+is running `295dfea`. From a separate clean checkout on each four-H100 node, run:
 
 ```bash
-git pull
-bash scripts/provision_generalization.sh
+bash scripts/run_additional_experiments.sh
 ```
 
-Then run the same selected command on each of the three four-H100 nodes:
-
-```bash
-bash scripts/run_generalization.sh
-# After the full GRPO matrix, for the registered method slice:
-bash scripts/run_method_robustness.sh
-```
-
-The shared `flock` family queue assigns each seed/dataset family once. Every
-family consumes all four GPUs on its node and preserves the ordered
-`0 -> 25 -> 100 -> 400` checkpoint lineage. Do not pull the new revision into
-the already-running `295dfea` worktrees.
+The script waits for the primary node lock and idle GPUs before it touches
+snapshots or starts work. The shared `flock` family queue assigns each
+seed/dataset family once. Every family consumes all four GPUs on its node and
+preserves the ordered `0 -> 25 -> 100 -> 400` checkpoint lineage.
 
 ## Residual risks
 

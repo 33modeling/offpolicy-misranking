@@ -80,9 +80,9 @@ def test_transfer_config_rejects_wrong_types_before_launch() -> None:
             raise AssertionError("wrongly typed experiment setting was accepted")
 
 
-def test_method_robustness_config_is_a_separate_dr_grpo_slice() -> None:
+def test_generalization_dr_grpo_config_is_a_separate_method_slice() -> None:
     root = Path(__file__).resolve().parents[1]
-    config = _load_config(root / "configs/method_robustness.json")
+    config = _load_config(root / "configs/generalization_dr_grpo.json")
     experiment = config["experiment"]
     assert experiment["policy_method"] == "dr_grpo"
     assert experiment["datasets"] == ["gsm8k", "mbpp"]
@@ -91,7 +91,7 @@ def test_method_robustness_config_is_a_separate_dr_grpo_slice() -> None:
 
 def test_rloo_config_is_sequence_level_and_single_epoch() -> None:
     root = Path(__file__).resolve().parents[1]
-    config = _load_config(root / "configs/method_rloo.json")
+    config = _load_config(root / "configs/generalization_rloo.json")
     experiment = config["experiment"]
     assert experiment["policy_method"] == "rloo"
     assert experiment["datasets"] == ["gsm8k", "mbpp"]

@@ -110,18 +110,20 @@ The audited Qwen run updates only `readouts/rlvr-grpo-v2-mathverify`; the
 already-running `295dfea` jobs retain the legacy `readouts/rlvr-grpo` target.
 Neither protocol uses timestamped harvest directories.
 
-The separate `run_generalization.sh` entry point applies the same queue and
-artifact contracts to Mistral-7B-Instruct-v0.3 and OLMo-2-1124-7B-Instruct over
-GSM8K, MBPP, Knights-and-Knaves, and ARC-Challenge. All three nodes run the same
-command. Each family is claimed once, and every positive checkpoint in that
-family resumes from its immediate predecessor. The launcher binds the clean Git
-commit, full model revision and file hashes, dataset snapshot hashes, normalized
-prompt split hashes, verifier runtime self-tests, and all hyperparameters into
-an immutable per-model matrix document. Results are written below
-`$OM_WORK/results/generalization-grpo-v1/` and cannot be mistaken for the
-primary Qwen result bundle.
+The single `run_additional_experiments.sh` entry point waits on the existing
+node-specific primary lock, provisions immutable shared snapshots under a
+global lock, and applies the same queue and artifact contracts to every
+additional stratum. The GRPO stratum varies Mistral-7B-Instruct-v0.3 and
+OLMo-2-1124-7B-Instruct over GSM8K, MBPP, Knights-and-Knaves, and ARC-Challenge.
+The method stratum uses those models and the GSM8K/MBPP pair to compare GRPO,
+Dr.GRPO, and RLOO. These are distinct generalization factors, not separate paper
+objectives and not pooled estimates.
 
-`run_method_robustness.sh` runs separately registered Dr.GRPO and RLOO slices
-on both model families and the GSM8K/MBPP math/code pair. Their roots are below
-`$OM_WORK/{runs,results}/method-{dr-grpo,rloo}-v1/`; neither reuses policy
-checkpoints or generated artifacts from another method.
+All three nodes run the same command. Each family is claimed once, and every
+positive checkpoint resumes from its immediate predecessor. The launcher binds
+the clean Git commit, full model revision and file hashes, dataset snapshot
+hashes, normalized prompt split hashes, verifier runtime self-tests, and all
+hyperparameters into an immutable per-model matrix document. Results remain in
+method-specific roots below `$OM_WORK/results/{generalization-grpo-v1,
+method-dr-grpo-v1,method-rloo-v1}/`; no policy checkpoint or generated artifact
+is reused across methods or mixed with the primary Qwen bundle.
