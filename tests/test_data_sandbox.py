@@ -15,6 +15,27 @@ assert _code_reward("```python\ndef add(a, b): return a + b\n```", "assert add(2
     1.0 if available else 0.0
 )
 assert _code_reward("```python\ndef add(a, b): return 0\n```", "assert add(2, 3) == 5") == 0.0
+assert _code_reward("```python\nraise SystemExit(0)\n```", "assert False") == 0.0
+assert _code_reward(
+    """```python
+import os
+for fd in range(3, 64):
+    try:
+        os.write(fd, b"VERIFIED")
+    except OSError:
+        pass
+os._exit(0)
+```""",
+    "assert False",
+) == 0.0
+assert _code_reward(
+    """```python
+import sys
+sys.modules["builtins"].len = lambda _: 0
+def add(a, b): return 0
+```""",
+    "assert add(2, 3) == 5",
+) == 0.0
 
 if available:
     assert _run_untrusted_python("open('/home/kms/.zshrc').read()") is not None

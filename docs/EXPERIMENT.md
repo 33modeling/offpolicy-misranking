@@ -3,13 +3,15 @@
 ## Policy update
 
 At optimizer step `t`, every one of four distributed ranks selects one prompt
-and samples `K=8` responses from the current policy. The exact-answer or runtime
-verifier produces rewards `r_i`. Within each prompt group:
+and samples `K=8` responses from the current policy. The mathematical
+equivalence, structured-answer, or isolated runtime verifier produces rewards
+`r_i`. Within each prompt group:
 
 ```text
 A_i = (r_i - mean(r)) / (std(r) + 1e-4)
 ratio_i,u = exp(log pi_theta(a_i,u|h_i,u) - log pi_old(a_i,u|h_i,u))
-L = -mean_i,u min(ratio_i,u A_i, clip(ratio_i,u, 0.8, 1.2) A_i)
+L = -(1/G) sum_i (1/|o_i|) sum_u
+    min(ratio_i,u A_i, clip(ratio_i,u, 0.8, 1.2) A_i)
 ```
 
 The old token log probabilities are captured when responses are generated.
@@ -18,6 +20,35 @@ clipped ratio against the frozen sampling policy. Gradients are averaged by DDP
 across all four ranks. No reference answer text is used as a supervised label.
 The registered reference-model KL coefficient is zero; policy movement is
 controlled by the old-policy ratio clip and the policy-step sweep.
+
+The training-method robustness slice uses Dr.GRPO. For the same sampled group,
+it sets `A_i = r_i - mean(r)` and divides each response's summed clipped token
+surrogate by the fixed `max_new_tokens=512` budget rather than its realized
+length:
+
+```text
+L_Dr = -(1/G) sum_i (1/512) sum_u
+       min(ratio_i,u A_i, clip(ratio_i,u, 0.8, 1.2) A_i).
+```
+
+This changes two optimization normalizers only. Sampling, verifier rewards,
+four-rank DDP, policy-ratio clipping, optimizer, LoRA parameterization, and the
+0/25/100/400 chain remain fixed. The implementation records
+`training_objective=dr_grpo`, and the policy validator rejects it unless the
+caller explicitly requests that method.
+
+The second robustness method is sequence-level RLOO. For $G=8$ online
+responses it uses
+
+```text
+b_i = (1/(G-1)) sum_(j != i) r_j
+L_RLOO = -(1/G) sum_i (r_i - b_i) sum_u log pi_theta(a_i,u | h_i,u).
+```
+
+RLOO uses exactly one epoch over each freshly sampled group, no old-policy
+ratio clipping, and no response-length normalization. The zero reference-KL
+coefficient is retained. Its manifest records
+`training_objective=rloo` and `policy_update=reinforce_leave_one_out`.
 
 ## Checkpoint chain
 
@@ -63,12 +94,11 @@ policy_step_N/
 `DONE` is written only after the policy contract, rollout contracts, score and
 oracle protocols, exact prompt coverage, and required artifacts pass.
 
-A completed GRPO run with an older analysis schema may take the analysis-only
-migration path. That path first validates hash-bound generation manifests, the
-GRPO policy, exact candidate coverage, and R/A/B-compatible gradient tensors.
-It then recomputes only off-policy scores, oracle scores, and the report. It does
-not regenerate rollouts or update the policy, and records source and
-postprocessing commits separately.
+The audited launchers disable implicit analysis-only migration. In particular,
+the `v1` exact-string mathematical verifier and the `v2-mathverify` symbolic
+equivalence verifier have separate run and readout roots. A future migration
+must use an explicit reviewed launcher and may change analysis provenance only;
+it cannot cross a reward, dataset, policy, or generation protocol boundary.
 
 ## Multi-node execution
 
@@ -76,5 +106,22 @@ postprocessing commits separately.
 simultaneously against the same `GROUP_VOLUME`; `run_matrix.sh` locks an entire
 seed/dataset family, preserving the ordered checkpoint chain and preventing
 duplicate jobs. Report collection is separately locked and content-addressed.
-It updates the single `readouts/rlvr-grpo` bundle in place and does not retain
-timestamped harvest directories.
+The audited Qwen run updates only `readouts/rlvr-grpo-v2-mathverify`; the
+already-running `295dfea` jobs retain the legacy `readouts/rlvr-grpo` target.
+Neither protocol uses timestamped harvest directories.
+
+The separate `run_generalization.sh` entry point applies the same queue and
+artifact contracts to Mistral-7B-Instruct-v0.3 and OLMo-2-1124-7B-Instruct over
+GSM8K, MBPP, Knights-and-Knaves, and ARC-Challenge. All three nodes run the same
+command. Each family is claimed once, and every positive checkpoint in that
+family resumes from its immediate predecessor. The launcher binds the clean Git
+commit, full model revision and file hashes, dataset snapshot hashes, normalized
+prompt split hashes, verifier runtime self-tests, and all hyperparameters into
+an immutable per-model matrix document. Results are written below
+`$OM_WORK/results/generalization-grpo-v1/` and cannot be mistaken for the
+primary Qwen result bundle.
+
+`run_method_robustness.sh` runs separately registered Dr.GRPO and RLOO slices
+on both model families and the GSM8K/MBPP math/code pair. Their roots are below
+`$OM_WORK/{runs,results}/method-{dr-grpo,rloo}-v1/`; neither reuses policy
+checkpoints or generated artifacts from another method.

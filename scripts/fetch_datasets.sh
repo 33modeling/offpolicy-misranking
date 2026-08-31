@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 공용 데이터셋을 $DATASETS_DIR(기본 /group-volume/datasets)에 jsonl로 받아둔다.
 # 오프라인 컴퓨트 노드가 그대로 읽는 배치본 — 온라인/미러 되는 셸에서 실행.
-#   bash scripts/fetch_datasets.sh              # 기본 (mbpp math500 gsm8k kk)
+#   bash scripts/fetch_datasets.sh              # 기본 (registered non-APPS sets)
 #   bash scripts/fetch_datasets.sh mbpp         # 골라서
 # 이미 있으면 스킵. HF 실패 시 hf-mirror.com 폴백.
 set -uo pipefail
@@ -12,7 +12,7 @@ export OM_ONLINE=1
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || PY=python3
-TARGETS="${*:-mbpp math500 gsm8k kk}"   # apps·dapo-math는 이름 명시 시에만
+TARGETS="${*:-mbpp math500 gsm8k kk arc-challenge}" # apps·dapo-math는 명시 시에만
 mkdir -p "$DATASETS_DIR"
 echo "[fetch] DATASETS_DIR=$DATASETS_DIR → $TARGETS"
 
@@ -91,33 +91,45 @@ tmp.replace(out / "mbpp.jsonl")
 print("mbpp.jsonl:", n, "rows")'; then fail=1; continue; fi
       _manifest mbpp google-research-datasets/mbpp "$rev" "$file" "all published splits, full config" ;;
     math500)
-      if [ -e "$DATASETS_DIR/math500/math500_test.jsonl" ]; then echo "[fetch] math500 있음, 스킵"; continue; fi
-      _fetch math500 '
+      rev=6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be
+      file="$DATASETS_DIR/math500/math500_test.jsonl"
+      manifest="$DATASETS_DIR/math500/dataset_manifest.json"
+      if _snapshot_ok "$manifest" "$rev" "$file"; then
+        echo "[fetch] math500 고정 스냅샷 있음, 스킵"
+      elif ! _fetch math500 '
 import json, os, sys
 from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "math500"; out.mkdir(parents=True, exist_ok=True)
-ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
+ds = load_dataset("HuggingFaceH4/MATH-500", split="test",
+                  revision="6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be")
 tmp = out / ("math500_test.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for r in ds:
         f.write(json.dumps({"problem": r["problem"], "answer": str(r["answer"])}) + "\n")
 tmp.replace(out / "math500_test.jsonl")
-print("math500_test.jsonl:", len(ds), "rows")' || fail=1 ;;
+print("math500_test.jsonl:", len(ds), "rows")'; then fail=1; continue; fi
+      _manifest math500 HuggingFaceH4/MATH-500 "$rev" "$file" "test split" ;;
     gsm8k)
-      if [ -e "$DATASETS_DIR/gsm8k/gsm8k_train.jsonl" ]; then echo "[fetch] gsm8k 있음, 스킵"; continue; fi
-      _fetch gsm8k '
+      rev=740312add88f781978c0658806c59bc2815b9866
+      file="$DATASETS_DIR/gsm8k/gsm8k_train.jsonl"
+      manifest="$DATASETS_DIR/gsm8k/dataset_manifest.json"
+      if _snapshot_ok "$manifest" "$rev" "$file"; then
+        echo "[fetch] gsm8k 고정 스냅샷 있음, 스킵"
+      elif ! _fetch gsm8k '
 import json, os, sys
 from pathlib import Path
 from datasets import load_dataset
 out = Path(sys.argv[1]) / "gsm8k"; out.mkdir(parents=True, exist_ok=True)
-ds = load_dataset("openai/gsm8k", "main", split="train")
+ds = load_dataset("openai/gsm8k", "main", split="train",
+                  revision="740312add88f781978c0658806c59bc2815b9866")
 tmp = out / ("gsm8k_train.jsonl.tmp." + str(os.getpid()))
 with open(tmp, "w") as f:
     for r in ds:
         f.write(json.dumps({"question": r["question"], "answer": r["answer"]}) + "\n")
 tmp.replace(out / "gsm8k_train.jsonl")
-print("gsm8k_train.jsonl:", len(ds), "rows")' || fail=1 ;;
+print("gsm8k_train.jsonl:", len(ds), "rows")'; then fail=1; continue; fi
+      _manifest gsm8k openai/gsm8k "$rev" "$file" "main train split only" ;;
     kk)
       rev=2f68547989981b1af37cb3dde5fdefa847aa8619
       file="$DATASETS_DIR/kk/kk.jsonl"

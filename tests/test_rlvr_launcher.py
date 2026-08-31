@@ -35,8 +35,10 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         'export OM_WORK="$TEST_WORK"\n'
         'export VENV_DIR="$TEST_WORK/venv"\n'
         'export MODELS_DIR="$TEST_WORK/models"\n'
+        'export DATASETS_DIR="$TEST_WORK/data"\n'
     )
     executable(root / "scripts/check_data.sh", "#!/bin/sh\nexit 0\n")
+    executable(root / "scripts/qualify_primary_data.sh", "#!/bin/sh\nexit 0\n")
     (root / "scripts/check_27b_fla.py").write_text("print('fla-ok')\n")
     executable(
         root / "scripts/run_matrix.sh",
@@ -44,7 +46,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "python3 - <<'PY'\n"
         "import json, os\n"
         "p=os.environ['TEST_WORK']+'/phases.jsonl'\n"
-        "row={k:os.environ[k] for k in ('MODEL_PATH','REGIME_MODEL_TAG','REGIME_DATASETS','REGIME_SEEDS','REGIME_DRIFTS','GRPO_WORLD_SIZE','GRPO_GROUP_SIZE')}\n"
+        "row={k:os.environ[k] for k in ('MODEL_PATH','REGIME_MODEL_TAG','REGIME_DATASETS','REGIME_SEEDS','REGIME_DRIFTS','GRPO_WORLD_SIZE','GRPO_GROUP_SIZE','OM_ALLOW_ANALYSIS_UPGRADE')}\n"
         "with open(p,'a') as f: f.write(json.dumps(row)+'\\n')\n"
         "PY\n",
     )
@@ -84,14 +86,15 @@ def test_one_command_runs_exact_7b_and_27b_matrices(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     phases = [json.loads(line) for line in (Path(env["TEST_WORK"]) / "phases.jsonl").read_text().splitlines()]
     assert len(phases) == 2
-    assert phases[0]["REGIME_MODEL_TAG"] == "qwen3.8-27b-grpo-v1"
+    assert phases[0]["REGIME_MODEL_TAG"] == "qwen3.8-27b-grpo-v2-mathverify"
     assert phases[0]["REGIME_SEEDS"] == "0 1 2 3 4"
     assert phases[0]["REGIME_DRIFTS"] == "0 25 100 400"
-    assert phases[1]["REGIME_MODEL_TAG"] == "qwen2.5-7b-grpo-v1"
+    assert phases[1]["REGIME_MODEL_TAG"] == "qwen2.5-7b-grpo-v2-mathverify"
     assert phases[1]["REGIME_SEEDS"] == "0 1 2"
     assert phases[1]["REGIME_DRIFTS"] == "0 25 100 400"
     assert all(row["GRPO_WORLD_SIZE"] == "4" for row in phases)
     assert all(row["GRPO_GROUP_SIZE"] == "8" for row in phases)
+    assert all(row["OM_ALLOW_ANALYSIS_UPGRADE"] == "0" for row in phases)
     assert "harvested" in result.stdout
 
 

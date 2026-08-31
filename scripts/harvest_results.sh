@@ -7,8 +7,13 @@ source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[harvest-abort] venv missing: $PY"; exit 1; }
 
-RESULTS_7B="$OM_WORK/results/regime-qwen2.5-7b-grpo-v1"
-RESULTS_27B="$OM_WORK/results/regime-qwen3.8-27b-grpo-v1"
+RESULTS_7B="${RLVR_RESULTS_7B:-$OM_WORK/results/regime-qwen2.5-7b-grpo-v1}"
+RESULTS_27B="${RLVR_RESULTS_27B:-$OM_WORK/results/regime-qwen3.8-27b-grpo-v1}"
+READOUT_ID="${RLVR_READOUT_ID:-rlvr-grpo}"
+[[ "$READOUT_ID" =~ ^[a-zA-Z0-9._-]+$ ]] || {
+  echo "[harvest-abort] RLVR_READOUT_ID must be one safe path component"
+  exit 1
+}
 READOUTS="$OM_WORK/readouts"
 mkdir -p "$READOUTS" "$OM_WORK/locks" "$OM_WORK/results"
 command -v flock >/dev/null 2>&1 || { echo "[harvest-abort] flock missing"; exit 1; }
@@ -25,7 +30,7 @@ for root in "$RESULTS_7B" "$RESULTS_27B"; do
 done
 
 KEY=$(sha256sum "${inputs[@]}" | sha256sum | cut -d' ' -f1)
-target="$READOUTS/rlvr-grpo"
+target="$READOUTS/$READOUT_ID"
 if [ -s "$target/RESULTS.json" ] && [ -s "$target/MANIFEST.sha256" ] \
     && (cd "$target" && sha256sum -c MANIFEST.sha256 >/dev/null 2>&1); then
   old_key=$("$PY" - "$target/RESULTS.json" <<'PYEOF'
@@ -44,7 +49,7 @@ PYEOF
   fi
 fi
 
-temporary=$(mktemp -d "$READOUTS/.rlvr-grpo.XXXXXX")
+temporary=$(mktemp -d "$READOUTS/.$READOUT_ID.XXXXXX")
 GIT_HEAD=$(git rev-parse HEAD)
 "$PY" - "$RESULTS_27B" "$RESULTS_7B" "$temporary" "$GIT_HEAD" "$KEY" <<'PYEOF'
 import csv
@@ -90,7 +95,7 @@ PYEOF
   sha256sum -c MANIFEST.sha256 >/dev/null
 )
 
-previous="$READOUTS/.rlvr-grpo.previous.$$"
+previous="$READOUTS/.$READOUT_ID.previous.$$"
 trap 'rm -rf "$temporary"; [ ! -e "$previous" ] || { rm -rf "$target"; mv "$previous" "$target"; }' ERR
 [ ! -e "$target" ] || mv "$target" "$previous"
 mv "$temporary" "$target"
@@ -98,7 +103,9 @@ rm -rf "$previous"
 trap - ERR
 
 # Remove bundles and the pointer created by the superseded timestamped layout.
-find "$READOUTS" -mindepth 1 -maxdepth 1 -type d \
-  -name 'rlvr-grpo-[0-9]*' -exec rm -rf -- {} +
-rm -f "$OM_WORK/results/.rlvr-harvest-current"
+if [ "$READOUT_ID" = "rlvr-grpo" ]; then
+  find "$READOUTS" -mindepth 1 -maxdepth 1 -type d \
+    -name 'rlvr-grpo-[0-9]*' -exec rm -rf -- {} +
+  rm -f "$OM_WORK/results/.rlvr-harvest-current"
+fi
 echo "[harvest] published $target"

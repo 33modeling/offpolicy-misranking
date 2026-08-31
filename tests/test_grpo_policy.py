@@ -20,7 +20,11 @@ from train_policy_grpo import (
     _checkpoint_step,
     _latest_checkpoint,
     _save_checkpoint,
+    centered_group_advantages,
     clipped_grpo_loss,
+    policy_update_for_objective,
+    rloo_group_advantages,
+    rloo_loss,
     standardized_group_advantages,
     validate_policy_manifest,
 )
@@ -31,6 +35,10 @@ def test_group_advantages_are_centered_and_zero_for_constant_rewards() -> None:
     assert float(advantages.mean()) == pytest.approx(0.0, abs=1e-6)
     assert advantages.tolist()[0] < 0 < advantages.tolist()[1]
     assert standardized_group_advantages(torch.ones(8)).tolist() == [0.0] * 8
+    dr = centered_group_advantages(torch.tensor([0.0, 1.0, 1.0, 0.0]))
+    assert dr.tolist() == [-0.5, 0.5, 0.5, -0.5]
+    rloo = rloo_group_advantages(torch.tensor([0.0, 1.0, 1.0, 0.0]))
+    assert rloo.tolist() == pytest.approx([-2 / 3, 2 / 3, 2 / 3, -2 / 3])
 
 
 def test_clipped_grpo_has_the_correct_sign_and_asymmetric_clip() -> None:
@@ -38,7 +46,7 @@ def test_clipped_grpo_has_the_correct_sign_and_asymmetric_clip() -> None:
     loss, stats = clipped_grpo_loss(
         [positive], [torch.zeros(1)], torch.tensor([1.0]), 0.2
     )
-    assert float(loss) == pytest.approx(-1.2)
+    assert float(loss.detach()) == pytest.approx(-1.2)
     assert stats["clip_fraction"] == 1.0
     loss.backward()
     assert float(positive.grad) == 0.0  # positive improvement is capped
@@ -47,9 +55,25 @@ def test_clipped_grpo_has_the_correct_sign_and_asymmetric_clip() -> None:
     loss, _ = clipped_grpo_loss(
         [negative], [torch.zeros(1)], torch.tensor([-1.0]), 0.2
     )
-    assert float(loss) == pytest.approx(2.0)
+    assert float(loss.detach()) == pytest.approx(2.0)
     loss.backward()
-    assert float(negative.grad) > 0  # gradient descent lowers bad-response log-probability
+    assert float(negative.grad.detach()) > 0  # gradient descent lowers bad-response log-probability
+
+
+def test_dr_grpo_uses_a_fixed_token_budget_not_response_length() -> None:
+    current = torch.zeros(2, requires_grad=True)
+    loss, _ = clipped_grpo_loss(
+        [current], [torch.zeros(2)], torch.tensor([1.0]), 0.2, token_normalizer=8
+    )
+    assert float(loss.detach()) == pytest.approx(-0.25)
+
+
+def test_rloo_uses_sequence_log_probability_and_leave_one_out_baseline() -> None:
+    logps = torch.tensor([-0.2, -0.3], requires_grad=True)
+    loss = rloo_loss([logps], torch.tensor([2 / 3]))
+    assert float(loss.detach()) == pytest.approx(1 / 3)
+    loss.backward()
+    assert logps.grad.tolist() == pytest.approx([-2 / 3, -2 / 3])
 
 
 def _policy_artifact(path: Path, *, objective: str = "grpo", active: int = 1) -> None:
@@ -63,7 +87,11 @@ def _policy_artifact(path: Path, *, objective: str = "grpo", active: int = 1) ->
     manifest = {
         "schema": POLICY_SCHEMA,
         "training_objective": objective,
-        "policy_update": "clipped_policy_gradient",
+        "policy_update": (
+            policy_update_for_objective(objective)
+            if objective in {"grpo", "dr_grpo", "rloo"}
+            else "supervised_cross_entropy"
+        ),
         "reward_source": "verifier",
         "reference_kl_beta": 0.0,
         "supervised_loss": False,
@@ -94,6 +122,20 @@ def test_policy_manifest_rejects_sft_and_no_reward_variation(tmp_path: Path) -> 
     _policy_artifact(no_signal, active=0)
     with pytest.raises(ValueError, match="no nonzero-advantage"):
         validate_policy_manifest(no_signal, target_steps=25, world_size=4)
+
+    dr_grpo = tmp_path / "dr-grpo"
+    _policy_artifact(dr_grpo, objective="dr_grpo")
+    validate_policy_manifest(
+        dr_grpo, target_steps=25, world_size=4, training_objective="dr_grpo"
+    )
+    with pytest.raises(ValueError, match="training_objective"):
+        validate_policy_manifest(dr_grpo, target_steps=25, world_size=4)
+
+    rloo = tmp_path / "rloo"
+    _policy_artifact(rloo, objective="rloo")
+    validate_policy_manifest(
+        rloo, target_steps=25, world_size=4, training_objective="rloo"
+    )
 
 
 def test_latest_checkpoint_ignores_partial_and_target_checkpoint(tmp_path: Path) -> None:

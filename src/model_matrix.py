@@ -30,6 +30,7 @@ DOWNLOAD_PATTERNS = [
 ]
 
 EXPERIMENT_FIELDS = {
+    "policy_method",
     "datasets",
     "seeds",
     "drifts",
@@ -50,6 +51,19 @@ EXPERIMENT_FIELDS = {
     "attn",
     "skip_hybrid",
     "first_bootstrap",
+}
+
+GRPO_FIELDS = {
+    "world_size",
+    "group_size",
+    "clip_epsilon",
+    "learning_rate",
+    "reference_kl_beta",
+    "epochs_per_batch",
+    "max_grad_norm",
+    "advantage_epsilon",
+    "lora_rank",
+    "lora_alpha",
 }
 
 
@@ -87,11 +101,17 @@ def _load_config(config_path: Path) -> dict:
             raise ValueError(f"experiment.{key} must be a non-empty unique list")
     if not all(isinstance(value, str) and value for value in experiment["datasets"]):
         raise TypeError("experiment.datasets must contain non-empty strings")
+    if experiment["policy_method"] not in {"grpo", "dr_grpo", "rloo"}:
+        raise ValueError(
+            "experiment.policy_method must be 'grpo', 'dr_grpo', or 'rloo'"
+        )
     if experiment["drifts"][0] != 0 or any(
         isinstance(value, bool) or not isinstance(value, int) or value < 0
         for value in experiment["drifts"]
     ):
         raise ValueError("experiment.drifts must begin with integer positive control 0")
+    if experiment["drifts"] != sorted(experiment["drifts"]):
+        raise ValueError("experiment.drifts must be strictly increasing")
     if any(
         isinstance(value, bool) or not isinstance(value, int) or value < 0
         for value in experiment["seeds"]
@@ -131,6 +151,44 @@ def _load_config(config_path: Path) -> dict:
         raise ValueError("experiment.attn is unsupported")
     if not isinstance(experiment["skip_hybrid"], bool):
         raise TypeError("experiment.skip_hybrid must be boolean")
+    grpo = experiment.get("grpo")
+    if not isinstance(grpo, dict):
+        raise TypeError("experiment.grpo must be a JSON object")
+    missing_grpo = sorted(GRPO_FIELDS - set(grpo))
+    if missing_grpo:
+        raise ValueError(f"domain-transfer GRPO fields missing: {missing_grpo}")
+    if (
+        experiment["policy_method"] == "rloo"
+        and grpo["epochs_per_batch"] != 1
+    ):
+        raise ValueError("RLOO requires grpo.epochs_per_batch=1")
+    for key in (
+        "world_size",
+        "group_size",
+        "epochs_per_batch",
+        "lora_rank",
+        "lora_alpha",
+    ):
+        if isinstance(grpo[key], bool) or not isinstance(grpo[key], int) or grpo[key] <= 0:
+            raise ValueError(f"experiment.grpo.{key} must be a positive integer")
+    if grpo["group_size"] < 2:
+        raise ValueError("experiment.grpo.group_size must be at least two")
+    for key in (
+        "clip_epsilon",
+        "learning_rate",
+        "max_grad_norm",
+        "advantage_epsilon",
+    ):
+        if (
+            isinstance(grpo[key], bool)
+            or not isinstance(grpo[key], (int, float))
+            or grpo[key] <= 0
+        ):
+            raise ValueError(f"experiment.grpo.{key} must be positive numeric")
+    if not 0 < grpo["clip_epsilon"] < 1:
+        raise ValueError("experiment.grpo.clip_epsilon must be in (0, 1)")
+    if grpo["reference_kl_beta"] != 0.0:
+        raise ValueError("current verifier-reward trainer requires reference_kl_beta=0.0")
     return config
 
 
@@ -352,10 +410,19 @@ def main() -> None:
     p.add_argument("name", choices=["path", "lora_targets", "repository", "revision"])
     p = sub.add_parser("experiment-field")
     p.add_argument("name", choices=sorted(EXPERIMENT_FIELDS))
+    sub.add_parser("list-models")
+    p = sub.add_parser("grpo-field")
+    p.add_argument(
+        "name",
+        choices=sorted(GRPO_FIELDS),
+    )
     args = parser.parse_args()
 
     config = _load_config(args.config)
     specs = _load_specs(args.config)
+    if args.command == "list-models":
+        print("\n".join(specs))
+        return
     if args.command == "experiment-field":
         value = config["experiment"][args.name]
         if isinstance(value, list):
@@ -364,6 +431,9 @@ def main() -> None:
             print("1" if value else "0")
         else:
             print(value)
+        return
+    if args.command == "grpo-field":
+        print(config["experiment"]["grpo"][args.name])
         return
     if args.models_dir is None:
         parser.error("--models-dir or MODELS_DIR is required")

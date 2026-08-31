@@ -70,6 +70,8 @@ deduped = _dedupe_items([
     {"question": "other", "answer": "two"},
 ], "fixture")
 assert len(deduped) == 2
+assert reward("Reasoning\n#### 0.5", r"\frac{1}{2}") == 1.0
+assert reward("Reasoning\n#### 0.6", r"\frac{1}{2}") == 0.0
 try:
     _dedupe_items([
         {"question": "same", "answer": "one"},
@@ -84,7 +86,7 @@ config = json.loads((ROOT / "configs" / "domain_transfer.json").read_text())
 models = {row["key"]: row for row in config["models"]}
 assert set(models) == {"mistral7b", "olmo2-7b"}
 assert all(len(row["revision"]) == 40 for row in models.values())
-assert config["experiment"]["datasets"] == ["mbpp", "kk", "arc-challenge"]
+assert config["experiment"]["datasets"] == ["gsm8k", "mbpp", "kk", "arc-challenge"]
 assert config["experiment"]["fresh_k"] == 32
 assert config["experiment"]["fresh_k"] % config["experiment"]["micro_group"] == 0
 assert config["experiment"]["grpo"]["world_size"] == 4

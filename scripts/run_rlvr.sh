@@ -39,6 +39,9 @@ for model in "$MODEL_7B" "$MODEL_27B"; do
   done
 done
 
+export GSM8K_DIR="$DATASETS_DIR/gsm8k"
+export MATH500_DIR="$DATASETS_DIR/math500"
+bash scripts/qualify_primary_data.sh
 bash scripts/check_data.sh gsm8k 512 100
 bash scripts/check_data.sh math500 400 100
 
@@ -82,7 +85,10 @@ export OM_ATTN=eager
 export OM_SKIP_HYBRID=1
 export OM_SKIP_GPU_CHECK=0
 export OM_ALLOW_DIRTY=0
-export OM_ALLOW_ANALYSIS_UPGRADE=1
+# This audited reward protocol must never reuse artifacts produced by the
+# earlier exact-string verifier. Postprocessing migrations require a separate,
+# explicitly reviewed launcher rather than an implicit in-place upgrade.
+export OM_ALLOW_ANALYSIS_UPGRADE=0
 export OM_STALL_MINUTES=10
 export HYBRID_PROMPTS=24
 export K_CELL=8
@@ -131,7 +137,7 @@ for gpu in 0 1 2 3; do
   CUDA_VISIBLE_DEVICES="$gpu" "$PY" scripts/check_27b_fla.py | tee -a "$LOG"
 done
 export MODEL_PATH="$MODEL_27B"
-export REGIME_MODEL_TAG="qwen3.8-27b-grpo-v1"
+export REGIME_MODEL_TAG="qwen3.8-27b-grpo-v2-mathverify"
 export REGIME_DATASETS="gsm8k math500"
 export REGIME_SEEDS="0 1 2 3 4"
 export REGIME_DRIFTS="0 25 100 400"
@@ -142,7 +148,7 @@ run_phase 27b
 
 # The 7B policy is a lower-scale replication with three preregistered seeds.
 export MODEL_PATH="$MODEL_7B"
-export REGIME_MODEL_TAG="qwen2.5-7b-grpo-v1"
+export REGIME_MODEL_TAG="qwen2.5-7b-grpo-v2-mathverify"
 export REGIME_DATASETS="gsm8k math500"
 export REGIME_SEEDS="0 1 2"
 export REGIME_DRIFTS="0 25 100 400"
@@ -150,6 +156,9 @@ unset REGIME_N_TRAIN OM_GEN_BATCH
 export OM_LORA_TARGETS=q_proj,v_proj
 run_phase 7b
 
+export RLVR_RESULTS_27B="$OM_WORK/results/regime-qwen3.8-27b-grpo-v2-mathverify"
+export RLVR_RESULTS_7B="$OM_WORK/results/regime-qwen2.5-7b-grpo-v2-mathverify"
+export RLVR_READOUT_ID="rlvr-grpo-v2-mathverify"
 bash scripts/harvest_results.sh | tee -a "$LOG"
 echo "[rlvr] all matrices complete" | tee -a "$LOG"
-echo "[rlvr] final bundle: $OM_WORK/readouts/rlvr-grpo" | tee -a "$LOG"
+echo "[rlvr] final bundle: $OM_WORK/readouts/$RLVR_READOUT_ID" | tee -a "$LOG"

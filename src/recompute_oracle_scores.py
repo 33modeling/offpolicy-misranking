@@ -65,6 +65,7 @@ def validate_analysis_upgrade(run: Path, drift: int, world_size: int) -> dict:
             run / f"policy_step_{drift}",
             target_steps=drift,
             world_size=world_size,
+            training_objective=config.get("training_objective", "grpo"),
         )
     return generation
 

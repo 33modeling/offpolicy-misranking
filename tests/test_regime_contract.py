@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from regime_contract import (
     json_digest,
     mark_collection,
     prepare_run,
+    prompt_split_errors,
 )
 
 
@@ -41,6 +43,7 @@ def matrix_document(root: Path) -> dict:
         "qualification_sha256": "1" * 64,
         "datasets": {},
         "experiment": {
+            "policy_method": "grpo",
             "datasets": ["mbpp"],
             "seeds": [0],
             "drifts": [0, 25],
@@ -149,3 +152,41 @@ def test_collection_is_bound_to_runs_matrix_and_outputs() -> None:
         validation["validated_rows"] = 1
         marker.write_text(json.dumps(validation), encoding="utf-8")
         assert not collection_is_current(results, [run], matrix)
+
+
+def test_materialized_prompts_must_match_qualified_set_and_order() -> None:
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        root = Path(raw_tmp)
+        run = root / "run"
+        run.mkdir()
+        prompts = {
+            "train": [{"question": "train one"}, {"question": "train two"}],
+            "val": [{"question": "validation one"}],
+        }
+
+        def digest(rows: list[dict], *, ordered: bool) -> str:
+            hashes = [
+                hashlib.sha256(row["question"].encode()).hexdigest() for row in rows
+            ]
+            payload = "".join(hashes if ordered else sorted(hashes)).encode()
+            return hashlib.sha256(payload).hexdigest()
+
+        matrix = matrix_document(root)
+        matrix["datasets"] = {
+            "mbpp": {
+                "prompt_split": {
+                    "train_prompt_set_sha256": digest(prompts["train"], ordered=False),
+                    "train_prompt_order_sha256": digest(prompts["train"], ordered=True),
+                    "validation_prompt_set_sha256": digest(prompts["val"], ordered=False),
+                    "validation_prompt_order_sha256": digest(prompts["val"], ordered=True),
+                }
+            }
+        }
+        (run / "prompts.json").write_text(json.dumps(prompts), encoding="utf-8")
+        assert prompt_split_errors(run, matrix, "mbpp") == []
+
+        prompts["train"].reverse()
+        (run / "prompts.json").write_text(json.dumps(prompts), encoding="utf-8")
+        assert prompt_split_errors(run, matrix, "mbpp") == [
+            "prompts.train order differs from qualified snapshot"
+        ]

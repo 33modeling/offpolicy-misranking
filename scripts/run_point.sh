@@ -129,6 +129,12 @@ run_stage() { local dev="${GPUS[$1]:-$1}" lf="$2"; shift 2
 }
 DRIFT="${DRIFT:-100}"
 export DRIFT
+RLVR_METHOD="${RLVR_METHOD:-grpo}"
+case "$RLVR_METHOD" in
+  grpo|dr_grpo|rloo) ;;
+  *) echo "[abort] unsupported RLVR_METHOD=$RLVR_METHOD"; exit 2 ;;
+esac
+export RLVR_METHOD
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # 클러스터 노드들의 fused SDPA ULF 이력(C5·C6) — 어떤 경로로 실행해도 eager 기본.
 # 빠른 커널을 검증한 노드에서만 OM_ATTN=sdpa 로 명시 해제.
@@ -239,8 +245,20 @@ config = {
     "hybrid_prompts": env_int("HYBRID_PROMPTS", 24),
     "k_cell": env_int("K_CELL", 8),
     "seed": env_int("SEED", 0), "drift": env_int("DRIFT", 100),
-    "training_objective": "base_control" if env_int("DRIFT", 100) == 0 else "grpo",
-    "policy_update": "none" if env_int("DRIFT", 100) == 0 else "clipped_policy_gradient",
+    "training_objective": (
+        "base_control"
+        if env_int("DRIFT", 100) == 0
+        else os.environ.get("RLVR_METHOD", "grpo")
+    ),
+    "policy_update": (
+        "none"
+        if env_int("DRIFT", 100) == 0
+        else (
+            "reinforce_leave_one_out"
+            if os.environ.get("RLVR_METHOD", "grpo") == "rloo"
+            else "clipped_policy_gradient"
+        )
+    ),
     "reward_source": "none" if env_int("DRIFT", 100) == 0 else "verifier",
     "supervised_loss": False,
     "positive_only_filter": False,
@@ -371,6 +389,11 @@ trap cleanup EXIT INT TERM
 log "=== RLVR point start: $MODEL_PATH -> $OUT_ROOT (${NGPU} GPUs) ==="
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
 run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}" || exit 1
+if [ -n "${REGIME_MATRIX:-}" ]; then
+  "$PY" src/regime_contract.py check-prompts --matrix "$REGIME_MATRIX" \
+    --run "$OUT_ROOT" --dataset "$DATASET" || exit 1
+  log "[regime] qualified dataset prompt set and order validated"
+fi
 
 # A drift sweep must hold the behavior sample fixed.  Copy only after both
 # runs have immutable configs and identical prompt files, then revalidate the
@@ -480,7 +503,7 @@ POLICY_DIR=""
 if [ "$DRIFT" -gt 0 ]; then
   POLICY_DIR="$OUT_ROOT/policy_step_$DRIFT"
   GRPO_ARGS=(--model "$MODEL_PATH" --prompts "$OUT_ROOT/prompts.json"
-    --output "$POLICY_DIR" --target-steps "$DRIFT"
+    --output "$POLICY_DIR" --target-steps "$DRIFT" --objective "$RLVR_METHOD"
     --expected-world-size "${GRPO_WORLD_SIZE:-4}"
     --group-size "${GRPO_GROUP_SIZE:-8}"
     --clip-epsilon "${GRPO_CLIP_EPSILON:-0.2}"
@@ -498,23 +521,26 @@ if [ "$DRIFT" -gt 0 ]; then
       --resume-optimizer "${OM_GRPO_RESUME_OPTIMIZER:?}")
   fi
   verify_code_snapshot || exit 1
-  log "GRPO ▶ 4-GPU verifier-reward update to step $DRIFT"
+  log "$RLVR_METHOD ▶ 4-GPU verifier-reward update to step $DRIFT"
   if CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" -m torch.distributed.run \
       --standalone --nproc_per_node="$NGPU" src/train_policy_grpo.py \
       "${GRPO_ARGS[@]}" >> "$LOGS/grpo.log" 2>&1; then
-    log "GRPO ✔ target=$DRIFT"
+    log "$RLVR_METHOD ✔ target=$DRIFT"
   else
     rc=$?
-    log "GRPO ✘ target=$DRIFT rc=$rc"
+    log "$RLVR_METHOD ✘ target=$DRIFT rc=$rc"
     tail -20 "$LOGS/grpo.log" | tee -a "$LOGS/main.log"
     exit "$rc"
   fi
-  "$PY" - "$POLICY_DIR" "$DRIFT" "$NGPU" <<'PYEOF' || exit 1
+  "$PY" - "$POLICY_DIR" "$DRIFT" "$NGPU" "$RLVR_METHOD" <<'PYEOF' || exit 1
 import sys
 from pathlib import Path
 from train_policy_grpo import validate_policy_manifest
-validate_policy_manifest(Path(sys.argv[1]), target_steps=int(sys.argv[2]), world_size=int(sys.argv[3]))
-print("[grpo] policy contract validated")
+validate_policy_manifest(
+    Path(sys.argv[1]), target_steps=int(sys.argv[2]), world_size=int(sys.argv[3]),
+    training_objective=sys.argv[4],
+)
+print(f"[{sys.argv[4]}] policy contract validated")
 PYEOF
   POLICY_ARGS=(--adapter "$POLICY_DIR")
 else

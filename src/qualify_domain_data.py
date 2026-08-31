@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed qualification for the fixed non-math dataset snapshots."""
+"""Fail-closed qualification for fixed cross-domain dataset snapshots."""
 
 from __future__ import annotations
 
@@ -13,6 +13,20 @@ from pathlib import Path
 from data import load_prompts, reward
 
 SPECS = {
+    "gsm8k": {
+        "revision": "740312add88f781978c0658806c59bc2815b9866",
+        "repository": "openai/gsm8k",
+        "file": "gsm8k_train.jsonl",
+        "answer_prefix": None,
+        "env": "GSM8K_DIR",
+    },
+    "math500": {
+        "revision": "6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be",
+        "repository": "HuggingFaceH4/MATH-500",
+        "file": "math500_test.jsonl",
+        "answer_prefix": None,
+        "env": "MATH500_DIR",
+    },
     "mbpp": {
         "revision": "4bb6404fdc6cacfda99d4ac4205087b89d32030c",
         "repository": "google-research-datasets/mbpp",
@@ -89,6 +103,13 @@ def _verify_reward_runtime(dataset: str, raw_rows: list[dict], split: dict) -> d
         return {"kind": "bubblewrap-execution", "reference_rows": checked}
 
     gold = str(split["train"][0]["answer"])
+    if dataset in {"gsm8k", "math500"}:
+        canonical = f"Reasoning\n#### {gold}"
+        if reward(canonical, gold) != 1.0 or reward("Reasoning\n#### not-a-number", gold) != 0.0:
+            raise ValueError(f"{dataset}: positive/negative math reward self-test failed")
+        if reward("Reasoning\n#### 0.5", r"\frac{1}{2}") != 1.0:
+            raise ValueError(f"{dataset}: symbolic-equivalence reward self-test failed")
+        return {"kind": "math-verify-equivalence", "reference_rows": 1}
     if dataset == "kk":
         canonical = "#### " + ", ".join(
             f"{name} is a {role}" for name, role in (
@@ -147,7 +168,11 @@ def qualify(dataset: str, root: Path, n_train: int, n_val: int, seeds: list[int]
         if set(train_hashes) & set(val_hashes):
             raise ValueError(f"{dataset}: train/validation prompt 중복")
         answers = [str(r["answer"]) for part in split.values() for r in part]
-        if not all(a.lstrip().startswith(spec["answer_prefix"]) for a in answers):
+        if not all(answers):
+            raise ValueError(f"{dataset}: empty normalized answer")
+        if spec["answer_prefix"] is not None and not all(
+            a.lstrip().startswith(spec["answer_prefix"]) for a in answers
+        ):
             raise ValueError(f"{dataset}: reward contract 불일치")
         reward_runtime = _verify_reward_runtime(dataset, raw_rows, split)
     finally:
@@ -168,6 +193,8 @@ def qualify(dataset: str, root: Path, n_train: int, n_val: int, seeds: list[int]
             "seed": 0,
             "train_prompt_set_sha256": hashlib.sha256("".join(sorted(train_hashes)).encode()).hexdigest(),
             "validation_prompt_set_sha256": hashlib.sha256("".join(sorted(val_hashes)).encode()).hexdigest(),
+            "train_prompt_order_sha256": hashlib.sha256("".join(train_hashes).encode()).hexdigest(),
+            "validation_prompt_order_sha256": hashlib.sha256("".join(val_hashes).encode()).hexdigest(),
         },
         "experiment_seeds": seeds,
         "reward_runtime": reward_runtime,

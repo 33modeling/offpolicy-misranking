@@ -28,6 +28,31 @@ from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 
 POLICY_SCHEMA = "offpolicy-rlvr-policy/v1"
 CHECKPOINT_SCHEMA = "offpolicy-grpo-checkpoint/v1"
+RLVR_METHODS = ("grpo", "dr_grpo", "rloo")
+
+
+def policy_update_for_objective(objective: str) -> str:
+    if objective in {"grpo", "dr_grpo"}:
+        return "clipped_policy_gradient"
+    if objective == "rloo":
+        return "reinforce_leave_one_out"
+    raise ValueError(f"unsupported RLVR method: {objective}")
+
+
+def advantage_normalization_for_objective(objective: str) -> str:
+    return {
+        "grpo": "group_std",
+        "dr_grpo": "none",
+        "rloo": "leave_one_out",
+    }[objective]
+
+
+def token_normalization_for_objective(objective: str) -> str:
+    return {
+        "grpo": "response_length",
+        "dr_grpo": "fixed_generation_budget",
+        "rloo": "sequence_sum",
+    }[objective]
 
 
 @dataclass(frozen=True)
@@ -55,19 +80,58 @@ def standardized_group_advantages(
     return centered / (rewards.float().std(unbiased=False) + epsilon)
 
 
+def centered_group_advantages(rewards: torch.Tensor) -> torch.Tensor:
+    """Return Dr.GRPO centered rewards without per-question std scaling."""
+    if rewards.ndim != 1 or rewards.numel() < 2:
+        raise ValueError("Dr.GRPO requires a one-dimensional reward group with K >= 2")
+    values = rewards.float()
+    return values - values.mean()
+
+
+def rloo_group_advantages(rewards: torch.Tensor) -> torch.Tensor:
+    """Use every other online response as an unbiased per-prompt baseline."""
+    if rewards.ndim != 1 or rewards.numel() < 2:
+        raise ValueError("RLOO requires a one-dimensional reward group with K >= 2")
+    values = rewards.float()
+    return values - (values.sum() - values) / (values.numel() - 1)
+
+
+def rloo_loss(
+    sequence_logps: list[torch.Tensor], advantages: torch.Tensor
+) -> torch.Tensor:
+    """Sequence-level REINFORCE loss with a leave-one-out reward baseline."""
+    if len(sequence_logps) != advantages.numel() or not sequence_logps:
+        raise ValueError("RLOO log-prob groups and advantages must have equal lengths")
+    losses = []
+    for logps, advantage in zip(sequence_logps, advantages, strict=True):
+        if logps.ndim != 1 or logps.numel() == 0:
+            raise ValueError("each RLOO response must have non-empty token log-probs")
+        advantage = advantage.to(device=logps.device, dtype=logps.dtype)
+        losses.append(-advantage * logps.sum())
+    return torch.stack(losses).mean()
+
+
 def clipped_grpo_loss(
     current_logps: list[torch.Tensor],
     old_logps: list[torch.Tensor],
     advantages: torch.Tensor,
     clip_epsilon: float,
+    token_normalizer: int | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
-    """Compute the token-level clipped GRPO surrogate for one prompt group."""
+    """Compute a clipped group-policy surrogate for one prompt group.
+
+    Vanilla GRPO averages over each response length. Dr.GRPO instead passes the
+    fixed generation budget as ``token_normalizer``, eliminating response-length
+    reweighting while keeping gradient scale bounded across batches.
+    """
     if not 0 < clip_epsilon < 1:
         raise ValueError("clip epsilon must be in (0, 1)")
     if len(current_logps) != len(old_logps) or len(current_logps) != advantages.numel():
         raise ValueError("log-prob groups and advantages must have equal lengths")
     if not current_logps:
         raise ValueError("GRPO group cannot be empty")
+    if token_normalizer is not None and token_normalizer < 1:
+        raise ValueError("fixed token normalizer must be positive")
 
     losses: list[torch.Tensor] = []
     ratios: list[torch.Tensor] = []
@@ -82,7 +146,11 @@ def clipped_grpo_loss(
         clipped = ratio.clamp(1.0 - clip_epsilon, 1.0 + clip_epsilon)
         advantage = advantage.to(device=current.device, dtype=current.dtype)
         surrogate = torch.minimum(ratio * advantage, clipped * advantage)
-        losses.append(-surrogate.mean())
+        losses.append(
+            -surrogate.mean()
+            if token_normalizer is None
+            else -surrogate.sum() / token_normalizer
+        )
         ratios.append(ratio.detach())
         approximate_kls.append((old - current.detach()).mean())
 
@@ -104,15 +172,18 @@ def validate_policy_manifest(
     *,
     target_steps: int | None = None,
     world_size: int | None = None,
+    training_objective: str = "grpo",
     verify_hash: bool = True,
 ) -> dict:
-    """Fail closed unless an adapter was produced by verifier-reward GRPO."""
+    """Fail closed unless an adapter used the requested verifier-RL objective."""
+    if training_objective not in RLVR_METHODS:
+        raise ValueError(f"unsupported RLVR method: {training_objective}")
     manifest_path = adapter_dir / "policy_train.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     required = {
         "schema": POLICY_SCHEMA,
-        "training_objective": "grpo",
-        "policy_update": "clipped_policy_gradient",
+        "training_objective": training_objective,
+        "policy_update": policy_update_for_objective(training_objective),
         "reward_source": "verifier",
         "reference_kl_beta": 0.0,
         "supervised_loss": False,
@@ -216,7 +287,7 @@ def _checkpoint_contract(
 ) -> dict:
     return {
         "schema": CHECKPOINT_SCHEMA,
-        "training_objective": "grpo",
+        "training_objective": args.objective,
         "base_model": str(Path(args.model).resolve()),
         "seed": args.seed,
         "world_size": world_size,
@@ -338,8 +409,12 @@ def train(args: argparse.Namespace) -> None:
         lora_alpha=args.lora_alpha,
         checkpoint_every=args.checkpoint_every,
     )
+    if args.objective not in RLVR_METHODS:
+        raise ValueError(f"unsupported RLVR method: {args.objective}")
     if config.group_size < 2 or config.epochs_per_batch < 1 or args.target_steps < 1:
         raise ValueError("group size must be >=2 and epochs/target steps must be positive")
+    if args.objective == "rloo" and config.epochs_per_batch != 1:
+        raise ValueError("canonical sequence-level RLOO requires exactly one epoch per batch")
     if SAMPLING["top_p"] != 1.0:
         raise ValueError("canonical GRPO requires OM_TOP_P=1.0")
 
@@ -347,7 +422,10 @@ def train(args: argparse.Namespace) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     if (out_dir / "policy_train.json").is_file():
         validate_policy_manifest(
-            out_dir, target_steps=args.target_steps, world_size=world_size
+            out_dir,
+            target_steps=args.target_steps,
+            world_size=world_size,
+            training_objective=args.objective,
         )
         if rank == 0:
             print(f"[grpo] validated completed policy: {out_dir}", flush=True)
@@ -371,10 +449,13 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError("resume step must be smaller than target steps")
     if local_checkpoint is None and completed_steps:
         previous = validate_policy_manifest(
-            resume_adapter, target_steps=completed_steps, world_size=world_size
+            resume_adapter,
+            target_steps=completed_steps,
+            world_size=world_size,
+            training_objective=args.objective,
         )
-        if previous["training_objective"] != "grpo":
-            raise ValueError("resume policy is not GRPO")
+        if previous["training_objective"] != args.objective:
+            raise ValueError("resume policy uses a different RLVR method")
 
     model, tokenizer = load_model(args.model, device=f"cuda:{local_rank}")
     if resume_adapter:
@@ -466,12 +547,29 @@ def train(args: argparse.Namespace) -> None:
             sequences, rewards = _sample_group(
                 model, tokenizer, prompts[prompt_index], config, args.max_new_tokens
             )
-            with torch.no_grad():
-                old_logps = [
-                    _response_logps(model, sequence, int(chat_ids(tokenizer, prompts[prompt_index]["question"]).numel())).cpu()
-                    for sequence in sequences
-                ]
-            advantages = standardized_group_advantages(rewards, config.advantage_epsilon)
+            if args.objective == "rloo":
+                old_logps = [None] * len(sequences)
+                advantages = rloo_group_advantages(rewards)
+            else:
+                with torch.no_grad():
+                    old_logps = [
+                        _response_logps(
+                            model,
+                            sequence,
+                            int(
+                                chat_ids(
+                                    tokenizer, prompts[prompt_index]["question"]
+                                ).numel()
+                            ),
+                        ).cpu()
+                        for sequence in sequences
+                    ]
+                advantages = (
+                    standardized_group_advantages(rewards, config.advantage_epsilon)
+                    if args.objective == "grpo"
+                    else centered_group_advantages(rewards)
+                )
+            token_normalizer = args.max_new_tokens if args.objective == "dr_grpo" else None
 
             epoch_stats = None
             loss_value = 0.0
@@ -492,12 +590,23 @@ def train(args: argparse.Namespace) -> None:
                     sync_context = contextlib.nullcontext() if sync else ddp.no_sync()
                     with sync_context:
                         current_logp = _response_logps(ddp, sequence, response_start)
-                        sequence_loss, sequence_stats = clipped_grpo_loss(
-                            [current_logp],
-                            [old_logp],
-                            advantages[index : index + 1],
-                            config.clip_epsilon,
-                        )
+                        if args.objective == "rloo":
+                            sequence_loss = rloo_loss(
+                                [current_logp], advantages[index : index + 1]
+                            )
+                            sequence_stats = {
+                                "clip_fraction": 0.0,
+                                "mean_ratio": 1.0,
+                                "approx_kl": 0.0,
+                            }
+                        else:
+                            sequence_loss, sequence_stats = clipped_grpo_loss(
+                                [current_logp],
+                                [old_logp],
+                                advantages[index : index + 1],
+                                config.clip_epsilon,
+                                token_normalizer=token_normalizer,
+                            )
                         (sequence_loss / len(sequences)).backward()
                     count = int(current_logp.numel())
                     token_count += count
@@ -544,11 +653,18 @@ def train(args: argparse.Namespace) -> None:
                     "clip_fraction": float(local[6] / world_size),
                     "mean_ratio": float(local[7] / world_size),
                     "approx_kl": float(local[8] / world_size),
+                    "training_objective": args.objective,
+                    "advantage_normalization": advantage_normalization_for_objective(
+                        args.objective
+                    ),
+                    "token_normalization": token_normalization_for_objective(
+                        args.objective
+                    ),
                 }
                 stats_stream.write(json.dumps(row, sort_keys=True) + "\n")
                 stats_stream.flush()
                 print(
-                    f"[grpo] step {step + 1}/{args.target_steps} "
+                    f"[{args.objective}] step {step + 1}/{args.target_steps} "
                     f"reward={row['reward_mean']:.3f} active_groups="
                     f"{row['nonzero_advantage_groups']}/{world_size} "
                     f"loss={loss_value:.4f}",
@@ -574,8 +690,8 @@ def train(args: argparse.Namespace) -> None:
             torch.save(optimizer.state_dict(), out_dir / "optimizer.pt")
             manifest = {
                 "schema": POLICY_SCHEMA,
-                "training_objective": "grpo",
-                "policy_update": "clipped_policy_gradient",
+                "training_objective": args.objective,
+                "policy_update": policy_update_for_objective(args.objective),
                 "reward_source": "verifier",
                 "reference_kl_beta": 0.0,
                 "supervised_loss": False,
@@ -589,12 +705,19 @@ def train(args: argparse.Namespace) -> None:
                 "max_new_tokens": args.max_new_tokens,
                 "seed": args.seed,
                 "config": asdict(config),
+                "advantage_normalization": advantage_normalization_for_objective(
+                    args.objective
+                ),
+                "token_normalization": token_normalization_for_objective(args.objective),
                 "adapter_sha256": sha256_file(out_dir / "adapter_model.safetensors"),
                 **parent_hashes,
             }
             _atomic_json(out_dir / "policy_train.json", manifest)
             validate_policy_manifest(
-                out_dir, target_steps=args.target_steps, world_size=world_size
+                out_dir,
+                target_steps=args.target_steps,
+                world_size=world_size,
+                training_objective=args.objective,
             )
             for checkpoint in out_dir.glob("checkpoint-*"):
                 shutil.rmtree(checkpoint)
@@ -611,6 +734,7 @@ def train(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--objective", choices=RLVR_METHODS, default="grpo")
     parser.add_argument("--prompts", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--target-steps", type=int, required=True)

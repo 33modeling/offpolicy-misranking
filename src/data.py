@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import random
 import re
+from functools import lru_cache
 
 
 def _gsm8k_answer(ans: str) -> str:
@@ -47,8 +48,18 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     # 로컬 사본 — provision.sh($OM_DATA) 또는 fetch_datasets.sh($DATASETS_DIR/<이름>/)
     local_names = {"gsm8k": "gsm8k_train.jsonl", "math500": "math500_test.jsonl"}
     fname = local_names.get(dataset, "_none_")
-    for local in (Path(os.environ.get("OM_DATA", "")) / fname,
-                  Path(os.environ.get("DATASETS_DIR", "")) / dataset / fname):
+    explicit_env = {"gsm8k": "GSM8K_DIR", "math500": "MATH500_DIR"}.get(dataset)
+    explicit_root = (
+        Path(os.environ[explicit_env])
+        if explicit_env is not None and os.environ.get(explicit_env)
+        else None
+    )
+    local_candidates = [
+        explicit_root / fname if explicit_root else None,
+        Path(os.environ.get("OM_DATA", "")) / fname,
+        Path(os.environ.get("DATASETS_DIR", "")) / dataset / fname,
+    ]
+    for local in (candidate for candidate in local_candidates if candidate is not None):
         # '존재하는 첫 파일' 채택은 손상/빈 사본이 정상 사본을 가린다(E4형) —
         # 판독까지 성공해야 채택, 실패하면 다음 후보→일반 탐색으로 넘어간다
         if not local.is_file():
@@ -508,8 +519,20 @@ def _extract_code(text: str) -> str:
     return text[i:] if i != -1 else text
 
 
-def _run_untrusted_python(code: str, stdin: str = "", timeout: int = 8):
-    """Run generated code in a fail-closed bubblewrap sandbox."""
+def _run_untrusted_python(
+    code: str,
+    stdin: str = "",
+    timeout: int = 8,
+    tests: str | None = None,
+):
+    """Run generated code in a fail-closed bubblewrap sandbox.
+
+    Function tests are passed separately to a trusted in-sandbox harness. The
+    harness rejects process-control and dynamic-introspection escape APIs before
+    executing the candidate, so it cannot skip the trusted assertions while
+    returning a successful process status.
+    """
+    import base64
     import os
     import shutil
     import subprocess
@@ -535,7 +558,9 @@ def _run_untrusted_python(code: str, stdin: str = "", timeout: int = 8):
             command += ["--ro-bind", path, path]
     command += [
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-        "--chdir", "/tmp", python, "-I", "/runner.py", str(timeout), code,
+        "--chdir", "/tmp", python, "-I", "/runner.py", str(timeout),
+        base64.b64encode(code.encode()).decode(),
+        base64.b64encode(tests.encode()).decode() if tests is not None else "-",
     ]
 
     try:
@@ -559,8 +584,7 @@ def _run_untrusted_python(code: str, stdin: str = "", timeout: int = 8):
 
 def _code_reward(text: str, tests: str) -> float:
     """Run generated functions and asserts in an isolated sandbox."""
-    src = _extract_code(text) + "\n\n" + tests + "\n"
-    result = _run_untrusted_python(src)
+    result = _run_untrusted_python(_extract_code(text), tests=tests)
     return 1.0 if result is not None and result[0] == 0 else 0.0
 
 
@@ -608,6 +632,31 @@ def _arc_reward(text: str, gold: str) -> float:
     return 1.0 if pred is not None and pred.upper() == gold[4:].upper() else 0.0
 
 
+@lru_cache(maxsize=8192)
+def _parse_math_gold(gold: str):
+    from math_verify import parse
+
+    return parse(gold)
+
+
+def _math_reward(prediction: str, gold: str) -> float:
+    """Verify numeric or symbolic mathematical equivalence fail-closed."""
+    try:
+        from math_verify import parse, verify
+    except ImportError as exc:
+        raise RuntimeError(
+            "math-verify is required for verifier-reward math experiments"
+        ) from exc
+    try:
+        parsed_gold = _parse_math_gold(gold)
+        parsed_prediction = parse(prediction)
+        return 1.0 if parsed_gold and parsed_prediction and verify(
+            parsed_gold, parsed_prediction
+        ) else 0.0
+    except Exception:
+        return 0.0
+
+
 def reward(text: str, gold: str) -> float:
     if gold.lstrip().startswith("assert"):  # mbpp — 실행 채점
         return _code_reward(text, gold)
@@ -624,6 +673,8 @@ def reward(text: str, gold: str) -> float:
     if pred == gold:
         return 1.0
     try:  # 수치 동등 (예: 3.0 == 3)
-        return 1.0 if abs(float(pred) - float(gold)) < 1e-6 else 0.0
+        if abs(float(pred) - float(gold)) < 1e-6:
+            return 1.0
     except ValueError:
-        return 0.0
+        pass
+    return _math_reward(pred, gold)

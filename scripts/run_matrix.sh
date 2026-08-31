@@ -55,6 +55,8 @@ GRPO_MAX_GRAD_NORM_DEFAULT="${GRPO_MAX_GRAD_NORM:-1.0}"
 GRPO_ADVANTAGE_EPSILON_DEFAULT="${GRPO_ADVANTAGE_EPSILON:-1e-4}"
 GRPO_LORA_RANK_DEFAULT="${GRPO_LORA_RANK:-16}"
 GRPO_LORA_ALPHA_DEFAULT="${GRPO_LORA_ALPHA:-32}"
+RLVR_METHOD_DEFAULT="${RLVR_METHOD:-grpo}"
+export RLVR_METHOD="$RLVR_METHOD_DEFAULT"
 WATCH_INTERVAL_SECONDS="${REGIME_WATCH_INTERVAL_SECONDS:-15}"
 STALL_SECONDS="${REGIME_STALL_SECONDS:-$(( ${OM_STALL_MINUTES:-5} * 60 ))}"
 WATCH_KILL_GRACE_SECONDS="${REGIME_WATCH_KILL_GRACE_SECONDS:-5}"
@@ -129,8 +131,16 @@ expected = {
     "attn": os.environ.get("OM_ATTN", "eager"),
     "lora_targets": os.environ.get("OM_LORA_TARGETS"),
     "skip_hybrid": os.environ.get("OM_SKIP_HYBRID", "1"),
-    "training_objective": "base_control" if drift == 0 else "grpo",
-    "policy_update": "none" if drift == 0 else "clipped_policy_gradient",
+    "training_objective": "base_control" if drift == 0 else os.environ.get("RLVR_METHOD", "grpo"),
+    "policy_update": (
+        "none"
+        if drift == 0
+        else (
+            "reinforce_leave_one_out"
+            if os.environ.get("RLVR_METHOD", "grpo") == "rloo"
+            else "clipped_policy_gradient"
+        )
+    ),
     "reward_source": "none" if drift == 0 else "verifier",
     "supervised_loss": False,
     "positive_only_filter": False,
@@ -182,13 +192,13 @@ PYEOF
     done
     PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
       "$PY" - "$run/policy_step_$drift" "$drift" \
-        "$GRPO_WORLD_SIZE_DEFAULT" <<'PYEOF' >/dev/null 2>&1 || return 1
+        "$GRPO_WORLD_SIZE_DEFAULT" "$RLVR_METHOD_DEFAULT" <<'PYEOF' >/dev/null 2>&1 || return 1
 import sys
 from pathlib import Path
 from train_policy_grpo import validate_policy_manifest
 validate_policy_manifest(
     Path(sys.argv[1]), target_steps=int(sys.argv[2]), world_size=int(sys.argv[3]),
-    verify_hash=False,
+    training_objective=sys.argv[4], verify_hash=False,
 )
 PYEOF
   fi

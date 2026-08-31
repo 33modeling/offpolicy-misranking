@@ -19,8 +19,8 @@
     }
   ],
   "experiment": {
-    "policy_method": "grpo",
-    "datasets": ["gsm8k", "mbpp", "kk", "arc-challenge"],
+    "policy_method": "rloo",
+    "datasets": ["gsm8k", "mbpp"],
     "seeds": [0, 1, 2],
     "drifts": [0, 25, 100, 400],
     "n_train": 512,
@@ -46,7 +46,7 @@
       "clip_epsilon": 0.2,
       "learning_rate": 0.00001,
       "reference_kl_beta": 0.0,
-      "epochs_per_batch": 2,
+      "epochs_per_batch": 1,
       "max_grad_norm": 1.0,
       "advantage_epsilon": 0.0001,
       "lora_rank": 16,

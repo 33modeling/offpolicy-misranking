@@ -161,12 +161,22 @@ def build_matrix(
         raise ValueError("dataset qualification does not cover the exact experiment matrix")
     for dataset in experiment["datasets"]:
         row = qualification_rows[dataset]
+        split = row.get("prompt_split", {})
         if (
             row.get("status") != "qualified"
             or row.get("n_train") != experiment["n_train"]
             or row.get("n_val") != experiment["n_val"]
             or row.get("experiment_seeds") != experiment["seeds"]
             or not row.get("reward_runtime")
+            or not all(
+                isinstance(split.get(key), str) and len(split[key]) == 64
+                for key in (
+                    "train_prompt_set_sha256",
+                    "validation_prompt_set_sha256",
+                    "train_prompt_order_sha256",
+                    "validation_prompt_order_sha256",
+                )
+            )
         ):
             raise ValueError(f"{dataset}: qualification does not match matrix dimensions")
 
@@ -266,8 +276,18 @@ def expected_run_config(
         "skip_hybrid": "1" if experiment["skip_hybrid"] else "0",
         "seed": seed,
         "drift": drift,
-        "training_objective": "base_control" if drift == 0 else "grpo",
-        "policy_update": "none" if drift == 0 else "clipped_policy_gradient",
+        "training_objective": (
+            "base_control" if drift == 0 else experiment["policy_method"]
+        ),
+        "policy_update": (
+            "none"
+            if drift == 0
+            else (
+                "reinforce_leave_one_out"
+                if experiment["policy_method"] == "rloo"
+                else "clipped_policy_gradient"
+            )
+        ),
         "reward_source": "none" if drift == 0 else "verifier",
         "supervised_loss": False,
         "positive_only_filter": False,
@@ -282,6 +302,33 @@ def expected_run_config(
         "grpo_lora_rank": grpo["lora_rank"],
         "grpo_lora_alpha": grpo["lora_alpha"],
     }
+
+
+def prompt_split_errors(run: Path, matrix: dict, dataset: str) -> list[str]:
+    """Compare materialized prompts to the qualified ordered snapshot split."""
+    prompts = read_json(run / "prompts.json")
+    expected = matrix["datasets"][dataset]["prompt_split"]
+    errors = []
+    for split, prefix in (("train", "train"), ("val", "validation")):
+        rows = prompts.get(split)
+        if not isinstance(rows, list):
+            errors.append(f"prompts.{split} is not a list")
+            continue
+        hashes = [
+            hashlib.sha256(str(row.get("question", "")).strip().encode()).hexdigest()
+            for row in rows
+            if isinstance(row, dict)
+        ]
+        if len(hashes) != len(rows):
+            errors.append(f"prompts.{split} contains a non-object row")
+            continue
+        set_digest = hashlib.sha256("".join(sorted(hashes)).encode()).hexdigest()
+        order_digest = hashlib.sha256("".join(hashes).encode()).hexdigest()
+        if set_digest != expected.get(f"{prefix}_prompt_set_sha256"):
+            errors.append(f"prompts.{split} set differs from qualified snapshot")
+        if order_digest != expected.get(f"{prefix}_prompt_order_sha256"):
+            errors.append(f"prompts.{split} order differs from qualified snapshot")
+    return errors
 
 
 def config_errors(
@@ -413,6 +460,10 @@ def deep_validation(run: Path, matrix: dict, drift: int) -> dict:
     artifacts = load_complete_score_artifacts(run)
     report = read_json(run / "report.json")
     prompts = read_json(run / "prompts.json")
+    dataset = read_json(run / "run_config.json").get("dataset")
+    split_errors = prompt_split_errors(run, matrix, dataset)
+    if split_errors:
+        raise ValueError("; ".join(split_errors))
     if len(prompts.get("train", [])) != matrix["experiment"]["n_train"]:
         raise ValueError("prompts.json train size differs from matrix")
     if len(prompts.get("val", [])) != matrix["experiment"]["n_val"]:
@@ -430,6 +481,7 @@ def deep_validation(run: Path, matrix: dict, drift: int) -> dict:
             policy,
             target_steps=drift,
             world_size=int(matrix["experiment"]["grpo"]["world_size"]),
+            training_objective=matrix["experiment"]["policy_method"],
         )
         bound_names.extend(
             str(Path(f"policy_step_{drift}") / name)
@@ -576,6 +628,10 @@ def main() -> int:
     add_collection_arguments(collection_check)
     collection_mark = sub.add_parser("mark-collection")
     add_collection_arguments(collection_mark)
+    prompt_check = sub.add_parser("check-prompts")
+    prompt_check.add_argument("--matrix", type=Path, required=True)
+    prompt_check.add_argument("--run", type=Path, required=True)
+    prompt_check.add_argument("--dataset", required=True)
     args = parser.parse_args()
 
     try:
@@ -595,6 +651,11 @@ def main() -> int:
             return 0 if collection_is_current(args.results, args.runs, matrix) else 1
         if args.command == "mark-collection":
             mark_collection(args.results, args.runs, matrix)
+            return 0
+        if args.command == "check-prompts":
+            errors = prompt_split_errors(args.run, matrix, args.dataset)
+            if errors:
+                raise ValueError("; ".join(errors))
             return 0
         behavior_source = args.behavior_source.resolve() if args.behavior_source else None
         if args.command == "check-run":

@@ -47,7 +47,14 @@ def test_analysis_upgrade_accepts_only_complete_hash_bound_rab_inputs(
     result = recompute_oracle_scores.validate_analysis_upgrade(run, 25, 4)
     assert result["validated_rows"] == 48
     assert policy_calls == [
-        ((run / "policy_step_25",), {"target_steps": 25, "world_size": 4})
+        (
+            (run / "policy_step_25",),
+            {
+                "target_steps": 25,
+                "world_size": 4,
+                "training_objective": "grpo",
+            },
+        )
     ]
 
     torch.save({0: torch.ones(6, 3), 1: torch.ones(6, 3)}, run / "oracle_micro_groups.pt")
