@@ -74,6 +74,7 @@ def checkout(
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "OM_WORK": str(work),
+        "OM_REGIME_RESUME_WRAPPED": "1",
         "MODEL_14B": "/wrong/model",
         "OM_GPUS": "0",
         "OM_BEHAVIOR_SOURCE": "/wrong/behavior",

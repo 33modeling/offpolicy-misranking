@@ -17,6 +17,12 @@ source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || PY=python3
 
+# User-facing v4 is the canonical end-to-end workflow. The internal guard lets
+# go_offpolicy.sh call the original v4 resume stage without recursion.
+if [ "${OM_OFFPOLICY_WRAPPED:-0}" != "1" ]; then
+  exec bash scripts/go_offpolicy.sh "$@"
+fi
+
 # A post-run git pull may contain analysis-only changes. Re-enter through the
 # immutable generation snapshot recorded by existing run configs, so multi-day
 # partial artifacts resume instead of being quarantined as a new experiment.

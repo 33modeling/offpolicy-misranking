@@ -10,12 +10,65 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+source scripts/_report_cache.sh
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
 READOUTS_ROOT="$OM_WORK/readouts"
 mkdir -p "$READOUTS_ROOT" || {
   echo "[harvest-abort] readouts 경로 생성 실패: $READOUTS_ROOT" >&2
   exit 1
 }
+
+# Harvest is a global publication step. Multiple workers may arrive here at
+# once; only the first computes, and later workers reuse the exact validated
+# bundle when neither analysis code nor input artifacts changed.
+command -v flock >/dev/null 2>&1 || {
+  echo "[harvest-abort] flock command missing" >&2
+  exit 1
+}
+mkdir -p "$OM_WORK/locks" "$OM_WORK/results" || exit 1
+exec 8>"$OM_WORK/locks/harvest.lock"
+flock 8 || exit 1
+
+harvest_code=(
+  scripts/harvest.sh scripts/_report_cache.sh
+  src/kcurve_floor.py src/kcurve_all.py src/readout_summary.py
+  src/reversal_freq.py src/stats_extra.py src/run_select.py
+  src/gate_rules.py src/score_artifacts.py src/select_rules.py
+)
+harvest_inputs=()
+if [ -d "$OM_WORK/runs" ]; then
+  while IFS= read -r -d '' artifact; do
+    harvest_inputs+=("$artifact")
+  done < <(find "$OM_WORK/runs" -type f \
+    \( -name DONE -o -name '*.json' -o -name '*.jsonl' -o -name '*.pt' \) \
+    -print0 | sort -z)
+fi
+while IFS= read -r -d '' artifact; do
+  harvest_inputs+=("$artifact")
+done < <(find "$OM_WORK/results" -mindepth 2 -maxdepth 2 -type f \
+  \( -name 'TABLES.md' -o -name 'FRONTIER.md' -o -name 'frontier.json' \
+     -o -name 'REGIME.json' -o -name 'REGIME.csv' \
+     -o -name 'REGIME_SUMMARY.csv' -o -name 'FINAL_REPORT.md' \
+     -o -name '.regime_collection.json' \) -print0 | sort -z)
+harvest_key=$(report_cache_key "${harvest_code[@]}" -- "${harvest_inputs[@]}") \
+  || exit 1
+harvest_key=$(report_cache_key_values "$harvest_key" "harvest-schema=2") || exit 1
+HARVEST_CURRENT="$OM_WORK/results/.harvest-current"
+if [ -s "$HARVEST_CURRENT" ]; then
+  cached_key=$(sed -n '1p' "$HARVEST_CURRENT")
+  cached_dir=$(sed -n '2p' "$HARVEST_CURRENT")
+  if [ "$cached_key" = "$harvest_key" ] \
+     && [[ "$cached_dir" == "$READOUTS_ROOT/"* ]] \
+     && [ -s "$cached_dir/HARVEST_STATUS.md" ] \
+     && [ -s "$cached_dir/HARVEST_MANIFEST.sha256" ] \
+     && (cd "$cached_dir" && sha256sum -c HARVEST_MANIFEST.sha256 >/dev/null 2>&1); then
+    echo "== harvest 입력 변경 없음; 중복 계산 생략"
+    echo "== 전달할 폴더 하나: $cached_dir"
+    ls "$cached_dir"
+    exit 0
+  fi
+fi
+
 STAMP_DIR=$(mktemp -d "$READOUTS_ROOT/$(date '+%Y-%m-%d_%H%M%S')-harvest.XXXXXX") || {
   echo "[harvest-abort] 고유 수확 폴더 생성 실패" >&2
   exit 1
@@ -228,6 +281,19 @@ fi
   echo "- source_commit: $(git rev-parse HEAD 2>/dev/null || echo unknown)"
   echo "- generated_at: $(date --iso-8601=seconds)"
 } > "$STAMP_DIR/HARVEST_STATUS.md"
+
+(
+  cd "$STAMP_DIR" || exit 1
+  find . -maxdepth 1 -type f ! -name HARVEST_MANIFEST.sha256 -print0 \
+    | sort -z | xargs -0 sha256sum
+) > "$STAMP_DIR/HARVEST_MANIFEST.sha256" || {
+  echo "[harvest-abort] bundle manifest 생성 실패: $STAMP_DIR" >&2
+  exit 1
+}
+
+current_tmp="$HARVEST_CURRENT.tmp.$$"
+printf '%s\n%s\n' "$harvest_key" "$STAMP_DIR" > "$current_tmp" || exit 1
+mv -- "$current_tmp" "$HARVEST_CURRENT" || exit 1
 
 echo
 echo "== 전달할 폴더 하나: $STAMP_DIR"

@@ -8,10 +8,17 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
+source scripts/_report_cache.sh
 
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv python 없음: $PY"; exit 1; }
 command -v flock >/dev/null || { echo "[abort] flock 없음"; exit 1; }
+
+# Supervisors may be newer than a partially completed run. Generation always
+# re-enters the immutable code snapshot recorded by that run.
+PIPELINE_REPO="${OM_PIPELINE_REPO:-$PWD}"
+PIPELINE_SCRIPT="${OM_PIPELINE_SCRIPT:-$PIPELINE_REPO/scripts/run_14b.sh}"
+[ -s "$PIPELINE_SCRIPT" ] || { echo "[abort] generation pipeline 없음: $PIPELINE_SCRIPT"; exit 1; }
 
 export MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 MODEL_TAG="${REGIME_MODEL_TAG:-$(basename "$MODEL_14B" | tr '[:upper:]' '[:lower:]')}"
@@ -98,7 +105,8 @@ run_point() {
       TEMPERATURE="$TEMPERATURE_DEFAULT"
       OM_SKIP_HYBRID="${OM_SKIP_HYBRID:-1}" OM_RETRY_INDEX="$try")
     [ -z "$source" ] || args+=(OM_BEHAVIOR_SOURCE="$source")
-    if "${args[@]}" bash scripts/run_14b.sh; then
+    if "${args[@]}" OM_REPO="$PIPELINE_REPO" PYTHONPATH="$PIPELINE_REPO/src" \
+        bash "$PIPELINE_SCRIPT"; then
       if [ -n "$CONTRACT" ]; then
         if ! contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \
           --deep --mark; then
@@ -185,6 +193,37 @@ if ! (
     echo "[collect] matrix-bound analysis already current"
     exit 0
   fi
+
+  # Discovery has no external matrix contract. Bind the analysis publication
+  # to its exact completed inputs so every waiting cluster does not rerun the
+  # same 2,000-bootstrap regime map after acquiring collect.lock.
+  analysis_code=(
+    src/regime_map.py src/gate_rules.py src/score_artifacts.py
+    src/select_rules.py src/first_interval.py
+  )
+  analysis_inputs=()
+  for run in "${runs[@]}"; do
+    for artifact in DONE run_config.json manifest.json score_protocol.json \
+        oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json \
+        scores_splithalf.json divergence_stats.json oracle_micro_groups.pt val_groups.pt; do
+      analysis_inputs+=("$run/$artifact")
+    done
+  done
+  [ -z "$CONTRACT" ] || analysis_inputs+=("$CONTRACT")
+  analysis_key=$(report_cache_key "${analysis_code[@]}" -- "${analysis_inputs[@]}") \
+    || exit 1
+  analysis_key=$(report_cache_key_values "$analysis_key" \
+    "first_bootstrap=${REGIME_FIRST_BOOTSTRAP:-2000}" \
+    "first_calibration=${REGIME_FIRST_CALIBRATION:-}") || exit 1
+  analysis_marker="$RESULTS/.regime_analysis.key"
+  analysis_outputs=(
+    "$RESULTS/REGIME.json" "$RESULTS/REGIME.csv"
+    "$RESULTS/REGIME_SUMMARY.csv" "$RESULTS/FINAL_REPORT.md"
+  )
+  if report_cache_hit "$analysis_marker" "$analysis_key" "${analysis_outputs[@]}"; then
+    echo "[collect] regime analysis already current; duplicate aggregation skipped"
+    exit 0
+  fi
   if [ -n "$CONTRACT" ]; then
     for seed in "${SEEDS[@]}"; do
       for dataset in "${DATASETS[@]}"; do
@@ -204,10 +243,15 @@ if ! (
     analysis_args+=(--first-calibration "$REGIME_FIRST_CALIBRATION")
   fi
   "$PY" src/regime_map.py "${runs[@]}" "${analysis_args[@]}" || exit 1
+  for output in "${analysis_outputs[@]}"; do
+    [ -s "$output" ] || { echo "[collect-abort] empty analysis output: $output"; exit 1; }
+  done
   if [ -n "$CONTRACT" ]; then
     "$PY" src/regime_contract.py mark-collection --matrix "$CONTRACT" \
       --results "$RESULTS" --runs "${runs[@]}" || exit 1
   fi
+  report_cache_write "$analysis_marker" "$analysis_key" \
+    "${analysis_outputs[@]}" || exit 1
 ) 9>"$QUEUE/collect.lock"; then
   echo "[collect-abort] final validation or analysis failed"
   exit 1

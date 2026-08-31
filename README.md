@@ -12,7 +12,8 @@ regime map이다.
 > 독립 validation 교정 이전의 역사적 탐색 결과다. 제출용 근거로 사용하지 않는다.
 > 교정 내용, 결과 계보, 재실행 조건은
 > [`docs/FULL_AUDIT_2026-08-20.md`](docs/FULL_AUDIT_2026-08-20.md)에 있다.
-> confirmatory 재실행은 `go_v4.sh`를 사용하며, 단일 run 복구/진단에는
+> 전체 재실행은 `go_v4.sh <1|2|3>`를 사용한다. 이 한 명령이 v4, 7B regime
+> discovery, 최종 수확까지 이어서 수행한다. 단일 run 복구/진단에는
 > `go_v2.sh`/`run_14b.sh`를 사용한다. legacy
 > `run_h100_all.sh`/`babysit.sh`는 기본 비활성화했다.
 > 교정 전 코드로 완주한 run은 공유 checkout을 갱신한 뒤 GPU 환경에서
@@ -110,7 +111,8 @@ fresh micro-group을 두 독립 절반으로 나눠 A로 current-policy ranking�
 계산한다. Behavior pass rate가 mixed인 `learnable` pool과 all-zero/all-one인
 `saturated` pool도 분리한다.
 
-Discovery sweep은 같은 명령을 독립 클러스터마다 실행한다:
+전체 실행에서는 4절의 `go_v4.sh <slot>`이 discovery까지 자동으로 이어 간다.
+v4가 이미 끝난 상태에서 regime만 복구할 때는 같은 명령을 독립 클러스터마다 실행한다:
 
 ```bash
 git pull
@@ -134,8 +136,8 @@ supervisor가 GPU 메모리 해제를 확인한 뒤 worker를 최대 12회 다�
 rollout은 같은 볼륨에서 hard link로 공유하며, LoRA 폴더에는 adapter 설정과 가중치만
 저장한다. 로그와 최종 분석 재현에 필요한 rollout·gradient 정본은 삭제하지 않는다.
 
-기존 v4는 중단하거나 재생성하지 않는다. v4 generation은 해당 run에 기록된 commit을
-계속 사용하고, 신규 regime sweep만 현재 commit에서 별도 경로로 실행한다.
+기존 v4와 regime generation은 각각 `run_config.json`에 기록된 commit을 계속 사용한다.
+완료 point는 건너뛰고 미완료 point만 그 snapshot에서 재개한다.
 
 ### 3.2 비Qwen·비수학 전이 행렬
 
@@ -188,6 +190,12 @@ bash scripts/go_v4.sh 2   # 27B: 2,3 / 7B: 1
 bash scripts/go_v4.sh 3   # 27B: 4   / 7B: 2,3,4
 ```
 
+각 명령의 실제 단계는 `v4 resume → Qwen2.5-7B regime discovery → collect_v4 →
+harvest`다. 노드·slot 잠금이 중복 worker를 막고, 완료 run/point 및 입력이 같은 CPU
+집계는 재실행하지 않는다. 이 통합 흐름의 27B는 fixed-drift v4 confirmation이다.
+27B **regime** confirmation은 7B boundary를 동결한 뒤 실행하는 후속 게이트이며 아직
+이 자동 행렬에 포함하지 않는다.
+
 7B가 완료된 뒤 27B만 새 코드로 재실행할 때는 아래 전용 진입점을 쓴다. 사용할 모든
 H100 4장 클러스터에서 **같은 명령**을 실행한다.
 
@@ -210,13 +218,11 @@ FLA 0.5.2 fused kernel을 공유 venv에 한 번만 자동 설치·검증하고,
 검증하고 집계한다. 예전 `V4_COMPLETE` 표식은 현재 generation commit과 다르면 재사용하지
 않는다.
 
-`go_v4.sh <slot>`은 실제로 `resume_v4.sh`에 위임해 이전 v4 프로세스를 정리하고,
+`go_v4.sh <slot>`은 `go_offpolicy.sh`를 거쳐 v4 단계에서는 `resume_v4.sh`에 위임한다.
 기존 `run_config.json`의 generation commit을 계산 코드로 유지하면서 최신 supervisor로
-재개한다. 이 호환 경로는 GPU 메모리 해제 대기와 최종 자동 집계를 수행하지 않으므로
-시작 전 `nvidia-smi` 확인과 완료 후 `collect_v4.sh`가 필요하다. 현재 코드로 27B를 새로
-실행하는 `go_v4_27b.sh`만 FLA 스모크, GPU 해제 확인, current-commit provenance 검증,
-마지막 worker 자동 집계를 수행한다. 상세 절차는 [`docs/USAGE.md`](docs/USAGE.md),
-장애 이력은 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)를 따른다.
+재개하고, 이어 regime과 최종 집계까지 수행한다. 상세 절차는
+[`docs/USAGE.md`](docs/USAGE.md), 장애 이력은
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)를 따른다.
 
 Worker 내부 실패는 성공으로 숨기지 않는다. 각 클러스터 launcher는 한 run이 실패해도
 나머지 배정 run을 계속 진행하고, 완료 목록을 다시 계산해 미완료 run만 기본 3 pass로
@@ -234,8 +240,8 @@ non-zero exit를 남긴다. 단, 클라우드 운영자가 노드나 최상위 j
   `0 1 2 3 4`다. 27B는 클러스터 `1`·`2`·`3`에 `0,1`·`2,3`·`4`를 배정하고,
   더 가벼운 7B는 종료시간 균형을 위해 `0`·`1`·`2,3,4`로 배정한다.
   세 worker가 같은 `$OM_WORK/runs`를 사용하므로 seed별 canonical 경로에 결과가 바로
-  모인다. 수동 복사 없이 모든 worker가 끝난 뒤 한 번 `bash scripts/collect_v4.sh`를
-  실행해 누락을 검사하고 모델별 표·frontier와 최종 harvest를 생성한다.
+  모인다. 마지막 단계의 `collect_v4.sh`와 `harvest.sh`도 공유 잠금 및 입력 키로 한 번만
+  실행되므로 수동 복사나 별도 수확 명령이 필요 없다.
 - 산출: run별 `report.json`·`manifest.json`·judge 판정 +
   `results/v4-27b`와 `results/v4-7b`의 `TABLES.md`·`FRONTIER.md`.
 - `score_protocol.json`과 `oracle_protocol.json`이 모두 없는 run은 모든 판정·표 생성기가

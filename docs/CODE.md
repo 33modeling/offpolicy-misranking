@@ -87,11 +87,12 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 
 | 스크립트 | 용도 |
 |---|---|
-| `go_additional.sh` | 4×H100 discovery 단일 진입점. 모델·전체 행렬을 고정하고 노드 싱글턴, GPU 해제 확인, 최대 12회 worker 자동 재시작을 담당한다 |
+| `go_offpolicy.sh` | `go_v4.sh <slot>`이 위임하는 전체 실행기. node/slot 중복 잠금 아래 v4 → 7B regime → 최종 수확을 순서대로 수행 |
+| `go_additional.sh` | 4×H100 discovery 복구 진입점. 기존 regime generation commit을 자동 선택하고 모델·전체 행렬 고정, 노드 싱글턴, 최대 12회 worker 자동 재시작을 담당 |
 | `go_retry.sh` | legacy fixed-drift 복구 경로. 신규 regime/transfer 실험의 진입점으로 쓰지 않음 |
-| `go_v4.sh` | 고정 slot v4 호환·재개 진입점. 즉시 `resume_v4.sh`로 위임해 run별 generation commit을 보존한다. GPU 해제 대기와 자동 집계는 하지 않음 |
+| `go_v4.sh` | 사용자용 전체 진입점. `go_offpolicy.sh`로 위임하며 v4 단계는 `resume_v4.sh`에서 run별 generation commit을 보존 |
 | `go_v4_27b.sh` | 현재 코드의 27B 전용 공유 큐. FLA/GPU 스모크, current-commit 계약, quarantine, 10-run 검증과 마지막 worker 자동 집계를 수행 |
-| `go_regime.sh` | 신규 주실험: 모든 클러스터에서 같은 명령을 실행하면 shared flock queue가 seed×dataset family를 분배. 한 behavior pool을 drift 0/25/100/400에 고정하고 완료 후 regime map을 단일 보고서로 집계 |
+| `go_regime.sh` | 신규 주실험: shared flock queue가 seed×dataset family를 분배. 완료 후 입력 키를 잠금 안에서 확인해 regime map을 정확히 한 번만 집계 |
 | `go_domain_transfer.sh` | 비Qwen·비수학 전이 행렬: Mistral/OLMo2 × MBPP/KK/ARC-Challenge를 고정 설정·host runtime smoke·불변 matrix 계약 아래 3-seed shared queue로 실행 |
 | `go_v2.sh` | 모델별 worker: GPU 건강검사 → 스모크 게이트 → `SEEDS`×`DATASETS` 루프. console/stage 로그 무변화 watchdog, process-group 자동 종료·최대 재시도, 실패 원인 콘솔 진단 내장 |
 | `run_14b.sh` | 단일 (seed,dataset) 실행기: config digest lock, GPU 자동감지, exact-K 병합 검증, 실패 전파, 최종 필수 artifact 검사 후 원자적 `DONE` 생성 |
@@ -114,8 +115,9 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 
 | 스크립트 | 용도 |
 |---|---|
-| `harvest.sh` | **수확 원스톱**: v4가 있으면 2모델×5-seed×2데이터셋의 20-run 완결성을 먼저 검사한다. 사전등록 `KCURVE.md`와 전 세대 확장 `KCURVE_ALL.md`, READOUT·REVERSAL(닻·McNemar 포함)·STATS·TABLES·FRONTIER를 고유 폴더에 원자적으로 publish. 실패 stdout/stderr는 partial/error로 격리하고 nonzero 종료 |
-| `collect_v4.sh` | **v4 결과 자동 취합**: 공유 `runs/`의 20개 run과 필수 산출물을 검사하고 27B·7B TABLES/FRONTIER를 staging에서 따로 생성·게시한 뒤 `harvest.sh` 실행. GPU 및 run 디렉터리는 건드리지 않음 |
+| `harvest.sh` | **수확 원스톱**: 전역 잠금과 입력 키로 동일 수확 중복을 생략한다. v4 20-run 완결성을 검사하고 KCURVE·READOUT·REVERSAL·STATS·TABLES·FRONTIER·REGIME을 원자적으로 publish |
+| `collect_v4.sh` | **v4 결과 자동 취합**: 전역 잠금 아래 20개 run을 검사하고 입력 변경이 있는 모델의 TABLES/FRONTIER만 다시 생성한 뒤 `harvest.sh` 실행 |
+| `resume_regime.sh` | 부분 regime의 `run_config.json`에서 단일 generation commit을 선택하고 해당 snapshot의 `run_14b.sh`로 미완료 point만 재개 |
 | `resume_v4.sh` | **중단된 v4 안전 재개**: 완료 run은 스킵하고 각 미완료 `run_config.json`에 기록된 generation commit의 격리 worktree에서 run별로 재개. 커밋이 여러 개여도 서로 섞지 않으며 기존 shard/`.partial`을 재사용. 없는 commit은 자동 fetch하고 snapshot 진입 시 호출 checkout의 `OM_REPO`/`PYTHONPATH`를 제거 |
 | `_report_io.sh` | 개별 보고서 I/O | read_now·K-curve·reversal 실행기의 고유 폴더 생성, nonempty 검사, 원자적 publish |
 | `reversal_freq.sh`/`kcurve.sh`/`kcurve_all.sh`/`frontier.sh` | 개별 분석 러너 (harvest가 전부 포함하므로 단독 실행은 조기 확인용) |

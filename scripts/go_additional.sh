@@ -6,6 +6,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 
+# Preserve immutable generation provenance when this command is rerun after a
+# pull. The wrapper selects the one commit already recorded by partial runs.
+if [ "${OM_REGIME_RESUME_WRAPPED:-0}" != "1" ]; then
+  exec bash scripts/resume_regime.sh
+fi
+
 [ -d "$GROUP_VOLUME" ] && { [ "$OM_WORK" = "$GROUP_VOLUME" ] || [[ "$OM_WORK" == "$GROUP_VOLUME/"* ]]; } || {
   echo "[abort] shared GROUP_VOLUME is required: GROUP_VOLUME=$GROUP_VOLUME OM_WORK=$OM_WORK"
   exit 1

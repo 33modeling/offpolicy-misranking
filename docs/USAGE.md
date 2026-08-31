@@ -19,13 +19,13 @@
 |---|---|
 | 셸 준비 | `source scripts/setup_env.sh` |
 | 클러스터 1회 셋업 | `bash scripts/provision.sh` |
-| v4 confirmatory 실행 (3-cluster) | `bash scripts/go_v4.sh 1` / `2` / `3` |
+| 전체 실험 실행: v4 → 7B regime → 수확 (3-cluster) | `bash scripts/go_v4.sh 1` / `2` / `3` |
 | 27B만 재실행 (공유 큐) | `bash scripts/go_v4_27b.sh` |
 | 중단 후 재개 | 같은 명령을 그대로 다시 실행 |
 | 진행 상황만 보기 (실행 중 안전) | `bash scripts/progress_snapshot.sh <라벨>` |
 | 계약 판정 | `bash scripts/check_contract.sh` |
-| 20-run 집계 | `bash scripts/collect_v4.sh` |
-| 수확 폴더 하나 만들기 | `bash scripts/harvest.sh` |
+| 20-run 집계만 복구 | `bash scripts/collect_v4.sh` |
+| 수확만 복구 | `bash scripts/harvest.sh` |
 | 실패 진단 | `bash scripts/diagnose_run_failure.sh <RUN_DIR>` |
 
 ---
@@ -95,7 +95,7 @@ bash scripts/check_data.sh gsm8k 512 100   # 로더가 찾는 위치와 실제 �
 
 ## 2. 실행 — 클러스터별 절차
 
-### 2.1 v4 confirmatory 행렬 (2 모델 × 5 seed × 2 데이터셋 = 20 run)
+### 2.1 전체 행렬 (v4 20 run → 7B regime 24 point → 수확)
 
 독립된 H100 4장 클러스터 **세 곳**에서 번호만 달리해 실행한다.
 
@@ -112,32 +112,25 @@ git pull && bash scripts/go_v4.sh 3     # 27B seed 4   / 7B seed 2,3,4
 `$OM_WORK/runs`를 쓰므로 결과가 seed별 canonical 경로에 바로 모인다.
 수동 복사가 필요 없다.
 
-**동작 사실 (중요).** `go_v4.sh`는 실제로는 `resume_v4.sh`로 즉시 위임한다
-(`OM_V4_RESUME_WRAPPED`가 어디서도 설정되지 않는다 —
-[ARCHITECTURE 12.1](ARCHITECTURE.md#121-go_v4sh-본문-대부분이-실행되지-않는다-영향-큼)).
-따라서 실제 흐름은 다음과 같다.
+`go_v4.sh`는 이제 상위 runner로 들어가 아래 전체 흐름을 수행한다.
 
 ```
 go_v4.sh <slot>
-  └─ exec resume_v4.sh <slot>
-       ├─ cleanup_run_processes.py --run-prefix $OM_WORK/runs/v4-   (이전 v4 프로세스 종료)
-       ├─ pkill TERM → 3초 → KILL
-       └─ pass 1..3 (OM_V4_SUPERVISOR_PASSES)
-            └─ v4_resume_commit.py plan → run마다:
-                 ├─ ensure_snapshot(commit)      # 없으면 git fetch + worktree add
-                 └─ go_v2.sh (현재 checkout)      # 감시·재시도
-                      ├─ GPU 건강검사 (matmul + softmax)
-                      ├─ 스모크 (~30분, commit별 경로)
-                      └─ run_14b.sh (snapshot 코드)  # 실제 계산
+  └─ go_offpolicy.sh <slot>           # node + global slot singleton
+       ├─ resume_v4.sh <slot>
+       │    ├─ cleanup_run_processes.py --run-prefix $OM_WORK/runs/v4-
+       │    ├─ pkill TERM → 3초 → KILL
+       │    └─ pass 1..3 (OM_V4_SUPERVISOR_PASSES)
+       │         └─ v4_resume_commit.py plan → ensure_snapshot → go_v2.sh
+       ├─ resume_regime.sh → go_additional.sh     # 완료 point 생략
+       └─ collect_v4.sh → harvest.sh              # 입력 동일 시 재사용
 ```
 
-귀결 두 가지를 알고 있어야 한다.
-
-1. **GPU 메모리 해제 대기 루프가 돌지 않는다.** 이전 실행의 CUDA 프로세스가
-   느리게 죽으면 다음 실행이 OOM으로 시작할 수 있다. 시작 직후
-   `nvidia-smi`로 메모리가 비었는지 확인하는 것을 절차에 넣는 편이 안전하다.
-2. **집계가 자동으로 일어나지 않는다.** 20 run이 다 모여도 `V4_COMPLETE`는
-   생기지 않는다. 5절의 수확 절차를 수동으로 실행해야 한다.
+같은 slot을 두 노드에서 실행하거나 같은 노드에서 다른 slot을 겹쳐 실행하면 시작 전에
+거부한다. regime family/run 잠금은 클러스터 간 생성 중복을 막고, 최종 regime 분석,
+모델별 TABLES/FRONTIER, harvest는 입력 키가 같으면 기존 결과를 그대로 재사용한다.
+27B fixed-drift v4는 이 흐름에 포함되지만 27B regime confirmation은 7B boundary 동결
+후의 별도 후속 게이트다.
 
 각 워커가 실제로 쓰는 설정(`resume_v4.sh` 기준):
 
@@ -425,11 +418,13 @@ GPU를 쓰지 않고 run 디렉터리도 수정하지 않는다. 하는 일:
    `divergence_stats*.json` 존재를 확인한다. 없는 것은
    `[missing-run]` / `[incomplete-run]` / `[missing-artifact]`로 **분리 출력**한다.
    하나라도 없으면 `[collect-v4-abort]`와 함께 exit 1이고 GPU는 재실행하지 않는다.
-2. `$OM_WORK/results/.v4-collect.XXXXXX` staging에서 27B·7B **각각** 표를 만든다
+2. 입력 키가 기존 완료 마커와 같으면 27B·7B 보고서를 재사용한다. 변경됐을 때만
+   `$OM_WORK/results/.v4-collect.XXXXXX` staging에서 **각각** 표를 만든다
    (`tables.sh` → `TABLES.md`, `frontier.sh` → `FRONTIER.md` + `frontier.json`).
    모델을 섞은 표를 만들지 않는 것이 요점이다.
 3. 셋 다 비어 있지 않으면 `$OM_WORK/results/v4-27b/`·`v4-7b/`로 원자적 게시.
-4. `harvest.sh` 실행.
+4. `harvest.sh` 실행. 전역 잠금 안에서 입력 키가 같은 기존 수확 폴더가 있으면 새 폴더나
+   bootstrap을 만들지 않고 그 폴더를 반환한다.
 
 > **한계.** `collect_v4.sh`는 **provenance를 검사하지 않는다.** commit·모델
 > 해시·고정 설정이 20 run에서 같은지 보지 않는다. 27B는

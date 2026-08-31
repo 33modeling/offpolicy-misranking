@@ -30,8 +30,8 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         (work / "models/model").mkdir(parents=True)
         fake_bin.mkdir()
         shutil.copy2(REPO / "scripts/go_regime.sh", checkout / "scripts/go_regime.sh")
+        shutil.copy2(REPO / "scripts/_report_cache.sh", checkout / "scripts/_report_cache.sh")
         (work / "models/model/config.json").write_text("{}\n", encoding="utf-8")
-        (work / "matrix.json").write_text("{}\n", encoding="utf-8")
         (work / "venv/bin/python").symlink_to(Path(sys.executable))
         (checkout / "scripts/setup_env.sh").write_text(
             'export OM_WORK="${OM_WORK:?}"\n'
@@ -92,7 +92,6 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
                 "REGIME_MODEL_TAG": "fixture",
                 "REGIME_ROOT": str(work / "runs/regime-fixture"),
                 "REGIME_RESULTS": str(work / "results/regime-fixture"),
-                "REGIME_MATRIX": str(work / "matrix.json"),
                 "REGIME_DATASETS": "a b",
                 "REGIME_SEEDS": "0 1",
                 "REGIME_DRIFTS": "0 25",
@@ -132,7 +131,8 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         analyses = (work / "results/regime-fixture/analysis-count").read_text().splitlines()
         assert analyses == ["1"]
 
-        collection = work / "results/regime-fixture/.regime_collection.json"
+        collection = work / "results/regime-fixture/.regime_analysis.key"
+        assert collection.is_file()
         collection.unlink()
         failed_env = {**env, "FAIL_ANALYSIS": "1"}
         failed = subprocess.run(

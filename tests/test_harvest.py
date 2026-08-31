@@ -151,9 +151,15 @@ def run_report_script(
         check=False,
     )
     created = set(readouts.iterdir()) - before
-    if len(created) != 1:
-        raise AssertionError(f"harvest created {len(created)} directories: {created}")
-    return result, created.pop()
+    if len(created) == 1:
+        return result, created.pop()
+    if not created:
+        prefix = "== 전달할 폴더 하나: "
+        cached = [Path(line.removeprefix(prefix)) for line in result.stdout.splitlines()
+                  if line.startswith(prefix)]
+        if cached and cached[-1].is_dir():
+            return result, cached[-1]
+    raise AssertionError(f"harvest created {len(created)} directories: {created}")
 
 
 with tempfile.TemporaryDirectory() as raw_tmp:
@@ -199,7 +205,11 @@ with tempfile.TemporaryDirectory() as raw_tmp:
             "REGIME_COLLECTION-regime-fixture.json",
         )
     ))
-    check("rapid harvests use distinct directories", second.returncode == 0 and first_dir != second_dir)
+    check("unchanged harvest is reused instead of recomputed", (
+        second.returncode == 0
+        and first_dir == second_dir
+        and "중복 계산 생략" in second.stdout
+    ))
 
 
 with tempfile.TemporaryDirectory() as raw_tmp:
@@ -286,6 +296,16 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     check("collect_v4 finishes with a valid harvest bundle", (
         output / "HARVEST_STATUS.md"
     ).exists())
+    repeated, repeated_output = run_report_script(
+        work, env, "scripts/collect_v4.sh"
+    )
+    check("collect_v4 reuses both model reports and the harvest bundle", (
+        repeated.returncode == 0
+        and repeated_output == output
+        and "v4-27b 분석 입력 변경 없음" in repeated.stdout
+        and "v4-7b 분석 입력 변경 없음" in repeated.stdout
+        and "harvest 입력 변경 없음" in repeated.stdout
+    ))
 
 
 with tempfile.TemporaryDirectory() as raw_tmp:
