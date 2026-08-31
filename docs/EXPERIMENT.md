@@ -106,15 +106,18 @@ protocol boundaries.
 `run_rlvr.sh` requires exactly four H100s on its node. Three nodes may execute it
 simultaneously against the same `GROUP_VOLUME`; `run_matrix.sh` locks an entire
 seed/dataset family, preserving the ordered checkpoint chain and preventing
-duplicate jobs. Report collection is separately locked and content-addressed.
+duplicate jobs. Per-node launcher admission uses a node-local `/tmp` lock rather
+than hostname-derived state on the shared volume, so cloned cluster hostnames do
+not reject valid workers. Report collection is separately locked and
+content-addressed.
 The Qwen primary and already-running `295dfea` jobs retain the
 `readouts/rlvr-grpo` target. Additional-study outputs never enter that bundle.
 Neither path uses timestamped harvest directories.
 
 The single `run_additional_experiments.sh` entry point has a GPU-free
 `--prepare` mode that downloads and qualifies every immutable shared snapshot
-under a global lock. Its default run revalidates those inputs, waits on any
-existing node-specific primary lock, and applies the same queue and artifact
+under a global lock. Its default run revalidates those inputs, waits on the
+node-local primary lock, and applies the same queue and artifact
 contracts to every additional stratum. The GRPO stratum varies
 Mistral-7B-Instruct-v0.3 and
 OLMo-2-1124-7B-Instruct over GSM8K, MBPP, Knights-and-Knaves, and ARC-Challenge.

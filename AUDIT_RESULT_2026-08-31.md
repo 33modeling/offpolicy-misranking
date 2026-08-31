@@ -12,6 +12,8 @@ Date: 2026-08-31 KST
 - GPU-free snapshot preflight revision: `756a09f`.
 - Canonical harvest re-audit and fix revision:
   `8812a52ac7e098e1109b078c9fa5d5e159f50cf9`.
+- Multi-cluster admission fix revision:
+  `fb48565dda10d35aa58452b0b37696ae122558aa`.
 - Audited paper revision: `e53fe4ac9437ad702eb558213adad55e3125f83c`.
 - Final verdict: the existing primary remains on its compatible `v1` protocol;
   the separate generalization and method protocols are ready after their
@@ -76,6 +78,12 @@ Date: 2026-08-31 KST
    cell and selector, rejects provisional/non-finite/duplicate output, checks
    summary and CSV agreement, serializes concurrent publishers, preserves the
    prior bundle on failure, and enforces the exact four-file published layout.
+8. **Shared launcher lock rejected independent clusters.** The canonical
+   launcher placed a hostname-derived node-admission lock on `GROUP_VOLUME`.
+   Independent cloned clusters with the same hostname therefore contended on
+   one lock: the first entered the family queue and the other two exited. Node
+   admission now uses a fixed lock in node-local `/tmp`; random worker IDs keep
+   shared logs distinct, while only family and collection locks remain shared.
 
 ## Verification evidence
 
@@ -139,6 +147,37 @@ roots, and preservation of the last valid bundle after rejection. The running
 source revision `295dfea` was checked directly and emits the v2 regime schema,
 five selectors, 10,000-replicate final rows, and report-cache marker format
 accepted by the new validator.
+
+### Multi-cluster admission re-audit on 2026-09-01
+
+Executed against fix revision `fb48565`:
+
+```text
+python -m pytest -q
+86 passed in 13.43s
+
+launcher + queue + additional + harvest integration
+17 passed in 10.55s
+
+same-hostname three-worker launcher + shared family queue
+2 passed, repeated 5/5 times
+
+python -m compileall -q src tests
+ruff check --select E9,F63,F7,F82 src tests
+bash -n scripts/*.sh
+jq empty configs/*.json
+python -m pip check
+git diff --check
+All passed.
+```
+
+The regression starts three launchers reporting the identical hostname but
+using independent node-local filesystems; all three enter both registered
+matrix phases. The shared queue regression records worker identity and requires
+all three workers to claim work, every dataset/seed/drift point exactly once,
+one transient hung point to be retried, and aggregate analysis to publish once.
+A separate test requires a second process on the same physical node to fail and
+rejects any `OM_LOCAL_LOCK_DIR` placed below `GROUP_VOLUME`.
 
 ## Launch boundaries
 

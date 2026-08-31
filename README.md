@@ -16,7 +16,10 @@ bash scripts/run_rlvr.sh
 Run the same command on all three nodes. The nodes claim work from shared
 `flock` queues, so a seed/dataset family runs once. Each claimed family uses all
 four local H100s for GRPO. Interrupted training resumes from the latest adapter
-and optimizer checkpoint.
+and optimizer checkpoint. The launcher admission lock is stored on each node's
+local `/tmp`, never on `GROUP_VOLUME`; cloned hostnames therefore cannot collapse
+three independent clusters into one worker. Only family and collection locks
+are shared.
 
 The canonical launcher preserves the existing `v1` exact/float mathematical
 verifier and result roots, so jobs started at revision `295dfea` can resume from
