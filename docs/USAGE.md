@@ -462,18 +462,17 @@ bash scripts/harvest.sh
 `$OM_WORK/readouts/<YYYY-MM-DD_HHMMSS>-harvest.XXXXXX/` 폴더 하나를 만들고
 마지막 줄에 그 경로를 찍는다. **그 폴더만 전달하면 된다.**
 
-| 파일 | 생성기 | 허용 exit |
-|---|---|---|
-| `KCURVE.md` | `kcurve_floor.py` | 0(확장 권고) · 3(구조적 부재) · 4(대상 0개) |
-| `KCURVE_ALL.md` | `kcurve_all.py` | 0 |
-| `READOUT.md` | `readout_summary.py` | 0 |
-| `REVERSAL.md` | `reversal_freq.py` | 0 |
-| `STATS.md` | `stats_extra.py` (run별 실행 후 합침) | run마다 0 |
-| `TABLES-<세대>.md`, `FRONTIER-<세대>.md` | `$OM_WORK/results/*/`에서 복사 | — |
-| `REGIME-<이름>.json`/CSV, `REGIME_SUMMARY-<이름>.csv`, `FINAL_REPORT-<이름>.md` | `$OM_WORK/results/regime-*/`에서 필수 복사 | — |
-| `REGIME_COLLECTION-<이름>.json` | matrix-bound regime collection marker가 있으면 복사 | — |
-| `HARVEST_STATUS.md` | 성공 시에만 | — |
-| `HARVEST_FAILURES.md` | 실패가 있을 때만 | — |
+성공 폴더의 Markdown은 아래 두 개뿐이다.
+
+| 파일 | 내용 |
+|---|---|
+| `RESULTS.md` | regime final report + 모델별 TABLES + cross-run READOUT |
+| `APPENDIX.md` | KCURVE/KCURVE_ALL + REVERSAL + STATS + 모델별 FRONTIER |
+
+기계 판독 파일은 `REGIME-<이름>.json`/CSV,
+`REGIME_SUMMARY-<이름>.csv`, 선택적 `REGIME_COLLECTION-<이름>.json`,
+`PROVENANCE.json`, `HARVEST_MANIFEST.sha256`만 별도로 둔다. 개별 Markdown은 검증 중
+임시 파일이며 성공 시 `RESULTS.md`/`APPENDIX.md`로 합친 뒤 삭제한다.
 
 실패 처리 규약이 2026-08-20 수확 사고의 결과다. **실패를 숨기지 않는다.**
 종료 코드가 허용 목록 밖이거나 출력이 비어 있으면 최종 이름을 주지 않고
@@ -487,7 +486,7 @@ v4 run이 하나라도 있으면 시작 시 20-run × 6종 완결성을 먼저 �
 
 `$OM_WORK/results/regime-*`가 하나라도 있으면 regime의 JSON/CSV/최종 보고서 4종을
 모두 필수 산출물로 취급한다. 하나라도 없거나 비어 있으면 수확은 실패하고
-`HARVEST_STATUS.md`를 만들지 않는다.
+`PROVENANCE.json`을 만들지 않는다.
 
 ### 5.4 개별 분석만 돌리기
 

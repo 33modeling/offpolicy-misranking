@@ -88,6 +88,9 @@ case "$name" in
     echo "OM_RESULTS=$OM_RESULTS"
     exit 0
     ;;
+  compose_harvest.py)
+    exec python3 "$@"
+    ;;
   *)
     echo "unexpected script: $1" >&2
     exit 99
@@ -180,32 +183,37 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     first, first_dir = run_harvest(work, env)
     second, second_dir = run_harvest(work, env)
     check("scientific kcurve exit 3 is accepted", first.returncode == 0)
-    check("successful markdown outputs are nonempty", all(
+    check("successful bundle exposes only two readable markdown files", (
+        sorted(path.name for path in first_dir.glob("*.md")) == [
+            "APPENDIX.md",
+            "RESULTS.md",
+        ]
+        and all(
         (first_dir / name).stat().st_size > 0
-        for name in (
-            "KCURVE.md",
-            "KCURVE_ALL.md",
-            "READOUT.md",
-            "REVERSAL.md",
-            "STATS.md",
+        for name in ("RESULTS.md", "APPENDIX.md")
         )
     ))
+    appendix = (first_dir / "APPENDIX.md").read_text(encoding="utf-8")
     check("preregistered and all-generation kcurves stay separate", (
-        first_dir / "KCURVE.md"
-    ).read_text().strip() == "# kcurve" and (
-        first_dir / "KCURVE_ALL.md"
-    ).read_text().strip() == "# kcurve all")
-    check("successful harvest records source status", (first_dir / "HARVEST_STATUS.md").exists())
+        "## KCURVE\n" in appendix
+        and "### kcurve\n" in appendix
+        and "## KCURVE_ALL\n" in appendix
+        and "### kcurve all\n" in appendix
+    ))
+    check("successful harvest records machine provenance", (
+        first_dir / "PROVENANCE.json"
+    ).exists())
     check("successful harvest includes every canonical regime artifact", all(
         (first_dir / name).stat().st_size > 0
         for name in (
             "REGIME-regime-fixture.json",
             "REGIME-regime-fixture.csv",
             "REGIME_SUMMARY-regime-fixture.csv",
-            "FINAL_REPORT-regime-fixture.md",
             "REGIME_COLLECTION-regime-fixture.json",
         )
-    ))
+    ) and "regime report" in (
+        first_dir / "RESULTS.md"
+    ).read_text(encoding="utf-8"))
     check("unchanged harvest is reused instead of recomputed", (
         second.returncode == 0
         and first_dir == second_dir
@@ -223,7 +231,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     failures = (output / "HARVEST_FAILURES.md").read_text(encoding="utf-8")
     check("partial regime output aborts final harvest", result.returncode == 1)
     check("partial regime output cannot publish complete status", not (
-        output / "HARVEST_STATUS.md"
+        output / "PROVENANCE.json"
     ).exists())
     check("missing regime artifacts are named in failure manifest", all(
         marker in failures
@@ -257,7 +265,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     check("failed harvest checkpoints successful stats for the repaired harvest", (
         failed.returncode == 1
         and repaired.returncode == 0
-        and (repaired_dir / "STATS.md").exists()
+        and "run=good" in (repaired_dir / "APPENDIX.md").read_text(encoding="utf-8")
         and stats_calls == 1
         and "2,000-bootstrap 재사용" in repaired.stdout
     ))
@@ -276,7 +284,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     calls = call_log.read_text(encoding="utf-8").splitlines()
     check("pre-cache successful stats are validated and adopted once", (
         result.returncode == 0
-        and (output / "STATS.md").read_text(encoding="utf-8") == legacy_stats
+        and legacy_stats.strip() in (output / "APPENDIX.md").read_text(encoding="utf-8")
         and "stats_extra.py" not in calls
         and "이전 정상 STATS 검증 완료" in result.stdout
     ))
@@ -342,7 +350,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         for name in ("TABLES.md", "FRONTIER.md", "frontier.json")
     ))
     check("collect_v4 finishes with a valid harvest bundle", (
-        output / "HARVEST_STATUS.md"
+        output / "PROVENANCE.json"
     ).exists())
     repeated, repeated_output = run_report_script(
         work, env, "scripts/collect_v4.sh"

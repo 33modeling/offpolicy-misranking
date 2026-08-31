@@ -31,6 +31,7 @@ flock 8 || exit 1
 
 harvest_code=(
   scripts/harvest.sh scripts/_report_cache.sh
+  src/compose_harvest.py
   src/kcurve_floor.py src/kcurve_all.py src/readout_summary.py
   src/reversal_freq.py src/stats_extra.py src/run_select.py
   src/gate_rules.py src/score_artifacts.py src/select_rules.py
@@ -52,14 +53,14 @@ done < <(find "$OM_WORK/results" -mindepth 2 -maxdepth 2 -type f \
      -o -name '.regime_collection.json' \) -print0 | sort -z)
 harvest_key=$(report_cache_key "${harvest_code[@]}" -- "${harvest_inputs[@]}") \
   || exit 1
-harvest_key=$(report_cache_key_values "$harvest_key" "harvest-schema=2") || exit 1
+harvest_key=$(report_cache_key_values "$harvest_key" "harvest-schema=3") || exit 1
 HARVEST_CURRENT="$OM_WORK/results/.harvest-current"
 if [ -s "$HARVEST_CURRENT" ]; then
   cached_key=$(sed -n '1p' "$HARVEST_CURRENT")
   cached_dir=$(sed -n '2p' "$HARVEST_CURRENT")
   if [ "$cached_key" = "$harvest_key" ] \
      && [[ "$cached_dir" == "$READOUTS_ROOT/"* ]] \
-     && [ -s "$cached_dir/HARVEST_STATUS.md" ] \
+     && [ -s "$cached_dir/PROVENANCE.json" ] \
      && [ -s "$cached_dir/HARVEST_MANIFEST.sha256" ] \
      && (cd "$cached_dir" && sha256sum -c HARVEST_MANIFEST.sha256 >/dev/null 2>&1); then
     echo "== harvest 입력 변경 없음; 중복 계산 생략"
@@ -349,13 +350,50 @@ if [ "${#failures[@]}" -gt 0 ]; then
   exit 1
 fi
 
+# Delivery folders expose two readable documents. Component reports remain
+# separate only while validating a failed harvest, where they are diagnostics.
+primary_args=()
+detail_args=()
+markdown_components=()
+for report in "$STAMP_DIR"/FINAL_REPORT-*.md; do
+  [ -s "$report" ] || continue
+  primary_args+=(--primary "Regime final report: $(basename "$report" .md)" "$report")
+  markdown_components+=("$report")
+done
+for report in "$STAMP_DIR"/TABLES*.md; do
+  [ -s "$report" ] || continue
+  primary_args+=(--primary "Confirmatory tables: $(basename "$report" .md)" "$report")
+  markdown_components+=("$report")
+done
+primary_args+=(--primary "Cross-run readout" "$STAMP_DIR/READOUT.md")
+markdown_components+=("$STAMP_DIR/READOUT.md")
+
+for report in "$STAMP_DIR/KCURVE.md" "$STAMP_DIR/KCURVE_ALL.md" \
+    "$STAMP_DIR/REVERSAL.md" "$STAMP_DIR/STATS.md" \
+    "$STAMP_DIR"/FRONTIER*.md; do
+  [ -s "$report" ] || continue
+  detail_args+=(--detail "$(basename "$report" .md)" "$report")
+  markdown_components+=("$report")
+done
+
+"$PY" src/compose_harvest.py \
+  --results "$STAMP_DIR/RESULTS.md" \
+  --appendix "$STAMP_DIR/APPENDIX.md" \
+  "${primary_args[@]}" "${detail_args[@]}" || {
+  echo "[harvest-abort] 전달용 Markdown 병합 실패: $STAMP_DIR" >&2
+  exit 1
+}
+rm -f -- "${markdown_components[@]}"
+
 {
-  echo "# Harvest status"
-  echo
-  echo "- status: complete"
-  echo "- source_commit: $(git rev-parse HEAD 2>/dev/null || echo unknown)"
-  echo "- generated_at: $(date --iso-8601=seconds)"
-} > "$STAMP_DIR/HARVEST_STATUS.md"
+  echo '{'
+  echo '  "schema": "offpolicy-harvest-provenance-v1",'
+  echo '  "status": "complete",'
+  echo "  \"source_commit\": \"$(git rev-parse HEAD 2>/dev/null || echo unknown)\","
+  echo "  \"input_key\": \"$harvest_key\","
+  echo "  \"generated_at\": \"$(date --iso-8601=seconds)\""
+  echo '}'
+} > "$STAMP_DIR/PROVENANCE.json"
 
 (
   cd "$STAMP_DIR" || exit 1

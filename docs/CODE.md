@@ -115,7 +115,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 
 | 스크립트 | 용도 |
 |---|---|
-| `harvest.sh` | **수확 원스톱**: 전역 잠금과 입력 키로 동일 수확 중복을 생략한다. 실패한 수확에서도 완료된 2,000-bootstrap STATS를 체크포인트한다. v4 20-run 완결성을 검사하고 KCURVE·READOUT·REVERSAL·STATS·TABLES·FRONTIER·REGIME을 원자적으로 publish |
+| `harvest.sh` | **수확 원스톱**: 전역 잠금과 입력 키로 동일 수확 중복을 생략한다. 실패한 수확에서도 완료된 2,000-bootstrap STATS를 체크포인트한다. 성공 폴더에는 분석 Markdown을 `RESULTS.md`와 `APPENDIX.md` 두 개로 합쳐 publish |
 | `collect_v4.sh` | **v4 결과 자동 취합**: 전역 잠금 아래 20개 run을 검사하고 입력 변경이 있는 모델의 TABLES/FRONTIER만 다시 생성한 뒤 `harvest.sh` 실행 |
 | `resume_regime.sh` | 부분 regime의 `run_config.json`에서 단일 generation commit을 선택하고 해당 snapshot의 `run_14b.sh`로 미완료 point만 재개 |
 | `resume_v4.sh` | **중단된 v4 안전 재개**: 완료 run은 스킵하고 각 미완료 `run_config.json`에 기록된 generation commit의 격리 worktree에서 run별로 재개. 커밋이 여러 개여도 서로 섞지 않으며 기존 shard/`.partial`을 재사용. 없는 commit은 자동 fetch하고 snapshot 진입 시 호출 checkout의 `OM_REPO`/`PYTHONPATH`를 제거 |
