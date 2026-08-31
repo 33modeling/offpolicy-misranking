@@ -159,6 +159,17 @@ def run_report_script(
 with tempfile.TemporaryDirectory() as raw_tmp:
     tmp = Path(raw_tmp)
     work, env = prepare(tmp, "good")
+    regime = work / "results" / "regime-fixture"
+    regime.mkdir(parents=True)
+    regime_payloads = {
+        "REGIME.json": "{}\n",
+        "REGIME.csv": "run,status\nfixture,usable\n",
+        "REGIME_SUMMARY.csv": "model,status\nfixture,usable\n",
+        "FINAL_REPORT.md": "# regime report\n",
+        ".regime_collection.json": "{}\n",
+    }
+    for name, payload in regime_payloads.items():
+        (regime / name).write_text(payload, encoding="utf-8")
     first, first_dir = run_harvest(work, env)
     second, second_dir = run_harvest(work, env)
     check("scientific kcurve exit 3 is accepted", first.returncode == 0)
@@ -178,7 +189,39 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         first_dir / "KCURVE_ALL.md"
     ).read_text().strip() == "# kcurve all")
     check("successful harvest records source status", (first_dir / "HARVEST_STATUS.md").exists())
+    check("successful harvest includes every canonical regime artifact", all(
+        (first_dir / name).stat().st_size > 0
+        for name in (
+            "REGIME-regime-fixture.json",
+            "REGIME-regime-fixture.csv",
+            "REGIME_SUMMARY-regime-fixture.csv",
+            "FINAL_REPORT-regime-fixture.md",
+            "REGIME_COLLECTION-regime-fixture.json",
+        )
+    ))
     check("rapid harvests use distinct directories", second.returncode == 0 and first_dir != second_dir)
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "good")
+    partial_regime = work / "results" / "regime-partial"
+    partial_regime.mkdir(parents=True)
+    (partial_regime / "REGIME.json").write_text("{}\n", encoding="utf-8")
+    result, output = run_harvest(work, env)
+    failures = (output / "HARVEST_FAILURES.md").read_text(encoding="utf-8")
+    check("partial regime output aborts final harvest", result.returncode == 1)
+    check("partial regime output cannot publish complete status", not (
+        output / "HARVEST_STATUS.md"
+    ).exists())
+    check("missing regime artifacts are named in failure manifest", all(
+        marker in failures
+        for marker in (
+            "regime:regime-partial:csv:missing-or-empty",
+            "regime:regime-partial:summary:missing-or-empty",
+            "regime:regime-partial:report:missing-or-empty",
+        )
+    ))
 
 
 with tempfile.TemporaryDirectory() as raw_tmp:

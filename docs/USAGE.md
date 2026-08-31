@@ -474,6 +474,8 @@ bash scripts/harvest.sh
 | `REVERSAL.md` | `reversal_freq.py` | 0 |
 | `STATS.md` | `stats_extra.py` (run별 실행 후 합침) | run마다 0 |
 | `TABLES-<세대>.md`, `FRONTIER-<세대>.md` | `$OM_WORK/results/*/`에서 복사 | — |
+| `REGIME-<이름>.json`/CSV, `REGIME_SUMMARY-<이름>.csv`, `FINAL_REPORT-<이름>.md` | `$OM_WORK/results/regime-*/`에서 필수 복사 | — |
+| `REGIME_COLLECTION-<이름>.json` | matrix-bound regime collection marker가 있으면 복사 | — |
 | `HARVEST_STATUS.md` | 성공 시에만 | — |
 | `HARVEST_FAILURES.md` | 실패가 있을 때만 | — |
 
@@ -486,6 +488,10 @@ v4 run이 하나라도 있으면 시작 시 20-run × 6종 완결성을 먼저 �
 누락이 있으면 `v4-matrix:incomplete-<N>-artifacts`를 실패 목록에 넣고
 `V4_MATRIX.err`에 run별 누락 목록을 남긴다. **보고서 생성 자체는 계속 진행하되
 최종 exit는 1이다.** `docs/results/2026-08-24/`의 번들이 그 상태로 도착한 예다.
+
+`$OM_WORK/results/regime-*`가 하나라도 있으면 regime의 JSON/CSV/최종 보고서 4종을
+모두 필수 산출물로 취급한다. 하나라도 없거나 비어 있으면 수확은 실패하고
+`HARVEST_STATUS.md`를 만들지 않는다.
 
 ### 5.4 개별 분석만 돌리기
 

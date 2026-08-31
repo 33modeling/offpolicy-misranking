@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 수확 원스톱 — 분석 산출물을 검증한 뒤 하나의 고유 폴더에 원자적으로 publish한다.
 #   KCURVE(사전등록) + KCURVE_ALL(전 세대) + READOUT + REVERSAL(닻 포함)
-#   + STATS + 표 사본을 같은 폴더에.
+#   + STATS + 표 사본 + regime 정본을 같은 폴더에.
 #   bash scripts/harvest.sh
 #
 # 0820 수확 교훈: 실패를 숨기면(2>/dev/null, || true) 빈 파일이 성공처럼 전달된다
@@ -168,6 +168,20 @@ copy_optional_report() {
   fi
 }
 
+copy_required_report() {
+  local label=$1 source=$2 destination=$3
+  if [ ! -s "$source" ]; then
+    failures+=("$label:missing-or-empty")
+    echo "[harvest] $label 실패 (missing-or-empty): $source" >&2
+    return 1
+  fi
+  if ! cp -- "$source" "$destination"; then
+    failures+=("$label:copy-failed")
+    echo "[harvest] $label 실패 (copy-failed): $source" >&2
+    return 1
+  fi
+}
+
 # 결과 폴더는 세대별(v2·v3·qwen3.8-27b 등)로 분리될 수 있다.
 for rd in "$OM_WORK"/results/*/; do
   [ -d "$rd" ] || continue
@@ -176,6 +190,21 @@ for rd in "$OM_WORK"/results/*/; do
     "$STAMP_DIR/TABLES-$rtag.md" || :
   copy_optional_report "frontier:$rtag" "$rd/FRONTIER.md" \
     "$STAMP_DIR/FRONTIER-$rtag.md" || :
+  case "$rtag" in
+    regime-*)
+      copy_required_report "regime:$rtag:json" "$rd/REGIME.json" \
+        "$STAMP_DIR/REGIME-$rtag.json" || :
+      copy_required_report "regime:$rtag:csv" "$rd/REGIME.csv" \
+        "$STAMP_DIR/REGIME-$rtag.csv" || :
+      copy_required_report "regime:$rtag:summary" "$rd/REGIME_SUMMARY.csv" \
+        "$STAMP_DIR/REGIME_SUMMARY-$rtag.csv" || :
+      copy_required_report "regime:$rtag:report" "$rd/FINAL_REPORT.md" \
+        "$STAMP_DIR/FINAL_REPORT-$rtag.md" || :
+      copy_optional_report "regime:$rtag:collection" \
+        "$rd/.regime_collection.json" \
+        "$STAMP_DIR/REGIME_COLLECTION-$rtag.json" || :
+      ;;
+  esac
 done
 copy_optional_report "tables:legacy-repo" results/TABLES.md \
   "$STAMP_DIR/TABLES.md" || :
