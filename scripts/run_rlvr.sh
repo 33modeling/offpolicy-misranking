@@ -42,12 +42,24 @@ done
 bash scripts/check_data.sh gsm8k 512 100
 bash scripts/check_data.sh math500 400 100
 
-NODE_TAG=$(hostname 2>/dev/null || printf node)
-NODE_TAG=$(printf '%s' "$NODE_TAG" | tr -cs 'a-zA-Z0-9._-' '-')
-mkdir -p "$OM_WORK/locks" "$OM_WORK/console-logs"
-exec 9>"$OM_WORK/locks/rlvr-$NODE_TAG.lock"
-flock -n 9 || { echo "[abort] an RLVR worker is already running on this node"; exit 1; }
-LOG="$OM_WORK/console-logs/rlvr-$NODE_TAG-$(date +%F-%H%M%S).log"
+HOST_TAG=$(hostname 2>/dev/null || printf node)
+WORKER_SUFFIX=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || printf '%s-%s' "$$" "$(date +%s%N)")
+WORKER_TAG="${RLVR_WORKER_ID:-$HOST_TAG-$WORKER_SUFFIX}"
+WORKER_TAG=$(printf '%s' "$WORKER_TAG" | tr -cs 'a-zA-Z0-9._-' '-')
+LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+local_lock_path=$(realpath -m "$LOCAL_LOCK_DIR")
+shared_path=$(realpath -m "$GROUP_VOLUME")
+[[ "$local_lock_path" != "$shared_path" && "$local_lock_path" != "$shared_path/"* ]] || {
+  echo "[abort] OM_LOCAL_LOCK_DIR must be node-local, not on GROUP_VOLUME"
+  exit 1
+}
+mkdir -p "$LOCAL_LOCK_DIR" "$OM_WORK/locks" "$OM_WORK/console-logs"
+chmod 700 "$LOCAL_LOCK_DIR"
+exec 9>"$LOCAL_LOCK_DIR/primary.lock"
+flock -n 9 || { echo "[abort] an RLVR worker is already running on this physical node"; exit 1; }
+LOG="$OM_WORK/console-logs/rlvr-$WORKER_TAG-$(date +%F-%H%M%S).log"
+echo "[rlvr] worker=$WORKER_TAG local_lock=$LOCAL_LOCK_DIR shared_queue=$OM_WORK/runs" \
+  | tee -a "$LOG"
 
 # Clear inherited overrides that could silently change the registered matrix.
 unset REGIME_ROOT REGIME_RESULTS REGIME_MATRIX REGIME_QUARANTINE

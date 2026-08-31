@@ -30,7 +30,9 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         (work / "models/model").mkdir(parents=True)
         fake_bin.mkdir()
         shutil.copy2(REPO / "scripts/run_matrix.sh", checkout / "scripts/run_matrix.sh")
-        shutil.copy2(REPO / "scripts/_report_cache.sh", checkout / "scripts/_report_cache.sh")
+        shutil.copy2(
+            REPO / "scripts/_report_cache.sh", checkout / "scripts/_report_cache.sh"
+        )
         (work / "models/model/config.json").write_text("{}\n", encoding="utf-8")
         (work / "venv/bin/python").symlink_to(Path(sys.executable))
         (checkout / "scripts/setup_env.sh").write_text(
@@ -43,9 +45,10 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             checkout / "scripts/run_point.sh",
             "#!/usr/bin/env bash\n"
             'point="$DATASET $SEED $DRIFT"\n'
-            'printf "%s\\n" "$point" >> "$OM_WORK/claims"\n'
+            'printf "%s|%s\\n" "${OM_TEST_WORKER:-worker}" "$point" >> "$OM_WORK/claims"\n'
+            "/bin/sleep 0.05\n"
             'if [ "$point" = "a 0 0" ] && mkdir "$OM_WORK/hang-once" 2>/dev/null; then '
-            'while :; do /bin/sleep 1; done; fi\n'
+            "while :; do /bin/sleep 1; done; fi\n"
             'mkdir -p "$OUT_ROOT"\n'
             "python3 - \"$OUT_ROOT\" <<'PY'\n"
             "import json, os, sys\n"
@@ -90,12 +93,12 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "(out/'oracle_protocol.json').write_text(json.dumps({**protocol,'schema':"
             "'offpolicy-oracle-validation-split/v2'}))\n"
             "PY\n"
-            'for name in DONE manifest.json report.json divergence_stats.json oracle_micro_groups.pt '
-            'val_groups.pt; do '
+            "for name in DONE manifest.json report.json divergence_stats.json oracle_micro_groups.pt "
+            "val_groups.pt; do "
             'printf "{}\\n" > "$OUT_ROOT/$name"; done\n'
             'if [ "$DRIFT" -gt 0 ]; then '
             'p="$OUT_ROOT/policy_step_$DRIFT"; mkdir -p "$p"; '
-            'for name in policy_train.json adapter_config.json adapter_model.safetensors optimizer.pt grpo_stats.jsonl; do '
+            "for name in policy_train.json adapter_config.json adapter_model.safetensors optimizer.pt grpo_stats.jsonl; do "
             'printf "x\\n" > "$p/$name"; done; fi\n',
         )
         executable(
@@ -123,7 +126,9 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             encoding="utf-8",
         )
         shutil.copy2(REPO / "src/gate_rules.py", checkout / "src/gate_rules.py")
-        shutil.copy2(REPO / "src/score_artifacts.py", checkout / "src/score_artifacts.py")
+        shutil.copy2(
+            REPO / "src/score_artifacts.py", checkout / "src/score_artifacts.py"
+        )
         shutil.copy2(REPO / "src/select_rules.py", checkout / "src/select_rules.py")
         (checkout / "src/regime_map.py").write_text(
             "import os,pathlib,sys\n"
@@ -158,17 +163,18 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
                 "REGIME_WATCH_GPU_SAMPLES": "1",
             }
         )
-        workers = [
-            subprocess.Popen(
-                ["/bin/bash", "scripts/run_matrix.sh"],
-                cwd=checkout,
-                env=env,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+        workers = []
+        for index in range(3):
+            workers.append(
+                subprocess.Popen(
+                    ["/bin/bash", "scripts/run_matrix.sh"],
+                    cwd=checkout,
+                    env={**env, "OM_TEST_WORKER": f"worker-{index}"},
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
             )
-            for _ in range(3)
-        ]
         outputs = []
         for worker in workers:
             output, _ = worker.communicate(timeout=30)
@@ -176,7 +182,9 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             assert worker.returncode == 0, output
         assert any("[regime-watchdog]" in output for output in outputs)
 
-        claims = (work / "claims").read_text(encoding="utf-8").splitlines()
+        claim_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
+        claim_workers = {row.split("|", 1)[0] for row in claim_rows}
+        claims = [row.split("|", 1)[1] for row in claim_rows]
         expected = {
             f"{dataset} {seed} {drift}"
             for dataset in ("a", "b")
@@ -186,8 +194,11 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         assert set(claims) == expected
         assert len(claims) == len(expected) + 1
         assert claims.count("a 0 0") == 2
+        assert claim_workers == {"worker-0", "worker-1", "worker-2"}
         assert (work / "results/regime-fixture/FINAL_REPORT.md").is_file()
-        analyses = (work / "results/regime-fixture/analysis-count").read_text().splitlines()
+        analyses = (
+            (work / "results/regime-fixture/analysis-count").read_text().splitlines()
+        )
         assert analyses == ["1"]
 
         damaged = work / "runs/regime-fixture/fixture-s0-a-d25"
@@ -205,9 +216,12 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             check=False,
         )
         assert repaired.returncode == 0, repaired.stdout + repaired.stderr
-        repaired_claims = (work / "claims").read_text(encoding="utf-8").splitlines()
+        repaired_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
+        repaired_claims = [row.split("|", 1)[1] for row in repaired_rows]
         assert repaired_claims[len(claims) :] == ["a 0 25"]
-        assert (work / "results/regime-fixture/analysis-count").read_text().splitlines() == [
+        assert (
+            work / "results/regime-fixture/analysis-count"
+        ).read_text().splitlines() == [
             "1",
             "1",
         ]

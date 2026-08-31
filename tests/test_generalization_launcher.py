@@ -50,9 +50,9 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         work / "venv/bin/python",
         "#!/usr/bin/env bash\n"
         "script=$1; shift\n"
-        "case \"$script\" in\n"
+        'case "$script" in\n'
         "  src/model_matrix.py)\n"
-        "    case \" $* \" in\n"
+        '    case " $* " in\n'
         "      *' list-models '*) printf 'm1\\nm2\\n' ;;\n"
         "      *'domain_transfer.json experiment-field datasets '*) printf 'gsm8k mbpp kk arc-challenge\\n' ;;\n"
         "      *' experiment-field datasets '*) printf 'gsm8k mbpp\\n' ;;\n"
@@ -96,23 +96,23 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "      *) printf 'unexpected model_matrix args: %s\\n' \"$*\" >&2; exit 2 ;;\n"
         "    esac ;;\n"
         "  src/qualify_domain_data.py)\n"
-        "    while [ $# -gt 0 ]; do [ \"$1\" = --output ] && { printf '{}\\n' > \"$2\"; break; }; shift; done ;;\n"
+        '    while [ $# -gt 0 ]; do [ "$1" = --output ] && { printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  src/transfer_smoke.py)\n"
-        "    while [ $# -gt 0 ]; do [ \"$1\" = --marker ] && { mkdir -p \"$(dirname \"$2\")\"; printf '{}\\n' > \"$2\"; break; }; shift; done ;;\n"
+        '    while [ $# -gt 0 ]; do [ "$1" = --marker ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  src/regime_contract.py)\n"
-        "    while [ $# -gt 0 ]; do [ \"$1\" = --matrix ] && { mkdir -p \"$(dirname \"$2\")\"; printf '{}\\n' > \"$2\"; break; }; shift; done ;;\n"
+        '    while [ $# -gt 0 ]; do [ "$1" = --matrix ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  *) printf 'unexpected script: %s\\n' \"$script\" >&2; exit 2 ;;\n"
         "esac\n",
     )
     executable(
         root / "scripts/run_matrix.sh",
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' \"$REGIME_MODEL_TAG|$MODEL_PATH|$REGIME_DATASETS|$REGIME_SEEDS|$REGIME_DRIFTS|$REGIME_MATRIX\" >> \"$TEST_WORK/phases\"\n",
+        'printf \'%s\\n\' "$REGIME_MODEL_TAG|$MODEL_PATH|$REGIME_DATASETS|$REGIME_SEEDS|$REGIME_DRIFTS|$REGIME_MATRIX" >> "$TEST_WORK/phases"\n',
     )
     executable(
         fake_bin / "nvidia-smi",
         "#!/usr/bin/env bash\n"
-        "case \"$*\" in\n"
+        'case "$*" in\n'
         "  *memory.used*) "
         + "printf '0\\n'\n" * gpu_count
         + "    ;;\n  *) "
@@ -120,7 +120,9 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         + "    ;;\nesac\n",
     )
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    subprocess.run(["git", "config", "user.email", "fixture@example.com"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "fixture@example.com"], cwd=root, check=True
+    )
     subprocess.run(["git", "config", "user.name", "fixture"], cwd=root, check=True)
     subprocess.run(["git", "add", "."], cwd=root, check=True)
     subprocess.run(["git", "commit", "-qm", "fixture"], cwd=root, check=True)
@@ -130,6 +132,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "TEST_WORK": str(work),
         "ADDITIONAL_NODE_TAG": "test-node",
         "ADDITIONAL_SKIP_PROVISION": "1",
+        "OM_LOCAL_LOCK_DIR": str(tmp_path / "local-locks"),
     }
 
 
@@ -175,7 +178,7 @@ def test_launcher_rejects_non_four_h100_node(tmp_path: Path) -> None:
 
 def test_launcher_does_nothing_until_primary_lock_is_released(tmp_path: Path) -> None:
     root, env = checkout(tmp_path)
-    lock_path = Path(env["TEST_WORK"]) / "locks/rlvr-test-node.lock"
+    lock_path = Path(env["OM_LOCAL_LOCK_DIR"]) / "primary.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_stream = lock_path.open("w")
     fcntl.flock(lock_stream, fcntl.LOCK_EX)
@@ -200,7 +203,7 @@ def test_launcher_does_nothing_until_primary_lock_is_released(tmp_path: Path) ->
 
 def test_prepare_mode_needs_neither_primary_lock_nor_gpus(tmp_path: Path) -> None:
     root, env = checkout(tmp_path)
-    lock_path = Path(env["TEST_WORK"]) / "locks/rlvr-test-node.lock"
+    lock_path = Path(env["OM_LOCAL_LOCK_DIR"]) / "primary.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_stream = lock_path.open("w")
     fcntl.flock(lock_stream, fcntl.LOCK_EX)

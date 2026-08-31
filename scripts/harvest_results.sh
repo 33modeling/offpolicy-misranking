@@ -23,15 +23,18 @@ flock 8
 target="$READOUTS/$READOUT_ID"
 temporary=$(mktemp -d "$READOUTS/.$READOUT_ID.XXXXXX")
 previous=""
+published=0
 publish_cleanup() {
   rc=$?
   trap - EXIT HUP INT TERM
   rm -rf "$temporary"
   if [ -n "$previous" ] && { [ -e "$previous" ] || [ -L "$previous" ]; }; then
-    if [ -e "$target" ] || [ -L "$target" ]; then
+    if [ "$published" -eq 1 ] && { [ -e "$target" ] || [ -L "$target" ]; }; then
       rm -rf "$previous"
+    elif [ ! -e "$target" ] && [ ! -L "$target" ]; then
+      mv -T -- "$previous" "$target"
     else
-      mv "$previous" "$target"
+      echo "[harvest-abort] prior bundle retained at $previous" >&2
     fi
   fi
   exit "$rc"
@@ -84,12 +87,13 @@ if bundle_current; then
   exit 0
 fi
 
-previous="$READOUTS/.$READOUT_ID.previous.$$"
-[ ! -e "$target" ] && [ ! -L "$target" ] || mv "$target" "$previous"
-if ! mv "$temporary" "$target"; then
-  [ ! -e "$previous" ] && [ ! -L "$previous" ] || mv "$previous" "$target"
+previous=$(mktemp -d "$READOUTS/.$READOUT_ID.previous.XXXXXX")
+rmdir "$previous"
+[ ! -e "$target" ] && [ ! -L "$target" ] || mv -T -- "$target" "$previous"
+if ! mv -T -- "$temporary" "$target"; then
   exit 1
 fi
+published=1
 rm -rf "$previous"
 previous=""
 trap - EXIT HUP INT TERM

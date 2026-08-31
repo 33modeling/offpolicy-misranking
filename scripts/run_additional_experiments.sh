@@ -109,17 +109,28 @@ if [ "$MODE" = "--prepare" ]; then
   exit 0
 fi
 
-NODE_TAG="${ADDITIONAL_NODE_TAG:-$(hostname 2>/dev/null || printf node)}"
-NODE_TAG=$(printf '%s' "$NODE_TAG" | tr -cs 'a-zA-Z0-9._-' '-')
+HOST_TAG=$(hostname 2>/dev/null || printf node)
+WORKER_SUFFIX=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || printf '%s-%s' "$$" "$(date +%s%N)")
+WORKER_TAG="${ADDITIONAL_WORKER_ID:-${ADDITIONAL_NODE_TAG:-$HOST_TAG-$WORKER_SUFFIX}}"
+WORKER_TAG=$(printf '%s' "$WORKER_TAG" | tr -cs 'a-zA-Z0-9._-' '-')
+LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+local_lock_path=$(realpath -m "$LOCAL_LOCK_DIR")
+shared_path=$(realpath -m "$GROUP_VOLUME")
+[[ "$local_lock_path" != "$shared_path" && "$local_lock_path" != "$shared_path/"* ]] || {
+  echo "[abort] OM_LOCAL_LOCK_DIR must be node-local, not on GROUP_VOLUME"
+  exit 1
+}
+mkdir -p "$LOCAL_LOCK_DIR"
+chmod 700 "$LOCAL_LOCK_DIR"
 
 # Reject a duplicate additional-suite worker on this node, then wait on the
 # exact lock held for the lifetime of revision 295dfea's primary launcher.
-exec 9>"$OM_WORK/locks/additional-suite-$NODE_TAG.lock"
-flock -n 9 || { echo "[abort] additional suite already queued on $NODE_TAG"; exit 1; }
-exec 8>"$OM_WORK/locks/rlvr-$NODE_TAG.lock"
-echo "[additional] queued behind primary on $NODE_TAG at git=$GIT"
+exec 9>"$LOCAL_LOCK_DIR/additional-suite.lock"
+flock -n 9 || { echo "[abort] additional suite already queued on this physical node"; exit 1; }
+exec 8>"$LOCAL_LOCK_DIR/primary.lock"
+echo "[additional] worker=$WORKER_TAG queued behind local primary at git=$GIT"
 flock 8
-echo "[additional] primary complete on $NODE_TAG"
+echo "[additional] local primary complete for worker=$WORKER_TAG"
 clean_checkout
 
 mapfile -t GPU_NAMES < <(
@@ -189,7 +200,7 @@ run_registered_matrix() {
   )
   [ "${#model_keys[@]}" -gt 0 ] || { echo "[abort] no configured models"; return 1; }
 
-  log="$OM_WORK/console-logs/$run_id-$NODE_TAG-$(date +%F-%H%M%S).log"
+  log="$OM_WORK/console-logs/$run_id-$WORKER_TAG-$(date +%F-%H%M%S).log"
   config_id=$(sha256sum "$config" | cut -c1-16)
   qualification="$OM_WORK/contracts/$run_id-datasets-$config_id.json"
   (
@@ -250,7 +261,7 @@ run_registered_matrix() {
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
     CUDA_VISIBLE_DEVICES=0 "$PY" src/transfer_smoke.py \
       --model "$MODEL_PATH" --lora-targets "$OM_LORA_TARGETS" \
-      --marker "$OM_WORK/contracts/$run_id-smoke-$NODE_TAG-$model_key-$GIT.json" \
+      --marker "$OM_WORK/contracts/$run_id-smoke-$WORKER_TAG-$model_key-$GIT.json" \
       | tee -a "$log"
 
     export REGIME_MODEL_TAG="$run_id-$method-$model_key"
