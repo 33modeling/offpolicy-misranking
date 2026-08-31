@@ -25,6 +25,12 @@ MATRIX_IDS=(
   method-dr-grpo-v1
   method-rloo-v1
 )
+MODE=${1:---run}
+[ "$#" -le 1 ] || { echo "usage: $0 [--prepare|--run]"; exit 2; }
+case "$MODE" in
+  --prepare|--run) ;;
+  *) echo "usage: $0 [--prepare|--run]"; exit 2 ;;
+esac
 for config in "${MATRIX_CONFIGS[@]}"; do
   [ -s "$config" ] || { echo "[abort] additional config missing: $config"; exit 1; }
 done
@@ -42,6 +48,66 @@ clean_checkout
 GIT=$(git rev-parse HEAD)
 
 mkdir -p "$OM_WORK/locks" "$OM_WORK/console-logs" "$OM_WORK/contracts"
+
+matrix_field() {
+  "$PY" src/model_matrix.py --config "$1" experiment-field "$2"
+}
+
+grpo_field() {
+  "$PY" src/model_matrix.py --config "$1" grpo-field "$2"
+}
+
+model_field() {
+  "$PY" src/model_matrix.py --config "$1" --models-dir "$MODELS_DIR" \
+    field "$2" "$3"
+}
+
+provision_registered_snapshots() {
+  local config=${MATRIX_CONFIGS[0]} datasets
+  local model_keys=()
+  [ "${ADDITIONAL_SKIP_PROVISION:-0}" != "1" ] || return 0
+
+  # Model and data destinations are shared. Only one node writes; the other
+  # nodes subsequently hash-check the immutable snapshots.
+  exec 7>"$OM_WORK/locks/additional-provision.lock"
+  flock 7
+  export OM_ONLINE=1
+  unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE
+  mapfile -t model_keys < <(
+    "$PY" src/model_matrix.py --config "$config" list-models
+  )
+  datasets=$(matrix_field "$config" datasets)
+  "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
+    download "${model_keys[@]}"
+  bash scripts/fetch_datasets.sh $datasets
+  flock -u 7
+  exec 7>&-
+}
+
+# Explicit roots prevent old flat snapshots and the primary v1 protocol from
+# shadowing any input or receiving any output from this suite.
+export GSM8K_DIR="$DATASETS_DIR/gsm8k"
+export MATH500_DIR="$DATASETS_DIR/math500"
+export MBPP_DIR="$DATASETS_DIR/mbpp"
+export KK_DIR="$DATASETS_DIR/kk"
+export ARC_CHALLENGE_DIR="$DATASETS_DIR/arc-challenge"
+
+if [ "$MODE" = "--prepare" ]; then
+  config=${MATRIX_CONFIGS[0]}
+  provision_registered_snapshots
+  datasets=$(matrix_field "$config" datasets)
+  seeds=$(matrix_field "$config" seeds)
+  config_id=$(sha256sum "$config" | cut -c1-16)
+  "$PY" src/qualify_domain_data.py $datasets \
+    --data-root "$DATASETS_DIR" \
+    --n-train "$(matrix_field "$config" n_train)" \
+    --n-val "$(matrix_field "$config" n_val)" \
+    --seeds $seeds \
+    --output "$OM_WORK/contracts/additional-prepared-$config_id.json"
+  echo "[additional] all pinned model/data snapshots prepared and qualified"
+  exit 0
+fi
+
 NODE_TAG="${ADDITIONAL_NODE_TAG:-$(hostname 2>/dev/null || printf node)}"
 NODE_TAG=$(printf '%s' "$NODE_TAG" | tr -cs 'a-zA-Z0-9._-' '-')
 
@@ -78,50 +144,7 @@ wait_for_gpu_release() {
   return 1
 }
 wait_for_gpu_release || { echo "[abort] four GPUs did not become idle"; exit 1; }
-
-matrix_field() {
-  "$PY" src/model_matrix.py --config "$1" experiment-field "$2"
-}
-
-grpo_field() {
-  "$PY" src/model_matrix.py --config "$1" grpo-field "$2"
-}
-
-model_field() {
-  "$PY" src/model_matrix.py --config "$1" --models-dir "$MODELS_DIR" \
-    field "$2" "$3"
-}
-
-provision_registered_snapshots() {
-  local config=${MATRIX_CONFIGS[0]} datasets
-  local model_keys=()
-  [ "${ADDITIONAL_SKIP_PROVISION:-0}" != "1" ] || return 0
-
-  # Model and data destinations are shared. Only one node writes; the other
-  # nodes subsequently hash-check the immutable snapshots.
-  exec 7>"$OM_WORK/locks/additional-provision.lock"
-  flock 7
-  export OM_ONLINE=1
-  unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE
-  mapfile -t model_keys < <(
-    "$PY" src/model_matrix.py --config "$config" list-models
-  )
-  datasets=$(matrix_field "$config" datasets)
-  "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
-    download "${model_keys[@]}"
-  bash scripts/fetch_datasets.sh $datasets
-  flock -u 7
-  exec 7>&-
-}
 provision_registered_snapshots
-
-# Explicit roots prevent old flat snapshots and the primary v1 protocol from
-# shadowing any input or receiving any output from this suite.
-export GSM8K_DIR="$DATASETS_DIR/gsm8k"
-export MATH500_DIR="$DATASETS_DIR/math500"
-export MBPP_DIR="$DATASETS_DIR/mbpp"
-export KK_DIR="$DATASETS_DIR/kk"
-export ARC_CHALLENGE_DIR="$DATASETS_DIR/arc-challenge"
 
 run_phase() {
   local log=$1 name=$2 restarts=0 rc=0

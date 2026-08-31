@@ -62,7 +62,8 @@ Date: 2026-08-31 KST
 6. **Fragmented additional launch.** Model/domain and method checks are distinct
    generalization factors, but separate public launch/provision wrappers made
    them look like unrelated objectives. `scripts/run_additional_experiments.sh`
-   now queues, provisions, qualifies, and runs the entire registered extension.
+   now prepares, qualifies, queues, and runs the entire registered extension;
+   `--prepare` performs all dependency work without requiring an H100.
 
 ## Verification evidence
 
@@ -70,12 +71,12 @@ Executed after the final fixes:
 
 ```text
 python -m pytest -q
-77 passed in 11.15s
+78 passed in 11.44s
 
 python -m pytest -q tests/test_generalization_launcher.py \
   tests/test_model_matrix.py tests/test_grpo_policy.py \
   tests/test_regime_contract.py tests/test_rlvr_launcher.py
-23 passed in 2.02s
+24 passed in 2.11s
 
 python -m compileall -q src tests
 ruff check --select E9,F63,F7,F82 src tests

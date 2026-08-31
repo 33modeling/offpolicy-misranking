@@ -110,10 +110,12 @@ The audited Qwen run updates only `readouts/rlvr-grpo-v2-mathverify`; the
 already-running `295dfea` jobs retain the legacy `readouts/rlvr-grpo` target.
 Neither protocol uses timestamped harvest directories.
 
-The single `run_additional_experiments.sh` entry point waits on the existing
-node-specific primary lock, provisions immutable shared snapshots under a
-global lock, and applies the same queue and artifact contracts to every
-additional stratum. The GRPO stratum varies Mistral-7B-Instruct-v0.3 and
+The single `run_additional_experiments.sh` entry point has a GPU-free
+`--prepare` mode that downloads and qualifies every immutable shared snapshot
+under a global lock. Its default run revalidates those inputs, waits on any
+existing node-specific primary lock, and applies the same queue and artifact
+contracts to every additional stratum. The GRPO stratum varies
+Mistral-7B-Instruct-v0.3 and
 OLMo-2-1124-7B-Instruct over GSM8K, MBPP, Knights-and-Knaves, and ARC-Challenge.
 The method stratum uses those models and the GSM8K/MBPP pair to compare GRPO,
 Dr.GRPO, and RLOO. These are distinct generalization factors, not separate paper

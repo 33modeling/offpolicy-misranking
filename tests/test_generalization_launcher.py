@@ -196,3 +196,28 @@ def test_launcher_does_nothing_until_primary_lock_is_released(tmp_path: Path) ->
     output, _ = process.communicate(timeout=20)
     assert process.returncode == 0, output
     assert len((Path(env["TEST_WORK"]) / "phases").read_text().splitlines()) == 6
+
+
+def test_prepare_mode_needs_neither_primary_lock_nor_gpus(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    lock_path = Path(env["TEST_WORK"]) / "locks/rlvr-test-node.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_stream = lock_path.open("w")
+    fcntl.flock(lock_stream, fcntl.LOCK_EX)
+    nvidia_smi = Path(env["PATH"].split(":", 1)[0]) / "nvidia-smi"
+    executable(nvidia_smi, "#!/bin/sh\nexit 99\n")
+
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_additional_experiments.sh", "--prepare"],
+        cwd=root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    fcntl.flock(lock_stream, fcntl.LOCK_UN)
+    lock_stream.close()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "snapshots prepared and qualified" in result.stdout
+    assert not (Path(env["TEST_WORK"]) / "phases").exists()

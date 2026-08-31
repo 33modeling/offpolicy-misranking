@@ -74,20 +74,22 @@ Both strata use seeds 0-2 and the `0/25/100/400` checkpoint chain. Model and
 dataset revisions are immutable. There is one operational entry point for the
 entire additional study.
 
-Do not pull or modify a checkout running the primary `295dfea` jobs. On each
-node, create a separate clean checkout and start the same queued command:
+Do not pull or modify a checkout running the primary `295dfea` jobs. First use
+one separate online checkout with the same shared volume to prepare and qualify
+every model and dataset snapshot without requiring a GPU:
 
 ```bash
 git clone https://github.com/33modeling/offpolicy-misranking.git \
   ~/offpolicy-misranking-additional
 cd ~/offpolicy-misranking-additional
-bash scripts/run_additional_experiments.sh
+bash scripts/run_additional_experiments.sh --prepare
 ```
 
-The script blocks on the existing node-specific primary lock without signalling
-that process. After the primary launcher exits and all four GPUs are idle, it
-serializes shared snapshot provisioning and runs the GRPO model/domain stratum,
-then the Dr.GRPO and RLOO method strata.
+Then run `bash scripts/run_additional_experiments.sh` from a separate clean
+checkout on each of the three new 4xH100 nodes. The default run rechecks the
+snapshots, blocks on any existing node-specific primary lock without signalling
+that process, and starts only after all four GPUs are idle. It runs the GRPO
+model/domain stratum, then the Dr.GRPO and RLOO method strata.
 
 Each node runs an independent model/runtime smoke test, then claims complete
 seed/dataset families from shared queues. The generalization roots, contracts,
