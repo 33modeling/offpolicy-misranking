@@ -11,9 +11,9 @@ Date: 2026-08-31 KST
 - Single-launcher consolidation revision: `c8095c8`.
 - GPU-free snapshot preflight revision: `756a09f`.
 - Audited paper revision: `e53fe4ac9437ad702eb558213adad55e3125f83c`.
-- Final verdict: ready to launch the new `v2-mathverify`, generalization, and
-  method-robustness protocols after their cluster preflights pass. No empirical
-  result is claimed for those new matrices before all registered cells finish.
+- Final verdict: the existing primary remains on its compatible `v1` protocol;
+  the separate generalization and method protocols are ready after their
+  cluster preflights pass. No result is claimed before registered cells finish.
 - The retired positive-only LoRA cross-entropy path is SFT, not RLVR. It is
   excluded from canonical launch, harvest, main results, and generalization
   claims. The root cause is recorded in
@@ -26,7 +26,7 @@ Date: 2026-08-31 KST
 | 0. Provenance/objective | PASS WITH PRIOR DEFECT | SFT substitution isolated; positive steps require verifier reward, no supervised loss/filter, and a method-bound policy manifest. |
 | 1. Policy update | PASS, GPU RUNTIME PENDING | GRPO sign/clipping/std, Dr.GRPO normalizers, RLOO leave-one-out sequence loss, DDP/resume lineage, optimizer and manifest paths inspected and unit tested. Four-H100 execution remains a launch preflight. |
 | 2. Data | PASS FOR REGISTERED SETS | Immutable revisions/manifests, explicit loader roots, schema/dedupe/split checks, prompt set/order hashes, and runtime qualification added. APPS remains evaluator-only and is excluded from the registered matrix because its existing converted snapshot is not yet immutable-qualified. |
-| 3. Verifiers/sandbox | PASS WITH FIXES | Symbolic math equivalence uses pinned Math-Verify. MBPP catches `SystemExit` and blocks process-control/dynamic-introspection escapes; inherited-FD token forgery regression added. Local MBPP/KK/ARC reward qualification passed. |
+| 3. Verifiers/sandbox | PASS WITH FIXES | Additional-study symbolic equivalence uses pinned Math-Verify; primary remains exact/float compatible. MBPP blocks process-control escapes and FD token forgery. Local MBPP/KK/ARC qualification passed. |
 | 4. Rollout/contracts | PASS, GPU RUNTIME PENDING | Token/log-prob boundaries and manifest checks covered by the full suite; prompt identities and method/source hashes are bound. Actual new-model generation is gated by cluster smoke tests. |
 | 5. R/A/B independence | PASS | Ranking split R and disjoint reference splits A/B are enforced in contracts and paper text; exact set/order checks and independent score artifacts remain mandatory. |
 | 6. Estimators/selection | PASS | Four estimator cells, clipping/ESS, LOO advantages, ranking baselines, stable top-k, and selection contracts were rechecked against executable tests and manuscript equations. |
@@ -43,10 +43,10 @@ Date: 2026-08-31 KST
    optimization objective. Canonical training now samples online verifier
    rewards and validates GRPO-family manifests; old SFT artifacts cannot enter
    RLVR results.
-2. **Mathematical false negatives.** Exact string/float matching rejected
-   equivalent symbolic answers. Math-Verify 0.9.0 was pinned, and the changed
-   reward protocol uses separate `v2-mathverify` run/readout roots with implicit
-   analysis migration disabled.
+2. **Mathematical protocol separation.** Exact string/float matching can reject
+   equivalent symbolic answers, but changing it in place breaks primary
+   compatibility. The primary explicitly retains exact/float matching;
+   Math-Verify 0.9.0 is enabled only by the additional launcher in disjoint roots.
 3. **MBPP reward bypass.** Appended assertions could be skipped by
    `SystemExit(0)`. An initial completion pipe was also forgeable through an
    inherited file descriptor. The final harness separates trusted tests,

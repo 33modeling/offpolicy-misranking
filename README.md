@@ -18,10 +18,10 @@ Run the same command on all three nodes. The nodes claim work from shared
 four local H100s for GRPO. Interrupted training resumes from the latest adapter
 and optimizer checkpoint.
 
-The audited launcher writes a new `v2-mathverify` matrix and disables implicit
-analysis upgrades. The three jobs already started at revision `295dfea` remain
-`v1` artifacts and must finish under that revision; they are never opened,
-relabelled, or harvested as `v2` results.
+The canonical launcher preserves the existing `v1` exact/float mathematical
+verifier and result roots, so jobs started at revision `295dfea` can resume from
+their existing flat local datasets and artifacts. Pinned manifests and symbolic
+Math-Verify are requirements only of the separate additional-study launcher.
 
 The command runs:
 
@@ -36,13 +36,12 @@ The command runs:
 The only user-facing result bundle is replaced in place at:
 
 ```text
-$OM_WORK/readouts/rlvr-grpo-v2-mathverify/
+$OM_WORK/readouts/rlvr-grpo/
 ```
 
 It contains exactly `REPORT.md`, `RESULTS.json`, `RESULTS.csv`, and
-`MANIFEST.sha256`. The legacy `v1` launcher retains its own
-`$OM_WORK/readouts/rlvr-grpo/` bundle. Unchanged inputs reuse their versioned
-bundle; no protocol version overwrites another.
+`MANIFEST.sha256`. Unchanged inputs reuse that bundle. Additional experiments
+write only to their separate method-specific roots.
 
 ## Objective Contract
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -70,8 +71,10 @@ deduped = _dedupe_items([
     {"question": "other", "answer": "two"},
 ], "fixture")
 assert len(deduped) == 2
+os.environ["OM_MATH_VERIFIER"] = "math_verify"
 assert reward("Reasoning\n#### 0.5", r"\frac{1}{2}") == 1.0
 assert reward("Reasoning\n#### 0.6", r"\frac{1}{2}") == 0.0
+os.environ.pop("OM_MATH_VERIFIER")
 try:
     _dedupe_items([
         {"question": "same", "answer": "one"},

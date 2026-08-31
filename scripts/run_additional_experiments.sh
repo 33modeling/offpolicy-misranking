@@ -91,6 +91,7 @@ export MATH500_DIR="$DATASETS_DIR/math500"
 export MBPP_DIR="$DATASETS_DIR/mbpp"
 export KK_DIR="$DATASETS_DIR/kk"
 export ARC_CHALLENGE_DIR="$DATASETS_DIR/arc-challenge"
+export OM_MATH_VERIFIER=math_verify
 
 if [ "$MODE" = "--prepare" ]; then
   config=${MATRIX_CONFIGS[0]}

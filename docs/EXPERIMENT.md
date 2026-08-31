@@ -94,11 +94,12 @@ policy_step_N/
 `DONE` is written only after the policy contract, rollout contracts, score and
 oracle protocols, exact prompt coverage, and required artifacts pass.
 
-The audited launchers disable implicit analysis-only migration. In particular,
-the `v1` exact-string mathematical verifier and the `v2-mathverify` symbolic
-equivalence verifier have separate run and readout roots. A future migration
-must use an explicit reviewed launcher and may change analysis provenance only;
-it cannot cross a reward, dataset, policy, or generation protocol boundary.
+The canonical primary launcher retains its `v1` exact/float mathematical
+verifier, flat dataset compatibility, and analysis-only migration path so an
+existing run can resume. The additional-study launcher alone enables symbolic
+Math-Verify and immutable dataset qualification. It uses disjoint run roots and
+disables analysis migration across reward, dataset, policy, or generation
+protocol boundaries.
 
 ## Multi-node execution
 
@@ -106,9 +107,9 @@ it cannot cross a reward, dataset, policy, or generation protocol boundary.
 simultaneously against the same `GROUP_VOLUME`; `run_matrix.sh` locks an entire
 seed/dataset family, preserving the ordered checkpoint chain and preventing
 duplicate jobs. Report collection is separately locked and content-addressed.
-The audited Qwen run updates only `readouts/rlvr-grpo-v2-mathverify`; the
-already-running `295dfea` jobs retain the legacy `readouts/rlvr-grpo` target.
-Neither protocol uses timestamped harvest directories.
+The Qwen primary and already-running `295dfea` jobs retain the
+`readouts/rlvr-grpo` target. Additional-study outputs never enter that bundle.
+Neither path uses timestamped harvest directories.
 
 The single `run_additional_experiments.sh` entry point has a GPU-free
 `--prepare` mode that downloads and qualifies every immutable shared snapshot

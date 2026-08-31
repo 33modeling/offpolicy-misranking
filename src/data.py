@@ -7,6 +7,7 @@ H100 클러스터는 GitHub egress가 없으므로 HF 미러를 쓴다:
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 from functools import lru_cache
@@ -677,4 +678,6 @@ def reward(text: str, gold: str) -> float:
             return 1.0
     except ValueError:
         pass
-    return _math_reward(pred, gold)
+    if os.environ.get("OM_MATH_VERIFIER", "exact") == "math_verify":
+        return _math_reward(pred, gold)
+    return 0.0
