@@ -7,6 +7,9 @@ commands, evidence, defects, and final verdicts only after every required check
 has run. A checked box means evidence was recorded, not merely that code was
 read.
 
+The frozen per-item scope remains below. Final outcomes, commands, defects, and
+residual risks are recorded in [AUDIT_RESULT_2026-08-31.md](AUDIT_RESULT_2026-08-31.md).
+
 ## Status legend
 
 - `[ ]` pending
