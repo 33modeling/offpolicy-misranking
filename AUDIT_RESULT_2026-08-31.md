@@ -10,6 +10,8 @@ Date: 2026-08-31 KST
 - Audited implementation revision: `e54077fa50ffaafba70c2ec93914a83c7efb2770`.
 - Single-launcher consolidation revision: `c8095c8`.
 - GPU-free snapshot preflight revision: `756a09f`.
+- Canonical harvest re-audit and fix revision:
+  `8812a52ac7e098e1109b078c9fa5d5e159f50cf9`.
 - Audited paper revision: `e53fe4ac9437ad702eb558213adad55e3125f83c`.
 - Final verdict: the existing primary remains on its compatible `v1` protocol;
   the separate generalization and method protocols are ready after their
@@ -31,7 +33,7 @@ Date: 2026-08-31 KST
 | 5. R/A/B independence | PASS | Ranking split R and disjoint reference splits A/B are enforced in contracts and paper text; exact set/order checks and independent score artifacts remain mandatory. |
 | 6. Estimators/selection | PASS | Four estimator cells, clipping/ESS, LOO advantages, ranking baselines, stable top-k, and selection contracts were rechecked against executable tests and manuscript equations. |
 | 7. Utility/statistics | PASS | Utility remains validation-gradient alignment, not downstream reward. Reliability/fresh-gain gates and 10,000-replicate hierarchical bootstrap remain unchanged and are not overclaimed. |
-| 8. Distributed/publication | PASS, CLUSTER RUNTIME PENDING | Exactly four H100s, clean Git state, shared-volume location, family/collection locks, retries, deep validation, and content-addressed outputs fail closed. No four-H100 node is attached to this audit host. |
+| 8. Distributed/publication | PASS WITH FIX, CLUSTER RUNTIME PENDING | Exactly four H100s, clean Git state, shared-volume location, family/collection locks, retries, deep validation, and content-addressed outputs fail closed. The final harvester now carries those checks through publication. No four-H100 node is attached to this audit host. |
 | 9. Generalization | REGISTERED | Two independent 7B model families, four verifier domains, three seeds, four checkpoints, full GRPO matrix, and math/code Dr.GRPO plus RLOO slice use disjoint roots/contracts. |
 | 10. Mathematics/claims | PASS | Estimator identities, counterexamples, normalization lemma, recovery proposition, reliability ceiling, certification bound, and claim scopes were checked against code/tests; generalization is explicitly non-universal. |
 | 11. References/build | PASS | 65 citation keys resolve to 65 unique bibliography entries with zero missing, duplicate, or uncited entries. Clean 18-page letter PDF has no undefined refs/citations, LaTeX errors, or overfull boxes. |
@@ -65,6 +67,15 @@ Date: 2026-08-31 KST
    them look like unrelated objectives. `scripts/run_additional_experiments.sh`
    now prepares, qualifies, queues, and runs the entire registered extension;
    `--prepare` performs all dependency work without requiring an H100.
+7. **Final harvest trusted file presence.** `harvest_results.sh` previously
+   required five nonempty analysis files but did not verify the report-cache
+   hashes, registered matrix dimensions, 27B/7B role assignment, final bootstrap
+   status, or JSON/CSV agreement. A stale or internally inconsistent report set
+   could therefore be packaged after the stronger matrix checks had run. The
+   v2 harvester reads a coherent hash-bound snapshot, validates every registered
+   cell and selector, rejects provisional/non-finite/duplicate output, checks
+   summary and CSV agreement, serializes concurrent publishers, preserves the
+   prior bundle on failure, and enforces the exact four-file published layout.
 
 ## Verification evidence
 
@@ -101,6 +112,34 @@ Additional runtime/data evidence:
 - Citation audit: 65 cited keys, 65 bibliography keys, zero missing, duplicate,
   or uncited keys.
 
+### Harvest re-audit on 2026-09-01
+
+Executed against fix revision `8812a52`:
+
+```text
+python -m pytest -q
+83 passed in 12.14s
+
+python -m pytest -q tests/test_harvest_results.py
+7 passed in 0.89s
+
+python -m compileall -q src tests
+ruff check --select E9,F63,F7,F82 src tests
+bash -n scripts/*.sh
+jq empty configs/*.json
+python -m pip check
+git diff --check
+All passed.
+```
+
+The harvest fixture covers a valid full 27B/7B matrix, unchanged reuse, removal
+of unmanifested files, three simultaneous harvesters, stale analysis hashes,
+JSON/CSV disagreement, a missing registered cell, swapped primary/replication
+roots, and preservation of the last valid bundle after rejection. The running
+source revision `295dfea` was checked directly and emits the v2 regime schema,
+five selectors, 10,000-replicate final rows, and report-cache marker format
+accepted by the new validator.
+
 ## Launch boundaries
 
 The audit host has one 6 GB RTX 3050, not four H100s, so it must not start or
@@ -124,6 +163,10 @@ preserves the ordered `0 -> 25 -> 100 -> 400` checkpoint lineage.
 - Failure recovery and shared locking are covered by fixture tests; actual
   preemption, filesystem latency, and three-node scheduling remain operational
   observations to record during the run.
+- This host has no primary cluster result volume, so the new harvester was
+  exercised with a structurally complete fixture rather than the in-progress
+  H100 artifacts. Run it after those jobs finish and the checkout is updated;
+  rejection leaves the last valid readout unchanged and does not rerun training.
 - New statistical outcomes and cross-stratum generalization are unknown until
   every registered cell and reliability gate completes. A pooled or universal
   claim remains prohibited.
