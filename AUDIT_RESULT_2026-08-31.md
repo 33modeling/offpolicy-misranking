@@ -9,6 +9,7 @@ Date: 2026-08-31 KST
 - Pre-audit checklist revision: `6873002`.
 - Audited implementation revision: `e54077fa50ffaafba70c2ec93914a83c7efb2770`.
 - Single-launcher consolidation revision: `c8095c8`.
+- GPU-free snapshot preflight revision: `756a09f`.
 - Audited paper revision: `e53fe4ac9437ad702eb558213adad55e3125f83c`.
 - Final verdict: ready to launch the new `v2-mathverify`, generalization, and
   method-robustness protocols after their cluster preflights pass. No empirical
