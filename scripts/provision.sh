@@ -106,4 +106,4 @@ fi
 # 4) 로직 테스트 (모델 불필요)
 "$VENV_DIR/bin/python" tests/test_core.py
 
-step "done — 다음: bash scripts/run_h100_all.sh (로그: $PLOG)"
+step "done - next: bash scripts/run_rlvr.sh (log: $PLOG)"

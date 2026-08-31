@@ -87,12 +87,8 @@ assert all(len(row["revision"]) == 40 for row in models.values())
 assert config["experiment"]["datasets"] == ["mbpp", "kk", "arc-challenge"]
 assert config["experiment"]["fresh_k"] == 32
 assert config["experiment"]["fresh_k"] % config["experiment"]["micro_group"] == 0
-runner = (ROOT / "scripts" / "go_domain_transfer.sh").read_text()
-assert "bash scripts/go_regime.sh" in runner
-assert "qualify_domain_data.py" in runner
-assert "transfer_smoke.py" in runner
-assert "regime_contract.py init" in runner
-assert '${REGIME_DATASETS:-' not in runner
-assert 'REGIME_FIRST_BOOTSTRAP="$(config_field first_bootstrap)"' in runner
+assert config["experiment"]["grpo"]["world_size"] == 4
+assert config["experiment"]["grpo"]["group_size"] == 8
+assert config["experiment"]["grpo"]["clip_epsilon"] == 0.2
 
 print("PASS")

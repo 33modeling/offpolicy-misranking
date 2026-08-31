@@ -61,6 +61,18 @@ def matrix_document(root: Path) -> dict:
             "attn": "eager",
             "skip_hybrid": True,
             "first_bootstrap": 2000,
+            "grpo": {
+                "world_size": 4,
+                "group_size": 8,
+                "clip_epsilon": 0.2,
+                "learning_rate": 1e-5,
+                "reference_kl_beta": 0.0,
+                "epochs_per_batch": 2,
+                "max_grad_norm": 1.0,
+                "advantage_epsilon": 1e-4,
+                "lora_rank": 16,
+                "lora_alpha": 32,
+            },
         },
     }
     document["digest"] = json_digest(document)

@@ -12,7 +12,7 @@ def main() -> None:
     mib = 1024 * 1024
     resource.setrlimit(resource.RLIMIT_CPU, (timeout + 1, timeout + 1))
     resource.setrlimit(resource.RLIMIT_AS, (1024 * mib, 1024 * mib))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (1 * mib, 1 * mib))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (mib, mib))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
     if hasattr(resource, "RLIMIT_NPROC"):
         resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))

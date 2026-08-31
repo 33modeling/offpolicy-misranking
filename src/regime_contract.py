@@ -17,6 +17,7 @@ from artifact_contract import validate_generation_contract
 from gate_rules import has_valid_analysis_protocol
 from model_matrix import _load_config
 from score_artifacts import load_complete_score_artifacts
+from train_policy_grpo import validate_policy_manifest
 
 MATRIX_SCHEMA = "offpolicy-regime-matrix/v1"
 MARKER_SCHEMA = "offpolicy-regime-run-validation/v1"
@@ -83,6 +84,21 @@ RUN_CONFIG_FIELDS = (
     "skip_hybrid",
     "seed",
     "drift",
+    "training_objective",
+    "policy_update",
+    "reward_source",
+    "supervised_loss",
+    "positive_only_filter",
+    "grpo_world_size",
+    "grpo_group_size",
+    "grpo_clip_epsilon",
+    "grpo_learning_rate",
+    "grpo_reference_kl_beta",
+    "grpo_epochs_per_batch",
+    "grpo_max_grad_norm",
+    "grpo_advantage_epsilon",
+    "grpo_lora_rank",
+    "grpo_lora_alpha",
 )
 
 
@@ -221,6 +237,7 @@ def expected_run_config(
     if drift not in experiment["drifts"]:
         raise ValueError(f"drift is outside matrix: {drift}")
     model = matrix["model"]
+    grpo = experiment["grpo"]
     return {
         "git": matrix["git"],
         "git_status": "",
@@ -249,6 +266,21 @@ def expected_run_config(
         "skip_hybrid": "1" if experiment["skip_hybrid"] else "0",
         "seed": seed,
         "drift": drift,
+        "training_objective": "base_control" if drift == 0 else "grpo",
+        "policy_update": "none" if drift == 0 else "clipped_policy_gradient",
+        "reward_source": "none" if drift == 0 else "verifier",
+        "supervised_loss": False,
+        "positive_only_filter": False,
+        "grpo_world_size": grpo["world_size"],
+        "grpo_group_size": grpo["group_size"],
+        "grpo_clip_epsilon": float(grpo["clip_epsilon"]),
+        "grpo_learning_rate": float(grpo["learning_rate"]),
+        "grpo_reference_kl_beta": float(grpo["reference_kl_beta"]),
+        "grpo_epochs_per_batch": grpo["epochs_per_batch"],
+        "grpo_max_grad_norm": float(grpo["max_grad_norm"]),
+        "grpo_advantage_epsilon": float(grpo["advantage_epsilon"]),
+        "grpo_lora_rank": grpo["lora_rank"],
+        "grpo_lora_alpha": grpo["lora_alpha"],
     }
 
 
@@ -374,7 +406,7 @@ def mark_collection(results: Path, runs: list[Path], matrix: dict) -> None:
     temporary.replace(target)
 
 
-def deep_validation(run: Path, matrix: dict) -> dict:
+def deep_validation(run: Path, matrix: dict, drift: int) -> dict:
     generation = validate_generation_contract(run)
     if not has_valid_analysis_protocol(run):
         raise ValueError("score/oracle protocol or bound generation hashes are invalid")
@@ -392,6 +424,23 @@ def deep_validation(run: Path, matrix: dict) -> dict:
     bound_names = sorted(
         set(generation["artifact_sha256"]) | set(generation["manifest_sha256"])
     )
+    if drift > 0:
+        policy = run / f"policy_step_{drift}"
+        validate_policy_manifest(
+            policy,
+            target_steps=drift,
+            world_size=int(matrix["experiment"]["grpo"]["world_size"]),
+        )
+        bound_names.extend(
+            str(Path(f"policy_step_{drift}") / name)
+            for name in (
+                "policy_train.json",
+                "adapter_config.json",
+                "adapter_model.safetensors",
+                "optimizer.pt",
+                "grpo_stats.jsonl",
+            )
+        )
     return {
         "generation": generation,
         "bound_artifact_stats": artifact_stats(run, bound_names),
@@ -417,7 +466,7 @@ def validate_run(
         if not marker_is_current(run, matrix):
             raise ValueError("deep-validation marker is missing or stale")
         return
-    validation = deep_validation(run, matrix)
+    validation = deep_validation(run, matrix, drift)
     if mark:
         marker = {
             "schema": MARKER_SCHEMA,

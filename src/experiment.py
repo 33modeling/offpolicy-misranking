@@ -2,7 +2,7 @@
 
 stages:
   rollout-behavior  β(base)로 train+val 프롬프트 rollout 수집
-  drift             정답 rollout LoRA RFT로 π 체크포인트 생성 (steps 스윕)
+  Policy training is performed only by train_policy_grpo.py.
   score             β rollout에 4개 추정량(g00/g10/g01/g11) 적용 → 프롬프트 점수
   oracle            π fresh rollout 수집 → oracle 점수·split-half noise floor·micro-group grads
   report            top-k precision/Jaccard 표 + margin + CertaGrad vs uniform
@@ -21,7 +21,6 @@ import torch
 from artifact_contract import sha256_file, validate_generation_contract
 from certagrad import certagrad, uniform_baseline
 from compact_artifacts import (
-    compact_adapter,
     compact_analysis_shards,
     merge_divergence_shards,
 )
@@ -37,7 +36,7 @@ from grads import (
     token_weights,
     weight_stats,
 )
-from rollout import SAMPLING, collect_rollouts, load_policy, train_drift_lora
+from rollout import SAMPLING, collect_rollouts, load_policy
 from rollout_contract import trim_row
 from select_rules import (
     fixed_selection_overlap,
@@ -508,7 +507,7 @@ def stage_report(args, run: Path) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--stage", required=True,
-                   choices=["prep", "rollout-behavior", "drift", "score", "oracle",
+                   choices=["prep", "rollout-behavior", "score", "oracle",
                             "report", "hybrid", "analyze", "downstream",
                             "rollout-fresh", "oracle-grads", "score-shard",
                             "merge-grads", "val-grads", "val-deepen"])
@@ -526,7 +525,6 @@ def main() -> None:
     p.add_argument("--micro-group", type=int, default=4)
     p.add_argument("--max-new-tokens", type=int, default=512)
     p.add_argument("--temperature", type=float, default=1.0)
-    p.add_argument("--drift-steps", type=int, default=100)
     p.add_argument("--proj-dim", type=int, default=4096)
     p.add_argument("--grad-layers", type=int, default=4)
     p.add_argument("--clip-cap", type=float, default=10.0)
@@ -586,7 +584,7 @@ def main() -> None:
         else:
             i, n, out = 0, 1, merged
         # 병합본이 있으면 샤드도 스킵 — 다른 run에서 복사해 온 β 재사용(go_boost·
-        # real_drift_check)과 병합 후 재시작 양쪽을 커버한다.
+        # Reused behavior artifacts and post-merge restarts both stop here.
         if merged.exists():
             print("rollout-behavior: 병합본 존재 — 스킵 (재사용)")
         elif out.exists():
@@ -609,7 +607,7 @@ def main() -> None:
             i, n, out = 0, 1, merged
         pi = tok = None
         # 병합본 존재 시 샤드 스킵 (병합 후 재시작 케이스 — 낡은 π 병합본은
-        # run_14b의 adapter 시각 격리가 먼저 치우므로 여기 도달하면 현재 π 것)
+        # run_point의 adapter 시각 격리가 먼저 치우므로 여기 도달하면 현재 π 것)
         if merged.exists():
             print("rollout-fresh: 병합본 존재 — 스킵")
         elif out.exists():
@@ -632,18 +630,6 @@ def main() -> None:
             prompts = json.loads((run / "prompts.json").read_text())
             collect_rollouts(pi, tok, prompts["val"], args.val_k,
                              args.max_new_tokens, args.temperature, val_out)
-    elif args.stage == "drift":
-        # 재개 시 재학습 금지 — LoRA 초기화가 랜덤이라 π가 바뀌면 이전에 계산된
-        # 점수들과의 비교 일관성이 깨진다. 다시 학습하려면 adapter 폴더를 지울 것.
-        adapter_dir = run / f"drift_{args.drift_steps}"
-        if (adapter_dir / "adapter_config.json").exists():
-            removed = compact_adapter(adapter_dir)
-            if removed:
-                print(f"drift: redundant adapter files removed: {len(removed)}")
-            print(f"drift: {adapter_dir.name} 이미 존재 — 스킵 (재학습하려면 폴더 삭제)")
-        else:
-            train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
-                             adapter_dir, steps=args.drift_steps)
     elif args.stage == "score":
         stage_score(args, run)
     elif args.stage == "oracle":

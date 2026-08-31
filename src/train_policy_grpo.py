@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""Distributed verifier-reward GRPO policy training.
+
+LoRA is used only as a parameter-efficient representation of the policy update.
+The optimization objective is clipped GRPO over online samples from the current
+policy. No supervised labels or positive-only filtering enter this path.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import os
+import random
+import shutil
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+import torch
+import torch.distributed as dist
+
+from artifact_contract import sha256_file
+from compact_artifacts import compact_adapter
+from data import reward
+from rollout import SAMPLING, _lora_targets, chat_ids, load_model
+from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
+
+POLICY_SCHEMA = "offpolicy-rlvr-policy/v1"
+CHECKPOINT_SCHEMA = "offpolicy-grpo-checkpoint/v1"
+
+
+@dataclass(frozen=True)
+class GrpoConfig:
+    group_size: int = 8
+    clip_epsilon: float = 0.2
+    learning_rate: float = 1e-5
+    epochs_per_batch: int = 2
+    max_grad_norm: float = 1.0
+    advantage_epsilon: float = 1e-4
+    lora_rank: int = 16
+    lora_alpha: int = 32
+    checkpoint_every: int = 5
+
+
+def standardized_group_advantages(
+    rewards: torch.Tensor, epsilon: float = 1e-4
+) -> torch.Tensor:
+    """Return the GRPO within-group standardized reward advantages."""
+    if rewards.ndim != 1 or rewards.numel() < 2:
+        raise ValueError("GRPO requires a one-dimensional reward group with K >= 2")
+    if epsilon <= 0:
+        raise ValueError("advantage epsilon must be positive")
+    centered = rewards.float() - rewards.float().mean()
+    return centered / (rewards.float().std(unbiased=False) + epsilon)
+
+
+def clipped_grpo_loss(
+    current_logps: list[torch.Tensor],
+    old_logps: list[torch.Tensor],
+    advantages: torch.Tensor,
+    clip_epsilon: float,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """Compute the token-level clipped GRPO surrogate for one prompt group."""
+    if not 0 < clip_epsilon < 1:
+        raise ValueError("clip epsilon must be in (0, 1)")
+    if len(current_logps) != len(old_logps) or len(current_logps) != advantages.numel():
+        raise ValueError("log-prob groups and advantages must have equal lengths")
+    if not current_logps:
+        raise ValueError("GRPO group cannot be empty")
+
+    losses: list[torch.Tensor] = []
+    ratios: list[torch.Tensor] = []
+    approximate_kls: list[torch.Tensor] = []
+    for current, old, advantage in zip(
+        current_logps, old_logps, advantages, strict=True
+    ):
+        if current.ndim != 1 or current.shape != old.shape or current.numel() == 0:
+            raise ValueError("each response must have matching non-empty token log-probs")
+        old = old.to(device=current.device, dtype=current.dtype)
+        ratio = torch.exp(current - old)
+        clipped = ratio.clamp(1.0 - clip_epsilon, 1.0 + clip_epsilon)
+        advantage = advantage.to(device=current.device, dtype=current.dtype)
+        surrogate = torch.minimum(ratio * advantage, clipped * advantage)
+        losses.append(-surrogate.mean())
+        ratios.append(ratio.detach())
+        approximate_kls.append((old - current.detach()).mean())
+
+    all_ratios = torch.cat(ratios)
+    stats = {
+        "clip_fraction": float(
+            ((all_ratios < 1.0 - clip_epsilon) | (all_ratios > 1.0 + clip_epsilon))
+            .float()
+            .mean()
+        ),
+        "mean_ratio": float(all_ratios.mean()),
+        "approx_kl": float(torch.stack(approximate_kls).mean()),
+    }
+    return torch.stack(losses).mean(), stats
+
+
+def validate_policy_manifest(
+    adapter_dir: Path,
+    *,
+    target_steps: int | None = None,
+    world_size: int | None = None,
+    verify_hash: bool = True,
+) -> dict:
+    """Fail closed unless an adapter was produced by verifier-reward GRPO."""
+    manifest_path = adapter_dir / "policy_train.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    required = {
+        "schema": POLICY_SCHEMA,
+        "training_objective": "grpo",
+        "policy_update": "clipped_policy_gradient",
+        "reward_source": "verifier",
+        "reference_kl_beta": 0.0,
+        "supervised_loss": False,
+        "positive_only_filter": False,
+    }
+    errors = [
+        f"{key}={manifest.get(key)!r}, expected {value!r}"
+        for key, value in required.items()
+        if manifest.get(key) != value
+    ]
+    start_step = manifest.get("start_step")
+    if not isinstance(start_step, int) or start_step < 0:
+        errors.append(f"invalid start_step={start_step!r}")
+    parent_fields = (
+        "parent_policy",
+        "parent_policy_manifest_sha256",
+        "parent_adapter_sha256",
+        "parent_optimizer_sha256",
+    )
+    if isinstance(start_step, int) and start_step > 0:
+        if not manifest.get("parent_policy"):
+            errors.append("resumed policy has no parent_policy")
+        for key in parent_fields[1:]:
+            value = manifest.get(key)
+            if not isinstance(value, str) or len(value) != 64:
+                errors.append(f"resumed policy has invalid {key}")
+    elif any(manifest.get(key) is not None for key in parent_fields):
+        errors.append("base policy unexpectedly records a parent policy")
+    if target_steps is not None and manifest.get("completed_steps") != target_steps:
+        errors.append(
+            f"completed_steps={manifest.get('completed_steps')!r}, expected {target_steps}"
+        )
+    if world_size is not None and manifest.get("world_size") != world_size:
+        errors.append(f"world_size={manifest.get('world_size')!r}, expected {world_size}")
+    for name in ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt"):
+        path = adapter_dir / name
+        if not path.is_file() or path.stat().st_size == 0:
+            errors.append(f"missing or empty {name}")
+    stats_path = adapter_dir / "grpo_stats.jsonl"
+    if not stats_path.is_file() or stats_path.stat().st_size == 0:
+        errors.append("missing or empty grpo_stats.jsonl")
+    elif sum(
+        int(json.loads(line).get("nonzero_advantage_groups", 0))
+        for line in stats_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ) <= 0:
+        errors.append("training observed no nonzero-advantage reward group")
+    if errors:
+        raise ValueError("invalid GRPO policy artifact: " + "; ".join(errors))
+    if verify_hash and manifest.get("adapter_sha256") != sha256_file(
+        adapter_dir / "adapter_model.safetensors"
+    ):
+        raise ValueError("GRPO adapter hash does not match policy_train.json")
+    return manifest
+
+
+def _response_logps(model, ids: torch.Tensor, response_start: int) -> torch.Tensor:
+    batch = ids.unsqueeze(0).to(next(model.parameters()).device)
+    logits = model(batch, attention_mask=torch.ones_like(batch)).logits[0, :-1].float()
+    targets = batch[0, 1:]
+    token_logps = logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    token_logps = token_logps - logits.logsumexp(dim=-1)
+    response = token_logps[response_start - 1 :]
+    if response.numel() == 0:
+        raise ValueError("generated response has no scoreable tokens")
+    return response
+
+
+@torch.no_grad()
+def _sample_group(model, tokenizer, prompt: dict, config: GrpoConfig, max_new_tokens: int):
+    inputs = chat_ids(tokenizer, prompt["question"]).to(next(model.parameters()).device)
+    response_start = int(inputs.numel())
+    batch = inputs.unsqueeze(0).expand(config.group_size, -1)
+    kwargs = gen_kwargs(1.0, SAMPLING["top_p"], max_new_tokens, tokenizer.eos_token_id)
+    generated = model.generate(
+        batch,
+        attention_mask=torch.ones_like(batch),
+        use_cache=True,
+        **kwargs,
+    )
+    eos_ids = eos_ids_of(model, tokenizer, pad_id=tokenizer.eos_token_id)
+    sequences: list[torch.Tensor] = []
+    rewards: list[float] = []
+    for sequence in generated:
+        end = resp_end_index(sequence, response_start, eos_ids)
+        sequence = sequence[:end].detach()
+        text = tokenizer.decode(sequence[response_start:], skip_special_tokens=True)
+        sequences.append(sequence)
+        rewards.append(reward(text, prompt["answer"]))
+    return sequences, torch.tensor(rewards, dtype=torch.float32)
+
+
+def _atomic_json(path: Path, document: dict) -> None:
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def _save_checkpoint(model, optimizer, out_dir: Path, completed_steps: int, rank: int) -> None:
+    if rank != 0:
+        return
+    target = out_dir / f"checkpoint-{completed_steps:06d}"
+    if target.is_dir():
+        return
+    temporary = out_dir / f".checkpoint-{completed_steps:06d}.tmp"
+    shutil.rmtree(temporary, ignore_errors=True)
+    temporary.mkdir(parents=True)
+    model.save_pretrained(temporary, safe_serialization=True)
+    compact_adapter(temporary)
+    torch.save(optimizer.state_dict(), temporary / "optimizer.pt")
+    _atomic_json(
+        temporary / "checkpoint_state.json",
+        {"schema": CHECKPOINT_SCHEMA, "completed_steps": completed_steps},
+    )
+    temporary.rename(target)
+    checkpoints = sorted(out_dir.glob("checkpoint-*"))
+    for stale in checkpoints[:-2]:
+        shutil.rmtree(stale)
+
+
+def _latest_checkpoint(out_dir: Path, upper_bound: int) -> tuple[Path | None, int]:
+    candidates: list[tuple[int, Path]] = []
+    for path in out_dir.glob("checkpoint-*"):
+        try:
+            state = json.loads((path / "checkpoint_state.json").read_text())
+            step = int(state["completed_steps"])
+            if (
+                state.get("schema") == CHECKPOINT_SCHEMA
+                and 0 < step < upper_bound
+                and (path / "adapter_config.json").is_file()
+                and (path / "adapter_model.safetensors").is_file()
+                and (path / "optimizer.pt").is_file()
+            ):
+                candidates.append((step, path))
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+    candidates.sort(key=lambda item: item[0])
+    return (candidates[-1][1], candidates[-1][0]) if candidates else (None, 0)
+
+
+def _distributed_setup(expected_world_size: int) -> tuple[int, int, int]:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if world_size != expected_world_size:
+        raise RuntimeError(
+            f"GRPO requires exactly {expected_world_size} processes, got {world_size}; "
+            "launch with torchrun"
+        )
+    if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
+        raise RuntimeError("GRPO training requires CUDA")
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group("nccl")
+    return rank, local_rank, world_size
+
+
+def train(args: argparse.Namespace) -> None:
+    from peft import LoraConfig, PeftModel, get_peft_model
+    from torch.nn.parallel import DistributedDataParallel
+
+    rank, local_rank, world_size = _distributed_setup(args.expected_world_size)
+    config = GrpoConfig(
+        group_size=args.group_size,
+        clip_epsilon=args.clip_epsilon,
+        learning_rate=args.learning_rate,
+        epochs_per_batch=args.epochs_per_batch,
+        max_grad_norm=args.max_grad_norm,
+        advantage_epsilon=args.advantage_epsilon,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        checkpoint_every=args.checkpoint_every,
+    )
+    if config.group_size < 2 or config.epochs_per_batch < 1 or args.target_steps < 1:
+        raise ValueError("group size must be >=2 and epochs/target steps must be positive")
+    if SAMPLING["top_p"] != 1.0:
+        raise ValueError("canonical GRPO requires OM_TOP_P=1.0")
+
+    out_dir = Path(args.output)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if (out_dir / "policy_train.json").is_file():
+        validate_policy_manifest(
+            out_dir, target_steps=args.target_steps, world_size=world_size
+        )
+        if rank == 0:
+            print(f"[grpo] validated completed policy: {out_dir}", flush=True)
+        dist.destroy_process_group()
+        return
+
+    has_parent_adapter = args.resume_adapter is not None
+    has_parent_optimizer = args.resume_optimizer is not None
+    if args.start_step > 0 and not (has_parent_adapter and has_parent_optimizer):
+        raise ValueError("a positive start step requires both parent adapter and optimizer")
+    if args.start_step == 0 and (has_parent_adapter or has_parent_optimizer):
+        raise ValueError("parent adapter/optimizer require a positive start step")
+
+    local_checkpoint, local_step = _latest_checkpoint(out_dir, args.target_steps)
+    resume_adapter = local_checkpoint or (Path(args.resume_adapter) if args.resume_adapter else None)
+    completed_steps = local_step or args.start_step
+    if completed_steps >= args.target_steps:
+        raise ValueError("resume step must be smaller than target steps")
+    if local_checkpoint is None and completed_steps:
+        previous = validate_policy_manifest(
+            resume_adapter, target_steps=completed_steps, world_size=world_size
+        )
+        if previous["training_objective"] != "grpo":
+            raise ValueError("resume policy is not GRPO")
+
+    model, tokenizer = load_model(args.model, device=f"cuda:{local_rank}")
+    if resume_adapter:
+        model = PeftModel.from_pretrained(model, str(resume_adapter), is_trainable=True)
+    else:
+        model = get_peft_model(
+            model,
+            LoraConfig(
+                r=config.lora_rank,
+                lora_alpha=config.lora_alpha,
+                target_modules=_lora_targets(),
+                lora_dropout=0.0,
+                bias="none",
+                task_type="CAUSAL_LM",
+            ),
+        )
+    model.gradient_checkpointing_enable(
+        gradient_checkpointing_kwargs={"use_reentrant": False}
+    )
+    model.enable_input_require_grads()
+    model.config.use_cache = False
+    trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    if not trainable:
+        raise RuntimeError("GRPO policy has no trainable parameters")
+    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate)
+    optimizer_source = (
+        local_checkpoint / "optimizer.pt"
+        if local_checkpoint
+        else (Path(args.resume_optimizer) if args.resume_optimizer else None)
+    )
+    if optimizer_source:
+        optimizer.load_state_dict(torch.load(optimizer_source, map_location="cpu", weights_only=True))
+        for state in optimizer.state.values():
+            for key, value in state.items():
+                if isinstance(value, torch.Tensor):
+                    state[key] = value.to(torch.device(f"cuda:{local_rank}"))
+
+    ddp = DistributedDataParallel(
+        model,
+        device_ids=[local_rank],
+        output_device=local_rank,
+        find_unused_parameters=False,
+    )
+    prompts = json.loads(Path(args.prompts).read_text(encoding="utf-8"))["train"]
+    if not prompts:
+        raise ValueError("training prompt set is empty")
+    stats_path = out_dir / "grpo_stats.jsonl"
+    if rank == 0 and stats_path.exists():
+        retained = []
+        for line in stats_path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                break
+            if int(row.get("step", -1)) <= completed_steps:
+                retained.append(json.dumps(row, sort_keys=True))
+        temporary = stats_path.with_name(stats_path.name + ".tmp")
+        temporary.write_text("\n".join(retained) + ("\n" if retained else ""))
+        temporary.replace(stats_path)
+    if world_size > 1:
+        dist.barrier()
+    stats_stream = stats_path.open("a", encoding="utf-8") if rank == 0 else None
+    initial_step = args.start_step
+    parent_hashes = {}
+    if rank == 0:
+        parent_policy = Path(args.resume_adapter).resolve() if args.resume_adapter else None
+        parent_hashes = {
+            "parent_policy": str(parent_policy) if parent_policy else None,
+            "parent_policy_manifest_sha256": (
+                sha256_file(parent_policy / "policy_train.json") if parent_policy else None
+            ),
+            "parent_adapter_sha256": (
+                sha256_file(parent_policy / "adapter_model.safetensors")
+                if parent_policy
+                else None
+            ),
+            "parent_optimizer_sha256": (
+                sha256_file(Path(args.resume_optimizer)) if args.resume_optimizer else None
+            ),
+        }
+
+    try:
+        for step in range(completed_steps, args.target_steps):
+            sample_seed = (args.seed * 1_000_003 + step * 7_919 + rank * 104_729 + 17) & 0x7FFFFFFF
+            random.seed(sample_seed)
+            torch.manual_seed(sample_seed)
+            prompt_index = (args.seed * 37 + step * world_size + rank) % len(prompts)
+            model.eval()
+            sequences, rewards = _sample_group(
+                model, tokenizer, prompts[prompt_index], config, args.max_new_tokens
+            )
+            with torch.no_grad():
+                old_logps = [
+                    _response_logps(model, sequence, int(chat_ids(tokenizer, prompts[prompt_index]["question"]).numel())).cpu()
+                    for sequence in sequences
+                ]
+            advantages = standardized_group_advantages(rewards, config.advantage_epsilon)
+
+            epoch_stats = None
+            loss_value = 0.0
+            grad_norm_value = 0.0
+            model.train()
+            for _ in range(config.epochs_per_batch):
+                optimizer.zero_grad(set_to_none=True)
+                response_start = int(chat_ids(tokenizer, prompts[prompt_index]["question"]).numel())
+                token_count = 0
+                clip_count = 0
+                ratio_sum = 0.0
+                kl_sum = 0.0
+                epoch_loss = 0.0
+                for index, (sequence, old_logp) in enumerate(
+                    zip(sequences, old_logps, strict=True)
+                ):
+                    sync = index == len(sequences) - 1
+                    sync_context = contextlib.nullcontext() if sync else ddp.no_sync()
+                    with sync_context:
+                        current_logp = _response_logps(ddp, sequence, response_start)
+                        sequence_loss, sequence_stats = clipped_grpo_loss(
+                            [current_logp],
+                            [old_logp],
+                            advantages[index : index + 1],
+                            config.clip_epsilon,
+                        )
+                        (sequence_loss / len(sequences)).backward()
+                    count = int(current_logp.numel())
+                    token_count += count
+                    clip_count += round(sequence_stats["clip_fraction"] * count)
+                    ratio_sum += sequence_stats["mean_ratio"] * count
+                    kl_sum += sequence_stats["approx_kl"] * count
+                    epoch_loss += float(sequence_loss.detach()) / len(sequences)
+                epoch_stats = {
+                    "clip_fraction": clip_count / token_count,
+                    "mean_ratio": ratio_sum / token_count,
+                    "approx_kl": kl_sum / token_count,
+                }
+                grad_norm = torch.nn.utils.clip_grad_norm_(trainable, config.max_grad_norm)
+                optimizer.step()
+                loss_value = epoch_loss
+                grad_norm_value = float(grad_norm)
+
+            local = torch.tensor(
+                [
+                    float(rewards.sum()),
+                    float(rewards.numel()),
+                    float(rewards.std(unbiased=False)),
+                    float(bool(advantages.abs().max() > 0)),
+                    loss_value,
+                    grad_norm_value,
+                    float(epoch_stats["clip_fraction"]),
+                    float(epoch_stats["mean_ratio"]),
+                    float(epoch_stats["approx_kl"]),
+                ],
+                device=local_rank,
+            )
+            if world_size > 1:
+                dist.all_reduce(local)
+            if rank == 0:
+                row = {
+                    "step": step + 1,
+                    "reward_mean": float(local[0] / local[1]),
+                    "rank_reward_std_mean": float(local[2] / world_size),
+                    "nonzero_advantage_groups": int(local[3]),
+                    "groups": world_size,
+                    "samples": int(local[1]),
+                    "loss": float(local[4] / world_size),
+                    "grad_norm": float(local[5] / world_size),
+                    "clip_fraction": float(local[6] / world_size),
+                    "mean_ratio": float(local[7] / world_size),
+                    "approx_kl": float(local[8] / world_size),
+                }
+                stats_stream.write(json.dumps(row, sort_keys=True) + "\n")
+                stats_stream.flush()
+                print(
+                    f"[grpo] step {step + 1}/{args.target_steps} "
+                    f"reward={row['reward_mean']:.3f} active_groups="
+                    f"{row['nonzero_advantage_groups']}/{world_size} "
+                    f"loss={loss_value:.4f}",
+                    flush=True,
+                )
+            if world_size > 1:
+                dist.barrier()
+            if (step + 1) % config.checkpoint_every == 0:
+                _save_checkpoint(model, optimizer, out_dir, step + 1, rank)
+            if world_size > 1:
+                dist.barrier()
+
+        if rank == 0:
+            model.save_pretrained(out_dir, safe_serialization=True)
+            compact_adapter(out_dir)
+            torch.save(optimizer.state_dict(), out_dir / "optimizer.pt")
+            manifest = {
+                "schema": POLICY_SCHEMA,
+                "training_objective": "grpo",
+                "policy_update": "clipped_policy_gradient",
+                "reward_source": "verifier",
+                "reference_kl_beta": 0.0,
+                "supervised_loss": False,
+                "positive_only_filter": False,
+                "parameterization": "lora",
+                "base_model": str(Path(args.model).resolve()),
+                "world_size": world_size,
+                "start_step": initial_step,
+                "completed_steps": args.target_steps,
+                "samples_per_step": world_size * config.group_size,
+                "max_new_tokens": args.max_new_tokens,
+                "seed": args.seed,
+                "config": asdict(config),
+                "adapter_sha256": sha256_file(out_dir / "adapter_model.safetensors"),
+                **parent_hashes,
+            }
+            _atomic_json(out_dir / "policy_train.json", manifest)
+            validate_policy_manifest(
+                out_dir, target_steps=args.target_steps, world_size=world_size
+            )
+            for checkpoint in out_dir.glob("checkpoint-*"):
+                shutil.rmtree(checkpoint)
+            print(f"[grpo] published {out_dir}", flush=True)
+        if world_size > 1:
+            dist.barrier()
+    finally:
+        if stats_stream is not None:
+            stats_stream.close()
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--prompts", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--target-steps", type=int, required=True)
+    parser.add_argument("--start-step", type=int, default=0)
+    parser.add_argument("--resume-adapter")
+    parser.add_argument("--resume-optimizer")
+    parser.add_argument("--expected-world-size", type=int, default=4)
+    parser.add_argument("--group-size", type=int, default=8)
+    parser.add_argument("--clip-epsilon", type=float, default=0.2)
+    parser.add_argument("--learning-rate", type=float, default=1e-5)
+    parser.add_argument("--epochs-per-batch", type=int, default=2)
+    parser.add_argument("--max-grad-norm", type=float, default=1.0)
+    parser.add_argument("--advantage-epsilon", type=float, default=1e-4)
+    parser.add_argument("--lora-rank", type=int, default=16)
+    parser.add_argument("--lora-alpha", type=int, default=32)
+    parser.add_argument("--checkpoint-every", type=int, default=5)
+    parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--seed", type=int, default=0)
+    train(parser.parse_args())
+
+
+if __name__ == "__main__":
+    main()

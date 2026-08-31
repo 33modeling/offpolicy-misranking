@@ -38,6 +38,18 @@
     "thinking": "off",
     "attn": "eager",
     "skip_hybrid": true,
-    "first_bootstrap": 2000
+    "first_bootstrap": 2000,
+    "grpo": {
+      "world_size": 4,
+      "group_size": 8,
+      "clip_epsilon": 0.2,
+      "learning_rate": 0.00001,
+      "reference_kl_beta": 0.0,
+      "epochs_per_batch": 2,
+      "max_grad_norm": 1.0,
+      "advantage_epsilon": 0.0001,
+      "lora_rank": 16,
+      "lora_alpha": 32
+    }
   }
 }

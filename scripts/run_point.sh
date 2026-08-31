@@ -1,19 +1,11 @@
 #!/usr/bin/env bash
-# 14B 규모 확인 실험 — 7B 게이트 통과 후의 scale confirmation.
-#
-# 설계 (풀 게이트 축소판):
-#   · 모델: Qwen2.5-14B-Instruct — group-volume 로컬 스냅샷 전용 (다운로드 안 함)
-#   · drift 100 단일 / fresh K=16 / hybrid 3절단점 / downstream 없음(C1·C1' 중심)
-#   · 판정 대상: 7B 대비 g10/g01의 Δfloor가 커지는가 작아지는가 (스케일 축)
-#   · GPU 배치: phase0 β rollout 4샤딩 → drift(1 GPU) → fresh rollout 4샤딩 → analyze
-#
-#   bash scripts/run_14b.sh
+# One RLVR point: behavior rollout, 4-GPU GRPO policy training, and evaluation.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
-MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-14B-Instruct}"
-[ -f "$MODEL_14B/config.json" ] || { echo "[abort] 14B 로컬 스냅샷 없음: $MODEL_14B — failure-atlas 규약대로 미러 경로를 MODEL_14B로 지정하거나 자산을 먼저 확보할 것"; exit 1; }
+MODEL_PATH="${MODEL_PATH:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
+[ -f "$MODEL_PATH/config.json" ] || { echo "[abort] model snapshot missing: $MODEL_PATH"; exit 1; }
 OUT_ROOT="${OUT_ROOT:-$OM_WORK/runs/gate-14b}"; export OUT_ROOT
 LOGS="$OUT_ROOT/logs"; mkdir -p "$LOGS"
 # GPU 수 자동 감지 — 인스턴스마다 다름 (4장 하드코딩이 invalid device ordinal의 원인)
@@ -48,12 +40,6 @@ wait_all_stages() {
   done
   return "$failed"
 }
-# 다른 실행(7B babysit/run)과의 GPU 충돌 차단
-if pgrep -f "bash.*scripts/babysit.sh" >/dev/null || pgrep -f "scripts/run_h100_all.sh" >/dev/null; then
-  echo "[abort] 7B babysit/run_h100_all 이 아직 실행 중 — 14B와 GPU가 충돌한다."
-  echo "        해당 작업을 시작한 tmux 창에서 중단하거나 그 run의 PID만 종료할 것."
-  exit 1
-fi
 # 점유 검사는 내가 쓸 GPU만 대상 (OM_GPUS 분할 실행 시 서로 간섭 금지)
 BUSY=$(timeout 20 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
   | awk -F', ' -v g="${OM_GPUS:-}" 'BEGIN{n=split(g,a,","); for(i=1;i<=n;i++) sel[a[i]]=1}
@@ -148,7 +134,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # 빠른 커널을 검증한 노드에서만 OM_ATTN=sdpa 로 명시 해제.
 export OM_ATTN="${OM_ATTN:-eager}"
 DATASET="${DATASET:-gsm8k}"
-export MODEL_14B DATASET OUT_ROOT
+export MODEL_PATH DATASET OUT_ROOT
 # 데이터셋 접미사는 멱등 — 호출자가 v2-s0-dapo-math·v2-27b-dapo-math-s0처럼 데이터셋명이
 # 이미 든 경로를 넘기면 그대로 쓴다. 무조건 덧붙이면 v2-s0-dapo-math-dapo-math에 산출물이
 # 쌓여 호출자의 DONE 체크(go_v2.sh:98 등)가 완주를 영구 미인식 → 매 루프 전체 재실행.
@@ -199,7 +185,7 @@ def package_version(name):
     try: return importlib.metadata.version(name)
     except importlib.metadata.PackageNotFoundError: return None
 import torch, transformers
-model = os.environ["MODEL_14B"]
+model = os.environ["MODEL_PATH"]
 pool = os.environ.get("OM_POOL_FILE")
 pool_manifest = pool + ".manifest.json" if pool else None
 git_head = sh("git rev-parse HEAD")
@@ -231,6 +217,23 @@ config = {
     "hybrid_prompts": env_int("HYBRID_PROMPTS", 24),
     "k_cell": env_int("K_CELL", 8),
     "seed": env_int("SEED", 0), "drift": env_int("DRIFT", 100),
+    "training_objective": "base_control" if env_int("DRIFT", 100) == 0 else "grpo",
+    "policy_update": "none" if env_int("DRIFT", 100) == 0 else "clipped_policy_gradient",
+    "reward_source": "none" if env_int("DRIFT", 100) == 0 else "verifier",
+    "supervised_loss": False,
+    "positive_only_filter": False,
+    "grpo_world_size": env_int("GRPO_WORLD_SIZE", 4),
+    "grpo_group_size": env_int("GRPO_GROUP_SIZE", 8),
+    "grpo_clip_epsilon": float(os.environ.get("GRPO_CLIP_EPSILON", "0.2")),
+    "grpo_learning_rate": float(os.environ.get("GRPO_LEARNING_RATE", "1e-5")),
+    "grpo_reference_kl_beta": 0.0,
+    "grpo_epochs_per_batch": env_int("GRPO_EPOCHS_PER_BATCH", 2),
+    "grpo_max_grad_norm": float(os.environ.get("GRPO_MAX_GRAD_NORM", "1.0")),
+    "grpo_advantage_epsilon": float(os.environ.get("GRPO_ADVANTAGE_EPSILON", "1e-4")),
+    "grpo_lora_rank": env_int("GRPO_LORA_RANK", 16),
+    "grpo_lora_alpha": env_int("GRPO_LORA_ALPHA", 32),
+    "grpo_start_step": env_int("OM_GRPO_START_STEP", 0),
+    "grpo_resume_adapter": os.environ.get("OM_GRPO_RESUME_ADAPTER"),
     "max_new_tokens": env_int("MAX_NEW_TOKENS", 512),
     "proj_dim": env_int("PROJ_DIM", 4096), "grad_layers": env_int("GRAD_LAYERS", 4),
     "clip_cap": float(os.environ.get("CLIP_CAP", "10.0")),
@@ -272,7 +275,7 @@ print("[manifest]", git_head[:8], config["dataset"], "n=", config["n_train"],
       "seed=", config["seed"], "config=", config["digest"][:12])
 PYEOF
 
-COMMON=(--run "$OUT_ROOT" --model "$MODEL_14B" --dataset "$DATASET"
+COMMON=(--run "$OUT_ROOT" --model "$MODEL_PATH" --dataset "$DATASET"
         --behavior-k "${BEHAVIOR_K:-8}" --fresh-k "${FRESH_K:-16}"
         --val-k "${VAL_K:-8}" --micro-group "${MICRO_GROUP:-4}"
         --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1
@@ -295,7 +298,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "=== 14B 시작: $MODEL_14B → $OUT_ROOT (GPU ${NGPU}장) ==="
+log "=== RLVR point start: $MODEL_PATH -> $OUT_ROOT (${NGPU} GPUs) ==="
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
 run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}" || exit 1
 
@@ -314,7 +317,7 @@ fi
 # ---- 정합성 사전 검사: 옛 실행 잔재가 이번 실행과 섞이는 것을 원천 차단 ----
 # ① π(drift adapter)보다 오래된 π-의존 산출물 격리 — 재학습 후 옛 점수/rollout이
 #    병합에 섞여 조용히 오염되는 경로 차단 (B6 확장)
-AD=$(ls -t "$OUT_ROOT"/drift_*/adapter_config.json 2>/dev/null | head -1)
+AD=$(ls -t "$OUT_ROOT"/policy_step_*/adapter_config.json 2>/dev/null | head -1)
 if [ -n "${AD:-}" ]; then
   SDIR="$OUT_ROOT/stale-$(date +%s)"; moved=0
   for f in "$OUT_ROOT"/rollouts_fresh_train*.jsonl "$OUT_ROOT"/rollouts_fresh_train*.manifest.json \
@@ -402,10 +405,54 @@ if [ -n "${OM_POOL_FILE:-}" ]; then
   "$PY" src/qualify_pool.py "$OUT_ROOT" "$OM_POOL_FILE" \
     --topk-frac "${TOPK_FRAC:-0.10}" | tee -a "$LOGS/main.log" || exit 1
 fi
-run_stage 0 "$LOGS/drift.log" --stage drift "${COMMON[@]}" --drift-steps "$DRIFT" || exit 1
+POLICY_ARGS=()
+POLICY_DIR=""
+if [ "$DRIFT" -gt 0 ]; then
+  POLICY_DIR="$OUT_ROOT/policy_step_$DRIFT"
+  GRPO_ARGS=(--model "$MODEL_PATH" --prompts "$OUT_ROOT/prompts.json"
+    --output "$POLICY_DIR" --target-steps "$DRIFT"
+    --expected-world-size "${GRPO_WORLD_SIZE:-4}"
+    --group-size "${GRPO_GROUP_SIZE:-8}"
+    --clip-epsilon "${GRPO_CLIP_EPSILON:-0.2}"
+    --learning-rate "${GRPO_LEARNING_RATE:-1e-5}"
+    --epochs-per-batch "${GRPO_EPOCHS_PER_BATCH:-2}"
+    --max-grad-norm "${GRPO_MAX_GRAD_NORM:-1.0}"
+    --advantage-epsilon "${GRPO_ADVANTAGE_EPSILON:-1e-4}"
+    --lora-rank "${GRPO_LORA_RANK:-16}"
+    --lora-alpha "${GRPO_LORA_ALPHA:-32}"
+    --checkpoint-every "${GRPO_CHECKPOINT_EVERY:-5}"
+    --max-new-tokens "${MAX_NEW_TOKENS:-512}" --seed "${SEED:-0}")
+  if [ -n "${OM_GRPO_RESUME_ADAPTER:-}" ]; then
+    GRPO_ARGS+=(--start-step "${OM_GRPO_START_STEP:?}"
+      --resume-adapter "$OM_GRPO_RESUME_ADAPTER"
+      --resume-optimizer "${OM_GRPO_RESUME_OPTIMIZER:?}")
+  fi
+  verify_code_snapshot || exit 1
+  log "GRPO ▶ 4-GPU verifier-reward update to step $DRIFT"
+  if CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" -m torch.distributed.run \
+      --standalone --nproc_per_node="$NGPU" src/train_policy_grpo.py \
+      "${GRPO_ARGS[@]}" >> "$LOGS/grpo.log" 2>&1; then
+    log "GRPO ✔ target=$DRIFT"
+  else
+    rc=$?
+    log "GRPO ✘ target=$DRIFT rc=$rc"
+    tail -20 "$LOGS/grpo.log" | tee -a "$LOGS/main.log"
+    exit "$rc"
+  fi
+  "$PY" - "$POLICY_DIR" "$DRIFT" "$NGPU" <<'PYEOF' || exit 1
+import sys
+from pathlib import Path
+from train_policy_grpo import validate_policy_manifest
+validate_policy_manifest(Path(sys.argv[1]), target_steps=int(sys.argv[2]), world_size=int(sys.argv[3]))
+print("[grpo] policy contract validated")
+PYEOF
+  POLICY_ARGS=(--adapter "$POLICY_DIR")
+else
+  log "GRPO control: d0 uses the unchanged base policy"
+fi
 # π fresh N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
-  ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
+  ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" "${POLICY_ARGS[@]}" --shard "$i:$NGPU" ) & pids+=($!)
 done
 wait_all_stages "${pids[@]}" || exit 1
 merge_rollouts rollouts_fresh_train "${FRESH_K:-16}" || exit 1
@@ -413,18 +460,18 @@ merge_rollouts rollouts_fresh_train "${FRESH_K:-16}" || exit 1
 pids=()
 if [ "$NGPU" -ge 2 ]; then
   NM=$((NGPU - 1))
-  ( run_stage "$NM" "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" ) & pids+=($!)
+  ( run_stage "$NM" "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" "${POLICY_ARGS[@]}" ) & pids+=($!)
 else
   NM=1
-  run_stage 0 "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" || exit 1
+  run_stage 0 "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" "${POLICY_ARGS[@]}" || exit 1
 fi
 for i in $(seq 0 $((NM - 1))); do
-  ( run_stage "$i" "$LOGS/ograds-shard$i.log" --stage oracle-grads "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NM" ) & pids+=($!)
+  ( run_stage "$i" "$LOGS/ograds-shard$i.log" --stage oracle-grads "${COMMON[@]}" "${POLICY_ARGS[@]}" --shard "$i:$NM" ) & pids+=($!)
 done
 wait_all_stages "${pids[@]}" || exit 1
 # 2×2 score N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
-  ( run_stage "$i" "$LOGS/score-shard$i.log" --stage score-shard "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --shard "$i:$NGPU" ) & pids+=($!)
+  ( run_stage "$i" "$LOGS/score-shard$i.log" --stage score-shard "${COMMON[@]}" "${POLICY_ARGS[@]}" --shard "$i:$NGPU" ) & pids+=($!)
 done
 wait_all_stages "${pids[@]}" || exit 1
 run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}" || exit 1
@@ -438,7 +485,7 @@ if [ "${OM_SKIP_HYBRID:-0}" = "1" ]; then
 else
 pids=(); gpu=0
 for cut in 0.25 0.5 0.75; do
-  ( run_stage "$((gpu % NGPU))" "$LOGS/hybrid-$cut.log" --stage hybrid "${COMMON[@]}" --adapter "$OUT_ROOT/drift_$DRIFT" --cut-frac "$cut" ) & pids+=($!)
+  ( run_stage "$((gpu % NGPU))" "$LOGS/hybrid-$cut.log" --stage hybrid "${COMMON[@]}" "${POLICY_ARGS[@]}" --cut-frac "$cut" ) & pids+=($!)
   gpu=$((gpu + 1))
   if [ $((gpu % NGPU)) -eq 0 ]; then
     wait_all_stages "${pids[@]}" || exit 1
@@ -454,6 +501,15 @@ required=(prompts.json rollouts_behavior_train.jsonl rollouts_fresh_train.jsonl
 for artifact in "${required[@]}"; do
   [ -s "$OUT_ROOT/$artifact" ] || { log "[abort] 필수 산출물 누락/빈 파일: $artifact"; exit 1; }
 done
+if [ "$DRIFT" -gt 0 ]; then
+  for artifact in policy_train.json adapter_config.json adapter_model.safetensors \
+      optimizer.pt grpo_stats.jsonl; do
+    [ -s "$POLICY_DIR/$artifact" ] || {
+      log "[abort] GRPO policy artifact missing/empty: $POLICY_DIR/$artifact"
+      exit 1
+    }
+  done
+fi
 printf '%s\n' "completed $(date -Is)" > "$OUT_ROOT/DONE.tmp"
 mv "$OUT_ROOT/DONE.tmp" "$OUT_ROOT/DONE"
-log "=== 14B 완료 — bash scripts/result.sh 로 판정 (OUT_ROOT=$OUT_ROOT) ==="
+log "=== RLVR point complete: $OUT_ROOT ==="

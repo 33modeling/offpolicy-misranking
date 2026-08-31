@@ -518,7 +518,7 @@ def _run_untrusted_python(code: str, stdin: str = "", timeout: int = 8):
 
     bwrap = shutil.which("bwrap")
     python = "/usr/bin/python3"
-    runner = Path(__file__).resolve().parents[1] / "scripts" / "code_sandbox.py"
+    runner = Path(__file__).resolve().with_name("code_sandbox.py")
     if not bwrap or not os.path.isfile(python) or not runner.is_file():
         return None
 

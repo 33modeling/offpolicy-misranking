@@ -29,7 +29,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         (work / "venv/bin").mkdir(parents=True)
         (work / "models/model").mkdir(parents=True)
         fake_bin.mkdir()
-        shutil.copy2(REPO / "scripts/go_regime.sh", checkout / "scripts/go_regime.sh")
+        shutil.copy2(REPO / "scripts/run_matrix.sh", checkout / "scripts/run_matrix.sh")
         shutil.copy2(REPO / "scripts/_report_cache.sh", checkout / "scripts/_report_cache.sh")
         (work / "models/model/config.json").write_text("{}\n", encoding="utf-8")
         (work / "venv/bin/python").symlink_to(Path(sys.executable))
@@ -40,17 +40,52 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             encoding="utf-8",
         )
         executable(
-            checkout / "scripts/run_14b.sh",
+            checkout / "scripts/run_point.sh",
             "#!/usr/bin/env bash\n"
             'point="$DATASET $SEED $DRIFT"\n'
             'printf "%s\\n" "$point" >> "$OM_WORK/claims"\n'
             'if [ "$point" = "a 0 0" ] && mkdir "$OM_WORK/hang-once" 2>/dev/null; then '
             'while :; do /bin/sleep 1; done; fi\n'
             'mkdir -p "$OUT_ROOT"\n'
-            'for name in DONE run_config.json manifest.json score_protocol.json '
+            "python3 - \"$OUT_ROOT\" <<'PY'\n"
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "dataset=os.environ['DATASET']; drift=int(os.environ['DRIFT'])\n"
+            "config={'model_resolved':str(Path(os.environ['MODEL_PATH']).resolve()),"
+            "'dataset':dataset,'seed':int(os.environ['SEED']),'drift':drift,"
+            "'n_train':int(os.environ.get('N_TRAIN','512')),'n_val':int(os.environ.get('N_VAL','100')),"
+            "'behavior_k':int(os.environ.get('BEHAVIOR_K','8')),'fresh_k':int(os.environ.get('FRESH_K','32')),"
+            "'val_k':int(os.environ.get('VAL_K','8')),'training_objective':'base_control' if drift==0 else 'grpo',"
+            "'micro_group':int(os.environ.get('MICRO_GROUP','4')),"
+            "'max_new_tokens':int(os.environ.get('MAX_NEW_TOKENS','512')),"
+            "'proj_dim':int(os.environ.get('PROJ_DIM','4096')),'grad_layers':int(os.environ.get('GRAD_LAYERS','4')),"
+            "'clip_cap':float(os.environ.get('CLIP_CAP','10')),'temperature':float(os.environ.get('TEMPERATURE','1.0')),"
+            "'topk_frac':float(os.environ.get('TOPK_FRAC','0.10')),'top_p':float(os.environ.get('OM_TOP_P','1.0')),"
+            "'thinking':os.environ.get('OM_THINKING','off'),'attn':os.environ.get('OM_ATTN','eager'),"
+            "'lora_targets':os.environ.get('OM_LORA_TARGETS'),'skip_hybrid':os.environ.get('OM_SKIP_HYBRID','1'),"
+            "'policy_update':'none' if drift==0 else 'clipped_policy_gradient',"
+            "'reward_source':'none' if drift==0 else 'verifier','supervised_loss':False,"
+            "'positive_only_filter':False,'grpo_world_size':int(os.environ.get('GRPO_WORLD_SIZE','4')),"
+            "'grpo_group_size':int(os.environ.get('GRPO_GROUP_SIZE','8')),"
+            "'grpo_clip_epsilon':float(os.environ.get('GRPO_CLIP_EPSILON','0.2')),"
+            "'grpo_learning_rate':float(os.environ.get('GRPO_LEARNING_RATE','1e-5')),"
+            "'grpo_reference_kl_beta':0.0,"
+            "'grpo_epochs_per_batch':int(os.environ.get('GRPO_EPOCHS_PER_BATCH','2')),"
+            "'grpo_max_grad_norm':float(os.environ.get('GRPO_MAX_GRAD_NORM','1.0')),"
+            "'grpo_advantage_epsilon':float(os.environ.get('GRPO_ADVANTAGE_EPSILON','1e-4')),"
+            "'grpo_lora_rank':int(os.environ.get('GRPO_LORA_RANK','16')),"
+            "'grpo_lora_alpha':int(os.environ.get('GRPO_LORA_ALPHA','32')),"
+            "'behavior_source':os.environ.get('OM_BEHAVIOR_SOURCE')}\n"
+            "(Path(sys.argv[1])/'run_config.json').write_text(json.dumps(config))\n"
+            "PY\n"
+            'for name in DONE manifest.json score_protocol.json '
             'oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json '
             'scores_splithalf.json divergence_stats.json oracle_micro_groups.pt val_groups.pt; do '
-            'printf "{}\\n" > "$OUT_ROOT/$name"; done\n',
+            'printf "{}\\n" > "$OUT_ROOT/$name"; done\n'
+            'if [ "$DRIFT" -gt 0 ]; then '
+            'p="$OUT_ROOT/policy_step_$DRIFT"; mkdir -p "$p"; '
+            'for name in policy_train.json adapter_config.json adapter_model.safetensors optimizer.pt grpo_stats.jsonl; do '
+            'printf "x\\n" > "$p/$name"; done; fi\n',
         )
         executable(
             checkout / "scripts/diagnose_run_failure.sh",
@@ -72,6 +107,10 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "raise SystemExit(0 if marker.exists() else 1)\n",
             encoding="utf-8",
         )
+        (checkout / "src/train_policy_grpo.py").write_text(
+            "def validate_policy_manifest(*args, **kwargs): return {}\n",
+            encoding="utf-8",
+        )
         (checkout / "src/regime_map.py").write_text(
             "import os,pathlib,sys\n"
             "args=sys.argv[1:]; out=pathlib.Path(args[args.index('--output-dir')+1])\n"
@@ -89,7 +128,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             {
                 "OM_WORK": str(work),
                 "PATH": f"{fake_bin}:{env['PATH']}",
-                "MODEL_14B": str(work / "models/model"),
+                "MODEL_PATH": str(work / "models/model"),
                 "REGIME_MODEL_TAG": "fixture",
                 "REGIME_ROOT": str(work / "runs/regime-fixture"),
                 "REGIME_RESULTS": str(work / "results/regime-fixture"),
@@ -107,7 +146,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         )
         workers = [
             subprocess.Popen(
-                ["/bin/bash", "scripts/go_regime.sh"],
+                ["/bin/bash", "scripts/run_matrix.sh"],
                 cwd=checkout,
                 env=env,
                 text=True,
@@ -142,7 +181,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         collection.unlink()
         failed_env = {**env, "FAIL_ANALYSIS": "1"}
         failed = subprocess.run(
-            ["/bin/bash", "scripts/go_regime.sh"],
+            ["/bin/bash", "scripts/run_matrix.sh"],
             cwd=checkout,
             env=failed_env,
             text=True,

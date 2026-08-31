@@ -27,7 +27,6 @@ from hybrid import (
     validate_hybrid_cells,
 )
 from kcurve_floor import find_fresh_k
-from rollout import response_only_training_example, select_drift_training_rows
 from select_rules import overlap_under_independent_ties, topk_count
 
 
@@ -122,30 +121,6 @@ def test_gradient_rejects_response_weight_truncation():
         prompt_gradient(
             None, [], sequences, [torch.ones(1)], ProjectionSpec(dim=4)
         )
-
-
-def test_response_only_sft_never_labels_prompt_after_truncation():
-    ids, labels = response_only_training_example({
-        "input_ids": [1, 2, 3, 4, 5],
-        "resp_start": 3,
-        "resp_end": 5,
-    })
-    assert ids.tolist() == [1, 2, 3, 4, 5]
-    assert labels.tolist() == [-100, -100, -100, 4, 5]
-    with pytest.raises(ValueError, match="outside max_length"):
-        response_only_training_example({
-            "input_ids": [1, 2, 3, 4, 5, 6],
-            "resp_start": 4,
-            "resp_end": 6,
-        }, max_length=4)
-
-
-def test_drift_training_rejects_an_all_wrong_pool():
-    assert select_drift_training_rows([
-        {"reward": 0.0}, {"reward": 1.0}, {"reward": 0.0}
-    ]) == [{"reward": 1.0}]
-    with pytest.raises(ValueError, match="at least one correct behavior rollout"):
-        select_drift_training_rows([{"reward": 0.0}, {"reward": 0.0}])
 
 
 def test_artifact_metadata_parsing():

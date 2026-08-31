@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""rollout 수집과 drift 체크포인트 생성 (LoRA RFT).
+"""Rollout collection and policy loading.
 
-행동 정책 β = base instruct 모델.
-현재 정책 π = β의 정답 rollout으로 LoRA SFT(RFT)를 n step 돌린 모델.
-drift 수준은 step 수(50/100/200)로 제어한다 — concept 10절의 drift 축.
+Policy training lives in train_policy_grpo.py. Keeping supervised fine-tuning
+out of this module prevents it from being substituted for the RLVR objective.
 """
 
 from __future__ import annotations
@@ -57,8 +56,9 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     device = device or auto_device()
+    is_cuda = str(device).startswith("cuda")
     if dtype is None:
-        dtype = "bfloat16" if device == "cuda" else "float32"
+        dtype = "bfloat16" if is_cuda else "float32"
     tok = AutoTokenizer.from_pretrained(name_or_path)
     # device_map 대신 CPU 로드 → .to(cuda) 2단계: 신아키텍처(Qwen3.8 등)가
     # meta-init을 못 타면 device_map 경로가 GPU에 스켈레톤+체크포인트 이중
@@ -86,13 +86,13 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
     n_bytes = sum(p.numel() * p.element_size() for p in model.parameters()) \
         + sum(b.numel() * b.element_size() for b in model.buffers())
     print(f"[load_model] 파라미터+버퍼 총 {n_bytes / 1e9:.1f}GB ({want})", flush=True)
-    if device == "cuda":
-        free, total = torch.cuda.mem_get_info()
+    if is_cuda:
+        free, total = torch.cuda.mem_get_info(device)
         print(f"[load_model] GPU free {free / 1e9:.1f}/{total / 1e9:.1f}GB, "
               f"필요 {n_bytes / 1e9:.1f}GB", flush=True)
-        model.to("cuda")
+        model.to(device)
     model.eval()
-    gpu = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
+    gpu = torch.cuda.get_device_name(device) if is_cuda else "CPU"
     print(f"model loaded: {name_or_path} → {device} ({gpu}, {dtype})", flush=True)
     return model, tok
 
@@ -260,98 +260,6 @@ def collect_rollouts(
     })
     manifest_tmp.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
     manifest_tmp.replace(manifest_path)
-
-
-def response_only_training_example(
-    row: dict,
-    max_length: int = 1280,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build one SFT example and reject rows whose response is truncated away."""
-    input_ids = list(row["input_ids"])
-    response_end = int(row.get("resp_end", len(input_ids)))
-    response_start = int(row["resp_start"])
-    if not 0 < response_start < response_end <= len(input_ids):
-        raise ValueError(
-            f"invalid response boundary: start={response_start}, end={response_end}, "
-            f"length={len(input_ids)}"
-        )
-    truncated = input_ids[:response_end][:max_length]
-    if response_start >= len(truncated):
-        raise ValueError(
-            f"response starts at {response_start}, outside max_length={max_length}; "
-            "increase the training horizon instead of training on prompt tokens"
-        )
-    ids = torch.as_tensor(truncated)
-    labels = ids.clone()
-    labels[:response_start] = -100
-    return ids, labels
-
-
-def select_drift_training_rows(rows: list[dict]) -> list[dict]:
-    """Select verified-positive SFT rows; no-signal runs cannot define this drift."""
-    correct = [row for row in rows if float(row["reward"]) > 0.5]
-    if not correct:
-        raise ValueError(
-            "drift SFT requires at least one correct behavior rollout; "
-            "the current pool has no positive training target"
-        )
-    return correct
-
-
-def train_drift_lora(
-    base: str,
-    rollout_path: Path,
-    out_dir: Path,
-    steps: int,
-    lr: float = 1e-4,
-    batch_size: int = 4,
-    device: str | None = None,
-) -> None:
-    """정답 rollout에 대한 LoRA SFT — checkpoint를 out_dir에 저장 (병합 없이 adapter)."""
-    from peft import LoraConfig, get_peft_model
-    device = device or auto_device()
-    # 로드는 load_model로 일원화 — dtype 보장·CPU 경유 단일 사본·MM 폴백 전부 공유
-    model, _ = load_model(base, device=device)
-    model = get_peft_model(
-        model,
-        LoraConfig(r=16, lora_alpha=32, target_modules=_lora_targets(), lora_dropout=0.0),
-    )
-    # 활성값 메모리 절감 — 7B 학습 OOM 방지
-    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-    model.enable_input_require_grads()
-    rows = [json.loads(line) for line in rollout_path.open()]
-    correct = select_drift_training_rows(rows)
-    print(f"drift SFT: rollout {len(correct)}개, {steps} steps")
-
-    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
-    model.train()
-    i = 0
-    for step in range(steps):
-        opt.zero_grad()
-        loss_acc = 0.0
-        for _ in range(batch_size):
-            r = correct[i % len(correct)]
-            i += 1
-            # P0-2: 응답 끝 이후 padding과 응답 전 prompt를 SFT 라벨에서 제외한다.
-            ids, labels = response_only_training_example(r)
-            ids = ids.to(model.device).unsqueeze(0)
-            labels = labels.to(model.device).unsqueeze(0)
-            loss = model(ids, labels=labels).loss / batch_size
-            loss.backward()
-            loss_acc += float(loss)
-        opt.step()
-        if (step + 1) % 20 == 0:
-            from grads import ts
-
-            print(
-                f"[{ts()}]  drift step {step + 1}/{steps} loss={loss_acc:.4f}",
-                flush=True,
-            )
-    out_dir.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(out_dir)
-    from compact_artifacts import compact_adapter
-
-    compact_adapter(out_dir)
 
 
 def load_policy(base: str, adapter: Path | None, device: str | None = None):

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regime discovery sweep. Run the same command on every independent cluster:
 #
-#   bash scripts/go_regime.sh
+#   bash scripts/run_matrix.sh
 #
 # A shared flock queue assigns one seed x dataset family to each cluster.  A
 # family creates one behavior pool and evaluates every drift on that exact pool.
@@ -18,11 +18,11 @@ command -v setsid >/dev/null || { echo "[abort] setsid 없음"; exit 1; }
 # Supervisors may be newer than a partially completed run. Generation always
 # re-enters the immutable code snapshot recorded by that run.
 PIPELINE_REPO="${OM_PIPELINE_REPO:-$PWD}"
-PIPELINE_SCRIPT="${OM_PIPELINE_SCRIPT:-$PIPELINE_REPO/scripts/run_14b.sh}"
+PIPELINE_SCRIPT="${OM_PIPELINE_SCRIPT:-$PIPELINE_REPO/scripts/run_point.sh}"
 [ -s "$PIPELINE_SCRIPT" ] || { echo "[abort] generation pipeline 없음: $PIPELINE_SCRIPT"; exit 1; }
 
-export MODEL_14B="${MODEL_14B:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
-MODEL_TAG="${REGIME_MODEL_TAG:-$(basename "$MODEL_14B" | tr '[:upper:]' '[:lower:]')}"
+export MODEL_PATH="${MODEL_PATH:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
+MODEL_TAG="${REGIME_MODEL_TAG:-$(basename "$MODEL_PATH" | tr '[:upper:]' '[:lower:]')}"
 ROOT="${REGIME_ROOT:-$OM_WORK/runs/regime-$MODEL_TAG}"
 QUEUE="$ROOT/.queue"
 RESULTS="${REGIME_RESULTS:-$OM_WORK/results/regime-$MODEL_TAG}"
@@ -46,6 +46,15 @@ GRAD_LAYERS_DEFAULT="${REGIME_GRAD_LAYERS:-4}"
 CLIP_CAP_DEFAULT="${REGIME_CLIP_CAP:-10}"
 TOPK_FRAC_DEFAULT="${REGIME_TOPK_FRAC:-0.10}"
 TEMPERATURE_DEFAULT="${REGIME_TEMPERATURE:-1.0}"
+GRPO_WORLD_SIZE_DEFAULT="${GRPO_WORLD_SIZE:-4}"
+GRPO_GROUP_SIZE_DEFAULT="${GRPO_GROUP_SIZE:-8}"
+GRPO_CLIP_EPSILON_DEFAULT="${GRPO_CLIP_EPSILON:-0.2}"
+GRPO_LEARNING_RATE_DEFAULT="${GRPO_LEARNING_RATE:-1e-5}"
+GRPO_EPOCHS_PER_BATCH_DEFAULT="${GRPO_EPOCHS_PER_BATCH:-2}"
+GRPO_MAX_GRAD_NORM_DEFAULT="${GRPO_MAX_GRAD_NORM:-1.0}"
+GRPO_ADVANTAGE_EPSILON_DEFAULT="${GRPO_ADVANTAGE_EPSILON:-1e-4}"
+GRPO_LORA_RANK_DEFAULT="${GRPO_LORA_RANK:-16}"
+GRPO_LORA_ALPHA_DEFAULT="${GRPO_LORA_ALPHA:-32}"
 WATCH_INTERVAL_SECONDS="${REGIME_WATCH_INTERVAL_SECONDS:-15}"
 STALL_SECONDS="${REGIME_STALL_SECONDS:-$(( ${OM_STALL_MINUTES:-5} * 60 ))}"
 WATCH_KILL_GRACE_SECONDS="${REGIME_WATCH_KILL_GRACE_SECONDS:-5}"
@@ -86,6 +95,78 @@ run_complete() {
       scores_splithalf.json divergence_stats.json oracle_micro_groups.pt val_groups.pt; do
     [ -s "$run/$artifact" ] || return 1
   done
+  MODEL_PATH="$MODEL_PATH" DATASET="$dataset" SEED="$seed" DRIFT="$drift" \
+    BEHAVIOR_SOURCE="$source" "$PY" - "$run/run_config.json" <<'PYEOF' \
+      >/dev/null 2>&1 || return 1
+import json
+import os
+import sys
+from pathlib import Path
+
+config = json.load(open(sys.argv[1]))
+dataset = os.environ["DATASET"]
+drift = int(os.environ["DRIFT"])
+n_train = int(os.environ.get("REGIME_N_TRAIN", "400" if dataset == "math500" else "512"))
+expected = {
+    "model_resolved": str(Path(os.environ["MODEL_PATH"]).resolve()),
+    "dataset": dataset,
+    "seed": int(os.environ["SEED"]),
+    "drift": drift,
+    "n_train": n_train,
+    "n_val": int(os.environ.get("REGIME_N_VAL", "100")),
+    "behavior_k": int(os.environ.get("REGIME_BEHAVIOR_K", "8")),
+    "fresh_k": int(os.environ.get("REGIME_FRESH_K", "32")),
+    "val_k": int(os.environ.get("REGIME_VAL_K", "8")),
+    "micro_group": int(os.environ.get("REGIME_MICRO_GROUP", "4")),
+    "max_new_tokens": int(os.environ.get("REGIME_MAX_NEW_TOKENS", "512")),
+    "proj_dim": int(os.environ.get("REGIME_PROJ_DIM", "4096")),
+    "grad_layers": int(os.environ.get("REGIME_GRAD_LAYERS", "4")),
+    "clip_cap": float(os.environ.get("REGIME_CLIP_CAP", "10")),
+    "temperature": float(os.environ.get("REGIME_TEMPERATURE", "1.0")),
+    "topk_frac": float(os.environ.get("REGIME_TOPK_FRAC", "0.10")),
+    "top_p": float(os.environ.get("OM_TOP_P", "1.0")),
+    "thinking": os.environ.get("OM_THINKING", "off"),
+    "attn": os.environ.get("OM_ATTN", "eager"),
+    "lora_targets": os.environ.get("OM_LORA_TARGETS"),
+    "skip_hybrid": os.environ.get("OM_SKIP_HYBRID", "1"),
+    "training_objective": "base_control" if drift == 0 else "grpo",
+    "policy_update": "none" if drift == 0 else "clipped_policy_gradient",
+    "reward_source": "none" if drift == 0 else "verifier",
+    "supervised_loss": False,
+    "positive_only_filter": False,
+    "grpo_world_size": int(os.environ.get("GRPO_WORLD_SIZE", "4")),
+    "grpo_group_size": int(os.environ.get("GRPO_GROUP_SIZE", "8")),
+    "grpo_clip_epsilon": float(os.environ.get("GRPO_CLIP_EPSILON", "0.2")),
+    "grpo_learning_rate": float(os.environ.get("GRPO_LEARNING_RATE", "1e-5")),
+    "grpo_reference_kl_beta": 0.0,
+    "grpo_epochs_per_batch": int(os.environ.get("GRPO_EPOCHS_PER_BATCH", "2")),
+    "grpo_max_grad_norm": float(os.environ.get("GRPO_MAX_GRAD_NORM", "1.0")),
+    "grpo_advantage_epsilon": float(os.environ.get("GRPO_ADVANTAGE_EPSILON", "1e-4")),
+    "grpo_lora_rank": int(os.environ.get("GRPO_LORA_RANK", "16")),
+    "grpo_lora_alpha": int(os.environ.get("GRPO_LORA_ALPHA", "32")),
+    "behavior_source": os.environ["BEHAVIOR_SOURCE"] or None,
+}
+errors = [key for key, value in expected.items() if config.get(key) != value]
+if errors:
+    raise SystemExit("run config mismatch: " + ", ".join(errors))
+PYEOF
+  if [ "$drift" -gt 0 ]; then
+    for artifact in policy_train.json adapter_config.json adapter_model.safetensors \
+        optimizer.pt grpo_stats.jsonl; do
+      [ -s "$run/policy_step_$drift/$artifact" ] || return 1
+    done
+    PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PY" - "$run/policy_step_$drift" "$drift" \
+        "$GRPO_WORLD_SIZE_DEFAULT" <<'PYEOF' >/dev/null 2>&1 || return 1
+import sys
+from pathlib import Path
+from train_policy_grpo import validate_policy_manifest
+validate_policy_manifest(
+    Path(sys.argv[1]), target_steps=int(sys.argv[2]), world_size=int(sys.argv[3]),
+    verify_hash=False,
+)
+PYEOF
+  fi
   [ -z "$CONTRACT" ] || contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \
     >/dev/null 2>&1
 }
@@ -200,7 +281,8 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
 }
 
 run_point() {
-  local dataset=$1 seed=$2 drift=$3 source=$4 run try n_train attempt_log
+  local dataset=$1 seed=$2 drift=$3 source=$4 resume_step=$5 resume_run=$6
+  local run try n_train attempt_log
   run=$(run_dir "$dataset" "$seed" "$drift")
   n_train="${REGIME_N_TRAIN:-512}"
   [ -n "${REGIME_N_TRAIN:-}" ] || [ "$dataset" != "math500" ] || n_train=400
@@ -218,8 +300,22 @@ run_point() {
       GRAD_LAYERS="$GRAD_LAYERS_DEFAULT" CLIP_CAP="$CLIP_CAP_DEFAULT"
       TOPK_FRAC="$TOPK_FRAC_DEFAULT" MAX_NEW_TOKENS="$MAX_NEW_TOKENS_DEFAULT"
       TEMPERATURE="$TEMPERATURE_DEFAULT"
+      GRPO_WORLD_SIZE="$GRPO_WORLD_SIZE_DEFAULT"
+      GRPO_GROUP_SIZE="$GRPO_GROUP_SIZE_DEFAULT"
+      GRPO_CLIP_EPSILON="$GRPO_CLIP_EPSILON_DEFAULT"
+      GRPO_LEARNING_RATE="$GRPO_LEARNING_RATE_DEFAULT"
+      GRPO_EPOCHS_PER_BATCH="$GRPO_EPOCHS_PER_BATCH_DEFAULT"
+      GRPO_MAX_GRAD_NORM="$GRPO_MAX_GRAD_NORM_DEFAULT"
+      GRPO_ADVANTAGE_EPSILON="$GRPO_ADVANTAGE_EPSILON_DEFAULT"
+      GRPO_LORA_RANK="$GRPO_LORA_RANK_DEFAULT"
+      GRPO_LORA_ALPHA="$GRPO_LORA_ALPHA_DEFAULT"
       OM_SKIP_HYBRID="${OM_SKIP_HYBRID:-1}" OM_RETRY_INDEX="$try")
     [ -z "$source" ] || args+=(OM_BEHAVIOR_SOURCE="$source")
+    if [ -n "$resume_run" ]; then
+      args+=(OM_GRPO_START_STEP="$resume_step"
+        OM_GRPO_RESUME_ADAPTER="$resume_run/policy_step_$resume_step"
+        OM_GRPO_RESUME_OPTIMIZER="$resume_run/policy_step_$resume_step/optimizer.pt")
+    fi
     attempt_log="$run/logs/regime-attempt-$try.log"
     if run_pipeline_watchdog "$run" "$attempt_log" \
         "${args[@]}" OM_REPO="$PIPELINE_REPO" PYTHONPATH="$PIPELINE_REPO/src" \
@@ -242,13 +338,16 @@ run_point() {
 }
 
 run_family() {
-  local dataset=$1 seed=$2 source drift
+  local dataset=$1 seed=$2 source drift previous_step=0 previous_run=""
   source=$(run_dir "$dataset" "$seed" 0)
   # d0 is the exact positive control: beta=pi with independent rollout noise.
-  run_point "$dataset" "$seed" 0 "" || return 1
+  run_point "$dataset" "$seed" 0 "" "" "" || return 1
   for drift in "${DRIFTS[@]}"; do
     [ "$drift" = 0 ] && continue
-    run_point "$dataset" "$seed" "$drift" "$source" || return 1
+    run_point "$dataset" "$seed" "$drift" "$source" "$previous_step" "$previous_run" \
+      || return 1
+    previous_step=$drift
+    previous_run=$(run_dir "$dataset" "$seed" "$drift")
   done
 }
 
