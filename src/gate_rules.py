@@ -11,8 +11,8 @@ from select_rules import overlap_under_independent_ties, topk_count
 
 ONE_SIDED_DROP = 0.15
 CAUSAL_CUT = "0.5"
-SCORE_PROTOCOL_SCHEMA = "offpolicy-score-validation-split/v1"
-ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v1"
+SCORE_PROTOCOL_SCHEMA = "offpolicy-score-validation-split/v2"
+ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v2"
 HYBRID_PROTOCOL_SCHEMA = "offpolicy-hybrid-validation-split/v2"
 
 

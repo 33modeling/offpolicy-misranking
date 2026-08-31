@@ -24,10 +24,10 @@ def test_identical_independent_halves_have_unit_lower_bound(tmp_path: Path) -> N
     micro = {}
     for idx in range(20):
         vector = torch.tensor([float(idx + 1), 1.0])
-        micro[idx] = torch.stack([vector, vector, vector, vector])
+        micro[idx] = torch.stack([vector] * 8)
     torch.save(micro, tmp_path / "oracle_micro_groups.pt")
     torch.save(
-        torch.tensor([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0]]),
+        torch.tensor([[1.0, 0.0]] * 8),
         tmp_path / "val_groups.pt",
     )
     result = bootstrap_floor_intervals(
@@ -47,10 +47,10 @@ def test_regime_interval_separates_aligned_and_reversed_selectors(
     micro = {}
     for idx in range(40):
         vector = torch.tensor([float(idx + 1), 8.0])
-        micro[str(idx)] = torch.stack([vector, vector, vector, vector])
+        micro[str(idx)] = torch.stack([vector] * 8)
     torch.save(micro, tmp_path / "oracle_micro_groups.pt")
     torch.save(
-        torch.tensor([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 0.0]]),
+        torch.tensor([[1.0, 0.0]] * 8),
         tmp_path / "val_groups.pt",
     )
     aligned = {idx: float(idx) for idx in range(40)}

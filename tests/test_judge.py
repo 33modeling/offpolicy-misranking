@@ -35,11 +35,11 @@ def mark_score_protocol(
     g01_fail: bool = True,
 ) -> None:
     write_json(run / "score_protocol.json", {
-        "schema": "offpolicy-score-validation-split/v1",
+        "schema": "offpolicy-score-validation-split/v2",
         "generation_validation": {"validated_rows": 1},
     })
     write_json(run / "oracle_protocol.json", {
-        "schema": "offpolicy-oracle-validation-split/v1",
+        "schema": "offpolicy-oracle-validation-split/v2",
         "generation_validation": {"validated_rows": 1},
     })
     oracle_scores = {str(i): float(20 - i) for i in range(20)}
@@ -187,7 +187,7 @@ with tempfile.TemporaryDirectory() as tmp:
 with tempfile.TemporaryDirectory() as tmp:
     run = Path(tmp)
     write_json(run / "score_protocol.json", {
-        "schema": "offpolicy-score-validation-split/v1",
+        "schema": "offpolicy-score-validation-split/v2",
         "generation_validation": {"validated_rows": 1},
     })
     write_json(run / "report.json", report())

@@ -47,10 +47,10 @@ HALF = {i: {"a": (0.0 if i == 14 else abs(ORACLE[i]) or 0.0),
 with tempfile.TemporaryDirectory() as td:
     run = Path(td)
     (run / "score_protocol.json").write_text(json.dumps(
-        {"schema": "offpolicy-score-validation-split/v1",
+        {"schema": "offpolicy-score-validation-split/v2",
          "generation_validation": {"validated_rows": 1}}))
     (run / "oracle_protocol.json").write_text(json.dumps(
-        {"schema": "offpolicy-oracle-validation-split/v1",
+        {"schema": "offpolicy-oracle-validation-split/v2",
          "generation_validation": {"validated_rows": 1}}))
     (run / "scores_oracle.json").write_text(json.dumps(
         {str(i): {"score": v, "norm": 1.0} for i, v in ORACLE.items()}))

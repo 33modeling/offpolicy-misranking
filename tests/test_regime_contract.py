@@ -60,7 +60,7 @@ def matrix_document(root: Path) -> dict:
             "thinking": "off",
             "attn": "eager",
             "skip_hybrid": True,
-            "first_bootstrap": 2000,
+            "first_bootstrap": 10000,
             "grpo": {
                 "world_size": 4,
                 "group_size": 8,

@@ -150,6 +150,31 @@ errors = [key for key, value in expected.items() if config.get(key) != value]
 if errors:
     raise SystemExit("run config mismatch: " + ", ".join(errors))
 PYEOF
+  PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PY" - "$run" <<'PYEOF' >/dev/null 2>&1 || return 1
+import json
+import math
+import sys
+from pathlib import Path
+
+from gate_rules import has_valid_analysis_protocol
+from score_artifacts import load_complete_score_artifacts
+
+run = Path(sys.argv[1])
+if not has_valid_analysis_protocol(run):
+    raise SystemExit("score/oracle protocol validation failed")
+artifacts = load_complete_score_artifacts(run)
+config = json.loads((run / "run_config.json").read_text())
+expected_ids = set(range(int(config["n_train"])))
+if set(artifacts.oracle) != expected_ids:
+    raise SystemExit("score artifacts do not cover every candidate prompt")
+halves = json.loads((run / "scores_splithalf.json").read_text())
+for row in halves.values():
+    if not isinstance(row, dict) or set(row) != {"r", "a", "b"}:
+        raise SystemExit("scores_splithalf.json lacks exact R/A/B scores")
+    if not all(math.isfinite(float(row[key])) for key in ("r", "a", "b")):
+        raise SystemExit("scores_splithalf.json contains non-finite scores")
+PYEOF
   if [ "$drift" -gt 0 ]; then
     for artifact in policy_train.json adapter_config.json adapter_model.safetensors \
         optimizer.pt grpo_stats.jsonl; do
@@ -412,7 +437,7 @@ if ! (
 
   # Discovery has no external matrix contract. Bind the analysis publication
   # to its exact completed inputs so every waiting cluster does not rerun the
-  # same 2,000-bootstrap regime map after acquiring collect.lock.
+  # same bootstrap regime map after acquiring collect.lock.
   analysis_code=(
     src/regime_map.py src/gate_rules.py src/score_artifacts.py
     src/select_rules.py src/first_interval.py
@@ -429,8 +454,7 @@ if ! (
   analysis_key=$(report_cache_key "${analysis_code[@]}" -- "${analysis_inputs[@]}") \
     || exit 1
   analysis_key=$(report_cache_key_values "$analysis_key" \
-    "first_bootstrap=${REGIME_FIRST_BOOTSTRAP:-2000}" \
-    "first_calibration=${REGIME_FIRST_CALIBRATION:-}") || exit 1
+    "first_bootstrap=${REGIME_FIRST_BOOTSTRAP:-10000}") || exit 1
   analysis_marker="$RESULTS/.regime_analysis.key"
   analysis_outputs=(
     "$RESULTS/REGIME.json" "$RESULTS/REGIME.csv"
@@ -454,10 +478,7 @@ if ! (
     done
   fi
   analysis_args=(--output-dir "$RESULTS"
-    --first-bootstrap "${REGIME_FIRST_BOOTSTRAP:-2000}")
-  if [ -n "${REGIME_FIRST_CALIBRATION:-}" ]; then
-    analysis_args+=(--first-calibration "$REGIME_FIRST_CALIBRATION")
-  fi
+    --first-bootstrap "${REGIME_FIRST_BOOTSTRAP:-10000}")
   "$PY" src/regime_map.py "${runs[@]}" "${analysis_args[@]}" || exit 1
   for output in "${analysis_outputs[@]}"; do
     [ -s "$output" ] || { echo "[collect-abort] empty analysis output: $output"; exit 1; }

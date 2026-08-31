@@ -1,4 +1,4 @@
-"""Recompute corrected oracle split-halves and reports from completed artifacts.
+"""Recompute corrected R/A/B oracle scores and reports from completed artifacts.
 
 This path preserves expensive rollouts only when their manifests prove the
 raw-softmax generation contract and every row records an EOS-trimmed boundary.
@@ -28,6 +28,45 @@ from experiment import (
     split_validation_directions,
     stage_report,
 )
+from train_policy_grpo import validate_policy_manifest
+
+
+def validate_analysis_upgrade(run: Path, drift: int, world_size: int) -> dict:
+    """Validate immutable inputs before an analysis-only schema migration."""
+    generation = validate_generation_contract(run)
+    if generation.get("generation_hash_missing"):
+        raise ValueError("analysis upgrade requires hash-bound generation manifests")
+    config = json.loads((run / "run_config.json").read_text())
+    prompts = json.loads((run / "prompts.json").read_text())["train"]
+    micro = torch.load(
+        run / "oracle_micro_groups.pt", map_location="cpu", weights_only=True
+    )
+    validation = torch.load(
+        run / "val_groups.pt", map_location="cpu", weights_only=True
+    )
+    expected_ids = set(range(int(config["n_train"])))
+    if len(prompts) != len(expected_ids) or set(map(int, micro)) != expected_ids:
+        raise ValueError("analysis upgrade candidate coverage mismatch")
+    shapes = {tuple(value.shape) for value in micro.values()}
+    if len(shapes) != 1:
+        raise ValueError("analysis upgrade candidate gradient shapes differ")
+    groups, dimension = next(iter(shapes))
+    if groups < 8 or groups % 4:
+        raise ValueError("analysis upgrade requires valid candidate R/A/B groups")
+    if (
+        validation.ndim != 2
+        or validation.shape[0] < 8
+        or validation.shape[0] % 4
+        or validation.shape[1] != dimension
+    ):
+        raise ValueError("analysis upgrade requires valid validation R/A/B groups")
+    if drift:
+        validate_policy_manifest(
+            run / f"policy_step_{drift}",
+            target_steps=drift,
+            world_size=world_size,
+        )
+    return generation
 
 
 def recompute(run: Path) -> dict:
@@ -55,15 +94,18 @@ def recompute(run: Path) -> dict:
     expected_ids = set(range(len(prompts)))
     if set(micro) != expected_ids:
         raise ValueError("oracle micro-group prompt coverage does not match prompts.json")
-    val_half_a, val_half_b = split_validation_directions(val_groups)
+    val_rank, val_half_a, val_half_b = split_validation_directions(val_groups)
     oracle, halves = {}, {}
     for prompt_idx, stack in sorted(micro.items()):
         oracle[prompt_idx], halves[prompt_idx] = score_oracle_microgroups(
-            stack.float(), val_half_b.float(), val_half_a.float(), val_half_b.float()
+            stack.float(), val_rank.float(), val_half_a.float(), val_half_b.float()
         )
     _atomic_text(run / "scores_splithalf.json", json.dumps(halves, indent=1))
     _atomic_text(run / "scores_oracle.json", json.dumps(oracle, indent=1))
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     oracle_protocol = oracle_protocol_document(val_groups, generation)
+    oracle_protocol["source_run_git"] = config.get("git")
+    oracle_protocol["postprocess_git"] = head
     if oracle_protocol["schema"] != ORACLE_PROTOCOL_SCHEMA:
         raise AssertionError("oracle protocol schema drift")
     _atomic_text(run / "oracle_protocol.json", json.dumps(oracle_protocol, indent=1))
@@ -76,7 +118,6 @@ def recompute(run: Path) -> dict:
         radius_mode=str(config.get("radius_mode", "gaussian")),
     )
     stage_report(args, run)
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     inputs = {
         path.name: sha256_file(path)
         for path in required[1:]

@@ -40,11 +40,11 @@ def make_run(
     if done:
         (run / "DONE").touch()
     write_json(run / "score_protocol.json", {
-        "schema": "offpolicy-score-validation-split/v1",
+        "schema": "offpolicy-score-validation-split/v2",
         "generation_validation": {"validated_rows": 20},
     })
     write_json(run / "oracle_protocol.json", {
-        "schema": "offpolicy-oracle-validation-split/v1",
+        "schema": "offpolicy-oracle-validation-split/v2",
         "generation_validation": {"validated_rows": 20},
     })
     scores = {str(i): float(20 - i) for i in range(20)}

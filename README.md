@@ -18,10 +18,19 @@ Run the same command on all three nodes. The nodes claim work from shared
 four local H100s for GRPO. Interrupted training resumes from the latest adapter
 and optimizer checkpoint.
 
+Completed GRPO runs from the immediately preceding analysis schema are not
+retrained. After their rollout manifests, policy hashes, prompt coverage, and
+gradient shapes pass, only the 4-GPU scores and R/A/B report are migrated. The
+source training commit and postprocessing commit remain separate in the
+artifacts.
+
 The command runs:
 
 - 27B primary: GSM8K and MATH-500, seeds 0-4, policy steps 0/25/100/400.
 - 7B scale replication: GSM8K and MATH-500, seeds 0-2, the same policy steps.
+- Independent R/A/B evaluation: R ranks, the mean of A/B scalar scores is the
+  held-out utility reference, and A versus B sets the reliability floor. Final
+  labels use 10,000 hierarchical bootstrap replicates per run.
 - A hash-bound harvest that packages existing matrix reports without rerunning
   rollouts or bootstrap analysis.
 

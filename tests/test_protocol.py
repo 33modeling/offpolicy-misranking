@@ -39,28 +39,23 @@ def test_all_tie_overlap_is_chance():
     assert summary.low < summary.high
 
 
-def test_oracle_uses_equal_odd_even_halves():
-    stack = torch.tensor([
-        [1.0, 0.0],
-        [1.0, 0.0],
-        [1.0, 0.0],
-        [1.0, 0.0],
-    ])
-    val_groups = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
-    val_a, val_b = split_validation_directions(val_groups)
-    oracle, halves = score_oracle_microgroups(
-        stack, torch.tensor([1.0, 0.0]), val_a, val_b
+def test_oracle_uses_disjoint_ranking_and_reference_partitions():
+    stack = torch.tensor(
+        [[1.0, 0.0]] * 4 + [[0.0, 1.0]] * 2 + [[1.0, 0.0]] * 2
     )
-    assert halves == {"a": 1.0, "b": 0.0}
-    assert oracle["score"] == 1.0
-    try:
+    val_groups = torch.tensor(
+        [[1.0, 0.0]] * 8
+    )
+    val_r, val_a, val_b = split_validation_directions(val_groups)
+    oracle, halves = score_oracle_microgroups(
+        stack, val_r, val_a, val_b
+    )
+    assert halves == {"r": 1.0, "a": 0.0, "b": 1.0}
+    assert oracle["score"] == 0.5
+    with pytest.raises(ValueError, match="at least eight"):
         score_oracle_microgroups(
-            stack[:3], torch.tensor([1.0, 0.0]), val_a, val_b
+            stack[:6], val_r, val_a, val_b
         )
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("odd micro-group counts must be rejected")
 
 
 def test_hybrid_preserves_total_response_horizon():

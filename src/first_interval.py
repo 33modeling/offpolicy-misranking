@@ -1,7 +1,7 @@
-"""Hierarchical bootstrap interval for split-half top-k reliability.
+"""Hierarchical bootstrap intervals for three-way ranking/reference scores.
 
 Candidate micro-groups are resampled independently within every prompt.  The
-validation prompts assigned to each half are resampled independently as well.
+validation prompts assigned to R, A, and B are resampled independently as well.
 Prompt identities stay fixed, so the interval is conditional on the candidate
 pool and must not be described as population-over-prompts uncertainty.
 """
@@ -108,9 +108,16 @@ def bootstrap_regime_intervals(
     if len(shapes) != 1:
         raise ValueError(f"inconsistent oracle micro-group shapes: {sorted(shapes)}")
     groups, dim = stacks[0].shape
-    if groups < 4 or groups % 2:
-        raise ValueError("FIRST needs an even number of at least four candidate groups")
-    if val_groups.ndim != 2 or val_groups.shape[0] < 4 or val_groups.shape[1] != dim:
+    if groups < 8 or groups % 4:
+        raise ValueError(
+            "FIRST needs a multiple of four with at least eight candidate groups"
+        )
+    if (
+        val_groups.ndim != 2
+        or val_groups.shape[0] < 8
+        or val_groups.shape[0] % 4
+        or val_groups.shape[1] != dim
+    ):
         raise ValueError(
             "validation groups are incompatible with candidate projections"
         )
@@ -164,13 +171,27 @@ def bootstrap_regime_intervals(
         }
 
     completed = 0
+    candidate_half = groups // 2
+    candidate_quarter = groups // 4
+    val_count = val_groups.shape[0]
+    val_half = val_count // 2
+    val_quarter = val_count // 4
     while completed < samples:
         batch = min(chunk_size, samples - completed)
+        score_r = _bootstrap_scores(
+            full[:, :candidate_half], val_groups[:val_half], batch, generator
+        ).cpu()
         score_a = _bootstrap_scores(
-            full[:, 0::2], val_groups[0::2], batch, generator
+            full[:, candidate_half : candidate_half + candidate_quarter],
+            val_groups[val_half : val_half + val_quarter],
+            batch,
+            generator,
         ).cpu()
         score_b = _bootstrap_scores(
-            full[:, 1::2], val_groups[1::2], batch, generator
+            full[:, candidate_half + candidate_quarter :],
+            val_groups[val_half + val_quarter :],
+            batch,
+            generator,
         ).cpu()
         for draw in range(batch):
             for name, stratum_ids in strata.items():
@@ -184,17 +205,28 @@ def bootstrap_regime_intervals(
                 right = {
                     idx: float(score_b[draw, p]) for idx, p in zip(stratum_ids, pos)
                 }
+                ranking = {
+                    idx: float(score_r[draw, p]) for idx, p in zip(stratum_ids, pos)
+                }
+                reference = {
+                    idx: (left[idx] + right[idx]) / 2.0 for idx in stratum_ids
+                }
                 # Tie streams are fixed across bootstrap draws.  Varying them
                 # here would incorrectly fold tie sensitivity into sampling
                 # uncertainty; tie-stream sensitivity is reported separately.
                 top_a = jittered_topk(left, k, fixed_tie_seed + 17)
                 top_b = jittered_topk(right, k, fixed_tie_seed + 17 + RIGHT_TIE_OFFSET)
+                top_r = jittered_topk(ranking, k, fixed_tie_seed + 31)
                 values[name]["floor"].append(len(top_a & top_b) / k)
-                random_utility = sum(right.values()) / len(right)
-                fresh_gain = sum(right[idx] for idx in top_a) / k - random_utility
+                random_utility = sum(reference.values()) / len(reference)
+                fresh_gain = (
+                    sum(reference[idx] for idx in top_r) / k - random_utility
+                )
                 values[name]["fresh_gain"].append(fresh_gain)
                 for selector, top_stale in selected.get(name, {}).items():
-                    gain = sum(right[idx] for idx in top_stale) / k - random_utility
+                    gain = (
+                        sum(reference[idx] for idx in top_stale) / k - random_utility
+                    )
                     values[name]["selectors"][selector]["gain"].append(gain)
                     if fresh_gain > 1e-12:
                         values[name]["selectors"][selector]["retention"].append(

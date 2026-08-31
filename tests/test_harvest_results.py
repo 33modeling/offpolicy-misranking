@@ -57,6 +57,18 @@ def test_harvest_publishes_four_files_and_skips_unchanged_inputs(tmp_path: Path)
     assert "inputs unchanged; reuse" in second.stdout
     assert [path.name for path in (work / "readouts").iterdir()] == ["rlvr-grpo"]
 
+    script = checkout / "scripts/harvest_results.sh"
+    script.write_text(script.read_text() + "\n# cache-key change\n")
+    third = subprocess.run(
+        ["bash", "scripts/harvest_results.sh"], cwd=checkout, env=env,
+        text=True, capture_output=True, check=False,
+    )
+    assert third.returncode == 0, third.stdout + third.stderr
+    assert "published" in third.stdout
+    changed = json.loads((bundle / "RESULTS.json").read_text())
+    assert changed["input_digest"] != document["input_digest"]
+    assert [path.name for path in (work / "readouts").iterdir()] == ["rlvr-grpo"]
+
 
 def test_harvest_replaces_bundle_and_removes_legacy_layout(tmp_path: Path) -> None:
     checkout = tmp_path / "checkout"

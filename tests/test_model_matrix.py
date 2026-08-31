@@ -24,7 +24,11 @@ def test_transfer_config_has_a_complete_fixed_protocol() -> None:
     assert experiment["drifts"][0] == 0
     assert experiment["temperature"] == 1.0
     assert experiment["top_p"] == 1.0
-    assert experiment["fresh_k"] // experiment["micro_group"] % 2 == 0
+    assert experiment["fresh_k"] // experiment["micro_group"] >= 8
+    assert experiment["fresh_k"] // experiment["micro_group"] % 4 == 0
+    assert experiment["n_val"] >= 8
+    assert experiment["n_val"] % 4 == 0
+    assert experiment["first_bootstrap"] >= 10_000
 
 
 def test_weight_manifest_detects_content_corruption() -> None:

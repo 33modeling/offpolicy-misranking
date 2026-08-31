@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Characterize when a stale selector is useful, unsafe, or unresolved.
+"""Classify stale selectors as effective, ineffective, or inconclusive.
 
 The primary outcome is utility under a sample-disjoint fresh half, not exact
 top-k overlap alone.  The other fresh half is an independent current-policy
@@ -26,10 +26,11 @@ from gate_rules import has_valid_analysis_protocol
 from score_artifacts import load_complete_score_artifacts
 from select_rules import jittered_topk, overlap_under_independent_ties, topk_count
 
-SCHEMA = "offpolicy-regime-map/v1"
+SCHEMA = "offpolicy-regime-map/v2"
 ESTIMATORS = ("g00", "g10", "g01", "g11")
 DEFAULT_RETENTION = 0.50
 DEFAULT_REPLICATION = 0.80
+MIN_FINAL_BOOTSTRAP = 10_000
 
 
 def _mean(values: Iterable[float]) -> float:
@@ -51,13 +52,18 @@ def _selection_metrics(
     selector_scores: Mapping[int, float],
     fresh_scores: Mapping[int, float],
     truth_scores: Mapping[int, float],
+    half_a_scores: Mapping[int, float],
+    half_b_scores: Mapping[int, float],
     *,
     frac: float,
     seed: int,
 ) -> dict[str, float | bool | None]:
     ids = sorted(truth_scores)
-    if set(selector_scores) != set(ids) or set(fresh_scores) != set(ids):
-        raise ValueError("selector, fresh, and truth score IDs must match")
+    if any(
+        set(scores) != set(ids)
+        for scores in (selector_scores, fresh_scores, half_a_scores, half_b_scores)
+    ):
+        raise ValueError("selector, ranking, reference, and half score IDs must match")
     k = topk_count(len(ids), frac)
     tie_pairs = 20
 
@@ -78,7 +84,7 @@ def _selection_metrics(
     fresh_gain = fresh_utility - random_utility
     retention = stale_gain / fresh_gain if fresh_gain > 1e-12 else None
     floor = overlap_under_independent_ties(
-        fresh_scores, truth_scores, k, seed=seed + 17, pairs=tie_pairs
+        half_a_scores, half_b_scores, k, seed=seed + 17, pairs=tie_pairs
     ).mean
     precision = overlap_under_independent_ties(
         selector_scores, truth_scores, k, seed=seed, pairs=tie_pairs
@@ -89,8 +95,8 @@ def _selection_metrics(
     uniform_error = max(
         abs(float(selector_scores[idx]) - float(truth_scores[idx])) for idx in ids
     )
-    # This is an observed-half diagnostic, not a population certificate: half
-    # B is a noisy oracle realization rather than the latent current score.
+    # This is an observed-reference diagnostic, not a population certificate:
+    # the averaged A/B score remains a noisy realization of the latent target.
     observed_margin_condition = truth_margin > 2.0 * uniform_error
     observed_error_margin_ratio = (
         uniform_error / truth_margin if truth_margin > 0 else None
@@ -158,8 +164,8 @@ def _strata(rates: Mapping[int, float]) -> dict[str, list[int]]:
     ids = sorted(rates)
     return {
         "all": ids,
-        "learnable": [idx for idx in ids if 0.0 < rates[idx] < 1.0],
-        "saturated": [idx for idx in ids if rates[idx] in (0.0, 1.0)],
+        "mixed_reward": [idx for idx in ids if 0.0 < rates[idx] < 1.0],
+        "identical_reward": [idx for idx in ids if rates[idx] in (0.0, 1.0)],
     }
 
 
@@ -205,7 +211,6 @@ def analyze_run(
     frac: float = 0.10,
     *,
     first_bootstrap: int = 0,
-    first_calibrated: bool = False,
 ) -> list[dict]:
     if not has_valid_analysis_protocol(run):
         raise ValueError(f"{run}: corrected score/oracle protocols are required")
@@ -216,10 +221,16 @@ def analyze_run(
     divergence = _load_divergence(run)
     rows: list[dict] = []
     strata = _strata(rates)
-    # Half a ranks with disjoint current-policy rollouts and validation prompts;
-    # half b is held out as the evaluation target.
-    fresh_all = {idx: halves["a"] for idx, halves in artifacts.splithalf.items()}
-    truth_all = {idx: halves["b"] for idx, halves in artifacts.splithalf.items()}
+    # R ranks independently; A and B form the held-out averaged reference and
+    # independently measure split-half reliability.
+    if any("r" not in halves for halves in artifacts.splithalf.values()):
+        raise ValueError(f"{run}: scores_splithalf.json lacks the independent R split")
+    fresh_all = {idx: halves["r"] for idx, halves in artifacts.splithalf.items()}
+    half_a_all = {idx: halves["a"] for idx, halves in artifacts.splithalf.items()}
+    half_b_all = {idx: halves["b"] for idx, halves in artifacts.splithalf.items()}
+    truth_all = {
+        idx: (half_a_all[idx] + half_b_all[idx]) / 2.0 for idx in artifacts.splithalf
+    }
     policies = {f"stale_{name}": artifacts.offpolicy[name] for name in ESTIMATORS}
     policies["passrate_beta"] = {idx: -abs(rate - 0.5) for idx, rate in rates.items()}
     intervals = {}
@@ -235,21 +246,28 @@ def analyze_run(
             seed=int(config.get("seed", 0)) + 20_260_824,
             tie_seed=int(config.get("seed", 0)) + 1_000,
         )
-
     for stratum, stratum_ids in strata.items():
         if len(stratum_ids) < 20:
             continue
         fresh = _subset(fresh_all, stratum_ids)
+        half_a = _subset(half_a_all, stratum_ids)
+        half_b = _subset(half_b_all, stratum_ids)
         truth = _subset(truth_all, stratum_ids)
         for policy, scores in policies.items():
             metrics = _selection_metrics(
                 _subset(scores, stratum_ids),
                 fresh,
                 truth,
+                half_a,
+                half_b,
                 frac=frac,
                 seed=int(config.get("seed", 0)) + 1_000,
             )
             interval = intervals.get(stratum)
+            interval_final = bool(
+                interval
+                and int(interval.get("samples", 0)) >= MIN_FINAL_BOOTSTRAP
+            )
             floor_lower = interval["lower_one_sided_95"] if interval else None
             fresh_gain_lower = (
                 interval["fresh_gain"].get("lower_one_sided_95") if interval else None
@@ -281,32 +299,32 @@ def analyze_run(
                 if gain_lower is not None
                 else metrics["utility_gain"] > 0
             )
-            usable_evidence = positive_evidence and (
+            effective_evidence = positive_evidence and (
                 retention_lower >= DEFAULT_RETENTION
                 if retention_lower is not None
                 else retention is not None and retention >= DEFAULT_RETENTION
             )
-            unsafe_evidence = measurable and (
+            ineffective_evidence = measurable and (
                 gain_upper <= 0
                 if gain_upper is not None
                 else metrics["utility_gain"] <= 0
             )
             if not measurable:
-                point_status = "unresolved"
-            elif unsafe_evidence:
+                point_status = "inconclusive"
+            elif ineffective_evidence:
                 point_status = (
-                    "unsafe_candidate"
-                    if interval and first_calibrated
-                    else "provisional_unsafe_candidate"
+                    "ineffective_candidate"
+                    if interval_final
+                    else "provisional_ineffective_candidate"
                 )
-            elif usable_evidence:
+            elif effective_evidence:
                 point_status = (
-                    "usable_candidate"
-                    if interval and first_calibrated
-                    else "provisional_usable_candidate"
+                    "effective_candidate"
+                    if interval_final
+                    else "provisional_effective_candidate"
                 )
             else:
-                point_status = "unresolved"
+                point_status = "inconclusive"
             rows.append(
                 {
                     "run": run.name,
@@ -330,14 +348,15 @@ def analyze_run(
                     "utility_gain_upper_one_sided_95": gain_upper,
                     "utility_retention_lower_one_sided_95": retention_lower,
                     "first_bootstrap_samples": interval["samples"] if interval else 0,
+                    "final_resampling": interval_final,
                     "measurable": measurable,
                     "positive_evidence": positive_evidence,
-                    "usable_evidence": usable_evidence,
-                    "unsafe_evidence": unsafe_evidence,
+                    "effective_evidence": effective_evidence,
+                    "ineffective_evidence": ineffective_evidence,
                     "decision_basis": (
-                        "FIRST-lower-calibrated"
-                        if interval and first_calibrated
-                        else "FIRST-lower-uncalibrated"
+                        f"FIRST-{int(interval['samples'])}-final"
+                        if interval_final
+                        else f"FIRST-{int(interval['samples'])}-provisional"
                         if interval
                         else "point-floor-provisional"
                     ),
@@ -384,16 +403,14 @@ def summarize_regimes(
                 )
             )
         ]
-        nonpositive = [row for row in measurable if row["unsafe_evidence"]]
-        final_basis = all(
-            row["decision_basis"] == "FIRST-lower-calibrated" for row in group
-        )
+        nonpositive = [row for row in measurable if row["ineffective_evidence"]]
+        final_basis = all(row.get("final_resampling") is True for row in group)
         if n >= 3 and len(measurable) >= required and len(retained) >= required:
-            status = "usable" if final_basis else "provisional_usable"
+            status = "effective" if final_basis else "provisional_effective"
         elif n >= 3 and len(measurable) >= required and len(nonpositive) >= required:
-            status = "unsafe" if final_basis else "provisional_unsafe"
+            status = "ineffective" if final_basis else "provisional_ineffective"
         else:
-            status = "unresolved"
+            status = "inconclusive"
         retentions = [
             row["utility_retention"]
             for row in group
@@ -487,13 +504,13 @@ def render_report(summary: list[dict]) -> str:
         "# Stale-Rollout Regime Map",
         "",
         (
-            "`usable` requires at least three seeds, FIRST-measurable fresh halves in at "
+            "`effective` requires at least three seeds, FIRST-measurable fresh halves in at "
             "least 80% of seeds, positive utility gain over random in those seeds, and at "
             "least 50% retention of the independent fresh ranker's gain. With resampling, "
-            "these tests use one-sided 95% endpoints. `unsafe` requires a non-positive "
-            "gain upper endpoint with the same replication rule. Labels are prefixed with "
-            "`provisional_` until the resampling procedure has passed its coverage "
-            "calibration."
+            "these tests use one-sided 95% endpoints. `ineffective` requires a non-positive "
+            "gain upper endpoint with the same replication rule; all other results are "
+            "`inconclusive`. Labels are prefixed with `provisional_` unless each run "
+            f"uses at least {MIN_FINAL_BOOTSTRAP:,} prespecified bootstrap replicates."
         ),
         "",
         "| model | data | drift | pool | selector | seeds | KL | margin | e/margin | floor [LB] | gain [L,U] | retention [LB] | status |",
@@ -537,30 +554,9 @@ def main(argv: list[str] | None = None) -> int:
         default=0,
         help="hierarchical FIRST replicates per run (0=provisional point floor)",
     )
-    parser.add_argument(
-        "--first-calibration",
-        type=Path,
-        help="coverage-calibration JSON required for final labels",
-    )
     args = parser.parse_args(argv)
     if not 0 < args.retention <= 1 or not 0 < args.replication <= 1:
         parser.error("retention and replication must be in (0, 1]")
-
-    first_calibrated = False
-    calibration = None
-    if args.first_calibration:
-        if not args.first_bootstrap:
-            parser.error("--first-calibration requires --first-bootstrap")
-        try:
-            calibration = json.loads(args.first_calibration.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
-            parser.error(f"FIRST calibration read failed: {exc}")
-        if (
-            calibration.get("schema") != "first-bootstrap-calibration/v1"
-            or calibration.get("passed") is not True
-        ):
-            parser.error("FIRST calibration artifact is not a passing v1 calibration")
-        first_calibrated = True
 
     rows: list[dict] = []
     try:
@@ -570,7 +566,6 @@ def main(argv: list[str] | None = None) -> int:
                     run,
                     args.topk_frac,
                     first_bootstrap=args.first_bootstrap,
-                    first_calibrated=first_calibrated,
                 )
             )
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -588,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
         "retention_threshold": args.retention,
         "replication_fraction": args.replication,
         "first_bootstrap": args.first_bootstrap,
-        "first_calibration": calibration,
+        "minimum_final_bootstrap": MIN_FINAL_BOOTSTRAP,
         "rows": rows,
         "summary": summary,
     }

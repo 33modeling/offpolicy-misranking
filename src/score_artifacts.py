@@ -7,7 +7,6 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ESTIMATORS = ("g00", "g10", "g01", "g11")
 
 
@@ -90,6 +89,8 @@ def load_complete_score_artifacts(run: Path) -> ScoreArtifacts:
                     f"scores_splithalf.json has duplicate normalized ID {idx}"
                 )
             halves = {half: float(row[half]) for half in ("a", "b")}
+            if "r" in row:
+                halves["r"] = float(row["r"])
             if not all(math.isfinite(score) for score in halves.values()):
                 raise ScoreArtifactError(
                     f"scores_splithalf.json[{idx}] contains a non-finite score"

@@ -76,11 +76,22 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "'grpo_lora_rank':int(os.environ.get('GRPO_LORA_RANK','16')),"
             "'grpo_lora_alpha':int(os.environ.get('GRPO_LORA_ALPHA','32')),"
             "'behavior_source':os.environ.get('OM_BEHAVIOR_SOURCE')}\n"
-            "(Path(sys.argv[1])/'run_config.json').write_text(json.dumps(config))\n"
+            "out=Path(sys.argv[1]); (out/'run_config.json').write_text(json.dumps(config))\n"
+            "scores={str(i):{'score':float(i)} for i in range(config['n_train'])}\n"
+            "off={name:scores for name in ('g00','g10','g01','g11')}\n"
+            "halves={str(i):{'r':float(i),'a':float(i),'b':float(i)} "
+            "for i in range(config['n_train'])}\n"
+            "(out/'scores_oracle.json').write_text(json.dumps(scores))\n"
+            "(out/'scores_offpolicy.json').write_text(json.dumps(off))\n"
+            "(out/'scores_splithalf.json').write_text(json.dumps(halves))\n"
+            "protocol={'generation_validation':{'validated_rows':1}}\n"
+            "(out/'score_protocol.json').write_text(json.dumps({**protocol,'schema':"
+            "'offpolicy-score-validation-split/v2'}))\n"
+            "(out/'oracle_protocol.json').write_text(json.dumps({**protocol,'schema':"
+            "'offpolicy-oracle-validation-split/v2'}))\n"
             "PY\n"
-            'for name in DONE manifest.json score_protocol.json '
-            'oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json '
-            'scores_splithalf.json divergence_stats.json oracle_micro_groups.pt val_groups.pt; do '
+            'for name in DONE manifest.json report.json divergence_stats.json oracle_micro_groups.pt '
+            'val_groups.pt; do '
             'printf "{}\\n" > "$OUT_ROOT/$name"; done\n'
             'if [ "$DRIFT" -gt 0 ]; then '
             'p="$OUT_ROOT/policy_step_$DRIFT"; mkdir -p "$p"; '
@@ -111,6 +122,9 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "def validate_policy_manifest(*args, **kwargs): return {}\n",
             encoding="utf-8",
         )
+        shutil.copy2(REPO / "src/gate_rules.py", checkout / "src/gate_rules.py")
+        shutil.copy2(REPO / "src/score_artifacts.py", checkout / "src/score_artifacts.py")
+        shutil.copy2(REPO / "src/select_rules.py", checkout / "src/select_rules.py")
         (checkout / "src/regime_map.py").write_text(
             "import os,pathlib,sys\n"
             "args=sys.argv[1:]; out=pathlib.Path(args[args.index('--output-dir')+1])\n"
@@ -175,6 +189,28 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         assert (work / "results/regime-fixture/FINAL_REPORT.md").is_file()
         analyses = (work / "results/regime-fixture/analysis-count").read_text().splitlines()
         assert analyses == ["1"]
+
+        damaged = work / "runs/regime-fixture/fixture-s0-a-d25"
+        (damaged / "score_protocol.json").write_text(
+            '{"schema":"offpolicy-score-validation-split/v1"}\n'
+        )
+        (damaged / "scores_oracle.json").write_text('{"0":{"score":0}}\n')
+        repaired = subprocess.run(
+            ["/bin/bash", "scripts/run_matrix.sh"],
+            cwd=checkout,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+        repaired_claims = (work / "claims").read_text(encoding="utf-8").splitlines()
+        assert repaired_claims[len(claims) :] == ["a 0 25"]
+        assert (work / "results/regime-fixture/analysis-count").read_text().splitlines() == [
+            "1",
+            "1",
+        ]
 
         collection = work / "results/regime-fixture/.regime_analysis.key"
         assert collection.is_file()

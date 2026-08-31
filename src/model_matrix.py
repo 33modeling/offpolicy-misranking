@@ -110,8 +110,13 @@ def _load_config(config_path: Path) -> dict:
             raise ValueError(f"experiment.{key} must be a positive integer")
     if experiment["fresh_k"] % experiment["micro_group"]:
         raise ValueError("fresh_k must be divisible by micro_group")
-    if (experiment["fresh_k"] // experiment["micro_group"]) % 2:
-        raise ValueError("fresh_k/micro_group must produce an even group count")
+    fresh_groups = experiment["fresh_k"] // experiment["micro_group"]
+    if fresh_groups < 8 or fresh_groups % 4:
+        raise ValueError(
+            "fresh_k/micro_group must produce at least eight groups divisible by four"
+        )
+    if experiment["n_val"] < 8 or experiment["n_val"] % 4:
+        raise ValueError("n_val must be at least eight and divisible by four")
     if experiment["temperature"] != 1.0 or experiment["top_p"] != 1.0:
         raise ValueError("transfer matrix must use the raw-softmax sampling contract")
     if not isinstance(experiment["clip_cap"], (int, float)) or experiment["clip_cap"] < 1:

@@ -37,6 +37,16 @@ generated once in that control run and contract-validated before reuse by all
 positive steps in the same family. Current-policy rollout and score artifacts
 are never reused across policy steps.
 
+## Evaluation split
+
+The 32 current-policy rollouts for each candidate form eight four-rollout
+micro-groups. They are assigned once as `R=4`, `A=2`, and `B=2` groups. The 100
+validation-prompt gradients are independently assigned as `R=50`, `A=25`, and
+`B=25`. R alone ranks candidates. The mean of the two scalar scores from A and B
+is the held-out utility reference, while A-versus-B top-k agreement defines the
+reliability floor. Final regime labels require 10,000 hierarchical bootstrap
+replicates per run; fewer replicates are explicitly provisional.
+
 ## Completion
 
 Positive-step directories contain:
@@ -52,6 +62,13 @@ policy_step_N/
 
 `DONE` is written only after the policy contract, rollout contracts, score and
 oracle protocols, exact prompt coverage, and required artifacts pass.
+
+A completed GRPO run with an older analysis schema may take the analysis-only
+migration path. That path first validates hash-bound generation manifests, the
+GRPO policy, exact candidate coverage, and R/A/B-compatible gradient tensors.
+It then recomputes only off-policy scores, oracle scores, and the report. It does
+not regenerate rollouts or update the policy, and records source and
+postprocessing commits separately.
 
 ## Multi-node execution
 

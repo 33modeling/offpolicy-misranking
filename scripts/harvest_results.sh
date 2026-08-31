@@ -15,7 +15,7 @@ command -v flock >/dev/null 2>&1 || { echo "[harvest-abort] flock missing"; exit
 exec 8>"$OM_WORK/locks/rlvr-harvest.lock"
 flock 8
 
-inputs=()
+inputs=("$PWD/scripts/harvest_results.sh")
 for root in "$RESULTS_7B" "$RESULTS_27B"; do
   for name in REGIME.json REGIME.csv REGIME_SUMMARY.csv FINAL_REPORT.md .regime_analysis.key; do
     path="$root/$name"

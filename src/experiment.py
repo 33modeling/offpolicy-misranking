@@ -45,8 +45,8 @@ from select_rules import (
     topk_count,
 )
 
-SCORE_PROTOCOL_SCHEMA = "offpolicy-score-validation-split/v1"
-ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v1"
+SCORE_PROTOCOL_SCHEMA = "offpolicy-score-validation-split/v2"
+ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v2"
 HYBRID_PROTOCOL_SCHEMA = "offpolicy-hybrid-validation-split/v2"
 
 
@@ -63,13 +63,27 @@ def _atomic_save(obj, path: Path) -> None:
     tmp.replace(path)
 
 
-def split_validation_directions(val_groups: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return disjoint selection/evaluation validation directions."""
-    if val_groups.ndim != 2 or val_groups.shape[0] < 2:
+def split_three_way_groups(tensor: torch.Tensor, dimension: int = 0) -> tuple:
+    """Partition groups into disjoint R/A/B blocks with proportions 1/2, 1/4, 1/4."""
+    count = tensor.shape[dimension]
+    if count < 8 or count % 4:
         raise ValueError(
-            "split-half scoring requires at least two validation prompt gradients"
+            "R/A/B partition requires a multiple of four with at least eight "
+            f"groups, got {count}"
         )
-    return val_groups[0::2].mean(dim=0), val_groups[1::2].mean(dim=0)
+    half = count // 2
+    quarter = count // 4
+    return torch.split(tensor, (half, quarter, quarter), dim=dimension)
+
+
+def split_validation_directions(
+    val_groups: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return disjoint ranking and two reference validation directions."""
+    if val_groups.ndim != 2:
+        raise ValueError("validation prompt gradients must be a two-dimensional tensor")
+    rank, half_a, half_b = split_three_way_groups(val_groups)
+    return rank.mean(dim=0), half_a.mean(dim=0), half_b.mean(dim=0)
 
 
 def _has_protocol(path: Path, schema: str) -> bool:
@@ -90,9 +104,9 @@ def oracle_protocol_document(
 ) -> dict:
     document = {
         "schema": ORACLE_PROTOCOL_SCHEMA,
-        "candidate_partition": "a=micro_groups[0::2], b=micro_groups[1::2]",
-        "validation_partition": "a=val_groups[0::2], b=val_groups[1::2]",
-        "evaluation_oracle": "all candidate micro-groups scored on val_groups[1::2]",
+        "candidate_partition": "r=first 1/2, a=next 1/4, b=final 1/4",
+        "validation_partition": "r=first 1/2, a=next 1/4, b=final 1/4",
+        "evaluation_reference": "arithmetic mean of independent scalar scores a and b",
         "validation_group_count": int(val_groups.shape[0]),
     }
     if generation_validation is not None:
@@ -102,22 +116,24 @@ def oracle_protocol_document(
 
 def score_oracle_microgroups(
     stack: torch.Tensor,
-    evaluation_val: torch.Tensor,
+    val_rank: torch.Tensor,
     val_half_a: torch.Tensor,
     val_half_b: torch.Tensor,
 ) -> tuple[dict, dict]:
-    """Score a full oracle and sample-disjoint candidate/validation halves."""
+    """Score disjoint ranking and reference candidate/validation partitions."""
     if stack.ndim != 2:
         raise ValueError(f"micro-group stack must be 2D, got shape={tuple(stack.shape)}")
-    groups = stack.shape[0]
-    if groups < 2 or groups % 2:
-        raise ValueError(f"split-half requires an even number of groups >=2, got {groups}")
-    mu = stack.mean(dim=0)
-    halves = {
-        "a": cosine(stack[0::2].mean(dim=0), val_half_a),
-        "b": cosine(stack[1::2].mean(dim=0), val_half_b),
+    rank, half_a, half_b = split_three_way_groups(stack)
+    scores = {
+        "r": cosine(rank.mean(dim=0), val_rank),
+        "a": cosine(half_a.mean(dim=0), val_half_a),
+        "b": cosine(half_b.mean(dim=0), val_half_b),
     }
-    return {"score": cosine(mu, evaluation_val), "norm": float(mu.norm())}, halves
+    reference_candidate = torch.cat((half_a, half_b)).mean(dim=0)
+    return {
+        "score": (scores["a"] + scores["b"]) / 2.0,
+        "norm": float(reference_candidate.norm()),
+    }, scores
 
 
 def read_rollouts(path: Path) -> dict[int, list[dict]]:
@@ -199,7 +215,7 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
 
     # Selection score와 evaluation oracle이 validation rollout noise를 공유하지 않는다.
     val_groups = torch.load(run / "val_groups.pt", weights_only=True)
-    selection_val, _ = split_validation_directions(val_groups)
+    selection_val, _, _ = split_validation_directions(val_groups)
 
     import time as _time
 
@@ -246,7 +262,7 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
         _atomic_text(run / dname, json.dumps(stats, indent=1))
     protocol = {
         "schema": SCORE_PROTOCOL_SCHEMA,
-        "validation_partition": "selection=val_groups[0::2], evaluation=val_groups[1::2]",
+        "validation_partition": "selection=r (first 1/2); reference=a/b (final quarters)",
         "validation_group_count": int(val_groups.shape[0]),
         "shard": shard[0] if shard is not None else None,
         "score_git": subprocess.check_output(
@@ -325,7 +341,7 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         fresh_by_prompt = {k: fresh_by_prompt[k] for k in keys}
     if shard is None:
         val_groups = torch.load(run / "val_groups.pt", weights_only=True)
-        val_half_a, val_half_b = split_validation_directions(val_groups)
+        val_rank, val_half_a, val_half_b = split_validation_directions(val_groups)
     for pi_idx, rows in sorted(fresh_by_prompt.items()):
         n_done += 1
         gsize = args.micro_group
@@ -334,9 +350,9 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
                 f"prompt {pi_idx}: fresh rollouts {len(rows)} not divisible by "
                 f"micro_group={gsize}"
             )
-        if len(rows) // gsize < 2 or (len(rows) // gsize) % 2:
+        if len(rows) // gsize < 8 or (len(rows) // gsize) % 4:
             raise ValueError(
-                f"prompt {pi_idx}: split-half needs an even number of micro-groups >=2; "
+                f"prompt {pi_idx}: R/A/B needs at least eight micro-groups; "
                 f"got {len(rows) // gsize}"
             )
         group_grads = []
@@ -352,7 +368,7 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         micro[pi_idx] = stack
         if shard is None:
             oracle[pi_idx], halves[pi_idx] = score_oracle_microgroups(
-                stack, val_half_b, val_half_a, val_half_b
+                stack, val_rank, val_half_a, val_half_b
             )
         if n_done % 5 == 0:
             from grads import ts
@@ -457,13 +473,21 @@ def stage_report(args, run: Path) -> None:
     micro = torch.load(run / "oracle_micro_groups.pt", weights_only=True)
     val_groups = torch.load(run / "val_groups.pt", weights_only=True)
     order = sorted(micro)
-    if min(stack.shape[0] for stack in micro.values()) < 2 or val_groups.shape[0] < 2:
-        raise ValueError("CertaGrad evaluation requires disjoint candidate and validation halves")
-    pools = [micro[i][0::2].float() for i in order]
-    selection_val = val_groups[0::2].float()
-    truth_val = val_groups[1::2].float().mean(dim=0)
+    if any(stack.shape[0] % 4 for stack in micro.values()) or val_groups.shape[0] % 4:
+        raise ValueError("CertaGrad evaluation requires valid R/A/B group partitions")
+    candidate_parts = {i: split_three_way_groups(micro[i].float()) for i in order}
+    val_rank, val_half_a, val_half_b = split_three_way_groups(val_groups.float())
+    pools = [candidate_parts[i][0] for i in order]
+    selection_val = val_rank
+    truth_val_a = val_half_a.mean(dim=0)
+    truth_val_b = val_half_b.mean(dim=0)
     cert_truth = {
-        i: cosine(micro[i][1::2].float().mean(dim=0), truth_val) for i in order
+        i: (
+            cosine(candidate_parts[i][1].mean(dim=0), truth_val_a)
+            + cosine(candidate_parts[i][2].mean(dim=0), truth_val_b)
+        )
+        / 2.0
+        for i in order
     }
     cg = certagrad(pools, selection_val, k, radius_mode=args.radius_mode)
     uni = uniform_baseline(pools, selection_val, k, groups_each=pools[0].shape[0])
@@ -484,7 +508,7 @@ def stage_report(args, run: Path) -> None:
         "validation_groups": cg["validation_groups"],
         "fresh_rollouts": cg_rollouts,
         "uniform_rollouts": uni_rollouts,
-        "evaluation": "selection=even groups, evaluation=odd groups",
+        "evaluation": "selection=R, evaluation=mean of independent A/B scalar scores",
         "radius_mode": args.radius_mode,
         "coverage": cg["coverage"],
         "fresh_frac_of_uniform": cg_rollouts / uni_rollouts,
@@ -745,14 +769,14 @@ def main() -> None:
                 and _has_protocol(run / "oracle_protocol.json", ORACLE_PROTOCOL_SCHEMA)):
             micro = torch.load(micro_p, weights_only=True)
             val_groups = torch.load(val_groups_p, weights_only=True)
-            val_half_a, val_half_b = split_validation_directions(val_groups)
+            val_rank, val_half_a, val_half_b = split_validation_directions(val_groups)
             generation_validation = validate_generation_contract(
                 run, ("rollouts_fresh_train", "rollouts_fresh_val")
             )
             oracle, halves = {}, {}
             for pi_idx, stack in sorted(micro.items()):
                 oracle[pi_idx], halves[pi_idx] = score_oracle_microgroups(
-                    stack, val_half_b, val_half_a, val_half_b
+                    stack, val_rank, val_half_a, val_half_b
                 )
             _atomic_text(run / "scores_splithalf.json", json.dumps(halves, indent=1))
             _atomic_text(run / "scores_oracle.json", json.dumps(oracle, indent=1))
@@ -848,7 +872,7 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
                 cells[r["cell"]].setdefault(idx, []).append(r)
         params = grad_params(pi, args.grad_layers)
         val_groups = torch.load(run / "val_groups.pt", weights_only=True)
-        selection_val, _ = split_validation_directions(val_groups)
+        selection_val, _, _ = split_validation_directions(val_groups)
         scores = score_cells(
             pi, params, cells, selection_val, spec, expected_prompts, args.k_cell
         )
@@ -857,7 +881,7 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
         hybrid_inputs = (hy_path, rollout_manifest_path, run / "val_groups.pt")
         _atomic_text(protocol_path, json.dumps({
             "schema": HYBRID_PROTOCOL_SCHEMA,
-            "validation_partition": "selection=val_groups[0::2]",
+            "validation_partition": "selection=r (first 1/2)",
             "cut": cut_frac,
             "rollout_protocol": HYBRID_ROLLOUT_SCHEMA,
             "input_sha256": {path.name: sha256_file(path) for path in hybrid_inputs},
