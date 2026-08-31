@@ -81,6 +81,7 @@ def checkout(
         "OM_POOL_FILE": "/wrong/pool",
         "OM_SKIP_HYBRID": "0",
         "OM_ATTN": "sdpa",
+        "OM_STALL_MINUTES": "999",
         "REGIME_DATASETS": "wrong",
         "REGIME_SEEDS": "99",
         "REGIME_DRIFTS": "7",
@@ -112,6 +113,7 @@ def test_launcher_locks_full_matrix_and_clears_incompatible_overrides(tmp_path: 
     assert captured["REGIME_DRIFTS"] == "0 25 100 400"
     assert captured["OM_SKIP_HYBRID"] == "1"
     assert captured["OM_ATTN"] == "eager"
+    assert captured["OM_STALL_MINUTES"] == "5"
     assert captured["HYBRID_PROMPTS"] == "24"
     assert captured["K_CELL"] == "8"
     assert captured["RADIUS_MODE"] == "gaussian"

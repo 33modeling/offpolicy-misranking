@@ -131,6 +131,10 @@ supervisor가 GPU 메모리 해제를 확인한 뒤 worker를 최대 12회 다�
 `REGIME.json`/CSV와 단일 `FINAL_REPORT.md`다. Coverage calibration JSON이 없으면
 판정은 자동으로 `provisional_*`로 제한되며 최종 주장으로 승격되지 않는다.
 
+각 regime point는 독립 process group에서 실행한다. 로그가 5분 멈췄을 때 GPU 또는
+해당 process group의 CPU가 움직이면 정상 계산으로 유지하고 heartbeat를 남긴다. 세 신호가
+모두 멈췄을 때만 전체 group을 종료해 같은 point의 `.partial`부터 자동 재시도한다.
+
 완료 전에는 재개용 shard와 `.partial`을 보존한다. 병합본의 해시와 exact-K coverage가
 검증되면 canonical manifest를 발행하고 중복 shard를 삭제한다. Drift 간 동일한 behavior
 rollout은 같은 볼륨에서 hard link로 공유하며, LoRA 폴더에는 adapter 설정과 가중치만
@@ -304,7 +308,7 @@ tests/test_first_interval.py  FIRST·utility 구간과 고정 tie-stream 회귀 
 tests/test_reuse_behavior.py  prompt/config 불일치와 behavior artifact 복제 회귀 테스트
 tests/test_model_matrix.py  모델 파일 손상·설정 타입·shard 경로 검증 테스트
 tests/test_regime_contract.py  행렬/run 격리·최종 출력 hash 계약 테스트
-tests/test_regime_queue.py  3-worker 중복 방지·재시도·분석 실패 전파 통합 테스트
+tests/test_regime_queue.py  3-worker 중복 방지·hang watchdog·재시도·분석 실패 전파 통합 테스트
 ```
 
 구현 노트:

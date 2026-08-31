@@ -132,6 +132,10 @@ go_v4.sh <slot>
 27B fixed-drift v4는 이 흐름에 포함되지만 27B regime confirmation은 7B boundary 동결
 후의 별도 후속 게이트다.
 
+regime point는 독립 process group으로 실행된다. 5분간 로그가 변하지 않더라도 GPU 또는
+그 group의 CPU가 움직이면 계속 실행한다. 로그·GPU·CPU가 모두 정지한 경우에만 group을
+TERM/KILL하고 같은 point의 `.partial`부터 자동 재시도한다.
+
 각 워커가 실제로 쓰는 설정(`resume_v4.sh` 기준):
 
 | 항목 | 27B | 7B |
@@ -628,7 +632,7 @@ python3 src/recompute_oracle_scores.py RUN_DIR     # GPU 불필요 — oracle/re
 | `RESULTS_BASE` | `$OM_WORK/results/v2` | 결과 수집 경로 |
 | `OM_RESULTS` | 세대 자동 판별 | `make_tables`/`frontier` 출력 경로 |
 | `OM_MAX_RETRIES` | `2` | run당 재시도 (v4 5, 27B rerun 10) |
-| `OM_STALL_MINUTES` | `5` | watchdog 로그 무변화 임계 (27B 20) |
+| `OM_STALL_MINUTES` | `5` | v4/regime watchdog 로그 무변화 임계 (27B 20) |
 | `OM_SKIP_POSTPROCESS` | `0` | `1`이면 워커가 표를 만들지 않음 (병렬 워커용) |
 | `OM_PIPELINE_REPO` | `$PWD` | 계산 코드 worktree |
 | `OM_PIPELINE_SCRIPT` | `$OM_PIPELINE_REPO/scripts/run_14b.sh` | 실제 실행할 파이프라인 |

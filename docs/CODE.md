@@ -92,7 +92,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | `go_retry.sh` | legacy fixed-drift 복구 경로. 신규 regime/transfer 실험의 진입점으로 쓰지 않음 |
 | `go_v4.sh` | 사용자용 전체 진입점. `go_offpolicy.sh`로 위임하며 v4 단계는 `resume_v4.sh`에서 run별 generation commit을 보존 |
 | `go_v4_27b.sh` | 현재 코드의 27B 전용 공유 큐. FLA/GPU 스모크, current-commit 계약, quarantine, 10-run 검증과 마지막 worker 자동 집계를 수행 |
-| `go_regime.sh` | 신규 주실험: shared flock queue가 seed×dataset family를 분배. 완료 후 입력 키를 잠금 안에서 확인해 regime map을 정확히 한 번만 집계 |
+| `go_regime.sh` | 신규 주실험: shared flock queue가 seed×dataset family를 분배. point를 독립 process group으로 실행하고 로그·GPU·CPU가 모두 멈춘 hang만 종료·재개. 완료 후 regime map을 정확히 한 번만 집계 |
 | `go_domain_transfer.sh` | 비Qwen·비수학 전이 행렬: Mistral/OLMo2 × MBPP/KK/ARC-Challenge를 고정 설정·host runtime smoke·불변 matrix 계약 아래 3-seed shared queue로 실행 |
 | `go_v2.sh` | 모델별 worker: GPU 건강검사 → 스모크 게이트 → `SEEDS`×`DATASETS` 루프. console/stage 로그 무변화 watchdog, process-group 자동 종료·최대 재시도, 실패 원인 콘솔 진단 내장 |
 | `run_14b.sh` | 단일 (seed,dataset) 실행기: config digest lock, GPU 자동감지, exact-K 병합 검증, 실패 전파, 최종 필수 artifact 검사 후 원자적 `DONE` 생성 |
@@ -132,6 +132,7 @@ prep ──→ rollout-behavior ──→ drift ──→ oracle ──→ score
 | `REGIME_SEEDS` / `REGIME_DATASETS` / `REGIME_DRIFTS` | `0 1 2` / `gsm8k math500` / `0 25 100 400` | regime discovery matrix. confirmation은 결과 동결 뒤 별도 값으로 실행 |
 | `REGIME_ROOT` / `REGIME_RESULTS` / `REGIME_MODEL_TAG` | `$OM_WORK/runs/...` / `$OM_WORK/results/...` / model basename | regime shared queue·artifact·모델별 결과 경로 |
 | `REGIME_FIRST_BOOTSTRAP` / `REGIME_FIRST_CALIBRATION` | `2000` / 없음 | discovery 재표집 수와 coverage calibration JSON. 최종 freeze는 10000회와 passing calibration을 요구하며, 없으면 label은 `provisional_*` |
+| `OM_STALL_MINUTES` | `5` | regime point의 로그 무변화 검사 간격. GPU/CPU 활동도 없을 때만 process group을 종료하고 `.partial`부터 재개 |
 | `N_TRAIN`/`N_VAL` | 512/100 (math500은 400/100) | 프롬프트 수 |
 | `OM_GPUS` | 전 GPU | 사용 GPU 제한 (`"0,1"` — 한 노드 두 실험 분할용) |
 | `OM_WORK` | — | 작업 루트 (산출물 `$OM_WORK/results/v2/`, 로그 `$OM_WORK/console-logs/` — 레포에 로그 금지) |

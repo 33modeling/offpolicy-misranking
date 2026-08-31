@@ -44,7 +44,8 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "#!/usr/bin/env bash\n"
             'point="$DATASET $SEED $DRIFT"\n'
             'printf "%s\\n" "$point" >> "$OM_WORK/claims"\n'
-            'if [ "$point" = "a 0 0" ] && mkdir "$OM_WORK/fail-once" 2>/dev/null; then exit 9; fi\n'
+            'if [ "$point" = "a 0 0" ] && mkdir "$OM_WORK/hang-once" 2>/dev/null; then '
+            'while :; do /bin/sleep 1; done; fi\n'
             'mkdir -p "$OUT_ROOT"\n'
             'for name in DONE run_config.json manifest.json score_protocol.json '
             'oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json '
@@ -98,6 +99,10 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
                 "REGIME_MAX_RETRIES": "2",
                 "REGIME_N_TRAIN": "8",
                 "REGIME_N_VAL": "4",
+                "REGIME_WATCH_INTERVAL_SECONDS": "1",
+                "REGIME_STALL_SECONDS": "1",
+                "REGIME_WATCH_KILL_GRACE_SECONDS": "0",
+                "REGIME_WATCH_GPU_SAMPLES": "1",
             }
         )
         workers = [
@@ -116,6 +121,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             output, _ = worker.communicate(timeout=30)
             outputs.append(output)
             assert worker.returncode == 0, output
+        assert any("[regime-watchdog]" in output for output in outputs)
 
         claims = (work / "claims").read_text(encoding="utf-8").splitlines()
         expected = {

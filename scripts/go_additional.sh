@@ -71,6 +71,7 @@ export OM_TOP_P=1.0
 export OM_THINKING=off
 export OM_SKIP_GPU_CHECK=0
 export OM_ALLOW_DIRTY=0
+export OM_STALL_MINUTES=5
 export HYBRID_PROMPTS=24
 export K_CELL=8
 export RADIUS_MODE=gaussian

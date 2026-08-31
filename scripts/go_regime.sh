@@ -13,6 +13,7 @@ source scripts/_report_cache.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv python 없음: $PY"; exit 1; }
 command -v flock >/dev/null || { echo "[abort] flock 없음"; exit 1; }
+command -v setsid >/dev/null || { echo "[abort] setsid 없음"; exit 1; }
 
 # Supervisors may be newer than a partially completed run. Generation always
 # re-enters the immutable code snapshot recorded by that run.
@@ -45,6 +46,20 @@ GRAD_LAYERS_DEFAULT="${REGIME_GRAD_LAYERS:-4}"
 CLIP_CAP_DEFAULT="${REGIME_CLIP_CAP:-10}"
 TOPK_FRAC_DEFAULT="${REGIME_TOPK_FRAC:-0.10}"
 TEMPERATURE_DEFAULT="${REGIME_TEMPERATURE:-1.0}"
+WATCH_INTERVAL_SECONDS="${REGIME_WATCH_INTERVAL_SECONDS:-15}"
+STALL_SECONDS="${REGIME_STALL_SECONDS:-$(( ${OM_STALL_MINUTES:-5} * 60 ))}"
+WATCH_KILL_GRACE_SECONDS="${REGIME_WATCH_KILL_GRACE_SECONDS:-5}"
+WATCH_GPU_SAMPLES="${REGIME_WATCH_GPU_SAMPLES:-3}"
+
+for value_name in WATCH_INTERVAL_SECONDS STALL_SECONDS WATCH_GPU_SAMPLES; do
+  value=${!value_name}
+  case "$value" in
+    ''|*[!0-9]*|0) echo "[abort] invalid $value_name=$value"; exit 2 ;;
+  esac
+done
+case "$WATCH_KILL_GRACE_SECONDS" in
+  ''|*[!0-9]*) echo "[abort] invalid WATCH_KILL_GRACE_SECONDS=$WATCH_KILL_GRACE_SECONDS"; exit 2 ;;
+esac
 
 if [ -n "$CONTRACT" ] && [ ! -s "$CONTRACT" ]; then
   echo "[abort] regime matrix contract 없음: $CONTRACT"
@@ -84,8 +99,108 @@ family_complete() {
   done
 }
 
+group_cpu_seconds() {
+  ps -eo pgid=,cputimes= 2>/dev/null \
+    | awk -v pgid="$1" '$1 == pgid { total += $2 } END { print total + 0 }'
+}
+
+gpu_peak_util() {
+  local peak=0 util sample
+  for sample in $(seq 1 "$WATCH_GPU_SAMPLES"); do
+    util=$(timeout 10 nvidia-smi --query-gpu=utilization.gpu \
+      --format=csv,noheader,nounits 2>/dev/null \
+      | awk '$1 > peak { peak=$1 } END { print peak + 0 }')
+    [ "${util:-0}" -le "$peak" ] || peak=$util
+    [ "$sample" -eq "$WATCH_GPU_SAMPLES" ] || /bin/sleep 2
+  done
+  printf '%s\n' "$peak"
+}
+
+terminate_process_group() {
+  local pgid=$1
+  [ -n "$pgid" ] || return 0
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  /bin/sleep "$WATCH_KILL_GRACE_SECONDS"
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+}
+
+ACTIVE_PGID=""
+ACTIVE_WATCHER=""
+cleanup_active_pipeline() {
+  [ -z "$ACTIVE_PGID" ] || terminate_process_group "$ACTIVE_PGID"
+  [ -z "$ACTIVE_WATCHER" ] || kill "$ACTIVE_WATCHER" 2>/dev/null || true
+  ACTIVE_PGID=""
+  ACTIVE_WATCHER=""
+}
+
+run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command...>
+  local run=$1 attempt_log=$2 runner_pid watcher_pid rc
+  shift 2
+  local prev="" elapsed=0 cpu_mark cpu_now cpu_delta gpu_peak lf line sig
+  local candidates=()
+
+  mkdir -p "$run/logs" || return 1
+  : > "$attempt_log" || return 1
+  setsid "$@" >> "$attempt_log" 2>&1 &
+  runner_pid=$!
+  ACTIVE_PGID=$runner_pid
+
+  (
+    cpu_mark=$(group_cpu_seconds "$runner_pid")
+    while kill -0 -- "-$runner_pid" 2>/dev/null; do
+      /bin/sleep "$WATCH_INTERVAL_SECONDS"
+      kill -0 -- "-$runner_pid" 2>/dev/null || break
+
+      candidates=("$attempt_log")
+      for lf in "$run"/logs/*.log; do
+        [ -f "$lf" ] && candidates+=("$lf")
+      done
+      lf=$(ls -t -- "${candidates[@]}" 2>/dev/null | head -1)
+      line=$(tail -n 1 "$lf" 2>/dev/null | cut -c1-160)
+      sig=$(stat -c '%n:%y:%s' "$lf" 2>/dev/null || true)
+      if [ -n "$sig" ] && [ "$sig" != "$prev" ]; then
+        [ -n "$line" ] && echo "[regime-detail·$(basename "$lf" .log)] $line"
+        prev=$sig
+        elapsed=0
+        cpu_mark=$(group_cpu_seconds "$runner_pid")
+        continue
+      fi
+
+      elapsed=$((elapsed + WATCH_INTERVAL_SECONDS))
+      [ "$elapsed" -lt "$STALL_SECONDS" ] || {
+        cpu_now=$(group_cpu_seconds "$runner_pid")
+        cpu_delta=$((cpu_now > cpu_mark ? cpu_now - cpu_mark : 0))
+        gpu_peak=$(gpu_peak_util)
+        if [ "$gpu_peak" -gt 0 ] || [ "$cpu_delta" -gt 2 ]; then
+          message="[regime-watchdog] 로그 ${STALL_SECONDS}초 무변화지만 계산 활동 확인 (GPU ${gpu_peak}%, CPU +${cpu_delta}s) — 계속 실행"
+          echo "$message"
+          printf '%s\n' "$message" >> "$attempt_log"
+          cpu_mark=$cpu_now
+        else
+          message="[regime-watchdog] 로그·GPU·CPU ${STALL_SECONDS}초 정지 — process group 종료 후 .partial 재개"
+          echo "$message"
+          printf '%s\n' "$message" >> "$attempt_log"
+          terminate_process_group "$runner_pid"
+          break
+        fi
+        elapsed=0
+      }
+    done
+  ) &
+  watcher_pid=$!
+  ACTIVE_WATCHER=$watcher_pid
+
+  wait "$runner_pid"
+  rc=$?
+  kill "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+  ACTIVE_PGID=""
+  ACTIVE_WATCHER=""
+  return "$rc"
+}
+
 run_point() {
-  local dataset=$1 seed=$2 drift=$3 source=$4 run try n_train
+  local dataset=$1 seed=$2 drift=$3 source=$4 run try n_train attempt_log
   run=$(run_dir "$dataset" "$seed" "$drift")
   n_train="${REGIME_N_TRAIN:-512}"
   [ -n "${REGIME_N_TRAIN:-}" ] || [ "$dataset" != "math500" ] || n_train=400
@@ -105,7 +220,9 @@ run_point() {
       TEMPERATURE="$TEMPERATURE_DEFAULT"
       OM_SKIP_HYBRID="${OM_SKIP_HYBRID:-1}" OM_RETRY_INDEX="$try")
     [ -z "$source" ] || args+=(OM_BEHAVIOR_SOURCE="$source")
-    if "${args[@]}" OM_REPO="$PIPELINE_REPO" PYTHONPATH="$PIPELINE_REPO/src" \
+    attempt_log="$run/logs/regime-attempt-$try.log"
+    if run_pipeline_watchdog "$run" "$attempt_log" \
+        "${args[@]}" OM_REPO="$PIPELINE_REPO" PYTHONPATH="$PIPELINE_REPO/src" \
         bash "$PIPELINE_SCRIPT"; then
       if [ -n "$CONTRACT" ]; then
         if ! contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \
@@ -118,8 +235,7 @@ run_point() {
       fi
       run_complete "$run" "$dataset" "$seed" "$drift" "$source" && return 0
     fi
-    bash scripts/diagnose_run_failure.sh "$run" \
-      "$run/logs/main.log" 1 2>/dev/null || true
+    bash scripts/diagnose_run_failure.sh "$run" "$attempt_log" 1 2>/dev/null || true
     sleep 20
   done
   return 1
@@ -147,6 +263,7 @@ while :; do
       remaining=$((remaining + 1))
       lock="$QUEUE/$dataset-s$seed.lock"
       (
+        trap 'cleanup_active_pipeline; exit 130' INT TERM HUP
         flock -n 9 || exit 75
         family_complete "$dataset" "$seed" && exit 0
         run_family "$dataset" "$seed"

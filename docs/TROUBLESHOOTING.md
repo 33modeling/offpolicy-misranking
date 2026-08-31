@@ -246,6 +246,11 @@ E절(데이터셋 확장 하루치)의 추가 교훈: **(4) 같은 판단(경로
 - **기존 run에 최신 복구 로직 적용**: 계산 파일은 `run_config.json`에 기록된 commit의
   격리 worktree에서 실행하지만 감시·재시도 supervisor는 현재 checkout 버전을 사용한다.
   이 분리가 없으면 `git pull` 뒤에도 옛 watchdog 버그가 그대로 재현된다.
+- **8/31 regime 정지 원인**: `go_additional.sh → go_regime.sh`가 `run_14b.sh`를
+  foreground로 직접 실행해 v4의 watchdog을 우회했다. child가 hang이면 종료 코드가
+  반환되지 않아 point 3회 재시도와 worker 12회 재시작이 모두 시작되지 않았다. 현재는
+  각 point를 `setsid` process group으로 실행하고 로그·GPU·CPU가 5분 모두 정지한 경우에만
+  TERM/KILL한 뒤 기존 `.partial`부터 재개한다.
 - **27B `rc=1` 뒤 다른 shard `rc=143`**: 첫 shard의 CUDA ULF로 `wait`가 실패하자
   `run_14b.sh`가 즉시 exit하고 EXIT cleanup이 정상 계산 중인 형제 shard에 SIGTERM을
   보내던 증상이다. `143=128+15`이므로 형제 shard의 독립 CUDA 실패가 아니다. 현재는
