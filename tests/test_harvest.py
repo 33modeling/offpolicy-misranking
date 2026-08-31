@@ -39,6 +39,7 @@ def prepare(tmp: Path, *run_names: str) -> tuple[Path, dict[str, str]]:
     python.write_text(
         """#!/usr/bin/env bash
 name=$(basename "$1")
+[ -z "${FAKE_CALL_LOG:-}" ] || printf '%s\n' "$name" >> "$FAKE_CALL_LOG"
 case "$name" in
   kcurve_floor.py)
     echo '# kcurve'
@@ -231,6 +232,53 @@ with tempfile.TemporaryDirectory() as raw_tmp:
             "regime:regime-partial:summary:missing-or-empty",
             "regime:regime-partial:report:missing-or-empty",
         )
+    ))
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "good")
+    call_log = tmp / "calls.log"
+    env["FAKE_CALL_LOG"] = str(call_log)
+    regime = work / "results" / "regime-repair"
+    regime.mkdir(parents=True)
+    (regime / "REGIME.json").write_text("{}\n", encoding="utf-8")
+    failed, _ = run_harvest(work, env)
+    for name, payload in {
+        "REGIME.csv": "run,status\nfixture,usable\n",
+        "REGIME_SUMMARY.csv": "model,status\nfixture,usable\n",
+        "FINAL_REPORT.md": "# regime report\n",
+    }.items():
+        (regime / name).write_text(payload, encoding="utf-8")
+    repaired, repaired_dir = run_harvest(work, env)
+    stats_calls = call_log.read_text(encoding="utf-8").splitlines().count(
+        "stats_extra.py"
+    )
+    check("failed harvest checkpoints successful stats for the repaired harvest", (
+        failed.returncode == 1
+        and repaired.returncode == 0
+        and (repaired_dir / "STATS.md").exists()
+        and stats_calls == 1
+        and "2,000-bootstrap 재사용" in repaired.stdout
+    ))
+
+
+with tempfile.TemporaryDirectory() as raw_tmp:
+    tmp = Path(raw_tmp)
+    work, env = prepare(tmp, "good")
+    legacy = work / "readouts" / "legacy-harvest"
+    legacy.mkdir(parents=True)
+    legacy_stats = "## good\nrun=good n=20 k=2\ng00 1.0\n"
+    (legacy / "STATS.md").write_text(legacy_stats, encoding="utf-8")
+    call_log = tmp / "calls.log"
+    env["FAKE_CALL_LOG"] = str(call_log)
+    result, output = run_harvest(work, env)
+    calls = call_log.read_text(encoding="utf-8").splitlines()
+    check("pre-cache successful stats are validated and adopted once", (
+        result.returncode == 0
+        and (output / "STATS.md").read_text(encoding="utf-8") == legacy_stats
+        and "stats_extra.py" not in calls
+        and "이전 정상 STATS 검증 완료" in result.stdout
     ))
 
 

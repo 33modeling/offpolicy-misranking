@@ -158,10 +158,15 @@ publish_markdown reversal "$STAMP_DIR/REVERSAL.md" "0" no \
 stats_tmp="$STAMP_DIR/STATS.md.tmp"
 stats_partial="$STAMP_DIR/STATS.partial.md"
 stats_err="$STAMP_DIR/STATS.err"
-: > "$stats_tmp"
-: > "$stats_err"
 stats_runs=0
 stats_failed=0
+stats_reused=0
+stats_dirs=()
+stats_names=()
+stats_inputs=()
+stats_code=(
+  src/stats_extra.py src/gate_rules.py src/score_artifacts.py src/select_rules.py
+)
 shopt -s nullglob
 for d in "$OM_WORK"/runs/*/; do
   [ -f "$d/scores_oracle.json" ] || continue
@@ -170,39 +175,109 @@ for d in "$OM_WORK"/runs/*/; do
   case "$(basename "$d")" in *smoke*) continue;; esac
   stats_runs=$((stats_runs + 1))
   run_name=$(basename "$d")
-  run_out="$STAMP_DIR/.stats-$run_name.out"
-  run_err="$STAMP_DIR/.stats-$run_name.err"
-  "$PY" src/stats_extra.py "$d" > "$run_out" 2> "$run_err"
-  rc=$?
-  if [ "$rc" -ne 0 ] || [ ! -s "$run_out" ]; then
-    reason="exit=$rc"
-    [ "$rc" -eq 0 ] && reason="empty-output"
-    failures+=("stats:$run_name:$reason")
-    stats_failed=1
-    mv "$run_out" "$STAMP_DIR/STATS-$run_name.partial.md"
-  else
-    printf '## %s\n' "$run_name" >> "$stats_tmp"
-    cat "$run_out" >> "$stats_tmp"
-    printf '\n' >> "$stats_tmp"
-    rm -f "$run_out"
-  fi
-  if [ -s "$run_err" ]; then
-    printf '## %s\n' "$run_name" >> "$stats_err"
-    cat "$run_err" >> "$stats_err"
-    printf '\n' >> "$stats_err"
-  fi
-  rm -f "$run_err"
+  stats_dirs+=("$d")
+  stats_names+=("$run_name")
+  for artifact in run_config.json manifest.json score_protocol.json \
+      oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json \
+      scores_splithalf.json; do
+    stats_inputs+=("$d/$artifact")
+  done
 done
 if [ "$stats_runs" -eq 0 ]; then
   failures+=("stats:no-corrected-runs")
   stats_failed=1
-fi
-if [ "$stats_failed" -eq 0 ] && [ -s "$stats_tmp" ]; then
-  mv "$stats_tmp" "$STAMP_DIR/STATS.md"
 else
-  mv "$stats_tmp" "$stats_partial"
+  stats_key=$(report_cache_key "${stats_code[@]}" -- "${stats_inputs[@]}") || exit 1
+  stats_key=$(report_cache_key_values "$stats_key" "stats-schema=1" \
+    "frac=0.10" "bootstrap=2000" "seed=0") || exit 1
+  stats_cache_dir="$OM_WORK/results/.analysis-cache/harvest-stats"
+  stats_cache_out="$stats_cache_dir/STATS.md"
+  stats_cache_marker="$stats_cache_dir/STATS.key"
+  mkdir -p "$stats_cache_dir" || exit 1
+
+  if report_cache_hit "$stats_cache_marker" "$stats_key" "$stats_cache_out"; then
+    cp -- "$stats_cache_out" "$STAMP_DIR/STATS.md" || exit 1
+    stats_reused=1
+    echo "[harvest] STATS 입력 변경 없음; 2,000-bootstrap 재사용"
+  elif [ ! -e "$stats_cache_marker" ]; then
+    # One-time migration for a successful STATS.md inside an older harvest that
+    # failed later (for example, because REGIME files were still missing).
+    while IFS= read -r legacy_stats; do
+      [ -s "$legacy_stats" ] || continue
+      legacy_is_fresh=1
+      for artifact in "${stats_code[@]}" "${stats_inputs[@]}"; do
+        [ -e "$artifact" ] || continue
+        if [ "$artifact" -nt "$legacy_stats" ]; then
+          legacy_is_fresh=0
+          break
+        fi
+      done
+      [ "$legacy_is_fresh" -eq 1 ] || continue
+      [ "$(grep -c '^## ' "$legacy_stats" || true)" -eq "$stats_runs" ] || continue
+      legacy_has_all=1
+      for run_name in "${stats_names[@]}"; do
+        grep -Fqx "## $run_name" "$legacy_stats" || {
+          legacy_has_all=0
+          break
+        }
+      done
+      [ "$legacy_has_all" -eq 1 ] || continue
+
+      cache_tmp="$stats_cache_out.tmp.$$"
+      cp -- "$legacy_stats" "$cache_tmp" || exit 1
+      mv -- "$cache_tmp" "$stats_cache_out" || exit 1
+      report_cache_write "$stats_cache_marker" "$stats_key" \
+        "$stats_cache_out" || exit 1
+      cp -- "$stats_cache_out" "$STAMP_DIR/STATS.md" || exit 1
+      stats_reused=1
+      echo "[harvest] 이전 정상 STATS 검증 완료; 2,000-bootstrap 재계산 생략"
+      break
+    done < <(find "$READOUTS_ROOT" -mindepth 2 -maxdepth 2 -type f \
+      -name STATS.md -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
+  fi
+
+  if [ "$stats_reused" -eq 0 ]; then
+    : > "$stats_tmp"
+    : > "$stats_err"
+    for stats_index in "${!stats_dirs[@]}"; do
+      d=${stats_dirs[$stats_index]}
+      run_name=${stats_names[$stats_index]}
+      run_out="$STAMP_DIR/.stats-$run_name.out"
+      run_err="$STAMP_DIR/.stats-$run_name.err"
+      "$PY" src/stats_extra.py "$d" > "$run_out" 2> "$run_err"
+      rc=$?
+      if [ "$rc" -ne 0 ] || [ ! -s "$run_out" ]; then
+        reason="exit=$rc"
+        [ "$rc" -eq 0 ] && reason="empty-output"
+        failures+=("stats:$run_name:$reason")
+        stats_failed=1
+        mv "$run_out" "$STAMP_DIR/STATS-$run_name.partial.md"
+      else
+        printf '## %s\n' "$run_name" >> "$stats_tmp"
+        cat "$run_out" >> "$stats_tmp"
+        printf '\n' >> "$stats_tmp"
+        rm -f "$run_out"
+      fi
+      if [ -s "$run_err" ]; then
+        printf '## %s\n' "$run_name" >> "$stats_err"
+        cat "$run_err" >> "$stats_err"
+        printf '\n' >> "$stats_err"
+      fi
+      rm -f "$run_err"
+    done
+    if [ "$stats_failed" -eq 0 ] && [ -s "$stats_tmp" ]; then
+      mv "$stats_tmp" "$STAMP_DIR/STATS.md"
+      cache_tmp="$stats_cache_out.tmp.$$"
+      cp -- "$STAMP_DIR/STATS.md" "$cache_tmp" || exit 1
+      mv -- "$cache_tmp" "$stats_cache_out" || exit 1
+      report_cache_write "$stats_cache_marker" "$stats_key" \
+        "$stats_cache_out" || exit 1
+    else
+      mv "$stats_tmp" "$stats_partial"
+    fi
+    [ -s "$stats_err" ] || rm -f "$stats_err"
+  fi
 fi
-[ -s "$stats_err" ] || rm -f "$stats_err"
 
 # 결과 표는 선택 사항이지만, 파일이 존재하면 비어 있거나 복사에 실패한 상태를
 # 정상 수확으로 숨기지 않는다.
