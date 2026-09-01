@@ -39,11 +39,13 @@ hashes and sealed automatically without redownloading. If that snapshot is outsi
 `$MODELS_DIR/Olmo-3-1025-7B`, set `OM_OLMO3_MODEL_PATH` to its exact local path
 on all three nodes.
 
-Separately uploaded MATH-500 and MBPP data may be a JSONL file, parquet/Hugging
-Face directory, a flat file directly under `DATASETS_DIR`, or a conventional
-dataset subdirectory. `run` verifies the official ordered content fingerprints,
-then atomically creates the standard local artifacts and manifests before
-entering a commit-pinned continuation. It never contacts the Hub in run mode.
+Separately uploaded MATH-500 and MBPP data may be JSONL, parquet, an HF saved
+dataset, a flat file, or an arbitrarily named nested directory. `run` searches
+recursively and identifies data by parsed schema, official row count, and an
+order-independent official content fingerprint. Original MATH rows containing
+`problem/solution` are accepted by extracting the final boxed answer. The
+verified rows are atomically materialized at the standard local paths before a
+commit-pinned continuation. Run mode never contacts the Hub.
 
 `run` bootstraps the pinned `math-verify==0.9.0`,
 `latex2sympy2-extended==1.11.0`, ANTLR 4.13.2, SymPy 1.14.0, and mpmath 1.3.0

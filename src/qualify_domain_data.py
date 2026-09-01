@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-from data import _load_rows_any, load_prompts, reward
+from data import _boxed, _load_rows_any, load_prompts, reward
 
 SPECS = {
     "gsm8k": {
@@ -28,7 +28,7 @@ SPECS = {
         "env": "MATH500_DIR",
         "aliases": ("math500", "MATH-500", "math-500", "math_500"),
         "rows": 500,
-        "content_sha256": "e412347e79b7fcc6c86811eb5fb84abc2f69cdec74d7476812675769f6939e6b",
+        "content_sha256": "8fe39a4f83b2331b2fdee1c5fa9dbc2f0f3523b5f0644f8d4bb8dd180f464c14",
         "selection": "test split",
     },
     "mbpp": {
@@ -39,7 +39,7 @@ SPECS = {
         "env": "MBPP_DIR",
         "aliases": ("mbpp", "MBPP"),
         "rows": 974,
-        "content_sha256": "5611e10a00b91df4c5c9feae516b35d9aefceaf6fd537e77f42937044a6a6f4b",
+        "content_sha256": "d6405fb43c7314126f24a98206789736a8713eeeca8886e9d888963d553b2aba",
         "selection": "all published splits, full config",
     },
     "kk": {
@@ -89,6 +89,8 @@ def _canonical_rows(dataset: str, rows: list[dict]) -> list[dict]:
             if dataset == "math500":
                 problem = row.get("problem") or row.get("question")
                 answer = row.get("answer")
+                if answer is None and isinstance(row.get("solution"), str):
+                    answer = _boxed(row["solution"])
                 if not isinstance(problem, str) or answer is None:
                     raise ValueError("problem/answer missing")
                 canonical.append({"problem": problem, "answer": str(answer)})
@@ -115,13 +117,12 @@ def _canonical_rows(dataset: str, rows: list[dict]) -> list[dict]:
 
 def _content_sha256(rows: list[dict]) -> str:
     digest = hashlib.sha256()
-    for row in rows:
-        digest.update(
-            json.dumps(
-                row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-        )
-        digest.update(b"\n")
+    lines = [
+        json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        for row in rows
+    ]
+    for line in sorted(lines):
+        digest.update(line.encode("utf-8") + b"\n")
     return digest.hexdigest()
 
 
@@ -140,14 +141,19 @@ def _source_candidates(dataset: str, root: Path) -> list[Path]:
         base = Path(om_data)
         candidates.extend([base / filename, base / dataset / filename, base / dataset])
         candidates.extend(base / alias for alias in aliases)
-    keys = tuple(alias.lower() for alias in aliases)
+    # Folder names are not a contract. Check exact filenames first, then every
+    # plausible local artifact/directory by its parsed schema and content hash.
     if root.is_dir():
-        for pattern in ("*", "*/*"):
-            candidates.extend(
-                path
-                for path in root.glob(pattern)
-                if path.is_dir() and any(key in path.name.lower() for key in keys)
-            )
+        candidates.extend(sorted(root.rglob(filename)))
+        candidates.extend(
+            path
+            for path in sorted(root.rglob("*.jsonl"))
+            if path.name != "dataset_manifest.json"
+        )
+        candidates.extend(sorted({path.parent for path in root.rglob("*.parquet")}))
+        candidates.extend(sorted({path.parent for path in root.rglob("state.json")}))
+        for pattern in ("*", "*/*", "*/*/*"):
+            candidates.extend(path for path in sorted(root.glob(pattern)) if path.is_dir())
     unique = []
     seen = set()
     for candidate in candidates:

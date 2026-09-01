@@ -152,6 +152,17 @@ scheduled. The launcher now yields for one second after each completed family.
 This is negligible relative to real family runtime and gives waiting clusters
 a deterministic opportunity to claim independent work.
 
+A subsequent dataset-adoption failure exposed another invalid assumption. The
+first adoption implementation recognized flexible file formats but still
+favored a small list of folder names and compared an order-sensitive loader
+fingerprint. A separately uploaded official dataset can live under any folder
+name, can enumerate the same rows in a different order, and original MATH data
+may contain `solution` rather than a derived `answer` field. The resolver now
+recursively examines candidate JSONL, parquet, and HF saved-dataset locations,
+accepts only the exact official row multiset, and supports boxed-answer
+extraction. Regression coverage uses an unrelated three-level folder name,
+reversed row order, and `question/solution` MATH rows.
+
 ## Verification
 
 - Full suite: 86 passed.

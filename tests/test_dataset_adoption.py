@@ -20,8 +20,7 @@ def test_flat_official_upload_replaces_a_broken_standard_shadow(
     tmp_path: Path, monkeypatch
 ) -> None:
     rows = [
-        {"problem": f"problem {index}", "answer": str(index), "extra": "allowed"}
-        for index in range(3)
+        {"problem": f"problem {index}", "answer": str(index)} for index in range(3)
     ]
     canonical = [
         {"problem": row["problem"], "answer": row["answer"]} for row in rows
@@ -38,9 +37,21 @@ def test_flat_official_upload_replaces_a_broken_standard_shadow(
     broken = tmp_path / "math500/math500_test.jsonl"
     broken.parent.mkdir()
     broken.write_text("", encoding="utf-8")
-    uploaded = tmp_path / "math500_test.jsonl"
+    uploaded = tmp_path / "unrelated-name/deep/tree/test.jsonl"
+    uploaded.parent.mkdir(parents=True)
     uploaded.write_text(
-        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        "".join(
+            json.dumps(
+                {
+                    "question": row["problem"],
+                    "solution": rf"work \boxed{{{row['answer']}}}",
+                    "extra": "allowed",
+                }
+            )
+            + "\n"
+            for row in reversed(rows)
+        ),
+        encoding="utf-8",
     )
 
     target, adopted_rows = _adopt_official_upload("math500", tmp_path)
