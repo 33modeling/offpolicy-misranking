@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -29,9 +30,14 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         (work / "venv/bin").mkdir(parents=True)
         (work / "models/model").mkdir(parents=True)
         fake_bin.mkdir()
+        shutil.copy2(REPO / ".gitignore", checkout / ".gitignore")
         shutil.copy2(REPO / "scripts/run_matrix.sh", checkout / "scripts/run_matrix.sh")
         shutil.copy2(
             REPO / "scripts/_report_cache.sh", checkout / "scripts/_report_cache.sh"
+        )
+        shutil.copy2(
+            REPO / "src/regime_resume_commit.py",
+            checkout / "src/regime_resume_commit.py",
         )
         (work / "models/model/config.json").write_text("{}\n", encoding="utf-8")
         (work / "venv/bin/python").symlink_to(Path(sys.executable))
@@ -44,6 +50,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         executable(
             checkout / "scripts/run_point.sh",
             "#!/usr/bin/env bash\n"
+            'cd "$(dirname "$0")/.."\n'
             'point="$DATASET $SEED $DRIFT"\n'
             'printf "%s|%s\\n" "${OM_TEST_WORKER:-worker}" "$point" >> "$OM_WORK/claims"\n'
             "/bin/sleep 0.05\n"
@@ -51,7 +58,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "while :; do /bin/sleep 1; done; fi\n"
             'mkdir -p "$OUT_ROOT"\n'
             "python3 - \"$OUT_ROOT\" <<'PY'\n"
-            "import json, os, sys\n"
+            "import json, os, subprocess, sys\n"
             "from pathlib import Path\n"
             "dataset=os.environ['DATASET']; drift=int(os.environ['DRIFT'])\n"
             "config={'model_resolved':str(Path(os.environ['MODEL_PATH']).resolve()),"
@@ -78,7 +85,8 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "'grpo_advantage_epsilon':float(os.environ.get('GRPO_ADVANTAGE_EPSILON','1e-4')),"
             "'grpo_lora_rank':int(os.environ.get('GRPO_LORA_RANK','16')),"
             "'grpo_lora_alpha':int(os.environ.get('GRPO_LORA_ALPHA','32')),"
-            "'behavior_source':os.environ.get('OM_BEHAVIOR_SOURCE')}\n"
+            "'behavior_source':os.environ.get('OM_BEHAVIOR_SOURCE'),"
+            "'git':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()}\n"
             "out=Path(sys.argv[1]); (out/'run_config.json').write_text(json.dumps(config))\n"
             "scores={str(i):{'score':float(i)} for i in range(config['n_train'])}\n"
             "off={name:scores for name in ('g00','g10','g01','g11')}\n"
@@ -141,6 +149,24 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             encoding="utf-8",
         )
         executable(fake_bin / "sleep", "#!/usr/bin/env bash\nexit 0\n")
+        subprocess.run(
+            ["git", "init", "-q"], cwd=checkout, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=checkout,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=checkout, check=True
+        )
+        subprocess.run(["git", "add", "."], cwd=checkout, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "fixture"], cwd=checkout, check=True
+        )
+        checkout_git = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
+        ).strip()
 
         env = os.environ.copy()
         env.update(
@@ -181,6 +207,9 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             outputs.append(output)
             assert worker.returncode == 0, output
         assert any("[regime-watchdog]" in output for output in outputs)
+        assert (
+            work / "runs/regime-fixture/.queue/generation.git"
+        ).read_text(encoding="utf-8") == f"{checkout_git}\n"
 
         claim_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
         claim_workers = {row.split("|", 1)[0] for row in claim_rows}
@@ -225,6 +254,52 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "1",
             "1",
         ]
+
+        # A supervisor pulled after an interruption must transparently resume
+        # generation with the commit recorded by the existing matrix.
+        (checkout / "src/supervisor_revision.txt").write_text(
+            "new supervisor\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "add", "."], cwd=checkout, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "new supervisor"], cwd=checkout, check=True
+        )
+        (damaged / "score_protocol.json").write_text(
+            '{"schema":"offpolicy-score-validation-split/v1"}\n'
+        )
+        (damaged / "scores_oracle.json").write_text('{"0":{"score":0}}\n')
+        claims_before_upgrade_resume = len(repaired_rows)
+        wrong_pipeline = subprocess.run(
+            ["/bin/bash", "scripts/run_matrix.sh"],
+            cwd=checkout,
+            env={**env, "OM_PIPELINE_REPO": str(checkout)},
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert wrong_pipeline.returncode != 0
+        assert "partial matrix requires generation commit" in wrong_pipeline.stdout
+        assert len((work / "claims").read_text().splitlines()) == len(repaired_rows)
+
+        upgraded = subprocess.run(
+            ["/bin/bash", "scripts/run_matrix.sh"],
+            cwd=checkout,
+            env={
+                **env,
+                "OM_PIPELINE_CACHE": str(root / "pipeline-cache"),
+            },
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
+        assert "[queue] restored generation checkout=" in upgraded.stdout
+        upgraded_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
+        upgraded_claims = [row.split("|", 1)[1] for row in upgraded_rows]
+        assert upgraded_claims[claims_before_upgrade_resume:] == ["a 0 25"]
+        assert json.loads((damaged / "run_config.json").read_text())["git"] == checkout_git
 
         collection = work / "results/regime-fixture/.regime_analysis.key"
         assert collection.is_file()

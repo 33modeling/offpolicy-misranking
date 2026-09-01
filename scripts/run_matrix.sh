@@ -17,9 +17,24 @@ command -v setsid >/dev/null || { echo "[abort] setsid 없음"; exit 1; }
 
 # Supervisors may be newer than a partially completed run. Generation always
 # re-enters the immutable code snapshot recorded by that run.
-PIPELINE_REPO="${OM_PIPELINE_REPO:-$PWD}"
+SUPERVISOR_REPO="$PWD"
+PIPELINE_EXPLICIT=0
+if [ -n "${OM_PIPELINE_REPO+x}" ] || [ -n "${OM_PIPELINE_SCRIPT+x}" ]; then
+  PIPELINE_EXPLICIT=1
+fi
+PIPELINE_REPO="${OM_PIPELINE_REPO:-$SUPERVISOR_REPO}"
 PIPELINE_SCRIPT="${OM_PIPELINE_SCRIPT:-$PIPELINE_REPO/scripts/run_point.sh}"
 [ -s "$PIPELINE_SCRIPT" ] || { echo "[abort] generation pipeline 없음: $PIPELINE_SCRIPT"; exit 1; }
+PIPELINE_GIT=$(git -C "$PIPELINE_REPO" rev-parse HEAD 2>/dev/null) || {
+  echo "[abort] generation pipeline is not a Git checkout: $PIPELINE_REPO"
+  exit 1
+}
+PIPELINE_DIRTY=$(git -C "$PIPELINE_REPO" status --porcelain -- src scripts)
+[ -z "$PIPELINE_DIRTY" ] || {
+  echo "[abort] generation pipeline checkout is dirty: $PIPELINE_REPO"
+  printf '%s\n' "$PIPELINE_DIRTY"
+  exit 1
+}
 
 export MODEL_PATH="${MODEL_PATH:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 MODEL_TAG="${REGIME_MODEL_TAG:-$(basename "$MODEL_PATH" | tr '[:upper:]' '[:lower:]')}"
@@ -27,6 +42,55 @@ ROOT="${REGIME_ROOT:-$OM_WORK/runs/regime-$MODEL_TAG}"
 QUEUE="$ROOT/.queue"
 RESULTS="${REGIME_RESULTS:-$OM_WORK/results/regime-$MODEL_TAG}"
 mkdir -p "$QUEUE" "$RESULTS"
+
+# Bind an automatically created shared marker before any worker can initialize
+# a run. This closes the empty-matrix race where different checkout revisions
+# could otherwise claim different families concurrently.
+GENERATION_MARKER="$QUEUE/generation.git"
+GENERATION_GIT=$("$PY" src/regime_resume_commit.py "$ROOT" "$PIPELINE_GIT" \
+  --marker "$GENERATION_MARKER") || exit 1
+
+# A new supervisor may resume a partial matrix, but generation must still use
+# the exact source revision that initialized it. Materialize that revision in a
+# node-local detached worktree so a pull between attempts remains restartable.
+if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ] && [ "$PIPELINE_EXPLICIT" -eq 0 ]; then
+  PIPELINE_CACHE="${OM_PIPELINE_CACHE:-/tmp/offpolicy-misranking-$(id -u)/pipelines}"
+  PIPELINE_REPO="$PIPELINE_CACHE/$GENERATION_GIT"
+  mkdir -p "$PIPELINE_CACHE"
+  (
+    flock 7
+    if [ ! -e "$PIPELINE_REPO" ]; then
+      git -C "$SUPERVISOR_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
+        echo "[abort] generation commit is unavailable locally: $GENERATION_GIT" >&2
+        exit 1
+      }
+      git -C "$SUPERVISOR_REPO" worktree add --detach "$PIPELINE_REPO" \
+        "$GENERATION_GIT" >&2 || exit 1
+    fi
+    recorded=$(git -C "$PIPELINE_REPO" rev-parse HEAD 2>/dev/null) || {
+      echo "[abort] invalid cached generation checkout: $PIPELINE_REPO" >&2
+      exit 1
+    }
+    [ "$recorded" = "$GENERATION_GIT" ] || {
+      echo "[abort] cached generation checkout is at $recorded, expected $GENERATION_GIT" >&2
+      exit 1
+    }
+    dirty=$(git -C "$PIPELINE_REPO" status --porcelain -- src scripts)
+    [ -z "$dirty" ] || {
+      echo "[abort] cached generation checkout is dirty: $PIPELINE_REPO" >&2
+      printf '%s\n' "$dirty" >&2
+      exit 1
+    }
+  ) 7>"$PIPELINE_CACHE/.worktree.lock" || exit 1
+  PIPELINE_SCRIPT="$PIPELINE_REPO/scripts/run_point.sh"
+  [ -s "$PIPELINE_SCRIPT" ] || {
+    echo "[abort] cached generation pipeline missing: $PIPELINE_SCRIPT"
+    exit 1
+  }
+  PIPELINE_GIT="$GENERATION_GIT"
+  echo "[queue] restored generation checkout=$PIPELINE_REPO"
+fi
+echo "[queue] generation_git=$GENERATION_GIT pipeline_git=$PIPELINE_GIT"
 
 # Discovery uses three seeds.  Seeds 3-4 are a held-back confirmation extension.
 SEEDS=(${REGIME_SEEDS:-0 1 2})
@@ -214,6 +278,21 @@ family_complete() {
       "$([ "$drift" = 0 ] || printf '%s' "$source")" || return 1
   done
 }
+
+if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ]; then
+  incomplete=0
+  for seed in "${SEEDS[@]}"; do
+    for dataset in "${DATASETS[@]}"; do
+      family_complete "$dataset" "$seed" || incomplete=1
+    done
+  done
+  if [ "$incomplete" -eq 1 ]; then
+    echo "[abort] partial matrix requires generation commit $GENERATION_GIT"
+    echo "[abort] use OM_PIPELINE_REPO=<clean checkout at $GENERATION_GIT>"
+    exit 1
+  fi
+  echo "[queue] completed source matrix; current checkout is analysis-only"
+fi
 
 group_cpu_seconds() {
   ps -eo pgid=,cputimes= 2>/dev/null \
