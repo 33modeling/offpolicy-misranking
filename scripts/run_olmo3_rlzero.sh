@@ -38,8 +38,85 @@ case "$CONFIG" in
 esac
 command -v flock >/dev/null 2>&1 || { echo "[abort] flock missing"; exit 1; }
 
+materialize_local_checkout() {
+  local commit=$1 target temporary recorded dirty stale
+  local source_repo="${CHECKOUT_SOURCE_REPO:-$SUPERVISOR_REPO}"
+  target="$PIPELINE_CACHE/clones/$commit"
+  mkdir -p "$PIPELINE_CACHE/clones"
+  (
+    flock 9
+    recorded=$(git -C "$target" rev-parse HEAD 2>/dev/null || true)
+    dirty=invalid
+    if [ -d "$target/.git" ] && [ "$recorded" = "$commit" ]; then
+      dirty=$(git -C "$target" status --porcelain \
+        -- src scripts configs requirements.txt 2>/dev/null || printf invalid)
+    fi
+    if [ ! -d "$target/.git" ] || [ "$recorded" != "$commit" ] || [ -n "$dirty" ]; then
+      if [ -e "$target" ] || [ -L "$target" ]; then
+        stale="$PIPELINE_CACHE/.stale-$commit-$(date +%s)-$$"
+        mv -- "$target" "$stale" || exit 1
+        echo "[checkout] invalid node-local cache quarantined: $stale" >&2
+      fi
+      temporary="$PIPELINE_CACHE/.clone-$commit-$$"
+      rm -rf -- "$temporary"
+      git clone --quiet --no-hardlinks --no-checkout \
+        "$source_repo" "$temporary" >&2 || exit 1
+      git -C "$temporary" checkout --quiet --detach "$commit" >&2 || exit 1
+      git -C "$temporary" remote remove origin >/dev/null 2>&1 || true
+      mv -- "$temporary" "$target" || exit 1
+    fi
+    [ -d "$target/.git" ] || {
+      echo "[abort] runtime checkout must have independent Git metadata: $target" >&2
+      exit 1
+    }
+    [ "$(git -C "$target" rev-parse HEAD 2>/dev/null)" = "$commit" ] || {
+      echo "[abort] node-local checkout HEAD mismatch: $target" >&2
+      exit 1
+    }
+    [ -z "$(git -C "$target" status --porcelain -- src scripts configs requirements.txt)" ] || {
+      echo "[abort] node-local checkout is dirty: $target" >&2
+      exit 1
+    }
+  ) 9>"$PIPELINE_CACHE/.clone.lock" || return 1
+  printf '%s\n' "$target"
+}
+
+CONFIG_SHA=$(sha256sum "$CONFIG" | awk '{print $1}')
+MATRIX_TOOL_REPO=$SUPERVISOR_REPO
+if [ "$MODE" = check ] || [ "$MODE" = run ]; then
+  DIRTY=$(git status --porcelain -- src scripts configs requirements.txt)
+  [ -z "$DIRTY" ] || {
+    echo "[abort] generation code is dirty; commit once before allocating GPUs"
+    printf '%s\n' "$DIRTY"
+    exit 1
+  }
+  CURRENT_GIT=$(git rev-parse HEAD) || exit 1
+  LOCAL_ROOT="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+  local_path=$(realpath -m "$LOCAL_ROOT")
+  shared_path=$(realpath -m "$GROUP_VOLUME")
+  [[ "$local_path" != "$shared_path" && "$local_path" != "$shared_path/"* ]] || {
+    echo "[abort] OM_LOCAL_LOCK_DIR must be node-local"
+    exit 1
+  }
+  PIPELINE_CACHE="${OM_PIPELINE_CACHE:-$LOCAL_ROOT/pipelines}"
+  cache_path=$(realpath -m "$PIPELINE_CACHE")
+  [[ "$cache_path" != "$shared_path" && "$cache_path" != "$shared_path/"* ]] || {
+    echo "[abort] OM_PIPELINE_CACHE must be node-local"
+    exit 1
+  }
+  SUPERVISOR_RUNTIME_REPO=$(materialize_local_checkout "$CURRENT_GIT") || exit 1
+  SUPERVISOR_RUNTIME_CONFIG="$SUPERVISOR_RUNTIME_REPO/$CONFIG_REL"
+  [ "$(sha256sum "$SUPERVISOR_RUNTIME_CONFIG" | awk '{print $1}')" = "$CONFIG_SHA" ] || {
+    echo "[abort] node-local supervisor config differs from requested contract"
+    exit 1
+  }
+  CHECKOUT_SOURCE_REPO=$SUPERVISOR_RUNTIME_REPO
+  MATRIX_TOOL_REPO=$SUPERVISOR_RUNTIME_REPO
+  CONFIG=$SUPERVISOR_RUNTIME_CONFIG
+fi
+
 if [ "$MODE" != status ]; then
-  MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py \
+  MATH_VERIFY_PATH=$("$PY" "$MATRIX_TOOL_REPO/src/bootstrap_math_verify.py" \
     --cache-root "$OM_WORK/runtime-deps") || exit 1
   export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}"
   "$PY" -c 'from math_verify import parse, verify; assert verify(parse(r"\frac{1}{2}"), parse("0.5"))' \
@@ -49,17 +126,17 @@ fi
 
 MODEL_KEY=olmo3-7b-base
 model_field() {
-  "$PY" src/model_matrix.py --config "$CONFIG" --models-dir "$MODELS_DIR" \
+  "$PY" "$MATRIX_TOOL_REPO/src/model_matrix.py" --config "$CONFIG" --models-dir "$MODELS_DIR" \
     field "$MODEL_KEY" "$1"
 }
 experiment_field() {
-  "$PY" src/model_matrix.py --config "$CONFIG" experiment-field "$1"
+  "$PY" "$MATRIX_TOOL_REPO/src/model_matrix.py" --config "$CONFIG" experiment-field "$1"
 }
 grpo_field() {
-  "$PY" src/model_matrix.py --config "$CONFIG" grpo-field "$1"
+  "$PY" "$MATRIX_TOOL_REPO/src/model_matrix.py" --config "$CONFIG" grpo-field "$1"
 }
 runtime_field() {
-  "$PY" src/model_matrix.py --config "$CONFIG" runtime-field "$1"
+  "$PY" "$MATRIX_TOOL_REPO/src/model_matrix.py" --config "$CONFIG" runtime-field "$1"
 }
 
 if [ "$MODE" = prepare ]; then
@@ -99,7 +176,6 @@ DATASETS=($(experiment_field datasets))
 SEEDS=($(experiment_field seeds))
 DRIFTS=($(experiment_field drifts))
 N_VAL=$(experiment_field n_val)
-CONFIG_SHA=$(sha256sum "$CONFIG" | awk '{print $1}')
 MODEL_TAG="${OM_OLMO3_MODEL_TAG:-$DEFAULT_MODEL_TAG}"
 ROOT="${OM_OLMO3_ROOT:-$OM_WORK/runs/$MODEL_TAG}"
 GLOBAL_RESULTS="${OM_OLMO3_RESULTS:-$OM_WORK/results/$MODEL_TAG}"
@@ -149,14 +225,6 @@ if [ "$MODE" = status ]; then
   exit 0
 fi
 
-DIRTY=$(git status --porcelain -- src scripts configs requirements.txt)
-[ -z "$DIRTY" ] || {
-  echo "[abort] generation code is dirty; commit and pull one revision before allocating GPUs"
-  printf '%s\n' "$DIRTY"
-  exit 1
-}
-
-CURRENT_GIT=$(git rev-parse HEAD) || exit 1
 mkdir -p "$ROOT/.queue" "$QUEUE" "$PREFLIGHT" "$GLOBAL_RESULTS" "$OM_WORK/locks"
 
 if [ "$MODE" = run ]; then
@@ -170,13 +238,6 @@ if [ "$MODE" = run ]; then
     exit 1
   }
 
-  LOCAL_ROOT="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
-  local_path=$(realpath -m "$LOCAL_ROOT")
-  shared_path=$(realpath -m "$GROUP_VOLUME")
-  [[ "$local_path" != "$shared_path" && "$local_path" != "$shared_path/"* ]] || {
-    echo "[abort] OM_LOCAL_LOCK_DIR must be node-local"
-    exit 1
-  }
   mkdir -p "$LOCAL_ROOT/olmo3-preflight" "$ROOT/logs"
   exec 8>"$LOCAL_ROOT/primary.lock"
   flock -n 8 || { echo "[abort] another experiment already owns this physical node"; exit 1; }
@@ -215,7 +276,7 @@ if [ "$MODE" = run ]; then
     [ -z "${SUPERVISOR_KEEPALIVE:-}" ] || return 0
     rm -f -- "$KEEPALIVE_READY"
     OM_GPU_KEEPALIVE_READY_FILE="$KEEPALIVE_READY" CUDA_VISIBLE_DEVICES=0,1,2,3 \
-      "$PY" "$SUPERVISOR_REPO/scripts/gpu_keepalive.py" \
+      "$PY" "$SUPERVISOR_RUNTIME_REPO/scripts/gpu_keepalive.py" \
       >> "$ROOT/logs/$WORKER_ID-keepalive.log" 2>&1 8>&- 9>&- &
     SUPERVISOR_KEEPALIVE=$!
     for _ in $(seq 1 600); do
@@ -250,61 +311,33 @@ fi
 (
   flock 9
   if [ ! -s "$MODEL_PATH/.om_snapshot.json" ]; then
-    if ! PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-        "$PY" "$SUPERVISOR_REPO/src/model_matrix.py" --config "$CONFIG" \
+    if ! PYTHONPATH="$SUPERVISOR_RUNTIME_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$PY" "$SUPERVISOR_RUNTIME_REPO/src/model_matrix.py" --config "$CONFIG" \
         --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" check "$MODEL_KEY"; then
       echo "[model] manifest missing; verifying the uploaded model against pinned official hashes"
-      PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-        "$PY" "$SUPERVISOR_REPO/src/model_matrix.py" --config "$CONFIG" \
+      PYTHONPATH="$SUPERVISOR_RUNTIME_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$PY" "$SUPERVISOR_RUNTIME_REPO/src/model_matrix.py" --config "$CONFIG" \
         --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" seal "$MODEL_KEY" || exit 1
     fi
   fi
   OM_MATH_VERIFIER=math_verify \
-    PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PY" "$SUPERVISOR_REPO/src/qualify_domain_data.py" "${DATASETS[@]}" \
+    PYTHONPATH="$SUPERVISOR_RUNTIME_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PY" "$SUPERVISOR_RUNTIME_REPO/src/qualify_domain_data.py" "${DATASETS[@]}" \
     --data-root "$DATASETS_DIR" --n-train 512 \
     --dataset-n-train math500=400 --dataset-n-train mbpp=512 \
     --n-val "$N_VAL" --seeds "${SEEDS[@]}" \
     --output "$PREFLIGHT/data-adoption.json" || exit 1
 ) 9>"$OM_WORK/locks/olmo3-asset-adoption.lock" || exit 1
 
-GENERATION_GIT=$("$PY" src/regime_resume_commit.py "$ROOT" "$CURRENT_GIT" \
+GENERATION_GIT=$("$PY" "$SUPERVISOR_RUNTIME_REPO/src/regime_resume_commit.py" \
+  "$ROOT" "$CURRENT_GIT" \
   --marker "$ROOT/.queue/generation.git" --advance-empty) || exit 1
 
-GENERATION_REPO=$SUPERVISOR_REPO
-if [ "$GENERATION_GIT" != "$CURRENT_GIT" ]; then
-  PIPELINE_CACHE="${OM_PIPELINE_CACHE:-/tmp/offpolicy-misranking-$(id -u)/pipelines}"
-  GENERATION_REPO="$PIPELINE_CACHE/$GENERATION_GIT"
-  mkdir -p "$PIPELINE_CACHE"
-  (
-    flock 9
-    git -C "$SUPERVISOR_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
-      echo "[abort] pinned generation commit is unavailable locally: $GENERATION_GIT" >&2
-      exit 1
-    }
-    cached_git=$(git -C "$GENERATION_REPO" rev-parse HEAD 2>/dev/null || true)
-    cached_dirty=invalid
-    if [ "$cached_git" = "$GENERATION_GIT" ]; then
-      cached_dirty=$(git -C "$GENERATION_REPO" status --porcelain \
-        -- src scripts configs 2>/dev/null || printf invalid)
-    fi
-    if [ "$cached_git" != "$GENERATION_GIT" ] || [ -n "$cached_dirty" ]; then
-      if [ -e "$GENERATION_REPO" ] || [ -L "$GENERATION_REPO" ]; then
-        stale="$PIPELINE_CACHE/.stale-$GENERATION_GIT-$(date +%s)-$$"
-        mv -- "$GENERATION_REPO" "$stale" || exit 1
-        echo "[worktree] invalid cache quarantined: $stale" >&2
-      fi
-      git -C "$SUPERVISOR_REPO" worktree prune --expire now || exit 1
-      # Two -f flags also override a stale registration that was left locked.
-      git -C "$SUPERVISOR_REPO" worktree add -f -f --detach "$GENERATION_REPO" \
-        "$GENERATION_GIT" >&2 || exit 1
-    fi
-    [ "$(git -C "$GENERATION_REPO" rev-parse HEAD 2>/dev/null)" = "$GENERATION_GIT" ] \
-      || { echo "[abort] pinned worktree HEAD mismatch after repair" >&2; exit 1; }
-    [ -z "$(git -C "$GENERATION_REPO" status --porcelain -- src scripts configs)" ] \
-      || { echo "[abort] pinned worktree remains dirty after repair" >&2; exit 1; }
-  ) 9>"$PIPELINE_CACHE/.worktree.lock" || exit 1
-fi
+git -C "$SUPERVISOR_RUNTIME_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
+  echo "[abort] pinned generation commit is unavailable locally: $GENERATION_GIT"
+  exit 1
+}
+GENERATION_REPO=$(materialize_local_checkout "$GENERATION_GIT") || exit 1
 GENERATION_CONFIG="$GENERATION_REPO/$CONFIG_REL"
 [ -s "$GENERATION_CONFIG" ] || {
   echo "[abort] pinned generation commit lacks the OLMo-3 contract: $GENERATION_GIT"
@@ -508,15 +541,16 @@ PYEOF
     # Older pinned generation commits start their own point-local keepalive.
     # Pause the supervisor during those points to avoid duplicate GPU load.
     [ "$PINNED_POINT_EXTERNAL_KEEPALIVE" -eq 1 ] || stop_supervisor_keepalive
-    OM_REPO="$GENERATION_REPO" OM_PIPELINE_REPO="$GENERATION_REPO" \
+    OM_REPO="$SUPERVISOR_RUNTIME_REPO" OM_PIPELINE_REPO="$GENERATION_REPO" \
       OM_PIPELINE_SCRIPT="$GENERATION_REPO/scripts/run_point.sh" \
       OM_GENERATION_GIT="$GENERATION_GIT" \
-      PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" MODEL_PATH="$MODEL_PATH" \
+      PYTHONPATH="$SUPERVISOR_RUNTIME_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      MODEL_PATH="$MODEL_PATH" \
       REGIME_ROOT="$root" REGIME_RESULTS="$result" REGIME_MODEL_TAG="$MODEL_TAG" \
       REGIME_DATASETS="$dataset" REGIME_SEEDS="$seed" \
       REGIME_DRIFTS="${DRIFTS[*]}" REGIME_SKIP_COLLECTION=1 \
       OM_PROMPT_FORMAT="$format" \
-      bash "$SUPERVISOR_REPO/scripts/run_matrix.sh" 2>&1 | tee -a "$LOG"
+      bash "$SUPERVISOR_RUNTIME_REPO/scripts/run_matrix.sh" 2>&1 | tee -a "$LOG"
     statuses=("${PIPESTATUS[@]}")
     rc=${statuses[0]}
     if [ "${statuses[1]}" -ne 0 ]; then

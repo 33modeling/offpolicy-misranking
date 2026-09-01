@@ -241,6 +241,17 @@ The implementation and validation work made the following mistakes in order:
    same deterministic failure. Point launches now prepend the pinned `src`
    directory while preserving the inherited runtime dependency path. A
    regression test rejects the previous replacement form.
+9. The recovery design still assumed that each cluster had an independent Git
+   checkout. In the actual environment, all three clusters use the same
+   checkout and the same `.git` directory. A path under node-local `/tmp` does
+   not make `git worktree` independent: `worktree add`, `lock`, and `prune`
+   still mutate the main repository's shared `.git/worktrees` registry. Those
+   operations could collide across workers, and a `git pull` on the shared
+   checkout could also move code beneath an active supervisor. The corrected
+   launcher snapshots the selected commits using `git clone --no-hardlinks`
+   into the node-local cache. The resulting checkout has its own `.git`
+   directory and its origin is removed; neither the launcher nor matrix resume
+   code performs shared worktree registration or pruning.
 
 ### Validation failure
 
@@ -255,19 +266,21 @@ mock results were useful unit evidence but were overstated as launch readiness.
 
 The audit host also lacked the cluster's mounted group volume and four H100s.
 No claim of cluster success may be based on these fixtures. The current code has
-shell/static and simulated recovery coverage, including a locked registration
-whose path is replaced by an invalid directory, but live correction remains
-unverified until the canonical command passes on the target cluster.
+shell/static and simulated recovery coverage for invalid standalone-clone
+caches, shared-HEAD movement during an active worker, and partial-suite resume,
+but live correction remains unverified until the canonical command passes on
+the target cluster.
 
 ### Mandatory regression policy
 
 - A canonical launcher is not ready when only component mocks pass. Its exact
-  launcher, worktree, matrix, point, queue, cleanup, and resume composition must
-  run in one integration scenario.
-- Worktree recovery must cover clean reuse, missing registered paths, locked
-  missing paths, existing invalid directories, dirty/wrong-HEAD caches, and a
-  pull followed by partial-run resume. Cache repair must preserve invalid bytes
-  under quarantine rather than delete them.
+  launcher, local checkout, matrix, point, queue, cleanup, and resume
+  composition must run in one integration scenario.
+- Local-checkout recovery must cover clean reuse, existing invalid directories,
+  dirty/wrong-HEAD caches, and a pull followed by partial-run resume. It must
+  prove that the cache has its own `.git` directory and that the shared
+  repository's worktree list is unchanged. Cache repair must preserve invalid
+  bytes under quarantine rather than delete them.
 - Background helpers must close inherited lock descriptors. Tests must prove a
   helper cannot keep a node or family lock alive after its parent exits.
 - Keepalive tests must distinguish preflight, rollout generation, CPU verifier,
@@ -279,8 +292,9 @@ unverified until the canonical command passes on the target cluster.
   scheduling, shared-volume behavior, CUDA execution, and utilization-based
   reclamation.
 - Before allocating the main experiment, capture the exact commit, command,
-  worktree HEAD, matrix generation commit, four GPU process/utilization rows,
-  first completed rollout shard, and restart evidence from the target cluster.
+  node-local checkout HEAD, matrix generation commit, four GPU
+  process/utilization rows, first completed rollout shard, and restart evidence
+  from the target cluster.
 - If target-cluster access is unavailable, report that limitation and leave the
   launch gate unverified. Do not replace missing runtime evidence with a pass
   count from mocks.
@@ -309,6 +323,10 @@ unverified until the canonical command passes on the target cluster.
   rejects shared behavior/fresh RNG domains.
 - A real local Qwen2.5-0.5B snapshot loaded successfully with invalid inherited
   token values, a closed Hub endpoint, and all offline flags enabled.
+- The standalone-clone correction passes the 144-test full suite. A simulated
+  worker remained bound to its initial generation commit while the shared
+  checkout advanced, and the shared repository's worktree list stayed exactly
+  unchanged.
 
 Actual H100 scheduling remains cluster-runtime evidence to capture from the
 three console logs; this audit host has no access to that cluster volume.

@@ -90,10 +90,16 @@ version.
 
 ## Run on three clusters
 
-Execute the same command from a clean checkout on every 4xH100 node:
+All three clusters see the same checkout and `.git` directory. From that shared
+checkout, update once before starting any worker:
 
 ```bash
-git pull
+git pull --ff-only
+```
+
+Then execute the same command on every 4xH100 node, without another pull:
+
+```bash
 bash scripts/run_olmo3_rlzero.sh run
 ```
 
@@ -150,11 +156,16 @@ The first worker atomically writes the experiment-wide generation commit to:
 $OM_WORK/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.queue/generation.git
 ```
 
-After a launcher exits, `git pull` is allowed. A newer supervisor restores a
-node-local detached worktree at the recorded generation commit and runs all
-unfinished and not-yet-started families with that same code. Do not delete the
-generation marker, family completion stamps, or partial checkpoints. A missing
-local Git object aborts before a GPU family is claimed.
+After all launchers exit, one `git pull --ff-only` on the shared checkout is
+allowed. At startup each worker copies the selected supervisor and generation
+commits into a node-local standalone clone under
+`${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-UID}/pipelines`. Each clone owns
+its `.git` directory; no worker adds, locks, or prunes shared worktrees. A newer
+supervisor therefore runs all unfinished and not-yet-started families using the
+recorded generation code without being affected by a later shared-checkout
+change. Do not delete the generation marker, family completion stamps, or
+partial checkpoints. A missing local Git object aborts before a GPU family is
+claimed.
 
 Prompt/contract failures use exit code `43` to skip immediate same-family
 attempts. The worker stays allocated, moves to other work, and retries that

@@ -166,6 +166,13 @@ if [ "${TEST_FAIL_FAMILY:-}" = "$key" ]; then
 fi
 git=$(git -C "$OM_PIPELINE_REPO" rev-parse HEAD)
 printf '%s|%s|%s\n' "$WORKER_ID" "$key" "$git" >> "$TEST_SHARED/work/claims"
+if [ "${TEST_PAUSE_FAMILY:-}" = "$key" ]; then
+  marker="$TEST_SHARED/work/pause-once-$key"
+  if mkdir "$marker" 2>/dev/null; then
+    : > "$TEST_SHARED/work/pause-ready"
+    while [ ! -e "$TEST_SHARED/work/pause-release" ]; do /bin/sleep 0.05; done
+  fi
+fi
 /bin/sleep 0.05
 for drift in $REGIME_DRIFTS; do
   run="$REGIME_ROOT/$REGIME_MODEL_TAG-s$REGIME_SEEDS-$REGIME_DATASETS-d$drift"
@@ -314,21 +321,15 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
         ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
     ).strip() != first_commit
 
-    # Reproduce an interrupted node-local cache: Git still has a locked
-    # registration while the path was replaced by a non-worktree directory.
-    pipeline = Path(env["OM_PIPELINE_CACHE"]) / first_commit
-    subprocess.run(
-        ["git", "worktree", "add", "--detach", str(pipeline), first_commit],
-        cwd=checkout,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "worktree", "lock", str(pipeline)], cwd=checkout, check=True
-    )
+    # Reproduce an interrupted legacy cache whose path is not an independent
+    # checkout. Repair must not add or prune shared Git worktree registrations.
+    pipeline = Path(env["OM_PIPELINE_CACHE"]) / "clones" / first_commit
     shutil.rmtree(pipeline)
     pipeline.mkdir()
     (pipeline / "interrupted-cache").write_text("stale\n")
+    worktrees_before = subprocess.check_output(
+        ["git", "worktree", "list", "--porcelain"], cwd=checkout, text=True
+    )
 
     resumed = subprocess.run(
         ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
@@ -343,6 +344,51 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
     claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
     assert len(claims) == 10
     assert {line.split("|")[2] for line in claims} == {first_commit}
+    assert (pipeline / ".git").is_dir()
+    worktrees_after = subprocess.check_output(
+        ["git", "worktree", "list", "--porcelain"], cwd=checkout, text=True
+    )
+    assert worktrees_after == worktrees_before
+
+
+def test_running_worker_is_unchanged_when_shared_checkout_commit_moves(
+    tmp_path: Path,
+) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    first_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
+    ).strip()
+    worker = run_worker(
+        checkout,
+        {**env, "TEST_PAUSE_FAMILY": "math500-s0"},
+        tmp_path / "live-pull-local",
+    )
+    ready = Path(env["TEST_SHARED"]) / "work/pause-ready"
+    for _ in range(200):
+        if ready.exists():
+            break
+        time.sleep(0.05)
+    assert ready.is_file()
+
+    (checkout / "new-supervisor.txt").write_text("new\n")
+    subprocess.run(["git", "add", "new-supervisor.txt"], cwd=checkout, check=True)
+    subprocess.run(["git", "commit", "-qm", "move shared checkout"], cwd=checkout, check=True)
+    second_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
+    ).strip()
+    assert second_commit != first_commit
+    (Path(env["TEST_SHARED"]) / "work/pause-release").touch()
+
+    output, _ = worker.communicate(timeout=30)
+    assert worker.returncode == 0, output
+    claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
+    assert len(claims) == 10
+    assert {line.split("|")[2] for line in claims} == {first_commit}
+    pipeline = Path(env["OM_PIPELINE_CACHE"]) / "clones" / first_commit
+    assert (pipeline / ".git").is_dir()
+    assert str(pipeline) not in subprocess.check_output(
+        ["git", "worktree", "list", "--porcelain"], cwd=checkout, text=True
+    )
 
 
 def test_h100_worker_recovers_after_process_group_termination(tmp_path: Path) -> None:
@@ -430,10 +476,14 @@ def test_launcher_shares_the_node_primary_lock_with_other_experiments(
 
 def test_supervisor_keepalive_covers_preflight_and_point_transitions() -> None:
     launcher = (ROOT / "scripts/run_olmo3_rlzero.sh").read_text()
+    matrix = (ROOT / "scripts/run_matrix.sh").read_text()
     point = (ROOT / "scripts/run_point.sh").read_text()
     start = launcher.index('OM_GPU_KEEPALIVE_READY_FILE="$KEEPALIVE_READY"')
     signal = launcher.index("signal_qualify()")
     assert start < signal
     assert "export OM_EXTERNAL_GPU_KEEPALIVE=1" in launcher
     assert 'if [ "${OM_EXTERNAL_GPU_KEEPALIVE:-0}" = "1" ]' in point
-    assert 'worktree add -f -f --detach' in launcher
+    assert "git clone --quiet --no-hardlinks --no-checkout" in launcher
+    assert 'remote remove origin' in launcher
+    assert "git worktree" not in launcher
+    assert "git worktree" not in matrix

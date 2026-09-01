@@ -72,7 +72,8 @@ fi
 
 # A new supervisor may resume a partial matrix, but generation must still use
 # the exact source revision that initialized it. Materialize that revision in a
-# node-local detached worktree so a pull between attempts remains restartable.
+# node-local standalone clone so a pull between attempts remains restartable
+# without writing to a shared repository's .git/worktrees metadata.
 RESTORE_PIPELINE=0
 if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ]; then
   # A canonical launcher supplies OM_GENERATION_GIT and may deliberately run a
@@ -84,8 +85,16 @@ if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ]; then
 fi
 if [ "$RESTORE_PIPELINE" -eq 1 ]; then
   PIPELINE_CACHE="${OM_PIPELINE_CACHE:-/tmp/offpolicy-misranking-$(id -u)/pipelines}"
-  PIPELINE_REPO="$PIPELINE_CACHE/$GENERATION_GIT"
-  mkdir -p "$PIPELINE_CACHE"
+  cache_path=$(realpath -m "$PIPELINE_CACHE")
+  if [ -n "${GROUP_VOLUME:-}" ]; then
+    shared_path=$(realpath -m "$GROUP_VOLUME")
+    [[ "$cache_path" != "$shared_path" && "$cache_path" != "$shared_path/"* ]] || {
+      echo "[abort] OM_PIPELINE_CACHE must be node-local"
+      exit 1
+    }
+  fi
+  PIPELINE_REPO="$PIPELINE_CACHE/clones/$GENERATION_GIT"
+  mkdir -p "$PIPELINE_CACHE/clones"
   (
     flock 7
     git -C "$SUPERVISOR_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
@@ -94,20 +103,29 @@ if [ "$RESTORE_PIPELINE" -eq 1 ]; then
     }
     recorded=$(git -C "$PIPELINE_REPO" rev-parse HEAD 2>/dev/null || true)
     dirty=invalid
-    if [ "$recorded" = "$GENERATION_GIT" ]; then
+    if [ -d "$PIPELINE_REPO/.git" ] && [ "$recorded" = "$GENERATION_GIT" ]; then
       dirty=$(git -C "$PIPELINE_REPO" status --porcelain \
         -- src scripts 2>/dev/null || printf invalid)
     fi
-    if [ "$recorded" != "$GENERATION_GIT" ] || [ -n "$dirty" ]; then
+    if [ ! -d "$PIPELINE_REPO/.git" ] || [ "$recorded" != "$GENERATION_GIT" ] \
+        || [ -n "$dirty" ]; then
       if [ -e "$PIPELINE_REPO" ] || [ -L "$PIPELINE_REPO" ]; then
         stale="$PIPELINE_CACHE/.stale-$GENERATION_GIT-$(date +%s)-$$"
         mv -- "$PIPELINE_REPO" "$stale" || exit 1
         echo "[queue] invalid generation cache quarantined: $stale" >&2
       fi
-      git -C "$SUPERVISOR_REPO" worktree prune --expire now || exit 1
-      git -C "$SUPERVISOR_REPO" worktree add -f -f --detach "$PIPELINE_REPO" \
-        "$GENERATION_GIT" >&2 || exit 1
+      temporary="$PIPELINE_CACHE/.clone-$GENERATION_GIT-$$"
+      rm -rf -- "$temporary"
+      git clone --quiet --no-hardlinks --no-checkout \
+        "$SUPERVISOR_REPO" "$temporary" >&2 || exit 1
+      git -C "$temporary" checkout --quiet --detach "$GENERATION_GIT" >&2 || exit 1
+      git -C "$temporary" remote remove origin >/dev/null 2>&1 || true
+      mv -- "$temporary" "$PIPELINE_REPO" || exit 1
     fi
+    [ -d "$PIPELINE_REPO/.git" ] || {
+      echo "[abort] generation cache must have independent Git metadata: $PIPELINE_REPO" >&2
+      exit 1
+    }
     recorded=$(git -C "$PIPELINE_REPO" rev-parse HEAD 2>/dev/null) || {
       echo "[abort] invalid cached generation checkout: $PIPELINE_REPO" >&2
       exit 1
@@ -122,7 +140,7 @@ if [ "$RESTORE_PIPELINE" -eq 1 ]; then
       printf '%s\n' "$dirty" >&2
       exit 1
     }
-  ) 7>"$PIPELINE_CACHE/.worktree.lock" || exit 1
+  ) 7>"$PIPELINE_CACHE/.clone.lock" || exit 1
   PIPELINE_SCRIPT="$PIPELINE_REPO/scripts/run_point.sh"
   [ -s "$PIPELINE_SCRIPT" ] || {
     echo "[abort] cached generation pipeline missing: $PIPELINE_SCRIPT"

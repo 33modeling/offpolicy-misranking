@@ -8,10 +8,16 @@ entered through the canonical runner.
 
 The clean causal experiment starts from the raw, non-SFT
 `allenai/Olmo-3-1025-7B` base checkpoint and uses verifier-reward GRPO on
-MATH-500 and MBPP. On each of the three new 4xH100 nodes:
+MATH-500 and MBPP. The three nodes use one shared checkout. Update that checkout
+exactly once, before starting any worker:
 
 ```bash
-git pull
+git pull --ff-only
+```
+
+Then run this command on each 4xH100 node, without another pull:
+
+```bash
 bash scripts/run_olmo3_rlzero.sh run
 ```
 
@@ -37,7 +43,6 @@ The running baseline remains on the command and `...-grpo-v1` roots above. For
 the next clean H100 run, use the same launcher with its isolated runtime profile:
 
 ```bash
-git pull
 bash scripts/run_olmo3_rlzero.sh run h100
 ```
 
@@ -51,10 +56,9 @@ memory so the profile can be measured before any further tuning.
 
 ## Previous Qwen Matrix
 
-On each of the three independent 4xH100 nodes, after pulling the same commit:
+After one shared-checkout update, run this on each of the three 4xH100 nodes:
 
 ```bash
-git pull
 bash scripts/run_rlvr.sh
 ```
 
@@ -69,12 +73,14 @@ local `/tmp`, never on `GROUP_VOLUME`; cloned hostnames therefore cannot collaps
 three independent clusters into one worker. Only family and collection locks
 are shared.
 
-Do not pull a checkout while its launcher is running. After that process exits,
-the checkout may be updated and the same command run again. Each matrix stores
+Do not pull the shared checkout while any launcher is running. After all workers
+exit, update it once and start the same command on each node. Each matrix stores
 one atomic `generation.git` marker; if the supervisor is newer than a partial
-matrix, it creates a node-local detached worktree at the recorded commit and
-uses that immutable `run_point.sh` for the remaining generation. Mixed or
-malformed commit provenance aborts before a family is claimed.
+matrix, it creates a node-local standalone clone with its own `.git` directory
+at the recorded commit and uses that immutable `run_point.sh` for the remaining
+generation. It never adds or prunes entries in the shared repository's
+`.git/worktrees`. Mixed or malformed commit provenance aborts before a family is
+claimed.
 
 Every positive-drift point inherits the exact `prompts.json` owned by its d0
 behavior source. For legacy generation revisions, the supervisor materializes a
