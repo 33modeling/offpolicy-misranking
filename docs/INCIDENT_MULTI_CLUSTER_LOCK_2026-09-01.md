@@ -76,11 +76,18 @@ as transient and repeatedly reacquired the GPUs.
 
 Positive-drift points now take the exact prompt bytes from d0. When resuming an
 older generation commit, the current supervisor creates a hash-addressed local
-GSM8K/MATH-500 snapshot whose seed-0 loader output exactly reconstructs d0, then
-passes that path to the old pipeline without changing its Git provenance. A
-pre-existing mismatched target is preserved under quarantine and regenerated
-once. Base or qualification prompt mismatches exit with code 43, which both
-launchers treat as non-retryable.
+loader snapshot whose output exactly reconstructs d0, then passes that path to
+the old pipeline without changing its Git provenance. A pre-existing mismatched
+target is preserved under quarantine and regenerated once. Base or
+qualification prompt mismatches exit with code 43, which both launchers treat
+as non-retryable.
+
+Follow-up revision `ccc2807568b270a3efc92933c45aaccff79fe60f` closes two
+remaining cases in that compatibility path. The inverse shuffle now uses the
+actual family seed instead of a hard-coded seed 0, and native source-derived
+snapshots cover MBPP, Knights-and-Knaves, and ARC-Challenge in addition to
+GSM8K and MATH-500. This is required for older additional-study generation
+commits that still execute their own `prep` stage.
 
 ## Verification
 
@@ -95,9 +102,11 @@ launchers treat as non-retryable.
   interrupted matrix resumed after a simulated pull using the recorded commit.
 - Malformed markers, mixed run-config commits, and an explicitly wrong resume
   checkout were rejected before new work was claimed.
-- Source-derived prompt snapshots reproduce both registered math loaders' exact
-  train/validation order; a simulated mismatched point is quarantined and
-  rebuilt once, while a permanent contract error is launched only once.
+- Source-derived prompt snapshots reproduce all five registered loaders' exact
+  train/validation order for seeds 0-2; production-size round trips also passed
+  for GSM8K, MBPP, KK, and ARC-Challenge using the qualified local data.
+- A simulated mismatched point is quarantined and rebuilt once, while a
+  permanent contract error is launched only once.
 - Python compilation, fatal Ruff rules, shell syntax, JSON parsing, dependency
   integrity, and whitespace checks passed.
 

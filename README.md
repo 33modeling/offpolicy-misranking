@@ -29,11 +29,13 @@ uses that immutable `run_point.sh` for the remaining generation. Mixed or
 malformed commit provenance aborts before a family is claimed.
 
 Every positive-drift point inherits the exact `prompts.json` owned by its d0
-behavior source. For legacy primary revisions, the supervisor materializes a
-hash-addressed GSM8K or MATH-500 loader snapshot that reproduces the same split
-and order before invoking the old pipeline. A mismatched partial target is moved
-to quarantine once and rebuilt; a qualification or base-prompt mismatch is a
-non-retryable contract error and does not enter the launcher restart loop.
+behavior source. For legacy generation revisions, the supervisor materializes a
+hash- and seed-addressed loader snapshot for GSM8K, MATH-500, MBPP,
+Knights-and-Knaves, or ARC-Challenge. The old pipeline therefore reconstructs
+the same split and order for seeds 0-2 before it compares prompts. A mismatched
+partial target is moved to quarantine once and rebuilt; a qualification or
+base-prompt mismatch is a non-retryable contract error and does not enter the
+launcher restart loop.
 
 The canonical launcher preserves the existing `v1` exact/float mathematical
 verifier and result roots, so jobs started at revision `295dfea` can resume from

@@ -18,6 +18,8 @@ Date: 2026-08-31 KST
   `a223ee31bd0542cbe6c35af66cfb3549d0a8c40e`.
 - Prompt mismatch recovery fix revision:
   `c932ca0da2c2eb34e5defd914bb4a684bdf5d982`.
+- Seed-stable additional prompt recovery fix revision:
+  `ccc2807568b270a3efc92933c45aaccff79fe60f`.
 - Audited paper revision: `e53fe4ac9437ad702eb558213adad55e3125f83c`.
 - Final verdict: the existing primary remains on its compatible `v1` protocol;
   the separate generalization and method protocols are ready after their
@@ -251,6 +253,32 @@ The regression reconstructs exact GSM8K and MATH-500 prompt order from d0,
 injects a prompt mismatch into a partial positive-drift point, requires one
 quarantine plus one successful rebuild, and verifies that exit code 43 is not
 retried by the canonical launcher.
+
+### Additional prompt recovery re-audit on 2026-09-01
+
+Executed against fix revision `ccc2807`:
+
+```text
+python -m pytest -q
+95 passed in 16.16s
+
+focused prompt/queue/additional launcher integration
+7 passed in 10.88s
+
+real qualified data round trip
+GSM8K, MBPP, KK, ARC-Challenge x seeds 0,1,2 x 612 rows: all passed
+
+Python compile, Ruff, Bash syntax, and diff check
+All available checks passed (shellcheck is not installed on this host).
+```
+
+The earlier compatibility materializer had two uncovered gaps: it inverted the
+loader shuffle with seed 0 regardless of the run seed, and it did not support
+the MBPP, Knights-and-Knaves, or ARC-Challenge loader formats used by the
+additional study. The supervisor now passes the family seed and binds each of
+the five registered loader roots to a source-derived snapshot. Exact loader
+round trips cover seeds 0-2 for all five formats; production-size round trips
+also passed against every additional dataset available on this audit host.
 
 ## Launch boundaries
 
