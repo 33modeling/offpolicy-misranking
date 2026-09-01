@@ -15,6 +15,7 @@ import math
 import os
 import random
 import shutil
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -410,15 +411,59 @@ def validate_policy_lineage(
 
 
 def _response_logps(model, ids: torch.Tensor, response_start: int) -> torch.Tensor:
-    batch = ids.unsqueeze(0).to(next(model.parameters()).device)
-    logits = model(batch, attention_mask=torch.ones_like(batch)).logits[0, :-1].float()
-    targets = batch[0, 1:]
+    return _response_logps_batch(model, [ids], [response_start], pad_token_id=0)[0]
+
+
+def _response_logps_batch(
+    model,
+    sequences: list[torch.Tensor],
+    response_starts: list[int],
+    *,
+    pad_token_id: int,
+) -> list[torch.Tensor]:
+    """Score variable-length responses together without changing their losses."""
+    if not sequences or len(sequences) != len(response_starts):
+        raise ValueError("sequences and response starts must be non-empty and aligned")
+    if any(sequence.ndim != 1 or sequence.numel() < 2 for sequence in sequences):
+        raise ValueError("each generated sequence must contain at least two tokens")
+    lengths = [int(sequence.numel()) for sequence in sequences]
+    if any(
+        start < 1 or start >= length
+        for start, length in zip(response_starts, lengths)
+    ):
+        raise ValueError("response start must identify a non-empty generated suffix")
+
+    device = next(model.parameters()).device
+    width = max(lengths)
+    batch = torch.full(
+        (len(sequences), width),
+        int(pad_token_id),
+        dtype=sequences[0].dtype,
+        device=device,
+    )
+    attention = torch.zeros_like(batch)
+    for row, sequence in enumerate(sequences):
+        length = lengths[row]
+        batch[row, :length] = sequence.to(device)
+        attention[row, :length] = 1
+
+    logits = model(batch, attention_mask=attention).logits[:, :-1].float()
+    targets = batch[:, 1:]
     token_logps = logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
     token_logps = token_logps - logits.logsumexp(dim=-1)
-    response = token_logps[response_start - 1 :]
-    if response.numel() == 0:
-        raise ValueError("generated response has no scoreable tokens")
-    return response
+    return [
+        token_logps[row, start - 1 : length - 1]
+        for row, (start, length) in enumerate(zip(response_starts, lengths))
+    ]
+
+
+def _chunks(size: int, chunk_size: int) -> list[range]:
+    if size < 1 or chunk_size < 1:
+        raise ValueError("batch and micro-batch sizes must be positive")
+    return [
+        range(start, min(size, start + chunk_size))
+        for start in range(0, size, chunk_size)
+    ]
 
 
 @torch.no_grad()
@@ -584,6 +629,8 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError(f"unsupported RLVR method: {args.objective}")
     if config.group_size < 2 or config.epochs_per_batch < 1 or args.target_steps < 1:
         raise ValueError("group size must be >=2 and epochs/target steps must be positive")
+    if not 1 <= args.logprob_micro_batch <= config.group_size:
+        raise ValueError("log-prob micro-batch must be in [1, group size]")
     if args.objective == "rloo" and config.epochs_per_batch != 1:
         raise ValueError("canonical sequence-level RLOO requires exactly one epoch per batch")
     if SAMPLING["top_p"] != 1.0:
@@ -659,9 +706,10 @@ def train(args: argparse.Namespace) -> None:
                 task_type="CAUSAL_LM",
             ),
         )
-    model.gradient_checkpointing_enable(
-        gradient_checkpointing_kwargs={"use_reentrant": False}
-    )
+    if not args.disable_gradient_checkpointing:
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
     model.enable_input_require_grads()
     model.config.use_cache = False
     trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
@@ -726,6 +774,8 @@ def train(args: argparse.Namespace) -> None:
 
     try:
         for step in range(completed_steps, args.target_steps):
+            step_started = time.perf_counter()
+            torch.cuda.reset_peak_memory_stats(local_rank)
             sample_seed = (args.seed * 1_000_003 + step * 7_919 + rank * 104_729 + 17) & 0x7FFFFFFF
             random.seed(sample_seed)
             torch.manual_seed(sample_seed)
@@ -739,18 +789,21 @@ def train(args: argparse.Namespace) -> None:
                 advantages = rloo_group_advantages(rewards)
             else:
                 with torch.no_grad():
-                    old_logps = [
-                        _response_logps(
-                            model,
-                            sequence,
-                            int(
-                                chat_ids(
-                                    tokenizer, prompts[prompt_index]["question"]
-                                ).numel()
-                            ),
-                        ).cpu()
-                        for sequence in sequences
-                    ]
+                    response_start = int(
+                        chat_ids(tokenizer, prompts[prompt_index]["question"]).numel()
+                    )
+                    old_logps = []
+                    for chunk in _chunks(len(sequences), args.logprob_micro_batch):
+                        indices = list(chunk)
+                        old_logps.extend(
+                            value.cpu()
+                            for value in _response_logps_batch(
+                                model,
+                                [sequences[index] for index in indices],
+                                [response_start] * len(indices),
+                                pad_token_id=tokenizer.eos_token_id,
+                            )
+                        )
                 advantages = (
                     standardized_group_advantages(rewards, config.advantage_epsilon)
                     if args.objective == "grpo"
@@ -770,37 +823,55 @@ def train(args: argparse.Namespace) -> None:
                 ratio_sum = 0.0
                 kl_sum = 0.0
                 epoch_loss = 0.0
-                for index, (sequence, old_logp) in enumerate(
-                    zip(sequences, old_logps, strict=True)
-                ):
-                    sync = index == len(sequences) - 1
+                chunks = _chunks(len(sequences), args.logprob_micro_batch)
+                for chunk_index, chunk in enumerate(chunks):
+                    indices = list(chunk)
+                    sync = chunk_index == len(chunks) - 1
                     sync_context = contextlib.nullcontext() if sync else ddp.no_sync()
                     with sync_context:
-                        current_logp = _response_logps(ddp, sequence, response_start)
+                        current_logps = _response_logps_batch(
+                            ddp,
+                            [sequences[index] for index in indices],
+                            [response_start] * len(indices),
+                            pad_token_id=tokenizer.eos_token_id,
+                        )
                         if args.objective == "rloo":
-                            sequence_loss = rloo_loss(
-                                [current_logp], advantages[index : index + 1]
+                            chunk_loss = rloo_loss(
+                                current_logps, advantages[indices]
                             )
-                            sequence_stats = {
+                            chunk_stats = {
                                 "clip_fraction": 0.0,
                                 "mean_ratio": 1.0,
                                 "approx_kl": 0.0,
                             }
                         else:
-                            sequence_loss, sequence_stats = clipped_grpo_loss(
-                                [current_logp],
-                                [old_logp],
-                                advantages[index : index + 1],
+                            chunk_loss, chunk_stats = clipped_grpo_loss(
+                                current_logps,
+                                [old_logps[index] for index in indices],
+                                advantages[indices],
                                 config.clip_epsilon,
                                 token_normalizer=token_normalizer,
                             )
-                        (sequence_loss / len(sequences)).backward()
-                    count = int(current_logp.numel())
+                        weight = len(indices) / len(sequences)
+                        (chunk_loss * weight).backward()
+                    count = sum(int(value.numel()) for value in current_logps)
                     token_count += count
-                    clip_count += round(sequence_stats["clip_fraction"] * count)
-                    ratio_sum += sequence_stats["mean_ratio"] * count
-                    kl_sum += sequence_stats["approx_kl"] * count
-                    epoch_loss += float(sequence_loss.detach()) / len(sequences)
+                    clip_count += round(chunk_stats["clip_fraction"] * count)
+                    ratio_sum += chunk_stats["mean_ratio"] * count
+                    if args.objective != "rloo":
+                        kl_sum += sum(
+                            float(
+                                (
+                                    old_logps[index].to(
+                                        device=current.device, dtype=current.dtype
+                                    )
+                                    - current.detach()
+                                ).mean()
+                            )
+                            * int(current.numel())
+                            for index, current in zip(indices, current_logps, strict=True)
+                        )
+                    epoch_loss += float(chunk_loss.detach()) * weight
                 epoch_stats = {
                     "clip_fraction": clip_count / token_count,
                     "mean_ratio": ratio_sum / token_count,
@@ -810,6 +881,10 @@ def train(args: argparse.Namespace) -> None:
                 optimizer.step()
                 loss_value = epoch_loss
                 grad_norm_value = float(grad_norm)
+
+            step_seconds = time.perf_counter() - step_started
+            peak_allocated = torch.cuda.max_memory_allocated(local_rank) / 1e9
+            peak_reserved = torch.cuda.max_memory_reserved(local_rank) / 1e9
 
             local = torch.tensor(
                 [
@@ -822,11 +897,17 @@ def train(args: argparse.Namespace) -> None:
                     float(epoch_stats["clip_fraction"]),
                     float(epoch_stats["mean_ratio"]),
                     float(epoch_stats["approx_kl"]),
+                    float(token_count),
                 ],
                 device=local_rank,
             )
             if world_size > 1:
                 dist.all_reduce(local)
+            runtime_max = torch.tensor(
+                [step_seconds, peak_allocated, peak_reserved], device=local_rank
+            )
+            if world_size > 1:
+                dist.all_reduce(runtime_max, op=dist.ReduceOp.MAX)
             if rank == 0:
                 row = {
                     "step": step + 1,
@@ -840,6 +921,12 @@ def train(args: argparse.Namespace) -> None:
                     "clip_fraction": float(local[6] / world_size),
                     "mean_ratio": float(local[7] / world_size),
                     "approx_kl": float(local[8] / world_size),
+                    "response_tokens": int(local[9]),
+                    "step_seconds": float(runtime_max[0]),
+                    "response_tokens_per_second": float(local[9] / runtime_max[0]),
+                    "gpu_peak_allocated_gb": float(runtime_max[1]),
+                    "gpu_peak_reserved_gb": float(runtime_max[2]),
+                    "logprob_micro_batch": args.logprob_micro_batch,
                     "training_objective": args.objective,
                     "advantage_normalization": advantage_normalization_for_objective(
                         args.objective
@@ -893,6 +980,10 @@ def train(args: argparse.Namespace) -> None:
                 "prompt_format": prompt_format(),
                 "seed": args.seed,
                 "config": asdict(config),
+                "runtime": {
+                    "logprob_micro_batch": args.logprob_micro_batch,
+                    "gradient_checkpointing": not args.disable_gradient_checkpointing,
+                },
                 "advantage_normalization": advantage_normalization_for_objective(
                     args.objective
                 ),
@@ -953,6 +1044,8 @@ def main() -> None:
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--checkpoint-every", type=int, default=5)
+    parser.add_argument("--logprob-micro-batch", type=int, default=1)
+    parser.add_argument("--disable-gradient-checkpointing", action="store_true")
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--seed", type=int, default=0)
     train(parser.parse_args())

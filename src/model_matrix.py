@@ -120,6 +120,12 @@ GRPO_FIELDS = {
     "lora_alpha",
 }
 
+RUNTIME_DEFAULTS = {
+    "generation_batch": 4,
+    "logprob_micro_batch": 1,
+    "gradient_checkpointing": True,
+}
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -264,6 +270,25 @@ def _load_config(config_path: Path) -> dict:
         raise ValueError("experiment.grpo.clip_epsilon must be in (0, 1)")
     if grpo["reference_kl_beta"] != 0.0:
         raise ValueError("current verifier-reward trainer requires reference_kl_beta=0.0")
+    runtime = experiment.get("runtime", {})
+    if not isinstance(runtime, dict):
+        raise TypeError("experiment.runtime must be a JSON object")
+    unknown_runtime = sorted(set(runtime) - set(RUNTIME_DEFAULTS))
+    if unknown_runtime:
+        raise ValueError(f"unsupported experiment.runtime fields: {unknown_runtime}")
+    for key in ("generation_batch", "logprob_micro_batch"):
+        value = runtime.get(key, RUNTIME_DEFAULTS[key])
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"experiment.runtime.{key} must be a positive integer")
+    checkpointing = runtime.get(
+        "gradient_checkpointing", RUNTIME_DEFAULTS["gradient_checkpointing"]
+    )
+    if not isinstance(checkpointing, bool):
+        raise TypeError("experiment.runtime.gradient_checkpointing must be boolean")
+    if runtime.get("logprob_micro_batch", 1) > grpo["group_size"]:
+        raise ValueError(
+            "experiment.runtime.logprob_micro_batch cannot exceed grpo.group_size"
+        )
     return config
 
 
@@ -638,6 +663,8 @@ def main() -> None:
         "name",
         choices=sorted(GRPO_FIELDS),
     )
+    p = sub.add_parser("runtime-field")
+    p.add_argument("name", choices=sorted(RUNTIME_DEFAULTS))
     args = parser.parse_args()
 
     config = _load_config(args.config)
@@ -662,6 +689,15 @@ def main() -> None:
         return
     if args.command == "grpo-field":
         print(config["experiment"]["grpo"][args.name])
+        return
+    if args.command == "runtime-field":
+        value = config["experiment"].get("runtime", {}).get(
+            args.name, RUNTIME_DEFAULTS[args.name]
+        )
+        if isinstance(value, bool):
+            print("1" if value else "0")
+        else:
+            print(value)
         return
     if args.models_dir is None:
         parser.error("--models-dir or MODELS_DIR is required")

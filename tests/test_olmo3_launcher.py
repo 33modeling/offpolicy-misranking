@@ -35,6 +35,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy2(ROOT / "scripts/run_olmo3_rlzero.sh", checkout / "scripts")
     shutil.copy2(ROOT / "src/regime_resume_commit.py", checkout / "src")
     shutil.copy2(ROOT / "configs/olmo3_rlzero.json", checkout / "configs")
+    shutil.copy2(ROOT / "configs/olmo3_rlzero_h100.json", checkout / "configs")
     (checkout / "requirements.txt").write_text("fixture\n")
     (shared / "models/Olmo-3-1025-7B/config.json").write_text("{}\n")
     executable(checkout / "scripts/run_point.sh", "#!/bin/sh\nexit 0\n")
@@ -83,6 +84,11 @@ case "$script" in
       *" grpo-field advantage_epsilon "*) printf '1e-4\n' ;;
       *" grpo-field lora_rank "*) printf '16\n' ;;
       *" grpo-field lora_alpha "*) printf '32\n' ;;
+      *" runtime-field generation_batch "*)
+        case "$*" in *olmo3_rlzero_h100.json*) printf '8\n' ;; *) printf '4\n' ;; esac ;;
+      *" runtime-field logprob_micro_batch "*)
+        case "$*" in *olmo3_rlzero_h100.json*) printf '4\n' ;; *) printf '1\n' ;; esac ;;
+      *" runtime-field gradient_checkpointing "*) printf '1\n' ;;
       *" check olmo3-7b-base "*) printf '[model-check] passed\n' ;;
       *) printf 'unexpected model args: %s\n' "$*" >&2; exit 2 ;;
     esac ;;
@@ -206,6 +212,30 @@ def test_three_workers_claim_every_family_exactly_once(tmp_path: Path) -> None:
     assert len(set(keys)) == 10
     assert len({line.split("|")[0] for line in claims}) >= 2
     assert (Path(env["TEST_SHARED"]) / "work/results/olmo3-1025-7b-base-rlzero-grpo-v1/COMPLETE").is_file()
+
+
+def test_h100_profile_uses_a_disjoint_root_and_runtime_contract(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+        cwd=checkout,
+        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "h100-local")},
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    h100 = (
+        Path(env["TEST_SHARED"])
+        / "work/results/olmo3-1025-7b-base-rlzero-grpo-h100-v2/COMPLETE"
+    )
+    baseline = (
+        Path(env["TEST_SHARED"])
+        / "work/results/olmo3-1025-7b-base-rlzero-grpo-v1/COMPLETE"
+    )
+    assert h100.is_file()
+    assert not baseline.exists()
 
 
 def test_failed_family_restarts_automatically_without_launcher_exit(tmp_path: Path) -> None:

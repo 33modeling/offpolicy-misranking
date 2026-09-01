@@ -276,6 +276,8 @@ config = {
     "grpo_advantage_epsilon": float(os.environ.get("GRPO_ADVANTAGE_EPSILON", "1e-4")),
     "grpo_lora_rank": env_int("GRPO_LORA_RANK", 16),
     "grpo_lora_alpha": env_int("GRPO_LORA_ALPHA", 32),
+    "grpo_logprob_micro_batch": env_int("GRPO_LOGPROB_MICRO_BATCH", 1),
+    "grpo_gradient_checkpointing": os.environ.get("GRPO_GRADIENT_CHECKPOINTING", "1"),
     "grpo_start_step": env_int("OM_GRPO_START_STEP", 0),
     "grpo_resume_adapter": os.environ.get("OM_GRPO_RESUME_ADAPTER"),
     "max_new_tokens": env_int("MAX_NEW_TOKENS", 512),
@@ -545,14 +547,17 @@ if [ "$DRIFT" -gt 0 ]; then
     --lora-rank "${GRPO_LORA_RANK:-16}"
     --lora-alpha "${GRPO_LORA_ALPHA:-32}"
     --checkpoint-every "${GRPO_CHECKPOINT_EVERY:-5}"
+    --logprob-micro-batch "${GRPO_LOGPROB_MICRO_BATCH:-1}"
     --max-new-tokens "${MAX_NEW_TOKENS:-512}" --seed "${SEED:-0}")
+  [ "${GRPO_GRADIENT_CHECKPOINTING:-1}" = 1 ] \
+    || GRPO_ARGS+=(--disable-gradient-checkpointing)
   if [ -n "${OM_GRPO_RESUME_ADAPTER:-}" ]; then
     GRPO_ARGS+=(--start-step "${OM_GRPO_START_STEP:?}"
       --resume-adapter "$OM_GRPO_RESUME_ADAPTER"
       --resume-optimizer "${OM_GRPO_RESUME_OPTIMIZER:?}")
   fi
   verify_code_snapshot || exit 1
-  log "$RLVR_METHOD ▶ 4-GPU verifier-reward update to step $DRIFT"
+  log "$RLVR_METHOD ▶ ${NGPU}-GPU verifier-reward update to step $DRIFT (logprob micro-batch=${GRPO_LOGPROB_MICRO_BATCH:-1})"
   if CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" -m torch.distributed.run \
       --standalone --nproc_per_node="$NGPU" src/train_policy_grpo.py \
       "${GRPO_ARGS[@]}" >> "$LOGS/grpo.log" 2>&1; then

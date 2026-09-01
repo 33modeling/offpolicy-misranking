@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from data import _extract_code, extract_answer, reward
-from model_matrix import _load_config, _load_specs
+from model_matrix import RUNTIME_DEFAULTS, _load_config, _load_specs
 from qualify_rlzero_signal import read_rewards
 from rollout import chat_ids, render_prompt
 
@@ -67,6 +67,21 @@ def test_olmo3_contract_is_raw_base_grpo_with_two_verifier_domains() -> None:
         "advantage_epsilon": 1e-4,
         "lora_rank": 16,
         "lora_alpha": 32,
+    }
+    assert experiment.get("runtime", RUNTIME_DEFAULTS) == RUNTIME_DEFAULTS
+
+
+def test_h100_profile_changes_runtime_only_and_uses_larger_batches() -> None:
+    baseline = _load_config(ROOT / "configs/olmo3_rlzero.json")
+    h100 = _load_config(ROOT / "configs/olmo3_rlzero_h100.json")
+    baseline_experiment = dict(baseline["experiment"])
+    h100_experiment = dict(h100["experiment"])
+    runtime = h100_experiment.pop("runtime")
+    assert baseline_experiment == h100_experiment
+    assert runtime == {
+        "generation_batch": 8,
+        "logprob_micro_batch": 4,
+        "gradient_checkpointing": True,
     }
 
 

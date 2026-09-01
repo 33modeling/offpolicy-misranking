@@ -33,6 +33,21 @@ no post-update reuse of a group; the clip is therefore not claimed as an
 effective trust-region constraint. AdamW uses a constant `1e-5` learning rate,
 and query/value LoRA uses rank `16`, alpha `32`, and dropout `0`.
 
+The running baseline remains on the command and `...-grpo-v1` roots above. For
+the next clean H100 run, use the same launcher with its isolated runtime profile:
+
+```bash
+git pull
+bash scripts/run_olmo3_rlzero.sh run h100
+```
+
+The `h100` profile preserves the model, datasets, seeds, checkpoints, GRPO
+groups, and optimizer contract. It changes only execution batching: rollout
+generation uses batches of eight and response log-probability passes use
+micro-batches of four. Its artifacts go to the separate
+`...-grpo-h100-v2` root, and every GRPO step records throughput plus peak GPU
+memory so the profile can be measured before any further tuning.
+
 ## Previous Qwen Matrix
 
 On each of the three independent 4xH100 nodes, after pulling the same commit:

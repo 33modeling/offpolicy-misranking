@@ -6,6 +6,7 @@ import json
 import math
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -18,7 +19,10 @@ from train_policy_grpo import (
     CHECKPOINT_SCHEMA,
     POLICY_SCHEMA,
     _checkpoint_step,
+    _chunks,
     _latest_checkpoint,
+    _response_logps,
+    _response_logps_batch,
     _save_checkpoint,
     centered_group_advantages,
     clipped_grpo_loss,
@@ -29,6 +33,72 @@ from train_policy_grpo import (
     validate_policy_lineage,
     validate_policy_manifest,
 )
+
+
+class ToyCausalLM(torch.nn.Module):
+    def __init__(self, vocab_size: int = 17) -> None:
+        super().__init__()
+        self.embedding = torch.nn.Embedding(vocab_size, vocab_size)
+
+    def forward(self, input_ids, attention_mask=None):
+        assert attention_mask is not None
+        return SimpleNamespace(logits=self.embedding(input_ids))
+
+
+def test_batched_response_logps_match_single_variable_length_scoring() -> None:
+    torch.manual_seed(7)
+    model = ToyCausalLM()
+    sequences = [
+        torch.tensor([1, 2, 3, 4, 5]),
+        torch.tensor([1, 2, 6, 7, 8, 9, 10]),
+        torch.tensor([1, 11, 12, 13]),
+    ]
+    starts = [3, 3, 2]
+    expected = [
+        _response_logps(model, sequence, start)
+        for sequence, start in zip(sequences, starts, strict=True)
+    ]
+    actual = _response_logps_batch(
+        model, sequences, starts, pad_token_id=0
+    )
+    assert [value.shape for value in actual] == [value.shape for value in expected]
+    for left, right in zip(actual, expected, strict=True):
+        torch.testing.assert_close(left, right)
+
+
+def test_micro_batch_partition_preserves_group_loss_and_gradients() -> None:
+    advantages = torch.tensor([-1.0, -0.5, 0.5, 1.0])
+    old = [torch.zeros(length) for length in (2, 3, 4, 5)]
+    reference = [
+        torch.full((length,), 0.05, requires_grad=True)
+        for length in (2, 3, 4, 5)
+    ]
+    reference_loss, _ = clipped_grpo_loss(reference, old, advantages, 0.2)
+    reference_loss.backward()
+    reference_gradients = [value.grad.clone() for value in reference]
+
+    chunked = [
+        torch.full((length,), 0.05, requires_grad=True)
+        for length in (2, 3, 4, 5)
+    ]
+    chunked_loss = torch.zeros(())
+    for chunk in _chunks(len(chunked), 2):
+        indices = list(chunk)
+        loss, _ = clipped_grpo_loss(
+            [chunked[index] for index in indices],
+            [old[index] for index in indices],
+            advantages[indices],
+            0.2,
+        )
+        weighted = loss * len(indices) / len(chunked)
+        weighted.backward()
+        chunked_loss = chunked_loss + weighted.detach()
+
+    assert float(chunked_loss) == pytest.approx(
+        float(reference_loss.detach()), abs=1e-7
+    )
+    for actual, expected in zip(chunked, reference_gradients, strict=True):
+        torch.testing.assert_close(actual.grad, expected)
 
 
 def test_group_advantages_are_centered_and_zero_for_constant_rewards() -> None:

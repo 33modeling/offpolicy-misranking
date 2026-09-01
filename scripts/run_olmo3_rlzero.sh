@@ -6,19 +6,36 @@ cd "$(dirname "$0")/.."
 SUPERVISOR_REPO=$PWD
 export OM_REPO="${OM_REPO:-$SUPERVISOR_REPO}"
 MODE=${1:-run}
+PROFILE=${2:-baseline}
 case "$MODE" in
   prepare|check|run|status) ;;
-  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status]"; exit 2 ;;
+  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100]"; exit 2 ;;
+esac
+case "$PROFILE" in
+  baseline)
+    DEFAULT_CONFIG="$SUPERVISOR_REPO/configs/olmo3_rlzero.json"
+    DEFAULT_MODEL_TAG=olmo3-1025-7b-base-rlzero-grpo-v1
+    ;;
+  h100)
+    DEFAULT_CONFIG="$SUPERVISOR_REPO/configs/olmo3_rlzero_h100.json"
+    DEFAULT_MODEL_TAG=olmo3-1025-7b-base-rlzero-grpo-h100-v2
+    ;;
+  *) echo "[abort] unknown profile=$PROFILE; expected baseline or h100"; exit 2 ;;
 esac
 
 export OM_ONLINE=$([ "$MODE" = prepare ] && printf 1 || printf 0)
 source scripts/setup_env.sh
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
 export HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_HUB_DISABLE_TELEMETRY=1
-CONFIG="${OM_RLZERO_CONFIG:-$SUPERVISOR_REPO/configs/olmo3_rlzero.json}"
+CONFIG="${OM_RLZERO_CONFIG:-$DEFAULT_CONFIG}"
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv missing: $PY"; exit 1; }
 [ -s "$CONFIG" ] || { echo "[abort] experiment config missing: $CONFIG"; exit 1; }
+CONFIG=$(realpath "$CONFIG") || exit 1
+case "$CONFIG" in
+  "$SUPERVISOR_REPO"/configs/*.json) CONFIG_REL="configs/${CONFIG##*/}" ;;
+  *) echo "[abort] experiment config must be committed under $SUPERVISOR_REPO/configs"; exit 1 ;;
+esac
 command -v flock >/dev/null 2>&1 || { echo "[abort] flock missing"; exit 1; }
 
 if [ "$MODE" != status ]; then
@@ -40,6 +57,9 @@ experiment_field() {
 }
 grpo_field() {
   "$PY" src/model_matrix.py --config "$CONFIG" grpo-field "$1"
+}
+runtime_field() {
+  "$PY" src/model_matrix.py --config "$CONFIG" runtime-field "$1"
 }
 
 if [ "$MODE" = prepare ]; then
@@ -80,7 +100,7 @@ SEEDS=($(experiment_field seeds))
 DRIFTS=($(experiment_field drifts))
 N_VAL=$(experiment_field n_val)
 CONFIG_SHA=$(sha256sum "$CONFIG" | awk '{print $1}')
-MODEL_TAG=olmo3-1025-7b-base-rlzero-grpo-v1
+MODEL_TAG="${OM_OLMO3_MODEL_TAG:-$DEFAULT_MODEL_TAG}"
 ROOT="${OM_OLMO3_ROOT:-$OM_WORK/runs/$MODEL_TAG}"
 GLOBAL_RESULTS="${OM_OLMO3_RESULTS:-$OM_WORK/results/$MODEL_TAG}"
 QUEUE="$ROOT/.families"
@@ -104,6 +124,7 @@ family_complete() {
 }
 
 if [ "$MODE" = status ]; then
+  echo "profile=$PROFILE"
   echo "experiment_root=$ROOT"
   [ -s "$ROOT/.queue/generation.git" ] && \
     echo "generation_git=$(cat "$ROOT/.queue/generation.git")" || \
@@ -284,7 +305,7 @@ if [ "$GENERATION_GIT" != "$CURRENT_GIT" ]; then
       || { echo "[abort] pinned worktree remains dirty after repair" >&2; exit 1; }
   ) 9>"$PIPELINE_CACHE/.worktree.lock" || exit 1
 fi
-GENERATION_CONFIG="$GENERATION_REPO/configs/olmo3_rlzero.json"
+GENERATION_CONFIG="$GENERATION_REPO/$CONFIG_REL"
 [ -s "$GENERATION_CONFIG" ] || {
   echo "[abort] pinned generation commit lacks the OLMo-3 contract: $GENERATION_GIT"
   exit 1
@@ -321,7 +342,10 @@ if [ "$MODE" = check ]; then
 fi
 
 export MODEL_PATH OM_MATH_VERIFIER=math_verify OM_TOP_P=1.0 OM_THINKING=off
-export OM_ATTN=eager OM_SKIP_HYBRID=1 OM_LORA_TARGETS="$LORA_TARGETS" OM_GEN_BATCH=4
+export OM_ATTN="$(experiment_field attn)" OM_SKIP_HYBRID=1
+export OM_LORA_TARGETS="$LORA_TARGETS" OM_GEN_BATCH="$(runtime_field generation_batch)"
+export GRPO_LOGPROB_MICRO_BATCH="$(runtime_field logprob_micro_batch)"
+export GRPO_GRADIENT_CHECKPOINTING="$(runtime_field gradient_checkpointing)"
 
 signal_qualify() {
   local dataset=$1 report="$PREFLIGHT/$1-signal.json"
@@ -329,7 +353,7 @@ signal_qualify() {
     "$PY" "$GENERATION_REPO/src/qualify_rlzero_signal.py" \
     --model "$MODEL_PATH" --dataset "$dataset" --data-root "$DATASETS_DIR" \
     --output "$report" --prompt-count 8 --group-size 8 \
-    --max-new-tokens 1024 --generation-batch 4
+    --max-new-tokens 1024 --generation-batch "$OM_GEN_BATCH"
 }
 SIGNAL_WAIT_SECONDS="${OM_RLZERO_PREFLIGHT_WAIT_SECONDS:-10}"
 case "$SIGNAL_WAIT_SECONDS" in
@@ -379,11 +403,19 @@ prompts = load_prompts("math500", 4, 1, seed=0)
 open(sys.argv[1], "w").write(json.dumps(prompts) + "\n")
 PYEOF
   export OM_PROMPT_FORMAT=olmo_rlzero_math
+  SMOKE_GROUP_SIZE=2
+  [ "$PROFILE" = h100 ] && SMOKE_GROUP_SIZE="$(grpo_field group_size)"
+  SMOKE_LOGPROB_MICRO_BATCH="$GRPO_LOGPROB_MICRO_BATCH"
+  [ "$SMOKE_LOGPROB_MICRO_BATCH" -le "$SMOKE_GROUP_SIZE" ] \
+    || SMOKE_LOGPROB_MICRO_BATCH="$SMOKE_GROUP_SIZE"
   common=(--model "$MODEL_PATH" --objective grpo --prompts "$SMOKE_ROOT/prompts.json"
-    --expected-world-size 4 --group-size 2 --clip-epsilon 0.2
+    --expected-world-size 4 --group-size "$SMOKE_GROUP_SIZE" --clip-epsilon 0.2
     --learning-rate 1e-5 --epochs-per-batch 1 --max-grad-norm 1.0
     --advantage-epsilon 1e-4 --lora-rank 4 --lora-alpha 8
-    --checkpoint-every 1 --max-new-tokens 64 --seed 271828)
+    --checkpoint-every 1 --logprob-micro-batch "$SMOKE_LOGPROB_MICRO_BATCH"
+    --max-new-tokens 64 --seed 271828)
+  [ "$GRPO_GRADIENT_CHECKPOINTING" = 1 ] \
+    || common+=(--disable-gradient-checkpointing)
   CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
     "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 \
     "$GENERATION_REPO/src/train_policy_grpo.py" "${common[@]}" \
