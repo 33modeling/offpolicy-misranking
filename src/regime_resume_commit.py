@@ -8,6 +8,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 COMMIT_RE = re.compile(r"[0-9a-f]{40,64}")
@@ -120,6 +121,53 @@ def bind_generation_commit(
         return detected
 
 
+def repair_generation_commit(
+    root: Path, marker: Path, target: str, quarantine_root: Path
+) -> tuple[str, list[Path]]:
+    """Quarantine a conflicting checkpoint suffix and bind the matrix to target."""
+    target = validate_commit(target, "repair target")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = marker.with_name(f"{marker.name}.lock")
+    moved: list[Path] = []
+    with lock_path.open("a", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if marker.is_symlink():
+            raise ValueError(f"generation marker must not be a symlink: {marker}")
+
+        entries: list[tuple[Path, str | None, tuple[str, int] | None, int | None]] = []
+        cutoffs: dict[tuple[str, int], int] = {}
+        for config_path in sorted(root.glob("*/run_config.json")):
+            run = config_path.parent
+            try:
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                commit = validate_commit(config.get("git"), config_path)
+                key = (str(config["dataset"]), int(config["seed"]))
+                drift = int(config.get("drift", config.get("drift_steps", 0)))
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+                entries.append((run, None, None, None))
+                continue
+            entries.append((run, commit, key, drift))
+            if commit != target:
+                cutoffs[key] = min(cutoffs.get(key, drift), drift)
+
+        quarantine_root.mkdir(parents=True, exist_ok=True)
+        for index, (run, commit, key, drift) in enumerate(entries):
+            conflicting = commit is None or (
+                key in cutoffs and drift is not None and drift >= cutoffs[key]
+            )
+            if not conflicting:
+                continue
+            suffix = commit[:12] if commit else "invalid"
+            destination = quarantine_root / (
+                f"{run.name}-mixed-{suffix}-{time.time_ns()}-{os.getpid()}-{index}"
+            )
+            run.replace(destination)
+            moved.append(destination)
+
+        _write_generation_marker(marker, target)
+    return target, moved
+
+
 def bind_suite_generation_commit(
     roots: list[Path], marker: Path, current: str
 ) -> str:
@@ -157,11 +205,23 @@ def main() -> int:
     parser.add_argument("--marker", type=Path)
     parser.add_argument("--peer-root", action="append", default=[], type=Path)
     parser.add_argument("--advance-empty", action="store_true")
+    parser.add_argument("--repair-to")
+    parser.add_argument("--quarantine-root", type=Path)
     args = parser.parse_args()
     try:
+        if (args.repair_to is None) != (args.quarantine_root is None):
+            parser.error("--repair-to and --quarantine-root must be used together")
+        if args.repair_to is not None and args.marker is None:
+            parser.error("--repair-to requires --marker")
         if args.peer_root and args.marker is None:
             parser.error("--peer-root requires --marker")
-        if args.peer_root:
+        if args.repair_to is not None:
+            commit, moved = repair_generation_commit(
+                args.root, args.marker, args.repair_to, args.quarantine_root
+            )
+            for path in moved:
+                print(f"[generation-repair] quarantined {path}")
+        elif args.peer_root:
             commit = bind_suite_generation_commit(
                 [args.root, *args.peer_root], args.marker, args.current
             )

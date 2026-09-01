@@ -46,6 +46,7 @@ MODEL_TAG="${REGIME_MODEL_TAG:-$(basename "$MODEL_PATH" | tr '[:upper:]' '[:lowe
 ROOT="${REGIME_ROOT:-$OM_WORK/runs/regime-$MODEL_TAG}"
 QUEUE="$ROOT/.queue"
 RESULTS="${REGIME_RESULTS:-$OM_WORK/results/regime-$MODEL_TAG}"
+QUARANTINE="${REGIME_QUARANTINE:-$OM_WORK/quarantine/regime-$MODEL_TAG}"
 mkdir -p "$QUEUE" "$RESULTS"
 
 # Bind an automatically created shared marker before any worker can initialize
@@ -53,6 +54,15 @@ mkdir -p "$QUEUE" "$RESULTS"
 # could otherwise claim different families concurrently.
 GENERATION_MARKER="$QUEUE/generation.git"
 GENERATION_CANDIDATE="${OM_GENERATION_GIT:-$PIPELINE_GIT}"
+if [ -n "${OM_GENERATION_GIT:-}" ]; then
+  if [ "$PIPELINE_GIT" != "$OM_GENERATION_GIT" ]; then
+    echo "[abort] generation pipeline $PIPELINE_GIT conflicts with suite $OM_GENERATION_GIT"
+    exit 1
+  fi
+  "$PY" src/regime_resume_commit.py "$ROOT" "$GENERATION_CANDIDATE" \
+    --marker "$GENERATION_MARKER" --repair-to "$OM_GENERATION_GIT" \
+    --quarantine-root "$QUARANTINE" || exit 1
+fi
 GENERATION_GIT=$("$PY" src/regime_resume_commit.py "$ROOT" "$GENERATION_CANDIDATE" \
   --marker "$GENERATION_MARKER") || exit 1
 if [ -n "${OM_GENERATION_GIT:-}" ] && [ "$GENERATION_GIT" != "$OM_GENERATION_GIT" ]; then
@@ -129,7 +139,6 @@ DATASETS=(${REGIME_DATASETS:-gsm8k math500})
 DRIFTS=(${REGIME_DRIFTS:-0 25 100 400})
 MAX_RETRIES="${REGIME_MAX_RETRIES:-3}"
 CONTRACT="${REGIME_MATRIX:-}"
-QUARANTINE="${REGIME_QUARANTINE:-$OM_WORK/quarantine/regime-$MODEL_TAG}"
 N_VAL_DEFAULT="${REGIME_N_VAL:-100}"
 N_TRAIN_BY_DATASET="${REGIME_N_TRAIN_BY_DATASET:-}"
 BEHAVIOR_K_DEFAULT="${REGIME_BEHAVIOR_K:-8}"

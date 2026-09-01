@@ -12,6 +12,7 @@ from regime_resume_commit import (
     bind_generation_commit,
     bind_suite_generation_commit,
     choose_generation_commit,
+    repair_generation_commit,
 )
 
 
@@ -91,6 +92,45 @@ def test_marker_must_match_existing_run_configs(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="run configs use"):
         bind_generation_commit(tmp_path, marker, "a" * 40)
+
+
+def test_repair_quarantines_conflicting_checkpoint_suffix(tmp_path: Path) -> None:
+    root = tmp_path / "matrix"
+    marker = root / ".queue/generation.git"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(f"{'b' * 40}\n", encoding="utf-8")
+    target = "a" * 40
+
+    def write_run(name: str, commit: str, dataset: str, seed: int, drift: int) -> None:
+        run = root / name
+        run.mkdir(parents=True)
+        (run / "run_config.json").write_text(
+            json.dumps(
+                {"git": commit, "dataset": dataset, "seed": seed, "drift": drift}
+            ),
+            encoding="utf-8",
+        )
+
+    write_run("math-d0", target, "math500", 0, 0)
+    write_run("math-d25", "b" * 40, "math500", 0, 25)
+    write_run("math-d100", target, "math500", 0, 100)
+    write_run("code-d0", target, "mbpp", 0, 0)
+
+    selected, moved = repair_generation_commit(
+        root, marker, target, tmp_path / "quarantine"
+    )
+
+    assert selected == target
+    assert marker.read_text(encoding="utf-8") == f"{target}\n"
+    assert (root / "math-d0/run_config.json").is_file()
+    assert (root / "code-d0/run_config.json").is_file()
+    assert not (root / "math-d25").exists()
+    assert not (root / "math-d100").exists()
+    assert {path.name.split("-mixed-")[0] for path in moved} == {
+        "math-d25",
+        "math-d100",
+    }
+    assert choose_generation_commit(root, "c" * 40) == target
 
 
 def test_malformed_marker_is_rejected(tmp_path: Path) -> None:
