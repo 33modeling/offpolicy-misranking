@@ -405,7 +405,7 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
 
 run_point() {
   local dataset=$1 seed=$2 drift=$3 source=$4 resume_step=$5 resume_run=$6
-  local run try n_train attempt_log rc prompt_root
+  local run try n_train attempt_log rc prompt_root prompt_env
   run=$(run_dir "$dataset" "$seed" "$drift")
   n_train="${REGIME_N_TRAIN:-512}"
   [ -n "${REGIME_N_TRAIN:-}" ] || [ "$dataset" != "math500" ] || n_train=400
@@ -432,13 +432,21 @@ run_point() {
     fi
   fi
 
-  # Legacy primary commits still run their own prep stage. Feed that old code a
+  # Legacy generation commits still run their own prep stage. Feed that old code a
   # source-derived local snapshot so it reconstructs byte-identical prompts
   # without changing the recorded generation revision or run configuration.
   prompt_root=""
-  if [ -n "$source" ] && { [ "$dataset" = gsm8k ] || [ "$dataset" = math500 ]; }; then
+  prompt_env=""
+  case "$dataset" in
+    gsm8k) prompt_env=GSM8K_DIR ;;
+    math500) prompt_env=MATH500_DIR ;;
+    mbpp) prompt_env=MBPP_DIR ;;
+    kk) prompt_env=KK_DIR ;;
+    arc-challenge) prompt_env=ARC_CHALLENGE_DIR ;;
+  esac
+  if [ -n "$source" ] && [ -n "$prompt_env" ]; then
     prompt_root=$("$PY" src/materialize_prompt_dataset.py "$source/prompts.json" \
-      "$dataset" "$QUEUE/prompt-datasets") || return 43
+      "$dataset" "$QUEUE/prompt-datasets" --seed "$seed") || return 43
   fi
   for try in $(seq 1 "$MAX_RETRIES"); do
     echo "[$(date '+%F %T')] $dataset/s$seed/d$drift try $try/$MAX_RETRIES -> $run"
@@ -460,11 +468,7 @@ run_point() {
       GRPO_LORA_ALPHA="$GRPO_LORA_ALPHA_DEFAULT"
       OM_SKIP_HYBRID="${OM_SKIP_HYBRID:-1}" OM_RETRY_INDEX="$try")
     [ -z "$source" ] || args+=(OM_BEHAVIOR_SOURCE="$source")
-    if [ "$dataset" = gsm8k ] && [ -n "$prompt_root" ]; then
-      args+=(GSM8K_DIR="$prompt_root")
-    elif [ "$dataset" = math500 ] && [ -n "$prompt_root" ]; then
-      args+=(MATH500_DIR="$prompt_root")
-    fi
+    [ -z "$prompt_root" ] || args+=("$prompt_env=$prompt_root")
     if [ -n "$resume_run" ]; then
       args+=(OM_GRPO_START_STEP="$resume_step"
         OM_GRPO_RESUME_ADAPTER="$resume_run/policy_step_$resume_step"
