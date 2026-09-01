@@ -36,7 +36,7 @@ from grads import (
     token_weights,
     weight_stats,
 )
-from rollout import SAMPLING, collect_rollouts, load_policy
+from rollout import SAMPLING, collect_rollouts, load_policy, prepare_rollout_output
 from rollout_contract import rollout_seed_base, trim_row
 from select_rules import (
     fixed_selection_overlap,
@@ -296,7 +296,7 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
     prompts = json.loads((run / "prompts.json").read_text())
 
     fresh_path = run / "rollouts_fresh_train.jsonl"
-    if not fresh_path.exists():
+    if not prepare_rollout_output(fresh_path):
         collect_rollouts(
             pi, tok, prompts["train"], args.fresh_k, args.max_new_tokens,
             args.temperature, fresh_path,
@@ -305,7 +305,7 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
             ),
         )
     val_path = run / "rollouts_fresh_val.jsonl"
-    if not val_path.exists():
+    if not prepare_rollout_output(val_path):
         collect_rollouts(
             pi, tok, prompts["val"], args.val_k, args.max_new_tokens,
             args.temperature, val_path,
@@ -632,9 +632,9 @@ def main() -> None:
             i, n, out = 0, 1, merged
         # 병합본이 있으면 샤드도 스킵 — 다른 run에서 복사해 온 β 재사용(go_boost·
         # Reused behavior artifacts and post-merge restarts both stop here.
-        if merged.exists():
+        if prepare_rollout_output(merged):
             print("rollout-behavior: 병합본 존재 — 스킵 (재사용)")
-        elif out.exists():
+        elif prepare_rollout_output(out):
             print(f"rollout-behavior: {out.name} 이미 존재 — 스킵")
         else:
             beta, tok = load_policy(args.model, None)
@@ -658,9 +658,9 @@ def main() -> None:
         pi = tok = None
         # 병합본 존재 시 샤드 스킵 (병합 후 재시작 케이스 — 낡은 π 병합본은
         # run_point의 adapter 시각 격리가 먼저 치우므로 여기 도달하면 현재 π 것)
-        if merged.exists():
+        if prepare_rollout_output(merged):
             print("rollout-fresh: 병합본 존재 — 스킵")
-        elif out.exists():
+        elif prepare_rollout_output(out):
             print(f"rollout-fresh: {out.name} 이미 존재 — 스킵")
         else:
             pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
@@ -677,7 +677,7 @@ def main() -> None:
         # (else 안에 있던 시절: 재시작하면 train과 함께 val 수집도 건너뛰어
         #  rollouts_fresh_val.jsonl 영구 누락 → val-grads가 line 37에서 사망)
         val_out = run / "rollouts_fresh_val.jsonl"
-        if i == 0 and not val_out.exists():
+        if i == 0 and not prepare_rollout_output(val_out):
             if pi is None:
                 pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
             prompts = json.loads((run / "prompts.json").read_text())

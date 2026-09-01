@@ -29,7 +29,7 @@ from rollout import SAMPLING, _lora_targets, chat_ids, load_model, prompt_format
 from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 
 POLICY_SCHEMA = "offpolicy-rlvr-policy/v1"
-CHECKPOINT_SCHEMA = "offpolicy-grpo-checkpoint/v1"
+CHECKPOINT_SCHEMA = "offpolicy-grpo-checkpoint/v2"
 RLVR_METHODS = ("grpo", "dr_grpo", "rloo")
 
 
@@ -528,13 +528,22 @@ def _checkpoint_step(path: Path, expected_contract: dict) -> int | None:
         step = int(state["completed_steps"])
         if not all(state.get(key) == value for key, value in expected_contract.items()):
             return None
-        for name in ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt"):
+        for name in (
+            "adapter_config.json",
+            "adapter_model.safetensors",
+            "optimizer.pt",
+            "grpo_stats.jsonl",
+        ):
             artifact = path / name
             if not artifact.is_file() or artifact.stat().st_size == 0:
                 return None
         if state.get("adapter_sha256") != sha256_file(
             path / "adapter_model.safetensors"
-        ) or state.get("optimizer_sha256") != sha256_file(path / "optimizer.pt"):
+        ) or state.get("optimizer_sha256") != sha256_file(
+            path / "optimizer.pt"
+        ) or state.get("grpo_stats_sha256") != sha256_file(
+            path / "grpo_stats.jsonl"
+        ):
             return None
         return step
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -565,11 +574,16 @@ def _save_checkpoint(
     model.save_pretrained(temporary, safe_serialization=True)
     compact_adapter(temporary)
     torch.save(optimizer.state_dict(), temporary / "optimizer.pt")
+    stats_source = out_dir / "grpo_stats.jsonl"
+    if not stats_source.is_file() or stats_source.stat().st_size == 0:
+        raise ValueError("cannot checkpoint without durable GRPO statistics")
+    shutil.copy2(stats_source, temporary / "grpo_stats.jsonl")
     state = {
         **contract,
         "completed_steps": completed_steps,
         "adapter_sha256": sha256_file(temporary / "adapter_model.safetensors"),
         "optimizer_sha256": sha256_file(temporary / "optimizer.pt"),
+        "grpo_stats_sha256": sha256_file(temporary / "grpo_stats.jsonl"),
     }
     _atomic_json(
         temporary / "checkpoint_state.json",
@@ -587,7 +601,7 @@ def _latest_checkpoint(
     candidates: list[tuple[int, Path]] = []
     for path in out_dir.glob("checkpoint-*"):
         step = _checkpoint_step(path, expected_contract)
-        if step is not None and 0 < step < upper_bound:
+        if step is not None and 0 < step <= upper_bound:
             candidates.append((step, path))
     candidates.sort(key=lambda item: item[0])
     return (candidates[-1][1], candidates[-1][0]) if candidates else (None, 0)
@@ -638,28 +652,33 @@ def train(args: argparse.Namespace) -> None:
 
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
+    published_error = None
     if (out_dir / "policy_train.json").is_file():
-        validate_policy_lineage(
-            out_dir,
-            target_steps=args.target_steps,
-            world_size=world_size,
-            training_objective=args.objective,
-            expected_start_step=args.start_step,
-            expected_parent=(
-                Path(args.resume_adapter) if args.resume_adapter else None
-            ),
-            expected_model=Path(args.model),
-            expected_seed=args.seed,
-            expected_max_new_tokens=args.max_new_tokens,
-            expected_prompt_format=prompt_format(),
-            expected_config=asdict(config),
-            expected_prompts=Path(args.prompts),
-            require_complete_hashes=True,
-        )
-        if rank == 0:
-            print(f"[grpo] validated completed policy: {out_dir}", flush=True)
-        dist.destroy_process_group()
-        return
+        try:
+            validate_policy_lineage(
+                out_dir,
+                target_steps=args.target_steps,
+                world_size=world_size,
+                training_objective=args.objective,
+                expected_start_step=args.start_step,
+                expected_parent=(
+                    Path(args.resume_adapter) if args.resume_adapter else None
+                ),
+                expected_model=Path(args.model),
+                expected_seed=args.seed,
+                expected_max_new_tokens=args.max_new_tokens,
+                expected_prompt_format=prompt_format(),
+                expected_config=asdict(config),
+                expected_prompts=Path(args.prompts),
+                require_complete_hashes=True,
+            )
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            published_error = exc
+        else:
+            if rank == 0:
+                print(f"[grpo] validated completed policy: {out_dir}", flush=True)
+            dist.destroy_process_group()
+            return
 
     has_parent_adapter = args.resume_adapter is not None
     has_parent_optimizer = args.resume_optimizer is not None
@@ -672,10 +691,21 @@ def train(args: argparse.Namespace) -> None:
     local_checkpoint, local_step = _latest_checkpoint(
         out_dir, args.target_steps, checkpoint_contract
     )
+    if published_error is not None and local_checkpoint is None:
+        raise ValueError(
+            "published policy is invalid and no complete local checkpoint can repair it: "
+            f"{published_error}"
+        ) from published_error
+    if published_error is not None and rank == 0:
+        print(
+            f"[grpo-resume] repairing invalid final publication from {local_checkpoint}: "
+            f"{published_error}",
+            flush=True,
+        )
     resume_adapter = local_checkpoint or (Path(args.resume_adapter) if args.resume_adapter else None)
     completed_steps = local_step or args.start_step
-    if completed_steps >= args.target_steps:
-        raise ValueError("resume step must be smaller than target steps")
+    if completed_steps > args.target_steps:
+        raise ValueError("resume step must not exceed target steps")
     if local_checkpoint is None and completed_steps:
         previous = validate_policy_manifest(
             resume_adapter,
@@ -738,6 +768,11 @@ def train(args: argparse.Namespace) -> None:
     if not prompts:
         raise ValueError("training prompt set is empty")
     stats_path = out_dir / "grpo_stats.jsonl"
+    if rank == 0 and local_checkpoint is not None:
+        checkpoint_stats = local_checkpoint / "grpo_stats.jsonl"
+        temporary = stats_path.with_name(stats_path.name + ".checkpoint.tmp")
+        shutil.copy2(checkpoint_stats, temporary)
+        temporary.replace(stats_path)
     if rank == 0 and stats_path.exists():
         retained = []
         for line in stats_path.read_text(encoding="utf-8").splitlines():

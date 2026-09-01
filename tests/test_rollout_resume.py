@@ -63,6 +63,9 @@ def test_salvage():
         ok("개행 없는 완결 행 보존", got == {3}, got)
         ok("재작성 후 전 행 개행 종결", part.read_text().endswith("\n"))
 
+        part.write_text(row_line(0, 0) + row_line(0, 0))
+        ok("중복 rollout_idx 그룹 폐기", salvage_partial(part, 2) == set())
+
 
 class FakeTok:
     eos_token_id = 9
@@ -157,9 +160,39 @@ def test_crash_resume(monkeypatched_reward=True):
         ok("legacy 경로 발행·행수 정확",
            out2.exists() and sum(1 for _ in out2.open()) == 8)
 
+        # partial의 generation 계약이 달라지면 섞어 쓰지 않고 전부 재생성한다.
+        out3 = Path(d) / "contract-change.jsonl"
+        try:
+            collect_rollouts(FakeModel(crash_at=3), FakeTok(), prompts, k=2,
+                             max_new_tokens=4, temperature=1.0, out_path=out3,
+                             sampling_seed_base=1)
+        except RuntimeError:
+            pass
+        m4 = FakeModel()
+        collect_rollouts(m4, FakeTok(), prompts, k=2,
+                         max_new_tokens=4, temperature=1.0, out_path=out3,
+                         sampling_seed_base=2)
+        ok("partial 계약 변경 시 전 프롬프트 재생성", m4.calls == 4, m4.calls)
+        ok("불일치 partial 격리", (Path(d) / ".restart-quarantine").is_dir())
+
+
+def test_publication_recovery():
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "rollouts.jsonl"
+        out.write_text(
+            row_line(0, 0) + row_line(0, 1) + row_line(1, 0) + row_line(1, 1)
+        )
+        in_progress = Path(d) / "rollouts.manifest.json.tmp"
+        in_progress.write_text(json.dumps({"k": 2, "n_prompts": 2, "idx_offset": 0}))
+        ok("JSONL 뒤 manifest 발행 중단 복구", rollout.rollout_artifact_ready(out))
+        manifest = json.loads((Path(d) / "rollouts.manifest.json").read_text())
+        ok("복구 manifest가 artifact hash 결합", bool(manifest.get("artifact_sha256")))
+        ok("복구 후 in-progress manifest 제거", not in_progress.exists())
+
 
 test_salvage()
 test_crash_resume()
+test_publication_recovery()
 print(f"\nPASS {PASS} / FAIL {FAIL}")
 
 

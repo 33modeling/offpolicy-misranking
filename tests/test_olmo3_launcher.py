@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import time
@@ -143,6 +144,18 @@ cd "$(dirname "$0")/.."
   && [ "$HF_DATASETS_OFFLINE" = 1 ] || exit 92
 [[ ":$PYTHONPATH:" == *":$TEST_SHARED/runtime-deps:"* ]] || exit 94
 key="$REGIME_DATASETS-s$REGIME_SEEDS"
+if [ "${TEST_INTERRUPT_FAMILY:-}" = "$key" ]; then
+  marker="$TEST_SHARED/work/interrupt-once-$key"
+  mkdir -p "$REGIME_ROOT"
+  if mkdir "$marker" 2>/dev/null; then
+    printf 'durable partial\n' > "$REGIME_ROOT/interrupted.partial"
+    printf '%s\n' "$key" > "$TEST_SHARED/work/interrupt-ready"
+    trap 'exit 130' TERM INT HUP
+    while :; do /bin/sleep 1; done
+  fi
+  [ -s "$REGIME_ROOT/interrupted.partial" ] || exit 95
+  printf 'resumed\n' >> "$REGIME_ROOT/interrupted.partial"
+fi
 if [ "${TEST_FAIL_FAMILY:-}" = "$key" ]; then
   marker="$TEST_SHARED/work/fail-$key"
   mkdir -p "$(dirname "$marker")"
@@ -330,6 +343,65 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
     claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
     assert len(claims) == 10
     assert {line.split("|")[2] for line in claims} == {first_commit}
+
+
+def test_h100_worker_recovers_after_process_group_termination(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    local = tmp_path / "restart-local"
+    interrupted = subprocess.Popen(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(local),
+            "TEST_INTERRUPT_FAMILY": "math500-s0",
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    ready = Path(env["TEST_SHARED"]) / "work/interrupt-ready"
+    for _ in range(200):
+        if ready.exists():
+            break
+        time.sleep(0.05)
+    assert ready.is_file()
+    os.killpg(interrupted.pid, signal.SIGTERM)
+    interrupted.communicate(timeout=10)
+    assert interrupted.returncode != 0
+
+    owner = (
+        Path(env["TEST_SHARED"])
+        / "work/runs/olmo3-1025-7b-base-rlzero-grpo-h100-v2/.families/math500-s0.owner.json"
+    )
+    # SIGKILL/job teardown may leave only the informational owner file. The
+    # flock is the source of truth, so restart must replace and later remove it.
+    assert owner.exists()
+
+    resumed = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(local),
+            "TEST_INTERRUPT_FAMILY": "math500-s0",
+        },
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+    assert not owner.exists()
+    partial = (
+        Path(env["TEST_SHARED"])
+        / "work/runs/olmo3-1025-7b-base-rlzero-grpo-h100-v2/family-math500-s0/interrupted.partial"
+    )
+    assert partial.read_text().splitlines() == ["durable partial", "resumed"]
+    claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
+    assert len(claims) == 10
+    assert len({line.split("|")[1] for line in claims}) == 10
 
 
 def test_launcher_shares_the_node_primary_lock_with_other_experiments(

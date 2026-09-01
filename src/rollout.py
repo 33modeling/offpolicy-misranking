@@ -8,8 +8,10 @@ out of this module prevents it from being substituted for the RLVR objective.
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
+import time
 from pathlib import Path
 
 import torch
@@ -186,7 +188,147 @@ def chat_ids(tok, question: str) -> torch.Tensor:
     return tok(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
 
 
-def salvage_partial(part_path: Path, k: int) -> set[int]:
+def _rollout_manifest_paths(out_path: Path) -> tuple[Path, Path]:
+    manifest = out_path.parent / (out_path.stem + ".manifest.json")
+    return manifest, manifest.with_suffix(manifest.suffix + ".tmp")
+
+
+def _valid_rollout_row(row: object) -> bool:
+    if not isinstance(row, dict):
+        return False
+    input_ids = row.get("input_ids")
+    try:
+        prompt_idx = int(row["prompt_idx"])
+        rollout_idx = int(row["rollout_idx"])
+        response_start = int(row["resp_start"])
+        response_end = int(row["resp_end"])
+        reward_value = float(row["reward"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (
+        prompt_idx >= 0
+        and rollout_idx >= 0
+        and isinstance(input_ids, list)
+        and bool(input_ids)
+        and all(isinstance(token, int) and not isinstance(token, bool) for token in input_ids)
+        and 0 <= response_start < response_end == len(input_ids)
+        and math.isfinite(reward_value)
+        and reward_value in {0.0, 1.0}
+    )
+
+
+def _rollout_rows_match_manifest(path: Path, manifest: dict) -> bool:
+    try:
+        k = int(manifest["k"])
+        count = int(manifest["n_prompts"])
+        offset = int(manifest["idx_offset"])
+        if k <= 0 or count < 0 or offset < 0:
+            return False
+        expected_prompts = set(range(offset, offset + count))
+        indices = {prompt: set() for prompt in expected_prompts}
+        for line in path.open(encoding="utf-8"):
+            row = json.loads(line)
+            if not _valid_rollout_row(row):
+                return False
+            prompt_idx = int(row["prompt_idx"])
+            rollout_idx = int(row["rollout_idx"])
+            if prompt_idx not in indices or rollout_idx in indices[prompt_idx]:
+                return False
+            indices[prompt_idx].add(rollout_idx)
+        expected_rollouts = set(range(k))
+        return all(values == expected_rollouts for values in indices.values())
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def _atomic_manifest(path: Path, manifest: dict) -> None:
+    temporary = path.with_name(path.name + f".write.{os.getpid()}")
+    temporary.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
+    temporary.replace(path)
+
+
+def rollout_artifact_ready(out_path: Path) -> bool:
+    """Validate a rollout and finish an interrupted JSONL/manifest publication."""
+    if not out_path.is_file():
+        return False
+    manifest_path, in_progress_path = _rollout_manifest_paths(out_path)
+    for candidate in (manifest_path, in_progress_path):
+        try:
+            manifest = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict) or not _rollout_rows_match_manifest(
+            out_path, manifest
+        ):
+            continue
+        recorded_file = manifest.get("artifact_file")
+        if recorded_file not in (None, out_path.name):
+            continue
+        actual_hash = sha256_file(out_path)
+        recorded_hash = manifest.get("artifact_sha256")
+        if recorded_hash not in (None, actual_hash):
+            continue
+        if candidate != manifest_path or recorded_hash is None:
+            manifest.update(
+                {"artifact_file": out_path.name, "artifact_sha256": actual_hash}
+            )
+            _atomic_manifest(manifest_path, manifest)
+        in_progress_path.unlink(missing_ok=True)
+        return True
+    return False
+
+
+def quarantine_invalid_rollout(out_path: Path) -> list[Path]:
+    """Preserve invalid restart state out of the active artifact namespace."""
+    manifest_path, in_progress_path = _rollout_manifest_paths(out_path)
+    part_path = out_path.with_suffix(".partial")
+    legacy_path = out_path.with_suffix(".tmp")
+    existing = [
+        path
+        for path in (
+            out_path,
+            manifest_path,
+            in_progress_path,
+            part_path,
+            legacy_path,
+        )
+        if path.exists()
+    ]
+    if not existing:
+        return []
+    quarantine = out_path.parent / ".restart-quarantine"
+    quarantine.mkdir(exist_ok=True)
+    suffix = f"{time.time_ns()}-{os.getpid()}"
+    moved = []
+    for path in existing:
+        destination = quarantine / f"{path.name}.{suffix}"
+        try:
+            path.replace(destination)
+        except FileNotFoundError:
+            continue
+        moved.append(destination)
+    return moved
+
+
+def prepare_rollout_output(out_path: Path) -> bool:
+    """Return true for a durable rollout; quarantine an invalid published one."""
+    if not out_path.exists():
+        return False
+    if rollout_artifact_ready(out_path):
+        return True
+    moved = quarantine_invalid_rollout(out_path)
+    if moved:
+        print(
+            "[rollout-restart] invalid publication quarantined: "
+            + ", ".join(path.name for path in moved),
+            flush=True,
+        )
+    return False
+
+
+def salvage_partial(
+    part_path: Path, k: int, expected_prompts: set[int] | None = None
+) -> set[int]:
     """중단된 shard의 .partial에서 K개를 전부 갖춘 프롬프트만 남기고 재개 집합을 반환.
 
     ULF류 간헐 크래시 노드에서 수 시간짜리 shard를 프롬프트 0부터 다시 돌지 않기
@@ -194,21 +336,36 @@ def salvage_partial(part_path: Path, k: int) -> set[int]:
     통째로 제거해 중복 행·부분 행이 최종 산출물에 들어갈 수 없게 한다."""
     if not part_path.exists():
         return set()
-    rows_by_prompt: dict[int, list[str]] = {}
+    rows_by_prompt: dict[int, dict[int, str]] = {}
+    invalid_prompts: set[int] = set()
     with part_path.open() as f:
         for line in f:
             try:
                 row = json.loads(line)
-            except ValueError:
+                if not _valid_rollout_row(row):
+                    raise ValueError("invalid rollout row")
+                prompt_idx = int(row["prompt_idx"])
+                rollout_idx = int(row["rollout_idx"])
+            except (KeyError, TypeError, ValueError):
                 break  # 찢긴 꼬리 줄 — 이 지점부터는 신뢰하지 않는다
-            rows_by_prompt.setdefault(int(row["prompt_idx"]), []).append(
-                line if line.endswith("\n") else line + "\n"
-            )
-    complete = {p: rows for p, rows in rows_by_prompt.items() if len(rows) == k}
+            if expected_prompts is not None and prompt_idx not in expected_prompts:
+                invalid_prompts.add(prompt_idx)
+                continue
+            rows = rows_by_prompt.setdefault(prompt_idx, {})
+            if rollout_idx in rows:
+                invalid_prompts.add(prompt_idx)
+                continue
+            rows[rollout_idx] = line if line.endswith("\n") else line + "\n"
+    expected_indices = set(range(k))
+    complete = {
+        prompt: rows
+        for prompt, rows in rows_by_prompt.items()
+        if prompt not in invalid_prompts and set(rows) == expected_indices
+    }
     tmp = part_path.with_suffix(part_path.suffix + ".rewrite")
     with tmp.open("w") as f:
-        for p in sorted(complete):
-            f.writelines(complete[p])
+        for prompt in sorted(complete):
+            f.writelines(complete[prompt][index] for index in range(k))
     tmp.replace(part_path)
     return set(complete)
 
@@ -232,6 +389,9 @@ def collect_rollouts(
     from grads import ts
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if prepare_rollout_output(out_path):
+        print(f"[{ts()}] rollout 완료본 검증됨: {out_path.name}", flush=True)
+        return
     print(f"[{ts()}] rollout 시작: {len(prompts)} prompts × K={k}, "
           f"max_new={max_new_tokens}, temp={temperature} → {out_path.name}", flush=True)
     t_start = time.time()
@@ -239,8 +399,7 @@ def collect_rollouts(
     gkw = gen_kwargs(temperature, SAMPLING["top_p"], max_new_tokens,
                      tok.eos_token_id)
     eos_set = eos_ids_of(model, tok, pad_id=tok.eos_token_id)
-    manifest_path = out_path.parent / (out_path.stem + ".manifest.json")
-    manifest_tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+    manifest_path, manifest_tmp = _rollout_manifest_paths(out_path)
     manifest = resolved_manifest(model, tok, gkw, prompt_format=prompt_format())
     manifest.update({
         "k": k,
@@ -249,16 +408,50 @@ def collect_rollouts(
         "sampling_seed_base": int(sampling_seed_base),
         "sampling_seed_scheme": ROLLOUT_SEED_SCHEME,
     })
-    # Keep an in-progress record without replacing a previously valid sidecar.
-    # The final manifest is published only after the JSONL and its hash exist.
-    manifest_tmp.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
     # 프롬프트 단위 내구 저장 + 중간 재개 — 간헐 크래시(ULF) 노드에서 shard 전체를
     # 처음부터 다시 돌지 않는다. 구버전이 남긴 .tmp가 있으면 진행분을 승계한다.
     part_path = out_path.with_suffix(".partial")
     legacy_tmp = out_path.with_suffix(".tmp")
+    if not out_path.exists() and manifest_path.exists():
+        moved = quarantine_invalid_rollout(out_path)
+        print(
+            f"[{ts()}] rollout manifest has no artifact; restarting "
+            f"({len(moved)} files quarantined)",
+            flush=True,
+        )
+    legacy_adopted = False
     if not part_path.exists() and legacy_tmp.exists():
         legacy_tmp.rename(part_path)
-    done = salvage_partial(part_path, k)
+        legacy_adopted = True
+    if part_path.exists() and manifest_tmp.exists():
+        try:
+            previous_manifest = json.loads(manifest_tmp.read_text(encoding="utf-8"))
+            comparable = {
+                key: value
+                for key, value in previous_manifest.items()
+                if key not in {"artifact_file", "artifact_sha256"}
+            }
+        except (OSError, TypeError, json.JSONDecodeError):
+            comparable = None
+        if comparable != manifest:
+            moved = quarantine_invalid_rollout(out_path)
+            print(
+                f"[{ts()}] rollout partial contract changed; restarting "
+                f"({len(moved)} files quarantined)",
+                flush=True,
+            )
+    elif part_path.exists() and not legacy_adopted:
+        moved = quarantine_invalid_rollout(out_path)
+        print(
+            f"[{ts()}] rollout partial has no provenance; restarting "
+            f"({len(moved)} files quarantined)",
+            flush=True,
+        )
+    # Keep an in-progress record without replacing a previously valid sidecar.
+    # The final manifest is published only after the JSONL and its hash exist.
+    _atomic_manifest(manifest_tmp, manifest)
+    expected_prompts = set(range(idx_offset, idx_offset + len(prompts)))
+    done = salvage_partial(part_path, k, expected_prompts)
     if done:
         print(f"[{ts()}] rollout 재개: 완료 프롬프트 {len(done)}개 스킵 "
               f"({part_path.name})", flush=True)
@@ -324,7 +517,7 @@ def collect_rollouts(
         "artifact_file": out_path.name,
         "artifact_sha256": sha256_file(out_path),
     })
-    manifest_tmp.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
+    _atomic_manifest(manifest_tmp, manifest)
     manifest_tmp.replace(manifest_path)
 
 

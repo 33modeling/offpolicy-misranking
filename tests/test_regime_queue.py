@@ -183,6 +183,15 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             encoding="utf-8",
         )
         executable(fake_bin / "sleep", "#!/usr/bin/env bash\nexit 0\n")
+        executable(
+            fake_bin / "nvidia-smi",
+            "#!/usr/bin/env bash\n"
+            'if [[ "$*" == *"pmon"* ]]; then\n'
+            "  printf '# gpu pid type sm mem\\n0 999999 C 99 1\\n'\n"
+            "else\n"
+            "  printf '99\\n'\n"
+            "fi\n",
+        )
         subprocess.run(
             ["git", "init", "-q"], cwd=checkout, check=True, capture_output=True
         )

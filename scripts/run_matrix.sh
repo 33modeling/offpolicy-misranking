@@ -426,11 +426,15 @@ group_cpu_seconds() {
 }
 
 gpu_peak_util() {
-  local peak=0 util sample
+  local target_pgid=$1 peak=0 util sample pids
   for sample in $(seq 1 "$WATCH_GPU_SAMPLES"); do
-    util=$(timeout 10 nvidia-smi --query-gpu=utilization.gpu \
-      --format=csv,noheader,nounits 2>/dev/null \
-      | awk '$1 > peak { peak=$1 } END { print peak + 0 }')
+    pids=$(ps -eo pid=,pgid= 2>/dev/null \
+      | awk -v pgid="$target_pgid" '$2 == pgid { print $1 }')
+    util=$(timeout 10 nvidia-smi pmon -c 1 -s u 2>/dev/null \
+      | awk -v pids="$pids" '
+          BEGIN { n=split(pids, ids); for (i=1; i<=n; i++) wanted[ids[i]]=1 }
+          ($2 in wanted) && $4 ~ /^[0-9]+$/ && $4 > peak { peak=$4 }
+          END { print peak + 0 }')
     [ "${util:-0}" -le "$peak" ] || peak=$util
     [ "$sample" -eq "$WATCH_GPU_SAMPLES" ] || /bin/sleep 2
   done
@@ -491,7 +495,9 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
       [ "$elapsed" -lt "$STALL_SECONDS" ] || {
         cpu_now=$(group_cpu_seconds "$runner_pid")
         cpu_delta=$((cpu_now > cpu_mark ? cpu_now - cpu_mark : 0))
-        gpu_peak=$(gpu_peak_util)
+        # The supervisor keepalive is outside runner_pid's process group. Only
+        # activity from this pipeline may prevent a stalled-run restart.
+        gpu_peak=$(gpu_peak_util "$runner_pid")
         if [ "$gpu_peak" -gt 0 ] || [ "$cpu_delta" -gt 2 ]; then
           message="[regime-watchdog] 로그 ${STALL_SECONDS}초 무변화지만 계산 활동 확인 (GPU ${gpu_peak}%, CPU +${cpu_delta}s) — 계속 실행"
           echo "$message"

@@ -125,9 +125,14 @@ No family is claimed when any gate fails.
 
 ## Restart and Git updates
 
-An interrupted rollout keeps only complete prompt groups in `.partial` and
-continues from the next prompt. Interrupted GRPO loads the newest complete local
-checkpoint. A family failure no longer exits the launcher: it releases that
+An interrupted rollout keeps only exact-K complete prompt groups in `.partial`
+and continues from the next prompt. The partial file is bound to its generation
+manifest; incompatible restart state is quarantined instead of mixed. If the
+worker stops after publishing JSONL but before its manifest rename, the next run
+validates the exact rows and finishes that publication automatically. Interrupted
+GRPO loads the newest adapter/optimizer/statistics checkpoint, including a
+complete target-step checkpoint when only final publication remained. A family
+failure no longer exits the launcher: it releases that
 family lock, preserves the partial artifacts, processes other available
 families, and retries failed families after 60 seconds while the GPU keepalive
 remains active. `OM_RLZERO_FAMILY_ATTEMPTS` controls immediate attempts and

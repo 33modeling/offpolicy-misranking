@@ -366,7 +366,7 @@ def test_policy_contract_binds_model_seed_prompts_optimizer_and_stats(
         validate_policy_lineage(policy, **contract)
 
 
-def test_latest_checkpoint_ignores_partial_and_target_checkpoint(tmp_path: Path) -> None:
+def test_latest_checkpoint_accepts_complete_target_and_ignores_partial(tmp_path: Path) -> None:
     contract = {
         "schema": CHECKPOINT_SCHEMA,
         "training_objective": "grpo",
@@ -375,7 +375,12 @@ def test_latest_checkpoint_ignores_partial_and_target_checkpoint(tmp_path: Path)
     for step in (5, 10, 25):
         checkpoint = tmp_path / f"checkpoint-{step:06d}"
         checkpoint.mkdir()
-        for name in ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt"):
+        for name in (
+            "adapter_config.json",
+            "adapter_model.safetensors",
+            "optimizer.pt",
+            "grpo_stats.jsonl",
+        ):
             (checkpoint / name).write_text("x")
         (checkpoint / "checkpoint_state.json").write_text(
             json.dumps({
@@ -383,16 +388,22 @@ def test_latest_checkpoint_ignores_partial_and_target_checkpoint(tmp_path: Path)
                 "completed_steps": step,
                 "adapter_sha256": sha256_file(checkpoint / "adapter_model.safetensors"),
                 "optimizer_sha256": sha256_file(checkpoint / "optimizer.pt"),
+                "grpo_stats_sha256": sha256_file(checkpoint / "grpo_stats.jsonl"),
             })
         )
     (tmp_path / "checkpoint-000020").mkdir()
     path, step = _latest_checkpoint(tmp_path, 25, contract)
-    assert step == 10
-    assert path.name == "checkpoint-000010"
+    assert step == 25
+    assert path.name == "checkpoint-000025"
 
     path, step = _latest_checkpoint(tmp_path, 25, {**contract, "seed": 8})
     assert path is None
     assert step == 0
+
+    (tmp_path / "checkpoint-000025/optimizer.pt").write_text("corrupt")
+    path, step = _latest_checkpoint(tmp_path, 25, contract)
+    assert step == 10
+    assert path.name == "checkpoint-000010"
 
     (tmp_path / "checkpoint-000010/optimizer.pt").write_text("corrupt")
     path, step = _latest_checkpoint(tmp_path, 25, contract)
@@ -418,6 +429,7 @@ def test_checkpoint_publish_replaces_an_invalid_same_step_directory(tmp_path: Pa
         "training_objective": "grpo",
         "seed": 7,
     }
+    (tmp_path / "grpo_stats.jsonl").write_text('{"step":5}\n')
     stale = tmp_path / "checkpoint-000005"
     stale.mkdir()
     (stale / "checkpoint_state.json").write_text("{}\n")
