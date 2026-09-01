@@ -46,7 +46,35 @@ def test_olmo3_contract_is_raw_base_grpo_with_two_verifier_domains() -> None:
     assert experiment["datasets"] == ["math500", "mbpp"]
     assert experiment["seeds"] == [0, 1, 2, 3, 4]
     assert experiment["drifts"] == [0, 25, 100, 400]
-    assert experiment["grpo"]["epochs_per_batch"] == 1
+    assert experiment["max_new_tokens"] == 2048
+    assert experiment["temperature"] == 1.0
+    assert experiment["top_p"] == 1.0
+    assert experiment["grpo"] == {
+        "world_size": 4,
+        "group_size": 8,
+        "clip_epsilon": 0.2,
+        "learning_rate": 1e-5,
+        "reference_kl_beta": 0.0,
+        "epochs_per_batch": 1,
+        "max_grad_norm": 1.0,
+        "advantage_epsilon": 1e-4,
+        "lora_rank": 16,
+        "lora_alpha": 32,
+    }
+
+
+def test_olmo3_documentation_matches_single_epoch_contract() -> None:
+    runbook = (ROOT / "docs/OLMO3_RLZERO_RUNBOOK.md").read_text()
+    experiment_doc = (ROOT / "docs/EXPERIMENT.md").read_text()
+    readme = (ROOT / "README.md").read_text()
+
+    for text in (runbook, experiment_doc, readme):
+        assert "one optimizer epoch" in text or "single optimizer epoch" in text
+        assert "clip_epsilon=0.2" in text
+        assert "not claimed" in text or "does not" in text
+    assert "maximum `2048` new tokens" in runbook
+    assert "learning rate `1e-5`" in runbook
+    assert "rank `16`, alpha `32`, dropout `0`" in runbook
 
 
 @pytest.mark.parametrize(

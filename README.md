@@ -26,7 +26,14 @@ the Qwen or additional-study matrices. See
 [`docs/OLMO3_RLZERO_RUNBOOK.md`](docs/OLMO3_RLZERO_RUNBOOK.md) for its immutable
 model/data contract, family assignment, restart behavior, and completion checks.
 
-## Run
+The main matrix uses five seeds, policy steps `0/25/100/400`, four DDP ranks,
+eight responses per prompt and a single optimizer epoch per fresh group. It uses
+the PPO-form GRPO surrogate with `clip_epsilon=0.2`, but the one-epoch setting has
+no post-update reuse of a group; the clip is therefore not claimed as an
+effective trust-region constraint. AdamW uses a constant `1e-5` learning rate,
+and query/value LoRA uses rank `16`, alpha `32`, and dropout `0`.
+
+## Previous Qwen Matrix
 
 On each of the three independent 4xH100 nodes, after pulling the same commit:
 
@@ -96,7 +103,7 @@ can claim work; partial matrices force the other phase to resume that revision.
 The retired 2026-08-24 mixed-revision readout is documented in
 [`docs/results/2026-08-24/PROVENANCE_STATUS.md`](docs/results/2026-08-24/PROVENANCE_STATUS.md).
 
-## Objective Contract
+## Previous Qwen Objective Contract
 
 For every positive policy step, completion requires `policy_train.json` with:
 
@@ -106,9 +113,10 @@ For every positive policy step, completion requires `policy_train.json` with:
 - `supervised_loss = false`
 - `positive_only_filter = false`
 - exactly four distributed workers
-- a matching adapter hash and at least one nonzero-advantage reward group
+- a matching adapter hash and complete per-step group/sample/reward accounting
 
-LoRA is the policy parameterization used to fit 27B training on each 80 GB H100.
+LoRA is the policy parameterization used to fit previous 27B training on each
+80 GB H100.
 It does not change the objective: gradients come only from the clipped GRPO
 surrogate over online verifier-reward samples.
 
@@ -168,8 +176,8 @@ for the SFT substitution root-cause record.
 
 ## Scripts
 
-- `run_rlvr.sh`: canonical Qwen primary/scale-replication entry point.
-- `run_olmo3_rlzero.sh`: clean raw OLMo-3 base RL-Zero restart.
+- `run_olmo3_rlzero.sh`: main raw OLMo-3 base RL-Zero entry point.
+- `run_rlvr.sh`: previous Qwen primary/scale-replication entry point.
 - `run_additional_experiments.sh`: wait for primary, then run all additions.
 - `run_matrix.sh`: shared multi-node family queue and retry supervisor.
 - `run_point.sh`: one training/evaluation point.

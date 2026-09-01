@@ -21,6 +21,36 @@
 
 The immutable machine-readable contract is `configs/olmo3_rlzero.json`.
 
+## Training hyperparameters
+
+| Component | Registered value |
+|---|---|
+| Distributed batch | 4 DDP ranks, 1 prompt per rank, 8 responses per prompt (32 responses/update) |
+| Reward/advantage | Binary domain verifier; within-prompt population standard deviation; denominator epsilon `1e-4` |
+| Policy loss | PPO-form GRPO surrogate, ratio range `[0.8, 1.2]`, one optimizer epoch per fresh group |
+| Reference regularization | KL coefficient `0` |
+| Optimizer | AdamW, learning rate `1e-5`, no scheduler, gradient-norm cap `1` |
+| AdamW defaults | `betas=(0.9, 0.999)`, `eps=1e-8`, `weight_decay=0.01`, `amsgrad=false` |
+| LoRA | `q_proj,v_proj`, rank `16`, alpha `32`, dropout `0`, bias `none` |
+| Numeric/attention mode | BF16 model load and eager attention |
+| Sampling | temperature `1`, top-p `1`, top-k `0`, no repetition penalty, maximum `2048` new tokens |
+| Checkpointing | Every 5 updates; cumulative targets `0/25/100/400` with adapter and optimizer resume |
+| Evaluation | behavior/current/validation rollouts `8/32/8`; 4-rollout micro-groups; CountSketch dimension `4096`; final 4 decoder layers |
+| Selection/inference | top `10%`; 10,000 bootstrap replicates for final labels |
+
+The trainer constructs `torch.optim.AdamW(trainable, lr=1e-5)` and does not
+install a learning-rate scheduler. The AdamW values above are therefore the
+PyTorch defaults rather than separately passed command-line fields; the run
+manifest records the software versions needed to interpret them.
+
+The stored old log probabilities and the `clip_epsilon=0.2` field are part of
+the implemented GRPO surrogate. Because this matrix performs only one epoch on
+each freshly sampled group, current and old log probabilities are compared
+before the sole optimizer step and their ratio is one up to numerical error.
+There is no post-update second pass on that group, so clipping is not described
+as an effective trust-region constraint for this experiment. This differs from
+the separate two-epoch Qwen and GRPO/Dr.GRPO additional-study configs.
+
 ## Prepare
 
 Use a checkout that can reach the public Hugging Face repositories and mounts
