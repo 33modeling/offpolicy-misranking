@@ -1,13 +1,14 @@
-"""GPU 유휴 킬 회피 — 모든 GPU에 **상시** 저강도 연산 (사용률 기준 감시 대응).
+"""GPU 유휴 킬 회피 — 모든 GPU에 제한된 duty의 저강도 연산.
 
-버스트 방식(간헐)은 사용률 평균이 0%로 잡혀 소용없다. 여기서는 GPU마다 스레드가
-"연산 ~40ms → 휴식" 듀티 사이클을 계속 돌려 nvidia-smi 사용률이 항상 0보다 크게
-찍히게 한다. 기본 듀티 ~15% — 본 작업(생성·backward)이 SM을 점유하면 자연히
-밀려나므로 간섭은 미미하다. 메모리 ~64MB/GPU.
+GPU마다 짧은 연산과 휴식을 반복하되 실제 경과 시간을 기준으로 기본 duty를 15%로
+제한한다. 본 작업(생성·backward) 때문에 keepalive 커널이 늦어지면 그만큼 휴식도
+길어져 실제 workload를 방해하지 않는다. 메모리 사용량은 GPU당 1MB 미만이다.
 
     python3 scripts/gpu_keepalive.py [duty_percent]   # 기본 15
 """
 
+import os
+from pathlib import Path
 import sys
 import threading
 import time
@@ -15,40 +16,64 @@ import time
 import torch
 
 
-def worker(gpu: int, duty: float) -> None:
-    """소형 커널 연속 발사 — 사용률 지표(커널 실행 시간 비율)를 상시 높게 유지.
+def worker(gpu: int, duty: float, ready: threading.Event) -> None:
+    """짧은 소형 커널 burst 뒤 실측 시간에 비례해 휴식한다.
 
-    256×256 matmul은 H100에서 μs 단위라 실제 SM 점유는 미미하지만, 쉼 없이
-    발사하면 utilization 지표는 계속 nonzero로 찍힌다. 본 작업의 큰 커널이
-    들어오면 자연히 양보된다. duty 인자는 스트림 사이 마이크로 휴식 비율.
+    다른 프로세스의 큰 커널 뒤에서 대기한 시간도 active 구간에 포함되므로, 실제
+    rollout 부하가 높을수록 다음 sleep이 길어지는 협조적 backoff가 된다.
     """
     torch.cuda.set_device(gpu)
     a = torch.randn(256, 256, device="cuda")
+    a = a @ a
+    torch.cuda.synchronize()
     print(f"keepalive GPU{gpu}: continuous tiny-kernel mode", flush=True)
+    ready.set()
     while True:
-        for _ in range(500):
+        started = time.monotonic()
+        for _ in range(100):
             a = a @ a
             a = a / (a.norm() + 1e-6)
         torch.cuda.synchronize()
-        time.sleep(0.002)  # CPU 스핀 방지용 마이크로 휴식
+        active = max(time.monotonic() - started, 0.001)
+        time.sleep(active * (1.0 - duty) / duty)
 
 
 def main() -> None:
     duty = (float(sys.argv[1]) if len(sys.argv) > 1 else 15.0) / 100.0
+    if not 0.01 <= duty <= 0.5:
+        raise ValueError("duty_percent must be between 1 and 50")
     n = torch.cuda.device_count()
     if n == 0:
         print("keepalive: GPU 없음 — 종료")
         return
     print(f"keepalive: GPU {n}개 상시 가동, duty {duty:.0%}", flush=True)
-    threads = [threading.Thread(target=worker, args=(i, duty), daemon=True) for i in range(n)]
+    events = [threading.Event() for _ in range(n)]
+    threads = [
+        threading.Thread(target=worker, args=(i, duty, events[i]), daemon=True)
+        for i in range(n)
+    ]
     for t in threads:
         t.start()
+    deadline = time.monotonic() + 50
+    for event in events:
+        event.wait(max(0.0, deadline - time.monotonic()))
+    if not all(event.is_set() for event in events):
+        raise RuntimeError("one or more GPU keepalive workers failed to initialize")
+    if ready_path := os.environ.get("OM_GPU_KEEPALIVE_READY_FILE"):
+        path = Path(ready_path)
+        temporary = path.with_name(path.name + f".tmp.{os.getpid()}")
+        temporary.write_text(f"pid={os.getpid()} gpus={n}\n")
+        temporary.replace(path)
+    print(f"keepalive: all {n} GPU workers ready", flush=True)
     while True:  # 스레드 예외로 죽으면 재기동
         time.sleep(60)
         for i, t in enumerate(threads):
             if not t.is_alive():
                 print(f"keepalive: GPU{i} 스레드 재시작", flush=True)
-                threads[i] = threading.Thread(target=worker, args=(i, duty), daemon=True)
+                events[i] = threading.Event()
+                threads[i] = threading.Thread(
+                    target=worker, args=(i, duty, events[i]), daemon=True
+                )
                 threads[i].start()
 
 

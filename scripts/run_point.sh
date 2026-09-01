@@ -379,13 +379,18 @@ PYEOF
 fi
 
 KA_DEV=$(IFS=,; echo "${GPUS[*]}")
-CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
-KEEP=$!
-printf '%s\n' "$KEEP" > "$OUT_ROOT/keepalive.pid"
+KEEP=""
+if [ "${OM_EXTERNAL_GPU_KEEPALIVE:-0}" = "1" ]; then
+  log "GPU keepalive: supervisor-owned (all point transitions covered)"
+else
+  CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" scripts/gpu_keepalive.py > "$LOGS/keepalive.log" 2>&1 &
+  KEEP=$!
+  printf '%s\n' "$KEEP" > "$OUT_ROOT/keepalive.pid"
+fi
 # 종료(정상·에러 모두) 시 이 실행이 띄운 모든 자식 정리 — 고아 샤드가 GPU를 점유한 채
 # 남아 "계속 실행되는 것처럼" 보이고 재시작 OOM을 일으키는 버그의 수정
 cleanup() {
-  kill "$KEEP" 2>/dev/null || true
+  [ -z "$KEEP" ] || kill "$KEEP" 2>/dev/null || true
   rm -f "$OUT_ROOT/keepalive.pid"
   pkill -f -- "--run $OUT_ROOT" 2>/dev/null || true
 }

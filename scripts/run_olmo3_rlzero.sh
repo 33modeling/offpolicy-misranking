@@ -138,6 +138,82 @@ DIRTY=$(git status --porcelain -- src scripts configs requirements.txt)
 CURRENT_GIT=$(git rev-parse HEAD) || exit 1
 mkdir -p "$ROOT/.queue" "$QUEUE" "$PREFLIGHT" "$GLOBAL_RESULTS" "$OM_WORK/locks"
 
+if [ "$MODE" = run ]; then
+  mapfile -t GPU_NAMES < <(
+    timeout 20 nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || true
+  )
+  GPU_COUNT=${#GPU_NAMES[@]}
+  H100_COUNT=$(printf '%s\n' "${GPU_NAMES[@]}" | grep -c H100 || true)
+  [ "$GPU_COUNT" -eq 4 ] && [ "$H100_COUNT" -eq 4 ] || {
+    echo "[abort] exactly four H100 GPUs required (GPUs=$GPU_COUNT H100=$H100_COUNT)"
+    exit 1
+  }
+
+  LOCAL_ROOT="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+  local_path=$(realpath -m "$LOCAL_ROOT")
+  shared_path=$(realpath -m "$GROUP_VOLUME")
+  [[ "$local_path" != "$shared_path" && "$local_path" != "$shared_path/"* ]] || {
+    echo "[abort] OM_LOCAL_LOCK_DIR must be node-local"
+    exit 1
+  }
+  mkdir -p "$LOCAL_ROOT/olmo3-preflight" "$ROOT/logs"
+  exec 8>"$LOCAL_ROOT/primary.lock"
+  flock -n 8 || { echo "[abort] another experiment already owns this physical node"; exit 1; }
+
+  memory=$(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits) || exit 1
+  rows=$(printf '%s\n' "$memory" | awk 'NF {n++} END {print n+0}')
+  busy=$(printf '%s\n' "$memory" | awk '$1 > 2000 {n++} END {print n+0}')
+  [ "$rows" -eq 4 ] && [ "$busy" -eq 0 ] || {
+    echo "[abort] GPUs are already in use; refusing to overlap another experiment"
+    printf '%s\n' "$memory"
+    exit 1
+  }
+
+  HOST_TAG=$(hostname 2>/dev/null || printf node)
+  WORKER_SUFFIX=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || printf '%s' "$$")
+  WORKER_ID=$(printf '%s-%s' "$HOST_TAG" "$WORKER_SUFFIX" | tr -cs 'a-zA-Z0-9._-' '-')
+  export WORKER_ID
+  LOG="$ROOT/logs/$WORKER_ID.log"
+  echo "[worker] id=$WORKER_ID root=$ROOT" | tee -a "$LOG"
+
+  # Keep all allocated GPUs active before model/dataset verification begins.
+  # This also spans signal qualification, point transitions, CPU verification,
+  # queue waits, and final result collection.
+  ACTIVE_OWNER=""
+  SUPERVISOR_KEEPALIVE=""
+  KEEPALIVE_READY="$LOCAL_ROOT/keepalive-$WORKER_ID.ready"
+  cleanup_worker() {
+    [ -z "${ACTIVE_OWNER:-}" ] || rm -f -- "$ACTIVE_OWNER"
+    ACTIVE_OWNER=""
+    if [ -n "${SUPERVISOR_KEEPALIVE:-}" ]; then
+      kill "$SUPERVISOR_KEEPALIVE" 2>/dev/null || true
+      wait "$SUPERVISOR_KEEPALIVE" 2>/dev/null || true
+    fi
+    rm -f -- "$KEEPALIVE_READY"
+  }
+  trap cleanup_worker EXIT
+  trap 'exit 130' INT TERM HUP
+  rm -f -- "$KEEPALIVE_READY"
+  OM_GPU_KEEPALIVE_READY_FILE="$KEEPALIVE_READY" CUDA_VISIBLE_DEVICES=0,1,2,3 \
+    "$PY" "$SUPERVISOR_REPO/scripts/gpu_keepalive.py" \
+    >> "$ROOT/logs/$WORKER_ID-keepalive.log" 2>&1 &
+  SUPERVISOR_KEEPALIVE=$!
+  for _ in $(seq 1 60); do
+    [ -s "$KEEPALIVE_READY" ] && break
+    kill -0 "$SUPERVISOR_KEEPALIVE" 2>/dev/null || {
+      echo "[abort] GPU keepalive exited during startup" | tee -a "$LOG"
+      exit 1
+    }
+    sleep 1
+  done
+  [ -s "$KEEPALIVE_READY" ] || {
+    echo "[abort] GPU keepalive was not ready within 60 seconds" | tee -a "$LOG"
+    exit 1
+  }
+  export OM_EXTERNAL_GPU_KEEPALIVE=1
+  echo "[worker] four-GPU keepalive ready pid=$SUPERVISOR_KEEPALIVE" | tee -a "$LOG"
+fi
+
 # Adopt separately uploaded assets before entering an older commit-pinned run.
 # This creates the standard manifests/paths that the pinned code can read.
 (
@@ -215,43 +291,6 @@ if [ "$MODE" = check ]; then
   echo "[check] offline model, dataset, prompt, and verifier contracts passed"
   exit 0
 fi
-
-mapfile -t GPU_NAMES < <(
-  timeout 20 nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || true
-)
-GPU_COUNT=${#GPU_NAMES[@]}
-H100_COUNT=$(printf '%s\n' "${GPU_NAMES[@]}" | grep -c H100 || true)
-[ "$GPU_COUNT" -eq 4 ] && [ "$H100_COUNT" -eq 4 ] || {
-  echo "[abort] exactly four H100 GPUs required (GPUs=$GPU_COUNT H100=$H100_COUNT)"
-  exit 1
-}
-
-LOCAL_ROOT="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
-local_path=$(realpath -m "$LOCAL_ROOT")
-shared_path=$(realpath -m "$GROUP_VOLUME")
-[[ "$local_path" != "$shared_path" && "$local_path" != "$shared_path/"* ]] || {
-  echo "[abort] OM_LOCAL_LOCK_DIR must be node-local"
-  exit 1
-}
-mkdir -p "$LOCAL_ROOT/olmo3-preflight" "$ROOT/logs"
-exec 8>"$LOCAL_ROOT/primary.lock"
-flock -n 8 || { echo "[abort] another experiment already owns this physical node"; exit 1; }
-
-memory=$(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits) || exit 1
-rows=$(printf '%s\n' "$memory" | awk 'NF {n++} END {print n+0}')
-busy=$(printf '%s\n' "$memory" | awk '$1 > 2000 {n++} END {print n+0}')
-[ "$rows" -eq 4 ] && [ "$busy" -eq 0 ] || {
-  echo "[abort] GPUs are already in use; refusing to overlap another experiment"
-  printf '%s\n' "$memory"
-  exit 1
-}
-
-HOST_TAG=$(hostname 2>/dev/null || printf node)
-WORKER_SUFFIX=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || printf '%s' "$$")
-WORKER_ID=$(printf '%s-%s' "$HOST_TAG" "$WORKER_SUFFIX" | tr -cs 'a-zA-Z0-9._-' '-')
-export WORKER_ID
-LOG="$ROOT/logs/$WORKER_ID.log"
-echo "[worker] id=$WORKER_ID root=$ROOT" | tee -a "$LOG"
 
 export MODEL_PATH OM_MATH_VERIFIER=math_verify OM_TOP_P=1.0 OM_THINKING=off
 export OM_ATTN=eager OM_SKIP_HYBRID=1 OM_LORA_TARGETS="$LORA_TARGETS" OM_GEN_BATCH=4
@@ -366,12 +405,10 @@ case "$CLAIM_YIELD_SECONDS" in
   ''|*[!0-9]*) echo "[abort] OM_RLZERO_CLAIM_YIELD_SECONDS must be a non-negative integer"; exit 2 ;;
 esac
 
-ACTIVE_OWNER=""
 cleanup_owner() {
   [ -z "$ACTIVE_OWNER" ] || rm -f -- "$ACTIVE_OWNER"
   ACTIVE_OWNER=""
 }
-trap 'cleanup_owner; exit 130' INT TERM HUP
 
 run_family() {
   local dataset=$1 seed=$2 root result format owner rc=1 attempt

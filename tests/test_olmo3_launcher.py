@@ -90,6 +90,10 @@ case "$script" in
       if [ "$1" = --output ]; then mkdir -p "$(dirname "$2")"; printf '{}\n' > "$2"; break; fi
       shift
     done ;;
+  *gpu_keepalive.py)
+    printf 'pid=%s gpus=4\n' "$$" > "$OM_GPU_KEEPALIVE_READY_FILE"
+    trap 'exit 0' TERM INT
+    while :; do /bin/sleep 1; done ;;
   *regime_map.py)
     while [ $# -gt 0 ]; do
       if [ "$1" = --output-dir ]; then
@@ -261,3 +265,13 @@ def test_launcher_shares_the_node_primary_lock_with_other_experiments(
     assert result.returncode != 0
     assert "another experiment already owns this physical node" in result.stdout
     assert not (Path(env["TEST_SHARED"]) / "work/claims").exists()
+
+
+def test_supervisor_keepalive_covers_preflight_and_point_transitions() -> None:
+    launcher = (ROOT / "scripts/run_olmo3_rlzero.sh").read_text()
+    point = (ROOT / "scripts/run_point.sh").read_text()
+    start = launcher.index('OM_GPU_KEEPALIVE_READY_FILE="$KEEPALIVE_READY"')
+    signal = launcher.index("signal_qualify()")
+    assert start < signal
+    assert "export OM_EXTERNAL_GPU_KEEPALIVE=1" in launcher
+    assert 'if [ "${OM_EXTERNAL_GPU_KEEPALIVE:-0}" = "1" ]' in point
