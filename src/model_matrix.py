@@ -27,6 +27,7 @@ DOWNLOAD_PATTERNS = [
     "tokenizer_config.json",
     "merges.txt",
     "vocab.json",
+    "chat_template.jinja",
 ]
 
 EXPERIMENT_FIELDS = {
@@ -70,6 +71,15 @@ GRPO_FIELDS = {
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git_blob_sha1(path: Path) -> str:
+    digest = hashlib.sha1(usedforsecurity=False)
+    digest.update(f"blob {path.stat().st_size}\0".encode())
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
@@ -226,11 +236,27 @@ def _load_specs(config_path: Path) -> dict[str, dict]:
             isinstance(target, str) and target for target in targets
         ):
             raise ValueError(f"{key}: lora_targets must be a non-empty string list")
+        formatter = spec.get("prompt_format", "tokenizer_chat")
+        if formatter not in {"tokenizer_chat", "olmo_rlzero"}:
+            raise ValueError(f"{key}: unsupported prompt_format={formatter!r}")
     return specs
 
 
 def _snapshot_path(spec: dict, models_dir: Path) -> Path:
     return models_dir / spec["local_directory"]
+
+
+def _require_runtime(spec: dict) -> None:
+    if spec.get("model_type") != "olmo3":
+        return
+    from packaging.version import Version
+    from transformers import __version__ as transformers_version
+
+    if Version(transformers_version) < Version("4.57.0"):
+        raise ValueError(
+            f"{spec['key']}: OLMo-3 requires transformers>=4.57.0, "
+            f"found {transformers_version}; update the shared venv before GPU allocation"
+        )
 
 
 def _weight_shards(path: Path) -> list[Path]:
@@ -263,6 +289,7 @@ def _manifest_files(path: Path, shards: list[Path]) -> list[Path]:
         "tokenizer.model",
         "merges.txt",
         "vocab.json",
+        "chat_template.jinja",
     ):
         candidate = path / optional
         if candidate.is_file():
@@ -316,17 +343,17 @@ def _check_snapshot(spec: dict, path: Path) -> dict:
         raise ValueError(f"{spec['key']}: snapshot provenance mismatch")
     _verify_file_records(path, manifest.get("files"))
 
-    tokenizer_config = json.loads((path / "tokenizer_config.json").read_text(encoding="utf-8"))
-    if not tokenizer_config.get("chat_template"):
-        raise ValueError(f"{spec['key']}: tokenizer chat_template missing")
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
-    rendered = tokenizer.apply_chat_template(
-        [{"role": "user", "content": "Reply with OK."}],
-        add_generation_prompt=True,
-        tokenize=True,
-    )
-    if not rendered or not all(isinstance(token, int) for token in rendered):
-        raise ValueError(f"{spec['key']}: tokenizer chat template produced no token IDs")
+    if spec.get("prompt_format", "tokenizer_chat") == "tokenizer_chat":
+        if not getattr(tokenizer, "chat_template", None):
+            raise ValueError(f"{spec['key']}: tokenizer chat_template missing")
+        rendered = tokenizer.apply_chat_template(
+            [{"role": "user", "content": "Reply with OK."}],
+            add_generation_prompt=True,
+            tokenize=True,
+        )
+        if not rendered or not all(isinstance(token, int) for token in rendered):
+            raise ValueError(f"{spec['key']}: tokenizer chat template produced no token IDs")
     config = AutoConfig.from_pretrained(path, local_files_only=True)
     if config.model_type != spec["model_type"]:
         raise ValueError(
@@ -354,6 +381,7 @@ def _check_snapshot(spec: dict, path: Path) -> dict:
         "weight_shards": len(shards),
         "weight_bytes": weight_bytes,
         "lora_targets": spec["lora_targets"],
+        "prompt_format": spec.get("prompt_format", "tokenizer_chat"),
     }
 
 
@@ -369,6 +397,54 @@ def _write_manifest(spec: dict, path: Path) -> None:
     target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
+def _seal_local_snapshot(spec: dict, path: Path) -> dict:
+    """Seal a Hub ``local_dir`` download without making a network request."""
+    shards = _weight_shards(path)
+    files = _manifest_files(path, shards)
+    metadata_root = path / ".cache" / "huggingface" / "download"
+    missing: list[str] = []
+    wrong: list[str] = []
+    corrupt: list[str] = []
+    for file in files:
+        relative = file.relative_to(path)
+        metadata = metadata_root / f"{relative}.metadata"
+        try:
+            lines = metadata.read_text(encoding="utf-8").splitlines()
+            revision, etag = lines[0], lines[1]
+        except (OSError, IndexError):
+            missing.append(str(relative))
+            continue
+        if revision != spec["revision"]:
+            wrong.append(f"{relative}={revision}")
+        if re.fullmatch(r"[0-9a-f]{64}", etag):
+            valid_content = _sha256(file) == etag
+        elif re.fullmatch(r"[0-9a-f]{40}", etag):
+            valid_content = _git_blob_sha1(file) == etag
+        else:
+            valid_content = False
+        if not valid_content:
+            corrupt.append(str(relative))
+    if missing or wrong or corrupt:
+        detail = []
+        if missing:
+            detail.append("missing metadata: " + ", ".join(missing[:5]))
+        if wrong:
+            detail.append("revision mismatch: " + ", ".join(wrong[:5]))
+        if corrupt:
+            detail.append("content hash mismatch: " + ", ".join(corrupt[:5]))
+        raise ValueError(
+            f"{spec['key']}: cannot prove local Hub revision ({'; '.join(detail)})"
+        )
+
+    manifest = path / ".om_snapshot.json"
+    _write_manifest(spec, path)
+    try:
+        return _check_snapshot(spec, path)
+    except Exception:
+        manifest.unlink(missing_ok=True)
+        raise
+
+
 def _download(spec: dict, models_dir: Path) -> dict:
     from huggingface_hub import snapshot_download
 
@@ -377,6 +453,11 @@ def _download(spec: dict, models_dir: Path) -> dict:
         return _check_snapshot(spec, destination)
     except (OSError, ValueError, json.JSONDecodeError):
         pass
+    if destination.is_dir():
+        try:
+            return _seal_local_snapshot(spec, destination)
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
 
     models_dir.mkdir(parents=True, exist_ok=True)
     downloads = models_dir / ".downloads"
@@ -414,13 +495,20 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--models-dir", type=Path, default=os.environ.get("MODELS_DIR"))
+    parser.add_argument(
+        "--snapshot-path",
+        type=Path,
+        help="exact local path override for a single check/seal/field operation",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("check", "download"):
+    for command in ("check", "download", "seal"):
         p = sub.add_parser(command)
         p.add_argument("models", nargs="*")
     p = sub.add_parser("field")
     p.add_argument("model")
-    p.add_argument("name", choices=["path", "lora_targets", "repository", "revision"])
+    p.add_argument(
+        "name", choices=["path", "lora_targets", "repository", "revision", "prompt_format"]
+    )
     p = sub.add_parser("experiment-field")
     p.add_argument("name", choices=sorted(EXPERIMENT_FIELDS))
     p = sub.add_parser("dataset-n-train")
@@ -466,20 +554,30 @@ def main() -> None:
     if args.command == "field":
         spec = specs[args.model]
         if args.name == "path":
-            print(_snapshot_path(spec, args.models_dir))
+            print(args.snapshot_path or _snapshot_path(spec, args.models_dir))
         elif args.name == "lora_targets":
             print(",".join(spec["lora_targets"]))
+        elif args.name == "prompt_format":
+            print(spec.get("prompt_format", "tokenizer_chat"))
         else:
             print(spec[args.name])
         return
 
+    if args.snapshot_path is not None and len(models) != 1:
+        parser.error("--snapshot-path requires exactly one selected model")
+    if args.snapshot_path is not None and args.command == "download":
+        parser.error("--snapshot-path is supported by check/seal, not download")
+    for key in models:
+        _require_runtime(specs[key])
     for key in models:
         spec = specs[key]
-        result = (
-            _download(spec, args.models_dir)
-            if args.command == "download"
-            else _check_snapshot(spec, _snapshot_path(spec, args.models_dir))
-        )
+        snapshot_path = args.snapshot_path or _snapshot_path(spec, args.models_dir)
+        if args.command == "download":
+            result = _download(spec, args.models_dir)
+        elif args.command == "seal":
+            result = _seal_local_snapshot(spec, snapshot_path)
+        else:
+            result = _check_snapshot(spec, snapshot_path)
         print(
             f"[{args.command}] {key}: {result['model_type']} "
             f"{result['weight_shards']} shards {result['weight_bytes'] / 1e9:.1f} GB "

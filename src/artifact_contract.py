@@ -154,6 +154,15 @@ def validate_generation_contract(
             raise ValueError(f"{path.name}: generation contract mismatch: {mismatches}")
         if not document.get("eos_token_ids"):
             raise ValueError(f"{path.name}: eos_token_ids are missing")
+        expected_prompt_format = config.get("prompt_format", "tokenizer_chat")
+        recorded_prompt_format = document.get("prompt_format")
+        # Rollouts created before the prompt contract was recorded used the
+        # tokenizer chat template exclusively. Keep those immutable artifacts
+        # readable while requiring an explicit binding for every new format.
+        if recorded_prompt_format is None and "prompt_format" not in config:
+            recorded_prompt_format = "tokenizer_chat"
+        if recorded_prompt_format != expected_prompt_format:
+            raise ValueError(f"{path.name}: prompt format binding mismatch")
         recorded_model = Path(str(document.get("model_name_or_path", ""))).name
         if not expected_model or recorded_model != expected_model:
             raise ValueError(

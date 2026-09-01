@@ -240,6 +240,7 @@ expected = {
     "topk_frac": float(os.environ.get("REGIME_TOPK_FRAC", "0.10")),
     "top_p": float(os.environ.get("OM_TOP_P", "1.0")),
     "thinking": os.environ.get("OM_THINKING", "off"),
+    "prompt_format": os.environ.get("OM_PROMPT_FORMAT", "tokenizer_chat"),
     "attn": os.environ.get("OM_ATTN", "eager"),
     "lora_targets": os.environ.get("OM_LORA_TARGETS"),
     "skip_hybrid": os.environ.get("OM_SKIP_HYBRID", "1"),
@@ -342,6 +343,7 @@ validate_policy_lineage(
     expected_model=Path(os.environ["MODEL_PATH"]),
     expected_seed=int(os.environ["SEED"]),
     expected_max_new_tokens=int(os.environ.get("REGIME_MAX_NEW_TOKENS", "512")),
+    expected_prompt_format=os.environ.get("OM_PROMPT_FORMAT", "tokenizer_chat"),
     expected_config=vars(config),
     expected_prompts=Path(sys.argv[1]).parent / "prompts.json",
 )
@@ -654,6 +656,14 @@ while :; do
     exit 1
   fi
 done
+
+# A suite-level supervisor may own aggregation across multiple isolated family
+# roots. Each family has already passed run_complete above; avoid publishing an
+# underpowered one-seed report and let the suite collect the full matrix once.
+if [ "${REGIME_SKIP_COLLECTION:-0}" = 1 ]; then
+  echo "== regime family complete; suite-level collection deferred"
+  exit 0
+fi
 
 # Aggregate publication is serialized across workers. Machine outputs are
 # JSON/CSV; the sole human-facing output is FINAL_REPORT.md.

@@ -105,7 +105,9 @@ def trim_row(r: dict, eos_ids=None) -> dict:
     return r
 
 
-def resolved_manifest(model, tok, kwargs: dict) -> dict:
+def resolved_manifest(
+    model, tok, kwargs: dict, *, prompt_format: str | None = None
+) -> dict:
     """실제 적용될 생성 설정 스냅샷 — 명시 인자 + 모델 generation_config 원본."""
     gc = getattr(model, "generation_config", None)
     keys = ("do_sample", "temperature", "top_p", "top_k", "min_p",
@@ -122,6 +124,7 @@ def resolved_manifest(model, tok, kwargs: dict) -> dict:
         "model_name_or_path": getattr(getattr(model, "config", None),
                                       "_name_or_path", None),
         "policy_adapter": getattr(model, "_om_policy_adapter", None),
+        "prompt_format": prompt_format,
         "contract": ("sampling = raw softmax + temperature/top_p만 적용; "
                      "explicit_kwargs가 generation_config를 덮는다. "
                      "응답 구간 = [resp_start, resp_end), 첫 EOS 포함."),

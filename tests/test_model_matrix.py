@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from model_matrix import (
     _file_records,
     _load_config,
+    _seal_local_snapshot,
     _verify_file_records,
     _weight_shards,
 )
@@ -124,3 +128,45 @@ def test_rloo_config_is_sequence_level_and_single_epoch() -> None:
     assert experiment["datasets"] == ["gsm8k", "mbpp"]
     assert experiment["grpo"]["epochs_per_batch"] == 1
     assert len(config["models"]) == 2
+
+
+def test_local_hub_snapshot_can_only_be_sealed_from_exact_revision_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    revision = "a" * 40
+    spec = {
+        "key": "model",
+        "repository": "owner/model",
+        "revision": revision,
+        "lora_targets": ["q_proj"],
+    }
+    (tmp_path / "config.json").write_text("{}\n")
+    (tmp_path / "tokenizer_config.json").write_text("{}\n")
+    (tmp_path / "model.safetensors").write_bytes(b"weights")
+    metadata = tmp_path / ".cache/huggingface/download"
+    metadata.mkdir(parents=True)
+    for name in ("config.json", "tokenizer_config.json", "model.safetensors"):
+        digest = hashlib.sha256((tmp_path / name).read_bytes()).hexdigest()
+        (metadata / f"{name}.metadata").write_text(f"{revision}\n{digest}\n0\n")
+
+    monkeypatch.setattr(
+        "model_matrix._check_snapshot",
+        lambda model_spec, path: {"revision": model_spec["revision"], "path": str(path)},
+    )
+    result = _seal_local_snapshot(spec, tmp_path)
+    assert result["revision"] == revision
+    manifest = json.loads((tmp_path / ".om_snapshot.json").read_text())
+    assert manifest["revision"] == revision
+    assert set(manifest["files"]) == {
+        "config.json",
+        "model.safetensors",
+        "tokenizer_config.json",
+    }
+
+    (tmp_path / ".om_snapshot.json").unlink()
+    digest = hashlib.sha256((tmp_path / "model.safetensors").read_bytes()).hexdigest()
+    (metadata / "model.safetensors.metadata").write_text(
+        f"{'b' * 40}\n{digest}\n0\n"
+    )
+    with pytest.raises(ValueError, match="revision mismatch"):
+        _seal_local_snapshot(spec, tmp_path)

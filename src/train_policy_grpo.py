@@ -24,7 +24,7 @@ import torch.distributed as dist
 from artifact_contract import sha256_file
 from compact_artifacts import compact_adapter
 from data import reward
-from rollout import SAMPLING, _lora_targets, chat_ids, load_model
+from rollout import SAMPLING, _lora_targets, chat_ids, load_model, prompt_format
 from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 
 POLICY_SCHEMA = "offpolicy-rlvr-policy/v1"
@@ -330,6 +330,7 @@ def validate_policy_lineage(
     expected_model: Path | None = None,
     expected_seed: int | None = None,
     expected_max_new_tokens: int | None = None,
+    expected_prompt_format: str | None = None,
     expected_config: dict | None = None,
     expected_prompts: Path | None = None,
     require_complete_hashes: bool = False,
@@ -382,6 +383,8 @@ def validate_policy_lineage(
         run_expected["seed"] = expected_seed
     if expected_max_new_tokens is not None:
         run_expected["max_new_tokens"] = expected_max_new_tokens
+    if expected_prompt_format is not None:
+        run_expected["prompt_format"] = expected_prompt_format
     if expected_config is not None:
         run_expected["config"] = expected_config
         run_expected["samples_per_step"] = world_size * int(
@@ -461,6 +464,7 @@ def _checkpoint_contract(
         "target_steps": args.target_steps,
         "prompts_sha256": sha256_file(Path(args.prompts)),
         "max_new_tokens": args.max_new_tokens,
+        "prompt_format": prompt_format(),
         "resume_adapter": (
             str(Path(args.resume_adapter).resolve()) if args.resume_adapter else None
         ),
@@ -600,6 +604,7 @@ def train(args: argparse.Namespace) -> None:
             expected_model=Path(args.model),
             expected_seed=args.seed,
             expected_max_new_tokens=args.max_new_tokens,
+            expected_prompt_format=prompt_format(),
             expected_config=asdict(config),
             expected_prompts=Path(args.prompts),
             require_complete_hashes=True,
@@ -885,6 +890,7 @@ def train(args: argparse.Namespace) -> None:
                 "completed_steps": args.target_steps,
                 "samples_per_step": world_size * config.group_size,
                 "max_new_tokens": args.max_new_tokens,
+                "prompt_format": prompt_format(),
                 "seed": args.seed,
                 "config": asdict(config),
                 "advantage_normalization": advantage_normalization_for_objective(
@@ -910,6 +916,7 @@ def train(args: argparse.Namespace) -> None:
                 expected_model=Path(args.model),
                 expected_seed=args.seed,
                 expected_max_new_tokens=args.max_new_tokens,
+                expected_prompt_format=prompt_format(),
                 expected_config=asdict(config),
                 expected_prompts=Path(args.prompts),
                 require_complete_hashes=True,

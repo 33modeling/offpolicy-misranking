@@ -26,6 +26,7 @@ MATCHED_CONFIG = (
     "temperature",
     "top_p",
     "thinking",
+    "prompt_format",
 )
 
 PROMPT_REBUILD_EXIT = 42

@@ -514,9 +514,15 @@ def build_user_msg(question: str) -> str:
 
 
 ANSWER_RE = re.compile(r"####\s*([^\n]+)")
+ANSWER_LINE_RE = re.compile(r"(?im)^\s*Answer:\s*(.+?)\s*$")
 
 
 def extract_answer(text: str) -> str | None:
+    # OLMo 3 RL-Zero's released math template requires a final ``Answer:`` line.
+    # Use the last such line so reasoning that mentions the format cannot win.
+    answer_lines = ANSWER_LINE_RE.findall(text)
+    if answer_lines:
+        return answer_lines[-1].strip().rstrip(".").replace(",", "").replace("$", "")
     m = ANSWER_RE.search(text)
     if m:
         return m.group(1).strip().rstrip(".").replace(",", "").replace("$", "")
@@ -526,7 +532,13 @@ def extract_answer(text: str) -> str | None:
 
 
 def _extract_code(text: str) -> str:
-    m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
+    # Accept both conventional ```python and the literal ```\npython spelling
+    # shown in the released OLMo 3 RL-Zero code prompt.
+    m = re.search(r"```[ \t]*python[ \t]*\n(.*?)```", text, re.DOTALL)
+    if not m:
+        m = re.search(r"```[ \t]*\n[ \t]*python[ \t]*\n(.*?)```", text, re.DOTALL)
+    if not m:
+        m = re.search(r"```[ \t]*\n(.*?)```", text, re.DOTALL)
     if m:
         return m.group(1)
     i = text.find("def ")

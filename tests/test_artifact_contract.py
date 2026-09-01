@@ -133,6 +133,30 @@ def test_legacy_manifest_is_hashed_at_validation_time():
         assert result["artifact_sha256"]
 
 
+def test_explicit_prompt_format_is_bound_but_legacy_chat_artifacts_still_load():
+    with tempfile.TemporaryDirectory() as tmp:
+        run = Path(tmp)
+        make_run(run)
+        validate_generation_contract(run)
+
+        config_path = run / "run_config.json"
+        config = json.loads(config_path.read_text())
+        config["prompt_format"] = "olmo_rlzero_math"
+        config_path.write_text(json.dumps(config))
+        try:
+            validate_generation_contract(run)
+        except ValueError as exc:
+            assert "prompt format binding mismatch" in str(exc)
+        else:
+            raise AssertionError("unbound OLMo prompt format must be rejected")
+
+        for manifest_path in run.glob("rollouts_*.manifest.json"):
+            manifest = json.loads(manifest_path.read_text())
+            manifest["prompt_format"] = "olmo_rlzero_math"
+            manifest_path.write_text(json.dumps(manifest))
+        validate_generation_contract(run)
+
+
 def test_merged_rollouts_must_match_bound_shards():
     with tempfile.TemporaryDirectory() as tmp:
         run = Path(tmp)

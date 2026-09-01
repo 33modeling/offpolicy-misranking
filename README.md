@@ -4,6 +4,28 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+## Clean OLMo-3 Restart
+
+The clean causal experiment starts from the raw, non-SFT
+`allenai/Olmo-3-1025-7B` base checkpoint and uses verifier-reward GRPO on
+MATH-500 and MBPP. On each of the three new 4xH100 nodes:
+
+```bash
+git pull
+bash scripts/run_olmo3_rlzero.sh run
+```
+
+The command performs all offline model/data checks, real reward-signal
+qualification, a four-GPU GRPO update, and checkpoint-resume smoke before it
+claims long work. Prepare missing public snapshots once from a machine with the
+same shared volume using `bash scripts/run_olmo3_rlzero.sh prepare`. Inspect the
+shared queue with `bash scripts/run_olmo3_rlzero.sh status`.
+
+This restart has disjoint run/result roots and does not consume artifacts from
+the Qwen or additional-study matrices. See
+[`docs/OLMO3_RLZERO_RUNBOOK.md`](docs/OLMO3_RLZERO_RUNBOOK.md) for its immutable
+model/data contract, family assignment, restart behavior, and completion checks.
+
 ## Run
 
 On each of the three independent 4xH100 nodes, after pulling the same commit:
@@ -147,6 +169,7 @@ for the SFT substitution root-cause record.
 ## Scripts
 
 - `run_rlvr.sh`: canonical Qwen primary/scale-replication entry point.
+- `run_olmo3_rlzero.sh`: clean raw OLMo-3 base RL-Zero restart.
 - `run_additional_experiments.sh`: wait for primary, then run all additions.
 - `run_matrix.sh`: shared multi-node family queue and retry supervisor.
 - `run_point.sh`: one training/evaluation point.

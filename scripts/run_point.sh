@@ -286,6 +286,7 @@ config = {
     "radius_mode": os.environ.get("RADIUS_MODE", "gaussian"),
     "top_p": float(os.environ.get("OM_TOP_P", "1.0")),
     "thinking": os.environ.get("OM_THINKING", "off"),
+    "prompt_format": os.environ.get("OM_PROMPT_FORMAT", "tokenizer_chat"),
     "attn": os.environ.get("OM_ATTN", "eager"),
     "gen_batch": os.environ.get("OM_GEN_BATCH"),
     "lora_targets": os.environ.get("OM_LORA_TARGETS"),
