@@ -257,16 +257,31 @@ if [ "$GENERATION_GIT" != "$CURRENT_GIT" ]; then
   mkdir -p "$PIPELINE_CACHE"
   (
     flock 9
-    if [ ! -e "$GENERATION_REPO" ]; then
-      git -C "$SUPERVISOR_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
-        echo "[abort] pinned generation commit is unavailable locally: $GENERATION_GIT" >&2
-        exit 1
-      }
-      git -C "$SUPERVISOR_REPO" worktree add -f --detach "$GENERATION_REPO" \
+    git -C "$SUPERVISOR_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
+      echo "[abort] pinned generation commit is unavailable locally: $GENERATION_GIT" >&2
+      exit 1
+    }
+    cached_git=$(git -C "$GENERATION_REPO" rev-parse HEAD 2>/dev/null || true)
+    cached_dirty=invalid
+    if [ "$cached_git" = "$GENERATION_GIT" ]; then
+      cached_dirty=$(git -C "$GENERATION_REPO" status --porcelain \
+        -- src scripts configs 2>/dev/null || printf invalid)
+    fi
+    if [ "$cached_git" != "$GENERATION_GIT" ] || [ -n "$cached_dirty" ]; then
+      if [ -e "$GENERATION_REPO" ] || [ -L "$GENERATION_REPO" ]; then
+        stale="$PIPELINE_CACHE/.stale-$GENERATION_GIT-$(date +%s)-$$"
+        mv -- "$GENERATION_REPO" "$stale" || exit 1
+        echo "[worktree] invalid cache quarantined: $stale" >&2
+      fi
+      git -C "$SUPERVISOR_REPO" worktree prune --expire now || exit 1
+      # Two -f flags also override a stale registration that was left locked.
+      git -C "$SUPERVISOR_REPO" worktree add -f -f --detach "$GENERATION_REPO" \
         "$GENERATION_GIT" >&2 || exit 1
     fi
-    [ "$(git -C "$GENERATION_REPO" rev-parse HEAD)" = "$GENERATION_GIT" ] || exit 1
-    [ -z "$(git -C "$GENERATION_REPO" status --porcelain -- src scripts configs)" ] || exit 1
+    [ "$(git -C "$GENERATION_REPO" rev-parse HEAD 2>/dev/null)" = "$GENERATION_GIT" ] \
+      || { echo "[abort] pinned worktree HEAD mismatch after repair" >&2; exit 1; }
+    [ -z "$(git -C "$GENERATION_REPO" status --porcelain -- src scripts configs)" ] \
+      || { echo "[abort] pinned worktree remains dirty after repair" >&2; exit 1; }
   ) 9>"$PIPELINE_CACHE/.worktree.lock" || exit 1
 fi
 GENERATION_CONFIG="$GENERATION_REPO/configs/olmo3_rlzero.json"

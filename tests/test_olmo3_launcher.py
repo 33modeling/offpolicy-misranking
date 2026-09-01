@@ -228,6 +228,22 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
         ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
     ).strip() != first_commit
 
+    # Reproduce an interrupted node-local cache: Git still has a locked
+    # registration while the path was replaced by a non-worktree directory.
+    pipeline = Path(env["OM_PIPELINE_CACHE"]) / first_commit
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(pipeline), first_commit],
+        cwd=checkout,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "worktree", "lock", str(pipeline)], cwd=checkout, check=True
+    )
+    shutil.rmtree(pipeline)
+    pipeline.mkdir()
+    (pipeline / "interrupted-cache").write_text("stale\n")
+
     resumed = subprocess.run(
         ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
         cwd=checkout,
@@ -275,4 +291,4 @@ def test_supervisor_keepalive_covers_preflight_and_point_transitions() -> None:
     assert start < signal
     assert "export OM_EXTERNAL_GPU_KEEPALIVE=1" in launcher
     assert 'if [ "${OM_EXTERNAL_GPU_KEEPALIVE:-0}" = "1" ]' in point
-    assert 'worktree add -f --detach' in launcher
+    assert 'worktree add -f -f --detach' in launcher
