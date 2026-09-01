@@ -408,6 +408,73 @@ def check_disagreement_accompanies_double_flip(samples: int = 50_000) -> None:
     assert violations == 0, f"이중 반전+일치 사례 {violations}건 — T2 방어 재검토 필요"
 
 
+def check_measurement_ceiling_table(
+    *, seed: int = 20_260_820, replicates: int = 20_000
+) -> None:
+    """Reproduce the manuscript's Gaussian split-half/ceiling lookup table."""
+    import numpy as np
+
+    n, k, chunk = 512, 51, 1_000
+    correlations = (0.02, 0.05, 0.10, 0.12, 0.20, 0.40, 0.60)
+    expected = (
+        (0.106, 0.170),
+        (0.115, 0.219),
+        (0.133, 0.280),
+        (0.140, 0.300),
+        (0.171, 0.373),
+        (0.266, 0.516),
+        (0.389, 0.638),
+    )
+    rng = np.random.default_rng(seed)
+    observed = []
+    max_standard_error = 0.0
+    for rho_half in correlations:
+        rho_full = 2.0 * rho_half / (1.0 + rho_half)
+        ceiling_correlation = math.sqrt(rho_full)
+        half_overlaps = []
+        ceiling_overlaps = []
+        completed = 0
+        while completed < replicates:
+            draws = min(chunk, replicates - completed)
+            latent = rng.standard_normal((draws, n))
+            half = rho_half * latent + math.sqrt(1.0 - rho_half**2) * (
+                rng.standard_normal((draws, n))
+            )
+            reference = ceiling_correlation * latent + math.sqrt(
+                1.0 - ceiling_correlation**2
+            ) * rng.standard_normal((draws, n))
+            latent_top = np.argpartition(latent, -k, axis=1)[:, -k:]
+            half_top = np.argpartition(half, -k, axis=1)[:, -k:]
+            reference_top = np.argpartition(reference, -k, axis=1)[:, -k:]
+            latent_mask = np.zeros((draws, n), dtype=bool)
+            half_mask = np.zeros((draws, n), dtype=bool)
+            reference_mask = np.zeros((draws, n), dtype=bool)
+            np.put_along_axis(latent_mask, latent_top, True, axis=1)
+            np.put_along_axis(half_mask, half_top, True, axis=1)
+            np.put_along_axis(reference_mask, reference_top, True, axis=1)
+            half_overlaps.append((latent_mask & half_mask).sum(axis=1) / k)
+            ceiling_overlaps.append((latent_mask & reference_mask).sum(axis=1) / k)
+            completed += draws
+        half_values = np.concatenate(half_overlaps)
+        ceiling_values = np.concatenate(ceiling_overlaps)
+        max_standard_error = max(
+            max_standard_error,
+            float(half_values.std(ddof=1) / math.sqrt(replicates)),
+            float(ceiling_values.std(ddof=1) / math.sqrt(replicates)),
+        )
+        row = (
+            round(float(half_values.mean()), 3),
+            round(float(ceiling_values.mean()), 3),
+        )
+        observed.append(row)
+    assert tuple(observed) == expected, (tuple(observed), expected)
+    assert max_standard_error < 5e-4, max_standard_error
+    print(
+        "[measurement-ceiling] 20k-replicate table reproduced "
+        f"(n={n}, k={k}, seed={seed}, max_se={max_standard_error:.6f})"
+    )
+
+
 def report_cells() -> None:
     print("ε     example        KL      gπ       g00      g10      g01      g11     KL/ε²")
     for epsilon in (0.4, 0.1, 0.01, 0.001):
@@ -429,17 +496,15 @@ def main() -> None:
     check_leave_one_out_unbiasedness()
     check_angular_radius()
     check_disagreement_accompanies_double_flip()
+    check_measurement_ceiling_table()
+    check_groupnorm_general_k()
     report_cells()
     print(
         "PASS: sign reversals, indistinguishable pools(+enumerated), IS cells, "
         "relative error -1, ranking flip, "
-        "K=2/4/8 normalization, LOO unbiasedness, "
+        "K=2..1024 normalization, LOO unbiasedness, measurement ceiling, "
         "confidence-ball angular radius, and double-flip⇒disagreement (50k)"
     )
-
-
-if __name__ == "__main__":
-    main()
 
 
 # ---- 일반 K 그룹 정규화 검증 (T3, PAPER_REVIEW §3) ----------------------
@@ -470,4 +535,4 @@ def check_groupnorm_general_k() -> None:
 
 
 if __name__ == "__main__":
-    check_groupnorm_general_k()
+    main()
