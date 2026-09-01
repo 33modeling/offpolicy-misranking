@@ -224,3 +224,20 @@ def test_prepare_mode_needs_neither_primary_lock_nor_gpus(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stdout + result.stderr
     assert "snapshots prepared and qualified" in result.stdout
     assert not (Path(env["TEST_WORK"]) / "phases").exists()
+
+
+def test_run_mode_never_enters_snapshot_download(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    env.pop("ADDITIONAL_SKIP_PROVISION")
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_additional_experiments.sh"],
+        cwd=root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "unexpected model_matrix args" not in result.stdout + result.stderr
+    assert len((Path(env["TEST_WORK"]) / "phases").read_text().splitlines()) == 6

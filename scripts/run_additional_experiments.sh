@@ -31,6 +31,12 @@ case "$MODE" in
   --prepare|--run) ;;
   *) echo "usage: $0 [--prepare|--run]"; exit 2 ;;
 esac
+if [ "$MODE" = "--run" ]; then
+  # Compute clusters are security-isolated. Never attempt Hub discovery,
+  # authentication, or download from a paid GPU run.
+  export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+  export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+fi
 for config in "${MATRIX_CONFIGS[@]}"; do
   [ -s "$config" ] || { echo "[abort] additional config missing: $config"; exit 1; }
 done
@@ -69,17 +75,24 @@ provision_registered_snapshots() {
 
   # Model and data destinations are shared. Only one node writes; the other
   # nodes subsequently hash-check the immutable snapshots.
+  echo "[additional] waiting for shared snapshot preparation lock"
   exec 7>"$OM_WORK/locks/additional-provision.lock"
   flock 7
+  echo "[additional] preparing pinned snapshots (network allowed only in --prepare)"
   export OM_ONLINE=1
   unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE
+  export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+  export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-15}"
+  export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-60}"
   mapfile -t model_keys < <(
     "$PY" src/model_matrix.py --config "$config" list-models
   )
   datasets=$(matrix_field "$config" datasets)
-  "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
-    download "${model_keys[@]}"
-  bash scripts/fetch_datasets.sh $datasets
+  timeout "${ADDITIONAL_FETCH_TIMEOUT:-7200}" \
+    "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
+      download "${model_keys[@]}"
+  timeout "${ADDITIONAL_FETCH_TIMEOUT:-7200}" \
+    bash scripts/fetch_datasets.sh $datasets
   flock -u 7
   exec 7>&-
 }
@@ -156,7 +169,9 @@ wait_for_gpu_release() {
   return 1
 }
 wait_for_gpu_release || { echo "[abort] four GPUs did not become idle"; exit 1; }
-provision_registered_snapshots
+
+# Snapshot acquisition is an explicit --prepare operation. Run mode never
+# enters Hugging Face download/auth on the security-isolated compute clusters.
 
 run_phase() {
   local log=$1 name=$2 restarts=0 rc=0
