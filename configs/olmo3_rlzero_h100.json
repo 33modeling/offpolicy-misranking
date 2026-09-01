@@ -39,6 +39,7 @@
     "first_bootstrap": 10000,
     "runtime": {
       "generation_batch": 8,
+      "gradient_micro_batch": 4,
       "logprob_micro_batch": 4,
       "gradient_checkpointing": true
     },

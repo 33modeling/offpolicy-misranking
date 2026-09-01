@@ -278,6 +278,7 @@ config = {
     "grpo_lora_alpha": env_int("GRPO_LORA_ALPHA", 32),
     "grpo_logprob_micro_batch": env_int("GRPO_LOGPROB_MICRO_BATCH", 1),
     "grpo_gradient_checkpointing": os.environ.get("GRPO_GRADIENT_CHECKPOINTING", "1"),
+    "gradient_micro_batch": env_int("GRADIENT_MICRO_BATCH", 1),
     "grpo_start_step": env_int("OM_GRPO_START_STEP", 0),
     "grpo_resume_adapter": os.environ.get("OM_GRPO_RESUME_ADAPTER"),
     "max_new_tokens": env_int("MAX_NEW_TOKENS", 512),
@@ -332,7 +333,8 @@ PYEOF
 COMMON=(--run "$OUT_ROOT" --model "$MODEL_PATH" --dataset "$DATASET"
         --behavior-k "${BEHAVIOR_K:-8}" --fresh-k "${FRESH_K:-16}"
         --val-k "${VAL_K:-8}" --micro-group "${MICRO_GROUP:-4}"
-        --hybrid-prompts "${HYBRID_PROMPTS:-24}" --micro-batch 1
+        --hybrid-prompts "${HYBRID_PROMPTS:-24}"
+        --micro-batch "${GRADIENT_MICRO_BATCH:-1}"
         --n-train "${N_TRAIN:-256}" --n-val "${N_VAL:-50}" --seed "${SEED:-0}"
         --max-new-tokens "${MAX_NEW_TOKENS:-512}" --proj-dim "${PROJ_DIM:-4096}"
         --grad-layers "${GRAD_LAYERS:-4}" --clip-cap "${CLIP_CAP:-10.0}"

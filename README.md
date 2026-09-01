@@ -44,7 +44,8 @@ bash scripts/run_olmo3_rlzero.sh run h100
 The `h100` profile preserves the model, datasets, seeds, checkpoints, GRPO
 groups, and optimizer contract. It changes only execution batching: rollout
 generation uses batches of eight and response log-probability passes use
-micro-batches of four. Its artifacts go to the separate
+micro-batches of four. Projected-gradient scoring also batches four stored
+responses per forward pass. Its artifacts go to the separate
 `...-grpo-h100-v2` root, and every GRPO step records throughput plus peak GPU
 memory so the profile can be measured before any further tuning.
 

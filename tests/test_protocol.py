@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -20,7 +22,12 @@ from experiment import (
     score_oracle_microgroups,
     split_validation_directions,
 )
-from grads import ProjectionSpec, prompt_gradient
+from grads import (
+    ProjectionSpec,
+    prompt_gradient,
+    sequence_logprobs,
+    sequence_logprobs_batch,
+)
 from hybrid import (
     _cut_prefixes,
     continue_rollouts_batch,
@@ -116,6 +123,61 @@ def test_gradient_rejects_response_weight_truncation():
         prompt_gradient(
             None, [], sequences, [torch.ones(1)], ProjectionSpec(dim=4)
         )
+
+
+class ToyGradientModel(torch.nn.Module):
+    def __init__(self, vocab_size: int = 19):
+        super().__init__()
+        self.embedding = torch.nn.Embedding(vocab_size, vocab_size)
+
+    @property
+    def device(self):
+        return self.embedding.weight.device
+
+    def forward(self, input_ids, attention_mask=None):
+        assert attention_mask is not None
+        return SimpleNamespace(logits=self.embedding(input_ids))
+
+
+def test_batched_gradient_and_logprob_paths_match_single_sequence_execution():
+    torch.manual_seed(17)
+    single_model = ToyGradientModel()
+    batch_model = copy.deepcopy(single_model)
+    sequences = [
+        {"input_ids": torch.tensor([1, 2, 3, 4, 5]), "resp_start": 2},
+        {"input_ids": torch.tensor([1, 6, 7, 8, 9, 10]), "resp_start": 3},
+        {"input_ids": torch.tensor([1, 11, 12, 13]), "resp_start": 2},
+    ]
+    weights = [
+        torch.linspace(0.2, 0.6, sequence["input_ids"].numel() - sequence["resp_start"])
+        for sequence in sequences
+    ]
+    spec = ProjectionSpec(dim=64, seed=101, chunk=128)
+    single = prompt_gradient(
+        single_model,
+        list(single_model.parameters()),
+        sequences,
+        weights,
+        spec,
+        micro_batch=1,
+    )
+    batched = prompt_gradient(
+        batch_model,
+        list(batch_model.parameters()),
+        sequences,
+        weights,
+        spec,
+        micro_batch=3,
+    )
+    torch.testing.assert_close(batched, single, rtol=1e-5, atol=1e-6)
+
+    expected = [
+        sequence_logprobs(single_model, row["input_ids"], row["resp_start"])
+        for row in sequences
+    ]
+    actual = sequence_logprobs_batch(single_model, sequences, micro_batch=3)
+    for left, right in zip(actual, expected, strict=True):
+        torch.testing.assert_close(left, right)
 
 
 def test_artifact_metadata_parsing():

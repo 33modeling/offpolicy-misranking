@@ -344,6 +344,7 @@ fi
 export MODEL_PATH OM_MATH_VERIFIER=math_verify OM_TOP_P=1.0 OM_THINKING=off
 export OM_ATTN="$(experiment_field attn)" OM_SKIP_HYBRID=1
 export OM_LORA_TARGETS="$LORA_TARGETS" OM_GEN_BATCH="$(runtime_field generation_batch)"
+export GRADIENT_MICRO_BATCH="$(runtime_field gradient_micro_batch)"
 export GRPO_LOGPROB_MICRO_BATCH="$(runtime_field logprob_micro_batch)"
 export GRPO_GRADIENT_CHECKPOINTING="$(runtime_field gradient_checkpointing)"
 
@@ -353,7 +354,9 @@ signal_qualify() {
     "$PY" "$GENERATION_REPO/src/qualify_rlzero_signal.py" \
     --model "$MODEL_PATH" --dataset "$dataset" --data-root "$DATASETS_DIR" \
     --output "$report" --prompt-count 8 --group-size 8 \
-    --max-new-tokens 1024 --generation-batch "$OM_GEN_BATCH"
+    --max-new-tokens 1024 --generation-batch "$OM_GEN_BATCH" \
+    --gradient-micro-batch "$GRADIENT_MICRO_BATCH" \
+    --grad-layers "$(experiment_field grad_layers)"
 }
 SIGNAL_WAIT_SECONDS="${OM_RLZERO_PREFLIGHT_WAIT_SECONDS:-10}"
 case "$SIGNAL_WAIT_SECONDS" in

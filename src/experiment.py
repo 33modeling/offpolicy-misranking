@@ -32,7 +32,7 @@ from grads import (
     grad_params,
     loo_advantages,
     prompt_gradient,
-    sequence_logprobs,
+    sequence_logprobs_batch,
     token_weights,
     weight_stats,
 )
@@ -202,9 +202,9 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
         beta, _ = load_policy(args.model, None)
         _t0 = _time.time()
         for _n, (pi_idx, rows) in enumerate(sorted(rollouts.items()), 1):
-            beta_logps[pi_idx] = [
-                sequence_logprobs(beta, r["input_ids"], r["resp_start"]) for r in rows
-            ]
+            beta_logps[pi_idx] = sequence_logprobs_batch(
+                beta, rows, micro_batch=args.micro_batch
+            )
             if _n % 25 == 0:
                 print(f"[{ts()}]  score β-pass {_n}/{len(rollouts)} "
                       f"(ETA {_eta(_n, len(rollouts), _t0)})", flush=True)
@@ -231,10 +231,12 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
     for n_done, (pi_idx, rows) in enumerate(sorted(rollouts.items()), 1):
         rewards = torch.tensor([r["reward"] for r in rows])
         advs = loo_advantages(rewards)
-        logps_pi = [sequence_logprobs(pi, r["input_ids"], r["resp_start"]) for r in rows]
-        logps_beta = beta_logps[pi_idx] if two_pass else [
-            sequence_logprobs(beta, r["input_ids"], r["resp_start"]) for r in rows
-        ]
+        logps_pi = sequence_logprobs_batch(
+            pi, rows, micro_batch=args.micro_batch
+        )
+        logps_beta = beta_logps[pi_idx] if two_pass else sequence_logprobs_batch(
+            beta, rows, micro_batch=args.micro_batch
+        )
         for lp, lb in zip(logps_pi, logps_beta, strict=True):
             div_rows.append(weight_stats(lp, lb, clip_cap=args.clip_cap))
         for est in ESTIMATORS:

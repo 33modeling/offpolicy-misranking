@@ -194,13 +194,11 @@ def prompt_gradient(
     for start in range(0, k, micro_batch):
         batch = sequences[start : start + micro_batch]
         ws = weights[start : start + micro_batch]
-        loss = 0.0
-        for seq, w in zip(batch, ws, strict=True):
-            ids = seq["input_ids"].unsqueeze(0).to(model.device)
-            logits = model(ids).logits[0, :-1].float()
-            tgt = ids[0, 1:]
-            tok_logp = (logits.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
-                        - logits.logsumexp(dim=-1))
+        token_logps = _padded_token_logps(
+            model, [seq["input_ids"] for seq in batch]
+        )
+        loss = token_logps[0].new_zeros(())
+        for seq, w, tok_logp in zip(batch, ws, token_logps, strict=True):
             resp = tok_logp[seq["resp_start"] - 1 :]
             loss = loss + (w.to(resp.device) * resp).sum() / k
         loss.backward()
@@ -210,12 +208,61 @@ def prompt_gradient(
 @torch.no_grad()
 def sequence_logprobs(model, input_ids: torch.Tensor, resp_start: int) -> torch.Tensor:
     """주어진 시퀀스의 응답 구간 토큰 로그확률 (T,) — teacher forcing, no grad."""
-    ids = input_ids.unsqueeze(0).to(model.device)
-    logits = model(ids).logits[0, :-1].float()
-    tgt = ids[0, 1:]
-    tok = (logits.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
-           - logits.logsumexp(dim=-1))
-    return tok[resp_start - 1 :].cpu()
+    return sequence_logprobs_batch(
+        model,
+        [{"input_ids": input_ids, "resp_start": resp_start}],
+        micro_batch=1,
+    )[0]
+
+
+def _model_device(model) -> torch.device:
+    device = getattr(model, "device", None)
+    if device is not None:
+        return torch.device(device)
+    return next(model.parameters()).device
+
+
+def _padded_token_logps(
+    model, input_ids: list[torch.Tensor]
+) -> list[torch.Tensor]:
+    """Return real-token log-probabilities from one right-padded forward pass."""
+    if not input_ids or any(ids.ndim != 1 or ids.numel() < 2 for ids in input_ids):
+        raise ValueError("batched log-prob scoring requires non-empty token sequences")
+    lengths = [int(ids.numel()) for ids in input_ids]
+    device = _model_device(model)
+    batch = torch.zeros(
+        (len(input_ids), max(lengths)), dtype=input_ids[0].dtype, device=device
+    )
+    attention = torch.zeros_like(batch)
+    for row, ids in enumerate(input_ids):
+        batch[row, : lengths[row]] = ids.to(device)
+        attention[row, : lengths[row]] = 1
+    logits = model(batch, attention_mask=attention).logits[:, :-1].float()
+    targets = batch[:, 1:]
+    token_logps = logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    token_logps = token_logps - logits.logsumexp(dim=-1)
+    return [token_logps[row, : length - 1] for row, length in enumerate(lengths)]
+
+
+@torch.no_grad()
+def sequence_logprobs_batch(
+    model, sequences: list[dict], *, micro_batch: int
+) -> list[torch.Tensor]:
+    """Score stored variable-length responses with bounded padded batches."""
+    if micro_batch < 1:
+        raise ValueError("sequence log-prob micro-batch must be positive")
+    output: list[torch.Tensor] = []
+    for start in range(0, len(sequences), micro_batch):
+        chunk = sequences[start : start + micro_batch]
+        token_logps = _padded_token_logps(
+            model, [sequence["input_ids"] for sequence in chunk]
+        )
+        for sequence, values in zip(chunk, token_logps, strict=True):
+            response_start = int(sequence["resp_start"])
+            if not 0 < response_start < int(sequence["input_ids"].numel()):
+                raise ValueError("stored sequence has an invalid response boundary")
+            output.append(values[response_start - 1 :].cpu())
+    return output
 
 
 def cosine(a: torch.Tensor, b: torch.Tensor) -> float:

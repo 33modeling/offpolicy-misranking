@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+import torch
 
 from artifact_contract import sha256_file
 from data import load_prompts
@@ -50,6 +53,9 @@ def fingerprint(args: argparse.Namespace) -> dict:
         "prompt_count": args.prompt_count,
         "group_size": args.group_size,
         "max_new_tokens": args.max_new_tokens,
+        "generation_batch": args.generation_batch,
+        "gradient_micro_batch": args.gradient_micro_batch,
+        "grad_layers": args.grad_layers,
         "seed": args.seed,
         "temperature": 1.0,
         "top_p": 1.0,
@@ -78,6 +84,21 @@ def cached_report(path: Path, expected: dict) -> dict | None:
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
     if report.get("stats") != actual_stats:
+        return None
+    probe = report.get("runtime_probe")
+    if (
+        not isinstance(probe, dict)
+        or probe.get("gradient_micro_batch") != expected["gradient_micro_batch"]
+        or any(
+            not isinstance(probe.get(key), (int, float))
+            or not math.isfinite(float(probe[key]))
+            for key in (
+                "projected_gradient_norm",
+                "gpu_peak_allocated_gb",
+                "gpu_peak_reserved_gb",
+            )
+        )
+    ):
         return None
     return report
 
@@ -138,6 +159,46 @@ def qualify(args: argparse.Namespace, expected: dict) -> dict:
         batch_prompts=1,
         sampling_seed_base=args.seed,
     )
+    from experiment import read_rollouts
+    from grads import ProjectionSpec, grad_params, loo_advantages, prompt_gradient
+
+    groups = read_rollouts(rollout)
+    probe_rows = next(
+        (
+            rows
+            for rows in groups.values()
+            if len({float(row["reward"]) for row in rows}) > 1
+        ),
+        next(iter(groups.values())),
+    )
+    rewards = torch.tensor([float(row["reward"]) for row in probe_rows])
+    advantages = loo_advantages(rewards)
+    weights = [
+        torch.full(
+            (int(row["input_ids"].numel()) - int(row["resp_start"]),),
+            float(advantage),
+        )
+        for row, advantage in zip(probe_rows, advantages, strict=True)
+    ]
+    model.config.use_cache = False
+    params = grad_params(model, args.grad_layers)
+    torch.cuda.reset_peak_memory_stats()
+    projected = prompt_gradient(
+        model,
+        params,
+        probe_rows,
+        weights,
+        ProjectionSpec(dim=256),
+        micro_batch=args.gradient_micro_batch,
+    )
+    runtime_probe = {
+        "gradient_micro_batch": args.gradient_micro_batch,
+        "projected_gradient_norm": float(projected.norm()),
+        "gpu_peak_allocated_gb": torch.cuda.max_memory_allocated() / 1e9,
+        "gpu_peak_reserved_gb": torch.cuda.max_memory_reserved() / 1e9,
+    }
+    if not all(math.isfinite(float(value)) for value in runtime_probe.values()):
+        raise ValueError(f"non-finite H100 runtime probe: {runtime_probe}")
     del model, tokenizer
 
     stats = read_rewards(rollout, args.prompt_count, args.group_size)
@@ -161,6 +222,7 @@ def qualify(args: argparse.Namespace, expected: dict) -> dict:
         "rollout_manifest_file": final_manifest.name,
         "rollout_manifest_sha256": sha256_file(final_manifest),
         "stats": stats,
+        "runtime_probe": runtime_probe,
     }
     temporary = args.output.with_name(f".{args.output.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -178,10 +240,18 @@ def main() -> int:
     parser.add_argument("--group-size", type=int, default=8)
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--generation-batch", type=int, default=4)
+    parser.add_argument("--gradient-micro-batch", type=int, default=1)
+    parser.add_argument("--grad-layers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=314159)
     args = parser.parse_args()
-    if min(args.prompt_count, args.group_size, args.max_new_tokens) <= 0:
-        parser.error("prompt count, group size, and max tokens must be positive")
+    if min(
+        args.prompt_count,
+        args.group_size,
+        args.max_new_tokens,
+        args.gradient_micro_batch,
+        args.grad_layers,
+    ) <= 0:
+        parser.error("prompt, batch, layer, and max-token values must be positive")
     try:
         expected = fingerprint(args)
         report = cached_report(args.output, expected)
@@ -190,7 +260,11 @@ def main() -> int:
         print(
             f"[signal-qualified] {args.dataset}: "
             f"correct={report['stats']['correct']}/{report['stats']['samples']} "
-            f"mixed={report['stats']['mixed_prompt_groups']} report={args.output}"
+            f"mixed={report['stats']['mixed_prompt_groups']} "
+            f"gen_batch={args.generation_batch} "
+            f"grad_batch={report['runtime_probe']['gradient_micro_batch']} "
+            f"peak={report['runtime_probe']['gpu_peak_allocated_gb']:.1f}GB "
+            f"report={args.output}"
         )
         return 0
     except (KeyError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as exc:

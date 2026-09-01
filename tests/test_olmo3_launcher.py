@@ -86,6 +86,8 @@ case "$script" in
       *" grpo-field lora_alpha "*) printf '32\n' ;;
       *" runtime-field generation_batch "*)
         case "$*" in *olmo3_rlzero_h100.json*) printf '8\n' ;; *) printf '4\n' ;; esac ;;
+      *" runtime-field gradient_micro_batch "*)
+        case "$*" in *olmo3_rlzero_h100.json*) printf '4\n' ;; *) printf '1\n' ;; esac ;;
       *" runtime-field logprob_micro_batch "*)
         case "$*" in *olmo3_rlzero_h100.json*) printf '4\n' ;; *) printf '1\n' ;; esac ;;
       *" runtime-field gradient_checkpointing "*) printf '1\n' ;;

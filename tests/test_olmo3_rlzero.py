@@ -11,9 +11,10 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from artifact_contract import sha256_file
 from data import _extract_code, extract_answer, reward
 from model_matrix import RUNTIME_DEFAULTS, _load_config, _load_specs
-from qualify_rlzero_signal import read_rewards
+from qualify_rlzero_signal import cached_report, read_rewards
 from rollout import chat_ids, render_prompt
 
 
@@ -80,6 +81,7 @@ def test_h100_profile_changes_runtime_only_and_uses_larger_batches() -> None:
     assert baseline_experiment == h100_experiment
     assert runtime == {
         "generation_batch": 8,
+        "gradient_micro_batch": 4,
         "logprob_micro_batch": 4,
         "gradient_checkpointing": True,
     }
@@ -143,6 +145,43 @@ def test_rlzero_answer_and_code_parsers_follow_the_released_output_contract() ->
     assert extract_answer("Answer: mentioned early\nwork\nAnswer: $1,024$.") == "1024"
     assert reward("work\nAnswer: $0.5$", r"\frac{1}{2}") == 0.0
     assert _extract_code("```\npython\ndef f():\n    return 1\n```").startswith("def f")
+
+
+def test_signal_cache_requires_the_bound_runtime_probe(tmp_path: Path) -> None:
+    rollout = tmp_path / "signal.rollouts.jsonl"
+    rows = [
+        {"prompt_idx": prompt, "reward": reward_value}
+        for prompt in range(2)
+        for reward_value in (0.0, 1.0)
+    ]
+    rollout.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = tmp_path / "signal.rollouts.manifest.json"
+    manifest.write_text("{}\n")
+    expected = {
+        "prompt_count": 2,
+        "group_size": 2,
+        "gradient_micro_batch": 2,
+    }
+    report_path = tmp_path / "signal.json"
+    report = {
+        "status": "qualified",
+        "fingerprint": expected,
+        "rollout_file": rollout.name,
+        "rollout_sha256": sha256_file(rollout),
+        "rollout_manifest_file": manifest.name,
+        "rollout_manifest_sha256": sha256_file(manifest),
+        "stats": read_rewards(rollout, 2, 2),
+    }
+    report_path.write_text(json.dumps(report))
+    assert cached_report(report_path, expected) is None
+    report["runtime_probe"] = {
+        "gradient_micro_batch": 2,
+        "projected_gradient_norm": 1.0,
+        "gpu_peak_allocated_gb": 24.0,
+        "gpu_peak_reserved_gb": 28.0,
+    }
+    report_path.write_text(json.dumps(report))
+    assert cached_report(report_path, expected) == report
 
 
 def test_signal_gate_requires_exact_group_coverage_and_finds_mixed_groups(

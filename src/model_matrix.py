@@ -122,6 +122,7 @@ GRPO_FIELDS = {
 
 RUNTIME_DEFAULTS = {
     "generation_batch": 4,
+    "gradient_micro_batch": 1,
     "logprob_micro_batch": 1,
     "gradient_checkpointing": True,
 }
@@ -276,7 +277,7 @@ def _load_config(config_path: Path) -> dict:
     unknown_runtime = sorted(set(runtime) - set(RUNTIME_DEFAULTS))
     if unknown_runtime:
         raise ValueError(f"unsupported experiment.runtime fields: {unknown_runtime}")
-    for key in ("generation_batch", "logprob_micro_batch"):
+    for key in ("generation_batch", "gradient_micro_batch", "logprob_micro_batch"):
         value = runtime.get(key, RUNTIME_DEFAULTS[key])
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"experiment.runtime.{key} must be a positive integer")
