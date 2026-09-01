@@ -170,6 +170,11 @@ run_phase() {
     rc=${statuses[0]}
     [ "${statuses[1]}" -eq 0 ] || exit "${statuses[1]}"
     [ "$rc" -ne 0 ] || break
+    if [ "$rc" -eq 43 ]; then
+      echo "[abort] model=$name has a permanent prompt/contract failure; not retrying" \
+        | tee -a "$log"
+      break
+    fi
     [ "$restarts" -lt 12 ] || break
     restarts=$((restarts + 1))
     echo "[additional] model=$name failed rc=$rc; restart=$restarts/12" | tee -a "$log"

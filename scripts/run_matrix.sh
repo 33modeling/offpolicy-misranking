@@ -279,6 +279,15 @@ family_complete() {
   done
 }
 
+quarantine_prompt_target() {
+  local run=$1 try=$2 destination suffix
+  mkdir -p "$QUARANTINE" || return 1
+  suffix="$(date +%Y%m%dT%H%M%S)-$$-$try"
+  destination="$QUARANTINE/$(basename "$run")-prompt-mismatch-$suffix"
+  mv -- "$run" "$destination" || return 1
+  echo "[prompt-rebuild] quarantined $run -> $destination"
+}
+
 if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ]; then
   incomplete=0
   for seed in "${SEEDS[@]}"; do
@@ -396,7 +405,7 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
 
 run_point() {
   local dataset=$1 seed=$2 drift=$3 source=$4 resume_step=$5 resume_run=$6
-  local run try n_train attempt_log
+  local run try n_train attempt_log rc prompt_root
   run=$(run_dir "$dataset" "$seed" "$drift")
   n_train="${REGIME_N_TRAIN:-512}"
   [ -n "${REGIME_N_TRAIN:-}" ] || [ "$dataset" != "math500" ] || n_train=400
@@ -405,6 +414,32 @@ run_point() {
       --quarantine-root "$QUARANTINE" || return 1
   fi
   run_complete "$run" "$dataset" "$seed" "$drift" "$source" && return 0
+
+  # A partial target may have been initialized on a node that resolved a
+  # different local dataset copy. Quarantine it before any retry; never mix its
+  # prompt-dependent artifacts with the immutable d0 behavior family.
+  if [ -n "$source" ] && [ -s "$source/prompts.json" ] \
+      && [ -s "$source/run_config.json" ] && [ -s "$run/run_config.json" ]; then
+    mkdir -p "$run/logs" || return 43
+    "$PY" src/reuse_behavior.py --sync-prompts "$source" "$run" \
+      >> "$run/logs/behavior-reuse.log" 2>&1
+    rc=$?
+    if [ "$rc" -eq 42 ]; then
+      quarantine_prompt_target "$run" preflight || return 43
+    elif [ "$rc" -ne 0 ]; then
+      tail -20 "$run/logs/behavior-reuse.log" 2>/dev/null || true
+      return 43
+    fi
+  fi
+
+  # Legacy primary commits still run their own prep stage. Feed that old code a
+  # source-derived local snapshot so it reconstructs byte-identical prompts
+  # without changing the recorded generation revision or run configuration.
+  prompt_root=""
+  if [ -n "$source" ] && { [ "$dataset" = gsm8k ] || [ "$dataset" = math500 ]; }; then
+    prompt_root=$("$PY" src/materialize_prompt_dataset.py "$source/prompts.json" \
+      "$dataset" "$QUEUE/prompt-datasets") || return 43
+  fi
   for try in $(seq 1 "$MAX_RETRIES"); do
     echo "[$(date '+%F %T')] $dataset/s$seed/d$drift try $try/$MAX_RETRIES -> $run"
     args=(env DATASET="$dataset" SEED="$seed" DRIFT="$drift" OUT_ROOT="$run"
@@ -425,6 +460,11 @@ run_point() {
       GRPO_LORA_ALPHA="$GRPO_LORA_ALPHA_DEFAULT"
       OM_SKIP_HYBRID="${OM_SKIP_HYBRID:-1}" OM_RETRY_INDEX="$try")
     [ -z "$source" ] || args+=(OM_BEHAVIOR_SOURCE="$source")
+    if [ "$dataset" = gsm8k ] && [ -n "$prompt_root" ]; then
+      args+=(GSM8K_DIR="$prompt_root")
+    elif [ "$dataset" = math500 ] && [ -n "$prompt_root" ]; then
+      args+=(MATH500_DIR="$prompt_root")
+    fi
     if [ -n "$resume_run" ]; then
       args+=(OM_GRPO_START_STEP="$resume_step"
         OM_GRPO_RESUME_ADAPTER="$resume_run/policy_step_$resume_step"
@@ -444,6 +484,29 @@ run_point() {
         fi
       fi
       run_complete "$run" "$dataset" "$seed" "$drift" "$source" && return 0
+    else
+      rc=$?
+      if [ "$rc" -ne 42 ] && [ "$rc" -ne 43 ] && grep -Eq \
+          'prompts.json differs from the requested dataset/split|prompts.json: content hash differs' \
+          "$attempt_log" 2>/dev/null; then
+        rc=42
+      fi
+      if [ "$rc" -ne 42 ] && [ "$rc" -ne 43 ] && grep -Eq \
+          'prompts\.(train|val).*qualified snapshot|prompts differ from the qualified matrix' \
+          "$attempt_log" 2>/dev/null; then
+        rc=43
+      fi
+      if [ "$rc" -eq 42 ] && [ -n "$source" ]; then
+        if quarantine_prompt_target "$run" "$try"; then
+          continue
+        fi
+        echo "[abort] prompt-mismatch quarantine failed: $run"
+        return 43
+      fi
+      if [ "$rc" -eq 42 ] || [ "$rc" -eq 43 ]; then
+        echo "[abort] permanent prompt/contract failure rc=$rc: $run"
+        return 43
+      fi
     fi
     bash scripts/diagnose_run_failure.sh "$run" "$attempt_log" 1 2>/dev/null || true
     sleep 20
@@ -452,14 +515,15 @@ run_point() {
 }
 
 run_family() {
-  local dataset=$1 seed=$2 source drift previous_step=0 previous_run=""
+  local dataset=$1 seed=$2 source drift rc previous_step=0 previous_run=""
   source=$(run_dir "$dataset" "$seed" 0)
   # d0 is the exact positive control: beta=pi with independent rollout noise.
-  run_point "$dataset" "$seed" 0 "" "" "" || return 1
+  run_point "$dataset" "$seed" 0 "" "" ""
+  rc=$?; [ "$rc" -eq 0 ] || return "$rc"
   for drift in "${DRIFTS[@]}"; do
     [ "$drift" = 0 ] && continue
-    run_point "$dataset" "$seed" "$drift" "$source" "$previous_step" "$previous_run" \
-      || return 1
+    run_point "$dataset" "$seed" "$drift" "$source" "$previous_step" "$previous_run"
+    rc=$?; [ "$rc" -eq 0 ] || return "$rc"
     previous_step=$drift
     previous_run=$(run_dir "$dataset" "$seed" "$drift")
   done
@@ -483,6 +547,10 @@ while :; do
       ) 9>"$lock"
       rc=$?
       [ "$rc" -eq 75 ] && continue
+      if [ "$rc" -eq 43 ]; then
+        echo "[abort] permanent family contract failure: $dataset/s$seed"
+        exit 43
+      fi
       claimed=$((claimed + 1))
       if [ "$rc" -ne 0 ]; then
         echo "[family-fail] $dataset/s$seed"

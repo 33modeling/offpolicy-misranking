@@ -39,6 +39,14 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             REPO / "src/regime_resume_commit.py",
             checkout / "src/regime_resume_commit.py",
         )
+        shutil.copy2(
+            REPO / "src/materialize_prompt_dataset.py",
+            checkout / "src/materialize_prompt_dataset.py",
+        )
+        shutil.copy2(REPO / "src/reuse_behavior.py", checkout / "src/reuse_behavior.py")
+        shutil.copy2(REPO / "src/artifact_contract.py", checkout / "src/artifact_contract.py")
+        shutil.copy2(REPO / "src/compact_artifacts.py", checkout / "src/compact_artifacts.py")
+        shutil.copy2(REPO / "src/rollout_contract.py", checkout / "src/rollout_contract.py")
         (work / "models/model/config.json").write_text("{}\n", encoding="utf-8")
         (work / "venv/bin/python").symlink_to(Path(sys.executable))
         (checkout / "scripts/setup_env.sh").write_text(
@@ -57,6 +65,9 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             'if [ "$point" = "a 0 0" ] && mkdir "$OM_WORK/hang-once" 2>/dev/null; then '
             "while :; do /bin/sleep 1; done; fi\n"
             'mkdir -p "$OUT_ROOT"\n'
+            'if [ "${TEST_PROMPT_MISMATCH_ONCE:-0}" = 1 ] && '
+            '[ "$point" = "a 0 25" ] && mkdir "$OM_WORK/prompt-mismatch-once" 2>/dev/null; then '
+            'printf "prompt mismatch\\n" > "$OUT_ROOT/prompts.json"; exit 42; fi\n'
             "python3 - \"$OUT_ROOT\" <<'PY'\n"
             "import json, os, subprocess, sys\n"
             "from pathlib import Path\n"
@@ -88,6 +99,9 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "'behavior_source':os.environ.get('OM_BEHAVIOR_SOURCE'),"
             "'git':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()}\n"
             "out=Path(sys.argv[1]); (out/'run_config.json').write_text(json.dumps(config))\n"
+            "prompts={'train':[{'question':f'q{i}','answer':str(i)} for i in range(config['n_train'])],"
+            "'val':[{'question':f'v{i}','answer':str(i)} for i in range(config['n_val'])]}\n"
+            "(out/'prompts.json').write_text(json.dumps(prompts))\n"
             "scores={str(i):{'score':float(i)} for i in range(config['n_train'])}\n"
             "off={name:scores for name in ('g00','g10','g01','g11')}\n"
             "halves={str(i):{'r':float(i),'a':float(i),'b':float(i)} "
@@ -288,6 +302,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             env={
                 **env,
                 "OM_PIPELINE_CACHE": str(root / "pipeline-cache"),
+                "TEST_PROMPT_MISMATCH_ONCE": "1",
             },
             text=True,
             capture_output=True,
@@ -298,8 +313,9 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         assert "[queue] restored generation checkout=" in upgraded.stdout
         upgraded_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
         upgraded_claims = [row.split("|", 1)[1] for row in upgraded_rows]
-        assert upgraded_claims[claims_before_upgrade_resume:] == ["a 0 25"]
+        assert upgraded_claims[claims_before_upgrade_resume:] == ["a 0 25", "a 0 25"]
         assert json.loads((damaged / "run_config.json").read_text())["git"] == checkout_git
+        assert list((work / "quarantine/regime-fixture").glob("*-prompt-mismatch-*"))
 
         collection = work / "results/regime-fixture/.regime_analysis.key"
         assert collection.is_file()

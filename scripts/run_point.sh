@@ -388,10 +388,31 @@ trap cleanup EXIT INT TERM
 
 log "=== RLVR point start: $MODEL_PATH -> $OUT_ROOT (${NGPU} GPUs) ==="
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv | tee -a "$LOGS/main.log" || true
-run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}" || exit 1
+if [ -n "${OM_BEHAVIOR_SOURCE:-}" ]; then
+  log "[regime] d0 source에서 고정 prompt 복원: $OM_BEHAVIOR_SOURCE"
+  "$PY" src/reuse_behavior.py --sync-prompts "$OM_BEHAVIOR_SOURCE" "$OUT_ROOT" \
+    >> "$LOGS/behavior-reuse.log" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    tail -20 "$LOGS/behavior-reuse.log" | tee -a "$LOGS/main.log"
+    exit "$rc"
+  fi
+else
+  if ! run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"; then
+    if grep -Fq "prompts.json differs from the requested dataset/split" \
+        "$LOGS/prep.log"; then
+      log "[permanent-contract] base prompt set differs from the existing run"
+      exit 43
+    fi
+    exit 1
+  fi
+fi
 if [ -n "${REGIME_MATRIX:-}" ]; then
-  "$PY" src/regime_contract.py check-prompts --matrix "$REGIME_MATRIX" \
-    --run "$OUT_ROOT" --dataset "$DATASET" || exit 1
+  if ! "$PY" src/regime_contract.py check-prompts --matrix "$REGIME_MATRIX" \
+      --run "$OUT_ROOT" --dataset "$DATASET"; then
+    log "[permanent-contract] prompts differ from the qualified matrix"
+    exit 43
+  fi
   log "[regime] qualified dataset prompt set and order validated"
 fi
 
@@ -403,7 +424,7 @@ if [ -n "${OM_BEHAVIOR_SOURCE:-}" ]; then
   "$PY" src/reuse_behavior.py "$OM_BEHAVIOR_SOURCE" "$OUT_ROOT" \
     >> "$LOGS/behavior-reuse.log" 2>&1 || {
       tail -20 "$LOGS/behavior-reuse.log" | tee -a "$LOGS/main.log"
-      exit 1
+      exit 43
     }
 fi
 

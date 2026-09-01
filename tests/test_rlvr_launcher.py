@@ -51,7 +51,8 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "p=os.environ['TEST_WORK']+'/phases.jsonl'\n"
         "row={k:os.environ[k] for k in ('MODEL_PATH','REGIME_MODEL_TAG','REGIME_DATASETS','REGIME_SEEDS','REGIME_DRIFTS','GRPO_WORLD_SIZE','GRPO_GROUP_SIZE','OM_ALLOW_ANALYSIS_UPGRADE')}\n"
         "with open(p,'a') as f: f.write(json.dumps(row)+'\\n')\n"
-        "PY\n",
+        "PY\n"
+        'exit "${TEST_MATRIX_RC:-0}"\n',
     )
     executable(root / "scripts/harvest_results.sh", "#!/bin/sh\nprintf harvested\\n\n")
     executable(fake_bin / "hostname", "#!/bin/sh\nprintf cloned-cluster\\n\n")
@@ -178,6 +179,24 @@ def test_launcher_rejects_a_shared_node_lock_directory(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "OM_LOCAL_LOCK_DIR must be node-local" in result.stdout
     assert not (Path(env["TEST_WORK"]) / "phases.jsonl").exists()
+
+
+def test_permanent_contract_failure_is_not_retried(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    env["TEST_MATRIX_RC"] = "43"
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_rlvr.sh"],
+        cwd=root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 43, result.stdout + result.stderr
+    phases = (Path(env["TEST_WORK"]) / "phases.jsonl").read_text().splitlines()
+    assert len(phases) == 1
+    assert "permanent prompt/contract failure; not retrying" in result.stdout
 
 
 def test_two_workers_on_one_physical_node_do_not_oversubscribe_gpus(

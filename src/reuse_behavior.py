@@ -20,6 +20,7 @@ MATCHED_CONFIG = (
     "generation_config_sha256",
     "dataset",
     "n_train",
+    "n_val",
     "behavior_k",
     "max_new_tokens",
     "temperature",
@@ -27,8 +28,15 @@ MATCHED_CONFIG = (
     "thinking",
 )
 
+PROMPT_REBUILD_EXIT = 42
+PERMANENT_CONTRACT_EXIT = 43
 
-def compatibility_errors(source: Path, target: Path) -> list[str]:
+
+class TargetPromptMismatch(ValueError):
+    """The target must be quarantined before the source prompt set is restored."""
+
+
+def config_compatibility_errors(source: Path, target: Path) -> list[str]:
     source_config = json.loads((source / "run_config.json").read_text())
     target_config = json.loads((target / "run_config.json").read_text())
     errors = []
@@ -37,11 +45,68 @@ def compatibility_errors(source: Path, target: Path) -> list[str]:
         target_value = target_config.get(key)
         if source_value != target_value:
             errors.append(f"{key}: source={source_value!r} target={target_value!r}")
+    return errors
+
+
+def compatibility_errors(source: Path, target: Path) -> list[str]:
+    errors = config_compatibility_errors(source, target)
     source_prompts = source / "prompts.json"
     target_prompts = target / "prompts.json"
     if sha256_file(source_prompts) != sha256_file(target_prompts):
         errors.append("prompts.json: content hash differs")
     return errors
+
+
+def _validate_prompts(path: Path, config_path: Path) -> None:
+    prompts = json.loads(path.read_text(encoding="utf-8"))
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(prompts, dict):
+        raise TypeError(f"invalid prompt document: {path}")
+    for split, size_key in (("train", "n_train"), ("val", "n_val")):
+        rows = prompts.get(split)
+        if not isinstance(rows, list) or len(rows) != int(config[size_key]):
+            raise ValueError(
+                f"{path}: {split} prompt count differs from {config_path.name}"
+            )
+        if not all(
+            isinstance(row, dict) and row.get("question") and "answer" in row
+            for row in rows
+        ):
+            raise ValueError(f"{path}: {split} contains an invalid prompt row")
+
+
+def sync_prompts(source: Path, target: Path) -> dict:
+    """Make a drift target use the exact prompt bytes owned by its d0 source."""
+    source = source.resolve()
+    target = target.resolve()
+    if source == target:
+        raise ValueError("source and target run must differ")
+    errors = config_compatibility_errors(source, target)
+    if errors:
+        raise ValueError("behavior reuse config mismatch: " + "; ".join(errors))
+
+    source_prompts = source / "prompts.json"
+    target_prompts = target / "prompts.json"
+    _validate_prompts(source_prompts, source / "run_config.json")
+    if target_prompts.exists():
+        try:
+            _validate_prompts(target_prompts, target / "run_config.json")
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise TargetPromptMismatch(
+                f"target prompt artifact is invalid: {exc}"
+            ) from exc
+        if sha256_file(source_prompts) != sha256_file(target_prompts):
+            raise TargetPromptMismatch(
+                "target prompts differ from the immutable d0 behavior source"
+            )
+        return {"status": "already-synced", "source": str(source), "target": str(target)}
+
+    temporary = target / "prompts.json.reuse.tmp"
+    temporary.unlink(missing_ok=True)
+    shutil.copy2(source_prompts, temporary)
+    temporary.replace(target_prompts)
+    _validate_prompts(target_prompts, target / "run_config.json")
+    return {"status": "copied", "source": str(source), "target": str(target)}
 
 
 def behavior_files(run: Path) -> list[Path]:
@@ -143,11 +208,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("source", type=Path, nargs="?")
     parser.add_argument("target", type=Path)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--sync-prompts", action="store_true")
     args = parser.parse_args(argv)
     if args.check:
         return 0 if check(args.target) else 1
     if args.source is None:
         parser.error("source is required unless --check is used")
+    if args.sync_prompts:
+        try:
+            result = sync_prompts(args.source, args.target)
+        except TargetPromptMismatch as exc:
+            print(f"[behavior-prompt-rebuild] {exc}", file=sys.stderr)
+            return PROMPT_REBUILD_EXIT
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            print(f"[behavior-prompt-abort] {exc}", file=sys.stderr)
+            return PERMANENT_CONTRACT_EXIT
+        print(json.dumps(result, indent=1))
+        return 0
     try:
         result = reuse(args.source, args.target)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:

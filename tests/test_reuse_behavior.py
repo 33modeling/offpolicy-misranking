@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from artifact_contract import sha256_file
-from reuse_behavior import reuse
+from reuse_behavior import TargetPromptMismatch, reuse, sync_prompts
 
 
 def make_run(root: Path, name: str, drift: int) -> Path:
@@ -24,6 +24,7 @@ def make_run(root: Path, name: str, drift: int) -> Path:
         "generation_config_sha256": "generation-hash",
         "dataset": "gsm8k",
         "n_train": 2,
+        "n_val": 1,
         "behavior_k": 2,
         "fresh_k": 4,
         "val_k": 2,
@@ -37,8 +38,11 @@ def make_run(root: Path, name: str, drift: int) -> Path:
     (run / "prompts.json").write_text(
         json.dumps(
             {
-                "train": [{"question": "a"}, {"question": "b"}],
-                "val": [{"question": "v"}],
+                "train": [
+                    {"question": "a", "answer": "1"},
+                    {"question": "b", "answer": "2"},
+                ],
+                "val": [{"question": "v", "answer": "3"}],
             },
             sort_keys=True,
         )
@@ -137,6 +141,38 @@ def test_reuse_rejects_prompt_drift(tmp_path: Path) -> None:
         assert "prompts.json" in str(exc)
     else:
         raise AssertionError("prompt mismatch must be rejected")
+
+
+def test_sync_prompts_copies_the_immutable_source_before_generation(tmp_path: Path) -> None:
+    source = make_run(tmp_path, "source", 0)
+    target = make_run(tmp_path, "target", 100)
+    (target / "prompts.json").unlink()
+
+    assert sync_prompts(source, target)["status"] == "copied"
+    assert (target / "prompts.json").read_bytes() == (source / "prompts.json").read_bytes()
+
+
+def test_sync_prompts_requires_quarantine_for_an_existing_mismatch(tmp_path: Path) -> None:
+    source = make_run(tmp_path, "source", 0)
+    target = make_run(tmp_path, "target", 100)
+    (target / "prompts.json").write_text(
+        json.dumps(
+            {
+                "train": [
+                    {"question": "different-a", "answer": "1"},
+                    {"question": "different-b", "answer": "2"},
+                ],
+                "val": [{"question": "different-v", "answer": "3"}],
+            }
+        )
+    )
+
+    try:
+        sync_prompts(source, target)
+    except TargetPromptMismatch as exc:
+        assert "prompt" in str(exc)
+    else:
+        raise AssertionError("existing prompt drift must require quarantine")
 
 
 def test_reuse_rejects_a_different_valid_behavior_sample(tmp_path: Path) -> None:
