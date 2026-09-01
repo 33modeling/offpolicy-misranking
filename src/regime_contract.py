@@ -17,7 +17,7 @@ from artifact_contract import validate_generation_contract
 from gate_rules import has_valid_analysis_protocol
 from model_matrix import _load_config
 from score_artifacts import load_complete_score_artifacts
-from train_policy_grpo import validate_policy_manifest
+from train_policy_grpo import validate_policy_lineage
 
 MATRIX_SCHEMA = "offpolicy-regime-matrix/v1"
 MARKER_SCHEMA = "offpolicy-regime-run-validation/v1"
@@ -352,6 +352,28 @@ def config_errors(
             f"behavior_source: expected={expected_source!r} "
             f"recorded={config.get('behavior_source')!r}"
         )
+    drifts = matrix["experiment"]["drifts"]
+    drift_index = drifts.index(drift)
+    previous_drift = drifts[drift_index - 1] if drift_index > 0 else 0
+    expected_resume = None
+    if drift > 0 and previous_drift > 0:
+        if behavior_source is None or not behavior_source.name.endswith("-d0"):
+            errors.append("positive policy lineage has no canonical d0 source")
+        else:
+            parent_run = behavior_source.with_name(
+                f"{behavior_source.name[:-3]}-d{previous_drift}"
+            )
+            expected_resume = str(parent_run / f"policy_step_{previous_drift}")
+    if config.get("grpo_start_step", 0) != previous_drift:
+        errors.append(
+            f"grpo_start_step: expected={previous_drift!r} "
+            f"recorded={config.get('grpo_start_step')!r}"
+        )
+    if config.get("grpo_resume_adapter") != expected_resume:
+        errors.append(
+            f"grpo_resume_adapter: expected={expected_resume!r} "
+            f"recorded={config.get('grpo_resume_adapter')!r}"
+        )
     return errors
 
 
@@ -453,8 +475,19 @@ def mark_collection(results: Path, runs: list[Path], matrix: dict) -> None:
     temporary.replace(target)
 
 
-def deep_validation(run: Path, matrix: dict, drift: int) -> dict:
-    generation = validate_generation_contract(run)
+def deep_validation(
+    run: Path,
+    matrix: dict,
+    drift: int,
+    behavior_source: Path | None,
+) -> dict:
+    generation = validate_generation_contract(
+        run,
+        require_policy_binding=True,
+        require_rng_binding=True,
+    )
+    if generation["generation_hash_missing"]:
+        raise ValueError("generation manifests are not bound to rollout file hashes")
     if not has_valid_analysis_protocol(run):
         raise ValueError("score/oracle protocol or bound generation hashes are invalid")
     artifacts = load_complete_score_artifacts(run)
@@ -477,11 +510,54 @@ def deep_validation(run: Path, matrix: dict, drift: int) -> dict:
     )
     if drift > 0:
         policy = run / f"policy_step_{drift}"
-        validate_policy_manifest(
+        drifts = matrix["experiment"]["drifts"]
+        drift_index = drifts.index(drift)
+        previous_drift = drifts[drift_index - 1]
+        expected_parent = None
+        if previous_drift > 0:
+            if behavior_source is None or not behavior_source.name.endswith("-d0"):
+                raise ValueError("positive policy lineage has no canonical d0 source")
+            parent_run = behavior_source.with_name(
+                f"{behavior_source.name[:-3]}-d{previous_drift}"
+            )
+            expected_parent = parent_run / f"policy_step_{previous_drift}"
+        validate_policy_lineage(
             policy,
             target_steps=drift,
             world_size=int(matrix["experiment"]["grpo"]["world_size"]),
             training_objective=matrix["experiment"]["policy_method"],
+            expected_start_step=previous_drift,
+            expected_parent=expected_parent,
+            expected_model=Path(matrix["model"]["path"]),
+            expected_seed=int(read_json(run / "run_config.json")["seed"]),
+            expected_max_new_tokens=int(
+                matrix["experiment"]["max_new_tokens"]
+            ),
+            expected_config={
+                "group_size": int(matrix["experiment"]["grpo"]["group_size"]),
+                "clip_epsilon": float(
+                    matrix["experiment"]["grpo"]["clip_epsilon"]
+                ),
+                "learning_rate": float(
+                    matrix["experiment"]["grpo"]["learning_rate"]
+                ),
+                "epochs_per_batch": int(
+                    matrix["experiment"]["grpo"]["epochs_per_batch"]
+                ),
+                "max_grad_norm": float(
+                    matrix["experiment"]["grpo"]["max_grad_norm"]
+                ),
+                "advantage_epsilon": float(
+                    matrix["experiment"]["grpo"]["advantage_epsilon"]
+                ),
+                "lora_rank": int(matrix["experiment"]["grpo"]["lora_rank"]),
+                "lora_alpha": int(
+                    matrix["experiment"]["grpo"]["lora_alpha"]
+                ),
+                "checkpoint_every": 5,
+            },
+            expected_prompts=run / "prompts.json",
+            require_complete_hashes=True,
         )
         bound_names.extend(
             str(Path(f"policy_step_{drift}") / name)
@@ -518,7 +594,7 @@ def validate_run(
         if not marker_is_current(run, matrix):
             raise ValueError("deep-validation marker is missing or stale")
         return
-    validation = deep_validation(run, matrix, drift)
+    validation = deep_validation(run, matrix, drift, behavior_source)
     if mark:
         marker = {
             "schema": MARKER_SCHEMA,

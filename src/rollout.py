@@ -9,13 +9,21 @@ from __future__ import annotations
 
 import json
 import os
+import random
 from pathlib import Path
 
 import torch
 
 from artifact_contract import sha256_file
 from data import build_user_msg, reward
-from rollout_contract import eos_ids_of, gen_kwargs, resolved_manifest, resp_end_index
+from rollout_contract import (
+    ROLLOUT_SEED_SCHEME,
+    eos_ids_of,
+    gen_kwargs,
+    resolved_manifest,
+    resp_end_index,
+    rollout_prompt_seed,
+)
 
 # torch 2.7 + Hopper: cuDNN SDPA가 산발적 'unspecified launch failure'를 낸다
 # (비동기라 보고 지점은 attention이 아닐 수도 있음 — modeling_qwen2.py:47 사례).
@@ -59,13 +67,15 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
     is_cuda = str(device).startswith("cuda")
     if dtype is None:
         dtype = "bfloat16" if is_cuda else "float32"
-    tok = AutoTokenizer.from_pretrained(name_or_path)
+    # Compute launchers require an already materialized snapshot. Force the
+    # library to stay local even if a token or Hub endpoint is inherited.
+    tok = AutoTokenizer.from_pretrained(name_or_path, local_files_only=True)
     # device_map 대신 CPU 로드 → .to(cuda) 2단계: 신아키텍처(Qwen3.8 등)가
     # meta-init을 못 타면 device_map 경로가 GPU에 스켈레톤+체크포인트 이중
     # 상주(27B에서 ~52+49GB)로 OOM — CPU 경유는 GPU에 정확히 한 벌만 올린다.
     # (GPU 선택은 CUDA_VISIBLE_DEVICES가 담당하므로 기능 동일)
     want = getattr(torch, dtype)
-    kw = dict(low_cpu_mem_usage=True, **_attn_kwargs())
+    kw = dict(low_cpu_mem_usage=True, local_files_only=True, **_attn_kwargs())
 
     def _load(cls):
         try:
@@ -168,6 +178,7 @@ def collect_rollouts(
     out_path: Path,
     batch_prompts: int = 8,
     idx_offset: int = 0,
+    sampling_seed_base: int = 0,
 ) -> None:
     """프롬프트별 K개 응답 생성 → jsonl (token id·reward 저장, logp는 나중에 재계산)."""
     import time
@@ -185,7 +196,13 @@ def collect_rollouts(
     manifest_path = out_path.parent / (out_path.stem + ".manifest.json")
     manifest_tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
     manifest = resolved_manifest(model, tok, gkw)
-    manifest.update({"k": k, "n_prompts": len(prompts), "idx_offset": idx_offset})
+    manifest.update({
+        "k": k,
+        "n_prompts": len(prompts),
+        "idx_offset": idx_offset,
+        "sampling_seed_base": int(sampling_seed_base),
+        "sampling_seed_scheme": ROLLOUT_SEED_SCHEME,
+    })
     # Keep an in-progress record without replacing a previously valid sidecar.
     # The final manifest is published only after the JSONL and its hash exist.
     manifest_tmp.write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
@@ -205,6 +222,9 @@ def collect_rollouts(
         for i, item in enumerate(prompts):
             if idx_offset + i in done:
                 continue
+            prompt_seed = rollout_prompt_seed(sampling_seed_base, idx_offset + i)
+            random.seed(prompt_seed)
+            torch.manual_seed(prompt_seed)
             t0 = time.time()
             ids = chat_ids(tok, item["question"]).to(model.device)
             resp_start = ids.numel()
@@ -268,7 +288,22 @@ def load_policy(base: str, adapter: Path | None, device: str | None = None):
     if adapter is not None:
         from peft import PeftModel
 
-        model = PeftModel.from_pretrained(model, str(adapter))
+        adapter = adapter.resolve()
+        adapter_weights = adapter / "adapter_model.safetensors"
+        if not adapter_weights.is_file():
+            raise ValueError(f"policy adapter weights are missing: {adapter_weights}")
+        policy_manifest = adapter / "policy_train.json"
+        policy_binding = {
+            "path": str(adapter),
+            "adapter_sha256": sha256_file(adapter_weights),
+            "policy_manifest_sha256": (
+                sha256_file(policy_manifest) if policy_manifest.is_file() else None
+            ),
+        }
+        model = PeftModel.from_pretrained(
+            model, str(adapter), local_files_only=True
+        )
         model = model.merge_and_unload()
+        model._om_policy_adapter = policy_binding
         model.eval()
     return model, tok

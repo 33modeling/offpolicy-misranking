@@ -7,8 +7,13 @@
 # family creates one behavior pool and evaluates every drift on that exact pool.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+export OM_ONLINE=0
 source scripts/setup_env.sh
 source scripts/_report_cache.sh
+
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv python 없음: $PY"; exit 1; }
@@ -156,13 +161,23 @@ run_dir() {
 
 run_complete() {
   local run=$1 dataset=$2 seed=$3 drift=$4 source=$5 artifact
+  local previous_drift=0 expected_parent="" candidate
+  for candidate in "${DRIFTS[@]}"; do
+    [ "$candidate" = "$drift" ] && break
+    previous_drift=$candidate
+  done
+  if [ "$previous_drift" -gt 0 ]; then
+    expected_parent="$(run_dir "$dataset" "$seed" "$previous_drift")/policy_step_$previous_drift"
+  fi
   for artifact in DONE run_config.json manifest.json score_protocol.json \
       oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json \
       scores_splithalf.json divergence_stats.json oracle_micro_groups.pt val_groups.pt; do
     [ -s "$run/$artifact" ] || return 1
   done
   MODEL_PATH="$MODEL_PATH" DATASET="$dataset" SEED="$seed" DRIFT="$drift" \
-    BEHAVIOR_SOURCE="$source" "$PY" - "$run/run_config.json" <<'PYEOF' \
+    BEHAVIOR_SOURCE="$source" EXPECTED_GRPO_START="$previous_drift" \
+    EXPECTED_GRPO_RESUME="$expected_parent" \
+    "$PY" - "$run/run_config.json" <<'PYEOF' \
       >/dev/null 2>&1 || return 1
 import json
 import os
@@ -218,6 +233,8 @@ expected = {
     "grpo_advantage_epsilon": float(os.environ.get("GRPO_ADVANTAGE_EPSILON", "1e-4")),
     "grpo_lora_rank": int(os.environ.get("GRPO_LORA_RANK", "16")),
     "grpo_lora_alpha": int(os.environ.get("GRPO_LORA_ALPHA", "32")),
+    "grpo_start_step": int(os.environ["EXPECTED_GRPO_START"]),
+    "grpo_resume_adapter": os.environ["EXPECTED_GRPO_RESUME"] or None,
     "behavior_source": os.environ["BEHAVIOR_SOURCE"] or None,
 }
 errors = [key for key, value in expected.items() if config.get(key) != value]
@@ -254,17 +271,49 @@ PYEOF
         optimizer.pt grpo_stats.jsonl; do
       [ -s "$run/policy_step_$drift/$artifact" ] || return 1
     done
-    PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    if [ -z "$CONTRACT" ]; then
+    MODEL_PATH="$MODEL_PATH" SEED="$seed" \
+      REGIME_MAX_NEW_TOKENS="$MAX_NEW_TOKENS_DEFAULT" \
+      GRPO_GROUP_SIZE="$GRPO_GROUP_SIZE_DEFAULT" \
+      GRPO_CLIP_EPSILON="$GRPO_CLIP_EPSILON_DEFAULT" \
+      GRPO_LEARNING_RATE="$GRPO_LEARNING_RATE_DEFAULT" \
+      GRPO_EPOCHS_PER_BATCH="$GRPO_EPOCHS_PER_BATCH_DEFAULT" \
+      GRPO_MAX_GRAD_NORM="$GRPO_MAX_GRAD_NORM_DEFAULT" \
+      GRPO_ADVANTAGE_EPSILON="$GRPO_ADVANTAGE_EPSILON_DEFAULT" \
+      GRPO_LORA_RANK="$GRPO_LORA_RANK_DEFAULT" \
+      GRPO_LORA_ALPHA="$GRPO_LORA_ALPHA_DEFAULT" \
+      GRPO_CHECKPOINT_EVERY="${GRPO_CHECKPOINT_EVERY:-5}" \
+      PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
       "$PY" - "$run/policy_step_$drift" "$drift" \
-        "$GRPO_WORLD_SIZE_DEFAULT" "$RLVR_METHOD_DEFAULT" <<'PYEOF' >/dev/null 2>&1 || return 1
+        "$GRPO_WORLD_SIZE_DEFAULT" "$RLVR_METHOD_DEFAULT" "$previous_drift" \
+        "$expected_parent" <<'PYEOF' >/dev/null || return 1
 import sys
 from pathlib import Path
-from train_policy_grpo import validate_policy_manifest
-validate_policy_manifest(
+import os
+from train_policy_grpo import GrpoConfig, validate_policy_lineage
+config = GrpoConfig(
+    group_size=int(os.environ.get("GRPO_GROUP_SIZE", "8")),
+    clip_epsilon=float(os.environ.get("GRPO_CLIP_EPSILON", "0.2")),
+    learning_rate=float(os.environ.get("GRPO_LEARNING_RATE", "1e-5")),
+    epochs_per_batch=int(os.environ.get("GRPO_EPOCHS_PER_BATCH", "2")),
+    max_grad_norm=float(os.environ.get("GRPO_MAX_GRAD_NORM", "1.0")),
+    advantage_epsilon=float(os.environ.get("GRPO_ADVANTAGE_EPSILON", "1e-4")),
+    lora_rank=int(os.environ.get("GRPO_LORA_RANK", "16")),
+    lora_alpha=int(os.environ.get("GRPO_LORA_ALPHA", "32")),
+    checkpoint_every=int(os.environ.get("GRPO_CHECKPOINT_EVERY", "5")),
+)
+validate_policy_lineage(
     Path(sys.argv[1]), target_steps=int(sys.argv[2]), world_size=int(sys.argv[3]),
-    training_objective=sys.argv[4], verify_hash=False,
+    training_objective=sys.argv[4], expected_start_step=int(sys.argv[5]),
+    expected_parent=Path(sys.argv[6]) if sys.argv[6] else None,
+    expected_model=Path(os.environ["MODEL_PATH"]),
+    expected_seed=int(os.environ["SEED"]),
+    expected_max_new_tokens=int(os.environ.get("REGIME_MAX_NEW_TOKENS", "512")),
+    expected_config=vars(config),
+    expected_prompts=Path(sys.argv[1]).parent / "prompts.json",
 )
 PYEOF
+    fi
   fi
   [ -z "$CONTRACT" ] || contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \
     >/dev/null 2>&1
@@ -445,8 +494,10 @@ run_point() {
     arc-challenge) prompt_env=ARC_CHALLENGE_DIR ;;
   esac
   if [ -n "$source" ] && [ -n "$prompt_env" ]; then
+    # experiment.py fixes the dataset split at seed 0 for every experiment
+    # seed. Experiment seeds control rollout/training RNG, not pool membership.
     prompt_root=$("$PY" src/materialize_prompt_dataset.py "$source/prompts.json" \
-      "$dataset" "$QUEUE/prompt-datasets" --seed "$seed") || return 43
+      "$dataset" "$QUEUE/prompt-datasets" --seed 0) || return 43
   fi
   for try in $(seq 1 "$MAX_RETRIES"); do
     echo "[$(date '+%F %T')] $dataset/s$seed/d$drift try $try/$MAX_RETRIES -> $run"

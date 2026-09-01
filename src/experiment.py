@@ -37,7 +37,7 @@ from grads import (
     weight_stats,
 )
 from rollout import SAMPLING, collect_rollouts, load_policy
-from rollout_contract import trim_row
+from rollout_contract import rollout_seed_base, trim_row
 from select_rules import (
     fixed_selection_overlap,
     jittered_topk,
@@ -61,6 +61,11 @@ def _atomic_save(obj, path: Path) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     torch.save(obj, tmp)
     tmp.replace(path)
+
+
+def _generation_seed(args, run: Path, source: str) -> int:
+    config = json.loads((run / "run_config.json").read_text())
+    return rollout_seed_base(args.seed, int(config.get("drift", 0)), source)
 
 
 def split_three_way_groups(tensor: torch.Tensor, dimension: int = 0) -> tuple:
@@ -221,11 +226,9 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
 
     from rollout import _eta
     t_start = _time.time()
-    n_done = 0
     out = {est: {} for est in ESTIMATORS}
     div_rows: list[dict] = []
-    for pi_idx, rows in sorted(rollouts.items()):
-        n_done += 1
+    for n_done, (pi_idx, rows) in enumerate(sorted(rollouts.items()), 1):
         rewards = torch.tensor([r["reward"] for r in rows])
         advs = loo_advantages(rewards)
         logps_pi = [sequence_logprobs(pi, r["input_ids"], r["resp_start"]) for r in rows]
@@ -295,12 +298,18 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         collect_rollouts(
             pi, tok, prompts["train"], args.fresh_k, args.max_new_tokens,
             args.temperature, fresh_path,
+            sampling_seed_base=_generation_seed(
+                args, run, "rollouts_fresh_train"
+            ),
         )
     val_path = run / "rollouts_fresh_val.jsonl"
     if not val_path.exists():
         collect_rollouts(
             pi, tok, prompts["val"], args.val_k, args.max_new_tokens,
             args.temperature, val_path,
+            sampling_seed_base=_generation_seed(
+                args, run, "rollouts_fresh_val"
+            ),
         )
     generation_validation = None
     if shard is None:
@@ -309,31 +318,35 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
         )
 
     # validation 방향 v — 비샤드 경로 전담 (샤드 모드는 val-grads 스테이지가 담당)
-    if shard is None:
-        # 산출물 2개(gradient+groups) — 둘 다 있어야 스킵 (부분 상태 오인 방지, B5류)
-        if not ((run / "val_gradient.pt").exists() and (run / "val_groups.pt").exists()):
-            v_sum, groups_v = None, []
-            for _vn, (_pi_idx, rows) in enumerate(sorted(read_rollouts(val_path).items()), 1):
-                advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
-                weights = [
-                    torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
-                    for r, a in zip(rows, advs, strict=True)
-                ]
-                g = prompt_gradient(pi, params, rows, weights, spec, micro_batch=args.micro_batch)
-                groups_v.append(g)
-                v_sum = g if v_sum is None else v_sum + g
-                if _vn % 20 == 0:
-                    print(f"  val 방향 {_vn}개 완료", flush=True)
-            val_grad = v_sum / len(groups_v)
-            _atomic_save(torch.stack(groups_v), run / "val_groups.pt")
-            _atomic_save(val_grad, run / "val_gradient.pt")
+    # 산출물 2개(gradient+groups) — 둘 다 있어야 스킵 (부분 상태 오인 방지, B5류)
+    if shard is None and not (
+        (run / "val_gradient.pt").exists() and (run / "val_groups.pt").exists()
+    ):
+        v_sum, groups_v = None, []
+        for _vn, (_pi_idx, rows) in enumerate(
+            sorted(read_rollouts(val_path).items()), 1
+        ):
+            advs = loo_advantages(torch.tensor([r["reward"] for r in rows]))
+            weights = [
+                torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
+                for r, a in zip(rows, advs, strict=True)
+            ]
+            g = prompt_gradient(
+                pi, params, rows, weights, spec, micro_batch=args.micro_batch
+            )
+            groups_v.append(g)
+            v_sum = g if v_sum is None else v_sum + g
+            if _vn % 20 == 0:
+                print(f"  val 방향 {_vn}개 완료", flush=True)
+        val_grad = v_sum / len(groups_v)
+        _atomic_save(torch.stack(groups_v), run / "val_groups.pt")
+        _atomic_save(val_grad, run / "val_gradient.pt")
 
     # oracle 점수 + split-half + micro-group 저장
     import time as _time
 
     from rollout import _eta
     t_start = _time.time()
-    n_done = 0
     oracle, halves, micro = {}, {}, {}
     fresh_by_prompt = read_rollouts(fresh_path)
     if shard is not None:
@@ -342,8 +355,7 @@ def stage_oracle(args, run: Path, pi=None, tok=None, shard: tuple[int, int] | No
     if shard is None:
         val_groups = torch.load(run / "val_groups.pt", weights_only=True)
         val_rank, val_half_a, val_half_b = split_validation_directions(val_groups)
-    for pi_idx, rows in sorted(fresh_by_prompt.items()):
-        n_done += 1
+    for n_done, (pi_idx, rows) in enumerate(sorted(fresh_by_prompt.items()), 1):
         gsize = args.micro_group
         if len(rows) % gsize:
             raise ValueError(
@@ -433,8 +445,13 @@ def stage_report(args, run: Path) -> None:
         zeros = sum(1 for v in sc.values() if v.get("norm", 1.0) < 1e-6)
         return ties, zeros
 
-    lines = [f"# report  (top-{int(frac*100)}%, k={k}, "
-             f"split_half_reliability={noise_floor:.3f} — 참조치이며 상한 아님)", ""]
+    lines = [
+        (
+            f"# report  (top-{int(frac*100)}%, k={k}, "
+            f"split_half_reliability={noise_floor:.3f} — 참조치이며 상한 아님)"
+        ),
+        "",
+    ]
     lines.append("| estimator | top-k precision | Jaccard | Δ vs floor |")
     lines.append("|---|---|---|---|")
     results = {"noise_floor": noise_floor, "split_half_reliability": noise_floor,
@@ -518,10 +535,13 @@ def stage_report(args, run: Path) -> None:
     }
     lines += [
         "",
-        f"CertaGrad: certified={cg['certified']} fresh={cg_rollouts}/{uni_rollouts} rollouts "
-        f"({results['certagrad']['fresh_frac_of_uniform']:.2f}× of uniform), "
-        f"precision={results['certagrad']['precision_vs_oracle']:.3f} "
-        f"(uniform precision={uniform_precision:.3f})",
+        (
+            f"CertaGrad: certified={cg['certified']} "
+            f"fresh={cg_rollouts}/{uni_rollouts} rollouts "
+            f"({results['certagrad']['fresh_frac_of_uniform']:.2f}× of uniform), "
+            f"precision={results['certagrad']['precision_vs_oracle']:.3f} "
+            f"(uniform precision={uniform_precision:.3f})"
+        ),
     ]
     _atomic_text(run / "report.md", "\n".join(lines))
     _atomic_text(run / "report.json", json.dumps(results, indent=1))
@@ -620,7 +640,10 @@ def main() -> None:
             lo, hi = i * per, min((i + 1) * per, len(train))
             collect_rollouts(beta, tok, train[lo:hi], args.behavior_k,
                              args.max_new_tokens, args.temperature, out,
-                             idx_offset=lo)
+                             idx_offset=lo,
+                             sampling_seed_base=_generation_seed(
+                                 args, run, "rollouts_behavior_train"
+                             ))
     elif args.stage == "rollout-fresh":
         # π(adapter) fresh rollout을 샤딩 수집 — analyze는 완성 파일이 있으면 생성 스킵
         merged = run / "rollouts_fresh_train.jsonl"
@@ -643,7 +666,10 @@ def main() -> None:
             lo, hi = i * per, min((i + 1) * per, len(train))
             collect_rollouts(pi, tok, train[lo:hi], args.fresh_k,
                              args.max_new_tokens, args.temperature, out,
-                             idx_offset=lo)
+                             idx_offset=lo,
+                             sampling_seed_base=_generation_seed(
+                                 args, run, "rollouts_fresh_train"
+                             ))
         # shard 0이 val fresh도 담당 — train 샤드 스킵 여부와 **무관하게** 검사.
         # (else 안에 있던 시절: 재시작하면 train과 함께 val 수집도 건너뛰어
         #  rollouts_fresh_val.jsonl 영구 누락 → val-grads가 line 37에서 사망)
@@ -653,7 +679,10 @@ def main() -> None:
                 pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
             prompts = json.loads((run / "prompts.json").read_text())
             collect_rollouts(pi, tok, prompts["val"], args.val_k,
-                             args.max_new_tokens, args.temperature, val_out)
+                             args.max_new_tokens, args.temperature, val_out,
+                             sampling_seed_base=_generation_seed(
+                                 args, run, "rollouts_fresh_val"
+                             ))
     elif args.stage == "score":
         stage_score(args, run)
     elif args.stage == "oracle":

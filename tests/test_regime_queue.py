@@ -19,6 +19,12 @@ def executable(path: Path, source: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def test_resume_snapshot_uses_the_pipeline_split_seed() -> None:
+    script = (REPO / "scripts/run_matrix.sh").read_text(encoding="utf-8")
+    assert '"$dataset" "$QUEUE/prompt-datasets" --seed 0' in script
+    assert '"$dataset" "$QUEUE/prompt-datasets" --seed "$seed"' not in script
+
+
 def test_shared_regime_queue_is_unique_and_retryable() -> None:
     with tempfile.TemporaryDirectory() as raw_tmp:
         root = Path(raw_tmp)
@@ -96,6 +102,8 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "'grpo_advantage_epsilon':float(os.environ.get('GRPO_ADVANTAGE_EPSILON','1e-4')),"
             "'grpo_lora_rank':int(os.environ.get('GRPO_LORA_RANK','16')),"
             "'grpo_lora_alpha':int(os.environ.get('GRPO_LORA_ALPHA','32')),"
+            "'grpo_start_step':int(os.environ.get('OM_GRPO_START_STEP','0')),"
+            "'grpo_resume_adapter':os.environ.get('OM_GRPO_RESUME_ADAPTER'),"
             "'behavior_source':os.environ.get('OM_BEHAVIOR_SOURCE'),"
             "'git':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()}\n"
             "out=Path(sys.argv[1]); (out/'run_config.json').write_text(json.dumps(config))\n"
@@ -144,7 +152,10 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             encoding="utf-8",
         )
         (checkout / "src/train_policy_grpo.py").write_text(
-            "def validate_policy_manifest(*args, **kwargs): return {}\n",
+            "class GrpoConfig:\n"
+            " def __init__(self, **kwargs): self.__dict__.update(kwargs)\n"
+            "def validate_policy_manifest(*args, **kwargs): return {}\n"
+            "def validate_policy_lineage(*args, **kwargs): return {}\n",
             encoding="utf-8",
         )
         shutil.copy2(REPO / "src/gate_rules.py", checkout / "src/gate_rules.py")

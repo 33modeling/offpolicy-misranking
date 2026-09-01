@@ -1,7 +1,7 @@
-"""데이터 로딩 — 파일럿 기본 GSM8K, 옵션 MATH-500. 본실험은 DAPO-Math-17k로 확장.
+"""Local-first dataset loading for verifier-reward experiments.
 
-H100 클러스터는 GitHub egress가 없으므로 HF 미러를 쓴다:
-  export HF_ENDPOINT=<사내 미러>  (huggingface_hub가 자동 인식)
+Compute launchers set ``OM_ONLINE=0`` and must never enter a Hub code path.
+Only explicit preparation commands may set ``OM_ONLINE=1``.
 """
 
 from __future__ import annotations
@@ -30,6 +30,18 @@ def _dedupe_items(items: list[dict], name: str) -> list[dict]:
     return list(unique.values())
 
 
+def _require_online(dataset: str, tried: list | None = None) -> None:
+    if os.environ.get("OM_ONLINE") == "1":
+        return
+    locations = ""
+    if tried:
+        locations = "\nChecked local paths:\n  " + "\n  ".join(map(str, tried))
+    raise ValueError(
+        f"{dataset}: no readable local dataset snapshot; Hub fallback is disabled "
+        f"for compute runs (OM_ONLINE=0).{locations}"
+    )
+
+
 def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     import json
     import os
@@ -55,11 +67,14 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         if explicit_env is not None and os.environ.get(explicit_env)
         else None
     )
-    local_candidates = [
-        explicit_root / fname if explicit_root else None,
-        Path(os.environ.get("OM_DATA", "")) / fname,
-        Path(os.environ.get("DATASETS_DIR", "")) / dataset / fname,
-    ]
+    local_candidates = (
+        [explicit_root / fname]
+        if explicit_root
+        else [
+            Path(os.environ.get("OM_DATA", "")) / fname,
+            Path(os.environ.get("DATASETS_DIR", "")) / dataset / fname,
+        ]
+    )
     for local in (candidate for candidate in local_candidates if candidate is not None):
         # '존재하는 첫 파일' 채택은 손상/빈 사본이 정상 사본을 가린다(E4형) —
         # 판독까지 성공해야 채택, 실패하면 다음 후보→일반 탐색으로 넘어간다
@@ -85,6 +100,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
     # 라이브러리 상태(미설치·구버전 오프라인 미지원)와 무관하게 동작해야 한다
 
     if dataset == "gsm8k":
+        _require_online(dataset, local_candidates)
         from datasets import load_dataset
         ds = load_dataset("openai/gsm8k", "main", split="train")
         items = [
@@ -99,6 +115,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
                                  fuzzy=("math500", "math-500", "math_500"))
         root, rows = _load_rows_first(tried)
         if rows is None:
+            _require_online(dataset, tried)
             try:
                 from datasets import load_dataset
                 ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
@@ -124,6 +141,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         tried = _candidate_roots("MBPP_DIR", ("mbpp",))
         root, rows = _load_rows_first(tried)
         if rows is None:
+            _require_online(dataset, tried)
             try:
                 from datasets import load_dataset
                 ds = load_dataset("google-research-datasets/mbpp", "full")
@@ -194,6 +212,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         )
         root, rows = _load_rows_first(tried)
         if rows is None:
+            _require_online(dataset, tried)
             try:
                 from datasets import load_dataset
                 ds = load_dataset("allenai/ai2_arc", "ARC-Challenge")
@@ -244,6 +263,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
                                  fuzzy=("dapo",))
         root, rows = _load_rows_first(tried)
         if rows is None:
+            _require_online(dataset, tried)
             try:
                 from datasets import load_dataset
                 rows = list(load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train"))
@@ -382,22 +402,15 @@ def _load_rows_any(root) -> list[dict] | None:
         for f in pq:
             parent = Path(f).parent
             groups.setdefault("." if parent == root else parent.name, []).append(f)
-        order = sorted(groups, key=lambda g: (not g.startswith("full"), g))
+        full_groups = sorted(g for g in groups if g.startswith("full"))
+        order = full_groups or sorted(groups)
         rows: list[dict] = []
         for g in order:
             try:
                 part = list(load_dataset("parquet", data_files=groups[g], split="train"))
-            except Exception:
-                continue
+            except Exception as exc:
+                raise ValueError(f"parquet group could not be read: {g}: {exc}") from exc
             rows += part
-            if g.startswith("full"):
-                break
-        if not rows:
-            for f in pq:
-                try:
-                    rows += list(load_dataset("parquet", data_files=f, split="train"))
-                except Exception:
-                    continue
         if rows:
             return rows
     # 원본 MATH 등 문제당 개별 .json 파일 트리 (HF 메타 파일은 제외)
@@ -409,8 +422,8 @@ def _load_rows_any(root) -> list[dict] | None:
         for p in jf:
             try:
                 obj = json.loads(p.read_text())
-            except (ValueError, OSError):
-                continue
+            except (ValueError, OSError) as exc:
+                raise ValueError(f"JSON file could not be read: {p}: {exc}") from exc
             if isinstance(obj, list):
                 rows += [r for r in obj if isinstance(r, dict)]
             elif isinstance(obj, dict):
@@ -420,10 +433,10 @@ def _load_rows_any(root) -> list[dict] | None:
     try:
         from datasets import load_from_disk
         obj = load_from_disk(str(root))
-    except Exception:
+    except (FileNotFoundError, OSError, TypeError, ValueError):
         return None
     if hasattr(obj, "keys") and not hasattr(obj, "features"):  # DatasetDict
-        return [r for k in obj.keys() for r in obj[k]]
+        return [r for k in obj for r in obj[k]]
     return list(obj)
 
 
@@ -467,7 +480,7 @@ def _load_rows_first(tried: list) -> tuple:
             continue
         try:
             rows = _load_rows_any(c)
-        except Exception as e:  # 손상/부분 파일(비원자 쓰기 잔재)은 다음 후보로
+        except Exception as e:  # noqa: BLE001 - candidate boundary logs and tries next snapshot
             print(f"[data] 후보 판독 실패, 건너뜀: {c} ({type(e).__name__}: {e})")
             continue
         if rows:
@@ -513,7 +526,7 @@ def extract_answer(text: str) -> str | None:
 
 
 def _extract_code(text: str) -> str:
-    m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.S)
+    m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
     if m:
         return m.group(1)
     i = text.find("def ")
@@ -621,7 +634,10 @@ def _kk_reward(text: str, gold: str) -> float:
     seg = text.split("####")[-1] if "####" in text else text
     for name, role in pairs:
         ms = list(re.finditer(
-            rf"\b{re.escape(name)}\b\s+is\s+(?:a|an)\s+(knight|knave)", seg, re.I))
+            rf"\b{re.escape(name)}\b\s+is\s+(?:a|an)\s+(knight|knave)",
+            seg,
+            re.IGNORECASE,
+        ))
         if not ms or ms[-1].group(1).lower() != role:
             return 0.0
     return 1.0
@@ -654,7 +670,7 @@ def _math_reward(prediction: str, gold: str) -> float:
         return 1.0 if parsed_gold and parsed_prediction and verify(
             parsed_gold, parsed_prediction
         ) else 0.0
-    except Exception:
+    except Exception:  # noqa: BLE001 - verifier/parser failures are invalid answers
         return 0.0
 
 

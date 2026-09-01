@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from artifact_contract import sha256_file, validate_generation_contract
+from rollout_contract import ROLLOUT_SEED_SCHEME, rollout_seed_base
 
 
 def write_source(run: Path, prefix: str, n: int, k: int) -> None:
@@ -56,6 +57,8 @@ def make_run(run: Path) -> None:
         "val_k": 2,
         "max_new_tokens": 16,
         "model": "/models/test-model",
+        "seed": 0,
+        "drift": 0,
     }))
     (run / "prompts.json").write_text(json.dumps({
         "train": [{}, {}],
@@ -169,8 +172,89 @@ def test_merged_rollouts_must_match_bound_shards():
             raise AssertionError("merged content drift from shards must be rejected")
 
 
+def test_fresh_rollouts_bind_the_exact_policy_adapter():
+    with tempfile.TemporaryDirectory() as tmp:
+        run = Path(tmp)
+        make_run(run)
+        config_path = run / "run_config.json"
+        config = json.loads(config_path.read_text())
+        config["drift"] = 25
+        config_path.write_text(json.dumps(config))
+        policy = run / "policy_step_25"
+        policy.mkdir()
+        (policy / "adapter_model.safetensors").write_bytes(b"adapter")
+        (policy / "policy_train.json").write_text('{"objective":"grpo"}\n')
+        binding = {
+            "path": str(policy.resolve()),
+            "adapter_sha256": sha256_file(policy / "adapter_model.safetensors"),
+            "policy_manifest_sha256": sha256_file(policy / "policy_train.json"),
+        }
+        for prefix in ("rollouts_fresh_train", "rollouts_fresh_val"):
+            manifest_path = run / f"{prefix}.manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["policy_adapter"] = binding
+            manifest_path.write_text(json.dumps(manifest))
+
+        result = validate_generation_contract(run, require_policy_binding=True)
+        assert result["policy_binding_missing"] == []
+
+        manifest_path = run / "rollouts_fresh_train.manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["policy_adapter"]["adapter_sha256"] = "0" * 64
+        manifest_path.write_text(json.dumps(manifest))
+        try:
+            validate_generation_contract(run, require_policy_binding=True)
+        except ValueError as exc:
+            assert "adapter binding mismatch" in str(exc)
+        else:
+            raise AssertionError("fresh rollout from another policy must be rejected")
+
+
+def test_rollout_rng_streams_are_source_and_drift_bound():
+    with tempfile.TemporaryDirectory() as tmp:
+        run = Path(tmp)
+        make_run(run)
+        config_path = run / "run_config.json"
+        config = json.loads(config_path.read_text())
+        config.update({"seed": 2, "drift": 25})
+        config_path.write_text(json.dumps(config))
+
+        expected = {}
+        for prefix in (
+            "rollouts_behavior_train",
+            "rollouts_fresh_train",
+            "rollouts_fresh_val",
+        ):
+            seed = rollout_seed_base(2, 25, prefix)
+            expected[prefix] = seed
+            manifest_path = run / f"{prefix}.manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest.update({
+                "sampling_seed_base": seed,
+                "sampling_seed_scheme": ROLLOUT_SEED_SCHEME,
+            })
+            manifest_path.write_text(json.dumps(manifest))
+
+        assert len(set(expected.values())) == 3
+        result = validate_generation_contract(run, require_rng_binding=True)
+        assert result["rng_binding_missing"] == []
+
+        manifest_path = run / "rollouts_fresh_train.manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["sampling_seed_base"] = expected["rollouts_behavior_train"]
+        manifest_path.write_text(json.dumps(manifest))
+        try:
+            validate_generation_contract(run, require_rng_binding=True)
+        except ValueError as exc:
+            assert "RNG binding mismatch" in str(exc)
+        else:
+            raise AssertionError("shared behavior/fresh RNG stream must be rejected")
+
+
 if __name__ == "__main__":
     test_generation_contract_and_exact_coverage()
     test_legacy_manifest_is_hashed_at_validation_time()
     test_merged_rollouts_must_match_bound_shards()
+    test_fresh_rollouts_bind_the_exact_policy_adapter()
+    test_rollout_rng_streams_are_source_and_drift_bound()
     print("PASS generation contract and exact coverage")

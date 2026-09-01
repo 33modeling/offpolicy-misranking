@@ -2,7 +2,11 @@
 # One RLVR point: behavior rollout, 4-GPU GRPO policy training, and evaluation.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+export OM_ONLINE=0
 source scripts/setup_env.sh
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 PY="$VENV_DIR/bin/python"
 MODEL_PATH="${MODEL_PATH:-$MODELS_DIR/Qwen2.5-7B-Instruct}"
 [ -f "$MODEL_PATH/config.json" ] || { echo "[abort] model snapshot missing: $MODEL_PATH"; exit 1; }

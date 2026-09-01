@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
 import random
 import shutil
@@ -174,6 +175,7 @@ def validate_policy_manifest(
     world_size: int | None = None,
     training_objective: str = "grpo",
     verify_hash: bool = True,
+    require_complete_hashes: bool = False,
 ) -> dict:
     """Fail closed unless an adapter used the requested verifier-RL objective."""
     if training_objective not in RLVR_METHODS:
@@ -188,6 +190,11 @@ def validate_policy_manifest(
         "reference_kl_beta": 0.0,
         "supervised_loss": False,
         "positive_only_filter": False,
+        "parameterization": "lora",
+        "advantage_normalization": advantage_normalization_for_objective(
+            training_objective
+        ),
+        "token_normalization": token_normalization_for_objective(training_objective),
     }
     errors = [
         f"{key}={manifest.get(key)!r}, expected {value!r}"
@@ -223,20 +230,179 @@ def validate_policy_manifest(
         if not path.is_file() or path.stat().st_size == 0:
             errors.append(f"missing or empty {name}")
     stats_path = adapter_dir / "grpo_stats.jsonl"
+    stats_rows = []
     if not stats_path.is_file() or stats_path.stat().st_size == 0:
         errors.append("missing or empty grpo_stats.jsonl")
-    elif sum(
-        int(json.loads(line).get("nonzero_advantage_groups", 0))
-        for line in stats_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ) <= 0:
-        errors.append("training observed no nonzero-advantage reward group")
+    else:
+        try:
+            stats_rows = [
+                json.loads(line)
+                for line in stats_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"invalid grpo_stats.jsonl: {exc}")
+        if stats_rows:
+            completed_steps = manifest.get("completed_steps")
+            if isinstance(start_step, int) and isinstance(completed_steps, int):
+                expected_steps = list(range(start_step + 1, completed_steps + 1))
+                recorded_steps = [row.get("step") for row in stats_rows]
+                if recorded_steps != expected_steps:
+                    errors.append(
+                        "grpo_stats.jsonl step coverage does not match the policy interval"
+                    )
+            for row in stats_rows:
+                if row.get("training_objective") != training_objective:
+                    errors.append("grpo_stats.jsonl objective mismatch")
+                    break
+                if row.get("advantage_normalization") != required[
+                    "advantage_normalization"
+                ]:
+                    errors.append("grpo_stats.jsonl advantage normalization mismatch")
+                    break
+                if row.get("token_normalization") != required["token_normalization"]:
+                    errors.append("grpo_stats.jsonl token normalization mismatch")
+                    break
+                numeric = (
+                    "reward_mean",
+                    "rank_reward_std_mean",
+                    "loss",
+                    "grad_norm",
+                    "clip_fraction",
+                    "mean_ratio",
+                    "approx_kl",
+                )
+                if any(
+                    not isinstance(row.get(key), (int, float))
+                    or not math.isfinite(float(row[key]))
+                    for key in numeric
+                ):
+                    errors.append("grpo_stats.jsonl contains missing or non-finite metrics")
+                    break
+                active = row.get("nonzero_advantage_groups")
+                groups = row.get("groups")
+                samples = row.get("samples")
+                expected_samples = (
+                    int(manifest["world_size"])
+                    * int(manifest.get("config", {}).get("group_size", 0))
+                )
+                if (
+                    not isinstance(active, int)
+                    or isinstance(active, bool)
+                    or not 0 <= active <= int(manifest["world_size"])
+                    or groups != manifest["world_size"]
+                    or samples != expected_samples
+                ):
+                    errors.append("grpo_stats.jsonl group/sample accounting mismatch")
+                    break
+        else:
+            errors.append("missing GRPO training statistics")
     if errors:
         raise ValueError("invalid GRPO policy artifact: " + "; ".join(errors))
-    if verify_hash and manifest.get("adapter_sha256") != sha256_file(
-        adapter_dir / "adapter_model.safetensors"
-    ):
-        raise ValueError("GRPO adapter hash does not match policy_train.json")
+    if verify_hash:
+        hash_artifacts = {
+            "adapter_sha256": "adapter_model.safetensors",
+            "optimizer_sha256": "optimizer.pt",
+            "grpo_stats_sha256": "grpo_stats.jsonl",
+        }
+        hash_errors = []
+        for key, name in hash_artifacts.items():
+            recorded = manifest.get(key)
+            if recorded is None and not require_complete_hashes and key != "adapter_sha256":
+                continue
+            if not isinstance(recorded, str) or len(recorded) != 64:
+                hash_errors.append(f"missing or invalid {key}")
+            elif recorded != sha256_file(adapter_dir / name):
+                hash_errors.append(f"{name} hash does not match policy_train.json")
+        if hash_errors:
+            raise ValueError("invalid GRPO policy hashes: " + "; ".join(hash_errors))
+    return manifest
+
+
+def validate_policy_lineage(
+    adapter_dir: Path,
+    *,
+    target_steps: int,
+    world_size: int,
+    training_objective: str,
+    expected_start_step: int,
+    expected_parent: Path | None,
+    expected_model: Path | None = None,
+    expected_seed: int | None = None,
+    expected_max_new_tokens: int | None = None,
+    expected_config: dict | None = None,
+    expected_prompts: Path | None = None,
+    require_complete_hashes: bool = False,
+) -> dict:
+    """Validate the exact parent adapter and optimizer for a policy interval."""
+    manifest = validate_policy_manifest(
+        adapter_dir,
+        target_steps=target_steps,
+        world_size=world_size,
+        training_objective=training_objective,
+        require_complete_hashes=require_complete_hashes,
+    )
+    errors = []
+    if manifest.get("start_step") != expected_start_step:
+        errors.append(
+            f"start_step={manifest.get('start_step')!r}, expected {expected_start_step}"
+        )
+    if expected_parent is None:
+        expected = {
+            "parent_policy": None,
+            "parent_policy_manifest_sha256": None,
+            "parent_adapter_sha256": None,
+            "parent_optimizer_sha256": None,
+        }
+    else:
+        parent = expected_parent.resolve()
+        validate_policy_manifest(
+            parent,
+            target_steps=expected_start_step,
+            world_size=world_size,
+            training_objective=training_objective,
+        )
+        expected = {
+            "parent_policy": str(parent),
+            "parent_policy_manifest_sha256": sha256_file(parent / "policy_train.json"),
+            "parent_adapter_sha256": sha256_file(
+                parent / "adapter_model.safetensors"
+            ),
+            "parent_optimizer_sha256": sha256_file(parent / "optimizer.pt"),
+        }
+    errors.extend(
+        f"{key}={manifest.get(key)!r}, expected {value!r}"
+        for key, value in expected.items()
+        if manifest.get(key) != value
+    )
+    run_expected = {}
+    if expected_model is not None:
+        run_expected["base_model"] = str(expected_model.resolve())
+    if expected_seed is not None:
+        run_expected["seed"] = expected_seed
+    if expected_max_new_tokens is not None:
+        run_expected["max_new_tokens"] = expected_max_new_tokens
+    if expected_config is not None:
+        run_expected["config"] = expected_config
+        run_expected["samples_per_step"] = world_size * int(
+            expected_config["group_size"]
+        )
+    errors.extend(
+        f"{key}={manifest.get(key)!r}, expected {value!r}"
+        for key, value in run_expected.items()
+        if manifest.get(key) != value
+    )
+    if expected_prompts is not None:
+        prompt_hash = sha256_file(expected_prompts)
+        recorded_hash = manifest.get("prompts_sha256")
+        if recorded_hash is None and require_complete_hashes:
+            errors.append("prompts_sha256 is missing")
+        elif recorded_hash is not None and recorded_hash != prompt_hash:
+            errors.append(
+                f"prompts_sha256={recorded_hash!r}, expected {prompt_hash!r}"
+            )
+    if errors:
+        raise ValueError("invalid GRPO policy lineage: " + "; ".join(errors))
     return manifest
 
 
@@ -293,6 +459,7 @@ def _checkpoint_contract(
         "world_size": world_size,
         "start_step": args.start_step,
         "target_steps": args.target_steps,
+        "prompts_sha256": sha256_file(Path(args.prompts)),
         "max_new_tokens": args.max_new_tokens,
         "resume_adapter": (
             str(Path(args.resume_adapter).resolve()) if args.resume_adapter else None
@@ -421,11 +588,21 @@ def train(args: argparse.Namespace) -> None:
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
     if (out_dir / "policy_train.json").is_file():
-        validate_policy_manifest(
+        validate_policy_lineage(
             out_dir,
             target_steps=args.target_steps,
             world_size=world_size,
             training_objective=args.objective,
+            expected_start_step=args.start_step,
+            expected_parent=(
+                Path(args.resume_adapter) if args.resume_adapter else None
+            ),
+            expected_model=Path(args.model),
+            expected_seed=args.seed,
+            expected_max_new_tokens=args.max_new_tokens,
+            expected_config=asdict(config),
+            expected_prompts=Path(args.prompts),
+            require_complete_hashes=True,
         )
         if rank == 0:
             print(f"[grpo] validated completed policy: {out_dir}", flush=True)
@@ -459,7 +636,12 @@ def train(args: argparse.Namespace) -> None:
 
     model, tokenizer = load_model(args.model, device=f"cuda:{local_rank}")
     if resume_adapter:
-        model = PeftModel.from_pretrained(model, str(resume_adapter), is_trainable=True)
+        model = PeftModel.from_pretrained(
+            model,
+            str(resume_adapter),
+            is_trainable=True,
+            local_files_only=True,
+        )
     else:
         model = get_peft_model(
             model,
@@ -710,14 +892,27 @@ def train(args: argparse.Namespace) -> None:
                 ),
                 "token_normalization": token_normalization_for_objective(args.objective),
                 "adapter_sha256": sha256_file(out_dir / "adapter_model.safetensors"),
+                "optimizer_sha256": sha256_file(out_dir / "optimizer.pt"),
+                "grpo_stats_sha256": sha256_file(out_dir / "grpo_stats.jsonl"),
+                "prompts_sha256": sha256_file(Path(args.prompts)),
                 **parent_hashes,
             }
             _atomic_json(out_dir / "policy_train.json", manifest)
-            validate_policy_manifest(
+            validate_policy_lineage(
                 out_dir,
                 target_steps=args.target_steps,
                 world_size=world_size,
                 training_objective=args.objective,
+                expected_start_step=args.start_step,
+                expected_parent=(
+                    Path(args.resume_adapter) if args.resume_adapter else None
+                ),
+                expected_model=Path(args.model),
+                expected_seed=args.seed,
+                expected_max_new_tokens=args.max_new_tokens,
+                expected_config=asdict(config),
+                expected_prompts=Path(args.prompts),
+                require_complete_hashes=True,
             )
             for checkpoint in out_dir.glob("checkpoint-*"):
                 shutil.rmtree(checkpoint)

@@ -107,6 +107,10 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     executable(
         root / "scripts/run_matrix.sh",
         "#!/usr/bin/env bash\n"
+        '[ -z "${HF_TOKEN+x}" ] || { printf "HF_TOKEN leaked\\n" >&2; exit 91; }\n'
+        '[ -z "${HUGGING_FACE_HUB_TOKEN+x}" ] || { printf "legacy token leaked\\n" >&2; exit 92; }\n'
+        '[ "$HF_HUB_OFFLINE" = 1 ] && [ "$TRANSFORMERS_OFFLINE" = 1 ] && '
+        '[ "$HF_DATASETS_OFFLINE" = 1 ] || { printf "offline flags missing\\n" >&2; exit 93; }\n'
         'printf \'%s\\n\' "$REGIME_MODEL_TAG|$MODEL_PATH|$REGIME_DATASETS|$REGIME_SEEDS|$REGIME_DRIFTS|$REGIME_MATRIX" >> "$TEST_WORK/phases"\n',
     )
     executable(
@@ -229,6 +233,8 @@ def test_prepare_mode_needs_neither_primary_lock_nor_gpus(tmp_path: Path) -> Non
 def test_run_mode_never_enters_snapshot_download(tmp_path: Path) -> None:
     root, env = checkout(tmp_path)
     env.pop("ADDITIONAL_SKIP_PROVISION")
+    env["HF_TOKEN"] = "must-not-reach-compute"
+    env["HUGGING_FACE_HUB_TOKEN"] = "must-not-reach-compute"
     result = subprocess.run(
         ["/bin/bash", "scripts/run_additional_experiments.sh"],
         cwd=root,

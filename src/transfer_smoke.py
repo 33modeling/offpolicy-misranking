@@ -132,7 +132,9 @@ def run_smoke(model_path: Path, targets: list[str]) -> None:
         if not (adapter / "adapter_config.json").is_file():
             raise RuntimeError("PEFT adapter save did not publish adapter_config.json")
         base = wrapped.unload()
-        reloaded = PeftModel.from_pretrained(base, adapter)
+        reloaded = PeftModel.from_pretrained(
+            base, adapter, local_files_only=True
+        )
         merged = reloaded.merge_and_unload()
         merged.eval()
         with torch.no_grad():

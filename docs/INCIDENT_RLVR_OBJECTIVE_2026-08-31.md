@@ -40,8 +40,9 @@ empirical intervention matched the claim.
 - Every positive-step policy publishes an objective manifest, adapter hash,
   optimizer state, and per-step reward/ratio statistics.
 - Completion rejects SFT, positive-only filtering, non-verifier rewards, the
-  wrong distributed world size, a stale adapter hash, or a run with no
-  nonzero-advantage group.
+  wrong distributed world size, stale hashes, or inconsistent per-step sample
+  accounting. Zero-advantage groups remain valid GRPO observations and are
+  recorded rather than retried as infrastructure failures.
 - New GRPO runs use new result roots. Old SFT run directories are not resumed.
 - Unit tests cover the loss direction, clipping, zero-variance groups, manifest
   rejection, ordered checkpoint reuse, and single-claim shared queues.

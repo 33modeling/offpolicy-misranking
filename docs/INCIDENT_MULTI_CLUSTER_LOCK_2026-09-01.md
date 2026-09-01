@@ -82,12 +82,35 @@ target is preserved under quarantine and regenerated once. Base or
 qualification prompt mismatches exit with code 43, which both launchers treat
 as non-retryable.
 
-Follow-up revision `ccc2807568b270a3efc92933c45aaccff79fe60f` closes two
-remaining cases in that compatibility path. The inverse shuffle now uses the
-actual family seed instead of a hard-coded seed 0, and native source-derived
-snapshots cover MBPP, Knights-and-Knaves, and ARC-Challenge in addition to
-GSM8K and MATH-500. This is required for older additional-study generation
-commits that still execute their own `prep` stage.
+Follow-up revision `ccc2807568b270a3efc92933c45aaccff79fe60f` added native
+source-derived snapshots for MBPP, Knights-and-Knaves, and ARC-Challenge in
+addition to GSM8K and MATH-500. Its inverse-shuffle seed change was incorrect:
+`experiment.py` intentionally fixes candidate-pool splitting at seed 0 across
+all experiment seeds. Passing the policy/rollout family seed reconstructed a
+different prompt order for seeds 1 and 2 and caused deterministic d25 prompt
+mismatches. The current correction always reconstructs with split seed 0 and
+tests the exact loader path used by `experiment.py`.
+
+## Offline input and rollout independence incident
+
+Compute nodes are security-isolated. Environment-only offline flags did not
+make the loader contract sufficiently explicit: Transformers and PEFT calls
+did not pass `local_files_only=True`, and inherited Hub token variables remained
+visible. Compute launchers now remove inherited token variables, force all
+three Hugging Face offline flags, disable implicit tokens, and open the base
+model, tokenizer, and adapters in local-files-only mode. Dataset Hub fallbacks
+are rejected unless an explicit preparation process sets `OM_ONLINE=1`.
+Snapshot and reward-runtime qualification runs before a GPU training process.
+
+A separate audit found that behavior and fresh generation stages initialized
+the same RNG stream. This contradicted the independent Monte Carlo protocol and
+made resume output depend on the interruption boundary. New generation uses
+disjoint behavior, fresh-train, and fresh-validation seed domains; fresh seeds
+also include policy drift. A per-prompt seed derived from the global prompt ID
+makes output stable under interruption and resharding. Manifests bind this RNG
+scheme, and registered additional runs reject missing or mismatched bindings.
+Legacy rollout manifests without the binding are not eligible for the new
+registered extension.
 
 ## Verification
 
@@ -103,12 +126,16 @@ commits that still execute their own `prep` stage.
 - Malformed markers, mixed run-config commits, and an explicitly wrong resume
   checkout were rejected before new work was claimed.
 - Source-derived prompt snapshots reproduce all five registered loaders' exact
-  train/validation order for seeds 0-2; production-size round trips also passed
-  for GSM8K, MBPP, KK, and ARC-Challenge using the qualified local data.
+  fixed-seed train/validation order across experiment seeds 0-2.
 - A simulated mismatched point is quarantined and rebuilt once, while a
   permanent contract error is launched only once.
 - Python compilation, fatal Ruff rules, shell syntax, JSON parsing, dependency
   integrity, and whitespace checks passed.
+- The post-correction suite passes 103 tests. A crash/resume fixture produces
+  byte-identical rollout rows to an uninterrupted run, and a manifest fixture
+  rejects shared behavior/fresh RNG domains.
+- A real local Qwen2.5-0.5B snapshot loaded successfully with invalid inherited
+  token values, a closed Hub endpoint, and all offline flags enabled.
 
 Actual H100 scheduling remains cluster-runtime evidence to capture from the
 three console logs; this audit host has no access to that cluster volume.

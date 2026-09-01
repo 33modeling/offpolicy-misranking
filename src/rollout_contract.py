@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """생성·소비 계약 단일화 — P0-1·P0-2 수정 (docs/PAPER_REVIEW_2026-08-19.md §14.3-A).
 
 P0-1: HF generate()는 미지정 인자를 모델 generation_config에서 병합한다.
@@ -14,6 +15,32 @@ P0-2: 배치 생성은 이른 종료 행을 pad(=eos)로 채운다. 응답 구�
 
 from __future__ import annotations
 
+ROLLOUT_STREAM_IDS = {
+    "rollouts_behavior_train": 101,
+    "rollouts_fresh_train": 211,
+    "rollouts_fresh_val": 307,
+}
+ROLLOUT_SEED_SCHEME = "independent-source-per-prompt-v1"
+
+
+def rollout_seed_base(experiment_seed: int, drift: int, source: str) -> int:
+    """Return a stable, source-disjoint generation seed domain."""
+    if source not in ROLLOUT_STREAM_IDS:
+        raise ValueError(f"unknown rollout seed source: {source}")
+    source_id = ROLLOUT_STREAM_IDS[source]
+    source_drift = 0 if source == "rollouts_behavior_train" else int(drift)
+    return (
+        int(experiment_seed) * 1_000_003
+        + source_drift * 65_537
+        + source_id * 104_729
+        + 17
+    ) & 0x7FFFFFFF
+
+
+def rollout_prompt_seed(seed_base: int, prompt_idx: int) -> int:
+    """Derive a reshard- and resume-stable seed for one prompt."""
+    return (int(seed_base) + int(prompt_idx) * 15_485_863) & 0x7FFFFFFF
+
 
 def gen_kwargs(temperature: float, top_p: float, max_new_tokens: int,
                pad_token_id: int) -> dict:
@@ -22,16 +49,16 @@ def gen_kwargs(temperature: float, top_p: float, max_new_tokens: int,
     top_k=0·repetition_penalty=1.0·no_repeat_ngram_size=0은 '기본값이라 생략'이
     아니라 generation_config 병합 차단용 명시다 — 지우면 P0-1이 재발한다.
     """
-    return dict(
-        do_sample=True,
-        temperature=float(temperature),
-        top_p=float(top_p),
-        top_k=0,
-        repetition_penalty=1.0,
-        no_repeat_ngram_size=0,
-        max_new_tokens=int(max_new_tokens),
-        pad_token_id=int(pad_token_id),
-    )
+    return {
+        "do_sample": True,
+        "temperature": float(temperature),
+        "top_p": float(top_p),
+        "top_k": 0,
+        "repetition_penalty": 1.0,
+        "no_repeat_ngram_size": 0,
+        "max_new_tokens": int(max_new_tokens),
+        "pad_token_id": int(pad_token_id),
+    }
 
 
 def eos_ids_of(model=None, tok=None, pad_id: int | None = None) -> set[int]:
@@ -94,6 +121,7 @@ def resolved_manifest(model, tok, kwargs: dict) -> dict:
         "eos_token_ids": sorted(eos_ids_of(model, tok)),
         "model_name_or_path": getattr(getattr(model, "config", None),
                                       "_name_or_path", None),
+        "policy_adapter": getattr(model, "_om_policy_adapter", None),
         "contract": ("sampling = raw softmax + temperature/top_p만 적용; "
                      "explicit_kwargs가 generation_config를 덮는다. "
                      "응답 구간 = [resp_start, resp_end), 첫 EOS 포함."),

@@ -272,22 +272,63 @@ Python compile, Ruff, Bash syntax, and diff check
 All available checks passed (shellcheck is not installed on this host).
 ```
 
-The earlier compatibility materializer had two uncovered gaps: it inverted the
-loader shuffle with seed 0 regardless of the run seed, and it did not support
-the MBPP, Knights-and-Knaves, or ARC-Challenge loader formats used by the
-additional study. The supervisor now passes the family seed and binds each of
-the five registered loader roots to a source-derived snapshot. Exact loader
-round trips cover seeds 0-2 for all five formats; production-size round trips
-also passed against every additional dataset available on this audit host.
+The compatibility materializer added support for the MBPP,
+Knights-and-Knaves, and ARC-Challenge loader formats used by the additional
+study. A later live audit found that passing the experiment seed to its inverse
+shuffle was wrong: production `prep` fixes the prompt split at seed 0 across
+experiment seeds. That error made seeds 1 and 2 reconstruct a different d25
+prompt order. The correction below supersedes this paragraph's earlier seed
+claim.
+
+### Live compute-path correction on 2026-09-01
+
+The supervisor now materializes every d0-derived compatibility snapshot with
+split seed 0, while experiment seeds remain confined to policy training,
+generation, and tie breaking. All five registered loader formats are tested
+through the same fixed-seed path used by `experiment.py`.
+
+The compute path is hard offline. Inherited Hugging Face token variables are
+removed; Hub, Transformers, and datasets offline modes are forced; implicit
+token use is disabled; and every base-model, tokenizer, and PEFT-adapter load
+passes `local_files_only=True`. Dataset Hub fallback requires explicit
+`OM_ONLINE=1` preparation. Missing or corrupt registered snapshots fail during
+CPU qualification before any training process allocates a GPU.
+
+Rollout RNG streams were also corrected. Behavior, fresh-train, and fresh-val
+generation use separate domains, fresh streams include drift, and each prompt
+is reseeded from its global index. This makes crash/resume output byte-identical
+to uninterrupted output and prevents behavior/reference stages from sharing a
+stream. Registered deep validation requires the RNG manifest binding.
+
+```text
+python -m pytest -q
+103 passed in 16.38s
+
+focused offline/prompt/queue/RNG/lineage tests
+29 passed in 13.53s
+
+real local Qwen load with invalid inherited tokens and a closed endpoint
+OFFLINE_MODEL_LOAD_OK
+
+bash -n modified launchers; targeted Ruff; git diff --check
+All passed.
+```
 
 ## Launch boundaries
 
 The audit host has one 6 GB RTX 3050, not four H100s, so it must not start or
-pretend to validate a production training cell. Do not modify the checkout that
-is running `295dfea`. From a separate clean checkout on each four-H100 node, run:
+pretend to validate a production training cell. Prepare the pinned model and
+dataset snapshots once on a network-enabled machine with the shared volume:
 
 ```bash
-bash scripts/run_additional_experiments.sh
+bash scripts/run_additional_experiments.sh --prepare
+```
+
+After that succeeds, launch from a separate clean checkout on each four-H100
+compute node:
+
+```bash
+bash scripts/run_additional_experiments.sh --run
 ```
 
 The script waits for the primary node lock and idle GPUs before it touches
@@ -307,6 +348,10 @@ preserves the ordered `0 -> 25 -> 100 -> 400` checkpoint lineage.
   exercised with a structurally complete fixture rather than the in-progress
   H100 artifacts. Run it after those jobs finish and the checkout is updated;
   rejection leaves the last valid readout unchanged and does not rerun training.
+- Rollouts produced before the independent-source RNG manifest contract cannot
+  establish the newly stated independent-generation protocol. They must remain
+  legacy evidence or be regenerated; analysis-only migration cannot repair the
+  sampling design.
 - New statistical outcomes and cross-stratum generalization are unknown until
   every registered cell and reliability gate completes. A pooled or universal
   claim remains prohibited.

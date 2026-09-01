@@ -26,6 +26,7 @@ from train_policy_grpo import (
     rloo_group_advantages,
     rloo_loss,
     standardized_group_advantages,
+    validate_policy_lineage,
     validate_policy_manifest,
 )
 
@@ -76,13 +77,45 @@ def test_rloo_uses_sequence_log_probability_and_leave_one_out_baseline() -> None
     assert logps.grad.tolist() == pytest.approx([-2 / 3, -2 / 3])
 
 
-def _policy_artifact(path: Path, *, objective: str = "grpo", active: int = 1) -> None:
-    path.mkdir()
+def _policy_artifact(
+    path: Path,
+    *,
+    objective: str = "grpo",
+    active: int = 1,
+    start_step: int = 0,
+    completed_steps: int = 25,
+    parent: Path | None = None,
+) -> None:
+    path.mkdir(parents=True)
     (path / "adapter_config.json").write_text("{}\n")
     (path / "adapter_model.safetensors").write_bytes(b"adapter")
     (path / "optimizer.pt").write_bytes(b"optimizer")
+    normalization = {
+        "grpo": ("group_std", "response_length"),
+        "dr_grpo": ("none", "fixed_generation_budget"),
+        "rloo": ("leave_one_out", "sequence_sum"),
+    }.get(objective, ("invalid", "invalid"))
+    stats = [
+        {
+            "step": step,
+            "training_objective": objective,
+            "advantage_normalization": normalization[0],
+            "token_normalization": normalization[1],
+            "nonzero_advantage_groups": active if step == start_step + 1 else 0,
+            "groups": 4,
+            "samples": 32,
+            "reward_mean": 0.5,
+            "rank_reward_std_mean": 0.5,
+            "loss": 0.1,
+            "grad_norm": 0.2,
+            "clip_fraction": 0.0,
+            "mean_ratio": 1.0,
+            "approx_kl": 0.0,
+        }
+        for step in range(start_step + 1, completed_steps + 1)
+    ]
     (path / "grpo_stats.jsonl").write_text(
-        json.dumps({"step": 25, "nonzero_advantage_groups": active}) + "\n"
+        "".join(json.dumps(row) + "\n" for row in stats)
     )
     manifest = {
         "schema": POLICY_SCHEMA,
@@ -96,19 +129,29 @@ def _policy_artifact(path: Path, *, objective: str = "grpo", active: int = 1) ->
         "reference_kl_beta": 0.0,
         "supervised_loss": False,
         "positive_only_filter": False,
-        "completed_steps": 25,
-        "start_step": 0,
+        "parameterization": "lora",
+        "advantage_normalization": normalization[0],
+        "token_normalization": normalization[1],
+        "completed_steps": completed_steps,
+        "start_step": start_step,
         "world_size": 4,
+        "config": {"group_size": 8},
         "adapter_sha256": sha256_file(path / "adapter_model.safetensors"),
-        "parent_policy": None,
-        "parent_policy_manifest_sha256": None,
-        "parent_adapter_sha256": None,
-        "parent_optimizer_sha256": None,
+        "parent_policy": str(parent.resolve()) if parent else None,
+        "parent_policy_manifest_sha256": (
+            sha256_file(parent / "policy_train.json") if parent else None
+        ),
+        "parent_adapter_sha256": (
+            sha256_file(parent / "adapter_model.safetensors") if parent else None
+        ),
+        "parent_optimizer_sha256": (
+            sha256_file(parent / "optimizer.pt") if parent else None
+        ),
     }
     (path / "policy_train.json").write_text(json.dumps(manifest))
 
 
-def test_policy_manifest_rejects_sft_and_no_reward_variation(tmp_path: Path) -> None:
+def test_policy_manifest_rejects_sft_and_records_no_reward_variation(tmp_path: Path) -> None:
     valid = tmp_path / "valid"
     _policy_artifact(valid)
     validate_policy_manifest(valid, target_steps=25, world_size=4)
@@ -120,8 +163,8 @@ def test_policy_manifest_rejects_sft_and_no_reward_variation(tmp_path: Path) -> 
 
     no_signal = tmp_path / "no-signal"
     _policy_artifact(no_signal, active=0)
-    with pytest.raises(ValueError, match="no nonzero-advantage"):
-        validate_policy_manifest(no_signal, target_steps=25, world_size=4)
+    manifest = validate_policy_manifest(no_signal, target_steps=25, world_size=4)
+    assert manifest["training_objective"] == "grpo"
 
     dr_grpo = tmp_path / "dr-grpo"
     _policy_artifact(dr_grpo, objective="dr_grpo")
@@ -136,6 +179,121 @@ def test_policy_manifest_rejects_sft_and_no_reward_variation(tmp_path: Path) -> 
     validate_policy_manifest(
         rloo, target_steps=25, world_size=4, training_objective="rloo"
     )
+
+
+def test_policy_lineage_requires_the_exact_previous_interval(tmp_path: Path) -> None:
+    parent = tmp_path / "d25" / "policy_step_25"
+    _policy_artifact(parent)
+    child = tmp_path / "d100" / "policy_step_100"
+    _policy_artifact(
+        child,
+        start_step=25,
+        completed_steps=100,
+        parent=parent,
+    )
+    validate_policy_lineage(
+        child,
+        target_steps=100,
+        world_size=4,
+        training_objective="grpo",
+        expected_start_step=25,
+        expected_parent=parent,
+    )
+
+    independent = tmp_path / "independent" / "policy_step_100"
+    _policy_artifact(independent, completed_steps=100)
+    with pytest.raises(ValueError, match="start_step"):
+        validate_policy_lineage(
+            independent,
+            target_steps=100,
+            world_size=4,
+            training_objective="grpo",
+            expected_start_step=25,
+            expected_parent=parent,
+        )
+
+    wrong_parent = tmp_path / "wrong-parent" / "policy_step_25"
+    _policy_artifact(wrong_parent)
+    with pytest.raises(ValueError, match="parent_policy"):
+        validate_policy_lineage(
+            child,
+            target_steps=100,
+            world_size=4,
+            training_objective="grpo",
+            expected_start_step=25,
+            expected_parent=wrong_parent,
+        )
+
+    (parent / "optimizer.pt").write_bytes(b"changed")
+    with pytest.raises(ValueError, match="parent_optimizer_sha256"):
+        validate_policy_lineage(
+            child,
+            target_steps=100,
+            world_size=4,
+            training_objective="grpo",
+            expected_start_step=25,
+            expected_parent=parent,
+        )
+
+
+def test_policy_contract_binds_model_seed_prompts_optimizer_and_stats(
+    tmp_path: Path,
+) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    prompts = tmp_path / "prompts.json"
+    prompts.write_text(
+        '{"train":[{"question":"q","answer":"a"}],"val":[]}\n'
+    )
+    policy = tmp_path / "policy"
+    _policy_artifact(policy)
+    config = {
+        "group_size": 8,
+        "clip_epsilon": 0.2,
+        "learning_rate": 1e-5,
+        "epochs_per_batch": 2,
+        "max_grad_norm": 1.0,
+        "advantage_epsilon": 1e-4,
+        "lora_rank": 16,
+        "lora_alpha": 32,
+        "checkpoint_every": 5,
+    }
+    manifest_path = policy / "policy_train.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(
+        {
+            "base_model": str(model.resolve()),
+            "seed": 7,
+            "max_new_tokens": 512,
+            "config": config,
+            "samples_per_step": 32,
+            "prompts_sha256": sha256_file(prompts),
+            "optimizer_sha256": sha256_file(policy / "optimizer.pt"),
+            "grpo_stats_sha256": sha256_file(policy / "grpo_stats.jsonl"),
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest))
+
+    contract = {
+        "target_steps": 25,
+        "world_size": 4,
+        "training_objective": "grpo",
+        "expected_start_step": 0,
+        "expected_parent": None,
+        "expected_model": model,
+        "expected_seed": 7,
+        "expected_max_new_tokens": 512,
+        "expected_config": config,
+        "expected_prompts": prompts,
+        "require_complete_hashes": True,
+    }
+    validate_policy_lineage(policy, **contract)
+    with pytest.raises(ValueError, match="seed"):
+        validate_policy_lineage(policy, **{**contract, "expected_seed": 8})
+
+    (policy / "optimizer.pt").write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="optimizer.pt hash"):
+        validate_policy_lineage(policy, **contract)
 
 
 def test_latest_checkpoint_ignores_partial_and_target_checkpoint(tmp_path: Path) -> None:

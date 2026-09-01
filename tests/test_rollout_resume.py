@@ -91,10 +91,12 @@ class FakeModel:
         self.calls += 1
         if self.crash_at is not None and self.calls >= self.crash_at:
             raise RuntimeError("CUDA error: unspecified launch failure")
-        # 프롬프트(2토큰) + 응답 [7, eos]
+        # 프롬프트(2토큰) + RNG-dependent 응답 [7|8, eos]
         n = batch_ids.shape[0]
-        return torch.cat([batch_ids,
-                          torch.tensor([[7, 9]]).expand(n, -1)], dim=1)
+        response = torch.cat(
+            [torch.randint(7, 9, (n, 1)), torch.full((n, 1), 9)], dim=1
+        )
+        return torch.cat([batch_ids, response], dim=1)
 
 
 def test_crash_resume(monkeypatched_reward=True):
@@ -106,7 +108,8 @@ def test_crash_resume(monkeypatched_reward=True):
         # 1차: 3번째 generate 호출(프롬프트 2)에서 크래시 → 프롬프트 0·1만 내구
         try:
             collect_rollouts(FakeModel(crash_at=3), FakeTok(), prompts, k=2,
-                             max_new_tokens=4, temperature=1.0, out_path=out)
+                             max_new_tokens=4, temperature=1.0, out_path=out,
+                             sampling_seed_base=123)
             ok("크래시 발생", False)
         except RuntimeError as e:
             ok("크래시 발생", "unspecified launch failure" in str(e))
@@ -119,7 +122,8 @@ def test_crash_resume(monkeypatched_reward=True):
         # 2차: 정상 모델로 재실행 → 0·1 스킵, 2·3만 생성, 발행
         m2 = FakeModel()
         collect_rollouts(m2, FakeTok(), prompts, k=2,
-                         max_new_tokens=4, temperature=1.0, out_path=out)
+                         max_new_tokens=4, temperature=1.0, out_path=out,
+                         sampling_seed_base=123)
         ok("재실행 시 미완분만 생성(2프롬프트×1배치)", m2.calls == 2, m2.calls)
         ok("최종 파일 발행", out.exists() and not part.exists())
         rows = [json.loads(l) for l in out.open()]
@@ -129,6 +133,17 @@ def test_crash_resume(monkeypatched_reward=True):
         ok("전 프롬프트 커버", {r["prompt_idx"] for r in rows} == {0, 1, 2, 3})
         man = json.loads((out.parent / (out.stem + ".manifest.json")).read_text())
         ok("manifest sha 발행", "artifact_sha256" in man)
+        ok("manifest RNG seed 발행", man.get("sampling_seed_base") == 123)
+
+        clean_dir = Path(d) / "clean"
+        clean_dir.mkdir()
+        clean = clean_dir / out.name
+        collect_rollouts(
+            FakeModel(), FakeTok(), prompts, k=2,
+            max_new_tokens=4, temperature=1.0, out_path=clean,
+            sampling_seed_base=123,
+        )
+        ok("중단 재개와 무중단 생성이 동일", out.read_bytes() == clean.read_bytes())
 
         # 3차: 구버전 .tmp 승계 — 완주 1프롬프트가 든 legacy tmp에서 재개
         out2 = Path(d) / "rollouts_fresh_train.shard1.jsonl"
@@ -136,7 +151,8 @@ def test_crash_resume(monkeypatched_reward=True):
         legacy.write_text(row_line(0, 0) + row_line(0, 1))
         m3 = FakeModel()
         collect_rollouts(m3, FakeTok(), prompts, k=2,
-                         max_new_tokens=4, temperature=1.0, out_path=out2)
+                         max_new_tokens=4, temperature=1.0, out_path=out2,
+                         sampling_seed_base=123)
         ok("legacy .tmp 승계 후 미완분만 생성", m3.calls == 3, m3.calls)
         ok("legacy 경로 발행·행수 정확",
            out2.exists() and sum(1 for _ in out2.open()) == 8)

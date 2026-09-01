@@ -122,6 +122,35 @@ def test_partial_run_resumes_but_config_mismatch_is_quarantined() -> None:
         assert (moved / "partial").read_text(encoding="utf-8") == "keep"
 
 
+def test_positive_run_config_requires_continuous_checkpoint_lineage() -> None:
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        root = Path(raw_tmp)
+        matrix = matrix_document(root)
+        matrix["experiment"]["drifts"] = [0, 25, 100]
+        source = root / "fixture-s0-mbpp-d0"
+        run = root / "fixture-s0-mbpp-d100"
+        run.mkdir()
+        config = expected_run_config(matrix, "mbpp", 0, 100)
+        config.update(
+            {
+                "behavior_source": str(source),
+                "grpo_start_step": 25,
+                "grpo_resume_adapter": str(
+                    root / "fixture-s0-mbpp-d25" / "policy_step_25"
+                ),
+            }
+        )
+        (run / "run_config.json").write_text(json.dumps(config), encoding="utf-8")
+        assert not config_errors(run, matrix, "mbpp", 0, 100, source)
+
+        config["grpo_start_step"] = 0
+        config["grpo_resume_adapter"] = None
+        (run / "run_config.json").write_text(json.dumps(config), encoding="utf-8")
+        errors = config_errors(run, matrix, "mbpp", 0, 100, source)
+        assert any("grpo_start_step" in error for error in errors)
+        assert any("grpo_resume_adapter" in error for error in errors)
+
+
 def test_collection_is_bound_to_runs_matrix_and_outputs() -> None:
     with tempfile.TemporaryDirectory() as raw_tmp:
         root = Path(raw_tmp)

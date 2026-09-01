@@ -4,6 +4,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+export OM_ONLINE=0
 source scripts/setup_env.sh
 
 PY="$VENV_DIR/bin/python"
@@ -36,6 +37,7 @@ if [ "$MODE" = "--run" ]; then
   # authentication, or download from a paid GPU run.
   export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
   export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+  unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
 fi
 for config in "${MATRIX_CONFIGS[@]}"; do
   [ -s "$config" ] || { echo "[abort] additional config missing: $config"; exit 1; }

@@ -49,7 +49,8 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "python3 - <<'PY'\n"
         "import json, os\n"
         "p=os.environ['TEST_WORK']+'/phases.jsonl'\n"
-        "row={k:os.environ[k] for k in ('MODEL_PATH','REGIME_MODEL_TAG','REGIME_DATASETS','REGIME_SEEDS','REGIME_DRIFTS','GRPO_WORLD_SIZE','GRPO_GROUP_SIZE','OM_ALLOW_ANALYSIS_UPGRADE')}\n"
+        "row={k:os.environ[k] for k in ('MODEL_PATH','REGIME_MODEL_TAG','REGIME_DATASETS','REGIME_SEEDS','REGIME_DRIFTS','GRPO_WORLD_SIZE','GRPO_GROUP_SIZE','OM_ALLOW_ANALYSIS_UPGRADE','HF_HUB_OFFLINE','TRANSFORMERS_OFFLINE','HF_DATASETS_OFFLINE')}\n"
+        "row['hf_token_present']='HF_TOKEN' in os.environ or 'HUGGING_FACE_HUB_TOKEN' in os.environ\n"
         "with open(p,'a') as f: f.write(json.dumps(row)+'\\n')\n"
         "PY\n"
         'exit "${TEST_MATRIX_RC:-0}"\n',
@@ -82,6 +83,8 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
 
 def test_one_command_runs_exact_7b_and_27b_matrices(tmp_path: Path) -> None:
     root, env = checkout(tmp_path)
+    env["HF_TOKEN"] = "must-not-reach-compute"
+    env["HUGGING_FACE_HUB_TOKEN"] = "must-not-reach-compute"
     result = subprocess.run(
         ["/bin/bash", "scripts/run_rlvr.sh"],
         cwd=root,
@@ -106,6 +109,10 @@ def test_one_command_runs_exact_7b_and_27b_matrices(tmp_path: Path) -> None:
     assert all(row["GRPO_WORLD_SIZE"] == "4" for row in phases)
     assert all(row["GRPO_GROUP_SIZE"] == "8" for row in phases)
     assert all(row["OM_ALLOW_ANALYSIS_UPGRADE"] == "1" for row in phases)
+    assert all(row["hf_token_present"] is False for row in phases)
+    assert all(row["HF_HUB_OFFLINE"] == "1" for row in phases)
+    assert all(row["TRANSFORMERS_OFFLINE"] == "1" for row in phases)
+    assert all(row["HF_DATASETS_OFFLINE"] == "1" for row in phases)
     assert "harvested" in result.stdout
 
 

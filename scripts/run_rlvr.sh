@@ -3,7 +3,14 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+export OM_ONLINE=0
 source scripts/setup_env.sh
+
+# Security-isolated compute nodes must not inspect or use inherited Hub
+# credentials. Every model/dataset input below is a prequalified local snapshot.
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv missing: $PY"; exit 1; }
