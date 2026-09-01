@@ -24,8 +24,8 @@ ANALYSIS_FILES = (
     "FINAL_REPORT.md",
 )
 MARKER = ".regime_analysis.key"
-REGIME_SCHEMA = "offpolicy-regime-map/v2"
-HARVEST_SCHEMA = "offpolicy-rlvr-harvest/v2"
+REGIME_SCHEMA = "offpolicy-regime-map/v3"
+HARVEST_SCHEMA = "offpolicy-rlvr-harvest/v3"
 EXPECTED_DATASETS = ("gsm8k", "math500")
 EXPECTED_DRIFTS = (0, 25, 100, 400)
 EXPECTED_POLICIES = {
@@ -49,6 +49,8 @@ class AnalysisSnapshot:
     document: dict
     csv_rows: list[dict[str, str]]
     model: str
+    generation_git: str
+    analysis_git: str
 
 
 def _read_regular(path: Path) -> bytes:
@@ -164,7 +166,7 @@ def _validate_document(
     root: Path,
     files: dict[str, bytes],
     expected_seeds: tuple[int, ...],
-) -> tuple[dict, list[dict[str, str]], str]:
+) -> tuple[dict, list[dict[str, str]], str, str, str]:
     try:
         document = json.loads(files["REGIME.json"])
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -172,6 +174,22 @@ def _validate_document(
     if not isinstance(document, dict) or document.get("schema") != REGIME_SCHEMA:
         raise HarvestError(f"{root / 'REGIME.json'}: expected schema {REGIME_SCHEMA}")
     _reject_nonfinite(document, str(root / "REGIME.json"))
+    analysis_git = document.get("analysis_git")
+    generation_commits = document.get("generation_commits")
+    if not isinstance(analysis_git, str) or not re.fullmatch(
+        r"[0-9a-f]{40,64}", analysis_git
+    ):
+        raise HarvestError(f"{root / 'REGIME.json'}: invalid analysis_git")
+    if (
+        not isinstance(generation_commits, list)
+        or len(generation_commits) != 1
+        or not isinstance(generation_commits[0], str)
+        or not re.fullmatch(r"[0-9a-f]{40,64}", generation_commits[0])
+    ):
+        raise HarvestError(
+            f"{root / 'REGIME.json'}: expected exactly one generation commit"
+        )
+    generation_git = generation_commits[0]
     expected_protocol = {
         "topk_frac": 0.10,
         "retention_threshold": 0.50,
@@ -223,6 +241,7 @@ def _validate_document(
             stratum = row["stratum"]
             policy = row["policy"]
             run = row["run"]
+            row_generation_git = row["generation_git"]
         except KeyError as exc:
             raise HarvestError(
                 f"{root / 'REGIME.json'}: row lacks {exc.args[0]}"
@@ -240,6 +259,7 @@ def _validate_document(
             or not isinstance(policy, str)
             or not isinstance(run, str)
             or not run
+            or row_generation_git != generation_git
         ):
             raise HarvestError(f"{root / 'REGIME.json'}: invalid row identity fields")
         cell = (dataset, seed, drift)
@@ -287,14 +307,28 @@ def _validate_document(
             f"{root / 'REGIME.json'}: expected exactly one model, got {sorted(models)}"
         )
 
-    grouped_seeds: dict[tuple[str, str, int, str, str], set[int]] = {}
+    grouped_seeds: dict[tuple[str, str, str, int, str, str], set[int]] = {}
     for row in rows:
-        key = (row["model"], row["dataset"], row["drift"], row["stratum"], row["policy"])
+        key = (
+            row["generation_git"],
+            row["model"],
+            row["dataset"],
+            row["drift"],
+            row["stratum"],
+            row["policy"],
+        )
         grouped_seeds.setdefault(key, set()).add(row["seed"])
-    summary_keys: set[tuple[str, str, int, str, str]] = set()
+    summary_keys: set[tuple[str, str, str, int, str, str]] = set()
     for row in summary:
         try:
-            key = (row["model"], row["dataset"], row["drift"], row["stratum"], row["policy"])
+            key = (
+                row["generation_git"],
+                row["model"],
+                row["dataset"],
+                row["drift"],
+                row["stratum"],
+                row["policy"],
+            )
             seeds = row["seeds"]
             status = row["status"]
         except KeyError as exc:
@@ -321,14 +355,24 @@ def _validate_document(
     _validate_csv(
         files["REGIME_SUMMARY.csv"], summary, str(root / "REGIME_SUMMARY.csv")
     )
-    return document, csv_rows, next(iter(models))
+    return (
+        document,
+        csv_rows,
+        next(iter(models)),
+        generation_git,
+        analysis_git,
+    )
 
 
 def load_snapshot(root: Path, expected_seeds: tuple[int, ...]) -> AnalysisSnapshot:
     root = root.resolve()
     files = _read_coherent_files(root)
-    document, csv_rows, model = _validate_document(root, files, expected_seeds)
-    return AnalysisSnapshot(root, files, document, csv_rows, model)
+    document, csv_rows, model, generation_git, analysis_git = _validate_document(
+        root, files, expected_seeds
+    )
+    return AnalysisSnapshot(
+        root, files, document, csv_rows, model, generation_git, analysis_git
+    )
 
 
 def _input_digest(
@@ -368,11 +412,18 @@ def build_bundle(
     replication = load_snapshot(replication_root, (0, 1, 2))
     if primary.model == replication.model:
         raise HarvestError("primary and replication results resolve to the same model")
+    if primary.generation_git != replication.generation_git:
+        raise HarvestError(
+            "primary and replication use different generation commits: "
+            f"{primary.generation_git} != {replication.generation_git}"
+        )
     digest = _input_digest(primary, replication, git, code_paths)
 
     output.mkdir(parents=True, exist_ok=True)
     (output / "REPORT.md").write_text(
         "# RLVR Experiment Results\n\n"
+        f"Generation revision: `{primary.generation_git}`  \n"
+        f"Harvest revision: `{git}`\n\n"
         "## Primary: Qwen3.8-27B\n\n"
         + primary.files["FINAL_REPORT.md"].decode("utf-8").strip()
         + "\n\n## Scale replication: Qwen2.5-7B\n\n"
@@ -382,7 +433,8 @@ def build_bundle(
     )
     result = {
         "schema": HARVEST_SCHEMA,
-        "git": git,
+        "generation_git": primary.generation_git,
+        "harvest_git": git,
         "input_digest": digest,
         "primary_27b": primary.document,
         "replication_7b": replication.document,

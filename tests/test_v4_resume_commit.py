@@ -27,19 +27,19 @@ def write_config(root: Path, name: str, commit: str) -> Path:
 
 with tempfile.TemporaryDirectory() as raw_tmp:
     root = Path(raw_tmp)
-    plan, skipped = resume_plan(root, 1, "current")
+    current = "c" * 40
+    generation_a = "a" * 40
+    plan, skipped = resume_plan(root, 1, current)
     assert skipped == 0
     assert len(plan) == 6
-    assert {row["commit"] for row in plan} == {"current"}
+    assert {row["commit"] for row in plan} == {current}
 
-    first = write_config(root, "v4-27b-s0", "generation-a")
-    write_config(root, "v4-27b-s1", "generation-b")
-    plan, skipped = resume_plan(root, 1, "current")
+    first = write_config(root, "v4-27b-s0", generation_a)
+    plan, skipped = resume_plan(root, 1, current)
     by_name = {row["name"]: row for row in plan}
-    assert by_name["v4-27b-s0"]["commit"] == "generation-a"
-    assert by_name["v4-27b-s1"]["commit"] == "generation-b"
-    assert by_name["v4-27b-s0-math500"]["commit"] == "generation-a"
-    assert by_name["v4-27b-s1-math500"]["commit"] == "generation-b"
+    assert {row["commit"] for row in plan} == {generation_a}
+    assert by_name["v4-27b-s0"]["source"] == "recorded run_config"
+    assert by_name["v4-27b-s1"]["source"] == "matrix generation commit"
 
     run = root / "v4-27b-s0"
     for artifact in (
@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         "report.json",
     ):
         (run / artifact).write_text("ok\n", encoding="utf-8")
-    plan, skipped = resume_plan(root, 1, "current")
+    plan, skipped = resume_plan(root, 1, current)
     assert skipped == 1
     assert "v4-27b-s0" not in {row["name"] for row in plan}
 
@@ -60,7 +60,16 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert "export OM_SKIP_HYBRID=1" in exports
     assert "unset OM_POOL_FILE" in exports
 
-print("PASS mixed v4 commits are resumed per run")
+    write_config(root, "v4-27b-s1", "b" * 40)
+    try:
+        resume_plan(root, 1, current)
+    except ValueError as exc:
+        mixed_rejected = "mixed v4 generation commits" in str(exc)
+    else:
+        mixed_rejected = False
+    assert mixed_rejected
+
+print("PASS v4 matrices reject mixed generation commits")
 
 
 def test_v4_resume_commit_selection() -> None:

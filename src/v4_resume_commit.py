@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import shlex
 import sys
-from collections import Counter
 from pathlib import Path
+
+from run_provenance import validate_commit
 
 SLOTS = {
     1: (("27b", 0), ("27b", 1), ("7b", 0)),
@@ -53,8 +54,7 @@ def read_config(path: Path) -> dict[str, object]:
         commit = config["git"]
     except (OSError, ValueError, TypeError, KeyError) as exc:
         raise ValueError(f"unreadable run config: {path}: {exc}") from exc
-    if not isinstance(commit, str) or not commit or commit == "?":
-        raise ValueError(f"missing generation commit: {path}")
+    validate_commit(commit, path)
     return config
 
 
@@ -83,32 +83,31 @@ def complete(run: Path) -> bool:
     )
 
 
-def inherited_commit(
-    key: tuple[str, int, str],
+def matrix_commit(
     configs: dict[tuple[str, int, str], tuple[Path, dict[str, object]]],
     current: str,
-) -> tuple[str, str]:
-    model, seed, dataset = key
-    sibling = (model, seed, "math500" if dataset == "gsm8k" else "gsm8k")
-    if sibling in configs:
-        return str(configs[sibling][1]["git"]), run_name(*sibling)
-    same_model = [
-        str(config["git"])
-        for (candidate_model, _, _), (_, config) in configs.items()
-        if candidate_model == model
-    ]
-    if same_model:
-        return Counter(same_model).most_common(1)[0][0], f"existing {model} majority"
-    if configs:
-        commits = [str(config["git"]) for _, config in configs.values()]
-        return Counter(commits).most_common(1)[0][0], "existing v4 majority"
-    return current, "current checkout (no existing v4 config)"
+) -> str:
+    current = validate_commit(current, "current checkout")
+    by_commit: dict[str, list[str]] = {}
+    for key, (_, config) in configs.items():
+        commit = validate_commit(config.get("git"), run_name(*key))
+        by_commit.setdefault(commit, []).append(run_name(*key))
+    if len(by_commit) > 1:
+        details = ", ".join(
+            f"{commit}=[{', '.join(sorted(names))}]"
+            for commit, names in sorted(by_commit.items())
+        )
+        raise ValueError(
+            "mixed v4 generation commits cannot share one matrix: " + details
+        )
+    return next(iter(by_commit), current)
 
 
 def resume_plan(runs_root: Path, slot: int, current: str) -> tuple[list[dict[str, str]], int]:
     if slot not in SLOTS:
         raise ValueError(f"invalid cluster slot: {slot}")
     configs = all_configs(runs_root)
+    commit = matrix_commit(configs, current)
     plan = []
     skipped = 0
     for model, seed in SLOTS[slot]:
@@ -121,17 +120,18 @@ def resume_plan(runs_root: Path, slot: int, current: str) -> tuple[list[dict[str
                 continue
             if key in configs:
                 config_path, config = configs[key]
-                commit = str(config["git"])
+                run_commit = str(config["git"])
                 source = "recorded run_config"
             else:
                 config_path = None
-                commit, source = inherited_commit(key, configs, current)
+                run_commit = commit
+                source = "matrix generation commit"
             plan.append({
                 "name": name,
                 "model": model,
                 "seed": str(seed),
                 "dataset": dataset,
-                "commit": commit,
+                "commit": run_commit,
                 "config": str(config_path) if config_path else "-",
                 "source": source,
             })

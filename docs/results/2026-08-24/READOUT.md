@@ -1,5 +1,11 @@
 # 판독 보고서
 
+> **폐기된 혼합 revision 중간 산출물:** 이 파일의 자동 결론은 서로 다른
+> generation commit을 구분하지 않고 seed를 합쳤으므로 실험 근거로 사용할 수
+> 없다. 원시 run별 `run_config.json`도 이 보존본에 없어 여기 적힌 숫자를
+> 사후에 안전하게 SHA별 재집계할 수 없다. 처리 원칙은
+> [PROVENANCE_STATUS.md](PROVENANCE_STATUS.md)를 따른다.
+
 ## 한눈 요약
 
 | run | floor | chance | g00 | g10 | g01 | g11 | one-sided가 더 나쁜가 | hybrid 회복 | mixed-dip |
@@ -493,4 +499,3 @@
 → 핵심 조건 실패 있음 — concept 사망 조건 대조 필요. 수치 원인 분석 권장.
 ```
 </details>
-

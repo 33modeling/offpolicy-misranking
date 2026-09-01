@@ -34,6 +34,7 @@ def make_run(
     *,
     malformed: bool = False,
     done: bool = True,
+    generation_git: str = "a" * 40,
 ) -> Path:
     run = root / name
     run.mkdir()
@@ -41,12 +42,16 @@ def make_run(
         (run / "DONE").touch()
     write_json(run / "score_protocol.json", {
         "schema": "offpolicy-score-validation-split/v2",
+        "source_run_git": generation_git,
         "generation_validation": {"validated_rows": 20},
     })
     write_json(run / "oracle_protocol.json", {
         "schema": "offpolicy-oracle-validation-split/v2",
         "generation_validation": {"validated_rows": 20},
     })
+    if name.startswith("v"):
+        write_json(run / "run_config.json", {"git": generation_git})
+        write_json(run / "manifest.json", {"git": generation_git})
     scores = {str(i): float(20 - i) for i in range(20)}
     write_json(run / "scores_oracle.json", {
         idx: {"score": score} for idx, score in scores.items()
@@ -83,6 +88,7 @@ with tempfile.TemporaryDirectory() as tmp:
     make_run(root, "v2-s0")
     make_run(root, "v3-s2-math500")
     make_run(root, "v4-27b-s1")
+    make_run(root, "v4-27b-s2", generation_git="b" * 40)
     make_run(root, "v4-7b-s1")
     make_run(root, "gate-corrected-no-done", done=False)
     historical = root / "v2-historical"
@@ -90,11 +96,19 @@ with tempfile.TemporaryDirectory() as tmp:
     (historical / "DONE").touch()
     code, stdout, stderr = run_main(root)
     check("readout includes corrected v3 runs", code == 0 and "v3-s2-math500" in stdout)
-    check("automatic conclusions do not pool generations", "**v2/gsm8k**" in stdout and "**v3/math500**" in stdout)
+    check("automatic conclusions do not pool generations", (
+        f"**v2/gsm8k/{'a' * 40}**" in stdout
+        and f"**v3/math500/{'a' * 40}**" in stdout
+    ))
     check("automatic conclusions do not pool v4 model families", (
-        "**v4/27b/gsm8k**" in stdout
-        and "**v4/7b/gsm8k**" in stdout
-        and "**v4/gsm8k**" not in stdout
+        f"**v4/27b/gsm8k/{'a' * 40}**" in stdout
+        and f"**v4/7b/gsm8k/{'a' * 40}**" in stdout
+        and f"**v4/gsm8k/{'a' * 40}**" not in stdout
+    ))
+    check("automatic conclusions do not pool generation commits", (
+        f"**v4/27b/gsm8k/{'a' * 40}**" in stdout
+        and f"**v4/27b/gsm8k/{'b' * 40}**" in stdout
+        and "generation commit" in stdout
     ))
     check("protocol-complete run does not require legacy DONE", "gate-corrected-no-done" in stdout)
     check("historical runs are reported as excluded", "v2-historical" in stdout)

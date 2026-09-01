@@ -72,6 +72,7 @@ echo "[rlvr] worker=$WORKER_TAG local_lock=$LOCAL_LOCK_DIR shared_queue=$OM_WORK
 unset REGIME_ROOT REGIME_RESULTS REGIME_MATRIX REGIME_QUARANTINE
 unset OM_GPUS OM_BEHAVIOR_SOURCE OM_GRPO_RESUME_ADAPTER OM_GRPO_RESUME_OPTIMIZER
 unset OM_GRPO_START_STEP OM_POOL_FILE OM_EOS_IDS
+unset OM_GENERATION_GIT OM_PIPELINE_REPO OM_PIPELINE_SCRIPT
 export GRPO_WORLD_SIZE=4
 export GRPO_GROUP_SIZE=8
 export GRPO_CLIP_EPSILON=0.2
@@ -107,6 +108,20 @@ export OM_STALL_MINUTES=10
 export HYBRID_PROMPTS=24
 export K_CELL=8
 export RADIUS_MODE=gaussian
+
+# The primary and replication matrices are one publication unit. Bind both
+# roots before either phase starts so an empty second root cannot drift to a
+# newer checkout while resuming a partial first root.
+ROOT_27B="$OM_WORK/runs/regime-qwen3.8-27b-grpo-v1"
+ROOT_7B="$OM_WORK/runs/regime-qwen2.5-7b-grpo-v1"
+SUITE_MARKER="$OM_WORK/runs/.rlvr-grpo-generation.git"
+CURRENT_GIT=$(git rev-parse HEAD)
+OM_GENERATION_GIT=$("$PY" src/regime_resume_commit.py \
+  "$ROOT_27B" "$CURRENT_GIT" --peer-root "$ROOT_7B" --marker "$SUITE_MARKER") \
+  || exit 1
+export OM_GENERATION_GIT
+echo "[rlvr] generation_git=$OM_GENERATION_GIT suite_marker=$SUITE_MARKER" \
+  | tee -a "$LOG"
 
 wait_for_gpu_release() {
   local memory rows busy

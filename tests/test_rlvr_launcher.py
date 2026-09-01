@@ -22,6 +22,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     work = tmp_path / "shared"
     fake_bin = tmp_path / "bin"
     (root / "scripts").mkdir(parents=True)
+    (root / "src").mkdir()
     (work / "venv/bin").mkdir(parents=True)
     for model in ("Qwen2.5-7B-Instruct", "Qwen3.8-27B-BF16"):
         directory = work / "models" / model
@@ -31,6 +32,9 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     fake_bin.mkdir()
     (root / "scripts/run_rlvr.sh").write_text(
         (ROOT / "scripts/run_rlvr.sh").read_text()
+    )
+    (root / "src/regime_resume_commit.py").write_text(
+        (ROOT / "src/regime_resume_commit.py").read_text()
     )
     (work / "venv/bin/python").symlink_to("/usr/bin/python3")
     (root / "scripts/setup_env.sh").write_text(
@@ -49,7 +53,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "python3 - <<'PY'\n"
         "import json, os\n"
         "p=os.environ['TEST_WORK']+'/phases.jsonl'\n"
-        "row={k:os.environ[k] for k in ('MODEL_PATH','REGIME_MODEL_TAG','REGIME_DATASETS','REGIME_SEEDS','REGIME_DRIFTS','GRPO_WORLD_SIZE','GRPO_GROUP_SIZE','OM_ALLOW_ANALYSIS_UPGRADE','HF_HUB_OFFLINE','TRANSFORMERS_OFFLINE','HF_DATASETS_OFFLINE')}\n"
+        "row={k:os.environ[k] for k in ('MODEL_PATH','REGIME_MODEL_TAG','REGIME_DATASETS','REGIME_SEEDS','REGIME_DRIFTS','GRPO_WORLD_SIZE','GRPO_GROUP_SIZE','OM_ALLOW_ANALYSIS_UPGRADE','OM_GENERATION_GIT','HF_HUB_OFFLINE','TRANSFORMERS_OFFLINE','HF_DATASETS_OFFLINE')}\n"
         "row['hf_token_present']='HF_TOKEN' in os.environ or 'HUGGING_FACE_HUB_TOKEN' in os.environ\n"
         "with open(p,'a') as f: f.write(json.dumps(row)+'\\n')\n"
         "PY\n"
@@ -109,6 +113,10 @@ def test_one_command_runs_exact_7b_and_27b_matrices(tmp_path: Path) -> None:
     assert all(row["GRPO_WORLD_SIZE"] == "4" for row in phases)
     assert all(row["GRPO_GROUP_SIZE"] == "8" for row in phases)
     assert all(row["OM_ALLOW_ANALYSIS_UPGRADE"] == "1" for row in phases)
+    assert len({row["OM_GENERATION_GIT"] for row in phases}) == 1
+    assert (
+        Path(env["TEST_WORK"]) / "runs/.rlvr-grpo-generation.git"
+    ).read_text().strip() == phases[0]["OM_GENERATION_GIT"]
     assert all(row["hf_token_present"] is False for row in phases)
     assert all(row["HF_HUB_OFFLINE"] == "1" for row in phases)
     assert all(row["TRANSFORMERS_OFFLINE"] == "1" for row in phases)

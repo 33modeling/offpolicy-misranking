@@ -17,20 +17,35 @@ import csv
 import json
 import math
 import statistics
+import subprocess
 import sys
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from gate_rules import has_valid_analysis_protocol
+from run_provenance import generation_commit, partition_by_generation
 from score_artifacts import load_complete_score_artifacts
 from select_rules import jittered_topk, overlap_under_independent_ties, topk_count
 
-SCHEMA = "offpolicy-regime-map/v2"
+SCHEMA = "offpolicy-regime-map/v3"
 ESTIMATORS = ("g00", "g10", "g01", "g11")
 DEFAULT_RETENTION = 0.50
 DEFAULT_REPLICATION = 0.80
 MIN_FINAL_BOOTSTRAP = 10_000
+
+
+def _analysis_commit() -> str:
+    repository = Path(__file__).resolve().parents[1]
+    dirty = subprocess.check_output(
+        ["git", "-C", str(repository), "status", "--porcelain", "--", "src"],
+        text=True,
+    ).strip()
+    if dirty:
+        raise ValueError("analysis source is dirty; commit it before aggregation")
+    return subprocess.check_output(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], text=True
+    ).strip()
 
 
 def _mean(values: Iterable[float]) -> float:
@@ -216,6 +231,7 @@ def analyze_run(
         raise ValueError(f"{run}: corrected score/oracle protocols are required")
     artifacts = load_complete_score_artifacts(run)
     config = json.loads((run / "run_config.json").read_text())
+    run_generation_git = generation_commit(run)
     ids = set(artifacts.oracle)
     rates = _behavior_rates(run, ids)
     divergence = _load_divergence(run)
@@ -328,6 +344,7 @@ def analyze_run(
             rows.append(
                 {
                     "run": run.name,
+                    "generation_git": run_generation_git,
                     "model": str(
                         config.get("model_resolved", config.get("model", "?"))
                     ),
@@ -375,7 +392,14 @@ def summarize_regimes(
     grouped: dict[tuple, list[dict]] = defaultdict(list)
     for row in rows:
         grouped[
-            (row["model"], row["dataset"], row["drift"], row["stratum"], row["policy"])
+            (
+                row["generation_git"],
+                row["model"],
+                row["dataset"],
+                row["drift"],
+                row["stratum"],
+                row["policy"],
+            )
         ].append(row)
 
     out = []
@@ -433,11 +457,12 @@ def summarize_regimes(
         ]
         out.append(
             {
-                "model": key[0],
-                "dataset": key[1],
-                "drift": key[2],
-                "stratum": key[3],
-                "policy": key[4],
+                "generation_git": key[0],
+                "model": key[1],
+                "dataset": key[2],
+                "drift": key[3],
+                "stratum": key[4],
+                "policy": key[5],
                 "seeds": n,
                 "required_replicates": required,
                 "measurable_seeds": len(measurable),
@@ -503,6 +528,8 @@ def render_report(summary: list[dict]) -> str:
     lines = [
         "# Stale-Rollout Regime Map",
         "",
+        "Rows from different generation commits are partitioned and never pooled.",
+        "",
         (
             "`effective` requires at least three seeds, FIRST-measurable fresh halves in at "
             "least 80% of seeds, positive utility gain over random in those seeds, and at "
@@ -513,12 +540,13 @@ def render_report(summary: list[dict]) -> str:
             f"uses at least {MIN_FINAL_BOOTSTRAP:,} prespecified bootstrap replicates."
         ),
         "",
-        "| model | data | drift | pool | selector | seeds | KL | margin | e/margin | floor [LB] | gain [L,U] | retention [LB] | status |",
-        "|---|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| generation | model | data | drift | pool | selector | seeds | KL | margin | e/margin | floor [LB] | gain [L,U] | retention [LB] | status |",
+        "|---|---|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in summary:
         lines.append(
-            f"| {Path(row['model']).name} | {row['dataset']} | {row['drift']} | "
+            f"| {row['generation_git'][:12]} | {Path(row['model']).name} | "
+            f"{row['dataset']} | {row['drift']} | "
             f"{row['stratum']} | {row['policy']} | {row['seeds']} | "
             f"{_fmt(row['median_kl'])} | {_fmt(row['median_current_margin'])} | "
             f"{_fmt(row['median_error_margin_ratio'])} | "
@@ -560,6 +588,8 @@ def main(argv: list[str] | None = None) -> int:
 
     rows: list[dict] = []
     try:
+        analysis_git = _analysis_commit()
+        generation_partitions = partition_by_generation(args.runs)
         for run in args.runs:
             rows.extend(
                 analyze_run(
@@ -579,6 +609,8 @@ def main(argv: list[str] | None = None) -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": SCHEMA,
+        "analysis_git": analysis_git,
+        "generation_commits": sorted(generation_partitions),
         "topk_frac": args.topk_frac,
         "retention_threshold": args.retention,
         "replication_fraction": args.replication,

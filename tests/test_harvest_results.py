@@ -33,11 +33,17 @@ def refresh_marker(result: Path) -> None:
     (result / ".regime_analysis.key").write_text("\n".join(lines) + "\n")
 
 
-def write_analysis(result: Path, model: str, seeds: tuple[int, ...]) -> None:
+def write_analysis(
+    result: Path,
+    model: str,
+    seeds: tuple[int, ...],
+    generation_git: str = "a" * 40,
+) -> None:
     result.mkdir(parents=True)
     rows = [
         {
             "run": f"run-{dataset}-s{seed}-d{drift}",
+            "generation_git": generation_git,
             "model": model,
             "dataset": dataset,
             "seed": seed,
@@ -54,6 +60,7 @@ def write_analysis(result: Path, model: str, seeds: tuple[int, ...]) -> None:
     ]
     summary = [
         {
+            "generation_git": generation_git,
             "model": model,
             "dataset": dataset,
             "drift": drift,
@@ -67,7 +74,9 @@ def write_analysis(result: Path, model: str, seeds: tuple[int, ...]) -> None:
         for policy in POLICIES
     ]
     document = {
-        "schema": "offpolicy-regime-map/v2",
+        "schema": "offpolicy-regime-map/v3",
+        "analysis_git": "d" * 40,
+        "generation_commits": [generation_git],
         "topk_frac": 0.10,
         "retention_threshold": 0.50,
         "replication_fraction": 0.80,
@@ -154,12 +163,14 @@ def test_harvest_publishes_exact_bundle_and_skips_unchanged_inputs(
     document = json.loads((bundle / "RESULTS.json").read_text())
     assert set(document) == {
         "schema",
-        "git",
+        "generation_git",
+        "harvest_git",
         "input_digest",
         "primary_27b",
         "replication_7b",
     }
-    assert document["schema"] == "offpolicy-rlvr-harvest/v2"
+    assert document["schema"] == "offpolicy-rlvr-harvest/v3"
+    assert document["generation_git"] == "a" * 40
 
     second = run_harvest(checkout_root, env)
     assert second.returncode == 0, second.stdout + second.stderr
@@ -295,4 +306,21 @@ def test_harvest_rejects_swapped_primary_and_replication_roots(tmp_path: Path) -
         "incomplete registered matrix" in failed.stderr
         or "outside the registered matrix" in failed.stderr
     )
+    assert not (work / "readouts/rlvr-grpo").exists()
+
+
+def test_harvest_rejects_different_generation_commits(tmp_path: Path) -> None:
+    checkout_root, work, env = checkout(tmp_path)
+    replication = work / "results/regime-qwen2.5-7b-grpo-v1"
+    shutil.rmtree(replication)
+    write_analysis(
+        replication,
+        "/models/Qwen2.5-7B-Instruct",
+        (0, 1, 2),
+        generation_git="b" * 40,
+    )
+
+    failed = run_harvest(checkout_root, env)
+    assert failed.returncode != 0
+    assert "different generation commits" in failed.stderr
     assert not (work / "readouts/rlvr-grpo").exists()

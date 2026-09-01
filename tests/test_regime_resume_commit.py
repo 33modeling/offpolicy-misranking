@@ -8,7 +8,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from regime_resume_commit import bind_generation_commit, choose_generation_commit
+from regime_resume_commit import (
+    bind_generation_commit,
+    bind_suite_generation_commit,
+    choose_generation_commit,
+)
 
 
 def write_config(root: Path, name: str, commit: str) -> None:
@@ -71,3 +75,62 @@ def test_malformed_marker_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid generation commit"):
         bind_generation_commit(tmp_path, marker, "a" * 40)
+
+
+def test_suite_reuses_commit_from_partial_matrix_for_empty_peer(
+    tmp_path: Path,
+) -> None:
+    primary = tmp_path / "primary"
+    replication = tmp_path / "replication"
+    recorded = "b" * 40
+    write_config(primary, "run-a", recorded)
+    marker = tmp_path / ".rlvr-generation.git"
+
+    assert (
+        bind_suite_generation_commit(
+            [primary, replication], marker, current="a" * 40
+        )
+        == recorded
+    )
+    assert marker.read_text(encoding="utf-8") == f"{recorded}\n"
+
+
+def test_suite_reads_matrix_marker_before_first_run_config(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    replication = tmp_path / "replication"
+    matrix_marker = replication / ".queue/generation.git"
+    matrix_marker.parent.mkdir(parents=True)
+    matrix_marker.write_text(f"{'c' * 40}\n", encoding="utf-8")
+
+    assert bind_suite_generation_commit(
+        [primary, replication],
+        tmp_path / ".rlvr-generation.git",
+        current="a" * 40,
+    ) == "c" * 40
+
+
+def test_suite_rejects_mixed_matrix_commits(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    replication = tmp_path / "replication"
+    write_config(primary, "run-a", "a" * 40)
+    write_config(replication, "run-b", "b" * 40)
+
+    with pytest.raises(ValueError, match="mixed generation commits across RLVR suite"):
+        bind_suite_generation_commit(
+            [primary, replication],
+            tmp_path / ".rlvr-generation.git",
+            current="c" * 40,
+        )
+
+
+def test_suite_marker_must_match_later_matrix_artifacts(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    replication = tmp_path / "replication"
+    suite_marker = tmp_path / ".rlvr-generation.git"
+    suite_marker.write_text(f"{'a' * 40}\n", encoding="utf-8")
+    write_config(replication, "run-b", "b" * 40)
+
+    with pytest.raises(ValueError, match="mixed generation commits across RLVR suite"):
+        bind_suite_generation_commit(
+            [primary, replication], suite_marker, current="c" * 40
+        )

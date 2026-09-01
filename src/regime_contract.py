@@ -21,7 +21,7 @@ from train_policy_grpo import validate_policy_lineage
 
 MATRIX_SCHEMA = "offpolicy-regime-matrix/v1"
 MARKER_SCHEMA = "offpolicy-regime-run-validation/v1"
-COLLECTION_SCHEMA = "offpolicy-regime-collection/v1"
+COLLECTION_SCHEMA = "offpolicy-regime-collection/v2"
 COLLECTION_ARTIFACTS = (
     "REGIME.json",
     "REGIME.csv",

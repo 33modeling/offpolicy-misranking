@@ -23,23 +23,26 @@ def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value))
 
 
-def make_run(root: Path, seed: int = 0) -> Path:
+def make_run(root: Path, seed: int = 0, generation_git: str = "a" * 40) -> Path:
     run = root / f"regime-s{seed}"
     run.mkdir()
     n = 40
     write_json(
         run / "run_config.json",
         {
+            "git": generation_git,
             "model": "/models/test",
             "dataset": "math500",
             "seed": seed,
             "drift": 25,
         },
     )
+    write_json(run / "manifest.json", {"git": generation_git})
     write_json(
         run / "score_protocol.json",
         {
             "schema": "offpolicy-score-validation-split/v2",
+            "source_run_git": generation_git,
             "generation_validation": {"validated_rows": n},
         },
     )
@@ -100,7 +103,7 @@ def make_run(root: Path, seed: int = 0) -> Path:
 
 
 def test_regime_map_recognizes_positive_and_negative_selectors(tmp_path: Path) -> None:
-    assert SCHEMA == "offpolicy-regime-map/v2"
+    assert SCHEMA == "offpolicy-regime-map/v3"
     rows = analyze_run(make_run(tmp_path))
     all_rows = {row["policy"]: row for row in rows if row["stratum"] == "all"}
     assert all_rows["stale_g00"]["utility_gain"] > 0
@@ -113,6 +116,18 @@ def test_regime_map_recognizes_positive_and_negative_selectors(tmp_path: Path) -
         "mixed_reward",
         "identical_reward",
     }
+
+
+def test_summary_partitions_different_generation_commits(tmp_path: Path) -> None:
+    rows = analyze_run(make_run(tmp_path, 0, "a" * 40))
+    rows.extend(analyze_run(make_run(tmp_path, 1, "b" * 40)))
+    summary = [
+        row
+        for row in summarize_regimes(rows)
+        if row["stratum"] == "all" and row["policy"] == "stale_g00"
+    ]
+    assert {row["generation_git"] for row in summary} == {"a" * 40, "b" * 40}
+    assert {row["seeds"] for row in summary} == {1}
 
 
 def test_replicated_status_requires_at_least_three_seeds(tmp_path: Path) -> None:

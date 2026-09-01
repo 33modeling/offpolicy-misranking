@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from gate_rules import evaluate_causal_run, has_valid_analysis_protocol
+from run_provenance import generation_commit
 from run_select import is_generation_run, iter_runs
 from score_artifacts import (
     ESTIMATORS,
@@ -43,7 +44,8 @@ def _completed_runs(root: Path) -> list[Path]:
     return iter_runs(root, include_legacy=True)
 
 
-def _dataset_tag(name: str) -> str:
+def _dataset_tag(run: Path, revision: str) -> str:
+    name = run.name
     generation = name.split("-", 1)[0] if is_generation_run(name) else "legacy"
     model_match = re.match(r"^v\d+-(.+)-s\d+(?:-|$)", name)
     model = model_match.group(1) if model_match else None
@@ -59,6 +61,7 @@ def _dataset_tag(name: str) -> str:
     if model:
         parts.append(model)
     parts.append(dataset)
+    parts.append(revision)
     return "/".join(parts)
 
 
@@ -74,6 +77,7 @@ def main() -> int:
         return 2
 
     rows, details, concl = [], [], []
+    revision_runs: dict[str, list[str]] = {}
     skipped: list[str] = []
     errors: list[str] = []
     for d in runs:
@@ -81,6 +85,8 @@ def main() -> int:
             skipped.append(f"{d.name}: corrected score/oracle protocol 없음")
             continue
         try:
+            revision = generation_commit(d) if is_generation_run(d.name) else "legacy"
+            revision_runs.setdefault(revision, []).append(d.name)
             prec, _, chance = precisions(d)
             state = evaluate_causal_run(d)
             rep = state["report"] or {}
@@ -142,7 +148,7 @@ def main() -> int:
             jd = judge.stdout
 
             rows.append(
-                f"| {d.name} | {floor:.3f}† | {chance:.2f} | "
+                f"| {d.name} | {revision[:12]} | {floor:.3f}† | {chance:.2f} | "
                 + " | ".join(f"{prec[e]:.3f}" for e in ESTIMATORS)
                 + f" | {onesided} | {hyb} | {dip} |"
             )
@@ -150,16 +156,20 @@ def main() -> int:
                 f"<details><summary>{d.name} 원시 출력</summary>\n\n"
                 f"```\n{jd.strip()}\n```\n</details>\n"
             )
-            concl.append((_dataset_tag(d.name), onesided.startswith("예"), hyb))
+            concl.append((_dataset_tag(d, revision), onesided.startswith("예"), hyb))
         except (ScoreArtifactError, subprocess.TimeoutExpired, ValueError) as exc:
             errors.append(f"{d.name}: {type(exc).__name__}: {exc}")
 
     print("# 판독 보고서\n")
     print("## 한눈 요약\n")
-    print("| run | floor | chance | g00 | g10 | g01 | g11 | one-sided가 더 나쁜가 | hybrid 회복 | mixed-dip |")
-    print("|---|---|---|---|---|---|---|---|---|---|")
+    print("| run | generation commit | floor | chance | g00 | g10 | g01 | g11 | one-sided가 더 나쁜가 | hybrid 회복 | mixed-dip |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
     for r in rows:
         print(r)
+
+    print("\n## Generation revision partitions\n")
+    for revision, names in sorted(revision_runs.items()):
+        print(f"- **{revision}**: {', '.join(sorted(names))}")
 
     print("\n## 자동 결론\n")
     for tag in sorted({item[0] for item in concl}):

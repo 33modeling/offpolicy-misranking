@@ -65,6 +65,15 @@ It contains exactly `REPORT.md`, `RESULTS.json`, `RESULTS.csv`, and
 or internally inconsistent files cause rejection or a clean replacement.
 Additional experiments write only to their separate method-specific roots.
 
+Generation provenance is a grouping boundary, not report metadata. Regime
+analysis records generation and analysis revisions separately, partitions
+diagnostic summaries by generation revision, and refuses to publish the 27B
+and 7B matrices together when their generation revisions differ. The canonical
+launcher binds both matrices to one shared suite revision before either phase
+can claim work; partial matrices force the other phase to resume that revision.
+The retired 2026-08-24 mixed-revision readout is documented in
+[`docs/results/2026-08-24/PROVENANCE_STATUS.md`](docs/results/2026-08-24/PROVENANCE_STATUS.md).
+
 ## Objective Contract
 
 For every positive policy step, completion requires `policy_train.json` with:

@@ -311,6 +311,19 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         assert "partial matrix requires generation commit" in wrong_pipeline.stdout
         assert len((work / "claims").read_text().splitlines()) == len(repaired_rows)
 
+        wrong_suite = subprocess.run(
+            ["/bin/bash", "scripts/run_matrix.sh"],
+            cwd=checkout,
+            env={**env, "OM_GENERATION_GIT": "f" * 40},
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert wrong_suite.returncode != 0
+        assert "conflicts with suite" in wrong_suite.stdout
+        assert len((work / "claims").read_text().splitlines()) == len(repaired_rows)
+
         upgraded = subprocess.run(
             ["/bin/bash", "scripts/run_matrix.sh"],
             cwd=checkout,

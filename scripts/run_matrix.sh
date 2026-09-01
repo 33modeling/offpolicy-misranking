@@ -52,8 +52,13 @@ mkdir -p "$QUEUE" "$RESULTS"
 # a run. This closes the empty-matrix race where different checkout revisions
 # could otherwise claim different families concurrently.
 GENERATION_MARKER="$QUEUE/generation.git"
-GENERATION_GIT=$("$PY" src/regime_resume_commit.py "$ROOT" "$PIPELINE_GIT" \
+GENERATION_CANDIDATE="${OM_GENERATION_GIT:-$PIPELINE_GIT}"
+GENERATION_GIT=$("$PY" src/regime_resume_commit.py "$ROOT" "$GENERATION_CANDIDATE" \
   --marker "$GENERATION_MARKER") || exit 1
+if [ -n "${OM_GENERATION_GIT:-}" ] && [ "$GENERATION_GIT" != "$OM_GENERATION_GIT" ]; then
+  echo "[abort] matrix generation $GENERATION_GIT conflicts with suite $OM_GENERATION_GIT"
+  exit 1
+fi
 
 # A new supervisor may resume a partial matrix, but generation must still use
 # the exact source revision that initialized it. Materialize that revision in a
@@ -679,7 +684,7 @@ if ! (
   # same bootstrap regime map after acquiring collect.lock.
   analysis_code=(
     src/regime_map.py src/gate_rules.py src/score_artifacts.py
-    src/select_rules.py src/first_interval.py
+    src/select_rules.py src/first_interval.py src/run_provenance.py
   )
   analysis_inputs=()
   for run in "${runs[@]}"; do
