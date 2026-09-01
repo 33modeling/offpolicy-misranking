@@ -182,36 +182,46 @@ if [ "$MODE" = run ]; then
   ACTIVE_OWNER=""
   SUPERVISOR_KEEPALIVE=""
   KEEPALIVE_READY="$LOCAL_ROOT/keepalive-$WORKER_ID.ready"
-  cleanup_worker() {
-    [ -z "${ACTIVE_OWNER:-}" ] || rm -f -- "$ACTIVE_OWNER"
-    ACTIVE_OWNER=""
+  stop_supervisor_keepalive() {
     if [ -n "${SUPERVISOR_KEEPALIVE:-}" ]; then
       kill "$SUPERVISOR_KEEPALIVE" 2>/dev/null || true
       wait "$SUPERVISOR_KEEPALIVE" 2>/dev/null || true
     fi
+    SUPERVISOR_KEEPALIVE=""
     rm -f -- "$KEEPALIVE_READY"
+  }
+  start_supervisor_keepalive() {
+    [ -z "${SUPERVISOR_KEEPALIVE:-}" ] || return 0
+    rm -f -- "$KEEPALIVE_READY"
+    OM_GPU_KEEPALIVE_READY_FILE="$KEEPALIVE_READY" CUDA_VISIBLE_DEVICES=0,1,2,3 \
+      "$PY" "$SUPERVISOR_REPO/scripts/gpu_keepalive.py" \
+      >> "$ROOT/logs/$WORKER_ID-keepalive.log" 2>&1 8>&- 9>&- &
+    SUPERVISOR_KEEPALIVE=$!
+    for _ in $(seq 1 600); do
+      [ -s "$KEEPALIVE_READY" ] && break
+      kill -0 "$SUPERVISOR_KEEPALIVE" 2>/dev/null || {
+        echo "[abort] GPU keepalive exited during startup" | tee -a "$LOG"
+        SUPERVISOR_KEEPALIVE=""
+        return 1
+      }
+      sleep 0.1
+    done
+    [ -s "$KEEPALIVE_READY" ] || {
+      echo "[abort] GPU keepalive was not ready within 60 seconds" | tee -a "$LOG"
+      stop_supervisor_keepalive
+      return 1
+    }
+    echo "[worker] four-GPU keepalive ready pid=$SUPERVISOR_KEEPALIVE" | tee -a "$LOG"
+  }
+  cleanup_worker() {
+    [ -z "${ACTIVE_OWNER:-}" ] || rm -f -- "$ACTIVE_OWNER"
+    ACTIVE_OWNER=""
+    stop_supervisor_keepalive
   }
   trap cleanup_worker EXIT
   trap 'exit 130' INT TERM HUP
-  rm -f -- "$KEEPALIVE_READY"
-  OM_GPU_KEEPALIVE_READY_FILE="$KEEPALIVE_READY" CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    "$PY" "$SUPERVISOR_REPO/scripts/gpu_keepalive.py" \
-    >> "$ROOT/logs/$WORKER_ID-keepalive.log" 2>&1 &
-  SUPERVISOR_KEEPALIVE=$!
-  for _ in $(seq 1 60); do
-    [ -s "$KEEPALIVE_READY" ] && break
-    kill -0 "$SUPERVISOR_KEEPALIVE" 2>/dev/null || {
-      echo "[abort] GPU keepalive exited during startup" | tee -a "$LOG"
-      exit 1
-    }
-    sleep 1
-  done
-  [ -s "$KEEPALIVE_READY" ] || {
-    echo "[abort] GPU keepalive was not ready within 60 seconds" | tee -a "$LOG"
-    exit 1
-  }
+  start_supervisor_keepalive || exit 1
   export OM_EXTERNAL_GPU_KEEPALIVE=1
-  echo "[worker] four-GPU keepalive ready pid=$SUPERVISOR_KEEPALIVE" | tee -a "$LOG"
 fi
 
 # Adopt separately uploaded assets before entering an older commit-pinned run.
@@ -269,6 +279,9 @@ GENERATION_CONFIG="$GENERATION_REPO/configs/olmo3_rlzero.json"
   exit 1
 }
 echo "[contract] git=$GENERATION_GIT model_revision=$MODEL_REVISION config=$CONFIG_SHA"
+PINNED_POINT_EXTERNAL_KEEPALIVE=0
+grep -Fq 'OM_EXTERNAL_GPU_KEEPALIVE' "$GENERATION_REPO/scripts/run_point.sh" \
+  && PINNED_POINT_EXTERNAL_KEEPALIVE=1
 
 # Static qualification is deliberately offline. It hashes every model shard,
 # validates both pinned datasets, and executes the actual math/code verifiers.
@@ -434,6 +447,9 @@ PYEOF
   [ "$?" -eq 0 ] || { cleanup_owner; return 1; }
   for attempt in 1 2 3; do
     echo "[family] claim=$dataset/s$seed attempt=$attempt/3" | tee -a "$LOG"
+    # Older pinned generation commits start their own point-local keepalive.
+    # Pause the supervisor during those points to avoid duplicate GPU load.
+    [ "$PINNED_POINT_EXTERNAL_KEEPALIVE" -eq 1 ] || stop_supervisor_keepalive
     OM_REPO="$GENERATION_REPO" OM_PIPELINE_REPO="$GENERATION_REPO" \
       OM_PIPELINE_SCRIPT="$GENERATION_REPO/scripts/run_point.sh" \
       OM_GENERATION_GIT="$GENERATION_GIT" \
@@ -481,6 +497,8 @@ while :; do
         run_family "$dataset" "$seed"
       ) 9>"$QUEUE/$dataset-s$seed.lock"
       rc=$?
+      [ "$PINNED_POINT_EXTERNAL_KEEPALIVE" -eq 1 ] \
+        || start_supervisor_keepalive || exit 1
       [ "$rc" -eq 75 ] && continue
       claimed=$((claimed + 1))
       if [ "$rc" -ne 0 ]; then
