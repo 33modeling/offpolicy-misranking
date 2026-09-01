@@ -42,7 +42,7 @@ Date: 2026-08-31 KST
 | 6. Estimators/selection | PASS | Four estimator cells, clipping/ESS, LOO advantages, ranking baselines, stable top-k, and selection contracts were rechecked against executable tests and manuscript equations. |
 | 7. Utility/statistics | PASS | Utility remains validation-gradient alignment, not downstream reward. Reliability/fresh-gain gates and 10,000-replicate hierarchical bootstrap remain unchanged and are not overclaimed. |
 | 8. Distributed/publication | PASS WITH FIX, CLUSTER RUNTIME PENDING | Exactly four H100s, clean Git state, node-local admission, atomic generation-commit binding, family/collection locks, retries, deep validation, and content-addressed outputs fail closed. A newer supervisor resumes partial generation through a detached checkout of the recorded commit. The final harvester carries the checks through publication. No four-H100 node is attached to this audit host. |
-| 9. Generalization | REGISTERED | Two independent 7B model families, four verifier domains, three seeds, four checkpoints, full GRPO matrix, and math/code Dr.GRPO plus RLOO slice use disjoint roots/contracts. |
+| 9. Generalization | REGISTERED | Two independent 7B model families, five datasets across four verifier families, three seeds, four checkpoints, full GRPO matrix, and math/code Dr.GRPO plus RLOO slice use disjoint roots/contracts. |
 | 10. Mathematics/claims | PASS | Estimator identities, counterexamples, normalization lemma, recovery proposition, reliability ceiling, certification bound, and claim scopes were checked against code/tests; generalization is explicitly non-universal. |
 | 11. References/build | PASS | 65 citation keys resolve to 65 unique bibliography entries with zero missing, duplicate, or uncited entries. Clean 18-page letter PDF has no undefined refs/citations, LaTeX errors, or overfull boxes. |
 | 12. Regression | PASS WITH RESIDUALS | Exact command evidence and unresolved runtime/statistical risks are below. |
@@ -311,6 +311,33 @@ real local Qwen load with invalid inherited tokens and a closed endpoint
 OFFLINE_MODEL_LOAD_OK
 
 bash -n modified launchers; targeted Ruff; git diff --check
+All passed.
+```
+
+### MATH-500 extension restoration on 2026-09-01
+
+The GRPO generalization stratum includes GSM8K, MATH-500, MBPP,
+Knights-and-Knaves, and ARC-Challenge. MATH-500 contains only 500 examples, so
+the matrix now binds candidate counts per dataset: 400 for MATH-500 and 512 for
+the other four, with 100 validation prompts for every dataset. Snapshot
+qualification, immutable run configs, execution, resume completion checks, and
+deep artifact validation all read the same mapping.
+
+The widened GRPO stratum writes to `generalization-grpo-v2`; it cannot silently
+reuse partial `generalization-grpo-v1` output. Dr.GRPO and RLOO remain the
+prespecified GSM8K/MBPP method slice. The launcher and queue fixtures verify
+that all three nodes receive the same mapping while the shared family lock
+still assigns each model--dataset--seed family once.
+
+```text
+python -m pytest -q
+105 passed in 17.00s
+
+focused generalization/config/qualification/queue/contract tests
+20 passed in 12.86s
+
+Python compile, dependency check, targeted Ruff, Bash syntax, JSON parsing,
+matrix CLI inspection, and git diff --check
 All passed.
 ```
 

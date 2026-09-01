@@ -67,6 +67,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             'cd "$(dirname "$0")/.."\n'
             'point="$DATASET $SEED $DRIFT"\n'
             'printf "%s|%s\\n" "${OM_TEST_WORKER:-worker}" "$point" >> "$OM_WORK/claims"\n'
+            'printf "%s=%s\\n" "$DATASET" "$N_TRAIN" >> "$OM_WORK/candidate-sizes"\n'
             "/bin/sleep 0.05\n"
             'if [ "$point" = "a 0 0" ] && mkdir "$OM_WORK/hang-once" 2>/dev/null; then '
             "while :; do /bin/sleep 1; done; fi\n"
@@ -207,6 +208,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
                 "REGIME_DRIFTS": "0 25",
                 "REGIME_MAX_RETRIES": "2",
                 "REGIME_N_TRAIN": "8",
+                "REGIME_N_TRAIN_BY_DATASET": "a=7 b=8",
                 "REGIME_N_VAL": "4",
                 "REGIME_WATCH_INTERVAL_SECONDS": "1",
                 "REGIME_STALL_SECONDS": "1",
@@ -249,6 +251,8 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         assert len(claims) == len(expected) + 1
         assert claims.count("a 0 0") == 2
         assert claim_workers == {"worker-0", "worker-1", "worker-2"}
+        candidate_sizes = (work / "candidate-sizes").read_text().splitlines()
+        assert set(candidate_sizes) == {"a=7", "b=8"}
         assert (work / "results/regime-fixture/FINAL_REPORT.md").is_file()
         analyses = (
             (work / "results/regime-fixture/analysis-count").read_text().splitlines()

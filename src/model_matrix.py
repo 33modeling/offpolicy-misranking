@@ -35,6 +35,7 @@ EXPERIMENT_FIELDS = {
     "seeds",
     "drifts",
     "n_train",
+    "n_train_by_dataset",
     "n_val",
     "behavior_k",
     "fresh_k",
@@ -101,6 +102,18 @@ def _load_config(config_path: Path) -> dict:
             raise ValueError(f"experiment.{key} must be a non-empty unique list")
     if not all(isinstance(value, str) and value for value in experiment["datasets"]):
         raise TypeError("experiment.datasets must contain non-empty strings")
+    dataset_sizes = experiment["n_train_by_dataset"]
+    if not isinstance(dataset_sizes, dict) or set(dataset_sizes) != set(
+        experiment["datasets"]
+    ):
+        raise ValueError(
+            "experiment.n_train_by_dataset must cover exactly experiment.datasets"
+        )
+    for dataset, value in dataset_sizes.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(
+                f"experiment.n_train_by_dataset.{dataset} must be a positive integer"
+            )
     if experiment["policy_method"] not in {"grpo", "dr_grpo", "rloo"}:
         raise ValueError(
             "experiment.policy_method must be 'grpo', 'dr_grpo', or 'rloo'"
@@ -410,6 +423,8 @@ def main() -> None:
     p.add_argument("name", choices=["path", "lora_targets", "repository", "revision"])
     p = sub.add_parser("experiment-field")
     p.add_argument("name", choices=sorted(EXPERIMENT_FIELDS))
+    p = sub.add_parser("dataset-n-train")
+    p.add_argument("dataset")
     sub.add_parser("list-models")
     p = sub.add_parser("grpo-field")
     p.add_argument(
@@ -431,6 +446,12 @@ def main() -> None:
             print("1" if value else "0")
         else:
             print(value)
+        return
+    if args.command == "dataset-n-train":
+        sizes = config["experiment"]["n_train_by_dataset"]
+        if args.dataset not in sizes:
+            raise ValueError(f"dataset is outside matrix: {args.dataset}")
+        print(sizes[args.dataset])
         return
     if args.command == "grpo-field":
         print(config["experiment"]["grpo"][args.name])

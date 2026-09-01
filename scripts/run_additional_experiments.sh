@@ -22,7 +22,7 @@ MATRIX_CONFIGS=(
   configs/generalization_rloo.json
 )
 MATRIX_IDS=(
-  generalization-grpo-v1
+  generalization-grpo-v2
   method-dr-grpo-v1
   method-rloo-v1
 )
@@ -65,9 +65,31 @@ grpo_field() {
   "$PY" src/model_matrix.py --config "$1" grpo-field "$2"
 }
 
+dataset_n_train_field() {
+  "$PY" src/model_matrix.py --config "$1" dataset-n-train "$2"
+}
+
 model_field() {
   "$PY" src/model_matrix.py --config "$1" --models-dir "$MODELS_DIR" \
     field "$2" "$3"
+}
+
+qualify_registered_datasets() {
+  local config=$1 output=$2 datasets seeds dataset
+  local dataset_list=() size_args=()
+  datasets=$(matrix_field "$config" datasets)
+  seeds=$(matrix_field "$config" seeds)
+  read -r -a dataset_list <<< "$datasets"
+  for dataset in "${dataset_list[@]}"; do
+    size_args+=(--dataset-n-train "$dataset=$(dataset_n_train_field "$config" "$dataset")")
+  done
+  "$PY" src/qualify_domain_data.py "${dataset_list[@]}" \
+    --data-root "$DATASETS_DIR" \
+    --n-train "$(matrix_field "$config" n_train)" \
+    "${size_args[@]}" \
+    --n-val "$(matrix_field "$config" n_val)" \
+    --seeds $seeds \
+    --output "$output"
 }
 
 provision_registered_snapshots() {
@@ -112,14 +134,9 @@ if [ "$MODE" = "--prepare" ]; then
   config=${MATRIX_CONFIGS[0]}
   provision_registered_snapshots
   datasets=$(matrix_field "$config" datasets)
-  seeds=$(matrix_field "$config" seeds)
   config_id=$(sha256sum "$config" | cut -c1-16)
-  "$PY" src/qualify_domain_data.py $datasets \
-    --data-root "$DATASETS_DIR" \
-    --n-train "$(matrix_field "$config" n_train)" \
-    --n-val "$(matrix_field "$config" n_val)" \
-    --seeds $seeds \
-    --output "$OM_WORK/contracts/additional-prepared-$config_id.json"
+  qualify_registered_datasets "$config" \
+    "$OM_WORK/contracts/additional-prepared-$config_id.json"
   echo "[additional] all pinned model/data snapshots prepared and qualified"
   exit 0
 fi
@@ -203,7 +220,8 @@ run_phase() {
 
 run_registered_matrix() {
   local config=$1 run_id=$2 datasets seeds drifts method config_id qualification log
-  local model_keys=()
+  local dataset
+  local model_keys=() n_train_map=()
 
   datasets=$(matrix_field "$config" datasets)
   seeds=$(matrix_field "$config" seeds)
@@ -227,16 +245,12 @@ run_registered_matrix() {
   qualification="$OM_WORK/contracts/$run_id-datasets-$config_id.json"
   (
     flock 6
-    "$PY" src/qualify_domain_data.py $datasets \
-      --data-root "$DATASETS_DIR" \
-      --n-train "$(matrix_field "$config" n_train)" \
-      --n-val "$(matrix_field "$config" n_val)" \
-      --seeds $seeds \
-      --output "$qualification"
+    qualify_registered_datasets "$config" "$qualification"
   ) 6>"$OM_WORK/locks/$run_id-dataset-qualification.lock" | tee -a "$log"
 
   unset REGIME_ROOT REGIME_RESULTS REGIME_MATRIX REGIME_QUARANTINE
   unset REGIME_DATASETS REGIME_SEEDS REGIME_DRIFTS REGIME_N_TRAIN REGIME_N_VAL
+  unset REGIME_N_TRAIN_BY_DATASET
   unset OM_GPUS OM_BEHAVIOR_SOURCE OM_GRPO_RESUME_ADAPTER OM_GRPO_RESUME_OPTIMIZER
   unset OM_GRPO_START_STEP OM_POOL_FILE OM_EOS_IDS OM_GEN_BATCH
 
@@ -245,6 +259,10 @@ run_registered_matrix() {
   export REGIME_SEEDS="$seeds"
   export REGIME_DRIFTS="$drifts"
   export REGIME_N_TRAIN="$(matrix_field "$config" n_train)"
+  for dataset in $datasets; do
+    n_train_map+=("$dataset=$(dataset_n_train_field "$config" "$dataset")")
+  done
+  export REGIME_N_TRAIN_BY_DATASET="${n_train_map[*]}"
   export REGIME_N_VAL="$(matrix_field "$config" n_val)"
   export REGIME_BEHAVIOR_K="$(matrix_field "$config" behavior_k)"
   export REGIME_FRESH_K="$(matrix_field "$config" fresh_k)"

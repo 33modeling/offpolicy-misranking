@@ -87,13 +87,14 @@ The additional study has one purpose: test whether the primary conclusion
 generalizes. It varies two distinct factors without pooling them:
 
 - Model/domain transfer fixes GRPO and varies Mistral versus OLMo 2 and GSM8K,
-  MBPP, Knights-and-Knaves, and ARC-Challenge.
+  MATH-500, MBPP, Knights-and-Knaves, and ARC-Challenge.
 - Method transfer fixes the two models and math/code domains and varies GRPO,
   Dr.GRPO, and sequence-level RLOO.
 
 Both strata use seeds 0-2 and the `0/25/100/400` checkpoint chain. Model and
 dataset revisions are immutable. There is one operational entry point for the
-entire additional study.
+entire additional study. Candidate counts are registered per dataset: MATH-500
+uses 400, the other four use 512, and every dataset uses 100 validation prompts.
 
 Do not pull or modify a checkout running the primary `295dfea` jobs. First use
 one separate online checkout with the same shared volume to prepare and qualify

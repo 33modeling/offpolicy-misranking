@@ -48,6 +48,7 @@ def matrix_document(root: Path) -> dict:
             "seeds": [0],
             "drifts": [0, 25],
             "n_train": 8,
+            "n_train_by_dataset": {"mbpp": 8},
             "n_val": 4,
             "behavior_k": 4,
             "fresh_k": 8,
@@ -120,6 +121,16 @@ def test_partial_run_resumes_but_config_mismatch_is_quarantined() -> None:
         assert not run.exists()
         moved = next(quarantine.iterdir())
         assert (moved / "partial").read_text(encoding="utf-8") == "keep"
+
+
+def test_run_config_uses_the_registered_dataset_candidate_count() -> None:
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        root = Path(raw_tmp)
+        matrix = matrix_document(root)
+        matrix["experiment"]["datasets"] = ["mbpp", "math500"]
+        matrix["experiment"]["n_train_by_dataset"]["math500"] = 400
+        config = expected_run_config(matrix, "math500", 0, 0)
+        assert config["n_train"] == 400
 
 
 def test_positive_run_config_requires_continuous_checkpoint_lineage() -> None:

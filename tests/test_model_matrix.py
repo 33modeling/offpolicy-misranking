@@ -22,7 +22,18 @@ def test_transfer_config_has_a_complete_fixed_protocol() -> None:
     config = _load_config(root / "configs/domain_transfer.json")
     experiment = config["experiment"]
     assert experiment["policy_method"] == "grpo"
-    assert experiment["datasets"] == ["gsm8k", "mbpp", "kk", "arc-challenge"]
+    assert experiment["datasets"] == [
+        "gsm8k",
+        "math500",
+        "mbpp",
+        "kk",
+        "arc-challenge",
+    ]
+    assert experiment["n_train_by_dataset"]["math500"] == 400
+    assert all(
+        experiment["n_train_by_dataset"][dataset] == 512
+        for dataset in ("gsm8k", "mbpp", "kk", "arc-challenge")
+    )
     assert experiment["drifts"][0] == 0
     assert experiment["temperature"] == 1.0
     assert experiment["top_p"] == 1.0
@@ -78,6 +89,22 @@ def test_transfer_config_rejects_wrong_types_before_launch() -> None:
             assert "skip_hybrid" in str(exc)
         else:
             raise AssertionError("wrongly typed experiment setting was accepted")
+
+
+def test_transfer_config_requires_one_candidate_count_per_dataset() -> None:
+    source = Path(__file__).resolve().parents[1] / "configs/domain_transfer.json"
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        root = Path(raw_tmp)
+        config = json.loads(source.read_text(encoding="utf-8"))
+        del config["experiment"]["n_train_by_dataset"]["math500"]
+        path = root / "bad.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        try:
+            _load_config(path)
+        except ValueError as exc:
+            assert "cover exactly" in str(exc)
+        else:
+            raise AssertionError("incomplete per-dataset candidate counts were accepted")
 
 
 def test_generalization_dr_grpo_config_is_a_separate_method_slice() -> None:

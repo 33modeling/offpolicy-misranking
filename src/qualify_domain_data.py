@@ -201,11 +201,32 @@ def qualify(dataset: str, root: Path, n_train: int, n_val: int, seeds: list[int]
     }
 
 
+def _dataset_train_sizes(
+    datasets: list[str], default: int, overrides: list[str]
+) -> dict[str, int]:
+    sizes = {dataset: default for dataset in datasets}
+    seen = set()
+    for raw in overrides:
+        dataset, separator, value = raw.partition("=")
+        if not separator or dataset not in sizes or dataset in seen:
+            raise ValueError(f"invalid --dataset-n-train override: {raw!r}")
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ValueError(f"invalid --dataset-n-train override: {raw!r}") from exc
+        if parsed <= 0:
+            raise ValueError(f"invalid --dataset-n-train override: {raw!r}")
+        sizes[dataset] = parsed
+        seen.add(dataset)
+    return sizes
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("datasets", nargs="*", choices=sorted(SPECS))
     parser.add_argument("--data-root", default=os.environ.get("DATASETS_DIR"))
     parser.add_argument("--n-train", type=int, default=512)
+    parser.add_argument("--dataset-n-train", action="append", default=[])
     parser.add_argument("--n-val", type=int, default=100)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     parser.add_argument("--output")
@@ -215,11 +236,14 @@ def main() -> None:
 
     root = Path(args.data_root)
     datasets = args.datasets or list(SPECS)
+    train_sizes = _dataset_train_sizes(
+        datasets, args.n_train, args.dataset_n_train
+    )
     report = {
         "schema_version": 1,
         "status": "qualified",
         "datasets": [
-            qualify(ds, root, args.n_train, args.n_val, args.seeds)
+            qualify(ds, root, train_sizes[ds], args.n_val, args.seeds)
             for ds in datasets
         ],
     }

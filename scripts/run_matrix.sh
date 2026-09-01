@@ -105,6 +105,7 @@ MAX_RETRIES="${REGIME_MAX_RETRIES:-3}"
 CONTRACT="${REGIME_MATRIX:-}"
 QUARANTINE="${REGIME_QUARANTINE:-$OM_WORK/quarantine/regime-$MODEL_TAG}"
 N_VAL_DEFAULT="${REGIME_N_VAL:-100}"
+N_TRAIN_BY_DATASET="${REGIME_N_TRAIN_BY_DATASET:-}"
 BEHAVIOR_K_DEFAULT="${REGIME_BEHAVIOR_K:-8}"
 FRESH_K_DEFAULT="${REGIME_FRESH_K:-32}"
 VAL_K_DEFAULT="${REGIME_VAL_K:-8}"
@@ -130,6 +131,32 @@ WATCH_INTERVAL_SECONDS="${REGIME_WATCH_INTERVAL_SECONDS:-15}"
 STALL_SECONDS="${REGIME_STALL_SECONDS:-$(( ${OM_STALL_MINUTES:-5} * 60 ))}"
 WATCH_KILL_GRACE_SECONDS="${REGIME_WATCH_KILL_GRACE_SECONDS:-5}"
 WATCH_GPU_SAMPLES="${REGIME_WATCH_GPU_SAMPLES:-3}"
+
+n_train_for_dataset() {
+  local dataset=$1 item key value
+  for item in $N_TRAIN_BY_DATASET; do
+    key=${item%%=*}
+    value=${item#*=}
+    if [ "$key" = "$dataset" ]; then
+      case "$value" in
+        ''|*[!0-9]*|0) echo "[abort] invalid candidate count: $item" >&2; return 2 ;;
+      esac
+      printf '%s\n' "$value"
+      return
+    fi
+  done
+  if [ -n "$N_TRAIN_BY_DATASET" ]; then
+    echo "[abort] candidate-count mapping is missing dataset: $dataset" >&2
+    return 2
+  fi
+  if [ -n "${REGIME_N_TRAIN:-}" ]; then
+    printf '%s\n' "$REGIME_N_TRAIN"
+  elif [ "$dataset" = "math500" ]; then
+    printf '400\n'
+  else
+    printf '512\n'
+  fi
+}
 
 for value_name in WATCH_INTERVAL_SECONDS STALL_SECONDS WATCH_GPU_SAMPLES; do
   value=${!value_name}
@@ -175,6 +202,7 @@ run_complete() {
     [ -s "$run/$artifact" ] || return 1
   done
   MODEL_PATH="$MODEL_PATH" DATASET="$dataset" SEED="$seed" DRIFT="$drift" \
+    EXPECTED_N_TRAIN="$(n_train_for_dataset "$dataset")" \
     BEHAVIOR_SOURCE="$source" EXPECTED_GRPO_START="$previous_drift" \
     EXPECTED_GRPO_RESUME="$expected_parent" \
     "$PY" - "$run/run_config.json" <<'PYEOF' \
@@ -187,7 +215,7 @@ from pathlib import Path
 config = json.load(open(sys.argv[1]))
 dataset = os.environ["DATASET"]
 drift = int(os.environ["DRIFT"])
-n_train = int(os.environ.get("REGIME_N_TRAIN", "400" if dataset == "math500" else "512"))
+n_train = int(os.environ["EXPECTED_N_TRAIN"])
 expected = {
     "model_resolved": str(Path(os.environ["MODEL_PATH"]).resolve()),
     "dataset": dataset,
@@ -456,8 +484,7 @@ run_point() {
   local dataset=$1 seed=$2 drift=$3 source=$4 resume_step=$5 resume_run=$6
   local run try n_train attempt_log rc prompt_root prompt_env
   run=$(run_dir "$dataset" "$seed" "$drift")
-  n_train="${REGIME_N_TRAIN:-512}"
-  [ -n "${REGIME_N_TRAIN:-}" ] || [ "$dataset" != "math500" ] || n_train=400
+  n_train=$(n_train_for_dataset "$dataset") || return 43
   if [ -n "$CONTRACT" ]; then
     contract_run prepare-run "$run" "$dataset" "$seed" "$drift" "$source" \
       --quarantine-root "$QUARANTINE" || return 1

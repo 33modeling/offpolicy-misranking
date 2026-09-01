@@ -20,10 +20,17 @@
   ],
   "experiment": {
     "policy_method": "grpo",
-    "datasets": ["gsm8k", "mbpp", "kk", "arc-challenge"],
+    "datasets": ["gsm8k", "math500", "mbpp", "kk", "arc-challenge"],
     "seeds": [0, 1, 2],
     "drifts": [0, 25, 100, 400],
     "n_train": 512,
+    "n_train_by_dataset": {
+      "gsm8k": 512,
+      "math500": 400,
+      "mbpp": 512,
+      "kk": 512,
+      "arc-challenge": 512
+    },
     "n_val": 100,
     "behavior_k": 8,
     "fresh_k": 32,

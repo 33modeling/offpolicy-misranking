@@ -128,7 +128,9 @@ under a global lock. Its default run revalidates those inputs, waits on the
 node-local primary lock, and applies the same queue and artifact
 contracts to every additional stratum. The GRPO stratum varies
 Mistral-7B-Instruct-v0.3 and
-OLMo-2-1124-7B-Instruct over GSM8K, MBPP, Knights-and-Knaves, and ARC-Challenge.
+OLMo-2-1124-7B-Instruct over GSM8K, MATH-500, MBPP, Knights-and-Knaves, and
+ARC-Challenge. MATH-500 contributes 400 candidate prompts; the other datasets
+contribute 512, and every dataset contributes 100 validation prompts.
 The method stratum uses those models and the GSM8K/MBPP pair to compare GRPO,
 Dr.GRPO, and RLOO. These are distinct generalization factors, not separate paper
 objectives and not pooled estimates.
@@ -138,6 +140,6 @@ positive checkpoint resumes from its immediate predecessor. The launcher binds
 the clean Git commit, full model revision and file hashes, dataset snapshot
 hashes, normalized prompt split hashes, verifier runtime self-tests, and all
 hyperparameters into an immutable per-model matrix document. Results remain in
-method-specific roots below `$OM_WORK/results/{generalization-grpo-v1,
+method-specific roots below `$OM_WORK/results/{generalization-grpo-v2,
 method-dr-grpo-v1,method-rloo-v1}/`; no policy checkpoint or generated artifact
 is reused across methods or mixed with the primary Qwen bundle.

@@ -126,6 +126,13 @@ def optional_hash(path: Path) -> str | None:
     return sha256_file(path) if path.is_file() else None
 
 
+def dataset_n_train(experiment: dict, dataset: str) -> int:
+    sizes = experiment.get("n_train_by_dataset")
+    if not isinstance(sizes, dict) or dataset not in sizes:
+        raise ValueError(f"missing registered candidate count for dataset: {dataset}")
+    return int(sizes[dataset])
+
+
 def build_matrix(
     config_path: Path,
     model_key: str,
@@ -164,7 +171,7 @@ def build_matrix(
         split = row.get("prompt_split", {})
         if (
             row.get("status") != "qualified"
-            or row.get("n_train") != experiment["n_train"]
+            or row.get("n_train") != dataset_n_train(experiment, dataset)
             or row.get("n_val") != experiment["n_val"]
             or row.get("experiment_seeds") != experiment["seeds"]
             or not row.get("reward_runtime")
@@ -257,7 +264,7 @@ def expected_run_config(
         "generation_config_sha256": model["generation_config_sha256"],
         "model_snapshot_manifest_sha256": model["snapshot_manifest_sha256"],
         "dataset": dataset,
-        "n_train": experiment["n_train"],
+        "n_train": dataset_n_train(experiment, dataset),
         "n_val": experiment["n_val"],
         "behavior_k": experiment["behavior_k"],
         "fresh_k": experiment["fresh_k"],
@@ -497,11 +504,12 @@ def deep_validation(
     split_errors = prompt_split_errors(run, matrix, dataset)
     if split_errors:
         raise ValueError("; ".join(split_errors))
-    if len(prompts.get("train", [])) != matrix["experiment"]["n_train"]:
+    expected_train = dataset_n_train(matrix["experiment"], dataset)
+    if len(prompts.get("train", [])) != expected_train:
         raise ValueError("prompts.json train size differs from matrix")
     if len(prompts.get("val", [])) != matrix["experiment"]["n_val"]:
         raise ValueError("prompts.json validation size differs from matrix")
-    if len(artifacts.oracle) != matrix["experiment"]["n_train"]:
+    if len(artifacts.oracle) != expected_train:
         raise ValueError("score artifact coverage differs from matrix n_train")
     if not report:
         raise ValueError("report.json is empty")

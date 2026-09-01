@@ -54,8 +54,10 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "  src/model_matrix.py)\n"
         '    case " $* " in\n'
         "      *' list-models '*) printf 'm1\\nm2\\n' ;;\n"
-        "      *'domain_transfer.json experiment-field datasets '*) printf 'gsm8k mbpp kk arc-challenge\\n' ;;\n"
+        "      *'domain_transfer.json experiment-field datasets '*) printf 'gsm8k math500 mbpp kk arc-challenge\\n' ;;\n"
         "      *' experiment-field datasets '*) printf 'gsm8k mbpp\\n' ;;\n"
+        "      *' dataset-n-train math500 '*) printf '400\\n' ;;\n"
+        "      *' dataset-n-train '*) printf '512\\n' ;;\n"
         "      *'generalization_dr_grpo.json experiment-field policy_method '*) printf 'dr_grpo\\n' ;;\n"
         "      *'generalization_rloo.json experiment-field policy_method '*) printf 'rloo\\n' ;;\n"
         "      *' experiment-field policy_method '*) printf 'grpo\\n' ;;\n"
@@ -96,6 +98,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "      *) printf 'unexpected model_matrix args: %s\\n' \"$*\" >&2; exit 2 ;;\n"
         "    esac ;;\n"
         "  src/qualify_domain_data.py)\n"
+        '    printf \'%s\\n\' "$*" >> "$TEST_WORK/qualifications"\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --output ] && { printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  src/transfer_smoke.py)\n"
         '    while [ $# -gt 0 ]; do [ "$1" = --marker ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
@@ -111,7 +114,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '[ -z "${HUGGING_FACE_HUB_TOKEN+x}" ] || { printf "legacy token leaked\\n" >&2; exit 92; }\n'
         '[ "$HF_HUB_OFFLINE" = 1 ] && [ "$TRANSFORMERS_OFFLINE" = 1 ] && '
         '[ "$HF_DATASETS_OFFLINE" = 1 ] || { printf "offline flags missing\\n" >&2; exit 93; }\n'
-        'printf \'%s\\n\' "$REGIME_MODEL_TAG|$MODEL_PATH|$REGIME_DATASETS|$REGIME_SEEDS|$REGIME_DRIFTS|$REGIME_MATRIX" >> "$TEST_WORK/phases"\n',
+        'printf \'%s\\n\' "$REGIME_MODEL_TAG|$MODEL_PATH|$REGIME_DATASETS|$REGIME_SEEDS|$REGIME_DRIFTS|$REGIME_MATRIX|$REGIME_N_TRAIN_BY_DATASET" >> "$TEST_WORK/phases"\n',
     )
     executable(
         fake_bin / "nvidia-smi",
@@ -154,14 +157,22 @@ def test_launcher_runs_all_generalization_strata_in_order(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stdout + result.stderr
     phases = (Path(env["TEST_WORK"]) / "phases").read_text().splitlines()
     assert len(phases) == 6
-    assert phases[0].startswith("generalization-grpo-v1-grpo-m1|")
-    assert phases[1].startswith("generalization-grpo-v1-grpo-m2|")
+    assert phases[0].startswith("generalization-grpo-v2-grpo-m1|")
+    assert phases[1].startswith("generalization-grpo-v2-grpo-m2|")
     assert phases[2].startswith("method-dr-grpo-v1-dr_grpo-m1|")
     assert phases[3].startswith("method-dr-grpo-v1-dr_grpo-m2|")
     assert phases[4].startswith("method-rloo-v1-rloo-m1|")
     assert phases[5].startswith("method-rloo-v1-rloo-m2|")
-    assert "|gsm8k mbpp kk arc-challenge|0 1 2|0 25 100 400|" in phases[0]
+    assert "|gsm8k math500 mbpp kk arc-challenge|0 1 2|0 25 100 400|" in phases[0]
+    assert phases[0].endswith(
+        "|gsm8k=512 math500=400 mbpp=512 kk=512 arc-challenge=512"
+    )
     assert all("|gsm8k mbpp|0 1 2|0 25 100 400|" in row for row in phases[2:])
+    qualifications = (
+        Path(env["TEST_WORK"]) / "qualifications"
+    ).read_text().splitlines()
+    assert "--dataset-n-train math500=400" in qualifications[0]
+    assert "--dataset-n-train gsm8k=512" in qualifications[0]
 
 
 def test_launcher_rejects_non_four_h100_node(tmp_path: Path) -> None:
@@ -228,6 +239,9 @@ def test_prepare_mode_needs_neither_primary_lock_nor_gpus(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stdout + result.stderr
     assert "snapshots prepared and qualified" in result.stdout
     assert not (Path(env["TEST_WORK"]) / "phases").exists()
+    qualification = (Path(env["TEST_WORK"]) / "qualifications").read_text()
+    assert "--dataset-n-train math500=400" in qualification
+    assert "--dataset-n-train gsm8k=512" in qualification
 
 
 def test_run_mode_never_enters_snapshot_download(tmp_path: Path) -> None:

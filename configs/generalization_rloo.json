@@ -24,6 +24,10 @@
     "seeds": [0, 1, 2],
     "drifts": [0, 25, 100, 400],
     "n_train": 512,
+    "n_train_by_dataset": {
+      "gsm8k": 512,
+      "mbpp": 512
+    },
     "n_val": 100,
     "behavior_k": 8,
     "fresh_k": 32,

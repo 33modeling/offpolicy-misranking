@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -13,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from data import _dedupe_items, build_user_msg, load_prompts, reward
-from qualify_domain_data import qualify
+from qualify_domain_data import _dataset_train_sizes, qualify
 
 with tempfile.TemporaryDirectory() as td:
     root = Path(td)
@@ -89,11 +88,17 @@ config = json.loads((ROOT / "configs" / "domain_transfer.json").read_text())
 models = {row["key"]: row for row in config["models"]}
 assert set(models) == {"mistral7b", "olmo2-7b"}
 assert all(len(row["revision"]) == 40 for row in models.values())
-assert config["experiment"]["datasets"] == ["gsm8k", "mbpp", "kk", "arc-challenge"]
+assert config["experiment"]["datasets"] == [
+    "gsm8k", "math500", "mbpp", "kk", "arc-challenge",
+]
+assert config["experiment"]["n_train_by_dataset"]["math500"] == 400
 assert config["experiment"]["fresh_k"] == 32
 assert config["experiment"]["fresh_k"] % config["experiment"]["micro_group"] == 0
 assert config["experiment"]["grpo"]["world_size"] == 4
 assert config["experiment"]["grpo"]["group_size"] == 8
 assert config["experiment"]["grpo"]["clip_epsilon"] == 0.2
+assert _dataset_train_sizes(
+    ["gsm8k", "math500"], 512, ["math500=400"]
+) == {"gsm8k": 512, "math500": 400}
 
 print("PASS")
