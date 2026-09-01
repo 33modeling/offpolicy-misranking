@@ -9,7 +9,6 @@ import os
 import resource
 import sys
 
-
 _ALLOWED_IMPORTS = {
     "array",
     "bisect",
@@ -37,9 +36,13 @@ _BLOCKED_NAMES = {
     "compile",
     "eval",
     "exec",
+    "exit",
     "getattr",
     "globals",
+    "help",
     "locals",
+    "open",
+    "quit",
     "setattr",
     "vars",
 }
@@ -57,6 +60,12 @@ _BLOCKED_ATTRIBUTES = {
     "__mro__",
     "__spec__",
     "__subclasses__",
+    "modules",
+    "open",
+    "path_hooks",
+    "meta_path",
+    "setprofile",
+    "settrace",
     "_exit",
     "abort",
     "execv",
@@ -93,10 +102,18 @@ def _validated_candidate(source: str):
             module = (node.module or "").split(".", 1)[0]
             if node.level or module not in _ALLOWED_IMPORTS:
                 raise ValueError("candidate imports a module outside the verifier allowlist")
+            if any(alias.name.startswith("_") for alias in node.names):
+                raise ValueError("candidate imports a private module attribute")
+            if module == "sys" and any(alias.name != "maxsize" for alias in node.names):
+                raise ValueError("candidate imports an unsafe sys attribute")
         elif isinstance(node, ast.Name) and node.id in _BLOCKED_NAMES:
             raise ValueError(f"candidate uses blocked name {node.id}")
+        elif isinstance(node, ast.Name) and node.id.startswith("__"):
+            raise ValueError(f"candidate uses blocked private name {node.id}")
         elif isinstance(node, ast.Attribute) and node.attr in _BLOCKED_ATTRIBUTES:
             raise ValueError(f"candidate uses blocked attribute {node.attr}")
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+            raise ValueError(f"candidate uses blocked private attribute {node.attr}")
     return compile(tree, "<candidate>", "exec")
 
 

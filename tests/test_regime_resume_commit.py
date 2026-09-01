@@ -58,6 +58,31 @@ def test_marker_binds_empty_matrix_to_first_commit(tmp_path: Path) -> None:
     assert marker.read_text(encoding="utf-8") == f"{first}\n"
 
 
+def test_failed_preflight_marker_can_advance_before_any_family(tmp_path: Path) -> None:
+    marker = tmp_path / ".queue/generation.git"
+    first = "a" * 40
+    current = "b" * 40
+    assert bind_generation_commit(tmp_path, marker, first) == first
+
+    assert (
+        bind_generation_commit(tmp_path, marker, current, advance_empty=True)
+        == current
+    )
+    assert marker.read_text(encoding="utf-8") == f"{current}\n"
+
+
+def test_generation_marker_never_advances_after_family_creation(tmp_path: Path) -> None:
+    marker = tmp_path / ".queue/generation.git"
+    first = "a" * 40
+    current = "b" * 40
+    assert bind_generation_commit(tmp_path, marker, first) == first
+    (tmp_path / "family-mbpp-s0").mkdir()
+
+    assert bind_generation_commit(
+        tmp_path, marker, current, advance_empty=True
+    ) == first
+
+
 def test_marker_must_match_existing_run_configs(tmp_path: Path) -> None:
     marker = tmp_path / ".queue/generation.git"
     marker.parent.mkdir()

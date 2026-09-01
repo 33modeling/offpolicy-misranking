@@ -88,7 +88,13 @@ def _matrix_generation_commit(root: Path) -> str | None:
     return configured or recorded
 
 
-def bind_generation_commit(root: Path, marker: Path, current: str) -> str:
+def bind_generation_commit(
+    root: Path,
+    marker: Path,
+    current: str,
+    *,
+    advance_empty: bool = False,
+) -> str:
     """Atomically bind a shared matrix to one immutable generation commit."""
     current = validate_commit(current, "current checkout")
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -104,6 +110,10 @@ def bind_generation_commit(root: Path, marker: Path, current: str) -> str:
                 raise ValueError(
                     f"run configs use {detected} but generation marker uses {recorded}"
                 )
+            has_family = any(root.glob("family-*"))
+            if advance_empty and not has_configs and not has_family and recorded != current:
+                _write_generation_marker(marker, current)
+                return current
             return recorded
 
         _write_generation_marker(marker, detected)
@@ -146,6 +156,7 @@ def main() -> int:
     parser.add_argument("current")
     parser.add_argument("--marker", type=Path)
     parser.add_argument("--peer-root", action="append", default=[], type=Path)
+    parser.add_argument("--advance-empty", action="store_true")
     args = parser.parse_args()
     try:
         if args.peer_root and args.marker is None:
@@ -157,7 +168,12 @@ def main() -> int:
         elif args.marker is None:
             commit = choose_generation_commit(args.root, args.current)
         else:
-            commit = bind_generation_commit(args.root, args.marker, args.current)
+            commit = bind_generation_commit(
+                args.root,
+                args.marker,
+                args.current,
+                advance_empty=args.advance_empty,
+            )
         print(commit)
     except ValueError as exc:
         parser.error(str(exc))

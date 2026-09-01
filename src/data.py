@@ -552,7 +552,7 @@ def _run_untrusted_python(
     timeout: int = 8,
     tests: str | None = None,
 ):
-    """Run generated code in a fail-closed bubblewrap sandbox.
+    """Run generated code in the strongest available fail-closed sandbox.
 
     Function tests are passed separately to a trusted in-sandbox harness. The
     harness rejects process-control and dynamic-introspection escape APIs before
@@ -563,32 +563,41 @@ def _run_untrusted_python(
     import os
     import shutil
     import subprocess
+    import sys
     import tempfile
     from pathlib import Path
 
     bwrap = shutil.which("bwrap")
-    python = "/usr/bin/python3"
+    system_python = "/usr/bin/python3"
+    local_python = sys.executable
     runner = Path(__file__).resolve().with_name("code_sandbox.py")
-    if not bwrap or not os.path.isfile(python) or not runner.is_file():
+    if not runner.is_file():
         return None
-
-    command = [
-        bwrap,
-        "--unshare-all", "--die-with-parent", "--new-session",
-        "--clearenv", "--setenv", "PATH", "/usr/bin", "--setenv", "LANG", "C.UTF-8",
-        "--ro-bind", "/usr", "/usr",
-        "--ro-bind", "/lib", "/lib",
-        "--ro-bind", str(runner), "/runner.py",
-    ]
-    for path in ("/lib64", "/etc/ld.so.cache"):
-        if os.path.exists(path):
-            command += ["--ro-bind", path, path]
-    command += [
-        "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-        "--chdir", "/tmp", python, "-I", "/runner.py", str(timeout),
+    backend = _code_sandbox_backend()
+    encoded = [
+        str(timeout),
         base64.b64encode(code.encode()).decode(),
         base64.b64encode(tests.encode()).decode() if tests is not None else "-",
     ]
+    if backend == "bubblewrap":
+        command = [
+            bwrap,
+            "--unshare-all", "--die-with-parent", "--new-session",
+            "--clearenv", "--setenv", "PATH", "/usr/bin",
+            "--setenv", "LANG", "C.UTF-8", "--ro-bind", "/usr", "/usr",
+            "--ro-bind", "/lib", "/lib", "--ro-bind", str(runner), "/runner.py",
+        ]
+        for path in ("/lib64", "/etc/ld.so.cache"):
+            if os.path.exists(path):
+                command += ["--ro-bind", path, path]
+        command += [
+            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+            "--chdir", "/tmp", system_python, "-I", "/runner.py", *encoded,
+        ]
+    elif backend == "restricted-subprocess" and tests is not None:
+        command = [local_python, "-I", str(runner), *encoded]
+    else:
+        return None
 
     try:
         with tempfile.TemporaryFile() as output:
@@ -599,6 +608,9 @@ def _run_untrusted_python(
                 stderr=subprocess.DEVNULL,
                 timeout=timeout,
                 check=False,
+                cwd="/tmp" if backend == "restricted-subprocess" else None,
+                env={"PATH": "/usr/bin", "LANG": "C.UTF-8", "PYTHONHASHSEED": "0"},
+                start_new_session=backend == "restricted-subprocess",
             )
             output.seek(0)
             stdout = output.read(1024 * 1024 + 1)
@@ -607,6 +619,46 @@ def _run_untrusted_python(
         return process.returncode, stdout.decode(errors="replace")
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return None
+
+
+@lru_cache(maxsize=4)
+def _bubblewrap_available(bwrap: str, python: str) -> bool:
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [
+                bwrap, "--unshare-all", "--die-with-parent", "--new-session",
+                "--ro-bind", "/usr", "/usr", "--proc", "/proc", "--dev", "/dev",
+                python, "-I", "-c", "pass",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _code_sandbox_backend() -> str:
+    import os
+    import shutil
+
+    requested = os.environ.get("OM_CODE_SANDBOX", "auto")
+    if requested not in {"auto", "bubblewrap", "restricted-subprocess"}:
+        raise ValueError(f"unsupported OM_CODE_SANDBOX={requested!r}")
+    bwrap = shutil.which("bwrap")
+    python = "/usr/bin/python3"
+    available = bool(
+        bwrap and os.path.isfile(python) and _bubblewrap_available(bwrap, python)
+    )
+    if requested == "bubblewrap":
+        return "bubblewrap" if available else "unavailable"
+    if requested == "restricted-subprocess" or not available:
+        return "restricted-subprocess"
+    return "bubblewrap"
 
 
 def _code_reward(text: str, tests: str) -> float:

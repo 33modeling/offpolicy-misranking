@@ -162,7 +162,7 @@ mkdir -p "$ROOT/.queue" "$QUEUE" "$PREFLIGHT" "$GLOBAL_RESULTS" "$OM_WORK/locks"
 ) 9>"$OM_WORK/locks/olmo3-asset-adoption.lock" || exit 1
 
 GENERATION_GIT=$("$PY" src/regime_resume_commit.py "$ROOT" "$CURRENT_GIT" \
-  --marker "$ROOT/.queue/generation.git") || exit 1
+  --marker "$ROOT/.queue/generation.git" --advance-empty) || exit 1
 
 GENERATION_REPO=$SUPERVISOR_REPO
 if [ "$GENERATION_GIT" != "$CURRENT_GIT" ]; then

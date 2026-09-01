@@ -82,7 +82,9 @@ Before family assignment, every node must pass:
 1. Model revision, architecture, tokenizer, LoRA target, shard completeness, and
    per-file SHA verification in offline mode.
 2. Dataset revision, row count, file SHA, deterministic disjoint split, and real
-   Math-Verify/bubblewrap verifier checks.
+   Math-Verify/code verifier checks. Code uses bubblewrap when namespace creation
+   works, otherwise a resource-limited subprocess with a strict AST/import/file/
+   process deny policy.
 3. Cached real OLMo generations with positive, negative, and within-prompt mixed
    verifier rewards for both MATH-500 and MBPP.
 4. A four-rank GRPO step followed by an adapter/optimizer resume to step two on

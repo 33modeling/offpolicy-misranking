@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-from data import _boxed, _load_rows_any, load_prompts, reward
+from data import _boxed, _code_sandbox_backend, _load_rows_any, load_prompts, reward
 
 SPECS = {
     "gsm8k": {
@@ -235,7 +235,7 @@ def _verify_reward_runtime(dataset: str, raw_rows: list[dict], split: dict) -> d
         )
         if synthetic != 1.0:
             raise ValueError(
-                "mbpp: bubblewrap code sandbox is unavailable or cannot execute Python"
+                f"mbpp: {_code_sandbox_backend()} code sandbox cannot execute Python"
             )
         checked = 0
         for row in raw_rows:
@@ -252,7 +252,11 @@ def _verify_reward_runtime(dataset: str, raw_rows: list[dict], split: dict) -> d
                 break
         if checked < 3:
             raise ValueError("mbpp: fewer than three executable reference rows")
-        return {"kind": "bubblewrap-execution", "reference_rows": checked}
+        return {
+            "kind": "isolated-python-execution",
+            "backend": _code_sandbox_backend(),
+            "reference_rows": checked,
+        }
 
     gold = str(split["train"][0]["answer"])
     if dataset in {"gsm8k", "math500"}:

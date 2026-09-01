@@ -163,6 +163,25 @@ accepts only the exact official row multiset, and supports boxed-answer
 extraction. Regression coverage uses an unrelated three-level folder name,
 reversed row order, and `question/solution` MATH rows.
 
+The MBPP qualification then failed on a compute image where bubblewrap was
+missing or user-namespace creation was prohibited. Treating one host sandbox
+binary as universally available made a valid preloaded dataset unusable. The
+code verifier now probes bubblewrap functionality rather than mere executable
+presence and falls back, for MBPP function/assert evaluation only, to an
+isolated Python subprocess. The fallback applies the existing CPU, address
+space, output-file, descriptor, and process limits and additionally rejects
+filesystem builtins, private attributes, `sys.modules`, import escape paths,
+process control, and dynamic introspection before executing candidate code.
+APPS-style arbitrary stdin programs remain bubblewrap-only. Regression tests
+force the fallback backend and verify both a valid function and attempted host
+file/module access.
+
+Because the OLMo launcher writes `generation.git` before GPU preflight, failed
+preflight attempts could otherwise keep selecting code from before the sandbox
+fix after a pull. The launcher may now advance that marker only when there is no
+`run_config.json` and no `family-*` directory. Once any family has been created,
+the original immutable generation commit remains mandatory.
+
 ## Verification
 
 - Full suite: 86 passed.
