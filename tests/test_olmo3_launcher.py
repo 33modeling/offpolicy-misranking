@@ -275,3 +275,4 @@ def test_supervisor_keepalive_covers_preflight_and_point_transitions() -> None:
     assert start < signal
     assert "export OM_EXTERNAL_GPU_KEEPALIVE=1" in launcher
     assert 'if [ "${OM_EXTERNAL_GPU_KEEPALIVE:-0}" = "1" ]' in point
+    assert 'worktree add -f --detach' in launcher

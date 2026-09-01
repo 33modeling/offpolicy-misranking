@@ -262,7 +262,7 @@ if [ "$GENERATION_GIT" != "$CURRENT_GIT" ]; then
         echo "[abort] pinned generation commit is unavailable locally: $GENERATION_GIT" >&2
         exit 1
       }
-      git -C "$SUPERVISOR_REPO" worktree add --detach "$GENERATION_REPO" \
+      git -C "$SUPERVISOR_REPO" worktree add -f --detach "$GENERATION_REPO" \
         "$GENERATION_GIT" >&2 || exit 1
     fi
     [ "$(git -C "$GENERATION_REPO" rev-parse HEAD)" = "$GENERATION_GIT" ] || exit 1
