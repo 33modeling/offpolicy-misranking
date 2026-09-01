@@ -21,6 +21,13 @@ local `/tmp`, never on `GROUP_VOLUME`; cloned hostnames therefore cannot collaps
 three independent clusters into one worker. Only family and collection locks
 are shared.
 
+Do not pull a checkout while its launcher is running. After that process exits,
+the checkout may be updated and the same command run again. Each matrix stores
+one atomic `generation.git` marker; if the supervisor is newer than a partial
+matrix, it creates a node-local detached worktree at the recorded commit and
+uses that immutable `run_point.sh` for the remaining generation. Mixed or
+malformed commit provenance aborts before a family is claimed.
+
 The canonical launcher preserves the existing `v1` exact/float mathematical
 verifier and result roots, so jobs started at revision `295dfea` can resume from
 their existing flat local datasets and artifacts. Pinned manifests and symbolic

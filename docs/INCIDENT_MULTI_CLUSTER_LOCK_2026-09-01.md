@@ -56,6 +56,15 @@ legacy admission-lock names, and leaves the checkout and Git provenance clean.
 Both workers then enter the existing shared family queue. Future launches should
 pull `fb48565` or later and use the ordinary command with no override.
 
+Do not pull the checkout of a process that is still running. Revision
+`a223ee31bd0542cbe6c35af66cfb3549d0a8c40e` covers the later stopped-process
+case: after a worker exits, a newer supervisor may be pulled and launched with
+the ordinary command. The matrix-level `generation.git` marker is created
+without requiring a pre-existing snapshot or manifest. If partial artifacts
+record an older commit, the supervisor automatically restores that commit in a
+node-local detached worktree and resumes only the missing or invalid points.
+Mixed provenance fails before a family claim.
+
 ## Verification
 
 - Full suite: 86 passed.
@@ -65,6 +74,10 @@ pull `fb48565` or later and use the ordinary command with no override.
 - The launcher and queue pair passed five consecutive repetitions.
 - A duplicate launcher sharing one local lock was rejected.
 - A node-lock directory below the shared volume was rejected.
+- A three-worker empty matrix selected one atomic generation commit; an
+  interrupted matrix resumed after a simulated pull using the recorded commit.
+- Malformed markers, mixed run-config commits, and an explicitly wrong resume
+  checkout were rejected before new work was claimed.
 - Python compilation, fatal Ruff rules, shell syntax, JSON parsing, dependency
   integrity, and whitespace checks passed.
 

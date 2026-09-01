@@ -14,6 +14,8 @@ Date: 2026-08-31 KST
   `8812a52ac7e098e1109b078c9fa5d5e159f50cf9`.
 - Multi-cluster admission fix revision:
   `fb48565dda10d35aa58452b0b37696ae122558aa`.
+- Commit-stable matrix resume fix revision:
+  `a223ee31bd0542cbe6c35af66cfb3549d0a8c40e`.
 - Audited paper revision: `e53fe4ac9437ad702eb558213adad55e3125f83c`.
 - Final verdict: the existing primary remains on its compatible `v1` protocol;
   the separate generalization and method protocols are ready after their
@@ -35,7 +37,7 @@ Date: 2026-08-31 KST
 | 5. R/A/B independence | PASS | Ranking split R and disjoint reference splits A/B are enforced in contracts and paper text; exact set/order checks and independent score artifacts remain mandatory. |
 | 6. Estimators/selection | PASS | Four estimator cells, clipping/ESS, LOO advantages, ranking baselines, stable top-k, and selection contracts were rechecked against executable tests and manuscript equations. |
 | 7. Utility/statistics | PASS | Utility remains validation-gradient alignment, not downstream reward. Reliability/fresh-gain gates and 10,000-replicate hierarchical bootstrap remain unchanged and are not overclaimed. |
-| 8. Distributed/publication | PASS WITH FIX, CLUSTER RUNTIME PENDING | Exactly four H100s, clean Git state, shared-volume location, family/collection locks, retries, deep validation, and content-addressed outputs fail closed. The final harvester now carries those checks through publication. No four-H100 node is attached to this audit host. |
+| 8. Distributed/publication | PASS WITH FIX, CLUSTER RUNTIME PENDING | Exactly four H100s, clean Git state, node-local admission, atomic generation-commit binding, family/collection locks, retries, deep validation, and content-addressed outputs fail closed. A newer supervisor resumes partial generation through a detached checkout of the recorded commit. The final harvester carries the checks through publication. No four-H100 node is attached to this audit host. |
 | 9. Generalization | REGISTERED | Two independent 7B model families, four verifier domains, three seeds, four checkpoints, full GRPO matrix, and math/code Dr.GRPO plus RLOO slice use disjoint roots/contracts. |
 | 10. Mathematics/claims | PASS | Estimator identities, counterexamples, normalization lemma, recovery proposition, reliability ceiling, certification bound, and claim scopes were checked against code/tests; generalization is explicitly non-universal. |
 | 11. References/build | PASS | 65 citation keys resolve to 65 unique bibliography entries with zero missing, duplicate, or uncited entries. Clean 18-page letter PDF has no undefined refs/citations, LaTeX errors, or overfull boxes. |
@@ -84,6 +86,15 @@ Date: 2026-08-31 KST
    one lock: the first entered the family queue and the other two exited. Node
    admission now uses a fixed lock in node-local `/tmp`; random worker IDs keep
    shared logs distinct, while only family and collection locks remain shared.
+9. **Partial matrices did not actually re-enter their recorded code revision.**
+   `run_matrix.sh` described immutable resume behavior, and
+   `regime_resume_commit.py` could detect an older commit, but the helper was not
+   used. After a pull, `run_point.sh` could enter analysis-upgrade handling
+   instead of continuing generation, and an empty shared matrix had no atomic
+   revision owner. The queue now binds `.queue/generation.git` under a shared
+   lock, validates every recorded full commit, and automatically creates a
+   node-local detached worktree for the recorded generation revision. Wrong
+   explicit checkouts and mixed provenance fail before any family claim.
 
 ## Verification evidence
 
@@ -178,6 +189,39 @@ all three workers to claim work, every dataset/seed/drift point exactly once,
 one transient hung point to be retried, and aggregate analysis to publish once.
 A separate test requires a second process on the same physical node to fail and
 rejects any `OM_LOCAL_LOCK_DIR` placed below `GROUP_VOLUME`.
+
+### Commit-stable resume re-audit on 2026-09-01
+
+Executed against fix revision `a223ee3`:
+
+```text
+python -m pytest -q
+90 passed in 16.76s
+
+python -m pytest -q tests/test_regime_queue.py \
+  tests/test_regime_resume_commit.py
+8 passed in 9.37s
+
+launcher + additional + harvest integration
+16 passed in 3.66s
+
+python -m compileall -q src tests
+ruff check --select E9,F63,F7,F82 src tests
+bash -n scripts/*.sh
+jq empty configs/*.json
+python -m pip check
+git diff --check
+All passed.
+```
+
+The queue regression uses three simultaneous workers, injects one stalled point,
+repairs one corrupt point, commits a simulated supervisor update, rejects an
+explicit wrong generation checkout without claiming work, then restores the old
+commit into a detached worktree and regenerates only that point. Unit tests also
+reject malformed markers and mixed run-config commits. The unchanged paper
+revision rebuilt as an 18-page US Letter PDF with no undefined references,
+undefined citations, LaTeX errors, or overfull boxes; 65 cited keys match 65
+unique bibliography entries exactly.
 
 ## Launch boundaries
 

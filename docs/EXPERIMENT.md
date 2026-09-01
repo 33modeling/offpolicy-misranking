@@ -110,6 +110,14 @@ duplicate jobs. Per-node launcher admission uses a node-local `/tmp` lock rather
 than hostname-derived state on the shared volume, so cloned cluster hostnames do
 not reject valid workers. Report collection is separately locked and
 content-addressed.
+
+Before any family claim, the shared matrix is atomically bound to one full Git
+commit in `.queue/generation.git`. A supervisor updated after an interruption
+automatically materializes that commit as a node-local detached worktree and
+runs the remaining generation there. An explicit checkout at the wrong commit,
+mixed run-config commits, a malformed marker, or a dirty generation checkout
+fails before new work begins.
+
 The Qwen primary and already-running `295dfea` jobs retain the
 `readouts/rlvr-grpo` target. Additional-study outputs never enter that bundle.
 Neither path uses timestamped harvest directories.
