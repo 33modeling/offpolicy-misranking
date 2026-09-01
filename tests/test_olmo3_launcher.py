@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,7 +135,14 @@ cd "$(dirname "$0")/.."
   && [ "$HF_DATASETS_OFFLINE" = 1 ] || exit 92
 [[ ":$PYTHONPATH:" == *":$TEST_SHARED/runtime-deps:"* ]] || exit 94
 key="$REGIME_DATASETS-s$REGIME_SEEDS"
-[ "${TEST_FAIL_FAMILY:-}" != "$key" ] || exit 43
+if [ "${TEST_FAIL_FAMILY:-}" = "$key" ]; then
+  marker="$TEST_SHARED/work/fail-$key"
+  mkdir -p "$(dirname "$marker")"
+  if [ "${TEST_FAIL_ALWAYS:-0}" = 1 ] || [ ! -e "$marker" ]; then
+    : > "$marker"
+    exit 43
+  fi
+fi
 git=$(git -C "$OM_PIPELINE_REPO" rev-parse HEAD)
 printf '%s|%s|%s\n' "$WORKER_ID" "$key" "$git" >> "$TEST_SHARED/work/claims"
 /bin/sleep 0.05
@@ -168,6 +176,7 @@ done
         "OM_PIPELINE_CACHE": str(tmp_path / "pipeline-cache"),
         "OM_RLZERO_PREFLIGHT_WAIT_SECONDS": "1",
         "OM_RLZERO_QUEUE_WAIT_SECONDS": "1",
+        "OM_RLZERO_FAMILY_RETRY_SECONDS": "0",
     }
 
 
@@ -199,17 +208,14 @@ def test_three_workers_claim_every_family_exactly_once(tmp_path: Path) -> None:
     assert (Path(env["TEST_SHARED"]) / "work/results/olmo3-1025-7b-base-rlzero-grpo-v1/COMPLETE").is_file()
 
 
-def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) -> None:
+def test_failed_family_restarts_automatically_without_launcher_exit(tmp_path: Path) -> None:
     checkout, env = fixture_checkout(tmp_path)
-    first_commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
-    ).strip()
-    failed = subprocess.run(
+    result = subprocess.run(
         ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
         cwd=checkout,
         env={
             **env,
-            "OM_LOCAL_LOCK_DIR": str(tmp_path / "first-local"),
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "retry-local"),
             "TEST_FAIL_FAMILY": "mbpp-s0",
         },
         text=True,
@@ -217,7 +223,42 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
         timeout=30,
         check=False,
     )
-    assert failed.returncode != 0
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[family-retry] mbpp/s0 rc=43" in result.stdout
+    assert "allocation retained" in result.stdout
+    claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
+    assert len(claims) == 10
+    assert len({line.split("|")[1] for line in claims}) == 10
+
+
+def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    first_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
+    ).strip()
+    failed = subprocess.Popen(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "first-local"),
+            "TEST_FAIL_FAMILY": "mbpp-s0",
+            "TEST_FAIL_ALWAYS": "1",
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    failure_marker = Path(env["TEST_SHARED"]) / "work/fail-mbpp-s0"
+    for _ in range(200):
+        if failure_marker.exists():
+            break
+        time.sleep(0.05)
+    assert failure_marker.exists()
+    assert failed.poll() is None
+    failed.terminate()
+    failed_output, _ = failed.communicate(timeout=10)
+    assert "[family-retry] mbpp/s0 rc=43" in failed_output
     marker = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.queue/generation.git"
     assert marker.read_text().strip() == first_commit
 

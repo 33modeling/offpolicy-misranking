@@ -424,6 +424,14 @@ export REGIME_TEMPERATURE=$(experiment_field temperature)
 export REGIME_FIRST_BOOTSTRAP=$(experiment_field first_bootstrap)
 export REGIME_MAX_RETRIES=3 OM_STALL_MINUTES=15
 export OM_SKIP_GPU_CHECK=0 OM_ALLOW_DIRTY=0 OM_ALLOW_ANALYSIS_UPGRADE=1
+FAMILY_ATTEMPTS="${OM_RLZERO_FAMILY_ATTEMPTS:-3}"
+case "$FAMILY_ATTEMPTS" in
+  ''|*[!0-9]*|0) echo "[abort] OM_RLZERO_FAMILY_ATTEMPTS must be a positive integer"; exit 2 ;;
+esac
+FAMILY_RETRY_SECONDS="${OM_RLZERO_FAMILY_RETRY_SECONDS:-60}"
+case "$FAMILY_RETRY_SECONDS" in
+  ''|*[!0-9]*) echo "[abort] OM_RLZERO_FAMILY_RETRY_SECONDS must be a non-negative integer"; exit 2 ;;
+esac
 QUEUE_WAIT_SECONDS="${OM_RLZERO_QUEUE_WAIT_SECONDS:-60}"
 case "$QUEUE_WAIT_SECONDS" in
   ''|*[!0-9]*|0) echo "[abort] OM_RLZERO_QUEUE_WAIT_SECONDS must be a positive integer"; exit 2 ;;
@@ -460,8 +468,8 @@ tmp.write_text(json.dumps({
 tmp.replace(path)
 PYEOF
   [ "$?" -eq 0 ] || { cleanup_owner; return 1; }
-  for attempt in 1 2 3; do
-    echo "[family] claim=$dataset/s$seed attempt=$attempt/3" | tee -a "$LOG"
+  for ((attempt = 1; attempt <= FAMILY_ATTEMPTS; attempt++)); do
+    echo "[family] claim=$dataset/s$seed attempt=$attempt/$FAMILY_ATTEMPTS" | tee -a "$LOG"
     # Older pinned generation commits start their own point-local keepalive.
     # Pause the supervisor during those points to avoid duplicate GPU load.
     [ "$PINNED_POINT_EXTERNAL_KEEPALIVE" -eq 1 ] || stop_supervisor_keepalive
@@ -498,10 +506,10 @@ PYEOF
   cleanup_owner
 }
 
-failures=0
 while :; do
   remaining=0
   claimed=0
+  retrying=0
   for seed in "${SEEDS[@]}"; do
     for dataset in "${DATASETS[@]}"; do
       family_complete "$dataset" "$seed" && continue
@@ -518,16 +526,20 @@ while :; do
       claimed=$((claimed + 1))
       if [ "$rc" -ne 0 ]; then
         cleanup_owner
-        echo "[family-abort] $dataset/s$seed rc=$rc; rerun the same command to resume" | tee -a "$LOG"
-        failures=$((failures + 1))
-        break 2
+        echo "[family-retry] $dataset/s$seed rc=$rc; allocation retained, artifacts preserved, automatic retry scheduled" \
+          | tee -a "$LOG"
+        retrying=$((retrying + 1))
+        continue
       fi
       sleep "$CLAIM_YIELD_SECONDS"
     done
   done
   [ "$remaining" -eq 0 ] && break
-  [ "$failures" -eq 0 ] || exit 1
-  if [ "$claimed" -eq 0 ]; then
+  if [ "$retrying" -gt 0 ]; then
+    echo "[queue] $retrying failed families remain; retrying after ${FAMILY_RETRY_SECONDS}s while GPU keepalive stays active" \
+      | tee -a "$LOG"
+    sleep "$FAMILY_RETRY_SECONDS"
+  elif [ "$claimed" -eq 0 ]; then
     echo "[queue] waiting for $remaining families owned by other clusters" | tee -a "$LOG"
     sleep "$QUEUE_WAIT_SECONDS"
   fi

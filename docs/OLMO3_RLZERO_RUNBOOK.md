@@ -126,7 +126,13 @@ No family is claimed when any gate fails.
 
 An interrupted rollout keeps only complete prompt groups in `.partial` and
 continues from the next prompt. Interrupted GRPO loads the newest complete local
-checkpoint. Re-run the same command:
+checkpoint. A family failure no longer exits the launcher: it releases that
+family lock, preserves the partial artifacts, processes other available
+families, and retries failed families after 60 seconds while the GPU keepalive
+remains active. `OM_RLZERO_FAMILY_ATTEMPTS` controls immediate attempts and
+`OM_RLZERO_FAMILY_RETRY_SECONDS` controls the outer retry delay.
+
+Only a user signal or loss of the worker itself requires rerunning the command:
 
 ```bash
 bash scripts/run_olmo3_rlzero.sh run
@@ -144,9 +150,10 @@ unfinished and not-yet-started families with that same code. Do not delete the
 generation marker, family completion stamps, or partial checkpoints. A missing
 local Git object aborts before a GPU family is claimed.
 
-Permanent prompt/contract failures use exit code `43` and are not placed in an
-infinite retry loop. Other point failures receive bounded retries and preserve
-durable artifacts for the next launcher invocation.
+Prompt/contract failures use exit code `43` to skip immediate same-family
+attempts. The worker stays allocated, moves to other work, and retries that
+family on a later queue pass instead of terminating. Repeated attempts reuse
+only contract-valid durable artifacts.
 
 ## Observe and collect
 

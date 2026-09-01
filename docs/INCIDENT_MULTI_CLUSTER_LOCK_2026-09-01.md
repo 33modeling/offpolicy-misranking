@@ -226,6 +226,14 @@ The implementation and validation work made the following mistakes in order:
    `run_point.sh` and source checkout. A suite-bound generation commit now
    triggers automatic checkout repair instead of the user-facing
    `use OM_PIPELINE_REPO=<clean checkout ...>` abort.
+7. The family supervisor still exited after three failed attempts and printed
+   an instruction to rerun the same command. Its `EXIT` trap then stopped the
+   supervisor keepalive, so an unattended transient failure could release the
+   GPU allocation even though all partial artifacts were restartable. The
+   corrected loop preserves artifacts, releases only the failed family lock,
+   continues other families, and retries failures after a bounded delay without
+   exiting the worker. After family execution begins, normal exit is reserved
+   for an external signal or a completed matrix.
 
 ### Validation failure
 
