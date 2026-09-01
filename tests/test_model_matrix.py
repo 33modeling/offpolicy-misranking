@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from model_matrix import (
+    PINNED_OFFICIAL_FILES,
     _file_records,
     _load_config,
     _seal_local_snapshot,
@@ -169,4 +170,46 @@ def test_local_hub_snapshot_can_only_be_sealed_from_exact_revision_metadata(
         f"{'b' * 40}\n{digest}\n0\n"
     )
     with pytest.raises(ValueError, match="revision mismatch"):
+        _seal_local_snapshot(spec, tmp_path)
+
+
+def test_uploaded_snapshot_seals_without_hub_metadata(tmp_path: Path, monkeypatch) -> None:
+    files = {
+        "config.json": b"{}\n",
+        "tokenizer_config.json": b"{}\n",
+        "model.safetensors": b"weights",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_bytes(content)
+    spec = {
+        "key": "model",
+        "repository": "owner/model",
+        "revision": "a" * 40,
+        "lora_targets": ["q_proj"],
+    }
+    monkeypatch.setitem(
+        PINNED_OFFICIAL_FILES,
+        (spec["repository"], spec["revision"]),
+        {
+            name: {
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            for name, content in files.items()
+        },
+    )
+    monkeypatch.setattr(
+        "model_matrix._check_snapshot",
+        lambda model_spec, path: {"revision": model_spec["revision"], "path": str(path)},
+    )
+
+    result = _seal_local_snapshot(spec, tmp_path)
+
+    assert result["revision"] == spec["revision"]
+    assert (tmp_path / ".om_snapshot.json").is_file()
+    assert not (tmp_path / ".cache").exists()
+
+    (tmp_path / ".om_snapshot.json").unlink()
+    (tmp_path / "model.safetensors").write_bytes(b"damaged")
+    with pytest.raises(ValueError, match="hash mismatch"):
         _seal_local_snapshot(spec, tmp_path)

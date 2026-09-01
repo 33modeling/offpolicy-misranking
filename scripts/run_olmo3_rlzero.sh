@@ -4,6 +4,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 SUPERVISOR_REPO=$PWD
+export OM_REPO="${OM_REPO:-$SUPERVISOR_REPO}"
 MODE=${1:-run}
 case "$MODE" in
   prepare|check|run|status) ;;
@@ -126,6 +127,20 @@ DIRTY=$(git status --porcelain -- src scripts configs requirements.txt)
 }
 
 CURRENT_GIT=$(git rev-parse HEAD) || exit 1
+
+# A separately uploaded official snapshot has no Hugging Face cache metadata.
+# Seal it with the current verifier before entering an older commit-pinned run.
+if [ ! -s "$MODEL_PATH/.om_snapshot.json" ]; then
+  if ! PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PY" "$SUPERVISOR_REPO/src/model_matrix.py" --config "$CONFIG" \
+      --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" check "$MODEL_KEY"; then
+    echo "[model] manifest missing; verifying the uploaded model against pinned official hashes"
+    PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PY" "$SUPERVISOR_REPO/src/model_matrix.py" --config "$CONFIG" \
+      --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" seal "$MODEL_KEY" || exit 1
+  fi
+fi
+
 mkdir -p "$ROOT/.queue" "$QUEUE" "$PREFLIGHT" "$GLOBAL_RESULTS"
 GENERATION_GIT=$("$PY" src/regime_resume_commit.py "$ROOT" "$CURRENT_GIT" \
   --marker "$ROOT/.queue/generation.git") || exit 1
@@ -165,7 +180,7 @@ echo "[contract] git=$GENERATION_GIT model_revision=$MODEL_REVISION config=$CONF
 if ! PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
     "$PY" "$GENERATION_REPO/src/model_matrix.py" --config "$GENERATION_CONFIG" \
     --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" check "$MODEL_KEY"; then
-  echo "[model] sealed manifest missing; verifying local Hub revision and content offline"
+  echo "[model] manifest missing; verifying the uploaded model against pinned official hashes"
   PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
     "$PY" "$GENERATION_REPO/src/model_matrix.py" --config "$GENERATION_CONFIG" \
     --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" seal "$MODEL_KEY" || exit 1

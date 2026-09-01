@@ -33,9 +33,9 @@ bash scripts/run_olmo3_rlzero.sh prepare
 
 No token is read or requested. The model and datasets are public and all
 inherited Hugging Face token variables are removed. An existing
-`snapshot_download(local_dir=...)` model can be sealed without redownloading
-when its per-file Hub metadata proves both the registered commit and the file
-content hashes. If that snapshot is outside the default
+model directory, including one uploaded separately without a Hugging Face
+`.cache` directory, is checked against the registered official file sizes and
+hashes and sealed automatically without redownloading. If that snapshot is outside the default
 `$MODELS_DIR/Olmo-3-1025-7B`, set `OM_OLMO3_MODEL_PATH` to its exact local path
 on all three nodes.
 

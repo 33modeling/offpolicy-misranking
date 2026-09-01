@@ -30,6 +30,58 @@ DOWNLOAD_PATTERNS = [
     "chat_template.jinja",
 ]
 
+PINNED_OFFICIAL_FILES = {
+    (
+        "allenai/Olmo-3-1025-7B",
+        "a81bae42db3975be1671e27b9c9a56da1a9f980f",
+    ): {
+        "config.json": {
+            "size": 1620,
+            "git_blob_sha1": "5e1778fbc278e8f47217ba485e9a075689207f0f",
+        },
+        "generation_config.json": {
+            "size": 69,
+            "git_blob_sha1": "33b71a9c3ddf78cfa1c6721826775ae02d06d64d",
+        },
+        "merges.txt": {
+            "size": 916646,
+            "git_blob_sha1": "354558edcdbd64ca7abd407b8be3d5d09d39d781",
+        },
+        "model-00001-of-00003.safetensors": {
+            "size": 4969984976,
+            "sha256": "0490d6668e613a29b23367e3a7aa9cc6aced3d162694445bb969ed7622b3c4e2",
+        },
+        "model-00002-of-00003.safetensors": {
+            "size": 4981161496,
+            "sha256": "e127ea479fb6e208fe9d48d23b11212b5722f4873f6eef9c009b7a855866c641",
+        },
+        "model-00003-of-00003.safetensors": {
+            "size": 4644917240,
+            "sha256": "f3ddff10052ffe5de5c6b4cad45c422c0d898acc6beb21b1b8531244adfb3c70",
+        },
+        "model.safetensors.index.json": {
+            "size": 29630,
+            "git_blob_sha1": "421a80b181a130ccbc579a328fb349d8792a32ce",
+        },
+        "special_tokens_map.json": {
+            "size": 207,
+            "git_blob_sha1": "48f174b441a37b588e40d794c437adad1624a311",
+        },
+        "tokenizer.json": {
+            "size": 7137177,
+            "git_blob_sha1": "5fe172127988c3709a49d8d2ce20e11bb266cd57",
+        },
+        "tokenizer_config.json": {
+            "size": 4308,
+            "git_blob_sha1": "5599723dac37d9f0b7e496de66d15e0a762babe9",
+        },
+        "vocab.json": {
+            "size": 1611056,
+            "git_blob_sha1": "51135344eec01a62fc4deaca39c72ac08f5b9709",
+        },
+    }
+}
+
 EXPERIMENT_FIELDS = {
     "policy_method",
     "datasets",
@@ -239,6 +291,34 @@ def _load_specs(config_path: Path) -> dict[str, dict]:
         formatter = spec.get("prompt_format", "tokenizer_chat")
         if formatter not in {"tokenizer_chat", "olmo_rlzero"}:
             raise ValueError(f"{key}: unsupported prompt_format={formatter!r}")
+        official_files = spec.get("official_files")
+        if official_files is not None:
+            if not isinstance(official_files, dict) or not official_files:
+                raise TypeError(f"{key}: official_files must be a non-empty object")
+            for name, record in official_files.items():
+                relative = Path(name)
+                if (
+                    not isinstance(name, str)
+                    or relative.is_absolute()
+                    or len(relative.parts) != 1
+                    or not isinstance(record, dict)
+                ):
+                    raise ValueError(f"{key}: invalid official file record: {name!r}")
+                size = record.get("size")
+                hashes = {
+                    field: record.get(field)
+                    for field, length in (("sha256", 64), ("git_blob_sha1", 40))
+                    if isinstance(record.get(field), str)
+                    and re.fullmatch(rf"[0-9a-f]{{{length}}}", record[field])
+                }
+                if (
+                    isinstance(size, bool)
+                    or not isinstance(size, int)
+                    or size <= 0
+                    or len(hashes) != 1
+                    or len(record) != 2
+                ):
+                    raise ValueError(f"{key}: invalid official file record: {name!r}")
     return specs
 
 
@@ -385,13 +465,17 @@ def _check_snapshot(spec: dict, path: Path) -> dict:
     }
 
 
-def _write_manifest(spec: dict, path: Path) -> None:
+def _write_manifest(
+    spec: dict,
+    path: Path,
+    records: dict[str, dict[str, int | str]] | None = None,
+) -> None:
     shards = _weight_shards(path)
     manifest = {
         "schema_version": 2,
         "repository": spec["repository"],
         "revision": spec["revision"],
-        "files": _file_records(path, _manifest_files(path, shards)),
+        "files": records or _file_records(path, _manifest_files(path, shards)),
     }
     target = path / ".om_snapshot.json"
     target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -401,6 +485,41 @@ def _seal_local_snapshot(spec: dict, path: Path) -> dict:
     """Seal a Hub ``local_dir`` download without making a network request."""
     shards = _weight_shards(path)
     files = _manifest_files(path, shards)
+    official_files = spec.get("official_files") or PINNED_OFFICIAL_FILES.get(
+        (spec["repository"], spec["revision"])
+    )
+    if official_files:
+        records: dict[str, dict[str, int | str]] = {}
+        for file in files:
+            relative = str(file.relative_to(path))
+            expected = official_files.get(relative)
+            if expected is None:
+                raise ValueError(
+                    f"{spec['key']}: file is not registered for the pinned model: {relative}"
+                )
+            if not file.is_file():
+                raise ValueError(f"{spec['key']}: model file missing: {relative}")
+            size = file.stat().st_size
+            if size != expected["size"]:
+                raise ValueError(f"{spec['key']}: model file size mismatch: {relative}")
+            if "sha256" in expected:
+                sha256 = _sha256(file)
+                valid = sha256 == expected["sha256"]
+            else:
+                valid = _git_blob_sha1(file) == expected["git_blob_sha1"]
+                sha256 = _sha256(file)
+            if not valid:
+                raise ValueError(f"{spec['key']}: model file hash mismatch: {relative}")
+            records[relative] = {"size": size, "sha256": sha256}
+
+        manifest = path / ".om_snapshot.json"
+        _write_manifest(spec, path, records)
+        try:
+            return _check_snapshot(spec, path)
+        except Exception:
+            manifest.unlink(missing_ok=True)
+            raise
+
     metadata_root = path / ".cache" / "huggingface" / "download"
     missing: list[str] = []
     wrong: list[str] = []
