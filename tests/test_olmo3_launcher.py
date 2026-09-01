@@ -51,6 +51,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         r'''#!/usr/bin/env bash
 script=$1; shift
 case "$script" in
+  *bootstrap_math_verify.py) printf '%s/runtime-deps\n' "$TEST_SHARED" ;;
   *regime_resume_commit.py) exec python3 "$script" "$@" ;;
   *model_matrix.py)
     case " $* " in
@@ -98,6 +99,7 @@ case "$script" in
       fi
       shift
     done ;;
+  -c) exit 0 ;;
   -m)
     while [ $# -gt 0 ]; do
       if [ "$1" = --output ]; then
@@ -126,6 +128,7 @@ cd "$(dirname "$0")/.."
 [ -z "${HF_TOKEN+x}" ] && [ -z "${HUGGING_FACE_HUB_TOKEN+x}" ] || exit 91
 [ "$HF_HUB_OFFLINE" = 1 ] && [ "$TRANSFORMERS_OFFLINE" = 1 ] \
   && [ "$HF_DATASETS_OFFLINE" = 1 ] || exit 92
+[[ ":$PYTHONPATH:" == *":$TEST_SHARED/runtime-deps:"* ]] || exit 94
 key="$REGIME_DATASETS-s$REGIME_SEEDS"
 [ "${TEST_FAIL_FAMILY:-}" != "$key" ] || exit 43
 git=$(git rev-parse HEAD)

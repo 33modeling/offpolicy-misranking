@@ -21,6 +21,15 @@ PY="$VENV_DIR/bin/python"
 [ -s "$CONFIG" ] || { echo "[abort] experiment config missing: $CONFIG"; exit 1; }
 command -v flock >/dev/null 2>&1 || { echo "[abort] flock missing"; exit 1; }
 
+if [ "$MODE" != status ]; then
+  MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py \
+    --cache-root "$OM_WORK/runtime-deps") || exit 1
+  export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}"
+  "$PY" -c 'from math_verify import parse, verify; assert verify(parse(r"\frac{1}{2}"), parse("0.5"))' \
+    || { echo "[abort] bundled math verifier failed to import"; exit 1; }
+  echo "[runtime] bundled math-verify ready: $MATH_VERIFY_PATH"
+fi
+
 MODEL_KEY=olmo3-7b-base
 model_field() {
   "$PY" src/model_matrix.py --config "$CONFIG" --models-dir "$MODELS_DIR" \
@@ -352,6 +361,10 @@ QUEUE_WAIT_SECONDS="${OM_RLZERO_QUEUE_WAIT_SECONDS:-60}"
 case "$QUEUE_WAIT_SECONDS" in
   ''|*[!0-9]*|0) echo "[abort] OM_RLZERO_QUEUE_WAIT_SECONDS must be a positive integer"; exit 2 ;;
 esac
+CLAIM_YIELD_SECONDS="${OM_RLZERO_CLAIM_YIELD_SECONDS:-1}"
+case "$CLAIM_YIELD_SECONDS" in
+  ''|*[!0-9]*) echo "[abort] OM_RLZERO_CLAIM_YIELD_SECONDS must be a non-negative integer"; exit 2 ;;
+esac
 
 ACTIVE_OWNER=""
 cleanup_owner() {
@@ -387,7 +400,7 @@ PYEOF
     OM_REPO="$GENERATION_REPO" OM_PIPELINE_REPO="$GENERATION_REPO" \
       OM_PIPELINE_SCRIPT="$GENERATION_REPO/scripts/run_point.sh" \
       OM_GENERATION_GIT="$GENERATION_GIT" \
-      PYTHONPATH="$GENERATION_REPO/src" MODEL_PATH="$MODEL_PATH" \
+      PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" MODEL_PATH="$MODEL_PATH" \
       REGIME_ROOT="$root" REGIME_RESULTS="$result" REGIME_MODEL_TAG="$MODEL_TAG" \
       REGIME_DATASETS="$dataset" REGIME_SEEDS="$seed" \
       REGIME_DRIFTS="${DRIFTS[*]}" REGIME_SKIP_COLLECTION=1 \
@@ -439,6 +452,7 @@ while :; do
         failures=$((failures + 1))
         break 2
       fi
+      sleep "$CLAIM_YIELD_SECONDS"
     done
   done
   [ "$remaining" -eq 0 ] && break
@@ -472,7 +486,8 @@ done
       done
     done
   done
-  PYTHONPATH="$GENERATION_REPO/src" "$PY" "$GENERATION_REPO/src/regime_map.py" \
+  PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PY" "$GENERATION_REPO/src/regime_map.py" \
     "${runs[@]}" --output-dir "$GLOBAL_RESULTS" \
     --first-bootstrap "$REGIME_FIRST_BOOTSTRAP" || exit 1
   for output in REGIME.json REGIME.csv REGIME_SUMMARY.csv FINAL_REPORT.md; do

@@ -45,6 +45,12 @@ dataset subdirectory. `run` verifies the official ordered content fingerprints,
 then atomically creates the standard local artifacts and manifests before
 entering a commit-pinned continuation. It never contacts the Hub in run mode.
 
+`run` bootstraps the pinned `math-verify==0.9.0`,
+`latex2sympy2-extended==1.11.0`, ANTLR 4.13.2, SymPy 1.14.0, and mpmath 1.3.0
+wheels from `vendor/wheels` into `$OM_WORK/runtime-deps`. This does not call
+pip, modify the shared venv, or require network access. Import-source and
+symbolic-equivalence smoke tests run before GPU admission.
+
 `transformers>=4.57.0` is required by OLMo-3. Update the shared venv from
 `requirements.txt` before allocating GPUs if static checking reports an older
 version.

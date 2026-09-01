@@ -112,6 +112,46 @@ scheme, and registered additional runs reject missing or mismatched bindings.
 Legacy rollout manifests without the binding are not eligible for the new
 registered extension.
 
+## OLMo RL-Zero dependency bootstrap incident
+
+The OLMo launcher declared `math-verify==0.9.0` in `requirements.txt` but
+assumed every existing shared cluster venv had already been reprovisioned.
+`git pull && bash scripts/run_olmo3_rlzero.sh run` therefore failed with
+`ModuleNotFoundError: math_verify` on a stale venv, before the experiment could
+enter its queue.
+
+The validation mistake was specific and avoidable: the full suite was run only
+inside the local CUDA venv where `math_verify` was already installed. That
+proved the verifier behavior but did not test the launcher's stated fresh/stale
+venv contract. Reporting the launcher ready on that evidence was incorrect.
+
+The correction vendors the complete pure-Python dependency closure:
+math-verify 0.9.0, latex2sympy2-extended 1.11.0, ANTLR 4.13.2, SymPy 1.14.0,
+and mpmath 1.3.0. Their SHA-256 values are fixed in
+`src/bootstrap_math_verify.py`. Before any GPU admission, the launcher
+atomically extracts them under `$OM_WORK/runtime-deps`, prepends that directory
+to `PYTHONPATH`, asserts that all five modules came from the bundle, and runs a
+symbolic `1/2 == 0.5` verification. No pip, Hub token, network, or shared-venv
+mutation is involved.
+
+The bundle path is preserved when the supervisor switches to a commit-pinned
+generation worktree and when it launches each family pipeline. A regression
+fixture rejects any family command that overwrites `PYTHONPATH` and drops the
+bundle after preflight.
+
+Regression policy: a one-command launcher is not considered verified merely
+because its dependencies appear in `requirements.txt`. Each nonstandard
+runtime dependency must have a launch-path test from an empty bundle cache,
+must prove its imported module path and functional smoke case, and must fail
+before GPU admission when its checked artifact is absent or corrupt.
+
+The same regression run exposed a queue-scheduling edge case: with synthetic
+families completing in milliseconds, the first worker could release one family
+lock and immediately acquire the next before another ready worker was
+scheduled. The launcher now yields for one second after each completed family.
+This is negligible relative to real family runtime and gives waiting clusters
+a deterministic opportunity to claim independent work.
+
 ## Verification
 
 - Full suite: 86 passed.
