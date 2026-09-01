@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-from data import load_prompts, reward
+from data import _load_rows_any, load_prompts, reward
 
 SPECS = {
     "gsm8k": {
@@ -26,6 +26,10 @@ SPECS = {
         "file": "math500_test.jsonl",
         "answer_prefix": None,
         "env": "MATH500_DIR",
+        "aliases": ("math500", "MATH-500", "math-500", "math_500"),
+        "rows": 500,
+        "content_sha256": "e412347e79b7fcc6c86811eb5fb84abc2f69cdec74d7476812675769f6939e6b",
+        "selection": "test split",
     },
     "mbpp": {
         "revision": "4bb6404fdc6cacfda99d4ac4205087b89d32030c",
@@ -33,6 +37,10 @@ SPECS = {
         "file": "mbpp.jsonl",
         "answer_prefix": "assert",
         "env": "MBPP_DIR",
+        "aliases": ("mbpp", "MBPP"),
+        "rows": 974,
+        "content_sha256": "5611e10a00b91df4c5c9feae516b35d9aefceaf6fd537e77f42937044a6a6f4b",
+        "selection": "all published splits, full config",
     },
     "kk": {
         "revision": "2f68547989981b1af37cb3dde5fdefa847aa8619",
@@ -72,6 +80,144 @@ def _jsonl_rows(path: Path) -> list[dict]:
             raise TypeError(f"{path.name}:{line_number}: row must be an object")
         rows.append(row)
     return rows
+
+
+def _canonical_rows(dataset: str, rows: list[dict]) -> list[dict]:
+    canonical = []
+    for index, row in enumerate(rows):
+        try:
+            if dataset == "math500":
+                problem = row.get("problem") or row.get("question")
+                answer = row.get("answer")
+                if not isinstance(problem, str) or answer is None:
+                    raise ValueError("problem/answer missing")
+                canonical.append({"problem": problem, "answer": str(answer)})
+            elif dataset == "mbpp":
+                tests = row.get("test_list")
+                if not isinstance(tests, list) or not all(
+                    isinstance(test, str) for test in tests
+                ):
+                    raise ValueError("test_list must be a string list")
+                canonical.append(
+                    {
+                        "task_id": row["task_id"],
+                        "text": row["text"],
+                        "code": row["code"],
+                        "test_list": tests,
+                    }
+                )
+            else:
+                return rows
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"{dataset}: row {index} schema mismatch: {exc}") from exc
+    return canonical
+
+
+def _content_sha256(rows: list[dict]) -> str:
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(
+            json.dumps(
+                row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _source_candidates(dataset: str, root: Path) -> list[Path]:
+    spec = SPECS[dataset]
+    filename = spec["file"]
+    aliases = spec.get("aliases", (dataset,))
+    candidates: list[Path] = []
+    explicit = os.environ.get(spec["env"])
+    if explicit:
+        candidates.append(Path(explicit))
+    candidates.extend([root / dataset / filename, root / dataset, root / filename])
+    candidates.extend(root / alias for alias in aliases)
+    om_data = os.environ.get("OM_DATA")
+    if om_data:
+        base = Path(om_data)
+        candidates.extend([base / filename, base / dataset / filename, base / dataset])
+        candidates.extend(base / alias for alias in aliases)
+    keys = tuple(alias.lower() for alias in aliases)
+    if root.is_dir():
+        for pattern in ("*", "*/*"):
+            candidates.extend(
+                path
+                for path in root.glob(pattern)
+                if path.is_dir() and any(key in path.name.lower() for key in keys)
+            )
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        marker = str(candidate)
+        if marker not in seen:
+            seen.add(marker)
+            unique.append(candidate)
+    return unique
+
+
+def _write_json_atomic(path: Path, value: dict) -> None:
+    temporary = path.with_name(path.name + f".tmp.{os.getpid()}")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def _adopt_official_upload(dataset: str, root: Path) -> tuple[Path, list[dict]]:
+    spec = SPECS[dataset]
+    expected_hash = spec.get("content_sha256")
+    if expected_hash is None:
+        target = root / dataset / spec["file"]
+        return target, _jsonl_rows(target)
+
+    tried = []
+    for source in _source_candidates(dataset, root):
+        if not source.exists():
+            continue
+        try:
+            rows = _load_rows_any(source)
+            if not rows:
+                raise ValueError("no rows")
+            canonical = _canonical_rows(dataset, rows)
+            actual_hash = _content_sha256(canonical)
+            if len(canonical) != spec["rows"] or actual_hash != expected_hash:
+                raise ValueError(
+                    f"rows={len(canonical)} content_sha256={actual_hash[:12]}"
+                )
+        except (OSError, TypeError, ValueError) as exc:
+            tried.append(f"{source} ({exc})")
+            continue
+
+        target = root / dataset / spec["file"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.resolve() != target.resolve():
+            temporary = target.with_name(target.name + f".tmp.{os.getpid()}")
+            with temporary.open("w", encoding="utf-8") as stream:
+                for row in canonical:
+                    stream.write(json.dumps(row) + "\n")
+            temporary.replace(target)
+        raw_rows = _jsonl_rows(target)
+        manifest = {
+            "schema_version": 1,
+            "dataset": dataset,
+            "source_repository": spec["repository"],
+            "source_revision": spec["revision"],
+            "selection": spec["selection"],
+            "artifact": spec["file"],
+            "rows": len(raw_rows),
+            "sha256": _sha256(target),
+            "content_sha256": expected_hash,
+            "verification": "official-content-sha256-v1",
+        }
+        _write_json_atomic(target.parent / "dataset_manifest.json", manifest)
+        return target, raw_rows
+
+    locations = "\n  ".join(tried) if tried else "no candidate exists"
+    raise ValueError(
+        f"{dataset}: official local dataset not found or content mismatch. Checked:\n  "
+        f"{locations}"
+    )
 
 
 def _verify_reward_runtime(dataset: str, raw_rows: list[dict], split: dict) -> dict:
@@ -128,10 +274,10 @@ def _verify_reward_runtime(dataset: str, raw_rows: list[dict], split: dict) -> d
 
 def qualify(dataset: str, root: Path, n_train: int, n_val: int, seeds: list[int]) -> dict:
     spec = SPECS[dataset]
-    dataset_root = root / dataset
-    data_file = dataset_root / spec["file"]
+    data_file, raw_rows = _adopt_official_upload(dataset, root)
+    dataset_root = data_file.parent
     manifest_file = dataset_root / "dataset_manifest.json"
-    if not data_file.is_file() or not manifest_file.is_file():
+    if not manifest_file.is_file():
         raise ValueError(f"{dataset}: 고정 snapshot/manifest 없음: {dataset_root}")
 
     manifest = json.loads(manifest_file.read_text())
@@ -146,9 +292,13 @@ def qualify(dataset: str, root: Path, n_train: int, n_val: int, seeds: list[int]
         raise ValueError(f"{dataset}: manifest artifact name mismatch")
     if manifest.get("sha256") != digest:
         raise ValueError(f"{dataset}: manifest SHA-256 불일치")
-    raw_rows = _jsonl_rows(data_file)
     if manifest.get("rows") != len(raw_rows):
         raise ValueError(f"{dataset}: manifest row count 불일치")
+    if spec.get("content_sha256") and (
+        _content_sha256(_canonical_rows(dataset, raw_rows))
+        != spec["content_sha256"]
+    ):
+        raise ValueError(f"{dataset}: official content SHA-256 mismatch")
 
     old = os.environ.get(spec["env"])
     os.environ[spec["env"]] = str(dataset_root)
@@ -185,6 +335,7 @@ def qualify(dataset: str, root: Path, n_train: int, n_val: int, seeds: list[int]
         "dataset": dataset,
         "status": "qualified",
         "source_revision": spec["revision"],
+        "source_path": str(data_file),
         "snapshot_sha256": digest,
         "snapshot_rows": len(raw_rows),
         "n_train": n_train,

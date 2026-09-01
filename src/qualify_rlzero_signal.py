@@ -12,6 +12,7 @@ from pathlib import Path
 
 from artifact_contract import sha256_file
 from data import load_prompts
+from qualify_domain_data import SPECS, _adopt_official_upload
 
 PROMPT_FORMAT = {
     "math500": "olmo_rlzero_math",
@@ -27,7 +28,9 @@ def git_head() -> str:
 
 
 def dataset_manifest(data_root: Path, dataset: str) -> Path:
-    path = data_root / dataset / "dataset_manifest.json"
+    data_file, _ = _adopt_official_upload(dataset, data_root)
+    os.environ[SPECS[dataset]["env"]] = str(data_file.parent)
+    path = data_file.parent / "dataset_manifest.json"
     if not path.is_file():
         raise ValueError(f"dataset manifest missing: {path}")
     return path

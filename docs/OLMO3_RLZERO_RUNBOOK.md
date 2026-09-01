@@ -39,6 +39,12 @@ hashes and sealed automatically without redownloading. If that snapshot is outsi
 `$MODELS_DIR/Olmo-3-1025-7B`, set `OM_OLMO3_MODEL_PATH` to its exact local path
 on all three nodes.
 
+Separately uploaded MATH-500 and MBPP data may be a JSONL file, parquet/Hugging
+Face directory, a flat file directly under `DATASETS_DIR`, or a conventional
+dataset subdirectory. `run` verifies the official ordered content fingerprints,
+then atomically creates the standard local artifacts and manifests before
+entering a commit-pinned continuation. It never contacts the Hub in run mode.
+
 `transformers>=4.57.0` is required by OLMo-3. Update the shared venv from
 `requirements.txt` before allocating GPUs if static checking reports an older
 version.

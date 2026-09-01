@@ -127,21 +127,31 @@ DIRTY=$(git status --porcelain -- src scripts configs requirements.txt)
 }
 
 CURRENT_GIT=$(git rev-parse HEAD) || exit 1
+mkdir -p "$ROOT/.queue" "$QUEUE" "$PREFLIGHT" "$GLOBAL_RESULTS" "$OM_WORK/locks"
 
-# A separately uploaded official snapshot has no Hugging Face cache metadata.
-# Seal it with the current verifier before entering an older commit-pinned run.
-if [ ! -s "$MODEL_PATH/.om_snapshot.json" ]; then
-  if ! PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-      "$PY" "$SUPERVISOR_REPO/src/model_matrix.py" --config "$CONFIG" \
-      --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" check "$MODEL_KEY"; then
-    echo "[model] manifest missing; verifying the uploaded model against pinned official hashes"
-    PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-      "$PY" "$SUPERVISOR_REPO/src/model_matrix.py" --config "$CONFIG" \
-      --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" seal "$MODEL_KEY" || exit 1
+# Adopt separately uploaded assets before entering an older commit-pinned run.
+# This creates the standard manifests/paths that the pinned code can read.
+(
+  flock 9
+  if [ ! -s "$MODEL_PATH/.om_snapshot.json" ]; then
+    if ! PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$PY" "$SUPERVISOR_REPO/src/model_matrix.py" --config "$CONFIG" \
+        --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" check "$MODEL_KEY"; then
+      echo "[model] manifest missing; verifying the uploaded model against pinned official hashes"
+      PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$PY" "$SUPERVISOR_REPO/src/model_matrix.py" --config "$CONFIG" \
+        --models-dir "$MODELS_DIR" --snapshot-path "$MODEL_PATH" seal "$MODEL_KEY" || exit 1
+    fi
   fi
-fi
+  OM_MATH_VERIFIER=math_verify \
+    PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PY" "$SUPERVISOR_REPO/src/qualify_domain_data.py" "${DATASETS[@]}" \
+    --data-root "$DATASETS_DIR" --n-train 512 \
+    --dataset-n-train math500=400 --dataset-n-train mbpp=512 \
+    --n-val "$N_VAL" --seeds "${SEEDS[@]}" \
+    --output "$PREFLIGHT/data-adoption.json" || exit 1
+) 9>"$OM_WORK/locks/olmo3-asset-adoption.lock" || exit 1
 
-mkdir -p "$ROOT/.queue" "$QUEUE" "$PREFLIGHT" "$GLOBAL_RESULTS"
 GENERATION_GIT=$("$PY" src/regime_resume_commit.py "$ROOT" "$CURRENT_GIT" \
   --marker "$ROOT/.queue/generation.git") || exit 1
 

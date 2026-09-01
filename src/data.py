@@ -73,6 +73,7 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         else [
             Path(os.environ.get("OM_DATA", "")) / fname,
             Path(os.environ.get("DATASETS_DIR", "")) / dataset / fname,
+            Path(os.environ.get("DATASETS_DIR", "")) / fname,
         ]
     )
     for local in (candidate for candidate in local_candidates if candidate is not None):
