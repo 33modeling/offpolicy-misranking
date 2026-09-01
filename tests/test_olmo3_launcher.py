@@ -135,7 +135,7 @@ cd "$(dirname "$0")/.."
 [[ ":$PYTHONPATH:" == *":$TEST_SHARED/runtime-deps:"* ]] || exit 94
 key="$REGIME_DATASETS-s$REGIME_SEEDS"
 [ "${TEST_FAIL_FAMILY:-}" != "$key" ] || exit 43
-git=$(git rev-parse HEAD)
+git=$(git -C "$OM_PIPELINE_REPO" rev-parse HEAD)
 printf '%s|%s|%s\n' "$WORKER_ID" "$key" "$git" >> "$TEST_SHARED/work/claims"
 /bin/sleep 0.05
 for drift in $REGIME_DRIFTS; do

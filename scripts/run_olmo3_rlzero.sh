@@ -473,7 +473,7 @@ PYEOF
       REGIME_DATASETS="$dataset" REGIME_SEEDS="$seed" \
       REGIME_DRIFTS="${DRIFTS[*]}" REGIME_SKIP_COLLECTION=1 \
       OM_PROMPT_FORMAT="$format" \
-      bash "$GENERATION_REPO/scripts/run_matrix.sh" 2>&1 | tee -a "$LOG"
+      bash "$SUPERVISOR_REPO/scripts/run_matrix.sh" 2>&1 | tee -a "$LOG"
     statuses=("${PIPESTATUS[@]}")
     rc=${statuses[0]}
     if [ "${statuses[1]}" -ne 0 ]; then

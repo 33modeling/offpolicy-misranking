@@ -63,18 +63,39 @@ fi
 # A new supervisor may resume a partial matrix, but generation must still use
 # the exact source revision that initialized it. Materialize that revision in a
 # node-local detached worktree so a pull between attempts remains restartable.
-if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ] && [ "$PIPELINE_EXPLICIT" -eq 0 ]; then
+RESTORE_PIPELINE=0
+if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ]; then
+  # A canonical launcher supplies OM_GENERATION_GIT and may deliberately run a
+  # newer supervisor around an older immutable generation checkout.  Repair a
+  # wrong/stale explicit checkout instead of asking the user to construct one.
+  if [ "$PIPELINE_EXPLICIT" -eq 0 ] || [ -n "${OM_GENERATION_GIT:-}" ]; then
+    RESTORE_PIPELINE=1
+  fi
+fi
+if [ "$RESTORE_PIPELINE" -eq 1 ]; then
   PIPELINE_CACHE="${OM_PIPELINE_CACHE:-/tmp/offpolicy-misranking-$(id -u)/pipelines}"
   PIPELINE_REPO="$PIPELINE_CACHE/$GENERATION_GIT"
   mkdir -p "$PIPELINE_CACHE"
   (
     flock 7
-    if [ ! -e "$PIPELINE_REPO" ]; then
-      git -C "$SUPERVISOR_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
-        echo "[abort] generation commit is unavailable locally: $GENERATION_GIT" >&2
-        exit 1
-      }
-      git -C "$SUPERVISOR_REPO" worktree add --detach "$PIPELINE_REPO" \
+    git -C "$SUPERVISOR_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
+      echo "[abort] generation commit is unavailable locally: $GENERATION_GIT" >&2
+      exit 1
+    }
+    recorded=$(git -C "$PIPELINE_REPO" rev-parse HEAD 2>/dev/null || true)
+    dirty=invalid
+    if [ "$recorded" = "$GENERATION_GIT" ]; then
+      dirty=$(git -C "$PIPELINE_REPO" status --porcelain \
+        -- src scripts 2>/dev/null || printf invalid)
+    fi
+    if [ "$recorded" != "$GENERATION_GIT" ] || [ -n "$dirty" ]; then
+      if [ -e "$PIPELINE_REPO" ] || [ -L "$PIPELINE_REPO" ]; then
+        stale="$PIPELINE_CACHE/.stale-$GENERATION_GIT-$(date +%s)-$$"
+        mv -- "$PIPELINE_REPO" "$stale" || exit 1
+        echo "[queue] invalid generation cache quarantined: $stale" >&2
+      fi
+      git -C "$SUPERVISOR_REPO" worktree prune --expire now || exit 1
+      git -C "$SUPERVISOR_REPO" worktree add -f -f --detach "$PIPELINE_REPO" \
         "$GENERATION_GIT" >&2 || exit 1
     fi
     recorded=$(git -C "$PIPELINE_REPO" rev-parse HEAD 2>/dev/null) || {
