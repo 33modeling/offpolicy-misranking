@@ -65,6 +65,23 @@ record an older commit, the supervisor automatically restores that commit in a
 node-local detached worktree and resumes only the missing or invalid points.
 Mixed provenance fails before a family claim.
 
+## Prompt mismatch retry incident
+
+Revision `c932ca0da2c2eb34e5defd914bb4a684bdf5d982` fixes a second failure found
+during live recovery. A positive-drift point regenerated `prompts.json` through
+the node's current dataset path before comparing it with its d0 behavior source.
+If two nodes resolved different local copies, the comparison failed
+deterministically, but the point retry loop and launcher restart loop treated it
+as transient and repeatedly reacquired the GPUs.
+
+Positive-drift points now take the exact prompt bytes from d0. When resuming an
+older generation commit, the current supervisor creates a hash-addressed local
+GSM8K/MATH-500 snapshot whose seed-0 loader output exactly reconstructs d0, then
+passes that path to the old pipeline without changing its Git provenance. A
+pre-existing mismatched target is preserved under quarantine and regenerated
+once. Base or qualification prompt mismatches exit with code 43, which both
+launchers treat as non-retryable.
+
 ## Verification
 
 - Full suite: 86 passed.
@@ -78,6 +95,9 @@ Mixed provenance fails before a family claim.
   interrupted matrix resumed after a simulated pull using the recorded commit.
 - Malformed markers, mixed run-config commits, and an explicitly wrong resume
   checkout were rejected before new work was claimed.
+- Source-derived prompt snapshots reproduce both registered math loaders' exact
+  train/validation order; a simulated mismatched point is quarantined and
+  rebuilt once, while a permanent contract error is launched only once.
 - Python compilation, fatal Ruff rules, shell syntax, JSON parsing, dependency
   integrity, and whitespace checks passed.
 

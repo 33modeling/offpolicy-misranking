@@ -16,6 +16,8 @@ Date: 2026-08-31 KST
   `fb48565dda10d35aa58452b0b37696ae122558aa`.
 - Commit-stable matrix resume fix revision:
   `a223ee31bd0542cbe6c35af66cfb3549d0a8c40e`.
+- Prompt mismatch recovery fix revision:
+  `c932ca0da2c2eb34e5defd914bb4a684bdf5d982`.
 - Audited paper revision: `e53fe4ac9437ad702eb558213adad55e3125f83c`.
 - Final verdict: the existing primary remains on its compatible `v1` protocol;
   the separate generalization and method protocols are ready after their
@@ -95,6 +97,13 @@ Date: 2026-08-31 KST
    lock, validates every recorded full commit, and automatically creates a
    node-local detached worktree for the recorded generation revision. Wrong
    explicit checkouts and mixed provenance fail before any family claim.
+10. **Prompt contract failures repeatedly reacquired GPUs.** Positive-drift
+    points regenerated prompts from a node-resolved dataset path before checking
+    equality with d0. A deterministic mismatch therefore entered three point
+    attempts and up to twelve launcher restarts. Positive drift now inherits d0
+    prompts exactly; legacy math pipelines receive a hash-addressed reconstructed
+    loader snapshot. Mismatched partial targets are quarantined once, while base
+    and qualification mismatches propagate as non-retryable exit code 43.
 
 ## Verification evidence
 
@@ -222,6 +231,26 @@ reject malformed markers and mixed run-config commits. The unchanged paper
 revision rebuilt as an 18-page US Letter PDF with no undefined references,
 undefined citations, LaTeX errors, or overfull boxes; 65 cited keys match 65
 unique bibliography entries exactly.
+
+### Prompt mismatch recovery re-audit on 2026-09-01
+
+Executed against fix revision `c932ca0`:
+
+```text
+python -m pytest -q
+94 passed in 16.09s
+
+prompt/reuse/queue/launcher integration
+20 passed in 12.25s
+
+Python compile, fatal Ruff, shell syntax, JSON, pip check, and diff check
+All passed.
+```
+
+The regression reconstructs exact GSM8K and MATH-500 prompt order from d0,
+injects a prompt mismatch into a partial positive-drift point, requires one
+quarantine plus one successful rebuild, and verifies that exit code 43 is not
+retried by the canonical launcher.
 
 ## Launch boundaries
 
