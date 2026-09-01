@@ -182,6 +182,94 @@ fix after a pull. The launcher may now advance that marker only when there is no
 `run_config.json` and no `family-*` directory. Once any family has been created,
 the original immutable generation commit remains mandatory.
 
+## OLMo live-launch validation failure and repeated aborts
+
+### Impact
+
+The canonical OLMo command repeatedly aborted on the real cluster after being
+reported ready. Failures occurred around GPU-idle admission, pinned worktree
+recovery, and the `run_matrix.sh` clean-checkout guard. This delayed the main
+experiment and consumed allocated cluster time. The exact lost GPU-hours and
+cost were not captured, so this record must not invent a number.
+
+### What went wrong
+
+The implementation and validation work made the following mistakes in order:
+
+1. The first performance diagnosis counted rollout samples but did not first
+   account for the cluster's utilization-based GPU reclamation rule. The
+   existing keepalive began inside `run_point.sh`, after model/data checks and
+   signal qualification, leaving an unprotected launch interval.
+2. Revision `95a4836` moved keepalive ownership to the top-level worker, but the
+   first implementation trusted a `duty_percent` argument that the old worker
+   ignored and did near-continuous tiny-kernel work. It also did not account for
+   an older commit-pinned `run_point.sh` starting its own keepalive.
+3. Revision `e3987f0` prevented new point code from duplicating the supervisor
+   keepalive. During that correction, a supervisor keepalive was initially
+   restarted inside a family-lock subshell and inherited lock file descriptors.
+   The final version closes descriptors 8 and 9 and restarts only after the
+   family-lock subshell returns. Older pinned points pause the supervisor while
+   their own point-local keepalive is active.
+4. Revision `a8340c3` changed `git worktree add` to use `-f`, but that was an
+   incomplete fix. It handled a missing registered path but not a locked
+   registration or an existing non-worktree directory. Reporting that change
+   as sufficient before testing those states was incorrect.
+5. Revision `e9a723a` added recovery for all three cache states: wrong/dirty
+   checkout, locked or missing registration, and an existing invalid path.
+   Invalid node-local pipeline caches are preserved under `.stale-*`, registry
+   entries are pruned, and the detached checkout is recreated with `-f -f`.
+   Experiment artifacts under `OM_WORK/runs` are not moved or deleted.
+6. The launcher still invoked the old pinned commit's `run_matrix.sh`, so the
+   new recovery logic did not govern the failing orchestration path. Revision
+   `8068205` separates responsibilities: the current supervisor runs
+   `run_matrix.sh`, while generation remains bound to the immutable pinned
+   `run_point.sh` and source checkout. A suite-bound generation commit now
+   triggers automatic checkout repair instead of the user-facing
+   `use OM_PIPELINE_REPO=<clean checkout ...>` abort.
+
+### Validation failure
+
+The reported `4 passed` and later `6 passed` results were local simulations,
+not real H100-cluster validation. `test_olmo3_launcher.py` used fake
+`nvidia-smi`, fake model/data Python entry points, and initially a fake
+`run_matrix.sh`. `test_regime_queue.py` exercised the real matrix supervisor but
+used a synthetic point script and temporary storage. Because each side mocked
+the boundary where the other test ended, neither test initially executed the
+actual `run_olmo3_rlzero.sh -> run_matrix.sh -> run_point.sh` composition. The
+mock results were useful unit evidence but were overstated as launch readiness.
+
+The audit host also lacked the cluster's mounted group volume and four H100s.
+No claim of cluster success may be based on these fixtures. The current code has
+shell/static and simulated recovery coverage, including a locked registration
+whose path is replaced by an invalid directory, but live correction remains
+unverified until the canonical command passes on the target cluster.
+
+### Mandatory regression policy
+
+- A canonical launcher is not ready when only component mocks pass. Its exact
+  launcher, worktree, matrix, point, queue, cleanup, and resume composition must
+  run in one integration scenario.
+- Worktree recovery must cover clean reuse, missing registered paths, locked
+  missing paths, existing invalid directories, dirty/wrong-HEAD caches, and a
+  pull followed by partial-run resume. Cache repair must preserve invalid bytes
+  under quarantine rather than delete them.
+- Background helpers must close inherited lock descriptors. Tests must prove a
+  helper cannot keep a node or family lock alive after its parent exits.
+- Keepalive tests must distinguish preflight, rollout generation, CPU verifier,
+  point transition, retry, queue wait, and cleanup. Duplicate keepalive
+  processes are a failure. Duty limits must be measured, not merely accepted as
+  an unused argument.
+- Every test report must label evidence as unit, simulated integration, local
+  real-model, or target-cluster runtime. Only the last category validates H100
+  scheduling, shared-volume behavior, CUDA execution, and utilization-based
+  reclamation.
+- Before allocating the main experiment, capture the exact commit, command,
+  worktree HEAD, matrix generation commit, four GPU process/utilization rows,
+  first completed rollout shard, and restart evidence from the target cluster.
+- If target-cluster access is unavailable, report that limitation and leave the
+  launch gate unverified. Do not replace missing runtime evidence with a pass
+  count from mocks.
+
 ## Verification
 
 - Full suite: 86 passed.

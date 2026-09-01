@@ -143,6 +143,19 @@ residual risks are recorded in [AUDIT_RESULT_2026-08-31.md](AUDIT_RESULT_2026-08
 
 - [ ] Verify four-H100 fail-fast checks and that CPU-only validation does not
   allocate or interfere with running GPUs.
+- [!] The OLMo live launch repeatedly aborted despite component fixture passes;
+  see `docs/INCIDENT_MULTI_CLUSTER_LOCK_2026-09-01.md`. Add one composition test
+  that executes the actual launcher, worktree supervisor, matrix supervisor,
+  point entry point, cleanup, and partial resume without replacing an internal
+  supervisor boundary with a fake script.
+- [ ] On the target cluster, verify preflight, rollout, CPU verifier, checkpoint
+  transition, retry, queue wait, and cleanup under utilization-based GPU
+  reclamation. Record per-GPU process/utilization evidence and prove exactly one
+  keepalive owner per GPU.
+- [ ] Test clean, missing, locked, invalid-directory, dirty, and wrong-HEAD
+  pipeline worktree cache states. Verify repair quarantines cache bytes, closes
+  inherited lock descriptors, preserves experiment artifacts, and resumes the
+  immutable generation commit after a supervisor pull.
 - [ ] Verify all nodes require the same physical `GROUP_VOLUME` and family locks
   prevent duplicate work while preserving checkpoint order.
 - [ ] Test stale locks, process crashes, preemption, retry limits, and quarantine
@@ -200,6 +213,12 @@ residual risks are recorded in [AUDIT_RESULT_2026-08-31.md](AUDIT_RESULT_2026-08
 
 - [ ] Run the complete CPU test suite from a clean environment and record exact
   pass/fail/skip counts and runtime.
+- [ ] Classify every verification result as unit, simulated integration, local
+  real-model, or target-cluster runtime. Never report fixture pass counts as
+  proof of H100 scheduling or shared-volume launch readiness.
+- [ ] Require target-cluster evidence for the exact canonical command before
+  declaring a GPU experiment launcher ready. If cluster access is unavailable,
+  record the launch gate as unverified rather than inferring success.
 - [ ] Run syntax/import/static checks for every Python and shell entry point.
 - [ ] Record every defect, root cause, affected artifacts, fix commit, and
   regression test.
