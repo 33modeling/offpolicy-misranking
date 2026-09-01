@@ -13,6 +13,18 @@ import re
 from functools import lru_cache
 
 
+MMLU_PRO_NONMATH_CATEGORIES = (
+    "business",
+    "economics",
+    "health",
+    "history",
+    "law",
+    "other",
+    "philosophy",
+    "psychology",
+)
+
+
 def _gsm8k_answer(ans: str) -> str:
     return ans.split("####")[-1].strip().replace(",", "")
 
@@ -257,6 +269,62 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
                 f"arc-challenge 스키마 파싱 실패 (root={root}, rows={len(rows or [])}, "
                 f"첫 행 필드={keys}) — question/choices/answerKey 필드 확인"
             )
+    elif dataset == "mmlu-pro-nonmath":
+        tried = _candidate_roots(
+            "MMLU_PRO_DIR",
+            ("mmlu-pro-nonmath", "MMLU-Pro", "mmlu_pro"),
+            fuzzy=("mmlu-pro", "mmlu_pro"),
+        )
+        root, rows = _load_rows_first(tried)
+        if rows is None:
+            _require_online(dataset, tried)
+            raise ValueError(
+                "mmlu-pro-nonmath requires the registered derived local snapshot; "
+                "run fetch_datasets.sh mmlu-pro-nonmath during preparation"
+            )
+        items_by_question = {}
+        allowed = set(MMLU_PRO_NONMATH_CATEGORIES)
+        for r in rows:
+            question = r.get("question")
+            options = r.get("options")
+            category = str(r.get("category", "")).strip().lower()
+            answer = str(r.get("answer", "")).strip().upper()
+            if not isinstance(options, list) or not all(
+                isinstance(option, str) and option.strip() for option in options
+            ):
+                continue
+            labels = [chr(ord("A") + index) for index in range(len(options))]
+            if (
+                not isinstance(question, str)
+                or not question.strip()
+                or category not in allowed
+                or not 2 <= len(options) <= 10
+                or answer not in labels
+            ):
+                continue
+            rendered = "\n".join(
+                f"{label}. {' '.join(option.split())}"
+                for label, option in zip(labels, options, strict=True)
+            )
+            prompt = (
+                "Answer the following multiple-choice professional knowledge question. "
+                "Reason step by step, then write only the option label after '####'.\n\n"
+                f"Subject: {category}\n\nQuestion: {question.strip()}\n\n"
+                f"Choices:\n{rendered}"
+            )
+            item = {"question": prompt, "answer": f"MMLU:{answer}"}
+            key = question.strip()
+            previous = items_by_question.get(key)
+            if previous is not None and previous["answer"] != item["answer"]:
+                raise ValueError(f"mmlu-pro-nonmath duplicate answer conflict: {key}")
+            items_by_question[key] = item
+        items = list(items_by_question.values())
+        if not items:
+            keys = sorted(rows[0].keys()) if rows else []
+            raise ValueError(
+                f"mmlu-pro-nonmath schema parse failed (root={root}, rows={len(rows or [])}, "
+                f"first-row fields={keys})"
+            )
     elif dataset == "dapo-math":
         # 본실험용. 사전 배치본 우선. 스키마가 릴리스마다 달라 방어적으로 파싱한다.
         tried = _candidate_roots("DAPO_DIR",
@@ -387,6 +455,10 @@ def _load_rows_any(root) -> list[dict] | None:
 
     root = Path(root)
     if root.is_file():
+        if root.suffix == ".parquet":
+            from datasets import load_dataset
+
+            return list(load_dataset("parquet", data_files=str(root), split="train"))
         return [json.loads(l) for l in root.open()]
     files = sorted(root.rglob("*.jsonl"))
     if files:
@@ -708,10 +780,11 @@ def _kk_reward(text: str, gold: str) -> float:
     return 1.0
 
 
-def _arc_reward(text: str, gold: str) -> float:
-    """ARC option label exact match; free-form choice text is not accepted."""
+def _multiple_choice_reward(text: str, gold: str) -> float:
+    """Require the explicit final option label; choice text is not accepted."""
     pred = extract_answer(text)
-    return 1.0 if pred is not None and pred.upper() == gold[4:].upper() else 0.0
+    label = gold.split(":", 1)[1]
+    return 1.0 if pred is not None and pred.upper() == label.upper() else 0.0
 
 
 @lru_cache(maxsize=8192)
@@ -747,7 +820,9 @@ def reward(text: str, gold: str) -> float:
     if gold.startswith("KK:"):  # knights & knaves — 전원 신원 매치
         return _kk_reward(text, gold)
     if gold.startswith("ARC:"):  # ARC-Challenge — option label exact match
-        return _arc_reward(text, gold)
+        return _multiple_choice_reward(text, gold)
+    if gold.startswith("MMLU:"):  # registered non-math MMLU-Pro slice
+        return _multiple_choice_reward(text, gold)
     pred = extract_answer(text)
     if pred is None:
         return 0.0

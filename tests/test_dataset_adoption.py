@@ -10,9 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from data import load_prompts
 from qualify_domain_data import (
+    MMLU_PRO_QUOTAS,
     SPECS,
     _adopt_official_upload,
     _content_sha256,
+    _select_mmlu_pro_nonmath,
 )
 
 
@@ -82,3 +84,47 @@ def test_math_loader_accepts_a_flat_datasets_dir_file(
 
     assert len(split["train"]) == 1
     assert len(split["val"]) == 1
+
+
+def test_mmlu_pro_upload_is_balanced_selected_and_adopted_by_content(
+    tmp_path: Path, monkeypatch
+) -> None:
+    rows = []
+    for category, quota in MMLU_PRO_QUOTAS.items():
+        for index in range(quota + 2):
+            answer_index = index % 5
+            rows.append(
+                {
+                    "question_id": f"{category}-{index}",
+                    "question": f"{category} question {index}?",
+                    "options": [f"choice {label}" for label in "ABCDE"],
+                    "answer": "ABCDE"[answer_index],
+                    "answer_index": answer_index,
+                    "category": category,
+                    "src": "fixture",
+                }
+            )
+    selected = _select_mmlu_pro_nonmath(rows)
+    spec = {
+        **SPECS["mmlu-pro-nonmath"],
+        "content_sha256": _content_sha256(selected),
+    }
+    monkeypatch.setitem(SPECS, "mmlu-pro-nonmath", spec)
+    monkeypatch.delenv("MMLU_PRO_DIR", raising=False)
+    uploaded = tmp_path / "uploaded/unknown-layout/test.jsonl"
+    uploaded.parent.mkdir(parents=True)
+    uploaded.write_text(
+        "".join(json.dumps(row) + "\n" for row in reversed(rows)),
+        encoding="utf-8",
+    )
+
+    target, adopted = _adopt_official_upload("mmlu-pro-nonmath", tmp_path)
+
+    assert target.name == "mmlu_pro_nonmath.jsonl"
+    assert len(adopted) == 612
+    assert len({row["question"] for row in adopted}) == 612
+    assert {
+        category: sum(row["category"] == category for row in adopted)
+        for category in MMLU_PRO_QUOTAS
+    } == MMLU_PRO_QUOTAS
+    assert _content_sha256(adopted) == spec["content_sha256"]

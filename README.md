@@ -60,7 +60,7 @@ malformed commit provenance aborts before a family is claimed.
 Every positive-drift point inherits the exact `prompts.json` owned by its d0
 behavior source. For legacy generation revisions, the supervisor materializes a
 hash- and seed-addressed loader snapshot for GSM8K, MATH-500, MBPP,
-Knights-and-Knaves, or ARC-Challenge. The old pipeline therefore reconstructs
+Knights-and-Knaves, ARC-Challenge, or the registered MMLU-Pro slice. The old pipeline therefore reconstructs
 the same split and order for seeds 0-2 before it compares prompts. A mismatched
 partial target is moved to quarantine once and rebuilt; a qualification or
 base-prompt mismatch is a non-retryable contract error and does not enter the
@@ -92,7 +92,7 @@ $OM_WORK/readouts/rlvr-grpo/
 It contains exactly `REPORT.md`, `RESULTS.json`, `RESULTS.csv`, and
 `MANIFEST.sha256`. Unchanged inputs reuse that bundle; extra, partial, stale,
 or internally inconsistent files cause rejection or a clean replacement.
-Additional experiments write only to their separate method-specific roots.
+Additional experiments write only to their separate domain-specific roots.
 
 Generation provenance is a grouping boundary, not report metadata. Regime
 analysis records generation and analysis revisions separately, partitions
@@ -122,18 +122,20 @@ surrogate over online verifier-reward samples.
 
 ## Generalization Matrix
 
-The additional study has one purpose: test whether the primary conclusion
-generalizes. It varies two distinct factors without pooling them:
+The additional study has one purpose: test whether the primary ranking conclusion
+transfers beyond the OLMo-3/math/code setting. It fixes the GRPO objective and
+uses two raw, non-instruction base architectures: sparse
+`allenai/OLMoE-1B-7B-0125` (1B active/7B total) and dense
+`Qwen/Qwen2.5-14B`. Three separate single-domain matrices cover structured logic
+(Knights-and-Knaves), science (ARC-Challenge), and non-math professional
+knowledge (a deterministic balanced MMLU-Pro slice). No domain is pooled and no
+mixed-domain policy is trained.
 
-- Model/domain transfer fixes GRPO and varies Mistral versus OLMo 2 and GSM8K,
-  MATH-500, MBPP, Knights-and-Knaves, and ARC-Challenge.
-- Method transfer fixes the two models and math/code domains and varies GRPO,
-  Dr.GRPO, and sequence-level RLOO.
-
-Both strata use seeds 0-2 and the `0/25/100/400` checkpoint chain. Model and
-dataset revisions are immutable. There is one operational entry point for the
-entire additional study. Candidate counts are registered per dataset: MATH-500
-uses 400, the other four use 512, and every dataset uses 100 validation prompts.
+Every matrix uses seeds 0-2, the `0/25/100/400` checkpoint chain, one GRPO
+optimizer epoch per fresh group, 512 candidate prompts, and 100 validation
+prompts. Model and dataset revisions are immutable. This design deliberately
+changes architecture, capacity, and domain while holding the learning objective
+fixed; it does not add a second paper objective or reuse the main math/code data.
 
 Do not pull or modify a checkout running the primary `295dfea` jobs. First use
 one separate online checkout with the same shared volume to prepare and qualify
@@ -149,26 +151,16 @@ bash scripts/run_additional_experiments.sh --prepare
 Then run `bash scripts/run_additional_experiments.sh` from a separate clean
 checkout on each of the three new 4xH100 nodes. The default run rechecks the
 snapshots, blocks on any existing node-specific primary lock without signalling
-that process, and starts only after all four GPUs are idle. It runs the GRPO
-model/domain stratum, then the Dr.GRPO and RLOO method strata.
+that process, and starts only after all four GPUs are idle. It runs the logic,
+science, and professional-knowledge GRPO matrices in that order.
 
 Each node runs an independent model/runtime smoke test, then claims complete
 seed/dataset families from shared queues. The generalization roots, contracts,
 quarantine, and reports are separate from the primary Qwen matrix. A dirty
 checkout, missing dataset manifest, wrong model revision, non-four-H100 node,
-or contract mismatch aborts before a long run starts.
-
-The method stratum is a compute-bounded slice. It compares
-the full-matrix GRPO cells against Dr.GRPO and sequence-level RLOO on both model
-families and the GSM8K and MBPP domains with the same seeds and checkpoint chain.
-
-Dr.GRPO keeps online verifier rewards and the clipped old-policy ratio, but
-removes per-question reward-standard-deviation scaling and replaces
-response-length normalization with the fixed generation budget. RLOO treats a
-complete response as one action, uses the other seven online rewards as its
-baseline, and takes one unclipped sequence-level REINFORCE epoch. Neither is
-SFT or a relabeled GRPO artifact; each method is bound into its own config,
-paths, matrix contracts, checkpoints, and reports.
+or contract mismatch aborts before a long run starts. MMLU-Pro qualification
+also enforces the exact 612-row derived selection, category quotas, unique
+questions, answer-index consistency, and its order-independent content hash.
 
 See [docs/EXPERIMENT.md](docs/EXPERIMENT.md) for the algorithm and artifact
 layout, and [docs/INCIDENT_RLVR_OBJECTIVE_2026-08-31.md](docs/INCIDENT_RLVR_OBJECTIVE_2026-08-31.md)

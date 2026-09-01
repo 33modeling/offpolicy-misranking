@@ -32,6 +32,13 @@ class RecordingTokenizer:
         raise AssertionError("raw OLMo RL-Zero must not use a missing chat template")
 
 
+class CompletionTokenizer(RecordingTokenizer):
+    def __call__(self, text: str, **kwargs) -> SimpleNamespace:
+        self.text = text
+        assert kwargs == {"return_tensors": "pt", "add_special_tokens": True}
+        return SimpleNamespace(input_ids=torch.tensor([[1, 2, 3]]))
+
+
 def test_olmo3_contract_is_raw_base_grpo_with_two_verifier_domains() -> None:
     config_path = ROOT / "configs/olmo3_rlzero.json"
     config = _load_config(config_path)
@@ -103,6 +110,18 @@ def test_official_rlzero_prompts_bypass_chat_template(
     assert tokenizer.text.startswith(lead)
     assert "\n\nQUESTION\n\n" in tokenizer.text
     assert tokenizer.text.endswith(tail)
+
+
+def test_base_model_completion_prompt_uses_tokenizer_special_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokenizer = CompletionTokenizer()
+    monkeypatch.setenv("OM_PROMPT_FORMAT", "verifiable_completion")
+    ids = chat_ids(tokenizer, "Question with an explicit #### answer contract.")
+    assert ids.tolist() == [1, 2, 3]
+    assert tokenizer.text == (
+        "Question with an explicit #### answer contract.\n\nResponse:\n"
+    )
 
 
 def test_rlzero_answer_and_code_parsers_follow_the_released_output_contract() -> None:

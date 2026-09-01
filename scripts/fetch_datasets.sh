@@ -12,7 +12,7 @@ export OM_ONLINE=1
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || PY=python3
-TARGETS="${*:-mbpp math500 gsm8k kk arc-challenge}" # apps·dapo-math는 명시 시에만
+TARGETS="${*:-mbpp math500 gsm8k kk arc-challenge mmlu-pro-nonmath}" # apps·dapo-math는 명시 시에만
 mkdir -p "$DATASETS_DIR"
 echo "[fetch] DATASETS_DIR=$DATASETS_DIR → $TARGETS"
 
@@ -184,6 +184,69 @@ with open(tmp, "w") as f:
 tmp.replace(out / "arc_challenge.jsonl")
 print("arc_challenge.jsonl:", n, "rows")'; then fail=1; continue; fi
       _manifest arc-challenge allenai/ai2_arc "$rev" "$file" "ARC-Challenge train+validation (labeled only)" ;;
+    mmlu-pro-nonmath)
+      rev=b189ec765aa7ed75c8acfea42df31fdae71f97be
+      file="$DATASETS_DIR/mmlu-pro-nonmath/mmlu_pro_nonmath.jsonl"
+      manifest="$DATASETS_DIR/mmlu-pro-nonmath/dataset_manifest.json"
+      selection="test split; stable-hash sample without duplicate questions; non-math categories business/economics/health/history=77 each and law/other/philosophy/psychology=76 each"
+      if _snapshot_ok "$manifest" "$rev" "$file"; then
+        echo "[fetch] mmlu-pro-nonmath 고정 스냅샷 있음, 스킵"
+      elif ! _fetch mmlu-pro-nonmath '
+import hashlib, json, os, sys
+from pathlib import Path
+from datasets import load_dataset
+out = Path(sys.argv[1]) / "mmlu-pro-nonmath"; out.mkdir(parents=True, exist_ok=True)
+revision = "b189ec765aa7ed75c8acfea42df31fdae71f97be"
+categories = ("business", "economics", "health", "history", "law", "other", "philosophy", "psychology")
+quotas = {category: 77 if index < 4 else 76 for index, category in enumerate(categories)}
+ds = load_dataset("TIGER-Lab/MMLU-Pro", split="test", revision=revision)
+grouped = {category: [] for category in categories}
+for raw in ds:
+    category = str(raw["category"]).strip().lower()
+    if category not in grouped:
+        continue
+    options = [str(option).strip() for option in raw["options"]]
+    answer = str(raw["answer"]).strip().upper()
+    answer_index = int(raw["answer_index"])
+    if not 0 <= answer_index < len(options) or answer != chr(ord("A") + answer_index):
+        raise ValueError(f"invalid answer index for question_id={raw.get('"'"'question_id'"'"')}")
+    row = {
+        "question_id": raw["question_id"],
+        "question": str(raw["question"]).strip(),
+        "options": options,
+        "answer": answer,
+        "answer_index": answer_index,
+        "category": category,
+        "src": str(raw.get("src", "")),
+    }
+    payload = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    grouped[category].append((hashlib.sha256(payload.encode()).hexdigest(), row))
+selected = []
+seen_questions = set()
+for category in categories:
+    count = 0
+    for _, row in sorted(grouped[category]):
+        if row["question"] in seen_questions:
+            continue
+        selected.append(row); seen_questions.add(row["question"]); count += 1
+        if count == quotas[category]:
+            break
+    if count != quotas[category]:
+        raise ValueError(f"{category}: selected {count}, expected {quotas[category]}")
+lines = [json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) for row in selected]
+digest = hashlib.sha256()
+for line in sorted(lines):
+    digest.update(line.encode() + b"\n")
+expected = "4c8958a934fb8f17ef43d1826e140c5acc6f60d130a3657637f6331ac524623e"
+if len(selected) != 612 or digest.hexdigest() != expected:
+    raise ValueError(f"derived MMLU-Pro slice mismatch: rows={len(selected)} sha256={digest.hexdigest()}")
+tmp = out / ("mmlu_pro_nonmath.jsonl.tmp." + str(os.getpid()))
+with tmp.open("w", encoding="utf-8") as stream:
+    for row in selected:
+        stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+tmp.replace(out / "mmlu_pro_nonmath.jsonl")
+print("mmlu_pro_nonmath.jsonl:", len(selected), "rows")'; then fail=1; continue; fi
+      _manifest mmlu-pro-nonmath TIGER-Lab/MMLU-Pro "$rev" "$file" "$selection" ;;
     apps)
       if [ -e "$DATASETS_DIR/apps/apps.jsonl" ]; then echo "[fetch] apps 있음, 스킵"; continue; fi
       # 스크립트형 데이터셋이라 최신 datasets 라이브러리로는 load_dataset 불가 —
@@ -226,7 +289,7 @@ with open(tmp, "w") as f:
         f.write(json.dumps(dict(r)) + "\n")
 tmp.replace(out / "dapo_math.jsonl")
 print("dapo_math.jsonl:", len(ds), "rows")' || fail=1 ;;
-    *) echo "[fetch] 모르는 데이터셋: $t (mbpp|math500|gsm8k|kk|arc-challenge|apps|dapo-math)"; fail=1 ;;
+    *) echo "[fetch] 모르는 데이터셋: $t (mbpp|math500|gsm8k|kk|arc-challenge|mmlu-pro-nonmath|apps|dapo-math)"; fail=1 ;;
   esac
 done
 exit "$fail"

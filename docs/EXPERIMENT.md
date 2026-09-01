@@ -28,39 +28,12 @@ does not reuse the group after a policy update. Consequently, the paper does not
 claim that ratio clipping supplies an effective trust region in the OLMo-3
 matrix; policy movement is indexed by the cumulative update-step sweep.
 
-The previous Qwen matrix and the GRPO/Dr.GRPO additional-study configs use two
-optimizer epochs per sampled group. In those configs, the second epoch evaluates
-the frozen sampling-policy ratio after one update, so clipping can bind. This
-two-epoch statement does not apply to the main OLMo-3 matrix.
-
-The training-method robustness slice uses Dr.GRPO. For the same sampled group,
-it sets `A_i = r_i - mean(r)` and divides each response's summed clipped token
-surrogate by the fixed `max_new_tokens=512` budget rather than its realized
-length:
-
-```text
-L_Dr = -(1/G) sum_i (1/512) sum_u
-       min(ratio_i,u A_i, clip(ratio_i,u, 0.8, 1.2) A_i).
-```
-
-This changes two optimization normalizers only. Sampling, verifier rewards,
-four-rank DDP, policy-ratio clipping, optimizer, LoRA parameterization, and the
-0/25/100/400 chain remain fixed. The implementation records
-`training_objective=dr_grpo`, and the policy validator rejects it unless the
-caller explicitly requests that method.
-
-The second robustness method is sequence-level RLOO. For $G=8$ online
-responses it uses
-
-```text
-b_i = (1/(G-1)) sum_(j != i) r_j
-L_RLOO = -(1/G) sum_i (r_i - b_i) sum_u log pi_theta(a_i,u | h_i,u).
-```
-
-RLOO uses exactly one epoch over each freshly sampled group, no old-policy
-ratio clipping, and no response-length normalization. The zero reference-KL
-coefficient is retained. Its manifest records
-`training_objective=rloo` and `policy_update=reinforce_leave_one_out`.
+The previous Qwen matrix uses two optimizer epochs per sampled group. Its second
+epoch evaluates the frozen sampling-policy ratio after one update, so clipping
+can bind. This two-epoch statement does not apply to the main OLMo-3 matrix or
+the registered generalization matrices, all of which use one epoch. Dr.GRPO and
+RLOO remain implementation-supported diagnostics but are not registered paper
+experiments and must not be pooled with the fixed-objective GRPO extension.
 
 ## Checkpoint chain
 
@@ -143,21 +116,20 @@ The single `run_additional_experiments.sh` entry point has a GPU-free
 `--prepare` mode that downloads and qualifies every immutable shared snapshot
 under a global lock. Its default run revalidates those inputs, waits on the
 node-local primary lock, and applies the same queue and artifact
-contracts to every additional stratum. The GRPO stratum varies
-Mistral-7B-Instruct-v0.3 and
-OLMo-2-1124-7B-Instruct over GSM8K, MATH-500, MBPP, Knights-and-Knaves, and
-ARC-Challenge. MATH-500 contributes 400 candidate prompts; the other datasets
-contribute 512, and every dataset contributes 100 validation prompts.
-The method stratum uses those models and the GSM8K/MBPP pair to compare GRPO,
-Dr.GRPO, and RLOO. These are distinct generalization factors, not separate paper
-objectives and not pooled estimates.
+contracts to every additional stratum. The extension fixes online verifier-reward
+GRPO and compares a raw sparse OLMoE-1B-7B base model with a raw dense
+Qwen2.5-14B base model. Logic, science, and non-math professional knowledge are
+run as separate Knights-and-Knaves, ARC-Challenge, and balanced MMLU-Pro
+matrices. Each dataset contributes 512 candidate and 100 validation prompts;
+each model/domain cell uses seeds 0-2 and checkpoints 0/25/100/400. The extension
+does not train a mixed-domain policy and does not pool domain estimates.
 
 All three nodes run the same command. Each family is claimed once, and every
 positive checkpoint resumes from its immediate predecessor. The launcher binds
 the clean Git commit, full model revision and file hashes, dataset snapshot
 hashes, normalized prompt split hashes, verifier runtime self-tests, and all
 hyperparameters into an immutable per-model matrix document. Results remain in
-method-specific roots below `$OM_WORK/results/{generalization-grpo-v2,
-method-dr-grpo-v1,method-rloo-v1}/`; no policy checkpoint or generated artifact
-is reused across methods or mixed with either the OLMo-3 main matrix or the
-previous Qwen bundle.
+domain-specific roots below `$OM_WORK/results/{generalization-logic-grpo-v1,
+generalization-science-grpo-v1,generalization-knowledge-grpo-v1}/`; no policy
+checkpoint or generated artifact is reused across domains or mixed with either
+the OLMo-3 main matrix or the previous Qwen bundle.

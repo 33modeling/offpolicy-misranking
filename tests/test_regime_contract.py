@@ -35,6 +35,7 @@ def matrix_document(root: Path) -> dict:
             "repository": "org/model",
             "revision": "c" * 40,
             "lora_targets": ["q_proj", "v_proj"],
+            "prompt_format": "verifiable_completion",
             "config_sha256": "d" * 64,
             "tokenizer_config_sha256": "e" * 64,
             "generation_config_sha256": None,

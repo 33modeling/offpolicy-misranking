@@ -64,6 +64,41 @@ with tempfile.TemporaryDirectory() as td:
     assert report["experiment_seeds"] == [0, 1, 2]
     assert report["reward_runtime"]["kind"] == "exact-structured-match"
 
+    mmlu_root = root / "mmlu-pro-nonmath"
+    mmlu_root.mkdir()
+    mmlu_rows = [
+        {
+            "question_id": i,
+            "question": f"Professional question {i}?",
+            "options": ["first", "second", "third", "fourth"],
+            "answer": "C",
+            "answer_index": 2,
+            "category": "business",
+            "src": "fixture",
+        }
+        for i in range(9)
+    ]
+    (mmlu_root / "mmlu_pro_nonmath.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in mmlu_rows)
+    )
+    old = os.environ.get("MMLU_PRO_DIR")
+    os.environ["MMLU_PRO_DIR"] = str(mmlu_root)
+    try:
+        mmlu_split = load_prompts("mmlu-pro-nonmath", 6, 3, seed=0)
+    finally:
+        if old is None:
+            os.environ.pop("MMLU_PRO_DIR", None)
+        else:
+            os.environ["MMLU_PRO_DIR"] = old
+    assert all(
+        row["answer"] == "MMLU:C"
+        for part in mmlu_split.values()
+        for row in part
+    )
+    assert "Subject: business" in mmlu_split["train"][0]["question"]
+    assert reward("Reasoning\n#### C", "MMLU:C") == 1.0
+    assert reward("Reasoning\n#### A", "MMLU:C") == 0.0
+
 deduped = _dedupe_items([
     {"question": "same", "answer": "one"},
     {"question": "same", "answer": "one"},
@@ -84,19 +119,23 @@ except ValueError as exc:
 else:
     raise AssertionError("conflicting duplicate prompt was accepted")
 
-config = json.loads((ROOT / "configs" / "domain_transfer.json").read_text())
-models = {row["key"]: row for row in config["models"]}
-assert set(models) == {"mistral7b", "olmo2-7b"}
-assert all(len(row["revision"]) == 40 for row in models.values())
-assert config["experiment"]["datasets"] == [
-    "gsm8k", "math500", "mbpp", "kk", "arc-challenge",
-]
-assert config["experiment"]["n_train_by_dataset"]["math500"] == 400
-assert config["experiment"]["fresh_k"] == 32
-assert config["experiment"]["fresh_k"] % config["experiment"]["micro_group"] == 0
-assert config["experiment"]["grpo"]["world_size"] == 4
-assert config["experiment"]["grpo"]["group_size"] == 8
-assert config["experiment"]["grpo"]["clip_epsilon"] == 0.2
+for filename, dataset in (
+    ("generalization_logic.json", "kk"),
+    ("generalization_science.json", "arc-challenge"),
+    ("generalization_knowledge.json", "mmlu-pro-nonmath"),
+):
+    config = json.loads((ROOT / "configs" / filename).read_text())
+    models = {row["key"]: row for row in config["models"]}
+    assert set(models) == {"olmoe-1b-7b-base", "qwen2.5-14b-base"}
+    assert all(len(row["revision"]) == 40 for row in models.values())
+    assert all(row["prompt_format"] == "verifiable_completion" for row in models.values())
+    assert config["experiment"]["datasets"] == [dataset]
+    assert config["experiment"]["n_train_by_dataset"] == {dataset: 512}
+    assert config["experiment"]["fresh_k"] == 32
+    assert config["experiment"]["fresh_k"] % config["experiment"]["micro_group"] == 0
+    assert config["experiment"]["grpo"]["world_size"] == 4
+    assert config["experiment"]["grpo"]["group_size"] == 8
+    assert config["experiment"]["grpo"]["clip_epsilon"] == 0.2
 assert _dataset_train_sizes(
     ["gsm8k", "math500"], 512, ["math500=400"]
 ) == {"gsm8k": 512, "math500": 400}

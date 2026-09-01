@@ -17,14 +17,14 @@ command -v flock >/dev/null 2>&1 || { echo "[abort] flock missing"; exit 1; }
 }
 
 MATRIX_CONFIGS=(
-  configs/domain_transfer.json
-  configs/generalization_dr_grpo.json
-  configs/generalization_rloo.json
+  configs/generalization_logic.json
+  configs/generalization_science.json
+  configs/generalization_knowledge.json
 )
 MATRIX_IDS=(
-  generalization-grpo-v2
-  method-dr-grpo-v1
-  method-rloo-v1
+  generalization-logic-grpo-v1
+  generalization-science-grpo-v1
+  generalization-knowledge-grpo-v1
 )
 MODE=${1:---run}
 [ "$#" -le 1 ] || { echo "usage: $0 [--prepare|--run]"; exit 2; }
@@ -93,7 +93,7 @@ qualify_registered_datasets() {
 }
 
 provision_registered_snapshots() {
-  local config=${MATRIX_CONFIGS[0]} datasets
+  local config datasets model_config=${MATRIX_CONFIGS[0]}
   local model_keys=()
   [ "${ADDITIONAL_SKIP_PROVISION:-0}" != "1" ] || return 0
 
@@ -104,19 +104,21 @@ provision_registered_snapshots() {
   flock 7
   echo "[additional] preparing pinned snapshots (network allowed only in --prepare)"
   export OM_ONLINE=1
-  unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE
+  unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE HF_DATASETS_OFFLINE
   export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
   export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-15}"
   export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-60}"
   mapfile -t model_keys < <(
-    "$PY" src/model_matrix.py --config "$config" list-models
+    "$PY" src/model_matrix.py --config "$model_config" list-models
   )
-  datasets=$(matrix_field "$config" datasets)
   timeout "${ADDITIONAL_FETCH_TIMEOUT:-7200}" \
-    "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
+    "$PY" src/model_matrix.py --config "$model_config" --models-dir "$MODELS_DIR" \
       download "${model_keys[@]}"
-  timeout "${ADDITIONAL_FETCH_TIMEOUT:-7200}" \
-    bash scripts/fetch_datasets.sh $datasets
+  for config in "${MATRIX_CONFIGS[@]}"; do
+    datasets=$(matrix_field "$config" datasets)
+    timeout "${ADDITIONAL_FETCH_TIMEOUT:-7200}" \
+      bash scripts/fetch_datasets.sh $datasets
+  done
   flock -u 7
   exec 7>&-
 }
@@ -128,15 +130,16 @@ export MATH500_DIR="$DATASETS_DIR/math500"
 export MBPP_DIR="$DATASETS_DIR/mbpp"
 export KK_DIR="$DATASETS_DIR/kk"
 export ARC_CHALLENGE_DIR="$DATASETS_DIR/arc-challenge"
+export MMLU_PRO_DIR="$DATASETS_DIR/mmlu-pro-nonmath"
 export OM_MATH_VERIFIER=math_verify
 
 if [ "$MODE" = "--prepare" ]; then
-  config=${MATRIX_CONFIGS[0]}
   provision_registered_snapshots
-  datasets=$(matrix_field "$config" datasets)
-  config_id=$(sha256sum "$config" | cut -c1-16)
-  qualify_registered_datasets "$config" \
-    "$OM_WORK/contracts/additional-prepared-$config_id.json"
+  for config in "${MATRIX_CONFIGS[@]}"; do
+    config_id=$(sha256sum "$config" | cut -c1-16)
+    qualify_registered_datasets "$config" \
+      "$OM_WORK/contracts/additional-prepared-$config_id.json"
+  done
   echo "[additional] all pinned model/data snapshots prepared and qualified"
   exit 0
 fi
@@ -252,7 +255,7 @@ run_registered_matrix() {
   unset REGIME_DATASETS REGIME_SEEDS REGIME_DRIFTS REGIME_N_TRAIN REGIME_N_VAL
   unset REGIME_N_TRAIN_BY_DATASET
   unset OM_GPUS OM_BEHAVIOR_SOURCE OM_GRPO_RESUME_ADAPTER OM_GRPO_RESUME_OPTIMIZER
-  unset OM_GRPO_START_STEP OM_POOL_FILE OM_EOS_IDS OM_GEN_BATCH
+  unset OM_GRPO_START_STEP OM_POOL_FILE OM_EOS_IDS OM_GEN_BATCH OM_PROMPT_FORMAT
 
   export RLVR_METHOD="$method"
   export REGIME_DATASETS="$datasets"
@@ -290,12 +293,14 @@ run_registered_matrix() {
   export OM_ATTN="$(matrix_field "$config" attn)"
   export OM_SKIP_HYBRID="$(matrix_field "$config" skip_hybrid)"
   export OM_SKIP_GPU_CHECK=0 OM_ALLOW_DIRTY=0 OM_ALLOW_ANALYSIS_UPGRADE=0
+  export OM_GEN_BATCH=4
   export OM_STALL_MINUTES=10 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
 
   for model_key in "${model_keys[@]}"; do
     MODEL_PATH=$(model_field "$config" "$model_key" path)
     OM_LORA_TARGETS=$(model_field "$config" "$model_key" lora_targets)
-    export MODEL_PATH OM_LORA_TARGETS
+    OM_PROMPT_FORMAT=$(model_field "$config" "$model_key" prompt_format)
+    export MODEL_PATH OM_LORA_TARGETS OM_PROMPT_FORMAT
     "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
       check "$model_key" | tee -a "$log"
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
@@ -322,4 +327,4 @@ run_registered_matrix() {
 for index in "${!MATRIX_CONFIGS[@]}"; do
   run_registered_matrix "${MATRIX_CONFIGS[$index]}" "${MATRIX_IDS[$index]}"
 done
-echo "[additional] all registered model/domain/method generalization matrices complete"
+echo "[additional] all registered model/domain generalization matrices complete"

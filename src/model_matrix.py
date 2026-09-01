@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG = ROOT / "configs" / "domain_transfer.json"
+DEFAULT_CONFIG = ROOT / "configs" / "generalization_logic.json"
 DOWNLOAD_PATTERNS = [
     "README.md",
     "config.json",
@@ -289,7 +289,7 @@ def _load_specs(config_path: Path) -> dict[str, dict]:
         ):
             raise ValueError(f"{key}: lora_targets must be a non-empty string list")
         formatter = spec.get("prompt_format", "tokenizer_chat")
-        if formatter not in {"tokenizer_chat", "olmo_rlzero"}:
+        if formatter not in {"tokenizer_chat", "olmo_rlzero", "verifiable_completion"}:
             raise ValueError(f"{key}: unsupported prompt_format={formatter!r}")
         official_files = spec.get("official_files")
         if official_files is not None:

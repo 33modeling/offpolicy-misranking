@@ -38,7 +38,12 @@ except AttributeError:
 # ratio를 계산하면 정의한 IS estimand가 아니다. 기본을 full softmax(top_p=1.0)로
 # 통일한다. 예전 조건 재현 시에만 OM_TOP_P=0.95 지정.
 SAMPLING = {"top_p": float(os.environ.get("OM_TOP_P", "1.0"))}
-PROMPT_FORMATS = {"tokenizer_chat", "olmo_rlzero_math", "olmo_rlzero_code"}
+PROMPT_FORMATS = {
+    "tokenizer_chat",
+    "olmo_rlzero_math",
+    "olmo_rlzero_code",
+    "verifiable_completion",
+}
 
 
 def prompt_format() -> str:
@@ -155,6 +160,8 @@ def render_prompt(question: str, mode: str | None = None) -> str:
             "is the solution for the problem.\n\n"
             f"{question}\n\nRemember to put your solution inside the ```\npython\nCODE\n``` tags"
         )
+    if mode == "verifiable_completion":
+        return f"{build_user_msg(question)}\n\nResponse:\n"
     raise ValueError("tokenizer_chat prompts must be rendered by the tokenizer")
 
 
@@ -162,7 +169,11 @@ def chat_ids(tok, question: str) -> torch.Tensor:
     mode = prompt_format()
     if mode != "tokenizer_chat":
         text = render_prompt(question, mode)
-        return tok(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
+        return tok(
+            text,
+            return_tensors="pt",
+            add_special_tokens=(mode == "verifiable_completion"),
+        ).input_ids[0]
     msgs = [{"role": "user", "content": build_user_msg(question)}]
     # transformers 4/5 양쪽에서 안전: 템플릿은 텍스트로 뽑고 별도로 토크나이즈.
     # thinking 계열(Qwen3+)은 기본 OFF — 짧은 rollout이라는 추정량 정의를 보존.

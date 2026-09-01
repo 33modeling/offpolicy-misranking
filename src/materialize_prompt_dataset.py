@@ -19,6 +19,7 @@ FILENAMES = {
     "mbpp": "mbpp.jsonl",
     "kk": "kk.jsonl",
     "arc-challenge": "arc_challenge.jsonl",
+    "mmlu-pro-nonmath": "mmlu_pro_nonmath.jsonl",
 }
 
 MBPP_PREFIX = "Write a Python function for the task below.\n\n"
@@ -34,6 +35,12 @@ ARC_PREFIX = (
     "then write only the option label after '####'.\n\nQuestion: "
 )
 ARC_CHOICES = "\n\nChoices:\n"
+MMLU_PREFIX = (
+    "Answer the following multiple-choice professional knowledge question. "
+    "Reason step by step, then write only the option label after '####'.\n\nSubject: "
+)
+MMLU_QUESTION = "\n\nQuestion: "
+MMLU_CHOICES = "\n\nChoices:\n"
 
 
 def _unshuffle(desired: list[dict], seed: int) -> list[dict]:
@@ -106,6 +113,38 @@ def _document(row: dict, dataset: str) -> dict:
             "choices": {"label": labels, "text": texts},
             "answerKey": answer_key,
         }
+    if dataset == "mmlu-pro-nonmath":
+        if not question.startswith(MMLU_PREFIX) or not answer.startswith("MMLU:"):
+            raise ValueError("MMLU-Pro prompt does not match the legacy loader template")
+        body = question[len(MMLU_PREFIX) :]
+        category, separator, body = body.partition(MMLU_QUESTION)
+        raw_question, choice_separator, options = body.rpartition(MMLU_CHOICES)
+        if not separator or not choice_separator or not category or not raw_question:
+            raise ValueError("MMLU-Pro prompt has no subject, question, or choices")
+        matches = list(re.finditer(r"(?m)^([A-J])\. ", options))
+        if not matches or matches[0].start() != 0:
+            raise ValueError("MMLU-Pro choices do not match the legacy loader format")
+        labels = []
+        texts = []
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(options)
+            text = options[match.end() : end].removesuffix("\n")
+            if not text or text != text.strip() or "\n" in text:
+                raise ValueError("MMLU-Pro choice text cannot be reconstructed exactly")
+            labels.append(match.group(1))
+            texts.append(text)
+        answer_key = answer.split(":", 1)[1]
+        if answer_key not in labels:
+            raise ValueError("MMLU-Pro answer label is absent from the choices")
+        return {
+            "question_id": None,
+            "question": raw_question,
+            "options": texts,
+            "answer": answer_key,
+            "answer_index": labels.index(answer_key),
+            "category": category,
+            "src": "materialized-prompt",
+        }
     raise ValueError(f"unsupported legacy prompt dataset: {dataset}")
 
 
@@ -133,14 +172,27 @@ def _normalize(document: dict, dataset: str) -> dict:
             "question": f"{document['quiz']}{KK_SUFFIX}".strip(),
             "answer": gold,
         }
-    labels = document["choices"]["label"]
-    texts = document["choices"]["text"]
+    if dataset == "arc-challenge":
+        labels = document["choices"]["label"]
+        texts = document["choices"]["text"]
+        options = "\n".join(
+            f"{label}. {text}" for label, text in zip(labels, texts, strict=True)
+        )
+        return {
+            "question": f"{ARC_PREFIX}{document['question']}{ARC_CHOICES}{options}",
+            "answer": f"ARC:{document['answerKey']}",
+        }
+    labels = [chr(ord("A") + index) for index in range(len(document["options"]))]
     options = "\n".join(
-        f"{label}. {text}" for label, text in zip(labels, texts, strict=True)
+        f"{label}. {text}"
+        for label, text in zip(labels, document["options"], strict=True)
     )
     return {
-        "question": f"{ARC_PREFIX}{document['question']}{ARC_CHOICES}{options}",
-        "answer": f"ARC:{document['answerKey']}",
+        "question": (
+            f"{MMLU_PREFIX}{document['category']}{MMLU_QUESTION}"
+            f"{document['question']}{MMLU_CHOICES}{options}"
+        ),
+        "answer": f"MMLU:{document['answer']}",
     }
 
 

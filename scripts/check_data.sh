@@ -7,7 +7,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
-DS="${1:?사용법: bash scripts/check_data.sh <gsm8k|math500|mbpp|kk|arc-challenge|dapo-math|apps> [n_train n_val]}"
+DS="${1:?사용법: bash scripts/check_data.sh <gsm8k|math500|mbpp|kk|arc-challenge|mmlu-pro-nonmath|dapo-math|apps> [n_train n_val]}"
 "$PY" - "$DS" "${2:-32}" "${3:-16}" <<'PYEOF'
 import os
 import sys

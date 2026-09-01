@@ -49,7 +49,8 @@ each freshly sampled group, current and old log probabilities are compared
 before the sole optimizer step and their ratio is one up to numerical error.
 There is no post-update second pass on that group, so clipping is not described
 as an effective trust-region constraint for this experiment. This differs from
-the separate two-epoch Qwen and GRPO/Dr.GRPO additional-study configs.
+the previous two-epoch Qwen matrix; the separate generalization matrices also use
+one epoch and keep GRPO fixed.
 
 ## Prepare
 

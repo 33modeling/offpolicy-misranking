@@ -21,6 +21,7 @@ ENV_NAMES = {
     "mbpp": "MBPP_DIR",
     "kk": "KK_DIR",
     "arc-challenge": "ARC_CHALLENGE_DIR",
+    "mmlu-pro-nonmath": "MMLU_PRO_DIR",
 }
 
 
@@ -55,6 +56,19 @@ def _raw_rows(dataset: str) -> list[dict]:
             }
             for index in range(9)
         ]
+    if dataset == "mmlu-pro-nonmath":
+        return [
+            {
+                "question_id": index,
+                "question": f"Professional question {index}?",
+                "options": [f"option {letter} for {index}" for letter in "ABCDE"],
+                "answer": "ABCDE"[index % 5],
+                "answer_index": index % 5,
+                "category": "business",
+                "src": "fixture",
+            }
+            for index in range(9)
+        ]
     return [
         {
             "question": f"Science question {index}?",
@@ -75,6 +89,7 @@ def _filename(dataset: str) -> str:
         "mbpp": "mbpp.jsonl",
         "kk": "kk.jsonl",
         "arc-challenge": "arc_challenge.jsonl",
+        "mmlu-pro-nonmath": "mmlu_pro_nonmath.jsonl",
     }[dataset]
 
 

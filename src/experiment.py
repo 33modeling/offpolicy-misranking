@@ -560,6 +560,7 @@ def main() -> None:
     p.add_argument("--adapter", default=None, help="π LoRA adapter 경로 (없으면 β=π)")
     p.add_argument("--dataset", default="gsm8k",
                    choices=["gsm8k", "math500", "mbpp", "kk", "arc-challenge",
+                            "mmlu-pro-nonmath",
                             "dapo-math", "apps"])
     p.add_argument("--n-train", type=int, default=256)
     p.add_argument("--n-val", type=int, default=50)

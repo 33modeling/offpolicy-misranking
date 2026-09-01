@@ -556,6 +556,7 @@ run_point() {
     mbpp) prompt_env=MBPP_DIR ;;
     kk) prompt_env=KK_DIR ;;
     arc-challenge) prompt_env=ARC_CHALLENGE_DIR ;;
+    mmlu-pro-nonmath) prompt_env=MMLU_PRO_DIR ;;
   esac
   if [ -n "$source" ] && [ -n "$prompt_env" ]; then
     # experiment.py fixes the dataset split at seed 0 for every experiment

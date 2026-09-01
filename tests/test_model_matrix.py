@@ -22,31 +22,27 @@ from model_matrix import (
 )
 
 
-def test_transfer_config_has_a_complete_fixed_protocol() -> None:
+def test_generalization_configs_have_complete_fixed_protocols() -> None:
     root = Path(__file__).resolve().parents[1]
-    config = _load_config(root / "configs/domain_transfer.json")
-    experiment = config["experiment"]
-    assert experiment["policy_method"] == "grpo"
-    assert experiment["datasets"] == [
-        "gsm8k",
-        "math500",
-        "mbpp",
-        "kk",
-        "arc-challenge",
-    ]
-    assert experiment["n_train_by_dataset"]["math500"] == 400
-    assert all(
-        experiment["n_train_by_dataset"][dataset] == 512
-        for dataset in ("gsm8k", "mbpp", "kk", "arc-challenge")
-    )
-    assert experiment["drifts"][0] == 0
-    assert experiment["temperature"] == 1.0
-    assert experiment["top_p"] == 1.0
-    assert experiment["fresh_k"] // experiment["micro_group"] >= 8
-    assert experiment["fresh_k"] // experiment["micro_group"] % 4 == 0
-    assert experiment["n_val"] >= 8
-    assert experiment["n_val"] % 4 == 0
-    assert experiment["first_bootstrap"] >= 10_000
+    expected = {
+        "generalization_logic.json": "kk",
+        "generalization_science.json": "arc-challenge",
+        "generalization_knowledge.json": "mmlu-pro-nonmath",
+    }
+    for filename, dataset in expected.items():
+        config = _load_config(root / "configs" / filename)
+        experiment = config["experiment"]
+        assert experiment["policy_method"] == "grpo"
+        assert experiment["datasets"] == [dataset]
+        assert experiment["n_train_by_dataset"] == {dataset: 512}
+        assert experiment["seeds"] == [0, 1, 2]
+        assert experiment["drifts"] == [0, 25, 100, 400]
+        assert experiment["temperature"] == 1.0
+        assert experiment["top_p"] == 1.0
+        assert experiment["fresh_k"] // experiment["micro_group"] == 8
+        assert experiment["n_val"] == 100
+        assert experiment["first_bootstrap"] >= 10_000
+        assert experiment["grpo"]["epochs_per_batch"] == 1
 
 
 def test_weight_manifest_detects_content_corruption() -> None:
@@ -81,7 +77,7 @@ def test_weight_index_rejects_path_traversal() -> None:
 
 
 def test_transfer_config_rejects_wrong_types_before_launch() -> None:
-    source = Path(__file__).resolve().parents[1] / "configs/domain_transfer.json"
+    source = Path(__file__).resolve().parents[1] / "configs/generalization_logic.json"
     with tempfile.TemporaryDirectory() as raw_tmp:
         root = Path(raw_tmp)
         config = json.loads(source.read_text(encoding="utf-8"))
@@ -97,11 +93,11 @@ def test_transfer_config_rejects_wrong_types_before_launch() -> None:
 
 
 def test_transfer_config_requires_one_candidate_count_per_dataset() -> None:
-    source = Path(__file__).resolve().parents[1] / "configs/domain_transfer.json"
+    source = Path(__file__).resolve().parents[1] / "configs/generalization_logic.json"
     with tempfile.TemporaryDirectory() as raw_tmp:
         root = Path(raw_tmp)
         config = json.loads(source.read_text(encoding="utf-8"))
-        del config["experiment"]["n_train_by_dataset"]["math500"]
+        del config["experiment"]["n_train_by_dataset"]["kk"]
         path = root / "bad.json"
         path.write_text(json.dumps(config), encoding="utf-8")
         try:
@@ -112,23 +108,23 @@ def test_transfer_config_requires_one_candidate_count_per_dataset() -> None:
             raise AssertionError("incomplete per-dataset candidate counts were accepted")
 
 
-def test_generalization_dr_grpo_config_is_a_separate_method_slice() -> None:
+def test_generalization_models_change_architecture_and_capacity() -> None:
     root = Path(__file__).resolve().parents[1]
-    config = _load_config(root / "configs/generalization_dr_grpo.json")
-    experiment = config["experiment"]
-    assert experiment["policy_method"] == "dr_grpo"
-    assert experiment["datasets"] == ["gsm8k", "mbpp"]
-    assert len(config["models"]) == 2
-
-
-def test_rloo_config_is_sequence_level_and_single_epoch() -> None:
-    root = Path(__file__).resolve().parents[1]
-    config = _load_config(root / "configs/generalization_rloo.json")
-    experiment = config["experiment"]
-    assert experiment["policy_method"] == "rloo"
-    assert experiment["datasets"] == ["gsm8k", "mbpp"]
-    assert experiment["grpo"]["epochs_per_batch"] == 1
-    assert len(config["models"]) == 2
+    configs = [
+        _load_config(root / "configs" / filename)
+        for filename in (
+            "generalization_logic.json",
+            "generalization_science.json",
+            "generalization_knowledge.json",
+        )
+    ]
+    expected_models = {
+        ("allenai/OLMoE-1B-7B-0125", "olmoe"),
+        ("Qwen/Qwen2.5-14B", "qwen2"),
+    }
+    for config in configs:
+        assert {(row["repository"], row["model_type"]) for row in config["models"]} == expected_models
+        assert all(row["prompt_format"] == "verifiable_completion" for row in config["models"])
 
 
 def test_local_hub_snapshot_can_only_be_sealed_from_exact_revision_metadata(

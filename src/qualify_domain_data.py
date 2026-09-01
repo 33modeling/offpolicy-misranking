@@ -10,7 +10,24 @@ import os
 import sys
 from pathlib import Path
 
-from data import _boxed, _code_sandbox_backend, _load_rows_any, load_prompts, reward
+from data import (
+    MMLU_PRO_NONMATH_CATEGORIES,
+    _boxed,
+    _code_sandbox_backend,
+    _load_rows_any,
+    load_prompts,
+    reward,
+)
+
+MMLU_PRO_QUOTAS = {
+    category: 77 if index < 4 else 76
+    for index, category in enumerate(MMLU_PRO_NONMATH_CATEGORIES)
+}
+MMLU_PRO_SELECTION = (
+    "test split; stable-hash sample without duplicate questions; non-math categories "
+    "business/economics/health/history=77 each and "
+    "law/other/philosophy/psychology=76 each"
+)
 
 SPECS = {
     "gsm8k": {
@@ -55,6 +72,17 @@ SPECS = {
         "file": "arc_challenge.jsonl",
         "answer_prefix": "ARC:",
         "env": "ARC_CHALLENGE_DIR",
+    },
+    "mmlu-pro-nonmath": {
+        "revision": "b189ec765aa7ed75c8acfea42df31fdae71f97be",
+        "repository": "TIGER-Lab/MMLU-Pro",
+        "file": "mmlu_pro_nonmath.jsonl",
+        "answer_prefix": "MMLU:",
+        "env": "MMLU_PRO_DIR",
+        "aliases": ("mmlu-pro-nonmath", "MMLU-Pro", "mmlu_pro"),
+        "rows": 612,
+        "content_sha256": "4c8958a934fb8f17ef43d1826e140c5acc6f60d130a3657637f6331ac524623e",
+        "selection": MMLU_PRO_SELECTION,
     },
 }
 
@@ -108,11 +136,74 @@ def _canonical_rows(dataset: str, rows: list[dict]) -> list[dict]:
                         "test_list": tests,
                     }
                 )
+            elif dataset == "mmlu-pro-nonmath":
+                question = row.get("question")
+                options = row.get("options")
+                category = str(row.get("category", "")).strip().lower()
+                answer = str(row.get("answer", "")).strip().upper()
+                answer_index = row.get("answer_index")
+                if (
+                    not isinstance(question, str)
+                    or not question.strip()
+                    or not isinstance(options, list)
+                    or not 2 <= len(options) <= 10
+                    or not all(isinstance(option, str) and option.strip() for option in options)
+                    or category not in MMLU_PRO_QUOTAS
+                    or isinstance(answer_index, bool)
+                    or not isinstance(answer_index, int)
+                    or not 0 <= answer_index < len(options)
+                    or answer != chr(ord("A") + answer_index)
+                ):
+                    raise ValueError("question/options/category/answer fields are inconsistent")
+                canonical.append(
+                    {
+                        "question_id": row.get("question_id"),
+                        "question": question.strip(),
+                        "options": [option.strip() for option in options],
+                        "answer": answer,
+                        "answer_index": answer_index,
+                        "category": category,
+                        "src": str(row.get("src", "")),
+                    }
+                )
             else:
                 return rows
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"{dataset}: row {index} schema mismatch: {exc}") from exc
     return canonical
+
+
+def _select_mmlu_pro_nonmath(rows: list[dict]) -> list[dict]:
+    canonical = _canonical_rows("mmlu-pro-nonmath", rows)
+    grouped = {category: [] for category in MMLU_PRO_NONMATH_CATEGORIES}
+    for row in canonical:
+        grouped[row["category"]].append(row)
+
+    selected = []
+    seen_questions = set()
+    for category in MMLU_PRO_NONMATH_CATEGORIES:
+        candidates = sorted(
+            grouped[category],
+            key=lambda row: hashlib.sha256(
+                json.dumps(
+                    row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest(),
+        )
+        for row in candidates:
+            if row["question"] in seen_questions:
+                continue
+            selected.append(row)
+            seen_questions.add(row["question"])
+            if sum(item["category"] == category for item in selected) == MMLU_PRO_QUOTAS[category]:
+                break
+        actual = sum(item["category"] == category for item in selected)
+        if actual != MMLU_PRO_QUOTAS[category]:
+            raise ValueError(
+                f"mmlu-pro-nonmath: category {category!r} has {actual} unique rows; "
+                f"expected {MMLU_PRO_QUOTAS[category]}"
+            )
+    return selected
 
 
 def _content_sha256(rows: list[dict]) -> str:
@@ -150,6 +241,7 @@ def _source_candidates(dataset: str, root: Path) -> list[Path]:
             for path in sorted(root.rglob("*.jsonl"))
             if path.name != "dataset_manifest.json"
         )
+        candidates.extend(sorted(root.rglob("*.parquet")))
         candidates.extend(sorted({path.parent for path in root.rglob("*.parquet")}))
         candidates.extend(sorted({path.parent for path in root.rglob("state.json")}))
         for pattern in ("*", "*/*", "*/*/*"):
@@ -185,7 +277,11 @@ def _adopt_official_upload(dataset: str, root: Path) -> tuple[Path, list[dict]]:
             rows = _load_rows_any(source)
             if not rows:
                 raise ValueError("no rows")
-            canonical = _canonical_rows(dataset, rows)
+            canonical = (
+                _select_mmlu_pro_nonmath(rows)
+                if dataset == "mmlu-pro-nonmath"
+                else _canonical_rows(dataset, rows)
+            )
             actual_hash = _content_sha256(canonical)
             if len(canonical) != spec["rows"] or actual_hash != expected_hash:
                 raise ValueError(
@@ -197,12 +293,11 @@ def _adopt_official_upload(dataset: str, root: Path) -> tuple[Path, list[dict]]:
 
         target = root / dataset / spec["file"]
         target.parent.mkdir(parents=True, exist_ok=True)
-        if source.resolve() != target.resolve():
-            temporary = target.with_name(target.name + f".tmp.{os.getpid()}")
-            with temporary.open("w", encoding="utf-8") as stream:
-                for row in canonical:
-                    stream.write(json.dumps(row) + "\n")
-            temporary.replace(target)
+        temporary = target.with_name(target.name + f".tmp.{os.getpid()}")
+        with temporary.open("w", encoding="utf-8") as stream:
+            for row in canonical:
+                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+        temporary.replace(target)
         raw_rows = _jsonl_rows(target)
         manifest = {
             "schema_version": 1,
@@ -274,8 +369,9 @@ def _verify_reward_runtime(dataset: str, raw_rows: list[dict], split: dict) -> d
         )
         wrong = canonical.replace("knight", "wrong", 1).replace("knave", "wrong", 1)
     else:
-        canonical = f"Reasoning\n#### {gold[4:]}"
-        wrong_label = next(label for label in "ABCD" if label != gold[4:].upper())
+        label = gold.split(":", 1)[1]
+        canonical = f"Reasoning\n#### {label}"
+        wrong_label = next(candidate for candidate in "ABCDEFGHIJ" if candidate != label.upper())
         wrong = f"Reasoning\n#### {wrong_label}"
     if reward(canonical, gold) != 1.0 or reward(wrong, gold) != 0.0:
         raise ValueError(f"{dataset}: positive/negative reward self-test failed")
@@ -305,10 +401,16 @@ def qualify(dataset: str, root: Path, n_train: int, n_val: int, seeds: list[int]
     if manifest.get("rows") != len(raw_rows):
         raise ValueError(f"{dataset}: manifest row count 불일치")
     if spec.get("content_sha256") and (
-        _content_sha256(_canonical_rows(dataset, raw_rows))
+        _content_sha256(
+            _select_mmlu_pro_nonmath(raw_rows)
+            if dataset == "mmlu-pro-nonmath"
+            else _canonical_rows(dataset, raw_rows)
+        )
         != spec["content_sha256"]
     ):
         raise ValueError(f"{dataset}: official content SHA-256 mismatch")
+    if spec.get("selection") and manifest.get("selection") != spec["selection"]:
+        raise ValueError(f"{dataset}: manifest selection mismatch")
 
     old = os.environ.get(spec["env"])
     os.environ[spec["env"]] = str(dataset_root)
