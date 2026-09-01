@@ -582,7 +582,8 @@ run_point() {
     fi
     attempt_log="$run/logs/regime-attempt-$try.log"
     if run_pipeline_watchdog "$run" "$attempt_log" \
-        "${args[@]}" OM_REPO="$PIPELINE_REPO" PYTHONPATH="$PIPELINE_REPO/src" \
+        "${args[@]}" OM_REPO="$PIPELINE_REPO" \
+        PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
         bash "$PIPELINE_SCRIPT"; then
       if [ -n "$CONTRACT" ]; then
         if ! contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \

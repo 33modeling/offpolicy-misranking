@@ -25,6 +25,12 @@ def test_resume_snapshot_uses_the_pipeline_split_seed() -> None:
     assert '"$dataset" "$QUEUE/prompt-datasets" --seed "$seed"' not in script
 
 
+def test_pipeline_pythonpath_preserves_inherited_runtime_dependencies() -> None:
+    script = (REPO / "scripts/run_matrix.sh").read_text(encoding="utf-8")
+    assert 'PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}"' in script
+    assert 'PYTHONPATH="$PIPELINE_REPO/src"' not in script
+
+
 def test_shared_regime_queue_is_unique_and_retryable() -> None:
     with tempfile.TemporaryDirectory() as raw_tmp:
         root = Path(raw_tmp)

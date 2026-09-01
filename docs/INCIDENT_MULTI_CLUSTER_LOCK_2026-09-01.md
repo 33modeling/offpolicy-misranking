@@ -234,6 +234,13 @@ The implementation and validation work made the following mistakes in order:
    continues other families, and retries failures after a bounded delay without
    exiting the worker. After family execution begins, normal exit is reserved
    for an external signal or a completed matrix.
+8. The point-launch environment in `run_matrix.sh` replaced `PYTHONPATH` with
+   only the pinned generation checkout's `src` directory. That discarded the
+   bundled `math_verify` directory bootstrapped by the OLMo launcher, so every
+   point failed its verifier import and the new family supervisor repeated the
+   same deterministic failure. Point launches now prepend the pinned `src`
+   directory while preserving the inherited runtime dependency path. A
+   regression test rejects the previous replacement form.
 
 ### Validation failure
 
