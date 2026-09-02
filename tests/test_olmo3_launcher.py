@@ -134,6 +134,7 @@ case "$script" in
       shift
     done ;;
   -)
+    if [[ "$1" == *grpo_stats.jsonl ]]; then exec python3 - "$@"; fi
     destination=$1; mkdir -p "$(dirname "$destination")"
     case "$destination" in
       *.owner.json) printf '{"worker":"%s"}\n' "$WORKER_ID" > "$destination" ;;
@@ -378,8 +379,10 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     root = shared / "work/runs" / tag
     family = root / "family-math500-s0"
     run = family / f"{tag}-s0-math500-d0"
+    run25 = family / f"{tag}-s0-math500-d25"
     logs = run / "logs"
     logs.mkdir(parents=True)
+    (run25 / "policy_step_25").mkdir(parents=True)
     (root / ".families").mkdir()
     (root / ".queue").mkdir()
     (root / "logs").mkdir()
@@ -404,6 +407,10 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     (logs / "fresh-shard0.log").write_text(
         "[2026-09-02 12:00:00] rollout 46/100\n" + long_error + "\n"
     )
+    (run25 / "policy_step_25/grpo_stats.jsonl").write_text(
+        '{"grad_norm":0.42,"groups":4,"loss":0.0,"mean_ratio":1.0,'
+        '"nonzero_advantage_groups":3,"reward_mean":0.25}\n'
+    )
 
     result = subprocess.run(
         ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "status"],
@@ -419,7 +426,9 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     assert "math500/s0 stale-owner" in output
     assert "d0 stage=fresh-rollout behavior_rows=2 fresh_rows=3" in output
     assert "recovery_batch=1 recovery_status=failed" in output
-    assert "d25 stage=pending" in output
+    assert "d25 stage=initialized" in output
+    assert "active_groups=3/4 loss=0.000e+00 grad_norm=4.200e-01" in output
+    assert "learning_signal=update" in output
     assert "latest_log=" in output
     assert "rollout 46/100" in output
     assert "latest_log_errors:" in output

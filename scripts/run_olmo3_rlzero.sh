@@ -252,7 +252,8 @@ if [ "$MODE" = status ]; then
 
   status_point() {
     local dataset=$1 seed=$2 drift=$3 run log stage behavior_rows fresh_rows
-    local attempt="" grpo_steps="" recovery="" recovery_batch="" recovery_status=""
+    local attempt="" grpo_steps="" grpo_metrics="" recovery="" recovery_batch=""
+    local recovery_status=""
     run=$(run_dir "$dataset" "$seed" "$drift")
     if [ -s "$run/DONE" ]; then
       echo "  d$drift stage=complete"
@@ -281,6 +282,32 @@ if [ "$MODE" = status ]; then
     fresh_rows=$(status_rows "$run" rollouts_fresh_train)
     if [ -s "$run/policy_step_$drift/grpo_stats.jsonl" ]; then
       grpo_steps=$(wc -l < "$run/policy_step_$drift/grpo_stats.jsonl")
+      grpo_metrics=$("$PY" - "$run/policy_step_$drift/grpo_stats.jsonl" <<'PYEOF'
+import json
+import math
+import sys
+
+rows = [line for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+row = json.loads(rows[-1])
+active = int(row["nonzero_advantage_groups"])
+groups = int(row["groups"])
+gradient = float(row["grad_norm"])
+if active == 0:
+    signal = "no-mixed-reward"
+elif math.isfinite(gradient) and gradient > 0:
+    signal = "update"
+else:
+    signal = "ERROR-zero-grad"
+print(
+    f" reward={float(row['reward_mean']):.3f}"
+    f" active_groups={active}/{groups}"
+    f" loss={float(row['loss']):.3e}"
+    f" grad_norm={gradient:.3e}"
+    f" ratio={float(row['mean_ratio']):.6f}"
+    f" learning_signal={signal}"
+)
+PYEOF
+      ) || grpo_metrics=" metrics=invalid"
     fi
     attempt=$(find "$run/logs" -maxdepth 1 -type f -name 'regime-attempt-*.log' \
       -printf '%T@ %f\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
@@ -294,6 +321,7 @@ if [ "$MODE" = status ]; then
     printf '  d%s stage=%s behavior_rows=%s fresh_rows=%s' \
       "$drift" "$stage" "$behavior_rows" "$fresh_rows"
     [ -z "$grpo_steps" ] || printf ' grpo_steps=%s/%s' "$grpo_steps" "$drift"
+    [ -z "$grpo_metrics" ] || printf '%s' "$grpo_metrics"
     [ -z "$attempt" ] || printf ' attempt=%s' "${attempt%.log}"
     [ -z "$recovery_batch" ] || printf ' recovery_batch=%s' "$recovery_batch"
     [ -z "$recovery_status" ] || printf ' recovery_status=%s' "$recovery_status"
