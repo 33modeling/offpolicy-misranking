@@ -938,6 +938,10 @@ def train(args: argparse.Namespace) -> None:
             )
             if world_size > 1:
                 dist.all_reduce(local)
+            if int(local[3]) > 0 and not float(local[5]) > 0:
+                raise RuntimeError(
+                    "nonzero reward advantages produced a zero or non-finite gradient norm"
+                )
             runtime_max = torch.tensor(
                 [step_seconds, peak_allocated, peak_reserved], device=local_rank
             )
@@ -976,7 +980,8 @@ def train(args: argparse.Namespace) -> None:
                     f"[{args.objective}] step {step + 1}/{args.target_steps} "
                     f"reward={row['reward_mean']:.3f} active_groups="
                     f"{row['nonzero_advantage_groups']}/{world_size} "
-                    f"loss={loss_value:.4f}",
+                    f"loss={row['loss']:.3e} grad_norm={row['grad_norm']:.3e} "
+                    f"ratio={row['mean_ratio']:.6f} optimizer_step=applied",
                     flush=True,
                 )
             if world_size > 1:

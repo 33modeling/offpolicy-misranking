@@ -112,6 +112,22 @@ def test_group_advantages_are_centered_and_zero_for_constant_rewards() -> None:
     assert rloo.tolist() == pytest.approx([-2 / 3, 2 / 3, 2 / 3, -2 / 3])
 
 
+def test_on_policy_grpo_has_zero_scalar_loss_but_nonzero_gradient() -> None:
+    advantages = standardized_group_advantages(torch.tensor([0.0, 1.0, 1.0, 0.0]))
+    old = [torch.zeros(3) for _ in range(4)]
+    current = [torch.zeros(3, requires_grad=True) for _ in range(4)]
+
+    loss, stats = clipped_grpo_loss(current, old, advantages, 0.2)
+    assert float(loss.detach()) == pytest.approx(0.0, abs=1e-7)
+    assert stats["mean_ratio"] == 1.0
+
+    loss.backward()
+    gradient_norm = torch.linalg.vector_norm(
+        torch.cat([value.grad for value in current if value.grad is not None])
+    )
+    assert float(gradient_norm) > 0
+
+
 def test_clipped_grpo_has_the_correct_sign_and_asymmetric_clip() -> None:
     positive = torch.tensor([math.log(2.0)], requires_grad=True)
     loss, stats = clipped_grpo_loss(
