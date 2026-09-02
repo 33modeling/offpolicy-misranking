@@ -22,7 +22,8 @@ def test_recovery_rotates_gpus_and_forces_the_recovery_batch(tmp_path: Path) -> 
         "row={'batch':os.environ['OM_GEN_BATCH'],"
         "'gpu':os.environ['CUDA_VISIBLE_DEVICES'],"
         "'stage':args[args.index('--stage')+1],"
-        "'shard':args[args.index('--shard')+1]}\n"
+        "'shard':args[args.index('--shard')+1],"
+        "'adapter':args[args.index('--adapter')+1] if '--adapter' in args else None}\n"
         "fd=os.open(os.environ['RECOVERY_CAPTURE'], os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o600)\n"
         "os.write(fd, (json.dumps(row)+'\\n').encode()); os.close(fd)\n"
     )
@@ -47,7 +48,7 @@ def test_recovery_rotates_gpus_and_forces_the_recovery_batch(tmp_path: Path) -> 
         "git": head,
         "model_resolved": str(tmp_path / "model"),
         "dataset": "math500",
-        "drift": 0,
+        "drift": 25,
         "behavior_k": 8,
         "fresh_k": 32,
         "val_k": 8,
@@ -64,9 +65,12 @@ def test_recovery_rotates_gpus_and_forces_the_recovery_batch(tmp_path: Path) -> 
         "topk_frac": 0.1,
         "prompt_format": "olmo_rlzero_math",
         "attn": "eager",
-        "gen_batch": "4",
+        "gen_batch": "8",
     }
     (run / "run_config.json").write_text(json.dumps(config))
+    adapter = run / "policy_step_25"
+    adapter.mkdir()
+    (adapter / "adapter_model.safetensors").write_bytes(b"adapter")
     capture = tmp_path / "capture.jsonl"
     result = subprocess.run(
         [
@@ -97,12 +101,13 @@ def test_recovery_rotates_gpus_and_forces_the_recovery_batch(tmp_path: Path) -> 
         ("1:2", "0"),
     }
     assert {row["stage"] for row in rows} == {"rollout-fresh"}
-    assert json.loads((run / "run_config.json").read_text())["gen_batch"] == "4"
+    assert {row["adapter"] for row in rows} == {str(adapter)}
+    assert json.loads((run / "run_config.json").read_text())["gen_batch"] == "8"
     recovery = [
         json.loads(line)
         for line in (run / "rollout_recovery.jsonl").read_text().splitlines()
     ]
     assert [row["status"] for row in recovery] == ["started", "completed"]
-    assert {row["configured_generation_batch"] for row in recovery} == {"4"}
+    assert {row["configured_generation_batch"] for row in recovery} == {"8"}
     assert {row["recovery_generation_batch"] for row in recovery} == {1}
     assert recovery[0]["gpu_order"] == ["0", "1"]

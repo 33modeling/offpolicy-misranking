@@ -238,6 +238,10 @@ def test_three_workers_claim_every_family_exactly_once(tmp_path: Path) -> None:
 
 def test_h100_profile_uses_a_disjoint_root_and_runtime_contract(tmp_path: Path) -> None:
     checkout, env = fixture_checkout(tmp_path)
+    shared_root = (
+        Path(env["TEST_SHARED"])
+        / "work/runs/olmo3-1025-7b-base-rlzero-grpo-h100-v2"
+    )
     result = subprocess.run(
         ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
         cwd=checkout,
@@ -258,6 +262,22 @@ def test_h100_profile_uses_a_disjoint_root_and_runtime_contract(tmp_path: Path) 
     )
     assert h100.is_file()
     assert not baseline.exists()
+
+    status = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "status", "h100"],
+        cwd=checkout,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    output = status.stdout + status.stderr
+    assert status.returncode == 0, output
+    assert "profile=h100" in output
+    assert f"experiment_root={shared_root}" in output
+    assert "math500/s0 complete" in output
+    assert "d0 stage=complete" in output
 
 
 def test_status_shows_point_progress_and_untruncated_runtime_errors(
