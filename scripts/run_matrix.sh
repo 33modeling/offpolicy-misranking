@@ -186,6 +186,7 @@ RLVR_METHOD_DEFAULT="${RLVR_METHOD:-grpo}"
 export RLVR_METHOD="$RLVR_METHOD_DEFAULT"
 WATCH_INTERVAL_SECONDS="${REGIME_WATCH_INTERVAL_SECONDS:-15}"
 STALL_SECONDS="${REGIME_STALL_SECONDS:-$(( ${OM_STALL_MINUTES:-5} * 60 ))}"
+HARD_STALL_SECONDS="${REGIME_HARD_STALL_SECONDS:-$((STALL_SECONDS * 2))}"
 WATCH_KILL_GRACE_SECONDS="${REGIME_WATCH_KILL_GRACE_SECONDS:-5}"
 WATCH_GPU_SAMPLES="${REGIME_WATCH_GPU_SAMPLES:-3}"
 
@@ -215,12 +216,16 @@ n_train_for_dataset() {
   fi
 }
 
-for value_name in WATCH_INTERVAL_SECONDS STALL_SECONDS WATCH_GPU_SAMPLES; do
+for value_name in WATCH_INTERVAL_SECONDS STALL_SECONDS HARD_STALL_SECONDS WATCH_GPU_SAMPLES; do
   value=${!value_name}
   case "$value" in
     ''|*[!0-9]*|0) echo "[abort] invalid $value_name=$value"; exit 2 ;;
   esac
 done
+[ "$HARD_STALL_SECONDS" -ge "$STALL_SECONDS" ] || {
+  echo "[abort] HARD_STALL_SECONDS must be at least STALL_SECONDS"
+  exit 2
+}
 case "$RECOVERY_GEN_BATCH" in
   ''|*[!0-9]*|0) echo "[abort] invalid REGIME_RECOVERY_GEN_BATCH=$RECOVERY_GEN_BATCH"; exit 2 ;;
 esac
@@ -466,7 +471,7 @@ gpu_peak_util() {
 terminate_process_group() {
   local pgid=$1
   [ -n "$pgid" ] || return 0
-  kill -TERM -- "-$pgid" 2>/dev/null || true
+  kill -TERM -- "-$pgid" 2>/dev/null || return 0
   /bin/sleep "$WATCH_KILL_GRACE_SECONDS"
   kill -KILL -- "-$pgid" 2>/dev/null || true
 }
@@ -483,7 +488,7 @@ cleanup_active_pipeline() {
 run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command...>
   local run=$1 attempt_log=$2 runner_pid watcher_pid rc
   shift 2
-  local prev="" elapsed=0 cpu_mark cpu_now cpu_delta gpu_peak lf line sig
+  local prev="" elapsed=0 silent_elapsed=0 cpu_mark cpu_now cpu_delta gpu_peak lf line sig
   local candidates=()
 
   mkdir -p "$run/logs" || return 1
@@ -509,11 +514,20 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
         [ -n "$line" ] && echo "[regime-detail·$(basename "$lf" .log)] $line"
         prev=$sig
         elapsed=0
+        silent_elapsed=0
         cpu_mark=$(group_cpu_seconds "$runner_pid")
         continue
       fi
 
       elapsed=$((elapsed + WATCH_INTERVAL_SECONDS))
+      silent_elapsed=$((silent_elapsed + WATCH_INTERVAL_SECONDS))
+      if [ "$silent_elapsed" -ge "$HARD_STALL_SECONDS" ]; then
+        message="[regime-hard-stall] 로그 ${HARD_STALL_SECONDS}초 무변화 — GPU/CPU 활동과 무관하게 process group 종료 후 .partial 재개"
+        echo "$message"
+        printf '%s\n' "$message" >> "$attempt_log"
+        terminate_process_group "$runner_pid"
+        break
+      fi
       [ "$elapsed" -lt "$STALL_SECONDS" ] || {
         cpu_now=$(group_cpu_seconds "$runner_pid")
         cpu_delta=$((cpu_now > cpu_mark ? cpu_now - cpu_mark : 0))
@@ -523,7 +537,6 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
         if [ "$gpu_peak" -gt 0 ] || [ "$cpu_delta" -gt 2 ]; then
           message="[regime-watchdog] 로그 ${STALL_SECONDS}초 무변화지만 계산 활동 확인 (GPU ${gpu_peak}%, CPU +${cpu_delta}s) — 계속 실행"
           echo "$message"
-          printf '%s\n' "$message" >> "$attempt_log"
           cpu_mark=$cpu_now
         else
           message="[regime-watchdog] 로그·GPU·CPU ${STALL_SECONDS}초 정지 — process group 종료 후 .partial 재개"
@@ -541,6 +554,9 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
 
   wait "$runner_pid"
   rc=$?
+  # The leader may exit while CUDA workers or torchrun descendants still own
+  # contexts. Always clear the attempt's process group before another retry.
+  terminate_process_group "$runner_pid"
   kill "$watcher_pid" 2>/dev/null || true
   wait "$watcher_pid" 2>/dev/null || true
   ACTIVE_PGID=""

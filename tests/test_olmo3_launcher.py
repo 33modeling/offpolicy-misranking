@@ -35,6 +35,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         path.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "scripts/run_olmo3_rlzero.sh", checkout / "scripts")
     shutil.copy2(ROOT / "src/regime_resume_commit.py", checkout / "src")
+    shutil.copy2(ROOT / "src/cleanup_run_processes.py", checkout / "src")
     shutil.copy2(ROOT / "configs/olmo3_rlzero.json", checkout / "configs")
     shutil.copy2(ROOT / "configs/olmo3_rlzero_h100.json", checkout / "configs")
     (checkout / "requirements.txt").write_text("fixture\n")
@@ -56,6 +57,7 @@ script=$1; shift
 case "$script" in
   *bootstrap_math_verify.py) printf '%s/runtime-deps\n' "$TEST_SHARED" ;;
   *regime_resume_commit.py) exec python3 "$script" "$@" ;;
+  *cleanup_run_processes.py) exec python3 "$script" "$@" ;;
   *model_matrix.py)
     case " $* " in
       *" field olmo3-7b-base path "*) printf '%s/models/Olmo-3-1025-7B\n' "$TEST_SHARED" ;;
@@ -96,6 +98,10 @@ case "$script" in
       *) printf 'unexpected model args: %s\n' "$*" >&2; exit 2 ;;
     esac ;;
   *qualify_domain_data.py|*qualify_rlzero_signal.py)
+    if [[ "$script" == *qualify_rlzero_signal.py ]] && [ "${TEST_HANG_SIGNAL:-0}" = 1 ]; then
+      trap 'exit 0' TERM INT
+      while :; do /bin/sleep 1; done
+    fi
     while [ $# -gt 0 ]; do
       if [ "$1" = --output ]; then mkdir -p "$(dirname "$2")"; printf '{}\n' > "$2"; break; fi
       shift
@@ -115,6 +121,10 @@ case "$script" in
     done ;;
   -c) exit 0 ;;
   -m)
+    if [ "${TEST_HANG_SMOKE:-0}" = 1 ]; then
+      trap 'exit 0' TERM INT
+      while :; do /bin/sleep 1; done
+    fi
     while [ $# -gt 0 ]; do
       if [ "$1" = --output ]; then
         out=$2; mkdir -p "$out"
@@ -184,6 +194,12 @@ done
         fake_bin / "nvidia-smi",
         "#!/usr/bin/env bash\n"
         'case "$*" in\n'
+        "  *query-compute-apps=pid*)\n"
+        '    pid="${TEST_GPU_PID:-}"\n'
+        '    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then\n'
+        '      state=$(ps -o stat= -p "$pid" 2>/dev/null | tr -d " ")\n'
+        '      [[ "$state" == Z* ]] || printf "%s\\n" "$pid"\n'
+        "    fi ;;\n"
         "  *memory.used*) printf '0\\n0\\n0\\n0\\n' ;;\n"
         "  *) printf 'NVIDIA H100 80GB HBM3\\nNVIDIA H100 80GB HBM3\\nNVIDIA H100 80GB HBM3\\nNVIDIA H100 80GB HBM3\\n' ;;\n"
         "esac\n",
@@ -203,6 +219,9 @@ done
         "HUGGING_FACE_HUB_TOKEN": "must-not-reach-compute",
         "OM_PIPELINE_CACHE": str(tmp_path / "pipeline-cache"),
         "OM_RLZERO_PREFLIGHT_WAIT_SECONDS": "1",
+        "OM_RLZERO_SIGNAL_TIMEOUT_SECONDS": "5",
+        "OM_RLZERO_SMOKE_TIMEOUT_SECONDS": "5",
+        "OM_RLZERO_PREFLIGHT_KILL_GRACE_SECONDS": "1",
         "OM_RLZERO_QUEUE_WAIT_SECONDS": "1",
         "OM_RLZERO_FAMILY_RETRY_SECONDS": "0",
     }
@@ -278,6 +297,76 @@ def test_h100_profile_uses_a_disjoint_root_and_runtime_contract(tmp_path: Path) 
     assert f"experiment_root={shared_root}" in output
     assert "math500/s0 complete" in output
     assert "d0 stage=complete" in output
+
+
+def test_launcher_kills_stale_gpu_process_before_creating_fresh_contexts(
+    tmp_path: Path,
+) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    stale = subprocess.Popen(["sleep", "300"])
+    try:
+        result = subprocess.run(
+            ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+            cwd=checkout,
+            env={
+                **env,
+                "OM_LOCAL_LOCK_DIR": str(tmp_path / "stale-gpu-local"),
+                "TEST_GPU_PID": str(stale.pid),
+            },
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        stale.wait(timeout=3)
+        assert "TERM sent to 1 stale GPU compute processes" in result.stdout
+        assert "all GPU compute contexts cleared" in result.stdout
+        assert "fresh CUDA contexts passed on all four GPUs" in result.stdout
+    finally:
+        if stale.poll() is None:
+            stale.kill()
+            stale.wait()
+
+
+def test_signal_qualification_has_a_hard_timeout(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "signal-timeout-local"),
+            "OM_RLZERO_SIGNAL_TIMEOUT_SECONDS": "1",
+            "TEST_HANG_SIGNAL": "1",
+        },
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "[preflight-timeout] signal-math500 exceeded 1s" in result.stdout
+
+
+def test_four_gpu_smoke_has_a_hard_timeout(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "smoke-timeout-local"),
+            "OM_RLZERO_SMOKE_TIMEOUT_SECONDS": "1",
+            "TEST_HANG_SMOKE": "1",
+        },
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "[preflight-timeout] grpo-smoke-step1 exceeded 1s" in result.stdout
 
 
 def test_status_shows_point_progress_and_untruncated_runtime_errors(

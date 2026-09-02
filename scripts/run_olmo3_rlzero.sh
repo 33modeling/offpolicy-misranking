@@ -92,6 +92,7 @@ if [ "$MODE" = check ] || [ "$MODE" = run ]; then
   }
   CURRENT_GIT=$(git rev-parse HEAD) || exit 1
   LOCAL_ROOT="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+  export OM_NODE_NAMESPACE="$LOCAL_ROOT"
   local_path=$(realpath -m "$LOCAL_ROOT")
   shared_path=$(realpath -m "$GROUP_VOLUME")
   [[ "$local_path" != "$shared_path" && "$local_path" != "$shared_path/"* ]] || {
@@ -330,6 +331,13 @@ if [ "$MODE" = status ]; then
   [ -s "$ROOT/.queue/generation.git" ] && \
     echo "generation_git=$(cat "$ROOT/.queue/generation.git")" || \
     echo "generation_git=not-started"
+  latest_worker_log=$(find "$ROOT/logs" -maxdepth 1 -type f -name '*.log' \
+    ! -name '*-keepalive.log' -printf '%T@ %p\n' 2>/dev/null \
+    | sort -nr | head -1 | cut -d' ' -f2-)
+  if [ -n "$latest_worker_log" ]; then
+    echo "latest_worker_log=$latest_worker_log (last $STATUS_LOG_LINES lines)"
+    tail -n "$STATUS_LOG_LINES" "$latest_worker_log" 2>/dev/null | sed 's/^/  | /'
+  fi
   for seed in "${SEEDS[@]}"; do
     for dataset in "${DATASETS[@]}"; do
       owner="$QUEUE/$dataset-s$seed.owner.json"
@@ -374,8 +382,107 @@ if [ "$MODE" = run ]; then
   }
 
   mkdir -p "$LOCAL_ROOT/olmo3-preflight" "$ROOT/logs"
-  exec 8>"$LOCAL_ROOT/primary.lock"
-  flock -n 8 || { echo "[abort] another experiment already owns this physical node"; exit 1; }
+  PRIMARY_LOCK="$LOCAL_ROOT/primary.lock"
+  exec 8>"$PRIMARY_LOCK"
+  if ! flock -n 8; then
+    echo "[startup-cleanup] previous launcher or orphan owns the node lock; terminating it"
+    "$PY" "$SUPERVISOR_RUNTIME_REPO/src/cleanup_run_processes.py" \
+      --run-prefix "$ROOT" --timeout "${OM_RLZERO_STALE_PROCESS_TIMEOUT:-15}" \
+      --open-file "$PRIMARY_LOCK" || exit 1
+    flock -w 5 8 || {
+      echo "[abort] another experiment already owns this physical node; cleanup could not release it"
+      exit 1
+    }
+  fi
+
+  HOST_TAG=$(hostname 2>/dev/null || printf node)
+  WORKER_SUFFIX=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || printf '%s' "$$")
+  WORKER_ID=$(printf '%s-%s' "$HOST_TAG" "$WORKER_SUFFIX" | tr -cs 'a-zA-Z0-9._-' '-')
+  export WORKER_ID
+  LOG="$ROOT/logs/$WORKER_ID.log"
+  echo "[worker] id=$WORKER_ID root=$ROOT" | tee -a "$LOG"
+
+  STALE_PROCESS_TIMEOUT="${OM_RLZERO_STALE_PROCESS_TIMEOUT:-15}"
+  GPU_CLEANUP_TIMEOUT="${OM_RLZERO_GPU_CLEANUP_TIMEOUT:-15}"
+  for value_name in STALE_PROCESS_TIMEOUT GPU_CLEANUP_TIMEOUT; do
+    value=${!value_name}
+    case "$value" in
+      ''|*[!0-9]*|0) echo "[abort] invalid $value_name=$value" | tee -a "$LOG"; exit 2 ;;
+    esac
+  done
+
+  cleanup_stale_experiment_processes() {
+    "$PY" "$SUPERVISOR_RUNTIME_REPO/src/cleanup_run_processes.py" \
+      --run-prefix "$ROOT" --timeout "$STALE_PROCESS_TIMEOUT" \
+      --require-environment "OM_NODE_NAMESPACE=$LOCAL_ROOT" \
+      --command-pattern 'scripts/run_olmo3_rlzero.sh run' \
+      --command-pattern 'scripts/run_matrix.sh' \
+      --command-pattern 'scripts/run_point.sh' \
+      --command-pattern 'src/train_policy_grpo.py' \
+      --command-pattern 'src/experiment.py' \
+      --command-pattern 'scripts/gpu_keepalive.py'
+  }
+
+  gpu_compute_pids() {
+    timeout 20 nvidia-smi --query-compute-apps=pid \
+      --format=csv,noheader,nounits 2>/dev/null \
+      | awk '$1 ~ /^[[:space:]]*[0-9]+[[:space:]]*$/ {gsub(/[[:space:]]/, "", $1); print $1}'
+  }
+
+  cleanup_node_gpu_processes() {
+    local output pid owner deadline current_uid remaining="" terminated=0
+    local pids=()
+    current_uid=$(id -u)
+    output=$(gpu_compute_pids) || {
+      echo "[abort] nvidia-smi compute-process query failed during cleanup" | tee -a "$LOG"
+      return 1
+    }
+    [ -z "$output" ] || mapfile -t pids <<< "$output"
+    for pid in "${pids[@]}"; do
+      owner=$(stat -c %u "/proc/$pid" 2>/dev/null || true)
+      [ "$owner" = "$current_uid" ] || continue
+      kill -TERM "$pid" 2>/dev/null || true
+      terminated=$((terminated + 1))
+    done
+    if [ "$terminated" -gt 0 ]; then
+      echo "[startup-cleanup] TERM sent to $terminated stale GPU compute processes" | tee -a "$LOG"
+    fi
+
+    deadline=$((SECONDS + GPU_CLEANUP_TIMEOUT))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+      output=$(gpu_compute_pids) || return 1
+      remaining=""
+      while IFS= read -r pid; do
+        [ -n "$pid" ] || continue
+        owner=$(stat -c %u "/proc/$pid" 2>/dev/null || true)
+        [ "$owner" = "$current_uid" ] && remaining="$remaining $pid"
+      done <<< "$output"
+      [ -n "$remaining" ] || break
+      /bin/sleep 1
+    done
+    for pid in $remaining; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
+    [ -z "$remaining" ] || {
+      echo "[startup-cleanup] KILL sent to remaining GPU processes:$remaining" | tee -a "$LOG"
+      /bin/sleep 1
+    }
+
+    output=$(gpu_compute_pids) || return 1
+    if [ -n "$output" ]; then
+      echo "[abort] GPU compute processes remain after full cleanup: $(printf '%s' "$output" | tr '\n' ' ')" \
+        | tee -a "$LOG"
+      timeout 20 nvidia-smi --query-compute-apps=pid,process_name,used_gpu_memory \
+        --format=csv,noheader 2>&1 | tee -a "$LOG" || true
+      return 1
+    fi
+    echo "[startup-cleanup] all GPU compute contexts cleared" | tee -a "$LOG"
+  }
+
+  cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
+  statuses=("${PIPESTATUS[@]}")
+  [ "${statuses[0]}" -eq 0 ] && [ "${statuses[1]}" -eq 0 ] || exit 1
+  cleanup_node_gpu_processes || exit 1
 
   memory=$(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits) || exit 1
   rows=$(printf '%s\n' "$memory" | awk 'NF {n++} END {print n+0}')
@@ -385,13 +492,6 @@ if [ "$MODE" = run ]; then
     printf '%s\n' "$memory"
     exit 1
   }
-
-  HOST_TAG=$(hostname 2>/dev/null || printf node)
-  WORKER_SUFFIX=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || printf '%s' "$$")
-  WORKER_ID=$(printf '%s-%s' "$HOST_TAG" "$WORKER_SUFFIX" | tr -cs 'a-zA-Z0-9._-' '-')
-  export WORKER_ID
-  LOG="$ROOT/logs/$WORKER_ID.log"
-  echo "[worker] id=$WORKER_ID root=$ROOT" | tee -a "$LOG"
 
   # Keep all allocated GPUs active before model/dataset verification begins.
   # This also spans signal qualification, point transitions, CPU verification,
@@ -408,7 +508,11 @@ if [ "$MODE" = run ]; then
     rm -f -- "$KEEPALIVE_READY"
   }
   start_supervisor_keepalive() {
-    [ -z "${SUPERVISOR_KEEPALIVE:-}" ] || return 0
+    if [ -n "${SUPERVISOR_KEEPALIVE:-}" ]; then
+      kill -0 "$SUPERVISOR_KEEPALIVE" 2>/dev/null && return 0
+      wait "$SUPERVISOR_KEEPALIVE" 2>/dev/null || true
+      SUPERVISOR_KEEPALIVE=""
+    fi
     rm -f -- "$KEEPALIVE_READY"
     OM_GPU_KEEPALIVE_READY_FILE="$KEEPALIVE_READY" CUDA_VISIBLE_DEVICES=0,1,2,3 \
       "$PY" "$SUPERVISOR_RUNTIME_REPO/scripts/gpu_keepalive.py" \
@@ -428,7 +532,13 @@ if [ "$MODE" = run ]; then
       stop_supervisor_keepalive
       return 1
     }
-    echo "[worker] four-GPU keepalive ready pid=$SUPERVISOR_KEEPALIVE" | tee -a "$LOG"
+    grep -Fq 'gpus=4' "$KEEPALIVE_READY" || {
+      echo "[abort] GPU keepalive did not create four healthy CUDA contexts" | tee -a "$LOG"
+      stop_supervisor_keepalive
+      return 1
+    }
+    echo "[worker] fresh CUDA contexts passed on all four GPUs; keepalive pid=$SUPERVISOR_KEEPALIVE" \
+      | tee -a "$LOG"
   }
   cleanup_worker() {
     [ -z "${ACTIVE_OWNER:-}" ] || rm -f -- "$ACTIVE_OWNER"
@@ -516,15 +626,48 @@ export GRADIENT_MICRO_BATCH="$(runtime_field gradient_micro_batch)"
 export GRPO_LOGPROB_MICRO_BATCH="$(runtime_field logprob_micro_batch)"
 export GRPO_GRADIENT_CHECKPOINTING="$(runtime_field gradient_checkpointing)"
 
+SIGNAL_TIMEOUT_SECONDS="${OM_RLZERO_SIGNAL_TIMEOUT_SECONDS:-1800}"
+SMOKE_TIMEOUT_SECONDS="${OM_RLZERO_SMOKE_TIMEOUT_SECONDS:-900}"
+PREFLIGHT_KILL_GRACE_SECONDS="${OM_RLZERO_PREFLIGHT_KILL_GRACE_SECONDS:-30}"
+for value_name in SIGNAL_TIMEOUT_SECONDS SMOKE_TIMEOUT_SECONDS PREFLIGHT_KILL_GRACE_SECONDS; do
+  value=${!value_name}
+  case "$value" in
+    ''|*[!0-9]*|0) echo "[abort] invalid $value_name=$value" | tee -a "$LOG"; exit 2 ;;
+  esac
+done
+
+run_timed_preflight() {  # run_timed_preflight <label> <seconds> <command...>
+  local label=$1 seconds=$2 rc
+  local statuses=()
+  shift 2
+  echo "[preflight] $label start; timeout=${seconds}s" | tee -a "$LOG"
+  timeout --signal=TERM --kill-after="${PREFLIGHT_KILL_GRACE_SECONDS}s" \
+    "${seconds}s" "$@" 8>&- 9>&- 2>&1 | tee -a "$LOG" 8>&- 9>&-
+  statuses=("${PIPESTATUS[@]}")
+  rc=${statuses[0]}
+  [ "${statuses[1]}" -eq 0 ] || return "${statuses[1]}"
+  if [ "$rc" -eq 124 ]; then
+    echo "[preflight-timeout] $label exceeded ${seconds}s; process group terminated" \
+      | tee -a "$LOG"
+  elif [ "$rc" -ne 0 ]; then
+    echo "[preflight-fail] $label rc=$rc" | tee -a "$LOG"
+  else
+    echo "[preflight] $label passed" | tee -a "$LOG"
+  fi
+  return "$rc"
+}
+
 signal_qualify() {
   local dataset=$1 report="$PREFLIGHT/$1-signal.json"
-  CUDA_VISIBLE_DEVICES=0 PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PY" "$GENERATION_REPO/src/qualify_rlzero_signal.py" \
-    --model "$MODEL_PATH" --dataset "$dataset" --data-root "$DATASETS_DIR" \
-    --output "$report" --prompt-count 8 --group-size 8 \
-    --max-new-tokens 1024 --generation-batch "$OM_GEN_BATCH" \
-    --gradient-micro-batch "$GRADIENT_MICRO_BATCH" \
-    --grad-layers "$(experiment_field grad_layers)"
+  run_timed_preflight "signal-$dataset" "$SIGNAL_TIMEOUT_SECONDS" \
+    env CUDA_VISIBLE_DEVICES=0 \
+      PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PY" "$GENERATION_REPO/src/qualify_rlzero_signal.py" \
+      --model "$MODEL_PATH" --dataset "$dataset" --data-root "$DATASETS_DIR" \
+      --output "$report" --prompt-count 8 --group-size 8 \
+      --max-new-tokens 1024 --generation-batch "$OM_GEN_BATCH" \
+      --gradient-micro-batch "$GRADIENT_MICRO_BATCH" \
+      --grad-layers "$(experiment_field grad_layers)"
 }
 SIGNAL_WAIT_SECONDS="${OM_RLZERO_PREFLIGHT_WAIT_SECONDS:-10}"
 case "$SIGNAL_WAIT_SECONDS" in
@@ -587,16 +730,20 @@ PYEOF
     --max-new-tokens 64 --seed 271828)
   [ "$GRPO_GRADIENT_CHECKPOINTING" = 1 ] \
     || common+=(--disable-gradient-checkpointing)
-  CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 \
-    "$GENERATION_REPO/src/train_policy_grpo.py" "${common[@]}" \
-    --output "$SMOKE_ROOT/step1" --target-steps 1 || exit 1
-  CUDA_VISIBLE_DEVICES=0,1,2,3 PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 \
-    "$GENERATION_REPO/src/train_policy_grpo.py" "${common[@]}" \
-    --output "$SMOKE_ROOT/step2" --target-steps 2 --start-step 1 \
-    --resume-adapter "$SMOKE_ROOT/step1" \
-    --resume-optimizer "$SMOKE_ROOT/step1/optimizer.pt" || exit 1
+  run_timed_preflight "grpo-smoke-step1" "$SMOKE_TIMEOUT_SECONDS" \
+    env CUDA_VISIBLE_DEVICES=0,1,2,3 \
+      PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 \
+      "$GENERATION_REPO/src/train_policy_grpo.py" "${common[@]}" \
+      --output "$SMOKE_ROOT/step1" --target-steps 1 || exit 1
+  run_timed_preflight "grpo-smoke-step2" "$SMOKE_TIMEOUT_SECONDS" \
+    env CUDA_VISIBLE_DEVICES=0,1,2,3 \
+      PYTHONPATH="$GENERATION_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 \
+      "$GENERATION_REPO/src/train_policy_grpo.py" "${common[@]}" \
+      --output "$SMOKE_ROOT/step2" --target-steps 2 --start-step 1 \
+      --resume-adapter "$SMOKE_ROOT/step1" \
+      --resume-optimizer "$SMOKE_ROOT/step1/optimizer.pt" || exit 1
   printf '%s\n' "$SMOKE_KEY" > "$SMOKE_MARKER.tmp"
   mv "$SMOKE_MARKER.tmp" "$SMOKE_MARKER"
 fi
@@ -625,7 +772,9 @@ export REGIME_CLIP_CAP=$(experiment_field clip_cap)
 export REGIME_TOPK_FRAC=$(experiment_field topk_frac)
 export REGIME_TEMPERATURE=$(experiment_field temperature)
 export REGIME_FIRST_BOOTSTRAP=$(experiment_field first_bootstrap)
-export REGIME_MAX_RETRIES=3 OM_STALL_MINUTES=15
+export REGIME_MAX_RETRIES="${REGIME_MAX_RETRIES:-3}"
+export OM_STALL_MINUTES="${OM_STALL_MINUTES:-15}"
+export REGIME_HARD_STALL_SECONDS="${REGIME_HARD_STALL_SECONDS:-${OM_RLZERO_HARD_STALL_SECONDS:-1800}}"
 export OM_SKIP_GPU_CHECK=0 OM_ALLOW_DIRTY=0 OM_ALLOW_ANALYSIS_UPGRADE=1
 FAMILY_ATTEMPTS="${OM_RLZERO_FAMILY_ATTEMPTS:-3}"
 case "$FAMILY_ATTEMPTS" in
@@ -685,7 +834,8 @@ PYEOF
       REGIME_DATASETS="$dataset" REGIME_SEEDS="$seed" \
       REGIME_DRIFTS="${DRIFTS[*]}" REGIME_SKIP_COLLECTION=1 \
       OM_PROMPT_FORMAT="$format" \
-      bash "$SUPERVISOR_RUNTIME_REPO/scripts/run_matrix.sh" 2>&1 | tee -a "$LOG"
+      bash "$SUPERVISOR_RUNTIME_REPO/scripts/run_matrix.sh" 8>&- 9>&- 2>&1 \
+        | tee -a "$LOG" 8>&- 9>&-
     statuses=("${PIPESTATUS[@]}")
     rc=${statuses[0]}
     if [ "${statuses[1]}" -ne 0 ]; then
@@ -724,14 +874,20 @@ while :; do
         run_family "$dataset" "$seed"
       ) 9>"$QUEUE/$dataset-s$seed.lock"
       rc=$?
-      [ "$PINNED_POINT_EXTERNAL_KEEPALIVE" -eq 1 ] \
-        || start_supervisor_keepalive || exit 1
+      if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
+        echo "[family-retry] $dataset/s$seed rc=$rc; allocation retained, artifacts preserved, automatic retry scheduled" \
+          | tee -a "$LOG"
+        stop_supervisor_keepalive
+        cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
+        statuses=("${PIPESTATUS[@]}")
+        [ "${statuses[0]}" -eq 0 ] && [ "${statuses[1]}" -eq 0 ] || exit 1
+        cleanup_node_gpu_processes || exit 1
+      fi
+      start_supervisor_keepalive || exit 1
       [ "$rc" -eq 75 ] && continue
       claimed=$((claimed + 1))
       if [ "$rc" -ne 0 ]; then
         cleanup_owner
-        echo "[family-retry] $dataset/s$seed rc=$rc; allocation retained, artifacts preserved, automatic retry scheduled" \
-          | tee -a "$LOG"
         retrying=$((retrying + 1))
         continue
       fi

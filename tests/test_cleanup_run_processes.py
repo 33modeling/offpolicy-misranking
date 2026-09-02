@@ -39,4 +39,16 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert terminate(str(tmp / "runs" / "v4-"), timeout=1)
     assert_terminated(old_worker, "stale v4 worker")
 
+    lock = tmp / "primary.lock"
+    old_lock_holder = subprocess.Popen(
+        ["bash", "-c", 'exec 9>"$1"; flock 9; sleep 300', "bash", str(lock)]
+    )
+    time.sleep(0.1)
+    assert terminate(
+        str(tmp / "runs" / "olmo3-"),
+        timeout=1,
+        open_files=(str(lock.resolve()),),
+    )
+    assert_terminated(old_lock_holder, "stale primary-lock holder")
+
 print("PASS stale v4 launchers and workers are terminated")

@@ -187,7 +187,8 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             fake_bin / "nvidia-smi",
             "#!/usr/bin/env bash\n"
             'if [[ "$*" == *"pmon"* ]]; then\n'
-            "  printf '# gpu pid type sm mem\\n0 999999 C 99 1\\n'\n"
+            "  printf '# gpu pid type sm mem\\n'\n"
+            "  ps -eo pid=,args= | awk '/scripts\\/run_point.sh/ && !/awk/ {print \"0 \" $1 \" C 99 1\"}'\n"
             "else\n"
             "  printf '99\\n'\n"
             "fi\n",
@@ -229,6 +230,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
                 "REGIME_N_VAL": "4",
                 "REGIME_WATCH_INTERVAL_SECONDS": "1",
                 "REGIME_STALL_SECONDS": "1",
+                "REGIME_HARD_STALL_SECONDS": "2",
                 "REGIME_WATCH_KILL_GRACE_SECONDS": "0",
                 "REGIME_WATCH_GPU_SAMPLES": "1",
             }
@@ -250,7 +252,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             output, _ = worker.communicate(timeout=30)
             outputs.append(output)
             assert worker.returncode == 0, output
-        assert any("[regime-watchdog]" in output for output in outputs)
+        assert any("[regime-hard-stall]" in output for output in outputs)
         assert (
             work / "runs/regime-fixture/.queue/generation.git"
         ).read_text(encoding="utf-8") == f"{checkout_git}\n"

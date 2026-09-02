@@ -8,10 +8,10 @@ GPU마다 짧은 연산과 휴식을 반복하되 실제 경과 시간을 기준
 """
 
 import os
-from pathlib import Path
 import sys
 import threading
 import time
+from pathlib import Path
 
 import torch
 
@@ -65,16 +65,13 @@ def main() -> None:
         temporary.write_text(f"pid={os.getpid()} gpus={n}\n")
         temporary.replace(path)
     print(f"keepalive: all {n} GPU workers ready", flush=True)
-    while True:  # 스레드 예외로 죽으면 재기동
-        time.sleep(60)
+    while True:
+        time.sleep(5)
         for i, t in enumerate(threads):
             if not t.is_alive():
-                print(f"keepalive: GPU{i} 스레드 재시작", flush=True)
-                events[i] = threading.Event()
-                threads[i] = threading.Thread(
-                    target=worker, args=(i, duty, events[i]), daemon=True
+                raise RuntimeError(
+                    f"GPU{i} keepalive worker exited; CUDA context restart required"
                 )
-                threads[i].start()
 
 
 if __name__ == "__main__":
