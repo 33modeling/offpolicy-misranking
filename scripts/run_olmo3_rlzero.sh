@@ -200,25 +200,161 @@ family_complete() {
 }
 
 if [ "$MODE" = status ]; then
+  STATUS_LOG_LINES="${OM_RLZERO_STATUS_LOG_LINES:-20}"
+  STATUS_ERROR_LINES="${OM_RLZERO_STATUS_ERROR_LINES:-6}"
+  for value_name in STATUS_LOG_LINES STATUS_ERROR_LINES; do
+    value=${!value_name}
+    case "$value" in
+      ''|*[!0-9]*|0) echo "[abort] invalid $value_name=$value"; exit 2 ;;
+    esac
+  done
+
+  status_rows() {
+    local run=$1 base=$2 file rows=0 count
+    if [ -f "$run/$base.jsonl" ]; then
+      wc -l < "$run/$base.jsonl" 2>/dev/null || printf '0\n'
+      return
+    fi
+    while IFS= read -r -d '' file; do
+      count=$(wc -l < "$file" 2>/dev/null || printf 0)
+      rows=$((rows + count))
+    done < <(find "$run" -maxdepth 1 -type f \
+      \( -name "$base.shard*.jsonl" -o -name "$base.shard*.partial" \) \
+      -print0 2>/dev/null)
+    printf '%s\n' "$rows"
+  }
+
+  status_latest_log() {
+    local root=$1
+    [ -d "$root" ] || return 1
+    find "$root" -type f -path '*/logs/*.log' -printf '%T@ %p\n' 2>/dev/null \
+      | sort -nr | head -1 | cut -d' ' -f2-
+  }
+
+  status_log_stage() {
+    local name=${1##*/}
+    case "$name" in
+      *rollout-behavior*|beta-shard*) printf 'behavior-rollout\n' ;;
+      *rollout-fresh*|fresh-shard*) printf 'fresh-rollout\n' ;;
+      grpo.log) printf 'grpo\n' ;;
+      val-grads.log) printf 'validation-gradients\n' ;;
+      ograds-shard*) printf 'oracle-gradients\n' ;;
+      score-shard*) printf 'scoring\n' ;;
+      merge.log) printf 'merge\n' ;;
+      report.log) printf 'report\n' ;;
+      regime-recovery-*) printf 'cuda-recovery\n' ;;
+      regime-attempt-*) printf 'pipeline\n' ;;
+      main.log) printf 'pipeline\n' ;;
+      *) printf 'pipeline\n' ;;
+    esac
+  }
+
+  status_point() {
+    local dataset=$1 seed=$2 drift=$3 run log stage behavior_rows fresh_rows
+    local attempt="" grpo_steps="" recovery="" recovery_batch="" recovery_status=""
+    run=$(run_dir "$dataset" "$seed" "$drift")
+    if [ -s "$run/DONE" ]; then
+      echo "  d$drift stage=complete"
+      return
+    fi
+    if [ ! -d "$run" ]; then
+      echo "  d$drift stage=pending"
+      return
+    fi
+
+    log=$(status_latest_log "$run" || true)
+    stage=initialized
+    [ -z "$log" ] || stage=$(status_log_stage "$log")
+    if [ "$stage" = pipeline ] || [ "$stage" = initialized ]; then
+      if [ -s "$run/rollouts_fresh_train.manifest.json" ]; then
+        stage=post-rollout
+      elif [ "$drift" -gt 0 ] && [ -s "$run/policy_step_$drift/policy_train.json" ]; then
+        stage=grpo-complete
+      elif [ -s "$run/rollouts_behavior_train.manifest.json" ]; then
+        stage=behavior-ready
+      elif [ -s "$run/prompts.json" ]; then
+        stage=prepared
+      fi
+    fi
+    behavior_rows=$(status_rows "$run" rollouts_behavior_train)
+    fresh_rows=$(status_rows "$run" rollouts_fresh_train)
+    if [ -s "$run/policy_step_$drift/grpo_stats.jsonl" ]; then
+      grpo_steps=$(wc -l < "$run/policy_step_$drift/grpo_stats.jsonl")
+    fi
+    attempt=$(find "$run/logs" -maxdepth 1 -type f -name 'regime-attempt-*.log' \
+      -printf '%T@ %f\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
+    if [ -s "$run/rollout_recovery.jsonl" ]; then
+      recovery=$(tail -n 1 "$run/rollout_recovery.jsonl")
+      recovery_batch=$(printf '%s\n' "$recovery" | sed -n \
+        's/.*"recovery_generation_batch":\([0-9][0-9]*\).*/\1/p')
+      recovery_status=$(printf '%s\n' "$recovery" | sed -n \
+        's/.*"status":"\([^"]*\)".*/\1/p')
+    fi
+    printf '  d%s stage=%s behavior_rows=%s fresh_rows=%s' \
+      "$drift" "$stage" "$behavior_rows" "$fresh_rows"
+    [ -z "$grpo_steps" ] || printf ' grpo_steps=%s/%s' "$grpo_steps" "$drift"
+    [ -z "$attempt" ] || printf ' attempt=%s' "${attempt%.log}"
+    [ -z "$recovery_batch" ] || printf ' recovery_batch=%s' "$recovery_batch"
+    [ -z "$recovery_status" ] || printf ' recovery_status=%s' "$recovery_status"
+    printf '\n'
+  }
+
+  status_family_logs() {
+    local dataset=$1 seed=$2 owner=$3 root latest errors worker worker_log
+    root=$(family_root "$dataset" "$seed")
+    latest=$(status_latest_log "$root" || true)
+    if [ -n "$latest" ]; then
+      echo "  latest_log=$latest (last $STATUS_LOG_LINES lines)"
+      tail -n "$STATUS_LOG_LINES" "$latest" 2>/dev/null | sed 's/^/    | /'
+    fi
+    errors=$(find "$root" -type f -path '*/logs/*.log' -print0 2>/dev/null \
+      | xargs -0 -r grep -hEi \
+        'CUDA error|CUBLAS_STATUS|cuBLAS|CUDA out of memory|device-side assert|unspecified launch failure|illegal memory access|Traceback|RuntimeError' \
+        2>/dev/null | tail -n "$STATUS_ERROR_LINES")
+    if [ -n "$errors" ]; then
+      echo "  recent_errors:"
+      printf '%s\n' "$errors" | sed 's/^/    ! /'
+    fi
+    if [ -s "$owner" ]; then
+      worker=$(sed -n 's/.*"worker"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$owner")
+      worker_log="$ROOT/logs/$worker.log"
+      if [ -n "$worker" ] && [ -s "$worker_log" ]; then
+        echo "  worker_log=$worker_log (last $STATUS_LOG_LINES lines)"
+        tail -n "$STATUS_LOG_LINES" "$worker_log" 2>/dev/null | sed 's/^/    | /'
+      fi
+    fi
+  }
+
   echo "profile=$PROFILE"
   echo "experiment_root=$ROOT"
+  echo "log_tail_lines=$STATUS_LOG_LINES"
   [ -s "$ROOT/.queue/generation.git" ] && \
     echo "generation_git=$(cat "$ROOT/.queue/generation.git")" || \
     echo "generation_git=not-started"
   for seed in "${SEEDS[@]}"; do
     for dataset in "${DATASETS[@]}"; do
+      owner="$QUEUE/$dataset-s$seed.owner.json"
       if [ -s "$(family_stamp "$dataset" "$seed")" ]; then
         state=complete
-      elif [ -s "$QUEUE/$dataset-s$seed.owner.json" ]; then
+      elif [ -s "$owner" ]; then
         if (flock -n 9) 9>"$QUEUE/$dataset-s$seed.lock"; then
-          state="stale-owner $(tr '\n' ' ' < "$QUEUE/$dataset-s$seed.owner.json")"
+          state="stale-owner $(tr '\n' ' ' < "$owner")"
         else
-          state="claimed $(tr '\n' ' ' < "$QUEUE/$dataset-s$seed.owner.json")"
+          state="claimed $(tr '\n' ' ' < "$owner")"
         fi
+      elif [ -d "$(family_root "$dataset" "$seed")" ]; then
+        state=partial
       else
         state=pending
       fi
       echo "$dataset/s$seed $state"
+      for drift in "${DRIFTS[@]}"; do
+        status_point "$dataset" "$seed" "$drift"
+      done
+      case "$state" in
+        complete|pending) ;;
+        *) status_family_logs "$dataset" "$seed" "$owner" ;;
+      esac
     done
   done
   [ -s "$GLOBAL_RESULTS/FINAL_REPORT.md" ] && echo "report=$GLOBAL_RESULTS/FINAL_REPORT.md"

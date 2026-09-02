@@ -260,6 +260,64 @@ def test_h100_profile_uses_a_disjoint_root_and_runtime_contract(tmp_path: Path) 
     assert not baseline.exists()
 
 
+def test_status_shows_point_progress_and_untruncated_runtime_errors(
+    tmp_path: Path,
+) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    shared = Path(env["TEST_SHARED"])
+    tag = "olmo3-1025-7b-base-rlzero-grpo-v1"
+    root = shared / "work/runs" / tag
+    family = root / "family-math500-s0"
+    run = family / f"{tag}-s0-math500-d0"
+    logs = run / "logs"
+    logs.mkdir(parents=True)
+    (root / ".families").mkdir()
+    (root / ".queue").mkdir()
+    (root / "logs").mkdir()
+    (root / ".queue/generation.git").write_text("abc123\n")
+    (root / ".families/math500-s0.owner.json").write_text(
+        '{"worker":"worker-status","host":"h100-test"}\n'
+    )
+    (root / "logs/worker-status.log").write_text(
+        "[family-retry] math500/s0 rc=1; artifacts preserved\n"
+    )
+    (run / "rollouts_behavior_train.jsonl").write_text("{}\n{}\n")
+    (run / "rollouts_fresh_train.shard0.partial").write_text("{}\n{}\n{}\n")
+    (run / "rollout_recovery.jsonl").write_text(
+        '{"recovery_generation_batch":1,"status":"failed"}\n'
+    )
+    long_error = (
+        "RuntimeError: CUDA error: CUBLAS_STATUS_EXECUTION_FAILED "
+        + "x" * 220
+        + " END-OF-ERROR"
+    )
+    (logs / "regime-attempt-2.log").write_text("pipeline failed\n")
+    (logs / "fresh-shard0.log").write_text(
+        "[2026-09-02 12:00:00] rollout 46/100\n" + long_error + "\n"
+    )
+
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "status"],
+        cwd=checkout,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "math500/s0 stale-owner" in output
+    assert "d0 stage=fresh-rollout behavior_rows=2 fresh_rows=3" in output
+    assert "recovery_batch=1 recovery_status=failed" in output
+    assert "d25 stage=pending" in output
+    assert "latest_log=" in output
+    assert "rollout 46/100" in output
+    assert "recent_errors:" in output
+    assert long_error in output
+    assert "worker_log=" in output
+
+
 def test_failed_family_restarts_automatically_without_launcher_exit(tmp_path: Path) -> None:
     checkout, env = fixture_checkout(tmp_path)
     result = subprocess.run(

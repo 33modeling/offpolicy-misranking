@@ -156,6 +156,7 @@ SEEDS=(${REGIME_SEEDS:-0 1 2})
 DATASETS=(${REGIME_DATASETS:-gsm8k math500})
 DRIFTS=(${REGIME_DRIFTS:-0 25 100 400})
 MAX_RETRIES="${REGIME_MAX_RETRIES:-3}"
+RECOVERY_GEN_BATCH="${REGIME_RECOVERY_GEN_BATCH:-1}"
 CONTRACT="${REGIME_MATRIX:-}"
 N_VAL_DEFAULT="${REGIME_N_VAL:-100}"
 N_TRAIN_BY_DATASET="${REGIME_N_TRAIN_BY_DATASET:-}"
@@ -220,6 +221,9 @@ for value_name in WATCH_INTERVAL_SECONDS STALL_SECONDS WATCH_GPU_SAMPLES; do
     ''|*[!0-9]*|0) echo "[abort] invalid $value_name=$value"; exit 2 ;;
   esac
 done
+case "$RECOVERY_GEN_BATCH" in
+  ''|*[!0-9]*|0) echo "[abort] invalid REGIME_RECOVERY_GEN_BATCH=$RECOVERY_GEN_BATCH"; exit 2 ;;
+esac
 case "$WATCH_KILL_GRACE_SECONDS" in
   ''|*[!0-9]*) echo "[abort] invalid WATCH_KILL_GRACE_SECONDS=$WATCH_KILL_GRACE_SECONDS"; exit 2 ;;
 esac
@@ -544,6 +548,77 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
   return "$rc"
 }
 
+rollout_artifact_ready() {
+  local run=$1 artifact=$2
+  PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PY" - "$run" "$artifact" <<'PYEOF' >/dev/null 2>&1
+import sys
+from pathlib import Path
+
+from artifact_contract import validate_generation_contract
+
+validate_generation_contract(Path(sys.argv[1]), (sys.argv[2],))
+PYEOF
+}
+
+policy_artifact_ready() {
+  local run=$1 drift=$2
+  [ "$drift" -gt 0 ] || return 0
+  PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PY" - "$run/policy_step_$drift" "$drift" \
+      "$GRPO_WORLD_SIZE_DEFAULT" "$RLVR_METHOD_DEFAULT" <<'PYEOF' >/dev/null 2>&1
+import sys
+from pathlib import Path
+
+from train_policy_grpo import validate_policy_manifest
+
+validate_policy_manifest(
+    Path(sys.argv[1]),
+    target_steps=int(sys.argv[2]),
+    world_size=int(sys.argv[3]),
+    training_objective=sys.argv[4],
+)
+PYEOF
+}
+
+cuda_runtime_failure() {
+  local run=$1 attempt_log=$2 file
+  local pattern='CUDA error|CUBLAS_STATUS|cuBLAS|CUDA out of memory|device-side assert|unspecified launch failure|illegal memory access'
+  grep -Eqi "$pattern" "$attempt_log" 2>/dev/null && return 0
+  while IFS= read -r file; do
+    grep -Eqi "$pattern" "$file" 2>/dev/null && return 0
+  done < <(find "$run/logs" -maxdepth 1 -type f -name '*.log' -print 2>/dev/null)
+  return 1
+}
+
+recover_cuda_rollout() {
+  local run=$1 drift=$2 try=$3 stage="" gpu_csv recovery_log
+  cuda_runtime_failure "$run" "$run/logs/regime-attempt-$try.log" || return 1
+
+  if [ "$drift" -eq 0 ] \
+      && ! rollout_artifact_ready "$run" rollouts_behavior_train; then
+    stage=rollout-behavior
+  elif rollout_artifact_ready "$run" rollouts_behavior_train \
+      && ! rollout_artifact_ready "$run" rollouts_fresh_train \
+      && policy_artifact_ready "$run" "$drift"; then
+    stage=rollout-fresh
+  else
+    return 1
+  fi
+
+  gpu_csv="${OM_GPUS:-}"
+  if [ -z "$gpu_csv" ]; then
+    gpu_csv=$(seq -s, 0 $((GRPO_WORLD_SIZE_DEFAULT - 1)))
+  fi
+  recovery_log="$run/logs/regime-recovery-$try.log"
+  echo "[cuda-recovery] $stage with generation batch=$RECOVERY_GEN_BATCH; immutable run config preserved"
+  run_pipeline_watchdog "$run" "$recovery_log" \
+    env OM_RECOVERY_PY="$PY" OM_RECOVERY_INDEX="$try" \
+      PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      bash "$SUPERVISOR_REPO/scripts/recover_rollout_stage.sh" \
+        "$PIPELINE_REPO" "$run" "$stage" "$RECOVERY_GEN_BATCH" "$gpu_csv"
+}
+
 run_point() {
   local dataset=$1 seed=$2 drift=$3 source=$4 resume_step=$5 resume_run=$6
   local run try n_train attempt_log rc prompt_root prompt_env
@@ -660,17 +735,36 @@ run_point() {
       fi
     fi
     bash scripts/diagnose_run_failure.sh "$run" "$attempt_log" 1 2>/dev/null || true
+    if recover_cuda_rollout "$run" "$drift" "$try"; then
+      echo "[cuda-recovery] $dataset/s$seed/d$drift recovered; resuming normal pipeline"
+      continue
+    fi
     sleep 20
   done
   return 1
 }
 
 run_family() {
-  local dataset=$1 seed=$2 source drift rc previous_step=0 previous_run=""
+  local dataset=$1 seed=$2 source drift rc d0_deferred=0 has_training=0
+  local previous_step=0 previous_run=""
   source=$(run_dir "$dataset" "$seed" 0)
   # d0 is the exact positive control: beta=pi with independent rollout noise.
-  run_point "$dataset" "$seed" 0 "" "" ""
-  rc=$?; [ "$rc" -eq 0 ] || return "$rc"
+  # Its independent fresh evaluation is not a prerequisite for training. Once
+  # the immutable d0 behavior pool is valid, start d25 before finishing d0 so a
+  # flaky control rollout cannot leave the entire family with zero GRPO steps.
+  for drift in "${DRIFTS[@]}"; do
+    [ "$drift" -gt 0 ] && has_training=1
+  done
+  if run_complete "$source" "$dataset" "$seed" 0 ""; then
+    :
+  elif [ "$has_training" -eq 1 ] \
+      && rollout_artifact_ready "$source" rollouts_behavior_train; then
+    d0_deferred=1
+    echo "[family-order] d0 behavior ready; deferring independent d0 evaluation until after GRPO points"
+  else
+    run_point "$dataset" "$seed" 0 "" "" ""
+    rc=$?; [ "$rc" -eq 0 ] || return "$rc"
+  fi
   for drift in "${DRIFTS[@]}"; do
     [ "$drift" = 0 ] && continue
     run_point "$dataset" "$seed" "$drift" "$source" "$previous_step" "$previous_run"
@@ -678,6 +772,10 @@ run_family() {
     previous_step=$drift
     previous_run=$(run_dir "$dataset" "$seed" "$drift")
   done
+  if [ "$d0_deferred" -eq 1 ]; then
+    run_point "$dataset" "$seed" 0 "" "" ""
+    rc=$?; [ "$rc" -eq 0 ] || return "$rc"
+  fi
 }
 
 echo "== regime queue: model=$MODEL_TAG seeds=${SEEDS[*]} data=${DATASETS[*]} drift=${DRIFTS[*]}"
