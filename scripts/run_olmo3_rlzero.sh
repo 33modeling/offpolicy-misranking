@@ -306,14 +306,13 @@ if [ "$MODE" = status ]; then
     if [ -n "$latest" ]; then
       echo "  latest_log=$latest (last $STATUS_LOG_LINES lines)"
       tail -n "$STATUS_LOG_LINES" "$latest" 2>/dev/null | sed 's/^/    | /'
-    fi
-    errors=$(find "$root" -type f -path '*/logs/*.log' -print0 2>/dev/null \
-      | xargs -0 -r grep -hEi \
+      errors=$(grep -Ei \
         'CUDA error|CUBLAS_STATUS|cuBLAS|CUDA out of memory|device-side assert|unspecified launch failure|illegal memory access|Traceback|RuntimeError' \
-        2>/dev/null | tail -n "$STATUS_ERROR_LINES")
-    if [ -n "$errors" ]; then
-      echo "  recent_errors:"
-      printf '%s\n' "$errors" | sed 's/^/    ! /'
+        "$latest" 2>/dev/null | tail -n "$STATUS_ERROR_LINES")
+      if [ -n "$errors" ]; then
+        echo "  latest_log_errors:"
+        printf '%s\n' "$errors" | sed 's/^/    ! /'
+      fi
     fi
     if [ -s "$owner" ]; then
       worker=$(sed -n 's/.*"worker"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$owner")

@@ -313,7 +313,7 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     assert "d25 stage=pending" in output
     assert "latest_log=" in output
     assert "rollout 46/100" in output
-    assert "recent_errors:" in output
+    assert "latest_log_errors:" in output
     assert long_error in output
     assert "worker_log=" in output
 
