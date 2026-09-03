@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory() as td:
         {"schema": "offpolicy-score-validation-split/v2",
          "generation_validation": {"validated_rows": 1}}))
     (run / "oracle_protocol.json").write_text(json.dumps(
-        {"schema": "offpolicy-oracle-validation-split/v2",
+        {"schema": "offpolicy-oracle-validation-split/v3",
          "generation_validation": {"validated_rows": 1}}))
     (run / "scores_oracle.json").write_text(json.dumps(
         {str(i): {"score": v, "norm": 1.0} for i, v in ORACLE.items()}))

@@ -137,6 +137,7 @@ def clipped_grpo_loss(
 
     losses: list[torch.Tensor] = []
     ratios: list[torch.Tensor] = []
+    log_ratios: list[torch.Tensor] = []
     approximate_kls: list[torch.Tensor] = []
     for current, old, advantage in zip(
         current_logps, old_logps, advantages, strict=True
@@ -144,7 +145,8 @@ def clipped_grpo_loss(
         if current.ndim != 1 or current.shape != old.shape or current.numel() == 0:
             raise ValueError("each response must have matching non-empty token log-probs")
         old = old.to(device=current.device, dtype=current.dtype)
-        ratio = torch.exp(current - old)
+        log_ratio = current - old
+        ratio = torch.exp(log_ratio)
         clipped = ratio.clamp(1.0 - clip_epsilon, 1.0 + clip_epsilon)
         advantage = advantage.to(device=current.device, dtype=current.dtype)
         surrogate = torch.minimum(ratio * advantage, clipped * advantage)
@@ -154,6 +156,7 @@ def clipped_grpo_loss(
             else -surrogate.sum() / token_normalizer
         )
         ratios.append(ratio.detach())
+        log_ratios.append(log_ratio.detach())
         approximate_kls.append((old - current.detach()).mean())
 
     all_ratios = torch.cat(ratios)
@@ -165,8 +168,27 @@ def clipped_grpo_loss(
         ),
         "mean_ratio": float(all_ratios.mean()),
         "approx_kl": float(torch.stack(approximate_kls).mean()),
+        "max_abs_log_ratio": float(torch.cat(log_ratios).abs().max()),
     }
     return torch.stack(losses).mean(), stats
+
+
+def _distributed_metric_row(local: torch.Tensor, world_size: int) -> dict[str, float]:
+    """Summarize an already all-reduced training-stat vector."""
+    if local.numel() != 10 or world_size < 1:
+        raise ValueError("invalid distributed training-stat vector")
+    token_count = float(local[9])
+    if token_count <= 0:
+        raise ValueError("distributed training-stat vector has no response tokens")
+    return {
+        "reward_mean": float(local[0] / local[1]),
+        "rank_reward_std_mean": float(local[2] / world_size),
+        "loss": float(local[4] / world_size),
+        "grad_norm": float(local[5] / world_size),
+        "clip_fraction": float(local[6] / token_count),
+        "mean_ratio": float(local[7] / token_count),
+        "approx_kl": float(local[8] / token_count),
+    }
 
 
 def validate_policy_manifest(
@@ -850,13 +872,14 @@ def train(args: argparse.Namespace) -> None:
             loss_value = 0.0
             grad_norm_value = 0.0
             model.train()
-            for _ in range(config.epochs_per_batch):
+            for epoch_index in range(config.epochs_per_batch):
                 optimizer.zero_grad(set_to_none=True)
                 response_start = int(chat_ids(tokenizer, prompts[prompt_index]["question"]).numel())
                 token_count = 0
                 clip_count = 0
                 ratio_sum = 0.0
                 kl_sum = 0.0
+                max_abs_log_ratio = 0.0
                 epoch_loss = 0.0
                 chunks = _chunks(len(sequences), args.logprob_micro_batch)
                 for chunk_index, chunk in enumerate(chunks):
@@ -878,6 +901,7 @@ def train(args: argparse.Namespace) -> None:
                                 "clip_fraction": 0.0,
                                 "mean_ratio": 1.0,
                                 "approx_kl": 0.0,
+                                "max_abs_log_ratio": 0.0,
                             }
                         else:
                             chunk_loss, chunk_stats = clipped_grpo_loss(
@@ -893,6 +917,9 @@ def train(args: argparse.Namespace) -> None:
                     token_count += count
                     clip_count += round(chunk_stats["clip_fraction"] * count)
                     ratio_sum += chunk_stats["mean_ratio"] * count
+                    max_abs_log_ratio = max(
+                        max_abs_log_ratio, chunk_stats["max_abs_log_ratio"]
+                    )
                     if args.objective != "rloo":
                         kl_sum += sum(
                             float(
@@ -911,7 +938,25 @@ def train(args: argparse.Namespace) -> None:
                     "clip_fraction": clip_count / token_count,
                     "mean_ratio": ratio_sum / token_count,
                     "approx_kl": kl_sum / token_count,
+                    "max_abs_log_ratio": max_abs_log_ratio,
                 }
+                ratio_deviation = torch.tensor(
+                    [max_abs_log_ratio], device=local_rank
+                )
+                if world_size > 1:
+                    dist.all_reduce(ratio_deviation, op=dist.ReduceOp.MAX)
+                if (
+                    args.objective != "rloo"
+                    and epoch_index == 0
+                    and (
+                        not math.isfinite(float(ratio_deviation[0]))
+                        or float(ratio_deviation[0]) > 5e-3
+                    )
+                ):
+                    raise RuntimeError(
+                        "first policy-loss evaluation is not on-policy: "
+                        f"max_abs_log_ratio={float(ratio_deviation[0]):.6g}"
+                    )
                 grad_norm = torch.nn.utils.clip_grad_norm_(trainable, config.max_grad_norm)
                 optimizer.step()
                 loss_value = epoch_loss
@@ -929,9 +974,9 @@ def train(args: argparse.Namespace) -> None:
                     float(bool(advantages.abs().max() > 0)),
                     loss_value,
                     grad_norm_value,
-                    float(epoch_stats["clip_fraction"]),
-                    float(epoch_stats["mean_ratio"]),
-                    float(epoch_stats["approx_kl"]),
+                    float(clip_count),
+                    float(ratio_sum),
+                    float(kl_sum),
                     float(token_count),
                 ],
                 device=local_rank,
@@ -948,18 +993,14 @@ def train(args: argparse.Namespace) -> None:
             if world_size > 1:
                 dist.all_reduce(runtime_max, op=dist.ReduceOp.MAX)
             if rank == 0:
+                metric_row = _distributed_metric_row(local, world_size)
                 row = {
                     "step": step + 1,
-                    "reward_mean": float(local[0] / local[1]),
-                    "rank_reward_std_mean": float(local[2] / world_size),
                     "nonzero_advantage_groups": int(local[3]),
                     "groups": world_size,
                     "samples": int(local[1]),
-                    "loss": float(local[4] / world_size),
-                    "grad_norm": float(local[5] / world_size),
-                    "clip_fraction": float(local[6] / world_size),
-                    "mean_ratio": float(local[7] / world_size),
-                    "approx_kl": float(local[8] / world_size),
+                    **metric_row,
+                    "max_abs_log_ratio": float(ratio_deviation[0]),
                     "response_tokens": int(local[9]),
                     "step_seconds": float(runtime_max[0]),
                     "response_tokens_per_second": float(local[9] / runtime_max[0]),

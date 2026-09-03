@@ -65,5 +65,25 @@ def test_regime_interval_separates_aligned_and_reversed_selectors(
     )["all"]
     assert result["fresh_gain"]["lower_one_sided_95"] > 0
     assert result["selectors"]["aligned"]["gain"]["lower_one_sided_95"] > 0
-    assert result["selectors"]["aligned"]["retention"]["lower_one_sided_95"] == 1
+    assert result["schema"] == "first-hierarchical-bootstrap/v2"
+    assert result["selectors"]["aligned"]["retention_margin"]["lower_one_sided_95"] > 0
     assert result["selectors"]["reversed"]["gain"]["upper_one_sided_95"] < 0
+
+
+def test_retention_margin_keeps_nonpositive_fresh_draws(tmp_path: Path) -> None:
+    micro = {
+        idx: torch.stack([torch.tensor([float(idx + 1), 1.0])] * 8)
+        for idx in range(20)
+    }
+    torch.save(micro, tmp_path / "oracle_micro_groups.pt")
+    torch.save(torch.tensor([[0.0, 0.0]] * 8), tmp_path / "val_groups.pt")
+    result = bootstrap_regime_intervals(
+        tmp_path,
+        {"all": list(range(20))},
+        {"selector": {idx: float(idx) for idx in range(20)}},
+        samples=100,
+        seed=11,
+        device="cpu",
+    )["all"]
+    margin = result["selectors"]["selector"]["retention_margin"]
+    assert margin["valid_samples"] == 100

@@ -91,6 +91,8 @@ def load_complete_score_artifacts(run: Path) -> ScoreArtifacts:
             halves = {half: float(row[half]) for half in ("a", "b")}
             if "r" in row:
                 halves["r"] = float(row["r"])
+            if "r_high_budget" in row:
+                halves["r_high_budget"] = float(row["r_high_budget"])
             if not all(math.isfinite(score) for score in halves.values()):
                 raise ScoreArtifactError(
                     f"scores_splithalf.json[{idx}] contains a non-finite score"

@@ -74,7 +74,7 @@ def write_analysis(
         for policy in POLICIES
     ]
     document = {
-        "schema": "offpolicy-regime-map/v3",
+        "schema": "offpolicy-regime-map/v4",
         "analysis_git": "d" * 40,
         "generation_commits": [generation_git],
         "topk_frac": 0.10,

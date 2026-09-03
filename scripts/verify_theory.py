@@ -5,8 +5,14 @@ from __future__ import annotations
 
 import math
 import random
+import sys
 from collections.abc import Iterable
 from itertools import product
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from measurement_ceiling import REGISTERED_CURVES, simulate_registered_curve
 
 Trajectory = tuple[float, float, float]
 
@@ -475,6 +481,16 @@ def check_measurement_ceiling_table(
     )
 
 
+def check_registered_ceiling_lookups() -> None:
+    for (n, k), expected in REGISTERED_CURVES.items():
+        actual = simulate_registered_curve(n, k)
+        assert all(
+            math.isclose(left, right, abs_tol=5e-9)
+            for left, right in zip(actual, expected, strict=True)
+        ), (n, k, actual, expected)
+    print("[measurement-ceiling] registered MATH-500/MBPP lookups reproduced")
+
+
 def report_cells() -> None:
     print("ε     example        KL      gπ       g00      g10      g01      g11     KL/ε²")
     for epsilon in (0.4, 0.1, 0.01, 0.001):
@@ -497,6 +513,7 @@ def main() -> None:
     check_angular_radius()
     check_disagreement_accompanies_double_flip()
     check_measurement_ceiling_table()
+    check_registered_ceiling_lookups()
     check_groupnorm_general_k()
     report_cells()
     print(

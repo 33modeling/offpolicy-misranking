@@ -130,7 +130,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "(out/'score_protocol.json').write_text(json.dumps({**protocol,'schema':"
             "'offpolicy-score-validation-split/v2'}))\n"
             "(out/'oracle_protocol.json').write_text(json.dumps({**protocol,'schema':"
-            "'offpolicy-oracle-validation-split/v2'}))\n"
+            "'offpolicy-oracle-validation-split/v3'}))\n"
             "PY\n"
             "for name in DONE manifest.json report.json divergence_stats.json oracle_micro_groups.pt "
             "val_groups.pt; do "

@@ -46,7 +46,7 @@ def make_run(
         "generation_validation": {"validated_rows": 20},
     })
     write_json(run / "oracle_protocol.json", {
-        "schema": "offpolicy-oracle-validation-split/v2",
+        "schema": "offpolicy-oracle-validation-split/v3",
         "generation_validation": {"validated_rows": 20},
     })
     if name.startswith("v"):

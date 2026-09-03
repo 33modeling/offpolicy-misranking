@@ -86,9 +86,12 @@ def bootstrap_regime_intervals(
     tie_seed: int | None = None,
     chunk_size: int | None = None,
     device: str | None = None,
+    retention_threshold: float = 0.50,
 ) -> dict[str, dict]:
     if samples < 100:
         raise ValueError("FIRST bootstrap requires at least 100 replicates")
+    if not 0.0 < retention_threshold <= 1.0:
+        raise ValueError("retention threshold must be in (0, 1]")
     resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     target = torch.device(resolved_device)
     raw_micro = torch.load(
@@ -150,7 +153,7 @@ def bootstrap_regime_intervals(
             "floor": [],
             "fresh_gain": [],
             "selectors": {
-                selector: {"gain": [], "retention": []}
+                selector: {"gain": [], "retention_margin": []}
                 for selector in normalized_selectors
             },
         }
@@ -179,7 +182,7 @@ def bootstrap_regime_intervals(
     while completed < samples:
         batch = min(chunk_size, samples - completed)
         score_r = _bootstrap_scores(
-            full[:, :candidate_half], val_groups[:val_half], batch, generator
+            full[:, :candidate_quarter], val_groups[:val_half], batch, generator
         ).cpu()
         score_a = _bootstrap_scores(
             full[:, candidate_half : candidate_half + candidate_quarter],
@@ -228,10 +231,12 @@ def bootstrap_regime_intervals(
                         sum(reference[idx] for idx in top_stale) / k - random_utility
                     )
                     values[name]["selectors"][selector]["gain"].append(gain)
-                    if fresh_gain > 1e-12:
-                        values[name]["selectors"][selector]["retention"].append(
-                            gain / fresh_gain
-                        )
+                    # Once the separate fresh-gain gate establishes a positive
+                    # denominator, this paired contrast is nonnegative exactly
+                    # when the requested retention fraction is reached.
+                    values[name]["selectors"][selector]["retention_margin"].append(
+                        gain - retention_threshold * fresh_gain
+                    )
         completed += batch
 
     result = {}
@@ -239,16 +244,17 @@ def bootstrap_regime_intervals(
         if not observed["floor"]:
             continue
         result[name] = {
-            "schema": "first-hierarchical-bootstrap/v1",
+            "schema": "first-hierarchical-bootstrap/v2",
             "samples": samples,
             "seed": seed,
             "device": str(target),
+            "retention_threshold": retention_threshold,
             **_summary(observed["floor"]),
             "fresh_gain": _summary(observed["fresh_gain"]),
             "selectors": {
                 selector: {
                     "gain": _summary(metrics["gain"]),
-                    "retention": _summary(metrics["retention"]),
+                    "retention_margin": _summary(metrics["retention_margin"]),
                 }
                 for selector, metrics in observed["selectors"].items()
             },

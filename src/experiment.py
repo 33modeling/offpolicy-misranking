@@ -46,7 +46,7 @@ from select_rules import (
 )
 
 SCORE_PROTOCOL_SCHEMA = "offpolicy-score-validation-split/v2"
-ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v2"
+ORACLE_PROTOCOL_SCHEMA = "offpolicy-oracle-validation-split/v3"
 HYBRID_PROTOCOL_SCHEMA = "offpolicy-hybrid-validation-split/v2"
 
 
@@ -109,7 +109,10 @@ def oracle_protocol_document(
 ) -> dict:
     document = {
         "schema": ORACLE_PROTOCOL_SCHEMA,
-        "candidate_partition": "r=first 1/2, a=next 1/4, b=final 1/4",
+        "candidate_partition": (
+            "r=first 1/4 (budget-matched primary), "
+            "r_high_budget=first 1/2, a=next 1/4, b=final 1/4"
+        ),
         "validation_partition": "r=first 1/2, a=next 1/4, b=final 1/4",
         "evaluation_reference": "arithmetic mean of independent scalar scores a and b",
         "validation_group_count": int(val_groups.shape[0]),
@@ -129,8 +132,10 @@ def score_oracle_microgroups(
     if stack.ndim != 2:
         raise ValueError(f"micro-group stack must be 2D, got shape={tuple(stack.shape)}")
     rank, half_a, half_b = split_three_way_groups(stack)
+    matched_rank = rank[: rank.shape[0] // 2]
     scores = {
-        "r": cosine(rank.mean(dim=0), val_rank),
+        "r": cosine(matched_rank.mean(dim=0), val_rank),
+        "r_high_budget": cosine(rank.mean(dim=0), val_rank),
         "a": cosine(half_a.mean(dim=0), val_half_a),
         "b": cosine(half_b.mean(dim=0), val_half_b),
     }

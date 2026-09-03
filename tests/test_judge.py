@@ -39,7 +39,7 @@ def mark_score_protocol(
         "generation_validation": {"validated_rows": 1},
     })
     write_json(run / "oracle_protocol.json", {
-        "schema": "offpolicy-oracle-validation-split/v2",
+        "schema": "offpolicy-oracle-validation-split/v3",
         "generation_validation": {"validated_rows": 1},
     })
     oracle_scores = {str(i): float(20 - i) for i in range(20)}

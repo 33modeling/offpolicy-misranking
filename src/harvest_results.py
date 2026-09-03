@@ -24,7 +24,7 @@ ANALYSIS_FILES = (
     "FINAL_REPORT.md",
 )
 MARKER = ".regime_analysis.key"
-REGIME_SCHEMA = "offpolicy-regime-map/v3"
+REGIME_SCHEMA = "offpolicy-regime-map/v4"
 HARVEST_SCHEMA = "offpolicy-rlvr-harvest/v3"
 EXPECTED_DATASETS = ("gsm8k", "math500")
 EXPECTED_DRIFTS = (0, 25, 100, 400)

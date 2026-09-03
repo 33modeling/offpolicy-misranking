@@ -57,12 +57,27 @@ def test_oracle_uses_disjoint_ranking_and_reference_partitions():
     oracle, halves = score_oracle_microgroups(
         stack, val_r, val_a, val_b
     )
-    assert halves == {"r": 1.0, "a": 0.0, "b": 1.0}
+    assert halves == {"r": 1.0, "r_high_budget": 1.0, "a": 0.0, "b": 1.0}
     assert oracle["score"] == 0.5
     with pytest.raises(ValueError, match="at least eight"):
         score_oracle_microgroups(
             stack[:6], val_r, val_a, val_b
         )
+
+
+def test_primary_oracle_ranker_uses_the_budget_matched_first_quarter():
+    stack = torch.tensor(
+        [[1.0, 0.0]] * 2
+        + [[0.0, 1.0]] * 2
+        + [[1.0, 0.0]] * 2
+        + [[1.0, 0.0]] * 2
+    )
+    direction = torch.tensor([1.0, 0.0])
+    _, halves = score_oracle_microgroups(
+        stack, direction, direction, direction
+    )
+    assert halves["r"] == 1.0
+    assert halves["r_high_budget"] == pytest.approx(2**-0.5)
 
 
 def test_hybrid_preserves_total_response_horizon():

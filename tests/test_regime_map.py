@@ -49,7 +49,7 @@ def make_run(root: Path, seed: int = 0, generation_git: str = "a" * 40) -> Path:
     write_json(
         run / "oracle_protocol.json",
         {
-            "schema": "offpolicy-oracle-validation-split/v2",
+            "schema": "offpolicy-oracle-validation-split/v3",
             "generation_validation": {"validated_rows": n},
         },
     )
@@ -61,7 +61,12 @@ def make_run(root: Path, seed: int = 0, generation_git: str = "a" * 40) -> Path:
     write_json(
         run / "scores_splithalf.json",
         {
-            str(idx): {"r": score, "a": score, "b": score}
+            str(idx): {
+                "r": score,
+                "r_high_budget": score,
+                "a": score,
+                "b": score,
+            }
             for idx, score in truth.items()
         },
     )
@@ -103,7 +108,7 @@ def make_run(root: Path, seed: int = 0, generation_git: str = "a" * 40) -> Path:
 
 
 def test_regime_map_recognizes_positive_and_negative_selectors(tmp_path: Path) -> None:
-    assert SCHEMA == "offpolicy-regime-map/v3"
+    assert SCHEMA == "offpolicy-regime-map/v4"
     rows = analyze_run(make_run(tmp_path))
     all_rows = {row["policy"]: row for row in rows if row["stratum"] == "all"}
     assert all_rows["stale_g00"]["utility_gain"] > 0
@@ -179,7 +184,7 @@ def test_regime_map_rejects_v1_or_missing_ranking_split(tmp_path: Path) -> None:
     for row in halves.values():
         row.pop("r")
     write_json(run / "scores_splithalf.json", halves)
-    with pytest.raises(ValueError, match="independent R split"):
+    with pytest.raises(ValueError, match="matched R or high-budget"):
         analyze_run(run)
 
 
@@ -205,7 +210,7 @@ def test_regime_map_uses_bootstrap_endpoints_for_candidate_labels(
     )
     assert aligned["floor_lower_one_sided_95"] == 1
     assert aligned["utility_gain_lower_one_sided_95"] > 0
-    assert aligned["utility_retention_lower_one_sided_95"] >= 0.5
+    assert aligned["retention_margin_lower_one_sided_95"] >= 0
     assert aligned["point_status"] == "provisional_effective_candidate"
     assert reversed_row["utility_gain_upper_one_sided_95"] < 0
     assert reversed_row["point_status"] == "provisional_ineffective_candidate"

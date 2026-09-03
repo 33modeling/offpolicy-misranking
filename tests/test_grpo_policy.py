@@ -20,6 +20,7 @@ from train_policy_grpo import (
     POLICY_SCHEMA,
     _checkpoint_step,
     _chunks,
+    _distributed_metric_row,
     _latest_checkpoint,
     _response_logps,
     _response_logps_batch,
@@ -120,6 +121,7 @@ def test_on_policy_grpo_has_zero_scalar_loss_but_nonzero_gradient() -> None:
     loss, stats = clipped_grpo_loss(current, old, advantages, 0.2)
     assert float(loss.detach()) == pytest.approx(0.0, abs=1e-7)
     assert stats["mean_ratio"] == 1.0
+    assert stats["max_abs_log_ratio"] == 0.0
 
     loss.backward()
     gradient_norm = torch.linalg.vector_norm(
@@ -145,6 +147,17 @@ def test_clipped_grpo_has_the_correct_sign_and_asymmetric_clip() -> None:
     assert float(loss.detach()) == pytest.approx(2.0)
     loss.backward()
     assert float(negative.grad.detach()) > 0  # gradient descent lowers bad-response log-probability
+
+
+def test_distributed_diagnostics_are_weighted_by_response_tokens() -> None:
+    reduced = torch.tensor(
+        [8.0, 16.0, 1.0, 2.0, 4.0, 6.0, 3.0, 10.0, 2.0, 10.0]
+    )
+    row = _distributed_metric_row(reduced, world_size=2)
+    assert row["reward_mean"] == 0.5
+    assert row["clip_fraction"] == pytest.approx(0.3)
+    assert row["mean_ratio"] == pytest.approx(1.0)
+    assert row["approx_kl"] == pytest.approx(0.2)
 
 
 def test_dr_grpo_uses_a_fixed_token_budget_not_response_length() -> None:

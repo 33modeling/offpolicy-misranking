@@ -36,7 +36,8 @@ The main matrix uses five seeds, policy steps `0/25/100/400`, four DDP ranks,
 eight responses per prompt and a single optimizer epoch per fresh group. It uses
 the PPO-form GRPO surrogate with `clip_epsilon=0.2`, but the one-epoch setting has
 no post-update reuse of a group; the clip is therefore not claimed as an
-effective trust-region constraint. AdamW uses a constant `1e-5` learning rate,
+effective trust-region constraint. The first loss pass records the maximum
+absolute token log-ratio and aborts above `5e-3`. AdamW uses a constant `1e-5` learning rate,
 and query/value LoRA uses rank `16`, alpha `32`, and dropout `0`.
 
 The running baseline remains on the command and `...-grpo-v1` roots above. For
@@ -110,7 +111,10 @@ The command runs:
 - 7B scale replication: GSM8K and MATH-500, seeds 0-2, the same policy steps.
 - Independent R/A/B evaluation: R ranks, the mean of A/B scalar scores is the
   held-out utility reference, and A versus B sets the reliability floor. Final
-  labels use 10,000 hierarchical bootstrap replicates per run.
+  labels use 10,000 hierarchical bootstrap replicates per run. Primary R and
+  stale selectors each use eight candidate responses; nested 16-response R+ is
+  descriptive only. Retention inference uses the paired contrast
+  `stale_gain - 0.5 * fresh_gain`, not a ratio conditioned on positive draws.
 - A hash-bound harvest that packages existing matrix reports without rerunning
   rollouts or bootstrap analysis. Publication revalidates the analysis-cache
   hashes, exact registered cells and selectors, final bootstrap status, and
