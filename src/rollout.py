@@ -469,21 +469,38 @@ def collect_rollouts(
             resp_start = ids.numel()
             n_correct = 0
             bs = _gen_batch_size(k)
+            generation_seconds = 0.0
+            verifier_seconds = 0.0
+            response_tokens = 0
+            capped_responses = 0
             j = 0
             for s in range(0, k, bs):
                 nb = min(bs, k - s)
                 batch_ids = ids.unsqueeze(0).expand(nb, -1)
+                if str(model.device).startswith("cuda"):
+                    torch.cuda.synchronize(model.device)
+                generation_started = time.perf_counter()
                 gen = model.generate(
                     batch_ids,
                     attention_mask=torch.ones_like(batch_ids),
                     **gkw,
                 )
+                if str(model.device).startswith("cuda"):
+                    torch.cuda.synchronize(model.device)
+                generation_seconds += time.perf_counter() - generation_started
                 for seq in gen:
                     # P0-2: 첫 EOS(포함)에서 절단 — padding을 저장하지 않는다
                     end = resp_end_index(seq, resp_start, eos_set)
                     seq = seq[:end]
                     text = tok.decode(seq[resp_start:], skip_special_tokens=True)
+                    verifier_started = time.perf_counter()
                     r = reward(text, item["answer"])
+                    verifier_seconds += time.perf_counter() - verifier_started
+                    tokens = end - resp_start
+                    response_tokens += tokens
+                    capped_responses += int(
+                        tokens >= max_new_tokens and int(seq[-1]) not in eos_set
+                    )
                     n_correct += r > 0.5
                     f.write(
                         json.dumps(
@@ -502,9 +519,14 @@ def collect_rollouts(
             f.flush()  # 프롬프트 단위 내구 지점 — 크래시 시 여기까지는 재개 가능
             session_done += 1
             n_have = len(done) + session_done
+            prompt_seconds = time.time() - t0
+            tokens_per_second = response_tokens / max(generation_seconds, 1e-9)
             print(f"[{ts()}]  rollout {n_have}/{len(prompts)} "
-                  f"({100 * n_have // len(prompts)}%, {time.time() - t0:.0f}s/개, "
-                  f"정답 {n_correct}/{k}, ETA {_eta(session_done, todo_total, t_start)})",
+                  f"({100 * n_have // len(prompts)}%, {prompt_seconds:.0f}s/개, "
+                  f"gen={generation_seconds:.1f}s verify={verifier_seconds:.1f}s "
+                  f"tok/s={tokens_per_second:.1f} cap={capped_responses}/{k} "
+                  f"batch={bs}, 정답 {n_correct}/{k}, "
+                  f"ETA {_eta(session_done, todo_total, t_start)})",
                   flush=True)
     # fail-closed 발행: 행 수가 정확히 n_prompts×K일 때만 최종 이름을 얻는다
     n_rows = sum(1 for _ in part_path.open())

@@ -156,7 +156,9 @@ SEEDS=(${REGIME_SEEDS:-0 1 2})
 DATASETS=(${REGIME_DATASETS:-gsm8k math500})
 DRIFTS=(${REGIME_DRIFTS:-0 25 100 400})
 MAX_RETRIES="${REGIME_MAX_RETRIES:-3}"
-RECOVERY_GEN_BATCH="${REGIME_RECOVERY_GEN_BATCH:-1}"
+# Only genuine OOM recovery reduces the generation batch. CUDA context/runtime
+# failures need a fresh process, not an eightfold serialization of the work.
+OOM_RECOVERY_GEN_BATCH="${REGIME_RECOVERY_GEN_BATCH:-1}"
 CONTRACT="${REGIME_MATRIX:-}"
 N_VAL_DEFAULT="${REGIME_N_VAL:-100}"
 N_TRAIN_BY_DATASET="${REGIME_N_TRAIN_BY_DATASET:-}"
@@ -226,8 +228,8 @@ done
   echo "[abort] HARD_STALL_SECONDS must be at least STALL_SECONDS"
   exit 2
 }
-case "$RECOVERY_GEN_BATCH" in
-  ''|*[!0-9]*|0) echo "[abort] invalid REGIME_RECOVERY_GEN_BATCH=$RECOVERY_GEN_BATCH"; exit 2 ;;
+case "$OOM_RECOVERY_GEN_BATCH" in
+  ''|*[!0-9]*|0) echo "[abort] invalid REGIME_RECOVERY_GEN_BATCH=$OOM_RECOVERY_GEN_BATCH"; exit 2 ;;
 esac
 case "$WATCH_KILL_GRACE_SECONDS" in
   ''|*[!0-9]*) echo "[abort] invalid WATCH_KILL_GRACE_SECONDS=$WATCH_KILL_GRACE_SECONDS"; exit 2 ;;
@@ -597,19 +599,15 @@ validate_policy_manifest(
 PYEOF
 }
 
-cuda_runtime_failure() {
-  local run=$1 attempt_log=$2 file
-  local pattern='CUDA error|CUBLAS_STATUS|cuBLAS|CUDA out of memory|device-side assert|unspecified launch failure|illegal memory access'
-  grep -Eqi "$pattern" "$attempt_log" 2>/dev/null && return 0
-  while IFS= read -r file; do
-    grep -Eqi "$pattern" "$file" 2>/dev/null && return 0
-  done < <(find "$run/logs" -maxdepth 1 -type f -name '*.log' -print 2>/dev/null)
-  return 1
-}
-
 recover_cuda_rollout() {
   local run=$1 drift=$2 try=$3 stage="" gpu_csv recovery_log
-  cuda_runtime_failure "$run" "$run/logs/regime-attempt-$try.log" || return 1
+  local failure_kind recovery_batch configured_batch
+  read -r failure_kind recovery_batch configured_batch < <(
+    "$PY" "$SUPERVISOR_REPO/src/recovery_policy.py" \
+      --run-config "$run/run_config.json" \
+      --attempt-log "$run/logs/regime-attempt-$try.log" \
+      --oom-batch "$OOM_RECOVERY_GEN_BATCH"
+  ) || return 1
 
   if [ "$drift" -eq 0 ] \
       && ! rollout_artifact_ready "$run" rollouts_behavior_train; then
@@ -627,12 +625,14 @@ recover_cuda_rollout() {
     gpu_csv=$(seq -s, 0 $((GRPO_WORLD_SIZE_DEFAULT - 1)))
   fi
   recovery_log="$run/logs/regime-recovery-$try.log"
-  echo "[cuda-recovery] $stage with generation batch=$RECOVERY_GEN_BATCH; immutable run config preserved"
+  printf '%s\n' "[cuda-recovery] $stage reason=$failure_kind "\
+"generation batch=$recovery_batch (configured=$configured_batch); "\
+"immutable run config preserved"
   run_pipeline_watchdog "$run" "$recovery_log" \
     env OM_RECOVERY_PY="$PY" OM_RECOVERY_INDEX="$try" \
       PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
       bash "$SUPERVISOR_REPO/scripts/recover_rollout_stage.sh" \
-        "$PIPELINE_REPO" "$run" "$stage" "$RECOVERY_GEN_BATCH" "$gpu_csv"
+        "$PIPELINE_REPO" "$run" "$stage" "$recovery_batch" "$gpu_csv"
 }
 
 run_point() {

@@ -31,6 +31,14 @@ checked source fix does not mark result regeneration complete.
 - [x] `OM-2026-09-03-07` State that ranking gradients are measured in the final
   dense merged-model layers while training updates LoRA coordinates, and state
   that one-epoch PPO-form GRPO has no effective clipping pass.
+- [x] `OM-2026-09-03-08` Fix CUDA rollout recovery collapsing every failure to
+  generation batch 1. Context failures now restart at the configured batch;
+  only a current-attempt OOM uses the reduced recovery batch. The old policy
+  produced observed d400 fresh-rollout times of 1,245--1,282 seconds per prompt
+  at batch 1, roughly eight times the configured H100 batch-8 runtime.
+- [x] `OM-2026-09-03-09` Split fresh-rollout runtime telemetry into generation,
+  verifier, output-token throughput, length-cap count, and effective batch so a
+  low-utilization recovery cannot be mislabeled as undifferentiated activity.
 
 ## Required before numerical freeze
 
@@ -50,6 +58,10 @@ checked source fix does not mark result regeneration complete.
   letter PDF has no undefined references, LaTeX errors, or overfull boxes.
 - [ ] Run the target-cluster preflight on the committed revision used for final
   analysis.
+- [ ] Stop the active batch-1 d400 recovery, deploy the corrected supervisor,
+  and resume its durable `.partial` files at the configured batch. Verify the
+  launcher reports batch 8 and that per-prompt runtime returns to the
+  pre-recovery range before leaving the allocation unattended.
 
 ## Provenance note
 
