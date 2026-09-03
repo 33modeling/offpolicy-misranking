@@ -36,6 +36,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy2(ROOT / "scripts/run_olmo3_rlzero.sh", checkout / "scripts")
     shutil.copy2(ROOT / "src/regime_resume_commit.py", checkout / "src")
     shutil.copy2(ROOT / "src/cleanup_run_processes.py", checkout / "src")
+    shutil.copy2(ROOT / "src/rlzero_status.py", checkout / "src")
     shutil.copy2(ROOT / "configs/olmo3_rlzero.json", checkout / "configs")
     shutil.copy2(ROOT / "configs/olmo3_rlzero_h100.json", checkout / "configs")
     (checkout / "requirements.txt").write_text("fixture\n")
@@ -58,6 +59,7 @@ case "$script" in
   *bootstrap_math_verify.py) printf '%s/runtime-deps\n' "$TEST_SHARED" ;;
   *regime_resume_commit.py) exec python3 "$script" "$@" ;;
   *cleanup_run_processes.py) exec python3 "$script" "$@" ;;
+  *rlzero_status.py) exec python3 "$script" "$@" ;;
   *model_matrix.py)
     case " $* " in
       *" field olmo3-7b-base path "*) printf '%s/models/Olmo-3-1025-7B\n' "$TEST_SHARED" ;;
@@ -225,6 +227,7 @@ done
         "OM_RLZERO_PREFLIGHT_KILL_GRACE_SECONDS": "1",
         "OM_RLZERO_QUEUE_WAIT_SECONDS": "1",
         "OM_RLZERO_FAMILY_RETRY_SECONDS": "0",
+        "OM_RLZERO_STATUS_PROBE_SECONDS": "0",
     }
 
 
@@ -424,6 +427,7 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "math500/s0 stale-owner" in output
+    assert "verdict=DEAD" in output
     assert "d0 stage=fresh-rollout behavior_rows=2 fresh_rows=3" in output
     assert "recovery_batch=1 recovery_status=failed" in output
     assert "d25 stage=initialized" in output
@@ -431,7 +435,7 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     assert "learning_signal=update" in output
     assert "latest_log=" in output
     assert "rollout 46/100" in output
-    assert "latest_log_errors:" in output
+    assert "error_evidence_from_all_checked_logs:" in output
     assert long_error in output
     assert "worker_log=" in output
 

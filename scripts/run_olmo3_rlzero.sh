@@ -203,197 +203,30 @@ family_complete() {
 if [ "$MODE" = status ]; then
   STATUS_LOG_LINES="${OM_RLZERO_STATUS_LOG_LINES:-20}"
   STATUS_ERROR_LINES="${OM_RLZERO_STATUS_ERROR_LINES:-6}"
-  for value_name in STATUS_LOG_LINES STATUS_ERROR_LINES; do
+  STATUS_PROBE_SECONDS="${OM_RLZERO_STATUS_PROBE_SECONDS:-20}"
+  STATUS_STUCK_SECONDS="${OM_RLZERO_STATUS_STUCK_SECONDS:-1800}"
+  STATUS_WORKER_STALE_SECONDS="${OM_RLZERO_STATUS_WORKER_STALE_SECONDS:-180}"
+  STATUS_EXPECTED_WORKERS="${OM_RLZERO_STATUS_EXPECTED_WORKERS:-3}"
+  for value_name in STATUS_LOG_LINES STATUS_ERROR_LINES STATUS_STUCK_SECONDS \
+      STATUS_WORKER_STALE_SECONDS STATUS_EXPECTED_WORKERS; do
     value=${!value_name}
     case "$value" in
       ''|*[!0-9]*|0) echo "[abort] invalid $value_name=$value"; exit 2 ;;
     esac
   done
-
-  status_rows() {
-    local run=$1 base=$2 file rows=0 count
-    if [ -f "$run/$base.jsonl" ]; then
-      wc -l < "$run/$base.jsonl" 2>/dev/null || printf '0\n'
-      return
-    fi
-    while IFS= read -r -d '' file; do
-      count=$(wc -l < "$file" 2>/dev/null || printf 0)
-      rows=$((rows + count))
-    done < <(find "$run" -maxdepth 1 -type f \
-      \( -name "$base.shard*.jsonl" -o -name "$base.shard*.partial" \) \
-      -print0 2>/dev/null)
-    printf '%s\n' "$rows"
-  }
-
-  status_latest_log() {
-    local root=$1
-    [ -d "$root" ] || return 1
-    find "$root" -type f -path '*/logs/*.log' -printf '%T@ %p\n' 2>/dev/null \
-      | sort -nr | head -1 | cut -d' ' -f2-
-  }
-
-  status_log_stage() {
-    local name=${1##*/}
-    case "$name" in
-      *rollout-behavior*|beta-shard*) printf 'behavior-rollout\n' ;;
-      *rollout-fresh*|fresh-shard*) printf 'fresh-rollout\n' ;;
-      grpo.log) printf 'grpo\n' ;;
-      val-grads.log) printf 'validation-gradients\n' ;;
-      ograds-shard*) printf 'oracle-gradients\n' ;;
-      score-shard*) printf 'scoring\n' ;;
-      merge.log) printf 'merge\n' ;;
-      report.log) printf 'report\n' ;;
-      regime-recovery-*) printf 'cuda-recovery\n' ;;
-      regime-attempt-*) printf 'pipeline\n' ;;
-      main.log) printf 'pipeline\n' ;;
-      *) printf 'pipeline\n' ;;
-    esac
-  }
-
-  status_point() {
-    local dataset=$1 seed=$2 drift=$3 run log stage behavior_rows fresh_rows
-    local attempt="" grpo_steps="" grpo_metrics="" recovery="" recovery_batch=""
-    local recovery_status=""
-    run=$(run_dir "$dataset" "$seed" "$drift")
-    if [ -s "$run/DONE" ]; then
-      echo "  d$drift stage=complete"
-      return
-    fi
-    if [ ! -d "$run" ]; then
-      echo "  d$drift stage=pending"
-      return
-    fi
-
-    log=$(status_latest_log "$run" || true)
-    stage=initialized
-    [ -z "$log" ] || stage=$(status_log_stage "$log")
-    if [ "$stage" = pipeline ] || [ "$stage" = initialized ]; then
-      if [ -s "$run/rollouts_fresh_train.manifest.json" ]; then
-        stage=post-rollout
-      elif [ "$drift" -gt 0 ] && [ -s "$run/policy_step_$drift/policy_train.json" ]; then
-        stage=grpo-complete
-      elif [ -s "$run/rollouts_behavior_train.manifest.json" ]; then
-        stage=behavior-ready
-      elif [ -s "$run/prompts.json" ]; then
-        stage=prepared
-      fi
-    fi
-    behavior_rows=$(status_rows "$run" rollouts_behavior_train)
-    fresh_rows=$(status_rows "$run" rollouts_fresh_train)
-    if [ -s "$run/policy_step_$drift/grpo_stats.jsonl" ]; then
-      grpo_steps=$(wc -l < "$run/policy_step_$drift/grpo_stats.jsonl")
-      grpo_metrics=$("$PY" - "$run/policy_step_$drift/grpo_stats.jsonl" <<'PYEOF'
-import json
-import math
-import sys
-
-rows = [line for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
-row = json.loads(rows[-1])
-active = int(row["nonzero_advantage_groups"])
-groups = int(row["groups"])
-gradient = float(row["grad_norm"])
-if active == 0:
-    signal = "no-mixed-reward"
-elif math.isfinite(gradient) and gradient > 0:
-    signal = "update"
-else:
-    signal = "ERROR-zero-grad"
-print(
-    f" reward={float(row['reward_mean']):.3f}"
-    f" active_groups={active}/{groups}"
-    f" loss={float(row['loss']):.3e}"
-    f" grad_norm={gradient:.3e}"
-    f" ratio={float(row['mean_ratio']):.6f}"
-    f" learning_signal={signal}"
-)
-PYEOF
-      ) || grpo_metrics=" metrics=invalid"
-    fi
-    attempt=$(find "$run/logs" -maxdepth 1 -type f -name 'regime-attempt-*.log' \
-      -printf '%T@ %f\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
-    if [ -s "$run/rollout_recovery.jsonl" ]; then
-      recovery=$(tail -n 1 "$run/rollout_recovery.jsonl")
-      recovery_batch=$(printf '%s\n' "$recovery" | sed -n \
-        's/.*"recovery_generation_batch":\([0-9][0-9]*\).*/\1/p')
-      recovery_status=$(printf '%s\n' "$recovery" | sed -n \
-        's/.*"status":"\([^"]*\)".*/\1/p')
-    fi
-    printf '  d%s stage=%s behavior_rows=%s fresh_rows=%s' \
-      "$drift" "$stage" "$behavior_rows" "$fresh_rows"
-    [ -z "$grpo_steps" ] || printf ' grpo_steps=%s/%s' "$grpo_steps" "$drift"
-    [ -z "$grpo_metrics" ] || printf '%s' "$grpo_metrics"
-    [ -z "$attempt" ] || printf ' attempt=%s' "${attempt%.log}"
-    [ -z "$recovery_batch" ] || printf ' recovery_batch=%s' "$recovery_batch"
-    [ -z "$recovery_status" ] || printf ' recovery_status=%s' "$recovery_status"
-    printf '\n'
-  }
-
-  status_family_logs() {
-    local dataset=$1 seed=$2 owner=$3 root latest errors worker worker_log
-    root=$(family_root "$dataset" "$seed")
-    latest=$(status_latest_log "$root" || true)
-    if [ -n "$latest" ]; then
-      echo "  latest_log=$latest (last $STATUS_LOG_LINES lines)"
-      tail -n "$STATUS_LOG_LINES" "$latest" 2>/dev/null | sed 's/^/    | /'
-      errors=$(grep -Ei \
-        'CUDA error|CUBLAS_STATUS|cuBLAS|CUDA out of memory|device-side assert|unspecified launch failure|illegal memory access|Traceback|RuntimeError' \
-        "$latest" 2>/dev/null | tail -n "$STATUS_ERROR_LINES")
-      if [ -n "$errors" ]; then
-        echo "  latest_log_errors:"
-        printf '%s\n' "$errors" | sed 's/^/    ! /'
-      fi
-    fi
-    if [ -s "$owner" ]; then
-      worker=$(sed -n 's/.*"worker"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$owner")
-      worker_log="$ROOT/logs/$worker.log"
-      if [ -n "$worker" ] && [ -s "$worker_log" ]; then
-        echo "  worker_log=$worker_log (last $STATUS_LOG_LINES lines)"
-        tail -n "$STATUS_LOG_LINES" "$worker_log" 2>/dev/null | sed 's/^/    | /'
-      fi
-    fi
-  }
-
-  echo "profile=$PROFILE"
-  echo "experiment_root=$ROOT"
-  echo "log_tail_lines=$STATUS_LOG_LINES"
-  [ -s "$ROOT/.queue/generation.git" ] && \
-    echo "generation_git=$(cat "$ROOT/.queue/generation.git")" || \
-    echo "generation_git=not-started"
-  latest_worker_log=$(find "$ROOT/logs" -maxdepth 1 -type f -name '*.log' \
-    ! -name '*-keepalive.log' -printf '%T@ %p\n' 2>/dev/null \
-    | sort -nr | head -1 | cut -d' ' -f2-)
-  if [ -n "$latest_worker_log" ]; then
-    echo "latest_worker_log=$latest_worker_log (last $STATUS_LOG_LINES lines)"
-    tail -n "$STATUS_LOG_LINES" "$latest_worker_log" 2>/dev/null | sed 's/^/  | /'
-  fi
-  for seed in "${SEEDS[@]}"; do
-    for dataset in "${DATASETS[@]}"; do
-      owner="$QUEUE/$dataset-s$seed.owner.json"
-      if [ -s "$(family_stamp "$dataset" "$seed")" ]; then
-        state=complete
-      elif [ -s "$owner" ]; then
-        if (flock -n 9) 9>"$QUEUE/$dataset-s$seed.lock"; then
-          state="stale-owner $(tr '\n' ' ' < "$owner")"
-        else
-          state="claimed $(tr '\n' ' ' < "$owner")"
-        fi
-      elif [ -d "$(family_root "$dataset" "$seed")" ]; then
-        state=partial
-      else
-        state=pending
-      fi
-      echo "$dataset/s$seed $state"
-      for drift in "${DRIFTS[@]}"; do
-        status_point "$dataset" "$seed" "$drift"
-      done
-      case "$state" in
-        complete|pending) ;;
-        *) status_family_logs "$dataset" "$seed" "$owner" ;;
-      esac
-    done
-  done
-  [ -s "$GLOBAL_RESULTS/FINAL_REPORT.md" ] && echo "report=$GLOBAL_RESULTS/FINAL_REPORT.md"
-  exit 0
+  case "$STATUS_PROBE_SECONDS" in
+    ''|*[!0-9]*) echo "[abort] invalid STATUS_PROBE_SECONDS=$STATUS_PROBE_SECONDS"; exit 2 ;;
+  esac
+  "$PY" "$SUPERVISOR_REPO/src/rlzero_status.py" \
+    --profile "$PROFILE" --root "$ROOT" --results "$GLOBAL_RESULTS" \
+    --model-tag "$MODEL_TAG" --datasets "${DATASETS[@]}" \
+    --seeds "${SEEDS[@]}" --drifts "${DRIFTS[@]}" \
+    --probe-seconds "$STATUS_PROBE_SECONDS" \
+    --stuck-seconds "$STATUS_STUCK_SECONDS" \
+    --worker-stale-seconds "$STATUS_WORKER_STALE_SECONDS" \
+    --expected-workers "$STATUS_EXPECTED_WORKERS" \
+    --log-lines "$STATUS_LOG_LINES" --error-lines "$STATUS_ERROR_LINES"
+  exit $?
 fi
 
 mkdir -p "$ROOT/.queue" "$QUEUE" "$PREFLIGHT" "$GLOBAL_RESULTS" "$OM_WORK/locks"

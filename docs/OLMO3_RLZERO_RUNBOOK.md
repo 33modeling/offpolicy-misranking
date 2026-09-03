@@ -177,8 +177,21 @@ only contract-valid durable artifacts.
 Queue state:
 
 ```bash
-bash scripts/run_olmo3_rlzero.sh status
+bash scripts/run_olmo3_rlzero.sh status h100
 ```
+
+`status` is an active health check, not only a queue listing. By default it
+samples the shared run for 20 seconds, compares logs, rollout partials, and
+checkpoints, scans every log belonging to an active family for CUDA/runtime
+errors, verifies whether the family lock is still held, and reports one of
+`PROGRESSING`, `ALIVE`, `STUCK`, `DEAD`, `RETRYING`, `STOPPED`, `PENDING`, or
+`COMPLETE`. The final
+diagnosis also checks whether all three expected workers are observable. A held
+lock with no shared activity for 30 minutes is `STUCK`; a released lock with a
+leftover owner record is `DEAD`. For a non-waiting snapshot set
+`OM_RLZERO_STATUS_PROBE_SECONDS=0`; change the thresholds only through
+`OM_RLZERO_STATUS_STUCK_SECONDS`, `OM_RLZERO_STATUS_WORKER_STALE_SECONDS`, and
+`OM_RLZERO_STATUS_EXPECTED_WORKERS`.
 
 Worker logs are under:
 

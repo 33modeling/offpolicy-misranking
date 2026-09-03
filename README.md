@@ -46,6 +46,14 @@ the next clean H100 run, use the same launcher with its isolated runtime profile
 bash scripts/run_olmo3_rlzero.sh run h100
 ```
 
+Diagnose that profile from any machine mounting the shared volume. The command
+waits 20 seconds, checks every active-family log and lock, and reports whether
+each worker is progressing, merely alive, stuck, or dead:
+
+```bash
+bash scripts/run_olmo3_rlzero.sh status h100
+```
+
 The `h100` profile preserves the model, datasets, seeds, checkpoints, GRPO
 groups, and optimizer contract. It changes only execution batching: rollout
 generation uses batches of eight and response log-probability passes use
