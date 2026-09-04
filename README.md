@@ -48,8 +48,12 @@ bash scripts/run_olmo3_rlzero.sh run h100
 ```
 
 Diagnose that profile from any machine mounting the shared volume. The command
-waits 20 seconds, checks every active-family log and lock, and reports whether
-each worker is progressing, merely alive, stuck, or dead:
+waits 20 seconds and combines family locks, worker heartbeats, pipeline
+CPU/GPU telemetry, artifact changes, and runtime batch contracts. A quiet log
+alone is never treated as proof of a stall: legacy workers without telemetry
+are `UNKNOWN`, while `STUCK` requires an explicit consecutive-idle report from
+the node-local watchdog. A failed CPU/GPU probe also reports `UNKNOWN` and
+suppresses termination.
 
 ```bash
 bash scripts/run_olmo3_rlzero.sh status h100
@@ -59,9 +63,15 @@ The `h100` profile preserves the model, datasets, seeds, checkpoints, GRPO
 groups, and optimizer contract. It changes only execution batching: rollout
 generation uses batches of eight and response log-probability passes use
 micro-batches of four. Projected-gradient scoring also batches four stored
-responses per forward pass. Its artifacts go to the separate
-`...-grpo-h100-v2` root, and every GRPO step records throughput plus peak GPU
-memory so the profile can be measured before any further tuning.
+responses per forward pass. Confirmed rollout OOMs reduce generation batches
+geometrically from 8 to 4 and then 2; the launcher refuses a batch-1 fallback
+instead of silently serializing a multi-hour run. This floor is a supervisor
+safety invariant, so it does not alter the immutable experiment config or its
+hash. Recovery classification reads
+only bytes appended to the failed stage logs after the current attempt began,
+so stale CUDA errors cannot trigger a new fallback. Its artifacts go to the
+separate `...-grpo-h100-v2` root, and every GRPO step records throughput plus
+peak GPU memory so the profile can be measured before any further tuning.
 
 ## Previous Qwen Matrix
 

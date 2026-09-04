@@ -7,6 +7,7 @@ SUPERVISOR_REPO=$PWD
 export OM_REPO="${OM_REPO:-$SUPERVISOR_REPO}"
 MODE=${1:-run}
 PROFILE=${2:-baseline}
+RECOVERY_MIN_GENERATION_BATCH=2
 case "$MODE" in
   prepare|check|run|status) ;;
   *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100]"; exit 2 ;;
@@ -206,9 +207,11 @@ if [ "$MODE" = status ]; then
   STATUS_PROBE_SECONDS="${OM_RLZERO_STATUS_PROBE_SECONDS:-20}"
   STATUS_STUCK_SECONDS="${OM_RLZERO_STATUS_STUCK_SECONDS:-1800}"
   STATUS_WORKER_STALE_SECONDS="${OM_RLZERO_STATUS_WORKER_STALE_SECONDS:-180}"
+  STATUS_HEARTBEAT_STALE_SECONDS="${OM_RLZERO_STATUS_HEARTBEAT_STALE_SECONDS:-90}"
   STATUS_EXPECTED_WORKERS="${OM_RLZERO_STATUS_EXPECTED_WORKERS:-3}"
   for value_name in STATUS_LOG_LINES STATUS_ERROR_LINES STATUS_STUCK_SECONDS \
-      STATUS_WORKER_STALE_SECONDS STATUS_EXPECTED_WORKERS; do
+      STATUS_WORKER_STALE_SECONDS STATUS_HEARTBEAT_STALE_SECONDS \
+      STATUS_EXPECTED_WORKERS; do
     value=${!value_name}
     case "$value" in
       ''|*[!0-9]*|0) echo "[abort] invalid $value_name=$value"; exit 2 ;;
@@ -224,7 +227,13 @@ if [ "$MODE" = status ]; then
     --probe-seconds "$STATUS_PROBE_SECONDS" \
     --stuck-seconds "$STATUS_STUCK_SECONDS" \
     --worker-stale-seconds "$STATUS_WORKER_STALE_SECONDS" \
+    --heartbeat-stale-seconds "$STATUS_HEARTBEAT_STALE_SECONDS" \
     --expected-workers "$STATUS_EXPECTED_WORKERS" \
+    --config-sha "$CONFIG_SHA" --model-revision "$MODEL_REVISION" \
+    --generation-batch "$(runtime_field generation_batch)" \
+    --gradient-micro-batch "$(runtime_field gradient_micro_batch)" \
+    --logprob-micro-batch "$(runtime_field logprob_micro_batch)" \
+    --min-recovery-generation-batch "$RECOVERY_MIN_GENERATION_BATCH" \
     --log-lines "$STATUS_LOG_LINES" --error-lines "$STATUS_ERROR_LINES"
   exit $?
 fi
@@ -360,6 +369,38 @@ if [ "$MODE" = run ]; then
   ACTIVE_OWNER=""
   SUPERVISOR_KEEPALIVE=""
   KEEPALIVE_READY="$LOCAL_ROOT/keepalive-$WORKER_ID.ready"
+  WORKER_HEARTBEAT_PID=""
+  WORKER_HEARTBEAT_PATH="$ROOT/.workers/$WORKER_ID.json"
+  WORKER_HEARTBEAT_SECONDS="${OM_RLZERO_HEARTBEAT_SECONDS:-15}"
+  case "$WORKER_HEARTBEAT_SECONDS" in
+    ''|*[!0-9]*|0) echo "[abort] invalid OM_RLZERO_HEARTBEAT_SECONDS=$WORKER_HEARTBEAT_SECONDS"; exit 2 ;;
+  esac
+  stop_worker_heartbeat() {
+    if [ -n "${WORKER_HEARTBEAT_PID:-}" ]; then
+      kill "$WORKER_HEARTBEAT_PID" 2>/dev/null || true
+      wait "$WORKER_HEARTBEAT_PID" 2>/dev/null || true
+    fi
+    WORKER_HEARTBEAT_PID=""
+    rm -f -- "$WORKER_HEARTBEAT_PATH"
+  }
+  start_worker_heartbeat() {
+    mkdir -p "$ROOT/.workers"
+    rm -f -- "$WORKER_HEARTBEAT_PATH"
+    "$PY" "$SUPERVISOR_RUNTIME_REPO/src/rlzero_heartbeat.py" \
+      --path "$WORKER_HEARTBEAT_PATH" --worker "$WORKER_ID" \
+      --host "$HOST_TAG" --launcher-pid "$$" \
+      --interval-seconds "$WORKER_HEARTBEAT_SECONDS" \
+      >/dev/null 2>&1 &
+    WORKER_HEARTBEAT_PID=$!
+    for _ in $(seq 1 50); do
+      [ -s "$WORKER_HEARTBEAT_PATH" ] && return 0
+      kill -0 "$WORKER_HEARTBEAT_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    echo "[abort] worker heartbeat failed to start" | tee -a "$LOG"
+    stop_worker_heartbeat
+    return 1
+  }
   stop_supervisor_keepalive() {
     if [ -n "${SUPERVISOR_KEEPALIVE:-}" ]; then
       kill "$SUPERVISOR_KEEPALIVE" 2>/dev/null || true
@@ -405,9 +446,11 @@ if [ "$MODE" = run ]; then
     [ -z "${ACTIVE_OWNER:-}" ] || rm -f -- "$ACTIVE_OWNER"
     ACTIVE_OWNER=""
     stop_supervisor_keepalive
+    stop_worker_heartbeat
   }
   trap cleanup_worker EXIT
   trap 'exit 130' INT TERM HUP
+  start_worker_heartbeat || exit 1
   start_supervisor_keepalive || exit 1
   export OM_EXTERNAL_GPU_KEEPALIVE=1
 fi
@@ -485,6 +528,7 @@ export OM_ATTN="$(experiment_field attn)" OM_SKIP_HYBRID=1
 export OM_LORA_TARGETS="$LORA_TARGETS" OM_GEN_BATCH="$(runtime_field generation_batch)"
 export GRADIENT_MICRO_BATCH="$(runtime_field gradient_micro_batch)"
 export GRPO_LOGPROB_MICRO_BATCH="$(runtime_field logprob_micro_batch)"
+export REGIME_RECOVERY_MIN_BATCH="$RECOVERY_MIN_GENERATION_BATCH"
 export GRPO_GRADIENT_CHECKPOINTING="$(runtime_field gradient_checkpointing)"
 
 SIGNAL_TIMEOUT_SECONDS="${OM_RLZERO_SIGNAL_TIMEOUT_SECONDS:-1800}"

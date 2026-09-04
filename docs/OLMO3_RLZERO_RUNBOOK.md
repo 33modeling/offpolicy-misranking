@@ -181,17 +181,44 @@ bash scripts/run_olmo3_rlzero.sh status h100
 ```
 
 `status` is an active health check, not only a queue listing. By default it
-samples the shared run for 20 seconds, compares logs, rollout partials, and
-checkpoints, scans every log belonging to an active family for CUDA/runtime
-errors, verifies whether the family lock is still held, and reports one of
-`PROGRESSING`, `ALIVE`, `STUCK`, `DEAD`, `RETRYING`, `STOPPED`, `PENDING`, or
-`COMPLETE`. The final
-diagnosis also checks whether all three expected workers are observable. A held
-lock with no shared activity for 30 minutes is `STUCK`; a released lock with a
-leftover owner record is `DEAD`. For a non-waiting snapshot set
+samples the shared run for 20 seconds and combines five independent signals:
+family locks, worker heartbeats, node-local watchdog telemetry, durable
+artifact changes, and the configured/runtime batch contract. It also scans
+every log belonging to an active family for CUDA/runtime errors. Family states
+include `PROGRESSING`, `COMPUTING`, `ALIVE`, `IDLE`, `UNKNOWN`, `STUCK`, `DEAD`,
+`RETRYING`, `STOPPED`, `PENDING`, and `COMPLETE`.
+
+- `PROGRESSING`: a real log or durable artifact changed during the probe.
+- `COMPUTING`: fresh watchdog telemetry observed CPU or GPU activity even if
+  the stage emitted no log line.
+- `ALIVE`: the worker/pipeline heartbeat is fresh but no progress was observed
+  during the short probe.
+- `IDLE`: one inactive watchdog window was observed; the watchdog will verify
+  it again before terminating anything.
+- `UNKNOWN`: a legacy or broken worker holds the lock but provides no fresh
+  telemetry, or a CPU/GPU probe failed. This is not proof that the process is
+  stuck, and a probe failure suppresses watchdog termination.
+- `STUCK`: the node-local watchdog measured no log, CPU, or GPU activity for
+  consecutive idle windows and recorded termination evidence.
+- `DEAD`: the family lock was released while an owner record remained.
+
+The final diagnosis checks whether all three expected worker heartbeats are
+observable. Completion additionally requires the exact generation commit,
+config hash, model revision, dataset, and seed in the family stamp; non-empty
+stamp files are not accepted by themselves. For a non-waiting snapshot set
 `OM_RLZERO_STATUS_PROBE_SECONDS=0`; change the thresholds only through
 `OM_RLZERO_STATUS_STUCK_SECONDS`, `OM_RLZERO_STATUS_WORKER_STALE_SECONDS`, and
+`OM_RLZERO_STATUS_HEARTBEAT_STALE_SECONDS`, and
 `OM_RLZERO_STATUS_EXPECTED_WORKERS`.
+
+The H100 generation batch is 8. Only a confirmed OOM can lower it, and recovery
+steps down geometrically (`8 -> 4 -> 2`). Batch 2 is the supervisor safety
+floor and does not change the immutable experiment config hash; a further OOM
+aborts with explicit recovery exhaustion instead of falling back to batch 1.
+CUDA runtime/context errors restart at the configured batch 8. Each
+attempt records the starting byte offset of every stage log; recovery reads
+only newly appended bytes for the missing rollout stage. Status output likewise
+separates all historical error matches from current-attempt matches.
 
 Worker logs are under:
 

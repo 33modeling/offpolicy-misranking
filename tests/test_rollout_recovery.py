@@ -79,13 +79,14 @@ def test_recovery_rotates_gpus_and_forces_the_recovery_batch(tmp_path: Path) -> 
             str(pipeline),
             str(run),
             "rollout-fresh",
-            "1",
+            "4",
             "0,1",
         ],
         env={
             **os.environ,
             "OM_RECOVERY_PY": sys.executable,
             "OM_RECOVERY_INDEX": "2",
+            "OM_RECOVERY_FAILURE_KIND": "oom",
             "RECOVERY_CAPTURE": str(capture),
         },
         text=True,
@@ -95,7 +96,7 @@ def test_recovery_rotates_gpus_and_forces_the_recovery_batch(tmp_path: Path) -> 
     )
     assert result.returncode == 0, result.stdout + result.stderr
     rows = [json.loads(line) for line in capture.read_text().splitlines()]
-    assert {row["batch"] for row in rows} == {"1"}
+    assert {row["batch"] for row in rows} == {"4"}
     assert {(row["shard"], row["gpu"]) for row in rows} == {
         ("0:2", "1"),
         ("1:2", "0"),
@@ -109,5 +110,6 @@ def test_recovery_rotates_gpus_and_forces_the_recovery_batch(tmp_path: Path) -> 
     ]
     assert [row["status"] for row in recovery] == ["started", "completed"]
     assert {row["configured_generation_batch"] for row in recovery} == {"8"}
-    assert {row["recovery_generation_batch"] for row in recovery} == {1}
+    assert {row["recovery_generation_batch"] for row in recovery} == {4}
+    assert {row["failure_kind"] for row in recovery} == {"oom"}
     assert recovery[0]["gpu_order"] == ["0", "1"]

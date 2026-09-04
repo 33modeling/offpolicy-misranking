@@ -77,6 +77,10 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "/bin/sleep 0.05\n"
             'if [ "$point" = "a 0 0" ] && mkdir "$OM_WORK/hang-once" 2>/dev/null; then '
             "while :; do /bin/sleep 1; done; fi\n"
+            'if [ "${TEST_TELEMETRY_PAUSE_ONCE:-0}" = 1 ] && [ "$point" = "a 0 25" ] '
+            '&& mkdir "$OM_WORK/telemetry-pause-once" 2>/dev/null; then /bin/sleep 3; fi\n'
+            'if [ "${TEST_ACTIVE_PAUSE_ONCE:-0}" = 1 ] && [ "$point" = "a 0 25" ] '
+            '&& mkdir "$OM_WORK/active-pause-once" 2>/dev/null; then /bin/sleep 3; fi\n'
             'mkdir -p "$OUT_ROOT"\n'
             'if [ "${TEST_PROMPT_MISMATCH_ONCE:-0}" = 1 ] && '
             '[ "$point" = "a 0 25" ] && mkdir "$OM_WORK/prompt-mismatch-once" 2>/dev/null; then '
@@ -187,8 +191,11 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             fake_bin / "nvidia-smi",
             "#!/usr/bin/env bash\n"
             'if [[ "$*" == *"pmon"* ]]; then\n'
+            '  [ "${TEST_GPU_PROBE_FAIL:-0}" != 1 ] || exit 1\n'
             "  printf '# gpu pid type sm mem\\n'\n"
-            "  ps -eo pid=,args= | awk '/scripts\\/run_point.sh/ && !/awk/ {print \"0 \" $1 \" C 99 1\"}'\n"
+            '  if [ "${TEST_GPU_ACTIVE:-0}" = 1 ]; then\n'
+            "    ps -eo pid=,args= | awk '/scripts\\/run_point.sh/ && !/awk/ {print \"0 \" $1 \" C 99 1\"}'\n"
+            "  fi\n"
             "else\n"
             "  printf '99\\n'\n"
             "fi\n",
@@ -253,6 +260,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             outputs.append(output)
             assert worker.returncode == 0, output
         assert any("[regime-hard-stall]" in output for output in outputs)
+        assert all("GPU/CPU 활동과 무관하게" not in output for output in outputs)
         assert (
             work / "runs/regime-fixture/.queue/generation.git"
         ).read_text(encoding="utf-8") == f"{checkout_git}\n"
@@ -286,13 +294,19 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         repaired = subprocess.run(
             ["/bin/bash", "scripts/run_matrix.sh"],
             cwd=checkout,
-            env=env,
+            env={
+                **env,
+                "TEST_GPU_PROBE_FAIL": "1",
+                "TEST_TELEMETRY_PAUSE_ONCE": "1",
+            },
             text=True,
             capture_output=True,
             timeout=30,
             check=False,
         )
         assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+        assert "telemetry 조회 실패" in repaired.stdout
+        assert "[regime-hard-stall]" not in repaired.stdout
         repaired_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
         repaired_claims = [row.split("|", 1)[1] for row in repaired_rows]
         assert repaired_claims[len(claims) :] == ["a 0 25"]
@@ -302,6 +316,31 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "1",
             "1",
         ]
+
+        (damaged / "score_protocol.json").write_text(
+            '{"schema":"offpolicy-score-validation-split/v1"}\n'
+        )
+        (damaged / "scores_oracle.json").write_text('{"0":{"score":0}}\n')
+        active = subprocess.run(
+            ["/bin/bash", "scripts/run_matrix.sh"],
+            cwd=checkout,
+            env={**env, "TEST_GPU_ACTIVE": "1", "TEST_ACTIVE_PAUSE_ONCE": "1"},
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert active.returncode == 0, active.stdout + active.stderr
+        assert "계산 활동 확인 (GPU 99%" in active.stdout
+        assert "[regime-hard-stall]" not in active.stdout
+        active_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
+        assert [row.split("|", 1)[1] for row in active_rows[len(repaired_rows) :]] == [
+            "a 0 25"
+        ]
+        assert (
+            work / "results/regime-fixture/analysis-count"
+        ).read_text().splitlines() == ["1", "1", "1"]
+        repaired_rows = active_rows
 
         # A supervisor pulled after an interruption must transparently resume
         # generation with the commit recorded by the existing matrix.

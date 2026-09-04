@@ -156,9 +156,10 @@ SEEDS=(${REGIME_SEEDS:-0 1 2})
 DATASETS=(${REGIME_DATASETS:-gsm8k math500})
 DRIFTS=(${REGIME_DRIFTS:-0 25 100 400})
 MAX_RETRIES="${REGIME_MAX_RETRIES:-3}"
-# Only genuine OOM recovery reduces the generation batch. CUDA context/runtime
-# failures need a fresh process, not an eightfold serialization of the work.
-OOM_RECOVERY_GEN_BATCH="${REGIME_RECOVERY_GEN_BATCH:-1}"
+# Only genuine OOM recovery reduces the generation batch. Reductions are
+# geometric (8 -> 4 -> 2), and the configured floor prevents an accidental
+# batch-1 serialization of a multi-hour rollout.
+RECOVERY_MIN_GEN_BATCH="${REGIME_RECOVERY_MIN_BATCH:-2}"
 CONTRACT="${REGIME_MATRIX:-}"
 N_VAL_DEFAULT="${REGIME_N_VAL:-100}"
 N_TRAIN_BY_DATASET="${REGIME_N_TRAIN_BY_DATASET:-}"
@@ -228,8 +229,8 @@ done
   echo "[abort] HARD_STALL_SECONDS must be at least STALL_SECONDS"
   exit 2
 }
-case "$OOM_RECOVERY_GEN_BATCH" in
-  ''|*[!0-9]*|0) echo "[abort] invalid REGIME_RECOVERY_GEN_BATCH=$OOM_RECOVERY_GEN_BATCH"; exit 2 ;;
+case "$RECOVERY_MIN_GEN_BATCH" in
+  ''|*[!0-9]*|0) echo "[abort] invalid REGIME_RECOVERY_MIN_BATCH=$RECOVERY_MIN_GEN_BATCH"; exit 2 ;;
 esac
 case "$WATCH_KILL_GRACE_SECONDS" in
   ''|*[!0-9]*) echo "[abort] invalid WATCH_KILL_GRACE_SECONDS=$WATCH_KILL_GRACE_SECONDS"; exit 2 ;;
@@ -450,20 +451,26 @@ if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ]; then
 fi
 
 group_cpu_seconds() {
-  ps -eo pgid=,cputimes= 2>/dev/null \
+  local rows
+  rows=$(ps -eo pgid=,cputimes= 2>/dev/null) || return 1
+  printf '%s\n' "$rows" \
     | awk -v pgid="$1" '$1 == pgid { total += $2 } END { print total + 0 }'
 }
 
 gpu_peak_util() {
-  local target_pgid=$1 peak=0 util sample pids
+  local target_pgid=$1 peak=0 util sample pids raw
   for sample in $(seq 1 "$WATCH_GPU_SAMPLES"); do
     pids=$(ps -eo pid=,pgid= 2>/dev/null \
-      | awk -v pgid="$target_pgid" '$2 == pgid { print $1 }')
-    util=$(timeout 10 nvidia-smi pmon -c 1 -s u 2>/dev/null \
-      | awk -v pids="$pids" '
+      | awk -v pgid="$target_pgid" '$2 == pgid { print $1 }') || return 1
+    raw=$(timeout 10 nvidia-smi pmon -c 1 -s u 2>/dev/null) || return 1
+    util=$(printf '%s\n' "$raw" | awk -v pids="$pids" '
           BEGIN { n=split(pids, ids); for (i=1; i<=n; i++) wanted[ids[i]]=1 }
+          /^#/ && /gpu/ && /pid/ { header=1 }
           ($2 in wanted) && $4 ~ /^[0-9]+$/ && $4 > peak { peak=$4 }
-          END { print peak + 0 }')
+          END { if (!header) exit 2; print peak + 0 }') || return 1
+    case "$util" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
     [ "${util:-0}" -le "$peak" ] || peak=$util
     [ "$sample" -eq "$WATCH_GPU_SAMPLES" ] || /bin/sleep 2
   done
@@ -478,6 +485,53 @@ terminate_process_group() {
   kill -KILL -- "-$pgid" 2>/dev/null || true
 }
 
+write_pipeline_activity() {
+  local run=$1 state=$2 runner_pid=$3 cpu_delta=$4 gpu_peak=$5 idle_seconds=$6
+  local target temporary now
+  target="$run/.pipeline-activity.json"
+  temporary="$target.tmp.${BASHPID:-$$}"
+  now=$(date +%s)
+  printf '{"schema":"offpolicy-pipeline-activity/v1","observed_at_epoch":%s,"state":"%s","runner_pid":%s,"cpu_delta_seconds":%s,"gpu_peak_percent":%s,"idle_seconds":%s}\n' \
+    "$now" "$state" "$runner_pid" "$cpu_delta" "$gpu_peak" "$idle_seconds" \
+    > "$temporary" && mv -f -- "$temporary" "$target"
+}
+
+write_attempt_manifest() {
+  local run=$1 attempt_log=$2 target
+  target="$attempt_log.start.json"
+  "$PY" - "$run/logs" "$attempt_log" "$target" <<'PYEOF'
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+logs_root = Path(sys.argv[1])
+attempt_log = Path(sys.argv[2]).resolve()
+target = Path(sys.argv[3])
+offsets = {}
+for path in logs_root.rglob("*.log"):
+    try:
+        offsets[path.relative_to(logs_root).as_posix()] = (
+            0 if path.resolve() == attempt_log else path.stat().st_size
+        )
+    except OSError:
+        continue
+record = {
+    "schema": "offpolicy-pipeline-attempt/v1",
+    "started_at_ns": time.time_ns(),
+    "attempt_log": attempt_log.name,
+    "log_offsets": offsets,
+}
+temporary = target.with_name(f"{target.name}.tmp.{os.getpid()}")
+temporary.write_text(
+    json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+temporary.replace(target)
+PYEOF
+}
+
 ACTIVE_PGID=""
 ACTIVE_WATCHER=""
 cleanup_active_pipeline() {
@@ -490,20 +544,58 @@ cleanup_active_pipeline() {
 run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command...>
   local run=$1 attempt_log=$2 runner_pid watcher_pid rc
   shift 2
-  local prev="" elapsed=0 silent_elapsed=0 cpu_mark cpu_now cpu_delta gpu_peak lf line sig
+  local prev="" elapsed=0 idle_elapsed=0 cpu_mark cpu_now cpu_delta
+  local interval_cpu_mark gpu_peak lf line sig state message
+  local cpu_probe_ok interval_cpu_valid stall_cpu_valid gpu_probe_ok
+  local telemetry_failed=0
+  local gpu_text cpu_text
   local candidates=()
 
   mkdir -p "$run/logs" || return 1
   : > "$attempt_log" || return 1
+  write_attempt_manifest "$run" "$attempt_log" || return 1
   setsid "$@" >> "$attempt_log" 2>&1 &
   runner_pid=$!
   ACTIVE_PGID=$runner_pid
 
   (
-    cpu_mark=$(group_cpu_seconds "$runner_pid")
+    if cpu_mark=$(group_cpu_seconds "$runner_pid"); then
+      stall_cpu_valid=1
+      interval_cpu_valid=1
+    else
+      cpu_mark=0
+      stall_cpu_valid=0
+      interval_cpu_valid=0
+    fi
+    interval_cpu_mark=$cpu_mark
+    state=starting
+    write_pipeline_activity "$run" "$state" "$runner_pid" 0 -1 0
+    finish_watchdog() {
+      trap - TERM INT HUP
+      [ "$state" = terminating-idle ] || \
+        write_pipeline_activity "$run" exited "$runner_pid" 0 -1 "$idle_elapsed"
+      exit 0
+    }
+    trap finish_watchdog TERM INT HUP
     while kill -0 -- "-$runner_pid" 2>/dev/null; do
       /bin/sleep "$WATCH_INTERVAL_SECONDS"
       kill -0 -- "-$runner_pid" 2>/dev/null || break
+
+      if cpu_now=$(group_cpu_seconds "$runner_pid"); then
+        cpu_probe_ok=1
+        if [ "$interval_cpu_valid" -eq 1 ]; then
+          cpu_delta=$((cpu_now > interval_cpu_mark ? cpu_now - interval_cpu_mark : 0))
+        else
+          cpu_delta=-1
+        fi
+        interval_cpu_mark=$cpu_now
+        interval_cpu_valid=1
+      else
+        cpu_probe_ok=0
+        cpu_now=0
+        cpu_delta=-1
+        interval_cpu_valid=0
+      fi
 
       candidates=("$attempt_log")
       for lf in "$run"/logs/*.log; do
@@ -516,40 +608,107 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
         [ -n "$line" ] && echo "[regime-detail·$(basename "$lf" .log)] $line"
         prev=$sig
         elapsed=0
-        silent_elapsed=0
-        cpu_mark=$(group_cpu_seconds "$runner_pid")
+        idle_elapsed=0
+        telemetry_failed=0
+        if [ "$cpu_probe_ok" -eq 1 ]; then
+          cpu_mark=$cpu_now
+          stall_cpu_valid=1
+        else
+          stall_cpu_valid=0
+        fi
+        write_pipeline_activity "$run" output-progress "$runner_pid" \
+          "$cpu_delta" -1 0
         continue
       fi
 
       elapsed=$((elapsed + WATCH_INTERVAL_SECONDS))
-      silent_elapsed=$((silent_elapsed + WATCH_INTERVAL_SECONDS))
-      if [ "$silent_elapsed" -ge "$HARD_STALL_SECONDS" ]; then
-        message="[regime-hard-stall] 로그 ${HARD_STALL_SECONDS}초 무변화 — GPU/CPU 활동과 무관하게 process group 종료 후 .partial 재개"
-        echo "$message"
-        printf '%s\n' "$message" >> "$attempt_log"
-        terminate_process_group "$runner_pid"
-        break
+      state=process-alive
+      if [ "$cpu_probe_ok" -ne 1 ]; then
+        state=telemetry-error
+        telemetry_failed=1
+      elif [ "$cpu_delta" -gt 2 ]; then
+        state=cpu-active
+        telemetry_failed=0
+        idle_elapsed=0
+        elapsed=0
+        cpu_mark=$cpu_now
+        stall_cpu_valid=1
+      elif [ "$telemetry_failed" -eq 1 ]; then
+        state=telemetry-error
+      elif [ "$idle_elapsed" -gt 0 ]; then
+        state=idle-suspected
       fi
+      write_pipeline_activity "$run" "$state" "$runner_pid" \
+        "$cpu_delta" -1 "$idle_elapsed"
       [ "$elapsed" -lt "$STALL_SECONDS" ] || {
-        cpu_now=$(group_cpu_seconds "$runner_pid")
-        cpu_delta=$((cpu_now > cpu_mark ? cpu_now - cpu_mark : 0))
+        if [ "$cpu_probe_ok" -eq 1 ] && [ "$stall_cpu_valid" -eq 1 ]; then
+          cpu_delta=$((cpu_now > cpu_mark ? cpu_now - cpu_mark : 0))
+        else
+          cpu_delta=-1
+        fi
         # The supervisor keepalive is outside runner_pid's process group. Only
         # activity from this pipeline may prevent a stalled-run restart.
-        gpu_peak=$(gpu_peak_util "$runner_pid")
-        if [ "$gpu_peak" -gt 0 ] || [ "$cpu_delta" -gt 2 ]; then
-          message="[regime-watchdog] 로그 ${STALL_SECONDS}초 무변화지만 계산 활동 확인 (GPU ${gpu_peak}%, CPU +${cpu_delta}s) — 계속 실행"
-          echo "$message"
-          cpu_mark=$cpu_now
+        if gpu_peak=$(gpu_peak_util "$runner_pid"); then
+          gpu_probe_ok=1
+          gpu_text="${gpu_peak}%"
         else
-          message="[regime-watchdog] 로그·GPU·CPU ${STALL_SECONDS}초 정지 — process group 종료 후 .partial 재개"
+          gpu_probe_ok=0
+          gpu_peak=-1
+          gpu_text=unavailable
+        fi
+        if [ "$cpu_delta" -ge 0 ]; then
+          cpu_text="+${cpu_delta}s"
+        else
+          cpu_text=unavailable
+        fi
+        if { [ "$gpu_probe_ok" -eq 1 ] && [ "$gpu_peak" -gt 0 ]; } \
+            || [ "$cpu_delta" -gt 2 ]; then
+          message="[regime-watchdog] 로그 ${STALL_SECONDS}초 무변화지만 계산 활동 확인 (GPU ${gpu_text}, CPU ${cpu_text}) — 계속 실행"
           echo "$message"
-          printf '%s\n' "$message" >> "$attempt_log"
-          terminate_process_group "$runner_pid"
-          break
+          idle_elapsed=0
+          telemetry_failed=0
+          state=cpu-active
+          if [ "$gpu_probe_ok" -eq 1 ] && [ "$gpu_peak" -gt 0 ]; then
+            state=gpu-active
+          fi
+          write_pipeline_activity "$run" "$state" "$runner_pid" \
+            "$cpu_delta" "$gpu_peak" 0
+        elif [ "$gpu_probe_ok" -ne 1 ] || [ "$cpu_delta" -lt 0 ]; then
+          message="[regime-watchdog] 로그 ${STALL_SECONDS}초 무변화, telemetry 조회 실패 (GPU ${gpu_text}, CPU ${cpu_text}) — 종료 판정 보류"
+          echo "$message"
+          idle_elapsed=0
+          telemetry_failed=1
+          state=telemetry-error
+          write_pipeline_activity "$run" "$state" "$runner_pid" \
+            "$cpu_delta" "$gpu_peak" 0
+        else
+          telemetry_failed=0
+          idle_elapsed=$((idle_elapsed + elapsed))
+          if [ "$idle_elapsed" -ge "$HARD_STALL_SECONDS" ]; then
+            message="[regime-hard-stall] 로그·GPU·CPU ${idle_elapsed}초 연속 정지 — process group 종료 후 .partial 재개"
+            echo "$message"
+            printf '%s\n' "$message" >> "$attempt_log"
+            state=terminating-idle
+            write_pipeline_activity "$run" "$state" "$runner_pid" \
+              "$cpu_delta" "$gpu_peak" "$idle_elapsed"
+            terminate_process_group "$runner_pid"
+            break
+          fi
+          message="[regime-watchdog] 로그·GPU·CPU ${elapsed}초 정지 의심 (${idle_elapsed}/${HARD_STALL_SECONDS}s) — 한 번 더 확인"
+          echo "$message"
+          write_pipeline_activity "$run" idle-suspected "$runner_pid" \
+            "$cpu_delta" "$gpu_peak" "$idle_elapsed"
+        fi
+        if [ "$cpu_probe_ok" -eq 1 ]; then
+          cpu_mark=$cpu_now
+          stall_cpu_valid=1
+        else
+          stall_cpu_valid=0
         fi
         elapsed=0
       }
     done
+    finish_watchdog
   ) &
   watcher_pid=$!
   ACTIVE_WATCHER=$watcher_pid
@@ -602,13 +761,6 @@ PYEOF
 recover_cuda_rollout() {
   local run=$1 drift=$2 try=$3 stage="" gpu_csv recovery_log
   local failure_kind recovery_batch configured_batch
-  read -r failure_kind recovery_batch configured_batch < <(
-    "$PY" "$SUPERVISOR_REPO/src/recovery_policy.py" \
-      --run-config "$run/run_config.json" \
-      --attempt-log "$run/logs/regime-attempt-$try.log" \
-      --oom-batch "$OOM_RECOVERY_GEN_BATCH"
-  ) || return 1
-
   if [ "$drift" -eq 0 ] \
       && ! rollout_artifact_ready "$run" rollouts_behavior_train; then
     stage=rollout-behavior
@@ -620,6 +772,16 @@ recover_cuda_rollout() {
     return 1
   fi
 
+  read -r failure_kind recovery_batch configured_batch < <(
+    "$PY" "$SUPERVISOR_REPO/src/recovery_policy.py" \
+      --run-config "$run/run_config.json" \
+      --attempt-log "$run/logs/regime-attempt-$try.log" \
+      --attempt-manifest "$run/logs/regime-attempt-$try.log.start.json" \
+      --logs-root "$run/logs" \
+      --stage "$stage" --recovery-log "$run/rollout_recovery.jsonl" \
+      --min-oom-batch "$RECOVERY_MIN_GEN_BATCH"
+  ) || return 1
+
   gpu_csv="${OM_GPUS:-}"
   if [ -z "$gpu_csv" ]; then
     gpu_csv=$(seq -s, 0 $((GRPO_WORLD_SIZE_DEFAULT - 1)))
@@ -630,6 +792,7 @@ recover_cuda_rollout() {
 "immutable run config preserved"
   run_pipeline_watchdog "$run" "$recovery_log" \
     env OM_RECOVERY_PY="$PY" OM_RECOVERY_INDEX="$try" \
+      OM_RECOVERY_FAILURE_KIND="$failure_kind" \
       PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
       bash "$SUPERVISOR_REPO/scripts/recover_rollout_stage.sh" \
         "$PIPELINE_REPO" "$run" "$stage" "$recovery_batch" "$gpu_csv"

@@ -37,6 +37,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy2(ROOT / "src/regime_resume_commit.py", checkout / "src")
     shutil.copy2(ROOT / "src/cleanup_run_processes.py", checkout / "src")
     shutil.copy2(ROOT / "src/rlzero_status.py", checkout / "src")
+    shutil.copy2(ROOT / "src/rlzero_heartbeat.py", checkout / "src")
     shutil.copy2(ROOT / "configs/olmo3_rlzero.json", checkout / "configs")
     shutil.copy2(ROOT / "configs/olmo3_rlzero_h100.json", checkout / "configs")
     (checkout / "requirements.txt").write_text("fixture\n")
@@ -59,7 +60,7 @@ case "$script" in
   *bootstrap_math_verify.py) printf '%s/runtime-deps\n' "$TEST_SHARED" ;;
   *regime_resume_commit.py) exec python3 "$script" "$@" ;;
   *cleanup_run_processes.py) exec python3 "$script" "$@" ;;
-  *rlzero_status.py) exec python3 "$script" "$@" ;;
+  *rlzero_status.py|*rlzero_heartbeat.py) exec python3 "$script" "$@" ;;
   *model_matrix.py)
     case " $* " in
       *" field olmo3-7b-base path "*) printf '%s/models/Olmo-3-1025-7B\n' "$TEST_SHARED" ;;
@@ -80,6 +81,7 @@ case "$script" in
       *" experiment-field topk_frac "*) printf '0.1\n' ;;
       *" experiment-field temperature "*) printf '1.0\n' ;;
       *" experiment-field first_bootstrap "*) printf '10000\n' ;;
+      *" experiment-field attn "*) printf 'eager\n' ;;
       *" grpo-field world_size "*) printf '4\n' ;;
       *" grpo-field group_size "*) printf '8\n' ;;
       *" grpo-field clip_epsilon "*) printf '0.2\n' ;;
@@ -299,6 +301,8 @@ def test_h100_profile_uses_a_disjoint_root_and_runtime_contract(tmp_path: Path) 
     assert status.returncode == 0, output
     assert "profile=h100" in output
     assert f"experiment_root={shared_root}" in output
+    assert "runtime_contract generation_batch=8 gradient_micro_batch=4" in output
+    assert "min_recovery_generation_batch=2" in output
     assert "math500/s0 complete" in output
     assert "d0 stage=complete" in output
 
@@ -399,7 +403,8 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     (run / "rollouts_behavior_train.jsonl").write_text("{}\n{}\n")
     (run / "rollouts_fresh_train.shard0.partial").write_text("{}\n{}\n{}\n")
     (run / "rollout_recovery.jsonl").write_text(
-        '{"recovery_generation_batch":1,"status":"failed"}\n'
+        '{"configured_generation_batch":"8","failure_kind":"oom",'
+        '"recovery_generation_batch":4,"status":"failed"}\n'
     )
     long_error = (
         "RuntimeError: CUDA error: CUBLAS_STATUS_EXECUTION_FAILED "
@@ -429,7 +434,7 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     assert "math500/s0 stale-owner" in output
     assert "verdict=DEAD" in output
     assert "d0 stage=fresh-rollout behavior_rows=2 fresh_rows=3" in output
-    assert "recovery_batch=1 recovery_status=failed" in output
+    assert "recovery_batch=4 recovery_status=failed recovery_reason=oom" in output
     assert "d25 stage=initialized" in output
     assert "active_groups=3/4 loss=0.000e+00 grad_norm=4.200e-01" in output
     assert "learning_signal=update" in output

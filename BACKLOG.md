@@ -1,6 +1,6 @@
 # Off-policy Misranking Backlog
 
-Last updated: 2026-09-03 KST
+Last updated: 2026-09-04 KST
 
 This file records defects that can affect the confirmatory interpretation. A
 checked source fix does not mark result regeneration complete.
@@ -33,12 +33,18 @@ checked source fix does not mark result regeneration complete.
   that one-epoch PPO-form GRPO has no effective clipping pass.
 - [x] `OM-2026-09-03-08` Fix CUDA rollout recovery collapsing every failure to
   generation batch 1. Context failures now restart at the configured batch;
-  only a current-attempt OOM uses the reduced recovery batch. The old policy
-  produced observed d400 fresh-rollout times of 1,245--1,282 seconds per prompt
-  at batch 1, roughly eight times the configured H100 batch-8 runtime.
+  only an OOM in bytes appended to the failed stage logs during the current
+  attempt uses a reduced recovery batch. The old policy produced observed d400
+  fresh-rollout times of 1,245--1,282 seconds per prompt at batch 1, roughly
+  eight times the configured H100 batch-8 runtime.
 - [x] `OM-2026-09-03-09` Split fresh-rollout runtime telemetry into generation,
   verifier, output-token throughput, length-cap count, and effective batch so a
   low-utilization recovery cannot be mislabeled as undifferentiated activity.
+- [x] `OM-2026-09-04-10` Replace mtime-only `STUCK` diagnosis with worker
+  heartbeats and per-pipeline CPU/GPU telemetry. A quiet log now reports
+  `COMPUTING`, `ALIVE`, `IDLE`, or `UNKNOWN` according to measured evidence;
+  `STUCK` requires consecutive confirmed idle windows. Failed CPU/GPU probes
+  suppress termination instead of being interpreted as zero utilization.
 
 ## Required before numerical freeze
 

@@ -13,6 +13,7 @@ BATCH=$4
 GPU_CSV=$5
 PY=${OM_RECOVERY_PY:?OM_RECOVERY_PY is required}
 INDEX=${OM_RECOVERY_INDEX:-1}
+FAILURE_KIND=${OM_RECOVERY_FAILURE_KIND:?OM_RECOVERY_FAILURE_KIND is required}
 
 case "$STAGE" in
   rollout-behavior|rollout-fresh) ;;
@@ -20,6 +21,10 @@ case "$STAGE" in
 esac
 case "$BATCH" in
   ''|*[!0-9]*|0) echo "[recovery-abort] invalid batch=$BATCH" >&2; exit 2 ;;
+esac
+case "$FAILURE_KIND" in
+  oom|runtime) ;;
+  *) echo "[recovery-abort] invalid failure kind=$FAILURE_KIND" >&2; exit 2 ;;
 esac
 [ -x "$PY" ] || { echo "[recovery-abort] Python missing: $PY" >&2; exit 1; }
 [ -s "$RUN/run_config.json" ] || {
@@ -102,7 +107,8 @@ case "$STAGE" in
 esac
 record_recovery() {
   "$PY" - "$RUN" "$1" "$STAGE" "$RECOVERY_BASE" "$RECOVERY_K" \
-    "$CONFIGURED_GEN_BATCH" "$BATCH" "$INDEX" "$GPU_CSV" <<'PYEOF'
+    "$CONFIGURED_GEN_BATCH" "$BATCH" "$INDEX" "$GPU_CSV" \
+    "$FAILURE_KIND" <<'PYEOF'
 import collections
 import datetime
 import json
@@ -116,6 +122,7 @@ k = int(sys.argv[5])
 configured_batch, recovery_batch = sys.argv[6:8]
 attempt = int(sys.argv[8])
 gpus = sys.argv[9].split(",")
+failure_kind = sys.argv[10]
 coverage = {}
 for shard in range(len(gpus)):
     published = run / f"{base}.shard{shard}.jsonl"
@@ -145,6 +152,7 @@ record = {
     "status": status,
     "stage": stage,
     "attempt": attempt,
+    "failure_kind": failure_kind,
     "configured_generation_batch": configured_batch,
     "recovery_generation_batch": int(recovery_batch),
     "gpu_order": gpus,
