@@ -166,6 +166,8 @@ def _validate_document(
     root: Path,
     files: dict[str, bytes],
     expected_seeds: tuple[int, ...],
+    expected_datasets: tuple[str, ...] = EXPECTED_DATASETS,
+    expected_drifts: tuple[int, ...] = EXPECTED_DRIFTS,
 ) -> tuple[dict, list[dict[str, str]], str, str, str]:
     try:
         document = json.loads(files["REGIME.json"])
@@ -225,7 +227,7 @@ def _validate_document(
         raise HarvestError(f"{root / 'REGIME.json'}: summary must be nonempty objects")
 
     expected_cells = set(
-        itertools.product(EXPECTED_DATASETS, expected_seeds, EXPECTED_DRIFTS)
+        itertools.product(expected_datasets, expected_seeds, expected_drifts)
     )
     actual_cells: set[tuple[str, int, int]] = set()
     selector_sets: dict[tuple[str, int, int, str], set[str]] = {}

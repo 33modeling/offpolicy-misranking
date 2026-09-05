@@ -487,14 +487,24 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
         stderr=subprocess.STDOUT,
     )
     failure_marker = Path(env["TEST_SHARED"]) / "work/fail-mbpp-s0"
+    logs = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/logs"
+    retry_recorded = False
     for _ in range(200):
-        if failure_marker.exists():
+        # The child writes failure_marker before the supervisor observes exit.
+        # Wait for the actual retry transition before sending SIGTERM.
+        retry_recorded = any(
+            "[family-retry] mbpp/s0 rc=43" in path.read_text()
+            for path in logs.glob("*.log")
+        )
+        if retry_recorded:
             break
         time.sleep(0.05)
-    assert failure_marker.exists()
-    assert failed.poll() is None
+    was_running = failed.poll() is None
     failed.terminate()
     failed_output, _ = failed.communicate(timeout=10)
+    assert retry_recorded, failed_output
+    assert failure_marker.exists()
+    assert was_running
     assert "[family-retry] mbpp/s0 rc=43" in failed_output
     marker = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.queue/generation.git"
     assert marker.read_text().strip() == first_commit

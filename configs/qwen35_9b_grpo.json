@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "models": [{
+    "key": "qwen3.5-9b-posttrained",
+    "repository": "Qwen/Qwen3.5-9B",
+    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    "local_directory": "Qwen3.5-9B-pinned",
+    "model_type": "qwen3_5",
+    "initialization": "posttrained",
+    "lora_targets": ["q_proj", "v_proj", "in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a"],
+    "prompt_format": "tokenizer_chat"
+  }],
+  "experiment": {
+    "policy_method": "grpo",
+    "datasets": ["math500", "mbpp"],
+    "seeds": [0, 1, 2, 3, 4],
+    "drifts": [0, 25, 100, 400],
+    "n_train": 512,
+    "n_train_by_dataset": {"math500": 400, "mbpp": 512},
+    "n_val": 100,
+    "behavior_k": 8,
+    "fresh_k": 32,
+    "val_k": 8,
+    "micro_group": 4,
+    "max_new_tokens": 2048,
+    "proj_dim": 4096,
+    "grad_layers": 4,
+    "clip_cap": 10.0,
+    "topk_frac": 0.1,
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "thinking": "off",
+    "attn": "eager",
+    "skip_hybrid": true,
+    "first_bootstrap": 10000,
+    "runtime": {
+      "generation_batch": 4,
+      "gradient_micro_batch": 1,
+      "logprob_micro_batch": 1,
+      "gradient_checkpointing": true
+    },
+    "grpo": {
+      "world_size": 4,
+      "group_size": 8,
+      "clip_epsilon": 0.2,
+      "learning_rate": 0.00001,
+      "reference_kl_beta": 0.0,
+      "epochs_per_batch": 1,
+      "max_grad_norm": 1.0,
+      "advantage_epsilon": 0.0001,
+      "lora_rank": 16,
+      "lora_alpha": 32
+    }
+  }
+}

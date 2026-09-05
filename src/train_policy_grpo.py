@@ -17,6 +17,7 @@ import random
 import shutil
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
@@ -31,6 +32,24 @@ from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 POLICY_SCHEMA = "offpolicy-rlvr-policy/v1"
 CHECKPOINT_SCHEMA = "offpolicy-grpo-checkpoint/v2"
 RLVR_METHODS = ("grpo", "dr_grpo", "rloo")
+
+
+def checked_optimizer_step(optimizer, parameters, max_norm, loss, active):
+    """All ranks reject invalid updates before changing parameters or Adam state."""
+    norm = torch.nn.utils.clip_grad_norm_(parameters, max_norm)
+    invalid = (not math.isfinite(float(norm)) or not math.isfinite(float(loss))
+               or (bool(active) and float(norm) <= 0))
+    flag = torch.tensor(int(invalid), device=parameters[0].device)
+    if dist.is_initialized():
+        dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+    if flag.item():
+        optimizer.zero_grad(set_to_none=True)
+        raise RuntimeError(
+            "invalid policy loss/gradient on at least one rank; optimizer not applied; "
+            f"local_loss={float(loss)} local_grad_norm={float(norm)}"
+        )
+    optimizer.step()
+    return norm
 
 
 def policy_update_for_objective(objective: str) -> str:
@@ -832,6 +851,9 @@ def train(args: argparse.Namespace) -> None:
     try:
         for step in range(completed_steps, args.target_steps):
             step_started = time.perf_counter()
+            if rank == 0:
+                print(f"[{args.objective}] utc={datetime.now(timezone.utc).isoformat()} "
+                      f"step-start={step + 1}/{args.target_steps} phase=rollout", flush=True)
             torch.cuda.reset_peak_memory_stats(local_rank)
             sample_seed = (args.seed * 1_000_003 + step * 7_919 + rank * 104_729 + 17) & 0x7FFFFFFF
             random.seed(sample_seed)
@@ -957,8 +979,10 @@ def train(args: argparse.Namespace) -> None:
                         "first policy-loss evaluation is not on-policy: "
                         f"max_abs_log_ratio={float(ratio_deviation[0]):.6g}"
                     )
-                grad_norm = torch.nn.utils.clip_grad_norm_(trainable, config.max_grad_norm)
-                optimizer.step()
+                grad_norm = checked_optimizer_step(
+                    optimizer, trainable, config.max_grad_norm, epoch_loss,
+                    advantages.abs().max() > 0,
+                )
                 loss_value = epoch_loss
                 grad_norm_value = float(grad_norm)
 
@@ -995,6 +1019,7 @@ def train(args: argparse.Namespace) -> None:
             if rank == 0:
                 metric_row = _distributed_metric_row(local, world_size)
                 row = {
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                     "step": step + 1,
                     "nonzero_advantage_groups": int(local[3]),
                     "groups": world_size,
@@ -1022,7 +1047,10 @@ def train(args: argparse.Namespace) -> None:
                     f"reward={row['reward_mean']:.3f} active_groups="
                     f"{row['nonzero_advantage_groups']}/{world_size} "
                     f"loss={row['loss']:.3e} grad_norm={row['grad_norm']:.3e} "
-                    f"ratio={row['mean_ratio']:.6f} optimizer_step=applied",
+                    f"ratio={row['mean_ratio']:.6f} optimizer_step=applied "
+                    f"seconds={row['step_seconds']:.2f} "
+                    f"tok/s={row['response_tokens_per_second']:.2f} "
+                    f"peak_GB={row['gpu_peak_allocated_gb']:.2f}",
                     flush=True,
                 )
             if world_size > 1:

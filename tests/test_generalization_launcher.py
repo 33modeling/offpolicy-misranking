@@ -24,6 +24,9 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     (root / "scripts").mkdir(parents=True)
     (root / "src").mkdir()
     (root / "configs").mkdir()
+    (root / "scripts/launch_logging.sh").write_text(
+        (ROOT / "scripts/launch_logging.sh").read_text(), encoding="utf-8"
+    )
     (work / "venv/bin").mkdir(parents=True)
     (work / "models/m1").mkdir(parents=True)
     (work / "models/m2").mkdir(parents=True)
@@ -37,6 +40,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "generalization_science.json",
         "generalization_knowledge.json",
         "qwen38_27b_grpo.json",
+        "qwen35_9b_grpo.json",
     ):
         (root / "configs" / name).write_text("{}\n", encoding="utf-8")
     (root / "scripts/setup_env.sh").write_text(
@@ -54,6 +58,8 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         'case "$script" in\n'
         "  src/model_matrix.py)\n"
         '    case " $* " in\n'
+        "      *'qwen35_9b_grpo.json list-models '*) printf 'm1\\n' ;;\n"
+        "      *'qwen35_9b_grpo.json experiment-field datasets '*) printf 'math500 mbpp\\n' ;;\n"
         "      *'qwen38_27b_grpo.json list-models '*) printf 'm1\\n' ;;\n"
         "      *'qwen38_27b_grpo.json experiment-field datasets '*) printf 'math500 mbpp\\n' ;;\n"
         "      *' runtime-field '*) printf '1\\n' ;;\n"
@@ -103,6 +109,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '    printf \'%s\\n\' "$*" >> "$TEST_WORK/qualifications"\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --output ] && { printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  src/transfer_smoke.py)\n"
+        '    [ "${TEST_SMOKE_FAIL:-0}" = 0 ] || { echo "synthetic smoke traceback" >&2; exit 17; }\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --marker ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  scripts/check_27b_fla.py) exit 0 ;;\n"
         "  src/regime_contract.py)\n"
@@ -155,6 +162,38 @@ def test_qwen_check_does_not_launch_matrix(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (Path(env["TEST_WORK"]) / "phases").exists()
     assert list((Path(env["TEST_WORK"]) / "contracts").glob("*qwen38*smoke*"))
+
+
+def test_qwen35_logs_failure_stderr_and_exit_status(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    env["TEST_SMOKE_FAIL"] = "1"
+    result = subprocess.run(
+        ["bash", "scripts/run_additional_experiments.sh", "--check", "qwen35"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 17, result.stdout + result.stderr
+    logs = list((Path(env["TEST_WORK"]) / "console-logs").glob("additional-qwen35-check-*.log"))
+    assert len(logs) == 1
+    content = logs[0].read_text()
+    assert "synthetic smoke traceback" in content
+    assert "rc=17 stage=smoke-m1" in content
+    assert "[launch] utc=" in content
+    assert not (Path(env["TEST_WORK"]) / "phases").exists()
+
+
+def test_qwen35_prepare_and_run_have_separate_session_logs(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    for mode in ("--prepare", "--run"):
+        result = subprocess.run(
+            ["bash", "scripts/run_additional_experiments.sh", mode, "qwen35"],
+            cwd=root, env=env, capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+    work = Path(env["TEST_WORK"])
+    assert (work / "phases").read_text().startswith("qwen35-9b-posttrained-")
+    logs = list((work / "console-logs").glob("additional-qwen35-*.log"))
+    assert len(logs) == 2
+    assert all("rc=0" in log.read_text() for log in logs)
 
 
 def test_qwen_run_uses_separate_matrix(tmp_path: Path) -> None:

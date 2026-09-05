@@ -4,7 +4,14 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
-## Qwen3.8-27B replication (2026-09-06)
+## Qwen3.5-9B replication (2026-09-06)
+
+The selected additional experiment is now `bash scripts/run_qwen35_9b.sh
+prepare|check|run`. It pins `Qwen/Qwen3.5-9B`, uses the same 40-point math/code
+design, and never launches the retained 27B configuration implicitly.
+See [the 9B runbook](docs/QWEN35_9B_RUNBOOK.md) for commands and logging.
+
+## Retained Qwen3.8-27B configuration
 
 The new explicit entry point is `bash scripts/run_qwen38_27b.sh
 prepare|check|run` (choose one mode). It uses a pinned **post-trained**

@@ -1,5 +1,9 @@
 # Qwen3.8-27B post-trained replication
 
+The selected additional experiment is now Qwen3.5-9B; see
+`QWEN35_9B_RUNBOOK.md`. This 27B configuration is retained and never launched
+implicitly by the 9B wrapper. Both share the improved session logging.
+
 Prepared 2026-09-06. No GPU experiment has been launched by this code change.
 Local tests use Transformers 5.14.1 and PEFT 0.20.0. The generic requirements
 minimum is not evidence of Qwen3.8 support: the compute environment must expose

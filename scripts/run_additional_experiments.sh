@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # One queued entry point for every registered post-primary experiment.
 # Run from a separate clean checkout on each of the three 4xH100 nodes.
-set -euo pipefail
+set -Eeuo pipefail
 
 cd "$(dirname "$0")/.."
 export OM_ONLINE=0
 source scripts/setup_env.sh
+MODE=${1:---run}
+PROFILE=${2:-legacy}
+source scripts/launch_logging.sh
 
 PY="$VENV_DIR/bin/python"
 [ -x "$PY" ] || { echo "[abort] venv missing: $PY"; exit 1; }
@@ -28,18 +31,22 @@ MATRIX_IDS=(
 )
 MODE=${1:---run}
 PROFILE=${2:-legacy}
-[ "$#" -le 2 ] || { echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38]"; exit 2; }
+[ "$#" -le 2 ] || { echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38|qwen35]"; exit 2; }
 case "$PROFILE" in
   legacy) ;;
   qwen38)
     MATRIX_CONFIGS=(configs/qwen38_27b_grpo.json)
     MATRIX_IDS=(qwen38-27b-posttrained-math-code-grpo-v1)
     ;;
+  qwen35)
+    MATRIX_CONFIGS=(configs/qwen35_9b_grpo.json)
+    MATRIX_IDS=(qwen35-9b-posttrained-math-code-grpo-v1)
+    ;;
   *) echo "[abort] unknown additional profile: $PROFILE"; exit 2 ;;
 esac
 case "$MODE" in
   --prepare|--check|--run) ;;
-  *) echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38]"; exit 2 ;;
+  *) echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38|qwen35]"; exit 2 ;;
 esac
 if [ "$MODE" != "--prepare" ]; then
   # Compute clusters are security-isolated. Never attempt Hub discovery,
@@ -143,6 +150,7 @@ export MMLU_PRO_DIR="$DATASETS_DIR/mmlu-pro-nonmath"
 export OM_MATH_VERIFIER=math_verify
 
 if [ "$MODE" = "--prepare" ]; then
+  log_stage prepare
   provision_registered_snapshots
   for config in "${MATRIX_CONFIGS[@]}"; do
     config_id=$(sha256sum "$config" | cut -c1-16)
@@ -174,6 +182,7 @@ flock -n 9 || { echo "[abort] additional suite already queued on this physical n
 exec 8>"$LOCAL_LOCK_DIR/primary.lock"
 echo "[additional] worker=$WORKER_TAG queued behind local primary at git=$GIT"
 flock 8
+log_stage gpu-admission
 echo "[additional] local primary complete for worker=$WORKER_TAG"
 clean_checkout
 
@@ -209,6 +218,7 @@ run_phase() {
   echo "[additional] method=$RLVR_METHOD model=$name datasets=$REGIME_DATASETS seeds=$REGIME_SEEDS drifts=$REGIME_DRIFTS" \
     | tee -a "$log"
   while :; do
+    log_stage "matrix-$name-attempt-$restarts"
     set +e
     bash scripts/run_matrix.sh 2>&1 | tee -a "$log"
     statuses=("${PIPESTATUS[@]}")
@@ -303,7 +313,7 @@ run_registered_matrix() {
   export OM_SKIP_HYBRID="$(matrix_field "$config" skip_hybrid)"
   export OM_SKIP_GPU_CHECK=0 OM_ALLOW_DIRTY=0 OM_ALLOW_ANALYSIS_UPGRADE=0
   export OM_GEN_BATCH=4
-  if [ "$PROFILE" = qwen38 ]; then
+  if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35 ]]; then
     OM_GEN_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field generation_batch)
     GRADIENT_MICRO_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field gradient_micro_batch)
     GRPO_LOGPROB_MICRO_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field logprob_micro_batch)
@@ -313,6 +323,7 @@ run_registered_matrix() {
   export OM_STALL_MINUTES=10 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
 
   for model_key in "${model_keys[@]}"; do
+    log_stage "snapshot-$model_key"
     MODEL_PATH=$(model_field "$config" "$model_key" path)
     OM_LORA_TARGETS=$(model_field "$config" "$model_key" lora_targets)
     OM_PROMPT_FORMAT=$(model_field "$config" "$model_key" prompt_format)
@@ -320,11 +331,13 @@ run_registered_matrix() {
     "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
       check "$model_key" | tee -a "$log"
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
-    if [ "$PROFILE" = qwen38 ]; then
+    if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35 ]]; then
+      log_stage "fla-$model_key"
       CUDA_VISIBLE_DEVICES=0 "$PY" scripts/check_27b_fla.py | tee -a "$log"
     fi
     smoke_args=()
-    [ "$PROFILE" != qwen38 ] || smoke_args+=(--benchmark)
+    [[ "$PROFILE" != qwen38 && "$PROFILE" != qwen35 ]] || smoke_args+=(--benchmark)
+    log_stage "smoke-$model_key"
     CUDA_VISIBLE_DEVICES=0 "$PY" src/transfer_smoke.py \
       --model "$MODEL_PATH" --lora-targets "$OM_LORA_TARGETS" \
       --marker "$OM_WORK/contracts/$run_id-smoke-$WORKER_TAG-$model_key-$GIT.json" \
