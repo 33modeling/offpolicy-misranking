@@ -1,6 +1,6 @@
 # Off-policy Misranking Backlog
 
-Last updated: 2026-09-04 KST
+Last updated: 2026-09-05 KST
 
 This file records defects that can affect the confirmatory interpretation. A
 checked source fix does not mark result regeneration complete.
@@ -59,15 +59,20 @@ checked source fix does not mark result regeneration complete.
 - [ ] Report Gaussian ceilings only for supported full-pool designs and label
   them model diagnostics unless iid, equal-noise, and conditional-independence
   assumptions survive the final residual checks.
-- [x] Re-run the complete CPU suite, theory verifier, and clean LaTeX build:
-  159 tests passed; both registered ceiling curves reproduced; the 20-page
-  letter PDF has no undefined references, LaTeX errors, or overfull boxes.
+- [x] Re-run the complete CPU suite, theory verifier, shell syntax checks,
+  Python byte compilation, and clean LaTeX build: 174 tests passed; both
+  registered ceiling curves reproduced; the current 21-page letter PDF has no
+  undefined references, LaTeX errors, or overfull boxes. Main text ends and
+  references begin on page 9, so the post-result build must be rechecked against
+  the nine-page limit.
 - [ ] Run the target-cluster preflight on the committed revision used for final
   analysis.
-- [ ] Stop the active batch-1 d400 recovery, deploy the corrected supervisor,
-  and resume its durable `.partial` files at the configured batch. Verify the
-  launcher reports batch 8 and that per-prompt runtime returns to the
-  pre-recovery range before leaving the allocation unattended.
+- [ ] On the target cluster, confirm that no old batch-1 d400 recovery remains,
+  deploy the corrected supervisor if needed, and resume durable `.partial`
+  files at the configured batch. Verify that the launcher reports batch 8 and
+  that per-prompt runtime returns to the pre-recovery range before leaving the
+  allocation unattended. The 2026-09-05 local audit could not inspect this
+  state because the shared group volume was not mounted.
 
 ## Provenance note
 
