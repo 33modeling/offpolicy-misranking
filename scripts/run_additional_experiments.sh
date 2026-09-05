@@ -27,12 +27,21 @@ MATRIX_IDS=(
   generalization-knowledge-grpo-v1
 )
 MODE=${1:---run}
-[ "$#" -le 1 ] || { echo "usage: $0 [--prepare|--run]"; exit 2; }
-case "$MODE" in
-  --prepare|--run) ;;
-  *) echo "usage: $0 [--prepare|--run]"; exit 2 ;;
+PROFILE=${2:-legacy}
+[ "$#" -le 2 ] || { echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38]"; exit 2; }
+case "$PROFILE" in
+  legacy) ;;
+  qwen38)
+    MATRIX_CONFIGS=(configs/qwen38_27b_grpo.json)
+    MATRIX_IDS=(qwen38-27b-posttrained-math-code-grpo-v1)
+    ;;
+  *) echo "[abort] unknown additional profile: $PROFILE"; exit 2 ;;
 esac
-if [ "$MODE" = "--run" ]; then
+case "$MODE" in
+  --prepare|--check|--run) ;;
+  *) echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38]"; exit 2 ;;
+esac
+if [ "$MODE" != "--prepare" ]; then
   # Compute clusters are security-isolated. Never attempt Hub discovery,
   # authentication, or download from a paid GPU run.
   export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
@@ -294,6 +303,13 @@ run_registered_matrix() {
   export OM_SKIP_HYBRID="$(matrix_field "$config" skip_hybrid)"
   export OM_SKIP_GPU_CHECK=0 OM_ALLOW_DIRTY=0 OM_ALLOW_ANALYSIS_UPGRADE=0
   export OM_GEN_BATCH=4
+  if [ "$PROFILE" = qwen38 ]; then
+    OM_GEN_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field generation_batch)
+    GRADIENT_MICRO_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field gradient_micro_batch)
+    GRPO_LOGPROB_MICRO_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field logprob_micro_batch)
+    GRPO_GRADIENT_CHECKPOINTING=$("$PY" src/model_matrix.py --config "$config" runtime-field gradient_checkpointing)
+    export OM_GEN_BATCH GRADIENT_MICRO_BATCH GRPO_LOGPROB_MICRO_BATCH GRPO_GRADIENT_CHECKPOINTING
+  fi
   export OM_STALL_MINUTES=10 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
 
   for model_key in "${model_keys[@]}"; do
@@ -304,10 +320,17 @@ run_registered_matrix() {
     "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
       check "$model_key" | tee -a "$log"
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
+    if [ "$PROFILE" = qwen38 ]; then
+      CUDA_VISIBLE_DEVICES=0 "$PY" scripts/check_27b_fla.py | tee -a "$log"
+    fi
+    smoke_args=()
+    [ "$PROFILE" != qwen38 ] || smoke_args+=(--benchmark)
     CUDA_VISIBLE_DEVICES=0 "$PY" src/transfer_smoke.py \
       --model "$MODEL_PATH" --lora-targets "$OM_LORA_TARGETS" \
       --marker "$OM_WORK/contracts/$run_id-smoke-$WORKER_TAG-$model_key-$GIT.json" \
+      "${smoke_args[@]}" \
       | tee -a "$log"
+    [ "$MODE" != "--check" ] || continue
 
     export REGIME_MODEL_TAG="$run_id-$method-$model_key"
     export REGIME_ROOT="$OM_WORK/runs/$run_id/$model_key"
@@ -320,11 +343,11 @@ run_registered_matrix() {
       | tee -a "$log"
     run_phase "$log" "$model_key"
   done
-  echo "[additional] complete: method=$method results=$OM_WORK/results/$run_id" \
+  echo "[additional] mode=$MODE complete: method=$method root=$OM_WORK/results/$run_id" \
     | tee -a "$log"
 }
 
 for index in "${!MATRIX_CONFIGS[@]}"; do
   run_registered_matrix "${MATRIX_CONFIGS[$index]}" "${MATRIX_IDS[$index]}"
 done
-echo "[additional] all registered model/domain generalization matrices complete"
+echo "[additional] requested mode=$MODE profile=$PROFILE complete"

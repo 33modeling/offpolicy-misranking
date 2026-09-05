@@ -140,11 +140,18 @@ def grad_params(model, last_n_layers: int) -> list[torch.Tensor]:
     lm_head/embedding은 크기 대비 신호가 중복이라 기본 제외 (concept '같은 gradient
     layer 범위' — 모든 estimator·oracle이 같은 목록을 쓰는 것이 유일한 요구).
     """
-    layers = model.model.layers
+    decoder = model.model
+    # Qwen3.5/3.8 multimodal wrappers keep the text decoder one level deeper.
+    # Vision parameters must never enter the text-only ranking projection.
+    if hasattr(decoder, "language_model"):
+        decoder = decoder.language_model
+    layers = decoder.layers
+    if not 1 <= last_n_layers <= len(layers):
+        raise ValueError("last_n_layers must be within the text decoder depth")
     chosen: list[torch.Tensor] = []
     for layer in layers[len(layers) - last_n_layers :]:
         chosen += [p for p in layer.parameters()]
-    chosen += list(model.model.norm.parameters())
+    chosen += list(decoder.norm.parameters())
     # LoRA merge_and_unload 이후엔 전체가 requires_grad=False일 수 있다 —
     # 대상만 켜고 나머지는 동결(backward 메모리 절약 겸용).
     model.requires_grad_(False)

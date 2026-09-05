@@ -474,7 +474,12 @@ def _check_snapshot(spec: dict, path: Path) -> dict:
         raise ValueError(f"{spec['key']}: implausibly small weight snapshot")
 
     with init_empty_weights():
-        model = AutoModelForCausalLM.from_config(config)
+        if config.model_type == "qwen3_5":
+            from transformers import AutoModelForMultimodalLM
+
+            model = AutoModelForMultimodalLM.from_config(config)
+        else:
+            model = AutoModelForCausalLM.from_config(config)
     module_suffixes = {name.rsplit(".", 1)[-1] for name, _ in model.named_modules()}
     absent = [target for target in spec["lora_targets"] if target not in module_suffixes]
     if absent:

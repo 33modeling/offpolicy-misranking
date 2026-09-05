@@ -4,6 +4,18 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+## Qwen3.8-27B replication (2026-09-06)
+
+The new explicit entry point is `bash scripts/run_qwen38_27b.sh
+prepare|check|run` (choose one mode). It uses a pinned **post-trained**
+Qwen3.8-27B checkpoint on the same MATH-500/MBPP pools as the main study,
+with five seeds and checkpoints 0/25/100/400. This is a separate 40-point
+replication, not a base-initialization or architecture-only ablation.
+See [the Qwen runbook](docs/QWEN38_27B_RUNBOOK.md) for launch commands,
+short runtime measurements, and remaining H100 qualification. The older
+generalization launcher defaults remain available for provenance; invoking
+the Qwen entry point does not enqueue the retired Qwen2.5/OLMoE extension.
+
 ## Clean OLMo-3 Restart
 
 The clean causal experiment starts from the raw, non-SFT

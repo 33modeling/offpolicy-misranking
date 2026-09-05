@@ -36,6 +36,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "generalization_logic.json",
         "generalization_science.json",
         "generalization_knowledge.json",
+        "qwen38_27b_grpo.json",
     ):
         (root / "configs" / name).write_text("{}\n", encoding="utf-8")
     (root / "scripts/setup_env.sh").write_text(
@@ -53,6 +54,9 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         'case "$script" in\n'
         "  src/model_matrix.py)\n"
         '    case " $* " in\n'
+        "      *'qwen38_27b_grpo.json list-models '*) printf 'm1\\n' ;;\n"
+        "      *'qwen38_27b_grpo.json experiment-field datasets '*) printf 'math500 mbpp\\n' ;;\n"
+        "      *' runtime-field '*) printf '1\\n' ;;\n"
         "      *' list-models '*) printf 'm1\\nm2\\n' ;;\n"
         "      *'generalization_logic.json experiment-field datasets '*) printf 'kk\\n' ;;\n"
         "      *'generalization_science.json experiment-field datasets '*) printf 'arc-challenge\\n' ;;\n"
@@ -100,6 +104,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '    while [ $# -gt 0 ]; do [ "$1" = --output ] && { printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  src/transfer_smoke.py)\n"
         '    while [ $# -gt 0 ]; do [ "$1" = --marker ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
+        "  scripts/check_27b_fla.py) exit 0 ;;\n"
         "  src/regime_contract.py)\n"
         '    while [ $# -gt 0 ]; do [ "$1" = --matrix ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  *) printf 'unexpected script: %s\\n' \"$script\" >&2; exit 2 ;;\n"
@@ -139,6 +144,30 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "ADDITIONAL_SKIP_PROVISION": "1",
         "OM_LOCAL_LOCK_DIR": str(tmp_path / "local-locks"),
     }
+
+
+def test_qwen_check_does_not_launch_matrix(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    result = subprocess.run(
+        ["bash", "scripts/run_additional_experiments.sh", "--check", "qwen38"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (Path(env["TEST_WORK"]) / "phases").exists()
+    assert list((Path(env["TEST_WORK"]) / "contracts").glob("*qwen38*smoke*"))
+
+
+def test_qwen_run_uses_separate_matrix(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    result = subprocess.run(
+        ["bash", "scripts/run_additional_experiments.sh", "--run", "qwen38"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    phases = (Path(env["TEST_WORK"]) / "phases").read_text().splitlines()
+    assert len(phases) == 1
+    assert phases[0].startswith("qwen38-27b-posttrained-math-code-grpo-v1-grpo-m1|")
+    assert "|math500 mbpp|" in phases[0]
 
 
 def test_launcher_runs_all_generalization_strata_in_order(tmp_path: Path) -> None:

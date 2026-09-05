@@ -12,6 +12,7 @@ import platform
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -78,13 +79,16 @@ def marker_matches(marker: Path, expected: dict) -> bool:
     return recorded == {**expected, "status": "passed"}
 
 
-def run_smoke(model_path: Path, targets: list[str]) -> None:
+def run_smoke(model_path: Path, targets: list[str], benchmark: bool = False) -> dict:
     import torch
     from peft import LoraConfig, PeftModel, get_peft_model
 
     from rollout import chat_ids, load_model
 
     model, tokenizer = load_model(str(model_path), device="cuda")
+    timings = {}
+    torch.cuda.reset_peak_memory_stats()
+    started = time.perf_counter()
     ids = chat_ids(
         tokenizer,
         "Answer with one short sentence: why should an experiment be reproducible?",
@@ -94,22 +98,34 @@ def run_smoke(model_path: Path, targets: list[str]) -> None:
             ids,
             attention_mask=torch.ones_like(ids),
             do_sample=False,
-            max_new_tokens=4,
+            max_new_tokens=32 if benchmark else 4,
             pad_token_id=tokenizer.eos_token_id,
         )
     if generated.shape[1] <= ids.shape[1]:
         raise RuntimeError("model generation produced no response token")
+    torch.cuda.synchronize()
+    timings["generation_seconds"] = time.perf_counter() - started
+    timings["generated_tokens"] = generated.shape[1] - ids.shape[1]
+    started = time.perf_counter()
 
     wrapped = get_peft_model(
         model,
         LoraConfig(
-            r=4,
-            lora_alpha=8,
+            r=16 if benchmark else 4,
+            lora_alpha=32 if benchmark else 8,
             target_modules=targets,
             lora_dropout=0.0,
+            task_type="CAUSAL_LM" if benchmark else None,
         ),
     )
     wrapped.enable_input_require_grads()
+    if benchmark:
+        wrapped.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
+    timings["trainable_parameters"] = sum(
+        p.numel() for p in wrapped.parameters() if p.requires_grad
+    )
     wrapped.train()
     wrapped.zero_grad(set_to_none=True)
     loss = wrapped(ids, labels=ids).loss
@@ -125,6 +141,10 @@ def run_smoke(model_path: Path, targets: list[str]) -> None:
         gradient is not None and torch.isfinite(gradient).all() for gradient in gradients
     ):
         raise RuntimeError("LoRA target modules did not receive finite gradients")
+    torch.cuda.synchronize()
+    timings["lora_backward_seconds"] = time.perf_counter() - started
+    wrapped.zero_grad(set_to_none=True)
+    del gradients, loss
 
     with tempfile.TemporaryDirectory(prefix="offpolicy-transfer-adapter-") as raw_tmp:
         adapter = Path(raw_tmp)
@@ -141,10 +161,31 @@ def run_smoke(model_path: Path, targets: list[str]) -> None:
             logits = merged(ids).logits
         if not torch.isfinite(logits[:, -1]).all():
             raise RuntimeError("reloaded and merged adapter produced non-finite logits")
+        del logits
+        if benchmark:
+            from grads import ProjectionSpec, grad_params, prompt_gradient
 
+            started = time.perf_counter()
+            params = grad_params(merged, 4)
+            response_tokens = generated.shape[1] - ids.shape[1]
+            projected = prompt_gradient(
+                merged, params,
+                [{"input_ids": generated[0], "resp_start": ids.shape[1]}],
+                [torch.ones(response_tokens)], ProjectionSpec(dim=4096), micro_batch=1,
+            )
+            torch.cuda.synchronize()
+            if not torch.isfinite(projected).all() or not projected.abs().sum() > 0:
+                raise RuntimeError("dense ranking gradient is zero or non-finite")
+            timings["ranking_gradient_seconds"] = time.perf_counter() - started
+            timings["ranking_parameters"] = sum(p.numel() for p in params)
+            merged.zero_grad(set_to_none=True)
+            del params, projected
+
+    timings["peak_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
     del merged, reloaded, base, wrapped, model, generated, ids
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
+    return timings
 
 
 def main() -> int:
@@ -153,6 +194,8 @@ def main() -> int:
     parser.add_argument("--lora-targets", required=True)
     parser.add_argument("--marker", type=Path, required=True)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--benchmark", action="store_true",
+                        help="time a short generation, rank-16 LoRA backward and dense ranking gradient")
     args = parser.parse_args()
     targets = [target.strip() for target in args.lora_targets.split(",") if target.strip()]
     if not targets:
@@ -161,11 +204,20 @@ def main() -> int:
     try:
         quick_cuda_health()
         expected = fingerprint(args.model, targets)
+        if args.benchmark:
+            expected["benchmark"] = "short-text-ranking/v1"
         if not args.force and marker_matches(args.marker, expected):
             print(f"[transfer-smoke] cached runtime contract passed: {args.marker}")
             return 0
-        run_smoke(args.model, targets)
+        timings = run_smoke(args.model, targets, benchmark=args.benchmark)
         args.marker.parent.mkdir(parents=True, exist_ok=True)
+        if args.benchmark:
+            report = {**expected, "measurements": timings,
+                      "scope": "Single short prompt; not a 2048-token or four-rank GRPO qualification."}
+            args.marker.with_suffix(".benchmark.json").write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            print(json.dumps(report, sort_keys=True), flush=True)
         temporary = args.marker.with_name(f"{args.marker.name}.tmp.{os.getpid()}")
         temporary.write_text(
             json.dumps({**expected, "status": "passed"}, indent=2, sort_keys=True) + "\n",
