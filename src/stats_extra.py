@@ -1,6 +1,6 @@
 """D6 — GPU 0 통계 보강: 기존 산출물만으로 정확 p-값과 부트스트랩 CI.
 
-    python3 src/stats_extra.py <run_dir> [frac] [boot] [seed]   # 기본 0.10 2000 0
+    python3 src/stats_extra.py <run_dir> [frac] [boot] [seed]   # 기본 0.10 2000 run_config.seed
     python3 src/stats_extra.py --sign <wins> <losses> [ties]    # 부호검정만
 
 출력 3종 (전부 CPU, 표준 라이브러리만):
@@ -20,7 +20,7 @@ import sys
 from math import comb
 from pathlib import Path
 
-from gate_rules import has_valid_analysis_protocol
+from gate_rules import has_valid_analysis_protocol, run_seed
 
 
 def hyp_p_le(n: int, big_k: int, k: int, x: int) -> float:
@@ -55,7 +55,7 @@ def main() -> int:
         raise ValueError("corrected independent-validation score protocol is missing")
     frac = float(sys.argv[2]) if len(sys.argv) > 2 else 0.10
     boot = int(sys.argv[3]) if len(sys.argv) > 3 else 2000
-    seed = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+    seed = int(sys.argv[4]) if len(sys.argv) > 4 else run_seed(run)
     rng = random.Random(seed)
 
     oracle = {int(i): v["score"] for i, v in

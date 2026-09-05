@@ -40,6 +40,9 @@ def validate_generation_contract(
     expected_model = Path(str(config.get("model_resolved", config.get("model", "")))).name
     all_sources = {
         "rollouts_behavior_train": (len(prompts["train"]), int(config["behavior_k"])),
+        # drift 학습 전용 β 표본 — 채점 표본과 분리 (검수 §1). PRIMARY에는 넣지 않아
+        # 구 run의 rescore 경로는 그대로 두고, drift 단계가 직접 검증한다.
+        "rollouts_drift_train": (len(prompts["train"]), int(config["behavior_k"])),
         "rollouts_fresh_train": (len(prompts["train"]), int(config["fresh_k"])),
         "rollouts_fresh_val": (len(prompts["val"]), int(config["val_k"])),
     }

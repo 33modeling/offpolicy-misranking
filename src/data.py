@@ -421,13 +421,16 @@ def build_user_msg(question: str) -> str:
     return PROMPT_TEMPLATE.format(question=question)
 
 
-ANSWER_RE = re.compile(r"####\s*([^\n]+)")
+# 한 줄에 ####가 둘 이상이어도 각각 따로 잡는다 (마지막 것을 최종 답으로 쓰기 위해)
+ANSWER_RE = re.compile(r"####\s*((?:(?!####)[^\n])+)")
 
 
 def extract_answer(text: str) -> str | None:
-    m = ANSWER_RE.search(text)
-    if m:
-        return m.group(1).strip().rstrip(".").replace(",", "").replace("$", "")
+    # 마지막 '####'를 최종 답으로 본다 — 템플릿이 "final answer after '####'"이므로
+    # 중간 추론에 등장한 '####'(첫 매치)를 잡으면 정답을 오답 처리한다(검수 §4).
+    ms = ANSWER_RE.findall(text)
+    if ms:
+        return ms[-1].strip().rstrip(".").replace(",", "").replace("$", "")
     # fallback: \boxed{...}
     m = re.search(r"\\boxed\{([^{}]+)\}", text)
     return m.group(1).strip() if m else None

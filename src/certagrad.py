@@ -213,9 +213,17 @@ def certagrad(
     }
 
 
-def uniform_baseline(cand_pools: list[torch.Tensor], val_pool: torch.Tensor, k: int, groups_each: int) -> dict:
-    """GradAlign matched — 모든 후보에 같은 수의 fresh micro-group 균등 배분."""
-    validation_groups = min(val_pool.shape[0], max(1, groups_each))
+def uniform_baseline(cand_pools: list[torch.Tensor], val_pool: torch.Tensor, k: int,
+                     groups_each: int, validation_groups: int | None = None) -> dict:
+    """GradAlign matched — 모든 후보에 같은 수의 fresh micro-group 균등 배분.
+
+    validation_groups: 기준 방향에 쓸 val 그룹 수. 기본(None)은 **val_pool 전체** —
+    후보 깊이(groups_each)로 val 깊이까지 자르면 selection score(val 절반 전부)와
+    다른, 인위적으로 잡음 큰 기준선이 된다(검수 §3). 비용은 그대로 전부 청구한다.
+    """
+    if validation_groups is None:
+        validation_groups = val_pool.shape[0]
+    validation_groups = min(val_pool.shape[0], max(1, validation_groups))
     mu_v = val_pool[:validation_groups].mean(dim=0)
     scores = []
     for pool in cand_pools:

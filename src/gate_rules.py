@@ -22,6 +22,19 @@ def load_json(path: Path):
         return None
 
 
+def run_seed(run: Path, default: int = 0) -> int:
+    """동률(tie) jitter 시드 — run_config.json의 seed 하나로 통일한다.
+
+    stage_report는 --seed, 판정·표·통계 도구는 0을 쓰던 불일치(검수 §3)로 s1/s2 run의
+    report.json과 TABLES/READOUT/judge 수치가 서로 달랐다. 점수 0 동률이 수백 개인
+    풀에서는 이 차이가 눈에 보인다."""
+    config = load_json(run / "run_config.json")
+    try:
+        return int(config.get("seed", default)) if isinstance(config, dict) else default
+    except (TypeError, ValueError):
+        return default
+
+
 def has_valid_score_protocol(run: Path) -> bool:
     protocol = load_json(run / "score_protocol.json")
     try:
@@ -50,10 +63,14 @@ def has_valid_analysis_protocol(run: Path) -> bool:
     return has_valid_score_protocol(run) and has_valid_oracle_protocol(run)
 
 
-def canonical_gate_report(run: Path, frac: float = 0.10, seed: int = 0) -> dict | None:
-    """Prefer recomputation from raw scores; fall back to a stored report."""
+def canonical_gate_report(run: Path, frac: float = 0.10, seed: int | None = None) -> dict | None:
+    """Prefer recomputation from raw scores; fall back to a stored report.
+
+    seed=None이면 run_config.json의 seed(stage_report와 동일 jitter 스트림)."""
     if not has_valid_analysis_protocol(run):
         return None
+    if seed is None:
+        seed = run_seed(run)
     stored = load_json(run / "report.json")
     oracle = load_json(run / "scores_oracle.json")
     off = load_json(run / "scores_offpolicy.json")
@@ -149,7 +166,7 @@ def evaluate_causal_run(
                 protocol = load_json(run / f"hybrid_protocol_{cut}.json")
                 if not protocol or protocol.get("schema") != HYBRID_PROTOCOL_SCHEMA:
                     raise ValueError("corrected hybrid validation protocol is missing")
-                precision = hybrid_precisions(oracle, cells or {})
+                precision = hybrid_precisions(oracle, cells or {}, seed=run_seed(run))
                 recovery = {
                     "g10": precision["pp"] > precision["pb"],
                     "g01": precision["pp"] > precision["bp"],

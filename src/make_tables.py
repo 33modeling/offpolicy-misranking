@@ -32,6 +32,7 @@ from certagrad import angle_radius, eb_radius
 from gate_rules import (
     HYBRID_PROTOCOL_SCHEMA,
     has_valid_analysis_protocol,
+    run_seed,
 )
 from select_rules import overlap_under_independent_ties, topk_count
 
@@ -73,16 +74,17 @@ def gate_numbers(run: Path) -> dict | None:
     halves = {int(i): v for i, v in halves.items()}
     k = topk_count(len(oracle), FRAC)
     oracle_scores = {i: v["score"] for i, v in oracle.items()}
+    seed = run_seed(run)
     floor = overlap_under_independent_ties(
         {i: h["a"] for i, h in halves.items()},
         {i: h["b"] for i, h in halves.items()},
-        k, seed=0,
+        k, seed=seed,
     )
     out = {"noise_floor": floor.mean, "k": k, "_recomputed": True}
     for est in EST:
         sc = {int(i): v["score"] for i, v in off.get(est, {}).items()}
         if sc:
-            overlap = overlap_under_independent_ties(oracle_scores, sc, k, seed=0)
+            overlap = overlap_under_independent_ties(oracle_scores, sc, k, seed=seed)
             out[est] = {
                 "precision": overlap.mean,
                 "jaccard": sum(v / (2 - v) for v in overlap.values) / len(overlap.values),
@@ -173,7 +175,7 @@ def t3_floor_curve(runs) -> list[str]:
                 a_mu, b_mu = st[0::2].mean(0), st[1::2].mean(0)
                 a_sc[i] = float((a_mu @ val_a) / (a_mu.norm() * val_a.norm() + 1e-12))
                 b_sc[i] = float((b_mu @ val_b) / (b_mu.norm() * val_b.norm() + 1e-12))
-            fl = overlap_under_independent_ties(a_sc, b_sc, k, seed=0).mean
+            fl = overlap_under_independent_ties(a_sc, b_sc, k, seed=run_seed(run)).mean
             pts.append(f"m={m}: {fl:.3f}")
         rows.append(f"| {name} | " + " · ".join(pts) + " |")
     rows += ["", "split-half floor를 관측 그룹 수 m으로 subsample 재계산 — 곡선이 늦게 "
@@ -229,7 +231,7 @@ def t5_hybrid(runs) -> list[str]:
             for cell in ("bb", "bp", "pb", "pp"):
                 c_scores = {i: v for i, v in cells[cell].items() if i in o_sub}
                 prec[cell] = overlap_under_independent_ties(
-                    o_sub, c_scores, k, seed=0
+                    o_sub, c_scores, k, seed=run_seed(run)
                 ).mean
             rows.append(f"| {name} | {cut} | " +
                         " | ".join(f"{prec[c]:.2f}" for c in ("bb", "bp", "pb", "pp")) +

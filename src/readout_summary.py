@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from gate_rules import evaluate_causal_run, has_valid_analysis_protocol
+from gate_rules import evaluate_causal_run, has_valid_analysis_protocol, run_seed
 
 def precisions(run: Path) -> tuple[dict, int, float] | None:
     if not has_valid_analysis_protocol(run):
@@ -32,7 +32,7 @@ def precisions(run: Path) -> tuple[dict, int, float] | None:
         if est not in off:
             continue
         sc = {int(i): v["score"] for i, v in off[est].items() if int(i) in oracle}
-        out[est] = overlap_under_independent_ties(oracle, sc, k, seed=0).mean
+        out[est] = overlap_under_independent_ties(oracle, sc, k, seed=run_seed(run)).mean
     return out, k, k / n
 
 

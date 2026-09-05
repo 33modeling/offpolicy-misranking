@@ -57,7 +57,10 @@ def load_model(name_or_path: str, device: str | None = None, dtype: str | None =
 
     device = device or auto_device()
     if dtype is None:
-        dtype = "bfloat16" if device == "cuda" else "float32"
+        # OM_DTYPE=float32 — logprob/gradient 정밀도 진단용 (bf16 logits의 토큰당
+        # ~0.05nat 반올림이 300토큰 궤적 가중치에 누적되는지 확인할 때). 7B fp32는
+        # 80GB에 들어간다. run_config에 기록된다.
+        dtype = os.environ.get("OM_DTYPE") or ("bfloat16" if device == "cuda" else "float32")
     tok = AutoTokenizer.from_pretrained(name_or_path)
     # device_map 대신 CPU 로드 → .to(cuda) 2단계: 신아키텍처(Qwen3.8 등)가
     # meta-init을 못 타면 device_map 경로가 GPU에 스켈레톤+체크포인트 이중
@@ -210,8 +213,15 @@ def train_drift_lora(
     lr: float = 1e-4,
     batch_size: int = 4,
     device: str | None = None,
+    seed: int = 0,
 ) -> None:
-    """정답 rollout에 대한 LoRA SFT — checkpoint를 out_dir에 저장 (병합 없이 adapter)."""
+    """정답 rollout에 대한 LoRA SFT — checkpoint를 out_dir에 저장 (병합 없이 adapter).
+
+    rollout_path는 **채점(score) 대상과 다른 β 표본**이어야 한다(rollouts_drift_train).
+    같은 표본으로 학습하면 π가 채점 표본의 함수가 되어 E_β[w·f]=E_π[f] 항등식이
+    깨지고 KL̂(β‖π)<0이 나온다(2026-09-05 검수 §1). 정답 행은 seed로 셔플해
+    파일(prompt_idx) 순서 앞부분만 소비하는 편향을 없앤다.
+    """
     from peft import LoraConfig, get_peft_model
     device = device or auto_device()
     # 로드는 load_model로 일원화 — dtype 보장·CPU 경유 단일 사본·MM 폴백 전부 공유
@@ -229,7 +239,11 @@ def train_drift_lora(
         # 게이트 본실행에서는 있어선 안 되는 상황 — 스모크 완주용 폴백.
         print("경고: 정답 rollout 0개 — 전체 rollout으로 drift SFT (스모크 전용 폴백)")
         correct = rows
-    print(f"drift SFT: rollout {len(correct)}개, {steps} steps")
+    import random as _random
+    _random.Random(seed * 7_919 + 3).shuffle(correct)
+    n_prompts = len({r["prompt_idx"] for r in correct})
+    print(f"drift SFT: rollout {len(correct)}개({n_prompts} prompts, 셔플 seed={seed}), "
+          f"{steps} steps × batch {batch_size} = {steps * batch_size}개 소비")
 
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     model.train()

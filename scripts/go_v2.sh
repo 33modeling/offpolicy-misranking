@@ -4,6 +4,11 @@
 # 절차: GPU 건강검사 → 30분 스모크(전 스테이지 완주 확인) → 3-seed × {gsm8k, dapo-math}
 #       n=512·val 100·fresh 32·hybrid 64 — 죽으면 자동 재개(2회), DONE 스킵
 # 끝나면 결과 일체를 $OM_WORK/results/v2/ 로 수집.
+#
+# 병렬: PAR=2 bash scripts/go_v2.sh  → GPU를 PAR개 그룹으로 나눠 seed×dataset job을
+#       동시에 PAR개 돌린다(run_14b.sh의 OM_GPUS 분할). 기본 PAR=1은 종전과 동일한
+#       완전 순차 — 6 run이 2~3일 걸리던 원인. 8장이면 PAR=2(4장씩)가 안전한 기본.
+#       한 그룹은 최소 2장(val-grads ∥ oracle-grads 분리)을 권장.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
@@ -56,9 +61,13 @@ SEEDS=(${SEEDS:-0 1 2})
     fi
   done ) &
 W=$!
-cleanup_strays() { pkill -f -- "--run $BASE" 2>/dev/null || true; \
+# 좀비 정리는 **해당 run 디렉터리의 프로세스만** — "--run $BASE" 접두 매치는 같은
+# BASE 접두를 쓰는 다른 인스턴스(별도 seed 병렬 실행)와 형제 run까지 죽인다.
+cleanup_run() { pkill -f -- "--run $1( |\$)" 2>/dev/null || true; \
   find "${HF_HOME:-/nonexistent}" -name '*.lock' -mmin +30 -delete 2>/dev/null || true; sleep 5; }
-trap 'echo "== 중단 — 전체 정리"; cleanup_strays; kill $W 2>/dev/null; exit 130' INT TERM
+cleanup_all_mine() { for d in "${MY_RUNS[@]:-}"; do [ -n "$d" ] && cleanup_run "$d"; done; }
+MY_RUNS=()
+trap 'echo "== 중단 — 이 인스턴스의 run 정리"; cleanup_all_mine; kill $W 2>/dev/null; exit 130' INT TERM
 
 echo
 echo "== [1] 스모크 (~30분): 교정 파이프라인 전 스테이지가 실제로 완주하는지 먼저 확인"
@@ -68,12 +77,12 @@ if [ -f "$SMOKE/report.json" ] && [ -f "$SMOKE/score_protocol.json" ] \
    && ls "$SMOKE"/scores_hybrid_*.json >/dev/null 2>&1; then
   echo "   스모크 산출물 존재 — 스킵"
 else
-  cleanup_strays
+  MY_RUNS+=("$SMOKE"); cleanup_run "$SMOKE"
   if ! DATASET=gsm8k OUT_ROOT="$SMOKE" N_TRAIN=32 N_VAL=16 FRESH_K=8 \
        HYBRID_PROMPTS=8 SEED=0 bash scripts/run_14b.sh > "$LOGDIR/v2-smoke.log" 2>&1; then
     echo "== [중단] 스모크 실패 — 본실행 진입 안 함. 사인:"
     tail -8 "$LOGDIR/v2-smoke.log" | sed 's/^/   /'
-    cleanup_strays; kill $W 2>/dev/null; exit 1
+    cleanup_run "$SMOKE"; kill $W 2>/dev/null; exit 1
   fi
   WANTS="report.json score_protocol.json oracle_protocol.json divergence_stats.shard0.json manifest.json"
   [ "${OM_SKIP_HYBRID:-0}" = "1" ] || WANTS="$WANTS scores_hybrid_0.5.json"
@@ -83,45 +92,77 @@ else
   echo "   스모크 ✔ ($WANTS 확인)"
 fi
 
-# 본실행 전 좀비 정리 — 반드시 무조건 실행 (스모크 스킵 경로 포함).
-# 죽은 런의 experiment.py가 모델 한 벌(27B≈52GB)을 문 채 남아 있으면
-# drift 재로드가 "48.63GB 할당 실패/27.57GB 잔여" 꼴로 같은 자리 OOM 반복.
-cleanup_strays
-
 export N_TRAIN="${N_TRAIN:-512}" N_VAL="${N_VAL:-100}"
 export FRESH_K="${FRESH_K:-32}" HYBRID_PROMPTS="${HYBRID_PROMPTS:-64}"
-declare -A RESULT
-for SEED in "${SEEDS[@]}"; do
-  for DS in "${DATASETS[@]}"; do
-    RUN_DIR="$BASE-s$SEED"; [ "$DS" != "gsm8k" ] && RUN_DIR="$RUN_DIR-$DS"
-    KEY="$DS/s$SEED"; LOG="$LOGDIR/v2-$DS-s$SEED.log"
-    echo
-    echo "==== [$KEY] → $RUN_DIR (log: $LOG)"
-    if [ -f "$RUN_DIR/DONE" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
-       && [ -f "$RUN_DIR/oracle_protocol.json" ]; then
-      echo "==== [$KEY] ✔ 완주(DONE+protocols) — 스킵"; RESULT[$KEY]=1; continue
+RESDIR="$LOGDIR/v2-results.$$"; mkdir -p "$RESDIR"
+run_dir_of() { local d="$BASE-s$1"; [ "$2" != "gsm8k" ] && d="$d-$2"; echo "$d"; }
+# 한 job(seed×dataset) — 죽으면 2회 재시도, 좀비 정리는 이 run 디렉터리 한정.
+# 죽은 런의 experiment.py가 모델 한 벌(27B≈52GB)을 문 채 남아 있으면 drift 재로드가
+# "48.63GB 할당 실패/27.57GB 잔여" 꼴로 같은 자리 OOM 반복 — 그래서 시도 전 정리.
+run_job() {  # run_job <SEED> <DS> <OM_GPUS 또는 빈문자열>
+  local SEED="$1" DS="$2" GSET="$3"
+  local RUN_DIR KEY LOG ok try
+  RUN_DIR=$(run_dir_of "$SEED" "$DS"); KEY="$DS/s$SEED"; LOG="$LOGDIR/v2-$DS-s$SEED.log"
+  echo "==== [$KEY] → $RUN_DIR (log: $LOG${GSET:+, GPU $GSET})"
+  if [ -f "$RUN_DIR/DONE" ] && [ -f "$RUN_DIR/score_protocol.json" ] \
+     && [ -f "$RUN_DIR/oracle_protocol.json" ]; then
+    echo "==== [$KEY] ✔ 완주(DONE+protocols) — 스킵"; echo 1 > "$RESDIR/$DS-s$SEED"; return 0
+  fi
+  ok=0
+  for try in 1 2; do
+    echo "==== [$KEY] 시도 $try/2"
+    cleanup_run "$RUN_DIR"
+    # 확장 결과로 생긴 VAR=값 단어는 bash가 환경 대입으로 안 본다 — export로 처리
+    # (run_job은 워커 서브셸 안에서 돌아 밖으로 새지 않음; PAR=1이면 GSET이 비어 종전과 동일)
+    [ -n "$GSET" ] && export OM_GPUS="$GSET"
+    if DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" \
+         bash scripts/run_14b.sh >> "$LOG" 2>&1; then
+      ok=1; echo "==== [$KEY] ✔ 완주"; break
     fi
-    ok=0
-    for try in 1 2; do
-      echo "==== [$KEY] 시도 $try/2"
-      cleanup_strays
-      if DATASET="$DS" OUT_ROOT="$RUN_DIR" SEED="$SEED" bash scripts/run_14b.sh >> "$LOG" 2>&1; then
-        ok=1; echo "==== [$KEY] ✔ 완주"; break
-      fi
-      echo "==== [$KEY] ✘ 실패 — tail:"; tail -4 "$LOG" | sed 's/^/     /'
-      grep -q "\[abort\].*데이터" "$LOG" && { echo "==== [$KEY] 데이터 문제 — 스킵"; break; }
-      sleep 20
-    done
-    RESULT[$KEY]=$ok
+    echo "==== [$KEY] ✘ 실패 — tail:"; tail -4 "$LOG" | sed 's/^/     /'
+    grep -q "\[abort\].*데이터" "$LOG" && { echo "==== [$KEY] 데이터 문제 — 스킵"; break; }
+    sleep 20
   done
+  echo "$ok" > "$RESDIR/$DS-s$SEED"
+}
+JOBS=()
+for SEED in "${SEEDS[@]}"; do for DS in "${DATASETS[@]}"; do
+  JOBS+=("$SEED $DS"); MY_RUNS+=("$(run_dir_of "$SEED" "$DS")")
+done; done
+
+PAR="${PAR:-1}"
+if [ "$PAR" -le 1 ]; then
+  for job in "${JOBS[@]}"; do echo; run_job $job ""; done
+else
+  # GPU를 PAR개 그룹으로 라운드로빈 분할 → 워커 j는 자기 그룹으로 job j, j+PAR, ... 순차
+  if [ -n "${OM_GPUS:-}" ]; then IFS=',' read -r -a ALLG <<< "$OM_GPUS"; else ALLG=($(seq 0 $((N - 1)))); fi
+  [ "${#ALLG[@]}" -ge "$PAR" ] || { echo "[abort] GPU ${#ALLG[@]}장을 PAR=$PAR 그룹으로 못 나눔"; kill $W 2>/dev/null; exit 1; }
+  declare -a GROUP
+  for ((g = 0; g < ${#ALLG[@]}; g++)); do
+    j=$((g % PAR)); GROUP[$j]="${GROUP[$j]:+${GROUP[$j]},}${ALLG[$g]}"
+  done
+  echo "== 병렬 PAR=$PAR — GPU 그룹: ${GROUP[*]}"
+  wpids=()
+  for ((j = 0; j < PAR; j++)); do
+    (
+      for ((i = j; i < ${#JOBS[@]}; i += PAR)); do
+        echo; run_job ${JOBS[$i]} "${GROUP[$j]}"
+      done
+    ) & wpids+=($!)
+  done
+  for p in "${wpids[@]}"; do wait "$p"; done
+fi
+declare -A RESULT
+for job in "${JOBS[@]}"; do
+  set -- $job; RESULT["$2/s$1"]=$(cat "$RESDIR/$2-s$1" 2>/dev/null || echo 0)
 done
 
-cleanup_strays; kill "$W" 2>/dev/null
+cleanup_all_mine; kill "$W" 2>/dev/null
 echo
 echo "==== 종료 요약 ===="
 DIRS=()
 for SEED in "${SEEDS[@]}"; do for DS in "${DATASETS[@]}"; do
-  RUN_DIR="$BASE-s$SEED"; [ "$DS" != "gsm8k" ] && RUN_DIR="$RUN_DIR-$DS"
+  RUN_DIR=$(run_dir_of "$SEED" "$DS")
   KEY="$DS/s$SEED"
   if [ "${RESULT[$KEY]:-0}" = "1" ]; then
     echo "  $KEY ✔"

@@ -1,8 +1,10 @@
 """게이트 실험 orchestrator — stage 단위 실행, 산출물은 outputs/<run>/ 아래 저장.
 
 stages:
-  rollout-behavior  β(base)로 train+val 프롬프트 rollout 수집
-  drift             정답 rollout LoRA RFT로 π 체크포인트 생성 (steps 스윕)
+  rollout-behavior  β(base)로 train 프롬프트 rollout 수집 → 채점(score) 전용
+  rollout-drift     β(base)로 train 프롬프트 rollout을 **따로** 수집 → drift 학습 전용
+                    (채점 표본으로 π를 학습하면 IS 항등식 전제가 깨진다 — 검수 §1)
+  drift             rollouts_drift_train의 정답 rollout LoRA RFT로 π 체크포인트 생성
   score             β rollout에 4개 추정량(g00/g10/g01/g11) 적용 → 프롬프트 점수
   oracle            π fresh rollout 수집 → oracle 점수·split-half noise floor·micro-group grads
   report            top-k precision/Jaccard 표 + margin + CertaGrad vs uniform
@@ -134,6 +136,23 @@ def read_rollouts(path: Path) -> dict[int, list[dict]]:
     return by_prompt
 
 
+DRIFT_ROLLOUTS = "rollouts_drift_train.jsonl"
+
+
+def drift_source_of(run: Path) -> str:
+    """π(drift adapter)가 어느 β 표본으로 학습됐는지 — 프로토콜 기록용.
+
+    'disjoint'가 아니면 π가 채점 표본의 함수라 stale score의 IS 항등식이 성립하지
+    않는다. 구 run은 'shared-legacy'로 표기되어 판정 도구가 구분할 수 있다."""
+    marker = run / "drift_source.json"
+    if marker.exists():
+        try:
+            return str(json.loads(marker.read_text()).get("source", "unknown"))
+        except (OSError, ValueError):
+            return "unknown"
+    return "shared-legacy"
+
+
 def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | None = None) -> None:
     """β rollout에 대해 π/β 로그확률 → 4개 추정량 → projected gradient → 점수.
 
@@ -240,6 +259,7 @@ def stage_score(args, run: Path, pi=None, beta=None, shard: tuple[int, int] | No
         "schema": SCORE_PROTOCOL_SCHEMA,
         "validation_partition": "selection=val_groups[0::2], evaluation=val_groups[1::2]",
         "validation_group_count": int(val_groups.shape[0]),
+        "drift_source": drift_source_of(run),
         "shard": shard[0] if shard is not None else None,
         "score_git": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], text=True
@@ -438,7 +458,10 @@ def stage_report(args, run: Path) -> None:
         i: cosine(micro[i][1::2].float().mean(dim=0), truth_val) for i in order
     }
     cg = certagrad(pools, selection_val, k, radius_mode=args.radius_mode)
-    uni = uniform_baseline(pools, selection_val, k, groups_each=pools[0].shape[0])
+    # uniform 기준선의 val 방향은 selection score와 같은 val 절반 **전부** — 후보 깊이로
+    # val을 자르면 기준선만 잡음이 커져 C2 비교가 기울어진다(검수 §3)
+    uni = uniform_baseline(pools, selection_val, k, groups_each=pools[0].shape[0],
+                           validation_groups=selection_val.shape[0])
     cg_sel = {order[i] for i in cg["selected"]}
     uni_sel = {order[i] for i in uni["selected"]}
     cg_overlap = fixed_selection_overlap(cg_sel, cert_truth, k, seed=seed)
@@ -479,8 +502,8 @@ def stage_report(args, run: Path) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--stage", required=True,
-                   choices=["prep", "rollout-behavior", "drift", "score", "oracle",
-                            "report", "hybrid", "analyze", "downstream",
+                   choices=["prep", "rollout-behavior", "rollout-drift", "drift", "score",
+                            "oracle", "report", "hybrid", "analyze", "downstream",
                             "rollout-fresh", "oracle-grads", "score-shard",
                             "merge-grads", "val-grads", "val-deepen"])
     p.add_argument("--run", default="outputs/pilot")
@@ -529,6 +552,9 @@ def main() -> None:
     import random as _random
     _shard_i = int(args.shard.split(":")[0]) if args.shard else 0
     _base = (args.seed * 1_000_003 + _shard_i * 7919 + 17) & 0x7FFFFFFF
+    if args.stage == "rollout-drift":
+        # drift 학습용 β 표본은 채점용과 **다른** 난수 스트림 — 같은 시드면 같은 표본
+        _base = (_base ^ 0x0D21F7) & 0x7FFFFFFF
     torch.manual_seed(_base)
     _random.seed(_base)
 
@@ -561,6 +587,26 @@ def main() -> None:
             print("rollout-behavior: 병합본 존재 — 스킵 (재사용)")
         elif out.exists():
             print(f"rollout-behavior: {out.name} 이미 존재 — 스킵")
+        else:
+            beta, tok = load_policy(args.model, None)
+            train = json.loads((run / "prompts.json").read_text())["train"]
+            per = (len(train) + n - 1) // n
+            lo, hi = i * per, min((i + 1) * per, len(train))
+            collect_rollouts(beta, tok, train[lo:hi], args.behavior_k,
+                             args.max_new_tokens, args.temperature, out,
+                             idx_offset=lo)
+    elif args.stage == "rollout-drift":
+        # drift 학습 전용 β rollout — rollouts_behavior_train과 같은 프롬프트·K, 다른 표본.
+        merged = run / DRIFT_ROLLOUTS
+        if args.shard:
+            i, n = map(int, args.shard.split(":"))
+            out = run / f"rollouts_drift_train.shard{i}.jsonl"
+        else:
+            i, n, out = 0, 1, merged
+        if merged.exists():
+            print("rollout-drift: 병합본 존재 — 스킵")
+        elif out.exists():
+            print(f"rollout-drift: {out.name} 이미 존재 — 스킵")
         else:
             beta, tok = load_policy(args.model, None)
             train = json.loads((run / "prompts.json").read_text())["train"]
@@ -609,26 +655,36 @@ def main() -> None:
         if (adapter_dir / "adapter_config.json").exists():
             print(f"drift: {adapter_dir.name} 이미 존재 — 스킵 (재학습하려면 폴더 삭제)")
         else:
-            train_drift_lora(args.model, run / "rollouts_behavior_train.jsonl",
-                             adapter_dir, steps=args.drift_steps)
+            drift_rollouts = run / DRIFT_ROLLOUTS
+            if not drift_rollouts.exists():
+                raise ValueError(
+                    f"{DRIFT_ROLLOUTS} 없음 — drift는 채점용 rollouts_behavior_train과 "
+                    "분리된 β 표본으로만 학습한다. 먼저 --stage rollout-drift를 실행할 것."
+                )
+            # 생성 계약(raw-softmax·EOS 절단·정확 K)을 학습 표본에도 강제
+            gen = validate_generation_contract(run, ("rollouts_drift_train",))
+            train_drift_lora(args.model, drift_rollouts, adapter_dir,
+                             steps=args.drift_steps, seed=args.seed)
+            _atomic_text(run / "drift_source.json", json.dumps({
+                "source": "disjoint",
+                "rollouts": DRIFT_ROLLOUTS,
+                "scored_rollouts": "rollouts_behavior_train.jsonl",
+                "shuffle_seed": args.seed,
+                "generation_validation": gen,
+            }, indent=1))
     elif args.stage == "score":
         stage_score(args, run)
     elif args.stage == "oracle":
         stage_oracle(args, run)
     elif args.stage == "val-deepen":
-        # val fresh를 K만큼 추가 수집(append) 후 val gradient 재계산 — α_v 심화용
-        pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
-        prompts = json.loads((run / "prompts.json").read_text())
-        extra = run / "rollouts_fresh_val.extra.jsonl"
-        collect_rollouts(pi, tok, prompts["val"], args.val_k,
-                         args.max_new_tokens, args.temperature, extra)
-        with (run / "rollouts_fresh_val.jsonl").open("a") as f:
-            for line in extra.open():
-                f.write(line)
-        extra.unlink()
-        for p in ("val_gradient.pt", "val_groups.pt"):
-            (run / p).unlink(missing_ok=True)
-        print(f"val-deepen: +K={args.val_k} 추가 완료 → val-grads 재계산 필요")
+        # 구 프로토콜의 append 심화는 생성 계약(run_config.val_k × 프롬프트 정확 K)을
+        # 깨뜨려 score/oracle 프로토콜 마커를 다시 못 만들게 한다(검수 §2). run을
+        # 오염시키지 않도록 거부한다 — 심화가 필요하면 VAL_K를 키운 새 OUT_ROOT로.
+        raise ValueError(
+            "val-deepen은 현재 생성 계약과 양립하지 않는다(rollouts_fresh_val 행 수가 "
+            "run_config.val_k와 어긋나 protocol 마커 생성이 막힘). "
+            "VAL_K를 키운 새 OUT_ROOT에서 재실행할 것."
+        )
     elif args.stage == "val-grads":
         # 재시작 스킵 — 이게 없어서 재시작마다 무출력 15~40분 구간을 다시 돌았다
         if (run / "val_gradient.pt").exists() and (run / "val_groups.pt").exists():
@@ -829,7 +885,8 @@ def run_hybrid(args, run: Path, pi, beta, tok, cut_frac: float) -> None:
         params = grad_params(pi, args.grad_layers)
         val_groups = torch.load(run / "val_groups.pt", weights_only=True)
         selection_val, _ = split_validation_directions(val_groups)
-        scores = score_cells(pi, params, cells, selection_val, spec)
+        scores = score_cells(pi, params, cells, selection_val, spec,
+                             micro_batch=args.micro_batch)
         _atomic_text(run / f"scores_hybrid_{cut_frac}.json", json.dumps(scores, indent=1))
         _atomic_text(protocol_path, json.dumps({
             "schema": HYBRID_PROTOCOL_SCHEMA,

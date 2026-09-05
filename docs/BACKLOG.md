@@ -2,6 +2,18 @@
 
 담당: 🖥 = 클러스터(사용자 실행), 🤖 = 로컬(Claude 작업). 순서는 위→아래.
 
+## 2026-09-05 재검수 후 (docs/REVIEW_2026-09-05.md)
+
+- [x] drift 학습 표본을 채점 표본과 분리(`rollout-drift` stage, `drift_source` 프로토콜 기록)
+      + 정답 행 seed 셔플 — IS 항등식 전제 복구
+- [x] stale shard manifest 격리, `val-deepen` fail-closed, hybrid micro-batch 관통, pkill 경계
+- [x] 동률 jitter 시드 `run_config.seed`로 전 도구 통일, uniform baseline val 전체 사용
+- [x] `extract_answer` 마지막 `####`, `OM_DTYPE` 진단 노브, go_v2 `PAR=N` 병렬
+- [ ] 🖥 현재 인스턴스 완주 후 새 OUT_ROOT에서 재실행(구 v2/v3와 비교 불가 — π가 다른 정책)
+- [ ] 🖥 구 run 진단: drift에 쓰인 앞 400행 vs 나머지의 `kl_sum` 부호 분리 집계
+- [ ] 🖥 `OM_DTYPE=float32` 부분집합으로 bf16 log-weight 잡음 실측
+- [ ] DAPO `MAX_NEW_TOKENS` 상향 여부 결정(무신호 91~95%의 절단 기여 확인)
+
 ## 2026-08-20 전수 감사 후 제출 게이트
 
 - [x] 이론 식과 2×2 셀을 독립 열거 검산하고 일반 $K$ group normalization을

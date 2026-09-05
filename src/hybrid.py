@@ -172,7 +172,7 @@ def make_hybrid_cells(
 
 def score_cells(
     grad_model, params, cell_rows: dict[str, dict[int, list[dict]]],
-    val_grad: torch.Tensor, spec: ProjectionSpec,
+    val_grad: torch.Tensor, spec: ProjectionSpec, micro_batch: int = 2,
 ) -> dict:
     """cell별 프롬프트 점수 (gradient는 항상 π에서 계산 — 처치는 데이터 분포뿐)."""
     out: dict[str, dict[int, float]] = {}
@@ -184,6 +184,7 @@ def score_cells(
                 torch.full((r["input_ids"].numel() - r["resp_start"],), float(a))
                 for r, a in zip(rows, advs, strict=True)
             ]
-            g = prompt_gradient(grad_model, params, rows, weights, spec)
+            g = prompt_gradient(grad_model, params, rows, weights, spec,
+                                micro_batch=micro_batch)
             out[cell][pi_idx] = cosine(g, val_grad)
     return out

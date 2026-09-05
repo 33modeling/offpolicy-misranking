@@ -26,7 +26,7 @@
 비영 프롬프트가 10개 미만인 run(무신호 우세)의 결정 칸(top-k 두 열)은 동점
 jitter 인공물이므로 †로 표시하고 해석하지 않는다.
 
-top-k 동점 처리는 readout_summary와 동일(Random(0) jitter) — 판정 무결성 보존.
+top-k 동점 처리는 readout_summary와 동일(run_config.seed jitter) — 판정 무결성 보존.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ import sys
 from math import comb
 from pathlib import Path
 
-from gate_rules import has_valid_analysis_protocol
+from gate_rules import has_valid_analysis_protocol, run_seed
 
 ESTS = ("g00", "g10", "g01", "g11")
 
@@ -101,9 +101,10 @@ def analyze_run(run: Path) -> dict | None:
     from select_rules import topk_count
     k = topk_count(n, 0.10)
     w = max(1, round(k / 2))
-    rng = random.Random(0)
+    seed = run_seed(run)
+    rng = random.Random(seed)
     o_top = topk_ids(oracle, k, rng)
-    o_rank = ranks_desc(oracle, random.Random(0))
+    o_rank = ranks_desc(oracle, random.Random(seed))
     band = {i for i, r in o_rank.items() if k - w + 1 <= r <= k + w}
     o_nz = {i for i, s in oracle.items() if s != 0.0}
 
@@ -180,7 +181,7 @@ def pct(num: int, den: int) -> str:
 def report(results: list[dict]) -> str:
     L = ["# 부호반전 빈도 재집계 (reversal_freq)", ""]
     L.append("경계 대역 = oracle 순위 k±w (w=round(k/2)). 무신호(score 0) 제외, "
-             "분모는 각 칸에 명시. top-k jitter는 readout과 동일(Random(0)).")
+             "분모는 각 칸에 명시. top-k jitter는 readout과 동일(run_config.seed).")
     for r in results:
         L += ["", f"## {r['run']} — n={r['n']}, k={r['k']}, w={r['w']}, "
                   f"oracle 무신호 {r['oracle_zero']}개", "",

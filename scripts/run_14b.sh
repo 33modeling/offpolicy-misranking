@@ -5,7 +5,10 @@
 #   · 모델: Qwen2.5-14B-Instruct — group-volume 로컬 스냅샷 전용 (다운로드 안 함)
 #   · drift 100 단일 / fresh K=16 / hybrid 3절단점 / downstream 없음(C1·C1' 중심)
 #   · 판정 대상: 7B 대비 g10/g01의 Δfloor가 커지는가 작아지는가 (스케일 축)
-#   · GPU 배치: phase0 β rollout 4샤딩 → drift(1 GPU) → fresh rollout 4샤딩 → analyze
+#   · GPU 배치: phase0 β rollout N샤딩(채점용+drift용 별도 표본) → drift(1 GPU)
+#               → fresh rollout N샤딩 → analyze
+#   · drift 학습 표본(rollouts_drift_train)은 채점 표본(rollouts_behavior_train)과
+#     분리 — 같은 표본으로 π를 학습하면 IS 항등식 전제가 깨진다(검수 2026-09-05 §1)
 #
 #   bash scripts/run_14b.sh
 set -uo pipefail
@@ -212,6 +215,8 @@ config = {
     "gen_batch": os.environ.get("OM_GEN_BATCH"),
     "lora_targets": os.environ.get("OM_LORA_TARGETS"),
     "skip_hybrid": os.environ.get("OM_SKIP_HYBRID", "0"),
+    "dtype": os.environ.get("OM_DTYPE") or "bfloat16",
+    "drift_source": "disjoint",  # rollouts_drift_train — 채점 표본과 분리 (검수 §1)
 }
 encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
 config["digest"] = hashlib.sha256(encoded).hexdigest()
@@ -256,7 +261,9 @@ printf '%s\n' "$KEEP" > "$OUT_ROOT/keepalive.pid"
 cleanup() {
   kill "$KEEP" 2>/dev/null || true
   rm -f "$OUT_ROOT/keepalive.pid"
-  pkill -f -- "--run $OUT_ROOT" 2>/dev/null || true
+  # 인자 경계까지 맞춘다 — "--run .../v2-s1"이 ".../v2-s1-dapo-math" 프로세스까지
+  # 접두 매치로 죽이던 것(병렬 실행 시 형제 run 사망)의 수정
+  pkill -f -- "--run $OUT_ROOT( |\$)" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -297,15 +304,30 @@ if not pj.exists():
 n_train = len(json.loads(pj.read_text())["train"])
 per = (n_train + n - 1) // n
 stale = []
-for base in ("rollouts_behavior_train", "rollouts_fresh_train"):
-    if (root / (base + ".jsonl")).exists():
-        continue  # 병합 완료 — 샤드는 더 안 쓰임
-    for p in root.glob(base + ".shard*.jsonl"):
+for base in ("rollouts_behavior_train", "rollouts_drift_train", "rollouts_fresh_train"):
+    merged_exists = (root / (base + ".jsonl")).exists()
+    if not merged_exists:
+        for p in root.glob(base + ".shard*.jsonl"):
+            try:
+                i = int(p.name.split("shard")[1].split(".")[0])
+                lo, hi = i * per, min((i + 1) * per, n_train)
+                idx = {json.loads(l)["prompt_idx"] for l in p.open()}
+                ok = i < n and idx == set(range(lo, hi))
+            except Exception:
+                ok = False
+            if not ok:
+                stale.append(p)
+    # 샤드 manifest도 같이 격리 — 계약 검증기(artifact_contract)가 *.shard*.manifest.json을
+    # 전부 glob하므로, GPU 수가 바뀐 옛 manifest가 남으면 범위 겹침으로 score/merge가
+    # 매 재시도마다 죽는다(검수 §2). 병합 완료 후에도 검증기는 샤드 manifest를 읽으니
+    # 현재 분할(n)·범위와 안 맞는 manifest는 항상 치운다.
+    for p in root.glob(base + ".shard*.manifest.json"):
         try:
             i = int(p.name.split("shard")[1].split(".")[0])
+            doc = json.loads(p.read_text())
             lo, hi = i * per, min((i + 1) * per, n_train)
-            idx = {json.loads(l)["prompt_idx"] for l in p.open()}
-            ok = i < n and idx == set(range(lo, hi))
+            ok = (i < n and int(doc.get("idx_offset", -1)) == lo
+                  and int(doc.get("n_prompts", -1)) == hi - lo)
         except Exception:
             ok = False
         if not ok:
@@ -341,6 +363,12 @@ if [ -n "${OM_POOL_FILE:-}" ]; then
   "$PY" src/qualify_pool.py "$OUT_ROOT" "$OM_POOL_FILE" \
     --topk-frac "${TOPK_FRAC:-0.10}" | tee -a "$LOGS/main.log" || exit 1
 fi
+# drift 학습 전용 β rollout — 채점용과 같은 프롬프트·K, 다른 난수 스트림 (검수 §1)
+pids=(); for i in $(seq 0 $((NGPU - 1))); do
+  ( run_stage "$i" "$LOGS/drift-rollout-shard$i.log" --stage rollout-drift "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
+done
+for p in "${pids[@]}"; do wait "$p" || exit 1; done
+merge_rollouts rollouts_drift_train "${BEHAVIOR_K:-8}" || exit 1
 run_stage 0 "$LOGS/drift.log" --stage drift "${COMMON[@]}" --drift-steps "$DRIFT" || exit 1
 # π fresh N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
@@ -383,7 +411,8 @@ for cut in 0.25 0.5 0.75; do
 done
 for p in "${pids[@]}"; do wait "$p" || exit 1; done
 fi
-required=(prompts.json rollouts_behavior_train.jsonl rollouts_fresh_train.jsonl
+required=(prompts.json rollouts_behavior_train.jsonl rollouts_drift_train.jsonl
+          drift_source.json rollouts_fresh_train.jsonl
           val_gradient.pt val_groups.pt oracle_micro_groups.pt scores_oracle.json
           scores_splithalf.json scores_offpolicy.json score_protocol.json
           oracle_protocol.json report.json)

@@ -2,6 +2,8 @@
 # val 방향 심화 — fresh K 추가 수집 + val gradient 재계산 (GPU 1장, 7B ~1시간)
 #   bash scripts/deepen_val.sh 7b [drift100] [추가K=24]
 set -euo pipefail
+echo "[abort] deepen_val은 현재 생성 계약과 양립하지 않는다 — rollouts_fresh_val 행 수가 run_config.val_k와 어긋나 protocol 마커 생성이 막힌다(검수 2026-09-05 §2). VAL_K를 키운 새 OUT_ROOT로 재실행할 것." >&2
+exit 2
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh
 source scripts/_find_root.sh "${1:-7b}"
