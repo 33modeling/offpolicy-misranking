@@ -251,16 +251,15 @@ def analyze_run(
     strata = _strata(rates)
     # R ranks independently; A and B form the held-out averaged reference and
     # independently measure split-half reliability.
-    if any(
-        "r" not in halves or "r_high_budget" not in halves
-        for halves in artifacts.splithalf.values()
-    ):
-        raise ValueError(
-            f"{run}: scores_splithalf.json lacks the matched R or high-budget R+ split"
-        )
+    if any("r" not in halves for halves in artifacts.splithalf.values()):
+        raise ValueError(f"{run}: scores_splithalf.json lacks the matched R split")
     fresh_all = {idx: halves["r"] for idx, halves in artifacts.splithalf.items()}
+    # r_high_budget (16-response R+) is a descriptive sensitivity added on
+    # 2026-09-03. Points generated earlier carry only r; fall back to r for
+    # the sensitivity column instead of refusing to analyse the run.
     fresh_high_budget_all = {
-        idx: halves["r_high_budget"] for idx, halves in artifacts.splithalf.items()
+        idx: halves.get("r_high_budget", halves["r"])
+        for idx, halves in artifacts.splithalf.items()
     }
     half_a_all = {idx: halves["a"] for idx, halves in artifacts.splithalf.items()}
     half_b_all = {idx: halves["b"] for idx, halves in artifacts.splithalf.items()}

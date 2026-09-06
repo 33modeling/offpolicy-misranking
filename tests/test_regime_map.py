@@ -184,7 +184,7 @@ def test_regime_map_rejects_v1_or_missing_ranking_split(tmp_path: Path) -> None:
     for row in halves.values():
         row.pop("r")
     write_json(run / "scores_splithalf.json", halves)
-    with pytest.raises(ValueError, match="matched R or high-budget"):
+    with pytest.raises(ValueError, match="matched R split"):
         analyze_run(run)
 
 

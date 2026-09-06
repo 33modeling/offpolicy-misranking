@@ -357,11 +357,15 @@ expected_ids = set(range(int(config["n_train"])))
 if set(artifacts.oracle) != expected_ids:
     raise SystemExit("score artifacts do not cover every candidate prompt")
 halves = json.loads((run / "scores_splithalf.json").read_text())
-# Oracle protocol v3 writes r, r_high_budget, a, b; regime_map requires all
-# four. An exact {r,a,b} match rejected every completed v3 point (2026-09-06).
+# Generation code before 2026-09-03 writes r/a/b; oracle protocol v3 adds
+# r_high_budget. Both are complete points. An exact key match rejected every
+# finished point of the other vintage and re-ran it forever (2026-09-06).
 for row in halves.values():
-    if not isinstance(row, dict) or set(row) != {"r", "r_high_budget", "a", "b"}:
-        raise SystemExit("scores_splithalf.json lacks exact R/R+/A/B scores")
+    if not isinstance(row, dict):
+        raise SystemExit("scores_splithalf.json row is not an object")
+    keys = set(row)
+    if not {"r", "a", "b"} <= keys <= {"r", "r_high_budget", "a", "b"}:
+        raise SystemExit(f"scores_splithalf.json has unexpected keys: {sorted(keys)}")
     if not all(math.isfinite(float(v)) for v in row.values()):
         raise SystemExit("scores_splithalf.json contains non-finite scores")
 PYEOF
