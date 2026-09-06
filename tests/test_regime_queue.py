@@ -125,7 +125,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             "(out/'prompts.json').write_text(json.dumps(prompts))\n"
             "scores={str(i):{'score':float(i)} for i in range(config['n_train'])}\n"
             "off={name:scores for name in ('g00','g10','g01','g11')}\n"
-            "halves={str(i):{'r':float(i),'a':float(i),'b':float(i)} "
+            "halves={str(i):{'r':float(i),'r_high_budget':float(i),'a':float(i),'b':float(i)} "
             "for i in range(config['n_train'])}\n"
             "(out/'scores_oracle.json').write_text(json.dumps(scores))\n"
             "(out/'scores_offpolicy.json').write_text(json.dumps(off))\n"

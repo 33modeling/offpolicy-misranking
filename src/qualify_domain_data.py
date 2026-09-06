@@ -269,6 +269,18 @@ def _adopt_official_upload(dataset: str, root: Path) -> tuple[Path, list[dict]]:
         target = root / dataset / spec["file"]
         return target, _jsonl_rows(target)
 
+    target = root / dataset / spec["file"]
+    if target.is_file():
+        # Already adopted: verify by content and leave the shared volume alone
+        # (it may be read-only or owned by another account).
+        try:
+            existing = _canonical_rows(dataset, _jsonl_rows(target)) if dataset != "mmlu-pro-nonmath" \
+                else _select_mmlu_pro_nonmath(_jsonl_rows(target))
+            if len(existing) == spec["rows"] and _content_sha256(existing) == expected_hash:
+                return target, existing
+        except (OSError, TypeError, ValueError):
+            pass
+
     tried = []
     for source in _source_candidates(dataset, root):
         if not source.exists():

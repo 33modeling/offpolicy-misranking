@@ -451,16 +451,54 @@ def collection_hashes(results: Path) -> dict[str, str]:
     return {name: sha256_file(results / name) for name in COLLECTION_ARTIFACTS}
 
 
+ANALYSIS_CODE_FILES = (
+    "regime_map.py",
+    "regime_contract.py",
+    "first_interval.py",
+    "measurement_ceiling.py",
+    "gate_rules.py",
+    "score_artifacts.py",
+)
+
+
+def analysis_code_digest() -> str:
+    """Hash of the analysis modules; a marker written by older analysis code
+    (regime schema v3, 2,000 replicates) must not be treated as current."""
+    digest = hashlib.sha256()
+    here = Path(__file__).resolve().parent
+    for name in ANALYSIS_CODE_FILES:
+        path = here / name
+        digest.update(name.encode())
+        digest.update(path.read_bytes() if path.is_file() else b"<missing>")
+    return digest.hexdigest()
+
+
+def _regime_output_current(results: Path, matrix: dict) -> bool:
+    from regime_map import SCHEMA as REGIME_SCHEMA
+
+    regime = read_json(results / "REGIME.json")
+    if regime.get("schema") != REGIME_SCHEMA:
+        return False
+    wanted = int(matrix.get("experiment", {}).get("first_bootstrap", 0) or 0)
+    rows = regime.get("rows") or regime.get("cells") or []
+    samples = [int(r.get("first_bootstrap_samples", 0) or 0) for r in rows if isinstance(r, dict)]
+    if wanted and samples and min(samples) < wanted:
+        return False
+    return True
+
+
 def collection_is_current(results: Path, runs: list[Path], matrix: dict) -> bool:
     try:
         marker = read_json(results / ".regime_collection.json")
         return (
             marker.get("schema") == COLLECTION_SCHEMA
             and marker.get("matrix_digest") == matrix["digest"]
+            and marker.get("analysis_code") == analysis_code_digest()
             and marker.get("run_validations") == collection_inputs(runs, matrix)
             and marker.get("output_sha256") == collection_hashes(results)
+            and _regime_output_current(results, matrix)
         )
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, ImportError):
         return False
 
 
@@ -468,6 +506,7 @@ def mark_collection(results: Path, runs: list[Path], matrix: dict) -> None:
     document = {
         "schema": COLLECTION_SCHEMA,
         "matrix_digest": matrix["digest"],
+        "analysis_code": analysis_code_digest(),
         "run_validations": collection_inputs(runs, matrix),
         "output_sha256": collection_hashes(results),
     }

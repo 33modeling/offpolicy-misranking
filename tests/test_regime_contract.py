@@ -177,10 +177,32 @@ def test_collection_is_bound_to_runs_matrix_and_outputs() -> None:
         }
         marker = run / ".regime_validated.json"
         marker.write_text(json.dumps(validation), encoding="utf-8")
+        from regime_map import SCHEMA as REGIME_SCHEMA
+
+        def write_regime(schema: str, samples: int) -> None:
+            (results / "REGIME.json").write_text(
+                json.dumps({"schema": schema, "rows": [{"first_bootstrap_samples": samples}]}),
+                encoding="utf-8",
+            )
+
         for name in COLLECTION_ARTIFACTS:
             (results / name).write_text(f"{name}\n", encoding="utf-8")
+        write_regime(REGIME_SCHEMA, 10_000)
 
         assert not collection_is_current(results, [run], matrix)
+        mark_collection(results, [run], matrix)
+        assert collection_is_current(results, [run], matrix)
+
+        # A marker written by older analysis code, or a REGIME.json from an
+        # older schema, must not count as current even with matching hashes.
+        marker_doc = json.loads((results / ".regime_collection.json").read_text())
+        marker_doc["analysis_code"] = "0" * 64
+        (results / ".regime_collection.json").write_text(json.dumps(marker_doc))
+        assert not collection_is_current(results, [run], matrix)
+        mark_collection(results, [run], matrix)
+        write_regime("offpolicy-regime-map/v3", 2_000)
+        assert not collection_is_current(results, [run], matrix)
+        write_regime(REGIME_SCHEMA, 10_000)
         mark_collection(results, [run], matrix)
         assert collection_is_current(results, [run], matrix)
 

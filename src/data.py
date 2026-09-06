@@ -588,6 +588,25 @@ def build_user_msg(question: str) -> str:
 
 ANSWER_RE = re.compile(r"####\s*([^\n]+)")
 ANSWER_LINE_RE = re.compile(r"(?im)^\s*Answer:\s*(.+?)\s*$")
+_THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+_TEXT_RE = re.compile(r"\\text\{([^{}]*)\}")
+
+
+def normalize_math_answer(answer: str) -> str:
+    """Canonical string compared before math-verify.
+
+    Only thousands separators are dropped (``1,234`` -> ``1234``); a structural
+    comma (``(3, 1)``, ``1,2``) is kept, otherwise ``(3, 1)`` vs ``(3,1)`` scored 0
+    and ``12`` vs ``1,2`` scored 1 (28/500 MATH-500 golds carry such commas).
+    ``\\dfrac``/``\\tfrac`` and ``\\text{...}`` are reduced to the plain forms
+    so a natural answer matches the gold spelling.
+    """
+    s = answer.strip().rstrip(".").replace("$", "")
+    s = _THOUSANDS_RE.sub("", s)
+    s = s.replace("\\dfrac", "\\frac").replace("\\tfrac", "\\frac")
+    s = _TEXT_RE.sub(lambda m: m.group(1), s)
+    s = re.sub(r"\s*,\s*", ",", s)
+    return s.strip()
 
 
 def extract_answer(text: str) -> str | None:
@@ -595,13 +614,13 @@ def extract_answer(text: str) -> str | None:
     # Use the last such line so reasoning that mentions the format cannot win.
     answer_lines = ANSWER_LINE_RE.findall(text)
     if answer_lines:
-        return answer_lines[-1].strip().rstrip(".").replace(",", "").replace("$", "")
+        return normalize_math_answer(answer_lines[-1])
     m = ANSWER_RE.search(text)
     if m:
-        return m.group(1).strip().rstrip(".").replace(",", "").replace("$", "")
-    # fallback: \boxed{...}
-    m = re.search(r"\\boxed\{([^{}]+)\}", text)
-    return m.group(1).strip() if m else None
+        return normalize_math_answer(m.group(1))
+    # fallback: last \boxed{...}, brace-aware (``\boxed{\frac{1}{2}}``)
+    boxed = _boxed(text)
+    return normalize_math_answer(boxed) if boxed is not None else None
 
 
 def _extract_code(text: str) -> str:
@@ -826,7 +845,7 @@ def reward(text: str, gold: str) -> float:
     pred = extract_answer(text)
     if pred is None:
         return 0.0
-    gold = gold.strip().rstrip(".").replace(",", "").replace("$", "")
+    gold = normalize_math_answer(gold)
     if pred == gold:
         return 1.0
     try:  # 수치 동등 (예: 3.0 == 3)

@@ -589,10 +589,21 @@ def classify(
         if age is not None and age <= stuck_seconds:
             return "RETRYING", "partial_artifacts_waiting_for_next_claim"
         return "STOPPED", "partial_artifacts_exist_without_a_live_family_lock"
-    if changes:
-        return "PROGRESSING", "artifact_or_log_changed_during_probe"
     telemetry = after.pipeline_activity
     telemetry_age = record_age_seconds(telemetry, "observed_at_epoch")
+    fresh_telemetry_state = None
+    if telemetry is not None and telemetry_age is not None and telemetry_age <= telemetry_stale_seconds:
+        fresh_telemetry_state = str(telemetry.get("state", "invalid"))
+    # The supervisor's own "[regime-watchdog] ... idle" line lands in the worker
+    # log and counted as a change, turning a confirmed-idle pipeline into
+    # PROGRESSING. Measured idleness wins over that echo.
+    if fresh_telemetry_state in {"idle-suspected", "terminating-idle"}:
+        idle = telemetry.get("idle_seconds", "unknown")
+        if fresh_telemetry_state == "idle-suspected":
+            return "IDLE", f"pipeline_idle_suspected_for_{idle}s"
+        return "STUCK", f"pipeline_confirmed_idle_for_{idle}s"
+    if changes:
+        return "PROGRESSING", "artifact_or_log_changed_during_probe"
     if telemetry is not None and telemetry_age is not None:
         telemetry_state = str(telemetry.get("state", "invalid"))
         if telemetry_age <= telemetry_stale_seconds:

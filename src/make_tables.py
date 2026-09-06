@@ -31,6 +31,7 @@ import torch
 from certagrad import angle_radius, eb_radius
 from gate_rules import (
     HYBRID_PROTOCOL_SCHEMA,
+    canonical_gate_report,
     has_valid_analysis_protocol,
 )
 from select_rules import overlap_under_independent_ties, topk_count
@@ -61,7 +62,9 @@ def gate_numbers(run: Path) -> dict | None:
     """report.json 우선, 없으면 원시 점수에서 재계산."""
     if not has_valid_analysis_protocol(run):
         return None
-    rep = jload(run / "report.json")
+    # canonical_gate_report checks report.json against the input hashes; a
+    # bare jload returned pre-regeneration numbers.
+    rep = canonical_gate_report(run)
     if rep and "noise_floor" in rep:
         return rep
     oracle = jload(run / "scores_oracle.json")

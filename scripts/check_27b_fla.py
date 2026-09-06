@@ -9,6 +9,18 @@ import torch
 from transformers.models.qwen3_5 import modeling_qwen3_5 as modeling
 
 
+def _kernel(name: str):
+    """transformers 5 wraps the kernels; import them from fla directly."""
+    kernel = getattr(modeling, name, None)
+    if kernel is not None:
+        return kernel
+    try:
+        from fla.ops import gated_delta_rule
+    except ImportError:
+        return None
+    return getattr(gated_delta_rule, name, None)
+
+
 def main() -> int:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable")
@@ -16,8 +28,8 @@ def main() -> int:
     if installed != "0.5.2":
         print(f"[27b-runtime] WARNING fla-core {installed} != registered 0.5.2; "
               "kernels are still exercised below", flush=True)
-    recurrent = modeling.fused_recurrent_gated_delta_rule
-    chunk = modeling.chunk_gated_delta_rule
+    recurrent = _kernel("fused_recurrent_gated_delta_rule")
+    chunk = _kernel("chunk_gated_delta_rule")
     if recurrent is None or chunk is None:
         raise RuntimeError("FLA fused recurrent/chunk kernels are unavailable")
 

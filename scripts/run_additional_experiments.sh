@@ -309,6 +309,7 @@ run_registered_matrix() {
   log="$OM_WORK/console-logs/$run_id-$WORKER_TAG-$(date +%F-%H%M%S).log"
   config_id=$(sha256sum "$config" | cut -c1-16)
   qualification="$OM_WORK/contracts/$run_id-datasets-$config_id.json"
+  log_stage "qualify-datasets"
   (
     flock 6
     qualify_registered_datasets "$config" "$qualification"
@@ -324,37 +325,40 @@ run_registered_matrix() {
   export REGIME_DATASETS="$datasets"
   export REGIME_SEEDS="$seeds"
   export REGIME_DRIFTS="$drifts"
-  export REGIME_N_TRAIN="$(matrix_field "$config" n_train)"
+  REGIME_N_TRAIN="$(matrix_field "$config" n_train)"
   for dataset in $datasets; do
     n_train_map+=("$dataset=$(dataset_n_train_field "$config" "$dataset")")
   done
   export REGIME_N_TRAIN_BY_DATASET="${n_train_map[*]}"
-  export REGIME_N_VAL="$(matrix_field "$config" n_val)"
-  export REGIME_BEHAVIOR_K="$(matrix_field "$config" behavior_k)"
-  export REGIME_FRESH_K="$(matrix_field "$config" fresh_k)"
-  export REGIME_VAL_K="$(matrix_field "$config" val_k)"
-  export REGIME_MICRO_GROUP="$(matrix_field "$config" micro_group)"
-  export REGIME_MAX_NEW_TOKENS="$(matrix_field "$config" max_new_tokens)"
-  export REGIME_PROJ_DIM="$(matrix_field "$config" proj_dim)"
-  export REGIME_GRAD_LAYERS="$(matrix_field "$config" grad_layers)"
-  export REGIME_CLIP_CAP="$(matrix_field "$config" clip_cap)"
-  export REGIME_TOPK_FRAC="$(matrix_field "$config" topk_frac)"
-  export REGIME_TEMPERATURE="$(matrix_field "$config" temperature)"
-  export REGIME_FIRST_BOOTSTRAP="$(matrix_field "$config" first_bootstrap)"
-  export GRPO_WORLD_SIZE="$(grpo_field "$config" world_size)"
-  export GRPO_GROUP_SIZE="$(grpo_field "$config" group_size)"
-  export GRPO_CLIP_EPSILON="$(grpo_field "$config" clip_epsilon)"
-  export GRPO_LEARNING_RATE="$(grpo_field "$config" learning_rate)"
-  export GRPO_EPOCHS_PER_BATCH="$(grpo_field "$config" epochs_per_batch)"
-  export GRPO_MAX_GRAD_NORM="$(grpo_field "$config" max_grad_norm)"
-  export GRPO_ADVANTAGE_EPSILON="$(grpo_field "$config" advantage_epsilon)"
-  export GRPO_LORA_RANK="$(grpo_field "$config" lora_rank)"
-  export GRPO_LORA_ALPHA="$(grpo_field "$config" lora_alpha)"
+  REGIME_N_VAL="$(matrix_field "$config" n_val)"
+  REGIME_BEHAVIOR_K="$(matrix_field "$config" behavior_k)"
+  REGIME_FRESH_K="$(matrix_field "$config" fresh_k)"
+  REGIME_VAL_K="$(matrix_field "$config" val_k)"
+  REGIME_MICRO_GROUP="$(matrix_field "$config" micro_group)"
+  REGIME_MAX_NEW_TOKENS="$(matrix_field "$config" max_new_tokens)"
+  REGIME_PROJ_DIM="$(matrix_field "$config" proj_dim)"
+  REGIME_GRAD_LAYERS="$(matrix_field "$config" grad_layers)"
+  REGIME_CLIP_CAP="$(matrix_field "$config" clip_cap)"
+  REGIME_TOPK_FRAC="$(matrix_field "$config" topk_frac)"
+  REGIME_TEMPERATURE="$(matrix_field "$config" temperature)"
+  REGIME_FIRST_BOOTSTRAP="$(matrix_field "$config" first_bootstrap)"
+  GRPO_WORLD_SIZE="$(grpo_field "$config" world_size)"
+  GRPO_GROUP_SIZE="$(grpo_field "$config" group_size)"
+  GRPO_CLIP_EPSILON="$(grpo_field "$config" clip_epsilon)"
+  GRPO_LEARNING_RATE="$(grpo_field "$config" learning_rate)"
+  GRPO_EPOCHS_PER_BATCH="$(grpo_field "$config" epochs_per_batch)"
+  GRPO_MAX_GRAD_NORM="$(grpo_field "$config" max_grad_norm)"
+  GRPO_ADVANTAGE_EPSILON="$(grpo_field "$config" advantage_epsilon)"
+  GRPO_LORA_RANK="$(grpo_field "$config" lora_rank)"
+  GRPO_LORA_ALPHA="$(grpo_field "$config" lora_alpha)"
   export GRPO_CHECKPOINT_EVERY=5 REGIME_MAX_RETRIES=3
-  export OM_TOP_P="$(matrix_field "$config" top_p)"
-  export OM_THINKING="$(matrix_field "$config" thinking)"
-  export OM_ATTN="$(matrix_field "$config" attn)"
-  export OM_SKIP_HYBRID="$(matrix_field "$config" skip_hybrid)"
+  OM_TOP_P="$(matrix_field "$config" top_p)"
+  OM_THINKING="$(matrix_field "$config" thinking)"
+  OM_ATTN="$(matrix_field "$config" attn)"
+  OM_SKIP_HYBRID="$(matrix_field "$config" skip_hybrid)"
+  # Assigned first, exported after: `export X="$(helper)"` returns 0 even when the
+  # helper fails, and run_matrix would then silently use its defaults.
+  export REGIME_N_TRAIN REGIME_N_VAL REGIME_BEHAVIOR_K REGIME_FRESH_K REGIME_VAL_K REGIME_MICRO_GROUP REGIME_MAX_NEW_TOKENS REGIME_PROJ_DIM REGIME_GRAD_LAYERS REGIME_CLIP_CAP REGIME_TOPK_FRAC REGIME_TEMPERATURE REGIME_FIRST_BOOTSTRAP GRPO_WORLD_SIZE GRPO_GROUP_SIZE GRPO_CLIP_EPSILON GRPO_LEARNING_RATE GRPO_EPOCHS_PER_BATCH GRPO_MAX_GRAD_NORM GRPO_ADVANTAGE_EPSILON GRPO_LORA_RANK GRPO_LORA_ALPHA OM_TOP_P OM_THINKING OM_ATTN OM_SKIP_HYBRID
   export OM_SKIP_GPU_CHECK=0 OM_ALLOW_DIRTY=0 OM_ALLOW_ANALYSIS_UPGRADE=0
   export OM_GEN_BATCH=4
   if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35* || "$PROFILE" == olmo3_domains ]]; then

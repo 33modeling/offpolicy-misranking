@@ -46,6 +46,46 @@ checked source fix does not mark result regeneration complete.
   `STUCK` requires consecutive confirmed idle windows. Failed CPU/GPU probes
   suppress termination instead of being interpreted as zero utilization.
 
+## 2026-09-06 full-code review fixes (four-area audit; details in docs/REVIEW_NOTE_2026-09-06.md)
+
+- [x] `OM-2026-09-06-01` `run_matrix.sh` completion check demanded exactly `r/a/b`
+  split-half keys while oracle protocol v3 writes `r_high_budget` too: every
+  finished point was re-run as incomplete. Now requires exactly `r/r_high_budget/a/b`.
+- [x] `OM-2026-09-06-02` `code_sandbox.py` rejected `typing`/`dataclasses`/`abc`/
+  `enum` imports, `__name__` and single-underscore attributes, scoring correct
+  MBPP solutions 0. Only dunder attributes and the blocked builtins remain banned.
+- [x] `OM-2026-09-06-03` Math reward stripped every comma (`(3, 1)` vs `(3,1)` → 0,
+  `12` vs `1,2` → 1) and the `\boxed` fallback ignored nested braces. Only
+  thousands separators are dropped; `\dfrac`/`\text` are normalised; `_boxed` is used.
+- [x] `OM-2026-09-06-04` `generate()` received no `eos_token_id`; the pinned
+  Qwen3.5-9B config lists only `<|endoftext|>`, so `<|im_end|>` never stopped
+  decoding. The resolved EOS set is passed explicitly (recorded in the manifest).
+- [x] `OM-2026-09-06-05` `check_27b_fla.py` read kernels from the transformers
+  module, which no longer re-exports them (AttributeError, launch abort).
+- [x] `OM-2026-09-06-06` GRPO: LoRA init seeded from `--seed`; AdamW
+  `weight_decay=0.0` stated explicitly (torch default 0.01 was unregistered);
+  a loaded parent optimizer no longer overrides the registered lr; parent config
+  compared on chain resume; NCCL timeout 2 h.
+- [x] `OM-2026-09-06-07` Collection marker binds the analysis code digest and the
+  REGIME.json schema/bootstrap count, so a v3/2,000-replicate cache is not current.
+- [x] `OM-2026-09-06-08` `rlzero_status.py` let a watchdog echo in the worker log
+  outrank confirmed-idle telemetry (PROGRESSING over STUCK).
+- [x] `OM-2026-09-06-09` `make_tables.gate_numbers` read `report.json` without the
+  input-hash check; `cleanup_run_processes.py` matched any `RUN_LABEL=v4-*`
+  process outside its `--run-prefix`; dataset adoption rewrote an already
+  adopted copy on a possibly read-only shared root.
+- [x] `OM-2026-09-06-10` Launcher: `export X="$(helper)"` masked helper failures;
+  the pipeline's own keepalive counted as pipeline activity (hard-stall kill
+  unreachable); `fetch_datasets.sh` ignored manifest failures; stale-shard
+  quarantine status was lost behind `tee`; Ctrl+C was reported as a log-writer
+  failure; terminal filter matched words instead of tags.
+- [ ] `OM-2026-09-06-11` 5/974 MBPP prompts are unsolvable by construction (two
+  need `test_setup_code`, three use blocked dunder methods/`exit()`); constant
+  zero reward → zero advantage, harmless to GRPO but wasted prompts. Fixing
+  changes the registered dataset content hash; decide before the next matrix.
+- [ ] `OM-2026-09-06-12` `make_tables` T3/T6 split micro-groups even/odd instead
+  of the contiguous R/A/B partition (diagnostic tables only).
+
 ## Required before numerical freeze
 
 - [ ] Recompute `scores_splithalf.json`, `scores_oracle.json`, and

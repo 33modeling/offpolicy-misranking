@@ -7,12 +7,19 @@ mkdir -p "$OM_WORK/console-logs"
 SESSION_LOG=$(mktemp "$OM_WORK/console-logs/additional-${PROFILE}-${MODE#--}-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.log")
 export SESSION_LOG
 exec {LAUNCH_STDOUT}>&1 {LAUNCH_STDERR}>&2
-# Lines worth a human's attention. Everything else goes only to the file.
-TERMINAL_PATTERN='\[progress\]|^\[stage\]|^\[exit\]|abort\]|\[error\]|Traceback|Error:|Error\b|✔|✘|try [0-9]+/[0-9]+ ->|\[family|\[queue\]|\[cuda-recovery\]|\[contract|\[additional\]|\[runtime\]|\[regime-contract\]|\[transfer-smoke|\[27b-runtime\]|\[check\]|\[download\]|\[seal\]|complete|passed|PASS|FAIL'
+# Terminal = tagged lines only. Word matches (Error, complete, passed, PASS)
+# let tracebacks and library chatter through and buried the state lines the
+# operator reads on a phone. Tracebacks still reach the file; on failure the
+# excerpt prints the last error lines. `bash scripts/run_qwen35_9b.sh status`
+# gives the same picture on demand.
+TERMINAL_TAGS='stage|exit|launch|progress|abort|additional|model|regime-hard-stall|regime-watchdog|permanent-contract|prompt-rebuild|family|family-order|family-fail|queue|cuda-recovery|recovery-abort|contract|contract-fail|regime-contract|regime-contract-abort|transfer-smoke|transfer-smoke-abort|27b-runtime|check|download|seal|qualified|qualification-abort|signal-qualified|signal-abort|data|locate|code|cleanup|oom-backoff|grpo'
+TERMINAL_PATTERN="^(\[[0-9: -]+\] )?\[($TERMINAL_TAGS)\]|^(START|OK|FAILED|DIAGNOSIS|ACTION|EVIDENCE)\b"
 if [ "${ADDITIONAL_VERBOSE:-0}" = 1 ]; then
-  exec > >(tee -a "$SESSION_LOG") 2>&1
+  exec > >(trap '' INT TERM; tee -a "$SESSION_LOG") 2>&1
 else
-  exec > >(tee -a "$SESSION_LOG" | { grep --line-buffered -E "$TERMINAL_PATTERN" >&"$LAUNCH_STDOUT" || { filter_rc=$?; [ "$filter_rc" -eq 1 ] || exit "$filter_rc"; }; }) 2>&1
+  # The writer ignores INT/TERM so it drains and records the exit line after
+  # Ctrl+C; the launcher's own trap still exits 130/143.
+  exec > >(trap '' INT TERM; tee -a "$SESSION_LOG" | { grep --line-buffered -E "$TERMINAL_PATTERN" >&"$LAUNCH_STDOUT" || { filter_rc=$?; [ "$filter_rc" -eq 1 ] || exit "$filter_rc"; }; }) 2>&1
 fi
 LAUNCH_LOGGER_PID=$!
 LAUNCH_STAGE=admission
@@ -42,7 +49,8 @@ finish_launch_log() {
   exec 1>&"$LAUNCH_STDOUT" 2>&"$LAUNCH_STDERR"
   wait "$LAUNCH_LOGGER_PID" || logger_rc=$?
   # Only the grep stage normalizes its no-match status; tee errors must propagate.
-  [ "$logger_rc" -eq 0 ] || { echo "[abort] log writer failed rc=$logger_rc" >&2; rc=$logger_rc; }
+  # A writer that died of the same signal as the launcher (Ctrl+C) is not a failure.
+  [ "$logger_rc" -eq 0 ] || [ "$logger_rc" -eq "$rc" ] || { echo "[abort] log writer failed rc=$logger_rc" >&2; rc=$logger_rc; }
   # The authoritative exit record is written only after the writer has drained.
   if ! printf '[exit] utc=%s rc=%s stage=%s log=%s\n' "$(date -u +%FT%TZ)" "$rc" "$LAUNCH_STAGE" "$SESSION_LOG" >> "$SESSION_LOG"; then
     echo "[abort] cannot persist final exit record" >&2

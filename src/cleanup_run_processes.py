@@ -92,8 +92,11 @@ def matching_processes(
             process.environ.get("RUN_BASE_SMOKE", ""),
             process.environ.get("REGIME_ROOT", ""),
         )
-        is_v4_worker = process.environ.get("RUN_LABEL", "").startswith("v4-")
-        is_v4_launcher = "scripts/go_v4.sh" in process.command
+        # The v4 heuristics matched any RUN_LABEL=v4-* process on the node, even
+        # for an unrelated --run-prefix. Apply them only inside a v4 scope.
+        v4_scope = "v4" in run_prefix
+        is_v4_worker = v4_scope and process.environ.get("RUN_LABEL", "").startswith("v4-")
+        is_v4_launcher = v4_scope and "scripts/go_v4.sh" in process.command
         matches_scope = (
             any(path.startswith(run_prefix) for path in environment_paths)
             or any(pattern in process.command for pattern in command_patterns)

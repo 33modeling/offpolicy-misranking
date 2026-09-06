@@ -446,9 +446,9 @@ def collect_rollouts(
           f"max_new={max_new_tokens}, temp={temperature} → {out_path.name}", flush=True)
     t_start = time.time()
     # P0-1: 샘플링 인자 전체 명시(generation_config 병합 차단) + manifest 기록
-    gkw = gen_kwargs(temperature, SAMPLING["top_p"], max_new_tokens,
-                     tok.eos_token_id)
     eos_set = eos_ids_of(model, tok, pad_id=tok.eos_token_id)
+    gkw = gen_kwargs(temperature, SAMPLING["top_p"], max_new_tokens,
+                     tok.eos_token_id, eos_token_id=eos_set)
     manifest_path, manifest_tmp = _rollout_manifest_paths(out_path)
     manifest = resolved_manifest(model, tok, gkw, prompt_format=prompt_format())
     manifest.update({

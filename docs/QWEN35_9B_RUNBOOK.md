@@ -57,6 +57,19 @@ Results: `$OM_WORK/results/qwen35-9b-posttrained-math-code-grpo-v1/`.
 Models/configuration/outputs are separate from the retained 27B experiment.
 Do not reuse or relabel 27B checkpoints as 9B results.
 
+## Reading progress on a phone
+
+```bash
+bash scripts/run_qwen35_9b.sh status     # one screen: stage, points done/started, current point, last error
+```
+
+The terminal shows tagged lines only (`[stage]`, `[progress]`, `[abort]`,
+`[model]`, `[regime-*]`, `START/OK/FAILED/DIAGNOSIS/ACTION`); tracebacks and
+library output go to the session log. A point prints one `[progress]` line per
+stage, `<run>  k/8 <stage>  +<min>`. GRPO prints one console line every 5 steps
+with reward, active groups, loss, seconds per step and ETA; `grpo_stats.jsonl`
+still records every step.
+
 ## Logging and failures
 
 All additional profiles now capture both stdout and stderr after environment

@@ -10,25 +10,32 @@ import resource
 import sys
 
 _ALLOWED_IMPORTS = {
+    "abc",
     "array",
     "bisect",
     "calendar",
     "cmath",
     "collections",
     "copy",
+    "dataclasses",
     "datetime",
     "decimal",
+    "enum",
     "fractions",
     "functools",
     "heapq",
     "itertools",
     "math",
+    "numbers",
     "operator",
     "random",
     "re",
     "statistics",
     "string",
     "sys",
+    "textwrap",
+    "typing",
+    "unicodedata",
 }
 _BLOCKED_NAMES = {
     "__import__",
@@ -108,11 +115,14 @@ def _validated_candidate(source: str):
                 raise ValueError("candidate imports an unsafe sys attribute")
         elif isinstance(node, ast.Name) and node.id in _BLOCKED_NAMES:
             raise ValueError(f"candidate uses blocked name {node.id}")
-        elif isinstance(node, ast.Name) and node.id.startswith("__"):
+        elif isinstance(node, ast.Name) and node.id.startswith("__") and node.id != "__name__":
+            # ``if __name__ == "__main__":`` is ordinary MBPP-style code.
             raise ValueError(f"candidate uses blocked private name {node.id}")
         elif isinstance(node, ast.Attribute) and node.attr in _BLOCKED_ATTRIBUTES:
             raise ValueError(f"candidate uses blocked attribute {node.attr}")
-        elif isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            # Dunder access is the escape hatch (__class__, __dict__, ...); a
+            # single-underscore attribute such as ``self._n`` is plain style.
             raise ValueError(f"candidate uses blocked private attribute {node.attr}")
     return compile(tree, "<candidate>", "exec")
 

@@ -89,7 +89,7 @@ with open(tmp, "w") as f:
             n += 1
 tmp.replace(out / "mbpp.jsonl")
 print("mbpp.jsonl:", n, "rows")'; then fail=1; continue; fi
-      _manifest mbpp google-research-datasets/mbpp "$rev" "$file" "all published splits, full config" ;;
+      _manifest mbpp google-research-datasets/mbpp "$rev" "$file" "all published splits, full config" || fail=1 ;;
     math500)
       rev=6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be
       file="$DATASETS_DIR/math500/math500_test.jsonl"
@@ -109,7 +109,7 @@ with open(tmp, "w") as f:
         f.write(json.dumps({"problem": r["problem"], "answer": str(r["answer"])}) + "\n")
 tmp.replace(out / "math500_test.jsonl")
 print("math500_test.jsonl:", len(ds), "rows")'; then fail=1; continue; fi
-      _manifest math500 HuggingFaceH4/MATH-500 "$rev" "$file" "test split" ;;
+      _manifest math500 HuggingFaceH4/MATH-500 "$rev" "$file" "test split" || fail=1 ;;
     gsm8k)
       rev=740312add88f781978c0658806c59bc2815b9866
       file="$DATASETS_DIR/gsm8k/gsm8k_train.jsonl"
@@ -129,7 +129,7 @@ with open(tmp, "w") as f:
         f.write(json.dumps({"question": r["question"], "answer": r["answer"]}) + "\n")
 tmp.replace(out / "gsm8k_train.jsonl")
 print("gsm8k_train.jsonl:", len(ds), "rows")'; then fail=1; continue; fi
-      _manifest gsm8k openai/gsm8k "$rev" "$file" "main train split only" ;;
+      _manifest gsm8k openai/gsm8k "$rev" "$file" "main train split only" || fail=1 ;;
     kk)
       rev=2f68547989981b1af37cb3dde5fdefa847aa8619
       file="$DATASETS_DIR/kk/kk.jsonl"
@@ -158,7 +158,7 @@ with open(tmp, "w") as f:
                 f.write(json.dumps(r) + "\n"); n += 1
 tmp.replace(out / "kk.jsonl")
 print("kk.jsonl:", n, "rows")'; then fail=1; continue; fi
-      _manifest kk K-and-K/knights-and-knaves "$rev" "$file" "all published configs and splits" ;;
+      _manifest kk K-and-K/knights-and-knaves "$rev" "$file" "all published configs and splits" || fail=1 ;;
     arc-challenge)
       rev=210d026faf9955653af8916fad021475a3f00453
       file="$DATASETS_DIR/arc-challenge/arc_challenge.jsonl"
@@ -183,7 +183,7 @@ with open(tmp, "w") as f:
             n += 1
 tmp.replace(out / "arc_challenge.jsonl")
 print("arc_challenge.jsonl:", n, "rows")'; then fail=1; continue; fi
-      _manifest arc-challenge allenai/ai2_arc "$rev" "$file" "ARC-Challenge train+validation (labeled only)" ;;
+      _manifest arc-challenge allenai/ai2_arc "$rev" "$file" "ARC-Challenge train+validation (labeled only)" || fail=1 ;;
     mmlu-pro-nonmath)
       rev=b189ec765aa7ed75c8acfea42df31fdae71f97be
       file="$DATASETS_DIR/mmlu-pro-nonmath/mmlu_pro_nonmath.jsonl"
@@ -246,7 +246,7 @@ with tmp.open("w", encoding="utf-8") as stream:
         stream.write(json.dumps(row, ensure_ascii=False) + "\n")
 tmp.replace(out / "mmlu_pro_nonmath.jsonl")
 print("mmlu_pro_nonmath.jsonl:", len(selected), "rows")'; then fail=1; continue; fi
-      _manifest mmlu-pro-nonmath TIGER-Lab/MMLU-Pro "$rev" "$file" "$selection" ;;
+      _manifest mmlu-pro-nonmath TIGER-Lab/MMLU-Pro "$rev" "$file" "$selection" || fail=1 ;;
     apps)
       if [ -e "$DATASETS_DIR/apps/apps.jsonl" ]; then echo "[fetch] apps 있음, 스킵"; continue; fi
       # 스크립트형 데이터셋이라 최신 datasets 라이브러리로는 load_dataset 불가 —

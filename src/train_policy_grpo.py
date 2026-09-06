@@ -17,7 +17,7 @@ import random
 import shutil
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import torch
@@ -32,6 +32,9 @@ from rollout_contract import eos_ids_of, gen_kwargs, resp_end_index
 POLICY_SCHEMA = "offpolicy-rlvr-policy/v1"
 CHECKPOINT_SCHEMA = "offpolicy-grpo-checkpoint/v2"
 RLVR_METHODS = ("grpo", "dr_grpo", "rloo")
+
+
+LOG_EVERY_STEPS = 5  # console cadence; grpo_stats.jsonl still has every step
 
 
 def checked_optimizer_step(optimizer, parameters, max_norm, loss, active):
@@ -512,12 +515,13 @@ def _sample_group(model, tokenizer, prompt: dict, config: GrpoConfig, max_new_to
     inputs = chat_ids(tokenizer, prompt["question"]).to(next(model.parameters()).device)
     response_start = int(inputs.numel())
     batch = inputs.unsqueeze(0).expand(config.group_size, -1)
-    kwargs = gen_kwargs(1.0, SAMPLING["top_p"], max_new_tokens, tokenizer.eos_token_id)
+    eos_ids = eos_ids_of(model, tokenizer, pad_id=tokenizer.eos_token_id)
+    kwargs = gen_kwargs(1.0, SAMPLING["top_p"], max_new_tokens, tokenizer.eos_token_id,
+                        eos_token_id=eos_ids)
     kwargs["use_cache"] = True
     from rollout import generate_with_backoff
 
     generated = generate_with_backoff(model, batch, kwargs, label="grpo")
-    eos_ids = eos_ids_of(model, tokenizer, pad_id=tokenizer.eos_token_id)
     sequences: list[torch.Tensor] = []
     rewards: list[float] = []
     for sequence in generated:
@@ -658,7 +662,9 @@ def _distributed_setup(expected_world_size: int) -> tuple[int, int, int]:
     if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
         raise RuntimeError("GRPO training requires CUDA")
     torch.cuda.set_device(local_rank)
-    dist.init_process_group("nccl")
+    # 2048-token generation, OOM restarts and sandbox timeouts skew ranks by
+    # minutes; the 10-minute default surfaces as an opaque collective timeout.
+    dist.init_process_group("nccl", timeout=timedelta(hours=2))
     return rank, local_rank, world_size
 
 
@@ -754,6 +760,11 @@ def train(args: argparse.Namespace) -> None:
         )
         if previous["training_objective"] != args.objective:
             raise ValueError("resume policy uses a different RLVR method")
+        if previous.get("config") is not None and previous["config"] != asdict(config):
+            raise ValueError(
+                "resume policy was trained under a different GRPO config: "
+                f"{previous['config']} != {asdict(config)}"
+            )
 
     model, tokenizer = load_model(args.model, device=f"cuda:{local_rank}")
     if resume_adapter:
@@ -764,6 +775,9 @@ def train(args: argparse.Namespace) -> None:
             local_files_only=True,
         )
     else:
+        # LoRA B is zero but A is random: seed it so the same --seed reproduces
+        # the same initial adapter (DDP broadcasts rank 0 to the others).
+        torch.manual_seed((args.seed * 1_000_003 + 8_675_309) & 0x7FFFFFFF)
         model = get_peft_model(
             model,
             LoraConfig(
@@ -784,7 +798,9 @@ def train(args: argparse.Namespace) -> None:
     trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
     if not trainable:
         raise RuntimeError("GRPO policy has no trainable parameters")
-    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate)
+    # torch's AdamW default weight_decay=0.01 is not part of the registered
+    # contract; state it explicitly as zero.
+    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, weight_decay=0.0)
     optimizer_source = (
         local_checkpoint / "optimizer.pt"
         if local_checkpoint
@@ -796,6 +812,11 @@ def train(args: argparse.Namespace) -> None:
             for key, value in state.items():
                 if isinstance(value, torch.Tensor):
                     state[key] = value.to(torch.device(f"cuda:{local_rank}"))
+        # A loaded optimizer state carries the parent's hyper-parameters; the
+        # registered config, not the checkpoint, owns them.
+        for group in optimizer.param_groups:
+            group["lr"] = config.learning_rate
+            group["weight_decay"] = 0.0
 
     ddp = DistributedDataParallel(
         model,
@@ -846,10 +867,12 @@ def train(args: argparse.Namespace) -> None:
             ),
         }
 
+    run_seconds = 0.0
+    run_steps = 0
     try:
         for step in range(completed_steps, args.target_steps):
             step_started = time.perf_counter()
-            if rank == 0:
+            if rank == 0 and (step == completed_steps or (step + 1) % LOG_EVERY_STEPS == 0):
                 print(f"[{args.objective}] utc={datetime.now(timezone.utc).isoformat()} "
                       f"step-start={step + 1}/{args.target_steps} phase=rollout", flush=True)
             torch.cuda.reset_peak_memory_stats(local_rank)
@@ -1040,17 +1063,22 @@ def train(args: argparse.Namespace) -> None:
                 }
                 stats_stream.write(json.dumps(row, sort_keys=True) + "\n")
                 stats_stream.flush()
-                print(
-                    f"[{args.objective}] step {step + 1}/{args.target_steps} "
-                    f"reward={row['reward_mean']:.3f} active_groups="
-                    f"{row['nonzero_advantage_groups']}/{world_size} "
-                    f"loss={row['loss']:.3e} grad_norm={row['grad_norm']:.3e} "
-                    f"ratio={row['mean_ratio']:.6f} optimizer_step=applied "
-                    f"seconds={row['step_seconds']:.2f} "
-                    f"tok/s={row['response_tokens_per_second']:.2f} "
-                    f"peak_GB={row['gpu_peak_allocated_gb']:.2f}",
-                    flush=True,
-                )
+                run_seconds += float(row["step_seconds"])
+                run_steps += 1
+                if (step + 1) % LOG_EVERY_STEPS == 0 or step + 1 == args.target_steps:
+                    remaining = args.target_steps - (step + 1)
+                    eta_min = remaining * (run_seconds / run_steps) / 60.0
+                    # Every field is in grpo_stats.jsonl; the log keeps what an
+                    # operator needs to judge progress at a glance.
+                    print(
+                        f"[{args.objective}] step {step + 1}/{args.target_steps} "
+                        f"reward={row['reward_mean']:.3f} "
+                        f"active={row['nonzero_advantage_groups']}/{world_size} "
+                        f"loss={row['loss']:.2e} gnorm={row['grad_norm']:.2e} "
+                        f"{row['step_seconds']:.0f}s/step eta={eta_min:.0f}min "
+                        f"peakGB={row['gpu_peak_allocated_gb']:.1f}",
+                        flush=True,
+                    )
             if world_size > 1:
                 dist.barrier()
             if (step + 1) % config.checkpoint_every == 0:

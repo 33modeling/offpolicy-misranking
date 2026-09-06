@@ -43,13 +43,13 @@ def rollout_prompt_seed(seed_base: int, prompt_idx: int) -> int:
 
 
 def gen_kwargs(temperature: float, top_p: float, max_new_tokens: int,
-               pad_token_id: int) -> dict:
+               pad_token_id: int, eos_token_id=None) -> dict:
     """model.generate()에 그대로 풀어 넣는 샘플링 인자 전부.
 
     top_k=0·repetition_penalty=1.0·no_repeat_ngram_size=0은 '기본값이라 생략'이
     아니라 generation_config 병합 차단용 명시다 — 지우면 P0-1이 재발한다.
     """
-    return {
+    kwargs = {
         "do_sample": True,
         "temperature": float(temperature),
         "top_p": float(top_p),
@@ -59,6 +59,14 @@ def gen_kwargs(temperature: float, top_p: float, max_new_tokens: int,
         "max_new_tokens": int(max_new_tokens),
         "pad_token_id": int(pad_token_id),
     }
+    if eos_token_id is not None:
+        # generate() stops only on generation_config.eos_token_id. The pinned
+        # Qwen3.5-9B has no generation_config.json and config.json lists only
+        # <|endoftext|>, so <|im_end|> would never stop decoding and every
+        # response would run to the cap. Pass the full set explicitly.
+        ids = [eos_token_id] if isinstance(eos_token_id, int) else list(eos_token_id)
+        kwargs["eos_token_id"] = sorted({int(x) for x in ids})
+    return kwargs
 
 
 def eos_ids_of(model=None, tok=None, pad_id: int | None = None) -> set[int]:

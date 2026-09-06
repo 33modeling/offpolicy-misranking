@@ -357,10 +357,12 @@ expected_ids = set(range(int(config["n_train"])))
 if set(artifacts.oracle) != expected_ids:
     raise SystemExit("score artifacts do not cover every candidate prompt")
 halves = json.loads((run / "scores_splithalf.json").read_text())
+# Oracle protocol v3 writes r, r_high_budget, a, b; regime_map requires all
+# four. An exact {r,a,b} match rejected every completed v3 point (2026-09-06).
 for row in halves.values():
-    if not isinstance(row, dict) or set(row) != {"r", "a", "b"}:
-        raise SystemExit("scores_splithalf.json lacks exact R/A/B scores")
-    if not all(math.isfinite(float(row[key])) for key in ("r", "a", "b")):
+    if not isinstance(row, dict) or set(row) != {"r", "r_high_budget", "a", "b"}:
+        raise SystemExit("scores_splithalf.json lacks exact R/R+/A/B scores")
+    if not all(math.isfinite(float(v)) for v in row.values()):
         raise SystemExit("scores_splithalf.json contains non-finite scores")
 PYEOF
   if [ "$drift" -gt 0 ]; then
@@ -450,18 +452,27 @@ if [ "$GENERATION_GIT" != "$PIPELINE_GIT" ]; then
   echo "[queue] completed source matrix; current checkout is analysis-only"
 fi
 
-group_cpu_seconds() {
-  local rows
-  rows=$(ps -eo pgid=,cputimes= 2>/dev/null) || return 1
-  printf '%s\n' "$rows" \
-    | awk -v pgid="$1" '$1 == pgid { total += $2 } END { print total + 0 }'
+# run_point.sh starts scripts/gpu_keepalive.py inside its own process group
+# unless OM_EXTERNAL_GPU_KEEPALIVE=1. Its CPU/GPU duty must not count as
+# pipeline activity, or the hard-stall kill can never fire (2026-09-06).
+probe_exclude_pid() {  # probe_exclude_pid <run>
+  local pid
+  pid=$(cat "$1/keepalive.pid" 2>/dev/null) || pid=""
+  case "$pid" in ''|*[!0-9]*) printf '%s' 0 ;; *) printf '%s' "$pid" ;; esac
 }
 
-gpu_peak_util() {
-  local target_pgid=$1 peak=0 util sample pids raw
+group_cpu_seconds() {  # group_cpu_seconds <pgid> [exclude-pid]
+  local rows
+  rows=$(ps -eo pid=,pgid=,cputimes= 2>/dev/null) || return 1
+  printf '%s\n' "$rows" \
+    | awk -v pgid="$1" -v skip="${2:-0}" '$2 == pgid && $1 != skip { total += $3 } END { print total + 0 }'
+}
+
+gpu_peak_util() {  # gpu_peak_util <pgid> [exclude-pid]
+  local target_pgid=$1 skip=${2:-0} peak=0 util sample pids raw
   for sample in $(seq 1 "$WATCH_GPU_SAMPLES"); do
     pids=$(ps -eo pid=,pgid= 2>/dev/null \
-      | awk -v pgid="$target_pgid" '$2 == pgid { print $1 }') || return 1
+      | awk -v pgid="$target_pgid" -v skip="$skip" '$2 == pgid && $1 != skip { print $1 }') || return 1
     raw=$(timeout 10 nvidia-smi pmon -c 1 -s u 2>/dev/null) || return 1
     util=$(printf '%s\n' "$raw" | awk -v pids="$pids" '
           BEGIN { n=split(pids, ids); for (i=1; i<=n; i++) wanted[ids[i]]=1 }
@@ -559,7 +570,7 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
   ACTIVE_PGID=$runner_pid
 
   (
-    if cpu_mark=$(group_cpu_seconds "$runner_pid"); then
+    if cpu_mark=$(group_cpu_seconds "$runner_pid" "$(probe_exclude_pid "$run")"); then
       stall_cpu_valid=1
       interval_cpu_valid=1
     else
@@ -581,7 +592,7 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
       /bin/sleep "$WATCH_INTERVAL_SECONDS"
       kill -0 -- "-$runner_pid" 2>/dev/null || break
 
-      if cpu_now=$(group_cpu_seconds "$runner_pid"); then
+      if cpu_now=$(group_cpu_seconds "$runner_pid" "$(probe_exclude_pid "$run")"); then
         cpu_probe_ok=1
         if [ "$interval_cpu_valid" -eq 1 ]; then
           cpu_delta=$((cpu_now > interval_cpu_mark ? cpu_now - interval_cpu_mark : 0))
@@ -656,7 +667,7 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
         fi
         # The supervisor keepalive is outside runner_pid's process group. Only
         # activity from this pipeline may prevent a stalled-run restart.
-        if gpu_peak=$(gpu_peak_util "$runner_pid"); then
+        if gpu_peak=$(gpu_peak_util "$runner_pid" "$(probe_exclude_pid "$run")"); then
           gpu_probe_ok=1
           gpu_text="${gpu_peak}%"
         else

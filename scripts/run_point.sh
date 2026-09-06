@@ -27,7 +27,7 @@ POINT_T0=$SECONDS
 STAGE_TOTAL=8
 progress() {  # progress <k> <label> — one line the operator can read on a phone
   local k=$1; shift
-  log "[progress] point=$(basename "$OUT_ROOT") stage=$k/$STAGE_TOTAL $* elapsed=$(( (SECONDS - POINT_T0) / 60 ))min"
+  log "[progress] $(basename "$OUT_ROOT")  $k/$STAGE_TOTAL $*  +$(( (SECONDS - POINT_T0) / 60 ))min"
 }
 # CUDA ULF가 특정 GPU에서 반복될 때 같은 shard를 같은 GPU에 계속 재투입하지 않는다.
 retry_index=${OM_RETRY_INDEX:-1}
@@ -525,6 +525,7 @@ if stale:
         p.rename(d / p.name)
     print(f"[정합성] 현재 분할(n={n})과 안 맞는 샤드 {len(stale)}개 격리 → {d.name}")
 PYEOF
+[ "${PIPESTATUS[0]}" -eq 0 ] || { log "[abort] stale shard quarantine failed"; exit 1; }
 # β rollout N샤딩.  A validated merged artifact may come from an earlier
 # point in the same drift family; in that case generation is skipped entirely.
 if "$PY" src/reuse_behavior.py --check "$OUT_ROOT"; then
