@@ -26,6 +26,12 @@ failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only
     # Advisory only: never let the diagnoser change the launcher's exit status.
     python3 "$(dirname "${BASH_SOURCE[0]}")/../src/diagnose_launch_failure.py" "$SESSION_LOG" 2>/dev/null \
       || echo "DIAGNOSIS: (diagnoser unavailable) last log line: $(tail -n 1 "$SESSION_LOG" 2>/dev/null)"
+    echo "--- last error lines ---"
+    grep -vE '^\[(stage|launch|exit|error|additional|runtime)\]|^\s*$' "$SESSION_LOG" 2>/dev/null | tail -n 6 | cut -c1-200
+    if [ "${PROFILE:-}" = qwen35 ] && [ -x "$(dirname "${BASH_SOURCE[0]}")/doctor_qwen35.sh" ]; then
+      echo "--- state ---"
+      bash "$(dirname "${BASH_SOURCE[0]}")/doctor_qwen35.sh" 2>&1 | cut -c1-200 || true
+    fi
     echo "(full log: $SESSION_LOG)"
   } >&"$LAUNCH_STDOUT"
 }
