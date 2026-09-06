@@ -129,6 +129,20 @@ Before family assignment, every node must pass:
 
 No family is claimed when any gate fails.
 
+## Static split per node (optional)
+
+By default every node pulls from the shared family queue. To pin a node to a
+fixed list instead (one node = one list, no cross-node claiming), set:
+
+```bash
+OM_RLZERO_ONLY_FAMILIES="math500/s0 mbpp/s0 math500/s1 mbpp/s1" bash scripts/run_olmo3_rlzero.sh run h100
+```
+
+Families outside the list are neither claimed nor waited for on that node.
+Give every family to exactly one node; the final collection still needs all
+ten. The per-family lock stays in force, so an overlapping list is safe (the
+second node skips a family already held).
+
 ## Restart and Git updates
 
 An interrupted rollout keeps only exact-K complete prompt groups in `.partial`

@@ -176,6 +176,26 @@ MODEL_REVISION=$(model_field revision)
 LORA_TARGETS=$(model_field lora_targets)
 DATASETS=($(experiment_field datasets))
 SEEDS=($(experiment_field seeds))
+# Optional static split: OM_RLZERO_ONLY_FAMILIES="math500/s0 mbpp/s0 math500/s1"
+# makes this node touch only those families (still lock-protected). Other
+# families are neither claimed nor waited for; the final collection still
+# requires all of them. Use it when you want one node = one fixed list.
+ONLY_FAMILIES="${OM_RLZERO_ONLY_FAMILIES:-}"
+family_selected() {  # family_selected <dataset> <seed>
+  [ -z "$ONLY_FAMILIES" ] && return 0
+  case " $ONLY_FAMILIES " in *" $1/s$2 "*) return 0 ;; esac
+  return 1
+}
+if [ -n "$ONLY_FAMILIES" ]; then
+  for fam in $ONLY_FAMILIES; do
+    ok=0
+    for seed in "${SEEDS[@]}"; do for dataset in "${DATASETS[@]}"; do
+      [ "$fam" = "$dataset/s$seed" ] && ok=1
+    done; done
+    [ "$ok" -eq 1 ] || { echo "[abort] OM_RLZERO_ONLY_FAMILIES has unknown family: $fam (expected e.g. math500/s0)"; exit 2; }
+  done
+  echo "[queue] this node handles only: $ONLY_FAMILIES"
+fi
 DRIFTS=($(experiment_field drifts))
 N_VAL=$(experiment_field n_val)
 MODEL_TAG="${OM_OLMO3_MODEL_TAG:-$DEFAULT_MODEL_TAG}"
@@ -785,6 +805,7 @@ while :; do
   retrying=0
   for seed in "${SEEDS[@]}"; do
     for dataset in "${DATASETS[@]}"; do
+      family_selected "$dataset" "$seed" || continue
       family_complete "$dataset" "$seed" && continue
       remaining=$((remaining + 1))
       (
@@ -823,6 +844,9 @@ while :; do
     sleep "$QUEUE_WAIT_SECONDS"
   fi
 done
+if [ -n "$ONLY_FAMILIES" ]; then
+  echo "[queue] this node's families are complete: $ONLY_FAMILIES (final collection runs when all 10 are done)"
+fi
 
 (
   flock 9
