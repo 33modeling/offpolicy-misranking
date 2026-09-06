@@ -339,8 +339,15 @@ run_registered_matrix() {
     OM_LORA_TARGETS=$(model_field "$config" "$model_key" lora_targets)
     OM_PROMPT_FORMAT=$(model_field "$config" "$model_key" prompt_format)
     export MODEL_PATH OM_LORA_TARGETS OM_PROMPT_FORMAT
-    "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
-      check "$model_key" | tee -a "$log"
+    # A snapshot uploaded by hand (scp, no Hub metadata) is adopted here, offline,
+    # against the pinned official hashes — same as run_olmo3_rlzero.sh. `prepare`
+    # is only for downloading when nothing has been uploaded.
+    if ! "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
+        check "$model_key" 2>&1 | tee -a "$log"; then
+      echo "[model] snapshot manifest missing/invalid; sealing uploaded files against pinned official hashes" | tee -a "$log"
+      "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
+        seal "$model_key" 2>&1 | tee -a "$log"
+    fi
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
     if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35 ]]; then
       log_stage "fla-$model_key"

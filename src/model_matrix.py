@@ -83,7 +83,67 @@ PINNED_OFFICIAL_FILES = {
             "size": 1611056,
             "git_blob_sha1": "51135344eec01a62fc4deaca39c72ac08f5b9709",
         },
-    }
+    },
+    # Qwen3.5-9B: lets a manually uploaded snapshot (no .cache/huggingface metadata)
+    # be sealed offline on the compute node, exactly like OLMo. Values are the Hub
+    # tree at the pinned revision (LFS sha256 for big files, git blob sha1 otherwise).
+    (
+        "Qwen/Qwen3.5-9B",
+        "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+    ): {
+        "chat_template.jinja": {
+            "size": 7756,
+            "git_blob_sha1": "a585dec894e63da457d9440ec6aa7caa16d20860",
+        },
+        "config.json": {
+            "size": 3126,
+            "git_blob_sha1": "273ce437e01baf96a07cd9eb3d5f48bac8d7c657",
+        },
+        "merges.txt": {
+            "size": 3353259,
+            "git_blob_sha1": "a494e019ca1502219fd0128658b979e5f05ae8e8",
+        },
+        "model.safetensors-00001-of-00004.safetensors": {
+            "size": 5276436216,
+            "sha256": "db6f444b43d318c92f360a13a25561a6a65b10c0631b8ed305a426dbaa6c380e",
+        },
+        "model.safetensors-00002-of-00004.safetensors": {
+            "size": 5335161512,
+            "sha256": "31c7d7e2dd5d207840b31cc59083c8f4c4718959149e0358c0364052bb9a0330",
+        },
+        "model.safetensors-00003-of-00004.safetensors": {
+            "size": 5368717440,
+            "sha256": "7ec36ba3a4176a44c3c0876ad80c56a2f70c84bf008d82e9501df642f17dadec",
+        },
+        "model.safetensors-00004-of-00004.safetensors": {
+            "size": 3325995712,
+            "sha256": "b62b0c4cd7e44edee103ee8f4fe225f246d5e768e07bfd5f25b63a8aa1fdd0c6",
+        },
+        "model.safetensors.index.json": {
+            "size": 79657,
+            "git_blob_sha1": "e4c1cb7dba5096b43b9d92bc781aba5e3aa8acd8",
+        },
+        "preprocessor_config.json": {
+            "size": 390,
+            "git_blob_sha1": "2ea84a437d448ff71b08df68fdd949d5cc4ebb64",
+        },
+        "tokenizer.json": {
+            "size": 12807982,
+            "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        },
+        "tokenizer_config.json": {
+            "size": 16710,
+            "git_blob_sha1": "eda48d3e75a8e59a8479ee4ec8b37f76e711d9c1",
+        },
+        "video_preprocessor_config.json": {
+            "size": 385,
+            "git_blob_sha1": "3ba673a5ad7d4d13f54155ecd38b2a94a6dac8fe",
+        },
+        "vocab.json": {
+            "size": 6722759,
+            "git_blob_sha1": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176",
+        },
+    },
 }
 
 EXPERIMENT_FIELDS = {

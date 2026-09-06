@@ -15,6 +15,14 @@ The fused DeltaNet QKV adapter includes keys, unlike attention Q/V-only LoRA.
 
 ## Execute
 
+`prepare` exists only because compute nodes have no Hub access: it downloads the
+pinned model and datasets on a networked machine into the shared volume. If the
+snapshot was uploaded by hand instead (scp into `$MODELS_DIR/Qwen3.5-9B-pinned`),
+skip `prepare`: `check`/`run` seal the uploaded files offline against the pinned
+official sizes/hashes (`model_matrix.PINNED_OFFICIAL_FILES`) and adopt uploaded
+MATH-500/MBPP copies by content, then continue. A failed launch prints one
+Korean diagnosis line and one action line; the full stream is in the session log.
+
 From a clean committed checkout, with the same shared volume/environment as
 the other registered experiments:
 
