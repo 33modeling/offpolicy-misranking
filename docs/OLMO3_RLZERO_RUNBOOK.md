@@ -129,6 +129,31 @@ Before family assignment, every node must pass:
 
 No family is claimed when any gate fails.
 
+## Reading one finished family early
+
+```bash
+bash scripts/family_readout.sh h100 mbpp 0          # provisional (1,000 replicates)
+bash scripts/family_readout.sh h100 mbpp 0 10000    # final-quality bootstrap
+```
+
+Runs `regime_map.py` on that family's four completed points only, prints the
+regime report, and writes it under `$OM_WORK/readouts/family-<dataset>-s<seed>-<git>-boot<N>/`.
+It is a preview: the registered result is the full 40-point collection.
+
+## Dead-worker alerts
+
+Every worker's heartbeat process watches the other workers' heartbeat files
+under `$ROOT/.workers/`. When one stops updating for five minutes (node lost,
+launcher killed) every surviving worker prints, on its own terminal and in its
+log, once per hour:
+
+```text
+[WORKER DEAD] run275509-... on h100-b: no heartbeat for 4d; it held math500/s0. Start a worker on h100-b again: ...
+```
+
+The same line is appended to `$ROOT/logs/ALERTS.log`, and `status` shows the
+last alerts and names dead workers in its DECISION line.
+
 ## Static split per node (optional)
 
 By default every node pulls from the shared family queue. To pin a node to a
