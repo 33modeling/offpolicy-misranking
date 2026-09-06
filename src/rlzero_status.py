@@ -541,7 +541,8 @@ def point_status(
     stats_path = run / f"policy_step_{drift}/grpo_stats.jsonl"
     stats = last_json(stats_path) if stats_path.is_file() else None
     if stats is not None:
-        steps = count_lines(stats_path)
+        previous_drift = max([d for d in args.drifts if d < drift], default=0)
+        steps = min(drift, previous_drift + count_lines(stats_path))
         try:
             active = int(stats["nonzero_advantage_groups"])
             groups = int(stats["groups"])
@@ -945,7 +946,10 @@ def main() -> None:
                 stage = log_stage(latest_stage_log(run))
             stats_path = run / f"policy_step_{drift}/grpo_stats.jsonl"
             if drift and stats_path.is_file():
-                grpo = f"{count_lines(stats_path)}/{drift}"
+                # the stats file of point d_k covers steps (d_{k-1}, d_k]; show the
+                # cumulative step so 300 rows in d400 reads 400/400, not 300/400
+                previous = max([d for d in args.drifts if d < drift], default=0)
+                grpo = f"{min(drift, previous + count_lines(stats_path))}/{drift}"
         elif kind == "not-started":
             stage = "not started" if not done_drifts else "next"
         note = ""
