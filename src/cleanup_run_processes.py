@@ -34,7 +34,9 @@ def _read_process(pid: int) -> Process | None:
             for entry in (proc / "fd").iterdir()
             if entry.is_symlink()
         )
-    except (FileNotFoundError, PermissionError, ProcessLookupError):
+    except OSError:
+        # /proc descriptors can change between is_symlink() and readlink().
+        # An unreadable process must not abort recovery for the whole node.
         return None
 
     environ: dict[str, str] = {}

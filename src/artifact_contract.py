@@ -24,6 +24,65 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+# ---- validation cache -------------------------------------------------------
+# Every restart re-parsed and re-hashed every published rollout file in every
+# shard process (4 x torch start-up + 4 x a few hundred MB over NFS) just to
+# print "already exists, skip". The result of a full validation is recorded
+# next to the artifact; while size, mtime and the manifest's hash are
+# unchanged the artifact is accepted without re-reading it.
+READY_SIDECAR_SUFFIX = ".ready.json"
+
+
+def ready_sidecar(out_path: Path) -> Path:
+    return out_path.with_name(out_path.name + READY_SIDECAR_SUFFIX)
+
+
+def _stat_signature(path: Path) -> dict | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def cached_rollout_ready(out_path: Path) -> bool:
+    """True only if a previous full validation of exactly this file is recorded."""
+    sidecar = ready_sidecar(out_path)
+    manifest_path = out_path.parent / (out_path.stem + ".manifest.json")
+    if not (out_path.is_file() and manifest_path.is_file() and sidecar.is_file()):
+        return False
+    try:
+        record = json.loads(sidecar.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    signature = _stat_signature(out_path)
+    return (
+        isinstance(record, dict)
+        and signature is not None
+        and record.get("size") == signature["size"]
+        and record.get("mtime_ns") == signature["mtime_ns"]
+        and record.get("artifact_sha256")
+        and record.get("artifact_sha256") == manifest.get("artifact_sha256")
+    )
+
+
+def record_rollout_ready(out_path: Path, artifact_sha256: str) -> None:
+    signature = _stat_signature(out_path)
+    if signature is None:
+        return
+    sidecar = ready_sidecar(out_path)
+    temporary = sidecar.with_name(sidecar.name + f".tmp.{id(signature)}")
+    try:
+        temporary.write_text(
+            json.dumps({**signature, "artifact_sha256": artifact_sha256, "schema": "offpolicy-rollout-ready/v1"}) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(sidecar)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+
+
 def validate_generation_contract(
     run: Path,
     source_names: tuple[str, ...] = PRIMARY_SOURCES,

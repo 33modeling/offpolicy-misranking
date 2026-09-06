@@ -16,7 +16,7 @@ from pathlib import Path
 
 import torch
 
-from artifact_contract import sha256_file
+from artifact_contract import cached_rollout_ready, record_rollout_ready, sha256_file
 from data import build_user_msg, reward
 from rollout_contract import (
     ROLLOUT_SEED_SCHEME,
@@ -301,6 +301,8 @@ def rollout_artifact_ready(out_path: Path) -> bool:
     """Validate a rollout and finish an interrupted JSONL/manifest publication."""
     if not out_path.is_file():
         return False
+    if cached_rollout_ready(out_path):
+        return True
     manifest_path, in_progress_path = _rollout_manifest_paths(out_path)
     for candidate in (manifest_path, in_progress_path):
         try:
@@ -324,6 +326,7 @@ def rollout_artifact_ready(out_path: Path) -> bool:
             )
             _atomic_manifest(manifest_path, manifest)
         in_progress_path.unlink(missing_ok=True)
+        record_rollout_ready(out_path, actual_hash)
         return True
     return False
 

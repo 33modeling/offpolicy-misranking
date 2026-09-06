@@ -103,6 +103,12 @@ def configured_generation_batch(config: dict) -> int:
 
 
 def failed_oom_batches(path: Path, stage: str) -> list[int]:
+    """Batches at which this stage's recovery genuinely ran out of memory,
+    counting only failures since the stage's last completed recovery.
+
+    Before 2026-09-06 every failed recovery record for the stage counted forever,
+    whatever the recovery actually died of (killed worker, stall, disk), so one
+    old OOM halved the batch of every later recovery: 8 -> 4 -> 2 for days."""
     if not path.is_file():
         return []
     batches: list[int] = []
@@ -110,15 +116,27 @@ def failed_oom_batches(path: Path, stage: str) -> list[int]:
         for line in stream:
             try:
                 record = json.loads(line)
-                if (
-                    record.get("status") == "failed"
-                    and record.get("stage") == stage
-                    and record.get("failure_kind") == "oom"
-                ):
-                    batches.append(int(record["recovery_generation_batch"]))
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            except json.JSONDecodeError:
                 continue
-    return [batch for batch in batches if batch > 0]
+            if not isinstance(record, dict) or record.get("stage") != stage:
+                continue
+            status = record.get("status")
+            if status == "completed":
+                batches = []  # a completed recovery resets the OOM history
+                continue
+            if status != "failed":
+                continue
+            own = record.get("recovery_failure_kind")
+            genuinely_oom = own == "oom" if own else record.get("failure_kind") == "oom"
+            if not genuinely_oom:
+                continue
+            try:
+                batch = int(record["recovery_generation_batch"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if batch > 0:
+                batches.append(batch)
+    return batches
 
 
 def select_recovery_batch(

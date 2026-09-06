@@ -129,6 +129,15 @@ if (head != config.get("git") or status != config.get("git_status")
     sys.exit(1)
 PYEOF
 }
+artifact_ready() {  # artifact_ready <jsonl> : previously validated and unchanged (no torch, no re-hash)
+  "$PY" - "$1" <<'PYEOF'
+import sys
+sys.path.insert(0, "src")
+from pathlib import Path
+from artifact_contract import cached_rollout_ready
+sys.exit(0 if cached_rollout_ready(Path(sys.argv[1])) else 1)
+PYEOF
+}
 run_stage() { local dev="${GPUS[$1]:-$1}" lf="$2"; shift 2
   local t0=$SECONDS
   verify_code_snapshot || return 1
@@ -531,12 +540,16 @@ PYEOF
 if "$PY" src/reuse_behavior.py --check "$OUT_ROOT"; then
   progress 2 "behavior-rollout reused"
 else
-  progress 2 "behavior-rollout ${N_TRAIN:-256}x${BEHAVIOR_K:-8} on $NGPU GPUs"
-  pids=(); for i in $(seq 0 $((NGPU - 1))); do
-    ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
-  done
-  wait_all_stages "${pids[@]}" || exit 1
-  merge_rollouts rollouts_behavior_train "${BEHAVIOR_K:-8}" || exit 1
+  if artifact_ready "$OUT_ROOT/rollouts_behavior_train.jsonl"; then
+    progress 2 "behavior-rollout already published and validated; skipped without relaunching shards"
+  else
+    progress 2 "behavior-rollout ${N_TRAIN:-256}x${BEHAVIOR_K:-8} on $NGPU GPUs"
+    pids=(); for i in $(seq 0 $((NGPU - 1))); do
+      ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
+    done
+    wait_all_stages "${pids[@]}" || exit 1
+    merge_rollouts rollouts_behavior_train "${BEHAVIOR_K:-8}" || exit 1
+  fi
 fi
 if [ -n "${OM_POOL_FILE:-}" ]; then
   "$PY" src/qualify_pool.py "$OUT_ROOT" "$OM_POOL_FILE" \
@@ -594,13 +607,17 @@ PYEOF
 else
   progress 3 "grpo skipped (d0 base policy)"
 fi
-progress 4 "fresh-rollout ${N_TRAIN:-256}x${FRESH_K:-16} + val ${N_VAL:-50}x${VAL_K:-8} on $NGPU GPUs (longest stage)"
-# π fresh N샤딩
-pids=(); for i in $(seq 0 $((NGPU - 1))); do
-  ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" "${POLICY_ARGS[@]}" --shard "$i:$NGPU" ) & pids+=($!)
-done
-wait_all_stages "${pids[@]}" || exit 1
-merge_rollouts rollouts_fresh_train "${FRESH_K:-16}" || exit 1
+if artifact_ready "$OUT_ROOT/rollouts_fresh_train.jsonl" && artifact_ready "$OUT_ROOT/rollouts_fresh_val.jsonl"; then
+  progress 4 "fresh-rollout already published and validated; skipped without relaunching shards"
+else
+  progress 4 "fresh-rollout ${N_TRAIN:-256}x${FRESH_K:-16} + val ${N_VAL:-50}x${VAL_K:-8} on $NGPU GPUs (longest stage)"
+  # π fresh N샤딩
+  pids=(); for i in $(seq 0 $((NGPU - 1))); do
+    ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" "${POLICY_ARGS[@]}" --shard "$i:$NGPU" ) & pids+=($!)
+  done
+  wait_all_stages "${pids[@]}" || exit 1
+  merge_rollouts rollouts_fresh_train "${FRESH_K:-16}" || exit 1
+fi
 progress 5 "oracle+val gradients"
 # val 방향 ∥ oracle micro 샤딩 (GPU 여유가 있으면 마지막 GPU를 val 전용으로)
 pids=()

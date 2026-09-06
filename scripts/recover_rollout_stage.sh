@@ -105,8 +105,22 @@ case "$STAGE" in
   rollout-behavior) RECOVERY_BASE=rollouts_behavior_train; RECOVERY_K=$BEHAVIOR_K ;;
   rollout-fresh) RECOVERY_BASE=rollouts_fresh_train; RECOVERY_K=$FRESH_K ;;
 esac
+recovery_own_failure_kind() {  # what this recovery attempt itself died of (from its own log)
+  local log="$RUN/logs/regime-recovery-$INDEX.log" text
+  [ -f "$log" ] || { echo unknown; return; }
+  text=$(tail -c 200000 "$log" 2>/dev/null)
+  if printf '%s' "$text" | grep -qiE 'CUDA out of memory|OutOfMemoryError|CUDA error: out of memory|CUBLAS_STATUS_ALLOC_FAILED|cudaErrorMemoryAllocation'; then
+    echo oom
+  elif printf '%s' "$text" | grep -qiE 'CUDA error|CUBLAS_STATUS|device-side assert|unspecified launch failure|illegal memory access'; then
+    echo runtime
+  else
+    echo other   # killed, stalled, disk, python error: not a reason to shrink the batch
+  fi
+}
 record_recovery() {
-  "$PY" - "$RUN" "$1" "$STAGE" "$RECOVERY_BASE" "$RECOVERY_K" \
+  local own=""
+  [ "$1" != failed ] || own=$(recovery_own_failure_kind)
+  RECOVERY_OWN_FAILURE_KIND="$own" "$PY" - "$RUN" "$1" "$STAGE" "$RECOVERY_BASE" "$RECOVERY_K" \
     "$CONFIGURED_GEN_BATCH" "$BATCH" "$INDEX" "$GPU_CSV" \
     "$FAILURE_KIND" <<'PYEOF'
 import collections
@@ -153,6 +167,7 @@ record = {
     "stage": stage,
     "attempt": attempt,
     "failure_kind": failure_kind,
+    "recovery_failure_kind": os.environ.get("RECOVERY_OWN_FAILURE_KIND") or None,
     "configured_generation_batch": configured_batch,
     "recovery_generation_batch": int(recovery_batch),
     "gpu_order": gpus,

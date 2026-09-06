@@ -493,8 +493,11 @@ gpu_peak_util() {  # gpu_peak_util <pgid> [exclude-pid]
     util=$(printf '%s\n' "$raw" | awk -v pids="$pids" '
           BEGIN { n=split(pids, ids); for (i=1; i<=n; i++) wanted[ids[i]]=1 }
           /^#/ && /gpu/ && /pid/ { header=1 }
-          ($2 in wanted) && $4 ~ /^[0-9]+$/ && $4 > peak { peak=$4 }
-          END { if (!header) exit 2; print peak + 0 }') || return 1
+          ($2 in wanted) {
+            if ($4 !~ /^[0-9]+$/ || $4 > 100) unavailable=1
+            else if ($4 > peak) peak=$4
+          }
+          END { if (!header || unavailable) exit 2; print peak + 0 }') || return 1
     case "$util" in
       ''|*[!0-9]*) return 1 ;;
     esac

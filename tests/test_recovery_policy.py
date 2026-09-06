@@ -190,4 +190,27 @@ def test_failed_oom_history_is_stage_specific(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    assert failed_oom_batches(recovery, "rollout-fresh") == [4]
+    # a completed recovery for the stage resets its OOM history
+    assert failed_oom_batches(recovery, "rollout-fresh") == []
+    assert failed_oom_batches(recovery, "rollout-behavior") == [2]
+
+
+def test_only_genuine_oom_recovery_failures_shrink_the_batch(tmp_path: Path) -> None:
+    recovery = tmp_path / "rollout_recovery.jsonl"
+    rows = [
+        {"status": "failed", "stage": "rollout-fresh", "failure_kind": "oom",
+         "recovery_failure_kind": "other", "recovery_generation_batch": 8},   # killed worker
+        {"status": "failed", "stage": "rollout-fresh", "failure_kind": "oom",
+         "recovery_failure_kind": "oom", "recovery_generation_batch": 8},     # real OOM
+        {"status": "failed", "stage": "rollout-fresh", "failure_kind": "oom",
+         "recovery_generation_batch": 4},                                     # legacy record
+        {"status": "completed", "stage": "rollout-fresh", "failure_kind": "oom",
+         "recovery_generation_batch": 2},
+        {"status": "failed", "stage": "rollout-fresh", "failure_kind": "oom",
+         "recovery_failure_kind": "runtime", "recovery_generation_batch": 8},
+    ]
+    recovery.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    # after the completed record only the runtime failure remains, which does not count
+    assert failed_oom_batches(recovery, "rollout-fresh") == []
+    recovery.write_text("\n".join(json.dumps(r) for r in rows[:3]) + "\n", encoding="utf-8")
+    assert failed_oom_batches(recovery, "rollout-fresh") == [8, 4]
