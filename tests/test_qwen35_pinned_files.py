@@ -28,3 +28,15 @@ def test_qwen35_spec_has_pinned_official_files():
     for shard in SHARDS:
         assert "sha256" in files[shard]
     assert sum(files[s]["size"] for s in SHARDS) > 19_000_000_000
+
+
+def test_qwen38_spec_has_pinned_official_files():
+    spec = next(iter(_load_specs(ROOT / "configs/qwen38_27b_grpo.json").values()))
+    files = PINNED_OFFICIAL_FILES[(spec["repository"], spec["revision"])]
+    shards = [f"model-{i:05d}-of-00018.safetensors" for i in range(1, 19)]
+    for name in shards + ["config.json", "tokenizer_config.json", "generation_config.json",
+                          "model.safetensors.index.json", "tokenizer.json", "merges.txt",
+                          "vocab.json", "chat_template.jinja"]:
+        assert name in files, name
+    assert files["config.json"]["size"] != PINNED_OFFICIAL_FILES[
+        ("Qwen/Qwen3.5-9B", "c202236235762e1c871ad0ccb60c8ee5ba337b9a")]["config.json"]["size"]

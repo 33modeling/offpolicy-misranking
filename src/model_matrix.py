@@ -144,6 +144,124 @@ PINNED_OFFICIAL_FILES = {
             "git_blob_sha1": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176",
         },
     },
+    # Qwen3.8-27B (same purpose; shards use the classic model-NNNNN-of-NNNNN naming).
+    (
+        "Qwen/Qwen3.8-27B",
+        "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    ): {
+        "chat_template.jinja": {
+            "size": 8952,
+            "git_blob_sha1": "c0c686f9c38d70d179fb7b5f5aa7530bc913dda3",
+        },
+        "config.json": {
+            "size": 4312,
+            "git_blob_sha1": "706cebd746c4b6f2b1d1f892630867acfdfd3df8",
+        },
+        "generation_config.json": {
+            "size": 202,
+            "git_blob_sha1": "023756cfadf88e5bf69eefeee3e172f38c448d64",
+        },
+        "merges.txt": {
+            "size": 3353259,
+            "git_blob_sha1": "a494e019ca1502219fd0128658b979e5f05ae8e8",
+        },
+        "model-00001-of-00018.safetensors": {
+            "size": 3966730552,
+            "sha256": "ba0ce20aae489ad196733da5064bcdf159a1fe84f53336648196e1ebb7751b1c",
+        },
+        "model-00002-of-00018.safetensors": {
+            "size": 3043080328,
+            "sha256": "06a148c01bfbe3faa14a5f184a7ff29a706f7ae1c8b2705d2058e26d17a001fb",
+        },
+        "model-00003-of-00018.safetensors": {
+            "size": 2542796952,
+            "sha256": "2e1bf62cbcd406eaa64b60d10353e1f0ef4039d0976e56f05cabe953454f9968",
+        },
+        "model-00004-of-00018.safetensors": {
+            "size": 3988973152,
+            "sha256": "511e34063187882659753c4d93f3859f93c019fd438d8813071921c81d9a3f1a",
+        },
+        "model-00005-of-00018.safetensors": {
+            "size": 2099339864,
+            "sha256": "635cb53446dc74f219740fc59e18b774f877b803b9722e289ca62575a6efa701",
+        },
+        "model-00006-of-00018.safetensors": {
+            "size": 3979553696,
+            "sha256": "0bc5214fac607f0e6cc92eec3789d4b8559410ef9fce66621ba8158e8410dae0",
+        },
+        "model-00007-of-00018.safetensors": {
+            "size": 2108759344,
+            "sha256": "80b0c49033e9a0d5762562aa12f4acdb7f54da586f3d0110f28c48d91cf07892",
+        },
+        "model-00008-of-00018.safetensors": {
+            "size": 3979553696,
+            "sha256": "7192c5b66185d3592927daabee1cc19e6f6e0ce75988ee20e824b624765fda79",
+        },
+        "model-00009-of-00018.safetensors": {
+            "size": 2108759344,
+            "sha256": "af3c48cc37af44f3db6ae0579baf019180d48d9c527caa0a1f03ff85813a56d8",
+        },
+        "model-00010-of-00018.safetensors": {
+            "size": 3979553696,
+            "sha256": "163490a76f3bea3a40855b7efc04ce6d27afaf1a34f0bbde495b9491f76457c9",
+        },
+        "model-00011-of-00018.safetensors": {
+            "size": 2108759344,
+            "sha256": "5f3ae1b948aeee39da77aec558e8236cd65fe4d7cb7686a76bb007acc563c6d8",
+        },
+        "model-00012-of-00018.safetensors": {
+            "size": 3979553696,
+            "sha256": "a3de1c7114677a8f5ac5c4892c90e8238ea5c1e2038c80e757dfc87c3902ca55",
+        },
+        "model-00013-of-00018.safetensors": {
+            "size": 2108759344,
+            "sha256": "06ab79a41f74c9c5cb734816feb0c7fc364104b227165ee7391231e1155aa02a",
+        },
+        "model-00014-of-00018.safetensors": {
+            "size": 3979553696,
+            "sha256": "4138ed94603065ba884bbcadedb04d7718bb40117e85e6f5c6fc5b9c05b7a85b",
+        },
+        "model-00015-of-00018.safetensors": {
+            "size": 2108759344,
+            "sha256": "69224e27b9de4e7dbf6fc936c6eaae08447bda3b80a6c31a871ab451173afd22",
+        },
+        "model-00016-of-00018.safetensors": {
+            "size": 3979564040,
+            "sha256": "73cb9a1089fb6155cb648609478d6633be8a5c7d9ca5a05bc8925ce8a553cefe",
+        },
+        "model-00017-of-00018.safetensors": {
+            "size": 2108759344,
+            "sha256": "beb51f01056142ac4984bd800507b0dd0fd18de57f8e9ef6ea41d1a3598983a8",
+        },
+        "model-00018-of-00018.safetensors": {
+            "size": 3392197344,
+            "sha256": "1d3479509e21494658f9b64d317f5ea8e55c4025d28c702d6c4d0b356ce8ea06",
+        },
+        "model.safetensors.index.json": {
+            "size": 112216,
+            "git_blob_sha1": "da35e3c564457dface7d138f0b6cac284ff8958c",
+        },
+        "preprocessor_config.json": {
+            "size": 390,
+            "git_blob_sha1": "2ea84a437d448ff71b08df68fdd949d5cc4ebb64",
+        },
+        "tokenizer.json": {
+            "size": 12809320,
+            "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+        },
+        "tokenizer_config.json": {
+            "size": 17928,
+            "git_blob_sha1": "5de744b3fca2129d7186979ae47c06be33903243",
+        },
+        "video_preprocessor_config.json": {
+            "size": 385,
+            "git_blob_sha1": "3ba673a5ad7d4d13f54155ecd38b2a94a6dac8fe",
+        },
+        "vocab.json": {
+            "size": 6722759,
+            "git_blob_sha1": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176",
+        },
+    },
 }
 
 EXPERIMENT_FIELDS = {
