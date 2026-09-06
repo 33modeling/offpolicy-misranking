@@ -353,16 +353,42 @@ def _snapshot_path(spec: dict, models_dir: Path) -> Path:
 
 
 def _require_runtime(spec: dict) -> None:
-    if spec.get("model_type") != "olmo3":
+    """Fail before GPU allocation when the venv cannot load this model family."""
+    model_type = spec.get("model_type")
+    if model_type not in {"olmo3", "qwen3_5"}:
         return
     from packaging.version import Version
     from transformers import __version__ as transformers_version
 
-    if Version(transformers_version) < Version("4.57.0"):
+    if model_type == "olmo3" and Version(transformers_version) < Version("4.57.0"):
         raise ValueError(
             f"{spec['key']}: OLMo-3 requires transformers>=4.57.0, "
             f"found {transformers_version}; update the shared venv before GPU allocation"
         )
+    if model_type == "qwen3_5":
+        # rollout.load_model falls back to AutoModelForMultimodalLM and
+        # check_27b_fla.py imports transformers.models.qwen3_5; both exist only in
+        # transformers 5.x. requirements.txt's >=4.57 floor is the OLMo minimum,
+        # not evidence of Qwen3.5 support (QWEN38_27B_RUNBOOK.md).
+        try:
+            from transformers import AutoModelForMultimodalLM  # noqa: F401
+            from transformers.models.qwen3_5 import modeling_qwen3_5  # noqa: F401
+        except ImportError as exc:
+            raise ValueError(
+                f"{spec['key']}: Qwen3.5 needs transformers>=5 with the qwen3_5 "
+                f"multimodal classes (found {transformers_version}): {exc}"
+            ) from exc
+        try:
+            from importlib.metadata import version
+
+            fla = version("fla-core")
+        except Exception as exc:  # noqa: BLE001 - any metadata failure means FLA is absent
+            raise ValueError(
+                f"{spec['key']}: fla-core (flash-linear-attention 0.5.2) is not "
+                f"installed; GatedDeltaNet layers need it: {exc}"
+            ) from exc
+        if fla != "0.5.2":
+            raise ValueError(f"{spec['key']}: expected fla-core 0.5.2, found {fla}")
 
 
 def _weight_shards(path: Path) -> list[Path]:
