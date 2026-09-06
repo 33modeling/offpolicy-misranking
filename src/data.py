@@ -12,7 +12,6 @@ import random
 import re
 from functools import lru_cache
 
-
 MMLU_PRO_NONMATH_CATEGORIES = (
     "business",
     "economics",
@@ -588,7 +587,7 @@ def build_user_msg(question: str) -> str:
 
 ANSWER_RE = re.compile(r"####\s*([^\n]+)")
 ANSWER_LINE_RE = re.compile(r"(?im)^\s*Answer:\s*(.+?)\s*$")
-_THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+_THOUSANDS_RE = re.compile(r"[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
 _TEXT_RE = re.compile(r"\\text\{([^{}]*)\}")
 
 
@@ -602,9 +601,12 @@ def normalize_math_answer(answer: str) -> str:
     so a natural answer matches the gold spelling.
     """
     s = answer.strip().rstrip(".").replace("$", "")
-    s = _THOUSANDS_RE.sub("", s)
     s = s.replace("\\dfrac", "\\frac").replace("\\tfrac", "\\frac")
     s = _TEXT_RE.sub(lambda m: m.group(1), s)
+    # Only an entire scalar can be a grouped number; commas inside tuples,
+    # intervals and sets carry mathematical structure even before three digits.
+    if _THOUSANDS_RE.fullmatch(s):
+        s = s.replace(",", "")
     s = re.sub(r"\s*,\s*", ",", s)
     return s.strip()
 
@@ -615,9 +617,9 @@ def extract_answer(text: str) -> str | None:
     answer_lines = ANSWER_LINE_RE.findall(text)
     if answer_lines:
         return normalize_math_answer(answer_lines[-1])
-    m = ANSWER_RE.search(text)
-    if m:
-        return normalize_math_answer(m.group(1))
+    hash_answers = ANSWER_RE.findall(text)
+    if hash_answers:
+        return normalize_math_answer(hash_answers[-1])
     # fallback: last \boxed{...}, brace-aware (``\boxed{\frac{1}{2}}``)
     boxed = _boxed(text)
     return normalize_math_answer(boxed) if boxed is not None else None

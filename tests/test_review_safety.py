@@ -62,10 +62,31 @@ echo '[check] synthetic success'
     assert "log writer failed" in result.stderr
 
 
-def test_launchers_do_not_mutate_git_or_kill_other_jobs():
-    for name in ("run_qwen35_9b.sh", "run_followup.sh"):
-        text = (ROOT / "scripts" / name).read_text()
-        assert all(command not in text for command in ("git reset", "git fetch", "git merge", "git pull"))
+@pytest.mark.parametrize("mode", ["run", "check", "prepare", "doctor"])
+@pytest.mark.parametrize("profile", [None, "qwen35_2b", "qwen35_4b", "olmo3_domains"])
+def test_launchers_do_not_mutate_git_or_kill_other_jobs(tmp_path, mode, profile):
+    # status gained an explicit fast-forward path on September 6. Exercise
+    # actual launch modes instead of rejecting words inside that function.
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    name = "run_followup.sh" if profile else "run_qwen35_9b.sh"
+    (scripts / name).write_text((ROOT / "scripts" / name).read_text())
+    for child in ("run_additional_experiments.sh", "doctor_qwen35.sh"):
+        (scripts / child).write_text("exit 0\n")
+    bins = tmp_path / "bin"
+    bins.mkdir()
+    git = bins / "git"
+    git.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$GIT_CALLS"\n[ "$1" = rev-parse ] && { echo test-hash; exit 0; }\nexit 99\n')
+    git.chmod(0o755)
+    calls = tmp_path / "git-calls"
+    args = [profile, mode] if profile else [mode]
+    result = subprocess.run(
+        ["bash", str(scripts / name), *args],
+        env={**os.environ, "PATH": str(bins) + os.pathsep + os.environ["PATH"], "GIT_CALLS": str(calls)},
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls.read_text().splitlines() == ["rev-parse --short HEAD"]
     assert "cleanup_run_processes.py" not in (ROOT / "scripts/run_additional_experiments.sh").read_text()
 
 

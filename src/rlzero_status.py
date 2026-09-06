@@ -611,6 +611,8 @@ def classify(
     telemetry_age = record_age_seconds(telemetry, "observed_at_epoch")
     fresh_telemetry_state = None
     if telemetry is not None and telemetry_age is not None and telemetry_age <= telemetry_stale_seconds:
+        if telemetry.get("schema") != "offpolicy-pipeline-activity/v1":
+            return "UNKNOWN", "pipeline_telemetry_schema_invalid"
         fresh_telemetry_state = str(telemetry.get("state", "invalid"))
     # The supervisor's own "[regime-watchdog] ... idle" line lands in the worker
     # log and counted as a change, turning a confirmed-idle pipeline into
@@ -719,7 +721,7 @@ def recent_workers(
     now = time.time_ns()
     if logs_root.is_dir():
         for path in logs_root.glob("*.log"):
-            if path.name.endswith("-keepalive.log"):
+            if path.name.endswith("-keepalive.log") or path.name.startswith("status-"):
                 continue
             try:
                 age = (now - path.stat().st_mtime_ns) / 1_000_000_000
@@ -767,17 +769,40 @@ def last_progress(run: Path) -> str:
 
 
 def current_point(args: argparse.Namespace, family: Family) -> tuple[int | None, Path | None, str, list[int]]:
-    """First drift in chain order that is not DONE: (drift, run, kind, done_drifts)."""
+    """Count every DONE point and locate the most recently active unfinished one.
+
+    The launcher can defer d0 evaluation until after d25/d100/d400 training.
+    An unfinished earlier drift therefore cannot terminate the completion scan.
+    """
     done: list[int] = []
+    unfinished: list[tuple[int, Path, str]] = []
     for drift in args.drifts:
         run = run_dir(args, family, drift)
         if not run.is_dir():
-            return drift, run, "not-started", done
+            unfinished.append((drift, run, "not-started"))
+            continue
         stamp = run / "DONE"
         if stamp.is_file() and stamp.stat().st_size:
             done.append(drift)
             continue
-        return drift, run, "active", done
+        unfinished.append((drift, run, "active"))
+    active = [point for point in unfinished if point[2] == "active"]
+    if active:
+        def activity(point: tuple[int, Path, str]) -> int:
+            root = point[1]
+            latest = max((mtime for _, mtime in file_metadata(root).values()), default=0)
+            path, record = latest_pipeline_activity(root)
+            if path is not None and record.get("schema") == "offpolicy-pipeline-activity/v1":
+                try:
+                    latest = max(latest, path.stat().st_mtime_ns)
+                except OSError:
+                    pass
+            return latest
+        drift, run, kind = max(active, key=activity)
+        return drift, run, kind, done
+    if unfinished:
+        drift, run, kind = unfinished[0]
+        return drift, run, kind, done
     return None, None, "all-done", done
 
 
@@ -936,8 +961,17 @@ def main() -> None:
             note = f"CHECK: {reason.replace('_', ' ')}"
         elif current_errors:
             note = f"ERROR in current attempt but still moving: {err_text}"
-        elif recovery is not None and recovery.get("status") not in (None, "recovered"):
-            note = f"AUTO: recovery {recovery.get('status')} ({recovery.get('failure_kind', '?')}, batch {recovery.get('recovery_generation_batch', '?')})"
+        elif recovery is not None and recovery.get("status") not in (None, "recovered", "completed"):
+            kind = recovery.get("failure_kind") or recovery.get("stage") or "unknown-cause"
+            rec_logs = sorted((run / "logs").glob("regime-recovery-*.log"), key=lambda q: q.stat().st_mtime_ns) if run is not None and (run / "logs").is_dir() else []
+            _, rec_errors = scan_errors(rec_logs[-1:], 3) if rec_logs else (0, [])
+            tail = f" | {short_error(rec_errors, 70)}" if rec_errors else ""
+            if recovery.get("status") == "failed":
+                note = f"AUTO: CUDA recovery failed once ({kind}, batch {recovery.get('recovery_generation_batch', '?')}); supervisor retries the point. If this row still says failed next time, that node has a CUDA problem{tail}"
+            else:
+                note = f"AUTO: CUDA recovery {recovery.get('status')} ({kind}, batch {recovery.get('recovery_generation_batch', '?')}){tail}"
+        elif recovery is not None and recovery.get("status") == "completed" and verdict in {"PROGRESSING", "COMPUTING", "ALIVE"}:
+            note = "ok (recovered from a CUDA error earlier in this point)"
         elif errors and verdict in {"PROGRESSING", "COMPUTING", "ALIVE"}:
             note = "ok (old errors in earlier attempts, current attempt clean)"
         elif verdict in {"PROGRESSING", "COMPUTING", "ALIVE"}:

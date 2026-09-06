@@ -9,8 +9,10 @@ HISTORY="$OM_WORK/console-logs/status-qwen35-history.log"
 if [ -z "${STATUS_HISTORY_ACTIVE:-}" ] && mkdir -p "$(dirname "$HISTORY")" 2>/dev/null; then
   printf '\n===== status %s host=%s =====\n' "$(date -u +%FT%TZ)" "$(hostname)" >> "$HISTORY"
   STATUS_HISTORY_ACTIVE=1 bash "$0" "$@" | tee -a "$HISTORY"
+  status_codes=("${PIPESTATUS[@]}")
   echo "history : $HISTORY"
-  exit "${PIPESTATUS[0]}"
+  if [ "${status_codes[0]}" -ne 0 ]; then exit "${status_codes[0]}"; fi
+  exit "${status_codes[1]}"
 fi
 
 RUN_ID=${RUN_ID:-qwen35-9b-posttrained-math-code-grpo-v1}
@@ -39,13 +41,14 @@ if [ -n "$LOG" ]; then
   started=$(grep -m1 '^\[launch\]' "$LOG" | grep -o 'utc=[^ ]*' | cut -c5-)
   stage=$(grep '^\[stage\]' "$LOG" | tail -1 | sed 's/^\[stage\] //')
   exit_line=$(grep '^\[exit\]' "$LOG" | tail -1)
-  fails=$(grep -c '^\[family-fail\]' "$LOG" 2>/dev/null || echo 0)
+  fails=$(grep -c '^\[family-fail\]' "$LOG" 2>/dev/null || true)
+  fails=${fails:-0}
   log_age=$((NOW - $(stat -c %Y "$LOG" 2>/dev/null || echo "$NOW")))
 fi
 total=0; done_n=0; write_age=""; current=""; current_stage=""; current_err=""
 if [ -d "$RUNS" ]; then
   total=$(find "$RUNS" -mindepth 2 -maxdepth 2 -type d -name '*-s*-d*' 2>/dev/null | wc -l)
-  done_n=$(find "$RUNS" -mindepth 3 -maxdepth 3 -name DONE 2>/dev/null | wc -l)
+  done_n=$(find "$RUNS" -mindepth 3 -maxdepth 3 -type f -name DONE -size +0c 2>/dev/null | wc -l)
   newest=$(newest_epoch "$RUNS"); [ -z "$newest" ] || write_age=$((NOW - newest))
   main=$(find "$RUNS" -mindepth 4 -maxdepth 4 -path '*/logs/main.log' 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
   if [ -n "$main" ]; then
@@ -61,7 +64,11 @@ if [ -z "$LOG" ]; then
 elif [ -n "$exit_line" ]; then
   rc=$(printf '%s' "$exit_line" | grep -o 'rc=[0-9]*' | cut -d= -f2)
   if [ "${rc:-1}" = 0 ]; then
-    decision="DONE: launcher finished rc=0 ($done_n/40 points). Nothing to do."
+    if [ "$done_n" -eq 40 ]; then
+      decision="DONE: launcher finished rc=0 ($done_n/40 points). Nothing to do."
+    else
+      decision="WARNING: launcher finished rc=0 but only $done_n/40 points have nonempty DONE records. Check the selected matrix and completion artifacts before treating this run as complete."
+    fi
   else
     decision="ERROR: launcher exited rc=$rc at stage '$stage'. Read the ! lines below, fix, then run again (finished points and .partial rollouts resume)."
   fi
@@ -95,7 +102,7 @@ if [ -d "$RUNS" ]; then
   echo " point                  stage                         last write   note"
   find "$RUNS" -mindepth 4 -maxdepth 4 -path '*/logs/main.log' 2>/dev/null | xargs -r ls -t 2>/dev/null | head -6 | while read -r m; do
     run=$(dirname "$(dirname "$m")")
-    [ -f "$run/DONE" ] && continue
+    [ -s "$run/DONE" ] && continue
     age=$(newest_epoch "$run"); [ -n "$age" ] && age=$(fmt_age $((NOW - age))) || age="-"
     st=$(grep -F '[progress]' "$m" | tail -1 | sed 's/.*\[progress\] //' | cut -d' ' -f3- | cut -c1-28)
     prog_n=$(grep -nF '[progress]' "$m" | tail -1 | cut -d: -f1); prog_n=${prog_n:-0}
