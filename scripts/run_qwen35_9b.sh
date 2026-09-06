@@ -11,5 +11,5 @@ case "$MODE" in
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|doctor]"; exit 2; }
     exec bash scripts/run_additional_experiments.sh "--$MODE" qwen35
     ;;
-  *) echo "usage: bash scripts/run_qwen35_9b.sh [prepare|check|run|doctor]  (기본 run)"; exit 2 ;;
+  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|check|doctor|prepare]  (default run; prepare = download, needs internet)"; exit 2 ;;
 esac

@@ -6,12 +6,13 @@ from diagnose_launch_failure import diagnose, last_exception
 
 CASES = {
     'RuntimeError: math-verify is required for verifier-reward math experiments': "math-verify",
-    '[model-abort] qwen3.5-9b-posttrained: safetensors shard set incomplete': "가중치",
+    '[model-abort] qwen3.5-9b-posttrained: safetensors shard set incomplete': "shard",
     "ModuleNotFoundError: No module named 'transformers.models.qwen3_5'": "transformers",
     "RuntimeError: expected FLA 0.5.2, got 0.4.1": "fla-core",
-    "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2 GiB": "메모리",
-    "[abort] exactly four H100 GPUs required (GPUs=2 H100=2)": "4×H100",
+    "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2 GiB": "memory",
+    "[abort] exactly four H100 GPUs required (GPUs=2 H100=2)": "4x H100",
     "[additional] worker=x queued behind local primary at git=abc": "primary",
+    "[additional] waiting for shared snapshot preparation lock": "prepare is blocked",
 }
 
 
@@ -30,4 +31,4 @@ def test_unknown_failure_reports_last_exception():
 
 def test_latest_signature_wins():
     text = "RuntimeError: math-verify is required\n... later ...\n[abort] exactly four H100 GPUs required\n"
-    assert "4×H100" in diagnose(text)[0]
+    assert "4x H100" in diagnose(text)[0]

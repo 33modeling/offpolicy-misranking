@@ -126,9 +126,17 @@ provision_registered_snapshots() {
 
   # Model and data destinations are shared. Only one node writes; the other
   # nodes subsequently hash-check the immutable snapshots.
-  echo "[additional] waiting for shared snapshot preparation lock"
+  # prepare = download. Refuse fast on an offline node instead of hanging on
+  # Hub timeouts, and never wait forever behind a hung earlier prepare.
+  if ! timeout 8 "$PY" -c "import urllib.request; urllib.request.urlopen('https://huggingface.co', timeout=6)" >/dev/null 2>&1; then
+    echo "[abort] no internet: prepare downloads from the Hub. On the cluster just run: bash scripts/run_qwen35_9b.sh (uploaded models/datasets are adopted)"
+    exit 1
+  fi
   exec 7>"$OM_WORK/locks/additional-provision.lock"
-  flock 7
+  if ! flock -n 7; then
+    echo "[abort] another prepare holds $OM_WORK/locks/additional-provision.lock (hung download?). pkill -f 'run_additional_experiments.sh --prepare' and rerun"
+    exit 1
+  fi
   echo "[additional] preparing pinned snapshots (network allowed only in --prepare)"
   export OM_ONLINE=1
   unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE HF_DATASETS_OFFLINE

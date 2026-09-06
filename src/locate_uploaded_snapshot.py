@@ -137,21 +137,21 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
 
 def describe(directory: Path, official: dict) -> list[str]:
     """Human-readable comparison of what is on disk vs the pinned official files."""
-    lines = [f"폴더 {directory}:"]
+    lines = [f"folder {directory}:"]
     present = {p.name: p.stat().st_size for p in directory.iterdir() if p.is_file() or p.is_symlink()}
     for name, record in sorted(official.items()):
         size = present.get(name)
         if size is None:
             same = [n for n, s in present.items() if s == record["size"] and n.endswith(".safetensors")]
-            hint = f" (같은 크기 파일: {same[0]})" if same else ""
-            lines.append(f"  없음  {name}  기대 {record['size']:,} B{hint}")
+            hint = f" (same-size file present: {same[0]})" if same else ""
+            lines.append(f"  MISSING  {name}  expected {record['size']:,} B{hint}")
         elif size != record["size"]:
-            lines.append(f"  크기≠  {name}  {size:,} B ≠ 기대 {record['size']:,} B  ← 다른 revision/잘린 파일")
+            lines.append(f"  SIZE?    {name}  {size:,} B != expected {record['size']:,} B  (other revision or truncated)")
     extras = sorted(n for n in present if n.endswith(".safetensors") and n not in official)
     if extras:
-        lines.append("  등록 안 된 safetensors: " + ", ".join(f"{n} ({present[n]:,} B)" for n in extras))
+        lines.append("  unregistered safetensors: " + ", ".join(f"{n} ({present[n]:,} B)" for n in extras))
     if len(lines) == 1:
-        lines.append("  공식 파일 전부 존재, 크기 일치")
+        lines.append("  all official files present with matching sizes")
     return lines
 
 
@@ -258,10 +258,10 @@ def main() -> int:
     if found is None:
         roots = ", ".join(str(r) for r in search_roots(args.models_dir))
         print(
-            f"[locate-abort] {spec['repository']} 스냅샷 없음. 찾은 곳: {roots} "
-            f"(config.json의 model_type={spec.get('model_type')!r} 기준, 3단계 깊이). "
-            f"config.json이 있던 폴더: " + (", ".join(str(p) for p in scanned) or "없음")
-            + ". 경로가 다르면 OM_SNAPSHOT_PATH=<폴더>로 지정.",
+            f"[locate-abort] no snapshot with weights for {spec['repository']} under {roots} "
+            f"(config.json model_type={spec.get('model_type')!r}, 3 levels deep). "
+            f"folders with config.json: " + (", ".join(str(p) for p in scanned) or "none")
+            + ". Set OM_SNAPSHOT_PATH=<folder> if it lives elsewhere.",
             file=sys.stderr,
         )
         return 1

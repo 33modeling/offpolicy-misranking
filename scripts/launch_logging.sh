@@ -25,8 +25,8 @@ failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only
     echo
     # Advisory only: never let the diagnoser change the launcher's exit status.
     python3 "$(dirname "${BASH_SOURCE[0]}")/../src/diagnose_launch_failure.py" "$SESSION_LOG" 2>/dev/null \
-      || echo "진단: (diagnose_launch_failure.py 실행 불가) — 로그 마지막 줄: $(tail -n 1 "$SESSION_LOG" 2>/dev/null)"
-    echo "(전체 로그: $SESSION_LOG)"
+      || echo "DIAGNOSIS: (diagnoser unavailable) last log line: $(tail -n 1 "$SESSION_LOG" 2>/dev/null)"
+    echo "(full log: $SESSION_LOG)"
   } >&"$LAUNCH_STDOUT"
 }
 finish_launch_log() {
@@ -38,9 +38,9 @@ finish_launch_log() {
   # grep exits 1 when nothing matched; that is not a writer failure.
   [ "$logger_rc" -eq 0 ] || [ "$logger_rc" -eq 1 ] || { echo "[abort] log writer failed rc=$logger_rc" >&2; rc=$logger_rc; }
   if [ "$rc" -eq 0 ]; then
-    printf '✔ %s %s 완료 (log: %s)\n' "$PROFILE" "${MODE#--}" "$SESSION_LOG"
+    printf 'OK  %s %s finished (log: %s)\n' "$PROFILE" "${MODE#--}" "$SESSION_LOG"
   else
-    printf '✘ %s %s 실패 — stage=%s rc=%s code=%s\n' "$PROFILE" "${MODE#--}" "$LAUNCH_STAGE" "$rc" "$(git rev-parse --short HEAD 2>/dev/null || printf '?')"
+    printf 'FAILED  %s %s  stage=%s rc=%s code=%s\n' "$PROFILE" "${MODE#--}" "$LAUNCH_STAGE" "$rc" "$(git rev-parse --short HEAD 2>/dev/null || printf '?')"
     failure_excerpt
   fi
   exit "$rc"
@@ -53,5 +53,5 @@ trap 'exit 143' TERM
 printf '[launch] utc=%s profile=%s mode=%s host=%s pid=%s git=%s log=%s\n' \
   "$(date -u +%FT%TZ)" "$PROFILE" "$MODE" "$(hostname)" "$$" \
   "$(git rev-parse HEAD 2>/dev/null || printf unknown)" "$SESSION_LOG"
-printf '▶ %s %s  code=%s  (터미널엔 단계·성패·에러만; 전체 출력은 %s)\n' \
+printf 'START  %s %s  code=%s  (terminal shows stages/pass-fail/errors only; full log: %s)\n' \
   "$PROFILE" "${MODE#--}" "$(git rev-parse --short HEAD 2>/dev/null || printf '?')" "$SESSION_LOG" >&"$LAUNCH_STDOUT"
