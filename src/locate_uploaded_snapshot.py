@@ -112,8 +112,11 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
         # A weightless pinned directory (left by the old prepare that downloaded
         # only config/tokenizer/index) must not shadow the real upload next to it.
         stale = standard.with_name(f".stale-{standard.name}-{int(time.time())}")
-        standard.rename(stale)
-        print(f"[locate] {standard} had no weights; moved aside to {stale.name}", file=sys.stderr)
+        try:
+            standard.rename(stale)
+            print(f"[locate] {standard} had no weights; moved aside to {stale.name}", file=sys.stderr)
+        except OSError as exc:
+            print(f"[locate] {standard} has no weights and cannot be moved ({exc}); ignoring it", file=sys.stderr)
     scanned: list[Path] = []
     by_type: list[Path] = []
     for root in search_roots(models_dir):
@@ -154,7 +157,18 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
 def describe(directory: Path, official: dict) -> list[str]:
     """Human-readable comparison of what is on disk vs the pinned official files."""
     lines = [f"folder {directory}:"]
-    present = {p.name: p.stat().st_size for p in directory.iterdir() if p.is_file() or p.is_symlink()}
+    present = {}
+    for entry in directory.iterdir():
+        try:
+            if entry.is_file() or entry.is_symlink():
+                present[entry.name] = entry.stat().st_size
+        except OSError:
+            continue
+    shards = sorted(name for name in present if name.endswith(".safetensors"))
+    lines.append(
+        f"  {len(shards)} safetensors file(s), "
+        f"{sum(present[n] for n in shards) / 1e9:.1f} GB"
+    )
     for name, record in sorted(official.items()):
         size = present.get(name)
         if size is None:
@@ -281,14 +295,25 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    # Linking the pinned name is a convenience, not a requirement: everything
+    # downstream is given the located path explicitly. A read-only or
+    # foreign-owned $MODELS_DIR must not turn a present model into "not found".
     if found != standard.resolve() and not standard.exists():
-        os.symlink(found, standard)
-        print(f"[locate] {standard} -> {found} (symlink)", file=sys.stderr)
-    target = _weights_dir(standard.resolve() if standard.exists() else found)
-    for action in link_missing_shards(target, official):
-        print(f"[locate] {action}", file=sys.stderr)
-    for action in ensure_index(target):
-        print(f"[locate] {action}", file=sys.stderr)
+        try:
+            os.symlink(found, standard)
+            print(f"[locate] {standard} -> {found} (symlink)", file=sys.stderr)
+        except OSError as exc:
+            print(f"[locate] cannot link {standard} ({exc}); using {found} directly", file=sys.stderr)
+    base = standard.resolve() if standard.exists() else found
+    target = _weights_dir(base)
+    writable = os.access(target, os.W_OK)
+    if writable:
+        for action in link_missing_shards(target, official):
+            print(f"[locate] {action}", file=sys.stderr)
+        for action in ensure_index(target):
+            print(f"[locate] {action}", file=sys.stderr)
+    else:
+        print(f"[locate] {target} is not writable; using files as they are", file=sys.stderr)
     for line in describe(target, official):
         print(f"[locate] {line}", file=sys.stderr)
     print(target)

@@ -365,9 +365,12 @@ run_registered_matrix() {
     log_stage "snapshot-$model_key"
     # Hand-uploaded snapshots: find by content, link the pinned name and official
     # shard names if the upload used different ones. Nothing is moved or deleted.
-    MODEL_PATH=$("$PY" src/locate_uploaded_snapshot.py --config "$config" \
-      --model-key "$model_key" --models-dir "$MODELS_DIR" 2> >(tee -a "$log" >&2)) \
-      || MODEL_PATH=$(model_field "$config" "$model_key" path)
+    if ! MODEL_PATH=$("$PY" src/locate_uploaded_snapshot.py --config "$config" \
+      --model-key "$model_key" --models-dir "$MODELS_DIR" 2> >(tee -a "$log" >&2)); then
+      MODEL_PATH=$(model_field "$config" "$model_key" path)
+      echo "[model] locator failed; falling back to $MODEL_PATH" | tee -a "$log"
+    fi
+    echo "[model] using snapshot: $MODEL_PATH" | tee -a "$log"
     OM_LORA_TARGETS=$(model_field "$config" "$model_key" lora_targets)
     OM_PROMPT_FORMAT=$(model_field "$config" "$model_key" prompt_format)
     export MODEL_PATH OM_LORA_TARGETS OM_PROMPT_FORMAT
