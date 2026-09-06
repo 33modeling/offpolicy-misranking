@@ -39,6 +39,7 @@ class Snapshot:
     owner: dict
     files: dict[str, tuple[int, int]]
     latest_activity_ns: int
+    artifact_activity_ns: int  # family-root files only (no worker log, no owner record)
     pipeline_activity: dict | None
     pipeline_activity_path: Path | None
 
@@ -142,14 +143,19 @@ def expected_family_stamp(
 
 
 def lock_held(path: Path) -> bool:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+") as stream:
-        try:
-            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        fcntl.flock(stream, fcntl.LOCK_UN)
+    # A diagnostic must not create lock files or crash on a read-only queue.
+    if not path.is_file():
         return False
+    try:
+        with path.open("r") as stream:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(stream, fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return True  # cannot test it from here: assume the owner still holds it
 
 
 def family_state(args: argparse.Namespace, family: Family) -> tuple[str, dict]:
@@ -229,6 +235,7 @@ def latest_pipeline_activity(root: Path) -> tuple[Path | None, dict | None]:
 def take_snapshot(args: argparse.Namespace, family: Family) -> Snapshot:
     state, owner = family_state(args, family)
     files = file_metadata(family_root(args, family))
+    artifact_latest = max((metadata[1] for metadata in files.values()), default=0)
     for extra in (owner_path(args, family), worker_log(args, owner)):
         if extra is None or not extra.is_file():
             continue
@@ -244,6 +251,7 @@ def take_snapshot(args: argparse.Namespace, family: Family) -> Snapshot:
         owner=owner,
         files=files,
         latest_activity_ns=latest,
+        artifact_activity_ns=artifact_latest,
         pipeline_activity=activity,
         pipeline_activity_path=activity_path,
     )
@@ -594,7 +602,7 @@ def classify(
         # heartbeat, or a recent write proves the owner is alive: fall through
         # to the telemetry/artifact logic (HUNG / COMPUTING) instead of DEAD.
         telemetry_age = record_age_seconds(after.pipeline_activity, "observed_at_epoch")
-        artifact_age = age_seconds(after.latest_activity_ns)
+        artifact_age = age_seconds(after.artifact_activity_ns)
         owner_alive = heartbeat_fresh or (
             telemetry_age is not None and telemetry_age <= telemetry_stale_seconds
         )
@@ -635,7 +643,7 @@ def classify(
                 # days while writing nothing. Telemetry "activity" without any
                 # artifact or log change for far longer than a stage takes is a
                 # hang, not computing.
-                artifact_age = age_seconds(after.latest_activity_ns)
+                artifact_age = age_seconds(after.artifact_activity_ns)
                 hang_after = max(6 * 3600, 8 * stuck_seconds)
                 if (
                     telemetry_state != "output-progress"
@@ -661,7 +669,7 @@ def classify(
                 return "ALIVE", f"pipeline_telemetry_{telemetry_state}"
             return "UNKNOWN", f"pipeline_telemetry_state_invalid:{telemetry_state}"
     if heartbeat_fresh:
-        artifact_age = age_seconds(after.latest_activity_ns)
+        artifact_age = age_seconds(after.artifact_activity_ns)
         if artifact_age is not None and artifact_age > max(6 * 3600, 8 * stuck_seconds):
             return "HUNG", f"worker_heartbeat_fresh_but_no_artifact_or_log_change_for_{artifact_age}s"
         return "ALIVE", "worker_heartbeat_fresh_but_pipeline_progress_unobserved"
@@ -721,7 +729,11 @@ def recent_workers(
     now = time.time_ns()
     if logs_root.is_dir():
         for path in logs_root.glob("*.log"):
-            if path.name.endswith("-keepalive.log") or path.name.startswith("status-"):
+            if (
+                path.name.endswith("-keepalive.log")
+                or path.name.startswith("status-")
+                or path.name in {"ALERTS.log"}
+            ):
                 continue
             try:
                 age = (now - path.stat().st_mtime_ns) / 1_000_000_000
@@ -938,7 +950,7 @@ def main() -> None:
             stage = "not started" if not done_drifts else "next"
         note = ""
         recovery = last_json(run / "rollout_recovery.jsonl") if run is not None and run.is_dir() else None
-        write_age = fmt_age(age_seconds(snapshot.latest_activity_ns))
+        write_age = fmt_age(age_seconds(snapshot.artifact_activity_ns))
         err_text = short_error(current_errors, 60) if current_errors else ""
         if verdict == "HUNG":
             note = f"NEEDS YOU: alive but nothing written for {write_age} -> Ctrl-C this worker, git pull, run h100"
@@ -989,7 +1001,7 @@ def main() -> None:
                 "done_drifts": done_drifts,
                 "stage": stage,
                 "grpo": grpo,
-                "age": age_seconds(snapshot.latest_activity_ns),
+                "age": age_seconds(snapshot.artifact_activity_ns),
                 "note": note,
                 "points": points,
                 "checked_logs": checked_logs,
@@ -1106,6 +1118,7 @@ def main() -> None:
         if r["verdict"] == "HUNG" or (r["verdict"] in {"DEAD", "STOPPED"} and not workers)
     ]
     queued = [r["family"].key for r in rows if r["verdict"] in {"DEAD", "STOPPED"} and workers]
+    idle_workers = {w["worker"] for w in worker_rows if w["state"] == "AVAILABLE"}
     auto = [r["family"].key for r in rows if r["verdict"] in {"STUCK", "RETRYING"}]
     check = [r["family"].key for r in rows if r["verdict"] == "UNKNOWN"]
     errored = [r["family"].key for r in rows if r["current_error_count"]]
@@ -1115,7 +1128,9 @@ def main() -> None:
         for entry in sorted(workers_dir.glob("*.json")):
             rec = read_owner(entry)
             beat = record_age_seconds(rec, "heartbeat_at_ns", 1_000_000_000)
-            if rec.get("state") == "launcher-missing" or (beat is not None and beat > args.heartbeat_stale_seconds):
+            if beat is not None and beat > 86400:
+                continue  # a day-old record: already acted on or replaced; not an alarm
+            if rec.get("state") in {"launcher-missing", "crashed"} or (rec.get("state") == "running" and beat is not None and beat > args.heartbeat_stale_seconds):
                 dead_workers.append(f"{rec.get('worker', entry.stem)} on {rec.get('host', '?')} (last seen {fmt_age(beat) if beat is not None else '?'} ago)")
     if contract_errors:
         decision = "ERROR: config/contract mismatch. Do not restart; fix the ! contract lines first."
@@ -1143,6 +1158,9 @@ def main() -> None:
         decision = "NO ACTION NOW: " + "; ".join(parts) + ". Check again in 30 min; if the same rows are still not * then, restart that worker."
     elif errored:
         decision = f"NO ERROR blocking: {', '.join(errored)} logged an error but the current attempt is progressing. Nothing to do."
+    elif queued and idle_workers:
+        decision = (f"ERROR: {', '.join(queued)} unclaimed while worker(s) {', '.join(sorted(idle_workers))} sit idle: "
+                    "a stale family lock or a worker stuck in preflight. Read that worker's last log line below.")
     elif queued and len(workers) >= args.expected_workers:
         decision = f"NO ERROR. Workers busy; {', '.join(queued)} waiting in the queue. Nothing to do."
     else:

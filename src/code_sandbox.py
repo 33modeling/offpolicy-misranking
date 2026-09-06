@@ -67,6 +67,15 @@ _BLOCKED_ATTRIBUTES = {
     "__mro__",
     "__spec__",
     "__subclasses__",
+    "f_back",
+    "f_globals",
+    "f_locals",
+    "f_builtins",
+    "gi_frame",
+    "cr_frame",
+    "tb_frame",
+    "currentframe",
+    "stack",
     "modules",
     "open",
     "path_hooks",
@@ -75,6 +84,10 @@ _BLOCKED_ATTRIBUTES = {
     "settrace",
     "_exit",
     "abort",
+    "execl",
+    "execle",
+    "execlp",
+    "execlpe",
     "execv",
     "execve",
     "execvp",
@@ -121,9 +134,14 @@ def _validated_candidate(source: str):
         elif isinstance(node, ast.Attribute) and node.attr in _BLOCKED_ATTRIBUTES:
             raise ValueError(f"candidate uses blocked attribute {node.attr}")
         elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-            # Dunder access is the escape hatch (__class__, __dict__, ...); a
-            # single-underscore attribute such as ``self._n`` is plain style.
+            # Dunder access is the escape hatch (__class__, __dict__, ...).
             raise ValueError(f"candidate uses blocked private attribute {node.attr}")
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+            # ``self._n`` / ``cls._cache`` are ordinary style. A private
+            # attribute on anything else (``random._os``, ``module._x``) is
+            # how a candidate reaches os/exec through an allowed module.
+            if not (isinstance(node.value, ast.Name) and node.value.id in {"self", "cls"}):
+                raise ValueError(f"candidate uses blocked private attribute {node.attr}")
     return compile(tree, "<candidate>", "exec")
 
 

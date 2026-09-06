@@ -261,6 +261,7 @@ def analyze_run(
         idx: halves.get("r_high_budget", halves["r"])
         for idx, halves in artifacts.splithalf.items()
     }
+    high_budget_measured = all("r_high_budget" in halves for halves in artifacts.splithalf.values())
     half_a_all = {idx: halves["a"] for idx, halves in artifacts.splithalf.items()}
     half_b_all = {idx: halves["b"] for idx, halves in artifacts.splithalf.items()}
     truth_all = {
@@ -376,6 +377,7 @@ def analyze_run(
                 point_status = "inconclusive"
             rows.append(
                 {
+                    "high_budget_measured": high_budget_measured,
                     "run": run.name,
                     "generation_git": run_generation_git,
                     "model": str(

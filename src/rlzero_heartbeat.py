@@ -40,13 +40,18 @@ def write_heartbeat(
         "started_at_ns": started_at_ns,
         "heartbeat_at_ns": time.time_ns(),
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
-    temporary.write_text(
-        json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    # A transient NFS error must not kill the heartbeat: a dead heartbeat makes
+    # a healthy worker look dead to everyone else.
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+        temporary.write_text(
+            json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    except OSError:
+        pass
 
 
 def fmt_age(seconds: float) -> str:
@@ -94,15 +99,23 @@ def check_peers(
         host = str(record.get("host") or "?")
         state = str(record.get("state") or "")
         age = now - beat
-        dead = state in {"launcher-missing"} or (state == "running" and age > stale_seconds)
+        dead = state in {"launcher-missing", "crashed"} or (state == "running" and age > stale_seconds)
         if not dead:
             last_alert.pop(peer, None)
             continue
         if now - last_alert.get(peer, 0.0) < repeat_seconds:
             continue
         last_alert[peer] = now
+        if age > 86400:
+            # Day-old corpse: everyone has been told for a day; remove the record
+            # so it stops alarming and stops counting against expected workers.
+            try:
+                entry.unlink()
+            except OSError:
+                pass
+            continue
         families = []
-        queue = root.parent / ".queue"
+        queue = root.parent / ".families"
         try:
             for owner in queue.glob("*.owner.json"):
                 doc = json.loads(owner.read_text(encoding="utf-8"))
@@ -112,7 +125,8 @@ def check_peers(
             pass
         held = ", ".join(sorted(families)) or "no family"
         line = (
-            f"[WORKER DEAD] {peer} on {host}: no heartbeat for {fmt_age(age)}"
+            f"[WORKER DEAD] {peer} on {host}: "
+            f"{'crashed rc=' + str(record.get('exit_code', '?')) + ' ' + fmt_age(age) + ' ago' if state == 'crashed' else 'no heartbeat for ' + fmt_age(age)}"
             f"{' (launcher exited)' if state == 'launcher-missing' else ''}; it held {held}."
             f" Start a worker on {host} again: bash scripts/run_olmo3_rlzero.sh run <profile>  (seen by {worker})"
         )

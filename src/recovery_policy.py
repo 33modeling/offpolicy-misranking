@@ -8,7 +8,11 @@ import re
 import sys
 from pathlib import Path
 
-OOM_PATTERN = re.compile(r"CUDA out of memory|(?:torch\.)?OutOfMemoryError", re.IGNORECASE)
+OOM_PATTERN = re.compile(
+    r"CUDA out of memory|(?:torch\.)?OutOfMemoryError|CUDA error: out of memory|"
+    r"CUBLAS_STATUS_ALLOC_FAILED|CUBLAS_STATUS_NOT_INITIALIZED|cudaErrorMemoryAllocation",
+    re.IGNORECASE,
+)
 RUNTIME_PATTERN = re.compile(
     r"CUDA error|CUBLAS_STATUS|cuBLAS|device-side assert|"
     r"unspecified launch failure|illegal memory access",

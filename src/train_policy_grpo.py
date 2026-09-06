@@ -90,6 +90,7 @@ class GrpoConfig:
     lora_rank: int = 16
     lora_alpha: int = 32
     checkpoint_every: int = 5
+    weight_decay: float = 0.0  # recorded: torch's AdamW default (0.01) is not the contract
 
 
 def standardized_group_advantages(
@@ -760,11 +761,20 @@ def train(args: argparse.Namespace) -> None:
         )
         if previous["training_objective"] != args.objective:
             raise ValueError("resume policy uses a different RLVR method")
-        if previous.get("config") is not None and previous["config"] != asdict(config):
-            raise ValueError(
-                "resume policy was trained under a different GRPO config: "
-                f"{previous['config']} != {asdict(config)}"
-            )
+        if previous.get("config") is not None:
+            current = asdict(config)
+            mismatched = {
+                key: (previous["config"][key], current.get(key))
+                for key in previous["config"]
+                if key in current and previous["config"][key] != current[key]
+            }
+            if mismatched:
+                raise ValueError(
+                    f"resume policy was trained under a different GRPO config: {mismatched}"
+                )
+            for key in ("weight_decay",):
+                if key not in previous["config"]:
+                    print(f"[grpo] parent manifest predates the {key} record; current value {current[key]}", flush=True)
 
     model, tokenizer = load_model(args.model, device=f"cuda:{local_rank}")
     if resume_adapter:
@@ -800,7 +810,7 @@ def train(args: argparse.Namespace) -> None:
         raise RuntimeError("GRPO policy has no trainable parameters")
     # torch's AdamW default weight_decay=0.01 is not part of the registered
     # contract; state it explicitly as zero.
-    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, weight_decay=0.0)
+    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, weight_decay=config.weight_decay)
     optimizer_source = (
         local_checkpoint / "optimizer.pt"
         if local_checkpoint
@@ -816,7 +826,7 @@ def train(args: argparse.Namespace) -> None:
         # registered config, not the checkpoint, owns them.
         for group in optimizer.param_groups:
             group["lr"] = config.learning_rate
-            group["weight_decay"] = 0.0
+            group["weight_decay"] = config.weight_decay
 
     ddp = DistributedDataParallel(
         model,

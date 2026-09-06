@@ -98,7 +98,7 @@ def matching_processes(
         is_v4_worker = v4_scope and process.environ.get("RUN_LABEL", "").startswith("v4-")
         is_v4_launcher = v4_scope and "scripts/go_v4.sh" in process.command
         matches_scope = (
-            any(path.startswith(run_prefix) for path in environment_paths)
+            any(path == run_prefix or path.startswith(run_prefix.rstrip("/") + "/") or path.startswith(run_prefix + "-") for path in environment_paths)
             or any(pattern in process.command for pattern in command_patterns)
             or any(path in process.open_files for path in open_files)
             or is_v4_worker

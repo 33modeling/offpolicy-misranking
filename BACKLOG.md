@@ -86,6 +86,29 @@ checked source fix does not mark result regeneration complete.
 - [ ] `OM-2026-09-06-12` `make_tables` T3/T6 split micro-groups even/odd instead
   of the contiguous R/A/B partition (diagnostic tables only).
 
+## 2026-09-06 second review (OLMo supervisor, status/heartbeat, regression pass)
+
+- [x] `OM-2026-09-06-13` Launcher and queue treated SIGHUP as exit: a dropped
+  phone SSH session ended a multi-day worker and left its owner record
+  behind (the two workers lost on 2026-09-02). HUP is now ignored.
+- [x] `OM-2026-09-06-14` Sandbox relaxation allowed `module._private` access
+  (`random._os.execl`): wrong MBPP answers could score 1.0. Single-underscore
+  attributes are allowed only on `self`/`cls`; `execl*` and frame attributes
+  are blocked.
+- [x] `OM-2026-09-06-15` Status counted the worker log (watchdog echoes) as
+  family activity, so HUNG was unreachable; `logs/ALERTS.log` counted as a
+  worker; heartbeat records were never pruned and read owners from the wrong
+  directory; a crashed launcher deleted its own heartbeat (no alert);
+  read-only queue crashed status. All fixed.
+- [x] `OM-2026-09-06-16` recovery_policy classed `CUDA error: out of memory` /
+  `CUBLAS_STATUS_ALLOC_FAILED` as runtime and retried at full batch.
+- [x] `OM-2026-09-06-17` Static split ran and failed the global collection on
+  every node; status self-update could swap script inodes under running
+  launchers (now only when no worker is alive); Korean operator lines in
+  run_matrix.sh translated; weight_decay recorded in the policy manifest.
+- [ ] `OM-2026-09-06-18` regime rows carry `high_budget_measured`; the paper's
+  r_high_budget sensitivity must exclude rows where it is false.
+
 ## Required before numerical freeze
 
 - [ ] Recompute `scores_splithalf.json`, `scores_oracle.json`, and

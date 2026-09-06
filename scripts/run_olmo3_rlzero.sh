@@ -28,8 +28,18 @@ esac
 # Workers run from node-local clones, so fast-forwarding the shared checkout
 # never touches a running experiment. Never resets: local edits are reported.
 self_update_for_status() {
-  local before after dirty
+  local before after dirty live
   before=$(git rev-parse --short HEAD 2>/dev/null)
+  # Replacing script files on the shared checkout while a launcher on another
+  # node still reads them can ESTALE that launcher. Update only when no worker
+  # heartbeat is fresh; otherwise say so and keep the current code.
+  live=$(find "${OM_WORK:-/nonexistent}"/runs/*/.workers -name '*.json' -mmin -10 2>/dev/null | wc -l)
+  if [ "${live:-0}" -gt 0 ]; then
+    if git fetch -q origin master 2>/dev/null && [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master)" ]; then
+      echo "[code] $before; origin/master is $(git rev-parse --short origin/master). Not updating: $live worker(s) run from this checkout. Update after they exit, or run status from a second clone."
+    fi
+    return 0
+  fi
   if ! git fetch -q origin master 2>/dev/null; then
     echo "[code] $before (offline: could not fetch origin)"; return 0
   fi
@@ -43,6 +53,8 @@ self_update_for_status() {
   if git merge -q --ff-only origin/master 2>/dev/null; then
     after=$(git rev-parse --short HEAD 2>/dev/null)
     [ "$before" = "$after" ] && echo "[code] $after (up to date)" || echo "[code] updated $before -> $after"
+  elif git merge-base --is-ancestor HEAD origin/master 2>/dev/null; then
+    echo "[code] $before; origin/master is $(git rev-parse --short origin/master); update skipped (git busy, e.g. another status running). Try again."
   else
     echo "[code] $before but origin/master is $(git rev-parse --short origin/master); NOT updated: branch diverged"
     echo "        to update: git reset --hard origin/master   (shared checkout only; workers are unaffected)"
@@ -252,7 +264,7 @@ if [ "$MODE" = status ]; then
   STATUS_PROBE_SECONDS="${OM_RLZERO_STATUS_PROBE_SECONDS:-20}"
   STATUS_STUCK_SECONDS="${OM_RLZERO_STATUS_STUCK_SECONDS:-1800}"
   STATUS_WORKER_STALE_SECONDS="${OM_RLZERO_STATUS_WORKER_STALE_SECONDS:-180}"
-  STATUS_HEARTBEAT_STALE_SECONDS="${OM_RLZERO_STATUS_HEARTBEAT_STALE_SECONDS:-90}"
+  STATUS_HEARTBEAT_STALE_SECONDS="${OM_RLZERO_STATUS_HEARTBEAT_STALE_SECONDS:-300}"
   STATUS_EXPECTED_WORKERS="${OM_RLZERO_STATUS_EXPECTED_WORKERS:-3}"
   # One screen by default; `status <profile> verbose` (or OM_RLZERO_STATUS_VERBOSE=1)
   # appends per-point rows, telemetry and log tails.
@@ -510,13 +522,41 @@ if [ "$MODE" = run ]; then
       | tee -a "$LOG"
   }
   cleanup_worker() {
+    local rc=$?
     [ -z "${ACTIVE_OWNER:-}" ] || rm -f -- "$ACTIVE_OWNER"
     ACTIVE_OWNER=""
     stop_supervisor_keepalive
-    stop_worker_heartbeat
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 130 ] && [ "$rc" -ne 143 ]; then
+      # Abnormal exit: keep a "crashed" record so every other worker shouts
+      # [WORKER DEAD]. A clean exit or Ctrl-C removes the record silently.
+      mark_worker_crashed "$rc"
+    else
+      stop_worker_heartbeat
+    fi
+  }
+  mark_worker_crashed() {
+    if [ -n "${WORKER_HEARTBEAT_PID:-}" ]; then
+      kill "$WORKER_HEARTBEAT_PID" 2>/dev/null || true
+      wait "$WORKER_HEARTBEAT_PID" 2>/dev/null || true
+    fi
+    WORKER_HEARTBEAT_PID=""
+    "$PY" - "$WORKER_HEARTBEAT_PATH" "$WORKER_ID" "$HOST_TAG" "$1" <<'PYEOF' 2>/dev/null || true
+import json, sys, time
+from pathlib import Path
+path = Path(sys.argv[1])
+try:
+    record = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    record = {"schema": "offpolicy-worker-heartbeat/v1", "worker": sys.argv[2], "host": sys.argv[3]}
+record.update({"state": "crashed", "exit_code": int(sys.argv[4]), "heartbeat_at_ns": time.time_ns()})
+path.write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+PYEOF
   }
   trap cleanup_worker EXIT
-  trap 'exit 130' INT TERM HUP
+  # A dropped SSH session (phone) sends SIGHUP; that must not end a multi-day
+  # worker. Only Ctrl-C / kill stop it. Two workers were lost this way.
+  trap '' HUP
+  trap 'exit 130' INT TERM
   start_worker_heartbeat || exit 1
   start_supervisor_keepalive || exit 1
   export OM_EXTERNAL_GPU_KEEPALIVE=1
@@ -878,7 +918,15 @@ while :; do
   fi
 done
 if [ -n "$ONLY_FAMILIES" ]; then
-  echo "[queue] this node's families are complete: $ONLY_FAMILIES (final collection runs when all 10 are done)"
+  echo "[queue] this node's families are complete: $ONLY_FAMILIES"
+  all_done=1
+  for seed in "${SEEDS[@]}"; do for dataset in "${DATASETS[@]}"; do
+    family_complete "$dataset" "$seed" || all_done=0
+  done; done
+  if [ "$all_done" -ne 1 ]; then
+    echo "[queue] other families are still running elsewhere; the final collection runs on whichever node finishes the last one (or: run h100 again later without OM_RLZERO_ONLY_FAMILIES)"
+    exit 0
+  fi
 fi
 
 (

@@ -16,9 +16,9 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
 export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 
 PY="$VENV_DIR/bin/python"
-[ -x "$PY" ] || { echo "[abort] venv python 없음: $PY"; exit 1; }
-command -v flock >/dev/null || { echo "[abort] flock 없음"; exit 1; }
-command -v setsid >/dev/null || { echo "[abort] setsid 없음"; exit 1; }
+[ -x "$PY" ] || { echo "[abort] venv python missing: $PY"; exit 1; }
+command -v flock >/dev/null || { echo "[abort] flock missing"; exit 1; }
+command -v setsid >/dev/null || { echo "[abort] setsid missing"; exit 1; }
 
 # Supervisors may be newer than a partially completed run. Generation always
 # re-enters the immutable code snapshot recorded by that run.
@@ -237,7 +237,7 @@ case "$WATCH_KILL_GRACE_SECONDS" in
 esac
 
 if [ -n "$CONTRACT" ] && [ ! -s "$CONTRACT" ]; then
-  echo "[abort] regime matrix contract 없음: $CONTRACT"
+  echo "[abort] regime matrix contract missing: $CONTRACT"
   exit 1
 fi
 
@@ -928,7 +928,7 @@ run_point() {
       if [ -n "$CONTRACT" ]; then
         if ! contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \
           --deep --mark; then
-          echo "[contract-fail] $dataset/s$seed/d$drift 산출물 격리 후 재시도"
+          echo "[contract-fail] $dataset/s$seed/d$drift artifacts quarantined; retrying"
           contract_run prepare-run "$run" "$dataset" "$seed" "$drift" "$source" \
             --quarantine-root "$QUARANTINE" || return 1
           continue
@@ -1014,7 +1014,8 @@ while :; do
       remaining=$((remaining + 1))
       lock="$QUEUE/$dataset-s$seed.lock"
       (
-        trap 'cleanup_active_pipeline; exit 130' INT TERM HUP
+        trap '' HUP
+        trap 'cleanup_active_pipeline; exit 130' INT TERM
         flock -n 9 || exit 75
         family_complete "$dataset" "$seed" && exit 0
         run_family "$dataset" "$seed"
@@ -1034,10 +1035,10 @@ while :; do
   done
   [ "$remaining" -eq 0 ] && break
   if [ "$claimed" -eq 0 ]; then
-    echo "[queue] 다른 클러스터의 ${remaining}개 family 완료 대기"
+    echo "[queue] waiting for ${remaining} families held by other workers"
     sleep 60
   elif [ "$failures" -gt 0 ]; then
-    echo "[abort] 이 worker에서 family 실패 ${failures}개; 같은 명령으로 artifact부터 재개"
+    echo "[abort] ${failures} family failure(s) on this worker; rerun the same command to resume from the artifacts"
     exit 1
   fi
 done

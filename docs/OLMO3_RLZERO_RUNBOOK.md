@@ -30,7 +30,7 @@ The immutable machine-readable contract is `configs/olmo3_rlzero.json`.
 | Policy loss | PPO-form GRPO surrogate, ratio range `[0.8, 1.2]`, one optimizer epoch per fresh group |
 | Reference regularization | KL coefficient `0` |
 | Optimizer | AdamW, learning rate `1e-5`, no scheduler, gradient-norm cap `1` |
-| AdamW defaults | `betas=(0.9, 0.999)`, `eps=1e-8`, `weight_decay=0.01`, `amsgrad=false` |
+| AdamW | `betas=(0.9, 0.999)`, `eps=1e-8`, `weight_decay=0.0` (explicit since 2026-09-06; runs generated on earlier commits used torch's default 0.01 and are pinned to that code), `amsgrad=false` |
 | LoRA | `q_proj,v_proj`, rank `16`, alpha `32`, dropout `0`, bias `none` |
 | Numeric/attention mode | BF16 model load and eager attention |
 | Sampling | temperature `1`, top-p `1`, top-k `0`, no repetition penalty, maximum `2048` new tokens |
