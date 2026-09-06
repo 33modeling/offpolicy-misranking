@@ -140,6 +140,71 @@ def describe(directory: Path, official: dict) -> list[str]:
     return lines
 
 
+def _safetensors_tensor_names(path: Path) -> list[str] | None:
+    """Tensor names from a safetensors header (8-byte LE length + JSON)."""
+    import struct
+    try:
+        with path.open("rb") as stream:
+            (length,) = struct.unpack("<Q", stream.read(8))
+            if not 0 < length < 200_000_000:
+                return None
+            header = json.loads(stream.read(length).decode("utf-8"))
+    except (OSError, ValueError, struct.error):
+        return None
+    return [name for name in header if name != "__metadata__"]
+
+
+def ensure_index(directory: Path) -> list[str]:
+    """Make model.safetensors.index.json point at the shard files actually present.
+
+    Uploads often carry shards under other names than the index expects (or no
+    index at all). Reading each shard's header gives its tensor names, so the
+    weight_map can be rebuilt exactly; nothing is guessed from sizes. The previous
+    index is kept as model.safetensors.index.json.orig.
+    """
+    actions: list[str] = []
+    index_path = directory / "model.safetensors.index.json"
+    shards = sorted(
+        path for path in directory.glob("*.safetensors")
+        if path.is_file() and not path.is_symlink()
+    )
+    if not shards:
+        return ["no *.safetensors file in the directory"]
+    if index_path.is_file():
+        try:
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            referenced = set(index.get("weight_map", {}).values())
+        except (OSError, ValueError):
+            referenced = set()
+        if referenced and all((directory / name).exists() for name in referenced):
+            return actions
+    weight_map: dict[str, str] = {}
+    for shard in shards:
+        names = _safetensors_tensor_names(shard)
+        if names is None:
+            return [f"unreadable safetensors header: {shard.name}"]
+        for name in names:
+            weight_map[name] = shard.name
+    if not weight_map:
+        return ["shards contain no tensors"]
+    if index_path.exists():
+        backup = index_path.with_suffix(index_path.suffix + ".orig")
+        if not backup.exists():
+            index_path.replace(backup)
+            actions.append(f"kept old index as {backup.name}")
+    total = sum(shard.stat().st_size for shard in shards)
+    index_path.write_text(
+        json.dumps({"metadata": {"total_size": total}, "weight_map": weight_map},
+                   indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    actions.append(
+        f"rebuilt {index_path.name} from {len(shards)} shard header(s): "
+        + ", ".join(shard.name for shard in shards)
+    )
+    return actions
+
+
 def link_missing_shards(directory: Path, official: dict) -> list[str]:
     """Link official shard names to same-size uploaded files; return actions."""
     actions: list[str] = []
@@ -190,6 +255,8 @@ def main() -> int:
         print(f"[locate] {standard} -> {found} (symlink)", file=sys.stderr)
     target = standard.resolve() if standard.exists() else found
     for action in link_missing_shards(target, official):
+        print(f"[locate] {action}", file=sys.stderr)
+    for action in ensure_index(target):
         print(f"[locate] {action}", file=sys.stderr)
     for line in describe(target, official):
         print(f"[locate] {line}", file=sys.stderr)

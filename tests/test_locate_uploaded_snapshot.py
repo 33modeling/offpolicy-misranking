@@ -70,3 +70,30 @@ def test_two_qwen_uploads_are_told_apart_by_folder_name(tmp_path: Path) -> None:
     fake_upload(models / "Qwen3.8-27B", "model")   # same model_type, different repo
     found, _ = discover(models, SPEC)
     assert found == (models / "Qwen3.5-9B").resolve()
+
+
+def _write_safetensors(path: Path, tensors: list[str]) -> None:
+    import json as _json, struct
+    header = {name: {"dtype": "F32", "shape": [1], "data_offsets": [4 * i, 4 * i + 4]}
+              for i, name in enumerate(tensors)}
+    blob = _json.dumps(header).encode()
+    with path.open("wb") as stream:
+        stream.write(struct.pack("<Q", len(blob)) + blob + b"\0" * (4 * len(tensors)))
+
+
+def test_index_is_rebuilt_from_actual_shard_headers(tmp_path: Path) -> None:
+    import json as _json
+    from locate_uploaded_snapshot import ensure_index
+    d = tmp_path / "m"; d.mkdir()
+    _write_safetensors(d / "part-a.safetensors", ["model.layers.0.w", "model.layers.1.w"])
+    _write_safetensors(d / "part-b.safetensors", ["lm_head.weight"])
+    (d / "model.safetensors.index.json").write_text(_json.dumps(
+        {"weight_map": {"model.layers.0.w": "model.safetensors-00001-of-00002.safetensors"}}))
+    actions = ensure_index(d)
+    assert any(a.startswith("rebuilt") for a in actions), actions
+    index = _json.loads((d / "model.safetensors.index.json").read_text())
+    assert index["weight_map"] == {"model.layers.0.w": "part-a.safetensors",
+                                   "model.layers.1.w": "part-a.safetensors",
+                                   "lm_head.weight": "part-b.safetensors"}
+    assert (d / "model.safetensors.index.json.orig").exists()
+    assert ensure_index(d) == []  # consistent now: untouched
