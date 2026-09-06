@@ -24,6 +24,31 @@ case "$PROFILE" in
   *) echo "[abort] unknown profile=$PROFILE; expected baseline or h100"; exit 2 ;;
 esac
 
+# status is a read-only diagnostic; make sure it runs the latest pushed code.
+# Workers run from node-local clones, so fast-forwarding the shared checkout
+# never touches a running experiment. Never resets: local edits are reported.
+self_update_for_status() {
+  local before after dirty
+  before=$(git rev-parse --short HEAD 2>/dev/null)
+  if ! git fetch -q origin master 2>/dev/null; then
+    echo "[code] $before (offline: could not fetch origin)"; return 0
+  fi
+  dirty=$(git status --porcelain -- src scripts configs 2>/dev/null)
+  if [ -n "$dirty" ]; then
+    echo "[code] $before but origin/master is $(git rev-parse --short origin/master); NOT updated: local edits block it:"
+    printf '%s\n' "$dirty" | head -5
+    echo "        to update: git stash && git pull --ff-only"
+    return 0
+  fi
+  if git merge -q --ff-only origin/master 2>/dev/null; then
+    after=$(git rev-parse --short HEAD 2>/dev/null)
+    [ "$before" = "$after" ] && echo "[code] $after (up to date)" || echo "[code] updated $before -> $after"
+  else
+    echo "[code] $before but origin/master is $(git rev-parse --short origin/master); NOT updated: branch diverged"
+    echo "        to update: git reset --hard origin/master   (shared checkout only; workers are unaffected)"
+  fi
+}
+[ "$MODE" != status ] || self_update_for_status
 export OM_ONLINE=$([ "$MODE" = prepare ] && printf 1 || printf 0)
 source scripts/setup_env.sh
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
