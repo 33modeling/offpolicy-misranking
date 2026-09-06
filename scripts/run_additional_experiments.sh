@@ -375,10 +375,10 @@ run_registered_matrix() {
     # against the pinned official hashes — same as run_olmo3_rlzero.sh. `prepare`
     # is only for downloading when nothing has been uploaded.
     if ! "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
-        check "$model_key" 2>&1 | tee -a "$log"; then
-      echo "[model] snapshot manifest missing/invalid; sealing uploaded files against pinned official hashes" | tee -a "$log"
+        --snapshot-path "$MODEL_PATH" check "$model_key" 2>&1 | tee -a "$log"; then
+      echo "[model] snapshot manifest missing/invalid; sealing $MODEL_PATH" | tee -a "$log"
       "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
-        seal "$model_key" 2>&1 | tee -a "$log"
+        --snapshot-path "$MODEL_PATH" seal "$model_key" 2>&1 | tee -a "$log"
     fi
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
     if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35 ]]; then

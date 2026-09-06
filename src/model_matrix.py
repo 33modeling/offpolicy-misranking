@@ -578,19 +578,28 @@ def _weight_shards(path: Path) -> list[Path]:
     if index_path.is_file():
         index = json.loads(index_path.read_text(encoding="utf-8"))
         names = sorted(set(index.get("weight_map", {}).values()))
-        if not names:
-            raise ValueError("weight index contains no shards")
         shards = []
         for name in names:
             candidate = Path(str(name))
             if candidate.is_absolute() or len(candidate.parts) != 1:
                 raise ValueError(f"unsafe weight shard path in index: {name!r}")
             shards.append(path / candidate)
-        return shards
+        if shards and all(shard.is_file() for shard in shards):
+            return shards
     single = path / "model.safetensors"
     if single.is_file():
         return [single]
-    raise ValueError("model has neither a safetensors index nor model.safetensors")
+    # An uploaded snapshot may carry no index, or one naming files that were
+    # renamed on upload. The shards themselves are what matters here; the
+    # tokenizer/config checks and the loader validate the rest.
+    present = sorted(
+        candidate for candidate in path.glob("*.safetensors") if candidate.is_file()
+    )
+    if present:
+        return present
+    raise ValueError(
+        f"no *.safetensors in {path} (and no usable model.safetensors.index.json)"
+    )
 
 
 def _manifest_files(path: Path, shards: list[Path]) -> list[Path]:

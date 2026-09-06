@@ -6,7 +6,8 @@ from diagnose_launch_failure import diagnose, last_exception
 
 CASES = {
     'RuntimeError: math-verify is required for verifier-reward math experiments': "math-verify",
-    '[model-abort] qwen3.5-9b-posttrained: safetensors shard set incomplete': "shard",
+    '[model-abort] qwen3.5-9b-posttrained: safetensors shard set incomplete': "*.safetensors",
+    '[model-abort] no *.safetensors in /group-volume/models/Qwen3.5-9B (and no usable model.safetensors.index.json)': "*.safetensors",
     "ModuleNotFoundError: No module named 'transformers.models.qwen3_5'": "transformers",
     "RuntimeError: expected FLA 0.5.2, got 0.4.1": "fla-core",
     "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2 GiB": "memory",

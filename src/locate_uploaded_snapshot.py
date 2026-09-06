@@ -74,6 +74,20 @@ def _has_weights(directory: Path) -> bool:
     )
 
 
+def _weights_dir(directory: Path) -> Path:
+    """Where the shards really are: the directory itself, or a subdirectory."""
+    if _has_weights(directory):
+        return directory
+    for pattern in ("*/*.safetensors", "*/*/*.safetensors"):
+        found = sorted(
+            path for path in directory.glob(pattern)
+            if path.is_file() and path.stat().st_size > 1_000_000
+        )
+        if found:
+            return found[0].parent
+    return directory
+
+
 def _type_matches(config_path: Path, spec: dict) -> bool:
     try:
         document = json.loads(config_path.read_text(encoding="utf-8"))
@@ -93,7 +107,7 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
         return (path.resolve() if (path / "config.json").is_file() else None), [path]
     standard = models_dir / spec["local_directory"]
     if (standard / "config.json").is_file():
-        if _has_weights(standard):
+        if _has_weights(standard) or _weights_dir(standard) != standard:
             return standard, [standard]
         # A weightless pinned directory (left by the old prepare that downloaded
         # only config/tokenizer/index) must not shadow the real upload next to it.
@@ -109,7 +123,9 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
                 if directory in scanned:
                     continue
                 scanned.append(directory)
-                if _type_matches(config_path, spec) and _has_weights(directory):
+                if _type_matches(config_path, spec) and (
+                    _has_weights(directory) or _weights_dir(directory) != directory
+                ):
                     by_type.append(directory)
     if len(by_type) == 1:
         return by_type[0], scanned
@@ -268,14 +284,14 @@ def main() -> int:
     if found != standard.resolve() and not standard.exists():
         os.symlink(found, standard)
         print(f"[locate] {standard} -> {found} (symlink)", file=sys.stderr)
-    target = standard.resolve() if standard.exists() else found
+    target = _weights_dir(standard.resolve() if standard.exists() else found)
     for action in link_missing_shards(target, official):
         print(f"[locate] {action}", file=sys.stderr)
     for action in ensure_index(target):
         print(f"[locate] {action}", file=sys.stderr)
     for line in describe(target, official):
         print(f"[locate] {line}", file=sys.stderr)
-    print(standard if standard.exists() else found)
+    print(target)
     return 0
 
 
