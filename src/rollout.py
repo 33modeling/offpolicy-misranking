@@ -133,6 +133,47 @@ def _lora_targets() -> list | str:
     return v if v == "all-linear" else [s.strip() for s in v.split(",") if s.strip()]
 
 
+def _is_cuda_oom(exc: BaseException) -> bool:
+    return isinstance(exc, torch.cuda.OutOfMemoryError) or (
+        isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+    )
+
+
+def generate_with_backoff(model, batch_ids: torch.Tensor, gkw: dict, label: str = "") -> torch.Tensor:
+    """model.generate() that halves the batch on CUDA OOM instead of dying.
+
+    Rows are generated in slices and concatenated (right-padded to the longest
+    slice with the pad id), so callers see exactly one output row per input row.
+    Sampling distribution is unchanged; only memory scheduling differs.
+    """
+    rows = int(batch_ids.shape[0])
+    step = rows
+    while True:
+        try:
+            outputs = []
+            for start in range(0, rows, step):
+                outputs.append(model.generate(
+                    batch_ids[start:start + step],
+                    attention_mask=torch.ones_like(batch_ids[start:start + step]),
+                    **gkw,
+                ))
+            if len(outputs) == 1:
+                return outputs[0]
+            width = max(out.shape[1] for out in outputs)
+            pad = int(gkw.get("pad_token_id", 0))
+            padded = [
+                torch.nn.functional.pad(out, (0, width - out.shape[1]), value=pad)
+                for out in outputs
+            ]
+            return torch.cat(padded, dim=0)
+        except Exception as exc:  # noqa: BLE001 - only OOM is handled, everything else re-raised
+            if not _is_cuda_oom(exc) or step <= 1:
+                raise
+            torch.cuda.empty_cache()
+            step = max(1, step // 2)
+            print(f"[oom-backoff] {label} generation batch -> {step} after CUDA OOM", flush=True)
+
+
 def _gen_batch_size(total: int) -> int:
     """OM_GEN_BATCH: generate 배치 상한 (0/미설정 = 전체 한 배치 — 기존 동작 그대로).
     27B처럼 가중치가 GPU를 거의 채우는 모델은 8 정도로 제한해 KV 캐시/프리필
@@ -480,11 +521,7 @@ def collect_rollouts(
                 if str(model.device).startswith("cuda"):
                     torch.cuda.synchronize(model.device)
                 generation_started = time.perf_counter()
-                gen = model.generate(
-                    batch_ids,
-                    attention_mask=torch.ones_like(batch_ids),
-                    **gkw,
-                )
+                gen = generate_with_backoff(model, batch_ids, gkw, label=out_path.name)
                 if str(model.device).startswith("cuda"):
                     torch.cuda.synchronize(model.device)
                 generation_seconds += time.perf_counter() - generation_started

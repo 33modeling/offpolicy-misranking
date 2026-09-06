@@ -513,12 +513,10 @@ def _sample_group(model, tokenizer, prompt: dict, config: GrpoConfig, max_new_to
     response_start = int(inputs.numel())
     batch = inputs.unsqueeze(0).expand(config.group_size, -1)
     kwargs = gen_kwargs(1.0, SAMPLING["top_p"], max_new_tokens, tokenizer.eos_token_id)
-    generated = model.generate(
-        batch,
-        attention_mask=torch.ones_like(batch),
-        use_cache=True,
-        **kwargs,
-    )
+    kwargs["use_cache"] = True
+    from rollout import generate_with_backoff
+
+    generated = generate_with_backoff(model, batch, kwargs, label="grpo")
     eos_ids = eos_ids_of(model, tokenizer, pad_id=tokenizer.eos_token_id)
     sequences: list[torch.Tensor] = []
     rewards: list[float] = []

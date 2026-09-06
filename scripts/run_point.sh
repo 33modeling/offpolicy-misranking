@@ -23,6 +23,12 @@ else
   GPUS=($(seq 0 $((NGPU - 1))))
 fi
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOGS/main.log"; }
+POINT_T0=$SECONDS
+STAGE_TOTAL=8
+progress() {  # progress <k> <label> — one line the operator can read on a phone
+  local k=$1; shift
+  log "[progress] point=$(basename "$OUT_ROOT") stage=$k/$STAGE_TOTAL $* elapsed=$(( (SECONDS - POINT_T0) / 60 ))min"
+}
 # CUDA ULF가 특정 GPU에서 반복될 때 같은 shard를 같은 GPU에 계속 재투입하지 않는다.
 retry_index=${OM_RETRY_INDEX:-1}
 rotation=$(( (retry_index - 1) % NGPU ))
@@ -412,7 +418,8 @@ if [ -n "${OM_BEHAVIOR_SOURCE:-}" ]; then
     exit "$rc"
   fi
 else
-  if ! run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"; then
+  if ! progress 1 prep
+  run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"; then
     if grep -Fq "prompts.json differs from the requested dataset/split" \
         "$LOGS/prep.log"; then
       log "[permanent-contract] base prompt set differs from the existing run"
@@ -521,8 +528,9 @@ PYEOF
 # β rollout N샤딩.  A validated merged artifact may come from an earlier
 # point in the same drift family; in that case generation is skipped entirely.
 if "$PY" src/reuse_behavior.py --check "$OUT_ROOT"; then
-  log "[regime] behavior rollout 계약 확인됨 — 생성 스킵"
+  progress 2 "behavior-rollout reused"
 else
+  progress 2 "behavior-rollout ${N_TRAIN:-256}x${BEHAVIOR_K:-8} on $NGPU GPUs"
   pids=(); for i in $(seq 0 $((NGPU - 1))); do
     ( run_stage "$i" "$LOGS/beta-shard$i.log" --stage rollout-behavior "${COMMON[@]}" --shard "$i:$NGPU" ) & pids+=($!)
   done
@@ -559,6 +567,7 @@ if [ "$DRIFT" -gt 0 ]; then
       --resume-optimizer "${OM_GRPO_RESUME_OPTIMIZER:?}")
   fi
   verify_code_snapshot || exit 1
+  progress 3 "grpo steps ${OM_GRPO_START_STEP:-0}->$DRIFT (see $LOGS/grpo.log for per-step lines)"
   log "$RLVR_METHOD ▶ ${NGPU}-GPU verifier-reward update to step $DRIFT (logprob micro-batch=${GRPO_LOGPROB_MICRO_BATCH:-1})"
   if CUDA_VISIBLE_DEVICES="$KA_DEV" "$PY" -m torch.distributed.run \
       --standalone --nproc_per_node="$NGPU" src/train_policy_grpo.py \
@@ -582,14 +591,16 @@ print(f"[{sys.argv[4]}] policy contract validated")
 PYEOF
   POLICY_ARGS=(--adapter "$POLICY_DIR")
 else
-  log "GRPO control: d0 uses the unchanged base policy"
+  progress 3 "grpo skipped (d0 base policy)"
 fi
+progress 4 "fresh-rollout ${N_TRAIN:-256}x${FRESH_K:-16} + val ${N_VAL:-50}x${VAL_K:-8} on $NGPU GPUs (longest stage)"
 # π fresh N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/fresh-shard$i.log" --stage rollout-fresh "${COMMON[@]}" "${POLICY_ARGS[@]}" --shard "$i:$NGPU" ) & pids+=($!)
 done
 wait_all_stages "${pids[@]}" || exit 1
 merge_rollouts rollouts_fresh_train "${FRESH_K:-16}" || exit 1
+progress 5 "oracle+val gradients"
 # val 방향 ∥ oracle micro 샤딩 (GPU 여유가 있으면 마지막 GPU를 val 전용으로)
 pids=()
 if [ "$NGPU" -ge 2 ]; then
@@ -603,11 +614,13 @@ for i in $(seq 0 $((NM - 1))); do
   ( run_stage "$i" "$LOGS/ograds-shard$i.log" --stage oracle-grads "${COMMON[@]}" "${POLICY_ARGS[@]}" --shard "$i:$NM" ) & pids+=($!)
 done
 wait_all_stages "${pids[@]}" || exit 1
+progress 6 "off-policy scores (4 estimators)"
 # 2×2 score N샤딩
 pids=(); for i in $(seq 0 $((NGPU - 1))); do
   ( run_stage "$i" "$LOGS/score-shard$i.log" --stage score-shard "${COMMON[@]}" "${POLICY_ARGS[@]}" --shard "$i:$NGPU" ) & pids+=($!)
 done
 wait_all_stages "${pids[@]}" || exit 1
+progress 7 "merge + report"
 run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}" || exit 1
 run_stage 0 "$LOGS/report.log" --stage report "${COMMON[@]}" || exit 1
 # hybrid 3절단점 — GPU 수만큼 병렬 (모자라면 라운드로빈 순차)
@@ -646,4 +659,5 @@ if [ "$DRIFT" -gt 0 ]; then
 fi
 printf '%s\n' "completed $(date -Is)" > "$OUT_ROOT/DONE.tmp"
 mv "$OUT_ROOT/DONE.tmp" "$OUT_ROOT/DONE"
+progress 8 "DONE"
 log "=== RLVR point complete: $OUT_ROOT ==="

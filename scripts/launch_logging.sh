@@ -8,7 +8,7 @@ SESSION_LOG=$(mktemp "$OM_WORK/console-logs/additional-${PROFILE}-${MODE#--}-$(d
 export SESSION_LOG
 exec {LAUNCH_STDOUT}>&1 {LAUNCH_STDERR}>&2
 # Lines worth a human's attention. Everything else goes only to the file.
-TERMINAL_PATTERN='^\[stage\]|^\[exit\]|abort\]|\[error\]|Traceback|Error:|Error\b|✔|✘|try [0-9]+/[0-9]+ ->|\[family|\[queue\]|\[cuda-recovery\]|\[contract|\[additional\]|\[runtime\]|\[regime-contract\]|\[transfer-smoke|\[27b-runtime\]|\[check\]|\[download\]|\[seal\]|complete|passed|PASS|FAIL'
+TERMINAL_PATTERN='\[progress\]|^\[stage\]|^\[exit\]|abort\]|\[error\]|Traceback|Error:|Error\b|✔|✘|try [0-9]+/[0-9]+ ->|\[family|\[queue\]|\[cuda-recovery\]|\[contract|\[additional\]|\[runtime\]|\[regime-contract\]|\[transfer-smoke|\[27b-runtime\]|\[check\]|\[download\]|\[seal\]|complete|passed|PASS|FAIL'
 if [ "${ADDITIONAL_VERBOSE:-0}" = 1 ]; then
   exec > >(tee -a "$SESSION_LOG") 2>&1
 else

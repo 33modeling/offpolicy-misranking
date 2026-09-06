@@ -198,18 +198,35 @@ def prompt_gradient(
 
     model.zero_grad(set_to_none=True)
     k = len(sequences)
-    for start in range(0, k, micro_batch):
+    start = 0
+    while start < k:
         batch = sequences[start : start + micro_batch]
         ws = weights[start : start + micro_batch]
-        token_logps = _padded_token_logps(
-            model, [seq["input_ids"] for seq in batch]
-        )
-        loss = token_logps[0].new_zeros(())
-        for seq, w, tok_logp in zip(batch, ws, token_logps, strict=True):
-            resp = tok_logp[seq["resp_start"] - 1 :]
-            loss = loss + (w.to(resp.device) * resp).sum() / k
-        loss.backward()
+        try:
+            token_logps = _padded_token_logps(
+                model, [seq["input_ids"] for seq in batch]
+            )
+            loss = token_logps[0].new_zeros(())
+            for seq, w, tok_logp in zip(batch, ws, token_logps, strict=True):
+                resp = tok_logp[seq["resp_start"] - 1 :]
+                loss = loss + (w.to(resp.device) * resp).sum() / k
+            loss.backward()
+        except Exception as exc:  # noqa: BLE001 - CUDA OOM only; the gradient sum is unchanged
+            if not _is_oom(exc) or micro_batch <= 1:
+                raise
+            del exc
+            torch.cuda.empty_cache()
+            micro_batch = max(1, micro_batch // 2)
+            print(f"[oom-backoff] gradient micro-batch -> {micro_batch}", flush=True)
+            continue
+        start += len(batch)
     return project_grads(params, spec)
+
+
+def _is_oom(exc: BaseException) -> bool:
+    return isinstance(exc, torch.cuda.OutOfMemoryError) or (
+        isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+    )
 
 
 @torch.no_grad()
@@ -259,11 +276,22 @@ def sequence_logprobs_batch(
     if micro_batch < 1:
         raise ValueError("sequence log-prob micro-batch must be positive")
     output: list[torch.Tensor] = []
-    for start in range(0, len(sequences), micro_batch):
+    start = 0
+    while start < len(sequences):
         chunk = sequences[start : start + micro_batch]
-        token_logps = _padded_token_logps(
-            model, [sequence["input_ids"] for sequence in chunk]
-        )
+        try:
+            token_logps = _padded_token_logps(
+                model, [sequence["input_ids"] for sequence in chunk]
+            )
+        except Exception as exc:  # noqa: BLE001 - CUDA OOM only
+            if not _is_oom(exc) or micro_batch <= 1:
+                raise
+            del exc
+            torch.cuda.empty_cache()
+            micro_batch = max(1, micro_batch // 2)
+            print(f"[oom-backoff] log-prob micro-batch -> {micro_batch}", flush=True)
+            continue
+        start += len(chunk)
         for sequence, values in zip(chunk, token_logps, strict=True):
             response_start = int(sequence["resp_start"])
             if not 0 < response_start < int(sequence["input_ids"].numel()):

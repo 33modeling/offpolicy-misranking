@@ -544,7 +544,7 @@ cleanup_active_pipeline() {
 run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command...>
   local run=$1 attempt_log=$2 runner_pid watcher_pid rc
   shift 2
-  local prev="" elapsed=0 idle_elapsed=0 cpu_mark cpu_now cpu_delta
+  local prev="" elapsed=0 idle_elapsed=0 cpu_mark cpu_now cpu_delta progress_offset=0 new_size
   local interval_cpu_mark gpu_peak lf line sig state message
   local cpu_probe_ok interval_cpu_valid stall_cpu_valid gpu_probe_ok
   local telemetry_failed=0
@@ -597,6 +597,14 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
         interval_cpu_valid=0
       fi
 
+      # Forward point-level progress lines to the supervisor/terminal.
+      if [ -f "$run/logs/main.log" ]; then
+        new_size=$(stat -c %s "$run/logs/main.log" 2>/dev/null || echo 0)
+        if [ "${new_size:-0}" -gt "${progress_offset:-0}" ]; then
+          tail -c +"$((progress_offset + 1))" "$run/logs/main.log" 2>/dev/null | grep -F '[progress]' | cut -c1-200 || true
+          progress_offset=$new_size
+        fi
+      fi
       candidates=("$attempt_log")
       for lf in "$run"/logs/*.log; do
         [ -f "$lf" ] && candidates+=("$lf")
@@ -845,6 +853,12 @@ run_point() {
     prompt_root=$("$PY" src/materialize_prompt_dataset.py "$source/prompts.json" \
       "$dataset" "$QUEUE/prompt-datasets" --seed 0) || return 43
   fi
+  local done_points=0 total_points=0 d
+  for d in "${DRIFTS[@]}"; do
+    total_points=$((total_points + 1))
+    [ -s "$(run_dir "$dataset" "$seed" "$d")/DONE" ] && done_points=$((done_points + 1))
+  done
+  echo "[progress] family=$dataset/s$seed point=d$drift points_done=$done_points/$total_points seeds=${SEEDS[*]} datasets=${DATASETS[*]}"
   for try in $(seq 1 "$MAX_RETRIES"); do
     echo "[$(date '+%F %T')] $dataset/s$seed/d$drift try $try/$MAX_RETRIES -> $run"
     args=(env DATASET="$dataset" SEED="$seed" DRIFT="$drift" OUT_ROOT="$run"
