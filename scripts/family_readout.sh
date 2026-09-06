@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 # Arguments: [profile] <dataset> <seed> [bootstrap]. Profile defaults to h100, so
 #   bash scripts/family_readout.sh mbpp 0        and
 #   bash scripts/family_readout.sh h100 mbpp 0   both work.
-PROFILE=h100
+PROFILE=auto
 case "${1:-}" in baseline|h100) PROFILE=$1; shift ;; esac
 DATASET=${1:-}; SEED=${2:-}; BOOT=${3:-1000}
 case "$DATASET" in
@@ -19,14 +19,28 @@ esac
 case "$SEED" in ''|*[!0-9]*) echo "usage: seed must be a number 0-4 (got '$SEED')"; exit 2 ;; esac
 case "$BOOT" in ''|*[!0-9]*) echo "usage: bootstrap must be a number >= 100 (got '$BOOT')"; exit 2 ;; esac
 [ "$BOOT" -ge 100 ] || { echo "usage: bootstrap must be >= 100"; exit 2; }
-case "$PROFILE" in
-  baseline) MODEL_TAG=${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-v1} ;;
-  h100)     MODEL_TAG=${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-h100-v2} ;;
-  *) echo "[abort] profile must be baseline or h100"; exit 2 ;;
-esac
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
+tag_for() { case "$1" in baseline) echo olmo3-1025-7b-base-rlzero-grpo-v1 ;; h100) echo olmo3-1025-7b-base-rlzero-grpo-h100-v2 ;; esac; }
+done_points() {  # done_points <root> <tag> -> number of DONE points in this family
+  local n=0 d
+  for d in 0 25 100 400; do
+    [ -s "$1/family-$DATASET-s$SEED/$2-s$SEED-$DATASET-d$d/DONE" ] && n=$((n + 1))
+  done
+  echo "$n"
+}
+if [ "$PROFILE" = auto ]; then
+  # No profile given: use whichever experiment root actually holds this family
+  # (status h100 and status baseline look at different roots; so does this).
+  best=h100; best_n=-1
+  for cand in h100 baseline; do
+    n=$(done_points "$OM_WORK/runs/$(tag_for "$cand")" "$(tag_for "$cand")")
+    [ "$n" -gt "$best_n" ] && { best=$cand; best_n=$n; }
+  done
+  PROFILE=$best
+fi
+MODEL_TAG=${OM_OLMO3_MODEL_TAG:-$(tag_for "$PROFILE")}
 ROOT="${OM_OLMO3_ROOT:-$OM_WORK/runs/$MODEL_TAG}"
 FAMILY="$ROOT/family-$DATASET-s$SEED"
 runs=(); missing=()
