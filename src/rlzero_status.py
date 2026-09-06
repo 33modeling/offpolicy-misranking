@@ -1190,6 +1190,7 @@ def main() -> None:
     ordered = sorted(rows, key=lambda r: (rank(r), r["family"].dataset, r["family"].seed))
     shown = [r for r in ordered if r["verdict"] != "PENDING"]
     waiting = [r["family"].key for r in ordered if r["verdict"] == "PENDING"]
+    print(" points column, one char per point d0 d25 d100 d400:   + = done   * = running   X = hung/stuck/dead   ? = unknown   . = waiting")
     header = f" {'family':<11} {'points':<{len(args.drifts) + 1}} {'now':<40} {'last write':<10} {'worker':<12} note"
     print(header)
     for row in shown:
@@ -1224,7 +1225,7 @@ def main() -> None:
             claims = ",".join(w["claims"]) or "-"
             print(f" {w['worker'][:17]:<17} {fmt_age(w['log_age']):<8} {claims[:15]:<15} {w['last_line'][:95]}")
     print(" family = one dataset x seed = 4 chained points d0 -> d25 -> d100 -> d400 on one node (each GRPO point resumes the previous checkpoint)")
-    print(" points: + done   * running   X hung/stuck/dead   ? unknown   . waiting      last write = time since this family wrote any file")
+    print(" last write = time since this family wrote any file.  note: NEEDS YOU = you act, AUTO = supervisor handles it, QUEUED = waits for a free worker, ok = fine")
     stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]
     if stale_workers:
         print(f" stale worker records (no claim, no fresh log): {', '.join(stale_workers)}")
