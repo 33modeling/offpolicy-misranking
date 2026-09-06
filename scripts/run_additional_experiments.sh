@@ -31,7 +31,7 @@ MATRIX_IDS=(
 )
 MODE=${1:---run}
 PROFILE=${2:-legacy}
-[ "$#" -le 2 ] || { echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38|qwen35]"; exit 2; }
+[ "$#" -le 2 ] || { echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38|qwen35|qwen35_2b|qwen35_4b|olmo3_domains]"; exit 2; }
 case "$PROFILE" in
   legacy) ;;
   qwen38)
@@ -42,11 +42,23 @@ case "$PROFILE" in
     MATRIX_CONFIGS=(configs/qwen35_9b_grpo.json)
     MATRIX_IDS=(qwen35-9b-posttrained-math-code-grpo-v1)
     ;;
+  qwen35_2b)   # follow-up: scale axis (docs/FOLLOWUP_GENERALIZATION_DESIGN.md)
+    MATRIX_CONFIGS=(configs/qwen35_2b_grpo.json)
+    MATRIX_IDS=(qwen35-2b-posttrained-math-code-grpo-v1)
+    ;;
+  qwen35_4b)
+    MATRIX_CONFIGS=(configs/qwen35_4b_grpo.json)
+    MATRIX_IDS=(qwen35-4b-posttrained-math-code-grpo-v1)
+    ;;
+  olmo3_domains)  # follow-up: domain axis for the main model
+    MATRIX_CONFIGS=(configs/olmo3_domains_grpo.json)
+    MATRIX_IDS=(olmo3-7b-base-domains-grpo-v1)
+    ;;
   *) echo "[abort] unknown additional profile: $PROFILE"; exit 2 ;;
 esac
 case "$MODE" in
   --prepare|--check|--run) ;;
-  *) echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38|qwen35]"; exit 2 ;;
+  *) echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38|qwen35|qwen35_2b|qwen35_4b|olmo3_domains]"; exit 2 ;;
 esac
 if [ "$MODE" != "--prepare" ]; then
   # Compute clusters are security-isolated. Never attempt Hub discovery,
@@ -352,7 +364,7 @@ run_registered_matrix() {
   export OM_SKIP_HYBRID="$(matrix_field "$config" skip_hybrid)"
   export OM_SKIP_GPU_CHECK=0 OM_ALLOW_DIRTY=0 OM_ALLOW_ANALYSIS_UPGRADE=0
   export OM_GEN_BATCH=4
-  if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35 ]]; then
+  if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35* || "$PROFILE" == olmo3_domains ]]; then
     OM_GEN_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field generation_batch)
     GRADIENT_MICRO_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field gradient_micro_batch)
     GRPO_LOGPROB_MICRO_BATCH=$("$PY" src/model_matrix.py --config "$config" runtime-field logprob_micro_batch)
@@ -388,12 +400,12 @@ run_registered_matrix() {
         --snapshot-path "$MODEL_PATH" seal "$model_key" 2>&1 | tee -a "$log" || true
     fi
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
-    if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35 ]]; then
+    if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35* ]]; then
       log_stage "fla-$model_key"
       CUDA_VISIBLE_DEVICES=0 "$PY" scripts/check_27b_fla.py | tee -a "$log"
     fi
     smoke_args=()
-    [[ "$PROFILE" != qwen38 && "$PROFILE" != qwen35 ]] || smoke_args+=(--benchmark)
+    [[ "$PROFILE" != qwen38 && "$PROFILE" != qwen35* ]] || smoke_args+=(--benchmark)
     log_stage "smoke-$model_key"
     CUDA_VISIBLE_DEVICES=0 "$PY" src/transfer_smoke.py \
       --model "$MODEL_PATH" --lora-targets "$OM_LORA_TARGETS" \

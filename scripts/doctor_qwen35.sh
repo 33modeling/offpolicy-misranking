@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
-CONFIG=configs/qwen35_9b_grpo.json
+CONFIG=${PROFILE_CONFIG:-configs/qwen35_9b_grpo.json}
 echo "code     : $(git rev-parse --short HEAD) ($(git log -1 --format=%s | cut -c1-50))"
 echo "MODELS_DIR: $MODELS_DIR"
 echo "DATASETS_DIR: $DATASETS_DIR"
