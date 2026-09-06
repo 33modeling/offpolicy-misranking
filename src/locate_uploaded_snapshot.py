@@ -46,23 +46,92 @@ def _config_matches(config_path: Path, spec: dict, official: dict) -> bool:
     return expected is None or config_path.stat().st_size == expected
 
 
+def search_roots(models_dir: Path) -> list[Path]:
+    """Every place people actually drop model folders on the shared volume."""
+    roots = [models_dir]
+    work = os.environ.get("OM_WORK")
+    volume = os.environ.get("GROUP_VOLUME")
+    user = os.environ.get("OM_USER")
+    if work:
+        roots.append(Path(work) / "models")
+    if volume:
+        roots.append(Path(volume) / "models")
+        if user:
+            roots.append(Path(volume) / user / "models")
+    unique: list[Path] = []
+    for root in roots:
+        if root.is_dir() and root.resolve() not in [u.resolve() for u in unique]:
+            unique.append(root)
+    return unique
+
+
+def _type_matches(config_path: Path, spec: dict) -> bool:
+    try:
+        document = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return document.get("model_type") == spec.get("model_type")
+
+
 def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
+    """Return (directory, scanned). Explicit OM_SNAPSHOT_PATH wins; then the pinned
+    directory; then any config.json with the right model_type under the search
+    roots (three levels), disambiguated by official config/index sizes."""
     official = _official(spec)
+    explicit = os.environ.get("OM_SNAPSHOT_PATH")
+    if explicit:
+        path = Path(explicit)
+        return (path.resolve() if (path / "config.json").is_file() else None), [path]
     standard = models_dir / spec["local_directory"]
     if (standard / "config.json").is_file():
         return standard, [standard]
     scanned: list[Path] = []
-    matches: list[Path] = []
-    for pattern in ("*/config.json", "*/*/config.json"):
-        for config_path in sorted(models_dir.glob(pattern)):
-            directory = config_path.parent
-            scanned.append(directory)
-            if _config_matches(config_path, spec, official):
-                matches.append(directory.resolve())
-    unique = sorted(set(matches))
-    if len(unique) != 1:
+    by_type: list[Path] = []
+    for root in search_roots(models_dir):
+        for pattern in ("config.json", "*/config.json", "*/*/config.json", "*/*/*/config.json"):
+            for config_path in sorted(root.glob(pattern)):
+                directory = config_path.parent.resolve()
+                if directory in scanned:
+                    continue
+                scanned.append(directory)
+                if _type_matches(config_path, spec):
+                    by_type.append(directory)
+    if len(by_type) == 1:
+        return by_type[0], scanned
+    if not by_type:
         return None, scanned
-    return unique[0], scanned
+    exact = [d for d in by_type if _config_matches(d / "config.json", spec, official)]
+    if len(exact) == 1:
+        return exact[0], scanned
+    index_size = official.get("model.safetensors.index.json", {}).get("size")
+    by_index = [
+        d for d in (exact or by_type)
+        if index_size and (d / "model.safetensors.index.json").is_file()
+        and (d / "model.safetensors.index.json").stat().st_size == index_size
+    ]
+    if len(by_index) == 1:
+        return by_index[0], scanned
+    return None, scanned
+
+
+def describe(directory: Path, official: dict) -> list[str]:
+    """Human-readable comparison of what is on disk vs the pinned official files."""
+    lines = [f"폴더 {directory}:"]
+    present = {p.name: p.stat().st_size for p in directory.iterdir() if p.is_file() or p.is_symlink()}
+    for name, record in sorted(official.items()):
+        size = present.get(name)
+        if size is None:
+            same = [n for n, s in present.items() if s == record["size"] and n.endswith(".safetensors")]
+            hint = f" (같은 크기 파일: {same[0]})" if same else ""
+            lines.append(f"  없음  {name}  기대 {record['size']:,} B{hint}")
+        elif size != record["size"]:
+            lines.append(f"  크기≠  {name}  {size:,} B ≠ 기대 {record['size']:,} B  ← 다른 revision/잘린 파일")
+    extras = sorted(n for n in present if n.endswith(".safetensors") and n not in official)
+    if extras:
+        lines.append("  등록 안 된 safetensors: " + ", ".join(f"{n} ({present[n]:,} B)" for n in extras))
+    if len(lines) == 1:
+        lines.append("  공식 파일 전부 존재, 크기 일치")
+    return lines
 
 
 def link_missing_shards(directory: Path, official: dict) -> list[str]:
@@ -101,19 +170,24 @@ def main() -> int:
     standard = args.models_dir / spec["local_directory"]
     found, scanned = discover(args.models_dir, spec)
     if found is None:
+        roots = ", ".join(str(r) for r in search_roots(args.models_dir))
         print(
-            f"[locate-abort] {spec['repository']} 스냅샷을 {args.models_dir} 아래에서 못 찾음 "
-            f"(config.json의 model_type={spec.get('model_type')!r}로 식별). 살펴본 폴더: "
-            + (", ".join(str(p) for p in scanned) or "없음"),
+            f"[locate-abort] {spec['repository']} 스냅샷 없음. 찾은 곳: {roots} "
+            f"(config.json의 model_type={spec.get('model_type')!r} 기준, 3단계 깊이). "
+            f"config.json이 있던 폴더: " + (", ".join(str(p) for p in scanned) or "없음")
+            + ". 경로가 다르면 OM_SNAPSHOT_PATH=<폴더>로 지정.",
             file=sys.stderr,
         )
         return 1
     if found != standard.resolve() and not standard.exists():
         os.symlink(found, standard)
         print(f"[locate] {standard} -> {found} (symlink)", file=sys.stderr)
-    for action in link_missing_shards(standard.resolve(), official):
+    target = standard.resolve() if standard.exists() else found
+    for action in link_missing_shards(target, official):
         print(f"[locate] {action}", file=sys.stderr)
-    print(standard)
+    for line in describe(target, official):
+        print(f"[locate] {line}", file=sys.stderr)
+    print(standard if standard.exists() else found)
     return 0
 
 

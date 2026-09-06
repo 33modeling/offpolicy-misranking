@@ -105,6 +105,12 @@ def last_exception(text: str) -> str | None:
     return None
 
 
+def snapshot_listing(text: str) -> list[str]:
+    """For weight/snapshot failures, echo the locator's on-disk comparison lines."""
+    lines = [line.strip() for line in text.splitlines() if line.startswith("[locate]")]
+    return lines[-40:]
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: diagnose_launch_failure.py SESSION_LOG", file=sys.stderr)
@@ -121,6 +127,9 @@ def main() -> int:
         print(f"진단: {why}")
         print(f"조치: {what}")
         print(f"근거: {line[:300]}")
+        if re.search(r"가중치|스냅샷|shard|모델 파일|폴더를 못 찾음", why):
+            for extra in snapshot_listing(text):
+                print(f"  {extra}")
         return 0
     exc = last_exception(text)
     if exc:
