@@ -287,9 +287,18 @@ def _token_logps_chunked(model, batch, attention, targets) -> torch.Tensor:
     Falls back to the single-pass computation for models without the usual
     ``.model`` / ``.lm_head`` layout. Values are identical up to float order.
     """
-    base = getattr(model, "model", None)
-    head = getattr(model, "lm_head", None)
-    if base is None or head is None or LOGIT_CHUNK_TOKENS <= 0:
+    # An unmerged PeftModel forwards ``.model`` to the wrapped *causal LM*, whose
+    # output has ``.logits`` but no ``.last_hidden_state``; unwrap it first so
+    # ``base`` is the bare transformer (LoRA layers stay injected and active).
+    core = model.get_base_model() if hasattr(model, "get_base_model") else model
+    base = getattr(core, "model", None)
+    head = getattr(core, "lm_head", None)
+    if (
+        base is None
+        or head is None
+        or getattr(base, "lm_head", None) is not None
+        or LOGIT_CHUNK_TOKENS <= 0
+    ):
         logits = model(batch, attention_mask=attention).logits[:, :-1].float()
         return logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1) - logits.logsumexp(dim=-1)
     hidden = base(input_ids=batch, attention_mask=attention).last_hidden_state[:, :-1]
