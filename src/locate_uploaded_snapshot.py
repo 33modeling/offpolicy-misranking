@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from model_matrix import PINNED_OFFICIAL_FILES, _load_specs
@@ -65,6 +66,14 @@ def search_roots(models_dir: Path) -> list[Path]:
     return unique
 
 
+def _has_weights(directory: Path) -> bool:
+    return any(
+        path.stat().st_size > 1_000_000
+        for path in directory.glob("*.safetensors")
+        if path.is_file()
+    )
+
+
 def _type_matches(config_path: Path, spec: dict) -> bool:
     try:
         document = json.loads(config_path.read_text(encoding="utf-8"))
@@ -84,7 +93,13 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
         return (path.resolve() if (path / "config.json").is_file() else None), [path]
     standard = models_dir / spec["local_directory"]
     if (standard / "config.json").is_file():
-        return standard, [standard]
+        if _has_weights(standard):
+            return standard, [standard]
+        # A weightless pinned directory (left by the old prepare that downloaded
+        # only config/tokenizer/index) must not shadow the real upload next to it.
+        stale = standard.with_name(f".stale-{standard.name}-{int(time.time())}")
+        standard.rename(stale)
+        print(f"[locate] {standard} had no weights; moved aside to {stale.name}", file=sys.stderr)
     scanned: list[Path] = []
     by_type: list[Path] = []
     for root in search_roots(models_dir):
@@ -94,7 +109,7 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
                 if directory in scanned:
                     continue
                 scanned.append(directory)
-                if _type_matches(config_path, spec):
+                if _type_matches(config_path, spec) and _has_weights(directory):
                     by_type.append(directory)
     if len(by_type) == 1:
         return by_type[0], scanned

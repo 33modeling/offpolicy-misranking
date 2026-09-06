@@ -97,3 +97,17 @@ def test_index_is_rebuilt_from_actual_shard_headers(tmp_path: Path) -> None:
                                    "lm_head.weight": "part-b.safetensors"}
     assert (d / "model.safetensors.index.json.orig").exists()
     assert ensure_index(d) == []  # consistent now: untouched
+
+
+def test_weightless_pinned_dir_does_not_shadow_the_real_upload(tmp_path: Path) -> None:
+    models = tmp_path / "models"
+    fake_upload(models / "Qwen3.5-9B", "model.safetensors")
+    for other in ("Qwen3.5-2B", "Qwen3.5-4B", "Qwen3.6-27B", "Qwen3.8-27B-BF16"):
+        fake_upload(models / other, "model")
+    pinned = models / SPEC["local_directory"]
+    pinned.mkdir()
+    (pinned / "config.json").write_text('{"model_type": "qwen3_5"}')  # old prepare: no weights
+    found, _ = discover(models, SPEC)
+    assert found == (models / "Qwen3.5-9B").resolve()
+    assert not pinned.exists()
+    assert list(models.glob(".stale-Qwen3.5-9B-pinned-*"))
