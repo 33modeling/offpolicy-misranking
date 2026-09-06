@@ -615,6 +615,22 @@ def classify(
             if telemetry.get("schema") != "offpolicy-pipeline-activity/v1":
                 return "UNKNOWN", "pipeline_telemetry_schema_invalid"
             if telemetry_state in {"output-progress", "cpu-active", "gpu-active"}:
+                # Supervisors pinned before 2026-09-06 counted the pipeline's own
+                # GPU keepalive as compute, so a hung point reports gpu-active for
+                # days while writing nothing. Telemetry "activity" without any
+                # artifact or log change for far longer than a stage takes is a
+                # hang, not computing.
+                artifact_age = age_seconds(after.latest_activity_ns)
+                hang_after = max(6 * 3600, 8 * stuck_seconds)
+                if (
+                    telemetry_state != "output-progress"
+                    and artifact_age is not None
+                    and artifact_age > hang_after
+                ):
+                    return (
+                        "HUNG",
+                        f"telemetry_{telemetry_state}_but_no_artifact_or_log_change_for_{artifact_age}s",
+                    )
                 return "COMPUTING", f"pipeline_telemetry_{telemetry_state}"
             if telemetry_state == "idle-suspected":
                 idle = telemetry.get("idle_seconds", "unknown")
@@ -882,6 +898,10 @@ def main() -> None:
             note = "! " + short_error(current_errors)
         elif recovery is not None and recovery.get("status") not in (None, "recovered"):
             note = f"recovery {recovery.get('status')} ({recovery.get('failure_kind', '?')}, batch {recovery.get('recovery_generation_batch', '?')})"
+        elif verdict == "HUNG":
+            note = f"no file written for {fmt_age(age_seconds(snapshot.latest_activity_ns))}; worker alive but stuck -> restart that worker"
+        elif verdict == "DEAD" and reason == "family_lock_released_but_owner_record_remains":
+            note = f"no lock seen from this node, nothing written for {fmt_age(age_seconds(snapshot.latest_activity_ns))}; if a node still prints logs for it, that worker is hung"
         elif verdict not in {"PROGRESSING", "COMPUTING", "ALIVE", "COMPLETE", "PENDING"}:
             note = reason.replace("_", " ")
         rows.append(
@@ -922,17 +942,23 @@ def main() -> None:
     stopped = verdict_counts.get("STOPPED", 0)
     pending = verdict_counts.get("PENDING", 0)
     retrying = verdict_counts.get("RETRYING", 0)
+    hung = verdict_counts.get("HUNG", 0)
     missing_workers = len(workers) < args.expected_workers
-    degraded = stuck + dead + stopped + idle + unknown > 0 or missing_workers
+    degraded = stuck + dead + stopped + idle + unknown + hung > 0 or missing_workers
     if contract_errors:
         overall = "INVALID"
         action = "fix_runtime_contract_before_continuing"
     elif complete == len(families):
         overall = "COMPLETE"
         action = "none"
+    elif hung and not (progressing or computing):
+        overall = "HUNG"
+        action = "Ctrl-C_that_worker__git_pull__relaunch_run_h100__partials_resume"
     elif progressing or computing or alive or idle:
         overall = "DEGRADED" if degraded else "RUNNING"
-        if stuck + dead + stopped > 0 or missing_workers:
+        if hung:
+            action = "Ctrl-C_the_HUNG_family_worker__git_pull__relaunch_run_h100"
+        elif stuck + dead + stopped > 0 or missing_workers:
             action = "inspect_STUCK_DEAD_families_and_missing_workers"
         elif idle:
             action = "wait_for_next_watchdog_confirmation"

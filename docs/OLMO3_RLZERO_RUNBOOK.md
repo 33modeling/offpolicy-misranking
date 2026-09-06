@@ -204,6 +204,11 @@ include `PROGRESSING`, `COMPUTING`, `ALIVE`, `IDLE`, `UNKNOWN`, `STUCK`, `DEAD`,
   during the short probe.
 - `IDLE`: one inactive watchdog window was observed; the watchdog will verify
   it again before terminating anything.
+- `HUNG`: telemetry claims CPU/GPU activity but no artifact or log has changed
+  for more than six hours (or eight stall windows). Supervisors launched before
+  2026-09-06 counted the pipeline's own GPU keepalive as compute, so a hung
+  point looked `COMPUTING` indefinitely. Ctrl-C that worker, `git pull`, and
+  relaunch `run h100`; the `.partial` rollouts and checkpoints resume.
 - `UNKNOWN`: a legacy or broken worker holds the lock but provides no fresh
   telemetry, or a CPU/GPU probe failed. This is not proof that the process is
   stuck, and a probe failure suppresses watchdog termination.
