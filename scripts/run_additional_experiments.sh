@@ -371,7 +371,9 @@ run_registered_matrix() {
     GRPO_GRADIENT_CHECKPOINTING=$("$PY" src/model_matrix.py --config "$config" runtime-field gradient_checkpointing)
     export OM_GEN_BATCH GRADIENT_MICRO_BATCH GRPO_LOGPROB_MICRO_BATCH GRPO_GRADIENT_CHECKPOINTING
   fi
-  export OM_STALL_MINUTES=10 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
+  # 2048-token rollouts at K=32 log once per prompt; a 10-minute stall window
+# would probe (not kill) too often. Hard stall stays at twice this value.
+export OM_STALL_MINUTES=30 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
 
   for model_key in "${model_keys[@]}"; do
     log_stage "snapshot-$model_key"

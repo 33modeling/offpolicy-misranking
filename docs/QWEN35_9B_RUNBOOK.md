@@ -36,8 +36,9 @@ bash scripts/run_qwen35_9b.sh run
 ```
 
 Two datasets (MATH-500 / MBPP), five seeds and four GRPO checkpoints
-(0/25/100/400) are preserved. Initial generation batch is 4; gradient and
-training log-prob microbatches are 1. This is a starting configuration, not a
+(0/25/100/400) are preserved. Generation batch is 32; gradient and training
+log-prob microbatches are 4 (Qwen3.5-9B has 8 full-attention layers with 4 KV
+heads, so the 2048-token KV cache is ~40 MB per sequence). This is a starting configuration, not a
 measured speed/memory guarantee. Changing it changes the contract hash.
 `check` uses a short prompt and does not qualify 2048-token or four-rank
 training. Full weights have not been trained on the local audit host.

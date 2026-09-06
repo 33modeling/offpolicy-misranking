@@ -1,22 +1,48 @@
 {
   "schema_version": 1,
-  "models": [{
-    "key": "qwen3.5-9b-posttrained",
-    "repository": "Qwen/Qwen3.5-9B",
-    "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
-    "local_directory": "Qwen3.5-9B-pinned",
-    "model_type": "qwen3_5",
-    "initialization": "posttrained",
-    "lora_targets": ["q_proj", "v_proj", "in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a"],
-    "prompt_format": "tokenizer_chat"
-  }],
+  "models": [
+    {
+      "key": "qwen3.5-9b-posttrained",
+      "repository": "Qwen/Qwen3.5-9B",
+      "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+      "local_directory": "Qwen3.5-9B-pinned",
+      "model_type": "qwen3_5",
+      "initialization": "posttrained",
+      "lora_targets": [
+        "q_proj",
+        "v_proj",
+        "in_proj_qkv",
+        "in_proj_z",
+        "in_proj_b",
+        "in_proj_a"
+      ],
+      "prompt_format": "tokenizer_chat"
+    }
+  ],
   "experiment": {
     "policy_method": "grpo",
-    "datasets": ["math500", "mbpp"],
-    "seeds": [0, 1, 2, 3, 4],
-    "drifts": [0, 25, 100, 400],
+    "datasets": [
+      "math500",
+      "mbpp"
+    ],
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "drifts": [
+      0,
+      25,
+      100,
+      400
+    ],
     "n_train": 512,
-    "n_train_by_dataset": {"math500": 400, "mbpp": 512},
+    "n_train_by_dataset": {
+      "math500": 400,
+      "mbpp": 512
+    },
     "n_val": 100,
     "behavior_k": 8,
     "fresh_k": 32,
@@ -34,16 +60,16 @@
     "skip_hybrid": true,
     "first_bootstrap": 10000,
     "runtime": {
-      "generation_batch": 4,
-      "gradient_micro_batch": 1,
-      "logprob_micro_batch": 1,
+      "generation_batch": 32,
+      "gradient_micro_batch": 4,
+      "logprob_micro_batch": 4,
       "gradient_checkpointing": true
     },
     "grpo": {
       "world_size": 4,
       "group_size": 8,
       "clip_epsilon": 0.2,
-      "learning_rate": 0.00001,
+      "learning_rate": 1e-05,
       "reference_kl_beta": 0.0,
       "epochs_per_batch": 1,
       "max_grad_norm": 1.0,
