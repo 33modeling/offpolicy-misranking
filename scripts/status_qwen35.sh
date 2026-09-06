@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# One screen, no GPU, no locks: where is the Qwen3.5-9B run right now?
+# One screen, no GPU, no locks: is the Qwen3.5-9B run fine, and if not, what to do?
 #   bash scripts/run_qwen35_9b.sh status
-# Reads the newest session log and the run/result directories only.
+# Line 2 (DECISION) is the answer. Everything is appended to a history file.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
-# Append every run to a history file so the timeline survives the terminal.
 HISTORY="$OM_WORK/console-logs/status-qwen35-history.log"
 if [ -z "${STATUS_HISTORY_ACTIVE:-}" ] && mkdir -p "$(dirname "$HISTORY")" 2>/dev/null; then
   printf '\n===== status %s host=%s =====\n' "$(date -u +%FT%TZ)" "$(hostname)" >> "$HISTORY"
@@ -13,54 +12,102 @@ if [ -z "${STATUS_HISTORY_ACTIVE:-}" ] && mkdir -p "$(dirname "$HISTORY")" 2>/de
   echo "history : $HISTORY"
   exit "${PIPESTATUS[0]}"
 fi
+
 RUN_ID=${RUN_ID:-qwen35-9b-posttrained-math-code-grpo-v1}
 RUNS="$OM_WORK/runs/$RUN_ID"
 RES="$OM_WORK/results/$RUN_ID"
 LOG=$(ls -t "$OM_WORK"/console-logs/additional-qwen35-*.log 2>/dev/null | head -1)
+NOW=$(date +%s)
 
-echo "code    : $(git rev-parse --short HEAD 2>/dev/null) $(git log -1 --format=%s 2>/dev/null | cut -c1-50)"
-echo "host    : $(hostname)  now=$(date -u +%FT%TZ)"
-if [ -z "$LOG" ]; then
-  echo "session : none (no console-logs/additional-qwen35-*.log under $OM_WORK)"
-else
-  echo "session : $LOG"
-  echo "started : $(grep -m1 '^\[launch\]' "$LOG" | grep -o 'utc=[^ ]*' | cut -c5-)"
-  echo "stage   : $(grep '^\[stage\]' "$LOG" | tail -1 | sed 's/^\[stage\] //')"
+fmt_age() {  # seconds -> 3m / 2h05m / 4d
+  local a=$1
+  if [ "$a" -lt 90 ]; then printf '%ss' "$a"
+  elif [ "$a" -lt 5400 ]; then printf '%sm' "$((a / 60))"
+  elif [ "$a" -lt 172800 ]; then printf '%sh%02dm' "$((a / 3600))" "$(((a % 3600) / 60))"
+  else printf '%sd' "$((a / 86400))"; fi
+}
+newest_epoch() {  # newest_epoch <dir> [find-args...] -> epoch of newest file (keepalive excluded)
+  local d=$1; shift
+  find "$d" -type f ! -name 'keepalive.log' ! -name '.pipeline-activity.json*' "$@" \
+    -printf '%T@\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1
+}
+
+# ---- gather facts ----
+launcher_alive=0; pgrep -f "run_additional_experiments.sh --run qwen35" >/dev/null 2>&1 && launcher_alive=1
+stage=""; exit_line=""; started=""; fails=0; log_age=""
+if [ -n "$LOG" ]; then
+  started=$(grep -m1 '^\[launch\]' "$LOG" | grep -o 'utc=[^ ]*' | cut -c5-)
+  stage=$(grep '^\[stage\]' "$LOG" | tail -1 | sed 's/^\[stage\] //')
   exit_line=$(grep '^\[exit\]' "$LOG" | tail -1)
-  if [ -n "$exit_line" ]; then
-    echo "exit    : $(printf '%s' "$exit_line" | grep -o 'rc=[^ ]* stage=[^ ]*')  (finished)"
-  elif pgrep -f "run_additional_experiments.sh --run qwen35" >/dev/null 2>&1; then
-    echo "exit    : running (launcher process alive)"
-  else
-    echo "exit    : NO EXIT RECORD and no launcher process -> killed or node lost"
-  fi
-  last_err=$(grep -E '^(\[[0-9: -]+\] )?\[(abort|recovery-abort|family-fail|regime-hard-stall|qualification-abort|signal-abort)\]|Traceback|Error' "$LOG" | tail -1 | cut -c1-160)
-  [ -z "$last_err" ] || echo "last err: $last_err"
+  fails=$(grep -c '^\[family-fail\]' "$LOG" 2>/dev/null || echo 0)
+  log_age=$((NOW - $(stat -c %Y "$LOG" 2>/dev/null || echo "$NOW")))
 fi
-
+total=0; done_n=0; write_age=""; current=""; current_stage=""; current_err=""
 if [ -d "$RUNS" ]; then
   total=$(find "$RUNS" -mindepth 2 -maxdepth 2 -type d -name '*-s*-d*' 2>/dev/null | wc -l)
   done_n=$(find "$RUNS" -mindepth 3 -maxdepth 3 -name DONE 2>/dev/null | wc -l)
-  echo "points  : $done_n done / $total started / 40 in matrix"
-  echo "--- in progress (newest first) ---"
-  find "$RUNS" -mindepth 4 -maxdepth 4 -path '*/logs/main.log' 2>/dev/null | xargs -r ls -t 2>/dev/null | head -6 | while read -r main; do
-    run=$(dirname "$(dirname "$main")")
-    [ -f "$run/DONE" ] && continue
-    printf '%-44s %s\n' "$(basename "$run")" \
-      "$(grep -F '[progress]' "$main" | tail -1 | sed 's/.*\[progress\] //' | cut -c1-90)"
-    g="$run/logs/grpo.log"
-    [ -f "$g" ] && grep -E '\] step [0-9]+/' "$g" | tail -1 | sed 's/^/    /' | cut -c1-140
-    last=$(grep -nE '✘|\[abort\]|cuda-recovery|oom-backoff' "$main" | tail -1)
-    if [ -n "$last" ]; then
-      # The failing stage line, then the error excerpt run_point copied after it.
-      n=${last%%:*}
-      sed -n "${n},$((n + 8))p" "$main" | grep -v '^\s*$' | cut -c1-160 | sed 's/^/    ! /'
-    fi
-  done
-  fails=$(grep -c '^\[family-fail\]' "$LOG" 2>/dev/null || echo 0)
-  [ "$fails" -eq 0 ] || echo "family failures in this session: $fails  (matrix retries by itself; fix the cause above first)"
-  [ -d "$RES" ] && echo "results : $RES ($(ls "$RES" 2>/dev/null | wc -l) entries)"
-else
-  echo "points  : none started ($RUNS missing)"
+  newest=$(newest_epoch "$RUNS"); [ -z "$newest" ] || write_age=$((NOW - newest))
+  main=$(find "$RUNS" -mindepth 4 -maxdepth 4 -path '*/logs/main.log' 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
+  if [ -n "$main" ]; then
+    current=$(basename "$(dirname "$(dirname "$main")")")
+    current_stage=$(grep -F '[progress]' "$main" | tail -1 | sed 's/.*\[progress\] //' | cut -d' ' -f3- | cut -c1-60)
+    current_err=$(grep -E '✘|\[abort\]' "$main" | tail -1 | cut -c1-120)
+  fi
 fi
-[ -z "$LOG" ] || echo "follow  : tail -F $LOG"
+
+# ---- decide ----
+if [ -z "$LOG" ]; then
+  decision="NOT STARTED: no session log. Start: bash scripts/run_qwen35_9b.sh run"
+elif [ -n "$exit_line" ]; then
+  rc=$(printf '%s' "$exit_line" | grep -o 'rc=[0-9]*' | cut -d= -f2)
+  if [ "${rc:-1}" = 0 ]; then
+    decision="DONE: launcher finished rc=0 ($done_n/40 points). Nothing to do."
+  else
+    decision="ERROR: launcher exited rc=$rc at stage '$stage'. Read the ! lines below, fix, then run again (finished points and .partial rollouts resume)."
+  fi
+elif [ "$launcher_alive" -eq 0 ]; then
+  decision="ERROR: launcher is gone with no exit record (node lost or killed). Run again: bash scripts/run_qwen35_9b.sh run (finished work resumes)."
+elif [ "$total" -eq 0 ]; then
+  if [ "${log_age:-0}" -lt 1800 ]; then
+    decision="NO ERROR: preparing, stage '$stage' (log written $(fmt_age "$log_age") ago). Nothing to do."
+  else
+    decision="ERROR: stuck in stage '$stage' for $(fmt_age "$log_age") with no output. Ctrl-C and run again."
+  fi
+elif [ -n "$write_age" ] && [ "$write_age" -ge 10800 ]; then
+  decision="ERROR: alive but nothing written for $(fmt_age "$write_age") (last point $current, $current_stage). Hung. Ctrl-C, then run again (finished work resumes)."
+elif [ -n "$write_age" ] && [ "$write_age" -ge 2700 ]; then
+  decision="WARNING: nothing written for $(fmt_age "$write_age") at $current ($current_stage). A 2048-token rollout stage can be quiet this long. Check again in 30 min; if still quiet, treat as hung."
+elif [ "$fails" -gt 0 ] && [ "$done_n" -eq 0 ]; then
+  decision="WARNING: running, but $fails family failures so far and 0 points done. Read the ! lines; if the same error repeats on the next status, fix it before it burns GPU time."
+else
+  decision="NO ERROR. Running: $current $current_stage (written $(fmt_age "${write_age:-0}") ago), $done_n/40 points done. Nothing to do."
+fi
+
+# ---- print ----
+echo "Qwen3.5-9B GRPO   $(date -u +%FT%TZ)   code $(git rev-parse --short HEAD 2>/dev/null)   host $(hostname)"
+echo "DECISION $decision"
+if [ -n "$LOG" ]; then
+  echo "session  started $started   stage $stage   launcher $([ "$launcher_alive" -eq 1 ] && echo alive || echo not-running)"
+fi
+echo "points   $done_n done / $total started / 40 in matrix   family failures this session: $fails"
+if [ -d "$RUNS" ]; then
+  echo
+  echo " point                                         stage                         last write   note"
+  find "$RUNS" -mindepth 4 -maxdepth 4 -path '*/logs/main.log' 2>/dev/null | xargs -r ls -t 2>/dev/null | head -6 | while read -r m; do
+    run=$(dirname "$(dirname "$m")")
+    [ -f "$run/DONE" ] && continue
+    age=$(newest_epoch "$run"); [ -n "$age" ] && age=$(fmt_age $((NOW - age))) || age="-"
+    st=$(grep -F '[progress]' "$m" | tail -1 | sed 's/.*\[progress\] //' | cut -d' ' -f3- | cut -c1-28)
+    note=""
+    last=$(grep -nE '✘|\[abort\]|cuda-recovery|oom-backoff' "$m" | tail -1)
+    if [ -n "$last" ]; then
+      n=${last%%:*}
+      note="ERROR: $(sed -n "$((n)),$((n + 8))p" "$m" | grep -vE '^\s*$|^\[' | tail -1 | cut -c1-90)"
+    fi
+    printf ' %-45s %-29s %-12s %s\n' "$(basename "$run" | cut -c1-45)" "${st:-starting}" "$age" "$note"
+  done
+  [ -d "$RES" ] && echo "results  $RES ($(ls "$RES" 2>/dev/null | wc -l) entries)"
+fi
+echo
+echo " ERROR = you act   WARNING = check again in 30 min   NO ERROR = leave it     last write = time since that point wrote any file"
+[ -z "$LOG" ] || echo " log      $LOG"
