@@ -40,7 +40,7 @@ finish_launch_log() {
   if [ "$rc" -eq 0 ]; then
     printf '✔ %s %s 완료 (log: %s)\n' "$PROFILE" "${MODE#--}" "$SESSION_LOG"
   else
-    printf '✘ %s %s 실패 — stage=%s rc=%s\n' "$PROFILE" "${MODE#--}" "$LAUNCH_STAGE" "$rc"
+    printf '✘ %s %s 실패 — stage=%s rc=%s code=%s\n' "$PROFILE" "${MODE#--}" "$LAUNCH_STAGE" "$rc" "$(git rev-parse --short HEAD 2>/dev/null || printf '?')"
     failure_excerpt
   fi
   exit "$rc"
@@ -53,5 +53,5 @@ trap 'exit 143' TERM
 printf '[launch] utc=%s profile=%s mode=%s host=%s pid=%s git=%s log=%s\n' \
   "$(date -u +%FT%TZ)" "$PROFILE" "$MODE" "$(hostname)" "$$" \
   "$(git rev-parse HEAD 2>/dev/null || printf unknown)" "$SESSION_LOG"
-printf '▶ %s %s  (터미널엔 단계·성패·에러만; 전체 출력은 %s, ADDITIONAL_VERBOSE=1이면 전부)\n' \
-  "$PROFILE" "${MODE#--}" "$SESSION_LOG" >&"$LAUNCH_STDOUT"
+printf '▶ %s %s  code=%s  (터미널엔 단계·성패·에러만; 전체 출력은 %s)\n' \
+  "$PROFILE" "${MODE#--}" "$(git rev-parse --short HEAD 2>/dev/null || printf '?')" "$SESSION_LOG" >&"$LAUNCH_STDOUT"

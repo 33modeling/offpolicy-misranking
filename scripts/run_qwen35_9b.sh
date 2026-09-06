@@ -6,9 +6,10 @@ cd "$(dirname "$0")/.."
 # smoke) before the matrix, so there is no separate step to remember.
 MODE=${1:-run}
 case "$MODE" in
+  doctor) exec bash scripts/doctor_qwen35.sh ;;
   prepare|check|run)
-    [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run]"; exit 2; }
+    [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|doctor]"; exit 2; }
     exec bash scripts/run_additional_experiments.sh "--$MODE" qwen35
     ;;
-  *) echo "usage: bash scripts/run_qwen35_9b.sh [prepare|check|run]  (기본 run)"; exit 2 ;;
+  *) echo "usage: bash scripts/run_qwen35_9b.sh [prepare|check|run|doctor]  (기본 run)"; exit 2 ;;
 esac
