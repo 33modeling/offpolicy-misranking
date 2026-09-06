@@ -23,14 +23,18 @@ for fam in "$ROOT"/family-*; do
   [ -d "$fam" ] || continue
   name=$(basename "$fam" | sed 's/^family-//')
   done_n=0; gits=""
-  for d in 0 25 100 400; do
-    run="$fam/$TAG-s${name##*-s}-${name%%-s*}-d$d"
+  # Read the actual run directories instead of rebuilding their names.
+  for run in "$fam"/*-d[0-9]*; do
+    [ -d "$run" ] || continue
+    d=${run##*-d}
     [ -s "$run/DONE" ] && done_n=$((done_n + 1))
-    g=$(sed -n 's/.*"git": *"\([0-9a-f]\{7\}\).*/\1/p' "$run/run_config.json" 2>/dev/null | head -1)
-    [ -z "$g" ] || gits="$gits $d:$g"
+    g=$(python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("git","")[:7])
+except Exception: pass' "$run/run_config.json" 2>/dev/null)
+    [ -z "$g" ] || gits="$gits d$d:$g"
   done
   stamp=no; [ -s "$fam/.family-complete" ] && stamp=yes
-  err=$(grep -hoE 'torch\.OutOfMemoryError[^)]*|CUDA error[^)]*|RuntimeError[^)]*' "$fam"/*/logs/*.log 2>/dev/null | tail -1 | cut -c1-70)
+  err=$(grep -hoE 'torch\.OutOfMemoryError[^"]*|OutOfMemoryError[^"]*|CUDA error[^"]*|RuntimeError[^"]*' "$fam"/*/logs/*.log 2>/dev/null | tail -1 | cut -c1-70)
   printf '%-12s done=%s/4 stamp=%s code=%s %s\n' "$name" "$done_n" "$stamp" "${gits:- none}" "${err:+| $err}"
 done
 echo "--- workers (heartbeat age, seconds) ---"
@@ -42,5 +46,5 @@ for w in "$ROOT"/.workers/*.json; do
   printf '%-40s %ss %s\n' "$(basename "$w" .json)" "$age" "${state:-?}"
 done
 echo "--- oom count per family (all logs) ---"
-grep -rlc "OutOfMemoryError" "$ROOT"/family-*/*/logs/*.log 2>/dev/null | sed "s|$ROOT/family-||" | cut -d/ -f1 | sort | uniq -c | sed 's/^/  /' || echo "  none"
+grep -rlE "OutOfMemoryError|out of memory" "$ROOT"/family-*/*/logs/*.log 2>/dev/null | sed "s|$ROOT/family-||" | cut -d/ -f1 | sort | uniq -c | sed 's/^/  /' || echo "  none"
 echo "===== END ====="
