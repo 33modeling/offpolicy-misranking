@@ -305,7 +305,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             check=False,
         )
         assert repaired.returncode == 0, repaired.stdout + repaired.stderr
-        assert "telemetry 조회 실패" in repaired.stdout
+        assert "telemetry probe failed" in repaired.stdout
         assert "[regime-hard-stall]" not in repaired.stdout
         repaired_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
         repaired_claims = [row.split("|", 1)[1] for row in repaired_rows]
@@ -331,7 +331,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             check=False,
         )
         assert active.returncode == 0, active.stdout + active.stderr
-        assert "계산 활동 확인 (GPU 99%" in active.stdout
+        assert "compute is real (GPU 99%" in active.stdout
         assert "[regime-hard-stall]" not in active.stdout
         active_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
         assert [row.split("|", 1)[1] for row in active_rows[len(repaired_rows) :]] == [

@@ -196,6 +196,9 @@ def file_metadata(root: Path) -> dict[str, tuple[int, int]]:
         for name in names:
             if name == ".pipeline-activity.json" or ".pipeline-activity.json.tmp." in name:
                 continue
+            if name == "keepalive.log":
+                # Written by the point's own GPU keepalive; never evidence of progress.
+                continue
             path = Path(base) / name
             try:
                 stat = path.stat()

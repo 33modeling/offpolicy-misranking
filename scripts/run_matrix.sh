@@ -465,6 +465,18 @@ probe_exclude_pid() {  # probe_exclude_pid <run>
   case "$pid" in ''|*[!0-9]*) printf '%s' 0 ;; *) printf '%s' "$pid" ;; esac
 }
 
+last_real_write_age() {  # last_real_write_age <run> -> "3m" / "2h05m" / "4d" / "never"
+  local newest now age
+  newest=$(find "$1" -type f ! -name 'keepalive.log' ! -name '.pipeline-activity.json*' \
+    -printf '%T@\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1)
+  [ -n "$newest" ] || { printf 'never'; return; }
+  now=$(date +%s); age=$((now - newest))
+  if [ "$age" -lt 90 ]; then printf '%ss' "$age"
+  elif [ "$age" -lt 5400 ]; then printf '%sm' "$((age / 60))"
+  elif [ "$age" -lt 172800 ]; then printf '%sh%02dm' "$((age / 3600))" "$(((age % 3600) / 60))"
+  else printf '%sd' "$((age / 86400))"; fi
+}
+
 group_cpu_seconds() {  # group_cpu_seconds <pgid> [exclude-pid]
   local rows
   rows=$(ps -eo pid=,pgid=,cputimes= 2>/dev/null) || return 1
@@ -620,15 +632,19 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
           progress_offset=$new_size
         fi
       fi
+      # keepalive.log is written by the point's own GPU keepalive every few
+      # seconds. Counting it as pipeline output reset the stall clock forever
+      # and streamed "[regime-detail keepalive]" lines that looked like work.
       candidates=("$attempt_log")
       for lf in "$run"/logs/*.log; do
+        case "$lf" in */keepalive.log) continue ;; esac
         [ -f "$lf" ] && candidates+=("$lf")
       done
       lf=$(ls -t -- "${candidates[@]}" 2>/dev/null | head -1)
       line=$(tail -n 1 "$lf" 2>/dev/null | cut -c1-160)
       sig=$(stat -c '%n:%y:%s' "$lf" 2>/dev/null || true)
       if [ -n "$sig" ] && [ "$sig" != "$prev" ]; then
-        [ -n "$line" ] && echo "[regime-detail·$(basename "$lf" .log)] $line"
+        [ -n "$line" ] && echo "[regime-detail $(basename "$lf" .log)] $line"
         prev=$sig
         elapsed=0
         idle_elapsed=0
@@ -684,9 +700,10 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
         else
           cpu_text=unavailable
         fi
+        last_write=$(last_real_write_age "$run")
         if { [ "$gpu_probe_ok" -eq 1 ] && [ "$gpu_peak" -gt 0 ]; } \
             || [ "$cpu_delta" -gt 2 ]; then
-          message="[regime-watchdog] 로그 ${STALL_SECONDS}초 무변화지만 계산 활동 확인 (GPU ${gpu_text}, CPU ${cpu_text}) — 계속 실행"
+          message="[regime-watchdog] $(basename "$run"): no new log line for ${STALL_SECONDS}s, last file written ${last_write} ago, but compute is real (GPU ${gpu_text}, CPU ${cpu_text}) -> RUNNING"
           echo "$message"
           idle_elapsed=0
           telemetry_failed=0
@@ -697,7 +714,7 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
           write_pipeline_activity "$run" "$state" "$runner_pid" \
             "$cpu_delta" "$gpu_peak" 0
         elif [ "$gpu_probe_ok" -ne 1 ] || [ "$cpu_delta" -lt 0 ]; then
-          message="[regime-watchdog] 로그 ${STALL_SECONDS}초 무변화, telemetry 조회 실패 (GPU ${gpu_text}, CPU ${cpu_text}) — 종료 판정 보류"
+          message="[regime-watchdog] $(basename "$run"): no new log line for ${STALL_SECONDS}s, last file written ${last_write} ago, telemetry probe failed (GPU ${gpu_text}, CPU ${cpu_text}) -> UNKNOWN, not killing"
           echo "$message"
           idle_elapsed=0
           telemetry_failed=1
@@ -708,7 +725,7 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
           telemetry_failed=0
           idle_elapsed=$((idle_elapsed + elapsed))
           if [ "$idle_elapsed" -ge "$HARD_STALL_SECONDS" ]; then
-            message="[regime-hard-stall] 로그·GPU·CPU ${idle_elapsed}초 연속 정지 — process group 종료 후 .partial 재개"
+            message="[regime-hard-stall] $(basename "$run"): NO PROGRESS for ${idle_elapsed}s (no log, no GPU, no CPU; last file written ${last_write} ago) -> killing the point, .partial resumes"
             echo "$message"
             printf '%s\n' "$message" >> "$attempt_log"
             state=terminating-idle
@@ -717,7 +734,7 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
             terminate_process_group "$runner_pid"
             break
           fi
-          message="[regime-watchdog] 로그·GPU·CPU ${elapsed}초 정지 의심 (${idle_elapsed}/${HARD_STALL_SECONDS}s) — 한 번 더 확인"
+          message="[regime-watchdog] $(basename "$run"): NO PROGRESS for ${elapsed}s (no log, no GPU, no CPU; last file written ${last_write} ago) -> idle ${idle_elapsed}/${HARD_STALL_SECONDS}s, restart at ${HARD_STALL_SECONDS}s"
           echo "$message"
           write_pipeline_activity "$run" idle-suspected "$runner_pid" \
             "$cpu_delta" "$gpu_peak" "$idle_elapsed"
