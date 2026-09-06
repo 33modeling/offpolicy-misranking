@@ -74,17 +74,39 @@ def _has_weights(directory: Path) -> bool:
     )
 
 
+SKIP_DIRS = {".downloads", ".quarantine", ".cache", ".git", "quarantine"}
+
+
+def _iter_files(root: Path, name_or_suffix: str, limit: int = 40000):
+    """Walk like the dataset loader does: any depth, skipping bookkeeping dirs."""
+    import os as _os
+
+    seen = 0
+    for current, directories, files in _os.walk(root, followlinks=True):
+        directories[:] = [
+            d for d in directories
+            if d not in SKIP_DIRS and not d.startswith(".stale-")
+        ]
+        for filename in files:
+            seen += 1
+            if seen > limit:
+                return
+            if filename == name_or_suffix or (
+                name_or_suffix.startswith(".") and filename.endswith(name_or_suffix)
+            ):
+                yield Path(current) / filename
+
+
 def _weights_dir(directory: Path) -> Path:
-    """Where the shards really are: the directory itself, or a subdirectory."""
+    """Where the shards really are: this directory, or anywhere below it."""
     if _has_weights(directory):
         return directory
-    for pattern in ("*/*.safetensors", "*/*/*.safetensors"):
-        found = sorted(
-            path for path in directory.glob(pattern)
-            if path.is_file() and path.stat().st_size > 1_000_000
-        )
-        if found:
-            return found[0].parent
+    for path in _iter_files(directory, ".safetensors"):
+        try:
+            if path.is_file() and path.stat().st_size > 1_000_000:
+                return path.parent
+        except OSError:
+            continue
     return directory
 
 
@@ -120,16 +142,17 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
     scanned: list[Path] = []
     by_type: list[Path] = []
     for root in search_roots(models_dir):
-        for pattern in ("config.json", "*/config.json", "*/*/config.json", "*/*/*/config.json"):
-            for config_path in sorted(root.glob(pattern)):
-                directory = config_path.parent.resolve()
-                if directory in scanned:
-                    continue
-                scanned.append(directory)
-                if _type_matches(config_path, spec) and (
-                    _has_weights(directory) or _weights_dir(directory) != directory
-                ):
-                    by_type.append(directory)
+        # Same strategy the dataset loader uses for uploaded corpora: walk the
+        # whole tree instead of assuming a folder layout.
+        for config_path in sorted(_iter_files(root, "config.json")):
+            directory = config_path.parent.resolve()
+            if directory in scanned:
+                continue
+            scanned.append(directory)
+            if _type_matches(config_path, spec) and (
+                _has_weights(directory) or _weights_dir(directory) != directory
+            ):
+                by_type.append(directory)
     if len(by_type) == 1:
         return by_type[0], scanned
     if not by_type:
@@ -137,7 +160,9 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
     # Several Qwen3.x uploads share model_type=qwen3_5 (9B and 27B). The folder is
     # almost always named after the repository ("Qwen3.5-9B", "Qwen3.5-9B-pinned").
     base = spec["repository"].split("/")[-1].lower()
-    named = [d for d in by_type if base in d.name.lower()]
+    named = [d for d in by_type if base in str(d).lower()]
+    if len(named) > 1:
+        named = sorted(named, key=lambda d: (len(d.parts), str(d)))[:1]
     if len(named) == 1:
         return named[0], scanned
     exact = [d for d in (named or by_type) if _config_matches(d / "config.json", spec, official)]

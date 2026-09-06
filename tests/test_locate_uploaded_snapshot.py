@@ -111,3 +111,13 @@ def test_weightless_pinned_dir_does_not_shadow_the_real_upload(tmp_path: Path) -
     assert found == (models / "Qwen3.5-9B").resolve()
     assert not pinned.exists()
     assert list(models.glob(".stale-Qwen3.5-9B-pinned-*"))
+
+
+def test_snapshot_nested_at_any_depth_is_found(tmp_path: Path) -> None:
+    models = tmp_path / "models"
+    deep = models / "uploads/2026-09/Qwen3.5-9B/snapshots/abc123"
+    fake_upload(deep, "model")
+    (models / ".downloads").mkdir(parents=True)
+    fake_upload(models / ".downloads/Qwen3.5-9B", "model")  # must be ignored
+    found, _ = discover(models, SPEC)
+    assert found == deep.resolve()
