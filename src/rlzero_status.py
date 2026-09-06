@@ -1109,8 +1109,19 @@ def main() -> None:
     auto = [r["family"].key for r in rows if r["verdict"] in {"STUCK", "RETRYING"}]
     check = [r["family"].key for r in rows if r["verdict"] == "UNKNOWN"]
     errored = [r["family"].key for r in rows if r["current_error_count"]]
+    dead_workers = []
+    workers_dir = args.root / ".workers"
+    if workers_dir.is_dir():
+        for entry in sorted(workers_dir.glob("*.json")):
+            rec = read_owner(entry)
+            beat = record_age_seconds(rec, "heartbeat_at_ns", 1_000_000_000)
+            if rec.get("state") == "launcher-missing" or (beat is not None and beat > args.heartbeat_stale_seconds):
+                dead_workers.append(f"{rec.get('worker', entry.stem)} on {rec.get('host', '?')} (last seen {fmt_age(beat) if beat is not None else '?'} ago)")
     if contract_errors:
         decision = "ERROR: config/contract mismatch. Do not restart; fix the ! contract lines first."
+    elif dead_workers and len(workers) < args.expected_workers:
+        decision = (f"WORKER DEAD: {'; '.join(dead_workers)}. Progress continues on {len(workers)} worker(s). "
+                    "Start a worker on that host again: bash scripts/run_olmo3_rlzero.sh run h100")
     elif complete == len(families):
         decision = "DONE: every family is complete."
     elif needs_you and workers:
@@ -1200,6 +1211,12 @@ def main() -> None:
     if waiting:
         print(f" waiting     {'.' * len(args.drifts):<{len(args.drifts) + 1}} {', '.join(waiting)}")
     print()
+    alerts = args.root / "logs" / "ALERTS.log"
+    if alerts.is_file() and alerts.stat().st_size:
+        print()
+        print(" recent alerts (logs/ALERTS.log):")
+        for line in tail_lines(alerts, 3):
+            print(f"  {line[:150]}")
     if worker_rows:
         print()
         print(" worker            log age  claims          last log line")

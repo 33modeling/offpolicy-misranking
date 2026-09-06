@@ -445,11 +445,15 @@ if [ "$MODE" = run ]; then
   start_worker_heartbeat() {
     mkdir -p "$ROOT/.workers"
     rm -f -- "$WORKER_HEARTBEAT_PATH"
+    # The heartbeat also watches the other workers and prints
+    # "[WORKER DEAD] ..." here (terminal + $LOG) and to $ROOT/logs/ALERTS.log.
     "$PY" "$SUPERVISOR_RUNTIME_REPO/src/rlzero_heartbeat.py" \
       --path "$WORKER_HEARTBEAT_PATH" --worker "$WORKER_ID" \
       --host "$HOST_TAG" --launcher-pid "$$" \
       --interval-seconds "$WORKER_HEARTBEAT_SECONDS" \
-      >/dev/null 2>&1 &
+      --peer-stale-seconds "${OM_RLZERO_PEER_STALE_SECONDS:-300}" \
+      --alerts-log "$ROOT/logs/ALERTS.log" \
+      2>/dev/null | tee -a "$LOG" &
     WORKER_HEARTBEAT_PID=$!
     for _ in $(seq 1 50); do
       [ -s "$WORKER_HEARTBEAT_PATH" ] && return 0
