@@ -140,6 +140,15 @@ Runs `regime_map.py` on that family's four completed points only, prints the
 regime report, and writes it under `$OM_WORK/readouts/family-<dataset>-s<seed>-<git>-boot<N>/`.
 It is a preview: the registered result is the full 40-point collection.
 
+## Failure loops
+
+A point that dies of the same error on every attempt is not retried forever.
+After `OM_RLZERO_MAX_FAMILY_FAILURES` (default 4) consecutive failures the
+launcher writes `.families/<dataset>-s<seed>.loop` with the last error, prints
+`[family-loop] ...`, and every worker skips that family. `status` shows the row
+as `LOOPING` with the error. After fixing the cause, relaunch with
+`OM_RLZERO_CLEAR_LOOPS=1 bash scripts/run_olmo3_rlzero.sh run h100`.
+
 ## Dead-worker alerts
 
 Every worker's heartbeat process watches the other workers' heartbeat files

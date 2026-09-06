@@ -492,10 +492,19 @@ def _response_logps_batch(
         batch[row, :length] = sequence.to(device)
         attention[row, :length] = 1
 
-    logits = model(batch, attention_mask=attention).logits[:, :-1].float()
+    # The DDP/PEFT forward must stay intact (reducer hooks), so the bf16 logits
+    # are materialised once; the fp32 copy, gather and logsumexp are done per
+    # chunk of positions so their fp32 temporaries never cover the whole
+    # sequence (Qwen3.5: 248k vocab x 2048 x 4 x fp32 = 8 GB per temporary).
+    logits = model(batch, attention_mask=attention).logits[:, :-1]
     targets = batch[:, 1:]
-    token_logps = logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
-    token_logps = token_logps - logits.logsumexp(dim=-1)
+    chunk = int(os.environ.get("OM_LOGIT_CHUNK_TOKENS", "512")) or logits.shape[1]
+    pieces = []
+    for start in range(0, logits.shape[1], chunk):
+        piece = logits[:, start : start + chunk].float()
+        tgt = targets[:, start : start + chunk]
+        pieces.append(piece.gather(-1, tgt.unsqueeze(-1)).squeeze(-1) - piece.logsumexp(dim=-1))
+    token_logps = torch.cat(pieces, dim=1)
     return [
         token_logps[row, start - 1 : length - 1]
         for row, (start, length) in enumerate(zip(response_starts, lengths))

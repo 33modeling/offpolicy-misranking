@@ -810,6 +810,40 @@ cleanup_owner() {
   ACTIVE_OWNER=""
 }
 
+# ---- failure-loop guard -------------------------------------------------------
+# A point that dies of the same error every attempt (e.g. OOM in a stage) used to
+# be retried forever: die, restart, die, restart, for days. After
+# OM_RLZERO_MAX_FAMILY_FAILURES consecutive failures the family is marked
+# `.families/<dataset>-s<seed>.loop` (shared), every worker skips it, status shows
+# LOOPING with the error, and the operator decides. Clear with
+# OM_RLZERO_CLEAR_LOOPS=1 on the next launch after fixing the cause.
+MAX_FAMILY_FAILURES="${OM_RLZERO_MAX_FAMILY_FAILURES:-4}"
+declare -A FAMILY_FAILURES=()
+loop_marker() { printf '%s/%s-s%s.loop\n' "$QUEUE" "$1" "$2"; }
+if [ "${OM_RLZERO_CLEAR_LOOPS:-0}" = 1 ]; then
+  for marker in "$QUEUE"/*.loop; do
+    [ -e "$marker" ] || continue
+    rm -f -- "$marker" && echo "[queue] cleared loop marker $(basename "$marker")"
+  done
+fi
+family_looping() {  # family_looping <dataset> <seed>
+  [ -s "$(loop_marker "$1" "$2")" ]
+}
+note_family_failure() {  # note_family_failure <dataset> <seed> <rc>
+  local key="$1-s$2" n last_error run
+  n=$(( ${FAMILY_FAILURES[$key]:-0} + 1 ))
+  FAMILY_FAILURES[$key]=$n
+  [ "$n" -ge "$MAX_FAMILY_FAILURES" ] || return 0
+  last_error=$(grep -hE 'OutOfMemoryError|CUDA error|RuntimeError|Error:|\[abort\]' \
+    "$(family_root "$1" "$2")"/*/logs/*.log 2>/dev/null | tail -1 | cut -c1-200)
+  {
+    echo "family=$1/s$2 worker=$WORKER_ID host=$HOST_TAG consecutive_failures=$n last_rc=$3"
+    echo "last_error=${last_error:-none captured}"
+    echo "marked_at_utc=$(date -u +%FT%TZ)"
+  } > "$(loop_marker "$1" "$2")"
+  echo "[family-loop] $1/s$2 failed $n times in a row (last: ${last_error:-no error line captured}). Not retrying it any more on any worker. Fix the cause, then relaunch with OM_RLZERO_CLEAR_LOOPS=1." | tee -a "$LOG"
+}
+
 run_family() {
   local dataset=$1 seed=$2 root result format owner rc=1 attempt
   root=$(family_root "$dataset" "$seed")
@@ -880,6 +914,10 @@ while :; do
     for dataset in "${DATASETS[@]}"; do
       family_selected "$dataset" "$seed" || continue
       family_complete "$dataset" "$seed" && continue
+      if family_looping "$dataset" "$seed"; then
+        remaining=$((remaining + 1))
+        continue
+      fi
       remaining=$((remaining + 1))
       (
         flock -n 9 || exit 75
@@ -888,7 +926,8 @@ while :; do
       ) 9>"$QUEUE/$dataset-s$seed.lock"
       rc=$?
       if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
-        echo "[family-retry] $dataset/s$seed rc=$rc; allocation retained, artifacts preserved, automatic retry scheduled" \
+        note_family_failure "$dataset" "$seed" "$rc"
+        echo "[family-retry] $dataset/s$seed rc=$rc (consecutive failures: ${FAMILY_FAILURES[$dataset-s$seed]:-1}/$MAX_FAMILY_FAILURES); allocation retained, artifacts preserved, automatic retry scheduled" \
           | tee -a "$LOG"
         stop_supervisor_keepalive
         cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
@@ -904,6 +943,7 @@ while :; do
         retrying=$((retrying + 1))
         continue
       fi
+      FAMILY_FAILURES[$dataset-s$seed]=0
       sleep "$CLAIM_YIELD_SECONDS"
     done
   done

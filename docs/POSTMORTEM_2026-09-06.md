@@ -54,6 +54,20 @@ catch or correct.
 - Status tool: unreadable dump, no decision line, non-ASCII markers the phone
   terminal cannot copy, Korean lines dropped by the cluster terminal.
 
+9. **Die-restart-die loops went unreported.** A point failing with the same
+   error every attempt (OOM in validation-gradients on mbpp/s0) was retried by
+   the supervisor indefinitely: `try 1/3 .. 3/3`, `[family-retry]`, 60 s, again.
+   Nothing counted the repetitions and status showed only "AUTO: retry
+   scheduled". Fixed the same night: consecutive failures are counted, after
+   `OM_RLZERO_MAX_FAMILY_FAILURES` (4) the family is marked `.loop`, every
+   worker skips it, status says LOOPING with the last error, and the launcher
+   prints `[family-loop] ... Not retrying it any more`.
+10. **Full-vocab fp32 logits in every scoring/gradient pass** (`grads.py`,
+    `train_policy_grpo.py`): 100k-248k vocab x 2048 tokens x micro-batch 4 in
+    fp32, several copies. Chunked to 512 positions (values identical, gradients
+    equal to 5e-7). Applies to Qwen and to any new OLMo matrix; the running
+    OLMo matrix is pinned to its 09-01 generation code and does not get it.
+
 ## Still unknown
 
 - Why workers run275509 and run275511 died on 2026-09-02.

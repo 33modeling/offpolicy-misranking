@@ -174,6 +174,15 @@ def family_state(args: argparse.Namespace, family: Family) -> tuple[str, dict]:
                 return "complete", {}
         except OSError:
             pass
+    loop_marker = args.root / ".families" / f"{family.file_key}.loop"
+    if loop_marker.is_file() and loop_marker.stat().st_size:
+        try:
+            info = dict(
+                line.split("=", 1) for line in loop_marker.read_text(encoding="utf-8").splitlines() if "=" in line
+            )
+        except OSError:
+            info = {}
+        return "looping", {"loop": info}
     if owner_file.is_file() and owner_file.stat().st_size:
         owner = read_owner(owner_file)
         return (
@@ -597,6 +606,8 @@ def classify(
         if before.state != "complete":
             return "COMPLETE", "family_completed_during_probe"
         return "COMPLETE", "all_registered_points_complete"
+    if after.state == "looping":
+        return "LOOPING", "same_failure_repeated_until_the_supervisor_stopped_retrying"
     if after.state == "stale-owner":
         # flock held on another node is invisible over NFS, so from here the
         # family looks unowned. Fresh watchdog telemetry, a fresh worker
@@ -956,7 +967,11 @@ def main() -> None:
         recovery = last_json(run / "rollout_recovery.jsonl") if run is not None and run.is_dir() else None
         write_age = fmt_age(age_seconds(snapshot.artifact_activity_ns))
         err_text = short_error(current_errors, 60) if current_errors else ""
-        if verdict == "HUNG":
+        if verdict == "LOOPING":
+            info = snapshot.owner.get("loop", {}) if isinstance(snapshot.owner, dict) else {}
+            note = (f"NEEDS YOU: failed {info.get('consecutive_failures', '?')} times in a row, retries stopped. "
+                    f"last error: {str(info.get('last_error', ''))[:110]} -> fix, then relaunch with OM_RLZERO_CLEAR_LOOPS=1")
+        elif verdict == "HUNG":
             note = f"NEEDS YOU: alive but nothing written for {write_age} -> Ctrl-C this worker, git pull, run h100"
             if err_text:
                 note += f" | last error: {err_text}"
@@ -1119,8 +1134,9 @@ def main() -> None:
     worker_ids = ", ".join(sorted(workers)) or "none"
     needs_you = [
         r["family"].key for r in rows
-        if r["verdict"] == "HUNG" or (r["verdict"] in {"DEAD", "STOPPED"} and not workers)
+        if r["verdict"] in {"HUNG", "LOOPING"} or (r["verdict"] in {"DEAD", "STOPPED"} and not workers)
     ]
+    looping = [r["family"].key for r in rows if r["verdict"] == "LOOPING"]
     queued = [r["family"].key for r in rows if r["verdict"] in {"DEAD", "STOPPED"} and workers]
     idle_workers = {w["worker"] for w in worker_rows if w["state"] == "AVAILABLE"}
     auto = [r["family"].key for r in rows if r["verdict"] in {"STUCK", "RETRYING"}]
@@ -1143,6 +1159,9 @@ def main() -> None:
                     "Start a worker on that host again: bash scripts/run_olmo3_rlzero.sh run h100")
     elif complete == len(families):
         decision = "DONE: every family is complete."
+    elif looping:
+        decision = (f"ERROR: {', '.join(looping)} keep(s) failing with the same error; retries were stopped. "
+                    "Read the note on that row, fix the cause, then relaunch with OM_RLZERO_CLEAR_LOOPS=1.")
     elif needs_you and workers:
         decision = (f"ERROR: {len(needs_you)} family(ies) hung (alive, writing nothing): {', '.join(needs_you)}. "
                     "RESTART NEEDED on the node showing that family: Ctrl-C, git pull --ff-only, run h100 (finished work resumes).")
@@ -1179,7 +1198,7 @@ def main() -> None:
             print(f"  ! contract: {issue}")
     print()
 
-    problem = {"HUNG", "STUCK", "DEAD", "STOPPED"}
+    problem = {"HUNG", "STUCK", "DEAD", "STOPPED", "LOOPING"}
     moving = {"PROGRESSING", "COMPUTING", "ALIVE", "IDLE", "RETRYING"}
 
     def glyphs(row: dict) -> str:
