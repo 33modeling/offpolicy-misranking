@@ -42,9 +42,15 @@ if [ -d "$RUNS" ]; then
       "$(grep -F '[progress]' "$main" | tail -1 | sed 's/.*\[progress\] //' | cut -c1-90)"
     g="$run/logs/grpo.log"
     [ -f "$g" ] && grep -E '\] step [0-9]+/' "$g" | tail -1 | sed 's/^/    /' | cut -c1-140
-    last=$(grep -E '✘|\[abort\]|cuda-recovery|oom-backoff' "$main" | tail -1 | cut -c1-140)
-    [ -z "$last" ] || echo "    ! $last"
+    last=$(grep -nE '✘|\[abort\]|cuda-recovery|oom-backoff' "$main" | tail -1)
+    if [ -n "$last" ]; then
+      # The failing stage line, then the error excerpt run_point copied after it.
+      n=${last%%:*}
+      sed -n "${n},$((n + 8))p" "$main" | grep -v '^\s*$' | cut -c1-160 | sed 's/^/    ! /'
+    fi
   done
+  fails=$(grep -c '^\[family-fail\]' "$LOG" 2>/dev/null || echo 0)
+  [ "$fails" -eq 0 ] || echo "family failures in this session: $fails  (matrix retries by itself; fix the cause above first)"
   [ -d "$RES" ] && echo "results : $RES ($(ls "$RES" 2>/dev/null | wc -l) entries)"
 else
   echo "points  : none started ($RUNS missing)"
