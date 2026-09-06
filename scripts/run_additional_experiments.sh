@@ -59,6 +59,17 @@ for config in "${MATRIX_CONFIGS[@]}"; do
   [ -s "$config" ] || { echo "[abort] additional config missing: $config"; exit 1; }
 done
 
+# OM_MATH_VERIFIER=math_verify is exported below, but the verifier is a vendored
+# wheel bundle, not a venv package. Without this bootstrap every non-exact math
+# reward raises data._math_reward's RuntimeError ("math-verify is required")
+# during qualification, smoke and the matrix. Same offline bootstrap as
+# run_olmo3_rlzero.sh; no pip, no network.
+MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps") || exit 1
+export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}"
+"$PY" -c 'from math_verify import parse, verify; assert verify(parse(r"\frac{1}{2}"), parse("0.5"))' \
+  || { echo "[abort] bundled math verifier failed to import"; exit 1; }
+echo "[runtime] bundled math-verify ready: $MATH_VERIFY_PATH"
+
 clean_checkout() {
   local dirty
   dirty=$(git status --porcelain -- src scripts configs requirements.txt)
