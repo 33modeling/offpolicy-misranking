@@ -445,9 +445,10 @@ def test_status_default_is_one_screen_table(tmp_path: Path) -> None:
     (root / "logs").mkdir(parents=True)
     output = run_status(root, verbose=False)
     lines = output.splitlines()
-    assert lines[0].startswith("OLMo-3 RL-Zero  profile=h100")
-    assert lines[1].startswith("VERDICT NOT_STARTED")
-    assert any(line.startswith("math500/s0 ") and " PENDING " in line for line in lines)
+    assert lines[0].startswith("OLMo-3 RL-Zero h100")
+    assert lines[1].startswith("DECISION ")
+    assert lines[2].startswith("STATE   NOT STARTED")
+    assert any(line.startswith(" waiting") and "math500/s0" in line for line in lines)
     # the machine-readable verdict lines stay for scripts; the evidence dump does not
     assert "overall_verdict=NOT_STARTED" in output
     assert "== worker diagnostics ==" not in output

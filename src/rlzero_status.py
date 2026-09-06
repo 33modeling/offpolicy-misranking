@@ -746,6 +746,9 @@ def last_progress(run: Path) -> str:
     if len(fields) >= 2:
         fields = fields[1:]
     stage = re.sub(r"\s*\(.*?\)", "", fields[0]).strip() if fields else text
+    words = stage.split()
+    if len(words) >= 2 and re.fullmatch(r"\d+/\d+", words[0]):
+        stage = f"{words[0]} {words[1]}"
     elapsed = fields[-1] if len(fields) > 1 and fields[-1].startswith("+") else ""
     return f"{stage} {elapsed}".strip()
 
@@ -897,16 +900,35 @@ def main() -> None:
             stage = "not started" if not done_drifts else "next"
         note = ""
         recovery = last_json(run / "rollout_recovery.jsonl") if run is not None and run.is_dir() else None
-        if current_errors:
-            note = "! " + short_error(current_errors)
+        write_age = fmt_age(age_seconds(snapshot.latest_activity_ns))
+        err_text = short_error(current_errors, 60) if current_errors else ""
+        if verdict == "HUNG":
+            note = f"NEEDS YOU: alive but nothing written for {write_age} -> Ctrl-C this worker, git pull, run h100"
+            if err_text:
+                note += f" | last error: {err_text}"
+        elif verdict in {"DEAD", "STOPPED"}:
+            if workers:
+                note = f"QUEUED: no worker on it for {write_age}; the next free worker picks it up where it stopped"
+            else:
+                note = f"NEEDS YOU: no worker anywhere for {write_age} -> start one: run h100"
+            if err_text:
+                note += f" | last error: {err_text}"
+        elif verdict == "STUCK":
+            note = f"AUTO: confirmed idle for {write_age}; the watchdog kills and resumes the point by itself"
+        elif verdict == "RETRYING":
+            note = "AUTO: failed attempt, retry scheduled by the supervisor"
+            if err_text:
+                note += f" | error: {err_text}"
+        elif verdict == "UNKNOWN":
+            note = f"CHECK: {reason.replace('_', ' ')}"
+        elif current_errors:
+            note = f"ERROR in current attempt but still moving: {err_text}"
         elif recovery is not None and recovery.get("status") not in (None, "recovered"):
-            note = f"recovery {recovery.get('status')} ({recovery.get('failure_kind', '?')}, batch {recovery.get('recovery_generation_batch', '?')})"
-        elif verdict == "HUNG":
-            note = f"no file written for {fmt_age(age_seconds(snapshot.latest_activity_ns))}; worker alive but stuck -> restart that worker"
-        elif verdict == "DEAD" and reason == "family_lock_released_but_owner_record_remains":
-            note = f"no lock seen from this node, nothing written for {fmt_age(age_seconds(snapshot.latest_activity_ns))}; if a node still prints logs for it, that worker is hung"
-        elif verdict not in {"PROGRESSING", "COMPUTING", "ALIVE", "COMPLETE", "PENDING"}:
-            note = reason.replace("_", " ")
+            note = f"AUTO: recovery {recovery.get('status')} ({recovery.get('failure_kind', '?')}, batch {recovery.get('recovery_generation_batch', '?')})"
+        elif errors and verdict in {"PROGRESSING", "COMPUTING", "ALIVE"}:
+            note = "ok (old errors in earlier attempts, current attempt clean)"
+        elif verdict in {"PROGRESSING", "COMPUTING", "ALIVE"}:
+            note = "ok"
         rows.append(
             {
                 "family": family,
@@ -917,6 +939,7 @@ def main() -> None:
                 "worker": worker if isinstance(worker, str) else "",
                 "drift": drift,
                 "kind": kind,
+                "done_drifts": done_drifts,
                 "stage": stage,
                 "grpo": grpo,
                 "age": age_seconds(snapshot.latest_activity_ns),
@@ -991,42 +1014,155 @@ def main() -> None:
     # ---- one screen ----
     total_points = len(families) * len(args.drifts)
     now = time.strftime("%Y-%m-%d %H:%MZ", time.gmtime())
-    print(f"OLMo-3 RL-Zero  profile={args.profile}  code={generation_git[:8]}  {now}  probe={args.probe_seconds}s")
+    started = None
+    for family in families:
+        for drift in args.drifts:
+            cfg = run_dir(args, family, drift) / "run_config.json"
+            if cfg.is_file():
+                mtime = cfg.stat().st_mtime
+                started = mtime if started is None else min(started, mtime)
+    eta = ""
+    if started is not None and points_done >= 2:
+        days = max((time.time() - started) / 86400.0, 1e-6)
+        rate = points_done / days
+        remaining = total_points - points_done
+        eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day, 3 nodes assumed busy)"
+    action_text = {
+        "none": "nothing to do",
+        "inspect_STUCK_DEAD_families_and_missing_workers": "look at the ■ rows: Ctrl-C the worker on that node, git pull, run h100 again (partials resume)",
+        "Ctrl-C_that_worker__git_pull__relaunch_run_h100__partials_resume": "Ctrl-C the worker on the ■ node, git pull, run h100 again (partials resume)",
+        "Ctrl-C_the_HUNG_family_worker__git_pull__relaunch_run_h100": "Ctrl-C the worker on the ■ node, git pull, run h100 again (partials resume)",
+        "wait_for_next_watchdog_confirmation": "wait: the watchdog is confirming idleness before it restarts the point",
+        "inspect_node_telemetry_before_restarting_any_worker": "no telemetry: look at that node before restarting anything",
+        "wait_for_automatic_retry": "a failed family retries by itself: wait",
+        "restart_missing_workers_after_node_cleanup": "start a worker on each idle node: bash scripts/run_olmo3_rlzero.sh run h100",
+        "wait_for_worker_preflight_or_queue_claim": "workers are starting: wait",
+        "start_workers": "start the workers: bash scripts/run_olmo3_rlzero.sh run h100",
+        "fix_runtime_contract_before_continuing": "config mismatch: do not continue, see the ! contract lines",
+    }.get(action, action.replace("_", " "))
+    verdict_word = {
+        "RUNNING": "RUNNING - all good",
+        "DEGRADED": "DEGRADED - something needs a look",
+        "HUNG": "HUNG - alive but not working",
+        "STOPPED": "STOPPED",
+        "RECOVERING": "RECOVERING",
+        "COMPLETE": "COMPLETE",
+        "INVALID": "INVALID",
+        "UNKNOWN": "UNKNOWN",
+        "STARTING": "STARTING",
+        "INCOMPLETE": "INCOMPLETE",
+        "NOT_STARTED": "NOT STARTED",
+    }.get(overall, overall)
     worker_ids = ", ".join(sorted(workers)) or "none"
-    print(
-        f"VERDICT {overall}   workers {len(workers)}/{args.expected_workers} ({worker_ids})   "
-        f"families {complete}/{len(families)} done   points {points_done}/{total_points} done"
-    )
-    print(f"ACTION  {action.replace('_', ' ')}")
+    needs_you = [
+        r["family"].key for r in rows
+        if r["verdict"] == "HUNG" or (r["verdict"] in {"DEAD", "STOPPED"} and not workers)
+    ]
+    queued = [r["family"].key for r in rows if r["verdict"] in {"DEAD", "STOPPED"} and workers]
+    auto = [r["family"].key for r in rows if r["verdict"] in {"STUCK", "RETRYING"}]
+    check = [r["family"].key for r in rows if r["verdict"] == "UNKNOWN"]
+    errored = [r["family"].key for r in rows if r["current_error_count"]]
+    if contract_errors:
+        decision = "ERROR: config/contract mismatch. Do not restart; fix the ! contract lines first."
+    elif complete == len(families):
+        decision = "DONE: every family is complete."
+    elif needs_you and workers:
+        decision = (f"ERROR: {len(needs_you)} family(ies) hung (alive, writing nothing): {', '.join(needs_you)}. "
+                    "RESTART NEEDED on the node showing that family: Ctrl-C, git pull --ff-only, run h100 (finished work resumes).")
+    elif needs_you:
+        decision = (f"ERROR: {len(needs_you)} family(ies) stopped and no worker is running: {', '.join(needs_you)}. "
+                    "START workers: bash scripts/run_olmo3_rlzero.sh run h100 on each node (finished work resumes).")
+    elif missing_workers and len(workers) == 0:
+        decision = "ERROR: no worker is running anywhere. Start one per node: bash scripts/run_olmo3_rlzero.sh run h100"
+    elif missing_workers:
+        decision = f"WARNING: only {len(workers)}/{args.expected_workers} workers. Progress continues but slower; start a worker on the idle node(s)."
+    elif auto or check:
+        parts = []
+        if auto:
+            parts.append(f"{', '.join(auto)} recovering by itself")
+        if check:
+            parts.append(f"{', '.join(check)} unknown (no telemetry)")
+        decision = "NO ACTION NOW: " + "; ".join(parts) + ". Check again in 30 min; if the same rows are still not ● then, restart that worker."
+    elif errored:
+        decision = f"NO ERROR blocking: {', '.join(errored)} logged an error but the current attempt is progressing. Nothing to do."
+    elif queued and len(workers) >= args.expected_workers:
+        decision = f"NO ERROR. Workers busy; {', '.join(queued)} waiting in the queue. Nothing to do."
+    else:
+        decision = "NO ERROR. Everything is progressing. Nothing to do."
+    print(f"OLMo-3 RL-Zero {args.profile}   {now}   code {generation_git[:8]}   probe {args.probe_seconds}s")
+    print(f"DECISION {decision}")
+    print(f"STATE   {verdict_word}")
+    print(f"        workers {len(workers)}/{args.expected_workers} ({worker_ids})   families {complete}/{len(families)} done   points {points_done}/{total_points} done{eta}")
+    print(f"ACTION  {action_text}")
     if contract_errors:
         for issue in contract_errors[:6]:
             print(f"  ! contract: {issue}")
     print()
-    header = f"{'family':<12} {'state':<11} {'point':<6} {'stage':<30} {'grpo':<8} {'last':<6} {'worker':<12} note"
+
+    problem = {"HUNG", "STUCK", "DEAD", "STOPPED"}
+    moving = {"PROGRESSING", "COMPUTING", "ALIVE", "IDLE", "RETRYING"}
+
+    def glyphs(row: dict) -> str:
+        out = []
+        for drift in args.drifts:
+            if drift in row["done_drifts"]:
+                out.append("✓")
+            elif drift == row["drift"] and row["kind"] == "active":
+                if row["verdict"] in problem:
+                    out.append("■")
+                elif row["verdict"] == "UNKNOWN":
+                    out.append("?")
+                else:
+                    out.append("●")
+            else:
+                out.append("·")
+        return "".join(out)
+
+    def rank(row: dict) -> int:
+        if row["verdict"] in problem:
+            return 0
+        if row["verdict"] == "UNKNOWN":
+            return 1
+        if row["verdict"] in moving:
+            return 2
+        if row["verdict"] == "COMPLETE":
+            return 3
+        return 4
+
+    ordered = sorted(rows, key=lambda r: (rank(r), r["family"].dataset, r["family"].seed))
+    shown = [r for r in ordered if r["verdict"] != "PENDING"]
+    waiting = [r["family"].key for r in ordered if r["verdict"] == "PENDING"]
+    header = f" {'family':<11} {'points':<{len(args.drifts) + 1}} {'now':<40} {'last write':<10} {'worker':<12} note"
     print(header)
-    print("-" * len(header))
-    for row in rows:
-        point = "-"
-        if row["kind"] == "active" and row["drift"] is not None:
-            point = f"d{row['drift']}"
-        elif row["kind"] == "all-done":
-            point = "done"
-        elif row["kind"] == "not-started" and row["drift"] is not None and row["stage"] == "next":
-            point = f"d{row['drift']}"
-        state = row["verdict"]
+    for row in shown:
+        if row["verdict"] == "COMPLETE":
+            now_text = "done"
+        elif row["kind"] == "active" and row["drift"] is not None:
+            bits = [f"d{row['drift']}", row["stage"]]
+            if row["grpo"] != "-":
+                bits.append(f"step {row['grpo']}")
+            if row["verdict"] in problem or row["verdict"] == "UNKNOWN":
+                bits.append(row["verdict"])
+            now_text = " ".join(b for b in bits if b and b != "-")
+        else:
+            now_text = row["stage"] if row["stage"] != "-" else row["verdict"].lower()
         print(
-            f"{row['family'].key:<12} {state:<11} {point:<6} {row['stage'][:30]:<30} "
-            f"{row['grpo']:<8} {fmt_age(row['age']):<6} {row['worker'][:12]:<12} {row['note']}"
+            f" {row['family'].key:<11} {glyphs(row):<{len(args.drifts) + 1}} {now_text[:40]:<40} "
+            f"{fmt_age(row['age']):<10} {row['worker'][:12]:<12} {row['note']}"
         )
+    if waiting:
+        print(f" waiting     {'·' * len(args.drifts):<{len(args.drifts) + 1}} {', '.join(waiting)}")
+    print()
+    print(" family = one dataset x seed = 4 chained points d0 -> d25 -> d100 -> d400 on one node (each GRPO point resumes the previous checkpoint)")
+    print(" ✓ done   ● running   ■ hung/stuck/dead   ? unknown   · waiting      last write = time since this family wrote any file")
     stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]
     if stale_workers:
-        print(f"\nstale worker records (no claim, no fresh log): {', '.join(stale_workers)}")
+        print(f" stale worker records (no claim, no fresh log): {', '.join(stale_workers)}")
     report = args.results / "FINAL_REPORT.md"
     if report.is_file() and report.stat().st_size:
-        print(f"report  {report}")
-    print(f"logs    {args.root / 'logs'}")
+        print(f" report  {report}")
+    print(f" logs    {args.root / 'logs'}      detail: status {args.profile} verbose")
     if not args.verbose:
-        print("detail  add --verbose (or `status <profile> verbose`) for per-point rows, telemetry and log tails")
         print(f"overall_verdict={overall}")
         print(f"recommended_action={action}")
         return
