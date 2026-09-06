@@ -701,11 +701,14 @@ def _check_snapshot(spec: dict, path: Path) -> dict:
     if spec.get("prompt_format", "tokenizer_chat") == "tokenizer_chat":
         if not getattr(tokenizer, "chat_template", None):
             raise ValueError(f"{spec['key']}: tokenizer chat_template missing")
-        rendered = tokenizer.apply_chat_template(
+        # transformers 5 returns a BatchEncoding (dict) for tokenize=True, so render
+        # text first and tokenize separately — the same path rollout.chat_ids uses.
+        text = tokenizer.apply_chat_template(
             [{"role": "user", "content": "Reply with OK."}],
             add_generation_prompt=True,
-            tokenize=True,
+            tokenize=False,
         )
+        rendered = tokenizer(text, add_special_tokens=False).input_ids
         if not rendered or not all(isinstance(token, int) for token in rendered):
             raise ValueError(f"{spec['key']}: tokenizer chat template produced no token IDs")
     config = AutoConfig.from_pretrained(path, local_files_only=True)
