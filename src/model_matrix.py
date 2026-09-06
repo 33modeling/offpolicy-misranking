@@ -18,8 +18,12 @@ DOWNLOAD_PATTERNS = [
     "README.md",
     "config.json",
     "generation_config.json",
-    "model.safetensors",
-    "model-*.safetensors",
+    "preprocessor_config.json",
+    "video_preprocessor_config.json",
+    # Qwen3.5/3.8 shards are named "model.safetensors-00001-of-00004.safetensors",
+    # which "model-*.safetensors" never matched: prepare downloaded config/tokenizer
+    # only and check failed with "safetensors shard set incomplete".
+    "*.safetensors",
     "model.safetensors.index.json",
     "special_tokens_map.json",
     "tokenizer.json",
