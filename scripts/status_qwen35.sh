@@ -54,7 +54,7 @@ if [ -d "$RUNS" ]; then
   if [ -n "$main" ]; then
     current=$(basename "$(dirname "$(dirname "$main")")")
     current_stage=$(grep -F '[progress]' "$main" | tail -1 | sed 's/.*\[progress\] //' | cut -d' ' -f3- | cut -c1-60)
-    current_err=$(grep -E '✘|\[abort\]' "$main" | tail -1 | cut -c1-120)
+    current_err=$(grep -E '(GPU[0-9]* \\S* ✘|✘|\[abort\]' "$main" | tail -1 | cut -c1-120)
   fi
 fi
 
@@ -107,7 +107,7 @@ if [ -d "$RUNS" ]; then
     st=$(grep -F '[progress]' "$m" | tail -1 | sed 's/.*\[progress\] //' | cut -d' ' -f3- | cut -c1-28)
     prog_n=$(grep -nF '[progress]' "$m" | tail -1 | cut -d: -f1); prog_n=${prog_n:-0}
     note="ok"
-    last=$(grep -nE '✘|\[abort\]|cuda-recovery|oom-backoff' "$m" | tail -1)
+    last=$(grep -nE '(GPU[0-9]* \\S* ✘|✘|\[abort\]|cuda-recovery|oom-backoff' "$m" | tail -1)
     if [ -n "$last" ]; then
       n=${last%%:*}
       text=$(sed -n "$((n)),$((n + 8))p" "$m" | grep -vE '^\s*$|^\[' | tail -1 | cut -c1-90)

@@ -1,6 +1,7 @@
 """Behavioral regressions for the September 6 follow-up audit."""
 
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -53,6 +54,22 @@ def test_status_history_is_not_a_worker(tmp_path):
     output = run_status(root)
     assert "workers_observed=0/1" in output
     assert "overall_verdict=NOT_STARTED" in output
+
+
+def test_recovery_cause_does_not_overwrite_active_point_kind(tmp_path):
+    root = tmp_path / "runs"
+    run, _, lock = active_family(root)
+    (run / "rollout_recovery.jsonl").write_text(
+        json.dumps({"status": "failed", "failure_kind": "cuda-oom"}) + "\n"
+    )
+    try:
+        output = run_status(root, verbose=False)
+    finally:
+        lock.close()
+    row = next(line for line in output.splitlines() if line.startswith(" math500/s0"))
+    assert "d0" in row
+    assert "●" in row
+    assert "CUDA recovery failed once (cuda-oom" in row
 
 
 def test_deferred_d0_does_not_hide_completed_points_or_current_training(tmp_path):
