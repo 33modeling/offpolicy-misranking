@@ -92,19 +92,26 @@ fi
 echo "points   $done_n done / $total started / 40 in matrix   family failures this session: $fails"
 if [ -d "$RUNS" ]; then
   echo
-  echo " point                                         stage                         last write   note"
+  echo " point                  stage                         last write   note"
   find "$RUNS" -mindepth 4 -maxdepth 4 -path '*/logs/main.log' 2>/dev/null | xargs -r ls -t 2>/dev/null | head -6 | while read -r m; do
     run=$(dirname "$(dirname "$m")")
     [ -f "$run/DONE" ] && continue
     age=$(newest_epoch "$run"); [ -n "$age" ] && age=$(fmt_age $((NOW - age))) || age="-"
     st=$(grep -F '[progress]' "$m" | tail -1 | sed 's/.*\[progress\] //' | cut -d' ' -f3- | cut -c1-28)
-    note=""
+    prog_n=$(grep -nF '[progress]' "$m" | tail -1 | cut -d: -f1); prog_n=${prog_n:-0}
+    note="ok"
     last=$(grep -nE '✘|\[abort\]|cuda-recovery|oom-backoff' "$m" | tail -1)
     if [ -n "$last" ]; then
       n=${last%%:*}
-      note="ERROR: $(sed -n "$((n)),$((n + 8))p" "$m" | grep -vE '^\s*$|^\[' | tail -1 | cut -c1-90)"
+      text=$(sed -n "$((n)),$((n + 8))p" "$m" | grep -vE '^\s*$|^\[' | tail -1 | cut -c1-90)
+      if [ "$n" -gt "$prog_n" ]; then
+        note="ERROR (current): $text"
+      else
+        note="ok (earlier attempt failed: $text)"
+      fi
     fi
-    printf ' %-45s %-29s %-12s %s\n' "$(basename "$run" | cut -c1-45)" "${st:-starting}" "$age" "$note"
+    short=$(basename "$run" | sed "s/^$RUN_ID-//")
+    printf ' %-22s %-29s %-12s %s\n' "${short:0:22}" "${st:-starting}" "$age" "$note"
   done
   [ -d "$RES" ] && echo "results  $RES ($(ls "$RES" 2>/dev/null | wc -l) entries)"
 fi
