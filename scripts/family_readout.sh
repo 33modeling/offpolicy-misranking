@@ -6,7 +6,19 @@
 #   bash scripts/family_readout.sh h100 mbpp 0 10000   # final-quality bootstrap (slow)
 set -uo pipefail
 cd "$(dirname "$0")/.."
-PROFILE=${1:-h100}; DATASET=${2:?dataset (math500|mbpp)}; SEED=${3:?seed}; BOOT=${4:-1000}
+# Arguments: [profile] <dataset> <seed> [bootstrap]. Profile defaults to h100, so
+#   bash scripts/family_readout.sh mbpp 0        and
+#   bash scripts/family_readout.sh h100 mbpp 0   both work.
+PROFILE=h100
+case "${1:-}" in baseline|h100) PROFILE=$1; shift ;; esac
+DATASET=${1:-}; SEED=${2:-}; BOOT=${3:-1000}
+case "$DATASET" in
+  math500|mbpp) ;;
+  *) echo "usage: bash scripts/family_readout.sh [h100|baseline] <math500|mbpp> <seed 0-4> [bootstrap, default 1000]"; exit 2 ;;
+esac
+case "$SEED" in ''|*[!0-9]*) echo "usage: seed must be a number 0-4 (got '$SEED')"; exit 2 ;; esac
+case "$BOOT" in ''|*[!0-9]*) echo "usage: bootstrap must be a number >= 100 (got '$BOOT')"; exit 2 ;; esac
+[ "$BOOT" -ge 100 ] || { echo "usage: bootstrap must be >= 100"; exit 2; }
 case "$PROFILE" in
   baseline) MODEL_TAG=${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-v1} ;;
   h100)     MODEL_TAG=${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-h100-v2} ;;
@@ -36,7 +48,24 @@ echo
 if [ "$rc" -eq 0 ]; then
   echo "DECISION report written: $OUT/FINAL_REPORT.md  (also REGIME.csv, REGIME_SUMMARY.csv, REGIME.json)"
   echo "handover: paste the table above, or copy $OUT off the cluster (scp) - it is text only, a few hundred KB"
-else
-  echo "DECISION analysis failed rc=$rc; the error is above and in $OUT/readout.log"
+  exit 0
 fi
+echo "regime report failed (rc=$rc, see above). Falling back to the per-point gate numbers, which need no bootstrap:"
+echo
+printf ' %-6s %-12s %-10s %-10s %-10s %-10s\n' point noise_floor g00 g10 g01 g11
+for run in "${runs[@]}"; do
+  "$PY" - "$run" <<'PYEOF'
+import json, sys
+from pathlib import Path
+run = Path(sys.argv[1]); r = json.loads((run / "report.json").read_text())
+d = run.name.rsplit("-d", 1)[-1]
+def p(k):
+    v = r.get(k, {}); v = v.get("precision", v) if isinstance(v, dict) else v
+    return f"{float(v):.3f}" if isinstance(v, (int, float)) else "-"
+print(f" d{d:<5} {float(r.get('noise_floor', float('nan'))):<12.3f} {p('g00'):<10} {p('g10'):<10} {p('g01'):<10} {p('g11'):<10}")
+PYEOF
+done
+echo
+echo " noise_floor = split-half ceiling; gNN = top-k precision of each off-policy estimator (higher = better ranking)"
+echo "DECISION regime report failed; the table above is the raw per-point readout. Send the failing line from $OUT/readout.log"
 exit "$rc"
