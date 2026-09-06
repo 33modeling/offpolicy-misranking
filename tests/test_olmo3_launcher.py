@@ -289,7 +289,7 @@ def test_h100_profile_uses_a_disjoint_root_and_runtime_contract(tmp_path: Path) 
     assert not baseline.exists()
 
     status = subprocess.run(
-        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "status", "h100"],
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "status", "h100", "verbose"],
         cwd=checkout,
         env=env,
         text=True,
@@ -421,7 +421,7 @@ def test_status_shows_point_progress_and_untruncated_runtime_errors(
     )
 
     result = subprocess.run(
-        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "status"],
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "status", "baseline", "verbose"],
         cwd=checkout,
         env=env,
         text=True,

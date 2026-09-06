@@ -10,7 +10,7 @@ PROFILE=${2:-baseline}
 RECOVERY_MIN_GENERATION_BATCH=2
 case "$MODE" in
   prepare|check|run|status) ;;
-  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100]"; exit 2 ;;
+  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100] [verbose]"; exit 2 ;;
 esac
 case "$PROFILE" in
   baseline)
@@ -209,6 +209,12 @@ if [ "$MODE" = status ]; then
   STATUS_WORKER_STALE_SECONDS="${OM_RLZERO_STATUS_WORKER_STALE_SECONDS:-180}"
   STATUS_HEARTBEAT_STALE_SECONDS="${OM_RLZERO_STATUS_HEARTBEAT_STALE_SECONDS:-90}"
   STATUS_EXPECTED_WORKERS="${OM_RLZERO_STATUS_EXPECTED_WORKERS:-3}"
+  # One screen by default; `status <profile> verbose` (or OM_RLZERO_STATUS_VERBOSE=1)
+  # appends per-point rows, telemetry and log tails.
+  STATUS_VERBOSE_FLAG=()
+  if [ "${3:-}" = verbose ] || [ "${OM_RLZERO_STATUS_VERBOSE:-0}" = 1 ]; then
+    STATUS_VERBOSE_FLAG=(--verbose)
+  fi
   for value_name in STATUS_LOG_LINES STATUS_ERROR_LINES STATUS_STUCK_SECONDS \
       STATUS_WORKER_STALE_SECONDS STATUS_HEARTBEAT_STALE_SECONDS \
       STATUS_EXPECTED_WORKERS; do
@@ -234,7 +240,8 @@ if [ "$MODE" = status ]; then
     --gradient-micro-batch "$(runtime_field gradient_micro_batch)" \
     --logprob-micro-batch "$(runtime_field logprob_micro_batch)" \
     --min-recovery-generation-batch "$RECOVERY_MIN_GENERATION_BATCH" \
-    --log-lines "$STATUS_LOG_LINES" --error-lines "$STATUS_ERROR_LINES"
+    --log-lines "$STATUS_LOG_LINES" --error-lines "$STATUS_ERROR_LINES" \
+    "${STATUS_VERBOSE_FLAG[@]}"
   exit $?
 fi
 

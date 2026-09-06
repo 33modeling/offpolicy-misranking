@@ -14,7 +14,7 @@ STATUS = ROOT / "src/rlzero_status.py"
 TAG = "olmo3-test"
 
 
-def status_command(root: Path, **overrides: int) -> list[str]:
+def status_command(root: Path, verbose: bool = True, **overrides: int) -> list[str]:
     values = {
         "probe_seconds": 0,
         "stuck_seconds": 30,
@@ -29,9 +29,10 @@ def status_command(root: Path, **overrides: int) -> list[str]:
         "error_lines": 5,
         **overrides,
     }
-    return [
+    return ([
         sys.executable,
         str(STATUS),
+    ] + (["--verbose"] if verbose else [])) + [
         "--profile",
         "h100",
         "--root",
@@ -149,9 +150,9 @@ def write_attempt_manifest(run: Path, offsets: dict[str, int]) -> Path:
     return path
 
 
-def run_status(root: Path, **overrides: int) -> str:
+def run_status(root: Path, verbose: bool = True, **overrides: int) -> str:
     result = subprocess.run(
-        status_command(root, **overrides),
+        status_command(root, verbose=verbose, **overrides),
         text=True,
         capture_output=True,
         timeout=10,
@@ -437,3 +438,17 @@ def test_status_requires_exact_family_completion_stamp(tmp_path: Path) -> None:
     complete = run_status(root)
     assert "math500/s0 complete" in complete
     assert "overall_verdict=COMPLETE" in complete
+
+
+def test_status_default_is_one_screen_table(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    (root / "logs").mkdir(parents=True)
+    output = run_status(root, verbose=False)
+    lines = output.splitlines()
+    assert lines[0].startswith("OLMo-3 RL-Zero  profile=h100")
+    assert lines[1].startswith("VERDICT NOT_STARTED")
+    assert any(line.startswith("math500/s0 ") and " PENDING " in line for line in lines)
+    # the machine-readable verdict lines stay for scripts; the evidence dump does not
+    assert "overall_verdict=NOT_STARTED" in output
+    assert "== worker diagnostics ==" not in output
+    assert len(lines) < 20

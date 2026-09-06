@@ -180,6 +180,13 @@ Queue state:
 bash scripts/run_olmo3_rlzero.sh status h100
 ```
 
+`status` prints one screen: a VERDICT/ACTION header, worker and point counts,
+and one row per family (state, current point, pipeline stage `k/8`, GRPO
+steps, time since last activity, worker, and the latest current-attempt error
+or recovery note). Add `verbose` as the third argument
+(`status h100 verbose`) for the full evidence dump described below: per-point
+rows, telemetry, error attribution and log tails.
+
 `status` is an active health check, not only a queue listing. By default it
 samples the shared run for 20 seconds and combines five independent signals:
 family locks, worker heartbeats, node-local watchdog telemetry, durable

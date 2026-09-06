@@ -65,6 +65,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-recovery-generation-batch", type=int, required=True)
     parser.add_argument("--log-lines", type=int, default=20)
     parser.add_argument("--error-lines", type=int, default=6)
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="after the one-screen summary, print per-point detail, telemetry and log tails",
+    )
     args = parser.parse_args()
     for name in (
         "probe_seconds",
@@ -693,6 +698,62 @@ def recent_workers(
     return workers
 
 
+def fmt_age(seconds: int | None) -> str:
+    if seconds is None:
+        return "-"
+    if seconds < 90:
+        return f"{seconds}s"
+    if seconds < 5400:
+        return f"{seconds // 60}m"
+    if seconds < 172800:
+        return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}"
+    return f"{seconds // 86400}d"
+
+
+def last_progress(run: Path) -> str:
+    """The pipeline's own `[progress] <run>  k/8 <stage>  +<min>` line, minus the run name."""
+    main_log = run / "logs/main.log"
+    if not main_log.is_file():
+        return ""
+    text = ""
+    for line in tail_lines(main_log, 400):
+        if "[progress]" in line:
+            text = line
+    if not text:
+        return ""
+    text = text.split("[progress]", 1)[1].strip()
+    # "<run>  k/8 <label> (detail)  +12min" -> "k/8 <label> +12min"
+    fields = [field.strip() for field in re.split(r"\s{2,}", text) if field.strip()]
+    if len(fields) >= 2:
+        fields = fields[1:]
+    stage = re.sub(r"\s*\(.*?\)", "", fields[0]).strip() if fields else text
+    elapsed = fields[-1] if len(fields) > 1 and fields[-1].startswith("+") else ""
+    return f"{stage} {elapsed}".strip()
+
+
+def current_point(args: argparse.Namespace, family: Family) -> tuple[int | None, Path | None, str, list[int]]:
+    """First drift in chain order that is not DONE: (drift, run, kind, done_drifts)."""
+    done: list[int] = []
+    for drift in args.drifts:
+        run = run_dir(args, family, drift)
+        if not run.is_dir():
+            return drift, run, "not-started", done
+        stamp = run / "DONE"
+        if stamp.is_file() and stamp.stat().st_size:
+            done.append(drift)
+            continue
+        return drift, run, "active", done
+    return None, None, "all-done", done
+
+
+def short_error(errors: list[tuple[Path, str]], width: int = 70) -> str:
+    if not errors:
+        return ""
+    _, line = errors[-1]
+    line = re.sub(r"\s+", " ", line).strip()
+    return line if len(line) <= width else line[: width - 1] + "…"
+
+
 def main() -> None:
     args = parse_args()
     families = [
@@ -706,33 +767,15 @@ def main() -> None:
     ]
     if args.probe_seconds and active:
         print(
-            f"[status] checking {len(active)} active/partial families for "
-            f"{args.probe_seconds}s; logs, rollouts, and checkpoints will be compared",
+            f"[status] probing {len(active)} active families for {args.probe_seconds}s ...",
             flush=True,
         )
         time.sleep(args.probe_seconds)
     after = {family: take_snapshot(args, family) for family in families}
 
-    print(f"profile={args.profile}")
-    print(f"experiment_root={args.root}")
-    print(f"status_probe_seconds={args.probe_seconds}")
-    print(f"stuck_after_seconds={args.stuck_seconds}")
-    print(f"heartbeat_stale_seconds={args.heartbeat_stale_seconds}")
-    print(f"log_tail_lines={args.log_lines}")
-    print(
-        f"runtime_contract generation_batch={args.generation_batch} "
-        f"gradient_micro_batch={args.gradient_micro_batch} "
-        f"logprob_micro_batch={args.logprob_micro_batch} "
-        f"min_recovery_generation_batch={args.min_recovery_generation_batch}"
-    )
     generation = args.root / ".queue/generation.git"
-    print(
-        "generation_git="
-        + (
-            generation.read_text(encoding="utf-8").strip()
-            if generation.is_file()
-            else "not-started"
-        )
+    generation_git = (
+        generation.read_text(encoding="utf-8").strip() if generation.is_file() else "not-started"
     )
 
     workers = recent_workers(args, after)
@@ -748,8 +791,8 @@ def main() -> None:
         worker = snapshot.owner.get("worker")
         if snapshot.state == "claimed" and isinstance(worker, str) and worker:
             claims_by_worker.setdefault(worker, []).append(family.key)
-    print("== worker diagnostics ==")
     diagnostic_workers = workers | heartbeat_workers | set(claims_by_worker)
+    worker_rows: list[dict] = []
     for worker in sorted(diagnostic_workers):
         log = args.root / "logs" / f"{worker}.log"
         log_age = age_seconds(log.stat().st_mtime_ns) if log.is_file() else None
@@ -760,8 +803,6 @@ def main() -> None:
             state = "AVAILABLE"
         else:
             state = "STALE"
-        claims = ",".join(claims_by_worker.get(worker, [])) or "none"
-        last_line = last_nonempty_line(log) if log.is_file() else ""
         heartbeat, heartbeat_age, heartbeat_fresh = worker_heartbeat(args, worker)
         if heartbeat_fresh:
             evidence = "heartbeat"
@@ -771,21 +812,25 @@ def main() -> None:
             evidence = "stale-heartbeat"
         else:
             evidence = "lock-only"
-        heartbeat_age_text = "none" if heartbeat_age is None else f"{heartbeat_age}s"
-        print(
-            f"worker={worker} state={state} claims={claims} "
-            f"log_age={'none' if log_age is None else f'{log_age}s'} "
-            f"heartbeat_age={heartbeat_age_text} "
-            f"liveness_evidence={evidence} "
-            f"error_matches={worker_errors}"
+        worker_rows.append(
+            {
+                "worker": worker,
+                "state": state,
+                "claims": claims_by_worker.get(worker, []),
+                "log": log,
+                "log_age": log_age,
+                "heartbeat_age": heartbeat_age,
+                "evidence": evidence,
+                "errors": worker_errors,
+                "last_line": last_nonempty_line(log) if log.is_file() else "",
+            }
         )
-        if last_line:
-            print(f"  last_log_line={last_line}")
-    if not workers:
-        print("worker=none state=NOT_OBSERVED")
 
+    # ---- per-family classification (once) ----
+    rows: list[dict] = []
     verdict_counts: dict[str, int] = {}
     contract_errors: list[str] = []
+    points_done = 0
     for family in families:
         snapshot = after[family]
         changes = changed_files(before[family], snapshot)
@@ -804,10 +849,6 @@ def main() -> None:
             args.heartbeat_stale_seconds,
         )
         verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
-        suffix = f" {owner_display(snapshot.owner)}" if snapshot.owner else ""
-        print(f"{family.key} {snapshot.state}{suffix}")
-        age = age_seconds(snapshot.latest_activity_ns)
-        age_text = "none" if age is None else f"{age}s"
         family_logs = log_files(family_root(args, family))
         owner_log = worker_log(args, snapshot.owner)
         checked_logs = list(family_logs)
@@ -817,73 +858,58 @@ def main() -> None:
         boundary, current_error_count, current_errors, attempt_manifest = (
             current_attempt_errors(family_root(args, family), args.error_lines)
         )
-        if current_error_count and verdict in {
-            "PROGRESSING",
-            "COMPUTING",
-            "ALIVE",
-            "COMPLETE",
-        }:
-            error_assessment = "current_attempt_errors_present_but_activity_continues"
-        elif current_error_count:
-            error_assessment = "current_attempt_error_evidence_present"
-        elif error_count == 0:
-            error_assessment = "none"
-        elif boundary:
-            error_assessment = "historical_only_not_current_attempt"
-        elif verdict in {"PROGRESSING", "COMPUTING", "ALIVE", "COMPLETE"}:
-            error_assessment = "history_present_but_not_blocking_current_progress"
-        else:
-            error_assessment = "attempt_boundary_unavailable_history_not_attributed"
-        print(
-            f"  verdict={verdict} reason={reason} activity_age={age_text} "
-            f"logs_checked={len(checked_logs)} error_matches={error_count} "
-            f"current_attempt_error_matches={current_error_count} "
-            f"error_assessment={error_assessment}"
-        )
-        if attempt_manifest is not None:
-            print(f"  current_attempt_boundary={attempt_manifest}")
-        if changes:
-            print("  observed_changes=" + ", ".join(changes[:8]))
-        if snapshot.pipeline_activity is not None:
-            telemetry_age = record_age_seconds(
-                snapshot.pipeline_activity, "observed_at_epoch"
-            )
-            print(
-                f"  pipeline_telemetry={snapshot.pipeline_activity_path} "
-                f"state={snapshot.pipeline_activity.get('state', 'invalid')} "
-                f"age={'none' if telemetry_age is None else f'{telemetry_age}s'} "
-                f"cpu_delta={snapshot.pipeline_activity.get('cpu_delta_seconds', 'unknown')} "
-                f"gpu_peak={snapshot.pipeline_activity.get('gpu_peak_percent', 'unknown')} "
-                f"idle={snapshot.pipeline_activity.get('idle_seconds', 'unknown')}s"
-            )
+        points = []
         for drift in args.drifts:
             point, issues = point_status(args, family, drift)
-            print(point)
+            points.append(point)
             contract_errors.extend(f"{family.key}/d{drift}:{issue}" for issue in issues)
-        if snapshot.state not in {"complete", "pending"}:
-            latest = family_logs[0] if family_logs else None
-            if latest is not None:
-                log_age = age_seconds(latest.stat().st_mtime_ns)
-                print(
-                    f"  latest_log={latest} age={log_age}s (last {args.log_lines} lines)"
-                )
-                for line in tail_lines(latest, args.log_lines):
-                    print(f"    | {line}")
-            if errors:
-                print("  error_evidence_from_all_checked_logs:")
-                for path, line in errors:
-                    print(f"    ! {path}: {line}")
-            if current_errors:
-                print("  current_attempt_error_evidence:")
-                for path, line in current_errors:
-                    print(f"    ! {path}: {line}")
-            if owner_log is not None and owner_log != latest:
-                log_age = age_seconds(owner_log.stat().st_mtime_ns)
-                print(
-                    f"  worker_log={owner_log} age={log_age}s (last {args.log_lines} lines)"
-                )
-                for line in tail_lines(owner_log, args.log_lines):
-                    print(f"    | {line}")
+        drift, run, kind, done_drifts = current_point(args, family)
+        points_done += len(done_drifts)
+        stage = "-"
+        grpo = "-"
+        if kind == "active" and run is not None:
+            stage = last_progress(run)
+            if not stage:
+                stage = log_stage(latest_stage_log(run))
+            stats_path = run / f"policy_step_{drift}/grpo_stats.jsonl"
+            if drift and stats_path.is_file():
+                grpo = f"{count_lines(stats_path)}/{drift}"
+        elif kind == "not-started":
+            stage = "not started" if not done_drifts else "next"
+        note = ""
+        recovery = last_json(run / "rollout_recovery.jsonl") if run is not None and run.is_dir() else None
+        if current_errors:
+            note = "! " + short_error(current_errors)
+        elif recovery is not None and recovery.get("status") not in (None, "recovered"):
+            note = f"recovery {recovery.get('status')} ({recovery.get('failure_kind', '?')}, batch {recovery.get('recovery_generation_batch', '?')})"
+        elif verdict not in {"PROGRESSING", "COMPUTING", "ALIVE", "COMPLETE", "PENDING"}:
+            note = reason.replace("_", " ")
+        rows.append(
+            {
+                "family": family,
+                "snapshot": snapshot,
+                "changes": changes,
+                "verdict": verdict,
+                "reason": reason,
+                "worker": worker if isinstance(worker, str) else "",
+                "drift": drift,
+                "kind": kind,
+                "stage": stage,
+                "grpo": grpo,
+                "age": age_seconds(snapshot.latest_activity_ns),
+                "note": note,
+                "points": points,
+                "checked_logs": checked_logs,
+                "errors": errors,
+                "error_count": error_count,
+                "current_errors": current_errors,
+                "current_error_count": current_error_count,
+                "boundary": boundary,
+                "attempt_manifest": attempt_manifest,
+                "family_logs": family_logs,
+                "owner_log": owner_log,
+            }
+        )
 
     complete = verdict_counts.get("COMPLETE", 0)
     progressing = verdict_counts.get("PROGRESSING", 0)
@@ -932,6 +958,145 @@ def main() -> None:
     else:
         overall = "NOT_STARTED"
         action = "start_workers"
+
+    # ---- one screen ----
+    total_points = len(families) * len(args.drifts)
+    now = time.strftime("%Y-%m-%d %H:%MZ", time.gmtime())
+    print(f"OLMo-3 RL-Zero  profile={args.profile}  code={generation_git[:8]}  {now}  probe={args.probe_seconds}s")
+    worker_ids = ", ".join(sorted(workers)) or "none"
+    print(
+        f"VERDICT {overall}   workers {len(workers)}/{args.expected_workers} ({worker_ids})   "
+        f"families {complete}/{len(families)} done   points {points_done}/{total_points} done"
+    )
+    print(f"ACTION  {action.replace('_', ' ')}")
+    if contract_errors:
+        for issue in contract_errors[:6]:
+            print(f"  ! contract: {issue}")
+    print()
+    header = f"{'family':<12} {'state':<11} {'point':<6} {'stage':<30} {'grpo':<8} {'last':<6} {'worker':<12} note"
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        point = "-"
+        if row["kind"] == "active" and row["drift"] is not None:
+            point = f"d{row['drift']}"
+        elif row["kind"] == "all-done":
+            point = "done"
+        elif row["kind"] == "not-started" and row["drift"] is not None and row["stage"] == "next":
+            point = f"d{row['drift']}"
+        state = row["verdict"]
+        print(
+            f"{row['family'].key:<12} {state:<11} {point:<6} {row['stage'][:30]:<30} "
+            f"{row['grpo']:<8} {fmt_age(row['age']):<6} {row['worker'][:12]:<12} {row['note']}"
+        )
+    stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]
+    if stale_workers:
+        print(f"\nstale worker records (no claim, no fresh log): {', '.join(stale_workers)}")
+    report = args.results / "FINAL_REPORT.md"
+    if report.is_file() and report.stat().st_size:
+        print(f"report  {report}")
+    print(f"logs    {args.root / 'logs'}")
+    if not args.verbose:
+        print("detail  add --verbose (or `status <profile> verbose`) for per-point rows, telemetry and log tails")
+        print(f"overall_verdict={overall}")
+        print(f"recommended_action={action}")
+        return
+
+    # ---- verbose: the full evidence dump ----
+    print()
+    print(f"profile={args.profile}")
+    print(f"experiment_root={args.root}")
+    print(f"status_probe_seconds={args.probe_seconds}")
+    print(f"stuck_after_seconds={args.stuck_seconds}")
+    print(f"heartbeat_stale_seconds={args.heartbeat_stale_seconds}")
+    print(f"log_tail_lines={args.log_lines}")
+    print(
+        f"runtime_contract generation_batch={args.generation_batch} "
+        f"gradient_micro_batch={args.gradient_micro_batch} "
+        f"logprob_micro_batch={args.logprob_micro_batch} "
+        f"min_recovery_generation_batch={args.min_recovery_generation_batch}"
+    )
+    print("generation_git=" + generation_git)
+    print("== worker diagnostics ==")
+    for w in worker_rows:
+        claims = ",".join(w["claims"]) or "none"
+        print(
+            f"worker={w['worker']} state={w['state']} claims={claims} "
+            f"log_age={'none' if w['log_age'] is None else f'{w["log_age"]}s'} "
+            f"heartbeat_age={'none' if w['heartbeat_age'] is None else f'{w["heartbeat_age"]}s'} "
+            f"liveness_evidence={w['evidence']} "
+            f"error_matches={w['errors']}"
+        )
+        if w["last_line"]:
+            print(f"  last_log_line={w['last_line']}")
+    if not workers:
+        print("worker=none state=NOT_OBSERVED")
+    for row in rows:
+        family = row["family"]
+        snapshot = row["snapshot"]
+        verdict, reason, changes = row["verdict"], row["reason"], row["changes"]
+        suffix = f" {owner_display(snapshot.owner)}" if snapshot.owner else ""
+        print(f"{family.key} {snapshot.state}{suffix}")
+        age = row["age"]
+        age_text = "none" if age is None else f"{age}s"
+        error_count, errors = row["error_count"], row["errors"]
+        current_error_count, current_errors = row["current_error_count"], row["current_errors"]
+        boundary, attempt_manifest = row["boundary"], row["attempt_manifest"]
+        if current_error_count and verdict in {"PROGRESSING", "COMPUTING", "ALIVE", "COMPLETE"}:
+            error_assessment = "current_attempt_errors_present_but_activity_continues"
+        elif current_error_count:
+            error_assessment = "current_attempt_error_evidence_present"
+        elif error_count == 0:
+            error_assessment = "none"
+        elif boundary:
+            error_assessment = "historical_only_not_current_attempt"
+        elif verdict in {"PROGRESSING", "COMPUTING", "ALIVE", "COMPLETE"}:
+            error_assessment = "history_present_but_not_blocking_current_progress"
+        else:
+            error_assessment = "attempt_boundary_unavailable_history_not_attributed"
+        print(
+            f"  verdict={verdict} reason={reason} activity_age={age_text} "
+            f"logs_checked={len(row['checked_logs'])} error_matches={error_count} "
+            f"current_attempt_error_matches={current_error_count} "
+            f"error_assessment={error_assessment}"
+        )
+        if attempt_manifest is not None:
+            print(f"  current_attempt_boundary={attempt_manifest}")
+        if changes:
+            print("  observed_changes=" + ", ".join(changes[:8]))
+        if snapshot.pipeline_activity is not None:
+            telemetry_age = record_age_seconds(snapshot.pipeline_activity, "observed_at_epoch")
+            print(
+                f"  pipeline_telemetry={snapshot.pipeline_activity_path} "
+                f"state={snapshot.pipeline_activity.get('state', 'invalid')} "
+                f"age={'none' if telemetry_age is None else f'{telemetry_age}s'} "
+                f"cpu_delta={snapshot.pipeline_activity.get('cpu_delta_seconds', 'unknown')} "
+                f"gpu_peak={snapshot.pipeline_activity.get('gpu_peak_percent', 'unknown')} "
+                f"idle={snapshot.pipeline_activity.get('idle_seconds', 'unknown')}s"
+            )
+        for point in row["points"]:
+            print(point)
+        if snapshot.state not in {"complete", "pending"}:
+            family_logs, owner_log = row["family_logs"], row["owner_log"]
+            latest = family_logs[0] if family_logs else None
+            if latest is not None:
+                log_age = age_seconds(latest.stat().st_mtime_ns)
+                print(f"  latest_log={latest} age={log_age}s (last {args.log_lines} lines)")
+                for line in tail_lines(latest, args.log_lines):
+                    print(f"    | {line}")
+            if errors:
+                print("  error_evidence_from_all_checked_logs:")
+                for path, line in errors:
+                    print(f"    ! {path}: {line}")
+            if current_errors:
+                print("  current_attempt_error_evidence:")
+                for path, line in current_errors:
+                    print(f"    ! {path}: {line}")
+            if owner_log is not None and owner_log != latest:
+                log_age = age_seconds(owner_log.stat().st_mtime_ns)
+                print(f"  worker_log={owner_log} age={log_age}s (last {args.log_lines} lines)")
+                for line in tail_lines(owner_log, args.log_lines):
+                    print(f"    | {line}")
     print("== diagnosis ==")
     print(
         f"workers_observed={len(workers)}/{args.expected_workers} "
@@ -948,7 +1113,6 @@ def main() -> None:
         print(f"  ! {issue}")
     print(f"overall_verdict={overall}")
     print(f"recommended_action={action}")
-    report = args.results / "FINAL_REPORT.md"
     if report.is_file() and report.stat().st_size:
         print(f"report={report}")
 
