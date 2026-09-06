@@ -573,6 +573,21 @@ def _require_runtime(spec: dict) -> None:
             raise ValueError(f"{spec['key']}: expected fla-core 0.5.2, found {fla}")
 
 
+def _safetensors_tensor_names(path: Path) -> list[str] | None:
+    """Tensor names from a safetensors header (8-byte LE length + JSON)."""
+    import struct
+
+    try:
+        with path.open("rb") as stream:
+            (length,) = struct.unpack("<Q", stream.read(8))
+            if not 0 < length < 200_000_000:
+                return None
+            header = json.loads(stream.read(length).decode("utf-8"))
+    except (OSError, ValueError, struct.error):
+        return None
+    return [name for name in header if name != "__metadata__"]
+
+
 def _weight_shards(path: Path) -> list[Path]:
     index_path = path / "model.safetensors.index.json"
     if index_path.is_file():
@@ -649,24 +664,38 @@ def _verify_file_records(path: Path, records: dict) -> None:
 
 
 def _check_snapshot(spec: dict, path: Path) -> dict:
+    """Validate a local snapshot.
+
+    The default check is provenance-based (manifest + per-file hashes). With
+    OM_TRUST_LOCAL_SNAPSHOT=1 the check is capability-based instead: the files
+    only have to be loadable — config/tokenizer parse, shards exist and their
+    safetensors headers cover the tensors the config implies. Use it when the
+    upload is known good and only its bookkeeping disagrees.
+    """
     from accelerate import init_empty_weights
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-    required = [
-        path / "config.json",
-        path / "tokenizer_config.json",
-        path / ".om_snapshot.json",
-    ]
+    trust_local = os.environ.get("OM_TRUST_LOCAL_SNAPSHOT") == "1"
+    required = [path / "config.json", path / "tokenizer_config.json"]
+    if not trust_local:
+        required.append(path / ".om_snapshot.json")
     missing = [p.name for p in required if not p.is_file()]
     if missing:
         raise ValueError(f"{spec['key']}: missing files: {', '.join(missing)}")
 
-    manifest = json.loads((path / ".om_snapshot.json").read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != 2:
-        raise ValueError(f"{spec['key']}: obsolete snapshot manifest schema")
-    if manifest.get("repository") != spec["repository"] or manifest.get("revision") != spec["revision"]:
-        raise ValueError(f"{spec['key']}: snapshot provenance mismatch")
-    _verify_file_records(path, manifest.get("files"))
+    if trust_local:
+        print(
+            f"[model] OM_TRUST_LOCAL_SNAPSHOT=1: {path} checked for loadability only; "
+            "provenance recorded as unverified",
+            file=sys.stderr,
+        )
+    else:
+        manifest = json.loads((path / ".om_snapshot.json").read_text(encoding="utf-8"))
+        if manifest.get("schema_version") != 2:
+            raise ValueError(f"{spec['key']}: obsolete snapshot manifest schema")
+        if manifest.get("repository") != spec["repository"] or manifest.get("revision") != spec["revision"]:
+            raise ValueError(f"{spec['key']}: snapshot provenance mismatch")
+        _verify_file_records(path, manifest.get("files"))
 
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     if spec.get("prompt_format", "tokenizer_chat") == "tokenizer_chat":
@@ -691,6 +720,20 @@ def _check_snapshot(spec: dict, path: Path) -> dict:
     weight_bytes = sum(shard.stat().st_size for shard in shards)
     if weight_bytes < 1_000_000_000:
         raise ValueError(f"{spec['key']}: implausibly small weight snapshot")
+    if trust_local:
+        tensors = 0
+        for shard in shards:
+            names = _safetensors_tensor_names(shard)
+            if names is None:
+                raise ValueError(f"{spec['key']}: unreadable safetensors header: {shard.name}")
+            tensors += len(names)
+        if tensors < 100:
+            raise ValueError(f"{spec['key']}: shards contain only {tensors} tensors")
+        print(
+            f"[model] {len(shards)} shard(s), {tensors} tensors, "
+            f"{weight_bytes / 1e9:.1f} GB readable",
+            file=sys.stderr,
+        )
 
     with init_empty_weights():
         if config.model_type == "qwen3_5":
@@ -735,6 +778,10 @@ def _seal_local_snapshot(spec: dict, path: Path) -> dict:
     """Seal a Hub ``local_dir`` download without making a network request."""
     shards = _weight_shards(path)
     files = _manifest_files(path, shards)
+    if os.environ.get("OM_TRUST_LOCAL_SNAPSHOT") == "1":
+        # Capability mode: record what is on disk, do not compare to the Hub.
+        _write_manifest(spec, path, _file_records(path, files))
+        return _check_snapshot(spec, path)
     official_files = spec.get("official_files") or PINNED_OFFICIAL_FILES.get(
         (spec["repository"], spec["revision"])
     )

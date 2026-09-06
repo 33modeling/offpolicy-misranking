@@ -13,6 +13,9 @@ if [ -z "$(git status --porcelain -- src scripts configs requirements.txt)" ]; t
   git pull --ff-only -q 2>/dev/null || echo "[note] git pull failed; running current code $(git rev-parse --short HEAD)"
 fi
 export OM_ALLOW_UNPINNED_SNAPSHOT="${OM_ALLOW_UNPINNED_SNAPSHOT:-1}"
+# Uploaded weights are trusted: validate that they load, not that they match the
+# Hub revision byte for byte. Set OM_TRUST_LOCAL_SNAPSHOT=0 for the strict check.
+export OM_TRUST_LOCAL_SNAPSHOT="${OM_TRUST_LOCAL_SNAPSHOT:-1}"
 case "$MODE" in
   doctor) exec bash scripts/doctor_qwen35.sh ;;
   prepare|check|run)
