@@ -110,6 +110,32 @@ def _weights_dir(directory: Path) -> Path:
     return directory
 
 
+HEAVY_DIRS = {"runs", "results", "quarantine", "console-logs", "cache", "datasets",
+              "runtime-deps", "tmp", "pools", "contracts", "readouts", "locks"}
+
+
+def _directories_named(root: Path, needle: str, max_depth: int = 4) -> list[Path]:
+    """Directory-name search across the volume (cheap: never lists files)."""
+    import os as _os
+
+    hits: list[Path] = []
+    root = root.resolve()
+    base_depth = len(root.parts)
+    for current, directories, _ in _os.walk(root, followlinks=False):
+        depth = len(Path(current).parts) - base_depth
+        if depth >= max_depth:
+            directories[:] = []
+            continue
+        directories[:] = [
+            d for d in directories
+            if d not in HEAVY_DIRS and d not in SKIP_DIRS and not d.startswith(".")
+        ]
+        for name in list(directories):
+            if needle in name.lower():
+                hits.append(Path(current) / name)
+    return hits
+
+
 def _type_matches(config_path: Path, spec: dict) -> bool:
     try:
         document = json.loads(config_path.read_text(encoding="utf-8"))
@@ -153,6 +179,21 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
                 _has_weights(directory) or _weights_dir(directory) != directory
             ):
                 by_type.append(directory)
+    if not by_type:
+        # Last resort: the model may live outside the configured model roots
+        # (a different group share). Search the whole volume by directory name.
+        volume = os.environ.get("GROUP_VOLUME")
+        needle = spec["repository"].split("/")[-1].lower()
+        if volume and Path(volume).is_dir():
+            for directory in _directories_named(Path(volume), needle):
+                config_path = directory / "config.json"
+                if directory in scanned:
+                    continue
+                scanned.append(directory)
+                if config_path.is_file() and _type_matches(config_path, spec) and (
+                    _has_weights(directory) or _weights_dir(directory) != directory
+                ):
+                    by_type.append(directory.resolve())
     if len(by_type) == 1:
         return by_type[0], scanned
     if not by_type:
@@ -310,6 +351,11 @@ def main() -> int:
     official = _official(spec)
     standard = args.models_dir / spec["local_directory"]
     found, scanned = discover(args.models_dir, spec)
+    print(
+        "[locate] roots: " + ", ".join(str(r) for r in search_roots(args.models_dir))
+        + (f" (+ volume scan of {os.environ['GROUP_VOLUME']})" if os.environ.get("GROUP_VOLUME") else ""),
+        file=sys.stderr,
+    )
     if found is None:
         roots = ", ".join(str(r) for r in search_roots(args.models_dir))
         print(

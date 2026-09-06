@@ -121,3 +121,16 @@ def test_snapshot_nested_at_any_depth_is_found(tmp_path: Path) -> None:
     fake_upload(models / ".downloads/Qwen3.5-9B", "model")  # must be ignored
     found, _ = discover(models, SPEC)
     assert found == deep.resolve()
+
+
+def test_model_outside_the_model_roots_is_found_via_volume_scan(tmp_path, monkeypatch) -> None:
+    volume = tmp_path / "vol"
+    models = volume / "models"          # configured root, empty
+    models.mkdir(parents=True)
+    elsewhere = volume / "SR-Coredata/models/Qwen3.5-9B"
+    fake_upload(elsewhere, "model")
+    monkeypatch.setenv("GROUP_VOLUME", str(volume))
+    monkeypatch.delenv("OM_WORK", raising=False)
+    monkeypatch.delenv("OM_USER", raising=False)
+    found, _ = discover(models, SPEC)
+    assert found == elsewhere.resolve()
