@@ -34,8 +34,23 @@ for d in 0 25 100 400; do
   run="$FAMILY/$MODEL_TAG-s$SEED-$DATASET-d$d"
   if [ -s "$run/DONE" ] && [ -s "$run/report.json" ]; then runs+=("$run"); else missing+=("d$d"); fi
 done
+echo "root     $ROOT  (profile $PROFILE)"
 echo "family   $DATASET/s$SEED   points done: ${#runs[@]}/4${missing:+   missing: ${missing[*]}}"
-[ "${#runs[@]}" -gt 0 ] || { echo "DECISION nothing to analyse yet"; exit 1; }
+if [ "${#runs[@]}" -eq 0 ]; then
+  if [ -d "$FAMILY" ]; then
+    echo "family dir exists; contents:"
+    for d in "$FAMILY"/*/; do
+      [ -d "$d" ] || continue
+      printf '   %-50s DONE=%s report.json=%s\n' "$(basename "$d")" "$([ -s "$d/DONE" ] && echo yes || echo no)" "$([ -s "$d/report.json" ] && echo yes || echo no)"
+    done
+  else
+    echo "family dir does not exist: $FAMILY"
+  fi
+  others=$(ls -d "$OM_WORK"/runs/*/family-"$DATASET"-s"$SEED" 2>/dev/null | grep -v "^$FAMILY$" || true)
+  [ -z "$others" ] || { echo "same family under another root (try the other profile: baseline|h100):"; printf '   %s\n' $others; }
+  echo "DECISION nothing to analyse yet: no point of $DATASET/s$SEED has DONE+report.json under this root"
+  exit 1
+fi
 OUT="$OM_WORK/readouts/family-$DATASET-s$SEED-$(git rev-parse --short HEAD)-boot$BOOT"
 mkdir -p "$OUT"
 echo "output   $OUT"
