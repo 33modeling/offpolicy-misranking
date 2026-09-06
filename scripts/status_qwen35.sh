@@ -100,6 +100,8 @@ fi
 echo "points   $done_n done / $total started / 40 in matrix   family failures this session: $fails"
 if [ -d "$RUNS" ]; then
   echo
+  echo " stage = k/8 of the point pipeline: 1 prep  2 behavior-rollout  3 grpo  4 fresh-rollout  5 gradients  6 scores  7 merge+report  8 DONE;  +Nmin = time in this point"
+  echo " note:  ok = fine   ok (earlier attempt failed: ...) = recovered   ERROR (current): = this attempt is failing, read it"
   echo " point                  stage                         last write   note"
   find "$RUNS" -mindepth 4 -maxdepth 4 -path '*/logs/main.log' 2>/dev/null | xargs -r ls -t 2>/dev/null | head -6 | while read -r m; do
     run=$(dirname "$(dirname "$m")")
@@ -124,5 +126,6 @@ if [ -d "$RUNS" ]; then
   [ -d "$RES" ] && echo "results  $RES ($(ls "$RES" 2>/dev/null | wc -l) entries)"
 fi
 echo
-echo " ERROR = you act   WARNING = check again in 30 min   NO ERROR = leave it     last write = time since that point wrote any file"
+echo " DECISION words:  ERROR = you act   WARNING = check again in 30 min   NO ERROR = leave it      last write = time since that point wrote any file"
+echo " point name = s<seed>-<dataset>-d<drift>; 10 families (2 datasets x 5 seeds) x 4 points (d0 d25 d100 d400) = 40"
 [ -z "$LOG" ] || echo " log      $LOG"
