@@ -209,8 +209,18 @@ chmod 700 "$LOCAL_LOCK_DIR"
 exec 9>"$LOCAL_LOCK_DIR/additional-suite.lock"
 flock -n 9 || { echo "[abort] additional suite already queued on this physical node"; exit 1; }
 exec 8>"$LOCAL_LOCK_DIR/primary.lock"
-echo "[additional] worker=$WORKER_TAG queued behind local primary at git=$GIT"
-flock 8
+# The OLMo primary launcher holds this node-local lock for its whole life (days).
+# Queueing silently behind it looks like a hang from a phone; say so and stop
+# unless the operator explicitly wants to wait (OM_WAIT_PRIMARY=1).
+if ! flock -n 8; then
+  if [ "${OM_WAIT_PRIMARY:-0}" = 1 ]; then
+    echo "[additional] worker=$WORKER_TAG queued behind local primary at git=$GIT (OM_WAIT_PRIMARY=1)"
+    flock 8
+  else
+    echo "[abort] the OLMo primary launcher is running on THIS node and owns its 4 GPUs (primary.lock). Run the 9B on an idle 4xH100 node, or OM_WAIT_PRIMARY=1 to queue behind OLMo (days)."
+    exit 1
+  fi
+fi
 log_stage gpu-admission
 echo "[additional] local primary complete for worker=$WORKER_TAG"
 clean_checkout
