@@ -1,7 +1,7 @@
 """Behavioral regressions for the September 6 follow-up audit."""
 
-import os
 import json
+import os
 import shutil
 import subprocess
 import sys

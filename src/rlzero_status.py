@@ -962,14 +962,14 @@ def main() -> None:
         elif current_errors:
             note = f"ERROR in current attempt but still moving: {err_text}"
         elif recovery is not None and recovery.get("status") not in (None, "recovered", "completed"):
-            kind = recovery.get("failure_kind") or recovery.get("stage") or "unknown-cause"
+            recovery_kind = recovery.get("failure_kind") or recovery.get("stage") or "unknown-cause"
             rec_logs = sorted((run / "logs").glob("regime-recovery-*.log"), key=lambda q: q.stat().st_mtime_ns) if run is not None and (run / "logs").is_dir() else []
             _, rec_errors = scan_errors(rec_logs[-1:], 3) if rec_logs else (0, [])
             tail = f" | {short_error(rec_errors, 70)}" if rec_errors else ""
             if recovery.get("status") == "failed":
-                note = f"AUTO: CUDA recovery failed once ({kind}, batch {recovery.get('recovery_generation_batch', '?')}); supervisor retries the point. If this row still says failed next time, that node has a CUDA problem{tail}"
+                note = f"AUTO: CUDA recovery failed once ({recovery_kind}, batch {recovery.get('recovery_generation_batch', '?')}); supervisor retries the point. If this row still says failed next time, that node has a CUDA problem{tail}"
             else:
-                note = f"AUTO: CUDA recovery {recovery.get('status')} ({kind}, batch {recovery.get('recovery_generation_batch', '?')}){tail}"
+                note = f"AUTO: CUDA recovery {recovery.get('status')} ({recovery_kind}, batch {recovery.get('recovery_generation_batch', '?')}){tail}"
         elif recovery is not None and recovery.get("status") == "completed" and verdict in {"PROGRESSING", "COMPUTING", "ALIVE"}:
             note = "ok (recovered from a CUDA error earlier in this point)"
         elif errors and verdict in {"PROGRESSING", "COMPUTING", "ALIVE"}:
