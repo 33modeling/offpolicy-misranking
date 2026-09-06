@@ -19,7 +19,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import os
+
 import torch
+import torch.utils.checkpoint
 
 ESTIMATORS = ("g00", "g10", "g01", "g11")
 
@@ -266,11 +269,44 @@ def _padded_token_logps(
     for row, ids in enumerate(input_ids):
         batch[row, : lengths[row]] = ids.to(device)
         attention[row, : lengths[row]] = 1
-    logits = model(batch, attention_mask=attention).logits[:, :-1].float()
     targets = batch[:, 1:]
-    token_logps = logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
-    token_logps = token_logps - logits.logsumexp(dim=-1)
+    token_logps = _token_logps_chunked(model, batch, attention, targets)
     return [token_logps[row, : length - 1] for row, length in enumerate(lengths)]
+
+
+LOGIT_CHUNK_TOKENS = int(os.environ.get("OM_LOGIT_CHUNK_TOKENS", "512"))
+
+
+def _token_logps_chunked(model, batch, attention, targets) -> torch.Tensor:
+    """Target log-probs without materialising the full [B, L, V] fp32 logits.
+
+    The base transformer runs once; the LM head + log-softmax run per chunk of
+    LOGIT_CHUNK_TOKENS positions under activation checkpointing, so the peak
+    is one chunk of logits instead of the whole sequence (100k vocab x 2048
+    tokens x 4 sequences x fp32 = 3.3 GB per copy; several copies existed).
+    Falls back to the single-pass computation for models without the usual
+    ``.model`` / ``.lm_head`` layout. Values are identical up to float order.
+    """
+    base = getattr(model, "model", None)
+    head = getattr(model, "lm_head", None)
+    if base is None or head is None or LOGIT_CHUNK_TOKENS <= 0:
+        logits = model(batch, attention_mask=attention).logits[:, :-1].float()
+        return logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1) - logits.logsumexp(dim=-1)
+    hidden = base(input_ids=batch, attention_mask=attention).last_hidden_state[:, :-1]
+
+    def chunk_logps(h: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        logits = head(h).float()
+        return logits.gather(-1, t.unsqueeze(-1)).squeeze(-1) - logits.logsumexp(dim=-1)
+
+    pieces = []
+    for start in range(0, hidden.shape[1], LOGIT_CHUNK_TOKENS):
+        h = hidden[:, start : start + LOGIT_CHUNK_TOKENS]
+        t = targets[:, start : start + LOGIT_CHUNK_TOKENS]
+        if torch.is_grad_enabled() and hidden.requires_grad:
+            pieces.append(torch.utils.checkpoint.checkpoint(chunk_logps, h, t, use_reentrant=False))
+        else:
+            pieces.append(chunk_logps(h, t))
+    return torch.cat(pieces, dim=1)
 
 
 @torch.no_grad()
