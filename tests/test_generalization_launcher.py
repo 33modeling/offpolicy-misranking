@@ -27,6 +27,9 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     (root / "scripts/launch_logging.sh").write_text(
         (ROOT / "scripts/launch_logging.sh").read_text(), encoding="utf-8"
     )
+    (root / "src/diagnose_launch_failure.py").write_text(
+        (ROOT / "src/diagnose_launch_failure.py").read_text(), encoding="utf-8"
+    )
     (work / "venv/bin").mkdir(parents=True)
     (work / "models/m1").mkdir(parents=True)
     (work / "models/m2").mkdir(parents=True)

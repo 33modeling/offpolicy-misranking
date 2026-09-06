@@ -20,16 +20,13 @@ log_stage() {
   LAUNCH_STAGE=$1
   printf '[stage] %s  %s\n' "$(date -u +%H:%M:%SZ)" "$LAUNCH_STAGE"
 }
-failure_excerpt() {  # terminal-only: the last error-ish lines, then the tail
-  local hits
-  hits=$(grep -nE 'abort\]|Traceback|Error:|Error\b|✘|traceback' "$SESSION_LOG" 2>/dev/null | grep -vE '^[0-9]+:\[(error|exit)\]' | tail -8)
+failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only if unknown
   {
     echo
-    echo "── 원인 (로그의 에러 줄, 마지막 8개) ──"
-    [ -n "$hits" ] && printf '%s\n' "$hits" || echo "(에러 패턴 없음 — 아래 tail 참고)"
-    echo "── 로그 마지막 8줄 ──"
-    tail -n 8 "$SESSION_LOG" 2>/dev/null
-    echo "── 전체: tail -n 60 $SESSION_LOG"
+    # Advisory only: never let the diagnoser change the launcher's exit status.
+    python3 "$(dirname "${BASH_SOURCE[0]}")/../src/diagnose_launch_failure.py" "$SESSION_LOG" 2>/dev/null \
+      || echo "진단: (diagnose_launch_failure.py 실행 불가) — 로그 마지막 줄: $(tail -n 1 "$SESSION_LOG" 2>/dev/null)"
+    echo "(전체 로그: $SESSION_LOG)"
   } >&"$LAUNCH_STDOUT"
 }
 finish_launch_log() {
