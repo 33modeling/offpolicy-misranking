@@ -447,13 +447,17 @@ if [ "$MODE" = run ]; then
     rm -f -- "$WORKER_HEARTBEAT_PATH"
     # The heartbeat also watches the other workers and prints
     # "[WORKER DEAD] ..." here (terminal + $LOG) and to $ROOT/logs/ALERTS.log.
+    # Alerts go to this worker's log, to the shared ALERTS.log and, when the
+    # launcher runs on a terminal, straight to that terminal. No pipeline here:
+    # $! must stay the heartbeat's own pid.
     "$PY" "$SUPERVISOR_RUNTIME_REPO/src/rlzero_heartbeat.py" \
       --path "$WORKER_HEARTBEAT_PATH" --worker "$WORKER_ID" \
       --host "$HOST_TAG" --launcher-pid "$$" \
       --interval-seconds "$WORKER_HEARTBEAT_SECONDS" \
       --peer-stale-seconds "${OM_RLZERO_PEER_STALE_SECONDS:-300}" \
-      --alerts-log "$ROOT/logs/ALERTS.log" \
-      2>/dev/null | tee -a "$LOG" &
+      --alerts-log "$ROOT/logs/ALERTS.log" --worker-log "$LOG" \
+      --terminal "$( { tty; } 2>/dev/null || true)" \
+      >/dev/null 2>&1 &
     WORKER_HEARTBEAT_PID=$!
     for _ in $(seq 1 50); do
       [ -s "$WORKER_HEARTBEAT_PATH" ] && return 0

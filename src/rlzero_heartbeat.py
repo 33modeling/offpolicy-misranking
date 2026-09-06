@@ -68,6 +68,8 @@ def check_peers(
     alerts_log: Path | None,
     last_alert: dict[str, float],
     repeat_seconds: float,
+    worker_log: Path | None = None,
+    terminal: Path | None = None,
 ) -> None:
     """Every worker watches every other worker's heartbeat file. A file that
     stops updating (node lost, launcher killed) is announced on this worker's
@@ -114,12 +116,15 @@ def check_peers(
             f"{' (launcher exited)' if state == 'launcher-missing' else ''}; it held {held}."
             f" Start a worker on {host} again: bash scripts/run_olmo3_rlzero.sh run <profile>  (seen by {worker})"
         )
-        print(line, flush=True)
-        if alerts_log is not None:
+        stamped = time.strftime("%Y-%m-%dT%H:%M:%SZ ", time.gmtime()) + line + "\n"
+        for target in (alerts_log, worker_log, terminal):
+            if target is None:
+                continue
             try:
-                alerts_log.parent.mkdir(parents=True, exist_ok=True)
-                with alerts_log.open("a", encoding="utf-8") as stream:
-                    stream.write(time.strftime("%Y-%m-%dT%H:%M:%SZ ", time.gmtime()) + line + "\n")
+                if target != terminal:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("a", encoding="utf-8") as stream:
+                    stream.write(stamped)
             except OSError:
                 pass
 
@@ -133,8 +138,12 @@ def main() -> int:
     parser.add_argument("--interval-seconds", type=float, default=15.0)
     parser.add_argument("--peer-stale-seconds", type=float, default=300.0)
     parser.add_argument("--alerts-log", type=Path, default=None)
+    parser.add_argument("--worker-log", type=Path, default=None)
+    parser.add_argument("--terminal", type=Path, default=None,
+                        help="tty of the launcher; alerts are written there too (empty/'not a tty' = skip)")
     parser.add_argument("--alert-repeat-seconds", type=float, default=3600.0)
     args = parser.parse_args()
+    terminal = args.terminal if args.terminal and str(args.terminal).startswith("/dev/") else None
     if args.launcher_pid <= 1:
         parser.error("--launcher-pid must be greater than one")
     if args.interval_seconds <= 0:
@@ -166,6 +175,8 @@ def main() -> int:
             alerts_log=args.alerts_log,
             last_alert=last_alert,
             repeat_seconds=args.alert_repeat_seconds,
+            worker_log=args.worker_log,
+            terminal=terminal,
         )
         stop_event.wait(args.interval_seconds)
 
