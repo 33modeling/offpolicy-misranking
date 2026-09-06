@@ -589,7 +589,17 @@ def classify(
             return "COMPLETE", "family_completed_during_probe"
         return "COMPLETE", "all_registered_points_complete"
     if after.state == "stale-owner":
-        return "DEAD", "family_lock_released_but_owner_record_remains"
+        # flock held on another node is invisible over NFS, so from here the
+        # family looks unowned. Fresh watchdog telemetry, a fresh worker
+        # heartbeat, or a recent write proves the owner is alive: fall through
+        # to the telemetry/artifact logic (HUNG / COMPUTING) instead of DEAD.
+        telemetry_age = record_age_seconds(after.pipeline_activity, "observed_at_epoch")
+        artifact_age = age_seconds(after.latest_activity_ns)
+        owner_alive = heartbeat_fresh or (
+            telemetry_age is not None and telemetry_age <= telemetry_stale_seconds
+        )
+        if not owner_alive:
+            return "DEAD", "family_lock_released_but_owner_record_remains"
     if after.state == "pending":
         return "PENDING", "not_claimed"
     if after.state == "partial":
@@ -649,6 +659,9 @@ def classify(
                 return "ALIVE", f"pipeline_telemetry_{telemetry_state}"
             return "UNKNOWN", f"pipeline_telemetry_state_invalid:{telemetry_state}"
     if heartbeat_fresh:
+        artifact_age = age_seconds(after.latest_activity_ns)
+        if artifact_age is not None and artifact_age > max(6 * 3600, 8 * stuck_seconds):
+            return "HUNG", f"worker_heartbeat_fresh_but_no_artifact_or_log_change_for_{artifact_age}s"
         return "ALIVE", "worker_heartbeat_fresh_but_pipeline_progress_unobserved"
     age = age_seconds(after.latest_activity_ns)
     if age is None:
@@ -1153,6 +1166,12 @@ def main() -> None:
     if waiting:
         print(f" waiting     {'·' * len(args.drifts):<{len(args.drifts) + 1}} {', '.join(waiting)}")
     print()
+    if worker_rows:
+        print()
+        print(" worker            log age  claims          last log line")
+        for w in worker_rows:
+            claims = ",".join(w["claims"]) or "-"
+            print(f" {w['worker'][:17]:<17} {fmt_age(w['log_age']):<8} {claims[:15]:<15} {w['last_line'][:95]}")
     print(" family = one dataset x seed = 4 chained points d0 -> d25 -> d100 -> d400 on one node (each GRPO point resumes the previous checkpoint)")
     print(" ✓ done   ● running   ■ hung/stuck/dead   ? unknown   · waiting      last write = time since this family wrote any file")
     stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]
