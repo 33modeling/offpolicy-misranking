@@ -811,7 +811,7 @@ def short_error(errors: list[tuple[Path, str]], width: int = 70) -> str:
         return ""
     _, line = errors[-1]
     line = re.sub(r"\s+", " ", line).strip()
-    return line if len(line) <= width else line[: width - 1] + "…"
+    return line if len(line) <= width else line[: width - 3] + "..."
 
 
 def main() -> None:
@@ -1076,9 +1076,9 @@ def main() -> None:
         eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day, 3 nodes assumed busy)"
     action_text = {
         "none": "nothing to do",
-        "inspect_STUCK_DEAD_families_and_missing_workers": "look at the ■ rows: Ctrl-C the worker on that node, git pull, run h100 again (partials resume)",
-        "Ctrl-C_that_worker__git_pull__relaunch_run_h100__partials_resume": "Ctrl-C the worker on the ■ node, git pull, run h100 again (partials resume)",
-        "Ctrl-C_the_HUNG_family_worker__git_pull__relaunch_run_h100": "Ctrl-C the worker on the ■ node, git pull, run h100 again (partials resume)",
+        "inspect_STUCK_DEAD_families_and_missing_workers": "look at the X rows: Ctrl-C the worker on that node, git pull, run h100 again (partials resume)",
+        "Ctrl-C_that_worker__git_pull__relaunch_run_h100__partials_resume": "Ctrl-C the worker on the X node, git pull, run h100 again (partials resume)",
+        "Ctrl-C_the_HUNG_family_worker__git_pull__relaunch_run_h100": "Ctrl-C the worker on the X node, git pull, run h100 again (partials resume)",
         "wait_for_next_watchdog_confirmation": "wait: the watchdog is confirming idleness before it restarts the point",
         "inspect_node_telemetry_before_restarting_any_worker": "no telemetry: look at that node before restarting anything",
         "wait_for_automatic_retry": "a failed family retries by itself: wait",
@@ -1129,7 +1129,7 @@ def main() -> None:
             parts.append(f"{', '.join(auto)} recovering by itself")
         if check:
             parts.append(f"{', '.join(check)} unknown (no telemetry)")
-        decision = "NO ACTION NOW: " + "; ".join(parts) + ". Check again in 30 min; if the same rows are still not ● then, restart that worker."
+        decision = "NO ACTION NOW: " + "; ".join(parts) + ". Check again in 30 min; if the same rows are still not * then, restart that worker."
     elif errored:
         decision = f"NO ERROR blocking: {', '.join(errored)} logged an error but the current attempt is progressing. Nothing to do."
     elif queued and len(workers) >= args.expected_workers:
@@ -1153,16 +1153,16 @@ def main() -> None:
         out = []
         for drift in args.drifts:
             if drift in row["done_drifts"]:
-                out.append("✓")
+                out.append("+")
             elif drift == row["drift"] and row["kind"] == "active":
                 if row["verdict"] in problem:
-                    out.append("■")
+                    out.append("X")
                 elif row["verdict"] == "UNKNOWN":
                     out.append("?")
                 else:
-                    out.append("●")
+                    out.append("*")
             else:
-                out.append("·")
+                out.append(".")
         return "".join(out)
 
     def rank(row: dict) -> int:
@@ -1198,7 +1198,7 @@ def main() -> None:
             f"{fmt_age(row['age']):<10} {row['worker'][:12]:<12} {row['note']}"
         )
     if waiting:
-        print(f" waiting     {'·' * len(args.drifts):<{len(args.drifts) + 1}} {', '.join(waiting)}")
+        print(f" waiting     {'.' * len(args.drifts):<{len(args.drifts) + 1}} {', '.join(waiting)}")
     print()
     if worker_rows:
         print()
@@ -1207,7 +1207,7 @@ def main() -> None:
             claims = ",".join(w["claims"]) or "-"
             print(f" {w['worker'][:17]:<17} {fmt_age(w['log_age']):<8} {claims[:15]:<15} {w['last_line'][:95]}")
     print(" family = one dataset x seed = 4 chained points d0 -> d25 -> d100 -> d400 on one node (each GRPO point resumes the previous checkpoint)")
-    print(" ✓ done   ● running   ■ hung/stuck/dead   ? unknown   · waiting      last write = time since this family wrote any file")
+    print(" points: + done   * running   X hung/stuck/dead   ? unknown   . waiting      last write = time since this family wrote any file")
     stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]
     if stale_workers:
         print(f" stale worker records (no claim, no fresh log): {', '.join(stale_workers)}")
