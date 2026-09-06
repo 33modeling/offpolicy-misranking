@@ -46,11 +46,7 @@ def fingerprint(model: Path, targets: list[str]) -> dict:
         "host": platform.node(),
         "model": str(model.resolve()),
         "model_config_sha256": sha256_file(model / "config.json"),
-        "snapshot_manifest_sha256": (
-            sha256_file(model / ".om_snapshot.json")
-            if (model / ".om_snapshot.json").is_file()
-            else None
-        ),
+        "snapshot_manifest_sha256": sha256_file(model / ".om_snapshot.json"),
         "lora_targets": targets,
         "torch": torch.__version__,
         "transformers": package_version("transformers"),

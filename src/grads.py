@@ -196,31 +196,36 @@ def prompt_gradient(
                 f"{response_length} != {weight.numel()}"
             )
 
-    model.zero_grad(set_to_none=True)
-    k = len(sequences)
-    start = 0
-    while start < k:
-        batch = sequences[start : start + micro_batch]
-        ws = weights[start : start + micro_batch]
+    # A failed backward may already have changed some .grad tensors. Retry the
+    # entire prompt, not the failed chunk, so no partial contribution survives.
+    while True:
+        model.zero_grad(set_to_none=True)
         try:
-            token_logps = _padded_token_logps(
-                model, [seq["input_ids"] for seq in batch]
-            )
-            loss = token_logps[0].new_zeros(())
-            for seq, w, tok_logp in zip(batch, ws, token_logps, strict=True):
-                resp = tok_logp[seq["resp_start"] - 1 :]
-                loss = loss + (w.to(resp.device) * resp).sum() / k
-            loss.backward()
-        except Exception as exc:  # noqa: BLE001 - CUDA OOM only; the gradient sum is unchanged
+            _accumulate_prompt_gradient(model, sequences, weights, micro_batch)
+        except Exception as exc:
             if not _is_oom(exc) or micro_batch <= 1:
+                model.zero_grad(set_to_none=True)
                 raise
-            del exc
-            torch.cuda.empty_cache()
             micro_batch = max(1, micro_batch // 2)
-            print(f"[oom-backoff] gradient micro-batch -> {micro_batch}", flush=True)
-            continue
-        start += len(batch)
-    return project_grads(params, spec)
+        else:
+            return project_grads(params, spec)
+        # Outside the except block, its traceback/failed graph has been released.
+        model.zero_grad(set_to_none=True)
+        torch.cuda.empty_cache()
+        print(f"[oom-backoff] restart whole prompt; gradient micro-batch -> {micro_batch}", flush=True)
+
+
+def _accumulate_prompt_gradient(model, sequences, weights, micro_batch):
+    k = len(sequences)
+    for start in range(0, k, micro_batch):
+        batch = sequences[start:start + micro_batch]
+        ws = weights[start:start + micro_batch]
+        token_logps = _padded_token_logps(model, [seq["input_ids"] for seq in batch])
+        loss = token_logps[0].new_zeros(())
+        for seq, w, tok_logp in zip(batch, ws, token_logps, strict=True):
+            resp = tok_logp[seq["resp_start"] - 1:]
+            loss = loss + (w.to(resp.device) * resp).sum() / k
+        loss.backward()
 
 
 def _is_oom(exc: BaseException) -> bool:

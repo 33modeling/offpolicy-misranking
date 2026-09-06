@@ -418,8 +418,8 @@ if [ -n "${OM_BEHAVIOR_SOURCE:-}" ]; then
     exit "$rc"
   fi
 else
-  if ! progress 1 prep
-  run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"; then
+  progress 1 prep
+  if ! run_stage 0 "$LOGS/prep.log" --stage prep "${COMMON[@]}"; then
     if grep -Fq "prompts.json differs from the requested dataset/split" \
         "$LOGS/prep.log"; then
       log "[permanent-contract] base prompt set differs from the existing run"

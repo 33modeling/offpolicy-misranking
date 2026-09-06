@@ -1,6 +1,7 @@
 """A hand-uploaded Qwen3.5-9B directory is found by content and exposed at the pinned path."""
 import json
 import os
+import hashlib
 import sys
 from pathlib import Path
 
@@ -10,7 +11,11 @@ from model_matrix import PINNED_OFFICIAL_FILES, _load_specs
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = next(iter(_load_specs(ROOT / "configs/qwen35_9b_grpo.json").values()))
-OFFICIAL = PINNED_OFFICIAL_FILES[(SPEC["repository"], SPEC["revision"])]
+OFFICIAL = dict(PINNED_OFFICIAL_FILES[(SPEC["repository"], SPEC["revision"])])
+FIXTURE_CONFIG = json.dumps({"model_type": "qwen3_5", "architectures": ["Qwen3_5ForConditionalGeneration"]})
+FIXTURE_CONFIG += " " * (OFFICIAL["config.json"]["size"] - len(FIXTURE_CONFIG.encode()))
+OFFICIAL["config.json"] = {"size": len(FIXTURE_CONFIG), "sha256": hashlib.sha256(FIXTURE_CONFIG.encode()).hexdigest()}
+SPEC = {**SPEC, "official_files": OFFICIAL}
 
 
 def fake_upload(directory: Path, shard_prefix: str) -> None:
@@ -19,6 +24,8 @@ def fake_upload(directory: Path, shard_prefix: str) -> None:
     text = json.dumps(config)
     # pad to the official size so content identification succeeds
     text += " " * (OFFICIAL["config.json"]["size"] - len(text.encode()))
+    if any(x in str(directory) for x in ("27B", "2B", "4B")):
+        text = text.replace('"qwen3_5"', '"qwen3_5", "wrong_capacity": true')
     (directory / "config.json").write_text(text)
     for index in range(1, 5):
         name = f"{shard_prefix}-0000{index}-of-00004.safetensors"
@@ -109,8 +116,23 @@ def test_weightless_pinned_dir_does_not_shadow_the_real_upload(tmp_path: Path) -
     (pinned / "config.json").write_text('{"model_type": "qwen3_5"}')  # old prepare: no weights
     found, _ = discover(models, SPEC)
     assert found == (models / "Qwen3.5-9B").resolve()
-    assert not pinned.exists()
-    assert list(models.glob(".stale-Qwen3.5-9B-pinned-*"))
+    assert pinned.exists()  # discovery must not rename user directories
+    assert not list(models.glob(".stale-Qwen3.5-9B-pinned-*"))
+
+
+def test_only_wrong_capacity_is_never_selected(tmp_path, monkeypatch):
+    models = tmp_path / "models"
+    fake_upload(models / "Qwen3.8-27B", "model")
+    assert discover(models, SPEC)[0] is None
+    monkeypatch.setenv("OM_SNAPSHOT_PATH", str(models / "Qwen3.8-27B"))
+    assert discover(models, SPEC)[0] is None
+
+
+def test_directory_cycle_is_bounded(tmp_path):
+    models = tmp_path / "models"
+    fake_upload(models / "upload", "model")
+    (models / "upload/loop").symlink_to(models, target_is_directory=True)
+    assert discover(models, SPEC)[0] == (models / "upload").resolve()
 
 
 def test_snapshot_nested_at_any_depth_is_found(tmp_path: Path) -> None:

@@ -1,21 +1,10 @@
 #!/usr/bin/env python3
-"""Find a hand-uploaded model snapshot by content and expose it at the pinned path.
+"""Read-only discovery of a hand-uploaded pinned model snapshot.
 
-    python3 src/locate_uploaded_snapshot.py --config CONFIG --model-key KEY --models-dir DIR
-
-People upload weights by scp into whatever directory name they like, sometimes
-with shard names that differ from the Hub index. The contracts, however, expect
-$MODELS_DIR/<local_directory> with the official file names. This tool:
-
-1. uses $MODELS_DIR/<local_directory> if it already holds config.json;
-2. otherwise scans $MODELS_DIR (two levels) for a config.json whose model_type
-   matches the spec and whose size equals the pinned official config.json, and
-   links the pinned directory name to it (symlink, nothing is moved);
-3. inside the chosen directory, links every official shard name that is missing
-   to an existing *.safetensors file of exactly the official size (hash is still
-   verified by `model_matrix seal`).
-
-Prints the pinned path on success. Exit 1 with the scanned locations otherwise.
+Folder names are arbitrary. Candidates must match the pinned config content
+(or exact Hub config metadata for models without embedded records). Full weight
+and tokenizer validation is performed by model_matrix check/seal afterwards.
+No directory rename, symlink creation, or index repair is performed by the CLI.
 """
 
 from __future__ import annotations
@@ -24,10 +13,9 @@ import argparse
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
-from model_matrix import PINNED_OFFICIAL_FILES, _load_specs
+from model_matrix import PINNED_OFFICIAL_FILES, _load_specs, _git_blob_sha1, _sha256
 
 
 def _official(spec: dict) -> dict:
@@ -41,10 +29,21 @@ def _config_matches(config_path: Path, spec: dict, official: dict) -> bool:
         document = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    if document.get("model_type") != spec.get("model_type"):
+    if not isinstance(document, dict) or document.get("model_type") != spec.get("model_type"):
         return False
-    expected = official.get("config.json", {}).get("size")
-    return expected is None or config_path.stat().st_size == expected
+    expected = official.get("config.json")
+    if expected:
+        if config_path.stat().st_size != expected["size"]:
+            return False
+        return (_sha256(config_path) == expected["sha256"] if "sha256" in expected
+                else _git_blob_sha1(config_path) == expected["git_blob_sha1"])
+    metadata = config_path.parent / ".cache/huggingface/download/config.json.metadata"
+    try:
+        revision, etag, *_ = metadata.read_text().splitlines()
+        return revision == spec["revision"] and etag in {
+            _sha256(config_path), _git_blob_sha1(config_path)}
+    except (OSError, ValueError):
+        return False
 
 
 def search_roots(models_dir: Path) -> list[Path]:
@@ -82,7 +81,13 @@ def _iter_files(root: Path, name_or_suffix: str, limit: int = 40000):
     import os as _os
 
     seen = 0
+    visited = set()
     for current, directories, files in _os.walk(root, followlinks=True):
+        identity = Path(current).resolve()
+        if identity in visited:
+            directories[:] = []
+            continue
+        visited.add(identity)
         directories[:] = [
             d for d in directories
             if d not in SKIP_DIRS and not d.startswith(".stale-")
@@ -152,72 +157,28 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
     explicit = os.environ.get("OM_SNAPSHOT_PATH")
     if explicit:
         path = Path(explicit)
-        return (path.resolve() if (path / "config.json").is_file() else None), [path]
+        valid = _config_matches(path / "config.json", spec, official) and _has_weights(path)
+        return (path.resolve() if valid else None), [path]
     standard = models_dir / spec["local_directory"]
-    if (standard / "config.json").is_file():
-        if _has_weights(standard) or _weights_dir(standard) != standard:
-            return standard, [standard]
-        # A weightless pinned directory (left by the old prepare that downloaded
-        # only config/tokenizer/index) must not shadow the real upload next to it.
-        stale = standard.with_name(f".stale-{standard.name}-{int(time.time())}")
-        try:
-            standard.rename(stale)
-            print(f"[locate] {standard} had no weights; moved aside to {stale.name}", file=sys.stderr)
-        except OSError as exc:
-            print(f"[locate] {standard} has no weights and cannot be moved ({exc}); ignoring it", file=sys.stderr)
-    scanned: list[Path] = []
-    by_type: list[Path] = []
-    for root in search_roots(models_dir):
-        # Same strategy the dataset loader uses for uploaded corpora: walk the
-        # whole tree instead of assuming a folder layout.
-        for config_path in sorted(_iter_files(root, "config.json")):
+    if (_config_matches(standard / "config.json", spec, official)
+            and _has_weights(standard)):
+        return standard, [standard]
+    scanned = []
+    matches = []
+    roots = search_roots(models_dir)
+    volume = os.environ.get("GROUP_VOLUME")
+    if volume and Path(volume).is_dir():
+        roots += _directories_named(Path(volume), spec["repository"].split("/")[-1].lower())
+    for root in roots:
+        for config_path in _iter_files(root, "config.json"):
             directory = config_path.parent.resolve()
             if directory in scanned:
                 continue
             scanned.append(directory)
-            if _type_matches(config_path, spec) and (
-                _has_weights(directory) or _weights_dir(directory) != directory
-            ):
-                by_type.append(directory)
-    if not by_type:
-        # Last resort: the model may live outside the configured model roots
-        # (a different group share). Search the whole volume by directory name.
-        volume = os.environ.get("GROUP_VOLUME")
-        needle = spec["repository"].split("/")[-1].lower()
-        if volume and Path(volume).is_dir():
-            for directory in _directories_named(Path(volume), needle):
-                config_path = directory / "config.json"
-                if directory in scanned:
-                    continue
-                scanned.append(directory)
-                if config_path.is_file() and _type_matches(config_path, spec) and (
-                    _has_weights(directory) or _weights_dir(directory) != directory
-                ):
-                    by_type.append(directory.resolve())
-    if len(by_type) == 1:
-        return by_type[0], scanned
-    if not by_type:
-        return None, scanned
-    # Several Qwen3.x uploads share model_type=qwen3_5 (9B and 27B). The folder is
-    # almost always named after the repository ("Qwen3.5-9B", "Qwen3.5-9B-pinned").
-    base = spec["repository"].split("/")[-1].lower()
-    named = [d for d in by_type if base in str(d).lower()]
-    if len(named) > 1:
-        named = sorted(named, key=lambda d: (len(d.parts), str(d)))[:1]
-    if len(named) == 1:
-        return named[0], scanned
-    exact = [d for d in (named or by_type) if _config_matches(d / "config.json", spec, official)]
-    if len(exact) == 1:
-        return exact[0], scanned
-    index_size = official.get("model.safetensors.index.json", {}).get("size")
-    by_index = [
-        d for d in (exact or by_type)
-        if index_size and (d / "model.safetensors.index.json").is_file()
-        and (d / "model.safetensors.index.json").stat().st_size == index_size
-    ]
-    if len(by_index) == 1:
-        return by_index[0], scanned
-    return None, scanned
+            if _config_matches(config_path, spec, official) and _has_weights(directory):
+                matches.append(directory)
+    # Never choose by model_type, folder name, file size alone, or traversal order.
+    return (matches[0] if len(matches) == 1 else None), scanned
 
 
 def describe(directory: Path, official: dict) -> list[str]:
@@ -366,28 +327,11 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    # Linking the pinned name is a convenience, not a requirement: everything
-    # downstream is given the located path explicitly. A read-only or
-    # foreign-owned $MODELS_DIR must not turn a present model into "not found".
-    if found != standard.resolve() and not standard.exists():
-        try:
-            os.symlink(found, standard)
-            print(f"[locate] {standard} -> {found} (symlink)", file=sys.stderr)
-        except OSError as exc:
-            print(f"[locate] cannot link {standard} ({exc}); using {found} directly", file=sys.stderr)
-    base = standard.resolve() if standard.exists() else found
-    target = _weights_dir(base)
-    writable = os.access(target, os.W_OK)
-    if writable:
-        for action in link_missing_shards(target, official):
-            print(f"[locate] {action}", file=sys.stderr)
-        for action in ensure_index(target):
-            print(f"[locate] {action}", file=sys.stderr)
-    else:
-        print(f"[locate] {target} is not writable; using files as they are", file=sys.stderr)
-    for line in describe(target, official):
+    # Discovery/doctor are read-only. No rename, symlink or index reconstruction.
+    # If upload names differ, prepare the exact pinned layout separately.
+    for line in describe(found, official):
         print(f"[locate] {line}", file=sys.stderr)
-    print(target)
+    print(found)
     return 0
 
 

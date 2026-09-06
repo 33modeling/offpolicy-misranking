@@ -140,38 +140,47 @@ def _is_cuda_oom(exc: BaseException) -> bool:
 
 
 def generate_with_backoff(model, batch_ids: torch.Tensor, gkw: dict, label: str = "") -> torch.Tensor:
-    """model.generate() that halves the batch on CUDA OOM instead of dying.
+    """Retry the full generation request at a smaller batch after CUDA OOM.
 
-    Rows are generated in slices and concatenated (right-padded to the longest
-    slice with the pad id), so callers see exactly one output row per input row.
-    Sampling distribution is unchanged; only memory scheduling differs.
+    Failed attempts retain no output/graph and do not consume the retry's RNG
+    stream. Different batch schedules can still yield different sampled tokens.
     """
     rows = int(batch_ids.shape[0])
+    if rows < 1:
+        raise ValueError("generation requires at least one row")
+    cpu_rng = torch.get_rng_state()
+    cuda_rng = torch.cuda.get_rng_state(batch_ids.device) if batch_ids.is_cuda else None
     step = rows
     while True:
         try:
-            outputs = []
-            for start in range(0, rows, step):
-                outputs.append(model.generate(
-                    batch_ids[start:start + step],
-                    attention_mask=torch.ones_like(batch_ids[start:start + step]),
-                    **gkw,
-                ))
-            if len(outputs) == 1:
-                return outputs[0]
-            width = max(out.shape[1] for out in outputs)
-            pad = int(gkw.get("pad_token_id", 0))
-            padded = [
-                torch.nn.functional.pad(out, (0, width - out.shape[1]), value=pad)
-                for out in outputs
-            ]
-            return torch.cat(padded, dim=0)
-        except Exception as exc:  # noqa: BLE001 - only OOM is handled, everything else re-raised
+            return _generate_slices(model, batch_ids, gkw, step)
+        except Exception as exc:
             if not _is_cuda_oom(exc) or step <= 1:
                 raise
-            torch.cuda.empty_cache()
             step = max(1, step // 2)
-            print(f"[oom-backoff] {label} generation batch -> {step} after CUDA OOM", flush=True)
+        # Outside except: failed call frames and output tensors are now released.
+        torch.set_rng_state(cpu_rng)
+        if cuda_rng is not None:
+            torch.cuda.set_rng_state(cuda_rng, batch_ids.device)
+        torch.cuda.empty_cache()
+        print(f"[oom-backoff] {label} restart generation batch -> {step}", flush=True)
+
+
+def _generate_slices(model, batch_ids, gkw, step):
+    outputs = [
+        model.generate(batch_ids[start:start + step],
+                       attention_mask=torch.ones_like(batch_ids[start:start + step]),
+                       **gkw)
+        for start in range(0, int(batch_ids.shape[0]), step)
+    ]
+    if len(outputs) == 1:
+        return outputs[0]
+    width = max(out.shape[1] for out in outputs)
+    pad = int(gkw.get("pad_token_id", 0))
+    return torch.cat([
+        torch.nn.functional.pad(out, (0, width - out.shape[1]), value=pad)
+        for out in outputs
+    ], dim=0)
 
 
 def _gen_batch_size(total: int) -> int:

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from artifact_contract import validate_generation_contract
 from gate_rules import has_valid_analysis_protocol
-from model_matrix import _load_config
+from model_matrix import _load_config, validate_snapshot_provenance
 from score_artifacts import load_complete_score_artifacts
 from train_policy_grpo import validate_policy_lineage
 
@@ -148,25 +148,10 @@ def build_matrix(
     spec = models[model_key]
     if not (model_path / "config.json").is_file():
         raise ValueError(f"model path has no config.json: {model_path}")
-    # The snapshot may be a hand-uploaded directory under any name. Provenance
-    # is recorded from its manifest when one exists; otherwise it is recorded
-    # as unverified rather than refusing to run.
+    # Folder names are arbitrary; verified content, not names, establishes identity.
     manifest_path = model_path / ".om_snapshot.json"
-    provenance = "unverified-local-upload"
-    if manifest_path.is_file():
-        manifest = read_json(manifest_path)
-        if (
-            manifest.get("schema_version") == 2
-            and manifest.get("repository") == spec["repository"]
-            and manifest.get("revision") == spec["revision"]
-        ):
-            provenance = (
-                "unverified-local-upload"
-                if "__provenance__" in (manifest.get("files") or {})
-                else "pinned-hub-revision"
-            )
-        else:
-            raise ValueError("model snapshot manifest does not match the transfer config")
+    validate_snapshot_provenance(spec, model_path)
+    provenance = "pinned-hub-revision"
 
     qualification = read_json(qualification_path)
     experiment = config["experiment"]

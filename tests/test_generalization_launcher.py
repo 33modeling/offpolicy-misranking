@@ -115,6 +115,8 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '    [ "${TEST_SMOKE_FAIL:-0}" = 0 ] || { echo "synthetic smoke traceback" >&2; exit 17; }\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --marker ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  scripts/check_27b_fla.py) exit 0 ;;\n"
+        "  src/locate_uploaded_snapshot.py)\n"
+        "    case \" $* \" in *'--model-key m2 '*) printf '%s/models/m2\\n' \"$TEST_WORK\" ;; *) printf '%s/models/m1\\n' \"$TEST_WORK\" ;; esac ;;\n"
         "  src/bootstrap_math_verify.py) printf '%s/runtime-deps/math-verify-test\\n' \"$TEST_WORK\" ;;\n"
         "  -c) exit 0 ;;\n"
         "  src/regime_contract.py)\n"

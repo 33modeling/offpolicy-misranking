@@ -651,7 +651,7 @@ def _verify_file_records(path: Path, records: dict) -> None:
         raise ValueError("snapshot manifest has no file integrity records")
     for name, expected in records.items():
         if name == "__provenance__":
-            continue
+            raise ValueError("unverified snapshot records are not admissible")
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"unsafe manifest file path: {name!r}")
@@ -664,39 +664,50 @@ def _verify_file_records(path: Path, records: dict) -> None:
             raise ValueError(f"snapshot file hash mismatch: {name}")
 
 
-def _check_snapshot(spec: dict, path: Path) -> dict:
-    """Validate a local snapshot.
+def validate_snapshot_provenance(spec: dict, path: Path) -> dict:
+    """Reject old trust-local manifests, changed files and wrong pinned weights."""
+    manifest = json.loads((path / ".om_snapshot.json").read_text())
+    if (manifest.get("schema_version") != 2
+            or manifest.get("repository") != spec["repository"]
+            or manifest.get("revision") != spec["revision"]):
+        raise ValueError("snapshot provenance mismatch")
+    records = manifest.get("files")
+    if not isinstance(records, dict) or "__provenance__" in records:
+        raise ValueError("unverified snapshot cannot enter a registered matrix")
+    shards = _weight_shards(path)
+    names = {str(file.relative_to(path)) for file in _manifest_files(path, shards)}
+    if set(records) != names:
+        raise ValueError("snapshot manifest does not bind the complete current file set")
+    _verify_file_records(path, records)
+    official = spec.get("official_files") or PINNED_OFFICIAL_FILES.get(
+        (spec["repository"], spec["revision"])
+    )
+    if official:
+        expected_shards = {name for name in official if name.endswith(".safetensors")}
+        if {file.name for file in shards} != expected_shards:
+            raise ValueError("snapshot shard set differs from pinned revision")
+        for name in names:
+            expected = official.get(name)
+            actual = records[name]
+            if expected is None or actual["size"] != expected["size"]:
+                raise ValueError(f"unregistered or wrong-size pinned file: {name}")
+            if "sha256" in expected:
+                valid = actual["sha256"] == expected["sha256"]
+            else:
+                valid = _git_blob_sha1(path / name) == expected["git_blob_sha1"]
+            if not valid:
+                raise ValueError(f"pinned model file hash mismatch: {name}")
+    elif manifest.get("provenance") != "pinned-hub-revision":
+        raise ValueError("legacy manifest must be resealed from exact Hub metadata")
+    return manifest
 
-    The default check is provenance-based (manifest + per-file hashes). With
-    OM_TRUST_LOCAL_SNAPSHOT=1 the check is capability-based instead: the files
-    only have to be loadable — config/tokenizer parse, shards exist and their
-    safetensors headers cover the tensors the config implies. Use it when the
-    upload is known good and only its bookkeeping disagrees.
-    """
+
+def _check_snapshot(spec: dict, path: Path) -> dict:
+    """Strict pinned identity plus tokenizer and architecture compatibility."""
     from accelerate import init_empty_weights
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-    trust_local = os.environ.get("OM_TRUST_LOCAL_SNAPSHOT") == "1"
-    required = [path / "config.json", path / "tokenizer_config.json"]
-    if not trust_local:
-        required.append(path / ".om_snapshot.json")
-    missing = [p.name for p in required if not p.is_file()]
-    if missing:
-        raise ValueError(f"{spec['key']}: missing files: {', '.join(missing)}")
-
-    if trust_local:
-        print(
-            f"[model] OM_TRUST_LOCAL_SNAPSHOT=1: {path} checked for loadability only; "
-            "provenance recorded as unverified",
-            file=sys.stderr,
-        )
-    else:
-        manifest = json.loads((path / ".om_snapshot.json").read_text(encoding="utf-8"))
-        if manifest.get("schema_version") != 2:
-            raise ValueError(f"{spec['key']}: obsolete snapshot manifest schema")
-        if manifest.get("repository") != spec["repository"] or manifest.get("revision") != spec["revision"]:
-            raise ValueError(f"{spec['key']}: snapshot provenance mismatch")
-        _verify_file_records(path, manifest.get("files"))
+    validate_snapshot_provenance(spec, path)
 
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     if spec.get("prompt_format", "tokenizer_chat") == "tokenizer_chat":
@@ -724,21 +735,6 @@ def _check_snapshot(spec: dict, path: Path) -> dict:
     weight_bytes = sum(shard.stat().st_size for shard in shards)
     if weight_bytes < 1_000_000_000:
         raise ValueError(f"{spec['key']}: implausibly small weight snapshot")
-    if trust_local:
-        tensors = 0
-        for shard in shards:
-            names = _safetensors_tensor_names(shard)
-            if names is None:
-                raise ValueError(f"{spec['key']}: unreadable safetensors header: {shard.name}")
-            tensors += len(names)
-        if tensors < 100:
-            raise ValueError(f"{spec['key']}: shards contain only {tensors} tensors")
-        print(
-            f"[model] {len(shards)} shard(s), {tensors} tensors, "
-            f"{weight_bytes / 1e9:.1f} GB readable",
-            file=sys.stderr,
-        )
-
     with init_empty_weights():
         if config.model_type == "qwen3_5":
             from transformers import AutoModelForMultimodalLM
@@ -770,22 +766,24 @@ def _write_manifest(
     shards = _weight_shards(path)
     manifest = {
         "schema_version": 2,
+        "provenance": "pinned-hub-revision",
         "repository": spec["repository"],
         "revision": spec["revision"],
         "files": records or _file_records(path, _manifest_files(path, shards)),
     }
     target = path / ".om_snapshot.json"
-    target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    temporary = target.with_name(f"{target.name}.tmp-{os.getpid()}-{time.time_ns()}")
+    try:
+        temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _seal_local_snapshot(spec: dict, path: Path) -> dict:
     """Seal a Hub ``local_dir`` download without making a network request."""
     shards = _weight_shards(path)
     files = _manifest_files(path, shards)
-    if os.environ.get("OM_TRUST_LOCAL_SNAPSHOT") == "1":
-        # Capability mode: record what is on disk, do not compare to the Hub.
-        _write_manifest(spec, path, _file_records(path, files))
-        return _check_snapshot(spec, path)
     official_files = spec.get("official_files") or PINNED_OFFICIAL_FILES.get(
         (spec["repository"], spec["revision"])
     )
@@ -817,22 +815,7 @@ def _seal_local_snapshot(spec: dict, path: Path) -> dict:
                     raise ValueError(f"{spec['key']}: model file hash mismatch: {relative}")
                 records[relative] = {"size": size, "sha256": sha256}
         except ValueError:
-            # Escape hatch for a snapshot that was downloaded from `main` instead of
-            # the pinned revision: seal what is on disk and say so in the manifest.
-            # Opt-in only; provenance is then "this directory", not the Hub revision.
-            if os.environ.get("OM_ALLOW_UNPINNED_SNAPSHOT") != "1":
-                raise
-            print(
-                f"[model] WARNING {spec['key']}: files differ from pinned revision "
-                f"{spec['revision'][:12]}; sealing the local upload as-is "
-                "(OM_ALLOW_UNPINNED_SNAPSHOT=1)",
-                file=sys.stderr,
-            )
-            for file in files:
-                if not file.is_file():
-                    raise ValueError(f"{spec['key']}: model file missing: {file.relative_to(path)}")
-            records = _file_records(path, files)
-            records["__provenance__"] = {"size": 0, "sha256": "unverified-local-upload"}
+            raise
 
         manifest = path / ".om_snapshot.json"
         _write_manifest(spec, path, records)

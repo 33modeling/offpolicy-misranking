@@ -12,7 +12,7 @@ TERMINAL_PATTERN='\[progress\]|^\[stage\]|^\[exit\]|abort\]|\[error\]|Traceback|
 if [ "${ADDITIONAL_VERBOSE:-0}" = 1 ]; then
   exec > >(tee -a "$SESSION_LOG") 2>&1
 else
-  exec > >(tee -a "$SESSION_LOG" | grep --line-buffered -E "$TERMINAL_PATTERN" >&"$LAUNCH_STDOUT") 2>&1
+  exec > >(tee -a "$SESSION_LOG" | { grep --line-buffered -E "$TERMINAL_PATTERN" >&"$LAUNCH_STDOUT" || { filter_rc=$?; [ "$filter_rc" -eq 1 ] || exit "$filter_rc"; }; }) 2>&1
 fi
 LAUNCH_LOGGER_PID=$!
 LAUNCH_STAGE=admission
@@ -38,11 +38,16 @@ failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only
 finish_launch_log() {
   local rc=$? logger_rc=0
   trap - EXIT ERR INT TERM
-  printf '[exit] utc=%s rc=%s stage=%s log=%s\n' "$(date -u +%FT%TZ)" "$rc" "$LAUNCH_STAGE" "$SESSION_LOG"
+  printf '[work-exit] utc=%s rc=%s stage=%s\n' "$(date -u +%FT%TZ)" "$rc" "$LAUNCH_STAGE"
   exec 1>&"$LAUNCH_STDOUT" 2>&"$LAUNCH_STDERR"
   wait "$LAUNCH_LOGGER_PID" || logger_rc=$?
-  # grep exits 1 when nothing matched; that is not a writer failure.
-  [ "$logger_rc" -eq 0 ] || [ "$logger_rc" -eq 1 ] || { echo "[abort] log writer failed rc=$logger_rc" >&2; rc=$logger_rc; }
+  # Only the grep stage normalizes its no-match status; tee errors must propagate.
+  [ "$logger_rc" -eq 0 ] || { echo "[abort] log writer failed rc=$logger_rc" >&2; rc=$logger_rc; }
+  # The authoritative exit record is written only after the writer has drained.
+  if ! printf '[exit] utc=%s rc=%s stage=%s log=%s\n' "$(date -u +%FT%TZ)" "$rc" "$LAUNCH_STAGE" "$SESSION_LOG" >> "$SESSION_LOG"; then
+    echo "[abort] cannot persist final exit record" >&2
+    rc=1
+  fi
   if [ "$rc" -eq 0 ]; then
     printf 'OK  %s %s finished (log: %s)\n' "$PROFILE" "${MODE#--}" "$SESSION_LOG"
   else

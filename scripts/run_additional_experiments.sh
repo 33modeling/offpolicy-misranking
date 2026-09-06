@@ -94,15 +94,8 @@ clean_checkout() {
 clean_checkout
 GIT=$(git rev-parse HEAD)
 
-# A prepare that hung on a Hub download (offline node) keeps the provision lock
-# and a python download process alive. Nothing else depends on them; remove
-# them here so nobody has to pkill by hand. Only download-side processes match.
-"$PY" src/cleanup_run_processes.py --run-prefix "$OM_WORK/.never-a-run" --timeout 10 \
-  --command-pattern 'run_additional_experiments.sh --prepare' \
-  --command-pattern 'model_matrix.py --config configs/qwen35_9b_grpo.json --models-dir' \
-  --command-pattern 'model_matrix.py --config configs/qwen38_27b_grpo.json --models-dir' \
-  --command-pattern 'scripts/fetch_datasets.sh' 2>/dev/null \
-  | sed 's/^/[cleanup] /' || true
+# Admission never kills other jobs. Provision and node locks establish ownership;
+# a suspected stale owner must be diagnosed explicitly, not matched by command text.
 
 mkdir -p "$OM_WORK/locks" "$OM_WORK/console-logs" "$OM_WORK/contracts"
 
@@ -372,8 +365,8 @@ run_registered_matrix() {
     export OM_GEN_BATCH GRADIENT_MICRO_BATCH GRPO_LOGPROB_MICRO_BATCH GRPO_GRADIENT_CHECKPOINTING
   fi
   # 2048-token rollouts at K=32 log once per prompt; a 10-minute stall window
-# would probe (not kill) too often. Hard stall stays at twice this value.
-export OM_STALL_MINUTES=30 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
+  # would probe (not kill) too often. Hard stall stays at twice this value.
+  export OM_STALL_MINUTES=30 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
 
   for model_key in "${model_keys[@]}"; do
     log_stage "snapshot-$model_key"
@@ -382,7 +375,8 @@ export OM_STALL_MINUTES=30 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
     if ! MODEL_PATH=$("$PY" src/locate_uploaded_snapshot.py --config "$config" \
       --model-key "$model_key" --models-dir "$MODELS_DIR" 2> >(tee -a "$log" >&2)); then
       MODEL_PATH=$(model_field "$config" "$model_key" path)
-      echo "[model] locator failed; falling back to $MODEL_PATH" | tee -a "$log"
+      echo "[abort] model discovery failed; explicit identity is required" | tee -a "$log"
+      return 43
     fi
     echo "[model] using snapshot: $MODEL_PATH" | tee -a "$log"
     OM_LORA_TARGETS=$(model_field "$config" "$model_key" lora_targets)
@@ -396,10 +390,6 @@ export OM_STALL_MINUTES=30 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
       echo "[model] snapshot check failed; sealing $MODEL_PATH" | tee -a "$log"
       "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
         --snapshot-path "$MODEL_PATH" seal "$model_key" 2>&1 | tee -a "$log"
-    elif [ ! -f "$MODEL_PATH/.om_snapshot.json" ] && [ -w "$MODEL_PATH" ]; then
-      # Record what was used (best effort); contracts tolerate a missing manifest.
-      "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
-        --snapshot-path "$MODEL_PATH" seal "$model_key" 2>&1 | tee -a "$log" || true
     fi
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
     if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35* ]]; then
