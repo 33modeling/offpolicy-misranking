@@ -5,6 +5,14 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
+# Append every run to a history file so the timeline survives the terminal.
+HISTORY="$OM_WORK/console-logs/status-qwen35-history.log"
+if [ -z "${STATUS_HISTORY_ACTIVE:-}" ] && mkdir -p "$(dirname "$HISTORY")" 2>/dev/null; then
+  printf '\n===== status %s host=%s =====\n' "$(date -u +%FT%TZ)" "$(hostname)" >> "$HISTORY"
+  STATUS_HISTORY_ACTIVE=1 bash "$0" "$@" | tee -a "$HISTORY"
+  echo "history : $HISTORY"
+  exit "${PIPESTATUS[0]}"
+fi
 RUN_ID=${RUN_ID:-qwen35-9b-posttrained-math-code-grpo-v1}
 RUNS="$OM_WORK/runs/$RUN_ID"
 RES="$OM_WORK/results/$RUN_ID"

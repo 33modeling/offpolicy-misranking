@@ -226,6 +226,11 @@ if [ "$MODE" = status ]; then
   case "$STATUS_PROBE_SECONDS" in
     ''|*[!0-9]*) echo "[abort] invalid STATUS_PROBE_SECONDS=$STATUS_PROBE_SECONDS"; exit 2 ;;
   esac
+  # Every status run is appended to a shared history file so "was it alive at
+  # 03:00?" can be answered later from any node: $ROOT/logs/status-history.log
+  STATUS_HISTORY="$ROOT/logs/status-history.log"
+  mkdir -p "$ROOT/logs" 2>/dev/null || true
+  { printf '\n===== status %s host=%s =====\n' "$(date -u +%FT%TZ)" "$(hostname)"; } >> "$STATUS_HISTORY" 2>/dev/null || STATUS_HISTORY=/dev/null
   "$PY" "$SUPERVISOR_REPO/src/rlzero_status.py" \
     --profile "$PROFILE" --root "$ROOT" --results "$GLOBAL_RESULTS" \
     --model-tag "$MODEL_TAG" --datasets "${DATASETS[@]}" \
@@ -241,8 +246,10 @@ if [ "$MODE" = status ]; then
     --logprob-micro-batch "$(runtime_field logprob_micro_batch)" \
     --min-recovery-generation-batch "$RECOVERY_MIN_GENERATION_BATCH" \
     --log-lines "$STATUS_LOG_LINES" --error-lines "$STATUS_ERROR_LINES" \
-    "${STATUS_VERBOSE_FLAG[@]}"
-  exit $?
+    "${STATUS_VERBOSE_FLAG[@]}" | tee -a "$STATUS_HISTORY"
+  rc=${PIPESTATUS[0]}
+  [ "$STATUS_HISTORY" = /dev/null ] || echo "history $STATUS_HISTORY"
+  exit "$rc"
 fi
 
 mkdir -p "$ROOT/.queue" "$QUEUE" "$PREFLIGHT" "$GLOBAL_RESULTS" "$OM_WORK/locks"
