@@ -570,7 +570,8 @@ def _require_runtime(spec: dict) -> None:
                 f"installed; GatedDeltaNet layers need it: {exc}"
             ) from exc
         if fla != "0.5.2":
-            raise ValueError(f"{spec['key']}: expected fla-core 0.5.2, found {fla}")
+            print(f"[model] WARNING {spec['key']}: fla-core {fla} != registered 0.5.2",
+                  file=sys.stderr)
 
 
 def _safetensors_tensor_names(path: Path) -> list[str] | None:

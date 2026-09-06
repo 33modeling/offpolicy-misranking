@@ -379,9 +379,13 @@ run_registered_matrix() {
     # is only for downloading when nothing has been uploaded.
     if ! "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
         --snapshot-path "$MODEL_PATH" check "$model_key" 2>&1 | tee -a "$log"; then
-      echo "[model] snapshot manifest missing/invalid; sealing $MODEL_PATH" | tee -a "$log"
+      echo "[model] snapshot check failed; sealing $MODEL_PATH" | tee -a "$log"
       "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
         --snapshot-path "$MODEL_PATH" seal "$model_key" 2>&1 | tee -a "$log"
+    elif [ ! -f "$MODEL_PATH/.om_snapshot.json" ] && [ -w "$MODEL_PATH" ]; then
+      # Record what was used (best effort); contracts tolerate a missing manifest.
+      "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
+        --snapshot-path "$MODEL_PATH" seal "$model_key" 2>&1 | tee -a "$log" || true
     fi
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
     if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35 ]]; then

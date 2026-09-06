@@ -146,19 +146,27 @@ def build_matrix(
     if model_key not in models:
         raise ValueError(f"model key is not in transfer config: {model_key}")
     spec = models[model_key]
-    if model_path.name != spec["local_directory"]:
-        raise ValueError(
-            f"model path does not match pinned directory: {model_path.name!r} != "
-            f"{spec['local_directory']!r}"
-        )
+    if not (model_path / "config.json").is_file():
+        raise ValueError(f"model path has no config.json: {model_path}")
+    # The snapshot may be a hand-uploaded directory under any name. Provenance
+    # is recorded from its manifest when one exists; otherwise it is recorded
+    # as unverified rather than refusing to run.
     manifest_path = model_path / ".om_snapshot.json"
-    manifest = read_json(manifest_path)
-    if (
-        manifest.get("schema_version") != 2
-        or manifest.get("repository") != spec["repository"]
-        or manifest.get("revision") != spec["revision"]
-    ):
-        raise ValueError("model snapshot manifest does not match the transfer config")
+    provenance = "unverified-local-upload"
+    if manifest_path.is_file():
+        manifest = read_json(manifest_path)
+        if (
+            manifest.get("schema_version") == 2
+            and manifest.get("repository") == spec["repository"]
+            and manifest.get("revision") == spec["revision"]
+        ):
+            provenance = (
+                "unverified-local-upload"
+                if "__provenance__" in (manifest.get("files") or {})
+                else "pinned-hub-revision"
+            )
+        else:
+            raise ValueError("model snapshot manifest does not match the transfer config")
 
     qualification = read_json(qualification_path)
     experiment = config["experiment"]
@@ -212,7 +220,8 @@ def build_matrix(
             "config_sha256": sha256_file(model_path / "config.json"),
             "tokenizer_config_sha256": sha256_file(model_path / "tokenizer_config.json"),
             "generation_config_sha256": optional_hash(model_path / "generation_config.json"),
-            "snapshot_manifest_sha256": sha256_file(manifest_path),
+            "snapshot_manifest_sha256": optional_hash(manifest_path),
+            "provenance": provenance,
         },
         "qualification_sha256": sha256_file(qualification_path),
         "datasets": qualification_rows,
