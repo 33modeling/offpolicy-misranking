@@ -264,8 +264,26 @@ def test_launcher_rejects_non_four_h100_node(tmp_path: Path) -> None:
     assert not (Path(env["TEST_WORK"]) / "phases").exists()
 
 
+def test_launcher_refuses_when_primary_owns_the_node(tmp_path: Path) -> None:
+    root, env = checkout(tmp_path)
+    lock_path = Path(env["OM_LOCAL_LOCK_DIR"]) / "primary.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_stream = lock_path.open("w")
+    fcntl.flock(lock_stream, fcntl.LOCK_EX)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_additional_experiments.sh"],
+        cwd=root, env=env, text=True, capture_output=True, timeout=20, check=False,
+    )
+    assert result.returncode != 0
+    assert "OLMo primary launcher is running on THIS node" in result.stdout + result.stderr
+    assert not (Path(env["TEST_WORK"]) / "phases").exists()
+    fcntl.flock(lock_stream, fcntl.LOCK_UN)
+    lock_stream.close()
+
+
 def test_launcher_does_nothing_until_primary_lock_is_released(tmp_path: Path) -> None:
     root, env = checkout(tmp_path)
+    env["OM_WAIT_PRIMARY"] = "1"
     lock_path = Path(env["OM_LOCAL_LOCK_DIR"]) / "primary.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_stream = lock_path.open("w")
