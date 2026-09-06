@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from code_sandbox import _validated_candidate
 from data import extract_answer, normalize_math_answer, reward
