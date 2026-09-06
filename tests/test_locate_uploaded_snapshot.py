@@ -62,3 +62,11 @@ def test_size_mismatch_is_reported_not_linked(tmp_path: Path) -> None:
         stream.truncate(123)
     actions = link_missing_shards(models / "x", OFFICIAL)
     assert any(action.startswith("missing model.safetensors-00002") for action in actions)
+
+
+def test_two_qwen_uploads_are_told_apart_by_folder_name(tmp_path: Path) -> None:
+    models = tmp_path / "models"
+    fake_upload(models / "Qwen3.5-9B", "model.safetensors")
+    fake_upload(models / "Qwen3.8-27B", "model")   # same model_type, different repo
+    found, _ = discover(models, SPEC)
+    assert found == (models / "Qwen3.5-9B").resolve()

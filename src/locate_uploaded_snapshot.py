@@ -100,7 +100,13 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
         return by_type[0], scanned
     if not by_type:
         return None, scanned
-    exact = [d for d in by_type if _config_matches(d / "config.json", spec, official)]
+    # Several Qwen3.x uploads share model_type=qwen3_5 (9B and 27B). The folder is
+    # almost always named after the repository ("Qwen3.5-9B", "Qwen3.5-9B-pinned").
+    base = spec["repository"].split("/")[-1].lower()
+    named = [d for d in by_type if base in d.name.lower()]
+    if len(named) == 1:
+        return named[0], scanned
+    exact = [d for d in (named or by_type) if _config_matches(d / "config.json", spec, official)]
     if len(exact) == 1:
         return exact[0], scanned
     index_size = official.get("model.safetensors.index.json", {}).get("size")

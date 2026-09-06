@@ -625,6 +625,8 @@ def _verify_file_records(path: Path, records: dict) -> None:
     if not isinstance(records, dict) or not records:
         raise ValueError("snapshot manifest has no file integrity records")
     for name, expected in records.items():
+        if name == "__provenance__":
+            continue
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"unsafe manifest file path: {name!r}")
@@ -729,27 +731,48 @@ def _seal_local_snapshot(spec: dict, path: Path) -> dict:
     )
     if official_files:
         records: dict[str, dict[str, int | str]] = {}
-        for file in files:
-            relative = str(file.relative_to(path))
-            expected = official_files.get(relative)
-            if expected is None:
-                raise ValueError(
-                    f"{spec['key']}: file is not registered for the pinned model: {relative}"
-                )
-            if not file.is_file():
-                raise ValueError(f"{spec['key']}: model file missing: {relative}")
-            size = file.stat().st_size
-            if size != expected["size"]:
-                raise ValueError(f"{spec['key']}: model file size mismatch: {relative}")
-            if "sha256" in expected:
-                sha256 = _sha256(file)
-                valid = sha256 == expected["sha256"]
-            else:
-                valid = _git_blob_sha1(file) == expected["git_blob_sha1"]
-                sha256 = _sha256(file)
-            if not valid:
-                raise ValueError(f"{spec['key']}: model file hash mismatch: {relative}")
-            records[relative] = {"size": size, "sha256": sha256}
+        try:
+            for file in files:
+                relative = str(file.relative_to(path))
+                expected = official_files.get(relative)
+                if expected is None:
+                    raise ValueError(
+                        f"{spec['key']}: file is not registered for the pinned model: {relative}"
+                    )
+                if not file.is_file():
+                    raise ValueError(f"{spec['key']}: model file missing: {relative}")
+                size = file.stat().st_size
+                if size != expected["size"]:
+                    raise ValueError(
+                        f"{spec['key']}: model file size mismatch: {relative} "
+                        f"({size} B on disk, official {expected['size']} B)"
+                    )
+                if "sha256" in expected:
+                    sha256 = _sha256(file)
+                    valid = sha256 == expected["sha256"]
+                else:
+                    valid = _git_blob_sha1(file) == expected["git_blob_sha1"]
+                    sha256 = _sha256(file)
+                if not valid:
+                    raise ValueError(f"{spec['key']}: model file hash mismatch: {relative}")
+                records[relative] = {"size": size, "sha256": sha256}
+        except ValueError:
+            # Escape hatch for a snapshot that was downloaded from `main` instead of
+            # the pinned revision: seal what is on disk and say so in the manifest.
+            # Opt-in only; provenance is then "this directory", not the Hub revision.
+            if os.environ.get("OM_ALLOW_UNPINNED_SNAPSHOT") != "1":
+                raise
+            print(
+                f"[model] WARNING {spec['key']}: files differ from pinned revision "
+                f"{spec['revision'][:12]}; sealing the local upload as-is "
+                "(OM_ALLOW_UNPINNED_SNAPSHOT=1)",
+                file=sys.stderr,
+            )
+            for file in files:
+                if not file.is_file():
+                    raise ValueError(f"{spec['key']}: model file missing: {file.relative_to(path)}")
+            records = _file_records(path, files)
+            records["__provenance__"] = {"size": 0, "sha256": "unverified-local-upload"}
 
         manifest = path / ".om_snapshot.json"
         _write_manifest(spec, path, records)
