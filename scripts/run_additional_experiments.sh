@@ -82,6 +82,16 @@ clean_checkout() {
 clean_checkout
 GIT=$(git rev-parse HEAD)
 
+# A prepare that hung on a Hub download (offline node) keeps the provision lock
+# and a python download process alive. Nothing else depends on them; remove
+# them here so nobody has to pkill by hand. Only download-side processes match.
+"$PY" src/cleanup_run_processes.py --run-prefix "$OM_WORK/.never-a-run" --timeout 10 \
+  --command-pattern 'run_additional_experiments.sh --prepare' \
+  --command-pattern 'model_matrix.py --config configs/qwen35_9b_grpo.json --models-dir' \
+  --command-pattern 'model_matrix.py --config configs/qwen38_27b_grpo.json --models-dir' \
+  --command-pattern 'scripts/fetch_datasets.sh' 2>/dev/null \
+  | sed 's/^/[cleanup] /' || true
+
 mkdir -p "$OM_WORK/locks" "$OM_WORK/console-logs" "$OM_WORK/contracts"
 
 matrix_field() {
