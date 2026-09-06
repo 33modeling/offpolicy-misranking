@@ -226,3 +226,29 @@ residual risks are recorded in [AUDIT_RESULT_2026-08-31.md](AUDIT_RESULT_2026-08
 - [ ] Record residual GPU-only, model-download, cluster, and statistical risks.
 - [ ] Commit and push the completed audit record without rewriting the source
   revision stored by already-running jobs.
+
+## Added 2026-09-06 after four lost days on the OLMo-3 H100 run
+
+Root causes, all in the supervisor, all invisible in the old status/log:
+
+1. `run_matrix.sh` completion check required an exact split-half key set; a
+   finished point of the other vintage was re-run forever.
+2. The stall watchdog counted the point's own `logs/keepalive.log` as pipeline
+   output and the keepalive's GPU/CPU as compute, so a hung point never
+   stalled and the terminal streamed keepalive lines that looked like work.
+3. Status labelled the family `DEAD` (lock not visible from another node) while
+   the hung worker kept printing; nobody could tell from either source.
+
+Checks that must pass before any launch is left unattended (add to the
+final-audit runbook):
+
+- [ ] One hour after launch, `status` shows `points N/40 done` with N > 0 or a
+      `[progress] ... k/8` line whose stage number increased since the last check.
+- [ ] `[regime-watchdog]` lines, if any, end in `-> RUNNING` with GPU > 0 and
+      the "last file written" age is under one stage duration. A line ending
+      in `NO PROGRESS` twice in a row means the point is hung and must be
+      killed by the watchdog within `HARD_STALL_SECONDS`; if it is not, stop.
+- [ ] `grep -c keepalive $ROOT/logs/*.log` is 0 (no keepalive lines forwarded).
+- [ ] After the first point finishes, the next point's directory appears within
+      ten minutes. If the same point directory is re-entered (`try 2/3` on a
+      run with `DONE`), the completion check is rejecting finished work.
