@@ -68,7 +68,7 @@ def test_recovery_cause_does_not_overwrite_active_point_kind(tmp_path):
         lock.close()
     row = next(line for line in output.splitlines() if line.startswith(" math500/s0"))
     assert "d0" in row
-    assert "●" in row
+    assert row.split()[1] == "*"
     assert "CUDA recovery failed once (cuda-oom" in row
 
 
@@ -113,6 +113,7 @@ def qwen_status(
     empty_done=False,
     done_count=0,
     history_failure=False,
+    error_text="",
 ):
     repo = tmp_path / "repo"
     scripts = repo / "scripts"
@@ -129,7 +130,7 @@ def qwen_status(
     run_id = "qwen35-9b-posttrained-math-code-grpo-v1"
     run = work / "runs" / run_id / "qwen35" / f"{run_id}-grpo-qwen35-s0-math500-d0"
     (run / "logs").mkdir(parents=True)
-    (run / "logs/main.log").write_text("[progress] test  1/8 prep\n")
+    (run / "logs/main.log").write_text("[progress] test  1/8 prep\n" + error_text)
     if empty_done:
         (run / "DONE").touch()
     for index in range(done_count):
@@ -168,6 +169,16 @@ def test_qwen_no_failures_has_valid_integer_count(tmp_path):
     assert result.returncode == 0
     assert result.stderr == ""
     assert "family failures this session: 0\n" in result.stdout
+
+
+@pytest.mark.parametrize("marker", ["[abort]", "GPU0 ✘ job rc=1"])
+def test_qwen_error_search_matches_actual_abort_and_legacy_markers(tmp_path, marker):
+    result = qwen_status(
+        tmp_path, active=True, error_text=marker + "\nRuntimeError: test failure\n"
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert "ERROR (current): RuntimeError: test failure" in result.stdout
 
 
 def test_qwen_successful_launcher_is_not_complete_with_missing_points(tmp_path):

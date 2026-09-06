@@ -3,7 +3,9 @@
 ## Scope and baseline
 
 - Repository: `offpolicy-misranking`, branch `master`.
-- Baseline: `e26ed6d`, not the older `audit/p1-integrity` checkout.
+- Initial baseline: `e26ed6d` (49 commits since midnight KST), not the older
+  `audit/p1-integrity` checkout. Concurrent status commits through `aa6a493`
+  were also inspected as they appeared.
 - Reviewed today's commit history (KST), with focused inspection of reward
   parsing, generation/OOM handling, optimizer safeguards, matrix completion,
   launcher paths, and status diagnostics. This is not a claim that every line
@@ -42,6 +44,14 @@
    produces a warning. This display still does not deep-validate artifacts.
 8. **History output masked failures.** An `echo` replaced PIPESTATUS before
    it was inspected. Child-status and history-writer failures are now preserved.
+9. **Recovery cause overwrote point state.** Concurrent commit `3233a47`
+   reused `kind` for a recovery error, replacing the active-point classification.
+   The row lost its drift and running marker. A separate `recovery_kind`
+   retains the point state; a regression exercises the actual compact output.
+10. **An error-search regex could not compile.** Concurrent commit `4b8556f`
+    introduced an unmatched opening parenthesis in both Qwen grep patterns.
+    The shell test caught the resulting stderr. Both searches now share a
+    valid base error pattern while recovery/backoff matches remain supported.
 
 ## Verification
 
@@ -49,11 +59,26 @@
   OLMo status fixtures, and execution of the actual Qwen shell script with
   isolated logs and a stub process probe.
 - Initial regression run before the fixes: 11 failures, 3 passes.
-- Expanded targeted suite: 40 passed, including the existing status and
+- Expanded targeted suite includes the existing status, launcher safety and
   September 6 reward/EOS regression modules.
+- Replaced the obsolete no-Git-keywords launcher test with execution of all
+  16 launch/prepare/check/doctor combinations. Added 8 isolated checks that
+  status uses only fast-forward merges and does not merge on dirty/offline
+  checkouts or reset a diverged branch. The intentional status auto-update
+  behavior was not removed to satisfy the older string-based assertion.
 - Ruff checks on changed Python modules and the new test module passed.
 - `bash -n scripts/status_qwen35.sh` and `git diff --check` passed.
-- Full-suite outcome is recorded below when the run finishes.
+- Initial full run: 241 passed, 1 obsolete launcher assertion failed.
+- A subsequent shared-checkout run caught the concurrently introduced grep
+  error (267 passed, 1 failed). Final verification uses a fixed copy to avoid
+  source changes during collection/execution.
+- Fixed-copy full suite: **269 passed in 132.07 seconds**. The copy was taken
+  from `aa6a493` plus the working fixes in this audit.
+- Final shared-checkout targeted suite: **74 passed in 3.36 seconds**, including
+  two additional end-to-end grep checks for `[abort]` and legacy GPU failure
+  markers after consolidating/escaping the error pattern.
+- Interpreter: `.work/.venv-cu126/bin/python` (PyTorch 2.7.1+cu126). The system
+  Python lacked torch/math-verify and was not used for the full validation.
 
 ## Operational limits
 
