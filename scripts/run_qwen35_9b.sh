@@ -35,6 +35,21 @@ if [ "$MODE" = status ]; then
   self_update_for_status
   exec bash scripts/status_qwen35.sh
 fi
+if [ "$MODE" = watch ]; then
+  interval="${OM_WATCH_SECONDS:-1800}"
+  echo "watching qwen35 every ${interval}s; one line per check"
+  while :; do
+    out=$(bash "$0" status 2>&1)
+    decision=$(printf '%s\n' "$out" | grep -m1 '^DECISION ' | cut -c10-)
+    points=$(printf '%s\n' "$out" | grep -m1 -o 'points *[0-9]* done / [0-9]* started')
+    stamp=$(date -u +%m-%d\ %H:%MZ)
+    case "$decision" in
+      ERROR*) echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"; echo "$stamp  $points"; echo "$decision"; echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"; printf '\a' ;;
+      *) echo "$stamp  $points  ${decision:-status failed}" ;;
+    esac
+    sleep "$interval"
+  done
+fi
 echo "[code] $(git rev-parse --short HEAD) (no automatic fetch/merge/reset)"
 export OM_ALLOW_UNPINNED_SNAPSHOT=0 OM_TRUST_LOCAL_SNAPSHOT=0
 case "$MODE" in
@@ -44,5 +59,5 @@ case "$MODE" in
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
     exec bash scripts/run_additional_experiments.sh "--$MODE" qwen35
     ;;
-  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|check|status|doctor|prepare]  (default run; status = one-screen progress; prepare = download, needs internet)"; exit 2 ;;
+  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|check|status|watch|doctor|prepare]  (default run; status = one screen; watch = one line every 30 min; prepare = download, needs internet)"; exit 2 ;;
 esac

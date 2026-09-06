@@ -10,7 +10,31 @@ PROFILE=${2:-baseline}
 RECOVERY_MIN_GENERATION_BATCH=2
 case "$MODE" in
   prepare|check|run|status) ;;
-  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100] [verbose]"; exit 2 ;;
+  watch)
+    # Unattended: every OM_RLZERO_WATCH_SECONDS (default 1800) run status and
+    # print one timestamped DECISION line; shout when it is ERROR / WORKER DEAD.
+    # Leave this in its own tmux window; look at it when you want to.
+    interval="${OM_RLZERO_WATCH_SECONDS:-1800}"
+    echo "watching $PROFILE every ${interval}s; one line per check; history in the experiment logs/status-history.log"
+    while :; do
+      out=$(bash "$0" status "$PROFILE" 2>&1)
+      decision=$(printf '%s\n' "$out" | grep -m1 '^DECISION ' | cut -c10-)
+      points=$(printf '%s\n' "$out" | grep -m1 -o 'points [0-9]*/[0-9]* done')
+      workers=$(printf '%s\n' "$out" | grep -m1 -o 'workers [0-9]*/[0-9]*')
+      stamp=$(date -u +%m-%d\ %H:%MZ)
+      case "$decision" in
+        ERROR*|"WORKER DEAD"*)
+          echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+          echo "$stamp  $workers  $points"
+          echo "$decision"
+          printf '%s\n' "$out" | grep -m1 '^ACTION ' || true
+          echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+          printf '\a' ;;
+        *) echo "$stamp  $workers  $points  ${decision:-status failed}" ;;
+      esac
+      sleep "$interval"
+    done ;;
+  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status|watch] [baseline|h100] [verbose]"; exit 2 ;;
 esac
 case "$PROFILE" in
   baseline)
