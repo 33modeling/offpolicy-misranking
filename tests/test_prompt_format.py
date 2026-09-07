@@ -35,6 +35,17 @@ def test_cli_prints_the_concrete_template(capsys: pytest.CaptureFixture[str]) ->
     assert pf.main(["only-one-arg"]) == 2
 
 
+BASE_SPEC = {
+    "key": "qwen3.5-9b-base",
+    "repository": "Qwen/Qwen3.5-9B-Base",
+    "revision": "68c46c4b3498877f3ef123c856ecfde50c39f404",
+    "local_directory": "Qwen3.5-9B-Base",
+    "model_type": "qwen3_5",
+    "lora_targets": ["q_proj", "v_proj"],
+    "prompt_format": "olmo_rlzero",
+}
+
+
 def test_contract_expects_the_resolved_template_for_each_dataset() -> None:
     config = json.loads((ROOT / "configs/qwen35_9b_grpo.json").read_text())
     experiment = config["experiment"]
@@ -56,7 +67,7 @@ def test_contract_expects_the_resolved_template_for_each_dataset() -> None:
 
 
 def test_base_and_posttrained_uploads_are_told_apart_by_shard_sizes(tmp_path: Path) -> None:
-    spec = next(iter(_load_specs(ROOT / "configs/qwen35_9b_grpo.json").values()))
+    spec = dict(BASE_SPEC)
     base_files = PINNED_OFFICIAL_FILES[(spec["repository"], spec["revision"])]
     post_files = PINNED_OFFICIAL_FILES[("Qwen/Qwen3.5-9B", "c202236235762e1c871ad0ccb60c8ee5ba337b9a")]
     # the two repositories ship the identical config.json, so use a fixture config

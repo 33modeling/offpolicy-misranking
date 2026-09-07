@@ -38,9 +38,9 @@ case "$PROFILE" in
     MATRIX_CONFIGS=(configs/qwen38_27b_grpo.json)
     MATRIX_IDS=(qwen38-27b-posttrained-math-code-grpo-v1)
     ;;
-  qwen35)  # Qwen3.5-9B-Base, OLMo RL-Zero prompts (2026-09-07; the post-trained run id is retired)
+  qwen35)
     MATRIX_CONFIGS=(configs/qwen35_9b_grpo.json)
-    MATRIX_IDS=(qwen35-9b-base-math-code-grpo-v1)
+    MATRIX_IDS=(qwen35-9b-posttrained-math-code-grpo-v1)
     ;;
   qwen35_2b)   # follow-up: scale axis (docs/FOLLOWUP_GENERALIZATION_DESIGN.md)
     MATRIX_CONFIGS=(configs/qwen35_2b_grpo.json)
@@ -420,6 +420,14 @@ run_registered_matrix() {
     # a `git pull` abort with "matrix contract mismatch" (2026-09-07).
     matrix_git=$("$PY" src/regime_contract.py matrix-git --root "$REGIME_ROOT" --fallback "$GIT") \
       || { echo "[abort] cannot determine the matrix generation commit" | tee -a "$log"; return 1; }
+    # A contract left by a launch that never started a point (no queue marker,
+    # no point directory) binds a dead commit; replace it instead of aborting.
+    if [ -s "$REGIME_MATRIX" ] && [ ! -s "$REGIME_ROOT/.queue/generation.git" ] \
+        && ! compgen -G "$REGIME_ROOT/*/run_config.json" >/dev/null 2>&1; then
+      stale="$REGIME_MATRIX.stale-$(date -u +%Y%m%dT%H%M%SZ)"
+      mv -- "$REGIME_MATRIX" "$stale" \
+        && echo "[regime-contract] previous contract never started a point; moved to $stale" | tee -a "$log"
+    fi
     [ "$matrix_git" = "$GIT" ] \
       || echo "[regime-contract] resuming matrix pinned to generation commit $matrix_git (supervisor at $GIT)" | tee -a "$log"
     "$PY" src/regime_contract.py init \

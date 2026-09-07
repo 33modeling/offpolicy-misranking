@@ -2,12 +2,12 @@
   "schema_version": 1,
   "models": [
     {
-      "key": "qwen3.5-9b-base",
-      "repository": "Qwen/Qwen3.5-9B-Base",
-      "revision": "68c46c4b3498877f3ef123c856ecfde50c39f404",
-      "local_directory": "Qwen3.5-9B-Base",
+      "key": "qwen3.5-9b-posttrained",
+      "repository": "Qwen/Qwen3.5-9B",
+      "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+      "local_directory": "Qwen3.5-9B-pinned",
       "model_type": "qwen3_5",
-      "initialization": "base",
+      "initialization": "posttrained",
       "lora_targets": [
         "q_proj",
         "v_proj",
@@ -16,7 +16,7 @@
         "in_proj_b",
         "in_proj_a"
       ],
-      "prompt_format": "olmo_rlzero"
+      "prompt_format": "tokenizer_chat"
     }
   ],
   "experiment": {

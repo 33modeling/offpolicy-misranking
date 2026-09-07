@@ -14,7 +14,7 @@ from model_matrix import _load_config, _load_specs
 
 @pytest.mark.parametrize("filename,repository,initialization,prompt_format", [
     ("qwen38_27b_grpo.json", "Qwen/Qwen3.8-27B", "posttrained", "tokenizer_chat"),
-    ("qwen35_9b_grpo.json", "Qwen/Qwen3.5-9B-Base", "base", "olmo_rlzero"),
+    ("qwen35_9b_grpo.json", "Qwen/Qwen3.5-9B", "posttrained", "tokenizer_chat"),
 ])
 def test_qwen_matrix_matches_primary_sampling(filename, repository, initialization, prompt_format):
     qwen = _load_config(ROOT / "configs" / filename)

@@ -15,7 +15,7 @@ if [ -z "${STATUS_HISTORY_ACTIVE:-}" ] && mkdir -p "$(dirname "$HISTORY")" 2>/de
   exit "${status_codes[1]}"
 fi
 
-RUN_ID=${RUN_ID:-qwen35-9b-base-math-code-grpo-v1}
+RUN_ID=${RUN_ID:-qwen35-9b-posttrained-math-code-grpo-v1}
 RUNS="$OM_WORK/runs/$RUN_ID"
 RES="$OM_WORK/results/$RUN_ID"
 LOG=$(ls -t "$OM_WORK"/console-logs/additional-qwen35-*.log 2>/dev/null | head -1)

@@ -1,22 +1,22 @@
-# Qwen3.5-9B-Base replication — 2026-09-07
+# Qwen3.5-9B replication — 2026-09-06
 
 This is the selected additional experiment; 27B remains an optional preserved
 configuration, not a dependency or automatically scheduled job.
 
-Official model: [Qwen/Qwen3.5-9B-Base](https://huggingface.co/Qwen/Qwen3.5-9B-Base),
-pinned to `68c46c4b3498877f3ef123c856ecfde50c39f404` (Hub `main` on 2026-09-07).
-It is the pretrained base, matching the OLMo-3 7B base main matrix: RL-Zero
-from a raw base model, prompted with the released OLMo RL-Zero math/code
-templates (`prompt_format: olmo_rlzero`, resolved per dataset; the repository
-has no chat template). The 2026-09-06 configuration used the post-trained
-`Qwen/Qwen3.5-9B` with its chat template; that run id
-(`qwen35-9b-posttrained-math-code-grpo-v1`) is retired and its artifacts are not
-reused. Model identity is by file content (`model_matrix.PINNED_OFFICIAL_FILES`),
-never by folder name: an upload named anything is found and sealed as long as
-its files are the pinned revision's files. The two 9B repositories ship the same
-`config.json`, so discovery also compares shard sizes. The official config uses
-`Qwen3_5ForConditionalGeneration` and 32 text blocks; vision, embeddings and
-output head are excluded from ranking gradients and LoRA targets.
+Official model: [Qwen/Qwen3.5-9B](https://huggingface.co/Qwen/Qwen3.5-9B), pinned
+to `c202236235762e1c871ad0ccb60c8ee5ba337b9a` (Hub `main`, re-verified against
+the Hub tree on 2026-09-07). It is the released post-trained multimodal model,
+used text-only, not a pretrained base. Model identity is by file content
+(`model_matrix.PINNED_OFFICIAL_FILES`), never by folder name: the folder can be
+called anything (`Qwen3.5-9B-pinned` is only the default download name). The
+pretrained base, [Qwen/Qwen3.5-9B-Base](https://huggingface.co/Qwen/Qwen3.5-9B-Base)
+at `68c46c4b3498877f3ef123c856ecfde50c39f404`, is registered in the same table;
+switching to it is a config change (`repository`, `revision`,
+`prompt_format: olmo_rlzero`, new run id) plus its 19.3 GB of weights on the
+volume. The two 9B repositories ship the same `config.json`, so discovery also
+compares shard sizes. The official config uses `Qwen3_5ForConditionalGeneration`
+and 32 text blocks. Vision, embeddings and output head are excluded from ranking
+gradients and LoRA targets.
 
 The 27B runbook's scientific caveats also apply: initialization, capacity,
 prompt template and adapter parameter counts are not controlled individually.
@@ -37,7 +37,7 @@ staging copy, rather than silently treated as verified.
 `prepare` exists only because compute nodes have no Hub access: it downloads the
 pinned model and datasets on a networked machine into the shared volume. If the
 snapshot was uploaded by hand instead (any folder under `$MODELS_DIR`; the
-default download folder is `Qwen3.5-9B-Base`),
+default download folder is `Qwen3.5-9B-pinned`),
 skip `prepare`: `check`/`run` seal the uploaded files offline against the pinned
 official sizes/hashes (`model_matrix.PINNED_OFFICIAL_FILES`) and adopt uploaded
 MATH-500/MBPP copies by content, then continue. A failed launch prints one
@@ -63,7 +63,7 @@ measured speed/memory guarantee. Changing it changes the contract hash.
 `check` uses a short prompt and does not qualify 2048-token or four-rank
 training. Full weights have not been trained on the local audit host.
 
-Results: `$OM_WORK/results/qwen35-9b-base-math-code-grpo-v1/`.
+Results: `$OM_WORK/results/qwen35-9b-posttrained-math-code-grpo-v1/`.
 Models/configuration/outputs are separate from the retained 27B experiment.
 Do not reuse or relabel 27B checkpoints as 9B results.
 

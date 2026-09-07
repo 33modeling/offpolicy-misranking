@@ -197,7 +197,7 @@ def test_qwen35_prepare_and_run_have_separate_session_logs(tmp_path: Path) -> No
         )
         assert result.returncode == 0, result.stdout + result.stderr
     work = Path(env["TEST_WORK"])
-    assert (work / "phases").read_text().startswith("qwen35-9b-base-")
+    assert (work / "phases").read_text().startswith("qwen35-9b-posttrained-")
     logs = list((work / "console-logs").glob("additional-qwen35-*.log"))
     assert len(logs) == 2
     assert all("rc=0" in log.read_text() for log in logs)
