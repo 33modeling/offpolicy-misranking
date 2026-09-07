@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -149,10 +150,34 @@ def _type_matches(config_path: Path, spec: dict) -> bool:
     return document.get("model_type") == spec.get("model_type")
 
 
+def _weights_match(directory: Path, official: dict) -> bool:
+    """Every official shard size is present among this directory's safetensors.
+
+    Qwen3.5-9B and Qwen3.5-9B-Base ship the same config.json, so the config alone
+    cannot tell a post-trained upload from a base upload; their shard sizes differ.
+    Without official shard records this is a no-op (True).
+    """
+    expected = {
+        record["size"] for name, record in official.items()
+        if name.endswith(".safetensors") and isinstance(record, dict) and "size" in record
+    }
+    if not expected:
+        return True
+    present = set()
+    for path in _iter_files(_weights_dir(directory), ".safetensors"):
+        try:
+            if path.is_file():
+                present.add(path.stat().st_size)
+        except OSError:
+            continue
+    return expected <= present
+
+
 def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
     """Return (directory, scanned). Explicit OM_SNAPSHOT_PATH wins; then the pinned
     directory; then any config.json with the right model_type under the search
-    roots (three levels), disambiguated by official config/index sizes."""
+    roots (three levels), disambiguated by official config/index sizes and the
+    official shard sizes."""
     official = _official(spec)
     explicit = os.environ.get("OM_SNAPSHOT_PATH")
     if explicit:
@@ -161,21 +186,26 @@ def discover(models_dir: Path, spec: dict) -> tuple[Path | None, list[Path]]:
         return (path.resolve() if valid else None), [path]
     standard = models_dir / spec["local_directory"]
     if (_config_matches(standard / "config.json", spec, official)
-            and _has_weights(standard)):
+            and _has_weights(standard) and _weights_match(standard, official)):
         return standard, [standard]
     scanned = []
     matches = []
     roots = search_roots(models_dir)
     volume = os.environ.get("GROUP_VOLUME")
     if volume and Path(volume).is_dir():
-        roots += _directories_named(Path(volume), spec["repository"].split("/")[-1].lower())
+        # "Qwen3.5-9B-Base" uploads are commonly named "Qwen3.5-9B" (and the
+        # other way round): search by the model stem, verify by content.
+        needle = spec["repository"].split("/")[-1].lower()
+        stem = re.sub(r"-(base|instruct|chat)$", "", needle)
+        roots += _directories_named(Path(volume), stem)
     for root in roots:
         for config_path in _iter_files(root, "config.json"):
             directory = config_path.parent.resolve()
             if directory in scanned:
                 continue
             scanned.append(directory)
-            if _config_matches(config_path, spec, official) and _has_weights(directory):
+            if (_config_matches(config_path, spec, official) and _has_weights(directory)
+                    and _weights_match(directory, official)):
                 matches.append(directory)
     # Never choose by model_type, folder name, file size alone, or traversal order.
     return (matches[0] if len(matches) == 1 else None), scanned

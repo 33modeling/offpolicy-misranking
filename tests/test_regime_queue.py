@@ -59,6 +59,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         shutil.copy2(REPO / "src/artifact_contract.py", checkout / "src/artifact_contract.py")
         shutil.copy2(REPO / "src/compact_artifacts.py", checkout / "src/compact_artifacts.py")
         shutil.copy2(REPO / "src/rollout_contract.py", checkout / "src/rollout_contract.py")
+        shutil.copy2(REPO / "src/prompt_format.py", checkout / "src/prompt_format.py")
         (work / "models/model/config.json").write_text("{}\n", encoding="utf-8")
         (work / "venv/bin/python").symlink_to(Path(sys.executable))
         (checkout / "scripts/setup_env.sh").write_text(

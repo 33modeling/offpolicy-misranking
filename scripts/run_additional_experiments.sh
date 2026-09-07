@@ -38,9 +38,9 @@ case "$PROFILE" in
     MATRIX_CONFIGS=(configs/qwen38_27b_grpo.json)
     MATRIX_IDS=(qwen38-27b-posttrained-math-code-grpo-v1)
     ;;
-  qwen35)
+  qwen35)  # Qwen3.5-9B-Base, OLMo RL-Zero prompts (2026-09-07; the post-trained run id is retired)
     MATRIX_CONFIGS=(configs/qwen35_9b_grpo.json)
-    MATRIX_IDS=(qwen35-9b-posttrained-math-code-grpo-v1)
+    MATRIX_IDS=(qwen35-9b-base-math-code-grpo-v1)
     ;;
   qwen35_2b)   # follow-up: scale axis (docs/FOLLOWUP_GENERALIZATION_DESIGN.md)
     MATRIX_CONFIGS=(configs/qwen35_2b_grpo.json)

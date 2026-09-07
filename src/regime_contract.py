@@ -16,6 +16,7 @@ from pathlib import Path
 from artifact_contract import validate_generation_contract
 from gate_rules import has_valid_analysis_protocol
 from model_matrix import _load_config, validate_snapshot_provenance
+from prompt_format import resolve_prompt_format
 from score_artifacts import load_complete_score_artifacts
 from train_policy_grpo import validate_policy_lineage
 
@@ -274,7 +275,9 @@ def expected_run_config(
         "topk_frac": float(experiment["topk_frac"]),
         "top_p": float(experiment["top_p"]),
         "thinking": experiment["thinking"],
-        "prompt_format": model["prompt_format"],
+        # A family value (olmo_rlzero) names one template per dataset; the point
+        # records the concrete template the launcher resolved for its dataset.
+        "prompt_format": resolve_prompt_format(model["prompt_format"], dataset),
         "attn": experiment["attn"],
         "lora_targets": ",".join(model["lora_targets"]),
         "skip_hybrid": "1" if experiment["skip_hybrid"] else "0",

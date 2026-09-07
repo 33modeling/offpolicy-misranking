@@ -975,6 +975,14 @@ run_point() {
 run_family() {
   local dataset=$1 seed=$2 source drift rc d0_deferred=0 has_training=0
   local previous_step=0 previous_run=""
+  # A prompt-format family (olmo_rlzero) names one template per dataset;
+  # concrete values pass through. run_family runs in its own subshell, so the
+  # resolved export is scoped to this family's points.
+  OM_PROMPT_FORMAT=$("$PY" src/prompt_format.py "${OM_PROMPT_FORMAT:-tokenizer_chat}" "$dataset") || {
+    echo "[abort] cannot resolve prompt format for $dataset"
+    return 43
+  }
+  export OM_PROMPT_FORMAT
   source=$(run_dir "$dataset" "$seed" 0)
   # d0 is the exact positive control: beta=pi with independent rollout noise.
   # Its independent fresh evaluation is not a prerequisite for training. Once

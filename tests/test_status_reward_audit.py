@@ -127,7 +127,7 @@ def qwen_status(
     if exit_code is not None:
         text += f"[exit] rc={exit_code}\n"
     (logs / "additional-qwen35-test.log").write_text(text)
-    run_id = "qwen35-9b-posttrained-math-code-grpo-v1"
+    run_id = "qwen35-9b-base-math-code-grpo-v1"
     run = work / "runs" / run_id / "qwen35" / f"{run_id}-grpo-qwen35-s0-math500-d0"
     (run / "logs").mkdir(parents=True)
     (run / "logs/main.log").write_text("[progress] test  1/8 prep\n" + error_text)

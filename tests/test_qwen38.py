@@ -12,17 +12,18 @@ from grads import grad_params
 from model_matrix import _load_config, _load_specs
 
 
-@pytest.mark.parametrize("filename,repository", [
-    ("qwen38_27b_grpo.json", "Qwen/Qwen3.8-27B"),
-    ("qwen35_9b_grpo.json", "Qwen/Qwen3.5-9B"),
+@pytest.mark.parametrize("filename,repository,initialization,prompt_format", [
+    ("qwen38_27b_grpo.json", "Qwen/Qwen3.8-27B", "posttrained", "tokenizer_chat"),
+    ("qwen35_9b_grpo.json", "Qwen/Qwen3.5-9B-Base", "base", "olmo_rlzero"),
 ])
-def test_qwen_matrix_matches_primary_sampling(filename, repository):
+def test_qwen_matrix_matches_primary_sampling(filename, repository, initialization, prompt_format):
     qwen = _load_config(ROOT / "configs" / filename)
     primary = _load_config(ROOT / "configs/olmo3_rlzero_h100.json")
     assert len(qwen["models"]) == 1
     spec = next(iter(_load_specs(ROOT / "configs" / filename).values()))
-    assert spec["initialization"] == "posttrained"
+    assert spec["initialization"] == initialization
     assert spec["repository"] == repository
+    assert spec["prompt_format"] == prompt_format
     assert "in_proj_qkv" in spec["lora_targets"]
     for key in primary["experiment"]:
         if key != "runtime":

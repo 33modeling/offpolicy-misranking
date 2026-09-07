@@ -84,9 +84,68 @@ PINNED_OFFICIAL_FILES = {
             "git_blob_sha1": "51135344eec01a62fc4deaca39c72ac08f5b9709",
         },
     },
-    # Qwen3.5-9B: lets a manually uploaded snapshot (no .cache/huggingface metadata)
-    # be sealed offline on the compute node, exactly like OLMo. Values are the Hub
-    # tree at the pinned revision (LFS sha256 for big files, git blob sha1 otherwise).
+    # Qwen3.5-9B-Base (2026-09-07): the registered 9B replication uses the
+    # pretrained base, like the OLMo-3 main matrix, with the OLMo RL-Zero prompt
+    # templates (no chat template in this repository). Values are the Hub tree at
+    # the pinned revision, read from the Hub API on 2026-09-07
+    # (LFS sha256 for big files, git blob sha1 otherwise).
+    (
+        "Qwen/Qwen3.5-9B-Base",
+        "68c46c4b3498877f3ef123c856ecfde50c39f404",
+    ): {
+        "config.json": {
+            "size": 3126,
+            "git_blob_sha1": "273ce437e01baf96a07cd9eb3d5f48bac8d7c657",
+        },
+        "merges.txt": {
+            "size": 3353259,
+            "git_blob_sha1": "a494e019ca1502219fd0128658b979e5f05ae8e8",
+        },
+        "model.safetensors-00001-of-00004.safetensors": {
+            "size": 5276436216,
+            "sha256": "862bf7bba8a50145d19d0ae463931fae515284024736592a73a336bc4dfa54ee",
+        },
+        "model.safetensors-00002-of-00004.safetensors": {
+            "size": 5335161576,
+            "sha256": "bace8e115e11ca93c22f0352a60d2fb0c76ac6d7d1c2993c143b7ad2b6c8868c",
+        },
+        "model.safetensors-00003-of-00004.safetensors": {
+            "size": 5368717376,
+            "sha256": "63a021ac0011cbfc66166e77103327a8b45dee95832e36551f6b4c3337448959",
+        },
+        "model.safetensors-00004-of-00004.safetensors": {
+            "size": 3325995704,
+            "sha256": "1a643bbed669266917b5058b5d3f660c03233599249ff7d8fd083decfe662ae0",
+        },
+        "model.safetensors.index.json": {
+            "size": 79657,
+            "git_blob_sha1": "b46f5c8684a87aaf30cc7e226584e3de9a7f1d0a",
+        },
+        "preprocessor_config.json": {
+            "size": 390,
+            "git_blob_sha1": "2ea84a437d448ff71b08df68fdd949d5cc4ebb64",
+        },
+        "tokenizer.json": {
+            "size": 12807196,
+            "sha256": "fe000e3ed39ed12b8d2481d527d44f93c65d37e87645d2dcc80d1bf9d50d2927",
+        },
+        "tokenizer_config.json": {
+            "size": 16713,
+            "git_blob_sha1": "ae8d254e44c51d0cb0907bcb221f18efca829d3e",
+        },
+        "video_preprocessor_config.json": {
+            "size": 386,
+            "git_blob_sha1": "37900b3ff9295e1aa7e211378466356b52e64e55",
+        },
+        "vocab.json": {
+            "size": 6722759,
+            "git_blob_sha1": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176",
+        },
+    },
+    # Qwen3.5-9B (post-trained): kept so an earlier upload can still be identified
+    # and described; it is not the registered 9B replication model any more.
+    # Values are the Hub tree at the pinned revision (LFS sha256 for big files,
+    # git blob sha1 otherwise).
     (
         "Qwen/Qwen3.5-9B",
         "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
