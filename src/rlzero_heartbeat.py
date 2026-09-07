@@ -128,7 +128,7 @@ def check_peers(
             f"[WORKER DEAD] {peer} on {host}: "
             f"{'crashed rc=' + str(record.get('exit_code', '?')) + ' ' + fmt_age(age) + ' ago' if state == 'crashed' else 'no heartbeat for ' + fmt_age(age)}"
             f"{' (launcher exited)' if state == 'launcher-missing' else ''}; it held {held}."
-            f" Start a worker on {host} again: bash scripts/run_olmo3_rlzero.sh run <profile>  (seen by {worker})"
+            f" Its family resumes on the next worker started on any node: git pull; bash scripts/run_olmo3_rlzero.sh run <profile>  (seen by {worker})"
         )
         stamped = time.strftime("%Y-%m-%dT%H:%M:%SZ ", time.gmtime()) + line + "\n"
         for target in (alerts_log, worker_log, terminal):

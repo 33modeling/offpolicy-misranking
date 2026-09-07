@@ -1274,7 +1274,7 @@ def main() -> None:
                     "(see the ! contract lines). Workers keep running; the next relaunch repairs unfinished points.")
     elif dead_workers and len(workers) < args.expected_workers:
         decision = (f"WORKER DEAD: {'; '.join(dead_workers)}. Progress continues on {len(workers)} worker(s). "
-                    "Start a worker on that host again: bash scripts/run_olmo3_rlzero.sh run h100")
+                    "Its family resumes on the next worker started on any node: git pull; bash scripts/run_olmo3_rlzero.sh run h100")
     elif complete == len(families):
         decision = "DONE: every family is complete."
     elif looping:
