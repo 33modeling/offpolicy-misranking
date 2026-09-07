@@ -84,6 +84,54 @@ def matrix_document(root: Path) -> dict:
     return document
 
 
+def test_matrix_binds_the_pinned_generation_commit_not_the_supervisor_head() -> None:
+    import os
+    import subprocess
+
+    from regime_contract import matrix_git, require_committed_generation
+
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        repo = Path(raw_tmp)
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        (repo / "src").mkdir()
+        (repo / "src/a.py").write_text("1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "first"], cwd=repo, check=True)
+        first = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+        (repo / "src/a.py").write_text("2\n")
+        subprocess.run(["git", "commit", "-qam", "second"], cwd=repo, check=True)
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+        cwd = os.getcwd()
+        os.chdir(repo)
+        try:
+            require_committed_generation(head)
+            require_committed_generation(first)   # pinned earlier, supervisor moved on
+            try:
+                require_committed_generation("f" * 40)
+            except ValueError as exc:
+                assert "not available" in str(exc)
+            else:
+                raise AssertionError("unknown commit accepted")
+            (repo / "src/a.py").write_text("3\n")
+            try:
+                require_committed_generation(head)
+            except ValueError as exc:
+                assert "dirty" in str(exc)
+            else:
+                raise AssertionError("dirty checkout accepted")
+        finally:
+            os.chdir(cwd)
+        root = repo / "root"
+        assert matrix_git(root, head) == head                     # no marker: launch HEAD
+        (root / ".queue").mkdir(parents=True)
+        (root / ".queue/generation.git").write_text(first + "\n")
+        assert matrix_git(root, head) == first                    # marker wins
+        (root / ".queue/generation.git").write_text("garbage\n")
+        assert matrix_git(root, head) == head                     # unreadable marker: fallback
+
+
 def test_matrix_initialization_is_idempotent_and_fail_closed() -> None:
     with tempfile.TemporaryDirectory() as raw_tmp:
         root = Path(raw_tmp)

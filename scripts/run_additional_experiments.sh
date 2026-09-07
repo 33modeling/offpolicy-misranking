@@ -415,9 +415,16 @@ run_registered_matrix() {
     export REGIME_RESULTS="$OM_WORK/results/$run_id/$model_key"
     export REGIME_QUARANTINE="$OM_WORK/quarantine/$run_id/$model_key"
     export REGIME_MATRIX="$OM_WORK/contracts/$run_id-$model_key-$config_id.json"
+    # The matrix binds the generation commit the queue pinned for this root (the
+    # launch HEAD on the first run). Binding HEAD itself made every relaunch after
+    # a `git pull` abort with "matrix contract mismatch" (2026-09-07).
+    matrix_git=$("$PY" src/regime_contract.py matrix-git --root "$REGIME_ROOT" --fallback "$GIT") \
+      || { echo "[abort] cannot determine the matrix generation commit" | tee -a "$log"; return 1; }
+    [ "$matrix_git" = "$GIT" ] \
+      || echo "[regime-contract] resuming matrix pinned to generation commit $matrix_git (supervisor at $GIT)" | tee -a "$log"
     "$PY" src/regime_contract.py init \
       --matrix "$REGIME_MATRIX" --config "$config" --model-key "$model_key" \
-      --model "$MODEL_PATH" --qualification "$qualification" --git "$GIT" \
+      --model "$MODEL_PATH" --qualification "$qualification" --git "$matrix_git" \
       | tee -a "$log"
     run_phase "$log" "$model_key"
   done

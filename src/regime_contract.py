@@ -182,15 +182,7 @@ def build_matrix(
         ):
             raise ValueError(f"{dataset}: qualification does not match matrix dimensions")
 
-    dirty = subprocess.check_output(
-        ["git", "status", "--porcelain", "--", "src", "scripts", "configs"],
-        text=True,
-    ).strip()
-    if dirty:
-        raise ValueError("src/scripts/configs worktree is dirty; commit before starting the matrix")
-    current = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    if current != git:
-        raise ValueError(f"requested git {git} differs from checkout {current}")
+    require_committed_generation(git)
 
     document = {
         "schema": MATRIX_SCHEMA,
@@ -215,6 +207,48 @@ def build_matrix(
     }
     document["digest"] = json_digest(document)
     return document
+
+
+def require_committed_generation(git: str) -> None:
+    """The matrix binds one generation commit; the checkout must be clean and hold it.
+
+    2026-09-07: the commit is the generation commit the shared queue pins in
+    ``<root>/.queue/generation.git`` (the first launch pins the checkout HEAD).
+    A later supervisor update moves HEAD but not the pinned commit, and
+    run_matrix generates from a node-local clone of the pinned commit, so a
+    matrix initialized before the update must still be accepted. Demanding
+    ``git == HEAD`` here made every relaunch after ``git pull`` abort with
+    "matrix contract mismatch" (Qwen3.5-9B, 2026-09-07 00:53Z).
+    """
+    dirty = subprocess.check_output(
+        ["git", "status", "--porcelain", "--", "src", "scripts", "configs"],
+        text=True,
+    ).strip()
+    if dirty:
+        raise ValueError("src/scripts/configs worktree is dirty; commit before starting the matrix")
+    current = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    if current == git:
+        return
+    available = subprocess.run(
+        ["git", "cat-file", "-e", f"{git}^{{commit}}"], capture_output=True, text=True, check=False
+    )
+    if available.returncode != 0:
+        raise ValueError(
+            f"requested generation commit {git} is not available in this checkout (HEAD {current})"
+        )
+
+
+def matrix_git(root: Path, fallback: str) -> str:
+    """Generation commit that binds the matrix under ``root``: the queue marker
+    when the matrix already exists, otherwise ``fallback`` (the launch HEAD)."""
+    marker = root / ".queue" / "generation.git"
+    try:
+        lines = marker.read_text(encoding="utf-8").split()
+    except OSError:
+        return fallback
+    if len(lines) == 1 and len(lines[0]) in (40, 64) and all(c in "0123456789abcdef" for c in lines[0]):
+        return lines[0]
+    return fallback
 
 
 def initialize_matrix(path: Path, expected: dict) -> None:
@@ -755,9 +789,15 @@ def main() -> int:
     prompt_check.add_argument("--matrix", type=Path, required=True)
     prompt_check.add_argument("--run", type=Path, required=True)
     prompt_check.add_argument("--dataset", required=True)
+    git_for = sub.add_parser("matrix-git", help="print the commit that binds the matrix under --root")
+    git_for.add_argument("--root", type=Path, required=True)
+    git_for.add_argument("--fallback", required=True)
     args = parser.parse_args()
 
     try:
+        if args.command == "matrix-git":
+            print(matrix_git(args.root, args.fallback))
+            return 0
         if args.command == "init":
             expected = build_matrix(
                 args.config, args.model_key, args.model, args.qualification, args.git
