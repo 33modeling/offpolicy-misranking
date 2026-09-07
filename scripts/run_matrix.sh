@@ -1007,35 +1007,63 @@ run_family() {
 }
 
 echo "== regime queue: model=$MODEL_TAG seeds=${SEEDS[*]} data=${DATASETS[*]} drift=${DRIFTS[*]}"
+# Claim the most-progressed family first (DONE points, then families with any
+# point directory, then registered seed/dataset order), so a worker resumes a
+# nearly finished family before it starts a fresh one. Same rule as the OLMo
+# launcher (2026-09-07); here it serves the additional-study launchers, which
+# call this queue with the whole matrix.
+family_points_done() {  # family_points_done <dataset> <seed>
+  local drift n=0
+  for drift in "${DRIFTS[@]}"; do
+    [ -s "$(run_dir "$1" "$2" "$drift")/DONE" ] && n=$((n + 1))
+  done
+  printf '%s\n' "$n"
+}
+family_started() {  # family_started <dataset> <seed>: some point directory exists
+  local drift
+  for drift in "${DRIFTS[@]}"; do
+    [ -f "$(run_dir "$1" "$2" "$drift")/run_config.json" ] && return 0
+  done
+  return 1
+}
+ordered_families() {  # "<dataset> <seed>" lines
+  local seed dataset started
+  for seed in "${SEEDS[@]}"; do
+    for dataset in "${DATASETS[@]}"; do
+      started=0
+      family_started "$dataset" "$seed" && started=1
+      printf '%s %s %s %s\n' "$(family_points_done "$dataset" "$seed")" "$started" "$dataset" "$seed"
+    done
+  done | sort -s -k1,1nr -k2,2nr | awk '{print $3, $4}'
+}
 failures=0
 while :; do
   remaining=0
   claimed=0
-  for seed in "${SEEDS[@]}"; do
-    for dataset in "${DATASETS[@]}"; do
-      family_complete "$dataset" "$seed" && continue
-      remaining=$((remaining + 1))
-      lock="$QUEUE/$dataset-s$seed.lock"
-      (
-        trap '' HUP
-        trap 'cleanup_active_pipeline; exit 130' INT TERM
-        flock -n 9 || exit 75
-        family_complete "$dataset" "$seed" && exit 0
-        run_family "$dataset" "$seed"
-      ) 9>"$lock"
-      rc=$?
-      [ "$rc" -eq 75 ] && continue
-      if [ "$rc" -eq 43 ]; then
-        echo "[abort] permanent family contract failure: $dataset/s$seed"
-        exit 43
-      fi
-      claimed=$((claimed + 1))
-      if [ "$rc" -ne 0 ]; then
-        echo "[family-fail] $dataset/s$seed"
-        failures=$((failures + 1))
-      fi
-    done
-  done
+  while read -r dataset seed; do
+    [ -n "$dataset" ] && [ -n "$seed" ] || continue
+    family_complete "$dataset" "$seed" && continue
+    remaining=$((remaining + 1))
+    lock="$QUEUE/$dataset-s$seed.lock"
+    (
+      trap '' HUP
+      trap 'cleanup_active_pipeline; exit 130' INT TERM
+      flock -n 9 || exit 75
+      family_complete "$dataset" "$seed" && exit 0
+      run_family "$dataset" "$seed"
+    ) 9>"$lock" </dev/null   # stdin is the family list; children must not read it
+    rc=$?
+    [ "$rc" -eq 75 ] && continue
+    if [ "$rc" -eq 43 ]; then
+      echo "[abort] permanent family contract failure: $dataset/s$seed"
+      exit 43
+    fi
+    claimed=$((claimed + 1))
+    if [ "$rc" -ne 0 ]; then
+      echo "[family-fail] $dataset/s$seed"
+      failures=$((failures + 1))
+    fi
+  done < <(ordered_families)
   [ "$remaining" -eq 0 ] && break
   if [ "$claimed" -eq 0 ]; then
     echo "[queue] waiting for ${remaining} families held by other workers"
