@@ -45,3 +45,32 @@ console log under `$OM_WORK/console-logs/`. The `curve` stage trains the E1
 chain (400 updates per seed) and the `downstream` stage the E5 updates (7
 selectors x 50 updates per seed), so run those two on a node that has finished
 its share of the registered matrix.
+
+## Corrections (2026-09-08 review)
+
+- **Reward function.** `run_drift_curve.sh`, `run_downstream_compare.sh` and
+  `go_extensions.sh` now export `OM_MATH_VERIFIER=math_verify` and bootstrap
+  the vendored Math-Verify bundle, exactly like the registered launcher. Before
+  this the E1 chain and the E5 updates/evaluations used exact-match rewards and
+  were not comparable with the registered points.
+- **Node ownership.** GPU stages take the node-local `primary.lock` the
+  registered launcher holds and refuse a node whose GPUs are taken.
+- **Default profile** of `go_extensions.sh` is `h100` (the running matrix).
+  The script prints a per-stage status line and exits 1 when a stage failed.
+- **Progress.** The E1 chain prints a `[progress]` line every 10 minutes
+  (`training_progress.py`); on the h100 profile it runs math500 at generation
+  batch 32 and mbpp at 16 with gradient micro-batch 1, like the registered
+  supervisor.
+- **Cost, measured against the running matrix** (233 s/prompt/shard before the
+  batch change, ~120 s after): E1 with two seeds is 3-5 node-days (eight fresh
+  rollouts per seed, not only 400 updates); E5 is about 3 node-days; E6
+  re-scoring over 40 runs is 1-2 node-days.
+- **E5 power.** In the registered matrix the mean reward moved from 0.188
+  (d=25) to 0.219 (d=400) for math500/s0, i.e. +0.03 over 375 updates. Fifty
+  updates move it by ~0.004, while the held-out estimate over 100 prompts x 8
+  samples has a standard error of ~0.017. As registered, E5 cannot separate
+  the selectors; the step count and the evaluation budget must be raised
+  before it is run.
+- **E3** cannot fail by construction (the implication holds for any pair of
+  score vectors); its informative output is the fraction of cells in which
+  the margin condition holds.

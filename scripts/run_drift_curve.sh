@@ -28,6 +28,23 @@ source scripts/setup_env.sh
 PY="$VENV_DIR/bin/python"
 MATRIX_TOOL="src/model_matrix.py"
 
+# Same reward function as the registered matrix: symbolic Math-Verify from the
+# vendored bundle. Without this the curve trains and scores on exact-match
+# rewards and cannot be compared with the registered points (found 2026-09-07).
+MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps") || exit 1
+export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify
+"$PY" -c 'from math_verify import parse, verify; assert verify(parse(r"\frac{1}{2}"), parse("0.5"))' \
+  || { echo "[abort] bundled math verifier failed to import"; exit 1; }
+
+# This chain needs the node's four GPUs. Hold the same node-local lock the
+# registered launcher holds, so neither starts on top of the other.
+if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then   # go_extensions.sh already holds it
+  LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+  mkdir -p "$LOCAL_LOCK_DIR"
+  exec 8>"$LOCAL_LOCK_DIR/primary.lock"
+  flock -n 8 || { echo "[abort] another experiment (registered launcher or extension) owns this node's GPUs; run the curve on an idle 4xH100 node"; exit 1; }
+fi
+
 field() { "$PY" "$MATRIX_TOOL" --config "$CONFIG" "$@"; }
 MODEL_KEY="${DRIFT_CURVE_MODEL_KEY:-$(field list-models | head -1)}"
 [ -n "$MODEL_KEY" ] || { echo "[abort] no model key in $CONFIG"; exit 1; }
@@ -65,14 +82,31 @@ if [ -n "$PROFILE" ]; then
   export GRPO_GRADIENT_CHECKPOINTING=$(field runtime-field gradient_checkpointing)
   export GRADIENT_MICRO_BATCH=$(field runtime-field gradient_micro_batch)
   export OM_GEN_BATCH=$(field runtime-field generation_batch)
+  # The registered h100 supervisor runs math500 at generation batch 32 and mbpp
+  # at 16 with gradient micro-batch 1 (execution-only knobs, see
+  # run_olmo3_rlzero.sh); the curve uses the same values.
+  if [ "$PROFILE" = h100 ]; then
+    case "$DATASETS" in
+      math500) export OM_GEN_BATCH="${DRIFT_CURVE_GEN_BATCH:-32}" ;;
+      mbpp) export OM_GEN_BATCH="${DRIFT_CURVE_GEN_BATCH:-16}" GRADIENT_MICRO_BATCH="${DRIFT_CURVE_GRADIENT_MICRO_BATCH:-1}" ;;
+    esac
+  fi
 fi
 mkdir -p "$CURVE_ROOT" "$CURVE_RESULTS"
 echo "[drift-curve] model=$MODEL_PATH datasets=$DATASETS seeds=$SEEDS drifts=$DRIFTS root=$CURVE_ROOT"
-echo "[drift-curve] n_train=$REGIME_N_TRAIN_BY_DATASET n_val=$REGIME_N_VAL fresh_k=$REGIME_FRESH_K max_new_tokens=$REGIME_MAX_NEW_TOKENS world=$GRPO_WORLD_SIZE epochs=$GRPO_EPOCHS_PER_BATCH"
+echo "[drift-curve] n_train=$REGIME_N_TRAIN_BY_DATASET n_val=$REGIME_N_VAL fresh_k=$REGIME_FRESH_K max_new_tokens=$REGIME_MAX_NEW_TOKENS world=$GRPO_WORLD_SIZE epochs=$GRPO_EPOCHS_PER_BATCH gen_batch=${OM_GEN_BATCH:-all} gradient_micro_batch=${GRADIENT_MICRO_BATCH:-1} verifier=$OM_MATH_VERIFIER"
+# One [progress] line every 10 min from durable artifacts (DONE, GRPO steps,
+# rollout bytes); NOT TRAINING when nothing changes for 30 min.
+total_points=$(( $(wc -w <<< "$SEEDS") * $(wc -w <<< "$DATASETS") * $(wc -w <<< "$DRIFTS") ))
+"$PY" src/training_progress.py --root "$CURVE_ROOT" --total-points "$total_points" \
+  --watch --interval "${OM_PROGRESS_INTERVAL_SECONDS:-600}" --tag "[progress]" 2>/dev/null &
+progress_pid=$!
 REGIME_ROOT="$CURVE_ROOT" REGIME_RESULTS="$CURVE_RESULTS" REGIME_MODEL_TAG="$(basename "$MODEL_PATH" | tr '[:upper:]' '[:lower:]')-curve" \
   REGIME_DATASETS="$DATASETS" REGIME_SEEDS="$SEEDS" REGIME_DRIFTS="$DRIFTS" REGIME_SKIP_COLLECTION=1 \
-  bash scripts/run_matrix.sh
+  bash scripts/run_matrix.sh 8>&-
 rc=$?
+kill "$progress_pid" 2>/dev/null || true; wait "$progress_pid" 2>/dev/null || true
+"$PY" src/training_progress.py --root "$CURVE_ROOT" --total-points "$total_points" --record 2>/dev/null | sed 's/^/[progress] final: /'
 [ "$rc" -eq 0 ] || { echo "[drift-curve] run_matrix.sh failed rc=$rc"; exit "$rc"; }
 echo "[drift-curve] complete. Aggregate with:"
 echo "  $PY src/drift_curve.py --curve $CURVE_ROOT/*-d* --registered <registered runs> --output-dir <dir>"

@@ -275,11 +275,16 @@ run_phase() {
         | tee -a "$log"
       break
     fi
-    [ "$restarts" -lt 12 ] || break
+    # CUDA runtime faults hit this cluster a few times a day and recover on
+    # retry; a matrix that runs for days must not stop after twelve of them.
+    # ADDITIONAL_MAX_RESTARTS (default 200) bounds it; the pause grows to 5 min.
+    [ "$restarts" -lt "${ADDITIONAL_MAX_RESTARTS:-200}" ] || break
     restarts=$((restarts + 1))
-    echo "[additional] model=$name failed rc=$rc; restart=$restarts/12" | tee -a "$log"
+    pause=$(( 15 * (restarts < 6 ? restarts : 6) * (restarts < 6 ? restarts : 6) ))
+    [ "$pause" -le 300 ] || pause=300
+    echo "[additional] model=$name failed rc=$rc; restart=$restarts/${ADDITIONAL_MAX_RESTARTS:-200} in ${pause}s" | tee -a "$log"
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return "$rc"; }
-    sleep 15
+    sleep "$pause"
   done
   [ "$rc" -eq 0 ] || return "$rc"
 }

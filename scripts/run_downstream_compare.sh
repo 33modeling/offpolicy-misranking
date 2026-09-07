@@ -18,6 +18,22 @@ unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 PY="$VENV_DIR/bin/python"
 
+# Same reward function as the registered matrix (symbolic Math-Verify); the
+# held-out reward and the GRPO updates must not use exact-match rewards.
+MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps") || exit 1
+export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify
+"$PY" -c 'from math_verify import parse, verify; assert verify(parse(r"\frac{1}{2}"), parse("0.5"))' \
+  || { echo "[abort] bundled math verifier failed to import"; exit 1; }
+
+# Four-rank GRPO updates need the node's GPUs: hold the node-local lock the
+# registered launcher holds.
+if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then   # go_extensions.sh already holds it
+  LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+  mkdir -p "$LOCAL_LOCK_DIR"
+  exec 8>"$LOCAL_LOCK_DIR/primary.lock"
+  flock -n 8 || { echo "[abort] another experiment owns this node's GPUs; run the downstream comparison on an idle 4xH100 node"; exit 1; }
+fi
+
 [ "$#" -ge 2 ] || { echo "usage: $0 <completed point run> <out root> [steps]"; exit 2; }
 RUN=$1; OUT_ROOT=$2; STEPS=${3:-50}
 [ -s "$RUN/DONE" ] || { echo "[abort] point is not complete: $RUN"; exit 1; }
