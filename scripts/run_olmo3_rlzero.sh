@@ -522,6 +522,10 @@ if [ "$MODE" = run ]; then
     # Alerts go to this worker's log, to the shared ALERTS.log and, when the
     # launcher runs on a terminal, straight to that terminal. No pipeline here:
     # $! must stay the heartbeat's own pid.
+    # It also prints a [progress] line every OM_RLZERO_PROGRESS_SECONDS (10 min)
+    # from durable artifacts only (DONE points, GRPO steps, rollout bytes, last
+    # write) and shouts [NOT TRAINING] when nothing durable changed for
+    # OM_PROGRESS_STALL_MINUTES (30): a live heartbeat is not progress (2026-09-07).
     "$PY" "$SUPERVISOR_RUNTIME_REPO/src/rlzero_heartbeat.py" \
       --path "$WORKER_HEARTBEAT_PATH" --worker "$WORKER_ID" \
       --host "$HOST_TAG" --launcher-pid "$$" \
@@ -529,6 +533,8 @@ if [ "$MODE" = run ]; then
       --peer-stale-seconds "${OM_RLZERO_PEER_STALE_SECONDS:-300}" \
       --alerts-log "$ROOT/logs/ALERTS.log" --worker-log "$LOG" \
       --terminal "$( { tty; } 2>/dev/null || true)" \
+      --progress-root "$ROOT" --progress-seconds "${OM_RLZERO_PROGRESS_SECONDS:-600}" \
+      --total-points "$(( ${#SEEDS[@]} * ${#DATASETS[@]} * ${#DRIFTS[@]} ))" \
       >/dev/null 2>&1 &
     WORKER_HEARTBEAT_PID=$!
     for _ in $(seq 1 50); do

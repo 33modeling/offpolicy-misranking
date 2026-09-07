@@ -59,6 +59,16 @@ if [ -d "$RUNS" ]; then
   fi
 fi
 
+# ---- training progress from durable artifacts (DONE, GRPO steps, rollout bytes, last write) ----
+PY="${VENV_DIR:-}/bin/python"; [ -x "$PY" ] || PY=python3
+PROGRESS_TOOL="$(dirname "$0")/../src/training_progress.py"
+progress=""; progress_word=""
+if [ -f "$PROGRESS_TOOL" ] && [ -d "$RUNS" ]; then
+  progress=$("$PY" "$PROGRESS_TOOL" --root "$RUNS" --total-points 40 --record 2>/dev/null)
+  progress_word=$(printf '%s' "$progress" | awk '{print $1}')
+  [ "$progress_word" != NOT ] || progress_word="NOT $(printf '%s' "$progress" | awk '{print $2}')"
+fi
+
 # ---- decide ----
 if [ -z "$LOG" ]; then
   decision="NOT STARTED: no session log. Start: bash scripts/run_qwen35_9b.sh run"
@@ -75,6 +85,8 @@ elif [ -n "$exit_line" ]; then
   fi
 elif [ "$launcher_alive" -eq 0 ]; then
   decision="ERROR: launcher is gone with no exit record (node lost or killed). Run again: bash scripts/run_qwen35_9b.sh run (finished work resumes)."
+elif [ "$progress_word" = "NOT TRAINING" ]; then
+  decision="ERROR: $progress. The launcher is alive but nothing durable has been written; this is not a running experiment. Ctrl-C, then run again (finished work resumes)."
 elif [ "$total" -eq 0 ]; then
   if [ "${log_age:-0}" -lt 1800 ]; then
     decision="NO ERROR: preparing, stage '$stage' (log written $(fmt_age "$log_age") ago). Nothing to do."
@@ -94,6 +106,7 @@ fi
 # ---- print ----
 echo "Qwen3.5-9B GRPO   $(date -u +%FT%TZ)   code $(git rev-parse --short HEAD 2>/dev/null)   host $(hostname)"
 echo "DECISION $decision"
+[ -z "$progress" ] || echo "PROGRESS $progress"
 if [ -n "$LOG" ]; then
   echo "session  started $started   stage $stage   launcher $([ "$launcher_alive" -eq 1 ] && echo alive || echo not-running)"
 fi

@@ -262,6 +262,25 @@ attempts. The worker stays allocated, moves to other work, and retries that
 family on a later queue pass instead of terminating. Repeated attempts reuse
 only contract-valid durable artifacts.
 
+## Is it training? (2026-09-07)
+
+Liveness is not progress. Every worker prints, on its own terminal and in its
+worker log, one line every 10 minutes (`OM_RLZERO_PROGRESS_SECONDS`) computed
+from durable artifacts only: DONE points, GRPO steps (`grpo_stats.jsonl`
+lines), rollout bytes and the newest artifact write. Logs, keepalive and
+telemetry do not count.
+
+```text
+[progress] TRAINING  points 7/40  grpo 1025 steps  rollouts 812 MB  last 30m: +0 points +25 grpo steps +18 MB rollouts  last write 2m ago (rollouts_fresh_train.shard1.partial)
+[NOT TRAINING] NOT TRAINING for 47m  points 7/40  grpo 1025 steps  rollouts 812 MB  last 30m: +0 points +0 grpo steps +0 MB rollouts  last write 47m ago (...)
+```
+
+`[NOT TRAINING]` also goes to `logs/ALERTS.log`. `status` prints the same as
+its `PROGRESS` line and, when workers are alive but nothing durable changed for
+`OM_PROGRESS_STALL_MINUTES` (30), its DECISION is `ERROR: NOT TRAINING ...` and
+STATE is `NOT TRAINING`, whatever the heartbeats and GPU duty say. The probe
+history is under `<root>/.progress/history.jsonl` (`src/training_progress.py`).
+
 ## Observe and collect
 
 Queue state:

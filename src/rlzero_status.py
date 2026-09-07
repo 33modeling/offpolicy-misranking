@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import training_progress
+
 ERROR_RE = re.compile(
     r"CUDA error|CUBLAS_STATUS|cuBLAS|CUDA out of memory|OutOfMemoryError|device-side assert|"
     r"unspecified launch failure|illegal memory access|Traceback|RuntimeError|"
@@ -1114,7 +1116,20 @@ def main() -> None:
     hung = verdict_counts.get("HUNG", 0)
     missing_workers = len(workers) < args.expected_workers
     degraded = stuck + dead + stopped + idle + unknown + hung > 0 or missing_workers
-    if contract_errors:
+    # Training progress from durable artifacts only (DONE points, GRPO steps,
+    # rollout bytes, last write). Heartbeats, CPU and GPU duty are liveness, not
+    # progress: on 2026-09-07 a launcher looked alive for 18 h without one GRPO
+    # step. NOT TRAINING with live workers outranks every softer verdict.
+    progress_word, progress_line, _ = training_progress.verdict(
+        args.root,
+        total_points=len(families) * len(args.drifts),
+        stall_seconds=float(os.environ.get("OM_PROGRESS_STALL_MINUTES", "30")) * 60,
+        record_probe=True,
+    )
+    if progress_word == "NOT TRAINING" and workers:
+        overall = "NOT_TRAINING"
+        action = "Ctrl-C_the_idle_worker__git_pull__relaunch_run_h100"
+    elif contract_errors:
         overall = "INVALID"
         action = "fix_runtime_contract_before_continuing"
     elif complete == len(families):
@@ -1198,8 +1213,10 @@ def main() -> None:
         "wait_for_worker_preflight_or_queue_claim": "workers are starting: wait",
         "start_workers": "start the workers: bash scripts/run_olmo3_rlzero.sh run h100",
         "fix_runtime_contract_before_continuing": "config mismatch: do not continue, see the ! contract lines",
+        "Ctrl-C_the_idle_worker__git_pull__relaunch_run_h100": "nothing durable is being written: Ctrl-C the idle worker, git pull, run h100 again (partials resume)",
     }.get(action, action.replace("_", " "))
     verdict_word = {
+        "NOT_TRAINING": "NOT TRAINING - workers alive, nothing durable written",
         "RUNNING": "RUNNING - all good",
         "DEGRADED": "DEGRADED - something needs a look",
         "HUNG": "HUNG - alive but not working",
@@ -1233,7 +1250,10 @@ def main() -> None:
                 continue  # a day-old record: already acted on or replaced; not an alarm
             if rec.get("state") in {"launcher-missing", "crashed"} or (rec.get("state") == "running" and beat is not None and beat > args.heartbeat_stale_seconds):
                 dead_workers.append(f"{rec.get('worker', entry.stem)} on {rec.get('host', '?')} (last seen {fmt_age(beat) if beat is not None else '?'} ago)")
-    if contract_errors:
+    if progress_word == "NOT TRAINING" and workers:
+        decision = (f"ERROR: {progress_line}. Workers are alive but nothing durable has been written; "
+                    "this is not a running experiment. Ctrl-C the idle worker, git pull, run h100 again.")
+    elif contract_errors:
         decision = ("ERROR: an unfinished point runs with other runtime values than this launcher expects "
                     "(see the ! contract lines). Workers keep running; the next relaunch repairs unfinished points.")
     elif dead_workers and len(workers) < args.expected_workers:
@@ -1272,6 +1292,7 @@ def main() -> None:
         decision = "NO ERROR. Everything is progressing. Nothing to do."
     print(f"OLMo-3 RL-Zero {args.profile}   {now}   code {generation_git[:8]}   probe {args.probe_seconds}s")
     print(f"DECISION {decision}")
+    print(f"PROGRESS {progress_line}")
     print(f"STATE   {verdict_word}")
     print(f"        workers {len(workers)}/{args.expected_workers} ({worker_ids})   families {complete}/{len(families)} done   points {points_done}/{total_points} done{eta}")
     print(f"ACTION  {action_text}")

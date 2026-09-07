@@ -143,6 +143,49 @@ def check_peers(
                 pass
 
 
+def report_progress(
+    root: Path,
+    *,
+    total_points: int | None,
+    worker: str,
+    elapsed: float,
+    not_started_grace: float,
+    alerts_log: Path | None,
+    worker_log: Path | None,
+    terminal: Path | None,
+) -> str:
+    """One [progress] line from durable artifacts (training_progress.verdict).
+
+    TRAINING/DONE go to the terminal and the worker log; NOT TRAINING, and NOT
+    STARTED once the preflight grace is over, are shouted as [NOT TRAINING] and
+    also appended to ALERTS.log. A worker whose heartbeat is fresh but whose
+    matrix writes nothing durable must never read as a running experiment."""
+    import training_progress
+
+    stall = float(os.environ.get("OM_PROGRESS_STALL_MINUTES", "30")) * 60
+    try:
+        word, line, _ = training_progress.verdict(
+            root, total_points=total_points, stall_seconds=stall, record_probe=True
+        )
+    except Exception as exc:  # a shared-volume hiccup must not kill the heartbeat
+        word, line = "UNKNOWN", f"progress probe failed: {exc}"
+    loud = word == "NOT TRAINING" or (word == "NOT STARTED" and elapsed > not_started_grace)
+    tag = "[NOT TRAINING]" if loud else "[progress]"
+    stamped = f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {tag} {line}  (worker {worker})\n"
+    targets = [worker_log, terminal] + ([alerts_log] if loud else [])
+    for target in targets:
+        if target is None:
+            continue
+        try:
+            if target != terminal:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8") as stream:
+                stream.write(stamped)
+        except OSError:
+            pass
+    return stamped
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", type=Path, required=True)
@@ -156,12 +199,18 @@ def main() -> int:
     parser.add_argument("--terminal", type=Path, default=None,
                         help="tty of the launcher; alerts are written there too (empty/'not a tty' = skip)")
     parser.add_argument("--alert-repeat-seconds", type=float, default=3600.0)
+    parser.add_argument("--progress-root", type=Path, default=None,
+                        help="matrix root; prints a [progress] line from durable artifacts every --progress-seconds")
+    parser.add_argument("--progress-seconds", type=float, default=600.0)
+    parser.add_argument("--total-points", type=int, default=None)
+    parser.add_argument("--not-started-grace-seconds", type=float, default=2700.0,
+                        help="NOT STARTED is expected during preflight; after this it is shouted")
     args = parser.parse_args()
     terminal = args.terminal if args.terminal and str(args.terminal).startswith("/dev/") else None
     if args.launcher_pid <= 1:
         parser.error("--launcher-pid must be greater than one")
-    if args.interval_seconds <= 0:
-        parser.error("--interval-seconds must be positive")
+    if args.interval_seconds <= 0 or args.progress_seconds <= 0:
+        parser.error("--interval-seconds and --progress-seconds must be positive")
 
     stop_event = threading.Event()
 
@@ -173,6 +222,7 @@ def main() -> int:
     signal.signal(signal.SIGHUP, request_stop)
     started_at_ns = time.time_ns()
     last_alert: dict[str, float] = {}
+    next_progress = time.time() + args.progress_seconds
     while not stop_event.is_set() and process_alive(args.launcher_pid):
         write_heartbeat(
             args.path,
@@ -192,6 +242,18 @@ def main() -> int:
             worker_log=args.worker_log,
             terminal=terminal,
         )
+        if args.progress_root is not None and time.time() >= next_progress:
+            next_progress = time.time() + args.progress_seconds
+            report_progress(
+                args.progress_root,
+                total_points=args.total_points,
+                worker=args.worker,
+                elapsed=time.time() - started_at_ns / 1e9,
+                not_started_grace=args.not_started_grace_seconds,
+                alerts_log=args.alerts_log,
+                worker_log=args.worker_log,
+                terminal=terminal,
+            )
         stop_event.wait(args.interval_seconds)
 
     state = "stopped" if stop_event.is_set() else "launcher-missing"

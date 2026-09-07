@@ -40,6 +40,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy2(ROOT / "src/rlzero_status.py", checkout / "src")
     shutil.copy2(ROOT / "src/rlzero_heartbeat.py", checkout / "src")
     shutil.copy2(ROOT / "src/repair_run_config.py", checkout / "src")
+    shutil.copy2(ROOT / "src/training_progress.py", checkout / "src")
     shutil.copy2(ROOT / "configs/olmo3_rlzero.json", checkout / "configs")
     shutil.copy2(ROOT / "configs/olmo3_rlzero_h100.json", checkout / "configs")
     (checkout / "requirements.txt").write_text("fixture\n")

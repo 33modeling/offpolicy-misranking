@@ -434,7 +434,22 @@ run_registered_matrix() {
       --matrix "$REGIME_MATRIX" --config "$config" --model-key "$model_key" \
       --model "$MODEL_PATH" --qualification "$qualification" --git "$matrix_git" \
       | tee -a "$log"
+    # One [progress] line every OM_PROGRESS_INTERVAL_SECONDS (10 min) on the
+    # terminal and in the session log, from durable artifacts only: DONE points,
+    # GRPO steps, rollout bytes, last write. It says NOT TRAINING when nothing
+    # durable changed for OM_PROGRESS_STALL_MINUTES (30). A launcher that stays
+    # alive without training must never look like a running one (2026-09-07).
+    total_points=$(( $(wc -w <<< "$seeds") * $(wc -w <<< "$datasets") * $(wc -w <<< "$drifts") ))
+    "$PY" src/training_progress.py --root "$REGIME_ROOT" --total-points "$total_points" \
+      --watch --interval "${OM_PROGRESS_INTERVAL_SECONDS:-600}" --tag "[progress]" 2>/dev/null &
+    progress_pid=$!
     run_phase "$log" "$model_key"
+    phase_rc=$?
+    kill "$progress_pid" 2>/dev/null || true
+    wait "$progress_pid" 2>/dev/null || true
+    "$PY" src/training_progress.py --root "$REGIME_ROOT" --total-points "$total_points" --record \
+      2>/dev/null | sed 's/^/[progress] final: /' | tee -a "$log" || true
+    [ "$phase_rc" -eq 0 ] || return "$phase_rc"
   done
   echo "[additional] mode=$MODE complete: method=$method root=$OM_WORK/results/$run_id" \
     | tee -a "$log"

@@ -67,6 +67,18 @@ Results: `$OM_WORK/results/qwen35-9b-posttrained-math-code-grpo-v1/`.
 Models/configuration/outputs are separate from the retained 27B experiment.
 Do not reuse or relabel 27B checkpoints as 9B results.
 
+## Is it training? (2026-09-07)
+
+While the matrix runs, the launcher prints one `[progress]` line every 10
+minutes (`OM_PROGRESS_INTERVAL_SECONDS`) computed from durable artifacts only
+(DONE points, GRPO steps, rollout bytes, newest artifact write); the line reads
+`TRAINING ...`, `NOT STARTED ...` or `NOT TRAINING for <age> ...`. `status`
+prints the same as its `PROGRESS` line and its DECISION is `ERROR: NOT
+TRAINING ...` whenever the launcher is alive but nothing durable changed for
+`OM_PROGRESS_STALL_MINUTES` (30). A launcher that is alive without training
+must never look like a running experiment (18 hours were lost that way on
+2026-09-06/07).
+
 ## Reading progress on a phone
 
 ```bash

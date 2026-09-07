@@ -447,7 +447,8 @@ def test_status_default_is_one_screen_table(tmp_path: Path) -> None:
     lines = output.splitlines()
     assert lines[0].startswith("OLMo-3 RL-Zero h100")
     assert lines[1].startswith("DECISION ")
-    assert lines[2].startswith("STATE   NOT STARTED")
+    assert lines[2].startswith("PROGRESS NOT STARTED")
+    assert lines[3].startswith("STATE   NOT STARTED")
     assert any(line.startswith(" waiting") and "math500/s0" in line for line in lines)
     # the machine-readable verdict lines stay for scripts; the evidence dump does not
     assert "overall_verdict=NOT_STARTED" in output
@@ -465,6 +466,34 @@ def _status_with(root: Path, extra: list[str]) -> str:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
+
+
+def test_live_worker_without_durable_writes_is_not_training(tmp_path: Path) -> None:
+    """A fresh heartbeat and a held lock are liveness; with nothing durable
+    written for longer than the stall window the first line must say so."""
+    root = tmp_path / "runs" / TAG
+    run, partial, lock = active_family(root)
+    write_worker_heartbeat(root)
+    (run / "run_config.json").write_text(
+        json.dumps({"gen_batch": "8", "gradient_micro_batch": 4, "grpo_logprob_micro_batch": 4}),
+        encoding="utf-8",
+    )
+    try:
+        fresh = run_status(root, verbose=False)
+        assert "PROGRESS TRAINING" in fresh
+        assert "NOT TRAINING" not in fresh
+        old = time.time() - 2 * 3600
+        for path in list(run.rglob("*")) + [run]:
+            os.utime(path, (old, old))
+        stale = run_status(root, verbose=False)
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+    lines = stale.splitlines()
+    assert lines[1].startswith("DECISION ERROR: NOT TRAINING for 2h"), lines[1]
+    assert lines[2].startswith("PROGRESS NOT TRAINING for 2h")
+    assert lines[3].startswith("STATE   NOT TRAINING")
+    assert "overall_verdict=NOT_TRAINING" in stale
 
 
 def test_finished_point_history_is_not_a_contract_error(tmp_path: Path) -> None:
