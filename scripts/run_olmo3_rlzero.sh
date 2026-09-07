@@ -884,8 +884,30 @@ cleanup_owner() {
 # LOOPING with the error, and the operator decides. Clear with
 # OM_RLZERO_CLEAR_LOOPS=1 on the next launch after fixing the cause.
 MAX_FAMILY_FAILURES="${OM_RLZERO_MAX_FAMILY_FAILURES:-4}"
+# CUDA runtime faults (unspecified launch failure, CUBLAS execution failure,
+# device-side assert) hit every node of this cluster a few times a day and
+# recover on retry. They are not the same failure repeating: they must not
+# count toward the loop guard, or a nearly finished family gets marked LOOPING
+# within an hour (math500/s1 and s2, 2026-09-07 03:20Z). Such a failure is
+# retried with a growing pause; after MAX_CUDA_FAILURES in a row on this
+# worker the family is released for another node instead of being marked.
+MAX_CUDA_FAILURES="${OM_RLZERO_MAX_CUDA_FAILURES:-8}"
 declare -A FAMILY_FAILURES=()
+declare -A FAMILY_CUDA_FAILURES=()
+LAST_FAILURE_KIND=""
 loop_marker() { printf '%s/%s-s%s.loop\n' "$QUEUE" "$1" "$2"; }
+family_last_error() {  # family_last_error <dataset> <seed> -> last error line (may be empty)
+  grep -hE 'OutOfMemoryError|CUDA error|CUBLAS_STATUS|device-side assert|RuntimeError|Error:|\[abort\]' \
+    "$(family_root "$1" "$2")"/*/logs/*.log 2>/dev/null | tail -1 | cut -c1-200
+}
+failure_kind() {  # failure_kind "<error line>" -> oom | runtime | other
+  "$PY" - "$1" "$SUPERVISOR_RUNTIME_REPO/src" <<'PYEOF'
+import sys
+sys.path.insert(0, sys.argv[2])
+from recovery_policy import classify_cuda_failure
+print(classify_cuda_failure(sys.argv[1]) or "other")
+PYEOF
+}
 if [ "${OM_RLZERO_CLEAR_LOOPS:-0}" = 1 ]; then
   for marker in "$QUEUE"/*.loop; do
     [ -e "$marker" ] || continue
@@ -895,13 +917,20 @@ fi
 family_looping() {  # family_looping <dataset> <seed>
   [ -s "$(loop_marker "$1" "$2")" ]
 }
-note_family_failure() {  # note_family_failure <dataset> <seed> <rc>
+note_family_failure() {  # note_family_failure <dataset> <seed> <rc>; sets LAST_FAILURE_KIND
   local key="$1-s$2" n last_error run
+  last_error=$(family_last_error "$1" "$2")
+  LAST_FAILURE_KIND=$(failure_kind "$last_error" 2>/dev/null || printf other)
+  if [ "$LAST_FAILURE_KIND" = runtime ]; then
+    n=$(( ${FAMILY_CUDA_FAILURES[$key]:-0} + 1 ))
+    FAMILY_CUDA_FAILURES[$key]=$n
+    echo "[cuda-flaky] $1/s$2: CUDA runtime fault #$n on this worker (${last_error:-no error line}); not counted as a repeating failure" | tee -a "$LOG"
+    return 0
+  fi
+  FAMILY_CUDA_FAILURES[$key]=0
   n=$(( ${FAMILY_FAILURES[$key]:-0} + 1 ))
   FAMILY_FAILURES[$key]=$n
   [ "$n" -ge "$MAX_FAMILY_FAILURES" ] || return 0
-  last_error=$(grep -hE 'OutOfMemoryError|CUDA error|RuntimeError|Error:|\[abort\]' \
-    "$(family_root "$1" "$2")"/*/logs/*.log 2>/dev/null | tail -1 | cut -c1-200)
   {
     echo "family=$1/s$2 worker=$WORKER_ID host=$HOST_TAG consecutive_failures=$n last_rc=$3"
     echo "last_error=${last_error:-none captured}"
@@ -1038,8 +1067,13 @@ while :; do
       rc=$?
       if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
         note_family_failure "$dataset" "$seed" "$rc"
-        echo "[family-retry] $dataset/s$seed rc=$rc (consecutive failures: ${FAMILY_FAILURES[$dataset-s$seed]:-1}/$MAX_FAMILY_FAILURES); allocation retained, artifacts preserved" \
-          | tee -a "$LOG"
+        if [ "$LAST_FAILURE_KIND" = runtime ]; then
+          echo "[family-retry] $dataset/s$seed rc=$rc (CUDA runtime faults on this worker: ${FAMILY_CUDA_FAILURES[$dataset-s$seed]:-1}/$MAX_CUDA_FAILURES, not a repeating failure); allocation retained, artifacts preserved" \
+            | tee -a "$LOG"
+        else
+          echo "[family-retry] $dataset/s$seed rc=$rc (consecutive failures: ${FAMILY_FAILURES[$dataset-s$seed]:-1}/$MAX_FAMILY_FAILURES); allocation retained, artifacts preserved" \
+            | tee -a "$LOG"
+        fi
         stop_supervisor_keepalive
         cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
         statuses=("${PIPESTATUS[@]}")
@@ -1052,12 +1086,27 @@ while :; do
       if [ "$rc" -ne 0 ]; then
         cleanup_owner
         family_looping "$dataset" "$seed" && break   # guard tripped: every worker skips it now
+        if [ "$LAST_FAILURE_KIND" = runtime ]; then
+          cuda_n=${FAMILY_CUDA_FAILURES[$dataset-s$seed]:-1}
+          if [ "$cuda_n" -ge "$MAX_CUDA_FAILURES" ]; then
+            echo "[cuda-flaky] $dataset/s$seed: $cuda_n CUDA runtime faults in a row on this worker; releasing it for another node (artifacts preserved)" \
+              | tee -a "$LOG"
+            FAMILY_CUDA_FAILURES[$dataset-s$seed]=0
+            break
+          fi
+          pause=$(( FAMILY_RETRY_SECONDS * (1 << (cuda_n - 1)) ))
+          [ "$pause" -le 900 ] || pause=900
+          echo "[family-retry] $dataset/s$seed: CUDA runtime fault; this worker retries it in ${pause}s" | tee -a "$LOG"
+          sleep "$pause"
+          continue
+        fi
         echo "[family-retry] $dataset/s$seed: this worker retries it in ${FAMILY_RETRY_SECONDS}s (not left for another worker)" \
           | tee -a "$LOG"
         sleep "$FAMILY_RETRY_SECONDS"
         continue
       fi
       FAMILY_FAILURES[$dataset-s$seed]=0
+      FAMILY_CUDA_FAILURES[$dataset-s$seed]=0
       sleep "$CLAIM_YIELD_SECONDS"
       break
     done

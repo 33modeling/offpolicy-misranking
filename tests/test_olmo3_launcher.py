@@ -41,6 +41,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy2(ROOT / "src/rlzero_heartbeat.py", checkout / "src")
     shutil.copy2(ROOT / "src/repair_run_config.py", checkout / "src")
     shutil.copy2(ROOT / "src/training_progress.py", checkout / "src")
+    shutil.copy2(ROOT / "src/recovery_policy.py", checkout / "src")
     shutil.copy2(ROOT / "configs/olmo3_rlzero.json", checkout / "configs")
     shutil.copy2(ROOT / "configs/olmo3_rlzero_h100.json", checkout / "configs")
     (checkout / "requirements.txt").write_text("fixture\n")
@@ -142,7 +143,7 @@ case "$script" in
       shift
     done ;;
   -)
-    if [[ "$1" == *grpo_stats.jsonl ]]; then exec python3 - "$@"; fi
+    if [[ "$1" == *grpo_stats.jsonl || "${2:-}" == */src ]]; then exec python3 - "$@"; fi
     destination=$1; mkdir -p "$(dirname "$destination")"
     case "$destination" in
       *.owner.json) printf '{"worker":"%s"}\n' "$WORKER_ID" > "$destination" ;;
@@ -181,6 +182,16 @@ if [ "${TEST_FAIL_FAMILY:-}" = "$key" ]; then
   if [ "${TEST_FAIL_ALWAYS:-0}" = 1 ] || [ ! -e "$marker" ]; then
     : > "$marker"
     exit 43
+  fi
+fi
+if [ "${TEST_CUDA_FAIL_FAMILY:-}" = "$key" ]; then
+  counter="$TEST_SHARED/work/cuda-fail-$key"
+  n=$(cat "$counter" 2>/dev/null || echo 0)
+  if [ "$n" -lt "${TEST_CUDA_FAIL_TIMES:-5}" ]; then
+    echo $((n + 1)) > "$counter"
+    mkdir -p "$REGIME_ROOT/point/logs"
+    echo "RuntimeError: CUDA error: unspecified launch failure" >> "$REGIME_ROOT/point/logs/main.log"
+    exit 1
   fi
 fi
 git=$(git -C "$OM_PIPELINE_REPO" rev-parse HEAD)
@@ -815,6 +826,67 @@ def test_most_progressed_family_is_claimed_first(tmp_path: Path) -> None:
     assert claims[1] == "math500-s2"       # started, nothing done
     assert claims[2] == "math500-s0"       # untouched families in registered order
     assert len(claims) == 10
+
+
+def test_cuda_runtime_faults_are_retried_without_tripping_the_loop_guard(tmp_path: Path) -> None:
+    """Five CUDA runtime faults in a row exceed the loop guard (4) but are not
+    the same failure repeating: the family is retried and finishes, and no
+    .loop marker is written."""
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "cuda-local"),
+            "TEST_CUDA_FAIL_FAMILY": "math500-s1",
+            "TEST_CUDA_FAIL_TIMES": "5",
+            "OM_RLZERO_FAMILY_ATTEMPTS": "1",
+            "OM_RLZERO_STALE_PROCESS_TIMEOUT": "1",
+            "OM_RLZERO_GPU_CLEANUP_TIMEOUT": "1",
+        },
+        text=True,
+        capture_output=True,
+        timeout=300,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[cuda-flaky] math500/s1: CUDA runtime fault #5" in result.stdout
+    assert "CUDA runtime fault; this worker retries it in" in result.stdout
+    assert "[family-loop]" not in result.stdout
+    queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
+    assert not (queue / "math500-s1.loop").exists()
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    assert len(claims) == 10 and len(set(claims)) == 10
+
+
+def test_repeated_cuda_faults_release_the_family_for_another_node(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "cuda-release-local"),
+            "TEST_CUDA_FAIL_FAMILY": "math500-s1",
+            "TEST_CUDA_FAIL_TIMES": "3",
+            "OM_RLZERO_MAX_CUDA_FAILURES": "2",
+            "OM_RLZERO_FAMILY_ATTEMPTS": "1",
+            "OM_RLZERO_STALE_PROCESS_TIMEOUT": "1",
+            "OM_RLZERO_GPU_CLEANUP_TIMEOUT": "1",
+        },
+        text=True,
+        capture_output=True,
+        timeout=300,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "releasing it for another node" in result.stdout
+    assert "[family-loop]" not in result.stdout
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    # released after two faults, other families ran, then it was claimed again and finished
+    assert claims.index("math500-s1") > claims.index("mbpp-s1")
+    assert len(claims) == 10 and len(set(claims)) == 10
 
 
 def test_failed_family_is_retried_by_the_same_worker_before_moving_on(tmp_path: Path) -> None:

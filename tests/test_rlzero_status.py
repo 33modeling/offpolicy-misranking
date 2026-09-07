@@ -496,6 +496,34 @@ def test_live_worker_without_durable_writes_is_not_training(tmp_path: Path) -> N
     assert "overall_verdict=NOT_TRAINING" in stale
 
 
+def test_unowned_family_mismatch_is_a_note_and_loop_marker_count_is_read(tmp_path: Path) -> None:
+    root = tmp_path / "runs" / TAG
+    run = root / "family-math500-s0" / f"{TAG}-s0-math500-d0"
+    (run / "logs").mkdir(parents=True)
+    (root / ".families").mkdir(parents=True)
+    (root / "logs").mkdir(parents=True)
+    (run / "run_config.json").write_text(
+        json.dumps({"gen_batch": "8", "gradient_micro_batch": 4, "grpo_logprob_micro_batch": 4}),
+        encoding="utf-8",
+    )
+    (run / "rollouts_fresh_train.shard0.partial").write_text("{}\n", encoding="utf-8")
+    # unowned (no lock held, no owner): the old batch values are repaired at the next claim
+    output = _status_with(root, ["--dataset-generation-batch", "math500=32"])
+    assert "runtime_contract_errors=0" in output
+    assert "runtime_contract_notes_unowned=1" in output
+    assert "~ contract (unowned; repaired when a worker claims it): math500/s0/d0:gen_batch:8!=32" in output
+    assert "config/contract mismatch" not in output and "overall_verdict=INVALID" not in output
+    # the launcher's loop marker: one line of pairs, then last_error and marked_at_utc
+    (root / ".families/math500-s0.loop").write_text(
+        "family=math500/s0 worker=w host=h consecutive_failures=4 last_rc=1\n"
+        "last_error=RuntimeError: CUDA error: unspecified launch failure\nmarked_at_utc=2026-09-07T03:00:00Z\n",
+        encoding="utf-8",
+    )
+    output = run_status(root, verbose=False)
+    assert "failed 4 times in a row" in output
+    assert "unspecified launch failure" in output
+
+
 def test_finished_point_history_is_not_a_contract_error(tmp_path: Path) -> None:
     """2026-09-06: one complete point whose old recovery once ran at batch 1
     made status print ERROR/INVALID ("do not restart") for a whole day."""

@@ -222,10 +222,19 @@ def family_state(args: argparse.Namespace, family: Family) -> tuple[str, dict]:
             pass
     loop_marker = args.root / ".families" / f"{family.file_key}.loop"
     if loop_marker.is_file() and loop_marker.stat().st_size:
+        # Marker format (note_family_failure): one line of space-separated
+        # key=value pairs, then "last_error=<free text>" and "marked_at_utc=...".
+        info: dict[str, str] = {}
         try:
-            info = dict(
-                line.split("=", 1) for line in loop_marker.read_text(encoding="utf-8").splitlines() if "=" in line
-            )
+            for line in loop_marker.read_text(encoding="utf-8").splitlines():
+                if line.startswith(("last_error=", "marked_at_utc=")):
+                    key, _, value = line.partition("=")
+                    info[key] = value
+                    continue
+                for token in line.split():
+                    if "=" in token:
+                        key, _, value = token.partition("=")
+                        info[key] = value
         except OSError:
             info = {}
         return "looping", {"loop": info}
@@ -981,6 +990,7 @@ def main() -> None:
     rows: list[dict] = []
     verdict_counts: dict[str, int] = {}
     contract_errors: list[str] = []
+    contract_notes: list[str] = []
     points_done = 0
     for family in families:
         snapshot = after[family]
@@ -1013,7 +1023,13 @@ def main() -> None:
         for drift in args.drifts:
             point, issues = point_status(args, family, drift)
             points.append(point)
-            contract_errors.extend(f"{family.key}/d{drift}:{issue}" for issue in issues)
+            # A mismatch matters only while a worker is running the family with
+            # the other values. An unowned family is repaired when it is claimed
+            # (repair_run_config), so its mismatch is a note, not an error.
+            if snapshot.state == "claimed":
+                contract_errors.extend(f"{family.key}/d{drift}:{issue}" for issue in issues)
+            else:
+                contract_notes.extend(f"{family.key}/d{drift}:{issue}" for issue in issues)
         drift, run, kind, done_drifts = current_point(args, family)
         points_done += len(done_drifts)
         stage = "-"
@@ -1299,6 +1315,9 @@ def main() -> None:
     if contract_errors:
         for issue in contract_errors[:6]:
             print(f"  ! contract: {issue}")
+    if contract_notes:
+        for issue in contract_notes[:6]:
+            print(f"  ~ contract (unowned; repaired when a worker claims it): {issue}")
     print()
 
     problem = {"HUNG", "STUCK", "DEAD", "STOPPED", "LOOPING"}
@@ -1498,6 +1517,7 @@ def main() -> None:
         f"pending={pending}"
     )
     print(f"runtime_contract_errors={len(contract_errors)}")
+    print(f"runtime_contract_notes_unowned={len(contract_notes)}")
     for issue in contract_errors[:20]:
         print(f"  ! {issue}")
     print(f"overall_verdict={overall}")
