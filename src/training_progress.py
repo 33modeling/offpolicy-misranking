@@ -266,6 +266,20 @@ def verdict(
         f"  last write {fmt_age(now - current.last_write_epoch)} ago ({current.last_write_name})"
         if current.last_write_epoch > 0 else "  no durable write yet"
     )
+    # Hard rule: the signature itself (DONE points, GRPO steps, rollout bytes)
+    # must move within hard_stall_seconds. Stage logs keep a gradient stage
+    # from reading as a stall for 30 minutes, but a recovery loop also writes
+    # logs forever; after 90 minutes without any durable change it is a stall
+    # whatever the logs say.
+    hard_stall = float(os.environ.get("OM_PROGRESS_HARD_STALL_MINUTES", "90")) * 60
+    flat_since = signature_flat_since(history, current)
+    if flat_since is not None and now - flat_since > hard_stall:
+        return (
+            "NOT TRAINING",
+            f"NOT TRAINING for {fmt_age(now - flat_since)}  {counts}{delta_text}{write_text}"
+            "  (no DONE, GRPO step or rollout byte changed in that time; logs alone do not count)",
+            current,
+        )
     if since is not None and since <= stall_seconds:
         return "TRAINING", f"TRAINING  {counts}{delta_text}{write_text}", current
     quiet = fmt_age(since) if since is not None else "?"
@@ -274,6 +288,22 @@ def verdict(
         f"NOT TRAINING for {quiet}  {counts}{delta_text}{write_text}",
         current,
     )
+
+
+def signature_flat_since(history: list[dict], current: Signature) -> float | None:
+    """Epoch of the earliest consecutive history record that already carried
+    the current signature (None when history holds no such record)."""
+    key = current.key()
+    earliest = None
+    for entry in reversed(history):
+        entry_key = (
+            entry.get("points_done"), entry.get("grpo_steps"),
+            entry.get("rollout_bytes"), entry.get("rollout_files"),
+        )
+        if entry_key != key:
+            break
+        earliest = float(entry["epoch"])
+    return earliest
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -92,6 +92,28 @@ def test_unchanged_signature_across_probes_is_a_stall(tmp_path: Path) -> None:
     assert "+0 grpo steps" in line and "+0 points" in line
 
 
+def test_fresh_stage_logs_do_not_hide_a_signature_that_has_not_moved_for_hours(tmp_path: Path) -> None:
+    """A recovery loop writes shard logs forever; after 90 minutes without a
+    DONE, GRPO step or rollout byte it is a stall whatever the logs say."""
+    root = tmp_path / "root"
+    run = _point(root, "family-mbpp-s2", "tag-s2-mbpp-d0", steps=0, rollout_bytes=5000)
+    now = time.time()
+    for age in (3 * 3600, 2 * 3600, 3600, 1200):
+        tp.record(root, tp.probe(root, 40), now - age)
+    (run / "logs/recovery-rollout-fresh-attempt2-shard1.log").write_text("[cuda-recovery] retrying\n")
+    word, line, _ = tp.verdict(root, total_points=40, stall_seconds=1800, now=now)
+    assert word == "NOT TRAINING", line
+    assert line.startswith("NOT TRAINING for 3h")
+    assert "logs alone do not count" in line
+    # the same fresh log within the first 90 minutes still reads as a gradient/scoring stage
+    short = tmp_path / "short"
+    run2 = _point(short, "family-mbpp-s2", "tag-s2-mbpp-d0", steps=0, rollout_bytes=5000)
+    tp.record(short, tp.probe(short, 40), now - 1200)
+    (run2 / "logs/ograds-shard1.log").write_text("oracle 65/134\n")
+    word, line, _ = tp.verdict(short, total_points=40, stall_seconds=1800, now=now)
+    assert word == "TRAINING", line
+
+
 def test_cli_exit_status_and_watch_tag(tmp_path: Path, capsys) -> None:
     root = tmp_path / "root"
     root.mkdir()
