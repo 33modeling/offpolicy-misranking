@@ -16,7 +16,10 @@ import training_progress
 ERROR_RE = re.compile(
     r"CUDA error|CUBLAS_STATUS|cuBLAS|CUDA out of memory|OutOfMemoryError|device-side assert|"
     r"unspecified launch failure|illegal memory access|Traceback|RuntimeError|"
-    r"regime-hard-stall|logs?.*GPU.*CPU.*(?:stopped|정지)",
+    r"regime-hard-stall|logs?.*GPU.*CPU.*(?:stopped|정지)|"
+    # a finished point rejected at re-entry, and the pinned run_point.sh refusing a
+    # run_config whose batch fields differ (2026-09-08, math500/s1/d25)
+    r"config-abort|done-but-incomplete|repair-failed",
     re.IGNORECASE,
 )
 

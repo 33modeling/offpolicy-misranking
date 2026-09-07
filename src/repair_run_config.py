@@ -9,7 +9,9 @@ whose recorded values differ from the launch environment (`[config-abort]`), so 
 supervisor that wants a different batch for an unfinished point has to update the
 record first. This tool does exactly that, and nothing else:
 
-- only points without a non-empty `DONE` are touched;
+- only points without a non-empty `DONE` are touched, unless `--include-done`
+  (run_matrix.sh passes it for the one finished point it is about to re-enter
+  because run_complete rejected it, 2026-09-08);
 - only `gen_batch` / `gradient_micro_batch` are changed;
 - the digest is recomputed with the same serialization `run_point.sh` uses
   (`json.dumps(config_without_digest, sort_keys=True, separators=(",", ":"))`);
@@ -73,13 +75,15 @@ def planned_changes(config: dict, wanted: dict[str, int | None]) -> dict[str, tu
     return changes
 
 
-def repair_run(run: Path, wanted: dict[str, int | None], *, apply: bool) -> list[str]:
+def repair_run(
+    run: Path, wanted: dict[str, int | None], *, apply: bool, include_done: bool = False
+) -> list[str]:
     """Repair one point directory. Returns the human-readable change lines."""
     config_path = run / "run_config.json"
     if not config_path.is_file():
         return []
     done = run / "DONE"
-    if done.is_file() and done.stat().st_size > 0:
+    if not include_done and done.is_file() and done.stat().st_size > 0:
         return []
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -128,6 +132,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gen-batch", type=int, default=None)
     parser.add_argument("--gradient-micro-batch", type=int, default=None)
     parser.add_argument("--apply", action="store_true", help="write the changes (default: dry run)")
+    parser.add_argument(
+        "--include-done",
+        action="store_true",
+        help="also rewrite a finished point (its DONE marker is non-empty); used right before re-entry",
+    )
     args = parser.parse_args(argv)
     if args.gen_batch is None and args.gradient_micro_batch is None:
         parser.error("nothing to repair: pass --gen-batch and/or --gradient-micro-batch")
@@ -138,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     runs = [args.run] if args.run else list(iter_runs(args.family_root)) if args.family_root.is_dir() else []
     lines: list[str] = []
     for run in runs:
-        lines.extend(repair_run(run, wanted, apply=args.apply))
+        lines.extend(repair_run(run, wanted, apply=args.apply, include_done=args.include_done))
     for line in lines:
         print(line, flush=True)
     return 0

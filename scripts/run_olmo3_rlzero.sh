@@ -900,7 +900,7 @@ declare -A FAMILY_CUDA_FAILURES=()
 LAST_FAILURE_KIND=""
 loop_marker() { printf '%s/%s-s%s.loop\n' "$QUEUE" "$1" "$2"; }
 family_last_error() {  # family_last_error <dataset> <seed> -> last error line (may be empty)
-  grep -hE 'OutOfMemoryError|CUDA error|CUBLAS_STATUS|device-side assert|RuntimeError|Error:|\[abort\]' \
+  grep -hE 'OutOfMemoryError|CUDA error|CUBLAS_STATUS|device-side assert|RuntimeError|Error:|\[abort\]|\[config-abort\]' \
     "$(family_root "$1" "$2")"/*/logs/*.log 2>/dev/null | tail -1 | cut -c1-200
 }
 failure_kind() {  # failure_kind "<error line>" -> oom | runtime | other
@@ -925,6 +925,11 @@ for marker in "$QUEUE"/*.loop; do
   if [ "$(failure_kind "$marker_error" 2>/dev/null || printf other)" = runtime ]; then
     rm -f -- "$marker" \
       && echo "[queue] cleared loop marker $(basename "$marker"): it recorded a CUDA runtime fault, which is retried, not a repeating failure" | tee -a "$LOG"
+  elif [ -n "$marker_error" ] && [ -z "${marker_error##*config-abort*}" ]; then
+    # 2026-09-08: a finished point re-entered under a different generation batch
+    # died in the pinned pipeline; run_matrix.sh now aligns the record first.
+    rm -f -- "$marker" \
+      && echo "[queue] cleared loop marker $(basename "$marker"): it recorded a re-entry config-abort, which this code repairs before re-entry" | tee -a "$LOG"
   fi
 done
 family_looping() {  # family_looping <dataset> <seed>

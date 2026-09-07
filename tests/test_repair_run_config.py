@@ -81,6 +81,23 @@ def test_finished_points_are_never_touched(tmp_path: Path) -> None:
     assert json.loads((run / "run_config.json").read_text()) == before
 
 
+def test_include_done_rewrites_a_finished_point_for_re_entry(tmp_path: Path) -> None:
+    """run_matrix.sh re-enters a DONE point that run_complete rejected; the pinned
+    run_point.sh would [config-abort] on gen_batch 8 != 32 unless the record is aligned."""
+    run = tmp_path / "family-math500-s1" / "tag-s1-math500-d25"
+    before = _write_point(run, done=True)
+    rc = rrc.main(["--run", str(run), "--include-done", "--gen-batch", "32", "--gradient-micro-batch", "4", "--apply"])
+    assert rc == 0
+    after = json.loads((run / "run_config.json").read_text())
+    assert after["gen_batch"] == "32" and after["gradient_micro_batch"] == 4
+    assert after["digest"] == _run_point_digest(after) and after["digest"] != before["digest"]
+    assert (run / "DONE").read_text() == "ok\n"
+    # the family-level call keeps skipping finished points
+    _write_point(tmp_path / "family-math500-s1" / "tag-s1-math500-d100", done=True)
+    assert rrc.main(["--family-root", str(tmp_path / "family-math500-s1"), "--gen-batch", "8", "--apply"]) == 0
+    assert json.loads((run / "run_config.json").read_text())["gen_batch"] == "32"
+
+
 def test_matching_values_are_a_no_op(tmp_path: Path) -> None:
     run = tmp_path / "family-mbpp-s0" / "tag-s0-mbpp-d25"
     before = _write_point(run, gen_batch="16", micro=1)

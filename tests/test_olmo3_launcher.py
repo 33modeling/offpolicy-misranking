@@ -875,6 +875,11 @@ def test_every_worker_clears_loop_markers_that_recorded_a_cuda_fault(tmp_path: P
         "family=mbpp/s4 worker=w host=h consecutive_failures=4 last_rc=1\n"
         "last_error=torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.98 GiB\nmarked_at_utc=2026-09-07T03:00:00Z\n"
     )
+    # a finished point re-entered under another generation batch (2026-09-08): fixed in run_matrix.sh
+    (queue / "math500-s2.loop").write_text(
+        "family=math500/s2 worker=w host=h consecutive_failures=4 last_rc=2\n"
+        "last_error=[config-abort] existing artifacts use a different run config: ['gen_batch']\nmarked_at_utc=2026-09-08T00:00:00Z\n"
+    )
     families = " ".join(f"{d}/s{s}" for s in range(5) for d in ("math500", "mbpp") if (d, s) != ("mbpp", 4))
     result = subprocess.run(
         ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
@@ -887,10 +892,12 @@ def test_every_worker_clears_loop_markers_that_recorded_a_cuda_fault(tmp_path: P
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "cleared loop marker math500-s1.loop: it recorded a CUDA runtime fault" in result.stdout
+    assert "cleared loop marker math500-s2.loop: it recorded a re-entry config-abort" in result.stdout
     assert not (queue / "math500-s1.loop").exists()
+    assert not (queue / "math500-s2.loop").exists()
     assert (queue / "mbpp-s4.loop").exists()
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
-    assert "math500-s1" in claims and "mbpp-s4" not in claims and len(claims) == 9
+    assert "math500-s1" in claims and "math500-s2" in claims and "mbpp-s4" not in claims and len(claims) == 9
 
 
 def test_repeated_cuda_faults_release_the_family_for_another_node(tmp_path: Path) -> None:

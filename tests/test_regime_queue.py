@@ -60,6 +60,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         shutil.copy2(REPO / "src/compact_artifacts.py", checkout / "src/compact_artifacts.py")
         shutil.copy2(REPO / "src/rollout_contract.py", checkout / "src/rollout_contract.py")
         shutil.copy2(REPO / "src/prompt_format.py", checkout / "src/prompt_format.py")
+        shutil.copy2(REPO / "src/repair_run_config.py", checkout / "src/repair_run_config.py")
         (work / "models/model/config.json").write_text("{}\n", encoding="utf-8")
         (work / "venv/bin/python").symlink_to(Path(sys.executable))
         (checkout / "scripts/setup_env.sh").write_text(
@@ -83,6 +84,10 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             'if [ "${TEST_ACTIVE_PAUSE_ONCE:-0}" = 1 ] && [ "$point" = "a 0 25" ] '
             '&& mkdir "$OM_WORK/active-pause-once" 2>/dev/null; then /bin/sleep 3; fi\n'
             'mkdir -p "$OUT_ROOT"\n'
+            # what the pinned pipeline would compare against OM_GEN_BATCH at entry
+            '[ ! -f "$OUT_ROOT/run_config.json" ] || python3 -c '
+            "'import json,sys;print(json.load(open(sys.argv[1])).get(\"gen_batch\"))' "
+            '"$OUT_ROOT/run_config.json" >> "$OM_WORK/entry-gen-batch"\n'
             'if [ "${TEST_PROMPT_MISMATCH_ONCE:-0}" = 1 ] && '
             '[ "$point" = "a 0 25" ] && mkdir "$OM_WORK/prompt-mismatch-once" 2>/dev/null; then '
             'printf "prompt mismatch\\n" > "$OUT_ROOT/prompts.json"; exit 42; fi\n'
@@ -292,6 +297,12 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             '{"schema":"offpolicy-score-validation-split/v1"}\n'
         )
         (damaged / "scores_oracle.json").write_text('{"0":{"score":0}}\n')
+        # The finished point was recorded under generation batch 8; this launch
+        # runs batch 32. Re-entry must say why the point is rejected and align
+        # the record first, or the pinned pipeline [config-abort]s forever.
+        damaged_config = json.loads((damaged / "run_config.json").read_text())
+        damaged_config["gen_batch"] = "8"
+        (damaged / "run_config.json").write_text(json.dumps(damaged_config))
         repaired = subprocess.run(
             ["/bin/bash", "scripts/run_matrix.sh"],
             cwd=checkout,
@@ -299,6 +310,8 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
                 **env,
                 "TEST_GPU_PROBE_FAIL": "1",
                 "TEST_TELEMETRY_PAUSE_ONCE": "1",
+                "OM_GEN_BATCH": "32",
+                "GRADIENT_MICRO_BATCH": "1",
             },
             text=True,
             capture_output=True,
@@ -308,6 +321,15 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         assert repaired.returncode == 0, repaired.stdout + repaired.stderr
         assert "telemetry probe failed" in repaired.stdout
         assert "[regime-hard-stall]" not in repaired.stdout
+        assert (
+            "[done-but-incomplete] a/s0/d25: score/oracle protocol validation failed"
+            in repaired.stdout
+        ), repaired.stdout
+        assert "[repair] fixture-s0-a-d25: gen_batch '8' -> '32'" in repaired.stdout
+        assert (work / "entry-gen-batch").read_text().splitlines() == ["32"]
+        assert "[done-but-incomplete] score/oracle protocol validation failed" in (
+            damaged / "logs/complete-check.log"
+        ).read_text()
         repaired_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
         repaired_claims = [row.split("|", 1)[1] for row in repaired_rows]
         assert repaired_claims[len(claims) :] == ["a 0 25"]

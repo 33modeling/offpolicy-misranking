@@ -254,9 +254,18 @@ run_dir() {
   printf '%s/%s-s%s-%s-d%s\n' "$ROOT" "$MODEL_TAG" "$2" "$1" "$3"
 }
 
+# Why the last run_complete call said "no" (2026-09-08). A point with a DONE
+# marker that fails this check is re-entered by run_point; without the reason
+# the worker log only showed "try 1/3" on a finished point (math500/s1/d25).
+COMPLETE_REASON=""
+complete_reason_last_line() {  # keep the final non-empty line of a captured stderr
+  printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n 1
+}
+
 run_complete() {
   local run=$1 dataset=$2 seed=$3 drift=$4 source=$5 artifact
   local previous_drift=0 expected_parent="" candidate
+  COMPLETE_REASON=""
   for candidate in "${DRIFTS[@]}"; do
     [ "$candidate" = "$drift" ] && break
     previous_drift=$candidate
@@ -267,14 +276,13 @@ run_complete() {
   for artifact in DONE run_config.json manifest.json score_protocol.json \
       oracle_protocol.json report.json scores_oracle.json scores_offpolicy.json \
       scores_splithalf.json divergence_stats.json oracle_micro_groups.pt val_groups.pt; do
-    [ -s "$run/$artifact" ] || return 1
+    [ -s "$run/$artifact" ] || { COMPLETE_REASON="missing or empty $artifact"; return 1; }
   done
-  MODEL_PATH="$MODEL_PATH" DATASET="$dataset" SEED="$seed" DRIFT="$drift" \
+  if ! COMPLETE_REASON=$(MODEL_PATH="$MODEL_PATH" DATASET="$dataset" SEED="$seed" DRIFT="$drift" \
     EXPECTED_N_TRAIN="$(n_train_for_dataset "$dataset")" \
     BEHAVIOR_SOURCE="$source" EXPECTED_GRPO_START="$previous_drift" \
     EXPECTED_GRPO_RESUME="$expected_parent" \
-    "$PY" - "$run/run_config.json" <<'PYEOF' \
-      >/dev/null 2>&1 || return 1
+    "$PY" - "$run/run_config.json" 2>&1 >/dev/null <<'PYEOF'
 import json
 import os
 import sys
@@ -338,8 +346,12 @@ errors = [key for key, value in expected.items() if config.get(key) != value]
 if errors:
     raise SystemExit("run config mismatch: " + ", ".join(errors))
 PYEOF
-  PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PY" - "$run" <<'PYEOF' >/dev/null 2>&1 || return 1
+  ); then
+    COMPLETE_REASON=$(complete_reason_last_line "$COMPLETE_REASON")
+    return 1
+  fi
+  if ! COMPLETE_REASON=$(PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PY" - "$run" 2>&1 >/dev/null <<'PYEOF'
 import json
 import math
 import sys
@@ -369,13 +381,18 @@ for row in halves.values():
     if not all(math.isfinite(float(v)) for v in row.values()):
         raise SystemExit("scores_splithalf.json contains non-finite scores")
 PYEOF
+  ); then
+    COMPLETE_REASON=$(complete_reason_last_line "$COMPLETE_REASON")
+    return 1
+  fi
   if [ "$drift" -gt 0 ]; then
     for artifact in policy_train.json adapter_config.json adapter_model.safetensors \
         optimizer.pt grpo_stats.jsonl; do
-      [ -s "$run/policy_step_$drift/$artifact" ] || return 1
+      [ -s "$run/policy_step_$drift/$artifact" ] \
+        || { COMPLETE_REASON="missing or empty policy_step_$drift/$artifact"; return 1; }
     done
     if [ -z "$CONTRACT" ]; then
-    MODEL_PATH="$MODEL_PATH" SEED="$seed" \
+    if ! COMPLETE_REASON=$(MODEL_PATH="$MODEL_PATH" SEED="$seed" \
       REGIME_MAX_NEW_TOKENS="$MAX_NEW_TOKENS_DEFAULT" \
       GRPO_GROUP_SIZE="$GRPO_GROUP_SIZE_DEFAULT" \
       GRPO_CLIP_EPSILON="$GRPO_CLIP_EPSILON_DEFAULT" \
@@ -389,7 +406,7 @@ PYEOF
       PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
       "$PY" - "$run/policy_step_$drift" "$drift" \
         "$GRPO_WORLD_SIZE_DEFAULT" "$RLVR_METHOD_DEFAULT" "$previous_drift" \
-        "$expected_parent" <<'PYEOF' >/dev/null || return 1
+        "$expected_parent" 2>&1 >/dev/null <<'PYEOF'
 import sys
 from pathlib import Path
 import os
@@ -417,10 +434,38 @@ validate_policy_lineage(
     expected_prompts=Path(sys.argv[1]).parent / "prompts.json",
 )
 PYEOF
+    ); then
+      COMPLETE_REASON=$(complete_reason_last_line "$COMPLETE_REASON")
+      return 1
+    fi
     fi
   fi
-  [ -z "$CONTRACT" ] || contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \
-    >/dev/null 2>&1
+  [ -n "$CONTRACT" ] || return 0
+  if ! COMPLETE_REASON=$(contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \
+      2>&1 >/dev/null); then
+    COMPLETE_REASON="contract check-run: $(complete_reason_last_line "$COMPLETE_REASON")"
+    return 1
+  fi
+  COMPLETE_REASON=""
+  return 0
+}
+
+# A finished point that run_complete rejects is re-entered through the pinned
+# run_point.sh, which refuses a run_config whose execution-only batch fields differ
+# from this launch ([config-abort] gen_batch). The family-level repair at claim
+# time skips DONE points on purpose, so repair this one point here, right before
+# re-entry (2026-09-08: math500/s1/d25 looped on exactly this).
+reenter_runtime_fields() {  # reenter_runtime_fields <run>
+  local run=$1 repair="$SUPERVISOR_REPO/src/repair_run_config.py"
+  local args=()
+  [ -s "$run/run_config.json" ] || return 0
+  [ -f "$repair" ] || return 0
+  [ -z "${OM_GEN_BATCH:-}" ] || args+=(--gen-batch "$OM_GEN_BATCH")
+  [ -z "${GRADIENT_MICRO_BATCH:-}" ] || args+=(--gradient-micro-batch "$GRADIENT_MICRO_BATCH_DEFAULT")
+  [ "${#args[@]}" -gt 0 ] || return 0
+  "$PY" "$repair" --run "$run" --include-done "${args[@]}" --apply 2>&1 \
+    || echo "[repair-failed] $run: run_config.json could not be aligned with OM_GEN_BATCH=${OM_GEN_BATCH:-} GRADIENT_MICRO_BATCH=${GRADIENT_MICRO_BATCH:-}"
+  return 0
 }
 
 family_complete() {
@@ -851,6 +896,13 @@ run_point() {
       --quarantine-root "$QUARANTINE" || return 1
   fi
   run_complete "$run" "$dataset" "$seed" "$drift" "$source" && return 0
+  if [ -s "$run/DONE" ]; then
+    echo "[done-but-incomplete] $dataset/s$seed/d$drift: ${COMPLETE_REASON:-unknown reason}; re-entering the point"
+    mkdir -p "$run/logs" \
+      && echo "[$(date '+%F %T')] [done-but-incomplete] ${COMPLETE_REASON:-unknown reason}" \
+        >> "$run/logs/complete-check.log"
+  fi
+  reenter_runtime_fields "$run"
 
   # A partial target may have been initialized on a node that resolved a
   # different local dataset copy. Quarantine it before any retry; never mix its
