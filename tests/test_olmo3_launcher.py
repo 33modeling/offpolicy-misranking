@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import shutil
 import signal
@@ -38,6 +39,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy2(ROOT / "src/cleanup_run_processes.py", checkout / "src")
     shutil.copy2(ROOT / "src/rlzero_status.py", checkout / "src")
     shutil.copy2(ROOT / "src/rlzero_heartbeat.py", checkout / "src")
+    shutil.copy2(ROOT / "src/repair_run_config.py", checkout / "src")
     shutil.copy2(ROOT / "configs/olmo3_rlzero.json", checkout / "configs")
     shutil.copy2(ROOT / "configs/olmo3_rlzero_h100.json", checkout / "configs")
     (checkout / "requirements.txt").write_text("fixture\n")
@@ -61,6 +63,7 @@ case "$script" in
   *regime_resume_commit.py) exec python3 "$script" "$@" ;;
   *cleanup_run_processes.py) exec python3 "$script" "$@" ;;
   *rlzero_status.py|*rlzero_heartbeat.py) exec python3 "$script" "$@" ;;
+  *repair_run_config.py) exec python3 "$script" "$@" ;;
   *model_matrix.py)
     case " $* " in
       *" field olmo3-7b-base path "*) printf '%s/models/Olmo-3-1025-7B\n' "$TEST_SHARED" ;;
@@ -180,7 +183,7 @@ if [ "${TEST_FAIL_FAMILY:-}" = "$key" ]; then
   fi
 fi
 git=$(git -C "$OM_PIPELINE_REPO" rev-parse HEAD)
-printf '%s|%s|%s\n' "$WORKER_ID" "$key" "$git" >> "$TEST_SHARED/work/claims"
+printf '%s|%s|%s|%s|%s\n' "$WORKER_ID" "$key" "$git" "${OM_GEN_BATCH:-}" "${GRADIENT_MICRO_BATCH:-}" >> "$TEST_SHARED/work/claims"
 if [ "${TEST_PAUSE_FAMILY:-}" = "$key" ]; then
   marker="$TEST_SHARED/work/pause-once-$key"
   if mkdir "$marker" 2>/dev/null; then
@@ -682,3 +685,155 @@ def test_supervisor_keepalive_covers_preflight_and_point_transitions() -> None:
     assert 'remote remove origin' in launcher
     assert "git worktree" not in launcher
     assert "git worktree" not in matrix
+
+
+def _run_config_digest(config: dict) -> str:
+    import hashlib
+    import json
+
+    body = {k: v for k, v in config.items() if k != "digest"}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def test_h100_passes_per_dataset_runtime_values_and_repairs_unfinished_points(tmp_path: Path) -> None:
+    """math500 rollouts run at batch 32, mbpp at 16 with gradient micro-batch 1;
+    a point recorded under the old values is rewritten before re-entry, a DONE
+    point is not."""
+    checkout, env = fixture_checkout(tmp_path)
+    root = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-h100-v2"
+    tag = "olmo3-1025-7b-base-rlzero-grpo-h100-v2"
+    family = root / "family-mbpp-s1"
+    old = {"dataset": "mbpp", "seed": 1, "gen_batch": "8", "gradient_micro_batch": 4, "grpo_logprob_micro_batch": 4}
+    done_run = family / f"{tag}-s1-mbpp-d0"
+    live_run = family / f"{tag}-s1-mbpp-d25"
+    for run, done in ((done_run, True), (live_run, False)):
+        run.mkdir(parents=True)
+        config = {**old, "drift": 0 if done else 25}
+        config["digest"] = _run_config_digest(config)
+        (run / "run_config.json").write_text(json.dumps(config, indent=1))
+        if done:
+            (run / "DONE").write_text("done\n")
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+        cwd=checkout,
+        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "h100-local")},
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
+    by_family = {line.split("|")[1]: line.split("|")[3:5] for line in claims}
+    assert by_family["math500-s0"] == ["32", "4"]
+    assert by_family["mbpp-s0"] == ["16", "1"]
+    assert "[family] mbpp/s1 runtime: generation batch=16 gradient micro-batch=1" in result.stdout
+    assert "[repair] " + live_run.name + ": gen_batch '8' -> '16'" in result.stdout
+    assert "[repair] " + live_run.name + ": gradient_micro_batch 4 -> 1" in result.stdout
+    assert done_run.name not in "".join(line for line in result.stdout.splitlines() if "[repair]" in line)
+    live = json.loads((live_run / "run_config.json").read_text())
+    assert live["gen_batch"] == "16" and live["gradient_micro_batch"] == 1
+    assert live["digest"] == _run_config_digest(live)
+    assert json.loads((done_run / "run_config.json").read_text())["gen_batch"] == "8"
+
+    status = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "status", "h100", "verbose"],
+        cwd=checkout,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    output = status.stdout + status.stderr
+    assert status.returncode == 0, output
+    assert "runtime_contract_errors=0" in output
+    assert (
+        "runtime_per_dataset math500:gen_batch=32,gradient_micro_batch=4 "
+        "mbpp:gen_batch=16,gradient_micro_batch=1"
+    ) in output
+
+
+def test_run_accepts_a_dataset_filter_as_third_argument(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100", "math500"],
+        cwd=checkout,
+        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "filter-local")},
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
+    families = {line.split("|")[1] for line in claims}
+    assert families == {f"math500-s{seed}" for seed in range(5)}
+    bad = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100", "gsm8k"],
+        cwd=checkout,
+        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "filter-local-2")},
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert bad.returncode == 2
+    assert "unknown dataset filter: gsm8k" in bad.stdout + bad.stderr
+
+
+def test_most_progressed_family_is_claimed_first(tmp_path: Path) -> None:
+    """A family with finished points is resumed before an untouched family is
+    started, whatever its seed."""
+    checkout, env = fixture_checkout(tmp_path)
+    root = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-h100-v2"
+    tag = "olmo3-1025-7b-base-rlzero-grpo-h100-v2"
+    family = root / "family-mbpp-s3"
+    for drift in (0, 25):
+        run = family / f"{tag}-s3-mbpp-d{drift}"
+        run.mkdir(parents=True)
+        config = {"dataset": "mbpp", "seed": 3, "drift": drift, "gen_batch": "16", "gradient_micro_batch": 1}
+        config["digest"] = _run_config_digest(config)
+        (run / "run_config.json").write_text(json.dumps(config))
+        (run / "DONE").write_text("done\n")
+    started = root / "family-math500-s2" / f"{tag}-s2-math500-d0"
+    started.mkdir(parents=True)
+    (started / "run_config.json").write_text(json.dumps({"dataset": "math500", "seed": 2, "gen_batch": "32", "gradient_micro_batch": 4}))
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+        cwd=checkout,
+        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "order-local")},
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    assert claims[0] == "mbpp-s3"          # two points done
+    assert claims[1] == "math500-s2"       # started, nothing done
+    assert claims[2] == "math500-s0"       # untouched families in registered order
+    assert len(claims) == 10
+
+
+def test_failed_family_is_retried_by_the_same_worker_before_moving_on(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "retry-same-local"),
+            "TEST_FAIL_FAMILY": "math500-s2",
+        },
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[family-retry] math500/s2: this worker retries it in 0s" in result.stdout
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    # the failed family is claimed again right away, before any later family is started
+    assert claims.index("math500-s2") < claims.index("mbpp-s2")
+    assert len(claims) == 10 and len(set(claims)) == 10

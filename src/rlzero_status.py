@@ -64,6 +64,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-micro-batch", type=int, required=True)
     parser.add_argument("--logprob-micro-batch", type=int, required=True)
     parser.add_argument("--min-recovery-generation-batch", type=int, required=True)
+    # Per-dataset runtime values the launcher applies (execution-only knobs); a
+    # point recorded with the dataset's value is not a mismatch.
+    parser.add_argument(
+        "--dataset-generation-batch", action="append", default=[], metavar="DATASET=N",
+        help="expected gen_batch for one dataset (repeatable); default --generation-batch",
+    )
+    parser.add_argument(
+        "--dataset-gradient-micro-batch", action="append", default=[], metavar="DATASET=N",
+        help="expected gradient_micro_batch for one dataset (repeatable); default --gradient-micro-batch",
+    )
     parser.add_argument("--log-lines", type=int, default=20)
     parser.add_argument("--error-lines", type=int, default=6)
     parser.add_argument(
@@ -72,6 +82,12 @@ def parse_args() -> argparse.Namespace:
         help="after the one-screen summary, print per-point detail, telemetry and log tails",
     )
     args = parser.parse_args()
+    args.generation_batch_by_dataset = parse_dataset_values(
+        parser, "--dataset-generation-batch", args.dataset_generation_batch, args.datasets
+    )
+    args.gradient_micro_batch_by_dataset = parse_dataset_values(
+        parser, "--dataset-gradient-micro-batch", args.dataset_gradient_micro_batch, args.datasets
+    )
     for name in (
         "probe_seconds",
         "stuck_seconds",
@@ -94,6 +110,34 @@ def parse_args() -> argparse.Namespace:
             "--min-recovery-generation-batch cannot exceed --generation-batch"
         )
     return args
+
+
+def parse_dataset_values(
+    parser: argparse.ArgumentParser, flag: str, items: list[str], datasets: list[str]
+) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for item in items:
+        name, separator, raw = item.partition("=")
+        if not separator or name not in datasets:
+            parser.error(f"{flag} expects <dataset>=<positive integer> with a known dataset, got {item!r}")
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value < 1:
+            parser.error(f"{flag} expects <dataset>=<positive integer>, got {item!r}")
+        values[name] = value
+    return values
+
+
+def expected_runtime(args: argparse.Namespace, dataset: str) -> dict[str, int]:
+    return {
+        "gen_batch": args.generation_batch_by_dataset.get(dataset, args.generation_batch),
+        "gradient_micro_batch": args.gradient_micro_batch_by_dataset.get(
+            dataset, args.gradient_micro_batch
+        ),
+        "grpo_logprob_micro_batch": args.logprob_micro_batch,
+    }
 
 
 def family_root(args: argparse.Namespace, family: Family) -> Path:
@@ -476,16 +520,34 @@ def last_json(path: Path) -> dict | None:
 
 
 def runtime_contract_issues(
-    args: argparse.Namespace, run: Path, recovery: dict | None
+    args: argparse.Namespace,
+    run: Path,
+    recovery: dict | None,
+    dataset: str | None = None,
+    done: bool = False,
 ) -> tuple[list[str], dict]:
+    """Runtime (execution-only) mismatches of one point.
+
+    A finished point reports none: its DONE already certifies the registered
+    contract, and a historical recovery record (e.g. a batch that once dropped
+    below today's floor) is a note, not a reason to stop the run. 2026-09-06:
+    one such record on a complete point made status print
+    "ERROR ... Do not restart" for a whole day.
+    """
     config_path = run / "run_config.json"
     config = read_owner(config_path) if config_path.is_file() else {}
     issues: list[str] = []
-    expected = {
-        "gen_batch": args.generation_batch,
-        "gradient_micro_batch": args.gradient_micro_batch,
-        "grpo_logprob_micro_batch": args.logprob_micro_batch,
-    }
+    if done:
+        return issues, config
+    expected = (
+        expected_runtime(args, dataset)
+        if dataset is not None
+        else {
+            "gen_batch": args.generation_batch,
+            "gradient_micro_batch": args.gradient_micro_batch,
+            "grpo_logprob_micro_batch": args.logprob_micro_batch,
+        }
+    )
     if config.get("invalid"):
         issues.append("invalid_run_config")
     elif config:
@@ -517,8 +579,11 @@ def point_status(
     if not run.is_dir():
         return f"  d{drift} stage=pending", []
     recovery = last_json(run / "rollout_recovery.jsonl")
-    issues, config = runtime_contract_issues(args, run, recovery)
     done = (run / "DONE").is_file() and (run / "DONE").stat().st_size
+    issues, config = runtime_contract_issues(
+        args, run, recovery, dataset=family.dataset, done=bool(done)
+    )
+    wanted = expected_runtime(args, family.dataset)
     log = latest_stage_log(run)
     stage = log_stage(log)
     if done:
@@ -537,10 +602,10 @@ def point_status(
         f"stage={stage}",
         f"behavior_rows={rollout_rows(run, 'rollouts_behavior_train')}",
         f"fresh_rows={rollout_rows(run, 'rollouts_fresh_train')}",
-        f"generation_batch={config.get('gen_batch', 'missing')}/{args.generation_batch}",
+        f"generation_batch={config.get('gen_batch', 'missing')}/{wanted['gen_batch']}",
         (
             "gradient_batch="
-            f"{config.get('gradient_micro_batch', 'missing')}/{args.gradient_micro_batch}"
+            f"{config.get('gradient_micro_batch', 'missing')}/{wanted['gradient_micro_batch']}"
         ),
         (
             "logprob_batch="
@@ -1100,11 +1165,27 @@ def main() -> None:
                 mtime = cfg.stat().st_mtime
                 started = mtime if started is None else min(started, mtime)
     eta = ""
-    if started is not None and points_done >= 2:
+    # Rate from the last two days of DONE stamps, so a restart after days of
+    # dead workers does not drag the estimate (it once printed "~37 days left"
+    # from a 4-day-old start). Falls back to the whole-run average.
+    window_days = 2.0
+    recent_done = 0
+    for family in families:
+        for drift in args.drifts:
+            stamp = run_dir(args, family, drift) / "DONE"
+            try:
+                if stamp.stat().st_size and time.time() - stamp.stat().st_mtime <= window_days * 86400:
+                    recent_done += 1
+            except OSError:
+                continue
+    remaining = total_points - points_done
+    if remaining > 0 and recent_done >= 2:
+        rate = recent_done / window_days
+        eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day over the last {window_days:.0f} days, {len(workers)} workers)"
+    elif started is not None and points_done >= 2 and remaining > 0:
         days = max((time.time() - started) / 86400.0, 1e-6)
         rate = points_done / days
-        remaining = total_points - points_done
-        eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day, 3 nodes assumed busy)"
+        eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day since the first point, {len(workers)} workers)"
     action_text = {
         "none": "nothing to do",
         "inspect_STUCK_DEAD_families_and_missing_workers": "look at the X rows: Ctrl-C the worker on that node, git pull, run h100 again (partials resume)",
@@ -1153,7 +1234,8 @@ def main() -> None:
             if rec.get("state") in {"launcher-missing", "crashed"} or (rec.get("state") == "running" and beat is not None and beat > args.heartbeat_stale_seconds):
                 dead_workers.append(f"{rec.get('worker', entry.stem)} on {rec.get('host', '?')} (last seen {fmt_age(beat) if beat is not None else '?'} ago)")
     if contract_errors:
-        decision = "ERROR: config/contract mismatch. Do not restart; fix the ! contract lines first."
+        decision = ("ERROR: an unfinished point runs with other runtime values than this launcher expects "
+                    "(see the ! contract lines). Workers keep running; the next relaunch repairs unfinished points.")
     elif dead_workers and len(workers) < args.expected_workers:
         decision = (f"WORKER DEAD: {'; '.join(dead_workers)}. Progress continues on {len(workers)} worker(s). "
                     "Start a worker on that host again: bash scripts/run_olmo3_rlzero.sh run h100")
@@ -1293,6 +1375,15 @@ def main() -> None:
         f"logprob_micro_batch={args.logprob_micro_batch} "
         f"min_recovery_generation_batch={args.min_recovery_generation_batch}"
     )
+    if args.generation_batch_by_dataset or args.gradient_micro_batch_by_dataset:
+        print(
+            "runtime_per_dataset "
+            + " ".join(
+                f"{dataset}:gen_batch={expected_runtime(args, dataset)['gen_batch']}"
+                f",gradient_micro_batch={expected_runtime(args, dataset)['gradient_micro_batch']}"
+                for dataset in args.datasets
+            )
+        )
     print("generation_git=" + generation_git)
     print("== worker diagnostics ==")
     for w in worker_rows:

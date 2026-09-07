@@ -163,10 +163,42 @@ log, once per hour:
 The same line is appended to `$ROOT/logs/ALERTS.log`, and `status` shows the
 last alerts and names dead workers in its DECISION line.
 
+## Runtime batch sizes per dataset (H100 profile, 2026-09-07)
+
+Measured on the running matrix: every response runs to the 2048-token cap and a
+batch-8 decode step is overhead-bound (about 280 tok/s per GPU, 233 s per
+prompt for 32 samples), and mbpp validation gradients die at gradient
+micro-batch 4 (`torch.OutOfMemoryError` in the fp32 attention softmax, 9 GiB per
+layer at 4.3k tokens). The h100 launcher therefore applies, per family:
+
+| dataset | generation batch (`OM_GEN_BATCH`) | gradient micro-batch |
+|---|---|---|
+| math500 | 32 | 4 |
+| mbpp | 16 | 1 |
+
+Both are execution-only knobs: neither is in `regime_contract.RUN_CONFIG_FIELDS`,
+the rollout partial manifest does not record the batch, and OOM recovery
+already lowers the batch mid-stage. They are recorded per point in
+`run_config.json`; because the pinned `run_point.sh` refuses to re-enter a point
+whose record differs from its environment, the launcher rewrites the two fields
+(and the digest) of every unfinished point of a family before claiming it and
+logs each change as `[repair] <point>: <field> <old> -> <new>`
+(`src/repair_run_config.py`; finished points are never touched). `status`
+expects the same per-dataset values and prints them as `runtime_per_dataset`.
+Override or disable with `OM_RLZERO_GEN_BATCH_BY_DATASET="math500=32 mbpp=16"`
+and `OM_RLZERO_GRADIENT_MICRO_BATCH_BY_DATASET="mbpp=1"` (an empty string
+disables). The baseline profile applies no overrides.
+
 ## Static split per node (optional)
 
-By default every node pulls from the shared family queue. To pin a node to a
-fixed list instead (one node = one list, no cross-node claiming), set:
+By default every node pulls from the shared family queue. To pin a node to one
+dataset, add it as the third argument (this is the form to type on a phone):
+
+```bash
+bash scripts/run_olmo3_rlzero.sh run h100 math500
+```
+
+To pin a node to an arbitrary fixed list instead, set:
 
 ```bash
 OM_RLZERO_ONLY_FAMILIES="math500/s0 mbpp/s0 math500/s1 mbpp/s1" bash scripts/run_olmo3_rlzero.sh run h100
@@ -186,11 +218,21 @@ worker stops after publishing JSONL but before its manifest rename, the next run
 validates the exact rows and finishes that publication automatically. Interrupted
 GRPO loads the newest adapter/optimizer/statistics checkpoint, including a
 complete target-step checkpoint when only final publication remained. A family
-failure no longer exits the launcher: it releases that
-family lock, preserves the partial artifacts, processes other available
-families, and retries failed families after 60 seconds while the GPU keepalive
-remains active. `OM_RLZERO_FAMILY_ATTEMPTS` controls immediate attempts and
-`OM_RLZERO_FAMILY_RETRY_SECONDS` controls the outer retry delay.
+failure no longer exits the launcher: it releases that family lock, preserves
+the partial artifacts, and (since 2026-09-07) the same worker retries that
+family after `OM_RLZERO_FAMILY_RETRY_SECONDS` (60 s) until it succeeds or the
+failure-loop guard marks it LOOPING. It no longer moves on to a fresh family
+and leaves the failed one for "the next free worker": on 2026-09-06 that left
+math500/s1 (three points done, last generation stage) unowned for nine hours
+while every worker was busy for a day. Workers also claim the most-progressed
+family first (DONE points, then started families, then registered order), so
+resuming beats starting. `OM_RLZERO_FAMILY_ATTEMPTS` controls immediate
+attempts inside one claim.
+
+The supervisor GPU keepalive pauses its bursts on a GPU whose utilization is
+already above `OM_GPU_KEEPALIVE_BUSY_PERCENT` (40) as sampled by nvidia-smi
+every `OM_GPU_KEEPALIVE_SAMPLE_SECONDS` (5); a GPU running a rollout is not
+idle. Without a working sampler the fixed 15% duty applies as before.
 
 Only a user signal or loss of the worker itself requires rerunning the command:
 

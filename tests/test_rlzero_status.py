@@ -453,3 +453,68 @@ def test_status_default_is_one_screen_table(tmp_path: Path) -> None:
     assert "overall_verdict=NOT_STARTED" in output
     assert "== worker diagnostics ==" not in output
     assert len(lines) < 20
+
+
+def _status_with(root: Path, extra: list[str]) -> str:
+    result = subprocess.run(
+        status_command(root) + extra,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
+
+
+def test_finished_point_history_is_not_a_contract_error(tmp_path: Path) -> None:
+    """2026-09-06: one complete point whose old recovery once ran at batch 1
+    made status print ERROR/INVALID ("do not restart") for a whole day."""
+    root = tmp_path / "runs" / TAG
+    run = root / "family-math500-s0" / f"{TAG}-s0-math500-d0"
+    run.mkdir(parents=True)
+    (root / "logs").mkdir(parents=True)
+    (run / "run_config.json").write_text(
+        json.dumps({"gen_batch": "8", "gradient_micro_batch": 4, "grpo_logprob_micro_batch": 4}),
+        encoding="utf-8",
+    )
+    (run / "rollout_recovery.jsonl").write_text(
+        json.dumps({"recovery_generation_batch": 1, "status": "completed"}) + "\n",
+        encoding="utf-8",
+    )
+    (run / "DONE").write_text("done\n", encoding="utf-8")
+    output = run_status(root)
+    assert "recovery_batch_below_floor" not in output
+    assert "runtime_contract_errors=0" in output
+    assert "overall_verdict=INVALID" not in output
+    assert "config/contract mismatch" not in output
+
+
+def test_per_dataset_runtime_expectations(tmp_path: Path) -> None:
+    root = tmp_path / "runs" / TAG
+    run, _, lock = active_family(root)
+    (run / "run_config.json").write_text(
+        json.dumps({"gen_batch": "32", "gradient_micro_batch": 1, "grpo_logprob_micro_batch": 4}),
+        encoding="utf-8",
+    )
+    try:
+        plain = run_status(root)
+        scoped = _status_with(
+            root,
+            ["--dataset-generation-batch", "math500=32", "--dataset-gradient-micro-batch", "math500=1"],
+        )
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+    assert "gen_batch:32!=8" in plain and "gradient_micro_batch:1!=4" in plain
+    assert "runtime_contract_errors=0" in scoped
+    assert "generation_batch=32/32" in scoped and "gradient_batch=1/1" in scoped
+    assert "runtime_per_dataset math500:gen_batch=32,gradient_micro_batch=1" in scoped
+    bad = subprocess.run(
+        status_command(root) + ["--dataset-generation-batch", "gsm8k=32"],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert bad.returncode != 0

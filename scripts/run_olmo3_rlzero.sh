@@ -10,7 +10,7 @@ PROFILE=${2:-baseline}
 RECOVERY_MIN_GENERATION_BATCH=2
 case "$MODE" in
   prepare|check|run|status) ;;
-  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100] [verbose]"; exit 2 ;;
+  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100] [verbose|<dataset>]"; exit 2 ;;
 esac
 case "$PROFILE" in
   baseline)
@@ -178,6 +178,47 @@ runtime_field() {
   "$PY" "$MATRIX_TOOL_REPO/src/model_matrix.py" --config "$CONFIG" runtime-field "$1"
 }
 
+# ---- per-dataset runtime overrides (execution-only knobs, not contract fields) --
+# Measured on the H100 matrix (2026-09-06): every response runs to the 2048-token
+# cap and a batch-8 decode step is overhead-bound (~280 tok/s per GPU), so the
+# generation batch is raised to 32 for math500 (short prompts) and 16 for mbpp
+# (prompts up to ~2.3k tokens; the fp32 prefill softmax of batch 32 would not
+# fit). mbpp validation gradients OOM at micro-batch 4 (fp32 attention softmax,
+# 9 GiB per layer at 4.3k tokens); 1 fits with room to spare. Neither field is in
+# regime_contract.RUN_CONFIG_FIELDS and the rollout partial manifest does not
+# record the batch, so partial rollouts survive the change. A point created with
+# other values is repaired before re-entry (src/repair_run_config.py), because the
+# pinned run_point.sh refuses a run_config that differs from its environment.
+# Set a list to "" to disable, e.g. OM_RLZERO_GEN_BATCH_BY_DATASET="". The
+# defaults are sized for the 80 GB H100 profile only.
+case "$PROFILE" in
+  h100) DEFAULT_GEN_BATCH_BY_DATASET="math500=32 mbpp=16"; DEFAULT_GRADIENT_MICRO_BATCH_BY_DATASET="mbpp=1" ;;
+  *) DEFAULT_GEN_BATCH_BY_DATASET=""; DEFAULT_GRADIENT_MICRO_BATCH_BY_DATASET="" ;;
+esac
+GEN_BATCH_BY_DATASET="${OM_RLZERO_GEN_BATCH_BY_DATASET-$DEFAULT_GEN_BATCH_BY_DATASET}"
+GRADIENT_MICRO_BATCH_BY_DATASET="${OM_RLZERO_GRADIENT_MICRO_BATCH_BY_DATASET-$DEFAULT_GRADIENT_MICRO_BATCH_BY_DATASET}"
+dataset_override() {  # dataset_override "<name=value ...>" <dataset> -> value (rc 1 if absent)
+  local item
+  for item in $1; do
+    case "$item" in "$2="*) printf '%s\n' "${item#*=}"; return 0 ;; esac
+  done
+  return 1
+}
+gen_batch_for() {  # gen_batch_for <dataset>
+  dataset_override "$GEN_BATCH_BY_DATASET" "$1" || runtime_field generation_batch
+}
+gradient_micro_batch_for() {  # gradient_micro_batch_for <dataset>
+  dataset_override "$GRADIENT_MICRO_BATCH_BY_DATASET" "$1" || runtime_field gradient_micro_batch
+}
+validate_dataset_overrides() {  # validate_dataset_overrides <env name> "<list>"
+  local item name value
+  for item in $2; do
+    name=${item%%=*}; value=${item#*=}
+    case " ${DATASETS[*]} " in *" $name "*) ;; *) echo "[abort] $1: unknown dataset in '$item' (expected one of: ${DATASETS[*]})"; exit 2 ;; esac
+    case "$value" in ''|*[!0-9]*|0) echo "[abort] $1: '$item' must be <dataset>=<positive integer>"; exit 2 ;; esac
+  done
+}
+
 if [ "$MODE" = prepare ]; then
   export HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 HF_DATASETS_OFFLINE=0
   export HF_HUB_ETAG_TIMEOUT=15 HF_HUB_DOWNLOAD_TIMEOUT=60
@@ -218,6 +259,17 @@ SEEDS=($(experiment_field seeds))
 # families are neither claimed nor waited for; the final collection still
 # requires all of them. Use it when you want one node = one fixed list.
 ONLY_FAMILIES="${OM_RLZERO_ONLY_FAMILIES:-}"
+# `run h100 <dataset>` is the phone-typable form of the same split: this node
+# handles only that dataset's families.
+if [ "$MODE" = run ] && [ -n "${3:-}" ]; then
+  case " ${DATASETS[*]} " in
+    *" $3 "*) ;;
+    *) echo "[abort] unknown dataset filter: $3 (expected one of: ${DATASETS[*]})"; exit 2 ;;
+  esac
+  ONLY_FAMILIES=$(for seed in "${SEEDS[@]}"; do printf '%s/s%s ' "$3" "$seed"; done)
+fi
+validate_dataset_overrides OM_RLZERO_GEN_BATCH_BY_DATASET "$GEN_BATCH_BY_DATASET"
+validate_dataset_overrides OM_RLZERO_GRADIENT_MICRO_BATCH_BY_DATASET "$GRADIENT_MICRO_BATCH_BY_DATASET"
 family_selected() {  # family_selected <dataset> <seed>
   [ -z "$ONLY_FAMILIES" ] && return 0
   case " $ONLY_FAMILIES " in *" $1/s$2 "*) return 0 ;; esac
@@ -272,6 +324,13 @@ if [ "$MODE" = status ]; then
   if [ "${3:-}" = verbose ] || [ "${OM_RLZERO_STATUS_VERBOSE:-0}" = 1 ]; then
     STATUS_VERBOSE_FLAG=(--verbose)
   fi
+  # status must expect the same per-dataset runtime values the launcher applies;
+  # otherwise every repaired point reads as a contract mismatch.
+  STATUS_DATASET_FLAGS=()
+  for dataset in "${DATASETS[@]}"; do
+    STATUS_DATASET_FLAGS+=(--dataset-generation-batch "$dataset=$(gen_batch_for "$dataset")")
+    STATUS_DATASET_FLAGS+=(--dataset-gradient-micro-batch "$dataset=$(gradient_micro_batch_for "$dataset")")
+  done
   for value_name in STATUS_LOG_LINES STATUS_ERROR_LINES STATUS_STUCK_SECONDS \
       STATUS_WORKER_STALE_SECONDS STATUS_HEARTBEAT_STALE_SECONDS \
       STATUS_EXPECTED_WORKERS; do
@@ -302,6 +361,7 @@ if [ "$MODE" = status ]; then
     --gradient-micro-batch "$(runtime_field gradient_micro_batch)" \
     --logprob-micro-batch "$(runtime_field logprob_micro_batch)" \
     --min-recovery-generation-batch "$RECOVERY_MIN_GENERATION_BATCH" \
+    "${STATUS_DATASET_FLAGS[@]}" \
     --log-lines "$STATUS_LOG_LINES" --error-lines "$STATUS_ERROR_LINES" \
     "${STATUS_VERBOSE_FLAG[@]}" | tee -a "$STATUS_HISTORY"
   rc=${PIPESTATUS[0]}
@@ -866,12 +926,26 @@ tmp.write_text(json.dumps({
 tmp.replace(path)
 PYEOF
   [ "$?" -eq 0 ] || { cleanup_owner; return 1; }
+  local family_gen_batch family_micro_batch
+  family_gen_batch=$(gen_batch_for "$dataset") || { cleanup_owner; return 1; }
+  family_micro_batch=$(gradient_micro_batch_for "$dataset") || { cleanup_owner; return 1; }
+  echo "[family] $dataset/s$seed runtime: generation batch=$family_gen_batch gradient micro-batch=$family_micro_batch" | tee -a "$LOG"
+  # Points created under other runtime values are updated before re-entry: only
+  # unfinished points, only these two fields, every change logged
+  # (src/repair_run_config.py).
+  if [ -d "$root" ] && compgen -G "$root/*/run_config.json" >/dev/null 2>&1; then
+    "$PY" "$SUPERVISOR_RUNTIME_REPO/src/repair_run_config.py" --family-root "$root" \
+      --gen-batch "$family_gen_batch" --gradient-micro-batch "$family_micro_batch" --apply \
+      2>&1 | tee -a "$LOG"
+    [ "${PIPESTATUS[0]}" -eq 0 ] || { cleanup_owner; return 1; }
+  fi
   for ((attempt = 1; attempt <= FAMILY_ATTEMPTS; attempt++)); do
     echo "[family] claim=$dataset/s$seed attempt=$attempt/$FAMILY_ATTEMPTS" | tee -a "$LOG"
     # Older pinned generation commits start their own point-local keepalive.
     # Pause the supervisor during those points to avoid duplicate GPU load.
     [ "$PINNED_POINT_EXTERNAL_KEEPALIVE" -eq 1 ] || stop_supervisor_keepalive
-    OM_REPO="$SUPERVISOR_RUNTIME_REPO" OM_PIPELINE_REPO="$GENERATION_REPO" \
+    OM_GEN_BATCH="$family_gen_batch" GRADIENT_MICRO_BATCH="$family_micro_batch" \
+      OM_REPO="$SUPERVISOR_RUNTIME_REPO" OM_PIPELINE_REPO="$GENERATION_REPO" \
       OM_PIPELINE_SCRIPT="$GENERATION_REPO/scripts/run_point.sh" \
       OM_GENERATION_GIT="$GENERATION_GIT" \
       PYTHONPATH="$SUPERVISOR_RUNTIME_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
@@ -906,28 +980,59 @@ PYEOF
   cleanup_owner
 }
 
+# ---- claim order and retry policy -------------------------------------------
+# 2026-09-07: math500/s1 (three of four points done, last generation stage) sat
+# unowned for nine hours: its worker failed once, moved on to a fresh family and
+# stayed busy on it for a day, and every other worker was busy too. Two rules:
+# (1) most-progressed family first, so resuming beats starting; (2) a family that
+# fails is retried by the same worker after FAMILY_RETRY_SECONDS until it
+# succeeds or trips the failure-loop guard, instead of being left for "the next
+# free worker".
+family_points_done() {  # family_points_done <dataset> <seed> -> number of DONE points
+  local drift n=0
+  for drift in "${DRIFTS[@]}"; do
+    [ -s "$(run_dir "$1" "$2" "$drift")/DONE" ] && n=$((n + 1))
+  done
+  printf '%s\n' "$n"
+}
+family_started() {  # family_started <dataset> <seed>: some point directory exists
+  local root
+  root=$(family_root "$1" "$2")
+  [ -d "$root" ] && compgen -G "$root/*/run_config.json" >/dev/null 2>&1
+}
+ordered_families() {  # "<dataset> <seed>" lines: most progress first, ties in registered order
+  local seed dataset started
+  for seed in "${SEEDS[@]}"; do
+    for dataset in "${DATASETS[@]}"; do
+      started=0
+      family_started "$dataset" "$seed" && started=1
+      printf '%s %s %s %s\n' "$(family_points_done "$dataset" "$seed")" "$started" "$dataset" "$seed"
+    done
+  done | sort -s -k1,1nr -k2,2nr | awk '{print $3, $4}'
+}
+
 while :; do
   remaining=0
   claimed=0
-  retrying=0
-  for seed in "${SEEDS[@]}"; do
-    for dataset in "${DATASETS[@]}"; do
-      family_selected "$dataset" "$seed" || continue
-      family_complete "$dataset" "$seed" && continue
-      if family_looping "$dataset" "$seed"; then
-        remaining=$((remaining + 1))
-        continue
-      fi
+  while read -r dataset seed; do
+    [ -n "$dataset" ] && [ -n "$seed" ] || continue
+    family_selected "$dataset" "$seed" || continue
+    family_complete "$dataset" "$seed" && continue
+    if family_looping "$dataset" "$seed"; then
       remaining=$((remaining + 1))
+      continue
+    fi
+    remaining=$((remaining + 1))
+    while :; do
       (
         flock -n 9 || exit 75
         family_complete "$dataset" "$seed" && exit 0
         run_family "$dataset" "$seed"
-      ) 9>"$QUEUE/$dataset-s$seed.lock"
+      ) 9>"$QUEUE/$dataset-s$seed.lock" </dev/null   # stdin is the family list; children must not read it
       rc=$?
       if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
         note_family_failure "$dataset" "$seed" "$rc"
-        echo "[family-retry] $dataset/s$seed rc=$rc (consecutive failures: ${FAMILY_FAILURES[$dataset-s$seed]:-1}/$MAX_FAMILY_FAILURES); allocation retained, artifacts preserved, automatic retry scheduled" \
+        echo "[family-retry] $dataset/s$seed rc=$rc (consecutive failures: ${FAMILY_FAILURES[$dataset-s$seed]:-1}/$MAX_FAMILY_FAILURES); allocation retained, artifacts preserved" \
           | tee -a "$LOG"
         stop_supervisor_keepalive
         cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
@@ -936,24 +1041,24 @@ while :; do
         cleanup_node_gpu_processes || exit 1
       fi
       start_supervisor_keepalive || exit 1
-      [ "$rc" -eq 75 ] && continue
+      [ "$rc" -eq 75 ] && break   # held by another worker
       claimed=$((claimed + 1))
       if [ "$rc" -ne 0 ]; then
         cleanup_owner
-        retrying=$((retrying + 1))
+        family_looping "$dataset" "$seed" && break   # guard tripped: every worker skips it now
+        echo "[family-retry] $dataset/s$seed: this worker retries it in ${FAMILY_RETRY_SECONDS}s (not left for another worker)" \
+          | tee -a "$LOG"
+        sleep "$FAMILY_RETRY_SECONDS"
         continue
       fi
       FAMILY_FAILURES[$dataset-s$seed]=0
       sleep "$CLAIM_YIELD_SECONDS"
+      break
     done
-  done
+  done < <(ordered_families)
   [ "$remaining" -eq 0 ] && break
-  if [ "$retrying" -gt 0 ]; then
-    echo "[queue] $retrying failed families remain; retrying after ${FAMILY_RETRY_SECONDS}s while GPU keepalive stays active" \
-      | tee -a "$LOG"
-    sleep "$FAMILY_RETRY_SECONDS"
-  elif [ "$claimed" -eq 0 ]; then
-    echo "[queue] waiting for $remaining families owned by other clusters" | tee -a "$LOG"
+  if [ "$claimed" -eq 0 ]; then
+    echo "[queue] waiting for $remaining families owned by other workers or marked LOOPING" | tee -a "$LOG"
     sleep "$QUEUE_WAIT_SECONDS"
   fi
 done
