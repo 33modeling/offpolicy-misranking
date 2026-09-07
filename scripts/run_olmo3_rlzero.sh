@@ -908,12 +908,22 @@ from recovery_policy import classify_cuda_failure
 print(classify_cuda_failure(sys.argv[1]) or "other")
 PYEOF
 }
-if [ "${OM_RLZERO_CLEAR_LOOPS:-0}" = 1 ]; then
-  for marker in "$QUEUE"/*.loop; do
-    [ -e "$marker" ] || continue
-    rm -f -- "$marker" && echo "[queue] cleared loop marker $(basename "$marker")"
-  done
-fi
+# Every worker clears, at startup, loop markers that recorded a CUDA runtime
+# fault: those were written by the old rule that counted such faults, and the
+# operator must not have to pick one node to relaunch differently.
+# OM_RLZERO_CLEAR_LOOPS=1 clears every marker.
+for marker in "$QUEUE"/*.loop; do
+  [ -e "$marker" ] || continue
+  if [ "${OM_RLZERO_CLEAR_LOOPS:-0}" = 1 ]; then
+    rm -f -- "$marker" && echo "[queue] cleared loop marker $(basename "$marker") (OM_RLZERO_CLEAR_LOOPS=1)"
+    continue
+  fi
+  marker_error=$(sed -n 's/^last_error=//p' "$marker" 2>/dev/null | head -1)
+  if [ "$(failure_kind "$marker_error" 2>/dev/null || printf other)" = runtime ]; then
+    rm -f -- "$marker" \
+      && echo "[queue] cleared loop marker $(basename "$marker"): it recorded a CUDA runtime fault, which is retried, not a repeating failure" | tee -a "$LOG"
+  fi
+done
 family_looping() {  # family_looping <dataset> <seed>
   [ -s "$(loop_marker "$1" "$2")" ]
 }

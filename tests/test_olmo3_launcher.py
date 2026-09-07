@@ -860,6 +860,39 @@ def test_cuda_runtime_faults_are_retried_without_tripping_the_loop_guard(tmp_pat
     assert len(claims) == 10 and len(set(claims)) == 10
 
 
+def test_every_worker_clears_loop_markers_that_recorded_a_cuda_fault(tmp_path: Path) -> None:
+    """No node has to be relaunched differently: a marker written for a CUDA
+    runtime fault is cleared by whichever worker starts next; a marker for a
+    real repeating failure (OOM) stays."""
+    checkout, env = fixture_checkout(tmp_path)
+    queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
+    queue.mkdir(parents=True)
+    (queue / "math500-s1.loop").write_text(
+        "family=math500/s1 worker=w host=h consecutive_failures=4 last_rc=1\n"
+        "last_error=RuntimeError: CUDA error: unspecified launch failure\nmarked_at_utc=2026-09-07T03:00:00Z\n"
+    )
+    (queue / "mbpp-s4.loop").write_text(
+        "family=mbpp/s4 worker=w host=h consecutive_failures=4 last_rc=1\n"
+        "last_error=torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.98 GiB\nmarked_at_utc=2026-09-07T03:00:00Z\n"
+    )
+    families = " ".join(f"{d}/s{s}" for s in range(5) for d in ("math500", "mbpp") if (d, s) != ("mbpp", 4))
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "clear-local"), "OM_RLZERO_ONLY_FAMILIES": families},
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "cleared loop marker math500-s1.loop: it recorded a CUDA runtime fault" in result.stdout
+    assert not (queue / "math500-s1.loop").exists()
+    assert (queue / "mbpp-s4.loop").exists()
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    assert "math500-s1" in claims and "mbpp-s4" not in claims and len(claims) == 9
+
+
 def test_repeated_cuda_faults_release_the_family_for_another_node(tmp_path: Path) -> None:
     checkout, env = fixture_checkout(tmp_path)
     result = subprocess.run(
