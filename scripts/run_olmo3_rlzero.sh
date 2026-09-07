@@ -561,8 +561,11 @@ if [ "$MODE" = run ]; then
       SUPERVISOR_KEEPALIVE=""
     fi
     rm -f -- "$KEEPALIVE_READY"
+    # OM_GPU_KEEPALIVE_DUTY (percent, default 15, max 50) is the share of
+    # wall time the keepalive keeps an otherwise idle GPU busy; raise it if
+    # the cluster judges a job by its utilization.
     OM_GPU_KEEPALIVE_READY_FILE="$KEEPALIVE_READY" CUDA_VISIBLE_DEVICES=0,1,2,3 \
-      "$PY" "$SUPERVISOR_RUNTIME_REPO/scripts/gpu_keepalive.py" \
+      "$PY" "$SUPERVISOR_RUNTIME_REPO/scripts/gpu_keepalive.py" "${OM_GPU_KEEPALIVE_DUTY:-15}" \
       >> "$ROOT/logs/$WORKER_ID-keepalive.log" 2>&1 8>&- 9>&- &
     SUPERVISOR_KEEPALIVE=$!
     for _ in $(seq 1 600); do
