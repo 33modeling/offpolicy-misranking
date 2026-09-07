@@ -135,12 +135,11 @@ def main() -> None:
         print("keepalive: GPU 없음 — 종료")
         return
     print(f"keepalive: GPU {n}개 상시 가동, duty {duty:.0%}", flush=True)
-    # Utilization gating is opt-in (OM_GPU_KEEPALIVE_GATE=1). The cluster kills
-    # jobs for reasons the launcher cannot see (2026-09-07: three nodes in one
-    # afternoon); until the reaper's rule is known the keepalive keeps its
-    # original constant duty, which is what the idle-GPU reaper was tuned against.
+    # Utilization gating is on by default (OM_GPU_KEEPALIVE_GATE=0 restores the
+    # constant duty). The operator confirmed on 2026-09-07 that the cluster's
+    # job kills are unrelated to GPU utilization, so a busy GPU gets no bursts.
     monitor = None
-    if os.environ.get("OM_GPU_KEEPALIVE_GATE", "0") == "1":
+    if os.environ.get("OM_GPU_KEEPALIVE_GATE", "1") == "1":
         monitor = BusyMonitor(_visible_gpu_ids()[:n])
         if len(monitor.gpu_ids) == n:
             monitor.start()
