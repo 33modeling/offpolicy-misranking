@@ -888,7 +888,7 @@ recover_cuda_rollout() {
 
 run_point() {
   local dataset=$1 seed=$2 drift=$3 source=$4 resume_step=$5 resume_run=$6
-  local run try n_train attempt_log rc prompt_root prompt_env
+  local run try n_train attempt_log rc prompt_root prompt_env failure_line
   run=$(run_dir "$dataset" "$seed" "$drift")
   n_train=$(n_train_for_dataset "$dataset") || return 43
   if [ -n "$CONTRACT" ]; then
@@ -900,7 +900,7 @@ run_point() {
     echo "[done-but-incomplete] $dataset/s$seed/d$drift: ${COMPLETE_REASON:-unknown reason}; re-entering the point"
     mkdir -p "$run/logs" \
       && echo "[$(date '+%F %T')] [done-but-incomplete] ${COMPLETE_REASON:-unknown reason}" \
-        >> "$run/logs/complete-check.log"
+        >> "$run/logs/supervisor.log"
   fi
   reenter_runtime_fields "$run"
 
@@ -992,6 +992,15 @@ run_point() {
       run_complete "$run" "$dataset" "$seed" "$drift" "$source" && return 0
     else
       rc=$?
+      # One line that says why this attempt failed, in the worker log and in the
+      # point's own log, so status can show it (2026-09-08: five workers cycled
+      # grads -> score for seven hours with nothing visible but "try N/3").
+      failure_line=$(grep -E 'config-abort|\[abort\]|Error|Traceback' "$attempt_log" 2>/dev/null \
+        | tail -n 1 | cut -c1-200)
+      echo "[point-failed] $dataset/s$seed/d$drift try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}"
+      mkdir -p "$run/logs" \
+        && echo "[$(date '+%F %T')] [point-failed] try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}" \
+          >> "$run/logs/supervisor.log"
       if [ "$rc" -ne 42 ] && [ "$rc" -ne 43 ] && grep -Eq \
           'prompts.json differs from the requested dataset/split|prompts.json: content hash differs' \
           "$attempt_log" 2>/dev/null; then
@@ -1036,6 +1045,22 @@ run_family() {
   }
   export OM_PROMPT_FORMAT
   source=$(run_dir "$dataset" "$seed" 0)
+  # One line per claim that says what this worker thinks of every point, with
+  # the rejection reason for a point that has DONE but does not pass (2026-09-08).
+  local plan="" d point
+  for d in "${DRIFTS[@]}"; do
+    point=$(run_dir "$dataset" "$seed" "$d")
+    if run_complete "$point" "$dataset" "$seed" "$d" "$( [ "$d" = 0 ] || printf '%s' "$source" )"; then
+      plan+=" d$d=complete"
+    elif [ -s "$point/DONE" ]; then
+      plan+=" d$d=DONE-but-rejected(${COMPLETE_REASON:-unknown reason})"
+    elif [ -d "$point" ]; then
+      plan+=" d$d=partial"
+    else
+      plan+=" d$d=new"
+    fi
+  done
+  echo "[family-plan] $dataset/s$seed:$plan"
   # d0 is the exact positive control: beta=pi with independent rollout noise.
   # Its independent fresh evaluation is not a prerequisite for training. Once
   # the immutable d0 behavior pool is valid, start d25 before finishing d0 so a

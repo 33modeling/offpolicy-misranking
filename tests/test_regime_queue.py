@@ -266,6 +266,11 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             outputs.append(output)
             assert worker.returncode == 0, output
         assert any("[regime-hard-stall]" in output for output in outputs)
+        # the hung first attempt of a/s0/d0 is killed: the worker says so in one line
+        assert any("[point-failed] a/s0/d0 try 1/2 rc=" in output for output in outputs), outputs
+        assert (
+            work / "runs/regime-fixture/fixture-s0-a-d0/logs/supervisor.log"
+        ).read_text().count("[point-failed] try 1/2") == 1
         assert all("GPU/CPU 활동과 무관하게" not in output for output in outputs)
         assert (
             work / "runs/regime-fixture/.queue/generation.git"
@@ -326,9 +331,13 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
             in repaired.stdout
         ), repaired.stdout
         assert "[repair] fixture-s0-a-d25: gen_batch '8' -> '32'" in repaired.stdout
+        assert (
+            "[family-plan] a/s0: d0=complete d25=DONE-but-rejected(score/oracle protocol validation failed)"
+            in repaired.stdout
+        ), repaired.stdout
         assert (work / "entry-gen-batch").read_text().splitlines() == ["32"]
         assert "[done-but-incomplete] score/oracle protocol validation failed" in (
-            damaged / "logs/complete-check.log"
+            damaged / "logs/supervisor.log"
         ).read_text()
         repaired_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
         repaired_claims = [row.split("|", 1)[1] for row in repaired_rows]
