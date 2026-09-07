@@ -1053,7 +1053,7 @@ def main() -> None:
         if verdict == "LOOPING":
             info = snapshot.owner.get("loop", {}) if isinstance(snapshot.owner, dict) else {}
             note = (f"NEEDS YOU: failed {info.get('consecutive_failures', '?')} times in a row, retries stopped. "
-                    f"last error: {str(info.get('last_error', ''))[:110]} -> fix, then relaunch with OM_RLZERO_CLEAR_LOOPS=1")
+                    f"last error: {str(info.get('last_error', ''))[:110]} -> a CUDA-fault marker is cleared by the next worker started with the current code; other causes: fix, then relaunch with OM_RLZERO_CLEAR_LOOPS=1")
         elif verdict == "HUNG":
             note = f"NEEDS YOU: alive but nothing written for {write_age} -> Ctrl-C this worker, git pull, run h100"
             if err_text:
@@ -1279,7 +1279,8 @@ def main() -> None:
         decision = "DONE: every family is complete."
     elif looping:
         decision = (f"ERROR: {', '.join(looping)} keep(s) failing with the same error; retries were stopped. "
-                    "Read the note on that row, fix the cause, then relaunch with OM_RLZERO_CLEAR_LOOPS=1.")
+                    "A marker written for a CUDA runtime fault is cleared by the next worker started with the current code "
+                    "(git pull, run h100); for any other cause fix it, then relaunch with OM_RLZERO_CLEAR_LOOPS=1.")
     elif needs_you and workers:
         decision = (f"ERROR: {len(needs_you)} family(ies) hung (alive, writing nothing): {', '.join(needs_you)}. "
                     "RESTART NEEDED on the node showing that family: Ctrl-C, git pull --ff-only, run h100 (finished work resumes).")

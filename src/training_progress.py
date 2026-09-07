@@ -73,11 +73,20 @@ def _count_lines(path: Path) -> int:
         return 0
 
 
+STAGE_LOG_PREFIXES = ("fresh-shard", "beta-shard", "ograds-shard", "score-shard", "val-grads", "grpo", "recovery-rollout")
+
+
 def _durable(path: Path) -> bool:
     name = path.name
-    if name in EXCLUDED_NAMES or name.startswith(EXCLUDED_PREFIXES) or name.endswith(EXCLUDED_SUFFIXES):
+    if name in EXCLUDED_NAMES or name.startswith(EXCLUDED_PREFIXES):
         return False
-    return not any(part in ("logs",) or part.startswith(EXCLUDED_PREFIXES) for part in path.parts)
+    if "logs" in path.parts:
+        # Stage logs are written per item by the compute process itself
+        # ("oracle 65/134", "score 40/128", GRPO step lines): a gradient or
+        # scoring stage publishes nothing else for 15-30 minutes. Supervisor,
+        # watchdog and keepalive logs stay excluded.
+        return name.endswith(".log") and name.startswith(STAGE_LOG_PREFIXES)
+    return not name.endswith(EXCLUDED_SUFFIXES)
 
 
 def point_dirs(root: Path) -> list[Path]:
