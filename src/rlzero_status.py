@@ -777,6 +777,23 @@ def owner_display(owner: dict) -> str:
     return json.dumps(owner, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+WORKER_ID_RE = re.compile(r"^(?P<job>run\d+)-first-(?P<node>rlvr-[a-z0-9]+(?:-[a-z0-9]+)*?)-[0-9a-f]{8}-[0-9a-f]{4}-")
+
+
+def short_worker(name: str) -> str:
+    """Readable worker label for the one-screen tables.
+
+    Worker ids are `<job>-first-<node>-<uuid>`; the node number at the end is
+    what the operator recognizes and the old columns cut it off
+    ("run275510-fi"). Shown as "<node> <job>", e.g. "rlvr-1 run278140".
+    Ids of another shape are cut to 18 characters.
+    """
+    match = WORKER_ID_RE.match(name or "")
+    if match:
+        return f"{match.group('node')} {match.group('job')}"
+    return (name or "-")[:18]
+
+
 def worker_heartbeat(
     args: argparse.Namespace, worker: str
 ) -> tuple[dict | None, int | None, bool]:
@@ -1245,7 +1262,7 @@ def main() -> None:
         "INCOMPLETE": "INCOMPLETE",
         "NOT_STARTED": "NOT STARTED",
     }.get(overall, overall)
-    worker_ids = ", ".join(sorted(workers)) or "none"
+    worker_ids = ", ".join(short_worker(w) for w in sorted(workers)) or "none"
     needs_you = [
         r["family"].key for r in rows
         if r["verdict"] in {"HUNG", "LOOPING"} or (r["verdict"] in {"DEAD", "STOPPED"} and not workers)
@@ -1355,7 +1372,7 @@ def main() -> None:
     shown = [r for r in ordered if r["verdict"] != "PENDING"]
     waiting = [r["family"].key for r in ordered if r["verdict"] == "PENDING"]
     print(" points column, one char per point d0 d25 d100 d400:   + = done   * = running   X = hung/stuck/dead   ? = unknown   . = waiting")
-    header = f" {'family':<11} {'points':<{len(args.drifts) + 1}} {'now':<40} {'last write':<10} {'worker':<12} note"
+    header = f" {'family':<11} {'points':<{len(args.drifts) + 1}} {'now':<40} {'last write':<10} {'worker (node job)':<18} note"
     print(header)
     for row in shown:
         if row["verdict"] == "COMPLETE":
@@ -1371,7 +1388,7 @@ def main() -> None:
             now_text = row["stage"] if row["stage"] != "-" else row["verdict"].lower()
         print(
             f" {row['family'].key:<11} {glyphs(row):<{len(args.drifts) + 1}} {now_text[:40]:<40} "
-            f"{fmt_age(row['age']):<10} {row['worker'][:12]:<12} {row['note']}"
+            f"{fmt_age(row['age']):<10} {short_worker(row['worker']) if row['worker'] != '-' else '-':<18} {row['note']}"
         )
     if waiting:
         print(f" waiting     {'.' * len(args.drifts):<{len(args.drifts) + 1}} {', '.join(waiting)}")
@@ -1384,10 +1401,10 @@ def main() -> None:
             print(f"  {line[:150]}")
     if worker_rows:
         print()
-        print(" worker            log age  claims          last log line")
+        print(" worker (node job)  log age  claims          last log line")
         for w in worker_rows:
             claims = ",".join(w["claims"]) or "-"
-            print(f" {w['worker'][:17]:<17} {fmt_age(w['log_age']):<8} {claims[:15]:<15} {w['last_line'][:95]}")
+            print(f" {short_worker(w['worker']):<18} {fmt_age(w['log_age']):<8} {claims[:15]:<15} {w['last_line'][:95]}")
     print(" family = one dataset x seed = 4 chained points d0 -> d25 -> d100 -> d400 on one node (each GRPO point resumes the previous checkpoint)")
     print(" last write = time since this family wrote any file.  note: NEEDS YOU = you act, AUTO = supervisor handles it, QUEUED = waits for a free worker, ok = fine")
     stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]

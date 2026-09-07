@@ -456,6 +456,16 @@ def test_status_default_is_one_screen_table(tmp_path: Path) -> None:
     assert len(lines) < 20
 
 
+def test_short_worker_shows_node_and_job() -> None:
+    sys.path.insert(0, str(ROOT / "src"))
+    from rlzero_status import short_worker
+
+    assert short_worker("run278140-first-rlvr-1-718eebe8-184b-4a22-aa34-2a2248932778") == "rlvr-1 run278140"
+    assert short_worker("run277819-first-rlvr-5-ec778c50-2b79-4823-ae79-2d160dba9b05") == "rlvr-5 run277819"
+    assert short_worker("worker-1") == "worker-1"
+    assert len(short_worker("x" * 40)) == 18
+
+
 def _status_with(root: Path, extra: list[str]) -> str:
     result = subprocess.run(
         status_command(root) + extra,
