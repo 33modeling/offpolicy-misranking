@@ -30,3 +30,18 @@ Notes.
   (`DOWNSTREAM_EVAL_K` samples each, default 8).
 - Registered labels are never recomputed by these modules; every output is
   descriptive unless the registration states its own criterion (E3).
+
+## One-shot cluster runner
+
+```bash
+git pull --ff-only
+bash scripts/go_extensions.sh h100            # all stages: synthetic rescore analyze curve downstream
+bash scripts/go_extensions.sh h100 analyze    # only the analysis tables over completed runs
+```
+
+Stages are idempotent and resumable; rerun the same command after an
+interruption. Output: `$OM_WORK/results/extensions-<model tag>/` and the
+console log under `$OM_WORK/console-logs/`. The `curve` stage trains the E1
+chain (400 updates per seed) and the `downstream` stage the E5 updates (7
+selectors x 50 updates per seed), so run those two on a node that has finished
+its share of the registered matrix.
