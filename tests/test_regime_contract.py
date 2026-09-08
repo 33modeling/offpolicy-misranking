@@ -301,3 +301,25 @@ def test_materialized_prompts_must_match_qualified_set_and_order() -> None:
         assert prompt_split_errors(run, matrix, "mbpp") == [
             "prompts.train order differs from qualified snapshot"
         ]
+
+
+def test_contract_mismatch_names_the_differing_fields(tmp_path):
+    """'matrix contract mismatch' alone sent the operator to guess between model,
+    data, code and hyperparameters (2026-09-08, the Qwen relaunch)."""
+    import json
+
+    import pytest
+
+    import regime_contract as rc
+
+    path = tmp_path / "matrix.json"
+    recorded = {"git": "old", "model": {"revision": "a", "path": "/m"}, "experiment": {"n_train": 512}}
+    path.write_text(json.dumps(recorded), encoding="utf-8")
+    expected = {"git": "old", "model": {"revision": "b", "path": "/m"}, "experiment": {"n_train": 512}, "extra": 1}
+    with pytest.raises(ValueError) as caught:
+        rc.initialize_matrix(path, expected)
+    message = str(caught.value)
+    assert "model.revision: recorded='a' now='b'" in message
+    assert "extra: recorded='<absent>' now='1'" in message
+    assert "git: " not in message          # an unchanged key is not reported
+    assert rc.contract_differences({"a": 1}, {"a": 1}) == ["(no key differs; the documents differ only in structure)"]

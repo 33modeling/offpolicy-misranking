@@ -251,6 +251,20 @@ def matrix_git(root: Path, fallback: str) -> str:
     return fallback
 
 
+def contract_differences(recorded: dict, expected: dict, prefix: str = "") -> list[str]:
+    """Dotted keys whose values differ, with both values, shortest first."""
+    out: list[str] = []
+    keys = sorted(set(recorded) | set(expected))
+    for key in keys:
+        name = f"{prefix}{key}"
+        a, b = recorded.get(key, "<absent>"), expected.get(key, "<absent>")
+        if isinstance(a, dict) and isinstance(b, dict):
+            out.extend(contract_differences(a, b, f"{name}."))
+        elif a != b:
+            out.append(f"{name}: recorded={str(a)[:60]!r} now={str(b)[:60]!r}")
+    return out or ["(no key differs; the documents differ only in structure)"]
+
+
 def initialize_matrix(path: Path, expected: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
@@ -259,9 +273,12 @@ def initialize_matrix(path: Path, expected: dict) -> None:
         if path.exists():
             recorded = read_json(path)
             if recorded != expected:
+                # Name what differs. "mismatch" alone sent the operator to guess
+                # between model, data, code and hyperparameters (2026-09-08, Qwen).
                 raise ValueError(
-                    f"matrix contract mismatch at {path}; use a new REGIME_ROOT instead "
-                    "of mixing models, data, code, or hyperparameters"
+                    f"matrix contract mismatch at {path}: "
+                    + "; ".join(contract_differences(recorded, expected))
+                    + " -> use a new REGIME_ROOT instead of mixing models, data, code, or hyperparameters"
                 )
             return
         temporary = path.with_name(f"{path.name}.tmp.{os.getpid()}")
