@@ -92,5 +92,5 @@ either side; it adds label noise to both. Two effects are real:
 | piece | state |
 |---|---|
 | measurement tool `scripts/check_math_reward.sh` / `src/measure_math_reward.py` | committed `4a1732e`, `6f5f151` |
-| corrected verifier (`src/data.py`, `tests/test_math_expression_reward.py`) | working tree only, 10 tests pass, not yet committed |
-| rescoring path (corrected copies beside the originals + analysis rerun) | not written yet; planned to run on an idle node before the matrix completes |
+| corrected verifier (`src/data.py`) | committed `57e2e43`; every matrix launched from that commit on uses it |
+| rescoring path `scripts/rescore_math500.sh` / `src/rescore_rollouts.py` | written 2026-09-08 evening: rewrites `reward` in the stored rollouts (pinned value kept as `reward_pinned`), reseals manifests (pinned hashes in `<prefix>.rescore.json`), moves gradients/scores/report/DONE into `pinned-scoring/<stamp>/`; a normal worker then recomputes them. Verifies the whole family read-only before touching a file. Dry run by default. |
