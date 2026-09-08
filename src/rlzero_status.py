@@ -534,12 +534,17 @@ def rejected_completions(run: Path | None) -> tuple[int, str]:
         return 0, ""
     log = run / "logs/supervisor.log"
     try:
-        lines = [
-            line for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
-            if "[done-but-incomplete]" in line
-        ]
+        entries = log.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return 0, ""
+    # Only rejections since the point was last accepted: otherwise a point that
+    # was rejected before the cause was fixed keeps a healthy node reading as
+    # REDOING for ever. run_matrix.sh writes [point-accepted] when the check passes.
+    for index in range(len(entries) - 1, -1, -1):
+        if "[point-accepted]" in entries[index]:
+            entries = entries[index + 1:]
+            break
+    lines = [line for line in entries if "[done-but-incomplete]" in line]
     if not lines:
         return 0, ""
     reason = lines[-1].split("[done-but-incomplete]", 1)[1].strip()
@@ -950,12 +955,29 @@ def current_point(args: argparse.Namespace, family: Family) -> tuple[int | None,
     return None, None, "all-done", done
 
 
+def elide(text: str, width: int) -> str:
+    """Shorten a message while keeping both ends.
+
+    Every shortener here used to cut the tail, and the tail is where a mismatch
+    is named: `config={...}, expected {...}` put the one differing key last, so
+    the operator read the same 240 characters all night and never saw which field
+    was wrong (2026-09-07). Keep the head and the tail, drop the middle.
+    """
+    text = re.sub(r"\s+", " ", str(text)).strip()
+    if len(text) <= width:
+        return text
+    if width <= 5:
+        return text[:width]
+    keep = width - 5
+    head = (keep + 1) // 2
+    return text[:head] + " ... " + text[len(text) - (keep - head):]
+
+
 def short_error(errors: list[tuple[Path, str]], width: int = 70) -> str:
     if not errors:
         return ""
     _, line = errors[-1]
-    line = re.sub(r"\s+", " ", line).strip()
-    return line if len(line) <= width else line[: width - 3] + "..."
+    return elide(line, width)
 
 
 def main() -> None:
@@ -1098,7 +1120,7 @@ def main() -> None:
         if verdict == "LOOPING":
             info = snapshot.owner.get("loop", {}) if isinstance(snapshot.owner, dict) else {}
             note = (f"NEEDS YOU: failed {info.get('consecutive_failures', '?')} times in a row, retries stopped. "
-                    f"last error: {str(info.get('last_error', ''))[:110]} -> a CUDA-fault marker is cleared by the next worker started with the current code; other causes: fix, then relaunch with OM_RLZERO_CLEAR_LOOPS=1")
+                    f"last error: {elide(info.get('last_error', ''), 110)} -> a CUDA-fault marker is cleared by the next worker started with the current code; other causes: fix, then relaunch with OM_RLZERO_CLEAR_LOOPS=1")
         elif verdict == "HUNG":
             note = f"NEEDS YOU: alive but nothing written for {write_age} -> Ctrl-C this worker, git pull, run h100"
             if err_text:
@@ -1120,7 +1142,7 @@ def main() -> None:
             note = f"CHECK: {reason.replace('_', ' ')}"
         elif rejected_count:
             note = (f"NEEDS YOU: this point finished and the completion check refused it "
-                    f"{rejected_count}x, so the worker keeps redoing it: {rejected_reason[:110]}")
+                    f"{rejected_count}x, so the worker keeps redoing it: {elide(rejected_reason, 140)}")
         elif current_errors:
             note = f"ERROR in current attempt but still moving: {err_text}"
         elif recovery is not None and recovery.get("status") not in (None, "recovered", "completed"):
@@ -1343,7 +1365,7 @@ def main() -> None:
         decision = (f"ERROR: {', '.join(r['family'].key for r in redoing)} finished a point and the completion check "
                     f"refused it ({first['rejected_completions']}x on {first['family'].key}), so the worker is redoing "
                     f"work that can never be accepted. The GPUs look busy and nothing can finish. "
-                    f"Reason: {first['rejected_reason'][:150]} -> git pull (the check may be fixed), then run h100; "
+                    f"Reason: {elide(first['rejected_reason'], 220)} -> git pull (the check may be fixed), then run h100; "
                     f"if it repeats, read <point>/logs/supervisor.log.")
     elif needs_you and workers:
         decision = (f"ERROR: {len(needs_you)} family(ies) hung (alive, writing nothing): {', '.join(needs_you)}. "
@@ -1445,7 +1467,7 @@ def main() -> None:
         print()
         print(" recent alerts (logs/ALERTS.log):")
         for line in tail_lines(alerts, 3):
-            print(f"  {line[:150]}")
+            print(f"  {elide(line, 150)}")
     if worker_rows:
         print()
         print(" worker (node job)  log age  claims          last log line")

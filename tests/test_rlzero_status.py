@@ -197,6 +197,27 @@ def test_status_observes_real_progress_and_scans_all_active_logs(
     assert "overall_verdict=RUNNING" in output
 
 
+def test_a_shortened_message_keeps_the_end_where_the_mismatch_is_named() -> None:
+    """`config={...}, expected {...}` names the differing field last. Head-only
+    truncation showed the operator the same 240 identical characters all night
+    and never the one key that differed (2026-09-07)."""
+    import rlzero_status
+
+    message = (
+        "config={'advantage_epsilon': 0.0001, 'checkpoint_every': 5, 'group_size': 8, "
+        "'lora_rank': 16, 'max_grad_norm': 1.0}, expected {'advantage_epsilon': 0.0001, "
+        "'checkpoint_every': 5, 'group_size': 8, 'lora_rank': 16, 'max_grad_norm': 1.0, "
+        "'weight_decay': 0.0}"
+    )
+    short = rlzero_status.elide(message, 140)
+    assert len(short) <= 140
+    assert short.startswith("config={'advantage_epsilon'")
+    assert short.endswith("'weight_decay': 0.0}")
+    assert " ... " in short
+    # a message that fits is returned whole, with runs of whitespace collapsed
+    assert rlzero_status.elide("  a   b  ", 40) == "a b"
+
+
 def test_status_reports_a_finished_point_that_the_completion_check_refuses(
     tmp_path: Path,
 ) -> None:
@@ -230,6 +251,29 @@ def test_status_reports_a_finished_point_that_the_completion_check_refuses(
     assert "the completion check refused it (2x on math500/s0)" in output
     assert "invalid GRPO policy lineage" in output
     assert "the completion check refused it 2x, so the worker keeps redoing it" in output
+
+
+def test_rejections_before_the_point_was_accepted_are_not_counted(tmp_path: Path) -> None:
+    """Once the cause is fixed the point is accepted; old rejection lines must not
+    keep a healthy node reading as REDOING."""
+    import rlzero_status
+
+    run = tmp_path / "point"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs/supervisor.log").write_text(
+        "[2026-09-08 01:00:00] [done-but-incomplete] invalid GRPO policy lineage: config=...\n"
+        "[2026-09-08 02:00:00] [done-but-incomplete] invalid GRPO policy lineage: config=...\n"
+        "[2026-09-08 10:00:00] [point-accepted] completion check passed\n",
+        encoding="utf-8",
+    )
+    assert rlzero_status.rejected_completions(run) == (0, "")
+
+    with (run / "logs/supervisor.log").open("a", encoding="utf-8") as stream:
+        stream.write("[2026-09-08 11:00:00] [done-but-incomplete] something else\n")
+    count, reason = rlzero_status.rejected_completions(run)
+    assert count == 1 and reason == "something else"
+    assert rlzero_status.rejected_completions(None) == (0, "")
+    assert rlzero_status.rejected_completions(tmp_path / "nope") == (0, "")
 
 
 def test_status_distinguishes_alive_unknown_confirmed_stuck_and_dead(

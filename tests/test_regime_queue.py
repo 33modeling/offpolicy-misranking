@@ -413,6 +413,10 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         assert "[done-but-incomplete] score/oracle protocol validation failed" in (
             damaged / "logs/supervisor.log"
         ).read_text()
+        # once the point is accepted again the rejection counter must reset
+        assert "[point-accepted] completion check passed" in (
+            damaged / "logs/supervisor.log"
+        ).read_text()
         repaired_rows = (work / "claims").read_text(encoding="utf-8").splitlines()
         repaired_claims = [row.split("|", 1)[1] for row in repaired_rows]
         assert repaired_claims[len(claims) :] == ["a 0 25"]

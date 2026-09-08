@@ -261,6 +261,23 @@ COMPLETE_REASON=""
 complete_reason_last_line() {  # keep the final non-empty line of a captured stderr
   printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n 1
 }
+short_reason() {  # short_reason <width>: shorten a line but keep BOTH ends
+  # `config={...}, expected {...}` names the differing field last, so head-only
+  # truncation hid it for a whole night (2026-09-07).
+  awk -v w="${1:-200}" '{
+    gsub(/[[:space:]]+/, " ")
+    if (length($0) <= w) { print; next }
+    k = w - 5; h = int((k + 1) / 2)
+    print substr($0, 1, h) " ... " substr($0, length($0) - (k - h) + 1)
+  }'
+}
+note_point_accepted() {  # note_point_accepted <run>: the completion check passed
+  # Without this the rejection counter in status keeps counting rejections from
+  # before the cause was fixed, and a healthy node reads as REDOING for ever.
+  [ -d "$1" ] || return 0
+  mkdir -p "$1/logs" 2>/dev/null || return 0
+  echo "[$(date '+%F %T')] [point-accepted] completion check passed" >> "$1/logs/supervisor.log"
+}
 
 run_complete() {
   local run=$1 dataset=$2 seed=$3 drift=$4 source=$5 artifact
@@ -561,10 +578,13 @@ gpu_peak_util() {  # gpu_peak_util <pgid> [exclude-pid]
 }
 
 terminate_process_group() {
-  local pgid=$1
+  local pgid=$1 deadline
   [ -n "$pgid" ] || return 0
   kill -TERM -- "-$pgid" 2>/dev/null || return 0
-  /bin/sleep "$WATCH_KILL_GRACE_SECONDS"
+  deadline=$((SECONDS + WATCH_KILL_GRACE_SECONDS))
+  while kill -0 -- "-$pgid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do
+    /bin/sleep 0.1
+  done
   kill -KILL -- "-$pgid" 2>/dev/null || true
 }
 
@@ -620,6 +640,7 @@ ACTIVE_WATCHER=""
 cleanup_active_pipeline() {
   [ -z "$ACTIVE_PGID" ] || terminate_process_group "$ACTIVE_PGID"
   [ -z "$ACTIVE_WATCHER" ] || kill "$ACTIVE_WATCHER" 2>/dev/null || true
+  [ -z "$ACTIVE_WATCHER" ] || wait "$ACTIVE_WATCHER" 2>/dev/null || true
   ACTIVE_PGID=""
   ACTIVE_WATCHER=""
 }
@@ -652,16 +673,26 @@ run_pipeline_watchdog() {  # run_pipeline_watchdog <run> <attempt-log> <command.
     fi
     interval_cpu_mark=$cpu_mark
     state=starting
+    watch_sleep=""
     write_pipeline_activity "$run" "$state" "$runner_pid" 0 -1 0
     finish_watchdog() {
       trap - TERM INT HUP
+      if [ -n "$watch_sleep" ]; then
+        kill "$watch_sleep" 2>/dev/null || true
+        wait "$watch_sleep" 2>/dev/null || true
+      fi
       [ "$state" = terminating-idle ] || \
         write_pipeline_activity "$run" exited "$runner_pid" 0 -1 "$idle_elapsed"
       exit 0
     }
     trap finish_watchdog TERM INT HUP
     while kill -0 -- "-$runner_pid" 2>/dev/null; do
-      /bin/sleep "$WATCH_INTERVAL_SECONDS"
+      # Waiting on a background timer lets TERM interrupt immediately. A
+      # foreground sleep delays the trap and every completed point by a tick.
+      /bin/sleep "$WATCH_INTERVAL_SECONDS" &
+      watch_sleep=$!
+      wait "$watch_sleep" || true
+      watch_sleep=""
       kill -0 -- "-$runner_pid" 2>/dev/null || break
 
       if cpu_now=$(group_cpu_seconds "$runner_pid" "$(probe_exclude_pid "$run")"); then
@@ -903,7 +934,10 @@ run_point() {
     contract_run prepare-run "$run" "$dataset" "$seed" "$drift" "$source" \
       --quarantine-root "$QUARANTINE" || return 1
   fi
-  run_complete "$run" "$dataset" "$seed" "$drift" "$source" && return 0
+  if run_complete "$run" "$dataset" "$seed" "$drift" "$source"; then
+    [ -s "$run/logs/supervisor.log" ] && note_point_accepted "$run"
+    return 0
+  fi
   if [ -s "$run/DONE" ]; then
     echo "[done-but-incomplete] $dataset/s$seed/d$drift: ${COMPLETE_REASON:-unknown reason}; re-entering the point"
     mkdir -p "$run/logs" \
@@ -988,20 +1022,19 @@ run_point() {
         "${args[@]}" OM_REPO="$PIPELINE_REPO" \
         PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
         bash "$PIPELINE_SCRIPT"; then
-      if [ -n "$CONTRACT" ]; then
-        if ! contract_run check-run "$run" "$dataset" "$seed" "$drift" "$source" \
-          --deep --mark; then
-          echo "[contract-fail] $dataset/s$seed/d$drift artifacts quarantined; retrying"
-          contract_run prepare-run "$run" "$dataset" "$seed" "$drift" "$source" \
-            --quarantine-root "$QUARANTINE" || return 1
-          continue
+      if [ -n "$CONTRACT" ] && ! failure_line=$(contract_run check-run \
+          "$run" "$dataset" "$seed" "$drift" "$source" --deep --mark 2>&1); then
+        failure_line="matrix contract validation failed: $failure_line"
+      else
+        if run_complete "$run" "$dataset" "$seed" "$drift" "$source"; then
+          note_point_accepted "$run"
+          return 0
         fi
+        failure_line="completion validation failed: ${COMPLETE_REASON:-unknown reason}"
       fi
-      run_complete "$run" "$dataset" "$seed" "$drift" "$source" && return 0
       # A successful pipeline with invalid artifacts needs a different action,
       # not another identical GPU run. Propagate the existing contract-failure
       # code so both matrix and family retry loops yield immediately.
-      failure_line="completion validation failed: ${COMPLETE_REASON:-unknown reason}"
       echo "[point-failed] $dataset/s$seed/d$drift try $try/$MAX_RETRIES rc=43: $failure_line"
       mkdir -p "$run/logs" || return 43
       printf '[%s] [point-failed] try %s/%s rc=43: %s\n' \
@@ -1013,7 +1046,7 @@ run_point() {
       # point's own log, so status can show it (2026-09-08: five workers cycled
       # grads -> score for seven hours with nothing visible but "try N/3").
       failure_line=$(grep -E 'config-abort|\[abort\]|Error|Traceback' "$attempt_log" 2>/dev/null \
-        | tail -n 1 | cut -c1-200)
+        | tail -n 1 | short_reason 240)
       echo "[point-failed] $dataset/s$seed/d$drift try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}"
       mkdir -p "$run/logs" \
         && echo "[$(date '+%F %T')] [point-failed] try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}" \
@@ -1041,6 +1074,7 @@ run_point() {
       fi
     fi
     bash scripts/diagnose_run_failure.sh "$run" "$attempt_log" 1 2>/dev/null || true
+    [ "$try" -lt "$MAX_RETRIES" ] || break
     if recover_cuda_rollout "$run" "$drift" "$try"; then
       echo "[cuda-recovery] $dataset/s$seed/d$drift recovered; resuming normal pipeline"
       continue
@@ -1168,6 +1202,10 @@ while :; do
   done < <(ordered_families)
   [ "$remaining" -eq 0 ] && break
   if [ "$claimed" -eq 0 ]; then
+    if [ "${REGIME_YIELD_WHEN_BUSY:-0}" = 1 ]; then
+      echo "[queue] remaining families are held by other workers; yielding this node"
+      exit 75
+    fi
     echo "[queue] waiting for ${remaining} families held by other workers"
     sleep 60
   elif [ "$failures" -gt 0 ]; then
