@@ -897,6 +897,9 @@ MAX_FAMILY_FAILURES="${OM_RLZERO_MAX_FAMILY_FAILURES:-4}"
 # retried with a growing pause; after MAX_CUDA_FAILURES in a row on this
 # worker the family is released for another node instead of being marked.
 MAX_CUDA_FAILURES="${OM_RLZERO_MAX_CUDA_FAILURES:-8}"
+# Lifetime bound on the CUDA-fault exemption: a fault that reproduces every time
+# is not transient, whatever its message says (2026-09-08).
+MAX_RUNTIME_FAILURES="${OM_RLZERO_MAX_RUNTIME_FAILURES:-24}"
 declare -A FAMILY_FAILURES=()
 declare -A FAMILY_CUDA_FAILURES=()
 # Earliest time (epoch seconds) at which this worker attempts a family again after
@@ -956,7 +959,9 @@ for marker in "$QUEUE"/*.loop; do
   # New permanent contract failures are not legacy CUDA/config-abort markers.
   grep -Eq '(^| )last_rc=43( |$)' "$marker" && continue
   marker_error=$(sed -n 's/^last_error=//p' "$marker" 2>/dev/null | head -1)
-  if [ "$(failure_kind "$marker_error" 2>/dev/null || printf other)" = runtime ]; then
+  if grep -q '^family=.*runtime_failures_total=' "$marker" 2>/dev/null; then
+    echo "[queue] keeping loop marker $(basename "$marker"): it records a CUDA fault that reproduced on every attempt, not a transient one" | tee -a "$LOG"
+  elif [ "$(failure_kind "$marker_error" 2>/dev/null || printf other)" = runtime ]; then
     rm -f -- "$marker" \
       && echo "[queue] cleared loop marker $(basename "$marker"): it recorded a CUDA runtime fault, which is retried, not a repeating failure" | tee -a "$LOG"
   elif [ -n "$marker_error" ] && [ -z "${marker_error##*config-abort*}" ]; then
@@ -1164,8 +1169,26 @@ while :; do
       if [ "$LAST_FAILURE_KIND" = runtime ]; then
         cuda_n=${FAMILY_CUDA_FAILURES[$dataset-s$seed]:-1}
         pause=$(failure_backoff_seconds "$cuda_n")
+        # A CUDA runtime fault is exempt from the failure-loop guard because it is
+        # usually transient. The exemption had no lifetime bound and the counter
+        # dies with the worker, so a fault that reproduces on every attempt (a
+        # device-side assert, say) cycled die -> wait -> die for ever and was
+        # never marked LOOPING. Count the whole family's failed tries from the
+        # durable [point-failed] lines and stop when even a "transient" fault has
+        # burned that many attempts.
+        runtime_total=$(grep -h '\[point-failed\]' \
+          "$(family_root "$dataset" "$seed")"/*/logs/supervisor.log 2>/dev/null | grep -c .)
+        if [ "${runtime_total:-0}" -ge "$MAX_RUNTIME_FAILURES" ]; then
+          {
+            echo "family=$dataset/s$seed worker=$WORKER_ID host=$HOST_TAG consecutive_failures=$cuda_n last_rc=$rc runtime_failures_total=$runtime_total"
+            echo "last_error=$(family_last_error "$dataset" "$seed")"
+            echo "marked_at_utc=$(date -u +%FT%TZ)"
+          } > "$(loop_marker "$dataset" "$seed")"
+          echo "[family-loop] $dataset/s$seed: $runtime_total failed tries on this family, every one a CUDA runtime fault. That reproduces, so it is not flaky hardware. No worker retries it until you fix it and relaunch with OM_RLZERO_CLEAR_LOOPS=1." | tee -a "$LOG"
+          continue
+        fi
         if [ "$cuda_n" -ge "$MAX_CUDA_FAILURES" ]; then
-          echo "[cuda-flaky] $dataset/s$seed: $cuda_n CUDA runtime faults in a row on this worker; releasing it for another node (artifacts preserved)" \
+          echo "[cuda-flaky] $dataset/s$seed: $cuda_n CUDA runtime faults in a row here, $runtime_total failed tries on this family in total; this worker moves on (artifacts preserved)" \
             | tee -a "$LOG"
           FAMILY_CUDA_FAILURES[$dataset-s$seed]=0
         fi

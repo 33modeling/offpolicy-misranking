@@ -66,3 +66,21 @@ class of failure is visible within minutes next time instead of a night later.
   back later.
 - Any state the operator must clear by hand must stop the worker with an
   instruction, not become a silent wait.
+
+## Audit of the diagnostics themselves (2026-09-08)
+
+Four parallel readers swept the supervisor for failures and decisions that leave
+no usable trace; every finding was then checked by a second reader that tried to
+refute it. Seven survived, six were real defects in code written the same day:
+
+| Where | What was invisible | Fix |
+| --- | --- | --- |
+| `run_olmo3_rlzero.sh` queue loop | A CUDA runtime fault is exempt from the failure-loop guard, and the exemption had no lifetime bound. A fault that reproduces on every attempt (a device-side assert) cycled die → wait 900s → die for ever, never marked LOOPING, the printed counter restarting at #1 after every eighth fault. | Count the family's failed tries from the durable `[point-failed]` lines; past `OM_RLZERO_MAX_RUNTIME_FAILURES` (24) write the loop marker and say that a fault reproducing every time is not transient. The startup sweep keeps that marker. |
+| `why.sh` owner test | The launcher writes `<family>.owner.json`; `why.sh` tested for `.owner`. The branch was dead, so **every running family printed "QUEUED (no worker)"** — the one symptom that makes an operator restart a healthy node. | Read `.owner.json`, and name the worker and host in both the running and the silent state. |
+| `run_matrix.sh` failure line | The watchdog's own verdict (`[regime-hard-stall] ... -> killing the point`) matched none of the patterns, so a killed point reported an unrelated line containing "Error", or "no error line". | `regime-hard-stall` is a reported reason. |
+| `rlzero_status.py` refused-point detector | It asked the *current* point, and `current_point()` only ever returns an **unfinished** point. A refused point always has `DONE`, so the detector added the day before could never fire in production. | Scan every point of the family and report the most recently refused one, with its drift. |
+| `rlzero_heartbeat.py` progress line | The probe walks the whole shared root, so a node that had written nothing for hours still printed a healthy `[progress]` line because five other nodes were writing. The `[NOT TRAINING]` shout required the entire cluster to be flat. | The line also carries the verdict for the family this worker holds, and that verdict alone makes it shout. |
+| `why.sh` current point | "Current point" was the last drift without `DONE`. The point actually being worked is usually a finished one being re-entered, so every age, stage and log tail described an idle directory. | The current point is the one whose logs were written last, and a point that already finished and was refused is stated as `REDOING A REFUSED POINT`. |
+
+Rule added: a fixture that reproduces the bug is not a test. `why.sh` passed its
+own checks because the fixture created `.owner`, the same name the code read.

@@ -37,7 +37,7 @@ else
     [ -d "$dir" ] || continue
     name=${dir##*/family-}; dataset=${name%-s*}; seed=${name##*-s}
     if [ "$ALL" = 1 ] \
-        || [ -f "$ROOT/.families/$dataset-s$seed.owner" ] \
+        || [ -f "$ROOT/.families/$dataset-s$seed.owner.json" ] \
         || [ -f "$ROOT/.families/$dataset-s$seed.loop" ] \
         || [ -n "$(find "$dir" -maxdepth 3 -newermt '-1 day' -print -quit 2>/dev/null)" ]; then
       families+=("$dataset $seed")
@@ -68,6 +68,14 @@ age_of() {  # age_of <file> -> "12s" / "4m" / "3h07m" / "-"
 # -d matters: without it `ls -t <dir>` lists the directory CONTENTS, so the
 # newest point directory came back as one of its files (e.g. "DONE").
 newest_in() { ls -td "$@" 2>/dev/null | head -1; }
+refused_count() {  # refused_count <point dir>: rejections since the point was last accepted
+  awk '/\[point-accepted\]/ { n = 0; next } /\[done-but-incomplete\]/ { n++ } END { print n + 0 }' \
+    "$1/logs/supervisor.log" 2>/dev/null || echo 0
+}
+refused_reason() {  # refused_reason <point dir>: the newest rejection reason
+  awk '/\[point-accepted\]/ { last = ""; next } /\[done-but-incomplete\]/ { sub(/^.*\[done-but-incomplete\] /, ""); last = $0 } END { print last }' \
+    "$1/logs/supervisor.log" 2>/dev/null
+}
 short_reason() {  # short_reason <width>: shorten each line but keep BOTH ends
   # The tail of a message names the mismatch (`config={...}, expected {...}`), so
   # head-only truncation hid the one differing field for a whole night
@@ -85,12 +93,26 @@ declare -A F_POINTS F_CURRENT F_STATE F_WHY F_AGE F_STAGE
 for fam in "${families[@]}"; do
   set -- $fam; dataset=$1; seed=$2; key="$dataset/s$seed"
   froot="$ROOT/family-$dataset-s$seed"
-  points=""; current=""; done_count=0
+  points=""; done_count=0
   for d in $DRIFTS; do
     run=$(run_dir_of "$dataset" "$seed" "$d")
     if [ -s "$run/DONE" ]; then points+="+"; done_count=$((done_count + 1))
-    elif [ -d "$run" ]; then points+="*"; current=$run
-    else points+="."; fi
+    elif [ -n "$(newest_in "$run"/logs/*.log)" ]; then points+="*"
+    else points+="."; fi   # a directory with no log was created, never worked on
+  done
+  # The point being worked on is the one being WRITTEN, which is often a finished
+  # point that the completion check refused and the worker is re-running. Picking
+  # "the last drift without DONE" pointed at an idle directory and every age,
+  # stage and reason below then described the wrong point.
+  current=""; newest_ns=0
+  for d in $DRIFTS; do
+    run=$(run_dir_of "$dataset" "$seed" "$d")
+    # a point with no log was never worked on; its directory mtime is just when
+    # it was created and would beat the point that is actually being written
+    candidate=$(newest_in "$run"/logs/*.log)
+    [ -n "$candidate" ] || continue
+    ns=$(stat -c %Y "$candidate" 2>/dev/null || echo 0)
+    if [ "$ns" -gt "$newest_ns" ]; then newest_ns=$ns; current=$run; fi
   done
   [ -n "$current" ] || current=$(newest_in "$froot"/$TAG-s$seed-$dataset-d*)
   F_POINTS[$key]=$points
@@ -103,22 +125,36 @@ for fam in "${families[@]}"; do
   reason=""
   [ -z "$supervisor" ] || reason=$(grep -E '\[(point-failed|done-but-incomplete)\]' "$supervisor" 2>/dev/null | tail -1 | short_reason 180)
   [ -n "$reason" ] || reason=$(grep -hE "$ERRORS" "$current"/logs/*.log 2>/dev/null | tail -1 | short_reason 180)
-  if [ -f "$ROOT/.families/$dataset-s$seed.loop" ]; then
+  refused=$(refused_count "$current")
+  if [ "${refused:-0}" -gt 0 ] && [ ! -f "$ROOT/.families/$dataset-s$seed.loop" ]; then
+    # the GPUs are busy on a point that already finished and was refused: the
+    # single state that reads as healthy everywhere else (2026-09-07 night)
+    F_STATE[$key]="REDOING A REFUSED POINT ${refused}x - it finished and the completion check refused it"
+    F_WHY[$key]=$(refused_reason "$current" | short_reason 200)
+  elif [ -f "$ROOT/.families/$dataset-s$seed.loop" ]; then
     F_STATE[$key]="LOOPING (every worker skips it until you clear it)"
     F_WHY[$key]=$(sed -n 's/^last_error=//p' "$ROOT/.families/$dataset-s$seed.loop" | head -1 | short_reason 180)
   elif [ "$done_count" -eq "$(printf '%s\n' $DRIFTS | wc -l)" ]; then
     F_STATE[$key]="COMPLETE"
     F_WHY[$key]="all $done_count points done"
-  elif [ -f "$ROOT/.families/$dataset-s$seed.owner" ]; then
-    owner_age=$(age_of "$ROOT/.families/$dataset-s$seed.owner")
+  elif [ -f "$ROOT/.families/$dataset-s$seed.owner.json" ]; then
+    # The launcher writes .owner.json (run_olmo3_rlzero.sh:1001), as status and
+    # the heartbeat both read. A test for ".owner" is never true, and every
+    # running family was reported as "QUEUED (no worker)" - the one symptom that
+    # makes an operator restart a healthy node.
+    owner_file="$ROOT/.families/$dataset-s$seed.owner.json"
+    owner_age=$(age_of "$owner_file")
+    owner_who=$(sed -n 's/.*"worker": *"\([^"]*\)".*/\1/p' "$owner_file" | head -1)
+    owner_host=$(sed -n 's/.*"host": *"\([^"]*\)".*/\1/p' "$owner_file" | head -1)
+    owner_who="worker=${owner_who:-?} host=${owner_host:-?}"
     # compare seconds, never the formatted age: "3h07m" ends in "m" and a glob
     # test for minutes called a family silent for hours RUNNING.
     write_secs=$(age_secs "${newest_log:-$current}")
     if [ "$write_secs" -ge 0 ] && [ "$write_secs" -le "${WHY_RUNNING_SECONDS:-300}" ]; then
-      F_STATE[$key]="RUNNING (owner claimed $owner_age ago)"
+      F_STATE[$key]="RUNNING ($owner_who, claimed $owner_age ago)"
       F_WHY[$key]=$(tail -1 "${newest_log:-/dev/null}" 2>/dev/null | short_reason 180)
     else
-      F_STATE[$key]="OWNED BUT SILENT for ${F_AGE[$key]} - the worker holds it and writes nothing"
+      F_STATE[$key]="OWNED BUT SILENT for ${F_AGE[$key]} - $owner_who holds it and writes nothing"
       F_WHY[$key]=${reason:-no error line; look at the stage log below}
     fi
   else
@@ -144,7 +180,7 @@ done
   echo "================ 2. EVIDENCE ================"
   echo
   echo "--- queue markers ($ROOT/.families)"
-  for m in "$ROOT"/.families/*.owner "$ROOT"/.families/*.loop; do
+  for m in "$ROOT"/.families/*.owner.json "$ROOT"/.families/*.loop; do
     [ -f "$m" ] || continue
     echo "  $(basename "$m") (written $(age_of "$m") ago): $(tr '\n' ' ' < "$m" | short_reason 220)"
   done

@@ -197,6 +197,8 @@ if [ "${TEST_CUDA_FAIL_FAMILY:-}" = "$key" ]; then
     echo $((n + 1)) > "$counter"
     mkdir -p "$REGIME_ROOT/point/logs"
     echo "RuntimeError: CUDA error: unspecified launch failure" >> "$REGIME_ROOT/point/logs/main.log"
+    printf '[%s] [point-failed] try 1/1 rc=1: RuntimeError: CUDA error: unspecified launch failure\n' \
+      "$(date '+%F %T')" >> "$REGIME_ROOT/point/logs/supervisor.log"
     exit 1
   fi
 fi
@@ -942,7 +944,10 @@ def test_repeated_cuda_faults_release_the_family_for_another_node(tmp_path: Path
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "releasing it for another node" in result.stdout
+    # the old wording claimed the family was "released for another node"; nothing
+    # hands it to a node, this worker just moves on and anyone may take it
+    assert "CUDA runtime faults in a row here" in result.stdout
+    assert "this worker moves on" in result.stdout
     assert "[family-loop]" not in result.stdout
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
     # three faults, each one moving the worker to another family, then it finishes
@@ -1040,3 +1045,35 @@ def test_failed_family_is_retried_by_the_same_worker_before_moving_on(tmp_path: 
     assert claims.index("math500-s2") > claims.index("mbpp-s2"), claims
     assert set(claims) == {f"{d}-s{s}" for s in range(5) for d in ("math500", "mbpp")}
     assert len(claims) == 10
+
+
+def test_a_cuda_fault_that_reproduces_every_time_stops_being_exempt(tmp_path: Path) -> None:
+    """A CUDA runtime fault is exempt from the loop guard because it is usually
+    transient. With no lifetime bound, a fault that reproduces on every attempt
+    cycled die -> wait -> die for ever and was never marked LOOPING."""
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "runtime-bound-local"),
+            "TEST_CUDA_FAIL_FAMILY": "math500-s1",
+            "TEST_CUDA_FAIL_TIMES": "99",
+            "OM_RLZERO_MAX_RUNTIME_FAILURES": "1",
+            "OM_RLZERO_FAMILY_ATTEMPTS": "1",
+            "OM_RLZERO_STALE_PROCESS_TIMEOUT": "1",
+            "OM_RLZERO_GPU_CLEANUP_TIMEOUT": "1",
+        },
+        text=True,
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    assert "every one a CUDA runtime fault" in result.stdout, result.stdout[-3000:]
+    queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
+    marker = (queue / "math500-s1.loop").read_text()
+    assert "runtime_failures_total=" in marker
+    # the other nine families still ran
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    assert "math500-s1" not in claims and len(claims) == 9

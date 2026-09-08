@@ -551,6 +551,36 @@ def rejected_completions(run: Path | None) -> tuple[int, str]:
     return len(lines), reason
 
 
+def family_rejected_completions(family_root: Path) -> tuple[int, str, str]:
+    """Rejections anywhere in the family: count, reason, and which point.
+
+    A refused point is one that HAS a non-empty DONE, and current_point() only
+    ever returns an unfinished point, so asking the current point alone could
+    never see the rejection that the whole 2026-09-07 night consisted of. Scan
+    every point of the family and report the most recently refused one.
+    """
+    try:
+        points = [entry for entry in family_root.iterdir() if entry.is_dir()]
+    except OSError:
+        return 0, "", ""
+    total = 0
+    newest_ns = -1
+    reason = ""
+    where = ""
+    for point in points:
+        count, point_reason = rejected_completions(point)
+        if not count:
+            continue
+        total += count
+        try:
+            stamp = (point / "logs/supervisor.log").stat().st_mtime_ns
+        except OSError:
+            stamp = 0
+        if stamp >= newest_ns:
+            newest_ns, reason, where = stamp, point_reason, point.name
+    return total, reason, where
+
+
 def last_json(path: Path) -> dict | None:
     line = last_nonempty_line(path)
     if not line:
@@ -1113,7 +1143,9 @@ def main() -> None:
         elif kind == "not-started":
             stage = "not started" if not done_drifts else "next"
         note = ""
-        rejected_count, rejected_reason = rejected_completions(run)
+        rejected_count, rejected_reason, rejected_point = family_rejected_completions(
+            family_root(args, family)
+        )
         recovery = last_json(run / "rollout_recovery.jsonl") if run is not None and run.is_dir() else None
         write_age = fmt_age(age_seconds(snapshot.artifact_activity_ns))
         err_text = short_error(current_errors, 60) if current_errors else ""
@@ -1141,7 +1173,7 @@ def main() -> None:
         elif verdict == "UNKNOWN":
             note = f"CHECK: {reason.replace('_', ' ')}"
         elif rejected_count:
-            note = (f"NEEDS YOU: this point finished and the completion check refused it "
+            note = (f"NEEDS YOU: {rejected_point.rsplit('-', 1)[-1]} finished and the completion check refused it "
                     f"{rejected_count}x, so the worker keeps redoing it: {elide(rejected_reason, 140)}")
         elif current_errors:
             note = f"ERROR in current attempt but still moving: {err_text}"
@@ -1164,6 +1196,7 @@ def main() -> None:
             {
                 "rejected_completions": rejected_count,
                 "rejected_reason": rejected_reason,
+                "rejected_point": rejected_point,
                 "family": family,
                 "snapshot": snapshot,
                 "changes": changes,
@@ -1363,7 +1396,8 @@ def main() -> None:
     elif redoing:
         first = redoing[0]
         decision = (f"ERROR: {', '.join(r['family'].key for r in redoing)} finished a point and the completion check "
-                    f"refused it ({first['rejected_completions']}x on {first['family'].key}), so the worker is redoing "
+                    f"refused it ({first['rejected_completions']}x on {first['family'].key} "
+                    f"{first['rejected_point'].rsplit('-', 1)[-1]}), so the worker is redoing "
                     f"work that can never be accepted. The GPUs look busy and nothing can finish. "
                     f"Reason: {elide(first['rejected_reason'], 220)} -> git pull (the check may be fixed), then run h100; "
                     f"if it repeats, read <point>/logs/supervisor.log.")

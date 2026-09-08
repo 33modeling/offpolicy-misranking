@@ -227,7 +227,12 @@ def test_status_reports_a_finished_point_that_the_completion_check_refuses(
     (2026-09-07 night). Status must call that an error, not "ok"."""
     root = tmp_path / "runs" / TAG
     run, partial, lock = active_family(root)
-    (run / "logs/supervisor.log").write_text(
+    # the refused point is a FINISHED one (it has DONE); the worker is meanwhile
+    # re-running it, which is what current_point() reports as active
+    refused = run.parent / f"{TAG}-s0-math500-d25"
+    (refused / "logs").mkdir(parents=True)
+    (refused / "DONE").write_text("done\n", encoding="utf-8")
+    (refused / "logs/supervisor.log").write_text(
         "[2026-09-08 01:00:00] [done-but-incomplete] ValueError: invalid GRPO policy lineage: config=...\n"
         "[2026-09-08 02:00:00] [done-but-incomplete] ValueError: invalid GRPO policy lineage: config=...\n",
         encoding="utf-8",
@@ -248,9 +253,9 @@ def test_status_reports_a_finished_point_that_the_completion_check_refuses(
         lock.close()
 
     assert "overall_verdict=REDOING_REJECTED_WORK" in output
-    assert "the completion check refused it (2x on math500/s0)" in output
+    assert "the completion check refused it (2x on math500/s0 d25)" in output
     assert "invalid GRPO policy lineage" in output
-    assert "the completion check refused it 2x, so the worker keeps redoing it" in output
+    assert "d25 finished and the completion check refused it 2x, so the worker keeps redoing it" in output
 
 
 def test_rejections_before_the_point_was_accepted_are_not_counted(tmp_path: Path) -> None:

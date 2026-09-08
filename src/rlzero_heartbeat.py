@@ -143,6 +143,41 @@ def check_peers(
                 pass
 
 
+def own_family_progress(root: Path, worker: str, stall: float) -> tuple[str, str]:
+    """The verdict for the family THIS worker holds, or "" when it holds none.
+
+    Without it a node that has written nothing for hours still printed a healthy
+    [progress] line, because five other nodes were writing into the same root
+    (2026-09-07).
+    """
+    import training_progress
+
+    queue = root / ".families"
+    try:
+        markers = sorted(queue.glob("*.owner.json"))
+    except OSError:
+        return "", ""
+    for marker in markers:
+        try:
+            record = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("worker") != worker:
+            continue
+        family = marker.name[: -len(".owner.json")]
+        family_root = root / f"family-{family}"
+        if not family_root.is_dir():
+            return "", ""
+        try:
+            word, line, _ = training_progress.verdict(
+                family_root, total_points=None, stall_seconds=stall
+            )
+        except Exception as exc:
+            return "UNKNOWN", f"own-family probe failed: {exc}"
+        return word, f"{family} {line}"
+    return "", ""
+
+
 def report_progress(
     root: Path,
     *,
@@ -169,6 +204,14 @@ def report_progress(
         )
     except Exception as exc:  # a shared-volume hiccup must not kill the heartbeat
         word, line = "UNKNOWN", f"progress probe failed: {exc}"
+    # The root holds all six nodes' families, so this line can read TRAINING
+    # purely because another node is writing. Say what THIS worker's own family
+    # is doing, from the family this worker holds.
+    own_word, own = own_family_progress(root, worker, stall)
+    if own:
+        line = f"{line}   this worker: {own}"
+        if own_word == "NOT TRAINING":
+            word = "NOT TRAINING"
     loud = word == "NOT TRAINING" or (word == "NOT STARTED" and elapsed > not_started_grace)
     tag = "[NOT TRAINING]" if loud else "[progress]"
     stamped = f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {tag} {line}  (worker {worker})\n"

@@ -1045,7 +1045,10 @@ run_point() {
       # One line that says why this attempt failed, in the worker log and in the
       # point's own log, so status can show it (2026-09-08: five workers cycled
       # grads -> score for seven hours with nothing visible but "try N/3").
-      failure_line=$(grep -E 'config-abort|\[abort\]|Error|Traceback' "$attempt_log" 2>/dev/null \
+      # regime-hard-stall is the watchdog's own verdict ("no progress -> killing
+      # the point"). Without it a killed point reported "no error line" and the
+      # operator could not tell a crash from a kill.
+      failure_line=$(grep -E 'config-abort|\[abort\]|regime-hard-stall|Error|Traceback' "$attempt_log" 2>/dev/null \
         | tail -n 1 | short_reason 240)
       echo "[point-failed] $dataset/s$seed/d$drift try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}"
       mkdir -p "$run/logs" \
