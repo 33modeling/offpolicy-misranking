@@ -356,7 +356,7 @@ run_registered_matrix() {
   GRPO_ADVANTAGE_EPSILON="$(grpo_field "$config" advantage_epsilon)"
   GRPO_LORA_RANK="$(grpo_field "$config" lora_rank)"
   GRPO_LORA_ALPHA="$(grpo_field "$config" lora_alpha)"
-  export GRPO_CHECKPOINT_EVERY=5 REGIME_MAX_RETRIES=3
+  export GRPO_CHECKPOINT_EVERY=5 REGIME_MAX_RETRIES="${ADDITIONAL_REGIME_MAX_RETRIES:-3}"
   OM_TOP_P="$(matrix_field "$config" top_p)"
   OM_THINKING="$(matrix_field "$config" thinking)"
   OM_ATTN="$(matrix_field "$config" attn)"

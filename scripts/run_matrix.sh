@@ -998,6 +998,15 @@ run_point() {
         fi
       fi
       run_complete "$run" "$dataset" "$seed" "$drift" "$source" && return 0
+      # A successful pipeline with invalid artifacts needs a different action,
+      # not another identical GPU run. Propagate the existing contract-failure
+      # code so both matrix and family retry loops yield immediately.
+      failure_line="completion validation failed: ${COMPLETE_REASON:-unknown reason}"
+      echo "[point-failed] $dataset/s$seed/d$drift try $try/$MAX_RETRIES rc=43: $failure_line"
+      mkdir -p "$run/logs" || return 43
+      printf '[%s] [point-failed] try %s/%s rc=43: %s\n' \
+        "$(date '+%F %T')" "$try" "$MAX_RETRIES" "$failure_line" >> "$run/logs/supervisor.log"
+      return 43
     else
       rc=$?
       # One line that says why this attempt failed, in the worker log and in the

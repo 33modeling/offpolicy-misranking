@@ -31,6 +31,44 @@ def test_pipeline_pythonpath_preserves_inherited_runtime_dependencies() -> None:
     assert 'PYTHONPATH="$PIPELINE_REPO/src"' not in script
 
 
+def test_successful_pipeline_with_failed_completion_yields_without_retry(tmp_path):
+    source = (REPO / "scripts/run_matrix.sh").read_text()
+    start = source.index("run_point() {")
+    function = source[start:source.index("\n}\n", start) + 2]
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "checkpoint").write_text("preserve")
+    script = function + '''
+run_dir() { printf '%s\\n' "$TEST_ROOT"; }
+n_train_for_dataset() { echo 400; }
+run_complete() { COMPLETE_REASON='invalid policy lineage: config mismatch'; return 1; }
+reenter_runtime_fields() { return 0; }
+run_pipeline_watchdog() {
+  echo attempt >> "$TEST_ROOT/attempts"
+  echo complete > "$TEST_ROOT/DONE"
+  return 0
+}
+recover_cuda_rollout() { echo unexpected-recovery; return 1; }
+sleep() { echo unexpected-sleep; }
+CONTRACT=''
+DRIFTS=(0 25)
+SEEDS=(0)
+DATASETS=(math500)
+MAX_RETRIES=3
+run_point math500 0 25 '' '' ''
+'''
+    result = subprocess.run(
+        ["bash", "-c", script], env={**os.environ, "TEST_ROOT": str(tmp_path)},
+        cwd=tmp_path, capture_output=True, text=True, timeout=5,
+    )
+    assert result.returncode == 43, result.stdout + result.stderr
+    assert (tmp_path / "attempts").read_text().splitlines() == ["attempt"]
+    assert "unexpected-" not in result.stdout
+    assert "completion validation failed: invalid policy lineage" in result.stdout
+    assert "[point-failed] try 1/3 rc=43:" in (tmp_path / "logs/supervisor.log").read_text()
+    assert (tmp_path / "checkpoint").read_text() == "preserve"
+    assert (tmp_path / "DONE").is_file()
+
+
 def test_policy_lineage_is_validated_with_the_pinned_generation_code() -> None:
     """The policy manifest holds the pinned commit's GrpoConfig fields. Checking it
     against the supervisor's newer GrpoConfig rejected every finished GRPO point

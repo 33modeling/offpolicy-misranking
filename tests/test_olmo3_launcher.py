@@ -47,6 +47,12 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     (checkout / "requirements.txt").write_text("fixture\n")
     (shared / "models/Olmo-3-1025-7B/config.json").write_text("{}\n")
     executable(checkout / "scripts/run_point.sh", "#!/bin/sh\nexit 0\n")
+    executable(checkout / "scripts/run_available_experiments.sh", '''#!/usr/bin/env bash
+set -eu
+exec 8>"$OM_LOCAL_LOCK_DIR/primary.lock"
+flock -n 8 || { echo 'primary lock leaked into handoff'; exit 9; }
+echo '[fixture-fallback] independent experiment admitted'
+''')
     (checkout / "scripts/setup_env.sh").write_text(
         'export GROUP_VOLUME="$TEST_SHARED"\n'
         'export OM_WORK="$TEST_SHARED/work"\n'
@@ -181,7 +187,7 @@ if [ "${TEST_FAIL_FAMILY:-}" = "$key" ]; then
   mkdir -p "$(dirname "$marker")"
   if [ "${TEST_FAIL_ALWAYS:-0}" = 1 ] || [ ! -e "$marker" ]; then
     : > "$marker"
-    exit 43
+    exit "${TEST_FAIL_RC:-43}"
   fi
 fi
 if [ "${TEST_CUDA_FAIL_FAMILY:-}" = "$key" ]; then
@@ -476,6 +482,8 @@ def test_failed_family_restarts_automatically_without_launcher_exit(tmp_path: Pa
             **env,
             "OM_LOCAL_LOCK_DIR": str(tmp_path / "retry-local"),
             "TEST_FAIL_FAMILY": "mbpp-s0",
+            "TEST_FAIL_RC": "1",
+            "OM_RLZERO_FAMILY_ATTEMPTS": "1",
         },
         text=True,
         capture_output=True,
@@ -483,7 +491,7 @@ def test_failed_family_restarts_automatically_without_launcher_exit(tmp_path: Pa
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "[family-retry] mbpp/s0 rc=43" in result.stdout
+    assert "[family-retry] mbpp/s0 rc=1" in result.stdout
     assert "allocation retained" in result.stdout
     claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
     assert len(claims) == 10
@@ -503,6 +511,9 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
             "OM_LOCAL_LOCK_DIR": str(tmp_path / "first-local"),
             "TEST_FAIL_FAMILY": "mbpp-s0",
             "TEST_FAIL_ALWAYS": "1",
+            "TEST_FAIL_RC": "1",
+            "OM_RLZERO_FAMILY_ATTEMPTS": "1",
+            "OM_RLZERO_MAX_FAMILY_FAILURES": "100",
         },
         text=True,
         stdout=subprocess.PIPE,
@@ -515,7 +526,7 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
         # The child writes failure_marker before the supervisor observes exit.
         # Wait for the actual retry transition before sending SIGTERM.
         retry_recorded = any(
-            "[family-retry] mbpp/s0 rc=43" in path.read_text()
+            "[family-retry] mbpp/s0 rc=1" in path.read_text()
             for path in logs.glob("*.log")
         )
         if retry_recorded:
@@ -527,7 +538,7 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
     assert retry_recorded, failed_output
     assert failure_marker.exists()
     assert was_running
-    assert "[family-retry] mbpp/s0 rc=43" in failed_output
+    assert "[family-retry] mbpp/s0 rc=1" in failed_output
     marker = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.queue/generation.git"
     assert marker.read_text().strip() == first_commit
 
@@ -962,18 +973,19 @@ def test_stale_cuda_line_does_not_exempt_a_real_repeating_failure(tmp_path: Path
         timeout=120,
         check=False,
     )
-    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "[cuda-flaky]" not in result.stdout
     assert "[family-loop] math500/s1 failed 1 times in a row (last: try 3/3 rc=2: [config-abort]" in result.stdout
     queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
     assert "last_error=try 3/3 rc=2: [config-abort]" in (queue / "math500-s1.loop").read_text()
-    # the other nine families still run, and the worker stops instead of waiting for ever
+    # Other primary families finish before admission of an independent experiment.
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
     assert "math500-s1" not in claims and len(claims) == 9
     assert "[queue] every family left is marked LOOPING: math500/s1" in result.stdout
+    assert "[fixture-fallback] independent experiment admitted" in result.stdout
 
 
-def test_worker_stops_when_only_looping_families_remain(tmp_path: Path) -> None:
+def test_worker_hands_off_when_only_looping_families_remain(tmp_path: Path) -> None:
     """A LOOPING family is skipped by every worker, so waiting for one is waiting
     for ever: the node held four GPUs all night printing '[queue] waiting for 1
     families' (2026-09-08)."""
@@ -993,11 +1005,14 @@ def test_worker_stops_when_only_looping_families_remain(tmp_path: Path) -> None:
         timeout=120,
         check=False,
     )
-    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "[queue] every family left is marked LOOPING: mbpp/s4" in result.stdout
     assert "OM_RLZERO_CLEAR_LOOPS=1" in result.stdout
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
     assert "mbpp-s4" not in claims and len(claims) == 9
+    assert (queue / "mbpp-s4.loop").is_file()
+    assert "[fixture-fallback] independent experiment admitted" in result.stdout
+    assert not list((queue.parent / ".workers").glob("*.json"))
 
 
 def test_failed_family_is_retried_by_the_same_worker_before_moving_on(tmp_path: Path) -> None:
@@ -1009,6 +1024,8 @@ def test_failed_family_is_retried_by_the_same_worker_before_moving_on(tmp_path: 
             **env,
             "OM_LOCAL_LOCK_DIR": str(tmp_path / "retry-same-local"),
             "TEST_FAIL_FAMILY": "math500-s2",
+            "TEST_FAIL_RC": "1",
+            "OM_RLZERO_FAMILY_ATTEMPTS": "1",
         },
         text=True,
         capture_output=True,

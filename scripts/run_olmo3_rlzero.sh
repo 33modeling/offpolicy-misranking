@@ -951,6 +951,8 @@ for marker in "$QUEUE"/*.loop; do
     rm -f -- "$marker" && echo "[queue] cleared loop marker $(basename "$marker") (OM_RLZERO_CLEAR_LOOPS=1)"
     continue
   fi
+  # New permanent contract failures are not legacy CUDA/config-abort markers.
+  grep -Eq '(^| )last_rc=43( |$)' "$marker" && continue
   marker_error=$(sed -n 's/^last_error=//p' "$marker" 2>/dev/null | head -1)
   if [ "$(failure_kind "$marker_error" 2>/dev/null || printf other)" = runtime ]; then
     rm -f -- "$marker" \
@@ -969,6 +971,9 @@ note_family_failure() {  # note_family_failure <dataset> <seed> <rc>; sets LAST_
   local key="$1-s$2" n last_error run
   last_error=$(family_last_error "$1" "$2")
   LAST_FAILURE_KIND=$(failure_kind "$last_error" 2>/dev/null || printf other)
+  # rc=43 is a permanent contract/postcondition failure from run_matrix.
+  # It must not be reclassified by an older CUDA log or retried on a later claim.
+  [ "$3" -ne 43 ] || LAST_FAILURE_KIND=other
   if [ "$LAST_FAILURE_KIND" = runtime ]; then
     n=$(( ${FAMILY_CUDA_FAILURES[$key]:-0} + 1 ))
     FAMILY_CUDA_FAILURES[$key]=$n
@@ -978,7 +983,7 @@ note_family_failure() {  # note_family_failure <dataset> <seed> <rc>; sets LAST_
   FAMILY_CUDA_FAILURES[$key]=0
   n=$(( ${FAMILY_FAILURES[$key]:-0} + 1 ))
   FAMILY_FAILURES[$key]=$n
-  [ "$n" -ge "$MAX_FAMILY_FAILURES" ] || return 0
+  [ "$3" -eq 43 ] || [ "$n" -ge "$MAX_FAMILY_FAILURES" ] || return 0
   {
     echo "family=$1/s$2 worker=$WORKER_ID host=$HOST_TAG consecutive_failures=$n last_rc=$3"
     echo "last_error=${last_error:-none captured}"
@@ -1047,6 +1052,7 @@ PYEOF
     fi
     [ "$rc" -ne 0 ] || break
     [ "$rc" -ne 43 ] || break
+    [ "$attempt" -lt "$FAMILY_ATTEMPTS" ] || break
     sleep 30
   done
   if [ "$rc" -ne 0 ]; then
@@ -1177,10 +1183,10 @@ while :; do
   [ "$remaining" -eq 0 ] && break
   # A LOOPING family is never released by another worker, so waiting for one is
   # waiting for ever: the node burned a night in "[queue] waiting for N families"
-  # while holding four GPUs (2026-09-08). Say so and stop instead.
+  # while holding four GPUs (2026-09-08). Yield to independent matrices instead.
   if [ "$looping" -gt 0 ] && [ "$looping" -eq "$remaining" ]; then
     echo "[queue] every family left is marked LOOPING:$looping_list" | tee -a "$LOG"
-    echo "[queue] a LOOPING family is skipped by every worker until you clear it, so this worker has nothing to do and is stopping." | tee -a "$LOG"
+    echo "[queue] primary families are preserved; switching this node to independent experiments" | tee -a "$LOG"
     echo "[queue] see the reason in <family>/<point>/logs/supervisor.log (bash scripts/why.sh), fix it, then relaunch with OM_RLZERO_CLEAR_LOOPS=1" | tee -a "$LOG"
     stopped_for_looping=1
     break
@@ -1198,9 +1204,17 @@ while :; do
     fi
   fi
 done
-# Nothing this worker may take is left, and what remains needs the operator: stop
-# with a non-zero status instead of running the final collection on a partial matrix.
-[ "${stopped_for_looping:-0}" = 1 ] && exit 1
+# Do not publish the partial primary matrix. Release only our own helpers/lock;
+# each independent launcher performs its own GPU admission and artifact checks.
+if [ "${stopped_for_looping:-0}" = 1 ]; then
+  cleanup_owner
+  stop_supervisor_keepalive
+  stop_worker_heartbeat
+  exec 8>&-
+  export OM_LOCAL_LOCK_DIR="$LOCAL_ROOT"
+  trap - EXIT
+  exec bash "$SUPERVISOR_RUNTIME_REPO/scripts/run_available_experiments.sh"
+fi
 if [ -n "$ONLY_FAMILIES" ]; then
   echo "[queue] this node's families are complete: $ONLY_FAMILIES"
   all_done=1
