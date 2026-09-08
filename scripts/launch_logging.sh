@@ -13,6 +13,7 @@ exec {LAUNCH_STDOUT}>&1 {LAUNCH_STDERR}>&2
 # excerpt prints the last error lines. `bash scripts/run_qwen35_9b.sh status`
 # gives the same picture on demand.
 TERMINAL_TAGS='stage|exit|launch|progress|abort|additional|model|regime-hard-stall|regime-watchdog|permanent-contract|prompt-rebuild|family|family-order|family-fail|queue|cuda-recovery|recovery-abort|contract|contract-fail|regime-contract|regime-contract-abort|transfer-smoke|transfer-smoke-abort|27b-runtime|check|download|seal|qualified|qualification-abort|signal-qualified|signal-abort|data|locate|code|cleanup|oom-backoff|grpo'
+TERMINAL_TAGS+='|primary-pending|primary-complete'
 TERMINAL_PATTERN="^(\[[0-9: -]+\] )?\[($TERMINAL_TAGS)\]|^(START|OK|FAILED|DIAGNOSIS|ACTION|EVIDENCE)\b"
 if [ "${ADDITIONAL_VERBOSE:-0}" = 1 ]; then
   exec > >(trap '' INT TERM; tee -a "$SESSION_LOG") 2>&1
@@ -28,6 +29,10 @@ log_stage() {
   printf '[stage] %s  %s\n' "$(date -u +%H:%M:%SZ)" "$LAUNCH_STAGE"
 }
 failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only if unknown
+  if [ "$LAUNCH_STAGE" = primary-completion ]; then
+    printf 'ACTION: finish the OLMo3 primary matrix first; no Qwen GPU preflight was started.\n(full log: %s)\n' "$SESSION_LOG" >&"$LAUNCH_STDOUT"
+    return 0
+  fi
   local doctor_seconds=${ADDITIONAL_FAILURE_DOCTOR_TIMEOUT:-30} doctor_rc=0
   [[ "$doctor_seconds" =~ ^[1-9][0-9]*$ ]] || doctor_seconds=30
   {

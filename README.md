@@ -4,9 +4,17 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
-## Qwen3.5-9B replication (2026-09-06)
+## Run OLMo3 First
 
-The selected additional experiment is now `bash scripts/run_qwen35_9b.sh
+Finish the OLMo3 H100 primary matrix before starting another model:
+`bash scripts/run_olmo3_rlzero.sh run h100`. Failed families yield only to
+other eligible OLMo3 families. Qwen/additional compute is blocked until all
+40 primary points and the final collection are complete. Existing healthy
+OLMo3 workers and their checkpoints do not need a restart for this policy.
+
+## Qwen3.5-9B replication (after OLMo3 completion)
+
+After the primary finishes, the additional entrypoint is `bash scripts/run_qwen35_9b.sh
 prepare|check|run`. It pins `Qwen/Qwen3.5-9B`, uses the same 40-point math/code
 design, and never launches the retained 27B configuration implicitly.
 See [the 9B runbook](docs/QWEN35_9B_RUNBOOK.md) for commands and logging.

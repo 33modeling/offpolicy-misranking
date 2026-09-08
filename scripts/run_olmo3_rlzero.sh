@@ -1169,6 +1169,7 @@ while :; do
       fi
       continue
     fi
+    start_supervisor_keepalive || exit 1
     (
       flock -n 9 || exit 75
       family_complete "$dataset" "$seed" && exit 0
@@ -1236,15 +1237,15 @@ while :; do
     sleep "$CLAIM_YIELD_SECONDS"
   done < <(ordered_families)
   [ "$remaining" -eq 0 ] && break
-  # A LOOPING family is never released by another worker, so waiting for one is
-  # waiting for ever: the node burned a night in "[queue] waiting for N families"
-  # while holding four GPUs (2026-09-08). Yield to independent matrices instead.
+  # OLMo3 must finish before any independent model. Keep the worker available
+  # for repaired primary families without repeatedly running a known failure.
   if [ "$looping" -gt 0 ] && [ "$looping" -eq "$remaining" ]; then
     echo "[queue] every family left is marked LOOPING:$looping_list" | tee -a "$LOG"
-    echo "[queue] primary families are preserved; switching this node to independent experiments" | tee -a "$LOG"
+    echo "[primary-blocked] OLMo3 is incomplete; Qwen/additional handoff disabled; retaining primary worker" | tee -a "$LOG"
     echo "[queue] see the reason in <family>/<point>/logs/supervisor.log (bash scripts/why.sh), fix it, then relaunch with OM_RLZERO_CLEAR_LOOPS=1" | tee -a "$LOG"
-    stopped_for_looping=1
-    break
+    stop_supervisor_keepalive
+    sleep "$QUEUE_WAIT_SECONDS"
+    continue
   fi
   if [ "$claimed" -eq 0 ]; then
     if [ "$next_attempt_wait" -gt 0 ]; then
@@ -1259,17 +1260,6 @@ while :; do
     fi
   fi
 done
-# Do not publish the partial primary matrix. Release only our own helpers/lock;
-# each independent launcher performs its own GPU admission and artifact checks.
-if [ "${stopped_for_looping:-0}" = 1 ]; then
-  cleanup_owner
-  stop_supervisor_keepalive
-  stop_worker_heartbeat
-  exec 8>&-
-  export OM_LOCAL_LOCK_DIR="$LOCAL_ROOT"
-  trap - EXIT
-  exec bash "$SUPERVISOR_RUNTIME_REPO/scripts/run_available_experiments.sh"
-fi
 if [ -n "$ONLY_FAMILIES" ]; then
   echo "[queue] this node's families are complete: $ONLY_FAMILIES"
   all_done=1

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rotate registered independent matrices after primary work becomes blocked.
+# Rotate registered independent matrices only after primary work is complete.
 # No downloads, artifact deletion or promotion of a partial primary matrix.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -21,6 +21,9 @@ for profile in "${PROFILES[@]}"; do
     *) echo "[fallback] unknown profile: $profile"; exit 2 ;;
   esac
 done
+source scripts/setup_env.sh || exit 1
+source scripts/require_olmo3_complete.sh || exit 1
+require_olmo3_complete || exit $?
 COOLDOWN=${OM_RLZERO_FALLBACK_COOLDOWN_SECONDS:-900}
 [[ "$COOLDOWN" =~ ^[1-9][0-9]*$ ]] || exit 2
 LOCAL_LOCK_DIR=${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}

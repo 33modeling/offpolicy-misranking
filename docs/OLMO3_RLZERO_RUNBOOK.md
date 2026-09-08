@@ -142,6 +142,26 @@ It is a preview: the registered result is the full 40-point collection.
 
 ## Failure loops
 
+OLMo3 is the first priority. A blocked primary worker never hands off to Qwen
+or another model. It tries other eligible OLMo3 families; if all remaining
+families are `LOOPING`, it reports `[primary-blocked]` and rechecks the primary
+queue without retrying the known-broken points. GPU keepalive is stopped in
+this fully blocked state; it is not training progress or a throughput fix.
+
+Additional `--run` and `--check` commands (including direct Qwen launchers and
+the rotation runner) require the shared OLMo3 generation/config binding,
+all 40 `DONE` points, all 10 family completion stamps, and the final collection.
+The gate defaults to the H100 v2 matrix; `OM_PRIMARY_PROFILE=baseline` selects
+the baseline matrix. Existing `OM_OLMO3_ROOT`, `OM_OLMO3_RESULTS`,
+`OM_OLMO3_MODEL_TAG`, and `OM_RLZERO_CONFIG` overrides must identify that same
+primary matrix. Missing or stale evidence returns 75 before GPU preflight.
+`prepare` remains an offline-cluster-independent download operation. The 9B
+wrapper no longer rotates automatically to other models.
+
+This supervisor change does not alter generation pins or checkpoint formats.
+It does not hot-patch an already running frozen supervisor or stop a remote
+Qwen process. Do not restart healthy OLMo3 workers merely to update this policy.
+
 A point that dies of the same error on every attempt is not retried forever.
 After `OM_RLZERO_MAX_FAMILY_FAILURES` (default 4) consecutive failures the
 launcher writes `.families/<dataset>-s<seed>.loop` with the last error, prints

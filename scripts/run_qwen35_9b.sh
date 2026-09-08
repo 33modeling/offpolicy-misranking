@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Try 9B first, then registered smaller/domain runs; never implicitly launch 27B.
+# Explicit 9B entrypoint; the shared launcher requires full OLMo3 completion.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # No argument = run. `run` already performs every check (snapshot seal, FLA,
@@ -42,9 +42,7 @@ case "$MODE" in
   status) exec bash scripts/status_qwen35.sh ;;
   run)
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
-    export OM_RLZERO_FALLBACK_PROFILES="${OM_RLZERO_FALLBACK_PROFILES:-qwen35_2b qwen35_4b olmo3_domains}"
-    echo '[additional] trying qwen35 first; blocked/completed work yields to the selected independent profiles'
-    exec bash scripts/run_available_experiments.sh --first qwen35
+    exec bash scripts/run_additional_experiments.sh --run qwen35
     ;;
   prepare|check)
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }

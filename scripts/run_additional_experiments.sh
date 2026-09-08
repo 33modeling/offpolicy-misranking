@@ -69,6 +69,13 @@ for config in "${MATRIX_CONFIGS[@]}"; do
   [ -s "$config" ] || { echo "[abort] additional config missing: $config"; exit 1; }
 done
 
+# A free node is not evidence that the cluster-wide primary matrix finished.
+if [ "$MODE" != --prepare ]; then
+  log_stage primary-completion
+  source scripts/require_olmo3_complete.sh
+  require_olmo3_complete || exit $?
+fi
+
 # OM_MATH_VERIFIER=math_verify is exported below, but the verifier is a vendored
 # wheel bundle, not a venv package. Without this bootstrap every non-exact math
 # reward raises data._math_reward's RuntimeError ("math-verify is required")

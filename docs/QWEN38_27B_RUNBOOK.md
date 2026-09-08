@@ -46,7 +46,9 @@ reused. On the network-enabled preparation machine:
 bash scripts/run_qwen38_27b.sh prepare
 ```
 
-On an idle four-H100 node, first perform offline compatibility checks:
+Only after OLMo3's 40 points and final collection are complete, use an idle
+four-H100 node for offline compatibility checks. The launcher blocks compute
+before that cluster-wide completion, even on a locally idle node:
 
 ```bash
 bash scripts/run_qwen38_27b.sh check

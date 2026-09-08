@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from test_primary_priority import completed_primary
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -27,6 +29,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     (root / "scripts").mkdir(parents=True)
     (root / "src").mkdir()
     (root / "configs").mkdir()
+    completed_primary(root, work)
     (root / "scripts/launch_logging.sh").write_text(
         (ROOT / "scripts/launch_logging.sh").read_text(), encoding="utf-8"
     )

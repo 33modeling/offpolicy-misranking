@@ -91,10 +91,13 @@ It writes the expected JSON beside the original as
 `*.json.expected-<digest>.json`; the recorded contract is not overwritten.
 The exact remote mismatch cannot be resolved without comparing those files.
 
-For the failed, idle Qwen allocation only, update its idle checkout with
-`git pull --ff-only`, then run `bash scripts/run_qwen35_9b.sh`. If its 9B
-contract remains incompatible, the rotation tries the other selected profiles.
-Do not restart healthy primary OLMo workers for this launcher change.
+OLMo3 must finish first, including all 40 points and the final collection.
+An idle node or a blocked OLMo3 family does not authorize a Qwen run. The shared
+launcher returns 75 before GPU preflight when primary completion is missing.
+Only after OLMo3 completion, update an idle Qwen checkout with
+`git pull --ff-only`, then run `bash scripts/run_qwen35_9b.sh`. This wrapper
+does not rotate to other models. Do not restart healthy primary OLMo workers
+for this launcher change. The recovery commands below are also post-primary.
 
 If inspection confirms an obsolete, metadata-only Qwen root, stop the Qwen
 launchers using that root before this separate recovery command:

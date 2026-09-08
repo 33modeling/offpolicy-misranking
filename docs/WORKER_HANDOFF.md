@@ -1,10 +1,12 @@
-# Blocked primary work and independent experiment rotation
+# OLMo3 first, independent experiments only after completion
 
 The OLMo launcher preserves blocked family checkpoints and rollouts. It finishes
 other eligible primary families first. When every remaining selected primary
 family is marked LOOPING, it does not exit or collect a partial matrix as complete.
-It stops its own heartbeat/keepalive, releases the node's primary lock, and hands
-the process to `scripts/run_available_experiments.sh` from the supervisor snapshot.
+It keeps its heartbeat and primary lock, stops GPU keepalive, and reports
+`[primary-blocked]` while rechecking OLMo3 work. It never hands the process to
+Qwen or another independent matrix. Repaired, explicitly unblocked primary
+families can be resumed by the same worker.
 
 ## Independent work
 
@@ -14,11 +16,12 @@ The default registered profile order is:
 olmo3_domains qwen35_2b qwen35_4b qwen35 qwen38
 ```
 
-Override the selection before launching OLMo when only some snapshots are prepared:
+Only after OLMo3 completes all 40 points and the final collection, explicitly
+start a separate rotation if needed:
 
 ```bash
 OM_RLZERO_FALLBACK_PROFILES="olmo3_domains qwen35_2b" \
-  bash scripts/run_olmo3_rlzero.sh run h100
+  bash scripts/run_available_experiments.sh
 ```
 
 These are the existing `run_additional_experiments.sh --run <profile>` matrices,
@@ -40,10 +43,11 @@ stays alive and checks every 30 seconds. It cannot perform useful GPU computatio
 without ready work; it does not disguise keepalive as training. Upload/prepare the
 registered snapshots or select other registered profiles when none are available.
 
-The primary remains incomplete. Fix its recorded cause and deliberately relaunch
-it with `OM_RLZERO_CLEAR_LOOPS=1` to resume preserved artifacts. Do not launch it on
-a node while an independent experiment is using the GPUs. This handoff does not
-automatically resume a blocked primary while the independent matrix runs.
+The rotation and direct additional compute launchers check the shared primary
+completion binding, family stamps, all 40 DONE files and final report outputs
+before any GPU preflight. Missing or stale completion returns 75. This guard
+does not stop a process already running from an older frozen checkout; do not
+restart healthy OLMo3 workers just to update the policy.
 
 ## Completion postcondition
 
@@ -63,7 +67,7 @@ DONE alone is not proof that strict completion validation succeeded.
 CPU fixtures cover postcondition failure after a successful pipeline, immediate
 shared blocking, marker preservation across worker startup, rotation after an
 unavailable profile, completed-profile skipping, environment isolation, and
-primary-lock/heartbeat handoff. Real H100 execution and snapshot availability
+primary-only waiting/resumption and cluster-wide completion admission. Real H100 execution and snapshot availability
 must be checked on the cluster; local tests use fake GPU/model launchers.
 
 ## Bounded waits and retry ownership

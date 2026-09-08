@@ -79,17 +79,19 @@ def test_failed_qwen_contract_yields_to_another_real_launcher(tmp_path):
 
 
 @pytest.mark.parametrize("args", [[], ["run"]])
-def test_qwen_entrypoint_tries_9b_first_without_implicit_27b(tmp_path, args):
+def test_qwen_entrypoint_does_not_rotate_to_other_models(tmp_path, args):
     repo, env = checkout(tmp_path)
-    runner = repo / "scripts/run_available_experiments.sh"
-    runner.write_text('printf "%s|%s\\n" "$*" "$OM_RLZERO_FALLBACK_PROFILES"\n')
+    runner = repo / "scripts/run_additional_experiments.sh"
+    runner.write_text('printf "args=%s\\n" "$*"\n')
     env.pop("OM_RLZERO_FALLBACK_PROFILES", None)
     result = subprocess.run(
         ["bash", "scripts/run_qwen35_9b.sh", *args], cwd=repo, env=env,
         text=True, capture_output=True, timeout=5,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "--first qwen35|qwen35_2b qwen35_4b olmo3_domains" in result.stdout
+    assert "args=--run qwen35" in result.stdout
+    assert "qwen35_2b" not in result.stdout
+    assert "olmo3_domains" not in result.stdout
     assert "qwen38" not in result.stdout
 
 

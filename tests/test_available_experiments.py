@@ -6,12 +6,20 @@ import subprocess
 
 import pytest
 
+from test_primary_priority import completed_primary
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def primary_fixture(repo):
+    completed_primary(repo, repo / "work")
+    (repo / "scripts/setup_env.sh").write_text('export OM_WORK="$PWD/work"\n')
 
 
 def test_failed_profile_yields_and_success_is_not_repeated(tmp_path):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
+    primary_fixture(tmp_path)
     shutil.copy2(ROOT / "scripts/run_available_experiments.sh", scripts)
     (scripts / "run_additional_experiments.sh").write_text('''#!/usr/bin/env bash
 set -eu
@@ -59,6 +67,7 @@ def test_unknown_profile_is_rejected_before_any_execution(tmp_path):
 def test_explicit_snapshot_does_not_leak_to_independent_profiles(tmp_path, args):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
+    primary_fixture(tmp_path)
     shutil.copy2(ROOT / "scripts/run_available_experiments.sh", scripts)
     (scripts / "run_additional_experiments.sh").write_text('''#!/usr/bin/env bash
 printf '%s|%s\\n' "$2" "${OM_SNAPSHOT_PATH-unset}" >> "$TEST_CALLS"

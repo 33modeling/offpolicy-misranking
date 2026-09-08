@@ -994,15 +994,41 @@ def test_repeated_cuda_faults_release_the_family_for_another_node(tmp_path: Path
     assert len(claims) == 10
 
 
+def run_until_primary_blocked(checkout: Path, env: dict[str, str], repair=False):
+    capture = checkout.parent / "primary-blocked-output.log"
+    with capture.open("w") as output:
+        worker = subprocess.Popen(
+            ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"], cwd=checkout,
+            env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 120
+            while "[primary-blocked]" not in capture.read_text():
+                assert worker.poll() is None, capture.read_text()
+                assert time.monotonic() < deadline, capture.read_text()
+                time.sleep(0.05)
+            assert worker.poll() is None
+            if repair:
+                root = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1"
+                (root / ".families/mbpp-s4.loop").unlink()
+                worker.wait(timeout=30)
+            else:
+                os.killpg(worker.pid, signal.SIGTERM)
+                worker.wait(timeout=10)
+        finally:
+            if worker.poll() is None:
+                os.killpg(worker.pid, signal.SIGKILL)
+                worker.wait(timeout=10)
+    return subprocess.CompletedProcess(worker.args, worker.returncode, capture.read_text(), "")
+
+
 def test_stale_cuda_line_does_not_exempt_a_real_repeating_failure(tmp_path: Path) -> None:
     """2026-09-08: five workers re-claimed the same family all night because an
     old CUDA line in a stage log classified every later failure as a CUDA
     fault. The attempt's own [point-failed] line decides now."""
     checkout, env = fixture_checkout(tmp_path)
-    result = subprocess.run(
-        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
-        cwd=checkout,
-        env={
+    result = run_until_primary_blocked(
+        checkout, {
             **env,
             "OM_LOCAL_LOCK_DIR": str(tmp_path / "stale-cuda-local"),
             "TEST_STALE_CUDA_FAIL_FAMILY": "math500-s1",
@@ -1011,27 +1037,21 @@ def test_stale_cuda_line_does_not_exempt_a_real_repeating_failure(tmp_path: Path
             "OM_RLZERO_STALE_PROCESS_TIMEOUT": "1",
             "OM_RLZERO_GPU_CLEANUP_TIMEOUT": "1",
         },
-        text=True,
-        capture_output=True,
-        timeout=120,
-        check=False,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 130, result.stdout + result.stderr
     assert "[cuda-flaky]" not in result.stdout
     assert "[family-loop] math500/s1 failed 1 times in a row (last: try 3/3 rc=2: [config-abort]" in result.stdout
     queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
     assert "last_error=try 3/3 rc=2: [config-abort]" in (queue / "math500-s1.loop").read_text()
-    # Other primary families finish before admission of an independent experiment.
+    # Other primary families finish, but an incomplete matrix never admits Qwen.
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
     assert "math500-s1" not in claims and len(claims) == 9
     assert "[queue] every family left is marked LOOPING: math500/s1" in result.stdout
-    assert "[fixture-fallback] independent experiment admitted" in result.stdout
+    assert "[fixture-fallback]" not in result.stdout
+    assert "Qwen/additional handoff disabled" in result.stdout
 
 
-def test_worker_hands_off_when_only_looping_families_remain(tmp_path: Path) -> None:
-    """A LOOPING family is skipped by every worker, so waiting for one is waiting
-    for ever: the node held four GPUs all night printing '[queue] waiting for 1
-    families' (2026-09-08)."""
+def test_worker_retains_primary_queue_when_only_looping_families_remain(tmp_path: Path) -> None:
     checkout, env = fixture_checkout(tmp_path)
     queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
     queue.mkdir(parents=True)
@@ -1039,23 +1059,33 @@ def test_worker_hands_off_when_only_looping_families_remain(tmp_path: Path) -> N
         "family=mbpp/s4 worker=w host=h consecutive_failures=4 last_rc=1\n"
         "last_error=torch.OutOfMemoryError: CUDA out of memory\nmarked_at_utc=2026-09-08T03:00:00Z\n"
     )
-    result = subprocess.run(
-        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
-        cwd=checkout,
-        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "looping-only-local")},
-        text=True,
-        capture_output=True,
-        timeout=120,
-        check=False,
+    result = run_until_primary_blocked(
+        checkout, {**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "looping-only-local")},
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 130, result.stdout + result.stderr
     assert "[queue] every family left is marked LOOPING: mbpp/s4" in result.stdout
     assert "OM_RLZERO_CLEAR_LOOPS=1" in result.stdout
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
     assert "mbpp-s4" not in claims and len(claims) == 9
     assert (queue / "mbpp-s4.loop").is_file()
-    assert "[fixture-fallback] independent experiment admitted" in result.stdout
+    assert "[fixture-fallback]" not in result.stdout
+    assert "Qwen/additional handoff disabled" in result.stdout
     assert not list((queue.parent / ".workers").glob("*.json"))
+
+
+def test_blocked_worker_resumes_repaired_olmo_family_without_qwen(tmp_path: Path) -> None:
+    checkout, env = fixture_checkout(tmp_path)
+    root = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1"
+    (root / ".families").mkdir(parents=True)
+    (root / ".families/mbpp-s4.loop").write_text("last_rc=43\nlast_error=fixture\n")
+    result = run_until_primary_blocked(
+        checkout, {**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "repair-local")}, repair=True,
+    )
+    assert result.returncode == 0, result.stdout
+    assert "[complete] all 10 families / 40 points" in result.stdout
+    assert "[fixture-fallback]" not in result.stdout
+    claims = (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()
+    assert len(claims) == 10
 
 
 def test_failed_family_is_retried_by_the_same_worker_before_moving_on(tmp_path: Path) -> None:
@@ -1090,10 +1120,8 @@ def test_a_cuda_fault_that_reproduces_every_time_stops_being_exempt(tmp_path: Pa
     transient. With no lifetime bound, a fault that reproduces on every attempt
     cycled die -> wait -> die for ever and was never marked LOOPING."""
     checkout, env = fixture_checkout(tmp_path)
-    result = subprocess.run(
-        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
-        cwd=checkout,
-        env={
+    result = run_until_primary_blocked(
+        checkout, {
             **env,
             "OM_LOCAL_LOCK_DIR": str(tmp_path / "runtime-bound-local"),
             "TEST_CUDA_FAIL_FAMILY": "math500-s1",
@@ -1103,11 +1131,8 @@ def test_a_cuda_fault_that_reproduces_every_time_stops_being_exempt(tmp_path: Pa
             "OM_RLZERO_STALE_PROCESS_TIMEOUT": "1",
             "OM_RLZERO_GPU_CLEANUP_TIMEOUT": "1",
         },
-        text=True,
-        capture_output=True,
-        timeout=180,
-        check=False,
     )
+    assert result.returncode == 130, result.stdout
     assert "every one a CUDA runtime fault" in result.stdout, result.stdout[-3000:]
     queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
     marker = (queue / "math500-s1.loop").read_text()
