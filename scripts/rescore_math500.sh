@@ -2,9 +2,9 @@
 # Rescore the finished MATH-500 families with the corrected verifier
 # (registered handling, paper plan §9.1, 2026-09-08).
 #
-#   bash scripts/rescore_math500.sh              # dry run: counts only, changes nothing
-#   bash scripts/rescore_math500.sh apply        # rewrite every complete math500 family
-#   bash scripts/rescore_math500.sh apply 0 1    # only seeds 0 and 1
+#   bash scripts/rescore_math500.sh              # rescore every complete math500 family
+#   bash scripts/rescore_math500.sh 0 1          # only seeds 0 and 1
+#   bash scripts/rescore_math500.sh dry          # preview: counts only, changes nothing
 #
 # No GPU, no regeneration, no retraining. Rewards are recomputed from the stored
 # responses; the pinned value stays in each row as `reward_pinned`, the pinned
@@ -22,8 +22,8 @@ cd "$(dirname "$0")/.."
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
-MODE=dry
-[ "${1:-}" = apply ] && { MODE=apply; shift; }
+MODE=apply
+case "${1:-}" in dry|preview) MODE=dry; shift ;; apply) shift ;; esac
 PROFILE=h100
 case "${1:-}" in baseline|h100) PROFILE=$1; shift ;; esac
 case "$PROFILE" in
