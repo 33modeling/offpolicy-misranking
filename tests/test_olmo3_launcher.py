@@ -501,6 +501,11 @@ def test_failed_family_restarts_automatically_without_launcher_exit(tmp_path: Pa
 
 
 def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) -> None:
+    """A queue that has started a point keeps its generation commit across a
+    supervisor update. The failing family is math500/s0: under the claim order
+    (most work left first) the five mbpp families run before it, so a point
+    exists when the first launcher is interrupted. With mbpp/s0 failing first
+    nothing would have started and the queue would legitimately rebind."""
     checkout, env = fixture_checkout(tmp_path)
     first_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=checkout, text=True
@@ -511,7 +516,7 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
         env={
             **env,
             "OM_LOCAL_LOCK_DIR": str(tmp_path / "first-local"),
-            "TEST_FAIL_FAMILY": "mbpp-s0",
+            "TEST_FAIL_FAMILY": "math500-s0",
             "TEST_FAIL_ALWAYS": "1",
             "TEST_FAIL_RC": "1",
             "OM_RLZERO_FAMILY_ATTEMPTS": "1",
@@ -521,14 +526,14 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    failure_marker = Path(env["TEST_SHARED"]) / "work/fail-mbpp-s0"
+    failure_marker = Path(env["TEST_SHARED"]) / "work/fail-math500-s0"
     logs = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/logs"
     retry_recorded = False
     for _ in range(200):
         # The child writes failure_marker before the supervisor observes exit.
         # Wait for the actual retry transition before sending SIGTERM.
         retry_recorded = any(
-            "[family-retry] mbpp/s0 rc=1" in path.read_text()
+            "[family-retry] math500/s0 rc=1" in path.read_text()
             for path in logs.glob("*.log")
         )
         if retry_recorded:
@@ -540,7 +545,7 @@ def test_partial_suite_resumes_original_commit_after_git_pull(tmp_path: Path) ->
     assert retry_recorded, failed_output
     assert failure_marker.exists()
     assert was_running
-    assert "[family-retry] mbpp/s0 rc=1" in failed_output
+    assert "[family-retry] math500/s0 rc=1" in failed_output
     marker = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.queue/generation.git"
     assert marker.read_text().strip() == first_commit
 
