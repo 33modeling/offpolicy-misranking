@@ -4,9 +4,18 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 ONCE=0
-case "${1:-}" in --once) ONCE=1 ;; '') ;; *) exit 2 ;; esac
+FIRST=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --once) ONCE=1; shift ;;
+    --first) [ "$#" -ge 2 ] || exit 2; FIRST=$2; shift 2 ;;
+    *) echo '[fallback] usage: run_available_experiments.sh [--once] [--first PROFILE]'; exit 2 ;;
+  esac
+done
 read -r -a PROFILES <<< "${OM_RLZERO_FALLBACK_PROFILES:-olmo3_domains qwen35_2b qwen35_4b qwen35 qwen38}"
+[ -z "$FIRST" ] || PROFILES=("$FIRST" "${PROFILES[@]}")
 [ "${#PROFILES[@]}" -gt 0 ] || { echo '[fallback] no registered profiles selected'; exit 2; }
+SNAPSHOT_PROFILE=${PROFILES[0]}
 for profile in "${PROFILES[@]}"; do
   case "$profile" in olmo3_domains|qwen35_2b|qwen35_4b|qwen35|qwen38) ;;
     *) echo "[fallback] unknown profile: $profile"; exit 2 ;;
@@ -53,7 +62,11 @@ while :; do
     now=$(date +%s)
     [ "$now" -ge "${READY_AT[$profile]:-0}" ] || continue
     echo "[fallback] starting registered profile=$profile (offline, one matrix attempt)"
-    setsid bash scripts/run_additional_experiments.sh --run "$profile" 7>&- &
+    # An explicit snapshot belongs to the requested first model, not its
+    # independent fallbacks. Keep it in the parent for that model's retries.
+    snapshot_env=()
+    [ "$profile" = "$SNAPSHOT_PROFILE" ] || snapshot_env=(-u OM_SNAPSHOT_PATH)
+    setsid env "${snapshot_env[@]}" bash scripts/run_additional_experiments.sh --run "$profile" 7>&- &
     CHILD=$!
     wait "$CHILD"
     rc=$?

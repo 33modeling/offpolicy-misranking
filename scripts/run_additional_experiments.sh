@@ -402,6 +402,18 @@ run_registered_matrix() {
   export OM_STALL_MINUTES=30 HYBRID_PROMPTS=24 K_CELL=8 RADIUS_MODE=gaussian
 
   for model_key in "${model_keys[@]}"; do
+    export REGIME_MODEL_TAG="$run_id-$method-$model_key"
+    export REGIME_ROOT="$OM_WORK/runs/$run_id/$model_key"
+    export REGIME_RESULTS="$OM_WORK/results/$run_id/$model_key"
+    export REGIME_QUARANTINE="$OM_WORK/quarantine/$run_id/$model_key"
+    export REGIME_MATRIX="$OM_WORK/contracts/$run_id-$model_key-$config_id.json"
+    # Shared across nodes and held through preflight and computation. A root
+    # reset needs the exclusive lease, not the age of an informational owner.
+    exec {MATRIX_LEASE_FD}>"$OM_WORK/locks/$run_id-$model_key.lifecycle.lock"
+    flock -s -w "${ADDITIONAL_MATRIX_LOCK_SECONDS:-60}" "$MATRIX_LEASE_FD" || {
+      echo "[abort] matrix maintenance is busy; yielding $model_key"
+      return 75
+    }
     log_stage "snapshot-$model_key"
     # Hand-uploaded snapshots: find by content, link the pinned name and official
     # shard names if the upload used different ones. Nothing is moved or deleted.
@@ -444,6 +456,20 @@ run_registered_matrix() {
       ) 6>"$OM_WORK/locks/$run_id-dataset-qualification.lock" | tee -a "$log"
       qualification_ready=1
     fi
+    if [ "$MODE" = "--run" ]; then
+      log_stage "matrix-contract-$model_key"
+      matrix_git=$("$PY" src/regime_contract.py matrix-git --root "$REGIME_ROOT" --fallback "$GIT") \
+        || { echo "[abort] cannot determine the matrix generation commit" | tee -a "$log"; return 1; }
+      [ "$matrix_git" = "$GIT" ] \
+        || echo "[regime-contract] resuming matrix pinned to generation commit $matrix_git (supervisor at $GIT)" | tee -a "$log"
+      # Never replace an existing contract just because a point has not appeared
+      # yet: another worker may still be in GPU preflight for that contract.
+      preflight matrix-contract "${ADDITIONAL_CONTRACT_TIMEOUT:-120}" \
+        "$PY" src/regime_contract.py init \
+        --matrix "$REGIME_MATRIX" --config "$config" --model-key "$model_key" \
+        --model "$MODEL_PATH" --qualification "$qualification" --git "$matrix_git" \
+        | tee -a "$log"
+    fi
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
     if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35* ]]; then
       log_stage "fla-$model_key"
@@ -459,32 +485,10 @@ run_registered_matrix() {
       --marker "$OM_WORK/contracts/$run_id-smoke-$WORKER_TAG-$model_key-$GIT.json" \
       "${smoke_args[@]}" \
       | tee -a "$log"
-    [ "$MODE" != "--check" ] || continue
-
-    export REGIME_MODEL_TAG="$run_id-$method-$model_key"
-    export REGIME_ROOT="$OM_WORK/runs/$run_id/$model_key"
-    export REGIME_RESULTS="$OM_WORK/results/$run_id/$model_key"
-    export REGIME_QUARANTINE="$OM_WORK/quarantine/$run_id/$model_key"
-    export REGIME_MATRIX="$OM_WORK/contracts/$run_id-$model_key-$config_id.json"
-    # The matrix binds the generation commit the queue pinned for this root (the
-    # launch HEAD on the first run). Binding HEAD itself made every relaunch after
-    # a `git pull` abort with "matrix contract mismatch" (2026-09-07).
-    matrix_git=$("$PY" src/regime_contract.py matrix-git --root "$REGIME_ROOT" --fallback "$GIT") \
-      || { echo "[abort] cannot determine the matrix generation commit" | tee -a "$log"; return 1; }
-    # A contract left by a launch that never started a point (no queue marker,
-    # no point directory) binds a dead commit; replace it instead of aborting.
-    if [ -s "$REGIME_MATRIX" ] && [ ! -s "$REGIME_ROOT/.queue/generation.git" ] \
-        && ! compgen -G "$REGIME_ROOT/*/run_config.json" >/dev/null 2>&1; then
-      stale="$REGIME_MATRIX.stale-$(date -u +%Y%m%dT%H%M%SZ)"
-      mv -- "$REGIME_MATRIX" "$stale" \
-        && echo "[regime-contract] previous contract never started a point; moved to $stale" | tee -a "$log"
+    if [ "$MODE" = "--check" ]; then
+      exec {MATRIX_LEASE_FD}>&-
+      continue
     fi
-    [ "$matrix_git" = "$GIT" ] \
-      || echo "[regime-contract] resuming matrix pinned to generation commit $matrix_git (supervisor at $GIT)" | tee -a "$log"
-    "$PY" src/regime_contract.py init \
-      --matrix "$REGIME_MATRIX" --config "$config" --model-key "$model_key" \
-      --model "$MODEL_PATH" --qualification "$qualification" --git "$matrix_git" \
-      | tee -a "$log"
     # One [progress] line every OM_PROGRESS_INTERVAL_SECONDS (10 min) on the
     # terminal and in the session log, from durable artifacts only: DONE points,
     # GRPO steps, rollout bytes, last write. It says NOT TRAINING when nothing
@@ -500,6 +504,7 @@ run_registered_matrix() {
     "$PY" src/training_progress.py --root "$REGIME_ROOT" --total-points "$total_points" --record \
       2>/dev/null | sed 's/^/[progress] final: /' | tee -a "$log" || true
     [ "$phase_rc" -eq 0 ] || return "$phase_rc"
+    exec {MATRIX_LEASE_FD}>&-
   done
   echo "[additional] mode=$MODE complete: method=$method root=$OM_WORK/results/$run_id" \
     | tee -a "$log"

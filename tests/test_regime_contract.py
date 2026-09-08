@@ -322,4 +322,19 @@ def test_contract_mismatch_names_the_differing_fields(tmp_path):
     assert "model.revision: recorded='a' now='b'" in message
     assert "extra: recorded='<absent>' now='1'" in message
     assert "git: " not in message          # an unchanged key is not reported
+    assert "no key differs" not in message
+    diagnostics = list(tmp_path.glob("matrix.json.expected-*.json"))
+    assert len(diagnostics) == 1
+    assert json.loads(diagnostics[0].read_text()) == expected
+    assert json.loads(path.read_text()) == recorded
+    assert "expected_contract=" in message
     assert rc.contract_differences({"a": 1}, {"a": 1}) == ["(no key differs; the documents differ only in structure)"]
+
+
+def test_contract_differences_keep_full_hashes():
+    from regime_contract import contract_differences
+
+    before, after = "a" * 60 + "0000", "a" * 60 + "1111"
+    differences = contract_differences({"sha256": before}, {"sha256": after})
+    assert len(differences) == 1
+    assert before in differences[0] and after in differences[0]

@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from diagnose_launch_failure import diagnose, last_exception
 
 CASES = {
+    '[regime-contract-abort] matrix contract mismatch: model.revision differs': "matrix contract",
     'RuntimeError: math-verify is required for verifier-reward math experiments': "math-verify",
     '[model-abort] qwen3.5-9b-posttrained: safetensors shard set incomplete': "*.safetensors",
     '[model-abort] no *.safetensors in /group-volume/models/Qwen3.5-9B (and no usable model.safetensors.index.json)': "*.safetensors",
@@ -33,3 +34,11 @@ def test_unknown_failure_reports_last_exception():
 def test_latest_signature_wins():
     text = "RuntimeError: math-verify is required\n... later ...\n[abort] exactly four H100 GPUs required\n"
     assert "4x H100" in diagnose(text)[0]
+
+
+def test_contract_conflict_after_cuda_chatter_is_not_a_cuda_diagnosis():
+    text = "old warning: CUDA out of memory\n[transfer-smoke] passed\n[regime-contract-abort] matrix contract mismatch: git differs\n[exit] rc=1\n"
+    why, action, evidence = diagnose(text)
+    assert "not a CUDA error" in why
+    assert "expected_contract" in action and "preserve" in action
+    assert "matrix contract mismatch" in evidence

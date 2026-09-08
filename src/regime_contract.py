@@ -258,10 +258,17 @@ def contract_differences(recorded: dict, expected: dict, prefix: str = "") -> li
     for key in keys:
         name = f"{prefix}{key}"
         a, b = recorded.get(key, "<absent>"), expected.get(key, "<absent>")
+        if a == b:
+            continue
         if isinstance(a, dict) and isinstance(b, dict):
             out.extend(contract_differences(a, b, f"{name}."))
         elif a != b:
-            out.append(f"{name}: recorded={str(a)[:60]!r} now={str(b)[:60]!r}")
+            values = [str(value) for value in (a, b)]
+            values = [
+                value if len(value) <= 160 else value[:96] + "..." + value[-48:]
+                for value in values
+            ]
+            out.append(f"{name}: recorded={values[0]!r} now={values[1]!r}")
     return out or ["(no key differs; the documents differ only in structure)"]
 
 
@@ -273,11 +280,28 @@ def initialize_matrix(path: Path, expected: dict) -> None:
         if path.exists():
             recorded = read_json(path)
             if recorded != expected:
+                diagnostic = path.with_name(f"{path.name}.expected-{json_digest(expected)[:12]}.json")
+                temporary = diagnostic.with_name(f".{diagnostic.name}.tmp.{os.getpid()}")
+                try:
+                    temporary.write_text(
+                        json.dumps(expected, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    temporary.replace(diagnostic)
+                    detail = f"; expected_contract={diagnostic}"
+                except OSError as exc:
+                    detail = f"; could not save expected contract: {exc}"
+                finally:
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 # Name what differs. "mismatch" alone sent the operator to guess
                 # between model, data, code and hyperparameters (2026-09-08, Qwen).
                 raise ValueError(
                     f"matrix contract mismatch at {path}: "
                     + "; ".join(contract_differences(recorded, expected))
+                    + detail
                     + " -> use a new REGIME_ROOT instead of mixing models, data, code, or hyperparameters"
                 )
             return

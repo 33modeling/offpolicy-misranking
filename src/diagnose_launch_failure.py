@@ -14,6 +14,9 @@ from pathlib import Path
 
 # (pattern, diagnosis, action). First match from the END of the log wins.
 RULES: list[tuple[str, str, str]] = [
+    (r"matrix contract mismatch",
+     "matrix contract differs from the registered model/data/code/config; this is not a CUDA error",
+     "inspect the differing fields and expected_contract JSON; preserve partial work and let the rotation try another profile"),
     (r"math-verify is required|No module named 'math_verify'",
      "math-verify bundle not on PYTHONPATH (code older than 004f5f8)",
      "update a separate idle checkout, then rerun"),

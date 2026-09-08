@@ -28,6 +28,8 @@ log_stage() {
   printf '[stage] %s  %s\n' "$(date -u +%H:%M:%SZ)" "$LAUNCH_STAGE"
 }
 failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only if unknown
+  local doctor_seconds=${ADDITIONAL_FAILURE_DOCTOR_TIMEOUT:-30} doctor_rc=0
+  [[ "$doctor_seconds" =~ ^[1-9][0-9]*$ ]] || doctor_seconds=30
   {
     echo
     # Advisory only: never let the diagnoser change the launcher's exit status.
@@ -35,9 +37,14 @@ failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only
       || echo "DIAGNOSIS: (diagnoser unavailable) last log line: $(tail -n 1 "$SESSION_LOG" 2>/dev/null)"
     echo "--- last error lines ---"
     grep -vE '^\[(stage|launch|exit|error|additional|runtime)\]|^\s*$' "$SESSION_LOG" 2>/dev/null | tail -n 6 | cut -c1-200
-    if [ "${PROFILE:-}" = qwen35 ] && [ -x "$(dirname "${BASH_SOURCE[0]}")/doctor_qwen35.sh" ]; then
+    # A known contract conflict needs its JSON diff, not another model scan.
+    # Other advisory scans must not indefinitely delay the next experiment.
+    if [ "${PROFILE:-}" = qwen35 ] && [[ "$LAUNCH_STAGE" != matrix-contract-* ]] \
+        && [ -x "$(dirname "${BASH_SOURCE[0]}")/doctor_qwen35.sh" ]; then
       echo "--- state ---"
-      bash "$(dirname "${BASH_SOURCE[0]}")/doctor_qwen35.sh" 2>&1 | cut -c1-200 || true
+      timeout --signal=TERM --kill-after=2s "$doctor_seconds" \
+        bash "$(dirname "${BASH_SOURCE[0]}")/doctor_qwen35.sh" 2>&1 | cut -c1-200 || doctor_rc=$?
+      [ "$doctor_rc" -eq 0 ] || echo "[diagnostic] optional doctor stopped rc=$doctor_rc; original failure retained"
     fi
     echo "(full log: $SESSION_LOG)"
   } >&"$LAUNCH_STDOUT"

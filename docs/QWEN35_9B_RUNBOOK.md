@@ -51,9 +51,23 @@ the other registered experiments:
 bash scripts/run_qwen35_9b.sh prepare
 # Idle four-H100 compute node; offline, no matrix training.
 bash scripts/run_qwen35_9b.sh check
-# After target-node qualification, explicitly launch the 40-point matrix.
+# Try the 40-point 9B matrix first, then other selected independent matrices.
 bash scripts/run_qwen35_9b.sh run
 ```
+
+`run` (also the no-argument default) now retains a rotation worker: it tries
+`qwen35`, then `qwen35_2b`, `qwen35_4b`, and `olmo3_domains`. A failed or busy
+profile keeps its artifacts and yields to the next one. No 27B job is selected
+implicitly. Override the fallback list with `OM_RLZERO_FALLBACK_PROFILES`;
+9B is still tried first. `OM_SNAPSHOT_PATH`, if set, applies only to the first
+profile, not to different fallback models. Each fallback requires its own
+registered, offline model and data. If none is runnable, the worker waits;
+it does not download weights or fabricate GPU activity.
+
+`prepare` and `check` remain 9B-only. To execute only 9B without a rotation
+worker, use `bash scripts/run_additional_experiments.sh --run qwen35`.
+`status` reports the 9B matrix, not the currently selected fallback; use the
+rotation terminal's `[fallback]` lines and each profile's session log for that.
 
 Two datasets (MATH-500 / MBPP), five seeds and four GRPO checkpoints
 (0/25/100/400) are preserved. Generation batch is 32; gradient and training
@@ -66,6 +80,47 @@ training. Full weights have not been trained on the local audit host.
 Results: `$OM_WORK/results/qwen35-9b-posttrained-math-code-grpo-v1/`.
 Models/configuration/outputs are separate from the retained 27B experiment.
 Do not reuse or relabel 27B checkpoints as 9B results.
+
+## Contract conflict recovery (2026-09-08)
+
+The uploaded `additional-qwen35-run-20260908T072635Z-eQlPEK.log` ended on
+`matrix contract mismatch`, after a successful single-GPU smoke. It does not
+show a CUDA failure. The updated launcher checks the contract before FLA/smoke,
+labels the stage `matrix-contract-*`, and prints the actual differing fields.
+It writes the expected JSON beside the original as
+`*.json.expected-<digest>.json`; the recorded contract is not overwritten.
+The exact remote mismatch cannot be resolved without comparing those files.
+
+For the failed, idle Qwen allocation only, update its idle checkout with
+`git pull --ff-only`, then run `bash scripts/run_qwen35_9b.sh`. If its 9B
+contract remains incompatible, the rotation tries the other selected profiles.
+Do not restart healthy primary OLMo workers for this launcher change.
+
+If inspection confirms an obsolete, metadata-only Qwen root, stop the Qwen
+launchers using that root before this separate recovery command:
+
+```bash
+bash scripts/reset_qwen35_root.sh
+bash scripts/run_qwen35_9b.sh
+```
+
+The reset refuses any point directory, partial checkpoint, nonempty result
+directory, or live matrix/local-primary lock by default. Do not force a reset
+when it refuses existing work: retain the artifacts and compare the contract
+fields. An accepted reset moves the old metadata to a unique directory under
+`$OM_WORK/quarantine/`; nothing is deleted, and external contract lock files
+keep their inodes. It never runs automatically during a launch.
+
+Updated launchers hold a shared lifecycle lock across preflight and training;
+reset needs that lock exclusively. Legacy workers do not hold this new lease,
+so stop their Qwen launchers explicitly before resetting, including workers
+on other nodes that are still in preflight. Old queue locks are also checked,
+but their absence alone does not establish that a legacy preflight is idle.
+
+Contract-stage failures skip the redundant automatic model doctor. For other
+Qwen failures it is bounded by `ADDITIONAL_FAILURE_DOCTOR_TIMEOUT` (30 seconds,
+plus at most 2 seconds for forced termination); advisory failure does not
+replace the launcher's original exit code. Manual `doctor` is unchanged.
 
 ## Is it training? (2026-09-07)
 

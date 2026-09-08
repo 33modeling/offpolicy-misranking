@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Explicit 9B replication; never implicitly launch the retained 27B study.
+# Try 9B first, then registered smaller/domain runs; never implicitly launch 27B.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # No argument = run. `run` already performs every check (snapshot seal, FLA,
@@ -40,7 +40,13 @@ export OM_ALLOW_UNPINNED_SNAPSHOT=0 OM_TRUST_LOCAL_SNAPSHOT=0
 case "$MODE" in
   doctor) exec bash scripts/doctor_qwen35.sh ;;
   status) exec bash scripts/status_qwen35.sh ;;
-  prepare|check|run)
+  run)
+    [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
+    export OM_RLZERO_FALLBACK_PROFILES="${OM_RLZERO_FALLBACK_PROFILES:-qwen35_2b qwen35_4b olmo3_domains}"
+    echo '[additional] trying qwen35 first; blocked/completed work yields to the selected independent profiles'
+    exec bash scripts/run_available_experiments.sh --first qwen35
+    ;;
+  prepare|check)
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
     exec bash scripts/run_additional_experiments.sh "--$MODE" qwen35
     ;;

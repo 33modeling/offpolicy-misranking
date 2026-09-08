@@ -41,6 +41,8 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         (ROOT / "scripts/run_additional_experiments.sh").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    for name in ("run_available_experiments.sh", "run_qwen35_9b.sh", "reset_qwen35_root.sh"):
+        (root / "scripts" / name).write_text((ROOT / "scripts" / name).read_text(), encoding="utf-8")
     for name in (
         "generalization_logic.json",
         "generalization_science.json",
@@ -115,10 +117,11 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '    printf \'%s\\n\' "$*" >> "$TEST_WORK/qualifications"\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --output ] && { printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  src/transfer_smoke.py)\n"
+        '    echo smoke >> "$TEST_WORK/gpu-preflights"\n'
         '    [ "${TEST_SMOKE_HANG:-0}" = 0 ] || sleep 30\n'
         '    [ "${TEST_SMOKE_FAIL:-0}" = 0 ] || { echo "synthetic smoke traceback" >&2; exit 17; }\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --marker ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
-        "  scripts/check_27b_fla.py) exit 0 ;;\n"
+        '  scripts/check_27b_fla.py) echo fla >> "$TEST_WORK/gpu-preflights"; exit 0 ;;\n'
         "  src/locate_uploaded_snapshot.py)\n"
         '    [ "${TEST_MODEL_MISSING:-0}" = 0 ] || { echo "model missing" >&2; exit 1; }\n'
         "    case \" $* \" in *'--model-key m2 '*) printf '%s/models/m2\\n' \"$TEST_WORK\" ;; *) printf '%s/models/m1\\n' \"$TEST_WORK\" ;; esac ;;\n"
@@ -127,6 +130,16 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '    case " $* " in *" --watch "*) echo $$ > "$TEST_WORK/progress.pid"; exec sleep 300 ;; esac ;;\n'
         "  -c) exit 0 ;;\n"
         "  src/regime_contract.py)\n"
+        '    if [ "$1" = matrix-git ]; then\n'
+        '      shift; root=""; fallback=""\n'
+        '      while [ $# -gt 0 ]; do case "$1" in --root) root=$2; shift 2 ;; --fallback) fallback=$2; shift 2 ;; *) exit 2 ;; esac; done\n'
+        '      if [ -s "$root/.queue/generation.git" ]; then cat "$root/.queue/generation.git"; else echo "$fallback"; fi\n'
+        '      exit 0\n'
+        '    fi\n'
+        '    printf "%s\\n" "$*" >> "$TEST_WORK/matrix-contract-calls"\n'
+        '    if [ "${TEST_CONTRACT_FAIL:-0}" = 1 ] || { [ -n "${TEST_CONTRACT_FAIL_CONFIG:-}" ] && [[ " $* " == *"$TEST_CONTRACT_FAIL_CONFIG"* ]]; }; then\n'
+        '      echo "[regime-contract-abort] matrix contract mismatch: model.revision differs"; exit 1\n'
+        '    fi\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --matrix ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  *) printf 'unexpected script: %s\\n' \"$script\" >&2; exit 2 ;;\n"
         "esac\n",
@@ -139,6 +152,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '[ "$HF_HUB_OFFLINE" = 1 ] && [ "$TRANSFORMERS_OFFLINE" = 1 ] && '
         '[ "$HF_DATASETS_OFFLINE" = 1 ] || { printf "offline flags missing\\n" >&2; exit 93; }\n'
         'printf \'%s\\n\' "$REGIME_MODEL_TAG|$MODEL_PATH|$REGIME_DATASETS|$REGIME_SEEDS|$REGIME_DRIFTS|$REGIME_MATRIX|$REGIME_N_TRAIN_BY_DATASET|$OM_PROMPT_FORMAT" >> "$TEST_WORK/phases"\n'
+        'if [ "${TEST_MATRIX_WAIT:-0}" = 1 ]; then while [ ! -e "$TEST_WORK/release-matrix" ]; do sleep 0.05; done; fi\n'
         'sleep 0.05\nexit "${TEST_MATRIX_RC:-0}"\n',
     )
     executable(
@@ -176,6 +190,7 @@ def test_qwen_check_does_not_launch_matrix(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (Path(env["TEST_WORK"]) / "phases").exists()
+    assert not (Path(env["TEST_WORK"]) / "matrix-contract-calls").exists()
     assert list((Path(env["TEST_WORK"]) / "contracts").glob("*qwen38*smoke*"))
 
 

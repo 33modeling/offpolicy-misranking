@@ -4,6 +4,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -47,6 +49,40 @@ def test_unknown_profile_is_rejected_before_any_execution(tmp_path):
         ["bash", str(ROOT / "scripts/run_available_experiments.sh"), "--once"],
         env={**os.environ, "OM_RLZERO_FALLBACK_PROFILES": "not-registered",
              "OM_LOCAL_LOCK_DIR": str(tmp_path / "locks")},
+        text=True, capture_output=True, timeout=5,
+    )
+    assert result.returncode == 2
+    assert not (tmp_path / "locks").exists()
+
+
+@pytest.mark.parametrize("args", [[], ["--first", "qwen35"]])
+def test_explicit_snapshot_does_not_leak_to_independent_profiles(tmp_path, args):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    shutil.copy2(ROOT / "scripts/run_available_experiments.sh", scripts)
+    (scripts / "run_additional_experiments.sh").write_text('''#!/usr/bin/env bash
+printf '%s|%s\\n' "$2" "${OM_SNAPSHOT_PATH-unset}" >> "$TEST_CALLS"
+exit 1
+''')
+    calls = tmp_path / "calls"
+    result = subprocess.run(
+        ["bash", str(scripts / "run_available_experiments.sh"), "--once", *args],
+        env={**os.environ, "OM_LOCAL_LOCK_DIR": str(tmp_path / "locks"),
+             "OM_RLZERO_FALLBACK_PROFILES": "qwen35 qwen35_2b",
+             "OM_SNAPSHOT_PATH": "/uploaded/custom-9b", "TEST_CALLS": str(calls)},
+        text=True, capture_output=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls.read_text().splitlines() == [
+        "qwen35|/uploaded/custom-9b", "qwen35_2b|unset",
+    ]
+
+
+@pytest.mark.parametrize("args", [["--first"], ["--first", "not-registered"], ["--once", "extra"]])
+def test_invalid_rotation_arguments_do_not_launch(tmp_path, args):
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/run_available_experiments.sh"), *args],
+        env={**os.environ, "OM_LOCAL_LOCK_DIR": str(tmp_path / "locks")},
         text=True, capture_output=True, timeout=5,
     )
     assert result.returncode == 2

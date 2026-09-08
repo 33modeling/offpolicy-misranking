@@ -71,7 +71,7 @@ def test_launchers_do_not_mutate_git_or_kill_other_jobs(tmp_path, mode, profile)
     scripts.mkdir()
     name = "run_followup.sh" if profile else "run_qwen35_9b.sh"
     (scripts / name).write_text((ROOT / "scripts" / name).read_text())
-    for child in ("run_additional_experiments.sh", "doctor_qwen35.sh"):
+    for child in ("run_additional_experiments.sh", "run_available_experiments.sh", "doctor_qwen35.sh"):
         (scripts / child).write_text("exit 0\n")
     bins = tmp_path / "bin"
     bins.mkdir()
