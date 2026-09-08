@@ -814,9 +814,8 @@ def test_run_accepts_a_dataset_filter_as_third_argument(tmp_path: Path) -> None:
     assert "unknown dataset filter: gsm8k" in bad.stdout + bad.stderr
 
 
-def test_most_progressed_family_is_claimed_first(tmp_path: Path) -> None:
-    """A family with finished points is resumed before an untouched family is
-    started, whatever its seed."""
+def _order_fixture(tmp_path: Path):
+    """mbpp/s3 has two finished points, math500/s2 was started, the rest untouched."""
     checkout, env = fixture_checkout(tmp_path)
     root = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-h100-v2"
     tag = "olmo3-1025-7b-base-rlzero-grpo-h100-v2"
@@ -831,6 +830,20 @@ def test_most_progressed_family_is_claimed_first(tmp_path: Path) -> None:
     started = root / "family-math500-s2" / f"{tag}-s2-math500-d0"
     started.mkdir(parents=True)
     (started / "run_config.json").write_text(json.dumps({"dataset": "math500", "seed": 2, "gen_batch": "32", "gradient_micro_batch": 4}))
+    return checkout, env
+
+
+def _claims(env: dict[str, str]) -> list[str]:
+    return [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+
+
+def test_family_with_the_most_work_left_is_claimed_first(tmp_path: Path) -> None:
+    """Seven workers, eight families, no node comes back once the GPU manager
+    takes it: the family left waiting must be the shortest one. mbpp points cost
+    about 1.35x math500 points and d400 about 1.7x a d0/d100 point, so an
+    untouched mbpp family (4 points) goes first and the mbpp family with only
+    d100+d400 left goes last."""
+    checkout, env = _order_fixture(tmp_path)
     result = subprocess.run(
         ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
         cwd=checkout,
@@ -841,7 +854,27 @@ def test_most_progressed_family_is_claimed_first(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    claims = _claims(env)
+    assert claims[:4] == ["mbpp-s0", "mbpp-s1", "mbpp-s2", "mbpp-s4"], claims   # untouched mbpp, 4 points each
+    assert claims[4] == "math500-s2", claims          # same work as other math500, but already started
+    assert claims[5:9] == ["math500-s0", "math500-s1", "math500-s3", "math500-s4"], claims
+    assert claims[9] == "mbpp-s3", claims             # only d100 + d400 left: least work, claimed last
+    assert len(claims) == 10
+
+
+def test_claim_order_progress_restores_the_2026_09_07_rule(tmp_path: Path) -> None:
+    checkout, env = _order_fixture(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run", "h100"],
+        cwd=checkout,
+        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "order-progress-local"), "OM_RLZERO_CLAIM_ORDER": "progress"},
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    claims = _claims(env)
     assert claims[0] == "mbpp-s3"          # two points done
     assert claims[1] == "math500-s2"       # started, nothing done
     assert claims[2] == "math500-s0"       # untouched families in registered order

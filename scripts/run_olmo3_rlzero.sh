@@ -1101,13 +1101,43 @@ family_started() {  # family_started <dataset> <seed>: some point directory exis
   root=$(family_root "$1" "$2")
   [ -d "$root" ] && compgen -G "$root/*/run_config.json" >/dev/null 2>&1
 }
-ordered_families() {  # "<dataset> <seed>" lines: most progress first, ties in registered order
-  local seed dataset started
+family_remaining_work() {  # family_remaining_work <dataset> <seed> -> integer estimate of hours x100 still to run
+  # Relative cost of the points still missing. Measured on the h100 matrix
+  # (2026-09-08): a d400 point is about 1.7x a d0/d100 point (300 GRPO steps
+  # plus the rollout), d25 about 0.8x, and an mbpp point about 1.35x a math500
+  # point (512 prompts instead of 400, longer generations). Only the ORDER
+  # matters, so rough weights are enough.
+  local drift weight total=0 factor=100
+  [ "$1" = mbpp ] && factor=135
+  for drift in "${DRIFTS[@]}"; do
+    [ -s "$(run_dir "$1" "$2" "$drift")/DONE" ] && continue
+    case "$drift" in 25) weight=80 ;; 400) weight=170 ;; *) weight=100 ;; esac
+    total=$((total + weight * factor / 100))
+  done
+  printf '%s\n' "$total"
+}
+# Claim order. Default "remaining": the family with the MOST work left is
+# claimed first (longest-processing-time first), ties to a family that already
+# has a directory, then registered order. With seven workers for eight families
+# and no way to get a node back once the GPU manager takes it, the family that
+# waits for a free worker must be the shortest one: leaving a 34-hour family
+# unowned while a 16-hour one runs cost the whole matrix 16 hours
+# (2026-09-08 evening, mbpp/s4). OM_RLZERO_CLAIM_ORDER=progress restores the
+# 2026-09-07 rule (most finished points first).
+CLAIM_ORDER="${OM_RLZERO_CLAIM_ORDER:-remaining}"
+case "$CLAIM_ORDER" in remaining|progress) ;; *) echo "[abort] OM_RLZERO_CLAIM_ORDER must be remaining or progress, not $CLAIM_ORDER"; exit 2 ;; esac
+ordered_families() {  # "<dataset> <seed>" lines in claim order
+  local seed dataset started key
   for seed in "${SEEDS[@]}"; do
     for dataset in "${DATASETS[@]}"; do
       started=0
       family_started "$dataset" "$seed" && started=1
-      printf '%s %s %s %s\n' "$(family_points_done "$dataset" "$seed")" "$started" "$dataset" "$seed"
+      if [ "$CLAIM_ORDER" = progress ]; then
+        key=$(family_points_done "$dataset" "$seed")
+      else
+        key=$(family_remaining_work "$dataset" "$seed")
+      fi
+      printf '%s %s %s %s\n' "$key" "$started" "$dataset" "$seed"
     done
   done | sort -s -k1,1nr -k2,2nr | awk '{print $3, $4}'
 }
