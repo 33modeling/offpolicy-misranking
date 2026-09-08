@@ -55,11 +55,20 @@ def load_pinned_data_module(repo: Path, commit: str):
     if source.returncode != 0:
         raise SystemExit(f"[abort] cannot read {commit}:src/data.py ({source.stderr.strip()})")
     directory = Path(tempfile.mkdtemp(prefix="pinned-data-"))
-    (directory / "data.py").write_text(source.stdout, encoding="utf-8")
-    sys.path.insert(0, str(directory))
-    sys.path.insert(1, str(repo / "src"))          # data.py's own imports
-    import importlib
-    module = importlib.import_module("data")
+    path = directory / "data.py"
+    path.write_text(source.stdout, encoding="utf-8")
+    # Load it under a name of its own. importlib.import_module("data") would hand
+    # back a "data" module that something else imported first - in this repo that
+    # is the WORKING TREE copy, which may already carry the corrected verifier.
+    # The old side would then be silently identical to the new one and the tool
+    # would report "no change" for a bug that is really there.
+    if str(repo / "src") not in sys.path:
+        sys.path.insert(0, str(repo / "src"))      # data.py's own imports
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(f"pinned_data_{commit}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     return module
 
 
