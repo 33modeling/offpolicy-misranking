@@ -16,6 +16,8 @@ set -eu
 test "$1" = --run
 test "$ADDITIONAL_MAX_RESTARTS" = 0
 test "$ADDITIONAL_REGIME_MAX_RETRIES" = 1
+test "$REGIME_YIELD_WHEN_BUSY" = 1
+test "${OM_EXTERNAL_GPU_KEEPALIVE-unset}" = unset
 test "$HF_HUB_OFFLINE" = 1
 test "${OM_PIPELINE_REPO-unset}" = unset
 test "${OM_GENERATION_GIT-unset}" = unset
@@ -30,7 +32,8 @@ test "$2" != olmo3_domains
         env={**os.environ, "OM_LOCAL_LOCK_DIR": str(tmp_path / "locks"),
              "OM_RLZERO_FALLBACK_PROFILES": "olmo3_domains qwen35_2b qwen35_2b",
              "TEST_CALLS": str(calls), "OM_PIPELINE_REPO": "/old/pinned",
-             "OM_GENERATION_GIT": "old", "REGIME_SKIP_COLLECTION": "1", "HF_TOKEN": "secret"},
+             "OM_GENERATION_GIT": "old", "REGIME_SKIP_COLLECTION": "1", "HF_TOKEN": "secret",
+             "OM_EXTERNAL_GPU_KEEPALIVE": "1"},
         text=True, capture_output=True, timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr

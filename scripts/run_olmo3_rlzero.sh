@@ -857,7 +857,9 @@ export REGIME_MAX_RETRIES="${REGIME_MAX_RETRIES:-3}"
 export OM_STALL_MINUTES="${OM_STALL_MINUTES:-15}"
 export REGIME_HARD_STALL_SECONDS="${REGIME_HARD_STALL_SECONDS:-${OM_RLZERO_HARD_STALL_SECONDS:-1800}}"
 export OM_SKIP_GPU_CHECK=0 OM_ALLOW_DIRTY=0 OM_ALLOW_ANALYSIS_UPGRADE=1
-FAMILY_ATTEMPTS="${OM_RLZERO_FAMILY_ATTEMPTS:-3}"
+# Point retries are already bounded by run_matrix. Rotate families before
+# claiming another full retry budget for the same failure.
+FAMILY_ATTEMPTS="${OM_RLZERO_FAMILY_ATTEMPTS:-1}"
 case "$FAMILY_ATTEMPTS" in
   ''|*[!0-9]*|0) echo "[abort] OM_RLZERO_FAMILY_ATTEMPTS must be a positive integer"; exit 2 ;;
 esac
@@ -926,7 +928,7 @@ family_last_error() {  # family_last_error <dataset> <seed> -> last error line (
     line=$(grep -E '\[(point-failed|done-but-incomplete)\]' "$supervisor" 2>/dev/null | tail -1 \
       | sed -E 's/^\[[^]]*\] \[(point-failed|done-but-incomplete)\] //')
     case "$line" in
-      ''|*"no error line in"*) ;;
+      '') ;;
       *) printf '%s\n' "$line" | cut -c1-200; return 0 ;;
     esac
   fi

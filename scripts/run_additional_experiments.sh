@@ -29,8 +29,6 @@ MATRIX_IDS=(
   generalization-science-grpo-v1
   generalization-knowledge-grpo-v1
 )
-MODE=${1:---run}
-PROFILE=${2:-legacy}
 [ "$#" -le 2 ] || { echo "usage: $0 [--prepare|--check|--run] [legacy|qwen38|qwen35|qwen35_2b|qwen35_4b|olmo3_domains]"; exit 2; }
 case "$PROFILE" in
   legacy) ;;
@@ -94,6 +92,26 @@ clean_checkout() {
 clean_checkout
 GIT=$(git rev-parse HEAD)
 
+progress_pid=""
+cleanup_launch() {
+  [ -n "$progress_pid" ] || return 0
+  kill "$progress_pid" 2>/dev/null || true
+  wait "$progress_pid" 2>/dev/null || true
+  progress_pid=""
+}
+
+preflight() {  # preflight <label> <seconds> <command...>
+  local label=$1 seconds=$2 rc=0
+  shift 2
+  [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || { echo "[abort] invalid $label timeout=$seconds"; return 2; }
+  echo "[additional] preflight=$label timeout=${seconds}s" >&2
+  timeout --signal=TERM --kill-after=5s "$seconds" "$@" || rc=$?
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo "[abort] preflight=$label exceeded ${seconds}s; preserving artifacts" >&2
+  fi
+  return "$rc"
+}
+
 # Admission never kills other jobs. Provision and node locks establish ownership;
 # a suspected stale owner must be diagnosed explicitly, not matched by command text.
 
@@ -125,7 +143,8 @@ qualify_registered_datasets() {
   for dataset in "${dataset_list[@]}"; do
     size_args+=(--dataset-n-train "$dataset=$(dataset_n_train_field "$config" "$dataset")")
   done
-  "$PY" src/qualify_domain_data.py "${dataset_list[@]}" \
+  preflight qualify-datasets "${ADDITIONAL_DATA_TIMEOUT:-1800}" \
+    "$PY" src/qualify_domain_data.py "${dataset_list[@]}" \
     --data-root "$DATASETS_DIR" \
     --n-train "$(matrix_field "$config" n_train)" \
     "${size_args[@]}" \
@@ -241,14 +260,24 @@ H100_COUNT=$(printf '%s\n' "${GPU_NAMES[@]}" | grep -c 'H100' || true)
 }
 
 wait_for_gpu_release() {
-  local memory rows busy
-  for _ in $(seq 1 120); do
-    memory=$(timeout 20 nvidia-smi --query-gpu=memory.used \
-      --format=csv,noheader,nounits 2>/dev/null) || { sleep 5; continue; }
-    rows=$(printf '%s\n' "$memory" | awk 'NF {n++} END {print n+0}')
-    busy=$(printf '%s\n' "$memory" | awk '$1 > 2000 {n++} END {print n+0}')
-    [ "$rows" -eq 4 ] && [ "$busy" -eq 0 ] && return 0
-    sleep 5
+  local memory seconds=${ADDITIONAL_GPU_WAIT_SECONDS:-600} deadline remaining probe pause
+  [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || return 2
+  deadline=$((SECONDS + seconds))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    remaining=$((deadline - SECONDS))
+    probe=$((remaining < 20 ? remaining : 20))
+    if memory=$(timeout --kill-after=2s "$probe" nvidia-smi --query-gpu=memory.used \
+        --format=csv,noheader,nounits 2>/dev/null); then
+      if printf '%s\n' "$memory" | awk '
+          NF { rows++; if ($1 !~ /^[0-9]+$/ || $1 > 2000) busy=1 }
+          END { exit !(rows == 4 && !busy) }'; then
+        return 0
+      fi
+    fi
+    remaining=$((deadline - SECONDS))
+    [ "$remaining" -gt 0 ] || break
+    pause=$((remaining < 5 ? remaining : 5))
+    sleep "$pause"
   done
   return 1
 }
@@ -270,6 +299,7 @@ run_phase() {
     rc=${statuses[0]}
     [ "${statuses[1]}" -eq 0 ] || exit "${statuses[1]}"
     [ "$rc" -ne 0 ] || break
+    [ "$rc" -ne 75 ] || return 75
     if [ "$rc" -eq 43 ]; then
       echo "[abort] model=$name has a permanent prompt/contract failure; not retrying" \
         | tee -a "$log"
@@ -291,7 +321,7 @@ run_phase() {
 
 run_registered_matrix() {
   local config=$1 run_id=$2 datasets seeds drifts method config_id qualification log
-  local dataset
+  local dataset qualification_ready=0
   local model_keys=() n_train_map=()
 
   datasets=$(matrix_field "$config" datasets)
@@ -314,12 +344,6 @@ run_registered_matrix() {
   log="$OM_WORK/console-logs/$run_id-$WORKER_TAG-$(date +%F-%H%M%S).log"
   config_id=$(sha256sum "$config" | cut -c1-16)
   qualification="$OM_WORK/contracts/$run_id-datasets-$config_id.json"
-  log_stage "qualify-datasets"
-  (
-    flock 6
-    qualify_registered_datasets "$config" "$qualification"
-  ) 6>"$OM_WORK/locks/$run_id-dataset-qualification.lock" | tee -a "$log"
-
   unset REGIME_ROOT REGIME_RESULTS REGIME_MATRIX REGIME_QUARANTINE
   unset REGIME_DATASETS REGIME_SEEDS REGIME_DRIFTS REGIME_N_TRAIN REGIME_N_VAL
   unset REGIME_N_TRAIN_BY_DATASET
@@ -381,7 +405,8 @@ run_registered_matrix() {
     log_stage "snapshot-$model_key"
     # Hand-uploaded snapshots: find by content, link the pinned name and official
     # shard names if the upload used different ones. Nothing is moved or deleted.
-    if ! MODEL_PATH=$("$PY" src/locate_uploaded_snapshot.py --config "$config" \
+    if ! MODEL_PATH=$(preflight locate-snapshot "${ADDITIONAL_MODEL_TIMEOUT:-1800}" \
+      "$PY" src/locate_uploaded_snapshot.py --config "$config" \
       --model-key "$model_key" --models-dir "$MODELS_DIR" 2> >(tee -a "$log" >&2)); then
       MODEL_PATH=$(model_field "$config" "$model_key" path)
       echo "[abort] model discovery failed; explicit identity is required" | tee -a "$log"
@@ -394,21 +419,42 @@ run_registered_matrix() {
     # A snapshot uploaded by hand (scp, no Hub metadata) is adopted here, offline,
     # against the pinned official hashes — same as run_olmo3_rlzero.sh. `prepare`
     # is only for downloading when nothing has been uploaded.
-    if ! "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
+    if preflight check-snapshot "${ADDITIONAL_MODEL_TIMEOUT:-1800}" \
+        "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
         --snapshot-path "$MODEL_PATH" check "$model_key" 2>&1 | tee -a "$log"; then
+      :
+    else
+      statuses=("${PIPESTATUS[@]}")
+      [ "${statuses[1]}" -eq 0 ] || return "${statuses[1]}"
+      case "${statuses[0]}" in 124|137) return "${statuses[0]}" ;; esac
       echo "[model] snapshot check failed; sealing $MODEL_PATH" | tee -a "$log"
-      "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
+      preflight seal-snapshot "${ADDITIONAL_MODEL_TIMEOUT:-1800}" \
+        "$PY" src/model_matrix.py --config "$config" --models-dir "$MODELS_DIR" \
         --snapshot-path "$MODEL_PATH" seal "$model_key" 2>&1 | tee -a "$log"
+    fi
+    # Missing models must yield before costly shared dataset qualification.
+    if [ "$qualification_ready" -eq 0 ]; then
+      log_stage qualify-datasets
+      (
+        flock -w "${ADDITIONAL_QUALIFICATION_LOCK_SECONDS:-60}" 6 || {
+          echo "[abort] dataset qualification is busy; yielding this profile"
+          exit 75
+        }
+        qualify_registered_datasets "$config" "$qualification"
+      ) 6>"$OM_WORK/locks/$run_id-dataset-qualification.lock" | tee -a "$log"
+      qualification_ready=1
     fi
     wait_for_gpu_release || { echo "[abort] GPU memory did not clear"; return 1; }
     if [[ "$PROFILE" == qwen38 || "$PROFILE" == qwen35* ]]; then
       log_stage "fla-$model_key"
-      CUDA_VISIBLE_DEVICES=0 "$PY" scripts/check_27b_fla.py | tee -a "$log"
+      CUDA_VISIBLE_DEVICES=0 preflight fla "${ADDITIONAL_FLA_TIMEOUT:-120}" \
+        "$PY" scripts/check_27b_fla.py | tee -a "$log"
     fi
     smoke_args=()
     [[ "$PROFILE" != qwen38 && "$PROFILE" != qwen35* ]] || smoke_args+=(--benchmark)
     log_stage "smoke-$model_key"
-    CUDA_VISIBLE_DEVICES=0 "$PY" src/transfer_smoke.py \
+    CUDA_VISIBLE_DEVICES=0 preflight smoke "${ADDITIONAL_SMOKE_TIMEOUT:-600}" \
+      "$PY" src/transfer_smoke.py \
       --model "$MODEL_PATH" --lora-targets "$OM_LORA_TARGETS" \
       --marker "$OM_WORK/contracts/$run_id-smoke-$WORKER_TAG-$model_key-$GIT.json" \
       "${smoke_args[@]}" \
@@ -450,8 +496,7 @@ run_registered_matrix() {
     progress_pid=$!
     run_phase "$log" "$model_key"
     phase_rc=$?
-    kill "$progress_pid" 2>/dev/null || true
-    wait "$progress_pid" 2>/dev/null || true
+    cleanup_launch
     "$PY" src/training_progress.py --root "$REGIME_ROOT" --total-points "$total_points" --record \
       2>/dev/null | sed 's/^/[progress] final: /' | tee -a "$log" || true
     [ "$phase_rc" -eq 0 ] || return "$phase_rc"

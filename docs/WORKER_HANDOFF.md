@@ -65,3 +65,50 @@ shared blocking, marker preservation across worker startup, rotation after an
 unavailable profile, completed-profile skipping, environment isolation, and
 primary-lock/heartbeat handoff. Real H100 execution and snapshot availability
 must be checked on the cluster; local tests use fake GPU/model launchers.
+
+## Bounded waits and retry ownership
+
+The primary defaults to one matrix invocation per family claim
+(`OM_RLZERO_FAMILY_ATTEMPTS=1`). The matrix still owns its configured point retry
+budget. If that budget fails, the primary rotates to another eligible family
+before reclaiming the failed family after cooldown. This avoids multiplying a
+three-attempt point budget by three immediate family attempts.
+
+The last failed point attempt records diagnostics but does not run a recovery
+stage or sleep when no subsequent pipeline attempt remains. Both matrix-contract
+and completion-postcondition failures return 43 without another quarantine/retry
+cycle. A new unknown failure is not reclassified using historical CUDA errors.
+
+Watchdog shutdown interrupts its timer immediately. The additional launcher
+stops its progress writer before draining the log pipe, including on failure;
+otherwise the open pipe can prevent exit and therefore prevent fallback rotation.
+
+Fallback matrices export `REGIME_YIELD_WHEN_BUSY=1`: when all remaining families
+are owned by other nodes, the matrix returns 75 instead of holding an idle node
+in the queue. The additional launcher propagates that status without restarting
+the same matrix. Ordinary matrix launchers retain their existing queue-wait
+behavior unless this setting is explicitly enabled.
+
+Additional-launcher limits (seconds):
+
+| Variable | Default | Scope |
+| --- | ---: | --- |
+| `ADDITIONAL_QUALIFICATION_LOCK_SECONDS` | 60 | Shared dataset qualification lock |
+| `ADDITIONAL_DATA_TIMEOUT` | 1800 | Dataset qualification command |
+| `ADDITIONAL_MODEL_TIMEOUT` | 1800 | Each snapshot discovery/check/seal command |
+| `ADDITIONAL_FLA_TIMEOUT` | 120 | Kernel preflight |
+| `ADDITIONAL_SMOKE_TIMEOUT` | 600 | GPU smoke check |
+| `ADDITIONAL_GPU_WAIT_SECONDS` | 600; fallback 60 | Total GPU-release polling budget |
+
+Preflight timeout sends TERM, then KILL after five seconds if necessary. A timed
+out snapshot check does not trigger a second long sealing operation. GPU polling
+uses a total deadline rather than multiplying a slow query by 120 iterations;
+its kill grace is two seconds. Non-numeric GPU memory readings cannot admit work.
+The fallback removes the primary's external-keepalive flag because that primary
+helper has already been stopped.
+Missing model snapshots are rejected before spending time qualifying datasets;
+qualification is still required once per registered matrix before any training.
+
+These limits do not shorten GRPO steps, rollout budgets, artifact validation,
+bootstrap samples or the existing NCCL collective timeout. They are not a fix for
+an unhealthy CUDA driver or an uninterruptible kernel/storage operation.

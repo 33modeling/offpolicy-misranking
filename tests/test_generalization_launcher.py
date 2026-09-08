@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import fcntl
 import os
+import signal
 import stat
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -112,12 +115,16 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '    printf \'%s\\n\' "$*" >> "$TEST_WORK/qualifications"\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --output ] && { printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  src/transfer_smoke.py)\n"
+        '    [ "${TEST_SMOKE_HANG:-0}" = 0 ] || sleep 30\n'
         '    [ "${TEST_SMOKE_FAIL:-0}" = 0 ] || { echo "synthetic smoke traceback" >&2; exit 17; }\n'
         '    while [ $# -gt 0 ]; do [ "$1" = --marker ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
         "  scripts/check_27b_fla.py) exit 0 ;;\n"
         "  src/locate_uploaded_snapshot.py)\n"
+        '    [ "${TEST_MODEL_MISSING:-0}" = 0 ] || { echo "model missing" >&2; exit 1; }\n'
         "    case \" $* \" in *'--model-key m2 '*) printf '%s/models/m2\\n' \"$TEST_WORK\" ;; *) printf '%s/models/m1\\n' \"$TEST_WORK\" ;; esac ;;\n"
         "  src/bootstrap_math_verify.py) printf '%s/runtime-deps/math-verify-test\\n' \"$TEST_WORK\" ;;\n"
+        "  src/training_progress.py)\n"
+        '    case " $* " in *" --watch "*) echo $$ > "$TEST_WORK/progress.pid"; exec sleep 300 ;; esac ;;\n'
         "  -c) exit 0 ;;\n"
         "  src/regime_contract.py)\n"
         '    while [ $# -gt 0 ]; do [ "$1" = --matrix ] && { mkdir -p "$(dirname "$2")"; printf \'{}\\n\' > "$2"; break; }; shift; done ;;\n'
@@ -131,7 +138,8 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         '[ -z "${HUGGING_FACE_HUB_TOKEN+x}" ] || { printf "legacy token leaked\\n" >&2; exit 92; }\n'
         '[ "$HF_HUB_OFFLINE" = 1 ] && [ "$TRANSFORMERS_OFFLINE" = 1 ] && '
         '[ "$HF_DATASETS_OFFLINE" = 1 ] || { printf "offline flags missing\\n" >&2; exit 93; }\n'
-        'printf \'%s\\n\' "$REGIME_MODEL_TAG|$MODEL_PATH|$REGIME_DATASETS|$REGIME_SEEDS|$REGIME_DRIFTS|$REGIME_MATRIX|$REGIME_N_TRAIN_BY_DATASET|$OM_PROMPT_FORMAT" >> "$TEST_WORK/phases"\n',
+        'printf \'%s\\n\' "$REGIME_MODEL_TAG|$MODEL_PATH|$REGIME_DATASETS|$REGIME_SEEDS|$REGIME_DRIFTS|$REGIME_MATRIX|$REGIME_N_TRAIN_BY_DATASET|$OM_PROMPT_FORMAT" >> "$TEST_WORK/phases"\n'
+        'sleep 0.05\nexit "${TEST_MATRIX_RC:-0}"\n',
     )
     executable(
         fake_bin / "nvidia-smi",
@@ -169,6 +177,56 @@ def test_qwen_check_does_not_launch_matrix(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (Path(env["TEST_WORK"]) / "phases").exists()
     assert list((Path(env["TEST_WORK"]) / "contracts").glob("*qwen38*smoke*"))
+
+
+@pytest.mark.parametrize("rc", [1, 43, 75])
+def test_failed_matrix_stops_progress_before_draining_logs(tmp_path, rc):
+    root, env = checkout(tmp_path)
+    env.update(TEST_MATRIX_RC=str(rc), ADDITIONAL_MAX_RESTARTS="0")
+    process = subprocess.Popen(
+        ["bash", "scripts/run_additional_experiments.sh", "--run", "qwen38"],
+        cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    try:
+        out, err = process.communicate(timeout=10)
+        assert process.returncode == rc, out + err
+        pid = int((Path(env["TEST_WORK"]) / "progress.pid").read_text())
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+        for name in ("primary.lock", "additional-suite.lock"):
+            with (Path(env["OM_LOCAL_LOCK_DIR"]) / name).open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+
+
+def test_hung_smoke_has_a_deadline_and_never_starts_matrix(tmp_path):
+    root, env = checkout(tmp_path)
+    env.update(TEST_SMOKE_HANG="1", ADDITIONAL_SMOKE_TIMEOUT="1")
+    result = subprocess.run(
+        ["bash", "scripts/run_additional_experiments.sh", "--run", "qwen38"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 124, result.stdout + result.stderr
+    assert "preflight=smoke exceeded 1s" in result.stdout + result.stderr
+    assert not (Path(env["TEST_WORK"]) / "phases").exists()
+
+
+def test_missing_model_yields_before_dataset_qualification(tmp_path):
+    root, env = checkout(tmp_path)
+    env["TEST_MODEL_MISSING"] = "1"
+    result = subprocess.run(
+        ["bash", "scripts/run_additional_experiments.sh", "--run", "qwen38"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 43, result.stdout + result.stderr
+    assert not (Path(env["TEST_WORK"]) / "qualifications").exists()
+    assert not (Path(env["TEST_WORK"]) / "phases").exists()
 
 
 def test_qwen35_logs_failure_stderr_and_exit_status(tmp_path: Path) -> None:

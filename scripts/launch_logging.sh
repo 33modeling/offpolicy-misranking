@@ -45,6 +45,8 @@ failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only
 finish_launch_log() {
   local rc=$? logger_rc=0
   trap - EXIT ERR INT TERM
+  # Stop owned writers before waiting for EOF on the logging pipe.
+  if declare -F cleanup_launch >/dev/null; then cleanup_launch || true; fi
   printf '[work-exit] utc=%s rc=%s stage=%s\n' "$(date -u +%FT%TZ)" "$rc" "$LAUNCH_STAGE"
   exec 1>&"$LAUNCH_STDOUT" 2>&"$LAUNCH_STDERR"
   wait "$LAUNCH_LOGGER_PID" || logger_rc=$?
