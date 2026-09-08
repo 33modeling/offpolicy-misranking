@@ -158,6 +158,13 @@ primary matrix. Missing or stale evidence returns 75 before GPU preflight.
 `prepare` remains an offline-cluster-independent download operation. The 9B
 wrapper no longer rotates automatically to other models.
 
+Explicit exception: `bash scripts/run_qwen35_9b.sh run-idle` allows only Qwen
+9B on the operator-selected current hostname before primary completion. The
+local primary lock and four-idle-H100 admission still apply. `restart-idle`
+first cleans up only that node's previous Qwen 9B namespace and children.
+OLMo workers keep running; a residual lock owner must be identified, not
+assumed to be OLMo. The primary never invokes this exception automatically.
+
 This supervisor change does not alter generation pins or checkpoint formats.
 It does not hot-patch an already running frozen supervisor or stop a remote
 Qwen process. Do not restart healthy OLMo3 workers merely to update this policy.

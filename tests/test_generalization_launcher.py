@@ -36,6 +36,9 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
     (root / "src/diagnose_launch_failure.py").write_text(
         (ROOT / "src/diagnose_launch_failure.py").read_text(), encoding="utf-8"
     )
+    (root / "src/cleanup_run_processes.py").write_text(
+        (ROOT / "src/cleanup_run_processes.py").read_text(), encoding="utf-8"
+    )
     (work / "venv/bin").mkdir(parents=True)
     (work / "models/m1").mkdir(parents=True)
     (work / "models/m2").mkdir(parents=True)
@@ -67,6 +70,7 @@ def checkout(tmp_path: Path, gpu_count: int = 4) -> tuple[Path, dict[str, str]]:
         "#!/usr/bin/env bash\n"
         "script=$1; shift\n"
         'case "$script" in\n'
+        '  src/cleanup_run_processes.py) exec python3 "$script" "$@" ;;\n'
         "  src/model_matrix.py)\n"
         '    case " $* " in\n'
         "      *'qwen35_9b_grpo.json list-models '*) printf 'm1\\n' ;;\n"
@@ -353,7 +357,7 @@ def test_launcher_refuses_when_primary_owns_the_node(tmp_path: Path) -> None:
         cwd=root, env=env, text=True, capture_output=True, timeout=20, check=False,
     )
     assert result.returncode != 0
-    assert "OLMo primary launcher is running on THIS node" in result.stdout + result.stderr
+    assert "primary.lock is still held by another process" in result.stdout + result.stderr
     assert not (Path(env["TEST_WORK"]) / "phases").exists()
     fcntl.flock(lock_stream, fcntl.LOCK_UN)
     lock_stream.close()

@@ -29,6 +29,10 @@ log_stage() {
   printf '[stage] %s  %s\n' "$(date -u +%H:%M:%SZ)" "$LAUNCH_STAGE"
 }
 failure_excerpt() {  # terminal-only: one diagnosis + one action; raw lines only if unknown
+  if [ "$LAUNCH_STAGE" = local-primary-admission ]; then
+    printf 'ACTION: this node is locked; identify its remaining lock owner. Do not delete lock files or stop unrelated OLMo workers.\n(full log: %s)\n' "$SESSION_LOG" >&"$LAUNCH_STDOUT"
+    return 0
+  fi
   if [ "$LAUNCH_STAGE" = primary-completion ]; then
     printf 'ACTION: finish the OLMo3 primary matrix first; no Qwen GPU preflight was started.\n(full log: %s)\n' "$SESSION_LOG" >&"$LAUNCH_STDOUT"
     return 0

@@ -72,8 +72,17 @@ done
 # A free node is not evidence that the cluster-wide primary matrix finished.
 if [ "$MODE" != --prepare ]; then
   log_stage primary-completion
-  source scripts/require_olmo3_complete.sh
-  require_olmo3_complete || exit $?
+  if [ "$PROFILE" = qwen35 ] && [ -n "${OM_QWEN_IDLE_NODE:-}" ]; then
+    current_host=$(hostname) || exit 1
+    [ "$OM_QWEN_IDLE_NODE" = "$current_host" ] || {
+      echo "[primary-pending] idle-node exception belongs to $OM_QWEN_IDLE_NODE, not $current_host"
+      exit 75
+    }
+    echo "[additional] explicit Qwen 9B exception on $current_host; local primary lock, idle GPUs and contracts still required"
+  else
+    source scripts/require_olmo3_complete.sh
+    require_olmo3_complete || exit $?
+  fi
 fi
 
 # OM_MATH_VERIFIER=math_verify is exported below, but the verifier is a vendored
@@ -237,6 +246,7 @@ chmod 700 "$LOCAL_LOCK_DIR"
 
 # Reject a duplicate additional-suite worker on this node, then wait on the
 # exact lock held for the lifetime of revision 295dfea's primary launcher.
+log_stage local-primary-admission
 exec 9>"$LOCAL_LOCK_DIR/additional-suite.lock"
 flock -n 9 || { echo "[abort] additional suite already queued on this physical node"; exit 1; }
 exec 8>"$LOCAL_LOCK_DIR/primary.lock"
@@ -248,12 +258,12 @@ if ! flock -n 8; then
     echo "[additional] worker=$WORKER_TAG queued behind local primary at git=$GIT (OM_WAIT_PRIMARY=1)"
     flock 8
   else
-    echo "[abort] the OLMo primary launcher is running on THIS node and owns its 4 GPUs (primary.lock). Run the 9B on an idle 4xH100 node, or OM_WAIT_PRIMARY=1 to queue behind OLMo (days)."
+    echo "[abort] this node's primary.lock is still held by another process. It may be an OLMo or additional launcher. Do not delete locks or stop unrelated training; identify the remaining owner on this node."
     exit 1
   fi
 fi
 log_stage gpu-admission
-echo "[additional] local primary complete for worker=$WORKER_TAG"
+echo "[additional] exclusive local primary lock acquired for worker=$WORKER_TAG"
 clean_checkout
 
 mapfile -t GPU_NAMES < <(

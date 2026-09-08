@@ -91,13 +91,42 @@ It writes the expected JSON beside the original as
 `*.json.expected-<digest>.json`; the recorded contract is not overwritten.
 The exact remote mismatch cannot be resolved without comparing those files.
 
-OLMo3 must finish first, including all 40 points and the final collection.
+Normal `run` requires OLMo3 to finish first, including all 40 points and the final collection.
 An idle node or a blocked OLMo3 family does not authorize a Qwen run. The shared
 launcher returns 75 before GPU preflight when primary completion is missing.
 Only after OLMo3 completion, update an idle Qwen checkout with
 `git pull --ff-only`, then run `bash scripts/run_qwen35_9b.sh`. This wrapper
 does not rotate to other models. Do not restart healthy primary OLMo workers
 for this launcher change. The recovery commands below are also post-primary.
+
+### Explicit idle-node parallel run (2026-09-09)
+
+The operator may assign a separate node to Qwen 9B while the remaining nodes
+continue OLMo3. Ctrl-C alone does not guarantee that detached CUDA children
+exited. To clean up this user's previous Qwen 9B processes in the same work
+root on this node, then launch again from an updated idle checkout:
+
+```bash
+git pull --ff-only
+bash scripts/run_qwen35_9b.sh restart-idle
+```
+
+`restart-idle` uses the existing process-namespace cleanup with a 15-second
+TERM grace followed by KILL for remaining matches. It selects the same
+`OM_WORK` and 9B run namespace/launcher plus descendants, on this machine and
+under this user only. It excludes its caller/ancestors, other model namespaces
+and other work roots. It does not delete artifacts, contracts or lock files.
+Unrecognized survivors still block normal lock/GPU admission rather than being
+killed indiscriminately. Use `run-idle` when no previous Qwen cleanup is needed.
+
+Both modes bind the exception to this hostname and only the 9B profile. Each
+requires the same exclusive local locks, four idle H100 GPUs, pinned snapshot,
+and dataset/matrix contracts as normal admission. Neither waits behind a
+primary lock, resets a contract, nor rotates to another model. Neither stops
+OLMo workers. A remaining lock owner must be identified rather than assumed
+to be OLMo just because the shared lock file is named `primary.lock`.
+The OLMo-to-Qwen automatic handoff remains disabled. A pre-existing Qwen
+contract conflict can still reject admission and must be diagnosed separately.
 
 If inspection confirms an obsolete, metadata-only Qwen root, stop the Qwen
 launchers using that root before this separate recovery command:

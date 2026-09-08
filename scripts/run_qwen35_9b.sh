@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Explicit 9B entrypoint; the shared launcher requires full OLMo3 completion.
+# Explicit 9B entrypoint; run-idle permits parallel work on this idle node only.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # No argument = run. `run` already performs every check (snapshot seal, FLA,
@@ -40,6 +40,26 @@ export OM_ALLOW_UNPINNED_SNAPSHOT=0 OM_TRUST_LOCAL_SNAPSHOT=0
 case "$MODE" in
   doctor) exec bash scripts/doctor_qwen35.sh ;;
   status) exec bash scripts/status_qwen35.sh ;;
+  run-idle|restart-idle)
+    [ "$#" -eq 1 ] || { echo "usage: $0 run-idle|restart-idle"; exit 2; }
+    export OM_QWEN_IDLE_NODE="$(hostname)"
+    [ -n "$OM_QWEN_IDLE_NODE" ] || exit 1
+    export OM_WAIT_PRIMARY=0
+    export ADDITIONAL_GPU_WAIT_SECONDS="${ADDITIONAL_GPU_WAIT_SECONDS:-60}"
+    # This is a separate model, never the primary's pinned generation/adapter.
+    unset OM_PIPELINE_REPO OM_PIPELINE_SCRIPT OM_GENERATION_GIT
+    unset REGIME_SKIP_COLLECTION REGIME_MATRIX MODEL_PATH OM_EXTERNAL_GPU_KEEPALIVE
+    if [ "$MODE" = restart-idle ]; then
+      source scripts/setup_env.sh
+      echo "[cleanup] stopping this user's previous Qwen 9B processes on $(hostname), work=$OM_WORK; preserving all artifacts"
+      "$VENV_DIR/bin/python" src/cleanup_run_processes.py \
+        --run-prefix "$OM_WORK/runs/qwen35-9b-posttrained-math-code-grpo-v1" \
+        --require-environment "OM_WORK=$OM_WORK" \
+        --command-pattern 'scripts/run_additional_experiments.sh --run qwen35 ' \
+        --timeout 15
+    fi
+    exec bash scripts/run_additional_experiments.sh --run qwen35
+    ;;
   run)
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
     exec bash scripts/run_additional_experiments.sh --run qwen35
@@ -48,5 +68,5 @@ case "$MODE" in
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
     exec bash scripts/run_additional_experiments.sh "--$MODE" qwen35
     ;;
-  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|check|status|doctor|prepare]  (default run; status = one screen; prepare = download, needs internet)"; exit 2 ;;
+  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|run-idle|restart-idle|check|status|doctor|prepare]  (restart-idle = stop this node's previous 9B processes, then run-idle)"; exit 2 ;;
 esac

@@ -12,6 +12,12 @@ other eligible OLMo3 families. Qwen/additional compute is blocked until all
 40 primary points and the final collection are complete. Existing healthy
 OLMo3 workers and their checkpoints do not need a restart for this policy.
 
+Explicit idle-node exception: `bash scripts/run_qwen35_9b.sh run-idle` assigns
+only the current, otherwise idle node to Qwen 9B while OLMo continues elsewhere.
+Use `restart-idle` instead to first terminate that node's previous Qwen 9B
+processes and children in the same work root. Other OLMo workers are untouched;
+local GPU locks and contracts remain enforced. Automatic handoff stays disabled.
+
 ## Qwen3.5-9B replication (after OLMo3 completion)
 
 After the primary finishes, the additional entrypoint is `bash scripts/run_qwen35_9b.sh

@@ -1,5 +1,12 @@
 # OLMo3 first, independent experiments only after completion
 
+Explicit operator exception (2026-09-09): the Qwen 9B wrapper's `run-idle`
+mode allows that separately selected, locally idle node to run 9B before full
+OLMo completion. `restart-idle` first terminates only the same user's previous
+9B namespace/launcher and descendants on that node. Local locks, GPU admission
+and contracts still apply. The automatic rotation described below remains
+post-primary only; the OLMo launcher never invokes these explicit modes.
+
 The OLMo launcher preserves blocked family checkpoints and rollouts. It finishes
 other eligible primary families first. When every remaining selected primary
 family is marked LOOPING, it does not exit or collect a partial matrix as complete.
