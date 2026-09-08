@@ -86,15 +86,24 @@ def verifier_pair(timeout_seconds: int = GENEROUS_TIMEOUT):
     budget here; the caller uses DEFAULT_TIMEOUT to tell a timeout-sensitive row
     from a real mismatch.
     """
+    import contextlib
+    import io
+
     from math_verify import LatexExtractionConfig, parse, verify
+
+    # math-verify prints "Timeout during comparison" on stdout for every row that
+    # runs out of time. On a slow node that is thousands of lines that bury the
+    # real output; the timeout is already accounted for (a timed-out comparison
+    # scores 0 and is classified timeout-sensitive by the caller).
+    def quiet_verify(a, b) -> bool:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return bool(verify(a, b, timeout_seconds=timeout_seconds))
 
     def old(prediction: str, gold: str) -> float:
         try:
             parsed_gold = parse(gold, parsing_timeout=timeout_seconds)
             parsed_prediction = parse(prediction, parsing_timeout=timeout_seconds)
-            return 1.0 if parsed_gold and parsed_prediction and verify(
-                parsed_gold, parsed_prediction, timeout_seconds=timeout_seconds
-            ) else 0.0
+            return 1.0 if parsed_gold and parsed_prediction and quiet_verify(parsed_gold, parsed_prediction) else 0.0
         except Exception:
             return 0.0
 
@@ -106,9 +115,7 @@ def verifier_pair(timeout_seconds: int = GENEROUS_TIMEOUT):
         try:
             parsed_gold = as_math(gold)
             parsed_prediction = as_math(prediction)
-            return 1.0 if parsed_gold and parsed_prediction and verify(
-                parsed_gold, parsed_prediction, timeout_seconds=timeout_seconds
-            ) else 0.0
+            return 1.0 if parsed_gold and parsed_prediction and quiet_verify(parsed_gold, parsed_prediction) else 0.0
         except Exception:
             return 0.0
 

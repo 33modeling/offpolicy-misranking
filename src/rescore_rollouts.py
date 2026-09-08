@@ -88,6 +88,8 @@ def rewrite_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, n
                 row["reward_pinned"] = pinned
             row["reward"] = corrected
             stats["rows"] += 1
+            if stats["rows"] % 1000 == 0:
+                print(f"    {path.name}: {stats['rows']} rows rewritten ...", flush=True)
             if corrected > pinned:
                 stats["flip_0_to_1"] += 1
             elif corrected < pinned:
@@ -119,6 +121,8 @@ def scan_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, new_
             stats["rows"] += 1
             stats["flip_0_to_1"] += corrected > pinned
             stats["flip_1_to_0"] += corrected < pinned
+            if stats["rows"] % 1000 == 0:
+                print(f"    {path.name}: {stats['rows']} rows checked ...", flush=True)
     return stats
 
 
