@@ -74,7 +74,8 @@ sources = [merged] if merged.exists() else sorted(root.glob(base + ".shard*.json
 if not sources:
     print(f"[merge-abort] {base}: shard files not found", flush=True)
     sys.exit(1)
-n_train = len(json.loads((root / "prompts.json").read_text())["train"])
+split = "val" if base.endswith("_val") else "train"
+n_train = len(json.loads((root / "prompts.json").read_text())[split])
 seen = {}
 for s in sources:
     for line in s.open():
@@ -465,7 +466,7 @@ AD=$(ls -t "$OUT_ROOT"/policy_step_*/adapter_config.json 2>/dev/null | head -1)
 if [ -n "${AD:-}" ]; then
   SDIR="$OUT_ROOT/stale-$(date +%s)"; moved=0
   for f in "$OUT_ROOT"/rollouts_fresh_train*.jsonl "$OUT_ROOT"/rollouts_fresh_train*.manifest.json \
-           "$OUT_ROOT"/rollouts_fresh_val.jsonl "$OUT_ROOT"/rollouts_fresh_val.manifest.json \
+           "$OUT_ROOT"/rollouts_fresh_val*.jsonl "$OUT_ROOT"/rollouts_fresh_val*.manifest.json \
            "$OUT_ROOT"/oracle_micro_groups*.pt "$OUT_ROOT"/scores_oracle.json \
            "$OUT_ROOT"/scores_splithalf.json "$OUT_ROOT"/scores_offpolicy*.json \
            "$OUT_ROOT"/scores_hybrid_*.json "$OUT_ROOT"/rollouts_hybrid_*.jsonl \
@@ -607,6 +608,13 @@ PYEOF
 else
   progress 3 "grpo skipped (d0 base policy)"
 fi
+# Complete an interrupted merge before any shard sees a canonical JSONL without
+# its final manifest. Failed validation leaves the source shards intact.
+if [ -f "$OUT_ROOT/rollouts_fresh_val.jsonl" ] \
+    && compgen -G "$OUT_ROOT/rollouts_fresh_val.shard*.manifest.json" >/dev/null \
+    && ! artifact_ready "$OUT_ROOT/rollouts_fresh_val.jsonl"; then
+  merge_rollouts rollouts_fresh_val "${VAL_K:-8}" || exit 1
+fi
 if artifact_ready "$OUT_ROOT/rollouts_fresh_train.jsonl" && artifact_ready "$OUT_ROOT/rollouts_fresh_val.jsonl"; then
   progress 4 "fresh-rollout already published and validated; skipped without relaunching shards"
 else
@@ -617,6 +625,7 @@ else
   done
   wait_all_stages "${pids[@]}" || exit 1
   merge_rollouts rollouts_fresh_train "${FRESH_K:-16}" || exit 1
+  merge_rollouts rollouts_fresh_val "${VAL_K:-8}" || exit 1
 fi
 progress 5 "oracle+val gradients"
 # val 방향 ∥ oracle micro 샤딩 (GPU 여유가 있으면 마지막 GPU를 val 전용으로)

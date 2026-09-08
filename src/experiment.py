@@ -25,6 +25,7 @@ from compact_artifacts import (
     merge_divergence_shards,
 )
 from data import load_prompts
+from fresh_validation import validation_layout
 from grads import (
     ESTIMATORS,
     ProjectionSpec,
@@ -36,7 +37,10 @@ from grads import (
     token_weights,
     weight_stats,
 )
-from rollout import SAMPLING, collect_rollouts, load_policy, prepare_rollout_output
+from rollout import (
+    SAMPLING, collect_rollouts, load_policy, prepare_rollout_output,
+    rollout_artifact_ready,
+)
 from rollout_contract import rollout_seed_base, trim_row
 from select_rules import (
     fixed_selection_overlap,
@@ -555,6 +559,57 @@ def stage_report(args, run: Path) -> None:
     print("\n".join(lines))
 
 
+def stage_rollout_fresh(args, run: Path) -> None:
+    """Collect train and validation with the same global per-prompt RNG seeds."""
+    i, n = map(int, args.shard.split(":")) if args.shard else (0, 1)
+    if n < 1 or not 0 <= i < n:
+        raise ValueError(f"invalid rollout shard: {args.shard}")
+    prompts = json.loads((run / "prompts.json").read_text())
+    val_out = run / "rollouts_fresh_val.jsonl"
+    val_ready = rollout_artifact_ready(val_out)
+    if val_out.exists() and not val_ready:
+        raise ValueError("validation publication needs verified merge/recovery; preserving existing output")
+    layout = None if val_ready else validation_layout(run, n, len(prompts["val"]))
+    merged = run / "rollouts_fresh_train.jsonl"
+    out = run / f"rollouts_fresh_train.shard{i}.jsonl" if args.shard else merged
+    pi = tok = None
+    if prepare_rollout_output(merged):
+        print("rollout-fresh: validated merged training rollout; skipped")
+    elif prepare_rollout_output(out):
+        print(f"rollout-fresh: {out.name} already complete; skipped")
+    else:
+        pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+        train = prompts["train"]
+        per = (len(train) + n - 1) // n
+        lo, hi = min(i * per, len(train)), min((i + 1) * per, len(train))
+        collect_rollouts(
+            pi, tok, train[lo:hi], args.fresh_k, args.max_new_tokens,
+            args.temperature, out, idx_offset=lo,
+            sampling_seed_base=_generation_seed(args, run, "rollouts_fresh_train"),
+        )
+    if layout is None:
+        return
+    val = prompts["val"]
+    if layout["mode"] == "serial":
+        if i != 0:
+            return
+        lo, hi = 0, len(val)
+    else:
+        per = (len(val) + n - 1) // n
+        lo, hi = min(i * per, len(val)), min((i + 1) * per, len(val))
+        val_out = run / f"rollouts_fresh_val.shard{i}.jsonl"
+    if lo == hi or prepare_rollout_output(val_out):
+        return
+    if pi is None:
+        pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
+    print(f"rollout-fresh: validation {layout['mode']} shard={i}/{n} prompts=[{lo},{hi})")
+    collect_rollouts(
+        pi, tok, val[lo:hi], args.val_k, args.max_new_tokens,
+        args.temperature, val_out, idx_offset=lo,
+        sampling_seed_base=_generation_seed(args, run, "rollouts_fresh_val"),
+    )
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--stage", required=True,
@@ -653,44 +708,7 @@ def main() -> None:
                                  args, run, "rollouts_behavior_train"
                              ))
     elif args.stage == "rollout-fresh":
-        # π(adapter) fresh rollout을 샤딩 수집 — analyze는 완성 파일이 있으면 생성 스킵
-        merged = run / "rollouts_fresh_train.jsonl"
-        if args.shard:
-            i, n = map(int, args.shard.split(":"))
-            out = run / f"rollouts_fresh_train.shard{i}.jsonl"
-        else:
-            i, n, out = 0, 1, merged
-        pi = tok = None
-        # 병합본 존재 시 샤드 스킵 (병합 후 재시작 케이스 — 낡은 π 병합본은
-        # run_point의 adapter 시각 격리가 먼저 치우므로 여기 도달하면 현재 π 것)
-        if prepare_rollout_output(merged):
-            print("rollout-fresh: 병합본 존재 — 스킵")
-        elif prepare_rollout_output(out):
-            print(f"rollout-fresh: {out.name} 이미 존재 — 스킵")
-        else:
-            pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
-            train = json.loads((run / "prompts.json").read_text())["train"]
-            per = (len(train) + n - 1) // n
-            lo, hi = i * per, min((i + 1) * per, len(train))
-            collect_rollouts(pi, tok, train[lo:hi], args.fresh_k,
-                             args.max_new_tokens, args.temperature, out,
-                             idx_offset=lo,
-                             sampling_seed_base=_generation_seed(
-                                 args, run, "rollouts_fresh_train"
-                             ))
-        # shard 0이 val fresh도 담당 — train 샤드 스킵 여부와 **무관하게** 검사.
-        # (else 안에 있던 시절: 재시작하면 train과 함께 val 수집도 건너뛰어
-        #  rollouts_fresh_val.jsonl 영구 누락 → val-grads가 line 37에서 사망)
-        val_out = run / "rollouts_fresh_val.jsonl"
-        if i == 0 and not prepare_rollout_output(val_out):
-            if pi is None:
-                pi, tok = load_policy(args.model, Path(args.adapter) if args.adapter else None)
-            prompts = json.loads((run / "prompts.json").read_text())
-            collect_rollouts(pi, tok, prompts["val"], args.val_k,
-                             args.max_new_tokens, args.temperature, val_out,
-                             sampling_seed_base=_generation_seed(
-                                 args, run, "rollouts_fresh_val"
-                             ))
+        stage_rollout_fresh(args, run)
     elif args.stage == "score":
         stage_score(args, run)
     elif args.stage == "oracle":

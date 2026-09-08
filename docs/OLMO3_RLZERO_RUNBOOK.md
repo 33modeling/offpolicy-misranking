@@ -163,6 +163,48 @@ log, once per hour:
 The same line is appended to `$ROOT/logs/ALERTS.log`, and `status` shows the
 last alerts and names dead workers in its DECISION line.
 
+## Parallel fresh validation (2026-09-08)
+
+For a matrix whose **generation commit contains this change**, fresh train
+and fresh validation both run on the selected GPUs. With four GPUs and 100
+validation prompts, each GPU generates 25 validation prompts after its train
+shard, instead of GPU0 generating all 100. The shell waits for all shards and
+merges into the same canonical `rollouts_fresh_val.jsonl`. It validates exact
+prompt/K coverage and provenance before publishing the canonical manifest and
+discarding redundant shards. Downstream gradient
+and scoring inputs, K, token cap, policy adapter, and per-prompt seed domains
+are unchanged. There are no extra model loads when a train worker continues
+directly to its validation shard.
+
+Scheduling is recorded in the point's `.fresh-val-layout.json` under a lock.
+A pre-existing serial validation partial retains the serial path and resumes
+its missing prompts; it is not discarded to get parallelism. Finished
+validation is reused. An interrupted new shard resumes from its own partial.
+Mixed layouts or a changed GPU count for an unfinished sharded validation
+fail without silently reinterpreting or discarding those artifacts. Preserve
+the recorded layout rather than deleting it to force a resume.
+
+The September 8 MBPP log showed roughly 90-95 minutes for serial validation.
+Four balanced shards would theoretically reduce that part to 23-24 minutes
+before overhead. This is not a measured H100 speedup or a fourfold speedup of
+the whole matrix. Inspect `fresh-shard*.log` for each worker's
+`validation sharded ... prompts=[lo,hi)` line and generation/verification
+timings when validating the new generation on an available allocation.
+
+**Existing pinned matrices do not acquire this change from `git pull` or a
+supervisor restart.** Their `.queue/generation.git` and point code identities
+remain unchanged. Do not interrupt the seven running primary workers, edit
+their local clones, rewrite Git/hash fields, or regenerate finished work just
+to activate this optimization. The patch is available for a new compatible
+generation; migration of an already-running pinned generation is a separate
+operation, not implemented or implicitly authorized by this change.
+
+CPU regression command (use a test environment with PyTorch and pytest):
+
+```bash
+PYTHONPATH=src python -m pytest -q tests/test_fresh_validation_shards.py
+```
+
 ## Runtime batch sizes per dataset (H100 profile, 2026-09-07)
 
 Measured on the running matrix: every response runs to the 2048-token cap and a
