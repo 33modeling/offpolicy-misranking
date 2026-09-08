@@ -197,6 +197,41 @@ def test_status_observes_real_progress_and_scans_all_active_logs(
     assert "overall_verdict=RUNNING" in output
 
 
+def test_status_reports_a_finished_point_that_the_completion_check_refuses(
+    tmp_path: Path,
+) -> None:
+    """Busy GPUs are not progress. A point that finished and was refused is
+    re-run from the start, so rollout bytes and GRPO steps keep moving and every
+    liveness measure says TRAINING while nothing can ever be accepted
+    (2026-09-07 night). Status must call that an error, not "ok"."""
+    root = tmp_path / "runs" / TAG
+    run, partial, lock = active_family(root)
+    (run / "logs/supervisor.log").write_text(
+        "[2026-09-08 01:00:00] [done-but-incomplete] ValueError: invalid GRPO policy lineage: config=...\n"
+        "[2026-09-08 02:00:00] [done-but-incomplete] ValueError: invalid GRPO policy lineage: config=...\n",
+        encoding="utf-8",
+    )
+
+    def advance() -> None:
+        time.sleep(0.2)
+        with partial.open("a", encoding="utf-8") as stream:
+            stream.write("{}\n")
+
+    updater = threading.Thread(target=advance)
+    updater.start()
+    try:
+        output = run_status(root, probe_seconds=1)
+    finally:
+        updater.join()
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+    assert "overall_verdict=REDOING_REJECTED_WORK" in output
+    assert "the completion check refused it (2x on math500/s0)" in output
+    assert "invalid GRPO policy lineage" in output
+    assert "the completion check refused it 2x, so the worker keeps redoing it" in output
+
+
 def test_status_distinguishes_alive_unknown_confirmed_stuck_and_dead(
     tmp_path: Path,
 ) -> None:

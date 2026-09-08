@@ -522,6 +522,30 @@ def current_attempt_errors(
     return True, total, evidence, manifest
 
 
+def rejected_completions(run: Path | None) -> tuple[int, str]:
+    """How often this point finished and was refused by the completion check.
+
+    The supervisor writes one `[done-but-incomplete] <reason>` line per rejection
+    to <run>/logs/supervisor.log. Such a point is re-run from the start, so the
+    node writes rollouts and GRPO steps and every liveness measure says TRAINING
+    while no point can ever be accepted (2026-09-07 night). Count it and say so.
+    """
+    if run is None:
+        return 0, ""
+    log = run / "logs/supervisor.log"
+    try:
+        lines = [
+            line for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+            if "[done-but-incomplete]" in line
+        ]
+    except OSError:
+        return 0, ""
+    if not lines:
+        return 0, ""
+    reason = lines[-1].split("[done-but-incomplete]", 1)[1].strip()
+    return len(lines), reason
+
+
 def last_json(path: Path) -> dict | None:
     line = last_nonempty_line(path)
     if not line:
@@ -1067,6 +1091,7 @@ def main() -> None:
         elif kind == "not-started":
             stage = "not started" if not done_drifts else "next"
         note = ""
+        rejected_count, rejected_reason = rejected_completions(run)
         recovery = last_json(run / "rollout_recovery.jsonl") if run is not None and run.is_dir() else None
         write_age = fmt_age(age_seconds(snapshot.artifact_activity_ns))
         err_text = short_error(current_errors, 60) if current_errors else ""
@@ -1093,6 +1118,9 @@ def main() -> None:
                 note += f" | error: {err_text}"
         elif verdict == "UNKNOWN":
             note = f"CHECK: {reason.replace('_', ' ')}"
+        elif rejected_count:
+            note = (f"NEEDS YOU: this point finished and the completion check refused it "
+                    f"{rejected_count}x, so the worker keeps redoing it: {rejected_reason[:110]}")
         elif current_errors:
             note = f"ERROR in current attempt but still moving: {err_text}"
         elif recovery is not None and recovery.get("status") not in (None, "recovered", "completed"):
@@ -1112,6 +1140,8 @@ def main() -> None:
             note = "ok"
         rows.append(
             {
+                "rejected_completions": rejected_count,
+                "rejected_reason": rejected_reason,
                 "family": family,
                 "snapshot": snapshot,
                 "changes": changes,
@@ -1168,6 +1198,10 @@ def main() -> None:
     elif contract_errors:
         overall = "INVALID"
         action = "fix_runtime_contract_before_continuing"
+    elif any(r.get("rejected_completions") for r in rows):
+        # bytes are moving, but on a point that can never be accepted
+        overall = "REDOING_REJECTED_WORK"
+        action = "git_pull_then_run_h100__read_point_logs_supervisor_log"
     elif complete == len(families):
         overall = "COMPLETE"
         action = "none"
@@ -1249,10 +1283,12 @@ def main() -> None:
         "wait_for_worker_preflight_or_queue_claim": "workers are starting: wait",
         "start_workers": "start the workers: bash scripts/run_olmo3_rlzero.sh run h100",
         "fix_runtime_contract_before_continuing": "config mismatch: do not continue, see the ! contract lines",
+        "git_pull_then_run_h100__read_point_logs_supervisor_log": "a finished point is being refused and redone: git pull, run h100 again; if it repeats, read that point's logs/supervisor.log",
         "Ctrl-C_the_idle_worker__git_pull__relaunch_run_h100": "nothing durable is being written: Ctrl-C the idle worker, git pull, run h100 again (partials resume)",
     }.get(action, action.replace("_", " "))
     verdict_word = {
         "NOT_TRAINING": "NOT TRAINING - workers alive, nothing durable written",
+        "REDOING_REJECTED_WORK": "REDOING REFUSED WORK - the GPUs are busy on a point that cannot be accepted",
         "RUNNING": "RUNNING - all good",
         "DEGRADED": "DEGRADED - something needs a look",
         "HUNG": "HUNG - alive but not working",
@@ -1276,6 +1312,7 @@ def main() -> None:
     auto = [r["family"].key for r in rows if r["verdict"] in {"STUCK", "RETRYING"}]
     check = [r["family"].key for r in rows if r["verdict"] == "UNKNOWN"]
     errored = [r["family"].key for r in rows if r["current_error_count"]]
+    redoing = [r for r in rows if r.get("rejected_completions")]
     dead_workers = []
     workers_dir = args.root / ".workers"
     if workers_dir.is_dir():
@@ -1301,6 +1338,13 @@ def main() -> None:
         decision = (f"ERROR: {', '.join(looping)} keep(s) failing with the same error; retries were stopped. "
                     "A marker written for a CUDA runtime fault is cleared by the next worker started with the current code "
                     "(git pull, run h100); for any other cause fix it, then relaunch with OM_RLZERO_CLEAR_LOOPS=1.")
+    elif redoing:
+        first = redoing[0]
+        decision = (f"ERROR: {', '.join(r['family'].key for r in redoing)} finished a point and the completion check "
+                    f"refused it ({first['rejected_completions']}x on {first['family'].key}), so the worker is redoing "
+                    f"work that can never be accepted. The GPUs look busy and nothing can finish. "
+                    f"Reason: {first['rejected_reason'][:150]} -> git pull (the check may be fixed), then run h100; "
+                    f"if it repeats, read <point>/logs/supervisor.log.")
     elif needs_you and workers:
         decision = (f"ERROR: {len(needs_you)} family(ies) hung (alive, writing nothing): {', '.join(needs_you)}. "
                     "RESTART NEEDED on the node showing that family: Ctrl-C, git pull --ff-only, run h100 (finished work resumes).")
