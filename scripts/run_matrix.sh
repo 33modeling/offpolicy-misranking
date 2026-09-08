@@ -155,6 +155,14 @@ echo "[queue] generation_git=$GENERATION_GIT pipeline_git=$PIPELINE_GIT"
 SEEDS=(${REGIME_SEEDS:-0 1 2})
 DATASETS=(${REGIME_DATASETS:-gsm8k math500})
 DRIFTS=(${REGIME_DRIFTS:-0 25 100 400})
+PARALLEL_CONTROL=${REGIME_PARALLEL_CONTROL:-0}
+CONTROL_ONLY=${REGIME_CONTROL_ONLY:-0}
+case "$PARALLEL_CONTROL:$CONTROL_ONLY" in 0:0|1:0|1:1) ;;
+  *) echo '[abort] invalid parallel control mode'; exit 2 ;;
+esac
+[ "$CONTROL_ONLY" = 0 ] || [ "${REGIME_SKIP_COLLECTION:-0}" = 1 ] || {
+  echo '[abort] control-only work cannot publish a full matrix'; exit 2;
+}
 MAX_RETRIES="${REGIME_MAX_RETRIES:-3}"
 # Only genuine OOM recovery reduces the generation batch. Reductions are
 # geometric (8 -> 4 -> 2), and the configured floor prevents an accidental
@@ -926,6 +934,25 @@ recover_cuda_rollout() {
 }
 
 run_point() {
+  if [ "${PARALLEL_CONTROL:-0}" != 1 ]; then
+    run_point_unlocked "$@"
+    return $?
+  fi
+  local point_lock rc
+  mkdir -p "$QUEUE/points" || return 1
+  exec {point_lock}>"$QUEUE/points/$1-s$2-d$3.lock"
+  if ! flock -n "$point_lock"; then
+    exec {point_lock}>&-
+    return 75
+  fi
+  # Keep watchdog ownership in the caller's shell while serializing all writes.
+  run_point_unlocked "$@"
+  rc=$?
+  exec {point_lock}>&-
+  return "$rc"
+}
+
+run_point_unlocked() {
   local dataset=$1 seed=$2 drift=$3 source=$4 resume_step=$5 resume_run=$6
   local run try n_train attempt_log rc prompt_root prompt_env failure_line
   run=$(run_dir "$dataset" "$seed" "$drift")
@@ -1099,6 +1126,13 @@ run_family() {
   }
   export OM_PROMPT_FORMAT
   source=$(run_dir "$dataset" "$seed" 0)
+  if [ "$CONTROL_ONLY" = 1 ]; then
+    # Never regenerate a behavior pool that the training worker is consuming.
+    rollout_artifact_ready "$source" rollouts_behavior_train || return 75
+    echo "[control-assist] evaluating $dataset/s$seed/d0 alongside its GRPO chain"
+    run_point "$dataset" "$seed" 0 "" "" ""
+    return $?
+  fi
   # One line per claim that says what this worker thinks of every point, with
   # the rejection reason for a point that has DONE but does not pass (2026-09-08).
   local plan="" d point
@@ -1181,14 +1215,23 @@ while :; do
   claimed=0
   while read -r dataset seed; do
     [ -n "$dataset" ] && [ -n "$seed" ] || continue
-    family_complete "$dataset" "$seed" && continue
+    if [ "$CONTROL_ONLY" = 1 ]; then
+      run_complete "$(run_dir "$dataset" "$seed" 0)" "$dataset" "$seed" 0 "" && continue
+    else
+      family_complete "$dataset" "$seed" && continue
+    fi
     remaining=$((remaining + 1))
     lock="$QUEUE/$dataset-s$seed.lock"
+    [ "$CONTROL_ONLY" = 0 ] || lock="$QUEUE/$dataset-s$seed.control.lock"
     (
       trap '' HUP
       trap 'cleanup_active_pipeline; exit 130' INT TERM
       flock -n 9 || exit 75
-      family_complete "$dataset" "$seed" && exit 0
+      if [ "$CONTROL_ONLY" = 1 ]; then
+        run_complete "$(run_dir "$dataset" "$seed" 0)" "$dataset" "$seed" 0 "" && exit 0
+      else
+        family_complete "$dataset" "$seed" && exit 0
+      fi
       run_family "$dataset" "$seed"
     ) 9>"$lock" </dev/null   # stdin is the family list; children must not read it
     rc=$?

@@ -6,6 +6,13 @@ entered through the canonical runner.
 
 ## Run OLMo3 First
 
+Spare OLMo nodes can help with independent d0 evaluation while another node
+continues its GRPO chain. On both participating upgraded nodes, use
+`OM_RLZERO_PARALLEL_CONTROL=1 bash scripts/run_olmo3_rlzero.sh run h100`.
+Existing results and the generation pin are reused. Already-running legacy
+owners need a targeted stop/re-entry before their family can be shared; do not
+restart every worker. See the [runbook](docs/OLMO3_RLZERO_RUNBOOK.md).
+
 Finish the OLMo3 H100 primary matrix before starting another model:
 `bash scripts/run_olmo3_rlzero.sh run h100`. Failed families yield only to
 other eligible OLMo3 families. Qwen/additional compute is blocked until all

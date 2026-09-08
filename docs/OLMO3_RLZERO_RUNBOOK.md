@@ -140,6 +140,53 @@ Runs `regime_map.py` on that family's four completed points only, prints the
 regime report, and writes it under `$OM_WORK/readouts/family-<dataset>-s<seed>-<git>-boot<N>/`.
 It is a preview: the registered result is the full 40-point collection.
 
+## Parallel d0 evaluation on spare OLMo nodes (2026-09-09)
+
+Opt in on the participating nodes from an updated idle checkout:
+
+```bash
+OM_RLZERO_PARALLEL_CONTROL=1 bash scripts/run_olmo3_rlzero.sh run h100
+```
+
+Workers still prioritize normal OLMo families. When no training family can be
+claimed, a spare worker searches the most-work-remaining families for an
+unfinished d0 evaluation whose behavior pool is already validated. It can
+evaluate that d0 while another upgraded worker continues d25 -> d100 -> d400.
+Once finished it returns to the queue and can help another eligible family.
+This increases useful parallelism within OLMo; it never starts Qwen.
+
+For the September 9 08:01 snapshot, mbpp/s4 was furthest behind. The useful
+initial pairing is its current owner plus a genuinely spare four-H100 node.
+Both must run the command above. Stop/re-enter only those selected launchers
+after checking their current ownership; preserve the run root and generation
+pin. Existing checkpoint and rollout partials resume through the normal pinned
+pipeline, with model/preflight startup overhead. Do not restart all healthy
+workers. Old exclusive family owners cannot be helped in place: their locks
+remain respected until those owners stop. A git pull cannot hot-patch a frozen
+running supervisor. Expand participation at later natural restart boundaries.
+
+The math/MBPP protocol, data sizes, K values, GRPO world size and generation
+commit do not change. D0 is not a prerequisite for GRPO once behavior data is
+valid. The sequential GRPO checkpoint dependency still cannot be skipped.
+The existing legacy serial validation path remains serial within each point;
+this change does not silently deploy new generation code to the current run.
+
+Locking: upgraded participants share the existing family lease (legacy EX
+owners remain excluded), one exclusive training lease allows only one GRPO
+chain, and one exclusive point lease covers repair, generation, validation and
+publication. Helpers have a separate control lease and owner record, displayed
+as `<dataset>/s<seed>/d0` in worker claims. Family-wide runtime repair is disabled
+in this mode; the matrix repairs only its locked point. A helper never writes
+the family-complete stamp or publishes the full collection. Completed control
+artifacts are reused by the original chain; the final 40-point checks remain.
+
+Use `[control-assist] claim=.../d0` and `completed .../d0` in the worker log to
+confirm actual assignment. No compatible upgraded chain or no unfinished valid
+d0 means waiting, not extra GPU training. All participants must see coherent
+cross-node shared-volume flock behavior; local tests cannot validate the mount.
+This overlaps independent evaluation work but is not a measured H100 speedup
+or a promise that the whole remaining matrix scales with GPU count.
+
 ## Failure loops
 
 OLMo3 is the first priority. A blocked primary worker never hands off to Qwen

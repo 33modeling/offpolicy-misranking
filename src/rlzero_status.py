@@ -1047,6 +1047,14 @@ def main() -> None:
         worker = snapshot.owner.get("worker")
         if snapshot.state == "claimed" and isinstance(worker, str) and worker:
             claims_by_worker.setdefault(worker, []).append(family.key)
+        control_owner = args.root / ".families" / f"{family.file_key}.control-owner.json"
+        control = read_owner(control_owner) if control_owner.is_file() else {}
+        helper = control.get("worker")
+        if (control.get("role") == "control" and control.get("generation_git") == generation_git
+                and isinstance(helper, str) and helper
+                and worker_heartbeat(args, helper)[2]
+                and lock_held(args.root / ".families" / f"{family.file_key}.control.lock")):
+            claims_by_worker.setdefault(helper, []).append(f"{family.key}/d0")
     diagnostic_workers = workers | heartbeat_workers | set(claims_by_worker)
     worker_rows: list[dict] = []
     for worker in sorted(diagnostic_workers):

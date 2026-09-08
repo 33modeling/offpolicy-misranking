@@ -259,6 +259,8 @@ SEEDS=($(experiment_field seeds))
 # families are neither claimed nor waited for; the final collection still
 # requires all of them. Use it when you want one node = one fixed list.
 ONLY_FAMILIES="${OM_RLZERO_ONLY_FAMILIES:-}"
+PARALLEL_CONTROL=${OM_RLZERO_PARALLEL_CONTROL:-0}
+case "$PARALLEL_CONTROL" in 0|1) ;; *) echo '[abort] OM_RLZERO_PARALLEL_CONTROL must be 0 or 1'; exit 2 ;; esac
 # `run h100 <dataset>` is the phone-typable form of the same split: this node
 # handles only that dataset's families.
 if [ "$MODE" = run ] && [ -n "${3:-}" ]; then
@@ -906,6 +908,7 @@ declare -A FAMILY_CUDA_FAILURES=()
 # a failure. A failed family is never retried on the spot: the worker walks on to
 # the next family and comes back after this cooldown (2026-09-08).
 declare -A FAMILY_NEXT_ATTEMPT=()
+declare -A CONTROL_NEXT_ATTEMPT=()
 now_seconds() { printf '%s\n' "${EPOCHSECONDS:-$(date +%s)}"; }
 failure_backoff_seconds() {  # failure_backoff_seconds <consecutive failures>
   local n=$1 pause
@@ -1000,15 +1003,16 @@ note_family_failure() {  # note_family_failure <dataset> <seed> <rc>; sets LAST_
 }
 
 run_family() {
-  local dataset=$1 seed=$2 root result format owner rc=1 attempt
+  local dataset=$1 seed=$2 control_only=${3:-0} root result format owner rc=1 attempt
   root=$(family_root "$dataset" "$seed")
   result=$(family_result "$dataset" "$seed")
   owner="$QUEUE/$dataset-s$seed.owner.json"
+  [ "$control_only" = 0 ] || owner="$QUEUE/$dataset-s$seed.control-owner.json"
   format=olmo_rlzero_math
   [ "$dataset" = mbpp ] && format=olmo_rlzero_code
   ACTIVE_OWNER=$owner
   HOST_TAG="$HOST_TAG" WORKER_ID="$WORKER_ID" GENERATION_GIT="$GENERATION_GIT" \
-    DATASET="$dataset" SEED="$seed" "$PY" - "$owner" <<'PYEOF'
+    DATASET="$dataset" SEED="$seed" CONTROL_ONLY="$control_only" "$PY" - "$owner" <<'PYEOF'
 import datetime, json, os, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
@@ -1016,6 +1020,7 @@ tmp.write_text(json.dumps({
     "host": os.environ["HOST_TAG"], "worker": os.environ["WORKER_ID"],
     "dataset": os.environ["DATASET"], "seed": int(os.environ["SEED"]),
     "generation_git": os.environ["GENERATION_GIT"],
+    "role": "control" if os.environ["CONTROL_ONLY"] == "1" else "family",
     "claimed_at_utc": datetime.datetime.now(datetime.UTC).isoformat(),
 }, sort_keys=True) + "\n")
 tmp.replace(path)
@@ -1028,7 +1033,7 @@ PYEOF
   # Points created under other runtime values are updated before re-entry: only
   # unfinished points, only these two fields, every change logged
   # (src/repair_run_config.py).
-  if [ -d "$root" ] && compgen -G "$root/*/run_config.json" >/dev/null 2>&1; then
+  if [ "$PARALLEL_CONTROL" = 0 ] && [ -d "$root" ] && compgen -G "$root/*/run_config.json" >/dev/null 2>&1; then
     "$PY" "$SUPERVISOR_RUNTIME_REPO/src/repair_run_config.py" --family-root "$root" \
       --gen-batch "$family_gen_batch" --gradient-micro-batch "$family_micro_batch" --apply \
       2>&1 | tee -a "$LOG"
@@ -1048,6 +1053,8 @@ PYEOF
       REGIME_ROOT="$root" REGIME_RESULTS="$result" REGIME_MODEL_TAG="$MODEL_TAG" \
       REGIME_DATASETS="$dataset" REGIME_SEEDS="$seed" \
       REGIME_DRIFTS="${DRIFTS[*]}" REGIME_SKIP_COLLECTION=1 \
+      REGIME_PARALLEL_CONTROL="$PARALLEL_CONTROL" REGIME_CONTROL_ONLY="$control_only" \
+      REGIME_YIELD_WHEN_BUSY="$PARALLEL_CONTROL" \
       OM_PROMPT_FORMAT="$format" \
       bash "$SUPERVISOR_RUNTIME_REPO/scripts/run_matrix.sh" 8>&- 9>&- 2>&1 \
         | tee -a "$LOG" 8>&- 9>&-
@@ -1059,12 +1066,18 @@ PYEOF
     fi
     [ "$rc" -ne 0 ] || break
     [ "$rc" -ne 43 ] || break
+    [ "$rc" -ne 75 ] || break
     [ "$attempt" -lt "$FAMILY_ATTEMPTS" ] || break
     sleep 30
   done
   if [ "$rc" -ne 0 ]; then
     cleanup_owner
     return "$rc"
+  fi
+  if [ "$control_only" = 1 ]; then
+    echo "[control-assist] completed $dataset/s$seed/d0; GRPO chain and family collection remain separate" | tee -a "$LOG"
+    cleanup_owner
+    return 0
   fi
   expected="$GENERATION_GIT $CONFIG_SHA $MODEL_REVISION $dataset $seed"
   temporary="$(family_stamp "$dataset" "$seed").tmp.$$"
@@ -1171,10 +1184,18 @@ while :; do
     fi
     start_supervisor_keepalive || exit 1
     (
-      flock -n 9 || exit 75
+      if [ "$PARALLEL_CONTROL" = 1 ]; then
+        # Legacy workers take EX on this same inode: they cannot overlap an
+        # upgraded chain or helper. Only upgraded participants share the lease.
+        flock -sn 9 || exit 75
+        exec {training_lease}>"$QUEUE/$dataset-s$seed.training.lock"
+        flock -n "$training_lease" || exit 75
+      else
+        flock -n 9 || exit 75
+      fi
       family_complete "$dataset" "$seed" && exit 0
       run_family "$dataset" "$seed"
-    ) 9>"$QUEUE/$dataset-s$seed.lock" </dev/null   # stdin is the family list; children must not read it
+    ) 9<>"$QUEUE/$dataset-s$seed.lock" </dev/null   # stdin is the family list; children must not read it
     rc=$?
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
       note_family_failure "$dataset" "$seed" "$rc"
@@ -1237,6 +1258,38 @@ while :; do
     sleep "$CLAIM_YIELD_SECONDS"
   done < <(ordered_families)
   [ "$remaining" -eq 0 ] && break
+  if [ "$PARALLEL_CONTROL" = 1 ] && [ "$claimed" -eq 0 ]; then
+    while read -r dataset seed; do
+      family_selected "$dataset" "$seed" || continue
+      family_complete "$dataset" "$seed" && continue
+      family_looping "$dataset" "$seed" && continue
+      [ ! -s "$(run_dir "$dataset" "$seed" 0)/DONE" ] || continue
+      [ ! -s "$QUEUE/$dataset-s$seed.control.loop" ] || continue
+      [ "$(now_seconds)" -ge "${CONTROL_NEXT_ATTEMPT[$dataset-s$seed]:-0}" ] || continue
+      (
+        flock -sn 9 || exit 75
+        # Help an upgraded active training worker, not a stale owner record.
+        exec {training_probe}>"$QUEUE/$dataset-s$seed.training.lock"
+        flock -n "$training_probe" && exit 75
+        exec {training_probe}>&-
+        exec {control_lease}>"$QUEUE/$dataset-s$seed.control.lock"
+        flock -n "$control_lease" || exit 75
+        echo "[control-assist] claim=$dataset/s$seed/d0 worker=$WORKER_ID" | tee -a "$LOG"
+        run_family "$dataset" "$seed" 1
+      ) 9<>"$QUEUE/$dataset-s$seed.lock" </dev/null
+      rc=$?
+      [ "$rc" -ne 75 ] || continue
+      claimed=$((claimed + 1))
+      if [ "$rc" -ne 0 ]; then
+        CONTROL_NEXT_ATTEMPT[$dataset-s$seed]=$(( $(now_seconds) + 900 ))
+        echo "[control-retry] $dataset/s$seed/d0 rc=$rc; preserved; other OLMo tasks first" | tee -a "$LOG"
+        if [ "$rc" = 43 ]; then
+          printf 'last_rc=43\nlast_error=control completion or contract failed\n' > "$QUEUE/$dataset-s$seed.control.loop"
+        fi
+      fi
+      break
+    done < <(ordered_families)
+  fi
   # OLMo3 must finish before any independent model. Keep the worker available
   # for repaired primary families without repeatedly running a known failure.
   if [ "$looping" -gt 0 ] && [ "$looping" -eq "$remaining" ]; then

@@ -35,6 +35,8 @@ def test_successful_pipeline_with_failed_completion_yields_without_retry(tmp_pat
     source = (REPO / "scripts/run_matrix.sh").read_text()
     start = source.index("run_point() {")
     function = source[start:source.index("\n}\n", start) + 2]
+    start = source.index("run_point_unlocked() {")
+    function += "\n" + source[start:source.index("\n}\n", start) + 2]
     (tmp_path / "logs").mkdir()
     (tmp_path / "checkpoint").write_text("preserve")
     script = function + '''
