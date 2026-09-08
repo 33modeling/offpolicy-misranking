@@ -72,34 +72,58 @@ def load_pinned_data_module(repo: Path, commit: str):
     return module
 
 
-def verifier_pair():
-    """(old, new) math verifiers; both raise if math-verify is missing."""
+DEFAULT_TIMEOUT = 5          # math-verify's own default for parse and verify
+GENEROUS_TIMEOUT = int(os.environ.get("OM_MATH_VERIFY_TIMEOUT", "60"))
+
+
+def verifier_pair(timeout_seconds: int = GENEROUS_TIMEOUT):
+    """(old, new) math verifiers; both raise if math-verify is missing.
+
+    math-verify gives parse and verify 5 seconds each. The matrix was scored on
+    H100 nodes; on a slower CPU node the same comparison can run out of time and
+    score 0, so the recomputed "old" value disagrees with the stored one for a
+    reason that has nothing to do with the answer. Both verifiers get a generous
+    budget here; the caller uses DEFAULT_TIMEOUT to tell a timeout-sensitive row
+    from a real mismatch.
+    """
     from math_verify import LatexExtractionConfig, parse, verify
 
     def old(prediction: str, gold: str) -> float:
         try:
-            parsed_gold = parse(gold)
-            parsed_prediction = parse(prediction)
+            parsed_gold = parse(gold, parsing_timeout=timeout_seconds)
+            parsed_prediction = parse(prediction, parsing_timeout=timeout_seconds)
             return 1.0 if parsed_gold and parsed_prediction and verify(
-                parsed_gold, parsed_prediction
+                parsed_gold, parsed_prediction, timeout_seconds=timeout_seconds
             ) else 0.0
         except Exception:
             return 0.0
 
     def new(prediction: str, gold: str) -> float:
         def as_math(expression: str):
-            return parse("$" + expression + "$", extraction_config=[LatexExtractionConfig()])
+            return parse("$" + expression + "$", extraction_config=[LatexExtractionConfig()],
+                         parsing_timeout=timeout_seconds)
 
         try:
             parsed_gold = as_math(gold)
             parsed_prediction = as_math(prediction)
             return 1.0 if parsed_gold and parsed_prediction and verify(
-                parsed_gold, parsed_prediction
+                parsed_gold, parsed_prediction, timeout_seconds=timeout_seconds
             ) else 0.0
         except Exception:
             return 0.0
 
     return old, new
+
+
+def reproduces_stored(text: str, gold: str, data, stored: float, old_verifier) -> str:
+    """'exact' when the pinned verifier reproduces the stored reward, 'timeout'
+    when only the time budget explains the difference, 'mismatch' otherwise."""
+    if abs(score(text, gold, data, old_verifier) - stored) <= 1e-9:
+        return "exact"
+    old_default, _ = verifier_pair(DEFAULT_TIMEOUT)
+    if abs(score(text, gold, data, old_default) - stored) <= 1e-9:
+        return "timeout"
+    return "mismatch"
 
 
 def score(text: str, gold: str, data, verifier) -> float:
@@ -160,11 +184,16 @@ def measure_run(run: Path, data, old_verifier, new_verifier, limit_rows: int | N
                 recomputed_new = score(text, gold, data, new_verifier)
                 stats["rows"] += 1
                 if abs(recomputed_old - stored) > 1e-9:
-                    stats["replication_mismatch"] += 1
-                    if len(mismatch_examples) < 3:
-                        mismatch_examples.append(
-                            f"line {line_number}: stored={stored} recomputed_old={recomputed_old} gold={gold!r}"
-                        )
+                    kind = reproduces_stored(text, gold, data, stored, old_verifier)
+                    if kind == "timeout":
+                        stats["timeout_sensitive"] += 1
+                        recomputed_old = stored      # the pinned value is the stored one
+                    else:
+                        stats["replication_mismatch"] += 1
+                        if len(mismatch_examples) < 3:
+                            mismatch_examples.append(
+                                f"line {line_number}: stored={stored} recomputed_old={recomputed_old} gold={gold!r}"
+                            )
                 if recomputed_new > recomputed_old:
                     stats["flip_0_to_1"] += 1
                 elif recomputed_new < recomputed_old:
@@ -179,6 +208,7 @@ def measure_run(run: Path, data, old_verifier, new_verifier, limit_rows: int | N
                 "rows": stats["rows"],
                 "unreadable": stats["unreadable"],
                 "replication_mismatch": stats["replication_mismatch"],
+                "timeout_sensitive": stats["timeout_sensitive"],
                 "mismatch_examples": mismatch_examples,
                 "flip_0_to_1": stats["flip_0_to_1"],
                 "flip_1_to_0": stats["flip_1_to_0"],

@@ -75,12 +75,14 @@ def rewrite_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, n
             gold = split[int(row["prompt_idx"])]["answer"]
             text = tokenizer.decode(ids, skip_special_tokens=True)
             pinned = float(row.get("reward_pinned", row["reward"]))
-            if abs(mmr.score(text, gold, data, old_verifier) - pinned) > 1e-9:
+            kind = mmr.reproduces_stored(text, gold, data, pinned, old_verifier)
+            if kind == "mismatch":
                 temporary.unlink(missing_ok=True)
                 raise ValueError(
                     f"{path.name}:{line_number}: the pinned verifier does not reproduce the stored reward "
                     f"({pinned}); responses or gold answers are misread, nothing was changed"
                 )
+            stats["timeout_sensitive"] += kind == "timeout"
             corrected = mmr.score(text, gold, data, new_verifier)
             if "reward_pinned" not in row:
                 row["reward_pinned"] = pinned
@@ -106,11 +108,13 @@ def scan_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, new_
             text = tokenizer.decode(row["input_ids"][int(row["resp_start"]):], skip_special_tokens=True)
             gold = split[int(row["prompt_idx"])]["answer"]
             pinned = float(row.get("reward_pinned", row["reward"]))
-            if abs(mmr.score(text, gold, data, old_verifier) - pinned) > 1e-9:
+            kind = mmr.reproduces_stored(text, gold, data, pinned, old_verifier)
+            if kind == "mismatch":
                 raise ValueError(
                     f"{path.name}:{line_number}: the pinned verifier does not reproduce the stored reward "
                     f"({pinned}); responses or gold answers are misread, nothing was changed"
                 )
+            stats["timeout_sensitive"] += kind == "timeout"
             corrected = mmr.score(text, gold, data, new_verifier)
             stats["rows"] += 1
             stats["flip_0_to_1"] += corrected > pinned
@@ -171,6 +175,7 @@ def rescore_point(run: Path, data, old_verifier, new_verifier, *, apply: bool, s
                 "rows": int(stats["rows"]),
                 "flip_0_to_1": int(stats["flip_0_to_1"]),
                 "flip_1_to_0": int(stats["flip_1_to_0"]),
+                "timeout_sensitive": int(stats["timeout_sensitive"]),
             })
         if apply:
             sidecar_path.write_text(json.dumps(sidecar, indent=1, ensure_ascii=False), encoding="utf-8")
@@ -260,7 +265,8 @@ def main(argv: list[str] | None = None) -> int:
                 totals["rows"] += entry["rows"]
                 totals["flip_0_to_1"] += entry["flip_0_to_1"]
                 totals["flip_1_to_0"] += entry["flip_1_to_0"]
-                print(f"  {point['run']}  {entry['file']}: rows={entry['rows']} 0->1={entry['flip_0_to_1']} 1->0={entry['flip_1_to_0']}")
+                print(f"  {point['run']}  {entry['file']}: rows={entry['rows']} 0->1={entry['flip_0_to_1']} 1->0={entry['flip_1_to_0']}"
+                      + (f" timeout-sensitive={entry['timeout_sensitive']}" if entry["timeout_sensitive"] else ""))
             if point["retired"]:
                 print(f"  {point['run']}  moved to pinned-scoring/{result['stamp']}/: {', '.join(point['retired'])}")
     print(f"[rescore] rows={totals['rows']} 0->1={totals['flip_0_to_1']} 1->0={totals['flip_1_to_0']}")
