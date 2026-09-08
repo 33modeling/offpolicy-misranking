@@ -247,8 +247,13 @@ def main(argv: list[str] | None = None) -> int:
         seeds = []
         for family_root in sorted(args.root.glob(f"family-{args.dataset}-s*")):
             seed = int(family_root.name.rsplit("-s", 1)[1])
-            done = all((family_root / f"{args.tag}-s{seed}-{args.dataset}-d{d}" / "DONE").is_file() for d in drifts)
-            if done or (family_root / ".family-complete").is_file():
+            points = [family_root / f"{args.tag}-s{seed}-{args.dataset}-d{d}" for d in drifts]
+            done = all((p / "DONE").is_file() for p in points)
+            # A family already rescored once has no DONE and no stamp any more;
+            # it is still ours to rescore again (idempotent), so a re-run after a
+            # crash or a second correction needs no seed argument.
+            rescored = all(any(p.glob("*.rescore.json")) for p in points)
+            if done or rescored or (family_root / ".family-complete").is_file():
                 seeds.append(seed)
     if not seeds:
         print(f"[rescore] no complete {args.dataset} family under {args.root}")
