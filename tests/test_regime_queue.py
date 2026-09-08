@@ -31,6 +31,42 @@ def test_pipeline_pythonpath_preserves_inherited_runtime_dependencies() -> None:
     assert 'PYTHONPATH="$PIPELINE_REPO/src"' not in script
 
 
+def test_policy_lineage_is_validated_with_the_pinned_generation_code() -> None:
+    """The policy manifest holds the pinned commit's GrpoConfig fields. Checking it
+    against the supervisor's newer GrpoConfig rejected every finished GRPO point
+    (master added `weight_decay` on 2026-09-06; four families re-ran d25 all night
+    on 2026-09-07). Validate pinned artifacts with the pinned definition."""
+    script = (REPO / "scripts/run_matrix.sh").read_text(encoding="utf-8")
+    block = script.split("from train_policy_grpo import GrpoConfig, validate_policy_lineage")[0]
+    invocation = block.rsplit('if ! COMPLETE_REASON=$(', 1)[1]
+    assert 'PYTHONPATH="$PIPELINE_REPO/src' in invocation, invocation
+    assert "SUPERVISOR_REPO" not in invocation, invocation
+
+
+def test_supervisor_grpo_config_has_fields_the_pinned_generation_code_lacks() -> None:
+    """The reason the check above matters: the two definitions really do differ.
+    If they ever converge this test may be deleted, not the pinning."""
+    import subprocess as sp
+
+    pinned = sp.run(
+        ["git", "show", "0e4cd412:src/train_policy_grpo.py"],
+        cwd=REPO, capture_output=True, text=True,
+    )
+    if pinned.returncode != 0:
+        return  # shallow checkout without the pinned commit
+    current = (REPO / "src/train_policy_grpo.py").read_text(encoding="utf-8")
+
+    def fields(source: str) -> set[str]:
+        body = source.split("class GrpoConfig:", 1)[1].split("\n\n", 1)[0]
+        return {
+            line.strip().split(":", 1)[0]
+            for line in body.splitlines()
+            if ":" in line and not line.strip().startswith("#")
+        }
+
+    assert fields(current) - fields(pinned.stdout) == {"weight_decay"}
+
+
 def test_shared_regime_queue_is_unique_and_retryable() -> None:
     with tempfile.TemporaryDirectory() as raw_tmp:
         root = Path(raw_tmp)

@@ -392,6 +392,14 @@ PYEOF
         || { COMPLETE_REASON="missing or empty policy_step_$drift/$artifact"; return 1; }
     done
     if [ -z "$CONTRACT" ]; then
+    # The policy manifest was written by the pinned generation commit, so its
+    # training config has exactly that commit's GrpoConfig fields. Validating it
+    # with the supervisor's newer GrpoConfig compares a 9-field record against a
+    # 10-field expectation and rejects every finished GRPO point: master gained
+    # `weight_decay` on 2026-09-06 (44538b9) and from then on every family that
+    # finished d25 re-ran it for ever (2026-09-07 night, four families, six nodes).
+    # Pinned artifacts are validated with the pinned definition, like
+    # policy_artifact_ready above.
     if ! COMPLETE_REASON=$(MODEL_PATH="$MODEL_PATH" SEED="$seed" \
       REGIME_MAX_NEW_TOKENS="$MAX_NEW_TOKENS_DEFAULT" \
       GRPO_GROUP_SIZE="$GRPO_GROUP_SIZE_DEFAULT" \
@@ -403,7 +411,7 @@ PYEOF
       GRPO_LORA_RANK="$GRPO_LORA_RANK_DEFAULT" \
       GRPO_LORA_ALPHA="$GRPO_LORA_ALPHA_DEFAULT" \
       GRPO_CHECKPOINT_EVERY="${GRPO_CHECKPOINT_EVERY:-5}" \
-      PYTHONPATH="$SUPERVISOR_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+      PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
       "$PY" - "$run/policy_step_$drift" "$drift" \
         "$GRPO_WORLD_SIZE_DEFAULT" "$RLVR_METHOD_DEFAULT" "$previous_drift" \
         "$expected_parent" 2>&1 >/dev/null <<'PYEOF'

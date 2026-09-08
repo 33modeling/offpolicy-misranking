@@ -194,6 +194,13 @@ if [ "${TEST_CUDA_FAIL_FAMILY:-}" = "$key" ]; then
     exit 1
   fi
 fi
+if [ "${TEST_STALE_CUDA_FAIL_FAMILY:-}" = "$key" ]; then
+  # an old CUDA line in a stage log, but the attempt that just failed says config-abort
+  mkdir -p "$REGIME_ROOT/point/logs"
+  echo "RuntimeError: CUDA error: unspecified launch failure" >> "$REGIME_ROOT/point/logs/main.log"
+  echo "[2026-09-08 09:00:00] [point-failed] try 3/3 rc=2: [config-abort] existing artifacts use a different run config: ['gen_batch']" >> "$REGIME_ROOT/point/logs/supervisor.log"
+  exit 1
+fi
 git=$(git -C "$OM_PIPELINE_REPO" rev-parse HEAD)
 printf '%s|%s|%s|%s|%s\n' "$WORKER_ID" "$key" "$git" "${OM_GEN_BATCH:-}" "${GRADIENT_MICRO_BATCH:-}" >> "$TEST_SHARED/work/claims"
 if [ "${TEST_PAUSE_FAMILY:-}" = "$key" ]; then
@@ -852,12 +859,15 @@ def test_cuda_runtime_faults_are_retried_without_tripping_the_loop_guard(tmp_pat
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "[cuda-flaky] math500/s1: CUDA runtime fault #5" in result.stdout
-    assert "CUDA runtime fault; this worker retries it in" in result.stdout
+    assert "[family-next] math500/s1 failed; this worker moves on to the next family now" in result.stdout
     assert "[family-loop]" not in result.stdout
     queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
     assert not (queue / "math500-s1.loop").exists()
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
-    assert len(claims) == 10 and len(set(claims)) == 10
+    # five faults, each one handing the node to another family; it finishes last
+    assert claims.index("math500-s1") > claims.index("mbpp-s1"), claims
+    assert set(claims) == {f"{d}-s{s}" for s in range(5) for d in ("math500", "mbpp")}
+    assert len(claims) == 10
 
 
 def test_every_worker_clears_loop_markers_that_recorded_a_cuda_fault(tmp_path: Path) -> None:
@@ -924,9 +934,70 @@ def test_repeated_cuda_faults_release_the_family_for_another_node(tmp_path: Path
     assert "releasing it for another node" in result.stdout
     assert "[family-loop]" not in result.stdout
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
-    # released after two faults, other families ran, then it was claimed again and finished
-    assert claims.index("math500-s1") > claims.index("mbpp-s1")
-    assert len(claims) == 10 and len(set(claims)) == 10
+    # three faults, each one moving the worker to another family, then it finishes
+    assert claims.index("math500-s1") > claims.index("mbpp-s1"), claims
+    assert set(claims) == {f"{d}-s{s}" for s in range(5) for d in ("math500", "mbpp")}
+    assert len(claims) == 10
+
+
+def test_stale_cuda_line_does_not_exempt_a_real_repeating_failure(tmp_path: Path) -> None:
+    """2026-09-08: five workers re-claimed the same family all night because an
+    old CUDA line in a stage log classified every later failure as a CUDA
+    fault. The attempt's own [point-failed] line decides now."""
+    checkout, env = fixture_checkout(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "stale-cuda-local"),
+            "TEST_STALE_CUDA_FAIL_FAMILY": "math500-s1",
+            "OM_RLZERO_MAX_FAMILY_FAILURES": "1",
+            "OM_RLZERO_FAMILY_ATTEMPTS": "1",
+            "OM_RLZERO_STALE_PROCESS_TIMEOUT": "1",
+            "OM_RLZERO_GPU_CLEANUP_TIMEOUT": "1",
+        },
+        text=True,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "[cuda-flaky]" not in result.stdout
+    assert "[family-loop] math500/s1 failed 1 times in a row (last: try 3/3 rc=2: [config-abort]" in result.stdout
+    queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
+    assert "last_error=try 3/3 rc=2: [config-abort]" in (queue / "math500-s1.loop").read_text()
+    # the other nine families still run, and the worker stops instead of waiting for ever
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    assert "math500-s1" not in claims and len(claims) == 9
+    assert "[queue] every family left is marked LOOPING: math500/s1" in result.stdout
+
+
+def test_worker_stops_when_only_looping_families_remain(tmp_path: Path) -> None:
+    """A LOOPING family is skipped by every worker, so waiting for one is waiting
+    for ever: the node held four GPUs all night printing '[queue] waiting for 1
+    families' (2026-09-08)."""
+    checkout, env = fixture_checkout(tmp_path)
+    queue = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1/.families"
+    queue.mkdir(parents=True)
+    (queue / "mbpp-s4.loop").write_text(
+        "family=mbpp/s4 worker=w host=h consecutive_failures=4 last_rc=1\n"
+        "last_error=torch.OutOfMemoryError: CUDA out of memory\nmarked_at_utc=2026-09-08T03:00:00Z\n"
+    )
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={**env, "OM_LOCAL_LOCK_DIR": str(tmp_path / "looping-only-local")},
+        text=True,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "[queue] every family left is marked LOOPING: mbpp/s4" in result.stdout
+    assert "OM_RLZERO_CLEAR_LOOPS=1" in result.stdout
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    assert "mbpp-s4" not in claims and len(claims) == 9
 
 
 def test_failed_family_is_retried_by_the_same_worker_before_moving_on(tmp_path: Path) -> None:
@@ -945,8 +1016,10 @@ def test_failed_family_is_retried_by_the_same_worker_before_moving_on(tmp_path: 
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "[family-retry] math500/s2: this worker retries it in 0s" in result.stdout
+    assert "[family-next] math500/s2 failed; this worker moves on to the next family now" in result.stdout
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
-    # the failed family is claimed again right away, before any later family is started
-    assert claims.index("math500-s2") < claims.index("mbpp-s2")
-    assert len(claims) == 10 and len(set(claims)) == 10
+    # the failed family does not hold the worker: every later family runs first,
+    # and it is picked up again on a later pass (a failed attempt writes no claim)
+    assert claims.index("math500-s2") > claims.index("mbpp-s2"), claims
+    assert set(claims) == {f"{d}-s{s}" for s in range(5) for d in ("math500", "mbpp")}
+    assert len(claims) == 10

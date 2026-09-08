@@ -897,11 +897,41 @@ MAX_FAMILY_FAILURES="${OM_RLZERO_MAX_FAMILY_FAILURES:-4}"
 MAX_CUDA_FAILURES="${OM_RLZERO_MAX_CUDA_FAILURES:-8}"
 declare -A FAMILY_FAILURES=()
 declare -A FAMILY_CUDA_FAILURES=()
+# Earliest time (epoch seconds) at which this worker attempts a family again after
+# a failure. A failed family is never retried on the spot: the worker walks on to
+# the next family and comes back after this cooldown (2026-09-08).
+declare -A FAMILY_NEXT_ATTEMPT=()
+now_seconds() { printf '%s\n' "${EPOCHSECONDS:-$(date +%s)}"; }
+failure_backoff_seconds() {  # failure_backoff_seconds <consecutive failures>
+  local n=$1 pause
+  [ "$n" -ge 1 ] || n=1
+  [ "$n" -le 8 ] || n=8
+  pause=$(( FAMILY_RETRY_SECONDS * (1 << (n - 1)) ))
+  [ "$pause" -le 900 ] || pause=900
+  printf '%s\n' "$pause"
+}
 LAST_FAILURE_KIND=""
 loop_marker() { printf '%s/%s-s%s.loop\n' "$QUEUE" "$1" "$2"; }
 family_last_error() {  # family_last_error <dataset> <seed> -> last error line (may be empty)
+  # 2026-09-08: judge the attempt that just failed, not the newest error line
+  # anywhere in the family's logs. A stale CUDA line from an earlier attempt made
+  # every later failure look like a CUDA fault, which is exempt from the loop
+  # guard, so a family that failed at its completion check was re-claimed by the
+  # same worker for ever. run_matrix.sh writes the failed attempt's own error
+  # line to <run>/logs/supervisor.log ([point-failed] ... rc=N: <line>).
+  local froot supervisor line
+  froot=$(family_root "$1" "$2")
+  supervisor=$(ls -t "$froot"/*/logs/supervisor.log 2>/dev/null | head -1)
+  if [ -n "$supervisor" ]; then
+    line=$(grep -E '\[(point-failed|done-but-incomplete)\]' "$supervisor" 2>/dev/null | tail -1 \
+      | sed -E 's/^\[[^]]*\] \[(point-failed|done-but-incomplete)\] //')
+    case "$line" in
+      ''|*"no error line in"*) ;;
+      *) printf '%s\n' "$line" | cut -c1-200; return 0 ;;
+    esac
+  fi
   grep -hE 'OutOfMemoryError|CUDA error|CUBLAS_STATUS|device-side assert|RuntimeError|Error:|\[abort\]|\[config-abort\]' \
-    "$(family_root "$1" "$2")"/*/logs/*.log 2>/dev/null | tail -1 | cut -c1-200
+    "$froot"/*/logs/*.log 2>/dev/null | tail -1 | cut -c1-200
 }
 failure_kind() {  # failure_kind "<error line>" -> oom | runtime | other
   "$PY" - "$1" "$SUPERVISOR_RUNTIME_REPO/src" <<'PYEOF'
@@ -1038,9 +1068,14 @@ PYEOF
 # unowned for nine hours: its worker failed once, moved on to a fresh family and
 # stayed busy on it for a day, and every other worker was busy too. Two rules:
 # (1) most-progressed family first, so resuming beats starting; (2) a family that
-# fails is retried by the same worker after FAMILY_RETRY_SECONDS until it
-# succeeds or trips the failure-loop guard, instead of being left for "the next
-# free worker".
+# fails is not abandoned to "the next free worker": this worker keeps it in its
+# own rotation and comes back to it.
+# 2026-09-08 correction: "keeps it" used to mean retrying the same family
+# immediately, in place, for ever. One family that failed at the same step every
+# time held a whole node all night. Now a failure moves the worker to the next
+# family at once and the failed one is retried after a growing cooldown
+# (FAMILY_RETRY_SECONDS doubling, capped at 900s) on a later pass. Work never
+# stops because one family is broken.
 family_points_done() {  # family_points_done <dataset> <seed> -> number of DONE points
   local drift n=0
   for drift in "${DRIFTS[@]}"; do
@@ -1067,74 +1102,105 @@ ordered_families() {  # "<dataset> <seed>" lines: most progress first, ties in r
 while :; do
   remaining=0
   claimed=0
+  next_attempt_wait=0
+  looping=0
+  looping_list=""
   while read -r dataset seed; do
     [ -n "$dataset" ] && [ -n "$seed" ] || continue
     family_selected "$dataset" "$seed" || continue
     family_complete "$dataset" "$seed" && continue
     if family_looping "$dataset" "$seed"; then
       remaining=$((remaining + 1))
+      looping=$((looping + 1))
+      looping_list+=" $dataset/s$seed"
       continue
     fi
     remaining=$((remaining + 1))
-    while :; do
-      (
-        flock -n 9 || exit 75
-        family_complete "$dataset" "$seed" && exit 0
-        run_family "$dataset" "$seed"
-      ) 9>"$QUEUE/$dataset-s$seed.lock" </dev/null   # stdin is the family list; children must not read it
-      rc=$?
-      if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
-        note_family_failure "$dataset" "$seed" "$rc"
-        if [ "$LAST_FAILURE_KIND" = runtime ]; then
-          echo "[family-retry] $dataset/s$seed rc=$rc (CUDA runtime faults on this worker: ${FAMILY_CUDA_FAILURES[$dataset-s$seed]:-1}/$MAX_CUDA_FAILURES, not a repeating failure); allocation retained, artifacts preserved" \
-            | tee -a "$LOG"
-        else
-          echo "[family-retry] $dataset/s$seed rc=$rc (consecutive failures: ${FAMILY_FAILURES[$dataset-s$seed]:-1}/$MAX_FAMILY_FAILURES); allocation retained, artifacts preserved" \
-            | tee -a "$LOG"
-        fi
-        stop_supervisor_keepalive
-        cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
-        statuses=("${PIPESTATUS[@]}")
-        [ "${statuses[0]}" -eq 0 ] && [ "${statuses[1]}" -eq 0 ] || exit 1
-        cleanup_node_gpu_processes || exit 1
+    # A family this worker failed on is not retried on the spot; another family
+    # runs first. Without this a single broken family held a whole node
+    # (2026-09-07 night: five workers re-entered the same point until morning).
+    cooldown=$(( ${FAMILY_NEXT_ATTEMPT[$dataset-s$seed]:-0} - $(now_seconds) ))
+    if [ "$cooldown" -gt 0 ]; then
+      if [ "$next_attempt_wait" -eq 0 ] || [ "$cooldown" -lt "$next_attempt_wait" ]; then
+        next_attempt_wait=$cooldown
       fi
-      start_supervisor_keepalive || exit 1
-      [ "$rc" -eq 75 ] && break   # held by another worker
-      claimed=$((claimed + 1))
-      if [ "$rc" -ne 0 ]; then
-        cleanup_owner
-        family_looping "$dataset" "$seed" && break   # guard tripped: every worker skips it now
-        if [ "$LAST_FAILURE_KIND" = runtime ]; then
-          cuda_n=${FAMILY_CUDA_FAILURES[$dataset-s$seed]:-1}
-          if [ "$cuda_n" -ge "$MAX_CUDA_FAILURES" ]; then
-            echo "[cuda-flaky] $dataset/s$seed: $cuda_n CUDA runtime faults in a row on this worker; releasing it for another node (artifacts preserved)" \
-              | tee -a "$LOG"
-            FAMILY_CUDA_FAILURES[$dataset-s$seed]=0
-            break
-          fi
-          pause=$(( FAMILY_RETRY_SECONDS * (1 << (cuda_n - 1)) ))
-          [ "$pause" -le 900 ] || pause=900
-          echo "[family-retry] $dataset/s$seed: CUDA runtime fault; this worker retries it in ${pause}s" | tee -a "$LOG"
-          sleep "$pause"
-          continue
-        fi
-        echo "[family-retry] $dataset/s$seed: this worker retries it in ${FAMILY_RETRY_SECONDS}s (not left for another worker)" \
+      continue
+    fi
+    (
+      flock -n 9 || exit 75
+      family_complete "$dataset" "$seed" && exit 0
+      run_family "$dataset" "$seed"
+    ) 9>"$QUEUE/$dataset-s$seed.lock" </dev/null   # stdin is the family list; children must not read it
+    rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
+      note_family_failure "$dataset" "$seed" "$rc"
+      if [ "$LAST_FAILURE_KIND" = runtime ]; then
+        echo "[family-retry] $dataset/s$seed rc=$rc (CUDA runtime faults on this worker: ${FAMILY_CUDA_FAILURES[$dataset-s$seed]:-1}/$MAX_CUDA_FAILURES, not a repeating failure); allocation retained, artifacts preserved" \
           | tee -a "$LOG"
-        sleep "$FAMILY_RETRY_SECONDS"
-        continue
+      else
+        echo "[family-retry] $dataset/s$seed rc=$rc (consecutive failures: ${FAMILY_FAILURES[$dataset-s$seed]:-1}/$MAX_FAMILY_FAILURES); allocation retained, artifacts preserved" \
+          | tee -a "$LOG"
       fi
-      FAMILY_FAILURES[$dataset-s$seed]=0
-      FAMILY_CUDA_FAILURES[$dataset-s$seed]=0
-      sleep "$CLAIM_YIELD_SECONDS"
-      break
-    done
+      stop_supervisor_keepalive
+      cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
+      statuses=("${PIPESTATUS[@]}")
+      [ "${statuses[0]}" -eq 0 ] && [ "${statuses[1]}" -eq 0 ] || exit 1
+      cleanup_node_gpu_processes || exit 1
+    fi
+    start_supervisor_keepalive || exit 1
+    [ "$rc" -eq 75 ] && continue   # held by another worker
+    claimed=$((claimed + 1))
+    if [ "$rc" -ne 0 ]; then
+      cleanup_owner
+      family_looping "$dataset" "$seed" && continue   # guard tripped: every worker skips it now
+      if [ "$LAST_FAILURE_KIND" = runtime ]; then
+        cuda_n=${FAMILY_CUDA_FAILURES[$dataset-s$seed]:-1}
+        pause=$(failure_backoff_seconds "$cuda_n")
+        if [ "$cuda_n" -ge "$MAX_CUDA_FAILURES" ]; then
+          echo "[cuda-flaky] $dataset/s$seed: $cuda_n CUDA runtime faults in a row on this worker; releasing it for another node (artifacts preserved)" \
+            | tee -a "$LOG"
+          FAMILY_CUDA_FAILURES[$dataset-s$seed]=0
+        fi
+      else
+        pause=$(failure_backoff_seconds "${FAMILY_FAILURES[$dataset-s$seed]:-1}")
+      fi
+      FAMILY_NEXT_ATTEMPT[$dataset-s$seed]=$(( $(now_seconds) + pause ))
+      echo "[family-next] $dataset/s$seed failed; this worker moves on to the next family now and may come back to this one in ${pause}s (artifacts preserved)" \
+        | tee -a "$LOG"
+      continue
+    fi
+    FAMILY_FAILURES[$dataset-s$seed]=0
+    FAMILY_CUDA_FAILURES[$dataset-s$seed]=0
+    FAMILY_NEXT_ATTEMPT[$dataset-s$seed]=0
+    sleep "$CLAIM_YIELD_SECONDS"
   done < <(ordered_families)
   [ "$remaining" -eq 0 ] && break
+  # A LOOPING family is never released by another worker, so waiting for one is
+  # waiting for ever: the node burned a night in "[queue] waiting for N families"
+  # while holding four GPUs (2026-09-08). Say so and stop instead.
+  if [ "$looping" -gt 0 ] && [ "$looping" -eq "$remaining" ]; then
+    echo "[queue] every family left is marked LOOPING:$looping_list" | tee -a "$LOG"
+    echo "[queue] a LOOPING family is skipped by every worker until you clear it, so this worker has nothing to do and is stopping." | tee -a "$LOG"
+    echo "[queue] see the reason in <family>/<point>/logs/supervisor.log (bash scripts/why.sh), fix it, then relaunch with OM_RLZERO_CLEAR_LOOPS=1" | tee -a "$LOG"
+    stopped_for_looping=1
+    break
+  fi
   if [ "$claimed" -eq 0 ]; then
-    echo "[queue] waiting for $remaining families owned by other workers or marked LOOPING" | tee -a "$LOG"
-    sleep "$QUEUE_WAIT_SECONDS"
+    if [ "$next_attempt_wait" -gt 0 ]; then
+      wait_seconds=$next_attempt_wait
+      [ "$wait_seconds" -le "$QUEUE_WAIT_SECONDS" ] || wait_seconds=$QUEUE_WAIT_SECONDS
+      echo "[queue] $remaining families left; the ones this worker may take are cooling down after a failure; next attempt in ${wait_seconds}s" \
+        | tee -a "$LOG"
+      sleep "$wait_seconds"
+    else
+      echo "[queue] waiting for $remaining families owned by other workers or marked LOOPING" | tee -a "$LOG"
+      sleep "$QUEUE_WAIT_SECONDS"
+    fi
   fi
 done
+# Nothing this worker may take is left, and what remains needs the operator: stop
+# with a non-zero status instead of running the final collection on a partial matrix.
+[ "${stopped_for_looping:-0}" = 1 ] && exit 1
 if [ -n "$ONLY_FAMILIES" ]; then
   echo "[queue] this node's families are complete: $ONLY_FAMILIES"
   all_done=1
