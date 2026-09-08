@@ -21,10 +21,10 @@ is what the verifier was meant to do. Concretely:
 
 The bug is present in the pinned generation commit `0e4cd412` (the code every
 point of the OLMo-3 h100-v2 matrix is generated and scored with) and in every
-`master` commit up to and including `6f5f151`. The corrected verifier exists as
-an uncommitted working-tree edit of `src/data.py` with
-`tests/test_math_expression_reward.py` (10 tests, passing); it is not part of
-any launched run. MBPP is unaffected: it is scored by executing the code.
+`master` commit up to and including `6f5f151`. The corrected verifier is
+committed as `57e2e43` (`src/data.py`, `tests/test_math_expression_reward.py`,
+10 tests); no matrix launched before that commit carries it. MBPP is
+unaffected: it is scored by executing the code.
 
 ## Who is affected
 
