@@ -810,22 +810,32 @@ def _multiple_choice_reward(text: str, gold: str) -> float:
 
 @lru_cache(maxsize=8192)
 def _parse_math_gold(gold: str):
-    from math_verify import parse
+    return _parse_math_expression(gold)
 
-    return parse(gold)
+
+def _parse_math_expression(expression: str):
+    from math_verify import LatexExtractionConfig, parse
+
+    # extract_answer has already removed the surrounding math delimiters.
+    # Parsing bare text lets the numeric extractor read "2x" as just 2,
+    # while roots and symbolic expressions may not be extracted at all.
+    # Restore a math context and disable the free-text numeric extractor.
+    return parse(
+        "$" + expression + "$", extraction_config=[LatexExtractionConfig()]
+    )
 
 
 def _math_reward(prediction: str, gold: str) -> float:
     """Verify numeric or symbolic mathematical equivalence fail-closed."""
     try:
-        from math_verify import parse, verify
+        from math_verify import verify
     except ImportError as exc:
         raise RuntimeError(
             "math-verify is required for verifier-reward math experiments"
         ) from exc
     try:
         parsed_gold = _parse_math_gold(gold)
-        parsed_prediction = parse(prediction)
+        parsed_prediction = _parse_math_expression(prediction)
         return 1.0 if parsed_gold and parsed_prediction and verify(
             parsed_gold, parsed_prediction
         ) else 0.0
