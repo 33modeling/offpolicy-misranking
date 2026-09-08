@@ -36,10 +36,15 @@ else
   for dir in "$ROOT"/family-*; do
     [ -d "$dir" ] || continue
     name=${dir##*/family-}; dataset=${name%-s*}; seed=${name##*-s}
-    if [ "$ALL" = 1 ] \
-        || [ -f "$ROOT/.families/$dataset-s$seed.owner.json" ] \
-        || [ -f "$ROOT/.families/$dataset-s$seed.loop" ] \
-        || [ -n "$(find "$dir" -maxdepth 3 -newermt '-1 day' -print -quit 2>/dev/null)" ]; then
+    # Every family that is not finished, however long it has been silent. The
+    # first version required a write in the last day, which hid exactly the two
+    # families that had been stuck for 26 hours: the ones most needing a look
+    # (2026-09-08, math500/s4 and mbpp/s4 absent from the report).
+    complete=1
+    for d in $DRIFTS; do
+      [ -s "$dir/$TAG-s$seed-$dataset-d$d/DONE" ] || complete=0
+    done
+    if [ "$ALL" = 1 ] || [ "$complete" = 0 ]; then
       families+=("$dataset $seed")
     fi
   done
