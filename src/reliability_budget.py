@@ -184,8 +184,13 @@ def verify_stored_scores(folder: Path, stack: torch.Tensor, val_groups: torch.Te
         halves = stored.get(str(prompt))
         if not isinstance(halves, dict) or "a" not in halves or "b" not in halves:
             return float("inf")
-        worst = max(worst, abs(float(halves["a"]) - float(score_a[position])),
-                    abs(float(halves["b"]) - float(score_b[position])))
+        try:
+            stored_a, stored_b = float(halves["a"]), float(halves["b"])
+        except (TypeError, ValueError):
+            return float("inf")
+        if not (math.isfinite(stored_a) and math.isfinite(stored_b)):
+            return float("inf")
+        worst = max(worst, abs(stored_a - float(score_a[position])), abs(stored_b - float(score_b[position])))
     return worst
 
 
@@ -235,8 +240,13 @@ def load_run(run: Path, label: str | None = None) -> RunArtifacts:
         expected_val = len(prompts.get("val", []))
         if expected_val and expected_val != val_groups.shape[0]:
             raise ValueError(f"{folder}: {val_groups.shape[0]} validation gradients but prompts.json lists {expected_val}")
-    elif config.get("n_train"):
-        expected_prompts = int(config["n_train"])
+    else:
+        if config.get("n_train"):
+            expected_prompts = int(config["n_train"])
+        if config.get("n_val") and int(config["n_val"]) != val_groups.shape[0]:
+            raise ValueError(
+                f"{folder}: {val_groups.shape[0]} validation gradients but run_config says n_val={int(config['n_val'])}"
+            )
     if expected_prompts is not None and prompt_ids != list(range(expected_prompts)):
         missing = sorted(set(range(expected_prompts)) - set(prompt_ids))[:5]
         extra = sorted(set(prompt_ids) - set(range(expected_prompts)))[:5]
@@ -568,7 +578,7 @@ def analyze_run(
             return min(1.0, coupling * axis_product(responses_per_half / artifacts.group_size, val_prompts_per_half))
 
         for responses in CANDIDATE_HALF_RESPONSES:
-            for val_half in VALIDATION_HALF_PROMPTS:
+            for val_half in sorted(set(VALIDATION_HALF_PROMPTS) | {reg_val}):
                 budget_table[(responses, val_half)] = overlap_from_correlation(predicted_rho(responses, val_half), n, k)
         for responses in CANDIDATE_HALF_RESPONSES:
             predicted = budget_table[(responses, reg_val)]
@@ -593,7 +603,9 @@ def analyze_run(
         reasons.append(f"held-out self-check off by {self_check[0] - self_check[1]:+.3f} (tolerance {SELF_CHECK_TOLERANCE})")
     if registered is not None and registered.boundary_ties > MAX_BOUNDARY_TIE_FRACTION * n:
         reasons.append(f"{registered.boundary_ties:.0f} prompts tied at the selection boundary (max {MAX_BOUNDARY_TIE_FRACTION * n:.0f})")
-    if artifacts.stored_score_max_diff is not None and artifacts.stored_score_max_diff > STORED_SCORE_TOLERANCE:
+    if artifacts.stored_score_max_diff is None:
+        reasons.append("stored A/B scores absent (scores_splithalf.json); recomputation not verifiable")
+    elif artifacts.stored_score_max_diff > STORED_SCORE_TOLERANCE:
         reasons.append("stored A/B scores not reproduced from the artifacts")
     if artifacts.zero_norm_prompts:
         reasons.append(f"{artifacts.zero_norm_prompts} prompts with a zero-norm stored gradient")
@@ -695,11 +707,12 @@ def render_run(readout: RunReadout, target: float) -> list[str]:
             f"predicted floor (product model, coupling={_fmt(readout.coupling)} fitted on the observed cells; "
             f"GATE mark = point estimate >= {target:.2f}; prediction {status})"
         )
-        lines.append("| responses/half | " + " | ".join(f"val {v}/half" for v in VALIDATION_HALF_PROMPTS) + " |")
-        lines.append("|---|" + "---|" * len(VALIDATION_HALF_PROMPTS))
+        columns = sorted({val_half for _, val_half in readout.budget_table})
+        lines.append("| responses/half | " + " | ".join(f"val {v}/half" for v in columns) + " |")
+        lines.append("|---|" + "---|" * len(columns))
         for responses in CANDIDATE_HALF_RESPONSES:
             cells = []
-            for val_half in VALIDATION_HALF_PROMPTS:
+            for val_half in columns:
                 value = readout.budget_table[(responses, val_half)]
                 cells.append(f"{value:.3f}{' GATE' if value >= target else ''}")
             lines.append(f"| {responses} | " + " | ".join(cells) + " |")
@@ -819,7 +832,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[reliability-budget] {artifacts.label}: n={artifacts.stack.shape[0]} groups={artifacts.stack.shape[1]} "
               f"val={artifacts.val_groups.shape[0]} scoring={artifacts.scoring} loaded in {time.time() - t_load:.0f}s; analysing ...", flush=True)
         t_analyse = time.time()
-        readouts.append(analyze_run(artifacts, reps=args.reps, pairs=args.pairs, target=args.target, seed=args.seed))
+        try:
+            readouts.append(analyze_run(artifacts, reps=args.reps, pairs=args.pairs, target=args.target, seed=args.seed))
+        except (ValueError, KeyError, RuntimeError) as exc:
+            print(f"[skip] {run}: analysis failed: {exc!r}", file=sys.stderr)
+            continue
         print(f"[reliability-budget] {artifacts.label}: done in {time.time() - t_analyse:.0f}s", flush=True)
     if not readouts:
         print("[abort] no run directory could be read", file=sys.stderr)

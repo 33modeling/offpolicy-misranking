@@ -85,8 +85,13 @@ the registered matrix (no registered point is written, no label is defined):
   node-local `primary.lock` as the registered launcher (a busy node is refused) and
   one lease per run directory (the same dataset, budget and seed cannot start on
   two nodes). Resuming compares the whole effective contract (model, prompts, budgets,
-  token cap, projection, verifier, prompt format) and refuses a mismatch; TERM/INT
-  stop the run's own stage processes. The sizing report marks its prediction
+  token cap, projection, verifier, prompt format) and the fingerprint of the
+  generation/scoring/analysis sources; a changed backend is refused unless
+  `RB_ACCEPT_CODE_CHANGE=1` accepts it explicitly (recorded in the run lineage).
+  TERM/INT stop the run's own stage processes, foreground stages included. After
+  the gradients the run writes `scores_splithalf.json` with the registered scoring
+  code so the analysis can verify its recomputation; a run without verifiable
+  stored scores gets observed curves only, no budget claim. The sizing report marks its prediction
   `unsupported` (no budget claim) when the held-out self-check misses, the registered
   cell carries no signal, exact ties dominate the selection boundary, or the stored
   A/B scores do not reproduce from the artifacts (review 2026-09-09, six defects fixed).

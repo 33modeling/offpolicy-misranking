@@ -31,7 +31,7 @@ def synthetic_artifacts(noise: float, seed: int = 0, groups: int = GROUPS, val_n
 
 
 def write_run(tmp_path: Path, stack: torch.Tensor, val_groups: torch.Tensor, *, parked: bool = False,
-              behavior: bool = False, fresh_k: int = GROUPS * GSIZE) -> Path:
+              behavior: bool = False, fresh_k: int = GROUPS * GSIZE, stored_scores: bool = True) -> Path:
     run = tmp_path / "point"
     run.mkdir(parents=True, exist_ok=True)
     micro = {idx: stack[idx].clone() for idx in range(stack.shape[0])}
@@ -39,6 +39,10 @@ def write_run(tmp_path: Path, stack: torch.Tensor, val_groups: torch.Tensor, *, 
     target.mkdir(parents=True, exist_ok=True)
     torch.save(micro, target / "oracle_micro_groups.pt")
     torch.save(val_groups, target / "val_groups.pt")
+    if stored_scores:
+        score_a, score_b = rb.registered_half_scores(stack.float(), val_groups.float())
+        stored = {str(i): {"a": float(score_a[i]), "b": float(score_b[i]), "r": 0.0} for i in range(stack.shape[0])}
+        (target / "scores_splithalf.json").write_text(json.dumps(stored))
     (run / "run_config.json").write_text(json.dumps(
         {"dataset": "math500", "fresh_k": fresh_k, "val_k": 8, "micro_group": GSIZE, "seed": 0, "drift": 0}
     ))
@@ -369,7 +373,7 @@ def test_loader_rejects_incomplete_or_inconsistent_points(tmp_path):
 
 def test_stored_scores_are_reproduced_and_a_mismatch_is_flagged(tmp_path):
     stack, val = synthetic_artifacts(noise=3.0)
-    run = write_run(tmp_path, stack, val)
+    run = write_run(tmp_path, stack, val, stored_scores=False)
     score_a, score_b = rb.registered_half_scores(stack, val)
     stored = {str(i): {"a": float(score_a[i]), "b": float(score_b[i]), "r": 0.0} for i in range(N)}
     (run / "scores_splithalf.json").write_text(json.dumps(stored))
@@ -433,3 +437,160 @@ def test_launcher_resumes_a_run_created_by_the_first_launcher_version(launch_env
     config = json.loads((run / "run_config.json").read_text())
     assert config["prompts_sha256"] and config["math_verifier"] == "math_verify"
     assert config["fresh_k"] == 64 and config["model"] == old_style["model"]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests inverted from the recheck of 7a9ef91 (four residual defects).
+@pytest.mark.parametrize("saved_scores", ["missing", "nan"])
+def test_unverified_saved_scores_block_a_budget_claim(tmp_path, saved_scores):
+    stack, val = synthetic_artifacts(noise=3.0, val_noise=1.0)
+    run = write_run(tmp_path, stack, val, stored_scores=False)
+    if saved_scores == "nan":
+        a, b = rb.registered_half_scores(stack, val)
+        stored = {str(i): {"a": float(a[i]), "b": float(b[i])} for i in range(len(stack))}
+        stored["0"]["a"] = float("nan")
+        (run / "scores_splithalf.json").write_text(json.dumps(stored))
+    artifacts = rb.load_run(run)
+    if saved_scores == "missing":
+        assert artifacts.stored_score_max_diff is None
+    else:
+        assert artifacts.stored_score_max_diff == float("inf")
+    result = rb.analyze_run(artifacts, reps=8, pairs=3, seed=5)
+    assert not result.supported and result.needed_candidate is None
+    report = rb.render_report([result], 0.2, 8, 3)
+    assert "prediction unsupported" in report and "expected at" not in report
+
+
+def test_validation_count_mismatch_is_rejected_at_load_and_never_crashes_the_report(tmp_path):
+    stack, val = synthetic_artifacts(noise=3.0, val_noise=1.0)
+    run = write_run(tmp_path, stack, val[:96])
+    config_path = run / "run_config.json"
+    config = json.loads(config_path.read_text())
+    config.update(n_train=400, n_val=100)
+    config_path.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="n_val=100"):
+        rb.load_run(run)
+    # without a configured n_val the 96-prompt validation set is analysed with its own 24-prompt halves
+    config.pop("n_val")
+    config_path.write_text(json.dumps(config))
+    artifacts = rb.load_run(run)
+    result = rb.analyze_run(artifacts, reps=2, pairs=2)
+    assert (8, 24) in result.budget_table
+    assert "val 24/half" in rb.render_report([result], 0.2, 2, 2)
+
+
+def _git(repo, *args):
+    return subprocess.check_output(
+        ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
+        cwd=repo, text=True, stderr=subprocess.STDOUT,
+    ).strip()
+
+
+def test_launcher_refuses_to_resume_after_the_computation_code_changed(launch_env):
+    env, command, run, _ = launch_env
+    repo = Path(env["OM_REPO"])
+    _git(repo, "init", "-q")
+    _git(repo, "add", "scripts", "src", "configs")
+    _git(repo, "commit", "-qm", "original")
+    first = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
+    assert first.returncode == 0, first.stdout + first.stderr
+    fingerprint = json.loads((run / "run_config.json").read_text())["computation_fingerprint"]
+    for record in run.glob("child-*.json"):
+        record.unlink()
+    (run / "oracle_micro_groups.pt").unlink()
+    (run / "RB_DONE").unlink()
+    backend = repo / "src/experiment.py"
+    backend.write_text(backend.read_text() + "\n(run / 'changed-code-executed').write_text('new computation')\n")
+    second = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
+    assert second.returncode != 0
+    assert "computation code" in second.stdout + second.stderr
+    assert not (run / "changed-code-executed").exists()
+    # a documentation-only change is not a computation change
+    (repo / "README.md").write_text("docs only\n")
+    third = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
+    assert third.returncode != 0 and "computation code" in third.stdout  # backend still changed
+    # explicit acceptance records the lineage and resumes
+    env["RB_ACCEPT_CODE_CHANGE"] = "1"
+    fourth = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
+    assert fourth.returncode == 0, fourth.stdout + fourth.stderr
+    config = json.loads((run / "run_config.json").read_text())
+    assert config["computation_fingerprint"] != fingerprint
+    assert config["reliability_budget"]["code_changes_accepted"][0]["from"] == fingerprint
+    assert (run / "changed-code-executed").is_file()
+
+
+def test_launcher_single_gpu_foreground_stage_responds_to_parent_term(launch_env):
+    env, command, run, _ = launch_env
+    env["CUDA_VISIBLE_DEVICES"] = "0"
+    repo = Path(env["OM_REPO"])
+    backend = repo / "src/experiment.py"
+    backend.write_text(backend.read_text().replace(
+        "if os.environ.get('FAKE_BLOCK_CHILDREN') == '1':", "if stage == 'val-grads':",
+    ))
+    process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 30
+        records = []
+        while time.monotonic() < deadline:
+            records = list(run.glob("child-*.json"))
+            if records:
+                break
+            time.sleep(0.05)
+        assert len(records) == 1 and json.loads(records[0].read_text())["stage"] == "val-grads"
+        pid = json.loads(records[0].read_text())["pid"]
+        process.terminate()
+        assert process.wait(timeout=15) == 143
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                state = Path(f"/proc/{pid}/stat").read_text().split()[2]
+            except OSError:
+                break
+            if state == "Z":
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("foreground val-grads stage survived the launcher's TERM")
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+
+
+def test_launcher_four_gpu_rollout_children_are_stopped(launch_env):
+    env, command, run, _ = launch_env
+    env.update(CUDA_VISIBLE_DEVICES="0,1,2,3", FAKE_BLOCK_CHILDREN="1")
+    process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 30
+        records = []
+        while time.monotonic() < deadline:
+            records = list(run.glob("child-*.json"))
+            if len(records) == 4:
+                break
+            time.sleep(0.05)
+        assert len(records) == 4
+        children = [json.loads(path.read_text())["pid"] for path in records]
+        process.terminate()
+        assert process.wait(timeout=15) == 143
+        deadline = time.monotonic() + 10
+        alive = set(children)
+        while alive and time.monotonic() < deadline:
+            for pid in list(alive):
+                try:
+                    if Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
+                        alive.discard(pid)
+                except OSError:
+                    alive.discard(pid)
+            time.sleep(0.05)
+        assert not alive
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)

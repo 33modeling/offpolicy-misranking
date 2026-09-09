@@ -134,6 +134,14 @@ stop_children() {
 }
 on_signal() { trap - TERM INT; log "[abort] terminated; stopping this run's stage processes"; stop_children; exit 143; }
 trap on_signal TERM INT
+run_tracked() {  # run_tracked <command...> : run in the background, track it, wait (so TERM/INT still reach it)
+  "$@" &
+  local pid=$! rc
+  CHILDREN+=("$pid")
+  wait "$pid"; rc=$?
+  CHILDREN=()
+  return "$rc"
+}
 
 if [ "$DATASET" = math500 ]; then
   MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps") || exit 1
@@ -169,10 +177,37 @@ request = {
     "gradient_micro_batch": grad_micro_batch,
     "prompts_sha256": hashlib.sha256((run / "prompts.json").read_bytes()).hexdigest(),
 }
+# Computation identity: the source files that generate, score and analyse.
+# Documentation-only commits do not change it; a changed backend does.
+COMPUTATION_FILES = [
+    "src/experiment.py", "src/rollout.py", "src/rollout_contract.py", "src/grads.py", "src/data.py",
+    "src/prompt_format.py", "src/code_sandbox.py", "src/artifact_contract.py", "src/compact_artifacts.py",
+    "src/fresh_validation.py", "src/select_rules.py", "src/measurement_ceiling.py", "src/reliability_budget.py",
+    "configs/olmo3_rlzero_h100.json",
+]
+digest = hashlib.sha256()
+for name in COMPUTATION_FILES:
+    path = Path(name)
+    if path.is_file():
+        digest.update(name.encode()); digest.update(b"\0"); digest.update(path.read_bytes()); digest.update(b"\0")
+request["computation_fingerprint"] = digest.hexdigest()
 target = run / "run_config.json"
 if target.exists():
     existing = json.loads(target.read_text())
     bad = {k: (existing[k], v) for k, v in request.items() if k in existing and existing[k] != v}
+    if "computation_fingerprint" in bad and env.get("RB_ACCEPT_CODE_CHANGE") == "1":
+        stored_fp, new_fp = bad.pop("computation_fingerprint")
+        lineage = existing.setdefault("reliability_budget", {}).setdefault("code_changes_accepted", [])
+        lineage.append({"from": stored_fp, "to": new_fp, "when": datetime.now(timezone.utc).isoformat()})
+        existing["computation_fingerprint"] = new_fp
+        tmp = target.with_suffix(".json.tmp"); tmp.write_text(json.dumps(existing, indent=1)); tmp.replace(target)
+        print("[rb] computation code changed since this run was created; accepted explicitly (RB_ACCEPT_CODE_CHANGE=1) and recorded in the lineage")
+    if "computation_fingerprint" in bad:
+        print("[abort] the computation code (generation, scoring or analysis sources) changed since this run "
+              "directory was created; existing artifacts may not be compatible with the current code.")
+        print("  Either rerun on a checkout of the recorded code, start a new run (other seed), or, if the change is "
+              "known to be compatible, repeat the command with RB_ACCEPT_CODE_CHANGE=1 (recorded in the run lineage).")
+        sys.exit(1)
     if bad:
         print("[abort] this run directory was created with a different effective contract; "
               "not resuming with mixed settings. Differences (stored, requested):")
@@ -244,7 +279,7 @@ PYEOF
 }
 merge_rollouts() {  # merge_rollouts <base> <responses per prompt>   (same routine as scripts/run_point.sh)
   local base="$1" expected_k="$2"
-  "$PY" - "$RUN" "$base" "$expected_k" <<'PYEOF'
+  "$PY" - "$RUN" "$base" "$expected_k" 2>&1 <<'PYEOF' | tee -a "$MAIN_LOG"; return "${PIPESTATUS[0]}"
 import json, sys
 from pathlib import Path
 from compact_artifacts import compact_rollout_shards
@@ -293,8 +328,8 @@ else
   done
   wait_all "${pids[@]}" || { log "[abort] a rollout shard failed; rerun the same command to resume"; stop_children; exit 1; }
   CHILDREN=()
-  merge_rollouts rollouts_fresh_train "$FRESH_K" 2>&1 | tee -a "$MAIN_LOG"; [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
-  merge_rollouts rollouts_fresh_val "$VAL_K" 2>&1 | tee -a "$MAIN_LOG"; [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
+  run_tracked merge_rollouts rollouts_fresh_train "$FRESH_K" || exit 1
+  run_tracked merge_rollouts rollouts_fresh_val "$VAL_K" || exit 1
 fi
 # 2+3 gradients
 if [ -s "$RUN/oracle_micro_groups.pt" ] && [ -s "$RUN/val_groups.pt" ]; then
@@ -307,7 +342,7 @@ else
     ( run_stage "$NM" "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" ) & pids+=($!); CHILDREN+=($!)
   else
     NM=1
-    run_stage 0 "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" || exit 1
+    run_tracked run_stage 0 "$LOGS/val-grads.log" --stage val-grads "${COMMON[@]}" || exit 1
   fi
   for i in $(seq 0 $((NM - 1))); do
     ( run_stage "$i" "$LOGS/ograds-shard$i.log" --stage oracle-grads "${COMMON[@]}" --shard "$i:$NM" ) & pids+=($!); CHILDREN+=($!)
@@ -315,16 +350,47 @@ else
   wait_all "${pids[@]}" || { log "[abort] a gradient stage failed; rerun the same command to resume"; stop_children; exit 1; }
   CHILDREN=()
   log "stage 4 merge-grads"
-  run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}" || exit 1
+  run_tracked run_stage 0 "$LOGS/merge.log" --stage merge-grads "${COMMON[@]}" || exit 1
   [ -s "$RUN/oracle_micro_groups.pt" ] && [ -s "$RUN/val_groups.pt" ] || { log "[abort] gradient artifacts missing after merge"; exit 1; }
+fi
+# Stored A/B scores from the registered scoring code (src/experiment.py), so the
+# analysis can verify its own recomputation against an independent implementation.
+write_stored_scores() {
+  "$PY" - "$RUN" 2>&1 <<'PYEOF' | tee -a "$MAIN_LOG"; return "${PIPESTATUS[0]}"
+import json, sys
+from pathlib import Path
+run = Path(sys.argv[1])
+try:
+    import torch
+    from experiment import _atomic_text, score_oracle_microgroups, split_validation_directions
+except Exception as exc:
+    print(f"[rb] stored scores not written (backend lacks the registered scoring functions: {exc})")
+    sys.exit(0)
+micro = torch.load(run / "oracle_micro_groups.pt", map_location="cpu", weights_only=True)
+val_groups = torch.load(run / "val_groups.pt", map_location="cpu", weights_only=True).float()
+val_rank, val_a, val_b = split_validation_directions(val_groups)
+oracle, halves = {}, {}
+for idx in sorted(micro, key=int):
+    oracle[idx], halves[idx] = score_oracle_microgroups(micro[idx].float(), val_rank, val_a, val_b)
+_atomic_text(run / "scores_splithalf.json", json.dumps(halves, indent=1))
+_atomic_text(run / "scores_oracle.json", json.dumps(oracle, indent=1))
+print(f"[rb] stored A/B scores written for {len(halves)} prompts with the registered scoring code")
+PYEOF
+}
+if [ -s "$RUN/scores_splithalf.json" ]; then
+  log "stored A/B scores present; kept"
+else
+  run_tracked write_stored_scores || { log "[abort] writing the stored scores failed"; exit 1; }
 fi
 printf '%s\n' "completed $(date -Is)" > "$RUN/RB_DONE"
 # 5 analysis: the new run next to the registered d0 point it was sized from.
 log "stage 5 analysis -> $OUT"
-"$PY" src/reliability_budget.py "$RUN" "$SRC_POINT" \
-  --label "$DATASET new reference fk$FRESH_K vk$VAL_K s$SEED" --label "$DATASET registered d0 ($(basename "$(dirname "$SRC_POINT")"))" \
-  --out "$OUT" --reps "${RB_REPS:-40}" --pairs "${RB_PAIRS:-20}" --target "${RB_TARGET:-0.20}" > "$LOGS/analysis.log" 2>&1 \
-  || { log "[abort] analysis failed (see $LOGS/analysis.log)"; tail -5 "$LOGS/analysis.log"; exit 1; }
+analysis() {
+  "$PY" src/reliability_budget.py "$RUN" "$SRC_POINT" \
+    --label "$DATASET new reference fk$FRESH_K vk$VAL_K s$SEED" --label "$DATASET registered d0 ($(basename "$(dirname "$SRC_POINT")"))" \
+    --out "$OUT" --reps "${RB_REPS:-40}" --pairs "${RB_PAIRS:-20}" --target "${RB_TARGET:-0.20}" > "$LOGS/analysis.log" 2>&1
+}
+run_tracked analysis || { log "[abort] analysis failed (see $LOGS/analysis.log)"; tail -5 "$LOGS/analysis.log"; exit 1; }
 log "report: $OUT"
 grep "^KEY " "$OUT" | tee -a "$MAIN_LOG"
 log "=== reliability budget run complete ==="
