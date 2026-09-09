@@ -12,6 +12,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import reliability_budget as rb  # noqa: E402
+from select_rules import overlap_under_independent_ties  # noqa: E402
 
 N, K = 400, 40          # registered MATH-500 design so the frozen lookup applies
 GROUPS, GSIZE, DIM, VAL = 8, 4, 48, 100
@@ -156,3 +157,19 @@ def test_half_scores_rejects_impossible_geometry():
         rb.half_scores(stack, val, groups_per_half=1, val_prompts_per_half=60, mode="both", generator=generator)
     with pytest.raises(ValueError):
         rb.half_scores(stack, val, groups_per_half=1, val_prompts_per_half=25, mode="nope", generator=generator)
+
+
+def test_batched_overlap_matches_reference_definition():
+    generator = torch.Generator().manual_seed(11)
+    a = torch.randn(N, generator=generator)
+    b = 0.6 * a + 0.8 * torch.randn(N, generator=generator)
+    reference = overlap_under_independent_ties(
+        {i: float(v) for i, v in enumerate(a)}, {i: float(v) for i, v in enumerate(b)}, K, seed=3, pairs=20
+    ).mean
+    batched = rb.topk_overlap_batch(a, b, K, pairs=20, generator=torch.Generator().manual_seed(3))
+    assert batched == pytest.approx(reference, abs=1e-9)      # no ties: both definitions are exact
+    tied = torch.zeros(N)
+    tied_overlap = rb.topk_overlap_batch(tied, tied, K, pairs=200, generator=torch.Generator().manual_seed(5))
+    assert abs(tied_overlap - K / N) < 0.03                    # all ties: independent streams give chance
+    with pytest.raises(ValueError):
+        rb.topk_overlap_batch(a, b, 0, pairs=2, generator=generator)

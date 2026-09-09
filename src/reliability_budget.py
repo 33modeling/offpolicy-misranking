@@ -40,8 +40,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
+import re
 import statistics
+import time
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,7 +52,9 @@ from pathlib import Path
 import torch
 
 from measurement_ceiling import CORRELATIONS, REGISTERED_CURVES, _interpolate
-from select_rules import overlap_under_independent_ties, topk_count
+from select_rules import topk_count
+
+THREAD_CAP = 8
 
 MODES = ("both", "candidate", "validation")
 CANDIDATE_HALF_RESPONSES = (8, 16, 32, 64, 128, 256)
@@ -106,15 +111,30 @@ def locate_artifacts(run: Path) -> tuple[Path, Path, str]:
     )
 
 
+_PROMPT_RE = re.compile(r'"prompt_idx"\s*:\s*(-?\d+)')
+_REWARD_RE = re.compile(r'"reward"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)')
+
+
 def behavior_pass_rates(path: Path) -> dict[int, float]:
-    """Behavior pass rate per prompt from the stored behavior rollouts."""
+    """Behavior pass rate per prompt from the stored behavior rollouts.
+
+    Rows carry full token arrays, so the two fields are read with regular
+    expressions instead of parsing every line as JSON; a row where either field
+    is missing falls back to json.loads.
+    """
     rewards: dict[int, list[float]] = {}
     with path.open(encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue
-            row = json.loads(line)
-            rewards.setdefault(int(row["prompt_idx"]), []).append(float(row["reward"]))
+            prompt = _PROMPT_RE.search(line)
+            reward = _REWARD_RE.search(line)
+            if prompt is None or reward is None:
+                row = json.loads(line)
+                idx, value = int(row["prompt_idx"]), float(row["reward"])
+            else:
+                idx, value = int(prompt.group(1)), float(reward.group(1))
+            rewards.setdefault(idx, []).append(value)
     return {idx: sum(values) / len(values) for idx, values in rewards.items() if values}
 
 
@@ -212,6 +232,34 @@ def half_scores(
     return _cosine_rows(candidate_a, direction_a), _cosine_rows(candidate_b, direction_b)
 
 
+def topk_overlap_batch(
+    score_a: torch.Tensor,
+    score_b: torch.Tensor,
+    k: int,
+    *,
+    pairs: int,
+    generator: torch.Generator,
+) -> float:
+    """Mean top-k overlap over `pairs` independent tie-breaking draws.
+
+    Same estimand as select_rules.overlap_under_independent_ties (each side
+    gets its own tie stream per pair) but batched in torch: ties are broken by
+    a jitter far below the float64 resolution of any score difference.
+    """
+    if score_a.numel() != score_b.numel():
+        raise ValueError("score vectors must have the same length")
+    n = score_a.numel()
+    if not 0 < k <= n:
+        raise ValueError(f"k={k} must lie in (0, {n}]")
+    a = score_a.to(torch.float64)[None, :] + 1e-12 * torch.rand(pairs, n, generator=generator, dtype=torch.float64)
+    b = score_b.to(torch.float64)[None, :] + 1e-12 * torch.rand(pairs, n, generator=generator, dtype=torch.float64)
+    mask_a = torch.zeros(pairs, n, dtype=torch.bool)
+    mask_b = torch.zeros(pairs, n, dtype=torch.bool)
+    mask_a.scatter_(1, torch.topk(a, k, dim=1).indices, True)
+    mask_b.scatter_(1, torch.topk(b, k, dim=1).indices, True)
+    return float((mask_a & mask_b).sum(dim=1).double().mean() / k)
+
+
 def floor_statistic(
     stack: torch.Tensor,
     val_groups: torch.Tensor,
@@ -226,7 +274,7 @@ def floor_statistic(
     prompt_ids: list[int] | None = None,
 ) -> FloorStat:
     """Split-half top-k overlap and Pearson correlation over resampled halves."""
-    ids = list(range(stack.shape[0])) if prompt_ids is None else list(prompt_ids)
+    index = None if prompt_ids is None else torch.tensor(list(prompt_ids), dtype=torch.long)
     floors, correlations = [], []
     for rep in range(reps):
         generator = torch.Generator().manual_seed(seed + 1_000_003 * rep)
@@ -237,12 +285,11 @@ def floor_statistic(
             mode=mode,
             generator=generator,
         )
-        left = {idx: float(score_a[idx]) for idx in ids}
-        right = {idx: float(score_b[idx]) for idx in ids}
-        floors.append(
-            overlap_under_independent_ties(left, right, k, seed=seed + 17 + rep, pairs=pairs).mean
-        )
-        correlations.append(_pearson(score_a[ids], score_b[ids]))
+        if index is not None:
+            score_a, score_b = score_a[index], score_b[index]
+        tie_generator = torch.Generator().manual_seed(seed + 17 + rep)
+        floors.append(topk_overlap_batch(score_a, score_b, k, pairs=pairs, generator=tie_generator))
+        correlations.append(_pearson(score_a, score_b))
     return FloorStat(
         mean=sum(floors) / len(floors),
         low=min(floors),
@@ -279,9 +326,10 @@ def _simulated_overlap(rho: float, n: int, k: int, sims: int = FALLBACK_SIMULATI
         noise_b = torch.randn(n, generator=generator)
         weight = math.sqrt(rho)
         residual = math.sqrt(1.0 - rho)
-        a = {i: float(v) for i, v in enumerate(weight * latent + residual * noise_a)}
-        b = {i: float(v) for i, v in enumerate(weight * latent + residual * noise_b)}
-        values.append(overlap_under_independent_ties(a, b, k, seed=sim, pairs=3).mean)
+        values.append(topk_overlap_batch(
+            weight * latent + residual * noise_a, weight * latent + residual * noise_b, k,
+            pairs=3, generator=torch.Generator().manual_seed(9_000 + sim),
+        ))
     return sum(values) / len(values)
 
 
@@ -641,17 +689,21 @@ def main(argv: list[str] | None = None) -> int:
         print("[abort] --reps and --pairs must be positive", file=sys.stderr)
         return 2
     labels = args.label or []
+    torch.set_num_threads(max(1, min(THREAD_CAP, os.cpu_count() or 1)))
     readouts = []
     for position, run in enumerate(args.runs):
         label = labels[position] if position < len(labels) else None
+        t_load = time.time()
         try:
             artifacts = load_run(run, label)
         except (FileNotFoundError, ValueError) as exc:
             print(f"[skip] {run}: {exc}", file=sys.stderr)
             continue
         print(f"[reliability-budget] {artifacts.label}: n={artifacts.stack.shape[0]} groups={artifacts.stack.shape[1]} "
-              f"val={artifacts.val_groups.shape[0]} scoring={artifacts.scoring}", flush=True)
+              f"val={artifacts.val_groups.shape[0]} scoring={artifacts.scoring} loaded in {time.time() - t_load:.0f}s; analysing ...", flush=True)
+        t_analyse = time.time()
         readouts.append(analyze_run(artifacts, reps=args.reps, pairs=args.pairs, target=args.target, seed=args.seed))
+        print(f"[reliability-budget] {artifacts.label}: done in {time.time() - t_analyse:.0f}s", flush=True)
     if not readouts:
         print("[abort] no run directory could be read", file=sys.stderr)
         return 1
