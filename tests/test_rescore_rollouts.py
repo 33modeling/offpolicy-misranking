@@ -195,3 +195,93 @@ def test_a_mismatch_in_a_later_point_leaves_the_whole_family_untouched(tmp_path:
                           old_verifier=only_exact, new_verifier=generous, apply=True)
     assert {p.name: p.read_bytes() for p in good.iterdir() if p.is_file()} == before
     assert (good / "DONE").exists() and (bad / "DONE").exists()
+
+
+def test_merged_and_shards_are_verified_once_per_unique_response(tmp_path: Path, fake_transformers) -> None:
+    run = write_point(tmp_path, 0, 0, [(0, "#### 2 x", "2x", 0.0), (1, "#### 1 + x", "1+x", 0.0)], shards=True)
+    calls = {"old": 0, "new": 0}
+    def old(prediction, gold):
+        calls["old"] += 1
+        return only_exact(prediction, gold)
+    def new(prediction, gold):
+        calls["new"] += 1
+        return generous(prediction, gold)
+    report = rr.rescore_point(run, FakeData(), old, new, apply=True, stamp="test")
+    assert calls == {"old": 2, "new": 2}
+    assert sum(f["scored"] for f in report["files"]) == 2
+    assert sum(f["reused"] for f in report["files"]) == 2
+    assert sum(f["rows"] for f in report["files"]) == 4
+
+
+@pytest.mark.parametrize("field,value", [("input_ids", [42]), ("reward", 1.0), ("resp_start", 1)])
+def test_conflicting_duplicate_aborts_before_any_family_write(tmp_path: Path, fake_transformers, field, value) -> None:
+    good = write_point(tmp_path, 0, 0, [(0, "#### 2 x", "2x", 0.0)], shards=False)
+    bad = write_point(tmp_path, 0, 25, [(0, "#### 2 x", "2x", 0.0), (1, "#### 9", "7", 0.0)], shards=True)
+    shard = bad / "rollouts_fresh_train.shard0.jsonl"
+    row = json.loads(shard.read_text())
+    row[field] = value
+    shard.write_text(json.dumps(row) + "\n")
+    before = {p: p.read_bytes() for run in (good, bad) for p in run.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError, match="conflicting duplicate"):
+        rr.rescore_family(tmp_path, "math500", 0, [0, 25], TAG, data=FakeData(),
+                          old_verifier=only_exact, new_verifier=generous, apply=True)
+    assert before == {p: p.read_bytes() for run in (good, bad) for p in run.rglob("*") if p.is_file()}
+
+
+def test_duplicate_cache_does_not_cross_train_and_val(tmp_path: Path, fake_transformers) -> None:
+    run = write_point(tmp_path, 0, 0, [(0, "#### 2 x", "2x", 0.0)], shards=False)
+    prompts = json.loads((run / "prompts.json").read_text())
+    prompts["val"] = [{"answer": "9"}]
+    (run / "prompts.json").write_text(json.dumps(prompts))
+    (run / "rollouts_fresh_val.jsonl").write_bytes((run / "rollouts_fresh_train.jsonl").read_bytes())
+    _, results = rr.scan_point(run, FakeData(), only_exact, generous)
+    assert results["rollouts_fresh_train"][(0, 0)] == 1
+    assert results["rollouts_fresh_val"][(0, 0)] == 0
+
+
+def test_duplicate_reuse_matches_independent_real_verifier_results(tmp_path: Path, fake_transformers) -> None:
+    pytest.importorskip("math_verify")
+    old, new = rr.mmr.verifier_pair()
+    pairs = [("#### 2", "2x"), ("#### 0.5", r"\frac{1}{2}")]
+    rows = [(i, text, gold, rr.mmr.score(text, gold, FakeData(), old)) for i, (text, gold) in enumerate(pairs)]
+    run = write_point(tmp_path, 0, 0, rows, shards=True)
+    report, results = rr.scan_point(run, FakeData(), old, new)
+    split = json.loads((run / "prompts.json").read_text())["train"]
+    independent = {}
+    for path, _ in rr.rollout_files(run, "rollouts_fresh_train"):
+        rr.scan_rows(path, split, FakeTokenizer(), FakeData(), old, new, independent)
+    assert results["rollouts_fresh_train"] == independent
+    assert independent[(0, 0)] == 0
+    assert sum(f["reused"] for f in report["files"]) == 2
+
+
+def fake_worker_init(repo, pinned):
+    rr._WORKER.update(data=FakeData(), old=only_exact, new=generous)
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_real_process_pool_keeps_read_before_write_barrier(tmp_path: Path, fake_transformers, monkeypatch, mismatch) -> None:
+    import concurrent.futures
+    import functools
+    import multiprocessing
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("fixture inherits its tokenizer through fork")
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", functools.partial(
+        concurrent.futures.ProcessPoolExecutor, mp_context=multiprocessing.get_context("fork")))
+    monkeypatch.setattr(rr, "_worker_init", fake_worker_init)
+    monkeypatch.setenv("OM_RESCORE_REPO", str(REPO))
+    monkeypatch.setenv("OM_RESCORE_PINNED", "0e4cd412")
+    monkeypatch.setenv("OM_RESCORE_WORKERS", "2")
+    good = write_point(tmp_path, 0, 0, [(0, "#### 2 x", "2x", 0.0)], shards=False)
+    bad_rows = [(0, "#### 4", "4", 0.0)] if mismatch else [(0, "#### 2 x", "2x", 0.0)]
+    second = write_point(tmp_path, 0, 25, bad_rows, shards=False)
+    before = {p: p.read_bytes() for run in (good, second) for p in run.rglob("*") if p.is_file()}
+    kwargs = dict(data=FakeData(), old_verifier=only_exact, new_verifier=generous, apply=True)
+    if mismatch:
+        with pytest.raises(ValueError, match="does not reproduce"):
+            rr.rescore_family(tmp_path, "math500", 0, [0, 25], TAG, **kwargs)
+        assert before == {p: p.read_bytes() for run in (good, second) for p in run.rglob("*") if p.is_file()}
+    else:
+        report = rr.rescore_family(tmp_path, "math500", 0, [0, 25], TAG, **kwargs)
+        assert all("DONE" in p["retired"] for p in report["points"])
+        assert all(not (p / "DONE").exists() for p in (good, second))

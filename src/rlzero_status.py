@@ -564,6 +564,26 @@ def rescore_pending(family_root: Path) -> bool:
         return False
 
 
+def nonempty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def rescore_points(args: argparse.Namespace, family: Family) -> tuple[list[int], list[int]]:
+    pending, previously_done = [], []
+    for drift in args.drifts:
+        run = run_dir(args, family, drift)
+        if nonempty_file(run / "DONE"):
+            previously_done.append(drift)
+        elif (run / "pinned-scoring").is_dir():
+            pending.append(drift)
+            if any(nonempty_file(p) for p in (run / "pinned-scoring").glob("*/DONE")):
+                previously_done.append(drift)
+    return pending, previously_done
+
+
 def family_rejected_completions(family_root: Path) -> tuple[int, str, str]:
     """Rejections anywhere in the family: count, reason, and which point.
 
@@ -1109,6 +1129,7 @@ def main() -> None:
     contract_errors: list[str] = []
     contract_notes: list[str] = []
     points_done = 0
+    points_previously_done = 0
     for family in families:
         snapshot = after[family]
         changes = changed_files(before[family], snapshot)
@@ -1126,6 +1147,11 @@ def main() -> None:
             heartbeat_age,
             args.heartbeat_stale_seconds,
         )
+        rescore_drifts, previous_done = rescore_points(args, family)
+        points_previously_done += len(previous_done)
+        owner_live = snapshot.state == "claimed" or (snapshot.state == "stale-owner" and heartbeat_fresh)
+        if rescore_drifts and not owner_live and verdict in {"RETRYING", "STOPPED", "DEAD", "PROGRESSING", "COMPUTING", "ALIVE"}:
+            verdict, reason = "RESCORE_WAITING", "reward_derived_evaluation_has_no_live_owner"
         verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
         family_logs = log_files(family_root(args, family))
         owner_log = worker_log(args, snapshot.owner)
@@ -1187,9 +1213,9 @@ def main() -> None:
                 note += f" | last error: {err_text}"
         elif verdict == "STUCK":
             note = f"AUTO: confirmed idle for {write_age}; the watchdog kills and resumes the point by itself"
-        elif rescore_pending(family_root(args, family)):
-            note = ("RESCORE PENDING: rewards were rewritten with the corrected verifier and the pinned "
-                    "gradients/scores are parked under pinned-scoring/; the next free worker recomputes them")
+        elif verdict == "RESCORE_WAITING":
+            note = ("GPU EVAL QUEUED: no live owner; CPU reward rewrite parked prior scoring. "
+                    "Assign a separate GPU worker; existing artifacts must pass reuse checks.")
         elif verdict == "RETRYING":
             note = "AUTO: failed attempt, retry scheduled by the supervisor"
             if err_text:
@@ -1201,6 +1227,8 @@ def main() -> None:
                     f"{rejected_count}x, so the worker keeps redoing it: {elide(rejected_reason, 140)}")
         elif current_errors:
             note = f"ERROR in current attempt but still moving: {err_text}"
+        elif rescore_drifts and owner_live and drift in rescore_drifts:
+            note = "GPU RE-EVALUATION assigned: reward-derived gradients/scores; artifact reuse is checked by the worker"
         elif recovery is not None and recovery.get("status") not in (None, "recovered", "completed"):
             recovery_kind = recovery.get("failure_kind") or recovery.get("stage") or "unknown-cause"
             rec_logs = sorted((run / "logs").glob("regime-recovery-*.log"), key=lambda q: q.stat().st_mtime_ns) if run is not None and (run / "logs").is_dir() else []
@@ -1222,11 +1250,13 @@ def main() -> None:
                 "rejected_reason": rejected_reason,
                 "rejected_point": rejected_point,
                 "family": family,
+                "rescore_drifts": rescore_drifts,
+                "previous_done": previous_done,
                 "snapshot": snapshot,
                 "changes": changes,
                 "verdict": verdict,
                 "reason": reason,
-                "worker": worker if isinstance(worker, str) else "",
+                "worker": worker if isinstance(worker, str) and verdict != "RESCORE_WAITING" else "",
                 "drift": drift,
                 "kind": kind,
                 "done_drifts": done_drifts,
@@ -1261,16 +1291,30 @@ def main() -> None:
     hung = verdict_counts.get("HUNG", 0)
     missing_workers = len(workers) < args.expected_workers
     degraded = stuck + dead + stopped + idle + unknown + hung > 0 or missing_workers
+    rescore_waiting = [r for r in rows if r["verdict"] == "RESCORE_WAITING"]
+    rescore_count = sum(len(r["rescore_drifts"]) for r in rows)
+    evaluation_only = rescore_count > 0 and all(
+        len(r["done_drifts"]) + len(r["rescore_drifts"]) == len(args.drifts) for r in rows
+    )
     # Training progress from durable artifacts only (DONE points, GRPO steps,
     # rollout bytes, last write). Heartbeats, CPU and GPU duty are liveness, not
     # progress: on 2026-09-07 a launcher looked alive for 18 h without one GRPO
     # step. NOT TRAINING with live workers outranks every softer verdict.
-    progress_word, progress_line, _ = training_progress.verdict(
+    progress_word, progress_line, signature = training_progress.verdict(
         args.root,
         total_points=len(families) * len(args.drifts),
         stall_seconds=float(os.environ.get("OM_PROGRESS_STALL_MINUTES", "30")) * 60,
         record_probe=True,
     )
+    if evaluation_only:
+        # Unchanging GRPO/rollout counters are expected during re-evaluation.
+        # Keep per-family watchdog, error and contract verdicts authoritative.
+        progress_word = "EVALUATION"
+    if rescore_count:
+        progress_line = (f"{progress_word}  prior completion {points_previously_done}/{len(families) * len(args.drifts)} "
+                         f"(current or archived DONE); final accepted {points_done}/{len(families) * len(args.drifts)}; "
+                         f"re-evaluation pending {rescore_count}; grpo {signature.grpo_steps} steps; "
+                         f"rollouts {signature.rollout_bytes / 1e6:.0f} MB")
     if progress_word == "NOT TRAINING" and workers:
         overall = "NOT_TRAINING"
         action = "Ctrl-C_the_idle_worker__git_pull__relaunch_run_h100"
@@ -1317,6 +1361,11 @@ def main() -> None:
     else:
         overall = "NOT_STARTED"
         action = "start_workers"
+    if rescore_waiting and not (contract_errors or hung or stuck or dead or stopped or unknown
+                               or any(r["verdict"] == "LOOPING" or r["rejected_completions"] for r in rows)):
+        if progress_word != "NOT TRAINING":
+            overall = "EVALUATION_PENDING" if evaluation_only else "RUNNING_WITH_EVALUATION_PENDING"
+            action = "assign_separate_gpu_evaluation_worker"
 
     # ---- one screen ----
     total_points = len(families) * len(args.drifts)
@@ -1343,7 +1392,9 @@ def main() -> None:
             except OSError:
                 continue
     remaining = total_points - points_done
-    if remaining > 0 and recent_done >= 2:
+    if rescore_count:
+        eta = "   ETA unavailable: primary work and re-evaluation are separate workloads"
+    elif remaining > 0 and recent_done >= 2:
         rate = recent_done / window_days
         eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day over the last {window_days:.0f} days, {len(workers)} workers)"
     elif started is not None and points_done >= 2 and remaining > 0:
@@ -1352,6 +1403,7 @@ def main() -> None:
         eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day since the first point, {len(workers)} workers)"
     action_text = {
         "none": "nothing to do",
+        "assign_separate_gpu_evaluation_worker": "keep progressing workers running; assign the queued evaluation to a separate GPU node",
         "inspect_STUCK_DEAD_families_and_missing_workers": "look at the X rows: Ctrl-C the worker on that node, git pull, run h100 again (partials resume)",
         "Ctrl-C_that_worker__git_pull__relaunch_run_h100__partials_resume": "Ctrl-C the worker on the X node, git pull, run h100 again (partials resume)",
         "Ctrl-C_the_HUNG_family_worker__git_pull__relaunch_run_h100": "Ctrl-C the worker on the X node, git pull, run h100 again (partials resume)",
@@ -1379,6 +1431,8 @@ def main() -> None:
         "STARTING": "STARTING",
         "INCOMPLETE": "INCOMPLETE",
         "NOT_STARTED": "NOT STARTED",
+        "EVALUATION_PENDING": "EVALUATION PENDING - GPU evaluation has no live owner",
+        "RUNNING_WITH_EVALUATION_PENDING": "RUNNING - separate GPU evaluation queued",
     }.get(overall, overall)
     worker_ids = ", ".join(short_worker(w) for w in sorted(workers)) or "none"
     needs_you = [
@@ -1431,6 +1485,14 @@ def main() -> None:
     elif needs_you:
         decision = (f"ERROR: {len(needs_you)} family(ies) stopped and no worker is running: {', '.join(needs_you)}. "
                     "START workers: bash scripts/run_olmo3_rlzero.sh run h100 on each node (finished work resumes).")
+    elif rescore_waiting:
+        decision = (f"GPU EVALUATION QUEUED: {', '.join(r['family'].key for r in rescore_waiting)} have no live owner. "
+                    "Prior completion was parked for reward re-evaluation; this count is not lost training. "
+                    "Keep progressing workers running; assign a separate GPU worker. "
+                    "This is not automatic recovery or an exclusive evaluation queue.")
+        active_errors = [r["family"].key for r in rows if r["current_error_count"] and r["verdict"] != "RESCORE_WAITING"]
+        if active_errors:
+            decision += f" Current-attempt errors also need inspection: {', '.join(active_errors)}."
     elif missing_workers and len(workers) == 0:
         decision = "ERROR: no worker is running anywhere. Start one per node: bash scripts/run_olmo3_rlzero.sh run h100"
     elif missing_workers:
@@ -1460,12 +1522,17 @@ def main() -> None:
         worker_word += f" (expected at least {args.expected_workers})"
     print(f"        {worker_word} ({worker_ids})   families {complete}/{len(families)} done   points {points_done}/{total_points} done{eta}")
     print(f"ACTION  {action_text}")
+    if rescore_count:
+        print(" EVALUATION CPU = stored-answer reward rewrite; GPU = reward-derived gradients/scores; final DONE requires both")
+        if rescore_waiting:
+            selection = " ".join(r["family"].key for r in rescore_waiting)
+            print(f' separate GPU node: OM_RLZERO_ONLY_FAMILIES="{selection}" bash scripts/run_olmo3_rlzero.sh run {args.profile}')
     if contract_errors:
         for issue in contract_errors[:6]:
             print(f"  ! contract: {issue}")
     if contract_notes:
         for issue in contract_notes[:6]:
-            print(f"  ~ contract (unowned; repaired when a worker claims it): {issue}")
+            print(f"  ~ contract (unowned runtime settings; checked on claim): {issue}")
     print()
 
     problem = {"HUNG", "STUCK", "DEAD", "STOPPED", "LOOPING"}
@@ -1476,6 +1543,8 @@ def main() -> None:
         for drift in args.drifts:
             if drift in row["done_drifts"]:
                 out.append("+")
+            elif drift in row["rescore_drifts"] and row["verdict"] == "RESCORE_WAITING":
+                out.append("R")
             elif drift == row["drift"] and row["kind"] == "active":
                 if row["verdict"] in problem:
                     out.append("X")
@@ -1501,12 +1570,14 @@ def main() -> None:
     ordered = sorted(rows, key=lambda r: (rank(r), r["family"].dataset, r["family"].seed))
     shown = [r for r in ordered if r["verdict"] != "PENDING"]
     waiting = [r["family"].key for r in ordered if r["verdict"] == "PENDING"]
-    print(" points column, one char per point d0 d25 d100 d400:   + = done   * = running   X = hung/stuck/dead   ? = unknown   . = waiting")
+    print(" points column, one char per point d0 d25 d100 d400:   + = done   * = running   R = re-evaluation queued   X = hung/stuck/dead   ? = unknown   . = waiting")
     header = f" {'family':<11} {'points':<{len(args.drifts) + 1}} {'now':<40} {'last write':<10} {'worker (node job)':<18} note"
     print(header)
     for row in shown:
         if row["verdict"] == "COMPLETE":
             now_text = "done"
+        elif row["verdict"] == "RESCORE_WAITING":
+            now_text = "GPU evaluation queued"
         elif row["kind"] == "active" and row["drift"] is not None:
             bits = [f"d{row['drift']}", row["stage"]]
             if row["grpo"] != "-":
@@ -1540,7 +1611,7 @@ def main() -> None:
         for w in sorted(shown_rows, key=lambda w: (w["state"] == "STALE", short_worker(w["worker"]))):
             claims = ",".join(w["claims"]) or "-"
             print(f" {short_worker(w['worker']):<18} {fmt_age(w['log_age']):<8} {claims[:15]:<15} {elide(w['last_line'], 95)}")
-    print(" family = one dataset x seed = 4 chained points d0 -> d25 -> d100 -> d400 on one node (each GRPO point resumes the previous checkpoint)")
+    print(" family = dataset x seed; GRPO d25 -> d100 -> d400 resumes checkpoints; d0 and post-rescore evaluation may run separately")
     print(" last write = time since this family wrote any file.  note: NEEDS YOU = you act, AUTO = supervisor handles it, QUEUED = waits for a free worker, ok = fine")
     stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]
     if stale_workers:

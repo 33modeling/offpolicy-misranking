@@ -140,6 +140,50 @@ Runs `regime_map.py` on that family's four completed points only, prints the
 regime report, and writes it under `$OM_WORK/readouts/family-<dataset>-s<seed>-<git>-boot<N>/`.
 It is a preview: the registered result is the full 40-point collection.
 
+## CPU Rescoring And Separate GPU Evaluation Status (2026-09-09)
+
+`scripts/rescore_math500.sh` performs CPU-only reward rewriting from saved
+responses. The follow-up gradients and model-based scores require a GPU worker.
+These are separate workloads, although they still use the same family queue.
+Setting `OM_RLZERO_ONLY_FAMILIES` restricts that worker, not every other worker.
+
+After rescoring parks the old DONE, status distinguishes:
+
+- `prior completion`: current DONE or nonempty archived DONE, counted once.
+  This is historical completion evidence, not a new checkpoint validation.
+- `final accepted`: current nonempty DONE only. The actual completion gates
+  are unchanged; historical completion does not authorize final collection.
+- `R / GPU evaluation queued`: reward-derived evaluation without a live owner.
+  This is not an automatic retry or evidence that a separate worker is running.
+- `GPU RE-EVALUATION`: an owned reopened point. Watchdog, runtime-contract,
+  and current-attempt errors remain visible. A combined ETA is not estimated
+  from a mixture of primary completion and reopened evaluation points.
+
+Inspect with `bash scripts/run_olmo3_rlzero.sh status h100`. On a separate idle
+4xH100 node sharing the same work root, the selected evaluations can be assigned
+without restarting healthy primary workers:
+
+```bash
+OM_RLZERO_ONLY_FAMILIES="math500/s0 math500/s1" bash scripts/run_olmo3_rlzero.sh run h100
+```
+
+CPU rescoring now checks duplicate response identity before reusing the
+comparison across the merged file and shards. Conflicting tokens, response
+boundaries, gold answers or pinned rewards abort before the family's write
+phase. The timeout budgets and scoring rules are unchanged. Progress logs show
+`[rescore-cpu]`, `scored`, `reused`, `timeout_events`, and elapsed seconds, after
+each file and at row boundaries at least ten seconds apart (or every 1000 rows).
+A single slow verification may exceed that reporting interval. Both legacy
+stdout timeout notices and current math-verify logger warnings are counted;
+other warnings are preserved. Timeout events are not CUDA errors and are not
+the same metric as `timeout_sensitive` reward reproduction.
+
+Pulling code does not replace an already-running Python rescoring process.
+Do not rerun an apply operation just to update logging or inspect status. Its
+existing output is under `$OM_WORK/exports/rescore-math500-apply-*.txt`; inspect
+that output before interrupting a running apply. No GPU worker restart is
+required for this status change.
+
 ## Parallel d0 evaluation on spare OLMo nodes (2026-09-09)
 
 Opt in on the participating nodes from an updated idle checkout:

@@ -605,7 +605,7 @@ def test_unowned_family_mismatch_is_a_note_and_loop_marker_count_is_read(tmp_pat
     output = _status_with(root, ["--dataset-generation-batch", "math500=32"])
     assert "runtime_contract_errors=0" in output
     assert "runtime_contract_notes_unowned=1" in output
-    assert "~ contract (unowned; repaired when a worker claims it): math500/s0/d0:gen_batch:8!=32" in output
+    assert "~ contract (unowned runtime settings; checked on claim): math500/s0/d0:gen_batch:8!=32" in output
     assert "config/contract mismatch" not in output and "overall_verdict=INVALID" not in output
     # the launcher's loop marker: one line of pairs, then last_error and marked_at_utc
     (root / ".families/math500-s0.loop").write_text(
@@ -683,3 +683,127 @@ def test_a_rescored_family_reads_as_rescore_pending_not_failed(tmp_path: Path) -
     (point / "DONE").write_text("done\n")
     assert not rlzero_status.rescore_pending(family)
     assert not rlzero_status.rescore_pending(tmp_path / "missing")
+
+
+def park_done(run: Path) -> None:
+    parking = run / "pinned-scoring" / "20260909T000000Z"
+    parking.mkdir(parents=True)
+    (parking / "DONE").write_text("pinned\n")
+    (run / "run_config.json").write_text("{}")
+
+
+def test_unowned_rescore_has_separate_counts_and_gpu_queue(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    run = root / "family-math500-s0" / f"{TAG}-s0-math500-d0"
+    park_done(run)
+    output = run_status(root)
+    assert "prior completion 1/1 (current or archived DONE); final accepted 0/1; re-evaluation pending 1" in output
+    assert "verdict=RESCORE_WAITING" in output
+    assert any(line.split()[:2] == ["math500/s0", "R"] for line in output.splitlines())
+    assert "GPU evaluation queued" in output
+    assert 'OM_RLZERO_ONLY_FAMILIES="math500/s0"' in output
+    assert "overall_verdict=EVALUATION_PENDING" in output
+    assert "recovering by itself" not in output
+    assert "AUTO: failed attempt" not in output
+    assert "~" not in output.split("ACTION")[0]
+
+
+def test_empty_parking_directory_does_not_invent_prior_completion(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    run = root / "family-math500-s0" / f"{TAG}-s0-math500-d0"
+    (run / "pinned-scoring").mkdir(parents=True)
+    (run / "run_config.json").write_text("{}")
+    output = run_status(root)
+    assert "prior completion 0/1" in output
+
+
+def test_live_rescore_shows_gpu_evaluation_not_training(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    run, _, lock = active_family(root)
+    park_done(run)
+    write_worker_heartbeat(root)
+    write_pipeline_activity(run, "gpu-active")
+    try:
+        output = run_status(root)
+    finally:
+        lock.close()
+    assert "PROGRESS EVALUATION" in output
+    assert "GPU RE-EVALUATION" in output
+    assert "GPU evaluation queued" not in output
+    assert "state=CLAIMED claims=math500/s0" in output
+
+
+def test_rescore_does_not_hide_live_runtime_errors(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    run, _, lock = active_family(root)
+    park_done(run)
+    (run / "run_config.json").write_text(json.dumps({"gen_batch": 1}))
+    try:
+        output = run_status(root)
+    finally:
+        lock.close()
+    assert "overall_verdict=INVALID" in output
+    assert "gen_batch:1!=8" in output
+
+
+def test_completed_rescore_is_not_counted_twice(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    run = root / "family-math500-s0" / f"{TAG}-s0-math500-d0"
+    park_done(run)
+    (run / "DONE").write_text("new\n")
+    (root / ".queue").mkdir()
+    (root / ".queue/generation.git").write_text("test-generation\n")
+    (run.parent / ".family-complete").write_text("test-generation test-config test-model math500 0\n")
+    output = run_status(root)
+    assert "points 1/1 done" in output
+    assert "overall_verdict=COMPLETE" in output
+    assert "GPU EVALUATION QUEUED" not in output
+
+
+def test_reopened_evaluation_does_not_call_busy_primary_a_failed_retry(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    primary, _, lock = active_family(root)
+    write_worker_heartbeat(root)
+    write_pipeline_activity(primary, "gpu-active")
+    queued = root / "family-math500-s1" / f"{TAG}-s1-math500-d0"
+    park_done(queued)
+    try:
+        output = _status_with(root, ["--seeds", "0", "1"])
+    finally:
+        lock.close()
+    assert "overall_verdict=RUNNING_WITH_EVALUATION_PENDING" in output
+    assert 'OM_RLZERO_ONLY_FAMILIES="math500/s1"' in output
+    assert "verdict=COMPUTING" in output
+    assert "recovering by itself" not in output
+
+
+def test_rescore_waiting_does_not_hide_another_hung_family(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    primary, _, lock = active_family(root)
+    old = time.time() - 8 * 3600
+    for path in primary.rglob("*"):
+        if path.is_file():
+            os.utime(path, (old, old))
+    write_worker_heartbeat(root)
+    write_pipeline_activity(primary, "gpu-active")
+    park_done(root / "family-math500-s1" / f"{TAG}-s1-math500-d0")
+    try:
+        output = _status_with(root, ["--seeds", "0", "1"])
+    finally:
+        lock.close()
+    assert "verdict=HUNG" in output
+    assert "overall_verdict=HUNG" in output
+
+
+def test_flat_training_counters_do_not_trigger_restart_for_evaluation_only(tmp_path: Path, monkeypatch, capsys) -> None:
+    import rlzero_status
+    root = tmp_path / "runs"
+    park_done(root / "family-math500-s0" / f"{TAG}-s0-math500-d0")
+    write_worker_heartbeat(root, "idle-worker")
+    signature = rlzero_status.training_progress.probe(root, 1)
+    monkeypatch.setattr(rlzero_status.training_progress, "verdict", lambda *a, **k: ("NOT TRAINING", "NOT TRAINING for 2h", signature))
+    monkeypatch.setattr(sys, "argv", status_command(root)[1:])
+    rlzero_status.main()
+    output = capsys.readouterr().out
+    assert "overall_verdict=EVALUATION_PENDING" in output
+    assert "Ctrl-C" not in output

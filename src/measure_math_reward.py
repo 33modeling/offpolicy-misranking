@@ -88,22 +88,46 @@ def verifier_pair(timeout_seconds: int = GENEROUS_TIMEOUT):
     """
     import contextlib
     import io
+    import logging
 
     from math_verify import LatexExtractionConfig, parse, verify
 
-    # math-verify prints "Timeout during comparison" on stdout for every row that
-    # runs out of time. On a slow node that is thousands of lines that bury the
-    # real output; the timeout is already accounted for (a timed-out comparison
-    # scores 0 and is classified timeout-sensitive by the caller).
-    def quiet_verify(a, b) -> bool:
-        with contextlib.redirect_stdout(io.StringIO()):
-            return bool(verify(a, b, timeout_seconds=timeout_seconds))
+    @contextlib.contextmanager
+    def counted_timeouts(counts):
+        class TimeoutFilter(logging.Filter):
+            def filter(self, record):
+                if "timeout during" in record.getMessage().lower():
+                    counts["events"] += 1
+                    return False
+                return True
+
+        # Bundled versions print; newer versions log warnings. Preserve other
+        # diagnostics and report timeout counts instead of thousands of lines.
+        loggers = [logging.getLogger(f"math_verify.{name}") for name in ("parser", "grader")]
+        capture = io.StringIO()
+        filter_ = TimeoutFilter()
+        for logger in loggers:
+            logger.addFilter(filter_)
+        try:
+            with contextlib.redirect_stdout(capture):
+                yield
+        finally:
+            for logger in loggers:
+                logger.removeFilter(filter_)
+            for line in capture.getvalue().splitlines():
+                if "timeout during" in line.lower():
+                    counts["events"] += 1
+                else:
+                    print(line)
+
+    old_timeouts, new_timeouts = Counter(), Counter()
 
     def old(prediction: str, gold: str) -> float:
         try:
-            parsed_gold = parse(gold, parsing_timeout=timeout_seconds)
-            parsed_prediction = parse(prediction, parsing_timeout=timeout_seconds)
-            return 1.0 if parsed_gold and parsed_prediction and quiet_verify(parsed_gold, parsed_prediction) else 0.0
+            with counted_timeouts(old_timeouts):
+                parsed_gold = parse(gold, parsing_timeout=timeout_seconds)
+                parsed_prediction = parse(prediction, parsing_timeout=timeout_seconds)
+                return 1.0 if parsed_gold and parsed_prediction and verify(parsed_gold, parsed_prediction, timeout_seconds=timeout_seconds) else 0.0
         except Exception:
             return 0.0
 
@@ -113,12 +137,15 @@ def verifier_pair(timeout_seconds: int = GENEROUS_TIMEOUT):
                          parsing_timeout=timeout_seconds)
 
         try:
-            parsed_gold = as_math(gold)
-            parsed_prediction = as_math(prediction)
-            return 1.0 if parsed_gold and parsed_prediction and quiet_verify(parsed_gold, parsed_prediction) else 0.0
+            with counted_timeouts(new_timeouts):
+                parsed_gold = as_math(gold)
+                parsed_prediction = as_math(prediction)
+                return 1.0 if parsed_gold and parsed_prediction and verify(parsed_gold, parsed_prediction, timeout_seconds=timeout_seconds) else 0.0
         except Exception:
             return 0.0
 
+    old.timeouts = old_timeouts
+    new.timeouts = new_timeouts
     return old, new
 
 
@@ -128,7 +155,10 @@ def reproduces_stored(text: str, gold: str, data, stored: float, old_verifier) -
     if abs(score(text, gold, data, old_verifier) - stored) <= 1e-9:
         return "exact"
     old_default, _ = verifier_pair(DEFAULT_TIMEOUT)
-    if abs(score(text, gold, data, old_default) - stored) <= 1e-9:
+    reproduced = abs(score(text, gold, data, old_default) - stored) <= 1e-9
+    if hasattr(old_verifier, "timeouts"):
+        old_verifier.timeouts["events"] += old_default.timeouts["events"]
+    if reproduced:
         return "timeout"
     return "mismatch"
 

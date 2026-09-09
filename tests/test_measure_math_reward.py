@@ -141,3 +141,27 @@ def test_verifier_pair_disagrees_exactly_where_the_bug_is() -> None:
     assert new("2", "2x") == 0.0
     # and both agree on a plain equality
     assert old("0.5", r"\frac{1}{2}") == new("0.5", r"\frac{1}{2}")
+
+
+def test_timeout_logs_are_counted_without_hiding_other_warnings(monkeypatch, caplog, capsys) -> None:
+    import logging
+    module = type(sys)("math_verify")
+    module.LatexExtractionConfig = lambda: None
+    def parse(text, **kwargs):
+        logging.getLogger("math_verify.parser").warning("Timeout during parsing: test")
+        return [text]
+    def verify(a, b, **kwargs):
+        assert kwargs["timeout_seconds"] == 20
+        logging.getLogger("math_verify.grader").warning("Timeout during comparison")
+        logging.getLogger("math_verify.grader").warning("unrelated warning")
+        print("Timeout during comparison")
+        return False
+    module.parse, module.verify = parse, verify
+    monkeypatch.setitem(sys.modules, "math_verify", module)
+    old, new = mmr.verifier_pair(20)
+    assert old("x", "y") == new("x", "y") == 0
+    assert old.timeouts["events"] == new.timeouts["events"] == 4
+    assert "Timeout during" not in caplog.text + capsys.readouterr().out
+    assert "unrelated warning" in caplog.text
+    assert not logging.getLogger("math_verify.parser").filters
+    assert not logging.getLogger("math_verify.grader").filters

@@ -100,34 +100,62 @@ def rewrite_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, n
 
 
 def scan_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, new_verifier,
-              results: dict[tuple[int, int], float] | None = None) -> Counter:
+              results: dict[tuple[int, int], float] | None = None,
+              checked: dict | None = None) -> Counter:
     """Read-only pass: prove the pinned verifier reproduces every stored reward and
     count what the corrected one would change. Raises on the first row it cannot
     reproduce, before anything has been written. When `results` is given, the
     corrected reward of every row is stored in it keyed by (prompt_idx,
     rollout_idx), so the rewrite pass does not score anything a second time."""
     stats = Counter()
+    checked = {} if checked is None else checked
+    started = last_report = time.monotonic()
+    print(f"[rescore-cpu] scan {path.parent.name}/{path.name}", flush=True)
+    def timeout_events():
+        return sum(getattr(v, "timeouts", {}).get("events", 0) for v in (old_verifier, new_verifier))
+    timeouts_before = timeout_events()
     with path.open(encoding="utf-8") as stream:
         for line_number, line in enumerate(stream, 1):
             row = json.loads(line)
-            text = tokenizer.decode(row["input_ids"][int(row["resp_start"]):], skip_special_tokens=True)
+            key = (int(row["prompt_idx"]), int(row["rollout_idx"]))
             gold = split[int(row["prompt_idx"])]["answer"]
             pinned = float(row.get("reward_pinned", row["reward"]))
-            kind = mmr.reproduces_stored(text, gold, data, pinned, old_verifier)
-            if kind == "mismatch":
-                raise ValueError(
-                    f"{path.name}:{line_number}: the pinned verifier does not reproduce the stored reward "
-                    f"({pinned}); responses or gold answers are misread, nothing was changed"
-                )
+            fingerprint = hashlib.sha256(json.dumps(
+                [row["input_ids"], int(row["resp_start"]), gold, pinned],
+                separators=(",", ":"), ensure_ascii=True,
+            ).encode()).digest()
+            if key in checked:
+                previous, kind, corrected = checked[key]
+                if previous != fingerprint:
+                    raise ValueError(f"{path.name}:{line_number}: conflicting duplicate rollout {key}; nothing was changed")
+                stats["reused"] += 1
+            else:
+                text = tokenizer.decode(row["input_ids"][int(row["resp_start"]):], skip_special_tokens=True)
+                kind = mmr.reproduces_stored(text, gold, data, pinned, old_verifier)
+                if kind == "mismatch":
+                    raise ValueError(
+                        f"{path.name}:{line_number}: the pinned verifier does not reproduce the stored reward "
+                        f"({pinned}); responses or gold answers are misread, nothing was changed"
+                    )
+                corrected = mmr.score(text, gold, data, new_verifier)
+                checked[key] = (fingerprint, kind, corrected)
+                stats["scored"] += 1
             stats["timeout_sensitive"] += kind == "timeout"
-            corrected = mmr.score(text, gold, data, new_verifier)
             if results is not None:
-                results[(int(row["prompt_idx"]), int(row["rollout_idx"]))] = corrected
+                results[key] = corrected
             stats["rows"] += 1
             stats["flip_0_to_1"] += corrected > pinned
             stats["flip_1_to_0"] += corrected < pinned
-            if stats["rows"] % 1000 == 0:
-                print(f"    {path.name}: {stats['rows']} rows checked ...", flush=True)
+            now = time.monotonic()
+            if now - last_report >= 10 or stats["rows"] % 1000 == 0:
+                print(f"[rescore-cpu] {path.parent.name}/{path.name}: rows={stats['rows']} "
+                      f"scored={stats['scored']} reused={stats['reused']} "
+                      f"timeout_events={timeout_events() - timeouts_before} elapsed={now - started:.1f}s", flush=True)
+                last_report = now
+    stats["timeout_events"] = timeout_events() - timeouts_before
+    print(f"[rescore-cpu] checked {path.parent.name}/{path.name}: rows={stats['rows']} "
+          f"scored={stats['scored']} reused={stats['reused']} timeout_events={stats['timeout_events']} "
+          f"elapsed={time.monotonic() - started:.1f}s", flush=True)
     return stats
 
 
@@ -195,14 +223,18 @@ def scan_point(run: Path, data, old_verifier, new_verifier) -> tuple[dict, dict]
         split = prompts["val"] if prefix.endswith("_val") else prompts["train"]
         # the merged file and its shards hold the same rows: one result table serves all
         results: dict[tuple[int, int], float] = {}
+        checked: dict = {}
         for path, _ in files:
-            stats = scan_rows(path, split, tokenizer, data, old_verifier, new_verifier, results)
+            stats = scan_rows(path, split, tokenizer, data, old_verifier, new_verifier, results, checked)
             report["files"].append({
                 "file": path.name,
                 "rows": int(stats["rows"]),
                 "flip_0_to_1": int(stats["flip_0_to_1"]),
                 "flip_1_to_0": int(stats["flip_1_to_0"]),
                 "timeout_sensitive": int(stats["timeout_sensitive"]),
+                "scored": int(stats["scored"]),
+                "reused": int(stats["reused"]),
+                "timeout_events": int(stats["timeout_events"]),
             })
         results_by_prefix[prefix] = results
     return report, results_by_prefix
