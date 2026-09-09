@@ -1434,7 +1434,7 @@ def main() -> None:
     elif missing_workers and len(workers) == 0:
         decision = "ERROR: no worker is running anywhere. Start one per node: bash scripts/run_olmo3_rlzero.sh run h100"
     elif missing_workers:
-        decision = f"WARNING: only {len(workers)}/{args.expected_workers} workers. Progress continues but slower; start a worker on the idle node(s)."
+        decision = f"WARNING: only {len(workers)} workers alive, at least {args.expected_workers} expected. Progress continues but slower; start a worker on any free node."
     elif auto or check:
         parts = []
         if auto:
@@ -1455,7 +1455,10 @@ def main() -> None:
     print(f"DECISION {decision}")
     print(f"PROGRESS {progress_line}")
     print(f"STATE   {verdict_word}")
-    print(f"        workers {len(workers)}/{args.expected_workers} ({worker_ids})   families {complete}/{len(families)} done   points {points_done}/{total_points} done{eta}")
+    worker_word = f"workers {len(workers)} alive"
+    if len(workers) < args.expected_workers:
+        worker_word += f" (expected at least {args.expected_workers})"
+    print(f"        {worker_word} ({worker_ids})   families {complete}/{len(families)} done   points {points_done}/{total_points} done{eta}")
     print(f"ACTION  {action_text}")
     if contract_errors:
         for issue in contract_errors[:6]:
@@ -1526,12 +1529,17 @@ def main() -> None:
         print(" recent alerts (logs/ALERTS.log):")
         for line in tail_lines(alerts, 3):
             print(f"  {elide(line, 150)}")
-    if worker_rows:
+    # One line per LIVE worker: what it holds and what it wrote last. Records of
+    # dead workers used to be interleaved here (25h-old lines from nodes the GPU
+    # manager took), which buried the six lines that mattered (2026-09-09).
+    live_rows = [w for w in worker_rows if w["state"] != "STALE"]
+    shown_rows = worker_rows if getattr(args, "verbose", False) else live_rows
+    if shown_rows:
         print()
-        print(" worker (node job)  log age  claims          last log line")
-        for w in worker_rows:
+        print(f" worker (node job)  log age  claims          last log line   ({len(live_rows)} alive)")
+        for w in sorted(shown_rows, key=lambda w: (w["state"] == "STALE", short_worker(w["worker"]))):
             claims = ",".join(w["claims"]) or "-"
-            print(f" {short_worker(w['worker']):<18} {fmt_age(w['log_age']):<8} {claims[:15]:<15} {w['last_line'][:95]}")
+            print(f" {short_worker(w['worker']):<18} {fmt_age(w['log_age']):<8} {claims[:15]:<15} {elide(w['last_line'], 95)}")
     print(" family = one dataset x seed = 4 chained points d0 -> d25 -> d100 -> d400 on one node (each GRPO point resumes the previous checkpoint)")
     print(" last write = time since this family wrote any file.  note: NEEDS YOU = you act, AUTO = supervisor handles it, QUEUED = waits for a free worker, ok = fine")
     stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]
