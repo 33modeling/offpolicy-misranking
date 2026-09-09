@@ -84,6 +84,14 @@ while :; do
       echo "[fallback] profile=$profile unavailable/failed rc=$rc; preserved for retry; selecting next experiment"
     fi
   done
+  all_complete=1
+  for profile in "${PROFILES[@]}"; do
+    [ "${COMPLETE[$profile]:-0}" = 1 ] || all_complete=0
+  done
+  if [ "$all_complete" = 1 ]; then
+    echo '[fallback] all selected profiles complete; releasing worker'
+    break
+  fi
   [ "$ONCE" -eq 0 ] || break
   # Waiting is only reached after every selected independent profile was tried.
   # Do not fake GPU work when models/data are missing or all work is complete.

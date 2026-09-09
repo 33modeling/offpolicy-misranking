@@ -1075,12 +1075,8 @@ run_point_unlocked() {
       # regime-hard-stall is the watchdog's own verdict ("no progress -> killing
       # the point"). Without it a killed point reported "no error line" and the
       # operator could not tell a crash from a kill.
-      failure_line=$(grep -E 'config-abort|\[abort\]|regime-hard-stall|Error|Traceback' "$attempt_log" 2>/dev/null \
+      failure_line=$(grep -E 'config-abort|code-abort|permanent-contract|regime-contract-abort|\[abort\]|regime-hard-stall|Error|Traceback' "$attempt_log" 2>/dev/null \
         | tail -n 1 | short_reason 240)
-      echo "[point-failed] $dataset/s$seed/d$drift try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}"
-      mkdir -p "$run/logs" \
-        && echo "[$(date '+%F %T')] [point-failed] try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}" \
-          >> "$run/logs/supervisor.log"
       if [ "$rc" -ne 42 ] && [ "$rc" -ne 43 ] && grep -Eq \
           'prompts.json differs from the requested dataset/split|prompts.json: content hash differs' \
           "$attempt_log" 2>/dev/null; then
@@ -1091,6 +1087,17 @@ run_point_unlocked() {
           "$attempt_log" 2>/dev/null; then
         rc=43
       fi
+      # These cannot recover by repeating identical GPU work. Preserve the
+      # repairable prompt-mismatch path (42), but stop nested matrix retries.
+      if [ "$rc" -ne 42 ] && [ "$rc" -ne 43 ] && grep -Eq \
+          '\[(config-abort|code-abort|permanent-contract|regime-contract-abort)\]' \
+          "$attempt_log" 2>/dev/null; then
+        rc=43
+      fi
+      echo "[point-failed] $dataset/s$seed/d$drift try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}"
+      mkdir -p "$run/logs" \
+        && echo "[$(date '+%F %T')] [point-failed] try $try/$MAX_RETRIES rc=$rc: ${failure_line:-no error line in $(basename "$attempt_log")}" \
+          >> "$run/logs/supervisor.log"
       if [ "$rc" -eq 42 ] && [ -n "$source" ]; then
         if quarantine_prompt_target "$run" "$try"; then
           continue
@@ -1213,6 +1220,7 @@ failures=0
 while :; do
   remaining=0
   claimed=0
+  permanent_failures=0
   while read -r dataset seed; do
     [ -n "$dataset" ] && [ -n "$seed" ] || continue
     if [ "$CONTROL_ONLY" = 1 ]; then
@@ -1236,12 +1244,12 @@ while :; do
     ) 9>"$lock" </dev/null   # stdin is the family list; children must not read it
     rc=$?
     [ "$rc" -eq 75 ] && continue
-    if [ "$rc" -eq 43 ]; then
-      echo "[abort] permanent family contract failure: $dataset/s$seed"
-      exit 43
-    fi
     claimed=$((claimed + 1))
     if [ "$rc" -ne 0 ]; then
+      if [ "$rc" -eq 43 ]; then
+        echo "[family-blocked] permanent family contract failure: $dataset/s$seed; preserving artifacts and trying other eligible families"
+        permanent_failures=$((permanent_failures + 1))
+      fi
       echo "[family-fail] $dataset/s$seed"
       failures=$((failures + 1))
     fi
@@ -1255,6 +1263,10 @@ while :; do
     echo "[queue] waiting for ${remaining} families held by other workers"
     sleep 60
   elif [ "$failures" -gt 0 ]; then
+    if [ "$permanent_failures" -gt 0 ]; then
+      echo "[abort] $permanent_failures permanent family failure(s); other eligible families were tried; fix the reported contract before retrying"
+      exit 43
+    fi
     echo "[abort] ${failures} family failure(s) on this worker; rerun the same command to resume from the artifacts"
     exit 1
   fi
