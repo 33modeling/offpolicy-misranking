@@ -38,6 +38,7 @@ def fixture_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     shutil.copy2(ROOT / "src/regime_resume_commit.py", checkout / "src")
     shutil.copy2(ROOT / "src/cleanup_run_processes.py", checkout / "src")
     shutil.copy2(ROOT / "src/rlzero_status.py", checkout / "src")
+    shutil.copy2(ROOT / "src/point_key_numbers.py", checkout / "src")
     shutil.copy2(ROOT / "src/rlzero_heartbeat.py", checkout / "src")
     shutil.copy2(ROOT / "src/repair_run_config.py", checkout / "src")
     shutil.copy2(ROOT / "src/training_progress.py", checkout / "src")
