@@ -81,8 +81,15 @@ the registered matrix (no registered point is written, no label is defined):
   writes the floor-versus-budget report next to the registered d0 point's to
   `$OM_WORK/exports/reliability-budget-run-*.txt`. Rerunning the same command
   resumes. `fresh_k` must be a multiple of 16 (micro-groups of four, R/A/B
-  partition). The run does not join the supervisor queue; start it on a node the
-  supervisor is not using.
+  partition). The run does not join the supervisor queue, but it holds the same
+  node-local `primary.lock` as the registered launcher (a busy node is refused) and
+  one lease per run directory (the same dataset, budget and seed cannot start on
+  two nodes). Resuming compares the whole effective contract (model, prompts, budgets,
+  token cap, projection, verifier, prompt format) and refuses a mismatch; TERM/INT
+  stop the run's own stage processes. The sizing report marks its prediction
+  `unsupported` (no budget claim) when the held-out self-check misses, the registered
+  cell carries no signal, exact ties dominate the selection boundary, or the stored
+  A/B scores do not reproduce from the artifacts (review 2026-09-09, six defects fixed).
 
 ## Training hyperparameters
 

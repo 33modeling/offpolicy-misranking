@@ -11,8 +11,10 @@ rollouts or validation direction) limits it now.
 Inputs per run directory: ``oracle_micro_groups.pt`` (prompt -> [G, D]
 micro-group gradients, G groups of ``micro_group`` responses each),
 ``val_groups.pt`` ([V, D], one gradient per validation prompt),
-``run_config.json``, and optionally ``rollouts_behavior_train.jsonl`` for the
-behavior reward profile of every prompt.
+``run_config.json``, ``prompts.json`` when present, ``scores_splithalf.json``
+when present (the stored A/B scores are recomputed from the artifacts and must
+match before any derived number is trusted), and optionally
+``rollouts_behavior_train.jsonl`` for the behavior reward profile.
 
 Method. The registered reference scores a prompt with two disjoint candidate
 groups (8 responses) per half and 25 validation prompts per half. Here both
@@ -25,14 +27,19 @@ three modes:
 * ``validation``  one shared candidate mean, independent validation halves.
 
 The split-half Pearson correlation on each axis is extrapolated with
-Spearman-Brown and converted to an expected top-k overlap through the frozen
-Gaussian lookup of ``src/measurement_ceiling.py`` (registered (n, k) designs;
-other designs fall back to a small bivariate-normal simulation).
+Spearman-Brown, coupled by one constant fitted on the observed cells with the
+largest cell held out, and converted to an expected top-k overlap through the
+frozen Gaussian lookup of ``src/measurement_ceiling.py``. The prediction is
+reported as supported only when the held-out cell reproduces, the registered
+cell carries signal, the stored scores reproduce, and exact ties do not
+dominate the selection boundary; otherwise the KEY line says so and makes no
+budget claim.
 
 This is a sizing diagnostic for a new reference budget. It reuses the locked
 rollouts descriptively, defines no registered label, and changes nothing on
 disk except the requested output file (plan section 7; section 9 row 1:
-"increase reference reliability or redesign the pool").
+"increase reference reliability or redesign the pool"). Point estimates here
+do not certify the paper's one-sided confidence-bound and positive-gain gates.
 """
 
 from __future__ import annotations
@@ -41,12 +48,11 @@ import argparse
 import json
 import math
 import os
-import random
 import re
 import statistics
-import time
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import torch
@@ -54,12 +60,16 @@ import torch
 from measurement_ceiling import CORRELATIONS, REGISTERED_CURVES, _interpolate
 from select_rules import topk_count
 
-THREAD_CAP = 8
-
 MODES = ("both", "candidate", "validation")
 CANDIDATE_HALF_RESPONSES = (8, 16, 32, 64, 128, 256)
 VALIDATION_HALF_PROMPTS = (25, 50, 100)
 FALLBACK_SIMULATIONS = 24
+THREAD_CAP = 8
+SELF_CHECK_TOLERANCE = 0.06      # predicted minus observed overlap at the held-out cell
+MIN_REGISTERED_CORRELATION = 0.02
+MAX_BOUNDARY_TIE_FRACTION = 0.05  # prompts tied with the k-th score, as a fraction of n
+STORED_SCORE_TOLERANCE = 1e-3
+MIN_AXIS_GAP = 0.05               # correlation gap needed to name a limiting side
 
 
 @dataclass(frozen=True)
@@ -68,6 +78,7 @@ class FloorStat:
     low: float
     high: float
     correlation: float
+    boundary_ties: float = 0.0    # mean number of prompts tied with the k-th score (both halves averaged)
 
 
 @dataclass
@@ -81,6 +92,10 @@ class RunArtifacts:
     config: dict
     behavior_pass_rate: dict[int, float] | None
     scoring: str                 # "current" or "pinned"
+    prompt_ids: list[int] = field(default_factory=list)
+    stored_score_max_diff: float | None = None   # recomputed vs stored A/B scores, None if not checkable
+    zero_norm_prompts: int = 0                   # prompts whose mean stored gradient has zero norm
+    notes: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- io
@@ -88,24 +103,20 @@ def _load_tensor(path: Path) -> torch.Tensor:
     return torch.load(path, map_location="cpu", weights_only=True)
 
 
-def locate_artifacts(run: Path) -> tuple[Path, Path, str]:
-    """Return (micro_groups, val_groups, scoring) preferring the run root.
+def locate_artifacts(run: Path) -> tuple[Path, str]:
+    """Return (directory holding the artifacts, scoring) preferring the run root.
 
     A point whose scoring was parked by scripts/rescore_math500.sh keeps the
     original artifacts under pinned-scoring/<stamp>/ until a GPU worker rebuilds
     the root copies; the geometry is identical, so either copy answers the
     budget question.
     """
-    root_micro = run / "oracle_micro_groups.pt"
-    root_val = run / "val_groups.pt"
-    if root_micro.is_file() and root_val.is_file():
-        return root_micro, root_val, "current"
+    if (run / "oracle_micro_groups.pt").is_file() and (run / "val_groups.pt").is_file():
+        return run, "current"
     parked = sorted(p for p in run.glob("pinned-scoring/*/") if p.is_dir())
     for stamp in reversed(parked):
-        micro = stamp / "oracle_micro_groups.pt"
-        val = stamp / "val_groups.pt"
-        if micro.is_file() and val.is_file():
-            return micro, val, "pinned"
+        if (stamp / "oracle_micro_groups.pt").is_file() and (stamp / "val_groups.pt").is_file():
+            return stamp, "pinned"
     raise FileNotFoundError(
         f"{run}: oracle_micro_groups.pt and val_groups.pt are missing (root and pinned-scoring)"
     )
@@ -138,24 +149,101 @@ def behavior_pass_rates(path: Path) -> dict[int, float]:
     return {idx: sum(values) / len(values) for idx, values in rewards.items() if values}
 
 
+def _three_way(count: int) -> tuple[int, int, int]:
+    """Registered R/A/B index blocks: proportions 1/2, 1/4, 1/4 in stored order."""
+    if count < 8 or count % 4:
+        raise ValueError(f"R/A/B partition needs a multiple of four with at least eight items, got {count}")
+    return count // 2, count // 4, count // 4
+
+
+def registered_half_scores(stack: torch.Tensor, val_groups: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """A/B scores exactly as src/experiment.py stores them (fixed blocks, no resampling)."""
+    groups = stack.shape[1]
+    rank_g, a_g, _ = _three_way(groups)
+    rank_v, a_v, _ = _three_way(val_groups.shape[0])
+    half_a = stack[:, rank_g : rank_g + a_g].mean(dim=1)
+    half_b = stack[:, rank_g + a_g :].mean(dim=1)
+    direction_a = val_groups[rank_v : rank_v + a_v].mean(dim=0)
+    direction_b = val_groups[rank_v + a_v :].mean(dim=0)
+    return _cosine_rows(half_a, direction_a), _cosine_rows(half_b, direction_b)
+
+
+def verify_stored_scores(folder: Path, stack: torch.Tensor, val_groups: torch.Tensor,
+                         prompt_ids: list[int]) -> float | None:
+    """Max |recomputed - stored| over the A/B scores in scores_splithalf.json, or None when absent."""
+    path = folder / "scores_splithalf.json"
+    if not path.is_file():
+        return None
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        score_a, score_b = registered_half_scores(stack, val_groups)
+    except ValueError:
+        return float("inf")
+    worst = 0.0
+    for position, prompt in enumerate(prompt_ids):
+        halves = stored.get(str(prompt))
+        if not isinstance(halves, dict) or "a" not in halves or "b" not in halves:
+            return float("inf")
+        worst = max(worst, abs(float(halves["a"]) - float(score_a[position])),
+                    abs(float(halves["b"]) - float(score_b[position])))
+    return worst
+
+
 def load_run(run: Path, label: str | None = None) -> RunArtifacts:
-    micro_path, val_path, scoring = locate_artifacts(run)
-    micro = _load_tensor(micro_path)
+    folder, scoring = locate_artifacts(run)
+    micro = _load_tensor(folder / "oracle_micro_groups.pt")
     if not isinstance(micro, dict) or not micro:
-        raise ValueError(f"{micro_path}: expected a non-empty prompt -> tensor mapping")
-    groups = min(int(tensor.shape[0]) for tensor in micro.values())
-    stack = torch.stack([micro[idx][:groups].float() for idx in sorted(micro)])
-    val_groups = _load_tensor(val_path).float()
+        raise ValueError(f"{folder}/oracle_micro_groups.pt: expected a non-empty prompt -> tensor mapping")
+    prompt_ids = sorted(int(key) for key in micro)
+    shapes = {tuple(micro[key].shape) for key in micro}
+    if len(shapes) != 1:
+        common = max(shapes, key=lambda s: sum(1 for key in micro if tuple(micro[key].shape) == s))
+        offenders = sorted((int(key), tuple(micro[key].shape)) for key in micro if tuple(micro[key].shape) != common)[:5]
+        raise ValueError(
+            f"{folder}/oracle_micro_groups.pt: prompts differ in stored geometry, e.g. {offenders}; "
+            "incomplete point, not analysed"
+        )
+    stack = torch.stack([micro[key].float() for key in sorted(micro, key=int)])
+    if stack.ndim != 3:
+        raise ValueError(f"{folder}/oracle_micro_groups.pt: expected [G, D] per prompt, got {tuple(stack.shape[1:])}")
+    val_groups = _load_tensor(folder / "val_groups.pt").float()
     if val_groups.ndim != 2 or val_groups.shape[0] < 4:
-        raise ValueError(f"{val_path}: need a [V, D] tensor with at least four validation prompts")
+        raise ValueError(f"{folder}/val_groups.pt: need a [V, D] tensor with at least four validation prompts")
+    if not bool(torch.isfinite(stack).all()) or not bool(torch.isfinite(val_groups).all()):
+        raise ValueError(f"{folder}: non-finite gradient values")
     config = {}
     config_path = run / "run_config.json"
     if config_path.is_file():
         config = json.loads(config_path.read_text(encoding="utf-8"))
+    groups = stack.shape[1]
     fresh_k = int(config.get("fresh_k", 0) or 0)
     group_size = int(config.get("micro_group", 0) or 0)
-    if group_size <= 0:
+    if fresh_k and group_size:
+        expected_groups = fresh_k // group_size
+        if expected_groups != groups:
+            raise ValueError(
+                f"{folder}: stored {groups} micro-groups per prompt but run_config says "
+                f"fresh_k={fresh_k} / micro_group={group_size} = {expected_groups}"
+            )
+    elif group_size <= 0:
         group_size = fresh_k // groups if fresh_k and fresh_k % groups == 0 else 4
+    expected_prompts = None
+    prompts_path = run / "prompts.json"
+    if prompts_path.is_file():
+        prompts = json.loads(prompts_path.read_text(encoding="utf-8"))
+        expected_prompts = len(prompts.get("train", []))
+        expected_val = len(prompts.get("val", []))
+        if expected_val and expected_val != val_groups.shape[0]:
+            raise ValueError(f"{folder}: {val_groups.shape[0]} validation gradients but prompts.json lists {expected_val}")
+    elif config.get("n_train"):
+        expected_prompts = int(config["n_train"])
+    if expected_prompts is not None and prompt_ids != list(range(expected_prompts)):
+        missing = sorted(set(range(expected_prompts)) - set(prompt_ids))[:5]
+        extra = sorted(set(prompt_ids) - set(range(expected_prompts)))[:5]
+        raise ValueError(
+            f"{folder}: prompt coverage mismatch, expected 0..{expected_prompts - 1}; "
+            f"missing={missing} extra={extra}; incomplete point, not analysed"
+        )
     dataset = str(config.get("dataset", run.name))
     pass_rates = None
     behavior = run / "rollouts_behavior_train.jsonl"
@@ -164,16 +252,17 @@ def load_run(run: Path, label: str | None = None) -> RunArtifacts:
             pass_rates = behavior_pass_rates(behavior)
         except (OSError, ValueError, KeyError):
             pass_rates = None
+    zero_norm = int((stack.mean(dim=1).norm(dim=1) == 0).sum())
+    notes = []
+    stored_diff = verify_stored_scores(folder, stack, val_groups, prompt_ids)
+    if stored_diff is None:
+        notes.append("scores_splithalf.json absent; stored A/B scores not checked")
+    elif stored_diff > STORED_SCORE_TOLERANCE:
+        notes.append(f"stored A/B scores NOT reproduced (max diff {stored_diff:.4g}); geometry assumption invalid")
     return RunArtifacts(
-        run=run,
-        label=label or run.name,
-        dataset=dataset,
-        stack=stack,
-        val_groups=val_groups,
-        group_size=group_size,
-        config=config,
-        behavior_pass_rate=pass_rates,
-        scoring=scoring,
+        run=run, label=label or run.name, dataset=dataset, stack=stack, val_groups=val_groups,
+        group_size=group_size, config=config, behavior_pass_rate=pass_rates, scoring=scoring,
+        prompt_ids=prompt_ids, stored_score_max_diff=stored_diff, zero_norm_prompts=zero_norm, notes=notes,
     )
 
 
@@ -204,14 +293,10 @@ def half_scores(
         raise ValueError(f"unknown mode {mode!r}; expected one of {MODES}")
     prompts, groups, _ = stack.shape
     if groups_per_half < 1 or 2 * groups_per_half > groups:
-        raise ValueError(
-            f"groups_per_half={groups_per_half} needs 2*m <= {groups} stored groups"
-        )
+        raise ValueError(f"groups_per_half={groups_per_half} needs 2*m <= {groups} stored groups")
     val_count = val_groups.shape[0]
     if val_prompts_per_half < 1 or 2 * val_prompts_per_half > val_count:
-        raise ValueError(
-            f"val_prompts_per_half={val_prompts_per_half} needs 2*m <= {val_count} validation prompts"
-        )
+        raise ValueError(f"val_prompts_per_half={val_prompts_per_half} needs 2*m <= {val_count} validation prompts")
     if mode == "validation":
         candidate_a = candidate_b = stack.mean(dim=1)
     else:
@@ -226,10 +311,26 @@ def half_scores(
     else:
         permutation = torch.randperm(val_count, generator=generator)
         direction_a = val_groups[permutation[:val_prompts_per_half]].mean(dim=0)
-        direction_b = val_groups[
-            permutation[val_prompts_per_half : 2 * val_prompts_per_half]
-        ].mean(dim=0)
+        direction_b = val_groups[permutation[val_prompts_per_half : 2 * val_prompts_per_half]].mean(dim=0)
     return _cosine_rows(candidate_a, direction_a), _cosine_rows(candidate_b, direction_b)
+
+
+def _topk_masks(scores: torch.Tensor, k: int, pairs: int, generator: torch.Generator) -> torch.Tensor:
+    """Top-k membership masks for `pairs` independent tie streams.
+
+    Score order is primary; a random permutation is applied first and the sort
+    is stable, so only exact ties are broken at random. No jitter touches the
+    scores, so distinct values keep their order at any scale.
+    """
+    n = scores.numel()
+    values = scores.to(torch.float64)
+    permutations = torch.argsort(torch.rand(pairs, n, generator=generator), dim=1)
+    permuted = values[permutations]
+    order = torch.argsort(permuted, dim=1, descending=True, stable=True)
+    top = torch.gather(permutations, 1, order[:, :k])
+    masks = torch.zeros(pairs, n, dtype=torch.bool)
+    masks.scatter_(1, top, True)
+    return masks
 
 
 def topk_overlap_batch(
@@ -240,24 +341,28 @@ def topk_overlap_batch(
     pairs: int,
     generator: torch.Generator,
 ) -> float:
-    """Mean top-k overlap over `pairs` independent tie-breaking draws.
+    """Mean top-k overlap over `pairs` independent tie-breaking draws per side.
 
-    Same estimand as select_rules.overlap_under_independent_ties (each side
-    gets its own tie stream per pair) but batched in torch: ties are broken by
-    a jitter far below the float64 resolution of any score difference.
+    Same estimand as select_rules.overlap_under_independent_ties (score first,
+    random order only within exact ties, independent streams per side), batched.
     """
     if score_a.numel() != score_b.numel():
         raise ValueError("score vectors must have the same length")
     n = score_a.numel()
     if not 0 < k <= n:
         raise ValueError(f"k={k} must lie in (0, {n}]")
-    a = score_a.to(torch.float64)[None, :] + 1e-12 * torch.rand(pairs, n, generator=generator, dtype=torch.float64)
-    b = score_b.to(torch.float64)[None, :] + 1e-12 * torch.rand(pairs, n, generator=generator, dtype=torch.float64)
-    mask_a = torch.zeros(pairs, n, dtype=torch.bool)
-    mask_b = torch.zeros(pairs, n, dtype=torch.bool)
-    mask_a.scatter_(1, torch.topk(a, k, dim=1).indices, True)
-    mask_b.scatter_(1, torch.topk(b, k, dim=1).indices, True)
+    if pairs < 1:
+        raise ValueError(f"pairs must be positive, got {pairs}")
+    mask_a = _topk_masks(score_a, k, pairs, generator)
+    mask_b = _topk_masks(score_b, k, pairs, generator)
     return float((mask_a & mask_b).sum(dim=1).double().mean() / k)
+
+
+def boundary_tie_count(scores: torch.Tensor, k: int) -> int:
+    """Number of prompts whose score equals the k-th largest score exactly."""
+    values = scores.to(torch.float64)
+    kth = torch.topk(values, k).values[-1]
+    return int((values == kth).sum())
 
 
 def floor_statistic(
@@ -271,30 +376,27 @@ def floor_statistic(
     reps: int,
     pairs: int,
     seed: int,
-    prompt_ids: list[int] | None = None,
+    prompt_positions: list[int] | None = None,
 ) -> FloorStat:
     """Split-half top-k overlap and Pearson correlation over resampled halves."""
-    index = None if prompt_ids is None else torch.tensor(list(prompt_ids), dtype=torch.long)
-    floors, correlations = [], []
+    index = None if prompt_positions is None else torch.tensor(list(prompt_positions), dtype=torch.long)
+    floors, correlations, ties = [], [], []
     for rep in range(reps):
         generator = torch.Generator().manual_seed(seed + 1_000_003 * rep)
         score_a, score_b = half_scores(
             stack, val_groups,
-            groups_per_half=groups_per_half,
-            val_prompts_per_half=val_prompts_per_half,
-            mode=mode,
-            generator=generator,
+            groups_per_half=groups_per_half, val_prompts_per_half=val_prompts_per_half,
+            mode=mode, generator=generator,
         )
         if index is not None:
             score_a, score_b = score_a[index], score_b[index]
         tie_generator = torch.Generator().manual_seed(seed + 17 + rep)
         floors.append(topk_overlap_batch(score_a, score_b, k, pairs=pairs, generator=tie_generator))
         correlations.append(_pearson(score_a, score_b))
+        ties.append((boundary_tie_count(score_a, k) + boundary_tie_count(score_b, k)) / 2.0)
     return FloorStat(
-        mean=sum(floors) / len(floors),
-        low=min(floors),
-        high=max(floors),
-        correlation=sum(correlations) / len(correlations),
+        mean=sum(floors) / len(floors), low=min(floors), high=max(floors),
+        correlation=sum(correlations) / len(correlations), boundary_ties=sum(ties) / len(ties),
     )
 
 
@@ -324,8 +426,7 @@ def _simulated_overlap(rho: float, n: int, k: int, sims: int = FALLBACK_SIMULATI
         latent = torch.randn(n, generator=generator)
         noise_a = torch.randn(n, generator=generator)
         noise_b = torch.randn(n, generator=generator)
-        weight = math.sqrt(rho)
-        residual = math.sqrt(1.0 - rho)
+        weight, residual = math.sqrt(rho), math.sqrt(1.0 - rho)
         values.append(topk_overlap_batch(
             weight * latent + residual * noise_a, weight * latent + residual * noise_b, k,
             pairs=3, generator=torch.Generator().manual_seed(9_000 + sim),
@@ -378,6 +479,9 @@ class RunReadout:
     self_check: tuple[float, float] | None                # predicted vs observed at the held-out largest cell
     strata: dict[str, object] | None
     coupling: float | None = None                          # fitted coupling constant of the product model
+    supported: bool = False                                # whether the budget prediction may be acted on
+    unsupported_reasons: list[str] = field(default_factory=list)
+    limiting_side: str | None = None                       # "candidate rollouts", "validation direction", or None
 
 
 def _registered_geometry(groups: int, group_size: int, val_count: int) -> tuple[int, int] | None:
@@ -435,27 +539,14 @@ def analyze_run(
                 mode="both", reps=reps, pairs=pairs, seed=seed + 31,
             )
 
-    # Candidate axis: unit = one micro-group; average the implied unit reliability
-    # over every observed half size (each inversion is exact under Spearman-Brown).
-    candidate_units = [
-        unit_correlation(stat.correlation, groups_per_half)
-        for (groups_per_half, _), stat in curves["candidate"].items()
-    ]
+    candidate_units = [unit_correlation(stat.correlation, g) for (g, _), stat in curves["candidate"].items()]
     r1_candidate = statistics.fmean(candidate_units) if candidate_units else 0.0
-    # Validation axis: unit = one validation prompt.
-    validation_units = [
-        unit_correlation(stat.correlation, val_half)
-        for (_, val_half), stat in curves["validation"].items()
-    ]
+    validation_units = [unit_correlation(stat.correlation, v) for (_, v), stat in curves["validation"].items()]
     r1_validation = statistics.fmean(validation_units) if validation_units else 0.0
 
-    # Combined prediction. Each half's score is a cosine between a candidate
-    # estimate and a validation direction, so the between-half correlation is
-    # modelled as a coupling constant times the Spearman-Brown reliability of
-    # each axis. The constant is fitted through the origin on every observed
-    # registered-construction cell except the largest, which is held out as a
-    # self-check; predictions convert correlation to overlap with the frozen
-    # Gaussian lookup.
+    # Combined prediction: coupling constant times the Spearman-Brown reliability
+    # of each axis, fitted through the origin on every observed registered-
+    # construction cell except the largest, which is held out as a self-check.
     budget_table: dict[tuple[int, int], float] = {}
     needed_candidate = needed_candidate_margin = None
     self_check = None
@@ -463,27 +554,22 @@ def analyze_run(
     if registered is not None and registered_geometry is not None and curves["both"]:
         _, reg_val = registered_geometry
 
-        def axis_product(groups_per_half: int, val_prompts_per_half: int) -> float:
-            return spearman_brown(r1_candidate, groups_per_half) * spearman_brown(
-                r1_validation, val_prompts_per_half
-            )
+        def axis_product(groups_per_half: float, val_prompts_per_half: float) -> float:
+            return spearman_brown(r1_candidate, groups_per_half) * spearman_brown(r1_validation, val_prompts_per_half)
 
         cells = sorted(curves["both"], key=lambda key: (key[0], key[1]))
         held_out = cells[-1] if len(cells) >= 2 else None
         fit_cells = [cell for cell in cells if cell != held_out]
         numerator = sum(axis_product(*cell) * curves["both"][cell].correlation for cell in fit_cells)
         denominator = sum(axis_product(*cell) ** 2 for cell in fit_cells)
-        coupling = numerator / denominator if denominator > 0 else 0.0
-        coupling = max(0.0, coupling)
+        coupling = max(0.0, numerator / denominator) if denominator > 0 else 0.0
 
         def predicted_rho(responses_per_half: int, val_prompts_per_half: int) -> float:
             return min(1.0, coupling * axis_product(responses_per_half / artifacts.group_size, val_prompts_per_half))
 
         for responses in CANDIDATE_HALF_RESPONSES:
             for val_half in VALIDATION_HALF_PROMPTS:
-                budget_table[(responses, val_half)] = overlap_from_correlation(
-                    predicted_rho(responses, val_half), n, k
-                )
+                budget_table[(responses, val_half)] = overlap_from_correlation(predicted_rho(responses, val_half), n, k)
         for responses in CANDIDATE_HALF_RESPONSES:
             predicted = budget_table[(responses, reg_val)]
             if needed_candidate is None and predicted >= target:
@@ -492,42 +578,62 @@ def analyze_run(
                 needed_candidate_margin = responses
         if held_out is not None:
             observed = curves["both"][held_out].mean
-            predicted = overlap_from_correlation(
-                predicted_rho(held_out[0] * artifacts.group_size, held_out[1]), n, k
-            )
+            predicted = overlap_from_correlation(predicted_rho(held_out[0] * artifacts.group_size, held_out[1]), n, k)
             self_check = (predicted, observed)
+
+    # Adequacy: the prediction is actionable only when the model reproduces the
+    # held-out cell, the registered cell carries signal, exact ties do not
+    # dominate the boundary, and the stored scores reproduce from the artifacts.
+    reasons = []
+    if not budget_table:
+        reasons.append("registered geometry not observable in the stored artifacts")
+    if registered is not None and registered.correlation < MIN_REGISTERED_CORRELATION:
+        reasons.append(f"registered-cell correlation {registered.correlation:.3f} below {MIN_REGISTERED_CORRELATION}")
+    if self_check is not None and abs(self_check[0] - self_check[1]) > SELF_CHECK_TOLERANCE:
+        reasons.append(f"held-out self-check off by {self_check[0] - self_check[1]:+.3f} (tolerance {SELF_CHECK_TOLERANCE})")
+    if registered is not None and registered.boundary_ties > MAX_BOUNDARY_TIE_FRACTION * n:
+        reasons.append(f"{registered.boundary_ties:.0f} prompts tied at the selection boundary (max {MAX_BOUNDARY_TIE_FRACTION * n:.0f})")
+    if artifacts.stored_score_max_diff is not None and artifacts.stored_score_max_diff > STORED_SCORE_TOLERANCE:
+        reasons.append("stored A/B scores not reproduced from the artifacts")
+    if artifacts.zero_norm_prompts:
+        reasons.append(f"{artifacts.zero_norm_prompts} prompts with a zero-norm stored gradient")
+    supported = not reasons
+    if not supported:
+        needed_candidate = needed_candidate_margin = None
+
+    limiting_side = None
+    if supported and curves["candidate"] and curves["validation"]:
+        best_candidate = max(stat.correlation for stat in curves["candidate"].values())
+        best_validation = max(stat.correlation for stat in curves["validation"].values())
+        if best_validation - best_candidate >= MIN_AXIS_GAP:
+            limiting_side = "candidate rollouts"
+        elif best_candidate - best_validation >= MIN_AXIS_GAP:
+            limiting_side = "validation direction"
 
     strata = None
     if artifacts.behavior_pass_rate and registered_geometry is not None:
         rates = artifacts.behavior_pass_rate
-        mixed = [idx for idx in range(n) if 0.0 < rates.get(idx, 0.0) < 1.0]
-        all_wrong = sum(1 for idx in range(n) if rates.get(idx, 0.0) == 0.0)
-        all_right = sum(1 for idx in range(n) if rates.get(idx, 0.0) == 1.0)
-        strata = {
-            "mixed": len(mixed),
-            "all_wrong": all_wrong,
-            "all_right": all_right,
-            "mixed_floor": None,
-            "mixed_k": None,
-            "mixed_chance": None,
-        }
-        if len(mixed) >= 20:
-            k_mixed = topk_count(len(mixed), topk_frac)
+        ids = artifacts.prompt_ids or list(range(n))
+        mixed_positions = [pos for pos, prompt in enumerate(ids) if 0.0 < rates.get(prompt, 0.0) < 1.0]
+        all_wrong = sum(1 for prompt in ids if rates.get(prompt, 0.0) == 0.0)
+        all_right = sum(1 for prompt in ids if rates.get(prompt, 0.0) == 1.0)
+        strata = {"mixed": len(mixed_positions), "all_wrong": all_wrong, "all_right": all_right,
+                  "mixed_floor": None, "mixed_k": None, "mixed_chance": None}
+        if len(mixed_positions) >= 20:
+            k_mixed = topk_count(len(mixed_positions), topk_frac)
             stat = floor_statistic(
                 stack, val_groups, k=k_mixed,
                 groups_per_half=registered_geometry[0], val_prompts_per_half=registered_geometry[1],
-                mode="both", reps=reps, pairs=pairs, seed=seed + 977, prompt_ids=mixed,
+                mode="both", reps=reps, pairs=pairs, seed=seed + 977, prompt_positions=mixed_positions,
             )
-            strata["mixed_floor"] = stat
-            strata["mixed_k"] = k_mixed
-            strata["mixed_chance"] = k_mixed / len(mixed)
+            strata.update(mixed_floor=stat, mixed_k=k_mixed, mixed_chance=k_mixed / len(mixed_positions))
 
     return RunReadout(
         artifacts=artifacts, n=n, k=k, chance=chance, groups=groups, val_count=val_count,
-        curves=curves, registered=registered, r1_candidate=r1_candidate,
-        r1_validation=r1_validation, budget_table=budget_table,
-        needed_candidate=needed_candidate, needed_candidate_margin=needed_candidate_margin,
-        self_check=self_check, strata=strata, coupling=coupling,
+        curves=curves, registered=registered, r1_candidate=r1_candidate, r1_validation=r1_validation,
+        budget_table=budget_table, needed_candidate=needed_candidate,
+        needed_candidate_margin=needed_candidate_margin, self_check=self_check, strata=strata,
+        coupling=coupling, supported=supported, unsupported_reasons=reasons, limiting_side=limiting_side,
     )
 
 
@@ -547,12 +653,20 @@ def render_run(readout: RunReadout, target: float) -> list[str]:
         f"stored groups={readout.groups}x{gsize} responses  validation prompts={readout.val_count}",
         "",
     ]
+    if art.stored_score_max_diff is None:
+        lines.append("stored A/B scores: not checkable (scores_splithalf.json absent)")
+    else:
+        verdict = "reproduced" if art.stored_score_max_diff <= STORED_SCORE_TOLERANCE else "NOT reproduced"
+        lines.append(f"stored A/B scores: {verdict} from the artifacts (max |diff| {art.stored_score_max_diff:.2e})")
+    lines.append(f"zero-norm stored gradients: {art.zero_norm_prompts} of {readout.n} prompts")
     if readout.registered is not None:
         reg = readout.registered
         lines.append(
             f"registered geometry (8 responses and {readout.val_count // 4} validation prompts per half): "
             f"floor={reg.mean:.3f} [{reg.low:.3f}~{reg.high:.3f}]  r={reg.correlation:.3f}  "
-            f"{'GATE-OK' if reg.mean >= target else 'gate-LOW'} (point estimate vs {target:.2f})"
+            f"boundary ties={reg.boundary_ties:.1f}  "
+            f"{'GATE-OK' if reg.mean >= target else 'gate-LOW'} (point estimate vs {target:.2f}; "
+            "the paper gate uses a one-sided 95% lower bound and a positive-gain condition)"
         )
     lines.append("")
     lines.append("observed floor by half size (both = registered construction; candidate = shared validation direction; validation = shared candidate mean)")
@@ -576,12 +690,12 @@ def render_run(readout: RunReadout, target: float) -> list[str]:
     )
     if readout.budget_table:
         lines.append("")
+        status = "supported" if readout.supported else "UNSUPPORTED, shown for inspection only"
         lines.append(
             f"predicted floor (product model, coupling={_fmt(readout.coupling)} fitted on the observed cells; "
-            f"GATE mark = point estimate >= {target:.2f})"
+            f"GATE mark = point estimate >= {target:.2f}; prediction {status})"
         )
-        header = "| responses/half | " + " | ".join(f"val {v}/half" for v in VALIDATION_HALF_PROMPTS) + " |"
-        lines.append(header)
+        lines.append("| responses/half | " + " | ".join(f"val {v}/half" for v in VALIDATION_HALF_PROMPTS) + " |")
         lines.append("|---|" + "---|" * len(VALIDATION_HALF_PROMPTS))
         for responses in CANDIDATE_HALF_RESPONSES:
             cells = []
@@ -597,39 +711,41 @@ def render_run(readout: RunReadout, target: float) -> list[str]:
             predicted, observed = readout.self_check
             lines.append(
                 f"self-check on the held-out largest cell: predicted {predicted:.3f} vs observed {observed:.3f} "
-                f"(difference {predicted - observed:+.3f}; a large gap means the extrapolation is unreliable)"
+                f"(difference {predicted - observed:+.3f}; tolerance {SELF_CHECK_TOLERANCE})"
             )
-        reg_val = readout.val_count // 4
-        if readout.needed_candidate is None:
-            lines.append(
-                f"KEY {art.label}: no candidate half size up to {CANDIDATE_HALF_RESPONSES[-1]} responses reaches "
-                f"floor {target:.2f} with {reg_val} validation prompts per half"
-            )
-        else:
-            lines.append(
-                f"KEY {art.label}: floor >= {target:.2f} expected at {readout.needed_candidate} responses per half "
-                f"({2 * readout.needed_candidate} per prompt for A+B, {3 * readout.needed_candidate} with an equal ranking split) "
-                f"at {reg_val} validation prompts per half"
-                + (
-                    f"; >= {0.25:.2f} (margin for the lower bound) at {readout.needed_candidate_margin} per half"
-                    if readout.needed_candidate_margin is not None else
-                    f"; 0.25 not reached up to {CANDIDATE_HALF_RESPONSES[-1]}"
-                )
-            )
-        if readout.curves["candidate"] and readout.curves["validation"]:
-            cand_reg = max(readout.curves["candidate"].values(), key=lambda s: s.correlation)
-            vali_reg = max(readout.curves["validation"].values(), key=lambda s: s.correlation)
-            limiting = "candidate rollouts" if cand_reg.correlation < vali_reg.correlation else "validation direction"
-            lines.append(
-                f"KEY {art.label}: limiting side now = {limiting} "
-                f"(best candidate-only r={cand_reg.correlation:.3f}, best validation-only r={vali_reg.correlation:.3f})"
-            )
+    for note in art.notes:
+        lines.append(f"note: {note}")
+    reg_val = readout.val_count // 4
+    if not readout.supported:
+        lines.append(f"KEY {art.label}: prediction unsupported, no budget claim; " + "; ".join(readout.unsupported_reasons))
+    elif readout.needed_candidate is None:
+        lines.append(
+            f"KEY {art.label}: no candidate half size up to {CANDIDATE_HALF_RESPONSES[-1]} responses reaches "
+            f"floor {target:.2f} with {reg_val} validation prompts per half"
+        )
+    else:
+        margin = (
+            f"; >= 0.25 (margin for the lower bound) at {readout.needed_candidate_margin} per half"
+            if readout.needed_candidate_margin is not None
+            else f"; 0.25 not reached up to {CANDIDATE_HALF_RESPONSES[-1]}"
+        )
+        lines.append(
+            f"KEY {art.label}: floor >= {target:.2f} expected at {readout.needed_candidate} responses per half "
+            f"({2 * readout.needed_candidate} per prompt for A+B, {3 * readout.needed_candidate} with an equal ranking split) "
+            f"at {reg_val} validation prompts per half{margin}"
+        )
+    if readout.supported and readout.curves["candidate"] and readout.curves["validation"]:
+        best_candidate = max(stat.correlation for stat in readout.curves["candidate"].values())
+        best_validation = max(stat.correlation for stat in readout.curves["validation"].values())
+        side = readout.limiting_side or "no clear limiting side"
+        lines.append(
+            f"KEY {art.label}: limiting side now = {side} "
+            f"(best candidate-only r={best_candidate:.3f}, best validation-only r={best_validation:.3f})"
+        )
     if readout.strata is not None:
         s = readout.strata
         lines.append("")
-        lines.append(
-            f"behavior reward profile: mixed={s['mixed']}  all-wrong={s['all_wrong']}  all-right={s['all_right']}"
-        )
+        lines.append(f"behavior reward profile: mixed={s['mixed']}  all-wrong={s['all_wrong']}  all-right={s['all_right']}")
         if s["mixed_floor"] is not None:
             stat = s["mixed_floor"]
             lines.append(
@@ -659,13 +775,14 @@ def render_report(readouts: list[RunReadout], target: float, reps: int, pairs: i
     lines.append("")
     for dataset, group in sorted(by_dataset.items()):
         registered = [r.registered.mean for r in group if r.registered is not None]
-        needed = [r.needed_candidate for r in group if r.needed_candidate is not None]
-        missing = sum(1 for r in group if r.budget_table and r.needed_candidate is None)
+        needed = [r.needed_candidate for r in group if r.supported and r.needed_candidate is not None]
+        unsupported = sum(1 for r in group if not r.supported)
+        not_reached = sum(1 for r in group if r.supported and r.needed_candidate is None)
         lines.append(
             f"KEY {dataset}: runs={len(group)}  registered floor mean={_fmt(statistics.fmean(registered) if registered else None)}"
-            f"  responses/half needed (median of runs that reach {target:.2f}) = "
+            f"  responses/half needed (median of supported runs that reach {target:.2f}) = "
             f"{int(statistics.median(needed)) if needed else 'none'}"
-            f"  runs not reaching within {CANDIDATE_HALF_RESPONSES[-1]}: {missing}"
+            f"  unsupported predictions: {unsupported}  supported but not reaching within {CANDIDATE_HALF_RESPONSES[-1]}: {not_reached}"
         )
     return "\n".join(lines) + "\n"
 
