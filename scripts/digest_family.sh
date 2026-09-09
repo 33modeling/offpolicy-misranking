@@ -4,16 +4,24 @@
 # and to diagnose its errors. Read-only for the experiment; writes only under
 # $OM_WORK/exports and $OM_WORK/readouts.
 #
-#   bash scripts/digest_family.sh                    # h100: every family with all four points DONE
+#   bash scripts/digest_family.sh                    # h100: every family with at least one completed point
 #   bash scripts/digest_family.sh math500 0          # one family (finished or not)
 #   bash scripts/digest_family.sh baseline math500 0
 #   DIGEST_READOUT=0 ...                             # skip the regime readout (fast)
 #
-# Sections per family: run_config essentials, per-point report.json,
-# divergence_stats.json, GRPO statistics (first/last steps), scores summary
-# (count, mean, sign agreement with the fresh reference), the regime readout
-# tables, the error census (every CUDA/OOM/Runtime error line with the last
-# code frame before it, counted by frame), and the tail of each stage log.
+# A completed point is one with DONE now, or one whose DONE was parked under
+# pinned-scoring/<stamp>/ by scripts/rescore_math500.sh (RESCORE PENDING: the
+# pinned scoring is still readable there while a worker recomputes the
+# corrected one). Both scorings are shown when both exist, so the pinned versus
+# corrected comparison of paper plan §9.1 can be read from one file.
+#
+# Sections: KEY NUMBERS table for every family and point first (floor, chance,
+# fresh and stale precisions, KL, ESS, per scoring), then per family:
+# run_config essentials, per-point report.json, divergence_stats.json, GRPO
+# statistics (first/last steps), scores summary (count, mean, sign agreement
+# with the fresh reference), the regime readout tables, the error census (every
+# CUDA/OOM/Runtime error line with the last code frame before it, counted by
+# frame), and the tail of each stage log.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export OM_ONLINE=0
@@ -31,10 +39,31 @@ DRIFTS="${DIGEST_DRIFTS:-0 25 100 400}"
 TAIL_LINES="${DIGEST_TAIL_LINES:-40}"
 [ -d "$ROOT" ] || { echo "[abort] no experiment root: $ROOT"; exit 1; }
 
-family_complete() {
-  local d
-  for d in $DRIFTS; do [ -s "$ROOT/family-$1-s$2/$TAG-s$2-$1-d$d/DONE" ] || return 1; done
+point_dir() { echo "$ROOT/family-$1-s$2/$TAG-s$2-$1-d$3"; }
+point_done() { [ -s "$(point_dir "$1" "$2" "$3")/DONE" ]; }
+point_parked() {  # DONE moved aside by rescoring; the pinned scoring sits under pinned-scoring/<stamp>/
+  local f
+  for f in "$(point_dir "$1" "$2" "$3")"/pinned-scoring/*/DONE; do [ -s "$f" ] && return 0; done
+  return 1
 }
+latest_parking() {  # latest_parking <run> -> newest pinned-scoring/<stamp> dir, or nothing
+  local d last=
+  for d in "$1"/pinned-scoring/*/; do [ -d "$d" ] && last=${d%/}; done
+  [ -n "$last" ] && echo "$last"
+}
+point_state() {  # point_state <dataset> <seed> <drift> -> DONE | RESCORE PENDING (...) | not done
+  local run; run=$(point_dir "$1" "$2" "$3")
+  if [ -s "$run/DONE" ]; then
+    if point_parked "$1" "$2" "$3"; then echo "DONE (corrected scoring; pinned scoring parked)"; else echo DONE; fi
+  elif point_parked "$1" "$2" "$3"; then
+    echo "RESCORE PENDING (pinned scoring parked under $(basename "$(latest_parking "$run")"); waiting for a GPU worker)"
+  else
+    echo "not done"
+  fi
+}
+family_complete() { local d; for d in $DRIFTS; do point_done "$1" "$2" "$d" || return 1; done; }
+family_started() { local d; for d in $DRIFTS; do { point_done "$1" "$2" "$d" || point_parked "$1" "$2" "$d"; } && return 0; done; return 1; }
+
 families=()
 if [ "$#" -ge 2 ]; then
   case "$2" in ''|*[!0-9]*) echo "usage: bash scripts/digest_family.sh [h100|baseline] [<dataset> <seed>]"; exit 2 ;; esac
@@ -46,14 +75,14 @@ else
   for dir in "$ROOT"/family-*; do
     [ -d "$dir" ] || continue
     name=${dir##*/family-}; dataset=${name%-s*}; seed=${name##*-s}
-    family_complete "$dataset" "$seed" && families+=("$dataset $seed")
+    family_started "$dataset" "$seed" && families+=("$dataset $seed")
   done
-  [ "${#families[@]}" -gt 0 ] || { echo "[digest] no family has all four points DONE under $ROOT; name one: bash scripts/digest_family.sh <dataset> <seed>"; exit 1; }
+  [ "${#families[@]}" -gt 0 ] || { echo "[digest] no family has a completed point (DONE, or DONE parked by rescoring) under $ROOT; name one: bash scripts/digest_family.sh <dataset> <seed>"; exit 1; }
 fi
 
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 EXPORTS="$OM_WORK/exports"; mkdir -p "$EXPORTS" || { echo "[abort] cannot create $EXPORTS"; exit 1; }
-label=$(printf '%s\n' "${families[@]}" | awk '{printf "%s%s-s%s", (NR>1?"_":""), $1, $2}')
+if [ "${#families[@]}" -gt 3 ]; then label="${#families[@]}families"; else label=$(printf '%s\n' "${families[@]}" | awk '{printf "%s%s-s%s", (NR>1?"_":""), $1, $2}'); fi
 OUT="$EXPORTS/digest-$TAG-$label-$STAMP.txt"
 
 section() { printf '\n===== %s =====\n' "$*"; }
@@ -72,7 +101,44 @@ print("\n".join(lines[:limit]))
 if len(lines) > limit: print(f"... ({len(lines) - limit} more lines)")
 PYEOF
 }
-scores_summary() {  # scores_summary <run>
+key_numbers() {  # key_numbers <run> <scoring dir> <label> -> one line: floor, chance, fresh/stale precisions, KL, ESS
+  "$PY" - "$1" "$2" "$3" <<'PYEOF'
+import json, sys
+from pathlib import Path
+run, scoring, label = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+def load(path):
+    try:
+        return json.load(open(path))
+    except Exception:
+        return None
+def fmt(value, digits=3):
+    if isinstance(value, bool) or value is None: return "-"
+    try: return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError): return str(value)
+report = load(scoring / "report.json"); div = load(scoring / "divergence_stats.json") or {}
+config = load(run / "run_config.json") or {}
+if not report:
+    print(f"{label:<9} (no report.json)"); sys.exit(0)
+n = config.get("n_train"); k = report.get("k")
+chance = (k / n) if isinstance(n, (int, float)) and n and isinstance(k, (int, float)) else None
+floor = report.get("noise_floor")
+gate = "-"
+if isinstance(floor, (int, float)) and chance is not None:
+    gate = "floor>=2*chance" if floor >= 2 * chance else "floor<2*chance"
+fresh = (report.get("certagrad") or {}).get("precision_vs_oracle")
+stale = " ".join(f"{e}={fmt((report.get(e) or {}).get('precision'))}" for e in ("g00", "g01", "g10", "g11"))
+print(f"{label:<9} floor={fmt(floor)} chance={fmt(chance)} {gate:<15} fresh={fmt(fresh)} {stale} "
+      f"KL={fmt(div.get('token_kl_beta_pi'), 6)} ESS={fmt(div.get('traj_ess_frac_g11'))}")
+PYEOF
+}
+scorings() {  # scorings <run> -> lines "<label> <dir>": the current scoring and/or the newest parked pinned scoring
+  local park
+  [ -s "$1/report.json" ] && echo "current $1"
+  park=$(latest_parking "$1")
+  [ -n "$park" ] && [ -s "$park/report.json" ] && echo "pinned $park"
+  return 0
+}
+scores_summary() {  # scores_summary <scoring dir>
   "$PY" - "$1" <<'PYEOF'
 import json, sys, statistics
 from pathlib import Path
@@ -131,13 +197,30 @@ PYEOF
   echo "digest=$(basename "$OUT")  created_utc=$STAMP  host=$(hostname 2>/dev/null || echo ?)"
   echo "checkout=$(git rev-parse HEAD 2>/dev/null || echo ?)  generation_git=$(cat "$ROOT/.queue/generation.git" 2>/dev/null || echo none)"
   echo "profile=$PROFILE tag=$TAG root=$ROOT families=$(printf '%s;' "${families[@]}")"
+  section "KEY NUMBERS (one line per point and scoring; 'pinned' = parked by rescoring, 'current' = what is on disk now)"
+  echo "gate: paper plan §7 needs the one-sided 95% lower bound of floor >= 2*chance; the point estimate here is the optimistic check"
+  for fam in "${families[@]}"; do
+    set -- $fam; dataset=$1; seed=$2
+    for d in $DRIFTS; do
+      run=$(point_dir "$dataset" "$seed" "$d")
+      [ -d "$run" ] || continue
+      state=$(point_state "$dataset" "$seed" "$d")
+      any=0
+      while read -r kind dir; do
+        [ -n "$kind" ] || continue
+        any=1
+        key_numbers "$run" "$dir" "$dataset/s$seed/d$d $kind"
+      done < <(scorings "$run")
+      [ "$any" = 1 ] || printf '%-9s %s\n' "$dataset/s$seed/d$d" "(no scoring on disk: $state)"
+    done
+  done
   for fam in "${families[@]}"; do
     set -- $fam; dataset=$1; seed=$2
     froot="$ROOT/family-$dataset-s$seed"
     section "FAMILY $dataset/s$seed"
     for d in $DRIFTS; do
-      run="$froot/$TAG-s$seed-$dataset-d$d"
-      section "point d$d  $( [ -s "$run/DONE" ] && echo DONE || echo "not done" )  $(basename "$run")"
+      run=$(point_dir "$dataset" "$seed" "$d")
+      section "point d$d  $(point_state "$dataset" "$seed" "$d")  $(basename "$run")"
       [ -d "$run" ] || { echo "(no directory)"; continue; }
       echo "--- run_config essentials"
       "$PY" - "$run/run_config.json" <<'PYEOF' 2>/dev/null || echo "(no run_config.json)"
@@ -147,9 +230,18 @@ keys = ["dataset","seed","drift","n_train","n_val","behavior_k","fresh_k","val_k
         "gradient_micro_batch","grpo_logprob_micro_batch","prompt_format","attn","git","training_objective"]
 print(" ".join(f"{k}={c.get(k)}" for k in keys))
 PYEOF
-      echo "--- report.json"; show_json "$run/report.json" 120
-      echo "--- divergence_stats.json"; show_json "$run/divergence_stats.json" 40
-      echo "--- scores"; scores_summary "$run"
+      sidecars=$(ls "$run"/*.rescore.json 2>/dev/null | wc -l)
+      [ "$sidecars" -eq 0 ] || echo "--- rescore sidecars: $sidecars ($(ls "$run"/*.rescore.json | xargs -n1 basename | tr '\n' ' '))"
+      any=0
+      while read -r kind dir; do
+        [ -n "$kind" ] || continue
+        any=1
+        echo "--- scoring: $kind  ($dir)"
+        echo "--- report.json"; show_json "$dir/report.json" 120
+        echo "--- divergence_stats.json"; show_json "$dir/divergence_stats.json" 40
+        echo "--- scores"; scores_summary "$dir"
+      done < <(scorings "$run")
+      [ "$any" = 1 ] || { echo "--- report.json"; echo "(missing: $run/report.json; no parked pinned scoring either)"; }
       for stats in "$run"/policy_step_*/grpo_stats.jsonl; do
         [ -s "$stats" ] || continue
         echo "--- $(basename "$(dirname "$stats")")/grpo_stats.jsonl: $(wc -l < "$stats") steps; first/last:"
@@ -165,6 +257,8 @@ PYEOF
     section "READOUT $dataset/s$seed"
     if [ "${DIGEST_READOUT:-1}" = 1 ] && family_complete "$dataset" "$seed"; then
       bash scripts/family_readout.sh "$PROFILE" "$dataset" "$seed" "${DIGEST_BOOT:-1000}" 2>&1 | tail -n 120 | cut -c1-220
+    elif ! family_complete "$dataset" "$seed"; then
+      echo "(no new readout: not all four points have DONE now; earlier readouts, if any, follow)"
     fi
     for rd in "$OM_WORK/readouts"/family-$dataset-s$seed-*; do
       [ -d "$rd" ] || continue
