@@ -21,6 +21,25 @@
 
 The immutable machine-readable contract is `configs/olmo3_rlzero.json`.
 
+## Cluster network: download only (recorded 2026-09-09)
+
+The cluster can pull (`git pull`, dataset and model downloads) but cannot push
+or upload: `git push` from a cluster node fails and other uploads are heavily
+restricted. Consequences, so that nobody builds on the wrong assumption again:
+
+- Nothing that runs on the cluster may depend on pushing, uploading, or
+  reaching a service to deliver a result. Results are plain-text files under
+  `$OM_WORK/exports` (digests, `why`, reward checks, rescoring logs, status
+  history) and leave the cluster only by the operator's own path, usually from
+  the PC, into the `33modeling/transfer` repository.
+- `bash scripts/digest_family.sh` therefore does not push. It writes the digest
+  and prints its KEY NUMBERS table to the terminal, so a screenshot or a short
+  paste already carries the result; `scripts/handover.sh` (copy, commit, push)
+  is for the PC side, or `DIGEST_HANDOVER=1` on a machine that can push.
+- The operator often works from a phone with no clipboard: commands handed over
+  must be one line with nothing in front and no arguments; a needed mode is
+  made the script default instead.
+
 ## Training hyperparameters
 
 | Component | Registered value |

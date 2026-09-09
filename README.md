@@ -261,5 +261,9 @@ for the SFT substitution root-cause record.
 - `run_matrix.sh`: shared multi-node family queue and retry supervisor.
 - `run_point.sh`: one training/evaluation point.
 - `harvest_results.sh`: report packaging only; no experiment recomputation.
+- `digest_family.sh`: one plain-text hand-over file per run (every family with a
+  completed point; pinned and corrected scorings side by side) plus a KEY NUMBERS
+  table on the terminal. The cluster cannot push (download-only network); the
+  file leaves by the operator's path, `handover.sh` commits/pushes it from the PC.
 - `setup_env.sh`, `provision.sh`, `fetch_datasets.sh`, `fetch_27b.sh`: setup.
 - `check_data.sh`, `check_27b_fla.py`, `diagnose_run_failure.sh`: preflight and diagnosis.

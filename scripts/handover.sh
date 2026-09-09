@@ -2,8 +2,9 @@
 # Hand plain-text files over through the transfer repository without typing a
 # path: copy them into <transfer clone>/offpolicy-misranking/, commit, push.
 #   bash scripts/handover.sh <file>...
-# Called by scripts/digest_family.sh for its output. Read-only for the
-# experiment; touches only the transfer clone.
+# For a machine that can push (the PC), not the cluster: the cluster network
+# downloads only, so digest_family.sh does not call this unless
+# DIGEST_HANDOVER=1. Read-only for the experiment; touches only the transfer clone.
 #
 # The transfer clone is found, in order: $OM_TRANSFER_DIR, $HOME/transfer,
 # $HOME/dev/transfer, $OM_WORK/../transfer, $GROUP_VOLUME/$OM_USER/transfer,
