@@ -205,6 +205,58 @@ required for this status change.
 
 ## Parallel d0 evaluation on spare OLMo nodes (2026-09-09)
 
+For an explicit pair, use separate roles instead of starting two unrestricted
+workers. Both commands require an existing family and generation pin:
+
+```bash
+# Chain owner, e.g. node 4: resume only this family, with a shareable lease.
+bash scripts/run_olmo3_rlzero.sh resume-family h100 mbpp 4
+
+# Spare GPU node, e.g. node 3: only this family's d0 evaluation, never its GRPO.
+bash scripts/run_olmo3_rlzero.sh assist h100 mbpp 4
+```
+
+Transition procedure for the September 9 14:21 allocation:
+
+1. Prepare a new, unused checkout on the shared mount before interrupting any
+   work. From the existing checkout, one example is
+   `git clone "$(git remote get-url origin)" ../offpolicy-misranking-pair`.
+   Do not update a checkout still read by a running launcher. If the example
+   directory already exists, choose a different unused directory. Preserve the
+   existing `OM_WORK`, profile, model/data settings and node-local lock namespace.
+2. On node 4, stop its current launcher with Ctrl-C, change to the new checkout,
+   then run `resume-family h100 mbpp 4` as above. This is a targeted restart:
+   saved checkpoints and rollout partials stay in their existing directories
+   and must pass the normal reuse checks. In-flight unsaved work and model/
+   preflight startup time are not free. Do not remove the generation pin.
+3. On node 3, stop its idle launcher with Ctrl-C, change to the same new checkout,
+   then run `assist h100 mbpp 4`. Nodes 1, 6, 7 and 8 are left running. These
+   commands do not start Qwen or change the scientific matrix.
+
+The helper can start first: it waits for a shared training owner and cannot
+take the GRPO chain. It does not attach through an old exclusive family lease.
+The owner command does not fall back to being a helper. Once d0 is accepted,
+the helper exits and releases its node lease; it does not wait for the whole
+family, take another family or publish the full collection. A d0 that already
+has DONE is reported before GPU admission without starting compute.
+
+Ctrl-C is not a promise that every detached child has stopped. Explicit roles
+refuse an occupied local node lock instead of killing its owner. After acquiring
+the lock, they clean only same-node, target-family orphan processes. Any other
+GPU process causes admission to fail without being killed. Do not remove lock
+files or launch multiple workers on the same physical node to bypass a refusal;
+inspect the reported remaining processes. Ordinary `run` behavior is unchanged.
+
+Success is visible as `[worker-role] role=resume-family ... parallel_control=1`
+on the owner, followed by `[control-assist] claim=mbpp/s4/d0` on the helper.
+`[assist-wait]` explicitly distinguishes an exclusive lease from no shared
+training owner. Owner JSON includes `parallel_control` and `supervisor_git` so
+future status evidence can identify the actual supervisor mode, not infer it
+from the generation pin. Preflight qualification remains enabled. Cross-node
+flock coherence and actual GPU timing still require verification on the cluster.
+
+The older automatic-help opt-in remains available:
+
 Opt in on the participating nodes from an updated idle checkout:
 
 ```bash

@@ -6,6 +6,12 @@ entered through the canonical runner.
 
 ## Run OLMo3 First
 
+For a targeted GPU pair, use `bash scripts/run_olmo3_rlzero.sh resume-family h100 mbpp 4`
+on the family owner and `bash scripts/run_olmo3_rlzero.sh assist h100 mbpp 4` on
+the spare node. Stop only those nodes' previous launchers first, using an updated
+idle checkout and the existing work root. The helper runs only d0; it never
+claims GRPO. See the runbook for process-admission and partial-resume limits.
+
 Spare OLMo nodes can help with independent d0 evaluation while another node
 continues its GRPO chain. On both participating upgraded nodes, use
 `OM_RLZERO_PARALLEL_CONTROL=1 bash scripts/run_olmo3_rlzero.sh run h100`.

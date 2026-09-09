@@ -7,11 +7,25 @@ SUPERVISOR_REPO=$PWD
 export OM_REPO="${OM_REPO:-$SUPERVISOR_REPO}"
 MODE=${1:-run}
 PROFILE=${2:-baseline}
+RUN_ROLE=auto
+TARGET_DATASET=""
+TARGET_SEED=""
 RECOVERY_MIN_GENERATION_BATCH=2
 case "$MODE" in
+  resume-family|assist)
+    [ "$#" -eq 4 ] && [[ "$4" =~ ^[0-9]+$ ]] || {
+      echo "usage: bash scripts/run_olmo3_rlzero.sh $MODE h100 <dataset> <seed>"
+      exit 2
+    }
+    RUN_ROLE=$MODE
+    TARGET_DATASET=$3
+    TARGET_SEED=$4
+    MODE=run
+    ;;
   prepare|check|run|status) ;;
-  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100] [verbose|<dataset>]"; exit 2 ;;
+  *) echo "usage: bash scripts/run_olmo3_rlzero.sh [prepare|check|run|status] [baseline|h100] [verbose|<dataset>]; or [resume-family|assist] h100 <dataset> <seed>"; exit 2 ;;
 esac
+[ "$RUN_ROLE" = auto ] || export OM_REPO="$SUPERVISOR_REPO"
 case "$PROFILE" in
   baseline)
     DEFAULT_CONFIG="$SUPERVISOR_REPO/configs/olmo3_rlzero.json"
@@ -260,10 +274,14 @@ SEEDS=($(experiment_field seeds))
 # requires all of them. Use it when you want one node = one fixed list.
 ONLY_FAMILIES="${OM_RLZERO_ONLY_FAMILIES:-}"
 PARALLEL_CONTROL=${OM_RLZERO_PARALLEL_CONTROL:-0}
+if [ "$RUN_ROLE" != auto ]; then
+  ONLY_FAMILIES="$TARGET_DATASET/s$TARGET_SEED"
+  PARALLEL_CONTROL=1
+fi
 case "$PARALLEL_CONTROL" in 0|1) ;; *) echo '[abort] OM_RLZERO_PARALLEL_CONTROL must be 0 or 1'; exit 2 ;; esac
 # `run h100 <dataset>` is the phone-typable form of the same split: this node
 # handles only that dataset's families.
-if [ "$MODE" = run ] && [ -n "${3:-}" ]; then
+if [ "$MODE" = run ] && [ "$RUN_ROLE" = auto ] && [ -n "${3:-}" ]; then
   case " ${DATASETS[*]} " in
     *" $3 "*) ;;
     *) echo "[abort] unknown dataset filter: $3 (expected one of: ${DATASETS[*]})"; exit 2 ;;
@@ -294,6 +312,16 @@ ROOT="${OM_OLMO3_ROOT:-$OM_WORK/runs/$MODEL_TAG}"
 GLOBAL_RESULTS="${OM_OLMO3_RESULTS:-$OM_WORK/results/$MODEL_TAG}"
 QUEUE="$ROOT/.families"
 PREFLIGHT="$ROOT/preflight"
+if [ "$RUN_ROLE" != auto ]; then
+  [ -s "$ROOT/.queue/generation.git" ] && [ -d "$ROOT/family-$TARGET_DATASET-s$TARGET_SEED" ] || {
+    echo "[abort] $RUN_ROLE requires an existing family and generation pin; no new matrix will be created"
+    exit 2
+  }
+  if [ "$RUN_ROLE" = assist ] && [ -s "$ROOT/family-$TARGET_DATASET-s$TARGET_SEED/$MODEL_TAG-s$TARGET_SEED-$TARGET_DATASET-d0/DONE" ]; then
+    echo "[assist-complete] $ONLY_FAMILIES d0 already has DONE; no GPU work started"
+    exit 0
+  fi
+fi
 
 family_root() { printf '%s/family-%s-s%s\n' "$ROOT" "$1" "$2"; }
 family_result() { printf '%s/family-results/%s-s%s\n' "$ROOT" "$1" "$2"; }
@@ -388,6 +416,10 @@ if [ "$MODE" = run ]; then
   PRIMARY_LOCK="$LOCAL_ROOT/primary.lock"
   exec 8>"$PRIMARY_LOCK"
   if ! flock -n 8; then
+    if [ "$RUN_ROLE" != auto ]; then
+      echo "[abort] this node still has an experiment owner; stop its previous launcher before $RUN_ROLE. No process was terminated."
+      exit 75
+    fi
     echo "[startup-cleanup] previous launcher or orphan owns the node lock; terminating it"
     "$PY" "$SUPERVISOR_RUNTIME_REPO/src/cleanup_run_processes.py" \
       --run-prefix "$ROOT" --timeout "${OM_RLZERO_STALE_PROCESS_TIMEOUT:-15}" \
@@ -404,6 +436,7 @@ if [ "$MODE" = run ]; then
   export WORKER_ID
   LOG="$ROOT/logs/$WORKER_ID.log"
   echo "[worker] id=$WORKER_ID root=$ROOT" | tee -a "$LOG"
+  echo "[worker-role] role=$RUN_ROLE families=${ONLY_FAMILIES:-all} parallel_control=$PARALLEL_CONTROL supervisor=$CURRENT_GIT" | tee -a "$LOG"
 
   STALE_PROCESS_TIMEOUT="${OM_RLZERO_STALE_PROCESS_TIMEOUT:-15}"
   GPU_CLEANUP_TIMEOUT="${OM_RLZERO_GPU_CLEANUP_TIMEOUT:-15}"
@@ -415,6 +448,12 @@ if [ "$MODE" = run ]; then
   done
 
   cleanup_stale_experiment_processes() {
+    if [ "$RUN_ROLE" != auto ]; then
+      "$PY" "$SUPERVISOR_RUNTIME_REPO/src/cleanup_run_processes.py" \
+        --run-prefix "$(family_root "$TARGET_DATASET" "$TARGET_SEED")" \
+        --timeout "$STALE_PROCESS_TIMEOUT" --require-environment "OM_NODE_NAMESPACE=$LOCAL_ROOT"
+      return "$?"
+    fi
     "$PY" "$SUPERVISOR_RUNTIME_REPO/src/cleanup_run_processes.py" \
       --run-prefix "$ROOT" --timeout "$STALE_PROCESS_TIMEOUT" \
       --require-environment "OM_NODE_NAMESPACE=$LOCAL_ROOT" \
@@ -485,7 +524,17 @@ if [ "$MODE" = run ]; then
   cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
   statuses=("${PIPESTATUS[@]}")
   [ "${statuses[0]}" -eq 0 ] && [ "${statuses[1]}" -eq 0 ] || exit 1
-  cleanup_node_gpu_processes || exit 1
+  # Explicit roles clean only their target-family orphans, never arbitrary GPU
+  # processes. The memory/admission checks below reject a still-busy node.
+  if [ "$RUN_ROLE" = auto ]; then
+    cleanup_node_gpu_processes || exit 1
+  else
+    remaining_gpu_pids=$(gpu_compute_pids) || exit 1
+    [ -z "$remaining_gpu_pids" ] || {
+      echo "[abort] GPU processes remain on this node: $remaining_gpu_pids; explicit roles do not kill unrelated compute"
+      exit 75
+    }
+  fi
 
   memory=$(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits) || exit 1
   rows=$(printf '%s\n' "$memory" | awk 'NF {n++} END {print n+0}')
@@ -656,9 +705,11 @@ fi
     --output "$PREFLIGHT/data-adoption.json" || exit 1
 ) 9>"$OM_WORK/locks/olmo3-asset-adoption.lock" || exit 1
 
+GENERATION_ADVANCE=()
+[ "$RUN_ROLE" != auto ] || GENERATION_ADVANCE=(--advance-empty)
 GENERATION_GIT=$("$PY" "$SUPERVISOR_RUNTIME_REPO/src/regime_resume_commit.py" \
   "$ROOT" "$CURRENT_GIT" \
-  --marker "$ROOT/.queue/generation.git" --advance-empty) || exit 1
+  --marker "$ROOT/.queue/generation.git" "${GENERATION_ADVANCE[@]}") || exit 1
 
 git -C "$SUPERVISOR_RUNTIME_REPO" cat-file -e "$GENERATION_GIT^{commit}" 2>/dev/null || {
   echo "[abort] pinned generation commit is unavailable locally: $GENERATION_GIT"
@@ -1012,6 +1063,7 @@ run_family() {
   [ "$dataset" = mbpp ] && format=olmo_rlzero_code
   ACTIVE_OWNER=$owner
   HOST_TAG="$HOST_TAG" WORKER_ID="$WORKER_ID" GENERATION_GIT="$GENERATION_GIT" \
+    SUPERVISOR_GIT="$CURRENT_GIT" PARALLEL_CONTROL="$PARALLEL_CONTROL" \
     DATASET="$dataset" SEED="$seed" CONTROL_ONLY="$control_only" "$PY" - "$owner" <<'PYEOF'
 import datetime, json, os, pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -1020,6 +1072,8 @@ tmp.write_text(json.dumps({
     "host": os.environ["HOST_TAG"], "worker": os.environ["WORKER_ID"],
     "dataset": os.environ["DATASET"], "seed": int(os.environ["SEED"]),
     "generation_git": os.environ["GENERATION_GIT"],
+    "supervisor_git": os.environ["SUPERVISOR_GIT"],
+    "parallel_control": os.environ["PARALLEL_CONTROL"] == "1",
     "role": "control" if os.environ["CONTROL_ONLY"] == "1" else "family",
     "claimed_at_utc": datetime.datetime.now(datetime.UTC).isoformat(),
 }, sort_keys=True) + "\n")
@@ -1165,6 +1219,10 @@ while :; do
     [ -n "$dataset" ] && [ -n "$seed" ] || continue
     family_selected "$dataset" "$seed" || continue
     family_complete "$dataset" "$seed" && continue
+    if [ "$RUN_ROLE" = assist ]; then
+      [ -s "$(run_dir "$dataset" "$seed" 0)/DONE" ] || remaining=$((remaining + 1))
+      continue
+    fi
     if family_looping "$dataset" "$seed"; then
       remaining=$((remaining + 1))
       looping=$((looping + 1))
@@ -1210,7 +1268,7 @@ while :; do
       cleanup_stale_experiment_processes 2>&1 | tee -a "$LOG"
       statuses=("${PIPESTATUS[@]}")
       [ "${statuses[0]}" -eq 0 ] && [ "${statuses[1]}" -eq 0 ] || exit 1
-      cleanup_node_gpu_processes || exit 1
+      if [ "$RUN_ROLE" = auto ]; then cleanup_node_gpu_processes || exit 1; fi
     fi
     start_supervisor_keepalive || exit 1
     [ "$rc" -eq 75 ] && continue   # held by another worker
@@ -1258,7 +1316,7 @@ while :; do
     sleep "$CLAIM_YIELD_SECONDS"
   done < <(ordered_families)
   [ "$remaining" -eq 0 ] && break
-  if [ "$PARALLEL_CONTROL" = 1 ] && [ "$claimed" -eq 0 ]; then
+  if [ "$PARALLEL_CONTROL" = 1 ] && [ "$RUN_ROLE" != resume-family ] && [ "$claimed" -eq 0 ]; then
     while read -r dataset seed; do
       family_selected "$dataset" "$seed" || continue
       family_complete "$dataset" "$seed" && continue
@@ -1267,10 +1325,16 @@ while :; do
       [ ! -s "$QUEUE/$dataset-s$seed.control.loop" ] || continue
       [ "$(now_seconds)" -ge "${CONTROL_NEXT_ATTEMPT[$dataset-s$seed]:-0}" ] || continue
       (
-        flock -sn 9 || exit 75
+        flock -sn 9 || {
+          [ "$RUN_ROLE" != assist ] || echo "[assist-wait] $dataset/s$seed has an exclusive family lease; no helper attached" | tee -a "$LOG"
+          exit 75
+        }
         # Help an upgraded active training worker, not a stale owner record.
         exec {training_probe}>"$QUEUE/$dataset-s$seed.training.lock"
-        flock -n "$training_probe" && exit 75
+        if flock -n "$training_probe"; then
+          [ "$RUN_ROLE" != assist ] || echo "[assist-wait] no shared training owner for $dataset/s$seed; start resume-family on the owner node" | tee -a "$LOG"
+          exit 75
+        fi
         exec {training_probe}>&-
         exec {control_lease}>"$QUEUE/$dataset-s$seed.control.lock"
         flock -n "$control_lease" || exit 75
@@ -1313,6 +1377,10 @@ while :; do
     fi
   fi
 done
+if [ "$RUN_ROLE" = assist ]; then
+  echo "[assist-complete] $ONLY_FAMILIES d0 is complete; no GRPO family or final collection was claimed" | tee -a "$LOG"
+  exit 0
+fi
 if [ -n "$ONLY_FAMILIES" ]; then
   echo "[queue] this node's families are complete: $ONLY_FAMILIES"
   all_done=1
