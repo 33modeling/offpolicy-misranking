@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Explicit 9B entrypoint; run-idle permits parallel work on this idle node only.
+# Explicit 9B entrypoint: run on this idle node, independently of other nodes.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# No argument = run. `run` already performs every check (snapshot seal, FLA,
-# smoke) before the matrix, so there is no separate step to remember.
+# No argument = run. The node-local locks and GPU/model checks still apply;
+# this operator-selected model does not wait for OLMo on other nodes.
 MODE=${1:-run}
 # Never mutate the checkout from a launch/diagnostic command.
 # Update explicitly in a separate idle checkout after reviewing local changes.
@@ -40,8 +40,8 @@ export OM_ALLOW_UNPINNED_SNAPSHOT=0 OM_TRUST_LOCAL_SNAPSHOT=0
 case "$MODE" in
   doctor) exec bash scripts/doctor_qwen35.sh ;;
   status) exec bash scripts/status_qwen35.sh ;;
-  run-idle|restart-idle)
-    [ "$#" -eq 1 ] || { echo "usage: $0 run-idle|restart-idle"; exit 2; }
+  run|run-idle|restart-idle)
+    [ "$#" -le 1 ] || { echo "usage: $0 [run|run-idle|restart-idle]"; exit 2; }
     export OM_QWEN_IDLE_NODE="$(hostname)"
     [ -n "$OM_QWEN_IDLE_NODE" ] || exit 1
     export OM_WAIT_PRIMARY=0
@@ -60,13 +60,9 @@ case "$MODE" in
     fi
     exec bash scripts/run_additional_experiments.sh --run qwen35
     ;;
-  run)
-    [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
-    exec bash scripts/run_additional_experiments.sh --run qwen35
-    ;;
   prepare|check)
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
     exec bash scripts/run_additional_experiments.sh "--$MODE" qwen35
     ;;
-  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|run-idle|restart-idle|check|status|doctor|prepare]  (restart-idle = stop this node's previous 9B processes, then run-idle)"; exit 2 ;;
+  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|run-idle|restart-idle|check|status|doctor|prepare]  (default: run 9B on this idle node; restart-idle first stops this node's previous 9B processes)"; exit 2 ;;
 esac

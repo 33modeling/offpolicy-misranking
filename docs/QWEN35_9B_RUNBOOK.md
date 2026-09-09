@@ -49,25 +49,20 @@ the other registered experiments:
 ```bash
 # Internet-connected preparation machine; downloads actual weights and data.
 bash scripts/run_qwen35_9b.sh prepare
-# Idle four-H100 compute node; offline, no matrix training.
+# Optional post-primary check; normal launch already includes its checks.
 bash scripts/run_qwen35_9b.sh check
-# Try the 40-point 9B matrix first, then other selected independent matrices.
-bash scripts/run_qwen35_9b.sh run
+# Idle four-H100 compute node; run only the 40-point 9B matrix.
+bash scripts/run_qwen35_9b.sh
 ```
 
-`run` (also the no-argument default) now retains a rotation worker: it tries
-`qwen35`, then `qwen35_2b`, `qwen35_4b`, and `olmo3_domains`. A failed or busy
-profile keeps its artifacts and yields to the next one. No 27B job is selected
-implicitly. Override the fallback list with `OM_RLZERO_FALLBACK_PROFILES`;
-9B is still tried first. `OM_SNAPSHOT_PATH`, if set, applies only to the first
-profile, not to different fallback models. Each fallback requires its own
-registered, offline model and data. If none is runnable, the worker waits;
-it does not download weights or fabricate GPU activity.
-
-`prepare` and `check` remain 9B-only. To execute only 9B without a rotation
-worker, use `bash scripts/run_additional_experiments.sh --run qwen35`.
-`status` reports the 9B matrix, not the currently selected fallback; use the
-rotation terminal's `[fallback]` lines and each profile's session log for that.
+No argument, `run`, and the compatibility alias `run-idle` all select 9B on
+this node without waiting for OLMo3 completion on other nodes. The wrapper
+does not rotate to 2B, 4B, 27B or another OLMo experiment, even after a failure.
+It preserves existing work and still requires free local locks, idle GPUs,
+the pinned snapshot, valid contracts and successful preflight. It does not
+terminate an existing job by default. `prepare`, `check` and `status` remain
+9B-only. The optional `check` and the generic additional/rotation launchers
+retain their primary-completion gate; normal 9B launch needs no separate check.
 
 Two datasets (MATH-500 / MBPP), five seeds and four GRPO checkpoints
 (0/25/100/400) are preserved. Generation batch is 32; gradient and training
@@ -91,20 +86,19 @@ It writes the expected JSON beside the original as
 `*.json.expected-<digest>.json`; the recorded contract is not overwritten.
 The exact remote mismatch cannot be resolved without comparing those files.
 
-Normal `run` requires OLMo3 to finish first, including all 40 points and the final collection.
-An idle node or a blocked OLMo3 family does not authorize a Qwen run. The shared
-launcher returns 75 before GPU preflight when primary completion is missing.
-Only after OLMo3 completion, update an idle Qwen checkout with
-`git pull --ff-only`, then run `bash scripts/run_qwen35_9b.sh`. This wrapper
-does not rotate to other models. Do not restart healthy primary OLMo workers
-for this launcher change. The recovery commands below are also post-primary.
+Directly invoking `bash scripts/run_qwen35_9b.sh` is the operator's assignment
+of this node to Qwen. It no longer requires OLMo3 completion on other nodes.
+Automatic OLMo-to-Qwen handoff and the generic rotation worker still require
+all 40 primary points and final collection. Do not restart healthy primary
+OLMo workers for this launcher change. Contract validation is not bypassed.
 
-### Explicit idle-node parallel run (2026-09-09)
+### Default node-local run (2026-09-09)
 
-The operator may assign a separate node to Qwen 9B while the remaining nodes
-continue OLMo3. Ctrl-C alone does not guarantee that detached CUDA children
-exited. To clean up this user's previous Qwen 9B processes in the same work
-root on this node, then launch again from an updated idle checkout:
+Run `bash scripts/run_qwen35_9b.sh` on the allocated idle node. The remaining
+nodes continue OLMo3; `run-idle` is retained only for compatibility.
+Ctrl-C alone does not guarantee that detached CUDA children exited. To clean
+up this user's previous Qwen 9B processes in the same work root on this node,
+then launch again from an updated idle checkout:
 
 ```bash
 git pull --ff-only
@@ -117,12 +111,12 @@ TERM grace followed by KILL for remaining matches. It selects the same
 under this user only. It excludes its caller/ancestors, other model namespaces
 and other work roots. It does not delete artifacts, contracts or lock files.
 Unrecognized survivors still block normal lock/GPU admission rather than being
-killed indiscriminately. Use `run-idle` when no previous Qwen cleanup is needed.
+killed indiscriminately. The no-argument command does not perform this cleanup.
 
-Both modes bind the exception to this hostname and only the 9B profile. Each
+All run modes bind the assignment to this hostname and only the 9B profile. Each
 requires the same exclusive local locks, four idle H100 GPUs, pinned snapshot,
-and dataset/matrix contracts as normal admission. Neither waits behind a
-primary lock, resets a contract, nor rotates to another model. Neither stops
+and dataset/matrix contracts as normal admission. No mode waits behind a
+primary lock, resets a contract, or rotates to another model. None stops
 OLMo workers. A remaining lock owner must be identified rather than assumed
 to be OLMo just because the shared lock file is named `primary.lock`.
 The OLMo-to-Qwen automatic handoff remains disabled. A pre-existing Qwen

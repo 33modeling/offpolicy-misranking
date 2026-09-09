@@ -19,22 +19,23 @@ Existing results and the generation pin are reused. Already-running legacy
 owners need a targeted stop/re-entry before their family can be shared; do not
 restart every worker. See the [runbook](docs/OLMO3_RLZERO_RUNBOOK.md).
 
-Finish the OLMo3 H100 primary matrix before starting another model:
-`bash scripts/run_olmo3_rlzero.sh run h100`. Failed families yield only to
-other eligible OLMo3 families. Qwen/additional compute is blocked until all
-40 primary points and the final collection are complete. Existing healthy
-OLMo3 workers and their checkpoints do not need a restart for this policy.
+The OLMo3 H100 primary launcher is `bash scripts/run_olmo3_rlzero.sh run h100`.
+Failed families yield only to other eligible OLMo3 families. Automatic
+Qwen/additional handoff is blocked until all 40 primary points and the final
+collection are complete. Existing healthy OLMo3 workers and their checkpoints
+do not need a restart for this policy.
 
-Explicit idle-node exception: `bash scripts/run_qwen35_9b.sh run-idle` assigns
-only the current, otherwise idle node to Qwen 9B while OLMo continues elsewhere.
+Explicit Qwen launch: `bash scripts/run_qwen35_9b.sh` assigns only the current,
+otherwise idle node to Qwen 9B while OLMo continues elsewhere. No extra mode
+is needed; `run` and the compatibility alias `run-idle` behave identically.
 Use `restart-idle` instead to first terminate that node's previous Qwen 9B
 processes and children in the same work root. Other OLMo workers are untouched;
 local GPU locks and contracts remain enforced. Automatic handoff stays disabled.
 
-## Qwen3.5-9B replication (after OLMo3 completion)
+## Qwen3.5-9B replication
 
-After the primary finishes, the additional entrypoint is `bash scripts/run_qwen35_9b.sh
-prepare|check|run`. It pins `Qwen/Qwen3.5-9B`, uses the same 40-point math/code
+The entrypoint is `bash scripts/run_qwen35_9b.sh` (no argument needed to run).
+It pins `Qwen/Qwen3.5-9B`, uses the same 40-point math/code
 design, and never launches the retained 27B configuration implicitly.
 See [the 9B runbook](docs/QWEN35_9B_RUNBOOK.md) for commands and logging.
 

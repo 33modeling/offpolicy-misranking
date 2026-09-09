@@ -78,12 +78,24 @@ def test_failed_qwen_contract_yields_to_another_real_launcher(tmp_path):
     assert (work / "gpu-preflights").read_text().splitlines() == ["fla", "smoke"]
 
 
-@pytest.mark.parametrize("args", [[], ["run"]])
+@pytest.mark.parametrize("args", [[], ["run"], ["run-idle"]])
 def test_qwen_entrypoint_does_not_rotate_to_other_models(tmp_path, args):
     repo, env = checkout(tmp_path)
     runner = repo / "scripts/run_additional_experiments.sh"
-    runner.write_text('printf "args=%s\\n" "$*"\n')
+    runner.write_text('''set -eu
+test "$OM_QWEN_IDLE_NODE" = "$(hostname)"
+test "$OM_WAIT_PRIMARY" = 0
+for name in OM_PIPELINE_REPO OM_PIPELINE_SCRIPT OM_GENERATION_GIT REGIME_SKIP_COLLECTION REGIME_MATRIX MODEL_PATH OM_EXTERNAL_GPU_KEEPALIVE; do
+  test -z "${!name+x}"
+done
+printf 'args=%s\\n' "$*"
+''')
     env.pop("OM_RLZERO_FALLBACK_PROFILES", None)
+    env.update({name: "old-olmo-setting" for name in (
+        "OM_PIPELINE_REPO", "OM_PIPELINE_SCRIPT", "OM_GENERATION_GIT",
+        "REGIME_SKIP_COLLECTION", "REGIME_MATRIX", "MODEL_PATH", "OM_EXTERNAL_GPU_KEEPALIVE",
+    )})
+    env["OM_WAIT_PRIMARY"] = "1"
     result = subprocess.run(
         ["bash", "scripts/run_qwen35_9b.sh", *args], cwd=repo, env=env,
         text=True, capture_output=True, timeout=5,
@@ -93,6 +105,19 @@ def test_qwen_entrypoint_does_not_rotate_to_other_models(tmp_path, args):
     assert "qwen35_2b" not in result.stdout
     assert "olmo3_domains" not in result.stdout
     assert "qwen38" not in result.stdout
+
+
+@pytest.mark.parametrize("args", [["run", "extra"], ["run-idle", "extra"], ["restart-idle", "extra"]])
+def test_qwen_run_rejects_extra_arguments(tmp_path, args):
+    repo, env = checkout(tmp_path)
+    runner = repo / "scripts/run_additional_experiments.sh"
+    runner.write_text('touch "$TEST_WORK/unexpected-launch"\n')
+    result = subprocess.run(
+        ["bash", "scripts/run_qwen35_9b.sh", *args], cwd=repo, env=env,
+        text=True, capture_output=True, timeout=5,
+    )
+    assert result.returncode == 2
+    assert not (Path(env["TEST_WORK"]) / "unexpected-launch").exists()
 
 
 @pytest.mark.parametrize("stage", ["matrix-contract-m1", "smoke-m1"])

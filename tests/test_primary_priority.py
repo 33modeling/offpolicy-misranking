@@ -72,8 +72,8 @@ def test_primary_gate_checks_full_shared_completion(tmp_path, damage):
 
 
 @pytest.mark.parametrize("command", [
-    ["scripts/run_qwen35_9b.sh"],
     ["scripts/run_qwen35_9b.sh", "check"],
+    ["scripts/run_additional_experiments.sh", "--run", "qwen35"],
     ["scripts/run_additional_experiments.sh", "--run", "qwen38"],
     ["scripts/run_additional_experiments.sh", "--run", "qwen35_2b"],
     ["scripts/run_additional_experiments.sh", "--run", "qwen35_4b"],
@@ -102,7 +102,8 @@ def test_incomplete_primary_blocks_direct_and_rotation_compute(tmp_path, command
 
 
 @pytest.mark.parametrize("blocked", [False, True])
-def test_explicit_idle_qwen_requires_free_local_primary_lock(tmp_path, blocked):
+@pytest.mark.parametrize("args", [[], ["run"], ["run-idle"]])
+def test_explicit_qwen_defaults_to_idle_node_admission(tmp_path, blocked, args):
     from test_generalization_launcher import checkout
 
     repo, env = checkout(tmp_path)
@@ -114,7 +115,7 @@ def test_explicit_idle_qwen_requires_free_local_primary_lock(tmp_path, blocked):
         if blocked:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         result = subprocess.run(
-            ["bash", "scripts/run_qwen35_9b.sh", "run-idle"], cwd=repo,
+            ["bash", "scripts/run_qwen35_9b.sh", *args], cwd=repo,
             env={**env, "OM_WAIT_PRIMARY": "1"}, text=True, capture_output=True, timeout=15,
         )
     assert result.returncode == (1 if blocked else 0), result.stdout + result.stderr
