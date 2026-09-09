@@ -7,7 +7,7 @@
 #   bash scripts/digest_family.sh                    # h100: every family with at least one completed point
 #   bash scripts/digest_family.sh math500 0          # one family (finished or not)
 #   bash scripts/digest_family.sh baseline math500 0
-#   DIGEST_READOUT=0 ...                             # skip the regime readout (fast)
+#   DIGEST_READOUT=1 ...                             # also run the slow regime readout (1000 bootstrap per family)
 #
 # A completed point is one with DONE now, or one whose DONE was parked under
 # pinned-scoring/<stamp>/ by scripts/rescore_math500.sh (RESCORE PENDING: the
@@ -255,10 +255,12 @@ PYEOF
     section "ERROR CENSUS $dataset/s$seed (every error line, grouped by the code frame before it)"
     error_census "$froot"
     section "READOUT $dataset/s$seed"
-    if [ "${DIGEST_READOUT:-1}" = 1 ] && family_complete "$dataset" "$seed"; then
+    if [ "${DIGEST_READOUT:-0}" = 1 ] && family_complete "$dataset" "$seed"; then
       bash scripts/family_readout.sh "$PROFILE" "$dataset" "$seed" "${DIGEST_BOOT:-1000}" 2>&1 | tail -n 120 | cut -c1-220
     elif ! family_complete "$dataset" "$seed"; then
       echo "(no new readout: not all four points have DONE now; earlier readouts, if any, follow)"
+    else
+      echo "(readout skipped by default; earlier readouts, if any, follow)"
     fi
     for rd in "$OM_WORK/readouts"/family-$dataset-s$seed-*; do
       [ -d "$rd" ] || continue
