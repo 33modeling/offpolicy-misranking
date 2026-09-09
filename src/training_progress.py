@@ -259,8 +259,8 @@ def verdict(
     delta_text = ""
     if change is not None:
         delta_text = (
-            f"  last {fmt_age(change['window_seconds'])}: +{change['points']} points"
-            f" +{change['steps']} grpo steps +{change['rollout_mb']:.0f} MB rollouts"
+            f"  last {fmt_age(change['window_seconds'])}: {change['points']:+d} points"
+            f" {change['steps']:+d} grpo steps {change['rollout_mb']:+.0f} MB rollouts"
         )
     write_text = (
         f"  last write {fmt_age(now - current.last_write_epoch)} ago ({current.last_write_name})"

@@ -669,3 +669,17 @@ def test_per_dataset_runtime_expectations(tmp_path: Path) -> None:
         check=False,
     )
     assert bad.returncode != 0
+
+
+def test_a_rescored_family_reads_as_rescore_pending_not_failed(tmp_path: Path) -> None:
+    """After scripts/rescore_math500.sh the family has no DONE and its pinned scoring
+    is parked; the status must say so instead of 'failed attempt'."""
+    import rlzero_status
+
+    family = tmp_path / "family-math500-s0"
+    point = family / f"{TAG}-s0-math500-d25"
+    (point / "pinned-scoring" / "20260909T000000Z").mkdir(parents=True)
+    assert rlzero_status.rescore_pending(family)
+    (point / "DONE").write_text("done\n")
+    assert not rlzero_status.rescore_pending(family)
+    assert not rlzero_status.rescore_pending(tmp_path / "missing")

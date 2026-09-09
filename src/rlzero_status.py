@@ -551,6 +551,19 @@ def rejected_completions(run: Path | None) -> tuple[int, str]:
     return len(lines), reason
 
 
+def rescore_pending(family_root: Path) -> bool:
+    """A point whose pinned scoring is parked and whose DONE is gone is waiting for
+    a worker to recompute gradients and scores (scripts/rescore_math500.sh), not
+    a failed attempt."""
+    try:
+        return any(
+            (point / "pinned-scoring").is_dir() and not (point / "DONE").is_file()
+            for point in family_root.iterdir() if point.is_dir()
+        )
+    except OSError:
+        return False
+
+
 def family_rejected_completions(family_root: Path) -> tuple[int, str, str]:
     """Rejections anywhere in the family: count, reason, and which point.
 
@@ -1174,6 +1187,9 @@ def main() -> None:
                 note += f" | last error: {err_text}"
         elif verdict == "STUCK":
             note = f"AUTO: confirmed idle for {write_age}; the watchdog kills and resumes the point by itself"
+        elif rescore_pending(family_root(args, family)):
+            note = ("RESCORE PENDING: rewards were rewritten with the corrected verifier and the pinned "
+                    "gradients/scores are parked under pinned-scoring/; the next free worker recomputes them")
         elif verdict == "RETRYING":
             note = "AUTO: failed attempt, retry scheduled by the supervisor"
             if err_text:
