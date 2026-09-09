@@ -8,6 +8,7 @@
 #   bash scripts/digest_family.sh math500 0          # one family (finished or not)
 #   bash scripts/digest_family.sh baseline math500 0
 #   DIGEST_READOUT=1 ...                             # also run the slow regime readout (1000 bootstrap per family)
+#   DIGEST_HANDOVER=0 ...                            # do not copy/commit/push the file through scripts/handover.sh
 #
 # A completed point is one with DONE now, or one whose DONE was parked under
 # pinned-scoring/<stamp>/ by scripts/rescore_math500.sh (RESCORE PENDING: the
@@ -275,4 +276,8 @@ PYEOF
 } > "$OUT" 2>&1
 size=$(stat -c %s "$OUT")
 echo "[digest] $OUT ($((size / 1024)) KB, $(wc -l < "$OUT") lines)"
-echo "[digest] plain text: copy it into the transfer repository and push"
+if [ "${DIGEST_HANDOVER:-1}" = 1 ]; then
+  bash scripts/handover.sh "$OUT"   # copies into the transfer clone, commits, pushes; says so if no clone is found
+else
+  echo "[digest] plain text: copy it into the transfer repository and push"
+fi
