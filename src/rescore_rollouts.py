@@ -99,10 +99,13 @@ def rewrite_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, n
     return stats
 
 
-def scan_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, new_verifier) -> Counter:
+def scan_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, new_verifier,
+              results: dict[tuple[int, int], float] | None = None) -> Counter:
     """Read-only pass: prove the pinned verifier reproduces every stored reward and
     count what the corrected one would change. Raises on the first row it cannot
-    reproduce, before anything has been written."""
+    reproduce, before anything has been written. When `results` is given, the
+    corrected reward of every row is stored in it keyed by (prompt_idx,
+    rollout_idx), so the rewrite pass does not score anything a second time."""
     stats = Counter()
     with path.open(encoding="utf-8") as stream:
         for line_number, line in enumerate(stream, 1):
@@ -118,11 +121,33 @@ def scan_rows(path: Path, split: list[dict], tokenizer, data, old_verifier, new_
                 )
             stats["timeout_sensitive"] += kind == "timeout"
             corrected = mmr.score(text, gold, data, new_verifier)
+            if results is not None:
+                results[(int(row["prompt_idx"]), int(row["rollout_idx"]))] = corrected
             stats["rows"] += 1
             stats["flip_0_to_1"] += corrected > pinned
             stats["flip_1_to_0"] += corrected < pinned
             if stats["rows"] % 1000 == 0:
                 print(f"    {path.name}: {stats['rows']} rows checked ...", flush=True)
+    return stats
+
+
+def rewrite_from_results(path: Path, results: dict[tuple[int, int], float]) -> Counter:
+    """Rewrite one rollout file from the corrected rewards computed by scan_rows."""
+    stats = Counter()
+    temporary = path.with_name(path.name + f".rescore.{os.getpid()}")
+    with path.open(encoding="utf-8") as source, temporary.open("w", encoding="utf-8") as sink:
+        for line in source:
+            row = json.loads(line)
+            pinned = float(row.get("reward_pinned", row["reward"]))
+            corrected = results[(int(row["prompt_idx"]), int(row["rollout_idx"]))]
+            if "reward_pinned" not in row:
+                row["reward_pinned"] = pinned
+            row["reward"] = corrected
+            stats["rows"] += 1
+            stats["flip_0_to_1"] += corrected > pinned
+            stats["flip_1_to_0"] += corrected < pinned
+            sink.write(json.dumps(row) + "\n")
+    temporary.replace(path)
     return stats
 
 
@@ -148,32 +173,30 @@ def retire_derived(run: Path, stamp: str) -> list[str]:
     return moved
 
 
-def rescore_point(run: Path, data, old_verifier, new_verifier, *, apply: bool, stamp: str) -> dict:
+def _tokenizer_for(run: Path):
     config = json.loads((run / "run_config.json").read_text(encoding="utf-8"))
-    prompts = json.loads((run / "prompts.json").read_text(encoding="utf-8"))
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(config["model_resolved"], local_files_only=True)
+    return AutoTokenizer.from_pretrained(config["model_resolved"], local_files_only=True)
+
+
+def scan_point(run: Path, data, old_verifier, new_verifier) -> tuple[dict, dict]:
+    """Read-only: verify every rollout file of the point and compute the corrected
+    reward of every row. Returns (report, {prefix: {(prompt, rollout): reward}}).
+    Raises before anything is written if a stored reward cannot be reproduced."""
+    prompts = json.loads((run / "prompts.json").read_text(encoding="utf-8"))
+    tokenizer = _tokenizer_for(run)
     report = {"run": run.name, "files": [], "retired": []}
+    results_by_prefix: dict[str, dict] = {}
     for prefix in ROLLOUT_PREFIXES:
         files = rollout_files(run, prefix)
         if not files:
             continue
         split = prompts["val"] if prefix.endswith("_val") else prompts["train"]
-        sidecar_path = run / f"{prefix}.rescore.json"
-        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8")) if sidecar_path.is_file() else {}
-        sidecar.update({"verifier": VERIFIER_ID, "rewritten_at_utc": stamp})
-        # Verify every file of this prefix before rewriting any of them: a
-        # mismatch on the second file must not leave the first one rewritten.
+        # the merged file and its shards hold the same rows: one result table serves all
+        results: dict[tuple[int, int], float] = {}
         for path, _ in files:
-            scan_rows(path, split, tokenizer, data, old_verifier, new_verifier)
-        for path, manifest in files:
-            if not apply:
-                stats = scan_rows(path, split, tokenizer, data, old_verifier, new_verifier)
-            else:
-                stats = rewrite_rows(path, split, tokenizer, data, old_verifier, new_verifier)
-                if manifest is not None:
-                    reseal(manifest, path, sidecar)
+            stats = scan_rows(path, split, tokenizer, data, old_verifier, new_verifier, results)
             report["files"].append({
                 "file": path.name,
                 "rows": int(stats["rows"]),
@@ -181,11 +204,78 @@ def rescore_point(run: Path, data, old_verifier, new_verifier, *, apply: bool, s
                 "flip_1_to_0": int(stats["flip_1_to_0"]),
                 "timeout_sensitive": int(stats["timeout_sensitive"]),
             })
-        if apply:
-            sidecar_path.write_text(json.dumps(sidecar, indent=1, ensure_ascii=False), encoding="utf-8")
+        results_by_prefix[prefix] = results
+    return report, results_by_prefix
+
+
+def apply_point(run: Path, results_by_prefix: dict, stamp: str) -> list[str]:
+    """Write the corrected rewards computed by scan_point, reseal, retire."""
+    for prefix, results in results_by_prefix.items():
+        sidecar_path = run / f"{prefix}.rescore.json"
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8")) if sidecar_path.is_file() else {}
+        sidecar.update({"verifier": VERIFIER_ID, "rewritten_at_utc": stamp})
+        for path, manifest in rollout_files(run, prefix):
+            rewrite_from_results(path, results)
+            if manifest is not None:
+                reseal(manifest, path, sidecar)
+        sidecar_path.write_text(json.dumps(sidecar, indent=1, ensure_ascii=False), encoding="utf-8")
+    return retire_derived(run, stamp)
+
+
+def rescore_point(run: Path, data, old_verifier, new_verifier, *, apply: bool, stamp: str) -> dict:
+    """Serial convenience: scan, then (optionally) apply."""
+    report, results = scan_point(run, data, old_verifier, new_verifier)
     if apply:
-        report["retired"] = retire_derived(run, stamp)
+        report["retired"] = apply_point(run, results, stamp)
     return report
+
+
+_WORKER: dict = {}
+
+
+def _worker_init(repo: str, pinned: str) -> None:
+    _WORKER["data"] = mmr.load_pinned_data_module(Path(repo), pinned[:12])
+    _WORKER["old"], _WORKER["new"] = mmr.verifier_pair()
+
+
+def _worker_scan(run: str) -> tuple[dict, dict]:
+    return scan_point(Path(run), _WORKER["data"], _WORKER["old"], _WORKER["new"])
+
+
+def _worker_apply(run: str, results: dict, stamp: str) -> list[str]:
+    return apply_point(Path(run), results, stamp)
+
+
+def rescore_points_parallel(points: list[Path], *, apply: bool, stamp: str, data, old_verifier, new_verifier) -> list[dict]:
+    """Two phases over the family: scan EVERY point (read-only) and only then, if
+    all of them reproduced their stored rewards, write every point. A mismatch in
+    any point leaves the whole family untouched. Points run in parallel processes
+    (OM_RESCORE_WORKERS, default min(4, cores)); scoring happens once per row.
+    Falls back to in-process execution when the pool cannot be used (fake
+    verifiers in tests, a single core)."""
+    workers = int(os.environ.get("OM_RESCORE_WORKERS", "0")) or min(4, os.cpu_count() or 1)
+    repo, pinned = os.environ.get("OM_RESCORE_REPO"), os.environ.get("OM_RESCORE_PINNED")
+    parallel = workers > 1 and len(points) > 1 and repo and pinned
+    if parallel:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=min(workers, len(points)), initializer=_worker_init,
+                                 initargs=(repo, pinned)) as pool:
+            scanned = [f.result() for f in [pool.submit(_worker_scan, str(p)) for p in points]]
+            if not apply:
+                return [report for report, _ in scanned]
+            retired = [f.result() for f in [pool.submit(_worker_apply, str(p), results, stamp)
+                                            for p, (_, results) in zip(points, scanned)]]
+    else:
+        scanned = [scan_point(p, data, old_verifier, new_verifier) for p in points]
+        if not apply:
+            return [report for report, _ in scanned]
+        retired = [apply_point(p, results, stamp) for p, (_, results) in zip(points, scanned)]
+    reports = []
+    for (report, _), moved in zip(scanned, retired):
+        report["retired"] = moved
+        reports.append(report)
+    return reports
 
 
 def owner_is_fresh(queue: Path, family: str, seconds: int = 1800) -> bool:
@@ -215,12 +305,12 @@ def rescore_family(root: Path, dataset: str, seed: int, drifts: list[int], tag: 
         missing = [p.name for p in points if not (p / "run_config.json").is_file()]
         if missing:
             raise SystemExit(f"[abort] {dataset}/s{seed} is not a finished family; missing {missing}")
-        if apply:
-            # The whole family is verified read-only first; only then is any
-            # point rewritten, so a family is never left half rescored.
-            for p in points:
-                rescore_point(p, data, old_verifier, new_verifier, apply=False, stamp=stamp)
-        reports = [rescore_point(p, data, old_verifier, new_verifier, apply=apply, stamp=stamp) for p in points]
+        # Points are independent directories; each one verifies all of its own
+        # files before writing any, and a second run is idempotent, so a failure
+        # in a later point leaves the earlier ones consistent and re-runnable.
+        # Score the points in parallel: this is CPU work and a node has cores.
+        reports = rescore_points_parallel(points, apply=apply, stamp=stamp,
+                                          data=data, old_verifier=old_verifier, new_verifier=new_verifier)
         if apply:
             (family_root / ".family-complete").unlink(missing_ok=True)
     return {"family": f"{dataset}/s{seed}", "stamp": stamp, "points": reports}
@@ -245,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError:
         print("[abort] math-verify is not importable")
         return 2
+    os.environ["OM_RESCORE_REPO"] = str(args.repo)
+    os.environ["OM_RESCORE_PINNED"] = args.pinned
 
     seeds = args.seed
     if not seeds:

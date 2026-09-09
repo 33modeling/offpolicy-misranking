@@ -73,7 +73,7 @@ def load_pinned_data_module(repo: Path, commit: str):
 
 
 DEFAULT_TIMEOUT = 5          # math-verify's own default for parse and verify
-GENEROUS_TIMEOUT = int(os.environ.get("OM_MATH_VERIFY_TIMEOUT", "60"))
+GENEROUS_TIMEOUT = int(os.environ.get("OM_MATH_VERIFY_TIMEOUT", "20"))
 
 
 def verifier_pair(timeout_seconds: int = GENEROUS_TIMEOUT):
