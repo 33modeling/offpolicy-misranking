@@ -1045,59 +1045,15 @@ def short_error(errors: list[tuple[Path, str]], width: int = 70) -> str:
 
 def key_numbers_lines(args: argparse.Namespace, families: list[Family]) -> list[str]:
     """One line per scored point and scoring with the numbers the paper's gates
-    read: split-half floor against 2*chance, the fresh selector's precision, the
-    four stale precisions, token KL and trajectory ESS. 'pinned' rows come from
-    the scoring parked by scripts/rescore_math500.sh, 'current' from the point
-    root. Printed by every status run so the routine status-history upload
-    carries the numbers off a cluster that cannot push (2026-09-09)."""
-
-    def load(path: Path):
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-
-    def fmt(value, digits: int = 3) -> str:
-        if value is None or isinstance(value, bool):
-            return "-"
-        try:
-            return f"{float(value):.{digits}f}"
-        except (TypeError, ValueError):
-            return "-"
+    read (see src/point_key_numbers.py, shared with the Qwen status). Printed by
+    every status run so the routine status-history upload carries the numbers
+    off a cluster that cannot push (2026-09-09)."""
+    from point_key_numbers import point_lines
 
     lines = []
     for family in families:
         for drift in args.drifts:
-            run = run_dir(args, family, drift)
-            scorings = []
-            if nonempty_file(run / "report.json"):
-                scorings.append(("current", run))
-            parking = run / "pinned-scoring"
-            parked = sorted(p for p in parking.glob("*") if p.is_dir()) if parking.is_dir() else []
-            if parked and nonempty_file(parked[-1] / "report.json"):
-                scorings.append(("pinned", parked[-1]))
-            if not scorings:
-                continue
-            config = load(run / "run_config.json") or {}
-            for kind, where in scorings:
-                report = load(where / "report.json") or {}
-                div = load(where / "divergence_stats.json") or {}
-                n = config.get("n_train")
-                k = report.get("k")
-                chance = k / n if isinstance(n, (int, float)) and n and isinstance(k, (int, float)) else None
-                floor = report.get("noise_floor")
-                gate = "-       "
-                if isinstance(floor, (int, float)) and not isinstance(floor, bool) and chance is not None:
-                    gate = "GATE-OK " if floor >= 2 * chance else "gate-LOW"
-                fresh = (report.get("certagrad") or {}).get("precision_vs_oracle")
-                stale = " ".join(
-                    f"{e}={fmt((report.get(e) or {}).get('precision'))}" for e in ("g00", "g01", "g10", "g11")
-                )
-                lines.append(
-                    f" {family.dataset} s{family.seed} d{drift} {kind:<7} floor={fmt(floor)} {gate} "
-                    f"fresh={fmt(fresh)} {stale} KL={fmt(div.get('token_kl_beta_pi'), 6)} "
-                    f"ESS={fmt(div.get('traj_ess_frac_g11'))}"
-                )
+            lines.extend(point_lines(run_dir(args, family, drift), family.dataset, family.seed, drift))
     return lines
 
 

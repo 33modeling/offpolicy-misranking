@@ -137,6 +137,9 @@ if [ -d "$RUNS" ]; then
     printf ' %-22s %-29s %-12s %s\n' "${short:0:22}" "${st:-starting}" "$age" "$note"
   done
   [ -d "$RES" ] && echo "results  $RES ($(ls "$RES" 2>/dev/null | wc -l) entries)"
+  echo
+  "$PY" "$(dirname "$0")/../src/point_key_numbers.py" --root "$RUNS" 2>/dev/null \
+    || echo " KEY NUMBERS unavailable (python or point_key_numbers.py missing)"
 fi
 echo
 echo " DECISION words:  ERROR = you act   WARNING = check again in 30 min   NO ERROR = leave it      last write = time since that point wrote any file"
