@@ -40,6 +40,50 @@ restricted. Consequences, so that nobody builds on the wrong assumption again:
   must be one line with nothing in front and no arguments; a needed mode is
   made the script default instead.
 
+## Reference reliability versus budget (2026-09-09)
+
+The 16:18 KST status readout put the split-half floor of every d0 point near
+chance (MATH-500 .10-.175, MBPP .06-.12 against 2k/n = .20), so plan section 9
+row 1 applies: no drift point is interpreted, and the registered remedy is a
+more reliable reference, not a lower gate. Two scripts serve that, both outside
+the registered matrix (no registered point is written, no label is defined):
+
+- Sizing (CPU, any node, minutes):
+
+  ```bash
+  bash scripts/reliability_budget.sh
+  ```
+
+  reads `oracle_micro_groups.pt` and `val_groups.pt` of every d0 point (root copy
+  or the copy parked under `pinned-scoring/`), re-draws the two reference halves at
+  every observable half size (4, 8, 12, 16 responses; 25 or 50 validation prompts),
+  separates the candidate-rollout axis from the validation-direction axis, and
+  extrapolates with Spearman-Brown through the frozen Gaussian lookup of
+  `src/measurement_ceiling.py`. The KEY lines say how many responses per half the
+  gate floor would need and which side limits it now. Optional arguments
+  `<dataset> <drift>`; the report goes to `$OM_WORK/exports/reliability-budget-*.txt`.
+  It reuses the locked rollouts descriptively; plan section 7 forbids using such a
+  curve as a registered result, which is why the next script exists.
+
+- New reference groups (one node with the visible GPUs, about half a day per
+  dataset at 64 responses per prompt on 4xH100):
+
+  ```bash
+  bash scripts/run_reliability_budget.sh math500
+  ```
+
+  `<dataset> [fresh_k=64] [val_k=32] [seed=100]`; `RB_DRY=1` prints the plan. It
+  copies `prompts.json` and the run-config template from a finished d0 point,
+  generates `fresh_k` responses per candidate prompt and `val_k` per validation
+  prompt from the base policy in a new RNG domain under
+  `$OM_WORK/runs/reliability-budget-v1/<dataset>-fk<K>-vk<VK>-s<seed>/`, computes
+  the micro-group gradients with the registered stages of `src/experiment.py`, and
+  writes the floor-versus-budget report next to the registered d0 point's to
+  `$OM_WORK/exports/reliability-budget-run-*.txt`. Rerunning the same command
+  resumes. `fresh_k` must be a multiple of 16 (micro-groups of four, R/A/B
+  partition). The run does not join the supervisor queue; start it on a node the
+  supervisor is not using.
+
 ## Training hyperparameters
 
 | Component | Registered value |

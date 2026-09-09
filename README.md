@@ -272,5 +272,11 @@ for the SFT substitution root-cause record.
   completed point; pinned and corrected scorings side by side) plus a KEY NUMBERS
   table on the terminal. The cluster cannot push (download-only network); the
   file leaves by the operator's path, `handover.sh` commits/pushes it from the PC.
+- `reliability_budget.sh`: CPU sizing of the on-policy reference budget from the
+  stored d0 micro-groups (split-half floor by half size, Spearman-Brown through the
+  frozen Gaussian lookup, limiting side); read-only, report under `$OM_WORK/exports`.
+- `run_reliability_budget.sh`: one-node d0 run that generates new reference groups
+  at a larger budget (`<dataset> [fresh_k] [val_k] [seed]`, default 64/32/100) in its
+  own root and reads the floor from them; no training, no registered point touched.
 - `setup_env.sh`, `provision.sh`, `fetch_datasets.sh`, `fetch_27b.sh`: setup.
 - `check_data.sh`, `check_27b_fla.py`, `diagnose_run_failure.sh`: preflight and diagnosis.
