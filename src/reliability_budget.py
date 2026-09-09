@@ -48,7 +48,6 @@ import argparse
 import json
 import math
 import os
-import re
 import statistics
 import sys
 import time
@@ -122,29 +121,25 @@ def locate_artifacts(run: Path) -> tuple[Path, str]:
     )
 
 
-_PROMPT_RE = re.compile(r'"prompt_idx"\s*:\s*(-?\d+)')
-_REWARD_RE = re.compile(r'"reward"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)')
-
-
 def behavior_pass_rates(path: Path) -> dict[int, float]:
     """Behavior pass rate per prompt from the stored behavior rollouts.
 
-    Rows carry full token arrays, so the two fields are read with regular
-    expressions instead of parsing every line as JSON; a row where either field
-    is missing falls back to json.loads.
+    Every row is parsed as JSON (no field regexes): a regex could match text
+    embedded in a string field if the row schema ever gains one, and a row
+    with a missing or non-binary reward is an error rather than a skip.
     """
     rewards: dict[int, list[float]] = {}
     with path.open(encoding="utf-8") as handle:
-        for line in handle:
+        for number, line in enumerate(handle, 1):
             if not line.strip():
                 continue
-            prompt = _PROMPT_RE.search(line)
-            reward = _REWARD_RE.search(line)
-            if prompt is None or reward is None:
+            try:
                 row = json.loads(line)
-                idx, value = int(row["prompt_idx"]), float(row["reward"])
-            else:
-                idx, value = int(prompt.group(1)), float(reward.group(1))
+                idx, value = row["prompt_idx"], float(row["reward"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"{path}:{number}: invalid reward record") from exc
+            if type(idx) is not int or idx < 0 or not math.isfinite(value):
+                raise ValueError(f"{path}:{number}: invalid prompt identity or reward")
             rewards.setdefault(idx, []).append(value)
     return {idx: sum(values) / len(values) for idx, values in rewards.items() if values}
 
