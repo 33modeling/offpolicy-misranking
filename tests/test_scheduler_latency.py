@@ -52,7 +52,7 @@ run_pipeline_watchdog "$TEST_ROOT" "$TEST_ROOT/logs/attempt.log" bash -c 'sleep 
 @pytest.mark.parametrize("attempts", [1, 2])
 def test_last_point_failure_does_not_recover_or_sleep(tmp_path, attempts):
     (tmp_path / "logs").mkdir()
-    source = shell_function(MATRIX.read_text(), "run_point")
+    source = shell_function(MATRIX.read_text(), "run_point_unlocked") + "\n" + shell_function(MATRIX.read_text(), "run_point")  # run_point delegates to run_point_unlocked since b834792
     result = run_shell(source + f'\nMAX_RETRIES={attempts}\n' + '''
 run_dir() { echo "$TEST_ROOT"; }
 n_train_for_dataset() { echo 400; }
@@ -80,7 +80,7 @@ run_point math500 0 0 '' '' ''
 def test_failed_deep_contract_preserves_artifacts_and_yields(tmp_path):
     (tmp_path / "logs").mkdir()
     (tmp_path / "checkpoint").write_text("preserve")
-    source = shell_function(MATRIX.read_text(), "run_point")
+    source = shell_function(MATRIX.read_text(), "run_point_unlocked") + "\n" + shell_function(MATRIX.read_text(), "run_point")  # run_point delegates to run_point_unlocked since b834792
     result = run_shell(source + '''
 run_dir() { echo "$TEST_ROOT"; }
 n_train_for_dataset() { echo 400; }
