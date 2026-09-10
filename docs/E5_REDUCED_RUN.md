@@ -16,7 +16,13 @@ subset? Gradient alignment is a proxy; this experiment measures reward.
 | readout | mean reward after each arm, paired difference vs fresh_r with a 10,000-draw prompt bootstrap, overlap of each subset with fresh_r |
 
 Cost: 900 updates in total (22% of the 4,000 in the matrix) plus 12 policies
-x 300 prompts x 8 responses. Two to three days on three 4xH100 nodes.
+x 300 prompts x 8 responses. Measured matrix throughput on 4xH100 (status
+history 09-08/09, MATH-500 d400: 103->142 steps in 45 min, 311->392 in 95 min)
+is about 70 s per GRPO update, so one arm takes about 2 h and one seed's three
+arms about 6 h. Evaluation at 8 responses per prompt runs about 60 s per prompt
+per GPU (responses run to the 2048-token cap), so one policy takes about 1.3 h
+and one seed's four evaluations about 5-6 h. One seed is therefore about 12 h:
+three nodes finish in about half a day, one node in about 1.5 days.
 
 ## Commands (phone-typable)
 
