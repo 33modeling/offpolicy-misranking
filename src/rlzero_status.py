@@ -1292,6 +1292,9 @@ def main() -> None:
         )
 
     complete = verdict_counts.get("COMPLETE", 0)
+    # 2026-09-10: with one family left, one worker is a full crew. "expected at
+    # least 3" and its WORKER DEAD alarm sent the operator restarting healthy nodes.
+    expected_workers = min(args.expected_workers, max(1, len(families) - complete))
     progressing = verdict_counts.get("PROGRESSING", 0)
     computing = verdict_counts.get("COMPUTING", 0)
     alive = verdict_counts.get("ALIVE", 0)
@@ -1303,7 +1306,7 @@ def main() -> None:
     pending = verdict_counts.get("PENDING", 0)
     retrying = verdict_counts.get("RETRYING", 0)
     hung = verdict_counts.get("HUNG", 0)
-    missing_workers = len(workers) < args.expected_workers
+    missing_workers = len(workers) < expected_workers
     degraded = stuck + dead + stopped + idle + unknown + hung > 0 or missing_workers
     rescore_waiting = [r for r in rows if r["verdict"] == "RESCORE_WAITING"]
     rescore_count = sum(len(r["rescore_drifts"]) for r in rows)
@@ -1349,8 +1352,10 @@ def main() -> None:
         overall = "DEGRADED" if degraded else "RUNNING"
         if hung:
             action = "Ctrl-C_the_HUNG_family_worker__git_pull__relaunch_run_h100"
-        elif stuck + dead + stopped > 0 or missing_workers:
+        elif stuck + dead + stopped > 0:
             action = "inspect_STUCK_DEAD_families_and_missing_workers"
+        elif missing_workers:
+            action = "start_a_worker_on_a_free_node"
         elif idle:
             action = "wait_for_next_watchdog_confirmation"
         elif unknown:
@@ -1419,6 +1424,7 @@ def main() -> None:
         "none": "nothing to do",
         "assign_separate_gpu_evaluation_worker": "keep progressing workers running; assign the queued evaluation to a separate GPU node",
         "inspect_STUCK_DEAD_families_and_missing_workers": "look at the X rows: Ctrl-C the worker on that node, git pull, run h100 again (partials resume)",
+        "start_a_worker_on_a_free_node": "fewer workers than unfinished families: start one on a free node: bash scripts/run_olmo3_rlzero.sh run h100 (nothing to restart)",
         "Ctrl-C_that_worker__git_pull__relaunch_run_h100__partials_resume": "Ctrl-C the worker on the X node, git pull, run h100 again (partials resume)",
         "Ctrl-C_the_HUNG_family_worker__git_pull__relaunch_run_h100": "Ctrl-C the worker on the X node, git pull, run h100 again (partials resume)",
         "wait_for_next_watchdog_confirmation": "wait: the watchdog is confirming idleness before it restarts the point",
@@ -1468,6 +1474,11 @@ def main() -> None:
             beat = record_age_seconds(rec, "heartbeat_at_ns", 1_000_000_000)
             if beat is not None and beat > 86400:
                 continue  # a day-old record: already acted on or replaced; not an alarm
+            if not claims_by_worker.get(str(rec.get("worker", ""))):
+                # 2026-09-10: a worker that died holding no family (its job was
+                # taken away hours ago) is history, listed under stale records;
+                # it must not become the DECISION while the last family runs.
+                continue
             if rec.get("state") in {"launcher-missing", "crashed"} or (rec.get("state") == "running" and beat is not None and beat > args.heartbeat_stale_seconds):
                 dead_workers.append(f"{rec.get('worker', entry.stem)} on {rec.get('host', '?')} (last seen {fmt_age(beat) if beat is not None else '?'} ago)")
     if progress_word == "NOT TRAINING" and workers:
@@ -1476,7 +1487,7 @@ def main() -> None:
     elif contract_errors:
         decision = ("ERROR: an unfinished point runs with other runtime values than this launcher expects "
                     "(see the ! contract lines). Workers keep running; the next relaunch repairs unfinished points.")
-    elif dead_workers and len(workers) < args.expected_workers:
+    elif dead_workers and len(workers) < expected_workers:
         decision = (f"WORKER DEAD: {'; '.join(dead_workers)}. Progress continues on {len(workers)} worker(s). "
                     "Its family resumes on the next worker started on any node: git pull; bash scripts/run_olmo3_rlzero.sh run h100")
     elif complete == len(families):
@@ -1510,7 +1521,7 @@ def main() -> None:
     elif missing_workers and len(workers) == 0:
         decision = "ERROR: no worker is running anywhere. Start one per node: bash scripts/run_olmo3_rlzero.sh run h100"
     elif missing_workers:
-        decision = f"WARNING: only {len(workers)} workers alive, at least {args.expected_workers} expected. Progress continues but slower; start a worker on any free node."
+        decision = f"WARNING: only {len(workers)} workers alive, at least {expected_workers} expected. Progress continues but slower; start a worker on any free node."
     elif auto or check:
         parts = []
         if auto:
@@ -1523,7 +1534,7 @@ def main() -> None:
     elif queued and idle_workers:
         decision = (f"ERROR: {', '.join(queued)} unclaimed while worker(s) {', '.join(sorted(idle_workers))} sit idle: "
                     "a stale family lock or a worker stuck in preflight. Read that worker's last log line below.")
-    elif queued and len(workers) >= args.expected_workers:
+    elif queued and len(workers) >= expected_workers:
         decision = f"NO ERROR. Workers busy; {', '.join(queued)} waiting in the queue. Nothing to do."
     else:
         decision = "NO ERROR. Everything is progressing. Nothing to do."
@@ -1532,8 +1543,8 @@ def main() -> None:
     print(f"PROGRESS {progress_line}")
     print(f"STATE   {verdict_word}")
     worker_word = f"workers {len(workers)} alive"
-    if len(workers) < args.expected_workers:
-        worker_word += f" (expected at least {args.expected_workers})"
+    if len(workers) < expected_workers:
+        worker_word += f" (expected at least {expected_workers})"
     print(f"        {worker_word} ({worker_ids})   families {complete}/{len(families)} done   points {points_done}/{total_points} done{eta}")
     print(f"ACTION  {action_text}")
     if rescore_count:
@@ -1751,7 +1762,7 @@ def main() -> None:
                     print(f"    | {line}")
     print("== diagnosis ==")
     print(
-        f"workers_observed={len(workers)}/{args.expected_workers} "
+        f"workers_observed={len(workers)}/{expected_workers} "
         f"worker_ids={','.join(sorted(workers)) or 'none'}"
     )
     print(

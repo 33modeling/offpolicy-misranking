@@ -14,7 +14,7 @@ STATUS = ROOT / "src/rlzero_status.py"
 TAG = "olmo3-test"
 
 
-def status_command(root: Path, verbose: bool = True, **overrides: int) -> list[str]:
+def status_command(root: Path, verbose: bool = True, seeds: str = "0", **overrides: int) -> list[str]:
     values = {
         "probe_seconds": 0,
         "stuck_seconds": 30,
@@ -44,7 +44,7 @@ def status_command(root: Path, verbose: bool = True, **overrides: int) -> list[s
         "--datasets",
         "math500",
         "--seeds",
-        "0",
+        *seeds.split(),
         "--drifts",
         "0",
         "--probe-seconds",
@@ -335,6 +335,23 @@ def test_status_distinguishes_alive_unknown_confirmed_stuck_and_dead(
 
 
 def test_status_marks_missing_workers_as_degraded(tmp_path: Path) -> None:
+    # three unfinished families, one worker: degraded, and the action is to add
+    # a worker, not to restart the healthy one (2026-09-10)
+    root = tmp_path / "runs" / TAG
+    _, _, lock = active_family(root)
+    try:
+        output = run_status(root, expected_workers=3, seeds="0 1 2")
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+    assert "workers_observed=1/3" in output
+    assert "overall_verdict=DEGRADED" in output
+    assert "recommended_action=start_a_worker_on_a_free_node" in output
+    assert "Ctrl-C" not in output.split("ACTION")[1].splitlines()[0]
+
+
+def test_status_does_not_expect_more_workers_than_unfinished_families(tmp_path: Path) -> None:
+    # 2026-09-10: one family left, one worker on it: a full crew, not DEGRADED
     root = tmp_path / "runs" / TAG
     _, _, lock = active_family(root)
     try:
@@ -342,11 +359,29 @@ def test_status_marks_missing_workers_as_degraded(tmp_path: Path) -> None:
     finally:
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
-    assert "workers_observed=1/3" in output
-    assert "overall_verdict=DEGRADED" in output
-    assert (
-        "recommended_action=inspect_STUCK_DEAD_families_and_missing_workers" in output
-    )
+    assert "workers_observed=1/1" in output
+    assert "expected at least" not in output
+    assert "overall_verdict=DEGRADED" not in output
+
+
+def test_status_ignores_dead_workers_that_hold_no_family(tmp_path: Path) -> None:
+    # 2026-09-10: workers whose jobs were taken away hours ago, holding nothing,
+    # were the DECISION ("WORKER DEAD ... Ctrl-C") while the last family ran fine
+    root = tmp_path / "runs" / TAG
+    _, _, lock = active_family(root)
+    write_worker_heartbeat(root)
+    stale = root / ".workers/worker-9.json"
+    stale.write_text(json.dumps({
+        "schema": "offpolicy-worker-heartbeat/v1", "worker": "worker-9", "host": "node-9",
+        "state": "running", "heartbeat_at_ns": time.time_ns() - 2 * 3600 * 10**9,
+    }) + "\n", encoding="utf-8")
+    try:
+        output = run_status(root, expected_workers=3, seeds="0 1 2")
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+    assert "WORKER DEAD" not in output, output
+    assert "worker-9" in output
 
 
 def test_status_reports_worker_preflight_before_first_claim(tmp_path: Path) -> None:

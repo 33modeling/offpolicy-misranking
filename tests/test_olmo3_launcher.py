@@ -1049,7 +1049,7 @@ def test_stale_cuda_line_does_not_exempt_a_real_repeating_failure(tmp_path: Path
     assert "math500-s1" not in claims and len(claims) == 9
     assert "[queue] every family left is marked LOOPING: math500/s1" in result.stdout
     assert "[fixture-fallback]" not in result.stdout
-    assert "Qwen/additional handoff disabled" in result.stdout
+    assert "starts no other model" in result.stdout
 
 
 def test_worker_retains_primary_queue_when_only_looping_families_remain(tmp_path: Path) -> None:
@@ -1070,7 +1070,7 @@ def test_worker_retains_primary_queue_when_only_looping_families_remain(tmp_path
     assert "mbpp-s4" not in claims and len(claims) == 9
     assert (queue / "mbpp-s4.loop").is_file()
     assert "[fixture-fallback]" not in result.stdout
-    assert "Qwen/additional handoff disabled" in result.stdout
+    assert "starts no other model" in result.stdout
     assert not list((queue.parent / ".workers").glob("*.json"))
 
 
@@ -1141,3 +1141,77 @@ def test_a_cuda_fault_that_reproduces_every_time_stops_being_exempt(tmp_path: Pa
     # the other nine families still ran
     claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
     assert "math500-s1" not in claims and len(claims) == 9
+
+
+def test_launcher_never_stops_a_live_launcher_that_holds_the_node_lock(tmp_path: Path) -> None:
+    """2026-09-10: the auto role terminated whatever held the node lock, which on a
+    node running Qwen on purpose killed that launcher. A live launcher is never
+    stopped from here; the operator is told to Ctrl-C it deliberately."""
+    checkout, env = fixture_checkout(tmp_path)
+    local = tmp_path / "qwen-local"
+    local.mkdir()
+    other = tmp_path / "other"
+    (other / "scripts").mkdir(parents=True)
+    executable(other / "scripts/run_additional_experiments.sh",
+               '#!/usr/bin/env bash\nexec 8>"$1"\nflock 8\nsleep 120\n')
+    holder = subprocess.Popen(["bash", "scripts/run_additional_experiments.sh", str(local / "primary.lock")],
+                              cwd=other)
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with (local / "primary.lock").open("a+") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(probe, fcntl.LOCK_UN)
+                except BlockingIOError:
+                    break
+            time.sleep(0.05)
+        result = subprocess.run(
+            ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+            cwd=checkout,
+            env={**env, "OM_LOCAL_LOCK_DIR": str(local)},
+            text=True, capture_output=True, timeout=30, check=False,
+        )
+        assert result.returncode == 75, result.stdout + result.stderr
+        assert "nothing was stopped" in result.stdout
+        assert "run_additional_experiments.sh" in result.stdout
+        assert holder.poll() is None, "the live launcher was killed"
+        assert not (Path(env["TEST_SHARED"]) / "work/claims").exists()
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+
+
+def test_family_history_does_not_count_toward_the_cuda_fault_bound(tmp_path: Path) -> None:
+    """2026-09-10: the bound counted every [point-failed] line of every point in the
+    family for all time; mbpp/s4 was marked LOOPING on its first fault of the day."""
+    checkout, env = fixture_checkout(tmp_path)
+    root = Path(env["TEST_SHARED"]) / "work/runs/olmo3-1025-7b-base-rlzero-grpo-v1"
+    old_point = root / "family-math500-s1/olmo3-1025-7b-base-rlzero-grpo-v1-s1-math500-d25/logs"
+    old_point.mkdir(parents=True)
+    (old_point / "supervisor.log").write_text("".join(
+        "[2026-09-06 00:00:00] [point-failed] try 1/3 rc=1: RuntimeError: CUDA error: unspecified launch failure\n"
+        for _ in range(30)))
+    stale = time.time() - 3600
+    os.utime(old_point / "supervisor.log", (stale, stale))
+    result = subprocess.run(
+        ["/bin/bash", "scripts/run_olmo3_rlzero.sh", "run"],
+        cwd=checkout,
+        env={
+            **env,
+            "OM_LOCAL_LOCK_DIR": str(tmp_path / "history-local"),
+            "TEST_CUDA_FAIL_FAMILY": "math500-s1",
+            "TEST_CUDA_FAIL_TIMES": "1",
+            "OM_RLZERO_FAMILY_ATTEMPTS": "1",
+            "OM_RLZERO_FAMILY_RETRY_SECONDS": "1",
+            "OM_RLZERO_QUEUE_WAIT_SECONDS": "1",
+            "OM_RLZERO_STALE_PROCESS_TIMEOUT": "1",
+            "OM_RLZERO_GPU_CLEANUP_TIMEOUT": "1",
+        },
+        text=True, capture_output=True, timeout=90, check=False,
+    )
+    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-1000:]
+    assert "[family-loop]" not in result.stdout, result.stdout[-3000:]
+    assert "[cuda-flaky] math500/s1: CUDA runtime fault #1" in result.stdout
+    claims = [line.split("|")[1] for line in (Path(env["TEST_SHARED"]) / "work/claims").read_text().splitlines()]
+    assert "math500-s1" in claims and len(claims) == 10

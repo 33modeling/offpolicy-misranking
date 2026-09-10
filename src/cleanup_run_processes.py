@@ -134,6 +134,19 @@ def matching_processes(
     }
 
 
+def list_processes(
+    run_prefix: str,
+    command_patterns: tuple[str, ...] = (),
+    required_environment: tuple[tuple[str, str], ...] = (),
+    open_files: tuple[str, ...] = (),
+) -> list[Process]:
+    """The processes terminate() would stop, in pid order; nothing is signalled."""
+    targets = matching_processes(
+        run_prefix, command_patterns, required_environment, open_files
+    )
+    return sorted(targets.values(), key=lambda process: process.pid)
+
+
 def terminate(
     run_prefix: str,
     timeout: float,
@@ -181,12 +194,25 @@ def main() -> int:
     parser.add_argument("--command-pattern", action="append", default=[])
     parser.add_argument("--require-environment", action="append", default=[])
     parser.add_argument("--open-file", action="append", default=[])
+    parser.add_argument(
+        "--list", action="store_true",
+        help="print the matching processes (pid<TAB>command) and stop nothing",
+    )
     args = parser.parse_args()
     required_environment = []
     for item in args.require_environment:
         if "=" not in item:
             parser.error("--require-environment must be KEY=VALUE")
         required_environment.append(tuple(item.split("=", 1)))
+    if args.list:
+        for process in list_processes(
+            args.run_prefix,
+            tuple(args.command_pattern),
+            tuple(required_environment),
+            tuple(str(Path(path).resolve()) for path in args.open_file),
+        ):
+            print(f"{process.pid}\t{process.command.strip()}")
+        return 0
     terminated = terminate(
         args.run_prefix,
         args.timeout,

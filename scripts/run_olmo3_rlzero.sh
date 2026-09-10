@@ -420,7 +420,21 @@ if [ "$MODE" = run ]; then
       echo "[abort] this node still has an experiment owner; stop its previous launcher before $RUN_ROLE. No process was terminated."
       exit 75
     fi
-    echo "[startup-cleanup] previous launcher or orphan owns the node lock; terminating it"
+    # 2026-09-10: this branch used to terminate whatever held the node lock,
+    # which on a node running Qwen on purpose (bash scripts/run_qwen35_9b.sh)
+    # killed that launcher and its rollouts. A live launcher is never stopped
+    # from here; only orphans (GPU processes whose launcher is gone) are.
+    lock_holders=$("$PY" "$SUPERVISOR_RUNTIME_REPO/src/cleanup_run_processes.py" --list \
+      --run-prefix "$ROOT" --open-file "$PRIMARY_LOCK") || exit 1
+    live_launcher=$(printf '%s\n' "$lock_holders" \
+      | grep -E 'scripts/(run_[a-z0-9_]+|go_[a-z0-9_]+)\.sh' | head -3)
+    if [ -n "$live_launcher" ]; then
+      echo "[abort] this node is running another experiment; nothing was stopped:"
+      printf '%s\n' "$live_launcher" | cut -c1-160 | sed 's/^/        pid /'
+      echo "        If this node should run OLMo3 instead, Ctrl-C that launcher yourself first."
+      exit 75
+    fi
+    echo "[startup-cleanup] orphaned processes own the node lock (no launcher alive); terminating them"
     "$PY" "$SUPERVISOR_RUNTIME_REPO/src/cleanup_run_processes.py" \
       --run-prefix "$ROOT" --timeout "${OM_RLZERO_STALE_PROCESS_TIMEOUT:-15}" \
       --open-file "$PRIMARY_LOCK" || exit 1
@@ -971,6 +985,39 @@ failure_backoff_seconds() {  # failure_backoff_seconds <consecutive failures>
 }
 LAST_FAILURE_KIND=""
 loop_marker() { printf '%s/%s-s%s.loop\n' "$QUEUE" "$1" "$2"; }
+point_runtime_failures() {  # point_runtime_failures <dataset> <seed> -> failed tries of the point that failed last
+  # 2026-09-10: the CUDA-fault bound counted every [point-failed] line of every
+  # point in the family for all time, so a family with a long history (mbpp/s4:
+  # d0 died on 2026-09-06, d25 lost its node twice) reached the bound on its
+  # first fault of the day and was marked LOOPING while its point was healthy.
+  # Count only the point whose supervisor log is newest, only lines after its
+  # last [point-accepted], and nothing at all for a point that already has DONE.
+  local supervisor point
+  supervisor=$(ls -t "$(family_root "$1" "$2")"/*/logs/supervisor.log 2>/dev/null | head -1)
+  [ -n "$supervisor" ] || { printf '0\n'; return 0; }
+  point=$(dirname "$(dirname "$supervisor")")
+  [ ! -s "$point/DONE" ] || { printf '0\n'; return 0; }
+  awk '/\[point-accepted\]/ {n = 0; next} /\[point-failed\]/ {n++} END {print n + 0}' "$supervisor"
+}
+remaining_families_summary() {  # who holds each unfinished family this worker may take
+  local dataset seed owner host claimed parts=""
+  while read -r dataset seed; do
+    [ -n "$dataset" ] && [ -n "$seed" ] || continue
+    family_selected "$dataset" "$seed" || continue
+    family_complete "$dataset" "$seed" && continue
+    owner="$QUEUE/$dataset-s$seed.owner.json"
+    if family_looping "$dataset" "$seed"; then
+      parts+="; $dataset/s$seed marked LOOPING"
+    elif [ -s "$owner" ]; then
+      host=$(sed -n 's/.*"host": "\([^"]*\)".*/\1/p' "$owner" | head -1)
+      claimed=$(sed -n 's/.*"claimed_at_utc": "\([^"]*\)".*/\1/p' "$owner" | head -1 | cut -c1-16)
+      parts+="; $dataset/s$seed running on ${host:-?} since ${claimed:-?}Z"
+    else
+      parts+="; $dataset/s$seed unowned"
+    fi
+  done < <(ordered_families)
+  printf '%s\n' "${parts#; }"
+}
 family_last_error() {  # family_last_error <dataset> <seed> -> last error line (may be empty)
   # 2026-09-08: judge the attempt that just failed, not the newest error line
   # anywhere in the family's logs. A stale CUDA line from an earlier attempt made
@@ -1014,7 +1061,14 @@ for marker in "$QUEUE"/*.loop; do
   grep -Eq '(^| )last_rc=43( |$)' "$marker" && continue
   marker_error=$(sed -n 's/^last_error=//p' "$marker" 2>/dev/null | head -1)
   if grep -q '^family=.*runtime_failures_total=' "$marker" 2>/dev/null; then
-    echo "[queue] keeping loop marker $(basename "$marker"): it records a CUDA fault that reproduced on every attempt, not a transient one" | tee -a "$LOG"
+    marker_family=$(basename "$marker" .loop)
+    marker_count=$(point_runtime_failures "${marker_family%-s*}" "${marker_family##*-s}")
+    if [ "$marker_count" -ge "$MAX_RUNTIME_FAILURES" ]; then
+      echo "[queue] keeping loop marker $(basename "$marker"): its current point failed $marker_count times, every one a CUDA runtime fault (bound $MAX_RUNTIME_FAILURES)" | tee -a "$LOG"
+    else
+      rm -f -- "$marker" \
+        && echo "[queue] cleared loop marker $(basename "$marker"): it was written by the old family-wide count; the current point has failed $marker_count time(s), below the bound of $MAX_RUNTIME_FAILURES" | tee -a "$LOG"
+    fi
   elif [ "$(failure_kind "$marker_error" 2>/dev/null || printf other)" = runtime ]; then
     rm -f -- "$marker" \
       && echo "[queue] cleared loop marker $(basename "$marker"): it recorded a CUDA runtime fault, which is retried, not a repeating failure" | tee -a "$LOG"
@@ -1286,15 +1340,14 @@ while :; do
         # never marked LOOPING. Count the whole family's failed tries from the
         # durable [point-failed] lines and stop when even a "transient" fault has
         # burned that many attempts.
-        runtime_total=$(grep -h '\[point-failed\]' \
-          "$(family_root "$dataset" "$seed")"/*/logs/supervisor.log 2>/dev/null | grep -c .)
+        runtime_total=$(point_runtime_failures "$dataset" "$seed")
         if [ "${runtime_total:-0}" -ge "$MAX_RUNTIME_FAILURES" ]; then
           {
             echo "family=$dataset/s$seed worker=$WORKER_ID host=$HOST_TAG consecutive_failures=$cuda_n last_rc=$rc runtime_failures_total=$runtime_total"
             echo "last_error=$(family_last_error "$dataset" "$seed")"
             echo "marked_at_utc=$(date -u +%FT%TZ)"
           } > "$(loop_marker "$dataset" "$seed")"
-          echo "[family-loop] $dataset/s$seed: $runtime_total failed tries on this family, every one a CUDA runtime fault. That reproduces, so it is not flaky hardware. No worker retries it until you fix it and relaunch with OM_RLZERO_CLEAR_LOOPS=1." | tee -a "$LOG"
+          echo "[family-loop] $dataset/s$seed: $runtime_total failed tries on its current point, every one a CUDA runtime fault. That reproduces, so it is not flaky hardware. No worker retries it until you fix it and relaunch with OM_RLZERO_CLEAR_LOOPS=1." | tee -a "$LOG"
           continue
         fi
         if [ "$cuda_n" -ge "$MAX_CUDA_FAILURES" ]; then
@@ -1358,8 +1411,10 @@ while :; do
   # for repaired primary families without repeatedly running a known failure.
   if [ "$looping" -gt 0 ] && [ "$looping" -eq "$remaining" ]; then
     echo "[queue] every family left is marked LOOPING:$looping_list" | tee -a "$LOG"
-    echo "[primary-blocked] OLMo3 is incomplete; Qwen/additional handoff disabled; retaining primary worker" | tee -a "$LOG"
-    echo "[queue] see the reason in <family>/<point>/logs/supervisor.log (bash scripts/why.sh), fix it, then relaunch with OM_RLZERO_CLEAR_LOOPS=1" | tee -a "$LOG"
+    for fam in $looping_list; do
+      echo "[queue]   $fam: $(sed -n 's/^last_error=//p' "$(loop_marker "${fam%/s*}" "${fam#*/s}")" 2>/dev/null | head -1 | cut -c1-200)" | tee -a "$LOG"
+    done
+    echo "[primary-blocked] OLMo3 is not finished, so this worker keeps waiting for it and starts no other model. Fix the cause above (bash scripts/why.sh), then relaunch with OM_RLZERO_CLEAR_LOOPS=1. For Qwen on this node instead: Ctrl-C, then bash scripts/run_qwen35_9b.sh" | tee -a "$LOG"
     stop_supervisor_keepalive
     sleep "$QUEUE_WAIT_SECONDS"
     continue
@@ -1372,7 +1427,7 @@ while :; do
         | tee -a "$LOG"
       sleep "$wait_seconds"
     else
-      echo "[queue] waiting for $remaining families owned by other workers or marked LOOPING" | tee -a "$LOG"
+      echo "[queue] waiting for $remaining families owned by other workers or marked LOOPING: $(remaining_families_summary). Nothing to run on this node until then (it stays an idle OLMo3 spare). For Qwen on this node now: Ctrl-C, then bash scripts/run_qwen35_9b.sh" | tee -a "$LOG"
       sleep "$QUEUE_WAIT_SECONDS"
     fi
   fi

@@ -8,7 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from cleanup_run_processes import terminate
+from cleanup_run_processes import list_processes, terminate
 
 
 def assert_terminated(process: subprocess.Popen[bytes], label: str) -> None:
@@ -44,6 +44,10 @@ with tempfile.TemporaryDirectory() as raw_tmp:
         ["bash", "-c", 'exec 9>"$1"; flock 9; sleep 300', "bash", str(lock)]
     )
     time.sleep(0.1)
+    # list mode names the holder and signals nothing (2026-09-10)
+    listed = list_processes(str(tmp / "runs" / "olmo3-"), open_files=(str(lock.resolve()),))
+    assert any(process.pid == old_lock_holder.pid for process in listed), listed
+    assert old_lock_holder.poll() is None
     assert terminate(
         str(tmp / "runs" / "olmo3-"),
         timeout=1,
