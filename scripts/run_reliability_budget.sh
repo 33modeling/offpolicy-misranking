@@ -87,9 +87,16 @@ for seed in 0 1 2 3 4; do
 done
 [ -n "$SRC_POINT" ] || { echo "[abort] no registered d0 point with prompts.json under $SOURCE_ROOT for $DATASET"; exit 1; }
 
-RUN="$OM_WORK/runs/reliability-budget-v1/$DATASET-fk$FRESH_K-vk$VAL_K-s$SEED"
+RUN="${RB_RUNS_ROOT:-$OM_WORK/runs/reliability-budget-v1}/$DATASET-fk$FRESH_K-vk$VAL_K-s$SEED"
 LOGS="$RUN/logs"
-EXPORTS="$OM_WORK/exports"
+EXPORTS="${RB_EXPORTS_ROOT:-$OM_WORK/exports}"
+source_abs=$(realpath -m "$SOURCE_ROOT")
+for destination in "$RUN" "$EXPORTS"; do
+  destination_abs=$(realpath -m "$destination")
+  case "$destination_abs/" in
+    "$source_abs/"*) echo "[abort] reference output cannot overwrite primary inputs: $destination"; exit 1 ;;
+  esac
+done
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 OUT="$EXPORTS/reliability-budget-run-$DATASET-fk$FRESH_K-vk$VAL_K-s$SEED-$STAMP.txt"
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then

@@ -4,6 +4,15 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+## New Reference Sampling
+
+On an idle allocated GPU node, use this existing checkout and environment:
+`git pull --ff-only`, then `bash scripts/run_reference_axes.sh math500 0`.
+This starts five one-factor sampling conditions. No v2 checkout or venv is
+needed; primary inputs are read only and outputs go to `runs/reference-axes`.
+See [the execution guide](docs/REFERENCE_AXES_RUN.md), including `--plan` and
+`--check` modes. This does not restart or replace a primary worker.
+
 ## Run OLMo3 First
 
 For a targeted GPU pair, use `bash scripts/run_olmo3_rlzero.sh resume-family h100 mbpp 4`
