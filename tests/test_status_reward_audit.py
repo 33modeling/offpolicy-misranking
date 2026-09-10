@@ -120,6 +120,11 @@ def qwen_status(
     scripts.mkdir(parents=True)
     for name in ["status_qwen35.sh", "setup_env.sh"]:
         shutil.copy2(ROOT / "scripts" / name, scripts / name)
+    # the full-matrix renderer and its two imports; the status falls back to
+    # its short table when they are missing, so copy them to test the real path
+    (repo / "src").mkdir()
+    for name in ["matrix_status.py", "training_progress.py", "point_key_numbers.py"]:
+        shutil.copy2(ROOT / "src" / name, repo / "src" / name)
     work = tmp_path / "work"
     logs = work / "console-logs"
     logs.mkdir(parents=True)
@@ -169,6 +174,20 @@ def test_qwen_no_failures_has_valid_integer_count(tmp_path):
     assert result.returncode == 0
     assert result.stderr == ""
     assert "family failures this session: 0\n" in result.stdout
+
+
+def test_qwen_status_prints_the_whole_matrix_like_olmo(tmp_path):
+    result = qwen_status(tmp_path, active=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    # all ten families, not just the newest six points
+    for dataset in ("math500", "mbpp"):
+        for seed in range(5):
+            assert f" {dataset}/s{seed} " in result.stdout
+    assert "families 10:" in result.stdout
+    assert "overall_verdict=" in result.stdout
+    assert "recommended_action=" in result.stdout
+    assert "KEY NUMBERS per scored point" in result.stdout
+    assert "(full status renderer failed" not in result.stdout
 
 
 @pytest.mark.parametrize("marker", ["[abort]", "GPU0 ✘ job rc=1"])

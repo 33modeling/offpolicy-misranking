@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# One screen, no GPU, no locks: is the Qwen3.5-9B run fine, and if not, what to do?
-#   bash scripts/run_qwen35_9b.sh status
+# No GPU, no locks: is the Qwen3.5-9B run fine, and if not, what to do?
+#   bash scripts/run_qwen35_9b.sh status            # DECISION + whole 40-point matrix + launchers + KEY NUMBERS
+#   bash scripts/run_qwen35_9b.sh status verbose    # + per-point rows and the newest stage-log lines
 # Line 2 (DECISION) is the answer. Everything is appended to a history file.
+# The matrix table comes from src/matrix_status.py (flat run_matrix layout);
+# it is the Qwen counterpart of the OLMo `status h100` screen.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
@@ -18,7 +21,14 @@ fi
 RUN_ID=${RUN_ID:-qwen35-9b-posttrained-math-code-grpo-v1}
 RUNS="$OM_WORK/runs/$RUN_ID"
 RES="$OM_WORK/results/$RUN_ID"
-LOG=$(ls -t "$OM_WORK"/console-logs/additional-qwen35-*.log 2>/dev/null | head -1)
+# The DECISION reads one session log. With several nodes the newest file can be
+# an old launcher's exit record rewritten late; prefer the newest log that has
+# no [exit] line (a session still running somewhere), else the newest overall.
+LOG=""
+for candidate in $(ls -t "$OM_WORK"/console-logs/additional-qwen35-*.log 2>/dev/null); do
+  [ -n "$LOG" ] || LOG=$candidate
+  if ! grep -q '^\[exit\]' "$candidate" 2>/dev/null; then LOG=$candidate; break; fi
+done
 NOW=$(date +%s)
 ERROR_PATTERN='✘|\[abort\]'
 
@@ -111,7 +121,27 @@ if [ -n "$LOG" ]; then
   echo "session  started $started   stage $stage   launcher $([ "$launcher_alive" -eq 1 ] && echo alive || echo not-running)"
 fi
 echo "points   $done_n done / $total started / 40 in matrix   family failures this session: $fails"
-if [ -d "$RUNS" ]; then
+full_status_printed=0
+if [ -d "$RUNS" ] || [ -n "$LOG" ]; then
+  # Whole matrix, OLMo-style: every family, every point, launcher sessions on
+  # all nodes, KEY NUMBERS, overall verdict. Read-only. `status verbose` adds
+  # per-point rows and the newest stage-log lines. Falls back to the short
+  # six-point table when the renderer or python is missing.
+  FULL_TOOL="$(dirname "$0")/../src/matrix_status.py"
+  CONFIG="$(dirname "$0")/../configs/qwen35_9b_grpo.json"
+  full_args=(--root "$RUNS" --console-logs "$OM_WORK/console-logs" --log-glob 'additional-qwen35-*.log')
+  [ -f "$CONFIG" ] && full_args+=(--config "$CONFIG")
+  [ "${1:-}" != verbose ] && [ "${OM_QWEN_STATUS_VERBOSE:-0}" != 1 ] || full_args+=(--verbose)
+  if [ -f "$FULL_TOOL" ]; then
+    echo
+    if PYTHONPATH="$(dirname "$0")/../src${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$FULL_TOOL" "${full_args[@]}"; then
+      full_status_printed=1
+    else
+      echo " (full status renderer failed; showing the short table)"
+    fi
+  fi
+fi
+if [ -d "$RUNS" ] && [ "$full_status_printed" -eq 0 ]; then
   echo
   echo " stage = k/8 of the point pipeline: 1 prep  2 behavior-rollout  3 grpo  4 fresh-rollout  5 gradients  6 scores  7 merge+report  8 DONE;  +Nmin = time in this point"
   echo " note:  ok = fine   ok (earlier attempt failed: ...) = recovered   ERROR (current): = this attempt is failing, read it"
@@ -136,11 +166,11 @@ if [ -d "$RUNS" ]; then
     short=$(basename "$run" | sed "s/^$RUN_ID-//")
     printf ' %-22s %-29s %-12s %s\n' "${short:0:22}" "${st:-starting}" "$age" "$note"
   done
-  [ -d "$RES" ] && echo "results  $RES ($(ls "$RES" 2>/dev/null | wc -l) entries)"
   echo
   "$PY" "$(dirname "$0")/../src/point_key_numbers.py" --root "$RUNS" 2>/dev/null \
     || echo " KEY NUMBERS unavailable (python or point_key_numbers.py missing)"
 fi
+[ ! -d "$RES" ] || echo "results  $RES ($(ls "$RES" 2>/dev/null | wc -l) entries)"
 echo
 echo " DECISION words:  ERROR = you act   WARNING = check again in 30 min   NO ERROR = leave it      last write = time since that point wrote any file"
 echo " point name = s<seed>-<dataset>-d<drift>; 10 families (2 datasets x 5 seeds) x 4 points (d0 d25 d100 d400) = 40"

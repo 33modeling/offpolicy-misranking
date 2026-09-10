@@ -163,8 +163,24 @@ must never look like a running experiment (18 hours were lost that way on
 ## Reading progress on a phone
 
 ```bash
-bash scripts/run_qwen35_9b.sh status     # one screen: stage, points done/started, current point, last error
+bash scripts/run_qwen35_9b.sh status            # DECISION, then the whole matrix like the OLMo `status h100`
+bash scripts/run_qwen35_9b.sh status verbose    # + per-point rows and the newest stage-log lines
 ```
+
+Since 2026-09-11 the status prints the same picture as the OLMo status
+(`src/matrix_status.py`, read only): every one of the 10 families with its
+state (`COMPLETE`, `PROGRESSING`/`COMPUTING`, `QUIET` after 45 min without a
+write, `HUNG` after 3 h, `QUEUED`, `STOPPED`, `BLOCKED`), the node on it, the
+four points (`ok`, `k/8`, `-`, `!k/8` = error in the current attempt), the
+current point and stage, cumulative GRPO steps, last write and a note; one row
+per launcher session log on every node (pid liveness is verified on this node
+only; remote launchers are inferred from log age); the KEY NUMBERS of every
+scored point; and `overall_verdict=` / `recommended_action=` lines. An extra
+profile word (`status h100`) is accepted and ignored. Because a Qwen launcher
+pinned to this checkout's commit reads `run_point.sh` and `src/` from the
+shared checkout, `status` no longer fast-forwards that checkout while any Qwen
+launcher is alive (local pid, or a session log without `[exit]` written in the
+last 20 minutes); it says so and prints from the current code.
 
 The terminal shows tagged lines only (`[stage]`, `[progress]`, `[abort]`,
 `[model]`, `[regime-*]`, `START/OK/FAILED/DIAGNOSIS/ACTION`); tracebacks and

@@ -11,8 +11,23 @@ MODE=${1:-run}
 # Workers run from node-local clones, so fast-forwarding the shared checkout
 # never touches a running experiment. Never resets: local edits are reported.
 self_update_for_status() {
-  local before after dirty
+  local before after dirty live
   before=$(git rev-parse --short HEAD 2>/dev/null)
+  # A Qwen launcher whose generation commit equals this checkout's HEAD runs
+  # run_point.sh and src/*.py straight from this shared checkout, stage by
+  # stage. Replacing those files under it changes a running experiment, so the
+  # update is skipped while any Qwen launcher is alive: on this node (pid) or on
+  # another node (a session log without an [exit] line written in the last 20
+  # minutes). Status still prints from the current code.
+  live=$(pgrep -f 'run_additional_experiments[.]sh --run qwen35' 2>/dev/null | wc -l)  # [.] keeps this line from matching itself
+  live=$(( ${live:-0} + $(find "${OM_WORK:-/nonexistent}/console-logs" -maxdepth 1 -name 'additional-qwen35-*.log' -mmin -20 2>/dev/null \
+    | xargs -r grep -L '^\[exit\]' 2>/dev/null | wc -l) ))
+  if [ "$live" -gt 0 ]; then
+    if git fetch -q origin master 2>/dev/null && [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master)" ]; then
+      echo "[code] $before; origin/master is $(git rev-parse --short origin/master). Not updating: $live live Qwen launcher(s) read this checkout. Update after they exit, or run status from a second clone."
+    fi
+    return 0
+  fi
   if ! git fetch -q origin master 2>/dev/null; then
     echo "[code] $before (offline: could not fetch origin)"; return 0
   fi
@@ -32,14 +47,18 @@ self_update_for_status() {
   fi
 }
 if [ "$MODE" = status ]; then
+  # `status`, `status verbose`; an extra profile word (`status h100`) is accepted
+  # and ignored: the 9B matrix has one profile.
   self_update_for_status
-  exec bash scripts/status_qwen35.sh
+  status_args=()
+  for word in "${@:2}"; do [ "$word" != verbose ] || status_args+=(verbose); done
+  exec bash scripts/status_qwen35.sh "${status_args[@]}"
 fi
 echo "[code] $(git rev-parse --short HEAD) (no automatic fetch/merge/reset)"
 export OM_ALLOW_UNPINNED_SNAPSHOT=0 OM_TRUST_LOCAL_SNAPSHOT=0
 case "$MODE" in
   doctor) exec bash scripts/doctor_qwen35.sh ;;
-  status) exec bash scripts/status_qwen35.sh ;;
+  status) exec bash scripts/status_qwen35.sh "${@:2}" ;;
   run|run-idle|restart-idle)
     [ "$#" -le 1 ] || { echo "usage: $0 [run|run-idle|restart-idle]"; exit 2; }
     export OM_QWEN_IDLE_NODE="$(hostname)"
