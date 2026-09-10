@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# E5 with an independent test set: resumable, matched four-GPU GRPO arms.
+#
+#   bash scripts/run_downstream_independent.sh RUN OUT --eval-prompts TEST.json \
+#        [--steps 100] [--eval-k 8] [--dry-run|--prepare-only]
+#   DOWNSTREAM_SELECTORS="random fresh_r g11"   arms to train (default; any of
+#                                               fresh_r g00 g10 g01 g11 passrate_beta random)
+#
+# Every arm starts from RUN's policy_step_<drift> adapter+optimizer, receives
+# --steps further GRPO updates on its selected prompts with the point's own
+# objective configuration, and is evaluated on TEST.json (never the ranking
+# validation prompts). Per-arm leases in OUT let several idle nodes share the
+# arms of one seed; a busy arm is skipped, not duplicated.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+usage() {
+  echo "usage: bash scripts/run_downstream_independent.sh RUN OUT --eval-prompts TEST.json [--steps 100] [--eval-k 8] [--dry-run|--prepare-only]"
+}
+[ "$#" -ge 2 ] || { usage; exit 2; }
+RUN=$(realpath -m "$1"); OUT=$(realpath -m "$2"); shift 2
+EVAL_PROMPTS=${DOWNSTREAM_EVAL_PROMPTS:-}; STEPS=${DOWNSTREAM_STEPS:-100}; EVAL_K=${DOWNSTREAM_EVAL_K:-8}
+DRY=0; PREPARE_ONLY=0
+read -r -a SELECTORS <<< "${DOWNSTREAM_SELECTORS:-random fresh_r g11}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --eval-prompts|--steps|--eval-k)
+      [ "$#" -ge 2 ] || { usage; exit 2; }
+      case "$1" in
+        --eval-prompts) EVAL_PROMPTS=$2 ;; --steps) STEPS=$2 ;; --eval-k) EVAL_K=$2 ;;
+      esac; shift 2 ;;
+    --dry-run) DRY=1; shift ;;
+    --prepare-only) PREPARE_ONLY=1; shift ;;
+    *) usage; exit 2 ;;
+  esac
+done
+[ -n "$EVAL_PROMPTS" ] || { echo "[abort] independent --eval-prompts is required; the ranking validation set is not a test set"; exit 2; }
+for selector in "${SELECTORS[@]}"; do
+  case "$selector" in fresh_r|g00|g10|g01|g11|passrate_beta|random) ;; *) echo "[abort] unknown selector: $selector"; exit 2 ;; esac
+done
+export OM_ONLINE=0
+source scripts/setup_env.sh || exit 1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+PY="$VENV_DIR/bin/python"
+[ -x "$PY" ] || { echo "[abort] venv missing: $PY"; exit 1; }
+[ -s "$RUN/run_config.json" ] || { echo "[abort] source run_config.json missing: $RUN"; exit 1; }
+# Runtime knobs come from the source point so the arms match the matrix exactly
+# (attention kernel, generation batch, LoRA targets, sampling, prompt format).
+{ read -r CFG_ATTN; read -r CFG_GEN; read -r CFG_LORA; read -r CFG_TOPP; read -r CFG_THINK; read -r CFG_FMT; } < <(
+  "$PY" -c 'import json,sys; c=json.load(open(sys.argv[1])); print(*(str(c.get(k) if c.get(k) is not None else "") for k in sys.argv[2:]), sep="\n")' \
+    "$RUN/run_config.json" attn gen_batch lora_targets top_p thinking prompt_format)
+export OM_ATTN=${OM_ATTN:-${CFG_ATTN:-eager}} OM_GEN_BATCH=${OM_GEN_BATCH:-${CFG_GEN:-32}} OM_SKIP_HYBRID=1
+export OM_LORA_TARGETS="$CFG_LORA" OM_TOP_P=${CFG_TOPP:-1.0} OM_THINKING=${CFG_THINK:-off} OM_PROMPT_FORMAT=${CFG_FMT:-olmo_rlzero_math}
+# Same reward function as the registered matrix (symbolic Math-Verify).
+MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps") || exit 1
+export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify
+PREPARE=("$PY" src/evidence_downstream.py prepare --run "$RUN" --out "$OUT" --eval-prompts "$EVAL_PROMPTS" \
+         --steps "$STEPS" --eval-k "$EVAL_K" --selectors "${SELECTORS[@]}")
+if [ "$DRY" = 1 ]; then "${PREPARE[@]}" --dry-run; exit "$?"; fi
+"${PREPARE[@]}" || exit 1
+[ "$PREPARE_ONLY" = 0 ] || { echo "[prepared] $OUT; no GPU work launched"; exit 0; }
+
+# Node-local GPU admission: never share a node with the OLMo or Qwen launcher.
+if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then
+  LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+  mkdir -p "$LOCAL_LOCK_DIR"
+  exec 8>"$LOCAL_LOCK_DIR/primary.lock"
+  flock -n 8 || { echo "[busy] this node's GPUs belong to another experiment"; exit 75; }
+fi
+if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+  IFS=, read -ra GPUS <<< "$CUDA_VISIBLE_DEVICES"
+else
+  mapfile -t GPUS < <(timeout 20 nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null)
+fi
+[ "${#GPUS[@]}" -eq 4 ] || { echo "[abort] E5 requires exactly four allocated GPUs (found ${#GPUS[@]})"; exit 1; }
+export CUDA_VISIBLE_DEVICES="$(IFS=,; echo "${GPUS[*]}")"
+mkdir -p "$OUT/logs"
+exec > >(tee -a "$OUT/logs/launcher-$(hostname)-$(date -u +%Y%m%dT%H%M%SZ).log") 2>&1
+echo "[environment] host=$(hostname) CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES attention=$OM_ATTN generation_batch=$OM_GEN_BATCH arms=${SELECTORS[*]}"
+nvidia-smi --query-gpu=index,name,memory.total --format=csv 2>/dev/null || true
+CHILDREN=()
+stop_children() {
+  local pid
+  for pid in "${CHILDREN[@]}"; do kill -TERM -- "-$pid" 2>/dev/null || true; done
+  for pid in "${CHILDREN[@]}"; do wait "$pid" 2>/dev/null || true; done
+  CHILDREN=()
+}
+trap 'trap - INT TERM; stop_children; exit 130' INT
+trap 'trap - INT TERM; stop_children; exit 143' TERM
+run_tracked() {
+  setsid "$@" & local pid=$!
+  CHILDREN=("$pid")
+  wait "$pid"; local rc=$?
+  CHILDREN=()
+  return "$rc"
+}
+evaluate_arm() {
+  local arm=$1 shard pid failed=0
+  CHILDREN=()
+  for shard in 0 1 2 3; do
+    setsid env CUDA_VISIBLE_DEVICES="${GPUS[$shard]}" "$PY" src/evidence_downstream.py evaluate \
+      --out "$OUT" --arm "$arm" --shard "$shard" > "$OUT/logs/eval-$arm-$shard.log" 2>&1 &
+    CHILDREN+=("$!")
+  done
+  for pid in "${CHILDREN[@]}"; do wait "$pid" || failed=1; done
+  CHILDREN=()
+  return "$failed"
+}
+failed=0; busy=0
+exec 9>"$OUT/.before.lock"
+if flock -n 9; then
+  echo "[eval] baseline policy on ${EVAL_K} responses per test prompt"
+  evaluate_arm before || { echo "[failed] baseline evaluation; completed shards are retained"; failed=1; }
+  flock -u 9
+else
+  echo "[busy] another node is evaluating the common baseline; continuing with training"
+fi
+for selector in "${SELECTORS[@]}"; do
+  exec 9>"$OUT/.$selector.lock"
+  if ! flock -n 9; then echo "[busy] $selector is claimed on another node"; busy=$((busy + 1)); continue; fi
+  mapfile -d '' -t ARGS < "$OUT/subsets/train-$selector.args"
+  "$PY" src/evidence_downstream.py policy-ready --out "$OUT" --arm "$selector"; ready=$?
+  if [ "$ready" -eq 2 ]; then
+    echo "[failed] $selector has an invalid published policy; preserving it for diagnosis"
+    failed=1; flock -u 9; continue
+  fi
+  if [ "$ready" -ne 0 ]; then
+    echo "[train] $selector: $STEPS matched GRPO updates (resumes from the newest checkpoint if present)"
+    if ! run_tracked "$PY" "${ARGS[@]}" >> "$OUT/logs/train-$selector.log" 2>&1; then
+      echo "[failed] $selector training; see $OUT/logs/train-$selector.log; continuing to the next arm"
+      failed=1; flock -u 9; continue
+    fi
+  else
+    echo "[done] $selector already trained"
+  fi
+  echo "[eval] $selector on ${EVAL_K} responses per test prompt"
+  evaluate_arm "$selector" || { echo "[failed] $selector evaluation; continuing to the next arm"; failed=1; }
+  flock -u 9
+done
+if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then flock -u 8; fi
+exec 9>"$OUT/.summary.lock"
+if flock -n 9; then
+  "$PY" src/evidence_downstream.py summarize --out "$OUT" --allow-partial > "$OUT/logs/summary.log" 2>&1 || failed=1
+  grep -E '"complete"|"missing' "$OUT/logs/summary.log" || true
+fi
+echo "[E5] failures=$failed busy_arms=$busy output=$OUT"
+[ "$failed" -eq 0 ]
