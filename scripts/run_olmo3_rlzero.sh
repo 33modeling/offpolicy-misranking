@@ -375,8 +375,11 @@ if [ "$MODE" = status ]; then
   # Every status run is appended to a shared history file so "was it alive at
   # 03:00?" can be answered later from any node: $ROOT/logs/status-history.log
   STATUS_HISTORY="$ROOT/logs/status-history.log"
-  mkdir -p "$ROOT/logs" 2>/dev/null || true
-  { printf '\n===== status %s host=%s =====\n' "$(date -u +%FT%TZ)" "$(hostname)"; } >> "$STATUS_HISTORY" 2>/dev/null || STATUS_HISTORY=/dev/null
+  mkdir -p "$ROOT/logs" || exit 1
+  STATUS_CAPTURE=$(mktemp "$ROOT/logs/.status.XXXXXX") || exit 1
+  { printf '\n===== status %s host=%s =====\n' "$(date -u +%FT%TZ)" "$(hostname)";
+    printf 'status_checkout=%s primary_generation=%s\n' "$(git -C "$SUPERVISOR_REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)" "$(cat "$ROOT/.queue/generation.git" 2>/dev/null || echo unknown)";
+  } | tee "$STATUS_CAPTURE"
   "$PY" "$SUPERVISOR_REPO/src/rlzero_status.py" \
     --profile "$PROFILE" --root "$ROOT" --results "$GLOBAL_RESULTS" \
     --model-tag "$MODEL_TAG" --datasets "${DATASETS[@]}" \
@@ -393,9 +396,16 @@ if [ "$MODE" = status ]; then
     --min-recovery-generation-batch "$RECOVERY_MIN_GENERATION_BATCH" \
     "${STATUS_DATASET_FLAGS[@]}" \
     --log-lines "$STATUS_LOG_LINES" --error-lines "$STATUS_ERROR_LINES" \
-    "${STATUS_VERBOSE_FLAG[@]}" | tee -a "$STATUS_HISTORY"
+    "${STATUS_VERBOSE_FLAG[@]}" 2>&1 | tee -a "$STATUS_CAPTURE"
   rc=${PIPESTATUS[0]}
-  [ "$STATUS_HISTORY" = /dev/null ] || echo "history $STATUS_HISTORY"
+  if [ -f "$SUPERVISOR_REPO/scripts/reference_status.sh" ]; then
+    bash "$SUPERVISOR_REPO/scripts/reference_status.sh" "$OM_WORK" 2>&1 | tee -a "$STATUS_CAPTURE"
+  else
+    echo 'reference_status=UNAVAILABLE (update this status checkout)' | tee -a "$STATUS_CAPTURE"
+  fi
+  { flock 9 && cat "$STATUS_CAPTURE" >> "$STATUS_HISTORY"; } 9>"$STATUS_HISTORY.lock" || rc=1
+  rm -f "$STATUS_CAPTURE"
+  echo "history $STATUS_HISTORY"
   exit "$rc"
 fi
 

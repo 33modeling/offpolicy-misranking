@@ -1332,6 +1332,13 @@ def main() -> None:
                          f"(current or archived DONE); final accepted {points_done}/{len(families) * len(args.drifts)}; "
                          f"re-evaluation pending {rescore_count}; grpo {signature.grpo_steps} steps; "
                          f"rollouts {signature.rollout_bytes / 1e6:.0f} MB")
+    training_drifts = [d for d in args.drifts if d > 0]
+    d0_evaluation_only = bool(training_drifts) and points_done < len(families) * len(args.drifts) and all(
+        all(d in r["done_drifts"] for d in training_drifts) for r in rows
+    )
+    if d0_evaluation_only and progress_word == "TRAINING":
+        progress_word = "EVALUATING"
+        progress_line = progress_line.replace("TRAINING", "EVALUATING", 1)
     if progress_word == "NOT TRAINING" and workers:
         overall = "NOT_TRAINING"
         action = "Ctrl-C_the_idle_worker__git_pull__relaunch_run_h100"
@@ -1411,15 +1418,15 @@ def main() -> None:
             except OSError:
                 continue
     remaining = total_points - points_done
-    if rescore_count:
+    if rescore_count or d0_evaluation_only:
         eta = "   ETA unavailable: primary work and re-evaluation are separate workloads"
     elif remaining > 0 and recent_done >= 2:
         rate = recent_done / window_days
-        eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day over the last {window_days:.0f} days, {len(workers)} workers)"
+        eta = f"   rough throughput estimate {remaining / rate:.1f} days (not a stage ETA; {rate:.1f} points/day over the last {window_days:.0f} days)"
     elif started is not None and points_done >= 2 and remaining > 0:
         days = max((time.time() - started) / 86400.0, 1e-6)
         rate = points_done / days
-        eta = f"   ~{remaining / rate:.0f} days left ({rate:.1f} points/day since the first point, {len(workers)} workers)"
+        eta = f"   rough throughput estimate {remaining / rate:.1f} days (not a stage ETA; {rate:.1f} points/day since the first point)"
     action_text = {
         "none": "nothing to do",
         "assign_separate_gpu_evaluation_worker": "keep progressing workers running; assign the queued evaluation to a separate GPU node",
@@ -1546,6 +1553,10 @@ def main() -> None:
     if len(workers) < expected_workers:
         worker_word += f" (expected at least {expected_workers})"
     print(f"        {worker_word} ({worker_ids})   families {complete}/{len(families)} done   points {points_done}/{total_points} done{eta}")
+    claimed_workers = sum(bool(w["claims"]) for w in worker_rows if w["worker"] in workers)
+    print(f"        primary worker roles: with_claim={claimed_workers} without_claim={len(workers) - claimed_workers}; alive is not proof of experiment progress")
+    if d0_evaluation_only:
+        print(" PHASE  training checkpoints complete; remaining d0 work is GPU evaluation (generation, gradients, scoring)")
     print(f"ACTION  {action_text}")
     if rescore_count:
         print(" EVALUATION CPU = stored-answer reward rewrite; GPU = reward-derived gradients/scores; final DONE requires both")
@@ -1620,9 +1631,9 @@ def main() -> None:
         print(f" waiting     {'.' * len(args.drifts):<{len(args.drifts) + 1}} {', '.join(waiting)}")
     print()
     alerts = args.root / "logs" / "ALERTS.log"
-    if alerts.is_file() and alerts.stat().st_size:
+    if args.verbose and alerts.is_file() and alerts.stat().st_size:
         print()
-        print(" recent alerts (logs/ALERTS.log):")
+        print(" historical alert tail (not necessarily current failures):")
         for line in tail_lines(alerts, 3):
             print(f"  {elide(line, 150)}")
     # One line per LIVE worker: what it holds and what it wrote last. Records of
@@ -1640,7 +1651,10 @@ def main() -> None:
     print(" last write = time since this family wrote any file.  note: NEEDS YOU = you act, AUTO = supervisor handles it, QUEUED = waits for a free worker, ok = fine")
     stale_workers = [w["worker"] for w in worker_rows if w["state"] == "STALE"]
     if stale_workers:
-        print(f" stale worker records (no claim, no fresh log): {', '.join(stale_workers)}")
+        if args.verbose:
+            print(f" stale worker records (no claim, no fresh log): {', '.join(stale_workers)}")
+        else:
+            print(f" historical unclaimed worker records: {len(stale_workers)} (details: status {args.profile} verbose)")
     key_lines = key_numbers_lines(args, families)
     if key_lines:
         print()

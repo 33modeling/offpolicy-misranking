@@ -49,13 +49,13 @@ else
     fi
   done
 fi
-[ "${#families[@]}" -gt 0 ] || { echo "[why] no family is running or was written to in the last day under $ROOT"; exit 1; }
+[ "${#families[@]}" -gt 0 ] || echo "[why] no unfinished primary family; collecting reference status too"
 
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 EXPORTS="$OM_WORK/exports"; mkdir -p "$EXPORTS" || { echo "[abort] cannot create $EXPORTS"; exit 1; }
 OUT="$EXPORTS/why-$TAG-$STAMP.txt"
 DECISIONS='\[(point-failed|done-but-incomplete|family-plan|family-order|family-next|family-retry|family-loop|cuda-flaky|cuda-recovery|contract-fail|repair|repair-failed|config-abort|abort|queue)\]|try [0-9]+/[0-9]+ ->'
-ERRORS='config-abort|\[abort\]|OutOfMemoryError|CUDA error|CUBLAS_STATUS|device-side assert|RuntimeError|Error:|누락'
+ERRORS='config-abort|\[abort\]|OutOfMemoryError|CUDA error|CUBLAS_STATUS|device-side assert triggered|RuntimeError|Error:|누락'
 
 run_dir_of() { printf '%s/family-%s-s%s/%s-s%s-%s-d%s\n' "$ROOT" "$1" "$2" "$TAG" "$2" "$1" "$3"; }
 age_secs() {  # age_secs <file> -> seconds, or -1 when there is no such file
@@ -129,7 +129,13 @@ for fam in "${families[@]}"; do
   supervisor=$(newest_in "$froot"/*/logs/supervisor.log)
   reason=""
   [ -z "$supervisor" ] || reason=$(grep -E '\[(point-failed|done-but-incomplete)\]' "$supervisor" 2>/dev/null | tail -1 | short_reason 180)
-  [ -n "$reason" ] || reason=$(grep -hE "$ERRORS" "$current"/logs/*.log 2>/dev/null | tail -1 | short_reason 180)
+  attempt=$(newest_in "$current"/logs/regime-attempt-*.log)
+  if [ -n "$attempt" ]; then
+    reason=$(grep -hE "$ERRORS" "$attempt" 2>/dev/null | tail -1 | short_reason 180)
+    reason=${reason:-no error in latest attempt log; stage-log history is not attributed to this attempt}
+  elif [ -n "$reason" ]; then
+    reason="HISTORY (attempt boundary unknown): $reason"
+  fi
   refused=$(refused_count "$current")
   if [ "${refused:-0}" -gt 0 ] && [ ! -f "$ROOT/.families/$dataset-s$seed.loop" ]; then
     # the GPUs are busy on a point that already finished and was refused: the
@@ -205,9 +211,24 @@ done
       [ -d "$run" ] || { echo "  d$d: not started"; continue; }
       echo "  d$d: $( [ -s "$run/DONE" ] && echo DONE || echo "no DONE" ), attempts=$(ls "$run"/logs/regime-attempt-*.log 2>/dev/null | wc -l), last write $(age_of "$(newest_in "$run"/logs/*.log)") ago, rollouts=$(ls "$run"/rollouts_*.jsonl 2>/dev/null | wc -l) merged +$(ls "$run"/*.partial 2>/dev/null | wc -l) partial, grpo steps=$(cat "$run"/policy_step_*/grpo_stats.jsonl 2>/dev/null | wc -l)"
     done
-    echo "  --- decision lines for $key from the worker logs (last 25)"
-    grep -hE "$DECISIONS" "$ROOT"/logs/run*.log 2>/dev/null | grep -F "$key" | tail -25 | sed 's/^/    /' | short_reason 230
     [ -d "$current" ] || continue
+    attempt=$(newest_in "$current"/logs/regime-attempt-*.log)
+    if [ -n "$attempt" ]; then
+      echo "  --- LATEST ATTEMPT LOG: $attempt (selected by modification time, not attempt number)"
+      echo "  --- error scope: this attempt log only; per-stage historical errors are not current failures"
+      grep -nE "$ERRORS" "$attempt" 2>/dev/null | tail -6 | sed 's/^/    /' | short_reason 230
+      tail -n "$TAIL" "$attempt" | sed 's/^/    /' | short_reason 230
+      echo "  --- STAGE ACTIVITY (tails, not current-error attribution)"
+      for stage in "$current"/logs/fresh-shard*.log "$current"/logs/val-grads*.log "$current"/logs/ograds-shard*.log "$current"/logs/score-shard*.log; do
+        [ -s "$stage" ] || continue
+        printf '    stage=%s age=%s last=%s\n' "${stage##*/}" "$(age_of "$stage")" "$(tail -1 "$stage" | short_reason 180)"
+      done
+    else
+      echo '  current_attempt=UNKNOWN (no attempt log); historical errors cannot establish current failure'
+    fi
+    [ "${WHY_HISTORY:-0}" = 1 ] || { echo '  historical errors/decisions omitted; WHY_HISTORY=1 includes them explicitly'; continue; }
+    echo "  --- HISTORY ONLY: decision lines for $key (not current failures)"
+    grep -hE "$DECISIONS" "$ROOT"/logs/run*.log 2>/dev/null | grep -F "$key" | tail -25 | sed 's/^/    /' | short_reason 230
     for f in "$current/logs/supervisor.log" "$current/logs/main.log"; do
       [ -s "$f" ] || continue
       echo "  --- $(basename "$current")/logs/$(basename "$f") tail $TAIL"
@@ -219,7 +240,7 @@ done
       echo "  --- $(basename "$f") tail $TAIL"
       tail -n "$TAIL" "$f" | sed 's/^/    /' | short_reason 230
     done
-    echo "  --- last error line of every stage log of $(basename "$current")"
+    echo "  --- HISTORY ONLY: last error line of every stage log of $(basename "$current")"
     for f in "$current"/logs/*.log; do
       [ -s "$f" ] || continue
       line=$(grep -hE "$ERRORS" "$f" 2>/dev/null | tail -1)
@@ -227,8 +248,15 @@ done
     done
   done
   echo
-  echo "--- ALERTS.log tail"
-  tail -n 20 "$ROOT/logs/ALERTS.log" 2>/dev/null | sed 's/^/  /' | short_reason 200
+  if [ "${WHY_HISTORY:-0}" = 1 ]; then
+    echo "--- HISTORY ONLY: ALERTS.log tail (not current failures)"
+    tail -n 20 "$ROOT/logs/ALERTS.log" 2>/dev/null | sed 's/^/  /' | short_reason 200
+  fi
+  if [ -f scripts/reference_status.sh ]; then
+    bash scripts/reference_status.sh "$OM_WORK"
+  else
+    echo 'reference_status=UNAVAILABLE (update this diagnostic checkout)'
+  fi
 } > "$OUT" 2>&1
 echo "[why] $OUT ($(( $(stat -c %s "$OUT") / 1024 )) KB, $(wc -l < "$OUT") lines)"
 sed -n '/1. DIAGNOSIS/,/2. EVIDENCE/p' "$OUT" | head -60

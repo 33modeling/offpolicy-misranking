@@ -43,3 +43,41 @@ project. No packages are installed or updated by this entry point.
 This change moves the immediate reference-experiment execution path into the
 operational repository. It does not replace the existing E5/E6 launchers with
 the separately developed E5/E6 implementation or change primary scheduling.
+
+## Status and Diagnostic Logs
+
+From the existing operational checkout:
+
+```bash
+git pull --ff-only
+bash scripts/run_olmo3_rlzero.sh status h100
+bash scripts/why.sh
+```
+
+These are read-only inspection commands; do not restart a productive worker
+to refresh its status. Status includes primary work and reference experiments
+in one snapshot, appended under a lock to the primary `logs/status-history.log`.
+`status_checkout` identifies the reporting code, while `primary_generation`
+identifies the pinned primary experiment code. They need not match.
+
+New reference invocations save their complete launcher console under
+`$OM_WORK/console-logs/reference-*.log` and atomic state records under
+`$OM_WORK/reference-workers/`. Records include node, PID, dataset, replicate,
+condition, seed, output directory and final exit state. Remote PID liveness
+is unverified; a RUNNING record alone does not establish current GPU activity.
+Older invocations without records remain UNKNOWN, not stopped. Stage tails
+show file activity, not proof that an error belongs to the latest attempt.
+Stage/shard ETAs are not whole-experiment completion estimates.
+
+`why.sh` writes one report under `$OM_WORK/exports/why-*.txt`, including reference
+status. Its default error section uses the latest modified attempt log, not
+the highest attempt number. Historical stage errors are not automatically
+attributed to that attempt. To include explicitly labelled older evidence:
+
+```bash
+WHY_HISTORY=1 bash scripts/why.sh
+```
+
+The separately prepared `run_mbpp_hotfix.sh` is not called by any of these
+commands. Its `go` mode starts a new five-seed MBPP matrix without reusing
+the existing matrix outputs; it is not a status/logging update.

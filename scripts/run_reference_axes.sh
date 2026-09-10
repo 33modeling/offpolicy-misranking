@@ -37,6 +37,36 @@ fi
 unset OUT_ROOT REGIME_ROOT OM_PROJECT_VERSION OM_NODE_LOCK_HELD PYTHONHOME
 export RB_DRY=0
 [ "$MODE" != --check ] || export RB_DRY=1
+STATE_FILE=""; CONSOLE="-"; fk="-"; vk="-"; seed="-"; CURRENT_RUN="-"
+HOST=$(hostname); CONDITION_EPOCH=$(date +%s)
+write_state() {
+  [ -n "$STATE_FILE" ] || return 0
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$1" "$HOST" "$$" "$DATASET" "$REPLICATE" "$fk" "$vk" "$seed" \
+    "$CURRENT_RUN" "$CONSOLE" "$CONDITION_EPOCH" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+}
+finish_log() {
+  local rc=$? state=COMPLETE
+  [ "$rc" -eq 0 ] || state=FAILED
+  [ "$rc" -ne 143 ] || state=INTERRUPTED
+  echo "[reference-end] utc=$(date -u +%FT%TZ) host=$HOST pid=$$ state=$state rc=$rc"
+  write_state "$state"
+}
+if [ "$MODE" = --run ]; then
+  for destination in "$OM_WORK/console-logs" "$OM_WORK/reference-workers"; do
+    case "$(realpath -m "$destination")/" in
+      "$(realpath -m "$OM_OLMO3_ROOT")/"*) echo '[abort] log output overlaps primary inputs'; exit 1 ;;
+    esac
+  done
+  mkdir -p "$OM_WORK/console-logs" "$OM_WORK/reference-workers" || exit 1
+  CONSOLE="$OM_WORK/console-logs/reference-$DATASET-r$REPLICATE-$HOST-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+  STATE_FILE="$OM_WORK/reference-workers/$DATASET-r$REPLICATE-$HOST-$$.state"
+  exec > >(tee -a "$CONSOLE") 2>&1
+  trap finish_log EXIT
+  write_state STARTING
+  echo "[reference-begin] utc=$(date -u +%FT%TZ) host=$HOST pid=$$ checkout=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) dataset=$DATASET replicate=$REPLICATE"
+  echo "[reference] console=$CONSOLE allocated_gpus=${CUDA_VISIBLE_DEVICES:-auto-detect}"
+fi
 echo "[reference] checkout=$OM_REPO"
 echo "[reference] existing_python=$VENV_DIR/bin/python"
 echo "[reference] model=$OM_OLMO3_MODEL_PATH"
@@ -64,6 +94,9 @@ for budgets in '32 8' '64 8' '128 8' '32 16' '32 32'; do
   seed=$((100000 + REPLICATE * 10000 + fk * 40 + vk))
   echo "[condition] dataset=$DATASET replicate=$REPLICATE fresh_k=$fk val_k=$vk seed=$seed"
   [ "$MODE" != --plan ] || continue
+  CURRENT_RUN="$RB_RUNS_ROOT/$DATASET-fk$fk-vk$vk-s$seed"
+  CONDITION_EPOCH=$(date +%s)
+  write_state RUNNING
   bash scripts/run_reliability_budget.sh "$DATASET" "$fk" "$vk" "$seed" &
   ACTIVE=$!
   wait "$ACTIVE"; rc=$?
