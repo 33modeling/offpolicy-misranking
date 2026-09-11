@@ -2,14 +2,17 @@
 
 Date: 2026-09-12 (Asia/Seoul)
 
-Latest user direction: prioritize a cost-bounded measurement procedure that
-uses a selector only when it establishes useful benefit over random and
-otherwise returns to random promptly. The
-[revised direction and unresolved design](LOW_ORDER_PRIOR_ART_AND_RATIONALE_2026-09-12.md#subsequent-direction-bounded-measurement-with-random-fallback)
-separate inconclusive results from demonstrated lack of gain, require charging
-diagnostic cost, and identify the existing runner's missing fallback control.
-This is a design record, not an implemented or validated detector. Earlier
-candidate-specific decisions below are retained for chronology.
+Latest user direction: use offline random-versus-selection TRAINING to develop
+an inexpensive gate placed BEFORE expensive selection. Deployment does not run
+two shadow trainings at each decision. The user permits replacing the earlier
+paper argument and proofs; low-order scoring is only one candidate selector.
+The [current experiment and code design](SELECTION_GATE_DESIGN_2026-09-12.md)
+specifies same-parent switch interventions, measurement opportunity cost,
+held-out validation, absorbing random fallback, and missing runner support.
+The [theory draft](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/main/research/2026-09-12/SELECTION_GATE_THEORY.md)
+states conditional proofs and their small-sample limits. This is a design
+record, not an implemented or validated detector. Earlier candidate-specific
+decisions below are retained for chronology.
 
 Implementation update: after reviewing the follow-up specification, the user
 explicitly requested code. That authorizes the isolated experimental

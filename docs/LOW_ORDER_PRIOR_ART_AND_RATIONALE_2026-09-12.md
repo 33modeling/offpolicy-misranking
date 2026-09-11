@@ -2,7 +2,27 @@
 
 Date: 2026-09-12 (Asia/Seoul)
 
-## Subsequent direction: bounded measurement with random fallback
+## Current direction: a gate before selection
+
+The user's subsequent clarification supersedes the operating sketch below:
+compare random and selection training OFFLINE to develop a predictor; in
+deployment place that predictor BEFORE expensive selection. Do not run paired
+shadow trainings at each gate check. The user permits replacing the earlier
+manuscript argument and theory to support this direction.
+
+The current specification is
+[Pre-selection gate: experiment and implementation design](SELECTION_GATE_DESIGN_2026-09-12.md).
+The [mathematical draft](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/main/research/2026-09-12/SELECTION_GATE_THEORY.md)
+derives the cost-adjusted objective, decision-error loss, a conditional
+whole-controller certificate, and the same-state stopping identity. None
+proves that the proposed inexpensive features predict RLVR learning benefit.
+
+The first controller design uses bounded checks and absorbing random fallback;
+it does not terminate healthy training. The gate is not implemented. Existing
+fixed-arm code and GPU jobs are unchanged. The following earlier paired-pilot
+sketch is retained as SUPERSEDED history, not current runtime instructions.
+
+## Superseded sketch: bounded measurement with random fallback
 
 After this review, the user proposed a different primary contribution:
 measure whether selection is worth using, and quickly return to uniform
@@ -87,6 +107,77 @@ currently waits for complete scores before preparing its random training
 subset. A future controller must make random training eligible independently
 of successful selector scoring. No automatic-switching code, default launcher
 change, GPU job, or manuscript claim was introduced with this direction note.
+
+### Superseded paired-pilot timing sketch
+
+This subsection predates the user's clarification above. Its expensive paired
+continuations belong in offline research, not in the deployed pre-selection
+gate. Use the linked current design for runtime timing and stopping behavior.
+
+The user's next refinement is to make the procedure specify the timing and
+size of measurement, not just produce a final selector/random label. Its
+output should identify the current action, its evidence and cost, and the
+earliest eligible next check. This remains a proposed protocol, not an
+implemented controller or a demonstrated optimal measurement schedule.
+
+**Start and recheck.** Start the first check before paying for a new selector
+deployment. Use existing cache metadata and ordinary training telemetry to
+screen feasibility before allocating new scoring work. After a decision,
+keep it for a predeclared block of training; do not evaluate after every
+update. A later check is eligible only at a block boundary with remaining
+diagnostic budget. A changed dataset, verifier, or selector invalidates the
+old decision's scope and returns the controller to unverified/random mode;
+it does not authorize an unlimited new budget. Drift or ESS may trigger a
+review, but neither establishes that the selector has lost learning value.
+
+For the first implementation, use fixed block boundaries and a maximum
+number of checks. An adaptive schedule that learns when a check is worth its
+cost is a later research extension, not something the current code supplies.
+If even a minimally informative paired pilot cannot fit the reserved budget,
+skip it and train randomly; do not describe this as a negative experiment.
+
+**Observe.** For a given check, fix the source checkpoint, optimizer state,
+candidate pool, selector, comparison horizon, and cost ledger. Construct the
+paired continuation comparison described above. Freeze the resulting policy
+pair during sequential evaluation. On each independent diagnostic prompt,
+observe both policies' verifier rewards under the same evaluation protocol
+and use their paired difference. Additional evaluation batches add evidence
+about that pair, not new training seeds. Keep the diagnostic set separate
+from the selector's fitting samples and the final reported benchmark.
+
+Choose a positive minimum useful gain `delta_min` before observing outcomes.
+It is a practical short-horizon reward margin at the stated budget, not an
+automatic conversion of GPU seconds into accuracy. Track its time-uniform
+uncertainty interval `[L_n, U_n]`, prompt/response counts, and accumulated
+selection, pilot, and evaluation costs.
+
+| Condition | Measurement action | Training action |
+| --- | --- | --- |
+| `L_n > delta_min` | Stop: useful short-horizon gain supported for this policy pair. | Use the selector for the next fixed block. |
+| `U_n <= delta_min` | Stop: the stated useful-gain threshold is not supported by the upper bound. | Use random; this need not mean the selector is strictly worse. |
+| Interval crosses the margin and the next batch fits the remaining cap | Collect one more predeclared batch of independent diagnostic prompts. | Do not expand the pilot-training horizon to chase a favorable result. |
+| Interval crosses the margin but any time, token, GPU-cost, or check-count cap is reached | Stop: inconclusive at the allowed budget. | Use random; retain the incomplete-evidence reason. |
+| Scoring-specific numerical or lineage validation fails | Stop this check and report the actual failure. | Use random only if common training inputs and verifier are valid. |
+
+The diagnostic must have a hard wall-time limit as well as a compute ledger
+so a stalled subprocess cannot keep the decision pending indefinitely.
+Reserve room for the next batch before dispatch and log any overshoot or
+partial work. Error control across multiple checks must be specified, for
+example by a predeclared allocation of the total error probability; restarting
+an independent nominal 95% test at every checkpoint is not a global guarantee.
+
+**End selection, not learning.** A random decision stops further selector
+scoring during that block. Continue GRPO from the designated usable checkpoint
+with uniform prompt sampling; do not terminate a healthy training job or
+restart it from the beginning. The original total training budget controls
+when learning ends. The controller cannot promise that this continuation is
+identical to an always-random trajectory.
+
+The study must measure whether this timing rule finds useful selection early
+enough to repay its own overhead. Report it against always-random,
+always-selector, and fixed-period checking at matched total cost. Very small
+effects may remain unresolved cheaply; bounded abstention is part of the
+design, not evidence of successful discrimination.
 
 ## Decision
 
