@@ -15,7 +15,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
-case "$MODE" in run|status|plan) ;; *) echo "usage: bash scripts/run_e5.sh [run|status|plan]"; exit 2 ;; esac
+case "$MODE" in run|status|plan|stop) ;; *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop]"; exit 2 ;; esac
+trap '' HUP
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
@@ -31,6 +32,13 @@ OUT_ROOT="$OM_WORK/runs/e5-reduced/$DATASET-d$DRIFT"
 run_dir() { printf '%s/family-%s-s%s/%s-s%s-%s-d%s\n' "$ROOT" "$DATASET" "$1" "$TAG" "$1" "$DATASET" "$DRIFT"; }
 
 echo "[e5] $DATASET d$DRIFT seeds=${SEEDS[*]} arms=$SELECTORS steps=$STEPS eval_k=$EVAL_K test=$COUNT  out=$OUT_ROOT"
+if [ "$MODE" = stop ]; then
+  # Stop every E5 process on THIS node (launcher, trainers, evaluation shards); nothing else.
+  n=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$OUT_ROOT" --command-pattern "$OUT_ROOT" 2>/dev/null | wc -l)
+  "$PY" src/cleanup_run_processes.py --run-prefix "$OUT_ROOT" --command-pattern "$OUT_ROOT" --timeout 30 >/dev/null 2>&1 || true
+  echo "[e5] stopped $n E5 process(es) on $(hostname); rerun 'bash scripts/run_e5.sh' to resume"
+  exit 0
+fi
 if [ "$MODE" = status ]; then
   for seed in "${SEEDS[@]}"; do
     out="$OUT_ROOT/s$seed"
@@ -44,6 +52,7 @@ if [ "$MODE" = status ]; then
   exit 0
 fi
 
+# 0. an earlier E5 launch on this node (dropped session) is stopped and resumed by the launcher itself
 # 1. source points must be complete
 runs=()
 for seed in "${SEEDS[@]}"; do

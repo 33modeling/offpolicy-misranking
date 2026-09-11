@@ -13,6 +13,8 @@
 # arms of one seed; a busy arm is skipped, not duplicated.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# A dropped SSH session (phone) sends SIGHUP; that must not end a multi-hour pass.
+trap '' HUP
 usage() {
   echo "usage: bash scripts/run_downstream_independent.sh RUN OUT --eval-prompts TEST.json [--steps 100] [--eval-k 8] [--dry-run|--prepare-only]"
 }
@@ -60,12 +62,23 @@ if [ "$DRY" = 1 ]; then "${PREPARE[@]}" --dry-run; exit "$?"; fi
 "${PREPARE[@]}" || exit 1
 [ "$PREPARE_ONLY" = 0 ] || { echo "[prepared] $OUT; no GPU work launched"; exit 0; }
 
+# Leftover E5 processes on THIS node (an earlier launch whose session dropped or
+# was interrupted) still hold the GPUs and the leases. Stop them and resume from
+# their checkpoints and partial shards. Only processes that reference the E5
+# output root are touched; the OLMo and Qwen launchers never match.
+E5_ROOT=$(dirname "$OUT")
+LEFTOVER=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$E5_ROOT" --command-pattern "$E5_ROOT" 2>/dev/null | wc -l)
+if [ "$LEFTOVER" -gt 0 ]; then
+  echo "[cleanup] stopping $LEFTOVER leftover E5 process(es) from an earlier launch on this node"
+  "$PY" src/cleanup_run_processes.py --run-prefix "$E5_ROOT" --command-pattern "$E5_ROOT" --timeout 30 >/dev/null 2>&1 || true
+  sleep 3
+fi
 # Node-local GPU admission: never share a node with the OLMo or Qwen launcher.
 if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then
   LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
   mkdir -p "$LOCAL_LOCK_DIR"
   exec 8>"$LOCAL_LOCK_DIR/primary.lock"
-  flock -n 8 || { echo "[busy] this node's GPUs belong to another experiment"; exit 75; }
+  flock -n 8 || { echo "[busy] another launcher (OLMo or Qwen matrix) owns this node's GPUs; E5 leftovers were already cleared, so pick a node without a matrix launcher"; exit 75; }
 fi
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
   IFS=, read -ra GPUS <<< "$CUDA_VISIBLE_DEVICES"
@@ -74,8 +87,15 @@ else
 fi
 [ "${#GPUS[@]}" -eq 4 ] || { echo "[abort] E5 requires exactly four allocated GPUs (found ${#GPUS[@]})"; exit 1; }
 export CUDA_VISIBLE_DEVICES="$(IFS=,; echo "${GPUS[*]}")"
+# Wait for the GPUs to drain after a cleanup (up to 60 s); report if they do not.
+for _ in $(seq 1 12); do
+  busy_mib=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i "$CUDA_VISIBLE_DEVICES" 2>/dev/null | sort -n | tail -1)
+  [ -n "$busy_mib" ] && [ "$busy_mib" -gt 4000 ] || break
+  sleep 5
+done
+[ -z "${busy_mib:-}" ] || [ "$busy_mib" -le 4000 ] || echo "[warn] a GPU still holds ${busy_mib} MiB held by a process outside E5; continuing"
 mkdir -p "$OUT/logs"
-exec > >(tee -a "$OUT/logs/launcher-$(hostname)-$(date -u +%Y%m%dT%H%M%SZ).log") 2>&1
+exec > >(tee -p -a "$OUT/logs/launcher-$(hostname)-$(date -u +%Y%m%dT%H%M%SZ).log") 2>&1
 echo "[environment] host=$(hostname) CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES attention=$OM_ATTN generation_batch=$OM_GEN_BATCH arms=${SELECTORS[*]}"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv 2>/dev/null || true
 CHILDREN=()
@@ -88,7 +108,7 @@ stop_children() {
 trap 'trap - INT TERM; stop_children; exit 130' INT
 trap 'trap - INT TERM; stop_children; exit 143' TERM
 run_tracked() {
-  setsid "$@" & local pid=$!
+  setsid "$@" 8>&- 9>&- & local pid=$!
   CHILDREN=("$pid")
   wait "$pid"; local rc=$?
   CHILDREN=()
@@ -109,7 +129,7 @@ evaluate_arm() {
   echo "[eval] $arm: four shard processes; progress every 5 min here, full logs in $OUT/logs/eval-$arm-<shard>.log"
   for shard in 0 1 2 3; do
     setsid env CUDA_VISIBLE_DEVICES="${GPUS[$shard]}" "$PY" src/evidence_downstream.py evaluate \
-      --out "$OUT" --arm "$arm" --shard "$shard" > "$OUT/logs/eval-$arm-$shard.log" 2>&1 &
+      --out "$OUT" --arm "$arm" --shard "$shard" > "$OUT/logs/eval-$arm-$shard.log" 2>&1 8>&- 9>&- &
     CHILDREN+=("$!")
   done
   while :; do
