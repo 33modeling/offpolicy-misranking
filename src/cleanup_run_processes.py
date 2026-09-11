@@ -18,6 +18,7 @@ class Process:
     environ: dict[str, str]
     open_files: frozenset[str]
     start_time: int = 0
+    argv: tuple[str, ...] = ()
 
 
 def _read_process(pid: int) -> Process | None:
@@ -28,7 +29,8 @@ def _read_process(pid: int) -> Process | None:
         stat_tail = (proc / "stat").read_text().rsplit(") ", 1)[1].split()
         if stat_tail[0] == "Z":
             return None
-        command = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(
+        raw_command = (proc / "cmdline").read_bytes()
+        command = raw_command.replace(b"\0", b" ").decode(
             errors="replace"
         )
         raw_environment = (proc / "environ").read_bytes().split(b"\0")
@@ -57,6 +59,7 @@ def _read_process(pid: int) -> Process | None:
         environ=environ,
         open_files=open_files,
         start_time=int(stat_tail[19]),
+        argv=tuple(os.fsdecode(arg) for arg in raw_command.split(b"\0") if arg),
     )
 
 
@@ -83,6 +86,71 @@ def _protected_ancestors(processes: dict[int, Process]) -> set[int]:
     return protected
 
 
+def _is_orphan_lock_helper(pid: int, processes: dict[int, Process]) -> bool:
+    """Require an all-helper ancestry ending at init, not just a missing label."""
+    if pid <= 1:
+        return False
+    visited: set[int] = set()
+    while pid > 1 and pid not in visited:
+        visited.add(pid)
+        process = processes.get(pid)
+        if process is None or not process.argv:
+            return False  # An unreadable parent is not proof of an orphan.
+        argv = process.argv
+        executable = Path(argv[0]).name
+        compiler = executable.startswith("python") and (
+            len(argv) > 1 and argv[1].endswith("/torch/_inductor/compile_worker/__main__.py")
+            or len(argv) > 2 and argv[1:3] == ("-m", "torch._inductor.compile_worker")
+        )
+        if compiler:
+            # Forked pool workers retain --parent=<training PID>. Even if a
+            # pool supervisor died, do not interfere with a live training job.
+            for index, arg in enumerate(argv):
+                parent = arg.partition("=")[2] if arg.startswith("--parent=") else (
+                    argv[index + 1] if arg == "--parent" and index + 1 < len(argv) else ""
+                )
+                if not parent.isdigit() or int(parent) <= 1:
+                    continue
+                try:
+                    os.kill(int(parent), 0)
+                except ProcessLookupError:
+                    continue
+                except PermissionError:
+                    pass  # A live but inaccessible training PID is protected.
+                return False
+        elif executable not in {"sleep", "tee"}:
+            return False
+        pid = process.ppid
+    return pid == 1
+
+
+def describe_lock_owners(open_files: tuple[str, ...], limit: int = 8) -> list[str]:
+    processes = _snapshot()
+    protected = _protected_ancestors(processes)
+    holders = {pid: process for pid, process in processes.items()
+               if pid not in protected and any(path in process.open_files for path in open_files)}
+    groups: dict[int, int] = {}
+    for pid, process in holders.items():
+        owner, ancestor, visited = pid, process.ppid, {pid}
+        while ancestor in processes and ancestor not in protected and ancestor not in visited:
+            visited.add(ancestor)
+            if ancestor in holders:
+                owner = ancestor
+            ancestor = processes[ancestor].ppid
+        groups[owner] = groups.get(owner, 0) + 1
+    lines = [f"[node-owners] {len(holders)} processes with this file open; {len(groups)} owner groups"]
+    for pid, count in sorted(groups.items())[:limit]:
+        process = holders[pid]
+        state = "orphan-helper" if _is_orphan_lock_helper(pid, processes) else "live-or-unverified"
+        lines.append(f"  pid={pid} ppid={process.ppid} openers={count} {state} {process.command.strip()[:220]}")
+        parent = processes.get(process.ppid)
+        if parent and parent.pid not in holders and parent.pid not in protected:
+            lines.append(f"    parent: pid={parent.pid} {parent.command.strip()[:160]}")
+    if len(groups) > limit:
+        lines.append(f"  ... {len(groups) - limit} more owner groups (not printed)")
+    return lines
+
+
 def matching_processes(
     run_prefix: str,
     command_patterns: tuple[str, ...] = (),
@@ -90,6 +158,7 @@ def matching_processes(
     open_files: tuple[str, ...] = (),
     launcher_environment_from_child: bool = False,
     session_log_prefix: str = "",
+    orphan_lock_helpers_only: bool = False,
 ) -> dict[int, Process]:
     processes = _snapshot()
     protected = _protected_ancestors(processes)
@@ -147,6 +216,10 @@ def matching_processes(
     # protected launcher that matches a broad command pattern would cause a
     # sibling such as tee to be selected as its descendant.
     targets.difference_update(protected)
+    if orphan_lock_helpers_only:
+        targets = {pid for pid in targets
+                   if any(path in processes[pid].open_files for path in open_files)
+                   and _is_orphan_lock_helper(pid, processes)}
 
     # Include descendants so launchers cannot leave CUDA children behind.
     changed = True
@@ -171,11 +244,12 @@ def list_processes(
     open_files: tuple[str, ...] = (),
     launcher_environment_from_child: bool = False,
     session_log_prefix: str = "",
+    orphan_lock_helpers_only: bool = False,
 ) -> list[Process]:
     """The processes terminate() would stop, in pid order; nothing is signalled."""
     targets = matching_processes(
         run_prefix, command_patterns, required_environment, open_files,
-        launcher_environment_from_child, session_log_prefix,
+        launcher_environment_from_child, session_log_prefix, orphan_lock_helpers_only,
     )
     return sorted(targets.values(), key=lambda process: process.pid)
 
@@ -188,10 +262,12 @@ def terminate(
     open_files: tuple[str, ...] = (),
     launcher_environment_from_child: bool = False,
     session_log_prefix: str = "",
+    orphan_lock_helpers_only: bool = False,
+    compact: bool = False,
 ) -> list[Process]:
     targets = matching_processes(
         run_prefix, command_patterns, required_environment, open_files,
-        launcher_environment_from_child, session_log_prefix,
+        launcher_environment_from_child, session_log_prefix, orphan_lock_helpers_only,
     )
     if not targets:
         return []
@@ -212,15 +288,19 @@ def terminate(
         except ProcessLookupError:
             pass
 
-    for process in sorted(targets.values(), key=lambda process: process.pid):
-        print(f"[cleanup-target] pid={process.pid} {process.command.strip()}", flush=True)
+    for index, process in enumerate(sorted(targets.values(), key=lambda process: process.pid)):
+        if not compact or index < 8:
+            command = process.command.strip()
+            print(f"[cleanup-target] pid={process.pid} {command[:220] if compact else command}", flush=True)
         send(process, signal.SIGTERM)
+    if compact and len(targets) > 8:
+        print(f"[cleanup-target] {len(targets) - 8} additional scoped children (not printed)", flush=True)
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         for pid, process in matching_processes(
             run_prefix, command_patterns, required_environment, open_files,
-            launcher_environment_from_child, session_log_prefix,
+            launcher_environment_from_child, session_log_prefix, orphan_lock_helpers_only,
         ).items():
             if pid not in targets or targets[pid].start_time != process.start_time:
                 targets[pid] = process
@@ -253,11 +333,22 @@ def main() -> int:
                         help="allow named launchers to prove missing initial environment through children")
     parser.add_argument("--session-log-prefix", default="",
                         help="also select this exact work/profile session-log namespace")
+    parser.add_argument("--orphan-lock-helpers-only", action="store_true",
+                        help="only stop orphan compiler/sleep/tee families opening the given lock")
+    parser.add_argument("--describe-lock-owners", action="store_true",
+                        help="summarize actual file openers and their parents without signalling")
+    parser.add_argument("--compact", action="store_true", help="bound cleanup target output")
     parser.add_argument(
         "--list", action="store_true",
         help="print the matching processes (pid<TAB>command) and stop nothing",
     )
     args = parser.parse_args()
+    if (args.orphan_lock_helpers_only or args.describe_lock_owners) and not args.open_file:
+        parser.error("helper recovery and owner diagnostics require --open-file")
+    if args.describe_lock_owners:
+        for line in describe_lock_owners(tuple(str(Path(path).resolve()) for path in args.open_file)):
+            print(line)
+        return 0
     required_environment = []
     for item in args.require_environment:
         if "=" not in item:
@@ -271,6 +362,7 @@ def main() -> int:
             tuple(str(Path(path).resolve()) for path in args.open_file),
             args.launcher_environment_from_child,
             args.session_log_prefix,
+            args.orphan_lock_helpers_only,
         ):
             print(f"{process.pid}\t{process.command.strip()}")
         return 0
@@ -283,13 +375,15 @@ def main() -> int:
             tuple(str(Path(path).resolve()) for path in args.open_file),
             args.launcher_environment_from_child,
             args.session_log_prefix,
+            args.orphan_lock_helpers_only,
+            args.compact,
         )
     except RuntimeError as exc:
         print(f"[abort] {exc}", flush=True)
         return 1
     if terminated:
         print(f"[startup-cleanup] terminated {len(terminated)} stale processes")
-    else:
+    elif not args.orphan_lock_helpers_only:
         print("[startup-cleanup] no stale processes")
     return 0
 

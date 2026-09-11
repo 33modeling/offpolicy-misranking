@@ -77,6 +77,28 @@ with mocked model work and simulated node-local process visibility. Both
 separate node-lock directories and a shared-filesystem configuration are tested.
 Live GPU execution is not accessible from the development host.
 
+The follow-up addresses reports of many `--pickler=torch._inductor...` and
+`/bin/sleep 15` entries. These are process command lines, not CUDA tracebacks.
+The former owner listing expanded a lock opener into every descendant, so the
+list did not establish that each compiler worker itself retained the lock.
+Admission diagnostics now group actual file openers by their owning ancestors,
+show PID/PPID and a parent command when available, and print at most eight
+groups. Normal E5 cleanup output is bounded as well.
+
+Unlabelled orphan compiler/sleep/tee families are reclaimed by the default
+command, including those predating the E5 `OUT_ROOT` marker. Recovery requires
+the exact node-lock file to be open, same-user local process visibility, and
+an ancestry consisting only of these helpers ending at PID 1. A live training
+PID named by the compiler's `--parent` option also prevents automatic cleanup.
+A live or unreadable parent, an unrelated lock, or a non-helper process is not
+automatically stopped. The existing force option is not needed for verified
+orphan helpers. No lock file is deleted and no Torch compilation setting changes.
+Real CPU orphan-process tests cover compiler-shaped workers and sleeps without
+E5 markers; unit tests cover live parents, unreadable ancestry, other locks and
+bounded output for a 101-process pool. The reported remote process tree is
+not yet available, so these command fragments alone do not prove its owner is
+orphaned.
+
 Provenance note: the concurrent `5b44ab4` change relaxed code/runtime matching
 in `evidence_downstream.py`. This node-ownership repair does not modify that
 scientific file or broaden that relaxation. The older fixed-file-hash status
