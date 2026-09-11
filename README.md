@@ -289,3 +289,9 @@ for the SFT substitution root-cause record.
   own root and reads the floor from them; no training, no registered point touched.
 - `setup_env.sh`, `provision.sh`, `fetch_datasets.sh`, `fetch_27b.sh`: setup.
 - `check_data.sh`, `check_27b_fla.py`, `diagnose_run_failure.sh`: preflight and diagnosis.
+# Additional Method-Choice Experiment
+
+The separate [method-choice and CPU measurement checks](docs/METHOD_CHOICE.md)
+preserve the running reduced E5. Start with
+`bash scripts/run_method_choice.sh plan` for the GPU budget or
+`bash scripts/run_measurement_audit.sh` for the CPU-only analytic checks.
