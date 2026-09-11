@@ -121,3 +121,60 @@ def test_shell_wrapper_discovers_d0_points_and_exports(tmp_path):
     assert " math500/s0 " in text and " mbpp/s3 " in text and "KEY means over 2 point(s)" in text
     key = next(line for line in text.splitlines() if line.startswith("KEY means"))
     assert not math.isnan(float(key.split("chance ")[-1].split()[0]))
+
+
+def test_partition_agreement_is_one_for_identical_halves_and_near_chance_when_independent():
+    pa = torch.tensor([0.0, 0.0, 0.5, 0.25, 1.0, 1.0, 0.75, 0.0])
+    same = rc.partition_agreement(pa, pa.clone())
+    assert same.kappa == pytest.approx(1.0)
+    assert all(same.jaccard[b] == pytest.approx(1.0) for b in rc.BANDS)
+    generator = torch.Generator().manual_seed(0)
+    # independent halves with all three bands populated: 0, 1, or a mixed value
+    def draw():
+        kind = torch.randint(0, 3, (4000,), generator=generator)
+        mixed_value = 0.25 + 0.5 * torch.rand(4000, generator=generator)
+        return torch.where(kind == 0, 0.0, torch.where(kind == 2, 1.0, mixed_value))
+    a, b = draw(), draw()
+    indep = rc.partition_agreement(a, b)
+    assert abs(indep.kappa) < 0.05
+    for band in rc.BANDS:
+        assert abs(indep.jaccard[band] - indep.jaccard_chance[band]) < 0.05
+
+
+def test_utility_comparison_rewards_a_band_that_carries_the_signal():
+    n = 200
+    generator = torch.Generator().manual_seed(1)
+    mixed = torch.zeros(n, dtype=torch.bool)
+    mixed[:80] = True
+    noise = torch.randn(n, generator=generator) * 0.05
+    truth = torch.where(mixed, torch.full((n,), 0.5), torch.zeros(n)) + noise
+    scores = {"truth": {i: float(truth[i]) for i in range(n)},
+              "fresh": {i: float(truth[i] + 0.2 * torch.randn(1, generator=generator)) for i in range(n)},
+              "g11": {i: float(torch.randn(1, generator=generator)) for i in range(n)}}
+    result = rc.utility_comparison(scores, {"fresh-band": mixed}, k_frac=0.1, draws=50, seed=0)
+    assert result.k == 20 and result.band_size["fresh-band"] == 80
+    assert result.gain["fresh-band-random"] > 0.25
+    assert result.gain["fresh-topk"] > result.gain["fresh-band-random"] - 0.1
+    assert abs(result.gain["stale-g11"]) < 0.15
+    assert result.fresh_topk_in_band["fresh-band"] > 0.9
+    empty = rc.utility_comparison(scores, {"fresh-band": torch.zeros(n, dtype=torch.bool)}, k_frac=0.1, draws=5, seed=0)
+    assert math.isnan(empty.gain["fresh-band-random"])
+
+
+def test_audit_point_uses_split_half_scores_when_present(tmp_path):
+    run = tmp_path / "tag-s2-math500-d0"
+    run.mkdir()
+    n = 40
+    matrix = bernoulli_pool(n, 32, 5)
+    write_rollouts(run / "rollouts_fresh_train.jsonl", matrix)
+    write_rollouts(run / "rollouts_behavior_train.jsonl", bernoulli_pool(n, 8, 6))
+    (run / "scores_splithalf.json").write_text(json.dumps(
+        {str(i): {"r": float(i) / n, "a": float(i) / n + 0.01, "b": float(i) / n - 0.01} for i in range(n)}))
+    (run / "scores_offpolicy.json").write_text(json.dumps(
+        {name: {str(i): {"score": float(n - i), "norm": 1.0} for i in range(n)} for name in rc.ESTIMATORS}))
+    row = rc.audit_point(run, "math500/s2", k_frac=0.1, reps=2, pairs=2, seed=0, draws=10)
+    assert row.utility is not None and row.notes == []
+    assert row.utility.gain["fresh-topk"] > 0 > row.utility.gain["stale-g11"]  # stale ranking is reversed on purpose
+    assert set(row.utility.band_size) == {"fresh-band", "behavior-band"}
+    text = rc.render([row], reps=2, pairs=2, k_frac=0.1)
+    assert "## 2." in text and " math500/s2 " in text and "KEY utility gain over uniform" in text
