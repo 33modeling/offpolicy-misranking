@@ -65,6 +65,30 @@ def bind(path: Path, value) -> None:
         atomic_json(path, value)
 
 
+INFORMATIONAL = ("code_hashes", "runtime")
+
+
+def bind_experiment(path: Path, contract: dict) -> dict:
+    """Freeze the experiment contract once; later launches must match it.
+
+    Code and package hashes are recorded for provenance but not enforced, so a
+    launcher or driver fix does not orphan a seed that is already half done.
+    Everything that defines the experiment (source point, policy, test set,
+    steps, arms) is enforced.
+    """
+    if not path.exists():
+        atomic_json(path, contract)
+        return contract
+    existing = read(path)
+    strip = lambda c: {k: v for k, v in c.items() if k not in INFORMATIONAL}  # noqa: E731
+    if strip(existing) != strip(contract):
+        raise ValueError(f"contract changed: {path}; use a new output root, do not mix runs")
+    if any(existing.get(k) != contract.get(k) for k in INFORMATIONAL):
+        print("[note] driver code or packages changed since this seed was prepared; "
+              "continuing with the recorded contract", file=sys.stderr)
+    return existing
+
+
 def require_separate_output(output: Path, inputs) -> Path:
     """The output root must not lie inside any input (source point, test file)."""
     destination = output.resolve()
@@ -238,7 +262,7 @@ def prepare(run: Path, out: Path, eval_path: Path, steps: int, eval_k: int,
     out.mkdir(parents=True, exist_ok=True)
     with (out / ".prepare.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        bind(out / "experiment.json", contract)
+        contract = bind_experiment(out / "experiment.json", contract)
         bind(out / "evaluation.json", {"val": test, "provenance": evaluation["provenance"]})
         if (out / "subsets_hashes.json").exists():
             written = {arm: out / "subsets" / f"subset-{arm}.json" for arm in SELECTORS}

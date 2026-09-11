@@ -157,3 +157,19 @@ def test_status_reports_progress_without_evaluation_files(tmp_path, capsys):
     status.print_status(out)
     text = capsys.readouterr().out
     assert "shard 1: 2/16 responses" in text and "rollout 3/2" in text
+
+
+def test_prepare_tolerates_driver_code_changes_but_not_design_changes(tmp_path):
+    run, evaluation = source_point(tmp_path)
+    out = tmp_path / "output"
+    first = ed.prepare(run, out, evaluation, 100, 8)
+    saved = ed.read(out / "experiment.json")
+    saved["code_hashes"]["src/evidence_downstream.py"] = "0" * 64
+    saved["runtime"]["packages"]["torch"] = "0.0"
+    ed.atomic_json(out / "experiment.json", saved)
+    again = ed.prepare(run, out, evaluation, 100, 8)
+    assert again["code_hashes"]["src/evidence_downstream.py"] == "0" * 64
+    assert ed.read(out / "experiment.json") == saved
+    with pytest.raises(ValueError, match="contract changed"):
+        ed.prepare(run, out, evaluation, 100, 8, ["random", "fresh_r"])
+    assert first["selectors"] == ["random", "fresh_r", "g11"]

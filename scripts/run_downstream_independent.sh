@@ -77,16 +77,37 @@ if [ -n "$LEFTOVER" ]; then
   sleep 3
 fi
 # Node-local GPU admission: never share a node with the OLMo or Qwen launcher.
+# The lock file is the one the matrix launchers use. If the lock is held but no
+# process on THIS node has it open, the lock directory is not node-local (a
+# shared /tmp); fall back to a per-host lock instead of refusing a free node.
+MATRIX_PATTERN='scripts/(run_olmo3_rlzero|run_qwen35_9b|run_point|run_reliability_budget|run_reference_axes|go_[a-z0-9_]+)\.sh'
 if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then
   LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
   mkdir -p "$LOCAL_LOCK_DIR"
-  exec 8>"$LOCAL_LOCK_DIR/primary.lock"
-  if ! flock -w 10 8; then
-    echo "[busy] another launcher owns this node's GPUs (E5 leftovers were already cleared). Holder:"
-    "$PY" src/cleanup_run_processes.py --list --run-prefix "$LOCAL_LOCK_DIR/none" --open-file "$LOCAL_LOCK_DIR/primary.lock" 2>/dev/null | cut -c1-160 | sed 's/^/  /'
-    echo "  if that is the OLMo or Qwen matrix, leave it and use another node; E5 never stops the matrix"
-    exit 75
+  LOCK_FILE="$LOCAL_LOCK_DIR/primary.lock"
+  echo "[node] host=$(hostname) lock=$LOCK_FILE fs=$(stat -f -c %T "$LOCAL_LOCK_DIR" 2>/dev/null || echo unknown)"
+  exec 8>"$LOCK_FILE"
+  if ! flock -n 8 2>"$LOCAL_LOCK_DIR/.flock-err"; then
+    HOLDERS=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$LOCAL_LOCK_DIR/none" --open-file "$LOCK_FILE" 2>/dev/null)
+    if [ -s "$LOCAL_LOCK_DIR/.flock-err" ]; then
+      echo "[note] flock is not supported on $LOCAL_LOCK_DIR ($(cat "$LOCAL_LOCK_DIR/.flock-err")); using a per-host lock"
+      HOLDERS=""
+      LOCK_FILE="$LOCAL_LOCK_DIR/primary.$(hostname).lock"; exec 8>"$LOCK_FILE"; flock -n 8 || true
+    elif [ -z "$HOLDERS" ]; then
+      echo "[note] the node lock is held, but no process on $(hostname) has it open: the lock directory is shared across nodes; using a per-host lock"
+      LOCK_FILE="$LOCAL_LOCK_DIR/primary.$(hostname).lock"; exec 8>"$LOCK_FILE"
+      flock -n 8 || { echo "[busy] per-host lock $LOCK_FILE is also held; E5 already runs on this host"; exit 75; }
+    elif printf '%s\n' "$HOLDERS" | grep -Eq "$MATRIX_PATTERN"; then
+      echo "[busy] a matrix launcher owns this node's GPUs; E5 never stops the matrix. Holder:"
+      printf '%s\n' "$HOLDERS" | cut -c1-160 | sed 's/^/  /'
+      exit 75
+    else
+      echo "[busy] the node lock is held by a process on this node that is not E5 and not the matrix; E5 will not stop it. Holder:"
+      printf '%s\n' "$HOLDERS" | cut -c1-160 | sed 's/^/  /'
+      exit 75
+    fi
   fi
+  rm -f "$LOCAL_LOCK_DIR/.flock-err"
 fi
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
   IFS=, read -ra GPUS <<< "$CUDA_VISIBLE_DEVICES"
