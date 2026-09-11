@@ -2,6 +2,16 @@
 
 Date: 2026-09-12 (Asia/Seoul)
 
+Subsequent user instruction authorized implementation. The
+[execution guide](LOW_ORDER_REUSE_RUN.md) records the code and verification.
+The research-stage status and claims below are preserved; implementation does
+not establish novelty, benchmark superiority, or GPU efficiency.
+
+The subsequent [pre-launch comparison](LOW_ORDER_PRIOR_ART_AND_RATIONALE_2026-09-12.md)
+adds ToV, Mirrored Influence, For-Value, and TACS to the computational-prior-art
+assessment. The first three were already in other vault indexes or notes;
+their omission from this synthesis did not imply an absence of precedent.
+
 Status: research specification, not an implemented or validated main method.
 No experiment code, running job, manuscript, or publication site was changed.
 This extends [the methodology gate](METHOD_DECISION_2026-09-12.md); it does not

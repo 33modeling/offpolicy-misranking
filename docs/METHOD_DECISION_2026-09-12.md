@@ -2,6 +2,17 @@
 
 Date: 2026-09-12 (Asia/Seoul)
 
+Implementation update: after reviewing the follow-up specification, the user
+explicitly requested code. That authorizes the isolated experimental
+[implementation](LOW_ORDER_REUSE_RUN.md), not a main-method claim, a GPU launch
+from this workstation, or a statement of benchmark superiority. The original
+research-stage decision below is retained for chronology.
+
+Pre-launch follow-up: the user requested a similarity review before running.
+The [prior-art and rationale record](LOW_ORDER_PRIOR_ART_AND_RATIONALE_2026-09-12.md)
+identifies close computational precedents, narrows the candidate contribution,
+and records missing matched-target and cost controls. No GPU job was launched.
+
 ## Decision
 
 No new main method is approved. Stop implementation until the acquisition

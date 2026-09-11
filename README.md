@@ -4,6 +4,21 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+## Low-Order Reuse Selection
+
+Read the [prior-art review and implementation rationale](docs/LOW_ORDER_PRIOR_ART_AND_RATIONALE_2026-09-12.md)
+before a GPU launch. Close precedents exist; full-study controls and the
+equal-cost protocol remain unresolved.
+
+`bash scripts/run_low_order.sh check` checks the new score on CPU. On an idle
+allocated four-GPU node, `bash scripts/run_low_order.sh` computes training-matched
+reuse scores and runs existing GRPO continuation plus independent evaluation
+for `random`, `pair_u2`, and `low_order`. Default: OLMo MATH d100, five seeds,
+100 additional updates per arm. `plan`, `status`, `live`, and `stop` are available.
+Source matrix and E5 outputs remain untouched. See the
+[execution and cost guide](docs/LOW_ORDER_REUSE_RUN.md). This is an experimental
+method, not a demonstrated accuracy or total-cost improvement.
+
 ## Additive Correction Comparison
 
 `bash scripts/run_additive.sh check` verifies the algebra on CPU. On an idle
