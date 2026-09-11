@@ -4,6 +4,17 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+## Additive Correction Comparison
+
+`bash scripts/run_additive.sh check` verifies the algebra on CPU. On an idle
+allocated four-GPU node, `bash scripts/run_additive.sh` rescores the existing
+OLMo MATH d400 seeds 0/1/2 with the additive and terminal TayPO-2-derived
+estimators. It generates no new responses and does not start GRPO training or
+change E5. `status` and `live` show progress. See the
+[run guide](docs/ADDITIVE_CORRECTION.md) and
+[TayPO comparison](docs/TAYPO_COMPARISON.md), including the novelty and clipping
+limitations. These are experimental variants, not verified improvements.
+
 ## New Reference Sampling
 
 On an idle allocated GPU node, use this existing checkout and environment:
