@@ -574,7 +574,12 @@ def family_row(
             matrix.queue / f"{dataset}-s{seed}.control.lock"
         )
     live_launchers = [l for l in launchers if l.live(now, args.launcher_live_seconds)]
-    unverified_remote = any(l.exit_rc is None and l.alive_here is None for l in launchers)
+    # A remote session log without an [exit] record is unverified, not dead; but a
+    # log untouched for days (node lost, launcher killed) must not keep every
+    # family UNVERIFIED forever. Same three-day horizon as retained exit records.
+    unverified_remote = any(
+        l.exit_rc is None and l.alive_here is None and now - l.mtime <= 3 * 86400 for l in launchers
+    )
     on_family = [l for l in launchers if l.family == key and l.exit_rc is None]
     for launcher in on_family:
         if launcher.live(now, args.launcher_live_seconds):

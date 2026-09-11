@@ -287,3 +287,26 @@ def test_silent_preflight_is_not_proof_of_training_progress(tmp_path):
     assert "overall_verdict=DEGRADED" in out
     assert "pid_liveness_is_not_progress" in out
     assert "DECISION NO ERROR" not in out
+
+
+def test_days_old_session_log_without_exit_does_not_keep_families_unverified(tmp_path):
+    work = tmp_path / "work"
+    make_point(work / "runs", "math500", 0, 0, progress="2/8 behavior-rollout", age=5 * 86400)
+    fresh = session_log(work, "additional-qwen35-run-recent.log", host="run1-first-rlvr-2", pid=4242)
+    stale = session_log(work, "additional-qwen35-run-lost.log", host="run2-first-rlvr-3", pid=4343)
+    old = time.time() - 5 * 86400
+    os.utime(stale, (old, old))
+    out = render(work)
+    row = next(line for line in out.splitlines() if line.startswith(" math500/s0 "))
+    # the recent remote log (20 min < age < 3 d) keeps the family UNVERIFIED ...
+    two_hours = time.time() - 7200
+    os.utime(fresh, (two_hours, two_hours))
+    out = render(work)
+    row = next(line for line in out.splitlines() if line.startswith(" math500/s0 "))
+    assert "UNVERIFIED" in row
+    # ... but once every non-exited log is days old the family is STOPPED
+    os.utime(fresh, (old, old))
+    out = render(work)
+    row = next(line for line in out.splitlines() if line.startswith(" math500/s0 "))
+    assert "STOPPED" in row and "no launcher anywhere" in row
+    assert "overall_verdict=STOPPED" in out
