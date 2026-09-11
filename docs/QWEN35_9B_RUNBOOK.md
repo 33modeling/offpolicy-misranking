@@ -156,6 +156,18 @@ git pull --ff-only
 bash scripts/run_qwen35_9b.sh restart-idle
 ```
 
+Recovery correction (2026-09-11): `restart-idle` now recognizes a named Qwen
+launcher whose `OM_WORK` was exported after Bash started, using its children's
+initial environment as evidence. It also recognizes old children by the exact
+work-root/9B session-log namespace. It tracks selected children by PID and
+process start time even after reparenting, escalates TERM to KILL when needed,
+waits for actual exit, and verifies that both node locks can be acquired before
+launching again. The previous implementation could miss the launcher or forget
+a TERM-ignoring orphan and then fail with `additional suite already queued`.
+Cleanup prints the selected PIDs; an unrelated remaining owner is listed, not
+killed. Lock files are never deleted. CPU tests use real Bash processes and
+real `flock` locks, including late exports and a TERM-ignoring orphan.
+
 `restart-idle` uses the existing process-namespace cleanup with a 15-second
 TERM grace followed by KILL for remaining matches. It selects the same
 `OM_WORK` and 9B run namespace/launcher plus descendants, on this machine and

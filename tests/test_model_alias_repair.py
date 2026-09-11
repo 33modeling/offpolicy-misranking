@@ -264,3 +264,34 @@ run_point_unlocked math500 0 0 '' '' ''
     for name, payload in originals.items():
         if name.endswith(".jsonl"):
             assert (run / name).read_bytes() == payload
+
+
+def test_prompt_rebuild_still_consumes_the_bounded_outer_retry(tmp_path):
+    source = (REPO / "scripts/run_matrix.sh").read_text()
+    start = source.index("run_point_unlocked() {")
+    function = source[start:source.index("\n}\n", start) + 2]
+    (tmp_path / "logs").mkdir()
+    script = function + r'''
+run_dir() { echo "$TEST_ROOT"; }
+n_train_for_dataset() { echo 2; }
+reenter_runtime_fields() { :; }
+run_complete() { return 1; }
+short_reason() { cat; }
+run_pipeline_watchdog() {
+  echo attempt >> "$TEST_ROOT/attempts"
+  echo '[abort] prompts need rebuilding' > "$2"
+  return 42
+}
+quarantine_prompt_target() { return 0; }
+CONTRACT=''
+DRIFTS=(0 25)
+SEEDS=(0)
+DATASETS=(fixture)
+MAX_RETRIES=2
+run_point_unlocked fixture 0 25 /missing-source '' ''
+'''
+    result = subprocess.run(["bash", "-c", script], cwd=tmp_path,
+                            env={**os.environ, "TEST_ROOT": str(tmp_path)},
+                            capture_output=True, text=True, timeout=3)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (tmp_path / "attempts").read_text().splitlines() == ["attempt"] * 2

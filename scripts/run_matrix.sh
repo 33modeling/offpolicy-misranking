@@ -1120,7 +1120,7 @@ run_point_unlocked() {
           >> "$run/logs/supervisor.log"
       if [ "$rc" -eq 42 ] && [ -n "$source" ]; then
         if quarantine_prompt_target "$run" "$try"; then
-          continue
+          continue 2
         fi
         echo "[abort] prompt-mismatch quarantine failed: $run"
         return 43

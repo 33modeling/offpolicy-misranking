@@ -17,6 +17,7 @@ cd "$(dirname "$0")/.."
 MODE=${1:-run}
 case "$MODE" in run|status|plan|stop) ;; *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop]"; exit 2 ;; esac
 trap '' HUP
+trap 'echo "[e5] interrupted; nothing else will be started"; exit 130' INT TERM
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
@@ -29,14 +30,19 @@ SELECTORS=${E5_SELECTORS:-random fresh_r g11}
 POOL="$DATASETS_DIR/math_train/math_train.jsonl"; POOL_MANIFEST="$DATASETS_DIR/math_train/dataset_manifest.json"
 TEST="$OM_WORK/inputs/e5-reduced/test-$DATASET-d$DRIFT.json"
 OUT_ROOT="$OM_WORK/runs/e5-reduced/$DATASET-d$DRIFT"
+# Exported marker: every process of this pass carries OUT_ROOT in its environment,
+# so a later launch on the same node can find and stop the whole earlier pass
+# (including this loop), while the matrix launchers never match.
+export OUT_ROOT
 run_dir() { printf '%s/family-%s-s%s/%s-s%s-%s-d%s\n' "$ROOT" "$DATASET" "$1" "$TAG" "$1" "$DATASET" "$DRIFT"; }
 
 echo "[e5] $DATASET d$DRIFT seeds=${SEEDS[*]} arms=$SELECTORS steps=$STEPS eval_k=$EVAL_K test=$COUNT  out=$OUT_ROOT"
 if [ "$MODE" = stop ]; then
   # Stop every E5 process on THIS node (launcher, trainers, evaluation shards); nothing else.
-  n=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$OUT_ROOT" --command-pattern "$OUT_ROOT" 2>/dev/null | wc -l)
+  found=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$OUT_ROOT" --command-pattern "$OUT_ROOT" 2>/dev/null)
+  [ -z "$found" ] || printf '%s\n' "$found" | cut -c1-140 | sed 's/^/  /'
   "$PY" src/cleanup_run_processes.py --run-prefix "$OUT_ROOT" --command-pattern "$OUT_ROOT" --timeout 30 >/dev/null 2>&1 || true
-  echo "[e5] stopped $n E5 process(es) on $(hostname); rerun 'bash scripts/run_e5.sh' to resume"
+  echo "[e5] stopped $(printf '%s\n' "$found" | grep -c .) E5 process(es) on $(hostname); rerun 'bash scripts/run_e5.sh' to resume"
   exit 0
 fi
 if [ "$MODE" = status ]; then
@@ -83,7 +89,8 @@ for seed in "${SEEDS[@]}"; do
   DOWNSTREAM_SELECTORS="$SELECTORS" bash scripts/run_downstream_independent.sh "$run" "$out" \
     --eval-prompts "$TEST" --steps "$STEPS" --eval-k "$EVAL_K"
   rc=$?
-  if [ "$rc" -eq 75 ]; then echo "[abort] this node's GPUs belong to another experiment (OLMo or Qwen launcher); use an idle node"; exit 75; fi
+  if [ "$rc" -eq 75 ]; then echo "[abort] a matrix launcher (OLMo or Qwen) owns this node's GPUs; E5 was not started here"; exit 75; fi
+  if [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then echo "[e5] stopped by signal; nothing else will be started"; exit "$rc"; fi
   [ "$rc" -eq 0 ] || rc_all=1
 done
 echo "[e5] pass complete; check:  bash scripts/run_e5.sh status"

@@ -58,4 +58,25 @@ def test_process_snapshot_tolerates_descriptor_disappearing(monkeypatch):
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(os, "readlink", race)
-    assert _read_process(os.getpid()) is None
+    process = _read_process(os.getpid())
+    assert process is not None
+    assert process.pid == os.getpid()
+    assert not process.open_files
+    assert process.start_time > 0
+
+
+def test_disappearing_descriptor_does_not_hide_other_lock_descriptors(tmp_path, monkeypatch):
+    lock = tmp_path / "additional-suite.lock"
+    original = os.readlink
+    with lock.open("w") as stream:
+        lock_fd = f"/proc/{os.getpid()}/fd/{stream.fileno()}"
+
+        def race(path, *args, **kwargs):
+            if str(path).startswith(f"/proc/{os.getpid()}/fd/") and str(path) != lock_fd:
+                raise FileNotFoundError(str(path))
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "readlink", race)
+        process = _read_process(os.getpid())
+        assert process is not None
+        assert str(lock) in process.open_files

@@ -53,23 +53,26 @@ PY="$VENV_DIR/bin/python"
     "$RUN/run_config.json" attn gen_batch lora_targets top_p thinking prompt_format)
 export OM_ATTN=${OM_ATTN:-${CFG_ATTN:-eager}} OM_GEN_BATCH=${OM_GEN_BATCH:-${CFG_GEN:-32}} OM_SKIP_HYBRID=1
 export OM_LORA_TARGETS="$CFG_LORA" OM_TOP_P=${CFG_TOPP:-1.0} OM_THINKING=${CFG_THINK:-off} OM_PROMPT_FORMAT=${CFG_FMT:-olmo_rlzero_math}
-# Same reward function as the registered matrix (symbolic Math-Verify).
-MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps") || exit 1
-export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify
 PREPARE=("$PY" src/evidence_downstream.py prepare --run "$RUN" --out "$OUT" --eval-prompts "$EVAL_PROMPTS" \
          --steps "$STEPS" --eval-k "$EVAL_K" --selectors "${SELECTORS[@]}")
 if [ "$DRY" = 1 ]; then "${PREPARE[@]}" --dry-run; exit "$?"; fi
-"${PREPARE[@]}" || exit 1
-[ "$PREPARE_ONLY" = 0 ] || { echo "[prepared] $OUT; no GPU work launched"; exit 0; }
+"${PREPARE[@]}" >/dev/null || exit 1
+echo "[prepared] $OUT (arms: ${SELECTORS[*]}; $STEPS updates; $EVAL_K responses per test prompt)"
+[ "$PREPARE_ONLY" = 0 ] || { echo "[prepared] no GPU work launched"; exit 0; }
+# Same reward function as the registered matrix (symbolic Math-Verify).
+MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps") || exit 1
+export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify
 
 # Leftover E5 processes on THIS node (an earlier launch whose session dropped or
 # was interrupted) still hold the GPUs and the leases. Stop them and resume from
 # their checkpoints and partial shards. Only processes that reference the E5
 # output root are touched; the OLMo and Qwen launchers never match.
 E5_ROOT=$(dirname "$OUT")
-LEFTOVER=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$E5_ROOT" --command-pattern "$E5_ROOT" 2>/dev/null | wc -l)
-if [ "$LEFTOVER" -gt 0 ]; then
-  echo "[cleanup] stopping $LEFTOVER leftover E5 process(es) from an earlier launch on this node"
+LEFTOVER=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$E5_ROOT" --command-pattern "$E5_ROOT" 2>/dev/null)
+if [ -n "$LEFTOVER" ]; then
+  echo "[cleanup] stopping $(printf '%s\n' "$LEFTOVER" | grep -c .) leftover E5 process(es) from an earlier launch on this node"
+  printf '%s\n' "$LEFTOVER" | cut -c1-140 | sed 's/^/  /'
+
   "$PY" src/cleanup_run_processes.py --run-prefix "$E5_ROOT" --command-pattern "$E5_ROOT" --timeout 30 >/dev/null 2>&1 || true
   sleep 3
 fi
@@ -78,7 +81,12 @@ if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then
   LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
   mkdir -p "$LOCAL_LOCK_DIR"
   exec 8>"$LOCAL_LOCK_DIR/primary.lock"
-  flock -n 8 || { echo "[busy] another launcher (OLMo or Qwen matrix) owns this node's GPUs; E5 leftovers were already cleared, so pick a node without a matrix launcher"; exit 75; }
+  if ! flock -w 10 8; then
+    echo "[busy] another launcher owns this node's GPUs (E5 leftovers were already cleared). Holder:"
+    "$PY" src/cleanup_run_processes.py --list --run-prefix "$LOCAL_LOCK_DIR/none" --open-file "$LOCAL_LOCK_DIR/primary.lock" 2>/dev/null | cut -c1-160 | sed 's/^/  /'
+    echo "  if that is the OLMo or Qwen matrix, leave it and use another node; E5 never stops the matrix"
+    exit 75
+  fi
 fi
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
   IFS=, read -ra GPUS <<< "$CUDA_VISIBLE_DEVICES"

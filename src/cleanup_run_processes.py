@@ -17,6 +17,7 @@ class Process:
     command: str
     environ: dict[str, str]
     open_files: frozenset[str]
+    start_time: int = 0
 
 
 def _read_process(pid: int) -> Process | None:
@@ -25,17 +26,21 @@ def _read_process(pid: int) -> Process | None:
         if proc.stat().st_uid != os.getuid():
             return None
         stat_tail = (proc / "stat").read_text().rsplit(") ", 1)[1].split()
+        if stat_tail[0] == "Z":
+            return None
         command = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(
             errors="replace"
         )
         raw_environment = (proc / "environ").read_bytes().split(b"\0")
-        open_files = frozenset(
-            os.readlink(entry)
-            for entry in (proc / "fd").iterdir()
-            if entry.is_symlink()
-        )
+        descriptors = []
+        for entry in (proc / "fd").iterdir():
+            try:
+                descriptors.append(os.readlink(entry))
+            except OSError:
+                # A closing descriptor must not hide the live lock owner.
+                continue
+        open_files = frozenset(descriptors)
     except OSError:
-        # /proc descriptors can change between is_symlink() and readlink().
         # An unreadable process must not abort recovery for the whole node.
         return None
 
@@ -51,6 +56,7 @@ def _read_process(pid: int) -> Process | None:
         command=command,
         environ=environ,
         open_files=open_files,
+        start_time=int(stat_tail[19]),
     )
 
 
@@ -82,10 +88,25 @@ def matching_processes(
     command_patterns: tuple[str, ...] = (),
     required_environment: tuple[tuple[str, str], ...] = (),
     open_files: tuple[str, ...] = (),
+    launcher_environment_from_child: bool = False,
+    session_log_prefix: str = "",
 ) -> dict[int, Process]:
     processes = _snapshot()
     protected = _protected_ancestors(processes)
     targets: set[int] = set()
+    environment_witnesses: set[int] = set()
+    if launcher_environment_from_child and required_environment:
+        # Linux exposes the shell's initial environment, not exports added by
+        # setup_env.sh. Its exec'ed children do expose those exports. Only an
+        # explicitly named launcher may use a descendant as a work-root witness.
+        for child in processes.values():
+            if all(child.environ.get(key) == value for key, value in required_environment):
+                pid = child.ppid
+                visited: set[int] = set()
+                while pid in processes and pid not in visited:
+                    visited.add(pid)
+                    environment_witnesses.add(pid)
+                    pid = processes[pid].ppid
 
     for pid, process in processes.items():
         environment_paths = (
@@ -103,6 +124,10 @@ def matching_processes(
             any(path == run_prefix or path.startswith(run_prefix.rstrip("/") + "/") or path.startswith(run_prefix + "-") for path in environment_paths)
             or any(pattern in process.command for pattern in command_patterns)
             or any(path in process.open_files for path in open_files)
+            or bool(session_log_prefix and (
+                process.environ.get("SESSION_LOG", "").startswith(session_log_prefix)
+                or any(path.startswith(session_log_prefix) for path in process.open_files)
+            ))
             or is_v4_worker
             or is_v4_launcher
         )
@@ -110,6 +135,11 @@ def matching_processes(
             process.environ.get(key) == value
             for key, value in required_environment
         )
+        if (not matches_environment and pid in environment_witnesses
+                and any(pattern in process.command for pattern in command_patterns)
+                and all(key not in process.environ or process.environ[key] == value
+                        for key, value in required_environment)):
+            matches_environment = True
         if matches_scope and matches_environment:
             targets.add(pid)
 
@@ -139,10 +169,13 @@ def list_processes(
     command_patterns: tuple[str, ...] = (),
     required_environment: tuple[tuple[str, str], ...] = (),
     open_files: tuple[str, ...] = (),
+    launcher_environment_from_child: bool = False,
+    session_log_prefix: str = "",
 ) -> list[Process]:
     """The processes terminate() would stop, in pid order; nothing is signalled."""
     targets = matching_processes(
-        run_prefix, command_patterns, required_environment, open_files
+        run_prefix, command_patterns, required_environment, open_files,
+        launcher_environment_from_child, session_log_prefix,
     )
     return sorted(targets.values(), key=lambda process: process.pid)
 
@@ -153,38 +186,60 @@ def terminate(
     command_patterns: tuple[str, ...] = (),
     required_environment: tuple[tuple[str, str], ...] = (),
     open_files: tuple[str, ...] = (),
+    launcher_environment_from_child: bool = False,
+    session_log_prefix: str = "",
 ) -> list[Process]:
     targets = matching_processes(
-        run_prefix, command_patterns, required_environment, open_files
+        run_prefix, command_patterns, required_environment, open_files,
+        launcher_environment_from_child, session_log_prefix,
     )
     if not targets:
         return []
 
     # Stop launchers first so they cannot retry while children are terminating.
-    ordered = sorted(targets.values(), key=lambda process: process.pid)
-    for process in ordered:
+    def alive(process: Process) -> bool:
         try:
-            os.kill(process.pid, signal.SIGTERM)
+            fields = (Path("/proc") / str(process.pid) / "stat").read_text().rsplit(") ", 1)[1].split()
+            return fields[0] != "Z" and int(fields[19]) == process.start_time
+        except (OSError, ValueError, IndexError):
+            return False
+
+    def send(process: Process, sig: int) -> None:
+        if not alive(process):
+            return
+        try:
+            os.kill(process.pid, sig)
         except ProcessLookupError:
             pass
+
+    for process in sorted(targets.values(), key=lambda process: process.pid):
+        print(f"[cleanup-target] pid={process.pid} {process.command.strip()}", flush=True)
+        send(process, signal.SIGTERM)
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        remaining = matching_processes(
-            run_prefix, command_patterns, required_environment, open_files
-        )
-        if not remaining:
-            return ordered
-        time.sleep(0.5)
+        for pid, process in matching_processes(
+            run_prefix, command_patterns, required_environment, open_files,
+            launcher_environment_from_child, session_log_prefix,
+        ).items():
+            if pid not in targets or targets[pid].start_time != process.start_time:
+                targets[pid] = process
+                send(process, signal.SIGTERM)
+        if not any(alive(process) for process in targets.values()):
+            return sorted(targets.values(), key=lambda process: process.pid)
+        time.sleep(0.1)
 
-    for pid in matching_processes(
-        run_prefix, command_patterns, required_environment, open_files
-    ):
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    return ordered
+    # Keep tracking already selected children after their parent exits. An
+    # orphaned tee/sleep may have no scope marker but still hold inherited locks.
+    for process in targets.values():
+        send(process, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if not any(alive(process) for process in targets.values()):
+            return sorted(targets.values(), key=lambda process: process.pid)
+        time.sleep(0.1)
+    remaining = [p.pid for p in targets.values() if alive(p)]
+    raise RuntimeError(f"selected processes did not exit after KILL: {remaining}")
 
 
 def main() -> int:
@@ -194,6 +249,10 @@ def main() -> int:
     parser.add_argument("--command-pattern", action="append", default=[])
     parser.add_argument("--require-environment", action="append", default=[])
     parser.add_argument("--open-file", action="append", default=[])
+    parser.add_argument("--launcher-environment-from-child", action="store_true",
+                        help="allow named launchers to prove missing initial environment through children")
+    parser.add_argument("--session-log-prefix", default="",
+                        help="also select this exact work/profile session-log namespace")
     parser.add_argument(
         "--list", action="store_true",
         help="print the matching processes (pid<TAB>command) and stop nothing",
@@ -210,16 +269,24 @@ def main() -> int:
             tuple(args.command_pattern),
             tuple(required_environment),
             tuple(str(Path(path).resolve()) for path in args.open_file),
+            args.launcher_environment_from_child,
+            args.session_log_prefix,
         ):
             print(f"{process.pid}\t{process.command.strip()}")
         return 0
-    terminated = terminate(
-        args.run_prefix,
-        args.timeout,
-        tuple(args.command_pattern),
-        tuple(required_environment),
-        tuple(str(Path(path).resolve()) for path in args.open_file),
-    )
+    try:
+        terminated = terminate(
+            args.run_prefix,
+            args.timeout,
+            tuple(args.command_pattern),
+            tuple(required_environment),
+            tuple(str(Path(path).resolve()) for path in args.open_file),
+            args.launcher_environment_from_child,
+            args.session_log_prefix,
+        )
+    except RuntimeError as exc:
+        print(f"[abort] {exc}", flush=True)
+        return 1
     if terminated:
         print(f"[startup-cleanup] terminated {len(terminated)} stale processes")
     else:

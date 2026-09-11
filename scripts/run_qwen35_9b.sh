@@ -37,7 +37,22 @@ case "$MODE" in
         --run-prefix "$OM_WORK/runs/qwen35-9b-posttrained-math-code-grpo-v1" \
         --require-environment "OM_WORK=$OM_WORK" \
         --command-pattern 'scripts/run_additional_experiments.sh --run qwen35 ' \
+        --launcher-environment-from-child \
+        --session-log-prefix "$OM_WORK/console-logs/additional-qwen35-run-" \
         --timeout 15
+      LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
+      if [ -d "$LOCAL_LOCK_DIR" ]; then
+        for lock in additional-suite.lock primary.lock; do
+          if ! flock -w 5 "$LOCAL_LOCK_DIR/$lock" true; then
+            echo "[abort] Qwen cleanup finished but $lock still has another owner:"
+            "$VENV_DIR/bin/python" src/cleanup_run_processes.py --list \
+              --run-prefix "$OM_WORK/runs/qwen35-9b-posttrained-math-code-grpo-v1" \
+              --open-file "$LOCAL_LOCK_DIR/$lock"
+            exit 75
+          fi
+        done
+      fi
+      echo "[cleanup] previous Qwen processes exited; node locks are available"
     fi
     exec bash scripts/run_additional_experiments.sh --run qwen35
     ;;
