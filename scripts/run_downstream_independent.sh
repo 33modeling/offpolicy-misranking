@@ -68,46 +68,13 @@ export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIE
 # their checkpoints and partial shards. Only processes that reference the E5
 # output root are touched; the OLMo and Qwen launchers never match.
 E5_ROOT=$(dirname "$OUT")
-LEFTOVER=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$E5_ROOT" --command-pattern "$E5_ROOT" 2>/dev/null)
-if [ -n "$LEFTOVER" ]; then
-  echo "[cleanup] stopping $(printf '%s\n' "$LEFTOVER" | grep -c .) leftover E5 process(es) from an earlier launch on this node"
-  printf '%s\n' "$LEFTOVER" | cut -c1-140 | sed 's/^/  /'
-
-  "$PY" src/cleanup_run_processes.py --run-prefix "$E5_ROOT" --command-pattern "$E5_ROOT" --timeout 30 >/dev/null 2>&1 || true
-  sleep 3
+source scripts/_e5_node.sh || exit 1
+if [ "${OM_E5_CONTROLLER_PID:-}" != "$PPID" ]; then
+  e5_cleanup_previous "$E5_ROOT" || exit 1
 fi
 # Node-local GPU admission: never share a node with the OLMo or Qwen launcher.
-# The lock file is the one the matrix launchers use. If the lock is held but no
-# process on THIS node has it open, the lock directory is not node-local (a
-# shared /tmp); fall back to a per-host lock instead of refusing a free node.
-MATRIX_PATTERN='scripts/(run_olmo3_rlzero|run_qwen35_9b|run_point|run_reliability_budget|run_reference_axes|go_[a-z0-9_]+)\.sh'
 if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then
-  LOCAL_LOCK_DIR="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
-  mkdir -p "$LOCAL_LOCK_DIR"
-  LOCK_FILE="$LOCAL_LOCK_DIR/primary.lock"
-  echo "[node] host=$(hostname) lock=$LOCK_FILE fs=$(stat -f -c %T "$LOCAL_LOCK_DIR" 2>/dev/null || echo unknown)"
-  exec 8>"$LOCK_FILE"
-  if ! flock -n 8 2>"$LOCAL_LOCK_DIR/.flock-err"; then
-    HOLDERS=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$LOCAL_LOCK_DIR/none" --open-file "$LOCK_FILE" 2>/dev/null)
-    if [ -s "$LOCAL_LOCK_DIR/.flock-err" ]; then
-      echo "[note] flock is not supported on $LOCAL_LOCK_DIR ($(cat "$LOCAL_LOCK_DIR/.flock-err")); using a per-host lock"
-      HOLDERS=""
-      LOCK_FILE="$LOCAL_LOCK_DIR/primary.$(hostname).lock"; exec 8>"$LOCK_FILE"; flock -n 8 || true
-    elif [ -z "$HOLDERS" ]; then
-      echo "[note] the node lock is held, but no process on $(hostname) has it open: the lock directory is shared across nodes; using a per-host lock"
-      LOCK_FILE="$LOCAL_LOCK_DIR/primary.$(hostname).lock"; exec 8>"$LOCK_FILE"
-      flock -n 8 || { echo "[busy] per-host lock $LOCK_FILE is also held; E5 already runs on this host"; exit 75; }
-    elif printf '%s\n' "$HOLDERS" | grep -Eq "$MATRIX_PATTERN"; then
-      echo "[busy] a matrix launcher owns this node's GPUs; E5 never stops the matrix. Holder:"
-      printf '%s\n' "$HOLDERS" | cut -c1-160 | sed 's/^/  /'
-      exit 75
-    else
-      echo "[busy] the node lock is held by a process on this node that is not E5 and not the matrix; E5 will not stop it. Holder:"
-      printf '%s\n' "$HOLDERS" | cut -c1-160 | sed 's/^/  /'
-      exit 75
-    fi
-  fi
-  rm -f "$LOCAL_LOCK_DIR/.flock-err"
+  e5_acquire_node || exit "$?"
 fi
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
   IFS=, read -ra GPUS <<< "$CUDA_VISIBLE_DEVICES"
@@ -122,9 +89,12 @@ for _ in $(seq 1 12); do
   [ -n "$busy_mib" ] && [ "$busy_mib" -gt 4000 ] || break
   sleep 5
 done
-[ -z "${busy_mib:-}" ] || [ "$busy_mib" -le 4000 ] || echo "[warn] a GPU still holds ${busy_mib} MiB held by a process outside E5; continuing"
+if [ -n "${busy_mib:-}" ] && [ "$busy_mib" -gt 4000 ]; then
+  echo "[busy] GPU memory did not drain after E5 cleanup (${busy_mib} MiB); no new GPU work started"
+  exit 75
+fi
 mkdir -p "$OUT/logs"
-exec > >(tee -p -a "$OUT/logs/launcher-$(hostname)-$(date -u +%Y%m%dT%H%M%SZ).log") 2>&1
+exec > >(tee -p -a "$OUT/logs/launcher-$(hostname)-$(date -u +%Y%m%dT%H%M%SZ).log" 7>&- 8>&- 9>&-) 2>&1
 echo "[environment] host=$(hostname) CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES attention=$OM_ATTN generation_batch=$OM_GEN_BATCH arms=${SELECTORS[*]}"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv 2>/dev/null || true
 CHILDREN=()
@@ -137,7 +107,7 @@ stop_children() {
 trap 'trap - INT TERM; stop_children; exit 130' INT
 trap 'trap - INT TERM; stop_children; exit 143' TERM
 run_tracked() {
-  setsid "$@" 8>&- 9>&- & local pid=$!
+  setsid "$@" 7>&- 8>&- 9>&- & local pid=$!
   CHILDREN=("$pid")
   wait "$pid"; local rc=$?
   CHILDREN=()
@@ -158,7 +128,7 @@ evaluate_arm() {
   echo "[eval] $arm: four shard processes; progress every 5 min here, full logs in $OUT/logs/eval-$arm-<shard>.log"
   for shard in 0 1 2 3; do
     setsid env CUDA_VISIBLE_DEVICES="${GPUS[$shard]}" "$PY" src/evidence_downstream.py evaluate \
-      --out "$OUT" --arm "$arm" --shard "$shard" > "$OUT/logs/eval-$arm-$shard.log" 2>&1 8>&- 9>&- &
+      --out "$OUT" --arm "$arm" --shard "$shard" > "$OUT/logs/eval-$arm-$shard.log" 2>&1 7>&- 8>&- 9>&- &
     CHILDREN+=("$!")
   done
   while :; do
@@ -212,7 +182,10 @@ for selector in "${SELECTORS[@]}"; do
   evaluate_arm "$selector" || { echo "[failed] $selector evaluation; continuing to the next arm"; failed=1; }
   flock -u 9
 done
-if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then flock -u 8; fi
+if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then
+  flock -u 8
+  if [ "${E5_HOST_LOCK_HELD:-0}" = 1 ]; then flock -u 7; fi
+fi
 exec 9>"$OUT/.summary.lock"
 if flock -n 9; then
   "$PY" src/evidence_downstream.py summarize --out "$OUT" --allow-partial > "$OUT/logs/summary.log" 2>&1 || failed=1

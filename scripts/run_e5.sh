@@ -7,6 +7,8 @@
 #   bash scripts/run_e5.sh          # run on THIS idle 4xH100 node (no OLMo/Qwen launcher here)
 #   bash scripts/run_e5.sh status   # progress of every seed and arm, no GPU
 #   bash scripts/run_e5.sh plan     # dry run: contracts and commands only
+#   bash scripts/run_e5.sh stop     # stop E5 on this node (nothing else)
+#   bash scripts/run_e5.sh force    # run, first stopping a non-matrix process that holds this node's GPU lock
 #
 # Several idle nodes may run the same command: arms are leased per seed, a
 # busy arm is skipped, and a node moves on to the next seed. Rerunning after a
@@ -15,7 +17,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
-case "$MODE" in run|status|plan|stop) ;; *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop]"; exit 2 ;; esac
+case "$MODE" in run|status|plan|stop) ;; force) MODE=run; export E5_FORCE=1 ;; *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force]"; exit 2 ;; esac
 trap '' HUP
 trap 'echo "[e5] interrupted; nothing else will be started"; exit 130' INT TERM
 export OM_ONLINE=0
@@ -38,11 +40,9 @@ run_dir() { printf '%s/family-%s-s%s/%s-s%s-%s-d%s\n' "$ROOT" "$DATASET" "$1" "$
 
 echo "[e5] $DATASET d$DRIFT seeds=${SEEDS[*]} arms=$SELECTORS steps=$STEPS eval_k=$EVAL_K test=$COUNT  out=$OUT_ROOT"
 if [ "$MODE" = stop ]; then
-  # Stop every E5 process on THIS node (launcher, trainers, evaluation shards); nothing else.
-  found=$("$PY" src/cleanup_run_processes.py --list --run-prefix "$OUT_ROOT" --command-pattern "$OUT_ROOT" 2>/dev/null)
-  [ -z "$found" ] || printf '%s\n' "$found" | cut -c1-140 | sed 's/^/  /'
-  "$PY" src/cleanup_run_processes.py --run-prefix "$OUT_ROOT" --command-pattern "$OUT_ROOT" --timeout 30 >/dev/null 2>&1 || true
-  echo "[e5] stopped $(printf '%s\n' "$found" | grep -c .) E5 process(es) on $(hostname); rerun 'bash scripts/run_e5.sh' to resume"
+  source scripts/_e5_node.sh || exit 1
+  e5_cleanup_previous "$OUT_ROOT" || exit 1
+  echo "[e5] previous E5 processes stopped on $(hostname); checkpoints retained"
   exit 0
 fi
 if [ "$MODE" = status ]; then
@@ -76,6 +76,12 @@ REVISION=$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["source
 # 3. freeze the independent test set (idempotent; shared by all seeds and nodes)
 "$PY" src/evidence_downstream.py prepare-test --candidates "$POOL" --runs "${runs[@]}" --out "$TEST" \
   --count "$COUNT" --dataset EleutherAI/hendrycks_math --revision "$REVISION" --split train || exit 1
+if [ "$MODE" = run ]; then
+  source scripts/_e5_node.sh || exit 1
+  e5_cleanup_previous "$OUT_ROOT" || exit 1
+  # Own this node for the entire seed pass, not separately for every child.
+  if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then e5_acquire_node || exit "$?"; fi
+fi
 # 4. one seed after another; arms are leased inside the launcher
 rc_all=0
 for seed in "${SEEDS[@]}"; do
@@ -86,10 +92,11 @@ for seed in "${SEEDS[@]}"; do
       --eval-prompts "$TEST" --steps "$STEPS" --eval-k "$EVAL_K" --dry-run | head -20 || rc_all=1
     continue
   fi
-  DOWNSTREAM_SELECTORS="$SELECTORS" bash scripts/run_downstream_independent.sh "$run" "$out" \
-    --eval-prompts "$TEST" --steps "$STEPS" --eval-k "$EVAL_K"
+  OM_NODE_LOCK_HELD=1 OM_E5_CONTROLLER_PID="$$" DOWNSTREAM_SELECTORS="$SELECTORS" \
+    bash scripts/run_downstream_independent.sh "$run" "$out" \
+    --eval-prompts "$TEST" --steps "$STEPS" --eval-k "$EVAL_K" 7>&- 8>&-
   rc=$?
-  if [ "$rc" -eq 75 ]; then echo "[abort] a matrix launcher (OLMo or Qwen) owns this node's GPUs; E5 was not started here"; exit 75; fi
+  if [ "$rc" -eq 75 ]; then echo "[abort] E5 admission failed; see the actual owner or resource error above"; exit 75; fi
   if [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then echo "[e5] stopped by signal; nothing else will be started"; exit "$rc"; fi
   [ "$rc" -eq 0 ] || rc_all=1
 done

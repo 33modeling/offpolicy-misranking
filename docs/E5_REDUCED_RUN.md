@@ -44,6 +44,47 @@ Progress from any node, no GPU:
 bash scripts/run_e5.sh status
 ```
 
+### Node ownership repair (2026-09-11)
+
+The normal `run_e5.sh` command now stops the previous E5 seed loop and its
+children on this node before taking the node lock. A shell's late `OUT_ROOT`
+export is proved through its children; killing only the downstream child left
+the older seed loop able to start another child and reacquire the lock.
+Cleanup failures are no longer suppressed or reported as successful cleanup.
+
+One controller keeps node ownership through all three seeds. Its child
+launchers borrow that ownership without reopening the same lock or repeating
+cleanup. Node-lock descriptors are not inherited by training, evaluation or
+logging children. The `.before.lock` and per-arm locks in each shared seed
+output remain unchanged: three nodes may still work on distinct arms/seeds.
+Nothing is deleted or moved, and no healthy OLMo/Qwen launcher is stopped.
+
+Node diagnostics print hostname, controller PID, lock path and filesystem.
+An unavailable lock is not automatically attributed to OLMo/Qwen. The per-host
+fallback requires an identified shared filesystem and no visible local owner;
+an unsupported `flock`, a busy local lock with an unknown owner, or a failed
+per-host lock cannot silently authorize GPU work. `force` remains explicit and
+does not override a visible matrix launcher. Persistent GPU memory occupancy
+after cleanup stops admission instead of merely warning and loading more models.
+On shared filesystems, the controller also holds its per-host lock when the
+legacy shared lock was initially free, preventing duplicate admission when a
+different node later releases that shared lock.
+
+Use the unchanged command on each of the three allocated E5 nodes after
+updating its checkout. No new work root, arm selection or manual PID selection
+is needed. CPU tests exercise the real Bash controllers and real file locks,
+with mocked model work and simulated node-local process visibility. Both
+separate node-lock directories and a shared-filesystem configuration are tested.
+Live GPU execution is not accessible from the development host.
+
+Provenance note: the concurrent `5b44ab4` change relaxed code/runtime matching
+in `evidence_downstream.py`. This node-ownership repair does not modify that
+scientific file or broaden that relaxation. The older fixed-file-hash status
+regression still fails against `5b44ab4`; that provenance compatibility issue
+is separate from node admission and remains to be reviewed. The earlier
+unchanged-scientific-source statement below describes the earlier repair,
+not that concurrent change.
+
 `bash scripts/run_e5.sh plan` prints the contracts and commands without
 touching a GPU. Rerunning after a kill resumes from the newest five-step
 checkpoint or the completed evaluation shards; arms are leased per seed so

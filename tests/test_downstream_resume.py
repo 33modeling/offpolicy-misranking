@@ -98,12 +98,14 @@ def test_launcher_repairs_or_preserves_bad_arm_and_continues(tmp_path, repair_rc
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy2(ROOT / "scripts/run_downstream_independent.sh", repo / "scripts")
+    shutil.copy2(ROOT / "scripts/_e5_node.sh", repo / "scripts")
     (repo / "scripts/setup_env.sh").write_text("true\n")
     bins = tmp_path / "venv/bin"
     bins.mkdir(parents=True)
     python = bins / "python"
     python.write_text('''#!/bin/bash
 case "$1" in
+  src/cleanup_run_processes.py) exit 0 ;;
   -c) printf 'eager\\n8\\nq_proj,v_proj\\n1.0\\noff\\nolmo_rlzero_math\\n' ;;
   src/bootstrap_math_verify.py) echo /fixture ;;
   src/check_downstream_resume.py) echo repair >> "$CALLS"; exit "$REPAIR_RC" ;;
