@@ -22,6 +22,7 @@ import math
 import os
 import random
 import sys
+import time
 import unicodedata
 from pathlib import Path
 
@@ -369,20 +370,83 @@ def paired_interval(values: np.ndarray, seed: int, reps: int = 10000) -> tuple[f
     return tuple(float(v) for v in np.quantile(means, [0.025, 0.975]))
 
 
+def _tail(path: Path, width: int = 110) -> str:
+    try:
+        lines = [line for line in path.read_text(errors="replace").splitlines() if line.strip()]
+    except OSError:
+        return ""
+    return lines[-1][-width:] if lines else ""
+
+
+def _age(path: Path) -> str:
+    try:
+        seconds = int(time.time() - path.stat().st_mtime)
+    except OSError:
+        return "-"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m" if seconds >= 3600 else f"{seconds // 60}m{seconds % 60:02d}s"
+
+
+def shard_states(out: Path, arm: str) -> list[str]:
+    """One line per evaluation shard: done / rows so far / not started, with the log tail."""
+    contract = read(out / "experiment.json")
+    n, k = contract["eval_prompts"], contract["eval_k"]
+    lines = []
+    for shard in range(4):
+        expected = (n * (shard + 1) // 4 - n * shard // 4) * k
+        target = out / arm / "evaluation"
+        log = out / "logs" / f"eval-{arm}-{shard}.log"
+        if (target / f"shard-{shard}.done.json").is_file():
+            lines.append(f"    shard {shard}: done ({expected} responses)")
+            continue
+        partial = target / f"shard-{shard}.jsonl.partial"
+        if partial.is_file():
+            rows = sum(1 for line in partial.open() if line.strip())
+            lines.append(f"    shard {shard}: {rows}/{expected} responses, last write {_age(partial)} ago | {_tail(log)}")
+        elif log.is_file():
+            lines.append(f"    shard {shard}: started, no responses yet, log {_age(log)} old | {_tail(log)}")
+        else:
+            lines.append(f"    shard {shard}: not started")
+    return lines
+
+
+def train_state(out: Path, arm: str) -> str:
+    contract = read(out / "experiment.json")
+    policy = out / arm / "policy"
+    log = out / "logs" / f"train-{arm}.log"
+    if (policy / "policy_train.json").is_file():
+        return "trained"
+    steps = [int(path.name.split("-")[1]) for path in policy.glob("checkpoint-*") if path.name.split("-")[1].isdigit()]
+    stats = policy / "grpo_stats.jsonl"
+    done = sum(1 for line in stats.open() if line.strip()) if stats.is_file() else 0
+    if not policy.is_dir() and not log.is_file():
+        return "not started"
+    return (f"training: {done}/{contract['steps']} updates logged, checkpoint at step "
+            f"{max(steps) if steps else contract['drift']}, log {_age(log)} old | {_tail(log)}")
+
+
 def arm_state(out: Path, arm: str) -> str:
-    """Durable progress word for status displays: missing / policy / partial / done."""
-    if all((out / arm / "evaluation" / f"shard-{s}.done.json").is_file() for s in range(4)):
+    """Durable progress word for status displays."""
+    done = sum((out / arm / "evaluation" / f"shard-{s}.done.json").is_file() for s in range(4))
+    if done == 4:
         return "done"
-    shards = sum((out / arm / "evaluation" / f"shard-{s}.done.json").is_file() for s in range(4))
-    if shards:
-        return f"eval {shards}/4"
+    if done or any((out / arm / "evaluation" / f"shard-{s}.jsonl.partial").is_file() for s in range(4)):
+        return f"evaluating ({done}/4 shards done)"
     if arm == "before":
         return "not evaluated"
-    if (out / arm / "policy" / "policy_train.json").is_file():
-        return "trained, not evaluated"
-    if (out / arm / "policy").is_dir():
-        return "training"
-    return "not started"
+    state = train_state(out, arm)
+    return "trained, not evaluated" if state == "trained" else state
+
+
+def print_status(out: Path) -> None:
+    contract = read(out / "experiment.json")
+    print(f"seed {contract['seed']} d{contract['drift']} steps={contract['steps']} eval_k={contract['eval_k']} test={contract['eval_prompts']}")
+    for arm in ["before", *contract["selectors"]]:
+        state = arm_state(out, arm)
+        print(f"  {arm:14s} {state}")
+        if state.startswith("evaluating") or (arm == "before" and state == "not evaluated" and (out / "logs").is_dir()
+                                                and any((out / "logs" / f"eval-before-{s}.log").is_file() for s in range(4))):
+            for line in shard_states(out, arm):
+                print(line)
 
 
 def summarize(out: Path, *, allow_partial: bool = False) -> dict:
@@ -485,10 +549,7 @@ def main() -> int:
             if not (out / "experiment.json").is_file():
                 print("not prepared")
                 return 0
-            contract = read(out / "experiment.json")
-            print(f"seed {contract['seed']} d{contract['drift']} steps={contract['steps']} eval_k={contract['eval_k']} test={contract['eval_prompts']}")
-            for arm in ["before", *contract["selectors"]]:
-                print(f"  {arm:14s} {arm_state(out, arm)}")
+            print_status(out)
             return 0
         else:
             result = summarize(args.out.resolve(), allow_partial=args.allow_partial)

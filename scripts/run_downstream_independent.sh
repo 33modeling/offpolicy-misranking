@@ -94,22 +94,44 @@ run_tracked() {
   CHILDREN=()
   return "$rc"
 }
+shard_progress() {  # one console line per shard while the evaluation runs
+  local arm=$1 shard partial log rows
+  for shard in 0 1 2 3; do
+    partial="$OUT/$arm/evaluation/shard-$shard.jsonl.partial"; log="$OUT/logs/eval-$arm-$shard.log"
+    if [ -f "$OUT/$arm/evaluation/shard-$shard.done.json" ]; then echo "  shard $shard: done"
+    elif [ -f "$partial" ]; then rows=$(grep -c . "$partial" 2>/dev/null || echo 0); echo "  shard $shard: $rows responses so far | $(tail -n 1 "$log" 2>/dev/null | cut -c1-110)"
+    else echo "  shard $shard: loading model | $(tail -n 1 "$log" 2>/dev/null | cut -c1-110)"; fi
+  done
+}
 evaluate_arm() {
-  local arm=$1 shard pid failed=0
+  local arm=$1 shard pid failed=0 waited=0
   CHILDREN=()
+  echo "[eval] $arm: four shard processes; progress every 5 min here, full logs in $OUT/logs/eval-$arm-<shard>.log"
   for shard in 0 1 2 3; do
     setsid env CUDA_VISIBLE_DEVICES="${GPUS[$shard]}" "$PY" src/evidence_downstream.py evaluate \
       --out "$OUT" --arm "$arm" --shard "$shard" > "$OUT/logs/eval-$arm-$shard.log" 2>&1 &
     CHILDREN+=("$!")
   done
+  while :; do
+    local alive=0
+    for pid in "${CHILDREN[@]}"; do kill -0 "$pid" 2>/dev/null && alive=$((alive + 1)); done
+    [ "$alive" -gt 0 ] || break
+    sleep 30; waited=$((waited + 30))
+    if [ $((waited % 300)) -eq 0 ]; then echo "[eval] $arm: $((waited / 60)) min elapsed, $alive/4 shards running"; shard_progress "$arm"; fi
+  done
   for pid in "${CHILDREN[@]}"; do wait "$pid" || failed=1; done
   CHILDREN=()
+  if [ "$failed" -ne 0 ]; then
+    for shard in 0 1 2 3; do
+      [ -f "$OUT/$arm/evaluation/shard-$shard.done.json" ] || echo "  shard $shard failed: $(grep -m1 -E '^\[abort\]|Error|error' "$OUT/logs/eval-$arm-$shard.log" 2>/dev/null | cut -c1-160)"
+    done
+  fi
   return "$failed"
 }
 failed=0; busy=0
 exec 9>"$OUT/.before.lock"
 if flock -n 9; then
-  echo "[eval] baseline policy on ${EVAL_K} responses per test prompt"
+  echo "[eval] baseline policy on ${EVAL_K} responses per test prompt (about 60-90 min on four GPUs)"
   evaluate_arm before || { echo "[failed] baseline evaluation; completed shards are retained"; failed=1; }
   flock -u 9
 else

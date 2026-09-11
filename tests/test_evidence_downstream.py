@@ -139,3 +139,19 @@ def test_test_preparation_excludes_the_whole_source_pool_and_is_frozen(tmp_path)
 def test_scripts_parse():
     for name in ("scripts/run_downstream_independent.sh", "scripts/run_e5.sh", "scripts/fetch_math_train.sh"):
         subprocess.run(["bash", "-n", str(ROOT / name)], check=True)
+
+
+def test_status_reports_progress_without_evaluation_files(tmp_path, capsys):
+    run, evaluation = source_point(tmp_path)
+    out = tmp_path / "output"
+    ed.prepare(run, out, evaluation, 100, 8)
+    assert ed.arm_state(out, "before") == "not evaluated"
+    assert ed.arm_state(out, "g11") == "not started"
+    (out / "logs").mkdir()
+    (out / "logs" / "eval-before-0.log").write_text("loading\nrollout 3/2 (x)\n")
+    (out / "before" / "evaluation").mkdir(parents=True)
+    (out / "before" / "evaluation" / "shard-1.jsonl.partial").write_text("{}\n{}\n")
+    assert ed.arm_state(out, "before").startswith("evaluating (0/4")
+    ed.print_status(out)
+    text = capsys.readouterr().out
+    assert "shard 1: 2/16 responses" in text and "rollout 3/2" in text
