@@ -8,6 +8,11 @@ No new main method is approved. Stop implementation until the acquisition
 rule, its connection to the diagnosed error, its contribution beyond prior
 work, and its full computation budget are defensible.
 
+Follow-up: [Obsidian and experiment synthesis](OBSIDIAN_EXPERIMENT_SYNTHESIS_2026-09-12.md)
+records a concrete low-order, learner-matched reuse-score candidate, its
+derivation, the existing K=8/G=8 constraint, and unresolved novelty and cost
+checks. It does not authorize implementation or change this gate.
+
 The target is **higher independent benchmark performance at the same total
 training-plus-selection cost**, or **lower total cost to reach a fixed benchmark
 performance**, relative to random selection. Ranking agreement, estimator
