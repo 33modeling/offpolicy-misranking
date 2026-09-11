@@ -846,8 +846,8 @@ def render(args: argparse.Namespace) -> tuple[list[str], str]:
     }
     out[0:0] = [
         f"DECISION {decisions[overall]}",
-        f"points   {points_done} done / {points_started} started / {total_points} in matrix   "
-        f"family failures in shown sessions: {sum(l.fails for l in launchers)}",
+        (f"points   {points_done} done / {points_started} started / {total_points} in matrix   "
+         f"family failures in shown sessions: {sum(l.fails for l in launchers)}"),
     ]
     out.append(f"overall_verdict={overall}")
     out.append(f"recommended_action={action}")
