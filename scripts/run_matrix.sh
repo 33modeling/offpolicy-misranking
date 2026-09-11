@@ -954,12 +954,15 @@ run_point() {
 
 run_point_unlocked() {
   local dataset=$1 seed=$2 drift=$3 source=$4 resume_step=$5 resume_run=$6
-  local run try n_train attempt_log rc prompt_root prompt_env failure_line
+  local run try n_train attempt_log rc prompt_root prompt_env failure_line alias_repairs=0
   run=$(run_dir "$dataset" "$seed" "$drift")
   n_train=$(n_train_for_dataset "$dataset") || return 43
   if [ -n "$CONTRACT" ]; then
     contract_run prepare-run "$run" "$dataset" "$seed" "$drift" "$source" \
       --quarantine-root "$QUARANTINE" || return 1
+  fi
+  if [ -s "$run/run_config.json" ]; then
+    "$PY" "$SUPERVISOR_REPO/src/repair_model_alias.py" "$run" || return 43
   fi
   if run_complete "$run" "$dataset" "$seed" "$drift" "$source"; then
     [ -s "$run/logs/supervisor.log" ] && note_point_accepted "$run"
@@ -1045,6 +1048,10 @@ run_point_unlocked() {
         OM_GRPO_RESUME_OPTIMIZER="$resume_run/policy_step_$resume_step/optimizer.pt")
     fi
     attempt_log="$run/logs/regime-attempt-$try.log"
+    while :; do
+    if [ "$alias_repairs" -gt 0 ]; then
+      attempt_log="$run/logs/regime-attempt-$try-alias-$alias_repairs.log"
+    fi
     if run_pipeline_watchdog "$run" "$attempt_log" \
         "${args[@]}" OM_REPO="$PIPELINE_REPO" \
         PYTHONPATH="$PIPELINE_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
@@ -1077,6 +1084,19 @@ run_point_unlocked() {
       # operator could not tell a crash from a kill.
       failure_line=$(grep -E 'config-abort|code-abort|permanent-contract|regime-contract-abort|\[abort\]|regime-hard-stall|Error|Traceback' "$attempt_log" 2>/dev/null \
         | tail -n 1 | short_reason 240)
+      if grep -Eq 'ValueError: rollouts_(behavior_train|fresh_train|fresh_val)(\.shard[0-9]+)?\.manifest\.json: model mismatch:' \
+          "$attempt_log" 2>/dev/null; then
+        # Old pinned generators record the load alias, while their validator
+        # compares the canonical basename. Repair only proven metadata aliases,
+        # after the child has exited; never rerun a completed rollout to fix it.
+        if [ "$alias_repairs" -lt 3 ] && "$PY" "$SUPERVISOR_REPO/src/repair_model_alias.py" \
+            "$run" --require-change; then
+          alias_repairs=$((alias_repairs + 1))
+          echo "[model-alias-repair] resume cached point ($alias_repairs/3); no CUDA recovery"
+          continue
+        fi
+        rc=43
+      fi
       if [ "$rc" -ne 42 ] && [ "$rc" -ne 43 ] && grep -Eq \
           'prompts.json differs from the requested dataset/split|prompts.json: content hash differs' \
           "$attempt_log" 2>/dev/null; then
@@ -1110,6 +1130,8 @@ run_point_unlocked() {
         return 43
       fi
     fi
+    break
+    done
     bash scripts/diagnose_run_failure.sh "$run" "$attempt_log" 1 2>/dev/null || true
     [ "$try" -lt "$MAX_RETRIES" ] || break
     if recover_cuda_rollout "$run" "$drift" "$try"; then

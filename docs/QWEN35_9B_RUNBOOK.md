@@ -78,6 +78,57 @@ Do not reuse or relabel 27B checkpoints as 9B results.
 
 ## Contract conflict recovery (2026-09-08)
 
+### Model-path failure loop (2026-09-11)
+
+The uploaded `status-qwen35-history (1).log`, sampled at
+`2026-09-11T00:22:42Z`, reports 0/40 completed points and 22h34m without
+changes to completion, GRPO steps or rollout bytes. Repeated failures end in
+`rollouts_behavior_train.shard0.manifest.json: model mismatch`, with the
+recorded basename `Qwen3.5-9B-pinned`. This is not evidence of useful GPU
+progress, and this exception is not a CUDA error. The abbreviated status line
+does not establish whether the two model paths actually identify the same
+snapshot; the recovery now checks that on the compute node.
+
+The supervisor handles the old pinned generator without modifying its source
+or the E5 source-hash contract:
+
+- Before entering a partial point, and after a matching manifest failure,
+  prove that the recorded absolute model paths resolve to the same accessible
+  canonical directory and that recorded model metadata hashes still match.
+- Validate completed rollout hashes, prompt/K coverage, merged-versus-shard
+  rows, sampling parameters and existing policy/RNG bindings in a temporary
+  view. Only the model-path spelling changes in this validation view.
+- Publish the canonical merged manifest and its ready cache. Preserve rollout
+  bytes, original shards, partials, run configuration and training checkpoints.
+  Original manifests and a hash receipt are retained under each point's
+  `logs/model-alias-repair/`. Already bound analysis results are not rewritten.
+- Re-enter the cached point immediately after a successful repair, with at
+  most three repair passes for its three primary rollout sources. Each pass
+  keeps a separate attempt log. Unprovable or repeated mismatches block that
+  family; the queue tries other eligible families instead of running CUDA
+  recovery or repeating the same matrix hundreds of times. Explicit Qwen
+  launchers still do not switch to OLMo or another Qwen model.
+
+Install the pushed update and use the existing node-local relaunch command
+on the **stalled Qwen nodes only**:
+
+```bash
+git pull --ff-only
+bash scripts/run_qwen35_9b.sh restart-idle
+```
+
+Keep the existing work root and environment. Do not reset the matrix, remove
+rollouts, rebuild model folders, or restart healthy E5/OLMo work. A running
+old launcher does not acquire this fix merely because another checkout was
+updated. Look for `[model-alias-repair]` followed by a new stage, and confirm
+actual rollout/step/completion progress with
+`bash scripts/run_qwen35_9b.sh status`. If identity cannot be proved, the
+launcher prints the full offending paths or failed hash and leaves artifacts
+untouched. CPU tests exercise the recorded `2e96090` validator through all
+three source transitions; the audit host cannot verify live H100 execution.
+
+### Earlier matrix contract conflict
+
 The uploaded `additional-qwen35-run-20260908T072635Z-eQlPEK.log` ended on
 `matrix contract mismatch`, after a successful single-GPU smoke. It does not
 show a CUDA failure. The updated launcher checks the contract before FLA/smoke,

@@ -133,6 +133,7 @@ def test_shared_regime_queue_is_unique_and_retryable() -> None:
         )
         shutil.copy2(REPO / "src/reuse_behavior.py", checkout / "src/reuse_behavior.py")
         shutil.copy2(REPO / "src/artifact_contract.py", checkout / "src/artifact_contract.py")
+        shutil.copy2(REPO / "src/repair_model_alias.py", checkout / "src/repair_model_alias.py")
         shutil.copy2(REPO / "src/compact_artifacts.py", checkout / "src/compact_artifacts.py")
         shutil.copy2(REPO / "src/rollout_contract.py", checkout / "src/rollout_contract.py")
         shutil.copy2(REPO / "src/prompt_format.py", checkout / "src/prompt_format.py")
