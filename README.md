@@ -4,6 +4,18 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+## V2 One-Shot Screen
+
+The current v2 revision adopts v3's measurement-first direction with corrected
+theory and explicit costs. New additive entrypoint:
+`bash scripts/run_light_gate.sh cpu`, then `bash scripts/run_light_gate.sh`
+on an allocated four-H100 node. The default suite has five MATH d100 seeds
+and two equal-allocation continuations per seed: gated versus random.
+It scans the whole existing cache once; no per-epoch gate or learned tree.
+`status`, `live`, `summarize`, and `stop` are available. Existing E5/Qwen/matrix
+workers remain unchanged. See [the scope, costs and run guide](docs/LIGHT_GATE_V2.md).
+The screen is an exploratory hypothesis, not a verified benchmark improvement.
+
 ## Low-Order Reuse Selection
 
 Read the [prior-art review and implementation rationale](docs/LOW_ORDER_PRIOR_ART_AND_RATIONALE_2026-09-12.md)
