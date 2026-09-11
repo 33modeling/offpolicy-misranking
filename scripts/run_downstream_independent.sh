@@ -121,8 +121,11 @@ for selector in "${SELECTORS[@]}"; do
   mapfile -d '' -t ARGS < "$OUT/subsets/train-$selector.args"
   "$PY" src/evidence_downstream.py policy-ready --out "$OUT" --arm "$selector"; ready=$?
   if [ "$ready" -eq 2 ]; then
-    echo "[failed] $selector has an invalid published policy; preserving it for diagnosis"
-    failed=1; flock -u 9; continue
+    if ! "$PY" src/check_downstream_resume.py --out "$OUT" --arm "$selector"; then
+      echo "[failed] $selector has no verified repair checkpoint; preserving it for diagnosis"
+      failed=1; flock -u 9; continue
+    fi
+    echo "[repair] $selector: restoring final publication from its verified checkpoint"
   fi
   if [ "$ready" -ne 0 ]; then
     echo "[train] $selector: $STEPS matched GRPO updates (resumes from the newest checkpoint if present)"

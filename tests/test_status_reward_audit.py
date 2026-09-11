@@ -219,47 +219,50 @@ def test_qwen_history_writer_failure_is_not_hidden(tmp_path):
 
 
 @pytest.mark.parametrize("name", ["run_qwen35_9b.sh", "run_olmo3_rlzero.sh"])
-@pytest.mark.parametrize("condition", ["clean", "dirty", "offline", "diverged"])
-def test_status_update_is_fast_forward_only_and_preserves_local_edits(
-    tmp_path, name, condition
+@pytest.mark.parametrize("git_available", [True, False])
+@pytest.mark.parametrize("active_e5", [True, False])
+def test_status_never_updates_code_or_requires_a_local_launcher(
+    tmp_path, name, git_available, active_e5
 ):
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
     source = (ROOT / "scripts" / name).read_text()
-    start = source.index("self_update_for_status() {")
-    stop = source.index("\n}\n", start) + 3
-    function = source[start:stop]
-    calls = tmp_path / "git-calls"
-    stub = """git() {
-      printf '%s\\n' "$*" >> "$GIT_CALLS"
-      case "$1" in
-        rev-parse) echo test-hash ;;
-        fetch) [ "$CONDITION" != offline ] ;;
-        status) if [ "$CONDITION" = dirty ]; then echo ' M src/data.py'; fi ;;
-        merge) [ "$CONDITION" != diverged ] ;;
-        *) return 99 ;;
-      esac
-    }
-    """
+    if name == "run_olmo3_rlzero.sh":
+        # Exercise the real entrypoint through its status revision report,
+        # stopping before cluster provisioning and the full status renderer.
+        source = source.split("export OM_ONLINE=", 1)[0] + 'echo STATUS_RENDERED\n'
+    else:
+        (scripts / "status_qwen35.sh").write_text('#!/bin/bash\necho "STATUS_RENDERED $*"\n')
+    (scripts / name).write_text(source)
+    work = tmp_path / "work"
+    if active_e5:
+        (work / "runs/e5-reduced/math500-d400/s0/logs").mkdir(parents=True)
+        (work / "runs/e5-reduced/math500-d400/s0/logs/launcher-remote.log").write_text("[train] g11\n")
+    bins = tmp_path / "bin"
+    bins.mkdir()
+    calls = tmp_path / "calls"
+    git = bins / "git"
+    git.write_text(
+        '#!/bin/bash\nprintf "git %s\\n" "$*" >> "$CALLS"\n'
+        + ('[ "$*" = "rev-parse --short HEAD" ] || exit 99\necho fixture\n'
+           if git_available else 'exit 127\n')
+    )
+    git.chmod(0o755)
+    pgrep = bins / "pgrep"
+    pgrep.write_text('#!/bin/bash\necho pgrep >> "$CALLS"\nexit 1\n')
+    pgrep.chmod(0o755)
     result = subprocess.run(
-        ["bash", "-c", stub + function + "\nself_update_for_status\n"],
-        env={**os.environ, "GIT_CALLS": str(calls), "CONDITION": condition},
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
+        ["bash", str(scripts / name), "status", "h100", "verbose"],
+        env={**os.environ, "OM_WORK": str(work), "CALLS": str(calls),
+             "PATH": str(bins) + os.pathsep + os.environ["PATH"]},
+        capture_output=True, text=True, timeout=10, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    commands = calls.read_text().splitlines()
-    assert all(
-        command.split()[0] not in {"reset", "pull", "checkout", "stash"}
-        for command in commands
-    )
-    merges = [command for command in commands if command.startswith("merge ")]
-    assert merges == (
-        ["merge -q --ff-only origin/master"]
-        if condition in {"clean", "diverged"}
-        else []
-    )
-    if condition == "dirty":
-        assert "local edits block it" in result.stdout
-    if condition == "diverged":
-        assert "branch diverged" in result.stdout
+    assert "STATUS_RENDERED" in result.stdout
+    assert "read-only status; no automatic update" in result.stdout
+    assert calls.read_text().splitlines() == ["git rev-parse --short HEAD"]
+    if name == "run_qwen35_9b.sh":
+        assert "STATUS_RENDERED verbose" in result.stdout
+    if not git_available:
+        assert "[code] unknown" in result.stdout

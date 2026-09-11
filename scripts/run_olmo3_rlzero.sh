@@ -38,43 +38,10 @@ case "$PROFILE" in
   *) echo "[abort] unknown profile=$PROFILE; expected baseline or h100"; exit 2 ;;
 esac
 
-# status is a read-only diagnostic; make sure it runs the latest pushed code.
-# Workers run from node-local clones, so fast-forwarding the shared checkout
-# never touches a running experiment. Never resets: local edits are reported.
-self_update_for_status() {
-  local before after dirty live
-  before=$(git rev-parse --short HEAD 2>/dev/null)
-  # Replacing script files on the shared checkout while a launcher on another
-  # node still reads them can ESTALE that launcher. Update only when no worker
-  # heartbeat is fresh; otherwise say so and keep the current code.
-  live=$(find "${OM_WORK:-/nonexistent}"/runs/*/.workers -name '*.json' -mmin -10 2>/dev/null | wc -l)
-  if [ "${live:-0}" -gt 0 ]; then
-    if git fetch -q origin master 2>/dev/null && [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master)" ]; then
-      echo "[code] $before; origin/master is $(git rev-parse --short origin/master). Not updating: $live worker(s) run from this checkout. Update after they exit, or run status from a second clone."
-    fi
-    return 0
-  fi
-  if ! git fetch -q origin master 2>/dev/null; then
-    echo "[code] $before (offline: could not fetch origin)"; return 0
-  fi
-  dirty=$(git status --porcelain -- src scripts configs 2>/dev/null)
-  if [ -n "$dirty" ]; then
-    echo "[code] $before but origin/master is $(git rev-parse --short origin/master); NOT updated: local edits block it:"
-    printf '%s\n' "$dirty" | head -5
-    echo "        to update: git stash && git pull --ff-only"
-    return 0
-  fi
-  if git merge -q --ff-only origin/master 2>/dev/null; then
-    after=$(git rev-parse --short HEAD 2>/dev/null)
-    [ "$before" = "$after" ] && echo "[code] $after (up to date)" || echo "[code] updated $before -> $after"
-  elif git merge-base --is-ancestor HEAD origin/master 2>/dev/null; then
-    echo "[code] $before; origin/master is $(git rev-parse --short origin/master); update skipped (git busy, e.g. another status running). Try again."
-  else
-    echo "[code] $before but origin/master is $(git rev-parse --short origin/master); NOT updated: branch diverged"
-    echo "        to update: git reset --hard origin/master   (shared checkout only; workers are unaffected)"
-  fi
-}
-[ "$MODE" != status ] || self_update_for_status
+# Status reports the installed revision without changing shared executable files.
+if [ "$MODE" = status ]; then
+  echo "[code] $(git rev-parse --short HEAD 2>/dev/null || printf unknown) (read-only status; no automatic update)"
+fi
 export OM_ONLINE=$([ "$MODE" = prepare ] && printf 1 || printf 0)
 source scripts/setup_env.sh
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN

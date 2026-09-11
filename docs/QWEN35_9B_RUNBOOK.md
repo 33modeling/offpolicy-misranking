@@ -176,11 +176,11 @@ current point and stage, cumulative GRPO steps, last write and a note; one row
 per launcher session log on every node (pid liveness is verified on this node
 only; remote launchers are inferred from log age); the KEY NUMBERS of every
 scored point; and `overall_verdict=` / `recommended_action=` lines. An extra
-profile word (`status h100`) is accepted and ignored. Because a Qwen launcher
-pinned to this checkout's commit reads `run_point.sh` and `src/` from the
-shared checkout, `status` no longer fast-forwards that checkout while any Qwen
-launcher is alive (local pid, or a session log without `[exit]` written in the
-last 20 minutes); it says so and prints from the current code.
+profile word (`status h100`) is accepted and ignored. Status always uses the
+installed code and prints its revision. It never fetches or merges, regardless
+of which experiment owns the shared checkout or whether a local launcher is
+present. Update explicitly only after launchers using that checkout have
+exited; running E5, OLMo and Qwen stages can all read its files.
 
 The terminal shows tagged lines only (`[stage]`, `[progress]`, `[abort]`,
 `[model]`, `[regime-*]`, `START/OK/FAILED/DIAGNOSIS/ACTION`); tracebacks and

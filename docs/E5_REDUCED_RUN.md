@@ -49,6 +49,21 @@ touching a GPU. Rerunning after a kill resumes from the newest five-step
 checkpoint or the completed evaluation shards; arms are leased per seed so
 several nodes share one seed's arms without duplicating work.
 
+The 2026-09-11 launcher repair also handles an invalid final publication when
+a compatible, hash-verified checkpoint remains. It uses the existing trainer's
+recovery path without clearing the experiment output. An arm with no verified
+repair checkpoint is preserved before continuing to other arms. The recovery
+probe is CPU-only.
+Scientific source files hashed by `experiment.json` are unchanged, so existing
+E5 contracts, subsets, checkpoints and completed evaluations remain reusable.
+
+Do not interrupt healthy training to install this repair or pull over a live
+shared launcher. After that launcher exits, pull and rerun the same command;
+no new output root or experiment restart is required. OLMo/Qwen status commands
+in the repaired revision no longer update the checkout automatically. On the
+older revision, use `bash scripts/run_e5.sh status` for E5 and
+`bash scripts/status_qwen35.sh` for Qwen without the auto-updating wrapper.
+
 Outputs: `$OM_WORK/runs/e5-reduced/math500-d400/s<seed>/downstream_results.csv`
 (and `.json`), one row per arm. Upload the three CSVs when they exist.
 
@@ -67,3 +82,11 @@ Environment knobs (defaults in parentheses): `E5_SEEDS` ("0 1 2"),
 
 Intervals are prompt-bootstrap intervals conditional on the trained seed; they
 describe evaluation noise, not training-seed variability.
+
+This three-arm experiment measures the training value of fixed data selections.
+It does not choose among g00/g10/g01/g11 using A/B alignment or fresh-R overlap.
+The manuscript's method-choice proposal is a distinct comparison, not a label
+for these runs. Do not relabel d400/three-seed/100-update/300-question results
+as d100/five-seed/200-update/500-question results, or expand `E5_SELECTORS` in an
+already frozen output. Preserve the current experiment and its negative or
+positive results alike.
