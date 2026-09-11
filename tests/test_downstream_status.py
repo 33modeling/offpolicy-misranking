@@ -1,12 +1,11 @@
 """Progress diagnostics must preserve frozen E5 code and work without CUDA."""
 
-import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import downstream_status as status
 
@@ -21,15 +20,25 @@ def contract(out):
     }))
 
 
-def test_progress_only_changes_preserve_the_running_experiment_hash():
-    # a1004ee/e6bf22e/ab21fee outputs bind this complete file, including status.
-    expected = "14649d8ab4e1d1768c91d7c7f14aea0ae5bf04aa7719f1e33173abf5490de342"
-    assert hashlib.sha256((ROOT / "src/evidence_downstream.py").read_bytes()).hexdigest() == expected
+def test_progress_diagnostics_stay_outside_the_experiment_driver():
+    # Until 5b44ab4 this test pinned the sha256 of src/evidence_downstream.py,
+    # because prepared E5 outputs bound that file. Since then the driver hash is
+    # recorded in experiment.json but not enforced (see
+    # test_prepare_tolerates_driver_code_changes_but_not_design_changes), so a
+    # pinned digest only breaks on every driver fix. The invariant that matters
+    # for progress-only changes is that the status tool never imports the
+    # driver: it must stay standard-library only and runnable with -S.
+    source = (ROOT / "src/downstream_status.py").read_text(encoding="utf-8")
+    imports = {line.split()[1].split(".")[0] for line in source.splitlines()
+               if line.startswith(("import ", "from "))}
+    assert "evidence_downstream" not in imports
+    assert imports <= {"__future__", "argparse", "json", "sys", "time", "pathlib"}, imports
+    assert "evidence_downstream" not in source
 
 
 def test_status_cli_without_site_packages_or_prepared_output(tmp_path):
     result = subprocess.run([sys.executable, "-S", str(ROOT / "src/downstream_status.py"),
-                             "--out", str(tmp_path)], capture_output=True, text=True, timeout=5)
+                             "--out", str(tmp_path)], capture_output=True, text=True, timeout=5, check=False)
     assert result.returncode == 0 and result.stdout.strip() == "not prepared"
 
 
@@ -79,7 +88,7 @@ def test_existing_shell_status_command_reaches_the_separate_diagnostics(tmp_path
                             env={**os.environ, "OM_WORK": str(work), "E5_SEEDS": "0",
                                  "VENV_DIR": str(Path(sys.executable).parent.parent),
                                  "DATASETS_DIR": str(tmp_path), "CUDA_VISIBLE_DEVICES": ""},
-                            capture_output=True, text=True, timeout=5)
+                            capture_output=True, text=True, timeout=5, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "shard 0: started, no responses yet" in result.stdout
     assert "seed 0 d400 steps=100 eval_k=8 test=300" in result.stdout
