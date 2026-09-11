@@ -142,6 +142,8 @@ def test_scripts_parse():
 
 
 def test_status_reports_progress_without_evaluation_files(tmp_path, capsys):
+    import downstream_status as status
+
     run, evaluation = source_point(tmp_path)
     out = tmp_path / "output"
     ed.prepare(run, out, evaluation, 100, 8)
@@ -151,7 +153,7 @@ def test_status_reports_progress_without_evaluation_files(tmp_path, capsys):
     (out / "logs" / "eval-before-0.log").write_text("loading\nrollout 3/2 (x)\n")
     (out / "before" / "evaluation").mkdir(parents=True)
     (out / "before" / "evaluation" / "shard-1.jsonl.partial").write_text("{}\n{}\n")
-    assert ed.arm_state(out, "before").startswith("evaluating (0/4")
-    ed.print_status(out)
+    assert status.arm_state(out, "before").startswith("evaluating (0/4")
+    status.print_status(out)
     text = capsys.readouterr().out
     assert "shard 1: 2/16 responses" in text and "rollout 3/2" in text

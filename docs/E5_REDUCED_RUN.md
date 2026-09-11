@@ -64,6 +64,12 @@ in the repaired revision no longer update the checkout automatically. On the
 older revision, use `bash scripts/run_e5.sh status` for E5 and
 `bash scripts/status_qwen35.sh` for Qwen without the auto-updating wrapper.
 
+`bash scripts/run_e5.sh status` retains detailed per-shard response counts,
+log ages/tails and training checkpoint steps through a separate diagnostic
+module. Five-minute console progress does not impose a five-minute wait:
+evaluation completion is checked every second. Status labels describe files
+present, not independently validated scientific results.
+
 Outputs: `$OM_WORK/runs/e5-reduced/math500-d400/s<seed>/downstream_results.csv`
 (and `.json`), one row per arm. Upload the three CSVs when they exist.
 

@@ -99,7 +99,7 @@ shard_progress() {  # one console line per shard while the evaluation runs
   for shard in 0 1 2 3; do
     partial="$OUT/$arm/evaluation/shard-$shard.jsonl.partial"; log="$OUT/logs/eval-$arm-$shard.log"
     if [ -f "$OUT/$arm/evaluation/shard-$shard.done.json" ]; then echo "  shard $shard: done"
-    elif [ -f "$partial" ]; then rows=$(grep -c . "$partial" 2>/dev/null || echo 0); echo "  shard $shard: $rows responses so far | $(tail -n 1 "$log" 2>/dev/null | cut -c1-110)"
+    elif [ -f "$partial" ]; then rows=$(grep -c . "$partial" 2>/dev/null); echo "  shard $shard: ${rows:-0} responses so far | $(tail -n 1 "$log" 2>/dev/null | cut -c1-110)"
     else echo "  shard $shard: loading model | $(tail -n 1 "$log" 2>/dev/null | cut -c1-110)"; fi
   done
 }
@@ -116,7 +116,8 @@ evaluate_arm() {
     local alive=0
     for pid in "${CHILDREN[@]}"; do kill -0 "$pid" 2>/dev/null && alive=$((alive + 1)); done
     [ "$alive" -gt 0 ] || break
-    sleep 30; waited=$((waited + 30))
+    # Poll completion separately from the five-minute reporting interval.
+    sleep 1; waited=$((waited + 1))
     if [ $((waited % 300)) -eq 0 ]; then echo "[eval] $arm: $((waited / 60)) min elapsed, $alive/4 shards running"; shard_progress "$arm"; fi
   done
   for pid in "${CHILDREN[@]}"; do wait "$pid" || failed=1; done

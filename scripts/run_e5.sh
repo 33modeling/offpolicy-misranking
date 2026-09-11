@@ -35,7 +35,7 @@ if [ "$MODE" = status ]; then
   for seed in "${SEEDS[@]}"; do
     out="$OUT_ROOT/s$seed"
     if [ -s "$out/experiment.json" ]; then
-      "$PY" src/evidence_downstream.py status --out "$out"
+      "$PY" src/downstream_status.py --out "$out"
       [ -s "$out/downstream_results.csv" ] && { echo "  results:"; sed 's/^/    /' "$out/downstream_results.csv"; }
     else
       echo "seed $seed: not prepared"
