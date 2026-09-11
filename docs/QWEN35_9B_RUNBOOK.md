@@ -264,6 +264,17 @@ still records every step.
 
 ## Logging and failures
 
+Live output, without starting or stopping an experiment:
+
+```bash
+bash scripts/run_qwen35_9b.sh log
+```
+
+This follows the most recently modified Qwen 9B run session on the current
+node. From a node without its own session, it follows the newest shared run
+log and prints that choice. `Ctrl+C` stops only the viewer. `live` and `logs`
+are aliases. The viewer does not source setup, update Git, or acquire GPU locks.
+
 All additional profiles now capture both stdout and stderr after environment
 setup, including prepare, admission, snapshot, FLA, smoke and matrix failures:
 

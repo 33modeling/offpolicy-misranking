@@ -5,6 +5,12 @@ cd "$(dirname "$0")/.."
 # No argument = run. The node-local locks and GPU/model checks still apply;
 # this operator-selected model does not wait for OLMo on other nodes.
 MODE=${1:-run}
+# Log viewing must not source setup, acquire locks, or start/restart a worker.
+case "$MODE" in log|logs|live)
+  [ "$#" -eq 1 ] || { echo "usage: bash scripts/run_qwen35_9b.sh log"; exit 2; }
+  exec bash scripts/log_qwen35.sh
+  ;;
+esac
 # Never mutate the checkout from a launch/diagnostic command.
 # Update explicitly in a separate idle checkout after reviewing local changes.
 # Status reports the installed revision without changing shared executable files.
@@ -60,5 +66,5 @@ case "$MODE" in
     [ "$#" -le 1 ] || { echo "usage: $0 [prepare|check|run|status|doctor]"; exit 2; }
     exec bash scripts/run_additional_experiments.sh "--$MODE" qwen35
     ;;
-  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|run-idle|restart-idle|check|status|doctor|prepare]  (default: run 9B on this idle node; restart-idle first stops this node's previous 9B processes)"; exit 2 ;;
+  *) echo "usage: bash scripts/run_qwen35_9b.sh [run|run-idle|restart-idle|check|status|log|doctor|prepare]  (default: run 9B on this idle node; log only follows output)"; exit 2 ;;
 esac
