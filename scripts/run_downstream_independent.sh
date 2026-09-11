@@ -150,8 +150,12 @@ evaluate_arm() {
   return "$failed"
 }
 failed=0; busy=0
+SKIP_EVAL=${E5_SKIP_EVAL:-0}
+[ "$SKIP_EVAL" = 0 ] || echo "[note] E5_SKIP_EVAL=1: training only; no baseline or arm evaluation, no summary"
 exec 9>"$OUT/.before.lock"
-if flock -n 9; then
+if [ "$SKIP_EVAL" = 1 ]; then
+  :
+elif flock -n 9; then
   echo "[eval] baseline policy on ${EVAL_K} responses per test prompt (about 60-90 min on four GPUs)"
   evaluate_arm before || { echo "[failed] baseline evaluation; completed shards are retained"; failed=1; }
   flock -u 9
@@ -179,6 +183,10 @@ for selector in "${SELECTORS[@]}"; do
   else
     echo "[done] $selector already trained"
   fi
+  if [ "${E5_RELIABILITY_LOG:-0}" = 1 ] && ls "$OUT/$selector/policy"/reliability_log.rank*.jsonl >/dev/null 2>&1; then
+    "$PY" src/reliability_trajectory.py --policy "$OUT/$selector/policy" --window "${E5_RELIABILITY_WINDOW:-20}" || failed=1
+  fi
+  if [ "$SKIP_EVAL" = 1 ]; then flock -u 9; continue; fi
   echo "[eval] $selector on ${EVAL_K} responses per test prompt"
   evaluate_arm "$selector" || { echo "[failed] $selector evaluation; continuing to the next arm"; failed=1; }
   flock -u 9
@@ -188,7 +196,7 @@ if [ "${OM_NODE_LOCK_HELD:-0}" != 1 ]; then
   if [ "${E5_HOST_LOCK_HELD:-0}" = 1 ]; then flock -u 7; fi
 fi
 exec 9>"$OUT/.summary.lock"
-if flock -n 9; then
+if [ "$SKIP_EVAL" = 0 ] && flock -n 9; then
   "$PY" src/evidence_downstream.py summarize --out "$OUT" --allow-partial > "$OUT/logs/summary.log" 2>&1 || failed=1
   grep -E '"complete"|"missing' "$OUT/logs/summary.log" || true
 fi

@@ -520,6 +520,61 @@ def _chunks(size: int, chunk_size: int) -> list[range]:
     ]
 
 
+def _half_chunks(size: int, chunk_size: int) -> tuple[list[range], list[range]]:
+    """Micro-batches that never cross the group's half boundary.
+
+    Used by the reliability log: the gradient accumulated after the first
+    half's chunks is one half-group estimate, the remainder is the other.
+    """
+    half = size // 2
+    if half < 1:
+        raise ValueError("reliability logging needs at least two responses per group")
+    first = _chunks(half, chunk_size)
+    second = [range(half + c.start, half + c.stop) for c in _chunks(size - half, chunk_size)]
+    return first, second
+
+
+def _flat_grad(parameters) -> torch.Tensor:
+    """Concatenate the current gradients of the trainable parameters (float32)."""
+    return torch.cat([
+        (p.grad if p.grad is not None else torch.zeros_like(p)).detach().reshape(-1).float()
+        for p in parameters
+    ])
+
+
+def _cosine(a: torch.Tensor, b: torch.Tensor) -> float:
+    na, nb = float(a.norm()), float(b.norm())
+    return float(a @ b) / (na * nb) if na > 0 and nb > 0 else 0.0
+
+
+def reliability_row(grad_first: torch.Tensor, grad_total: torch.Tensor,
+                    mean_total: torch.Tensor, world_size: int, rewards: torch.Tensor,
+                    step: int, rank: int, prompt_index: int) -> dict:
+    """Per-prompt statistics that training produces for free.
+
+    The two half-group gradients of this rank's prompt are compared with each
+    other and with the mean gradient of the other ranks' prompts; the two
+    half-group pass rates are recorded alongside. Across steps, the
+    correlation of the two halves is the split-half reliability of each
+    signal (Spearman--Brown gives the full-group value).
+    """
+    grad_second = grad_total - grad_first
+    others = (mean_total * world_size - grad_total) / (world_size - 1) if world_size > 1 else None
+    half = rewards.numel() // 2
+    row = {
+        "step": step, "rank": rank, "prompt_index": prompt_index,
+        "pass_a": float(rewards[:half].float().mean()), "pass_b": float(rewards[half:].float().mean()),
+        "pass": float(rewards.float().mean()), "mixed": bool(rewards.min() != rewards.max()),
+        "cos_ab": _cosine(grad_first, grad_second),
+        "norm_a": float(grad_first.norm()), "norm_b": float(grad_second.norm()),
+        "norm_total": float(grad_total.norm()),
+        "cos_a_others": _cosine(grad_first, others) if others is not None else None,
+        "cos_b_others": _cosine(grad_second, others) if others is not None else None,
+        "cos_total_others": _cosine(grad_total, others) if others is not None else None,
+    }
+    return row
+
+
 @torch.no_grad()
 def _sample_group(model, tokenizer, prompt: dict, config: GrpoConfig, max_new_tokens: int):
     inputs = chat_ids(tokenizer, prompt["question"]).to(next(model.parameters()).device)
@@ -867,6 +922,12 @@ def train(args: argparse.Namespace) -> None:
     if world_size > 1:
         dist.barrier()
     stats_stream = stats_path.open("a", encoding="utf-8") if rank == 0 else None
+    reliability_stream = None
+    if args.reliability_log:
+        # Opt-in, logging only: the update uses the same averaged gradient, but
+        # the average is formed by an explicit all-reduce after local backward
+        # passes so that each rank's own half-group gradients can be read.
+        reliability_stream = (out_dir / f"reliability_log.rank{rank}.jsonl").open("a", encoding="utf-8")
     initial_step = args.start_step
     parent_hashes = {}
     if rank == 0:
@@ -944,9 +1005,15 @@ def train(args: argparse.Namespace) -> None:
                 max_abs_log_ratio = 0.0
                 epoch_loss = 0.0
                 chunks = _chunks(len(sequences), args.logprob_micro_batch)
+                first_half_chunks = 0
+                grad_first_half = None
+                if args.reliability_log:
+                    first_half, second_half = _half_chunks(len(sequences), args.logprob_micro_batch)
+                    chunks = first_half + second_half
+                    first_half_chunks = len(first_half)
                 for chunk_index, chunk in enumerate(chunks):
                     indices = list(chunk)
-                    sync = chunk_index == len(chunks) - 1
+                    sync = chunk_index == len(chunks) - 1 and not args.reliability_log
                     sync_context = contextlib.nullcontext() if sync else ddp.no_sync()
                     with sync_context:
                         current_logps = _response_logps_batch(
@@ -996,6 +1063,24 @@ def train(args: argparse.Namespace) -> None:
                             for index, current in zip(indices, current_logps, strict=True)
                         )
                     epoch_loss += float(chunk_loss.detach()) * weight
+                    if args.reliability_log and chunk_index == first_half_chunks - 1:
+                        grad_first_half = _flat_grad(trainable)
+                if args.reliability_log:
+                    local_total = _flat_grad(trainable)
+                    mean_total = local_total.clone()
+                    if world_size > 1:
+                        dist.all_reduce(mean_total)
+                        mean_total.div_(world_size)
+                        for parameter in trainable:  # same averaged gradient as DDP would apply
+                            if parameter.grad is not None:
+                                dist.all_reduce(parameter.grad)
+                                parameter.grad.div_(world_size)
+                    if epoch_index == 0 and reliability_stream is not None:
+                        reliability_stream.write(json.dumps(reliability_row(
+                            grad_first_half, local_total, mean_total, world_size, rewards,
+                            step + 1, rank, prompt_index)) + "\n")
+                        reliability_stream.flush()
+                    del local_total, mean_total, grad_first_half
                 epoch_stats = {
                     "clip_fraction": clip_count / token_count,
                     "mean_ratio": ratio_sum / token_count,
@@ -1146,6 +1231,7 @@ def train(args: argparse.Namespace) -> None:
                 "optimizer_sha256": sha256_file(out_dir / "optimizer.pt"),
                 "grpo_stats_sha256": sha256_file(out_dir / "grpo_stats.jsonl"),
                 "prompts_sha256": sha256_file(Path(args.prompts)),
+                "reliability_log": bool(args.reliability_log),
                 **parent_hashes,
             }
             _atomic_json(out_dir / "policy_train.json", manifest)
@@ -1174,6 +1260,8 @@ def train(args: argparse.Namespace) -> None:
     finally:
         if stats_stream is not None:
             stats_stream.close()
+        if reliability_stream is not None:
+            reliability_stream.close()
         if dist.is_initialized():
             dist.destroy_process_group()
 
@@ -1202,6 +1290,9 @@ def main() -> None:
     parser.add_argument("--disable-gradient-checkpointing", action="store_true")
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--reliability-log", action="store_true",
+                        help="write per-rank half-group gradient/pass-rate rows "
+                             "(reliability_log.rank*.jsonl); the update is unchanged")
     train(parser.parse_args())
 
 

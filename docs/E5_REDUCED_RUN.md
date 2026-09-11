@@ -50,6 +50,23 @@ Progress of every branch from any node, no GPU:
 bash scripts/run_e5.sh status
 ```
 
+Reliability-logging run (random arm only, training only, separate root
+`e5-reduced/math500-d<drift>-rlog`):
+
+```
+git pull --ff-only && bash scripts/run_e5.sh rlog
+```
+
+(`bash scripts/run_e5.sh rlog d0` for the d0 branch.) The trainer option
+`--reliability-log` keeps the update unchanged and writes, per rank and step,
+the two half-group pass rates and the cosines of the two half-group gradients
+with the mean gradient of the other prompts in the batch
+(`reliability_log.rank*.jsonl`). After training,
+`src/reliability_trajectory.py` turns them into `reliability_trajectory.csv`
+and `.dat`: split-half reliability of the pass-rate and gradient signals in
+sliding 20-step windows, with Spearman--Brown full-group values, bootstrap
+intervals, and the fraction of prompts with mixed rewards. About 2 h per seed.
+
 Arms added after a seed was prepared (for example `passrate_beta` on a d400
 seed that started with three arms) are recorded in `arms.json` next to the
 frozen contract; completed shards stay valid and the new arm is trained and

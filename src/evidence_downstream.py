@@ -219,6 +219,8 @@ def train_args(config: dict, run: Path, out: Path, selector: str, steps: int) ->
         args += ["--" + flag, str(config[field])]
     if str(config["grpo_gradient_checkpointing"]).strip().lower() in {"0", "false", "no", "off", ""}:
         args += ["--disable-gradient-checkpointing"]
+    if os.environ.get("E5_RELIABILITY_LOG") == "1":  # logging-only option; see train_policy_grpo.py
+        args += ["--reliability-log"]
     return args
 
 

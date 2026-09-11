@@ -7,6 +7,9 @@
 #   bash scripts/run_e5.sh          # run the d400 branch on THIS idle 4xH100 node
 #   bash scripts/run_e5.sh d0       # run the d0 branch (arms start from the base model)
 #   bash scripts/run_e5.sh status   # progress of every branch, seed and arm, no GPU
+#   bash scripts/run_e5.sh rlog     # reliability-logging run: random arm only, training only,
+#                                   # writes reliability_trajectory.csv (split-half reliability
+#                                   # of the pass-rate and gradient signals along training)
 #   Any mode accepts d0 or d400 as an extra word, e.g.  bash scripts/run_e5.sh d0 stop
 #   bash scripts/run_e5.sh plan     # dry run: contracts and commands only
 #   bash scripts/run_e5.sh stop     # stop E5 on this node (nothing else)
@@ -25,7 +28,8 @@ for arg in "$@"; do
     d400) DRIFT=400; DRIFT_GIVEN=1 ;;
     run|status|plan|stop) MODE=$arg ;;
     force) MODE=run; export E5_FORCE=1 ;;
-    *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force] [d0|d400]"; exit 2 ;;
+    rlog) MODE=run; RLOG=1 ;;
+    *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force|rlog] [d0|d400]"; exit 2 ;;
   esac
 done
 trap '' HUP
@@ -39,9 +43,13 @@ DATASET=${E5_DATASET:-math500}
 read -r -a SEEDS <<< "${E5_SEEDS:-0 1 2}"
 STEPS=${E5_STEPS:-100}; EVAL_K=${E5_EVAL_K:-8}; COUNT=${E5_TEST_COUNT:-300}
 SELECTORS=${E5_SELECTORS:-random passrate_beta fresh_r g11}
+if [ "${RLOG:-0}" = 1 ]; then
+  # Separate root: the logging run must not share arm directories with the benchmark.
+  SELECTORS=random; export E5_RELIABILITY_LOG=1 E5_SKIP_EVAL=1; RLOG_SUFFIX="-rlog"
+fi
 POOL="$DATASETS_DIR/math_train/math_train.jsonl"; POOL_MANIFEST="$DATASETS_DIR/math_train/dataset_manifest.json"
 TEST="$OM_WORK/inputs/e5-reduced/test-$DATASET-d$DRIFT.json"
-OUT_ROOT="$OM_WORK/runs/e5-reduced/$DATASET-d$DRIFT"
+OUT_ROOT="$OM_WORK/runs/e5-reduced/$DATASET-d$DRIFT${RLOG_SUFFIX:-}"
 # Exported marker: every process of this pass carries OUT_ROOT in its environment,
 # so a later launch on the same node can find and stop the whole earlier pass
 # (including this loop), while the matrix launchers never match.
