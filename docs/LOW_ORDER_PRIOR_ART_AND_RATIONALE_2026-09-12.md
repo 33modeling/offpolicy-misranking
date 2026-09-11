@@ -2,6 +2,92 @@
 
 Date: 2026-09-12 (Asia/Seoul)
 
+## Subsequent direction: bounded measurement with random fallback
+
+After this review, the user proposed a different primary contribution:
+measure whether selection is worth using, and quickly return to uniform
+random prompt selection when it is not. This supersedes treating the
+low-order estimator as the required main method. It remains one candidate
+selector with which to test the measurement procedure.
+
+The proposed operating rule is **random by default; use the selector only
+when a bounded diagnostic establishes sufficient benefit**. Failure to
+establish benefit is an operational reason to use random, not proof that
+the selector is worse. A near tie may require substantial measurement to
+resolve; the procedure must be allowed to abstain rather than keep sampling.
+
+The research target is the final independent reward of the entire gated
+training procedure at a fixed total compute budget, compared with always
+random and always using the selector. Charge scoring, diagnostic evaluation,
+any pilot training, discarded branches, and later rechecks to that budget.
+Returning to random does not recover already-spent compute or undo earlier
+selector-induced parameter changes.
+
+A concrete staged design to review before implementation:
+
+1. Freeze a diagnostic budget cap, the candidate selector, a useful-benefit
+   margin, and a recheck schedule. Do not tune these on final benchmark results.
+2. Screen existing cache support, reward contrast, and numerical validity
+   first. These checks can reject an unusable score; passing them cannot
+   establish downstream superiority. Overlap is not the acceptance criterion.
+3. For a direct learning check, start short selector and random continuations
+   from the same checkpoint and optimizer state, using the same compute
+   accounting. Allow random to spend saved selection compute on training.
+   Evaluate fixed resulting policies on independent diagnostic prompts in
+   small batches. Both branches and evaluation are real overhead; this is
+   not a claim that two pilot trainings are inexpensive.
+4. Use predeclared sequential error control, not ordinary confidence
+   intervals repeatedly inspected until favorable. Accept the selector only
+   if the lower bound on the defined short-horizon reward difference exceeds
+   the useful-benefit margin. Stop for futility when its upper bound does not
+   exceed that margin. If the budget expires first, use random and label the
+   result inconclusive. Without calibrated score-to-reward evidence, an
+   alignment interval cannot replace this reward comparison.
+5. Continue the selected branch while preserving artifacts. On a later
+   fallback, stop expensive selection and sample prompts uniformly from the
+   eligible pool; do not claim this restores the counterfactual always-random
+   trajectory. Bound the number and total cost of rechecks to prevent a
+   diagnose-switch-diagnose loop.
+
+Sequential evaluation of fixed trained policies can quantify uncertainty
+from diagnostic sampling. It does not cover training-seed variation, new
+checkpoints, or long-horizon performance. Those require separate validation.
+Do not pool observations from changing policies as if their reward difference
+were a single stationary mean, or reuse diagnostic prompts for final reporting
+as an untouched benchmark. More diagnostic responses are not more independent
+training runs.
+
+Record distinguishable decisions such as `use_selector`, `no_useful_gain`,
+`inconclusive_budget`, and `invalid_measurement`. Invalid measurements must
+not become fabricated negative rewards. A broken verifier or corrupt training
+input is not fixed by random selection; the existing task-failure handling
+must still report it and may yield to other valid work.
+
+Baseline fallback itself is established: [conservative contextual bandits](https://papers.nips.cc/paper_files/paper/2017/hash/bdc4626aa1d1df8e14d80d345b2a442d-Abstract.html)
+constrain performance relative to a baseline, and
+[SPIBB](https://proceedings.mlr.press/v97/laroche19a.html) retains baseline
+behavior in uncertain regions. Their baseline is an action policy, not a
+prompt sampler coupled to an evolving GRPO learner; their guarantees do not
+automatically apply here. [Time-uniform confidence sequences](https://arxiv.org/abs/1810.08240)
+provide established sequential measurement tools, not a new contribution by
+themselves. These primary abstracts were checked as a first overlap screen,
+not a complete novelty audit of the revised direction.
+
+The contribution to establish is **an inexpensive, learning-relevant trigger
+that avoids wasted selection cost without discarding valuable selection too
+often**, validated across both beneficial and unhelpful settings. Report
+diagnostic cost, time to decision, harmful acceptances, missed useful cases,
+and final reward versus total cost. A detector that always chooses random is
+not a successful solution merely because it avoids selection overhead.
+
+Implementation status: `method_choice.py` selects from existing score
+estimates; `low_order_experiment.py` runs fixed comparison arms. Neither is
+this sequential fallback controller. In particular, the low-order runner
+currently waits for complete scores before preparing its random training
+subset. A future controller must make random training eligible independently
+of successful selector scoring. No automatic-switching code, default launcher
+change, GPU job, or manuscript claim was introduced with this direction note.
+
 ## Decision
 
 **Related methods exist, including close precedents for the computational

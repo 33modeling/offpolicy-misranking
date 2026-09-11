@@ -2,6 +2,15 @@
 
 Date: 2026-09-12 (Asia/Seoul)
 
+Latest user direction: prioritize a cost-bounded measurement procedure that
+uses a selector only when it establishes useful benefit over random and
+otherwise returns to random promptly. The
+[revised direction and unresolved design](LOW_ORDER_PRIOR_ART_AND_RATIONALE_2026-09-12.md#subsequent-direction-bounded-measurement-with-random-fallback)
+separate inconclusive results from demonstrated lack of gain, require charging
+diagnostic cost, and identify the existing runner's missing fallback control.
+This is a design record, not an implemented or validated detector. Earlier
+candidate-specific decisions below are retained for chronology.
+
 Implementation update: after reviewing the follow-up specification, the user
 explicitly requested code. That authorizes the isolated experimental
 [implementation](LOW_ORDER_REUSE_RUN.md), not a main-method claim, a GPU launch
