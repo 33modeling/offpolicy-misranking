@@ -78,7 +78,44 @@ Do not reuse or relabel 27B checkpoints as 9B results.
 
 ## Contract conflict recovery (2026-09-08)
 
-### Model-path failure loop (2026-09-11)
+### Recovered model-path errors still shown as current (2026-09-11)
+
+A later status report showed `4/8 fresh-rollout 400x32 + val` together with
+`ERROR (current): ... rollouts_behavior_train.shard0.manifest.json ...
+Qwen3.5-9B-pinned`. The status reader could produce this exact combination
+after a successful model-alias repair: it ignored `regime-attempt-1-alias-1.log`
+and kept reading the failed `regime-attempt-1.log` as current. It also sorted
+by retry number, so an old attempt 3 could outrank attempt 1 of a new launch.
+
+The status fix includes alias-resume logs, orders attempts by their recorded
+start time (file mtime for legacy logs), and uses the recorded `main.log` byte
+offset to separate earlier errors from new failures. New `ValueError` and
+contract failures remain visible. Verbose status names the current attempt
+log. Missing or invalid start metadata falls back conservatively; it does not
+discard errors on that basis.
+
+Apply this **read-only status fix without restarting experiments**:
+
+```bash
+git pull --ff-only
+bash scripts/run_qwen35_9b.sh status
+```
+
+Use `bash scripts/run_qwen35_9b.sh log` for the live console, or
+`bash scripts/run_qwen35_9b.sh status verbose` to see the chosen attempt log
+and watchdog telemetry. Do not restart healthy workers just because the old
+status showed this error. The repaired display is not proof that every remote
+worker is healthy: check whether a *new* error remains, rollout writes grow,
+or fresh watchdog telemetry reports computation. At d0, zero GRPO steps is
+expected; fresh rollout generation is still GPU work.
+
+CPU regression tests reproduce the exact misleading error before the fix,
+cover alias resumes, reset retry numbers, new failures, invalid/truncated
+logs, and verify that status leaves all input files unchanged. Existing tests
+also exercise alias recovery against the pinned `2e96090` validator. Actual
+H100 execution cannot be checked on this audit host.
+
+### Earlier model-path failure loop (2026-09-11)
 
 The uploaded `status-qwen35-history (1).log`, sampled at
 `2026-09-11T00:22:42Z`, reports 0/40 completed points and 22h34m without

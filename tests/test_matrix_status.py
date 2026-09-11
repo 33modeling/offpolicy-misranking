@@ -8,6 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -149,6 +151,118 @@ def test_current_attempt_error_is_named_and_earlier_errors_are_history(tmp_path)
     row = next(line for line in out.splitlines() if line.startswith(" math500/s0 "))
     assert "ok (earlier attempt failed: RuntimeError: old)" in row
     assert "4/8" in row and "!4/8" not in row
+
+
+MODEL_ALIAS_ERROR = (
+    "ValueError: rollouts_behavior_train.shard0.manifest.json: "
+    "model mismatch: expected 'uploaded-snapshot', recorded 'Qwen3.5-9B-pinned'"
+)
+
+
+def attempt_log(run, name, text, started_ns, *, main_offset=None):
+    path = run / "logs" / name
+    path.write_text(text)
+    record = {
+        "schema": "offpolicy-pipeline-attempt/v1",
+        "attempt_log": name,
+        "started_at_ns": started_ns,
+        "log_offsets": {} if main_offset is None else {"main.log": main_offset},
+    }
+    path.with_name(name + ".start.json").write_text(json.dumps(record))
+    return path
+
+
+def test_alias_resume_does_not_report_the_behavior_failure_as_current(tmp_path):
+    work = tmp_path / "work"
+    run = make_point(work / "runs", "math500", 0, 0, progress="2/8 behavior-rollout",
+                     main_extra=f"Traceback (most recent call last):\n{MODEL_ALIAS_ERROR}\n")
+    main = run / "logs/main.log"
+    before = main.read_bytes()
+    attempt_log(run, "regime-attempt-1.log", f"Traceback:\n{MODEL_ALIAS_ERROR}\n", 100)
+    progress = f"[progress] {run.name}  4/8 fresh-rollout 400x32 + val  +0min\n"
+    main.write_bytes(before + progress.encode())
+    attempt_log(run, "regime-attempt-1-alias-1.log", progress, 200, main_offset=len(before))
+    before_status = {p: p.read_bytes() for p in work.rglob("*") if p.is_file()}
+
+    point = matrix_status.inspect_point("math500", 0, 0, run, [0, 25, 100, 400])
+    assert not point.current_error
+    assert "Qwen3.5-9B-pinned" in point.earlier_error
+    assert point.mark() == "4/8"
+    out = render(work, verbose=True)
+    assert "ERROR (current)" not in out
+    assert "regime-attempt-1-alias-1.log" in out
+    assert {p: p.read_bytes() for p in work.rglob("*") if p.is_file()} == before_status
+
+
+@pytest.mark.parametrize("recorded_start", [True, False])
+def test_new_session_attempt_one_supersedes_old_attempt_three(tmp_path, recorded_start):
+    run = make_point(tmp_path, "math500", 0, 0, progress="4/8 fresh-rollout")
+    old = attempt_log(run, "regime-attempt-3.log", f"Traceback:\n{MODEL_ALIAS_ERROR}\n", 100)
+    new = attempt_log(run, "regime-attempt-1.log", "new launch\n", 200)
+    if recorded_start:
+        # A copied/touched historical log must not outrank the actual start record.
+        os.utime(old, ns=(300, 300))
+        os.utime(new, ns=(200, 200))
+    else:
+        for path in run.glob("logs/*.start.json"):
+            path.unlink()
+        os.utime(old, ns=(100, 100))
+        os.utime(new, ns=(200, 200))
+    point = matrix_status.inspect_point("math500", 0, 0, run, [0, 25])
+    assert point.attempt == 1
+    assert not point.current_error
+    assert "Qwen3.5-9B-pinned" in point.earlier_error
+
+
+def test_new_failure_in_alias_attempt_is_still_current(tmp_path):
+    run = make_point(tmp_path, "math500", 0, 0, progress="4/8 fresh-rollout")
+    attempt_log(run, "regime-attempt-1.log", "old attempt\n", 100)
+    # A one-line ValueError must be visible even without a Traceback header.
+    attempt_log(run, "regime-attempt-1-alias-2.log", MODEL_ALIAS_ERROR + "\n", 200)
+    point = matrix_status.inspect_point("math500", 0, 0, run, [0, 25])
+    assert "Qwen3.5-9B-pinned" in point.current_error
+    assert point.mark() == "!4/8"
+
+
+@pytest.mark.parametrize("new_failure", [False, True])
+def test_main_log_errors_are_scoped_to_attempt_start_offset(tmp_path, new_failure):
+    run = make_point(tmp_path, "math500", 0, 0, progress="2/8 behavior-rollout",
+                     main_extra=f"Traceback:\n{MODEL_ALIAS_ERROR}\n")
+    main = run / "logs/main.log"
+    offset = main.stat().st_size
+    attempt_log(run, "regime-attempt-1-alias-1.log", "preflight started\n", 200, main_offset=offset)
+    if new_failure:
+        with main.open("a") as stream:
+            stream.write("[abort]\nRuntimeError: new fresh failure\n")
+    point = matrix_status.inspect_point("math500", 0, 0, run, [0, 25])
+    if new_failure:
+        assert "new fresh failure" in point.current_error
+    else:
+        assert not point.current_error
+        assert "Qwen3.5-9B-pinned" in point.earlier_error
+
+
+@pytest.mark.parametrize("record_problem", ["bad-json", "wrong-name", "bad-offset", "truncated-main"])
+def test_bad_start_record_or_truncated_main_does_not_hide_failure(tmp_path, record_problem):
+    run = make_point(tmp_path, "math500", 0, 0, progress="4/8 fresh-rollout",
+                     main_extra="RuntimeError: current failure\n")
+    main = run / "logs/main.log"
+    path = attempt_log(run, "regime-attempt-1-alias-1.log", "starting\n", 200,
+                       main_offset=main.stat().st_size)
+    sidecar = path.with_name(path.name + ".start.json")
+    record = json.loads(sidecar.read_text())
+    if record_problem == "bad-json":
+        sidecar.write_text("{")
+    elif record_problem == "wrong-name":
+        record["attempt_log"] = "regime-attempt-9.log"
+        sidecar.write_text(json.dumps(record))
+    elif record_problem == "bad-offset":
+        record["log_offsets"]["main.log"] = -1
+        sidecar.write_text(json.dumps(record))
+    else:
+        main.write_text("RuntimeError: current failure\n")
+    point = matrix_status.inspect_point("math500", 0, 0, run, [0, 25])
+    assert "current failure" in point.current_error
 
 
 def test_quiet_and_hung_claimed_families_and_stopped_without_launchers(tmp_path):

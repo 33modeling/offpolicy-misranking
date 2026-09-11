@@ -40,18 +40,20 @@ from pathlib import Path
 import training_progress
 from point_key_numbers import HEADER as KEY_NUMBERS_HEADER
 from point_key_numbers import point_lines
+from recovery_policy import ATTEMPT_MANIFEST_SCHEMA, attempt_log_offsets
 
 # Same markers the Qwen status searched for (✘, [abort]) plus the OLMo error set.
 ERROR_RE = re.compile(
     r"✘|\[abort\]|CUDA error|CUBLAS_STATUS|cuBLAS|CUDA out of memory|OutOfMemoryError|"
     r"device-side assert|unspecified launch failure|illegal memory access|Traceback|"
-    r"RuntimeError|regime-hard-stall|config-abort|done-but-incomplete|repair-failed|"
+    r"RuntimeError|ValueError|permanent-contract|regime-contract-abort|"
+    r"regime-hard-stall|config-abort|done-but-incomplete|repair-failed|"
     r"point-failed",
     re.IGNORECASE,
 )
 POINT_NAME = re.compile(r"-s(\d+)-([a-z0-9]+)-d(\d+)$")
 PROGRESS_RE = re.compile(r"\[progress\]\s+(\S+)\s+(\d+/\d+)\s+(.*?)(?:\s+\+(\d+)min)?\s*$")
-ATTEMPT_RE = re.compile(r"^regime-attempt-(\d+)\.log$")
+ATTEMPT_RE = re.compile(r"^regime-attempt-(\d+)(?:-alias-(\d+))?\.log$")
 LAUNCH_KV_RE = re.compile(r"(\w+)=(\S+)")
 SESSION_FAMILY_RE = re.compile(r"\[progress\] family=(\S+) point=(d\d+)")
 DEFAULT_DATASETS = ["math500", "mbpp"]
@@ -91,9 +93,13 @@ def _load_json(path: Path):
         return None
 
 
-def _read_lines(path: Path) -> list[str]:
+def _read_lines(path: Path, offset: int = 0) -> list[str]:
     try:
-        return path.read_text(encoding="utf-8", errors="replace").splitlines()
+        with path.open("rb") as stream:
+            # A truncated/replaced log contains new data, not the old prefix.
+            if os.fstat(stream.fileno()).st_size >= offset:
+                stream.seek(offset)
+            return stream.read().decode("utf-8", errors="replace").splitlines()
     except OSError:
         return []
 
@@ -183,9 +189,8 @@ def error_text_after(lines: list[str], index: int, width: int = 90) -> str:
     return elide(text, width)
 
 
-def scan_errors(path: Path) -> tuple[int, str, int]:
+def scan_errors(lines: list[str]) -> tuple[int, str, int]:
     """(count, text of the last error, line index of the last error or -1)."""
-    lines = _read_lines(path)
     count = 0
     last = -1
     for index, line in enumerate(lines):
@@ -195,6 +200,27 @@ def scan_errors(path: Path) -> tuple[int, str, int]:
     if last < 0:
         return 0, "", -1
     return count, error_text_after(lines, last), last
+
+
+def attempt_record(log: Path) -> dict:
+    record = _load_json(log.with_name(log.name + ".start.json"))
+    if (isinstance(record, dict) and record.get("schema") == ATTEMPT_MANIFEST_SCHEMA
+            and record.get("attempt_log") == log.name
+            and type(record.get("started_at_ns")) is int and record["started_at_ns"] > 0):
+        return record
+    return {}
+
+
+def attempt_order(log: Path) -> tuple[int, int, int]:
+    # Retry numbers reset on each supervisor launch. Alias resumes are separate
+    # attempts too; the immutable start time outranks a touched old log's mtime.
+    record = attempt_record(log)
+    try:
+        stamp = record.get("started_at_ns") or log.stat().st_mtime_ns
+    except OSError:
+        stamp = 0
+    match = ATTEMPT_RE.fullmatch(log.name)
+    return stamp, int(match.group(1)), int(match.group(2) or 0)
 
 
 # ---------------------------------------------------------------- design
@@ -282,6 +308,7 @@ class Point:
     telemetry: dict | None = None
     recovery: dict | None = None
     attempt: int = 0
+    attempt_log: str = ""
 
     @property
     def key(self) -> tuple[str, int, int]:
@@ -361,34 +388,48 @@ def inspect_point(dataset: str, seed: int, drift: int, path: Path | None, drifts
     # Errors. main.log first (the rule the short status used): an error after
     # the last [progress] line belongs to the current attempt, one before it is
     # history. Attempt logs fill the gaps: the newest is the current attempt.
-    count = 0
-    last = -1
-    for index, line in enumerate(lines):
-        if ERROR_RE.search(line):
-            count += 1
-            last = index
+    count, text, last = scan_errors(lines)
     if count:
         point.error_count += count
-        text = error_text_after(lines, last)
         if last > last_progress:
             point.current_error = text
         else:
             point.earlier_error = text
-    attempts: list[tuple[int, Path]] = []
+    attempts: list[Path] = []
     if logs.is_dir():
         for log in logs.iterdir():
             match = ATTEMPT_RE.match(log.name)
             if match:
-                attempts.append((int(match.group(1)), log))
-    attempts.sort()
+                attempts.append(log)
+    attempts.sort(key=attempt_order)
     if attempts:
-        point.attempt = attempts[-1][0]
-        count, text, _ = scan_errors(attempts[-1][1])
+        latest = attempts[-1]
+        point.attempt = int(ATTEMPT_RE.fullmatch(latest.name).group(1))
+        point.attempt_log = latest.name
+        if attempt_record(latest):
+            try:
+                offsets = attempt_log_offsets(latest.with_name(latest.name + ".start.json"))
+            except (ValueError, TypeError, AttributeError):
+                offsets = None
+            if offsets is not None:
+                current_lines = _read_lines(main_log, offsets.get("main.log", 0))
+                _, text, last = scan_errors(current_lines)
+                progress = max((i for i, line in enumerate(current_lines) if PROGRESS_RE.search(line)), default=-1)
+                previous_error = point.current_error
+                point.current_error = text if last > progress else ""
+                if previous_error and not point.current_error:
+                    point.earlier_error = point.earlier_error or previous_error
+        attempt_lines = _read_lines(latest)
+        count, text, last = scan_errors(attempt_lines)
         point.error_count += count
         if count:
-            point.current_error = point.current_error or text
-        for _, log in attempts[:-1]:
-            count, text, _ = scan_errors(log)
+            progress = max((i for i, line in enumerate(attempt_lines) if PROGRESS_RE.search(line)), default=-1)
+            if last > progress:
+                point.current_error = point.current_error or text
+            else:
+                point.earlier_error = point.earlier_error or text
+        for log in reversed(attempts[:-1]):
+            count, text, _ = scan_errors(_read_lines(log))
             point.error_count += count
             if count:
                 point.earlier_error = point.earlier_error or text
@@ -771,6 +812,8 @@ def render(args: argparse.Namespace) -> tuple[list[str], str]:
                 elif point.earlier_error:
                     errors = f" earlier: {point.earlier_error}"
                 out.append(f"  {row.key}/d{point.drift}  attempt {point.attempt or '-'}  {elide_head(stage, 60)}  write {write}  errors {point.error_count}{errors}")
+                if point.attempt_log:
+                    out.append(f"    current attempt log: {point.attempt_log}")
                 if point.telemetry:
                     t = point.telemetry
                     out.append(f"    telemetry state={t.get('state')} cpu_delta={t.get('cpu_delta_seconds')} gpu_peak={t.get('gpu_peak_percent')} idle={t.get('idle_seconds')}s")
