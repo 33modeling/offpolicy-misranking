@@ -18,6 +18,7 @@ only, and prints:
   the four points, the current point, its stage, GRPO steps, last write, note;
 - one row per launcher session log: node, pid, started, stage, family it is
   on, failures, exit code, liveness (only the local node's pid is verified);
+- all registered points, including completed and not-yet-started points;
 - an overall verdict line, and the KEY NUMBERS of every scored point.
 
 Nothing here creates locks, files or processes; `flock` is only tested.
@@ -71,7 +72,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stall-seconds", type=int, default=2700, help="quiet family becomes a WARNING after this")
     parser.add_argument("--hung-seconds", type=int, default=10800, help="quiet family becomes HUNG after this")
     parser.add_argument("--launcher-live-seconds", type=int, default=1200, help="a remote session log this fresh counts as a live launcher")
-    parser.add_argument("--verbose", action="store_true", help="add per-point rows and the newest stage-log lines")
+    parser.add_argument("--verbose", action="store_true", help="add attempt details and the newest stage-log lines")
     parser.add_argument("--no-key-numbers", action="store_true")
     parser.add_argument("--now", type=float, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -517,7 +518,7 @@ def discover_launchers(folder: Path | None, pattern: str, hostname: str, now: fl
             continue  # exited days ago: history, not status
         launchers.append(launcher)
     launchers.sort(key=lambda l: l.mtime, reverse=True)
-    return launchers[:8]
+    return launchers
 
 
 # ---------------------------------------------------------------- families
@@ -573,6 +574,7 @@ def family_row(
             matrix.queue / f"{dataset}-s{seed}.control.lock"
         )
     live_launchers = [l for l in launchers if l.live(now, args.launcher_live_seconds)]
+    unverified_remote = any(l.exit_rc is None and l.alive_here is None for l in launchers)
     on_family = [l for l in launchers if l.family == key and l.exit_rc is None]
     for launcher in on_family:
         if launcher.live(now, args.launcher_live_seconds):
@@ -603,7 +605,7 @@ def family_row(
         err = row.current.current_error if row.current is not None else ""
         if age is not None and age >= args.hung_seconds:
             row.verdict = "HUNG"
-            row.note = f"NEEDS YOU: claimed but nothing written for {write_age} -> Ctrl-C that node's launcher, git pull, run again (finished work resumes)"
+            row.note = f"NEEDS YOU: claimed but nothing written for {write_age}; inspect that node and stage logs before interrupting it"
         elif telemetry is not None and str(telemetry.get("state", "")).startswith("idle"):
             row.verdict = "IDLE"
             row.note = f"AUTO: watchdog reports idle for {telemetry.get('idle_seconds', '?')}s; it kills and resumes the point by itself"
@@ -640,6 +642,9 @@ def family_row(
         elif live_launchers:
             row.verdict = "QUEUED"
             row.note = f"QUEUED: no launcher on it for {write_age}; the next free launcher resumes it from the artifacts"
+        elif unverified_remote:
+            row.verdict = "UNVERIFIED"
+            row.note = "remote session has no exit record; verify its node and the shared work path before restarting"
         else:
             row.verdict = "STOPPED"
             row.note = f"NEEDS YOU: no launcher anywhere for {write_age} -> start one: bash scripts/run_qwen35_9b.sh"
@@ -651,8 +656,8 @@ def family_row(
             row.note += f" | last error: {earlier_error}"
         return row
     row.state = "PENDING"
-    row.verdict = "QUEUED" if live_launchers else "NOT_STARTED"
-    row.note = "waits for a free launcher" if live_launchers else "no launcher running"
+    row.verdict = "QUEUED" if live_launchers else ("UNVERIFIED" if unverified_remote else "NOT_STARTED")
+    row.note = "waits for a free launcher" if live_launchers else ("remote launcher unverified" if unverified_remote else "no launcher running")
     return row
 
 
@@ -710,8 +715,24 @@ def render(args: argparse.Namespace) -> tuple[list[str], str]:
             f"{elide_head(stage, 34):<34} {grpo:<8} {write:<7} {row.note}"
         )
     out.append(" cells: ok = DONE   k/8 = stage of the point pipeline (1 prep 2 behavior-rollout 3 grpo 4 fresh-rollout 5 gradients 6 scores 7 merge+report 8 DONE)   - = not started   ! = error in the current attempt")
-    out.append(" state: PROGRESSING/COMPUTING = a launcher holds the family lock and writes   QUIET = claimed but nothing written for 45 min (check again)   HUNG = 3 h (act)   QUEUED = no launcher on it, one is alive   STOPPED = no launcher anywhere")
+    out.append(" state: PROGRESSING/COMPUTING = claimed with recent output; QUIET/HUNG = prolonged silence, verify the node before interrupting; QUEUED = launcher activity observed; UNVERIFIED = remote process not checked")
     out.append("")
+    out.append(f"ALL POINTS ({total_points})")
+    out.append(f" {'point':<18} {'state':<13} {'stage':<30} {'grpo':<8} write")
+    for row in rows:
+        for point in row.points:
+            if point.done:
+                state, stage = "DONE", "8/8 DONE"
+            elif not point.started:
+                state, stage = "NOT_STARTED", "-"
+            else:
+                state = row.verdict if point is row.current else "PENDING"
+                stage = f"{point.stage_k} {point.stage_label}".strip() or "starting"
+            grpo = f"{point.grpo_steps}/{point.drift}" if point.started and point.drift else "-"
+            write = fmt_age(now - point.last_write) if point.last_write else "-"
+            out.append(f" {row.key + '/d' + str(point.drift):<18} {state:<13} {elide_head(stage, 30):<30} {grpo:<8} {write}")
+    out.append("")
+    out.append("LAUNCHERS (all open sessions and exits from the last three days)")
     if launchers:
         out.append(f" {'launcher log':<34} {'node':<10} {'pid':<8} {'started':<21} {'state':<30} {'on':<14} {'fails':<5} stage")
         for launcher in launchers:
@@ -781,12 +802,12 @@ def render(args: argparse.Namespace) -> tuple[list[str], str]:
     elif "BLOCKED" in verdicts:
         overall, action = "BLOCKED", "fix_the_reported_contract_then_rerun"
     elif "HUNG" in verdicts and not ({"PROGRESSING", "COMPUTING"} & verdicts):
-        overall, action = "HUNG", "Ctrl-C_that_launcher__git_pull__run_again__finished_work_resumes"
+        overall, action = "HUNG", "verify_HUNG_node_and_stage_logs_before_interrupting"
     elif {"PROGRESSING", "COMPUTING", "QUIET", "IDLE"} & verdicts:
         degraded = bool({"HUNG", "STOPPED", "QUIET", "IDLE"} & verdicts) or bool(current_errors)
         overall = "DEGRADED" if degraded else "RUNNING"
         if "HUNG" in verdicts:
-            action = "Ctrl-C_the_HUNG_family_launcher__git_pull__run_again"
+            action = "verify_HUNG_node_and_stage_logs_before_interrupting"
         elif current_errors:
             action = "read_the_ERROR_rows__if_the_same_error_repeats_next_status_fix_it"
         elif "STOPPED" in verdicts:
@@ -796,13 +817,38 @@ def render(args: argparse.Namespace) -> tuple[list[str], str]:
         else:
             action = "none"
     elif live_launchers:
-        overall, action = "STARTING", "wait_for_launcher_preflight_or_queue_claim"
+        silent = all(now - launcher.mtime >= args.stall_seconds for launcher in live_launchers)
+        if current_errors:
+            overall, action = "DEGRADED", "read_the_ERROR_rows__if_the_same_error_repeats_next_status_fix_it"
+        elif silent:
+            overall, action = "DEGRADED", "inspect_silent_launcher_preflight_or_queue__pid_liveness_is_not_progress"
+        else:
+            overall, action = "STARTING", "wait_for_launcher_preflight_or_queue_claim"
+    elif "UNVERIFIED" in verdicts:
+        overall, action = "UNVERIFIED", "verify_remote_launcher_and_shared_work_path"
     elif "STOPPED" in verdicts:
         overall, action = "STOPPED", "start_launchers_after_node_cleanup"
     elif points_done:
         overall, action = "INCOMPLETE", "start_launchers"
     else:
         overall, action = "NOT_STARTED", "start_launchers"
+    decisions = {
+        "COMPLETE": f"DONE: all {total_points} registered points have nonempty DONE records.",
+        "RUNNING": "NO ERROR: the matrix is progressing. See every point and launcher below.",
+        "STARTING": "NO ERROR: launcher activity observed; preparing or waiting for a family.",
+        "DEGRADED": "WARNING: errors or quiet work need inspection; do not stop healthy workers.",
+        "HUNG": "WARNING: prolonged output silence; verify the affected node and stage logs before interrupting.",
+        "BLOCKED": "ERROR: a reported contract failure needs inspection; do not restart healthy workers.",
+        "UNVERIFIED": "WARNING: remote session liveness is unverified, not confirmed dead. Check its node and work path.",
+        "STOPPED": "WARNING: incomplete matrix with no observed launcher activity. Verify nodes before relaunching.",
+        "INCOMPLETE": "WARNING: some registered points are unfinished; see the full matrix below.",
+        "NOT_STARTED": "NOT STARTED: no registered point or live session found. Check the printed work path.",
+    }
+    out[0:0] = [
+        f"DECISION {decisions[overall]}",
+        f"points   {points_done} done / {points_started} started / {total_points} in matrix   "
+        f"family failures in shown sessions: {sum(l.fails for l in launchers)}",
+    ]
     out.append(f"overall_verdict={overall}")
     out.append(f"recommended_action={action}")
     return out, overall

@@ -153,34 +153,44 @@ replace the launcher's original exit code. Manual `doctor` is unchanged.
 While the matrix runs, the launcher prints one `[progress]` line every 10
 minutes (`OM_PROGRESS_INTERVAL_SECONDS`) computed from durable artifacts only
 (DONE points, GRPO steps, rollout bytes, newest artifact write); the line reads
-`TRAINING ...`, `NOT STARTED ...` or `NOT TRAINING for <age> ...`. `status`
-prints the same as its `PROGRESS` line and its DECISION is `ERROR: NOT
-TRAINING ...` whenever the launcher is alive but nothing durable changed for
-`OM_PROGRESS_STALL_MINUTES` (30). A launcher that is alive without training
-must never look like a running experiment (18 hours were lost that way on
-2026-09-06/07).
+`TRAINING ...`, `NOT STARTED ...` or `NOT TRAINING for <age> ...`. This remains
+a launcher diagnostic. Status now derives its DECISION and tables together
+from the whole matrix: per-family locks, durable writes, stage progress and
+session records. A PID by itself does not establish training progress; a
+silent unclaimed launcher is a warning, not a progressing family. The old
+single-session/global-PROGRESS override is no longer used by status.
 
 ## Reading progress on a phone
 
 ```bash
-bash scripts/run_qwen35_9b.sh status            # DECISION, then the whole matrix like the OLMo `status h100`
-bash scripts/run_qwen35_9b.sh status verbose    # + per-point rows and the newest stage-log lines
+bash scripts/run_qwen35_9b.sh status            # all 40 points, all families and launchers
+bash scripts/run_qwen35_9b.sh status verbose    # same full view plus attempts and stage-log tails
 ```
 
 Since 2026-09-11 the status prints the same picture as the OLMo status
 (`src/matrix_status.py`, read only): every one of the 10 families with its
 state (`COMPLETE`, `PROGRESSING`/`COMPUTING`, `QUIET` after 45 min without a
-write, `HUNG` after 3 h, `QUEUED`, `STOPPED`, `BLOCKED`), the node on it, the
+write, `HUNG` after 3 h, `QUEUED`, `STOPPED`, `BLOCKED`, `UNVERIFIED`), the node on it, the
 four points (`ok`, `k/8`, `-`, `!k/8` = error in the current attempt), the
-current point and stage, cumulative GRPO steps, last write and a note; one row
-per launcher session log on every node (pid liveness is verified on this node
-only; remote launchers are inferred from log age); the KEY NUMBERS of every
-scored point; and `overall_verdict=` / `recommended_action=` lines. An extra
+current point and stage, cumulative GRPO steps, last write and a note. The
+default `ALL POINTS (40)` table includes completed and unstarted points, not
+only ongoing work. `LAUNCHERS` includes all sessions without an exit record
+and every exit from the last three days, with no eight-row cap. PID liveness
+is verified only on the local node; a silent remote session is unverified,
+not declared dead. KEY NUMBERS cover every scored point, followed by
+`overall_verdict=` / `recommended_action=`. An extra
 profile word (`status h100`) is accepted and ignored. Status always uses the
 installed code and prints its revision. It never fetches or merges, regardless
 of which experiment owns the shared checkout or whether a local launcher is
 present. Update explicitly only after launchers using that checkout have
 exited; running E5, OLMo and Qwen stages can all read its files.
+
+The full design is printed even before any run directory exists. `work` and
+`matrix` show the actual paths being inspected. A missing/broken full renderer
+produces `[status-error]` and a nonzero exit, never a silent six-point fallback.
+Output, including errors, remains in
+`$OM_WORK/console-logs/status-qwen35-history.log`. No GPU or experiment restart
+is required to inspect status; the training configuration and code are unchanged.
 
 The terminal shows tagged lines only (`[stage]`, `[progress]`, `[abort]`,
 `[model]`, `[regime-*]`, `START/OK/FAILED/DIAGNOSIS/ACTION`); tracebacks and

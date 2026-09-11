@@ -176,7 +176,7 @@ def test_quiet_and_hung_claimed_families_and_stopped_without_launchers(tmp_path)
     assert "launchers: no session log found" in out
     # nothing is clearly progressing, one family is hung: the OLMo rule says HUNG
     assert "overall_verdict=HUNG" in out
-    assert "Ctrl-C_that_launcher" in out
+    assert "verify_HUNG_node_and_stage_logs_before_interrupting" in out
 
 
 def test_launcher_rows_report_exit_remote_liveness_and_failures(tmp_path):
@@ -215,3 +215,75 @@ def test_renderer_never_creates_queue_files(tmp_path):
     render(work)
     after = sorted(p.relative_to(work) for p in work.rglob("*"))
     assert before == after
+
+
+def test_default_output_lists_all_forty_points_including_done_and_pending(tmp_path):
+    work = tmp_path / "work"
+    make_point(work / "runs", "math500", 0, 0, done=True, progress="8/8 DONE")
+    make_point(work / "runs", "math500", 0, 25, progress="3/8 grpo")
+    out = render(work)
+    table = out.split("ALL POINTS (40)", 1)[1].split("LAUNCHERS", 1)[0]
+    rows = [line for line in table.splitlines() if line.startswith((" math500/", " mbpp/"))]
+    assert len(rows) == 40
+    for dataset in ("math500", "mbpp"):
+        for seed in range(5):
+            for drift in (0, 25, 100, 400):
+                assert sum(f" {dataset}/s{seed}/d{drift} " in row for row in rows) == 1
+    assert "DONE" in rows[0] and "NOT_STARTED" in rows[-1]
+
+
+def test_no_live_launcher_is_hidden_by_eight_newer_exit_logs(tmp_path):
+    work = tmp_path / "work"
+    active = session_log(work, "additional-qwen35-live.log", host=os.uname().nodename, pid=os.getpid())
+    old = time.time() - 1800
+    os.utime(active, (old, old))
+    for index in range(10):
+        session_log(work, f"additional-qwen35-exit-{index}.log", host=f"node-{index}", pid=4444, exit_rc=1)
+    out = render(work)
+    assert "ALIVE (this node)" in out
+    assert "launchers live 1/11" in out
+    assert "overall_verdict=STARTING" in out
+
+
+def test_silent_remote_session_is_unverified_not_a_dead_local_process(tmp_path):
+    work = tmp_path / "work"
+    make_point(work / "runs", "math500", 0, 0, progress="4/8 fresh-rollout", age=7200)
+    log = session_log(work, "additional-qwen35-remote.log", host="remote-node", pid=7777)
+    old = time.time() - 7200
+    os.utime(log, (old, old))
+    out = render(work)
+    assert "overall_verdict=UNVERIFIED" in out
+    assert "STOPPED" not in next(line for line in out.splitlines() if line.startswith(" math500/s0 "))
+    assert "Ctrl-C" not in out
+
+
+def test_complete_design_ignores_failures_in_old_launcher_sessions(tmp_path):
+    work = tmp_path / "work"
+    for dataset in ("math500", "mbpp"):
+        for seed in range(5):
+            for drift in (0, 25, 100, 400):
+                make_point(work / "runs", dataset, seed, drift, done=True)
+    session_log(work, "additional-qwen35-failed.log", host="remote-node", pid=7777, exit_rc=1)
+    out = render(work)
+    assert out.startswith("DECISION DONE:")
+    assert "overall_verdict=COMPLETE" in out
+
+
+def test_live_session_with_a_current_error_is_not_reported_as_no_error(tmp_path):
+    work = tmp_path / "work"
+    make_point(work / "runs", "math500", 0, 0, progress="1/8 prep", main_extra="[abort]\nRuntimeError: test failure\n")
+    session_log(work, "additional-qwen35-current.log", host=os.uname().nodename, pid=os.getpid())
+    out = render(work)
+    assert "DECISION NO ERROR" not in out
+    assert "overall_verdict=DEGRADED" in out
+
+
+def test_silent_preflight_is_not_proof_of_training_progress(tmp_path):
+    work = tmp_path / "work"
+    log = session_log(work, "additional-qwen35-preflight.log", host=os.uname().nodename, pid=os.getpid())
+    old = time.time() - 7200
+    os.utime(log, (old, old))
+    out = render(work)
+    assert "overall_verdict=DEGRADED" in out
+    assert "pid_liveness_is_not_progress" in out
+    assert "DECISION NO ERROR" not in out

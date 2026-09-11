@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -114,39 +115,59 @@ def qwen_status(
     done_count=0,
     history_failure=False,
     error_text="",
+    session_host=None,
+    session_age=0,
+    started=True,
+    no_session=False,
+    renderer_failure=False,
+    missing_renderer=False,
+    registered_done=True,
+    wrapper=False,
 ):
     repo = tmp_path / "repo"
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
-    for name in ["status_qwen35.sh", "setup_env.sh"]:
+    for name in ["status_qwen35.sh", "run_qwen35_9b.sh", "setup_env.sh"]:
         shutil.copy2(ROOT / "scripts" / name, scripts / name)
-    # the full-matrix renderer and its two imports; the status falls back to
-    # its short table when they are missing, so copy them to test the real path
+    # Exercise the real full renderer, not an abbreviated fallback.
     (repo / "src").mkdir()
     for name in ["matrix_status.py", "training_progress.py", "point_key_numbers.py"]:
         shutil.copy2(ROOT / "src" / name, repo / "src" / name)
+    if renderer_failure:
+        (repo / "src/matrix_status.py").write_text("raise SystemExit(23)\n")
+    if missing_renderer:
+        (repo / "src/matrix_status.py").unlink()
     work = tmp_path / "work"
     logs = work / "console-logs"
     logs.mkdir(parents=True)
-    text = "[launch] utc=2026-09-06T00:00:00Z\n[stage] run\n"
+    host = session_host or os.uname().nodename
+    text = f"[launch] utc=2026-09-06T00:00:00Z host={host} pid={os.getpid() if active else 99999999}\n[stage] run\n"
     if exit_code is not None:
         text += f"[exit] rc={exit_code}\n"
-    (logs / "additional-qwen35-test.log").write_text(text)
+    log = logs / "additional-qwen35-test.log"
+    if not no_session:
+        log.write_text(text)
+        if session_age:
+            stamp = time.time() - session_age
+            os.utime(log, (stamp, stamp))
     run_id = "qwen35-9b-posttrained-math-code-grpo-v1"
     run = work / "runs" / run_id / "qwen35" / f"{run_id}-grpo-qwen35-s0-math500-d0"
-    (run / "logs").mkdir(parents=True)
-    (run / "logs/main.log").write_text("[progress] test  1/8 prep\n" + error_text)
+    if started:
+        (run / "logs").mkdir(parents=True)
+        (run / "logs/main.log").write_text("[progress] test  1/8 prep\n" + error_text)
     if empty_done:
         (run / "DONE").touch()
     for index in range(done_count):
-        point = run if index == 0 else run.parent / f"test-s{index}-math500-d0"
+        dataset = ("math500", "mbpp")[(index // 4) % 2]
+        seed, drift = index // 8, (0, 25, 100, 400)[index % 4]
+        if registered_done:
+            point = run.parent / f"{run_id}-grpo-qwen35-s{seed}-{dataset}-d{drift}"
+        else:
+            point = run if index == 0 else run.parent / f"test-s{index}-math500-d0"
         point.mkdir(exist_ok=True)
         (point / "DONE").write_text("done\n")
     bins = tmp_path / "bin"
     bins.mkdir()
-    pgrep = bins / "pgrep"
-    pgrep.write_text(f"#!/bin/sh\nexit {0 if active else 1}\n")
-    pgrep.chmod(0o755)
     env = {
         **os.environ,
         "OM_WORK": str(work),
@@ -160,7 +181,7 @@ def qwen_status(
         tee.write_text("#!/bin/sh\ncat\nexit 7\n")
         tee.chmod(0o755)
     return subprocess.run(
-        ["bash", str(scripts / "status_qwen35.sh")],
+        ["bash", str(scripts / "run_qwen35_9b.sh"), "status"] if wrapper else ["bash", str(scripts / "status_qwen35.sh")],
         env=env,
         capture_output=True,
         text=True,
@@ -173,7 +194,7 @@ def test_qwen_no_failures_has_valid_integer_count(tmp_path):
     result = qwen_status(tmp_path, active=True)
     assert result.returncode == 0
     assert result.stderr == ""
-    assert "family failures this session: 0\n" in result.stdout
+    assert "family failures in shown sessions: 0\n" in result.stdout
 
 
 def test_qwen_status_prints_the_whole_matrix_like_olmo(tmp_path):
@@ -216,6 +237,57 @@ def test_qwen_complete_matrix_still_reports_done(tmp_path):
 def test_qwen_history_writer_failure_is_not_hidden(tmp_path):
     result = qwen_status(tmp_path, history_failure=True)
     assert result.returncode == 7
+
+
+def test_qwen_default_status_includes_unstarted_and_completed_points(tmp_path):
+    result = qwen_status(tmp_path, done_count=1)
+    assert result.returncode == 0
+    assert "ALL POINTS (40)" in result.stdout
+    assert " math500/s0/d0 " in result.stdout and " mbpp/s4/d400 " in result.stdout
+    assert "DONE" in result.stdout and "NOT_STARTED" in result.stdout
+
+
+def test_qwen_empty_work_path_still_displays_the_entire_design(tmp_path):
+    result = qwen_status(tmp_path, started=False, no_session=True)
+    assert result.returncode == 0
+    assert "ALL POINTS (40)" in result.stdout and "families 10:" in result.stdout
+    assert "overall_verdict=NOT_STARTED" in result.stdout
+
+
+@pytest.mark.parametrize("age", [0, 7200])
+def test_qwen_status_on_an_idle_node_does_not_declare_a_remote_launcher_dead(tmp_path, age):
+    result = qwen_status(tmp_path, session_host="remote-gpu-node", session_age=age)
+    assert result.returncode == 0
+    assert "launcher is gone" not in result.stdout and "Ctrl-C" not in result.stdout
+    assert f"overall_verdict={'UNVERIFIED' if age else 'STARTING'}" in result.stdout
+
+
+def test_qwen_counts_registered_points_not_forty_arbitrary_done_files(tmp_path):
+    result = qwen_status(tmp_path, exit_code=0, done_count=40, registered_done=False)
+    assert result.returncode == 0
+    assert "DECISION DONE:" not in result.stdout
+    assert "points   5 done" in result.stdout
+
+
+@pytest.mark.parametrize("failure,rc", [("renderer_failure", 23), ("missing_renderer", 2)])
+def test_qwen_renderer_failure_is_explicit_not_a_six_point_fallback(tmp_path, failure, rc):
+    result = qwen_status(tmp_path, **{failure: True})
+    assert result.returncode == rc
+    assert "[status-error]" in result.stderr
+    assert "short table" not in result.stdout
+
+
+def test_qwen_status_handles_work_paths_with_spaces(tmp_path):
+    result = qwen_status(tmp_path / "shared work", session_host="remote-node")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ALL POINTS (40)" in result.stdout
+
+
+def test_qwen_public_status_command_defaults_to_the_full_view(tmp_path):
+    result = qwen_status(tmp_path, wrapper=True, done_count=1)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ALL POINTS (40)" in result.stdout and "LAUNCHERS" in result.stdout
+    assert "read-only status; no automatic update" in result.stdout
 
 
 @pytest.mark.parametrize("name", ["run_qwen35_9b.sh", "run_olmo3_rlzero.sh"])
