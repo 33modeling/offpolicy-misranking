@@ -4,8 +4,10 @@
 #   100 further GRPO updates per arm, evaluated on 300 held-out MATH-train
 #   problems x 8 responses (never the ranking validation prompts).
 #
-#   bash scripts/run_e5.sh          # run on THIS idle 4xH100 node (no OLMo/Qwen launcher here)
-#   bash scripts/run_e5.sh status   # progress of every seed and arm, no GPU
+#   bash scripts/run_e5.sh          # run the d400 branch on THIS idle 4xH100 node
+#   bash scripts/run_e5.sh d0       # run the d0 branch (arms start from the base model)
+#   bash scripts/run_e5.sh status   # progress of every branch, seed and arm, no GPU
+#   Any mode accepts d0 or d400 as an extra word, e.g.  bash scripts/run_e5.sh d0 stop
 #   bash scripts/run_e5.sh plan     # dry run: contracts and commands only
 #   bash scripts/run_e5.sh stop     # stop E5 on this node (nothing else)
 #   bash scripts/run_e5.sh force    # run, first stopping a non-matrix process that holds this node's GPU lock
@@ -16,8 +18,16 @@
 # Prerequisite once, in an online shell:  bash scripts/fetch_math_train.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
-MODE=${1:-run}
-case "$MODE" in run|status|plan|stop) ;; force) MODE=run; export E5_FORCE=1 ;; *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force]"; exit 2 ;; esac
+MODE=run; DRIFT=${E5_DRIFT:-400}; DRIFT_GIVEN=${E5_DRIFT:+1}
+for arg in "$@"; do
+  case "$arg" in
+    d0) DRIFT=0; DRIFT_GIVEN=1 ;;
+    d400) DRIFT=400; DRIFT_GIVEN=1 ;;
+    run|status|plan|stop) MODE=$arg ;;
+    force) MODE=run; export E5_FORCE=1 ;;
+    *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force] [d0|d400]"; exit 2 ;;
+  esac
+done
 trap '' HUP
 trap 'echo "[e5] interrupted; nothing else will be started"; exit 130' INT TERM
 export OM_ONLINE=0
@@ -25,10 +35,10 @@ source scripts/setup_env.sh >/dev/null 2>&1
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
 TAG=${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-h100-v2}
 ROOT=${OM_OLMO3_ROOT:-$OM_WORK/runs/$TAG}
-DATASET=${E5_DATASET:-math500}; DRIFT=${E5_DRIFT:-400}
+DATASET=${E5_DATASET:-math500}
 read -r -a SEEDS <<< "${E5_SEEDS:-0 1 2}"
 STEPS=${E5_STEPS:-100}; EVAL_K=${E5_EVAL_K:-8}; COUNT=${E5_TEST_COUNT:-300}
-SELECTORS=${E5_SELECTORS:-random fresh_r g11}
+SELECTORS=${E5_SELECTORS:-random passrate_beta fresh_r g11}
 POOL="$DATASETS_DIR/math_train/math_train.jsonl"; POOL_MANIFEST="$DATASETS_DIR/math_train/dataset_manifest.json"
 TEST="$OM_WORK/inputs/e5-reduced/test-$DATASET-d$DRIFT.json"
 OUT_ROOT="$OM_WORK/runs/e5-reduced/$DATASET-d$DRIFT"
@@ -46,14 +56,22 @@ if [ "$MODE" = stop ]; then
   exit 0
 fi
 if [ "$MODE" = status ]; then
-  for seed in "${SEEDS[@]}"; do
-    out="$OUT_ROOT/s$seed"
-    if [ -s "$out/experiment.json" ]; then
-      "$PY" src/downstream_status.py --out "$out"
-      [ -s "$out/downstream_results.csv" ] && { echo "  results:"; sed 's/^/    /' "$out/downstream_results.csv"; }
-    else
-      echo "seed $seed: not prepared"
-    fi
+  # Without d0/d400 the status covers every branch that exists.
+  if [ -n "${DRIFT_GIVEN:-}" ]; then roots=("$OUT_ROOT"); else mapfile -t roots < <(ls -d "$OM_WORK/runs/e5-reduced/$DATASET-d"* 2>/dev/null); fi
+  [ "${#roots[@]}" -gt 0 ] || { echo "no E5 branch prepared yet"; exit 0; }
+  for root in "${roots[@]}"; do
+    echo "== branch $(basename "$root")"
+    for seed in "${SEEDS[@]}"; do
+      out="$root/s$seed"
+      if [ -s "$out/experiment.json" ]; then
+        "$PY" src/downstream_status.py --out "$out"
+        # arms added after preparation live in arms.json; show their state too
+        [ -s "$out/arms.json" ] && "$PY" src/evidence_downstream.py status --out "$out" | grep -E "^  (passrate_beta|g00|g10|g01|g11|fresh_r|random) " | grep -vFf <("$PY" -c 'import json,sys; print("\n".join("  "+a+" " for a in json.load(open(sys.argv[1]))["selectors"]))' "$out/experiment.json") | sed 's/^/  [added]/'
+        [ -s "$out/downstream_results.csv" ] && { echo "  results:"; sed 's/^/    /' "$out/downstream_results.csv"; }
+      else
+        echo "seed $seed: not prepared"
+      fi
+    done
   done
   exit 0
 fi

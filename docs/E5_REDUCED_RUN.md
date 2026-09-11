@@ -9,8 +9,8 @@ subset? Gradient alignment is a proxy; this experiment measures reward.
 
 | item | value |
 |---|---|
-| source points | OLMo-3 matrix, MATH-500, checkpoint d400, seeds 0 1 2 (`family-math500-s<seed>/…-d400`) |
-| arms | `random` (uniform subset), `fresh_r` (fresh top-k from split R), `g11` (stale top-k, full correction) |
+| source points | OLMo-3 matrix, MATH-500, seeds 0 1 2; two branch points: d400 (`…-d400`, arms resume its adapter and optimizer) and d0 (`…-d0`, arms start from the base model) |
+| arms | `random` (uniform subset), `passrate_beta` (stored-reward difficulty band, zero selection cost), `fresh_r` (fresh top-k from split R), `g11` (stale top-k, full correction) |
 | training | 100 further GRPO updates per arm from the point's `policy_step_400` adapter and optimizer, same objective configuration (4 ranks, one epoch, clip 0.2, lr 1e-5, LoRA q/v 16/32) |
 | evaluation | 300 MATH-train problems that share no question with the 400 candidates or the 100 ranking-validation prompts, 8 responses each, Math-Verify reward, before (d400 policy) and after every arm |
 | readout | mean reward after each arm, paired difference vs fresh_r with a 10,000-draw prompt bootstrap, overlap of each subset with fresh_r |
@@ -32,17 +32,28 @@ Once, in a shell with Hub access (login node):
 bash scripts/fetch_math_train.sh
 ```
 
-On each idle 4xH100 node (no OLMo or Qwen launcher on it), the same line:
+On each idle 4xH100 node (no OLMo or Qwen launcher on it), the d400 branch:
 
 ```
 git pull --ff-only && bash scripts/run_e5.sh
 ```
 
-Progress from any node, no GPU:
+and the d0 branch (same arms, starting from the base model):
+
+```
+git pull --ff-only && bash scripts/run_e5.sh d0
+```
+
+Progress of every branch from any node, no GPU:
 
 ```
 bash scripts/run_e5.sh status
 ```
+
+Arms added after a seed was prepared (for example `passrate_beta` on a d400
+seed that started with three arms) are recorded in `arms.json` next to the
+frozen contract; completed shards stay valid and the new arm is trained and
+evaluated on the next pass.
 
 ### Node ownership repair (2026-09-11)
 

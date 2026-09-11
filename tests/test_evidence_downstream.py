@@ -30,13 +30,14 @@ def source_point(tmp_path, drift=400):
                   prompt_format="olmo_rlzero_math")
     ed.atomic_json(run / "run_config.json", config)
     (run / "DONE").write_text("complete")
-    parent = run / f"policy_step_{drift}"
-    _policy_artifact(parent, completed_steps=drift)
-    manifest = ed.read(parent / "policy_train.json")
-    manifest.update(seed=0, prompt_format="olmo_rlzero_math",
-                    optimizer_sha256=ed.digest(parent / "optimizer.pt"),
-                    grpo_stats_sha256=ed.digest(parent / "grpo_stats.jsonl"))
-    ed.atomic_json(parent / "policy_train.json", manifest)
+    if drift > 0:
+        parent = run / f"policy_step_{drift}"
+        _policy_artifact(parent, completed_steps=drift)
+        manifest = ed.read(parent / "policy_train.json")
+        manifest.update(seed=0, prompt_format="olmo_rlzero_math",
+                        optimizer_sha256=ed.digest(parent / "optimizer.pt"),
+                        grpo_stats_sha256=ed.digest(parent / "grpo_stats.jsonl"))
+        ed.atomic_json(parent / "policy_train.json", manifest)
     inp = tmp_path / "eval-input"
     inp.mkdir()
     evaluation = inp / "test.json"
@@ -59,7 +60,7 @@ def test_prepare_dry_run_uses_the_source_drift_and_creates_nothing(tmp_path):
     contract = ed.prepare(run, out, evaluation, 100, 8, dry=True)
     assert not out.exists()
     assert contract["drift"] == 400
-    assert contract["selectors"] == ["random", "fresh_r", "g11"]
+    assert contract["selectors"] == ["random", "passrate_beta", "fresh_r", "g11"]
     assert contract["power_verified"] is False
 
 
@@ -78,10 +79,24 @@ def test_prepare_is_idempotent_and_targets_drift_plus_steps(tmp_path):
         ed.prepare(run, out, evaluation, 200, 8)
 
 
-def test_prepare_rejects_zero_drift_and_unknown_arms(tmp_path):
+def test_drift_zero_branches_from_the_base_model(tmp_path):
     run, evaluation = source_point(tmp_path, drift=0)
-    with pytest.raises(ValueError, match="positive drift"):
-        ed.prepare(run, tmp_path / "o", evaluation, 100, 8, dry=True)
+    out = tmp_path / "o"
+    contract = ed.prepare(run, out, evaluation, 100, 8)
+    assert contract["drift"] == 0
+    assert not any(name.startswith("policy_step") for name in contract["source_hashes"])
+    args = (out / "subsets/train-random.args").read_bytes().decode().rstrip("\0").split("\0")
+    assert "--resume-adapter" not in args and "--resume-optimizer" not in args
+    assert args[args.index("--start-step") + 1] == "0"
+    assert args[args.index("--target-steps") + 1] == "100"
+    assert ed.arm_policy(out, "before") is None
+    binding, policy, indices = ed.eval_binding(out, "before", 0)
+    assert policy is None and binding["adapter_sha256"] is None
+    assert binding["base_model_config_sha256"] == contract["model_config_sha256"]
+    assert len(indices) == 2
+
+
+def test_prepare_rejects_unknown_arms(tmp_path):
     run, evaluation = source_point(tmp_path / "b", drift=100)
     with pytest.raises(ValueError, match="unknown selector"):
         ed.prepare(run, tmp_path / "o2", evaluation, 100, 8, ["fresh_r", "certagrad"], dry=True)
@@ -170,6 +185,39 @@ def test_prepare_tolerates_driver_code_changes_but_not_design_changes(tmp_path):
     again = ed.prepare(run, out, evaluation, 100, 8)
     assert again["code_hashes"]["src/evidence_downstream.py"] == "0" * 64
     assert ed.read(out / "experiment.json") == saved
+    # The arm list is informational: a launcher may train a subset or add arms later.
+    ed.prepare(run, out, evaluation, 100, 8, ["random", "fresh_r"])
+    assert ed.arms_of(out) == ["random", "passrate_beta", "fresh_r", "g11"]
     with pytest.raises(ValueError, match="contract changed"):
-        ed.prepare(run, out, evaluation, 100, 8, ["random", "fresh_r"])
+        ed.prepare(run, out, evaluation, 100, 4)
+    assert first["selectors"] == ["random", "passrate_beta", "fresh_r", "g11"]
+
+
+def test_arms_can_be_added_after_preparation_without_changing_the_contract(tmp_path):
+    run, evaluation = source_point(tmp_path)
+    out = tmp_path / "output"
+    first = ed.prepare(run, out, evaluation, 100, 8, ["random", "fresh_r", "g11"])
+    frozen = ed.digest(out / "experiment.json")
+    ed.prepare(run, out, evaluation, 100, 8, ["random", "passrate_beta", "fresh_r", "g11"])
+    assert ed.digest(out / "experiment.json") == frozen
+    assert ed.read(out / "experiment.json")["selectors"] == ["random", "fresh_r", "g11"]
+    assert ed.arms_of(out) == ["random", "fresh_r", "g11", "passrate_beta"]
+    assert ed.read(out / "arms.json") == {"selectors": ["passrate_beta"]}
+    report = ed.summarize(out, allow_partial=True)
+    assert report["missing_selectors"] == ["random", "fresh_r", "g11", "passrate_beta"]
+    with pytest.raises(ValueError, match="unknown arm"):
+        ed.arm_policy(out, "g00")
     assert first["selectors"] == ["random", "fresh_r", "g11"]
+
+
+def test_frozen_test_set_is_reused_for_a_different_seed_list(tmp_path):
+    run, _ = source_point(tmp_path)
+    other, _ = source_point(tmp_path / "other")
+    pool = tmp_path / "pool.jsonl"
+    pool.write_text("".join(json.dumps({"problem": f"held-out {i}", "answer": "1"}) + "\n" for i in range(8)))
+    out = tmp_path / "inputs/test.json"
+    first = ed.prepare_test(pool, [run, other], out, 4, 1, "d", "r", "train")
+    again = ed.prepare_test(pool, [run], out, 4, 1, "d", "r", "train")
+    assert again["test"] == first["test"]
+    with pytest.raises(ValueError, match="contract changed"):
+        ed.prepare_test(pool, [run], out, 4, 2, "d", "r", "train")

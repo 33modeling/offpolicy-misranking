@@ -3,10 +3,11 @@
 #
 #   bash scripts/run_downstream_independent.sh RUN OUT --eval-prompts TEST.json \
 #        [--steps 100] [--eval-k 8] [--dry-run|--prepare-only]
-#   DOWNSTREAM_SELECTORS="random fresh_r g11"   arms to train (default; any of
+#   DOWNSTREAM_SELECTORS="random passrate_beta fresh_r g11"   arms to train (default; any of
 #                                               fresh_r g00 g10 g01 g11 passrate_beta random)
 #
-# Every arm starts from RUN's policy_step_<drift> adapter+optimizer, receives
+# Every arm starts from RUN's policy_step_<drift> adapter+optimizer (at drift 0:
+# the base model with a fresh adapter and optimizer), receives
 # --steps further GRPO updates on its selected prompts with the point's own
 # objective configuration, and is evaluated on TEST.json (never the ranking
 # validation prompts). Per-arm leases in OUT let several idle nodes share the
@@ -22,7 +23,7 @@ usage() {
 RUN=$(realpath -m "$1"); OUT=$(realpath -m "$2"); shift 2
 EVAL_PROMPTS=${DOWNSTREAM_EVAL_PROMPTS:-}; STEPS=${DOWNSTREAM_STEPS:-100}; EVAL_K=${DOWNSTREAM_EVAL_K:-8}
 DRY=0; PREPARE_ONLY=0
-read -r -a SELECTORS <<< "${DOWNSTREAM_SELECTORS:-random fresh_r g11}"
+read -r -a SELECTORS <<< "${DOWNSTREAM_SELECTORS:-random passrate_beta fresh_r g11}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --eval-prompts|--steps|--eval-k)

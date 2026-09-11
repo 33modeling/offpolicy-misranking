@@ -1,8 +1,9 @@
 """Independent-test downstream comparison (extension E5, reduced design).
 
 Ported from the v2 workspace (2026-09-10) and generalised: any completed
-positive-drift point can be the source, and the trained arms are a chosen
-subset of the seven selectors. Invoked through scripts/run_downstream_independent.sh.
+MATH-500 point can be the source (drift 0 branches from the base model), and
+the trained arms are a chosen subset of the seven selectors; arms may be added
+to a prepared seed later (arms.json) without changing the frozen contract. Invoked through scripts/run_downstream_independent.sh.
 
 Each arm starts from the source point's policy_step_<drift> adapter and
 optimizer, receives the same number of further GRPO updates on its selected
@@ -39,7 +40,7 @@ TRAIN_FLAGS = {
     "lora-rank": "grpo_lora_rank", "lora-alpha": "grpo_lora_alpha",
     "logprob-micro-batch": "grpo_logprob_micro_batch",
 }
-DEFAULT_ARMS = ("random", "fresh_r", "g11")
+DEFAULT_ARMS = ("random", "passrate_beta", "fresh_r", "g11")
 
 
 def read(path: Path):
@@ -65,7 +66,7 @@ def bind(path: Path, value) -> None:
         atomic_json(path, value)
 
 
-INFORMATIONAL = ("code_hashes", "runtime")
+INFORMATIONAL = ("code_hashes", "runtime", "selectors")
 
 
 def bind_experiment(path: Path, contract: dict) -> dict:
@@ -84,9 +85,31 @@ def bind_experiment(path: Path, contract: dict) -> dict:
     if strip(existing) != strip(contract):
         raise ValueError(f"contract changed: {path}; use a new output root, do not mix runs")
     if any(existing.get(k) != contract.get(k) for k in INFORMATIONAL):
-        print("[note] driver code or packages changed since this seed was prepared; "
-              "continuing with the recorded contract", file=sys.stderr)
+        print("[note] recorded contract differs only in informational fields (code hashes, "
+              "packages, arm list); continuing with the recorded contract", file=sys.stderr)
     return existing
+
+
+def arms_of(out: Path, contract: dict | None = None) -> list[str]:
+    """Frozen arms plus any added later through arms.json."""
+    contract = contract or read(out / "experiment.json")
+    arms = list(contract["selectors"])
+    extra = out / "arms.json"
+    if extra.exists():
+        arms += [arm for arm in read(extra)["selectors"] if arm not in arms]
+    return arms
+
+
+def extend_arms(out: Path, contract: dict, arms) -> list[str]:
+    """Record arms added after preparation without touching the frozen contract,
+    so completed shard bindings (which hash experiment.json) stay valid."""
+    current = arms_of(out, contract)
+    new = [arm for arm in arms if arm not in current]
+    if new:
+        extra = [arm for arm in current + new if arm not in contract["selectors"]]
+        atomic_json(out / "arms.json", {"selectors": extra})
+        print(f"[arms] added after preparation: {' '.join(new)}", file=sys.stderr)
+    return current + new
 
 
 def require_separate_output(output: Path, inputs) -> Path:
@@ -164,21 +187,34 @@ def prepare_test(candidates: Path, runs: list[Path], out: Path, count: int, seed
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.with_name(out.name + ".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        bind(out, result)
-    return result
+        if not out.exists():
+            atomic_json(out, result)
+            return result
+        # A frozen test set is reused when its content and pool provenance match;
+        # the exclusion record is informational, but the frozen questions must
+        # still be disjoint from every run given now.
+        existing = read(out)
+        if used & set(questions(existing["test"])):
+            raise ValueError(f"frozen test set overlaps the prompts of a given run: {out}")
+        core = lambda d: (d["test"], {k: d["provenance"].get(k) for k in  # noqa: E731
+                          ("dataset", "revision", "split", "candidate_sha256", "selection_seed")})
+        if core(existing) != core(result):
+            raise ValueError(f"contract changed: {out}; use a new output root, do not mix runs")
+    return existing
 
 
 def train_args(config: dict, run: Path, out: Path, selector: str, steps: int) -> list[str]:
     drift = config["drift"]
-    parent = run / f"policy_step_{drift}"
     args = ["-m", "torch.distributed.run", "--standalone", "--nproc_per_node=4",
             str(ROOT / "src/train_policy_grpo.py"), "--model", config["model"],
             "--prompts", str(out / "subsets" / f"subset-{selector}.json"),
             "--output", str(out / selector / "policy"), "--target-steps", str(drift + steps),
-            "--start-step", str(drift), "--resume-adapter", str(parent),
-            "--resume-optimizer", str(parent / "optimizer.pt"), "--objective", "grpo",
-            "--expected-world-size", "4", "--checkpoint-every", "5",
-            "--max-new-tokens", str(config["max_new_tokens"]), "--seed", str(config["seed"])]
+            "--start-step", str(drift)]
+    if drift > 0:  # drift 0 trains the base model directly; no adapter or optimizer to resume
+        parent = run / f"policy_step_{drift}"
+        args += ["--resume-adapter", str(parent), "--resume-optimizer", str(parent / "optimizer.pt")]
+    args += ["--objective", "grpo", "--expected-world-size", "4", "--checkpoint-every", "5",
+             "--max-new-tokens", str(config["max_new_tokens"]), "--seed", str(config["seed"])]
     for flag, field in TRAIN_FLAGS.items():
         args += ["--" + flag, str(config[field])]
     if str(config["grpo_gradient_checkpointing"]).strip().lower() in {"0", "false", "no", "off", ""}:
@@ -207,8 +243,8 @@ def prepare(run: Path, out: Path, eval_path: Path, steps: int, eval_k: int,
         raise ValueError("source point is not complete")
     config = read(run / "run_config.json")
     drift = config.get("drift")
-    if config.get("dataset") != "math500" or not isinstance(drift, int) or drift <= 0:
-        raise ValueError("E5 requires a completed MATH-500 point with positive drift")
+    if config.get("dataset") != "math500" or not isinstance(drift, int) or drift < 0:
+        raise ValueError("E5 requires a completed MATH-500 point (drift 0 branches from the base model)")
     if config.get("grpo_world_size") != 4 or config.get("grpo_epochs_per_batch") != 1:
         raise ValueError("E5 requires the four-rank, one-epoch GRPO source protocol")
     if config.get("seed") not in range(5) or config.get("topk_frac") != 0.1 or config.get("prompt_format") != "olmo_rlzero_math":
@@ -223,17 +259,19 @@ def prepare(run: Path, out: Path, eval_path: Path, steps: int, eval_k: int,
     from train_policy_grpo import validate_policy_manifest
 
     load_complete_score_artifacts(run)
-    parent = run / f"policy_step_{drift}"
-    policy = validate_policy_manifest(parent, target_steps=drift, world_size=4,
-                                      training_objective="grpo", require_complete_hashes=True)
-    if policy.get("seed") != config["seed"] or policy.get("prompt_format") != config["prompt_format"]:
-        raise ValueError("source policy seed/prompt format differs from the point config")
+    if drift > 0:
+        parent = run / f"policy_step_{drift}"
+        policy = validate_policy_manifest(parent, target_steps=drift, world_size=4,
+                                          training_objective="grpo", require_complete_hashes=True)
+        if policy.get("seed") != config["seed"] or policy.get("prompt_format") != config["prompt_format"]:
+            raise ValueError("source policy seed/prompt format differs from the point config")
     model = Path(config["model"]).resolve()
     if not (model / "config.json").is_file():
         raise ValueError(f"source model snapshot is unavailable: {model}")
     input_files = ["run_config.json", "prompts.json", "scores_offpolicy.json",
                    "scores_splithalf.json", "scores_oracle.json", "rollouts_behavior_train.jsonl"]
-    input_files += [f"policy_step_{drift}/{name}" for name in POLICY_FILES]
+    if drift > 0:
+        input_files += [f"policy_step_{drift}/{name}" for name in POLICY_FILES]
     contract = {
         "schema": SCHEMA, "source_run": str(run), "dataset": config["dataset"],
         "seed": config["seed"], "drift": drift, "steps": steps, "eval_k": eval_k,
@@ -263,6 +301,7 @@ def prepare(run: Path, out: Path, eval_path: Path, steps: int, eval_k: int,
     with (out / ".prepare.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         contract = bind_experiment(out / "experiment.json", contract)
+        extend_arms(out, contract, arms)
         bind(out / "evaluation.json", {"val": test, "provenance": evaluation["provenance"]})
         if (out / "subsets_hashes.json").exists():
             written = {arm: out / "subsets" / f"subset-{arm}.json" for arm in SELECTORS}
@@ -277,12 +316,14 @@ def prepare(run: Path, out: Path, eval_path: Path, steps: int, eval_k: int,
     return contract
 
 
-def arm_policy(out: Path, arm: str) -> Path:
+def arm_policy(out: Path, arm: str) -> Path | None:
+    """Adapter directory of an arm; None means the base model (the d0 'before' policy)."""
     contract = read(out / "experiment.json")
     drift = contract["drift"]
+    parent = Path(contract["source_run"]) / f"policy_step_{drift}" if drift > 0 else None
     if arm == "before":
-        return Path(contract["source_run"]) / f"policy_step_{drift}"
-    if arm not in contract["selectors"]:
+        return parent
+    if arm not in arms_of(out, contract):
         raise ValueError(f"unknown arm: {arm}")
     from dataclasses import asdict
 
@@ -293,7 +334,7 @@ def arm_policy(out: Path, arm: str) -> Path:
                             for field in TRAIN_FLAGS.values() if field != "grpo_logprob_micro_batch"}, checkpoint_every=5))
     validate_policy_lineage(path, target_steps=drift + contract["steps"], world_size=4,
                             training_objective="grpo", expected_start_step=drift,
-                            expected_parent=Path(contract["source_run"]) / f"policy_step_{drift}",
+                            expected_parent=parent,
                             expected_model=Path(config["model"]), expected_seed=contract["seed"],
                             expected_max_new_tokens=config["max_new_tokens"],
                             expected_prompt_format=config["prompt_format"],
@@ -326,7 +367,10 @@ def eval_binding(out: Path, arm: str, shard: int) -> tuple[dict, Path, range]:
         raise ValueError("independent evaluation prompts changed after preparation")
     source = Path(contract["source_run"])
     drift = contract["drift"]
-    for name in ("run_config.json", f"policy_step_{drift}/adapter_model.safetensors", f"policy_step_{drift}/policy_train.json"):
+    names = ["run_config.json"]
+    if drift > 0:
+        names += [f"policy_step_{drift}/adapter_model.safetensors", f"policy_step_{drift}/policy_train.json"]
+    for name in names:
         if digest(source / name) != contract["source_hashes"][name]:
             raise ValueError("source configuration or policy changed after preparation")
     policy = arm_policy(out, arm)
@@ -334,11 +378,18 @@ def eval_binding(out: Path, arm: str, shard: int) -> tuple[dict, Path, range]:
     indices = range(n * shard // 4, n * (shard + 1) // 4)
     if not indices:
         raise ValueError("evaluation requires at least four prompts for four GPU shards")
-    binding = {"experiment_sha256": digest(out / "experiment.json"),
-               "prompts_sha256": digest(out / "evaluation.json"),
-               "adapter_sha256": digest(policy / "adapter_model.safetensors"),
-               "policy_manifest_sha256": digest(policy / "policy_train.json"),
-               "arm": arm, "shard": shard, "shards": 4}
+    if policy is None:  # base model at drift 0: bind the model snapshot instead of an adapter
+        binding = {"experiment_sha256": digest(out / "experiment.json"),
+                   "prompts_sha256": digest(out / "evaluation.json"),
+                   "adapter_sha256": None, "policy_manifest_sha256": None,
+                   "base_model_config_sha256": contract["model_config_sha256"],
+                   "arm": arm, "shard": shard, "shards": 4}
+    else:
+        binding = {"experiment_sha256": digest(out / "experiment.json"),
+                   "prompts_sha256": digest(out / "evaluation.json"),
+                   "adapter_sha256": digest(policy / "adapter_model.safetensors"),
+                   "policy_manifest_sha256": digest(policy / "policy_train.json"),
+                   "arm": arm, "shard": shard, "shards": 4}
     return binding, policy, indices
 
 
@@ -419,7 +470,7 @@ def summarize(out: Path, *, allow_partial: bool = False) -> dict:
         raise ValueError("baseline evaluation is incomplete")
     before = evaluation_means(out, "before") if baseline_complete else None
     values, missing = {}, []
-    for arm in contract["selectors"]:
+    for arm in arms_of(out, contract):
         if not all((out / arm / "evaluation" / f"shard-{s}.done.json").is_file() for s in range(4)):
             missing.append(arm)
             continue
@@ -511,7 +562,7 @@ def main() -> int:
                 return 0
             contract = read(out / "experiment.json")
             print(f"seed {contract['seed']} d{contract['drift']} steps={contract['steps']} eval_k={contract['eval_k']} test={contract['eval_prompts']}")
-            for arm in ["before", *contract["selectors"]]:
+            for arm in ["before", *arms_of(out, contract)]:
                 print(f"  {arm:14s} {arm_state(out, arm)}")
             return 0
         else:
