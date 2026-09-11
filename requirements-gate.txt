@@ -1,0 +1,4 @@
+# CPU-only fitting and verification of the selection gate.
+numpy>=1.24
+scikit-learn>=1.2,<2
+pytest>=8,<10
