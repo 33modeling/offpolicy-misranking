@@ -222,3 +222,33 @@ bash scripts/run_gate_decision.sh          # both branches; export under $OM_WOR
 
 `bash scripts/run_e5.sh rlog400` runs the reliability-logging random arm for
 400 updates under the separate root `math500-d<drift>-rlog400`.
+
+## Public benchmarks for the trained policies (2026-09-13)
+
+Once, in an online shell (login node):
+
+```
+bash scripts/fetch_benchmarks.sh
+```
+
+writes `$DATASETS_DIR/benchmarks/{aime24,aime25,amc23,gsm8k,math_rest}.jsonl`
+with manifests (AIME 2024/2025, AMC 2023, GSM8K test, and the 4,500 MATH test
+problems outside MATH-500). On an idle 4xH100 node:
+
+```
+git pull --ff-only && bash scripts/run_e5_bench.sh          # d400 branch
+git pull --ff-only && bash scripts/run_e5_bench.sh d0       # d0 branch
+bash scripts/run_e5_bench.sh status | results | plan        # no GPU
+```
+
+Per seed the source checkpoint (`before`) and every arm whose policy is
+complete (gate arms included) are evaluated on all five sets with the E5
+sampling, prompt format and verifier; GSM8K and MATH-rest are frozen
+200-problem subsamples (`E5_BENCH_COUNT`), `E5_BENCH_K` responses per prompt
+(default 8). One process per (arm, GPU shard) loads the policy once and runs
+every set; arms are leased per seed; completed shards are reused. Results:
+`<seed>/benchmark_results.csv` (per set: mean reward, paired difference
+against the source checkpoint and against the random arm, GPU seconds) and a
+`macro` row per arm. `bash scripts/run_e5.sh export` bundles them.
+Cost at the measured E5 evaluation rate (about 60 s per prompt per GPU at 8
+responses): 500 prompts per policy, about 2 h per policy on four GPUs.
