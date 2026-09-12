@@ -93,6 +93,9 @@ if [ "$MODE" = results ]; then
   for seed_dir in "$OM_WORK"/runs/e5-reduced/math500-d*/s*; do
     [ -s "$seed_dir/experiment.json" ] && [ -d "$seed_dir/before/evaluation" ] && \
       "$PY" src/evidence_downstream.py summarize --out "$seed_dir" --allow-partial >/dev/null 2>&1 || true
+    # recompute reliability trajectories from the raw per-rank logs (adds newer columns)
+    ls "$seed_dir"/random/policy/reliability_log.rank*.jsonl >/dev/null 2>&1 && \
+      "$PY" src/reliability_trajectory.py --policy "$seed_dir/random/policy" --window "${E5_RELIABILITY_WINDOW:-20}" >/dev/null 2>&1 || true
   done
   "$PY" - "$OM_WORK/runs/e5-reduced" <<'PYEOF'
 import csv, sys
@@ -118,9 +121,9 @@ for branch in sorted(root.glob("math500-d*")):
             files.append(traj)
             rows = list(csv.DictReader(traj.open()))
             print(f"  seed {seed.name[1:]}: {traj}")
-            print(f"  seed {seed.name[1:]} reliability (steps: pass r | grad r | mixed frac | mean pass)")
+            print(f"  seed {seed.name[1:]} reliability, half-group correlations (steps: pass | diff score | grad | grad among mixed | mixed frac | mean pass)")
             for r in rows:
-                print(f"    {r['step_start']:>4}-{r['step_end']:<4} {f(r['pass_r_full'])} {f(r['grad_r_full'])} {f(r['mixed_fraction'])} {f(r['mean_pass'])}")
+                print(f"    {r['step_start']:>4}-{r['step_end']:<4} {f(r['pass_r_half'])} {f(r.get('diff_r_half'))} {f(r['grad_r_half'])} {f(r.get('grad_mixed_r_half'))} {f(r['mixed_fraction'])} {f(r['mean_pass'])}")
         if not results.is_file() and not traj.is_file():
             expected = traj if branch.name.endswith("-rlog") else results
             print(f"  seed {seed.name[1:]}: not finished; will be at {expected}")

@@ -92,6 +92,8 @@ def test_trajectory_recovers_a_known_split_half_reliability(tmp_path):
     assert r["grad_r_full"] == pytest.approx(rt.spearman_brown(r["grad_r_half"]))
     assert 0 < r["pass_r_half"] < 1 and 0 < r["mixed_fraction"] <= 1
     assert r["rows"] == 800
+    assert "diff_r_half" in r and "grad_mixed_r_half" in r and r["mixed_rows"] <= r["rows"]
+    assert math.isfinite(r["mean_cos_ab_mixed"])
 
 
 def test_trajectory_windows_slide_and_outputs_are_written(tmp_path):
@@ -105,7 +107,7 @@ def test_trajectory_windows_slide_and_outputs_are_written(tmp_path):
     target = rt.write_outputs(records, policy)
     assert target.is_file() and (policy / "reliability_trajectory.dat").is_file()
     header = (policy / "reliability_trajectory.dat").read_text().splitlines()[0].split()
-    assert header[:3] == ["step", "pass_r_full", "grad_r_full"]
+    assert header[:4] == ["step", "pass_r_half", "diff_r_half", "grad_r_half"]
     result = subprocess.run([sys.executable, str(ROOT / "src/reliability_trajectory.py"), "--policy", str(policy),
                              "--window", "30", "--reps", "20"], capture_output=True, text=True,
                             env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin"})

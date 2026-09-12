@@ -25,7 +25,10 @@ from pathlib import Path
 
 import numpy as np
 
-SIGNALS = {"pass": ("pass_a", "pass_b"), "grad": ("cos_a_others", "cos_b_others")}
+# pass: raw half pass rates; diff: the intermediate-difficulty selection score
+# -|p - 1/2| actually used by the passrate selector; grad: half-group gradient
+# cosines against the mean gradient of the other prompts in the batch.
+SIGNALS = {"pass": ("pass_a", "pass_b"), "diff": ("diff_a", "diff_b"), "grad": ("cos_a_others", "cos_b_others")}
 
 
 def load_rows(policy: Path) -> list[dict]:
@@ -35,6 +38,9 @@ def load_rows(policy: Path) -> list[dict]:
             rows.extend(json.loads(line) for line in stream if line.strip())
     if not rows:
         raise ValueError(f"no reliability_log.rank*.jsonl under {policy}")
+    for r in rows:  # the selection score applied to each half
+        r["diff_a"] = -abs(float(r["pass_a"]) - 0.5)
+        r["diff_b"] = -abs(float(r["pass_b"]) - 0.5)
     rows.sort(key=lambda r: (r["step"], r["rank"]))
     return rows
 
@@ -87,13 +93,20 @@ def trajectory(rows: list[dict], window: int, seed: int = 0, reps: int = 1000) -
         block = [r for r in rows if start <= r["step"] <= end]
         if not block:
             continue
+        mixed = [r for r in block if r.get("mixed")]
         record = {"step_start": start, "step_end": min(end, steps[-1]), "rows": len(block),
                   "mixed_fraction": float(np.mean([bool(r.get("mixed")) for r in block])),
                   "mean_pass": float(np.mean([r["pass"] for r in block])),
-                  "mean_cos_ab": float(np.mean([r["cos_ab"] for r in block]))}
+                  "mean_cos_ab": float(np.mean([r["cos_ab"] for r in block])),
+                  # conditional on groups with mixed rewards: groups with identical
+                  # rewards have a zero gradient and a cosine recorded as 0
+                  "mixed_rows": len(mixed),
+                  "mean_cos_ab_mixed": float(np.mean([r["cos_ab"] for r in mixed])) if mixed else float("nan")}
         for signal in SIGNALS:
             summary = window_summary(block, signal, seed + start, reps)
             record.update({f"{signal}_{k}": v for k, v in summary.items()})
+        grad_mixed = window_summary(mixed, "grad", seed + start + 1, reps)
+        record.update({f"grad_mixed_{k}": v for k, v in grad_mixed.items()})
         out.append(record)
         if end >= steps[-1]:
             break
@@ -108,12 +121,14 @@ def write_outputs(records: list[dict], policy: Path) -> Path:
         writer.writerows(records)
     dat = policy / "reliability_trajectory.dat"  # pgfplots-friendly
     with dat.open("w", encoding="utf-8") as handle:
-        handle.write("step pass_r_full grad_r_full pass_r_half_lo pass_r_half_hi grad_r_half_lo grad_r_half_hi mixed_fraction mean_pass\n")
+        handle.write("step pass_r_half diff_r_half grad_r_half grad_mixed_r_half pass_lo pass_hi diff_lo diff_hi grad_lo grad_hi "
+                     "mixed_fraction mean_pass cos_ab_mixed\n")
         for r in records:
             mid = (r["step_start"] + r["step_end"]) / 2
-            handle.write(f"{mid:.1f} {r['pass_r_full']:.4f} {r['grad_r_full']:.4f} {r['pass_r_half_lo']:.4f} "
-                         f"{r['pass_r_half_hi']:.4f} {r['grad_r_half_lo']:.4f} {r['grad_r_half_hi']:.4f} "
-                         f"{r['mixed_fraction']:.4f} {r['mean_pass']:.4f}\n")
+            handle.write(f"{mid:.1f} {r['pass_r_half']:.4f} {r['diff_r_half']:.4f} {r['grad_r_half']:.4f} {r['grad_mixed_r_half']:.4f} "
+                         f"{r['pass_r_half_lo']:.4f} {r['pass_r_half_hi']:.4f} {r['diff_r_half_lo']:.4f} {r['diff_r_half_hi']:.4f} "
+                         f"{r['grad_r_half_lo']:.4f} {r['grad_r_half_hi']:.4f} {r['mixed_fraction']:.4f} {r['mean_pass']:.4f} "
+                         f"{r['mean_cos_ab_mixed']:.4f}\n")
     return target
 
 
@@ -133,11 +148,13 @@ def main() -> int:
         print(f"[abort] {exc}")
         return 2
     print(f"[reliability] {len(rows)} rows, {len(records)} windows -> {target}")
+    print("  (half-group correlations; Spearman-Brown full-group values in the CSV are valid only for nonnegative r)")
     for r in records:
         print(f"  steps {r['step_start']:>4}-{r['step_end']:<4} n={r['rows']:<4} "
-              f"pass r_full={r['pass_r_full']:.2f} [{r['pass_r_half_lo']:.2f},{r['pass_r_half_hi']:.2f}]  "
-              f"grad r_full={r['grad_r_full']:.2f} [{r['grad_r_half_lo']:.2f},{r['grad_r_half_hi']:.2f}]  "
-              f"mixed={r['mixed_fraction']:.2f} cos_ab={r['mean_cos_ab']:.2f}")
+              f"pass r={r['pass_r_half']:.2f} [{r['pass_r_half_lo']:.2f},{r['pass_r_half_hi']:.2f}]  "
+              f"diff r={r['diff_r_half']:.2f} [{r['diff_r_half_lo']:.2f},{r['diff_r_half_hi']:.2f}]  "
+              f"grad r={r['grad_r_half']:.2f} [{r['grad_r_half_lo']:.2f},{r['grad_r_half_hi']:.2f}]  "
+              f"grad|mixed r={r['grad_mixed_r_half']:.2f}  mixed={r['mixed_fraction']:.2f} cos_ab|mixed={r['mean_cos_ab_mixed']:.2f}")
     return 0
 
 
