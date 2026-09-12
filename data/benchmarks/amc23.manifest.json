@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "dataset": "amc23",
+  "source_repository": "math-ai/amc23",
+  "source_config": null,
+  "split": "test",
+  "source_revision": "80815d37005feb82cd7f8fbc6901d5d3eff43057",
+  "rows": 40,
+  "excluded_math500": null,
+  "math500_revision": null,
+  "sha256": "087a7210614cffc15fe741fc9d66832f53ecd48b05a3aec7ca437f6035b7188c",
+  "fetched_at_utc": "2026-09-12T15:00:11.673864+00:00"
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "dataset": "gsm8k",
+  "source_repository": "openai/gsm8k",
+  "source_config": "main",
+  "split": "test",
+  "source_revision": "740312add88f781978c0658806c59bc2815b9866",
+  "rows": 1319,
+  "excluded_math500": null,
+  "math500_revision": null,
+  "sha256": "f61aed932e1e7add05ca0c66a7fa97151ed54fc251caf3ce2bc1fcc914899290",
+  "fetched_at_utc": "2026-09-12T15:00:17.433328+00:00"
+}

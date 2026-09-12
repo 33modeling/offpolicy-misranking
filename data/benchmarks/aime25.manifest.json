@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "dataset": "aime25",
+  "source_repository": "math-ai/aime25",
+  "source_config": null,
+  "split": "test",
+  "source_revision": "563bb8404243c5f09de6ec262f2db674fe5bce9b",
+  "rows": 30,
+  "excluded_math500": null,
+  "math500_revision": null,
+  "sha256": "887ee1d4c7f209d572759dbba941609bf2c919c491d9f8cd6d59ddebf44d5835",
+  "fetched_at_utc": "2026-09-12T15:00:08.262115+00:00"
+}

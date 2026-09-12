@@ -10,7 +10,7 @@
 #   bash scripts/run_e5_bench.sh plan       # what would run, no GPU
 #   Any mode accepts d0 or d400 as an extra word.
 #
-# Prerequisite once, in an online shell:  bash scripts/fetch_benchmarks.sh
+# The benchmark sets ship with the repository (data/benchmarks); no download step.
 # Evaluates the source checkpoint (before) and every arm whose policy is
 # complete; arms are leased per seed so several idle nodes can share the work.
 # Rerunning resumes from completed shards. Never shares a node with a running
@@ -36,7 +36,11 @@ ROOT=${OM_OLMO3_ROOT:-$OM_WORK/runs/$TAG}
 read -r -a SEEDS <<< "${E5_SEEDS:-0 1 2}"
 SETS=${E5_BENCH_SETS:-aime24 aime25 amc23 gsm8k math_rest}
 EVAL_K=${E5_BENCH_K:-8}; COUNT=${E5_BENCH_COUNT:-200}
+# The five sets are committed under data/benchmarks (fetched on 2026-09-13 with
+# scripts/fetch_benchmarks.sh, manifests with revisions and hashes); the cluster
+# needs no download. A copy under $DATASETS_DIR/benchmarks takes precedence.
 BENCH_DIR="$DATASETS_DIR/benchmarks"
+ls "$BENCH_DIR"/*.manifest.json >/dev/null 2>&1 || BENCH_DIR="$PWD/data/benchmarks"
 BRANCH="$OM_WORK/runs/e5-reduced/math500-d$DRIFT"
 # Marker for this pass's processes (distinct from the E5 marker, which is the branch root).
 export OUT_ROOT="$BRANCH/.bench"
@@ -79,8 +83,7 @@ PYEOF
   exit 0
 fi
 [ -d "$BENCH_DIR" ] && ls "$BENCH_DIR"/*.manifest.json >/dev/null 2>&1 || {
-  echo "[abort] benchmark sets missing: $BENCH_DIR"
-  echo "        run once in an online shell:  bash scripts/fetch_benchmarks.sh"
+  echo "[abort] benchmark sets missing: $BENCH_DIR (expected in the repository under data/benchmarks)"
   exit 1
 }
 if [ "$MODE" = plan ]; then

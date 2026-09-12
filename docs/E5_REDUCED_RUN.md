@@ -225,15 +225,12 @@ bash scripts/run_gate_decision.sh          # both branches; export under $OM_WOR
 
 ## Public benchmarks for the trained policies (2026-09-13)
 
-Once, in an online shell (login node):
-
-```
-bash scripts/fetch_benchmarks.sh
-```
-
-writes `$DATASETS_DIR/benchmarks/{aime24,aime25,amc23,gsm8k,math_rest}.jsonl`
-with manifests (AIME 2024/2025, AMC 2023, GSM8K test, and the 4,500 MATH test
-problems outside MATH-500). On an idle 4xH100 node:
+The five sets are committed in the repository under `data/benchmarks/`
+(`{aime24,aime25,amc23,gsm8k,math_rest}.jsonl` with manifests recording the
+Hub revisions and hashes; AIME 2024/2025, AMC 2023, GSM8K test, and the 4,500
+MATH test problems outside MATH-500). The cluster needs no download;
+`scripts/fetch_benchmarks.sh` only regenerates them on an online machine.
+On an idle 4xH100 node:
 
 ```
 git pull --ff-only && bash scripts/run_e5_bench.sh          # d400 branch

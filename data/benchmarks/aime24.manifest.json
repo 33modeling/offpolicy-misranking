@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "dataset": "aime24",
+  "source_repository": "HuggingFaceH4/aime_2024",
+  "source_config": null,
+  "split": "train",
+  "source_revision": "2fe88a2f1091d5048c0f36abc874fb997b3dd99a",
+  "rows": 30,
+  "excluded_math500": null,
+  "math500_revision": null,
+  "sha256": "dbe8d7dd7d6ee0b13741decf076c8299b4b73a60d5cce085ec9849afc5fbb92c",
+  "fetched_at_utc": "2026-09-12T15:00:05.789361+00:00"
+}
