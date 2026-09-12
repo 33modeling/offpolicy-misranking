@@ -252,3 +252,20 @@ against the source checkpoint and against the random arm, GPU seconds) and a
 `macro` row per arm. `bash scripts/run_e5.sh export` bundles them.
 Cost at the measured E5 evaluation rate (about 60 s per prompt per GPU at 8
 responses): 500 prompts per policy, about 2 h per policy on four GPUs.
+
+## Reuse-estimator half scores, gain law, and cost accounting (2026-09-13)
+
+```
+git pull --ff-only && bash scripts/run_stale_splithalf.sh        # d400 points, four GPUs; d0 with the word d0
+bash scripts/run_gain_law.sh                                      # CPU: cross-half gain against rho*c on every point
+bash scripts/run_cost_accounting.sh                               # CPU: GPU-seconds per arm, logging overhead, stage costs
+bash scripts/run_gate_decision.sh                                 # CPU: frozen rule on fresh, difficulty and reuse halves
+```
+
+`run_stale_splithalf.sh` writes `scores_stale_splithalf.json` (g00, g10, g01,
+g11 on the first and second half of every stored response group) into each
+MATH-500 point, with a protocol file that compares a few recomputed
+full-group scores with `scores_offpolicy.json`. The gate decision and the
+gain law then include the reuse estimators. All CPU scripts write under
+`$OM_WORK/exports/` and print the export path; `bash scripts/run_e5.sh export`
+also bundles the gate decisions and benchmark results.
