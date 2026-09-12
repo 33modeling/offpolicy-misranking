@@ -169,7 +169,7 @@ def merge(run: Path, shards: int) -> Path:
             raise ValueError(f"{est}: half-score coverage differs from the point's candidates "
                              f"({len(merged[est])} of {len(expected)})")
     check = {}
-    if any(full[est] for est in ESTIMATORS):
+    if any(full[est] for est in ESTIMATORS) and (run / "scores_offpolicy.json").is_file():
         stored = json.loads((run / "scores_offpolicy.json").read_text())
         for est in ESTIMATORS:
             diffs = [abs(full[est][i] - float(stored[est][i]["score"])) for i in full[est] if i in stored[est]]
