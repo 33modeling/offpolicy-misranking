@@ -41,6 +41,13 @@ TRAIN_FLAGS = {
     "logprob-micro-batch": "grpo_logprob_micro_batch",
 }
 DEFAULT_ARMS = ("random", "passrate_beta", "fresh_r", "g11")
+# Executed random-fallback gate arms (the manuscript's bounded diagnostic): a
+# uniform pilot block trained with reliability logging, one decision under the
+# frozen rule of config/gate_rule.json, then the continuation on the retained
+# selector's subset or on the random subset, resumed from the pilot policy.
+GATE_ARMS = {"gate_passrate": ("passrate_beta", "difficulty")}
+ARM_NAMES = SELECTORS + tuple(GATE_ARMS)
+GATE_PROMPTS_PER_STEP = 4  # four ranks, one prompt each
 
 
 def read(path: Path):
@@ -229,9 +236,55 @@ def check_arms(arms) -> tuple[str, ...]:
     if not arms or len(set(arms)) != len(arms):
         raise ValueError("arms must be a nonempty list without repeats")
     for arm in arms:
-        if arm not in SELECTORS:
+        if arm not in ARM_NAMES:
             raise ValueError(f"unknown selector: {arm}")
     return arms
+
+
+def gate_rule_path() -> Path:
+    return Path(os.environ.get("E5_GATE_RULE") or ROOT / "config" / "gate_rule.json")
+
+
+def gate_pilot_steps(rule: dict) -> int:
+    return max(1, math.ceil(int(rule["pilot_size"]) / GATE_PROMPTS_PER_STEP))
+
+
+def pilot_prompts(source: dict, seed: int) -> dict:
+    """The whole candidate pool in a seeded uniform order: the trainer visits
+    four consecutive prompts per step, so the first pilot steps are a uniform
+    sample without replacement."""
+    order = list(range(len(source["train"])))
+    random.Random(seed + 5_000_003).shuffle(order)
+    return {"train": [source["train"][i] for i in order], "val": source["val"],
+            "selector": "uniform-pilot", "selected_idx": order, "k": len(order)}
+
+
+def _replace_flag(args: list[str], flag: str, value: str) -> None:
+    args[args.index(flag) + 1] = value
+
+
+def pilot_args(config: dict, run: Path, out: Path, arm: str, rule: dict) -> list[str]:
+    args = train_args(config, run, out, arm, gate_pilot_steps(rule))
+    _replace_flag(args, "--prompts", str(out / "subsets" / f"subset-{arm}-pilot.json"))
+    _replace_flag(args, "--output", str(out / arm / "pilot"))
+    if "--reliability-log" not in args:
+        args.append("--reliability-log")
+    return args
+
+
+def gate_args(config: dict, run: Path, out: Path, arm: str, chosen: str, steps: int, rule: dict) -> list[str]:
+    """Continuation after the decision: resumes from the pilot policy at
+    drift + pilot steps and trains the chosen subset up to drift + steps."""
+    pilot = out / arm / "pilot"
+    args = train_args(config, run, out, arm, steps)
+    _replace_flag(args, "--prompts", str(out / "subsets" / f"subset-{chosen}.json"))
+    _replace_flag(args, "--start-step", str(config["drift"] + gate_pilot_steps(rule)))
+    for flag in ("--resume-adapter", "--resume-optimizer"):
+        if flag in args:
+            i = args.index(flag)
+            del args[i:i + 2]
+    args += ["--resume-adapter", str(pilot), "--resume-optimizer", str(pilot / "optimizer.pt")]
+    return args
 
 
 def prepare(run: Path, out: Path, eval_path: Path, steps: int, eval_k: int,
@@ -315,7 +368,100 @@ def prepare(run: Path, out: Path, eval_path: Path, steps: int, eval_k: int,
             args_path = out / "subsets" / f"train-{selector}.args"
             args_path.write_bytes(b"\0".join(arg.encode() for arg in train_args(config, run, out, selector, steps)) + b"\0")
         bind(out / "subsets_hashes.json", {key: digest(path) for key, path in written.items()})
+        gate_arms = [arm for arm in arms_of(out, contract) if arm in GATE_ARMS]
+        if gate_arms:
+            from gate_decision import validate_rule
+            rule = validate_rule(read(gate_rule_path()))
+            bind(out / "gate_rule.json", rule)  # frozen per seed directory
+            for arm in gate_arms:
+                pilot_path = out / "subsets" / f"subset-{arm}-pilot.json"
+                if not pilot_path.exists():
+                    pilot_path.write_text(json.dumps(pilot_prompts(source, config["seed"]), ensure_ascii=False, indent=1))
+                bind(out / "gate_pilot.json", {"prompts_sha256": {arm: digest(pilot_path)},
+                                               "pilot_steps": gate_pilot_steps(rule)})
+                args_path = out / "subsets" / f"train-{arm}-pilot.args"
+                args_path.write_bytes(b"\0".join(arg.encode() for arg in pilot_args(config, run, out, arm, rule)) + b"\0")
     return contract
+
+
+def _expected_config(config: dict) -> dict:
+    from dataclasses import asdict
+
+    from train_policy_grpo import GrpoConfig
+    return asdict(GrpoConfig(**{field.removeprefix("grpo_"): config[field]
+                              for field in TRAIN_FLAGS.values() if field != "grpo_logprob_micro_batch"}, checkpoint_every=5))
+
+
+def gate_pilot_dir(out: Path, arm: str) -> Path:
+    return out / arm / "pilot"
+
+
+def validate_pilot(out: Path, arm: str) -> dict:
+    """Lineage of a gate arm's pilot policy: parent = the source policy (or the
+    base model at drift 0), prompts = the frozen uniform pilot order."""
+    from train_policy_grpo import validate_policy_lineage
+    if arm not in GATE_ARMS or arm not in arms_of(out):
+        raise ValueError(f"unknown gate arm: {arm}")
+    contract = read(out / "experiment.json")
+    config = read(Path(contract["source_run"]) / "run_config.json")
+    pilot_info = read(out / "gate_pilot.json")
+    drift = contract["drift"]
+    parent = Path(contract["source_run"]) / f"policy_step_{drift}" if drift > 0 else None
+    pilot_file = out / "subsets" / f"subset-{arm}-pilot.json"
+    if digest(pilot_file) != pilot_info["prompts_sha256"][arm]:
+        raise ValueError("gate pilot prompts changed after preparation")
+    manifest = validate_policy_lineage(gate_pilot_dir(out, arm), target_steps=drift + pilot_info["pilot_steps"], world_size=4,
+                                       training_objective="grpo", expected_start_step=drift, expected_parent=parent,
+                                       expected_model=Path(config["model"]), expected_seed=contract["seed"],
+                                       expected_max_new_tokens=config["max_new_tokens"],
+                                       expected_prompt_format=config["prompt_format"],
+                                       expected_config=_expected_config(config), expected_prompts=pilot_file,
+                                       require_complete_hashes=True)
+    if not manifest.get("reliability_log"):
+        raise ValueError("gate pilot was trained without reliability logging")
+    return manifest
+
+
+def gate_decide(out: Path, arm: str) -> dict:
+    """One decision from the pilot's reliability log under the frozen rule;
+    writes <arm>/decision.json and the continuation's train-<arm>.args."""
+    import gate_decision
+    validate_pilot(out, arm)
+    contract = read(out / "experiment.json")
+    run = Path(contract["source_run"])
+    config = read(run / "run_config.json")
+    rule = gate_decision.validate_rule(read(out / "gate_rule.json"))
+    pilot_info = read(out / "gate_pilot.json")
+    selector, signal = GATE_ARMS[arm]
+    pilot = gate_pilot_dir(out, arm)
+    drift, pilot_steps = contract["drift"], pilot_info["pilot_steps"]
+    rows = [json.loads(line) for path in sorted(pilot.glob("reliability_log.rank*.jsonl"))
+            for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if {int(r["step"]) for r in rows} != set(range(drift + 1, drift + pilot_steps + 1)):
+        raise ValueError("pilot reliability log does not cover the pilot steps")
+    rows.sort(key=lambda r: (int(r["step"]), int(r["rank"])))
+    if signal == "difficulty":
+        halves = {i: (-abs(float(r["pass_a"]) - 0.5), -abs(float(r["pass_b"]) - 0.5)) for i, r in enumerate(rows)}
+    else:
+        halves = {i: (float(r["pass_a"]), float(r["pass_b"])) for i, r in enumerate(rows)}
+    pool = len(read(run / "prompts.json")["train"])
+    record = gate_decision.decide_signal(halves, signal, {**rule, "pilot_size": len(rows)}, pool_size=pool)
+    stats = [json.loads(line) for line in (pilot / "grpo_stats.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    chosen = selector if record["decision"] == "retain" else "random"
+    decision = {"schema": "offpolicy-gate-arm-decision/v1", "arm": arm, "selector": selector, "signal": signal,
+                "decision": record["decision"], "reason": record["reason"], "chosen_subset": chosen,
+                "pilot_steps": pilot_steps, "pilot_pairs": len(rows),
+                "pilot_seconds": sum(float(r.get("step_seconds", 0.0)) for r in stats),
+                "r_half": record["r_half"], "lower": record["lower"], "upper": record["upper"],
+                "r_min": rule["r_min"], "confidence": rule["confidence"],
+                "rule_sha256": digest(out / "gate_rule.json"),
+                "pilot_adapter_sha256": digest(pilot / "adapter_model.safetensors"),
+                "scope": "one decision before the continuation; the pilot block is training on uniformly "
+                         "ordered candidates and its measurement is the trainer's reliability log"}
+    bind(out / arm / "decision.json", decision)
+    args_path = out / "subsets" / f"train-{arm}.args"
+    args_path.write_bytes(b"\0".join(arg.encode() for arg in gate_args(config, run, out, arm, chosen, contract["steps"], rule)) + b"\0")
+    return decision
 
 
 def arm_policy(out: Path, arm: str) -> Path | None:
@@ -327,21 +473,28 @@ def arm_policy(out: Path, arm: str) -> Path | None:
         return parent
     if arm not in arms_of(out, contract):
         raise ValueError(f"unknown arm: {arm}")
-    from dataclasses import asdict
-
-    from train_policy_grpo import GrpoConfig, validate_policy_lineage
+    from train_policy_grpo import validate_policy_lineage
     config = read(Path(contract["source_run"]) / "run_config.json")
     path = out / arm / "policy"
-    expected_config = asdict(GrpoConfig(**{field.removeprefix("grpo_"): config[field]
-                            for field in TRAIN_FLAGS.values() if field != "grpo_logprob_micro_batch"}, checkpoint_every=5))
+    expected_config = _expected_config(config)
+    start_step, prompts = drift, out / "subsets" / f"subset-{arm}.json"
+    if arm in GATE_ARMS:
+        validate_pilot(out, arm)
+        decision = read(out / arm / "decision.json")
+        pilot = gate_pilot_dir(out, arm)
+        if decision.get("rule_sha256") != digest(out / "gate_rule.json") or \
+                decision.get("pilot_adapter_sha256") != digest(pilot / "adapter_model.safetensors"):
+            raise ValueError("gate decision does not match the frozen rule or the pilot policy")
+        parent, start_step = pilot, drift + read(out / "gate_pilot.json")["pilot_steps"]
+        prompts = out / "subsets" / f"subset-{decision['chosen_subset']}.json"
     validate_policy_lineage(path, target_steps=drift + contract["steps"], world_size=4,
-                            training_objective="grpo", expected_start_step=drift,
+                            training_objective="grpo", expected_start_step=start_step,
                             expected_parent=parent,
                             expected_model=Path(config["model"]), expected_seed=contract["seed"],
                             expected_max_new_tokens=config["max_new_tokens"],
                             expected_prompt_format=config["prompt_format"],
                             expected_config=expected_config,
-                            expected_prompts=out / "subsets" / f"subset-{arm}.json",
+                            expected_prompts=prompts,
                             require_complete_hashes=True)
     return path
 
@@ -459,6 +612,14 @@ def arm_state(out: Path, arm: str) -> str:
         return "trained, not evaluated"
     if (out / arm / "policy").is_dir():
         return "training"
+    if arm in GATE_ARMS:
+        if (out / arm / "decision.json").is_file():
+            d = read(out / arm / "decision.json")
+            return f"decided {d['decision']} ({d['reason']}), continuation not started"
+        if (out / arm / "pilot" / "policy_train.json").is_file():
+            return "pilot trained, not decided"
+        if (out / arm / "pilot").is_dir():
+            return "pilot training"
     return "not started"
 
 
@@ -480,15 +641,17 @@ def summarize(out: Path, *, allow_partial: bool = False) -> dict:
     if missing and not allow_partial:
         raise ValueError(f"incomplete arms: {missing}")
     subsets = {arm: set(read(path)["selected_idx"]) for arm, path in subset_paths.items()}
+    decisions = {arm: read(out / arm / "decision.json") for arm in values if arm in GATE_ARMS}
     rows = []
     for arm, after in values.items():
         delta = after - before if before is not None else None
         lo, hi = paired_interval(delta, contract["seed"]) if delta is not None else (None, None)
+        trained_on = decisions[arm]["chosen_subset"] if arm in decisions else arm
         row = {"dataset": contract["dataset"], "seed": contract["seed"], "drift": contract["drift"],
                "selector": arm,
                "reward_before": float(before.mean()) if before is not None else None, "reward_after": float(after.mean()),
                "reward_change": float(delta.mean()) if delta is not None else None, "change_lower": lo, "change_upper": hi,
-               "overlap_with_fresh": len(subsets[arm] & subsets["fresh_r"]) / len(subsets[arm]),
+               "overlap_with_fresh": len(subsets[trained_on] & subsets["fresh_r"]) / len(subsets[trained_on]),
                "difference_vs_fresh": None, "difference_lower": None, "difference_upper": None}
         if "fresh_r" in values:
             difference = after - values["fresh_r"]
@@ -499,6 +662,19 @@ def summarize(out: Path, *, allow_partial: bool = False) -> dict:
             difference = after - values["random"]
             lo, hi = paired_interval(difference, contract["seed"] + 7)
             row.update(difference_vs_random=float(difference.mean()), random_lower=lo, random_upper=hi)
+        # executed gate: its decision and the reward forgone against the unchanged selector
+        row.update(gate_decision=None, gate_reason=None, gate_r_half=None, gate_lower=None, gate_upper=None,
+                   gate_pilot_steps=None, gate_pilot_seconds=None, forgone_vs_selector=None,
+                   forgone_lower=None, forgone_upper=None)
+        if arm in decisions:
+            d = decisions[arm]
+            row.update(gate_decision=d["decision"], gate_reason=d["reason"], gate_r_half=d["r_half"],
+                       gate_lower=d["lower"], gate_upper=d["upper"], gate_pilot_steps=d["pilot_steps"],
+                       gate_pilot_seconds=d["pilot_seconds"])
+            if d["selector"] in values:
+                forgone = values[d["selector"]] - after
+                lo, hi = paired_interval(forgone, contract["seed"] + 11)
+                row.update(forgone_vs_selector=float(forgone.mean()), forgone_lower=lo, forgone_upper=hi)
         rows.append(row)
     report = {"schema": SCHEMA, "experiment_sha256": digest(out / "experiment.json"),
               "complete": not missing and baseline_complete, "missing_baseline": not baseline_complete,
@@ -534,14 +710,20 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("evaluate")
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--arm", choices=("before",) + SELECTORS, required=True)
+    p.add_argument("--arm", choices=("before",) + ARM_NAMES, required=True)
     p.add_argument("--shard", type=int, required=True)
     p = sub.add_parser("summarize")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--allow-partial", action="store_true")
     p = sub.add_parser("policy-ready")
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--arm", choices=SELECTORS, required=True)
+    p.add_argument("--arm", choices=ARM_NAMES, required=True)
+    p = sub.add_parser("gate-pilot-ready")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--arm", choices=tuple(GATE_ARMS), required=True)
+    p = sub.add_parser("gate-decide")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--arm", choices=tuple(GATE_ARMS), required=True)
     p = sub.add_parser("status")
     p.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
@@ -561,6 +743,18 @@ def main() -> int:
             if not (args.out / args.arm / "policy/policy_train.json").is_file():
                 return 1
             arm_policy(args.out.resolve(), args.arm)
+            return 0
+        elif args.command == "gate-pilot-ready":
+            if not (args.out / args.arm / "pilot/policy_train.json").is_file():
+                return 1
+            validate_pilot(args.out.resolve(), args.arm)
+            return 0
+        elif args.command == "gate-decide":
+            d = gate_decide(args.out.resolve(), args.arm)
+            fmt = lambda v: "-" if v is None else f"{v:+.3f}"  # noqa: E731
+            print(f"decision={d['decision']} reason={d['reason']} subset={d['chosen_subset']} "
+                  f"r_half={fmt(d['r_half'])} lower={fmt(d['lower'])} upper={fmt(d['upper'])} r_min={d['r_min']} "
+                  f"pilot_steps={d['pilot_steps']} pairs={d['pilot_pairs']} pilot_seconds={d['pilot_seconds']:.0f}")
             return 0
         elif args.command == "status":
             out = args.out.resolve()

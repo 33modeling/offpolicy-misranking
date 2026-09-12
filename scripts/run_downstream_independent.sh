@@ -4,7 +4,8 @@
 #   bash scripts/run_downstream_independent.sh RUN OUT --eval-prompts TEST.json \
 #        [--steps 100] [--eval-k 8] [--dry-run|--prepare-only]
 #   DOWNSTREAM_SELECTORS="random passrate_beta fresh_r g11"   arms to train (default; any of
-#                                               fresh_r g00 g10 g01 g11 passrate_beta random)
+#                                               fresh_r g00 g10 g01 g11 passrate_beta random,
+#                                               and the executed gate arm gate_passrate)
 #
 # Every arm starts from RUN's policy_step_<drift> adapter+optimizer (at drift 0:
 # the base model with a fresh adapter and optimizer), receives
@@ -38,7 +39,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$EVAL_PROMPTS" ] || { echo "[abort] independent --eval-prompts is required; the ranking validation set is not a test set"; exit 2; }
 for selector in "${SELECTORS[@]}"; do
-  case "$selector" in fresh_r|g00|g10|g01|g11|passrate_beta|random) ;; *) echo "[abort] unknown selector: $selector"; exit 2 ;; esac
+  case "$selector" in fresh_r|g00|g10|g01|g11|passrate_beta|random|gate_passrate) ;; *) echo "[abort] unknown selector: $selector"; exit 2 ;; esac
 done
 export OM_ONLINE=0
 source scripts/setup_env.sh || exit 1
@@ -165,6 +166,24 @@ fi
 for selector in "${SELECTORS[@]}"; do
   exec 9>"$OUT/.$selector.lock"
   if ! flock -n 9; then echo "[busy] $selector is claimed on another node"; busy=$((busy + 1)); continue; fi
+  case "$selector" in gate_*)
+    # Executed gate: uniform pilot block with reliability logging, one decision
+    # under the frozen rule (writes train-$selector.args), then the continuation.
+    if ! "$PY" src/evidence_downstream.py gate-pilot-ready --out "$OUT" --arm "$selector"; then
+      mapfile -d '' -t PARGS < "$OUT/subsets/train-$selector-pilot.args"
+      echo "[train] $selector pilot: uniform block with reliability logging (resumes from the newest checkpoint if present)"
+      if ! run_tracked "$PY" "${PARGS[@]}" >> "$OUT/logs/train-$selector-pilot.log" 2>&1; then
+        echo "[failed] $selector pilot training; see $OUT/logs/train-$selector-pilot.log; continuing to the next arm"
+        failed=1; flock -u 9; continue
+      fi
+    fi
+    if ! "$PY" src/evidence_downstream.py gate-decide --out "$OUT" --arm "$selector" >> "$OUT/logs/gate-$selector.log" 2>&1; then
+      echo "[failed] $selector decision; see $OUT/logs/gate-$selector.log; continuing to the next arm"
+      failed=1; flock -u 9; continue
+    fi
+    echo "[gate] $selector: $(tail -n 1 "$OUT/logs/gate-$selector.log")"
+    ;;
+  esac
   mapfile -d '' -t ARGS < "$OUT/subsets/train-$selector.args"
   "$PY" src/evidence_downstream.py policy-ready --out "$OUT" --arm "$selector"; ready=$?
   if [ "$ready" -eq 2 ]; then

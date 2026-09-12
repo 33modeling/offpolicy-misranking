@@ -14,6 +14,10 @@
 #   bash scripts/run_e5.sh rlog     # reliability-logging run: random arm only, training only,
 #                                   # writes reliability_trajectory.csv (split-half reliability
 #                                   # of the pass-rate and gradient signals along training)
+#   bash scripts/run_e5.sh rlog400  # the same logging run over 400 updates (separate root -rlog400)
+#   bash scripts/run_e5.sh gate     # executed gate arm (gate_passrate) added to the seeds of a
+#                                   # branch: uniform pilot with reliability logging, one frozen
+#                                   # decision (config/gate_rule.json), continuation, evaluation
 #   Any mode accepts d0 or d400 as an extra word, e.g.  bash scripts/run_e5.sh d0 stop
 #   bash scripts/run_e5.sh plan     # dry run: contracts and commands only
 #   bash scripts/run_e5.sh stop     # stop E5 on this node (nothing else)
@@ -33,7 +37,9 @@ for arg in "$@"; do
     run|status|plan|stop|results|export) MODE=$arg ;;
     force) MODE=run; export E5_FORCE=1 ;;
     rlog) MODE=run; RLOG=1 ;;
-    *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force|rlog] [d0|d400]"; exit 2 ;;
+    rlog400) MODE=run; RLOG=1; RLOG400=1 ;;
+    gate) MODE=run; GATE=1 ;;
+    *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force|rlog|rlog400|gate] [d0|d400]"; exit 2 ;;
   esac
 done
 trap '' HUP
@@ -50,6 +56,12 @@ SELECTORS=${E5_SELECTORS:-random passrate_beta fresh_r g11}
 if [ "${RLOG:-0}" = 1 ]; then
   # Separate root: the logging run must not share arm directories with the benchmark.
   SELECTORS=random; export E5_RELIABILITY_LOG=1 E5_SKIP_EVAL=1; RLOG_SUFFIX="-rlog"
+  if [ "${RLOG400:-0}" = 1 ]; then STEPS=400; RLOG_SUFFIX="-rlog400"; fi
+fi
+if [ "${GATE:-0}" = 1 ]; then
+  # The gate arm joins the benchmark root of the branch (arms.json extension);
+  # random and passrate_beta there are its comparison arms.
+  SELECTORS=${E5_SELECTORS:-gate_passrate}
 fi
 POOL="$DATASETS_DIR/math_train/math_train.jsonl"; POOL_MANIFEST="$DATASETS_DIR/math_train/dataset_manifest.json"
 TEST="$OM_WORK/inputs/e5-reduced/test-$DATASET-d$DRIFT.json"
@@ -78,7 +90,10 @@ if [ "$MODE" = export ]; then
   {
     echo "# E5 results export $(date -u +%Y-%m-%dT%H:%M:%SZ) host=$(hostname) code=$(git rev-parse --short HEAD 2>/dev/null)"
     for f in "$OM_WORK"/runs/e5-reduced/math500-d*/s*/downstream_results.csv \
-             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/random/policy/reliability_trajectory.csv; do
+             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/random/policy/reliability_trajectory.csv \
+             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/gate_*/decision.json \
+             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/gate_decision.csv \
+             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/benchmark_results.csv; do
       [ -s "$f" ] || continue
       n=$((n + 1)); echo; echo "### $f"; cat "$f"
     done
@@ -116,6 +131,11 @@ for branch in sorted(root.glob("math500-d*")):
             print(f"  seed {seed.name[1:]}: reward before {f(rows[0]['reward_before'])}   (after | vs random [95% CI] | vs fresh)")
             for r in rows:
                 print(f"    {r['selector']:14s} {f(r['reward_after'])} | {f(r.get('difference_vs_random'))} [{f(r.get('random_lower'))},{f(r.get('random_upper'))}] | {f(r.get('difference_vs_fresh'))}")
+                if r.get("gate_decision"):
+                    print(f"      gate: decision={r['gate_decision']} ({r['gate_reason']}) r_half={f(r.get('gate_r_half'))} "
+                          f"[{f(r.get('gate_lower'))},{f(r.get('gate_upper'))}] pilot={r.get('gate_pilot_steps')} steps "
+                          f"{f(r.get('gate_pilot_seconds'), 8)} s | forgone vs selector {f(r.get('forgone_vs_selector'))} "
+                          f"[{f(r.get('forgone_lower'))},{f(r.get('forgone_upper'))}]")
         traj = seed / "random" / "policy" / "reliability_trajectory.csv"
         if traj.is_file():
             files.append(traj)
@@ -153,7 +173,7 @@ if [ "$MODE" = status ]; then
       if [ -s "$out/experiment.json" ]; then
         "$PY" src/downstream_status.py --out "$out"
         # arms added after preparation live in arms.json; show their state too
-        [ -s "$out/arms.json" ] && "$PY" src/evidence_downstream.py status --out "$out" | grep -E "^  (passrate_beta|g00|g10|g01|g11|fresh_r|random) " | grep -vFf <("$PY" -c 'import json,sys; print("\n".join("  "+a+" " for a in json.load(open(sys.argv[1]))["selectors"]))' "$out/experiment.json") | sed 's/^/  [added]/'
+        [ -s "$out/arms.json" ] && "$PY" src/evidence_downstream.py status --out "$out" | grep -E "^  (passrate_beta|g00|g10|g01|g11|fresh_r|random|gate_passrate) " | grep -vFf <("$PY" -c 'import json,sys; print("\n".join("  "+a+" " for a in json.load(open(sys.argv[1]))["selectors"]))' "$out/experiment.json") | sed 's/^/  [added]/'
         [ -s "$out/downstream_results.csv" ] && { echo "  results:"; sed 's/^/    /' "$out/downstream_results.csv"; }
       else
         echo "seed $seed: not prepared"

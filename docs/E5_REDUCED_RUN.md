@@ -187,3 +187,38 @@ for these runs. Do not relabel d400/three-seed/100-update/300-question results
 as d100/five-seed/200-update/500-question results, or expand `E5_SELECTORS` in an
 already frozen output. Preserve the current experiment and its negative or
 positive results alike.
+
+## Executed gate arm and offline gate decisions (2026-09-13)
+
+The manuscript's bounded diagnostic is executed as an arm of the same benchmark:
+
+```
+git pull --ff-only && bash scripts/run_e5.sh gate        # d400 branch
+git pull --ff-only && bash scripts/run_e5.sh gate d0     # d0 branch
+```
+
+`gate_passrate` joins the seeds of the branch through `arms.json` (the frozen
+contract is unchanged). Phase 1 trains a uniform pilot block (the whole
+candidate pool in a seeded order, `pilot_size / 4` updates) with
+`--reliability-log`; the decision applies the frozen rule
+`config/gate_rule.json` (pilot size 40, `r_min` 0.25, Fisher-z bound at
+two-sided 0.90) to the difficulty score `-|p-1/2|` of the two half groups of
+every pilot visit; phase 2 resumes from the pilot policy and trains the
+retained selector's subset (`passrate_beta`) or the random subset up to the
+same total of 100 updates, then evaluates like every other arm.
+`<seed>/gate_passrate/decision.json` records decision, reason, r, bounds,
+pilot steps and pilot seconds; `downstream_results.csv` gains the columns
+`gate_decision … forgone_vs_selector` (reward of the unchanged selector minus
+reward of the gate arm, paired interval). The rule file is frozen per seed
+directory (`gate_rule.json`); changing it afterwards invalidates the arm.
+
+Offline decisions on the stored half scores (fresh a/b, difficulty from the
+behavior responses, and the reuse estimators once `scores_stale_splithalf.json`
+exists), mapped to the fixed arms' rewards, CPU only:
+
+```
+bash scripts/run_gate_decision.sh          # both branches; export under $OM_WORK/exports
+```
+
+`bash scripts/run_e5.sh rlog400` runs the reliability-logging random arm for
+400 updates under the separate root `math500-d<drift>-rlog400`.
