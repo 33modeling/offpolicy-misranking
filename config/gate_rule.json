@@ -1,0 +1,12 @@
+{
+ "schema": "offpolicy-gate-rule/v1",
+ "pilot_size": 40,
+ "r_min": 0.25,
+ "confidence": 0.9,
+ "seed": 20260913,
+ "scoring_budget_seconds": null,
+ "cost_per_prompt_seconds": {},
+ "interval": "Fisher z, two-sided at `confidence`; the lower endpoint is the one-sided bound used for retention",
+ "threshold_origin": "r_min = f^2 retains a score whose noisy top-k recovers at least the fraction f of the oracle score gain under the Gaussian model (Proposition gain); f = 0.5 gives 0.25",
+ "frozen_at_utc": "2026-09-12T14:46:25+00:00"
+}
