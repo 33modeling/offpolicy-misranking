@@ -201,4 +201,6 @@ if [ "$SKIP_EVAL" = 0 ] && flock -n 9; then
   grep -E '"complete"|"missing' "$OUT/logs/summary.log" || true
 fi
 echo "[E5] failures=$failed busy_arms=$busy output=$OUT"
+[ -s "$OUT/downstream_results.csv" ] && echo "[E5] results file: $OUT/downstream_results.csv"
+for traj in "$OUT"/*/policy/reliability_trajectory.csv; do [ -s "$traj" ] && echo "[E5] reliability file: $traj"; done
 [ "$failed" -eq 0 ]

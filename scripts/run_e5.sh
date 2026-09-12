@@ -78,23 +78,34 @@ root = Path(sys.argv[1])
 def f(v, w=6):
     try: return f"{float(v):+.3f}".rjust(w) if v not in ("", None) else "-".rjust(w)
     except ValueError: return str(v).rjust(w)
+files = []
 for branch in sorted(root.glob("math500-d*")):
     print(f"== {branch.name}")
     for seed in sorted(branch.glob("s*")):
         results = seed / "downstream_results.csv"
         if results.is_file():
+            files.append(results)
             rows = list(csv.DictReader(results.open()))
+            print(f"  seed {seed.name[1:]}: {results}")
             print(f"  seed {seed.name[1:]}: reward before {f(rows[0]['reward_before'])}   (after | vs random [95% CI] | vs fresh)")
             for r in rows:
                 print(f"    {r['selector']:14s} {f(r['reward_after'])} | {f(r.get('difference_vs_random'))} [{f(r.get('random_lower'))},{f(r.get('random_upper'))}] | {f(r.get('difference_vs_fresh'))}")
         traj = seed / "random" / "policy" / "reliability_trajectory.csv"
         if traj.is_file():
+            files.append(traj)
             rows = list(csv.DictReader(traj.open()))
+            print(f"  seed {seed.name[1:]}: {traj}")
             print(f"  seed {seed.name[1:]} reliability (steps: pass r | grad r | mixed frac | mean pass)")
             for r in rows:
                 print(f"    {r['step_start']:>4}-{r['step_end']:<4} {f(r['pass_r_full'])} {f(r['grad_r_full'])} {f(r['mixed_fraction'])} {f(r['mean_pass'])}")
         if not results.is_file() and not traj.is_file():
             print(f"  seed {seed.name[1:]}: no finished results yet")
+print()
+print("FILES TO UPLOAD (finished results):")
+for path in files:
+    print(f"  {path}")
+if not files:
+    print("  none yet")
 PYEOF
   exit 0
 fi
