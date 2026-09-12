@@ -26,7 +26,7 @@ def main(argv=None) -> int:
     if args.command != "evaluate":
         raise SystemExit("fake bench eval only implements evaluate")
     out = args.out.resolve()
-    frozen = ed.read(out / "benchmarks.json")
+    frozen = be.benchmark_contract(out)
     rng = random.Random(hash((args.arm, args.shard)) & 0xFFFF)
     for name in args.sets or frozen["sets"]:
         binding, _, indices = be.binding_for(out, args.arm, name, args.shard)

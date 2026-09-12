@@ -1,0 +1,17 @@
+{
+  "schema": "offpolicy-fixed-checkpoint-gate/v1",
+  "selector": "g11",
+  "pilot_size": 40,
+  "responses_per_measurement": 8,
+  "r_min": 0.25,
+  "confidence": 0.9,
+  "pilot_seed": 20260913,
+  "diagnostic_wall_seconds": 3600,
+  "remaining_scoring_gpu_seconds": 28800,
+  "cost_safety_factor": 1.5,
+  "score_check_atol": 0.0001,
+  "continuation_wall_seconds": 43200,
+  "baseline_wall_seconds": 7200,
+  "status": "exploratory_amendment_2026-09-13",
+  "scope": "Fixed current policy and stored ranking-validation direction; original eight behavior responses versus eight independently generated behavior-policy responses on pilot prompts only. No pilot training. Threshold is a Gaussian-model heuristic, not a reward guarantee. Historical cache and validation construction costs are shared inputs, not zero-cost work."
+}

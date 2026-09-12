@@ -106,10 +106,10 @@ def fetch(datasets_dir: Path, sets=SETS) -> None:
     from huggingface_hub import HfApi
 
     def revision_of(repo: str) -> str:
-        try:
-            return HfApi().dataset_info(repo).sha
-        except Exception as exc:  # the manifest records what could be resolved
-            return f"unresolved({type(exc).__name__})"
+        revision = HfApi().dataset_info(repo).sha
+        if not revision:
+            raise ValueError(f"cannot pin dataset revision: {repo}")
+        return revision
 
     datasets_dir.mkdir(parents=True, exist_ok=True)
     for name in sets:
@@ -118,13 +118,15 @@ def fetch(datasets_dir: Path, sets=SETS) -> None:
             print(f"[fetch] {name} already present ({sum(1 for _ in target.open())} rows); delete it to refetch")
             continue
         source = SOURCES[name]
+        revision = revision_of(source["repo"])
+        math500_revision = revision_of(MATH500) if name == "math_rest" else None
         excluded = 0
         rows = []
         if name == "math_rest":
-            math500 = load_dataset(MATH500, split="test")
+            math500 = load_dataset(MATH500, split="test", revision=math500_revision)
             banned = {normalize_question(r["problem"]) for r in math500}
             for config in source["config"].split():
-                for row in load_dataset(source["repo"], config, split=source["split"]):
+                for row in load_dataset(source["repo"], config, split=source["split"], revision=revision):
                     item = convert(name, row)
                     if item is None:
                         continue
@@ -135,17 +137,17 @@ def fetch(datasets_dir: Path, sets=SETS) -> None:
                     item["level"] = row.get("level")
                     rows.append(item)
         else:
-            dataset = load_dataset(source["repo"], source["config"], split=source["split"]) if source["config"] \
-                else load_dataset(source["repo"], split=source["split"])
+            dataset = load_dataset(source["repo"], source["config"], split=source["split"], revision=revision) if source["config"] \
+                else load_dataset(source["repo"], split=source["split"], revision=revision)
             rows = [item for item in (convert(name, row) for row in dataset) if item is not None]
         if not rows:
             raise ValueError(f"{name}: no usable rows")
         sha = write_set(rows, target)
         manifest = {"schema_version": 1, "dataset": name, "source_repository": source["repo"],
                     "source_config": source["config"], "split": source["split"],
-                    "source_revision": revision_of(source["repo"]), "rows": len(rows),
+                    "source_revision": revision, "rows": len(rows),
                     "excluded_math500": excluded if name == "math_rest" else None,
-                    "math500_revision": revision_of(MATH500) if name == "math_rest" else None,
+                    "math500_revision": math500_revision,
                     "sha256": sha, "fetched_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()}
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
         print(f"[manifest] {name}: rows={len(rows)} excluded={excluded} sha256={sha[:12]}")
@@ -157,10 +159,30 @@ def load_set(datasets_dir: Path, name: str) -> tuple[list[dict], dict]:
     if not path.is_file() or not manifest.is_file():
         raise FileNotFoundError(f"benchmark set missing: {path} (run once online: bash scripts/fetch_benchmarks.sh)")
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    return rows, ed.read(manifest)
+    metadata = ed.read(manifest)
+    if metadata.get("sha256") != ed.digest(path) or metadata.get("rows") != len(rows):
+        raise ValueError(f"benchmark dataset does not match its manifest: {path}")
+    return rows, metadata
 
 
 def prepare(out: Path, datasets_dir: Path, sets=SETS, count: int = 200, eval_k: int = 8) -> dict:
+    with (out / ".benchmark-prepare.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _prepare(out, datasets_dir, sets, count, eval_k)
+
+
+def benchmark_contract(out: Path) -> dict:
+    frozen = ed.read(out / "benchmarks.json")
+    extra = out / "benchmark_sets.json"
+    if extra.exists():
+        for name, spec in ed.read(extra)["sets"].items():
+            if name in frozen["sets"] and frozen["sets"][name] != spec:
+                raise ValueError(f"conflicting benchmark extension: {name}")
+            frozen["sets"][name] = spec
+    return frozen
+
+
+def _prepare(out: Path, datasets_dir: Path, sets, count: int, eval_k: int) -> dict:
     contract = ed.read(out / "experiment.json")
     if contract.get("schema") != ed.SCHEMA:
         raise ValueError("not an E5 seed directory")
@@ -169,6 +191,7 @@ def prepare(out: Path, datasets_dir: Path, sets=SETS, count: int = 200, eval_k: 
     source = ed.read(Path(contract["source_run"]) / "prompts.json")
     (out / "benchmarks").mkdir(parents=True, exist_ok=True)
     selection = {}
+    previous = benchmark_contract(out) if (out / "benchmarks.json").is_file() else None
     for index, name in enumerate(sets):
         if name not in SETS:
             raise ValueError(f"unknown benchmark set: {name}")
@@ -179,7 +202,9 @@ def prepare(out: Path, datasets_dir: Path, sets=SETS, count: int = 200, eval_k: 
         for key, row in zip(keys, rows):
             unique.setdefault(key, row)
         pool = [unique[k] for k in sorted(unique)]
-        seed = contract["eval_seed"] + 7_919 * (index + 1)
+        seed = contract["eval_seed"] + 7_919 * (SETS.index(name) + 1)
+        if previous and name in previous["sets"]:
+            seed = previous["sets"][name]["provenance"]["selection_seed"]
         if name in SUBSAMPLED and len(pool) > count:
             random.Random(seed).shuffle(pool)
             pool = sorted(pool[:count], key=lambda r: normalize_question(r["question"]))
@@ -196,27 +221,31 @@ def prepare(out: Path, datasets_dir: Path, sets=SETS, count: int = 200, eval_k: 
               "prompt_format": "the source point's format (OM_PROMPT_FORMAT), as in the E5 evaluation"}
     existing = out / "benchmarks.json"
     if existing.exists():  # later launches may add sets; frozen sets must match
-        recorded = ed.read(existing)
+        recorded = benchmark_contract(out)
         if recorded["eval_k"] != frozen["eval_k"] or recorded["eval_seed"] != frozen["eval_seed"] or \
                 recorded["experiment_sha256"] != frozen["experiment_sha256"]:
             raise ValueError(f"contract changed: {existing}; use a new output root, do not mix runs")
         for name, spec in recorded["sets"].items():
             if name in selection and selection[name] != spec:
                 raise ValueError(f"contract changed for benchmark set {name}: {existing}")
-        recorded["sets"].update({k: v for k, v in selection.items() if k not in recorded["sets"]})
-        ed.atomic_json(existing, recorded)
-        return recorded
+        added = {k: v for k, v in selection.items() if k not in recorded["sets"]}
+        if added:
+            extension = out / "benchmark_sets.json"
+            extra = ed.read(extension) if extension.exists() else {"sets": {}}
+            extra["sets"].update(added)
+            ed.atomic_json(extension, extra)
+        return benchmark_contract(out)
     ed.atomic_json(existing, frozen)
     return frozen
 
 
 # ------------------------------------------------------------------ evaluate
 def sets_of(out: Path) -> list[str]:
-    return list(ed.read(out / "benchmarks.json")["sets"])
+    return list(benchmark_contract(out)["sets"])
 
 
 def binding_for(out: Path, arm: str, name: str, shard: int) -> tuple[dict, Path | None, range]:
-    frozen = ed.read(out / "benchmarks.json")
+    frozen = benchmark_contract(out)
     if frozen.get("schema") != SCHEMA or shard not in range(4) or name not in frozen["sets"]:
         raise ValueError("unsupported benchmark contract, set or shard")
     if ed.digest(out / "experiment.json") != frozen["experiment_sha256"]:
@@ -243,7 +272,7 @@ def evaluate(out: Path, arm: str, shard: int, sets=None) -> None:
     """One process per (arm, shard): loads the policy once and runs every set."""
     contract = ed.read(out / "experiment.json")
     config = ed.read(Path(contract["source_run"]) / "run_config.json")
-    frozen = ed.read(out / "benchmarks.json")
+    frozen = benchmark_contract(out)
     names = list(sets or frozen["sets"])
     pending = []
     for name in names:
@@ -291,7 +320,7 @@ def atomic_done(completed: Path, binding: dict, path: Path, seconds: float, prom
 
 
 def set_means(out: Path, arm: str, name: str) -> np.ndarray:
-    frozen = ed.read(out / "benchmarks.json")
+    frozen = benchmark_contract(out)
     rewards = [[] for _ in range(frozen["sets"][name]["prompts"])]
     seconds = 0.0
     for shard in range(4):
@@ -309,7 +338,7 @@ def set_means(out: Path, arm: str, name: str) -> np.ndarray:
 
 def summarize(out: Path, *, allow_partial: bool = False) -> dict:
     contract = ed.read(out / "experiment.json")
-    frozen = ed.read(out / "benchmarks.json")
+    frozen = benchmark_contract(out)
     arms = ["before", *ed.arms_of(out, contract)]
     values, seconds, missing = {}, {}, []
     for arm in arms:
@@ -367,7 +396,7 @@ def summarize(out: Path, *, allow_partial: bool = False) -> dict:
 def status(out: Path) -> str:
     if not (out / "benchmarks.json").is_file():
         return "benchmarks not prepared"
-    frozen = ed.read(out / "benchmarks.json")
+    frozen = benchmark_contract(out)
     contract = ed.read(out / "experiment.json")
     lines = [f"benchmarks: {' '.join(f'{n}({s['prompts']})' for n, s in frozen['sets'].items())} eval_k={frozen['eval_k']}"]
     for arm in ["before", *ed.arms_of(out, contract)]:

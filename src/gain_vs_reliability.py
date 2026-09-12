@@ -89,7 +89,9 @@ def point_rows(run: Path, frac: float, constant_cache: dict) -> list[dict]:
                          "ratio": None, "note": "degenerate halves"})
             continue
         rho = float(np.corrcoef(a, b)[0, 1])
-        c = constant_cache.setdefault((n, k), topk_constant(n, k))
+        if (n, k) not in constant_cache:
+            constant_cache[(n, k)] = topk_constant(n, k)
+        c = constant_cache[(n, k)]
         gain = cross_half_gain(a, b, k)
         predicted = rho * c
         rows.append({"dataset": config.get("dataset"), "seed": config.get("seed"), "drift": config.get("drift"),

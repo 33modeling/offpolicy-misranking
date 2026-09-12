@@ -157,6 +157,8 @@ def merge(run: Path, shards: int) -> Path:
     for part in parts:
         if part.get("schema") != SCHEMA:
             raise ValueError("unsupported shard schema")
+        if part.get("shards") != shards or part.get("parameters") != parts[0].get("parameters"):
+            raise ValueError("split-half shards have different scoring parameters or shard counts")
         for est in ESTIMATORS:
             for idx, value in part["halves"][est].items():
                 if idx in merged[est]:

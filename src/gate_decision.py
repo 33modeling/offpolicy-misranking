@@ -224,7 +224,9 @@ def decide_signal(halves: dict[int, tuple[float, float]], signal: str, rule: dic
     r_min = rule["r_min"]
     if not valid:
         decision, reason = "random", "invalid"  # zero variance or too few pilot pairs
-    elif budget is not None and remaining is not None and remaining > budget:
+    elif budget is not None and remaining is None:
+        decision, reason = "random", "unknown_cost"
+    elif budget is not None and remaining > budget:
         decision, reason = "random", "over_budget"
     elif lower >= r_min:
         decision, reason = "retain", "reliable"

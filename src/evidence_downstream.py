@@ -422,6 +422,34 @@ def validate_pilot(out: Path, arm: str) -> dict:
     return manifest
 
 
+def pilot_log_rows(pilot: Path, *, drift: int, steps: int, seed: int, pool: int) -> list[dict]:
+    """Validate the historical training pilot, removing only identical replays."""
+    expected = {(step, rank) for step in range(drift + 1, drift + steps + 1) for rank in range(4)}
+    indexed = {}
+    for rank in range(4):
+        path = pilot / f"reliability_log.rank{rank}.jsonl"
+        if not path.is_file():
+            raise ValueError(f"pilot reliability log missing rank {rank}")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            key = (int(row["step"]), int(row["rank"]))
+            if key not in expected or key[1] != rank:
+                raise ValueError("unexpected pilot step or rank")
+            prompt = (seed * 37 + (key[0] - 1) * 4 + rank) % pool
+            if row.get("prompt_index") != prompt:
+                raise ValueError("pilot prompt identity differs from frozen order")
+            if any(not math.isfinite(float(row[k])) or not 0 <= float(row[k]) <= 1 for k in ("pass_a", "pass_b")):
+                raise ValueError("invalid pilot reward")
+            if key in indexed and indexed[key] != row:
+                raise ValueError("conflicting replay in pilot reliability log")
+            indexed[key] = row
+    if set(indexed) != expected:
+        raise ValueError("pilot reliability log does not cover every step and rank")
+    return [indexed[key] for key in sorted(indexed)]
+
+
 def gate_decide(out: Path, arm: str) -> dict:
     """One decision from the pilot's reliability log under the frozen rule;
     writes <arm>/decision.json and the continuation's train-<arm>.args."""
@@ -435,17 +463,15 @@ def gate_decide(out: Path, arm: str) -> dict:
     selector, signal = GATE_ARMS[arm]
     pilot = gate_pilot_dir(out, arm)
     drift, pilot_steps = contract["drift"], pilot_info["pilot_steps"]
-    rows = [json.loads(line) for path in sorted(pilot.glob("reliability_log.rank*.jsonl"))
-            for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if {int(r["step"]) for r in rows} != set(range(drift + 1, drift + pilot_steps + 1)):
-        raise ValueError("pilot reliability log does not cover the pilot steps")
-    rows.sort(key=lambda r: (int(r["step"]), int(r["rank"])))
+    pool = len(read(run / "prompts.json")["train"])
+    rows = pilot_log_rows(pilot, drift=drift, steps=pilot_steps, seed=contract["seed"], pool=pool)
+    if len(rows) != rule["pilot_size"]:
+        raise ValueError("pilot pair count differs from the frozen rule")
     if signal == "difficulty":
         halves = {i: (-abs(float(r["pass_a"]) - 0.5), -abs(float(r["pass_b"]) - 0.5)) for i, r in enumerate(rows)}
     else:
         halves = {i: (float(r["pass_a"]), float(r["pass_b"])) for i, r in enumerate(rows)}
-    pool = len(read(run / "prompts.json")["train"])
-    record = gate_decision.decide_signal(halves, signal, {**rule, "pilot_size": len(rows)}, pool_size=pool)
+    record = gate_decision.decide_signal(halves, signal, rule, pool_size=pool)
     stats = [json.loads(line) for line in (pilot / "grpo_stats.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     chosen = selector if record["decision"] == "retain" else "random"
     decision = {"schema": "offpolicy-gate-arm-decision/v1", "arm": arm, "selector": selector, "signal": signal,

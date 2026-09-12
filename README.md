@@ -4,6 +4,19 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+## Fixed-Checkpoint Gate
+
+The September 13 fixed-policy experiment has an additive entrypoint:
+`bash scripts/run_fixed_gate.sh`. Run the same command on up to four idle
+four-GPU nodes; it leases six OLMo MATH d0/d400 seed points independently.
+A bounded, forty-prompt diagnostic decides once whether to retain g11 or use
+random. Completed matching E5 outcomes are reused, not retrained; a separate
+ungated scoring pass measures the cost comparison after the decision.
+`cpu`, `status`, `live`, and `export` are available. See the
+[protocol and run guide](docs/FIXED_CHECKPOINT_GATE.md) for costs, fixed-arm
+outcome reuse and limitations. This does not replace the historical gate arm
+or establish a benchmark improvement.
+
 ## V2 One-Shot Screen
 
 The current v2 revision adopts v3's measurement-first direction with corrected

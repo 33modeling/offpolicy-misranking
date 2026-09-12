@@ -21,4 +21,6 @@ prefix="$OM_WORK/exports/cost-accounting-$(date -u +%Y%m%dT%H%M%SZ)"
   echo "# cost accounting $(date -u +%Y-%m-%dT%H:%M:%SZ) host=$(hostname) code=$(git rev-parse --short HEAD 2>/dev/null)"
   "$PY" src/cost_accounting.py --work "$OM_WORK" --matrix "$ROOT" --out "$prefix"
 } 2>&1 | tee "$prefix.txt"
+statuses=("${PIPESTATUS[@]}")
 echo "[cost] export written: $prefix.txt (plus .json, .csv)"
+for status in "${statuses[@]}"; do [ "$status" -eq 0 ] || exit "$status"; done

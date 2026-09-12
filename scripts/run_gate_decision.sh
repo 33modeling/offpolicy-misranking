@@ -53,7 +53,10 @@ rc=0
   done
   echo; echo "### pilot size table"
   "$PY" src/gate_decision.py table --r-min "$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["r_min"])' "$RULE")" \
-    --confidence "$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["confidence"])' "$RULE")"
+    --confidence "$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["confidence"])' "$RULE")" || rc=1
+  exit "$rc"
 } 2>&1 | tee "$target"
+statuses=("${PIPESTATUS[@]}")
 echo "[gate] export written: $target"
-exit "$rc"
+for status in "${statuses[@]}"; do [ "$status" -eq 0 ] || exit "$status"; done
+exit 0
