@@ -45,6 +45,11 @@ bash scripts/run_light_gate.sh
 
 Run the last command on each separately allocated four-H100 node. Shared task
 leases divide the ten default continuations (MATH d100, seeds 0..4, two arms).
+For four such nodes, launch the same command on all four: at most four
+continuations run concurrently. Do not assign different seeds or output roots
+per node. All nodes must use the same shared `OM_WORK` and suite output path.
+Both suite and light-protocol files must exist before preparation is complete;
+simultaneous starts also finish a partially published preparation safely.
 Preparation is idempotent and source artifacts are read-only. Node admission
 preserves unrelated running suites. Relaunch cleanup is limited to this
 suite on the same physical node; it never kills Qwen/E5 or another node.

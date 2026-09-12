@@ -75,7 +75,7 @@ fi
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
-if [ "$MODE" = prepare ] || [ ! -f "$OUT_ROOT/suite.json" ] || [ "$#" -gt 0 ]; then
+if [ "$MODE" = prepare ] || [ ! -f "$OUT_ROOT/suite.json" ] || [ ! -f "$OUT_ROOT/light_protocol.json" ] || [ "$#" -gt 0 ]; then
   GPU_TYPE=${GATE_GPU_TYPE:-}
   if [ -z "$GPU_TYPE" ] && command -v nvidia-smi >/dev/null; then
     GPU_TYPE=$(timeout 20 nvidia-smi --query-gpu=name --format=csv,noheader -i "${CUDA_VISIBLE_DEVICES:-0}" | sort -u)

@@ -221,3 +221,64 @@ def test_shell_cpu_modes_without_source_or_gpu(tmp_path, mode):
                        capture_output=True, text=True, timeout=15)
     assert r.returncode == 0, r.stderr
     assert not (tmp_path / "new").exists()
+
+
+def test_launcher_waits_for_both_preparation_artifacts(tmp_path):
+    script = (Path(__file__).resolve().parents[1] / "scripts/run_light_gate.sh").read_text()
+    start = script.index('if [ "$MODE" = prepare ]')
+    condition = script[start:script.index("; then", start)]
+    command = condition+'; then echo prepare; else echo run; fi'
+    env = {**os.environ, "MODE": "run", "OUT_ROOT": str(tmp_path)}
+    def action():
+        return subprocess.check_output(["bash", "-c", command], env=env, text=True).strip()
+    assert action() == "prepare"
+    core.atomic_json(tmp_path / "suite.json", {})
+    assert action() == "prepare", "suite.json alone is not a ready light-gate suite"
+    core.atomic_json(tmp_path / "light_protocol.json", {})
+    assert action() == "run"
+
+
+def test_four_workers_claim_ten_arms_without_duplicate_training(tmp_path):
+    entries = []
+    for seed in range(5):
+        name = f"seed-{seed}"
+        out = tmp_path / "points" / name
+        core.atomic_json(out / "contract.json", {"config": {"seed": seed}, "scope": {"gpu_type": "H100"}})
+        entries.append({"name": name, "sha256": base.digest(out / "contract.json")})
+    core.atomic_json(tmp_path / "suite.json", {"schema": base.SCHEMA, "points": entries})
+    core.atomic_json(tmp_path / "light_protocol.json", {"schema": light.SCHEMA,
+                     "arms": list(gpu.ARMS), "rule": light.default_rule()})
+    program = """
+import json, os, sys, time
+from pathlib import Path
+from types import SimpleNamespace
+import light_selection_gate_gpu as gpu
+sys.modules['additive_experiment'] = SimpleNamespace(model_environment=lambda c: {})
+gpu.subprocess.check_output = lambda *a, **kw: 'H100\\n'*4
+def run(out, suite, rule, arm, devices, env):
+    marker = out / arm / 'mock-trained.json'
+    if marker.exists():
+        return
+    time.sleep(.1)
+    with marker.open('x') as handle:
+        json.dump({'worker': os.getpid()}, handle)
+gpu.run_arm = run
+gpu.status = lambda root: None
+raise SystemExit(gpu.work(Path(sys.argv[1])))
+"""
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "0,1,2,3", "OM_NODE_LOCK_HELD": "1"}
+    processes = []
+    try:
+        for _ in range(4):
+            processes.append(subprocess.Popen([sys.executable, "-c", program, str(tmp_path)],
+                             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True))
+        for process in processes:
+            _, error = process.communicate(timeout=15)
+            assert process.returncode == 0, error
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill(); process.wait()
+    markers = list(tmp_path.glob("points/*/*/mock-trained.json"))
+    assert len(markers) == 10
+    assert not list(tmp_path.glob("points/*/*/failure.json"))
