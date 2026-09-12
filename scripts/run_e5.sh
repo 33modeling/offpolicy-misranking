@@ -59,6 +59,10 @@ export OUT_ROOT
 run_dir() { printf '%s/family-%s-s%s/%s-s%s-%s-d%s\n' "$ROOT" "$DATASET" "$1" "$TAG" "$1" "$DATASET" "$DRIFT"; }
 
 echo "[e5] $DATASET d$DRIFT seeds=${SEEDS[*]} arms=$SELECTORS steps=$STEPS eval_k=$EVAL_K test=$COUNT  out=$OUT_ROOT"
+for seed in "${SEEDS[@]}"; do
+  if [ "${RLOG:-0}" = 1 ]; then f="$OUT_ROOT/s$seed/random/policy/reliability_trajectory.csv"; else f="$OUT_ROOT/s$seed/downstream_results.csv"; fi
+  if [ -s "$f" ]; then echo "[e5] seed $seed result file (ready): $f"; else echo "[e5] seed $seed result file (not yet): $f"; fi
+done
 if [ "$MODE" = stop ]; then
   source scripts/_e5_node.sh || exit 1
   e5_cleanup_previous "$OUT_ROOT" || exit 1
@@ -99,7 +103,8 @@ for branch in sorted(root.glob("math500-d*")):
             for r in rows:
                 print(f"    {r['step_start']:>4}-{r['step_end']:<4} {f(r['pass_r_full'])} {f(r['grad_r_full'])} {f(r['mixed_fraction'])} {f(r['mean_pass'])}")
         if not results.is_file() and not traj.is_file():
-            print(f"  seed {seed.name[1:]}: no finished results yet")
+            expected = traj if branch.name.endswith("-rlog") else results
+            print(f"  seed {seed.name[1:]}: not finished; will be at {expected}")
 print()
 print("FILES TO UPLOAD (finished results):")
 for path in files:
@@ -117,6 +122,9 @@ if [ "$MODE" = status ]; then
     echo "== branch $(basename "$root")"
     for seed in "${SEEDS[@]}"; do
       out="$root/s$seed"
+      for f in "$out/downstream_results.csv" "$out/random/policy/reliability_trajectory.csv"; do
+        [ -s "$f" ] && echo "  seed $seed result file (ready): $f"
+      done
       if [ -s "$out/experiment.json" ]; then
         "$PY" src/downstream_status.py --out "$out"
         # arms added after preparation live in arms.json; show their state too
