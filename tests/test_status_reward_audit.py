@@ -123,6 +123,7 @@ def qwen_status(
     missing_renderer=False,
     registered_done=True,
     wrapper=False,
+    verbose=False,
 ):
     repo = tmp_path / "repo"
     scripts = repo / "scripts"
@@ -131,7 +132,7 @@ def qwen_status(
         shutil.copy2(ROOT / "scripts" / name, scripts / name)
     # Exercise the real full renderer, not an abbreviated fallback.
     (repo / "src").mkdir()
-    for name in ["matrix_status.py", "training_progress.py", "point_key_numbers.py"]:
+    for name in ["matrix_status.py", "training_progress.py", "point_key_numbers.py", "recovery_policy.py"]:
         shutil.copy2(ROOT / "src" / name, repo / "src" / name)
     if renderer_failure:
         (repo / "src/matrix_status.py").write_text("raise SystemExit(23)\n")
@@ -180,8 +181,11 @@ def qwen_status(
         tee = bins / "tee"
         tee.write_text("#!/bin/sh\ncat\nexit 7\n")
         tee.chmod(0o755)
+    command = ["bash", str(scripts / "run_qwen35_9b.sh"), "status"] if wrapper else ["bash", str(scripts / "status_qwen35.sh")]
+    if verbose:
+        command.append("verbose")
     return subprocess.run(
-        ["bash", str(scripts / "run_qwen35_9b.sh"), "status"] if wrapper else ["bash", str(scripts / "status_qwen35.sh")],
+        command,
         env=env,
         capture_output=True,
         text=True,
@@ -191,14 +195,14 @@ def qwen_status(
 
 
 def test_qwen_no_failures_has_valid_integer_count(tmp_path):
-    result = qwen_status(tmp_path, active=True)
+    result = qwen_status(tmp_path, active=True, verbose=True)
     assert result.returncode == 0
     assert result.stderr == ""
     assert "family failures in shown sessions: 0\n" in result.stdout
 
 
-def test_qwen_status_prints_the_whole_matrix_like_olmo(tmp_path):
-    result = qwen_status(tmp_path, active=True)
+def test_qwen_verbose_status_prints_the_whole_matrix_like_olmo(tmp_path):
+    result = qwen_status(tmp_path, active=True, verbose=True)
     assert result.returncode == 0, result.stdout + result.stderr
     # all ten families, not just the newest six points
     for dataset in ("math500", "mbpp"):
@@ -218,20 +222,21 @@ def test_qwen_error_search_matches_actual_abort_and_legacy_markers(tmp_path, mar
     )
     assert result.returncode == 0
     assert result.stderr == ""
-    assert "ERROR (current): RuntimeError: test failure" in result.stdout
+    assert "ERROR math500/s0/d0" in result.stdout
+    assert "RuntimeError: test failure" in result.stdout
 
 
 def test_qwen_successful_launcher_is_not_complete_with_missing_points(tmp_path):
     result = qwen_status(tmp_path, exit_code=0, empty_done=True)
-    assert "DECISION DONE:" not in result.stdout
-    assert "points   0 done" in result.stdout
-    assert "DECISION WARNING:" in result.stdout
+    assert "DONE 0/40" in result.stdout
+    assert "STATE STOPPED" in result.stdout
 
 
 def test_qwen_complete_matrix_still_reports_done(tmp_path):
     result = qwen_status(tmp_path, exit_code=0, done_count=40)
     assert result.returncode == 0
-    assert "DECISION DONE:" in result.stdout
+    assert "DONE 40/40 | RUN 0 | WAIT 0" in result.stdout
+    assert "STATE COMPLETE" in result.stdout
 
 
 def test_qwen_history_writer_failure_is_not_hidden(tmp_path):
@@ -242,16 +247,18 @@ def test_qwen_history_writer_failure_is_not_hidden(tmp_path):
 def test_qwen_default_status_includes_unstarted_and_completed_points(tmp_path):
     result = qwen_status(tmp_path, done_count=1)
     assert result.returncode == 0
-    assert "ALL POINTS (40)" in result.stdout
-    assert " math500/s0/d0 " in result.stdout and " mbpp/s4/d400 " in result.stdout
-    assert "DONE" in result.stdout and "NOT_STARTED" in result.stdout
+    assert "DONE 1/40" in result.stdout
+    assert " math500/s0 " in result.stdout and " mbpp/s4 " in result.stdout
+    assert "DONE" in result.stdout and "WAIT" in result.stdout
+    assert "ALL POINTS" not in result.stdout and "KEY NUMBERS" not in result.stdout
 
 
 def test_qwen_empty_work_path_still_displays_the_entire_design(tmp_path):
     result = qwen_status(tmp_path, started=False, no_session=True)
     assert result.returncode == 0
-    assert "ALL POINTS (40)" in result.stdout and "families 10:" in result.stdout
-    assert "overall_verdict=NOT_STARTED" in result.stdout
+    assert "DONE 0/40 | RUN 0 | WAIT 40" in result.stdout
+    assert "STATE NOT_STARTED" in result.stdout
+    assert len([line for line in result.stdout.splitlines() if line.startswith((" math500/", " mbpp/"))]) == 10
 
 
 @pytest.mark.parametrize("age", [0, 7200])
@@ -259,14 +266,14 @@ def test_qwen_status_on_an_idle_node_does_not_declare_a_remote_launcher_dead(tmp
     result = qwen_status(tmp_path, session_host="remote-gpu-node", session_age=age)
     assert result.returncode == 0
     assert "launcher is gone" not in result.stdout and "Ctrl-C" not in result.stdout
-    assert f"overall_verdict={'UNVERIFIED' if age else 'STARTING'}" in result.stdout
+    assert f"STATE {'UNVERIFIED' if age else 'STARTING'}" in result.stdout
 
 
 def test_qwen_counts_registered_points_not_forty_arbitrary_done_files(tmp_path):
     result = qwen_status(tmp_path, exit_code=0, done_count=40, registered_done=False)
     assert result.returncode == 0
-    assert "DECISION DONE:" not in result.stdout
-    assert "points   5 done" in result.stdout
+    assert "STATE COMPLETE" not in result.stdout
+    assert "DONE 5/40" in result.stdout
 
 
 @pytest.mark.parametrize("failure,rc", [("renderer_failure", 23), ("missing_renderer", 2)])
@@ -280,14 +287,23 @@ def test_qwen_renderer_failure_is_explicit_not_a_six_point_fallback(tmp_path, fa
 def test_qwen_status_handles_work_paths_with_spaces(tmp_path):
     result = qwen_status(tmp_path / "shared work", session_host="remote-node")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "ALL POINTS (40)" in result.stdout
+    assert "DONE 0/40" in result.stdout and " mbpp/s4 " in result.stdout
 
 
-def test_qwen_public_status_command_defaults_to_the_full_view(tmp_path):
+def test_qwen_public_status_command_defaults_to_completion_grid(tmp_path):
     result = qwen_status(tmp_path, wrapper=True, done_count=1)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "ALL POINTS (40)" in result.stdout and "LAUNCHERS" in result.stdout
+    assert "DONE 1/40" in result.stdout
+    assert "ALL POINTS" not in result.stdout and "LAUNCHERS" not in result.stdout
+    assert len(result.stdout.splitlines()) <= 23
     assert "read-only status; no automatic update" in result.stdout
+
+
+def test_qwen_public_verbose_preserves_all_details(tmp_path):
+    result = qwen_status(tmp_path, wrapper=True, verbose=True, done_count=1)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ALL POINTS (40)" in result.stdout and "LAUNCHERS" in result.stdout
+    assert "KEY NUMBERS per scored point" in result.stdout
 
 
 @pytest.mark.parametrize("name", ["run_qwen35_9b.sh", "run_olmo3_rlzero.sh"])

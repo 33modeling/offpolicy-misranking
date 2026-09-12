@@ -84,6 +84,53 @@ def test_every_family_is_listed_even_when_nothing_started(tmp_path):
     assert "(no scored point yet)" in out
 
 
+def test_compact_grid_shows_every_done_cell_without_loading_score_tables(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    for drift in (0, 25, 100, 400):
+        make_point(work / "runs", "math500", 0, drift, done=True)
+    def unexpected(*args):
+        pytest.fail("compact status must not load score tables")
+    monkeypatch.setattr(matrix_status, "point_lines", unexpected)
+    out = render(work, compact=True)
+    assert out.startswith("DONE 4/40 | RUN 0 | WAIT 36")
+    grid = [line.split() for line in out.splitlines() if line.startswith((" math500/", " mbpp/"))]
+    assert len(grid) == 10
+    assert grid[0] == ["math500/s0", "DONE", "DONE", "DONE", "DONE", "4/4"]
+    assert grid[-1] == ["mbpp/s4", "WAIT", "WAIT", "WAIT", "WAIT", "0/4"]
+    assert len(out.splitlines()) <= 20
+    assert max(map(len, out.splitlines())) <= 88
+    assert "ALL POINTS" not in out and "LAUNCHERS" not in out
+
+
+@pytest.mark.parametrize("verdict,state", [("PROGRESSING", "RUN"), ("COMPUTING", "RUN"),
+    ("QUEUED", "WAIT"), ("NOT_STARTED", "WAIT"), ("HUNG", "CHECK"), ("QUIET", "CHECK"),
+    ("IDLE", "CHECK"), ("UNVERIFIED", "CHECK"), ("STOPPED", "STOP"), ("BLOCKED", "ERROR")])
+def test_compact_state_does_not_call_all_started_points_running(verdict, state):
+    point = matrix_status.Point("math500", 0, 0, path=Path("source"))
+    row = matrix_status.FamilyRow("math500", 0, None, [point], current=point, verdict=verdict)
+    assert matrix_status.compact_state(row, point) == state
+    point.current_error = "ValueError: current failure"
+    assert matrix_status.compact_state(row, point) == "ERROR"
+    point.done = True
+    assert matrix_status.compact_state(row, point) == "DONE"
+
+
+def test_compact_status_names_running_work_and_keeps_current_error(tmp_path):
+    work = tmp_path / "work"
+    make_point(work / "runs", "math500", 0, 0, progress="4/8 fresh-rollout")
+    make_point(work / "runs", "mbpp", 0, 0, progress="1/8 prep", main_extra="ValueError: current test failure\n")
+    queue = work / "runs" / RUN_ID / MODEL_KEY / ".queue"
+    queue.mkdir(parents=True)
+    with (queue / "math500-s0.lock").open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        session_log(work, "additional-qwen35-active.log", host=os.uname().nodename,
+                    pid=os.getpid(), family="math500/s0", point="d0")
+        out = render(work, compact=True)
+    assert out.startswith("DONE 0/40 | RUN 1 | WAIT 38 | ERROR 1")
+    assert "RUN math500/s0/d0 | fresh rollout | node" in out
+    assert "ERROR mbpp/s0/d0" in out and "ValueError: current test failure" in out
+
+
 def test_claimed_partial_complete_and_pending_families_are_distinguished(tmp_path):
     work = tmp_path / "work"
     runs = work / "runs"

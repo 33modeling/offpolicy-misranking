@@ -2,7 +2,7 @@
 # Complete Qwen status from shared artifacts; no GPU or checkout updates.
 #   bash scripts/run_qwen35_9b.sh status
 #   bash scripts/run_qwen35_9b.sh status verbose
-# The default includes every registered point and every retained launcher.
+# The default is a completion grid; verbose retains every point and launcher.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/setup_env.sh >/dev/null 2>&1
@@ -22,11 +22,15 @@ RES="$OM_WORK/results/$RUN_ID"
 PY="${VENV_DIR:-}/bin/python"; [ -x "$PY" ] || PY=python3
 FULL_TOOL="src/matrix_status.py"
 CONFIG="configs/qwen35_9b_grpo.json"
-echo "Qwen3.5-9B GRPO   $(date -u +%FT%TZ)   code $(git rev-parse --short HEAD 2>/dev/null || printf unknown)   host $(hostname)"
-echo "work     $OM_WORK"
+echo "Qwen3.5-9B GRPO   $(date -u +%FT%TZ)"
 full_args=(--root "$RUNS" --console-logs "$OM_WORK/console-logs" --log-glob 'additional-qwen35-*.log')
 [ ! -f "$CONFIG" ] || full_args+=(--config "$CONFIG")
-[ "${1:-}" != verbose ] && [ "${OM_QWEN_STATUS_VERBOSE:-0}" != 1 ] || full_args+=(--verbose)
+if [ "${1:-}" = verbose ] || [ "${OM_QWEN_STATUS_VERBOSE:-0}" = 1 ]; then
+  full_args+=(--verbose)
+  echo "work     $OM_WORK   host $(hostname)   code $(git rev-parse --short HEAD 2>/dev/null || printf unknown)"
+else
+  full_args+=(--compact)
+fi
 if [ ! -f "$FULL_TOOL" ]; then
   echo "[status-error] missing $FULL_TOOL; full status is unavailable from this checkout" >&2
   exit 2

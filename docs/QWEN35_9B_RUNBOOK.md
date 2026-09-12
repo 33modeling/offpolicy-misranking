@@ -263,18 +263,20 @@ single-session/global-PROGRESS override is no longer used by status.
 ## Reading progress on a phone
 
 ```bash
-bash scripts/run_qwen35_9b.sh status            # all 40 points, all families and launchers
-bash scripts/run_qwen35_9b.sh status verbose    # same full view plus attempts and stage-log tails
+bash scripts/run_qwen35_9b.sh status            # completion grid, current work and errors
+bash scripts/run_qwen35_9b.sh status verbose    # all points, launchers, scores and attempt details
 ```
 
-Since 2026-09-11 the status prints the same picture as the OLMo status
-(`src/matrix_status.py`, read only): every one of the 10 families with its
-state (`COMPLETE`, `PROGRESSING`/`COMPUTING`, `QUIET` after 45 min without a
-write, `HUNG` after 3 h, `QUEUED`, `STOPPED`, `BLOCKED`, `UNVERIFIED`), the node on it, the
-four points (`ok`, `k/8`, `-`, `!k/8` = error in the current attempt), the
-current point and stage, cumulative GRPO steps, last write and a note. The
-default `ALL POINTS (40)` table includes completed and unstarted points, not
-only ongoing work. `LAUNCHERS` includes all sessions without an exit record
+Since 2026-09-13 the default is a ten-row completion grid, covering all forty
+registered points. Each seed/dataset row has explicit `d0`, `d25`, `d100` and
+`d400` cells: `DONE`, `RUN`, `WAIT`, `ERROR`, `CHECK` or `STOP`, plus its done
+count. The first line totals the point states. Current work appears below
+the grid with its stage, node and last write; current errors remain visible.
+`DONE` still requires a nonempty completion record, not an exited launcher.
+`CHECK` means quiet or unverified activity, not a confirmed dead process.
+
+Verbose mode retains the full per-family states, the `ALL POINTS (40)` table,
+score tables and attempt log details. `LAUNCHERS` includes all sessions without an exit record
 and every exit from the last three days, with no eight-row cap. PID liveness
 is verified only on the local node; a silent remote session is unverified,
 not declared dead. KEY NUMBERS cover every scored point, followed by
@@ -285,12 +287,18 @@ of which experiment owns the shared checkout or whether a local launcher is
 present. Update explicitly only after launchers using that checkout have
 exited; running E5, OLMo and Qwen stages can all read its files.
 
-The full design is printed even before any run directory exists. `work` and
-`matrix` show the actual paths being inspected. A missing/broken full renderer
+The full design is printed even before any run directory exists. In verbose
+mode, `work` and `matrix` show the actual paths being inspected. A missing/broken renderer
 produces `[status-error]` and a nonzero exit, never a silent six-point fallback.
 Output, including errors, remains in
 `$OM_WORK/console-logs/status-qwen35-history.log`. No GPU or experiment restart
 is required to inspect status; the training configuration and code are unchanged.
+
+CPU verification on 2026-09-13: 75 tests passed across
+`tests/test_matrix_status.py` and `tests/test_status_reward_audit.py`, including
+compact/verbose entrypoints, all forty registered cells, current versus old
+errors, empty completion records, remote liveness and shell failure codes.
+This change does not launch or interrupt any experiment.
 
 The terminal shows tagged lines only (`[stage]`, `[progress]`, `[abort]`,
 `[model]`, `[regime-*]`, `START/OK/FAILED/DIAGNOSIS/ACTION`); tracebacks and

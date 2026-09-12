@@ -33,6 +33,7 @@ import os
 import re
 import socket
 import sys
+import textwrap
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,6 +76,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hung-seconds", type=int, default=10800, help="quiet family becomes HUNG after this")
     parser.add_argument("--launcher-live-seconds", type=int, default=1200, help="a remote session log this fresh counts as a live launcher")
     parser.add_argument("--verbose", action="store_true", help="add attempt details and the newest stage-log lines")
+    parser.add_argument("--compact", action="store_true", help="completion grid and current work only; no historical sessions or score tables")
     parser.add_argument("--no-key-numbers", action="store_true")
     parser.add_argument("--now", type=float, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -709,6 +711,66 @@ def family_row(
 
 # ---------------------------------------------------------------- rendering
 
+def compact_state(row: FamilyRow, point: Point) -> str:
+    if point.done:
+        return "DONE"
+    if point.current_error:
+        return "ERROR"
+    if point is not row.current:
+        return "WAIT"
+    if row.verdict in {"PROGRESSING", "COMPUTING"}:
+        return "RUN"
+    if row.verdict == "BLOCKED":
+        return "ERROR"
+    if row.verdict == "STOPPED":
+        return "STOP"
+    if row.verdict in {"QUIET", "HUNG", "IDLE", "UNVERIFIED"}:
+        return "CHECK"
+    return "WAIT"
+
+
+def render_compact(rows: list[FamilyRow], drifts: list[int], overall: str,
+                   live_count: int, now: float) -> list[str]:
+    counts = {state: 0 for state in ("DONE", "RUN", "WAIT", "ERROR", "CHECK", "STOP")}
+    for row in rows:
+        for point in row.points:
+            counts[compact_state(row, point)] += 1
+    total = sum(counts.values())
+    summary = [f"DONE {counts['DONE']}/{total}", f"RUN {counts['RUN']}", f"WAIT {counts['WAIT']}"]
+    summary.extend(f"{state} {counts[state]}" for state in ("ERROR", "CHECK", "STOP") if counts[state])
+    out = [" | ".join(summary), f"STATE {overall} | active sessions {live_count} (remote: log-based)", ""]
+    out.append(f" {'family':<11} " + " ".join(f"{'d' + str(d):<7}" for d in drifts) + " done")
+    for row in rows:
+        cells = " ".join(f"{compact_state(row, p):<7}" for p in row.points)
+        out.append(f" {row.key:<11} {cells} {sum(p.done for p in row.points)}/{len(row.points)}")
+    details = []
+    stages = {"1/8": "prepare", "2/8": "behavior rollout", "3/8": "GRPO",
+              "4/8": "fresh rollout", "5/8": "gradients", "6/8": "scores",
+              "7/8": "report", "8/8": "finalizing"}
+    for row in rows:
+        for point in row.points:
+            state = compact_state(row, point)
+            if state in {"DONE", "WAIT"}:
+                continue
+            stage = stages.get(point.stage_k, "starting")
+            if point.stage_k == "3/8" and point.drift:
+                stage += f" {point.grpo_steps}/{point.drift}"
+            age = fmt_age(now - point.last_write) if point.last_write else "-"
+            details.append(f"{state} {row.key}/d{point.drift} | {stage} | node {row.host or '?'} | write {age}")
+            if point.current_error:
+                details.append(f"  {elide(point.current_error, 160)}")
+    if details:
+        out.append("")
+        for line in details:
+            out.extend(textwrap.wrap(line, width=88, subsequent_indent="  "))
+    if counts["CHECK"] or overall == "UNVERIFIED":
+        out.append("CHECK / UNVERIFIED: activity is not confirmed; do not assume the node is dead.")
+    if counts["STOP"]:
+        out.append("STOP: unfinished work with no observed launcher; verify its node.")
+    out.extend(["", "detail: bash scripts/run_qwen35_9b.sh status verbose"])
+    return out
+
+
 def render(args: argparse.Namespace) -> tuple[list[str], str]:
     now = args.now if args.now is not None else time.time()
     hostname = socket.gethostname()
@@ -827,7 +889,7 @@ def render(args: argparse.Namespace) -> tuple[list[str], str]:
                             out.append(f"    {newest.name}: {elide(line, 150)}")
         out.append("")
 
-    if not args.no_key_numbers:
+    if not args.no_key_numbers and not args.compact:
         out.append(KEY_NUMBERS_HEADER)
         printed = 0
         for row in rows:
@@ -892,6 +954,8 @@ def render(args: argparse.Namespace) -> tuple[list[str], str]:
         "INCOMPLETE": "WARNING: some registered points are unfinished; see the full matrix below.",
         "NOT_STARTED": "NOT STARTED: no registered point or live session found. Check the printed work path.",
     }
+    if args.compact:
+        return render_compact(rows, drifts, overall, len(live_launchers), now), overall
     out[0:0] = [
         f"DECISION {decisions[overall]}",
         (f"points   {points_done} done / {points_started} started / {total_points} in matrix   "
