@@ -64,7 +64,8 @@ if [ "${GATE:-0}" = 1 ]; then
   SELECTORS=${E5_SELECTORS:-gate_passrate}
 fi
 POOL="$DATASETS_DIR/math_train/math_train.jsonl"; POOL_MANIFEST="$DATASETS_DIR/math_train/dataset_manifest.json"
-TEST="$OM_WORK/inputs/e5-reduced/test-$DATASET-d$DRIFT.json"
+# E5_TEST_DATASET lets a derived pool (math500mix) reuse the frozen MATH-train test set of the base dataset.
+TEST="$OM_WORK/inputs/e5-reduced/test-${E5_TEST_DATASET:-$DATASET}-d$DRIFT.json"
 OUT_ROOT="$OM_WORK/runs/e5-reduced/$DATASET-d$DRIFT${RLOG_SUFFIX:-}"
 # Exported marker: every process of this pass carries OUT_ROOT in its environment,
 # so a later launch on the same node can find and stop the whole earlier pass
@@ -89,11 +90,11 @@ if [ "$MODE" = export ]; then
   n=0
   {
     echo "# E5 results export $(date -u +%Y-%m-%dT%H:%M:%SZ) host=$(hostname) code=$(git rev-parse --short HEAD 2>/dev/null)"
-    for f in "$OM_WORK"/runs/e5-reduced/math500-d*/s*/downstream_results.csv \
-             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/random/policy/reliability_trajectory.csv \
-             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/gate_*/decision.json \
-             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/gate_decision.csv \
-             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/benchmark_results.csv; do
+    for f in "$OM_WORK"/runs/e5-reduced/math500*-d*/s*/downstream_results.csv \
+             "$OM_WORK"/runs/e5-reduced/math500*-d*/s*/random/policy/reliability_trajectory.csv \
+             "$OM_WORK"/runs/e5-reduced/math500*-d*/s*/gate_*/decision.json \
+             "$OM_WORK"/runs/e5-reduced/math500*-d*/s*/gate_decision.csv \
+             "$OM_WORK"/runs/e5-reduced/math500*-d*/s*/benchmark_results.csv; do
       [ -s "$f" ] || continue
       n=$((n + 1)); echo; echo "### $f"; cat "$f"
     done
@@ -105,7 +106,7 @@ if [ "$MODE" = export ]; then
 fi
 if [ "$MODE" = results ]; then
   # Refresh summaries on CPU so older CSVs gain the random-baseline columns.
-  for seed_dir in "$OM_WORK"/runs/e5-reduced/math500-d*/s*; do
+  for seed_dir in "$OM_WORK"/runs/e5-reduced/math500*-d*/s*; do
     [ -s "$seed_dir/experiment.json" ] && [ -d "$seed_dir/before/evaluation" ] && \
       "$PY" src/evidence_downstream.py summarize --out "$seed_dir" --allow-partial >/dev/null 2>&1 || true
     # recompute reliability trajectories from the raw per-rank logs (adds newer columns)
@@ -120,7 +121,7 @@ def f(v, w=6):
     try: return f"{float(v):+.3f}".rjust(w) if v not in ("", None) else "-".rjust(w)
     except ValueError: return str(v).rjust(w)
 files = []
-for branch in sorted(root.glob("math500-d*")):
+for branch in sorted(root.glob("math500*-d*")):
     print(f"== {branch.name}")
     for seed in sorted(branch.glob("s*")):
         results = seed / "downstream_results.csv"

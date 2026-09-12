@@ -65,7 +65,15 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
         pf = Path(pool)
         if not pf.is_file():
             raise ValueError(f"OM_POOL_FILE 없음: {pool}")
-        rows = [json.loads(l) for l in pf.open()]
+        rows = [json.loads(l) for l in pf.open() if l.strip()]
+        if rows and all("split" in r for r in rows):
+            # A pre-split pool (src/mixed_pool.py): rows carry "split" in
+            # {"train", "val"}; the file order is kept, nothing is reshuffled.
+            train = [{"question": r["question"], "answer": str(r["answer"])} for r in rows if r["split"] == "train"]
+            val = [{"question": r["question"], "answer": str(r["answer"])} for r in rows if r["split"] == "val"]
+            if len(train) < n_train or len(val) < n_val:
+                raise ValueError(f"pool({pf.name}): train {len(train)} < {n_train} or val {len(val)} < {n_val}")
+            return {"train": train[:n_train], "val": val[:n_val]}
         items = [{"question": r["question"], "answer": str(r["answer"])} for r in rows]
         return _split(items, n_train, n_val, seed, f"pool({pf.name})")
 

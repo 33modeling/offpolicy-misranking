@@ -266,3 +266,26 @@ full-group scores with `scores_offpolicy.json`. The gate decision and the
 gain law then include the reuse estimators. All CPU scripts write under
 `$OM_WORK/exports/` and print the export path; `bash scripts/run_e5.sh export`
 also bundles the gate decisions and benchmark results.
+
+## Mixed pool: a positive control where selection should matter (2026-09-13)
+
+Half MATH-500 candidates, half off-task prompts (MBPP by default); the ranking
+validation set and the independent test set stay MATH. One new d0 point is
+built with the matched configuration of the existing MATH d0 point of the same
+seed (`scripts/run_point.sh` with `OM_POOL_FILE`, pre-split pool), then the
+reduced E5 arms and the gate arm run on it with `MIX_STEPS` updates (default
+200). A random subset spends part of its budget on prompts whose rewards carry
+no signal for MATH; the difficulty and gradient scores can exclude them.
+
+```
+bash scripts/run_mixed_pool.sh pool      # CPU: pool file under $OM_WORK/inputs/mixed
+bash scripts/run_mixed_pool.sh point     # GPU node, about a day: rollouts, gradients, scores
+bash scripts/run_mixed_pool.sh e5        # GPU node: random / difficulty / fresh / reused arms
+bash scripts/run_mixed_pool.sh gate      # GPU node: executed gate arm
+bash scripts/run_mixed_pool.sh status | results
+```
+
+Outputs: point under `family-math500mix-s0/…-math500mix-d0`, arms under
+`runs/e5-reduced/math500mix-d0/s0` (same test set as the MATH d0 branch,
+`E5_TEST_DATASET=math500`); `run_e5.sh export` bundles them. Knobs:
+`MIX_OTHER`, `MIX_MATH`, `MIX_N_OTHER`, `MIX_STEPS`, `MIX_SEED`.
