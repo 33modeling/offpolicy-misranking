@@ -122,9 +122,12 @@ if [ "$MODE" = status ]; then
     echo "== branch $(basename "$root")"
     for seed in "${SEEDS[@]}"; do
       out="$root/s$seed"
-      for f in "$out/downstream_results.csv" "$out/random/policy/reliability_trajectory.csv"; do
-        [ -s "$f" ] && echo "  seed $seed result file (ready): $f"
-      done
+      case "$root" in
+        *-rlog) f="$out/random/policy/reliability_trajectory.csv" ;;
+        *) f="$out/downstream_results.csv" ;;
+      esac
+      if [ -s "$f" ]; then echo "  seed $seed RESULT (ready):   $f"; else echo "  seed $seed RESULT (not yet): $f"; fi
+      echo "  seed $seed logs:             $out/logs/"
       if [ -s "$out/experiment.json" ]; then
         "$PY" src/downstream_status.py --out "$out"
         # arms added after preparation live in arms.json; show their state too
