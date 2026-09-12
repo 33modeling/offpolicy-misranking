@@ -7,6 +7,8 @@
 #   bash scripts/run_e5.sh          # run the d400 branch on THIS idle 4xH100 node
 #   bash scripts/run_e5.sh d0       # run the d0 branch (arms start from the base model)
 #   bash scripts/run_e5.sh status   # progress of every branch, seed and arm, no GPU
+#   bash scripts/run_e5.sh export   # bundle every finished result file (all branches, all seeds)
+#                                   # into one text file under $OM_WORK/exports and print it
 #   bash scripts/run_e5.sh results  # finished numbers only: benchmark table per seed and the
 #                                   # reliability trajectory per seed (no GPU)
 #   bash scripts/run_e5.sh rlog     # reliability-logging run: random arm only, training only,
@@ -28,7 +30,7 @@ for arg in "$@"; do
   case "$arg" in
     d0) DRIFT=0; DRIFT_GIVEN=1 ;;
     d400) DRIFT=400; DRIFT_GIVEN=1 ;;
-    run|status|plan|stop|results) MODE=$arg ;;
+    run|status|plan|stop|results|export) MODE=$arg ;;
     force) MODE=run; export E5_FORCE=1 ;;
     rlog) MODE=run; RLOG=1 ;;
     *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force|rlog] [d0|d400]"; exit 2 ;;
@@ -67,6 +69,23 @@ if [ "$MODE" = stop ]; then
   source scripts/_e5_node.sh || exit 1
   e5_cleanup_previous "$OUT_ROOT" || exit 1
   echo "[e5] previous E5 processes stopped on $(hostname); checkpoints retained"
+  exit 0
+fi
+if [ "$MODE" = export ]; then
+  mkdir -p "$OM_WORK/exports"
+  target="$OM_WORK/exports/e5-results-$(date -u +%Y%m%dT%H%M%SZ).txt"
+  n=0
+  {
+    echo "# E5 results export $(date -u +%Y-%m-%dT%H:%M:%SZ) host=$(hostname) code=$(git rev-parse --short HEAD 2>/dev/null)"
+    for f in "$OM_WORK"/runs/e5-reduced/math500-d*/s*/downstream_results.csv \
+             "$OM_WORK"/runs/e5-reduced/math500-d*/s*/random/policy/reliability_trajectory.csv; do
+      [ -s "$f" ] || continue
+      n=$((n + 1)); echo; echo "### $f"; cat "$f"
+    done
+    echo; echo "# files: $n"
+  } > "$target"
+  cat "$target"
+  echo; echo "[e5] export written: $target"
   exit 0
 fi
 if [ "$MODE" = results ]; then
