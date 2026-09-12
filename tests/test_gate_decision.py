@@ -72,6 +72,16 @@ def test_decision_retains_a_reliable_fresh_score_and_records_reasons(tmp_path):
     assert not report["rewards_available"]
 
 
+def test_topk_overlap_has_the_right_chance_level():
+    halves = {i: (float(i), float(i)) for i in range(40)}
+    exact = gd.topk_overlap(halves)
+    assert exact == {"k": 4, "n": 40, "overlap": 1.0, "chance": 0.1}
+    reversed_halves = {i: (float(i), float(-i)) for i in range(40)}
+    assert gd.topk_overlap(reversed_halves)["overlap"] == 0.0
+    record = gd.decide_signal(halves, "difficulty", gd.default_rule(pilot_size=40))
+    assert record["pool_topk_overlap"] == 1.0 and record["pool_topk_k"] == 4
+
+
 def test_constant_halves_are_invalid_and_fall_back():
     halves = {i: (0.0, 0.0) for i in range(30)}
     record = gd.decide_signal(halves, "difficulty", gd.default_rule(pilot_size=30))

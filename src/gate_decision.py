@@ -182,6 +182,18 @@ def signal_halves(run: Path, signal: str) -> dict[int, tuple[float, float]]:
     raise ValueError(f"unknown signal: {signal}")
 
 
+def topk_overlap(halves: dict[int, tuple[float, float]], frac: float = 0.1) -> dict:
+    """Set-level repeatability of a nonlinear score: fraction of the top-k of
+    half A that is also in the top-k of half B over the whole pool, with the
+    chance level k/n (ties broken by index)."""
+    ids = sorted(halves)
+    n = len(ids)
+    k = max(1, int(n * frac))
+    top_a = set(sorted(ids, key=lambda i: (-halves[i][0], i))[:k])
+    top_b = set(sorted(ids, key=lambda i: (-halves[i][1], i))[:k])
+    return {"k": k, "n": n, "overlap": len(top_a & top_b) / k, "chance": k / n}
+
+
 def pilot_indices(ids, n: int, seed: int) -> list[int]:
     ids = sorted(ids)
     if n >= len(ids):
@@ -230,6 +242,9 @@ def decide_signal(halves: dict[int, tuple[float, float]], signal: str, rule: dic
               "decision_steps": n / PROMPTS_PER_STEP if signal in BYPRODUCT else None,
               "pilot_indices_sha": None}
     record["pilot_indices_sha"] = _sha_of(pilot)
+    # descriptive set-level repeatability over the whole pool (not part of the rule)
+    overlap = topk_overlap(halves)
+    record.update(pool_topk_overlap=overlap["overlap"], pool_topk_chance=overlap["chance"], pool_topk_k=overlap["k"])
     return record
 
 
@@ -318,14 +333,15 @@ def render(report: dict) -> str:
     if not report["rewards_available"]:
         lines.append("  (no downstream_results.csv: decisions only, no reward mapping)")
     f = lambda v, w=6: ("-" if v is None or (isinstance(v, float) and not math.isfinite(v)) else f"{v:+.3f}").rjust(w)  # noqa: E731
-    lines.append("  signal      n    r_half   lower   upper  decision   reason      need_n  steps   J_sel  J_rand   J_dec  forgone")
+    lines.append("  signal      n    r_half   lower   upper  decision   reason      need_n  steps   J_sel  J_rand   J_dec  forgone  pool top-k overlap (chance)")
     for r in report["rows"]:
         need = r["required_pairs_at_r"]
         need_s = "-" if need is None else ("inf" if not math.isfinite(need) else f"{need:.0f}")
         steps = "-" if r["decision_steps"] is None else f"{r['decision_steps']:.0f}"
         lines.append(f"  {r['signal']:10s} {r['pilot_pairs']:4d} {f(r['r_half'], 8)} {f(r['lower'], 7)} {f(r['upper'], 7)}  "
                      f"{r['decision']:9s} {r['reason']:11s} {need_s:>6s} {steps:>5s} "
-                     f"{f(r['reward_selector'], 7)} {f(r['reward_random'], 7)} {f(r['reward_decision'], 7)} {f(r['forgone_reward'], 8)}")
+                     f"{f(r['reward_selector'], 7)} {f(r['reward_random'], 7)} {f(r['reward_decision'], 7)} {f(r['forgone_reward'], 8)}  "
+                     f"{r['pool_topk_overlap']:.3f} ({r['pool_topk_chance']:.3f})")
     for s in report["skipped"]:
         lines.append(f"  {s['signal']:10s} skipped: {s['reason']}")
     return "\n".join(lines)
