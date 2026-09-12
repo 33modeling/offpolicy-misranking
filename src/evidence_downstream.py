@@ -494,6 +494,11 @@ def summarize(out: Path, *, allow_partial: bool = False) -> dict:
             difference = after - values["fresh_r"]
             lo, hi = paired_interval(difference, contract["seed"])
             row.update(difference_vs_fresh=float(difference.mean()), difference_lower=lo, difference_upper=hi)
+        row.update(difference_vs_random=None, random_lower=None, random_upper=None)
+        if "random" in values:  # the benchmark's primary readout: paired difference against the random arm
+            difference = after - values["random"]
+            lo, hi = paired_interval(difference, contract["seed"] + 7)
+            row.update(difference_vs_random=float(difference.mean()), random_lower=lo, random_upper=hi)
         rows.append(row)
     report = {"schema": SCHEMA, "experiment_sha256": digest(out / "experiment.json"),
               "complete": not missing and baseline_complete, "missing_baseline": not baseline_complete,

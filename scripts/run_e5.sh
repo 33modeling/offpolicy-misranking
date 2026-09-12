@@ -7,6 +7,8 @@
 #   bash scripts/run_e5.sh          # run the d400 branch on THIS idle 4xH100 node
 #   bash scripts/run_e5.sh d0       # run the d0 branch (arms start from the base model)
 #   bash scripts/run_e5.sh status   # progress of every branch, seed and arm, no GPU
+#   bash scripts/run_e5.sh results  # finished numbers only: benchmark table per seed and the
+#                                   # reliability trajectory per seed (no GPU)
 #   bash scripts/run_e5.sh rlog     # reliability-logging run: random arm only, training only,
 #                                   # writes reliability_trajectory.csv (split-half reliability
 #                                   # of the pass-rate and gradient signals along training)
@@ -26,7 +28,7 @@ for arg in "$@"; do
   case "$arg" in
     d0) DRIFT=0; DRIFT_GIVEN=1 ;;
     d400) DRIFT=400; DRIFT_GIVEN=1 ;;
-    run|status|plan|stop) MODE=$arg ;;
+    run|status|plan|stop|results) MODE=$arg ;;
     force) MODE=run; export E5_FORCE=1 ;;
     rlog) MODE=run; RLOG=1 ;;
     *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force|rlog] [d0|d400]"; exit 2 ;;
@@ -61,6 +63,39 @@ if [ "$MODE" = stop ]; then
   source scripts/_e5_node.sh || exit 1
   e5_cleanup_previous "$OUT_ROOT" || exit 1
   echo "[e5] previous E5 processes stopped on $(hostname); checkpoints retained"
+  exit 0
+fi
+if [ "$MODE" = results ]; then
+  # Refresh summaries on CPU so older CSVs gain the random-baseline columns.
+  for seed_dir in "$OM_WORK"/runs/e5-reduced/math500-d*/s*; do
+    [ -s "$seed_dir/experiment.json" ] && [ -d "$seed_dir/before/evaluation" ] && \
+      "$PY" src/evidence_downstream.py summarize --out "$seed_dir" --allow-partial >/dev/null 2>&1 || true
+  done
+  "$PY" - "$OM_WORK/runs/e5-reduced" <<'PYEOF'
+import csv, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+def f(v, w=6):
+    try: return f"{float(v):+.3f}".rjust(w) if v not in ("", None) else "-".rjust(w)
+    except ValueError: return str(v).rjust(w)
+for branch in sorted(root.glob("math500-d*")):
+    print(f"== {branch.name}")
+    for seed in sorted(branch.glob("s*")):
+        results = seed / "downstream_results.csv"
+        if results.is_file():
+            rows = list(csv.DictReader(results.open()))
+            print(f"  seed {seed.name[1:]}: reward before {f(rows[0]['reward_before'])}   (after | vs random [95% CI] | vs fresh)")
+            for r in rows:
+                print(f"    {r['selector']:14s} {f(r['reward_after'])} | {f(r.get('difference_vs_random'))} [{f(r.get('random_lower'))},{f(r.get('random_upper'))}] | {f(r.get('difference_vs_fresh'))}")
+        traj = seed / "random" / "policy" / "reliability_trajectory.csv"
+        if traj.is_file():
+            rows = list(csv.DictReader(traj.open()))
+            print(f"  seed {seed.name[1:]} reliability (steps: pass r | grad r | mixed frac | mean pass)")
+            for r in rows:
+                print(f"    {r['step_start']:>4}-{r['step_end']:<4} {f(r['pass_r_full'])} {f(r['grad_r_full'])} {f(r['mixed_fraction'])} {f(r['mean_pass'])}")
+        if not results.is_file() and not traj.is_file():
+            print(f"  seed {seed.name[1:]}: no finished results yet")
+PYEOF
   exit 0
 fi
 if [ "$MODE" = status ]; then
