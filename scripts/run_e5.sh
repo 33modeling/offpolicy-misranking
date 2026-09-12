@@ -18,7 +18,8 @@
 #   bash scripts/run_e5.sh gate     # executed gate arm (gate_passrate) added to the seeds of a
 #                                   # branch: uniform pilot with reliability logging, one frozen
 #                                   # decision (config/gate_rule.json), continuation, evaluation
-#   Any mode accepts d0 or d400 as an extra word, e.g.  bash scripts/run_e5.sh d0 stop
+#   Any mode accepts d0, d25, d100 or d400 as an extra word, e.g.  bash scripts/run_e5.sh d100
+#   (intermediate checkpoints locate where selection stops helping between d0 and d400)
 #   bash scripts/run_e5.sh plan     # dry run: contracts and commands only
 #   bash scripts/run_e5.sh stop     # stop E5 on this node (nothing else)
 #   bash scripts/run_e5.sh force    # run, first stopping a non-matrix process that holds this node's GPU lock
@@ -33,13 +34,15 @@ MODE=run; DRIFT=${E5_DRIFT:-400}; DRIFT_GIVEN=${E5_DRIFT:+1}
 for arg in "$@"; do
   case "$arg" in
     d0) DRIFT=0; DRIFT_GIVEN=1 ;;
+    d25) DRIFT=25; DRIFT_GIVEN=1 ;;
+    d100) DRIFT=100; DRIFT_GIVEN=1 ;;
     d400) DRIFT=400; DRIFT_GIVEN=1 ;;
     run|status|plan|stop|results|export) MODE=$arg ;;
     force) MODE=run; export E5_FORCE=1 ;;
     rlog) MODE=run; RLOG=1 ;;
     rlog400) MODE=run; RLOG=1; RLOG400=1 ;;
     gate) MODE=run; GATE=1 ;;
-    *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force|rlog|rlog400|gate] [d0|d400]"; exit 2 ;;
+    *) echo "usage: bash scripts/run_e5.sh [run|status|plan|stop|force|rlog|rlog400|gate] [d0|d25|d100|d400]"; exit 2 ;;
   esac
 done
 trap '' HUP
