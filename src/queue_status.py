@@ -630,7 +630,8 @@ def record_seen(work: Path) -> float | None:
         tmp.write_text(json.dumps(record) + "\n", encoding="utf-8")
         tmp.replace(target)
         return target.stat().st_mtime
-    except OSError:
+    except OSError as exc:
+        print(f"[warn] could not write this node's report under {work / 'queue'}: {exc}", file=sys.stderr)
         return None
 
 
@@ -888,7 +889,7 @@ def main(argv=None) -> int:
         return 0
     root = args.root or Path(os.environ.get("OM_OLMO3_ROOT") or (args.work / "runs" / args.tag))
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    header = f"QUEUE STATUS  {stamp}  code={git_short()}"
+    header = f"QUEUE STATUS  {stamp}  code={git_short()}  work={args.work}"
     WORK[:] = [args.work]
     fs_now = record_seen(args.work)
     SEEN.clear()
