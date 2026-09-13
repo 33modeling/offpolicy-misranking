@@ -18,7 +18,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
-case "$MODE" in run|status|worker) ;; *) echo "usage: bash scripts/run_queue.sh [status]"; exit 2 ;; esac
+case "$MODE" in run|status|worker|dump) ;; *) echo "usage: bash scripts/run_queue.sh [status|dump]"; exit 2 ;; esac
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
@@ -41,6 +41,36 @@ ensure_watch
 if [ "$MODE" = status ]; then
   "$PY" src/queue_status.py
   exit $?
+fi
+if [ "$MODE" = dump ]; then
+  # One file with everything needed to see why a node is not working: the status, this node's
+  # nvidia-smi, every node's queue log tail, and the mixed point's own log tail. Copy it like an export.
+  mkdir -p "$OM_WORK/exports"
+  target="$OM_WORK/exports/queue-dump-$(date -u +%Y%m%dT%H%M%SZ).txt"
+  {
+    echo "# queue dump $(date -u +%Y-%m-%dT%H:%M:%SZ) host=$HOST code=$(git rev-parse --short HEAD 2>/dev/null)"
+    echo; echo "### status"; "$PY" src/queue_status.py 2>&1
+    echo; echo "### nvidia-smi on $HOST"; timeout 20 nvidia-smi 2>&1 | head -40
+    echo; echo "### processes with a queue marker on $HOST"
+    for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
+      m=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null | grep '^OUT_ROOT=' | head -1)
+      [ -n "$m" ] && echo "pid=$pid $m $(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null | cut -c1-120)"
+    done
+    for f in "$NOTES"/*.log; do [ -s "$f" ] || continue; echo; echo "### queue log $(basename "$f") (last 60 lines)"; tail -n 60 "$f"; done
+    TAG=${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-h100-v2}
+    ROOT=${OM_OLMO3_ROOT:-$OM_WORK/runs/$TAG}
+    POINT="$ROOT/family-math500mix-s${MIX_SEED:-0}/$TAG-s${MIX_SEED:-0}-math500mix-d0"
+    echo; echo "### mixed point $POINT"
+    ls -la "$POINT" 2>&1 | head -40
+    echo; echo "### mixed point lease note"; cat "$POINT.lease" 2>/dev/null
+    for f in "$POINT"/logs/*.log; do [ -s "$f" ] || continue; echo; echo "### point log $(basename "$f") (last 40 lines)"; tail -n 40 "$f"; done
+    for out in "$OM_WORK"/runs/e5-reduced/math500mix-d0/s*; do
+      [ -d "$out" ] || continue
+      for f in "$out"/logs/*.log; do [ -s "$f" ] || continue; echo; echo "### mixed arms log $(basename "$f") (last 30 lines)"; tail -n 30 "$f"; done
+    done
+  } > "$target" 2>&1
+  echo "[queue] dump written: $target"
+  exit 0
 fi
 if [ "$MODE" = run ]; then
   pid=$(cat "$WPID" 2>/dev/null)
