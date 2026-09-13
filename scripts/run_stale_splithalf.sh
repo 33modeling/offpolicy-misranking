@@ -43,6 +43,7 @@ if [ "$MODE" = status ]; then
 fi
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+source scripts/_lease.sh
 source scripts/_e5_node.sh || exit 1
 e5_cleanup_previous "$OUT_ROOT" || exit 1
 e5_acquire_node || exit "$?"
@@ -65,8 +66,9 @@ for seed in "${SEEDS[@]}"; do
       "$run/run_config.json" attn lora_targets prompt_format)
   export OM_ATTN=${OM_ATTN:-${CFG_ATTN:-eager}} OM_LORA_TARGETS="$CFG_LORA" OM_PROMPT_FORMAT=${CFG_FMT:-olmo_rlzero_math}
   mkdir -p "$run/logs"
-  exec 9>"$run/.stale-splithalf.lock"
+  exec 9>>"$run/.stale-splithalf.lock"
   if ! flock -n 9; then echo "  claimed on another node; skipped"; continue; fi
+  lease_note "$run/.stale-splithalf.lock"
   CHILDREN=()
   for shard in 0 1 2 3; do
     setsid env CUDA_VISIBLE_DEVICES="${GPUS[$shard]}" "$PY" src/stale_splithalf.py --run "$run" --shard "$shard" --shards 4 --check-full "$CHECK" \

@@ -299,6 +299,13 @@ bash scripts/run_queue.sh status   # CPU: one line per step with a state word, s
 
 `status` (`src/queue_status.py`) reads the shared filesystem only. State words:
 DONE (all artifacts exist), RUNNING (a lease of the step is held right now on
-some node; `*` marks the leased arm), PARTIAL (artifacts exist, nothing
-running), WAITING (prerequisite step unfinished), TODO (nothing started). The
-per-step commands keep their detailed `status` modes.
+some node; `*[node]` marks the leased arm and the node holding it), PARTIAL
+(artifacts exist, nothing running), WAITING (prerequisite step unfinished),
+TODO (nothing started). Below the steps, a `nodes` section lists every node
+that ran the queue with its current step, the time it started it, and whether
+its heartbeat is alive (`$OM_WORK/queue/<host>.txt` and `.beat`, written by
+`run_queue.sh`; a node killed by the scheduler shows NO HEARTBEAT), plus the
+leases each node holds (`scripts/_lease.sh` writes host/pid/time into every
+lease file on acquisition; leases taken by older code show `*[?]`). The
+`this node` line lists the queue processes on the current machine by their
+OUT_ROOT marker. The per-step commands keep their detailed `status` modes.

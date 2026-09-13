@@ -56,8 +56,10 @@ case "$MODE" in
     if [ -s "$POINT/DONE" ]; then echo "[mixed] point already complete: $POINT"; exit 0; fi
     # one node builds the point; others skip it (lease on the shared filesystem)
     mkdir -p "$(dirname "$POINT")"
-    exec 6>"$POINT.lease"
+    source scripts/_lease.sh
+    exec 6>>"$POINT.lease"
     if ! flock -n 6; then echo "[busy] the mixed point is being built on another node"; exit 0; fi
+    lease_note "$POINT.lease"
     export OUT_ROOT="$POINT"   # process marker for cleanup; the point runner uses the same variable
     source scripts/_e5_node.sh || exit 1
     e5_cleanup_previous "$POINT" || exit 1

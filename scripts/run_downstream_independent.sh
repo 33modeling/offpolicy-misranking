@@ -150,13 +150,15 @@ evaluate_arm() {
   fi
   return "$failed"
 }
+source scripts/_lease.sh
 failed=0; busy=0
 SKIP_EVAL=${E5_SKIP_EVAL:-0}
 [ "$SKIP_EVAL" = 0 ] || echo "[note] E5_SKIP_EVAL=1: training only; no baseline or arm evaluation, no summary"
-exec 9>"$OUT/.before.lock"
+exec 9>>"$OUT/.before.lock"
 if [ "$SKIP_EVAL" = 1 ]; then
   :
 elif flock -n 9; then
+  lease_note "$OUT/.before.lock"
   echo "[eval] baseline policy on ${EVAL_K} responses per test prompt (about 60-90 min on four GPUs)"
   evaluate_arm before || { echo "[failed] baseline evaluation; completed shards are retained"; failed=1; }
   flock -u 9
@@ -164,8 +166,9 @@ else
   echo "[busy] another node is evaluating the common baseline; continuing with training"
 fi
 for selector in "${SELECTORS[@]}"; do
-  exec 9>"$OUT/.$selector.lock"
+  exec 9>>"$OUT/.$selector.lock"
   if ! flock -n 9; then echo "[busy] $selector is claimed on another node"; busy=$((busy + 1)); continue; fi
+  lease_note "$OUT/.$selector.lock"
   case "$selector" in gate_*)
     # Executed gate: uniform pilot block with reliability logging, one decision
     # under the frozen rule (writes train-$selector.args), then the continuation.

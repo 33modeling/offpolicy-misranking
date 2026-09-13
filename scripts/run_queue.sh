@@ -21,14 +21,29 @@ if [ "${1:-run}" = status ]; then
   exit $?
 fi
 trap '' HUP
+export OM_ONLINE=0
+source scripts/setup_env.sh >/dev/null 2>&1
+# Per-node note on the shared filesystem: which step this node is on, plus a
+# heartbeat file touched every minute, so `run_queue.sh status` can list the
+# nodes and tell a live queue from a killed one.
+NOTES="$OM_WORK/queue"; mkdir -p "$NOTES"
+NOTE="$NOTES/$(hostname).txt"; BEAT="$NOTES/$(hostname).beat"
+note() { printf 'host=%s pid=%s step=%s since=%s\n' "$(hostname)" "$$" "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NOTE"; }
+( while :; do date -u +%Y-%m-%dT%H:%M:%SZ > "$BEAT" 2>/dev/null; sleep 60; done ) &
+BEAT_PID=$!
+trap 'kill "$BEAT_PID" 2>/dev/null; note "stopped"; exit 130' INT TERM
 QUEUE=("run_mixed_pool.sh pool" "run_mixed_pool.sh point" "run_mixed_pool.sh e5" "run_mixed_pool.sh gate" \
        "run_stale_splithalf.sh" "run_stale_splithalf.sh d0" "run_e5_bench.sh d0" "run_e5_bench.sh" \
        "run_e5.sh d100")
 for job in "${QUEUE[@]}"; do
   echo; echo "===== [$(date -u +%H:%M)] $job"
+  note "$job"
   bash scripts/$job 2>&1 | grep -v setup_env
   echo "===== [$(date -u +%H:%M)] $job finished (rc=${PIPESTATUS[0]})"
 done
 echo; echo "===== CPU analyses and export"
+note "run_analyses.sh"
 bash scripts/run_analyses.sh 2>&1 | grep -v setup_env | tail -n 6
+note "done"
+kill "$BEAT_PID" 2>/dev/null
 echo "[queue] done on $(hostname); check:  bash scripts/run_queue.sh status"

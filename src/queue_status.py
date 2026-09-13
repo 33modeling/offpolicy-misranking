@@ -8,9 +8,13 @@ One line per queue step, in queue order, with a single state word:
     WAITING   a prerequisite step is not finished
     TODO      nothing started
 
-Seed-level detail follows on indented lines. Everything is read from the
-shared filesystem; no GPU, nothing is written, no lease is taken (the lease
-probe releases immediately).
+Seed-level detail follows on indented lines; a held lease is marked
+``*[node]`` with the node that wrote the lease note (``*[?]`` when the lease
+predates the notes). A ``nodes`` section lists every node that ran the
+queue (note + heartbeat under $OM_WORK/queue) and the leases it holds, and
+``this node`` lists the queue processes on the current machine. Everything
+is read from the filesystem; no GPU, nothing is written, no lease is taken
+(the lease probe releases immediately).
 
     python src/queue_status.py [--work $OM_WORK] [--root $OM_OLMO3_ROOT] [--tag TAG] [--seeds 0 1 2]
 """
@@ -32,6 +36,11 @@ ARM_LABELS = {"before": "before", "random": "random", "passrate_beta": "difficul
               "g11": "reused", "g00": "reused00", "g10": "reused10", "g01": "reused01", "gate_passrate": "gate"}
 MIX_ARMS = ("random", "passrate_beta", "fresh_r", "g11")
 STATES = ("DONE", "RUNNING", "PARTIAL", "WAITING", "TODO")
+HEARTBEAT_ALIVE_SECONDS = 300
+NOTE_MAX_AGE_SECONDS = 3 * 86400
+
+# host -> list of "what" strings, filled while the rows are built
+NODES: dict[str, list[str]] = {}
 
 
 # ---------------------------------------------------------------- helpers
@@ -46,6 +55,10 @@ def age(path: Path) -> str:
         seconds = max(0, int(time.time() - path.stat().st_mtime))
     except OSError:
         return "-"
+    return age_text(seconds)
+
+
+def age_text(seconds: int) -> str:
     if seconds < 3600:
         return f"{seconds // 60}m"
     if seconds < 86400:
@@ -70,6 +83,39 @@ def lease_held(path: Path) -> bool:
         return False
     finally:
         os.close(fd)
+
+
+def parse_note(text: str) -> dict:
+    return dict(item.split("=", 1) for item in text.split() if "=" in item)
+
+
+def lease_holder(path: Path) -> str | None:
+    """None when the lease is free; otherwise the host from the lease note, or '?'."""
+    if not lease_held(path):
+        return None
+    try:
+        first = path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+    except OSError:
+        return "?"
+    return parse_note(first[0]).get("host", "?") if first else "?"
+
+
+def short_host(host: str) -> str:
+    parts = host.split("-")
+    return "-".join(parts[-2:]) if len(parts) > 2 else host
+
+
+def since_text(stamp: str) -> str:
+    m = re.match(r"\d{4}-(\d{2}-\d{2})T(\d{2}:\d{2}):\d{2}Z", stamp)
+    return f"{m.group(1)} {m.group(2)}Z" if m else stamp
+
+
+def note_lease(holder: str | None, what: str) -> str:
+    """Register a held lease under its node and return the inline marker."""
+    if holder is None:
+        return ""
+    NODES.setdefault(holder, []).append(what)
+    return f"*[{short_host(holder)}]"
 
 
 def row_count(path: Path) -> int:
@@ -171,7 +217,7 @@ def arm_state(out: Path, arm: str, contract: dict) -> tuple[str, bool]:
     return "-", False
 
 
-def branch_seed(out: Path, arms=None) -> dict:
+def branch_seed(out: Path, arms=None, label: str = "") -> dict:
     """State of one E5 seed directory: {'prepared', 'done', 'running', 'started', 'line'}."""
     if not (out / "experiment.json").is_file():
         return {"prepared": False, "done": False, "running": False, "started": False, "line": "not prepared"}
@@ -185,9 +231,10 @@ def branch_seed(out: Path, arms=None) -> dict:
         word, done = arm_state(out, arm, contract)
         all_done = all_done and done
         started = started or word != "-"
-        if lease_held(out / f".{arm}.lock"):
+        holder = lease_holder(out / f".{arm}.lock")
+        if holder is not None:
             running = True
-            word += "*"
+            word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
         parts.append(f"{ARM_LABELS.get(arm, arm)} {word}")
     line = "DONE" if all_done else " | ".join(parts)
     if all_done and not (out / "downstream_results.csv").is_file():
@@ -196,8 +243,8 @@ def branch_seed(out: Path, arms=None) -> dict:
     return {"prepared": True, "done": all_done, "running": running, "started": started, "line": line}
 
 
-def branch_state(root: Path, seeds, arms=None) -> tuple[str, list[str]]:
-    infos = {seed: branch_seed(root / f"s{seed}", arms) for seed in seeds}
+def branch_state(root: Path, seeds, arms=None, label: str = "") -> tuple[str, list[str]]:
+    infos = {seed: branch_seed(root / f"s{seed}", arms, label) for seed in seeds}
     lines = [f"s{seed}: {info['line']}" for seed, info in infos.items()]
     if all(info["done"] for info in infos.values()):
         return "DONE", []
@@ -210,7 +257,7 @@ def branch_state(root: Path, seeds, arms=None) -> tuple[str, list[str]]:
 
 # ---------------------------------------------------------------- benchmarks
 
-def bench_seed(out: Path) -> dict:
+def bench_seed(out: Path, label: str = "") -> dict:
     if not (out / "experiment.json").is_file():
         return {"done": False, "running": False, "started": False, "line": "E5 seed not prepared"}
     if not (out / "benchmarks.json").is_file():
@@ -234,16 +281,17 @@ def bench_seed(out: Path) -> dict:
             word = f"{finished}/{len(sets)}"
             all_done = False
         started = started or partial
-        if lease_held(out / f".bench-{arm}.lock"):
+        holder = lease_holder(out / f".bench-{arm}.lock")
+        if holder is not None:
             running = True
-            word += "*"
+            word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
         parts.append(f"{ARM_LABELS.get(arm, arm)} {word}")
     line = "DONE" if all_done else " | ".join(parts)
     return {"done": all_done, "running": running, "started": started, "line": line}
 
 
-def bench_state(root: Path, seeds) -> tuple[str, list[str]]:
-    infos = {seed: bench_seed(root / f"s{seed}") for seed in seeds}
+def bench_state(root: Path, seeds, label: str = "") -> tuple[str, list[str]]:
+    infos = {seed: bench_seed(root / f"s{seed}", label) for seed in seeds}
     lines = [f"s{seed}: {info['line']}" for seed, info in infos.items()]
     if all(info["done"] for info in infos.values()):
         return "DONE", []
@@ -258,7 +306,7 @@ def bench_state(root: Path, seeds) -> tuple[str, list[str]]:
 
 # ---------------------------------------------------------------- reuse split-half
 
-def stale_state(run_dir, seeds, drift: int) -> tuple[str, list[str]]:
+def stale_state(run_dir, seeds, drift: int, label: str = "") -> tuple[str, list[str]]:
     parts, all_done, running, started = [], True, False, False
     for seed in seeds:
         run = run_dir(seed, drift)
@@ -273,9 +321,10 @@ def stale_state(run_dir, seeds, drift: int) -> tuple[str, list[str]]:
         shards = len(list(run.glob("scores_stale_splithalf.shard*.json")))
         word = f"s{seed} {shards}/4 shards" if shards else f"s{seed} -"
         started = started or shards > 0
-        if lease_held(run / ".stale-splithalf.lock"):
+        holder = lease_holder(run / ".stale-splithalf.lock")
+        if holder is not None:
             running = True
-            word += "*"
+            word += note_lease(holder, f"{label} s{seed}")
         parts.append(word)
     if all_done:
         return "DONE", []
@@ -307,9 +356,10 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
     else:
         progress = last_progress(point)
         log = point / "logs" / "main.log"
-        held = lease_held(Path(str(point) + ".lease"))
-        if held:
-            rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'}, last write {age(log)} ago"]))
+        holder = lease_holder(Path(str(point) + ".lease"))
+        if holder is not None:
+            mark = note_lease(holder, f"mixed pool point ({progress or 'started'})")
+            rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'}, last write {age(log)} ago {mark}"]))
         elif log.is_file():
             rows.append(("mixed pool: point", "PARTIAL", [f"stopped at {progress or '?'}, last write {age(log)} ago"]))
         elif pool_ready:
@@ -323,7 +373,7 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
         rows.append(("mixed pool: arms", "WAITING", ["point not done"]))
         rows.append(("mixed pool: gate", "WAITING", ["point not done"]))
         return rows
-    state, lines = branch_state(branch, [seed], MIX_ARMS)
+    state, lines = branch_state(branch, [seed], MIX_ARMS, "mixed pool arms")
     rows.append((f"mixed pool: arms ({steps} upd)", state, lines))
     if (out / "experiment.json").is_file():
         try:
@@ -331,11 +381,12 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
         except (OSError, ValueError):
             contract = {}
         word, done = arm_state(out, "gate_passrate", contract)
-        held = lease_held(out / ".gate_passrate.lock")
+        holder = lease_holder(out / ".gate_passrate.lock")
         if done:
             rows.append(("mixed pool: gate", "DONE", []))
-        elif held:
-            rows.append(("mixed pool: gate", "RUNNING", [f"s{seed}: gate {word}"]))
+        elif holder is not None:
+            mark = note_lease(holder, f"mixed pool gate ({word})")
+            rows.append(("mixed pool: gate", "RUNNING", [f"s{seed}: gate {word}{mark}"]))
         elif word == "-":
             rows.append(("mixed pool: gate", "TODO" if state == "DONE" else "WAITING", []))
         else:
@@ -359,31 +410,119 @@ def exports_state(work: Path) -> tuple[str, list[str]]:
     return ("PARTIAL" if bundles else "TODO"), lines
 
 
-# ---------------------------------------------------------------- report
+# ---------------------------------------------------------------- nodes
+
+def queue_notes(work: Path) -> dict[str, dict]:
+    """host -> {'step', 'since', 'alive', 'beat_age'} from $OM_WORK/queue/<host>.txt and .beat."""
+    notes = {}
+    directory = work / "queue"
+    if not directory.is_dir():
+        return notes
+    now = time.time()
+    for note in sorted(directory.glob("*.txt")):
+        try:
+            fields = parse_note(note.read_text(encoding="utf-8", errors="replace"))
+            note_age = now - note.stat().st_mtime
+        except OSError:
+            continue
+        beat = note.with_suffix(".beat")
+        try:
+            beat_seconds = int(now - beat.stat().st_mtime) if beat.is_file() else None
+        except OSError:
+            beat_seconds = None
+        if note_age > NOTE_MAX_AGE_SECONDS and (beat_seconds is None or beat_seconds > NOTE_MAX_AGE_SECONDS):
+            continue
+        host = fields.get("host", note.stem)
+        notes[host] = {"step": fields.get("step", "?"), "since": fields.get("since", "?"),
+                       "alive": beat_seconds is not None and beat_seconds < HEARTBEAT_ALIVE_SECONDS,
+                       "beat_age": age_text(beat_seconds) if beat_seconds is not None else None}
+    return notes
+
+
+def node_lines(notes: dict[str, dict]) -> list[str]:
+    hosts = sorted(set(notes) | set(NODES), key=short_host)
+    if not hosts:
+        return ["  (no queue note and no held lease; nothing is running)"]
+    lines = []
+    for host in hosts:
+        note = notes.get(host)
+        if note is None:
+            head = "no queue note (started by hand or before this version)"
+        elif note["step"] == "done":
+            head = f"queue finished {since_text(note['since'])}"
+        elif note["step"] == "stopped":
+            head = f"queue stopped {since_text(note['since'])}"
+        elif note["alive"]:
+            head = f"{note['step']}  since {since_text(note['since'])}  alive (heartbeat {note['beat_age']} ago)"
+        else:
+            beat = f"no heartbeat for {note['beat_age']}" if note["beat_age"] else "no heartbeat"
+            head = f"{note['step']}  since {since_text(note['since'])}  {beat.upper()} (killed?)"
+        lines.append(f"  {short_host(host):<10} {head}")
+        for what in NODES.get(host, []):
+            lines.append(f"  {'':<10}   holds: {what}")
+    return lines
+
+
+def job_label(marker: str) -> str:
+    path = marker.rstrip("/")
+    name = path.split("/")[-1]
+    parent = path.split("/")[-2] if "/" in path else ""
+    if name == ".bench":
+        return f"benchmarks {parent}"
+    if name.startswith(".stale-splithalf-"):
+        return f"reuse split-half {name.split('-')[-1]}"
+    if "/e5-reduced/" in path:
+        return f"E5 arms {name}"
+    if "/family-" in path:
+        return f"point {name}"
+    return path
+
+
+def node_jobs() -> list[str]:
+    """Labels of the queue processes on this machine (every one carries OUT_ROOT in its environment)."""
+    markers = set()
+    for proc in Path("/proc").glob("[0-9]*"):
+        if proc.name == str(os.getpid()):
+            continue
+        try:
+            environ = (proc / "environ").read_bytes()
+        except OSError:
+            continue
+        for item in environ.split(b"\0"):
+            if item.startswith(b"OUT_ROOT="):
+                markers.add(item[9:].decode(errors="replace"))
+    return sorted({job_label(m) for m in markers if m})
+
 
 def node_line() -> str:
     directory = Path(os.environ.get("OM_LOCAL_LOCK_DIR", f"/tmp/offpolicy-misranking-{os.getuid()}"))
     lock = directory / "primary.lock"
-    if lease_held(lock):
-        return "this node: GPU job running (node lock held)"
-    return "this node: no GPU job (node lock free)"
+    jobs = node_jobs()
+    held = lease_held(lock)
+    if jobs:
+        return f"this node ({socket.gethostname()}): running {', '.join(jobs)}" + ("" if held else " (node lock free)")
+    return f"this node ({socket.gethostname()}): " + ("GPU job running (node lock held, not a queue step)" if held else "no GPU job (node lock free)")
 
+
+# ---------------------------------------------------------------- report
 
 def build_rows(work: Path, root: Path, tag: str, seeds, other: str, mix_seed: int, mix_steps: int):
+    NODES.clear()
+
     def run_dir(seed, drift):
         return root / f"family-math500-s{seed}" / f"{tag}-s{seed}-math500-d{drift}"
     e5 = work / "runs" / "e5-reduced"
     rows = list(mixed_states(work, root, tag, other, mix_seed, mix_steps))
-    rows.append(("reuse split-half d400",) + stale_state(run_dir, seeds, 400))
-    rows.append(("reuse split-half d0",) + stale_state(run_dir, seeds, 0))
-    rows.append(("benchmarks d0",) + bench_state(e5 / "math500-d0", seeds))
-    rows.append(("benchmarks d400",) + bench_state(e5 / "math500-d400", seeds))
-    rows.append(("d100 continuation",) + branch_state(e5 / "math500-d100", seeds))
+    rows.append(("reuse split-half d400",) + stale_state(run_dir, seeds, 400, "reuse split-half d400"))
+    rows.append(("reuse split-half d0",) + stale_state(run_dir, seeds, 0, "reuse split-half d0"))
+    rows.append(("benchmarks d0",) + bench_state(e5 / "math500-d0", seeds, "benchmarks d0"))
+    rows.append(("benchmarks d400",) + bench_state(e5 / "math500-d400", seeds, "benchmarks d400"))
+    rows.append(("d100 continuation",) + branch_state(e5 / "math500-d100", seeds, None, "d100"))
     rows.append(("analyses + export",) + exports_state(work))
     return rows
 
 
-def render(rows, header: str, node: str) -> str:
+def render(rows, header: str, node: str, notes: dict[str, dict] | None = None) -> str:
     out = [header, node, ""]
     out.append(f"{'#':>2}  {'step':<26} state")
     counts = {s: 0 for s in STATES}
@@ -394,7 +533,11 @@ def render(rows, header: str, node: str) -> str:
             out.append(f"      {line}")
     out.append("")
     out.append("  ".join(f"{s} {counts[s]}" for s in STATES if counts.get(s)))
-    out.append("RUNNING/* = lease held now on some node; PARTIAL = artifacts exist, nothing running")
+    out.append("RUNNING/*[node] = lease held now by that node; PARTIAL = artifacts exist, nothing running")
+    out.append("")
+    out.append("nodes (queue note + heartbeat under $OM_WORK/queue, and held leases)")
+    out.extend(node_lines(notes or {}))
+    out.append("")
     out.append("details: bash scripts/run_e5.sh status | run_e5_bench.sh status [d0] | run_stale_splithalf.sh status [d0]")
     return "\n".join(out)
 
@@ -414,9 +557,9 @@ def main(argv=None) -> int:
         return 2
     root = args.root or Path(os.environ.get("OM_OLMO3_ROOT") or (args.work / "runs" / args.tag))
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    header = f"QUEUE STATUS  {stamp}  host={socket.gethostname()}  code={git_short()}"
+    header = f"QUEUE STATUS  {stamp}  code={git_short()}"
     rows = build_rows(args.work, root, args.tag, args.seeds, args.mix_other, args.mix_seed, args.mix_steps)
-    print(render(rows, header, node_line()))
+    print(render(rows, header, node_line(), queue_notes(args.work)))
     return 0
 
 

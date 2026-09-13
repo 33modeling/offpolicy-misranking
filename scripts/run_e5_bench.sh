@@ -113,6 +113,7 @@ unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps") || exit 1
 export PYTHONPATH="$MATH_VERIFY_PATH:$PYTHONPATH" OM_MATH_VERIFIER=math_verify
+source scripts/_lease.sh
 source scripts/_e5_node.sh || exit 1
 e5_cleanup_previous "$OUT_ROOT" || exit 1
 e5_acquire_node || exit "$?"
@@ -142,8 +143,9 @@ for arm in ed.arms_of(out):
     if [ "$arm" != before ] && ! "$PY" src/evidence_downstream.py policy-ready --out "$out" --arm "$arm"; then
       echo "[skip] $arm: policy not complete or not valid"; continue
     fi
-    exec 9>"$out/.bench-$arm.lock"
+    exec 9>>"$out/.bench-$arm.lock"
     if ! flock -n 9; then echo "[busy] $arm is being evaluated on another node"; busy=$((busy + 1)); continue; fi
+    lease_note "$out/.bench-$arm.lock"
     if "$PY" - "$out" "$arm" <<'PYEOF'
 import sys; from pathlib import Path; import benchmark_eval as be
 out, arm = Path(sys.argv[1]), sys.argv[2]

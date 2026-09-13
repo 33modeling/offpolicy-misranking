@@ -179,3 +179,59 @@ def test_cli_and_queue_script_syntax(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.startswith("QUEUE STATUS") and "mixed pool: point" in result.stdout
     subprocess.run(["bash", "-n", str(ROOT / "scripts/run_queue.sh")], check=True)
+
+
+def test_lease_notes_name_the_node_and_queue_notes_list_nodes(tmp_path):
+    work, root = _tree(tmp_path)
+    run1 = root / "family-math500-s1" / f"{TAG}-s1-math500-d400"
+    (run1 / "scores_stale_splithalf.shard0.json").write_text("{}")
+    lock = run1 / ".stale-splithalf.lock"
+    lock.write_text("host=run280417-first-qw-7 pid=145 since=2026-09-13T12:03:00Z\n")
+    holder = os.open(lock, os.O_RDWR)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    notes = work / "queue"
+    notes.mkdir()
+    (notes / "run280417-first-qw-7.txt").write_text("host=run280417-first-qw-7 pid=1 step=run_stale_splithalf.sh since=2026-09-13T12:00:00Z\n")
+    (notes / "run280417-first-qw-7.beat").write_text("2026-09-13T12:10:00Z\n")
+    (notes / "run280417-first-qw-3.txt").write_text("host=run280417-first-qw-3 pid=2 step=run_mixed_pool.sh point since=2026-09-13T09:00:00Z\n")
+    (notes / "run280417-first-qw-3.beat").write_text("x\n")
+    os.utime(notes / "run280417-first-qw-3.beat", (1_000_000, 1_000_000))
+    (notes / "run280417-first-qw-1.txt").write_text("host=run280417-first-qw-1 pid=3 step=done since=2026-09-13T11:00:00Z\n")
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+        by = {name: (state, lines) for name, state, lines in rows}
+        assert by["reuse split-half d400"] == ("RUNNING", ["s0 -  s1 1/4 shards*[qw-7]  s2 -"])
+        assert qs.NODES == {"run280417-first-qw-7": ["reuse split-half d400 s1"]}
+        text = qs.render(rows, "HDR", "NODE", qs.queue_notes(work))
+    finally:
+        os.close(holder)
+    lines = text.splitlines()
+    node = [l for l in lines if l.startswith("  qw-7 ")][0]
+    assert "run_stale_splithalf.sh  since 09-13 12:00Z  alive (heartbeat" in node
+    assert "     holds: reuse split-half d400 s1" in text
+    assert [l for l in lines if l.startswith("  qw-3 ")][0].endswith("(killed?)") and "NO HEARTBEAT" in text
+    assert [l for l in lines if l.startswith("  qw-1 ")][0].endswith("queue finished 09-13 11:00Z")
+    # a lease held without a note (job started before the notes existed)
+    lock.write_text("")
+    holder = os.open(lock, os.O_RDWR)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+    finally:
+        os.close(holder)
+    assert dict((n, l) for n, s, l in rows)["reuse split-half d400"] == ["s0 -  s1 1/4 shards*[?]  s2 -"]
+
+
+def test_this_node_lists_queue_processes_by_their_marker():
+    assert qs.job_label("/w/runs/e5-reduced/math500-d0/.bench") == "benchmarks math500-d0"
+    assert qs.job_label("/w/runs/tag/.stale-splithalf-d400") == "reuse split-half d400"
+    assert qs.job_label("/w/runs/e5-reduced/math500mix-d0") == "E5 arms math500mix-d0"
+    assert qs.job_label("/w/runs/tag/family-math500mix-s0/tag-s0-math500mix-d0") == "point tag-s0-math500mix-d0"
+    child = subprocess.Popen(["sleep", "30"], env={"OUT_ROOT": "/w/runs/e5-reduced/math500-d100", "PATH": "/usr/bin:/bin"})
+    try:
+        import time
+        time.sleep(0.2)
+        assert "E5 arms math500-d100" in qs.node_jobs()
+    finally:
+        child.kill()
+        child.wait()
