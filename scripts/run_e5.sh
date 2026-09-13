@@ -101,6 +101,12 @@ if [ "$MODE" = export ]; then
       [ -s "$f" ] || continue
       n=$((n + 1)); echo; echo "### $f"; cat "$f"
     done
+    # the latest CPU-analysis exports (gate decisions, gain law, cost accounting) travel in the same bundle
+    for kind in gate-decision gain-law cost-accounting; do
+      f=$(ls -t "$OM_WORK"/exports/$kind-*.txt 2>/dev/null | head -n 1)
+      [ -s "$f" ] || continue
+      n=$((n + 1)); echo; echo "### $f"; cat "$f"
+    done
     echo; echo "# files: $n"
   } > "$target"
   cat "$target"
