@@ -563,11 +563,11 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
     idle = [h for h in hosts if h not in busy and fresh(h) and not seen[h]["jobs"]]
     gone = [h for h in hosts if h not in busy and h not in idle]
     reporting = [h for h in hosts if fresh(h)]
-    lines = [f"  nodes reporting now: {len(reporting)}  (a node reports only after run_queue.sh ran on it once; untouched nodes are invisible)",
+    lines = [f"  nodes reporting now: {len(reporting)}  (only nodes where run_queue.sh ran once; others are invisible)",
              f"  BUSY {len(busy)}: {', '.join(disp(h) for h in busy) or 'none'}"
              + (f"  + {len(unknown)} lease(s) on an unidentified node" if unknown else ""),
              f"  IDLE {len(idle)} (alive, nothing running; start the queue there): {', '.join(disp(h) for h in idle) or 'none'}",
-             f"  GONE {len(gone)} (no report for over {SEEN_FRESH_SECONDS // 60} min: allocation ended, killed, or never watched): {', '.join(disp(h) for h in gone) or 'none'}"]
+             f"  GONE {len(gone)} (no report for {SEEN_FRESH_SECONDS // 60}+ min: allocation ended or killed): {', '.join(disp(h) for h in gone) or 'none'}"]
     for host in hosts:
         note = notes.get(host)
         if note is None:
