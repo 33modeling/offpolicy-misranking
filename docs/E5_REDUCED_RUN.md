@@ -310,6 +310,13 @@ lease file on acquisition; leases taken by older code show `*[?]`). The
 `this node` line lists the queue processes on the current machine by their
 OUT_ROOT marker. The per-step commands keep their detailed `status` modes.
 
+Node watcher: the first `run_queue.sh` (run or status) on a node leaves
+`scripts/_node_watch.sh` running in the background; it reports the node's
+queue processes every minute to `$OM_WORK/queue/<host>.seen.json` and dies
+with the allocation. The NODES block then classifies every reported node as
+busy, IDLE (alive, nothing running: start the queue there) or gone (no
+report for five minutes). A node where the command never ran is invisible.
+
 Seed order: `run_e5.sh` and `run_e5_bench.sh` start at a different seed on
 different nodes (rotation by a hash of the hostname, `E5_SEED_ORDER=fixed`
 disables it), so several nodes spread over the seeds instead of all taking

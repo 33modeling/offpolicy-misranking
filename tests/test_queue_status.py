@@ -181,6 +181,12 @@ def test_cli_and_queue_script_syntax(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.startswith("QUEUE STATUS") and "mixed pool: point" in result.stdout
     subprocess.run(["bash", "-n", str(ROOT / "scripts/run_queue.sh")], check=True)
+    subprocess.run(["bash", "-n", str(ROOT / "scripts/_node_watch.sh")], check=True)
+    env["OM_LOCAL_LOCK_DIR"] = str(tmp_path / "locks")
+    result = subprocess.run([sys.executable, str(ROOT / "src/queue_status.py"), "--record"], capture_output=True, text=True, env=env)
+    assert result.returncode == 0 and result.stdout == ""
+    import socket
+    assert (work / "queue" / f"{socket.gethostname()}.seen.json").is_file()
 
 
 def test_lease_notes_name_the_node_and_queue_notes_list_nodes(tmp_path):
@@ -214,8 +220,7 @@ def test_lease_notes_name_the_node_and_queue_notes_list_nodes(tmp_path):
     assert [l for l in lines if l.startswith("  qw-3 ")][0].endswith("(killed?)") and "NO HEARTBEAT" in text
     assert [l for l in lines if l.startswith("  qw-1 ")][0].endswith("queue finished 09-13 11:00Z")
     assert "  busy nodes: 1 (qw-7)" in text
-    assert "  idle nodes (nothing running when last seen; free if the allocation still exists): qw-1" in text
-    assert "  no heartbeat (probably killed; rerun the queue on a fresh node): qw-3" in text
+    assert "gone or silent" in text and "qw-1" in [l for l in lines if "gone or silent" in l][0]
     # a lease held without a note (job started before the notes existed)
     lock.write_text("")
     holder = os.open(lock, os.O_RDWR)
@@ -306,9 +311,9 @@ def test_seen_records_attribute_old_leases_and_list_idle_nodes(tmp_path, monkeyp
     by = {name: (state, lines) for name, state, lines in rows}
     assert by["reuse split-half d400"][1] == ["s0 -  s1 1/4 shards*[~qw-9] (no write yet)  s2 -"]
     assert "  busy nodes: 1 (~qw-9)" in text
-    assert "idle nodes (nothing running when last seen; free if the allocation still exists): qw-8" in text
-    assert "last seen more than 30 min ago (run status there to refresh): qw-6" in text
-    assert "seen 0m ago by status on that node: running reuse split-half d400" in text
+    assert "IDLE nodes (alive, nothing running; start the queue there): qw-8" in text
+    assert "qw-6" in [l for l in text.splitlines() if "gone or silent" in l][0]
+    assert "reported 0m ago from that node: running reuse split-half d400" in text
     # status leaves this node's own view behind
     monkeypatch.setenv("OM_LOCAL_LOCK_DIR", str(tmp_path / "locks"))
     qs.record_seen(work)

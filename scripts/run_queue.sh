@@ -12,17 +12,28 @@
 # continuation -> CPU analyses and the export bundle.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+export OM_ONLINE=0
+source scripts/setup_env.sh >/dev/null 2>&1
+# Every node that runs this command (run or status) gets a background watcher
+# that reports the node every minute, so the status on any node lists all of
+# them as busy, idle or gone (scripts/_node_watch.sh).
+ensure_watch() {
+  local pidfile="$OM_WORK/queue/$(hostname).watch.pid" pid
+  pid=$(cat "$pidfile" 2>/dev/null)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi
+  mkdir -p "$OM_WORK/queue"
+  setsid nohup bash scripts/_node_watch.sh >/dev/null 2>&1 < /dev/null &
+  disown 2>/dev/null || true
+  echo "[queue] node watcher started on $(hostname): this node now reports itself every minute"
+}
+ensure_watch
 if [ "${1:-run}" = status ]; then
-  # One screen: one line per queue step with a state word, seed detail below.
-  export OM_ONLINE=0
-  source scripts/setup_env.sh >/dev/null 2>&1
+  # One screen: nodes first, then one line per queue step with a state word.
   PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
   PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" "$PY" src/queue_status.py
   exit $?
 fi
 trap '' HUP
-export OM_ONLINE=0
-source scripts/setup_env.sh >/dev/null 2>&1
 # Per-node note on the shared filesystem: which step this node is on, plus a
 # heartbeat file touched every minute, so `run_queue.sh status` can list the
 # nodes and tell a live queue from a killed one.

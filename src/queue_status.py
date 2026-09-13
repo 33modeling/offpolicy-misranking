@@ -48,7 +48,7 @@ NODES: dict[str, list[str]] = {}
 INFERRED: set[str] = set()
 # host -> {'age', 'jobs', 'lock'}: what each node was running when `status` last ran there
 SEEN: dict[str, dict] = {}
-SEEN_FRESH_SECONDS = 1800
+SEEN_FRESH_SECONDS = 300   # the node watcher reports every minute
 
 
 # ---------------------------------------------------------------- helpers
@@ -564,21 +564,18 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
     busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive") or (fresh(h) and seen[h]["jobs"])]
     lines = [f"  busy nodes: {len(busy)} ({', '.join(disp(h) for h in busy) or 'none'})"
              + (f" + {len(unknown)} lease(s) on an unidentified node" if unknown else "")]
-    idle = [h for h in hosts if h not in busy and (notes.get(h, {}).get("step") in ("done", "stopped") or (fresh(h) and not seen[h]["jobs"]))]
+    idle = [h for h in hosts if h not in busy and fresh(h) and not seen[h]["jobs"]]
     if idle:
-        lines.append(f"  idle nodes (nothing running when last seen; free if the allocation still exists): {', '.join(disp(h) for h in idle)}")
-    dead = [h for h in hosts if h not in busy and h not in idle and h in notes and notes[h]["step"] not in ("done", "stopped") and not notes[h]["alive"]]
-    if dead:
-        lines.append(f"  no heartbeat (probably killed; rerun the queue on a fresh node): {', '.join(disp(h) for h in dead)}")
-    stale = [h for h in hosts if h not in busy and h not in idle and h not in dead]
-    if stale:
-        lines.append(f"  last seen more than {SEEN_FRESH_SECONDS // 60} min ago (run status there to refresh): {', '.join(disp(h) for h in stale)}")
-    lines.append("  (a node appears here once the queue or status has run on it; nodes never touched are invisible)")
+        lines.append(f"  IDLE nodes (alive, nothing running; start the queue there): {', '.join(disp(h) for h in idle)}")
+    gone = [h for h in hosts if h not in busy and h not in idle]
+    if gone:
+        lines.append(f"  gone or silent (no report for over {SEEN_FRESH_SECONDS // 60} min: allocation ended, killed, or never watched): {', '.join(disp(h) for h in gone)}")
+    lines.append("  (a node appears once run_queue.sh ran on it: its watcher then reports every minute; untouched nodes are invisible)")
     for host in hosts:
         note = notes.get(host)
         if note is None:
             head = ("lease holder inferred (job started before the lease notes)"
-                    if host in INFERRED else "no queue note (started by hand or before this version)")
+                    if host in INFERRED else "no queue running here")
         elif note["step"] == "done":
             head = f"queue finished {since_text(note['since'])}"
         elif note["step"] == "stopped":
@@ -592,7 +589,7 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
         if host in seen:
             s = seen[host]
             view = f"running {', '.join(s['jobs'])}" if s["jobs"] else ("GPU lock held by a non-queue job" if s["lock"] else "idle")
-            lines.append(f"  {'':<10}   seen {age_text(s['age'])} ago by status on that node: {view}")
+            lines.append(f"  {'':<10}   reported {age_text(s['age'])} ago from that node: {view}")
         for what in NODES.get(host, []):
             lines.append(f"  {'':<10}   holds: {what}")
     for what in unknown:
@@ -689,10 +686,14 @@ def main(argv=None) -> int:
     parser.add_argument("--mix-other", default=os.environ.get("MIX_OTHER", "mbpp"))
     parser.add_argument("--mix-seed", type=int, default=int(os.environ.get("MIX_SEED", "0")))
     parser.add_argument("--mix-steps", type=int, default=int(os.environ.get("MIX_STEPS", "200")))
+    parser.add_argument("--record", action="store_true", help="only write this node's report under $OM_WORK/queue (used by the watcher)")
     args = parser.parse_args(argv)
     if not str(args.work):
         print("[abort] OM_WORK not set", file=sys.stderr)
         return 2
+    if args.record:
+        record_seen(args.work)
+        return 0
     root = args.root or Path(os.environ.get("OM_OLMO3_ROOT") or (args.work / "runs" / args.tag))
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     header = f"QUEUE STATUS  {stamp}  code={git_short()}"
