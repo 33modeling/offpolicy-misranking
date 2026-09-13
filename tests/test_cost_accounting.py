@@ -147,6 +147,13 @@ def test_stage_fallback_from_artifact_timestamps_and_resumed_eval_shard(tmp_path
     assert record["per_prompt"]["fresh_scoring_gpu_seconds"] == pytest.approx((120 + 240) * 60 * 4 / 400)
     assert record["per_prompt"]["reuse_scoring_gpu_seconds"] == pytest.approx(60 * 60 * 4 / 400)
     assert "[from artifact timestamps]" in ca.render({"e5": [], "logging_overhead": [], "matrix": [record], "suggested_rule_costs": {}})
+    # a rewritten artifact (minutes after the previous stage) or a days-long gap is not a stage duration
+    os.utime(run / "rollouts_fresh_train.jsonl", (base + 92 * 60, base + 92 * 60))
+    os.utime(run / "scores_offpolicy.json", (base + 5 * 86400, base + 5 * 86400))
+    record = ca.point_costs(run)
+    assert "fresh_rollout" not in record["stage_seconds"] and "offpolicy_scores" not in record["stage_seconds"]
+    assert record["per_prompt"]["fresh_scoring_gpu_seconds"] is None and record["per_prompt"]["reuse_scoring_gpu_seconds"] is None
+    assert record["per_prompt"]["behavior_cache_gpu_seconds"] == pytest.approx(30 * 60 * 4 / 400)
     arm = tmp_path / "arm"
     ev = arm / "evaluation"
     ev.mkdir(parents=True)

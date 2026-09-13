@@ -76,8 +76,16 @@ STAGE_ARTIFACTS = (("prep", ("prompts.json",)), ("behavior_rollout", ("rollouts_
                    ("offpolicy_scores", ("scores_offpolicy.json",)), ("merge_report", ("report.json",)), ("done", ("DONE",)))
 
 
+# Plausible wall-time window (seconds) of each stage on a four-GPU node. A gap between artifact
+# write times outside its window is not a stage duration: it spans idle time between attempts, or
+# the artifact was rewritten later (for example by a rescoring pass), and is reported as unknown.
+STAGE_WINDOWS = {"behavior_rollout": (900, 12 * 3600), "grpo": (1800, 24 * 3600), "fresh_rollout": (3600, 12 * 3600),
+                 "oracle_val_gradients": (300, 12 * 3600), "offpolicy_scores": (180, 12 * 3600), "merge_report": (0, 3600),
+                 "done": (0, 3600)}
+
+
 def stage_durations_from_artifacts(run: Path, drift: int) -> dict:
-    """Fallback stage durations from artifact write times (last write; may include idle time)."""
+    """Fallback stage durations from artifact write times, kept only inside STAGE_WINDOWS."""
     ends = []
     for name, files in STAGE_ARTIFACTS:
         if name == "grpo" and drift <= 0:
@@ -87,7 +95,8 @@ def stage_durations_from_artifacts(run: Path, drift: int) -> dict:
             ends.append((name, max(times)))
     stages = {}
     for (name, end), (_, previous) in zip(ends[1:], ends):
-        if end >= previous:
+        low, high = STAGE_WINDOWS.get(name, (0, float("inf")))
+        if low <= end - previous <= high:
             stages[name] = end - previous
     complete = bool(ends) and ends[-1][0] == "done"
     return {"stages": stages, "attempts": 0, "complete": complete,
