@@ -489,13 +489,13 @@ def exports_state(work: Path) -> tuple[str, list[str]]:
 
 # ---------------------------------------------------------------- nodes
 
-def queue_notes(work: Path) -> dict[str, dict]:
+def queue_notes(work: Path, now: float | None = None) -> dict[str, dict]:
     """host -> {'step', 'since', 'alive', 'beat_age'} from $OM_WORK/queue/<host>.txt and .beat."""
     notes = {}
     directory = work / "queue"
     if not directory.is_dir():
         return notes
-    now = time.time()
+    now = time.time() if now is None else now
     for note in sorted(directory.glob("*.txt")):
         try:
             fields = parse_note(note.read_text(encoding="utf-8", errors="replace"))
@@ -504,7 +504,7 @@ def queue_notes(work: Path) -> dict[str, dict]:
             continue
         beat = note.with_suffix(".beat")
         try:
-            beat_seconds = int(now - beat.stat().st_mtime) if beat.is_file() else None
+            beat_seconds = max(0, int(now - beat.stat().st_mtime)) if beat.is_file() else None
         except OSError:
             beat_seconds = None
         if note_age > NOTE_MAX_AGE_SECONDS and (beat_seconds is None or beat_seconds > NOTE_MAX_AGE_SECONDS):
@@ -516,14 +516,15 @@ def queue_notes(work: Path) -> dict[str, dict]:
     return notes
 
 
-def seen_nodes(work: Path) -> dict[str, dict]:
-    """host -> {'age', 'jobs', 'lock'} from $OM_WORK/queue/<host>.seen.json (written by every `status` run)."""
+def seen_nodes(work: Path, now: float | None = None) -> dict[str, dict]:
+    """host -> {'age', 'jobs', 'lock', 'gpu_busy', 'gpu'} from $OM_WORK/queue/<host>.seen.json
+    (written by the node watchers); ages against `now` (the shared filesystem clock when given)."""
     import json
     seen = {}
     directory = work / "queue"
     if not directory.is_dir():
         return seen
-    now = time.time()
+    now = time.time() if now is None else now
     for path in directory.glob("*.seen.json"):
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
@@ -532,25 +533,35 @@ def seen_nodes(work: Path) -> dict[str, dict]:
             continue
         if seconds > NOTE_MAX_AGE_SECONDS or not isinstance(record, dict):
             continue
+        util = [int(u) for u in record.get("gpu_util", []) if isinstance(u, int)]
+        procs = [str(x) for x in record.get("gpu_procs", [])]
         seen[str(record.get("host", path.name.split(".")[0]))] = {
-            "age": seconds, "jobs": [str(j) for j in record.get("jobs", [])], "lock": bool(record.get("lock"))}
+            "age": max(0, seconds), "jobs": [str(j) for j in record.get("jobs", [])], "lock": bool(record.get("lock")),
+            "gpu_busy": bool(record.get("gpu_busy")),
+            "gpu": (f"GPU util {'/'.join(str(u) for u in util)}%" if util else "") + (f", {'; '.join(procs)[:100]}" if procs else "")}
     return seen
 
 
-def record_seen(work: Path) -> None:
-    """Leave this node's process view under $OM_WORK/queue so the overview on any node knows it (best effort)."""
+def record_seen(work: Path) -> float | None:
+    """Leave this node's view (queue steps, node lock, nvidia-smi) under $OM_WORK/queue so the overview
+    on any node knows it (best effort). Returns the written file's mtime: the shared filesystem's
+    clock, which the freshness of other nodes' reports is measured against (node clocks may differ)."""
     import json
     directory = Path(os.environ.get("OM_LOCAL_LOCK_DIR", f"/tmp/offpolicy-misranking-{os.getuid()}"))
+    gpu = gpu_snapshot()
     record = {"host": socket.gethostname(), "utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "jobs": node_jobs(), "lock": lease_held(directory / "primary.lock")}
+              "jobs": node_jobs(), "lock": lease_held(directory / "primary.lock"),
+              "gpu_util": gpu.get("util", []), "gpu_procs": sorted({p["cmd"] for p in gpu.get("procs", [])}),
+              "gpu_busy": gpu_busy(gpu)}
     try:
         (work / "queue").mkdir(parents=True, exist_ok=True)
         target = work / "queue" / f"{record['host']}.seen.json"
         tmp = target.with_suffix(".tmp")
         tmp.write_text(json.dumps(record) + "\n", encoding="utf-8")
         tmp.replace(target)
+        return target.stat().st_mtime
     except OSError:
-        pass
+        return None
 
 
 def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> list[str]:
@@ -559,8 +570,9 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
     hosts = sorted(set(notes) | set(NODES) | set(seen), key=short_host)
     fresh = lambda h: seen.get(h, {}).get("age", 10**9) < SEEN_FRESH_SECONDS  # noqa: E731
     disp = lambda h: ("~" if h in INFERRED else "") + short_host(h)  # noqa: E731
-    busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive") or (fresh(h) and seen[h]["jobs"])]
-    idle = [h for h in hosts if h not in busy and fresh(h) and not seen[h]["jobs"]]
+    busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive")
+            or (fresh(h) and (seen[h]["jobs"] or seen[h].get("gpu_busy") or seen[h]["lock"]))]
+    idle = [h for h in hosts if h not in busy and fresh(h)]
     gone = [h for h in hosts if h not in busy and h not in idle]
     reporting = [h for h in hosts if fresh(h)]
     lines = [f"  nodes reporting now: {len(reporting)}  (only nodes where run_queue.sh ran once; others are invisible)",
@@ -586,6 +598,10 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
         if host in seen:
             s = seen[host]
             view = f"running {', '.join(s['jobs'])}" if s["jobs"] else ("GPU lock held by a non-queue job" if s["lock"] else "idle")
+            if s.get("gpu"):
+                view += f" | {s['gpu']}"
+            if s.get("gpu_busy") and not s["jobs"]:
+                view += " | GPUs busy but no queue step visible: job started outside the queue or from another shell"
             lines.append(f"  {'':<10}   reported {age_text(s['age'])} ago from that node: {view}")
         for what in NODES.get(host, []):
             lines.append(f"  {'':<10}   holds: {what}")
@@ -625,16 +641,64 @@ def node_jobs() -> list[str]:
     return sorted({job_label(m) for m in markers if m})
 
 
+def gpu_snapshot() -> dict:
+    """What nvidia-smi sees on this node: per-GPU utilisation (%) and the compute processes.
+    {} when nvidia-smi is unavailable. A process whose /proc entry is not readable from this
+    shell is reported as 'not visible' (different container or namespace)."""
+    try:
+        util = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used", "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=20)
+        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if util.returncode != 0:
+        return {}
+    snapshot = {"util": [], "mem_mb": [], "procs": []}
+    for line in util.stdout.splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) >= 2 and parts[0].isdigit():
+            snapshot["util"].append(int(parts[0]))
+            snapshot["mem_mb"].append(int(parts[1]) if parts[1].isdigit() else 0)
+    if apps.returncode == 0:
+        for line in apps.stdout.splitlines():
+            parts = [x.strip() for x in line.split(",")]
+            if len(parts) < 2 or not parts[0].isdigit():
+                continue
+            pid, name = parts[0], parts[1].split("/")[-1]
+            try:
+                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+                cmd = " ".join(w.split("/")[-1] for w in cmd.split()[:3]) or name
+            except OSError:
+                cmd = f"{name} (pid {pid}, not visible from this shell)"
+            snapshot["procs"].append({"pid": int(pid), "cmd": cmd})
+    return snapshot
+
+
+def gpu_text(snapshot: dict) -> str:
+    if not snapshot:
+        return "nvidia-smi unavailable"
+    util = "/".join(str(u) for u in snapshot.get("util", [])) or "?"
+    procs = snapshot.get("procs", [])
+    names = sorted({p["cmd"] for p in procs})
+    return f"GPU util {util}%, {len(procs)} GPU process(es)" + (f": {'; '.join(names)[:120]}" if names else "")
+
+
+def gpu_busy(snapshot: dict) -> bool:
+    return bool(snapshot) and (bool(snapshot.get("procs")) or max(snapshot.get("util", [0]) or [0]) >= 10)
+
+
 def node_line() -> str:
     directory = Path(os.environ.get("OM_LOCAL_LOCK_DIR", f"/tmp/offpolicy-misranking-{os.getuid()}"))
     lock = directory / "primary.lock"
     jobs = node_jobs()
     held = lease_held(lock)
-    if jobs:
-        return f"this node ({socket.gethostname()}): BUSY, running {', '.join(jobs)}" + ("" if held else " (node lock free)")
-    if held:
-        return f"this node ({socket.gethostname()}): BUSY, GPU lock held by a non-queue job"
-    return f"this node ({socket.gethostname()}): IDLE, nothing running here -> bash scripts/run_queue.sh"
+    gpu = gpu_snapshot()
+    host = socket.gethostname()
+    markers = f"queue steps here: {', '.join(jobs)}" if jobs else "no queue step visible from this shell"
+    if jobs or gpu_busy(gpu) or held:
+        return f"this node ({host}): BUSY. {gpu_text(gpu)}. {markers}" + ("; node lock held" if held else "")
+    return f"this node ({host}): IDLE. {gpu_text(gpu)}. {markers} -> bash scripts/run_queue.sh"
 
 
 # ---------------------------------------------------------------- report
@@ -696,11 +760,11 @@ def main(argv=None) -> int:
     root = args.root or Path(os.environ.get("OM_OLMO3_ROOT") or (args.work / "runs" / args.tag))
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     header = f"QUEUE STATUS  {stamp}  code={git_short()}"
-    record_seen(args.work)
+    fs_now = record_seen(args.work)
     SEEN.clear()
-    SEEN.update(seen_nodes(args.work))
+    SEEN.update(seen_nodes(args.work, fs_now))
     rows = build_rows(args.work, root, args.tag, args.seeds, args.mix_other, args.mix_seed, args.mix_steps)
-    print(render(rows, header, node_line(), queue_notes(args.work)))
+    print(render(rows, header, node_line(), queue_notes(args.work, fs_now)))
     return 0
 
 

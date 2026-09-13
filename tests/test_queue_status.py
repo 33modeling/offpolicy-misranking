@@ -321,3 +321,34 @@ def test_seen_records_attribute_old_leases_and_list_idle_nodes(tmp_path, monkeyp
     import socket
     record = json.loads((notes / f"{socket.gethostname()}.seen.json").read_text())
     assert record["host"] == socket.gethostname() and isinstance(record["jobs"], list) and record["lock"] is False
+
+
+def test_gpu_state_marks_a_node_busy_even_without_queue_markers(tmp_path, monkeypatch):
+    work, root = _tree(tmp_path)
+    notes = work / "queue"
+    notes.mkdir()
+    (notes / "run1-qw-5.seen.json").write_text(json.dumps({"host": "run1-qw-5", "jobs": [], "lock": False,
+                                                            "gpu_util": [98, 97, 99, 96], "gpu_procs": ["python src/benchmark_eval.py evaluate"], "gpu_busy": True}))
+    (notes / "run1-qw-4.seen.json").write_text(json.dumps({"host": "run1-qw-4", "jobs": [], "lock": False, "gpu_util": [0, 0, 0, 0], "gpu_procs": [], "gpu_busy": False}))
+    qs.SEEN.clear()
+    qs.SEEN.update(qs.seen_nodes(work))
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+        text = qs.render(rows, "HDR", "NODE", {})
+    finally:
+        qs.SEEN.clear()
+    assert "  BUSY 1: qw-5" in text and "  IDLE 1 (alive, nothing running; start the queue there): qw-4" in text
+    assert "GPU util 98/97/99/96%, python src/benchmark_eval.py evaluate | GPUs busy but no queue step visible" in text
+    # this node: nvidia-smi absent here -> classification falls back to the markers
+    monkeypatch.setattr(qs, "gpu_snapshot", lambda: {})
+    monkeypatch.setenv("OM_LOCAL_LOCK_DIR", str(tmp_path / "locks"))
+    assert "IDLE. nvidia-smi unavailable." in qs.node_line() or "BUSY." in qs.node_line()
+    monkeypatch.setattr(qs, "gpu_snapshot", lambda: {"util": [95, 90, 99, 97], "mem_mb": [1, 1, 1, 1], "procs": [{"pid": 1, "cmd": "python train_policy_grpo.py"}]})
+    line = qs.node_line()
+    assert line.startswith(f"this node ({__import__('socket').gethostname()}): BUSY. GPU util 95/90/99/97%, 1 GPU process(es): python train_policy_grpo.py")
+    # the filesystem clock is used for freshness: a report 10 minutes ahead of this node's clock is still fresh
+    import time
+    fs_now = time.time() + 600
+    (notes / "run1-qw-4.seen.json").touch()
+    os.utime(notes / "run1-qw-4.seen.json", (fs_now - 30, fs_now - 30))
+    assert qs.seen_nodes(work, fs_now)["run1-qw-4"]["age"] == 30
