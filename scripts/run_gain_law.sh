@@ -24,7 +24,7 @@ prefix="$OM_WORK/exports/gain-law-$stamp"
   rc=0
   echo "# gain law export $stamp host=$(hostname) code=$(git rev-parse --short HEAD 2>/dev/null) root=$ROOT"
   "$PY" src/gain_vs_reliability.py --root "$ROOT" --frac "${OM_TOPK_FRAC:-0.1}" --out "$prefix" || { echo "[gain-law] matrix analysis failed"; rc=1; }
-  echo; echo "### synthetic calibration (n=400, k=40)"
+  echo; echo "## synthetic calibration (n=400, k=40)"
   "$PY" src/gain_law_simulation.py --n 400 --frac 0.1 --reps "${GAIN_LAW_REPS:-300}" --out "$prefix-synthetic" || rc=1
   exit "$rc"
 } 2>&1 | tee "$prefix.txt"

@@ -124,3 +124,36 @@ def test_cli_and_script_syntax(tmp_path):
     assert result.returncode == 0 and "suggested cost_per_prompt_seconds" in result.stdout, result.stdout + result.stderr
     assert (work / "exports" / "cost-accounting.json").is_file()
     subprocess.run(["bash", "-n", str(ROOT / "scripts/run_cost_accounting.sh")], check=True)
+
+
+def test_stage_fallback_from_artifact_timestamps_and_resumed_eval_shard(tmp_path):
+    run = tmp_path / "family-math500-s0" / "point-s0-math500-d400"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs" / "main.log").write_text("[2026-09-08 10:00:00] no progress lines in this older log\n")
+    (run / "run_config.json").write_text(json.dumps({"dataset": "math500", "seed": 0, "drift": 400, "grpo_world_size": 4}))
+    (run / "prompts.json").write_text(json.dumps({"train": [{"question": str(i), "answer": "1"} for i in range(400)], "val": []}))
+    (run / "policy_step_400").mkdir()
+    base = 1_700_000_000
+    for name, minutes in (("prompts.json", 0), ("rollouts_behavior_train.jsonl", 30), ("policy_step_400/policy_train.json", 90),
+                          ("rollouts_fresh_train.jsonl", 210), ("oracle_micro_groups.pt", 450), ("scores_offpolicy.json", 510),
+                          ("report.json", 511), ("DONE", 512)):
+        path = run / name
+        if not path.exists():
+            path.write_text("x")
+        os.utime(path, (base + minutes * 60, base + minutes * 60))
+    record = ca.point_costs(run)
+    assert record["stage_source"] == "artifact timestamps" and record["complete"]
+    assert record["stage_seconds"]["fresh_rollout"] == pytest.approx(120 * 60)
+    assert record["per_prompt"]["fresh_scoring_gpu_seconds"] == pytest.approx((120 + 240) * 60 * 4 / 400)
+    assert record["per_prompt"]["reuse_scoring_gpu_seconds"] == pytest.approx(60 * 60 * 4 / 400)
+    assert "[from artifact timestamps]" in ca.render({"e5": [], "logging_overhead": [], "matrix": [record], "suggested_rule_costs": {}})
+    arm = tmp_path / "arm"
+    ev = arm / "evaluation"
+    ev.mkdir(parents=True)
+    for shard, seconds in enumerate((3600, 3700, 3500, 200_000)):
+        (ev / f"shard-{shard}.contract.json").write_text("{}")
+        (ev / f"shard-{shard}.done.json").write_text("{}")
+        os.utime(ev / f"shard-{shard}.contract.json", (base, base))
+        os.utime(ev / f"shard-{shard}.done.json", (base + seconds, base + seconds))
+    total, shards, resumed = ca.evaluation_seconds(arm)
+    assert shards == 4 and resumed == 1 and total == pytest.approx(3600 + 3700 + 3500 + 3600)

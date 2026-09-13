@@ -42,7 +42,7 @@ rc=0
     for seed in "${SEEDS[@]}"; do
       run="$ROOT/family-math500-s$seed/$TAG-s$seed-math500-d$drift"
       e5="$OM_WORK/runs/e5-reduced/math500-d$drift/s$seed"
-      echo; echo "### d$drift seed $seed"
+      echo; echo "## d$drift seed $seed"
       [ -s "$run/DONE" ] || { echo "source point not complete: $run"; continue; }
       if [ -d "$e5" ]; then
         "$PY" src/gate_decision.py decide --run "$run" --rule "$RULE" --e5 "$e5" || rc=1
@@ -51,7 +51,7 @@ rc=0
       fi
     done
   done
-  echo; echo "### pilot size table"
+  echo; echo "## pilot size table"
   "$PY" src/gate_decision.py table --r-min "$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["r_min"])' "$RULE")" \
     --confidence "$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["confidence"])' "$RULE")" || rc=1
   exit "$rc"

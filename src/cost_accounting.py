@@ -67,6 +67,33 @@ def stage_durations(events: list[dict]) -> dict:
             "labels": {STAGE_NAMES.get(e["stage"], str(e["stage"])): e["label"] for e in attempt}}
 
 
+# Stage-end artifacts of a point, in pipeline order, for points whose main.log
+# predates the runner's [progress] lines: a stage's duration is the gap between
+# the last write of its artifact and the previous stage's artifact.
+STAGE_ARTIFACTS = (("prep", ("prompts.json",)), ("behavior_rollout", ("rollouts_behavior_train.jsonl",)),
+                   ("grpo", ("policy_step_{drift}/policy_train.json",)), ("fresh_rollout", ("rollouts_fresh_train.jsonl",)),
+                   ("oracle_val_gradients", ("oracle_micro_groups.pt", "val_gradient.pt")),
+                   ("offpolicy_scores", ("scores_offpolicy.json",)), ("merge_report", ("report.json",)), ("done", ("DONE",)))
+
+
+def stage_durations_from_artifacts(run: Path, drift: int) -> dict:
+    """Fallback stage durations from artifact write times (last write; may include idle time)."""
+    ends = []
+    for name, files in STAGE_ARTIFACTS:
+        if name == "grpo" and drift <= 0:
+            continue
+        times = [(run / f.format(drift=drift)).stat().st_mtime for f in files if (run / f.format(drift=drift)).is_file()]
+        if times:
+            ends.append((name, max(times)))
+    stages = {}
+    for (name, end), (_, previous) in zip(ends[1:], ends):
+        if end >= previous:
+            stages[name] = end - previous
+    complete = bool(ends) and ends[-1][0] == "done"
+    return {"stages": stages, "attempts": 0, "complete": complete,
+            "wall_seconds_all_attempts": (ends[-1][1] - ends[0][1]) if len(ends) > 1 else None, "labels": {}}
+
+
 def point_costs(run: Path) -> dict | None:
     log = run / "logs" / "main.log"
     if not log.is_file():
@@ -74,7 +101,13 @@ def point_costs(run: Path) -> dict | None:
     config = json.loads((run / "run_config.json").read_text()) if (run / "run_config.json").is_file() else {}
     prompts = json.loads((run / "prompts.json").read_text()) if (run / "prompts.json").is_file() else {}
     n = len(prompts.get("train", [])) or None
-    durations = stage_durations(parse_progress(log.read_text(encoding="utf-8", errors="replace")))
+    events = parse_progress(log.read_text(encoding="utf-8", errors="replace"))
+    if events:
+        durations = stage_durations(events)
+        stage_source = "progress log"
+    else:
+        durations = stage_durations_from_artifacts(run, int(config.get("drift") or 0))
+        stage_source = "artifact timestamps"
     gpus = int(config.get("grpo_world_size") or GPUS_PER_NODE)
     stages = durations["stages"]
     per_prompt = {}
@@ -90,7 +123,7 @@ def point_costs(run: Path) -> dict | None:
     return {"run": str(run), "dataset": config.get("dataset"), "seed": config.get("seed"), "drift": config.get("drift"),
             "candidates": n, "gpus": gpus, "complete": durations["complete"], "attempts": durations["attempts"],
             "stage_seconds": stages, "wall_seconds_all_attempts": durations["wall_seconds_all_attempts"],
-            "per_prompt": per_prompt,
+            "per_prompt": per_prompt, "stage_source": stage_source,
             "cost_scope": "research stages; fresh includes reference/evaluation work; reuse covers all four estimators"}
 
 
@@ -118,16 +151,29 @@ def step_seconds(stats: Path) -> list[float]:
     return values
 
 
-def evaluation_seconds(arm_dir: Path) -> tuple[float | None, int]:
-    """Sum over shards of done.json mtime minus contract.json mtime (one GPU each)."""
-    total, shards = 0.0, 0
+def evaluation_seconds(arm_dir: Path) -> tuple[float | None, int, int]:
+    """Sum over shards of done.json mtime minus contract.json mtime (one GPU each). The contract is
+    bound at the first attempt, so a shard resumed after an interruption spans idle time: a shard
+    above 2.5x the median of the other shards (and above an hour) is replaced by that median and
+    counted in the third value."""
+    values = []
     for shard in range(4):
         done = arm_dir / "evaluation" / f"shard-{shard}.done.json"
         contract = arm_dir / "evaluation" / f"shard-{shard}.contract.json"
         if done.is_file() and contract.is_file():
-            total += max(0.0, done.stat().st_mtime - contract.stat().st_mtime)
-            shards += 1
-    return (total if shards else None), shards
+            values.append(max(0.0, done.stat().st_mtime - contract.stat().st_mtime))
+    if not values:
+        return None, 0, 0
+    repaired, resumed = [], 0
+    for i, value in enumerate(values):
+        others = values[:i] + values[i + 1:]
+        median = statistics.median(others) if others else value
+        if others and value > 2.5 * median and value > 3600:
+            repaired.append(median)
+            resumed += 1
+        else:
+            repaired.append(value)
+    return sum(repaired), len(values), resumed
 
 
 def benchmark_seconds(arm_dir: Path) -> float | None:
@@ -153,12 +199,12 @@ def seed_costs(seed_dir: Path) -> list[dict]:
         arm_dir = seed_dir / arm
         train = step_seconds(arm_dir / "policy" / "grpo_stats.jsonl")
         pilot = step_seconds(arm_dir / "pilot" / "grpo_stats.jsonl")
-        eval_s, shards = evaluation_seconds(arm_dir)
+        eval_s, shards, resumed = evaluation_seconds(arm_dir)
         rows.append({"branch": seed_dir.parent.name, "seed": contract["seed"], "arm": arm,
                      "train_steps": len(train), "train_gpu_seconds": sum(train) * GPUS_PER_NODE if train else None,
                      "step_seconds_mean": statistics.fmean(train) if train else None,
                      "pilot_steps": len(pilot), "pilot_gpu_seconds": sum(pilot) * GPUS_PER_NODE if pilot else None,
-                     "eval_gpu_seconds": eval_s, "eval_shards": shards,
+                     "eval_gpu_seconds": eval_s, "eval_shards": shards, "eval_resumed_shards": resumed,
                      "benchmark_gpu_seconds": benchmark_seconds(arm_dir)})
     return rows
 
@@ -202,7 +248,8 @@ def render(report: dict) -> str:
     for r in report["e5"]:
         lines.append(f"  {r['branch']:13s} {r['seed']:4d} {r['arm']:15s} {r['train_steps']:5d} {f(r['train_gpu_seconds'], 12)} "
                      f"{('-' if r['step_seconds_mean'] is None else f'{r['step_seconds_mean']:.1f}').rjust(7)} {f(r['pilot_gpu_seconds'], 12)} "
-                     f"{f(r['eval_gpu_seconds'], 12)} {f(r['benchmark_gpu_seconds'], 12)}")
+                     f"{f(r['eval_gpu_seconds'], 12)} {f(r['benchmark_gpu_seconds'], 12)}"
+                     + (f"  [{r['eval_resumed_shards']} resumed eval shard(s) set to the median]" if r.get("eval_resumed_shards") else ""))
     lines.append("reliability-logging overhead (random arm, rlog root vs benchmark root)")
     for r in report["logging_overhead"]:
         lines.append(f"  {r['branch']:13s} seed {r['seed']}: logged {r['logged_step_seconds']:.1f}s plain {r['plain_step_seconds']:.1f}s "
@@ -216,7 +263,8 @@ def render(report: dict) -> str:
         lines.append(f"  {str(p['dataset']):8s} {str(p['seed']):>4s} {str(p['drift']):>5s} {f(s.get('behavior_rollout'))} {f(s.get('grpo'))} "
                      f"{f(s.get('fresh_rollout'))} {f(s.get('oracle_val_gradients'), 11)} {f(s.get('offpolicy_scores'), 10)} | "
                      f"{f(pp.get('behavior_cache_gpu_seconds'), 8)} {f(pp.get('fresh_scoring_gpu_seconds'), 7)} {f(pp.get('reuse_scoring_gpu_seconds'), 7)}"
-                     + ("" if p["complete"] else "  [last attempt incomplete]"))
+                     + ("" if p["complete"] else "  [last attempt incomplete]")
+                     + ("  [from artifact timestamps]" if p.get("stage_source") == "artifact timestamps" else ""))
     if not report["matrix"]:
         lines.append("  (no point with logs/main.log found)")
     lines.append("suggested cost_per_prompt_seconds for config/gate_rule.json: "

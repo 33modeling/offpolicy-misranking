@@ -57,6 +57,10 @@ def test_point_rows_read_fresh_and_difficulty_halves(tmp_path):
 def test_gaussian_family_follows_sqrt_rho_and_bernoulli_departs():
     gauss = sim.simulate("gaussian", 0.5, 400, 40, 40, seed=1)
     assert gauss["latent_ratio"] == pytest.approx(math.sqrt(gauss["rho_measured"]), abs=0.06)
+    assert gauss["pool_ratio"] <= gauss["latent_ratio"] + 0.02  # mean of per-pool ratios is the smaller statistic
+    # the theorem's estimand at n=2, k=1, rho=1/4 is exactly 1/2; the per-pool mean is (2/pi) asin(1/2) = 1/3
+    tiny = sim.simulate("gaussian", 0.25, 2, 1, 20000, seed=20260913)
+    assert tiny["latent_ratio"] == pytest.approx(0.5, abs=0.03) and tiny["pool_ratio"] == pytest.approx(1 / 3, abs=0.03)
     assert gauss["cross_gain"] == pytest.approx(gauss["predicted"], abs=0.12)
     bern = sim.simulate("bernoulli", 0.3, 400, 40, 40, seed=2)
     assert 0 < bern["rho_measured"] < 1 and bern["reps"] == 40
