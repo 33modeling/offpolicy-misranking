@@ -79,6 +79,7 @@ def test_fresh_tree_is_all_todo_or_waiting(tmp_path):
     assert states["analyses + export"] == "TODO"
     text = qs.render(rows, "HDR", "NODE")
     assert text.splitlines()[0] == "HDR" and "TODO 5" in text and "WAITING 5" in text
+    assert text.index("NODES") < text.index("STEPS") < text.index("mixed pool: pool")
 
 
 def test_progress_states_and_leases(tmp_path):
@@ -212,7 +213,7 @@ def test_lease_notes_name_the_node_and_queue_notes_list_nodes(tmp_path):
     assert [l for l in lines if l.startswith("  qw-3 ")][0].endswith("(killed?)") and "NO HEARTBEAT" in text
     assert [l for l in lines if l.startswith("  qw-1 ")][0].endswith("queue finished 09-13 11:00Z")
     assert "  busy nodes: 1 (qw-7)" in text
-    assert "  idle nodes (queue finished there; free if the allocation still exists): qw-1" in text
+    assert "  idle nodes (nothing running when last seen; free if the allocation still exists): qw-1" in text
     assert "  no heartbeat (probably killed; rerun the queue on a fresh node): qw-3" in text
     # a lease held without a note (job started before the notes existed)
     lock.write_text("")
@@ -263,7 +264,7 @@ def test_old_leases_are_attributed_from_launcher_logs(tmp_path):
     finally:
         os.close(holder)
     assert "  busy nodes: 1 (~qw-2)" in text
-    assert "inferred from its launcher log" in text and "holds: d100 s0 random (train 12/100)" in text
+    assert "lease holder inferred" in text and "holds: d100 s0 random (train 12/100)" in text
     # no launcher log at all: the lease is listed under an unidentified node
     for log in (out / "logs").glob("launcher-*.log"):
         log.unlink()
@@ -276,3 +277,40 @@ def test_old_leases_are_attributed_from_launcher_logs(tmp_path):
         os.close(holder)
     assert "busy nodes: 0 (none) + 1 lease(s) on an unidentified node" in text
     assert "  ?          holds: d100 s0 random (train 12/100)" in text
+
+
+def test_seen_records_attribute_old_leases_and_list_idle_nodes(tmp_path, monkeypatch):
+    work, root = _tree(tmp_path)
+    run1 = root / "family-math500-s1" / f"{TAG}-s1-math500-d400"
+    (run1 / "scores_stale_splithalf.shard0.json").write_text("{}")
+    lock = run1 / ".stale-splithalf.lock"
+    lock.write_text("")
+    holder = os.open(lock, os.O_RDWR)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    notes = work / "queue"
+    notes.mkdir()
+    (notes / "run1-qw-9.seen.json").write_text(json.dumps({"host": "run1-qw-9", "jobs": ["reuse split-half d400"], "lock": True}))
+    (notes / "run1-qw-8.seen.json").write_text(json.dumps({"host": "run1-qw-8", "jobs": [], "lock": False}))
+    (notes / "run1-qw-6.seen.json").write_text(json.dumps({"host": "run1-qw-6", "jobs": ["E5 arms math500-d100"], "lock": True}))
+    import time
+    os.utime(notes / "run1-qw-6.seen.json", (time.time() - 3600, time.time() - 3600))
+    qs.SEEN.clear()
+    qs.SEEN.update(qs.seen_nodes(work))
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+        text = qs.render(rows, "HDR", "NODE", {})
+    finally:
+        os.close(holder)
+        qs.SEEN.clear()
+    by = {name: (state, lines) for name, state, lines in rows}
+    assert by["reuse split-half d400"][1] == ["s0 -  s1 1/4 shards*[~qw-9]  s2 -"]
+    assert "  busy nodes: 1 (~qw-9)" in text
+    assert "idle nodes (nothing running when last seen; free if the allocation still exists): qw-8" in text
+    assert "last seen more than 30 min ago (run status there to refresh): qw-6" in text
+    assert "seen 0m ago by status on that node: running reuse split-half d400" in text
+    # status leaves this node's own view behind
+    monkeypatch.setenv("OM_LOCAL_LOCK_DIR", str(tmp_path / "locks"))
+    qs.record_seen(work)
+    import socket
+    record = json.loads((notes / f"{socket.gethostname()}.seen.json").read_text())
+    assert record["host"] == socket.gethostname() and isinstance(record["jobs"], list) and record["lock"] is False

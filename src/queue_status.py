@@ -13,8 +13,11 @@ Seed-level detail follows on indented lines; a held lease is marked
 predates the notes). A ``nodes`` section lists every node that ran the
 queue (note + heartbeat under $OM_WORK/queue) and the leases it holds, and
 ``this node`` lists the queue processes on the current machine. Everything
-is read from the filesystem; no GPU, nothing is written, no lease is taken
-(the lease probe releases immediately).
+is read from the filesystem; no GPU, no lease is taken (the lease probe
+releases immediately). The only write is this node's own process view,
+$OM_WORK/queue/<host>.seen.json, so that the overview on any node knows what
+every node where status has run was doing (and can attribute leases taken
+before the lease notes existed). Run status once on each allocated node.
 
     python src/queue_status.py [--work $OM_WORK] [--root $OM_OLMO3_ROOT] [--tag TAG] [--seeds 0 1 2]
 """
@@ -39,8 +42,13 @@ STATES = ("DONE", "RUNNING", "PARTIAL", "WAITING", "TODO")
 HEARTBEAT_ALIVE_SECONDS = 300
 NOTE_MAX_AGE_SECONDS = 3 * 86400
 
-# host -> list of "what" strings, filled while the rows are built
+# host -> list of "what" strings, filled while the rows are built; hosts whose
+# identity was inferred (launcher log or a status run there) are in INFERRED
 NODES: dict[str, list[str]] = {}
+INFERRED: set[str] = set()
+# host -> {'age', 'jobs', 'lock'}: what each node was running when `status` last ran there
+SEEN: dict[str, dict] = {}
+SEEN_FRESH_SECONDS = 1800
 
 
 # ---------------------------------------------------------------- helpers
@@ -107,9 +115,18 @@ def launcher_host(logs_dir: Path, prefix: str) -> tuple[str, int] | None:
     return newest[0], max(0, int(time.time() - newest[1]))
 
 
-def lease_holder(path: Path, logs_dir: Path | None = None, prefix: str | None = None) -> str | None:
-    """None when the lease is free; otherwise the host from the lease note, else the host of the
-    newest launcher log of that step (marked '~host', jobs started before the notes), else '?'."""
+def seen_host_for(job: str | None) -> str | None:
+    """The one node whose recent `status` run saw this job among its processes, if unique."""
+    if not job:
+        return None
+    hosts = [h for h, s in SEEN.items() if job in s["jobs"] and s["age"] < SEEN_FRESH_SECONDS]
+    return hosts[0] if len(hosts) == 1 else None
+
+
+def lease_holder(path: Path, logs_dir: Path | None = None, prefix: str | None = None, job: str | None = None) -> str | None:
+    """None when the lease is free; otherwise the host from the lease note; else (jobs started
+    before the notes, marked '~host') the host of the newest launcher log of that step, or the
+    node where `status` recently saw the job running; else '?'."""
     if not lease_held(path):
         return None
     try:
@@ -123,7 +140,8 @@ def lease_holder(path: Path, logs_dir: Path | None = None, prefix: str | None = 
         found = launcher_host(logs_dir, prefix)
         if found:
             return f"~{found[0]}"
-    return "?"
+    seen = seen_host_for(job)
+    return f"~{seen}" if seen else "?"
 
 
 def short_host(host: str) -> str:
@@ -141,8 +159,12 @@ def note_lease(holder: str | None, what: str) -> str:
     """Register a held lease under its node and return the inline marker."""
     if holder is None:
         return ""
-    NODES.setdefault(holder, []).append(what)
-    return f"*[{short_host(holder)}]"
+    inferred = holder.startswith("~")
+    host = holder.lstrip("~")
+    NODES.setdefault(host, []).append(what)
+    if inferred:
+        INFERRED.add(host)
+    return f"*[{'~' if inferred else ''}{short_host(host)}]"
 
 
 def row_count(path: Path) -> int:
@@ -258,7 +280,7 @@ def branch_seed(out: Path, arms=None, label: str = "") -> dict:
         word, done = arm_state(out, arm, contract)
         all_done = all_done and done
         started = started or word != "-"
-        holder = lease_holder(out / f".{arm}.lock", out / "logs", "launcher")
+        holder = lease_holder(out / f".{arm}.lock", out / "logs", "launcher", f"E5 arms {out.parent.name}")
         if holder is not None:
             running = True
             word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
@@ -308,7 +330,7 @@ def bench_seed(out: Path, label: str = "") -> dict:
             word = f"{finished}/{len(sets)}"
             all_done = False
         started = started or partial
-        holder = lease_holder(out / f".bench-{arm}.lock", out / "logs", "bench-launcher")
+        holder = lease_holder(out / f".bench-{arm}.lock", out / "logs", "bench-launcher", f"benchmarks {out.parent.name}")
         if holder is not None:
             running = True
             word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
@@ -348,7 +370,7 @@ def stale_state(run_dir, seeds, drift: int, label: str = "") -> tuple[str, list[
         shards = len(list(run.glob("scores_stale_splithalf.shard*.json")))
         word = f"s{seed} {shards}/4 shards" if shards else f"s{seed} -"
         started = started or shards > 0
-        holder = lease_holder(run / ".stale-splithalf.lock")
+        holder = lease_holder(run / ".stale-splithalf.lock", job=f"reuse split-half d{drift}")
         if holder is not None:
             running = True
             word += note_lease(holder, f"{label} s{seed}")
@@ -383,7 +405,7 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
     else:
         progress = last_progress(point)
         log = point / "logs" / "main.log"
-        holder = lease_holder(Path(str(point) + ".lease"))
+        holder = lease_holder(Path(str(point) + ".lease"), job=f"point {point.name}")
         if holder is not None:
             mark = note_lease(holder, f"mixed pool point ({progress or 'started'})")
             rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'}, last write {age(log)} ago {mark}"]))
@@ -408,7 +430,7 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
         except (OSError, ValueError):
             contract = {}
         word, done = arm_state(out, "gate_passrate", contract)
-        holder = lease_holder(out / ".gate_passrate.lock", out / "logs", "launcher")
+        holder = lease_holder(out / ".gate_passrate.lock", out / "logs", "launcher", f"E5 arms {branch.name}")
         if done:
             rows.append(("mixed pool: gate", "DONE", []))
         elif holder is not None:
@@ -466,25 +488,69 @@ def queue_notes(work: Path) -> dict[str, dict]:
     return notes
 
 
-def node_lines(notes: dict[str, dict]) -> list[str]:
+def seen_nodes(work: Path) -> dict[str, dict]:
+    """host -> {'age', 'jobs', 'lock'} from $OM_WORK/queue/<host>.seen.json (written by every `status` run)."""
+    import json
+    seen = {}
+    directory = work / "queue"
+    if not directory.is_dir():
+        return seen
+    now = time.time()
+    for path in directory.glob("*.seen.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            seconds = int(now - path.stat().st_mtime)
+        except (OSError, ValueError):
+            continue
+        if seconds > NOTE_MAX_AGE_SECONDS or not isinstance(record, dict):
+            continue
+        seen[str(record.get("host", path.name.split(".")[0]))] = {
+            "age": seconds, "jobs": [str(j) for j in record.get("jobs", [])], "lock": bool(record.get("lock"))}
+    return seen
+
+
+def record_seen(work: Path) -> None:
+    """Leave this node's process view under $OM_WORK/queue so the overview on any node knows it (best effort)."""
+    import json
+    directory = Path(os.environ.get("OM_LOCAL_LOCK_DIR", f"/tmp/offpolicy-misranking-{os.getuid()}"))
+    record = {"host": socket.gethostname(), "utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "jobs": node_jobs(), "lock": lease_held(directory / "primary.lock")}
+    try:
+        (work / "queue").mkdir(parents=True, exist_ok=True)
+        target = work / "queue" / f"{record['host']}.seen.json"
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        tmp.replace(target)
+    except OSError:
+        pass
+
+
+def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> list[str]:
+    seen = seen if seen is not None else SEEN
     unknown = NODES.pop("?", [])
-    hosts = sorted(set(notes) | set(NODES), key=short_host)
+    hosts = sorted(set(notes) | set(NODES) | set(seen), key=short_host)
     if not hosts and not unknown:
-        return ["  (no queue note and no held lease; nothing is running)"]
-    busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive")]
-    lines = [f"  busy nodes: {len(busy)} ({', '.join(short_host(h) for h in busy) or 'none'})"
+        return ["  (no queue note, no held lease, no node has run status yet; nothing is visible)"]
+    fresh = lambda h: seen.get(h, {}).get("age", 10**9) < SEEN_FRESH_SECONDS  # noqa: E731
+    disp = lambda h: ("~" if h in INFERRED else "") + short_host(h)  # noqa: E731
+    busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive") or (fresh(h) and seen[h]["jobs"])]
+    lines = [f"  busy nodes: {len(busy)} ({', '.join(disp(h) for h in busy) or 'none'})"
              + (f" + {len(unknown)} lease(s) on an unidentified node" if unknown else "")]
-    idle = [h for h in hosts if h not in NODES and notes.get(h, {}).get("step") in ("done", "stopped")]
+    idle = [h for h in hosts if h not in busy and (notes.get(h, {}).get("step") in ("done", "stopped") or (fresh(h) and not seen[h]["jobs"]))]
     if idle:
-        lines.append(f"  idle nodes (queue finished there; free if the allocation still exists): {', '.join(short_host(h) for h in idle)}")
-    dead = [h for h in hosts if h not in NODES and h in notes and notes[h]["step"] not in ("done", "stopped") and not notes[h]["alive"]]
+        lines.append(f"  idle nodes (nothing running when last seen; free if the allocation still exists): {', '.join(disp(h) for h in idle)}")
+    dead = [h for h in hosts if h not in busy and h not in idle and h in notes and notes[h]["step"] not in ("done", "stopped") and not notes[h]["alive"]]
     if dead:
-        lines.append(f"  no heartbeat (probably killed; rerun the queue on a fresh node): {', '.join(short_host(h) for h in dead)}")
+        lines.append(f"  no heartbeat (probably killed; rerun the queue on a fresh node): {', '.join(disp(h) for h in dead)}")
+    stale = [h for h in hosts if h not in busy and h not in idle and h not in dead]
+    if stale:
+        lines.append(f"  last seen more than {SEEN_FRESH_SECONDS // 60} min ago (run status there to refresh): {', '.join(disp(h) for h in stale)}")
+    lines.append("  (a node appears here once the queue or status has run on it; nodes never touched are invisible)")
     for host in hosts:
         note = notes.get(host)
         if note is None:
-            head = ("lease holder inferred from its launcher log (job started before the lease notes)"
-                    if host.startswith("~") else "no queue note (started by hand or before this version)")
+            head = ("lease holder inferred (job started before the lease notes)"
+                    if host in INFERRED else "no queue note (started by hand or before this version)")
         elif note["step"] == "done":
             head = f"queue finished {since_text(note['since'])}"
         elif note["step"] == "stopped":
@@ -494,7 +560,11 @@ def node_lines(notes: dict[str, dict]) -> list[str]:
         else:
             beat = f"no heartbeat for {note['beat_age']}" if note["beat_age"] else "no heartbeat"
             head = f"{note['step']}  since {since_text(note['since'])}  {beat.upper()} (killed?)"
-        lines.append(f"  {short_host(host):<10} {head}")
+        lines.append(f"  {disp(host):<10} {head}")
+        if host in seen:
+            s = seen[host]
+            view = f"running {', '.join(s['jobs'])}" if s["jobs"] else ("GPU lock held by a non-queue job" if s["lock"] else "idle")
+            lines.append(f"  {'':<10}   seen {age_text(s['age'])} ago by status on that node: {view}")
         for what in NODES.get(host, []):
             lines.append(f"  {'':<10}   holds: {what}")
     for what in unknown:
@@ -547,6 +617,7 @@ def node_line() -> str:
 
 def build_rows(work: Path, root: Path, tag: str, seeds, other: str, mix_seed: int, mix_steps: int):
     NODES.clear()
+    INFERRED.clear()
 
     def run_dir(seed, drift):
         return root / f"family-math500-s{seed}" / f"{tag}-s{seed}-math500-d{drift}"
@@ -563,6 +634,10 @@ def build_rows(work: Path, root: Path, tag: str, seeds, other: str, mix_seed: in
 
 def render(rows, header: str, node: str, notes: dict[str, dict] | None = None) -> str:
     out = [header, node, ""]
+    out.append("NODES (queue note + heartbeat under $OM_WORK/queue, held leases, and what status saw on each node)")
+    out.extend(node_lines(notes or {}))
+    out.append("")
+    out.append("STEPS")
     out.append(f"{'#':>2}  {'step':<26} state")
     counts = {s: 0 for s in STATES}
     for i, (name, state, lines) in enumerate(rows, 1):
@@ -572,11 +647,7 @@ def render(rows, header: str, node: str, notes: dict[str, dict] | None = None) -
             out.append(f"      {line}")
     out.append("")
     out.append("  ".join(f"{s} {counts[s]}" for s in STATES if counts.get(s)))
-    out.append("RUNNING/*[node] = lease held now by that node; PARTIAL = artifacts exist, nothing running")
-    out.append("")
-    out.append("nodes (queue note + heartbeat under $OM_WORK/queue, and held leases)")
-    out.extend(node_lines(notes or {}))
-    out.append("")
+    out.append("RUNNING/*[node] = lease held now by that node (~ = node inferred); PARTIAL = artifacts exist, nothing running")
     out.append("details: bash scripts/run_e5.sh status | run_e5_bench.sh status [d0] | run_stale_splithalf.sh status [d0]")
     return "\n".join(out)
 
@@ -597,6 +668,9 @@ def main(argv=None) -> int:
     root = args.root or Path(os.environ.get("OM_OLMO3_ROOT") or (args.work / "runs" / args.tag))
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     header = f"QUEUE STATUS  {stamp}  code={git_short()}"
+    record_seen(args.work)
+    SEEN.clear()
+    SEEN.update(seen_nodes(args.work))
     rows = build_rows(args.work, root, args.tag, args.seeds, args.mix_other, args.mix_seed, args.mix_steps)
     print(render(rows, header, node_line(), queue_notes(args.work)))
     return 0
