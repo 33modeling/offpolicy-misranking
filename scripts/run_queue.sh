@@ -2,7 +2,7 @@
 # Everything that remains, in priority order, on THIS node:
 #
 #   bash scripts/run_queue.sh          # run the queue (GPU node)
-#   bash scripts/run_queue.sh status   # overview of every experiment (no GPU)
+#   bash scripts/run_queue.sh status   # one-screen overview: one line per step (no GPU)
 #
 # Every step is leased (node lock, per-seed arms, per-point locks), so the
 # same command on several nodes shares the work: a step that is finished or
@@ -13,11 +13,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 if [ "${1:-run}" = status ]; then
-  for cmd in "run_mixed_pool.sh status" "run_stale_splithalf.sh status" "run_stale_splithalf.sh status d0" \
-             "run_e5_bench.sh status" "run_e5_bench.sh status d0" "run_e5.sh status"; do
-    echo "===== $cmd"; bash scripts/$cmd 2>/dev/null | grep -v setup_env
-  done
-  exit 0
+  # One screen: one line per queue step with a state word, seed detail below.
+  export OM_ONLINE=0
+  source scripts/setup_env.sh >/dev/null 2>&1
+  PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
+  PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" "$PY" src/queue_status.py
+  exit $?
 fi
 trap '' HUP
 QUEUE=("run_mixed_pool.sh pool" "run_mixed_pool.sh point" "run_mixed_pool.sh e5" "run_mixed_pool.sh gate" \

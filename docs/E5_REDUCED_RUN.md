@@ -289,3 +289,16 @@ Outputs: point under `family-math500mix-s0/…-math500mix-d0`, arms under
 `runs/e5-reduced/math500mix-d0/s0` (same test set as the MATH d0 branch,
 `E5_TEST_DATASET=math500`); `run_e5.sh export` bundles them. Knobs:
 `MIX_OTHER`, `MIX_MATH`, `MIX_N_OTHER`, `MIX_STEPS`, `MIX_SEED`.
+
+## Queue of the remaining steps and its one-screen status (2026-09-13)
+
+```
+bash scripts/run_queue.sh          # GPU node: every remaining step in order (leased; skips finished or claimed work)
+bash scripts/run_queue.sh status   # CPU: one line per step with a state word, seed detail below
+```
+
+`status` (`src/queue_status.py`) reads the shared filesystem only. State words:
+DONE (all artifacts exist), RUNNING (a lease of the step is held right now on
+some node; `*` marks the leased arm), PARTIAL (artifacts exist, nothing
+running), WAITING (prerequisite step unfinished), TODO (nothing started). The
+per-step commands keep their detailed `status` modes.
