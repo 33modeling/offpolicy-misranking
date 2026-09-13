@@ -18,7 +18,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
-case "$MODE" in run|status|worker|dump) ;; *) echo "usage: bash scripts/run_queue.sh [status|dump]"; exit 2 ;; esac
+case "$MODE" in run|status|worker|dump|stop) ;; *) echo "usage: bash scripts/run_queue.sh [status|dump|stop]"; exit 2 ;; esac
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 PY="$VENV_DIR/bin/python"; [ -x "$PY" ] || PY=python3
@@ -70,6 +70,23 @@ if [ "$MODE" = dump ]; then
     done
   } > "$target" 2>&1
   echo "[queue] dump written: $target"
+  exit 0
+fi
+if [ "$MODE" = stop ]; then
+  # Stop this node's queue worker, then the step processes it started (they carry the OUT_ROOT
+  # marker); leases are released with them. Finished shards and checkpoints stay; rerunning resumes.
+  pid=$(cat "$WPID" 2>/dev/null)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    echo "[queue] stopping worker pid $pid on $HOST"
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+  else
+    echo "[queue] no live worker on $HOST"
+  fi
+  "$PY" src/queue_status.py --kill-orphans
+  printf 'host=%s pid=%s step=stopped since=%s\n' "$HOST" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NOTE"
+  echo "[queue] stopped on $HOST; restart with:  bash scripts/run_queue.sh"
   exit 0
 fi
 if [ "$MODE" = run ]; then
