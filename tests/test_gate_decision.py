@@ -88,6 +88,44 @@ def test_constant_halves_are_invalid_and_fall_back():
     assert record["decision"] == "random" and record["reason"] == "invalid" and record["valid"] is False
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_score_cannot_be_clamped_to_perfect_reliability(bad):
+    halves = {i: (float(i), float(i)) for i in range(40)}
+    halves[0] = (bad, 0.0)
+    record = gd.decide_signal(halves, "fresh", gd.default_rule())
+    assert record["decision"] == "random" and record["reason"] == "invalid"
+    assert record["r_half"] is None and record["pool_topk_overlap"] is None
+    json.dumps(record, allow_nan=False)
+
+
+def test_incomplete_pilot_falls_back_instead_of_shrinking_the_frozen_sample():
+    halves = {i: (float(i), float(i)) for i in range(4)}
+    record = gd.decide_signal(halves, "fresh", gd.default_rule(), pool_size=400)
+    assert record["decision"] == "random" and record["reason"] == "invalid"
+    assert record["pilot_pairs"] == 4 and record["pool_topk_overlap"] is None
+    # A genuinely smaller full pool is different from missing pilot pairs.
+    assert gd.decide_signal(halves, "fresh", gd.default_rule())["valid"]
+
+
+def test_threshold_equality_and_empty_pilots_have_serializable_decisions(monkeypatch):
+    rule = gd.default_rule()
+    halves = {i: (float(i), float(i)) for i in range(40)}
+    monkeypatch.setattr(gd, "pearson", lambda a, b: rule["r_min"])
+    record = gd.decide_signal(halves, "fresh", rule)
+    assert record["decision"] == "random" and record["required_pairs_at_r"] is None
+    json.dumps(record, allow_nan=False)
+    empty = gd.decide_signal({}, "fresh", rule, pool_size=400)
+    assert empty["decision"] == "random" and not empty["valid"]
+    json.dumps(empty, allow_nan=False)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), True])
+def test_rule_rejects_nonfinite_or_boolean_costs(bad):
+    for field, value in (("scoring_budget_seconds", bad), ("cost_per_prompt_seconds", {"fresh": bad})):
+        with pytest.raises(ValueError, match="finite"):
+            gd.validate_rule({**gd.default_rule(), field: value})
+
+
 def test_budget_check_precedes_the_reliability_check():
     halves = {i: (i / 10.0, i / 10.0 + 0.01 * (-1) ** i) for i in range(40)}
     rule = gd.default_rule(pilot_size=20, r_min=0.25, seed=5, budget_seconds=100.0)

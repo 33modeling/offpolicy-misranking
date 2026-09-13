@@ -123,7 +123,7 @@ if stage == 'prepare':
         except BlockingIOError: pass
         else: raise AssertionError('controller did not hold its node lock')
     (out / 'subsets').mkdir(parents=True, exist_ok=True)
-    for arm in ('random', 'fresh_r', 'g11'):
+    for arm in ('random', 'passrate_beta', 'fresh_r', 'g11'):
         (out / 'subsets' / ('train-' + arm + '.args')).write_bytes(('\\0'.join(['-m', 'fixture', arm, str(out)]) + '\\0').encode())
 elif stage == 'policy-ready':
     arm = args[args.index('--arm') + 1]
@@ -175,7 +175,7 @@ else: raise AssertionError(args)
             outputs.append(out)
         base = work / "runs/e5-reduced/math500-d400"
         for seed in range(3):
-            for arm in ("random", "fresh_r", "g11"):
+            for arm in ("random", "passrate_beta", "fresh_r", "g11"):
                 assert len((base / f"s{seed}/claim-{arm}").read_text().splitlines()) == 1
         assert any("claimed on another node" in out for out in outputs)
     finally:

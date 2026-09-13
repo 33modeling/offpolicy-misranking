@@ -70,18 +70,18 @@ def validate_rule(rule: dict) -> dict:
     if not isinstance(rule, dict) or rule.get("schema") != RULE_SCHEMA:
         raise ValueError("unsupported gate rule")
     n, r_min, conf = rule.get("pilot_size"), rule.get("r_min"), rule.get("confidence")
-    if not isinstance(n, int) or n < 4:
+    if type(n) is not int or n < 4:
         raise ValueError("pilot_size must be an integer of at least four")
     if not isinstance(r_min, (int, float)) or not 0 < r_min < 1:
         raise ValueError("r_min must lie in (0, 1)")
     if not isinstance(conf, (int, float)) or not 0.5 <= conf < 1:
         raise ValueError("confidence must lie in [0.5, 1)")
     budget = rule.get("scoring_budget_seconds")
-    if budget is not None and (not isinstance(budget, (int, float)) or budget < 0):
-        raise ValueError("scoring_budget_seconds must be nonnegative or null")
+    if budget is not None and (type(budget) not in (int, float) or not math.isfinite(budget) or budget < 0):
+        raise ValueError("scoring_budget_seconds must be finite and nonnegative or null")
     costs = rule.get("cost_per_prompt_seconds", {})
-    if not isinstance(costs, dict) or any(not isinstance(v, (int, float)) or v < 0 for v in costs.values()):
-        raise ValueError("cost_per_prompt_seconds must map signals to nonnegative seconds")
+    if not isinstance(costs, dict) or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in costs.values()):
+        raise ValueError("cost_per_prompt_seconds must map signals to finite nonnegative seconds")
     return rule
 
 
@@ -125,12 +125,15 @@ def pilot_size_table(r_min: float, confidence: float,
 def pearson(a: list[float], b: list[float]) -> float:
     if len(a) != len(b) or len(a) < 3:
         return float("nan")
+    if any(not math.isfinite(v) for values in (a, b) for v in values):
+        return float("nan")
     ma, mb = statistics.fmean(a), statistics.fmean(b)
     xa, xb = [v - ma for v in a], [v - mb for v in b]
     denom = math.sqrt(sum(v * v for v in xa) * sum(v * v for v in xb))
-    if denom == 0:
+    if not math.isfinite(denom) or denom == 0:
         return float("nan")
-    return max(-1.0, min(1.0, sum(u * v for u, v in zip(xa, xb)) / denom))
+    r = sum(u * v for u, v in zip(xa, xb)) / denom
+    return max(-1.0, min(1.0, r)) if math.isfinite(r) else float("nan")
 
 
 # ------------------------------------------------------------------- signals
@@ -188,6 +191,8 @@ def topk_overlap(halves: dict[int, tuple[float, float]], frac: float = 0.1) -> d
     chance level k/n (ties broken by index)."""
     ids = sorted(halves)
     n = len(ids)
+    if not n or any(not math.isfinite(v) for pair in halves.values() for v in pair):
+        return {"k": 0, "n": n, "overlap": None, "chance": None}
     k = max(1, int(n * frac))
     top_a = set(sorted(ids, key=lambda i: (-halves[i][0], i))[:k])
     top_b = set(sorted(ids, key=lambda i: (-halves[i][1], i))[:k])
@@ -205,13 +210,15 @@ def pilot_indices(ids, n: int, seed: int) -> list[int]:
 def decide_signal(halves: dict[int, tuple[float, float]], signal: str, rule: dict,
                   pool_size: int | None = None) -> dict:
     rule = validate_rule(rule)
-    pool_size = pool_size or len(halves)
+    pool_size = len(halves) if pool_size is None else pool_size
+    if type(pool_size) is not int or pool_size < 0 or pool_size < len(halves):
+        raise ValueError("pool_size must cover all observed prompt pairs")
     pilot = pilot_indices(halves, rule["pilot_size"], rule["seed"])
     a = [halves[i][0] for i in pilot]
     b = [halves[i][1] for i in pilot]
     n = len(pilot)
     r = pearson(a, b)
-    valid = n > 3 and math.isfinite(r)
+    valid = n >= 4 and n == min(rule["pilot_size"], pool_size) and math.isfinite(r)
     lower, upper = fisher_bounds(r, n, rule["confidence"]) if valid else (float("nan"), float("nan"))
     cost_per_prompt = rule.get("cost_per_prompt_seconds", {}).get(signal)
     if signal in BYPRODUCT:
@@ -238,14 +245,17 @@ def decide_signal(halves: dict[int, tuple[float, float]], signal: str, rule: dic
               "pool_size": pool_size, "r_half": r if valid else None, "lower": lower if valid else None,
               "upper": upper if valid else None, "valid": valid, "r_min": r_min,
               "confidence": rule["confidence"], "decision": decision, "reason": reason,
-              "required_pairs_at_r": (required_pilot_size(r, r_min, rule["confidence"]) if valid and abs(r) < 1 else None),
+              "required_pairs_at_r": (required_pilot_size(r, r_min, rule["confidence"])
+                                      if valid and abs(r) < 1 and r != r_min else None),
               "pilot_cost_seconds": pilot_cost, "remaining_scoring_seconds": remaining,
               "budget_seconds": budget,
               "decision_steps": n / PROMPTS_PER_STEP if signal in BYPRODUCT else None,
               "pilot_indices_sha": None}
     record["pilot_indices_sha"] = _sha_of(pilot)
     # descriptive set-level repeatability over the whole pool (not part of the rule)
-    overlap = topk_overlap(halves)
+    overlap = topk_overlap(halves) if len(halves) == pool_size else {
+        "overlap": None, "chance": None, "k": None,
+    }
     record.update(pool_topk_overlap=overlap["overlap"], pool_topk_chance=overlap["chance"], pool_topk_k=overlap["k"])
     return record
 
@@ -343,7 +353,7 @@ def render(report: dict) -> str:
         lines.append(f"  {r['signal']:10s} {r['pilot_pairs']:4d} {f(r['r_half'], 8)} {f(r['lower'], 7)} {f(r['upper'], 7)}  "
                      f"{r['decision']:9s} {r['reason']:11s} {need_s:>6s} {steps:>5s} "
                      f"{f(r['reward_selector'], 7)} {f(r['reward_random'], 7)} {f(r['reward_decision'], 7)} {f(r['forgone_reward'], 8)}  "
-                     f"{r['pool_topk_overlap']:.3f} ({r['pool_topk_chance']:.3f})")
+                     f"{f(r['pool_topk_overlap'])} ({f(r['pool_topk_chance'])})")
     for s in report["skipped"]:
         lines.append(f"  {s['signal']:10s} skipped: {s['reason']}")
     return "\n".join(lines)

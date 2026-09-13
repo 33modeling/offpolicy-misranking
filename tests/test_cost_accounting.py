@@ -54,7 +54,27 @@ def test_point_costs_per_prompt(tmp_path):
     assert record["per_prompt"]["reuse_scoring_gpu_seconds"] == pytest.approx(3600 * 4 / 400)
     rows = ca.matrix_costs(tmp_path)
     assert len(rows) == 1
-    assert ca.suggested_rule_costs(rows)["g11"] == pytest.approx(36.0) and ca.suggested_rule_costs(rows)["fresh"] == pytest.approx(180.0)
+    assert ca.suggested_rule_costs(rows) == {}  # joint research work is not a selector's marginal cost
+
+
+def test_missing_stages_are_unknown_not_zero_cost(tmp_path):
+    run = tmp_path / "point"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs/main.log").write_text(MAIN_LOG.split("[2026-09-08 17:02:00]")[0])
+    (run / "prompts.json").write_text(json.dumps({"train": [{}] * 400}))
+    row = ca.point_costs(run)
+    assert not row["complete"]
+    assert row["per_prompt"]["fresh_scoring_gpu_seconds"] is None
+    assert row["per_prompt"]["reuse_scoring_gpu_seconds"] is None
+    assert ca.suggested_rule_costs([row]) == {}
+
+
+@pytest.mark.parametrize("value", [None, float("nan"), float("inf"), -1])
+def test_unknown_benchmark_timer_is_not_free(tmp_path, value):
+    bench = tmp_path / "benchmark/aime24"
+    bench.mkdir(parents=True)
+    (bench / "shard-0.done.json").write_text(json.dumps({"elapsed_seconds": value}))
+    assert ca.benchmark_seconds(tmp_path) is None
 
 
 def _stats(path: Path, seconds: float, steps: int) -> None:

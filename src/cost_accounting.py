@@ -11,9 +11,10 @@ E5 seed directories (runs/e5-reduced/math500-d<drift>/s<seed>):
 Matrix points (family-*/…-d<drift>/logs/main.log): stage wall times from the
 runner's [progress] lines of the last attempt (behavior rollout, GRPO, fresh
 rollout with validation, oracle and validation gradients, off-policy scores),
-times the GPUs the point used; divided by the candidate count they give the
-per-prompt scoring costs that the gate rule's cost_per_prompt_seconds expects
-(fresh: fresh rollout + oracle gradients; reuse estimators: off-policy scores).
+times the GPUs the point used. Per-prompt values are research-stage costs,
+not marginal selector costs: fresh includes evaluation-only work, and the
+off-policy stage computes four estimators jointly. They cannot populate a
+gate rule without separately measuring and allocating the deployed work.
 
     python src/cost_accounting.py --work $OM_WORK [--matrix ROOT] [--out PREFIX]
 
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import statistics
 import sys
@@ -77,14 +79,19 @@ def point_costs(run: Path) -> dict | None:
     stages = durations["stages"]
     per_prompt = {}
     if n:
-        fresh = stages.get("fresh_rollout", 0.0) + stages.get("oracle_val_gradients", 0.0)
-        per_prompt = {"behavior_cache_gpu_seconds": stages.get("behavior_rollout", 0.0) * gpus / n,
-                      "fresh_scoring_gpu_seconds": fresh * gpus / n,
-                      "reuse_scoring_gpu_seconds": stages.get("offpolicy_scores", 0.0) * gpus / n}
+        def per_candidate(*names):
+            if not all(name in stages for name in names):
+                return None
+            return sum(stages[name] for name in names) * gpus / n
+
+        per_prompt = {"behavior_cache_gpu_seconds": per_candidate("behavior_rollout"),
+                      "fresh_scoring_gpu_seconds": per_candidate("fresh_rollout", "oracle_val_gradients"),
+                      "reuse_scoring_gpu_seconds": per_candidate("offpolicy_scores")}
     return {"run": str(run), "dataset": config.get("dataset"), "seed": config.get("seed"), "drift": config.get("drift"),
             "candidates": n, "gpus": gpus, "complete": durations["complete"], "attempts": durations["attempts"],
             "stage_seconds": stages, "wall_seconds_all_attempts": durations["wall_seconds_all_attempts"],
-            "per_prompt": per_prompt}
+            "per_prompt": per_prompt,
+            "cost_scope": "research stages; fresh includes reference/evaluation work; reuse covers all four estimators"}
 
 
 def matrix_costs(root: Path) -> list[dict]:
@@ -127,7 +134,10 @@ def benchmark_seconds(arm_dir: Path) -> float | None:
     total, found = 0.0, False
     for done in (arm_dir / "benchmark").glob("*/shard-*.done.json") if (arm_dir / "benchmark").is_dir() else []:
         record = json.loads(done.read_text())
-        total += float(record.get("elapsed_seconds", 0.0))
+        value = record.get("elapsed_seconds")
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            return None
+        total += value
         found = True
     return total if found else None
 
@@ -181,16 +191,8 @@ def e5_costs(work: Path) -> list[dict]:
 
 
 def suggested_rule_costs(points: list[dict]) -> dict:
-    """Median per-prompt GPU-seconds over the MATH-500 points, keyed by gate signal."""
-    fresh = [p["per_prompt"]["fresh_scoring_gpu_seconds"] for p in points if p.get("dataset") == "math500" and p["per_prompt"]]
-    reuse = [p["per_prompt"]["reuse_scoring_gpu_seconds"] for p in points if p.get("dataset") == "math500" and p["per_prompt"]]
-    out = {}
-    if fresh:
-        out["fresh"] = statistics.median(fresh)
-    if reuse:
-        for est in ("g00", "g10", "g01", "g11"):
-            out[est] = statistics.median(reuse)
-    return out
+    """Stage logs do not identify marginal costs of the deployed selectors."""
+    return {}
 
 
 def render(report: dict) -> str:
@@ -217,8 +219,9 @@ def render(report: dict) -> str:
                      + ("" if p["complete"] else "  [last attempt incomplete]"))
     if not report["matrix"]:
         lines.append("  (no point with logs/main.log found)")
-    lines.append("suggested cost_per_prompt_seconds for config/gate_rule.json (median over MATH-500 points): "
+    lines.append("suggested cost_per_prompt_seconds for config/gate_rule.json: "
                  + json.dumps(report["suggested_rule_costs"]))
+    lines.append("  no automatic rule costs: joint research stages are not marginal selector measurements")
     return "\n".join(lines)
 
 
