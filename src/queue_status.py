@@ -89,20 +89,47 @@ def parse_note(text: str) -> dict:
     return dict(item.split("=", 1) for item in text.split() if "=" in item)
 
 
-def lease_holder(path: Path) -> str | None:
-    """None when the lease is free; otherwise the host from the lease note, or '?'."""
+def launcher_host(logs_dir: Path, prefix: str) -> tuple[str, int] | None:
+    """(host, seconds since last write) of the newest '<prefix>-<host>-<UTC>.log' in logs_dir."""
+    newest = None
+    for log in logs_dir.glob(f"{prefix}-*-*Z.log"):
+        m = re.fullmatch(rf"{re.escape(prefix)}-(.+)-\d{{8}}T\d{{6}}Z\.log", log.name)
+        if not m:
+            continue
+        try:
+            mtime = log.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mtime > newest[1]:
+            newest = (m.group(1), mtime)
+    if newest is None:
+        return None
+    return newest[0], max(0, int(time.time() - newest[1]))
+
+
+def lease_holder(path: Path, logs_dir: Path | None = None, prefix: str | None = None) -> str | None:
+    """None when the lease is free; otherwise the host from the lease note, else the host of the
+    newest launcher log of that step (marked '~host', jobs started before the notes), else '?'."""
     if not lease_held(path):
         return None
     try:
         first = path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
     except OSError:
-        return "?"
-    return parse_note(first[0]).get("host", "?") if first else "?"
+        first = []
+    host = parse_note(first[0]).get("host") if first else None
+    if host:
+        return host
+    if logs_dir is not None and prefix:
+        found = launcher_host(logs_dir, prefix)
+        if found:
+            return f"~{found[0]}"
+    return "?"
 
 
 def short_host(host: str) -> str:
-    parts = host.split("-")
-    return "-".join(parts[-2:]) if len(parts) > 2 else host
+    tilde = "~" if host.startswith("~") else ""
+    parts = host.lstrip("~").split("-")
+    return tilde + ("-".join(parts[-2:]) if len(parts) > 2 else host.lstrip("~"))
 
 
 def since_text(stamp: str) -> str:
@@ -231,7 +258,7 @@ def branch_seed(out: Path, arms=None, label: str = "") -> dict:
         word, done = arm_state(out, arm, contract)
         all_done = all_done and done
         started = started or word != "-"
-        holder = lease_holder(out / f".{arm}.lock")
+        holder = lease_holder(out / f".{arm}.lock", out / "logs", "launcher")
         if holder is not None:
             running = True
             word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
@@ -281,7 +308,7 @@ def bench_seed(out: Path, label: str = "") -> dict:
             word = f"{finished}/{len(sets)}"
             all_done = False
         started = started or partial
-        holder = lease_holder(out / f".bench-{arm}.lock")
+        holder = lease_holder(out / f".bench-{arm}.lock", out / "logs", "bench-launcher")
         if holder is not None:
             running = True
             word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
@@ -381,7 +408,7 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
         except (OSError, ValueError):
             contract = {}
         word, done = arm_state(out, "gate_passrate", contract)
-        holder = lease_holder(out / ".gate_passrate.lock")
+        holder = lease_holder(out / ".gate_passrate.lock", out / "logs", "launcher")
         if done:
             rows.append(("mixed pool: gate", "DONE", []))
         elif holder is not None:
@@ -440,14 +467,18 @@ def queue_notes(work: Path) -> dict[str, dict]:
 
 
 def node_lines(notes: dict[str, dict]) -> list[str]:
+    unknown = NODES.pop("?", [])
     hosts = sorted(set(notes) | set(NODES), key=short_host)
-    if not hosts:
+    if not hosts and not unknown:
         return ["  (no queue note and no held lease; nothing is running)"]
-    lines = []
+    busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive")]
+    lines = [f"  busy nodes: {len(busy)} ({', '.join(short_host(h) for h in busy) or 'none'})"
+             + (f" + {len(unknown)} lease(s) on an unidentified node" if unknown else "")]
     for host in hosts:
         note = notes.get(host)
         if note is None:
-            head = "no queue note (started by hand or before this version)"
+            head = ("lease holder inferred from its launcher log (job started before the lease notes)"
+                    if host.startswith("~") else "no queue note (started by hand or before this version)")
         elif note["step"] == "done":
             head = f"queue finished {since_text(note['since'])}"
         elif note["step"] == "stopped":
@@ -460,6 +491,8 @@ def node_lines(notes: dict[str, dict]) -> list[str]:
         lines.append(f"  {short_host(host):<10} {head}")
         for what in NODES.get(host, []):
             lines.append(f"  {'':<10}   holds: {what}")
+    for what in unknown:
+        lines.append(f"  {'?':<10} holds: {what}  (node unknown: lease taken before the notes, no launcher log with a host name)")
     return lines
 
 

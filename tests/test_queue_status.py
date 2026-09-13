@@ -235,3 +235,41 @@ def test_this_node_lists_queue_processes_by_their_marker():
     finally:
         child.kill()
         child.wait()
+
+
+def test_old_leases_are_attributed_from_launcher_logs(tmp_path):
+    work, root = _tree(tmp_path)
+    e5 = work / "runs" / "e5-reduced"
+    out = _seed_dir(e5 / "math500-d100", 0, ["random", "fresh_r"])
+    _evaluated(out, "before")
+    _trained(out, "random", logged=12)
+    (out / "logs").mkdir()
+    (out / "logs" / "launcher-run280417-first-qw-4-20260913T100000Z.log").write_text("old\n")
+    os.utime(out / "logs" / "launcher-run280417-first-qw-4-20260913T100000Z.log", (1_000_000, 1_000_000))
+    (out / "logs" / "launcher-run280417-first-qw-2-20260913T120000Z.log").write_text("new\n")
+    lock = out / ".random.lock"
+    lock.write_text("")
+    holder = os.open(lock, os.O_RDWR)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+        by = {name: (state, lines) for name, state, lines in rows}
+        assert by["d100 continuation"][0] == "RUNNING"
+        assert by["d100 continuation"][1][0] == "s0: before ok | random train 12/100*[~qw-2] | fresh -"
+        text = qs.render(rows, "HDR", "NODE", {})
+    finally:
+        os.close(holder)
+    assert "  busy nodes: 1 (~qw-2)" in text
+    assert "inferred from its launcher log" in text and "holds: d100 s0 random (train 12/100)" in text
+    # no launcher log at all: the lease is listed under an unidentified node
+    for log in (out / "logs").glob("launcher-*.log"):
+        log.unlink()
+    holder = os.open(lock, os.O_RDWR)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+        text = qs.render(rows, "HDR", "NODE", {})
+    finally:
+        os.close(holder)
+    assert "busy nodes: 0 (none) + 1 lease(s) on an unidentified node" in text
+    assert "  ?          holds: d100 s0 random (train 12/100)" in text
