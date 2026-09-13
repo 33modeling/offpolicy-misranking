@@ -219,8 +219,8 @@ def test_lease_notes_name_the_node_and_queue_notes_list_nodes(tmp_path):
     assert "     holds: reuse split-half d400 s1" in text
     assert [l for l in lines if l.startswith("  qw-3 ")][0].endswith("(killed?)") and "NO HEARTBEAT" in text
     assert [l for l in lines if l.startswith("  qw-1 ")][0].endswith("queue finished 09-13 11:00Z")
-    assert "  busy nodes: 1 (qw-7)" in text
-    assert "gone or silent" in text and "qw-1" in [l for l in lines if "gone or silent" in l][0]
+    assert "  BUSY 1: qw-7" in text
+    assert "qw-1" in [l for l in lines if l.startswith("  GONE")][0] and "qw-3" in [l for l in lines if l.startswith("  GONE")][0]
     # a lease held without a note (job started before the notes existed)
     lock.write_text("")
     holder = os.open(lock, os.O_RDWR)
@@ -269,7 +269,7 @@ def test_old_leases_are_attributed_from_launcher_logs(tmp_path):
         text = qs.render(rows, "HDR", "NODE", {})
     finally:
         os.close(holder)
-    assert "  busy nodes: 1 (~qw-2)" in text
+    assert "  BUSY 1: ~qw-2" in text
     assert "lease holder inferred" in text and "holds: d100 s0 random (train 12/100)" in text
     # no launcher log at all: the lease is listed under an unidentified node
     for log in (out / "logs").glob("launcher-*.log"):
@@ -281,7 +281,7 @@ def test_old_leases_are_attributed_from_launcher_logs(tmp_path):
         text = qs.render(rows, "HDR", "NODE", {})
     finally:
         os.close(holder)
-    assert "busy nodes: 0 (none) + 1 lease(s) on an unidentified node" in text
+    assert "BUSY 0: none  + 1 lease(s) on an unidentified node" in text
     assert "  ?          holds: d100 s0 random (train 12/100)" in text
 
 
@@ -310,9 +310,10 @@ def test_seen_records_attribute_old_leases_and_list_idle_nodes(tmp_path, monkeyp
         qs.SEEN.clear()
     by = {name: (state, lines) for name, state, lines in rows}
     assert by["reuse split-half d400"][1] == ["s0 -  s1 1/4 shards*[~qw-9] (no write yet)  s2 -"]
-    assert "  busy nodes: 1 (~qw-9)" in text
-    assert "IDLE nodes (alive, nothing running; start the queue there): qw-8" in text
-    assert "qw-6" in [l for l in text.splitlines() if "gone or silent" in l][0]
+    assert "  BUSY 1: ~qw-9" in text
+    assert "  IDLE 1 (alive, nothing running; start the queue there): qw-8" in text
+    assert "qw-6" in [l for l in text.splitlines() if l.startswith("  GONE")][0]
+    assert "  nodes reporting now: 2" in text
     assert "reported 0m ago from that node: running reuse split-half d400" in text
     # status leaves this node's own view behind
     monkeypatch.setenv("OM_LOCAL_LOCK_DIR", str(tmp_path / "locks"))

@@ -557,20 +557,17 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
     seen = seen if seen is not None else SEEN
     unknown = NODES.pop("?", [])
     hosts = sorted(set(notes) | set(NODES) | set(seen), key=short_host)
-    if not hosts and not unknown:
-        return ["  (no queue note, no held lease, no node has run status yet; nothing is visible)"]
     fresh = lambda h: seen.get(h, {}).get("age", 10**9) < SEEN_FRESH_SECONDS  # noqa: E731
     disp = lambda h: ("~" if h in INFERRED else "") + short_host(h)  # noqa: E731
     busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive") or (fresh(h) and seen[h]["jobs"])]
-    lines = [f"  busy nodes: {len(busy)} ({', '.join(disp(h) for h in busy) or 'none'})"
-             + (f" + {len(unknown)} lease(s) on an unidentified node" if unknown else "")]
     idle = [h for h in hosts if h not in busy and fresh(h) and not seen[h]["jobs"]]
-    if idle:
-        lines.append(f"  IDLE nodes (alive, nothing running; start the queue there): {', '.join(disp(h) for h in idle)}")
     gone = [h for h in hosts if h not in busy and h not in idle]
-    if gone:
-        lines.append(f"  gone or silent (no report for over {SEEN_FRESH_SECONDS // 60} min: allocation ended, killed, or never watched): {', '.join(disp(h) for h in gone)}")
-    lines.append("  (a node appears once run_queue.sh ran on it: its watcher then reports every minute; untouched nodes are invisible)")
+    reporting = [h for h in hosts if fresh(h)]
+    lines = [f"  nodes reporting now: {len(reporting)}  (a node reports only after run_queue.sh ran on it once; untouched nodes are invisible)",
+             f"  BUSY {len(busy)}: {', '.join(disp(h) for h in busy) or 'none'}"
+             + (f"  + {len(unknown)} lease(s) on an unidentified node" if unknown else ""),
+             f"  IDLE {len(idle)} (alive, nothing running; start the queue there): {', '.join(disp(h) for h in idle) or 'none'}",
+             f"  GONE {len(gone)} (no report for over {SEEN_FRESH_SECONDS // 60} min: allocation ended, killed, or never watched): {', '.join(disp(h) for h in gone) or 'none'}"]
     for host in hosts:
         note = notes.get(host)
         if note is None:
@@ -634,8 +631,10 @@ def node_line() -> str:
     jobs = node_jobs()
     held = lease_held(lock)
     if jobs:
-        return f"this node ({socket.gethostname()}): running {', '.join(jobs)}" + ("" if held else " (node lock free)")
-    return f"this node ({socket.gethostname()}): " + ("GPU job running (node lock held, not a queue step)" if held else "no GPU job (node lock free)")
+        return f"this node ({socket.gethostname()}): BUSY, running {', '.join(jobs)}" + ("" if held else " (node lock free)")
+    if held:
+        return f"this node ({socket.gethostname()}): BUSY, GPU lock held by a non-queue job"
+    return f"this node ({socket.gethostname()}): IDLE, nothing running here -> bash scripts/run_queue.sh"
 
 
 # ---------------------------------------------------------------- report
