@@ -54,6 +54,10 @@ case "$MODE" in
     [ -s "$POOL" ] || { echo "[abort] pool missing; run:  bash scripts/run_mixed_pool.sh pool"; exit 1; }
     [ -s "$MATH_RUN/run_config.json" ] || { echo "[abort] source point missing: $MATH_RUN"; exit 1; }
     if [ -s "$POINT/DONE" ]; then echo "[mixed] point already complete: $POINT"; exit 0; fi
+    # one node builds the point; others skip it (lease on the shared filesystem)
+    mkdir -p "$(dirname "$POINT")"
+    exec 6>"$POINT.lease"
+    if ! flock -n 6; then echo "[busy] the mixed point is being built on another node"; exit 0; fi
     export OUT_ROOT="$POINT"   # process marker for cleanup; the point runner uses the same variable
     source scripts/_e5_node.sh || exit 1
     e5_cleanup_previous "$POINT" || exit 1
