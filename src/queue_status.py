@@ -48,6 +48,10 @@ NODES: dict[str, list[str]] = {}
 INFERRED: set[str] = set()
 # host -> {'age', 'jobs', 'lock'}: what each node was running when `status` last ran there
 SEEN: dict[str, dict] = {}
+# hosts busy in a seed directory whose leases cannot be paired to them one by one
+# (several launcher logs active there): host -> ["<label> s0: one of random, fresh", ...]
+SHARED: dict[str, list[str]] = {}
+LAUNCHER_ACTIVE_SECONDS = 3 * 3600
 SEEN_FRESH_SECONDS = 300   # the node watcher reports every minute
 
 
@@ -97,9 +101,10 @@ def parse_note(text: str) -> dict:
     return dict(item.split("=", 1) for item in text.split() if "=" in item)
 
 
-def launcher_host(logs_dir: Path, prefix: str) -> tuple[str, int] | None:
-    """(host, seconds since last write) of the newest '<prefix>-<host>-<UTC>.log' in logs_dir."""
-    newest = None
+def active_launcher_hosts(logs_dir: Path, prefix: str, within: int = LAUNCHER_ACTIVE_SECONDS) -> list[str]:
+    """Hosts of the '<prefix>-<host>-<UTC>.log' files in logs_dir written within `within` seconds,
+    newest first (one launcher log per node and pass; a node writes it while its pass runs)."""
+    hosts: dict[str, float] = {}
     for log in logs_dir.glob(f"{prefix}-*-*Z.log"):
         m = re.fullmatch(rf"{re.escape(prefix)}-(.+)-\d{{8}}T\d{{6}}Z\.log", log.name)
         if not m:
@@ -108,11 +113,23 @@ def launcher_host(logs_dir: Path, prefix: str) -> tuple[str, int] | None:
             mtime = log.stat().st_mtime
         except OSError:
             continue
-        if newest is None or mtime > newest[1]:
-            newest = (m.group(1), mtime)
-    if newest is None:
-        return None
-    return newest[0], max(0, int(time.time() - newest[1]))
+        if time.time() - mtime <= within:
+            hosts[m.group(1)] = max(hosts.get(m.group(1), 0.0), mtime)
+    return [h for h, _ in sorted(hosts.items(), key=lambda kv: -kv[1])]
+
+
+def launcher_host(logs_dir: Path, prefix: str) -> tuple[str, int] | None:
+    """(host, 0) of the only active launcher log in logs_dir; None when none or several are active."""
+    hosts = active_launcher_hosts(logs_dir, prefix)
+    return (hosts[0], 0) if len(hosts) == 1 else None
+
+
+def share_leases(logs_dir: Path, prefix: str, where: str, leases: list[str]) -> None:
+    """Several nodes are active in one seed directory: mark each as busy there without pairing."""
+    hosts = active_launcher_hosts(logs_dir, prefix)
+    if len(hosts) >= 2 and leases:
+        for host in hosts:
+            SHARED.setdefault(host, []).append(f"{where}: one of {', '.join(leases)}")
 
 
 def seen_host_for(job: str | None) -> str | None:
@@ -223,6 +240,43 @@ def last_progress(run: Path) -> str:
     return f"{stage} {elapsed}".strip()
 
 
+PROBLEM = re.compile(r"^\s*\[(abort|failed|busy|skip|error)\]", re.I)
+
+
+def tail_lines(path: Path, limit: int = 400) -> list[str]:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(max(0, path.stat().st_size - 65536))
+            return handle.read().decode(errors="replace").splitlines()[-limit:]
+    except OSError:
+        return []
+
+
+def last_problem(path: Path) -> str:
+    """The last '[abort]/[failed]/[busy]/[skip]' line of a log, shortened; '' when none."""
+    lines = [l.strip() for l in tail_lines(path) if PROBLEM.match(l)]
+    return lines[-1][:110] if lines else ""
+
+
+def newest_launcher_log(logs_dir: Path, prefix: str) -> Path | None:
+    logs = [p for p in logs_dir.glob(f"{prefix}-*-*Z.log") if p.is_file()]
+    return max(logs, key=lambda p: p.stat().st_mtime) if logs else None
+
+
+def queue_log_state(work: Path, host: str) -> str:
+    """Last step marker and last problem line of a node's queue console log on the shared filesystem."""
+    log = work / "queue" / f"{host}.log"
+    if not log.is_file():
+        return ""
+    lines = tail_lines(log)
+    steps = [l for l in lines if l.startswith("=====")]
+    problems = [l.strip() for l in lines if PROBLEM.match(l)]
+    text = f"queue log: {steps[-1][:80]}" if steps else "queue log present"
+    if problems:
+        text += f" | last problem: {problems[-1][:110]}"
+    return text
+
+
 def git_short() -> str:
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5,
@@ -295,7 +349,7 @@ def branch_seed(out: Path, arms=None, label: str = "") -> dict:
     except (OSError, ValueError):
         return {"prepared": True, "done": False, "running": False, "started": False, "line": "experiment.json unreadable"}
     names = list(arms) if arms else arms_of(out, contract)
-    parts, all_done, started, running = [], True, False, False
+    parts, all_done, started, running, unpaired = [], True, False, False, []
     for arm in ["before", *names]:
         word, done = arm_state(out, arm, contract)
         all_done = all_done and done
@@ -303,10 +357,18 @@ def branch_seed(out: Path, arms=None, label: str = "") -> dict:
         holder = lease_holder(out / f".{arm}.lock", out / "logs", "launcher", f"E5 arms {out.parent.name}")
         if holder is not None:
             running = True
+            if holder == "?":
+                unpaired.append(ARM_LABELS.get(arm, arm))
             word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
             word += write_note(out / arm)
         parts.append(f"{ARM_LABELS.get(arm, arm)} {word}")
+    share_leases(out / "logs", "launcher", f"{label} {out.name}", unpaired)
     line = "DONE" if all_done else " | ".join(parts)
+    if not all_done and not running:
+        log = newest_launcher_log(out / "logs", "launcher")
+        problem = last_problem(log) if log else ""
+        if problem:
+            line += f"  <- last: {problem}"
     if all_done and not (out / "downstream_results.csv").is_file():
         line = "evaluated, summary pending"
         all_done = False
@@ -337,7 +399,7 @@ def bench_seed(out: Path, label: str = "") -> dict:
         sets = list(read_json(out / "benchmarks.json").get("sets", {}))
     except (OSError, ValueError, AttributeError):
         return {"done": False, "running": False, "started": True, "line": "contract unreadable"}
-    parts, all_done, started, running = [], True, False, False
+    parts, all_done, started, running, unpaired = [], True, False, False, []
     for arm in ["before", *arms_of(out, contract)]:
         trained = arm == "before" or (out / arm / "policy" / "policy_train.json").is_file()
         finished = sum(all((out / arm / "benchmark" / name / f"shard-{s}.done.json").is_file() for s in range(4)) for name in sets)
@@ -354,10 +416,18 @@ def bench_seed(out: Path, label: str = "") -> dict:
         holder = lease_holder(out / f".bench-{arm}.lock", out / "logs", "bench-launcher", f"benchmarks {out.parent.name}")
         if holder is not None:
             running = True
+            if holder == "?":
+                unpaired.append(ARM_LABELS.get(arm, arm))
             word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
             word += write_note(out / arm / "benchmark")
         parts.append(f"{ARM_LABELS.get(arm, arm)} {word}")
+    share_leases(out / "logs", "bench-launcher", f"{label} {out.name}", unpaired)
     line = "DONE" if all_done else " | ".join(parts)
+    if not all_done and not running:
+        log = newest_launcher_log(out / "logs", "bench-launcher")
+        problem = last_problem(log) if log else ""
+        if problem:
+            line += f"  <- last: {problem}"
     return {"done": all_done, "running": running, "started": started, "line": line}
 
 
@@ -564,13 +634,21 @@ def record_seen(work: Path) -> float | None:
         return None
 
 
+WORK: list[Path] = []
+
+
 def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> list[str]:
     seen = seen if seen is not None else SEEN
     unknown = NODES.pop("?", [])
-    hosts = sorted(set(notes) | set(NODES) | set(seen), key=short_host)
+    for host in SHARED:
+        INFERRED.add(host)
+    shared_leases = {w for items in SHARED.values() for w in items}
+    unknown = [w for w in unknown if not any(w.split(" (")[0].rsplit(" ", 1)[0] in s for s in shared_leases)]
+    hosts = sorted(set(notes) | set(NODES) | set(seen) | set(SHARED), key=short_host)
     fresh = lambda h: seen.get(h, {}).get("age", 10**9) < SEEN_FRESH_SECONDS  # noqa: E731
     disp = lambda h: ("~" if h in INFERRED else "") + short_host(h)  # noqa: E731
-    busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive")
+    queue_live = lambda h: notes.get(h, {}).get("alive") and notes[h]["step"] not in ("done", "stopped")  # noqa: E731
+    busy = [h for h in hosts if h in NODES or h in SHARED or queue_live(h)
             or (fresh(h) and (seen[h]["jobs"] or seen[h].get("gpu_busy") or seen[h]["lock"]))]
     idle = [h for h in hosts if h not in busy and fresh(h)]
     gone = [h for h in hosts if h not in busy and h not in idle]
@@ -595,6 +673,10 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
             beat = f"no heartbeat for {note['beat_age']}" if note["beat_age"] else "no heartbeat"
             head = f"{note['step']}  since {since_text(note['since'])}  {beat.upper()} (killed?)"
         lines.append(f"  {disp(host):<10} {head}")
+        if WORK:
+            state = queue_log_state(WORK[0], host)
+            if state:
+                lines.append(f"  {'':<10}   {state}")
         if host in seen:
             s = seen[host]
             view = f"running {', '.join(s['jobs'])}" if s["jobs"] else ("GPU lock held by a non-queue job" if s["lock"] else "idle")
@@ -605,6 +687,8 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
             lines.append(f"  {'':<10}   reported {age_text(s['age'])} ago from that node: {view}")
         for what in NODES.get(host, []):
             lines.append(f"  {'':<10}   holds: {what}")
+        for what in SHARED.get(host, []):
+            lines.append(f"  {'':<10}   busy in {what} (its launcher log is active there)")
     for what in unknown:
         lines.append(f"  {'?':<10} holds: {what}  (node unknown: lease taken before the notes, no launcher log with a host name)")
     return lines
@@ -625,9 +709,9 @@ def job_label(marker: str) -> str:
     return path
 
 
-def node_jobs() -> list[str]:
-    """Labels of the queue processes on this machine (every one carries OUT_ROOT in its environment)."""
-    markers = set()
+def marked_processes() -> list[tuple[int, str]]:
+    """(pid, OUT_ROOT) of every process on this machine that carries the queue marker (own processes)."""
+    found = []
     for proc in Path("/proc").glob("[0-9]*"):
         if proc.name == str(os.getpid()):
             continue
@@ -637,8 +721,48 @@ def node_jobs() -> list[str]:
             continue
         for item in environ.split(b"\0"):
             if item.startswith(b"OUT_ROOT="):
-                markers.add(item[9:].decode(errors="replace"))
-    return sorted({job_label(m) for m in markers if m})
+                marker = item[9:].decode(errors="replace")
+                if marker:
+                    found.append((int(proc.name), marker))
+                break
+    return found
+
+
+def node_jobs() -> list[str]:
+    """Labels of the queue processes on this machine (every one carries OUT_ROOT in its environment)."""
+    return sorted({job_label(m) for _, m in marked_processes()})
+
+
+def kill_orphans() -> list[str]:
+    """Stop marked GPU processes on this node when no live driver holds the node lock: their driver
+    died (for example with the terminal of the old queue pipeline), their leases are released, and
+    they would collide with the work a fresh queue starts. Returns the labels stopped."""
+    import signal
+    directory = Path(os.environ.get("OM_LOCAL_LOCK_DIR", f"/tmp/offpolicy-misranking-{os.getuid()}"))
+    if lease_held(directory / "primary.lock"):
+        print("[orphans] node lock held: a live driver runs on this node; nothing stopped")
+        return []
+    procs = marked_processes()
+    if not procs:
+        print("[orphans] none")
+        return []
+    labels = sorted({job_label(m) for _, m in procs})
+    print(f"[orphans] stopping {len(procs)} process(es) of a dead driver: {', '.join(labels)}")
+    for pid, _ in procs:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.time() + 20
+    while time.time() < deadline and any(Path(f"/proc/{pid}").exists() for pid, _ in procs):
+        time.sleep(1)
+    for pid, _ in procs:
+        if Path(f"/proc/{pid}").exists():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    return labels
 
 
 def gpu_snapshot() -> dict:
@@ -706,6 +830,7 @@ def node_line() -> str:
 def build_rows(work: Path, root: Path, tag: str, seeds, other: str, mix_seed: int, mix_steps: int):
     NODES.clear()
     INFERRED.clear()
+    SHARED.clear()
 
     def run_dir(seed, drift):
         return root / f"family-math500-s{seed}" / f"{tag}-s{seed}-math500-d{drift}"
@@ -750,6 +875,7 @@ def main(argv=None) -> int:
     parser.add_argument("--mix-seed", type=int, default=int(os.environ.get("MIX_SEED", "0")))
     parser.add_argument("--mix-steps", type=int, default=int(os.environ.get("MIX_STEPS", "200")))
     parser.add_argument("--record", action="store_true", help="only write this node's report under $OM_WORK/queue (used by the watcher)")
+    parser.add_argument("--kill-orphans", action="store_true", help="stop marked GPU processes on this node when no live driver holds the node lock")
     args = parser.parse_args(argv)
     if not str(args.work):
         print("[abort] OM_WORK not set", file=sys.stderr)
@@ -757,9 +883,13 @@ def main(argv=None) -> int:
     if args.record:
         record_seen(args.work)
         return 0
+    if args.kill_orphans:
+        kill_orphans()
+        return 0
     root = args.root or Path(os.environ.get("OM_OLMO3_ROOT") or (args.work / "runs" / args.tag))
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     header = f"QUEUE STATUS  {stamp}  code={git_short()}"
+    WORK[:] = [args.work]
     fs_now = record_seen(args.work)
     SEEN.clear()
     SEEN.update(seen_nodes(args.work, fs_now))

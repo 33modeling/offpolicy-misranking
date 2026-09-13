@@ -352,3 +352,84 @@ def test_gpu_state_marks_a_node_busy_even_without_queue_markers(tmp_path, monkey
     (notes / "run1-qw-4.seen.json").touch()
     os.utime(notes / "run1-qw-4.seen.json", (fs_now - 30, fs_now - 30))
     assert qs.seen_nodes(work, fs_now)["run1-qw-4"]["age"] == 30
+
+
+def test_several_nodes_in_one_seed_directory_are_all_counted_busy(tmp_path):
+    work, root = _tree(tmp_path)
+    e5 = work / "runs" / "e5-reduced"
+    sets = ["aime24", "gsm8k"]
+    out = _seed_dir(e5 / "math500-d0", 1, ["random", "passrate_beta", "fresh_r"])
+    for arm in ("random", "passrate_beta", "fresh_r"):
+        _trained(out, arm)
+    _bench(out, "before", sets, sets)
+    (out / "logs").mkdir()
+    for host in ("run1-qw-3", "run1-qw-5", "run1-qw-6"):
+        (out / "logs" / f"bench-launcher-{host}-20260913T120000Z.log").write_text("x\n")
+    holders = []
+    for arm in ("random", "passrate_beta", "fresh_r"):
+        lock = out / f".bench-{arm}.lock"
+        lock.write_text("")
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        holders.append(fd)
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+        by = {name: (state, lines) for name, state, lines in rows}
+        text = qs.render(rows, "HDR", "NODE", {})
+    finally:
+        for fd in holders:
+            os.close(fd)
+    assert by["benchmarks d0"][0] == "RUNNING"
+    assert "random 0/2*[?]" in by["benchmarks d0"][1][1]
+    assert "  BUSY 3: ~qw-3, ~qw-5, ~qw-6" in text
+    assert "busy in benchmarks d0 s1: one of random, difficulty, fresh (its launcher log is active there)" in text
+    assert "unidentified" not in text
+
+
+def test_last_problem_lines_surface_in_the_status(tmp_path):
+    work, root = _tree(tmp_path)
+    e5 = work / "runs" / "e5-reduced"
+    out = _seed_dir(e5 / "math500-d100", 2, ["random", "fresh_r"])
+    (out / "logs").mkdir()
+    (out / "logs" / "launcher-run1-qw-2-20260913T120000Z.log").write_text(
+        "[environment] host=run1-qw-2\n[train] random\n[failed] random training; see logs/train-random.log; continuing to the next arm\n[E5] failures=1\n")
+    notes = work / "queue"
+    notes.mkdir()
+    (notes / "run1-qw-2.txt").write_text("host=run1-qw-2 pid=1 step=done since=2026-09-13T12:30:00Z\n")
+    (notes / "run1-qw-2.log").write_text("===== [12:00] run_e5.sh d100\n[abort] source point is not complete: /x/family-math500-s2/tag-s2-math500-d100\n===== [12:01] run_e5.sh d100 finished (rc=1)\n")
+    qs.WORK[:] = [work]
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+        text = qs.render(rows, "HDR", "NODE", qs.queue_notes(work))
+    finally:
+        qs.WORK.clear()
+    by = {name: (state, lines) for name, state, lines in rows}
+    assert by["d100 continuation"][1][2].endswith("<- last: [failed] random training; see logs/train-random.log; continuing to the next arm")
+    assert "queue log: ===== [12:01] run_e5.sh d100 finished (rc=1) | last problem: [abort] source point is not complete" in text
+
+
+def test_kill_orphans_only_when_the_node_lock_is_free(tmp_path, monkeypatch):
+    import time
+    monkeypatch.setenv("OM_LOCAL_LOCK_DIR", str(tmp_path / "locks"))
+    (tmp_path / "locks").mkdir()
+    child = subprocess.Popen(["sleep", "60"], env={"OUT_ROOT": "/w/runs/e5-reduced/math500-d0/.bench", "PATH": "/usr/bin:/bin"})
+    try:
+        time.sleep(0.2)
+        # a live driver holds the node lock: nothing is stopped
+        lock = tmp_path / "locks" / "primary.lock"
+        lock.write_text("")
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            assert qs.kill_orphans() == []
+            assert child.poll() is None
+        finally:
+            os.close(fd)
+        # lock free: the marked process is an orphan and is stopped
+        assert qs.kill_orphans() == ["benchmarks math500-d0"]
+        child.wait(timeout=10)
+        assert child.returncode != 0
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
