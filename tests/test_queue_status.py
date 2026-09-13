@@ -433,3 +433,45 @@ def test_kill_orphans_only_when_the_node_lock_is_free(tmp_path, monkeypatch):
         if child.poll() is None:
             child.kill()
             child.wait()
+
+
+def test_action_block_names_stalled_steps_and_nodes(tmp_path):
+    work, root = _tree(tmp_path)
+    pool = work / "inputs" / "mixed" / "pool-math500-mbpp-s0.jsonl"
+    pool.parent.mkdir(parents=True)
+    pool.write_text("{}\n")
+    point = _point(root, "math500mix", 0, 0, done=False)
+    (point / "logs").mkdir()
+    (point / "logs" / "main.log").write_text("2026-09-13 10:05:00 [progress] tag-s0-math500mix-d0  2/8 behavior-rollout  +5min\n")
+    notes = work / "queue"
+    notes.mkdir()
+    (notes / "run1-qw-3.seen.json").write_text(json.dumps({"host": "run1-qw-3", "jobs": [], "lock": False, "gpu_util": [99, 99, 99, 99], "gpu_procs": ["python experiment.py"], "gpu_busy": True}))
+    (notes / "run1-qw-8.seen.json").write_text(json.dumps({"host": "run1-qw-8", "jobs": [], "lock": False, "gpu_util": [0, 0, 0, 0], "gpu_procs": [], "gpu_busy": False}))
+    qs.SEEN.clear()
+    qs.SEEN.update(qs.seen_nodes(work))
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+        text = qs.render(rows, "HDR", "NODE", {})
+    finally:
+        qs.SEEN.clear()
+    assert "  stalled (artifacts exist, no driver holds them):\n      mixed pool: point" in text
+    assert "  first, on qw-3 (GPU busy, no driver): bash scripts/run_queue.sh" in text
+    assert "  then, on qw-8 (idle): bash scripts/run_queue.sh" in text
+
+
+def test_other_suites_are_listed_and_their_running_hosts_count_busy(tmp_path):
+    import time
+    work, root = _tree(tmp_path)
+    suite = work / "runs" / "fixed-checkpoint-gate-v1"
+    (suite / "d0" / "s0").mkdir(parents=True)
+    (suite / "d0" / "s0" / "progress.json").write_text(json.dumps({"phase": "baseline", "state": "finished", "host": "run1-ds-4", "updated": time.time() - 7200}))
+    (suite / "d0" / "s0" / "baseline-failure.json").write_text(json.dumps({"error": "recomputed g11 score differs from original E5 scoring"}))
+    (suite / "d400" / "s1").mkdir(parents=True)
+    (suite / "d400" / "s1" / "progress.json").write_text(json.dumps({"phase": "pilot", "state": "started", "host": "run1-ds-6", "updated": time.time() - 60}))
+    rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+    text = qs.render(rows, "HDR", "NODE", {})
+    assert "OTHER GPU SUITES" in text
+    assert "    d0/s0 FAILED (recomputed g11 score differs from original E5 scoring)" in text
+    assert "    d400/s1 pilot RUNNING on ds-6" in text
+    assert "  BUSY 1: ds-6" in text and "holds: fixed-checkpoint gate d400/s1 pilot" in text
+    assert qs.job_label("/w/runs/fixed-checkpoint-gate-v1") == "fixed-checkpoint gate"

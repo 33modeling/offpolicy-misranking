@@ -705,6 +705,8 @@ def job_label(marker: str) -> str:
         return f"reuse split-half {name.split('-')[-1]}"
     if "/e5-reduced/" in path:
         return f"E5 arms {name}"
+    if name in SUITES:
+        return SUITES[name]
     if "/family-" in path:
         return f"point {name}"
     return path
@@ -843,7 +845,82 @@ def build_rows(work: Path, root: Path, tag: str, seeds, other: str, mix_seed: in
     rows.append(("benchmarks d400",) + bench_state(e5 / "math500-d400", seeds, "benchmarks d400"))
     rows.append(("d100 continuation",) + branch_state(e5 / "math500-d100", seeds, None, "d100"))
     rows.append(("analyses + export",) + exports_state(work))
+    SUITE_LINES[:] = suite_lines(work)
     return rows
+
+
+SUITE_LINES: list[str] = []
+
+
+def action_lines(rows, notes: dict[str, dict], seen: dict[str, dict]) -> list[str]:
+    """What to restart, where, how: steps with artifacts but no driver, and the nodes to use."""
+    stalled = [name for name, state, _ in rows if state == "PARTIAL" and name != "analyses + export"]
+    fresh = lambda h: seen.get(h, {}).get("age", 10**9) < SEEN_FRESH_SECONDS  # noqa: E731
+    disp = lambda h: ("~" if h in INFERRED else "") + short_host(h)  # noqa: E731
+    live_queue = {h for h, n in notes.items() if n["alive"] and n["step"] not in ("done", "stopped")}
+    idle = [h for h in seen if fresh(h) and not seen[h]["jobs"] and not seen[h].get("gpu_busy") and h not in NODES and h not in live_queue]
+    orphaned = [h for h in seen if fresh(h) and seen[h].get("gpu_busy") and not seen[h]["jobs"] and h not in NODES and h not in live_queue]
+    lines = []
+    if stalled:
+        lines.append("  stalled (artifacts exist, no driver holds them):")
+        for name in stalled:
+            lines.append(f"      {name}")
+    else:
+        lines.append("  stalled: none (every started step has a driver)")
+    if orphaned:
+        lines.append(f"  first, on {', '.join(disp(h) for h in orphaned)} (GPU busy, no driver): bash scripts/run_queue.sh   -> stops the orphans, resumes")
+    if idle:
+        lines.append(f"  then, on {', '.join(disp(h) for h in idle)} (idle): bash scripts/run_queue.sh   -> each takes what is unclaimed")
+    if not idle and not orphaned:
+        lines.append("  no idle or orphaned node has reported yet: on every node you hold, run")
+        lines.append("      git pull --ff-only && bash scripts/run_queue.sh")
+        lines.append("  (a node with a live driver answers 'already running' or skips busy steps; nothing runs twice)")
+    return lines
+
+
+# ---------------------------------------------------------------- other GPU suites (same work directory)
+
+SUITES = {"fixed-checkpoint-gate-v1": "fixed-checkpoint gate", "selection-gate-light-v2": "light selection gate",
+          "selection-gate-one-shot-v1": "one-shot selection gate"}
+
+
+def suite_lines(work: Path) -> list[str]:
+    """Runs of the other GPU suites under $OM_WORK/runs (their progress.json records host, phase, state);
+    a run in state 'started' updated within an hour marks its host busy."""
+    lines = []
+    for name, label in SUITES.items():
+        root = work / "runs" / name
+        if not root.is_dir():
+            continue
+        cells = []
+        for progress in sorted(root.glob("d*/s*/progress.json")):
+            try:
+                rec = read_json(progress)
+            except (OSError, ValueError):
+                continue
+            cell = f"{progress.parent.parent.name}/{progress.parent.name}"
+            failure = progress.parent / "baseline-failure.json"
+            state = str(rec.get("state", "?"))
+            phase = str(rec.get("phase", "?"))
+            host = str(rec.get("host", "?"))
+            updated = rec.get("updated")
+            fresh = isinstance(updated, (int, float)) and time.time() - updated < 3600
+            if state == "started" and fresh:
+                NODES.setdefault(host, []).append(f"{label} {cell} {phase}")
+                cells.append(f"{cell} {phase} RUNNING on {short_host(host)}")
+            elif failure.is_file():
+                try:
+                    err = str(read_json(failure).get("error", "failed"))[:60]
+                except (OSError, ValueError):
+                    err = "failed"
+                cells.append(f"{cell} FAILED ({err})")
+            else:
+                cells.append(f"{cell} {phase} {state}")
+        if cells:
+            lines.append(f"  {label} ({name}):")
+            for cell in cells:
+                lines.append(f"    {cell}")
+    return lines
 
 
 def render(rows, header: str, node: str, notes: dict[str, dict] | None = None) -> str:
@@ -851,6 +928,13 @@ def render(rows, header: str, node: str, notes: dict[str, dict] | None = None) -
     out.append("NODES (queue note + heartbeat under $OM_WORK/queue, held leases, and what status saw on each node)")
     out.extend(node_lines(notes or {}))
     out.append("")
+    out.append("ACTION")
+    out.extend(action_lines(rows, notes or {}, SEEN))
+    out.append("")
+    if SUITE_LINES:
+        out.append("OTHER GPU SUITES in the same work directory (not queue steps)")
+        out.extend(SUITE_LINES)
+        out.append("")
     out.append("STEPS")
     out.append(f"{'#':>2}  {'step':<26} state")
     counts = {s: 0 for s in STATES}
