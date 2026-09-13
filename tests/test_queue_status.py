@@ -211,6 +211,9 @@ def test_lease_notes_name_the_node_and_queue_notes_list_nodes(tmp_path):
     assert "     holds: reuse split-half d400 s1" in text
     assert [l for l in lines if l.startswith("  qw-3 ")][0].endswith("(killed?)") and "NO HEARTBEAT" in text
     assert [l for l in lines if l.startswith("  qw-1 ")][0].endswith("queue finished 09-13 11:00Z")
+    assert "  busy nodes: 1 (qw-7)" in text
+    assert "  idle nodes (queue finished there; free if the allocation still exists): qw-1" in text
+    assert "  no heartbeat (probably killed; rerun the queue on a fresh node): qw-3" in text
     # a lease held without a note (job started before the notes existed)
     lock.write_text("")
     holder = os.open(lock, os.O_RDWR)

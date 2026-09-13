@@ -474,6 +474,12 @@ def node_lines(notes: dict[str, dict]) -> list[str]:
     busy = [h for h in hosts if h in NODES or notes.get(h, {}).get("alive")]
     lines = [f"  busy nodes: {len(busy)} ({', '.join(short_host(h) for h in busy) or 'none'})"
              + (f" + {len(unknown)} lease(s) on an unidentified node" if unknown else "")]
+    idle = [h for h in hosts if h not in NODES and notes.get(h, {}).get("step") in ("done", "stopped")]
+    if idle:
+        lines.append(f"  idle nodes (queue finished there; free if the allocation still exists): {', '.join(short_host(h) for h in idle)}")
+    dead = [h for h in hosts if h not in NODES and h in notes and notes[h]["step"] not in ("done", "stopped") and not notes[h]["alive"]]
+    if dead:
+        lines.append(f"  no heartbeat (probably killed; rerun the queue on a fresh node): {', '.join(short_host(h) for h in dead)}")
     for host in hosts:
         note = notes.get(host)
         if note is None:
