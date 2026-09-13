@@ -34,6 +34,12 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 TAG=${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-h100-v2}
 ROOT=${OM_OLMO3_ROOT:-$OM_WORK/runs/$TAG}
 read -r -a SEEDS <<< "${E5_SEEDS:-0 1 2}"
+# Different nodes start at different seeds, so several nodes spread over the
+# seeds instead of all queueing on seed 0 (arms are leased, so no overlap).
+if [ "$MODE" = run ] && [ "${E5_SEED_ORDER:-rotate}" = rotate ] && [ "${#SEEDS[@]}" -gt 1 ]; then
+  offset=$(( $(hostname | cksum | cut -d' ' -f1) % ${#SEEDS[@]} ))
+  SEEDS=("${SEEDS[@]:offset}" "${SEEDS[@]:0:offset}")
+fi
 SETS=${E5_BENCH_SETS:-aime24 aime25 amc23 gsm8k math_rest}
 EVAL_K=${E5_BENCH_K:-8}; COUNT=${E5_BENCH_COUNT:-200}
 # The five sets are committed under data/benchmarks (fetched on 2026-09-13 with

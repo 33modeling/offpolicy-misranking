@@ -130,7 +130,8 @@ def test_progress_states_and_leases(tmp_path):
         os.close(holder)
     by = {name: (state, lines) for name, state, lines in rows}
     assert by["mixed pool: pool"][0] == "DONE"
-    assert by["mixed pool: point"][0] == "RUNNING" and by["mixed pool: point"][1][0].startswith("2/8 behavior-rollout +5min")
+    assert by["mixed pool: point"][0] == "RUNNING" and by["mixed pool: point"][1][0].startswith("2/8 behavior-rollout +5min *[?]")
+    assert by["mixed pool: point"][1][1].startswith("last file write 0m ago")
     assert by["mixed pool: arms"][0] == "WAITING"
     assert by["reuse split-half d400"] == ("PARTIAL", ["s0 ok  s1 2/4 shards  s2 -"])
     assert by["reuse split-half d0"][0] == "TODO"
@@ -201,7 +202,7 @@ def test_lease_notes_name_the_node_and_queue_notes_list_nodes(tmp_path):
     try:
         rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
         by = {name: (state, lines) for name, state, lines in rows}
-        assert by["reuse split-half d400"] == ("RUNNING", ["s0 -  s1 1/4 shards*[qw-7]  s2 -"])
+        assert by["reuse split-half d400"] == ("RUNNING", ["s0 -  s1 1/4 shards*[qw-7] (no write yet)  s2 -"])
         assert qs.NODES == {"run280417-first-qw-7": ["reuse split-half d400 s1"]}
         text = qs.render(rows, "HDR", "NODE", qs.queue_notes(work))
     finally:
@@ -223,7 +224,7 @@ def test_lease_notes_name_the_node_and_queue_notes_list_nodes(tmp_path):
         rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
     finally:
         os.close(holder)
-    assert dict((n, l) for n, s, l in rows)["reuse split-half d400"] == ["s0 -  s1 1/4 shards*[?]  s2 -"]
+    assert dict((n, l) for n, s, l in rows)["reuse split-half d400"] == ["s0 -  s1 1/4 shards*[?] (no write yet)  s2 -"]
 
 
 def test_this_node_lists_queue_processes_by_their_marker():
@@ -259,7 +260,7 @@ def test_old_leases_are_attributed_from_launcher_logs(tmp_path):
         rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
         by = {name: (state, lines) for name, state, lines in rows}
         assert by["d100 continuation"][0] == "RUNNING"
-        assert by["d100 continuation"][1][0] == "s0: before ok | random train 12/100*[~qw-2] | fresh -"
+        assert by["d100 continuation"][1][0] == "s0: before ok | random train 12/100*[~qw-2] (write 0m ago) | fresh -"
         text = qs.render(rows, "HDR", "NODE", {})
     finally:
         os.close(holder)
@@ -303,7 +304,7 @@ def test_seen_records_attribute_old_leases_and_list_idle_nodes(tmp_path, monkeyp
         os.close(holder)
         qs.SEEN.clear()
     by = {name: (state, lines) for name, state, lines in rows}
-    assert by["reuse split-half d400"][1] == ["s0 -  s1 1/4 shards*[~qw-9]  s2 -"]
+    assert by["reuse split-half d400"][1] == ["s0 -  s1 1/4 shards*[~qw-9] (no write yet)  s2 -"]
     assert "  busy nodes: 1 (~qw-9)" in text
     assert "idle nodes (nothing running when last seen; free if the allocation still exists): qw-8" in text
     assert "last seen more than 30 min ago (run status there to refresh): qw-6" in text

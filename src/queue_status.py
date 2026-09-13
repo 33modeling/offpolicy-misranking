@@ -167,6 +167,26 @@ def note_lease(holder: str | None, what: str) -> str:
     return f"*[{'~' if inferred else ''}{short_host(host)}]"
 
 
+def newest_write(path: Path, pattern: str = "*") -> tuple[float, int]:
+    """(newest mtime, total bytes) of the files under path matching pattern (recursive); (0, 0) when none."""
+    latest, total = 0.0, 0
+    try:
+        for entry in path.rglob(pattern):
+            if entry.is_file():
+                st = entry.stat()
+                latest = max(latest, st.st_mtime)
+                total += st.st_size
+    except OSError:
+        pass
+    return latest, total
+
+
+def write_note(path: Path, pattern: str = "*") -> str:
+    """' (write 3m ago)' for the newest file under path, or ' (no write yet)'."""
+    latest, _ = newest_write(path, pattern)
+    return f" (write {age_text(max(0, int(time.time() - latest)))} ago)" if latest else " (no write yet)"
+
+
 def row_count(path: Path) -> int:
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
@@ -284,6 +304,7 @@ def branch_seed(out: Path, arms=None, label: str = "") -> dict:
         if holder is not None:
             running = True
             word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
+            word += write_note(out / arm)
         parts.append(f"{ARM_LABELS.get(arm, arm)} {word}")
     line = "DONE" if all_done else " | ".join(parts)
     if all_done and not (out / "downstream_results.csv").is_file():
@@ -334,6 +355,7 @@ def bench_seed(out: Path, label: str = "") -> dict:
         if holder is not None:
             running = True
             word += note_lease(holder, f"{label} {out.name} {ARM_LABELS.get(arm, arm)} ({word})".strip())
+            word += write_note(out / arm / "benchmark")
         parts.append(f"{ARM_LABELS.get(arm, arm)} {word}")
     line = "DONE" if all_done else " | ".join(parts)
     return {"done": all_done, "running": running, "started": started, "line": line}
@@ -374,6 +396,7 @@ def stale_state(run_dir, seeds, drift: int, label: str = "") -> tuple[str, list[
         if holder is not None:
             running = True
             word += note_lease(holder, f"{label} s{seed}")
+            word += write_note(run / "logs", "stale-splithalf-*.log")
         parts.append(word)
     if all_done:
         return "DONE", []
@@ -405,12 +428,17 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
     else:
         progress = last_progress(point)
         log = point / "logs" / "main.log"
+        latest, _ = newest_write(point)
+        _, rollout_bytes = newest_write(point, "rollouts_*")
+        activity = (f"last file write {age_text(max(0, int(time.time() - latest)))} ago" if latest else "no file written yet") \
+            + (f", rollouts {rollout_bytes / 1e6:.0f} MB" if rollout_bytes else "")
         holder = lease_holder(Path(str(point) + ".lease"), job=f"point {point.name}")
         if holder is not None:
             mark = note_lease(holder, f"mixed pool point ({progress or 'started'})")
-            rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'}, last write {age(log)} ago {mark}"]))
+            rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'} {mark}", activity,
+                                                          "(the stage line changes only at stage boundaries; a stage takes hours)"]))
         elif log.is_file():
-            rows.append(("mixed pool: point", "PARTIAL", [f"stopped at {progress or '?'}, last write {age(log)} ago"]))
+            rows.append(("mixed pool: point", "PARTIAL", [f"stopped at {progress or '?'}", activity]))
         elif pool_ready:
             rows.append(("mixed pool: point", "TODO", []))
         else:
