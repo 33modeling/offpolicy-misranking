@@ -15,6 +15,9 @@ import net_gain_gate_gpu as gpu
 base, core = gpu.base, gpu.core
 HERE = Path(__file__).resolve()
 SCHEMA = "net-gate-autograd-recovery/v1"
+MEMORY_WORKER = HERE.with_name("net_gate_memory_worker.py")
+# Exact predecessor from 6a90e1c: accept its immutable records, never rewrite them.
+PRE_MEMORY_RUNNER = "8e440d6fa3a46c5ed34bc77b8e1f60badc09b7c1c2c6a102b62b66dd8ce9c99e"
 _select_once = gpu.select_once
 _run_arm = gpu.run_arm
 _validate_result = gpu.validate_result
@@ -52,6 +55,8 @@ def validate_recovery(out, p, arm):
     expected = {"protocol_sha256": core.fingerprint(p),
                 "contract_sha256": base.digest(out / "contract.json"),
                 "runner_sha256": base.digest(HERE), "arm": arm}
+    if record.get("binding", {}).get("runner_sha256") == PRE_MEMORY_RUNNER:
+        expected["runner_sha256"] = PRE_MEMORY_RUNNER
     if record.get("schema") != SCHEMA or record.get("binding") != expected:
         raise ValueError("autograd recovery binding changed")
     with (directory / "cost.jsonl").open("rb") as handle:
@@ -60,7 +65,47 @@ def validate_recovery(out, p, arm):
         raise ValueError("pre-recovery cost ledger changed")
     if base.spent(directory) < record["original_gpu_seconds"]:
         raise ValueError("failed finite-difference work must remain charged")
+    if (directory / "autograd-memory-runtime.json").exists():
+        validate_memory_runtime(out, arm)
     return record
+
+
+def validate_memory_runtime(out, arm):
+    directory = out / arm
+    value = core.read(directory / "autograd-memory-runtime.json")
+    if value["runner_sha256"] != base.digest(HERE) or value["worker_sha256"] != base.digest(MEMORY_WORKER):
+        raise ValueError("frozen autograd memory runtime changed")
+    if value["recovery_sha256"] != base.digest(directory / "autograd-recovery.json"):
+        raise ValueError("memory runtime recovery binding changed")
+    contract = out / value["scoring_contract"]
+    if not contract.resolve().is_relative_to(private_dir(out, arm).resolve()) or base.digest(contract) != value["scoring_sha256"]:
+        raise ValueError("memory runtime scoring binding changed")
+    with (directory / "cost.jsonl").open("rb") as handle:
+        prefix = handle.read(value["prior_cost_bytes"])
+    if len(prefix) != value["prior_cost_bytes"] or hashlib.sha256(prefix).hexdigest() != value["prior_cost_sha256"]:
+        raise ValueError("pre-memory-repair cost ledger changed")
+    if base.spent(directory) < value["prior_gpu_seconds"]:
+        raise ValueError("pre-memory-repair GPU cost cannot be refunded")
+    return value
+
+
+def bind_memory_runtime(out, arm, point):
+    directory = out / arm
+    path = directory / "autograd-memory-runtime.json"
+    if path.exists():
+        validate_memory_runtime(out, arm)
+        return
+    paid = base.spent(directory)
+    prefix = (directory / "cost.jsonl").read_bytes()
+    value = {"schema": "net-gate-eval-checkpoint-runtime/v1", "runner_sha256": base.digest(HERE),
+        "worker_sha256": base.digest(MEMORY_WORKER), "recovery_sha256": base.digest(directory / "autograd-recovery.json"),
+        "scoring_contract": str((point / "experiment.json").relative_to(out)),
+        "scoring_sha256": base.digest(point / "experiment.json"),
+        "prior_cost_bytes": len(prefix), "prior_cost_sha256": hashlib.sha256(prefix).hexdigest(), "prior_gpu_seconds": paid,
+        "activation_policy": "non-reentrant per-decoder checkpointing with unchanged eval/dropout modes",
+        "failure_policy": "healthy shards drain within the original phase deadline; no automatic repeat of unchanged OOM",
+        "cost_policy": "retain all prior costs; unchanged branch allocation"}
+    base.bind(path, value)
 
 
 def begin_recovery(out, c, p, arm, evidence):
@@ -106,15 +151,15 @@ def exact_selection(out, c, arm, cap, env, devices):
     point = next(low.entries(scoring))
     if core.read(point / "experiment.json")["derivative"] != "autograd":
         raise ValueError("recovery requires a separate autograd scoring contract")
+    bind_memory_runtime(out, arm, point)
     for stage in ("validation", "score"):
         if stage == "validation" and (point / "direction.pt").exists():
             continue
         remaining = (cap - base.spent(directory)) / base.GPUS
         if remaining <= 0:
             raise ValueError("branch allocation exhausted during autograd recovery")
-        commands = [([sys.executable, str(base.ROOT / "src/low_order_experiment.py"), "worker",
-                      "--out", str(point), "--stage", stage, "--shard", str(i)], devices[i])
-                    for i in range(base.GPUS)]
+        commands = [([sys.executable, str(MEMORY_WORKER), "supervise", "--out", str(point),
+                      "--stage", stage, "--logs", str(directory)], ",".join(devices))]
         base.meter(directory, f"autograd-{stage}", c["scope"]["gpu_type"], commands=commands,
                    env=env, timeout=remaining, ledger="deployment")
         base.meter(directory, f"autograd-merge-{stage}", c["scope"]["gpu_type"],
@@ -165,8 +210,11 @@ def recovery_attestation(out, p, arm):
     execution = core.read(directory / "execution.json")
     if execution["action"] != "select" or execution["indices"] != selection["indices"]:
         raise ValueError("training did not use the recovered selection")
-    return {"schema": SCHEMA, "recovery_sha256": base.digest(directory / "autograd-recovery.json"),
-            "result_sha256": base.digest(directory / "result.json"), "selection_sha256": base.digest(selected)}
+    result = {"schema": SCHEMA, "recovery_sha256": base.digest(directory / "autograd-recovery.json"),
+              "result_sha256": base.digest(directory / "result.json"), "selection_sha256": base.digest(selected)}
+    if (directory / "autograd-memory-runtime.json").exists():
+        result["memory_runtime_sha256"] = base.digest(directory / "autograd-memory-runtime.json")
+    return result
 
 
 _pending = {}

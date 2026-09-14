@@ -28,7 +28,8 @@ if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
   CPU_PY=${NET_GATE_CPU_PYTHON:-${NET_GATE_PYTHON:-python3}}
   exec "$CPU_PY" -m pytest -q tests/test_net_gain_gate.py tests/test_net_gain_gate_gpu.py \
-    tests/test_net_gain_gate_recovery.py tests/test_net_gain_gate_recovery_math.py "$@"
+    tests/test_net_gain_gate_recovery.py tests/test_net_gain_gate_recovery_math.py \
+    tests/test_net_gate_memory_worker.py tests/test_net_gate_memory_math.py "$@"
 fi
 if [ "$MODE" = plan ]; then
   printf '%s\n' '[v3] one whole-pool cache scan plus existing checkpoint statistics; no per-epoch gate or bootstrap' \
@@ -70,8 +71,15 @@ if [ "$MODE" = why ]; then
       printf '\n===== %s =====\n' "${ARM_DIR#"$OUT_ROOT"/}"
       cat "$FAILURE"
       printf '\n'
+      for META in "$ARM_DIR/progress.json" "$ARM_DIR/autograd-memory-runtime.json" "$ARM_DIR"/autograd-*-workers.json; do
+        [ -f "$META" ] || continue
+        printf '\n--- STATE: %s ---\n' "${META##*/}"
+        cat "$META"
+        printf '\n'
+      done
       for LOG in "$ARM_DIR"/*.log; do
         printf '\n--- %s (last 120 lines) ---\n' "${LOG##*/}"
+        stat -c 'log modified: %y' "$LOG"
         tail -n 120 "$LOG"
       done
     done
@@ -109,7 +117,9 @@ if [ "$MODE" = export ]; then
           -o -name 'cost.jsonl' -o -name 'initial.json' -o -name 'measurement.json' \
           -o -name 'decision.json' -o -name 'execution.json' -o -name 'result.json' \
           -o -name 'budget_stop.json' -o -name 'failure.json' -o -name 'measurement-failure.json' \
-          -o -name 'autograd-recovery.json' -o -name 'autograd-recovery-result.json' \) -print0 | sort -z)
+          -o -name 'autograd-recovery.json' -o -name 'autograd-recovery-result.json' \
+          -o -name 'autograd-memory-runtime.json' -o -name 'autograd-*-workers.json' \
+          -o -name 'memory-score-*.json' -o -name 'memory-validation-*.json' \) -print0 | sort -z)
       while IFS= read -r -d '' path; do
         printf '\n===== LOG TAIL: %s =====\n' "${path#"$OUT_ROOT"/}"
         tail -n 40 "$path"

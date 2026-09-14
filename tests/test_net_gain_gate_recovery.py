@@ -118,6 +118,16 @@ def test_recovery_rejects_deleted_costs_and_changed_binding(tmp_path):
     p = protocol()
     recovery.begin_recovery(out, c, p, "selection_reduced", recovery.calibration_failure(directory))
     recovery.validate_recovery(out, p, "selection_reduced")
+    record = core.read(directory / "autograd-recovery.json")
+    record["binding"]["runner_sha256"] = recovery.PRE_MEMORY_RUNNER
+    core.atomic_json(directory / "autograd-recovery.json", record)
+    assert recovery.validate_recovery(out, p, "selection_reduced") == record
+    record["binding"]["runner_sha256"] = "unrecognized-code"
+    core.atomic_json(directory / "autograd-recovery.json", record)
+    with pytest.raises(ValueError, match="binding"):
+        recovery.validate_recovery(out, p, "selection_reduced")
+    record["binding"]["runner_sha256"] = recovery.PRE_MEMORY_RUNNER
+    core.atomic_json(directory / "autograd-recovery.json", record)
     with pytest.raises(ValueError, match="binding"):
         recovery.validate_recovery(out, {**p, "recent_window": 21}, "selection_reduced")
     (directory / "cost.jsonl").write_text("")
@@ -167,3 +177,26 @@ def test_summary_distinguishes_repaired_selector_costs(tmp_path, monkeypatch):
     assert result["points"][0]["scope"]["selector"] == "low_order:autograd-recovery-v1"
     assert result["numerical_protocol"] == "finite_with_audited_autograd_recovery/v1"
     assert core.read(root / "study.json") == result
+
+
+def test_memory_patch_binds_runtime_without_rewriting_legacy_record(tmp_path):
+    out, c = source(tmp_path)
+    directory = failed_score(out)
+    p = protocol()
+    recovery.begin_recovery(out, c, p, "selection_reduced", recovery.calibration_failure(directory))
+    record = core.read(directory / "autograd-recovery.json")
+    record["binding"]["runner_sha256"] = recovery.PRE_MEMORY_RUNNER
+    core.atomic_json(directory / "autograd-recovery.json", record)
+    original = (directory / "autograd-recovery.json").read_bytes()
+    point = recovery.private_dir(out, "selection_reduced") / "scoring/points/p0"
+    core.atomic_json(point / "experiment.json", {"derivative": "autograd"})
+    recovery.bind_memory_runtime(out, "selection_reduced", point)
+    recovery.validate_recovery(out, p, "selection_reduced")
+    recovery.bind_memory_runtime(out, "selection_reduced", point)
+    assert (directory / "autograd-recovery.json").read_bytes() == original
+    runtime = directory / "autograd-memory-runtime.json"
+    value = core.read(runtime)
+    value["worker_sha256"] = "modified-worker"
+    core.atomic_json(runtime, value)
+    with pytest.raises(ValueError, match="runtime changed"):
+        recovery.validate_recovery(out, p, "selection_reduced")

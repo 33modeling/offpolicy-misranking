@@ -28,6 +28,7 @@ def test_exact_recovery_scores_all_shards_without_finite_probes(tmp_path, monkey
          "scope": {"gpu_type": "H100", "selector": "low_order"}, "eval_k": 8,
          "evaluation": {"val": core.read(evaluation)["test"], "provenance": core.read(evaluation)["provenance"]}}
     out, arm = tmp_path / "gate-point", "selection_reduced"
+    core.atomic_json(out / arm / "autograd-recovery.json", {"test": "isolated scoring fixture"})
     private = recovery.private_dir(out, arm)
     old = out / "selector-work" / arm / "scores/p0.json"
     core.atomic_json(old, {"derivative": "finite", "must_not_reuse": True})
@@ -38,8 +39,10 @@ def test_exact_recovery_scores_all_shards_without_finite_probes(tmp_path, monkey
     def cpu_meter(directory, name, gpu_type, **kwargs):
         if kwargs.get("commands"):
             assert kwargs["timeout"] <= (10000 - base.spent(directory)) / 4
-            assert len(kwargs["commands"]) == 4
+            assert len(kwargs["commands"]) == 1
             commands = kwargs.pop("commands")
+            assert commands[0][0][1] == str(recovery.MEMORY_WORKER)
+            assert commands[0][0][2] == "supervise" and commands[0][1] == "0,1,2,3"
             point = next(low.entries(private / "scoring"))
             worker = low.validation_worker if name == "autograd-validation" else low.score_worker
             assert all(command[command.index("--stage") + 1] in {"score", "validation"} for command, _ in commands)

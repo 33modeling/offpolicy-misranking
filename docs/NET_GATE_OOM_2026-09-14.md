@@ -65,4 +65,59 @@ There is no evidence in this file of a repaired successful H100 run. Total
 remaining budget, complete suite progress and final benchmark rewards cannot
 be reconstructed reliably from these log tails alone.
 
-This commit records diagnosis only; it does not change the GPU execution path.
+The initial diagnosis commit changed no GPU execution path. The runtime repair
+below was added subsequently.
+
+## Implemented Runtime Repair
+
+`net_gate_memory_worker.py` wraps each decoder forward in non-reentrant
+activation checkpointing while retaining evaluation mode throughout the model.
+Unlike setting the model to training mode to activate framework checkpointing,
+this leaves attention dropout and LoRA dropout disabled. No response is
+truncated or skipped; the attention implementation and scoring formula are
+unchanged. Forward-only passes bypass the checkpoint wrapper.
+
+The metered parent now launches a supervisor which waits for independent
+shards to finish even if one fails. Shard logs use
+`autograd-score-shard-<i>.log`; aggregate exit codes are recorded in
+`autograd-score-workers.json`. The original allocation deadline still kills
+the supervisor and its children if it expires. A failed shard cannot become
+a successful result just because its siblings finished.
+
+A checkpointed worker that still OOMs writes a runtime/input-bound error
+record. An unchanged automatic retry refuses to reload that known failing
+input; other shards can still finish. This prevents repeated GPU consumption
+on an identical failure without silently dropping a prompt. Exceptions now
+include their traceback and response token lengths for the failing operation.
+
+Existing source contracts, completed per-prompt scores, validation directions,
+budgets and cost events are retained. The exact predecessor recovery runner's
+SHA-256 is explicitly recognized for existing immutable records; unknown
+versions are still rejected. A separate `autograd-memory-runtime.json` binds
+the new runner, worker, scoring contract and original recovery record. New
+result attestations include this runtime record. Completed legacy results
+without the new runtime record remain readable without rerunning GPU work.
+
+CPU tests exercise real small OLMo-3 models in FP32 and BF16 with nonzero
+configured attention/LoRA dropout kept in eval mode. Exact directional
+gradients agree before/after checkpointing, parameters do not change, and
+saved activation storage is less than one third of the uncheckpointed test
+case. This is not a measurement of H100 peak memory. Additional tests cover
+healthy-sibling completion, deadline cleanup, retained costs and legacy record
+compatibility. Actual remote H100 validation is still required.
+Local regression verification: 182 orchestration/CPU tests and 31 Torch CPU
+tests passed, with shell syntax and Ruff F checks passing.
+
+On an idle node or one whose failed launcher has exited:
+
+```bash
+git pull
+bash scripts/run_net_gain_gate.sh
+```
+
+Do not restart nodes that are still completing other work. To save updated
+failure logs and runtime state on the shared group volume:
+
+```bash
+bash scripts/run_net_gain_gate.sh why
+```
