@@ -359,16 +359,18 @@ def test_status_without_jq_still_shows_all_arms(tmp_path):
 
 def test_why_saves_child_error_without_starting_workers(tmp_path):
     root = tmp_path / "suite"
+    work = tmp_path / "shared-work"
+    report_dir = work / "reports/net-gain-gate-v3"
     arm = root / "points/p0/selection_reduced"
     core.atomic_json(arm / "failure.json", {"error": "score worker failed: [None, None, None, 2]"})
     (arm / "score-3.log").write_text("[abort] example child failure\n")
     before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     result = subprocess.run(["bash", "scripts/run_net_gain_gate.sh", "why"],
         cwd=gpu.HERE.parents[1], env={**os.environ, "NET_GATE_ROOT": str(root),
-            "HOME": str(tmp_path), "NET_GATE_PYTHON": "/nonexistent/python"},
+            "HOME": str(tmp_path), "OM_WORK": str(work), "NET_GATE_PYTHON": "/nonexistent/python"},
         capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
-    reports = list(tmp_path.glob("net-gate-errors-*.txt"))
+    reports = list(report_dir.glob("net-gate-errors-*.txt"))
     assert len(reports) == 1
     assert f"[saved] {reports[0]}" in result.stdout
     report = reports[0].read_text()
@@ -378,9 +380,10 @@ def test_why_saves_child_error_without_starting_workers(tmp_path):
     assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     again = subprocess.run(["bash", "scripts/run_net_gain_gate.sh", "why"],
         cwd=gpu.HERE.parents[1], env={**os.environ, "NET_GATE_ROOT": str(root),
-            "HOME": str(tmp_path)}, capture_output=True, text=True, timeout=10)
+            "HOME": str(tmp_path), "OM_WORK": str(work)}, capture_output=True, text=True, timeout=10)
     assert again.returncode == 0, again.stderr
-    assert len(list(tmp_path.glob("net-gate-errors-*.txt"))) == 2
+    assert len(list(report_dir.glob("net-gate-errors-*.txt"))) == 2
+    assert not list(tmp_path.glob("net-gate-errors-*.txt"))
     assert reports[0].read_text() == report
 
 
@@ -389,8 +392,32 @@ def test_why_saves_report_when_no_failures(tmp_path):
     root.mkdir()
     result = subprocess.run(["bash", "scripts/run_net_gain_gate.sh", "why"],
         cwd=gpu.HERE.parents[1], env={**os.environ, "NET_GATE_ROOT": str(root),
-            "HOME": str(tmp_path)}, capture_output=True, text=True, timeout=10)
+            "HOME": str(tmp_path), "OM_WORK": str(tmp_path / "shared-work")}, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
-    reports = list(tmp_path.glob("net-gate-errors-*.txt"))
+    reports = list((tmp_path / "shared-work/reports/net-gain-gate-v3").glob("net-gate-errors-*.txt"))
     assert len(reports) == 1 and f"[saved] {reports[0]}" in result.stdout
     assert "no recorded arm failures" in reports[0].read_text()
+
+
+@pytest.mark.parametrize("mode, prefix", [("why", "net-gate-errors"), ("export", "net-gate-results")])
+def test_reports_default_to_group_volume_not_home(tmp_path, mode, prefix):
+    group, home = tmp_path / "group-volume", tmp_path / "home"
+    group.mkdir()
+    home.mkdir()
+    work = group / "cluster-user/offpolicy-misranking"
+    root = work / "runs/net-gain-gate-v3"
+    core.atomic_json(root / "net_protocol.json", protocol())
+    core.atomic_json(root / "suite.json", {"schema": base.SCHEMA, "points": []})
+    env = {**os.environ, "GROUP_VOLUME": str(group), "OM_USER": "cluster-user", "HOME": str(home),
+           "NET_GATE_PYTHON": sys.executable}
+    for key in ("OM_WORK", "NET_GATE_ROOT", "NET_GATE_EXPORT"):
+        env.pop(key, None)
+    command = ["bash", "scripts/run_net_gain_gate.sh", mode]
+    for _ in range(2):
+        result = subprocess.run(command, cwd=gpu.HERE.parents[1], env=env,
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+        assert str(work / "reports/net-gain-gate-v3") in result.stdout
+    reports = list((work / "reports/net-gain-gate-v3").glob(f"{prefix}-*.txt"))
+    assert len(reports) == 2 and all(path.stat().st_size for path in reports)
+    assert not list(home.iterdir())

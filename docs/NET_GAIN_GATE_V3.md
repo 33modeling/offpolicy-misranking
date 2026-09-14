@@ -178,7 +178,7 @@ This specifies a compute horizon, not exactly 100 subsequent updates. A rough
 training allocation for P points on N four-GPU nodes is `3*P*B/(4*N)` wall
 seconds; evaluation, scoring imbalance and idle tail time must be added.
 
-Status, summary and a shell-based home-directory export:
+Status, summary and shell-based shared-volume reports:
 
 ```bash
 bash scripts/run_net_gain_gate.sh status
@@ -192,9 +192,13 @@ The export contains status, study/results, diagnostic decisions, costs and
 log tails. It does not copy model checkpoints, rollouts or another repository.
 
 `why` saves failed-arm records and the last 120 lines of each corresponding
-worker log to `$HOME/net-gate-errors-<UTC>-<unique>.txt`, then prints its full
+worker log to `$OM_WORK/reports/net-gain-gate-v3/net-gate-errors-<UTC>-<unique>.txt`, then prints its full
 path as `[saved] ...`. It needs neither jq nor Python, never overwrites an
 earlier report, and does not restart workers or change experiment artifacts.
+Both `why` and the default `export` write to this shared report directory, not
+`$HOME`. On the cluster the default directory is
+`/group-volume/minsoo3.kim/offpolicy-misranking/reports/net-gain-gate-v3/`.
+An explicitly supplied `NET_GATE_EXPORT` still overrides the export filename.
 
 ### Finite-Difference Calibration Recovery (2026-09-14)
 

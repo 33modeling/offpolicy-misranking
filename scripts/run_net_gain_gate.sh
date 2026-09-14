@@ -56,7 +56,9 @@ if [ "$MODE" = status ]; then
 fi
 if [ "$MODE" = why ]; then
   [ -d "$OUT_ROOT" ] || { echo "[abort] no v3 suite at $OUT_ROOT"; exit 2; }
-  TARGET=$(mktemp "$HOME/net-gate-errors-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.txt")
+  REPORT_DIR="$WORK/reports/net-gain-gate-v3"
+  mkdir -p "$REPORT_DIR"
+  TARGET=$(mktemp "$REPORT_DIR/net-gate-errors-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.txt")
   printf '[collecting] %s\n' "$TARGET"
   (
     printf 'V3 NET-GAIN GATE FAILURE LOGS\nUTC: %s\nROOT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$OUT_ROOT"
@@ -84,10 +86,16 @@ if [ "$MODE" = summarize ]; then
 fi
 if [ "$MODE" = export ]; then
   [ -f "$OUT_ROOT/net_protocol.json" ] || { echo '[abort] no v3 suite at output root'; exit 2; }
-  TARGET=${NET_GATE_EXPORT:-$HOME/net-gate-results-$(date -u +%Y%m%dT%H%M%SZ).txt}
-  [ ! -e "$TARGET" ] || { echo '[abort] export already exists'; exit 2; }
+  if [ -n "${NET_GATE_EXPORT:-}" ]; then
+    TARGET=$NET_GATE_EXPORT
+    [ ! -e "$TARGET" ] || { echo '[abort] export already exists'; exit 2; }
+  else
+    REPORT_DIR="$WORK/reports/net-gain-gate-v3"
+    mkdir -p "$REPORT_DIR"
+    TARGET=$(mktemp "$REPORT_DIR/net-gate-results-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.txt")
+  fi
   (
-    set -o noclobber
+    if [ -n "${NET_GATE_EXPORT:-}" ]; then set -o noclobber; fi
     {
       printf 'V3 NET-GAIN GATE EXPORT\nUTC: %s\nROOT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$OUT_ROOT"
       git rev-parse HEAD
