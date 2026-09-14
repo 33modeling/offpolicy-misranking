@@ -545,6 +545,11 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
         activity = (f"last file write {age_text(max(0, int(time.time() - latest)))} ago" if latest else "no file written yet") \
             + (f", rollouts {rollout_bytes / 1e6:.0f} MB" if rollout_bytes else "")
         holder = lease_holder(Path(str(point) + ".lease"), job=f"point {point.name}")
+        if holder is None:
+            # a flock taken on another node is not always visible from here; the watcher of the
+            # node that runs the point reports its runner among that node's processes
+            seen = seen_host_for(f"point {point.name}")
+            holder = f"~{seen}" if seen else None
         if holder is not None:
             mark = note_lease(holder, f"mixed pool point ({progress or 'started'})")
             rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'} {mark}", activity,

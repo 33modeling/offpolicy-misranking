@@ -155,6 +155,19 @@ def test_progress_states_and_leases(tmp_path):
     assert lines[2] == "last error: [stage-fail] pid=7 rc=1 \uB2E4\uB978 shard \uC644\uB8CC\uAE4C\uC9C0 \uB300\uAE30"
     assert lines[3].startswith("rerun:  bash scripts/run_queue.sh")
     assert qs.point_failure(root / "family-math500-s0" / f"{TAG}-s0-math500-d0") == ""
+    # a node whose watcher reported the point runner among its processes: running there even though
+    # its flock is not visible from this node
+    notes = work / "queue"
+    notes.mkdir(exist_ok=True)
+    (notes / "run1-qw-4.seen.json").write_text(json.dumps({"host": "run1-qw-4", "jobs": [f"point {point.name}"], "lock": True}))
+    qs.SEEN.clear()
+    qs.SEEN.update(qs.seen_nodes(work))
+    try:
+        rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
+    finally:
+        qs.SEEN.clear()
+    state, lines = {n: (s, l) for n, s, l in rows}["mixed pool: point"]
+    assert state == "RUNNING" and lines[0].startswith("2/8 behavior-rollout +5min *[~qw-4]")
     text = qs.render(rows, "HDR", "NODE")
     assert max(len(line) for line in text.splitlines()) < 110
     assert "DONE 1" in text

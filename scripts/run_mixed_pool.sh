@@ -40,7 +40,15 @@ case "$MODE" in
   status)
     if [ -s "$POOL" ]; then echo "pool: ready ($POOL)"; else echo "pool: not built"; fi
     if [ -s "$POINT/DONE" ]; then echo "point: DONE ($POINT)"
-    elif [ -s "$POINT/logs/main.log" ]; then echo "point: in progress; last progress line:"; grep -F '[progress]' "$POINT/logs/main.log" | tail -n 1
+    elif [ -s "$POINT/logs/main.log" ]; then
+      echo "point: in progress; last progress line:"; grep -F '[progress]' "$POINT/logs/main.log" | tail -n 1
+      newest=$(find "$POINT" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1 | cut -d. -f1)
+      [ -n "$newest" ] && echo "point: last file write $(( ($(date +%s) - newest) / 60 )) min ago"
+      if [ -f "$POINT.lease" ]; then
+        if ( exec 6<"$POINT.lease"; flock -n 6 ) 2>/dev/null; then held="free from this node's view"; else held="HELD (visible from this node)"; fi
+        echo "point: lease $held; note: $(cat "$POINT.lease" 2>/dev/null || echo none)"
+        echo "       (a lease taken on another node may not be visible here; the note names the node that took it)"
+      fi
     else echo "point: not started"; fi
     env "${E5_ENV[@]}" bash scripts/run_e5.sh status d0 2>/dev/null | grep -v setup_env
     exit 0 ;;
