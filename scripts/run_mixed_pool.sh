@@ -36,12 +36,19 @@ POOL="$OM_WORK/inputs/mixed/pool-math500-$OTHER-s$SEED.jsonl"
 POINT="$ROOT/family-$NAME-s$SEED/$TAG-s$SEED-$NAME-d0"
 E5_ENV=(E5_DATASET="$NAME" E5_TEST_DATASET=math500 E5_STEPS="$STEPS" E5_SEEDS="$SEED")
 echo "[mixed] pool=$POOL point=$POINT arms root=$OM_WORK/runs/e5-reduced/$NAME-d0 steps=$STEPS"
+shard_progress() {  # last line of each shard log of the stage written most recently: progress inside a stage
+  local f
+  for f in $(ls -t "$POINT"/logs/*-shard*.log 2>/dev/null | head -n 4 | sort); do
+    printf '       %s (%d min ago): %s\n' "$(basename "$f")" "$(( ($(date +%s) - $(stat -c %Y "$f")) / 60 ))" "$(tail -n 1 "$f" | cut -c1-100)"
+  done
+}
 case "$MODE" in
   status)
     if [ -s "$POOL" ]; then echo "pool: ready ($POOL)"; else echo "pool: not built"; fi
     if [ -s "$POINT/DONE" ]; then echo "point: DONE ($POINT)"
     elif [ -s "$POINT/logs/main.log" ]; then
       echo "point: in progress; last progress line:"; grep -F '[progress]' "$POINT/logs/main.log" | tail -n 1
+      shard_progress
       newest=$(find "$POINT" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1 | cut -d. -f1)
       [ -n "$newest" ] && echo "point: last file write $(( ($(date +%s) - newest) / 60 )) min ago"
       if [ -f "$POINT.lease" ]; then
@@ -87,7 +94,8 @@ case "$MODE" in
       fi
       echo "[busy] its last file write was $((idle / 60)) min ago"
       if [ "$idle" -lt "${MIX_STALE_LEASE_SECONDS:-900}" ]; then
-        echo "[busy] the holder is still writing; leaving it alone"
+        echo "[busy] the holder is still writing; leaving it alone. Progress inside its stage:"
+        shard_progress
         exit 0
       fi
       echo "[mixed] no write for $((idle / 60)) min: replacing the stale lease and taking the point over"
