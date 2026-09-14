@@ -32,7 +32,7 @@ if [ "$MODE" = status ] || [ "$MODE" = fit ] || [ "$MODE" = summarize ]; then
   exit 0
 fi
 if [ "$MODE" = export ] || [ "$MODE" = why ]; then
-  [ -f "$OUT_ROOT/switch.json" ] || { echo "[abort] not prepared: $OUT_ROOT"; exit 2; }
+  [ -d "$OUT_ROOT" ] || { echo "[abort] no logs/results: $OUT_ROOT"; exit 2; }
   REPORT_DIR="$WORK/reports/selection-switch"
   mkdir -p "$REPORT_DIR"
   TARGET=$(mktemp "$REPORT_DIR/switch-$MODE-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.txt")
@@ -40,7 +40,7 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
     printf 'SELECTION SWITCH EXPERIMENT\nUTC: %s\nROOT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$OUT_ROOT"
     git rev-parse HEAD
     CUDA_VISIBLE_DEVICES="" "$PY" src/selection_switch_gpu.py status --root "$OUT_ROOT"
-    if [ "$MODE" = export ]; then
+    if [ "$MODE" = export ] && [ -f "$OUT_ROOT/switch.json" ]; then
       CUDA_VISIBLE_DEVICES="" "$PY" src/selection_switch_gpu.py summarize --root "$OUT_ROOT"
     fi
     while IFS= read -r -d '' path; do
@@ -66,6 +66,10 @@ if [ "$MODE" = live ]; then
   [ "${#LOGS[@]}" -gt 0 ] || { echo "[no launcher logs] $OUT_ROOT/logs"; exit 1; }
   exec tail -n 20 -F "${LOGS[@]}"
 fi
+mkdir -p "$OUT_ROOT/logs"
+HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
+exec > >(tee -p -a "$OUT_ROOT/logs/launcher.$HOST.log") 2>&1
+echo "[logs] $OUT_ROOT/logs/launcher.$HOST.log"
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
@@ -81,10 +85,6 @@ fi
 [ "$MODE" != prepare ] || exit 0
 source scripts/_e5_node.sh
 export E5_FORCE=0
-mkdir -p "$OUT_ROOT/logs"
-HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
-exec > >(tee -p -a "$OUT_ROOT/logs/launcher.$HOST.log") 2>&1
-echo "[logs] $OUT_ROOT/logs/launcher.$HOST.log"
 e5_acquire_node
 if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
   mapfile -t GPUS < <(timeout 20 nvidia-smi --query-gpu=index --format=csv,noheader)

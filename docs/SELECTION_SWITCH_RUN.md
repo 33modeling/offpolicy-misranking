@@ -65,6 +65,18 @@ OLMo matrix. Initial subsets use the verified `fresh_r` score and E5 tie rule.
 Initial score generation is historical shared work with unknown historical
 cost, not free deployment scoring. New prefix training costs are recorded.
 
+Preparation compatibility fix (2026-09-14): the first launcher rejected legacy
+`oracle_protocol.json` metadata at `selection_switch_gpu.py:145`, even after
+live rollout validation. If the saved protocol lacks the current validation
+record/schema, preparation now reconstructs the exact fresh_r scalar scores
+on CPU from `oracle_micro_groups.pt` and `val_groups.pt`. It verifies shapes,
+prompt coverage, finite values and any surviving recorded input hashes, and
+records the recovery source hashes. No original matrix artifact is overwritten,
+no response or gradient is regenerated, and no unverifiable old scalar score
+is silently accepted. If these saved gradients are absent, the error names
+the exact required paths. Preparation failures now enter the launcher log;
+`why` and `export` also work before `switch.json` has been published.
+
 Prefix segments preserve the same initial selected subset and full optimizer
 lineage: 0 to 25, 25 to 50, 50 to 100. A generic drift checkpoint is rejected.
 Dedicated read-only input views reference the original pool and new prefix;

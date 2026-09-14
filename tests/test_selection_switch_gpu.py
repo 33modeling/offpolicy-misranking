@@ -204,3 +204,50 @@ def test_existing_link_cannot_silently_point_to_other_policy(tmp_path):
     switch.link(tmp_path / "parent", first)
     switch.link(tmp_path / "parent", first)
     with pytest.raises(ValueError): switch.link(tmp_path / "parent", second)
+
+
+@pytest.mark.parametrize("schema,recorded", [
+    ("offpolicy-oracle-validation-split/v3", None),
+    ("offpolicy-oracle-validation-split/v3", {"validated_rows": 0}),
+    ("offpolicy-oracle-validation-split/v2", {"validated_rows": 32}),
+])
+def test_legacy_initial_scores_reconstructed_on_cpu_without_mutating_source(tmp_path, schema, recorded):
+    import torch
+    from experiment import score_oracle_microgroups, split_validation_directions
+    cfg = {"proj_dim": 3}
+    prompts = {"train": [{}, {}], "val": [{}]*8}
+    torch.manual_seed(72)
+    groups = {i: torch.randn(8, 3) for i in range(2)}
+    validation = torch.randn(8, 3)
+    torch.save(groups, tmp_path / "oracle_micro_groups.pt")
+    torch.save(validation, tmp_path / "val_groups.pt")
+    core.atomic_json(tmp_path / "oracle_protocol.json", {"schema": schema, "generation_validation": recorded})
+    before = {p.name: base.digest(p) for p in tmp_path.iterdir()}
+    scores, info = switch.initial_fresh_scores(tmp_path, cfg, prompts, {"validated_rows": 128})
+    expected = {i: score_oracle_microgroups(g, *split_validation_directions(validation))[1]["r"] for i, g in groups.items()}
+    assert scores == expected
+    assert info["method"] == "cpu_reconstructed_fresh_r_from_saved_gradients"
+    assert before == {p.name: base.digest(p) for p in tmp_path.iterdir()}
+
+
+def test_verified_initial_scalar_scores_need_no_tensors(tmp_path):
+    core.atomic_json(tmp_path / "oracle_protocol.json", {
+        "schema": "offpolicy-oracle-validation-split/v3", "generation_validation": {"validated_rows": 16}})
+    core.atomic_json(tmp_path / "scores_splithalf.json", {"0": {"r": .2}, "1": {"r": -.1}})
+    scores, info = switch.initial_fresh_scores(tmp_path, {}, {"train": [{}, {}]}, {"validated_rows": 16})
+    assert scores == {0: .2, 1: -.1}
+    assert info["method"] == "verified_v3_scalar_scores"
+
+
+def test_legacy_without_gradients_explains_exact_missing_evidence(tmp_path):
+    core.atomic_json(tmp_path / "oracle_protocol.json", {"schema": "old"})
+    with pytest.raises(ValueError, match="CPU repair needs.*oracle_micro_groups.pt"):
+        switch.initial_fresh_scores(tmp_path, {"proj_dim": 3}, {"train": [{}]}, {"validated_rows": 8})
+
+
+def test_initial_score_repair_never_ignores_changed_recorded_inputs(tmp_path):
+    core.atomic_json(tmp_path / "oracle_protocol.json", {"schema": "old", "generation_validation": {
+        "artifact_sha256": {"rollouts.jsonl": "wrong"}}})
+    (tmp_path / "rollouts.jsonl").write_text("changed")
+    with pytest.raises(ValueError, match="input changed"):
+        switch.initial_fresh_scores(tmp_path, {}, {"train": [{}]}, {"validated_rows": 8})

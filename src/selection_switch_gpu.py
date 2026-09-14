@@ -108,11 +108,59 @@ def verify(out):
     return c
 
 
+def initial_fresh_scores(source, cfg, prompts, generation):
+    """Recover legacy scalar metadata from saved gradients, without modifying inputs."""
+    if not isinstance(generation, dict) or core.number(generation.get("validated_rows", 0), "validated rollout rows", 1) <= 0:
+        raise ValueError("initial selection requires freshly validated rollout inputs")
+    oracle = core.read(source / "oracle_protocol.json")
+    recorded = oracle.get("generation_validation") or {}
+    for key in ("manifest_sha256", "artifact_sha256"):
+        for name, sha in recorded.get(key, {}).items():
+            path = source / name
+            if path.is_file() and base.digest(path) != sha:
+                raise ValueError(f"initial score input changed since scoring: {path}")
+    n = len(prompts["train"])
+    info = {"recorded_schema": oracle.get("schema"), "recorded_validated_rows": recorded.get("validated_rows"),
+            "live_validated_rows": generation["validated_rows"], "input_hashes": {}}
+    if (oracle.get("schema") == "offpolicy-oracle-validation-split/v3"
+            and isinstance(recorded.get("validated_rows"), (int, float)) and recorded["validated_rows"] > 0):
+        rows = core.read(source / "scores_splithalf.json")
+        scores = {int(i): core.number(row["r"], "fresh_r score", -1.00001, 1.00001) for i, row in rows.items()}
+        if len(scores) != len(rows) or set(scores) != set(range(n)):
+            raise ValueError("initial fresh_r prompt coverage differs")
+        info["method"] = "verified_v3_scalar_scores"
+        return scores, info
+    import torch
+    from experiment import score_oracle_microgroups, split_validation_directions
+    paths = [source / "oracle_micro_groups.pt", source / "val_groups.pt"]
+    missing = [str(path) for path in paths if not path.is_file()]
+    if missing:
+        raise ValueError(f"{source}: legacy initial score metadata (schema={oracle.get('schema')!r}, "
+                         f"validated_rows={recorded.get('validated_rows')!r}); CPU repair needs {missing}")
+    info["input_hashes"] = {path.name: base.digest(path) for path in paths}
+    micro = torch.load(paths[0], map_location="cpu", weights_only=True)
+    validation = torch.load(paths[1], map_location="cpu", weights_only=True)
+    normalized = {int(i): value for i, value in micro.items()}
+    if len(normalized) != len(micro) or set(normalized) != set(range(n)):
+        raise ValueError("saved candidate gradients have invalid prompt coverage")
+    if tuple(validation.shape) != (len(prompts["val"]), cfg["proj_dim"]) or not torch.isfinite(validation).all():
+        raise ValueError("saved validation gradients have invalid shape or values")
+    directions = split_validation_directions(validation.float())
+    scores = {}
+    for i, groups in normalized.items():
+        if tuple(groups.shape) != (8, cfg["proj_dim"]) or not torch.isfinite(groups).all():
+            raise ValueError(f"saved candidate {i}: expected eight finite LOO4 projected gradients")
+        scores[i] = score_oracle_microgroups(groups.float(), *directions)[1]["r"]
+    info.update(method="cpu_reconstructed_fresh_r_from_saved_gradients",
+                scores_sha256=core.fingerprint(scores), original_artifacts_modified=False)
+    print(f"[initial-fresh-r] {source.name}: legacy metadata; recovered {n} scores from saved gradients on CPU; no GPU generation", flush=True)
+    return scores, info
+
+
 def prepare(args):
     import additive_experiment as ae
     import evidence_downstream as ed
     from artifact_contract import validate_generation_contract
-    from downstream_compare import selector_scores
     from select_rules import jittered_topk, topk_count
 
     root = args.root.resolve()
@@ -140,17 +188,16 @@ def prepare(args):
                 raise ValueError("expected complete base-policy OLMo MATH source with registered GRPO recipe")
             scoring.layout(cfg, prompts)
             generation = validate_generation_contract(source)
-            oracle = core.read(source / "oracle_protocol.json")
-            if oracle.get("schema") != "offpolicy-oracle-validation-split/v3" or not oracle.get("generation_validation", {}).get("validated_rows"):
-                raise ValueError("initial fresh_r scores lack verified R/A/B provenance")
-            scores = selector_scores(source, cfg["seed"])["fresh_r"]
+            scores, score_provenance = initial_fresh_scores(source, cfg, prompts, generation)
             if set(scores) != set(range(len(prompts["train"]))):
                 raise ValueError("initial fresh_r prompt coverage differs")
             indices = sorted(jittered_topk(scores, topk_count(len(scores), .1), cfg["seed"]+1000))
             names = ["run_config.json", "prompts.json", "scores_splithalf.json", "oracle_protocol.json",
                      "rollouts_behavior_train.jsonl"]
+            names += list(score_provenance["input_hashes"])
             sources[str(cfg["seed"])] = {"path": str(source), "config": cfg,
                 "hashes": {name: base.digest(source / name) for name in names}, "generation_validation": generation,
+                "initial_score_provenance": score_provenance,
                 "model_sha256": base.digest(Path(cfg["model"]) / "config.json"),
                 "subset": {**prompts, "train": [prompts["train"][i] for i in indices],
                            "selector": "fresh_r", "selected_idx": indices, "k": len(indices)}}
