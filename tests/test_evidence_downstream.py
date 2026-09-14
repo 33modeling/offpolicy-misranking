@@ -221,3 +221,33 @@ def test_frozen_test_set_is_reused_for_a_different_seed_list(tmp_path):
     assert again["test"] == first["test"]
     with pytest.raises(ValueError, match="contract changed"):
         ed.prepare_test(pool, [run], out, 4, 2, "d", "r", "train")
+
+
+def test_a_frozen_test_set_is_reused_for_further_seeds(tmp_path):
+    """A seed added later excludes different candidates, so its fresh draw differs from the frozen
+    one; the frozen questions are what every seed must be evaluated on, and the rule only requires
+    that they stay disjoint from the prompts of each run given now."""
+    candidates = tmp_path / "pool.json"
+    ed.atomic_json(candidates, {"test": [{"question": f"pool {i}", "answer": str(i)} for i in range(60)]})
+    def run_with(name, prompts):
+        run = tmp_path / name
+        run.mkdir()
+        ed.atomic_json(run / "prompts.json", {"train": [{"question": q, "answer": "1"} for q in prompts],
+                                              "val": [{"question": f"{name} val", "answer": "1"}]})
+        return run
+    first = run_with("s0", [f"pool {i}" for i in range(10)])
+    out = tmp_path / "test.json"
+    frozen = ed.prepare_test(candidates, [first], out, 8, 5, "d", "r", "train")
+    chosen = {row["question"] for row in frozen["test"]}
+    spare = [f"pool {i}" for i in range(10, 60) if f"pool {i}" not in chosen][:10]
+    later = run_with("s3", spare)
+    again = ed.prepare_test(candidates, [later], out, 8, 5, "d", "r", "train")
+    assert again["test"] == frozen["test"]          # the frozen questions are reused, not redrawn
+    assert not (set(spare) & chosen)
+    overlapping = run_with("s4", [frozen["test"][0]["question"]])
+    with pytest.raises(ValueError, match="overlaps the prompts"):
+        ed.prepare_test(candidates, [overlapping], out, 8, 5, "d", "r", "train")
+    with pytest.raises(ValueError, match="contract changed"):
+        ed.prepare_test(candidates, [later], out, 8, 6, "d", "r", "train")
+    with pytest.raises(ValueError, match="frozen with 8 questions"):
+        ed.prepare_test(candidates, [later], out, 12, 5, "d", "r", "train")

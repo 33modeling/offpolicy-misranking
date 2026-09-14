@@ -197,16 +197,21 @@ def prepare_test(candidates: Path, runs: list[Path], out: Path, count: int, seed
         if not out.exists():
             atomic_json(out, result)
             return result
-        # A frozen test set is reused when its content and pool provenance match;
-        # the exclusion record is informational, but the frozen questions must
-        # still be disjoint from every run given now.
+        # A frozen test set is reused when its pool provenance matches and its questions are
+        # disjoint from every run given now. Its questions are never recomputed: excluding a
+        # different set of runs removes different candidates, so the fresh draw of a later seed
+        # does not reproduce the frozen one, and evaluating more seeds on the same frozen
+        # questions is the point of freezing them.
         existing = read(out)
         if used & set(questions(existing["test"])):
             raise ValueError(f"frozen test set overlaps the prompts of a given run: {out}")
-        core = lambda d: (d["test"], {k: d["provenance"].get(k) for k in  # noqa: E731
-                          ("dataset", "revision", "split", "candidate_sha256", "selection_seed")})
+        core = lambda d: {k: d["provenance"].get(k) for k in  # noqa: E731
+                          ("dataset", "revision", "split", "candidate_sha256", "selection_seed")}
         if core(existing) != core(result):
             raise ValueError(f"contract changed: {out}; use a new output root, do not mix runs")
+        if len(existing["test"]) != count:
+            raise ValueError(f"contract changed: {out} is frozen with {len(existing['test'])} questions, "
+                             f"{count} requested; use a new output root, do not mix runs")
     return existing
 
 
