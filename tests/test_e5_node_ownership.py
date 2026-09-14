@@ -84,7 +84,7 @@ e5_acquire_node
 def test_three_node_controllers_share_arms_but_not_node_locks(tmp_path, shared_lock_directory):
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
-    for name in ("run_e5.sh", "run_downstream_independent.sh", "_e5_node.sh"):
+    for name in ("run_e5.sh", "run_downstream_independent.sh", "_e5_node.sh", "_lease.sh"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     (repo / "scripts/setup_env.sh").write_text('export OM_WORK="$TEST_WORK"\nexport DATASETS_DIR="$TEST_WORK/data"\nexport VENV_DIR="$TEST_VENV"\n')
     bins = tmp_path / "venv/bin"

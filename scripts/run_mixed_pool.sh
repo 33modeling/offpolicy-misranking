@@ -6,7 +6,9 @@
 # point (same seed), then the reduced E5 arms and the gate arm run on it.
 #
 #   bash scripts/run_mixed_pool.sh pool      # build the pool file (CPU)
-#   bash scripts/run_mixed_pool.sh point     # build the d0 point on THIS idle 4xH100 node (about a day)
+#   bash scripts/run_mixed_pool.sh point     # build the d0 point on THIS idle 4xH100 node (about a day);
+#                                            # resumable: a partial point re-enters the commit that started
+#                                            # it and transient shard crashes are retried (MIX_POINT_ATTEMPTS=3)
 #   bash scripts/run_mixed_pool.sh e5        # random / difficulty / fresh / reused arms, MIX_STEPS updates (default 200)
 #   bash scripts/run_mixed_pool.sh gate      # executed gate arm on the same point
 #   bash scripts/run_mixed_pool.sh status    # progress (no GPU)
@@ -58,7 +60,18 @@ case "$MODE" in
     mkdir -p "$(dirname "$POINT")"
     source scripts/_lease.sh
     exec 6>>"$POINT.lease"
-    if ! flock -n 6; then echo "[busy] the mixed point is being built on another node"; exit 0; fi
+    if ! flock -n 6; then
+      echo "[busy] the mixed point is claimed: $(head -n 1 "$POINT.lease" 2>/dev/null || echo 'no lease note')"
+      newest=$(find "$POINT" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1)
+      if [ -n "$newest" ]; then
+        age=$(( $(date +%s) - ${newest%.*} ))
+        echo "[busy] its last file write was $((age / 60)) min ago"
+        [ "$age" -gt 1800 ] && echo "[busy] nothing written for over 30 min: the holder looks dead; on that node run  bash scripts/run_queue.sh stop"
+      else
+        echo "[busy] the point directory has no file yet; the holder may be starting up or dead"
+      fi
+      exit 0
+    fi
     lease_note "$POINT.lease"
     export OUT_ROOT="$POINT"   # process marker for cleanup; the point runner uses the same variable
     source scripts/_e5_node.sh || exit 1
@@ -70,9 +83,37 @@ case "$MODE" in
     unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
     echo "[mixed] building the d0 point with the configuration of $MATH_RUN (model=$MODEL_PATH, N_TRAIN=$N_TRAIN, BEHAVIOR_K=$BEHAVIOR_K, FRESH_K=$FRESH_K)"
-    bash scripts/run_point.sh 7>&- 8>&- 9>&-
-    rc=$?
-    [ -s "$POINT/DONE" ] && echo "[mixed] point complete: $POINT   next:  bash scripts/run_mixed_pool.sh e5"
+    # run_point.sh pins the commit that initialized the point (run_config.json) and
+    # refuses every stage from another revision ([code-abort]); after `git pull` here
+    # a partial point re-enters its own commit through a node-local checkout, as the
+    # matrix supervisor does. A new point runs this checkout.
+    RUNNER=$PWD/scripts/run_point.sh
+    PIN=$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("git") or "")' "$POINT/run_config.json" 2>/dev/null || true)
+    HEAD=$(git rev-parse HEAD 2>/dev/null || true)
+    if [ -n "$PIN" ] && [ "$PIN" != "$HEAD" ]; then
+      source scripts/_pin_checkout.sh
+      PIPELINE=$(pin_checkout "$PIN") || { echo "[abort] cannot re-enter the point's pinned commit $PIN"; exit 1; }
+      RUNNER=$PIPELINE/scripts/run_point.sh
+      echo "[mixed] re-entering the partial point under its pinned commit ${PIN:0:9} (this checkout is ${HEAD:0:9}): $PIPELINE"
+    fi
+    # Transient shard crashes (CUDA faults, killed workers) are retried with a rotated GPU
+    # order; contract failures (rc 2/43, [code-abort]/[config-abort]) are not.
+    attempts=${MIX_POINT_ATTEMPTS:-3}; rc=1; reason=""
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+      echo "[mixed] point attempt $attempt/$attempts ($(date -u +%Y-%m-%dT%H:%MZ))"
+      OM_RETRY_INDEX=$attempt bash "$RUNNER" 7>&- 8>&- 9>&-
+      rc=$?
+      if [ -s "$POINT/DONE" ]; then echo "[mixed] point complete: $POINT   next:  bash scripts/run_mixed_pool.sh e5"; exit 0; fi
+      reason=$(grep -aE '\[(code-abort|config-abort|permanent-contract|regime-contract-abort|stage-fail|abort)\]|Traceback|Error' \
+        "$POINT/logs/main.log" 2>/dev/null | tail -n 1 | cut -c1-200)
+      echo "[mixed] point attempt $attempt failed rc=$rc: ${reason:-no error line in $POINT/logs/main.log}"
+      case "$rc" in 2|43) echo "[mixed] contract/config failure; not retrying"; exit "$rc" ;; esac
+      case "$reason" in *code-abort*|*config-abort*|*permanent-contract*) echo "[mixed] not a transient failure; not retrying"; exit 43 ;; esac
+      if [ "$attempt" -lt "$attempts" ]; then
+        echo "[mixed] retrying in ${MIX_RETRY_SLEEP:-60}s with a rotated GPU order"; sleep "${MIX_RETRY_SLEEP:-60}"
+      fi
+    done
+    echo "[mixed] point failed $attempts times (last: ${reason:-?}); finished shards are kept, rerun:  bash scripts/run_mixed_pool.sh point"
     exit "$rc" ;;
   e5)
     [ -s "$POINT/DONE" ] || { echo "[abort] point not complete; run:  bash scripts/run_mixed_pool.sh point"; exit 1; }

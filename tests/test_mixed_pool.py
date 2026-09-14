@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -106,4 +107,77 @@ def test_cli_and_script_syntax(tmp_path):
     result = subprocess.run(cmd + ["env", "--run", str(math)], capture_output=True, text=True, env=env)
     assert result.returncode == 0 and "BEHAVIOR_K=8" in result.stdout
     subprocess.run(["bash", "-n", str(ROOT / "scripts/run_mixed_pool.sh")], check=True)
+    subprocess.run(["bash", "-n", str(ROOT / "scripts/_pin_checkout.sh")], check=True)
     subprocess.run(["bash", "-n", str(ROOT / "scripts/run_e5.sh")], check=True)
+
+
+FAKE_POINT = """#!/usr/bin/env bash
+cd "$(dirname "$0")/.."
+echo "runner=%s cwd=$PWD retry=${OM_RETRY_INDEX:-0}"
+mkdir -p "$OUT_ROOT/logs"
+n=$(( $(cat "$OUT_ROOT/attempts" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$OUT_ROOT/attempts"
+if [ -n "${FAKE_PERMANENT:-}" ]; then
+  echo "[$(date '+%%F %%T')] [config-abort] existing artifacts use a different run config: ['gen_batch']" >> "$OUT_ROOT/logs/main.log"
+  exit 2
+fi
+if [ "$n" -lt 2 ]; then echo "[$(date '+%%F %%T')] [stage-fail] pid=1 rc=1 fake shard crash" >> "$OUT_ROOT/logs/main.log"; exit 1; fi
+echo done > "$OUT_ROOT/DONE"
+"""
+
+
+def _git(repo: Path, *args: str) -> str:
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    return subprocess.check_output(["git", "-C", str(repo), *args], text=True, env=env).strip()
+
+
+def test_point_step_reenters_the_pinned_commit_and_retries_transient_failures(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "src").mkdir()
+    for name in ("run_mixed_pool.sh", "_lease.sh", "_e5_node.sh", "_pin_checkout.sh"):
+        shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
+    for name in ("mixed_pool.py", "cleanup_run_processes.py"):
+        shutil.copy2(ROOT / "src" / name, repo / "src" / name)
+    (repo / "scripts/setup_env.sh").write_text('export OM_WORK="$TEST_WORK" VENV_DIR="$TEST_VENV"\n')
+    (repo / "scripts/run_point.sh").write_text(FAKE_POINT % "A")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "A")
+    commit_a = _git(repo, "rev-parse", "HEAD")
+    (repo / "scripts/run_point.sh").write_text(FAKE_POINT % "B")  # this checkout moved on
+    _git(repo, "commit", "-q", "-am", "B")
+    work = tmp_path / "work"
+    root = work / "runs" / "tag"
+    _run(root, "math500", 8, 4, "math")
+    shutil.copytree(root / "family-math500-s0" / "tag-s0-math500-d0", root / "family-math500-s1" / "tag-s1-math500-d0")
+    pool = work / "inputs" / "mixed"
+    pool.mkdir(parents=True)
+    for seed in (0, 1):
+        (pool / f"pool-math500-mbpp-s{seed}.jsonl").write_text("{}\n")
+        point = root / f"family-math500mix-s{seed}" / f"tag-s{seed}-math500mix-d0"
+        point.mkdir(parents=True)
+        (point / "run_config.json").write_text(json.dumps({"git": commit_a}))  # initialized under A
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(tmp_path), "TEST_WORK": str(work),
+           "TEST_VENV": str(Path(sys.executable).parent.parent), "OM_OLMO3_MODEL_TAG": "tag",
+           "OM_LOCAL_LOCK_DIR": str(tmp_path / "locks"), "OM_PIPELINE_CACHE": str(tmp_path / "cache"),
+           "MIX_RETRY_SLEEP": "0", "MIX_POINT_ATTEMPTS": "3"}
+    result = subprocess.run(["bash", "scripts/run_mixed_pool.sh", "point"], cwd=repo, env=env,
+                            capture_output=True, text=True, timeout=120, check=False)
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out
+    point = root / "family-math500mix-s0" / "tag-s0-math500mix-d0"
+    assert "runner=A" in out and "runner=B" not in out, out
+    assert f"cwd={tmp_path / 'cache' / 'clones' / commit_a}" in out, out
+    assert "re-entering the partial point under its pinned commit" in out
+    assert "point attempt 1 failed rc=1: [" in out and "[stage-fail] pid=1 rc=1 fake shard crash" in out
+    assert (point / "attempts").read_text().strip() == "2" and (point / "DONE").is_file()
+    assert "point complete" in out
+    # a contract failure is not retried
+    result = subprocess.run(["bash", "scripts/run_mixed_pool.sh", "point"], cwd=repo,
+                            env={**env, "MIX_SEED": "1", "FAKE_PERMANENT": "1"}, capture_output=True, text=True,
+                            timeout=120, check=False)
+    out = result.stdout + result.stderr
+    assert result.returncode == 2, out
+    point = root / "family-math500mix-s1" / "tag-s1-math500mix-d0"
+    assert (point / "attempts").read_text().strip() == "1" and not (point / "DONE").exists()
+    assert "contract/config failure; not retrying" in out

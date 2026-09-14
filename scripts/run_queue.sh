@@ -72,11 +72,20 @@ if [ "$MODE" = dump ]; then
   echo "[queue] dump written: $target"
   exit 0
 fi
+# A pid file on the shared filesystem outlives its allocation, and the number can be reused by an
+# unrelated process. Only a live process whose command line is this worker counts as running.
+worker_alive() {
+  local pid=$1
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'run_queue.sh' || return 1
+  return 0
+}
 if [ "$MODE" = stop ]; then
   # Stop this node's queue worker, then the step processes it started (they carry the OUT_ROOT
   # marker); leases are released with them. Finished shards and checkpoints stay; rerunning resumes.
   pid=$(cat "$WPID" 2>/dev/null)
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  if worker_alive "$pid"; then
     echo "[queue] stopping worker pid $pid on $HOST"
     kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
     for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
@@ -91,10 +100,12 @@ if [ "$MODE" = stop ]; then
 fi
 if [ "$MODE" = run ]; then
   pid=$(cat "$WPID" 2>/dev/null)
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  if worker_alive "$pid"; then
     echo "[queue] already running on $HOST (pid $pid); progress:  bash scripts/run_queue.sh status"
+    echo "        stop it with:  bash scripts/run_queue.sh stop"
     exit 0
   fi
+  if [ -n "$pid" ]; then echo "[queue] stale worker note on $HOST (pid $pid is not a queue worker); starting a new one"; fi
   echo "===== [$(date -u +%Y-%m-%dT%H:%M:%SZ)] queue started on $HOST code=$(git rev-parse --short HEAD 2>/dev/null)" >> "$QLOG"
   setsid nohup bash scripts/run_queue.sh worker >> "$QLOG" 2>&1 < /dev/null &
   disown 2>/dev/null || true
@@ -115,15 +126,23 @@ note "starting"
 QUEUE=("run_mixed_pool.sh pool" "run_mixed_pool.sh point" "run_mixed_pool.sh e5" "run_mixed_pool.sh gate" \
        "run_stale_splithalf.sh" "run_stale_splithalf.sh d0" "run_e5_bench.sh d0" "run_e5_bench.sh" \
        "run_e5.sh d100")
+failed=()
 for job in "${QUEUE[@]}"; do
   echo; echo "===== [$(date -u +%H:%M)] $job"
   note "$job"
   bash scripts/$job; rc=$?
   echo "===== [$(date -u +%H:%M)] $job finished (rc=$rc)"
+  [ "$rc" -eq 0 ] || failed+=("${job// /:}(rc=$rc)")
 done
 echo; echo "===== CPU analyses and export"
 note "run_analyses.sh"
-bash scripts/run_analyses.sh
-note "done"
+bash scripts/run_analyses.sh || failed+=("run_analyses.sh(rc=$?)")
+if [ "${#failed[@]}" -gt 0 ]; then
+  echo "===== FAILED STEPS: ${failed[*]}"
+  echo "      rerun:  bash scripts/run_queue.sh   (finished work is skipped; a partial point re-enters its pinned commit)"
+  note "done failed=$(IFS=,; echo "${failed[*]}")"
+else
+  note "done"
+fi
 kill "$BEAT_PID" 2>/dev/null
 echo "===== [$(date -u +%H:%M)] queue done on $HOST; check:  bash scripts/run_queue.sh status"

@@ -144,9 +144,17 @@ def test_progress_states_and_leases(tmp_path):
     assert lines[1] == "s1: before ok | random train 37/100 | fresh -" and lines[2] == "s2: not prepared"
     state, lines = by["analyses + export"]
     assert state == "PARTIAL" and lines[0].endswith("e5-results-20260913T053944Z.txt") and "gate-decision: none" in lines
-    # after the lease is released the point counts as stopped
+    # after the lease is released the point counts as stopped, with the last error of its own log
+    with (point / "logs" / "main.log").open("a") as handle:
+        handle.write("2026-09-13 10:06:00 GPU0 \u2718 --stage rollout-behavior rc=1\n"
+                     "[code-abort] repository changed after this run was initialized\n"
+                     "2026-09-13 10:06:01 [stage-fail] pid=7 rc=1 \uB2E4\uB978 shard \uC644\uB8CC\uAE4C\uC9C0 \uB300\uAE30\n")
     rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
-    assert dict((n, s) for n, s, _ in rows)["mixed pool: point"] == "PARTIAL"
+    state, lines = {n: (s, l) for n, s, l in rows}["mixed pool: point"]
+    assert state == "PARTIAL" and lines[0] == "stopped at 2/8 behavior-rollout +5min"
+    assert lines[2] == "last error: [stage-fail] pid=7 rc=1 \uB2E4\uB978 shard \uC644\uB8CC\uAE4C\uC9C0 \uB300\uAE30"
+    assert lines[3].startswith("rerun:  bash scripts/run_queue.sh")
+    assert qs.point_failure(root / "family-math500-s0" / f"{TAG}-s0-math500-d0") == ""
     text = qs.render(rows, "HDR", "NODE")
     assert max(len(line) for line in text.splitlines()) < 110
     assert "DONE 1" in text

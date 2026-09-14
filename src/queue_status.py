@@ -258,6 +258,18 @@ def last_problem(path: Path) -> str:
     return lines[-1][:110] if lines else ""
 
 
+POINT_FAILURE = re.compile(r"\[(code-abort|config-abort|permanent-contract|regime-contract-abort|stage-fail|point-failed|abort)\]"
+                           r"|Traceback|Error")
+
+
+def point_failure(run: Path) -> str:
+    """Last failure line of a point runner's logs/main.log without its timestamp, shortened; '' when none."""
+    lines = [l.strip() for l in tail_lines(run / "logs" / "main.log") if POINT_FAILURE.search(l)]
+    if not lines:
+        return ""
+    return re.sub(r"^\[?\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d\]?\s*", "", lines[-1])[:80]
+
+
 def newest_launcher_log(logs_dir: Path, prefix: str) -> Path | None:
     logs = [p for p in logs_dir.glob(f"{prefix}-*-*Z.log") if p.is_file()]
     return max(logs, key=lambda p: p.stat().st_mtime) if logs else None
@@ -538,7 +550,12 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
             rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'} {mark}", activity,
                                                           "(the stage line changes only at stage boundaries; a stage takes hours)"]))
         elif log.is_file():
-            rows.append(("mixed pool: point", "PARTIAL", [f"stopped at {progress or '?'}", activity]))
+            lines = [f"stopped at {progress or '?'}", activity]
+            reason = point_failure(point)
+            if reason:
+                lines.append(f"last error: {reason}")
+            lines.append("rerun:  bash scripts/run_queue.sh  (re-enters the point's pinned commit, retries)")
+            rows.append(("mixed pool: point", "PARTIAL", lines))
         elif pool_ready:
             rows.append(("mixed pool: point", "TODO", []))
         else:
@@ -610,7 +627,7 @@ def queue_notes(work: Path, now: float | None = None) -> dict[str, dict]:
         if note_age > NOTE_MAX_AGE_SECONDS and (beat_seconds is None or beat_seconds > NOTE_MAX_AGE_SECONDS):
             continue
         host = fields.get("host", note.stem)
-        notes[host] = {"step": fields.get("step", "?"), "since": fields.get("since", "?"),
+        notes[host] = {"step": fields.get("step", "?"), "since": fields.get("since", "?"), "failed": fields.get("failed"),
                        "alive": beat_seconds is not None and beat_seconds < HEARTBEAT_ALIVE_SECONDS,
                        "beat_age": age_text(beat_seconds) if beat_seconds is not None else None}
     return notes
@@ -696,6 +713,8 @@ def node_lines(notes: dict[str, dict], seen: dict[str, dict] | None = None) -> l
                     if host in INFERRED else "no queue running here")
         elif note["step"] == "done":
             head = f"queue finished {since_text(note['since'])}"
+            if note.get("failed"):
+                head += f"  FAILED: {note['failed']}  (rerun: bash scripts/run_queue.sh)"
         elif note["step"] == "stopped":
             head = f"queue stopped {since_text(note['since'])}"
         elif note["alive"]:
