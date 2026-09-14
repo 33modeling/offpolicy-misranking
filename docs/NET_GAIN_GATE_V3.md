@@ -182,6 +182,7 @@ Status, summary and a shell-based home-directory export:
 
 ```bash
 bash scripts/run_net_gain_gate.sh status
+bash scripts/run_net_gain_gate.sh why
 bash scripts/run_net_gain_gate.sh summarize
 bash scripts/run_net_gain_gate.sh export
 ```
@@ -189,6 +190,11 @@ bash scripts/run_net_gain_gate.sh export
 For a nondefault root, retain the same `NET_GATE_ROOT` prefix on these commands.
 The export contains status, study/results, diagnostic decisions, costs and
 log tails. It does not copy model checkpoints, rollouts or another repository.
+
+`why` saves failed-arm records and the last 120 lines of each corresponding
+worker log to `$HOME/net-gate-errors-<UTC>-<unique>.txt`, then prints its full
+path as `[saved] ...`. It needs neither jq nor Python, never overwrites an
+earlier report, and does not restart workers or change experiment artifacts.
 
 After all declared development points are valid, freeze the model on CPU:
 

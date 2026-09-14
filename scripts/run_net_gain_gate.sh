@@ -54,19 +54,27 @@ if [ "$MODE" = status ]; then
   exec bash scripts/status_net_gain_gate.sh "$@"
 fi
 if [ "$MODE" = why ]; then
-  shopt -s nullglob
-  FAILURES=("$OUT_ROOT"/points/*/*/failure.json)
-  for FAILURE in "${FAILURES[@]}"; do
-    ARM_DIR=${FAILURE%/*}
-    printf '\n===== %s =====\n' "${ARM_DIR#"$OUT_ROOT"/}"
-    cat "$FAILURE"
-    printf '\n'
-    for LOG in "$ARM_DIR"/*.log; do
-      printf '\n--- %s ---\n' "${LOG##*/}"
-      tail -n 35 "$LOG"
+  [ -d "$OUT_ROOT" ] || { echo "[abort] no v3 suite at $OUT_ROOT"; exit 2; }
+  TARGET=$(mktemp "$HOME/net-gate-errors-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.txt")
+  printf '[collecting] %s\n' "$TARGET"
+  (
+    printf 'V3 NET-GAIN GATE FAILURE LOGS\nUTC: %s\nROOT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$OUT_ROOT"
+    git rev-parse HEAD
+    shopt -s nullglob
+    FAILURES=("$OUT_ROOT"/points/*/*/failure.json)
+    for FAILURE in "${FAILURES[@]}"; do
+      ARM_DIR=${FAILURE%/*}
+      printf '\n===== %s =====\n' "${ARM_DIR#"$OUT_ROOT"/}"
+      cat "$FAILURE"
+      printf '\n'
+      for LOG in "$ARM_DIR"/*.log; do
+        printf '\n--- %s (last 120 lines) ---\n' "${LOG##*/}"
+        tail -n 120 "$LOG"
+      done
     done
-  done
-  [ "${#FAILURES[@]}" -gt 0 ] || printf '[why] no recorded arm failures at %s\n' "$OUT_ROOT"
+    [ "${#FAILURES[@]}" -gt 0 ] || printf '[why] no recorded arm failures at %s\n' "$OUT_ROOT"
+  ) > "$TARGET" 2>&1
+  printf '[saved] %s\n' "$TARGET"
   exit 0
 fi
 if [ "$MODE" = summarize ]; then

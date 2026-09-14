@@ -357,7 +357,7 @@ def test_status_without_jq_still_shows_all_arms(tmp_path):
     assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
-def test_why_shows_child_error_without_starting_workers(tmp_path):
+def test_why_saves_child_error_without_starting_workers(tmp_path):
     root = tmp_path / "suite"
     arm = root / "points/p0/selection_reduced"
     core.atomic_json(arm / "failure.json", {"error": "score worker failed: [None, None, None, 2]"})
@@ -365,7 +365,32 @@ def test_why_shows_child_error_without_starting_workers(tmp_path):
     before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     result = subprocess.run(["bash", "scripts/run_net_gain_gate.sh", "why"],
         cwd=gpu.HERE.parents[1], env={**os.environ, "NET_GATE_ROOT": str(root),
-            "NET_GATE_PYTHON": "/nonexistent/python"}, capture_output=True, text=True, timeout=10)
+            "HOME": str(tmp_path), "NET_GATE_PYTHON": "/nonexistent/python"},
+        capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
-    assert "score-3.log" in result.stdout and "[abort] example child failure" in result.stdout
+    reports = list(tmp_path.glob("net-gate-errors-*.txt"))
+    assert len(reports) == 1
+    assert f"[saved] {reports[0]}" in result.stdout
+    report = reports[0].read_text()
+    assert "score-3.log" in report and "[abort] example child failure" in report
+    assert str(root) in report and "COMMIT:" in report
+    assert "example child failure" not in result.stdout
     assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    again = subprocess.run(["bash", "scripts/run_net_gain_gate.sh", "why"],
+        cwd=gpu.HERE.parents[1], env={**os.environ, "NET_GATE_ROOT": str(root),
+            "HOME": str(tmp_path)}, capture_output=True, text=True, timeout=10)
+    assert again.returncode == 0, again.stderr
+    assert len(list(tmp_path.glob("net-gate-errors-*.txt"))) == 2
+    assert reports[0].read_text() == report
+
+
+def test_why_saves_report_when_no_failures(tmp_path):
+    root = tmp_path / "suite"
+    root.mkdir()
+    result = subprocess.run(["bash", "scripts/run_net_gain_gate.sh", "why"],
+        cwd=gpu.HERE.parents[1], env={**os.environ, "NET_GATE_ROOT": str(root),
+            "HOME": str(tmp_path)}, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    reports = list(tmp_path.glob("net-gate-errors-*.txt"))
+    assert len(reports) == 1 and f"[saved] {reports[0]}" in result.stdout
+    assert "no recorded arm failures" in reports[0].read_text()
