@@ -160,6 +160,7 @@ def test_progress_states_and_leases(tmp_path):
     assert state == "PARTIAL" and lines[0] == "stopped at 2/8 behavior-rollout +5min"
     assert lines[2] == "last error: [stage-fail] pid=7 rc=1 \uB2E4\uB978 shard \uC644\uB8CC\uAE4C\uC9C0 \uB300\uAE30"
     assert lines[3].startswith("rerun:  bash scripts/run_queue.sh")
+    assert lines[4] == "beta shards 61/100 62/100 60/100 63/100 (written 0m ago)"
     assert qs.point_failure(root / "family-math500-s0" / f"{TAG}-s0-math500-d0") == ""
     # a node whose watcher reported the point runner among its processes: running there even though
     # its flock is not visible from this node
@@ -203,7 +204,7 @@ def test_mixed_arms_and_gate_after_the_point(tmp_path):
 
 def test_cli_and_queue_script_syntax(tmp_path):
     work, root = _tree(tmp_path)
-    env = {"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin", "OM_WORK": str(work)}
+    env = {"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin", "OM_WORK": str(work), "MIX_IN_QUEUE": "1"}
     result = subprocess.run([sys.executable, str(ROOT / "src/queue_status.py"), "--tag", TAG], capture_output=True, text=True, env=env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.startswith("QUEUE STATUS") and "mixed pool: point" in result.stdout

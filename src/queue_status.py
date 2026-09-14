@@ -600,13 +600,13 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
                          [f"{progress or 'started'} {mark}", activity, verdict] + ([inside] if inside else [])))
         elif log.is_file():
             lines = [f"stopped at {progress or '?'}", activity]
-            inside = stage_activity(point)
-            if inside:
-                lines.append(inside)
             reason = point_failure(point)
             if reason:
                 lines.append(f"last error: {reason}")
             lines.append("rerun:  bash scripts/run_queue.sh  (re-enters the point's pinned commit, retries)")
+            inside = stage_activity(point)
+            if inside:
+                lines.append(inside)
             rows.append(("mixed pool: point", "PARTIAL", lines))
         elif pool_ready:
             rows.append(("mixed pool: point", "TODO", []))
