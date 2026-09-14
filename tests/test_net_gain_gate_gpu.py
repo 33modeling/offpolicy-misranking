@@ -1,4 +1,5 @@
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -329,3 +330,42 @@ def test_standalone_status_reports_eta_without_writing_suite(tmp_path):
     assert "4 nodes x 4 GPUs" in result.stdout
     assert "0.75 h" in result.stdout
     assert before == {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
+def test_status_without_jq_still_shows_all_arms(tmp_path):
+    root = tmp_path / "suite"
+    core.atomic_json(root / "net_protocol.json", protocol())
+    contract = root / "points/p0/contract.json"
+    core.atomic_json(contract, {"config": {"seed": 2, "drift": 100}})
+    core.atomic_json(root / "suite.json", {"schema": base.SCHEMA,
+        "points": [{"name": "p0", "sha256": base.digest(contract)}], "budget_gpu_seconds": 14400.})
+    arm = root / "points/p0/selection_reduced"
+    core.atomic_json(arm / "failure.json", {"error": "score worker failed: [None, None, None, 2]"})
+    bins = tmp_path / "bin"
+    bins.mkdir()
+    for name in ("bash", "dirname", "realpath"):
+        (bins / name).symlink_to(shutil.which(name))
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    result = subprocess.run([str(bins / "bash"), "scripts/run_net_gain_gate.sh", "status"],
+        cwd=gpu.HERE.parents[1], env={**os.environ, "PATH": str(bins),
+            "NET_GATE_ROOT": str(root), "NET_GATE_PYTHON": sys.executable},
+        capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "0/3 DONE" in result.stdout
+    assert "selection_reduced" in result.stdout and "FAILED" in result.stdout
+    assert "unavailable without jq" in result.stdout and "[abort]" not in result.stdout
+    assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+def test_why_shows_child_error_without_starting_workers(tmp_path):
+    root = tmp_path / "suite"
+    arm = root / "points/p0/selection_reduced"
+    core.atomic_json(arm / "failure.json", {"error": "score worker failed: [None, None, None, 2]"})
+    (arm / "score-3.log").write_text("[abort] example child failure\n")
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    result = subprocess.run(["bash", "scripts/run_net_gain_gate.sh", "why"],
+        cwd=gpu.HERE.parents[1], env={**os.environ, "NET_GATE_ROOT": str(root),
+            "NET_GATE_PYTHON": "/nonexistent/python"}, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "score-3.log" in result.stdout and "[abort] example child failure" in result.stdout
+    assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}

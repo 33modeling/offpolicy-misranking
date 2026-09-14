@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|prepare|status|summarize|live|stop|plan|cpu|fit|analyze|import-legacy|export) ;;
-  *) echo 'usage: bash scripts/run_net_gain_gate.sh [run|prepare|status|summarize|live|stop|plan|cpu|fit|analyze|import-legacy|export]'; exit 2 ;;
+case "$MODE" in run|prepare|status|why|summarize|live|stop|plan|cpu|fit|analyze|import-legacy|export) ;;
+  *) echo 'usage: bash scripts/run_net_gain_gate.sh [run|prepare|status|why|summarize|live|stop|plan|cpu|fit|analyze|import-legacy|export]'; exit 2 ;;
 esac
 for option in "$@"; do
   case "$option" in --root|--root=*) echo '[abort] use NET_GATE_ROOT to set the output root'; exit 2 ;; esac
@@ -52,6 +52,22 @@ if [ "$MODE" = fit ] || [ "$MODE" = analyze ] || [ "$MODE" = import-legacy ]; th
 fi
 if [ "$MODE" = status ]; then
   exec bash scripts/status_net_gain_gate.sh "$@"
+fi
+if [ "$MODE" = why ]; then
+  shopt -s nullglob
+  FAILURES=("$OUT_ROOT"/points/*/*/failure.json)
+  for FAILURE in "${FAILURES[@]}"; do
+    ARM_DIR=${FAILURE%/*}
+    printf '\n===== %s =====\n' "${ARM_DIR#"$OUT_ROOT"/}"
+    cat "$FAILURE"
+    printf '\n'
+    for LOG in "$ARM_DIR"/*.log; do
+      printf '\n--- %s ---\n' "${LOG##*/}"
+      tail -n 35 "$LOG"
+    done
+  done
+  [ "${#FAILURES[@]}" -gt 0 ] || printf '[why] no recorded arm failures at %s\n' "$OUT_ROOT"
+  exit 0
 fi
 if [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""

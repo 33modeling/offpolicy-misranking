@@ -13,14 +13,19 @@ PY=${NET_GATE_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 NODES=${NET_GATE_NODES:-4}
 
 [[ "$NODES" =~ ^[1-9][0-9]*$ ]] || { echo '[abort] NET_GATE_NODES must be a positive integer'; exit 2; }
-command -v jq >/dev/null || { echo '[abort] jq is required for ETA calculation'; exit 2; }
 [ -f "$NET_ROOT/net_protocol.json" ] && [ -f "$NET_ROOT/suite.json" ] || {
   echo "[not prepared] $NET_ROOT"
   exit 0
 }
 
-export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" CUDA_VISIBLE_DEVICES=""
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1
 "$PY" src/net_gain_gate_gpu.py status --root "$NET_ROOT"
+
+# ETA is optional; missing reporting tools must not hide experiment status.
+if ! command -v jq >/dev/null 2>&1; then
+  printf '\n[ETA] unavailable without jq; experiment status is shown above\n'
+  exit 0
+fi
 
 BUDGET=$(jq -er '.budget_gpu_seconds | numbers' "$NET_ROOT/suite.json")
 TOTAL=0
