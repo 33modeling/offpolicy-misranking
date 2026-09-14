@@ -216,7 +216,7 @@ def test_a_stale_lease_is_replaced_only_after_the_point_stops_being_written(tmp_
     """The holder's node may be gone; flock cannot then be released, so the lease file is replaced
     once nothing under the point has been written for the idle window."""
     body = (ROOT / "scripts/run_mixed_pool.sh").read_text().split("  point)", 1)[1].split("  e5)", 1)[0]
-    assert 'rm -f -- "$POINT.lease"' in body and "MIX_STALE_LEASE_SECONDS:-2700" in body
+    assert 'rm -f -- "$POINT.lease"' in body and "MIX_STALE_LEASE_SECONDS:-900" in body
     assert body.index("the holder is still writing") < body.index('rm -f -- "$POINT.lease"')
     # replacing the file leaves the old holder's lock behind and lets a new lock be taken
     lease = tmp_path / "point.lease"

@@ -69,7 +69,7 @@ case "$MODE" in
     source scripts/_lease.sh
     # A lease can only be released by its holder's node, so a holder that died elsewhere would keep
     # the point unclaimable. A live point writes shard logs every minute; when nothing under it has
-    # been written for MIX_STALE_LEASE_SECONDS (45 min) the lease file is replaced, which leaves the
+    # been written for MIX_STALE_LEASE_SECONDS (15 min) the lease file is replaced, which leaves the
     # old holder's lock on the unlinked file and lets this node claim the new one.
     point_idle_seconds() {
       local newest
@@ -86,7 +86,7 @@ case "$MODE" in
         exit 0
       fi
       echo "[busy] its last file write was $((idle / 60)) min ago"
-      if [ "$idle" -lt "${MIX_STALE_LEASE_SECONDS:-2700}" ]; then
+      if [ "$idle" -lt "${MIX_STALE_LEASE_SECONDS:-900}" ]; then
         echo "[busy] the holder is still writing; leaving it alone"
         exit 0
       fi
