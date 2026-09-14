@@ -145,9 +145,14 @@ trap 'kill "$BEAT_PID" 2>/dev/null; note "stopped"; exit 130' INT TERM
 note "starting"
 # Orphans of an earlier queue on this node (driver dead, GPU children alive).
 "$PY" src/queue_status.py --kill-orphans
-QUEUE=("run_mixed_pool.sh pool" "run_mixed_pool.sh point" "run_mixed_pool.sh e5" "run_mixed_pool.sh gate" \
-       "run_stale_splithalf.sh" "run_stale_splithalf.sh d0" "run_e5_bench.sh d0" "run_e5_bench.sh" \
+# The mixed-pool positive control was dropped on 2026-09-14: it is not part of the manuscript and
+# its point could not be built in time. Its scripts remain (bash scripts/run_mixed_pool.sh point)
+# but the queue no longer stops on it. MIX_IN_QUEUE=1 puts its four steps back at the front.
+QUEUE=("run_stale_splithalf.sh" "run_stale_splithalf.sh d0" "run_e5_bench.sh d0" "run_e5_bench.sh" \
        "run_e5.sh d100")
+if [ "${MIX_IN_QUEUE:-0}" = 1 ]; then
+  QUEUE=("run_mixed_pool.sh pool" "run_mixed_pool.sh point" "run_mixed_pool.sh e5" "run_mixed_pool.sh gate" "${QUEUE[@]}")
+fi
 failed=()
 for job in "${QUEUE[@]}"; do
   echo; echo "===== [$(date -u +%H:%M)] $job"

@@ -59,6 +59,7 @@ def _bench(out: Path, arm: str, sets, finished) -> None:
 
 
 def _tree(tmp_path: Path) -> tuple[Path, Path]:
+    os.environ["MIX_IN_QUEUE"] = "1"   # the dropped mixed-pool rows are still covered by these tests
     work = tmp_path / "work"
     root = work / "runs" / TAG
     for seed in SEEDS:
@@ -93,6 +94,9 @@ def test_progress_states_and_leases(tmp_path):
     (point / "logs" / "main.log").write_text(
         "2026-09-13 10:00:00 [progress] tag-s0-math500mix-d0  1/8 prep  +0min\n"
         "2026-09-13 10:05:00 [progress] tag-s0-math500mix-d0  2/8 behavior-rollout (400x8 on 4 GPUs)  +5min\n")
+    for shard, done in enumerate((61, 62, 60, 63)):
+        (point / "logs" / f"beta-shard{shard}.log").write_text(
+            f"[06:46:50]  rollout {done - 1}/100 (...)\n[06:47:46]  rollout {done}/100 (61%, 56s, ETA 30m)\n")
     lease = Path(str(point) + ".lease")
     lease.write_text("")
     holder = os.open(lease, os.O_RDWR)
@@ -132,6 +136,7 @@ def test_progress_states_and_leases(tmp_path):
     assert by["mixed pool: pool"][0] == "DONE"
     assert by["mixed pool: point"][0] == "RUNNING" and by["mixed pool: point"][1][0].startswith("2/8 behavior-rollout +5min *[?]")
     assert by["mixed pool: point"][1][1].startswith("last file write 0m ago")
+    assert by["mixed pool: point"][1][3] == "beta shards 61/100 62/100 60/100 63/100 (written 0m ago)"
     assert by["mixed pool: point"][1][2].startswith("WORKING: a file was written 0m ago")
     assert by["mixed pool: arms"][0] == "WAITING"
     assert by["reuse split-half d400"] == ("PARTIAL", ["s0 ok  s1 2/4 shards  s2 -"])

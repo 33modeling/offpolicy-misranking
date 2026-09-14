@@ -270,6 +270,42 @@ def point_failure(run: Path) -> str:
     return re.sub(r"^\[?\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d\]?\s*", "", lines[-1])[:80]
 
 
+SHARD_LOG = re.compile(r"^(beta|fresh|ograds|score)-shard(\d+)\.log$")
+
+
+def stage_activity(run: Path) -> str:
+    """Progress inside the running stage from the point runner's shard logs, e.g.
+    'beta shards 61/100 62/100 60/100 63/100 (written 0m ago)'; '' when there are none."""
+    logs = run / "logs"
+    groups: dict[str, list[tuple[int, float, Path]]] = {}
+    try:
+        entries = list(logs.iterdir()) if logs.is_dir() else []
+    except OSError:
+        entries = []
+    for path in entries:
+        m = SHARD_LOG.match(path.name)
+        if not m:
+            continue
+        try:
+            groups.setdefault(m.group(1), []).append((int(m.group(2)), path.stat().st_mtime, path))
+        except OSError:
+            continue
+    if not groups:
+        return ""
+    stage = max(groups, key=lambda g: max(t for _, t, _ in groups[g]))
+    parts, newest = [], 0.0
+    for _, mtime, path in sorted(groups[stage]):
+        newest = max(newest, mtime)
+        counter = "?"
+        for line in reversed(tail_lines(path, 5)):
+            m = re.search(r"rollout (\d+)/(\d+)", line) or re.search(r"\b(\d+)/(\d+)\b", line)
+            if m:
+                counter = f"{m.group(1)}/{m.group(2)}"
+                break
+        parts.append(counter)
+    return f"{stage} shards {' '.join(parts)} (written {age_text(max(0, int(time.time() - newest)))} ago)"
+
+
 def newest_launcher_log(logs_dir: Path, prefix: str) -> Path | None:
     logs = [p for p in logs_dir.glob(f"{prefix}-*-*Z.log") if p.is_file()]
     return max(logs, key=lambda p: p.stat().st_mtime) if logs else None
@@ -559,9 +595,14 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
                 verdict = f"WORKING: a file was written {age_text(idle)} ago (a stage takes hours, so the stage line barely moves)"
             else:
                 verdict = f"STUCK: nothing written for {age_text(idle)}; the queue takes the point over after 15 min of silence"
-            rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'} {mark}", activity, verdict]))
+            inside = stage_activity(point)
+            rows.append(("mixed pool: point", "RUNNING",
+                         [f"{progress or 'started'} {mark}", activity, verdict] + ([inside] if inside else [])))
         elif log.is_file():
             lines = [f"stopped at {progress or '?'}", activity]
+            inside = stage_activity(point)
+            if inside:
+                lines.append(inside)
             reason = point_failure(point)
             if reason:
                 lines.append(f"last error: {reason}")
@@ -898,7 +939,7 @@ def build_rows(work: Path, root: Path, tag: str, seeds, other: str, mix_seed: in
     def run_dir(seed, drift):
         return root / f"family-math500-s{seed}" / f"{tag}-s{seed}-math500-d{drift}"
     e5 = work / "runs" / "e5-reduced"
-    rows = list(mixed_states(work, root, tag, other, mix_seed, mix_steps))
+    rows = list(mixed_states(work, root, tag, other, mix_seed, mix_steps)) if os.environ.get("MIX_IN_QUEUE") == "1" else []
     rows.append(("reuse split-half d400",) + stale_state(run_dir, seeds, 400, "reuse split-half d400"))
     rows.append(("reuse split-half d0",) + stale_state(run_dir, seeds, 0, "reuse split-half d0"))
     rows.append(("benchmarks d0",) + bench_state(e5 / "math500-d0", seeds, "benchmarks d0"))
