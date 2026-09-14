@@ -111,6 +111,14 @@ if [ "$MODE" = run ]; then
   disown 2>/dev/null || true
   echo "[queue] started in the background on $HOST; closing this terminal does not stop it"
   echo "        progress:  bash scripts/run_queue.sh status        log: $QLOG"
+  # Show what the detached worker does first, so the terminal is not silent. Following the log
+  # neither feeds nor stops the worker: closing this terminal, or Ctrl-C here, leaves it running.
+  follow=${OM_QUEUE_FOLLOW_SECONDS:-120}
+  if [ "$follow" -gt 0 ]; then
+    echo "        ---- first $follow s of the queue log (Ctrl-C here does not stop the queue) ----"
+    timeout "$follow" tail -n 0 -f "$QLOG" 2>/dev/null
+    echo "        ---- the queue keeps running; check it with:  bash scripts/run_queue.sh status ----"
+  fi
   exit 0
 fi
 # ---- worker (background)
