@@ -475,3 +475,27 @@ def test_other_suites_are_listed_and_their_running_hosts_count_busy(tmp_path):
     assert "    d400/s1 pilot RUNNING on ds-6" in text
     assert "  BUSY 1: ds-6" in text and "holds: fixed-checkpoint gate d400/s1 pilot" in text
     assert qs.job_label("/w/runs/fixed-checkpoint-gate-v1") == "fixed-checkpoint gate"
+
+
+def test_each_step_reports_the_last_abort_from_the_node_queue_logs(tmp_path):
+    work, root = _tree(tmp_path)
+    notes = work / "queue"
+    notes.mkdir()
+    (notes / "run1-qw-3.log").write_text(
+        "===== [08:25] run_mixed_pool.sh pool\n"
+        "[abort] source point not complete: tag-s0-mbpp-d0\n"
+        "===== [08:25] run_mixed_pool.sh pool finished (rc=1)\n"
+        "===== [08:25] run_mixed_pool.sh point\n"
+        "[abort] pool missing; run:  bash scripts/run_mixed_pool.sh pool\n"
+        "===== [08:25] run_mixed_pool.sh point finished (rc=1)\n"
+        "===== [08:26] run_e5_bench.sh d0\n"
+        "[busy] random is being evaluated on another node\n")
+    problems = qs.job_problems(work)
+    assert problems["run_mixed_pool.sh pool"].startswith("[abort] source point not complete")
+    assert "(on qw-3, 08:25)" in problems["run_mixed_pool.sh point"]
+    rows = qs.with_problems(qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200), problems)
+    by = {name: lines for name, state, lines in rows}
+    assert by["mixed pool: pool"][-1].startswith("last attempt: [abort] source point not complete")
+    assert by["mixed pool: point"][-1].startswith("last attempt: [abort] pool missing")
+    text = qs.render(rows, "HDR", "NODE", {})
+    assert "last attempt: [abort] pool missing" in text

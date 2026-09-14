@@ -51,8 +51,24 @@ def test_build_mixes_training_prompts_and_keeps_math_validation(tmp_path):
     assert again["sha256"] == manifest["sha256"]
     with pytest.raises(ValueError, match="different content"):
         mp.build(math, other, out, 150, 250, 100, seed=0)
-    with pytest.raises(ValueError, match="not enough"):
+    with pytest.raises(ValueError, match="not enough distinct"):
         mp.build(math, other, tmp_path / "p2.jsonl", 500, 200, 100, seed=0)
+
+
+def test_repeated_questions_are_skipped_not_fatal(tmp_path):
+    math = _run(tmp_path, "math500", 400, 100, "math")
+    other = _run(tmp_path, "mbpp", 400, 100, "code")
+    prompts = json.loads((other / "prompts.json").read_text())
+    prompts["train"][5] = dict(prompts["train"][0])          # the source repeats one candidate
+    prompts["train"][9] = dict(prompts["train"][1])
+    (other / "prompts.json").write_text(json.dumps(prompts))
+    out = tmp_path / "pool.jsonl"
+    manifest = mp.build(math, other, out, 200, 200, 100, seed=0)
+    assert manifest["counts"] == {"train:math500": 200, "train:mbpp": 200, "val:math500": 100}
+    assert manifest["repeated_questions_skipped"] == 2
+    rows = [json.loads(l) for l in out.read_text().splitlines()]
+    questions = [r["question"] for r in rows]
+    assert len(set(questions)) == len(questions) == 500
 
 
 def test_loader_honours_the_pre_split_pool(tmp_path, monkeypatch):

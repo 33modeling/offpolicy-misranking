@@ -59,21 +59,38 @@ def read_prompts(run: Path) -> dict:
 
 
 def build_rows(math: dict, other: dict, n_math: int, n_other: int, n_val: int, seed: int,
-               math_name: str = "math500", other_name: str = "other") -> list[dict]:
+               math_name: str = "math500", other_name: str = "other") -> tuple[list[dict], int]:
+    """Rows of the mixed pool and the number of repeated questions skipped.
+
+    A source point may repeat a question (the same prompt text appearing twice in its
+    candidate list). Such a repeat is skipped and the next prompt of that source takes
+    its place, so the requested counts are met with distinct questions; the pool is
+    refused only when a source cannot supply enough distinct ones.
+    """
     if n_math < 1 or n_other < 1 or n_val < 1:
         raise ValueError("counts must be positive")
-    if len(math["train"]) < n_math or len(math["val"]) < n_val or len(other["train"]) < n_other:
-        raise ValueError(f"not enough prompts: math train {len(math['train'])} val {len(math['val'])}, other train {len(other['train'])}")
     def item(row, source, split):
         return {"question": row["question"], "answer": str(row["answer"]), "source": source, "split": split}
-    train = [item(r, math_name, "train") for r in math["train"][:n_math]] + \
-            [item(r, other_name, "train") for r in other["train"][:n_other]]
-    val = [item(r, math_name, "val") for r in math["val"][:n_val]]
-    questions = [r["question"] for r in train + val]
-    if len(set(questions)) != len(questions):
-        raise ValueError("duplicate question across the mixed pool")
+    seen: set[str] = set()
+    skipped = 0
+    def take(rows, count, source, split, label):
+        nonlocal skipped
+        out = []
+        for row in rows:
+            question = row["question"]
+            if question in seen:
+                skipped += 1
+                continue
+            seen.add(question)
+            out.append(item(row, source, split))
+            if len(out) == count:
+                return out
+        raise ValueError(f"not enough distinct prompts: {label} supplies {len(out)} of {count}")
+    train = take(math["train"], n_math, math_name, "train", f"{math_name} train") + \
+            take(other["train"], n_other, other_name, "train", f"{other_name} train")
+    val = take(math["val"], n_val, math_name, "val", f"{math_name} val")
     random.Random(seed + 9_973).shuffle(train)
-    return train + val
+    return train + val, skipped
 
 
 def write_pool(rows: list[dict], out: Path, provenance: dict) -> dict:
@@ -101,8 +118,9 @@ def write_pool(rows: list[dict], out: Path, provenance: dict) -> dict:
 def build(math_run: Path, other_run: Path, out: Path, n_math: int, n_other: int, n_val: int, seed: int) -> dict:
     math, other = read_prompts(math_run), read_prompts(other_run)
     other_name = other_run.name.split("-")[-2] if other_run.name.count("-") >= 2 else "other"
-    rows = build_rows(math, other, n_math, n_other, n_val, seed, other_name=other_name)
+    rows, skipped = build_rows(math, other, n_math, n_other, n_val, seed, other_name=other_name)
     provenance = {"math_run": str(math_run), "other_run": str(other_run), "seed": seed,
+                  "repeated_questions_skipped": skipped,
                   "math_prompts_sha256": hashlib.sha256((math_run / "prompts.json").read_bytes()).hexdigest(),
                   "other_prompts_sha256": hashlib.sha256((other_run / "prompts.json").read_bytes()).hexdigest(),
                   "order": "training prompts shuffled with seed + 9973; validation prompts in the MATH point's order"}
@@ -140,7 +158,8 @@ def main(argv=None) -> int:
         if args.command == "build":
             manifest = build(args.math_run.resolve(), args.other_run.resolve(), args.out.resolve(),
                              args.math, args.other, args.val, args.seed)
-            print(f"[pool] {args.out}: {json.dumps(manifest.get('counts'))} sha256={manifest['sha256'][:12]}")
+            print(f"[pool] {args.out}: {json.dumps(manifest.get('counts'))} sha256={manifest['sha256'][:12]}"
+                  + (f" (skipped {manifest['repeated_questions_skipped']} repeated question(s))" if manifest.get("repeated_questions_skipped") else ""))
         else:
             print("\n".join(env_lines(args.run.resolve())))
         return 0

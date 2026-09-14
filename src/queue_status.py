@@ -263,6 +263,36 @@ def newest_launcher_log(logs_dir: Path, prefix: str) -> Path | None:
     return max(logs, key=lambda p: p.stat().st_mtime) if logs else None
 
 
+ROW_JOBS = {"mixed pool: pool": "run_mixed_pool.sh pool", "mixed pool: point": "run_mixed_pool.sh point",
+            "mixed pool: arms": "run_mixed_pool.sh e5", "mixed pool: gate": "run_mixed_pool.sh gate",
+            "reuse split-half d400": "run_stale_splithalf.sh", "reuse split-half d0": "run_stale_splithalf.sh d0",
+            "benchmarks d0": "run_e5_bench.sh d0", "benchmarks d400": "run_e5_bench.sh",
+            "d100 continuation": "run_e5.sh d100", "analyses + export": "run_analyses.sh"}
+STEP_HEADER = re.compile(r"^=====\s*\[([^\]]*)\]\s*(.+?)(?:\s+finished \(rc=.*\))?$")
+
+
+def job_problems(work: Path) -> dict[str, str]:
+    """job -> 'last problem line (on <node>, <time>)' from every node's queue log.
+
+    The queue writes '===== [HH:MM] <job>' before each step and the step's own output after it,
+    so the last '[abort]/[failed]/[busy]/[skip]' line under a header belongs to that step.
+    """
+    problems: dict[str, str] = {}
+    directory = work / "queue"
+    if not directory.is_dir():
+        return problems
+    for log in sorted(directory.glob("*.log")):
+        host, job, stamp = log.stem, None, ""
+        for line in tail_lines(log, 4000):
+            header = STEP_HEADER.match(line.strip())
+            if header:
+                stamp, job = header.group(1), header.group(2).strip()
+                continue
+            if job and PROBLEM.match(line):
+                problems[job] = f"{line.strip()[:96]}  (on {short_host(host)}, {stamp})"
+    return problems
+
+
 def queue_log_state(work: Path, host: str) -> str:
     """Last step marker and last problem line of a node's queue console log on the shared filesystem."""
     log = work / "queue" / f"{host}.log"
@@ -923,6 +953,18 @@ def suite_lines(work: Path) -> list[str]:
     return lines
 
 
+def with_problems(rows, problems: dict[str, str]):
+    """Append each step's last problem line, so a step that never starts says why."""
+    out = []
+    for name, state, lines in rows:
+        job = next((j for key, j in ROW_JOBS.items() if name.startswith(key)), None)
+        problem = problems.get(job) if job else None
+        if problem and state in ("WAITING", "TODO", "PARTIAL"):
+            lines = list(lines) + [f"last attempt: {problem}"]
+        out.append((name, state, lines))
+    return out
+
+
 def render(rows, header: str, node: str, notes: dict[str, dict] | None = None) -> str:
     out = [header, node, ""]
     out.append("NODES (queue note + heartbeat under $OM_WORK/queue, held leases, and what status saw on each node)")
@@ -978,7 +1020,8 @@ def main(argv=None) -> int:
     fs_now = record_seen(args.work)
     SEEN.clear()
     SEEN.update(seen_nodes(args.work, fs_now))
-    rows = build_rows(args.work, root, args.tag, args.seeds, args.mix_other, args.mix_seed, args.mix_steps)
+    rows = with_problems(build_rows(args.work, root, args.tag, args.seeds, args.mix_other, args.mix_seed, args.mix_steps),
+                         job_problems(args.work))
     print(render(rows, header, node_line(), queue_notes(args.work, fs_now)))
     return 0
 
