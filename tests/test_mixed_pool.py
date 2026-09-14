@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
@@ -208,3 +209,28 @@ def test_a_point_declaring_a_prescreened_pool_is_moved_aside_not_reused(tmp_path
     assert subprocess.run(check).returncode == 0          # declared pool -> quarantine
     (point / "run_config.json").write_text(json.dumps({"pool": None, "dataset": "math500"}))
     assert subprocess.run(check).returncode == 1          # no declared pool -> keep and resume
+
+
+def test_a_stale_lease_is_replaced_only_after_the_point_stops_being_written(tmp_path):
+    """The holder's node may be gone; flock cannot then be released, so the lease file is replaced
+    once nothing under the point has been written for the idle window."""
+    body = (ROOT / "scripts/run_mixed_pool.sh").read_text().split("  point)", 1)[1].split("  e5)", 1)[0]
+    assert 'rm -f -- "$POINT.lease"' in body and "MIX_STALE_LEASE_SECONDS:-2700" in body
+    assert body.index("the holder is still writing") < body.index('rm -f -- "$POINT.lease"')
+    # replacing the file leaves the old holder's lock behind and lets a new lock be taken
+    lease = tmp_path / "point.lease"
+    lease.write_text("host=gone pid=1 since=x\n")
+    holder = os.open(lease, os.O_RDWR)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        second = os.open(lease, os.O_RDWR)
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.close(second)
+        lease.unlink()
+        lease.write_text("host=new pid=2 since=y\n")
+        fresh = os.open(lease, os.O_RDWR)
+        fcntl.flock(fresh, fcntl.LOCK_EX | fcntl.LOCK_NB)   # no longer blocked by the old holder
+        os.close(fresh)
+    finally:
+        os.close(holder)

@@ -67,18 +67,34 @@ case "$MODE" in
     # one node builds the point; others skip it (lease on the shared filesystem)
     mkdir -p "$(dirname "$POINT")"
     source scripts/_lease.sh
+    # A lease can only be released by its holder's node, so a holder that died elsewhere would keep
+    # the point unclaimable. A live point writes shard logs every minute; when nothing under it has
+    # been written for MIX_STALE_LEASE_SECONDS (45 min) the lease file is replaced, which leaves the
+    # old holder's lock on the unlinked file and lets this node claim the new one.
+    point_idle_seconds() {
+      local newest
+      newest=$(find "$POINT" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1)
+      [ -n "$newest" ] || { echo ""; return; }
+      echo $(( $(date +%s) - ${newest%.*} ))
+    }
     exec 6>>"$POINT.lease"
     if ! flock -n 6; then
       echo "[busy] the mixed point is claimed: $(head -n 1 "$POINT.lease" 2>/dev/null || echo 'no lease note')"
-      newest=$(find "$POINT" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1)
-      if [ -n "$newest" ]; then
-        age=$(( $(date +%s) - ${newest%.*} ))
-        echo "[busy] its last file write was $((age / 60)) min ago"
-        [ "$age" -gt 1800 ] && echo "[busy] nothing written for over 30 min: the holder looks dead; on that node run  bash scripts/run_queue.sh stop"
-      else
-        echo "[busy] the point directory has no file yet; the holder may be starting up or dead"
+      idle=$(point_idle_seconds)
+      if [ -z "$idle" ]; then
+        echo "[busy] the point directory has no file yet; the holder may be starting up"
+        exit 0
       fi
-      exit 0
+      echo "[busy] its last file write was $((idle / 60)) min ago"
+      if [ "$idle" -lt "${MIX_STALE_LEASE_SECONDS:-2700}" ]; then
+        echo "[busy] the holder is still writing; leaving it alone"
+        exit 0
+      fi
+      echo "[mixed] no write for $((idle / 60)) min: replacing the stale lease and taking the point over"
+      exec 6>&-
+      rm -f -- "$POINT.lease"
+      exec 6>>"$POINT.lease"
+      if ! flock -n 6; then echo "[busy] another node took the point over first"; exit 0; fi
     fi
     lease_note "$POINT.lease"
     # A point initialized before 2026-09-14 declared the mixed pool as a prescreened pool, so every
