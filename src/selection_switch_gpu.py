@@ -1,0 +1,667 @@
+"""Selected-prefix switching experiment, isolated from all existing run roots."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import socket
+import statistics
+import subprocess
+import sys
+import time
+import traceback
+from pathlib import Path
+from types import SimpleNamespace
+
+import net_gain_gate_gpu as runtime
+import selection_gate as core
+import selection_gate_gpu as base
+import selection_switch as rule
+import selection_switch_score as scoring
+
+HERE = Path(__file__).resolve()
+CODE = tuple(dict.fromkeys((*runtime.CODE_FILES, "src/selection_switch.py", "src/selection_switch_gpu.py",
+    "src/selection_switch_score.py", "src/grads.py", "src/experiment.py", "src/rollout.py",
+    "src/rollout_contract.py", "src/artifact_contract.py", "src/select_rules.py", "src/data.py",
+    "src/score_artifacts.py", "src/downstream_compare.py", "src/additive_experiment.py",
+    "src/net_gate_memory_worker.py", "src/bootstrap_math_verify.py")))
+_verify = base.verify
+_protocol = runtime.protocol
+
+
+def code_hashes():
+    return {name: base.digest(base.ROOT / name) for name in CODE}
+
+
+def manifest(root):
+    p = core.read(root / "switch.json")
+    if p["schema"] != rule.SCHEMA or p["code_hashes"] != code_hashes():
+        raise ValueError("switch protocol or scientific code changed; preserve the frozen run")
+    return p
+
+
+def link(path, target):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    target = target.resolve()
+    if path.is_symlink() or path.exists():
+        if path.resolve() != target:
+            raise ValueError(f"existing input link differs: {path}")
+    else:
+        path.symlink_to(target, target_is_directory=target.is_dir())
+
+
+def prefix_dir(root, seed):
+    return root / "prefixes" / f"seed-{seed}"
+
+
+def verify_source(root, seed):
+    p = manifest(root)
+    item = p["sources"][str(seed)]
+    source = Path(item["path"])
+    for name, sha in item["hashes"].items():
+        if base.digest(source / name) != sha:
+            raise ValueError(f"initial source changed: {source/name}")
+    if base.digest(Path(item["config"]["model"]) / "config.json") != item["model_sha256"]:
+        raise ValueError("initial base model changed")
+    return item
+
+
+def validate_prefix(root, seed, step):
+    import evidence_downstream as ed
+    from train_policy_grpo import validate_policy_lineage
+    item = verify_source(root, seed)
+    directory = prefix_dir(root, seed)
+    cfg = item["config"]
+    subset = directory / "subset.json"
+    if core.read(subset) != item["subset"]:
+        raise ValueError("initial selected subset changed")
+    previous = 0
+    for current in rule.STEPS:
+        policy = directory / f"policy_step_{current}"
+        validate_policy_lineage(policy, target_steps=current, world_size=4, training_objective="grpo",
+            expected_start_step=previous, expected_parent=directory / f"policy_step_{previous}" if previous else None,
+            expected_model=Path(cfg["model"]), expected_seed=seed, expected_max_new_tokens=cfg["max_new_tokens"],
+            expected_prompt_format=cfg["prompt_format"], expected_config=ed._expected_config(cfg),
+            expected_prompts=subset, require_complete_hashes=True)
+        expected = {"schema": rule.SCHEMA, "seed": seed, "step": current, "previous": previous,
+                    "selector": "fresh_r", "subset_sha256": base.digest(subset),
+                    "source_sha256": core.fingerprint(item),
+                    "policy_hashes": {name: base.digest(policy / name) for name in ed.POLICY_FILES}}
+        if core.read(directory / f"prefix-{current}.json") != expected:
+            raise ValueError("checkpoint is not a certified selected-training prefix")
+        if current == step:
+            return expected
+        previous = current
+    raise ValueError("unregistered prefix checkpoint")
+
+
+def verify(out):
+    c = _verify(out)
+    selected = c.get("selected_prefix")
+    if not selected or selected["schema"] != rule.SCHEMA:
+        raise ValueError("a generic GRPO checkpoint is not a selected-training prefix")
+    cert = validate_prefix(Path(selected["root"]), c["config"]["seed"], c["config"]["drift"])
+    if core.fingerprint(cert) != selected["certificate_sha256"]:
+        raise ValueError("selected history changed")
+    return c
+
+
+def prepare(args):
+    import additive_experiment as ae
+    import evidence_downstream as ed
+    from artifact_contract import validate_generation_contract
+    from downstream_compare import selector_scores
+    from select_rules import jittered_topk, topk_count
+
+    root = args.root.resolve()
+    for value, name in ((args.eval_timeout, "evaluation timeout"), (args.prefix_timeout, "prefix timeout")):
+        core.number(value, name, 1.)
+    core.integer(args.eval_k, "evaluation responses", 1)
+    with base.lease(root / ".prepare.lock", blocking=True):
+        if (root / "switch.json").exists():
+            manifest(root)
+            print(f"[prepared] frozen experiment already exists: {root}")
+            return
+        runs = ae.resolve_runs(args.matrix, (*rule.DEV_SEEDS, *rule.TEST_SEEDS), 0)
+        ed.require_separate_output(root, runs)
+        if any(root in run.parents for run in runs):
+            raise ValueError("output must not contain existing matrix data")
+        sources = {}
+        for source in runs:
+            cfg = core.read(source / "run_config.json")
+            prompts = core.read(source / "prompts.json")
+            if (cfg["drift"] != 0 or cfg["dataset"] != "math500" or cfg["prompt_format"] != "olmo_rlzero_math"
+                    or cfg["grpo_world_size"] != 4 or cfg["grpo_group_size"] != 8
+                    or cfg["grpo_epochs_per_batch"] != 1 or cfg["topk_frac"] != .1
+                    or cfg["temperature"] != 1. or cfg.get("top_p", 1.) != 1.
+                    or not (source / "DONE").is_file()):
+                raise ValueError("expected complete base-policy OLMo MATH source with registered GRPO recipe")
+            scoring.layout(cfg, prompts)
+            generation = validate_generation_contract(source)
+            oracle = core.read(source / "oracle_protocol.json")
+            if oracle.get("schema") != "offpolicy-oracle-validation-split/v3" or not oracle.get("generation_validation", {}).get("validated_rows"):
+                raise ValueError("initial fresh_r scores lack verified R/A/B provenance")
+            scores = selector_scores(source, cfg["seed"])["fresh_r"]
+            if set(scores) != set(range(len(prompts["train"]))):
+                raise ValueError("initial fresh_r prompt coverage differs")
+            indices = sorted(jittered_topk(scores, topk_count(len(scores), .1), cfg["seed"]+1000))
+            names = ["run_config.json", "prompts.json", "scores_splithalf.json", "oracle_protocol.json",
+                     "rollouts_behavior_train.jsonl"]
+            sources[str(cfg["seed"])] = {"path": str(source), "config": cfg,
+                "hashes": {name: base.digest(source / name) for name in names}, "generation_validation": generation,
+                "model_sha256": base.digest(Path(cfg["model"]) / "config.json"),
+                "subset": {**prompts, "train": [prompts["train"][i] for i in indices],
+                           "selector": "fresh_r", "selected_idx": indices, "k": len(indices)}}
+        budget = args.budget_gpu_seconds
+        budget_source = {"kind": "explicit", "gpu_seconds": budget}
+        if budget is None:
+            reference = ae.resolve_runs(args.matrix, [0], 100)[0] / "policy_step_100/grpo_stats.jsonl"
+            timings = [core.number(json.loads(line)["step_seconds"], "step duration", 1e-12)
+                       for line in reference.read_text().splitlines() if line.strip()]
+            budget = math.ceil(statistics.median(timings)*4*100/60)*60
+            budget_source = {"kind": "100-update equivalent; development seed-0 timings only", "path": str(reference),
+                             "sha256": base.digest(reference), "median_update_wall_seconds": statistics.median(timings)}
+        core.number(budget, "budget", 120.)
+        if args.eval_prompts:
+            evaluation = core.read(args.eval_prompts)
+        else:
+            if not args.pool or not args.pool_manifest:
+                raise ValueError("independent evaluation requires --eval-prompts or --pool/--pool-manifest")
+            evaluation = ed.prepare_test(args.pool, runs, root / "test.json", args.test_count, 20260914,
+                                         "EleutherAI/hendrycks_math", core.read(args.pool_manifest)["source_revision"], "train")
+        for source in runs:
+            if len(ed.independent_test(core.read(source / "prompts.json"), evaluation)) < 4:
+                raise ValueError("too few independent evaluation questions")
+        base.bind(root / "test.json", evaluation)
+        p = {"schema": rule.SCHEMA, "code_hashes": code_hashes(), "sources": sources,
+             "budget_gpu_seconds": budget, "budget_source": budget_source, "steps": list(rule.STEPS),
+             "development_seeds": list(rule.DEV_SEEDS), "test_seeds": list(rule.TEST_SEEDS),
+             "gpu_type": args.gpu_type, "evaluation": evaluation, "eval_k": args.eval_k,
+             "eval_timeout": args.eval_timeout, "prefix_timeout": args.prefix_timeout,
+             "measurement_config": rule.MEASUREMENT,
+             "historical_scoring_cost": "reused verified d0 fresh_r scores; historical cost unknown, not zero",
+             "prefix_cost": "shared research work, recorded separately from continuation allocation"}
+        base.bind(root / "switch.json", p)
+        print(f"[prepared] {root}; 18 development + 30 held-out continuations, five selected prefixes; B={budget:.0f} GPU-s")
+
+
+def build_prefix(root, seed, step, devices, env):
+    import evidence_downstream as ed
+    from train_policy_grpo import validate_policy_lineage
+    p, item = manifest(root), verify_source(root, seed)
+    directory = prefix_dir(root, seed)
+    previous = (0, *rule.STEPS)[rule.STEPS.index(step)]
+    if previous:
+        validate_prefix(root, seed, previous)
+    base.bind(directory / "subset.json", item["subset"])
+    segment = directory / f"segment-{step}"
+    base.bind(segment / "subsets/subset-fresh_r.json", item["subset"])
+    cfg = {**item["config"], "drift": previous}
+    policy = segment / "fresh_r/policy"
+    base.spent(segment)
+    if not (policy / "policy_train.json").exists():
+        command = ed.train_args(cfg, directory, segment, "fresh_r", step-previous)
+        command = [x for x in command if x != "--reliability-log"]
+        base.meter(segment, "prefix-train", p["gpu_type"], commands=[([sys.executable, *command], ",".join(devices))],
+                   env=env, timeout=p["prefix_timeout"], ledger="research")
+    link(directory / f"policy_step_{step}", policy)
+    validate_policy_lineage(policy, target_steps=step, world_size=4, training_objective="grpo",
+        expected_start_step=previous, expected_parent=directory / f"policy_step_{previous}" if previous else None,
+        expected_model=Path(cfg["model"]), expected_seed=seed, expected_max_new_tokens=cfg["max_new_tokens"],
+        expected_prompt_format=cfg["prompt_format"], expected_config=ed._expected_config(cfg),
+        expected_prompts=directory / "subset.json", require_complete_hashes=True)
+    cert = {"schema": rule.SCHEMA, "seed": seed, "step": step, "previous": previous,
+            "selector": "fresh_r", "subset_sha256": base.digest(directory / "subset.json"),
+            "source_sha256": core.fingerprint(item),
+            "policy_hashes": {name: base.digest(policy / name) for name in ed.POLICY_FILES}}
+    base.bind(directory / f"prefix-{step}.json", cert)
+    validate_prefix(root, seed, step)
+    (segment / "failure.json").unlink(missing_ok=True)
+
+
+def child_root(root, seed, step):
+    return root / "states" / f"s{seed}-t{step}"
+
+
+def publish_state(root, seed, step):
+    p, item = manifest(root), verify_source(root, seed)
+    cert = validate_prefix(root, seed, step)
+    held_out = seed in rule.TEST_SEEDS
+    model = core.read(root / "model.json") if held_out else None
+    directory = prefix_dir(root, seed)
+    source = directory / f"view-{step}"
+    cfg = {**item["config"], "drift": step}
+    base.bind(source / "run_config.json", cfg)
+    link(source / "prompts.json", Path(item["path"]) / "prompts.json")
+    link(source / f"policy_step_{step}", directory / f"policy_step_{step}")
+    link(source / "rollouts_behavior_train.jsonl", Path(item["path"]) / "rollouts_behavior_train.jsonl")
+    base.bind(source / "selected-prefix.json", cert)
+    child = child_root(root, seed, step)
+    c = base.source_contract(source, p["evaluation"], budget=p["budget_gpu_seconds"], gpu_type=p["gpu_type"],
+        role="test" if held_out else "development", selector="fresh_r", eval_k=p["eval_k"], max_steps=100000)
+    c["selected_prefix"] = {"schema": rule.SCHEMA, "root": str(root), "certificate_sha256": core.fingerprint(cert)}
+    c["source_hashes"]["selected-prefix.json"] = base.digest(source / "selected-prefix.json")
+    c["source_hashes"]["rollouts_behavior_train.jsonl"] = base.digest(source / "rollouts_behavior_train.jsonl")
+    out = child / "points" / source.name
+    base.bind(out / "contract.json", c)
+    base.bind(out / "evaluation.json", c["evaluation"])
+    base.bind(out / "net_inputs.json", {name: base.digest(source / name) for name in (
+        "rollouts_behavior_train.jsonl", f"policy_step_{step}/grpo_stats.jsonl")})
+    base.bind(child / "suite.json", {"schema": base.SCHEMA, "points": [{"name": source.name, "sha256": base.digest(out / "contract.json")}],
+        "budget_gpu_seconds": p["budget_gpu_seconds"], "measurement_wall_seconds": 30., "eval_timeout": p["eval_timeout"]})
+    protocol_value = {"schema": rule.SCHEMA, "schedule": rule.SCHEDULE, "mode": "test" if held_out else "study",
+        "model": model, "role": c["role"], "selector": "fresh_r", "arms": list(rule.TEST_ARMS if held_out else rule.DEV_ARMS),
+        "recent_window": 20, "max_measurement_fraction": .01, "code_hashes": p["code_hashes"]}
+    if model:
+        runtime.check_model(model, c)
+    base.bind(child / "net_protocol.json", protocol_value)
+    return child
+
+
+def protocol(root):
+    value = _protocol(root)
+    if value.get("code_hashes") != code_hashes():
+        raise ValueError("incomplete scientific code binding")
+    return value
+
+
+def measurement_worker(out, arm, *, window, wall_cap, scoring_only=False):
+    c = core.read(out / "contract.json")
+    run = Path(c["source_run"])
+    step = c["config"]["drift"]
+    report = rule.measure(run / "rollouts_behavior_train.jsonl", stats=run / f"policy_step_{step}/grpo_stats.jsonl",
+        step=step, prompts=c["n"], responses=8, seed=c["config"]["seed"], window=window, wall_cap=wall_cap)
+    expected = core.read(out / "net_inputs.json")
+    if expected != {"rollouts_behavior_train.jsonl": report["source_sha256"],
+                    f"policy_step_{step}/grpo_stats.jsonl": report["stats_sha256"]}:
+        raise ValueError("pre-decision inputs changed")
+    if arm == "gate_measurement":
+        model = protocol(out.parent.parent)["model"]
+        runtime.check_model(model, c)
+        report["choice"] = rule.choose(model, report["features"])
+        report["checkpoint_only"] = rule.choose(model, report["features"], checkpoint_only=True)
+    base.bind(out / arm / "measurement.json", report)
+
+
+def decision(out, suite, p, arm, env):
+    c = core.read(out / "contract.json")
+    binding = {"protocol_sha256": core.fingerprint(p), "contract_sha256": base.digest(out / "contract.json")}
+    value = {"binding": binding, "action": "select" if arm.startswith("selection_") else "random",
+             "reason": "control_arm", "profile_sha256": None, "measurement_gpu_seconds": 0.,
+             "budget_gpu_seconds": c["budget_gpu_seconds"], "start_step": c["config"]["drift"], "schedule": rule.SCHEDULE}
+    if arm in {*rule.DEV_ARMS, "gated"}:
+        measured = out / ("measurement" if p["mode"] == "study" else "gate_measurement")
+        first = runtime.measure_once(out, suite, p, measured, env)
+        value.update(measurement_gpu_seconds=first["gpu_seconds"], profile_sha256=first["report_sha256"])
+        value["budget_gpu_seconds"] -= first["gpu_seconds"]
+        if arm == "gated":
+            runtime.check_model(p["model"], c)
+            value.update(core.read(measured / "measurement.json")["choice"] if first["status"] == "complete" else
+                         {"action": "random", "reason": "measurement_failed_no_retry", "prediction": None})
+        elif first["status"] != "complete":
+            if p["mode"] == "study":
+                raise ValueError("failed development measurement cannot form a feature/label pair")
+            value["reason"] = "control_with_failed_diagnostic_charge"
+    if value["budget_gpu_seconds"] <= 0:
+        raise ValueError("diagnosis exhausted the branch allocation")
+    base.bind(out / arm / "decision.json", value)
+    return value
+
+
+def freeze_decisions(out, suite, p, env):
+    """No control may start before the held-out gate decision is durably frozen."""
+    path = out / "decisions-frozen.json"
+    with base.lease(out / ".decision-barrier.lock"):
+        if path.exists():
+            value = core.read(path)
+            if value["protocol_sha256"] != core.fingerprint(p) or value["decisions"] != {
+                    arm: base.digest(out / arm / "decision.json") for arm in p["arms"]}:
+                raise ValueError("frozen decision barrier changed")
+            return value
+        if any((out / arm / name).exists() for arm in p["arms"] for name in ("execution.json", "result.json")):
+            raise ValueError("continuation artifacts precede the decision barrier")
+        # Paid controls share this exact diagnostic. Test gate is evaluated first.
+        order = (["gated"] if p["mode"] == "test" else []) + [a for a in p["arms"] if a != "gated"]
+        for arm in order:
+            runtime.decision(out, suite, p, arm, env)
+        value = {"protocol_sha256": core.fingerprint(p), "frozen_at": time.time(),
+                 "decisions": {arm: base.digest(out / arm / "decision.json") for arm in p["arms"]}}
+        base.bind(path, value)
+        return value
+
+
+def select_once(out, c, p, arm, choice, env, devices):
+    directory = out / arm
+    private = directory / "fresh-r"
+    run = Path(c["source_run"])
+    parent = run / f"policy_step_{c['config']['drift']}"
+    base.bind(private / "scoring.json", {"config": c["config"], "parent": str(parent),
+        "adapter_sha256": base.digest(parent / "adapter_model.safetensors"), "prompts": str(run / "prompts.json"),
+        "prompts_sha256": base.digest(run / "prompts.json"), "sampling_seed": 701000003+c["config"]["seed"]*1000003+c["config"]["drift"]*7919,
+        "contract_sha256": base.digest(out / "contract.json"), "protocol_sha256": core.fingerprint(p)})
+    for stage in ("validation", "candidate"):
+        commands = [([sys.executable, str(base.ROOT / "src/selection_switch_score.py"), "--root", str(private),
+                      "--stage", stage, "--shard", str(i)], devices[i]) for i in range(4)
+                    if not (private / f"{stage}-{i}.done.json").exists()]
+        if commands:
+            base.meter(directory, f"fresh-r-{stage}", c["scope"]["gpu_type"], commands=commands, env=env,
+                timeout=(choice["budget_gpu_seconds"]-base.spent(directory))/4, ledger="deployment")
+        base.meter(directory, f"fresh-r-merge-{stage}", c["scope"]["gpu_type"],
+                   action=lambda: scoring.merge(private, stage), ledger="deployment")
+    if core.read(private / "selected.sha256.json") != {"sha256": base.digest(private / "selected.json")}:
+        raise ValueError("selection changed")
+    return core.read(private / "selected.json")["indices"]
+
+
+def collect(root, *, development):
+    p, rows, missing = manifest(root), [], []
+    seeds = rule.DEV_SEEDS if development else rule.TEST_SEEDS
+    for seed in seeds:
+        for step in rule.STEPS:
+            child = child_root(root, seed, step)
+            try:
+                protocol_value = protocol(child)
+                out = next(base.entries(child))
+                c = verify(out)
+                freeze = core.read(out / "decisions-frozen.json")
+                if freeze["decisions"] != {a: base.digest(out / a / "decision.json") for a in protocol_value["arms"]}:
+                    raise ValueError("decision evidence changed")
+                results = {arm: runtime.validate_result(out, protocol_value, arm) for arm in protocol_value["arms"]}
+                for arm, result in results.items():
+                    base.policy(out, c, arm)
+                    if result["rewards"] != base.rewards(out, c, arm):
+                        raise ValueError("reported rewards differ from evaluation artifacts")
+                if len({tuple(sorted(r["rewards"])) for r in results.values()}) != 1:
+                    raise ValueError("paired evaluation identities differ")
+                measured_dir = out / ("measurement" if development else "gate_measurement")
+                initial = core.read(measured_dir / "initial.json")
+                profile = core.read(measured_dir / "measurement.json") if initial["status"] == "complete" else None
+                means = {arm: statistics.fmean(r["rewards"].values()) for arm, r in results.items()}
+                trajectory, parent = runtime.identity(c)
+                row = {"seed": seed, "step": step, "role": c["role"], "complete": True,
+                    "scope": c["scope"], "trajectory_id": trajectory, "parent": list(parent),
+                    "budget_gpu_seconds": p["budget_gpu_seconds"], "features": profile["features"] if profile else None,
+                    "means": means, "branches": results, "decision_frozen_at": freeze["frozen_at"],
+                    "measurement_gpu_seconds": initial["gpu_seconds"]}
+                if not development:
+                    decision = core.read(out / "gated/decision.json")
+                    row["intended_action"] = decision["action"]
+                    row["actual_action"] = results["gated"]["action"]
+                    row["fallback"] = (decision["reason"] == "measurement_failed_no_retry" or
+                                       core.read(out / "gated/execution.json")["reason"] == "selector_failed")
+                    row["audit"] = rule.decision_audit(means, decision["action"])
+                    if profile:
+                        row["checkpoint_only_audit"] = rule.decision_audit(means, profile["checkpoint_only"]["action"])
+                    row["paired_question_differences"] = {i: results["selection_reduced"]["rewards"][i]-results["random_reduced"]["rewards"][i]
+                                                          for i in results["selection_reduced"]["rewards"]}
+                rows.append(row)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                missing.append({"seed": seed, "step": step, "reason": str(exc)})
+    return {"schema": rule.SCHEMA, "complete": not missing, "rows": rows, "missing_or_failed": missing}
+
+
+def fit_once(root):
+    with base.lease(root / ".fit.lock"):
+        if (root / "model.json").exists():
+            rule.validate_model(core.read(root / "model.json"))
+            return True
+        # Do not repeatedly hash large model/evaluation files until every dev arm has a result.
+        if any(not list(child_root(root, s, t).glob(f"points/*/{arm}/result.json"))
+               for s in rule.DEV_SEEDS for t in rule.STEPS for arm in rule.DEV_ARMS):
+            return False
+        started = time.monotonic()
+        data = collect(root, development=True)
+        if not data["complete"]:
+            raise ValueError(f"development labels are invalid: {data['missing_or_failed']}")
+        model = rule.fit(data["rows"])
+        base.bind(root / "development.json", data)
+        base.bind(root / "model.json", model)
+        elapsed = time.monotonic()-started
+        allocated = 4 if os.environ.get("OM_NODE_LOCK_HELD") == "1" else 0
+        base.bind(root / "fit-cost.json", {"wall_seconds": elapsed,
+            "gpu_seconds": allocated*elapsed, "allocated_gpus": allocated,
+            "ledger": "offline research; not a deployment diagnostic"})
+        print(f"[frozen] {root/'model.json'}; held-out branches now eligible", flush=True)
+        return True
+
+
+def admitted_devices(p):
+    devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
+    if len(devices) != 4 or len(set(devices)) != 4 or not all(devices) or os.environ.get("OM_NODE_LOCK_HELD") != "1":
+        raise ValueError("requires one admitted node with four distinct GPUs")
+    hardware = subprocess.check_output(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader", "-i", ",".join(devices)], text=True, timeout=20).splitlines()
+    if len(hardware) != 4 or set(map(str.strip, hardware)) != {p["gpu_type"]}:
+        raise ValueError("hardware differs from frozen allocation")
+    return devices
+
+
+def smoke(root):
+    """One registered prefix and paid continuation; full run reuses these artifacts."""
+    import additive_experiment as ae
+    p = manifest(root)
+    devices = admitted_devices(p)
+    env = ae.model_environment(p["sources"]["0"]["config"])
+    directory = prefix_dir(root, 0)
+    with base.lease(directory / ".prefix.lock"):
+        if not (directory / "prefix-25.json").exists():
+            build_prefix(root, 0, 25, devices, env)
+    child = child_root(root, 0, 25)
+    with base.lease(child / ".publish.lock", blocking=True):
+        if not (child / "net_protocol.json").exists():
+            publish_state(root, 0, 25)
+    out = next(base.entries(child))
+    with base.lease(out / "selection_reduced/.task.lock"):
+        suite, p = core.read(child / "suite.json"), protocol(child)
+        freeze_decisions(out, suite, p, env)
+        runtime.run_arm(out, suite, p, "selection_reduced", devices, env)
+    print(f"[smoke complete] registered s0/t25 CONTINUE_D; reused by full run: {out}")
+
+
+def work(root, *, idle_timeout=600.):
+    import additive_experiment as ae
+    p = manifest(root)
+    core.number(idle_timeout, "idle timeout", 0.)
+    devices = admitted_devices(p)
+    attempted, failures = set(), 0
+    last_progress = time.monotonic()
+    while True:
+        progress, busy = False, False
+        try:
+            fit_once(root)
+        except BlockingIOError:
+            busy = True
+        for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
+            env = ae.model_environment(p["sources"][str(seed)]["config"])
+            for step in rule.STEPS:
+                cert = prefix_dir(root, seed) / f"prefix-{step}.json"
+                if not cert.exists() or (seed in rule.TEST_SEEDS and not (root / "model.json").exists()):
+                    continue
+                child = child_root(root, seed, step)
+                with base.lease(child / ".publish.lock", blocking=True):
+                    if not (child / "net_protocol.json").exists():
+                        publish_state(root, seed, step)
+                out = next(base.entries(child))
+                protocol_value, suite = protocol(child), core.read(child / "suite.json")
+                for arm in protocol_value["arms"] if seed % 2 == 0 else protocol_value["arms"][::-1]:
+                    key = (seed, step, arm)
+                    directory = out / arm
+                    if key in attempted or (directory / "result.json").exists():
+                        continue
+                    try:
+                        with base.lease(directory / ".task.lock"):
+                            freeze_decisions(out, suite, protocol_value, env)
+                            attempted.add(key)
+                            runtime.run_arm(out, suite, protocol_value, arm, devices, env)
+                            progress = True
+                    except BlockingIOError:
+                        busy = True
+                    except Exception as exc:
+                        attempted.add(key)
+                        failures += 1
+                        record_failure(directory, exc)
+            # One segment per pass publishes ready work without waiting for the whole prefix.
+            for step in rule.STEPS:
+                directory = prefix_dir(root, seed)
+                key = (seed, step, "prefix")
+                if (directory / f"prefix-{step}.json").exists():
+                    continue
+                if key in attempted:
+                    break
+                previous = (0, *rule.STEPS)[rule.STEPS.index(step)]
+                if previous and not (directory / f"prefix-{previous}.json").exists():
+                    break
+                try:
+                    with base.lease(directory / ".prefix.lock"):
+                        if not (directory / f"prefix-{step}.json").exists():
+                            attempted.add(key)
+                            build_prefix(root, seed, step, devices, env)
+                            progress = True
+                except BlockingIOError:
+                    busy = True
+                except Exception as exc:
+                    attempted.add(key)
+                    failures += 1
+                    record_failure(directory / f"segment-{step}", exc)
+                break
+        if progress:
+            last_progress = time.monotonic()
+        elif busy and time.monotonic()-last_progress < idle_timeout:
+            print("[waiting] remaining ready tasks are held by other nodes; bounded wait", flush=True)
+            time.sleep(15)
+        else:
+            break
+    status(root)
+    return int(bool(failures))
+
+
+def record_failure(directory, exc):
+    traceback.print_exc()
+    core.atomic_json(directory / "failure.json", {"error": str(exc), "host": socket.gethostname(), "time": time.time()})
+    print(f"[failed] {directory}: {exc}; trying other tasks (no automatic retry loop)", flush=True)
+
+
+def status(root):
+    if not (root / "switch.json").exists():
+        print(f"[not prepared] {root}")
+        return
+    manifest(root)
+    done, total = 0, 48
+    print("STATE        ARM                  STATUS     DETAIL")
+    for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
+        prefix = prefix_dir(root, seed)
+        reached = [t for t in rule.STEPS if (prefix / f"prefix-{t}.json").exists()]
+        prefix_state = "DONE" if 100 in reached else "QUEUED"
+        detail = ""
+        for t in rule.STEPS:
+            if t in reached:
+                continue
+            segment = prefix / f"segment-{t}"
+            progress = core.read(segment / "progress.json") if (segment / "progress.json").exists() else {}
+            if progress.get("state") == "running" and time.time()-progress.get("updated", 0) < 60:
+                prefix_state, detail = "RUNNING", f"to {t}: {progress.get('seconds', 0):.0f}s"
+            elif (segment / "failure.json").exists():
+                prefix_state, detail = "FAILED", core.read(segment / "failure.json")["error"]
+            break
+        print(f"s{seed} prefix   fresh_r              {prefix_state:10} {max(reached, default=0):3}/100 {detail}")
+        for step in rule.STEPS:
+            child = child_root(root, seed, step)
+            points = list((child / "points").glob("*")) if (child / "points").exists() else []
+            arms = rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS
+            for arm in arms:
+                state, detail = "QUEUED", "prefix pending" if step not in reached else "development/model pending"
+                if points:
+                    directory = points[0] / arm
+                    if (directory / "result.json").exists():
+                        try:
+                            r = runtime.validate_result(points[0], protocol(child), arm)
+                            state, detail = "DONE", f"reward={statistics.fmean(r['rewards'].values()):.4f} updates={r['completed_steps']-step}"
+                            done += 1
+                        except (OSError, ValueError, KeyError) as exc:
+                            state, detail = "INVALID", str(exc)
+                    else:
+                        prog = core.read(directory / "progress.json") if (directory / "progress.json").exists() else {}
+                        failure = core.read(directory / "failure.json") if (directory / "failure.json").exists() else {}
+                        if prog.get("state") == "running" and time.time()-prog.get("updated", 0) < 60:
+                            state, detail = "RUNNING", prog["phase"]
+                        elif failure:
+                            state, detail = "FAILED", failure["error"]
+                        else:
+                            detail = "ready"
+                print(f"s{seed}/t{step:<6} {arm:20} {state:10} {detail}")
+    print(f"[switch] {done}/{total} DONE; logs/results: {root}")
+
+
+def summarize(root):
+    for development, name in ((True, "development-report.json"), (False, "test-report.json")):
+        report = collect(root, development=development)
+        if not development:
+            report["summary"] = rule.clustered_summary(report["rows"])
+        core.atomic_json(root / name, report)
+        print(f"[saved] {root/name}: {len(report['rows'])} complete states, {len(report['missing_or_failed'])} missing/failed")
+
+
+def install_runtime():
+    # Reuse the frozen learner/ledger implementation without changing its legacy entry points.
+    runtime.net, runtime.HERE = rule, HERE
+    runtime.TEST_ARMS, runtime.SELECTORS, runtime.CODE_FILES = rule.TEST_ARMS, ("fresh_r",), CODE
+    runtime.study = SimpleNamespace(BRANCHES=rule.DEV_ARMS, reward_mean=runtime.study.reward_mean)
+    runtime.protocol, runtime.select_once, runtime.measurement_worker = protocol, select_once, measurement_worker
+    runtime.decision = decision
+    base.verify = verify
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("prepare", "run", "smoke", "worker", "status", "summarize", "fit"))
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--matrix", type=Path)
+    parser.add_argument("--budget-gpu-seconds", type=float)
+    parser.add_argument("--gpu-type", default="NVIDIA H100 80GB HBM3")
+    parser.add_argument("--eval-prompts", type=Path)
+    parser.add_argument("--pool", type=Path)
+    parser.add_argument("--pool-manifest", type=Path)
+    parser.add_argument("--test-count", type=int, default=300)
+    parser.add_argument("--eval-k", type=int, default=8)
+    parser.add_argument("--eval-timeout", type=float, default=14400.)
+    parser.add_argument("--prefix-timeout", type=float, default=14400.)
+    parser.add_argument("--idle-timeout", type=float, default=600.)
+    parser.add_argument("--phase", choices=("measure", "evaluate"))
+    parser.add_argument("--arm")
+    parser.add_argument("--shard", type=int, choices=range(4))
+    parser.add_argument("--recent-window", type=int, default=20)
+    parser.add_argument("--measurement-wall-seconds", type=float, default=30.)
+    args = parser.parse_args()
+    install_runtime()
+    if args.command == "prepare":
+        if not args.matrix:
+            parser.error("prepare requires --matrix")
+        prepare(args)
+    elif args.command == "worker":
+        if os.environ.get("OM_NODE_LOCK_HELD") != "1" or not args.phase or not args.arm:
+            parser.error("worker requires an admitted node, phase and arm")
+        if args.phase == "measure":
+            measurement_worker(args.root, args.arm, window=args.recent_window, wall_cap=args.measurement_wall_seconds)
+        elif args.shard is None:
+            parser.error("evaluation requires a shard")
+        else:
+            base.evaluate(args.root, args.arm, args.shard)
+    elif args.command == "run":
+        return work(args.root, idle_timeout=args.idle_timeout)
+    elif args.command == "smoke":
+        smoke(args.root)
+    elif args.command == "fit":
+        if not fit_once(args.root):
+            raise ValueError("all 18 development continuations must finish first")
+    elif args.command == "status":
+        status(args.root)
+    else:
+        summarize(args.root)
+    return 0
+
+
+if __name__ == "__main__":
+    from light_selection_gate_gpu import install_signal_handlers
+    install_signal_handlers()
+    raise SystemExit(main())

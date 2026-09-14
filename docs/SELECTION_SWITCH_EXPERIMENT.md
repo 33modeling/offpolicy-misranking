@@ -1,7 +1,7 @@
 # Does the gate switch to random at the right learning state?
 
 Date: 2026-09-14
-Status: prospective experiment design, not an executed result or launch approval.
+Status: implemented in an isolated entry point; GPU validation/results pending.
 Manuscript target: v4. Preserve running net-gain, E5 and Qwen experiments.
 
 ## Claim under test
@@ -189,10 +189,11 @@ branched continuations as a single executed reward trajectory.
 
 ## Implementation boundary
 
-No new GPU job has been launched. A draft based only on the old generic
+No new GPU job has been launched locally. A draft based only on the old generic
 checkpoint runner was withdrawn before commit: it did not establish a
-selected-training prefix and would not support the intended switch claim.
-The active experiment code is unchanged. Before implementation/launch:
+selected-training prefix. The replacement is `scripts/run_selection_switch.sh`;
+see [the implementation and run guide](SELECTION_SWITCH_RUN.md). Existing E5,
+Qwen and net-gain entry points/results are unchanged. Before full GPU launch:
 
 - Audit reusable selected-prefix checkpoints and exact fresh-selector code.
 - Freeze the diagnostic-paid control design and remaining-budget convention.
