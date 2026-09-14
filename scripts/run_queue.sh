@@ -106,18 +106,32 @@ if [ "$MODE" = run ]; then
     exit 0
   fi
   if [ -n "$pid" ]; then echo "[queue] stale worker note on $HOST (pid $pid is not a queue worker); starting a new one"; fi
+  # Byte offset before this run, so the terminal shows everything this run writes even when the
+  # queue finishes before the follower attaches (every step can abort in seconds).
+  offset=$(stat -c %s "$QLOG" 2>/dev/null || echo 0)
   echo "===== [$(date -u +%Y-%m-%dT%H:%M:%SZ)] queue started on $HOST code=$(git rev-parse --short HEAD 2>/dev/null)" >> "$QLOG"
   setsid nohup bash scripts/run_queue.sh worker >> "$QLOG" 2>&1 < /dev/null &
   disown 2>/dev/null || true
   echo "[queue] started in the background on $HOST; closing this terminal does not stop it"
   echo "        progress:  bash scripts/run_queue.sh status        log: $QLOG"
-  # Show what the detached worker does first, so the terminal is not silent. Following the log
-  # neither feeds nor stops the worker: closing this terminal, or Ctrl-C here, leaves it running.
+  # Following the log neither feeds nor stops the worker: closing this terminal, or Ctrl-C here,
+  # leaves it running. The follower stops by itself when the worker exits.
   follow=${OM_QUEUE_FOLLOW_SECONDS:-120}
   if [ "$follow" -gt 0 ]; then
-    echo "        ---- first $follow s of the queue log (Ctrl-C here does not stop the queue) ----"
-    timeout "$follow" tail -n 0 -f "$QLOG" 2>/dev/null
-    echo "        ---- the queue keeps running; check it with:  bash scripts/run_queue.sh status ----"
+    echo "        ---- this run's queue log (Ctrl-C here does not stop the queue) ----"
+    timeout "$follow" tail -c "+$((offset + 1))" -f "$QLOG" 2>/dev/null &
+    tailpid=$!
+    ( sleep 3
+      while :; do
+        worker_alive "$(cat "$WPID" 2>/dev/null)" || break
+        sleep 3
+      done
+      sleep 2
+      kill "$tailpid" 2>/dev/null ) &
+    watchpid=$!
+    wait "$tailpid" 2>/dev/null
+    kill "$watchpid" 2>/dev/null
+    echo "        ---- end of this run's log; state:  bash scripts/run_queue.sh status ----"
   fi
   exit 0
 fi
