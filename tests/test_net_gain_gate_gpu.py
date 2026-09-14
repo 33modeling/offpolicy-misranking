@@ -309,3 +309,23 @@ def test_shell_export_is_read_only_and_never_overwrites(tmp_path):
     before = output.read_bytes()
     assert subprocess.run(command, cwd=gpu.HERE.parents[1], env=env, capture_output=True, timeout=10).returncode != 0
     assert output.read_bytes() == before
+
+
+def test_standalone_status_reports_eta_without_writing_suite(tmp_path):
+    root = tmp_path / "suite"
+    p = protocol()
+    core.atomic_json(root / "net_protocol.json", p)
+    contract = root / "points/p0/contract.json"
+    core.atomic_json(contract, {"config": {"seed": 0, "drift": 100}})
+    core.atomic_json(root / "suite.json", {"schema": base.SCHEMA,
+        "points": [{"name": "p0", "sha256": base.digest(contract)}], "budget_gpu_seconds": 14400.})
+    before = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    result = subprocess.run(["bash", "scripts/status_net_gain_gate.sh"], cwd=gpu.HERE.parents[1],
+                            env={**os.environ, "NET_GATE_ROOT": str(root), "NET_GATE_NODES": "4",
+                                 "NET_GATE_PYTHON": sys.executable},
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "DONE 0/3" in result.stdout and "QUEUED 3" in result.stdout and "INVALID 0" in result.stdout
+    assert "4 nodes x 4 GPUs" in result.stdout
+    assert "0.75 h" in result.stdout
+    assert before == {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}

@@ -50,7 +50,10 @@ if [ "$MODE" = fit ] || [ "$MODE" = analyze ] || [ "$MODE" = import-legacy ]; th
   fi
   exec "$PY" src/net_gain_gate.py "$MODE" "$@"
 fi
-if [ "$MODE" = status ] || [ "$MODE" = summarize ]; then
+if [ "$MODE" = status ]; then
+  exec bash scripts/status_net_gain_gate.sh "$@"
+fi
+if [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" src/net_gain_gate_gpu.py "$MODE" --root "$OUT_ROOT" "$@"
 fi
