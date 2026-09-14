@@ -196,6 +196,58 @@ worker log to `$HOME/net-gate-errors-<UTC>-<unique>.txt`, then prints its full
 path as `[saved] ...`. It needs neither jq nor Python, never overwrites an
 earlier report, and does not restart workers or change experiment artifacts.
 
+### Finite-Difference Calibration Recovery (2026-09-14)
+
+The received `selection_reduced/score-3.log` reports calibration failure at
+step 0.1, with relative L2 error 0.9232757495634607. The original gate scorer
+called `low_order_experiment.prepare` without a derivative argument, selecting
+the finite-difference default. Repeating that configuration is not a repair.
+
+After pulling the fix, use the same launcher on a node whose failed launcher
+has exited:
+
+```bash
+git pull
+bash scripts/run_net_gain_gate.sh
+```
+
+Do not stop other nodes that are still training or evaluating. Existing
+task locks remain authoritative, and completed arms are validated and skipped.
+The new `net_gain_gate_recovery.py` entrypoint leaves every file in the original
+protocol's frozen code list unchanged. It adapts only the development control's
+selection and result hooks; measurement, training, evaluation and budget
+enforcement still use the original runner.
+
+A verified finite-calibration abort switches that unfinished development
+control to an explicitly separate `derivative="autograd"` scoring workspace
+under `selector-work/selection_reduced-autograd-recovery`. Original finite
+scores and logs remain intact and are not reused as autograd scores. Validation
+direction computation is repeated in the separate scoring contract and charged.
+Subsequent recovery invocations resume this workspace, not finite calibration.
+CUDA OOMs, arbitrary worker failures and held-out gate tests do not trigger this
+backend change. Existing committed subsets are never replaced.
+
+`autograd-recovery.json` records the protocol and input bindings, recovery
+runner hash, original failure and the original ledger prefix and cost.
+`autograd-recovery-result.json` binds the recovery record, exact selection and
+completed original-format result. All old failed work and new recovery work
+are charged against the unchanged branch cap; an exhausted budget is not
+reset. Autograd may cost more and does not guarantee a positive reward gain.
+
+Status and exports expose the amendment. Summaries label the amended numerical
+protocol and use the selector scope suffix `:autograd-recovery-v1`, preventing
+a model fitted to these costs from silently deploying as the old finite-only
+selector. These are amended development results, not unchanged preregistered
+finite-difference results. Matching held-out deployment support is separate.
+
+CPU regression coverage includes actual four-shard autograd scoring on a small
+LoRA model, retained failed-work costs, unchanged baselines, completed resume,
+interrupted result attestation, exhausted budgets and unrelated-error refusal.
+The remote H100 execution cannot be tested on this local machine.
+Local verification for this repair: 177 CPU orchestration/regression tests and
+27 Torch CPU scoring/training tests passed; shell syntax and Ruff F checks
+passed. The original protocol's twelve frozen source files are unchanged.
+
 After all declared development points are valid, freeze the model on CPU:
 
 ```bash

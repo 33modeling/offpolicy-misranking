@@ -27,7 +27,8 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
   CPU_PY=${NET_GATE_CPU_PYTHON:-${NET_GATE_PYTHON:-python3}}
-  exec "$CPU_PY" -m pytest -q tests/test_net_gain_gate.py tests/test_net_gain_gate_gpu.py "$@"
+  exec "$CPU_PY" -m pytest -q tests/test_net_gain_gate.py tests/test_net_gain_gate_gpu.py \
+    tests/test_net_gain_gate_recovery.py tests/test_net_gain_gate_recovery_math.py "$@"
 fi
 if [ "$MODE" = plan ]; then
   printf '%s\n' '[v3] one whole-pool cache scan plus existing checkpoint statistics; no per-epoch gate or bootstrap' \
@@ -79,7 +80,7 @@ if [ "$MODE" = why ]; then
 fi
 if [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""
-  exec "$PY" src/net_gain_gate_gpu.py "$MODE" --root "$OUT_ROOT" "$@"
+  exec "$PY" src/net_gain_gate_recovery.py "$MODE" --root "$OUT_ROOT" "$@"
 fi
 if [ "$MODE" = export ]; then
   [ -f "$OUT_ROOT/net_protocol.json" ] || { echo '[abort] no v3 suite at output root'; exit 2; }
@@ -90,7 +91,7 @@ if [ "$MODE" = export ]; then
     {
       printf 'V3 NET-GAIN GATE EXPORT\nUTC: %s\nROOT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$OUT_ROOT"
       git rev-parse HEAD
-      CUDA_VISIBLE_DEVICES="" "$PY" src/net_gain_gate_gpu.py status --root "$OUT_ROOT"
+      CUDA_VISIBLE_DEVICES="" "$PY" src/net_gain_gate_recovery.py status --root "$OUT_ROOT"
       while IFS= read -r -d '' path; do
         printf '\n===== %s =====\n' "${path#"$OUT_ROOT"/}"
         cat "$path"
@@ -99,7 +100,8 @@ if [ "$MODE" = export ]; then
           -o -name 'study.json' -o -name 'model.json' -o -name 'net_results.json' \
           -o -name 'cost.jsonl' -o -name 'initial.json' -o -name 'measurement.json' \
           -o -name 'decision.json' -o -name 'execution.json' -o -name 'result.json' \
-          -o -name 'budget_stop.json' -o -name 'failure.json' -o -name 'measurement-failure.json' \) -print0 | sort -z)
+          -o -name 'budget_stop.json' -o -name 'failure.json' -o -name 'measurement-failure.json' \
+          -o -name 'autograd-recovery.json' -o -name 'autograd-recovery-result.json' \) -print0 | sort -z)
       while IFS= read -r -d '' path; do
         printf '\n===== LOG TAIL: %s =====\n' "${path#"$OUT_ROOT"/}"
         tail -n 40 "$path"
@@ -170,7 +172,7 @@ done <<< "$MEMORY"
 MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps")
 export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
 trap '' HUP
-"$PY" src/net_gain_gate_gpu.py run --root "$OUT_ROOT" 7>&- 8>&- &
+"$PY" src/net_gain_gate_recovery.py run --root "$OUT_ROOT" 7>&- 8>&- &
 CHILD=$!
 trap 'kill -TERM "$CHILD" 2>/dev/null || true; wait "$CHILD" || true; exit 130' INT
 trap 'kill -TERM "$CHILD" 2>/dev/null || true; wait "$CHILD" || true; exit 143' TERM

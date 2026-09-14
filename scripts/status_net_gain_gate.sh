@@ -19,7 +19,7 @@ NODES=${NET_GATE_NODES:-4}
 }
 
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1
-"$PY" src/net_gain_gate_gpu.py status --root "$NET_ROOT"
+"$PY" src/net_gain_gate_recovery.py status --root "$NET_ROOT"
 
 # ETA is optional; missing reporting tools must not hide experiment status.
 if ! command -v jq >/dev/null 2>&1; then
