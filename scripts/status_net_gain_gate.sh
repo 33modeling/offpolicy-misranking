@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only status and ETA for an already prepared v3 net-gain suite.
+# Read-only status and allocation accounting, not a completion-time forecast.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -20,10 +20,12 @@ NODES=${NET_GATE_NODES:-4}
 
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1
 "$PY" src/net_gain_gate_recovery.py status --root "$NET_ROOT"
+printf '[cost scope] phase ledgers include metered failures; allocated-node idle/debugging gaps are unmeasured, NOT zero\n'
 
-# ETA is optional; missing reporting tools must not hide experiment status.
+# Allocation details are optional; missing tools must not hide experiment status.
 if ! command -v jq >/dev/null 2>&1; then
-  printf '\n[ETA] unavailable without jq; experiment status is shown above\n'
+  printf '\n[budget] summary unavailable without jq; experiment status is shown above\n'
+  printf '[ETA] not inferred from budget caps; no verified completion estimate\n'
   exit 0
 fi
 
@@ -56,17 +58,31 @@ while IFS=$'\t' read -r point arm; do
     SPENT=$(jq -s '[.[] | select(.state == "finished" and .ledger != "reporting") | .allocated_gpu_seconds] | add // 0' "$ARM_DIR/cost.jsonl")
   fi
   ACTIVE=0
+  LIVE=0
   PROGRESS="$ARM_DIR/progress.json"
   if [ -f "$PROGRESS" ]; then
     STATE=$(jq -r '.state // ""' "$PROGRESS")
     UPDATED=$(jq -r '.updated // 0 | floor' "$PROGRESS")
-    if [ "$STATE" = running ] && [ $((NOW-UPDATED)) -lt 90 ]; then
-      ACTIVE=$(jq -r '(.seconds // 0) * (.gpus // 4)' "$PROGRESS")
+    if [ "$STATE" = running ] && [ $((NOW-UPDATED)) -ge 0 ] && [ $((NOW-UPDATED)) -lt 90 ]; then
+      LIVE=1
+      # Only an open non-reporting event contributes unjournalled GPU time.
+      if [ -s "$ARM_DIR/cost.jsonl" ]; then
+        ACTIVE=$(jq -s --slurpfile p "$PROGRESS" '
+          $p[0] as $p | [.[] | select(.event_id == $p.event_id)] as $events |
+          if $p.ledger != "reporting" and any($events[]; .state == "started")
+             and (any($events[]; .state == "finished") | not)
+          then ($p.seconds // 0) * ($p.gpus // 4) else 0 end' "$ARM_DIR/cost.jsonl")
+      fi
       RUNNING=$((RUNNING+1))
     fi
   fi
   USED=$(awk -v a="$SPENT" -v b="$ACTIVE" 'BEGIN { printf "%.9f", a+b }')
   LEFT=$(awk -v cap="$CAP" -v used="$USED" 'BEGIN { x=cap-used; printf "%.9f", (x>0 ? x : 0) }')
+  if [ -f "$ARM_DIR/policy/budget_stop.json" ] && jq -e \
+      '.stop_reason == "budget_exhausted" or .stop_reason == "no_block_fits"' \
+      "$ARM_DIR/policy/budget_stop.json" >/dev/null; then
+    LEFT=0
+  fi
   VALID_RESULT=0
   if [ -f "$RESULT" ] && [ -f "$RESULT_HASH" ]; then
     EXPECTED_HASH=$(jq -r '.sha256 // ""' "$RESULT_HASH")
@@ -93,7 +109,7 @@ while IFS=$'\t' read -r point arm; do
     [ "$SHARDS" -ge 4 ] || EVAL_PENDING=$((EVAL_PENDING+1))
     if [ -f "$RESULT" ]; then
       INVALID=$((INVALID+1))
-    elif [ "$ACTIVE" != 0 ]; then
+    elif [ "$LIVE" -eq 1 ]; then
       :
     elif [ -f "$ARM_DIR/failure.json" ]; then
       FAILED=$((FAILED+1))
@@ -103,27 +119,23 @@ while IFS=$'\t' read -r point arm; do
   fi
 done < <(jq -r --slurpfile p "$NET_ROOT/net_protocol.json" '.points[].name as $name | $p[0].arms[] | [$name, .] | @tsv' "$NET_ROOT/suite.json")
 
-FLOOR_SECONDS=$(awk -v gpu="$REMAINING_GPU_SECONDS" -v nodes="$NODES" 'BEGIN { printf "%.0f", gpu/(4*nodes) }')
-FLOOR_HOURS=$(awk -v seconds="$FLOOR_SECONDS" 'BEGIN { printf "%.2f", seconds/3600 }')
-printf '\n[ETA] %d nodes x 4 GPUs | DONE %d/%d | RUNNING %d | QUEUED %d | FAILED %d | INVALID %d\n' \
+ALLOCATION_SECONDS=$(awk -v gpu="$REMAINING_GPU_SECONDS" -v nodes="$NODES" 'BEGIN { printf "%.0f", gpu/(4*nodes) }')
+ALLOCATION_HOURS=$(awk -v seconds="$ALLOCATION_SECONDS" 'BEGIN { printf "%.2f", seconds/3600 }')
+printf '\n[status] assumed %d nodes x 4 GPUs | DONE %d/%d | RUNNING %d | QUEUED %d | FAILED %d | INVALID %d\n' \
   "$NODES" "$DONE" "$TOTAL" "$RUNNING" "$QUEUED" "$FAILED" "$INVALID"
-printf '[ETA] remaining training/scoring allocation floor: %s h\n' "$FLOOR_HOURS"
+printf '[budget] unused training/scoring allocation divided by assumed capacity: %s h (NOT ETA)\n' "$ALLOCATION_HOURS"
 
-TOTAL_SECONDS=$FLOOR_SECONDS
 if [ "$EVAL_SAMPLES" -gt 0 ]; then
-  EVAL_REMAINING=$(awk -v sum="$EVAL_WALL_SECONDS" -v samples="$EVAL_SAMPLES" -v pending="$EVAL_PENDING" -v nodes="$NODES" \
-    'BEGIN { printf "%.0f", (sum/samples)*pending/nodes }')
-  EVAL_HOURS=$(awk -v seconds="$EVAL_REMAINING" 'BEGIN { printf "%.2f", seconds/3600 }')
-  TOTAL_SECONDS=$((FLOOR_SECONDS+EVAL_REMAINING))
-  printf '[ETA] evaluation estimate from %d completed arms: %s h\n' "$EVAL_SAMPLES" "$EVAL_HOURS"
+  EVAL_HOURS=$(awk -v sum="$EVAL_WALL_SECONDS" -v samples="$EVAL_SAMPLES" 'BEGIN { printf "%.2f", sum/samples/3600 }')
+  printf '[history] evaluation mean: %s h per arm from %d completed arms; %d arms still lack all evaluation markers\n' \
+    "$EVAL_HOURS" "$EVAL_SAMPLES" "$EVAL_PENDING"
 else
-  printf '[ETA] evaluation: unknown until the first arm finishes evaluation\n'
+  printf '[history] evaluation duration: no completed-arm observation\n'
 fi
 
 if [ "$FAILED" -gt 0 ] || [ "$INVALID" -gt 0 ]; then
   printf '[ETA] completion time withheld: failed/invalid arms require inspection; other arms continue\n'
 else
-  FINISH=$((NOW+TOTAL_SECONDS))
-  printf '[ETA] estimated finish no earlier than: %s\n' "$(date -d "@$FINISH" '+%Y-%m-%d %H:%M:%S %Z')"
+  printf '[ETA] not inferred from budget caps; no verified completion estimate\n'
 fi
-printf '[ETA] estimate uses frozen allocation and observed reporting time; cluster queue/stragglers can extend it\n'
+printf '[budget] node count is a planning input, not a measured count of active nodes; evaluation is outside the training cap\n'
