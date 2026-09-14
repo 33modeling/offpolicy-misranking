@@ -64,15 +64,6 @@ case "$MODE" in
     [ -s "$POOL" ] || { echo "[abort] pool missing; run:  bash scripts/run_mixed_pool.sh pool"; exit 1; }
     [ -s "$MATH_RUN/run_config.json" ] || { echo "[abort] source point missing: $MATH_RUN"; exit 1; }
     if [ -s "$POINT/DONE" ]; then echo "[mixed] point already complete: $POINT"; exit 0; fi
-    # A point started before 2026-09-14 recorded the pool as a prescreened pool; every launch of it
-    # aborts at the qualification stage and its run config cannot be changed. It has to be rebuilt.
-    if [ -s "$POINT/run_config.json" ] && "$PY" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("pool") else 1)' "$POINT/run_config.json"; then
-      echo "[abort] this point was initialized with the pool declared as a prescreened pool, so every"
-      echo "        launch stops at [qualification-abort]. Its run config is immutable; move it aside"
-      echo "        and this command rebuilds it from the start:"
-      echo "          mv $POINT $POINT.pre-20260914"
-      exit 1
-    fi
     # one node builds the point; others skip it (lease on the shared filesystem)
     mkdir -p "$(dirname "$POINT")"
     source scripts/_lease.sh
@@ -90,6 +81,15 @@ case "$MODE" in
       exit 0
     fi
     lease_note "$POINT.lease"
+    # A point initialized before 2026-09-14 declared the mixed pool as a prescreened pool, so every
+    # launch of it stops at [qualification-abort] and its run config cannot be changed after
+    # initialization. Move that point aside (nothing is deleted) and build it again from the start.
+    if [ -s "$POINT/run_config.json" ] && "$PY" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("pool") else 1)' "$POINT/run_config.json"; then
+      superseded="$POINT.superseded-$(date -u +%Y%m%dT%H%M%SZ)"
+      echo "[mixed] this point declares a prescreened pool and can only abort at its qualification"
+      echo "[mixed] stage; keeping it as $superseded and building the point again from the start"
+      mv -- "$POINT" "$superseded" || { echo "[abort] could not move the superseded point aside"; exit 1; }
+    fi
     export OUT_ROOT="$POINT"   # process marker for cleanup; the point runner uses the same variable
     source scripts/_e5_node.sh || exit 1
     e5_cleanup_previous "$POINT" || exit 1

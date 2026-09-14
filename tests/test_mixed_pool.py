@@ -191,3 +191,20 @@ def test_point_step_reenters_the_pinned_commit_and_retries_transient_failures(tm
     point = root / "family-math500mix-s1" / "tag-s1-math500mix-d0"
     assert (point / "attempts").read_text().strip() == "1" and not (point / "DONE").exists()
     assert "contract/config failure; not retrying" in out
+
+
+def test_a_point_declaring_a_prescreened_pool_is_moved_aside_not_reused(tmp_path, monkeypatch):
+    """Its run config is immutable and its qualification stage can only abort, so the runner keeps
+    it under a superseded name and builds the point again."""
+    runner = (ROOT / "scripts/run_mixed_pool.sh").read_text()
+    body = runner.split("  point)", 1)[1].split("  e5)", 1)[0]
+    assert body.index("flock -n 6") < body.index("superseded"), "quarantine must happen under the lease"
+    assert 'mv -- "$POINT" "$superseded"' in body and "rm " not in body
+    point = tmp_path / "point"
+    point.mkdir()
+    (point / "run_config.json").write_text(json.dumps({"pool": "/x/pool.jsonl", "dataset": "math500"}))
+    check = [sys.executable, "-c", 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("pool") else 1)',
+             str(point / "run_config.json")]
+    assert subprocess.run(check).returncode == 0          # declared pool -> quarantine
+    (point / "run_config.json").write_text(json.dumps({"pool": None, "dataset": "math500"}))
+    assert subprocess.run(check).returncode == 1          # no declared pool -> keep and resume
