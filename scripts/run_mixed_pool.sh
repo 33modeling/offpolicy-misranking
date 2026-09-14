@@ -64,6 +64,15 @@ case "$MODE" in
     [ -s "$POOL" ] || { echo "[abort] pool missing; run:  bash scripts/run_mixed_pool.sh pool"; exit 1; }
     [ -s "$MATH_RUN/run_config.json" ] || { echo "[abort] source point missing: $MATH_RUN"; exit 1; }
     if [ -s "$POINT/DONE" ]; then echo "[mixed] point already complete: $POINT"; exit 0; fi
+    # A point started before 2026-09-14 recorded the pool as a prescreened pool; every launch of it
+    # aborts at the qualification stage and its run config cannot be changed. It has to be rebuilt.
+    if [ -s "$POINT/run_config.json" ] && "$PY" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("pool") else 1)' "$POINT/run_config.json"; then
+      echo "[abort] this point was initialized with the pool declared as a prescreened pool, so every"
+      echo "        launch stops at [qualification-abort]. Its run config is immutable; move it aside"
+      echo "        and this command rebuilds it from the start:"
+      echo "          mv $POINT $POINT.pre-20260914"
+      exit 1
+    fi
     # one node builds the point; others skip it (lease on the shared filesystem)
     mkdir -p "$(dirname "$POINT")"
     source scripts/_lease.sh
@@ -87,7 +96,10 @@ case "$MODE" in
     e5_acquire_node || exit "$?"
     # matched configuration of the existing MATH point; only the pool and the output change
     while IFS= read -r line; do [ -n "$line" ] && export "${line?}"; done < <("$PY" src/mixed_pool.py env --run "$MATH_RUN") || exit 1
-    export DATASET=math500 DRIFT=0 SEED="$SEED" OM_POOL_FILE="$POOL"
+    # OM_PROMPT_POOL_FILE, not OM_POOL_FILE: the latter declares a prescreened pool and makes
+    # run_point.sh requalify it against the main run, which a mixed pool cannot satisfy.
+    export DATASET=math500 DRIFT=0 SEED="$SEED" OM_PROMPT_POOL_FILE="$POOL"
+    unset OM_POOL_FILE
     unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
     echo "[mixed] building the d0 point with the configuration of $MATH_RUN (model=$MODEL_PATH, N_TRAIN=$N_TRAIN, BEHAVIOR_K=$BEHAVIOR_K, FRESH_K=$FRESH_K)"

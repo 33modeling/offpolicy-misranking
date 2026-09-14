@@ -77,13 +77,23 @@ def test_loader_honours_the_pre_split_pool(tmp_path, monkeypatch):
     other = _run(tmp_path, "mbpp", 30, 10, "code")
     out = tmp_path / "pool.jsonl"
     mp.build(math, other, out, 20, 20, 10, seed=1)
-    monkeypatch.setenv("OM_POOL_FILE", str(out))
+    monkeypatch.setenv("OM_PROMPT_POOL_FILE", str(out))
     prompts = data.load_prompts("math500", 40, 10, seed=0)
     assert len(prompts["train"]) == 40 and len(prompts["val"]) == 10
     assert all(q["question"].startswith("math val") for q in prompts["val"])
     assert set(prompts["train"][0]) == {"question", "answer"}
     with pytest.raises(ValueError, match="train 40 < 50"):
         data.load_prompts("math500", 50, 10, seed=0)
+
+
+def test_the_mixed_pool_does_not_declare_a_prescreened_pool():
+    """OM_POOL_FILE makes run_point.sh requalify the pool (src/qualify_pool.py); the mixed pool
+    is only a prompt list and must use OM_PROMPT_POOL_FILE, or every launch aborts there."""
+    runner = (ROOT / "scripts/run_mixed_pool.sh").read_text()
+    assert "OM_PROMPT_POOL_FILE=\"$POOL\"" in runner and "unset OM_POOL_FILE" in runner
+    assert "OM_POOL_FILE=\"$POOL\"" not in runner
+    point = (ROOT / "scripts/run_point.sh").read_text()
+    assert 'if [ -n "${OM_POOL_FILE:-}" ]; then' in point and "qualify_pool.py" in point
 
 
 def test_env_lines_cover_the_point_runner_configuration(tmp_path):

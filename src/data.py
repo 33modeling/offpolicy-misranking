@@ -60,11 +60,16 @@ def load_prompts(dataset: str, n_train: int, n_val: int, seed: int = 0) -> dict:
 
     # 사전 구성 풀 오버라이드 (예: 27B hard-slice) — {"question","answer"} jsonl.
     # dataset 이름은 reward 분기용으로 그대로 쓰이고, 풀 내용만 이 파일이 대체한다.
-    pool = os.environ.get("OM_POOL_FILE")
+    # OM_POOL_FILE is the prescreened pool of run_point.sh: setting it also makes that
+    # runner requalify the pool against the main run (src/qualify_pool.py). A pool that is
+    # only a prompt list, such as the pre-split mixed pool of src/mixed_pool.py, uses
+    # OM_PROMPT_POOL_FILE instead, which carries no prescreen contract.
+    pool = os.environ.get("OM_PROMPT_POOL_FILE") or os.environ.get("OM_POOL_FILE")
+    variable = "OM_PROMPT_POOL_FILE" if os.environ.get("OM_PROMPT_POOL_FILE") else "OM_POOL_FILE"
     if pool:
         pf = Path(pool)
         if not pf.is_file():
-            raise ValueError(f"OM_POOL_FILE 없음: {pool}")
+            raise ValueError(f"{variable} 없음: {pool}")
         rows = [json.loads(l) for l in pf.open() if l.strip()]
         if rows and all("split" in r for r in rows):
             # A pre-split pool (src/mixed_pool.py): rows carry "split" in
