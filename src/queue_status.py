@@ -552,8 +552,14 @@ def mixed_states(work: Path, root: Path, tag: str, other: str, seed: int, steps:
             holder = f"~{seen}" if seen else None
         if holder is not None:
             mark = note_lease(holder, f"mixed pool point ({progress or 'started'})")
-            rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'} {mark}", activity,
-                                                          "(the stage line changes only at stage boundaries; a stage takes hours)"]))
+            idle = int(time.time() - latest) if latest else None
+            if idle is None:
+                verdict = "STARTING: the point has no file yet"
+            elif idle < 600:
+                verdict = f"WORKING: a file was written {age_text(idle)} ago (a stage takes hours, so the stage line barely moves)"
+            else:
+                verdict = f"STUCK: nothing written for {age_text(idle)}; the queue takes the point over after 15 min of silence"
+            rows.append(("mixed pool: point", "RUNNING", [f"{progress or 'started'} {mark}", activity, verdict]))
         elif log.is_file():
             lines = [f"stopped at {progress or '?'}", activity]
             reason = point_failure(point)

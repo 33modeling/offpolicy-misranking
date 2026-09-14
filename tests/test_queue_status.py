@@ -132,6 +132,7 @@ def test_progress_states_and_leases(tmp_path):
     assert by["mixed pool: pool"][0] == "DONE"
     assert by["mixed pool: point"][0] == "RUNNING" and by["mixed pool: point"][1][0].startswith("2/8 behavior-rollout +5min *[?]")
     assert by["mixed pool: point"][1][1].startswith("last file write 0m ago")
+    assert by["mixed pool: point"][1][2].startswith("WORKING: a file was written 0m ago")
     assert by["mixed pool: arms"][0] == "WAITING"
     assert by["reuse split-half d400"] == ("PARTIAL", ["s0 ok  s1 2/4 shards  s2 -"])
     assert by["reuse split-half d0"][0] == "TODO"
