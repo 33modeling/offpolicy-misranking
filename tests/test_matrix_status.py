@@ -471,3 +471,33 @@ def test_days_old_session_log_without_exit_does_not_keep_families_unverified(tmp
     row = next(line for line in out.splitlines() if line.startswith(" math500/s0 "))
     assert "STOPPED" in row and "no launcher anywhere" in row
     assert "overall_verdict=STOPPED" in out
+
+
+def test_brief_status_fits_a_phone_and_names_the_one_blocking_reason(tmp_path):
+    work = tmp_path / "work"
+    mismatch = ("ValueError: rollouts_behavior_train.shard0.manifest.json: model mismatch: "
+                "expected 'Qwen3.5-9B', recorded 'Qwen3.5-9B-pinned'\n")
+    for drift in (0, 25):
+        make_point(work / "runs", "math500", 0, drift, done=True)
+    make_point(work / "runs", "math500", 1, 0, progress="2/8 behavior-rollout")
+    for seed in (2, 3):
+        make_point(work / "runs", "math500", seed, 0, progress="2/8 behavior-rollout", main_extra=mismatch)
+    out = render(work, brief=True)
+    lines = out.splitlines()
+    assert len(lines) <= 12 and max(map(len, lines)) <= 92
+    assert lines[0].startswith("WORKING: a point wrote a file ") or lines[0].startswith("NOT PROGRESSING")
+    assert lines[1].startswith("points   2/40 done")
+    assert "blocked  1 distinct reason(s); the most common stops 2 point(s):" in out
+    assert "rollouts_behavior_train.shard0.manifest.json" in out and "Qwen3.5-9B-pinned" in out
+    assert "next     bash scripts/doctor_qwen35.sh" in out
+    assert "DONE 2/40 |" not in out and "family" not in out          # no grid in the brief view
+    reasons = matrix_status.blocking_reasons(
+        [matrix_status.FamilyRow("math500", 0, None, [matrix_status.Point("math500", 0, 0, path=Path("p"))])])
+    assert reasons == []
+
+
+def test_brief_status_says_nothing_is_progressing_when_no_point_was_written(tmp_path):
+    work = tmp_path / "work"
+    make_point(work / "runs", "math500", 0, 0, progress="2/8 behavior-rollout", age=9 * 3600)
+    out = render(work, brief=True)
+    assert out.splitlines()[0].startswith("NOT PROGRESSING: nothing written for 9h")

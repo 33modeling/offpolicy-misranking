@@ -77,6 +77,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--launcher-live-seconds", type=int, default=1200, help="a remote session log this fresh counts as a live launcher")
     parser.add_argument("--verbose", action="store_true", help="add attempt details and the newest stage-log lines")
     parser.add_argument("--compact", action="store_true", help="completion grid and current work only; no historical sessions or score tables")
+    parser.add_argument("--brief", action="store_true", help="one screen: counts, whether anything is being written, and the one blocking reason")
     parser.add_argument("--no-key-numbers", action="store_true")
     parser.add_argument("--now", type=float, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -729,6 +730,59 @@ def compact_state(row: FamilyRow, point: Point) -> str:
     return "WAIT"
 
 
+def blocking_reasons(rows: list[FamilyRow]) -> list[tuple[str, int, list[str]]]:
+    """Distinct current errors across the matrix, most frequent first, with the families showing them.
+
+    The same defect usually stops every family, so the operator needs the reason once with a count,
+    not once per point. Paths and numbers inside a message are kept: they are part of the reason.
+    """
+    grouped: dict[str, list[str]] = {}
+    for row in rows:
+        for point in row.points:
+            if not point.current_error:
+                continue
+            grouped.setdefault(point.current_error.strip(), []).append(f"{row.key}/d{point.drift}")
+    return sorted(((reason, len(where), where) for reason, where in grouped.items()),
+                  key=lambda item: -item[1])
+
+
+def render_brief(rows: list[FamilyRow], drifts: list[int], overall: str,
+                 live_count: int, now: float) -> list[str]:
+    """One screen: is it progressing, how far, and what is blocking it."""
+    counts = {state: 0 for state in ("DONE", "RUN", "WAIT", "ERROR", "CHECK", "STOP")}
+    for row in rows:
+        for point in row.points:
+            counts[compact_state(row, point)] += 1
+    total = sum(counts.values())
+    newest = max((point.last_write for row in rows for point in row.points), default=0.0)
+    idle = now - newest if newest else None
+    if counts["DONE"] == total:
+        verdict = "COMPLETE: every point is done"
+    elif idle is None:
+        verdict = "NOT STARTED: no point has written a file"
+    elif idle < 1800:
+        verdict = f"WORKING: a point wrote a file {fmt_age(idle)} ago"
+    else:
+        verdict = f"NOT PROGRESSING: nothing written for {fmt_age(idle)}"
+    out = [f"{verdict}   (state {overall}, {live_count} live session(s))",
+           f"points   {counts['DONE']}/{total} done   running {counts['RUN']}   "
+           f"blocked {counts['ERROR']}   waiting {counts['WAIT'] + counts['CHECK'] + counts['STOP']}"]
+    running = [f"{row.key}/d{point.drift} ({point.stage_k or '?'}, write {fmt_age(now - point.last_write) if point.last_write else '-'})"
+               for row in rows for point in row.points if compact_state(row, point) == "RUN"]
+    if running:
+        out.append("running  " + ", ".join(running[:3]) + (f", and {len(running) - 3} more" if len(running) > 3 else ""))
+    reasons = blocking_reasons(rows)
+    if reasons:
+        out.append(f"blocked  {len(reasons)} distinct reason(s); the most common stops {reasons[0][1]} point(s):")
+        for line in textwrap.wrap(reasons[0][0], width=86, initial_indent="         ", subsequent_indent="         "):
+            out.append(line)
+        for reason, count, _ in reasons[1:3]:
+            out.append(f"         also {count}x: {elide(reason, 70)}")
+    out.append("next     bash scripts/doctor_qwen35.sh        (why a blocked point cannot be repaired)")
+    out.append("detail   bash scripts/run_qwen35_9b.sh status full")
+    return out
+
+
 def render_compact(rows: list[FamilyRow], drifts: list[int], overall: str,
                    live_count: int, now: float) -> list[str]:
     counts = {state: 0 for state in ("DONE", "RUN", "WAIT", "ERROR", "CHECK", "STOP")}
@@ -954,6 +1008,8 @@ def render(args: argparse.Namespace) -> tuple[list[str], str]:
         "INCOMPLETE": "WARNING: some registered points are unfinished; see the full matrix below.",
         "NOT_STARTED": "NOT STARTED: no registered point or live session found. Check the printed work path.",
     }
+    if args.brief:
+        return render_brief(rows, drifts, overall, len(live_launchers), now), overall
     if args.compact:
         return render_compact(rows, drifts, overall, len(live_launchers), now), overall
     out[0:0] = [
