@@ -200,7 +200,8 @@ def test_a_point_declaring_a_prescreened_pool_is_moved_aside_not_reused(tmp_path
     runner = (ROOT / "scripts/run_mixed_pool.sh").read_text()
     body = runner.split("  point)", 1)[1].split("  e5)", 1)[0]
     assert body.index("flock -n 6") < body.index("superseded"), "quarantine must happen under the lease"
-    assert 'mv -- "$POINT" "$superseded"' in body and "rm " not in body
+    assert 'mv -- "$POINT" "$superseded"' in body
+    assert 'rm -rf' not in body and 'rm -f -- "$POINT"' not in body   # the point itself is never deleted
     point = tmp_path / "point"
     point.mkdir()
     (point / "run_config.json").write_text(json.dumps({"pool": "/x/pool.jsonl", "dataset": "math500"}))
