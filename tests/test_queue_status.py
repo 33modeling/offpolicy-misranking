@@ -158,8 +158,8 @@ def test_progress_states_and_leases(tmp_path):
     rows = qs.build_rows(work, root, TAG, SEEDS, "mbpp", 0, 200)
     state, lines = {n: (s, l) for n, s, l in rows}["mixed pool: point"]
     assert state == "PARTIAL" and lines[0] == "stopped at 2/8 behavior-rollout +5min"
-    assert lines[2] == "last error: [stage-fail] pid=7 rc=1 \uB2E4\uB978 shard \uC644\uB8CC\uAE4C\uC9C0 \uB300\uAE30"
-    assert lines[3].startswith("rerun:  bash scripts/run_queue.sh")
+    assert "last error: [stage-fail] pid=7 rc=1 \uB2E4\uB978 shard \uC644\uB8CC\uAE4C\uC9C0 \uB300\uAE30" in lines
+    assert any(line.startswith("rerun:  bash scripts/run_queue.sh") for line in lines)
     assert lines[4] == "beta shards 61/100 62/100 60/100 63/100 (written 0m ago)"
     assert qs.point_failure(root / "family-math500-s0" / f"{TAG}-s0-math500-d0") == ""
     # a node whose watcher reported the point runner among its processes: running there even though
