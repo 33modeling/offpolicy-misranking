@@ -216,7 +216,7 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
       printf '\n'
     done < <(find "$OUT_ROOT" -type f \( -name 'switch.json' -o -name 'model.json' \
       -o -name '*report.json' -o -name 'failure.json' -o -name 'progress.json' \
-      -o -name 'decision.json' -o -name 'decisions-frozen.json' -o -name 'initial.json' \
+      -o -name 'decision.json' -o -name 'decisions-frozen.json' -o -name 'gate-frozen.json' -o -name 'gate.json' -o -name 'initial.json' \
       -o -name 'measurement.json' -o -name 'execution.json' -o -name 'result.json' \
       -o -name 'cost.jsonl' -o -name 'budget_stop.json' -o -name 'fit-cost.json' \
       -o -name '*-runtime.json' -o -name 'admission.json' -o -name 'rank-*.json' \
