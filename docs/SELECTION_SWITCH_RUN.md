@@ -79,6 +79,10 @@ worker failure now includes the failed child's log tail in the raised exception
 immediately, including when other queue tasks continue afterward. A
 failed launcher also prints these tails before exiting; it preserves its original
 nonzero exit status. Use `--limit` and `--lines` to adjust the diagnostic output.
+Without `--phase`, it also shows the latest bounded launcher log tails, including
+controller exceptions that have no task `failure.json`. New launcher start/exit
+markers include revision, PID and exit code. A missing exit marker does not prove
+normal completion; hard kills cannot reliably write one.
 
 `export` and `why` write text files and print their full paths. Defaults:
 
@@ -126,9 +130,24 @@ Unknown scientific changes still stop execution, with the differing file names
 and hashes in the error. Do not edit `switch.json` or remove receipts to bypass
 that check; provide the `check-code` output and complete traceback for diagnosis.
 
-Before updating a running cluster checkout, stop its old launchers gracefully
-and confirm their worker trees have stopped, then pull and relaunch on each node.
-Do not leave old-version controllers running alongside the patched ones.
+For the first runtime-isolation deployment, stop old live-checkout launchers
+gracefully and confirm their worker trees have stopped, then pull and relaunch
+on each node. Do not leave old-version controllers reading the changing checkout.
+
+Run/smoke/prepare/fit/summarize now enter an isolated detached local clone before
+GPU admission or preparation. `[runtime] commit=... pinned=...` identifies it.
+Controller and subprocess code, including `OM_REPO` and Python imports, stay on
+that revision even if the original checkout is updated later. The existing
+`SWITCH_ROOT`, input/model paths, Python environment and budgets are unchanged.
+The scientific code hash map did not change in this launcher-only repair.
+Status, errors, check-code and cost inspection do not create runtime clones.
+
+The default cache is `/tmp/offpolicy-misranking-<uid>/switch-runtimes/<commit>`;
+`SWITCH_RUNTIME_CACHE` can select another node-local path outside the repository.
+Do not edit or delete a runtime cache while its workers are alive. Dirty source
+or a modified cached runtime is rejected without discarding changes. New
+scientific revisions still need the frozen-run compatibility checks; pinning is
+not permission to mix different algorithms across nodes.
 
 An interrupted **research prefix** no longer blocks training merely because its
 historical duration is unknown. Its seed/task lock and cost writer lock must be

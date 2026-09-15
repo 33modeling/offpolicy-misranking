@@ -3,6 +3,14 @@
 Registered: 2026-09-15. Implementation and CPU verification only; no local
 cluster access, GPU smoke result or measured training outcome is claimed.
 
+The launcher now uses the same isolated local runtime mechanism as the switch
+launcher for run/retry/prepare/summarize. This protects running code and child
+imports from later changes to the live checkout, without changing either
+experiment's scientific code map, root or budget. See the
+[switch runtime notes](SELECTION_SWITCH_RUN.md) and
+[bug-fix record](SELECTION_SWITCH_BUGFIX_LOG.md) for deployment and verification
+limits. Status/errors/cost inspection do not create a runtime clone.
+
 ## Named prior work
 
 Yun Qu, Qi Wang, Yixiu Mao, Vincent Tao Hu, Bjorn Ommer and Xiangyang Ji.

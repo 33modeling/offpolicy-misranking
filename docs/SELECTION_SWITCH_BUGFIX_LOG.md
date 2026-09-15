@@ -16,6 +16,8 @@ The earlier net-gain incidents are not proof of the cause of these switch failur
 - OPEN: the user reports that execution starts but stops partway through.
   No complete traceback, matching current worker log, or exit status for this
   latest interruption has been provided. Its cause and resolution are NOT verified.
+  The user reported another stop after receiving resume instructions. The exact
+  deployed revision and the final error for that recurrence remain unconfirmed.
 - FIXED LOCALLY, PUSHED: an exact original `cb01401` frozen run was incorrectly
   rejected by the runtime compatibility list. Reproduced locally and repaired
   in `ac40a60`. This does not establish that the latest cluster interruption
@@ -23,6 +25,10 @@ The earlier net-gain incidents are not proof of the cause of these switch failur
 - OPEN: the underlying cause of the reported `prefix-train worker failed`
   exception has not been established from a matching full worker traceback.
   Better logging is implemented; that is not a training-failure repair.
+- FIXED LOCALLY, PUSHED (`2daa140`): live-checkout updates could change code under
+  a running controller and its later child processes. The same frozen-run error
+  was reproduced by changing the source mid-run; pinned runtimes passed that
+  reproduction. Whether this is the cause of the user's latest stop is unverified.
 - No successful post-fix H100 completion or uninterrupted long cluster run
   has been independently verified here.
 - Last user-reported allocation: four nodes running. This is not a live
@@ -65,6 +71,7 @@ not independently established incident or cluster deployment timestamps.
 | 2026-09-15 | `7dc108a` | Compact read-only status with node, prefix, continuation, failure, and dependency views. No original switch scientific-code hash changes. |
 | 2026-09-15 | `857c3fa` | Add isolated MoPPS versus executed Gate comparison and online-random control. This is an experiment extension, not a repair of the original switch worker. No original switch code-map file changed. |
 | 2026-09-15 | `ac40a60` | Accept the missing exact original frozen runtime, preserve previous migration receipts, provide file/hash mismatch details and read-only `check-code`, preflight before GPU admission, and retain compatibility for already frozen MoPPS sidecars. |
+| 2026-09-15 | `2daa140` | Execute switch/MoPPS launchers and workers from a verified local detached clone, not the live checkout; pin `OM_REPO`/imports; show launcher log tails and record controller start/exit codes. Scientific code maps unchanged. |
 
 ### Frozen-Run Compatibility Repair
 
@@ -94,6 +101,51 @@ Local reproduction used actual Git versions, not a guessed replacement hash:
   work with a separate compatibility receipt. The source switch remains
   read-only from the comparison runner.
 
+### Mid-Run Code Isolation Repair
+
+The earlier fix validated compatible code maps but left the controller running
+from the mutable shared checkout. Later imports, subprocess script paths, and
+code validation could therefore see different bytes after a checkout update.
+An inherited `OM_REPO` could also make `setup_env.sh` prepend a different
+checkout's `src` directory. Startup success alone does not protect either path.
+
+`2daa140` re-enters a verified, detached local clone before preparation or GPU
+admission. The controller, later child processes, `OM_REPO`, and Python imports
+use that clone. Relative input paths and the original run/model/data/venv roots
+are retained. Snapshots are keyed by commit, created under a filesystem lock,
+and reused without replacing an existing running snapshot. No remote Git origin
+is retained in the clone. The source is never reset or cleaned; dirty source or
+modified caches fail before admission instead of being silently discarded.
+
+Both original switch and MoPPS scientific code maps are byte-identical to those
+before this repair. No compatibility list, training algorithm, budget, source
+artifact, result, or cost journal was changed by the isolation patch.
+
+The `errors` command previously searched task `failure.json` files but omitted
+launcher logs. A controller-level validation exception could therefore be absent
+from that diagnostic. It now also shows bounded launcher tails. Launchers record
+start revision/PID and exit code, including ordinary shell failure and handled
+termination. A hard kill cannot guarantee an exit marker. A log tail is evidence,
+not an automatic diagnosis, and does not prove a cluster repair succeeded.
+
+Local reproduction and tests for this repair:
+
+- Unpinned fixture: start, change the committed live source, continue. The
+  controller raises the same scientific-code/frozen-run mismatch.
+- Pinned fixture: the same update leaves the running controller and its next
+  subprocess on the original source bytes; both complete.
+- Actual switch and MoPPS shell entrypoints, with CPU/fake GPU admission,
+  pass this scenario while keeping output storage and interpreter paths.
+- Four concurrent local processes reuse one snapshot and complete after the
+  live checkout changes. Dirty sources, changed caches, relative paths, stale
+  inherited imports, missing task error records, and log path escapes are tested.
+- Full local regression: **290 passed, 1 skipped**, with the same two tiny PEFT
+  fixture warnings. This is not a real H100/shared-cluster-filesystem run.
+
+The preceding compatibility omission and this reproducible isolation defect are
+distinct. Do not retroactively claim that either one explains every reported
+interruption. The latest cluster interruption stays OPEN pending matching evidence.
+
 ## Verification Record
 
 For `ac40a60`, local regression results were **274 passed, 1 skipped**.
@@ -113,7 +165,7 @@ NCCL, shared cluster filesystem, verifier-throughput, or long-duration test.
 No cluster authentication or execution was attempted. Do not report these
 CPU checks as remote operational success.
 
-Reproduction command for the recorded regression suite:
+Command for the current regression suite (290 passes after `2daa140`):
 
 ```bash
 env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
@@ -125,6 +177,7 @@ env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   tests/test_selection_switch.py tests/test_selection_switch_gpu.py \
   tests/test_selection_switch_cost.py tests/test_selection_switch_errors.py \
   tests/test_selection_switch_status.py tests/test_net_gate_memory_math.py \
+  tests/test_selection_switch_runtime.py \
   tests/test_logit_chunking.py tests/test_low_order_backend.py tests/test_protocol.py
 ```
 
@@ -153,11 +206,14 @@ deployment, and execution and supplies logs. The assistant works on the local
 repository and pushes reviewed changes; it must not attempt cluster access or
 ask for credentials. A push is not evidence of deployment on any node.
 
-Before changing code in a shared checkout, gracefully stop the affected old
+For the first isolation deployment, gracefully stop the affected old live-checkout
 launchers and confirm their worker trees have stopped. Pull once for a shared
-checkout, then use that same revision on its nodes. Do not mix old in-memory
-controllers with changed code on disk. Do not kill unrelated experiments or
-delete run roots, locks, receipts, checkpoints, or cost records to bypass checks.
+checkout, then use that same revision on its nodes. A newly pinned worker logs
+`[runtime] commit=... pinned=...`; later changes to the original checkout cannot
+change that worker's source. This does not authorize mixing scientifically
+different revisions in one frozen run. Never modify an active runtime cache,
+kill unrelated experiments, or delete run roots, locks, receipts, checkpoints,
+or cost records to bypass checks.
 
 Read-only diagnostics, using the same `SWITCH_ROOT` as the failing run:
 
