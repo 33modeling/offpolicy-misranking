@@ -42,8 +42,44 @@ launcher_pid_alive() {
   [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
 if [ "$MODE" = stop ]; then
+  # Launchers started before detachment (foreground, tmux) have no pid file but
+  # still export OUT_ROOT; so do their workers, ranks and keepalives. Find every
+  # own process carrying this root, TERM its process group (the new code reaps
+  # ranks and closes receipts on TERM), then sweep what is left.
+  stop_root_processes() {
+    local pid stat pgid found=0 groups=""
+    for pid in $(ls /proc | grep -E '^[0-9]+$'); do
+      [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] || continue
+      [ -O "/proc/$pid" ] || continue
+      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -qx "OUT_ROOT=$OUT_ROOT" || continue
+      stat=$(cut -d')' -f2 "/proc/$pid/stat" 2>/dev/null) || continue
+      pgid=$(echo "$stat" | awk '{print $3}')
+      [ -n "$pgid" ] && [ "$pgid" != "$$" ] || continue
+      found=1
+      echo "[stop] found pid=$pid pgid=$pgid $(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-90)"
+      case " $groups " in *" $pgid "*) ;; *) groups="$groups $pgid" ;; esac
+    done
+    [ "$found" -eq 1 ] || return 1
+    for pgid in $groups; do kill -TERM -- "-$pgid" 2>/dev/null || true; done
+    for _ in $(seq 1 180); do
+      sleep 1
+      local alive=0
+      for pgid in $groups; do kill -0 -- "-$pgid" 2>/dev/null && alive=1; done
+      [ "$alive" -eq 1 ] || break
+    done
+    for pgid in $groups; do
+      if kill -0 -- "-$pgid" 2>/dev/null; then echo "[stop] pgid=$pgid still alive after 180s; not killing harder (GPU ranks would be orphaned)"; fi
+    done
+    return 0
+  }
   if ! launcher_pid_alive; then
-    echo "[stop] no live detached launcher on $LAUNCH_HOST (pid file: $PID_FILE)"
+    echo "[stop] no detached launcher pid file on $LAUNCH_HOST; looking for older launchers and workers of this root"
+    if stop_root_processes; then
+      echo "[stop] TERM sent to every process group of this root; sweeping orphaned GPU ranks whose driver is gone"
+    else
+      echo "[stop] no process of this root is running on $LAUNCH_HOST"
+    fi
+    CUDA_VISIBLE_DEVICES="" "$PY" src/queue_status.py --kill-orphans 2>/dev/null || true
     exit 0
   fi
   pid=$(cat "$PID_FILE")
@@ -58,6 +94,8 @@ if [ "$MODE" = stop ]; then
   fi
   echo "[stop] launcher exited; last console lines:"
   tail -n 5 "$CONSOLE_LOG" 2>/dev/null || true
+  stop_root_processes && echo "[stop] leftover processes of this root were also signalled"
+  CUDA_VISIBLE_DEVICES="" "$PY" src/queue_status.py --kill-orphans 2>/dev/null || true
   exit 0
 fi
 case "$MODE" in run|retry)
