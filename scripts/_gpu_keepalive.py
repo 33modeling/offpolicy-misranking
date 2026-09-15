@@ -18,6 +18,9 @@ import time
 
 def main() -> int:
     period = float(os.environ.get("SWITCH_KEEPALIVE_PERIOD", "0.25"))
+    # Work per period: 4096x4096 fp16 matmuls, about 0.3 ms each on an H100, so
+    # the default 64 keeps a GPU visibly busy (~8%) without competing with training.
+    repeats = max(1, int(os.environ.get("SWITCH_KEEPALIVE_REPEATS", "64")))
     parent = os.getppid()
     try:
         import torch
@@ -39,13 +42,15 @@ def main() -> int:
     work = []
     for index in devices:
         with torch.cuda.device(index):
-            work.append((index, torch.randn(1024, 1024, device=f"cuda:{index}", dtype=torch.float16)))
-    print(f"[keepalive] pid={os.getpid()} parent={parent} devices={devices} period={period}s", flush=True)
+            work.append((index, torch.randn(4096, 4096, device=f"cuda:{index}", dtype=torch.float16) * 0.01))
+    print(f"[keepalive] pid={os.getpid()} parent={parent} devices={devices} period={period}s repeats={repeats}", flush=True)
     while not stop:
         for index, tensor in work:
             with torch.cuda.device(index):
-                tensor = tensor @ tensor
-                tensor = tensor / (tensor.abs().amax() + 1)
+                out = tensor
+                for _ in range(repeats):
+                    out = out @ tensor
+                    out = out / (out.abs().amax() + 1)
                 torch.cuda.synchronize(index)
         if os.getppid() != parent:
             break
