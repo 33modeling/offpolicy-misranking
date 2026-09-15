@@ -106,6 +106,17 @@ receipts, and the command waits up to three minutes for the exit. Starting
 terminal (tests, pipelines) or with `SWITCH_FOREGROUND=1`, the launcher keeps the
 direct foreground behaviour, where Ctrl-C stops the worker as before.
 
+Node admission (`scripts/selection_nccl_preflight.py`) runs a tiny four-rank NCCL
+probe before any task is claimed. A CUDA 802 "system not yet initialized" failure
+means single-process CUDA works but the NVSwitch fabric is not ready, so the probe
+is retried with one fabric-dependent transport disabled at a time:
+`NCCL_NVLS_ENABLE=0`, then `NCCL_CUMEM_ENABLE=0`, then `NCCL_P2P_DISABLE=1`
+(shared-memory transport). Only the overrides of the probe that passed are
+exported to the training workers; settings already present in the environment
+are never changed. If the failure persists through the whole ladder the node is
+refused (exit 78) with the administrator diagnosis and nothing is recorded
+against any branch.
+
 Rerun the same command to resume. Completed branches are skipped. A failed
 task is attempted at most once per invocation; other eligible tasks continue.
 It never kills another E5/Qwen/net-gain process or bypasses an occupied node.

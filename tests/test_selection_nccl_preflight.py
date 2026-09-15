@@ -115,25 +115,68 @@ def test_unresolved_probe_exits_without_repeated_training_attempts(tmp_path, mon
     assert not (tmp_path / "states").exists()
 
 
+E802 = ("ncclUnhandledCudaError: Call to CUDA function failed.\n"
+        "Last error:\nCuda failure 802 'system not yet initialized'")
+LADDER_KEYS = ("NCCL_NVLS_ENABLE", "NCCL_CUMEM_ENABLE", "NCCL_P2P_DISABLE")
+
+
+def clear_fabric_env(monkeypatch):
+    for key in LADDER_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
 @pytest.mark.parametrize("rank_only", [False, True])
-def test_cluster_802_is_diagnosed_without_host_allocation_retry(tmp_path, monkeypatch, capsys, rank_only):
-    error = ("ncclUnhandledCudaError: Call to CUDA function failed.\n"
-             "Last error:\nCuda failure 802 'system not yet initialized'")
-    calls = fake_attempt(monkeypatch, ["ChildFailedError" if rank_only else error])
+def test_cluster_802_walks_the_fabric_ladder_then_is_diagnosed_without_host_allocation_retry(tmp_path, monkeypatch, capsys, rank_only):
+    clear_fabric_env(monkeypatch)
+    calls = fake_attempt(monkeypatch, ["ChildFailedError" if rank_only else E802] * 4)
     if rank_only:
         original = check.rank_reports
         monkeypatch.setattr(check, "rank_reports", lambda *args: [
-            {**row, "error": error} for row in original(*args)])
-    with pytest.raises(RuntimeError, match="CUDA 802.*no training task claimed"):
+            {**row, "error": E802} for row in original(*args)])
+    with pytest.raises(RuntimeError, match="CUDA 802.*NCCL_P2P_DISABLE.*no training task claimed"):
         check.preflight(tmp_path)
-    assert len(calls) == 1
+    assert len(calls) == 4
+    assert all("NCCL_CUMEM_HOST_ENABLE" not in call for call in calls)
+    assert [sorted(key for key in LADDER_KEYS if key in call) for call in calls] == [
+        [], ["NCCL_NVLS_ENABLE"], ["NCCL_CUMEM_ENABLE", "NCCL_NVLS_ENABLE"],
+        ["NCCL_CUMEM_ENABLE", "NCCL_NVLS_ENABLE", "NCCL_P2P_DISABLE"]]
     value = admission(tmp_path)
     assert value["failure_kind"] == "cuda_system_not_ready"
     assert value["state"] == "failed" and "cluster administrator" in value["diagnosis"]
-    assert value["attempts"][0]["cost"]["complete"]
+    assert [row["name"] for row in value["attempts"]] == [
+        "baseline", "fabric-free-nvls", "fabric-free-cumem", "fabric-free-p2p"]
+    assert all(row["cost"]["complete"] for row in value["attempts"])
     assert value["attempts"][0]["overrides"] == {}
     assert not (tmp_path / "states").exists()
-    assert "retrying only the tiny probe" not in capsys.readouterr().out
+    assert "legacy host allocation" not in capsys.readouterr().out
+    assert not any(key in os.environ for key in LADDER_KEYS)
+
+
+@pytest.mark.parametrize("outcomes,expected", [
+    ([E802, None], {"NCCL_NVLS_ENABLE": "0"}),
+    ([E802, E802, None], {"NCCL_NVLS_ENABLE": "0", "NCCL_CUMEM_ENABLE": "0"}),
+    ([E802, E802, E802, None], {"NCCL_NVLS_ENABLE": "0", "NCCL_CUMEM_ENABLE": "0", "NCCL_P2P_DISABLE": "1"})])
+def test_fabric_ladder_exports_only_the_overrides_that_made_the_probe_pass(tmp_path, monkeypatch, outcomes, expected):
+    clear_fabric_env(monkeypatch)
+    calls = fake_attempt(monkeypatch, outcomes)
+    assert check.preflight(tmp_path) == expected
+    assert len(calls) == len(outcomes)
+    value = admission(tmp_path)
+    assert value["state"] == "passed" and value["overrides"] == expected
+    assert value["attempts"][-1]["error"] is None and all(row["error"] for row in value["attempts"][:-1])
+    assert all(row["cost"]["complete"] for row in value["attempts"])
+    assert not (tmp_path / "states").exists()
+
+
+def test_explicit_fabric_settings_are_skipped_not_overridden(tmp_path, monkeypatch):
+    clear_fabric_env(monkeypatch)
+    monkeypatch.setenv("NCCL_NVLS_ENABLE", "1")
+    calls = fake_attempt(monkeypatch, [E802, None])
+    assert check.preflight(tmp_path) == {"NCCL_CUMEM_ENABLE": "0"}
+    assert calls[1]["NCCL_NVLS_ENABLE"] == "1"
+    assert check.fabric_fallback(reports(), E802, {key: "x" for key in LADDER_KEYS}, 4) is None
+    assert check.fabric_fallback(reports(), "ncclUnhandledCudaError: out of memory", {}, 4) is None
+    assert check.fabric_fallback(reports(count=3), E802, {}, 4) is None
 
 
 @pytest.mark.parametrize("error", ["ncclUnhandledCudaError at /tmp/job-802/rank.log",

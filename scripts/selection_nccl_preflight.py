@@ -81,6 +81,25 @@ def cuda_system_not_ready(error):
             or bool(re.search(r"\bcuda(?: failure| error)?\s*:?\s*802\b|\berror\s+802\b", lower)))
 
 
+# CUDA 802 (cudaErrorSystemNotReady) at NCCL initialization while single-process
+# CUDA works: NVLS, cuMem device buffers and NVSwitch peer access all need fabric
+# handles that an unready fabric manager cannot provide. Each step disables one
+# of those transports and re-probes; explicit operator settings are never changed.
+FABRIC_LADDER = (("fabric-free-nvls", "NCCL_NVLS_ENABLE", "0"),
+                 ("fabric-free-cumem", "NCCL_CUMEM_ENABLE", "0"),
+                 ("fabric-free-p2p", "NCCL_P2P_DISABLE", "1"))
+
+
+def fabric_fallback(reports, error, env, world_size):
+    """Next (attempt name, override) for a CUDA 802 failure, or None when the ladder is exhausted."""
+    if not cuda_system_not_ready(error) or len(reports) != world_size:
+        return None
+    for name, key, value in FABRIC_LADDER:
+        if key not in env:
+            return name, {key: value}
+    return None
+
+
 def host_allocation_fallback(reports, error, env, world_size):
     """Only the pre-2.26.5 host-allocation workaround, after an observed failure."""
     if cuda_system_not_ready(error) or "NCCL_CUMEM_HOST_ENABLE" in env or len(reports) != world_size:
@@ -132,8 +151,9 @@ def preflight(root, *, world_size=4, timeout=90.):
               "probe_sha256": base.digest(Path(__file__)), "attempts": [], "state": "running",
               "cost_scope": "shared node-admission research cost; no task claimed or deployment cost waived"}
     overrides = {}
+    name = "baseline"
     try:
-        for name in ("baseline", "legacy-host-allocation"):
+        while True:
             attempt = directory / name
             env = {**os.environ, **overrides}
             print(f"[nccl-preflight] {name}: {world_size} ranks; timeout={timeout:.0f}s; {attempt}", flush=True)
@@ -159,20 +179,27 @@ def preflight(root, *, world_size=4, timeout=90.):
                 print(f"[nccl-preflight] original rank errors:\n{rank_errors}", flush=True)
             combined_error = error + "\n" + rank_errors
             if cuda_system_not_ready(combined_error):
-                diagnosis = ("CUDA 802: system not yet initialized. Have the cluster administrator check "
-                             "this node's driver/CUDA library and NVSwitch fabric readiness "
-                             "(including Fabric Manager where applicable). The logs do not establish "
-                             "which component is unhealthy. No host-allocation retry; no training task claimed.")
-                report.update(failure_kind="cuda_system_not_ready", diagnosis=diagnosis)
-                raise RuntimeError(f"{diagnosis} Evidence: {directory}")
-            if name == "baseline" and host_allocation_fallback(reports, combined_error, env, world_size):
-                overrides = {"NCCL_CUMEM_HOST_ENABLE": "0"}
+                following = fabric_fallback(reports, combined_error, env, world_size)
+                if following is None:
+                    tried = ", ".join(key for _, key, _ in FABRIC_LADDER if key in env)
+                    diagnosis = ("CUDA 802: system not yet initialized. Have the cluster administrator check "
+                                 "this node's driver/CUDA library and NVSwitch fabric readiness "
+                                 "(including Fabric Manager where applicable). The logs do not establish "
+                                 f"which component is unhealthy; the failure persisted with {tried or 'no transport override'}. "
+                                 "No host-allocation retry; no training task claimed.")
+                    report.update(failure_kind="cuda_system_not_ready", diagnosis=diagnosis)
+                    raise RuntimeError(f"{diagnosis} Evidence: {directory}")
+                name, extra = following
+                overrides = {**overrides, **extra}
+                print(f"[nccl-preflight] retrying only the tiny probe as {name} with {json.dumps(extra)}; "
+                      "no policy training was started", flush=True)
+            elif name == "baseline" and host_allocation_fallback(reports, combined_error, env, world_size):
+                name, overrides = "legacy-host-allocation", {"NCCL_CUMEM_HOST_ENABLE": "0"}
                 print("[nccl-preflight] retrying only the tiny probe with legacy host allocation; "
                       "no policy training was started", flush=True)
             else:
                 raise RuntimeError(f"NCCL node admission failed; no training task claimed. "
                                    f"Rank errors and original logs: {directory}")
-        raise RuntimeError("NCCL node admission did not pass")
     except BaseException as exc:
         report.update(state="interrupted" if isinstance(exc, KeyboardInterrupt) else "failed", error=str(exc))
         raise
