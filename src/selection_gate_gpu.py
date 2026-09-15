@@ -99,19 +99,102 @@ def recover_cost_receipts(directory):
         return gate.cost_summary(events)
 
 
-def terminate(processes):
-    for p in processes:
-        if p.poll() is None:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(p.pid, signal.SIGTERM)
-    deadline = time.monotonic() + 5
-    for p in processes:
+@contextlib.contextmanager
+def defer_stop_signals():
+    """Finish registering children or writing cost receipts before unwinding."""
+    pending = []
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    def deferred(signum, frame):
+        if not pending:
+            pending.append((signum, frame))
+    try:
+        for sig, handler in handlers.items():
+            if handler != signal.SIG_IGN:
+                signal.signal(sig, deferred)
+        yield
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+        if pending:
+            signum, frame = pending[0]
+            handler = handlers[signum]
+            if callable(handler):
+                handler(signum, frame)
+            elif handler == signal.SIG_DFL:
+                signal.raise_signal(signum)
+
+
+def owned_worker_groups(event_id):
+    """torchrun ranks start separate sessions but inherit the phase nonce."""
+    groups = set()
+    if event_id is None:
+        return groups
+    for path in Path("/proc").glob("[0-9]*/environ"):
         try:
-            p.wait(timeout=max(.01, deadline-time.monotonic()))
-        except subprocess.TimeoutExpired:
+            if path.parent.stat().st_uid != os.getuid():
+                continue
+            fields = (path.parent / "stat").read_text().rsplit(") ", 1)[1].split()
+            if fields[0] == "Z":
+                continue
+            env = dict(item.split(b"=", 1) for item in path.read_bytes().split(b"\0") if b"=" in item)
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+        if env.get(b"OM_SELECTION_COST_" + event_id.encode()) == b"1":
+            groups.add(int(fields[2]))
+    if os.getpgrp() in groups:
+        raise RuntimeError("refusing to signal the supervisor process group")
+    return groups
+
+
+def terminate(processes, *, event_id=None):
+    # A torchrun leader can exit before its CUDA ranks. Own the entire session
+    # created by Popen, including when poll()/wait() already reaped the leader.
+    groups = {p.pid for p in processes if event_id is None or p.poll() is None} | owned_worker_groups(event_id)
+    for pgid in groups:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pgid, signal.SIGTERM)
+    deadline = time.monotonic() + 5
+    while groups and time.monotonic() < deadline:
+        discovered = owned_worker_groups(event_id) - groups
+        for pgid in discovered:
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(p.pid, signal.SIGKILL)
-            p.wait()
+                os.killpg(pgid, signal.SIGTERM)
+        groups.update(discovered)
+        for p in processes:
+            p.poll()
+        for pgid in tuple(groups):
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                groups.remove(pgid)
+        if groups:
+            time.sleep(.05)
+    groups.update(owned_worker_groups(event_id))
+    for pgid in groups:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pgid, signal.SIGKILL)
+    for p in processes:
+        p.wait(timeout=5)
+    deadline = time.monotonic() + 5
+    while groups:
+        discovered = owned_worker_groups(event_id) - groups
+        for pgid in discovered:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(pgid, signal.SIGKILL)
+        groups.update(discovered)
+        live = set()
+        for path in Path("/proc").glob("[0-9]*/stat"):
+            try:
+                fields = path.read_text().rsplit(") ", 1)[1].split()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            if fields[0] != "Z" and int(fields[2]) in groups:
+                live.add(int(fields[2]))
+        if not live:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"owned worker groups did not exit after KILL: {sorted(live)}; cost remains unknown")
+        time.sleep(.05)
 
 
 def worker_log_tail(path, *, lines=120):
@@ -153,9 +236,11 @@ def _meter(directory, name, gpu_type, *, action=None, commands=None, env=None,
                 for i, (command, visible) in enumerate(commands):
                     log = stack.enter_context((directory / f"{name}-{i}.log").open("a"))
                     worker_env = {**os.environ, **(env or {}), "CUDA_VISIBLE_DEVICES": visible}
-                    p = subprocess.Popen(command, env=worker_env, stdout=log, stderr=subprocess.STDOUT,
-                                         start_new_session=True)
-                    processes.append(p)
+                    worker_env[f"OM_SELECTION_COST_{base['event_id']}"] = "1"
+                    with defer_stop_signals():
+                        p = subprocess.Popen(command, env=worker_env, stdout=log, stderr=subprocess.STDOUT,
+                                             start_new_session=True)
+                        processes.append(p)
                 heartbeat = 0.
                 while True:
                     codes = [p.poll() for p in processes]
@@ -181,16 +266,17 @@ def _meter(directory, name, gpu_type, *, action=None, commands=None, env=None,
         rc = 0
         return result
     finally:
-        terminate(processes)
-        seconds = time.monotonic()-started
-        finished = {**base, "state": "finished", "time": time.time(), "seconds": seconds,
-                    "allocated_gpu_seconds": seconds*devices, "exit_code": rc}
-        # The atomic receipt permits recovery if appending the finish is interrupted.
-        try:
-            gate.atomic_json(directory / "cost-events" / f"{base['event_id']}.json", finished)
-        finally:
-            journal(path, finished)
-        progress(seconds, "finished" if rc == 0 else "failed")
+        with defer_stop_signals():
+            terminate(processes, event_id=base["event_id"])
+            seconds = time.monotonic()-started
+            finished = {**base, "state": "finished", "time": time.time(), "seconds": seconds,
+                        "allocated_gpu_seconds": seconds*devices, "exit_code": rc}
+            # The atomic receipt permits recovery if appending the finish is interrupted.
+            try:
+                gate.atomic_json(directory / "cost-events" / f"{base['event_id']}.json", finished)
+            finally:
+                journal(path, finished)
+            progress(seconds, "finished" if rc == 0 else "failed")
 
 
 def source_contract(run, evaluation, *, budget, gpu_type, role, selector, eval_k, max_steps):

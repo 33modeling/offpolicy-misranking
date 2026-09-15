@@ -164,7 +164,7 @@ def test_snapshot_cache_cannot_be_inside_live_repository(tmp_path):
 @pytest.mark.parametrize("kind", ["switch", "mopps"])
 def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(tmp_path, kind):
     repo = repository(tmp_path)
-    for name in (*runtime.LAUNCHERS.values(), "selection_switch_runtime.py", "selection_switch_errors.py"):
+    for name in (*runtime.LAUNCHERS.values(), "selection_switch_runtime.py", "selection_switch_errors.py", "_selection_worker.sh"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     (repo / "scripts/setup_env.sh").write_text('export DATASETS_DIR="$OM_WORK/data"\nexport PYTHONPATH="$OM_REPO/src:$PYTHONPATH"\n')
     (repo / "scripts/_e5_node.sh").write_text('e5_acquire_node() { return 0; }\n')

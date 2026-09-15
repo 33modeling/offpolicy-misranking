@@ -22,6 +22,7 @@ CODE = (*switch.CODE, "src/mopps.py", "src/mopps_comparison_gpu.py", "src/train_
 _base_policy = base.policy
 _base_verify = base.verify
 PRE_CODE_COMPAT_CODE = "585e2e9efc8cb79433d90daabf589112c2bb64968bcd6b3fceef7a849d286def"
+PRE_LIFECYCLE_CODE = "ef5eb15dbd1d646adff3c515932d7b03171fcce937d8d8d69c44ee5e2e41da40"
 
 
 def hashes():
@@ -72,10 +73,10 @@ def protocol(root):
     current = hashes()
     recorded = p.get("code_hashes")
     if recorded != current:
-        if (not isinstance(recorded, dict) or core.fingerprint(recorded) != PRE_CODE_COMPAT_CODE
+        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE}
                 or set(recorded) != set(current)
                 or any(recorded[name] != sha for name, sha in current.items()
-                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py"})):
+                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py", "src/selection_gate_gpu.py"})):
             raise ValueError("frozen MoPPS experiment changed: unreviewed code hashes")
         switch.validate_code_hashes({name: recorded[name] for name in switch.CODE})
     if (p["schema"] != mopps.SCHEMA
@@ -92,11 +93,28 @@ def protocol(root):
         raise ValueError("comparison allocation differs from original branches")
     if recorded != current:
         with base.lease(root / ".code-compat-runtime.lock", blocking=True):
-            base.bind(root / "code-compat-runtime.json", {
+            receipt = {
                 "schema": "mopps-code-compat-runtime/v1", "protocol_sha256": base.digest(root / "mopps.json"),
                 "original_code_hashes": recorded, "runtime_code_hashes": current,
                 "change": "switch frozen-runtime compatibility and diagnostics only",
                 "cost_policy": "no change to selectors, training, frozen artifacts or budgets",
+            }
+            path = root / "code-compat-runtime.json"
+            if path.exists():
+                previous = core.read(path)
+                previous_code = previous.get("runtime_code_hashes")
+                if (previous != receipt and
+                        (previous != {**receipt, "runtime_code_hashes": previous_code}
+                         or core.fingerprint(previous_code) != PRE_LIFECYCLE_CODE)):
+                    raise ValueError(f"frozen contract changed: {path}")
+            else:
+                base.bind(path, receipt)
+            base.bind(root / "worker-lifecycle-runtime.json", {
+                "schema": "mopps-worker-lifecycle-runtime/v1",
+                "protocol_sha256": base.digest(root / "mopps.json"),
+                "compat_runtime_sha256": base.digest(path), "runtime_code_hashes": current,
+                "change": "signal cleanup and independent certified-prefix import; Gate evidence checked at comparison",
+                "cost_policy": "same policies, sampling, optimizer, evaluation and budgets; no source writes",
             })
     return p
 
@@ -111,11 +129,12 @@ def original_point(p, seed, step):
 
 def ready(p, seed, step):
     out = original_point(p, seed, step)
-    return (out / "contract.json").is_file() and (out / "decisions-frozen.json").is_file()
+    return ((switch.prefix_dir(Path(p["parent"]), seed) / f"prefix-{step}.json").is_file()
+            or (out / "contract.json").is_file() and (out / "decisions-frozen.json").is_file())
 
 
-def verify_origin(p, seed, step):
-    """Validate prefix and gate evidence without invoking mutating migration helpers."""
+def verify_prefix(p, seed, step):
+    """Validate the immutable checkpoint without requiring a fitted Gate."""
     import evidence_downstream as ed
     from train_policy_grpo import validate_policy_lineage
     parent = Path(p["parent"])
@@ -126,6 +145,8 @@ def verify_origin(p, seed, step):
             raise ValueError("initial selected-prefix source changed")
     directory = switch.prefix_dir(parent, seed)
     cfg = item["config"]
+    if "model_sha256" in item and base.digest(Path(cfg["model"]) / "config.json") != item["model_sha256"]:
+        raise ValueError("initial selected-prefix model changed")
     if core.read(directory / "subset.json") != item["subset"]:
         raise ValueError("prefix selected subset changed")
     previous = 0
@@ -147,6 +168,14 @@ def verify_origin(p, seed, step):
         previous = current
     else:
         raise ValueError("unregistered checkpoint")
+    return source_protocol, item, directory, cert
+
+
+def verify_origin(p, seed, step):
+    """Validate legacy imports and final Gate evidence without source writes."""
+    import evidence_downstream as ed
+    source_protocol, item, directory, cert = verify_prefix(p, seed, step)
+    parent, cfg = Path(p["parent"]), item["config"]
     origin = original_point(p, seed, step)
     c = _base_verify(origin)
     source = directory / f"view-{step}"
@@ -177,15 +206,48 @@ def verify_origin(p, seed, step):
     return c
 
 
+def prefix_contract(out, p, seed, step, *, publish=False):
+    source_protocol, item, directory, cert = verify_prefix(p, seed, step)
+    source = out / "source"
+    cfg = {**item["config"], "drift": step}
+    links = {name: Path(item["path"]) / name for name in ("prompts.json", "rollouts_behavior_train.jsonl")}
+    links[f"policy_step_{step}"] = directory / f"policy_step_{step}"
+    if publish:
+        base.bind(source / "run_config.json", cfg)
+        base.bind(source / "selected-prefix.json", cert)
+        for name, target in links.items():
+            switch.link(source / name, target)
+    if (core.read(source / "run_config.json") != cfg or core.read(source / "selected-prefix.json") != cert
+            or any((source / name).resolve() != target.resolve() for name, target in links.items())):
+        raise ValueError("comparison private prefix view changed")
+    c = base.source_contract(source, source_protocol["evaluation"], budget=p["budget_gpu_seconds"],
+        gpu_type=p["gpu_type"], role="test", selector="mopps_comparison",
+        eval_k=source_protocol["eval_k"], max_steps=100000)
+    c["selected_prefix"] = {"schema": rule.SCHEMA, "root": p["parent"],
+                            "certificate_sha256": core.fingerprint(cert)}
+    c["source_hashes"].update({name: base.digest(source / name)
+                              for name in ("selected-prefix.json", "rollouts_behavior_train.jsonl")})
+    c["comparison"] = {"protocol_sha256": core.fingerprint(p), "origin": str(original_point(p, seed, step)),
+                       "source_kind": "certified_prefix", "prefix_sha256": base.digest(directory / f"prefix-{step}.json")}
+    return c
+
+
 def import_point(root, p, seed, step):
     out = point(root, seed, step)
     def publish():
-        original = verify_origin(p, seed, step)
         origin = original_point(p, seed, step)
-        c = {**original, "scope": {**original["scope"], "selector": "mopps_comparison"},
-             "comparison": {"protocol_sha256": core.fingerprint(p), "origin": str(origin),
-                            "contract_sha256": base.digest(origin / "contract.json"),
-                            "decisions_sha256": base.digest(origin / "decisions-frozen.json")}}
+        if (out / "contract.json").exists():
+            independent = core.read(out / "contract.json")["comparison"].get("source_kind") == "certified_prefix"
+        else:
+            independent = not ((origin / "contract.json").is_file() and (origin / "decisions-frozen.json").is_file())
+        if independent:
+            c = prefix_contract(out, p, seed, step, publish=True)
+        else:
+            original = verify_origin(p, seed, step)
+            c = {**original, "scope": {**original["scope"], "selector": "mopps_comparison"},
+                 "comparison": {"protocol_sha256": core.fingerprint(p), "origin": str(origin),
+                                "contract_sha256": base.digest(origin / "contract.json"),
+                                "decisions_sha256": base.digest(origin / "decisions-frozen.json")}}
         base.bind(out / "contract.json", c)
         base.bind(out / "evaluation.json", c["evaluation"])
         prompts = core.read(Path(c["source_run"]) / "prompts.json")
@@ -202,12 +264,15 @@ def import_point(root, p, seed, step):
 def verify(out):
     p = protocol(out.parent.parent)
     c = _base_verify(out)
-    original = verify_origin(p, c["config"]["seed"], c["config"]["drift"])
-    origin = Path(c["comparison"]["origin"])
-    expected = {**original, "scope": {**original["scope"], "selector": "mopps_comparison"},
-                "comparison": {"protocol_sha256": core.fingerprint(p), "origin": str(original_point(p, c["config"]["seed"], c["config"]["drift"])),
-                               "contract_sha256": base.digest(origin / "contract.json"),
-                               "decisions_sha256": base.digest(origin / "decisions-frozen.json")}}
+    if c["comparison"].get("source_kind") == "certified_prefix":
+        expected = prefix_contract(out, p, c["config"]["seed"], c["config"]["drift"])
+    else:
+        original = verify_origin(p, c["config"]["seed"], c["config"]["drift"])
+        origin = Path(c["comparison"]["origin"])
+        expected = {**original, "scope": {**original["scope"], "selector": "mopps_comparison"},
+                    "comparison": {"protocol_sha256": core.fingerprint(p), "origin": str(original_point(p, c["config"]["seed"], c["config"]["drift"])),
+                                   "contract_sha256": base.digest(origin / "contract.json"),
+                                   "decisions_sha256": base.digest(origin / "decisions-frozen.json")}}
     if c != expected or core.read(out / "import.done.json") != {"contract_sha256": base.digest(out / "contract.json")}:
         raise ValueError("comparison input binding changed")
     prompts = core.read(Path(c["source_run"]) / "prompts.json")
@@ -329,7 +394,7 @@ def work(root, idle_timeout=600., only=None):
                 failures = 1
                 continue
             if not ready(p, seed, step):
-                waiting.append(f"s{seed}/t{step}: prefix or frozen gate")
+                waiting.append(f"s{seed}/t{step}: missing {switch.prefix_dir(Path(p['parent']), seed) / f'prefix-{step}.json'}")
                 continue
             try:
                 if not (out / "import.done.json").exists():
@@ -381,7 +446,7 @@ def status(root):
                     elif (directory / "failure.json").exists():
                         state, detail = "FAILED", core.read(directory / "failure.json")["error"].splitlines()[0]
                     elif not ready(p, seed, step):
-                        state, detail = "WAIT", "prefix / frozen gate"
+                        state, detail = "WAIT", f"prefixes/seed-{seed}/prefix-{step}.json missing (Gate not required)"
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     state, detail = "INVALID", str(exc)
                 counts[state] = counts.get(state, 0)+1
@@ -543,4 +608,6 @@ def main():
 
 
 if __name__ == "__main__":
+    from light_selection_gate_gpu import install_signal_handlers
+    install_signal_handlers()
     main()

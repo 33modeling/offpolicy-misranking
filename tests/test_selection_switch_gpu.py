@@ -57,9 +57,34 @@ def initial_predecessor():
 
 def code_compat_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.COST_METER
     hashes["src/selection_switch_gpu.py"] = "f87119d0f40cc0166f9095049b234c0b25a6fbaf0b910cc13bef688ce494f753"
     assert core.fingerprint(hashes) == switch.PRE_CODE_COMPAT_CODE
     return hashes
+
+
+def shutdown_predecessor():
+    hashes = switch.code_hashes()
+    hashes.update({"src/selection_gate_gpu.py": switch.COST_METER,
+                   "src/selection_switch_gpu.py": "23faf38b352f31ee64a2f2989f3b2086cc47b54508c5bd5c89571a670b3e66e8"})
+    assert core.fingerprint(hashes) == switch.PRE_SHUTDOWN_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_shutdown_upgrade_preserves_frozen_run_and_existing_receipts(tmp_path, monkeypatch, migrated):
+    previous = shutdown_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*.json")}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {path: path.read_bytes() for path in before} == before
+    assert core.read(tmp_path / "shutdown-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
 
 
 @pytest.mark.parametrize("predecessor", [initial_predecessor, code_compat_predecessor])
@@ -515,6 +540,12 @@ def run(out, suite, protocol, arm, devices, env):
     directory = out / arm
     with (directory / 'claim.json').open('x') as handle:
         json.dump({'pid': os.getpid(), 'started': time.monotonic()}, handle)
+    if len(sys.argv) > 2:
+        (root / f'running-{os.getpid()}').touch()
+        deadline = time.monotonic() + 5
+        while len(list(root.glob('running-*'))) < 4:
+            if time.monotonic() > deadline: raise RuntimeError('four ready tasks did not overlap')
+            time.sleep(.01)
     time.sleep(.15)
     s.core.atomic_json(directory / 'result.json', {'pid': os.getpid(), 'finished': time.monotonic()})
 s.runtime.run_arm = run
@@ -530,9 +561,20 @@ raise SystemExit(s.work(root, idle_timeout=1 if len(sys.argv) > 2 else 0))
 '''
 
 
-def ready_queue(root):
+def ready_queue(root, *, published=False):
     for seed in range(3):
         core.atomic_json(switch.prefix_dir(root, seed) / "prefix-25.json", {})
+        if published:
+            child = switch.child_root(root, seed, 25)
+            out = child / "points/view-25"
+            p = {"mode": "study", "arms": list(rule.DEV_ARMS)}
+            core.atomic_json(out / "contract.json", {"seed": seed})
+            core.atomic_json(child / "suite.json", {})
+            core.atomic_json(child / "net_protocol.json", p)
+            for arm in rule.DEV_ARMS:
+                core.atomic_json(out / arm / "decision.json", {"action": "random"})
+            core.atomic_json(out / "decisions-frozen.json", {"protocol_sha256": core.fingerprint(p),
+                "decisions": {arm: base.digest(out / arm / "decision.json") for arm in rule.DEV_ARMS}})
 
 
 def test_busy_publication_is_skipped_while_other_seeds_run(tmp_path):
@@ -550,7 +592,7 @@ def test_busy_publication_is_skipped_while_other_seeds_run(tmp_path):
 def test_four_nodes_claim_switch_tasks_concurrently_without_duplicates(tmp_path):
     import subprocess
     import time
-    ready_queue(tmp_path)
+    ready_queue(tmp_path, published=True)
     workers = [subprocess.Popen([sys.executable, "-c", QUEUE_WORKER, str(tmp_path), "wait"],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(4)]
     try:

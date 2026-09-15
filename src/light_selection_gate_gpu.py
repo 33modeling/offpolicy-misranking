@@ -28,8 +28,10 @@ ARMS = ("random_full", "gated")
 def install_signal_handlers():
     def interrupted(signum, frame):
         # Unwind meter's finally block so child process groups and costs close.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         raise KeyboardInterrupt(f"signal {signum}")
+    signal.signal(signal.SIGINT, interrupted)
     signal.signal(signal.SIGTERM, interrupted)
 
 

@@ -69,6 +69,7 @@ def test_prepare_is_idempotent_and_does_not_mutate_live_parent(tmp_path):
 
 def code_compat_predecessor():
     hashes = run.hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.COST_METER
     hashes.update({"src/selection_switch_gpu.py": "f87119d0f40cc0166f9095049b234c0b25a6fbaf0b910cc13bef688ce494f753",
                    "src/mopps_comparison_gpu.py": "b036737e9d8a7318bcaec361505fe8b564628d34bfed34c858b6e88ff250fb77"})
     assert core.fingerprint(hashes) == run.PRE_CODE_COMPAT_CODE
@@ -98,6 +99,31 @@ def test_code_compat_keeps_existing_mopps_run_and_parent_unchanged(tmp_path):
     core.atomic_json(root / "code-compat-runtime.json", receipt)
     with pytest.raises(ValueError, match="frozen contract changed"):
         run.protocol(root)
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_lifecycle_upgrade_preserves_existing_mopps_manifest_and_receipt(tmp_path, monkeypatch, migrated):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    previous = run.hashes()
+    previous.update({"src/selection_gate_gpu.py": switch.COST_METER,
+        "src/selection_switch_gpu.py": "23faf38b352f31ee64a2f2989f3b2086cc47b54508c5bd5c89571a670b3e66e8",
+        "src/mopps_comparison_gpu.py": "d55710f6909df21a17d45652c35b2e8acfd553960ee5dc492b86584f9bc983d4"})
+    assert core.fingerprint(previous) == run.PRE_LIFECYCLE_CODE
+    p["code_hashes"] = code_compat_predecessor() if migrated else previous
+    core.atomic_json(root / "mopps.json", p)
+    if migrated:
+        core.atomic_json(root / "code-compat-runtime.json", {
+            "schema": "mopps-code-compat-runtime/v1", "protocol_sha256": base.digest(root / "mopps.json"),
+            "original_code_hashes": p["code_hashes"], "runtime_code_hashes": previous,
+            "change": "switch frozen-runtime compatibility and diagnostics only",
+            "cost_policy": "no change to selectors, training, frozen artifacts or budgets"})
+    before = snapshot(tmp_path)
+    assert run.protocol(root) == p
+    assert run.protocol(root) == p
+    assert {name: snapshot(tmp_path)[name] for name in before} == before
+    assert core.read(root / "worker-lifecycle-runtime.json")["runtime_code_hashes"] == run.hashes()
 
 
 @pytest.mark.parametrize("name", ["src/mopps.py", "src/train_mopps_grpo.py", "src/grads.py", "src/selection_switch.py"])
@@ -243,12 +269,21 @@ def test_sidecar_cost_recovery_obeys_task_lock_and_actual_duration(tmp_path):
     assert base.spent(directory) == 60.
 
 
-def certified_origin(tmp_path, monkeypatch):
+def certified_origin(tmp_path, monkeypatch, *, full_config=False):
     import evidence_downstream as ed
     import train_policy_grpo as trainer
     from test_selection_switch import development
     parent, p = source(tmp_path)
     p.update(eval_k=8, evaluation={"val": [{"question": "held-out", "answer": "1"}], "provenance": {}})
+    if full_config:
+        p["sources"]["3"]["config"].update(dataset="math500", grpo_world_size=4, behavior_k=8,
+            grpo_group_size=8, grpo_epochs_per_batch=1, topk_frac=.1, temperature=1., top_p=1.,
+            grpo_clip_epsilon=.2, grpo_learning_rate=1e-5, grpo_max_grad_norm=1.,
+            grpo_advantage_epsilon=1e-6, grpo_lora_rank=4, grpo_lora_alpha=8,
+            grpo_logprob_micro_batch=1, grpo_gradient_checkpointing=True)
+        p["evaluation"]["val"] = [{"question": f"held-out {i}", "answer": "1"} for i in range(4)]
+        monkeypatch.setattr(trainer, "validate_policy_manifest", lambda *args, **kwargs:
+                            {"seed": 3, "prompt_format": "olmo_rlzero_math"})
     core.atomic_json(parent / "switch.json", p)
     item = p["sources"]["3"]
     initial = Path(item["path"])
@@ -304,6 +339,70 @@ def test_actual_origin_validation_binds_policy_optimizer_prefix_and_frozen_gate(
     assert calls[0][1]["require_complete_hashes"] is True
     assert calls[0][1]["expected_prompts"] == parent / "prefixes/seed-3/subset.json"
     assert snapshot(parent) == before
+
+
+def test_prefix_only_import_starts_without_gate_and_preserves_parent(tmp_path, monkeypatch):
+    import shutil
+    parent, p, origin, _ = certified_origin(tmp_path, monkeypatch, full_config=True)
+    root = tmp_path / "comparison"
+    shutil.rmtree(parent / "states")
+    shutil.rmtree(parent / "prefixes/seed-3/view-25")
+    (parent / "model.json").unlink()
+    before = snapshot(parent)
+    assert run.ready(p, 3, 25)
+    assert not run.ready(p, 3, 50)
+    out = run.import_point(root, p, 3, 25)
+    c = run.verify(out)
+    assert c["comparison"]["source_kind"] == "certified_prefix"
+    assert c["comparison"]["origin"] == str(origin)
+    assert c["budget_gpu_seconds"] == p["budget_gpu_seconds"]
+    assert c["eval_seed"] == 704000012 and c["eval_k"] == 8
+    assert (Path(c["source_run"]) / "policy_step_25").resolve() == parent / "prefixes/seed-3/policy_step_25"
+    assert len(core.read(out / "subsets/subset-mopps.json")["train"]) == 100
+    imported = snapshot(out)
+    run.import_point(root, p, 3, 25)
+    assert {name: snapshot(out)[name] for name in imported if not name.startswith("import-cost/")} == {
+        name: value for name, value in imported.items() if not name.startswith("import-cost/")}
+    assert snapshot(parent) == before
+    assert not (parent / "model.json").exists() and not (parent / "states").exists()
+    with pytest.raises(FileNotFoundError):
+        run.verify_origin(p, 3, 25)
+    original_contract = (out / "contract.json").read_bytes()
+    core.atomic_json(origin / "contract.json", {"later": "publication"})
+    core.atomic_json(origin / "decisions-frozen.json", {"later": "publication"})
+    later_parent = snapshot(parent)
+    run.import_point(root, p, 3, 25)
+    assert run.verify(out) == c
+    assert (out / "contract.json").read_bytes() == original_contract
+    assert snapshot(parent) == later_parent
+
+
+@pytest.mark.parametrize("artifact", ["optimizer", "certificate", "view", "evaluation"])
+def test_prefix_only_import_rejects_changed_frozen_input(tmp_path, monkeypatch, artifact):
+    parent, p, origin, _ = certified_origin(tmp_path, monkeypatch, full_config=True)
+    (origin / "decisions-frozen.json").unlink()
+    out = run.import_point(tmp_path / "comparison", p, 3, 25)
+    if artifact == "optimizer": path = parent / "prefixes/seed-3/policy_step_25/optimizer.pt"
+    elif artifact == "certificate": path = parent / "prefixes/seed-3/prefix-25.json"
+    elif artifact == "view": path = out / "source/run_config.json"
+    else: path = out / "evaluation.json"
+    core.atomic_json(path, {"changed": True})
+    with pytest.raises((ValueError, KeyError)):
+        run.verify(out)
+
+
+def test_missing_prefix_is_named_in_wait_instead_of_claiming_gate_dependency(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    run.prepare(root, parent)
+    monkeypatch.setitem(sys.modules, "additive_experiment", SimpleNamespace(model_environment=lambda _: {}))
+    monkeypatch.setattr(switch, "admitted_devices", lambda _: list("0123"))
+    assert run.work(root, idle_timeout=0.) == 0
+    output = capsys.readouterr().out
+    assert "prefixes/seed-3/prefix-25.json missing (Gate not required)" in output
+    assert "WAIT=12" in output
+    assert not list(root.glob("states/*/*/cost.jsonl"))
 
 
 @pytest.mark.parametrize("artifact", ["prefix", "optimizer", "decision", "model", "budget", "source"])
@@ -404,14 +503,18 @@ from types import SimpleNamespace
 import mopps_comparison_gpu as m
 sys.modules['additive_experiment'] = SimpleNamespace(model_environment=lambda c: {})
 root = Path(sys.argv[1])
-m.protocol = lambda _: {'seeds': [3, 4], 'steps': [25, 50, 100], 'arms': list(m.mopps.ARMS)}
+m.protocol = lambda _: {'parent': str(root / 'parent'), 'seeds': [3, 4], 'steps': [25, 50, 100], 'arms': list(m.mopps.ARMS)}
 m.switch.admitted_devices = lambda _: list('0123')
-m.ready = lambda *args: True
 m.status = lambda _: None
 def run(out, p, arm, devices, env):
     directory = out / arm
     with (directory / 'claim.json').open('x') as handle:
         json.dump({'pid': os.getpid(), 'started': time.monotonic()}, handle)
+    (root / f'running-{os.getpid()}').touch()
+    deadline = time.monotonic() + 5
+    while len(list(root.glob('running-*'))) < 4:
+        if time.monotonic() > deadline: raise RuntimeError('four ready tasks did not overlap')
+        time.sleep(.01)
     time.sleep(.2)
     m.core.atomic_json(directory / 'result.json', {'pid': os.getpid(), 'finished': time.monotonic()})
     m.core.atomic_json(directory / 'result.sha256.json', {'sha256': m.base.digest(directory / 'result.json')})
@@ -430,6 +533,7 @@ raise SystemExit(m.work(root, idle_timeout=1))
 def test_four_nodes_run_twelve_branches_without_duplicate_claims(tmp_path):
     for seed in rule.TEST_SEEDS:
         for step in rule.STEPS:
+            core.atomic_json(switch.prefix_dir(tmp_path / "parent", seed) / f"prefix-{step}.json", {})
             out = run.point(tmp_path, seed, step)
             core.atomic_json(out / "import.done.json", {})
             core.atomic_json(out / "contract.json", {"config": {}})

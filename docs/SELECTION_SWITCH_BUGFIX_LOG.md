@@ -274,3 +274,103 @@ local reproduction, source inspection, and verified cluster outcomes. Link each
 repair commit and state whether it was pushed, deployed, and remotely verified
 separately. Keep failed attempts and uncertainty visible instead of rewriting
 the history as a sequence of completed fixes.
+
+## 2026-09-15: Ctrl+C Cleanup And MoPPS Startup Dependency
+
+User reports: GPU workers remain after Ctrl+C; both queues wait; every MoPPS
+node immediately waits, including newly allocated nodes. Cluster logs and
+source certificates have not been supplied for this report. The separate
+Switch two-active/two-waiting report remains unconfirmed: no Switch dependency
+barrier is removed in this repair and full four-node utilization is not claimed.
+
+Confirmed defects:
+
+- `selection_gate_gpu.terminate` skipped an exited process-group leader and
+  escalated only when the leader itself timed out. A CUDA child could survive
+  either an already-dead leader or a leader that exited on TERM. The old code
+  failed the real RTX 3050 CUDA child-exit test before the repair; the fixture
+  confirmed the child in `nvidia-smi` and then cleaned up only its own process.
+- The MoPPS Python entrypoint never installed the shared SIGTERM unwind handler.
+  Its shell forwarded TERM on Ctrl+C, so the supervisor could exit without
+  executing metered cleanup or closing the cost event.
+- Repeated shell stop traps and SIGINT during child registration/cost writing
+  could interrupt shutdown itself.
+- `mopps_comparison_gpu.ready` required the original Gate barrier and state
+  contract, even for already-certified prefixes. New nodes cannot satisfy that
+  shared input dependency. Previous four-process queue tests mocked `ready=True`,
+  so they did not exercise the faulty readiness rule. The revised queue test
+  uses real readiness with prefix certificates and no Gate model/barriers.
+
+Repair scope:
+
+- Signal owned process groups even when the leader has exited. After a five-
+  second TERM grace period, KILL surviving groups and verify live members are
+  gone before finalizing costs. Unconfirmed termination leaves cost unknown.
+- The expanded real torchrun/NCCL check caught a further gap after the first
+  group-only CUDA tests passed: elastic ranks use `start_new_session=True`.
+  Tag descendants with a unique inherited cost-event environment key and track
+  those keys across sessions and reparenting. Re-scan during TERM/KILL cleanup.
+  Never signal a long-exited leader PID without current ownership evidence.
+- Defer stop signals while registering a child and finalizing cleanup/receipts.
+  Both entrypoints install SIGINT/SIGTERM unwind handlers. Both launchers use
+  the same stop helper, install traps before spawning and wait through repeated
+  stop signals before releasing the node lock.
+- New MoPPS imports need only their immutable registered prefix. Create a
+  private view in the comparison root, validate the full prefix/optimizer
+  lineage and bind the same pool, evaluation, RNG, allocation and selector.
+  Do not write the parent root. Existing imported contracts remain unchanged.
+  Final comparisons still validate the original Gate barrier and actual result;
+  no MoPPS outcome becomes a Gate feature or development label.
+- Missing-prefix waits now name the missing certificate rather than implying
+  a Gate dependency. A missing prefix is still a real prerequisite, not zero
+  work or a reason to fabricate a checkpoint.
+- Exact predecessor code maps remain accepted with additive runtime receipts.
+  Frozen manifests, prior receipts, checkpoints, costs and results are preserved;
+  unreviewed scientific changes and unknown deployment costs remain rejected.
+
+Local evidence: the initial direct-process CUDA lifecycle suite passed 12 cases (six
+CUDA, six CPU), covering both entrypoints, repeated INT/TERM, group-leader exit,
+GPU PID removal, cost closure, lock release, restart and unrelated-process
+survival. These tests replace the evaluation payload with a small allocation;
+they are not original-model training outcomes. That first result was not
+sufficient for torchrun: the expanded suite failed four cases (including two
+cold-start fixture timeouts), with separately sessioned ranks surviving TERM.
+Those test-owned processes were explicitly cleaned up; no other jobs were
+stopped. After event-nonce tracking, all eight CUDA cases passed, including real
+single-rank NCCL, both entrypoints, both stop signals and restarts. A separate
+nine-case CPU lifecycle run also passed. Final code verification is recorded
+below after completion; these results do not certify four-H100/NCCL execution.
+
+Deployment: the assistant cannot access the secure cluster. A pull does not
+patch an already-running pinned worker. Stop the old waiting MoPPS launchers,
+pull the repair and rerun the same command/root on free nodes. Old GPU workers
+must be confirmed stopped before reusing their GPUs; do not globally kill
+Python, reset GPUs, delete locks or rewrite cost records.
+
+Current reviewed source-map fingerprints (frozen run manifests are not rewritten):
+
+- Switch: `43f53caa042b27810fe3ba45da025198953378e6f858868cdb93e004bea3a60e`.
+- MoPPS: `0bb0f42a82215281267a5f8741f1e9b87d16ccaaf945ace32c81f50c6400f33a`.
+
+Regression fixtures run on local Linux, including a tmpfs temporary directory
+for the final suite to avoid unrelated disk contention. Short mocked-task
+overlap tests use an explicit overlap rendezvous; the Switch test starts with
+already-published decisions and its publication-lock test remains separate.
+These are process/queue contract checks, not measurements of four-node
+training throughput or shared-cluster filesystem behavior.
+
+Final verification on the reviewed code:
+
+- CPU/process regression command: 309 passed, 1 optional plotting skip;
+  9 deselected by `not cuda`. Report: `/tmp/switch-mopps-release-regression-20260915.xml`.
+  The one non-GPU shell test whose name contains `cuda` was rerun separately
+  and passed, giving 310 passing CPU/process checks in the final validation.
+- Actual RTX 3050 CUDA suite: 8 passed, covering four detached/same-group rank
+  cases and four Switch/MoPPS INT/TERM cases with two launches each. The latter
+  use real `torch.distributed.run` and a single-rank NCCL collective. Report:
+  `/tmp/switch-mopps-cuda-release-20260915.xml`.
+- `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader`
+  was empty after the final suite. Shell syntax and `git diff --check` passed.
+- No cluster login, four-H100 execution, lost-time total or original-model
+  comparison outcome was verified. The runtime patch and this record are one
+  commit; operator deployment remains separate from Git publication.

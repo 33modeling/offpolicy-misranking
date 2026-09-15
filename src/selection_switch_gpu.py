@@ -36,11 +36,13 @@ PRE_COST_CODE = "7c2480d74d8c4b2b109570ddab68d513961db60517acf1dad9d8794834ab6f7
 PRE_PREFIX_RESUME_CODE = "0e1bc0c39315258210b2ed0a003fe777b468993d60e9797f68972f739949de76"
 PRE_WORKER_LOGS_CODE = "803be77868081423affe81d073b0b5b566889c7d43cfc99608ad444ebb3dd4b9"
 PRE_CODE_COMPAT_CODE = "113afc51b2544e23d8389d6da5ad5f10e67b9407d54f835ba4935a1dd8523512"
+PRE_SHUTDOWN_CODE = "fff7859976ea68d49a9695b27d904522cae6d87e6e5e2f9475be085694122aa8"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
-                       PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE}
+                       PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE}
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
 COST_METER = "58fd87dfdc00c3ee66e6903e12a53b31c4d2798f7594352ee9aa894d23525a99"
+SHUTDOWN_METER = "4a578b63b9315d30e5a000fc0bccbaf522090f5c7ea936a447f82762588925d9"
 
 
 def code_hashes():
@@ -54,7 +56,7 @@ def validate_code_hashes(recorded):
     if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in PRIOR_RUNTIME_CODES
             or set(recorded) != set(current)
             or current["src/grads.py"] != KV_CACHE_GRADS
-            or current["src/selection_gate_gpu.py"] != COST_METER
+            or current["src/selection_gate_gpu.py"] not in {COST_METER, SHUTDOWN_METER}
             or any(recorded[name] != sha for name, sha in current.items() if name not in RUNTIME_PATCH_FILES)):
         old = recorded if isinstance(recorded, dict) else {}
         changed = {name: {"frozen": old.get(name), "current": current.get(name)}
@@ -101,7 +103,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -118,7 +120,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -135,7 +137,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -152,17 +154,35 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) != PRE_CODE_COMPAT_CODE)):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
-            base.bind(root / "code-compat-runtime.json", {
+            compat_receipt = {
                 "schema": "selection-switch-code-compat-runtime/v1",
                 "switch_sha256": base.digest(root / "switch.json"),
                 "worker_runtime_sha256": base.digest(worker_path), "runtime_code_hashes": current,
                 "change": "accept the exact original switch runtime; diagnose other code mismatches",
                 "cost_policy": "no change to frozen inputs, policies, phase costs or branch budgets",
-            })
+            }
+            compat_path = root / "code-compat-runtime.json"
+            if compat_path.exists():
+                previous = core.read(compat_path)
+                previous_code = previous.get("runtime_code_hashes")
+                if (previous != compat_receipt and
+                        (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
+                         or core.fingerprint(previous_code) != PRE_SHUTDOWN_CODE)):
+                    raise ValueError(f"frozen contract changed: {compat_path}")
+            else:
+                base.bind(compat_path, compat_receipt)
+            if current["src/selection_gate_gpu.py"] == SHUTDOWN_METER:
+                base.bind(root / "shutdown-runtime.json", {
+                    "schema": "selection-switch-shutdown-runtime/v1",
+                    "switch_sha256": base.digest(root / "switch.json"),
+                    "compat_runtime_sha256": base.digest(compat_path), "runtime_code_hashes": current,
+                    "change": "reap owned worker groups after leader exit; protect stop cleanup and cost receipts",
+                    "cost_policy": "charge cleanup time; preserve unknown costs and all frozen artifacts",
+                })
     return p
 
 

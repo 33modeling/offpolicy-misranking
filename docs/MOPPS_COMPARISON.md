@@ -1,12 +1,14 @@
 # MoPPS online-selector comparison
 
-Registered: 2026-09-15. Implementation and CPU verification only; no local
-cluster access, GPU smoke result or measured training outcome is claimed.
+Registered: 2026-09-15. Local CPU regressions and real RTX 3050 CUDA process
+shutdown/restart checks are available. These are not H100/NCCL training results;
+no cluster access or measured comparison outcome is claimed.
 
 The launcher now uses the same isolated local runtime mechanism as the switch
 launcher for run/retry/prepare/summarize. This protects running code and child
 imports from later changes to the live checkout, without changing either
-experiment's scientific code map, root or budget. See the
+experiment's root or budget. The later shutdown/prefix-import repair changes
+runtime hashes with exact predecessor compatibility and append-only receipts. See the
 [switch runtime notes](SELECTION_SWITCH_RUN.md) and
 [bug-fix record](SELECTION_SWITCH_BUGFIX_LOG.md) for deployment and verification
 limits. Status/errors/cost inspection do not create a runtime clone.
@@ -50,7 +52,13 @@ comparison when the actual GATE result is missing.
 - Held-out seeds are fixed to 3 and 4. No favorable seed/checkpoint selection.
 - Add `mopps` and `random_online` at all six states: **12 new continuations**.
 - Keep the existing 48-branch experiment and its fitted gate unchanged.
-- Import each state only after its original gate decision barrier is frozen.
+- Import each state as soon as its certified prefix exists. A new private view
+  under the comparison root binds the same adapter, optimizer, input pool and
+  evaluation without waiting for the original Gate fit/decision. Existing
+  imports keep their original contracts and Gate-barrier bindings unchanged.
+- The final Gate comparison still requires the original frozen Gate evidence
+  and actual executed result. Gate fitting uses only the registered development
+  labels, never the earlier-completing MoPPS outcomes.
 - MoPPS starts with a uniform prior at each branch. It receives only that
   branch's subsequent training rewards, never cached gradients/rewards,
   validation labels, other branches' outcomes or future observations.
@@ -81,7 +89,9 @@ access. Do not describe all arms as having identical subset persistence.
 `src/train_mopps_grpo.py` is an isolated copy of the budgeted driver at
 `7dc108a`, with selection, feedback and posterior evidence added. It shares
 the original loss, rollout, optimizer-check and checkpoint helpers. The
-scientific files frozen by `selection_switch_gpu.CODE` are not changed.
+initial sampler integration did not change the shared switch scientific files.
+The later lifecycle repair changes orchestration and process cleanup, not the
+sampler, learner, allocation, evaluation, seed set or original Gate policy.
 
 Every rank applies the same selected batch and gathered reward groups.
 NCCL feedback is moved from the verifier's CPU tensor to the model device.
@@ -132,8 +142,9 @@ bash scripts/run_mopps_comparison.sh run
 
 Run the same `run` command on each **free** allocated four-H100 node. Four
 nodes can process the queue concurrently. At most 12 tasks are independent
-once all source states are ready; fewer are available before prefix and gate
-dependencies finish. There is no reason to reserve 16 nodes for this extension.
+once all source prefixes are ready; fewer are available before prefix
+dependencies finish. No Gate decision is needed to start a new comparison
+import. There is no reason to reserve 16 nodes for this extension.
 Do not launch it on the four nodes already occupied by the switch experiment.
 
 Defaults use `$OM_WORK/runs/selection-switch-v1` as the read-only parent and
@@ -150,8 +161,24 @@ bash scripts/run_mopps_comparison.sh summarize
 
 Status is a read-only 12-row view. DONE verifies the result receipt, not the
 full scientific contract; `summarize` performs the latter. WAIT names missing
-prefix/gate dependencies; RUNNING shows host and phase; stale heartbeats are
+prefix certificate files; RUNNING shows host and phase; stale heartbeats are
 not assumed alive. No automatic failure retry loop consumes the budget.
+
+If every node waits immediately, adding nodes does not create a missing input.
+The old launcher also waited for the Gate barrier even when the prefix existed;
+the repaired launcher removes that dependency. Stop the old waiting launchers,
+pull the repair and run the same command with the same `SWITCH_ROOT` and
+`MOPPS_ROOT`. A running pinned worker does not change when the checkout is pulled.
+If a prefix certificate itself is missing, its named source prefix still needs
+to complete in the switch queue; MoPPS does not manufacture or rerun it.
+
+Ctrl+C and SIGTERM now stop the supervisor's owned worker groups, including
+ranks whose torchrun leader exited first. Repeated stop signals cannot interrupt
+cleanup/cost finalization. Per-event inherited ownership keys also track the
+separate sessions that torchrun creates for its ranks. The launcher waits for
+cleanup before releasing its node locks. SIGKILL, host loss, a driver hang, or an already-running old worker
+cannot be repaired by a new signal handler. Never use a global Python kill or
+GPU reset to stop this experiment.
 
 After diagnosing a failed branch, explicitly retry only that branch:
 
@@ -186,3 +213,14 @@ throughput or NCCL on the cluster.
 The operator should first run one task on a free cluster node and inspect its
 training/evaluation logs before adding nodes. H100 memory, NCCL and cluster
 filesystem behavior cannot be certified by the local CPU tests.
+
+The opt-in local GPU lifecycle test uses the real Switch/MoPPS entrypoint signal
+handlers, shared shell stop helper, meter, real single-rank torchrun/NCCL and
+CUDA allocations. It checks worker
+death, removal from `nvidia-smi`, complete cost events, lock release, restart,
+and survival of an unrelated process. The model evaluation payload is replaced
+by a small CUDA allocation; this does not exercise the four-H100 training stack.
+
+```bash
+SWITCH_TEST_CUDA=0 PYTHONPATH=src python -m pytest -q tests/test_selection_worker_shutdown.py
+```

@@ -19,7 +19,7 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
-  exec "$PY" -m pytest -q tests/test_mopps.py tests/test_mopps_comparison_gpu.py "$@"
+  exec "$PY" -m pytest -q tests/test_mopps.py tests/test_mopps_comparison_gpu.py tests/test_selection_worker_shutdown.py "$@"
 fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*|--parent-root|--parent-root=*) echo '[abort] use MOPPS_ROOT and SWITCH_ROOT'; exit 2 ;; esac
@@ -77,12 +77,9 @@ done <<< "$MEMORY"
 MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps")
 export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
 trap '' HUP
-"$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" 7>&- 8>&- &
-CHILD=$!
-trap 'kill -TERM "$CHILD" 2>/dev/null || true; wait "$CHILD" || true; exit 130' INT
-trap 'kill -TERM "$CHILD" 2>/dev/null || true; wait "$CHILD" || true; exit 143' TERM
+source scripts/_selection_worker.sh
 rc=0
-wait "$CHILD" || rc=$?
+selection_run_worker "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
 if [ "$rc" -ne 0 ]; then
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
 fi
