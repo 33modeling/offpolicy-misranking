@@ -41,6 +41,12 @@ launcher_pid_alive() {
   pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
   [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
+# Read-only viewers (status --watch, why, errors) also carry OUT_ROOT; only
+# launchers, controllers, ranks, probes, scorers and keepalives are "the run".
+root_worker_cmdline() {
+  { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null | grep -qE \
+    'run_selection_switch\.sh|run_mopps_comparison\.sh|selection_switch_runtime\.py|selection_switch_gpu\.py|mopps_comparison_gpu\.py|torch\.distributed\.run|train_[a-z_]*grpo\.py|_gpu_keepalive\.py|selection_nccl_preflight\.py|selection_switch_score\.py|light_selection_gate_gpu\.py'
+}
 if [ "$MODE" = stop ]; then
   # Launchers started before detachment (foreground, tmux) have no pid file but
   # still export OUT_ROOT; so do their workers, ranks and keepalives. Find every
@@ -52,6 +58,7 @@ if [ "$MODE" = stop ]; then
       [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] || continue
       [ -O "/proc/$pid" ] || continue
       { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -qx "OUT_ROOT=$OUT_ROOT" || continue
+      root_worker_cmdline "$pid" || continue
       stat=$(cut -d')' -f2 "/proc/$pid/stat" 2>/dev/null) || continue
       pgid=$(echo "$stat" | awk '{print $3}')
       [ -n "$pgid" ] && [ "$pgid" != "$$" ] || continue
@@ -102,6 +109,19 @@ case "$MODE" in run|retry)
   if [ -t 1 ] && [ "${SWITCH_DETACHED:-0}" != 1 ] && [ "${SWITCH_FOREGROUND:-0}" != 1 ]; then
     if launcher_pid_alive; then
       echo "[already running] host=$LAUNCH_HOST pid=$(cat "$PID_FILE"); follow: tail -f $CONSOLE_LOG; stop: bash scripts/$(basename "$0") stop"
+      exit 0
+    fi
+    older=""
+    for pid in $(ls /proc | grep -E '^[0-9]+$'); do
+      [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] || continue
+      [ -O "/proc/$pid" ] || continue
+      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -qx "OUT_ROOT=$OUT_ROOT" || continue
+      root_worker_cmdline "$pid" || continue
+      older="$older $pid"
+    done
+    if [ -n "$older" ]; then
+      echo "[already running] host=$LAUNCH_HOST: older launcher/worker processes of this root without a pid file:$older"
+      echo "[already running] stop them first with: bash scripts/$(basename "$0") stop"
       exit 0
     fi
     mkdir -p "$CONSOLE_DIR"
