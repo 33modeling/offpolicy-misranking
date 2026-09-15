@@ -256,6 +256,19 @@ failure. This describes inspected code, not the cause of the latest report.
 
 ## Record Maintenance
 
+Clarification recorded on 2026-09-15: the assistant recommended the existing
+switch comparison to test Gate utility and added MoPPS as the requested reward-
+based comparator. Missing verified cluster outcomes do not mean the comparison
+code is absent, nor do they establish a negative Gate result. The current
+`run_selection_switch.sh run` executes the original 48 continuation arms;
+`run_mopps_comparison.sh run` executes the separate 12-job extension. Gate is
+compared with the full-budget selection/random controls in the original study
+and with MoPPS in the extension. SEL/RND supply the diagnostic-paid action labels.
+A draft to chain both queues automatically was not shipped during this
+clarification; the existing entrypoints and frozen experimental designs remain
+unchanged. The user should not be told to change comparators merely because
+the assistant has not received the experiment outputs.
+
 Append new evidence with its date and source. Distinguish user-reported state,
 local reproduction, source inspection, and verified cluster outcomes. Link each
 repair commit and state whether it was pushed, deployed, and remotely verified
