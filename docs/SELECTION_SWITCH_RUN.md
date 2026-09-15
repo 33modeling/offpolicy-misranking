@@ -144,6 +144,15 @@ hold. Callers without a terminal (tests, pipelines) keep the single pass;
 `SWITCH_HOLD_SECONDS=0` forces it anywhere. MoPPS `run` holds the same way,
 checking for its 12 published continuations.
 
+Holding is not enough on its own: the cluster also reclaims an allocation whose
+GPUs sit idle, which is what waiting or holding looks like. Operator launches
+therefore start `scripts/_gpu_keepalive.py` right after the occupancy check and
+keep it for the launcher's lifetime: a tiny fp16 matmul on every visible GPU a
+few times a second (a few percent of utilisation, well under 1 GB per device),
+logged to `logs/keepalive.<host>.log`, killed on exit and by `stop`. It is not a
+metered cost event and never touches the run directory. `SWITCH_KEEPALIVE=0`
+disables it; `SWITCH_KEEPALIVE_PERIOD` (seconds, default 0.25) sets the pace.
+
 Rerun the same command to resume. Completed branches are skipped. A failed
 task is attempted at most once per invocation; other eligible tasks continue.
 It never kills another E5/Qwen/net-gain process or bypasses an occupied node.

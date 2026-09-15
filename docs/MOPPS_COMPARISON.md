@@ -200,6 +200,13 @@ prerequisites. `status --watch 5`, `--all` and `--json` work as for the switch;
 every mopps/contract/selector/failure/progress/result/cost/admission record,
 and the last 100 lines of every log) and prints the saved path.
 
+`run` on an operator launch first retries every recorded branch failure once
+(the same explicit single-branch retries, behind the same node admission), then
+enters the queue; without this a fresh node only waited for missing parent
+prefixes while the failed branches sat untouched. `MOPPS_AUTO_RETRY=0` restores
+the old behaviour. The launcher also keeps the allocated GPUs busy while it waits
+or holds (see the switch run notes on `_gpu_keepalive.py`).
+
 `bash scripts/run_mopps_comparison.sh retry` with no arguments retries every
 claimable recorded branch failure once, in path order, each through the same
 node admission check. It skips branches locked by another worker, including

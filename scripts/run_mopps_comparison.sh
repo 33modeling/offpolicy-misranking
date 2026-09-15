@@ -178,17 +178,31 @@ while read -r used; do
   [[ "$used" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]] || { echo '[abort] invalid GPU memory status'; exit 2; }
   [ "$used" -le 4000 ] || { echo '[busy] GPU occupied; existing jobs were not stopped'; exit 75; }
 done <<< "$MEMORY"
+# The allocation is reclaimed when its GPUs sit idle, which is what a launcher
+# looks like while it waits for a prerequisite or holds between passes. Keep a
+# tiny kernel running on every visible GPU for the launcher's lifetime
+# (operator launches only; SWITCH_KEEPALIVE=0 disables it). Started after the
+# occupancy check so it never counts as an existing job, killed on exit.
+KEEPALIVE_PID=
+stop_keepalive() { [ -n "$KEEPALIVE_PID" ] && kill -TERM "$KEEPALIVE_PID" 2>/dev/null; KEEPALIVE_PID=; }
+if [ "${SWITCH_KEEPALIVE:-1}" != 0 ] && { [ "${SWITCH_DETACHED:-0}" = 1 ] || [ -t 1 ]; }; then
+  "$PY" scripts/_gpu_keepalive.py > "$OUT_ROOT/logs/keepalive.$HOST.log" 2>&1 &
+  KEEPALIVE_PID=$!
+  echo "[keepalive] pid=$KEEPALIVE_PID keeps the allocated GPUs busy while this launcher waits or holds (log: logs/keepalive.$HOST.log)"
+  trap 'rc=$?; stop_keepalive; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE" "$rc" "$(date -u +%FT%TZ)"' EXIT
+fi
 MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps")
 export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
 trap '' HUP
 source scripts/_selection_worker.sh
 rc=0
-if [ "$MODE" = retry ] && [ "$#" -eq 0 ]; then
-  # Phone-typeable form: retry each recorded branch failure once, in path order.
-  # Each item is still the explicit single-branch retry of the Python entrypoint,
-  # behind the same node admission check.
+mopps_retry_failures() {
+  # Retry each recorded branch failure once, in path order. Each item is still
+  # the explicit single-branch retry of the Python entrypoint, behind the same
+  # node admission check. Returns the last nonzero worker rc, or 0.
+  local failure rel point arm seed step task_rc result=0
   mapfile -t FAILED < <(find "$OUT_ROOT/states" -mindepth 3 -maxdepth 3 -name failure.json 2>/dev/null | sort)
-  [ "${#FAILED[@]}" -gt 0 ] || echo '[retry] no recorded branch failures'
+  [ "${#FAILED[@]}" -gt 0 ] || { echo '[retry] no recorded branch failures'; return 0; }
   for failure in "${FAILED[@]}"; do
     [ -f "$failure" ] || continue
     rel=${failure#"$OUT_ROOT/states/"}
@@ -201,25 +215,38 @@ if [ "$MODE" = retry ] && [ "$#" -eq 0 ]; then
     selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
       "$PY" src/mopps_comparison_gpu.py retry --root "$OUT_ROOT" --seed "$seed" --step "$step" --arm "$arm" \
       --idle-timeout 0 || task_rc=$?
-    [ "$task_rc" -eq 0 ] || rc=$task_rc
+    [ "$task_rc" -eq 0 ] || result=$task_rc
     case "$task_rc" in
       78|130|137|143)
         echo "[retry stopped] worker rc=$task_rc; remaining branch failures were not retried"
-        break ;;
+        return "$task_rc" ;;
     esac
   done
+  return "$result"
+}
+if [ "$MODE" = retry ] && [ "$#" -eq 0 ]; then
+  mopps_retry_failures || rc=$?
 else
   # Keep the node between passes (see run_selection_switch.sh): the allocation
   # ends with this process, and MoPPS work appears only as the switch experiment
   # publishes prefixes. SWITCH_HOLD_SECONDS=0 restores the single pass.
   # Holding applies to operator launches (detached or on a terminal); pipelines
-# and tests without a terminal keep the single pass unless they opt in.
-if [ "${SWITCH_DETACHED:-0}" = 1 ] || [ -t 1 ]; then HOLD_DEFAULT=600; else HOLD_DEFAULT=0; fi
-HOLD=${SWITCH_HOLD_SECONDS:-$HOLD_DEFAULT}
+  # and tests without a terminal keep the single pass unless they opt in.
+  if [ "${SWITCH_DETACHED:-0}" = 1 ] || [ -t 1 ]; then HOLD_DEFAULT=600; else HOLD_DEFAULT=0; fi
+  HOLD=${SWITCH_HOLD_SECONDS:-$HOLD_DEFAULT}
   [[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] SWITCH_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
   mopps_complete() {
     [ "$(CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py status --root "$OUT_ROOT" 2>/dev/null | grep -c ' DONE ')" -ge 12 ]
   }
+  # The queue skips branches with a recorded failure, so a fresh node would only
+  # wait for missing parent prefixes while the failed branches sit untouched.
+  # Retry them once per launch first (this node has just passed admission);
+  # MOPPS_AUTO_RETRY=0 keeps the old behaviour of leaving them to 'retry'.
+  if [ "$MODE" = run ] && [ "$#" -eq 0 ] && [ "${MOPPS_AUTO_RETRY:-1}" != 0 ]; then
+    mopps_retry_failures || rc=$?
+    case "$rc" in 78|130|137|143) echo '[blocked] node admission or stop during the initial retry pass'; exit "$rc" ;; esac
+    rc=0
+  fi
   pass=0
   wait_seconds=$HOLD
   while :; do
