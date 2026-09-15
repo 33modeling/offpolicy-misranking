@@ -91,6 +91,21 @@ Independent A/B diagnostic gradients are not computed for selection. Gradients
 use the original projection/layer definition, micro-batch one, eval-mode
 activation checkpointing and durable per-prompt partials.
 
+KV-cache repair (2026-09-15): both teacher-forced scoring paths now pass
+`use_cache=False`. With the model's default cache enabled, eval-mode decoder
+checkpointing could append to the same mutable KV cache again during backward,
+causing attention-shape or checkpoint-recomputation failures. Generation keeps
+its original cache settings. The CPU suite now exercises the actual tiny OLMo3
+architecture with cache enabled, merged adapters, frozen early layers, both
+logit paths, gradient equivalence, and generation after scoring.
+
+The exact pre-fix runtime from `a63e69d` can resume with the same command. A
+`kv-cache-runtime.json` receipt binds the original manifest and patched code;
+the frozen protocol, saved prefixes, rollout partials and cost ledgers retain
+their original contents. Unknown code changes are rejected. Failed work stays
+charged, so an exhausted branch budget is not restored by this repair. The
+receipt is included in `why` and `export`.
+
 At each branch state, all decisions are frozen before any continuation starts.
 The diagnostic scans cached rewards and the last 20 completed prefix updates
 once. Its charge is assigned once to GATE, CONTINUE_D and SWITCH_D. A failed

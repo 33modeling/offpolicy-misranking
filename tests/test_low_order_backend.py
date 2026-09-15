@@ -13,7 +13,7 @@ class TinyLoRA(torch.nn.Module):
         self.lora_weight = torch.nn.Parameter(torch.tensor([[.1, -.2, .3, -.1]]*4, dtype=torch.float64))
         self.disabled = False
 
-    def forward(self, ids, attention_mask=None):
+    def forward(self, ids, attention_mask=None, use_cache=None):
         weight = torch.zeros_like(self.lora_weight) if self.disabled else self.lora_weight
         return SimpleNamespace(logits=weight[ids])
 

@@ -299,9 +299,11 @@ def _token_logps_chunked(model, batch, attention, targets) -> torch.Tensor:
         or getattr(base, "lm_head", None) is not None
         or LOGIT_CHUNK_TOKENS <= 0
     ):
-        logits = model(batch, attention_mask=attention).logits[:, :-1].float()
+        logits = model(batch, attention_mask=attention, use_cache=False).logits[:, :-1].float()
         return logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1) - logits.logsumexp(dim=-1)
-    hidden = base(input_ids=batch, attention_mask=attention).last_hidden_state[:, :-1]
+    # Teacher forcing needs no KV cache; decoder checkpoint recomputation would
+    # otherwise append to the same mutable cache again during backward.
+    hidden = base(input_ids=batch, attention_mask=attention, use_cache=False).last_hidden_state[:, :-1]
 
     def chunk_logps(h: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         logits = head(h).float()

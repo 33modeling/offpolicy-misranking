@@ -37,6 +37,73 @@ def test_generic_parent_is_rejected(tmp_path, monkeypatch):
         switch.verify(tmp_path)
 
 
+def cache_predecessor():
+    hashes = switch.code_hashes()
+    hashes.update({
+        "src/grads.py": "112d6a18747d324d91d3fdea0ae316ba0b5248dc7f12eb72eaf51bb391688245",
+        "src/selection_switch_gpu.py": "d2974888651e91badd30332569bd62c12c40c0bf6609e2fe10f250eed6a3276d",
+    })
+    assert core.fingerprint(hashes) == switch.PRE_KV_CACHE_CODE
+    return hashes
+
+
+def test_cache_fix_resumes_exact_predecessor_and_preserves_artifacts(tmp_path):
+    frozen = {"schema": rule.SCHEMA, "code_hashes": cache_predecessor(), "budget_gpu_seconds": 1000.}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "existing"})
+    base.journal(tmp_path / "cost.jsonl", {"gpu_seconds": 12.})
+    original = {p: base.digest(p) for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    receipt = core.read(tmp_path / "kv-cache-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["original_code_hashes"] == frozen["code_hashes"]
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: base.digest(p) for p in original} == original
+    receipt["runtime_code_hashes"]["src/grads.py"] = "changed"
+    core.atomic_json(tmp_path / "kv-cache-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+@pytest.mark.parametrize("filename", ["src/grads.py", "src/selection_switch.py", "extra.py"])
+def test_cache_fix_rejects_unrelated_runtime_changes(filename, monkeypatch):
+    original = cache_predecessor()
+    current = switch.code_hashes()
+    current[filename] = "unreviewed"
+    monkeypatch.setattr(switch, "code_hashes", lambda: current)
+    with pytest.raises(ValueError, match="scientific code changed"):
+        switch.validate_code_hashes(original)
+
+
+def test_cache_fix_rejects_unknown_predecessor():
+    original = cache_predecessor()
+    original["src/grads.py"] = "unknown version"
+    with pytest.raises(ValueError, match="scientific code changed"):
+        switch.validate_code_hashes(original)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_switch_protocol_validates_design_and_parent_runtime(tmp_path, legacy):
+    hashes = cache_predecessor() if legacy else switch.code_hashes()
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": hashes})
+    child = switch.child_root(tmp_path, 0, 25)
+    p = {"schema": rule.SCHEMA, "schedule": rule.SCHEDULE, "mode": "study",
+         "arms": list(rule.DEV_ARMS), "selector": "fresh_r", "model": None,
+         "role": "development", "max_measurement_fraction": .01, "recent_window": 20,
+         "code_hashes": hashes}
+    core.atomic_json(child / "net_protocol.json", p)
+    assert switch.protocol(child) == p
+    p["selector"] = "low_order"
+    core.atomic_json(child / "net_protocol.json", p)
+    with pytest.raises(ValueError, match="invalid switch experimental design"):
+        switch.protocol(child)
+    p["selector"] = "fresh_r"
+    p["code_hashes"] = switch.code_hashes() if legacy else cache_predecessor()
+    core.atomic_json(child / "net_protocol.json", p)
+    with pytest.raises(ValueError, match="state code binding differs"):
+        switch.protocol(child)
+
+
 def test_prefix_certificate_binds_actual_selected_history(tmp_path, monkeypatch):
     c = {"config": {"seed": 0, "drift": 25}, "selected_prefix": {"schema": rule.SCHEMA,
          "root": str(tmp_path), "certificate_sha256": core.fingerprint({"history": "selected"})}}

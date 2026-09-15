@@ -6,13 +6,13 @@ import low_order_backend as backend
 import net_gate_memory_worker as memory
 
 
-def olmo(dtype):
+def olmo(dtype, *, use_cache=False):
     from peft import LoraConfig, get_peft_model
     from transformers import Olmo3Config, Olmo3ForCausalLM
     torch.manual_seed(19)
     config = Olmo3Config(vocab_size=64, hidden_size=32, intermediate_size=64, num_hidden_layers=4,
                         num_attention_heads=4, num_key_value_heads=4, max_position_embeddings=256,
-                        attention_dropout=.25, use_cache=False)
+                        attention_dropout=.25, use_cache=use_cache)
     config._attn_implementation = "eager"
     model = get_peft_model(Olmo3ForCausalLM(config).to(dtype), LoraConfig(
         r=2, lora_alpha=2, lora_dropout=.3, target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM"))
@@ -21,6 +21,41 @@ def olmo(dtype):
             {"input_ids": torch.arange(64).remainder(62) + 1, "resp_start": 5, "reward": 0}]
     direction = {n: torch.randn_like(p) for n, p in backend.trainable_parameters(model).items()}
     return model, rows, direction
+
+
+@pytest.mark.parametrize("logit_chunk_tokens", [0, 16])
+def test_selected_prefix_gradient_with_default_kv_cache(logit_chunk_tokens, monkeypatch):
+    import copy
+    import grads
+
+    monkeypatch.setattr(grads, "LOGIT_CHUNK_TOKENS", logit_chunk_tokens)
+    model, rows, _ = olmo(torch.float32, use_cache=True)
+    model = model.merge_and_unload().eval()
+    reference = copy.deepcopy(model)
+    reference.config.use_cache = False
+    spec = grads.ProjectionSpec(dim=64)
+    weights = [torch.full((row["input_ids"].numel() - row["resp_start"],), advantage)
+               for row, advantage in zip(rows, [1., -1.], strict=True)]
+    expected = grads.prompt_gradient(reference, grads.grad_params(reference, 2), rows, weights, spec,
+                                     micro_batch=1)
+    params = grads.grad_params(model, 2)
+    memory.checkpoint_decoder_layers(model)
+    actual = grads.prompt_gradient(model, params, rows, weights, spec, micro_batch=1)
+    torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-5)
+    assert actual.norm() > 0
+    assert model.config.use_cache is True
+    assert not any(module.training for module in model.modules())
+    for actual_logps, expected_logps in zip(
+        grads.sequence_logprobs_batch(model, rows, micro_batch=2),
+        grads.sequence_logprobs_batch(reference, rows, micro_batch=2), strict=True,
+    ):
+        torch.testing.assert_close(actual_logps, expected_logps)
+    with torch.no_grad():
+        generated = model.generate(rows[0]["input_ids"][:5].unsqueeze(0), max_new_tokens=2,
+                                   do_sample=False, use_cache=True, return_dict_in_generate=True,
+                                   pad_token_id=0, eos_token_id=None)
+    assert generated.sequences.shape == (1, 7)
+    assert generated.past_key_values is not None
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])

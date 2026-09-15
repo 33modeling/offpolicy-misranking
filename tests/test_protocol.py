@@ -149,8 +149,9 @@ class ToyGradientModel(torch.nn.Module):
     def device(self):
         return self.embedding.weight.device
 
-    def forward(self, input_ids, attention_mask=None):
+    def forward(self, input_ids, attention_mask=None, use_cache=None):
         assert attention_mask is not None
+        assert use_cache is False
         return SimpleNamespace(logits=self.embedding(input_ids))
 
 

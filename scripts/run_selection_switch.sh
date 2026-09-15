@@ -18,7 +18,8 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
-  exec "${SWITCH_CPU_PYTHON:-$PY}" -m pytest -q tests/test_selection_switch.py tests/test_selection_switch_gpu.py "$@"
+  exec "${SWITCH_CPU_PYTHON:-$PY}" -m pytest -q tests/test_selection_switch.py tests/test_selection_switch_gpu.py \
+    tests/test_net_gate_memory_math.py tests/test_logit_chunking.py "$@"
 fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*) echo '[abort] use SWITCH_ROOT for the output directory'; exit 2 ;; esac
@@ -51,7 +52,8 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
       -o -name '*report.json' -o -name 'failure.json' -o -name 'progress.json' \
       -o -name 'decision.json' -o -name 'decisions-frozen.json' -o -name 'initial.json' \
       -o -name 'measurement.json' -o -name 'execution.json' -o -name 'result.json' \
-      -o -name 'cost.jsonl' -o -name 'budget_stop.json' -o -name 'fit-cost.json' \) -print0 | sort -z)
+      -o -name 'cost.jsonl' -o -name 'budget_stop.json' -o -name 'fit-cost.json' \
+      -o -name 'kv-cache-runtime.json' \) -print0 | sort -z)
     while IFS= read -r -d '' path; do
       printf '\n===== LOG: %s (last 100 lines) =====\n' "${path#"$OUT_ROOT"/}"
       tail -n 100 "$path"

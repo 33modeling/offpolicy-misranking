@@ -28,17 +28,42 @@ CODE = tuple(dict.fromkeys((*runtime.CODE_FILES, "src/selection_switch.py", "src
     "src/score_artifacts.py", "src/downstream_compare.py", "src/additive_experiment.py",
     "src/net_gate_memory_worker.py", "src/bootstrap_math_verify.py")))
 _verify = base.verify
-_protocol = runtime.protocol
+# Exact a63e69d runtime before the teacher-forced KV-cache fix.
+PRE_KV_CACHE_CODE = "8cb0b16a8c2e4229674c0165212a36ee916d9a2cbaea8dcc7adefc0deb9819ae"
+KV_CACHE_FILES = {"src/grads.py", "src/selection_switch_gpu.py"}
+KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
 
 
 def code_hashes():
     return {name: base.digest(base.ROOT / name) for name in CODE}
 
 
+def validate_code_hashes(recorded):
+    current = code_hashes()
+    if recorded == current:
+        return current
+    if (not isinstance(recorded, dict) or core.fingerprint(recorded) != PRE_KV_CACHE_CODE
+            or set(recorded) != set(current)
+            or current["src/grads.py"] != KV_CACHE_GRADS
+            or any(recorded[name] != sha for name, sha in current.items() if name not in KV_CACHE_FILES)):
+        raise ValueError("switch protocol or scientific code changed; preserve the frozen run")
+    return current
+
+
 def manifest(root):
     p = core.read(root / "switch.json")
-    if p["schema"] != rule.SCHEMA or p["code_hashes"] != code_hashes():
+    if p["schema"] != rule.SCHEMA:
         raise ValueError("switch protocol or scientific code changed; preserve the frozen run")
+    current = validate_code_hashes(p["code_hashes"])
+    if p["code_hashes"] != current:
+        with base.lease(root / ".kv-cache-runtime.lock", blocking=True):
+            base.bind(root / "kv-cache-runtime.json", {
+                "schema": "selection-switch-kv-cache-runtime/v1",
+                "switch_sha256": base.digest(root / "switch.json"),
+                "original_code_hashes": p["code_hashes"], "runtime_code_hashes": current,
+                "change": "teacher-forced scoring forwards explicitly disable KV cache",
+                "cost_policy": "retain all previous costs and the original branch allocation",
+            })
     return p
 
 
@@ -308,9 +333,23 @@ def publish_state(root, seed, step):
 
 
 def protocol(root):
-    value = _protocol(root)
-    if value.get("code_hashes") != code_hashes():
-        raise ValueError("incomplete scientific code binding")
+    value = core.read(root / "net_protocol.json")
+    if value.get("schema") != rule.SCHEMA or value.get("schedule") != rule.SCHEDULE:
+        raise ValueError("not a selected-prefix switch suite")
+    arms = list(rule.DEV_ARMS) if value["mode"] == "study" else list(rule.TEST_ARMS)
+    if value["mode"] not in {"study", "test"} or value["arms"] != arms or value["selector"] != "fresh_r":
+        raise ValueError("invalid switch experimental design")
+    if value["mode"] == "test":
+        rule.validate_model(value["model"])
+        if value["role"] != "test" or value["model"]["data_kind"] != "observed":
+            raise ValueError("actual gate testing needs an observed frozen model and held-out trajectories")
+    elif value["model"] is not None or value["role"] != "development":
+        raise ValueError("study collects development labels; it does not run a fitted gate")
+    core.number(value["max_measurement_fraction"], "measurement fraction", 1e-12, .1)
+    core.integer(value["recent_window"], "recent window", 1)
+    validate_code_hashes(value.get("code_hashes"))
+    if value["code_hashes"] != manifest(root.parent.parent)["code_hashes"]:
+        raise ValueError("state code binding differs from the switch manifest")
     return value
 
 
