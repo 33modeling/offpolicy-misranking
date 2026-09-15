@@ -180,6 +180,12 @@ cleanup before releasing its node locks. SIGKILL, host loss, a driver hang, or a
 cannot be repaired by a new signal handler. Never use a global Python kill or
 GPU reset to stop this experiment.
 
+From a terminal, `run` and `retry` detach into their own session with
+`logs/console.<host>.log` as console and the terminal only follows it; Ctrl-C
+ends the view, `bash scripts/run_mopps_comparison.sh stop` stops the node's
+detached launcher (TERM to its session; ranks reaped, receipts closed).
+`SWITCH_FOREGROUND=1` or a non-terminal caller keeps the foreground behaviour.
+
 After diagnosing a failed branch, explicitly retry only that branch:
 
 ```bash

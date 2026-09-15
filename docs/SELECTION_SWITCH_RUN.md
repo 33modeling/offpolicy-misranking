@@ -94,6 +94,18 @@ normal completion; hard kills cannot reliably write one.
 - `selection-switch-v1` is this experiment's first protocol, not a new paper
   version, repository, or replacement for the old v1/v2/v3 experiments.
 
+When started from a terminal, `run` and `smoke` detach themselves first: the
+controller runs in its own session with `logs/console.<host>.log` as its console,
+so a dropped phone or SSH session cannot kill it (the 2026-09-13 queue incident:
+a dead terminal killed the controller and left GPU ranks running). The terminal
+only follows that console; Ctrl-C ends the view and the run continues. Use
+`bash scripts/run_selection_switch.sh stop` on that node to stop it: it sends
+TERM to the detached session, the worker reaps its GPU ranks and closes cost
+receipts, and the command waits up to three minutes for the exit. Starting
+`run` again while a detached launcher is alive only prints its PID. Without a
+terminal (tests, pipelines) or with `SWITCH_FOREGROUND=1`, the launcher keeps the
+direct foreground behaviour, where Ctrl-C stops the worker as before.
+
 Rerun the same command to resume. Completed branches are skipped. A failed
 task is attempted at most once per invocation; other eligible tasks continue.
 It never kills another E5/Qwen/net-gain process or bypasses an occupied node.

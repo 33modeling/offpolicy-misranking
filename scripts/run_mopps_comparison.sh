@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Separate queue: never modifies or restarts the selected-prefix experiment.
 set -euo pipefail
+LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in prepare|run|retry|status|summarize|errors|recover-cost|cpu) ;;
-  *) echo 'usage: bash scripts/run_mopps_comparison.sh [prepare|run|retry|status|summarize|errors|recover-cost|cpu]'; exit 2 ;;
+case "$MODE" in prepare|run|retry|stop|status|summarize|errors|recover-cost|cpu) ;;
+  *) echo 'usage: bash scripts/run_mopps_comparison.sh [prepare|run|retry|stop|status|summarize|errors|recover-cost|cpu]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -24,6 +25,61 @@ fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*|--parent-root|--parent-root=*) echo '[abort] use MOPPS_ROOT and SWITCH_ROOT'; exit 2 ;; esac
 done
+
+# Phone terminals drop: keep the GPU controller off the terminal. GPU modes
+# re-launch themselves in their own session with a file console, then only
+# follow that file; Ctrl-C ends the view, not the run. Tests and pipelines
+# (no tty) keep the direct foreground behaviour; SWITCH_FOREGROUND=1 forces it.
+CONSOLE_DIR="$OUT_ROOT/logs"
+LAUNCH_HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
+PID_FILE="$CONSOLE_DIR/launcher.$LAUNCH_HOST.pid"
+CONSOLE_LOG="$CONSOLE_DIR/console.$LAUNCH_HOST.log"
+launcher_pid_alive() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid
+  pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+if [ "$MODE" = stop ]; then
+  if ! launcher_pid_alive; then
+    echo "[stop] no live detached launcher on $LAUNCH_HOST (pid file: $PID_FILE)"
+    exit 0
+  fi
+  pid=$(cat "$PID_FILE")
+  echo "[stop] host=$LAUNCH_HOST pid=$pid: sending TERM; the worker reaps its GPU ranks and closes cost receipts"
+  # The detached launcher leads its own session: TERM to the group reaches the
+  # controller and its worker together; both tolerate repeated stop signals.
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  for _ in $(seq 1 180); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "[stop] pid=$pid still running after 180s; not killing harder (GPU ranks would be orphaned). Retry stop or inspect: $CONSOLE_LOG"
+    exit 1
+  fi
+  echo "[stop] launcher exited; last console lines:"
+  tail -n 5 "$CONSOLE_LOG" 2>/dev/null || true
+  exit 0
+fi
+case "$MODE" in run|retry)
+  if [ -t 1 ] && [ "${SWITCH_DETACHED:-0}" != 1 ] && [ "${SWITCH_FOREGROUND:-0}" != 1 ]; then
+    if launcher_pid_alive; then
+      echo "[already running] host=$LAUNCH_HOST pid=$(cat "$PID_FILE"); follow: tail -f $CONSOLE_LOG; stop: bash scripts/$(basename "$0") stop"
+      exit 0
+    fi
+    mkdir -p "$CONSOLE_DIR"
+    touch "$CONSOLE_LOG"
+    offset=$(stat -c %s "$CONSOLE_LOG")
+    SWITCH_DETACHED=1 setsid nohup bash "$LAUNCHER_SELF" "$MODE" "$@" >> "$CONSOLE_LOG" 2>&1 < /dev/null &
+    pid=$!
+    disown 2>/dev/null || true
+    echo "$pid" > "$PID_FILE"
+    echo "[detached] host=$LAUNCH_HOST pid=$pid mode=$MODE console=$CONSOLE_LOG"
+    echo "[detached] Ctrl-C leaves the run going; stop with: bash scripts/$(basename "$0") stop"
+    tail --pid="$pid" -c +"$((offset+1))" -F "$CONSOLE_LOG" 2>/dev/null || true
+    rc=$(grep -o 'launcher-exit\] pid='"$pid"' mode=[a-z]* rc=[0-9]*' "$CONSOLE_LOG" | tail -n 1 | grep -o 'rc=[0-9]*' | cut -d= -f2)
+    exit "${rc:-0}"
+  fi
+  ;;
+esac
 case "$MODE" in
   run|retry|prepare|summarize)
     if [ "${SWITCH_RUNTIME_REPO:-}" != "$PWD" ]; then
@@ -79,7 +135,8 @@ export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIE
 trap '' HUP
 source scripts/_selection_worker.sh
 rc=0
-selection_run_worker "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
+selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
+  "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
 if [ "$rc" -ne 0 ]; then
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
 fi
