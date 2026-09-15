@@ -310,3 +310,18 @@ def test_prefix_rejects_live_local_legacy_owner(tmp_path):
     (directory / "progress.json").unlink()
     with pytest.raises(ValueError, match="still alive"):
         switch.prefix_cost(directory, "H100")
+
+
+def test_brief_lists_only_events_that_stayed_open():
+    closed = [{"directory": "states/s3-t25/mopps", "event_id": "abcdef0123", "status": "blocked",
+               "reason": "recorded owner PID 5 is still alive"},
+              {"directory": "development/s0-t25/selection_reduced", "event_id": "ff00", "status": "recovered"},
+              {"directory": "states/s4-t100/mopps", "event_id": "gg11", "status": "skipped",
+               "reason": "last evidence of the job is 100s old (< 900s)"}]
+    text = recovery.brief("mopps-comparison-v1", closed, [object(), object()])
+    lines = text.splitlines()
+    assert lines[0] == "[recover-cost] mopps-comparison-v1: 1 stale event(s) closed, 2 still open"
+    assert lines[1] == "[recover-cost]   states/s3-t25/mopps abcdef01: blocked - recorded owner PID 5 is still alive"
+    assert lines[2].startswith("[recover-cost]   states/s4-t100/mopps gg11: skipped - last evidence")
+    assert len(lines) == 3
+    assert "selection_reduced" not in text

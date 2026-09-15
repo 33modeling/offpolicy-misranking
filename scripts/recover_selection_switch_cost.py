@@ -213,6 +213,17 @@ def close_stale(root, *, min_age=900., now=None):
     return outcome
 
 
+def brief(label, closed, remaining):
+    """One line of counts, then one line per event that stayed open and why."""
+    recovered = sum(row.get("status") == "recovered" for row in closed)
+    lines = [f"[recover-cost] {label}: {recovered} stale event(s) closed, {len(remaining)} still open"]
+    for row in closed:
+        if row.get("status") != "recovered":
+            lines.append(f"[recover-cost]   {row.get('directory')} {str(row.get('event_id', ''))[:8]}: "
+                         f"{row.get('status')} - {str(row.get('reason', ''))[:200]}")
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -223,6 +234,8 @@ def main():
     parser.add_argument("--stale", action="store_true",
                         help="close open events whose owner has shown no life for --min-age seconds: receipt if present, else last observed evidence plus a 60s over-count margin")
     parser.add_argument("--min-age", type=float, default=900.)
+    parser.add_argument("--brief", action="store_true",
+                        help="with --stale: one summary line plus one line per event that was not closed, instead of JSON")
     args = parser.parse_args()
     if args.stale and args.directory is not None:
         parser.error("--stale cannot be combined with a single-event recovery")
@@ -237,7 +250,11 @@ def main():
                 closed = close_stale(root, min_age=args.min_age)
             except (ValueError, OSError) as exc:
                 parser.exit(2, f"[recovery blocked] {exc}\n")
-            print(json.dumps({"stale_closure": closed, "open_events": inspect(root)}, indent=2))
+            remaining = inspect(root)
+            if args.brief:
+                print(brief(root.name, closed, remaining))
+            else:
+                print(json.dumps({"stale_closure": closed, "open_events": remaining}, indent=2))
             return 2 if any(row["status"] == "blocked" for row in closed) else 0
         print(json.dumps({"open_events": inspect(root)}, indent=2))
         return 0

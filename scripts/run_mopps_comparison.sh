@@ -342,8 +342,8 @@ else
     # events whose owner has been silent for 15 minutes (operator decision,
     # see recover-cost --stale) before each pass. SWITCH_AUTO_RECOVER=0 disables.
     if [ "${SWITCH_AUTO_RECOVER:-1}" != 0 ]; then
-      CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" --stale 2>/dev/null \
-        | grep -c '"status": "recovered"' | sed 's/^/[recover-cost] stale events closed before this pass: /' || true
+      CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" --stale --brief 2>&1 \
+        | sed 's/^\[recovery blocked\]/[recover-cost] blocked:/' || true
     fi
     # The queue skips branches with a recorded failure; retry each once per pass
     # (this node has just passed admission) before the queue pass, like the

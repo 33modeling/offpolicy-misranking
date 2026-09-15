@@ -108,8 +108,9 @@ mopps_complete() {
 }
 recover_root() {
   [ -f "$1/switch.json" ] || [ -f "$1/mopps.json" ] || return 0
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$1" --stale 2>/dev/null \
-    | grep -c '"status": "recovered"' | sed "s|^|[recover-cost] $(basename "$1"): stale events closed: |" || true
+  # One summary line, then one line per open event that could not be closed and why.
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$1" --stale --brief 2>&1 \
+    | sed 's/^\[recovery blocked\]/[recover-cost] blocked:/' || true
 }
 pass=0
 wait_seconds=$HOLD
