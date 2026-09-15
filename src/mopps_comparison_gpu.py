@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import math
 import os
@@ -23,6 +25,7 @@ _base_policy = base.policy
 _base_verify = base.verify
 PRE_CODE_COMPAT_CODE = "585e2e9efc8cb79433d90daabf589112c2bb64968bcd6b3fceef7a849d286def"
 PRE_LIFECYCLE_CODE = "ef5eb15dbd1d646adff3c515932d7b03171fcce937d8d8d69c44ee5e2e41da40"
+PRE_QUEUE_FAILURE_CODE = "0bb0f42a82215281267a5f8741f1e9b87d16ccaaf945ace32c81f50c6400f33a"
 
 
 def hashes():
@@ -73,7 +76,7 @@ def protocol(root):
     current = hashes()
     recorded = p.get("code_hashes")
     if recorded != current:
-        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE}
+        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE}
                 or set(recorded) != set(current)
                 or any(recorded[name] != sha for name, sha in current.items()
                        if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py", "src/selection_gate_gpu.py"})):
@@ -105,16 +108,33 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) != PRE_LIFECYCLE_CODE)):
+                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
-            base.bind(root / "worker-lifecycle-runtime.json", {
+            lifecycle_path = root / "worker-lifecycle-runtime.json"
+            lifecycle_receipt = {
                 "schema": "mopps-worker-lifecycle-runtime/v1",
                 "protocol_sha256": base.digest(root / "mopps.json"),
                 "compat_runtime_sha256": base.digest(path), "runtime_code_hashes": current,
                 "change": "signal cleanup and independent certified-prefix import; Gate evidence checked at comparison",
                 "cost_policy": "same policies, sampling, optimizer, evaluation and budgets; no source writes",
+            }
+            if lifecycle_path.exists():
+                previous = core.read(lifecycle_path)
+                previous_code = previous.get("runtime_code_hashes")
+                if (previous != lifecycle_receipt and
+                        (previous != {**lifecycle_receipt, "runtime_code_hashes": previous_code}
+                         or core.fingerprint(previous_code) != PRE_QUEUE_FAILURE_CODE)):
+                    raise ValueError(f"frozen contract changed: {lifecycle_path}")
+            else:
+                base.bind(lifecycle_path, lifecycle_receipt)
+            base.bind(root / "queue-failure-runtime.json", {
+                "schema": "mopps-queue-failure-runtime/v1",
+                "protocol_sha256": base.digest(root / "mopps.json"),
+                "lifecycle_runtime_sha256": base.digest(lifecycle_path), "runtime_code_hashes": current,
+                "change": "distinguish failed prefix dependencies from live producers; drain independent ready tasks",
+                "cost_policy": "no automatic retries, source writes, policy changes or cost waivers",
             })
     return p
 
@@ -131,6 +151,32 @@ def ready(p, seed, step):
     out = original_point(p, seed, step)
     return ((switch.prefix_dir(Path(p["parent"]), seed) / f"prefix-{step}.json").is_file()
             or (out / "contract.json").is_file() and (out / "decisions-frozen.json").is_file())
+
+
+def prefix_dependency(p, seed, step):
+    """Inspect the earliest missing segment without creating source files."""
+    directory = switch.prefix_dir(Path(p["parent"]), seed)
+    with contextlib.ExitStack() as stack:
+        try:
+            handle = stack.enter_context((directory / ".prefix.lock").open("rb"))
+        except FileNotFoundError:
+            handle = None
+        if handle is not None:
+            try:
+                # A shared probe works with a read-only descriptor on NFS too.
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return {"active": True, "failure": None}
+        for current in rule.STEPS:
+            if current > step:
+                break
+            if not (directory / f"prefix-{current}.json").is_file():
+                path = directory / f"segment-{current}" / "failure.json"
+                if path.is_file():
+                    error = str(core.read(path).get("error", "unknown prefix failure"))
+                    return {"active": False, "failure": f"{path}: {error[:500]}"}
+                break
+    return {"active": False, "failure": None}
 
 
 def verify_prefix(p, seed, step):
@@ -376,6 +422,7 @@ def run_arm(out, p, arm, devices, env):
 def work(root, idle_timeout=600., only=None):
     import additive_experiment as ae
     p = protocol(root)
+    core.number(idle_timeout, "idle timeout", 0.)
     devices = switch.admitted_devices(p)
     attempted, failures, last_progress = set(), 0, time.monotonic()
     tasks = [(s, t, a) for s in p["seeds"] for t in p["steps"] for a in (p["arms"] if s % 2 == 0 else p["arms"][::-1])]
@@ -383,8 +430,10 @@ def work(root, idle_timeout=600., only=None):
         if only not in tasks:
             raise ValueError("unregistered retry task")
         tasks = [only]
+    reported_blockers = set()
     while True:
-        progressed, busy, waiting = False, [], []
+        progressed, busy, waiting, blocked = False, [], [], []
+        active_prefix = False
         for seed, step, arm in tasks:
             out, key = point(root, seed, step), (seed, step, arm)
             directory = out / arm
@@ -392,8 +441,15 @@ def work(root, idle_timeout=600., only=None):
                 continue
             if (directory / "failure.json").exists() and only is None:
                 failures = 1
+                blocked.append(f"{directory / 'failure.json'}: explicit retry required")
                 continue
             if not ready(p, seed, step):
+                dependency = prefix_dependency(p, seed, step)
+                active_prefix |= dependency["active"]
+                if dependency["failure"]:
+                    failures = 1
+                    blocked.append(dependency["failure"])
+                    continue
                 waiting.append(f"s{seed}/t{step}: missing {switch.prefix_dir(Path(p['parent']), seed) / f'prefix-{step}.json'}")
                 continue
             try:
@@ -412,14 +468,21 @@ def work(root, idle_timeout=600., only=None):
                 attempted.add(key)
                 failures += 1
                 switch.record_failure(directory, exc)
+        for detail in dict.fromkeys(blocked):
+            if detail not in reported_blockers:
+                print(f"[blocked] {detail}; independent ready tasks remain eligible", flush=True)
+                reported_blockers.add(detail)
         if progressed:
             last_progress = time.monotonic()
         elif busy and switch.wait_for_peers(busy, last_progress=last_progress, idle_timeout=idle_timeout):
             continue
-        elif waiting and time.monotonic()-last_progress < idle_timeout:
+        elif waiting and (active_prefix or not failures) and time.monotonic()-last_progress < idle_timeout:
             print("[waiting] " + "; ".join(dict.fromkeys(waiting)) + "; original experiment is read-only", flush=True)
             time.sleep(15)
         else:
+            if failures:
+                print("[blocked] no claimable work remains; exiting instead of reserving idle GPUs; "
+                      "inspect the recorded failures before retrying", flush=True)
             break
     status(root)
     return int(bool(failures))
@@ -446,7 +509,11 @@ def status(root):
                     elif (directory / "failure.json").exists():
                         state, detail = "FAILED", core.read(directory / "failure.json")["error"].splitlines()[0]
                     elif not ready(p, seed, step):
-                        state, detail = "WAIT", f"prefixes/seed-{seed}/prefix-{step}.json missing (Gate not required)"
+                        dependency = prefix_dependency(p, seed, step)
+                        if dependency["failure"]:
+                            state, detail = "BLOCKED", dependency["failure"]
+                        else:
+                            state, detail = "WAIT", f"prefixes/seed-{seed}/prefix-{step}.json missing (Gate not required)"
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     state, detail = "INVALID", str(exc)
                 counts[state] = counts.get(state, 0)+1

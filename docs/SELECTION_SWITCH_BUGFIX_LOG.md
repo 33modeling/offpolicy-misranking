@@ -374,3 +374,69 @@ Final verification on the reviewed code:
 - No cluster login, four-H100 execution, lost-time total or original-model
   comparison outcome was verified. The runtime patch and this record are one
   commit; operator deployment remains separate from Git publication.
+
+## 2026-09-15: Failed prerequisite must not look like useful waiting
+
+Operator reports: all nodes remain waiting with no progress. The preceding
+trace includes `train_mopps_grpo.py:649/645/244`, DDP parameter verification,
+`ncclUnhandledCudaError: Call to CUDA function failed`, and the outer torchrun
+`ChildFailedError` (`run.py:892/883`, launcher `api.py:139/270`). These frames
+identify a failure at DDP initialization, not a logging exception. They do not
+identify the underlying CUDA error or prove a version mismatch. No `Last error`
+detail or current `[waiting]` line has been supplied; the secure cluster is
+not accessible to the assistant.
+
+Confirmed separate queue defect: MoPPS checked only whether the required
+prefix certificate existed. If its earliest missing prefix segment had already
+failed, every dependent branch still displayed WAIT and the controllers slept
+for up to ten minutes. This is reproduced locally with failed seed-3/4 step-25
+prefixes: all 12 branches wait even though no prefix producer is running.
+This reproduction is not evidence that this is the operator's current wait
+path; busy task locks are another path and are not bypassed by this repair.
+
+Repair:
+
+- Inspect the earliest missing prefix segment and its existing failure record.
+  A failed prerequisite is BLOCKED, not ordinary WAIT. Print its record path and
+  error. Completed earlier prefixes and independent ready arms remain eligible.
+- Probe an existing prefix lock with a nonblocking shared lock on a read-only
+  descriptor. Do not create, remove, rewrite or force-release source locks. A
+  producer holding the exclusive lock may be retrying an old failure, so retain
+  normal waiting while it runs. No stale PID or GPU-utilization guess overrides
+  an actual lock.
+- After failures, leave the queue when no ready work, waitable peer or active
+  prefix producer remains, instead of sleeping for missing unscheduled work.
+  Existing failed continuation records still require an explicit retry. No
+  automatic retry, parent restart, checkpoint fabrication or cost waiver.
+- Preserve the exact `f258c46` source map and prior compatibility/lifecycle
+  receipts. Add `queue-failure-runtime.json`; do not rewrite frozen manifests,
+  selector/trainer code, source artifacts, result receipts or cost journals.
+
+Verification: the new failure-path tests fail on the preceding implementation
+and pass after the repair. Tests include four independent controllers observing
+the same failed prerequisites, real local file-lock contention, an active retry
+publishing ready work, independent ready arms completing, source byte
+preservation, and exact previous-runtime receipt migration/tamper rejection.
+These queue tests do not execute four-GPU training or validate cluster NCCL.
+
+Remaining limitation: this repair prevents a failed dependency from consuming
+idle queue time; it does not repair `ncclUnhandledCudaError`. The actual CUDA
+detail and current waiting line are still needed to distinguish a failed
+prerequisite from busy worker ownership. Do not install arbitrary Torch/NCCL
+versions, disable transports, delete lock files or repeat paid training attempts
+based only on the outer `ChildFailedError`. A running pinned controller does
+not pick up a Git pull until it is stopped and relaunched.
+
+Final local verification:
+
+- 232 CPU/process checks passed; one optional plotting test skipped. Report:
+  `/tmp/mopps-wait-regression-20260915.xml`.
+- 8 actual CUDA lifecycle checks passed on the local RTX 3050, including
+  single-rank torchrun/NCCL, both launchers, stop signals and restart. Report:
+  `/tmp/mopps-wait-cuda-20260915.xml`. This is lifecycle regression coverage,
+  not a reproduction or repair confirmation of the cluster's multi-GPU error.
+- No compute processes remained in `nvidia-smi` after testing. Shell syntax
+  and `git diff --check` passed.
+- Reviewed MoPPS source-map fingerprint:
+  `7a4e2b957080e1af5158e9802005dfcd13a51234e3400c9011c35ed6a9c1e5f9`.
+  Switch's source map, all three trainers and the manuscript are unchanged.

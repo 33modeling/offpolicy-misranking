@@ -126,6 +126,36 @@ def test_lifecycle_upgrade_preserves_existing_mopps_manifest_and_receipt(tmp_pat
     assert core.read(root / "worker-lifecycle-runtime.json")["runtime_code_hashes"] == run.hashes()
 
 
+@pytest.mark.parametrize("migrated", [False, True])
+def test_queue_failure_upgrade_preserves_f258c46_manifests_and_receipts(tmp_path, monkeypatch, migrated):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    previous = run.hashes()
+    previous["src/mopps_comparison_gpu.py"] = "de7f40dcc15ee9bea5812dbb5132313417868ce335dede161beedd894f5a9a4b"
+    assert core.fingerprint(previous) == run.PRE_QUEUE_FAILURE_CODE
+    p["code_hashes"] = code_compat_predecessor() if migrated else previous
+    core.atomic_json(root / "mopps.json", p)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(run, "hashes", lambda: previous)
+            run.protocol(root)
+        (root / "queue-failure-runtime.json").unlink()
+    before = snapshot(tmp_path)
+    assert run.protocol(root) == p
+    assert run.protocol(root) == p
+    assert run.prepare(root, parent) == p
+    after = snapshot(tmp_path)
+    assert {name: after[name] for name in before} == before
+    receipt_path = root / "queue-failure-runtime.json"
+    assert core.read(receipt_path)["runtime_code_hashes"] == run.hashes()
+    receipt = core.read(root / "worker-lifecycle-runtime.json")
+    receipt["cost_policy"] = "waive failed deployment costs"
+    core.atomic_json(root / "worker-lifecycle-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        run.protocol(root)
+
+
 @pytest.mark.parametrize("name", ["src/mopps.py", "src/train_mopps_grpo.py", "src/grads.py", "src/selection_switch.py"])
 @pytest.mark.parametrize("where", ["recorded", "current"])
 def test_code_compat_rejects_mopps_scientific_changes(tmp_path, monkeypatch, name, where):
@@ -403,6 +433,160 @@ def test_missing_prefix_is_named_in_wait_instead_of_claiming_gate_dependency(tmp
     assert "prefixes/seed-3/prefix-25.json missing (Gate not required)" in output
     assert "WAIT=12" in output
     assert not list(root.glob("states/*/*/cost.jsonl"))
+
+
+def test_failed_prefixes_stop_all_waiting_without_launching_or_changing_parent(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    run.prepare(root, parent)
+    for seed in rule.TEST_SEEDS:
+        core.atomic_json(parent / f"prefixes/seed-{seed}/segment-25/failure.json",
+                         {"error": "prefix-train worker failed: ncclUnhandledCudaError"})
+    before = snapshot(parent)
+    monkeypatch.setitem(sys.modules, "additive_experiment", SimpleNamespace(model_environment=lambda _: {}))
+    monkeypatch.setattr(switch, "admitted_devices", lambda _: list("0123"))
+    monkeypatch.setattr(run.time, "sleep", lambda _: pytest.fail("failed prerequisite kept GPUs waiting"))
+    monkeypatch.setattr(run, "run_arm", lambda *args: pytest.fail("launched without a valid prefix"))
+    assert run.work(root) == 1
+    output = capsys.readouterr().out
+    assert "BLOCKED=12" in output
+    assert "ncclUnhandledCudaError" in output
+    assert "[waiting]" not in output
+    assert snapshot(parent) == before
+    assert not list(root.glob("states/*/*/cost.jsonl"))
+
+
+def test_failed_earlier_segment_blocks_later_prefix_but_not_completed_prefix(tmp_path):
+    parent, _ = source(tmp_path)
+    p = run.prepare(tmp_path / "comparison", parent)
+    directory = parent / "prefixes/seed-3"
+    core.atomic_json(directory / "prefix-25.json", {})
+    core.atomic_json(directory / "segment-50/failure.json", {"error": "NCCL failure"})
+    before = snapshot(parent)
+    assert run.prefix_dependency(p, 3, 25)["failure"] is None
+    for step in (50, 100):
+        dependency = run.prefix_dependency(p, 3, step)
+        assert "segment-50/failure.json" in dependency["failure"]
+        assert "NCCL failure" in dependency["failure"]
+        assert not dependency["active"]
+    assert snapshot(parent) == before
+
+
+def test_active_prefix_retry_is_not_blocked_by_previous_failure(tmp_path):
+    parent, _ = source(tmp_path)
+    p = run.prepare(tmp_path / "comparison", parent)
+    directory = parent / "prefixes/seed-3"
+    core.atomic_json(directory / "segment-25/failure.json", {"error": "old NCCL failure"})
+    with base.lease(directory / ".prefix.lock"):
+        before = snapshot(parent)
+        dependency = run.prefix_dependency(p, 3, 100)
+        assert dependency["active"]
+        assert dependency["failure"] is None
+        assert snapshot(parent) == before
+    assert run.prefix_dependency(p, 3, 100)["failure"] is not None
+
+
+def test_waiting_queue_resumes_when_active_prefix_retry_publishes(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    for seed in rule.TEST_SEEDS:
+        core.atomic_json(parent / f"prefixes/seed-{seed}/segment-25/failure.json", {"error": "old failure"})
+    monkeypatch.setitem(sys.modules, "additive_experiment", SimpleNamespace(model_environment=lambda _: {}))
+    monkeypatch.setattr(switch, "admitted_devices", lambda _: list("0123"))
+    lease = base.lease(parent / "prefixes/seed-3/.prefix.lock")
+    lease.__enter__()
+    held = True
+    sleeps, claims = [], []
+    def publish_on_sleep(seconds):
+        nonlocal held
+        sleeps.append(seconds)
+        assert held
+        origin = run.original_point(p, 3, 25)
+        core.atomic_json(origin / "contract.json", {})
+        core.atomic_json(origin / "decisions-frozen.json", {})
+        lease.__exit__(None, None, None)
+        held = False
+    def import_ready(root, protocol, seed, step):
+        out = run.point(root, seed, step)
+        core.atomic_json(out / "contract.json", {"config": {}})
+        core.atomic_json(out / "import.done.json", {})
+        return out
+    def train(out, protocol, arm, devices, env):
+        claims.append((out.name, arm))
+        core.atomic_json(out / arm / "result.json", {})
+        core.atomic_json(out / arm / "result.sha256.json", {"sha256": base.digest(out / arm / "result.json")})
+    monkeypatch.setattr(run.time, "sleep", publish_on_sleep)
+    monkeypatch.setattr(run, "import_point", import_ready)
+    monkeypatch.setattr(run, "run_arm", train)
+    try:
+        assert run.work(root) == 1
+    finally:
+        if held:
+            lease.__exit__(None, None, None)
+    assert sleeps == [15]
+    assert set(claims) == {("s3-t25", arm) for arm in mopps.ARMS}
+    assert "DONE=2" in capsys.readouterr().out
+
+
+def test_four_waiting_controllers_exit_on_failed_prefix_without_gpu_claims(tmp_path):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    run.prepare(root, parent)
+    for seed in rule.TEST_SEEDS:
+        core.atomic_json(parent / f"prefixes/seed-{seed}/segment-25/failure.json", {"error": "NCCL failure"})
+    before = snapshot(tmp_path)
+    script = """
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+import mopps_comparison_gpu as m
+sys.modules['additive_experiment'] = SimpleNamespace(model_environment=lambda _: {})
+m.switch.admitted_devices = lambda _: list('0123')
+def unexpected(*args):
+    raise AssertionError('failed dependencies must not sleep or launch')
+m.time.sleep = unexpected
+m.run_arm = unexpected
+raise SystemExit(m.work(Path(sys.argv[1])))
+"""
+    workers = [subprocess.Popen([sys.executable, "-c", script, str(root)],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(4)]
+    try:
+        for worker in workers:
+            stdout, stderr = worker.communicate(timeout=10)
+            assert worker.returncode == 1, stdout + stderr
+            assert "BLOCKED=12" in stdout
+            assert "[claimed]" not in stdout and "[waiting]" not in stdout
+            assert not stderr
+    finally:
+        for worker in workers:
+            if worker.poll() is None:
+                worker.kill()
+                worker.communicate()
+    assert snapshot(tmp_path) == before
+
+
+def test_healthy_ready_arms_run_even_when_other_prefixes_failed(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    root, parent, p, out = imported_fixture(tmp_path, monkeypatch)
+    core.atomic_json(parent / "prefixes/seed-4/segment-25/failure.json", {"error": "NCCL failure"})
+    before = snapshot(parent)
+    monkeypatch.setitem(sys.modules, "additive_experiment", SimpleNamespace(model_environment=lambda _: {}))
+    monkeypatch.setattr(switch, "admitted_devices", lambda _: list("0123"))
+    monkeypatch.setattr(run.time, "sleep", lambda _: pytest.fail("no remaining producer; do not keep waiting"))
+    calls = []
+    def train(point, protocol, arm, devices, env):
+        assert point == out
+        calls.append(arm)
+        base.bind(point / arm / "result.json", {"complete": True})
+        base.bind(point / arm / "result.sha256.json", {"sha256": base.digest(point / arm / "result.json")})
+    monkeypatch.setattr(run, "run_arm", train)
+    assert run.work(root) == 1
+    assert sorted(calls) == sorted(mopps.ARMS)
+    assert "DONE=2" in capsys.readouterr().out
+    assert snapshot(parent) == before
 
 
 @pytest.mark.parametrize("artifact", ["prefix", "optimizer", "decision", "model", "budget", "source"])
