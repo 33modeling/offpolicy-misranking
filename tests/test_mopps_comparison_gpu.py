@@ -69,6 +69,7 @@ def test_prepare_is_idempotent_and_does_not_mutate_live_parent(tmp_path):
 
 def code_compat_predecessor():
     hashes = run.hashes()
+    hashes["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     hashes["src/selection_gate_gpu.py"] = switch.COST_METER
     hashes.update({"src/selection_switch_gpu.py": "f87119d0f40cc0166f9095049b234c0b25a6fbaf0b910cc13bef688ce494f753",
                    "src/mopps_comparison_gpu.py": "b036737e9d8a7318bcaec361505fe8b564628d34bfed34c858b6e88ff250fb77"})
@@ -107,6 +108,7 @@ def test_lifecycle_upgrade_preserves_existing_mopps_manifest_and_receipt(tmp_pat
     root = tmp_path / "comparison"
     p = run.prepare(root, parent)
     previous = run.hashes()
+    previous["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     previous.update({"src/selection_gate_gpu.py": switch.COST_METER,
         "src/selection_switch_gpu.py": "23faf38b352f31ee64a2f2989f3b2086cc47b54508c5bd5c89571a670b3e66e8",
         "src/mopps_comparison_gpu.py": "d55710f6909df21a17d45652c35b2e8acfd553960ee5dc492b86584f9bc983d4"})
@@ -132,6 +134,8 @@ def test_queue_failure_upgrade_preserves_f258c46_manifests_and_receipts(tmp_path
     root = tmp_path / "comparison"
     p = run.prepare(root, parent)
     previous = run.hashes()
+    previous.update({"src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
+                     "src/selection_switch_gpu.py": "05aa36a41197cca605933df9d62bba0e4482d6f592c17954c632b45e5cf51195"})
     previous["src/mopps_comparison_gpu.py"] = "de7f40dcc15ee9bea5812dbb5132313417868ce335dede161beedd894f5a9a4b"
     assert core.fingerprint(previous) == run.PRE_QUEUE_FAILURE_CODE
     p["code_hashes"] = code_compat_predecessor() if migrated else previous
@@ -156,7 +160,40 @@ def test_queue_failure_upgrade_preserves_f258c46_manifests_and_receipts(tmp_path
         run.protocol(root)
 
 
-@pytest.mark.parametrize("name", ["src/mopps.py", "src/train_mopps_grpo.py", "src/grads.py", "src/selection_switch.py"])
+@pytest.mark.parametrize("migrated", [False, True])
+def test_cache_guard_preserves_existing_mopps_parent_costs_and_receipts(tmp_path, monkeypatch, migrated):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    previous = run.hashes()
+    previous.update({"src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
+        "src/selection_switch_gpu.py": "05aa36a41197cca605933df9d62bba0e4482d6f592c17954c632b45e5cf51195",
+        "src/mopps_comparison_gpu.py": "e1f6c2021c8904484b185a482ca158be547a4776d97321d8550dd4e8398fc603"})
+    assert core.fingerprint(previous) == run.PRE_CACHE_GUARD_CODE
+    p["code_hashes"] = code_compat_predecessor() if migrated else previous
+    core.atomic_json(root / "mopps.json", p)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(run, "hashes", lambda: previous)
+            run.protocol(root)
+    base.journal(root / "states/s3-t25/mopps/cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = snapshot(tmp_path)
+    assert run.protocol(root) == p
+    assert run.prepare(root, parent) == p
+    after = snapshot(tmp_path)
+    assert {name: after[name] for name in before} == before
+    assert all(name.startswith("comparison/") for name in after.keys() - before.keys())
+    assert core.read(root / "cache-guard-runtime.json")["runtime_code_hashes"] == run.hashes()
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(root / "states/s3-t25/mopps")
+    receipt = core.read(root / "cache-guard-runtime.json")
+    receipt["cost_policy"] = "ignore previous costs"
+    core.atomic_json(root / "cache-guard-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        run.protocol(root)
+
+
+@pytest.mark.parametrize("name", ["src/mopps.py", "src/train_mopps_grpo.py", "src/grads.py", "src/selection_switch.py", "src/net_gate_memory_worker.py"])
 @pytest.mark.parametrize("where", ["recorded", "current"])
 def test_code_compat_rejects_mopps_scientific_changes(tmp_path, monkeypatch, name, where):
     parent, _ = source(tmp_path)

@@ -39,6 +39,7 @@ def test_generic_parent_is_rejected(tmp_path, monkeypatch):
 
 def cache_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     hashes.update({
         "src/grads.py": "112d6a18747d324d91d3fdea0ae316ba0b5248dc7f12eb72eaf51bb391688245",
         "src/selection_switch_gpu.py": "d2974888651e91badd30332569bd62c12c40c0bf6609e2fe10f250eed6a3276d",
@@ -57,6 +58,7 @@ def initial_predecessor():
 
 def code_compat_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     hashes["src/selection_gate_gpu.py"] = switch.COST_METER
     hashes["src/selection_switch_gpu.py"] = "f87119d0f40cc0166f9095049b234c0b25a6fbaf0b910cc13bef688ce494f753"
     assert core.fingerprint(hashes) == switch.PRE_CODE_COMPAT_CODE
@@ -65,10 +67,44 @@ def code_compat_predecessor():
 
 def shutdown_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     hashes.update({"src/selection_gate_gpu.py": switch.COST_METER,
                    "src/selection_switch_gpu.py": "23faf38b352f31ee64a2f2989f3b2086cc47b54508c5bd5c89571a670b3e66e8"})
     assert core.fingerprint(hashes) == switch.PRE_SHUTDOWN_CODE
     return hashes
+
+
+def cache_guard_predecessor():
+    hashes = switch.code_hashes()
+    hashes.update({"src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
+                   "src/selection_switch_gpu.py": "05aa36a41197cca605933df9d62bba0e4482d6f592c17954c632b45e5cf51195"})
+    assert core.fingerprint(hashes) == switch.PRE_CACHE_GUARD_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_cache_guard_preserves_cbaa8c8_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = cache_guard_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+    core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    assert core.read(tmp_path / "cache-guard-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+    receipt = core.read(tmp_path / "shutdown-runtime.json")
+    receipt["cost_policy"] = "ignore previous costs"
+    core.atomic_json(tmp_path / "shutdown-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
 
 
 @pytest.mark.parametrize("migrated", [False, True])
@@ -123,7 +159,7 @@ def test_code_compat_preserves_latest_and_partially_written_receipt_chains(tmp_p
     assert core.read(tmp_path / "code-compat-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
 
 
-@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat"])
+@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard"])
 def test_code_compat_rejects_tampered_receipts(tmp_path, receipt):
     core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": initial_predecessor()})
     switch.manifest(tmp_path)

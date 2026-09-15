@@ -1,3 +1,6 @@
+import copy
+import os
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -21,6 +24,51 @@ def olmo(dtype, *, use_cache=False):
             {"input_ids": torch.arange(64).remainder(62) + 1, "resp_start": 5, "reward": 0}]
     direction = {n: torch.randn_like(p) for n, p in backend.trainable_parameters(model).items()}
     return model, rows, direction
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("attention", ["eager", "sdpa"])
+@pytest.mark.parametrize("merged", [False, True])
+def test_decoder_guard_prevents_537_token_cache_doubling(device, attention, merged):
+    if device == "cuda" and "SWITCH_TEST_CUDA" not in os.environ:
+        pytest.skip("explicit SWITCH_TEST_CUDA device required")
+    if device == "cuda":
+        torch.cuda.set_device(int(os.environ["SWITCH_TEST_CUDA"]))
+    model, _, _ = olmo(torch.bfloat16 if device == "cuda" else torch.float32, use_cache=True)
+    model = model.to(device)
+    if merged:
+        model = model.merge_and_unload().eval()
+        model.requires_grad_(True)
+    model.set_attn_implementation(attention)
+    reference = copy.deepcopy(model)
+    ids = (torch.arange(537, device=device) % 62 + 1).unsqueeze(0)
+    mask = torch.ones_like(ids)
+    expected = reference(ids, attention_mask=mask, use_cache=False).logits
+    expected.float().square().mean().backward()
+    memory.checkpoint_decoder_layers(model)
+    # No caller-side use_cache override: the decoder must guard itself.
+    result = model(ids, attention_mask=mask)
+    result.logits.float().square().mean().backward()
+    assert result.past_key_values is None
+    torch.testing.assert_close(result.logits, expected)
+    for (name, actual), (_, wanted) in zip(model.named_parameters(), reference.named_parameters(), strict=True):
+        if wanted.grad is not None:
+            torch.testing.assert_close(actual.grad, wanted.grad, msg=name)
+    assert model.config.use_cache is True
+    assert not any(module.training for module in model.modules())
+    decoder = model.get_base_model().model if hasattr(model, "get_base_model") else model.model
+    forward = decoder.forward
+    memory.checkpoint_decoder_layers(model)
+    assert decoder.forward == forward
+    with torch.no_grad():
+        cached = model(ids[:, :5], use_cache=True).past_key_values
+        generated = model.generate(ids[:, :5], max_new_tokens=2, do_sample=False, use_cache=True,
+                                   return_dict_in_generate=True, pad_token_id=0, eos_token_id=None)
+    assert cached.get_seq_length() == 5
+    assert generated.sequences.shape == (1, 7) and generated.past_key_values is not None
+    with pytest.raises(ValueError, match="past_key_values"):
+        model(ids[:, :1], past_key_values=cached, use_cache=False)
+    assert cached.get_seq_length() == 5
 
 
 @pytest.mark.parametrize("logit_chunk_tokens", [0, 16])

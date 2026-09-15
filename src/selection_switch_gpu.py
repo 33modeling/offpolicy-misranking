@@ -37,12 +37,17 @@ PRE_PREFIX_RESUME_CODE = "0e1bc0c39315258210b2ed0a003fe777b468993d60e9797f68972f
 PRE_WORKER_LOGS_CODE = "803be77868081423affe81d073b0b5b566889c7d43cfc99608ad444ebb3dd4b9"
 PRE_CODE_COMPAT_CODE = "113afc51b2544e23d8389d6da5ad5f10e67b9407d54f835ba4935a1dd8523512"
 PRE_SHUTDOWN_CODE = "fff7859976ea68d49a9695b27d904522cae6d87e6e5e2f9475be085694122aa8"
+PRE_CACHE_GUARD_CODE = "43f53caa042b27810fe3ba45da025198953378e6f858868cdb93e004bea3a60e"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
-                       PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE}
-RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py"}
+                       PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE,
+                       PRE_CACHE_GUARD_CODE}
+RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py",
+                       "src/net_gate_memory_worker.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
 COST_METER = "58fd87dfdc00c3ee66e6903e12a53b31c4d2798f7594352ee9aa894d23525a99"
 SHUTDOWN_METER = "4a578b63b9315d30e5a000fc0bccbaf522090f5c7ea936a447f82762588925d9"
+PRE_CACHE_GUARD_WORKER = "37774032612a2f2f27693cf33267145c021f705046790a3adfafdaeac636c143"
+CACHE_GUARD_WORKER = "42451c5ad342b9ed0f9c0b194e34c4cd76c102c65aa31497a72cb06901858360"
 
 
 def code_hashes():
@@ -57,6 +62,7 @@ def validate_code_hashes(recorded):
             or set(recorded) != set(current)
             or current["src/grads.py"] != KV_CACHE_GRADS
             or current["src/selection_gate_gpu.py"] not in {COST_METER, SHUTDOWN_METER}
+            or current["src/net_gate_memory_worker.py"] not in {PRE_CACHE_GUARD_WORKER, CACHE_GUARD_WORKER}
             or any(recorded[name] != sha for name, sha in current.items() if name not in RUNTIME_PATCH_FILES)):
         old = recorded if isinstance(recorded, dict) else {}
         changed = {name: {"frozen": old.get(name), "current": current.get(name)}
@@ -103,7 +109,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -120,7 +126,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -137,7 +143,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -154,7 +160,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
@@ -171,18 +177,36 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != compat_receipt and
                         (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) != PRE_SHUTDOWN_CODE)):
+                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
                     raise ValueError(f"frozen contract changed: {compat_path}")
             else:
                 base.bind(compat_path, compat_receipt)
             if current["src/selection_gate_gpu.py"] == SHUTDOWN_METER:
-                base.bind(root / "shutdown-runtime.json", {
+                shutdown_path = root / "shutdown-runtime.json"
+                shutdown_receipt = {
                     "schema": "selection-switch-shutdown-runtime/v1",
                     "switch_sha256": base.digest(root / "switch.json"),
                     "compat_runtime_sha256": base.digest(compat_path), "runtime_code_hashes": current,
                     "change": "reap owned worker groups after leader exit; protect stop cleanup and cost receipts",
                     "cost_policy": "charge cleanup time; preserve unknown costs and all frozen artifacts",
-                })
+                }
+                if shutdown_path.exists():
+                    previous = core.read(shutdown_path)
+                    previous_code = previous.get("runtime_code_hashes")
+                    if (previous != shutdown_receipt and
+                            (previous != {**shutdown_receipt, "runtime_code_hashes": previous_code}
+                             or core.fingerprint(previous_code) != PRE_CACHE_GUARD_CODE)):
+                        raise ValueError(f"frozen contract changed: {shutdown_path}")
+                else:
+                    base.bind(shutdown_path, shutdown_receipt)
+                if current["src/net_gate_memory_worker.py"] == CACHE_GUARD_WORKER:
+                    base.bind(root / "cache-guard-runtime.json", {
+                        "schema": "selection-switch-cache-guard-runtime/v1",
+                        "switch_sha256": base.digest(root / "switch.json"),
+                        "shutdown_runtime_sha256": base.digest(shutdown_path), "runtime_code_hashes": current,
+                        "change": "disable KV cache before checkpointed decoder forward; preserve no-grad generation",
+                        "cost_policy": "same gradients, policies and budgets; retain all prior costs and artifacts",
+                    })
     return p
 
 

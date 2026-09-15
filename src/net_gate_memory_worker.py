@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import functools
+import inspect
 import os
 from pathlib import Path
 import signal
@@ -24,11 +25,37 @@ def checkpoint_decoder_layers(model):
     from torch.utils.checkpoint import checkpoint
 
     causal = model.get_base_model() if hasattr(model, "get_base_model") else model
-    layers = getattr(getattr(causal, "model", None), "layers", None)
+    decoder = getattr(causal, "model", None)
+    layers = getattr(decoder, "layers", None)
     if layers is None or not len(layers):
         raise ValueError("memory-safe scoring requires explicit transformer decoder layers")
     if any(module.training for module in model.modules()):
         raise ValueError("scoring must retain evaluation mode, including attention and LoRA dropout")
+    if not getattr(decoder, "_net_gate_cache_guarded", False):
+        decoder_forward = decoder.forward
+        signature = inspect.signature(decoder_forward)
+
+        @functools.wraps(decoder_forward)
+        def uncached_forward(*args, **kwargs):
+            if not torch.is_grad_enabled():
+                return decoder_forward(*args, **kwargs)
+            bound = signature.bind(*args, **kwargs)
+            if bound.arguments.get("past_key_values") is not None:
+                raise ValueError("checkpointed scoring requires full sequences with past_key_values=None")
+            # Disable cache creation before masks/layers capture a mutable cache.
+            # Setting use_cache=False only at a layer does not stop cache.update.
+            bound.arguments["use_cache"] = False
+            # Transformers' config-default decorator reads keyword arguments.
+            call_kwargs = {}
+            for name, value in bound.arguments.items():
+                if signature.parameters[name].kind == inspect.Parameter.VAR_KEYWORD:
+                    call_kwargs.update(value)
+                else:
+                    call_kwargs[name] = value
+            return decoder_forward(**call_kwargs)
+
+        decoder.forward = uncached_forward
+        decoder._net_gate_cache_guarded = True
     for layer in layers:
         if getattr(layer, "_net_gate_checkpointed", False):
             continue

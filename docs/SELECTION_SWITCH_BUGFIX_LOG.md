@@ -36,6 +36,10 @@ The earlier net-gain incidents are not proof of the cause of these switch failur
   accepted only after an observed CUDA/NCCL failure and a successful second
   probe. The operator's exact CUDA cause is still unconfirmed; see the final
   incident entry below. An outer rank/`ChildFailedError` is not that cause.
+- REPRODUCED LOCALLY: the later `1074` versus `537` tensor-size report matches
+  a mutable KV cache captured by eval-mode decoder checkpointing. A decoder-entry
+  cache guard fixes the local reproduction. This is distinct from NCCL startup;
+  the latest deployed revision/calling frame and cluster completion are unverified.
 - Last user-reported allocation: four nodes running. This is not a live
   observation or evidence that those nodes are still running now.
 
@@ -530,3 +534,69 @@ Final verification:
 - After testing, `nvidia-smi` reported no compute processes. Shell syntax and
   `git diff --check` passed. Both scientific source-map fingerprints match
   their pre-patch values above. No cluster execution was performed.
+
+## 2026-09-15: 1074/537 mismatch during checkpoint recomputation
+
+After reporting that `run_selection_switch.sh` still would not run, the operator
+provided `The size of tensor a (1074) must match the size of tensor b (537) at
+non-singleton dimension 3`. Investigation moved from the launcher to model
+forward/backward. No further launcher or NCCL changes are part of this repair.
+
+Reproduction: a real tiny OLMo3 in eval mode, a 537-token sequence, default
+`use_cache=True`, and the repository's `checkpoint_decoder_layers`. Forward
+creates a 537-token cache; backward recomputation appends the same tokens to
+that mutable cache. Attention then adds a 537-wide mask to 1074-wide scores and
+raises the exact reported error. New regression tests failed before the patch
+for both merged and unmerged LoRA. This is not a mocked tensor-size exception.
+
+The earlier `96ad9ed` fix already passes `use_cache=False` in `grads.py`.
+The remaining defect is that the checkpointing helper itself accepted cached
+forward calls. A layer-level `use_cache=False` is insufficient when OLMo3 has
+already received a non-null cache: its attention implementation updates that
+object. The operator's complete latest caller traceback/revision is not known,
+so this reproduction does not establish why a specific updated `grads.py`
+call would have missed its existing explicit cache setting.
+
+Repair:
+
+- Guard the bare decoder's forward before masks and cache objects are created.
+  With gradients enabled, explicitly pass `use_cache=False` regardless of a
+  caller's omitted/default/true setting. Preserve keyword arguments because
+  Transformers' config-default decorator consults keywords, not positional
+  values. Reject explicit `past_key_values` rather than silently discarding
+  a caller's prefix or changing attention-mask semantics.
+- Leave no-grad generation, cache configuration, eval/dropout modes and model
+  parameters unchanged. Installation is idempotent. Do not truncate tensors,
+  crop masks, clear global caches, disable activation checkpointing, alter
+  rewards/selection, or change any trainer.
+- Accept only the exact prior Switch/MoPPS source maps and the reviewed worker
+  hash. Preserve `switch.json`, `mopps.json`, prior migration receipts, policies,
+  selected subsets and cost journals byte-for-byte; append `cache-guard-runtime.json`.
+  Unknown scientific changes, tampered receipts and unknown costs still fail.
+- New source-map fingerprints: Switch
+  `b7803071821dd7aa68035370e37c77fdbaecec13d9e96ea6574d91b10758f5a5`;
+  MoPPS `46f08b629491f95ec180ead37440dd92c1161d19d34a81dfd14ffebfcdeb9756`.
+
+Deployment still requires stopping old pinned workers before pulling and
+relaunching the same root. In detached mode Ctrl+C only closes the console
+view; use the launcher's `stop` command and verify GPU cleanup. Do not delete
+the run or overwrite manifests to bypass compatibility checks. The NCCL
+preflight from `cbaa8c8` remains in place and does not diagnose tensor-shape
+errors during scoring. Secure-cluster execution remains the operator's task.
+
+Final verification:
+
+- The exact prior `cbaa8c8` helper, loaded read-only with `git show`, also
+  reproduced the exact 1074/537 exception on the RTX 3050 with BF16 OLMo3.
+- Fixed GPU regression: 4 passed (eager/SDPA x merged/unmerged LoRA), each with
+  537 tokens, full forward/backward, logit and parameter-gradient comparison
+  against uncached reference execution, retained generation caching, repeated
+  installation and rejection of supplied prefix caches without mutating them.
+  Report: `/tmp/cache-guard-cuda-20260915.xml`.
+- CPU/process regression: 373 passed, 16 skipped (15 opt-in CUDA cases and one
+  optional plotting case). Report: `/tmp/cache-guard-regression-20260915.xml`.
+  Includes current/legacy frozen-run migration, existing receipt preservation,
+  unknown-cost rejection, tamper rejection and shared GRPO loss/checkpoint tests.
+- `git diff --check` passed. `nvidia-smi` showed no remaining compute processes
+  after both positive GPU tests and the old-code reproduction. No four-H100
+  run, completed experiment result or cluster deployment is claimed.

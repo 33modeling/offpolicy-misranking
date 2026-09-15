@@ -26,6 +26,7 @@ _base_verify = base.verify
 PRE_CODE_COMPAT_CODE = "585e2e9efc8cb79433d90daabf589112c2bb64968bcd6b3fceef7a849d286def"
 PRE_LIFECYCLE_CODE = "ef5eb15dbd1d646adff3c515932d7b03171fcce937d8d8d69c44ee5e2e41da40"
 PRE_QUEUE_FAILURE_CODE = "0bb0f42a82215281267a5f8741f1e9b87d16ccaaf945ace32c81f50c6400f33a"
+PRE_CACHE_GUARD_CODE = "7a4e2b957080e1af5158e9802005dfcd13a51234e3400c9011c35ed6a9c1e5f9"
 
 
 def hashes():
@@ -76,10 +77,11 @@ def protocol(root):
     current = hashes()
     recorded = p.get("code_hashes")
     if recorded != current:
-        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE}
+        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE}
                 or set(recorded) != set(current)
+                or current["src/net_gate_memory_worker.py"] not in {switch.PRE_CACHE_GUARD_WORKER, switch.CACHE_GUARD_WORKER}
                 or any(recorded[name] != sha for name, sha in current.items()
-                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py", "src/selection_gate_gpu.py"})):
+                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py", "src/selection_gate_gpu.py", "src/net_gate_memory_worker.py"})):
             raise ValueError("frozen MoPPS experiment changed: unreviewed code hashes")
         switch.validate_code_hashes({name: recorded[name] for name in switch.CODE})
     if (p["schema"] != mopps.SCHEMA
@@ -108,7 +110,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -125,17 +127,35 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != lifecycle_receipt and
                         (previous != {**lifecycle_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) != PRE_QUEUE_FAILURE_CODE)):
+                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE})):
                     raise ValueError(f"frozen contract changed: {lifecycle_path}")
             else:
                 base.bind(lifecycle_path, lifecycle_receipt)
-            base.bind(root / "queue-failure-runtime.json", {
+            queue_path = root / "queue-failure-runtime.json"
+            queue_receipt = {
                 "schema": "mopps-queue-failure-runtime/v1",
                 "protocol_sha256": base.digest(root / "mopps.json"),
                 "lifecycle_runtime_sha256": base.digest(lifecycle_path), "runtime_code_hashes": current,
                 "change": "distinguish failed prefix dependencies from live producers; drain independent ready tasks",
                 "cost_policy": "no automatic retries, source writes, policy changes or cost waivers",
-            })
+            }
+            if queue_path.exists():
+                previous = core.read(queue_path)
+                previous_code = previous.get("runtime_code_hashes")
+                if (previous != queue_receipt and
+                        (previous != {**queue_receipt, "runtime_code_hashes": previous_code}
+                         or core.fingerprint(previous_code) != PRE_CACHE_GUARD_CODE)):
+                    raise ValueError(f"frozen contract changed: {queue_path}")
+            else:
+                base.bind(queue_path, queue_receipt)
+            if current["src/net_gate_memory_worker.py"] == switch.CACHE_GUARD_WORKER:
+                base.bind(root / "cache-guard-runtime.json", {
+                    "schema": "mopps-cache-guard-runtime/v1",
+                    "protocol_sha256": base.digest(root / "mopps.json"),
+                    "queue_runtime_sha256": base.digest(queue_path), "runtime_code_hashes": current,
+                    "change": "checkpointed decoder cache guard in shared Switch scoring; MoPPS trainer unchanged",
+                    "cost_policy": "same policies, gradients and budgets; no parent writes or cost waivers",
+                })
     return p
 
 
