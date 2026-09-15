@@ -136,8 +136,24 @@ export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIE
 trap '' HUP
 source scripts/_selection_worker.sh
 rc=0
-selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
-  "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
+if [ "$MODE" = retry ] && [ "$#" -eq 0 ]; then
+  # Phone-typeable form: retry each recorded branch failure once, in path order.
+  # Each item is still the explicit single-branch retry of the Python entrypoint,
+  # behind the same node admission check.
+  mapfile -t FAILED < <(find "$OUT_ROOT/states" -mindepth 3 -maxdepth 3 -name failure.json 2>/dev/null | sort)
+  [ "${#FAILED[@]}" -gt 0 ] || echo '[retry] no recorded branch failures'
+  for failure in "${FAILED[@]}"; do
+    rel=${failure#"$OUT_ROOT/states/"}
+    point=${rel%%/*}; arm=${rel#*/}; arm=${arm%%/*}
+    seed=${point#s}; seed=${seed%%-t*}; step=${point##*-t}
+    echo "[retry] s$seed/t$step/$arm ($failure)"
+    selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
+      "$PY" src/mopps_comparison_gpu.py retry --root "$OUT_ROOT" --seed "$seed" --step "$step" --arm "$arm" || rc=$?
+  done
+else
+  selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
+    "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
+fi
 if [ "$rc" -ne 0 ]; then
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
 fi

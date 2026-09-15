@@ -186,6 +186,10 @@ ends the view, `bash scripts/run_mopps_comparison.sh stop` stops the node's
 detached launcher (TERM to its session; ranks reaped, receipts closed).
 `SWITCH_FOREGROUND=1` or a non-terminal caller keeps the foreground behaviour.
 
+`bash scripts/run_mopps_comparison.sh retry` with no arguments retries every
+recorded branch failure once, in path order, each through the same node
+admission check; it is the phone-typeable form of the explicit retries below.
+
 After diagnosing a failed branch, explicitly retry only that branch:
 
 ```bash
