@@ -8,6 +8,7 @@ from datetime import timedelta
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import sys
 import time
@@ -74,9 +75,15 @@ def worker(directory, world_size):
             dist.destroy_process_group()
 
 
+def cuda_system_not_ready(error):
+    lower = error.lower()
+    return ("system not yet initialized" in lower or "cuda_error_system_not_ready" in lower
+            or bool(re.search(r"\bcuda(?: failure| error)?\s*:?\s*802\b|\berror\s+802\b", lower)))
+
+
 def host_allocation_fallback(reports, error, env, world_size):
     """Only the pre-2.26.5 host-allocation workaround, after an observed failure."""
-    if "NCCL_CUMEM_HOST_ENABLE" in env or len(reports) != world_size:
+    if cuda_system_not_ready(error) or "NCCL_CUMEM_HOST_ENABLE" in env or len(reports) != world_size:
         return False
     versions = {tuple(row.get("nccl", ())) for row in reports}
     if len(versions) != 1 or not (2, 24, 0) <= next(iter(versions)) < (2, 26, 5):
@@ -150,7 +157,15 @@ def preflight(root, *, world_size=4, timeout=90.):
             rank_errors = "\n".join(f"rank {row['rank']}: {row['error']}" for row in reports if row.get("error"))
             if rank_errors:
                 print(f"[nccl-preflight] original rank errors:\n{rank_errors}", flush=True)
-            if name == "baseline" and host_allocation_fallback(reports, error + "\n" + rank_errors, env, world_size):
+            combined_error = error + "\n" + rank_errors
+            if cuda_system_not_ready(combined_error):
+                diagnosis = ("CUDA 802: system not yet initialized. Have the cluster administrator check "
+                             "this node's driver/CUDA library and NVSwitch fabric readiness "
+                             "(including Fabric Manager where applicable). The logs do not establish "
+                             "which component is unhealthy. No host-allocation retry; no training task claimed.")
+                report.update(failure_kind="cuda_system_not_ready", diagnosis=diagnosis)
+                raise RuntimeError(f"{diagnosis} Evidence: {directory}")
+            if name == "baseline" and host_allocation_fallback(reports, combined_error, env, world_size):
                 overrides = {"NCCL_CUMEM_HOST_ENABLE": "0"}
                 print("[nccl-preflight] retrying only the tiny probe with legacy host allocation; "
                       "no policy training was started", flush=True)

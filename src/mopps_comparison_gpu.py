@@ -27,6 +27,7 @@ PRE_CODE_COMPAT_CODE = "585e2e9efc8cb79433d90daabf589112c2bb64968bcd6b3fceef7a84
 PRE_LIFECYCLE_CODE = "ef5eb15dbd1d646adff3c515932d7b03171fcce937d8d8d69c44ee5e2e41da40"
 PRE_QUEUE_FAILURE_CODE = "0bb0f42a82215281267a5f8741f1e9b87d16ccaaf945ace32c81f50c6400f33a"
 PRE_CACHE_GUARD_CODE = "7a4e2b957080e1af5158e9802005dfcd13a51234e3400c9011c35ed6a9c1e5f9"
+PRE_NONBLOCKING_RETRY_CODE = "46f08b629491f95ec180ead37440dd92c1161d19d34a81dfd14ffebfcdeb9756"
 
 
 def hashes():
@@ -77,7 +78,7 @@ def protocol(root):
     current = hashes()
     recorded = p.get("code_hashes")
     if recorded != current:
-        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE}
+        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE}
                 or set(recorded) != set(current)
                 or current["src/net_gate_memory_worker.py"] not in {switch.PRE_CACHE_GUARD_WORKER, switch.CACHE_GUARD_WORKER}
                 or any(recorded[name] != sha for name, sha in current.items()
@@ -110,7 +111,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -127,7 +128,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != lifecycle_receipt and
                         (previous != {**lifecycle_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE})):
                     raise ValueError(f"frozen contract changed: {lifecycle_path}")
             else:
                 base.bind(lifecycle_path, lifecycle_receipt)
@@ -144,17 +145,34 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != queue_receipt and
                         (previous != {**queue_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) != PRE_CACHE_GUARD_CODE)):
+                         or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE})):
                     raise ValueError(f"frozen contract changed: {queue_path}")
             else:
                 base.bind(queue_path, queue_receipt)
             if current["src/net_gate_memory_worker.py"] == switch.CACHE_GUARD_WORKER:
-                base.bind(root / "cache-guard-runtime.json", {
+                cache_path = root / "cache-guard-runtime.json"
+                cache_receipt = {
                     "schema": "mopps-cache-guard-runtime/v1",
                     "protocol_sha256": base.digest(root / "mopps.json"),
                     "queue_runtime_sha256": base.digest(queue_path), "runtime_code_hashes": current,
                     "change": "checkpointed decoder cache guard in shared Switch scoring; MoPPS trainer unchanged",
                     "cost_policy": "same policies, gradients and budgets; no parent writes or cost waivers",
+                }
+                if cache_path.exists():
+                    previous = core.read(cache_path)
+                    previous_code = previous.get("runtime_code_hashes")
+                    if (previous != cache_receipt and
+                            (previous != {**cache_receipt, "runtime_code_hashes": previous_code}
+                             or core.fingerprint(previous_code) != PRE_NONBLOCKING_RETRY_CODE)):
+                        raise ValueError(f"frozen contract changed: {cache_path}")
+                else:
+                    base.bind(cache_path, cache_receipt)
+                base.bind(root / "nonblocking-retry-runtime.json", {
+                    "schema": "mopps-nonblocking-retry-runtime/v1",
+                    "protocol_sha256": base.digest(root / "mopps.json"),
+                    "cache_guard_runtime_sha256": base.digest(cache_path), "runtime_code_hashes": current,
+                    "change": "explicit zero idle timeout skips busy branches, including active peers",
+                    "cost_policy": "same per-branch locks, policies and budgets; no parent writes or cost waivers",
                 })
     return p
 
@@ -494,7 +512,7 @@ def work(root, idle_timeout=600., only=None):
                 reported_blockers.add(detail)
         if progressed:
             last_progress = time.monotonic()
-        elif busy and switch.wait_for_peers(busy, last_progress=last_progress, idle_timeout=idle_timeout):
+        elif busy and idle_timeout > 0 and switch.wait_for_peers(busy, last_progress=last_progress, idle_timeout=idle_timeout):
             continue
         elif waiting and (active_prefix or not failures) and time.monotonic()-last_progress < idle_timeout:
             print("[waiting] " + "; ".join(dict.fromkeys(waiting)) + "; original experiment is read-only", flush=True)

@@ -154,15 +154,13 @@ def stale_end_time(directory, start, progress):
 
 
 def close_stale(root, *, min_age=900., now=None):
-    """Close open events whose owner shows no life for at least min_age seconds.
+    """Recover finish receipts and report stale events that still need evidence.
 
-    The charged duration is the last evidence of the job running (heartbeat or the
-    ranks' own log writes) minus the recorded start, so the ledger never charges
-    less than what was observed and never guesses beyond it. Events with an atomic
-    finish receipt are closed from that receipt. Recent heartbeats and live local
-    owners are left alone.
+    Silence proves neither termination nor its time. A heartbeat is only a lower
+    bound, and phase logs can be reused by a later attempt of the same branch.
     """
-    now = time.time() if now is None else now
+    core.number(min_age, "minimum stale age", 0.)
+    now = core.number(time.time() if now is None else now, "inspection time", 0.)
     outcome = []
     for item in inspect(root):
         directory = root / item["directory"]
@@ -180,11 +178,11 @@ def close_stale(root, *, min_age=900., now=None):
                     row.update(status="skipped", reason=f"last evidence of the job is {age:.0f}s old (< {min_age:.0f}s)")
                 else:
                     heartbeat = core.number(progress.get("seconds", 0.), "last recorded duration", 0.)
-                    seconds = max(heartbeat, end - core.number(start["time"], "start time", 0.))
-                    row.update(recover(root, directory, event_id, seconds=seconds,
-                        reason=f"owner silent for {age:.0f}s; duration = last heartbeat or worker-log write minus start",
-                        evidence_kind="stale_owner_last_evidence",
-                        evidence_extra={"last_evidence_time": end, "silent_seconds": age, "heartbeat_seconds": heartbeat}))
+                    row.update(status="blocked", last_evidence_time=end, silent_seconds=age,
+                        last_recorded_seconds=heartbeat,
+                        reason="no completed event receipt; stale heartbeat/log time is not termination evidence. "
+                               "For a confirmed stopped job, supply --directory, --event-id, --seconds from its "
+                               "termination log and --reason identifying that evidence; unknown cost remains open")
         except (ValueError, OSError, BlockingIOError) as exc:
             row.update(status="blocked", reason=str(exc))
         outcome.append(row)
@@ -199,9 +197,11 @@ def main():
     parser.add_argument("--seconds", type=float)
     parser.add_argument("--reason")
     parser.add_argument("--stale", action="store_true",
-                        help="close open events whose owner has shown no life for --min-age seconds, charging the last observed duration")
+                        help="recover completed receipts and report stale events that still need termination evidence")
     parser.add_argument("--min-age", type=float, default=900.)
     args = parser.parse_args()
+    if args.stale and args.directory is not None:
+        parser.error("--stale cannot be combined with a single-event recovery")
     root = args.root.resolve()
     if not any((root / name).is_file() for name in ("switch.json", "mopps.json")):
         parser.error("root must contain switch.json or mopps.json")
@@ -209,9 +209,12 @@ def main():
         if args.event_id is not None or args.seconds is not None or args.reason is not None:
             parser.error("event recovery requires --directory and --event-id")
         if args.stale:
-            closed = close_stale(root, min_age=args.min_age)
+            try:
+                closed = close_stale(root, min_age=args.min_age)
+            except (ValueError, OSError) as exc:
+                parser.exit(2, f"[recovery blocked] {exc}\n")
             print(json.dumps({"stale_closure": closed, "open_events": inspect(root)}, indent=2))
-            return 0
+            return 2 if any(row["status"] == "blocked" for row in closed) else 0
         print(json.dumps({"open_events": inspect(root)}, indent=2))
         return 0
     if args.event_id is None:

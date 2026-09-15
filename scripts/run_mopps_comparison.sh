@@ -178,18 +178,34 @@ if [ "$MODE" = retry ] && [ "$#" -eq 0 ]; then
   mapfile -t FAILED < <(find "$OUT_ROOT/states" -mindepth 3 -maxdepth 3 -name failure.json 2>/dev/null | sort)
   [ "${#FAILED[@]}" -gt 0 ] || echo '[retry] no recorded branch failures'
   for failure in "${FAILED[@]}"; do
+    [ -f "$failure" ] || continue
     rel=${failure#"$OUT_ROOT/states/"}
     point=${rel%%/*}; arm=${rel#*/}; arm=${arm%%/*}
     seed=${point#s}; seed=${seed%%-t*}; step=${point##*-t}
     echo "[retry] s$seed/t$step/$arm ($failure)"
+    task_rc=0
+    # Other nodes may already own this branch. Try the next one without
+    # spending the single-branch controller's default 600s waiting on its lock.
     selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
-      "$PY" src/mopps_comparison_gpu.py retry --root "$OUT_ROOT" --seed "$seed" --step "$step" --arm "$arm" || rc=$?
+      "$PY" src/mopps_comparison_gpu.py retry --root "$OUT_ROOT" --seed "$seed" --step "$step" --arm "$arm" \
+      --idle-timeout 0 || task_rc=$?
+    [ "$task_rc" -eq 0 ] || rc=$task_rc
+    case "$task_rc" in
+      78|130|137|143)
+        echo "[retry stopped] worker rc=$task_rc; remaining branch failures were not retried"
+        break ;;
+    esac
   done
 else
   selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
     "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
 fi
-if [ "$rc" -ne 0 ]; then
+if [ "$rc" -eq 78 ]; then
+  echo '[blocked] node admission failed above; historical branch errors are not the cause of this launch'
+elif [ "$rc" -ne 0 ]; then
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
+  if [ "$rc" -eq 1 ]; then
+    echo '[next] inspect the recorded failures; on a passing idle node use: bash scripts/run_mopps_comparison.sh retry'
+  fi
 fi
 exit "$rc"

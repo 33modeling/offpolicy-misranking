@@ -192,8 +192,14 @@ every mopps/contract/selector/failure/progress/result/cost/admission record,
 and the last 100 lines of every log) and prints the saved path.
 
 `bash scripts/run_mopps_comparison.sh retry` with no arguments retries every
-recorded branch failure once, in path order, each through the same node
-admission check; it is the phone-typeable form of the explicit retries below.
+claimable recorded branch failure once, in path order, each through the same
+node admission check. It skips branches locked by another worker, including
+workers with fresh heartbeats, instead of waiting behind the first branch.
+Admission failure or an interrupted worker stops the sweep immediately; it
+does not repeat the same failed probe for every remaining branch. Missing
+prefixes are not awaited in this mode. Use `run` for fresh work after those
+prefixes are published. This is the phone-typeable form of the explicit
+retries below, not an automatic retry on ordinary `run`.
 
 After diagnosing a failed branch, explicitly retry only that branch:
 

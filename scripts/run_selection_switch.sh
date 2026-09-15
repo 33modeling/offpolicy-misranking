@@ -136,8 +136,7 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
       -o -name 'decision.json' -o -name 'decisions-frozen.json' -o -name 'initial.json' \
       -o -name 'measurement.json' -o -name 'execution.json' -o -name 'result.json' \
       -o -name 'cost.jsonl' -o -name 'budget_stop.json' -o -name 'fit-cost.json' \
-      -o -name 'kv-cache-runtime.json' -o -name 'cost-runtime.json' -o -name 'prefix-resume-runtime.json' \
-      -o -name 'worker-logs-runtime.json' -o -name 'code-compat-runtime.json' \
+      -o -name '*-runtime.json' -o -name 'admission.json' -o -name 'rank-*.json' \
       -o -path '*/cost-events/*.json' -o -path '*/pending-costs/*.json' \) -print0 | sort -z)
     while IFS= read -r -d '' path; do
       printf '\n===== LOG: %s (last 100 lines) =====\n' "${path#"$OUT_ROOT"/}"
@@ -194,7 +193,9 @@ source scripts/_selection_worker.sh
 rc=0
 selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
   "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" || rc=$?
-if [ "$rc" -ne 0 ]; then
+if [ "$rc" -eq 78 ]; then
+  echo '[blocked] node admission failed above; historical branch errors are not the cause of this launch'
+elif [ "$rc" -ne 0 ]; then
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
 fi
 exit "$rc"

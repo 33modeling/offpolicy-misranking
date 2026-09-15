@@ -32,7 +32,10 @@ def test_host_fallback_is_limited_to_affected_nccl_versions(version, expected):
 @pytest.mark.parametrize("error", ["ChildFailedError", "timeout", "CUDA allocation mismatch",
     "ncclUnhandledCudaError: out of memory", "ncclUnhandledCudaError: illegal memory access",
     "ncclUnhandledCudaError: duplicate GPU", "ncclUnhandledCudaError: driver version is insufficient",
-    "ncclUnhandledCudaError: no kernel image"])
+    "ncclUnhandledCudaError: no kernel image",
+    "ncclUnhandledCudaError: Cuda failure 802 'system not yet initialized'",
+    "ncclUnhandledCudaError: CUDA_ERROR_SYSTEM_NOT_READY",
+    "ncclUnhandledCudaError: CUDA error: 802"])
 def test_unrelated_or_nonrecoverable_failures_do_not_change_transport_settings(error):
     assert not check.host_allocation_fallback(reports(), error, {}, 4)
 
@@ -110,6 +113,34 @@ def test_unresolved_probe_exits_without_repeated_training_attempts(tmp_path, mon
     assert value["state"] == "failed"
     assert all(row["cost"]["complete"] for row in value["attempts"])
     assert not (tmp_path / "states").exists()
+
+
+@pytest.mark.parametrize("rank_only", [False, True])
+def test_cluster_802_is_diagnosed_without_host_allocation_retry(tmp_path, monkeypatch, capsys, rank_only):
+    error = ("ncclUnhandledCudaError: Call to CUDA function failed.\n"
+             "Last error:\nCuda failure 802 'system not yet initialized'")
+    calls = fake_attempt(monkeypatch, ["ChildFailedError" if rank_only else error])
+    if rank_only:
+        original = check.rank_reports
+        monkeypatch.setattr(check, "rank_reports", lambda *args: [
+            {**row, "error": error} for row in original(*args)])
+    with pytest.raises(RuntimeError, match="CUDA 802.*no training task claimed"):
+        check.preflight(tmp_path)
+    assert len(calls) == 1
+    value = admission(tmp_path)
+    assert value["failure_kind"] == "cuda_system_not_ready"
+    assert value["state"] == "failed" and "cluster administrator" in value["diagnosis"]
+    assert value["attempts"][0]["cost"]["complete"]
+    assert value["attempts"][0]["overrides"] == {}
+    assert not (tmp_path / "states").exists()
+    assert "retrying only the tiny probe" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("error", ["ncclUnhandledCudaError at /tmp/job-802/rank.log",
+    "CUDA failure 803 'system has unsupported display driver / cuda driver combination'",
+    "ncclUnhandledCudaError: failed with code 1802"])
+def test_cuda_802_classifier_does_not_match_other_numbers(error):
+    assert not check.cuda_system_not_ready(error)
 
 
 def test_interruption_does_not_trigger_fallback_or_claim_work(tmp_path, monkeypatch):

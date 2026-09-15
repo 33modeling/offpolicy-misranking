@@ -600,3 +600,61 @@ Final verification:
 - `git diff --check` passed. `nvidia-smi` showed no remaining compute processes
   after both positive GPU tests and the old-code reproduction. No four-H100
   run, completed experiment result or cluster deployment is claimed.
+
+## 2026-09-15: uploaded reports, CUDA 802 and bulk retry contention
+
+Analyzed both operator-supplied `switch-why-20260915T100511Z-9ZQFr8.txt`
+and `mopps-why-20260915T100615Z-Qn04Kw.txt` without changing the originals.
+See [the detailed evidence and resume sequence](SELECTION_SWITCH_REPORT_ANALYSIS_2026-09-15.md).
+
+The reports establish CUDA 802 in fresh admission probes on nodes 4/5, despite
+the legacy host-allocation retry. Node 6 has three successful four-rank probes;
+its launcher tail reprints another node's historical trainer failure. Switch
+has two then three active workers, not uniformly waiting. Four unknown
+deployment costs and the unfinished development/prefix dependencies remain
+separate blockers. The retained 1074/537 trace uses the older live-checkout
+path, not a new guarded-worker failure.
+
+Repairs:
+
+- Classify CUDA 802 from supervisor or rank errors. Preserve its diagnosis,
+  stop admission with exit 78, and do not retry it with host-allocation flags.
+- Stop MoPPS bulk retry immediately on admission failure or stop status
+  78/130/137/143, instead of invoking the probe for every failed branch.
+- Bulk retry requests zero idle timeout; the controller now honors that even
+  for fresh active peers. It leaves locked work untouched and tries independent
+  branches. Ordinary positive-timeout waiting is unchanged.
+- Keep current admission failures separate from historical branch dumps;
+  include admission/rank and all runtime JSON in Switch exports.
+- Accept the exact prior MoPPS source map, preserve existing mixed-version
+  receipts byte-for-byte, and append `nonblocking-retry-runtime.json`.
+  Switch fingerprint stays unchanged; trainers, selectors and budgets are not
+  modified. The analysis document records both source-map fingerprints.
+- During this work, concurrent commit `779022f` added `recover-cost --stale`.
+  Preserve that interface and completed-receipt recovery, but correct its
+  assumption that the last log/heartbeat timestamp is the termination time.
+  Without a receipt it now reports the missing evidence and exits 2 while
+  keeping the cost open. No historical deployment cost is waived.
+
+Verification:
+
+- CPU/process regression before the final concurrent cost-tool integration:
+  392 passed, 16 skipped, with two expected PEFT fixture warnings.
+  Report: `/tmp/report-fixes-regression-20260915.xml`.
+- CUDA-selected run: 30 passed, comprising 15 actual CUDA cases and 15 CPU
+  parameter cases. Actual GPU coverage: three NCCL admission/allocation tests,
+  four 537-token cache-guard forward/backward cases, and eight owned-worker
+  shutdown/restart cases. One RTX 3050 6GB, not four H100s.
+  Report: `/tmp/report-fixes-cuda-20260915.xml`.
+- The exact exported mixed MoPPS receipt revisions were additionally recreated:
+  four nonblocking/receipt tests passed, including active peer locks and
+  immutable parent/cost checks. `/tmp/report-mixed-receipts-20260915.xml`.
+- All four failed attempts in the actual MoPPS export were parsed and checked
+  against the new classifier: all identify 802 and reject host fallback.
+- Final cost-tool and focused integration: 163 passed, 3 CUDA-only cases
+  skipped. Includes all 24 cost tests plus admission, both real shell
+  entrypoints, bulk retry, mixed receipt preservation and read-only export
+  checks. `/tmp/report-final-integration-20260915.xml`.
+- `nvidia-smi` showed no remaining compute processes after GPU tests. Shell
+  syntax and `git diff --check` passed. No cluster deployment or host repair
+  is claimed; missing termination durations still require actual evidence.

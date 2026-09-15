@@ -193,6 +193,59 @@ def test_cache_guard_preserves_existing_mopps_parent_costs_and_receipts(tmp_path
         run.protocol(root)
 
 
+@pytest.mark.parametrize("migrated", [False, True])
+def test_nonblocking_retry_preserves_bdd727e_manifest_receipts_and_costs(tmp_path, monkeypatch, migrated):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    previous = run.hashes()
+    previous["src/mopps_comparison_gpu.py"] = "8379a57ad00a9dae7324a4e3e5847f48b0f03da2f32c8f50ec61989107b04d11"
+    assert core.fingerprint(previous) == run.PRE_NONBLOCKING_RETRY_CODE
+    recorded = {**previous, "src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
+        "src/selection_gate_gpu.py": switch.COST_METER,
+        "src/selection_switch_gpu.py": "23faf38b352f31ee64a2f2989f3b2086cc47b54508c5bd5c89571a670b3e66e8",
+        "src/mopps_comparison_gpu.py": "d55710f6909df21a17d45652c35b2e8acfd553960ee5dc492b86584f9bc983d4"}
+    assert core.fingerprint(recorded) == run.PRE_LIFECYCLE_CODE
+    p["code_hashes"] = recorded if migrated else previous
+    core.atomic_json(root / "mopps.json", p)
+    if migrated:
+        # Reproduce the mixed receipt revisions in the operator's 10:06 export.
+        lifecycle = {**previous, "src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
+            "src/selection_switch_gpu.py": "05aa36a41197cca605933df9d62bba0e4482d6f592c17954c632b45e5cf51195",
+            "src/mopps_comparison_gpu.py": "de7f40dcc15ee9bea5812dbb5132313417868ce335dede161beedd894f5a9a4b"}
+        queue = {**lifecycle, "src/mopps_comparison_gpu.py": "e1f6c2021c8904484b185a482ca158be547a4776d97321d8550dd4e8398fc603"}
+        assert core.fingerprint(lifecycle) == run.PRE_QUEUE_FAILURE_CODE
+        assert core.fingerprint(queue) == run.PRE_CACHE_GUARD_CODE
+        with monkeypatch.context() as patch:
+            patch.setattr(run, "hashes", lambda: lifecycle)
+            run.protocol(root)
+        (root / "queue-failure-runtime.json").unlink()
+        with monkeypatch.context() as patch:
+            patch.setattr(run, "hashes", lambda: queue)
+            run.protocol(root)
+        with monkeypatch.context() as patch:
+            patch.setattr(run, "hashes", lambda: previous)
+            run.protocol(root)
+        (root / "nonblocking-retry-runtime.json").unlink()
+    base.journal(root / "states/s3-t25/mopps/cost.jsonl", {"state": "started", "event_id": "unknown"})
+    before = snapshot(tmp_path)
+    assert run.protocol(root) == p
+    assert run.prepare(root, parent) == p
+    after = snapshot(tmp_path)
+    assert {name: after[name] for name in before} == before
+    assert all(name.startswith("comparison/") for name in after.keys() - before.keys())
+    receipt_path = root / "nonblocking-retry-runtime.json"
+    receipt = core.read(receipt_path)
+    assert receipt["runtime_code_hashes"] == run.hashes()
+    assert receipt["cache_guard_runtime_sha256"] == base.digest(root / "cache-guard-runtime.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(root / "states/s3-t25/mopps")
+    receipt["cost_policy"] = "ignore costs"
+    core.atomic_json(receipt_path, receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        run.protocol(root)
+
+
 @pytest.mark.parametrize("name", ["src/mopps.py", "src/train_mopps_grpo.py", "src/grads.py", "src/selection_switch.py", "src/net_gate_memory_worker.py"])
 @pytest.mark.parametrize("where", ["recorded", "current"])
 def test_code_compat_rejects_mopps_scientific_changes(tmp_path, monkeypatch, name, where):
@@ -470,6 +523,37 @@ def test_missing_prefix_is_named_in_wait_instead_of_claiming_gate_dependency(tmp
     assert "prefixes/seed-3/prefix-25.json missing (Gate not required)" in output
     assert "WAIT=12" in output
     assert not list(root.glob("states/*/*/cost.jsonl"))
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_nonblocking_retry_skips_locked_branch_then_runs_an_independent_one(tmp_path, monkeypatch, active):
+    from types import SimpleNamespace
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    run.prepare(root, parent)
+    out = run.point(root, 3, 25)
+    core.atomic_json(out / "import.done.json", {})
+    core.atomic_json(out / "contract.json", {"config": {}})
+    for arm in mopps.ARMS:
+        core.atomic_json(out / arm / "failure.json", {"error": "earlier training failure"})
+    if active:
+        core.atomic_json(out / "mopps/progress.json", {"state": "running", "updated": time.time(),
+            "host": "other-node", "pid": 999, "phase": "train"})
+    before = snapshot(out / "mopps")
+    parent_before = snapshot(parent)
+    monkeypatch.setitem(sys.modules, "additive_experiment", SimpleNamespace(model_environment=lambda _: {}))
+    monkeypatch.setattr(switch, "admitted_devices", lambda _: list("0123"))
+    monkeypatch.setattr(run, "ready", lambda *args: True)
+    monkeypatch.setattr(run.time, "sleep", lambda _: pytest.fail("bulk retry must not sleep behind an active peer"))
+    calls = []
+    monkeypatch.setattr(run, "run_arm", lambda out, p, arm, *args: calls.append(arm))
+    with base.lease(out / "mopps/.task.lock"):
+        assert run.work(root, idle_timeout=0., only=(3, 25, "mopps")) == 0
+        assert calls == []
+        assert run.work(root, idle_timeout=0., only=(3, 25, "random_online")) == 0
+    assert calls == ["random_online"]
+    assert {name: snapshot(out / "mopps")[name] for name in before} == before
+    assert snapshot(parent) == parent_before
 
 
 def test_failed_prefixes_stop_all_waiting_without_launching_or_changing_parent(tmp_path, monkeypatch, capsys):

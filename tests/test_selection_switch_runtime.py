@@ -161,9 +161,9 @@ def test_snapshot_cache_cannot_be_inside_live_repository(tmp_path):
         runtime.snapshot(repo, repo / "cache")
 
 
-@pytest.mark.parametrize("kind", ["switch", "mopps"])
-@pytest.mark.parametrize("preflight_failure", [False, True])
-def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(tmp_path, kind, preflight_failure):
+@pytest.mark.parametrize("kind,mode", [("switch", "run"), ("mopps", "run"), ("mopps", "retry")])
+@pytest.mark.parametrize("preflight_code", [0, 78, 130])
+def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(tmp_path, kind, mode, preflight_code):
     repo = repository(tmp_path)
     for name in (*runtime.LAUNCHERS.values(), "selection_switch_runtime.py", "selection_switch_errors.py", "_selection_worker.sh"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
@@ -172,9 +172,14 @@ def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(t
     (repo / "src/bootstrap_math_verify.py").write_text("print('/unused-test-dependencies')\n")
     (repo / "scripts/selection_nccl_preflight.py").write_text('''
 import os, sys
-if os.environ.get('TEST_PREFLIGHT_FAILURE') == '1':
+from pathlib import Path
+root = Path(os.environ['OUT_ROOT'])
+with (root / 'probe-calls').open('a') as handle:
+    handle.write('probe\\n')
+code = int(os.environ['TEST_PREFLIGHT_CODE'])
+if code:
     print('[blocked] NCCL admission failed before claiming work', flush=True)
-    raise SystemExit(78)
+    raise SystemExit(code)
 command = sys.argv[sys.argv.index('--')+1:]
 os.execvpe(command[0], command, os.environ)
 ''')
@@ -200,22 +205,36 @@ else:
     git(repo, "add", ".")
     git(repo, "commit", "--quiet", "-m", "real launcher fixture")
     root = tmp_path / "run"
+    if mode == "retry":
+        for seed in (3, 4):
+            for step in (25, 50):
+                for arm in ("mopps", "random_online"):
+                    failure = root / f"states/s{seed}-t{step}/{arm}/failure.json"
+                    failure.parent.mkdir(parents=True)
+                    failure.write_text('{"error": "historical worker failure"}')
     env = {**os.environ, "OM_WORK": str(tmp_path / "work"), "OM_REPO": str(tmp_path / "stale-repo"),
            "SWITCH_RUNTIME_CACHE": str(tmp_path / "cache"), "SWITCH_PYTHON": sys.executable,
            "MOPPS_PYTHON": sys.executable, "PATH": str(repo / "bin") + os.pathsep + os.environ["PATH"],
            "PYTHONPATH": str(repo / "src"), "CUDA_VISIBLE_DEVICES": "0,1,2,3",
-           "TEST_PREFLIGHT_FAILURE": str(int(preflight_failure))}
+           "TEST_PREFLIGHT_CODE": str(preflight_code)}
     env["SWITCH_ROOT" if kind == "switch" else "MOPPS_ROOT"] = str(root)
     env.pop("SWITCH_RUNTIME_REPO", None)
-    worker = subprocess.Popen(["bash", str(repo / "scripts" / runtime.LAUNCHERS[kind]), "run"],
+    worker = subprocess.Popen(["bash", str(repo / "scripts" / runtime.LAUNCHERS[kind]), mode],
                               cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        if preflight_failure:
+        if preflight_code:
             stdout, stderr = worker.communicate(timeout=15)
-            assert worker.returncode == 78, stdout + stderr
+            assert worker.returncode == preflight_code, stdout + stderr
             assert "NCCL admission failed before claiming work" in stdout
             assert "[waiting]" not in stdout
             assert not (root / "started.json").exists()
+            assert (root / "probe-calls").read_text().splitlines() == ["probe"]
+            if preflight_code == 78:
+                assert "historical branch errors are not the cause" in stdout
+                assert "[failure]" not in stdout
+            if mode == "retry":
+                assert "[retry stopped]" in stdout
+                assert len(list(root.glob("states/*/*/failure.json"))) == 8
             return
         wait_for(root / "started.json", worker)
         start = json.loads((root / "started.json").read_text())
@@ -228,6 +247,10 @@ else:
         assert start["repo"] == str(Path(start["file"]).parent.parent)
         assert json.loads((root / "finished.json").read_text()) == {"value": "original", "child": "original"}
         assert len(list(root.glob("logs/launcher.*.log"))) == 1
+        assert len((root / "probe-calls").read_text().splitlines()) == (8 if mode == "retry" else 1)
+        if mode == "retry":
+            args = start["args"]
+            assert args[args.index("--idle-timeout")+1] == "0"
     finally:
         if worker.poll() is None:
             worker.kill()

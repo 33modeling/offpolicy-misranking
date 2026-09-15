@@ -181,6 +181,29 @@ def test_status_launcher_is_read_only_and_does_not_migrate_runtime(tmp_path):
     assert not list(tmp_path.glob("*-runtime.json"))
 
 
+@pytest.mark.parametrize("mode", ["why", "export"])
+def test_report_includes_admission_ranks_and_new_runtime_receipts_without_writes(tmp_path, mode):
+    root = tmp_path / "run"
+    rows = {
+        "node-preflight/node-1-probe/admission.json": {"state": "failed", "failure_kind": "cuda_system_not_ready"},
+        "node-preflight/node-1-probe/baseline/rank-0.json": {"rank": 0, "error": "Cuda failure 802"},
+        "shutdown-runtime.json": {"schema": "shutdown-test"},
+        "cache-guard-runtime.json": {"schema": "cache-guard-test"},
+    }
+    for name, value in rows.items():
+        core.atomic_json(root / name, value)
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    result = subprocess.run(["bash", "scripts/run_selection_switch.sh", mode], cwd=ROOT,
+        env={**os.environ, "SWITCH_ROOT": str(root), "OM_WORK": str(tmp_path / "work"), "SWITCH_PYTHON": sys.executable},
+        capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = Path(result.stdout.strip().removeprefix("[saved] ")).read_text()
+    for name in rows:
+        assert f"===== {name} =====" in report
+    assert "cuda_system_not_ready" in report and "Cuda failure 802" in report
+    assert {path: path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
+
+
 def test_watch_can_stop_without_touching_workers(tmp_path, monkeypatch, capsys):
     prepared(tmp_path)
     monkeypatch.setattr(sys, "argv", ["status", "--root", str(tmp_path), "--watch", "1"])
