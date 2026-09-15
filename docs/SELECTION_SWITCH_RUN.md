@@ -212,6 +212,12 @@ claim or a repeatedly invoked per-epoch controller.
 
 ## Allocation and reporting
 
+For the separately registered **MoPPS (KDD 2026)** online reward-selection
+comparison, see [MOPPS_COMPARISON.md](MOPPS_COMPARISON.md) and
+`scripts/run_mopps_comparison.sh`. It adds 12 held-out continuations in another
+output root, imports existing prefixes read-only, and does not alter this
+running experiment's arms, gate fit or frozen scientific runtime.
+
 Unless explicitly supplied during first preparation, the common branch cap is
 100 updates times four GPUs times the median original development seed-0 d100
 update duration, rounded up to 60 GPU-seconds. Only timing, not reward, enters

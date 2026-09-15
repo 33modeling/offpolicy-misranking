@@ -75,6 +75,10 @@ def recover(root, directory, event_id, *, seconds=None, reason=None):
         owner_lock = directory.parent / ".prefix.lock"
     elif len(relative) == 5 and relative[0] == "states" and relative[2] == "points":
         owner_lock = directory / (".measurement.lock" if directory.name in {"measurement", "gate_measurement"} else ".task.lock")
+    elif (root / "mopps.json").is_file() and len(relative) == 3 and relative[0] == "states" and relative[2] in {"mopps", "random_online"}:
+        owner_lock = directory / ".task.lock"
+    elif (root / "mopps.json").is_file() and len(relative) == 3 and relative[0] == "states" and relative[2] == "import-cost":
+        owner_lock = directory.parent / ".import.lock"
     else:
         raise ValueError("expected a switch prefix segment or continuation/measurement directory")
     if not event_id or Path(event_id).name != event_id or event_id in {".", ".."}:
@@ -147,8 +151,8 @@ def main():
     parser.add_argument("--reason")
     args = parser.parse_args()
     root = args.root.resolve()
-    if not (root / "switch.json").is_file():
-        parser.error("root must contain switch.json")
+    if not any((root / name).is_file() for name in ("switch.json", "mopps.json")):
+        parser.error("root must contain switch.json or mopps.json")
     if args.directory is None:
         if args.event_id is not None or args.seconds is not None or args.reason is not None:
             parser.error("event recovery requires --directory and --event-id")

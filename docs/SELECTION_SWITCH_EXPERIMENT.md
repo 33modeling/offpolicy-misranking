@@ -206,6 +206,18 @@ Qwen and net-gain entry points/results are unchanged. Before full GPU launch:
 
 ## Prior-work boundary
 
+The registered low-overhead comparison is **MoPPS** (Qu et al.,
+*Can Prompt Difficulty be Online Predicted for Accelerating RL Finetuning of
+Reasoning Models?*, KDD 2026;
+[paper](https://arxiv.org/abs/2507.04632v5)). Its online reward-history selection
+is tested in the [separate MoPPS extension](MOPPS_COMPARISON.md): 12 held-out
+continuations, original checkpoints/budgets, and a matched online-random
+control. The primary comparison is **executed GATE versus reward-based MoPPS**,
+including diagnostic cost, reported as GATE-minus-MoPPS final reward. Random
+and fresh-r are secondary controls. The live fresh-r gate study is unchanged. This is not the cached
+`passrate_beta` baseline and not a claim to reproduce MoPPS's full training
+system. GPU results remain pending.
+
 Scoring/training cost tradeoffs are already studied in
 [Yin and Rush, ICLR 2025](https://arxiv.org/abs/2410.16208), and budget-aware
 selection optimization in [Wan et al.](https://arxiv.org/abs/2510.16806).

@@ -23,7 +23,8 @@ def log_tail(path, lines):
 def show_errors(root, *, limit=3, lines=120, phase=None):
     root = root.resolve()
     paths = [*root.glob("prefixes/seed-*/segment-*/failure.json"),
-             *root.glob("states/*/points/*/*/failure.json")]
+             *root.glob("states/*/points/*/*/failure.json"),
+             *root.glob("states/*/*/failure.json")]
     shown = 0
     for path in sorted(paths, key=lambda item: item.stat().st_mtime_ns, reverse=True):
         if not path.resolve().is_relative_to(root):
