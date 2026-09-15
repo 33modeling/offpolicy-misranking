@@ -104,6 +104,45 @@ def test_cost_fix_preserves_preexisting_kv_runtime_receipt(tmp_path, already_pat
     assert switch.manifest(tmp_path) == frozen
 
 
+@pytest.mark.parametrize("original_version", ["before_cache", "before_cost", "before_prefix"])
+def test_prefix_resume_preserves_previous_runtime_receipts(tmp_path, original_version):
+    previous = cache_predecessor()
+    previous.update({"src/grads.py": switch.KV_CACHE_GRADS,
+                     "src/selection_gate_gpu.py": switch.COST_METER,
+                     "src/selection_switch_gpu.py": "43ea3c42217f47817312876a9d6e8bea37b84e616d98e722bc786ac6c826250b"})
+    assert core.fingerprint(previous) == switch.PRE_PREFIX_RESUME_CODE
+    original = cache_predecessor() if original_version != "before_prefix" else previous
+    if original_version == "before_cost":
+        original.update({"src/grads.py": switch.KV_CACHE_GRADS,
+                         "src/selection_switch_gpu.py": "52e2f4f6da51fe3693281ef4894b389b76811352795d97f5eea56e01f88acd90"})
+    frozen = {"schema": rule.SCHEMA, "code_hashes": original}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if original_version != "before_prefix":
+        kv = {"schema": "selection-switch-kv-cache-runtime/v1",
+              "switch_sha256": base.digest(tmp_path / "switch.json"),
+              "original_code_hashes": original, "runtime_code_hashes": previous,
+              "change": "teacher-forced scoring forwards explicitly disable KV cache",
+              "cost_policy": "retain all previous costs and the original branch allocation"}
+        core.atomic_json(tmp_path / "kv-cache-runtime.json", kv)
+        core.atomic_json(tmp_path / "cost-runtime.json", {
+            "schema": "selection-switch-cost-runtime/v1",
+            "switch_sha256": base.digest(tmp_path / "switch.json"),
+            "kv_cache_runtime_sha256": base.digest(tmp_path / "kv-cache-runtime.json"),
+            "runtime_code_hashes": previous,
+            "change": "protect phase startup, recover atomic finish receipts, skip busy publication tasks",
+            "cost_policy": "recover only from completion evidence or operator-reported termination duration"})
+    before = {path: base.digest(path) for path in tmp_path.glob("*.json")}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {path: base.digest(path) for path in before} == before
+    assert core.read(tmp_path / "prefix-resume-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
+    receipt = core.read(tmp_path / "cost-runtime.json")
+    receipt["cost_policy"] = "ignore costs"
+    core.atomic_json(tmp_path / "cost-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
 @pytest.mark.parametrize("legacy", [False, True])
 def test_switch_protocol_validates_design_and_parent_runtime(tmp_path, legacy):
     hashes = cache_predecessor() if legacy else switch.code_hashes()
@@ -325,7 +364,9 @@ if len(sys.argv) > 2:
     while not (root / 'go').exists():
         if time.monotonic() > deadline: raise RuntimeError('test start timeout')
         time.sleep(.01)
-raise SystemExit(s.work(root, idle_timeout=0))
+    sleep = time.sleep
+    s.time.sleep = lambda seconds: sleep(.01 if seconds == 15 else seconds)
+raise SystemExit(s.work(root, idle_timeout=1 if len(sys.argv) > 2 else 0))
 '''
 
 
@@ -364,11 +405,9 @@ def test_four_nodes_claim_switch_tasks_concurrently_without_duplicates(tmp_path)
         claims = {path.parent: core.read(path) for path in tmp_path.glob("states/*/points/*/*/claim.json")}
         results = {path.parent: core.read(path) for path in tmp_path.glob("states/*/points/*/*/result.json")}
         assert len(claims) == len(results) == 6
-        assert len({row["pid"] for row in results.values()}) >= 2
-        assert any(left != right and claims[left]["pid"] != claims[right]["pid"]
-                   and claims[left]["started"] < results[right]["finished"]
-                   and claims[right]["started"] < results[left]["finished"]
-                   for left in claims for right in claims)
+        assert len({row["pid"] for row in results.values()}) == 4
+        assert max(sum(claims[path]["started"] <= instant < results[path]["finished"] for path in claims)
+                   for instant in (row["started"] for row in claims.values())) == 4
     finally:
         for worker in workers:
             if worker.poll() is None:
@@ -379,6 +418,27 @@ def test_four_nodes_claim_switch_tasks_concurrently_without_duplicates(tmp_path)
 def test_missing_development_labels_do_not_hold_fit_lock(tmp_path):
     with base.lease(tmp_path / ".fit.lock"):
         assert switch.fit_once(tmp_path) is False
+
+
+def test_waiting_node_stays_for_active_peer_past_local_idle_limit(tmp_path, monkeypatch, capsys):
+    import time
+    directory = tmp_path / "states/s0-t25/points/view-25/selection_reduced"
+    core.atomic_json(directory.parent / "measurement/progress.json", {
+        "state": "running", "updated": time.time(), "host": "node-2", "pid": 123, "phase": "measure"})
+    busy = switch.busy_task("s0/t25/selection_reduced", directory)
+    sleeps = []
+    monkeypatch.setattr(switch.time, "sleep", sleeps.append)
+    assert switch.wait_for_peers([busy], last_progress=0., idle_timeout=0.)
+    assert sleeps == [15]
+    assert "node-2:123(measure)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("state,age", [("running", 61.), ("failed", 0.), ("finished", 0.)])
+def test_dead_or_finished_peer_does_not_keep_node_waiting(tmp_path, monkeypatch, state, age):
+    import time
+    core.atomic_json(tmp_path / "progress.json", {"state": state, "updated": time.time()-age})
+    monkeypatch.setattr(switch.time, "sleep", lambda _: pytest.fail("stale peer kept node waiting"))
+    assert not switch.wait_for_peers([switch.busy_task("prefix", tmp_path)], last_progress=0., idle_timeout=0.)
 
 
 def test_existing_link_cannot_silently_point_to_other_policy(tmp_path):

@@ -9,6 +9,7 @@ import pytest
 
 import selection_gate as core
 import selection_gate_gpu as base
+import selection_switch_gpu as switch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import recover_selection_switch_cost as recovery
@@ -133,3 +134,114 @@ def test_recover_cost_launcher_lists_events_without_modifying_them(tmp_path):
     assert pending[0]["progress"]["seconds"] == 12.
     assert {path: base.digest(path) for path in original} == original
     assert not base.cost(directory)["complete"]
+
+
+def pending_prefix(root, *, ledger="research"):
+    directory = root / "prefixes/seed-0/segment-25"
+    start = {"event_id": "aborted", "state": "started", "phase": "prefix-train", "ledger": ledger,
+             "gpus": 4, "gpu_type": "H100", "host": "stopped-node", "time": 100.}
+    base.journal(directory / "cost.jsonl", start)
+    core.atomic_json(directory / "progress.json", {**start, "state": "running", "seconds": 12., "updated": 112.})
+    return directory, start
+
+
+def test_prefix_restarts_with_unknown_research_cost_and_preserves_evidence(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    directory, start = pending_prefix(tmp_path)
+    original = (directory / "cost.jsonl").read_bytes()
+    old_progress = core.read(directory / "progress.json")
+    cfg = {"model": "model", "max_new_tokens": 64, "prompt_format": "fixture"}
+    monkeypatch.setattr(switch, "manifest", lambda _: {"gpu_type": "H100", "prefix_timeout": 60.})
+    monkeypatch.setattr(switch, "verify_source", lambda *a: {"config": cfg, "subset": {"train": []}})
+    monkeypatch.setattr(switch, "validate_prefix", lambda *a: None)
+    monkeypatch.setitem(sys.modules, "evidence_downstream", SimpleNamespace(
+        train_args=lambda *a: ["train"], _expected_config=lambda c: {}, POLICY_FILES=("policy_train.json",)))
+    monkeypatch.setitem(sys.modules, "train_policy_grpo", SimpleNamespace(validate_policy_lineage=lambda *a, **kw: None))
+    meter, calls = base.meter, []
+    def train(segment, name, gpu_type, **kwargs):
+        calls.append(name)
+        return meter(segment, name, gpu_type, ledger=kwargs["ledger"],
+                     action=lambda: core.atomic_json(segment / "fresh_r/policy/policy_train.json", {"done": True}))
+    monkeypatch.setattr(base, "meter", train)
+    with base.lease(directory.parent / ".prefix.lock"):
+        switch.build_prefix(tmp_path, 0, 25, list("0123"), {})
+    assert calls == ["prefix-train"]
+    assert (directory.parent / "prefix-25.json").exists()
+    assert (directory / "cost.jsonl").read_bytes().startswith(original)
+    archive = core.read(directory / "pending-costs/aborted.json")
+    assert archive["start"] == start and archive["progress"] == old_progress
+    assert archive["total_gpu_seconds"] is None
+    assert not base.cost(directory)["complete"]
+    report = switch.prefix_cost_report(tmp_path)
+    assert not report["complete"] and report["total_gpu_seconds"] is None
+    assert report["known_gpu_seconds"] > 0
+    with pytest.raises(ValueError, match="unclosed cost event"):
+        base.spent(directory)
+    assert recovery.inspect(tmp_path)[0]["progress"] == old_progress
+    with pytest.raises(ValueError):
+        recovery.recover(tmp_path, directory, "aborted", seconds=11., reason="termination log")
+    recovery.recover(tmp_path, directory, "aborted", seconds=15., reason="termination log")
+    report = switch.prefix_cost_report(tmp_path)
+    assert report["complete"] and report["total_gpu_seconds"] > 60.
+
+
+def test_prefix_unknown_cost_is_idempotent_and_never_waives_deployment(tmp_path):
+    directory, _ = pending_prefix(tmp_path)
+    assert not switch.prefix_cost(directory, "H100")["complete"]
+    before = {path: base.digest(path) for path in directory.rglob("*.json*")}
+    assert not switch.prefix_cost(directory, "H100")["complete"]
+    assert {path: base.digest(path) for path in before} == before
+    other, _ = pending_prefix(tmp_path / "other", ledger="deployment")
+    with pytest.raises(ValueError, match="unexpected prefix research allocation"):
+        switch.prefix_cost(other, "H100")
+    assert not (other / "pending-costs").exists()
+
+
+def test_prefix_cost_cannot_bypass_active_meter(tmp_path):
+    directory, _ = pending_prefix(tmp_path)
+    with base.lease(directory / ".cost.lock"), pytest.raises(BlockingIOError):
+        switch.prefix_cost(directory, "H100")
+    assert not (directory / "pending-costs").exists()
+
+
+def test_killed_prefix_owner_can_resume_without_inventing_its_duration(tmp_path):
+    import time
+    directory = tmp_path / "prefixes/seed-0/segment-25"
+    script = """
+import sys, time
+from pathlib import Path
+import selection_gate_gpu as b
+directory = Path(sys.argv[1])
+with b.lease(directory.parent / '.prefix.lock'):
+    b.meter(directory, 'prefix-train', 'H100', action=lambda: time.sleep(60))
+"""
+    worker = subprocess.Popen([sys.executable, "-c", script, str(directory)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 5
+        while not (directory / "progress.json").exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert (directory / "progress.json").exists()
+        original = (directory / "cost.jsonl").read_bytes()
+        with pytest.raises(BlockingIOError):
+            switch.prefix_cost(directory, "H100")
+        worker.kill()
+        worker.communicate(timeout=5)
+        with base.lease(directory.parent / ".prefix.lock"):
+            assert not switch.prefix_cost(directory, "H100")["complete"]
+            base.meter(directory, "prefix-train", "H100", action=lambda: None)
+        assert (directory / "cost.jsonl").read_bytes().startswith(original)
+        assert switch.prefix_cost_report(tmp_path)["total_gpu_seconds"] is None
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+        worker.communicate(timeout=5)
+
+
+def test_prefix_rejects_live_local_legacy_owner(tmp_path):
+    directory, start = pending_prefix(tmp_path)
+    start.update(host=socket.gethostname(), pid=os.getpid())
+    (directory / "cost.jsonl").write_text(json.dumps(start) + "\n")
+    (directory / "progress.json").unlink()
+    with pytest.raises(ValueError, match="still alive"):
+        switch.prefix_cost(directory, "H100")

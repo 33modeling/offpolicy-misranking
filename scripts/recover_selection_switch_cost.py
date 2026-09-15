@@ -24,6 +24,29 @@ def read_events(directory):
     return raw, [json.loads(line) for line in raw.splitlines() if line.strip()]
 
 
+def event_progress(directory, start):
+    event_id = start["event_id"]
+    if not event_id or Path(event_id).name != event_id or event_id in {".", ".."}:
+        raise ValueError("invalid cost event ID")
+    candidates = []
+    archive = directory / "pending-costs" / f"{event_id}.json"
+    if archive.exists():
+        saved = core.read(archive)
+        if saved.get("start") != start:
+            raise ValueError("archived cost start differs from the open event")
+        if saved.get("progress"):
+            candidates.append(saved["progress"])
+    path = directory / "progress.json"
+    if path.exists():
+        current = core.read(path)
+        if current.get("event_id") == event_id:
+            candidates.append(current)
+    for progress in candidates:
+        if any(progress.get(key) != start.get(key) for key in ("event_id", "phase", "ledger", "gpus", "gpu_type", "host")):
+            raise ValueError("progress record allocation differs from the open event")
+    return max(candidates, key=lambda row: core.number(row.get("seconds", 0.), "last recorded duration", 0.), default={})
+
+
 def inspect(root):
     pending = []
     for path in sorted(root.rglob("cost.jsonl")):
@@ -35,8 +58,7 @@ def inspect(root):
             raise ValueError(f"missing cost starts: {path}")
         for event_id in summary["incomplete_events"]:
             start = next(row for row in events if row["event_id"] == event_id and row["state"] == "started")
-            progress_path = path.parent / "progress.json"
-            progress = core.read(progress_path) if progress_path.exists() else {}
+            progress = event_progress(path.parent, start)
             pending.append({"directory": str(path.parent.relative_to(root)), "start": start,
                             "progress": progress if progress.get("event_id") == event_id else None,
                             "finish_receipt": (path.parent / "cost-events" / f"{event_id}.json").is_file()})
@@ -75,12 +97,7 @@ def recover(root, directory, event_id, *, seconds=None, reason=None):
             return {"status": "already_closed", "event_id": event_id}
         if any((directory / name).exists() for name in ("result.json", "initial.json")):
             raise ValueError("cannot change costs already bound to a published result or measurement")
-        progress_path = directory / "progress.json"
-        progress = core.read(progress_path) if progress_path.exists() else {}
-        if progress.get("event_id") != event_id:
-            progress = {}
-        if progress and any(progress.get(key) != start.get(key) for key in ("phase", "ledger", "gpus", "gpu_type", "host")):
-            raise ValueError("progress record allocation differs from the open event")
+        progress = event_progress(directory, start)
         pid = progress.get("pid", start.get("pid"))
         receipt_path = directory / "cost-events" / f"{event_id}.json"
         lower_bound = core.number(progress.get("seconds", 0.), "last recorded duration", 0.)

@@ -57,7 +57,8 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
       -o -name 'decision.json' -o -name 'decisions-frozen.json' -o -name 'initial.json' \
       -o -name 'measurement.json' -o -name 'execution.json' -o -name 'result.json' \
       -o -name 'cost.jsonl' -o -name 'budget_stop.json' -o -name 'fit-cost.json' \
-      -o -name 'kv-cache-runtime.json' -o -name 'cost-runtime.json' -o -path '*/cost-events/*.json' \) -print0 | sort -z)
+      -o -name 'kv-cache-runtime.json' -o -name 'cost-runtime.json' -o -name 'prefix-resume-runtime.json' \
+      -o -path '*/cost-events/*.json' -o -path '*/pending-costs/*.json' \) -print0 | sort -z)
     while IFS= read -r -d '' path; do
       printf '\n===== LOG: %s (last 100 lines) =====\n' "${path#"$OUT_ROOT"/}"
       tail -n 100 "$path"

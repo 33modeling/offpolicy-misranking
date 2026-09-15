@@ -31,6 +31,8 @@ _verify = base.verify
 # Exact a63e69d runtime before the teacher-forced KV-cache fix.
 PRE_KV_CACHE_CODE = "8cb0b16a8c2e4229674c0165212a36ee916d9a2cbaea8dcc7adefc0deb9819ae"
 PRE_COST_CODE = "7c2480d74d8c4b2b109570ddab68d513961db60517acf1dad9d8794834ab6f7a"
+PRE_PREFIX_RESUME_CODE = "0e1bc0c39315258210b2ed0a003fe777b468993d60e9797f68972f739949de76"
+PRIOR_RUNTIME_CODES = {PRE_KV_CACHE_CODE, PRE_COST_CODE, PRE_PREFIX_RESUME_CODE}
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
 COST_METER = "91b1d60ef7266dd59e5b534a0c7a0cf531075746b89d0d4126e455f935577005"
@@ -44,7 +46,7 @@ def validate_code_hashes(recorded):
     current = code_hashes()
     if recorded == current:
         return current
-    if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_KV_CACHE_CODE, PRE_COST_CODE}
+    if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in PRIOR_RUNTIME_CODES
             or set(recorded) != set(current)
             or current["src/grads.py"] != KV_CACHE_GRADS
             or current["src/selection_gate_gpu.py"] != COST_METER
@@ -73,16 +75,33 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) != PRE_COST_CODE)):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
-            base.bind(root / "cost-runtime.json", {
+            cost_receipt = {
                 "schema": "selection-switch-cost-runtime/v1",
                 "switch_sha256": base.digest(root / "switch.json"),
                 "kv_cache_runtime_sha256": base.digest(path), "runtime_code_hashes": current,
                 "change": "protect phase startup, recover atomic finish receipts, skip busy publication tasks",
                 "cost_policy": "recover only from completion evidence or operator-reported termination duration",
+            }
+            cost_path = root / "cost-runtime.json"
+            if cost_path.exists():
+                previous = core.read(cost_path)
+                previous_code = previous.get("runtime_code_hashes")
+                if (previous != cost_receipt and
+                        (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
+                         or core.fingerprint(previous_code) != PRE_PREFIX_RESUME_CODE)):
+                    raise ValueError(f"frozen contract changed: {cost_path}")
+            else:
+                base.bind(cost_path, cost_receipt)
+            base.bind(root / "prefix-resume-runtime.json", {
+                "schema": "selection-switch-prefix-resume-runtime/v1",
+                "switch_sha256": base.digest(root / "switch.json"),
+                "cost_runtime_sha256": base.digest(cost_path), "runtime_code_hashes": current,
+                "change": "resume research prefixes with explicitly unknown historical costs; keep active queue peers",
+                "cost_policy": "preserve open research events; never waive deployment budget accounting",
             })
     return p
 
@@ -279,6 +298,59 @@ def prepare(args):
         print(f"[prepared] {root}; 18 development + 30 held-out continuations, five selected prefixes; B={budget:.0f} GPU-s")
 
 
+def prefix_cost(segment, gpu_type):
+    """Called under the seed lease; unknown research cost is not a branch budget."""
+    result = base.cost(segment)
+    if not result["complete"]:
+        result = base.recover_cost_receipts(segment)
+    with base.lease(segment / ".cost.lock"):
+        path = segment / "cost.jsonl"
+        events = [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
+        result = core.cost_summary(events)
+        if result["missing_starts"]:
+            raise ValueError(f"prefix cost has missing start records: {segment}")
+        if any(row.get("ledger") != "research" or row.get("phase") != "prefix-train"
+               or row.get("gpus") != 4 or row.get("gpu_type") != gpu_type for row in events):
+            raise ValueError(f"unexpected prefix research allocation: {segment}")
+        for event_id in result["incomplete_events"]:
+            start = next(row for row in events if row["event_id"] == event_id)
+            archive = segment / "pending-costs" / f"{event_id}.json"
+            saved = core.read(archive) if archive.exists() else None
+            if saved is not None and saved.get("start") != start:
+                raise ValueError(f"pending prefix cost evidence changed: {archive}")
+            progress_path = segment / "progress.json"
+            progress = core.read(progress_path) if progress_path.exists() else {}
+            if progress.get("event_id") != event_id:
+                progress = saved.get("progress") if saved else None
+            if progress and any(progress.get(key) != start.get(key) for key in
+                                ("event_id", "phase", "ledger", "gpus", "gpu_type", "host")):
+                raise ValueError(f"prefix progress allocation changed: {segment}")
+            pid = (progress or {}).get("pid", start.get("pid"))
+            if start.get("host") == socket.gethostname() and type(pid) is int and pid > 0:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    pass
+                else:
+                    raise ValueError(f"prefix owner PID {pid} is still alive: {segment}")
+            if saved is None:
+                core.atomic_json(archive, {"start": start, "progress": progress,
+                    "total_gpu_seconds": None, "reason": "interrupted research prefix; duration unknown"})
+    if not result["complete"]:
+        print(f"[prefix-cost pending] {segment}: events={','.join(result['incomplete_events'])}; "
+              "historical research total UNKNOWN; resuming prefix, deployment budgets unchanged", flush=True)
+    return result
+
+
+def prefix_cost_report(root):
+    segments = {str(path.parent.relative_to(root)): base.cost(path.parent)
+                for path in sorted((root / "prefixes").glob("seed-*/segment-*/cost.jsonl"))}
+    complete = all(value["complete"] for value in segments.values())
+    known = sum(value["ledgers"]["research"]["gpu_seconds"] for value in segments.values())
+    return {"complete": complete, "known_gpu_seconds": known,
+            "total_gpu_seconds": known if complete else None, "segments": segments}
+
+
 def build_prefix(root, seed, step, devices, env):
     import evidence_downstream as ed
     from train_policy_grpo import validate_policy_lineage
@@ -292,7 +364,7 @@ def build_prefix(root, seed, step, devices, env):
     base.bind(segment / "subsets/subset-fresh_r.json", item["subset"])
     cfg = {**item["config"], "drift": previous}
     policy = segment / "fresh_r/policy"
-    base.spent(segment)
+    prefix_cost(segment, p["gpu_type"])
     if not (policy / "policy_train.json").exists():
         command = ed.train_args(cfg, directory, segment, "fresh_r", step-previous)
         command = [x for x in command if x != "--reliability-log"]
@@ -570,6 +642,33 @@ def smoke(root):
     print(f"[smoke complete] registered s0/t25 CONTINUE_D; reused by full run: {out}")
 
 
+def busy_task(label, directory):
+    paths = [directory / "progress.json"]
+    if directory.parent.parent.name == "points":
+        paths += [directory.parent / name / "progress.json" for name in ("measurement", "gate_measurement")]
+    for path in paths:
+        if path.exists():
+            progress = core.read(path)
+            if progress.get("state") == "running" and 0 <= time.time()-progress.get("updated", 0) < 60:
+                return {"task": label, "active": True, "host": progress.get("host", "unknown"),
+                        "pid": progress.get("pid"), "phase": progress.get("phase", "unknown")}
+    return {"task": label, "active": False}
+
+
+def wait_for_peers(busy, *, last_progress, idle_timeout):
+    if not busy:
+        return False
+    active = [item for item in busy if item["active"]]
+    if not active and time.monotonic()-last_progress >= idle_timeout:
+        return False
+    owners = {(item["host"], item["pid"]) for item in active}
+    detail = ",".join(item["task"] + (f"@{item['host']}:{item['pid']}({item['phase']})" if item["active"] else "(locked)")
+                      for item in busy[:8])
+    print(f"[waiting] no claimable task; active_peers={len(owners)}; busy={detail}; retry in 15s", flush=True)
+    time.sleep(15)
+    return True
+
+
 def work(root, *, idle_timeout=600.):
     import additive_experiment as ae
     p = manifest(root)
@@ -582,7 +681,7 @@ def work(root, *, idle_timeout=600.):
         try:
             fit_once(root)
         except BlockingIOError:
-            busy.append("gate-fit")
+            busy.append(busy_task("gate-fit", root))
         for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
             env = ae.model_environment(p["sources"][str(seed)]["config"])
             for step in rule.STEPS:
@@ -596,7 +695,7 @@ def work(root, *, idle_timeout=600.):
                             if not (child / "net_protocol.json").exists():
                                 publish_state(root, seed, step)
                     except BlockingIOError:
-                        busy.append(f"s{seed}/t{step}/publish")
+                        busy.append(busy_task(f"s{seed}/t{step}/publish", child))
                         continue
                 out = next(base.entries(child))
                 protocol_value, suite = protocol(child), core.read(child / "suite.json")
@@ -611,10 +710,11 @@ def work(root, *, idle_timeout=600.):
                                 continue
                             freeze_decisions(out, suite, protocol_value, env)
                             attempted.add(key)
+                            print(f"[claimed] host={socket.gethostname()} pid={os.getpid()} task=s{seed}/t{step}/{arm}", flush=True)
                             runtime.run_arm(out, suite, protocol_value, arm, devices, env)
                             progress = True
                     except BlockingIOError:
-                        busy.append(f"s{seed}/t{step}/{arm}")
+                        busy.append(busy_task(f"s{seed}/t{step}/{arm}", directory))
                     except Exception as exc:
                         attempted.add(key)
                         failures += 1
@@ -634,10 +734,11 @@ def work(root, *, idle_timeout=600.):
                     with base.lease(directory / ".prefix.lock"):
                         if not (directory / f"prefix-{step}.json").exists():
                             attempted.add(key)
+                            print(f"[claimed] host={socket.gethostname()} pid={os.getpid()} task=s{seed}/t{step}/prefix", flush=True)
                             build_prefix(root, seed, step, devices, env)
                             progress = True
                 except BlockingIOError:
-                    busy.append(f"s{seed}/t{step}/prefix")
+                    busy.append(busy_task(f"s{seed}/t{step}/prefix", directory / f"segment-{step}"))
                 except Exception as exc:
                     attempted.add(key)
                     failures += 1
@@ -645,12 +746,11 @@ def work(root, *, idle_timeout=600.):
                 break
         if progress:
             last_progress = time.monotonic()
-        elif busy and time.monotonic()-last_progress < idle_timeout:
-            print(f"[waiting] no claimable task; busy={','.join(busy[:8])}; "
-                  f"failed_on_this_node={failures}; retry in 15s", flush=True)
-            time.sleep(15)
         else:
-            break
+            if failures:
+                print(f"[queue] failed_on_this_node={failures}; failed tasks need attention, not more nodes", flush=True)
+            if not wait_for_peers(busy, last_progress=last_progress, idle_timeout=idle_timeout):
+                break
     status(root)
     return int(bool(failures))
 
@@ -710,11 +810,16 @@ def status(root):
                             detail = "ready"
                 print(f"s{seed}/t{step:<6} {arm:20} {state:10} {detail}")
     print(f"[switch] {done}/{total} DONE; logs/results: {root}")
+    prefix_costs = prefix_cost_report(root)
+    if not prefix_costs["complete"]:
+        print("[prefix-cost pending] research total UNKNOWN; prefix execution is allowed; "
+              "inspect with bash scripts/run_selection_switch.sh recover-cost")
 
 
 def summarize(root):
     for development, name in ((True, "development-report.json"), (False, "test-report.json")):
         report = collect(root, development=development)
+        report["prefix_research_cost"] = prefix_cost_report(root)
         if not development:
             report["summary"] = rule.clustered_summary(report["rows"])
         core.atomic_json(root / name, report)

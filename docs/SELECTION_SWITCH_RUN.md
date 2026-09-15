@@ -53,20 +53,40 @@ bash scripts/run_selection_switch.sh why
 Rerun the same command to resume. Completed branches are skipped. A failed
 task is attempted at most once per invocation; other eligible tasks continue.
 It never kills another E5/Qwen/net-gain process or bypasses an occupied node.
-Waiting for other owners is bounded at ten minutes without local progress,
-then the launcher exits rather than looping indefinitely. Rerun it to rejoin.
+Waiting continues while locked tasks have fresh running heartbeats from peers,
+even after ten minutes without local work. Without an active peer or local
+progress, the ten-minute idle limit still applies. Rerun the launcher to rejoin.
 State publication now uses a nonblocking task lock: a node skips a state that
 another node is preparing and continues through other ready states and prefixes.
 Missing development labels do not contend for the fitting lock. `waiting`
-lists the occupied tasks and this node's failure count. It means the scan found
-no claimable task; it does not mean the experiment has finished.
+lists occupied tasks and, when a fresh heartbeat exists, their host, PID and
+phase. `[claimed]` identifies the node and task that actually started. It means
+the scan found no claimable task; it does not mean parallel execution is disabled.
+Same-seed prefix segments remain sequential; different seeds and ready branches
+run concurrently. Failed-task counts are printed separately from active peers.
 
 SIGINT/TERM stops the current worker tree. Phase startup is covered by cleanup,
 and an atomic `cost-events/<event-id>.json` completion receipt is persisted before
 the finish is appended to `cost.jsonl`. On resume, `spent()` replays a matching
 receipt under the cost writer lock. It does not infer completion from an old
-heartbeat. The exact `a63e69d` and `96ad9ed` runtimes are accepted with an added
-`cost-runtime.json` binding; existing KV-cache runtime receipts stay unchanged.
+heartbeat. The exact `a63e69d`, `96ad9ed` and `bb32da3` runtimes are accepted with
+an added `prefix-resume-runtime.json` binding. Existing manifests and runtime
+receipts stay unchanged.
+
+Before updating a running cluster checkout, stop its old launchers gracefully
+and confirm their worker trees have stopped, then pull and relaunch on each node.
+Do not leave old-version controllers running alongside the patched ones.
+
+An interrupted **research prefix** no longer blocks training merely because its
+historical duration is unknown. Its seed/task lock and cost writer lock must be
+free, and a recorded local owner must not still be alive. The old start and last
+progress are preserved in `pending-costs/<event-id>.json` before a new phase can
+replace `progress.json`. Training resumes from its existing checkpoint machinery;
+completed prefix policies are reused. The original cost event stays open, never
+zeroed or assigned a guessed duration. Status and reports expose the research
+total as unknown (`total_gpu_seconds: null`) until evidence closes the event.
+This exception does **not** apply to deployment/measurement costs, whose exact
+accounting is still required to enforce the frozen continuation budget.
 
 For an older interrupted phase without a completion receipt, inspect its record
 without allocating GPUs:
@@ -75,7 +95,8 @@ without allocating GPUs:
 bash scripts/run_selection_switch.sh recover-cost
 ```
 
-This lists open event IDs, relative directories, and matching progress records.
+This lists open event IDs, relative directories, and matching progress records,
+including archived prefix progress even after another phase has run.
 After confirming that the affected job has stopped, close one event using its
 elapsed seconds from the termination/scheduler log:
 
