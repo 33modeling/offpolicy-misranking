@@ -103,6 +103,9 @@ def test_render_has_every_section_and_fits_the_terminal(tmp_path):
         assert heading in text, heading
     assert "node-1" in text and "s3/t25 MOPPS" in text and "train" in text
     assert "node-4" in text and "HOLD" in text
+    assert "NODES (every host" in text and "THIS NODE GPUS" in text
+    nodes = {item["host"]: item for item in status.snapshot(root, now=now)["nodes"]}
+    assert nodes["node-4"]["state"] == "HOLD" and nodes["node-1"]["state"] == "RUN"
     assert "cuda_system_not_ready" in text and "NCCL_NVLS_ENABLE=0" in text
     assert "s3/t100" in text and "BLOCKED" in text and "prefix 100 failed" in text
     assert "prefix 25 (run)" in text

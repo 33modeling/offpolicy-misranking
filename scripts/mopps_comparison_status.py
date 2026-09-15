@@ -20,6 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import selection_gate as core
 import selection_switch as rule
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _node_view as node_view
+
 ARM_LABELS = {"mopps": "MOPPS", "random_online": "RANDOM"}
 CELLS = {"DONE": "DONE", "RUNNING": "RUN", "READY": "READY", "WAIT": "WAIT", "BLOCKED": "BLOCKED",
          "FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVALID", "SAVING": "SAVING"}
@@ -233,7 +236,9 @@ def snapshot(root, *, now=None):
         elif last.startswith("[blocked]"):
             waiting.append({"host": host, "state": "BLOCKED", "reason": "node admission failed; launcher left"})
     branches = [task for task in tasks if task["kind"] == "branch"]
+    nodes = node_view.launcher_nodes(root, tasks, now=now)
     return {"prepared": True, "root": str(root), "parent": str(parent), "updated": now,
+            "nodes": nodes, "local_gpus": node_view.local_gpus(),
             "seeds": seeds, "steps": steps, "arms": arms,
             "active_nodes": len(active_hosts), "stale_nodes": len(stale_hosts), "waiting_nodes": waiting,
             "branch_counts": dict(Counter(task["status"] for task in branches)),
@@ -296,6 +301,10 @@ def render(data, *, all_tasks=False, width=120):
             lines += table(headers, rows, [max(12, min(20, width-88)), 7, 7, 20, 18, 8, 8, 6])
     else:
         lines.append("No fresh worker heartbeat or waiting launcher observed.")
+    lines += ["", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
+    lines += node_view.render_nodes(data.get("nodes", []), table, width)
+    lines += ["", "THIS NODE GPUS"]
+    lines += node_view.render_local_gpus(data.get("local_gpus", {"host": "?", "available": False, "gpus": [], "processes": []}), table, width)
     if data["admissions"]:
         lines += ["", "NODE ADMISSION (latest NCCL probe per host)"]
         rows = [[item["host"], item["state"], str(item["attempts"]),
