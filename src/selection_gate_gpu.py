@@ -72,8 +72,31 @@ def cost(directory):
 def spent(directory):
     result = cost(directory)
     if not result["complete"]:
+        result = recover_cost_receipts(directory)
+    if not result["complete"]:
         raise ValueError(f"unclosed cost event at {directory}; unknown cost cannot be treated as zero")
     return sum(v["gpu_seconds"] for k, v in result["ledgers"].items() if k != "reporting")
+
+
+def recover_cost_receipts(directory):
+    """Replay completed events only, after the writer releases its cost lock."""
+    with lease(directory / ".cost.lock"):
+        path = directory / "cost.jsonl"
+        events = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        result = gate.cost_summary(events)
+        for event_id in result["incomplete_events"]:
+            if Path(event_id).name != event_id or event_id in {".", ".."}:
+                raise ValueError("invalid pending cost event ID")
+            receipt = directory / "cost-events" / f"{event_id}.json"
+            if not receipt.exists():
+                continue
+            finish = gate.read(receipt)
+            if finish.get("event_id") != event_id or finish.get("state") != "finished":
+                raise ValueError("cost finish receipt belongs to a different event")
+            gate.cost_summary([*events, finish])
+            journal(path, finish)
+            events.append(finish)
+        return gate.cost_summary(events)
 
 
 def terminate(processes):
@@ -91,20 +114,25 @@ def terminate(processes):
             p.wait()
 
 
-def meter(directory, name, gpu_type, *, action=None, commands=None, env=None,
-          timeout=None, ledger="research", devices=GPUS):
+def meter(directory, name, gpu_type, **kwargs):
+    with lease(directory / ".cost.lock"):
+        return _meter(directory, name, gpu_type, **kwargs)
+
+
+def _meter(directory, name, gpu_type, *, action=None, commands=None, env=None,
+           timeout=None, ledger="research", devices=GPUS):
     """One allocation interval, including idle GPUs while a CPU phase runs."""
     directory.mkdir(parents=True, exist_ok=True)
     base = {"event_id": uuid.uuid4().hex, "phase": name, "ledger": ledger,
             "gpus": devices, "gpu_type": gpu_type, "host": socket.gethostname()}
     path = directory / "cost.jsonl"
-    journal(path, {**base, "state": "started", "time": time.time()})
     started, rc, processes = time.monotonic(), 1, []
     def progress(elapsed, state):
         gate.atomic_json(directory / "progress.json", {**base, "state": state, "pid": os.getpid(),
                          "updated": time.time(), "seconds": elapsed, "timeout": timeout})
-    progress(0., "running")
     try:
+        journal(path, {**base, "state": "started", "time": time.time(), "pid": os.getpid()})
+        progress(0., "running")
         if action is not None:
             result = action()
         else:
@@ -139,8 +167,13 @@ def meter(directory, name, gpu_type, *, action=None, commands=None, env=None,
     finally:
         terminate(processes)
         seconds = time.monotonic()-started
-        journal(path, {**base, "state": "finished", "time": time.time(), "seconds": seconds,
-                       "allocated_gpu_seconds": seconds*devices, "exit_code": rc})
+        finished = {**base, "state": "finished", "time": time.time(), "seconds": seconds,
+                    "allocated_gpu_seconds": seconds*devices, "exit_code": rc}
+        # The atomic receipt permits recovery if appending the finish is interrupted.
+        try:
+            gate.atomic_json(directory / "cost-events" / f"{base['event_id']}.json", finished)
+        finally:
+            journal(path, finished)
         progress(seconds, "finished" if rc == 0 else "failed")
 
 

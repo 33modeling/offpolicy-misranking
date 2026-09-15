@@ -57,6 +57,25 @@ def test_process_timeout_reaps_worker_and_records_failure(tmp_path):
     assert gpu.cost(tmp_path)["ledgers"]["research"]["failed_events"] == 1
 
 
+def test_initial_progress_failure_does_not_leave_cost_event_open(tmp_path, monkeypatch):
+    atomic_json = gate.atomic_json
+    calls = 0
+
+    def fail_first_progress(path, value):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("interrupted progress write")
+        return atomic_json(path, value)
+
+    monkeypatch.setattr(gate, "atomic_json", fail_first_progress)
+    with pytest.raises(OSError, match="interrupted progress write"):
+        gpu.meter(tmp_path, "profile", "H100", action=lambda: pytest.fail("action started"))
+    assert gpu.cost(tmp_path)["complete"]
+    assert gpu.cost(tmp_path)["ledgers"]["research"]["failed_events"] == 1
+    assert gpu.spent(tmp_path) > 0
+
+
 def test_failed_shard_cancels_sibling_and_does_not_loop(tmp_path):
     started = time.monotonic()
     with pytest.raises(RuntimeError, match="worker failed"):

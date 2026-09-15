@@ -55,8 +55,44 @@ task is attempted at most once per invocation; other eligible tasks continue.
 It never kills another E5/Qwen/net-gain process or bypasses an occupied node.
 Waiting for other owners is bounded at ten minutes without local progress,
 then the launcher exits rather than looping indefinitely. Rerun it to rejoin.
-SIGINT/TERM stops the current worker tree. A hard kill with an unclosed cost
-event requires an audited recovery: unknown failed work is not reset to zero.
+State publication now uses a nonblocking task lock: a node skips a state that
+another node is preparing and continues through other ready states and prefixes.
+Missing development labels do not contend for the fitting lock. `waiting`
+lists the occupied tasks and this node's failure count. It means the scan found
+no claimable task; it does not mean the experiment has finished.
+
+SIGINT/TERM stops the current worker tree. Phase startup is covered by cleanup,
+and an atomic `cost-events/<event-id>.json` completion receipt is persisted before
+the finish is appended to `cost.jsonl`. On resume, `spent()` replays a matching
+receipt under the cost writer lock. It does not infer completion from an old
+heartbeat. The exact `a63e69d` and `96ad9ed` runtimes are accepted with an added
+`cost-runtime.json` binding; existing KV-cache runtime receipts stay unchanged.
+
+For an older interrupted phase without a completion receipt, inspect its record
+without allocating GPUs:
+
+```bash
+bash scripts/run_selection_switch.sh recover-cost
+```
+
+This lists open event IDs, relative directories, and matching progress records.
+After confirming that the affected job has stopped, close one event using its
+elapsed seconds from the termination/scheduler log:
+
+```bash
+bash scripts/run_selection_switch.sh recover-cost \
+  --directory states/s0-t25/points/view-25/selection_reduced \
+  --event-id EVENT_ID --seconds ELAPSED_SECONDS --reason 'termination log reference'
+```
+
+Use the directory and event ID from the listing. An existing completion receipt
+can be replayed with just `--directory` and `--event-id`. Legacy recovery requires
+a stated duration and evidence; the last heartbeat is only a lower bound.
+Recovery refuses occupied task/cost locks, a still-live local legacy owner,
+underreported duration, changed allocation, and already published cost totals.
+It appends a failed completion with evidence and the original ledger hash;
+prior records, partial outputs and budgets remain in place. Repeating recovery
+does not charge the event twice. Failed work is not reset to zero.
 
 ## What is frozen
 

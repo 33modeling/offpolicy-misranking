@@ -42,6 +42,7 @@ def cache_predecessor():
     hashes.update({
         "src/grads.py": "112d6a18747d324d91d3fdea0ae316ba0b5248dc7f12eb72eaf51bb391688245",
         "src/selection_switch_gpu.py": "d2974888651e91badd30332569bd62c12c40c0bf6609e2fe10f250eed6a3276d",
+        "src/selection_gate_gpu.py": "cdac209f9dae10513782d865be615e825ea392605551df88bfa94a213f8f3f13",
     })
     assert core.fingerprint(hashes) == switch.PRE_KV_CACHE_CODE
     return hashes
@@ -65,7 +66,7 @@ def test_cache_fix_resumes_exact_predecessor_and_preserves_artifacts(tmp_path):
         switch.manifest(tmp_path)
 
 
-@pytest.mark.parametrize("filename", ["src/grads.py", "src/selection_switch.py", "extra.py"])
+@pytest.mark.parametrize("filename", ["src/grads.py", "src/selection_gate_gpu.py", "src/selection_switch.py", "extra.py"])
 def test_cache_fix_rejects_unrelated_runtime_changes(filename, monkeypatch):
     original = cache_predecessor()
     current = switch.code_hashes()
@@ -80,6 +81,27 @@ def test_cache_fix_rejects_unknown_predecessor():
     original["src/grads.py"] = "unknown version"
     with pytest.raises(ValueError, match="scientific code changed"):
         switch.validate_code_hashes(original)
+
+
+@pytest.mark.parametrize("already_patched", [False, True])
+def test_cost_fix_preserves_preexisting_kv_runtime_receipt(tmp_path, already_patched):
+    patched = cache_predecessor()
+    patched.update({"src/grads.py": switch.KV_CACHE_GRADS,
+                    "src/selection_switch_gpu.py": "52e2f4f6da51fe3693281ef4894b389b76811352795d97f5eea56e01f88acd90"})
+    assert core.fingerprint(patched) == switch.PRE_COST_CODE
+    frozen = {"schema": rule.SCHEMA, "code_hashes": patched if already_patched else cache_predecessor()}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    receipt = {"schema": "selection-switch-kv-cache-runtime/v1",
+               "switch_sha256": base.digest(tmp_path / "switch.json"),
+               "original_code_hashes": frozen["code_hashes"], "runtime_code_hashes": patched,
+               "change": "teacher-forced scoring forwards explicitly disable KV cache",
+               "cost_policy": "retain all previous costs and the original branch allocation"}
+    core.atomic_json(tmp_path / "kv-cache-runtime.json", receipt)
+    original = base.digest(tmp_path / "kv-cache-runtime.json")
+    assert switch.manifest(tmp_path) == frozen
+    assert base.digest(tmp_path / "kv-cache-runtime.json") == original
+    assert core.read(tmp_path / "cost-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
+    assert switch.manifest(tmp_path) == frozen
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -263,6 +285,100 @@ def test_all_48_tasks_auto_transition_only_after_18_dev_results(tmp_path, monkey
     before = len(calls)
     assert switch.work(tmp_path, idle_timeout=0) == 0
     assert len(calls) == before
+
+
+QUEUE_WORKER = '''
+import json, os, sys, time
+from pathlib import Path
+from types import SimpleNamespace
+import selection_switch_gpu as s
+sys.modules['additive_experiment'] = SimpleNamespace(model_environment=lambda c: {})
+s.rule.DEV_SEEDS, s.rule.TEST_SEEDS, s.rule.STEPS = (0, 1, 2), (), (25,)
+root = Path(sys.argv[1])
+s.manifest = lambda _: {'sources': {str(i): {'config': {}} for i in range(3)}}
+s.admitted_devices = lambda _: list('0123')
+s.fit_once = lambda _: False
+s.status = lambda _: None
+def publish(root, seed, step):
+    child = s.child_root(root, seed, step)
+    out = child / 'points' / 'view-25'
+    time.sleep(.05)
+    s.core.atomic_json(out / 'contract.json', {'seed': seed})
+    s.core.atomic_json(child / 'suite.json', {})
+    s.core.atomic_json(child / 'net_protocol.json', {'mode': 'study', 'arms': list(s.rule.DEV_ARMS)})
+s.publish_state = publish
+s.protocol = lambda child: s.core.read(child / 'net_protocol.json')
+s.base.entries = lambda child: iter((child / 'points').iterdir())
+def decide(out, suite, protocol, arm, env):
+    s.base.bind(out / arm / 'decision.json', {'action': 'random'})
+s.runtime.decision = decide
+def run(out, suite, protocol, arm, devices, env):
+    directory = out / arm
+    with (directory / 'claim.json').open('x') as handle:
+        json.dump({'pid': os.getpid(), 'started': time.monotonic()}, handle)
+    time.sleep(.15)
+    s.core.atomic_json(directory / 'result.json', {'pid': os.getpid(), 'finished': time.monotonic()})
+s.runtime.run_arm = run
+if len(sys.argv) > 2:
+    (root / f'ready-{os.getpid()}').touch()
+    deadline = time.monotonic() + 5
+    while not (root / 'go').exists():
+        if time.monotonic() > deadline: raise RuntimeError('test start timeout')
+        time.sleep(.01)
+raise SystemExit(s.work(root, idle_timeout=0))
+'''
+
+
+def ready_queue(root):
+    for seed in range(3):
+        core.atomic_json(switch.prefix_dir(root, seed) / "prefix-25.json", {})
+
+
+def test_busy_publication_is_skipped_while_other_seeds_run(tmp_path):
+    import subprocess
+    ready_queue(tmp_path)
+    child = switch.child_root(tmp_path, 0, 25)
+    with base.lease(child / ".publish.lock"):
+        result = subprocess.run([sys.executable, "-c", QUEUE_WORKER, str(tmp_path)],
+                                capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (child / "net_protocol.json").exists()
+    assert len(list(tmp_path.glob("states/*/points/*/*/result.json"))) == 4
+
+
+def test_four_nodes_claim_switch_tasks_concurrently_without_duplicates(tmp_path):
+    import subprocess
+    import time
+    ready_queue(tmp_path)
+    workers = [subprocess.Popen([sys.executable, "-c", QUEUE_WORKER, str(tmp_path), "wait"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(4)]
+    try:
+        deadline = time.monotonic() + 5
+        while len(list(tmp_path.glob("ready-*"))) < 4 and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert len(list(tmp_path.glob("ready-*"))) == 4
+        (tmp_path / "go").touch()
+        for worker in workers:
+            stdout, stderr = worker.communicate(timeout=10)
+            assert worker.returncode == 0, stdout + stderr
+        claims = {path.parent: core.read(path) for path in tmp_path.glob("states/*/points/*/*/claim.json")}
+        results = {path.parent: core.read(path) for path in tmp_path.glob("states/*/points/*/*/result.json")}
+        assert len(claims) == len(results) == 6
+        assert len({row["pid"] for row in results.values()}) >= 2
+        assert any(left != right and claims[left]["pid"] != claims[right]["pid"]
+                   and claims[left]["started"] < results[right]["finished"]
+                   and claims[right]["started"] < results[left]["finished"]
+                   for left in claims for right in claims)
+    finally:
+        for worker in workers:
+            if worker.poll() is None:
+                worker.kill()
+                worker.communicate()
+
+
+def test_missing_development_labels_do_not_hold_fit_lock(tmp_path):
+    with base.lease(tmp_path / ".fit.lock"):
+        assert switch.fit_once(tmp_path) is False
 
 
 def test_existing_link_cannot_silently_point_to_other_policy(tmp_path):

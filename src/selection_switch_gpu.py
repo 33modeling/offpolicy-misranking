@@ -30,8 +30,10 @@ CODE = tuple(dict.fromkeys((*runtime.CODE_FILES, "src/selection_switch.py", "src
 _verify = base.verify
 # Exact a63e69d runtime before the teacher-forced KV-cache fix.
 PRE_KV_CACHE_CODE = "8cb0b16a8c2e4229674c0165212a36ee916d9a2cbaea8dcc7adefc0deb9819ae"
-KV_CACHE_FILES = {"src/grads.py", "src/selection_switch_gpu.py"}
+PRE_COST_CODE = "7c2480d74d8c4b2b109570ddab68d513961db60517acf1dad9d8794834ab6f7a"
+RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
+COST_METER = "91b1d60ef7266dd59e5b534a0c7a0cf531075746b89d0d4126e455f935577005"
 
 
 def code_hashes():
@@ -42,10 +44,11 @@ def validate_code_hashes(recorded):
     current = code_hashes()
     if recorded == current:
         return current
-    if (not isinstance(recorded, dict) or core.fingerprint(recorded) != PRE_KV_CACHE_CODE
+    if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_KV_CACHE_CODE, PRE_COST_CODE}
             or set(recorded) != set(current)
             or current["src/grads.py"] != KV_CACHE_GRADS
-            or any(recorded[name] != sha for name, sha in current.items() if name not in KV_CACHE_FILES)):
+            or current["src/selection_gate_gpu.py"] != COST_METER
+            or any(recorded[name] != sha for name, sha in current.items() if name not in RUNTIME_PATCH_FILES)):
         raise ValueError("switch protocol or scientific code changed; preserve the frozen run")
     return current
 
@@ -57,12 +60,29 @@ def manifest(root):
     current = validate_code_hashes(p["code_hashes"])
     if p["code_hashes"] != current:
         with base.lease(root / ".kv-cache-runtime.lock", blocking=True):
-            base.bind(root / "kv-cache-runtime.json", {
+            path = root / "kv-cache-runtime.json"
+            receipt = {
                 "schema": "selection-switch-kv-cache-runtime/v1",
                 "switch_sha256": base.digest(root / "switch.json"),
                 "original_code_hashes": p["code_hashes"], "runtime_code_hashes": current,
                 "change": "teacher-forced scoring forwards explicitly disable KV cache",
                 "cost_policy": "retain all previous costs and the original branch allocation",
+            }
+            if path.exists():
+                previous = core.read(path)
+                previous_code = previous.get("runtime_code_hashes")
+                if (previous != receipt and
+                        (previous != {**receipt, "runtime_code_hashes": previous_code}
+                         or core.fingerprint(previous_code) != PRE_COST_CODE)):
+                    raise ValueError(f"frozen contract changed: {path}")
+            else:
+                base.bind(path, receipt)
+            base.bind(root / "cost-runtime.json", {
+                "schema": "selection-switch-cost-runtime/v1",
+                "switch_sha256": base.digest(root / "switch.json"),
+                "kv_cache_runtime_sha256": base.digest(path), "runtime_code_hashes": current,
+                "change": "protect phase startup, recover atomic finish receipts, skip busy publication tasks",
+                "cost_policy": "recover only from completion evidence or operator-reported termination duration",
             })
     return p
 
@@ -489,6 +509,11 @@ def collect(root, *, development):
 
 
 def fit_once(root):
+    # Missing labels are not a fitting job; other nodes need not contend for its lock.
+    if not (root / "model.json").exists() and any(
+            not list(child_root(root, s, t).glob(f"points/*/{arm}/result.json"))
+            for s in rule.DEV_SEEDS for t in rule.STEPS for arm in rule.DEV_ARMS):
+        return False
     with base.lease(root / ".fit.lock"):
         if (root / "model.json").exists():
             rule.validate_model(core.read(root / "model.json"))
@@ -553,11 +578,11 @@ def work(root, *, idle_timeout=600.):
     attempted, failures = set(), 0
     last_progress = time.monotonic()
     while True:
-        progress, busy = False, False
+        progress, busy = False, []
         try:
             fit_once(root)
         except BlockingIOError:
-            busy = True
+            busy.append("gate-fit")
         for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
             env = ae.model_environment(p["sources"][str(seed)]["config"])
             for step in rule.STEPS:
@@ -565,9 +590,14 @@ def work(root, *, idle_timeout=600.):
                 if not cert.exists() or (seed in rule.TEST_SEEDS and not (root / "model.json").exists()):
                     continue
                 child = child_root(root, seed, step)
-                with base.lease(child / ".publish.lock", blocking=True):
-                    if not (child / "net_protocol.json").exists():
-                        publish_state(root, seed, step)
+                if not (child / "net_protocol.json").exists():
+                    try:
+                        with base.lease(child / ".publish.lock"):
+                            if not (child / "net_protocol.json").exists():
+                                publish_state(root, seed, step)
+                    except BlockingIOError:
+                        busy.append(f"s{seed}/t{step}/publish")
+                        continue
                 out = next(base.entries(child))
                 protocol_value, suite = protocol(child), core.read(child / "suite.json")
                 for arm in protocol_value["arms"] if seed % 2 == 0 else protocol_value["arms"][::-1]:
@@ -577,12 +607,14 @@ def work(root, *, idle_timeout=600.):
                         continue
                     try:
                         with base.lease(directory / ".task.lock"):
+                            if (directory / "result.json").exists():
+                                continue
                             freeze_decisions(out, suite, protocol_value, env)
                             attempted.add(key)
                             runtime.run_arm(out, suite, protocol_value, arm, devices, env)
                             progress = True
                     except BlockingIOError:
-                        busy = True
+                        busy.append(f"s{seed}/t{step}/{arm}")
                     except Exception as exc:
                         attempted.add(key)
                         failures += 1
@@ -605,7 +637,7 @@ def work(root, *, idle_timeout=600.):
                             build_prefix(root, seed, step, devices, env)
                             progress = True
                 except BlockingIOError:
-                    busy = True
+                    busy.append(f"s{seed}/t{step}/prefix")
                 except Exception as exc:
                     attempted.add(key)
                     failures += 1
@@ -614,7 +646,8 @@ def work(root, *, idle_timeout=600.):
         if progress:
             last_progress = time.monotonic()
         elif busy and time.monotonic()-last_progress < idle_timeout:
-            print("[waiting] remaining ready tasks are held by other nodes; bounded wait", flush=True)
+            print(f"[waiting] no claimable task; busy={','.join(busy[:8])}; "
+                  f"failed_on_this_node={failures}; retry in 15s", flush=True)
             time.sleep(15)
         else:
             break
