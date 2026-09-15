@@ -46,6 +46,7 @@ def imported_fixture(tmp_path, monkeypatch):
          "evaluation": {"val": [{"question": "test"}], "provenance": {}}, "max_steps": 100000}
     core.atomic_json(origin / "contract.json", c)
     core.atomic_json(origin / "decisions-frozen.json", {})
+    core.atomic_json(origin / "gate-frozen.json", {})
     monkeypatch.setattr(run, "verify_origin", lambda *args: copy.deepcopy(c))
     out = run.import_point(root, p, 3, 25)
     return root, parent, p, out
@@ -193,12 +194,57 @@ def test_cache_guard_preserves_existing_mopps_parent_costs_and_receipts(tmp_path
         run.protocol(root)
 
 
+def parallel_predecessor():
+    hashes = run.hashes()
+    hashes["src/selection_switch_gpu.py"] = "0c0ac3aed8c5c53378c91ae5c357bcfc4e0d11fd0ffb7d2a53e9874db3e4a0b6"
+    hashes["src/mopps_comparison_gpu.py"] = "e7b55d8aac5a6a347f83651d080e1253857e41721c49c69563f69ac1d852f6dd"
+    assert core.fingerprint(hashes) == run.PRE_TEST_PARALLEL_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_test_parallel_preserves_89c26af_manifest_receipts_and_costs(tmp_path, monkeypatch, migrated):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    previous = parallel_predecessor()
+    recorded = {**previous, "src/mopps_comparison_gpu.py": "8379a57ad00a9dae7324a4e3e5847f48b0f03da2f32c8f50ec61989107b04d11"}
+    assert core.fingerprint(recorded) == run.PRE_NONBLOCKING_RETRY_CODE
+    p["code_hashes"] = recorded if migrated else previous
+    core.atomic_json(root / "mopps.json", p)
+    if migrated:
+        # Receipts as the 89c26af runtime left them; it never wrote the test-parallel receipt.
+        with monkeypatch.context() as patch:
+            patch.setattr(run, "hashes", lambda: previous)
+            run.protocol(root)
+        (root / "test-parallel-runtime.json").unlink()
+        assert core.read(root / "nonblocking-retry-runtime.json")["runtime_code_hashes"] == previous
+    base.journal(root / "states/s3-t25/mopps/cost.jsonl", {"state": "started", "event_id": "unknown"})
+    before = snapshot(tmp_path)
+    assert run.protocol(root) == p
+    assert run.prepare(root, parent) == p
+    after = snapshot(tmp_path)
+    assert {name: after[name] for name in before} == before
+    receipt_path = root / "test-parallel-runtime.json"
+    receipt = core.read(receipt_path)
+    assert receipt["runtime_code_hashes"] == run.hashes()
+    assert receipt["retry_runtime_sha256"] == base.digest(root / "nonblocking-retry-runtime.json")
+    if migrated:
+        assert core.read(root / "nonblocking-retry-runtime.json")["runtime_code_hashes"] == previous
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(root / "states/s3-t25/mopps")
+    receipt["cost_policy"] = "ignore costs"
+    core.atomic_json(receipt_path, receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        run.protocol(root)
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_nonblocking_retry_preserves_bdd727e_manifest_receipts_and_costs(tmp_path, monkeypatch, migrated):
     parent, _ = source(tmp_path)
     root = tmp_path / "comparison"
     p = run.prepare(root, parent)
-    previous = run.hashes()
+    previous = parallel_predecessor()
     previous["src/mopps_comparison_gpu.py"] = "8379a57ad00a9dae7324a4e3e5847f48b0f03da2f32c8f50ec61989107b04d11"
     assert core.fingerprint(previous) == run.PRE_NONBLOCKING_RETRY_CODE
     recorded = {**previous, "src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
@@ -227,6 +273,8 @@ def test_nonblocking_retry_preserves_bdd727e_manifest_receipts_and_costs(tmp_pat
             patch.setattr(run, "hashes", lambda: previous)
             run.protocol(root)
         (root / "nonblocking-retry-runtime.json").unlink()
+        # Neither predecessor runtime wrote the test-parallel receipt.
+        (root / "test-parallel-runtime.json").unlink()
     base.journal(root / "states/s3-t25/mopps/cost.jsonl", {"state": "started", "event_id": "unknown"})
     before = snapshot(tmp_path)
     assert run.protocol(root) == p
@@ -436,13 +484,20 @@ def certified_origin(tmp_path, monkeypatch, *, full_config=False):
     core.atomic_json(origin / "evaluation.json", c["evaluation"])
     model = rule.fit(development())
     core.atomic_json(parent / "model.json", model)
-    net = {"schema": rule.SCHEMA, "mode": "test", "arms": list(rule.TEST_ARMS), "model": model,
+    net = {"schema": rule.SCHEMA, "mode": "test", "arms": list(rule.TEST_ARMS), "model": None,
            "code_hashes": p["code_hashes"]}
     core.atomic_json(origin.parent.parent / "net_protocol.json", net)
+    gate = switch.gate_path(origin.parent.parent)
+    core.atomic_json(gate, {"schema": rule.SCHEMA, "protocol_sha256": core.fingerprint(net),
+                            "model_sha256": base.digest(parent / "model.json"), "model": model})
     for arm in rule.TEST_ARMS:
         core.atomic_json(origin / arm / "decision.json", {"action": "random"})
+    controls = [arm for arm in rule.TEST_ARMS if arm != "gated"]
     core.atomic_json(origin / "decisions-frozen.json", {"protocol_sha256": core.fingerprint(net),
-        "decisions": {arm: base.digest(origin / arm / "decision.json") for arm in rule.TEST_ARMS}})
+        "decisions": {arm: base.digest(origin / arm / "decision.json") for arm in controls}})
+    core.atomic_json(origin / "gate-frozen.json", {"protocol_sha256": core.fingerprint(net),
+        "gate_sha256": base.digest(gate), "controls_sha256": base.digest(origin / "decisions-frozen.json"),
+        "decision": base.digest(origin / "gated/decision.json")})
     calls = []
     monkeypatch.setattr(trainer, "validate_policy_lineage", lambda path, **kwargs: calls.append((path, kwargs)))
     monkeypatch.setattr(ed, "_expected_config", lambda _: {})
@@ -628,6 +683,7 @@ def test_waiting_queue_resumes_when_active_prefix_retry_publishes(tmp_path, monk
         origin = run.original_point(p, 3, 25)
         core.atomic_json(origin / "contract.json", {})
         core.atomic_json(origin / "decisions-frozen.json", {})
+        core.atomic_json(origin / "gate-frozen.json", {})
         lease.__exit__(None, None, None)
         held = False
     def import_ready(root, protocol, seed, step):

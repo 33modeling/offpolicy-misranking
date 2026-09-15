@@ -56,6 +56,9 @@ comparison when the actual GATE result is missing.
   under the comparison root binds the same adapter, optimizer, input pool and
   evaluation without waiting for the original Gate fit/decision. Existing
   imports keep their original contracts and Gate-barrier bindings unchanged.
+  An import binds to the original held-out state only when both of its
+  barriers exist (`decisions-frozen.json` for the controls and
+  `gate-frozen.json` for the GATE arm, bound to `gate.json`).
 - The final Gate comparison still requires the original frozen Gate evidence
   and actual executed result. Gate fitting uses only the registered development
   labels, never the earlier-completing MoPPS outcomes.

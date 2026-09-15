@@ -165,15 +165,20 @@ def snapshot(root, *, now=None):
             unfinished = next((task for task in tasks if task["kind"] == "prefix" and task["seed"] == seed
                                and task["step"] <= step and task["status"] != "DONE"), None)
             dependency = f"prefix {unfinished['step']} ({CELLS[unfinished['status']].lower()})" if unfinished else None
-            if dependency is None and seed in rule.TEST_SEEDS and not gate_ready:
-                dependency = "development gate"
-            if dependency is None and not (out / "decisions-frozen.json").exists() and diagnostic:
+            diagnostic_dependency = None
+            if not (out / "decisions-frozen.json").exists() and diagnostic:
                 if (diagnostic["status"] in {"RUNNING", "STALE", "INVALID"}
                         or diagnostic["status"] == "FAILED" and seed in rule.DEV_SEEDS):
-                    dependency = f"diagnostic {CELLS[diagnostic['status']].lower()}"
+                    diagnostic_dependency = f"diagnostic {CELLS[diagnostic['status']].lower()}"
             for arm in rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS:
+                # Held-out controls run before the gate is fitted; only the gated arm waits for it.
+                arm_dependency = dependency
+                if arm_dependency is None and arm == "gated" and not gate_ready:
+                    arm_dependency = "development gate"
+                if arm_dependency is None:
+                    arm_dependency = diagnostic_dependency
                 observe(out / arm, seed=seed, step=step, kind="branch", arm=arm,
-                        done_path=out / arm / "result.json", dependency=dependency)
+                        done_path=out / arm / "result.json", dependency=arm_dependency)
 
     active = [task for task in tasks if task["status"] == "RUNNING"]
     active_hosts = {task["host"] for task in active if task["host"]}
@@ -231,8 +236,8 @@ def render(data, *, all_tasks=False, width=120):
              f"PROGRESS  Prefix {data['prefix_done']}/15 segments  |  Dev {data['development_done']}/18  |  Test {data['test_done']}/30",
              "BRANCHES  " + "  ".join(f"{name} {data['branch_counts'].get(name, 0)}" for name in CELLS)]
     lines.append("GATE  " + ("READY" if data["gate_ready"] else
-                 f"WAIT: {18-data['development_done']} development branches unpublished" if data["development_done"] < 18
-                 else "FIT PENDING: 18/18 development results published"))
+                 f"WAIT: {18-data['development_done']} development branches unpublished (only the 6 GATE arms wait; held-out controls run now)"
+                 if data["development_done"] < 18 else "FIT PENDING: 18/18 development results published"))
     tasks = data["tasks"]
     alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID"})
     if alerts:

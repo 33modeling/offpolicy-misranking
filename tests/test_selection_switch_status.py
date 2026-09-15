@@ -84,6 +84,21 @@ def test_stale_heartbeat_is_not_running_or_ready(tmp_path):
     assert "old-node" in status.render(data)
 
 
+def test_held_out_controls_are_ready_before_the_gate_and_only_gate_arms_wait(tmp_path):
+    prepared(tmp_path)
+    completed_prefix(tmp_path, 3)
+    data = status.snapshot(tmp_path)
+    assert not data["gate_ready"]
+    branches = {task["arm"]: task for task in data["tasks"]
+                if task["kind"] == "branch" and task["seed"] == 3 and task["step"] == 25}
+    assert branches["gated"]["status"] == "WAIT" and branches["gated"]["reason"] == "development gate"
+    for arm in rule.TEST_ARMS:
+        if arm != "gated":
+            assert branches[arm]["status"] == "READY", arm
+    output = status.render(data)
+    assert "only the 6 GATE arms wait" in output
+
+
 @pytest.mark.parametrize("seed,expected", [(0, "WAIT"), (3, "READY")])
 def test_failed_diagnostic_blocks_dev_but_allows_held_out_fallback(tmp_path, seed, expected):
     prepared(tmp_path)

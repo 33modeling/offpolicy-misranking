@@ -82,6 +82,45 @@ def cache_guard_predecessor():
     return hashes
 
 
+def parallel_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "0c0ac3aed8c5c53378c91ae5c357bcfc4e0d11fd0ffb7d2a53e9874db3e4a0b6"
+    assert core.fingerprint(hashes) == switch.PRE_TEST_PARALLEL_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = parallel_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "cache-guard-runtime.json")["runtime_code_hashes"] == previous
+        # The 89c26af runtime never wrote this receipt; only its predecessors' receipts exist.
+        (tmp_path / "test-parallel-runtime.json").unlink()
+    core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "test-parallel-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["cache_guard_runtime_sha256"] == base.digest(tmp_path / "cache-guard-runtime.json")
+    if migrated:
+        assert core.read(tmp_path / "cache-guard-runtime.json")["runtime_code_hashes"] == previous
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+    guard = core.read(tmp_path / "cache-guard-runtime.json")
+    guard["cost_policy"] = "ignore previous costs"
+    core.atomic_json(tmp_path / "cache-guard-runtime.json", guard)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_cache_guard_preserves_cbaa8c8_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
     previous = cache_guard_predecessor()
@@ -159,7 +198,7 @@ def test_code_compat_preserves_latest_and_partially_written_receipt_chains(tmp_p
     assert core.read(tmp_path / "code-compat-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
 
 
-@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard"])
+@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard", "test-parallel"])
 def test_code_compat_rejects_tampered_receipts(tmp_path, receipt):
     core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": initial_predecessor()})
     switch.manifest(tmp_path)
@@ -396,20 +435,71 @@ def test_prefix_certificate_binds_actual_selected_history(tmp_path, monkeypatch)
     with pytest.raises(ValueError): switch.verify(tmp_path)
 
 
-def test_gate_decision_precedes_every_control_and_resume_does_not_remeasure(tmp_path, monkeypatch):
+def test_controls_freeze_before_the_gate_and_gated_freezes_once_bound(tmp_path, monkeypatch):
+    child = tmp_path / "states/s3-t25"
+    out = child / "points/view-25"
     p = {"mode": "test", "arms": list(rule.TEST_ARMS)}
     order = []
-    def decide(out, suite, protocol, arm, env):
+    def decide(out_, suite, protocol, arm, env):
         order.append(arm)
-        base.bind(out / arm / "decision.json", {"action": "random"})
+        base.bind(out_ / arm / "decision.json", {"action": "random"})
     monkeypatch.setattr(runtime, "decision", decide)
-    frozen = switch.freeze_decisions(tmp_path, {}, p, {})
-    assert order[0] == "gated" and set(order) == set(rule.TEST_ARMS)
-    assert len(frozen["decisions"]) == 5
+    with pytest.raises(ValueError, match="control decisions must be frozen"):
+        switch.freeze_gate(out, {}, p, {})
+    frozen = switch.freeze_decisions(out, {}, p, {})
+    assert order == [arm for arm in rule.TEST_ARMS if arm != "gated"]
+    assert set(frozen["decisions"]) == set(rule.TEST_ARMS) - {"gated"}
+    # The gated arm waits for the bound gate; the controls do not.
+    with pytest.raises(ValueError, match="not bound"):
+        switch.freeze_gate(out, {}, p, {})
+    assert "gated" not in order
+    core.atomic_json(switch.gate_path(child), {"model": {}})
+    gate_frozen = switch.freeze_gate(out, {}, p, {})
+    assert order[-1] == "gated" and order.count("gated") == 1
+    assert gate_frozen["decision"] == base.digest(out / "gated/decision.json")
+    assert gate_frozen["controls_sha256"] == base.digest(out / "decisions-frozen.json")
+    assert gate_frozen["gate_sha256"] == base.digest(switch.gate_path(child))
     monkeypatch.setattr(runtime, "decision", lambda *a: pytest.fail("diagnostic repeated"))
-    assert switch.freeze_decisions(tmp_path, {}, p, {}) == frozen
-    core.atomic_json(tmp_path / "gated/decision.json", {"action": "select"})
-    with pytest.raises(ValueError): switch.freeze_decisions(tmp_path, {}, p, {})
+    assert switch.freeze_decisions(out, {}, p, {}) == frozen
+    assert switch.freeze_gate(out, {}, p, {}) == gate_frozen
+    core.atomic_json(out / "gated/decision.json", {"action": "select"})
+    with pytest.raises(ValueError): switch.freeze_gate(out, {}, p, {})
+    core.atomic_json(out / "random_full/decision.json", {"action": "select"})
+    with pytest.raises(ValueError): switch.freeze_decisions(out, {}, p, {})
+
+
+@pytest.mark.parametrize("artifact", ["execution.json", "result.json"])
+def test_gate_barrier_rejects_gated_outcomes_created_before_its_decision(tmp_path, artifact):
+    child = tmp_path / "states/s3-t25"
+    out = child / "points/view-25"
+    p = {"mode": "test", "arms": list(rule.TEST_ARMS)}
+    for arm in rule.TEST_ARMS:
+        if arm != "gated":
+            core.atomic_json(out / arm / "decision.json", {"action": "random"})
+    core.atomic_json(out / "decisions-frozen.json", {"protocol_sha256": core.fingerprint(p),
+        "decisions": {arm: base.digest(out / arm / "decision.json") for arm in rule.TEST_ARMS if arm != "gated"}})
+    core.atomic_json(switch.gate_path(child), {"model": {}})
+    core.atomic_json(out / "gated" / artifact, {})
+    with pytest.raises(ValueError, match="precede"):
+        switch.freeze_gate(out, {}, p, {})
+
+
+def gate_fixture(out, monkeypatch, *, features=None, bound=True):
+    """A bound gate whose frozen model always selects; measurement carries only features.
+
+    toy_source puts the point directly under tmp_path, so the state directory the
+    gate would live in is the shared pytest base; keep the gate inside tmp_path.
+    """
+    monkeypatch.setattr(switch, "gate_path", lambda child: out.parent / "state-gate.json")
+    if bound:
+        core.atomic_json(switch.gate_path(out.parent.parent), {"model": {"fixture": "always-select"}})
+    monkeypatch.setattr(runtime, "check_model", lambda *a: None)
+    def choose(model, values, *, checkpoint_only=False):
+        assert model == {"fixture": "always-select"} and values == (features or {"f": 1.})
+        return {"action": "select", "prediction": 1., "reason": "checkpoint_only" if checkpoint_only else "frozen"}
+    monkeypatch.setattr(rule, "choose", choose)
+    if features is not False:
+        core.atomic_json(out / "gate_measurement/measurement.json", {"features": features or {"f": 1.}})
 
 
 @pytest.mark.parametrize("artifact", ["execution.json", "result.json"])
@@ -421,9 +511,8 @@ def test_barrier_rejects_outcomes_created_before_decision(tmp_path, artifact):
 
 def test_diagnostic_charge_once_per_paid_arm_not_free_arm(tmp_path, monkeypatch, installed):
     out, c = toy_source(tmp_path)
-    p = {"mode": "test", "model": {}, "arms": list(rule.TEST_ARMS)}
-    monkeypatch.setattr(runtime, "check_model", lambda *a: None)
-    core.atomic_json(out / "gate_measurement/measurement.json", {"choice": {"action": "select", "reason": "frozen"}})
+    p = {"mode": "test", "model": None, "arms": list(rule.TEST_ARMS)}
+    gate_fixture(out, monkeypatch)
     monkeypatch.setattr(runtime, "measure_once", lambda *a: {"status": "complete", "gpu_seconds": 8., "report_sha256": "sha"})
     for arm in rule.TEST_ARMS:
         choice = runtime.decision(out, {}, p, arm, {})
@@ -431,13 +520,31 @@ def test_diagnostic_charge_once_per_paid_arm_not_free_arm(tmp_path, monkeypatch,
         assert choice["measurement_gpu_seconds"] == (8. if paid else 0.)
         assert choice["budget_gpu_seconds"] == (992. if paid else 1000.)
         assert runtime.decision(out, {}, p, arm, {}) == choice
+    gated = core.read(out / "gated/decision.json")
+    assert gated["action"] == "select" and gated["reason"] == "frozen"
+    assert gated["checkpoint_only"]["reason"] == "checkpoint_only"
+    assert gated["gate_sha256"] == base.digest(switch.gate_path(out.parent.parent))
+    assert "choice" not in core.read(out / "gate_measurement/measurement.json")
+
+
+def test_gated_decision_needs_the_bound_gate_but_controls_do_not(tmp_path, monkeypatch, installed):
+    out, c = toy_source(tmp_path)
+    p = {"mode": "test", "model": None, "arms": list(rule.TEST_ARMS)}
+    gate_fixture(out, monkeypatch, bound=False)
+    monkeypatch.setattr(runtime, "measure_once", lambda *a: {"status": "complete", "gpu_seconds": 8., "report_sha256": "sha"})
+    for arm in rule.TEST_ARMS:
+        if arm != "gated":
+            assert runtime.decision(out, {}, p, arm, {})["action"] == ("select" if arm.startswith("selection_") else "random")
+    with pytest.raises(ValueError, match="not bound"):
+        runtime.decision(out, {}, p, "gated", {})
+    assert not (out / "gated/decision.json").exists()
 
 
 def test_failed_diagnosis_has_paid_fallback_and_is_never_repeated(tmp_path, monkeypatch, installed):
     out, _ = toy_source(tmp_path)
     core.atomic_json(out / "net_inputs.json", {})
-    p = {"mode": "test", "max_measurement_fraction": .01, "recent_window": 20, "model": {}}
-    monkeypatch.setattr(runtime, "check_model", lambda *a: None)
+    p = {"mode": "test", "max_measurement_fraction": .01, "recent_window": 20, "model": None}
+    gate_fixture(out, monkeypatch, features=False)
     meter = base.meter
     def failed(directory, name, gpu_type, **kw):
         def fail(): raise RuntimeError("intentional failure")
@@ -451,15 +558,17 @@ def test_failed_diagnosis_has_paid_fallback_and_is_never_repeated(tmp_path, monk
 
 def test_failed_test_diagnostic_does_not_block_actual_fallback(tmp_path, monkeypatch, installed):
     out, _ = toy_source(tmp_path)
-    p = {"mode": "test", "arms": list(rule.TEST_ARMS), "model": {}}
-    monkeypatch.setattr(runtime, "check_model", lambda *a: None)
+    p = {"mode": "test", "arms": list(rule.TEST_ARMS), "model": None}
+    gate_fixture(out, monkeypatch, features=False)
     monkeypatch.setattr(runtime, "measure_once", lambda *a: {
         "status": "failed_no_retry", "gpu_seconds": 10., "report_sha256": None})
     frozen = switch.freeze_decisions(out, {}, p, {})
-    assert set(frozen["decisions"]) == set(rule.TEST_ARMS)
+    assert set(frozen["decisions"]) == set(rule.TEST_ARMS) - {"gated"}
+    switch.freeze_gate(out, {}, p, {})
     for arm in (*rule.DEV_ARMS, "gated"):
         assert core.read(out / arm / "decision.json")["budget_gpu_seconds"] == 990.
-    assert core.read(out / "gated/decision.json")["reason"] == "measurement_failed_no_retry"
+    gated = core.read(out / "gated/decision.json")
+    assert gated["reason"] == "measurement_failed_no_retry" and gated["checkpoint_only"] is None
 
 
 def test_completed_gate_uses_own_training_evaluation_not_control_reward(tmp_path, monkeypatch, installed):
@@ -501,7 +610,7 @@ def test_nonblocking_task_lease_prevents_duplicate_nodes(tmp_path):
     assert result.returncode != 0 and b"BlockingIOError" in result.stderr
 
 
-def test_all_48_tasks_auto_transition_only_after_18_dev_results(tmp_path, monkeypatch):
+def test_all_48_tasks_run_and_only_the_gated_arms_wait_for_the_gate(tmp_path, monkeypatch):
     seeds = (*rule.DEV_SEEDS, *rule.TEST_SEEDS)
     p = {"sources": {str(s): {"config": {}} for s in seeds}, "gpu_type": "H100"}
     monkeypatch.setattr(switch, "manifest", lambda _: p)
@@ -530,18 +639,33 @@ def test_all_48_tasks_auto_transition_only_after_18_dev_results(tmp_path, monkey
     def freeze(out, *a):
         core.atomic_json(out / "decisions-frozen.json", {})
     monkeypatch.setattr(switch, "freeze_decisions", freeze)
+    monkeypatch.setattr(switch, "bind_gate", lambda root, child, p=None: {} if (root / "model.json").exists() else None)
+    def freeze_gate(out, *a):
+        assert (out / "decisions-frozen.json").exists()
+        core.atomic_json(out / "gate-frozen.json", {})
+    monkeypatch.setattr(switch, "freeze_gate", freeze_gate)
+    gate_seen = []
     def run(out, suite, protocol, arm, devices, env):
         c = core.read(out / "contract.json")
         key = (c["seed"], c["step"], arm)
         assert key not in calls
         assert (out / "decisions-frozen.json").exists()
-        if c["seed"] in rule.TEST_SEEDS: assert (tmp_path / "model.json").exists()
+        if arm == "gated":
+            assert (tmp_path / "model.json").exists() and (out / "gate-frozen.json").exists()
+        else:
+            assert not (out / "gate-frozen.json").exists()
+        if c["seed"] in rule.TEST_SEEDS:
+            gate_seen.append((arm, (tmp_path / "model.json").exists()))
         calls.append(key)
         core.atomic_json(out / arm / "result.json", {})
     monkeypatch.setattr(runtime, "run_arm", run)
     assert switch.work(tmp_path, idle_timeout=0) == 0
     assert sum(a == "prefix" for _, _, a in calls) == 15
     assert sum(a != "prefix" for _, _, a in calls) == 48
+    # Held-out controls ran before the gate existed; every gated arm ran after it.
+    assert any(arm != "gated" and not fitted for arm, fitted in gate_seen)
+    assert all(fitted for arm, fitted in gate_seen if arm == "gated")
+    assert sum(arm == "gated" for arm, _ in gate_seen) == 6
     before = len(calls)
     assert switch.work(tmp_path, idle_timeout=0) == 0
     assert len(calls) == before

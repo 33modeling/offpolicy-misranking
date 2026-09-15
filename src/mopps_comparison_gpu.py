@@ -28,6 +28,8 @@ PRE_LIFECYCLE_CODE = "ef5eb15dbd1d646adff3c515932d7b03171fcce937d8d8d69c44ee5e2e
 PRE_QUEUE_FAILURE_CODE = "0bb0f42a82215281267a5f8741f1e9b87d16ccaaf945ace32c81f50c6400f33a"
 PRE_CACHE_GUARD_CODE = "7a4e2b957080e1af5158e9802005dfcd13a51234e3400c9011c35ed6a9c1e5f9"
 PRE_NONBLOCKING_RETRY_CODE = "46f08b629491f95ec180ead37440dd92c1161d19d34a81dfd14ffebfcdeb9756"
+# Exact 89c26af runtime before Switch held-out controls could run ahead of the gate.
+PRE_TEST_PARALLEL_CODE = "b49a7417bf1f00c8c164c6bd9d0aa480dd4d7438e2de4d6f8d505d53a3e2dab2"
 
 
 def hashes():
@@ -78,7 +80,7 @@ def protocol(root):
     current = hashes()
     recorded = p.get("code_hashes")
     if recorded != current:
-        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE}
+        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE}
                 or set(recorded) != set(current)
                 or current["src/net_gate_memory_worker.py"] not in {switch.PRE_CACHE_GUARD_WORKER, switch.CACHE_GUARD_WORKER}
                 or any(recorded[name] != sha for name, sha in current.items()
@@ -111,7 +113,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -128,7 +130,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != lifecycle_receipt and
                         (previous != {**lifecycle_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE})):
                     raise ValueError(f"frozen contract changed: {lifecycle_path}")
             else:
                 base.bind(lifecycle_path, lifecycle_receipt)
@@ -145,7 +147,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != queue_receipt and
                         (previous != {**queue_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE})):
                     raise ValueError(f"frozen contract changed: {queue_path}")
             else:
                 base.bind(queue_path, queue_receipt)
@@ -163,16 +165,34 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != cache_receipt and
                             (previous != {**cache_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) != PRE_NONBLOCKING_RETRY_CODE)):
+                             or core.fingerprint(previous_code) not in {PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE})):
                         raise ValueError(f"frozen contract changed: {cache_path}")
                 else:
                     base.bind(cache_path, cache_receipt)
-                base.bind(root / "nonblocking-retry-runtime.json", {
+                retry_path = root / "nonblocking-retry-runtime.json"
+                retry_receipt = {
                     "schema": "mopps-nonblocking-retry-runtime/v1",
                     "protocol_sha256": base.digest(root / "mopps.json"),
                     "cache_guard_runtime_sha256": base.digest(cache_path), "runtime_code_hashes": current,
                     "change": "explicit zero idle timeout skips busy branches, including active peers",
                     "cost_policy": "same per-branch locks, policies and budgets; no parent writes or cost waivers",
+                }
+                if retry_path.exists():
+                    previous = core.read(retry_path)
+                    previous_code = previous.get("runtime_code_hashes")
+                    if (previous != retry_receipt and
+                            (previous != {**retry_receipt, "runtime_code_hashes": previous_code}
+                             or core.fingerprint(previous_code) != PRE_TEST_PARALLEL_CODE)):
+                        raise ValueError(f"frozen contract changed: {retry_path}")
+                else:
+                    base.bind(retry_path, retry_receipt)
+                base.bind(root / "test-parallel-runtime.json", {
+                    "schema": "mopps-test-parallel-runtime/v1",
+                    "protocol_sha256": base.digest(root / "mopps.json"),
+                    "retry_runtime_sha256": base.digest(retry_path), "runtime_code_hashes": current,
+                    "change": "Switch held-out states bind the gate in gate.json with separate control and gate "
+                              "barriers; origin binding requires both; certified-prefix imports unchanged",
+                    "cost_policy": "same selectors, policies and budgets; no parent writes or cost waivers",
                 })
     return p
 
@@ -185,10 +205,15 @@ def original_point(p, seed, step):
     return switch.child_root(Path(p["parent"]), seed, step) / "points" / f"view-{step}"
 
 
+def origin_frozen(out):
+    """The original held-out state with its control and gate decisions both frozen."""
+    return all((out / name).is_file() for name in ("contract.json", "decisions-frozen.json", "gate-frozen.json"))
+
+
 def ready(p, seed, step):
     out = original_point(p, seed, step)
     return ((switch.prefix_dir(Path(p["parent"]), seed) / f"prefix-{step}.json").is_file()
-            or (out / "contract.json").is_file() and (out / "decisions-frozen.json").is_file())
+            or origin_frozen(out))
 
 
 def prefix_dependency(p, seed, step):
@@ -280,13 +305,22 @@ def verify_origin(p, seed, step):
                                    "provenance": source_protocol["evaluation"]["provenance"]}):
         raise ValueError("source state differs from registered comparison")
     net = core.read(origin.parent.parent / "net_protocol.json")
+    gate = core.read(switch.gate_path(origin.parent.parent))
     barrier = core.read(origin / "decisions-frozen.json")
+    gate_barrier = core.read(origin / "gate-frozen.json")
+    controls = [arm for arm in rule.TEST_ARMS if arm != "gated"]
     if (net["schema"] != rule.SCHEMA or net["mode"] != "test" or net["arms"] != list(rule.TEST_ARMS)
-            or net["model"] != core.read(parent / "model.json") or net["code_hashes"] != source_protocol["code_hashes"]
+            or net["model"] is not None or net["code_hashes"] != source_protocol["code_hashes"]
+            or gate["protocol_sha256"] != core.fingerprint(net) or gate["model"] != core.read(parent / "model.json")
+            or gate["model_sha256"] != base.digest(parent / "model.json")
             or barrier["protocol_sha256"] != core.fingerprint(net)
-            or barrier["decisions"] != {arm: base.digest(origin / arm / "decision.json") for arm in rule.TEST_ARMS}):
+            or barrier["decisions"] != {arm: base.digest(origin / arm / "decision.json") for arm in controls}
+            or gate_barrier["protocol_sha256"] != core.fingerprint(net)
+            or gate_barrier["gate_sha256"] != base.digest(switch.gate_path(origin.parent.parent))
+            or gate_barrier["controls_sha256"] != base.digest(origin / "decisions-frozen.json")
+            or gate_barrier["decision"] != base.digest(origin / "gated/decision.json")):
         raise ValueError("original gate must be frozen before comparison training")
-    rule.validate_model(net["model"])
+    rule.validate_model(gate["model"])
     return c
 
 
@@ -323,7 +357,7 @@ def import_point(root, p, seed, step):
         if (out / "contract.json").exists():
             independent = core.read(out / "contract.json")["comparison"].get("source_kind") == "certified_prefix"
         else:
-            independent = not ((origin / "contract.json").is_file() and (origin / "decisions-frozen.json").is_file())
+            independent = not origin_frozen(origin)
         if independent:
             c = prefix_contract(out, p, seed, step, publish=True)
         else:
@@ -331,7 +365,8 @@ def import_point(root, p, seed, step):
             c = {**original, "scope": {**original["scope"], "selector": "mopps_comparison"},
                  "comparison": {"protocol_sha256": core.fingerprint(p), "origin": str(origin),
                                 "contract_sha256": base.digest(origin / "contract.json"),
-                                "decisions_sha256": base.digest(origin / "decisions-frozen.json")}}
+                                "decisions_sha256": base.digest(origin / "decisions-frozen.json"),
+                                "gate_decision_sha256": base.digest(origin / "gate-frozen.json")}}
         base.bind(out / "contract.json", c)
         base.bind(out / "evaluation.json", c["evaluation"])
         prompts = core.read(Path(c["source_run"]) / "prompts.json")
@@ -356,7 +391,8 @@ def verify(out):
         expected = {**original, "scope": {**original["scope"], "selector": "mopps_comparison"},
                     "comparison": {"protocol_sha256": core.fingerprint(p), "origin": str(original_point(p, c["config"]["seed"], c["config"]["drift"])),
                                    "contract_sha256": base.digest(origin / "contract.json"),
-                                   "decisions_sha256": base.digest(origin / "decisions-frozen.json")}}
+                                   "decisions_sha256": base.digest(origin / "decisions-frozen.json"),
+                                   "gate_decision_sha256": base.digest(origin / "gate-frozen.json")}}
     if c != expected or core.read(out / "import.done.json") != {"contract_sha256": base.digest(out / "contract.json")}:
         raise ValueError("comparison input binding changed")
     prompts = core.read(Path(c["source_run"]) / "prompts.json")

@@ -38,9 +38,11 @@ PRE_WORKER_LOGS_CODE = "803be77868081423affe81d073b0b5b566889c7d43cfc99608ad444e
 PRE_CODE_COMPAT_CODE = "113afc51b2544e23d8389d6da5ad5f10e67b9407d54f835ba4935a1dd8523512"
 PRE_SHUTDOWN_CODE = "fff7859976ea68d49a9695b27d904522cae6d87e6e5e2f9475be085694122aa8"
 PRE_CACHE_GUARD_CODE = "43f53caa042b27810fe3ba45da025198953378e6f858868cdb93e004bea3a60e"
+# Exact 89c26af runtime before held-out controls could run ahead of the development gate.
+PRE_TEST_PARALLEL_CODE = "b7803071821dd7aa68035370e37c77fdbaecec13d9e96ea6574d91b10758f5a5"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
                        PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE,
-                       PRE_CACHE_GUARD_CODE}
+                       PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE}
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py",
                        "src/net_gate_memory_worker.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
@@ -109,7 +111,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -126,7 +128,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -143,7 +145,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -160,7 +162,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
@@ -177,7 +179,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != compat_receipt and
                         (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
                     raise ValueError(f"frozen contract changed: {compat_path}")
             else:
                 base.bind(compat_path, compat_receipt)
@@ -195,17 +197,35 @@ def manifest(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != shutdown_receipt and
                             (previous != {**shutdown_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) != PRE_CACHE_GUARD_CODE)):
+                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
                         raise ValueError(f"frozen contract changed: {shutdown_path}")
                 else:
                     base.bind(shutdown_path, shutdown_receipt)
                 if current["src/net_gate_memory_worker.py"] == CACHE_GUARD_WORKER:
-                    base.bind(root / "cache-guard-runtime.json", {
+                    guard_path = root / "cache-guard-runtime.json"
+                    guard_receipt = {
                         "schema": "selection-switch-cache-guard-runtime/v1",
                         "switch_sha256": base.digest(root / "switch.json"),
                         "shutdown_runtime_sha256": base.digest(shutdown_path), "runtime_code_hashes": current,
                         "change": "disable KV cache before checkpointed decoder forward; preserve no-grad generation",
                         "cost_policy": "same gradients, policies and budgets; retain all prior costs and artifacts",
+                    }
+                    if guard_path.exists():
+                        previous = core.read(guard_path)
+                        previous_code = previous.get("runtime_code_hashes")
+                        if (previous != guard_receipt and
+                                (previous != {**guard_receipt, "runtime_code_hashes": previous_code}
+                                 or core.fingerprint(previous_code) != PRE_TEST_PARALLEL_CODE)):
+                            raise ValueError(f"frozen contract changed: {guard_path}")
+                    else:
+                        base.bind(guard_path, guard_receipt)
+                    base.bind(root / "test-parallel-runtime.json", {
+                        "schema": "selection-switch-test-parallel-runtime/v1",
+                        "switch_sha256": base.digest(root / "switch.json"),
+                        "cache_guard_runtime_sha256": base.digest(guard_path), "runtime_code_hashes": current,
+                        "change": "held-out control arms run before the development gate is fitted; "
+                                  "the gate model binds to each held-out state in gate.json and only the gated arm waits for it",
+                        "cost_policy": "same diagnostics, policies and budgets; retain all prior costs and artifacts",
                     })
     return p
 
@@ -497,7 +517,6 @@ def publish_state(root, seed, step):
     p, item = manifest(root), verify_source(root, seed)
     cert = validate_prefix(root, seed, step)
     held_out = seed in rule.TEST_SEEDS
-    model = core.read(root / "model.json") if held_out else None
     directory = prefix_dir(root, seed)
     source = directory / f"view-{step}"
     cfg = {**item["config"], "drift": step}
@@ -519,13 +538,47 @@ def publish_state(root, seed, step):
         "rollouts_behavior_train.jsonl", f"policy_step_{step}/grpo_stats.jsonl")})
     base.bind(child / "suite.json", {"schema": base.SCHEMA, "points": [{"name": source.name, "sha256": base.digest(out / "contract.json")}],
         "budget_gpu_seconds": p["budget_gpu_seconds"], "measurement_wall_seconds": 30., "eval_timeout": p["eval_timeout"]})
+    # Held-out states never carry the gate model: controls need only the frozen
+    # contract, and the fitted gate binds later in gate.json (see bind_gate).
     protocol_value = {"schema": rule.SCHEMA, "schedule": rule.SCHEDULE, "mode": "test" if held_out else "study",
-        "model": model, "role": c["role"], "selector": "fresh_r", "arms": list(rule.TEST_ARMS if held_out else rule.DEV_ARMS),
+        "model": None, "role": c["role"], "selector": "fresh_r", "arms": list(rule.TEST_ARMS if held_out else rule.DEV_ARMS),
         "recent_window": 20, "max_measurement_fraction": .01, "code_hashes": p["code_hashes"]}
-    if model:
-        runtime.check_model(model, c)
     base.bind(child / "net_protocol.json", protocol_value)
     return child
+
+
+def gate_path(child):
+    return child / "gate.json"
+
+
+def bind_gate(root, child, p=None):
+    """Bind the frozen development gate to a held-out state once model.json exists.
+
+    Returns None while the gate is unfitted: the state's control arms can run,
+    only the gated arm waits. The binding is deterministic (no timestamps), so
+    two nodes binding at once produce the same bytes.
+    """
+    path = gate_path(child)
+    p = protocol(child) if p is None else p
+    if path.exists():
+        value = core.read(path)
+        rule.validate_model(value["model"])
+        if (value.get("schema") != rule.SCHEMA or value["protocol_sha256"] != core.fingerprint(p)
+                or value["model_sha256"] != base.digest(root / "model.json")
+                or value["model"] != core.read(root / "model.json")):
+            raise ValueError("bound gate differs from the frozen development model")
+        return value
+    if not (root / "model.json").exists():
+        return None
+    model = rule.validate_model(core.read(root / "model.json"))
+    if p["mode"] != "test":
+        raise ValueError("only held-out states bind the gate")
+    out = next(base.entries(child))
+    runtime.check_model(model, core.read(out / "contract.json"))
+    value = {"schema": rule.SCHEMA, "protocol_sha256": core.fingerprint(p),
+             "model_sha256": base.digest(root / "model.json"), "model": model}
+    base.bind(path, value)
+    return value
 
 
 def protocol(root):
@@ -536,9 +589,8 @@ def protocol(root):
     if value["mode"] not in {"study", "test"} or value["arms"] != arms or value["selector"] != "fresh_r":
         raise ValueError("invalid switch experimental design")
     if value["mode"] == "test":
-        rule.validate_model(value["model"])
-        if value["role"] != "test" or value["model"]["data_kind"] != "observed":
-            raise ValueError("actual gate testing needs an observed frozen model and held-out trajectories")
+        if value["role"] != "test" or value["model"] is not None:
+            raise ValueError("held-out states bind the observed frozen gate in gate.json, not in the protocol")
     elif value["model"] is not None or value["role"] != "development":
         raise ValueError("study collects development labels; it does not run a fitted gate")
     core.number(value["max_measurement_fraction"], "measurement fraction", 1e-12, .1)
@@ -559,11 +611,8 @@ def measurement_worker(out, arm, *, window, wall_cap, scoring_only=False):
     if expected != {"rollouts_behavior_train.jsonl": report["source_sha256"],
                     f"policy_step_{step}/grpo_stats.jsonl": report["stats_sha256"]}:
         raise ValueError("pre-decision inputs changed")
-    if arm == "gate_measurement":
-        model = protocol(out.parent.parent)["model"]
-        runtime.check_model(model, c)
-        report["choice"] = rule.choose(model, report["features"])
-        report["checkpoint_only"] = rule.choose(model, report["features"], checkpoint_only=True)
+    # The shared held-out diagnostic is measured before the gate exists; the gated
+    # decision applies the frozen model to these features later (see decision).
     base.bind(out / arm / "measurement.json", report)
 
 
@@ -579,9 +628,19 @@ def decision(out, suite, p, arm, env):
         value.update(measurement_gpu_seconds=first["gpu_seconds"], profile_sha256=first["report_sha256"])
         value["budget_gpu_seconds"] -= first["gpu_seconds"]
         if arm == "gated":
-            runtime.check_model(p["model"], c)
-            value.update(core.read(measured / "measurement.json")["choice"] if first["status"] == "complete" else
-                         {"action": "random", "reason": "measurement_failed_no_retry", "prediction": None})
+            gate = gate_path(out.parent.parent)
+            if not gate.exists():
+                raise ValueError("held-out gate is not bound yet; the development gate must be fitted first")
+            model = core.read(gate)["model"]
+            runtime.check_model(model, c)
+            value["gate_sha256"] = base.digest(gate)
+            if first["status"] == "complete":
+                features = core.read(measured / "measurement.json")["features"]
+                value.update(rule.choose(model, features))
+                value["checkpoint_only"] = rule.choose(model, features, checkpoint_only=True)
+            else:
+                value.update({"action": "random", "reason": "measurement_failed_no_retry", "prediction": None,
+                              "checkpoint_only": None})
         elif first["status"] != "complete":
             if p["mode"] == "study":
                 raise ValueError("failed development measurement cannot form a feature/label pair")
@@ -592,24 +651,58 @@ def decision(out, suite, p, arm, env):
     return value
 
 
+def control_arms(p):
+    return [arm for arm in p["arms"] if arm != "gated"]
+
+
 def freeze_decisions(out, suite, p, env):
-    """No control may start before the held-out gate decision is durably frozen."""
+    """No control may start before every control decision, and the shared diagnostic
+    they are charged for, is durably frozen. The held-out gated arm has its own
+    barrier (freeze_gate): its decision is a fixed function of this frozen diagnostic
+    and the frozen development model, so controls running first cannot change it."""
     path = out / "decisions-frozen.json"
+    arms = control_arms(p)
     with base.lease(out / ".decision-barrier.lock"):
         if path.exists():
             value = core.read(path)
             if value["protocol_sha256"] != core.fingerprint(p) or value["decisions"] != {
-                    arm: base.digest(out / arm / "decision.json") for arm in p["arms"]}:
+                    arm: base.digest(out / arm / "decision.json") for arm in arms}:
                 raise ValueError("frozen decision barrier changed")
             return value
         if any((out / arm / name).exists() for arm in p["arms"] for name in ("execution.json", "result.json")):
             raise ValueError("continuation artifacts precede the decision barrier")
-        # Paid controls share this exact diagnostic. Test gate is evaluated first.
-        order = (["gated"] if p["mode"] == "test" else []) + [a for a in p["arms"] if a != "gated"]
-        for arm in order:
+        # Paid controls share this exact diagnostic; it is measured once here.
+        for arm in arms:
             runtime.decision(out, suite, p, arm, env)
         value = {"protocol_sha256": core.fingerprint(p), "frozen_at": time.time(),
-                 "decisions": {arm: base.digest(out / arm / "decision.json") for arm in p["arms"]}}
+                 "decisions": {arm: base.digest(out / arm / "decision.json") for arm in arms}}
+        base.bind(path, value)
+        return value
+
+
+def freeze_gate(out, suite, p, env):
+    """Freeze the gated decision from the bound gate and the already-frozen diagnostic."""
+    path = out / "gate-frozen.json"
+    gate = gate_path(out.parent.parent)
+    with base.lease(out / ".decision-barrier.lock"):
+        controls = out / "decisions-frozen.json"
+        if not controls.exists():
+            raise ValueError("control decisions must be frozen before the gate decision")
+        if path.exists():
+            value = core.read(path)
+            if (value["protocol_sha256"] != core.fingerprint(p) or value["gate_sha256"] != base.digest(gate)
+                    or value["controls_sha256"] != base.digest(controls)
+                    or value["decision"] != base.digest(out / "gated/decision.json")):
+                raise ValueError("frozen gate barrier changed")
+            return value
+        if not gate.exists():
+            raise ValueError("held-out gate is not bound yet; the development gate must be fitted first")
+        if any((out / "gated" / name).exists() for name in ("execution.json", "result.json")):
+            raise ValueError("gated continuation artifacts precede the gate barrier")
+        runtime.decision(out, suite, p, "gated", env)
+        value = {"protocol_sha256": core.fingerprint(p), "frozen_at": time.time(),
+                 "gate_sha256": base.digest(gate), "controls_sha256": base.digest(controls),
+                 "decision": base.digest(out / "gated/decision.json")}
         base.bind(path, value)
         return value
 
@@ -648,8 +741,15 @@ def collect(root, *, development):
                 out = next(base.entries(child))
                 c = verify(out)
                 freeze = core.read(out / "decisions-frozen.json")
-                if freeze["decisions"] != {a: base.digest(out / a / "decision.json") for a in protocol_value["arms"]}:
+                if freeze["decisions"] != {a: base.digest(out / a / "decision.json") for a in control_arms(protocol_value)}:
                     raise ValueError("decision evidence changed")
+                if not development:
+                    gate_freeze = core.read(out / "gate-frozen.json")
+                    if (gate_freeze["decision"] != base.digest(out / "gated/decision.json")
+                            or gate_freeze["controls_sha256"] != base.digest(out / "decisions-frozen.json")
+                            or gate_freeze["gate_sha256"] != base.digest(gate_path(child))
+                            or core.read(gate_path(child))["model"] != core.read(root / "model.json")):
+                        raise ValueError("gate decision evidence changed")
                 results = {arm: runtime.validate_result(out, protocol_value, arm) for arm in protocol_value["arms"]}
                 for arm, result in results.items():
                     base.policy(out, c, arm)
@@ -669,13 +769,14 @@ def collect(root, *, development):
                     "measurement_gpu_seconds": initial["gpu_seconds"]}
                 if not development:
                     decision = core.read(out / "gated/decision.json")
+                    row["gate_frozen_at"] = gate_freeze["frozen_at"]
                     row["intended_action"] = decision["action"]
                     row["actual_action"] = results["gated"]["action"]
                     row["fallback"] = (decision["reason"] == "measurement_failed_no_retry" or
                                        core.read(out / "gated/execution.json")["reason"] == "selector_failed")
                     row["audit"] = rule.decision_audit(means, decision["action"])
                     if profile:
-                        row["checkpoint_only_audit"] = rule.decision_audit(means, profile["checkpoint_only"]["action"])
+                        row["checkpoint_only_audit"] = rule.decision_audit(means, decision["checkpoint_only"]["action"])
                     row["paired_question_differences"] = {i: results["selection_reduced"]["rewards"][i]-results["random_reduced"]["rewards"][i]
                                                           for i in results["selection_reduced"]["rewards"]}
                 rows.append(row)
@@ -790,7 +891,7 @@ def work(root, *, idle_timeout=600.):
             env = ae.model_environment(p["sources"][str(seed)]["config"])
             for step in rule.STEPS:
                 cert = prefix_dir(root, seed) / f"prefix-{step}.json"
-                if not cert.exists() or (seed in rule.TEST_SEEDS and not (root / "model.json").exists()):
+                if not cert.exists():
                     continue
                 child = child_root(root, seed, step)
                 if not (child / "net_protocol.json").exists():
@@ -803,16 +904,29 @@ def work(root, *, idle_timeout=600.):
                         continue
                 out = next(base.entries(child))
                 protocol_value, suite = protocol(child), core.read(child / "suite.json")
+                # Held-out controls never wait for the gate; only the gated arm does.
+                gate = None
+                if seed in rule.TEST_SEEDS and (seed, step, "gated") not in attempted:
+                    try:
+                        gate = bind_gate(root, child, protocol_value)
+                    except Exception as exc:
+                        attempted.add((seed, step, "gated"))
+                        failures += 1
+                        record_failure(out / "gated", exc)
                 for arm in protocol_value["arms"] if seed % 2 == 0 else protocol_value["arms"][::-1]:
                     key = (seed, step, arm)
                     directory = out / arm
                     if key in attempted or (directory / "result.json").exists():
+                        continue
+                    if arm == "gated" and gate is None:
                         continue
                     try:
                         with base.lease(directory / ".task.lock"):
                             if (directory / "result.json").exists():
                                 continue
                             freeze_decisions(out, suite, protocol_value, env)
+                            if arm == "gated":
+                                freeze_gate(out, suite, protocol_value, env)
                             attempted.add(key)
                             print(f"[claimed] host={socket.gethostname()} pid={os.getpid()} task=s{seed}/t{step}/{arm}", flush=True)
                             runtime.run_arm(out, suite, protocol_value, arm, devices, env)
@@ -893,7 +1007,9 @@ def status(root):
             points = list((child / "points").glob("*")) if (child / "points").exists() else []
             arms = rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS
             for arm in arms:
-                state, detail = "QUEUED", "prefix pending" if step not in reached else "development/model pending"
+                state, detail = "QUEUED", ("prefix pending" if step not in reached else
+                                           "development gate pending" if arm == "gated" and not (root / "model.json").exists()
+                                           else "ready")
                 if points:
                     directory = points[0] / arm
                     if (directory / "result.json").exists():

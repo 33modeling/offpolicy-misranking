@@ -34,9 +34,15 @@ bash scripts/run_selection_switch.sh
 ```
 
 No seed, stage or arm flags are needed. The default queue builds five selected
-prefixes, collects 18 development continuations, freezes the gate automatically,
-then enables 30 held-out continuations. Test prefixes can be trained before
-gate fitting; their continuation rewards cannot enter fitting.
+prefixes, collects 18 development continuations and freezes the gate
+automatically. Held-out states (seeds 3 and 4) are published as soon as their
+prefix exists: the 24 control arms (selection/random, full/reduced) run
+immediately, and only the 6 GATE arms wait for `model.json`. Each held-out
+state binds the fitted gate in `states/s{seed}-t{step}/gate.json`; the control
+decisions are frozen in `decisions-frozen.json` before any control starts, and
+the GATE decision is frozen in `gate-frozen.json` from that same shared
+diagnostic and the bound model, so control outcomes cannot change it. Held-out
+rewards never enter gate fitting.
 
 ```bash
 bash scripts/run_selection_switch.sh status
@@ -54,7 +60,7 @@ worker on each node (PID, phase, elapsed time, limit and heartbeat age), five
 prefix rows, a 15-state continuation grid, and concise failures requiring attention.
 The prefix table distinguishes the last logged training step from a published
 prefix certificate. Waiting branches name their first unmet dependency, including
-a failed or stale prefix and a pending development gate.
+a failed or stale prefix and, for GATE arms only, a pending development gate.
 
 `status --watch 5` refreshes every five seconds; Ctrl-C stops only the status
 viewer. `--all` adds per-task paths and reasons, and `--json` exposes the snapshot
