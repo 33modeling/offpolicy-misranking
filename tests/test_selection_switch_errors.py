@@ -66,3 +66,38 @@ def test_worker_log_symlink_cannot_escape_run(tmp_path):
     log.symlink_to(target)
     with pytest.raises(ValueError, match="outside the switch root"):
         errors.show_errors(tmp_path / "run")
+
+
+def test_controller_traceback_is_shown_without_task_failure_record(tmp_path, capsys):
+    path = tmp_path / "logs/launcher.node-1.log"
+    path.parent.mkdir(parents=True)
+    path.write_text("[launcher-start] pid=1\nTraceback (most recent call last):\n"
+                    "ValueError: switch protocol or scientific code changed; preserve the frozen run\n"
+                    "[launcher-exit] pid=1 rc=1\n")
+    before = path.read_bytes()
+    errors.show_errors(tmp_path, limit=1)
+    output = capsys.readouterr().out
+    assert "[launcher-log]" in output and "scientific code changed" in output
+    assert "rc=1" in output
+    assert path.read_bytes() == before
+
+
+def test_launcher_tail_drops_previous_invocation_when_start_marker_is_present(tmp_path, capsys):
+    path = tmp_path / "logs/launcher.node-1.log"
+    path.parent.mkdir(parents=True)
+    path.write_text("[launcher-start] pid=1\nold CUDA failure\n[launcher-exit] rc=1\n"
+                    "[launcher-start] pid=2\n[launcher-exit] pid=2 rc=0\n")
+    errors.show_errors(tmp_path)
+    output = capsys.readouterr().out
+    assert "old CUDA failure" not in output
+    assert "pid=2 rc=0" in output
+
+
+def test_launcher_symlink_cannot_escape_run(tmp_path):
+    root = tmp_path / "run"
+    (root / "logs").mkdir(parents=True)
+    target = tmp_path / "outside.log"
+    target.write_text("outside\n")
+    (root / "logs/launcher.node.log").symlink_to(target)
+    with pytest.raises(ValueError, match="outside"):
+        errors.show_errors(root)

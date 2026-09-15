@@ -22,6 +22,16 @@ def log_tail(path, lines):
 
 def show_errors(root, *, limit=3, lines=120, phase=None):
     root = root.resolve()
+    if phase is None:
+        logs = sorted(root.glob("logs/launcher.*.log"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        for log in logs[:limit]:
+            if not log.resolve().is_relative_to(root):
+                raise ValueError(f"launcher log is outside the switch root: {log}")
+            tail = log_tail(log, lines)
+            if "[launcher-start]" in tail:
+                tail = "[launcher-start]" + tail.rsplit("[launcher-start]", 1)[1]
+            print(f"\n[launcher-log] {log.relative_to(root)} (tail; not a diagnosis of the exit cause)", flush=True)
+            print(tail or "[empty launcher log]", flush=True)
     paths = [*root.glob("prefixes/seed-*/segment-*/failure.json"),
              *root.glob("states/*/points/*/*/failure.json"),
              *root.glob("states/*/*/failure.json")]

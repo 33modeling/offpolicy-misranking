@@ -20,7 +20,7 @@ if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "${SWITCH_CPU_PYTHON:-$PY}" -m pytest -q tests/test_selection_switch.py tests/test_selection_switch_gpu.py \
     tests/test_net_gate_memory_math.py tests/test_logit_chunking.py tests/test_selection_switch_cost.py \
-    tests/test_selection_switch_errors.py tests/test_selection_switch_status.py "$@"
+    tests/test_selection_switch_errors.py tests/test_selection_switch_status.py tests/test_selection_switch_runtime.py "$@"
 fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*) echo '[abort] use SWITCH_ROOT for the output directory'; exit 2 ;; esac
@@ -41,6 +41,15 @@ if [ "$MODE" = recover-cost ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" "$@"
 fi
+case "$MODE" in
+  run|smoke|prepare|fit|summarize)
+    if [ "${SWITCH_RUNTIME_REPO:-}" != "$PWD" ]; then
+      exec "$PY" scripts/selection_switch_runtime.py --repo "$PWD" \
+        --cache "${SWITCH_RUNTIME_CACHE:-/tmp/offpolicy-misranking-$(id -u)/switch-runtimes}" -- "$MODE" "$@"
+    fi
+    export OM_REPO="$PWD"
+    ;;
+esac
 if [ "$MODE" = fit ] || [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""
   "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" "$@"
@@ -90,6 +99,8 @@ fi
 mkdir -p "$OUT_ROOT/logs"
 HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
 exec > >(tee -p -a "$OUT_ROOT/logs/launcher.$HOST.log") 2>&1
+printf '[launcher-start] host=%s pid=%s mode=%s commit=%s utc=%s\n' "$HOST" "$$" "$MODE" "${SWITCH_RUNTIME_COMMIT:-unknown}" "$(date -u +%FT%TZ)"
+trap 'rc=$?; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE" "$rc" "$(date -u +%FT%TZ)"' EXIT
 echo "[logs] $OUT_ROOT/logs/launcher.$HOST.log"
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1

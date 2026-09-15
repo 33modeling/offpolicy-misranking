@@ -24,6 +24,16 @@ fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*|--parent-root|--parent-root=*) echo '[abort] use MOPPS_ROOT and SWITCH_ROOT'; exit 2 ;; esac
 done
+case "$MODE" in
+  run|retry|prepare|summarize)
+    if [ "${SWITCH_RUNTIME_REPO:-}" != "$PWD" ]; then
+      exec "$PY" scripts/selection_switch_runtime.py --repo "$PWD" \
+        --cache "${SWITCH_RUNTIME_CACHE:-/tmp/offpolicy-misranking-$(id -u)/switch-runtimes}" \
+        --kind mopps -- "$MODE" "$@"
+    fi
+    export OM_REPO="$PWD"
+    ;;
+esac
 if [ "$MODE" = prepare ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" src/mopps_comparison_gpu.py prepare --root "$OUT_ROOT" --parent-root "$PARENT" "$@"
@@ -45,6 +55,8 @@ CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py prepare --root "$OUT_R
 mkdir -p "$OUT_ROOT/logs"
 HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
 exec > >(tee -p -a "$OUT_ROOT/logs/launcher.$HOST.log") 2>&1
+printf '[launcher-start] host=%s pid=%s mode=%s commit=%s utc=%s\n' "$HOST" "$$" "$MODE" "${SWITCH_RUNTIME_COMMIT:-unknown}" "$(date -u +%FT%TZ)"
+trap 'rc=$?; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE" "$rc" "$(date -u +%FT%TZ)"' EXIT
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
