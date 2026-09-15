@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|errors) ;;
-  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|errors]'; exit 2 ;;
+case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|errors|check-code) ;;
+  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|errors|check-code]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -28,6 +28,10 @@ done
 if [ "$MODE" = status ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/selection_switch_status.py --root "$OUT_ROOT" "$@"
+fi
+if [ "$MODE" = check-code ]; then
+  export CUDA_VISIBLE_DEVICES=""
+  exec "$PY" src/selection_switch_gpu.py check-code --root "$OUT_ROOT" "$@"
 fi
 if [ "$MODE" = errors ]; then
   export CUDA_VISIBLE_DEVICES=""
@@ -67,7 +71,7 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
       -o -name 'measurement.json' -o -name 'execution.json' -o -name 'result.json' \
       -o -name 'cost.jsonl' -o -name 'budget_stop.json' -o -name 'fit-cost.json' \
       -o -name 'kv-cache-runtime.json' -o -name 'cost-runtime.json' -o -name 'prefix-resume-runtime.json' \
-      -o -name 'worker-logs-runtime.json' \
+      -o -name 'worker-logs-runtime.json' -o -name 'code-compat-runtime.json' \
       -o -path '*/cost-events/*.json' -o -path '*/pending-costs/*.json' \) -print0 | sort -z)
     while IFS= read -r -d '' path; do
       printf '\n===== LOG: %s (last 100 lines) =====\n' "${path#"$OUT_ROOT"/}"
@@ -100,6 +104,7 @@ elif [ "$#" -gt 0 ]; then
   echo '[abort] experiment already frozen; run takes no new preparation options'; exit 2
 fi
 [ "$MODE" != prepare ] || exit 0
+CUDA_VISIBLE_DEVICES="" "$PY" src/selection_switch_gpu.py check-code --root "$OUT_ROOT"
 source scripts/_e5_node.sh
 export E5_FORCE=0
 e5_acquire_node

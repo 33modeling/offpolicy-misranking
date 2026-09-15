@@ -67,6 +67,72 @@ def test_prepare_is_idempotent_and_does_not_mutate_live_parent(tmp_path):
     assert not list(parent.rglob("*.lock"))
 
 
+def code_compat_predecessor():
+    hashes = run.hashes()
+    hashes.update({"src/selection_switch_gpu.py": "f87119d0f40cc0166f9095049b234c0b25a6fbaf0b910cc13bef688ce494f753",
+                   "src/mopps_comparison_gpu.py": "b036737e9d8a7318bcaec361505fe8b564628d34bfed34c858b6e88ff250fb77"})
+    assert core.fingerprint(hashes) == run.PRE_CODE_COMPAT_CODE
+    return hashes
+
+
+def test_code_compat_keeps_existing_mopps_run_and_parent_unchanged(tmp_path):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    p["code_hashes"] = code_compat_predecessor()
+    core.atomic_json(root / "mopps.json", p)
+    base.journal(root / "states/s3-t25/mopps/cost.jsonl", {"state": "started", "event_id": "interrupted"})
+    before = snapshot(tmp_path)
+    assert run.protocol(root) == p
+    assert run.protocol(root) == p
+    assert run.prepare(root, parent) == p
+    after = snapshot(tmp_path)
+    assert {name: after[name] for name in before} == before
+    assert all(name.startswith("comparison/") for name in after.keys() - before.keys())
+    receipt = core.read(root / "code-compat-runtime.json")
+    assert receipt["runtime_code_hashes"] == run.hashes()
+    assert receipt["original_code_hashes"] == p["code_hashes"]
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(root / "states/s3-t25/mopps")
+    receipt["cost_policy"] = "ignore costs"
+    core.atomic_json(root / "code-compat-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        run.protocol(root)
+
+
+@pytest.mark.parametrize("name", ["src/mopps.py", "src/train_mopps_grpo.py", "src/grads.py", "src/selection_switch.py"])
+@pytest.mark.parametrize("where", ["recorded", "current"])
+def test_code_compat_rejects_mopps_scientific_changes(tmp_path, monkeypatch, name, where):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    p["code_hashes"] = code_compat_predecessor()
+    if where == "recorded":
+        p["code_hashes"][name] = "unreviewed"
+    else:
+        current = run.hashes()
+        current[name] = "unreviewed"
+        monkeypatch.setattr(run, "hashes", lambda: current)
+    core.atomic_json(root / "mopps.json", p)
+    before = snapshot(tmp_path)
+    with pytest.raises(ValueError, match="unreviewed code hashes"):
+        run.protocol(root)
+    assert snapshot(tmp_path) == before
+
+
+def test_code_compat_prepare_still_rejects_changed_frozen_design(tmp_path):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    p["code_hashes"] = code_compat_predecessor()
+    p["sampling"] = "different sampling design"
+    core.atomic_json(root / "mopps.json", p)
+    before = snapshot(tmp_path)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        run.prepare(root, parent)
+    assert snapshot(tmp_path) == before
+
+
 @pytest.mark.parametrize("target", ["parent", "parent/nested", "model", "initial", "."])
 def test_output_overlap_rejected_before_any_output_write(tmp_path, target):
     parent, _ = source(tmp_path)

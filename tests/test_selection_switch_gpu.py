@@ -48,6 +48,134 @@ def cache_predecessor():
     return hashes
 
 
+def initial_predecessor():
+    hashes = cache_predecessor()
+    hashes["src/selection_switch_gpu.py"] = "118f7d0a7ecfe6b3e9a06cf21ac93f29cb5c784c40689f7202f3c5f0da996c02"
+    assert core.fingerprint(hashes) == switch.PRE_INITIAL_SCORE_CODE
+    return hashes
+
+
+def code_compat_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "f87119d0f40cc0166f9095049b234c0b25a6fbaf0b910cc13bef688ce494f753"
+    assert core.fingerprint(hashes) == switch.PRE_CODE_COMPAT_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("predecessor", [initial_predecessor, code_compat_predecessor])
+def test_code_compat_resumes_original_and_latest_frozen_runs(tmp_path, predecessor):
+    frozen = {"schema": rule.SCHEMA, "code_hashes": predecessor(), "budget_gpu_seconds": 1000.}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "existing"})
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "unknown-cost"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "code-compat-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["switch_sha256"] == base.digest(tmp_path / "switch.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+
+
+@pytest.mark.parametrize("receipt_count", range(5))
+def test_code_compat_preserves_latest_and_partially_written_receipt_chains(tmp_path, monkeypatch, receipt_count):
+    frozen = {"schema": rule.SCHEMA, "code_hashes": cache_predecessor()}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    previous = code_compat_predecessor()
+    with monkeypatch.context() as patch:
+        patch.setattr(switch, "code_hashes", lambda: previous)
+        switch.manifest(tmp_path)
+    receipts = ["kv-cache-runtime.json", "cost-runtime.json", "prefix-resume-runtime.json",
+                "worker-logs-runtime.json", "code-compat-runtime.json"]
+    for name in receipts[receipt_count:]:
+        (tmp_path / name).unlink()
+    before = {p: p.read_bytes() for p in tmp_path.glob("*.json")}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    assert core.read(tmp_path / "code-compat-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
+
+
+@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat"])
+def test_code_compat_rejects_tampered_receipts(tmp_path, receipt):
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": initial_predecessor()})
+    switch.manifest(tmp_path)
+    path = tmp_path / f"{receipt}-runtime.json"
+    value = core.read(path)
+    value["cost_policy"] = "ignore previous work"
+    core.atomic_json(path, value)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+def test_code_error_identifies_unreviewed_file_and_full_fingerprints(monkeypatch):
+    recorded = initial_predecessor()
+    current = switch.code_hashes()
+    current["src/train_policy_grpo.py"] = "unreviewed"
+    monkeypatch.setattr(switch, "code_hashes", lambda: current)
+    with pytest.raises(ValueError, match="scientific code changed") as error:
+        switch.validate_code_hashes(recorded)
+    assert "src/train_policy_grpo.py" in str(error.value)
+    assert "unreviewed" in str(error.value)
+    assert core.fingerprint(recorded) in str(error.value)
+    assert core.fingerprint(current) in str(error.value)
+
+
+def test_code_compat_four_processes_share_one_migration(tmp_path):
+    import subprocess
+
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor(), "budget_gpu_seconds": 1000.}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "unknown-cost"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    command = [sys.executable, "-c", "import sys; from pathlib import Path; "
+               "import selection_switch_gpu as s; s.manifest(Path(sys.argv[1])); s.manifest(Path(sys.argv[1]))",
+               str(tmp_path)]
+    env = {**os.environ, "PYTHONPATH": str(base.ROOT / "src"), "CUDA_VISIBLE_DEVICES": "",
+           "PYTHONDONTWRITEBYTECODE": "1"}
+    workers = []
+    try:
+        for _ in range(4):
+            workers.append(subprocess.Popen(command, cwd=base.ROOT, env=env, stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE, text=True))
+        for worker in workers:
+            stdout, stderr = worker.communicate(timeout=20)
+            assert worker.returncode == 0, stdout + stderr
+    finally:
+        for worker in workers:
+            if worker.poll() is None:
+                worker.kill()
+            worker.communicate(timeout=20)
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+
+
+@pytest.mark.parametrize("compatible", [True, False])
+def test_check_code_launcher_is_read_only_and_needs_no_gpu(tmp_path, compatible):
+    import json
+    import subprocess
+
+    recorded = initial_predecessor()
+    if not compatible:
+        recorded["src/selection_switch.py"] = "unreviewed"
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": recorded})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    env = {**os.environ, "SWITCH_ROOT": str(tmp_path), "SWITCH_PYTHON": sys.executable,
+           "OM_WORK": str(tmp_path / "absent-work"), "CUDA_VISIBLE_DEVICES": ""}
+    result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "check-code"],
+                            cwd=base.ROOT, env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == (0 if compatible else 1), result.stdout + result.stderr
+    if compatible:
+        assert json.loads(result.stdout)["status"] == "compatible"
+    else:
+        assert "src/selection_switch.py" in result.stderr
+        assert core.fingerprint(recorded) in result.stderr
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+    assert not list(tmp_path.rglob("*.lock"))
+
+
 def test_cache_fix_resumes_exact_predecessor_and_preserves_artifacts(tmp_path):
     frozen = {"schema": rule.SCHEMA, "code_hashes": cache_predecessor(), "budget_gpu_seconds": 1000.}
     core.atomic_json(tmp_path / "switch.json", frozen)

@@ -21,6 +21,7 @@ HERE = Path(__file__).resolve()
 CODE = (*switch.CODE, "src/mopps.py", "src/mopps_comparison_gpu.py", "src/train_mopps_grpo.py")
 _base_policy = base.policy
 _base_verify = base.verify
+PRE_CODE_COMPAT_CODE = "585e2e9efc8cb79433d90daabf589112c2bb64968bcd6b3fceef7a849d286def"
 
 
 def hashes():
@@ -55,14 +56,29 @@ def prepare(root, parent):
              "sampling": "full original training pool; four prompts without replacement per update; K=8",
              "cost": "all selection, feedback, training, startup and retries charged; evaluation separate"}
     with base.lease(root / ".prepare.lock", blocking=True):
-        base.bind(root / "mopps.json", value)
+        if (root / "mopps.json").exists():
+            recorded = core.read(root / "mopps.json")
+            if recorded != {**value, "code_hashes": recorded.get("code_hashes")}:
+                raise ValueError(f"frozen contract changed: {root / 'mopps.json'}")
+            value = protocol(root)
+        else:
+            base.bind(root / "mopps.json", value)
     print(f"[prepared] MoPPS (KDD 2026) + random_online: 12 continuations; B={p['budget_gpu_seconds']:.0f} GPU-s")
     return value
 
 
 def protocol(root):
     p = core.read(root / "mopps.json")
-    if (p["schema"] != mopps.SCHEMA or p["code_hashes"] != hashes()
+    current = hashes()
+    recorded = p.get("code_hashes")
+    if recorded != current:
+        if (not isinstance(recorded, dict) or core.fingerprint(recorded) != PRE_CODE_COMPAT_CODE
+                or set(recorded) != set(current)
+                or any(recorded[name] != sha for name, sha in current.items()
+                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py"})):
+            raise ValueError("frozen MoPPS experiment changed: unreviewed code hashes")
+        switch.validate_code_hashes({name: recorded[name] for name in switch.CODE})
+    if (p["schema"] != mopps.SCHEMA
             or p["arms"] != list(mopps.ARMS) or p["seeds"] != list(rule.TEST_SEEDS)
             or p["steps"] != list(rule.STEPS) or p["paper"] != mopps.PAPER
             or p["primary_comparison"] != "executed_gated_minus_online_mopps"
@@ -74,6 +90,14 @@ def protocol(root):
     source = read_parent(parent)
     if any(p[key] != source[key] for key in ("budget_gpu_seconds", "gpu_type", "eval_timeout")):
         raise ValueError("comparison allocation differs from original branches")
+    if recorded != current:
+        with base.lease(root / ".code-compat-runtime.lock", blocking=True):
+            base.bind(root / "code-compat-runtime.json", {
+                "schema": "mopps-code-compat-runtime/v1", "protocol_sha256": base.digest(root / "mopps.json"),
+                "original_code_hashes": recorded, "runtime_code_hashes": current,
+                "change": "switch frozen-runtime compatibility and diagnostics only",
+                "cost_policy": "no change to selectors, training, frozen artifacts or budgets",
+            })
     return p
 
 

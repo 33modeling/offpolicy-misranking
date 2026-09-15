@@ -28,12 +28,16 @@ CODE = tuple(dict.fromkeys((*runtime.CODE_FILES, "src/selection_switch.py", "src
     "src/score_artifacts.py", "src/downstream_compare.py", "src/additive_experiment.py",
     "src/net_gate_memory_worker.py", "src/bootstrap_math_verify.py")))
 _verify = base.verify
+# cb01401 froze valid v3 inputs before legacy preparation recovery was added.
+PRE_INITIAL_SCORE_CODE = "220a651698983460ea5e39d7f53d60127623cf824b5ffa5ab2309351ff9fe019"
 # Exact a63e69d runtime before the teacher-forced KV-cache fix.
 PRE_KV_CACHE_CODE = "8cb0b16a8c2e4229674c0165212a36ee916d9a2cbaea8dcc7adefc0deb9819ae"
 PRE_COST_CODE = "7c2480d74d8c4b2b109570ddab68d513961db60517acf1dad9d8794834ab6f7a"
 PRE_PREFIX_RESUME_CODE = "0e1bc0c39315258210b2ed0a003fe777b468993d60e9797f68972f739949de76"
 PRE_WORKER_LOGS_CODE = "803be77868081423affe81d073b0b5b566889c7d43cfc99608ad444ebb3dd4b9"
-PRIOR_RUNTIME_CODES = {PRE_KV_CACHE_CODE, PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE}
+PRE_CODE_COMPAT_CODE = "113afc51b2544e23d8389d6da5ad5f10e67b9407d54f835ba4935a1dd8523512"
+PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
+                       PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE}
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
 COST_METER = "58fd87dfdc00c3ee66e6903e12a53b31c4d2798f7594352ee9aa894d23525a99"
@@ -52,8 +56,29 @@ def validate_code_hashes(recorded):
             or current["src/grads.py"] != KV_CACHE_GRADS
             or current["src/selection_gate_gpu.py"] != COST_METER
             or any(recorded[name] != sha for name, sha in current.items() if name not in RUNTIME_PATCH_FILES)):
-        raise ValueError("switch protocol or scientific code changed; preserve the frozen run")
+        old = recorded if isinstance(recorded, dict) else {}
+        changed = {name: {"frozen": old.get(name), "current": current.get(name)}
+                   for name in sorted(set(old) | set(current)) if old.get(name) != current.get(name)}
+        raise ValueError("switch protocol or scientific code changed; preserve the frozen run; "
+                         + json.dumps({"frozen_code": core.fingerprint(recorded),
+                                       "current_code": core.fingerprint(current), "changed_files": changed}, sort_keys=True)
+                         + "; do not rewrite switch.json; run the updated launcher after old workers have stopped")
     return current
+
+
+def check_code(root):
+    """Read-only preflight, before acquiring GPUs or writing migration receipts."""
+    p = core.read(root / "switch.json")
+    if p.get("schema") != rule.SCHEMA:
+        raise ValueError(f"switch protocol changed: frozen schema={p.get('schema')!r}, "
+                         f"expected={rule.SCHEMA!r}; preserve the frozen run")
+    current = validate_code_hashes(p.get("code_hashes"))
+    print(json.dumps({"status": "exact" if current == p["code_hashes"] else "compatible",
+                      "frozen_code": core.fingerprint(p["code_hashes"]),
+                      "current_code": core.fingerprint(current), "repository": str(base.ROOT),
+                      "changed_files": [name for name in current if current[name] != p["code_hashes"][name]]},
+                     sort_keys=True), flush=True)
+    return p
 
 
 def manifest(root):
@@ -76,7 +101,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -93,7 +118,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -110,16 +135,33 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) != PRE_WORKER_LOGS_CODE)):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
-            base.bind(root / "worker-logs-runtime.json", {
+            worker_receipt = {
                 "schema": "selection-switch-worker-logs-runtime/v1",
                 "switch_sha256": base.digest(root / "switch.json"),
                 "prefix_runtime_sha256": base.digest(prefix_path), "runtime_code_hashes": current,
                 "change": "include failed child stderr in supervisor exceptions",
                 "cost_policy": "no change to phase costs or branch budgets",
+            }
+            worker_path = root / "worker-logs-runtime.json"
+            if worker_path.exists():
+                previous = core.read(worker_path)
+                previous_code = previous.get("runtime_code_hashes")
+                if (previous != worker_receipt and
+                        (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
+                         or core.fingerprint(previous_code) != PRE_CODE_COMPAT_CODE)):
+                    raise ValueError(f"frozen contract changed: {worker_path}")
+            else:
+                base.bind(worker_path, worker_receipt)
+            base.bind(root / "code-compat-runtime.json", {
+                "schema": "selection-switch-code-compat-runtime/v1",
+                "switch_sha256": base.digest(root / "switch.json"),
+                "worker_runtime_sha256": base.digest(worker_path), "runtime_code_hashes": current,
+                "change": "accept the exact original switch runtime; diagnose other code mismatches",
+                "cost_policy": "no change to frozen inputs, policies, phase costs or branch budgets",
             })
     return p
 
@@ -856,7 +898,7 @@ def install_runtime():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("prepare", "run", "smoke", "worker", "status", "summarize", "fit"))
+    parser.add_argument("command", choices=("prepare", "run", "smoke", "worker", "status", "summarize", "fit", "check-code"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--matrix", type=Path)
     parser.add_argument("--budget-gpu-seconds", type=float)
@@ -880,6 +922,8 @@ def main():
         if not args.matrix:
             parser.error("prepare requires --matrix")
         prepare(args)
+    elif args.command == "check-code":
+        check_code(args.root)
     elif args.command == "worker":
         if os.environ.get("OM_NODE_LOCK_HELD") != "1" or not args.phase or not args.arm:
             parser.error("worker requires an admitted node, phase and arm")

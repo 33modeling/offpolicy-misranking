@@ -38,6 +38,7 @@ bash scripts/run_selection_switch.sh status
 bash scripts/run_selection_switch.sh status --watch 5
 bash scripts/run_selection_switch.sh live
 bash scripts/run_selection_switch.sh errors
+bash scripts/run_selection_switch.sh check-code
 bash scripts/run_selection_switch.sh export
 bash scripts/run_selection_switch.sh why
 ```
@@ -103,9 +104,22 @@ SIGINT/TERM stops the current worker tree. Phase startup is covered by cleanup,
 and an atomic `cost-events/<event-id>.json` completion receipt is persisted before
 the finish is appended to `cost.jsonl`. On resume, `spent()` replays a matching
 receipt under the cost writer lock. It does not infer completion from an old
-heartbeat. The exact `a63e69d`, `96ad9ed`, `bb32da3` and `69bec8d` runtimes are
-accepted with an added `worker-logs-runtime.json` binding. Existing manifests and runtime
-receipts stay unchanged.
+heartbeat. The exact `cb01401`, `a63e69d`, `96ad9ed`, `bb32da3`, `69bec8d`,
+and `4798f93` runtimes are accepted with added runtime bindings. `7dc108a` and
+`857c3fa` have the same switch code hashes as `4798f93`. Existing manifests,
+runtime receipts, policies and cost journals stay unchanged. The original
+`cb01401` runtime was previously missing from the compatibility list, so valid
+experiments frozen by that version could incorrectly fail at the code check.
+The fix records `code-compat-runtime.json`; it never resets the run or treats an
+unknown deployment cost as zero. An already frozen `857c3fa` MoPPS sidecar is
+also accepted with its own receipt, without changing the source switch run.
+
+`check-code` is a read-only CPU preflight that prints the frozen and current code
+fingerprints and changed file names. It requires no GPU, node lock, environment
+bootstrap or run writes. The run/smoke launcher invokes it before node admission.
+Unknown scientific changes still stop execution, with the differing file names
+and hashes in the error. Do not edit `switch.json` or remove receipts to bypass
+that check; provide the `check-code` output and complete traceback for diagnosis.
 
 Before updating a running cluster checkout, stop its old launchers gracefully
 and confirm their worker trees have stopped, then pull and relaunch on each node.
