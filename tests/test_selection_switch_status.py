@@ -218,6 +218,21 @@ def test_unprepared_root_does_not_get_created(tmp_path):
     assert not root.exists()
 
 
+def test_holding_node_is_visible_but_not_counted_as_training(tmp_path):
+    prepared(tmp_path)
+    log = tmp_path / 'logs/launcher.node-3_.log'
+    log.parent.mkdir()
+    log.write_text('[holding] node retained; next queue pass in 600s; no training active in this launcher\n')
+    data = status.snapshot(tmp_path)
+    assert data['active_nodes'] == 0
+    assert data['waiting_nodes'] == [{'host': 'node-3', 'state': 'HOLD', 'reason': 'node retained between queue passes'}]
+    rendered = status.render(data)
+    assert 'HOLD' in rendered and 'between passes' in rendered
+    old = time.time() - 90
+    os.utime(log, (old, old))
+    assert status.snapshot(tmp_path)['waiting_nodes'] == []
+
+
 def test_training_step_uses_last_complete_log_row_without_claiming_publication(tmp_path):
     prepared(tmp_path)
     directory = prefix(tmp_path)

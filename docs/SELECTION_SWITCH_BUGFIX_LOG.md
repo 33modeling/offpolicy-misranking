@@ -658,3 +658,34 @@ Verification:
 - `nvidia-smi` showed no remaining compute processes after GPU tests. Shell
   syntax and `git diff --check` passed. No cluster deployment or host repair
   is claimed; missing termination durations still require actual evidence.
+
+## 2026-09-15: audit with two experiments on three nodes
+
+The operator reports three currently running nodes and repeated errors.
+The available exports are from 19:05-19:06 KST and are not live observations.
+See [the audit findings and limits](SELECTION_RUNTIME_AUDIT_2026-09-15.md).
+
+Preserved subsequent changes `6e46394` (bounded fabric probe ladder), `7e454cd`
+(operator-selected stale-cost estimate recovery), and `c881a85` (run-mode node
+retention). These supersede the corresponding earlier deployment notes; this
+audit does not silently revert their policies or alter any scientific source.
+
+Repairs are operational:
+
+- Use owned-worker signal cleanup for between-pass sleep, preventing a
+  parent-only INT/TERM from leaving a sleep process holding node locks.
+- Emit a 15-second holding heartbeat and show it as HOLD, not active training.
+- Attribute saved failures to their UTC/host and show latest progress and
+  completed admission evidence separately. Preserve every original failure.
+
+Broad regression: 403 passed, 16 skipped. CUDA-selected verification: 30 passed,
+including 15 actual CUDA cases on one RTX 3050. Reports are linked in the audit.
+Final focused tests cover both real launchers with holding disabled/enabled,
+original nonzero exits, pinned-code isolation, hold-time parent-only signals,
+lock release and read-only attributed diagnostics: 79 passed, eight CUDA cases
+deselected for this focused CPU/process run.
+Report: `/tmp/three-node-hold-review-20260915.xml`.
+
+No cluster worker was stopped, restarted or recovered. No claim is made that
+CUDA 802 on the affected H100 nodes has disappeared. Stale-cost recovery uses
+an estimate: its 60-second margin is not a proven upper bound on actual cost.

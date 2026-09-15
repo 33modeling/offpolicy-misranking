@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import re
 
@@ -20,6 +22,41 @@ def log_tail(path, lines):
         return "\n".join(handle.read().decode("utf-8", errors="replace").splitlines()[-lines:])
 
 
+def utc_time(value):
+    if not isinstance(value, (float, int)) or isinstance(value, bool) or not math.isfinite(value):
+        return "unknown"
+    try:
+        return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="seconds")
+    except (ValueError, OverflowError, OSError):
+        return "unknown"
+
+
+def show_admissions(root, limit):
+    seen = set()
+    paths = sorted(root.glob("node-preflight/*/admission.json"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+    for path in paths:
+        if not path.resolve().is_relative_to(root):
+            raise ValueError(f"admission record is outside the switch root: {path}")
+        try:
+            report = read_json(path)
+            if not isinstance(report, dict) or not isinstance(report.get("host"), str):
+                raise ValueError("admission record has no host")
+        except (OSError, ValueError) as exc:
+            print(f"[unreadable node check] {path.relative_to(root)}: {exc}", flush=True)
+            continue
+        host = report["host"]
+        if host in seen:
+            continue
+        seen.add(host)
+        print(f"\n[last node check] host={host} state={report.get('state', 'unknown')} "
+              f"runtime={report.get('runtime_commit', 'unknown')} saved_utc={utc_time(path.stat().st_mtime)}", flush=True)
+        print(f"[evidence] {path.relative_to(root)}; probe outcome only, not current training status", flush=True)
+        if report.get("diagnosis"):
+            print(str(report["diagnosis"])[:2000], flush=True)
+        if len(seen) >= limit:
+            break
+
+
 def show_errors(root, *, limit=3, lines=120, phase=None):
     root = root.resolve()
     if phase is None:
@@ -32,6 +69,7 @@ def show_errors(root, *, limit=3, lines=120, phase=None):
                 tail = "[launcher-start]" + tail.rsplit("[launcher-start]", 1)[1]
             print(f"\n[launcher-log] {log.relative_to(root)} (tail; not a diagnosis of the exit cause)", flush=True)
             print(tail or "[empty launcher log]", flush=True)
+        show_admissions(root, limit)
     paths = [*root.glob("prefixes/seed-*/segment-*/failure.json"),
              *root.glob("states/*/points/*/*/failure.json"),
              *root.glob("states/*/*/failure.json")]
@@ -46,6 +84,12 @@ def show_errors(root, *, limit=3, lines=120, phase=None):
         if phase is not None and current_phase != phase:
             continue
         print(f"\n[failure] {directory.relative_to(root)}", flush=True)
+        print(f"[recorded failure] host={failure.get('host', 'unknown')} utc={utc_time(failure.get('time'))}; "
+              "saved error; this display does not establish a new failure", flush=True)
+        if progress:
+            print(f"[last progress] host={progress.get('host', 'unknown')} pid={progress.get('pid', 'unknown')} "
+                  f"state={progress.get('state', 'unknown')} phase={current_phase or 'unknown'} "
+                  f"utc={utc_time(progress.get('updated'))}; heartbeat alone does not confirm a live owner", flush=True)
         print(str(failure.get("error", "unknown failure"))[:4000], flush=True)
         if isinstance(current_phase, str) and re.fullmatch(r"[A-Za-z0-9_-]+", current_phase):
             logs = sorted(directory.glob(f"{current_phase}-*.log"))

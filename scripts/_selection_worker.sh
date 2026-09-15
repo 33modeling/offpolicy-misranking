@@ -26,3 +26,14 @@ selection_run_worker() {
   trap - INT TERM
   return "$rc"
 }
+
+selection_hold_node() {
+  local remaining=$1 interval
+  while [ "$remaining" -gt 0 ]; do
+    interval=$(( remaining < 15 ? remaining : 15 ))
+    printf '[holding] node retained; next queue pass in %ss; no training active in this launcher\n' "$remaining"
+    # Reuse stop handling and close inherited node-lock descriptors in sleep.
+    selection_run_worker sleep "$interval" || return $?
+    remaining=$((remaining-interval))
+  done
+}

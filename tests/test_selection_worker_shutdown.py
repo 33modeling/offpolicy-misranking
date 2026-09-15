@@ -37,6 +37,49 @@ def compute_pids():
     return {int(line.strip()) for line in result.splitlines() if line.strip().isdigit()}
 
 
+@pytest.mark.parametrize('stop', [signal.SIGINT, signal.SIGTERM])
+def test_hold_reaps_sleep_and_releases_node_lock_when_only_parent_is_signaled(tmp_path, stop):
+    lock = tmp_path / 'node.lock'
+    marker = tmp_path / 'must-not-retry'
+    launcher = subprocess.Popen(['bash', '-c',
+        'source "$1"; exec 8>"$2"; flock -n 8; selection_hold_node 60; touch "$3"',
+        'hold-test', str(base.ROOT / 'scripts/_selection_worker.sh'), str(lock), str(marker)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    sleeper = None
+    children = Path(f'/proc/{launcher.pid}/task/{launcher.pid}/children')
+    try:
+        def sleep_started():
+            nonlocal sleeper
+            if launcher.poll() is not None:
+                return False
+            for pid in children.read_text().split():
+                try:
+                    if Path(f'/proc/{pid}/comm').read_text().strip() == 'sleep':
+                        sleeper = int(pid)
+                        return True
+                except FileNotFoundError:
+                    pass
+            return False
+        wait_until(sleep_started, timeout=5)
+        assert not Path(f'/proc/{sleeper}/fd/8').exists()
+        with pytest.raises(BlockingIOError):
+            with base.lease(lock):
+                pass
+        launcher.send_signal(stop)
+        stdout, stderr = launcher.communicate(timeout=5)
+        assert launcher.returncode == (130 if stop == signal.SIGINT else 143), stdout + stderr
+        assert '[holding]' in stdout and '[stopping]' in stdout
+        assert not alive(sleeper) and not marker.exists()
+        with base.lease(lock):
+            pass
+    finally:
+        try:
+            os.killpg(launcher.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        launcher.communicate(timeout=5)
+
+
 @pytest.fixture(params=['cpu', 'cuda'])
 def device(request):
     if request.param == 'cuda':

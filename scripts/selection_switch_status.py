@@ -187,6 +187,8 @@ def snapshot(root, *, now=None):
         host = path.name[len("launcher."):-len(".log")].rstrip("_")
         if last.startswith("[waiting]") and host not in active_hosts:
             waiting.append({"host": host, "reason": "no claimable task (fresh launcher log)"})
+        elif last.startswith("[holding]") and host not in active_hosts:
+            waiting.append({"host": host, "state": "HOLD", "reason": "node retained between queue passes"})
     branches = [task for task in tasks if task["kind"] == "branch"]
     return {"prepared": True, "root": str(root), "updated": now, "gate_ready": gate_ready,
             "active_nodes": len(active_hosts), "stale_nodes": len(stale_hosts), "waiting_nodes": waiting,
@@ -235,7 +237,9 @@ def render(data, *, all_tasks=False, width=120):
     rows = [[task["host"] or "unknown", task["pid"] or "-", CELLS[task["status"]], f"s{task['seed']}/t{task['step']} {ARM_LABELS.get(task['arm'], task['arm'])}",
              task["phase"] or "-", duration(task["seconds"]), duration(task["timeout"]) if task["timeout"] else "-",
              duration(task["heartbeat_age"])] for task in sorted(observed, key=lambda item: (item["host"], item["seed"], item["step"]))]
-    rows += [[item["host"], "-", "WAIT", "-", "no claimable task", "-", "-", "<60s"] for item in data["waiting_nodes"]]
+    rows += [[item["host"], "-", item.get("state", "WAIT"), "-",
+              "between passes" if item.get("state") == "HOLD" else "no claimable task", "-", "-", "<60s"]
+             for item in data["waiting_nodes"]]
     if rows:
         headers = ["NODE", "PID", "STATE", "TASK", "PHASE", "ELAPSED", "LIMIT", "BEAT"]
         if width < 100:

@@ -227,7 +227,7 @@ HOLD=${SWITCH_HOLD_SECONDS:-$HOLD_DEFAULT}
     fi
     if [ "$rc" -eq 0 ]; then wait_seconds=$HOLD; else wait_seconds=$(( wait_seconds*2 > 3600 ? 3600 : wait_seconds*2 )); fi
     echo "[hold] pass $pass ended rc=$rc; keeping this node's GPUs; next pass in ${wait_seconds}s (stop: bash scripts/run_mopps_comparison.sh stop)"
-    sleep "$wait_seconds"
+    selection_hold_node "$wait_seconds" || { rc=$?; break; }
   done
 fi
 if [ "$rc" -eq 78 ]; then

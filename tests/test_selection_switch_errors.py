@@ -101,3 +101,50 @@ def test_launcher_symlink_cannot_escape_run(tmp_path):
     (root / "logs/launcher.node.log").symlink_to(target)
     with pytest.raises(ValueError, match="outside"):
         errors.show_errors(root)
+
+
+def test_historical_failure_is_identified_separately_from_a_new_owner(tmp_path, capsys):
+    directory = failed_prefix(tmp_path)
+    core.atomic_json(directory / "failure.json", {"error": "old CUDA 802", "host": "failed-node", "time": 100.})
+    core.atomic_json(directory / "progress.json", {"host": "new-node", "pid": 42,
+        "phase": "prefix-train", "state": "running", "updated": 200.})
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    errors.show_errors(tmp_path)
+    output = capsys.readouterr().out
+    assert "[recorded failure] host=failed-node utc=1970-01-01T00:01:40+00:00" in output
+    assert "this display does not establish a new failure" in output
+    assert "[last progress] host=new-node pid=42 state=running" in output
+    assert "old CUDA 802" in output
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_node_checks_show_only_the_latest_record_per_host_and_never_claim_training_success(tmp_path, capsys):
+    for name, host, state, revision, when in [("old", "node-a", "failed", "old-code", 100),
+            ("new", "node-a", "passed", "new-code", 200), ("other", "node-b", "failed", "other-code", 150)]:
+        path = tmp_path / "node-preflight" / name / "admission.json"
+        core.atomic_json(path, {"host": host, "state": state, "runtime_commit": revision})
+        os.utime(path, (when, when))
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    errors.show_errors(tmp_path)
+    output = capsys.readouterr().out
+    assert "host=node-a state=passed runtime=new-code" in output
+    assert "host=node-b state=failed runtime=other-code" in output
+    assert "runtime=old-code" not in output
+    assert "probe outcome only, not current training status" in output
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+@pytest.mark.parametrize("value", [None, "unknown", float("nan"), float("inf"), True, 1e100])
+def test_invalid_recorded_timestamp_is_not_made_up(value):
+    assert errors.utc_time(value) == "unknown"
+
+
+def test_admission_symlink_cannot_escape_run(tmp_path):
+    root = tmp_path / "run"
+    path = root / "node-preflight/node-a/admission.json"
+    path.parent.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    core.atomic_json(outside, {"host": "outside", "state": "passed"})
+    path.symlink_to(outside)
+    with pytest.raises(ValueError, match="outside"):
+        errors.show_errors(root)

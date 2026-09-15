@@ -163,13 +163,20 @@ def test_snapshot_cache_cannot_be_inside_live_repository(tmp_path):
 
 @pytest.mark.parametrize("kind,mode", [("switch", "run"), ("mopps", "run"), ("mopps", "retry")])
 @pytest.mark.parametrize("preflight_code", [0, 78, 130])
-def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(tmp_path, kind, mode, preflight_code):
+@pytest.mark.parametrize("hold_seconds", [0, 1])
+def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(tmp_path, kind, mode, preflight_code, hold_seconds):
     repo = repository(tmp_path)
     for name in (*runtime.LAUNCHERS.values(), "selection_switch_runtime.py", "selection_switch_errors.py", "_selection_worker.sh"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     (repo / "scripts/setup_env.sh").write_text('export DATASETS_DIR="$OM_WORK/data"\nexport PYTHONPATH="$OM_REPO/src:$PYTHONPATH"\n')
     (repo / "scripts/_e5_node.sh").write_text('e5_acquire_node() { return 0; }\n')
     (repo / "src/bootstrap_math_verify.py").write_text("print('/unused-test-dependencies')\n")
+    (repo / "scripts/selection_switch_status.py").write_text('''
+import json, os
+from pathlib import Path
+count = len((Path(os.environ['OUT_ROOT']) / 'probe-calls').read_text().splitlines())
+print(json.dumps({'development_done': 18 if count >= 2 else 0, 'test_done': 30 if count >= 2 else 0}))
+''')
     (repo / "scripts/selection_nccl_preflight.py").write_text('''
 import os, sys
 from pathlib import Path
@@ -193,6 +200,10 @@ if sys.argv[1] == 'prepare':
     (root / 'mopps.json').write_text('{}')
 elif sys.argv[1] == 'check-code':
     print('exact')
+elif sys.argv[1] == 'status':
+    count = len((Path(os.environ['OUT_ROOT']) / 'probe-calls').read_text().splitlines())
+    if count >= 2:
+        print('s3 t25 mopps DONE published\\n' * 12)
 else:
     import probe
 '''
@@ -216,7 +227,7 @@ else:
            "SWITCH_RUNTIME_CACHE": str(tmp_path / "cache"), "SWITCH_PYTHON": sys.executable,
            "MOPPS_PYTHON": sys.executable, "PATH": str(repo / "bin") + os.pathsep + os.environ["PATH"],
            "PYTHONPATH": str(repo / "src"), "CUDA_VISIBLE_DEVICES": "0,1,2,3",
-           "TEST_PREFLIGHT_CODE": str(preflight_code)}
+           "TEST_PREFLIGHT_CODE": str(preflight_code), "SWITCH_HOLD_SECONDS": str(hold_seconds)}
     env["SWITCH_ROOT" if kind == "switch" else "MOPPS_ROOT"] = str(root)
     env.pop("SWITCH_RUNTIME_REPO", None)
     worker = subprocess.Popen(["bash", str(repo / "scripts" / runtime.LAUNCHERS[kind]), mode],
@@ -247,7 +258,9 @@ else:
         assert start["repo"] == str(Path(start["file"]).parent.parent)
         assert json.loads((root / "finished.json").read_text()) == {"value": "original", "child": "original"}
         assert len(list(root.glob("logs/launcher.*.log"))) == 1
-        assert len((root / "probe-calls").read_text().splitlines()) == (8 if mode == "retry" else 1)
+        assert len((root / "probe-calls").read_text().splitlines()) == (8 if mode == "retry" else 2 if hold_seconds else 1)
+        if mode == "run" and hold_seconds:
+            assert "[holding]" in stdout and "releasing the node" in stdout
         if mode == "retry":
             args = start["args"]
             assert args[args.index("--idle-timeout")+1] == "0"
