@@ -153,6 +153,16 @@ logged to `logs/keepalive.<host>.log`, killed on exit and by `stop`. It is not a
 metered cost event and never touches the run directory. `SWITCH_KEEPALIVE=0`
 disables it; `SWITCH_KEEPALIVE_PERIOD` (seconds, default 0.25) sets the pace.
 
+From a terminal, a plain `bash scripts/run_selection_switch.sh` (or the MoPPS
+launcher) now hands the node to `scripts/run_experiments.sh`: every cycle it
+closes stale cost events of both roots, runs one switch queue pass, then one
+MoPPS pass (which retries recorded failures first), and holds the node with the
+keepalive for `EXPERIMENTS_HOLD_SECONDS` (default 300) before the next cycle.
+Nodes are not assigned to an experiment; whichever has claimable work gets it.
+`bash scripts/run_experiments.sh stop` (or either launcher's `stop`) stops the
+node; `status` shows both views. `EXPERIMENTS_COMBINED=0` runs one queue only,
+`EXPERIMENTS_AUTO_PULL=1` pulls before each cycle.
+
 Rerun the same command to resume. Completed branches are skipped. A failed
 task is attempted at most once per invocation; other eligible tasks continue.
 It never kills another E5/Qwen/net-gain process or bypasses an occupied node.

@@ -200,7 +200,12 @@ prerequisites. `status --watch 5`, `--all` and `--json` work as for the switch;
 every mopps/contract/selector/failure/progress/result/cost/admission record,
 and the last 100 lines of every log) and prints the saved path.
 
-`run` on an operator launch first retries every recorded branch failure once
+From a terminal, `bash scripts/run_mopps_comparison.sh` hands the node to
+`scripts/run_experiments.sh`, which cycles switch and MoPPS passes on the same
+node with stale-cost closure and failure retries each cycle (see the switch run
+notes). `EXPERIMENTS_COMBINED=0` keeps the single-queue behaviour below.
+
+`run` on an operator launch retries every recorded branch failure once per pass
 (the same explicit single-branch retries, behind the same node admission), then
 enters the queue; without this a fresh node only waited for missing parent
 prefixes while the failed branches sat untouched. `MOPPS_AUTO_RETRY=0` restores

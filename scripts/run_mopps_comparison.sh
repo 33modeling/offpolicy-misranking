@@ -48,6 +48,15 @@ root_worker_cmdline() {
     'run_selection_switch\.sh|run_mopps_comparison\.sh|selection_switch_runtime\.py|selection_switch_gpu\.py|mopps_comparison_gpu\.py|torch\.distributed\.run|train_[a-z_]*grpo\.py|_gpu_keepalive\.py|selection_nccl_preflight\.py|selection_switch_score\.py|light_selection_gate_gpu\.py'
 }
 if [ "$MODE" = stop ]; then
+  NODE_PID_FILE="$WORK/runs/experiments/logs/launcher.$LAUNCH_HOST.pid"
+  if [ -f "$NODE_PID_FILE" ] && [ "${EXPERIMENTS_STOPPING:-0}" != 1 ]; then
+    node_pid=$(cat "$NODE_PID_FILE" 2>/dev/null || true)
+    if [[ "$node_pid" =~ ^[0-9]+$ ]] && kill -0 "$node_pid" 2>/dev/null; then
+      echo "[stop] node launcher (run_experiments.sh) pid=$node_pid is running; stopping it first"
+      kill -TERM -- "-$node_pid" 2>/dev/null || kill -TERM "$node_pid" 2>/dev/null || true
+      for _ in $(seq 1 240); do kill -0 "$node_pid" 2>/dev/null || break; sleep 1; done
+    fi
+  fi
   # Launchers started before detachment (foreground, tmux) have no pid file but
   # still export OUT_ROOT; so do their workers, ranks and keepalives. Find every
   # own process carrying this root, TERM its process group (the new code reaps
@@ -117,6 +126,12 @@ if [ "$MODE" = stop ]; then
 fi
 case "$MODE" in run|retry)
   if [ -t 1 ] && [ "${SWITCH_DETACHED:-0}" != 1 ] && [ "${SWITCH_FOREGROUND:-0}" != 1 ]; then
+    # From a terminal, a plain 'run' hands the node to scripts/run_experiments.sh,
+    # which closes stale costs, runs a switch pass and a MoPPS pass every cycle
+    # and keeps the node in between. EXPERIMENTS_COMBINED=0 runs only this queue.
+    if [ "$MODE" = run ] && [ "$#" -eq 0 ] && [ "${EXPERIMENTS_COMBINED:-1}" != 0 ]; then
+      exec bash scripts/run_experiments.sh run
+    fi
     if launcher_pid_alive; then
       echo "[already running] host=$LAUNCH_HOST pid=$(cat "$PID_FILE"); follow: tail -f $CONSOLE_LOG; stop: bash scripts/$(basename "$0") stop"
       exit 0
