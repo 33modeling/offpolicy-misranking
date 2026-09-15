@@ -130,6 +130,20 @@ attempt rather than under-counting it. The evidence is recorded in the ledger as
 `stale_owner_last_evidence`. Live local owners and recent evidence are left
 untouched; without `--stale` the command only lists open events.
 
+The allocation on this cluster lives only while the launcher process does, so
+an exit after "no claimable task" or a failed pass used to give the GPUs back
+and force a new allocation plus the same command again. In `run` mode an
+operator launch (detached or on a terminal) now keeps the node: after each
+worker pass it re-checks completion (18 development and 30 held-out
+continuations published), otherwise prints `[hold] pass N ended rc=...` and
+starts the next pass after `SWITCH_HOLD_SECONDS` (default 600; doubled up to
+3600 after a failed pass, reset after a clean one). Every pass re-admits the
+node through the NCCL probe and re-attempts failed tasks once. Node admission
+failure (78) and stop signals still end the launcher; `stop` works during the
+hold. Callers without a terminal (tests, pipelines) keep the single pass;
+`SWITCH_HOLD_SECONDS=0` forces it anywhere. MoPPS `run` holds the same way,
+checking for its 12 published continuations.
+
 Rerun the same command to resume. Completed branches are skipped. A failed
 task is attempted at most once per invocation; other eligible tasks continue.
 It never kills another E5/Qwen/net-gain process or bypasses an occupied node.

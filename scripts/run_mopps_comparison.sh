@@ -197,12 +197,42 @@ if [ "$MODE" = retry ] && [ "$#" -eq 0 ]; then
     esac
   done
 else
-  selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
-    "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
+  # Keep the node between passes (see run_selection_switch.sh): the allocation
+  # ends with this process, and MoPPS work appears only as the switch experiment
+  # publishes prefixes. SWITCH_HOLD_SECONDS=0 restores the single pass.
+  # Holding applies to operator launches (detached or on a terminal); pipelines
+# and tests without a terminal keep the single pass unless they opt in.
+if [ "${SWITCH_DETACHED:-0}" = 1 ] || [ -t 1 ]; then HOLD_DEFAULT=600; else HOLD_DEFAULT=0; fi
+HOLD=${SWITCH_HOLD_SECONDS:-$HOLD_DEFAULT}
+  [[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] SWITCH_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
+  mopps_complete() {
+    [ "$(CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py status --root "$OUT_ROOT" 2>/dev/null | grep -c ' DONE ')" -ge 12 ]
+  }
+  pass=0
+  wait_seconds=$HOLD
+  while :; do
+    pass=$((pass+1))
+    rc=0
+    selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
+      "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
+    case "$rc" in 78|130|137|143) break ;; esac
+    if [ "$rc" -ne 0 ]; then
+      CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
+    fi
+    [ "$MODE" = run ] && [ "$HOLD" -gt 0 ] || break
+    if mopps_complete; then
+      echo '[hold] all 12 comparison continuations are published; releasing the node'
+      rc=0
+      break
+    fi
+    if [ "$rc" -eq 0 ]; then wait_seconds=$HOLD; else wait_seconds=$(( wait_seconds*2 > 3600 ? 3600 : wait_seconds*2 )); fi
+    echo "[hold] pass $pass ended rc=$rc; keeping this node's GPUs; next pass in ${wait_seconds}s (stop: bash scripts/run_mopps_comparison.sh stop)"
+    sleep "$wait_seconds"
+  done
 fi
 if [ "$rc" -eq 78 ]; then
   echo '[blocked] node admission failed above; historical branch errors are not the cause of this launch'
-elif [ "$rc" -ne 0 ]; then
+elif [ "$rc" -ne 0 ] && [ "$MODE" = retry ]; then
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
   if [ "$rc" -eq 1 ]; then
     echo '[next] inspect the recorded failures; on a passing idle node use: bash scripts/run_mopps_comparison.sh retry'

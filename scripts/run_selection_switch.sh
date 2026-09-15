@@ -190,12 +190,42 @@ MATH_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/run
 export PYTHONPATH="$MATH_VERIFY_PATH${PYTHONPATH:+:$PYTHONPATH}" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
 trap '' HUP
 source scripts/_selection_worker.sh
-rc=0
-selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
-  "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" || rc=$?
+# The allocation lives only while this process does: an exit after "no
+# claimable task" or a failed pass gives the GPUs back and the operator must
+# re-request them and rerun the same command. In run mode keep the node and
+# poll again instead; every pass re-admits the node and re-attempts failed
+# tasks once. SWITCH_HOLD_SECONDS=0 restores the single pass.
+# Holding applies to operator launches (detached or on a terminal); pipelines
+# and tests without a terminal keep the single pass unless they opt in.
+if [ "${SWITCH_DETACHED:-0}" = 1 ] || [ -t 1 ]; then HOLD_DEFAULT=600; else HOLD_DEFAULT=0; fi
+HOLD=${SWITCH_HOLD_SECONDS:-$HOLD_DEFAULT}
+[[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] SWITCH_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
+switch_complete() {
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$OUT_ROOT" --json 2>/dev/null \
+    | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("development_done")==18 and d.get("test_done")==30 else 1)'
+}
+pass=0
+wait_seconds=$HOLD
+while :; do
+  pass=$((pass+1))
+  rc=0
+  selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
+    "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" || rc=$?
+  case "$rc" in 78|130|137|143) break ;; esac
+  if [ "$rc" -ne 0 ]; then
+    CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
+  fi
+  [ "$MODE" = run ] && [ "$HOLD" -gt 0 ] || break
+  if switch_complete; then
+    echo '[hold] all 48 continuations are published; releasing the node'
+    rc=0
+    break
+  fi
+  if [ "$rc" -eq 0 ]; then wait_seconds=$HOLD; else wait_seconds=$(( wait_seconds*2 > 3600 ? 3600 : wait_seconds*2 )); fi
+  echo "[hold] pass $pass ended rc=$rc; keeping this node's GPUs; next pass in ${wait_seconds}s (stop: bash scripts/run_selection_switch.sh stop)"
+  sleep "$wait_seconds"
+done
 if [ "$rc" -eq 78 ]; then
   echo '[blocked] node admission failed above; historical branch errors are not the cause of this launch'
-elif [ "$rc" -ne 0 ]; then
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
 fi
 exit "$rc"
