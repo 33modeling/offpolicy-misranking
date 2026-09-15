@@ -5,8 +5,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in prepare|run|retry|stop|status|summarize|errors|recover-cost|cpu) ;;
-  *) echo 'usage: bash scripts/run_mopps_comparison.sh [prepare|run|retry|stop|status|summarize|errors|recover-cost|cpu]'; exit 2 ;;
+case "$MODE" in prepare|run|retry|stop|status|why|summarize|errors|recover-cost|cpu) ;;
+  *) echo 'usage: bash scripts/run_mopps_comparison.sh [prepare|run|retry|stop|status|why|summarize|errors|recover-cost|cpu]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -98,6 +98,41 @@ fi
 if [ "$MODE" = status ] || [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@"
+fi
+if [ "$MODE" = why ]; then
+  # One read-only report file for diagnosis: status, every recorded protocol,
+  # failure, progress, decision, result, cost and node-admission record, then
+  # the tail of every log under the comparison root. Prints the saved path.
+  [ -d "$OUT_ROOT" ] || { echo "[abort] no logs/results: $OUT_ROOT"; exit 2; }
+  REPORT_DIR="$WORK/reports/mopps-comparison"
+  mkdir -p "$REPORT_DIR"
+  TARGET=$(mktemp "$REPORT_DIR/mopps-why-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.txt")
+  (
+    printf 'MOPPS COMPARISON\nUTC: %s\nROOT: %s\nPARENT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$OUT_ROOT" "$PARENT"
+    git rev-parse HEAD
+    if [ -f "$OUT_ROOT/mopps.json" ]; then
+      CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py status --root "$OUT_ROOT" || echo '[status unavailable]'
+    else
+      echo '[not prepared] mopps.json is absent'
+    fi
+    printf '\n===== parent switch status =====\n'
+    CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$PARENT" || echo '[parent status unavailable]'
+    while IFS= read -r -d '' path; do
+      printf '\n===== %s =====\n' "${path#"$OUT_ROOT"/}"
+      cat "$path"
+      printf '\n'
+    done < <(find "$OUT_ROOT" -type f \( -name 'mopps.json' -o -name 'contract.json' -o -name 'import.done.json' \
+      -o -name 'selector.json' -o -name 'failure.json' -o -name 'progress.json' -o -name 'result.json' \
+      -o -name 'result.sha256.json' -o -name 'budget_stop.json' -o -name 'cost.jsonl' -o -name 'admission.json' \
+      -o -name 'rank-*.json' -o -name '*-runtime.json' \
+      -o -path '*/cost-events/*.json' -o -path '*/pending-costs/*.json' \) -print0 | sort -z)
+    while IFS= read -r -d '' path; do
+      printf '\n===== LOG: %s (last 100 lines) =====\n' "${path#"$OUT_ROOT"/}"
+      tail -n 100 "$path"
+    done < <(find "$OUT_ROOT" -type f -name '*.log' -print0 | sort -z)
+  ) > "$TARGET" 2>&1 || { printf '[report incomplete; see errors] %s\n' "$TARGET"; exit 1; }
+  printf '[saved] %s\n' "$TARGET"
+  exit 0
 fi
 if [ "$MODE" = errors ]; then
   export CUDA_VISIBLE_DEVICES=""
