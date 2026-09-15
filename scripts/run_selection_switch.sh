@@ -225,6 +225,13 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
       printf '\n===== LOG: %s (last 100 lines) =====\n' "${path#"$OUT_ROOT"/}"
       tail -n 100 "$path"
     done < <(find "$OUT_ROOT" -type f -name '*.log' -print0 | sort -z)
+    # The node launcher (run_experiments.sh) logs live outside both roots.
+    if [ -d "$WORK/runs/experiments/logs" ]; then
+      while IFS= read -r -d '' path; do
+        printf '\n===== NODE LAUNCHER LOG: %s (last 150 lines) =====\n' "${path#"$WORK"/}"
+        grep -v '^\[holding\]' "$path" | tail -n 150
+      done < <(find "$WORK/runs/experiments/logs" -type f -name '*.log' -print0 | sort -z)
+    fi
   ) > "$TARGET" 2>&1 || { printf '[export incomplete; see errors] %s\n' "$TARGET"; exit 1; }
   printf '[saved] %s\n' "$TARGET"
   exit 0
