@@ -1,5 +1,10 @@
 # Execution And ETA Corrections
 
+The subsequent selected-prefix switch failures and repairs have their own
+[bug-fix log](SELECTION_SWITCH_BUGFIX_LOG.md), including unresolved mid-run
+interruptions reported on 2026-09-15. Do not conflate those reports with the
+earlier net-gain incidents recorded below.
+
 ## User-Reported State
 
 The user reports that the nine gate experiments were started concurrently,

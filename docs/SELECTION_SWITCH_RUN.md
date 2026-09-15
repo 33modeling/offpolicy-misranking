@@ -2,6 +2,11 @@
 
 Implemented: 2026-09-14. Manuscript target: v4. No GPU result is claimed here.
 
+Incident history, repair commits, verification limits, and unresolved mid-run
+interruptions are tracked in the dedicated
+[bug-fix log](SELECTION_SWITCH_BUGFIX_LOG.md). A locally tested fix is not a
+verified successful cluster run.
+
 ## Run
 
 Use four nodes with four H100 GPUs each, sharing the same group-volume root.
