@@ -22,7 +22,7 @@ if [ "$MODE" = cpu ]; then
   exec "${SWITCH_CPU_PYTHON:-$PY}" -m pytest -q tests/test_selection_switch.py tests/test_selection_switch_gpu.py \
     tests/test_net_gate_memory_math.py tests/test_logit_chunking.py tests/test_selection_switch_cost.py \
     tests/test_selection_switch_errors.py tests/test_selection_switch_status.py tests/test_selection_switch_runtime.py \
-    tests/test_selection_worker_shutdown.py "$@"
+    tests/test_selection_worker_shutdown.py tests/test_selection_nccl_preflight.py "$@"
 fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*) echo '[abort] use SWITCH_ROOT for the output directory'; exit 2 ;; esac

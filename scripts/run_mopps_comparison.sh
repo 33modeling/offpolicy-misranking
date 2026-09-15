@@ -20,7 +20,8 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
-  exec "$PY" -m pytest -q tests/test_mopps.py tests/test_mopps_comparison_gpu.py tests/test_selection_worker_shutdown.py "$@"
+  exec "$PY" -m pytest -q tests/test_mopps.py tests/test_mopps_comparison_gpu.py \
+    tests/test_selection_worker_shutdown.py tests/test_selection_nccl_preflight.py "$@"
 fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*|--parent-root|--parent-root=*) echo '[abort] use MOPPS_ROOT and SWITCH_ROOT'; exit 2 ;; esac

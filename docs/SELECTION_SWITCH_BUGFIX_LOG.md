@@ -31,6 +31,11 @@ The earlier net-gain incidents are not proof of the cause of these switch failur
   reproduction. Whether this is the cause of the user's latest stop is unverified.
 - No successful post-fix H100 completion or uninterrupted long cluster run
   has been independently verified here.
+- IMPLEMENTED, CLUSTER UNVERIFIED: bounded NCCL/DDP node admission now precedes
+  both training queues. A documented old-NCCL host-allocation workaround is
+  accepted only after an observed CUDA/NCCL failure and a successful second
+  probe. The operator's exact CUDA cause is still unconfirmed; see the final
+  incident entry below. An outer rank/`ChildFailedError` is not that cause.
 - Last user-reported allocation: four nodes running. This is not a live
   observation or evidence that those nodes are still running now.
 
@@ -440,3 +445,88 @@ Final local verification:
 - Reviewed MoPPS source-map fingerprint:
   `7a4e2b957080e1af5158e9802005dfcd13a51234e3400c9011c35ed6a9c1e5f9`.
   Switch's source map, all three trainers and the manuscript are unchanged.
+
+## 2026-09-15: Rank/ChildFailedError at NCCL initialization
+
+The operator again reports rank-labelled `ChildFailedError`. The earlier DDP
+parameter-verification frames identify first-collective startup failure, but
+the exact CUDA `Last error` remains unavailable. A version mismatch, failed
+GPU, interconnect fault or host-allocation failure is not established from
+those wrapper frames alone. No access to the secure cluster was attempted.
+
+The pinned provisioning stack is Torch 2.7.1/cu126; the local installation
+reports CUDA 12.6 and NCCL 2.26.2. NVIDIA documents that NCCL 2.24 enabled cuMem
+host allocations by default on qualifying CUDA versions, while automatic
+testing/fallback for unsupported NUMA environments arrived in 2.26.5. Earlier
+versions can use `NCCL_CUMEM_HOST_ENABLE=0`. This is a bounded compatibility
+candidate, not a confirmed diagnosis of this cluster:
+
+- [NVIDIA NCCL 2.26.5 release notes](https://docs.nvidia.com/deeplearning/nccl/release-notes/rel_2-26-5.html)
+- [NVIDIA NCCL 2.26.5 troubleshooting](https://docs.nvidia.com/deeplearning/nccl/archives/nccl_2265/user-guide/docs/troubleshooting.html)
+
+Repair scope:
+
+- Both pinned launchers invoke `scripts/selection_nccl_preflight.py` after
+  acquiring the existing node lease but before starting the training queue.
+  Four distinct allocated GPUs and four local ranks are required in production.
+  The probe performs eager NCCL initialization, all-reduce, DDP parameter
+  verification, forward/backward, SGD and all-gather of the updated parameters.
+- Each probe has a 90-second allocation deadline and 30-second collective
+  timeout. Only an observed NCCL CUDA failure with every rank reporting the
+  same NCCL version in [2.24.0, 2.26.5) can trigger one probe-only retry with
+  `NCCL_CUMEM_HOST_ENABLE=0`. Export this setting to the controller only after
+  that retry passes. Explicit user settings are never overridden. Known OOM,
+  illegal-access, allocation, duplicate-GPU and driver errors do not trigger
+  the workaround. No package reinstall or blanket P2P/IB/NVLS disable.
+- An unresolved admission failure exits 78 without claiming training tasks,
+  loading the policy model or entering queue waiting. Every rank records its
+  runtime versions, local rank, GPU UUID and original exception; the original
+  torchrun/NCCL output is retained. Rank errors are printed independently of
+  the bounded log tail, so wrapper output cannot hide them there.
+- All evidence is under `ROOT/node-preflight/HOST-UUID/`: `admission.json`,
+  per-attempt `rank-N.json`, `nccl-check-0.log` and closed cost records. NCCL
+  debug-file redirection is disabled only inside probe ranks, preserving the
+  user's actual training environment. Probe costs are explicitly recorded as
+  shared node-admission research overhead, not erased or presented as free
+  training. Prior deployment costs and retry budgets are unchanged.
+- The existing owned-descendant cleanup and signal-safe cost writer are used
+  for probe timeout/stop as well. Interrupted attempts remain in the admission
+  report. `setup_env.sh` now preserves explicitly configured CUDA allocator
+  settings, including an intentionally empty setting.
+- Scientific source maps remain exactly Switch
+  `43f53caa042b27810fe3ba45da025198953378e6f858868cdb93e004bea3a60e`
+  and MoPPS
+  `7a4e2b957080e1af5158e9802005dfcd13a51234e3400c9011c35ed6a9c1e5f9`.
+  No frozen-manifest migration, selector/trainer change, checkpoint replacement,
+  lock deletion, failure-record removal or deployment-cost waiver is included.
+
+Deployment: stop the old launchers and let their owned GPU workers finish
+cleanup before pulling and reusing those GPUs. Existing detached launchers
+have a `stop` command; Ctrl+C only closes their console view. Use the same run
+root and existing run/retry command after `git pull --ff-only`; the admission
+check is automatic. A pull does not patch a running pinned controller. Prior
+MoPPS failed continuations still require explicit `retry --seed ... --step ...
+--arm ...`; this patch does not silently retry paid training. Independent queue
+prerequisites and busy locks still apply after admission passes.
+
+Local testing uses one RTX 3050, not a four-H100 node. Passing single-rank
+NCCL/DDP or rejecting a bad allocation does not verify inter-GPU communication,
+reproduce the cluster's host-allocation fault or prove that all reported waiting
+has been resolved. Do not report cluster completion from these local checks.
+
+Final verification:
+
+- CPU/process regression: 348 passed, 12 skipped (11 explicit CUDA cases and
+  one optional plotting test). Report: `/tmp/nccl-admission-regression-20260915.xml`.
+  Includes both real shell entrypoints blocking controller startup on failed
+  admission, explicit allocator settings, fallback eligibility, closed retry
+  costs, bounded timeout, SIGTERM and unchanged queue/scientific contracts.
+- CUDA-enabled focused run: 20 passed, comprising 11 actual CUDA cases and
+  nine CPU parameter cases selected by the same name filter. Report:
+  `/tmp/nccl-admission-cuda-final-20260915.xml`. The actual CUDA cases cover
+  baseline and explicit legacy-host NCCL/DDP admission, invalid two-rank GPU
+  allocation rejection, four resistant-descendant cases, and both experiment
+  entrypoints under INT/TERM with restart. Hardware: one RTX 3050 6GB.
+- After testing, `nvidia-smi` reported no compute processes. Shell syntax and
+  `git diff --check` passed. Both scientific source-map fingerprints match
+  their pre-patch values above. No cluster execution was performed.

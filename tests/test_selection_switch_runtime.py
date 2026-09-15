@@ -162,13 +162,22 @@ def test_snapshot_cache_cannot_be_inside_live_repository(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["switch", "mopps"])
-def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(tmp_path, kind):
+@pytest.mark.parametrize("preflight_failure", [False, True])
+def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(tmp_path, kind, preflight_failure):
     repo = repository(tmp_path)
     for name in (*runtime.LAUNCHERS.values(), "selection_switch_runtime.py", "selection_switch_errors.py", "_selection_worker.sh"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     (repo / "scripts/setup_env.sh").write_text('export DATASETS_DIR="$OM_WORK/data"\nexport PYTHONPATH="$OM_REPO/src:$PYTHONPATH"\n')
     (repo / "scripts/_e5_node.sh").write_text('e5_acquire_node() { return 0; }\n')
     (repo / "src/bootstrap_math_verify.py").write_text("print('/unused-test-dependencies')\n")
+    (repo / "scripts/selection_nccl_preflight.py").write_text('''
+import os, sys
+if os.environ.get('TEST_PREFLIGHT_FAILURE') == '1':
+    print('[blocked] NCCL admission failed before claiming work', flush=True)
+    raise SystemExit(78)
+command = sys.argv[sys.argv.index('--')+1:]
+os.execvpe(command[0], command, os.environ)
+''')
     controller = '''
 import json, os, sys
 from pathlib import Path
@@ -194,12 +203,20 @@ else:
     env = {**os.environ, "OM_WORK": str(tmp_path / "work"), "OM_REPO": str(tmp_path / "stale-repo"),
            "SWITCH_RUNTIME_CACHE": str(tmp_path / "cache"), "SWITCH_PYTHON": sys.executable,
            "MOPPS_PYTHON": sys.executable, "PATH": str(repo / "bin") + os.pathsep + os.environ["PATH"],
-           "PYTHONPATH": str(repo / "src"), "CUDA_VISIBLE_DEVICES": "0,1,2,3"}
+           "PYTHONPATH": str(repo / "src"), "CUDA_VISIBLE_DEVICES": "0,1,2,3",
+           "TEST_PREFLIGHT_FAILURE": str(int(preflight_failure))}
     env["SWITCH_ROOT" if kind == "switch" else "MOPPS_ROOT"] = str(root)
     env.pop("SWITCH_RUNTIME_REPO", None)
     worker = subprocess.Popen(["bash", str(repo / "scripts" / runtime.LAUNCHERS[kind]), "run"],
                               cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
+        if preflight_failure:
+            stdout, stderr = worker.communicate(timeout=15)
+            assert worker.returncode == 78, stdout + stderr
+            assert "NCCL admission failed before claiming work" in stdout
+            assert "[waiting]" not in stdout
+            assert not (root / "started.json").exists()
+            return
         wait_for(root / "started.json", worker)
         start = json.loads((root / "started.json").read_text())
         commit_change(repo)

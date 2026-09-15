@@ -59,7 +59,7 @@ fi
 export HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_HUB_DISABLE_TELEMETRY=1
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
 export TRANSFORMERS_VERBOSITY=error HF_HUB_DISABLE_PROGRESS_BARS=1  # 로그 잡음 제거
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF-expandable_segments:True}"
 export PYTHONPATH="$OM_REPO/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # Model-specific hard-pool names prevent one model/revision from silently
