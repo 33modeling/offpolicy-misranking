@@ -95,7 +95,18 @@ if [ "$MODE" = prepare ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" src/mopps_comparison_gpu.py prepare --root "$OUT_ROOT" --parent-root "$PARENT" "$@"
 fi
-if [ "$MODE" = status ] || [ "$MODE" = summarize ]; then
+if [ "$MODE" = status ]; then
+  # Detailed read-only view in the switch status layout: nodes, current work,
+  # node admission probes, parent prefixes, per-state grid with wait reasons.
+  # 'status --brief' keeps the queue's own compact list.
+  export CUDA_VISIBLE_DEVICES=""
+  if [ "${1:-}" = --brief ]; then
+    shift
+    exec "$PY" src/mopps_comparison_gpu.py status --root "$OUT_ROOT" "$@"
+  fi
+  exec "$PY" scripts/mopps_comparison_status.py --root "$OUT_ROOT" "$@"
+fi
+if [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@"
 fi
@@ -111,7 +122,8 @@ if [ "$MODE" = why ]; then
     printf 'MOPPS COMPARISON\nUTC: %s\nROOT: %s\nPARENT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$OUT_ROOT" "$PARENT"
     git rev-parse HEAD
     if [ -f "$OUT_ROOT/mopps.json" ]; then
-      CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py status --root "$OUT_ROOT" || echo '[status unavailable]'
+      CUDA_VISIBLE_DEVICES="" "$PY" scripts/mopps_comparison_status.py --root "$OUT_ROOT" --all || echo '[status unavailable]'
+      CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py status --root "$OUT_ROOT" || echo '[brief status unavailable]'
     else
       echo '[not prepared] mopps.json is absent'
     fi

@@ -186,6 +186,15 @@ ends the view, `bash scripts/run_mopps_comparison.sh stop` stops the node's
 detached launcher (TERM to its session; ranks reaped, receipts closed).
 `SWITCH_FOREGROUND=1` or a non-terminal caller keeps the foreground behaviour.
 
+`bash scripts/run_mopps_comparison.sh status` is the detailed read-only view in
+the switch status layout: active/waiting/stale nodes, the current worker per node
+(PID, phase, elapsed, limit, heartbeat age), the latest NCCL admission probe per
+host with its overrides, the parent selection-switch prefixes per seed, a per-state
+grid (import, MoPPS, random-online, parent gate result) whose last column names the
+first unmet parent prefix or the running phase, and concise failures/blocked
+prerequisites. `status --watch 5`, `--all` and `--json` work as for the switch;
+`status --brief` prints the queue's own compact list.
+
 `bash scripts/run_mopps_comparison.sh why` writes one read-only report under
 `reports/mopps-comparison/mopps-why-<UTC>.txt` (status, parent switch status,
 every mopps/contract/selector/failure/progress/result/cost/admission record,
