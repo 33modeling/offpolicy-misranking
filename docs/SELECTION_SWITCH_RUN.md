@@ -35,11 +35,34 @@ gate fitting; their continuation rewards cannot enter fitting.
 
 ```bash
 bash scripts/run_selection_switch.sh status
+bash scripts/run_selection_switch.sh status --watch 5
 bash scripts/run_selection_switch.sh live
 bash scripts/run_selection_switch.sh errors
 bash scripts/run_selection_switch.sh export
 bash scripts/run_selection_switch.sh why
 ```
+
+`status` is now a separate, read-only operational snapshot. Its default view shows
+active/waiting/stale nodes, prefix and continuation completion counts, the current
+worker on each node (PID, phase, elapsed time, limit and heartbeat age), five
+prefix rows, a 15-state continuation grid, and concise failures requiring attention.
+The prefix table distinguishes the last logged training step from a published
+prefix certificate. Waiting branches name their first unmet dependency, including
+a failed or stale prefix and a pending development gate.
+
+`status --watch 5` refreshes every five seconds; Ctrl-C stops only the status
+viewer. `--all` adds per-task paths and reasons, and `--json` exposes the snapshot
+for scripting. A running heartbeat older than 60 seconds is STALE, not RUNNING
+or READY. Waiting-node counts are inferred only from fresh launcher log entries;
+nodes without recent evidence are not assumed alive. A failed held-out diagnostic
+does not falsely block the registered random fallback.
+
+Status does not acquire task locks, replay cost receipts, create runtime migration
+files, load models, or validate large source/weight artifacts. DONE in this view
+means that the published result and its receipt match; scientific result validation
+still belongs to the reporting workflow. Invalid JSON is reported locally without
+hiding the other nodes. This status-only update does not change frozen runtime
+code, training, budgets, or scheduling, and does not require restarting workers.
 
 `errors` prints the latest three recorded failures and their actual worker log
 tails directly to the terminal, without model loading, GPU allocation, hash

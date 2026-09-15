@@ -20,11 +20,15 @@ if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "${SWITCH_CPU_PYTHON:-$PY}" -m pytest -q tests/test_selection_switch.py tests/test_selection_switch_gpu.py \
     tests/test_net_gate_memory_math.py tests/test_logit_chunking.py tests/test_selection_switch_cost.py \
-    tests/test_selection_switch_errors.py "$@"
+    tests/test_selection_switch_errors.py tests/test_selection_switch_status.py "$@"
 fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*) echo '[abort] use SWITCH_ROOT for the output directory'; exit 2 ;; esac
 done
+if [ "$MODE" = status ]; then
+  export CUDA_VISIBLE_DEVICES=""
+  exec "$PY" scripts/selection_switch_status.py --root "$OUT_ROOT" "$@"
+fi
 if [ "$MODE" = errors ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" "$@"
@@ -33,7 +37,7 @@ if [ "$MODE" = recover-cost ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" "$@"
 fi
-if [ "$MODE" = status ] || [ "$MODE" = fit ] || [ "$MODE" = summarize ]; then
+if [ "$MODE" = fit ] || [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""
   "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" "$@"
   if [ "$MODE" = summarize ]; then
@@ -49,7 +53,7 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
   (
     printf 'SELECTION SWITCH EXPERIMENT\nUTC: %s\nROOT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$OUT_ROOT"
     git rev-parse HEAD
-    CUDA_VISIBLE_DEVICES="" "$PY" src/selection_switch_gpu.py status --root "$OUT_ROOT"
+    CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$OUT_ROOT"
     if [ "$MODE" = export ] && [ -f "$OUT_ROOT/switch.json" ]; then
       CUDA_VISIBLE_DEVICES="" "$PY" src/selection_switch_gpu.py summarize --root "$OUT_ROOT"
     fi
