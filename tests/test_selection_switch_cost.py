@@ -136,22 +136,34 @@ def test_recover_cost_launcher_lists_events_without_modifying_them(tmp_path):
     assert not base.cost(directory)["complete"]
 
 
-def test_stale_closure_never_turns_last_observed_duration_into_a_finish(tmp_path):
+def test_stale_closure_charges_last_evidence_plus_margin_and_keeps_recent_events(tmp_path):
     directory, start = open_event(tmp_path)
     log = directory / "fresh-r-validation-0.log"
     log.write_text("rank log\n")
     os.utime(log, (start["time"] + 40., start["time"] + 40.))
     assert recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 100.)[0]["status"] == "skipped"
     assert not base.cost(directory)["complete"]
-    before = (directory / "cost.jsonl").read_bytes()
     outcome = recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.)
-    assert outcome[0]["status"] == "blocked"
-    assert "not termination evidence" in outcome[0]["reason"]
-    assert outcome[0]["last_recorded_seconds"] == 12.
-    assert (directory / "cost.jsonl").read_bytes() == before
-    assert not base.cost(directory)["complete"]
-    with pytest.raises(ValueError, match="unknown cost"):
-        base.spent(directory)
+    assert outcome[0]["status"] == "recovered"
+    assert outcome[0]["seconds"] == 40. + recovery.STALE_MARGIN_SECONDS
+    assert outcome[0]["evidence"]["kind"] == "stale_owner_last_evidence"
+    assert outcome[0]["evidence"]["heartbeat_seconds"] == 12.
+    assert base.cost(directory)["complete"]
+    assert base.spent(directory) == outcome[0]["allocated_gpu_seconds"]
+    assert recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.) == []
+
+
+def test_stale_closure_caps_log_evidence_at_a_later_attempt(tmp_path):
+    directory, start = open_event(tmp_path)
+    later = {**start, "event_id": "later", "time": start["time"] + 30.}
+    base.journal(directory / "cost.jsonl", later)
+    base.journal(directory / "cost.jsonl", {**later, "state": "finished", "seconds": 5., "allocated_gpu_seconds": 20., "exit_code": 0})
+    log = directory / "fresh-r-validation-0.log"
+    log.write_text("reused by the later attempt\n")
+    os.utime(log, (start["time"] + 4000., start["time"] + 4000.))
+    outcome = recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.)
+    assert [row["status"] for row in outcome] == ["recovered"]
+    assert outcome[0]["seconds"] == 30. + recovery.STALE_MARGIN_SECONDS
 
 
 def test_stale_closure_uses_receipt_first_and_leaves_live_local_owner(tmp_path):
@@ -165,21 +177,19 @@ def test_stale_closure_uses_receipt_first_and_leaves_live_local_owner(tmp_path):
     base.journal(live_dir / "cost.jsonl", live)
     core.atomic_json(live_dir / "progress.json", {**live, "state": "running", "seconds": 5., "updated": start["time"] + 5.})
     outcome = recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.)
-    assert outcome[0]["status"] == "blocked" and "termination evidence" in outcome[0]["reason"]
+    assert outcome[0]["status"] == "blocked" and "still alive" in outcome[0]["reason"]
     assert not base.cost(live_dir)["complete"]
 
 
-def test_recover_cost_launcher_stale_flag_reports_unresolved_cost_without_changing_it(tmp_path):
+def test_recover_cost_launcher_stale_flag_closes_only_silent_events(tmp_path):
     directory, start = open_event(tmp_path)
-    before = (directory / "cost.jsonl").read_bytes()
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "recover-cost", "--stale"],
         cwd=base.ROOT, env={**os.environ, "SWITCH_ROOT": str(tmp_path), "SWITCH_PYTHON": sys.executable},
         capture_output=True, text=True, timeout=15)
-    assert result.returncode == 2, result.stderr
+    assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["stale_closure"][0]["status"] == "blocked" and len(payload["open_events"]) == 1
-    assert (directory / "cost.jsonl").read_bytes() == before
-    assert not base.cost(directory)["complete"]
+    assert payload["stale_closure"][0]["status"] == "recovered" and payload["open_events"] == []
+    assert base.cost(directory)["complete"]
 
 
 @pytest.mark.parametrize("min_age", [-1., float("nan"), float("inf")])

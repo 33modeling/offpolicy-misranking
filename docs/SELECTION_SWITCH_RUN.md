@@ -117,6 +117,19 @@ are never changed. If the failure persists through the whole ladder the node is
 refused (exit 78) with the administrator diagnosis and nothing is recorded
 against any branch.
 
+`bash scripts/run_selection_switch.sh recover-cost --stale` (also for the MoPPS
+root via `run_mopps_comparison.sh recover-cost --stale`) closes open cost events
+whose owner has shown no life for 15 minutes. Operator decision, 2026-09-15:
+hard-killed attempts never write a finish receipt and this cluster kills jobs
+routinely, so such events are closed from evidence instead of blocking a branch
+forever. If an atomic finish receipt exists it is used; otherwise the charged
+duration is the last observed evidence of the attempt (meter heartbeat or the
+ranks' phase-log writes, capped at any later attempt's start) minus the recorded
+start, plus a 60-second margin so the estimate over-counts the interrupted
+attempt rather than under-counting it. The evidence is recorded in the ledger as
+`stale_owner_last_evidence`. Live local owners and recent evidence are left
+untouched; without `--stale` the command only lists open events.
+
 Rerun the same command to resume. Completed branches are skipped. A failed
 task is attempted at most once per invocation; other eligible tasks continue.
 It never kills another E5/Qwen/net-gain process or bypasses an occupied node.

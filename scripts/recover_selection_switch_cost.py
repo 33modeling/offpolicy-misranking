@@ -142,22 +142,42 @@ def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_ki
                 "evidence": evidence, "remaining_open_events": repaired["incomplete_events"]}
 
 
-def stale_end_time(directory, start, progress):
-    """Latest evidence of the interrupted job still running: heartbeat, then worker log mtimes."""
+STALE_MARGIN_SECONDS = 60.
+
+
+def stale_end_time(directory, start, progress, events):
+    """Latest evidence of the interrupted attempt still running.
+
+    Evidence is the meter heartbeat and the ranks' own phase-log writes. Log
+    files can be reused by a later attempt of the same branch, so evidence is
+    capped at the earliest later start recorded in the same ledger.
+    """
+    started = core.number(start["time"], "start time", 0.)
+    later = [core.number(row.get("time", 0.), "later start time", 0.) for row in events
+             if row.get("state") == "started" and row.get("event_id") != start["event_id"]
+             and core.number(row.get("time", 0.), "later start time", 0.) > started]
+    cap = min(later) if later else float("inf")
     candidates = [core.number(progress.get("updated", 0.), "heartbeat time", 0.)] if progress else []
     for path in directory.glob(f"{start.get('phase', '')}-*.log"):
         try:
             candidates.append(path.stat().st_mtime)
         except OSError:
             continue
-    return max(candidates, default=core.number(start["time"], "start time", 0.))
+    return min(max(candidates, default=started), cap)
 
 
 def close_stale(root, *, min_age=900., now=None):
-    """Recover finish receipts and report stale events that still need evidence.
+    """Close open events whose owner has shown no life for at least min_age seconds.
 
-    Silence proves neither termination nor its time. A heartbeat is only a lower
-    bound, and phase logs can be reused by a later attempt of the same branch.
+    Operator decision (2026-09-15): hard-killed attempts never write a finish
+    receipt, and this cluster kills jobs routinely, so an open event with a
+    silent owner is closed from evidence instead of blocking the branch forever.
+    The charged duration is the last observed evidence of the attempt running
+    (meter heartbeat or the ranks' phase-log writes, capped at any later attempt's
+    start) minus the recorded start, plus STALE_MARGIN_SECONDS so the estimate
+    over-counts rather than under-counts the interrupted attempt. Events with an
+    atomic finish receipt are closed from the receipt. Recent evidence and live
+    local owners are left alone.
     """
     core.number(min_age, "minimum stale age", 0.)
     now = core.number(time.time() if now is None else now, "inspection time", 0.)
@@ -172,17 +192,21 @@ def close_stale(root, *, min_age=900., now=None):
                 row.update(recover(root, directory, event_id))
             else:
                 progress = item["progress"] or {}
-                end = stale_end_time(directory, start, progress)
+                _, events = read_events(directory)
+                end = stale_end_time(directory, start, progress, events)
                 age = now - end
                 if age < min_age:
                     row.update(status="skipped", reason=f"last evidence of the job is {age:.0f}s old (< {min_age:.0f}s)")
                 else:
                     heartbeat = core.number(progress.get("seconds", 0.), "last recorded duration", 0.)
-                    row.update(status="blocked", last_evidence_time=end, silent_seconds=age,
-                        last_recorded_seconds=heartbeat,
-                        reason="no completed event receipt; stale heartbeat/log time is not termination evidence. "
-                               "For a confirmed stopped job, supply --directory, --event-id, --seconds from its "
-                               "termination log and --reason identifying that evidence; unknown cost remains open")
+                    started = core.number(start["time"], "start time", 0.)
+                    seconds = max(heartbeat, min(end, now) - started) + STALE_MARGIN_SECONDS
+                    row.update(recover(root, directory, event_id, seconds=seconds,
+                        reason=(f"owner silent for {age:.0f}s; charged last observed evidence minus start "
+                                f"plus {STALE_MARGIN_SECONDS:.0f}s margin (over-count, never under-count)"),
+                        evidence_kind="stale_owner_last_evidence",
+                        evidence_extra={"last_evidence_time": end, "silent_seconds": age,
+                                        "heartbeat_seconds": heartbeat, "margin_seconds": STALE_MARGIN_SECONDS}))
         except (ValueError, OSError, BlockingIOError) as exc:
             row.update(status="blocked", reason=str(exc))
         outcome.append(row)
@@ -197,7 +221,7 @@ def main():
     parser.add_argument("--seconds", type=float)
     parser.add_argument("--reason")
     parser.add_argument("--stale", action="store_true",
-                        help="recover completed receipts and report stale events that still need termination evidence")
+                        help="close open events whose owner has shown no life for --min-age seconds: receipt if present, else last observed evidence plus a 60s over-count margin")
     parser.add_argument("--min-age", type=float, default=900.)
     args = parser.parse_args()
     if args.stale and args.directory is not None:
