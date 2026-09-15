@@ -92,7 +92,17 @@ if [ "$MODE" = stop ]; then
       [ "$alive" -eq 1 ] || break
     done
     for pgid in $groups; do
-      if kill -0 -- "-$pgid" 2>/dev/null; then echo "[stop] pgid=$pgid still alive after 180s; not killing harder (GPU ranks would be orphaned)"; fi
+      if kill -0 -- "-$pgid" 2>/dev/null; then
+        # A keepalive holds no receipts or ranks; if it ignores TERM (stuck in CUDA) kill it outright.
+        for pid in $(ls /proc | grep -E '^[0-9]+$'); do
+          [ -O "/proc/$pid" ] || continue
+          [ "$(cut -d')' -f2 "/proc/$pid/stat" 2>/dev/null | awk '{print $3}')" = "$pgid" ] || continue
+          if { tr '\0' ' ' < "/proc/$pid/cmdline"; } 2>/dev/null | grep -q "_gpu_keepalive.py"; then
+            echo "[stop] keepalive pid=$pid ignored TERM; killing it"; kill -KILL "$pid" 2>/dev/null || true
+          fi
+        done
+        kill -0 -- "-$pgid" 2>/dev/null && echo "[stop] pgid=$pgid still alive after 180s; not killing harder (GPU ranks would be orphaned)"
+      fi
     done
     return 0
   }
@@ -252,7 +262,7 @@ done <<< "$MEMORY"
 KEEPALIVE_PID=
 stop_keepalive() { [ -n "$KEEPALIVE_PID" ] && kill -TERM "$KEEPALIVE_PID" 2>/dev/null; KEEPALIVE_PID=; }
 if [ "${SWITCH_KEEPALIVE:-1}" != 0 ] && { [ "${SWITCH_DETACHED:-0}" = 1 ] || [ -t 1 ]; }; then
-  "$PY" scripts/_gpu_keepalive.py > "$OUT_ROOT/logs/keepalive.$HOST.log" 2>&1 &
+  "$PY" scripts/_gpu_keepalive.py > "$OUT_ROOT/logs/keepalive.$HOST.log" 2>&1 7>&- 8>&- &
   KEEPALIVE_PID=$!
   echo "[keepalive] pid=$KEEPALIVE_PID keeps the allocated GPUs busy while this launcher waits or holds (log: logs/keepalive.$HOST.log)"
   trap 'rc=$?; stop_keepalive; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE" "$rc" "$(date -u +%FT%TZ)"' EXIT
@@ -280,6 +290,14 @@ wait_seconds=$HOLD
 while :; do
   pass=$((pass+1))
   rc=0
+  # Nodes are killed routinely here; an attempt that died without a receipt
+  # otherwise blocks its branch until someone types recover-cost. Close
+  # events whose owner has been silent for 15 minutes (operator decision,
+  # see recover-cost --stale) before each pass. SWITCH_AUTO_RECOVER=0 disables.
+  if [ "${SWITCH_AUTO_RECOVER:-1}" != 0 ]; then
+    CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" --stale 2>/dev/null \
+      | grep -c '"status": "recovered"' | sed 's/^/[recover-cost] stale events closed before this pass: /' || true
+  fi
   selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
     "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" || rc=$?
   case "$rc" in 78|130|137|143) break ;; esac
