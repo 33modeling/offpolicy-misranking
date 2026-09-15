@@ -65,7 +65,7 @@ def inspect(root):
     return pending
 
 
-def recover(root, directory, event_id, *, seconds=None, reason=None):
+def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_kind="operator_reported_stopped_job", evidence_extra=None):
     root = root.resolve()
     directory = (root / directory).resolve()
     if not directory.is_relative_to(root) or directory == root:
@@ -126,8 +126,8 @@ def recover(root, directory, event_id, *, seconds=None, reason=None):
             core.number(seconds, "reported duration", lower_bound)
             finish = {**start, "state": "finished", "time": core.number(start["time"], "start time", 0.) + seconds,
                       "seconds": seconds, "allocated_gpu_seconds": seconds * start["gpus"], "exit_code": 130}
-            evidence = {"kind": "operator_reported_stopped_job", "reason": reason.strip(),
-                        "last_recorded_seconds": lower_bound}
+            evidence = {"kind": evidence_kind, "reason": reason.strip(),
+                        "last_recorded_seconds": lower_bound, **(evidence_extra or {})}
         if finish["seconds"] < lower_bound:
             raise ValueError("finish duration precedes the last recorded progress")
         finish = {**finish, "recovery": {**evidence, "recorded_at": time.time(),
@@ -142,6 +142,55 @@ def recover(root, directory, event_id, *, seconds=None, reason=None):
                 "evidence": evidence, "remaining_open_events": repaired["incomplete_events"]}
 
 
+def stale_end_time(directory, start, progress):
+    """Latest evidence of the interrupted job still running: heartbeat, then worker log mtimes."""
+    candidates = [core.number(progress.get("updated", 0.), "heartbeat time", 0.)] if progress else []
+    for path in directory.glob(f"{start.get('phase', '')}-*.log"):
+        try:
+            candidates.append(path.stat().st_mtime)
+        except OSError:
+            continue
+    return max(candidates, default=core.number(start["time"], "start time", 0.))
+
+
+def close_stale(root, *, min_age=900., now=None):
+    """Close open events whose owner shows no life for at least min_age seconds.
+
+    The charged duration is the last evidence of the job running (heartbeat or the
+    ranks' own log writes) minus the recorded start, so the ledger never charges
+    less than what was observed and never guesses beyond it. Events with an atomic
+    finish receipt are closed from that receipt. Recent heartbeats and live local
+    owners are left alone.
+    """
+    now = time.time() if now is None else now
+    outcome = []
+    for item in inspect(root):
+        directory = root / item["directory"]
+        start = item["start"]
+        event_id = start["event_id"]
+        row = {"directory": item["directory"], "event_id": event_id}
+        try:
+            if item["finish_receipt"]:
+                row.update(recover(root, directory, event_id))
+            else:
+                progress = item["progress"] or {}
+                end = stale_end_time(directory, start, progress)
+                age = now - end
+                if age < min_age:
+                    row.update(status="skipped", reason=f"last evidence of the job is {age:.0f}s old (< {min_age:.0f}s)")
+                else:
+                    heartbeat = core.number(progress.get("seconds", 0.), "last recorded duration", 0.)
+                    seconds = max(heartbeat, end - core.number(start["time"], "start time", 0.))
+                    row.update(recover(root, directory, event_id, seconds=seconds,
+                        reason=f"owner silent for {age:.0f}s; duration = last heartbeat or worker-log write minus start",
+                        evidence_kind="stale_owner_last_evidence",
+                        evidence_extra={"last_evidence_time": end, "silent_seconds": age, "heartbeat_seconds": heartbeat}))
+        except (ValueError, OSError, BlockingIOError) as exc:
+            row.update(status="blocked", reason=str(exc))
+        outcome.append(row)
+    return outcome
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -149,6 +198,9 @@ def main():
     parser.add_argument("--event-id")
     parser.add_argument("--seconds", type=float)
     parser.add_argument("--reason")
+    parser.add_argument("--stale", action="store_true",
+                        help="close open events whose owner has shown no life for --min-age seconds, charging the last observed duration")
+    parser.add_argument("--min-age", type=float, default=900.)
     args = parser.parse_args()
     root = args.root.resolve()
     if not any((root / name).is_file() for name in ("switch.json", "mopps.json")):
@@ -156,6 +208,10 @@ def main():
     if args.directory is None:
         if args.event_id is not None or args.seconds is not None or args.reason is not None:
             parser.error("event recovery requires --directory and --event-id")
+        if args.stale:
+            closed = close_stale(root, min_age=args.min_age)
+            print(json.dumps({"stale_closure": closed, "open_events": inspect(root)}, indent=2))
+            return 0
         print(json.dumps({"open_events": inspect(root)}, indent=2))
         return 0
     if args.event_id is None:

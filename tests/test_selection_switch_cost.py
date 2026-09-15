@@ -136,6 +136,46 @@ def test_recover_cost_launcher_lists_events_without_modifying_them(tmp_path):
     assert not base.cost(directory)["complete"]
 
 
+def test_stale_closure_charges_last_observed_duration_and_keeps_recent_events(tmp_path):
+    directory, start = open_event(tmp_path)
+    log = directory / "fresh-r-validation-0.log"
+    log.write_text("rank log\n")
+    os.utime(log, (start["time"] + 40., start["time"] + 40.))
+    assert recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 100.)[0]["status"] == "skipped"
+    assert not base.cost(directory)["complete"]
+    outcome = recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.)
+    assert outcome[0]["status"] == "recovered" and outcome[0]["seconds"] == 40.
+    assert outcome[0]["evidence"]["kind"] == "stale_owner_last_evidence"
+    assert base.cost(directory)["complete"]
+    assert recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.) == []
+
+
+def test_stale_closure_uses_receipt_first_and_leaves_live_local_owner(tmp_path):
+    directory, start = open_event(tmp_path)
+    finish = {**start, "state": "finished", "seconds": 33., "allocated_gpu_seconds": 132., "exit_code": 130}
+    core.atomic_json(directory / "cost-events/aborted.json", finish)
+    outcome = recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.)
+    assert outcome[0]["status"] == "recovered" and outcome[0]["evidence"]["kind"] == "atomic_finish_receipt"
+    live_dir = tmp_path / "states/s1-t25/points/view-25/random_reduced"
+    live = {**start, "host": socket.gethostname(), "pid": os.getpid()}
+    base.journal(live_dir / "cost.jsonl", live)
+    core.atomic_json(live_dir / "progress.json", {**live, "state": "running", "seconds": 5., "updated": start["time"] + 5.})
+    outcome = recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.)
+    assert outcome[0]["status"] == "blocked" and "still alive" in outcome[0]["reason"]
+    assert not base.cost(live_dir)["complete"]
+
+
+def test_recover_cost_launcher_stale_flag_closes_only_silent_events(tmp_path):
+    directory, start = open_event(tmp_path)
+    result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "recover-cost", "--stale"],
+        cwd=base.ROOT, env={**os.environ, "SWITCH_ROOT": str(tmp_path), "SWITCH_PYTHON": sys.executable},
+        capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["stale_closure"][0]["status"] == "recovered" and payload["open_events"] == []
+    assert base.cost(directory)["complete"]
+
+
 def pending_prefix(root, *, ledger="research"):
     directory = root / "prefixes/seed-0/segment-25"
     start = {"event_id": "aborted", "state": "started", "phase": "prefix-train", "ledger": ledger,
