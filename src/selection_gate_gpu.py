@@ -114,6 +114,16 @@ def terminate(processes):
             p.wait()
 
 
+def worker_log_tail(path, *, lines=120):
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            handle.seek(max(0, handle.tell()-65536))
+            return "\n".join(handle.read().decode("utf-8", errors="replace").splitlines()[-lines:]) or "[empty worker log]"
+    except OSError as exc:
+        return f"[cannot read worker log: {exc}]"
+
+
 def meter(directory, name, gpu_type, **kwargs):
     with lease(directory / ".cost.lock"):
         return _meter(directory, name, gpu_type, **kwargs)
@@ -151,7 +161,13 @@ def _meter(directory, name, gpu_type, *, action=None, commands=None, env=None,
                     codes = [p.poll() for p in processes]
                     elapsed = time.monotonic()-started
                     if any(v is not None and v != 0 for v in codes):
-                        raise RuntimeError(f"{name} worker failed: {codes}; see {directory}/{name}-*.log")
+                        details = []
+                        for i, code in enumerate(codes):
+                            if code is not None and code != 0:
+                                worker_path = directory / f"{name}-{i}.log"
+                                details.append(f"[worker-log] {worker_path}\n{worker_log_tail(worker_path)}")
+                        raise RuntimeError(f"{name} worker failed: {codes}; see {directory}/{name}-*.log\n"
+                                           + "\n".join(details))
                     if all(v == 0 for v in codes):
                         break
                     if elapsed >= timeout:

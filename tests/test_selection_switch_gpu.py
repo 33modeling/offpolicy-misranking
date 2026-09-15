@@ -108,7 +108,7 @@ def test_cost_fix_preserves_preexisting_kv_runtime_receipt(tmp_path, already_pat
 def test_prefix_resume_preserves_previous_runtime_receipts(tmp_path, original_version):
     previous = cache_predecessor()
     previous.update({"src/grads.py": switch.KV_CACHE_GRADS,
-                     "src/selection_gate_gpu.py": switch.COST_METER,
+                     "src/selection_gate_gpu.py": "91b1d60ef7266dd59e5b534a0c7a0cf531075746b89d0d4126e455f935577005",
                      "src/selection_switch_gpu.py": "43ea3c42217f47817312876a9d6e8bea37b84e616d98e722bc786ac6c826250b"})
     assert core.fingerprint(previous) == switch.PRE_PREFIX_RESUME_CODE
     original = cache_predecessor() if original_version != "before_prefix" else previous
@@ -163,6 +163,38 @@ def test_switch_protocol_validates_design_and_parent_runtime(tmp_path, legacy):
     core.atomic_json(child / "net_protocol.json", p)
     with pytest.raises(ValueError, match="state code binding differs"):
         switch.protocol(child)
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_worker_logging_upgrade_preserves_69bec8d_run_and_receipts(tmp_path, migrated):
+    previous = cache_predecessor()
+    previous.update({"src/grads.py": switch.KV_CACHE_GRADS,
+                     "src/selection_gate_gpu.py": "91b1d60ef7266dd59e5b534a0c7a0cf531075746b89d0d4126e455f935577005",
+                     "src/selection_switch_gpu.py": "a8d93b39270c576e9b29300863dcedc108a115c826748c8add65e4a14b86cb99"})
+    assert core.fingerprint(previous) == switch.PRE_WORKER_LOGS_CODE
+    frozen = {"schema": rule.SCHEMA, "code_hashes": cache_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        core.atomic_json(tmp_path / "kv-cache-runtime.json", {
+            "schema": "selection-switch-kv-cache-runtime/v1", "switch_sha256": base.digest(tmp_path / "switch.json"),
+            "original_code_hashes": frozen["code_hashes"], "runtime_code_hashes": previous,
+            "change": "teacher-forced scoring forwards explicitly disable KV cache",
+            "cost_policy": "retain all previous costs and the original branch allocation"})
+        core.atomic_json(tmp_path / "cost-runtime.json", {
+            "schema": "selection-switch-cost-runtime/v1", "switch_sha256": base.digest(tmp_path / "switch.json"),
+            "kv_cache_runtime_sha256": base.digest(tmp_path / "kv-cache-runtime.json"), "runtime_code_hashes": previous,
+            "change": "protect phase startup, recover atomic finish receipts, skip busy publication tasks",
+            "cost_policy": "recover only from completion evidence or operator-reported termination duration"})
+        core.atomic_json(tmp_path / "prefix-resume-runtime.json", {
+            "schema": "selection-switch-prefix-resume-runtime/v1", "switch_sha256": base.digest(tmp_path / "switch.json"),
+            "cost_runtime_sha256": base.digest(tmp_path / "cost-runtime.json"), "runtime_code_hashes": previous,
+            "change": "resume research prefixes with explicitly unknown historical costs; keep active queue peers",
+            "cost_policy": "preserve open research events; never waive deployment budget accounting"})
+    before = {path: base.digest(path) for path in tmp_path.glob("*.json")}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {path: base.digest(path) for path in before} == before
+    assert core.read(tmp_path / "worker-logs-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
 
 
 def test_prefix_certificate_binds_actual_selected_history(tmp_path, monkeypatch):

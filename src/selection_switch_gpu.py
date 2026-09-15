@@ -32,10 +32,11 @@ _verify = base.verify
 PRE_KV_CACHE_CODE = "8cb0b16a8c2e4229674c0165212a36ee916d9a2cbaea8dcc7adefc0deb9819ae"
 PRE_COST_CODE = "7c2480d74d8c4b2b109570ddab68d513961db60517acf1dad9d8794834ab6f7a"
 PRE_PREFIX_RESUME_CODE = "0e1bc0c39315258210b2ed0a003fe777b468993d60e9797f68972f739949de76"
-PRIOR_RUNTIME_CODES = {PRE_KV_CACHE_CODE, PRE_COST_CODE, PRE_PREFIX_RESUME_CODE}
+PRE_WORKER_LOGS_CODE = "803be77868081423affe81d073b0b5b566889c7d43cfc99608ad444ebb3dd4b9"
+PRIOR_RUNTIME_CODES = {PRE_KV_CACHE_CODE, PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE}
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
-COST_METER = "91b1d60ef7266dd59e5b534a0c7a0cf531075746b89d0d4126e455f935577005"
+COST_METER = "58fd87dfdc00c3ee66e6903e12a53b31c4d2798f7594352ee9aa894d23525a99"
 
 
 def code_hashes():
@@ -75,7 +76,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -92,16 +93,33 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) != PRE_PREFIX_RESUME_CODE)):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
-            base.bind(root / "prefix-resume-runtime.json", {
+            prefix_receipt = {
                 "schema": "selection-switch-prefix-resume-runtime/v1",
                 "switch_sha256": base.digest(root / "switch.json"),
                 "cost_runtime_sha256": base.digest(cost_path), "runtime_code_hashes": current,
                 "change": "resume research prefixes with explicitly unknown historical costs; keep active queue peers",
                 "cost_policy": "preserve open research events; never waive deployment budget accounting",
+            }
+            prefix_path = root / "prefix-resume-runtime.json"
+            if prefix_path.exists():
+                previous = core.read(prefix_path)
+                previous_code = previous.get("runtime_code_hashes")
+                if (previous != prefix_receipt and
+                        (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
+                         or core.fingerprint(previous_code) != PRE_WORKER_LOGS_CODE)):
+                    raise ValueError(f"frozen contract changed: {prefix_path}")
+            else:
+                base.bind(prefix_path, prefix_receipt)
+            base.bind(root / "worker-logs-runtime.json", {
+                "schema": "selection-switch-worker-logs-runtime/v1",
+                "switch_sha256": base.digest(root / "switch.json"),
+                "prefix_runtime_sha256": base.digest(prefix_path), "runtime_code_hashes": current,
+                "change": "include failed child stderr in supervisor exceptions",
+                "cost_policy": "no change to phase costs or branch budgets",
             })
     return p
 

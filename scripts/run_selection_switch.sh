@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost) ;;
-  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|status|export|why|live|cpu|prepare|fit|summarize|recover-cost]'; exit 2 ;;
+case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|errors) ;;
+  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|errors]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -19,11 +19,16 @@ export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 MKL_NUM_TH
 if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "${SWITCH_CPU_PYTHON:-$PY}" -m pytest -q tests/test_selection_switch.py tests/test_selection_switch_gpu.py \
-    tests/test_net_gate_memory_math.py tests/test_logit_chunking.py tests/test_selection_switch_cost.py "$@"
+    tests/test_net_gate_memory_math.py tests/test_logit_chunking.py tests/test_selection_switch_cost.py \
+    tests/test_selection_switch_errors.py "$@"
 fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*) echo '[abort] use SWITCH_ROOT for the output directory'; exit 2 ;; esac
 done
+if [ "$MODE" = errors ]; then
+  export CUDA_VISIBLE_DEVICES=""
+  exec "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" "$@"
+fi
 if [ "$MODE" = recover-cost ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" "$@"
@@ -58,6 +63,7 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
       -o -name 'measurement.json' -o -name 'execution.json' -o -name 'result.json' \
       -o -name 'cost.jsonl' -o -name 'budget_stop.json' -o -name 'fit-cost.json' \
       -o -name 'kv-cache-runtime.json' -o -name 'cost-runtime.json' -o -name 'prefix-resume-runtime.json' \
+      -o -name 'worker-logs-runtime.json' \
       -o -path '*/cost-events/*.json' -o -path '*/pending-costs/*.json' \) -print0 | sort -z)
     while IFS= read -r -d '' path; do
       printf '\n===== LOG: %s (last 100 lines) =====\n' "${path#"$OUT_ROOT"/}"
@@ -113,4 +119,7 @@ trap 'kill -TERM "$CHILD" 2>/dev/null || true; wait "$CHILD" || true; exit 130' 
 trap 'kill -TERM "$CHILD" 2>/dev/null || true; wait "$CHILD" || true; exit 143' TERM
 rc=0
 wait "$CHILD" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
+fi
 exit "$rc"

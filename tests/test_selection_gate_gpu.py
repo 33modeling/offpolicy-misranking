@@ -85,6 +85,20 @@ def test_failed_shard_cancels_sibling_and_does_not_loop(tmp_path):
     assert gpu.cost(tmp_path)["complete"]
 
 
+def test_failed_worker_exposes_original_exception_and_closes_cost(tmp_path):
+    with pytest.raises(RuntimeError, match="prefix-train worker failed") as caught:
+        gpu.meter(tmp_path, "prefix-train", "H100", commands=[
+            ([sys.executable, "-c", "raise RuntimeError('original training exception')"], "")], timeout=10)
+    assert "RuntimeError: original training exception" in str(caught.value)
+    assert "prefix-train-0.log" in str(caught.value)
+    assert gpu.cost(tmp_path)["complete"]
+    assert gpu.cost(tmp_path)["ledgers"]["research"]["failed_events"] == 1
+
+
+def test_missing_worker_log_does_not_hide_exit_code(tmp_path):
+    assert "cannot read worker log" in gpu.worker_log_tail(tmp_path / "missing.log")
+
+
 def test_reporting_cost_is_not_branch_training_cost(tmp_path):
     gpu.meter(tmp_path, "eval", "H100", action=lambda: None, ledger="reporting")
     assert gpu.spent(tmp_path) == 0.

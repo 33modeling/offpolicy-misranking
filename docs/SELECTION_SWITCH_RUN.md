@@ -36,9 +36,20 @@ gate fitting; their continuation rewards cannot enter fitting.
 ```bash
 bash scripts/run_selection_switch.sh status
 bash scripts/run_selection_switch.sh live
+bash scripts/run_selection_switch.sh errors
 bash scripts/run_selection_switch.sh export
 bash scripts/run_selection_switch.sh why
 ```
+
+`errors` prints the latest three recorded failures and their actual worker log
+tails directly to the terminal, without model loading, GPU allocation, hash
+migration or changes to run artifacts. For a `prefix-train worker failed`
+wrapper exception, use `errors --phase prefix-train`. The launcher's line number
+identifies the process supervisor, not the underlying training exception. A
+worker failure now includes the failed child's log tail in the raised exception
+immediately, including when other queue tasks continue afterward. A
+failed launcher also prints these tails before exiting; it preserves its original
+nonzero exit status. Use `--limit` and `--lines` to adjust the diagnostic output.
 
 `export` and `why` write text files and print their full paths. Defaults:
 
@@ -69,8 +80,8 @@ SIGINT/TERM stops the current worker tree. Phase startup is covered by cleanup,
 and an atomic `cost-events/<event-id>.json` completion receipt is persisted before
 the finish is appended to `cost.jsonl`. On resume, `spent()` replays a matching
 receipt under the cost writer lock. It does not infer completion from an old
-heartbeat. The exact `a63e69d`, `96ad9ed` and `bb32da3` runtimes are accepted with
-an added `prefix-resume-runtime.json` binding. Existing manifests and runtime
+heartbeat. The exact `a63e69d`, `96ad9ed`, `bb32da3` and `69bec8d` runtimes are
+accepted with an added `worker-logs-runtime.json` binding. Existing manifests and runtime
 receipts stay unchanged.
 
 Before updating a running cluster checkout, stop its old launchers gracefully
