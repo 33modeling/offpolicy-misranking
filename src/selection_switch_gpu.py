@@ -391,7 +391,11 @@ def accounting_of(p):
 def selection_ledger(out):
     """Where an arm's selection work is charged: the allocation (deployment) or, for
     matched-update roots, the reporting ledger, which the allocation does not count."""
-    return "reporting" if accounting_of(core.read(switch_root(out) / "switch.json")) == "matched" else "deployment"
+    try:
+        p = core.read(switch_root(out) / "switch.json")
+    except ValueError:
+        return "deployment"
+    return "reporting" if accounting_of(p) == "matched" else "deployment"
 
 
 def scoring_gpu_seconds(directory):
