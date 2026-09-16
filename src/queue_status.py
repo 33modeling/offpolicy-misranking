@@ -837,6 +837,22 @@ def node_jobs() -> list[str]:
     return sorted({job_label(m) for _, m in marked_processes()})
 
 
+# Experiment work: launchers, workers, ranks, keepalives. A marked status or report
+# viewer is not work and is never stopped.
+WORKER_COMMAND = re.compile(r"run_selection_switch\.sh|run_mopps_comparison\.sh|selection_switch_runtime\.py|"
+                            r"selection_switch_gpu\.py|mopps_comparison_gpu\.py|torch\.distributed\.run|"
+                            r"train_[a-z_]*grpo\.py|_gpu_keepalive\.py|selection_nccl_preflight\.py|"
+                            r"selection_switch_score\.py|light_selection_gate_gpu\.py|selection_switch_curve_train\.py")
+
+
+def worker_command(pid: int) -> bool:
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return False
+    return bool(WORKER_COMMAND.search(cmdline))
+
+
 def kill_orphans() -> list[str]:
     """Stop marked GPU processes on this node when no live driver holds the node lock: their driver
     died (for example with the terminal of the old queue pipeline), their leases are released, and
@@ -846,7 +862,7 @@ def kill_orphans() -> list[str]:
     if lease_held(directory / "primary.lock"):
         print("[orphans] node lock held: a live driver runs on this node; nothing stopped")
         return []
-    procs = marked_processes()
+    procs = [(pid, marker) for pid, marker in marked_processes() if worker_command(pid)]
     if not procs:
         print("[orphans] none")
         return []

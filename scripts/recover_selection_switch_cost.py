@@ -166,7 +166,7 @@ def stale_end_time(directory, start, progress, events):
     return min(max(candidates, default=started), cap)
 
 
-def close_stale(root, *, min_age=900., now=None):
+def close_stale(root, *, min_age=900., now=None, host=None):
     """Close open events whose owner has shown no life for at least min_age seconds.
 
     Operator decision (2026-09-15): hard-killed attempts never write a finish
@@ -187,6 +187,10 @@ def close_stale(root, *, min_age=900., now=None):
         start = item["start"]
         event_id = start["event_id"]
         row = {"directory": item["directory"], "event_id": event_id}
+        if host is not None and start.get("host") != host:
+            row.update(status="skipped", reason=f"owned by {start.get('host')!r}, not this host")
+            outcome.append(row)
+            continue
         try:
             if item["finish_receipt"]:
                 row.update(recover(root, directory, event_id))
@@ -234,6 +238,8 @@ def main():
     parser.add_argument("--stale", action="store_true",
                         help="close open events whose owner has shown no life for --min-age seconds: receipt if present, else last observed evidence plus a 60s over-count margin")
     parser.add_argument("--min-age", type=float, default=900.)
+    parser.add_argument("--this-host", action="store_true",
+                        help="with --stale: only events this host started (their owners are dead once the node is swept)")
     parser.add_argument("--brief", action="store_true",
                         help="with --stale: one summary line plus one line per event that was not closed, instead of JSON")
     args = parser.parse_args()
@@ -247,7 +253,7 @@ def main():
             parser.error("event recovery requires --directory and --event-id")
         if args.stale:
             try:
-                closed = close_stale(root, min_age=args.min_age)
+                closed = close_stale(root, min_age=args.min_age, host=socket.gethostname() if args.this_host else None)
             except (ValueError, OSError) as exc:
                 parser.exit(2, f"[recovery blocked] {exc}\n")
             remaining = inspect(root)

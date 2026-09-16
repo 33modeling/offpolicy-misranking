@@ -440,7 +440,11 @@ def test_kill_orphans_only_when_the_node_lock_is_free(tmp_path, monkeypatch):
     import time
     monkeypatch.setenv("OM_LOCAL_LOCK_DIR", str(tmp_path / "locks"))
     (tmp_path / "locks").mkdir()
-    child = subprocess.Popen(["sleep", "60"], env={"OUT_ROOT": "/w/runs/e5-reduced/math500-d0/.bench", "PATH": "/usr/bin:/bin"})
+    env = {"OUT_ROOT": "/w/runs/e5-reduced/math500-d0/.bench", "PATH": "/usr/bin:/bin"}
+    # Experiment work carries the marker and a worker command name ...
+    child = subprocess.Popen(["bash", "-c", 'exec -a "python src/selection_switch_gpu.py run" sleep 60'], env=env)
+    # ... a marked viewer (status, results) is not work and is never stopped.
+    viewer = subprocess.Popen(["bash", "-c", 'exec -a "python scripts/switch_results.py" sleep 60'], env=env)
     try:
         time.sleep(0.2)
         # a live driver holds the node lock: nothing is stopped
@@ -453,14 +457,16 @@ def test_kill_orphans_only_when_the_node_lock_is_free(tmp_path, monkeypatch):
             assert child.poll() is None
         finally:
             os.close(fd)
-        # lock free: the marked process is an orphan and is stopped
+        # lock free: the marked worker is an orphan and is stopped; the viewer is left alone
         assert qs.kill_orphans() == ["benchmarks math500-d0"]
         child.wait(timeout=10)
         assert child.returncode != 0
+        assert viewer.poll() is None
     finally:
-        if child.poll() is None:
-            child.kill()
-            child.wait()
+        for proc in (child, viewer):
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
 
 def test_action_block_names_stalled_steps_and_nodes(tmp_path):

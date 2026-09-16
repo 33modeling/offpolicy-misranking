@@ -79,87 +79,6 @@ if [ "$MODE" = why ]; then
   printf '[saved] %s\n' "$TARGET"
   exit "$rc"
 fi
-stop_node() {
-  if launcher_pid_alive; then
-    pid=$(cat "$PID_FILE")
-    echo "[stop] host=$HOST pid=$pid: sending TERM to the node launcher; inner launchers reap their ranks and close receipts"
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-    for _ in $(seq 1 240); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    kill -0 "$pid" 2>/dev/null && echo "[stop] pid=$pid still running after 240s; inspect $CONSOLE_LOG"
-  else
-    echo "[stop] no live node launcher on $HOST (pid file: $PID_FILE)"
-  fi
-  # Leftovers from either experiment (older launchers, ranks, keepalives).
-  EXPERIMENTS_STOPPING=1 bash scripts/run_selection_switch.sh stop || true
-  EXPERIMENTS_STOPPING=1 bash scripts/run_mopps_comparison.sh stop || true
-}
-if [ "$MODE" = stop ]; then
-  stop_node
-  exit 0
-fi
-# --- run ---
-# One command restarts a node: a launcher already running here is stopped first
-# (its ranks reaped, receipts closed), the shared checkout is pulled, then the
-# node starts fresh. EXPERIMENTS_PULL=0 skips the pull.
-if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
-  if launcher_pid_alive; then
-    echo "[restart] host=$HOST: a node launcher is already running (pid $(cat "$PID_FILE")); stopping it first"
-    stop_node
-  fi
-  if [ "${EXPERIMENTS_PULL:-1}" != 0 ]; then
-    if git pull -q --ff-only 2>/dev/null; then
-      echo "[pull] checkout at $(git rev-parse --short HEAD)"
-    else
-      echo "[pull] skipped (offline or diverged); checkout at $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    fi
-  fi
-fi
-if [ -t 1 ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
-  mkdir -p "$LOG_DIR"
-  touch "$CONSOLE_LOG"
-  offset=$(stat -c %s "$CONSOLE_LOG")
-  EXPERIMENTS_DETACHED=1 setsid nohup bash "$LAUNCHER_SELF" run >> "$CONSOLE_LOG" 2>&1 < /dev/null &
-  pid=$!
-  disown 2>/dev/null || true
-  echo "$pid" > "$PID_FILE"
-  echo "[detached] host=$HOST pid=$pid console=$CONSOLE_LOG"
-  echo "[detached] Ctrl-C leaves the node working; stop with: bash scripts/run_experiments.sh stop"
-  tail --pid="$pid" -c +"$((offset+1))" -F "$CONSOLE_LOG" 2>/dev/null || true
-  exit 0
-fi
-mkdir -p "$LOG_DIR"
-printf '[node-launcher-start] host=%s pid=%s utc=%s commit=%s\n' "$HOST" "$$" "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-KEEPALIVE_PID=
-WATCHDOG_PID=
-stop_keepalive() {
-  [ -n "$KEEPALIVE_PID" ] && kill -TERM "$KEEPALIVE_PID" 2>/dev/null; KEEPALIVE_PID=
-  [ -n "$WATCHDOG_PID" ] && kill -TERM "$WATCHDOG_PID" 2>/dev/null; WATCHDOG_PID=
-}
-trap 'rc=$?; stop_keepalive; printf "[node-launcher-exit] pid=%s rc=%s utc=%s\n" "$$" "$rc" "$(date -u +%FT%TZ)"' EXIT
-trap 'exit 143' TERM
-trap 'exit 130' INT
-HOLD=${EXPERIMENTS_HOLD_SECONDS:-300}
-# Keep the allocated GPUs visibly busy for this launcher's whole life: the
-# cluster reclaims idle allocations, and an inner pass may spend minutes in
-# admission or find nothing to claim. 727 MiB per GPU, well under the inner
-# launchers' occupancy limit. EXPERIMENTS_KEEPALIVE=0 disables it.
-if [ "${EXPERIMENTS_KEEPALIVE:-1}" != 0 ]; then
-  "$PY" scripts/_gpu_keepalive.py > "$LOG_DIR/keepalive.$HOST.log" 2>&1 7>&- 8>&- &
-  KEEPALIVE_PID=$!
-  echo "[keepalive] pid=$KEEPALIVE_PID (log: $LOG_DIR/keepalive.$HOST.log)"
-fi
-# Stall watchdog: a training phase whose worker logs stop moving (a rank dead
-# after a CUDA fault) is terminated after EXPERIMENTS_STALL_SECONDS (default
-# 1500) instead of running to its allocation limit, and this host is recorded
-# under runs/experiments/node-faults so no launcher does GPU work here again.
-if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --roots "$SWITCH_ROOT" "$MOPPS_ROOT" \
-    --faults-dir "$WORK/runs/experiments/node-faults" --stall-seconds "${EXPERIMENTS_STALL_SECONDS:-1500}" \
-    > "$LOG_DIR/stall.$HOST.log" 2>&1 7>&- 8>&- &
-  WATCHDOG_PID=$!
-  echo "[watchdog] pid=$WATCHDOG_PID stops a phase whose logs are silent for ${EXPERIMENTS_STALL_SECONDS:-1500}s (log: $LOG_DIR/stall.$HOST.log)"
-fi
-[[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] EXPERIMENTS_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
 # Inner launchers: foreground, single pass, no hold, no keepalive (this launcher holds the node).
 # EXPERIMENTS_INNER replaces bash for the inner launchers in tests only.
 inner() {
@@ -188,7 +107,7 @@ leftover_groups() {
   for pid in $(ls /proc | grep -E '^[0-9]+$'); do
     [ "$pid" != "$$" ] && [ -O "/proc/$pid" ] || continue
     marker=$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -m1 '^OUT_ROOT=' | cut -d= -f2-) || true
-    case "$marker" in "$SWITCH_ROOT"|"$MOPPS_ROOT") ;; *) continue ;; esac
+    case "$marker" in "$WORK"/runs/*) ;; *) continue ;; esac
     cmdline_of "$pid" | grep -qE "$ROOT_PROCESS_PATTERN" || continue
     pgid=$(pgid_of "$pid")
     [ -n "$pgid" ] && [ "$pgid" != "$MY_PGID" ] || continue
@@ -278,6 +197,120 @@ recover_root() {
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$1" --stale --brief 2>&1 \
     | sed 's/^\[recovery blocked\]/[recover-cost] blocked:/' || true
 }
+# Every experiment root on the shared volume: nodes come and go and run several
+# experiments, so a start or a stop sweeps them all, not just the two of this launcher.
+all_roots() {
+  local root
+  for root in "$WORK"/runs/*/; do
+    root=${root%/}
+    if [ -f "$root/switch.json" ] || [ -f "$root/mopps.json" ]; then echo "$root"; fi
+  done
+}
+sweep_all_roots() {
+  local root
+  for root in $(all_roots); do
+    if [ -f "$root/switch.json" ]; then
+      SWITCH_ROOT=$root EXPERIMENTS_STOPPING=1 bash scripts/run_selection_switch.sh stop 2>&1 | sed "s|^|[sweep $(basename "$root")] |" || true
+    else
+      MOPPS_ROOT=$root EXPERIMENTS_STOPPING=1 bash scripts/run_mopps_comparison.sh stop 2>&1 | sed "s|^|[sweep $(basename "$root")] |" || true
+    fi
+  done
+}
+# Open cost events this host started belong to attempts that are dead once the node
+# is swept; close them now so the retry is not blocked for the 15-minute stale window.
+close_this_hosts_events() {
+  local root
+  for root in $(all_roots); do
+    CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$root" --stale --min-age 0 --this-host --brief 2>&1 \
+      | grep -v ' 0 stale event(s) closed, 0 still open$' | sed "s|^|[sweep $(basename "$root")] |" || true
+  done
+}
+full_clean() {
+  sweep_all_roots
+  clean_node
+  close_this_hosts_events
+}
+stop_node() {
+  if launcher_pid_alive; then
+    pid=$(cat "$PID_FILE")
+    echo "[stop] host=$HOST pid=$pid: sending TERM to the node launcher; inner launchers reap their ranks and close receipts"
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 240); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    kill -0 "$pid" 2>/dev/null && echo "[stop] pid=$pid still running after 240s; inspect $CONSOLE_LOG"
+  else
+    echo "[stop] no live node launcher on $HOST (pid file: $PID_FILE)"
+  fi
+  # Everything of every experiment on this node: launchers, ranks, keepalives, GPU
+  # memory, and the cost events those attempts left open.
+  full_clean
+}
+if [ "$MODE" = stop ]; then
+  stop_node
+  exit 0
+fi
+# --- run ---
+# One command restarts a node: a launcher already running here is stopped first
+# (its ranks reaped, receipts closed), the shared checkout is pulled, then the
+# node starts fresh. EXPERIMENTS_PULL=0 skips the pull.
+if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
+  if launcher_pid_alive; then
+    echo "[restart] host=$HOST: a node launcher is already running (pid $(cat "$PID_FILE")); stopping it first"
+    stop_node
+  fi
+  if [ "${EXPERIMENTS_PULL:-1}" != 0 ]; then
+    if git pull -q --ff-only 2>/dev/null; then
+      echo "[pull] checkout at $(git rev-parse --short HEAD)"
+    else
+      echo "[pull] skipped (offline or diverged); checkout at $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    fi
+  fi
+fi
+if [ -t 1 ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
+  mkdir -p "$LOG_DIR"
+  touch "$CONSOLE_LOG"
+  offset=$(stat -c %s "$CONSOLE_LOG")
+  EXPERIMENTS_DETACHED=1 setsid nohup bash "$LAUNCHER_SELF" run >> "$CONSOLE_LOG" 2>&1 < /dev/null &
+  pid=$!
+  disown 2>/dev/null || true
+  echo "$pid" > "$PID_FILE"
+  echo "[detached] host=$HOST pid=$pid console=$CONSOLE_LOG"
+  echo "[detached] Ctrl-C leaves the node working; stop with: bash scripts/run_experiments.sh stop"
+  tail --pid="$pid" -c +"$((offset+1))" -F "$CONSOLE_LOG" 2>/dev/null || true
+  exit 0
+fi
+mkdir -p "$LOG_DIR"
+printf '[node-launcher-start] host=%s pid=%s utc=%s commit=%s\n' "$HOST" "$$" "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+KEEPALIVE_PID=
+WATCHDOG_PID=
+stop_keepalive() {
+  [ -n "$KEEPALIVE_PID" ] && kill -TERM "$KEEPALIVE_PID" 2>/dev/null; KEEPALIVE_PID=
+  [ -n "$WATCHDOG_PID" ] && kill -TERM "$WATCHDOG_PID" 2>/dev/null; WATCHDOG_PID=
+}
+trap 'rc=$?; stop_keepalive; printf "[node-launcher-exit] pid=%s rc=%s utc=%s\n" "$$" "$rc" "$(date -u +%FT%TZ)"' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+HOLD=${EXPERIMENTS_HOLD_SECONDS:-300}
+# Keep the allocated GPUs visibly busy for this launcher's whole life: the
+# cluster reclaims idle allocations, and an inner pass may spend minutes in
+# admission or find nothing to claim. 727 MiB per GPU, well under the inner
+# launchers' occupancy limit. EXPERIMENTS_KEEPALIVE=0 disables it.
+if [ "${EXPERIMENTS_KEEPALIVE:-1}" != 0 ]; then
+  "$PY" scripts/_gpu_keepalive.py > "$LOG_DIR/keepalive.$HOST.log" 2>&1 7>&- 8>&- &
+  KEEPALIVE_PID=$!
+  echo "[keepalive] pid=$KEEPALIVE_PID (log: $LOG_DIR/keepalive.$HOST.log)"
+fi
+# Stall watchdog: a training phase whose worker logs stop moving (a rank dead
+# after a CUDA fault) is terminated after EXPERIMENTS_STALL_SECONDS (default
+# 1500) instead of running to its allocation limit, and this host is recorded
+# under runs/experiments/node-faults so no launcher does GPU work here again.
+if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --roots "$SWITCH_ROOT" "$MOPPS_ROOT" \
+    --faults-dir "$WORK/runs/experiments/node-faults" --stall-seconds "${EXPERIMENTS_STALL_SECONDS:-1500}" \
+    > "$LOG_DIR/stall.$HOST.log" 2>&1 7>&- 8>&- &
+  WATCHDOG_PID=$!
+  echo "[watchdog] pid=$WATCHDOG_PID stops a phase whose logs are silent for ${EXPERIMENTS_STALL_SECONDS:-1500}s (log: $LOG_DIR/stall.$HOST.log)"
+fi
+[[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] EXPERIMENTS_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
 pass=0
 wait_seconds=$HOLD
 blocked_passes=0
@@ -289,7 +322,7 @@ while :; do
   fi
   # Before the first pass, and again whenever a pass found the node busy.
   if [ "$need_clean" -eq 1 ] && [ "${EXPERIMENTS_CLEAN:-1}" != 0 ]; then
-    clean_node
+    full_clean
   fi
   need_clean=0
   recover_root "$SWITCH_ROOT"

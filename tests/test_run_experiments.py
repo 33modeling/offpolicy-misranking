@@ -1,10 +1,13 @@
 """The combined node launcher: one pass per experiment, hold lines that say why."""
+import json
 import os
 from pathlib import Path
 import stat
 import subprocess
 import sys
 import time
+
+import pytest
 
 import selection_gate as core
 
@@ -122,21 +125,56 @@ def test_leftover_processes_of_either_root_are_stopped_before_the_first_pass(tmp
     # A marked process that is not an experiment command must be left alone.
     bystander = subprocess.Popen(["bash", "-c", 'exec -a "python scripts/selection_switch_status.py" sleep 300'],
                                  env={**env, "OUT_ROOT": env["SWITCH_ROOT"]}, start_new_session=True)
+    # A worker of another experiment root on this node (long, difficulty, ...) is ours too.
+    other_root = str(Path(env["OM_WORK"]) / "runs/selection-switch-long-v1")
+    other = subprocess.Popen(["bash", "-c", 'exec -a "python src/selection_switch_gpu.py run" sleep 300'],
+                             env={**env, "OUT_ROOT": other_root}, start_new_session=True)
     try:
         time.sleep(.3)
         result = subprocess.run(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
                                 capture_output=True, text=True, timeout=120)
-        assert result.returncode == 78, result.stdout + result.stderr
-        assert f"[clean] leftover pid={leftover.pid}" in result.stdout + result.stderr
-        assert f"pid={bystander.pid}" not in result.stdout + result.stderr
-        assert result.stdout.index("[clean] host=") < result.stdout.index("[pass 1] selection switch")
-        assert leftover.wait(timeout=10) != 0
+        out = result.stdout + result.stderr
+        assert result.returncode == 78, out
+        # Swept either by a root's own stop (orphans of a dead driver) or by the node clean.
+        assert f"pid={leftover.pid}" in out or "[orphans] stopping" in out
+        assert f"pid={bystander.pid}" not in out
+        assert out.index("[sweep ") < out.index("[clean] host=") < out.index("[pass 1] selection switch")
+        assert leftover.wait(timeout=10) != 0 and other.wait(timeout=10) != 0
         assert bystander.poll() is None
     finally:
-        for proc in (leftover, bystander):
+        for proc in (leftover, bystander, other):
             if proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=10)
+
+
+def open_event(root, host, pid, *, age=100.):
+    directory = root / "states/s0-t25/points/view-25/random_reduced"
+    core.atomic_json(root / "switch.json", {"schema": "fake"})
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "cost.jsonl").open("a") as handle:
+        handle.write(json.dumps({"event_id": "e1", "phase": "train", "ledger": "deployment", "gpus": 4, "gpu_type": "H100",
+                                 "host": host, "state": "started", "time": time.time()-age, "pid": pid}) + "\n")
+    return directory
+
+
+def finished_rows(directory):
+    return [json.loads(l) for l in (directory / "cost.jsonl").read_text().splitlines() if '"finished"' in l]
+
+
+@pytest.mark.parametrize("mode", ["run", "stop"])
+def test_start_and_stop_close_this_hosts_dead_cost_events_in_every_root(tmp_path, mode):
+    import socket
+    env = environment(tmp_path, fake_inner(tmp_path, 78, 78))
+    work = Path(env["OM_WORK"])
+    mine = open_event(work / "runs/selection-switch-long-v1", socket.gethostname(), 999999)
+    theirs = open_event(work / "runs/selection-switch-quality-v1", "some-other-node", 4242)
+    result = subprocess.run(["bash", "scripts/run_experiments.sh", mode], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=120)
+    out = result.stdout + result.stderr
+    assert "[sweep selection-switch-long-v1] [recover-cost]" in out and "1 stale event(s) closed" in out
+    assert len(finished_rows(mine)) == 1 and finished_rows(mine)[0]["event_id"] == "e1"
+    assert finished_rows(theirs) == []
 
 
 def test_node_launcher_runs_the_stall_watchdog_for_its_life(tmp_path):
