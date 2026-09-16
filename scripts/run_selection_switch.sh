@@ -5,8 +5,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|waive|errors|check-code|stop) ;;
-  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|waive|errors|check-code]'; exit 2 ;;
+case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|waive|reset-waived|errors|check-code|stop) ;;
+  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|waive|reset-waived|errors|check-code]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -46,6 +46,11 @@ fi
 if [ "$MODE" = recover-cost ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" "$@"
+fi
+if [ "$MODE" = reset-waived ]; then
+  # Branches whose retry resumed a waived attempt's checkpoints: discard everything and rerun.
+  export CUDA_VISIBLE_DEVICES=""
+  exec "$PY" scripts/waive_stalled_attempts.py --root "$OUT_ROOT" --reset-waived --apply "$@"
 fi
 if [ "$MODE" = waive ]; then
   # Operator decision: return the allocation of attempts that stalled after a GPU

@@ -97,9 +97,18 @@ leaves the trainer hung until the phase's allocation limit, the whole
 allocation is charged, and every retry ends with "branch allocation exhausted
 before a valid checkpoint". The waiver moves that attempt's ledger lines to
 `cost-waived.jsonl`, writes a receipt under `waivers/` with the fault line, and
-removes `failure.json` so the next pass retries the branch. It refuses branches
-with a published result, branches whose phase log shows no fault, and branches
-a worker holds. The node launcher also runs a stall watchdog: a training phase
+removes `failure.json` so the next pass retries the branch. It also moves the
+attempt's `policy/`, `evaluation/`, progress and result files to
+`discarded/<utc>/`: the trainer resumes from checkpoints in its output
+directory, so a retry that found them would add the discarded attempt's
+updates to its own allocation. It refuses branches with a published result,
+branches whose phase log shows no fault, and branches a worker holds.
+`reset-waived` handles branches waived before that discard existed (their retry
+resumed the discarded checkpoints and exceeded the allocation): it appends the
+branch's whole ledger to `cost-discarded.jsonl`, moves the outputs aside, writes
+a receipt under `discards/`, and leaves the frozen decision, execution record
+and subset, so the queue reruns the branch from the state's parent policy.
+Stop the node running such a branch first; a held branch is skipped. The node launcher also runs a stall watchdog: a training phase
 whose worker logs are silent for `EXPERIMENTS_STALL_SECONDS` (default 1500) is
 terminated, the attempt is charged for those minutes only, and the host is
 recorded under `runs/experiments/node-faults/`, after which both launchers
