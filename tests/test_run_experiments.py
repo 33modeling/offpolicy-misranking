@@ -26,7 +26,41 @@ def environment(tmp_path, fake):
     core.atomic_json(mopps_root / "mopps.json", {"schema": "fake"})
     return {**os.environ, "OM_WORK": str(work), "SWITCH_ROOT": str(switch_root), "MOPPS_ROOT": str(mopps_root),
             "SWITCH_PYTHON": sys.executable, "EXPERIMENTS_DETACHED": "1", "EXPERIMENTS_KEEPALIVE": "0", "EXPERIMENTS_WATCHDOG": "0",
-            "EXPERIMENTS_HOLD_SECONDS": "1", "EXPERIMENTS_INNER": str(fake), "CUDA_VISIBLE_DEVICES": ""}
+            "EXPERIMENTS_HOLD_SECONDS": "1", "EXPERIMENTS_INNER": str(fake), "CUDA_VISIBLE_DEVICES": "",
+            "EXPERIMENTS_PULL": "0"}
+
+
+def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
+    """One command per node: run stops the launcher already running here, then starts."""
+    env = environment(tmp_path, fake_inner(tmp_path, 0, 0))
+    env.pop("EXPERIMENTS_DETACHED")
+    log_dir = Path(env["OM_WORK"]) / "runs/experiments/logs"
+    log_dir.mkdir(parents=True)
+    host = subprocess.check_output(["bash", "-c", "hostname | tr -c 'a-zA-Z0-9._-' '_'"], text=True).strip()
+    # Reparented to init so its death is reaped there, not left as a zombie of this test.
+    old_pid = int(subprocess.check_output(["bash", "-c", "setsid sleep 300 >/dev/null 2>&1 & echo $!"], text=True).strip())
+    (log_dir / f"launcher.{host}.pid").write_text(str(old_pid))
+    process = subprocess.Popen(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    lines, deadline = [], time.monotonic() + 90
+    try:
+        while time.monotonic() < deadline:
+            line = process.stdout.readline()
+            if not line:
+                break
+            lines.append(line.rstrip("\n"))
+            if line.startswith("[holding]"):
+                break
+        os.killpg(process.pid, 15)
+        process.wait(timeout=30)
+        out = "\n".join(lines)
+        assert f"[restart] host={host}: a node launcher is already running (pid {old_pid}); stopping it first" in out
+        assert "[stop] host=" in out and "[pass 1]" in out
+        assert subprocess.run(["kill", "-0", str(old_pid)], capture_output=True).returncode != 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        subprocess.run(["kill", "-9", str(old_pid)], capture_output=True)
 
 
 def test_two_blocked_passes_release_the_node_and_every_hold_line_says_why(tmp_path):

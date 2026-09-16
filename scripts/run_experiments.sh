@@ -79,7 +79,7 @@ if [ "$MODE" = why ]; then
   printf '[saved] %s\n' "$TARGET"
   exit "$rc"
 fi
-if [ "$MODE" = stop ]; then
+stop_node() {
   if launcher_pid_alive; then
     pid=$(cat "$PID_FILE")
     echo "[stop] host=$HOST pid=$pid: sending TERM to the node launcher; inner launchers reap their ranks and close receipts"
@@ -92,14 +92,29 @@ if [ "$MODE" = stop ]; then
   # Leftovers from either experiment (older launchers, ranks, keepalives).
   EXPERIMENTS_STOPPING=1 bash scripts/run_selection_switch.sh stop || true
   EXPERIMENTS_STOPPING=1 bash scripts/run_mopps_comparison.sh stop || true
+}
+if [ "$MODE" = stop ]; then
+  stop_node
   exit 0
 fi
 # --- run ---
-if [ -t 1 ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
+# One command restarts a node: a launcher already running here is stopped first
+# (its ranks reaped, receipts closed), the shared checkout is pulled, then the
+# node starts fresh. EXPERIMENTS_PULL=0 skips the pull.
+if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if launcher_pid_alive; then
-    echo "[already running] host=$HOST pid=$(cat "$PID_FILE"); follow: tail -f $CONSOLE_LOG; stop: bash scripts/run_experiments.sh stop"
-    exit 0
+    echo "[restart] host=$HOST: a node launcher is already running (pid $(cat "$PID_FILE")); stopping it first"
+    stop_node
   fi
+  if [ "${EXPERIMENTS_PULL:-1}" != 0 ]; then
+    if git pull -q --ff-only 2>/dev/null; then
+      echo "[pull] checkout at $(git rev-parse --short HEAD)"
+    else
+      echo "[pull] skipped (offline or diverged); checkout at $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    fi
+  fi
+fi
+if [ -t 1 ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   mkdir -p "$LOG_DIR"
   touch "$CONSOLE_LOG"
   offset=$(stat -c %s "$CONSOLE_LOG")
