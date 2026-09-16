@@ -15,6 +15,7 @@ BRANCHES=(states/s3-t100/points/view-100/random_reduced
 HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
 LOG_DIR="$WORK/runs/experiments/logs"
 THEN_LOG="$LOG_DIR/then.$HOST.log"
+RUN_WAIVE=${RUN_WAIVE:-bash scripts/run_selection_switch.sh waive}
 RUN_RESET=${RUN_RESET:-bash scripts/run_selection_switch.sh reset-waived}
 RUN_V1=${RUN_V1:-bash scripts/run_selection_switch.sh}
 RUN_STOP=${RUN_STOP:-bash scripts/run_experiments.sh stop}
@@ -38,6 +39,7 @@ invalid_left() {
 
 if [ "${THEN_DETACHED:-0}" != 1 ]; then
   mkdir -p "$LOG_DIR"
+  $RUN_WAIVE || true
   $RUN_RESET || true
   if [ "$(invalid_left)" -ne 0 ]; then
     echo "[then] abort: an invalid branch still has its result after reset-waived (a worker holds it?); nothing started"

@@ -196,6 +196,11 @@ recover_root() {
   # One summary line, then one line per open event that could not be closed and why.
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$1" --stale --min-age "$STALE_CLOSE" --brief 2>&1 \
     | sed 's/^\[recovery blocked\]/[recover-cost] blocked:/' || true
+  # A branch whose attempt hung after a GPU fault until its allocation limit is
+  # infrastructure loss, not selector cost: return the allocation, discard the
+  # attempt, and let the queue rerun it (waivers/ keeps the receipt).
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/waive_stalled_attempts.py --root "$1" --apply 2>&1 \
+    | grep -v 'no branch failed with an exhausted allocation$' | sed 's/^/[auto-waive] /' || true
 }
 # Every experiment root on the shared volume: nodes come and go and run several
 # experiments, so a start or a stop sweeps them all, not just the two of this launcher.

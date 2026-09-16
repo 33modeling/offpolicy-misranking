@@ -180,6 +180,22 @@ def test_start_and_stop_close_this_hosts_dead_cost_events_in_every_root(tmp_path
     assert finished_rows(live_node) == []
 
 
+def test_a_branch_exhausted_by_a_gpu_fault_is_waived_before_the_pass(tmp_path):
+    from test_waive_stalled_attempts import branch as faulted_branch
+    env = environment(tmp_path, fake_inner(tmp_path, 78, 78))
+    root = Path(env["SWITCH_ROOT"])
+    core.atomic_json(root / "switch.json", {"schema": "x"})
+    directory = faulted_branch(root, "random_reduced")
+    assert (directory / "failure.json").exists()
+    result = subprocess.run(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=120)
+    out = result.stdout + result.stderr
+    assert "[auto-waive] [waive] states/s3-t100/points/view-100/random_reduced: waived train train1" in out
+    assert "29041 GPU-s returned to the allocation" in out and "discarded/" not in out
+    assert not (directory / "failure.json").exists() and (directory / "waivers/train1.json").exists()
+    assert out.index("[auto-waive]") < out.index("[pass 1] selection switch")
+
+
 def test_node_launcher_runs_the_stall_watchdog_for_its_life(tmp_path):
     env = {**environment(tmp_path, fake_inner(tmp_path, 78, 78)), "EXPERIMENTS_WATCHDOG": "1"}
     result = subprocess.run(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,

@@ -86,6 +86,8 @@ def candidates(root):
     """Branch directories whose recorded failure is an exhausted allocation."""
     out = []
     for failure in sorted(root.glob("states/**/failure.json")):
+        if "discarded" in failure.parts:
+            continue
         try:
             error = str(core.read(failure).get("error", ""))
         except (OSError, ValueError):
