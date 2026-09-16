@@ -192,6 +192,25 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
         switch.manifest(tmp_path)
 
 
+def pilot_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "d984197e2bce0c231682c4a9ca5e4475a668bdfc681365f4b206dfc568e1212c"
+    assert core.fingerprint(hashes) == switch.PRE_PILOT_CODE
+    return hashes
+
+
+def test_roots_prepared_with_the_convergence_runtime_keep_running(tmp_path):
+    """8b6c1f5 changed the runtime without registering its predecessor; every root prepared
+    at 792592f..b598a2d then refused to run. That fingerprint is registered now."""
+    previous = pilot_predecessor()
+    assert switch.validate_code_hashes(previous) == switch.code_hashes()
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": previous, "gate": "convergence"})
+    assert switch.manifest(tmp_path)["code_hashes"] == previous
+    for name in ("curve-runtime.json", "quality-runtime.json"):
+        assert core.read(tmp_path / name)["runtime_code_hashes"] == switch.code_hashes()
+    assert switch.manifest(tmp_path)["code_hashes"] == previous
+
+
 def quality_predecessor():
     hashes = switch.code_hashes()
     hashes["src/selection_switch_gpu.py"] = "e09500b8bf1d5f8bfa537aaab83e1391a73c57d59546ba2351d72abe07de0379"
