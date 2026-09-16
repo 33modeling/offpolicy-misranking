@@ -5,8 +5,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|waive|reset-waived|errors|check-code|stop) ;;
-  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|waive|reset-waived|errors|check-code]'; exit 2 ;;
+case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|waive|reset-waived|results|errors|check-code|stop) ;;
+  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|waive|reset-waived|results|errors|check-code]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -46,6 +46,12 @@ fi
 if [ "$MODE" = recover-cost ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" "$@"
+fi
+if [ "$MODE" = results ]; then
+  # Compact results file (branches, contrasts, gate, per-question rewards): a few hundred KB.
+  [ -f "$OUT_ROOT/switch.json" ] || { echo "[abort] no switch root: $OUT_ROOT"; exit 2; }
+  TARGET="$HOME/switch-results-$(basename "$OUT_ROOT")-$(date -u +%Y%m%dT%H%M%SZ).txt"
+  CUDA_VISIBLE_DEVICES="" exec "$PY" scripts/switch_results.py --root "$OUT_ROOT" --out "$TARGET" "$@"
 fi
 if [ "$MODE" = reset-waived ]; then
   # Branches whose retry resumed a waived attempt's checkpoints: discard everything and rerun.
