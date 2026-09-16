@@ -64,8 +64,12 @@ if [ "$MODE" = why ]; then
     "$PY" scripts/experiments_status.py --switch-root "$SWITCH_ROOT" --mopps-root "$MOPPS_ROOT" --all || echo '[status unavailable]'
     for launcher in run_selection_switch.sh run_mopps_comparison.sh; do
       printf '\n\n######## %s why ########\n' "$launcher"
-      if part=$(EXPERIMENTS_COMBINED=0 bash "scripts/$launcher" why 2>&1); then
-        cat "${part#\[saved\] }" 2>/dev/null || printf '%s\n' "$part"
+      part=$(EXPERIMENTS_COMBINED=0 bash "scripts/$launcher" why 2>&1) || true
+      # The inner report prints its path last, as "[saved] PATH" or "[... incomplete; see errors] PATH".
+      inner_path=$(printf '%s\n' "$part" | tail -n 1 | sed -E 's/^\[[^]]*\] //')
+      if [ -f "$inner_path" ]; then
+        printf '%s\n' "$part" | grep -v '^\[saved\]' || true
+        cat "$inner_path"
       else
         printf '%s\n' "$part"
       fi

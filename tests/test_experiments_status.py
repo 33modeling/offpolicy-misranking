@@ -88,6 +88,9 @@ def test_why_from_any_launcher_writes_one_report_for_both_experiments(tmp_path):
     (tmp_path / "work/runs/experiments/logs").mkdir(parents=True)
     (tmp_path / "work/runs/experiments/logs/console.node-9_.log").write_text(
         "[node-launcher-start] host=node-9\n[holding] node retained (switch rc=75 node busy: lock held or GPUs occupied | mopps rc=0 nothing left to claim); next pass in 60s\n")
+    # A node that never held (and an empty keepalive log) must not mark the report incomplete.
+    (tmp_path / "work/runs/experiments/logs/console.node-8_.log").write_text("[node-launcher-start] host=node-8\n[pass 1] selection switch\n")
+    (tmp_path / "work/runs/experiments/logs/keepalive.node-8_.log").write_text("")
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     env = {**os.environ, "SWITCH_ROOT": str(switch_root), "MOPPS_ROOT": str(mopps_root),
            "SWITCH_PYTHON": sys.executable, "OM_WORK": str(tmp_path / "work")}
@@ -105,4 +108,6 @@ def test_why_from_any_launcher_writes_one_report_for_both_experiments(tmp_path):
         assert "SELECTION SWITCH EXPERIMENT" in report and "MOPPS COMPARISON" in report
         assert "===== states/s3-t50/random_online/failure.json =====" in report
         assert "NODE LAUNCHER LOG" in report and "lock held or GPUs occupied" in report
+        assert "incomplete" not in report
+        assert report.count("[pass 1] selection switch") >= 2
     assert {path: path.read_bytes() for path in before} == before

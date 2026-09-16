@@ -237,8 +237,8 @@ if [ "$MODE" = why ]; then
     if [ -d "$WORK/runs/experiments/logs" ]; then
       while IFS= read -r -d '' path; do
         printf '\n===== NODE LAUNCHER LOG: %s (last 150 lines) =====\n' "${path#"$WORK"/}"
-        grep -v '^\[holding\]' "$path" | tail -n 150
-        grep '^\[holding\]' "$path" | tail -n 1
+        { grep -v '^\[holding\]' "$path" || true; } | tail -n 150
+        { grep '^\[holding\]' "$path" || true; } | tail -n 1
       done < <(find "$WORK/runs/experiments/logs" -type f -name '*.log' -print0 | sort -z)
     fi
   ) > "$TARGET" 2>&1 || { printf '[report incomplete; see errors] %s\n' "$TARGET"; exit 1; }
