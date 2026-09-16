@@ -9,6 +9,8 @@
 #   bash scripts/run_experiments.sh status   one screen for both experiments (also
 #                                            what run_selection_switch.sh status and
 #                                            run_mopps_comparison.sh status show)
+#   bash scripts/run_experiments.sh why      one report file for both experiments
+#                                            (also what either launcher's why writes)
 #
 # EXPERIMENTS_HOLD_SECONDS (default 300) is the pause between passes,
 # EXPERIMENTS_AUTO_PULL=1 runs 'git pull --ff-only' before each pass.
@@ -17,8 +19,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|stop|status) ;;
-  *) echo 'usage: bash scripts/run_experiments.sh [run|stop|status]'; exit 2 ;;
+case "$MODE" in run|stop|status|why) ;;
+  *) echo 'usage: bash scripts/run_experiments.sh [run|stop|status|why]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -47,6 +49,31 @@ if [ "$MODE" = status ]; then
   # GPUs once). Accepts --all, --json and --watch [seconds]. Read-only.
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/experiments_status.py --switch-root "$SWITCH_ROOT" --mopps-root "$MOPPS_ROOT" "$@"
+fi
+if [ "$MODE" = why ]; then
+  # One read-only report: the combined status screen, then each experiment's own
+  # why report (records, logs, node launcher console) back to back. Prints the path.
+  export CUDA_VISIBLE_DEVICES=""
+  REPORT_DIR="$WORK/reports/experiments"
+  mkdir -p "$REPORT_DIR"
+  TARGET=$(mktemp "$REPORT_DIR/experiments-why-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.txt")
+  rc=0
+  (
+    printf 'EXPERIMENTS WHY\nUTC: %s\nSWITCH ROOT: %s\nMOPPS ROOT: %s\nCOMMIT: ' "$(date -u +%FT%TZ)" "$SWITCH_ROOT" "$MOPPS_ROOT"
+    git rev-parse HEAD 2>/dev/null || echo unknown
+    "$PY" scripts/experiments_status.py --switch-root "$SWITCH_ROOT" --mopps-root "$MOPPS_ROOT" --all || echo '[status unavailable]'
+    for launcher in run_selection_switch.sh run_mopps_comparison.sh; do
+      printf '\n\n######## %s why ########\n' "$launcher"
+      if part=$(EXPERIMENTS_COMBINED=0 bash "scripts/$launcher" why 2>&1); then
+        cat "${part#\[saved\] }" 2>/dev/null || printf '%s\n' "$part"
+      else
+        printf '%s\n' "$part"
+      fi
+    done
+  ) > "$TARGET" 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || printf '[report incomplete; see errors] %s\n' "$TARGET"
+  printf '[saved] %s\n' "$TARGET"
+  exit "$rc"
 fi
 if [ "$MODE" = stop ]; then
   if launcher_pid_alive; then

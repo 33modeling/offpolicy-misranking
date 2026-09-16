@@ -77,3 +77,32 @@ def test_both_launchers_status_show_one_screen_and_stay_read_only(tmp_path):
     assert single.returncode == 0 and "MOPPS COMPARISON" not in single.stdout
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
     assert not list(tmp_path.rglob("*.lock")) and not list(tmp_path.rglob("*-runtime.json"))
+
+
+def test_why_from_any_launcher_writes_one_report_for_both_experiments(tmp_path):
+    # Real layout: both roots under WORK/runs, next to the node launcher's runs/experiments/logs.
+    switch_root, mopps_root = tmp_path / "work/runs/selection-switch-v1", tmp_path / "work/runs/mopps-comparison-v1"
+    now = time.time()
+    four_nodes(switch_root, now)
+    mopps_fixture(mopps_root, switch_root, now)
+    (tmp_path / "work/runs/experiments/logs").mkdir(parents=True)
+    (tmp_path / "work/runs/experiments/logs/console.node-9_.log").write_text(
+        "[node-launcher-start] host=node-9\n[holding] node retained (switch rc=75 node busy: lock held or GPUs occupied | mopps rc=0 nothing left to claim); next pass in 60s\n")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    env = {**os.environ, "SWITCH_ROOT": str(switch_root), "MOPPS_ROOT": str(mopps_root),
+           "SWITCH_PYTHON": sys.executable, "OM_WORK": str(tmp_path / "work")}
+    for launcher in ("run_selection_switch.sh", "run_mopps_comparison.sh", "run_experiments.sh"):
+        result = subprocess.run(["bash", f"scripts/{launcher}", "why"], cwd=ROOT, env=env,
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, (launcher, result.stdout + result.stderr)
+        path = Path(result.stdout.strip().splitlines()[-1].removeprefix("[saved] "))
+        assert path.parent == tmp_path / "work/reports/experiments", launcher
+        report = path.read_text()
+        assert report.startswith("EXPERIMENTS WHY")
+        assert "NODES  " in report and "HOLD" in report
+        assert "######## run_selection_switch.sh why ########" in report
+        assert "######## run_mopps_comparison.sh why ########" in report
+        assert "SELECTION SWITCH EXPERIMENT" in report and "MOPPS COMPARISON" in report
+        assert "===== states/s3-t50/random_online/failure.json =====" in report
+        assert "NODE LAUNCHER LOG" in report and "lock held or GPUs occupied" in report
+    assert {path: path.read_bytes() for path in before} == before

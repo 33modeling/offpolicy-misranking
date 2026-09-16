@@ -130,7 +130,7 @@ case "$MODE" in run|retry)
     # which closes stale costs, runs a switch pass and a MoPPS pass every cycle
     # and keeps the node in between. EXPERIMENTS_COMBINED=0 runs only this queue.
     if [ "$MODE" = run ] && [ "$#" -eq 0 ] && [ "${EXPERIMENTS_COMBINED:-1}" != 0 ]; then
-      exec bash scripts/run_experiments.sh run
+      exec env -u OUT_ROOT bash scripts/run_experiments.sh run
     fi
     if launcher_pid_alive; then
       echo "[already running] host=$LAUNCH_HOST pid=$(cat "$PID_FILE"); follow: tail -f $CONSOLE_LOG; stop: bash scripts/$(basename "$0") stop"
@@ -189,13 +189,17 @@ if [ "$MODE" = status ]; then
   fi
   # Both experiments on one screen; EXPERIMENTS_COMBINED=0 shows only this one.
   if [ "${EXPERIMENTS_COMBINED:-1}" != 0 ]; then
-    exec bash scripts/run_experiments.sh status "$@"
+    exec env -u OUT_ROOT bash scripts/run_experiments.sh status "$@"
   fi
   exec "$PY" scripts/mopps_comparison_status.py --root "$OUT_ROOT" "$@"
 fi
 if [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@"
+fi
+if [ "$MODE" = why ] && [ "$#" -eq 0 ] && [ "${EXPERIMENTS_COMBINED:-1}" != 0 ]; then
+  # One report for both experiments; EXPERIMENTS_COMBINED=0 writes only this one.
+  exec env -u OUT_ROOT bash scripts/run_experiments.sh why
 fi
 if [ "$MODE" = why ]; then
   # One read-only report file for diagnosis: status, every recorded protocol,
@@ -234,6 +238,7 @@ if [ "$MODE" = why ]; then
       while IFS= read -r -d '' path; do
         printf '\n===== NODE LAUNCHER LOG: %s (last 150 lines) =====\n' "${path#"$WORK"/}"
         grep -v '^\[holding\]' "$path" | tail -n 150
+        grep '^\[holding\]' "$path" | tail -n 1
       done < <(find "$WORK/runs/experiments/logs" -type f -name '*.log' -print0 | sort -z)
     fi
   ) > "$TARGET" 2>&1 || { printf '[report incomplete; see errors] %s\n' "$TARGET"; exit 1; }

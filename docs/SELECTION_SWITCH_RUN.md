@@ -67,6 +67,11 @@ The prefix table distinguishes the last logged training step from a published
 prefix certificate. Waiting branches name their first unmet dependency, including
 a failed or stale prefix and, for GATE arms only, a pending development gate.
 
+`why` from either launcher (or `bash scripts/run_experiments.sh why`) writes one
+report under `reports/experiments/` for both experiments: the combined status
+screen, then each experiment's own why report; `EXPERIMENTS_COMBINED=0` writes
+only this experiment's report under `reports/selection-switch/`.
+
 `status --watch 5` refreshes every five seconds; Ctrl-C stops only the status
 viewer. `--all` adds per-task paths and reasons, and `--json` exposes the snapshot
 for scripting. A running heartbeat older than 60 seconds is STALE, not RUNNING

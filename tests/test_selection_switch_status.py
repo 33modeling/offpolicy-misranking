@@ -212,7 +212,8 @@ def test_report_includes_admission_ranks_and_new_runtime_receipts_without_writes
         core.atomic_json(root / name, value)
     before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", mode], cwd=ROOT,
-        env={**os.environ, "SWITCH_ROOT": str(root), "OM_WORK": str(tmp_path / "work"), "SWITCH_PYTHON": sys.executable},
+        env={**os.environ, "SWITCH_ROOT": str(root), "OM_WORK": str(tmp_path / "work"), "SWITCH_PYTHON": sys.executable,
+             "EXPERIMENTS_COMBINED": "0"},
         capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
     report = Path(result.stdout.strip().removeprefix("[saved] ")).read_text()
