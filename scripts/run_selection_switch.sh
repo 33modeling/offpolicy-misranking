@@ -5,8 +5,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|errors|check-code|stop) ;;
-  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|errors|check-code]'; exit 2 ;;
+case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|waive|errors|check-code|stop) ;;
+  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|waive|errors|check-code]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -46,6 +46,12 @@ fi
 if [ "$MODE" = recover-cost ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/recover_selection_switch_cost.py --root "$OUT_ROOT" "$@"
+fi
+if [ "$MODE" = waive ]; then
+  # Operator decision: return the allocation of attempts that stalled after a GPU
+  # fault (recorded in waivers/, lines kept in cost-waived.jsonl) so the queue retries them.
+  export CUDA_VISIBLE_DEVICES=""
+  exec "$PY" scripts/waive_stalled_attempts.py --root "$OUT_ROOT" --apply "$@"
 fi
 
 # Phone terminals drop: keep the GPU controller off the terminal. GPU modes
@@ -257,6 +263,12 @@ exec > >(tee -p -a "$OUT_ROOT/logs/launcher.$HOST.log") 2>&1
 printf '[launcher-start] host=%s pid=%s mode=%s commit=%s utc=%s\n' "$HOST" "$$" "$MODE" "${SWITCH_RUNTIME_COMMIT:-unknown}" "$(date -u +%FT%TZ)"
 trap 'rc=$?; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE" "$rc" "$(date -u +%FT%TZ)"' EXIT
 echo "[logs] $OUT_ROOT/logs/launcher.$HOST.log"
+# A host recorded with a GPU fault by the stall watchdog does no GPU work again in this job.
+NODE_FAULT="$WORK/runs/experiments/node-faults/$(hostname).json"
+if [ -f "$NODE_FAULT" ]; then
+  echo "[blocked] host=$(hostname) was recorded with a GPU fault ($NODE_FAULT); refusing GPU work on this node (use another one)"
+  exit 78
+fi
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN

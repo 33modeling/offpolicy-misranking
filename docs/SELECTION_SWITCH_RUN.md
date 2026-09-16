@@ -72,6 +72,20 @@ report under `reports/experiments/` for both experiments: the combined status
 screen, then each experiment's own why report; `EXPERIMENTS_COMBINED=0` writes
 only this experiment's report under `reports/selection-switch/`.
 
+`waive` (from either launcher) returns the allocation of attempts that stalled
+after a GPU fault: a rank that dies with a CUDA "unspecified launch failure"
+leaves the trainer hung until the phase's allocation limit, the whole
+allocation is charged, and every retry ends with "branch allocation exhausted
+before a valid checkpoint". The waiver moves that attempt's ledger lines to
+`cost-waived.jsonl`, writes a receipt under `waivers/` with the fault line, and
+removes `failure.json` so the next pass retries the branch. It refuses branches
+with a published result, branches whose phase log shows no fault, and branches
+a worker holds. The node launcher also runs a stall watchdog: a training phase
+whose worker logs are silent for `EXPERIMENTS_STALL_SECONDS` (default 1500) is
+terminated, the attempt is charged for those minutes only, and the host is
+recorded under `runs/experiments/node-faults/`, after which both launchers
+refuse GPU work on it (rc 78) and the node launcher releases it.
+
 `status --watch 5` refreshes every five seconds; Ctrl-C stops only the status
 viewer. `--all` adds per-task paths and reasons, and `--json` exposes the snapshot
 for scripting. A running heartbeat older than 60 seconds is STALE, not RUNNING

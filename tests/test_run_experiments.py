@@ -25,7 +25,7 @@ def environment(tmp_path, fake):
     switch_root, mopps_root = work / "runs/selection-switch-v1", work / "runs/mopps-comparison-v1"
     core.atomic_json(mopps_root / "mopps.json", {"schema": "fake"})
     return {**os.environ, "OM_WORK": str(work), "SWITCH_ROOT": str(switch_root), "MOPPS_ROOT": str(mopps_root),
-            "SWITCH_PYTHON": sys.executable, "EXPERIMENTS_DETACHED": "1", "EXPERIMENTS_KEEPALIVE": "0",
+            "SWITCH_PYTHON": sys.executable, "EXPERIMENTS_DETACHED": "1", "EXPERIMENTS_KEEPALIVE": "0", "EXPERIMENTS_WATCHDOG": "0",
             "EXPERIMENTS_HOLD_SECONDS": "1", "EXPERIMENTS_INNER": str(fake), "CUDA_VISIBLE_DEVICES": ""}
 
 
@@ -103,3 +103,32 @@ def test_leftover_processes_of_either_root_are_stopped_before_the_first_pass(tmp
             if proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=10)
+
+
+def test_node_launcher_runs_the_stall_watchdog_for_its_life(tmp_path):
+    env = {**environment(tmp_path, fake_inner(tmp_path, 78, 78)), "EXPERIMENTS_WATCHDOG": "1"}
+    result = subprocess.run(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=90)
+    assert result.returncode == 78, result.stdout + result.stderr
+    assert "[watchdog] pid=" in result.stdout
+    log = Path(env["OM_WORK"]) / "runs/experiments/logs" / f"stall.{os.uname().nodename.replace('.', '_')}.log"
+    logs = list((Path(env["OM_WORK"]) / "runs/experiments/logs").glob("stall.*.log"))
+    assert logs and "[watchdog] pid=" in logs[0].read_text()
+    time.sleep(1)
+    pid = int(result.stdout.split("[watchdog] pid=")[1].split()[0])
+    assert not Path(f"/proc/{pid}").exists(), "the watchdog dies with the launcher"
+
+
+def test_recorded_gpu_fault_blocks_gpu_work_on_that_host(tmp_path):
+    env = environment(tmp_path, fake_inner(tmp_path, 0, 0))
+    faults = Path(env["OM_WORK"]) / "runs/experiments/node-faults"
+    faults.mkdir(parents=True)
+    (faults / f"{os.uname().nodename}.json").write_text('{"phase": "train"}\n')
+    core.atomic_json(Path(env["SWITCH_ROOT"]) / "switch.json", {"schema": "fake"})
+    inner = {**os.environ, "SWITCH_ROOT": env["SWITCH_ROOT"], "OM_WORK": env["OM_WORK"], "SWITCH_PYTHON": sys.executable,
+             "SWITCH_FOREGROUND": "1", "SWITCH_HOLD_SECONDS": "0", "SWITCH_KEEPALIVE": "0", "SWITCH_RUNTIME_REPO": str(ROOT),
+             "CUDA_VISIBLE_DEVICES": ""}
+    result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "run"], cwd=ROOT, env=inner,
+                            capture_output=True, text=True, timeout=120)
+    assert "[blocked] host=" in result.stdout + result.stderr, result.stdout + result.stderr
+    assert result.returncode == 78

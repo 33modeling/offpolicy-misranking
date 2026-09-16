@@ -115,7 +115,11 @@ fi
 mkdir -p "$LOG_DIR"
 printf '[node-launcher-start] host=%s pid=%s utc=%s commit=%s\n' "$HOST" "$$" "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 KEEPALIVE_PID=
-stop_keepalive() { [ -n "$KEEPALIVE_PID" ] && kill -TERM "$KEEPALIVE_PID" 2>/dev/null; KEEPALIVE_PID=; }
+WATCHDOG_PID=
+stop_keepalive() {
+  [ -n "$KEEPALIVE_PID" ] && kill -TERM "$KEEPALIVE_PID" 2>/dev/null; KEEPALIVE_PID=
+  [ -n "$WATCHDOG_PID" ] && kill -TERM "$WATCHDOG_PID" 2>/dev/null; WATCHDOG_PID=
+}
 trap 'rc=$?; stop_keepalive; printf "[node-launcher-exit] pid=%s rc=%s utc=%s\n" "$$" "$rc" "$(date -u +%FT%TZ)"' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
@@ -128,6 +132,17 @@ if [ "${EXPERIMENTS_KEEPALIVE:-1}" != 0 ]; then
   "$PY" scripts/_gpu_keepalive.py > "$LOG_DIR/keepalive.$HOST.log" 2>&1 7>&- 8>&- &
   KEEPALIVE_PID=$!
   echo "[keepalive] pid=$KEEPALIVE_PID (log: $LOG_DIR/keepalive.$HOST.log)"
+fi
+# Stall watchdog: a training phase whose worker logs stop moving (a rank dead
+# after a CUDA fault) is terminated after EXPERIMENTS_STALL_SECONDS (default
+# 1500) instead of running to its allocation limit, and this host is recorded
+# under runs/experiments/node-faults so no launcher does GPU work here again.
+if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --roots "$SWITCH_ROOT" "$MOPPS_ROOT" \
+    --faults-dir "$WORK/runs/experiments/node-faults" --stall-seconds "${EXPERIMENTS_STALL_SECONDS:-1500}" \
+    > "$LOG_DIR/stall.$HOST.log" 2>&1 7>&- 8>&- &
+  WATCHDOG_PID=$!
+  echo "[watchdog] pid=$WATCHDOG_PID stops a phase whose logs are silent for ${EXPERIMENTS_STALL_SECONDS:-1500}s (log: $LOG_DIR/stall.$HOST.log)"
 fi
 [[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] EXPERIMENTS_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
 # Inner launchers: foreground, single pass, no hold, no keepalive (this launcher holds the node).
