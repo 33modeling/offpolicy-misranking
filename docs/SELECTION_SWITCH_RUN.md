@@ -80,6 +80,23 @@ and gives every continuation three times the allocation (87,120 GPU-seconds, a
 instead of four fifths. It has its own development labels, gate, ledgers and
 status; the MoPPS pass is skipped. Same modes as the switch launcher.
 
+`bash scripts/run_switch_difficulty.sh` and `bash scripts/run_switch_hard.sh`
+run the cached-selector variants: the same prefixes, states, evaluation set and
+29,040 GPU-second allocation (`prepare --prefix-source`), but the selection
+arms rank the pool from the pre-continuation reward cache instead of
+rescoring (`prepare --selector difficulty|hard`, recorded in `switch.json`
+and every state contract and protocol). `difficulty` keeps the 10% of prompts
+closest to a 0.5 cached success rate, with the diagnostic's tie-break;
+`hard` keeps the 10% with the lowest cached success rate among prompts solved
+at least once (never-solved prompts give GRPO no signal). Selection is
+charged as a metered read (`<selector>-select`, a few GPU-seconds), so the
+selection arms complete about as many updates as random and the gate's
+decision rests on the per-update gain. The shared diagnostic freezes the same
+ranking in `selection.json` next to `measurement.json`, and a paid arm's
+selection must match it. Roots are `runs/selection-switch-difficulty-v1` and
+`runs/selection-switch-hard-v1`, each with its own labels, gate and ledgers;
+the MoPPS pass is skipped. Same modes as the switch launcher.
+
 `bash scripts/run_switch_mbpp.sh` runs the code variant: the same protocol on
 the OLMo MBPP matrix family (`family-mbpp-s<seed>`, 512-prompt pool, top 10%
 = 51, execution-verified rewards) in its own root

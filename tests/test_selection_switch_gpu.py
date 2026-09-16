@@ -26,7 +26,10 @@ def installed(monkeypatch):
 
 
 def test_new_runtime_keeps_primary_fresh_r_and_five_test_arms(installed):
-    assert runtime.SELECTORS == ("fresh_r",)
+    assert runtime.SELECTORS == switch.SELECTORS and switch.SELECTORS[0] == "fresh_r"
+    assert switch.selector_of({}) == "fresh_r" and switch.selector_of({"selector": "hard"}) == "hard"
+    with pytest.raises(ValueError, match="unregistered continuation selector"):
+        switch.selector_of({"selector": "low_order"})
     assert runtime.study.BRANCHES == rule.DEV_ARMS
     assert len(runtime.TEST_ARMS) == 5
     assert runtime.HERE == Path(switch.__file__).resolve()
@@ -111,6 +114,135 @@ def dataset_predecessor():
     return hashes
 
 
+def selector_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "8b3ed402eed90b80b78078319988a37f6d55abbb7fa78f12d0c535ea7efddf85"
+    assert core.fingerprint(hashes) == switch.PRE_SELECTOR_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = selector_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "dataset-runtime.json")["runtime_code_hashes"] == previous
+        # The 820e005 runtime never wrote this receipt.
+        (tmp_path / "selector-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "selector-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["dataset_runtime_sha256"] == base.digest(tmp_path / "dataset-runtime.json")
+    dataset = core.read(tmp_path / "dataset-runtime.json")
+    assert dataset["runtime_code_hashes"] == (previous if migrated else switch.code_hashes())
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+    tampered = core.read(tmp_path / "dataset-runtime.json")
+    tampered["cost_policy"] = "ignore previous costs"
+    core.atomic_json(tmp_path / "dataset-runtime.json", tampered)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+def reward_cache(path, prompts=40, responses=8):
+    """Prompt i has i % 9 cached successes: five never solved, four exactly at 0.5."""
+    lines = []
+    for i in range(prompts):
+        for j in range(responses):
+            lines.append(json.dumps({"prompt_idx": i, "rollout_idx": j, "reward": 1. if j < i % 9 else 0.}))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def test_cached_selection_ranks_difficulty_and_hard_from_the_cache_alone(tmp_path):
+    cache = reward_cache(tmp_path / "rollouts_behavior_train.jsonl")
+    difficulty = switch.cached_selection(cache, prompts=40, responses=8, seed=3, selector="difficulty")
+    assert difficulty["indices"] == [4, 13, 22, 31] and difficulty["k"] == 4
+    assert difficulty["selected_success_rate_mean"] == .5 and difficulty["unsolved_prompts"] == 5
+    hard = switch.cached_selection(cache, prompts=40, responses=8, seed=3, selector="hard")
+    assert len(hard["indices"]) == 4 and set(hard["indices"]) < {1, 10, 19, 28, 37}
+    assert hard["selected_success_rate_mean"] == .125
+    assert not set(hard["indices"]) & {0, 9, 18, 27, 36}
+    assert hard["cache_sha256"] == difficulty["cache_sha256"] == base.digest(cache)
+    assert hard == switch.cached_selection(cache, prompts=40, responses=8, seed=3, selector="hard")
+    with pytest.raises(ValueError, match="not a cached selector"):
+        switch.cached_selection(cache, prompts=40, responses=8, seed=3, selector="fresh_r")
+    short = tmp_path / "short.jsonl"
+    short.write_text("\n".join(cache.read_text().splitlines()[:-1]) + "\n")
+    with pytest.raises(ValueError, match="incomplete whole-pool cache"):
+        switch.cached_selection(short, prompts=40, responses=8, seed=3, selector="difficulty")
+
+
+def test_cached_selector_is_a_metered_read_checked_against_the_diagnostic(tmp_path, installed):
+    out, c = toy_source(tmp_path)
+    c["scope"]["selector"] = "difficulty"
+    core.atomic_json(out / "contract.json", c)
+    reward_cache(Path(c["source_run"]) / "rollouts_behavior_train.jsonl")
+    free = {"profile_sha256": None, "budget_gpu_seconds": 1000.}
+    assert switch.select_once(out, c, {"mode": "test"}, "selection_full", free, {}, []) == [4, 13, 22, 31]
+    rows = [json.loads(l) for l in (out / "selection_full/cost.jsonl").read_text().splitlines()]
+    assert [(r["phase"], r["ledger"], r["state"]) for r in rows] == [("difficulty-select", "deployment", "started"),
+                                                                     ("difficulty-select", "deployment", "finished")]
+    assert switch.select_once(out, c, {"mode": "test"}, "selection_full", free, {}, []) == [4, 13, 22, 31]
+    assert len((out / "selection_full/cost.jsonl").read_text().splitlines()) == 2
+    paid = {"profile_sha256": "sha", "budget_gpu_seconds": 996.}
+    core.atomic_json(out / "gate_measurement/selection.json", {"indices": [0, 1, 2, 3]})
+    with pytest.raises(ValueError, match="diagnostic-selected indices changed"):
+        switch.select_once(out, c, {"mode": "test"}, "gated", paid, {}, [])
+    core.atomic_json(out / "gate_measurement/selection.json", {"indices": [4, 13, 22, 31]})
+    assert switch.select_once(out, c, {"mode": "test"}, "gated", paid, {}, []) == [4, 13, 22, 31]
+    (out / "gated/cached-select/selection.json").write_text("{}")
+    with pytest.raises(ValueError, match="selection changed"):
+        switch.select_once(out, c, {"mode": "test"}, "gated", paid, {}, [])
+
+
+@pytest.mark.parametrize("selector, expected", [("difficulty", [3]), ("hard", [0]), ("fresh_r", None)])
+def test_diagnostic_freezes_the_cached_ranking_only_for_cached_selectors(tmp_path, installed, selector, expected):
+    run = tmp_path / "source"
+    (run / "policy_step_25").mkdir(parents=True)
+    cache = run / "rollouts_behavior_train.jsonl"
+    cache.write_text("".join(json.dumps({"prompt_idx": i, "rollout_idx": j, "reward": int(j <= i)}) + "\n"
+                             for i in range(4) for j in range(8)))
+    stats = run / "policy_step_25/grpo_stats.jsonl"
+    stats.write_text("".join(json.dumps({"step": s, "groups": 4, "nonzero_advantage_groups": 2,
+                                         "reward_mean": .5, "step_seconds": 3.}) + "\n" for s in range(1, 26)))
+    out = tmp_path / "point"
+    core.atomic_json(out / "contract.json", {"source_run": str(run), "n": 4, "config": {"seed": 0, "drift": 25},
+                                             "scope": {"gpu_type": "H100", "selector": selector}})
+    core.atomic_json(out / "net_inputs.json", {"rollouts_behavior_train.jsonl": base.digest(cache),
+                                               "policy_step_25/grpo_stats.jsonl": base.digest(stats)})
+    switch.measurement_worker(out, "gate_measurement", window=20, wall_cap=30.)
+    report = core.read(out / "gate_measurement/measurement.json")
+    assert set(report["features"]) == set(rule.FEATURES) and "difficulty_indices" not in report
+    selection = out / "gate_measurement/selection.json"
+    if expected is None:
+        assert not selection.exists()
+    else:
+        assert core.read(selection)["indices"] == expected and core.read(selection)["selector"] == selector
+
+
+def test_protocol_selector_must_match_the_manifest(tmp_path):
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": switch.code_hashes(), "selector": "hard"})
+    child = switch.child_root(tmp_path, 3, 25)
+    p = {"schema": rule.SCHEMA, "schedule": rule.SCHEDULE, "mode": "test", "arms": list(rule.TEST_ARMS),
+         "selector": "hard", "model": None, "role": "test", "max_measurement_fraction": .01, "recent_window": 20,
+         "code_hashes": switch.code_hashes()}
+    core.atomic_json(child / "net_protocol.json", p)
+    assert switch.protocol(child) == p
+    core.atomic_json(child / "net_protocol.json", {**p, "selector": "fresh_r"})
+    with pytest.raises(ValueError, match="invalid switch experimental design"):
+        switch.protocol(child)
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
     previous = dataset_predecessor()
@@ -121,8 +253,9 @@ def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
             patch.setattr(switch, "code_hashes", lambda: previous)
             switch.manifest(tmp_path)
         assert core.read(tmp_path / "variant-root-runtime.json")["runtime_code_hashes"] == previous
-        # The 47339ca runtime never wrote this receipt.
+        # The 47339ca runtime never wrote these receipts.
         (tmp_path / "dataset-runtime.json").unlink()
+        (tmp_path / "selector-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -202,6 +335,7 @@ def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         # The b8d90c0 runtime never wrote these receipts.
         (tmp_path / "variant-root-runtime.json").unlink()
         (tmp_path / "dataset-runtime.json").unlink()
+        (tmp_path / "selector-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -284,6 +418,7 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
         (tmp_path / "fit-resilience-runtime.json").unlink()
         (tmp_path / "variant-root-runtime.json").unlink()
         (tmp_path / "dataset-runtime.json").unlink()
+        (tmp_path / "selector-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -318,6 +453,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "fit-resilience-runtime.json").unlink()
         (tmp_path / "variant-root-runtime.json").unlink()
         (tmp_path / "dataset-runtime.json").unlink()
+        (tmp_path / "selector-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}

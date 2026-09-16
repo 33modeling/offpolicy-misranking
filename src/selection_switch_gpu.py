@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
+import random
 import re
 import socket
 import statistics
@@ -47,10 +49,19 @@ PRE_FIT_RESILIENCE_CODE = "6f8e1fadfa8f2dd6ab6c401824c9def4a5f91e261c79edf780147
 PRE_VARIANT_ROOT_CODE = "dafec55898396c4ddc91bddf6ba40cb1e5db3bfd58d055bc6b14a04006e3c47d"
 # Exact 47339ca runtime before prepare could build an MBPP (code) switch root.
 PRE_DATASET_CODE = "181ad569457d1c10c6e8d16feefbfe6a045eb10f6072158d142e63b0272f4fae"
+# Exact 820e005 runtime before the continuation selector could be a cached score (difficulty, hard).
+PRE_SELECTOR_CODE = "f63ca6cc21fc5b78a8267a05f844322befbcbcce7260a623ca7503d079291425"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
                        PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE,
                        PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE,
-                       PRE_DATASET_CODE}
+                       PRE_DATASET_CODE, PRE_SELECTOR_CODE}
+# Continuation selectors. fresh_r rescores the pool with new responses and gradients
+# (the primary experiment). The cached selectors rank the pool from the
+# pre-continuation reward cache alone: difficulty keeps the 10% closest to a 0.5
+# success rate; hard keeps the 10% with the lowest success rate among prompts with
+# at least one cached success (never-solved prompts give GRPO no signal).
+SELECTORS = ("fresh_r", "difficulty", "hard")
+CACHED_SELECTORS = ("difficulty", "hard")
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py",
                        "src/net_gate_memory_worker.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
@@ -119,7 +130,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -136,7 +147,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -153,7 +164,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -170,7 +181,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
@@ -187,7 +198,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != compat_receipt and
                         (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                     raise ValueError(f"frozen contract changed: {compat_path}")
             else:
                 base.bind(compat_path, compat_receipt)
@@ -205,7 +216,7 @@ def manifest(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != shutdown_receipt and
                             (previous != {**shutdown_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                         raise ValueError(f"frozen contract changed: {shutdown_path}")
                 else:
                     base.bind(shutdown_path, shutdown_receipt)
@@ -223,7 +234,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != guard_receipt and
                                 (previous != {**guard_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                             raise ValueError(f"frozen contract changed: {guard_path}")
                     else:
                         base.bind(guard_path, guard_receipt)
@@ -241,7 +252,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != parallel_receipt and
                                 (previous != {**parallel_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                             raise ValueError(f"frozen contract changed: {parallel_path}")
                     else:
                         base.bind(parallel_path, parallel_receipt)
@@ -259,7 +270,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != resilience_receipt and
                                 (previous != {**resilience_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                             raise ValueError(f"frozen contract changed: {resilience_path}")
                     else:
                         base.bind(resilience_path, resilience_receipt)
@@ -277,19 +288,90 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != variant_receipt and
                                 (previous != {**variant_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) != PRE_DATASET_CODE)):
+                                 or core.fingerprint(previous_code) not in {PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
                             raise ValueError(f"frozen contract changed: {variant_path}")
                     else:
                         base.bind(variant_path, variant_receipt)
-                    base.bind(root / "dataset-runtime.json", {
+                    dataset_path = root / "dataset-runtime.json"
+                    dataset_receipt = {
                         "schema": "selection-switch-dataset-runtime/v1",
                         "switch_sha256": base.digest(root / "switch.json"),
                         "variant_root_runtime_sha256": base.digest(variant_path), "runtime_code_hashes": current,
                         "change": "prepare accepts --dataset mbpp (code pool, execution-verified rewards); "
                                   "MATH roots publish contracts through the unchanged MATH path",
                         "cost_policy": "no change to this root's diagnostics, policies, phase costs or budgets",
+                    }
+                    if dataset_path.exists():
+                        previous = core.read(dataset_path)
+                        previous_code = previous.get("runtime_code_hashes")
+                        if (previous != dataset_receipt and
+                                (previous != {**dataset_receipt, "runtime_code_hashes": previous_code}
+                                 or core.fingerprint(previous_code) != PRE_SELECTOR_CODE)):
+                            raise ValueError(f"frozen contract changed: {dataset_path}")
+                    else:
+                        base.bind(dataset_path, dataset_receipt)
+                    base.bind(root / "selector-runtime.json", {
+                        "schema": "selection-switch-selector-runtime/v1",
+                        "switch_sha256": base.digest(root / "switch.json"),
+                        "dataset_runtime_sha256": base.digest(dataset_path), "runtime_code_hashes": current,
+                        "change": "prepare accepts --selector difficulty|hard: the continuation subset is ranked "
+                                  "from the cached whole-pool rewards and charged as a metered read; "
+                                  "fresh_r roots publish and select through the unchanged path",
+                        "cost_policy": "no change to this root's diagnostics, policies, phase costs or budgets",
                     })
     return p
+
+
+def selector_of(p):
+    selector = p.get("selector", "fresh_r")
+    if selector not in SELECTORS:
+        raise ValueError(f"unregistered continuation selector: {selector!r}")
+    return selector
+
+
+def cached_selection(cache, *, prompts, responses, seed, selector):
+    """Rank the whole pool from the pre-continuation reward cache: no model, rollout or gradient.
+
+    difficulty keeps the 10% closest to a 0.5 success rate, with the registered
+    tie-break of the historical diagnostic. hard keeps the 10% with the lowest
+    success rate among prompts solved at least once in the cache.
+    """
+    if selector not in CACHED_SELECTORS:
+        raise ValueError(f"not a cached selector: {selector!r}")
+    core.integer(prompts, "prompts", 2)
+    core.integer(responses, "responses", 4)
+    groups = [[None]*responses for _ in range(prompts)]
+    digest = hashlib.sha256()
+    with Path(cache).open("rb") as handle:
+        for line in handle:
+            digest.update(line)
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            i, j = core.integer(row["prompt_idx"], "prompt index"), core.integer(row["rollout_idx"], "response index")
+            reward = core.number(row["reward"], "binary reward", 0, 1)
+            if i >= prompts or j >= responses or reward not in (0., 1.) or groups[i][j] is not None:
+                raise ValueError("invalid or duplicate cached response")
+            groups[i][j] = reward
+    if any(v is None for group in groups for v in group):
+        raise ValueError("incomplete whole-pool cache")
+    means = [statistics.fmean(group) for group in groups]
+    rng = random.Random(seed+701_000_003)
+    ties = [rng.random() for _ in means]
+    k = max(1, int(.1*prompts))
+    if selector == "difficulty":
+        order = sorted(range(prompts), key=lambda i: (abs(means[i]-.5), ties[i]))
+    else:
+        solved = [i for i in range(prompts) if means[i] > 0]
+        if len(solved) < k:
+            raise ValueError("fewer solved prompts in the cache than the subset size")
+        order = sorted(solved, key=lambda i: (means[i], ties[i]))
+    indices = sorted(order[:k])
+    return {"schema": rule.SCHEMA, "selector": selector, "indices": indices, "k": k, "prompts": prompts,
+            "responses_per_prompt": responses, "cache_sha256": digest.hexdigest(),
+            "success_rate_sha256": core.fingerprint(means), "unsolved_prompts": means.count(0.),
+            "selected_success_rate_mean": statistics.fmean(means[i] for i in indices),
+            "source": "pre-continuation cached rewards; no model, rollout or gradient"}
 
 
 def link(path, target):
@@ -554,6 +636,7 @@ def prepare(args):
             print(f"[prepared] frozen experiment already exists: {root}")
             return
         dataset = getattr(args, "dataset", None) or "math500"
+        selector = selector_of({"selector": getattr(args, "selector", None) or "fresh_r"})
         runs = resolve_sources(args.matrix, (*rule.DEV_SEEDS, *rule.TEST_SEEDS), 0, dataset)
         ed.require_separate_output(root, runs)
         if any(root in run.parents for run in runs):
@@ -627,7 +710,7 @@ def prepare(args):
             if len(ed.independent_test(core.read(source / "prompts.json"), evaluation)) < 4:
                 raise ValueError("too few independent evaluation questions")
         base.bind(root / "test.json", evaluation)
-        p = {"schema": rule.SCHEMA, "dataset": dataset, "code_hashes": code_hashes(), "sources": sources,
+        p = {"schema": rule.SCHEMA, "dataset": dataset, "selector": selector, "code_hashes": code_hashes(), "sources": sources,
              "budget_gpu_seconds": budget, "budget_source": budget_source, "steps": list(rule.STEPS),
              "development_seeds": list(rule.DEV_SEEDS), "test_seeds": list(rule.TEST_SEEDS),
              "gpu_type": args.gpu_type, "evaluation": evaluation, "eval_k": args.eval_k,
@@ -640,7 +723,7 @@ def prepare(args):
             p["prefix_cost"] = "certified prefixes imported from prefix_source; their research cost is recorded there"
         base.bind(root / "switch.json", p)
         print(f"[prepared] {root}; 18 development + 30 held-out continuations, five selected prefixes"
-              f"{' imported from ' + imported['root'] if imported else ''}; B={budget:.0f} GPU-s")
+              f"{' imported from ' + imported['root'] if imported else ''}; selector={selector}; B={budget:.0f} GPU-s")
 
 
 def prefix_cost(segment, gpu_type):
@@ -748,7 +831,7 @@ def publish_state(root, seed, step):
     base.bind(source / "selected-prefix.json", cert)
     child = child_root(root, seed, step)
     c = state_contract(p, source, budget=p["budget_gpu_seconds"], gpu_type=p["gpu_type"],
-        role="test" if held_out else "development", selector="fresh_r", eval_k=p["eval_k"], max_steps=100000)
+        role="test" if held_out else "development", selector=selector_of(p), eval_k=p["eval_k"], max_steps=100000)
     c["selected_prefix"] = {"schema": rule.SCHEMA, "root": str(root), "certificate_sha256": core.fingerprint(cert)}
     c["source_hashes"]["selected-prefix.json"] = base.digest(source / "selected-prefix.json")
     c["source_hashes"]["rollouts_behavior_train.jsonl"] = base.digest(source / "rollouts_behavior_train.jsonl")
@@ -762,7 +845,7 @@ def publish_state(root, seed, step):
     # Held-out states never carry the gate model: controls need only the frozen
     # contract, and the fitted gate binds later in gate.json (see bind_gate).
     protocol_value = {"schema": rule.SCHEMA, "schedule": rule.SCHEDULE, "mode": "test" if held_out else "study",
-        "model": None, "role": c["role"], "selector": "fresh_r", "arms": list(rule.TEST_ARMS if held_out else rule.DEV_ARMS),
+        "model": None, "role": c["role"], "selector": selector_of(p), "arms": list(rule.TEST_ARMS if held_out else rule.DEV_ARMS),
         "recent_window": 20, "max_measurement_fraction": .01, "code_hashes": p["code_hashes"]}
     base.bind(child / "net_protocol.json", protocol_value)
     return child
@@ -807,7 +890,8 @@ def protocol(root):
     if value.get("schema") != rule.SCHEMA or value.get("schedule") != rule.SCHEDULE:
         raise ValueError("not a selected-prefix switch suite")
     arms = list(rule.DEV_ARMS) if value["mode"] == "study" else list(rule.TEST_ARMS)
-    if value["mode"] not in {"study", "test"} or value["arms"] != arms or value["selector"] != "fresh_r":
+    p = manifest(root.parent.parent)
+    if value["mode"] not in {"study", "test"} or value["arms"] != arms or value["selector"] != selector_of(p):
         raise ValueError("invalid switch experimental design")
     if value["mode"] == "test":
         if value["role"] != "test" or value["model"] is not None:
@@ -817,7 +901,7 @@ def protocol(root):
     core.number(value["max_measurement_fraction"], "measurement fraction", 1e-12, .1)
     core.integer(value["recent_window"], "recent window", 1)
     validate_code_hashes(value.get("code_hashes"))
-    if value["code_hashes"] != manifest(root.parent.parent)["code_hashes"]:
+    if value["code_hashes"] != p["code_hashes"]:
         raise ValueError("state code binding differs from the switch manifest")
     return value
 
@@ -835,6 +919,11 @@ def measurement_worker(out, arm, *, window, wall_cap, scoring_only=False):
     # The shared held-out diagnostic is measured before the gate exists; the gated
     # decision applies the frozen model to these features later (see decision).
     base.bind(out / arm / "measurement.json", report)
+    if c["scope"]["selector"] in CACHED_SELECTORS:
+        # The diagnostic already read the cache; the ranking it implies is frozen with it
+        # so a paid arm's later selection is checked against the diagnosed one.
+        base.bind(out / arm / "selection.json", cached_selection(run / "rollouts_behavior_train.jsonl",
+            prompts=c["n"], responses=8, seed=c["config"]["seed"], selector=c["scope"]["selector"]))
 
 
 def decision(out, suite, p, arm, env):
@@ -928,7 +1017,34 @@ def freeze_gate(out, suite, p, env):
         return value
 
 
+def cached_select_once(out, c, p, arm, choice):
+    """Charge the cached ranking as a metered read; no GPU work, no new responses."""
+    directory = out / arm
+    selector = c["scope"]["selector"]
+    run = Path(c["source_run"])
+    path = directory / "cached-select" / "selection.json"
+    if not path.exists():
+        def act():
+            value = cached_selection(run / "rollouts_behavior_train.jsonl", prompts=c["n"], responses=8,
+                                     seed=c["config"]["seed"], selector=selector)
+            base.bind(path, value)
+            base.bind(path.with_suffix(".sha256.json"), {"sha256": base.digest(path)})
+        base.meter(directory, f"{selector}-select", c["scope"]["gpu_type"], action=act, ledger="deployment")
+    if core.read(path.with_suffix(".sha256.json")) != {"sha256": base.digest(path)}:
+        raise ValueError("selection changed")
+    value = core.read(path)
+    if value["selector"] != selector or len(value["indices"]) != value["k"]:
+        raise ValueError("cached selection does not match the contract selector")
+    if choice.get("profile_sha256"):
+        measured = out / ("measurement" if p["mode"] == "study" else "gate_measurement") / "selection.json"
+        if core.read(measured)["indices"] != value["indices"]:
+            raise ValueError("diagnostic-selected indices changed")
+    return value["indices"]
+
+
 def select_once(out, c, p, arm, choice, env, devices):
+    if c["scope"]["selector"] in CACHED_SELECTORS:
+        return cached_select_once(out, c, p, arm, choice)
     directory = out / arm
     private = directory / "fresh-r"
     run = Path(c["source_run"])
@@ -1285,7 +1401,7 @@ def summarize(root):
 def install_runtime():
     # Reuse the frozen learner/ledger implementation without changing its legacy entry points.
     runtime.net, runtime.HERE = rule, HERE
-    runtime.TEST_ARMS, runtime.SELECTORS, runtime.CODE_FILES = rule.TEST_ARMS, ("fresh_r",), CODE
+    runtime.TEST_ARMS, runtime.SELECTORS, runtime.CODE_FILES = rule.TEST_ARMS, SELECTORS, CODE
     runtime.study = SimpleNamespace(BRANCHES=rule.DEV_ARMS, reward_mean=runtime.study.reward_mean)
     runtime.protocol, runtime.select_once, runtime.measurement_worker = protocol, select_once, measurement_worker
     runtime.decision = decision
@@ -1300,6 +1416,8 @@ def main():
     parser.add_argument("--budget-gpu-seconds", type=float)
     parser.add_argument("--prefix-source", type=Path,
                         help="reuse this root's certified prefixes and evaluation set (a variant of the same states)")
+    parser.add_argument("--selector", choices=SELECTORS, default="fresh_r",
+                        help="continuation selector: fresh_r (rescoring) or a cached ranking (difficulty, hard)")
     parser.add_argument("--dataset", choices=DATASETS, default="math500",
                         help="matrix family to prepare from: math500 (default) or mbpp (execution-verified code)")
     parser.add_argument("--gpu-type", default="NVIDIA H100 80GB HBM3")
