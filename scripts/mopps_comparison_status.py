@@ -268,7 +268,7 @@ def table(headers, rows, widths):
             for row in [headers, *rows]]
 
 
-def render(data, *, all_tasks=False, width=120):
+def render(data, *, all_tasks=False, width=120, local_gpus=True):
     if not data["prepared"]:
         return f"NOT PREPARED  {data['root']}"
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -303,8 +303,9 @@ def render(data, *, all_tasks=False, width=120):
         lines.append("No fresh worker heartbeat or waiting launcher observed.")
     lines += ["", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
     lines += node_view.render_nodes(data.get("nodes", []), table, width)
-    lines += ["", "THIS NODE GPUS"]
-    lines += node_view.render_local_gpus(data.get("local_gpus", {"host": "?", "available": False, "gpus": [], "processes": []}), table, width)
+    if local_gpus:
+        lines += ["", "THIS NODE GPUS"]
+        lines += node_view.render_local_gpus(data.get("local_gpus", {"host": "?", "available": False, "gpus": [], "processes": []}), table, width)
     if data["admissions"]:
         lines += ["", "NODE ADMISSION (latest NCCL probe per host)"]
         rows = [[item["host"], item["state"], str(item["attempts"]),

@@ -29,6 +29,10 @@ for arg in "$@"; do
 done
 if [ "$MODE" = status ]; then
   export CUDA_VISIBLE_DEVICES=""
+  # Both experiments on one screen; EXPERIMENTS_COMBINED=0 shows only this one.
+  if [ "${EXPERIMENTS_COMBINED:-1}" != 0 ]; then
+    exec bash scripts/run_experiments.sh status "$@"
+  fi
   exec "$PY" scripts/selection_switch_status.py --root "$OUT_ROOT" "$@"
 fi
 if [ "$MODE" = check-code ]; then

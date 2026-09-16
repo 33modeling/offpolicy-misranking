@@ -54,7 +54,12 @@ bash scripts/run_selection_switch.sh export
 bash scripts/run_selection_switch.sh why
 ```
 
-`status` is now a separate, read-only operational snapshot. Its default view shows
+`status` from either launcher (or `bash scripts/run_experiments.sh status`) is one
+read-only screen for both experiments: the selection-switch view below, then the
+MoPPS comparison view, then this node's GPUs once. `--all`, `--json` (one object
+with `selection_switch` and `mopps_comparison`) and `--watch [seconds]` apply to
+the whole screen; `EXPERIMENTS_COMBINED=0` shows only this experiment. The
+selection-switch view shows
 active/waiting/stale nodes, prefix and continuation completion counts, the current
 worker on each node (PID, phase, elapsed time, limit and heartbeat age), five
 prefix rows, a 15-state continuation grid, and concise failures requiring attention.

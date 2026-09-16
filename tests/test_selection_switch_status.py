@@ -187,10 +187,13 @@ def test_status_launcher_is_read_only_and_does_not_migrate_runtime(tmp_path):
     four_nodes(tmp_path, time.time())
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "status", "--json"], cwd=ROOT,
-        env={**os.environ, "SWITCH_ROOT": str(tmp_path), "SWITCH_PYTHON": sys.executable},
+        env={**os.environ, "SWITCH_ROOT": str(tmp_path), "MOPPS_ROOT": str(tmp_path.parent / "absent-mopps"),
+             "SWITCH_PYTHON": sys.executable},
         capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["active_nodes"] == 4
+    payload = json.loads(result.stdout)
+    assert payload["selection_switch"]["active_nodes"] == 4
+    assert payload["mopps_comparison"]["prepared"] is False
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
     assert not list(tmp_path.glob(".*.lock"))
     assert not list(tmp_path.glob("*-runtime.json"))

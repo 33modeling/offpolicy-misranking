@@ -6,7 +6,9 @@
 #
 #   bash scripts/run_experiments.sh          detach on this node and follow
 #   bash scripts/run_experiments.sh stop     stop this node's launcher and workers
-#   bash scripts/run_experiments.sh status   both status views
+#   bash scripts/run_experiments.sh status   one screen for both experiments (also
+#                                            what run_selection_switch.sh status and
+#                                            run_mopps_comparison.sh status show)
 #
 # EXPERIMENTS_HOLD_SECONDS (default 300) is the pause between passes,
 # EXPERIMENTS_AUTO_PULL=1 runs 'git pull --ff-only' before each pass.
@@ -23,8 +25,9 @@ export OM_WORK="$WORK"
 SWITCH_ROOT=$(realpath -m "${SWITCH_ROOT:-$WORK/runs/selection-switch-v1}")
 MOPPS_ROOT=$(realpath -m "${MOPPS_ROOT:-$WORK/runs/mopps-comparison-v1}")
 export SWITCH_ROOT MOPPS_ROOT
-PY=${SWITCH_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
+PY=${SWITCH_PYTHON:-${MOPPS_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}}
 [ -x "$PY" ] || PY=python3
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 LOG_DIR="$WORK/runs/experiments/logs"
 HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
 PID_FILE="$LOG_DIR/launcher.$HOST.pid"
@@ -36,13 +39,10 @@ launcher_pid_alive() {
   [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
 if [ "$MODE" = status ]; then
+  # One screen for both experiments (switch first, MoPPS second, this node's
+  # GPUs once). Accepts --all, --json and --watch [seconds]. Read-only.
   export CUDA_VISIBLE_DEVICES=""
-  echo "===== selection switch ====="
-  "$PY" scripts/selection_switch_status.py --root "$SWITCH_ROOT" "$@" || true
-  echo
-  echo "===== MoPPS comparison ====="
-  "$PY" scripts/mopps_comparison_status.py --root "$MOPPS_ROOT" "$@" || true
-  exit 0
+  exec "$PY" scripts/experiments_status.py --switch-root "$SWITCH_ROOT" --mopps-root "$MOPPS_ROOT" "$@"
 fi
 if [ "$MODE" = stop ]; then
   if launcher_pid_alive; then

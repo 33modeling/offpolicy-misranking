@@ -189,7 +189,9 @@ ends the view, `bash scripts/run_mopps_comparison.sh stop` stops the node's
 detached launcher (TERM to its session; ranks reaped, receipts closed).
 `SWITCH_FOREGROUND=1` or a non-terminal caller keeps the foreground behaviour.
 
-`bash scripts/run_mopps_comparison.sh status` is the detailed read-only view in
+`bash scripts/run_mopps_comparison.sh status` shows one read-only screen for both
+experiments (selection switch first, then this comparison, then this node's GPUs
+once); `EXPERIMENTS_COMBINED=0` shows only this comparison. Its view uses
 the switch status layout: active/waiting/stale nodes, the current worker per node
 (PID, phase, elapsed, limit, heartbeat age), the latest NCCL admission probe per
 host with its overrides, the parent selection-switch prefixes per seed, a per-state

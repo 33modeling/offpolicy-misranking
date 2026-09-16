@@ -187,6 +187,10 @@ if [ "$MODE" = status ]; then
     shift
     exec "$PY" src/mopps_comparison_gpu.py status --root "$OUT_ROOT" "$@"
   fi
+  # Both experiments on one screen; EXPERIMENTS_COMBINED=0 shows only this one.
+  if [ "${EXPERIMENTS_COMBINED:-1}" != 0 ]; then
+    exec bash scripts/run_experiments.sh status "$@"
+  fi
   exec "$PY" scripts/mopps_comparison_status.py --root "$OUT_ROOT" "$@"
 fi
 if [ "$MODE" = summarize ]; then
