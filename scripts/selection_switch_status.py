@@ -86,6 +86,11 @@ def snapshot(root, *, now=None):
         raise ValueError("switch.json has an invalid or unsupported schema")
     model = read(root / "model.json")
     gate_ready = bool(model) and "_invalid" not in model
+    gate_fit_failure = "" if gate_ready else str(read(root / "gate-fit/failure.json").get("error", ""))
+    if gate_fit_failure:
+        notices.append({"path": "gate-fit/failure.json", "error": f"gate fit failed: {gate_fit_failure}"})
+    for path in sorted((root / "states").glob("s*-t*/failure.json")):
+        notices.append({"path": str(path.relative_to(root)), "error": f"state not published/validated: {read(path).get('error', '')}"})
     tasks, cost_pending = [], []
 
     def observe(directory, *, seed, step, kind, arm, done_path=None, dependency=None):
@@ -209,6 +214,7 @@ def snapshot(root, *, now=None):
     branches = [task for task in tasks if task["kind"] == "branch"]
     nodes = node_view.launcher_nodes(root, tasks, now=now)
     return {"prepared": True, "root": str(root), "updated": now, "gate_ready": gate_ready,
+            "gate_fit_failure": gate_fit_failure,
             "nodes": nodes, "local_gpus": node_view.local_gpus(),
             "active_nodes": len(active_hosts), "stale_nodes": len(stale_hosts), "waiting_nodes": waiting,
             "branch_counts": dict(Counter(task["status"] for task in branches)),
@@ -246,7 +252,8 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
              f"PROGRESS  Prefix {data['prefix_done']}/15 segments  |  Dev {data['development_done']}/18  |  Test {data['test_done']}/30",
              "BRANCHES  " + "  ".join(f"{name} {data['branch_counts'].get(name, 0)}" for name in CELLS)]
     lines.append("GATE  " + ("READY" if data["gate_ready"] else
-                 f"WAIT: {18-data['development_done']} development branches unpublished (only the 6 GATE arms wait; held-out controls run now)"
+                 f"FIT FAILED: {data['gate_fit_failure'][:150]} (see errors; controls keep running)" if data.get("gate_fit_failure")
+                 else f"WAIT: {18-data['development_done']} development branches unpublished (only the 6 GATE arms wait; held-out controls run now)"
                  if data["development_done"] < 18 else "FIT PENDING: 18/18 development results published"))
     tasks = data["tasks"]
     alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID"})

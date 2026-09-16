@@ -89,6 +89,44 @@ def parallel_predecessor():
     return hashes
 
 
+def fit_resilience_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "af2aa2fe039da46d5f686fe80c0833aaca5cbdf4ed9e30ae38248e0c841524a9"
+    assert core.fingerprint(hashes) == switch.PRE_FIT_RESILIENCE_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = fit_resilience_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "test-parallel-runtime.json")["runtime_code_hashes"] == previous
+        # The 091ae20 runtime never wrote this receipt.
+        (tmp_path / "fit-resilience-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "fit-resilience-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["test_parallel_runtime_sha256"] == base.digest(tmp_path / "test-parallel-runtime.json")
+    if migrated:
+        assert core.read(tmp_path / "test-parallel-runtime.json")["runtime_code_hashes"] == previous
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+    tampered = core.read(tmp_path / "test-parallel-runtime.json")
+    tampered["cost_policy"] = "ignore previous costs"
+    core.atomic_json(tmp_path / "test-parallel-runtime.json", tampered)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
     previous = parallel_predecessor()
@@ -99,8 +137,9 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
             patch.setattr(switch, "code_hashes", lambda: previous)
             switch.manifest(tmp_path)
         assert core.read(tmp_path / "cache-guard-runtime.json")["runtime_code_hashes"] == previous
-        # The 89c26af runtime never wrote this receipt; only its predecessors' receipts exist.
+        # The 89c26af runtime never wrote these receipts; only its predecessors' receipts exist.
         (tmp_path / "test-parallel-runtime.json").unlink()
+        (tmp_path / "fit-resilience-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
@@ -198,7 +237,7 @@ def test_code_compat_preserves_latest_and_partially_written_receipt_chains(tmp_p
     assert core.read(tmp_path / "code-compat-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
 
 
-@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard", "test-parallel"])
+@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard", "test-parallel", "fit-resilience"])
 def test_code_compat_rejects_tampered_receipts(tmp_path, receipt):
     core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": initial_predecessor()})
     switch.manifest(tmp_path)
@@ -856,3 +895,47 @@ def test_initial_score_repair_never_ignores_changed_recorded_inputs(tmp_path):
     (tmp_path / "rollouts.jsonl").write_text("changed")
     with pytest.raises(ValueError, match="input changed"):
         switch.initial_fresh_scores(tmp_path, {}, {"train": [{}]}, {"validated_rows": 8})
+
+
+def test_failed_gate_fit_and_bad_state_do_not_stop_the_node(tmp_path, monkeypatch):
+    seeds = (*rule.DEV_SEEDS, *rule.TEST_SEEDS)
+    p = {"sources": {str(s): {"config": {}} for s in seeds}, "gpu_type": "H100"}
+    monkeypatch.setattr(switch, "manifest", lambda _: p)
+    monkeypatch.setattr(switch.subprocess, "check_output", lambda *a, **kw: "H100\n"*4)
+    monkeypatch.setattr(switch, "status", lambda _: None)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+    monkeypatch.setenv("OM_NODE_LOCK_HELD", "1")
+    for seed in seeds:
+        for step in rule.STEPS:
+            core.atomic_json(switch.prefix_dir(tmp_path, seed) / f"prefix-{step}.json", {})
+    fits = []
+    def fit(root):
+        fits.append(1)
+        raise ValueError("development labels are invalid: seed 1 result hash changed")
+    monkeypatch.setattr(switch, "fit_once", fit)
+    def publish(root, seed, step):
+        if (seed, step) == (3, 50):
+            raise ValueError("source state differs from registered prefix")
+        child = switch.child_root(root, seed, step)
+        core.atomic_json(child / "points" / f"{seed}-{step}" / "contract.json", {"seed": seed, "step": step})
+        core.atomic_json(child / "net_protocol.json", {"arms": list(rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS)})
+        core.atomic_json(child / "suite.json", {})
+    monkeypatch.setattr(switch, "publish_state", publish)
+    monkeypatch.setattr(switch, "protocol", lambda child: core.read(child / "net_protocol.json"))
+    monkeypatch.setattr(base, "entries", lambda child: iter((child / "points").iterdir()))
+    monkeypatch.setattr(switch, "bind_gate", lambda root, child, p=None: None)
+    monkeypatch.setattr(switch, "freeze_decisions", lambda out, *a: core.atomic_json(out / "decisions-frozen.json", {}))
+    calls = []
+    def run(out, suite, protocol, arm, devices, env):
+        c = core.read(out / "contract.json")
+        calls.append((c["seed"], c["step"], arm))
+        core.atomic_json(out / arm / "result.json", {})
+    monkeypatch.setattr(runtime, "run_arm", run)
+    assert switch.work(tmp_path, idle_timeout=0) == 1
+    assert len(fits) == 1, "a failing fit is attempted once per worker, not every loop"
+    failure = core.read(tmp_path / "gate-fit/failure.json")
+    assert "development labels are invalid" in failure["error"]
+    assert "registered prefix" in core.read(switch.child_root(tmp_path, 3, 50) / "failure.json")["error"]
+    assert not any(arm == "gated" for _, _, arm in calls)
+    assert sum(1 for s, t, a in calls if s in rule.TEST_SEEDS) == 4*5, "every publishable held-out state still ran its controls"
+    assert not any((s, t) == (3, 50) for s, t, _ in calls)

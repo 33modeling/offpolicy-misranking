@@ -202,6 +202,47 @@ def parallel_predecessor():
     return hashes
 
 
+def fit_resilience_predecessor():
+    hashes = run.hashes()
+    hashes["src/selection_switch_gpu.py"] = "af2aa2fe039da46d5f686fe80c0833aaca5cbdf4ed9e30ae38248e0c841524a9"
+    hashes["src/mopps_comparison_gpu.py"] = "cb7051a21a39260753f6e5fd15612f6beab3c3cd77af423e117fb98a7dc60a32"
+    assert core.fingerprint(hashes) == run.PRE_FIT_RESILIENCE_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_fit_resilience_preserves_091ae20_manifest_receipts_and_costs(tmp_path, monkeypatch, migrated):
+    parent, _ = source(tmp_path)
+    root = tmp_path / "comparison"
+    p = run.prepare(root, parent)
+    previous = fit_resilience_predecessor()
+    recorded = parallel_predecessor()
+    p["code_hashes"] = recorded if migrated else previous
+    core.atomic_json(root / "mopps.json", p)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(run, "hashes", lambda: previous)
+            run.protocol(root)
+        # The 091ae20 runtime never wrote this receipt.
+        (root / "fit-resilience-runtime.json").unlink()
+        assert core.read(root / "test-parallel-runtime.json")["runtime_code_hashes"] == previous
+    base.journal(root / "states/s3-t25/mopps/cost.jsonl", {"state": "started", "event_id": "unknown"})
+    before = snapshot(tmp_path)
+    assert run.protocol(root) == p
+    assert run.prepare(root, parent) == p
+    after = snapshot(tmp_path)
+    assert {name: after[name] for name in before} == before
+    receipt = core.read(root / "fit-resilience-runtime.json")
+    assert receipt["runtime_code_hashes"] == run.hashes()
+    assert receipt["test_parallel_runtime_sha256"] == base.digest(root / "test-parallel-runtime.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(root / "states/s3-t25/mopps")
+    receipt["cost_policy"] = "ignore costs"
+    core.atomic_json(root / "fit-resilience-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        run.protocol(root)
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_test_parallel_preserves_89c26af_manifest_receipts_and_costs(tmp_path, monkeypatch, migrated):
     parent, _ = source(tmp_path)
@@ -218,6 +259,7 @@ def test_test_parallel_preserves_89c26af_manifest_receipts_and_costs(tmp_path, m
             patch.setattr(run, "hashes", lambda: previous)
             run.protocol(root)
         (root / "test-parallel-runtime.json").unlink()
+        (root / "fit-resilience-runtime.json").unlink()
         assert core.read(root / "nonblocking-retry-runtime.json")["runtime_code_hashes"] == previous
     base.journal(root / "states/s3-t25/mopps/cost.jsonl", {"state": "started", "event_id": "unknown"})
     before = snapshot(tmp_path)
@@ -273,8 +315,9 @@ def test_nonblocking_retry_preserves_bdd727e_manifest_receipts_and_costs(tmp_pat
             patch.setattr(run, "hashes", lambda: previous)
             run.protocol(root)
         (root / "nonblocking-retry-runtime.json").unlink()
-        # Neither predecessor runtime wrote the test-parallel receipt.
+        # Neither predecessor runtime wrote the later receipts.
         (root / "test-parallel-runtime.json").unlink()
+        (root / "fit-resilience-runtime.json").unlink()
     base.journal(root / "states/s3-t25/mopps/cost.jsonl", {"state": "started", "event_id": "unknown"})
     before = snapshot(tmp_path)
     assert run.protocol(root) == p

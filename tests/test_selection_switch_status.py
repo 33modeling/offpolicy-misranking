@@ -273,3 +273,17 @@ def test_invalid_prefix_blocks_dependents_and_is_not_counted_complete(tmp_path):
     assert data["prefix_done"] == 0
     assert data["tasks"][0]["status"] == "INVALID"
     assert all(task["status"] == "WAIT" for task in data["tasks"] if task["kind"] == "branch" and task["seed"] == 0)
+
+
+def test_gate_fit_failure_and_unpublished_state_are_reported(tmp_path):
+    prepared(tmp_path)
+    core.atomic_json(tmp_path / "gate-fit/failure.json", {"error": "development labels are invalid: seed 1 result hash changed", "time": time.time()})
+    core.atomic_json(tmp_path / "states/s3-t50/failure.json", {"error": "source state differs from registered prefix", "time": time.time()})
+    data = status.snapshot(tmp_path)
+    assert data["gate_fit_failure"].startswith("development labels are invalid")
+    output = status.render(data)
+    assert "GATE  FIT FAILED: development labels are invalid" in output
+    assert any("gate fit failed" in n["error"] for n in data["notices"])
+    assert any("state not published/validated" in n["error"] and "s3-t50" in n["path"] for n in data["notices"])
+    core.atomic_json(tmp_path / "model.json", {"model_id": "published"})
+    assert status.snapshot(tmp_path)["gate_fit_failure"] == ""

@@ -40,9 +40,11 @@ PRE_SHUTDOWN_CODE = "fff7859976ea68d49a9695b27d904522cae6d87e6e5e2f9475be0856941
 PRE_CACHE_GUARD_CODE = "43f53caa042b27810fe3ba45da025198953378e6f858868cdb93e004bea3a60e"
 # Exact 89c26af runtime before held-out controls could run ahead of the development gate.
 PRE_TEST_PARALLEL_CODE = "b7803071821dd7aa68035370e37c77fdbaecec13d9e96ea6574d91b10758f5a5"
+# Exact 091ae20 runtime before a failing gate fit or state publication stopped the worker.
+PRE_FIT_RESILIENCE_CODE = "6f8e1fadfa8f2dd6ab6c401824c9def4a5f91e261c79edf780147b0454b8e4ef"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
                        PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE,
-                       PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE}
+                       PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE}
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py",
                        "src/net_gate_memory_worker.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
@@ -111,7 +113,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -128,7 +130,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -145,7 +147,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -162,7 +164,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
@@ -179,7 +181,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != compat_receipt and
                         (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
                     raise ValueError(f"frozen contract changed: {compat_path}")
             else:
                 base.bind(compat_path, compat_receipt)
@@ -197,7 +199,7 @@ def manifest(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != shutdown_receipt and
                             (previous != {**shutdown_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
                         raise ValueError(f"frozen contract changed: {shutdown_path}")
                 else:
                     base.bind(shutdown_path, shutdown_receipt)
@@ -215,17 +217,35 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != guard_receipt and
                                 (previous != {**guard_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) != PRE_TEST_PARALLEL_CODE)):
+                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
                             raise ValueError(f"frozen contract changed: {guard_path}")
                     else:
                         base.bind(guard_path, guard_receipt)
-                    base.bind(root / "test-parallel-runtime.json", {
+                    parallel_path = root / "test-parallel-runtime.json"
+                    parallel_receipt = {
                         "schema": "selection-switch-test-parallel-runtime/v1",
                         "switch_sha256": base.digest(root / "switch.json"),
                         "cache_guard_runtime_sha256": base.digest(guard_path), "runtime_code_hashes": current,
                         "change": "held-out control arms run before the development gate is fitted; "
                                   "the gate model binds to each held-out state in gate.json and only the gated arm waits for it",
                         "cost_policy": "same diagnostics, policies and budgets; retain all prior costs and artifacts",
+                    }
+                    if parallel_path.exists():
+                        previous = core.read(parallel_path)
+                        previous_code = previous.get("runtime_code_hashes")
+                        if (previous != parallel_receipt and
+                                (previous != {**parallel_receipt, "runtime_code_hashes": previous_code}
+                                 or core.fingerprint(previous_code) != PRE_FIT_RESILIENCE_CODE)):
+                            raise ValueError(f"frozen contract changed: {parallel_path}")
+                    else:
+                        base.bind(parallel_path, parallel_receipt)
+                    base.bind(root / "fit-resilience-runtime.json", {
+                        "schema": "selection-switch-fit-resilience-runtime/v1",
+                        "switch_sha256": base.digest(root / "switch.json"),
+                        "test_parallel_runtime_sha256": base.digest(parallel_path), "runtime_code_hashes": current,
+                        "change": "a failing gate fit or state publication is recorded (gate-fit/failure.json, "
+                                  "states/*/failure.json) and the worker keeps claiming other branches",
+                        "cost_policy": "no change to diagnostics, policies, phase costs or branch budgets",
                     })
     return p
 
@@ -811,6 +831,7 @@ def fit_once(root):
         base.bind(root / "fit-cost.json", {"wall_seconds": elapsed,
             "gpu_seconds": allocated*elapsed, "allocated_gpus": allocated,
             "ledger": "offline research; not a deployment diagnostic"})
+        (root / "gate-fit" / "failure.json").unlink(missing_ok=True)
         print(f"[frozen] {root/'model.json'}; held-out branches now eligible", flush=True)
         return True
 
@@ -883,27 +904,41 @@ def work(root, *, idle_timeout=600.):
     last_progress = time.monotonic()
     while True:
         progress, busy = False, []
-        try:
-            fit_once(root)
-        except BlockingIOError:
-            busy.append(busy_task("gate-fit", root))
+        # A failing gate fit must not stop this node: held-out controls do not
+        # need the gate. The failure is recorded once per worker and shown by status.
+        if ("gate", "fit") not in attempted:
+            try:
+                fit_once(root)
+            except BlockingIOError:
+                busy.append(busy_task("gate-fit", root))
+            except Exception as exc:
+                attempted.add(("gate", "fit"))
+                failures += 1
+                record_failure(root / "gate-fit", exc)
         for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
             env = ae.model_environment(p["sources"][str(seed)]["config"])
             for step in rule.STEPS:
                 cert = prefix_dir(root, seed) / f"prefix-{step}.json"
-                if not cert.exists():
+                if not cert.exists() or (seed, step, "state") in attempted:
                     continue
                 child = child_root(root, seed, step)
-                if not (child / "net_protocol.json").exists():
-                    try:
+                try:
+                    if not (child / "net_protocol.json").exists():
                         with base.lease(child / ".publish.lock"):
                             if not (child / "net_protocol.json").exists():
                                 publish_state(root, seed, step)
-                    except BlockingIOError:
-                        busy.append(busy_task(f"s{seed}/t{step}/publish", child))
-                        continue
-                out = next(base.entries(child))
-                protocol_value, suite = protocol(child), core.read(child / "suite.json")
+                    out = next(base.entries(child))
+                    protocol_value, suite = protocol(child), core.read(child / "suite.json")
+                except BlockingIOError:
+                    busy.append(busy_task(f"s{seed}/t{step}/publish", child))
+                    continue
+                except Exception as exc:
+                    # A state that cannot be published or validated is recorded and left
+                    # for the next pass; the other states keep this node busy.
+                    attempted.add((seed, step, "state"))
+                    failures += 1
+                    record_failure(child, exc)
+                    continue
                 # Held-out controls never wait for the gate; only the gated arm does.
                 gate = None
                 if seed in rule.TEST_SEEDS and (seed, step, "gated") not in attempted:
