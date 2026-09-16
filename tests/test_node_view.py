@@ -117,7 +117,7 @@ def test_node_launcher_logs_next_to_the_roots_are_read_and_summarized(tmp_path, 
     assert nodes["node-e"]["state"] == "ADMIT"
     summary = view.summarize(list(nodes.values()))
     assert summary["live"] == 3 and summary["counts"] == {"HOLD": 1, "LIVE": 1, "GONE": 1, "BLOCKED": 1, "ADMIT": 1}
-    assert view.render_summary(list(nodes.values())) == "NODES  3 live  |  ADMIT 1  HOLD 1  LIVE 1  BLOCKED 1  GONE 1"
+    assert view.render_summary(list(nodes.values())) == "NODES  3 live  |  ADMIT 1  HOLD 1  LIVE 1  |  not live: BLOCKED 1  GONE 1"
     assert view.render_summary([]) == "NODES  0 live  |  no launcher evidence yet"
     def table(headers, rows, widths):
         return ["  ".join(str(cell)[:w].ljust(w) for cell, w in zip(row, widths)).rstrip() for row in [headers, *rows]]
@@ -125,3 +125,29 @@ def test_node_launcher_logs_next_to_the_roots_are_read_and_summarized(tmp_path, 
     assert any("worker reported failed tasks" in line for line in wide)
     for width in (80, 100, 120):
         assert all(len(line) <= width for line in view.render_nodes(list(nodes.values()), table, width))
+
+
+def test_old_claimed_lines_are_dead_hosts_not_running_nodes(tmp_path, monkeypatch):
+    """Cluster hosts change with every job: nine nodes must never show as 15 RUN."""
+    now = time.time()
+    monkeypatch.setattr(view.socket, "gethostname", lambda: "elsewhere")
+    for index in range(15):
+        logs(tmp_path, f"old-{index:02d}", console="[pass 1] selection switch\n[claimed] host=x pid=1 task=s0/t25/prefix\n")
+        os.utime(tmp_path / "logs" / f"console.old-{index:02d}_.log", (now-8*3600, now-8*3600))
+    logs(tmp_path, "recent-dead", console="[claimed] host=x pid=1 task=s1/t25/prefix\n")
+    os.utime(tmp_path / "logs" / "console.recent-dead_.log", (now-1200, now-1200))
+    logs(tmp_path, "training", console="[claimed] host=training pid=1 task=s3/t25/selection_full\n")
+    os.utime(tmp_path / "logs" / "console.training_.log", (now-7200, now-7200))
+    logs(tmp_path, "starting", console="[pass 1] selection switch\n")
+    tasks = [{"status": "RUNNING", "host": "training", "seed": 3, "step": 25, "arm": "selection_full", "phase": "train"}]
+    nodes = view.launcher_nodes(tmp_path, tasks, now=now)
+    summary = view.summarize(nodes)
+    assert summary["live"] == 2 and summary["counts"]["RUN"] == 1 and summary["counts"]["LIVE"] == 1, summary
+    assert summary["counts"]["GONE"] == 16
+    assert view.render_summary(nodes) == "NODES  2 live  |  RUN 1  LIVE 1  |  not live: GONE 16"
+    assert [item["host"] for item in view.listed(nodes)] == ["recent-dead", "starting", "training"]
+    def table(headers, rows, widths):
+        return ["  ".join(str(cell)[:w].ljust(w) for cell, w in zip(row, widths)).rstrip() for row in [headers, *rows]]
+    rendered = view.render_nodes(nodes, table, 120)
+    assert rendered[-1].startswith("  and 15 older host(s)")
+    assert not any("old-0" in line for line in rendered)

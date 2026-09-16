@@ -78,3 +78,28 @@ def test_failed_and_idle_passes_hold_with_their_reasons_until_stopped(tmp_path):
     assert node["host"] == "node-t" and node["state"] == "HOLD"
     assert node["reason"] == "switch rc=1 failed tasks, see [failed] lines above | mopps rc=0 nothing left to claim"
     assert view.render_summary([node]) == "NODES  1 live  |  HOLD 1"
+
+
+def test_leftover_processes_of_either_root_are_stopped_before_the_first_pass(tmp_path):
+    env = environment(tmp_path, fake_inner(tmp_path, 78, 78))
+    # An orphaned keepalive of an earlier launcher: our marker, our command name, its own group.
+    leftover = subprocess.Popen(["bash", "-c", 'exec -a "python scripts/_gpu_keepalive.py" sleep 300'],
+                                env={**env, "OUT_ROOT": env["SWITCH_ROOT"]}, start_new_session=True)
+    # A marked process that is not an experiment command must be left alone.
+    bystander = subprocess.Popen(["bash", "-c", 'exec -a "python scripts/selection_switch_status.py" sleep 300'],
+                                 env={**env, "OUT_ROOT": env["SWITCH_ROOT"]}, start_new_session=True)
+    try:
+        time.sleep(.3)
+        result = subprocess.run(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+                                capture_output=True, text=True, timeout=120)
+        assert result.returncode == 78, result.stdout + result.stderr
+        assert f"[clean] leftover pid={leftover.pid}" in result.stdout + result.stderr
+        assert f"pid={bystander.pid}" not in result.stdout + result.stderr
+        assert result.stdout.index("[clean] host=") < result.stdout.index("[pass 1] selection switch")
+        assert leftover.wait(timeout=10) != 0
+        assert bystander.poll() is None
+    finally:
+        for proc in (leftover, bystander):
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=10)

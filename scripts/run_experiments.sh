@@ -22,6 +22,10 @@ case "$MODE" in run|stop|status) ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
+# OUT_ROOT is the per-experiment marker the inner launchers, workers and stop
+# sweeps use to recognise "the run"; this launcher and its keepalive must not
+# carry it (run_selection_switch.sh exports it before handing over to us).
+unset OUT_ROOT
 SWITCH_ROOT=$(realpath -m "${SWITCH_ROOT:-$WORK/runs/selection-switch-v1}")
 MOPPS_ROOT=$(realpath -m "${MOPPS_ROOT:-$WORK/runs/mopps-comparison-v1}")
 export SWITCH_ROOT MOPPS_ROOT
@@ -98,7 +102,95 @@ fi
 # Inner launchers: foreground, single pass, no hold, no keepalive (this launcher holds the node).
 # EXPERIMENTS_INNER replaces bash for the inner launchers in tests only.
 inner() {
-  env -u EXPERIMENTS_DETACHED SWITCH_FOREGROUND=1 SWITCH_HOLD_SECONDS=0 SWITCH_KEEPALIVE=0 "${EXPERIMENTS_INNER:-bash}" "$@"
+  env -u EXPERIMENTS_DETACHED -u OUT_ROOT SWITCH_FOREGROUND=1 SWITCH_HOLD_SECONDS=0 SWITCH_KEEPALIVE=0 "${EXPERIMENTS_INNER:-bash}" "$@"
+}
+# --- node cleanup: the node is ours; nothing of an earlier run may hold it ---
+ROOT_PROCESS_PATTERN='run_selection_switch\.sh|run_mopps_comparison\.sh|selection_switch_runtime\.py|selection_switch_gpu\.py|mopps_comparison_gpu\.py|torch\.distributed\.run|train_[a-z_]*grpo\.py|_gpu_keepalive\.py|selection_nccl_preflight\.py|selection_switch_score\.py|light_selection_gate_gpu\.py'
+MY_PGID=$(cut -d')' -f2 "/proc/$$/stat" | awk '{print $3}')
+pgid_of() { cut -d')' -f2 "/proc/$1/stat" 2>/dev/null | awk '{print $3}'; }
+# A process group is alive while it has a member that is not a zombie
+# (kill -0 on the group also counts unreaped zombies).
+group_alive() {
+  local pid fields
+  for pid in $(ls /proc | grep -E '^[0-9]+$'); do
+    fields=$(cut -d')' -f2 "/proc/$pid/stat" 2>/dev/null) || continue
+    [ "$(echo "$fields" | awk '{print $3}')" = "$1" ] || continue
+    [ "$(echo "$fields" | awk '{print $1}')" = "Z" ] || return 0
+  done
+  return 1
+}
+cmdline_of() { { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null | cut -c1-90; }
+# Process groups of our own leftover experiment processes (either root's
+# marker, our command names) outside this launcher's group.
+leftover_groups() {
+  local pid marker pgid
+  for pid in $(ls /proc | grep -E '^[0-9]+$'); do
+    [ "$pid" != "$$" ] && [ -O "/proc/$pid" ] || continue
+    marker=$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -m1 '^OUT_ROOT=' | cut -d= -f2-) || true
+    case "$marker" in "$SWITCH_ROOT"|"$MOPPS_ROOT") ;; *) continue ;; esac
+    cmdline_of "$pid" | grep -qE "$ROOT_PROCESS_PATTERN" || continue
+    pgid=$(pgid_of "$pid")
+    [ -n "$pgid" ] && [ "$pgid" != "$MY_PGID" ] || continue
+    echo "[clean] leftover pid=$pid pgid=$pgid $(cmdline_of "$pid")" >&2
+    echo "$pgid"
+  done | sort -u
+}
+# Process groups of our own processes still holding memory on the visible GPUs.
+gpu_holder_groups() {
+  local pid mem pgid
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  timeout 20 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null \
+    | while IFS=, read -r pid mem; do
+    pid=$(echo "$pid" | tr -d ' '); mem=$(echo "$mem" | tr -d ' ')
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    if [ ! -O "/proc/$pid" ]; then echo "[clean] gpu pid=$pid ${mem}MiB belongs to another user; cannot stop it" >&2; continue; fi
+    pgid=$(pgid_of "$pid")
+    [ -n "$pgid" ] && [ "$pgid" != "$MY_PGID" ] || continue
+    echo "[clean] gpu pid=$pid pgid=$pgid ${mem}MiB $(cmdline_of "$pid")" >&2
+    echo "$pgid"
+  done | sort -u
+}
+gpu_memory_line() {
+  command -v nvidia-smi >/dev/null 2>&1 || { echo "no nvidia-smi"; return 0; }
+  timeout 20 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
+    | awk -F, '{gsub(/ /,"",$1); gsub(/ /,"",$2); printf "gpu%s %sMiB  ", $1, $2}'
+}
+gpus_free() {
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  local used
+  while read -r used; do
+    used=$(echo "$used" | tr -d ' ')
+    [[ "$used" =~ ^[0-9]+$ ]] && [ "$used" -le 4000 ] || return 1
+  done < <(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null)
+}
+clean_node() {
+  echo "[clean] host=$HOST: stopping leftover experiment processes and freeing the allocated GPUs"
+  local groups g alive
+  groups=$({ leftover_groups; gpu_holder_groups; } | sort -u | tr '\n' ' ')
+  if [ -n "${groups// /}" ]; then
+    for g in $groups; do kill -TERM -- "-$g" 2>/dev/null || true; done
+    for _ in $(seq 1 120); do
+      alive=0
+      for g in $groups; do group_alive "$g" && alive=1; done
+      [ "$alive" -eq 1 ] || break
+      sleep 1
+    done
+    for g in $groups; do
+      if group_alive "$g"; then
+        echo "[clean] pgid=$g ignored TERM for 120s; killing it (its open cost events close as stale later)"
+        kill -KILL -- "-$g" 2>/dev/null || true
+      fi
+    done
+  else
+    echo "[clean] no leftover experiment process on $HOST"
+  fi
+  # (queue_status --kill-orphans is not used here: it stops every process that
+  # carries the marker, read-only status viewers included; the sweeps above
+  # cover launchers, controllers, ranks, probes, scorers, keepalives and any
+  # own process still holding GPU memory.)
+  for _ in $(seq 1 30); do gpus_free && break; sleep 2; done
+  echo "[clean] gpu memory now: $(gpu_memory_line)"
+  gpus_free || echo "[clean] a GPU still holds more than 4000MiB; the pass will report the node as busy"
 }
 switch_complete() {
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$SWITCH_ROOT" --json 2>/dev/null \
@@ -128,11 +220,17 @@ recover_root() {
 pass=0
 wait_seconds=$HOLD
 blocked_passes=0
+need_clean=1
 while :; do
   pass=$((pass+1))
   if [ "${EXPERIMENTS_AUTO_PULL:-0}" = 1 ]; then
     git pull -q --ff-only 2>&1 | tail -1 || true
   fi
+  # Before the first pass, and again whenever a pass found the node busy.
+  if [ "$need_clean" -eq 1 ] && [ "${EXPERIMENTS_CLEAN:-1}" != 0 ]; then
+    clean_node
+  fi
+  need_clean=0
   recover_root "$SWITCH_ROOT"
   recover_root "$MOPPS_ROOT"
   rc_switch=0 why_switch=skipped
@@ -152,6 +250,7 @@ while :; do
     echo "[pass $pass] MoPPS comparison ended: rc=$rc_mopps, $(rc_reason "$rc_mopps")"
   fi
   reason="switch rc=$rc_switch $(rc_reason "$why_switch") | mopps rc=$rc_mopps $(rc_reason "$why_mopps")"
+  if [ "$rc_switch" -eq 75 ] || [ "$rc_mopps" -eq 75 ]; then need_clean=1; fi
   if switch_complete && { [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; }; then
     echo '[done] both experiments are complete; releasing the node'
     exit 0

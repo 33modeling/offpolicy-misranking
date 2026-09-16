@@ -43,7 +43,11 @@ def _host_of(path, prefix):
 LIVE_STATES = ("RUN", "ADMIT", "WAIT", "HOLD", "LIVE")
 STATE_ORDER = ("RUN", "ADMIT", "WAIT", "HOLD", "LIVE", "STALE", "BLOCKED", "STOPPING", "EXITED", "GONE", "QUIET", "-")
 # A holding or waiting launcher prints every 15s; longer silence means it is gone.
+# A launcher log alone never proves training: hosts change with every cluster
+# job, so an old "[claimed]" line is a dead host unless a task heartbeat is fresh.
 HEARTBEAT_GRACE = 180.
+# Hosts whose only evidence is older than this are counted, not listed.
+LISTING_AGE = 6*3600.
 
 
 def node_launcher_logs(root):
@@ -70,8 +74,9 @@ def classify(last, *, node_launcher):
         return "EXITED"
     if last.startswith("[nccl-preflight]"):
         return "ADMIT"
-    if last.startswith(("[retry]", "[claimed]", "[gate]", "[grpo]", "[fresh_r]", "[pass ")):
-        return "RUN"
+    if last.startswith(("[retry]", "[claimed]", "[gate]", "[grpo]", "[fresh_r]", "[pass ", "[clean]")):
+        # Active launcher; RUN itself comes only from a fresh task heartbeat.
+        return "LIVE"
     if last.startswith("[stopping]"):
         return "STOPPING"
     return None
@@ -128,7 +133,11 @@ def launcher_nodes(root, tasks, *, now=None):
             last = _last(_tail_lines(path))
             item["detail"] = last[:160]
             state = classify(last, node_launcher=node_launcher)
-            item["state"] = state if state else ("LIVE" if age < 120 else "QUIET")
+            if state is None:
+                state = "LIVE" if age < HEARTBEAT_GRACE else "QUIET"
+            elif state in LIVE_STATES and age > HEARTBEAT_GRACE:
+                state = "GONE"
+            item["state"] = state
             item["reason"] = hold_reason(last) if state == "HOLD" else ""
     for logs, _ in sources:
         for path in logs.glob("keepalive.*.log"):
@@ -150,10 +159,7 @@ def launcher_nodes(root, tasks, *, now=None):
     for item in hosts.values():
         if item["launcher_alive"] is False and item["state"] in {"HOLD", "WAIT", "LIVE", "QUIET", "ADMIT"}:
             item["state"] = "EXITED"
-        elif (item["state"] in {"HOLD", "WAIT", "LIVE"} and item["last_age"] is not None
-              and item["last_age"] > HEARTBEAT_GRACE):
-            item["state"] = "GONE"
-        if item["state"] in {"EXITED", "GONE"} and item["keepalive"] == "busy":
+        if item["state"] in {"EXITED", "GONE", "QUIET"} and item["keepalive"] == "busy":
             item["keepalive"] = "orphan?"
     return sorted(hosts.values(), key=lambda item: item["host"])
 
@@ -168,10 +174,19 @@ def summarize(nodes):
 def render_summary(nodes):
     """First line of a status screen: how many nodes are live and what they are doing."""
     summary = summarize(nodes)
-    parts = [f"{state} {summary['counts'][state]}" for state in STATE_ORDER if summary["counts"].get(state)]
-    if not parts:
+    live = [f"{state} {summary['counts'][state]}" for state in LIVE_STATES if summary["counts"].get(state)]
+    dead = [f"{state} {summary['counts'][state]}" for state in STATE_ORDER
+            if state not in LIVE_STATES and summary["counts"].get(state)]
+    if not live and not dead:
         return "NODES  0 live  |  no launcher evidence yet"
-    return f"NODES  {summary['live']} live  |  " + "  ".join(parts)
+    line = f"NODES  {summary['live']} live  |  " + ("  ".join(live) if live else "none")
+    return line + (f"  |  not live: " + "  ".join(dead) if dead else "")
+
+
+def listed(nodes):
+    """Live and stale hosts, plus dead ones whose evidence is recent enough to matter."""
+    return [item for item in nodes if item["state"] in (*LIVE_STATES, "STALE", "STOPPING")
+            or item["last_age"] is None or item["last_age"] <= LISTING_AGE]
 
 
 def _role(pid):
@@ -217,6 +232,8 @@ def local_gpus():
 def render_nodes(nodes, table, width):
     if not nodes:
         return ["No launcher evidence under logs/ yet."]
+    hidden = len(nodes) - len(listed(nodes))
+    nodes = listed(nodes)
     rows = [[item["host"], item["launcher_pid"] or "-",
              "yes" if item["launcher_alive"] else "no" if item["launcher_alive"] is False else "?",
              item["state"], item["task"] or "-", item["phase"] or "-", item["keepalive"],
@@ -234,6 +251,8 @@ def render_nodes(nodes, table, width):
         if item["state"] == "HOLD" and item.get("reason"):
             lines += textwrap.wrap(f"{item['host']} holds: {item['reason']}", width=width,
                                    initial_indent="  ", subsequent_indent="    ", break_long_words=True)
+    if hidden:
+        lines.append(f"  and {hidden} older host(s) with no live launcher (logs older than {LISTING_AGE/3600:.0f}h) not listed")
     return lines
 
 
