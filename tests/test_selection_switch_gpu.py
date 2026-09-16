@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import sys
 from pathlib import Path
@@ -103,6 +104,91 @@ def variant_root_predecessor():
     return hashes
 
 
+def dataset_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "8d9e94df8c3813e989b447ea918f60e1283c8587e872818ba8cb29fa2b2b3521"
+    assert core.fingerprint(hashes) == switch.PRE_DATASET_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = dataset_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "variant-root-runtime.json")["runtime_code_hashes"] == previous
+        # The 47339ca runtime never wrote this receipt.
+        (tmp_path / "dataset-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "dataset-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["variant_root_runtime_sha256"] == base.digest(tmp_path / "variant-root-runtime.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+    tampered = core.read(tmp_path / "variant-root-runtime.json")
+    tampered["cost_policy"] = "ignore previous costs"
+    core.atomic_json(tmp_path / "variant-root-runtime.json", tampered)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+def test_resolve_sources_uses_the_dataset_family(tmp_path):
+    for dataset in ("math500", "mbpp"):
+        for seed in range(5):
+            (tmp_path / f"family-{dataset}-s{seed}" / f"tag-s{seed}-{dataset}-d0").mkdir(parents=True)
+    (tmp_path / "family-mbpp-s0" / "tag-s0-mbpp-d100").mkdir()
+    math = switch.resolve_sources(tmp_path, (0, 1, 2, 3, 4), 0, "math500")
+    code = switch.resolve_sources(tmp_path, (0, 1, 2, 3, 4), 0, "mbpp")
+    assert [p.name for p in math] == [f"tag-s{s}-math500-d0" for s in range(5)]
+    assert [p.name for p in code] == [f"tag-s{s}-mbpp-d0" for s in range(5)]
+    assert switch.resolve_sources(tmp_path, [0], 100, "mbpp")[0].name == "tag-s0-mbpp-d100"
+    with pytest.raises(ValueError, match="expected one mbpp d100"):
+        switch.resolve_sources(tmp_path, [1], 100, "mbpp")
+    with pytest.raises(ValueError, match="unsupported dataset"):
+        switch.resolve_sources(tmp_path, [0], 0, "apps")
+
+
+def test_mbpp_pool_matches_the_loader_prompts_and_excludes_run_prompts(tmp_path):
+    import data
+    import evidence_downstream as ed
+    rows = [{"task_id": i, "text": f"Return {i} plus one.", "code": "def f(x): return x+1",
+             "test_list": [f"assert f({i}) == {i+1}", f"assert f({i+10}) == {i+11}"]} for i in range(12)]
+    rows.append({"task_id": 99, "text": "no tests", "code": "pass", "test_list": []})
+    pool = tmp_path / "mbpp.jsonl"
+    pool.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    items = switch.mbpp_items(rows)
+    assert len(items) == 12 and all(item["answer"].startswith("assert") for item in items)
+    # The same question text the source runs' prompts carry (src/data.py loader).
+    monkeypatch_dir = tmp_path / "datasets" / "mbpp"
+    monkeypatch_dir.mkdir(parents=True)
+    (monkeypatch_dir / "mbpp.jsonl").write_text(pool.read_text())
+    os.environ["MBPP_DIR"] = str(monkeypatch_dir)
+    try:
+        loaded = data.load_prompts("mbpp", 8, 4, seed=0)
+    finally:
+        os.environ.pop("MBPP_DIR", None)
+    assert {q["question"] for q in loaded["train"] + loaded["val"]} <= {item["question"] for item in items}
+    written = switch.mbpp_pool_file(tmp_path / "root", pool)
+    assert [json.loads(l) for l in written.read_text().splitlines()] == items
+    run = tmp_path / "run-0"
+    core.atomic_json(run / "prompts.json", {"train": items[:6], "val": items[6:8]})
+    evaluation = ed.prepare_test(written, [run], tmp_path / "root" / "test.json", 4, 20260914,
+                                 "google-research-datasets/mbpp", "rev", "full")
+    assert len(evaluation["test"]) == 4
+    assert {q["question"] for q in evaluation["test"]} <= {item["question"] for item in items[8:]}
+    with pytest.raises(ValueError, match="only 4 disjoint unique questions remain"):
+        ed.prepare_test(written, [run], tmp_path / "root2" / "test.json", 300, 20260914,
+                        "google-research-datasets/mbpp", "rev", "full")
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
     previous = variant_root_predecessor()
@@ -113,8 +199,9 @@ def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
             patch.setattr(switch, "code_hashes", lambda: previous)
             switch.manifest(tmp_path)
         assert core.read(tmp_path / "fit-resilience-runtime.json")["runtime_code_hashes"] == previous
-        # The b8d90c0 runtime never wrote this receipt.
+        # The b8d90c0 runtime never wrote these receipts.
         (tmp_path / "variant-root-runtime.json").unlink()
+        (tmp_path / "dataset-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -196,6 +283,7 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
         # The 091ae20 runtime never wrote these receipts.
         (tmp_path / "fit-resilience-runtime.json").unlink()
         (tmp_path / "variant-root-runtime.json").unlink()
+        (tmp_path / "dataset-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -229,6 +317,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "test-parallel-runtime.json").unlink()
         (tmp_path / "fit-resilience-runtime.json").unlink()
         (tmp_path / "variant-root-runtime.json").unlink()
+        (tmp_path / "dataset-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
@@ -326,7 +415,7 @@ def test_code_compat_preserves_latest_and_partially_written_receipt_chains(tmp_p
     assert core.read(tmp_path / "code-compat-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
 
 
-@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard", "test-parallel", "fit-resilience", "variant-root"])
+@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard", "test-parallel", "fit-resilience", "variant-root", "dataset"])
 def test_code_compat_rejects_tampered_receipts(tmp_path, receipt):
     core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": initial_predecessor()})
     switch.manifest(tmp_path)

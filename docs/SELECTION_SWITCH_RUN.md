@@ -80,6 +80,17 @@ and gives every continuation three times the allocation (87,120 GPU-seconds, a
 instead of four fifths. It has its own development labels, gate, ledgers and
 status; the MoPPS pass is skipped. Same modes as the switch launcher.
 
+`bash scripts/run_switch_mbpp.sh` runs the code variant: the same protocol on
+the OLMo MBPP matrix family (`family-mbpp-s<seed>`, 512-prompt pool, top 10%
+= 51, execution-verified rewards) in its own root
+(`runs/selection-switch-mbpp-v1`). `prepare --dataset mbpp` resolves the five
+d0 sources from that family, derives the branch budget from the MBPP seed-0
+d100 update timings, builds the evaluation pool from `$DATASETS_DIR/mbpp/mbpp.jsonl`
+in the prompt format of the source runs, and draws up to 300 test problems
+disjoint from every run's candidate and validation prompts (all remaining
+ones if fewer). Contracts record dataset `mbpp` and verifier
+`code_execution`; MATH roots are published through the unchanged MATH path.
+
 `waive` (from either launcher) returns the allocation of attempts that stalled
 after a GPU fault: a rank that dies with a CUDA "unspecified launch failure"
 leaves the trainer hung until the phase's allocation limit, the whole

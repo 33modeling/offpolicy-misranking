@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import os
+import re
 import socket
 import statistics
 import subprocess
@@ -44,9 +45,12 @@ PRE_TEST_PARALLEL_CODE = "b7803071821dd7aa68035370e37c77fdbaecec13d9e96ea6574d91
 PRE_FIT_RESILIENCE_CODE = "6f8e1fadfa8f2dd6ab6c401824c9def4a5f91e261c79edf780147b0454b8e4ef"
 # Exact b8d90c0 runtime before variant roots could import another root's certified prefixes.
 PRE_VARIANT_ROOT_CODE = "dafec55898396c4ddc91bddf6ba40cb1e5db3bfd58d055bc6b14a04006e3c47d"
+# Exact 47339ca runtime before prepare could build an MBPP (code) switch root.
+PRE_DATASET_CODE = "181ad569457d1c10c6e8d16feefbfe6a045eb10f6072158d142e63b0272f4fae"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
                        PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE,
-                       PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE}
+                       PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE,
+                       PRE_DATASET_CODE}
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py",
                        "src/net_gate_memory_worker.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
@@ -115,7 +119,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -132,7 +136,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -149,7 +153,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -166,7 +170,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
@@ -183,7 +187,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != compat_receipt and
                         (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                     raise ValueError(f"frozen contract changed: {compat_path}")
             else:
                 base.bind(compat_path, compat_receipt)
@@ -201,7 +205,7 @@ def manifest(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != shutdown_receipt and
                             (previous != {**shutdown_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                         raise ValueError(f"frozen contract changed: {shutdown_path}")
                 else:
                     base.bind(shutdown_path, shutdown_receipt)
@@ -219,7 +223,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != guard_receipt and
                                 (previous != {**guard_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                             raise ValueError(f"frozen contract changed: {guard_path}")
                     else:
                         base.bind(guard_path, guard_receipt)
@@ -237,7 +241,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != parallel_receipt and
                                 (previous != {**parallel_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                             raise ValueError(f"frozen contract changed: {parallel_path}")
                     else:
                         base.bind(parallel_path, parallel_receipt)
@@ -255,17 +259,35 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != resilience_receipt and
                                 (previous != {**resilience_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) != PRE_VARIANT_ROOT_CODE)):
+                                 or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                             raise ValueError(f"frozen contract changed: {resilience_path}")
                     else:
                         base.bind(resilience_path, resilience_receipt)
-                    base.bind(root / "variant-root-runtime.json", {
+                    variant_path = root / "variant-root-runtime.json"
+                    variant_receipt = {
                         "schema": "selection-switch-variant-root-runtime/v1",
                         "switch_sha256": base.digest(root / "switch.json"),
                         "fit_resilience_runtime_sha256": base.digest(resilience_path), "runtime_code_hashes": current,
                         "change": "prepare can import another root's certified prefixes (--prefix-source) so a "
                                   "variant with a different continuation allocation reuses the same states",
                         "cost_policy": "this root unchanged; a variant root carries its own allocation and ledgers",
+                    }
+                    if variant_path.exists():
+                        previous = core.read(variant_path)
+                        previous_code = previous.get("runtime_code_hashes")
+                        if (previous != variant_receipt and
+                                (previous != {**variant_receipt, "runtime_code_hashes": previous_code}
+                                 or core.fingerprint(previous_code) != PRE_DATASET_CODE)):
+                            raise ValueError(f"frozen contract changed: {variant_path}")
+                    else:
+                        base.bind(variant_path, variant_receipt)
+                    base.bind(root / "dataset-runtime.json", {
+                        "schema": "selection-switch-dataset-runtime/v1",
+                        "switch_sha256": base.digest(root / "switch.json"),
+                        "variant_root_runtime_sha256": base.digest(variant_path), "runtime_code_hashes": current,
+                        "change": "prepare accepts --dataset mbpp (code pool, execution-verified rewards); "
+                                  "MATH roots publish contracts through the unchanged MATH path",
+                        "cost_policy": "no change to this root's diagnostics, policies, phase costs or budgets",
                     })
     return p
 
@@ -385,6 +407,100 @@ def initial_fresh_scores(source, cfg, prompts, generation):
     return scores, info
 
 
+DATASETS = ("math500", "mbpp")
+MBPP_PROVENANCE = {"dataset": "google-research-datasets/mbpp", "split": "full"}
+
+
+def resolve_sources(matrix, seeds, drift, dataset="math500"):
+    """One completed matrix point per seed for a dataset (family-<dataset>-s<seed>/*-s<seed>-<dataset>-d<drift>)."""
+    if dataset not in DATASETS:
+        raise ValueError(f"unsupported dataset: {dataset}")
+    runs = []
+    for seed in seeds:
+        found = sorted(Path(matrix).glob(f"family-{dataset}-s{seed}/*-s{seed}-{dataset}-d{drift}"))
+        if len(found) != 1:
+            raise ValueError(f"seed {seed}: expected one {dataset} d{drift} point under {matrix}; found {len(found)}")
+        runs.append(found[0].resolve())
+    return runs
+
+
+def mbpp_items(rows):
+    """MBPP rows (text, test_list) as the prompt items the source runs were built from (src/data.py)."""
+    from data import _dedupe_items
+    items = []
+    for r in rows:
+        text = (r.get("text") or r.get("prompt") or r.get("description")
+                or r.get("instruction") or r.get("task_description"))
+        tests = (r.get("test_list") or r.get("tests") or r.get("test") or r.get("challenge_test_list"))
+        if isinstance(tests, str):
+            tests = [tests]
+        if not (text and tests):
+            continue
+        tests_str = "\n".join(tests)
+        q = (f"Write a Python function for the task below.\n\n{text}\n\n"
+             f"Your code should satisfy these tests:\n{tests_str}\n\n"
+             "Return the complete function in a ```python code block.")
+        items.append({"question": q, "answer": tests_str})
+    if not items:
+        raise ValueError("MBPP pool has no usable rows (text and test_list)")
+    return _dedupe_items(items, "mbpp")
+
+
+def mbpp_pool_file(root, pool):
+    """The MBPP pool as {question, answer} rows, so prepare_test can exclude the runs' prompts by question."""
+    rows = [json.loads(line) for line in Path(pool).read_text().splitlines() if line.strip()]
+    items = mbpp_items(rows)
+    out = root / "mbpp-pool.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    text = "".join(json.dumps(item, allow_nan=False) + "\n" for item in items)
+    if out.exists() and out.read_text() != text:
+        raise ValueError(f"frozen contract changed: {out}")
+    out.write_text(text)
+    return out
+
+
+def code_source_contract(run, evaluation, *, budget, gpu_type, role, selector, eval_k, max_steps):
+    """The MATH contract builder's checks and layout for an MBPP source: execution-verified rewards."""
+    import evidence_downstream as ed
+    from train_policy_grpo import validate_policy_manifest
+    c = core.read(run / "run_config.json")
+    if (c.get("dataset") != "mbpp" or not isinstance(c.get("prompt_format"), str) or not c["prompt_format"]
+            or c.get("grpo_world_size") != 4 or c.get("grpo_epochs_per_batch") != 1
+            or c.get("behavior_k") != 8 or c.get("grpo_group_size") != 8
+            or c.get("topk_frac") != .1 or c.get("temperature") != 1.
+            or c.get("top_p", 1.) != 1. or c.get("drift", 0) <= 0):
+        raise ValueError("code gate protocol requires positive-drift OLMo MBPP, four ranks, K=G=8, top 10%, one epoch")
+    parent = run / f"policy_step_{c['drift']}"
+    manifest_value = validate_policy_manifest(parent, target_steps=c["drift"], world_size=4,
+                                              training_objective="grpo", require_complete_hashes=True)
+    if manifest_value["seed"] != c["seed"] or manifest_value["prompt_format"] != c["prompt_format"]:
+        raise ValueError("parent policy differs from source seed/prompt format")
+    prompts = core.read(run / "prompts.json")
+    ed.questions(prompts["train"])
+    test = ed.independent_test(prompts, evaluation)
+    if len(test) < 4:
+        raise ValueError("independent test needs at least four questions")
+    if not all(str(item["answer"]).lstrip().startswith("assert") for item in test):
+        raise ValueError("MBPP evaluation answers must be executable assert tests")
+    ed.train_args(c, run, Path("unused"), "random_full", max_steps)
+    hashes = {name: base.digest(run / name) for name in ["run_config.json", "prompts.json"]
+              + [f"policy_step_{c['drift']}/{f}" for f in ed.POLICY_FILES]}
+    model_hash = base.digest(Path(c["model"]) / "config.json")
+    scope = {"model": model_hash, "dataset": "mbpp", "selector": selector,
+             "verifier": "code_execution", "pool_sha256": hashes["prompts.json"], "gpu_type": gpu_type}
+    return {"schema": base.SCHEMA, "source_run": str(run), "config": c, "source_hashes": hashes,
+            "scope": scope, "role": role, "budget_gpu_seconds": budget, "max_steps": max_steps,
+            "evaluation": {"val": test, "provenance": evaluation["provenance"]}, "eval_k": eval_k,
+            "eval_seed": 701_000_003 + c["seed"]*1_000_003,
+            "n": len(prompts["train"]), "decision_schedule": "once_before_training"}
+
+
+def state_contract(p, source, **kwargs):
+    if p.get("dataset", "math500") == "mbpp":
+        return code_source_contract(source, p["evaluation"], **kwargs)
+    return base.source_contract(source, p["evaluation"], **kwargs)
+
+
 def import_prefixes(root, source_root, sources):
     """Reuse another root's certified selected prefixes for a variant of the same states.
 
@@ -437,7 +553,8 @@ def prepare(args):
             manifest(root)
             print(f"[prepared] frozen experiment already exists: {root}")
             return
-        runs = ae.resolve_runs(args.matrix, (*rule.DEV_SEEDS, *rule.TEST_SEEDS), 0)
+        dataset = getattr(args, "dataset", None) or "math500"
+        runs = resolve_sources(args.matrix, (*rule.DEV_SEEDS, *rule.TEST_SEEDS), 0, dataset)
         ed.require_separate_output(root, runs)
         if any(root in run.parents for run in runs):
             raise ValueError("output must not contain existing matrix data")
@@ -445,12 +562,14 @@ def prepare(args):
         for source in runs:
             cfg = core.read(source / "run_config.json")
             prompts = core.read(source / "prompts.json")
-            if (cfg["drift"] != 0 or cfg["dataset"] != "math500" or cfg["prompt_format"] != "olmo_rlzero_math"
+            expected_format = "olmo_rlzero_math" if dataset == "math500" else cfg.get("prompt_format")
+            if (cfg["drift"] != 0 or cfg["dataset"] != dataset or not expected_format
+                    or cfg["prompt_format"] != expected_format
                     or cfg["grpo_world_size"] != 4 or cfg["grpo_group_size"] != 8
                     or cfg["grpo_epochs_per_batch"] != 1 or cfg["topk_frac"] != .1
                     or cfg["temperature"] != 1. or cfg.get("top_p", 1.) != 1.
                     or not (source / "DONE").is_file()):
-                raise ValueError("expected complete base-policy OLMo MATH source with registered GRPO recipe")
+                raise ValueError(f"expected complete base-policy OLMo {dataset} source with registered GRPO recipe")
             scoring.layout(cfg, prompts)
             generation = validate_generation_contract(source)
             scores, score_provenance = initial_fresh_scores(source, cfg, prompts, generation)
@@ -469,7 +588,7 @@ def prepare(args):
         budget = args.budget_gpu_seconds
         budget_source = {"kind": "explicit", "gpu_seconds": budget}
         if budget is None:
-            reference = ae.resolve_runs(args.matrix, [0], 100)[0] / "policy_step_100/grpo_stats.jsonl"
+            reference = resolve_sources(args.matrix, [0], 100, dataset)[0] / "policy_step_100/grpo_stats.jsonl"
             timings = [core.number(json.loads(line)["step_seconds"], "step duration", 1e-12)
                        for line in reference.read_text().splitlines() if line.strip()]
             budget = math.ceil(statistics.median(timings)*4*100/60)*60
@@ -483,6 +602,22 @@ def prepare(args):
             evaluation = core.read(args.prefix_source.resolve() / "switch.json")["evaluation"]
         elif args.eval_prompts:
             evaluation = core.read(args.eval_prompts)
+        elif dataset == "mbpp":
+            if not args.pool or not args.pool_manifest:
+                raise ValueError("MBPP evaluation requires --pool mbpp.jsonl and --pool-manifest")
+            pool_file = mbpp_pool_file(root, args.pool)
+            revision = core.read(args.pool_manifest)["source_revision"]
+            try:
+                evaluation = ed.prepare_test(pool_file, runs, root / "test.json", args.test_count, 20260914,
+                                             MBPP_PROVENANCE["dataset"], revision, MBPP_PROVENANCE["split"])
+            except ValueError as exc:
+                found = re.search(r"only (\d+) disjoint unique questions remain", str(exc))
+                if not found:
+                    raise
+                count = int(found.group(1))
+                print(f"[prepare] MBPP pool leaves {count} disjoint questions; using all of them", flush=True)
+                evaluation = ed.prepare_test(pool_file, runs, root / "test.json", count, 20260914,
+                                             MBPP_PROVENANCE["dataset"], revision, MBPP_PROVENANCE["split"])
         else:
             if not args.pool or not args.pool_manifest:
                 raise ValueError("independent evaluation requires --eval-prompts or --pool/--pool-manifest")
@@ -492,7 +627,7 @@ def prepare(args):
             if len(ed.independent_test(core.read(source / "prompts.json"), evaluation)) < 4:
                 raise ValueError("too few independent evaluation questions")
         base.bind(root / "test.json", evaluation)
-        p = {"schema": rule.SCHEMA, "code_hashes": code_hashes(), "sources": sources,
+        p = {"schema": rule.SCHEMA, "dataset": dataset, "code_hashes": code_hashes(), "sources": sources,
              "budget_gpu_seconds": budget, "budget_source": budget_source, "steps": list(rule.STEPS),
              "development_seeds": list(rule.DEV_SEEDS), "test_seeds": list(rule.TEST_SEEDS),
              "gpu_type": args.gpu_type, "evaluation": evaluation, "eval_k": args.eval_k,
@@ -612,7 +747,7 @@ def publish_state(root, seed, step):
     link(source / "rollouts_behavior_train.jsonl", Path(item["path"]) / "rollouts_behavior_train.jsonl")
     base.bind(source / "selected-prefix.json", cert)
     child = child_root(root, seed, step)
-    c = base.source_contract(source, p["evaluation"], budget=p["budget_gpu_seconds"], gpu_type=p["gpu_type"],
+    c = state_contract(p, source, budget=p["budget_gpu_seconds"], gpu_type=p["gpu_type"],
         role="test" if held_out else "development", selector="fresh_r", eval_k=p["eval_k"], max_steps=100000)
     c["selected_prefix"] = {"schema": rule.SCHEMA, "root": str(root), "certificate_sha256": core.fingerprint(cert)}
     c["source_hashes"]["selected-prefix.json"] = base.digest(source / "selected-prefix.json")
@@ -1165,6 +1300,8 @@ def main():
     parser.add_argument("--budget-gpu-seconds", type=float)
     parser.add_argument("--prefix-source", type=Path,
                         help="reuse this root's certified prefixes and evaluation set (a variant of the same states)")
+    parser.add_argument("--dataset", choices=DATASETS, default="math500",
+                        help="matrix family to prepare from: math500 (default) or mbpp (execution-verified code)")
     parser.add_argument("--gpu-type", default="NVIDIA H100 80GB HBM3")
     parser.add_argument("--eval-prompts", type=Path)
     parser.add_argument("--pool", type=Path)

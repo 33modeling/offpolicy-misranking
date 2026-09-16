@@ -34,6 +34,8 @@ PRE_TEST_PARALLEL_CODE = "b49a7417bf1f00c8c164c6bd9d0aa480dd4d7438e2de4d6f8d505d
 PRE_FIT_RESILIENCE_CODE = "ca5486eda6ba169460ea15378986a6c514d76c421d05137d98bf179a7f9a9f2b"
 # Exact b8d90c0 runtime before Switch variant roots could import certified prefixes.
 PRE_VARIANT_ROOT_CODE = "2989e14c8cfb391158cb00171881afbc37cca0682c58447625fa8dffcc01f21c"
+# Exact 47339ca runtime before Switch prepare could build an MBPP root.
+PRE_DATASET_CODE = "c12c6e7956f4a61e648c29b3da2762bc71fc0713b68bd77012aed59004ecdddd"
 
 
 def hashes():
@@ -84,7 +86,7 @@ def protocol(root):
     current = hashes()
     recorded = p.get("code_hashes")
     if recorded != current:
-        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE}
+        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE}
                 or set(recorded) != set(current)
                 or current["src/net_gate_memory_worker.py"] not in {switch.PRE_CACHE_GUARD_WORKER, switch.CACHE_GUARD_WORKER}
                 or any(recorded[name] != sha for name, sha in current.items()
@@ -117,7 +119,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -134,7 +136,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != lifecycle_receipt and
                         (previous != {**lifecycle_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                     raise ValueError(f"frozen contract changed: {lifecycle_path}")
             else:
                 base.bind(lifecycle_path, lifecycle_receipt)
@@ -151,7 +153,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != queue_receipt and
                         (previous != {**queue_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                     raise ValueError(f"frozen contract changed: {queue_path}")
             else:
                 base.bind(queue_path, queue_receipt)
@@ -169,7 +171,7 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != cache_receipt and
                             (previous != {**cache_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                         raise ValueError(f"frozen contract changed: {cache_path}")
                 else:
                     base.bind(cache_path, cache_receipt)
@@ -186,7 +188,7 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != retry_receipt and
                             (previous != {**retry_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                         raise ValueError(f"frozen contract changed: {retry_path}")
                 else:
                     base.bind(retry_path, retry_receipt)
@@ -204,7 +206,7 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != parallel_receipt and
                             (previous != {**parallel_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                         raise ValueError(f"frozen contract changed: {parallel_path}")
                 else:
                     base.bind(parallel_path, parallel_receipt)
@@ -221,15 +223,32 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != resilience_receipt and
                             (previous != {**resilience_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) != PRE_VARIANT_ROOT_CODE)):
+                             or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
                         raise ValueError(f"frozen contract changed: {resilience_path}")
                 else:
                     base.bind(resilience_path, resilience_receipt)
-                base.bind(root / "variant-root-runtime.json", {
+                variant_path = root / "variant-root-runtime.json"
+                variant_receipt = {
                     "schema": "mopps-variant-root-runtime/v1",
                     "protocol_sha256": base.digest(root / "mopps.json"),
                     "fit_resilience_runtime_sha256": base.digest(resilience_path), "runtime_code_hashes": current,
                     "change": "shared Switch prepare can import certified prefixes for a variant root; MoPPS unchanged",
+                    "cost_policy": "same selectors, policies and budgets; no parent writes or cost waivers",
+                }
+                if variant_path.exists():
+                    previous = core.read(variant_path)
+                    previous_code = previous.get("runtime_code_hashes")
+                    if (previous != variant_receipt and
+                            (previous != {**variant_receipt, "runtime_code_hashes": previous_code}
+                             or core.fingerprint(previous_code) != PRE_DATASET_CODE)):
+                        raise ValueError(f"frozen contract changed: {variant_path}")
+                else:
+                    base.bind(variant_path, variant_receipt)
+                base.bind(root / "dataset-runtime.json", {
+                    "schema": "mopps-dataset-runtime/v1",
+                    "protocol_sha256": base.digest(root / "mopps.json"),
+                    "variant_root_runtime_sha256": base.digest(variant_path), "runtime_code_hashes": current,
+                    "change": "shared Switch prepare accepts --dataset mbpp; this MATH comparison is unchanged",
                     "cost_policy": "same selectors, policies and budgets; no parent writes or cost waivers",
                 })
     return p

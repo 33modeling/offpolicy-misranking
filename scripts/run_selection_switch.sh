@@ -276,10 +276,16 @@ MATRIX=${OM_OLMO3_ROOT:-$WORK/runs/${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlze
 if [ "$MODE" = prepare ] || [ ! -f "$OUT_ROOT/switch.json" ]; then
   # SWITCH_PREFIX_SOURCE / SWITCH_BUDGET_GPU_SECONDS make a variant root that reuses
   # another root's certified prefixes with its own continuation allocation (see run_switch_long.sh).
+  # SWITCH_DATASET=mbpp prepares from the MBPP matrix family with the MBPP pool (run_switch_mbpp.sh).
+  if [ "${SWITCH_DATASET:-math500}" = mbpp ]; then
+    POOL="$DATASETS_DIR/mbpp/mbpp.jsonl"; POOL_MANIFEST="$DATASETS_DIR/mbpp/dataset_manifest.json"
+  else
+    POOL="$DATASETS_DIR/math_train/math_train.jsonl"; POOL_MANIFEST="$DATASETS_DIR/math_train/dataset_manifest.json"
+  fi
   "$PY" src/selection_switch_gpu.py prepare --root "$OUT_ROOT" --matrix "$MATRIX" \
     --gpu-type "${GATE_GPU_TYPE:-NVIDIA H100 80GB HBM3}" \
-    --pool "$DATASETS_DIR/math_train/math_train.jsonl" \
-    --pool-manifest "$DATASETS_DIR/math_train/dataset_manifest.json" \
+    --dataset "${SWITCH_DATASET:-math500}" \
+    --pool "$POOL" --pool-manifest "$POOL_MANIFEST" \
     ${SWITCH_PREFIX_SOURCE:+--prefix-source "$SWITCH_PREFIX_SOURCE"} \
     ${SWITCH_BUDGET_GPU_SECONDS:+--budget-gpu-seconds "$SWITCH_BUDGET_GPU_SECONDS"} "$@"
 elif [ "$#" -gt 0 ]; then
