@@ -366,7 +366,8 @@ while :; do
       | sed 's/^\[recovery blocked\]/[recover-cost] blocked:/' || true
   fi
   selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
-    "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" || rc=$?
+    "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" \
+      ${SWITCH_ONLY_SEEDS:+--only-seeds "$SWITCH_ONLY_SEEDS"} ${SWITCH_ONLY_ARMS:+--only-arms "$SWITCH_ONLY_ARMS"} || rc=$?
   case "$rc" in 78|130|137|143) break ;; esac
   if [ "$rc" -ne 0 ]; then
     CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true

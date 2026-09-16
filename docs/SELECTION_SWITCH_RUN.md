@@ -116,6 +116,13 @@ frozen ridge is fitted on this label (`fit_rows`) and the gated arm selects
 when the prediction is positive. Held-out rows also carry `curve_audit`
 (gate versus random, selection versus random) and the final rewards.
 `SWITCH_GATE=final` runs the same launchers with the original gate.
+`bash scripts/run_switch_difficulty.sh pilot` (likewise `run_switch_hard.sh
+pilot`) is a cheaper first look: the worker claims only the six held-out
+`selection_full` and `random_full` branches (`SWITCH_ONLY_SEEDS=3,4`,
+`SWITCH_ONLY_ARMS=selection_full,random_full`, passed to the worker as
+`--only-seeds`/`--only-arms`), so twelve branches show whether the cached
+selector beats random anywhere before the development labels, gate and
+reduced arms are run; a later plain `run` completes the rest of the root.
 
 `bash scripts/run_switch_mbpp.sh` runs the code variant: the same protocol on
 the OLMo MBPP matrix family (`family-mbpp-s<seed>`, 512-prompt pool, top 10%

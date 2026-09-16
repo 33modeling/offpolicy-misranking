@@ -23,4 +23,11 @@ export SWITCH_SELECTOR=hard
 # than random after paying its scoring cost in update units.
 export SWITCH_GATE=${SWITCH_GATE:-convergence}
 export EXPERIMENTS_SKIP_MOPPS=1
+# "pilot": only the six held-out selection_full and random_full branches, to see
+# whether the cached selector beats random anywhere before the full 48 run.
+if [ "${1:-run}" = pilot ]; then
+  export SWITCH_ONLY_SEEDS=3,4 SWITCH_ONLY_ARMS=selection_full,random_full
+  shift
+  set -- run "$@"
+fi
 exec bash scripts/run_selection_switch.sh "$@"

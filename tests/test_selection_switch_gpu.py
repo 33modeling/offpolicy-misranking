@@ -1133,7 +1133,8 @@ def test_nonblocking_task_lease_prevents_duplicate_nodes(tmp_path):
     assert result.returncode != 0 and b"BlockingIOError" in result.stderr
 
 
-def test_all_48_tasks_run_and_only_the_gated_arms_wait_for_the_gate(tmp_path, monkeypatch):
+def simulated_queue(tmp_path, monkeypatch):
+    """Fake prefixes, publication, gate fit and arm runs; returns the call log and gate sightings."""
     seeds = (*rule.DEV_SEEDS, *rule.TEST_SEEDS)
     p = {"sources": {str(s): {"config": {}} for s in seeds}, "gpu_type": "H100"}
     monkeypatch.setattr(switch, "manifest", lambda _: p)
@@ -1182,6 +1183,11 @@ def test_all_48_tasks_run_and_only_the_gated_arms_wait_for_the_gate(tmp_path, mo
         calls.append(key)
         core.atomic_json(out / arm / "result.json", {})
     monkeypatch.setattr(runtime, "run_arm", run)
+    return calls, gate_seen
+
+
+def test_all_48_tasks_run_and_only_the_gated_arms_wait_for_the_gate(tmp_path, monkeypatch):
+    calls, gate_seen = simulated_queue(tmp_path, monkeypatch)
     assert switch.work(tmp_path, idle_timeout=0) == 0
     assert sum(a == "prefix" for _, _, a in calls) == 15
     assert sum(a != "prefix" for _, _, a in calls) == 48
@@ -1192,6 +1198,23 @@ def test_all_48_tasks_run_and_only_the_gated_arms_wait_for_the_gate(tmp_path, mo
     before = len(calls)
     assert switch.work(tmp_path, idle_timeout=0) == 0
     assert len(calls) == before
+
+
+def test_pilot_filter_claims_only_the_held_out_controls_and_leaves_the_rest_for_later(tmp_path, monkeypatch):
+    calls, gate_seen = simulated_queue(tmp_path, monkeypatch)
+    only = switch.task_filter(["3", "4"], ["selection_full", "random_full"])
+    assert only == {"seeds": {3, 4}, "arms": {"selection_full", "random_full"}}
+    assert switch.work(tmp_path, idle_timeout=0, only=only) == 0
+    assert sorted(c for c in calls if c[2] == "prefix") == [(s, t, "prefix") for s in (3, 4) for t in rule.STEPS]
+    arms = [c for c in calls if c[2] != "prefix"]
+    assert len(arms) == 12 and {c[0] for c in arms} == {3, 4} and {c[2] for c in arms} == {"selection_full", "random_full"}
+    assert not (tmp_path / "model.json").exists() and all(not fitted for _, fitted in gate_seen)
+    assert switch.work(tmp_path, idle_timeout=0) == 0
+    assert sum(a == "prefix" for _, _, a in calls) == 15 and sum(a != "prefix" for _, _, a in calls) == 48
+    assert switch.task_filter(None, None) is None
+    assert switch.task_filter(["3"], None)["arms"] == set(rule.TEST_ARMS)
+    with pytest.raises(ValueError, match="unregistered pilot filter"):
+        switch.task_filter(["3"], ["posterior"])
 
 
 QUEUE_WORKER = '''

@@ -1466,10 +1466,24 @@ def wait_for_peers(busy, *, last_progress, idle_timeout):
     return True
 
 
-def work(root, *, idle_timeout=600.):
+def task_filter(seeds=None, arms=None):
+    """Restrict a worker to some seeds and arms (a pilot); None means everything."""
+    if seeds is None and arms is None:
+        return None
+    seeds = set(rule.DEV_SEEDS+rule.TEST_SEEDS) if seeds is None else {core.integer(int(s), "seed") for s in seeds}
+    arms = set(rule.TEST_ARMS) if arms is None else set(arms)
+    unknown = arms-set(rule.TEST_ARMS)
+    if unknown or not seeds <= set(rule.DEV_SEEDS+rule.TEST_SEEDS):
+        raise ValueError(f"unregistered pilot filter: seeds={sorted(seeds)} arms={sorted(arms)}")
+    return {"seeds": seeds, "arms": arms}
+
+
+def work(root, *, idle_timeout=600., only=None):
     import additive_experiment as ae
     p = manifest(root)
     core.number(idle_timeout, "idle timeout", 0.)
+    if only:
+        print(f"[pilot] this worker claims only seeds {sorted(only['seeds'])} and arms {sorted(only['arms'])}", flush=True)
     devices = admitted_devices(p)
     attempted, failures = set(), 0
     last_progress = time.monotonic()
@@ -1487,6 +1501,8 @@ def work(root, *, idle_timeout=600.):
                 failures += 1
                 record_failure(root / "gate-fit", exc)
         for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
+            if only and seed not in only["seeds"]:
+                continue
             env = ae.model_environment(p["sources"][str(seed)]["config"])
             for step in rule.STEPS:
                 cert = prefix_dir(root, seed) / f"prefix-{step}.json"
@@ -1522,6 +1538,8 @@ def work(root, *, idle_timeout=600.):
                 for arm in protocol_value["arms"] if seed % 2 == 0 else protocol_value["arms"][::-1]:
                     key = (seed, step, arm)
                     directory = out / arm
+                    if only and arm not in only["arms"]:
+                        continue
                     if key in attempted or branch_finished(p, directory):
                         continue
                     if arm == "gated" and gate is None:
@@ -1697,6 +1715,8 @@ def main():
     parser.add_argument("--eval-timeout", type=float, default=14400.)
     parser.add_argument("--prefix-timeout", type=float, default=14400.)
     parser.add_argument("--idle-timeout", type=float, default=600.)
+    parser.add_argument("--only-seeds", help="pilot: comma-separated seeds this worker may claim")
+    parser.add_argument("--only-arms", help="pilot: comma-separated arms this worker may claim")
     parser.add_argument("--phase", choices=("measure", "evaluate", "curve"))
     parser.add_argument("--arm")
     parser.add_argument("--shard", type=int, choices=range(4))
@@ -1724,7 +1744,9 @@ def main():
         else:
             base.evaluate(args.root, args.arm, args.shard)
     elif args.command == "run":
-        return work(args.root, idle_timeout=args.idle_timeout)
+        only = task_filter(args.only_seeds.split(",") if args.only_seeds else None,
+                           args.only_arms.split(",") if args.only_arms else None)
+        return work(args.root, idle_timeout=args.idle_timeout, only=only)
     elif args.command == "smoke":
         smoke(args.root)
     elif args.command == "fit":
