@@ -194,7 +194,7 @@ rc_reason() {
 recover_root() {
   [ -f "$1/switch.json" ] || [ -f "$1/mopps.json" ] || return 0
   # One summary line, then one line per open event that could not be closed and why.
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$1" --stale --brief 2>&1 \
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$1" --stale --min-age "$STALE_CLOSE" --brief 2>&1 \
     | sed 's/^\[recovery blocked\]/[recover-cost] blocked:/' || true
 }
 # Every experiment root on the shared volume: nodes come and go and run several
@@ -216,19 +216,25 @@ sweep_all_roots() {
     fi
   done
 }
-# Open cost events this host started belong to attempts that are dead once the node
-# is swept; close them now so the retry is not blocked for the 15-minute stale window.
-close_this_hosts_events() {
+# Open cost events of dead attempts block their branch's retry. Ones this host
+# started are dead once the node is swept (closed at once); ones a killed node
+# left behind are closed after EXPERIMENTS_STALE_CLOSE_SECONDS (default 180) of
+# silence: the meter heartbeat is written every 15s, so three minutes without it
+# means the attempt is gone.
+STALE_CLOSE=${EXPERIMENTS_STALE_CLOSE_SECONDS:-180}
+close_dead_events() {
   local root
   for root in $(all_roots); do
     CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$root" --stale --min-age 0 --this-host --brief 2>&1 \
+      | grep -v ' 0 stale event(s) closed, 0 still open$' | sed "s|^|[sweep $(basename "$root")] |" || true
+    CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$root" --stale --min-age "$STALE_CLOSE" --brief 2>&1 \
       | grep -v ' 0 stale event(s) closed, 0 still open$' | sed "s|^|[sweep $(basename "$root")] |" || true
   done
 }
 full_clean() {
   sweep_all_roots
   clean_node
-  close_this_hosts_events
+  close_dead_events
 }
 stop_node() {
   if launcher_pid_alive; then

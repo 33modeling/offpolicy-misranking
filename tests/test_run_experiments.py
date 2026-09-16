@@ -168,13 +168,16 @@ def test_start_and_stop_close_this_hosts_dead_cost_events_in_every_root(tmp_path
     env = environment(tmp_path, fake_inner(tmp_path, 78, 78))
     work = Path(env["OM_WORK"])
     mine = open_event(work / "runs/selection-switch-long-v1", socket.gethostname(), 999999)
-    theirs = open_event(work / "runs/selection-switch-quality-v1", "some-other-node", 4242)
+    # A killed node's attempt: closed once its heartbeat is three minutes old, not fifteen.
+    dead_node = open_event(work / "runs/selection-switch-quality-v1", "some-dead-node", 4242, age=400.)
+    live_node = open_event(work / "runs/selection-switch-difficulty-v1", "some-live-node", 4243, age=100.)
     result = subprocess.run(["bash", "scripts/run_experiments.sh", mode], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=120)
     out = result.stdout + result.stderr
     assert "[sweep selection-switch-long-v1] [recover-cost]" in out and "1 stale event(s) closed" in out
     assert len(finished_rows(mine)) == 1 and finished_rows(mine)[0]["event_id"] == "e1"
-    assert finished_rows(theirs) == []
+    assert len(finished_rows(dead_node)) == 1
+    assert finished_rows(live_node) == []
 
 
 def test_node_launcher_runs_the_stall_watchdog_for_its_life(tmp_path):
