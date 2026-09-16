@@ -26,14 +26,29 @@ results_done() {
   for b in "${BRANCHES[@]}"; do [ -f "$V1/$b/result.json" ] && n=$((n+1)); done
   echo "$n"
 }
+# An invalid original still in place: a result with no reset receipt (discards/).
+# A rerun that already finished has both a result and discards/, and is kept.
+invalid_left() {
+  local n=0 b
+  for b in "${BRANCHES[@]}"; do
+    [ -f "$V1/$b/result.json" ] && [ ! -d "$V1/$b/discards" ] && n=$((n+1))
+  done
+  echo "$n"
+}
 
 if [ "${THEN_DETACHED:-0}" != 1 ]; then
   mkdir -p "$LOG_DIR"
   $RUN_RESET || true
-  if [ "$(results_done)" -ne 0 ]; then
-    echo "[then] abort: a branch still has result.json after reset-waived (a worker holds it?); nothing started"
+  if [ "$(invalid_left)" -ne 0 ]; then
+    echo "[then] abort: an invalid branch still has its result after reset-waived (a worker holds it?); nothing started"
     exit 2
   fi
+  if [ "$(results_done)" -eq 3 ]; then
+    echo "[then] all three reruns already have results; starting difficulty on this node now"
+    $RUN_NEXT
+    exit 0
+  fi
+  echo "[then] $(results_done)/3 reruns done; the rest run here first"
   THEN_DETACHED=1 setsid nohup bash "$0" >> "$THEN_LOG" 2>&1 < /dev/null &
   echo "[then] host=$HOST: watching the three v1 reruns; difficulty starts here when all three have results (log: $THEN_LOG)"
   $RUN_V1
