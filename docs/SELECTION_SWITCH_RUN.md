@@ -124,6 +124,18 @@ pilot`) is a cheaper first look: the worker claims only the six held-out
 selector beats random anywhere before the development labels, gate and
 reduced arms are run; a later plain `run` completes the rest of the root.
 
+`bash scripts/run_switch_quality.sh` runs the data-quality variant: fresh
+gradient selection as in the primary run, the same prefixes, states and
+evaluation set, but `prepare --accounting matched`. Fresh scoring is metered
+on the reporting ledger, which the allocation does not count, under its
+usual phase names (`fresh-r-validation`, `fresh-r-candidate`, ...), so the
+selection arms train as many updates as random and the comparison is how
+much better fresh-selected data learns per update; the scoring cost is
+recorded and reported, not subtracted. The convergence gate is on by
+default, so its label is the updates saved to the common target. Root
+`runs/selection-switch-quality-v1`; `pilot` runs the six held-out fresh and
+random branches first.
+
 `bash scripts/run_switch_mbpp.sh` runs the code variant: the same protocol on
 the OLMo MBPP matrix family (`family-mbpp-s<seed>`, 512-prompt pool, top 10%
 = 51, execution-verified rewards) in its own root

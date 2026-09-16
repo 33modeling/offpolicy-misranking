@@ -137,13 +137,16 @@ def report(root, *, draws=10000):
             flags.append("FAILED:" + str(b["failure"].get("error", ""))[:60].replace("\n", " "))
         dep = {k[1]: round(v) for k, v in b["phases"].items() if k[0] == "deployment"}
         rep = {k[1]: round(v) for k, v in b["phases"].items() if k[0] == "reporting"}
+        scoring = {k[1]: round(v) for k, v in b["phases"].items()
+                   if k[0] == "reporting" and k[1] != "evaluate" and k[1] != "curve"}
         mean = 100*statistics.fmean(result["rewards"].values()) if result else None
         used = result.get("used_gpu_seconds") if result else None
         lines.append(f"{b['state']:8s} {b['arm']:18s} reward={mean:6.2f} " if mean is not None else
                      f"{b['state']:8s} {b['arm']:18s} reward=  none  ")
         lines[-1] += (f"updates={updates if updates is not None else '?':>4} used={round(used) if used else '?':>6} "
                       f"action={b['execution'].get('action', b['decision'].get('action', '?'))} "
-                      f"pred={b['decision'].get('prediction')} deployment={dep} reporting={rep} {' '.join(flags)}")
+                      f"pred={b['decision'].get('prediction')} deployment={dep} reporting={rep}"
+                      + (f" scoring={scoring}" if scoring else "") + f" {' '.join(flags)}")
         if b["curve"]:
             pts = ", ".join(f"{v['updates']}:{100*v['reward']:.2f}" for v in sorted(b['curve']['points'].values(), key=lambda v: v['updates']))
             lines.append(f"    curve k={b['curve']['k']} points(updates:reward) {pts}")

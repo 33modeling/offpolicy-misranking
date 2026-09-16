@@ -134,6 +134,7 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
         # The 820e005 runtime never wrote this receipt.
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
+        (tmp_path / "quality-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -172,6 +173,7 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
         assert core.read(tmp_path / "selector-runtime.json")["runtime_code_hashes"] == previous
         # The 668ac36 runtime never wrote this receipt.
         (tmp_path / "curve-runtime.json").unlink()
+        (tmp_path / "quality-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -188,6 +190,94 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
     core.atomic_json(tmp_path / "selector-runtime.json", tampered)
     with pytest.raises(ValueError, match="frozen contract changed"):
         switch.manifest(tmp_path)
+
+
+def quality_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "e09500b8bf1d5f8bfa537aaab83e1391a73c57d59546ba2351d72abe07de0379"
+    assert core.fingerprint(hashes) == switch.PRE_QUALITY_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_quality_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = quality_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "curve-runtime.json")["runtime_code_hashes"] == previous
+        # The 8b6c1f5 runtime never wrote this receipt.
+        (tmp_path / "quality-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "quality-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["curve_runtime_sha256"] == base.digest(tmp_path / "curve-runtime.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+    tampered = core.read(tmp_path / "curve-runtime.json")
+    tampered["cost_policy"] = "ignore previous costs"
+    core.atomic_json(tmp_path / "curve-runtime.json", tampered)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+def test_matched_scoring_is_recorded_outside_the_allocation(tmp_path):
+    directory = tmp_path / "selection_full"
+    for name, ledger, seconds in (("verify-inputs", "deployment", 1.), ("fresh-r-candidate", "reporting", 5000.),
+                                  ("train", "deployment", 7000.), ("evaluate", "reporting", 3000.)):
+        for st in ("started", "finished"):
+            row = {"event_id": name, "phase": name, "ledger": ledger, "gpus": 4, "gpu_type": "H100", "host": "h",
+                   "state": st, "time": 1.}
+            if st == "finished":
+                row.update(seconds=seconds, allocated_gpu_seconds=4*seconds, exit_code=0)
+            base.journal(directory / "cost.jsonl", row)
+    assert base.spent(directory) == 4*7001.
+    assert switch.scoring_gpu_seconds(directory) == 20000.
+    assert switch.phase_gpu_seconds(directory, ledger="reporting") == 32000.
+    assert switch.phase_gpu_seconds(directory, exclude=("train",)) == 4.
+
+
+def test_matched_accounting_meters_selection_on_the_scoring_ledger(tmp_path, monkeypatch, installed):
+    out, c = toy_source(tmp_path)
+    c["scope"]["selector"] = "fresh_r"
+    out = tmp_path / "states/s3-t25/points/view-25"
+    core.atomic_json(out / "contract.json", c)
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "accounting": "matched"})
+    assert switch.selection_ledger(out) == "reporting"
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA})
+    assert switch.selection_ledger(out) == "deployment"
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "accounting": "matched"})
+    parent = Path(c["source_run"]) / "policy_step_100"
+    parent.mkdir(parents=True)
+    (parent / "adapter_model.safetensors").write_text("adapter")
+    ledgers = []
+    def meter(directory, name, gpu_type, **kwargs):
+        ledgers.append((name, kwargs.get("ledger")))
+        if "commands" in kwargs:
+            for command, _ in kwargs["commands"]:
+                stage, shard = command[command.index("--stage")+1], command[command.index("--shard")+1]
+                core.atomic_json(out / "selection_full/fresh-r" / f"{stage}-{shard}.done.json", {})
+        elif "action" in kwargs:
+            kwargs["action"]()
+    monkeypatch.setattr(base, "meter", meter)
+    monkeypatch.setattr(switch.scoring, "merge", lambda private, stage: None)
+    monkeypatch.setattr(base, "spent", lambda directory: 0.)
+    private = out / "selection_full/fresh-r"
+    core.atomic_json(private / "selected.json", {"indices": [1, 2, 3, 4]})
+    core.atomic_json(private / "selected.sha256.json", {"sha256": base.digest(private / "selected.json")})
+    choice = {"profile_sha256": None, "budget_gpu_seconds": 1000.}
+    assert switch.select_once(out, c, {"mode": "test"}, "selection_full", choice, {}, ["0", "1", "2", "3"]) == [1, 2, 3, 4]
+    assert ledgers and all(ledger == "reporting" for _, ledger in ledgers)
+    assert {name for name, _ in ledgers} == {"fresh-r-validation", "fresh-r-merge-validation", "fresh-r-candidate", "fresh-r-merge-candidate"}
+    with pytest.raises(ValueError, match="unregistered accounting"):
+        switch.accounting_of({"accounting": "free"})
 
 
 def convergence_manifest():
@@ -423,6 +513,7 @@ def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         (tmp_path / "dataset-runtime.json").unlink()
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
+        (tmp_path / "quality-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -504,6 +595,7 @@ def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         (tmp_path / "dataset-runtime.json").unlink()
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
+        (tmp_path / "quality-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -588,6 +680,7 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
         (tmp_path / "dataset-runtime.json").unlink()
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
+        (tmp_path / "quality-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -624,6 +717,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "dataset-runtime.json").unlink()
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
+        (tmp_path / "quality-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}

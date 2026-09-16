@@ -299,6 +299,7 @@ if [ "$MODE" = prepare ] || [ ! -f "$OUT_ROOT/switch.json" ]; then
     --gpu-type "${GATE_GPU_TYPE:-NVIDIA H100 80GB HBM3}" \
     --dataset "${SWITCH_DATASET:-math500}" --selector "${SWITCH_SELECTOR:-fresh_r}" \
     --gate "${SWITCH_GATE:-final}" --curve-points "${SWITCH_CURVE_POINTS:-3}" --curve-k "${SWITCH_CURVE_K:-4}" \
+    --accounting "${SWITCH_ACCOUNTING:-budget}" \
     --pool "$POOL" --pool-manifest "$POOL_MANIFEST" \
     ${SWITCH_PREFIX_SOURCE:+--prefix-source "$SWITCH_PREFIX_SOURCE"} \
     ${SWITCH_BUDGET_GPU_SECONDS:+--budget-gpu-seconds "$SWITCH_BUDGET_GPU_SECONDS"} "$@"
