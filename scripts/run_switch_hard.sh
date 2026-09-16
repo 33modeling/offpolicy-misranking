@@ -17,5 +17,10 @@ WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export SWITCH_ROOT=${SWITCH_HARD_ROOT:-$WORK/runs/selection-switch-hard-v1}
 export SWITCH_PREFIX_SOURCE=${SWITCH_PREFIX_SOURCE:-$WORK/runs/selection-switch-v1}
 export SWITCH_SELECTOR=hard
+# Convergence gate: every branch also evaluates held-out reward at three archived
+# checkpoints (SWITCH_CURVE_POINTS, SWITCH_CURVE_K responses per question) and the
+# gate selects when selection reaches the common target reward with fewer updates
+# than random after paying its scoring cost in update units.
+export SWITCH_GATE=${SWITCH_GATE:-convergence}
 export EXPERIMENTS_SKIP_MOPPS=1
 exec bash scripts/run_selection_switch.sh "$@"

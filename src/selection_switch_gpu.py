@@ -51,10 +51,19 @@ PRE_VARIANT_ROOT_CODE = "dafec55898396c4ddc91bddf6ba40cb1e5db3bfd58d055bc6b14a04
 PRE_DATASET_CODE = "181ad569457d1c10c6e8d16feefbfe6a045eb10f6072158d142e63b0272f4fae"
 # Exact 820e005 runtime before the continuation selector could be a cached score (difficulty, hard).
 PRE_SELECTOR_CODE = "f63ca6cc21fc5b78a8267a05f844322befbcbcce7260a623ca7503d079291425"
+# Exact 668ac36 runtime before a root could carry the convergence gate (held-out reward curves).
+PRE_CURVE_CODE = "d4d1d8085e1bdb2b2381bc059bc94369cb600bf26e2968a45742a8fe2048ef2e"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
                        PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE,
                        PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE,
-                       PRE_DATASET_CODE, PRE_SELECTOR_CODE}
+                       PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE}
+# Gate criteria. final: the label is the final held-out reward difference between the
+# diagnostic-paid selection and random controls (the primary experiment). convergence:
+# the label is the net update saving; selection is chosen when it reaches the common
+# target reward with fewer updates than random after paying its scoring cost in
+# update units, measured on held-out reward curves of archived checkpoints.
+GATES = ("final", "convergence")
+CURVE_TRAINER = "src/selection_switch_curve_train.py"
 # Continuation selectors. fresh_r rescores the pool with new responses and gradients
 # (the primary experiment). The cached selectors rank the pool from the
 # pre-continuation reward cache alone: difficulty keeps the 10% closest to a 0.5
@@ -130,7 +139,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -147,7 +156,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -164,7 +173,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -181,7 +190,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
@@ -198,7 +207,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != compat_receipt and
                         (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                     raise ValueError(f"frozen contract changed: {compat_path}")
             else:
                 base.bind(compat_path, compat_receipt)
@@ -216,7 +225,7 @@ def manifest(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != shutdown_receipt and
                             (previous != {**shutdown_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                         raise ValueError(f"frozen contract changed: {shutdown_path}")
                 else:
                     base.bind(shutdown_path, shutdown_receipt)
@@ -234,7 +243,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != guard_receipt and
                                 (previous != {**guard_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                             raise ValueError(f"frozen contract changed: {guard_path}")
                     else:
                         base.bind(guard_path, guard_receipt)
@@ -252,7 +261,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != parallel_receipt and
                                 (previous != {**parallel_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                             raise ValueError(f"frozen contract changed: {parallel_path}")
                     else:
                         base.bind(parallel_path, parallel_receipt)
@@ -270,7 +279,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != resilience_receipt and
                                 (previous != {**resilience_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                             raise ValueError(f"frozen contract changed: {resilience_path}")
                     else:
                         base.bind(resilience_path, resilience_receipt)
@@ -288,7 +297,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != variant_receipt and
                                 (previous != {**variant_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_DATASET_CODE, PRE_SELECTOR_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                             raise ValueError(f"frozen contract changed: {variant_path}")
                     else:
                         base.bind(variant_path, variant_receipt)
@@ -306,11 +315,12 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != dataset_receipt and
                                 (previous != {**dataset_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) != PRE_SELECTOR_CODE)):
+                                 or core.fingerprint(previous_code) not in {PRE_SELECTOR_CODE, PRE_CURVE_CODE})):
                             raise ValueError(f"frozen contract changed: {dataset_path}")
                     else:
                         base.bind(dataset_path, dataset_receipt)
-                    base.bind(root / "selector-runtime.json", {
+                    selector_path = root / "selector-runtime.json"
+                    selector_receipt = {
                         "schema": "selection-switch-selector-runtime/v1",
                         "switch_sha256": base.digest(root / "switch.json"),
                         "dataset_runtime_sha256": base.digest(dataset_path), "runtime_code_hashes": current,
@@ -318,8 +328,233 @@ def manifest(root):
                                   "from the cached whole-pool rewards and charged as a metered read; "
                                   "fresh_r roots publish and select through the unchanged path",
                         "cost_policy": "no change to this root's diagnostics, policies, phase costs or budgets",
+                    }
+                    if selector_path.exists():
+                        previous = core.read(selector_path)
+                        previous_code = previous.get("runtime_code_hashes")
+                        if (previous != selector_receipt and
+                                (previous != {**selector_receipt, "runtime_code_hashes": previous_code}
+                                 or core.fingerprint(previous_code) != PRE_CURVE_CODE)):
+                            raise ValueError(f"frozen contract changed: {selector_path}")
+                    else:
+                        base.bind(selector_path, selector_receipt)
+                    base.bind(root / "curve-runtime.json", {
+                        "schema": "selection-switch-curve-runtime/v1",
+                        "switch_sha256": base.digest(root / "switch.json"),
+                        "selector_runtime_sha256": base.digest(selector_path), "runtime_code_hashes": current,
+                        "change": "prepare accepts --gate convergence: branches archive checkpoint adapters, "
+                                  "evaluate held-out reward curves on the reporting ledger, and the gate label "
+                                  "is the net update saving; final-gate roots run through the unchanged path",
+                        "cost_policy": "no change to this root's diagnostics, policies, phase costs or budgets",
                     })
     return p
+
+
+def gate_of(p):
+    gate = p.get("gate", "final")
+    if gate not in GATES:
+        raise ValueError(f"unregistered gate criterion: {gate!r}")
+    return gate
+
+
+def switch_root(out):
+    for candidate in (out, *out.parents):
+        if (candidate / "switch.json").is_file():
+            return candidate
+    raise ValueError(f"no switch root above {out}")
+
+
+def curve_config(p):
+    if gate_of(p) != "convergence":
+        return None
+    curve = p["curve"]
+    core.integer(curve["points"], "curve points", 1)
+    core.integer(curve["k"], "curve responses", 1)
+    if curve.get("trainer") != CURVE_TRAINER or curve.get("trainer_sha256") != base.digest(base.ROOT / CURVE_TRAINER):
+        raise ValueError("the convergence trainer entry changed since this root was frozen")
+    return curve
+
+
+_train_command = base.train_command
+
+
+def train_command(out, c, arm, remaining):
+    args = _train_command(out, c, arm, remaining)
+    p = core.read(switch_root(out) / "switch.json")
+    if curve_config(p) is None:
+        return args
+    frozen = str(base.ROOT / "src/train_selection_gate_grpo.py")
+    if frozen not in args:
+        raise ValueError("unexpected training command")
+    args[args.index(frozen)] = str(base.ROOT / CURVE_TRAINER)
+    return args
+
+
+def curve_fractions(points):
+    return tuple((i+1)/(points+1) for i in range(points))
+
+
+def curve_steps(start, completed, fractions, saved):
+    """Archived checkpoint steps closest to the requested fractions of the completed updates."""
+    updates = completed-start
+    chosen = []
+    for f in fractions:
+        target = start+updates*f
+        candidates = [s for s in saved if start < s < completed]
+        if not candidates:
+            continue
+        step = min(candidates, key=lambda s: (abs(s-target), s))
+        if step not in chosen:
+            chosen.append(step)
+    return sorted(chosen)
+
+
+def curve_point_dir(out, arm, step, start):
+    return out / "curve-parent" if step == start else out / arm / "curve" / f"step-{step}"
+
+
+def curve_adapter(out, c, arm, step):
+    start = c["config"]["drift"]
+    if step == start:
+        return Path(c["source_run"]) / f"policy_step_{start}"
+    return out / arm / "policy" / "curve-checkpoints" / f"step-{step}"
+
+
+def curve_binding(out, c, arm, step, shard, k):
+    adapter = curve_adapter(out, c, arm, step)
+    n = len(c["evaluation"]["val"])
+    indices = range(n*shard//base.GPUS, n*(shard+1)//base.GPUS)
+    binding = {"experiment_sha256": base.digest(out / "contract.json"),
+               "adapter_sha256": base.digest(adapter / "adapter_model.safetensors"),
+               "arm": "parent" if step == c["config"]["drift"] else arm, "step": step, "shard": shard, "k": k}
+    return adapter, indices, binding
+
+
+def curve_evaluate(out, arm, step, shard):
+    """Evaluate one archived checkpoint (or the parent policy) on the evaluation set."""
+    import evidence_downstream as ed
+    c = verify(out)
+    k = curve_config(manifest(switch_root(out)))["k"]
+    adapter, indices, binding = curve_binding(out, c, arm, step, shard, k)
+    target = curve_point_dir(out, arm, step, c["config"]["drift"])
+    with base.lease(target / f"shard-{shard}.lock"):
+        base.bind(target / f"shard-{shard}.contract.json", binding)
+        path = target / f"shard-{shard}.jsonl"
+        done = target / f"shard-{shard}.done.json"
+        if done.exists():
+            if core.read(done) != {"binding": binding, "sha256": base.digest(path)}:
+                raise ValueError("curve evaluation artifact changed")
+            ed.reward_rows(path, indices, k)
+            return
+        from rollout import collect_rollouts, load_policy
+        model, tokenizer = load_policy(c["config"]["model"], adapter)
+        collect_rollouts(model, tokenizer, c["evaluation"]["val"][indices.start:indices.stop], k,
+                         c["config"]["max_new_tokens"], float(c["config"]["temperature"]), path,
+                         idx_offset=indices.start, sampling_seed_base=c["eval_seed"]+7919*(step+1))
+        ed.reward_rows(path, indices, k)
+        base.bind(done, {"binding": binding, "sha256": base.digest(path)})
+
+
+def curve_reward(out, c, arm, step, k):
+    import evidence_downstream as ed
+    target = curve_point_dir(out, arm, step, c["config"]["drift"])
+    values = []
+    for shard in range(base.GPUS):
+        _, indices, binding = curve_binding(out, c, arm, step, shard, k)
+        path = target / f"shard-{shard}.jsonl"
+        if core.read(path.with_suffix(".done.json")) != {"binding": binding, "sha256": base.digest(path)}:
+            raise ValueError("curve evaluation completion hash changed")
+        values.extend(row["reward"] for row in ed.reward_rows(path, indices, k))
+    return statistics.fmean(values)
+
+
+def curve_once(root, p, out, c, arm, suite, devices, env):
+    """After a branch publishes its result, evaluate its reward curve on the reporting ledger."""
+    curve = curve_config(p)
+    directory = out / arm
+    summary_path = directory / "curve.json"
+    if curve is None or summary_path.exists():
+        return
+    start = c["config"]["drift"]
+    stop = core.read(directory / "policy/budget_stop.json")
+    completed = stop["completed_steps"]
+    archive = directory / "policy" / "curve-checkpoints"
+    saved = {int(d.name.split("-", 1)[1]) for d in archive.glob("step-*") if (d / "adapter_model.safetensors").is_file()}
+    steps = [start, *curve_steps(start, completed, curve_fractions(curve["points"]), saved)]
+    for step in steps:
+        target = curve_point_dir(out, arm, step, start)
+        charged = out / "curve-parent" if step == start else directory
+        with base.lease(target / ".point.lock", blocking=True):
+            commands = [([sys.executable, str(HERE), "worker", "--root", str(out), "--phase", "curve",
+                          "--arm", arm, "--step", str(step), "--shard", str(i)], devices[i]) for i in range(4)
+                        if not (target / f"shard-{i}.done.json").exists()]
+            if commands:
+                base.meter(charged, "curve", c["scope"]["gpu_type"], commands=commands, env=env,
+                           timeout=suite["eval_timeout"], ledger="reporting")
+    result = core.read(directory / "result.json")
+    points = {str(step): {"updates": step-start, "reward": curve_reward(out, c, arm, step, curve["k"])} for step in steps}
+    points[str(completed)] = {"updates": completed-start, "reward": statistics.fmean(result["rewards"].values()),
+                              "k": c["eval_k"], "final": True}
+    base.bind(summary_path, {"schema": rule.SCHEMA, "arm": arm, "k": curve["k"], "start_step": start,
+                             "completed_steps": completed, "points": points,
+                             "result_sha256": base.digest(directory / "result.json")})
+
+
+def updates_to(points, target):
+    """First update count at which the piecewise-linear curve reaches the target."""
+    ordered = sorted(((v["updates"], v["reward"]) for v in points.values()), key=lambda x: x[0])
+    if ordered[0][1] >= target:
+        return 0.
+    for (u0, r0), (u1, r1) in zip(ordered, ordered[1:]):
+        if r1 >= target:
+            return u0+(u1-u0)*(target-r0)/(r1-r0) if r1 > r0 else float(u1)
+    raise ValueError("the curve never reaches the target")
+
+
+def phase_gpu_seconds(directory, phase=None, *, exclude=()):
+    total = 0.
+    path = directory / "cost.jsonl"
+    if not path.exists():
+        return total
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("state") != "finished" or row.get("ledger") != "deployment":
+            continue
+        if (phase is None or row["phase"] == phase) and row["phase"] not in exclude:
+            total += row.get("allocated_gpu_seconds", 0.)
+    return total
+
+
+def net_update_gain(out, selection, random, curves):
+    """Updates random needs beyond selection to reach the common target, minus selection's
+    extra pre-training cost in random's update units; as a fraction of random's updates."""
+    sel, rnd = curves[selection], curves[random]
+    final = lambda curve: next(v["reward"] for v in curve["points"].values() if v.get("final"))
+    target = min(final(sel), final(rnd))
+    u_sel, u_rnd = updates_to(sel["points"], target), updates_to(rnd["points"], target)
+    rnd_updates = rnd["completed_steps"]-rnd["start_step"]
+    if rnd_updates <= 0:
+        raise ValueError("random control completed no update")
+    unit = phase_gpu_seconds(out / random, "train")/rnd_updates
+    extra = phase_gpu_seconds(out / selection, exclude=("train",))-phase_gpu_seconds(out / random, exclude=("train",))
+    scoring_updates = extra/unit if unit > 0 else 0.
+    net = (u_rnd-u_sel)-scoring_updates
+    return {"target_reward": target, "selection_updates_to_target": u_sel, "random_updates_to_target": u_rnd,
+            "random_gpu_seconds_per_update": unit, "selection_extra_gpu_seconds": extra,
+            "scoring_updates": scoring_updates, "net_updates": net, "net_fraction": net/rnd_updates}
+
+
+def fit_rows(rows, p):
+    """Rows for the frozen ridge: the convergence label replaces the reward difference."""
+    if gate_of(p) != "convergence":
+        return rows
+    out = []
+    for row in rows:
+        net = max(-1., min(1., row["net_update_gain"]["net_fraction"]))
+        out.append({**row, "means": {"selection_reduced": .5+net/2, "random_reduced": .5}})
+    return out
 
 
 def selector_of(p):
@@ -637,6 +872,7 @@ def prepare(args):
             return
         dataset = getattr(args, "dataset", None) or "math500"
         selector = selector_of({"selector": getattr(args, "selector", None) or "fresh_r"})
+        gate = gate_of({"gate": getattr(args, "gate", None) or "final"})
         runs = resolve_sources(args.matrix, (*rule.DEV_SEEDS, *rule.TEST_SEEDS), 0, dataset)
         ed.require_separate_output(root, runs)
         if any(root in run.parents for run in runs):
@@ -710,7 +946,7 @@ def prepare(args):
             if len(ed.independent_test(core.read(source / "prompts.json"), evaluation)) < 4:
                 raise ValueError("too few independent evaluation questions")
         base.bind(root / "test.json", evaluation)
-        p = {"schema": rule.SCHEMA, "dataset": dataset, "selector": selector, "code_hashes": code_hashes(), "sources": sources,
+        p = {"schema": rule.SCHEMA, "dataset": dataset, "selector": selector, "gate": gate, "code_hashes": code_hashes(), "sources": sources,
              "budget_gpu_seconds": budget, "budget_source": budget_source, "steps": list(rule.STEPS),
              "development_seeds": list(rule.DEV_SEEDS), "test_seeds": list(rule.TEST_SEEDS),
              "gpu_type": args.gpu_type, "evaluation": evaluation, "eval_k": args.eval_k,
@@ -718,12 +954,18 @@ def prepare(args):
              "measurement_config": rule.MEASUREMENT,
              "historical_scoring_cost": "reused verified d0 fresh_r scores; historical cost unknown, not zero",
              "prefix_cost": "shared research work, recorded separately from continuation allocation"}
+        if gate == "convergence":
+            p["curve"] = {"points": core.integer(args.curve_points, "curve points", 1),
+                          "k": core.integer(args.curve_k, "curve responses", 1), "trainer": CURVE_TRAINER,
+                          "trainer_sha256": base.digest(base.ROOT / CURVE_TRAINER),
+                          "fractions": list(curve_fractions(args.curve_points)),
+                          "label": "net updates saved to the common target minus scoring in update units"}
         if imported:
             p["prefix_source"] = imported
             p["prefix_cost"] = "certified prefixes imported from prefix_source; their research cost is recorded there"
         base.bind(root / "switch.json", p)
         print(f"[prepared] {root}; 18 development + 30 held-out continuations, five selected prefixes"
-              f"{' imported from ' + imported['root'] if imported else ''}; selector={selector}; B={budget:.0f} GPU-s")
+              f"{' imported from ' + imported['root'] if imported else ''}; selector={selector}; gate={gate}; B={budget:.0f} GPU-s")
 
 
 def prefix_cost(segment, gpu_type):
@@ -1104,6 +1346,18 @@ def collect(root, *, development):
                     "budget_gpu_seconds": p["budget_gpu_seconds"], "features": profile["features"] if profile else None,
                     "means": means, "branches": results, "decision_frozen_at": freeze["frozen_at"],
                     "measurement_gpu_seconds": initial["gpu_seconds"]}
+                if gate_of(p) == "convergence":
+                    curves = {}
+                    for arm in results:
+                        curve = core.read(out / arm / "curve.json")
+                        if curve["result_sha256"] != base.digest(out / arm / "result.json"):
+                            raise ValueError("curve summary does not match the published result")
+                        curves[arm] = curve
+                    row["curves"] = curves
+                    row["net_update_gain"] = net_update_gain(out, "selection_reduced", "random_reduced", curves)
+                    if not development:
+                        row["curve_audit"] = {"gate_vs_random_full": net_update_gain(out, "gated", "random_full", curves),
+                                              "selection_full_vs_random_full": net_update_gain(out, "selection_full", "random_full", curves)}
                 if not development:
                     decision = core.read(out / "gated/decision.json")
                     row["gate_frozen_at"] = gate_freeze["frozen_at"]
@@ -1140,7 +1394,7 @@ def fit_once(root):
         data = collect(root, development=True)
         if not data["complete"]:
             raise ValueError(f"development labels are invalid: {data['missing_or_failed']}")
-        model = rule.fit(data["rows"])
+        model = rule.fit(fit_rows(data["rows"], manifest(root)))
         base.bind(root / "development.json", data)
         base.bind(root / "model.json", model)
         elapsed = time.monotonic()-started
@@ -1268,13 +1522,13 @@ def work(root, *, idle_timeout=600.):
                 for arm in protocol_value["arms"] if seed % 2 == 0 else protocol_value["arms"][::-1]:
                     key = (seed, step, arm)
                     directory = out / arm
-                    if key in attempted or (directory / "result.json").exists():
+                    if key in attempted or branch_finished(p, directory):
                         continue
                     if arm == "gated" and gate is None:
                         continue
                     try:
                         with base.lease(directory / ".task.lock"):
-                            if (directory / "result.json").exists():
+                            if branch_finished(p, directory):
                                 continue
                             freeze_decisions(out, suite, protocol_value, env)
                             if arm == "gated":
@@ -1282,6 +1536,8 @@ def work(root, *, idle_timeout=600.):
                             attempted.add(key)
                             print(f"[claimed] host={socket.gethostname()} pid={os.getpid()} task=s{seed}/t{step}/{arm}", flush=True)
                             runtime.run_arm(out, suite, protocol_value, arm, devices, env)
+                            if gate_of(p) == "convergence":
+                                curve_once(root, p, out, core.read(out / "contract.json"), arm, suite, devices, env)
                             progress = True
                     except BlockingIOError:
                         busy.append(busy_task(f"s{seed}/t{step}/{arm}", directory))
@@ -1323,6 +1579,12 @@ def work(root, *, idle_timeout=600.):
                 break
     status(root)
     return int(bool(failures))
+
+
+def branch_finished(p, directory):
+    if not (directory / "result.json").exists():
+        return False
+    return gate_of(p) != "convergence" or (directory / "curve.json").exists()
 
 
 def record_failure(directory, exc):
@@ -1406,6 +1668,7 @@ def install_runtime():
     runtime.protocol, runtime.select_once, runtime.measurement_worker = protocol, select_once, measurement_worker
     runtime.decision = decision
     base.verify = verify
+    base.train_command = train_command
 
 
 def main():
@@ -1418,6 +1681,11 @@ def main():
                         help="reuse this root's certified prefixes and evaluation set (a variant of the same states)")
     parser.add_argument("--selector", choices=SELECTORS, default="fresh_r",
                         help="continuation selector: fresh_r (rescoring) or a cached ranking (difficulty, hard)")
+    parser.add_argument("--gate", choices=GATES, default="final",
+                        help="gate criterion: final held-out reward (default) or convergence (net update saving)")
+    parser.add_argument("--curve-points", type=int, default=3, help="intermediate checkpoints evaluated per branch")
+    parser.add_argument("--curve-k", type=int, default=4, help="responses per question at intermediate checkpoints")
+    parser.add_argument("--step", type=int, help="curve worker: archived checkpoint step (parent when equal to the state step)")
     parser.add_argument("--dataset", choices=DATASETS, default="math500",
                         help="matrix family to prepare from: math500 (default) or mbpp (execution-verified code)")
     parser.add_argument("--gpu-type", default="NVIDIA H100 80GB HBM3")
@@ -1429,7 +1697,7 @@ def main():
     parser.add_argument("--eval-timeout", type=float, default=14400.)
     parser.add_argument("--prefix-timeout", type=float, default=14400.)
     parser.add_argument("--idle-timeout", type=float, default=600.)
-    parser.add_argument("--phase", choices=("measure", "evaluate"))
+    parser.add_argument("--phase", choices=("measure", "evaluate", "curve"))
     parser.add_argument("--arm")
     parser.add_argument("--shard", type=int, choices=range(4))
     parser.add_argument("--recent-window", type=int, default=20)
@@ -1449,6 +1717,10 @@ def main():
             measurement_worker(args.root, args.arm, window=args.recent_window, wall_cap=args.measurement_wall_seconds)
         elif args.shard is None:
             parser.error("evaluation requires a shard")
+        elif args.phase == "curve":
+            if args.step is None:
+                parser.error("curve evaluation requires --step")
+            curve_evaluate(args.root, args.arm, args.step, args.shard)
         else:
             base.evaluate(args.root, args.arm, args.shard)
     elif args.command == "run":

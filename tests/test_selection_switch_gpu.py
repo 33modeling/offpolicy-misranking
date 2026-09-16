@@ -133,6 +133,7 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
         assert core.read(tmp_path / "dataset-runtime.json")["runtime_code_hashes"] == previous
         # The 820e005 runtime never wrote this receipt.
         (tmp_path / "selector-runtime.json").unlink()
+        (tmp_path / "curve-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -150,6 +151,171 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
     core.atomic_json(tmp_path / "dataset-runtime.json", tampered)
     with pytest.raises(ValueError, match="frozen contract changed"):
         switch.manifest(tmp_path)
+
+
+def curve_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "337cea75e12718e35c4063205c2e5de568a5ad54eb1f67bd52681f37d0c7a42b"
+    assert core.fingerprint(hashes) == switch.PRE_CURVE_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = curve_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "selector-runtime.json")["runtime_code_hashes"] == previous
+        # The 668ac36 runtime never wrote this receipt.
+        (tmp_path / "curve-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "curve-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["selector_runtime_sha256"] == base.digest(tmp_path / "selector-runtime.json")
+    assert core.read(tmp_path / "selector-runtime.json")["runtime_code_hashes"] == (previous if migrated else switch.code_hashes())
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+    tampered = core.read(tmp_path / "selector-runtime.json")
+    tampered["cost_policy"] = "ignore previous costs"
+    core.atomic_json(tmp_path / "selector-runtime.json", tampered)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+def convergence_manifest():
+    return {"schema": rule.SCHEMA, "gate": "convergence",
+            "curve": {"points": 3, "k": 4, "trainer": switch.CURVE_TRAINER,
+                      "trainer_sha256": base.digest(base.ROOT / switch.CURVE_TRAINER)}}
+
+
+def test_curve_steps_follow_fractions_of_the_completed_updates():
+    assert switch.curve_fractions(3) == (.25, .5, .75) and switch.curve_fractions(1) == (.5,)
+    saved = set(range(30, 125, 5))
+    assert switch.curve_steps(25, 125, (.25, .5, .75), saved) == [50, 75, 100]
+    assert switch.curve_steps(25, 40, (.25, .5, .75), {30, 35}) == [30, 35]
+    assert switch.curve_steps(25, 25, (.25, .5, .75), set()) == []
+    assert switch.curve_steps(25, 125, (.5,), {125, 20}) == []
+
+
+def test_updates_to_target_interpolates_the_curve():
+    points = {"25": {"updates": 0, "reward": .25}, "50": {"updates": 25, "reward": .27},
+              "75": {"updates": 50, "reward": .28}, "125": {"updates": 100, "reward": .30, "final": True}}
+    assert switch.updates_to(points, .25) == 0.
+    assert switch.updates_to(points, .26) == pytest.approx(12.5)
+    assert switch.updates_to(points, .28) == pytest.approx(50.)
+    assert switch.updates_to(points, .29) == pytest.approx(75.)
+    with pytest.raises(ValueError, match="never reaches"):
+        switch.updates_to(points, .31)
+    flat = {"a": {"updates": 0, "reward": .2}, "b": {"updates": 10, "reward": .2}, "c": {"updates": 20, "reward": .3}}
+    assert switch.updates_to(flat, .2) == 0. and switch.updates_to(flat, .25) == pytest.approx(15.)
+
+
+def cost_rows(directory, phases):
+    for name, seconds in phases:
+        for state in ("started", "finished"):
+            row = {"event_id": name, "phase": name, "ledger": "deployment", "gpus": 4, "gpu_type": "H100",
+                   "host": "h", "state": state, "time": 1.}
+            if state == "finished":
+                row.update(seconds=seconds, allocated_gpu_seconds=4*seconds, exit_code=0)
+            base.journal(directory / "cost.jsonl", row)
+
+
+def curve(start, completed, rewards):
+    steps = sorted(rewards)
+    points = {str(s): {"updates": s-start, "reward": r} for s, r in rewards.items()}
+    points[str(completed)]["final"] = True
+    return {"start_step": start, "completed_steps": completed, "points": points}
+
+
+def test_net_update_gain_is_updates_saved_minus_scoring_in_update_units(tmp_path):
+    out = tmp_path / "point"
+    cost_rows(out / "random_reduced", [("verify-inputs", 1.), ("train", 7000.), ("evaluate", 3600.)])
+    cost_rows(out / "selection_reduced", [("verify-inputs", 1.), ("difficulty-select", 9.), ("train", 6950.), ("evaluate", 3600.)])
+    curves = {"random_reduced": curve(25, 125, {25: .25, 50: .27, 75: .28, 100: .29, 125: .30}),
+              "selection_reduced": curve(25, 125, {25: .25, 50: .28, 75: .30, 100: .31, 125: .31})}
+    gain = switch.net_update_gain(out, "selection_reduced", "random_reduced", curves)
+    assert gain["target_reward"] == .30 and gain["selection_updates_to_target"] == pytest.approx(50.)
+    assert gain["random_updates_to_target"] == pytest.approx(100.)
+    assert gain["random_gpu_seconds_per_update"] == pytest.approx(280.) and gain["selection_extra_gpu_seconds"] == pytest.approx(36.)
+    assert gain["net_updates"] == pytest.approx(50-36/280) and gain["net_fraction"] == pytest.approx((50-36/280)/100)
+    # A fresh-style arm: 15 updates after 24,000 GPU-s of scoring, higher final reward.
+    cost_rows(out / "selection_full", [("verify-inputs", 1.), ("fresh-r-candidate", 6000.), ("train", 1050.)])
+    cost_rows(out / "random_full", [("verify-inputs", 1.), ("train", 7000.)])
+    curves = {"random_full": curve(25, 125, {25: .25, 50: .27, 75: .28, 100: .29, 125: .30}),
+              "selection_full": curve(25, 40, {25: .25, 30: .29, 35: .30, 40: .31})}
+    gain = switch.net_update_gain(out, "selection_full", "random_full", curves)
+    assert gain["selection_updates_to_target"] == pytest.approx(10.) and gain["random_updates_to_target"] == pytest.approx(100.)
+    assert gain["scoring_updates"] == pytest.approx(24000/280) and gain["net_updates"] == pytest.approx(90-24000/280)
+    assert gain["net_fraction"] == pytest.approx((90-24000/280)/100)
+
+
+def test_fit_rows_replace_the_label_only_for_the_convergence_gate():
+    rows = [{"means": {"selection_reduced": .3, "random_reduced": .28}, "net_update_gain": {"net_fraction": .4}},
+            {"means": {"selection_reduced": .3, "random_reduced": .28}, "net_update_gain": {"net_fraction": -3.}}]
+    assert switch.fit_rows(rows, {"gate": "final"}) is rows
+    fitted = switch.fit_rows(rows, {"gate": "convergence"})
+    assert fitted[0]["means"] == {"selection_reduced": .7, "random_reduced": .5}
+    assert fitted[1]["means"] == {"selection_reduced": 0., "random_reduced": .5}
+    assert fitted[0]["net_update_gain"] == rows[0]["net_update_gain"]
+    with pytest.raises(ValueError, match="unregistered gate criterion"):
+        switch.gate_of({"gate": "speed"})
+
+
+def test_convergence_roots_train_through_the_archiving_entry(tmp_path, monkeypatch):
+    frozen = str(base.ROOT / "src/train_selection_gate_grpo.py")
+    monkeypatch.setattr(switch, "_train_command", lambda out, c, arm, remaining: ["python", "-m", "torch.distributed.run", frozen, "--seed", "0"])
+    out = tmp_path / "states/s3-t25/points/view-25"
+    out.mkdir(parents=True)
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA})
+    assert switch.train_command(out, {}, "random_full", 10.)[3] == frozen
+    core.atomic_json(tmp_path / "switch.json", convergence_manifest())
+    assert switch.train_command(out, {}, "random_full", 10.)[3] == str(base.ROOT / switch.CURVE_TRAINER)
+    tampered = convergence_manifest()
+    tampered["curve"]["trainer_sha256"] = "0"*64
+    core.atomic_json(tmp_path / "switch.json", tampered)
+    with pytest.raises(ValueError, match="trainer entry changed"):
+        switch.train_command(out, {}, "random_full", 10.)
+    with pytest.raises(ValueError, match="no switch root"):
+        switch.switch_root(tmp_path.parent / "elsewhere")
+
+
+def test_archiving_entry_keeps_each_checkpoint_adapter_before_removal(tmp_path):
+    import selection_switch_curve_train as entry
+    checkpoint = tmp_path / "policy" / "checkpoint-000050"
+    checkpoint.mkdir(parents=True)
+    for name in ("adapter_model.safetensors", "adapter_config.json", "checkpoint_state.json", "optimizer.pt"):
+        (checkpoint / name).write_text(name)
+    entry.archive_then_remove(checkpoint)
+    kept = tmp_path / "policy" / "curve-checkpoints" / "step-50"
+    assert not checkpoint.exists()
+    assert sorted(p.name for p in kept.iterdir()) == ["adapter_config.json", "adapter_model.safetensors", "checkpoint_state.json"]
+    other = tmp_path / "policy" / ".checkpoint-000055.tmp"
+    other.mkdir()
+    entry.archive_then_remove(other)
+    assert not other.exists() and not (tmp_path / "policy" / "curve-checkpoints" / "step-55").exists()
+    again = tmp_path / "policy" / "checkpoint-000050"
+    again.mkdir()
+    (again / "adapter_model.safetensors").write_text("changed")
+    entry.archive_then_remove(again)
+    assert (kept / "adapter_model.safetensors").read_text() == "adapter_model.safetensors"
+
+
+def test_convergence_branches_finish_only_with_their_curve(tmp_path):
+    directory = tmp_path / "random_full"
+    assert not switch.branch_finished({"gate": "convergence"}, directory)
+    core.atomic_json(directory / "result.json", {"complete": True})
+    assert switch.branch_finished({}, directory)
+    assert not switch.branch_finished({"gate": "convergence"}, directory)
+    core.atomic_json(directory / "curve.json", {"points": {}})
+    assert switch.branch_finished({"gate": "convergence"}, directory)
 
 
 def reward_cache(path, prompts=40, responses=8):
@@ -256,6 +422,7 @@ def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         # The 47339ca runtime never wrote these receipts.
         (tmp_path / "dataset-runtime.json").unlink()
         (tmp_path / "selector-runtime.json").unlink()
+        (tmp_path / "curve-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -336,6 +503,7 @@ def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         (tmp_path / "variant-root-runtime.json").unlink()
         (tmp_path / "dataset-runtime.json").unlink()
         (tmp_path / "selector-runtime.json").unlink()
+        (tmp_path / "curve-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -419,6 +587,7 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
         (tmp_path / "variant-root-runtime.json").unlink()
         (tmp_path / "dataset-runtime.json").unlink()
         (tmp_path / "selector-runtime.json").unlink()
+        (tmp_path / "curve-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -454,6 +623,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "variant-root-runtime.json").unlink()
         (tmp_path / "dataset-runtime.json").unlink()
         (tmp_path / "selector-runtime.json").unlink()
+        (tmp_path / "curve-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}

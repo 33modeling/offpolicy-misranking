@@ -97,6 +97,26 @@ selection must match it. Roots are `runs/selection-switch-difficulty-v1` and
 `runs/selection-switch-hard-v1`, each with its own labels, gate and ledgers;
 the MoPPS pass is skipped. Same modes as the switch launcher.
 
+Both cached-selector launchers set `SWITCH_GATE=convergence` (`prepare --gate
+convergence`, recorded in `switch.json` with the curve settings). Under this
+gate the label is not the final reward difference but the net update saving:
+every branch trains through `src/selection_switch_curve_train.py`, which
+archives each checkpoint's adapter under `policy/curve-checkpoints/step-<n>/`
+before the frozen trainer removes it, and after the result is published the
+node evaluates the parent policy (`curve-parent/`, once per state) and three
+archived checkpoints at a quarter, half and three quarters of the completed
+updates (`SWITCH_CURVE_POINTS`, `SWITCH_CURVE_K` responses per question,
+default 4) on the reporting ledger, phase `curve`, writing `curve.json`. A
+branch counts as finished only with its curve. The development label is
+`net_update_gain`: with the target the lower of the two controls' final
+rewards, the updates random needs beyond selection to reach it on the
+piecewise-linear curves, minus selection's extra pre-training GPU-seconds in
+random's GPU-seconds-per-update, as a fraction of random's updates. The
+frozen ridge is fitted on this label (`fit_rows`) and the gated arm selects
+when the prediction is positive. Held-out rows also carry `curve_audit`
+(gate versus random, selection versus random) and the final rewards.
+`SWITCH_GATE=final` runs the same launchers with the original gate.
+
 `bash scripts/run_switch_mbpp.sh` runs the code variant: the same protocol on
 the OLMo MBPP matrix family (`family-mbpp-s<seed>`, 512-prompt pool, top 10%
 = 51, execution-verified rewards) in its own root
