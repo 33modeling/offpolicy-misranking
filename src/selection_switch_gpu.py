@@ -42,9 +42,11 @@ PRE_CACHE_GUARD_CODE = "43f53caa042b27810fe3ba45da025198953378e6f858868cdb93e004
 PRE_TEST_PARALLEL_CODE = "b7803071821dd7aa68035370e37c77fdbaecec13d9e96ea6574d91b10758f5a5"
 # Exact 091ae20 runtime before a failing gate fit or state publication stopped the worker.
 PRE_FIT_RESILIENCE_CODE = "6f8e1fadfa8f2dd6ab6c401824c9def4a5f91e261c79edf780147b0454b8e4ef"
+# Exact b8d90c0 runtime before variant roots could import another root's certified prefixes.
+PRE_VARIANT_ROOT_CODE = "dafec55898396c4ddc91bddf6ba40cb1e5db3bfd58d055bc6b14a04006e3c47d"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
                        PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE,
-                       PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE}
+                       PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE}
 RUNTIME_PATCH_FILES = {"src/grads.py", "src/selection_switch_gpu.py", "src/selection_gate_gpu.py",
                        "src/net_gate_memory_worker.py"}
 KV_CACHE_GRADS = "6640be340a42fc79ba521a19440703fbb91d3fb6b9a11f3c5f152fa2e8a20bfe"
@@ -113,7 +115,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -130,7 +132,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -147,7 +149,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -164,7 +166,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
@@ -181,7 +183,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != compat_receipt and
                         (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
                     raise ValueError(f"frozen contract changed: {compat_path}")
             else:
                 base.bind(compat_path, compat_receipt)
@@ -199,7 +201,7 @@ def manifest(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != shutdown_receipt and
                             (previous != {**shutdown_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
                         raise ValueError(f"frozen contract changed: {shutdown_path}")
                 else:
                     base.bind(shutdown_path, shutdown_receipt)
@@ -217,7 +219,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != guard_receipt and
                                 (previous != {**guard_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
                             raise ValueError(f"frozen contract changed: {guard_path}")
                     else:
                         base.bind(guard_path, guard_receipt)
@@ -235,17 +237,35 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != parallel_receipt and
                                 (previous != {**parallel_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) != PRE_FIT_RESILIENCE_CODE)):
+                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE})):
                             raise ValueError(f"frozen contract changed: {parallel_path}")
                     else:
                         base.bind(parallel_path, parallel_receipt)
-                    base.bind(root / "fit-resilience-runtime.json", {
+                    resilience_path = root / "fit-resilience-runtime.json"
+                    resilience_receipt = {
                         "schema": "selection-switch-fit-resilience-runtime/v1",
                         "switch_sha256": base.digest(root / "switch.json"),
                         "test_parallel_runtime_sha256": base.digest(parallel_path), "runtime_code_hashes": current,
                         "change": "a failing gate fit or state publication is recorded (gate-fit/failure.json, "
                                   "states/*/failure.json) and the worker keeps claiming other branches",
                         "cost_policy": "no change to diagnostics, policies, phase costs or branch budgets",
+                    }
+                    if resilience_path.exists():
+                        previous = core.read(resilience_path)
+                        previous_code = previous.get("runtime_code_hashes")
+                        if (previous != resilience_receipt and
+                                (previous != {**resilience_receipt, "runtime_code_hashes": previous_code}
+                                 or core.fingerprint(previous_code) != PRE_VARIANT_ROOT_CODE)):
+                            raise ValueError(f"frozen contract changed: {resilience_path}")
+                    else:
+                        base.bind(resilience_path, resilience_receipt)
+                    base.bind(root / "variant-root-runtime.json", {
+                        "schema": "selection-switch-variant-root-runtime/v1",
+                        "switch_sha256": base.digest(root / "switch.json"),
+                        "fit_resilience_runtime_sha256": base.digest(resilience_path), "runtime_code_hashes": current,
+                        "change": "prepare can import another root's certified prefixes (--prefix-source) so a "
+                                  "variant with a different continuation allocation reuses the same states",
+                        "cost_policy": "this root unchanged; a variant root carries its own allocation and ledgers",
                     })
     return p
 
@@ -365,6 +385,43 @@ def initial_fresh_scores(source, cfg, prompts, generation):
     return scores, info
 
 
+def import_prefixes(root, source_root, sources):
+    """Reuse another root's certified selected prefixes for a variant of the same states.
+
+    The new root gets real prefix directories holding copies of the certificates
+    and subsets and symlinks to the source's policy checkpoints and research
+    segments; states, views and continuations are created fresh under this root.
+    The sources must be identical, so every certificate validates unchanged.
+    """
+    import evidence_downstream as ed
+    source_root = source_root.resolve()
+    source_p = core.read(source_root / "switch.json")
+    if source_p.get("schema") != rule.SCHEMA or source_p.get("steps") != list(rule.STEPS):
+        raise ValueError(f"{source_root}: not a selected-prefix switch root")
+    if source_p["sources"] != sources:
+        raise ValueError("prefix source was prepared from different initial sources; cannot reuse its prefixes")
+    record = {"root": str(source_root), "switch_sha256": base.digest(source_root / "switch.json"), "seeds": {}}
+    for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
+        origin = prefix_dir(source_root, seed)
+        target = prefix_dir(root, seed)
+        target.mkdir(parents=True, exist_ok=True)
+        base.bind(target / "subset.json", core.read(origin / "subset.json"))
+        for step in rule.STEPS:
+            cert = core.read(origin / f"prefix-{step}.json")
+            if cert.get("seed") != seed or cert.get("step") != step or cert.get("schema") != rule.SCHEMA:
+                raise ValueError(f"{origin}: prefix-{step}.json is not a certificate for seed {seed} step {step}")
+            base.bind(target / f"prefix-{step}.json", cert)
+            link(target / f"policy_step_{step}", (origin / f"policy_step_{step}").resolve())
+            segment = origin / f"segment-{step}"
+            if segment.is_dir():
+                link(target / f"segment-{step}", segment.resolve())
+            for name in ed.POLICY_FILES:
+                if base.digest(target / f"policy_step_{step}" / name) != cert["policy_hashes"][name]:
+                    raise ValueError(f"{origin}: policy_step_{step}/{name} differs from its certificate")
+        record["seeds"][str(seed)] = {f"prefix-{step}": base.digest(target / f"prefix-{step}.json") for step in rule.STEPS}
+    return record
+
+
 def prepare(args):
     import additive_experiment as ae
     import evidence_downstream as ed
@@ -419,7 +476,12 @@ def prepare(args):
             budget_source = {"kind": "100-update equivalent; development seed-0 timings only", "path": str(reference),
                              "sha256": base.digest(reference), "median_update_wall_seconds": statistics.median(timings)}
         core.number(budget, "budget", 120.)
-        if args.eval_prompts:
+        imported = None
+        if args.prefix_source:
+            imported = import_prefixes(root, args.prefix_source, sources)
+            # The variant asks the same question about the same states: keep the evaluation set.
+            evaluation = core.read(args.prefix_source.resolve() / "switch.json")["evaluation"]
+        elif args.eval_prompts:
             evaluation = core.read(args.eval_prompts)
         else:
             if not args.pool or not args.pool_manifest:
@@ -438,8 +500,12 @@ def prepare(args):
              "measurement_config": rule.MEASUREMENT,
              "historical_scoring_cost": "reused verified d0 fresh_r scores; historical cost unknown, not zero",
              "prefix_cost": "shared research work, recorded separately from continuation allocation"}
+        if imported:
+            p["prefix_source"] = imported
+            p["prefix_cost"] = "certified prefixes imported from prefix_source; their research cost is recorded there"
         base.bind(root / "switch.json", p)
-        print(f"[prepared] {root}; 18 development + 30 held-out continuations, five selected prefixes; B={budget:.0f} GPU-s")
+        print(f"[prepared] {root}; 18 development + 30 held-out continuations, five selected prefixes"
+              f"{' imported from ' + imported['root'] if imported else ''}; B={budget:.0f} GPU-s")
 
 
 def prefix_cost(segment, gpu_type):
@@ -1097,6 +1163,8 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--matrix", type=Path)
     parser.add_argument("--budget-gpu-seconds", type=float)
+    parser.add_argument("--prefix-source", type=Path,
+                        help="reuse this root's certified prefixes and evaluation set (a variant of the same states)")
     parser.add_argument("--gpu-type", default="NVIDIA H100 80GB HBM3")
     parser.add_argument("--eval-prompts", type=Path)
     parser.add_argument("--pool", type=Path)

@@ -72,6 +72,14 @@ report under `reports/experiments/` for both experiments: the combined status
 screen, then each experiment's own why report; `EXPERIMENTS_COMBINED=0` writes
 only this experiment's report under `reports/selection-switch/`.
 
+`bash scripts/run_switch_long.sh` runs the longer-horizon variant: a separate
+root (`runs/selection-switch-long-v1`) that imports the five certified prefixes
+and the evaluation set of `runs/selection-switch-v1` (`prepare --prefix-source`)
+and gives every continuation three times the allocation (87,120 GPU-seconds, a
+300-update equivalent), so fresh gradient scoring is about a quarter of a branch
+instead of four fifths. It has its own development labels, gate, ledgers and
+status; the MoPPS pass is skipped. Same modes as the switch launcher.
+
 `waive` (from either launcher) returns the allocation of attempts that stalled
 after a GPU fault: a rank that dies with a CUDA "unspecified launch failure"
 leaves the trainer hung until the phase's allocation limit, the whole

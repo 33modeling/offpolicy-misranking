@@ -274,10 +274,14 @@ source scripts/setup_env.sh >/dev/null 2>&1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
 MATRIX=${OM_OLMO3_ROOT:-$WORK/runs/${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-h100-v2}}
 if [ "$MODE" = prepare ] || [ ! -f "$OUT_ROOT/switch.json" ]; then
+  # SWITCH_PREFIX_SOURCE / SWITCH_BUDGET_GPU_SECONDS make a variant root that reuses
+  # another root's certified prefixes with its own continuation allocation (see run_switch_long.sh).
   "$PY" src/selection_switch_gpu.py prepare --root "$OUT_ROOT" --matrix "$MATRIX" \
     --gpu-type "${GATE_GPU_TYPE:-NVIDIA H100 80GB HBM3}" \
     --pool "$DATASETS_DIR/math_train/math_train.jsonl" \
-    --pool-manifest "$DATASETS_DIR/math_train/dataset_manifest.json" "$@"
+    --pool-manifest "$DATASETS_DIR/math_train/dataset_manifest.json" \
+    ${SWITCH_PREFIX_SOURCE:+--prefix-source "$SWITCH_PREFIX_SOURCE"} \
+    ${SWITCH_BUDGET_GPU_SECONDS:+--budget-gpu-seconds "$SWITCH_BUDGET_GPU_SECONDS"} "$@"
 elif [ "$#" -gt 0 ]; then
   echo '[abort] experiment already frozen; run takes no new preparation options'; exit 2
 fi

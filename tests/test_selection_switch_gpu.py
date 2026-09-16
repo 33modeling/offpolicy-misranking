@@ -96,6 +96,93 @@ def fit_resilience_predecessor():
     return hashes
 
 
+def variant_root_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "a3001f512fa99a801e32783a60ff8983fb567005319e61e6df170b7865732fa8"
+    assert core.fingerprint(hashes) == switch.PRE_VARIANT_ROOT_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = variant_root_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "fit-resilience-runtime.json")["runtime_code_hashes"] == previous
+        # The b8d90c0 runtime never wrote this receipt.
+        (tmp_path / "variant-root-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "variant-root-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["fit_resilience_runtime_sha256"] == base.digest(tmp_path / "fit-resilience-runtime.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+    tampered = core.read(tmp_path / "fit-resilience-runtime.json")
+    tampered["cost_policy"] = "ignore previous costs"
+    core.atomic_json(tmp_path / "fit-resilience-runtime.json", tampered)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+def certified_source_root(tmp_path):
+    """A frozen root with five certified prefixes: certificates, subsets, policy files, segments."""
+    import evidence_downstream as ed
+    source = tmp_path / "source-root"
+    sources = {str(s): {"path": str(tmp_path / f"run-{s}"), "config": {"seed": s}, "hashes": {}} for s in (*rule.DEV_SEEDS, *rule.TEST_SEEDS)}
+    core.atomic_json(source / "switch.json", {"schema": rule.SCHEMA, "steps": list(rule.STEPS), "sources": sources,
+                                              "evaluation": {"val": [{"question": "q"}], "provenance": {}}})
+    for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
+        directory = switch.prefix_dir(source, seed)
+        core.atomic_json(directory / "subset.json", {"train": [f"p{seed}"], "selector": "fresh_r"})
+        for step in rule.STEPS:
+            policy = directory / f"segment-{step}" / "fresh_r" / "policy"
+            for name in ed.POLICY_FILES:
+                core.atomic_json(policy / name, {"seed": seed, "step": step, "file": name})
+            base.journal(directory / f"segment-{step}" / "cost.jsonl", {"event_id": f"e{seed}{step}", "phase": "prefix-train", "ledger": "research", "gpus": 4, "gpu_type": "H100", "state": "started", "time": 1.})
+            base.journal(directory / f"segment-{step}" / "cost.jsonl", {"event_id": f"e{seed}{step}", "phase": "prefix-train", "ledger": "research", "gpus": 4, "gpu_type": "H100", "state": "finished", "time": 2., "seconds": 1., "allocated_gpu_seconds": 4., "exit_code": 0})
+            (directory / f"policy_step_{step}").symlink_to(policy.resolve(), target_is_directory=True)
+            core.atomic_json(directory / f"prefix-{step}.json", {"schema": rule.SCHEMA, "seed": seed, "step": step,
+                "previous": (0, *rule.STEPS)[rule.STEPS.index(step)], "selector": "fresh_r",
+                "subset_sha256": base.digest(directory / "subset.json"), "source_sha256": core.fingerprint(sources[str(seed)]),
+                "policy_hashes": {name: base.digest(policy / name) for name in ed.POLICY_FILES}})
+    return source, sources
+
+
+def test_import_prefixes_links_certified_checkpoints_and_keeps_the_source_read_only(tmp_path):
+    import evidence_downstream as ed
+    source, sources = certified_source_root(tmp_path)
+    before = {p: p.read_bytes() for p in source.rglob("*") if p.is_file()}
+    root = tmp_path / "variant"
+    record = switch.import_prefixes(root, source, sources)
+    assert record["root"] == str(source.resolve()) and set(record["seeds"]) == {"0", "1", "2", "3", "4"}
+    for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
+        directory = switch.prefix_dir(root, seed)
+        assert not directory.is_symlink() and directory.is_dir()
+        assert core.read(directory / "subset.json") == core.read(switch.prefix_dir(source, seed) / "subset.json")
+        for step in rule.STEPS:
+            assert core.read(directory / f"prefix-{step}.json") == core.read(switch.prefix_dir(source, seed) / f"prefix-{step}.json")
+            assert (directory / f"policy_step_{step}").is_symlink()
+            assert (directory / f"policy_step_{step}" / "adapter_model.safetensors").exists() or all(
+                (directory / f"policy_step_{step}" / name).exists() for name in ed.POLICY_FILES)
+            assert (directory / f"segment-{step}").is_symlink()
+    report = switch.prefix_cost_report(root)
+    assert report["complete"] and len(report["segments"]) == 15
+    assert {p: p.read_bytes() for p in source.rglob("*") if p.is_file()} == before
+    # Idempotent, and refused for different sources.
+    assert switch.import_prefixes(root, source, sources) == record
+    other = {**sources, "0": {**sources["0"], "hashes": {"changed": "x"}}}
+    with pytest.raises(ValueError, match="different initial sources"):
+        switch.import_prefixes(tmp_path / "variant-2", source, other)
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
     previous = fit_resilience_predecessor()
@@ -106,8 +193,9 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
             patch.setattr(switch, "code_hashes", lambda: previous)
             switch.manifest(tmp_path)
         assert core.read(tmp_path / "test-parallel-runtime.json")["runtime_code_hashes"] == previous
-        # The 091ae20 runtime never wrote this receipt.
+        # The 091ae20 runtime never wrote these receipts.
         (tmp_path / "fit-resilience-runtime.json").unlink()
+        (tmp_path / "variant-root-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -140,6 +228,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         # The 89c26af runtime never wrote these receipts; only its predecessors' receipts exist.
         (tmp_path / "test-parallel-runtime.json").unlink()
         (tmp_path / "fit-resilience-runtime.json").unlink()
+        (tmp_path / "variant-root-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
@@ -237,7 +326,7 @@ def test_code_compat_preserves_latest_and_partially_written_receipt_chains(tmp_p
     assert core.read(tmp_path / "code-compat-runtime.json")["runtime_code_hashes"] == switch.code_hashes()
 
 
-@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard", "test-parallel", "fit-resilience"])
+@pytest.mark.parametrize("receipt", ["kv-cache", "cost", "prefix-resume", "worker-logs", "code-compat", "cache-guard", "test-parallel", "fit-resilience", "variant-root"])
 def test_code_compat_rejects_tampered_receipts(tmp_path, receipt):
     core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": initial_predecessor()})
     switch.manifest(tmp_path)
