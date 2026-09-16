@@ -96,8 +96,9 @@ if [ "${EXPERIMENTS_KEEPALIVE:-1}" != 0 ]; then
 fi
 [[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] EXPERIMENTS_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
 # Inner launchers: foreground, single pass, no hold, no keepalive (this launcher holds the node).
+# EXPERIMENTS_INNER replaces bash for the inner launchers in tests only.
 inner() {
-  env -u EXPERIMENTS_DETACHED SWITCH_FOREGROUND=1 SWITCH_HOLD_SECONDS=0 SWITCH_KEEPALIVE=0 bash "$@"
+  env -u EXPERIMENTS_DETACHED SWITCH_FOREGROUND=1 SWITCH_HOLD_SECONDS=0 SWITCH_KEEPALIVE=0 "${EXPERIMENTS_INNER:-bash}" "$@"
 }
 switch_complete() {
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$SWITCH_ROOT" --json 2>/dev/null \
@@ -105,6 +106,18 @@ switch_complete() {
 }
 mopps_complete() {
   [ "$(CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py status --root "$MOPPS_ROOT" 2>/dev/null | grep -c ' DONE ')" -ge 12 ]
+}
+# One phrase per inner launcher exit code, for the hold lines and the status view.
+rc_reason() {
+  case "$1" in
+    0) echo "nothing left to claim" ;;
+    1) echo "failed tasks, see [failed] lines above" ;;
+    75) echo "node busy: lock held or GPUs occupied" ;;
+    78) echo "admission failed: NCCL/CUDA probe" ;;
+    130|143) echo "interrupted" ;;
+    skipped) echo "skipped: complete or not prepared" ;;
+    *) echo "launcher error, see lines above" ;;
+  esac
 }
 recover_root() {
   [ -f "$1/switch.json" ] || [ -f "$1/mopps.json" ] || return 0
@@ -122,18 +135,23 @@ while :; do
   fi
   recover_root "$SWITCH_ROOT"
   recover_root "$MOPPS_ROOT"
-  rc_switch=0
+  rc_switch=0 why_switch=skipped
   if [ "${EXPERIMENTS_SKIP_SWITCH:-0}" != 1 ] && ! switch_complete; then
     echo "[pass $pass] selection switch"
     inner scripts/run_selection_switch.sh || rc_switch=$?
     case "$rc_switch" in 130|143) exit "$rc_switch" ;; esac
+    why_switch=$rc_switch
+    echo "[pass $pass] selection switch ended: rc=$rc_switch, $(rc_reason "$rc_switch")"
   fi
-  rc_mopps=0
+  rc_mopps=0 why_mopps=skipped
   if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ] && [ -f "$MOPPS_ROOT/mopps.json" ] && ! mopps_complete; then
     echo "[pass $pass] MoPPS comparison"
     inner scripts/run_mopps_comparison.sh || rc_mopps=$?
     case "$rc_mopps" in 130|143) exit "$rc_mopps" ;; esac
+    why_mopps=$rc_mopps
+    echo "[pass $pass] MoPPS comparison ended: rc=$rc_mopps, $(rc_reason "$rc_mopps")"
   fi
+  reason="switch rc=$rc_switch $(rc_reason "$why_switch") | mopps rc=$rc_mopps $(rc_reason "$why_mopps")"
   if switch_complete && { [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; }; then
     echo '[done] both experiments are complete; releasing the node'
     exit 0
@@ -148,11 +166,11 @@ while :; do
     blocked_passes=0
   fi
   if [ "$rc_switch" -eq 0 ] && [ "$rc_mopps" -eq 0 ]; then wait_seconds=$HOLD; else wait_seconds=$(( wait_seconds*2 > 3600 ? 3600 : wait_seconds*2 )); fi
-  echo "[hold] pass $pass ended (switch rc=$rc_switch, mopps rc=$rc_mopps); keeping this node's GPUs; next pass in ${wait_seconds}s (stop: bash scripts/run_experiments.sh stop)"
+  echo "[hold] pass $pass ended ($reason); keeping this node's GPUs; next pass in ${wait_seconds}s (stop: bash scripts/run_experiments.sh stop)"
   remaining=$wait_seconds
   while [ "$remaining" -gt 0 ]; do
     step=$(( remaining < 15 ? remaining : 15 ))
-    printf '[holding] node retained; next pass in %ss\n' "$remaining"
+    printf '[holding] node retained (%s); next pass in %ss\n' "$reason" "$remaining"
     sleep "$step" & wait $! || true
     remaining=$((remaining-step))
   done
