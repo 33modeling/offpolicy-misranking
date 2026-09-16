@@ -45,6 +45,25 @@ def test_one_screen_shows_both_experiments_and_this_node_once(tmp_path):
     assert all(len(line) <= 120 for line in output.splitlines())
 
 
+def test_nodes_training_a_sibling_root_are_counted_and_labelled(tmp_path):
+    """A node running long or difficulty is silent on its console for hours; the
+    combined view must still show it as RUN from that root's own heartbeat."""
+    from test_selection_switch_status import point, prepared, running
+    switch_root, mopps_root = tmp_path / "selection-switch-v1", tmp_path / "mopps-comparison-v1"
+    now = time.time()
+    four_nodes(switch_root, now)
+    mopps_fixture(mopps_root, switch_root, now)
+    long_root = tmp_path / "selection-switch-long-v1"
+    prepared(long_root)
+    running(point(long_root) / "random_reduced", "node-long", now=now, phase="train")
+    data = combined.snapshot(switch_root, mopps_root, now=now)
+    hosts = {node["host"]: node for node in data["nodes"]}
+    assert hosts["node-long"]["state"] == "RUN" and hosts["node-long"]["phase"] == "train"
+    assert hosts["node-long"]["task"].endswith("long: random_reduced")
+    assert "node-long" in combined.render(data, width=120)
+    assert data["selection_switch"] == combined.switch_status.snapshot(switch_root, now=now)
+
+
 def test_unprepared_mopps_root_does_not_hide_the_switch(tmp_path):
     switch_root = tmp_path / "switch"
     four_nodes(switch_root, time.time())

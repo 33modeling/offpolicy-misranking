@@ -23,12 +23,39 @@ import selection_switch_status as switch_status
 SEPARATOR = "=" * 24
 
 
+def sibling_tasks(switch_root, mopps_root, *, now):
+    """Running tasks of every other experiment root next to these two (long, difficulty,
+    quality, ...). A node training a branch of another root is otherwise silent on
+    its console for hours and would be counted GONE."""
+    runs = Path(switch_root).resolve().parent
+    known = {Path(switch_root).resolve(), Path(mopps_root).resolve()}
+    tasks = []
+    if not runs.is_dir():
+        return tasks
+    for marker, module in (("switch.json", switch_status), ("mopps.json", mopps_status)):
+        for path in sorted(runs.glob(f"*/{marker}")):
+            root = path.parent.resolve()
+            if root in known:
+                continue
+            try:
+                data = module.snapshot(root, now=now)
+            except Exception:
+                continue
+            for task in data.get("tasks", []):
+                if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
+                    label = root.name.replace("selection-switch-", "").replace("mopps-comparison", "mopps")
+                    label = label[:-3] if label.endswith("-v1") else label
+                    tasks.append({**task, "arm": f"{label}: {task.get('arm', '')}"})
+    return tasks
+
+
 def snapshot(switch_root, mopps_root, *, now=None):
     now = time.time() if now is None else now
     switch = switch_status.snapshot(switch_root, now=now)
     mopps = mopps_status.snapshot(mopps_root, now=now)
-    # Every host once: the node launcher's logs plus both experiments' launcher logs and tasks.
-    nodes = switch_status.node_view.launcher_nodes(switch_root, switch.get("tasks", []) + mopps.get("tasks", []), now=now)
+    # Every host once: the node launcher's logs plus every experiment's launcher logs and tasks.
+    tasks = switch.get("tasks", []) + mopps.get("tasks", []) + sibling_tasks(switch_root, mopps_root, now=now)
+    nodes = switch_status.node_view.launcher_nodes(switch_root, tasks, now=now)
     return {"updated": now, "nodes": nodes, "node_summary": switch_status.node_view.summarize(nodes),
             "selection_switch": switch, "mopps_comparison": mopps}
 
