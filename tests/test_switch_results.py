@@ -49,6 +49,9 @@ def test_results_file_lists_branches_contrasts_flags_and_rewards(tmp_path):
     branch(tmp_path, "s4-t25", "selection_full", rewards=lo, updates=11)
     waived = branch(tmp_path, "s4-t25", "random_reduced", rewards=lo, updates=120, waiver=True)
     (waived / "result.json").unlink()
+    # A retry that resumed a waived attempt: 120 updates from one allocation that buys about 100.
+    branch(tmp_path, "s3-t100", "random_reduced", rewards=hi, updates=120, waiver=True)
+    branch(tmp_path, "s3-t100", "selection_reduced", rewards=lo, updates=14)
     out = tmp_path / "results.txt"
     subprocess.run([sys.executable, str(ROOT / "scripts/switch_results.py"), "--root", str(tmp_path), "--out", str(out), "--draws", "200"],
                    check=True, capture_output=True, text=True)
@@ -58,6 +61,10 @@ def test_results_file_lists_branches_contrasts_flags_and_rewards(tmp_path):
     assert "'fresh-r-candidate': 20000" in text
     assert "s4/t25   gated              reward= 58.33 updates= 191" in text and "INVALID" in text
     assert "s4/t25   random_reduced     reward=  none" in text and "RERUN" in text
+    assert "INVALID = more than 114 updates" in text
+    assert "s3/t100  random_reduced     reward= 58.33 updates= 120" in text
+    assert [l for l in text.split("\n") if l.startswith("s3/t100  random_reduced")][0].endswith("INVALID")
+    assert "s3/t100  selection_reduced-random_reduced" not in text
     assert "curve k=4 points(updates:reward) 0:25.00, 50:28.00, 100:30.00" in text
     contrasts = text[text.index("CONTRASTS"):text.index("REWARDS")]
     assert "s3/t25   selection_full-random_full=-12.50 [" in contrasts and "gated-random_full=+0.00 [" in contrasts

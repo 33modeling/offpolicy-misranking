@@ -86,6 +86,22 @@ def branches(root):
     return out
 
 
+def update_limit(p, rows):
+    """Updates one allocation can buy: 110% of budget / median random-arm GPU-seconds per update."""
+    units = []
+    for b in rows:
+        if not b["arm"].startswith("random_") or b["waivers"] or b["discards"] or not b["stop"]:
+            continue
+        updates = b["stop"]["completed_steps"]-b["step"]
+        train = b["phases"].get(("deployment", "train"), 0.)
+        if updates > 0 and train > 0:
+            units.append(train/updates)
+    budget = p.get("budget_gpu_seconds") or 0.
+    if not units or not budget:
+        return float("inf")
+    return 1.1*budget/statistics.median(units)
+
+
 def report(root, *, draws=10000):
     p = read(root / "switch.json") or {}
     lines = [f"SELECTION SWITCH RESULTS  {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
@@ -104,14 +120,16 @@ def report(root, *, draws=10000):
     else:
         lines.append("GATE MODEL not fitted")
     rows = branches(root)
-    lines += ["", "BRANCHES  (updates = completed_steps - state step; used = deployment GPU-s; flags: INVALID = "
-                  "updates beyond the allocation or a reset receipt, RERUN = waiver without a result)"]
+    limit = update_limit(p, rows)
+    lines += ["", f"BRANCHES  (updates = completed_steps - state step; used = deployment GPU-s; flags: INVALID = "
+                  f"more than {limit:.0f} updates, which one allocation cannot buy, or a reset receipt; "
+                  "RERUN = waiver without a result)"]
     by_state = defaultdict(dict)
     for b in rows:
         result, stop = b["result"], b["stop"]
         updates = stop["completed_steps"]-b["step"] if stop else None
         flags = []
-        if b["discards"] or (updates is not None and updates > 130):
+        if b["discards"] or (updates is not None and updates > limit):
             flags.append("INVALID")
         if b["waivers"] and not result:
             flags.append("RERUN")
@@ -158,7 +176,7 @@ def report(root, *, draws=10000):
         if b["result"]:
             keys = sorted(b["result"]["rewards"], key=int)
             values = " ".join(f"{100*b['result']['rewards'][k]:.1f}" for k in keys)
-            flag = " INVALID" if (b["discards"] or (b["stop"] and b["stop"]["completed_steps"]-b["step"] > 130)) else ""
+            flag = " INVALID" if (b["discards"] or (b["stop"] and b["stop"]["completed_steps"]-b["step"] > limit)) else ""
             lines.append(f"{b['state']} {b['arm']}{flag}: {values}")
     return "\n".join(lines) + "\n"
 
