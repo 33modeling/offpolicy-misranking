@@ -50,7 +50,9 @@ fi
 if [ "$MODE" = results ]; then
   # Compact results file (branches, contrasts, gate, per-question rewards): a few hundred KB.
   [ -f "$OUT_ROOT/switch.json" ] || { echo "[abort] no switch root: $OUT_ROOT"; exit 2; }
-  TARGET="$HOME/switch-results-$(basename "$OUT_ROOT")-$(date -u +%Y%m%dT%H%M%SZ).txt"
+  REPORT_DIR="$WORK/reports/selection-switch"
+  mkdir -p "$REPORT_DIR"
+  TARGET="$REPORT_DIR/switch-results-$(basename "$OUT_ROOT")-$(date -u +%Y%m%dT%H%M%SZ).txt"
   CUDA_VISIBLE_DEVICES="" exec "$PY" scripts/switch_results.py --root "$OUT_ROOT" --out "$TARGET" "$@"
 fi
 if [ "$MODE" = reset-waived ]; then
