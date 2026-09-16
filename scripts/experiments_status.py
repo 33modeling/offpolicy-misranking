@@ -8,6 +8,7 @@ snapshots. --watch [N] refreshes every N seconds (default 15).
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
@@ -24,16 +25,26 @@ SEPARATOR = "=" * 24
 
 def snapshot(switch_root, mopps_root, *, now=None):
     now = time.time() if now is None else now
-    return {"updated": now,
-            "selection_switch": switch_status.snapshot(switch_root, now=now),
-            "mopps_comparison": mopps_status.snapshot(mopps_root, now=now)}
+    switch = switch_status.snapshot(switch_root, now=now)
+    mopps = mopps_status.snapshot(mopps_root, now=now)
+    # Every host once: the node launcher's logs plus both experiments' launcher logs and tasks.
+    nodes = switch_status.node_view.launcher_nodes(switch_root, switch.get("tasks", []) + mopps.get("tasks", []), now=now)
+    return {"updated": now, "nodes": nodes, "node_summary": switch_status.node_view.summarize(nodes),
+            "selection_switch": switch, "mopps_comparison": mopps}
 
 
 def render(data, *, all_tasks=False, width=120):
-    lines = [f"{SEPARATOR} SELECTION SWITCH {SEPARATOR}",
-             switch_status.render(data["selection_switch"], all_tasks=all_tasks, width=width, local_gpus=False),
-             "", f"{SEPARATOR} MOPPS COMPARISON {SEPARATOR}",
-             mopps_status.render(data["mopps_comparison"], all_tasks=all_tasks, width=width, local_gpus=False)]
+    stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines = [f"EXPERIMENTS  {stamp}",
+             switch_status.node_view.render_summary(data["nodes"]),
+             "RUN training/claiming  ADMIT NCCL probe  WAIT no claimable task  HOLD between passes",
+             "GONE launcher stopped writing  EXITED/BLOCKED launcher left  (see TASK/REASON)",
+             "", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
+    lines += switch_status.node_view.render_nodes(data["nodes"], switch_status.table, width)
+    lines += ["", f"{SEPARATOR} SELECTION SWITCH {SEPARATOR}",
+              switch_status.render(data["selection_switch"], all_tasks=all_tasks, width=width, local_gpus=False, nodes=False),
+              "", f"{SEPARATOR} MOPPS COMPARISON {SEPARATOR}",
+              mopps_status.render(data["mopps_comparison"], all_tasks=all_tasks, width=width, local_gpus=False, nodes=False)]
     view = (data["selection_switch"] if data["selection_switch"].get("prepared") else data["mopps_comparison"]).get("local_gpus")
     if view is None:
         view = switch_status.node_view.local_gpus()

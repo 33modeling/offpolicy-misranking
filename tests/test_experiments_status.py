@@ -35,7 +35,10 @@ def test_one_screen_shows_both_experiments_and_this_node_once(tmp_path):
     assert data["mopps_comparison"] == combined.mopps_status.snapshot(mopps_root, now=now)
     assert data["selection_switch"]["active_nodes"] >= 1 and data["mopps_comparison"]["prepared"] is True
     output = combined.render(data, width=120)
-    assert output.index("SELECTION SWITCH") < output.index("MOPPS COMPARISON")
+    first, second = output.splitlines()[:2]
+    assert first.startswith("EXPERIMENTS  ") and second.startswith("NODES  ") and " live  |  " in second
+    assert output.index("NODES (every host") < output.index("SELECTION SWITCH") < output.index("MOPPS COMPARISON")
+    assert output.count("NODES (every host") == 1
     assert "CONTINUATIONS" in output and "PARENT PREFIXES" in output
     assert output.count("THIS NODE GPUS") == 1
     assert output.index("THIS NODE GPUS") > output.index("MOPPS COMPARISON")
@@ -68,7 +71,7 @@ def test_both_launchers_status_show_one_screen_and_stay_read_only(tmp_path):
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert set(payload) == {"updated", "selection_switch", "mopps_comparison"}
+    assert set(payload) == {"updated", "nodes", "node_summary", "selection_switch", "mopps_comparison"}
     single = subprocess.run(["bash", "scripts/run_selection_switch.sh", "status"], cwd=ROOT,
                             env={**env, "EXPERIMENTS_COMBINED": "0"}, capture_output=True, text=True, timeout=30)
     assert single.returncode == 0 and "MOPPS COMPARISON" not in single.stdout

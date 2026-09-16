@@ -85,3 +85,43 @@ def test_renderers_fit_narrow_and_wide_terminals(tmp_path, monkeypatch):
         rendered = view.render_local_gpus(gpus, table, width)
         assert any("keepalive" in line for line in rendered)
         assert all(len(line) <= width for line in rendered[1:-1])
+
+
+def test_node_launcher_logs_next_to_the_roots_are_read_and_summarized(tmp_path, monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(view.socket, "gethostname", lambda: "node-x")
+    root = tmp_path / "runs" / "selection-switch-v1"
+    node_logs = tmp_path / "runs" / "experiments" / "logs"
+    node_logs.mkdir(parents=True)
+    # Old per-root launcher log says EXITED; the fresher node launcher console says it is holding, and why.
+    logs(root, "node-a", launcher="[launcher-start] x\n[launcher-exit] pid=9 mode=run rc=1 utc=x\n")
+    os.utime(root / "logs" / "launcher.node-a_.log", (now-300, now-300))
+    (node_logs / "console.node-a_.log").write_text(
+        "[pass 3] MoPPS comparison\n[launcher-exit] pid=9 mode=run rc=1 utc=x\n"
+        "[hold] pass 3 ended (switch rc=1: worker reported failed tasks | mopps rc=0: nothing left to claim); next pass in 600s\n"
+        "[holding] node retained (switch rc=1: worker reported failed tasks | mopps rc=0: nothing left to claim); next pass in 585s\n")
+    (node_logs / "launcher.node-a_.pid").write_text("1\n")
+    # An inner launcher's exit inside the node console is just the end of a pass.
+    (node_logs / "console.node-b_.log").write_text("[pass 1] selection switch\n[launcher-exit] pid=4 mode=run rc=0 utc=x\n")
+    # A holding node whose console went silent is gone, not holding.
+    (node_logs / "console.node-c_.log").write_text("[holding] node retained; next pass in 30s\n")
+    os.utime(node_logs / "console.node-c_.log", (now-600, now-600))
+    (node_logs / "console.node-d_.log").write_text("[node-launcher-exit] pid=3 rc=78 utc=x\n")
+    (node_logs / "console.node-e_.log").write_text("[pass 2] selection switch\n[nccl-preflight] probing\n")
+    nodes = {item["host"]: item for item in view.launcher_nodes(root, [], now=now)}
+    assert nodes["node-a"]["state"] == "HOLD" and nodes["node-a"]["launcher_pid"] == 1
+    assert nodes["node-a"]["reason"] == "switch rc=1: worker reported failed tasks | mopps rc=0: nothing left to claim"
+    assert nodes["node-b"]["state"] == "LIVE"
+    assert nodes["node-c"]["state"] == "GONE"
+    assert nodes["node-d"]["state"] == "BLOCKED"
+    assert nodes["node-e"]["state"] == "ADMIT"
+    summary = view.summarize(list(nodes.values()))
+    assert summary["live"] == 3 and summary["counts"] == {"HOLD": 1, "LIVE": 1, "GONE": 1, "BLOCKED": 1, "ADMIT": 1}
+    assert view.render_summary(list(nodes.values())) == "NODES  3 live  |  ADMIT 1  HOLD 1  LIVE 1  BLOCKED 1  GONE 1"
+    assert view.render_summary([]) == "NODES  0 live  |  no launcher evidence yet"
+    def table(headers, rows, widths):
+        return ["  ".join(str(cell)[:w].ljust(w) for cell, w in zip(row, widths)).rstrip() for row in [headers, *rows]]
+    wide = view.render_nodes(list(nodes.values()), table, 120)
+    assert any("worker reported failed tasks" in line for line in wide)
+    for width in (80, 100, 120):
+        assert all(len(line) <= width for line in view.render_nodes(list(nodes.values()), table, width))

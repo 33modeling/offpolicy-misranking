@@ -215,7 +215,9 @@ def snapshot(root, *, now=None):
     active_hosts = {task["host"] for task in active if task["host"]}
     stale_hosts = {task["host"] for task in tasks if task["status"] == "STALE" and task["host"]} - active_hosts
     waiting = []
-    for path in sorted((root / "logs").glob("launcher.*.log")):
+    seen = set()
+    for path in sorted(list((root / "logs").glob("launcher.*.log"))
+                       + list(node_view.node_launcher_logs(root).glob("console.*.log")), key=lambda p: -p.stat().st_mtime):
         try:
             if not -5 <= now-path.stat().st_mtime < 60:
                 continue
@@ -226,13 +228,18 @@ def snapshot(root, *, now=None):
         except OSError:
             continue
         last = next((line for line in reversed(lines) if line.strip()), "")
-        host = path.name[len("launcher."):-len(".log")].rstrip("_")
-        if host in active_hosts:
+        host = path.name.split(".", 1)[1][:-len(".log")].rstrip("_")
+        if host in active_hosts or host in seen:
             continue
         if last.startswith("[waiting]"):
+            seen.add(host)
             waiting.append({"host": host, "state": "WAIT", "reason": "no claimable task (fresh launcher log)"})
         elif last.startswith("[holding]") or last.startswith("[hold]"):
-            waiting.append({"host": host, "state": "HOLD", "reason": "node retained between queue passes"})
+            seen.add(host)
+            reason = node_view.hold_reason(last)
+            waiting.append({"host": host, "state": "HOLD",
+                            "reason": f"node retained between queue passes; last pass: {reason}" if reason
+                            else "node retained between queue passes"})
         elif last.startswith("[blocked]"):
             waiting.append({"host": host, "state": "BLOCKED", "reason": "node admission failed; launcher left"})
     branches = [task for task in tasks if task["kind"] == "branch"]
@@ -268,7 +275,7 @@ def table(headers, rows, widths):
             for row in [headers, *rows]]
 
 
-def render(data, *, all_tasks=False, width=120, local_gpus=True):
+def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     if not data["prepared"]:
         return f"NOT PREPARED  {data['root']}"
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -276,7 +283,8 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True):
     states = len(seeds)*len(steps)
     gate_available = sum(data["gate_results"].values())
     lines = [f"MOPPS COMPARISON  {stamp}",
-             f"NODES  {data['active_nodes']} active  |  {len(data['waiting_nodes'])} waiting  |  {data['stale_nodes']} stale",
+             node_view.render_summary(data.get("nodes", [])),
+             f"WORK  {data['active_nodes']} active  |  {len(data['waiting_nodes'])} waiting  |  {data['stale_nodes']} stale",
              f"PROGRESS  Imports {data['imports_done']}/{states} states  |  Branches {data['branches_done']}/{states*len(arms)}"
              f"  |  Parent gate results {gate_available}/{states}",
              "BRANCHES  " + "  ".join(f"{name} {data['branch_counts'].get(name, 0)}" for name in CELLS)]
@@ -301,8 +309,9 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True):
             lines += table(headers, rows, [max(12, min(20, width-88)), 7, 7, 20, 18, 8, 8, 6])
     else:
         lines.append("No fresh worker heartbeat or waiting launcher observed.")
-    lines += ["", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
-    lines += node_view.render_nodes(data.get("nodes", []), table, width)
+    if nodes:
+        lines += ["", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
+        lines += node_view.render_nodes(data.get("nodes", []), table, width)
     if local_gpus:
         lines += ["", "THIS NODE GPUS"]
         lines += node_view.render_local_gpus(data.get("local_gpus", {"host": "?", "available": False, "gpus": [], "processes": []}), table, width)

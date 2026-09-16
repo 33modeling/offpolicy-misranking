@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import textwrap
 import time
 
 ROLES = (("_gpu_keepalive.py", "keepalive"), ("selection_nccl_preflight.py", "nccl-probe"),
@@ -39,71 +40,107 @@ def _host_of(path, prefix):
     return path.name[len(prefix):].rsplit(".", 1)[0].rstrip("_")
 
 
+LIVE_STATES = ("RUN", "ADMIT", "WAIT", "HOLD", "LIVE")
+STATE_ORDER = ("RUN", "ADMIT", "WAIT", "HOLD", "LIVE", "STALE", "BLOCKED", "STOPPING", "EXITED", "GONE", "QUIET", "-")
+# A holding or waiting launcher prints every 15s; longer silence means it is gone.
+HEARTBEAT_GRACE = 180.
+
+
+def node_launcher_logs(root):
+    """The combined node launcher (scripts/run_experiments.sh) logs next to both roots."""
+    return Path(root).resolve().parent / "experiments" / "logs"
+
+
+def classify(last, *, node_launcher):
+    """State from the last log line. In the node launcher's console an inner
+    launcher's exit is just the end of one pass, not the node leaving."""
+    if last.startswith("[node-launcher-exit]"):
+        return "BLOCKED" if "rc=78" in last else "EXITED"
+    if last.startswith("[launcher-exit]"):
+        if node_launcher:
+            return "LIVE"
+        return "BLOCKED" if "rc=78" in last else "EXITED"
+    if last.startswith(("[hold]", "[holding]")):
+        return "HOLD"
+    if last.startswith("[waiting]"):
+        return "WAIT"
+    if last.startswith("[blocked]"):
+        return "BLOCKED"
+    if last.startswith("[done]"):
+        return "EXITED"
+    if last.startswith("[nccl-preflight]"):
+        return "ADMIT"
+    if last.startswith(("[retry]", "[claimed]", "[gate]", "[grpo]", "[fresh_r]", "[pass ")):
+        return "RUN"
+    if last.startswith("[stopping]"):
+        return "STOPPING"
+    return None
+
+
+def hold_reason(last):
+    """The part of a [hold]/[holding] line that says why the last pass ended."""
+    if "(" in last and ")" in last and last.index("(") < last.index(")"):
+        return last[last.index("(")+1:last.index(")")]
+    return ""
+
+
 def launcher_nodes(root, tasks, *, now=None):
-    """One row per host that has launcher evidence under ROOT/logs."""
+    """One row per host that has launcher evidence under ROOT/logs or the node launcher's logs."""
     now = time.time() if now is None else now
-    logs = Path(root) / "logs"
     here = socket.gethostname().rstrip("_")
     hosts = {}
 
     def row(host):
         return hosts.setdefault(host, {"host": host, "launcher_pid": None, "launcher_alive": None,
                                        "state": "-", "detail": "", "last_age": None, "keepalive": "-",
-                                       "task": "", "phase": ""})
-    for path in logs.glob("launcher.*.pid"):
-        host = _host_of(path, "launcher.")
-        try:
-            pid = int(path.read_text().strip())
-        except (OSError, ValueError):
-            continue
-        item = row(host)
-        item["launcher_pid"] = pid
-        if host == here:
+                                       "task": "", "phase": "", "reason": ""})
+    sources = [(Path(root) / "logs", False), (node_launcher_logs(root), True)]
+    for logs, node_launcher in sources:
+        for path in logs.glob("launcher.*.pid"):
+            host = _host_of(path, "launcher.")
             try:
-                os.kill(pid, 0)
-                item["launcher_alive"] = True
-            except ProcessLookupError:
-                item["launcher_alive"] = False
-            except PermissionError:
-                item["launcher_alive"] = True
-    for path in list(logs.glob("console.*.log")) + list(logs.glob("launcher.*.log")):
-        host = _host_of(path, "console." if path.name.startswith("console.") else "launcher.")
-        item = row(host)
-        try:
-            age = now - path.stat().st_mtime
-        except OSError:
-            continue
-        if item["last_age"] is not None and age > item["last_age"]:
-            continue
-        item["last_age"] = age
-        last = _last(_tail_lines(path))
-        item["detail"] = last[:160]
-        if last.startswith("[launcher-exit]"):
-            item["state"] = "BLOCKED" if "rc=78" in last else "EXITED"
-        elif last.startswith(("[hold]", "[holding]")):
-            item["state"] = "HOLD"
-        elif last.startswith("[waiting]"):
-            item["state"] = "WAIT"
-        elif last.startswith("[blocked]"):
-            item["state"] = "BLOCKED"
-        elif last.startswith("[nccl-preflight]"):
-            item["state"] = "ADMIT"
-        elif last.startswith(("[retry]", "[claimed]", "[gate]", "[grpo]", "[fresh_r]")):
-            item["state"] = "RUN"
-        elif last.startswith("[stopping]"):
-            item["state"] = "STOPPING"
-        elif item["state"] == "-":
-            item["state"] = "LIVE" if age < 120 else "QUIET"
-    for path in logs.glob("keepalive.*.log"):
-        host = _host_of(path, "keepalive.")
-        last = _last(_tail_lines(path, 2048))
-        item = row(host)
-        if last.startswith("[keepalive] stopped"):
-            item["keepalive"] = "stopped"
-        elif "pid=" in last:
-            item["keepalive"] = "busy"
-        elif last:
-            item["keepalive"] = "off"
+                pid = int(path.read_text().strip())
+            except (OSError, ValueError):
+                continue
+            item = row(host)
+            if item["launcher_pid"] is not None and not node_launcher:
+                continue
+            item["launcher_pid"] = pid
+            if host == here:
+                try:
+                    os.kill(pid, 0)
+                    item["launcher_alive"] = True
+                except ProcessLookupError:
+                    item["launcher_alive"] = False
+                except PermissionError:
+                    item["launcher_alive"] = True
+    for logs, node_launcher in sources:
+        for path in list(logs.glob("console.*.log")) + list(logs.glob("launcher.*.log")):
+            host = _host_of(path, "console." if path.name.startswith("console.") else "launcher.")
+            item = row(host)
+            try:
+                age = now - path.stat().st_mtime
+            except OSError:
+                continue
+            if item["last_age"] is not None and age > item["last_age"]:
+                continue
+            item["last_age"] = age
+            last = _last(_tail_lines(path))
+            item["detail"] = last[:160]
+            state = classify(last, node_launcher=node_launcher)
+            item["state"] = state if state else ("LIVE" if age < 120 else "QUIET")
+            item["reason"] = hold_reason(last) if state == "HOLD" else ""
+    for logs, _ in sources:
+        for path in logs.glob("keepalive.*.log"):
+            host = _host_of(path, "keepalive.")
+            last = _last(_tail_lines(path, 2048))
+            item = row(host)
+            if last.startswith("[keepalive] stopped"):
+                item["keepalive"] = "stopped"
+            elif "pid=" in last:
+                item["keepalive"] = "busy"
+            elif last:
+                item["keepalive"] = "off"
     for task in tasks:
         if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
             item = row(str(task["host"]).rstrip("_"))
@@ -111,11 +148,30 @@ def launcher_nodes(root, tasks, *, now=None):
             item["task"] = f"s{task['seed']}/t{task['step']} {task['arm']}"
             item["phase"] = task.get("phase", "")
     for item in hosts.values():
-        if item["launcher_alive"] is False and item["state"] in {"HOLD", "WAIT", "LIVE", "QUIET"}:
+        if item["launcher_alive"] is False and item["state"] in {"HOLD", "WAIT", "LIVE", "QUIET", "ADMIT"}:
             item["state"] = "EXITED"
-        if item["state"] == "EXITED" and item["keepalive"] == "busy":
+        elif (item["state"] in {"HOLD", "WAIT", "LIVE"} and item["last_age"] is not None
+              and item["last_age"] > HEARTBEAT_GRACE):
+            item["state"] = "GONE"
+        if item["state"] in {"EXITED", "GONE"} and item["keepalive"] == "busy":
             item["keepalive"] = "orphan?"
     return sorted(hosts.values(), key=lambda item: item["host"])
+
+
+def summarize(nodes):
+    counts = {}
+    for item in nodes:
+        counts[item["state"]] = counts.get(item["state"], 0) + 1
+    return {"live": sum(counts.get(state, 0) for state in LIVE_STATES), "counts": counts}
+
+
+def render_summary(nodes):
+    """First line of a status screen: how many nodes are live and what they are doing."""
+    summary = summarize(nodes)
+    parts = [f"{state} {summary['counts'][state]}" for state in STATE_ORDER if summary["counts"].get(state)]
+    if not parts:
+        return "NODES  0 live  |  no launcher evidence yet"
+    return f"NODES  {summary['live']} live  |  " + "  ".join(parts)
 
 
 def _role(pid):
@@ -167,11 +223,18 @@ def render_nodes(nodes, table, width):
              f"{int(item['last_age'])}s" if item["last_age"] is not None else "-"] for item in nodes]
     if width < 100:
         # 12+8+5+8+9+7 fixed columns and six separators leave width-61 for TASK.
-        return table(["NODE", "LAUNCHER", "ALIVE", "STATE", "TASK", "KEEPALIVE", "LOG AGE"],
-                     [row[:5] + row[6:] for row in rows], [12, 8, 5, 8, max(8, width-61), 9, 7])
-    # 8+5+8+18+16+9+7 fixed columns and seven separators leave width-85 for NODE.
-    return table(["NODE", "LAUNCHER", "ALIVE", "STATE", "TASK", "PHASE", "KEEPALIVE", "LOG AGE"], rows,
-                 [max(12, min(22, width-85)), 8, 5, 8, 18, 16, 9, 7])
+        lines = table(["NODE", "LAUNCHER", "ALIVE", "STATE", "TASK", "KEEPALIVE", "LOG AGE"],
+                      [row[:5] + row[6:] for row in rows], [12, 8, 5, 8, max(8, width-61), 9, 7])
+    else:
+        # 8+5+8+18+16+9+7 fixed columns and seven separators leave width-85 for NODE.
+        lines = table(["NODE", "LAUNCHER", "ALIVE", "STATE", "TASK", "PHASE", "KEEPALIVE", "LOG AGE"], rows,
+                      [max(12, min(22, width-85)), 8, 5, 8, 18, 16, 9, 7])
+    # Why each holding node's last pass ended, from its [holding] line.
+    for item in nodes:
+        if item["state"] == "HOLD" and item.get("reason"):
+            lines += textwrap.wrap(f"{item['host']} holds: {item['reason']}", width=width,
+                                   initial_indent="  ", subsequent_indent="    ", break_long_words=True)
+    return lines
 
 
 def render_local_gpus(view, table, width):

@@ -98,7 +98,7 @@ def test_render_has_every_section_and_fits_the_terminal(tmp_path):
     root, parent = tmp_path / "mopps", tmp_path / "switch"
     fixture(root, parent, now)
     text = status.render(status.snapshot(root, now=now), width=120)
-    for heading in ("MOPPS COMPARISON", "NODES  1 active  |  1 waiting  |  0 stale", "PROGRESS  Imports 1/6 states",
+    for heading in ("MOPPS COMPARISON", "NODES  2 live  |  RUN 1  HOLD 1", "WORK  1 active  |  1 waiting  |  0 stale", "PROGRESS  Imports 1/6 states",
                     "CURRENT WORK", "NODE ADMISSION", "PARENT PREFIXES", "STATES", "ATTENTION"):
         assert heading in text, heading
     assert "node-1" in text and "s3/t25 MOPPS" in text and "train" in text
