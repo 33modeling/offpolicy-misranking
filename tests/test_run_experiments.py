@@ -226,15 +226,16 @@ def test_recorded_gpu_fault_blocks_gpu_work_on_that_host(tmp_path):
              "CUDA_VISIBLE_DEVICES": ""}
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "run"], cwd=ROOT, env=inner,
                             capture_output=True, text=True, timeout=120)
-    assert "[blocked] host=" in result.stdout + result.stderr, result.stdout + result.stderr
-    assert result.returncode == 78
+    # A fresh first strike is a cooldown (79), not the terminal admission failure (78).
+    assert "[cooldown] host=" in result.stdout + result.stderr, result.stdout + result.stderr
+    assert result.returncode == 79
     # A first strike expires after EXPERIMENTS_FAULT_TTL_SECONDS: the probe decides again.
     (faults / f"{os.uname().nodename}.json").write_text(json.dumps({"phase": "train", "time": time.time() - 4000, "strikes": 1}))
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "run"], cwd=ROOT, env=inner,
                             capture_output=True, text=True, timeout=120)
     out = result.stdout + result.stderr
-    assert "[fault-expired] host=" in out and "[blocked] host=" not in out, out
-    assert result.returncode != 78, out
+    assert "[fault-expired] host=" in out and "[blocked] host=" not in out and "[cooldown]" not in out, out
+    assert result.returncode not in (78, 79), out
     # A second strike blocks until an operator restart clears the record.
     (faults / f"{os.uname().nodename}.json").write_text(json.dumps({"phase": "train", "time": time.time() - 4000, "strikes": 2}))
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "run"], cwd=ROOT, env=inner,

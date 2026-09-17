@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -228,3 +229,54 @@ def test_every_failed_attempt_is_waived_at_once_not_only_after_exhaustion(tmp_pa
     assert waive.candidates(tmp_path) == [early]
     assert "waived" in waive.waive(tmp_path, early, apply=True)
     assert not (early / "failure.json").exists() and base.spent(early) < 100
+
+
+def test_waiver_keeps_a_checkpoint_and_returns_only_the_time_after_it(tmp_path):
+    """A stalled attempt that wrote checkpoint-40: charged up to that checkpoint, resumed from it."""
+    core.atomic_json(tmp_path / "switch.json", {"schema": "x"})
+    directory = branch(tmp_path, "random_reduced")
+    start = event("train1", "train", "started")["time"]
+    checkpoint = directory / "policy/checkpoint-40"
+    checkpoint.mkdir(parents=True)
+    for name in ("adapter_model.safetensors", "checkpoint_state.json"):
+        (checkpoint / name).write_bytes(b"x")
+        os.utime(checkpoint / name, (start + 3000, start + 3000))
+    message = waive.waive(tmp_path, directory, apply=False)
+    assert "3000s kept to its checkpoint" in message
+    message = waive.waive(tmp_path, directory, apply=True)
+    assert "resumes from the kept checkpoint" in message and "17041 GPU-s returned" in message, message
+    assert checkpoint.is_dir() and not (directory / "discarded").exists() and not (directory / "failure.json").exists()
+    rows = [json.loads(l) for l in (directory / "cost.jsonl").read_text().splitlines()]
+    fin = next(r for r in rows if r["event_id"] == "train1" and r["state"] == "finished")
+    assert fin["seconds"] == 3000 and fin["allocated_gpu_seconds"] == 12000 and fin["waiver"]["returned_seconds"] > 4260
+    assert 12000 < base.spent(directory) < 12010
+    receipt = core.read(directory / "waivers/train1.json")
+    assert receipt["kept_seconds"] == 3000 and receipt["resume"] is True and receipt["discarded_to"] is None
+    # The kept row is settled: nothing left to waive, and reset-waived does not mistake it for the old bug.
+    assert "no failed attempt with fault evidence" in waive.waive(tmp_path, directory, apply=True)
+    assert waive.resumed_after_waiver(tmp_path) == []
+
+
+def test_waived_scoring_stage_discards_its_outputs_and_their_charges(tmp_path):
+    """Three scoring shards done, the fourth faulted: the retry may not reuse the three for free."""
+    core.atomic_json(tmp_path / "switch.json", {"schema": "x"})
+    directory = tmp_path / "states/s3-t100/points/view-100/selection_full"
+    rows = [event("verify1", "verify-inputs", "started"), event("verify1", "verify-inputs", "finished"),
+            event("score1", "fresh-r-validation", "started"), event("score1", "fresh-r-validation", "finished", seconds=900.0),
+            event("score2", "fresh-r-candidate", "started"), event("score2", "fresh-r-candidate", "finished", seconds=400.0, exit_code=1)]
+    for row in rows:
+        base.journal(directory / "cost.jsonl", row)
+    (directory / "fresh-r").mkdir(parents=True)
+    for name in ("validation-0.done.json", "validation-1.done.json", "candidate-0.done.json", "candidate-2.done.json", "scoring.json"):
+        (directory / "fresh-r" / name).write_text("{}")
+    (directory / "fresh-r-candidate-3.log").write_text("NCCL WARN Cuda failure 802 'system not yet initialized'\n")
+    core.atomic_json(directory / "failure.json", {"error": "fresh-r-candidate worker failed: [None, None, None, 1]", "host": "h", "time": 1.0})
+    message = waive.waive(tmp_path, directory, apply=True)
+    assert "scoring outputs discarded" in message, message
+    assert not (directory / "fresh-r").exists()
+    kept = sorted(p.name for p in (directory / "discarded").iterdir())
+    assert len(kept) == 1 and (directory / "discarded" / kept[0] / "fresh-r/validation-0.done.json").exists()
+    rows = [json.loads(l) for l in (directory / "cost.jsonl").read_text().splitlines()]
+    assert {r["event_id"] for r in rows} == {"verify1"} and base.spent(directory) == 4
+    receipt = core.read(directory / "waivers/score2.json")
+    assert receipt["scoring_reset"] is True and receipt["kept_seconds"] == 0

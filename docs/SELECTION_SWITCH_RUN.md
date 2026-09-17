@@ -150,10 +150,11 @@ ones if fewer). Contracts record dataset `mbpp` and verifier
 A node launcher is started once and runs until every experiment is complete:
 before each pass it pulls the shared checkout and, when the checkout moved,
 restarts itself in place with the new code (same pid); a host the stall
-watchdog recorded with a GPU fault is refused GPU work for
-`EXPERIMENTS_FAULT_TTL_SECONDS` (default 1800) and then re-admitted through
-the probe, blocked for good only after a second strike, which an operator
-restart (`run`) clears; and every failed attempt is waived at the next pass so
+watchdog recorded with a GPU fault cools down (inner exit 79, held, not
+counted as an admission failure) for `EXPERIMENTS_FAULT_TTL_SECONDS` (default
+1800) and is then re-admitted through the probe; one stall is one strike, and
+a second strike blocks the host (78) until an operator restart (`run`) clears
+the record; and every failed attempt is waived at the next pass so
 the branch reruns with its allocation intact.
 
 A node launcher works its own root first and, when that root has nothing
@@ -172,15 +173,18 @@ with a CUDA fault leaves the trainer hung until the stall watchdog or the
 phase's allocation limit stops it, and the minutes are charged. Every failed
 attempt is waived as soon as the next pass sees its `failure.json`, so a
 branch that meets several faulty nodes never reaches "branch allocation
-exhausted before a valid checkpoint". The waiver moves those attempts' ledger
-lines to `cost-waived.jsonl`, writes a receipt under `waivers/` with the
-evidence, and removes `failure.json` so the next pass reruns the branch. Evidence is a CUDA/NCCL fault line in the phase
+exhausted before a valid checkpoint". A failed training attempt that wrote a checkpoint stays
+charged up to that checkpoint and the retry resumes from it; only the time
+after it (the hang, the fault, the updates lost since) is returned. An
+attempt without a checkpoint is returned whole and its leftovers moved to
+`discarded/<utc>/`. A waived scoring attempt takes the whole scoring stage
+with it: every `fresh-r-*` event of the branch is returned and `fresh-r/` is
+discarded, so the retry rescoring is charged anew rather than reusing finished
+shards for free. The waiver writes the original ledger lines to
+`cost-waived.jsonl`, a receipt under `waivers/` with the evidence, and removes
+`failure.json` so the next pass reruns the branch. Evidence is a CUDA/NCCL fault line in the phase
 log, a stall the watchdog stopped (`stalled.json`), a signal kill, or a branch
-that never reached a checkpoint (the attempts bought no training). It also
-moves the attempts' `policy/`, `evaluation/`, progress and result files to
-`discarded/<utc>/`: the trainer resumes from checkpoints in its output
-directory, so a retry that found them would add the discarded attempt's
-updates to its own allocation. It refuses branches with a published result,
+that never reached a checkpoint (the attempts bought no training). It refuses branches with a published result,
 branches a worker holds, branches that trained to a checkpoint and then had a
 failed attempt without evidence, and branches already waived six times; those
 need an operator.

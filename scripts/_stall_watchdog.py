@@ -114,10 +114,17 @@ def scan(roots, faults_dir, *, host=None, stall_seconds=1500., phases=DEFAULT_PH
             faults_dir.mkdir(parents=True, exist_ok=True)
             fault_path = faults_dir / f"{host}.json"
             previous = read_json(fault_path) or {}
-            record["strikes"] = int(previous.get("strikes", 0) or 0) + 1
-            fault_path.write_text(json.dumps(record, indent=2) + "\n")
-            print(f"[stall] host {host} recorded under {faults_dir} (strike {record['strikes']}); launchers refuse GPU "
-                  "work here until the record expires or an operator restart clears it", flush=True)
+            handled = list(previous.get("events") or ([previous["event_id"]] if previous.get("event_id") else []))
+            if p["event_id"] in handled:
+                # The meter died with its ranks, so progress.json keeps saying "running":
+                # the same stall is seen every scan. One stall is one strike.
+                print(f"[stall] host {host}: event {p['event_id'][:8]} already recorded (strike {previous.get('strikes', 1)})", flush=True)
+            else:
+                record["strikes"] = int(previous.get("strikes", 0) or 0) + 1
+                record["events"] = handled + [p["event_id"]]
+                fault_path.write_text(json.dumps(record, indent=2) + "\n")
+                print(f"[stall] host {host} recorded under {faults_dir} (strike {record['strikes']}); launchers refuse GPU "
+                      "work here until the record expires or an operator restart clears it", flush=True)
         stopped.append(record)
     return stopped
 

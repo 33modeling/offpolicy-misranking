@@ -297,9 +297,12 @@ PYEOF
   case "$fault_state" in
     expired*)
       echo "[fault-expired] host=$(hostname): GPU fault recorded $fault_state; re-admitting through the probe ($NODE_FAULT kept)" ;;
-    *)
-      echo "[blocked] host=$(hostname) was recorded with a GPU fault ($NODE_FAULT, $fault_state); refusing GPU work on this node (use another one, or restart it with run_experiments.sh run)"
+    "blocked strike"*)
+      echo "[blocked] host=$(hostname) was recorded with a GPU fault twice ($NODE_FAULT, $fault_state); refusing GPU work on this node (use another one, or restart it with run_experiments.sh run)"
       exit 78 ;;
+    *)
+      echo "[cooldown] host=$(hostname): GPU fault recorded $fault_state; no GPU work until the record expires ($NODE_FAULT)"
+      exit 79 ;;
   esac
 fi
 export OM_ONLINE=0

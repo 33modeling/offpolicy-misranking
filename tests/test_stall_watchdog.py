@@ -47,6 +47,9 @@ def test_silent_train_phase_is_stopped_and_host_recorded(tmp_path):
         # A second pass finds nothing new (progress still says running, but the workers are gone).
         again = watchdog.scan([root], faults, stall_seconds=1500)
         assert [s["event_id"] for s in again] == ["evt-stalled"] and again[0]["pids"] == []
+        # One stall is one strike: the same event seen again neither adds a strike nor renews the record.
+        fault_again = json.loads((faults / f"{socket.gethostname()}.json").read_text())
+        assert fault_again["strikes"] == 1 and fault_again["events"] == ["evt-stalled"] and fault_again["time"] == fault["time"]
     finally:
         for w in workers:
             if w.poll() is None:

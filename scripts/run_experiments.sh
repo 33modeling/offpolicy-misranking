@@ -185,6 +185,7 @@ rc_reason() {
     1) echo "failed tasks, see [failed] lines above" ;;
     75) echo "node busy: lock held or GPUs occupied" ;;
     78) echo "admission failed: NCCL/CUDA probe" ;;
+    79) echo "cooling down after a GPU fault; GPU work resumes when the record expires" ;;
     130|143) echo "interrupted" ;;
     skipped) echo "skipped: complete or not prepared" ;;
     *) echo "launcher error, see lines above" ;;
@@ -232,6 +233,15 @@ sibling_roots() {
     [ "$root" != "$SWITCH_ROOT" ] || continue
     printf '%s %s\n' "$(root_rank "$root")" "$root"
   done | sort -k1,1n -k2,2 | cut -d' ' -f2-
+}
+# With sibling help on, the node stays until the sibling roots are complete too.
+siblings_complete() {
+  local root
+  [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] || return 0
+  for root in $(sibling_roots); do
+    root_complete "$root" || return 1
+  done
+  return 0
 }
 root_complete() {
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$1" --json 2>/dev/null \
@@ -322,6 +332,7 @@ if [ -t 1 ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   exit 0
 fi
 mkdir -p "$LOG_DIR"
+LOADED_REV=$(git rev-parse HEAD 2>/dev/null || true)
 printf '[node-launcher-start] host=%s pid=%s utc=%s commit=%s\n' "$HOST" "$$" "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 KEEPALIVE_PID=
 WATCHDOG_PID=
@@ -364,11 +375,12 @@ while :; do
   # it moved, restart this launcher in place (same pid, same pid file) so fixes
   # reach every node without anyone typing a command. EXPERIMENTS_AUTO_PULL=0 disables it.
   if [ "${EXPERIMENTS_AUTO_PULL:-1}" != 0 ]; then
-    before=$(git rev-parse HEAD 2>/dev/null || true)
     git pull -q --ff-only >/dev/null 2>&1 || true
     after=$(git rev-parse HEAD 2>/dev/null || true)
-    if [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; then
-      echo "[pull] checkout moved ${before:0:7} -> ${after:0:7}; restarting this launcher with the new code"
+    # Compare with the revision this launcher loaded, not with the checkout before
+    # its own pull: a peer node may already have moved the shared checkout.
+    if [ -n "$LOADED_REV" ] && [ -n "$after" ] && [ "$after" != "$LOADED_REV" ]; then
+      echo "[pull] checkout moved ${LOADED_REV:0:7} -> ${after:0:7}; restarting this launcher with the new code"
       stop_keepalive
       exec env EXPERIMENTS_DETACHED=1 bash "$LAUNCHER_SELF" run
     fi
@@ -393,7 +405,7 @@ while :; do
   # own root has nothing claimable, take the sibling experiments' work in priority order.
   rc_own=$rc_switch
   helped=""
-  if [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ]; then
+  if [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ]; then
     for root in $(sibling_roots); do
       root_complete "$root" && continue
       name=$(basename "$root")
@@ -404,7 +416,7 @@ while :; do
       echo "[pass $pass] sibling $name ended: rc=$rc_sib, $(rc_reason "$rc_sib")"
       helped="$helped | $name rc=$rc_sib $(rc_reason "$rc_sib")"
       if [ "$rc_sib" -eq 75 ]; then need_clean=1; break; fi
-      if [ "$rc_sib" -eq 78 ]; then break; fi
+      if [ "$rc_sib" -eq 78 ] || [ "$rc_sib" -eq 79 ]; then break; fi
       [ "$rc_sib" -eq 0 ] && rc_switch=0
     done
   fi
@@ -418,8 +430,8 @@ while :; do
   fi
   reason="switch rc=$rc_own $(rc_reason "$why_switch")$helped | mopps rc=$rc_mopps $(rc_reason "$why_mopps")"
   if [ "$rc_switch" -eq 75 ] || [ "$rc_mopps" -eq 75 ]; then need_clean=1; fi
-  if switch_complete && { [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; }; then
-    echo '[done] both experiments are complete; releasing the node'
+  if switch_complete && { [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; } && siblings_complete; then
+    echo '[done] every experiment this node can work on is complete; releasing the node'
     exit 0
   fi
   if [ "$rc_switch" -eq 78 ] || [ "$rc_mopps" -eq 78 ]; then

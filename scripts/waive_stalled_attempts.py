@@ -35,7 +35,11 @@ TIMEOUT = re.compile(r"^[\w-]+ exceeded \d+s allocation limit")
 # failing without a checkpoint is not an infrastructure loss to return forever.
 MAX_ROUNDS = 6
 FAULT_SIGNATURES = ("unspecified launch failure", "Cuda failure", "CUDA error", "illegal memory access",
-                    "uncorrectable ECC error", "NCCL error")
+                    "uncorrectable ECC error", "NCCL error", "SignalException", "got signal:")
+# torchrun's failure table lists a rank killed by a signal as a negative exit code.
+FAULT_PATTERNS = (re.compile(r"exitcode\s*:\s*-\d+"),)
+# Wall seconds of slack between the meter's clock and the checkpoint file's mtime.
+CHECKPOINT_SLACK = 120.
 SCHEMA = "selection-switch-cost-waiver/v1"
 RESET_SCHEMA = "selection-switch-branch-reset/v1"
 # Everything an attempt writes that a retry would otherwise resume from or reuse.
@@ -66,19 +70,52 @@ def fault_excerpt(directory, phase):
     for path in sorted(directory.glob(f"{phase}-*.log")):
         try:
             for line in path.read_text(errors="replace").splitlines():
-                if any(sig in line for sig in FAULT_SIGNATURES):
+                if any(sig in line for sig in FAULT_SIGNATURES) or any(p.search(line) for p in FAULT_PATTERNS):
                     return {"log": path.name, "line": line.strip()[:300]}
         except OSError:
             continue
     return None
 
 
+def checkpoints(directory):
+    """(mtime, path) of every resumable training checkpoint of this branch, newest last."""
+    out = []
+    for adapter in (directory / "policy").glob("checkpoint-*/adapter_model.safetensors"):
+        state = adapter.with_name("checkpoint_state.json")
+        try:
+            out.append(((state if state.is_file() else adapter).stat().st_mtime, adapter.parent))
+        except OSError:
+            continue
+    return sorted(out)
+
+
 def has_checkpoint(directory):
     """True when an attempt of this branch reached a checkpoint or a published policy."""
     policy = directory / "policy"
-    if any(policy.glob("checkpoint-*/adapter_model.safetensors")):
+    if checkpoints(directory):
         return True
     return (policy / "adapter_model.safetensors").is_file() or (policy / "budget_stop.json").is_file()
+
+
+def kept_seconds(directory, start, fin):
+    """Wall seconds of a failed training attempt that bought a checkpoint still on disk.
+
+    The attempt is charged up to the newest checkpoint it wrote and the retry
+    resumes from that checkpoint; the time after it (the hang, the fault, the
+    updates lost since) is returned. Zero when the attempt wrote no checkpoint.
+    """
+    if fin.get("phase") != "train":
+        return 0.
+    started = core.number(start.get("time", 0.), "attempt start", 0.)
+    ended = started + core.number(fin.get("seconds", 0.), "attempt duration", 0.)
+    within = [m for m, _ in checkpoints(directory) if started - CHECKPOINT_SLACK <= m <= ended + CHECKPOINT_SLACK]
+    if not within:
+        return 0.
+    return min(max(max(within) - started, 0.), core.number(fin.get("seconds", 0.), "attempt duration", 0.))
+
+
+def scoring_phase(phase):
+    return isinstance(phase, str) and phase.startswith("fresh-r-")
 
 
 def stall_records(directory):
@@ -124,8 +161,9 @@ def stalled_attempts(directory):
     finished = {e["event_id"]: e for e in events if e.get("state") == "finished"}
     stalls, progressed = stall_records(directory), has_checkpoint(directory)
     found, unattributed = [], []
+    starts = {e["event_id"]: e for e in events if e.get("state") == "started"}
     for event_id, fin in finished.items():
-        if fin.get("exit_code") in (0, None) or fin.get("ledger") == "reporting":
+        if fin.get("exit_code") in (0, None) or fin.get("ledger") == "reporting" or fin.get("waiver"):
             continue
         row = {"event_id": event_id, "phase": fin.get("phase"), "host": fin.get("host"),
                "seconds": fin.get("seconds"), "allocated_gpu_seconds": fin.get("allocated_gpu_seconds"),
@@ -134,19 +172,21 @@ def stalled_attempts(directory):
         if why is None:
             unattributed.append(row)
         else:
-            found.append({**row, "fault": why})
+            found.append({**row, "fault": why, "kept_seconds": kept_seconds(directory, starts.get(event_id, {}), fin)})
     return events, found, unattributed
 
 
 def rounds_waived(directory):
-    """Waiver rounds already applied to this branch (one discard tag per round)."""
-    tags = set()
+    """Waiver rounds already applied to this branch."""
+    rounds, tags = 0, set()
     for receipt in (directory / "waivers").glob("*.json"):
         try:
-            tags.add(json.loads(receipt.read_text()).get("discarded_to"))
+            record = json.loads(receipt.read_text())
         except (OSError, ValueError):
             continue
-    return len(tags)
+        rounds = max(rounds, int(record.get("round", 0) or 0))
+        tags.add(record.get("discarded_to"))
+    return max(rounds, len(tags))
 
 
 def candidates(root):
@@ -184,45 +224,92 @@ def waive(root, directory, *, apply):
     if rounds >= MAX_ROUNDS:
         return f"[waive] {rel}: skipped, {rounds} waiver rounds already; the branch keeps failing, needs an operator"
     if not apply:
-        return f"[waive] {rel}: would waive " + ", ".join(f"{f['phase']} {f['event_id'][:8]} on {f['host']} ({f['allocated_gpu_seconds']:.0f} GPU-s) [{f['fault']['kind']}]" for f in found)
+        return f"[waive] {rel}: would waive " + ", ".join(
+            f"{f['phase']} {f['event_id'][:8]} on {f['host']} ({f['allocated_gpu_seconds']:.0f} GPU-s"
+            + (f", {f['kept_seconds']:.0f}s kept to its checkpoint" if f["kept_seconds"] else "") + f") [{f['fault']['kind']}]" for f in found)
     try:
         with base.lease(directory / ".task.lock"), base.lease(directory / ".cost.lock"):
-            waived_ids = {f["event_id"] for f in found}
-            keep = [e for e in events if e["event_id"] not in waived_ids]
-            moved = [e for e in events if e["event_id"] in waived_ids]
+            kept = {f["event_id"]: f["kept_seconds"] for f in found if f["kept_seconds"] > 0}
+            drop = {f["event_id"] for f in found if f["kept_seconds"] <= 0}
+            # A waived scoring attempt takes the whole scoring stage with it: its shard
+            # files would otherwise be reused by the retry for free, so every scoring
+            # event of this branch is returned and fresh-r/ is discarded.
+            reset_scoring = any(scoring_phase(f["phase"]) for f in found)
+            if reset_scoring:
+                drop |= {e["event_id"] for e in events if scoring_phase(e.get("phase")) and e.get("ledger") != "reporting"}
+            keep, moved_rows = [], []
+            for e in events:
+                if e["event_id"] in drop:
+                    moved_rows.append(e)
+                elif e["event_id"] in kept and e.get("state") == "finished":
+                    moved_rows.append(e)
+                    seconds = kept[e["event_id"]]
+                    start_time = next((s["time"] for s in events if s["event_id"] == e["event_id"] and s.get("state") == "started"), e["time"])
+                    keep.append({**e, "seconds": seconds, "allocated_gpu_seconds": seconds * e["gpus"], "time": start_time + seconds,
+                                 "waiver": {"original_seconds": e["seconds"], "returned_seconds": e["seconds"] - seconds,
+                                            "kept_to": "newest checkpoint written by this attempt"}})
+                else:
+                    keep.append(e)
             core.cost_summary(keep)  # the remaining ledger must stay well formed
             path = directory / "cost.jsonl"
             temporary = path.with_name("cost.jsonl.waiving")
             temporary.write_text("".join(json.dumps(e, allow_nan=False) + "\n" for e in keep))
             with (directory / "cost-waived.jsonl").open("a") as handle:
-                for e in moved:
+                for e in moved_rows:
                     handle.write(json.dumps(e, allow_nan=False) + "\n")
             tag = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-            moved = discard_outputs(directory, tag)
+            moved = []
+            if not has_checkpoint(directory):
+                # Nothing to resume from: clear the attempt's leftovers so the retry starts clean.
+                moved = discard_outputs(directory, tag)
+            if reset_scoring and (directory / "fresh-r").exists():
+                target = directory / "discarded" / tag
+                target.mkdir(parents=True, exist_ok=True)
+                (directory / "fresh-r").rename(target / "fresh-r")
+                moved.append("fresh-r")
+            resume = has_checkpoint(directory)
             for f in found:
                 core.atomic_json(directory / "waivers" / f"{f['event_id']}.json", {
                     "schema": SCHEMA, "directory": rel, "attempt": f, "waived_at": time.time(),
-                    "discarded_outputs": moved, "discarded_to": f"discarded/{tag}",
+                    "kept_seconds": f["kept_seconds"], "resume": resume, "scoring_reset": reset_scoring,
+                    "discarded_outputs": moved, "discarded_to": f"discarded/{tag}" if moved else None,
                     "reason": f"attempt lost to infrastructure ({f['fault']['kind']}): a GPU fault, a stall the "
                               "watchdog stopped, a kill, or an attempt that bought no training before the "
-                              "allocation ran out; not selector cost", "round": rounds+1,
+                              "allocation ran out; not selector cost. Time up to the attempt's newest checkpoint "
+                              "stays charged and the retry resumes there; the rest is returned", "round": rounds+1,
                     "operator": "run_selection_switch.sh waive"})
             temporary.replace(path)
             (directory / "failure.json").unlink(missing_ok=True)
     except BlockingIOError:
         return f"[waive] {rel}: skipped, a worker holds this branch right now"
-    restored = sum(f["allocated_gpu_seconds"] or 0 for f in found)
+    restored = sum((f["allocated_gpu_seconds"] or 0) * (1 - (f["kept_seconds"] / f["seconds"] if f["seconds"] else 0)) for f in found)
     return (f"[waive] {rel}: waived " + ", ".join(f"{f['phase']} {f['event_id'][:8]} on {f['host']} ({f['fault']['kind']})" for f in found)
-            + f"; {restored:.0f} GPU-s returned to the allocation; failure cleared, the queue retries it next pass")
+            + f"; {restored:.0f} GPU-s returned to the allocation; "
+            + ("the retry resumes from the kept checkpoint" if resume else "the retry starts from the parent policy")
+            + ("; scoring outputs discarded, the retry rescoring is charged anew" if reset_scoring else "")
+            + "; failure cleared, the queue retries it next pass")
 
 
 def resumed_after_waiver(root):
-    """Branches waived before outputs were discarded: their retry resumed the discarded checkpoints."""
+    """Branches waived by the first waiver, which returned whole attempts yet left their checkpoints.
+
+    Their retry resumed the discarded attempt's updates on top of a restored
+    allocation. Later receipts either discarded the outputs (``discarded_to``) or
+    kept the checkpoint together with its charge (``kept_seconds``).
+    """
     out = []
     for waivers in sorted(root.glob("states/**/waivers")):
         directory = waivers.parent
-        if not (directory / "discarded").exists():
-            out.append(directory)
+        if (directory / "discarded").exists():
+            continue
+        for receipt in waivers.glob("*.json"):
+            try:
+                record = json.loads(receipt.read_text())
+            except (OSError, ValueError):
+                continue
+            if "discarded_to" not in record and "kept_seconds" not in record:
+                out.append(directory)
+                break
     return out
 
 
