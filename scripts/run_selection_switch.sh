@@ -5,8 +5,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|smoke|prepare|status|progress|fit|summarize|export|why|evidence|live|cpu|recover-cost|waive|reset-waived|results|errors|check-code|stop) ;;
-  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|progress|export|why|evidence|live|cpu|prepare|fit|summarize|recover-cost|waive|reset-waived|results|errors|check-code]'; exit 2 ;;
+case "$MODE" in run|smoke|prepare|status|progress|fit|summarize|export|why|live|cpu|recover-cost|waive|reset-waived|results|errors|check-code|stop) ;;
+  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|progress|export|why|live|cpu|prepare|fit|summarize|recover-cost|waive|reset-waived|results|errors|check-code]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -67,26 +67,6 @@ if [ "$MODE" = results ]; then
     exit 0
   fi
   echo "[results failed] no file written for $OUT_ROOT; the error is above"
-  exit 1
-fi
-if [ "$MODE" = evidence ]; then
-  # The records the paper's audit reads, and nothing else: switch.json plus each
-  # branch's result, decision, cost ledger and budget stop. The `why` report carries
-  # every log tail of every root and is tens of megabytes, which is not movable off
-  # this cluster; this is about one megabyte and the importer parses it identically.
-  [ -f "$OUT_ROOT/switch.json" ] || { echo "[abort] no switch root: $OUT_ROOT"; exit 2; }
-  REPORT_DIR="$WORK/reports/selection-switch"
-  mkdir -p "$REPORT_DIR"
-  TARGET="$REPORT_DIR/switch-evidence-$(basename "$OUT_ROOT")-$(date -u +%Y%m%dT%H%M%SZ).txt"
-  echo "[evidence] root=$OUT_ROOT"
-  if CUDA_VISIBLE_DEVICES="" "$PY" scripts/switch_evidence_export.py --root "$OUT_ROOT" --out "$TARGET" "$@"; then
-    if [ -n "${HOME:-}" ] && [ -d "$HOME" ] && cp -f "$TARGET" "$HOME/" 2>/dev/null; then
-      echo "[evidence] copied to $HOME/$(basename "$TARGET")"
-    fi
-    echo "[evidence] done: $TARGET"
-    exit 0
-  fi
-  echo "[evidence failed] no file written for $OUT_ROOT; the error is above"
   exit 1
 fi
 if [ "$MODE" = reset-waived ]; then

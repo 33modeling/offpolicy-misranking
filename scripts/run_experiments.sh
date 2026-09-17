@@ -69,17 +69,28 @@ if [ "$MODE" = evidence ]; then
   # Read-only and GPU-free; this is what the paper's audit imports.
   export CUDA_VISIBLE_DEVICES=""
   # Enumerated here rather than through all_roots, which is defined further down
-  # with the run-mode helpers this read-only path never reaches.
-  rc=0 found=0
+  # with the run-mode helpers this read-only path never reaches. Every prepared root
+  # goes into ONE file: only one file then has to leave this cluster.
+  ROOT_ARGS=()
   for root in "$WORK"/runs/*/; do
     root=${root%/}
-    [ -f "$root/switch.json" ] || continue
-    found=1
-    SWITCH_ROOT=$root EXPERIMENTS_COMBINED=0 bash scripts/run_selection_switch.sh evidence || rc=1
+    [ -f "$root/switch.json" ] && ROOT_ARGS+=(--root "$root")
   done
-  [ "$found" -eq 1 ] || { echo "[abort] no prepared switch root under $WORK/runs"; exit 2; }
-  [ "$rc" -eq 0 ] || echo '[evidence] at least one root failed; the errors are above'
-  exit "$rc"
+  [ "${#ROOT_ARGS[@]}" -gt 0 ] || { echo "[abort] no prepared switch root under $WORK/runs"; exit 2; }
+  REPORT_DIR="$WORK/reports/selection-switch"
+  mkdir -p "$REPORT_DIR"
+  TARGET="$REPORT_DIR/switch-evidence-$(date -u +%Y%m%dT%H%M%SZ).txt"
+  PY_BIN=${SWITCH_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
+  [ -x "$PY_BIN" ] || PY_BIN=python3
+  if "$PY_BIN" scripts/switch_evidence_export.py "${ROOT_ARGS[@]}" --out "$TARGET"; then
+    if [ -n "${HOME:-}" ] && [ -d "$HOME" ] && cp -f "$TARGET" "$HOME/" 2>/dev/null; then
+      echo "[evidence] copied to $HOME/$(basename "$TARGET")"
+    fi
+    echo "[evidence] done: $TARGET"
+    exit 0
+  fi
+  echo "[evidence failed] no file written; the error is above"
+  exit 1
 fi
 if [ "$MODE" = why ]; then
   # One read-only report: the combined status screen, then each experiment's own

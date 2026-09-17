@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Compact evidence export of a selection-switch root: only the records the paper's
-audit reads, in the block format its importer already parses.
+"""Compact evidence export of the selection-switch roots: only the records the
+paper's audit reads, all roots in one file.
 
 The full `why` report carries every log tail and every record of every root, which
 is tens of megabytes and cannot be moved off the cluster comfortably. The paper's
@@ -12,7 +12,12 @@ about 1 MB here.
 
 Read-only: it opens nothing but the root's own records and needs no GPU.
 
-  python3 scripts/switch_evidence_export.py --root RUNS/selection-switch-difficulty-v1
+Every block name is prefixed with its root's directory name, so one file can hold
+several roots whose branch paths would otherwise collide. The importer wants one
+root at a time with unprefixed names; scripts/switch_evidence_split.py writes those
+back out on the machine that runs it.
+
+  python3 scripts/switch_evidence_export.py --root RUNS/a --root RUNS/b --out one.txt
 """
 from __future__ import annotations
 
@@ -31,7 +36,7 @@ STATE_ARMS = ("mopps", "random_online")
 FILES = ("result.json", "decision.json", "cost.jsonl", "policy/budget_stop.json")
 
 
-def blocks(root: Path):
+def blocks(root: Path, prefix: str = ""):
     """(block name, text) for every record the importer accepts, in a stable order.
 
     Names are root-relative so they match the importer's anchored pattern; nothing
@@ -40,7 +45,7 @@ def blocks(root: Path):
     switch = root / "switch.json"
     if not switch.is_file():
         raise SystemExit(f"[abort] not a selection-switch root: {root}")
-    yield "switch.json", switch.read_text()
+    yield prefix + "switch.json", switch.read_text()
     for state in sorted((root / "states").glob("s[0-9]-t[0-9]*")):
         directories = [point / arm for point in sorted((state / "points").glob("view-[0-9]*"))
                        for arm in POINT_ARMS]
@@ -49,7 +54,7 @@ def blocks(root: Path):
             for name in FILES:
                 path = directory / name
                 if path.is_file():
-                    yield str(path.relative_to(root)), path.read_text()
+                    yield prefix + str(path.relative_to(root)), path.read_text()
 
 
 def commit() -> str:
@@ -60,29 +65,40 @@ def commit() -> str:
         return "unknown"
 
 
-def report(root: Path) -> str:
-    root = root.resolve()
+def report(roots) -> str:
+    roots = [Path(r).resolve() for r in ([roots] if isinstance(roots, (str, Path)) else roots)]
+    if len({r.name for r in roots}) != len(roots):
+        raise SystemExit("[abort] roots must have distinct directory names")
     out = [f"SELECTION SWITCH EVIDENCE\nUTC: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
-           f"ROOT: {root}", f"COMMIT: {commit()}",
-           "CONTENT: switch.json plus per-branch result.json, decision.json, cost.jsonl and "
-           "policy/budget_stop.json; no logs, no other roots", ""]
-    count = 0
-    for name, text in blocks(root):
-        out.append(f"===== {name} =====")
-        out.append(text if text.endswith("\n") else text + "\n")
-        count += 1
-    if count < 2:
-        raise SystemExit(f"[abort] no branch records under {root}")
+           f"COMMIT: {commit()}",
+           "CONTENT: per root, switch.json plus each branch's result.json, decision.json, "
+           "cost.jsonl and policy/budget_stop.json; no logs",
+           "NAMES: every block name is prefixed with its root's directory name"]
+    for root in roots:
+        out.append(f"ROOT: {root}")
+    out.append("")
+    total = 0
+    for root in roots:
+        count = 0
+        for name, text in blocks(root, prefix=root.name + "/"):
+            out.append(f"===== {name} =====")
+            out.append(text if text.endswith("\n") else text + "\n")
+            count += 1
+        if count < 2:
+            raise SystemExit(f"[abort] no branch records under {root}")
+        print(f"[records] {root.name}: {count}", file=sys.stderr)
+        total += count
     # No trailer: anything after the last marker is that block's body and would be
-    # parsed as part of its JSON. The record count goes to stderr instead.
-    print(f"[records] {count}", file=sys.stderr)
+    # parsed as part of its JSON. Counts go to stderr instead.
+    print(f"[records] total {total}", file=sys.stderr)
     return "\n".join(out) + "\n"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--root", type=Path, action="append", required=True,
+                        help="a switch root; repeat to put several roots in one file")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     text = report(args.root)
