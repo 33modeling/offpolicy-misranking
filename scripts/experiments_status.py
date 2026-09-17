@@ -66,6 +66,7 @@ def render(data, *, all_tasks=False, width=120):
              switch_status.node_view.render_summary(data["nodes"]),
              "RUN training/claiming  ADMIT NCCL probe  WAIT no claimable task  HOLD between passes  COOL GPU-fault cooldown",
              "GONE launcher stopped writing  EXITED/BLOCKED launcher left  (see TASK/REASON)",
+             switch_status.node_view.render_idle(data["nodes"]),
              "", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
     lines += switch_status.node_view.render_nodes(data["nodes"], switch_status.table, width)
     lines += ["", f"{SEPARATOR} SELECTION SWITCH {SEPARATOR}",

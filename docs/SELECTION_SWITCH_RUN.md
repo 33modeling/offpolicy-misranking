@@ -159,6 +159,14 @@ a second strike blocks the host (78) until an operator restart (`run`) clears
 the record; and every failed attempt is waived at the next pass so
 the branch reruns with its allocation intact.
 
+A hold is not a timer: while holding, the node checks every
+`EXPERIMENTS_HOLD_POLL_SECONDS` (default 60) whether any branch of a root it
+serves is READY in the status snapshot and, if so, starts the next pass at
+once. The combined status prints an `IDLE` line naming the live hosts that
+have GPUs but no task (holding, waiting, cooling down), oldest first, and
+counts nodes evaluating reward curves (`curve-parent`, `<arm>/curve/step-N`)
+as RUN.
+
 A node launcher works its own root first and, when that root has nothing
 claimable (or only failed branches), takes the other prepared switch roots'
 work in priority order (v1, difficulty, hard, quality, long, then the rest by

@@ -123,6 +123,11 @@ def test_node_launcher_logs_next_to_the_roots_are_read_and_summarized(tmp_path, 
     assert nodes["node-e"]["state"] == "ADMIT"
     summary = view.summarize(list(nodes.values()))
     assert summary["live"] == 3 and summary["counts"] == {"HOLD": 1, "LIVE": 1, "GONE": 1, "BLOCKED": 1, "ADMIT": 1}
+    # Idle: live hosts with no task, oldest first; a training host is not idle.
+    assert [item["host"] for item in view.idle(list(nodes.values()))] == ["node-a", "node-b", "node-e"]
+    idle_line = view.render_idle(list(nodes.values()))
+    assert idle_line.startswith("IDLE  3 node(s) with GPUs and no task: node-a (HOLD ") and "node-e (ADMIT" in idle_line
+    assert view.render_idle([{**nodes["node-b"], "task": "s1/t25 gated"}]) == "IDLE  none: every live node has a task"
     assert view.render_summary(list(nodes.values())) == "NODES  3 live  |  ADMIT 1  HOLD 1  LIVE 1  |  not live: BLOCKED 1  GONE 1"
     assert view.render_summary([]) == "NODES  0 live  |  no launcher evidence yet"
     def table(headers, rows, widths):

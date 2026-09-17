@@ -189,6 +189,23 @@ def render_summary(nodes):
     return line + (f"  |  not live: " + "  ".join(dead) if dead else "")
 
 
+def idle(nodes):
+    """Live hosts with no running task: holding, waiting, cooling down, or an active launcher between claims."""
+    return sorted((item for item in nodes if item["state"] in {"HOLD", "WAIT", "COOL", "LIVE", "ADMIT"} and not item["task"]),
+                  key=lambda item: (-(item["last_age"] or 0), item["host"]))
+
+
+def render_idle(nodes, *, limit=8):
+    """One line naming the idle hosts (GPUs allocated, nothing training), oldest first."""
+    hosts = idle(nodes)
+    if not hosts:
+        return "IDLE  none: every live node has a task"
+    shown = [f"{item['host']} ({item['state']}" + (f" {int(item['last_age'])//60}m" if item["last_age"] is not None else "") + ")"
+             for item in hosts[:limit]]
+    more = f" +{len(hosts)-limit} more" if len(hosts) > limit else ""
+    return f"IDLE  {len(hosts)} node(s) with GPUs and no task: " + ", ".join(shown) + more
+
+
 def listed(nodes):
     """Live and stale hosts, plus dead ones whose evidence is recent enough to matter."""
     return [item for item in nodes if item["state"] in (*LIVE_STATES, "STALE", "STOPPING")

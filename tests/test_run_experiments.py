@@ -285,3 +285,33 @@ def test_a_node_with_nothing_to_claim_works_sibling_roots_in_priority_order(tmp_
             " | mopps rc=0 nothing left to claim)") in out
     # Sibling progress counts as progress: the hold is the base interval, not doubled.
     assert "next pass in 1s" in lines[-1]
+
+
+def test_a_holding_node_resumes_as_soon_as_a_branch_becomes_claimable(tmp_path):
+    """The hold polls the status snapshot; a READY branch ends the hold before the timer."""
+    from test_selection_switch_status import completed_prefix, prepared
+    env = environment(tmp_path, fake_inner(tmp_path, 1, 0))
+    env.update({"EXPERIMENTS_HOLD_SECONDS": "40", "EXPERIMENTS_HOLD_POLL_SECONDS": "2", "EXPERIMENTS_HELP_SIBLINGS": "0"})
+    root = Path(env["SWITCH_ROOT"])
+    prepared(root)
+    completed_prefix(root)  # seed 0 prefix 25 published: its two dev branches are READY
+    process = subprocess.Popen(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    lines, deadline = [], time.monotonic() + 60
+    try:
+        while time.monotonic() < deadline:
+            line = process.stdout.readline()
+            if not line:
+                break
+            lines.append(line.rstrip("\n"))
+            if line.startswith("[pass 2]"):
+                break
+        os.killpg(process.pid, 15)
+        process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    out = "\n".join(lines)
+    assert "[hold] claimable work in selection-switch-v1; starting the next pass now" in out, out
+    assert out.index("[holding]") < out.index("claimable work") < out.index("[pass 2]")
+    assert out.count("[holding]") <= 3

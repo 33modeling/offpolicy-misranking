@@ -39,6 +39,7 @@ def test_one_screen_shows_both_experiments_and_this_node_once(tmp_path):
     assert first.startswith("EXPERIMENTS  ") and second.startswith("NODES  ") and " live  |  " in second
     assert output.index("NODES (every host") < output.index("SELECTION SWITCH") < output.index("MOPPS COMPARISON")
     assert output.count("NODES (every host") == 1
+    assert output.count("IDLE  ") == 1 and output.index("IDLE  ") < output.index("NODES (every host")
     assert "CONTINUATIONS" in output and "PARENT PREFIXES" in output
     assert output.count("THIS NODE GPUS") == 1
     assert output.index("THIS NODE GPUS") > output.index("MOPPS COMPARISON")

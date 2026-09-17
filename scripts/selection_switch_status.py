@@ -185,6 +185,30 @@ def snapshot(root, *, now=None):
                 observe(out / arm, seed=seed, step=step, kind="branch", arm=arm,
                         done_path=out / arm / "result.json", dependency=arm_dependency)
 
+    # Metered phases outside the branch directories: the reward-curve evaluations
+    # (points/<view>/curve-parent and <arm>/curve/step-N). A node in one of them
+    # writes nothing to its console for many minutes and would otherwise look GONE.
+    observed = {root / task["directory"] for task in tasks}
+    for progress_path in sorted((root / "states").glob("s*-t*/points/*/**/progress.json")):
+        directory = progress_path.parent
+        if directory in observed or "discarded" in directory.parts:
+            continue
+        progress = read(progress_path)
+        age = now-number(progress.get("updated"), -1e30)
+        if progress.get("state") != "running" or not (-5 <= age < 60):
+            continue
+        state_dir = directory.relative_to(root / "states").parts[0]
+        match = re.fullmatch(r"s(\d+)-t(\d+)", state_dir)
+        if not match:
+            continue
+        seed, step = int(match.group(1)), int(match.group(2))
+        label = "/".join(directory.relative_to(root / "states" / state_dir / "points").parts[1:])
+        tasks.append({"seed": seed, "step": step, "kind": "phase", "arm": label,
+                      "role": "DEV" if seed in rule.DEV_SEEDS else "TEST",
+                      "directory": str(directory.relative_to(root)), "status": "RUNNING", "reason": "",
+                      "host": progress.get("host", ""), "pid": progress.get("pid"), "phase": progress.get("phase", ""),
+                      "seconds": number(progress.get("seconds")), "timeout": number(progress.get("timeout")),
+                      "heartbeat_age": max(0., age), "training_step": None})
     active = [task for task in tasks if task["status"] == "RUNNING"]
     active_hosts = {task["host"] for task in active if task["host"]}
     stale_hosts = {task["host"] for task in tasks if task["status"] == "STALE" and task["host"]} - active_hosts

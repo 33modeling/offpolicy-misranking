@@ -287,3 +287,26 @@ def test_gate_fit_failure_and_unpublished_state_are_reported(tmp_path):
     assert any("state not published/validated" in n["error"] and "s3-t50" in n["path"] for n in data["notices"])
     core.atomic_json(tmp_path / "model.json", {"model_id": "published"})
     assert status.snapshot(tmp_path)["gate_fit_failure"] == ""
+
+
+def test_nodes_evaluating_reward_curves_are_running_not_gone(tmp_path):
+    """Curve evaluations are metered in curve-parent and <arm>/curve/step-N, outside the branch
+    directories; the node doing one must count as RUN, without inflating the branch counts."""
+    now = time.time()
+    root = tmp_path / "selection-switch-difficulty-v1"
+    prepared(root)
+    running(point(root) / "curve-parent", "node-curve", now=now, phase="curve")
+    running(point(root) / "selection_full/curve/step-50", "node-curve2", now=now, phase="curve", pid=321)
+    core.atomic_json(point(root) / "random_full/curve/step-75/progress.json",
+                     {"state": "running", "host": "node-old", "pid": 9, "phase": "curve", "updated": now-900, "event_id": "x"})
+    data = status.snapshot(root, now=now)
+    phases = {task["arm"]: task for task in data["tasks"] if task["kind"] == "phase"}
+    assert set(phases) == {"curve-parent", "selection_full/curve/step-50"}
+    assert phases["curve-parent"]["status"] == "RUNNING" and phases["curve-parent"]["host"] == "node-curve"
+    assert phases["selection_full/curve/step-50"]["seed"] == 0 and phases["selection_full/curve/step-50"]["step"] == 25
+    assert data["active_nodes"] == 2 and data["branch_counts"].get("RUNNING", 0) == 0
+    hosts = {node["host"]: node for node in data["nodes"]}
+    assert hosts["node-curve"]["state"] == "RUN" and hosts["node-curve"]["task"] == "s0/t25 curve-parent"
+    assert hosts["node-curve2"]["state"] == "RUN" and "node-old" not in hosts
+    text = status.render(data, width=120)
+    assert "curve-parent" in text and "node-curve2" in text

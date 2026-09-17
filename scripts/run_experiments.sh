@@ -243,6 +243,22 @@ siblings_complete() {
   done
   return 0
 }
+# Any branch claimable right now in a root this node serves (own root first, then the
+# siblings it helps): READY in the status snapshot, which reads receipts only.
+claimable_work() {
+  local root roots
+  roots=$SWITCH_ROOT
+  [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] && roots="$roots $(sibling_roots | tr '\n' ' ')"
+  for root in $roots; do
+    [ -f "$root/switch.json" ] || continue
+    if CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$root" --json 2>/dev/null \
+        | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if any(t.get("status")=="READY" for t in d.get("tasks",[])) else 1)'; then
+      basename "$root"
+      return 0
+    fi
+  done
+  return 1
+}
 root_complete() {
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$1" --json 2>/dev/null \
     | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("development_done")==18 and d.get("test_done")==30 else 1)'
@@ -446,10 +462,24 @@ while :; do
   if [ "$rc_switch" -eq 0 ] && [ "$rc_mopps" -eq 0 ]; then wait_seconds=$HOLD; else wait_seconds=$(( wait_seconds*2 > 3600 ? 3600 : wait_seconds*2 )); fi
   echo "[hold] pass $pass ended ($reason); keeping this node's GPUs; next pass in ${wait_seconds}s (stop: bash scripts/run_experiments.sh stop)"
   remaining=$wait_seconds
+  poll=${EXPERIMENTS_HOLD_POLL_SECONDS:-60}
+  since_poll=0
   while [ "$remaining" -gt 0 ]; do
     step=$(( remaining < 15 ? remaining : 15 ))
+    [ "$step" -gt "$poll" ] && step=$poll
     printf '[holding] node retained (%s); next pass in %ss\n' "$reason" "$remaining"
     sleep "$step" & wait $! || true
     remaining=$((remaining-step))
+    since_poll=$((since_poll+step))
+    # A hold is not a timer: the moment a branch becomes claimable (a waiver, a fitted
+    # gate, a stale event closed elsewhere), the node goes back to work. A cooling-down
+    # or blocked node cannot take GPU work, so it waits the hold out.
+    if [ "$since_poll" -ge "$poll" ] && [ "$remaining" -gt 0 ] && [ "$rc_own" -ne 79 ] && [ "$rc_own" -ne 78 ]; then
+      since_poll=0
+      if found=$(claimable_work); then
+        echo "[hold] claimable work in $found; starting the next pass now"
+        break
+      fi
+    fi
   done
 done
