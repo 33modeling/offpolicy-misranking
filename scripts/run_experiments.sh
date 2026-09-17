@@ -19,8 +19,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|stop|status|progress|why) ;;
-  *) echo 'usage: bash scripts/run_experiments.sh [run|stop|status|progress|why]'; exit 2 ;;
+case "$MODE" in run|stop|status|progress|why|evidence) ;;
+  *) echo 'usage: bash scripts/run_experiments.sh [run|stop|status|progress|why|evidence]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -63,6 +63,23 @@ if [ "$MODE" = status ]; then
   # GPUs once). Accepts --all, --json and --watch [seconds]. Read-only.
   export CUDA_VISIBLE_DEVICES=""
   exec "$PY" scripts/experiments_status.py --switch-root "$SWITCH_ROOT" --mopps-root "$MOPPS_ROOT" "$@"
+fi
+if [ "$MODE" = evidence ]; then
+  # Every prepared switch root on this node, one compact file each, copied home.
+  # Read-only and GPU-free; this is what the paper's audit imports.
+  export CUDA_VISIBLE_DEVICES=""
+  # Enumerated here rather than through all_roots, which is defined further down
+  # with the run-mode helpers this read-only path never reaches.
+  rc=0 found=0
+  for root in "$WORK"/runs/*/; do
+    root=${root%/}
+    [ -f "$root/switch.json" ] || continue
+    found=1
+    SWITCH_ROOT=$root EXPERIMENTS_COMBINED=0 bash scripts/run_selection_switch.sh evidence || rc=1
+  done
+  [ "$found" -eq 1 ] || { echo "[abort] no prepared switch root under $WORK/runs"; exit 2; }
+  [ "$rc" -eq 0 ] || echo '[evidence] at least one root failed; the errors are above'
+  exit "$rc"
 fi
 if [ "$MODE" = why ]; then
   # One read-only report: the combined status screen, then each experiment's own
