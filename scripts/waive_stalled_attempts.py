@@ -38,8 +38,8 @@ FAULT_SIGNATURES = ("unspecified launch failure", "Cuda failure", "CUDA error", 
                     "uncorrectable ECC error", "NCCL error", "SignalException", "got signal:")
 # torchrun's failure table lists a rank killed by a signal as a negative exit code.
 FAULT_PATTERNS = (re.compile(r"exitcode\s*:\s*-\d+"),)
-# Wall seconds of slack between the meter's clock and the checkpoint file's mtime.
-CHECKPOINT_SLACK = 120.
+# Wall seconds of slack between the meter's clock and the checkpoint file's mtime (NFS server clock).
+CHECKPOINT_SLACK = 900.
 SCHEMA = "selection-switch-cost-waiver/v1"
 RESET_SCHEMA = "selection-switch-branch-reset/v1"
 # Everything an attempt writes that a retry would otherwise resume from or reuse.
