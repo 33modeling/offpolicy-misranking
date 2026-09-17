@@ -29,7 +29,7 @@ def worker(directory, world_size):
     rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     evidence = {
-        "rank": rank, "local_rank": local_rank, "host": socket.gethostname(), "pid": os.getpid(),
+        "rank": rank, "local_rank": local_rank, "host": (os.environ.get("EXPERIMENTS_NODE_ID") or socket.gethostname()), "pid": os.getpid(),
         "torch": torch.__version__, "cuda_runtime": torch.version.cuda,
         "nccl": list(torch.cuda.nccl.version()), "visible": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "cumem_host": os.environ.get("NCCL_CUMEM_HOST_ENABLE"),
@@ -142,10 +142,10 @@ def preflight(root, *, world_size=4, timeout=90.):
     devices = visible.split(",")
     if len(devices) != world_size or len(set(devices)) != world_size or not all(devices):
         raise ValueError(f"NCCL admission requires {world_size} distinct allocated CUDA_VISIBLE_DEVICES")
-    directory = root / "node-preflight" / f"{socket.gethostname()}-{uuid.uuid4().hex}"
+    directory = root / "node-preflight" / f"{(os.environ.get("EXPERIMENTS_NODE_ID") or socket.gethostname())}-{uuid.uuid4().hex}"
     directory.mkdir(parents=True)
     started = time.monotonic()
-    report = {"schema": "selection-nccl-admission/v1", "host": socket.gethostname(),
+    report = {"schema": "selection-nccl-admission/v1", "host": (os.environ.get("EXPERIMENTS_NODE_ID") or socket.gethostname()),
               "pid": os.getpid(), "world_size": world_size, "visible": visible,
               "runtime_commit": os.environ.get("SWITCH_RUNTIME_COMMIT"),
               "probe_sha256": base.digest(Path(__file__)), "attempts": [], "state": "running",

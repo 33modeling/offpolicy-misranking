@@ -159,6 +159,16 @@ a second strike blocks the host (78) until an operator restart (`run`) clears
 the record; and every failed attempt is waived at the next pass so
 the branch reruns with its allocation intact.
 
+Node identity: two containers of one cluster job can share a hostname, which
+merged them in the status, made `run`/`stop` read each other's pid file and
+let one container's start close the other's live cost events as dead. The
+launchers therefore source `scripts/_node_id.sh`, which sets
+`EXPERIMENTS_NODE_ID` to the hostname plus four hex digits of a hash over the
+node's GPU UUIDs, `CUDA_VISIBLE_DEVICES`, its cgroup and its address (for
+example `run282907-wss-20-g1b2c`); launcher files, fault records, the stall
+watchdog, the dead-event close and the cost events' `host` field all use it.
+Setting `EXPERIMENTS_NODE_ID` in the environment overrides it.
+
 A hold is not a timer: while holding, the node checks every
 `EXPERIMENTS_HOLD_POLL_SECONDS` (default 60) whether any branch of a root it
 serves is READY in the status snapshot and, if so, starts the next pass at

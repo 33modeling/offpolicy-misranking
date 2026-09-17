@@ -95,7 +95,7 @@ def stop(pids, grace=30.):
 
 def scan(roots, faults_dir, *, host=None, stall_seconds=1500., phases=DEFAULT_PHASES, now=None, dry_run=False):
     """One pass; returns the phases it stopped."""
-    host = socket.gethostname() if host is None else host
+    host = (os.environ.get("EXPERIMENTS_NODE_ID") or socket.gethostname()) if host is None else host
     now = time.time() if now is None else now
     stopped = []
     for directory, p in running_phases(roots, host, phases):
@@ -136,15 +136,16 @@ def main():
     parser.add_argument("--stall-seconds", type=float, default=1500.)
     parser.add_argument("--interval", type=float, default=60.)
     parser.add_argument("--phases", default=",".join(DEFAULT_PHASES))
+    parser.add_argument("--host", default=None, help="node identity to match progress records and record faults under")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     phases = tuple(p for p in args.phases.split(",") if p)
     parent = os.getppid()
-    print(f"[watchdog] pid={os.getpid()} host={socket.gethostname()} roots={[str(r) for r in args.roots]} "
+    print(f"[watchdog] pid={os.getpid()} host={args.host or os.environ.get('EXPERIMENTS_NODE_ID') or socket.gethostname()} roots={[str(r) for r in args.roots]} "
           f"stall={args.stall_seconds:.0f}s phases={phases}", flush=True)
     while True:
         try:
-            scan(args.roots, args.faults_dir, stall_seconds=args.stall_seconds, phases=phases)
+            scan(args.roots, args.faults_dir, host=args.host, stall_seconds=args.stall_seconds, phases=phases)
         except Exception as exc:  # the watchdog must outlive one bad file
             print(f"[watchdog] scan error: {exc}", flush=True)
         if args.once or os.getppid() != parent:

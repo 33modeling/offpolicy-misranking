@@ -207,6 +207,13 @@ def worker_log_tail(path, *, lines=120):
         return f"[cannot read worker log: {exc}]"
 
 
+def node_id():
+    """This launcher's node identity: EXPERIMENTS_NODE_ID, which the node launcher sets to
+    the hostname plus a suffix derived from the node's GPUs, or the plain hostname. Two
+    containers of one job can share a hostname; their GPUs do not."""
+    return os.environ.get("EXPERIMENTS_NODE_ID") or socket.gethostname()
+
+
 def meter(directory, name, gpu_type, **kwargs):
     with lease(directory / ".cost.lock"):
         return _meter(directory, name, gpu_type, **kwargs)
@@ -217,7 +224,7 @@ def _meter(directory, name, gpu_type, *, action=None, commands=None, env=None,
     """One allocation interval, including idle GPUs while a CPU phase runs."""
     directory.mkdir(parents=True, exist_ok=True)
     base = {"event_id": uuid.uuid4().hex, "phase": name, "ledger": ledger,
-            "gpus": devices, "gpu_type": gpu_type, "host": socket.gethostname()}
+            "gpus": devices, "gpu_type": gpu_type, "host": node_id()}
     path = directory / "cost.jsonl"
     started, rc, processes = time.monotonic(), 1, []
     def progress(elapsed, state):
@@ -663,7 +670,7 @@ def work(root):
             except Exception as exc:  # noqa: BLE001 - isolate and report task failures
                 failures += 1
                 traceback.print_exc()
-                gate.atomic_json(out / arm / "failure.json", {"error": str(exc), "host": socket.gethostname(), "time": time.time()})
+                gate.atomic_json(out / arm / "failure.json", {"error": str(exc), "host": node_id(), "time": time.time()})
                 print(f"[failed] {out.name}/{arm}: {exc}; continuing to other arms", flush=True)
     print_status(status(root))
     return 1 if failures else 0

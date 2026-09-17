@@ -96,7 +96,10 @@ def main():
         print(f"[curve-ledger] {root.name}: no published branch carries curve rows in its ledger")
         return 0
     for directory in dirs:
-        print(split(root, directory, apply=args.apply), flush=True)
+        try:
+            print(split(root, directory, apply=args.apply), flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[curve-ledger] {directory.relative_to(root)}: skipped, {exc}", flush=True)
     return 0
 
 

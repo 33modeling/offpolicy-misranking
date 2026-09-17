@@ -32,7 +32,10 @@ done
 # follow that file; Ctrl-C ends the view, not the run. Tests and pipelines
 # (no tty) keep the direct foreground behaviour; SWITCH_FOREGROUND=1 forces it.
 CONSOLE_DIR="$OUT_ROOT/logs"
-LAUNCH_HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
+# Node identity (hostname plus GPU suffix); copies of this launcher without the helper use the hostname.
+if [ -f scripts/_node_id.sh ]; then source scripts/_node_id.sh; fi
+export EXPERIMENTS_NODE_ID=${EXPERIMENTS_NODE_ID:-$(hostname)}
+LAUNCH_HOST=$(printf '%s\n' "$EXPERIMENTS_NODE_ID" | tr -c 'a-zA-Z0-9._-' '_')
 PID_FILE="$CONSOLE_DIR/launcher.$LAUNCH_HOST.pid"
 CONSOLE_LOG="$CONSOLE_DIR/console.$LAUNCH_HOST.log"
 launcher_pid_alive() {
@@ -265,7 +268,7 @@ fi
 # Preparation checks disjoint roots before even creating launcher logs.
 CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py prepare --root "$OUT_ROOT" --parent-root "$PARENT"
 mkdir -p "$OUT_ROOT/logs"
-HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
+HOST=$(printf '%s\n' "$EXPERIMENTS_NODE_ID" | tr -c 'a-zA-Z0-9._-' '_')
 exec > >(tee -p -a "$OUT_ROOT/logs/launcher.$HOST.log") 2>&1
 printf '[launcher-start] host=%s pid=%s mode=%s commit=%s utc=%s\n' "$HOST" "$$" "$MODE" "${SWITCH_RUNTIME_COMMIT:-unknown}" "$(date -u +%FT%TZ)"
 trap 'rc=$?; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE" "$rc" "$(date -u +%FT%TZ)"' EXIT
@@ -275,7 +278,7 @@ trap 'rc=$?; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE"
 # strike; an operator restart (run_experiments.sh run) clears the record and the
 # admission probe decides again. A transient hang thus costs a node half an hour,
 # not the rest of the job.
-NODE_FAULT="$WORK/runs/experiments/node-faults/$(hostname).json"
+NODE_FAULT="$WORK/runs/experiments/node-faults/$EXPERIMENTS_NODE_ID.json"
 if [ -f "$NODE_FAULT" ]; then
   fault_state=$(CUDA_VISIBLE_DEVICES="" "$PY" - "$NODE_FAULT" "${EXPERIMENTS_FAULT_TTL_SECONDS:-1800}" <<'PYEOF'
 import json, sys, time
@@ -296,12 +299,12 @@ PYEOF
 )
   case "$fault_state" in
     expired*)
-      echo "[fault-expired] host=$(hostname): GPU fault recorded $fault_state; re-admitting through the probe ($NODE_FAULT kept)" ;;
+      echo "[fault-expired] host=$EXPERIMENTS_NODE_ID: GPU fault recorded $fault_state; re-admitting through the probe ($NODE_FAULT kept)" ;;
     "blocked strike"*)
-      echo "[blocked] host=$(hostname) was recorded with a GPU fault twice ($NODE_FAULT, $fault_state); refusing GPU work on this node (use another one, or restart it with run_experiments.sh run)"
+      echo "[blocked] host=$EXPERIMENTS_NODE_ID was recorded with a GPU fault twice ($NODE_FAULT, $fault_state); refusing GPU work on this node (use another one, or restart it with run_experiments.sh run)"
       exit 78 ;;
     *)
-      echo "[cooldown] host=$(hostname): GPU fault recorded $fault_state; no GPU work until the record expires ($NODE_FAULT)"
+      echo "[cooldown] host=$EXPERIMENTS_NODE_ID: GPU fault recorded $fault_state; no GPU work until the record expires ($NODE_FAULT)"
       exit 79 ;;
   esac
 fi

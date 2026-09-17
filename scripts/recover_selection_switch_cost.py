@@ -113,7 +113,7 @@ def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_ki
                 raise ValueError("reported duration differs from the completed event receipt")
             evidence = {"kind": "atomic_finish_receipt", "sha256": base.digest(receipt_path)}
         else:
-            if start.get("host") == socket.gethostname() and type(pid) is int and pid > 0:
+            if start.get("host") == base.node_id() and type(pid) is int and pid > 0:
                 try:
                     os.kill(pid, 0)
                 except ProcessLookupError:
@@ -253,7 +253,7 @@ def main():
             parser.error("event recovery requires --directory and --event-id")
         if args.stale:
             try:
-                closed = close_stale(root, min_age=args.min_age, host=socket.gethostname() if args.this_host else None)
+                closed = close_stale(root, min_age=args.min_age, host=base.node_id() if args.this_host else None)
             except (ValueError, OSError) as exc:
                 parser.exit(2, f"[recovery blocked] {exc}\n")
             remaining = inspect(root)

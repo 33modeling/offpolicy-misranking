@@ -371,7 +371,10 @@ def main():
         print(f"[waive] {root.name}: no failed branch to waive")
         return 0
     for directory in dirs:
-        print(waive(root, directory, apply=args.apply), flush=True)
+        try:
+            print(waive(root, directory, apply=args.apply), flush=True)
+        except Exception as exc:  # noqa: BLE001 - one branch's broken ledger must not block the others
+            print(f"[waive] {directory.relative_to(root)}: skipped, {exc}", flush=True)
     if not args.apply:
         print("[waive] dry run; the launcher's 'waive' mode applies these")
     return 0

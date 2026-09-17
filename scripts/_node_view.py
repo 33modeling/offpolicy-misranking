@@ -15,6 +15,11 @@ import subprocess
 import textwrap
 import time
 
+
+def node_id():
+    """EXPERIMENTS_NODE_ID (hostname plus GPU suffix) when the launcher set it, else the hostname."""
+    return os.environ.get("EXPERIMENTS_NODE_ID") or socket.gethostname()
+
 ROLES = (("_gpu_keepalive.py", "keepalive"), ("selection_nccl_preflight.py", "nccl-probe"),
          ("train_mopps_grpo.py", "train"), ("train_selection_gate_grpo.py", "train"),
          ("train_policy_grpo.py", "train"), ("torch.distributed.run", "torchrun"),
@@ -98,7 +103,7 @@ def hold_reason(last):
 def launcher_nodes(root, tasks, *, now=None):
     """One row per host that has launcher evidence under ROOT/logs or the node launcher's logs."""
     now = time.time() if now is None else now
-    here = socket.gethostname().rstrip("_")
+    here = node_id().rstrip("_")
     hosts = {}
 
     def row(host):
@@ -228,14 +233,14 @@ def _role(pid):
 def local_gpus():
     """Per-GPU memory/utilisation and the compute processes on this node, with their roles."""
     if not shutil.which("nvidia-smi"):
-        return {"host": socket.gethostname(), "available": False, "gpus": [], "processes": []}
+        return {"host": node_id(), "available": False, "gpus": [], "processes": []}
     try:
         gpus = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.used,memory.total,utilization.gpu",
                                "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=20)
         apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory,gpu_uuid",
                                "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
-        return {"host": socket.gethostname(), "available": False, "gpus": [], "processes": []}
+        return {"host": node_id(), "available": False, "gpus": [], "processes": []}
     rows = []
     for line in gpus.stdout.splitlines():
         parts = [part.strip() for part in line.split(",")]
@@ -249,7 +254,7 @@ def local_gpus():
             role, cmdline = _role(int(parts[0]))
             processes.append({"pid": int(parts[0]), "memory_mib": int(parts[1]) if parts[1].isdigit() else None,
                               "role": role, "cmdline": cmdline})
-    return {"host": socket.gethostname(), "available": gpus.returncode == 0, "gpus": rows, "processes": processes}
+    return {"host": node_id(), "available": gpus.returncode == 0, "gpus": rows, "processes": processes}
 
 
 def render_nodes(nodes, table, width):

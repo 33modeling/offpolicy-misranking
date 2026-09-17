@@ -35,7 +35,10 @@ PY=${SWITCH_PYTHON:-${MOPPS_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}}
 [ -x "$PY" ] || PY=python3
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 LOG_DIR="$WORK/runs/experiments/logs"
-HOST=$(hostname | tr -c 'a-zA-Z0-9._-' '_')
+# Node identity (hostname plus GPU suffix); copies of this launcher without the helper use the hostname.
+if [ -f scripts/_node_id.sh ]; then source scripts/_node_id.sh; fi
+export EXPERIMENTS_NODE_ID=${EXPERIMENTS_NODE_ID:-$(hostname)}
+HOST=$(printf '%s\n' "$EXPERIMENTS_NODE_ID" | tr -c 'a-zA-Z0-9._-' '_')
 PID_FILE="$LOG_DIR/launcher.$HOST.pid"
 CONSOLE_LOG="$LOG_DIR/console.$HOST.log"
 launcher_pid_alive() {
@@ -328,7 +331,7 @@ if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   fi
   # An operator restart is a deliberate second chance for this node: clear the
   # watchdog's GPU-fault record and let the admission probe decide.
-  fault_record="$WORK/runs/experiments/node-faults/$(hostname).json"
+  fault_record="$WORK/runs/experiments/node-faults/$EXPERIMENTS_NODE_ID.json"
   if [ -f "$fault_record" ]; then
     rm -f "$fault_record" && echo "[fault-reset] host=$HOST: cleared the GPU-fault record ($fault_record); the admission probe decides again"
   fi
@@ -380,7 +383,7 @@ fi
 # 1500) instead of running to its allocation limit, and this host is recorded
 # under runs/experiments/node-faults so no launcher does GPU work here again.
 if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --roots "$SWITCH_ROOT" "$MOPPS_ROOT" $(sibling_roots | tr '\n' ' ') \
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --host "$EXPERIMENTS_NODE_ID" --roots "$SWITCH_ROOT" "$MOPPS_ROOT" $(sibling_roots | tr '\n' ' ') \
     --faults-dir "$WORK/runs/experiments/node-faults" --stall-seconds "${EXPERIMENTS_STALL_SECONDS:-1500}" \
     > "$LOG_DIR/stall.$HOST.log" 2>&1 7>&- 8>&- &
   WATCHDOG_PID=$!

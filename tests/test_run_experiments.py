@@ -30,7 +30,7 @@ def environment(tmp_path, fake):
     return {**os.environ, "OM_WORK": str(work), "SWITCH_ROOT": str(switch_root), "MOPPS_ROOT": str(mopps_root),
             "SWITCH_PYTHON": sys.executable, "EXPERIMENTS_DETACHED": "1", "EXPERIMENTS_KEEPALIVE": "0", "EXPERIMENTS_WATCHDOG": "0",
             "EXPERIMENTS_HOLD_SECONDS": "1", "EXPERIMENTS_INNER": str(fake), "CUDA_VISIBLE_DEVICES": "",
-            "EXPERIMENTS_PULL": "0", "EXPERIMENTS_AUTO_PULL": "0"}
+            "EXPERIMENTS_PULL": "0", "EXPERIMENTS_AUTO_PULL": "0", "EXPERIMENTS_NODE_ID": os.uname().nodename}
 
 
 def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
@@ -223,7 +223,7 @@ def test_recorded_gpu_fault_blocks_gpu_work_on_that_host(tmp_path):
     core.atomic_json(Path(env["SWITCH_ROOT"]) / "switch.json", {"schema": "fake"})
     inner = {**os.environ, "SWITCH_ROOT": env["SWITCH_ROOT"], "OM_WORK": env["OM_WORK"], "SWITCH_PYTHON": sys.executable,
              "SWITCH_FOREGROUND": "1", "SWITCH_HOLD_SECONDS": "0", "SWITCH_KEEPALIVE": "0", "SWITCH_RUNTIME_REPO": str(ROOT),
-             "CUDA_VISIBLE_DEVICES": ""}
+             "CUDA_VISIBLE_DEVICES": "", "EXPERIMENTS_NODE_ID": os.uname().nodename}
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "run"], cwd=ROOT, env=inner,
                             capture_output=True, text=True, timeout=120)
     # A fresh first strike is a cooldown (79), not the terminal admission failure (78).
@@ -315,3 +315,16 @@ def test_a_holding_node_resumes_as_soon_as_a_branch_becomes_claimable(tmp_path):
     assert "[hold] claimable work in selection-switch-v1; starting the next pass now" in out, out
     assert out.index("[holding]") < out.index("claimable work") < out.index("[pass 2]")
     assert out.count("[holding]") <= 3
+
+
+def test_node_identity_tells_two_containers_with_one_hostname_apart(tmp_path):
+    """The identity is the hostname plus a suffix from the node's GPUs and container; the env wins."""
+    script = "source scripts/_node_id.sh; echo \"$EXPERIMENTS_NODE_ID\""
+    plain = subprocess.run(["bash", "-c", script], cwd=ROOT, env={"PATH": os.environ["PATH"]}, capture_output=True, text=True, check=True).stdout.strip()
+    assert plain.startswith(os.uname().nodename)
+    forced = subprocess.run(["bash", "-c", script], cwd=ROOT, env={"PATH": os.environ["PATH"], "EXPERIMENTS_NODE_ID": "node-a-g1234"},
+                            capture_output=True, text=True, check=True).stdout.strip()
+    assert forced == "node-a-g1234"
+    other = subprocess.run(["bash", "-c", script], cwd=ROOT, env={"PATH": os.environ["PATH"], "CUDA_VISIBLE_DEVICES": "4,5,6,7"},
+                           capture_output=True, text=True, check=True).stdout.strip()
+    assert other.startswith(os.uname().nodename) and other != plain

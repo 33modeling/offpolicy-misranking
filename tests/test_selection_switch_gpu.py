@@ -1,5 +1,6 @@
 import copy
 import json
+import socket
 import os
 import sys
 from pathlib import Path
@@ -80,6 +81,7 @@ def shutdown_predecessor():
 
 def cache_guard_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes.update({"src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
                    "src/selection_switch_gpu.py": "05aa36a41197cca605933df9d62bba0e4482d6f592c17954c632b45e5cf51195"})
     assert core.fingerprint(hashes) == switch.PRE_CACHE_GUARD_CODE
@@ -88,6 +90,7 @@ def cache_guard_predecessor():
 
 def parallel_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "0c0ac3aed8c5c53378c91ae5c357bcfc4e0d11fd0ffb7d2a53e9874db3e4a0b6"
     assert core.fingerprint(hashes) == switch.PRE_TEST_PARALLEL_CODE
     return hashes
@@ -95,6 +98,7 @@ def parallel_predecessor():
 
 def fit_resilience_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "af2aa2fe039da46d5f686fe80c0833aaca5cbdf4ed9e30ae38248e0c841524a9"
     assert core.fingerprint(hashes) == switch.PRE_FIT_RESILIENCE_CODE
     return hashes
@@ -102,6 +106,7 @@ def fit_resilience_predecessor():
 
 def variant_root_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "a3001f512fa99a801e32783a60ff8983fb567005319e61e6df170b7865732fa8"
     assert core.fingerprint(hashes) == switch.PRE_VARIANT_ROOT_CODE
     return hashes
@@ -109,6 +114,7 @@ def variant_root_predecessor():
 
 def dataset_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "8d9e94df8c3813e989b447ea918f60e1283c8587e872818ba8cb29fa2b2b3521"
     assert core.fingerprint(hashes) == switch.PRE_DATASET_CODE
     return hashes
@@ -116,6 +122,7 @@ def dataset_predecessor():
 
 def selector_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "8b3ed402eed90b80b78078319988a37f6d55abbb7fa78f12d0c535ea7efddf85"
     assert core.fingerprint(hashes) == switch.PRE_SELECTOR_CODE
     return hashes
@@ -137,6 +144,7 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -158,6 +166,7 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
 
 def curve_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "337cea75e12718e35c4063205c2e5de568a5ad54eb1f67bd52681f37d0c7a42b"
     assert core.fingerprint(hashes) == switch.PRE_CURVE_CODE
     return hashes
@@ -178,6 +187,7 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -198,6 +208,7 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
 
 def pilot_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "d984197e2bce0c231682c4a9ca5e4475a668bdfc681365f4b206dfc568e1212c"
     assert core.fingerprint(hashes) == switch.PRE_PILOT_CODE
     return hashes
@@ -217,6 +228,7 @@ def test_roots_prepared_with_the_convergence_runtime_keep_running(tmp_path):
 
 def quality_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "e09500b8bf1d5f8bfa537aaab83e1391a73c57d59546ba2351d72abe07de0379"
     assert core.fingerprint(hashes) == switch.PRE_QUALITY_CODE
     return hashes
@@ -224,6 +236,7 @@ def quality_predecessor():
 
 def scoring_label_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "fb09987c2dd984584eeb4c394d4bca5cac01758492e60f000ee51ffe13187d18"
     assert core.fingerprint(hashes) == switch.PRE_SCORING_LABEL_CODE
     return hashes
@@ -231,9 +244,54 @@ def scoring_label_predecessor():
 
 def curve_ledger_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "901c728102d98206459918b076a9a9a27c4b8e273265350e68e29f26cd709e18"
     assert core.fingerprint(hashes) == switch.PRE_CURVE_LEDGER_CODE
     return hashes
+
+
+def node_id_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "eaabf75f8e37cd05d2dad5e3d8257af6b0e9f3c270bf242c993eee508b10205b"
+    hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
+    assert core.fingerprint(hashes) == switch.PRE_NODE_ID_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_node_id_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = node_id_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "curve-ledger-runtime.json")["runtime_code_hashes"] == previous
+        # The b909e39 runtime never wrote this receipt.
+        (tmp_path / "node-id-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "node-id-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["curve_ledger_runtime_sha256"] == base.digest(tmp_path / "curve-ledger-runtime.json")
+    assert switch.code_hashes()["src/selection_gate_gpu.py"] == switch.NODE_ID_METER
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+
+
+def test_meter_records_the_node_identity_not_the_bare_hostname(tmp_path, monkeypatch):
+    monkeypatch.setenv("EXPERIMENTS_NODE_ID", "run1-wss-20-gabcd")
+    assert base.node_id() == "run1-wss-20-gabcd"
+    base.meter(tmp_path, "verify-inputs", "H100", action=lambda: None, ledger="deployment")
+    rows = [json.loads(l) for l in (tmp_path / "cost.jsonl").read_text().splitlines()]
+    assert {r["host"] for r in rows} == {"run1-wss-20-gabcd"}
+    assert core.read(tmp_path / "progress.json")["host"] == "run1-wss-20-gabcd"
+    monkeypatch.delenv("EXPERIMENTS_NODE_ID")
+    assert base.node_id() == socket.gethostname()
 
 
 @pytest.mark.parametrize("migrated", [False, True])
@@ -248,6 +306,7 @@ def test_curve_ledger_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         assert core.read(tmp_path / "scoring-label-runtime.json")["runtime_code_hashes"] == previous
         # The dbe3669 runtime never wrote this receipt.
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -299,6 +358,7 @@ def test_scoring_label_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         # The 0fc4395..80fbf29 runtime never wrote this receipt.
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -325,6 +385,7 @@ def test_quality_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -658,6 +719,7 @@ def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -742,6 +804,7 @@ def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -829,6 +892,7 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -868,6 +932,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
+        (tmp_path / "node-id-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
