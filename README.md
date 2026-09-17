@@ -4,6 +4,14 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+## MBPP Selection And Switching
+
+`bash scripts/run_mbpp_experiments.sh` runs the MBPP fresh, learning-quality,
+and cached-difficulty switch suites using the original training code. The
+variants share MBPP prefixes and independent evaluation questions. `plan`,
+`check`, `status`, `results`, and `why` are available; no MATH run is changed.
+See the [inputs, execution order, and evaluation split](docs/MBPP_SELECTION_RUN.md).
+
 ## Fixed-Checkpoint Gate
 
 The September 13 fixed-policy experiment has an additive entrypoint:
