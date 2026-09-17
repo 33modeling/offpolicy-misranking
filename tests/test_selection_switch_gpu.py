@@ -136,6 +136,7 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
+        (tmp_path / "curve-ledger-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -176,6 +177,7 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
+        (tmp_path / "curve-ledger-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -227,6 +229,63 @@ def scoring_label_predecessor():
     return hashes
 
 
+def curve_ledger_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "901c728102d98206459918b076a9a9a27c4b8e273265350e68e29f26cd709e18"
+    assert core.fingerprint(hashes) == switch.PRE_CURVE_LEDGER_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_curve_ledger_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = curve_ledger_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "scoring-label-runtime.json")["runtime_code_hashes"] == previous
+        # The dbe3669 runtime never wrote this receipt.
+        (tmp_path / "curve-ledger-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "curve-ledger-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["scoring_label_runtime_sha256"] == base.digest(tmp_path / "scoring-label-runtime.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+
+
+def test_curve_evaluations_are_metered_outside_the_sealed_branch_ledger(tmp_path, monkeypatch):
+    """The branch ledger is sealed by result.json; archived-step curves go to curve/, the parent to curve-parent/."""
+    out = tmp_path / "states/s3-t25/points/view-25"
+    directory = out / "random_full"
+    c = {"config": {"drift": 25}, "scope": {"gpu_type": "H100"}, "eval_k": 8}
+    core.atomic_json(directory / "policy/budget_stop.json", {"completed_steps": 125})
+    core.atomic_json(directory / "result.json", {"rewards": {"1": .3, "2": .5}})
+    for step in (50, 75, 100):
+        (directory / "policy/curve-checkpoints" / f"step-{step}").mkdir(parents=True)
+        (directory / "policy/curve-checkpoints" / f"step-{step}/adapter_model.safetensors").write_bytes(b"x")
+    charged = []
+    def meter(where, name, gpu_type, **kwargs):
+        charged.append((where, name, kwargs.get("ledger")))
+        for command, _ in kwargs["commands"]:
+            step, shard = command[command.index("--step")+1], command[command.index("--shard")+1]
+            target = switch.curve_point_dir(out, "random_full", int(step), 25)
+            core.atomic_json(target / f"shard-{shard}.done.json", {})
+    monkeypatch.setattr(base, "meter", meter)
+    monkeypatch.setattr(switch, "curve_reward", lambda out, c, arm, step, k: .3)
+    switch.curve_once(tmp_path, convergence_manifest(), out, c, "random_full", {"eval_timeout": 10.}, ["0", "1", "2", "3"], {})
+    assert [name for _, name, _ in charged] == ["curve"]*4 and all(ledger == "reporting" for _, _, ledger in charged)
+    assert [where for where, _, _ in charged] == [out / "curve-parent", directory / "curve", directory / "curve", directory / "curve"]
+    assert switch.curve_ledger(directory) == directory / "curve"
+    assert set(core.read(directory / "curve.json")["points"]) == {"25", "50", "75", "100", "125"}
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_scoring_label_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
     previous = scoring_label_predecessor()
@@ -239,6 +298,7 @@ def test_scoring_label_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         assert core.read(tmp_path / "quality-runtime.json")["runtime_code_hashes"] == previous
         # The 0fc4395..80fbf29 runtime never wrote this receipt.
         (tmp_path / "scoring-label-runtime.json").unlink()
+        (tmp_path / "curve-ledger-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -264,6 +324,7 @@ def test_quality_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         # The 8b6c1f5 runtime never wrote this receipt.
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
+        (tmp_path / "curve-ledger-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -596,6 +657,7 @@ def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
+        (tmp_path / "curve-ledger-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -679,6 +741,7 @@ def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
+        (tmp_path / "curve-ledger-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -765,6 +828,7 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
+        (tmp_path / "curve-ledger-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -803,6 +867,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
         (tmp_path / "scoring-label-runtime.json").unlink()
+        (tmp_path / "curve-ledger-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}

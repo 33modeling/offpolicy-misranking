@@ -201,6 +201,12 @@ recover_root() {
   # attempt, and let the queue rerun it (waivers/ keeps the receipt).
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/waive_stalled_attempts.py --root "$1" --apply 2>&1 \
     | grep -v 'no failed branch to waive$' | sed 's/^/[auto-waive] /' || true
+  # Curve rows metered in a sealed branch ledger by the pre-curve-ledger runtime block
+  # the curve retry ("cost ledger changed"); move them to curve/cost.jsonl.
+  if [ -f "$1/switch.json" ]; then
+    CUDA_VISIBLE_DEVICES="" "$PY" scripts/split_curve_ledger.py --root "$1" --apply 2>&1 \
+      | grep -v 'no published branch carries curve rows in its ledger$' | sed 's/^/[auto-repair] /' || true
+  fi
 }
 # Every experiment root on the shared volume: nodes come and go and run several
 # experiments, so a start or a stop sweeps them all, not just the two of this launcher.

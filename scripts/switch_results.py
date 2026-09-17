@@ -35,15 +35,17 @@ def read(path):
 
 def phases(directory):
     totals = defaultdict(float)
-    path = directory / "cost.jsonl"
-    if not path.exists():
-        return totals
-    for line in path.read_text().splitlines():
-        if not line.strip():
+    # The branch ledger, plus the curve/ sub-ledger where archived-checkpoint curve
+    # evaluations are metered (the parent point's curve lives in the state's curve-parent/).
+    for path in (directory / "cost.jsonl", directory / "curve" / "cost.jsonl"):
+        if not path.exists():
             continue
-        row = json.loads(line)
-        if row.get("state") == "finished":
-            totals[(row.get("ledger", "?"), row["phase"])] += row.get("allocated_gpu_seconds", 0.)
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("state") == "finished":
+                totals[(row.get("ledger", "?"), row["phase"])] += row.get("allocated_gpu_seconds", 0.)
     return totals
 
 
