@@ -57,7 +57,17 @@ if [ "$MODE" = results ]; then
   REPORT_DIR="$WORK/reports/selection-switch"
   mkdir -p "$REPORT_DIR"
   TARGET="$REPORT_DIR/switch-results-$(basename "$OUT_ROOT")-$(date -u +%Y%m%dT%H%M%SZ).txt"
-  CUDA_VISIBLE_DEVICES="" exec "$PY" scripts/switch_results.py --root "$OUT_ROOT" --out "$TARGET" "$@"
+  echo "[results] root=$OUT_ROOT"
+  if CUDA_VISIBLE_DEVICES="" "$PY" scripts/switch_results.py --root "$OUT_ROOT" --out "$TARGET" "$@"; then
+    # A copy in the home directory as well, where the operator's sync picks it up.
+    if [ -n "${HOME:-}" ] && [ -d "$HOME" ] && cp -f "$TARGET" "$HOME/" 2>/dev/null; then
+      echo "[results] copied to $HOME/$(basename "$TARGET")"
+    fi
+    echo "[results] done: $TARGET"
+    exit 0
+  fi
+  echo "[results failed] no file written for $OUT_ROOT; the error is above"
+  exit 1
 fi
 if [ "$MODE" = reset-waived ]; then
   # Branches whose retry resumed a waived attempt's checkpoints: discard everything and rerun.

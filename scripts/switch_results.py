@@ -192,7 +192,13 @@ def main():
     parser.add_argument("--draws", type=int, default=10000)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
-    text = report(args.root.resolve(), draws=args.draws)
+    try:
+        text = report(args.root.resolve(), draws=args.draws)
+    except Exception as exc:  # noqa: BLE001 - name the failure instead of a bare traceback
+        import traceback
+        traceback.print_exc()
+        print(f"[results failed] {args.root}: {type(exc).__name__}: {exc}", flush=True)
+        return 1
     if args.out:
         args.out.write_text(text)
         print(f"[saved] {args.out} ({len(text.encode())//1024} KB)")
