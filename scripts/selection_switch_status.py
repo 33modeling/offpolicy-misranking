@@ -84,6 +84,9 @@ def snapshot(root, *, now=None):
         return {"prepared": False, "root": str(root), "updated": now}
     if manifest.get("schema") != rule.SCHEMA:
         raise ValueError("switch.json has an invalid or unsupported schema")
+    # A convergence root's branch is finished only once its reward curve is published;
+    # the gate is fitted from those curves, not from the final rewards alone.
+    curve_required = manifest.get("gate") == "convergence"
     model = read(root / "model.json")
     gate_ready = bool(model) and "_invalid" not in model
     gate_fit_failure = "" if gate_ready else str(read(root / "gate-fit/failure.json").get("error", ""))
@@ -93,7 +96,7 @@ def snapshot(root, *, now=None):
         notices.append({"path": str(path.relative_to(root)), "error": f"state not published/validated: {read(path).get('error', '')}"})
     tasks, cost_pending = [], []
 
-    def observe(directory, *, seed, step, kind, arm, done_path=None, dependency=None):
+    def observe(directory, *, seed, step, kind, arm, done_path=None, dependency=None, also=None):
         progress = read(directory / "progress.json")
         failure = read(directory / "failure.json")
         age = now-number(progress.get("updated"), -1e30)
@@ -106,7 +109,11 @@ def snapshot(root, *, now=None):
                 "timeout": number(progress.get("timeout")), "heartbeat_age": max(0., age) if progress else None}
         policy_dir = directory / ("fresh_r/policy" if kind == "prefix" else "policy")
         task["training_step"] = last_training_step(policy_dir / "grpo_stats.jsonl") if kind != "diagnostic" else None
-        if done_path is not None and done_path.is_file():
+        # `also` is a second published artefact the worker also requires before it
+        # stops claiming this task (the reward curve of a convergence root). Counting
+        # such a branch DONE made the launcher call the root complete and release the
+        # node while the worker still re-claimed the branch and re-ran its curve.
+        if done_path is not None and done_path.is_file() and (also is None or also.is_file()):
             result = read(done_path)
             task.update(status="DONE", reason="published")
             if "_invalid" in result:
@@ -129,6 +136,9 @@ def snapshot(root, *, now=None):
             task.update(status="STALE", reason="heartbeat older than 60s; owner not confirmed alive")
         elif "_invalid" in progress:
             task.update(status="INVALID", reason="unreadable progress record")
+        if (also is not None and not also.is_file() and done_path is not None and done_path.is_file()
+                and task["status"] == "READY"):
+            task["reason"] = "result published; reward curve pending"
 
         cost_path = directory / "cost.jsonl"
         if cost_path.is_file():
@@ -183,7 +193,8 @@ def snapshot(root, *, now=None):
                 if arm_dependency is None:
                     arm_dependency = diagnostic_dependency
                 observe(out / arm, seed=seed, step=step, kind="branch", arm=arm,
-                        done_path=out / arm / "result.json", dependency=arm_dependency)
+                        done_path=out / arm / "result.json", dependency=arm_dependency,
+                        also=(out / arm / "curve.json") if curve_required else None)
 
     # Metered phases outside the branch directories: the reward-curve evaluations
     # (points/<view>/curve-parent and <arm>/curve/step-N). A node in one of them

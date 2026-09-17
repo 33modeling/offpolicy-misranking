@@ -310,3 +310,38 @@ def test_nodes_evaluating_reward_curves_are_running_not_gone(tmp_path):
     assert hosts["node-curve2"]["state"] == "RUN" and "node-old" not in hosts
     text = status.render(data, width=120)
     assert "curve-parent" in text and "node-curve2" in text
+
+
+def convergence_root(root):
+    core.atomic_json(root / "switch.json", {"schema": rule.SCHEMA, "gate": "convergence",
+                                            "code_hashes": {"old": "unchanged"}})
+
+
+def test_a_convergence_branch_without_its_curve_is_not_counted_done(tmp_path):
+    """The worker keeps claiming a convergence branch until curve.json exists. Counting it
+    DONE made the launcher call the root complete and release the node while the worker
+    still re-ran the curve, so the operator saw DONE with nodes working on nothing."""
+    now = time.time()
+    convergence_root(tmp_path)
+    completed_prefix(tmp_path)
+    published(point(tmp_path) / "selection_reduced")
+    published(point(tmp_path) / "random_reduced")
+    core.atomic_json(point(tmp_path) / "random_reduced/curve.json", {"schema": rule.SCHEMA, "points": {}})
+    data = status.snapshot(tmp_path, now=now)
+    by_arm = {task["arm"]: task for task in data["tasks"] if task["kind"] == "branch" and task["seed"] == 0 and task["step"] == 25}
+    assert by_arm["random_reduced"]["status"] == "DONE"
+    assert by_arm["selection_reduced"]["status"] == "READY"
+    assert by_arm["selection_reduced"]["reason"] == "result published; reward curve pending"
+    assert data["development_done"] == 1
+    # Its curve arrives: the branch is done and the root can be called complete.
+    core.atomic_json(point(tmp_path) / "selection_reduced/curve.json", {"schema": rule.SCHEMA, "points": {}})
+    assert status.snapshot(tmp_path, now=now)["development_done"] == 2
+
+
+def test_a_final_gate_branch_is_done_on_its_result_alone(tmp_path):
+    """Only a convergence root needs the curve; the primary experiment is unchanged."""
+    now = time.time()
+    prepared(tmp_path)
+    completed_prefix(tmp_path)
+    published(point(tmp_path) / "selection_reduced")
+    assert status.snapshot(tmp_path, now=now)["development_done"] == 1

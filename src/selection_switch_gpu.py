@@ -71,10 +71,16 @@ PRE_CURVE_LEDGER_CODE = "831110758561ee701af1f7b443c129b13209f8568e1bacf179b9b3f
 # Exact b909e39 runtime before cost events, progress and failures carried the node
 # identity (hostname plus GPU suffix) instead of the bare hostname.
 PRE_NODE_ID_CODE = "509cae286eb633704203024f755e27b607ede6b5a342ae2c455562acbf1bc658"
+# Exact 901bf57 runtime before a node stopped waiting on a peer's shared curve point:
+# every arm of a state evaluates the same parent policy in one curve-parent/ directory,
+# so a blocking lease there parked a node's four GPUs with nothing to do for as long as
+# the peer's evaluation took. The waiting node meters nothing and writes no worker log,
+# so it is invisible to the status and the stall watchdog cannot end the wait either.
+PRE_CURVE_WAIT_CODE = "b1ba1d59cf6022bb6b0d567bbd30e1aa221a95089734a99a5250724f435cd507"
 PRIOR_RUNTIME_CODES = {PRE_INITIAL_SCORE_CODE, PRE_KV_CACHE_CODE, PRE_COST_CODE,
                        PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE,
                        PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE,
-                       PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE}
+                       PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE}
 # Accounting. budget: every selection charge comes out of the branch allocation (the
 # primary experiment). matched: selection work is metered on the reporting ledger,
 # which the allocation does not count (the frozen ledger set has no other name
@@ -168,7 +174,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_COST_CODE, PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -185,7 +191,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != cost_receipt and
                         (previous != {**cost_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_PREFIX_RESUME_CODE, PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                     raise ValueError(f"frozen contract changed: {cost_path}")
             else:
                 base.bind(cost_path, cost_receipt)
@@ -202,7 +208,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != prefix_receipt and
                         (previous != {**prefix_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_WORKER_LOGS_CODE, PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                     raise ValueError(f"frozen contract changed: {prefix_path}")
             else:
                 base.bind(prefix_path, prefix_receipt)
@@ -219,7 +225,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != worker_receipt and
                         (previous != {**worker_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CODE_COMPAT_CODE, PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                     raise ValueError(f"frozen contract changed: {worker_path}")
             else:
                 base.bind(worker_path, worker_receipt)
@@ -236,7 +242,7 @@ def manifest(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != compat_receipt and
                         (previous != {**compat_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_SHUTDOWN_CODE, PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                     raise ValueError(f"frozen contract changed: {compat_path}")
             else:
                 base.bind(compat_path, compat_receipt)
@@ -254,7 +260,7 @@ def manifest(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != shutdown_receipt and
                             (previous != {**shutdown_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                         raise ValueError(f"frozen contract changed: {shutdown_path}")
                 else:
                     base.bind(shutdown_path, shutdown_receipt)
@@ -272,7 +278,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != guard_receipt and
                                 (previous != {**guard_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {guard_path}")
                     else:
                         base.bind(guard_path, guard_receipt)
@@ -290,7 +296,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != parallel_receipt and
                                 (previous != {**parallel_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {parallel_path}")
                     else:
                         base.bind(parallel_path, parallel_receipt)
@@ -308,7 +314,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != resilience_receipt and
                                 (previous != {**resilience_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {resilience_path}")
                     else:
                         base.bind(resilience_path, resilience_receipt)
@@ -326,7 +332,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != variant_receipt and
                                 (previous != {**variant_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_DATASET_CODE, PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {variant_path}")
                     else:
                         base.bind(variant_path, variant_receipt)
@@ -344,7 +350,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != dataset_receipt and
                                 (previous != {**dataset_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_SELECTOR_CODE, PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {dataset_path}")
                     else:
                         base.bind(dataset_path, dataset_receipt)
@@ -363,7 +369,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != selector_receipt and
                                 (previous != {**selector_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_CURVE_CODE, PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {selector_path}")
                     else:
                         base.bind(selector_path, selector_receipt)
@@ -382,7 +388,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != curve_receipt and
                                 (previous != {**curve_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_PILOT_CODE, PRE_QUALITY_CODE, PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {curve_path}")
                     else:
                         base.bind(curve_path, curve_receipt)
@@ -402,7 +408,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != quality_receipt and
                                 (previous != {**quality_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_MATCHED_CODE, PRE_MATCHED_FIX_CODE, PRE_SCORING_LABEL_CODE, PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {quality_path}")
                     else:
                         base.bind(quality_path, quality_receipt)
@@ -423,7 +429,7 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != label_receipt and
                                 (previous != {**label_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_CURVE_LEDGER_CODE, PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {label_path}")
                     else:
                         base.bind(label_path, label_receipt)
@@ -444,11 +450,12 @@ def manifest(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != ledger_receipt and
                                 (previous != {**ledger_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) not in {PRE_NODE_ID_CODE})):
+                                 or core.fingerprint(previous_code) not in {PRE_NODE_ID_CODE, PRE_CURVE_WAIT_CODE})):
                             raise ValueError(f"frozen contract changed: {ledger_path}")
                     else:
                         base.bind(ledger_path, ledger_receipt)
-                    base.bind(root / "node-id-runtime.json", {
+                    node_id_path = root / "node-id-runtime.json"
+                    node_id_receipt = {
                         "schema": "selection-switch-node-id-runtime/v1",
                         "switch_sha256": base.digest(root / "switch.json"),
                         "curve_ledger_runtime_sha256": base.digest(ledger_path), "runtime_code_hashes": current,
@@ -458,6 +465,28 @@ def manifest(root):
                                   "share a hostname are told apart by the status, the dead-event close and the "
                                   "stall watchdog",
                         "cost_policy": "no change to this root's diagnostics, policies, phase costs or budgets",
+                    }
+                    if node_id_path.exists():
+                        previous = core.read(node_id_path)
+                        previous_code = previous.get("runtime_code_hashes")
+                        if (previous != node_id_receipt and
+                                (previous != {**node_id_receipt, "runtime_code_hashes": previous_code}
+                                 or core.fingerprint(previous_code) not in {PRE_CURVE_WAIT_CODE})):
+                            raise ValueError(f"frozen contract changed: {node_id_path}")
+                    else:
+                        base.bind(node_id_path, node_id_receipt)
+                    base.bind(root / "curve-wait-runtime.json", {
+                        "schema": "selection-switch-curve-wait-runtime/v1",
+                        "switch_sha256": base.digest(root / "switch.json"),
+                        "node_id_runtime_sha256": base.digest(node_id_path), "runtime_code_hashes": current,
+                        "change": "a curve point held by a peer is left for a later pass instead of being "
+                                  "waited on: the parent point of a state is one directory shared by every "
+                                  "arm, so the blocking lease kept a node's four GPUs idle for as long as the "
+                                  "peer's evaluation took, while metering nothing and writing no worker log; "
+                                  "this arm's own archived steps are evaluated first and the shared point "
+                                  "is taken last",
+                        "cost_policy": "no change to this root's diagnostics, policies, phase costs or budgets; "
+                                       "a point a peer is already metering is never metered twice",
                     })
     return p
 
@@ -616,17 +645,33 @@ def curve_once(root, p, out, c, arm, suite, devices, env):
     archive = directory / "policy" / "curve-checkpoints"
     saved = {int(d.name.split("-", 1)[1]) for d in archive.glob("step-*") if (d / "adapter_model.safetensors").is_file()}
     steps = [start, *curve_steps(start, completed, curve_fractions(curve["points"]), saved)]
-    for step in steps:
+    # The parent point is one directory for the whole state (curve-parent/), so every
+    # arm of a state meets there while each arm's archived steps are its own. Evaluate
+    # this arm's own steps first and take the shared point last, and never wait for the
+    # peer holding it: a blocking lease here parked this node's four GPUs in the curve
+    # phase with nothing to do until the peer finished, and the stall watchdog then
+    # recorded the silent waiting node as faulty. A point a peer holds is simply left
+    # for a later pass, which then finds its shards already published.
+    pending = []
+    for step in (*steps[1:], start):
         target = curve_point_dir(out, arm, step, start)
         # The branch ledger is sealed by result.json; archived-step curves go to a sub-ledger.
         charged = out / "curve-parent" if step == start else curve_ledger(directory)
-        with base.lease(target / ".point.lock", blocking=True):
-            commands = [([sys.executable, str(HERE), "worker", "--root", str(out), "--phase", "curve",
-                          "--arm", arm, "--step", str(step), "--shard", str(i)], devices[i]) for i in range(4)
-                        if not (target / f"shard-{i}.done.json").exists()]
-            if commands:
-                base.meter(charged, "curve", c["scope"]["gpu_type"], commands=commands, env=env,
-                           timeout=suite["eval_timeout"], ledger="reporting")
+        try:
+            with base.lease(target / ".point.lock"):
+                commands = [([sys.executable, str(HERE), "worker", "--root", str(out), "--phase", "curve",
+                              "--arm", arm, "--step", str(step), "--shard", str(i)], devices[i]) for i in range(4)
+                            if not (target / f"shard-{i}.done.json").exists()]
+                if commands:
+                    base.meter(charged, "curve", c["scope"]["gpu_type"], commands=commands, env=env,
+                               timeout=suite["eval_timeout"], ledger="reporting")
+        except BlockingIOError:
+            pending.append(step)
+    if pending:
+        print(f"[curve] {directory.relative_to(root) if root in directory.parents else directory}: "
+              f"point(s) {sorted(pending)} are held by a peer; this branch's summary waits for a later pass",
+              flush=True)
+        return
     result = core.read(directory / "result.json")
     points = {str(step): {"updates": step-start, "reward": curve_reward(out, c, arm, step, curve["k"])} for step in steps}
     points[str(completed)] = {"updates": completed-start, "reward": statistics.fmean(result["rewards"].values()),

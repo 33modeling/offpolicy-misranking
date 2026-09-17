@@ -145,6 +145,7 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -188,6 +189,7 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -270,6 +272,7 @@ def test_node_id_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         assert core.read(tmp_path / "curve-ledger-runtime.json")["runtime_code_hashes"] == previous
         # The b909e39 runtime never wrote this receipt.
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -307,6 +310,7 @@ def test_curve_ledger_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         # The dbe3669 runtime never wrote this receipt.
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -340,8 +344,47 @@ def test_curve_evaluations_are_metered_outside_the_sealed_branch_ledger(tmp_path
     monkeypatch.setattr(switch, "curve_reward", lambda out, c, arm, step, k: .3)
     switch.curve_once(tmp_path, convergence_manifest(), out, c, "random_full", {"eval_timeout": 10.}, ["0", "1", "2", "3"], {})
     assert [name for _, name, _ in charged] == ["curve"]*4 and all(ledger == "reporting" for _, _, ledger in charged)
-    assert [where for where, _, _ in charged] == [out / "curve-parent", directory / "curve", directory / "curve", directory / "curve"]
+    # This arm's own archived steps first, the shared parent point last.
+    assert [where for where, _, _ in charged] == [directory / "curve", directory / "curve", directory / "curve", out / "curve-parent"]
     assert switch.curve_ledger(directory) == directory / "curve"
+    assert set(core.read(directory / "curve.json")["points"]) == {"25", "50", "75", "100", "125"}
+
+
+def test_a_curve_point_held_by_a_peer_is_left_for_a_later_pass(tmp_path, monkeypatch):
+    """The parent point is shared by every arm of a state. Waiting on it held this node's
+    four GPUs idle for as long as the peer's evaluation took, with nothing metered and no
+    worker log to see it by. The arm's own steps still run; only the summary waits."""
+    import fcntl
+    out = tmp_path / "states/s3-t25/points/view-25"
+    directory = out / "random_full"
+    c = {"config": {"drift": 25}, "scope": {"gpu_type": "H100"}, "eval_k": 8}
+    core.atomic_json(directory / "policy/budget_stop.json", {"completed_steps": 125})
+    core.atomic_json(directory / "result.json", {"rewards": {"1": .3, "2": .5}})
+    for step in (50, 75, 100):
+        (directory / "policy/curve-checkpoints" / f"step-{step}").mkdir(parents=True)
+        (directory / "policy/curve-checkpoints" / f"step-{step}/adapter_model.safetensors").write_bytes(b"x")
+    charged = []
+    def meter(where, name, gpu_type, **kwargs):
+        charged.append(where)
+        for command, _ in kwargs["commands"]:
+            step, shard = command[command.index("--step")+1], command[command.index("--shard")+1]
+            core.atomic_json(switch.curve_point_dir(out, "random_full", int(step), 25) / f"shard-{shard}.done.json", {})
+    monkeypatch.setattr(base, "meter", meter)
+    monkeypatch.setattr(switch, "curve_reward", lambda out, c, arm, step, k: .3)
+    # A peer of a sibling arm holds the shared parent point.
+    peer = out / "curve-parent" / ".point.lock"
+    peer.parent.mkdir(parents=True, exist_ok=True)
+    with peer.open("a+") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        switch.curve_once(tmp_path, convergence_manifest(), out, c, "random_full",
+                          {"eval_timeout": 10.}, ["0", "1", "2", "3"], {})
+    # No exception, no wait: this arm's own points are published, the summary is not.
+    assert charged == [directory / "curve"]*3
+    assert not (directory / "curve.json").exists()
+    # The peer releases; the next pass finishes the summary without redoing those points.
+    switch.curve_once(tmp_path, convergence_manifest(), out, c, "random_full",
+                      {"eval_timeout": 10.}, ["0", "1", "2", "3"], {})
+    assert charged == [directory / "curve"]*3 + [out / "curve-parent"]
     assert set(core.read(directory / "curve.json")["points"]) == {"25", "50", "75", "100", "125"}
 
 
@@ -359,6 +402,7 @@ def test_scoring_label_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -386,6 +430,7 @@ def test_quality_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -720,6 +765,7 @@ def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -805,6 +851,7 @@ def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -893,6 +940,7 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -933,6 +981,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "scoring-label-runtime.json").unlink()
         (tmp_path / "curve-ledger-runtime.json").unlink()
         (tmp_path / "node-id-runtime.json").unlink()
+        (tmp_path / "curve-wait-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
@@ -1755,3 +1804,36 @@ def test_failed_gate_fit_and_bad_state_do_not_stop_the_node(tmp_path, monkeypatc
     assert not any(arm == "gated" for _, _, arm in calls)
     assert sum(1 for s, t, a in calls if s in rule.TEST_SEEDS) == 4*5, "every publishable held-out state still ran its controls"
     assert not any((s, t) == (3, 50) for s, t, _ in calls)
+
+
+def curve_wait_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "1631daac5ab40d1d6b9463e120cbd7faee6aa3ed51cafc5eaa19262b95a515fa"
+    assert core.fingerprint(hashes) == switch.PRE_CURVE_WAIT_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_curve_wait_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    """Roots prepared at 901bf57 (every live switch root) must keep running after the
+    curve point stopped blocking on a peer."""
+    previous = curve_wait_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": node_id_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "node-id-runtime.json")["runtime_code_hashes"] == previous
+        # The 901bf57 runtime never wrote this receipt.
+        (tmp_path / "curve-wait-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {q: q.read_bytes() for q in tmp_path.rglob("*") if q.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {q: q.read_bytes() for q in before} == before
+    receipt = core.read(tmp_path / "curve-wait-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["node_id_runtime_sha256"] == base.digest(tmp_path / "node-id-runtime.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
