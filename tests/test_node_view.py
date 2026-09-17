@@ -108,7 +108,13 @@ def test_node_launcher_logs_next_to_the_roots_are_read_and_summarized(tmp_path, 
     os.utime(node_logs / "console.node-c_.log", (now-600, now-600))
     (node_logs / "console.node-d_.log").write_text("[node-launcher-exit] pid=3 rc=78 utc=x\n")
     (node_logs / "console.node-e_.log").write_text("[pass 2] selection switch\n[nccl-preflight] probing\n")
+    # A host cooling down after a GPU fault, and one that just pulled new code and restarted in place.
+    (node_logs / "console.node-f_.log").write_text("[pass 4] selection switch\n[cooldown] host=node-f: GPU fault recorded 120s ago\n")
+    (node_logs / "console.node-g_.log").write_text("[pull] checkout moved abc1234 -> def5678; restarting this launcher with the new code\n")
     nodes = {item["host"]: item for item in view.launcher_nodes(root, [], now=now)}
+    assert nodes["node-f"]["state"] == "COOL" and nodes["node-g"]["state"] == "LIVE"
+    for host in ("node-f", "node-g"):
+        del nodes[host]
     assert nodes["node-a"]["state"] == "HOLD" and nodes["node-a"]["launcher_pid"] == 1
     assert nodes["node-a"]["reason"] == "switch rc=1: worker reported failed tasks | mopps rc=0: nothing left to claim"
     assert nodes["node-b"]["state"] == "LIVE"

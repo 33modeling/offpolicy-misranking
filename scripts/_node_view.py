@@ -40,8 +40,8 @@ def _host_of(path, prefix):
     return path.name[len(prefix):].rsplit(".", 1)[0].rstrip("_")
 
 
-LIVE_STATES = ("RUN", "ADMIT", "WAIT", "HOLD", "LIVE")
-STATE_ORDER = ("RUN", "ADMIT", "WAIT", "HOLD", "LIVE", "STALE", "BLOCKED", "STOPPING", "EXITED", "GONE", "QUIET", "-")
+LIVE_STATES = ("RUN", "ADMIT", "WAIT", "HOLD", "COOL", "LIVE")
+STATE_ORDER = ("RUN", "ADMIT", "WAIT", "HOLD", "COOL", "LIVE", "STALE", "BLOCKED", "STOPPING", "EXITED", "GONE", "QUIET", "-")
 # A holding or waiting launcher prints every 15s; longer silence means it is gone.
 # A launcher log alone never proves training: hosts change with every cluster
 # job, so an old "[claimed]" line is a dead host unless a task heartbeat is fresh.
@@ -70,11 +70,17 @@ def classify(last, *, node_launcher):
         return "WAIT"
     if last.startswith("[blocked]"):
         return "BLOCKED"
+    if last.startswith("[cooldown]"):
+        # A GPU fault recorded on this host; the launcher holds until the record expires.
+        return "COOL"
     if last.startswith("[done]"):
         return "EXITED"
     if last.startswith("[nccl-preflight]"):
         return "ADMIT"
-    if last.startswith(("[retry]", "[claimed]", "[gate]", "[grpo]", "[fresh_r]", "[pass ", "[clean]")):
+    if last.startswith(("[retry]", "[claimed]", "[gate]", "[grpo]", "[fresh_r]", "[pass ", "[clean]", "[pull]",
+                        "[fault-reset]", "[fault-expired]", "[auto-waive]", "[recover-cost]", "[sweep ", "[watchdog]",
+                        "[keepalive]", "[restart]", "[node-launcher-start]", "[stall]", "[waive]", "[curve",
+                        "[measurement]", "[selection]", "[evaluate]", "[difficulty", "[hard")):
         # Active launcher; RUN itself comes only from a fresh task heartbeat.
         return "LIVE"
     if last.startswith("[stopping]"):
@@ -157,7 +163,7 @@ def launcher_nodes(root, tasks, *, now=None):
             item["task"] = f"s{task['seed']}/t{task['step']} {task['arm']}"
             item["phase"] = task.get("phase", "")
     for item in hosts.values():
-        if item["launcher_alive"] is False and item["state"] in {"HOLD", "WAIT", "LIVE", "QUIET", "ADMIT"}:
+        if item["launcher_alive"] is False and item["state"] in {"HOLD", "COOL", "WAIT", "LIVE", "QUIET", "ADMIT"}:
             item["state"] = "EXITED"
         if item["state"] in {"EXITED", "GONE", "QUIET"} and item["keepalive"] == "busy":
             item["keepalive"] = "orphan?"
