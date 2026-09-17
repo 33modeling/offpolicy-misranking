@@ -223,3 +223,46 @@ def test_recorded_gpu_fault_blocks_gpu_work_on_that_host(tmp_path):
                             capture_output=True, text=True, timeout=120)
     assert "[blocked] host=" in result.stdout + result.stderr, result.stdout + result.stderr
     assert result.returncode == 78
+
+
+def test_a_node_with_nothing_to_claim_works_sibling_roots_in_priority_order(tmp_path):
+    """Own root out of claimable work (rc=1) -> the node takes v1, difficulty, long... siblings before holding."""
+    calls = tmp_path / "calls.txt"
+    fake = tmp_path / "fake-inner.sh"
+    fake.write_text("#!/usr/bin/env bash\n"
+                    f'case "$1" in *run_selection_switch.sh) echo "$SWITCH_ROOT" >> "{calls}"; '
+                    'case "$SWITCH_ROOT" in *selection-switch-long-v1) exit 1 ;; *) exit 0 ;; esac ;; '
+                    '*run_mopps_comparison.sh) exit 0 ;; esac\nexit 9\n')
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    env = environment(tmp_path, fake)
+    work = Path(env["OM_WORK"])
+    env["SWITCH_ROOT"] = str(work / "runs/selection-switch-long-v1")
+    for name in ("selection-switch-long-v1", "selection-switch-difficulty-v1", "selection-switch-v1", "selection-switch-hard-v1"):
+        core.atomic_json(work / "runs" / name / "switch.json", {"schema": "fake"})
+    process = subprocess.Popen(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    lines, deadline = [], time.monotonic() + 90
+    try:
+        while time.monotonic() < deadline:
+            line = process.stdout.readline()
+            if not line:
+                break
+            lines.append(line.rstrip("\n"))
+            if line.startswith("[holding]"):
+                break
+        os.killpg(process.pid, 15)
+        process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    out = "\n".join(lines)
+    roots = [Path(l).name for l in calls.read_text().split()]
+    assert roots == ["selection-switch-long-v1", "selection-switch-v1", "selection-switch-difficulty-v1", "selection-switch-hard-v1"], out
+    assert "[pass 1] selection switch ended: rc=1, failed tasks, see [failed] lines above" in out
+    assert "[pass 1] sibling selection-switch-v1 ended: rc=0, nothing left to claim" in out
+    assert out.index("sibling selection-switch-v1") < out.index("sibling selection-switch-difficulty-v1") < out.index("sibling selection-switch-hard-v1")
+    assert ("[hold] pass 1 ended (switch rc=1 failed tasks, see [failed] lines above | selection-switch-v1 rc=0 nothing left to claim"
+            " | selection-switch-difficulty-v1 rc=0 nothing left to claim | selection-switch-hard-v1 rc=0 nothing left to claim"
+            " | mopps rc=0 nothing left to claim)") in out
+    # Sibling progress counts as progress: the hold is the base interval, not doubled.
+    assert "next pass in 1s" in lines[-1]

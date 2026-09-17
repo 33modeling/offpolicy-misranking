@@ -173,8 +173,7 @@ clean_node() {
   gpus_free || echo "[clean] a GPU still holds more than 4000MiB; the pass will report the node as busy"
 }
 switch_complete() {
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$SWITCH_ROOT" --json 2>/dev/null \
-    | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("development_done")==18 and d.get("test_done")==30 else 1)'
+  root_complete "$SWITCH_ROOT"
 }
 mopps_complete() {
   [ "$(CUDA_VISIBLE_DEVICES="" "$PY" src/mopps_comparison_gpu.py status --root "$MOPPS_ROOT" 2>/dev/null | grep -c ' DONE ')" -ge 12 ]
@@ -210,6 +209,33 @@ all_roots() {
     root=${root%/}
     if [ -f "$root/switch.json" ] || [ -f "$root/mopps.json" ]; then echo "$root"; fi
   done
+}
+# Switch roots this node also works on when its own root has nothing claimable:
+# the shared queue is one pool of nodes, so a node idles only when every prepared
+# experiment is out of claimable work. Priority: the original v1 (its reruns feed
+# the paper), then difficulty, hard, quality, long, then the rest by name.
+# EXPERIMENTS_HELP_SIBLINGS=0 keeps a node on its own root only.
+root_rank() {
+  case "$(basename "$1")" in
+    selection-switch-v1) echo 0 ;;
+    *difficulty*) echo 1 ;;
+    *hard*) echo 2 ;;
+    *quality*) echo 3 ;;
+    *long*) echo 4 ;;
+    *) echo 5 ;;
+  esac
+}
+sibling_roots() {
+  local root
+  for root in $(all_roots); do
+    [ -f "$root/switch.json" ] || continue
+    [ "$root" != "$SWITCH_ROOT" ] || continue
+    printf '%s %s\n' "$(root_rank "$root")" "$root"
+  done | sort -k1,1n -k2,2 | cut -d' ' -f2-
+}
+root_complete() {
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$1" --json 2>/dev/null \
+    | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("development_done")==18 and d.get("test_done")==30 else 1)'
 }
 sweep_all_roots() {
   local root
@@ -315,7 +341,7 @@ fi
 # 1500) instead of running to its allocation limit, and this host is recorded
 # under runs/experiments/node-faults so no launcher does GPU work here again.
 if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --roots "$SWITCH_ROOT" "$MOPPS_ROOT" \
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --roots "$SWITCH_ROOT" "$MOPPS_ROOT" $(sibling_roots | tr '\n' ' ') \
     --faults-dir "$WORK/runs/experiments/node-faults" --stall-seconds "${EXPERIMENTS_STALL_SECONDS:-1500}" \
     > "$LOG_DIR/stall.$HOST.log" 2>&1 7>&- 8>&- &
   WATCHDOG_PID=$!
@@ -338,6 +364,7 @@ while :; do
   need_clean=0
   recover_root "$SWITCH_ROOT"
   recover_root "$MOPPS_ROOT"
+  for root in $(sibling_roots); do recover_root "$root"; done
   rc_switch=0 why_switch=skipped
   if [ "${EXPERIMENTS_SKIP_SWITCH:-0}" != 1 ] && ! switch_complete; then
     echo "[pass $pass] selection switch"
@@ -345,6 +372,24 @@ while :; do
     case "$rc_switch" in 130|143) exit "$rc_switch" ;; esac
     why_switch=$rc_switch
     echo "[pass $pass] selection switch ended: rc=$rc_switch, $(rc_reason "$rc_switch")"
+  fi
+  # Own root busy-or-blocked means the node itself is unusable; otherwise, once the
+  # own root has nothing claimable, take the sibling experiments' work in priority order.
+  rc_own=$rc_switch
+  helped=""
+  if [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ]; then
+    for root in $(sibling_roots); do
+      root_complete "$root" && continue
+      name=$(basename "$root")
+      echo "[pass $pass] sibling $name"
+      rc_sib=0
+      SWITCH_ROOT=$root SWITCH_ONLY_SEEDS= SWITCH_ONLY_ARMS= inner scripts/run_selection_switch.sh || rc_sib=$?
+      case "$rc_sib" in 130|143) exit "$rc_sib" ;; esac
+      echo "[pass $pass] sibling $name ended: rc=$rc_sib, $(rc_reason "$rc_sib")"
+      helped="$helped | $name rc=$rc_sib $(rc_reason "$rc_sib")"
+      if [ "$rc_sib" -eq 75 ] || [ "$rc_sib" -eq 78 ]; then break; fi
+      [ "$rc_sib" -eq 0 ] && rc_switch=0
+    done
   fi
   rc_mopps=0 why_mopps=skipped
   if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ] && [ -f "$MOPPS_ROOT/mopps.json" ] && ! mopps_complete; then
@@ -354,7 +399,7 @@ while :; do
     why_mopps=$rc_mopps
     echo "[pass $pass] MoPPS comparison ended: rc=$rc_mopps, $(rc_reason "$rc_mopps")"
   fi
-  reason="switch rc=$rc_switch $(rc_reason "$why_switch") | mopps rc=$rc_mopps $(rc_reason "$why_mopps")"
+  reason="switch rc=$rc_own $(rc_reason "$why_switch")$helped | mopps rc=$rc_mopps $(rc_reason "$why_mopps")"
   if [ "$rc_switch" -eq 75 ] || [ "$rc_mopps" -eq 75 ]; then need_clean=1; fi
   if switch_complete && { [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; }; then
     echo '[done] both experiments are complete; releasing the node'

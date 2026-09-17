@@ -68,8 +68,11 @@ def test_waiver_refuses_results_missing_fault_signatures_and_live_branches(tmp_p
     published = branch(tmp_path, "gated", result=True)
     assert "result already published" in waive.waive(tmp_path, published, apply=True)
     assert (published / "failure.json").exists()
+    # Trained to a checkpoint, then a failed attempt with no fault evidence: an operator's call.
     clean = branch(tmp_path, "selection_full", fault=False)
-    assert "no failed attempt with a GPU-fault signature" in waive.waive(tmp_path, clean, apply=True)
+    (clean / "policy/checkpoint-40").mkdir(parents=True)
+    (clean / "policy/checkpoint-40/adapter_model.safetensors").write_bytes(b"x")
+    assert "without fault evidence after training progress" in waive.waive(tmp_path, clean, apply=True)
     assert (clean / "failure.json").exists() and base.spent(clean) > 29040
     live = branch(tmp_path, "random_full")
     with base.lease(live / ".task.lock"):
@@ -152,3 +155,44 @@ def test_reset_waived_cli_reports_when_nothing_resumed(tmp_path):
     out = subprocess.run([sys.executable, str(ROOT / "scripts/waive_stalled_attempts.py"), "--root", str(tmp_path),
                           "--reset-waived"], capture_output=True, text=True, check=True).stdout
     assert "no waived branch resumed a discarded attempt" in out
+
+
+def test_waiver_accepts_watchdog_stops_kills_and_attempts_that_bought_no_training(tmp_path):
+    core.atomic_json(tmp_path / "switch.json", {"schema": "x"})
+    # Silent hang the watchdog stopped: no fault line in the log, stalled.json names the event.
+    stalled = branch(tmp_path, "random_reduced", fault=False)
+    base.journal(stalled / "cost.jsonl", event("train2", "train", "started"))
+    base.journal(stalled / "cost.jsonl", event("train2", "train", "finished", seconds=1550.0, exit_code=-15))
+    core.atomic_json(stalled / "stalled.json", {"event_id": "train2", "silent_seconds": 1550.0, "host": "run282666-wss-4"})
+    message = waive.waive(tmp_path, stalled, apply=False)
+    assert "train1" in message and "no-progress" in message and "train2" in message and "stall-watchdog" in message
+    message = waive.waive(tmp_path, stalled, apply=True)
+    assert "waived" in message and not (stalled / "failure.json").exists() and base.spent(stalled) < 100
+    assert core.read(stalled / "waivers/train2.json")["attempt"]["fault"]["kind"] == "stall-watchdog"
+    assert core.read(stalled / "waivers/train1.json")["attempt"]["fault"]["kind"] == "no-progress"
+    # A retry that died at once because only a sliver of the allocation was left is a candidate too.
+    sliver = branch(tmp_path, "selection_reduced", fault=False, exhausted=False)
+    core.atomic_json(sliver / "failure.json", {"error": "train exceeded 82s allocation limit", "host": "h", "time": 1.0})
+    assert sliver in waive.candidates(tmp_path)
+    # A kill without a checkpoint counts even without stalled.json.
+    killed = branch(tmp_path, "gated", fault=False, exhausted=False)
+    base.journal(killed / "cost.jsonl", event("train3", "train", "started"))
+    base.journal(killed / "cost.jsonl", event("train3", "train", "finished", seconds=900.0, exit_code=-9))
+    (killed / "policy/checkpoint-5").mkdir(parents=True)
+    (killed / "policy/checkpoint-5/adapter_model.safetensors").write_bytes(b"x")
+    core.atomic_json(killed / "failure.json", {"error": waive.EXHAUSTED, "host": "h", "time": 1.0})
+    # train1 (exit 1, no fault line) blocks the waiver once a checkpoint exists; train3 alone would qualify.
+    _, found, unattributed = waive.stalled_attempts(killed)
+    assert [f["event_id"] for f in found] == ["train3"] and found[0]["fault"] == {"kind": "killed", "signal": 9}
+    assert [u["event_id"] for u in unattributed] == ["train1"]
+    assert "needs an operator" in waive.waive(tmp_path, killed, apply=True) and (killed / "failure.json").exists()
+
+
+def test_waiver_stops_after_max_rounds(tmp_path):
+    core.atomic_json(tmp_path / "switch.json", {"schema": "x"})
+    directory = branch(tmp_path, "random_reduced")
+    for i in range(waive.MAX_ROUNDS):
+        core.atomic_json(directory / "waivers" / f"old{i}.json", {"schema": waive.SCHEMA, "discarded_to": f"discarded/tag{i}"})
+    message = waive.waive(tmp_path, directory, apply=True)
+    assert f"{waive.MAX_ROUNDS} waiver rounds already" in message and (directory / "failure.json").exists()
+    assert base.spent(directory) > 29040

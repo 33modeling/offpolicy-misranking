@@ -3,18 +3,25 @@
 
 A rank that dies with a CUDA fault can leave the trainer hung until the meter's
 allocation limit; the attempt is then charged in full and every retry ends with
-"branch allocation exhausted before a valid checkpoint". This operator action
-moves that attempt's ledger lines to cost-waived.jsonl, writes a receipt under
-waivers/ with the fault evidence, and removes failure.json so the queue retries
-the branch with its allocation restored. Only attempts whose phase log shows a
-CUDA/NCCL fault signature qualify; live branches and published results are
-never touched. Nothing is deleted: the waived lines and the phase logs remain.
+"branch allocation exhausted before a valid checkpoint" (or dies at once with
+"train exceeded Ns allocation limit" when only a sliver is left). This operator
+action moves the wasted attempts' ledger lines to cost-waived.jsonl, writes a
+receipt under waivers/ with the evidence, discards the attempts' outputs and
+removes failure.json so the queue reruns the branch from its parent policy with
+the allocation restored. An attempt qualifies when its phase log shows a
+CUDA/NCCL fault signature, the stall watchdog stopped it (stalled.json), a
+signal killed it, or the branch never reached a checkpoint (the attempt bought
+no training). A branch that has trained to a checkpoint keeps any failed attempt
+without such evidence and is left to an operator, as is a branch already waived
+MAX_ROUNDS times. Live branches and published results are never touched.
+Nothing is deleted: the waived lines and the phase logs remain.
 """
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -23,6 +30,10 @@ import selection_gate as core  # noqa: E402
 import selection_gate_gpu as base  # noqa: E402
 
 EXHAUSTED = "branch allocation exhausted before a valid checkpoint"
+TIMEOUT = re.compile(r"^[\w-]+ exceeded \d+s allocation limit")
+# Waiver rounds per branch before it is left to an operator: a branch that keeps
+# failing without a checkpoint is not an infrastructure loss to return forever.
+MAX_ROUNDS = 6
 FAULT_SIGNATURES = ("unspecified launch failure", "Cuda failure", "CUDA error", "illegal memory access",
                     "uncorrectable ECC error", "NCCL error")
 SCHEMA = "selection-switch-cost-waiver/v1"
@@ -62,24 +73,76 @@ def fault_excerpt(directory, phase):
     return None
 
 
+def has_checkpoint(directory):
+    """True when an attempt of this branch reached a checkpoint or a published policy."""
+    policy = directory / "policy"
+    if any(policy.glob("checkpoint-*/adapter_model.safetensors")):
+        return True
+    return (policy / "adapter_model.safetensors").is_file() or (policy / "budget_stop.json").is_file()
+
+
+def stall_records(directory):
+    """Event ids the stall watchdog stopped in this branch (stalled.json holds the last one)."""
+    path = directory / "stalled.json"
+    try:
+        record = json.loads(path.read_text()) if path.is_file() else None
+    except ValueError:
+        return {}
+    return {record["event_id"]: record} if isinstance(record, dict) and record.get("event_id") else {}
+
+
+def evidence(directory, fin, *, stalls, progressed):
+    """Why a failed attempt is infrastructure loss, or None when it is not known to be."""
+    excerpt = fault_excerpt(directory, fin.get("phase", ""))
+    if excerpt is not None:
+        return {"kind": "gpu-fault", **excerpt}
+    stall = stalls.get(fin["event_id"])
+    if stall is not None:
+        return {"kind": "stall-watchdog", "silent_seconds": stall.get("silent_seconds"), "host": stall.get("host")}
+    code = fin.get("exit_code")
+    if isinstance(code, int) and code < 0:
+        return {"kind": "killed", "signal": -code}
+    if not progressed:
+        return {"kind": "no-progress", "note": "the branch never reached a checkpoint, so the attempt bought no training"}
+    return None
+
+
 def stalled_attempts(directory):
-    """Finished events that failed (nonzero exit) in a phase whose log shows a GPU fault."""
+    """Finished failed (nonzero exit) deployment events with infrastructure-loss evidence.
+
+    Returns (events, found, unattributed): ``found`` are the waivable attempts and
+    ``unattributed`` the failed attempts without evidence, which block the waiver.
+    """
     path = directory / "cost.jsonl"
     if not path.exists():
-        return [], []
+        return [], [], []
     events = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     finished = {e["event_id"]: e for e in events if e.get("state") == "finished"}
-    found = []
+    stalls, progressed = stall_records(directory), has_checkpoint(directory)
+    found, unattributed = [], []
     for event_id, fin in finished.items():
         if fin.get("exit_code") in (0, None) or fin.get("ledger") == "reporting":
             continue
-        excerpt = fault_excerpt(directory, fin.get("phase", ""))
-        if excerpt is None:
+        row = {"event_id": event_id, "phase": fin.get("phase"), "host": fin.get("host"),
+               "seconds": fin.get("seconds"), "allocated_gpu_seconds": fin.get("allocated_gpu_seconds"),
+               "exit_code": fin.get("exit_code")}
+        why = evidence(directory, fin, stalls=stalls, progressed=progressed)
+        if why is None:
+            unattributed.append(row)
+        else:
+            found.append({**row, "fault": why})
+    return events, found, unattributed
+
+
+def rounds_waived(directory):
+    """Waiver rounds already applied to this branch (one discard tag per round)."""
+    tags = set()
+    for receipt in (directory / "waivers").glob("*.json"):
+        try:
+            tags.add(json.loads(receipt.read_text()).get("discarded_to"))
+        except (OSError, ValueError):
             continue
-        found.append({"event_id": event_id, "phase": fin.get("phase"), "host": fin.get("host"),
-                      "seconds": fin.get("seconds"), "allocated_gpu_seconds": fin.get("allocated_gpu_seconds"),
-                      "exit_code": fin.get("exit_code"), "fault": excerpt})
-    return events, found
+    return len(tags)
 
 
 def candidates(root):
@@ -92,7 +155,7 @@ def candidates(root):
             error = str(core.read(failure).get("error", ""))
         except (OSError, ValueError):
             continue
-        if error.startswith(EXHAUSTED):
+        if error.startswith(EXHAUSTED) or TIMEOUT.match(error):
             out.append(failure.parent)
     return out
 
@@ -101,11 +164,18 @@ def waive(root, directory, *, apply):
     rel = str(directory.relative_to(root))
     if (directory / "result.json").exists():
         return f"[waive] {rel}: skipped, result already published"
-    events, found = stalled_attempts(directory)
+    events, found, unattributed = stalled_attempts(directory)
+    if unattributed:
+        return (f"[waive] {rel}: skipped, failed attempt(s) without fault evidence after training progress: "
+                + ", ".join(f"{u['phase']} {u['event_id'][:8]} exit {u['exit_code']}" for u in unattributed)
+                + "; needs an operator")
     if not found:
-        return f"[waive] {rel}: skipped, no failed attempt with a GPU-fault signature in its log"
+        return f"[waive] {rel}: skipped, no failed attempt with fault evidence (log signature, stall watchdog, signal, or no checkpoint)"
+    rounds = rounds_waived(directory)
+    if rounds >= MAX_ROUNDS:
+        return f"[waive] {rel}: skipped, {rounds} waiver rounds already; the branch keeps failing, needs an operator"
     if not apply:
-        return f"[waive] {rel}: would waive " + ", ".join(f"{f['phase']} {f['event_id'][:8]} on {f['host']} ({f['allocated_gpu_seconds']:.0f} GPU-s)" for f in found)
+        return f"[waive] {rel}: would waive " + ", ".join(f"{f['phase']} {f['event_id'][:8]} on {f['host']} ({f['allocated_gpu_seconds']:.0f} GPU-s) [{f['fault']['kind']}]" for f in found)
     try:
         with base.lease(directory / ".task.lock"), base.lease(directory / ".cost.lock"):
             waived_ids = {f["event_id"] for f in found}
@@ -124,15 +194,16 @@ def waive(root, directory, *, apply):
                 core.atomic_json(directory / "waivers" / f"{f['event_id']}.json", {
                     "schema": SCHEMA, "directory": rel, "attempt": f, "waived_at": time.time(),
                     "discarded_outputs": moved, "discarded_to": f"discarded/{tag}",
-                    "reason": "attempt stalled after a GPU fault and was terminated at the allocation limit; "
-                              "the fault is infrastructure, not selector cost",
+                    "reason": f"attempt lost to infrastructure ({f['fault']['kind']}): a GPU fault, a stall the "
+                              "watchdog stopped, a kill, or an attempt that bought no training before the "
+                              "allocation ran out; not selector cost", "round": rounds+1,
                     "operator": "run_selection_switch.sh waive"})
             temporary.replace(path)
             (directory / "failure.json").unlink(missing_ok=True)
     except BlockingIOError:
         return f"[waive] {rel}: skipped, a worker holds this branch right now"
     restored = sum(f["allocated_gpu_seconds"] or 0 for f in found)
-    return (f"[waive] {rel}: waived " + ", ".join(f"{f['phase']} {f['event_id'][:8]} on {f['host']}" for f in found)
+    return (f"[waive] {rel}: waived " + ", ".join(f"{f['phase']} {f['event_id'][:8]} on {f['host']} ({f['fault']['kind']})" for f in found)
             + f"; {restored:.0f} GPU-s returned to the allocation; failure cleared, the queue retries it next pass")
 
 
