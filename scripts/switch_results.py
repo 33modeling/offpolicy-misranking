@@ -124,15 +124,19 @@ def report(root, *, draws=10000):
     rows = branches(root)
     limit = update_limit(p, rows)
     lines += ["", f"BRANCHES  (updates = completed_steps - state step; used = deployment GPU-s; flags: INVALID = "
-                  f"more than {limit:.0f} updates, which one allocation cannot buy, or a reset receipt; "
-                  "RERUN = waiver without a result)"]
+                  f"more than {limit:.0f} updates, which one allocation cannot buy; RESET = rerun from the parent "
+                  "policy after a reset receipt, valid on its own ledger; RERUN = waiver without a result)"]
     by_state = defaultdict(dict)
     for b in rows:
         result, stop = b["result"], b["stop"]
         updates = stop["completed_steps"]-b["step"] if stop else None
         flags = []
-        if b["discards"] or (updates is not None and updates > limit):
+        if updates is not None and updates > limit:
             flags.append("INVALID")
+        if b["discards"]:
+            # The reset moved the over-trained attempt's ledger and outputs aside; this
+            # result is the rerun's own, from the parent policy within one allocation.
+            flags.append("RESET")
         if b["waivers"] and not result:
             flags.append("RERUN")
         if b["failure"]:
