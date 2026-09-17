@@ -135,6 +135,7 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
+        (tmp_path / "scoring-label-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -174,6 +175,7 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
         # The 668ac36 runtime never wrote this receipt.
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
+        (tmp_path / "scoring-label-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -218,6 +220,37 @@ def quality_predecessor():
     return hashes
 
 
+def scoring_label_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "fb09987c2dd984584eeb4c394d4bca5cac01758492e60f000ee51ffe13187d18"
+    assert core.fingerprint(hashes) == switch.PRE_SCORING_LABEL_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_scoring_label_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
+    previous = scoring_label_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "quality-runtime.json")["runtime_code_hashes"] == previous
+        # The 0fc4395..80fbf29 runtime never wrote this receipt.
+        (tmp_path / "scoring-label-runtime.json").unlink()
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert switch.manifest(tmp_path) == frozen
+    assert switch.manifest(tmp_path) == frozen
+    assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "scoring-label-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["quality_runtime_sha256"] == base.digest(tmp_path / "quality-runtime.json")
+    with pytest.raises(ValueError, match="unknown cost"):
+        base.spent(tmp_path)
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_quality_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypatch, migrated):
     previous = quality_predecessor()
@@ -230,6 +263,7 @@ def test_quality_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         assert core.read(tmp_path / "curve-runtime.json")["runtime_code_hashes"] == previous
         # The 8b6c1f5 runtime never wrote this receipt.
         (tmp_path / "quality-runtime.json").unlink()
+        (tmp_path / "scoring-label-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -364,6 +398,34 @@ def test_net_update_gain_is_updates_saved_minus_scoring_in_update_units(tmp_path
     assert gain["selection_updates_to_target"] == pytest.approx(10.) and gain["random_updates_to_target"] == pytest.approx(100.)
     assert gain["scoring_updates"] == pytest.approx(24000/280) and gain["net_updates"] == pytest.approx(90-24000/280)
     assert gain["net_fraction"] == pytest.approx((90-24000/280)/100)
+    assert gain["reporting_scoring_updates"] == 0. and gain["recorded_scoring_updates"] == pytest.approx(24000/280)
+
+
+def test_matched_root_label_pays_for_the_reporting_ledger_scoring(tmp_path):
+    """Quality variant: scoring is outside the allocation but not outside the criterion."""
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "accounting": "matched", "code_hashes": {}})
+    out = tmp_path / "states/s3-t25/points/view-25"
+    cost_rows(out / "random_full", [("verify-inputs", 1.), ("train", 7000.)])
+    cost_rows(out / "selection_full", [("verify-inputs", 1.), ("train", 7000.)])
+    for name, seconds in (("fresh-r-validation", 1500.), ("fresh-r-candidate", 4500.)):
+        for state in ("started", "finished"):
+            row = {"event_id": name, "phase": name, "ledger": "reporting", "gpus": 4, "gpu_type": "H100",
+                   "host": "h", "state": state, "time": 1.}
+            if state == "finished":
+                row.update(seconds=seconds, allocated_gpu_seconds=4*seconds, exit_code=0)
+            base.journal(out / "selection_full/cost.jsonl", row)
+    curves = {"random_full": curve(25, 125, {25: .25, 50: .27, 75: .28, 100: .29, 125: .30}),
+              "selection_full": curve(25, 125, {25: .25, 50: .28, 75: .30, 100: .31, 125: .31})}
+    gain = switch.net_update_gain(out, "selection_full", "random_full", curves)
+    # 24,000 GPU-s of reporting-ledger scoring at 280 GPU-s per random update: 85.7 updates.
+    assert gain["selection_extra_gpu_seconds"] == pytest.approx(0.) and gain["scoring_updates"] == 0.
+    assert gain["reporting_scoring_gpu_seconds"] == pytest.approx(24000.)
+    assert gain["reporting_scoring_updates"] == pytest.approx(24000/280)
+    assert gain["net_updates"] == pytest.approx(50-24000/280) and gain["net_fraction"] == pytest.approx((50-24000/280)/100)
+    # The same ledgers under budget accounting: reporting-ledger work is not the selection charge.
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "accounting": "budget", "code_hashes": {}})
+    gain = switch.net_update_gain(out, "selection_full", "random_full", curves)
+    assert gain["reporting_scoring_updates"] == 0. and gain["net_updates"] == pytest.approx(50.)
 
 
 def test_fit_rows_replace_the_label_only_for_the_convergence_gate():
@@ -533,6 +595,7 @@ def test_dataset_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
+        (tmp_path / "scoring-label-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -615,6 +678,7 @@ def test_variant_root_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, m
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
+        (tmp_path / "scoring-label-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -700,6 +764,7 @@ def test_fit_resilience_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path,
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
+        (tmp_path / "scoring-label-runtime.json").unlink()
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     assert switch.manifest(tmp_path) == frozen
@@ -737,6 +802,7 @@ def test_test_parallel_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, 
         (tmp_path / "selector-runtime.json").unlink()
         (tmp_path / "curve-runtime.json").unlink()
         (tmp_path / "quality-runtime.json").unlink()
+        (tmp_path / "scoring-label-runtime.json").unlink()
     core.atomic_json(tmp_path / "prefixes/seed-0/prefix-25.json", {"checkpoint": "unchanged"})
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "still-unknown"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}

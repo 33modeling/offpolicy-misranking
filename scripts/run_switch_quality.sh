@@ -6,7 +6,8 @@
 # so the selection arms train as many updates as random. The comparison is
 # then how much better fresh-selected data learns per update, and the
 # convergence gate learns at which states that advantage still saves updates.
-# Scoring cost is recorded and reported, not subtracted. Own root, labels,
+# Scoring cost is recorded, reported, and subtracted from the gate label in update
+# units (not from the training allocation). Own root, labels,
 # gate and ledgers; the MoPPS pass is skipped. Same modes as the switch launcher.
 #
 #   bash scripts/run_switch_quality.sh          prepare on first use, then run

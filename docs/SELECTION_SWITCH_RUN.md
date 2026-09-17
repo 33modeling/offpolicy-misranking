@@ -131,7 +131,9 @@ on the reporting ledger, which the allocation does not count, under its
 usual phase names (`fresh-r-validation`, `fresh-r-candidate`, ...), so the
 selection arms train as many updates as random and the comparison is how
 much better fresh-selected data learns per update; the scoring cost is
-recorded and reported, not subtracted. The convergence gate is on by
+recorded and reported; the convergence-gate label subtracts it in the random arm's
+update units, so the label is the paper's criterion (updates saved to the common
+target minus selection cost). The convergence gate is on by
 default, so its label is the updates saved to the common target. Root
 `runs/selection-switch-quality-v1`; `pilot` runs the six held-out fresh and
 random branches first.
