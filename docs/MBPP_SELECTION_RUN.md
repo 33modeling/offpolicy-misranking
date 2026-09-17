@@ -1,13 +1,13 @@
 # MBPP Selection Experiments
 
-Run from the original `offpolicy-misranking` checkout on an idle, allocated
-four-H100 node, inside tmux:
+Run this same command from the original `offpolicy-misranking` checkout on
+**every allocated four-H100 node**, including replacement nodes:
 
 ```bash
 bash scripts/run_mbpp_experiments.sh
 ```
 
-The command runs the existing switch experiment on MBPP, in this order:
+The command joins the existing node controller's shared MBPP queue:
 
 | Suite | Continuation selection | Accounting | Gate |
 | --- | --- | --- | --- |
@@ -15,13 +15,15 @@ The command runs the existing switch experiment on MBPP, in this order:
 | `quality` | Fresh gradient scores | Scoring recorded separately from training allocation | Updates saved minus selection cost in update units |
 | `difficulty` | Cached success rate closest to 0.5 | Scoring and training share the allocation | Updates saved minus selection cost in update units |
 
-All suites include random controls. The first suite creates five fresh-selected
+All suites include random controls. The fresh suite creates five fresh-selected
 training prefixes. The other two reuse these exact prefixes, states at
 25/50/100 updates, and the same evaluation questions. They do not import MATH
 prefixes. Each suite uses the existing 18 development and 30 held-out
 continuations, with development seeds 0/1/2 and held-out seeds 3/4.
-Final evaluation uses eight responses per question; convergence curves use
-three archived checkpoints with four responses per question.
+Once all shared prefix certificates are ready, quality and difficulty can start
+even while fresh continuations are still running elsewhere. No node is assigned
+permanently to one suite. Final evaluation uses eight responses per question;
+convergence curves use three archived checkpoints with four responses per question.
 
 This is a port of the current switch suites, not a new difficulty definition,
 an E5 fixed-checkpoint run, or a gate that directly chooses fresh versus
@@ -34,6 +36,8 @@ versus random; the shared states permit the fresh/difficulty comparison.
 bash scripts/run_mbpp_experiments.sh plan       # settings only, no writes/GPU work
 bash scripts/run_mbpp_experiments.sh check      # read-only local input checks
 bash scripts/run_mbpp_experiments.sh status
+bash scripts/run_mbpp_experiments.sh progress   # shared experiment/node view
+bash scripts/run_mbpp_experiments.sh stop       # stop/clean THIS node, not peer nodes
 bash scripts/run_mbpp_experiments.sh results    # one report per suite, also copied home
 bash scripts/run_mbpp_experiments.sh why
 bash scripts/run_mbpp_experiments.sh run fresh
@@ -41,14 +45,44 @@ bash scripts/run_mbpp_experiments.sh run quality
 bash scripts/run_mbpp_experiments.sh run difficulty
 ```
 
-Each stage waits for its full queue before advancing. Ordinary failed tasks
-are retried by the existing launcher, starting with a 600-second hold;
-`MBPP_HOLD_SECONDS` changes that interval. Completed artifacts are reused and
-interrupted work resumes under the existing checkpoint and cost-ledger rules.
-Admission failures and terminal signals stop the sequence. A missing cost
-receipt is not silently erased or waived. Ctrl-C in the tmux pane stops the
-foreground run; no subsequent suite is started. No auto-pull or other
-experiment launch is enabled by this entrypoint.
+## Nodes Joining And Failing
+
+`run` and `stop` delegate directly to `scripts/run_experiments.sh`. Its existing
+restart, cleanup, detached console, keepalive, watchdog, automatic Git updates,
+stale-event recovery and GPU-fault waiver policy are retained. There is no
+separate MBPP controller or serial hold loop.
+The inner worker yields its idle peer-wait to this shared controller, instead
+of waiting inside one suite while another has work. Owned training/evaluation
+finishes normally before yielding; no active branch is interrupted for fairness.
+
+- On the same node, running the command again stops its previous controller,
+  reaps workers, closes recoverable receipts, clears the node fault record,
+  and re-enters through the GPU admission probe.
+- On a new node, the same command reads the shared queue and claims available
+  tasks using the existing leases. Busy branches are skipped, not duplicated.
+- If a node dies, its locks are released; surviving nodes use the existing
+  heartbeat/stale-cost recovery and recorded GPU-fault waiver rules before
+  retrying its work. Completed results and valid checkpoints remain reusable.
+- If a branch fails, the controller attempts other available work and retries
+  later. Missing source inputs or prefixes wait in the queue; they do not
+  prevent cleanup or terminate the whole launcher.
+- A node that repeatedly fails GPU/NCCL admission is released under the
+  original policy. A replacement node must be allocated by the cluster/user;
+  this script does not request a new cluster allocation itself.
+- The node exits successfully only when every requested MBPP suite is complete,
+  including suites whose inputs were initially pending. An unrelated unfinished
+  MoPPS run does not keep this MBPP allocation alive.
+
+The MBPP hold defaults to 600 seconds (`MBPP_HOLD_SECONDS`), with
+`EXPERIMENTS_HOLD_SECONDS` taking precedence when set. Holds poll for newly
+available work and exit early when peers complete the queue. Setting
+`EXPERIMENTS_HELP_SIBLINGS=0` explicitly restricts a node to the first root;
+leave it enabled to serve all requested suites.
+Terminal launches detach as before: Ctrl-C stops the log view, not the workers.
+Use `stop` to stop the current node. **Like the original controller, restart/stop
+cleans old experiment processes on that node's allocation, across experiment
+roots.** It does not stop healthy workers on other nodes. Queue work is limited
+to the requested MBPP suites, rather than adding unrelated math/MoPPS jobs.
 
 ## Inputs And Outputs
 
@@ -81,5 +115,5 @@ Default roots under `$OM_WORK/runs`:
 Override with `SWITCH_MBPP_ROOT`, `SWITCH_MBPP_QUALITY_ROOT`, and
 `SWITCH_MBPP_DIFFICULTY_ROOT`. Roots must be separate, non-nested directories.
 `OM_WORK`, `OM_OLMO3_ROOT`, `DATASETS_DIR`, and `VENV_DIR` retain their existing
-meanings. Status and results never start training. Existing math outputs,
-trainers, scoring code, and frozen experiment contracts are unchanged.
+meanings. Status and results never start training. Trainers, scoring code,
+data splits, gate calculations, and frozen experiment contracts are unchanged.

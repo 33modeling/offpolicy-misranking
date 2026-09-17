@@ -402,6 +402,10 @@ switch_complete() {
 }
 pass=0
 wait_seconds=$HOLD
+WORKER=src/selection_switch_gpu.py
+if [ "$MODE" = run ] && [ "${SWITCH_QUEUE_PASS:-0}" = 1 ]; then
+  WORKER=scripts/queue_selection_switch_gpu.py
+fi
 while :; do
   pass=$((pass+1))
   rc=0
@@ -414,7 +418,7 @@ while :; do
       | sed 's/^\[recovery blocked\]/[recover-cost] blocked:/' || true
   fi
   selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
-    "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" \
+    "$PY" "$WORKER" "$MODE" --root "$OUT_ROOT" \
       ${SWITCH_ONLY_SEEDS:+--only-seeds "$SWITCH_ONLY_SEEDS"} ${SWITCH_ONLY_ARMS:+--only-arms "$SWITCH_ONLY_ARMS"} || rc=$?
   case "$rc" in 78|130|137|143) break ;; esac
   if [ "$rc" -ne 0 ]; then

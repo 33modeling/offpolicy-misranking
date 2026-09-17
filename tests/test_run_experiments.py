@@ -14,6 +14,17 @@ import selection_gate as core
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def no_physical_gpu_cleanup(tmp_path, monkeypatch):
+    """Node lifecycle tests must never inspect or terminate real GPU holders."""
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    nvidia = binaries / "nvidia-smi"
+    nvidia.write_text('#!/usr/bin/env bash\ncase "$*" in *query-gpu=memory.used*) echo 0 ;; esac\nexit 0\n')
+    nvidia.chmod(0o755)
+    monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ["PATH"])
+
+
 def fake_inner(tmp_path, switch_rc, mopps_rc):
     fake = tmp_path / "fake-inner.sh"
     fake.write_text("#!/usr/bin/env bash\n"

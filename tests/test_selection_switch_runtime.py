@@ -69,6 +69,59 @@ def wait_for(path, worker):
     assert path.exists(), worker.communicate(timeout=5) if worker.poll() is not None else "fixture did not start"
 
 
+def test_shared_queue_entrypoint_is_pinned_and_yields_live_peer_waits(tmp_path):
+    repo = repository(tmp_path)
+    for name in ("run_selection_switch.sh", "selection_switch_runtime.py", "_selection_worker.sh",
+                 "queue_selection_switch_gpu.py"):
+        shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
+    (repo / "scripts/setup_env.sh").write_text('export DATASETS_DIR="$OM_WORK/data"\n')
+    (repo / "scripts/_e5_node.sh").write_text('e5_acquire_node() { return 0; }\n')
+    (repo / "src/bootstrap_math_verify.py").write_text("print('/unused-test-dependencies')\n")
+    (repo / "scripts/selection_nccl_preflight.py").write_text('''
+import os, sys
+command = sys.argv[sys.argv.index('--')+1:]
+assert command[1] == 'scripts/queue_selection_switch_gpu.py'
+os.execvpe(command[0], command, os.environ)
+''')
+    (repo / "src/selection_switch_gpu.py").write_text('''
+import json, os, sys
+from pathlib import Path
+def wait_for_peers(*args, **kwargs):
+    raise AssertionError('the node queue must own the wait')
+def main():
+    root = Path(os.environ['OUT_ROOT'])
+    if sys.argv[1] == 'prepare':
+        root.mkdir(parents=True, exist_ok=True)
+        (root / 'switch.json').write_text('{}')
+    elif sys.argv[1] == 'run':
+        assert not wait_for_peers([{'active': True}], last_progress=0, idle_timeout=600)
+        (root / 'queue.json').write_text(json.dumps({'repo': os.environ['OM_REPO'], 'module': __file__}))
+    return 0
+if __name__ == '__main__':
+    sys.exit(main())
+''')
+    (repo / "bin").mkdir()
+    gpu = repo / "bin/nvidia-smi"
+    gpu.write_text('#!/usr/bin/env bash\nprintf "0\\n0\\n0\\n0\\n"\n')
+    gpu.chmod(0o755)
+    git(repo, "add", ".")
+    git(repo, "commit", "--quiet", "-m", "shared queue fixture")
+    root, cache = tmp_path / "run", tmp_path / "cache"
+    env = {**os.environ, "OM_WORK": str(tmp_path / "work"), "SWITCH_ROOT": str(root),
+           "SWITCH_RUNTIME_CACHE": str(cache), "SWITCH_PYTHON": sys.executable,
+           "PATH": str(repo / "bin") + os.pathsep + os.environ["PATH"], "PYTHONPATH": str(repo / "src"),
+           "CUDA_VISIBLE_DEVICES": "0,1,2,3", "SWITCH_FOREGROUND": "1", "SWITCH_HOLD_SECONDS": "0",
+           "SWITCH_QUEUE_PASS": "1", "SWITCH_AUTO_RECOVER": "0", "SWITCH_KEEPALIVE": "0"}
+    env.pop("SWITCH_RUNTIME_REPO", None)
+    result = subprocess.run(["bash", str(repo / "scripts/run_selection_switch.sh")], cwd=repo,
+                            env=env, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+    receipt = json.loads((root / "queue.json").read_text())
+    assert Path(receipt["repo"]).parent == cache
+    assert Path(receipt["module"]).parent == Path(receipt["repo"]) / "src"
+    assert "[queue-yield]" in result.stdout
+
+
 @pytest.mark.parametrize("pinned", [False, True])
 @pytest.mark.parametrize("kind", ["switch", "mopps"])
 def test_midrun_checkout_change_and_next_worker_import(tmp_path, pinned, kind):

@@ -134,7 +134,8 @@ def launcher(tmp_path):
     repo = tmp_path / "repo with spaces"
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
-    shutil.copy(ROOT / "scripts/run_mbpp_experiments.sh", scripts)
+    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh"):
+        shutil.copy(ROOT / "scripts" / name, scripts)
     (scripts / "setup_env.sh").write_text('echo "preflight must not source setup_env" >&2\nexit 99\n')
     venv = tmp_path / "venv"
     (venv / "bin").mkdir(parents=True)
@@ -148,6 +149,7 @@ def launcher(tmp_path):
         'with open(os.environ["CALLS"], "a") as f:\n'
         '    f.write(json.dumps({"args": sys.argv[1:], "env": dict(os.environ)}) + "\\n")\n'
         'sys.exit(int(os.environ.get("FAKE_EXIT", "0")))\nPY\n')
+    shutil.copy(scripts / "run_selection_switch.sh", scripts / "run_experiments.sh")
     env = {**os.environ, "OM_WORK": str(tmp_path / "work"), "VENV_DIR": str(venv),
            "TEST_PYTHON": sys.executable, "CALLS": str(tmp_path / "calls.jsonl"),
            "CHECK_LOG": str(tmp_path / "checks"), "SWITCH_ROOT": "/wrong/math",
@@ -160,25 +162,20 @@ def launcher(tmp_path):
     return run, env
 
 
-def test_one_command_routes_all_suites_and_clears_math_settings(launcher):
+@pytest.mark.parametrize("mode", ["run", "stop", "progress"])
+def test_lifecycle_is_delegated_to_original_node_controller_without_preflight(launcher, mode):
     run, env = launcher
-    result = run()
+    result = run(mode, EXPERIMENTS_KEEPALIVE="1", EXPERIMENTS_WATCHDOG="1", EXPERIMENTS_AUTO_PULL="1")
     assert result.returncode == 0, result.stderr
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
-    assert len(calls) == 3
-    for call, selector, accounting, gate in zip(calls, ("fresh_r", "fresh_r", "difficulty"),
-                                               ("budget", "matched", "budget"), ("final", "convergence", "convergence")):
-        e = call["env"]
-        assert call["args"] == ["run"]
-        assert (e["SWITCH_DATASET"], e["SWITCH_SELECTOR"], e["SWITCH_ACCOUNTING"], e["SWITCH_GATE"]) == (
-            "mbpp", selector, accounting, gate)
-        assert all(key not in e for key in ("SWITCH_ONLY_SEEDS", "SWITCH_ONLY_ARMS", "OM_NODE_LOCK_HELD", "SWITCH_BUDGET_GPU_SECONDS"))
-        assert e["SWITCH_HOLD_SECONDS"] == "600" and e["SWITCH_FOREGROUND"] == "1"
-        assert e["EXPERIMENTS_COMBINED"] == "0" and e["EXPERIMENTS_SKIP_MOPPS"] == "1"
-    fresh = calls[0]["env"]["SWITCH_ROOT"]
-    assert calls[0]["env"]["SWITCH_PREFIX_SOURCE"] == ""
-    assert all(c["env"]["SWITCH_PREFIX_SOURCE"] == fresh for c in calls[1:])
-    assert len({c["env"]["SWITCH_ROOT"] for c in calls}) == 3
+    assert len(calls) == 1 and calls[0]["args"] == [mode]
+    e = calls[0]["env"]
+    assert e["EXPERIMENTS_MBPP_SUITE"] == "all"
+    assert e["SWITCH_ROOT"] == e["SWITCH_MBPP_ROOT"]
+    assert e["EXPERIMENTS_HELP_SIBLINGS"] == "1" and e["EXPERIMENTS_SKIP_MOPPS"] == "1"
+    assert all(e[key] == "1" for key in ("EXPERIMENTS_KEEPALIVE", "EXPERIMENTS_WATCHDOG", "EXPERIMENTS_AUTO_PULL"))
+    assert all(key not in e for key in ("SWITCH_PREFIX_SOURCE", "SWITCH_ONLY_SEEDS", "SWITCH_ONLY_ARMS", "OM_NODE_LOCK_HELD", "SWITCH_BUDGET_GPU_SECONDS"))
+    assert not Path(env["CHECK_LOG"]).exists()
 
 
 @pytest.mark.parametrize("mode", ["status", "results", "why"])
@@ -191,7 +188,7 @@ def test_readers_do_not_check_or_start_training(launcher, mode):
 
 
 @pytest.mark.parametrize("code", ["1", "75", "78", "130", "143"])
-def test_run_failure_never_starts_next_suite(launcher, code):
+def test_wrapper_preserves_the_node_controllers_exit_status(launcher, code):
     run, env = launcher
     result = run(FAKE_EXIT=code)
     assert result.returncode == int(code)
@@ -220,4 +217,5 @@ def test_bad_arguments_and_roots_fail_before_launch(launcher, args, overrides):
 
 
 def test_bash_syntax():
-    subprocess.run(["bash", "-n", str(ROOT / "scripts/run_mbpp_experiments.sh")], check=True)
+    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh", "run_experiments.sh"):
+        subprocess.run(["bash", "-n", str(ROOT / "scripts" / name)], check=True)

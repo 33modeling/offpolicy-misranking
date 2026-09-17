@@ -24,6 +24,11 @@ case "$MODE" in run|stop|status|progress|why) ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
+if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+  source scripts/_mbpp_experiments.sh
+  mbpp_queue_init
+  export SWITCH_ROOT="${MBPP_ROOTS[0]}" EXPERIMENTS_SKIP_MOPPS=1
+fi
 # OUT_ROOT is the per-experiment marker the inner launchers, workers and stop
 # sweeps use to recognise "the run"; this launcher and its keepalive must not
 # carry it (run_selection_switch.sh exports it before handing over to us).
@@ -92,6 +97,13 @@ fi
 # EXPERIMENTS_INNER replaces bash for the inner launchers in tests only.
 inner() {
   env -u EXPERIMENTS_DETACHED -u OUT_ROOT SWITCH_FOREGROUND=1 SWITCH_HOLD_SECONDS=0 SWITCH_KEEPALIVE=0 "${EXPERIMENTS_INNER:-bash}" "$@"
+}
+run_switch_root() {
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+    mbpp_queue_run "$1"
+  else
+    SWITCH_ROOT=$1 inner scripts/run_selection_switch.sh
+  fi
 }
 # --- node cleanup: the node is ours; nothing of an earlier run may hold it ---
 ROOT_PROCESS_PATTERN='run_selection_switch\.sh|run_mopps_comparison\.sh|selection_switch_runtime\.py|selection_switch_gpu\.py|mopps_comparison_gpu\.py|torch\.distributed\.run|train_[a-z_]*grpo\.py|_gpu_keepalive\.py|selection_nccl_preflight\.py|selection_switch_score\.py|light_selection_gate_gpu\.py'
@@ -221,10 +233,17 @@ recover_root() {
 # experiments, so a start or a stop sweeps them all, not just the two of this launcher.
 all_roots() {
   local root
-  for root in "$WORK"/runs/*/; do
-    root=${root%/}
-    if [ -f "$root/switch.json" ] || [ -f "$root/mopps.json" ]; then echo "$root"; fi
-  done
+  {
+    for root in "$WORK"/runs/*/; do
+      root=${root%/}
+      if [ -f "$root/switch.json" ] || [ -f "$root/mopps.json" ]; then echo "$root"; fi
+    done
+    if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+      for root in "${MBPP_ROOTS[@]}"; do
+        [ ! -f "$root/switch.json" ] || echo "$root"
+      done
+    fi
+  } | sort -u
 }
 # Switch roots this node also works on when its own root has nothing claimable:
 # the shared queue is one pool of nodes, so a node idles only when every prepared
@@ -243,28 +262,42 @@ root_rank() {
 }
 sibling_roots() {
   local root
-  for root in $(all_roots); do
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+    # Planned roots prevent early exit and can become ready on another node.
+    for root in "${MBPP_ROOTS[@]}"; do
+      [ "$root" = "$SWITCH_ROOT" ] || printf '%s\n' "$root"
+    done
+    return 0
+  fi
+  while IFS= read -r root; do
     [ -f "$root/switch.json" ] || continue
     [ "$root" != "$SWITCH_ROOT" ] || continue
     printf '%s %s\n' "$(root_rank "$root")" "$root"
-  done | sort -k1,1n -k2,2 | cut -d' ' -f2-
+  done < <(all_roots) | sort -k1,1n -k2,2 | cut -d' ' -f2-
 }
 # With sibling help on, the node stays until the sibling roots are complete too.
 siblings_complete() {
   local root
   [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] || return 0
-  for root in $(sibling_roots); do
+  while IFS= read -r root; do
     root_complete "$root" || return 1
-  done
+  done < <(sibling_roots)
   return 0
 }
 # Any branch claimable right now in a root this node serves (own root first, then the
 # siblings it helps): READY in the status snapshot, which reads receipts only.
 claimable_work() {
-  local root roots
-  roots=$SWITCH_ROOT
-  [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] && roots="$roots $(sibling_roots | tr '\n' ' ')"
-  for root in $roots; do
+  local root
+  local roots=("$SWITCH_ROOT") siblings=()
+  if [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ]; then
+    mapfile -t siblings < <(sibling_roots)
+    roots+=("${siblings[@]}")
+  fi
+  for root in "${roots[@]}"; do
+    if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && mbpp_queue_preparable "$root"; then
+      basename "$root"
+      return 0
+    fi
     [ -f "$root/switch.json" ] || continue
     if CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$root" --json 2>/dev/null \
         | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if any(t.get("status")=="READY" for t in d.get("tasks",[])) else 1)'; then
@@ -278,15 +311,18 @@ root_complete() {
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$1" --json 2>/dev/null \
     | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("development_done")==18 and d.get("test_done")==30 else 1)'
 }
+experiments_complete() {
+  switch_complete && { [ "${EXPERIMENTS_SKIP_MOPPS:-0}" = 1 ] || [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; } && siblings_complete
+}
 sweep_all_roots() {
   local root
-  for root in $(all_roots); do
+  while IFS= read -r root; do
     if [ -f "$root/switch.json" ]; then
       SWITCH_ROOT=$root EXPERIMENTS_STOPPING=1 bash scripts/run_selection_switch.sh stop 2>&1 | sed "s|^|[sweep $(basename "$root")] |" || true
     else
       MOPPS_ROOT=$root EXPERIMENTS_STOPPING=1 bash scripts/run_mopps_comparison.sh stop 2>&1 | sed "s|^|[sweep $(basename "$root")] |" || true
     fi
-  done
+  done < <(all_roots)
 }
 # Open cost events of dead attempts block their branch's retry. Ones this host
 # started are dead once the node is swept (closed at once); ones a killed node
@@ -296,12 +332,12 @@ sweep_all_roots() {
 STALE_CLOSE=${EXPERIMENTS_STALE_CLOSE_SECONDS:-180}
 close_dead_events() {
   local root
-  for root in $(all_roots); do
+  while IFS= read -r root; do
     CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$root" --stale --min-age 0 --this-host --brief 2>&1 \
       | grep -v ' 0 stale event(s) closed, 0 still open$' | sed "s|^|[sweep $(basename "$root")] |" || true
     CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$root" --stale --min-age "$STALE_CLOSE" --brief 2>&1 \
       | grep -v ' 0 stale event(s) closed, 0 still open$' | sed "s|^|[sweep $(basename "$root")] |" || true
-  done
+  done < <(all_roots)
 }
 full_clean() {
   sweep_all_roots
@@ -389,7 +425,8 @@ fi
 # 1500) instead of running to its allocation limit, and this host is recorded
 # under runs/experiments/node-faults so no launcher does GPU work here again.
 if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --host "$EXPERIMENTS_NODE_ID" --roots "$SWITCH_ROOT" "$MOPPS_ROOT" $(sibling_roots | tr '\n' ' ') \
+  mapfile -t WATCH_ROOTS < <(sibling_roots)
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --host "$EXPERIMENTS_NODE_ID" --roots "$SWITCH_ROOT" "$MOPPS_ROOT" "${WATCH_ROOTS[@]}" \
     --faults-dir "$WORK/runs/experiments/node-faults" --stall-seconds "${EXPERIMENTS_STALL_SECONDS:-1500}" \
     > "$LOG_DIR/stall.$HOST.log" 2>&1 7>&- 8>&- &
   WATCHDOG_PID=$!
@@ -423,11 +460,11 @@ while :; do
   need_clean=0
   recover_root "$SWITCH_ROOT"
   recover_root "$MOPPS_ROOT"
-  for root in $(sibling_roots); do recover_root "$root"; done
+  while IFS= read -r root; do recover_root "$root"; done < <(sibling_roots)
   rc_switch=0 why_switch=skipped
   if [ "${EXPERIMENTS_SKIP_SWITCH:-0}" != 1 ] && ! switch_complete; then
     echo "[pass $pass] selection switch"
-    inner scripts/run_selection_switch.sh || rc_switch=$?
+    run_switch_root "$SWITCH_ROOT" || rc_switch=$?
     case "$rc_switch" in 130|143) exit "$rc_switch" ;; esac
     why_switch=$rc_switch
     echo "[pass $pass] selection switch ended: rc=$rc_switch, $(rc_reason "$rc_switch")"
@@ -437,19 +474,19 @@ while :; do
   rc_own=$rc_switch
   helped=""
   if [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ]; then
-    for root in $(sibling_roots); do
+    while IFS= read -r root; do
       root_complete "$root" && continue
       name=$(basename "$root")
       echo "[pass $pass] sibling $name"
       rc_sib=0
-      SWITCH_ROOT=$root SWITCH_ONLY_SEEDS= SWITCH_ONLY_ARMS= inner scripts/run_selection_switch.sh || rc_sib=$?
+      SWITCH_ONLY_SEEDS= SWITCH_ONLY_ARMS= run_switch_root "$root" || rc_sib=$?
       case "$rc_sib" in 130|143) exit "$rc_sib" ;; esac
       echo "[pass $pass] sibling $name ended: rc=$rc_sib, $(rc_reason "$rc_sib")"
       helped="$helped | $name rc=$rc_sib $(rc_reason "$rc_sib")"
-      if [ "$rc_sib" -eq 75 ]; then need_clean=1; break; fi
-      if [ "$rc_sib" -eq 78 ] || [ "$rc_sib" -eq 79 ]; then break; fi
+      if [ "$rc_sib" -eq 75 ]; then rc_switch=$rc_sib; need_clean=1; break; fi
+      if [ "$rc_sib" -eq 78 ] || [ "$rc_sib" -eq 79 ]; then rc_switch=$rc_sib; break; fi
       [ "$rc_sib" -eq 0 ] && rc_switch=0
-    done
+    done < <(sibling_roots)
   fi
   rc_mopps=0 why_mopps=skipped
   if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ] && [ -f "$MOPPS_ROOT/mopps.json" ] && ! mopps_complete; then
@@ -461,7 +498,7 @@ while :; do
   fi
   reason="switch rc=$rc_own $(rc_reason "$why_switch")$helped | mopps rc=$rc_mopps $(rc_reason "$why_mopps")"
   if [ "$rc_switch" -eq 75 ] || [ "$rc_mopps" -eq 75 ]; then need_clean=1; fi
-  if switch_complete && { [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; } && siblings_complete; then
+  if experiments_complete; then
     echo '[done] every experiment this node can work on is complete; releasing the node'
     exit 0
   fi
@@ -489,9 +526,13 @@ while :; do
     # A hold is not a timer: the moment a branch becomes claimable (a waiver, a fitted
     # gate, a stale event closed elsewhere), the node goes back to work. A cooling-down
     # or blocked node cannot take GPU work, so it waits the hold out.
-    if [ "$since_poll" -ge "$poll" ] && [ "$remaining" -gt 0 ] && [ "$rc_own" -ne 79 ] && [ "$rc_own" -ne 78 ]; then
+    if [ "$since_poll" -ge "$poll" ] && [ "$remaining" -gt 0 ]; then
       since_poll=0
-      if found=$(claimable_work); then
+      if experiments_complete; then
+        echo '[done] peers completed every experiment; releasing the node during hold'
+        exit 0
+      fi
+      if [ "$rc_switch" -ne 79 ] && [ "$rc_switch" -ne 78 ] && found=$(claimable_work); then
         echo "[hold] claimable work in $found; starting the next pass now"
         break
       fi

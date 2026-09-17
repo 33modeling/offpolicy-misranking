@@ -6,11 +6,12 @@ entered through the canonical runner.
 
 ## MBPP Selection And Switching
 
-`bash scripts/run_mbpp_experiments.sh` runs the MBPP fresh, learning-quality,
-and cached-difficulty switch suites using the original training code. The
-variants share MBPP prefixes and independent evaluation questions. `plan`,
-`check`, `status`, `results`, and `why` are available; no MATH run is changed.
-See the [inputs, execution order, and evaluation split](docs/MBPP_SELECTION_RUN.md).
+Run `bash scripts/run_mbpp_experiments.sh` on every allocated node, including
+replacements. The MBPP fresh, learning-quality, and cached-difficulty suites
+share the original node controller's stop/restart, recovery, watchdog, and
+lease-based queue. The variants share MBPP prefixes and evaluation questions.
+`stop`, `plan`, `check`, `status`, `progress`, `results`, and `why` are available.
+See the [node lifecycle, inputs, and evaluation split](docs/MBPP_SELECTION_RUN.md).
 
 ## Fixed-Checkpoint Gate
 
