@@ -387,7 +387,8 @@ while :; do
       case "$rc_sib" in 130|143) exit "$rc_sib" ;; esac
       echo "[pass $pass] sibling $name ended: rc=$rc_sib, $(rc_reason "$rc_sib")"
       helped="$helped | $name rc=$rc_sib $(rc_reason "$rc_sib")"
-      if [ "$rc_sib" -eq 75 ] || [ "$rc_sib" -eq 78 ]; then break; fi
+      if [ "$rc_sib" -eq 75 ]; then need_clean=1; break; fi
+      if [ "$rc_sib" -eq 78 ]; then break; fi
       [ "$rc_sib" -eq 0 ] && rc_switch=0
     done
   fi

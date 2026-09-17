@@ -196,3 +196,24 @@ def test_waiver_stops_after_max_rounds(tmp_path):
     message = waive.waive(tmp_path, directory, apply=True)
     assert f"{waive.MAX_ROUNDS} waiver rounds already" in message and (directory / "failure.json").exists()
     assert base.spent(directory) > 29040
+
+
+def test_waiver_accepts_events_closed_after_their_owner_vanished(tmp_path):
+    """A node reclaimed mid-attempt: the stale closer charged the event (exit 130, recovery evidence)."""
+    core.atomic_json(tmp_path / "switch.json", {"schema": "x"})
+    directory = branch(tmp_path, "random_reduced", fault=False, exhausted=False)
+    (directory / "policy/checkpoint-10").mkdir(parents=True)
+    (directory / "policy/checkpoint-10/adapter_model.safetensors").write_bytes(b"x")
+    rows = [json.loads(l) for l in (directory / "cost.jsonl").read_text().splitlines()]
+    rows = [r for r in rows if r["event_id"] != "train1"]
+    (directory / "cost.jsonl").write_text("")
+    for r in rows:
+        base.journal(directory / "cost.jsonl", r)
+    base.journal(directory / "cost.jsonl", event("train1", "train", "started"))
+    closed = event("train1", "train", "finished", seconds=9000.0, exit_code=130)
+    closed["recovery"] = {"kind": "stale_owner_last_evidence", "silent_seconds": 48167.0}
+    base.journal(directory / "cost.jsonl", closed)
+    core.atomic_json(directory / "failure.json", {"error": waive.EXHAUSTED, "host": "h", "time": 1.0})
+    _, found, unattributed = waive.stalled_attempts(directory)
+    assert unattributed == [] and found[0]["fault"]["kind"] == "stale-closed"
+    assert "waived" in waive.waive(tmp_path, directory, apply=True) and base.spent(directory) < 100

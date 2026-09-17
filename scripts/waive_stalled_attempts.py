@@ -102,6 +102,10 @@ def evidence(directory, fin, *, stalls, progressed):
     code = fin.get("exit_code")
     if isinstance(code, int) and code < 0:
         return {"kind": "killed", "signal": -code}
+    recovery = fin.get("recovery")
+    if isinstance(recovery, dict) and recovery.get("kind"):
+        # Closed from evidence after its owner vanished (a reclaimed or dead node), not by the meter.
+        return {"kind": "stale-closed", "recovery": recovery.get("kind"), "silent_seconds": recovery.get("silent_seconds")}
     if not progressed:
         return {"kind": "no-progress", "note": "the branch never reached a checkpoint, so the attempt bought no training"}
     return None
