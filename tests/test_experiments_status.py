@@ -131,3 +131,31 @@ def test_why_from_any_launcher_writes_one_report_for_both_experiments(tmp_path):
         assert "incomplete" not in report
         assert report.count("[pass 1] selection switch") >= 2
     assert {path: path.read_bytes() for path in before} == before
+
+
+def test_progress_screen_lists_every_root_with_running_updates_and_failures(tmp_path):
+    from test_selection_switch_status import completed_prefix, point, prefix, prepared, running
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("experiments_progress", ROOT / "scripts/experiments_progress.py")
+    progress = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(progress)
+    work = tmp_path / "work"
+    now = time.time()
+    switch_root, mopps_root = work / "runs/selection-switch-v1", work / "runs/mopps-comparison-v1"
+    four_nodes(switch_root, now)
+    mopps_fixture(mopps_root, switch_root, now)
+    difficulty = work / "runs/selection-switch-difficulty-v1"
+    prepared(difficulty)
+    completed_prefix(difficulty, 1, 50)
+    running(point(difficulty, 1, 50) / "random_reduced", "run1-wss-3-gab12", now=now, phase="train")
+    (point(difficulty, 1, 50) / "random_reduced/policy").mkdir(parents=True)
+    (point(difficulty, 1, 50) / "random_reduced/policy/grpo_stats.jsonl").write_text('{"step": 87}\n')
+    core.atomic_json(point(difficulty, 1, 50) / "selection_reduced/failure.json", {"error": "train worker failed: [1]", "time": now})
+    text = progress.render(work, width=80, now=now)
+    lines = text.splitlines()
+    assert lines[0].startswith("PROGRESS  ") and all(len(line) <= 80 for line in lines)
+    assert any(line.startswith("NODES TRAINING NOW  ") for line in lines)
+    assert text.index("\nv1:") < text.index("\ndifficulty:") < text.index("\nmopps:")
+    assert "  RUN  s1/t50 random_reduced    train       37u" in text and "run1-wss-3-gab12" in text
+    assert "  FAIL s1/t50 selection_reduced train worker failed" in text
+    assert "difficulty: DONE 0/" in text and "gate WAIT (dev 0/18)" in text

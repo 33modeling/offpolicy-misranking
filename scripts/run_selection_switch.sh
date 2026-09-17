@@ -5,8 +5,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|smoke|prepare|status|fit|summarize|export|why|live|cpu|recover-cost|waive|reset-waived|results|errors|check-code|stop) ;;
-  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|export|why|live|cpu|prepare|fit|summarize|recover-cost|waive|reset-waived|results|errors|check-code]'; exit 2 ;;
+case "$MODE" in run|smoke|prepare|status|progress|fit|summarize|export|why|live|cpu|recover-cost|waive|reset-waived|results|errors|check-code|stop) ;;
+  *) echo 'usage: bash scripts/run_selection_switch.sh [run|smoke|stop|status|progress|export|why|live|cpu|prepare|fit|summarize|recover-cost|waive|reset-waived|results|errors|check-code]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -27,6 +27,10 @@ fi
 for arg in "$@"; do
   case "$arg" in --root|--root=*) echo '[abort] use SWITCH_ROOT for the output directory'; exit 2 ;; esac
 done
+if [ "$MODE" = progress ]; then
+  export CUDA_VISIBLE_DEVICES=""
+  exec env -u OUT_ROOT bash scripts/run_experiments.sh progress "$@"
+fi
 if [ "$MODE" = status ]; then
   export CUDA_VISIBLE_DEVICES=""
   # Both experiments on one screen; EXPERIMENTS_COMBINED=0 shows only this one.

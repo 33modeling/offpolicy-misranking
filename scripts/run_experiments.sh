@@ -19,8 +19,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|stop|status|why) ;;
-  *) echo 'usage: bash scripts/run_experiments.sh [run|stop|status|why]'; exit 2 ;;
+case "$MODE" in run|stop|status|progress|why) ;;
+  *) echo 'usage: bash scripts/run_experiments.sh [run|stop|status|progress|why]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -47,6 +47,12 @@ launcher_pid_alive() {
   pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
   [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
+if [ "$MODE" = progress ]; then
+  # One phone-width screen: per experiment root, branch counts, each running
+  # branch with its updates so far and node, each failed branch with why. Read-only.
+  export CUDA_VISIBLE_DEVICES=""
+  exec "$PY" scripts/experiments_progress.py --work "$WORK" "$@"
+fi
 if [ "$MODE" = status ]; then
   # One screen for both experiments (switch first, MoPPS second, this node's
   # GPUs once). Accepts --all, --json and --watch [seconds]. Read-only.

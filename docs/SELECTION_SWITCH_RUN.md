@@ -159,6 +159,12 @@ a second strike blocks the host (78) until an operator restart (`run`) clears
 the record; and every failed attempt is waived at the next pass so
 the branch reruns with its allocation intact.
 
+`progress` (from any launcher, no GPU needed) prints one phone-width screen
+for every prepared root: branch counts, each running branch with its updates
+so far, elapsed time and node, and each failed or stale branch with its
+reason. It reads only receipts and progress records, so it does not depend
+on node names or console logs.
+
 Node identity: two containers of one cluster job can share a hostname, which
 merged them in the status, made `run`/`stop` read each other's pid file and
 let one container's start close the other's live cost events as dead. The
