@@ -159,3 +159,8 @@ def test_progress_screen_lists_every_root_with_running_updates_and_failures(tmp_
     assert "  RUN  s1/t50 random_reduced    train       37u" in text and "run1-wss-3-gab12" in text
     assert "  FAIL s1/t50 selection_reduced train worker failed" in text
     assert "difficulty: DONE 0/" in text and "gate WAIT (dev 0/18)" in text
+    # The node list at the bottom names every node: state, identity, phase, and what it does.
+    assert "\nNODES  " in text and text.index("\nNODES  ") > text.index("\nmopps:")
+    node_lines = text[text.index("\nNODES  "):].splitlines()[1:]
+    assert any(l.startswith("  RUN    run1-wss-3-gab12") and "s1/t50 difficulty: random_red" in l for l in node_lines), node_lines
+    assert any(l.startswith("  RUN    node-1") for l in node_lines)

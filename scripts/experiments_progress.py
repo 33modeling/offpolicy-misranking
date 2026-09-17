@@ -106,7 +106,33 @@ def render(work, *, width=80, now=None):
     if not switch and not mopps:
         lines += ["", "no prepared experiment root under " + str(Path(work) / "runs")]
     lines.insert(2, f"NODES TRAINING NOW  {len(hosts)}  (distinct node identities with a running task)")
+    lines += ["", *render_nodes(switch, mopps, width=width, now=now)]
     return "\n".join(lines)
+
+
+def render_nodes(switch, mopps, *, width, now):
+    """Every node with launcher evidence or a running task: state, task, phase, silence."""
+    tasks = []
+    for root, module in [(r, switch_status) for r in switch] + [(r, mopps_status) for r in mopps]:
+        try:
+            data = module.snapshot(root, now=now)
+        except Exception:  # noqa: BLE001
+            continue
+        for task in data.get("tasks", []):
+            if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
+                tasks.append({**task, "arm": f"{label(root)}: {task.get('arm', '')}"})
+    anchor = switch[0] if switch else (mopps[0] if mopps else None)
+    if anchor is None:
+        return ["NODES  none"]
+    view = switch_status.node_view
+    nodes = view.listed(view.launcher_nodes(anchor, tasks, now=now))
+    lines = [f"NODES  {view.render_summary(nodes)[7:]}"]
+    order = {state: i for i, state in enumerate(view.STATE_ORDER)}
+    for item in sorted(nodes, key=lambda n: (order.get(n["state"], 99), n["host"])):
+        age = "" if item["last_age"] is None else f"{int(item['last_age'])//60}m"
+        what = item["task"] or ("between passes" if item["state"] == "HOLD" else item["reason"] or "")
+        lines.append(clip(f"  {item['state']:<6} {clip(item['host'], 24):<24} {clip(item['phase'] or '', 12):<12} {age:>4} {what}", width))
+    return lines
 
 
 def main():
