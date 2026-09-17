@@ -30,7 +30,7 @@ def environment(tmp_path, fake):
     return {**os.environ, "OM_WORK": str(work), "SWITCH_ROOT": str(switch_root), "MOPPS_ROOT": str(mopps_root),
             "SWITCH_PYTHON": sys.executable, "EXPERIMENTS_DETACHED": "1", "EXPERIMENTS_KEEPALIVE": "0", "EXPERIMENTS_WATCHDOG": "0",
             "EXPERIMENTS_HOLD_SECONDS": "1", "EXPERIMENTS_INNER": str(fake), "CUDA_VISIBLE_DEVICES": "",
-            "EXPERIMENTS_PULL": "0"}
+            "EXPERIMENTS_PULL": "0", "EXPERIMENTS_AUTO_PULL": "0"}
 
 
 def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
@@ -43,6 +43,9 @@ def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
     # Reparented to init so its death is reaped there, not left as a zombie of this test.
     old_pid = int(subprocess.check_output(["bash", "-c", "setsid sleep 300 >/dev/null 2>&1 & echo $!"], text=True).strip())
     (log_dir / f"launcher.{host}.pid").write_text(str(old_pid))
+    fault = Path(env["OM_WORK"]) / "runs/experiments/node-faults" / f"{os.uname().nodename}.json"
+    fault.parent.mkdir(parents=True)
+    fault.write_text('{"phase": "train", "strikes": 2}\n')
     process = subprocess.Popen(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
     lines, deadline = [], time.monotonic() + 90
@@ -60,6 +63,8 @@ def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
         assert f"[restart] host={host}: a node launcher is already running (pid {old_pid}); stopping it first" in out
         assert "[stop] host=" in out and "[pass 1]" in out
         assert subprocess.run(["kill", "-0", str(old_pid)], capture_output=True).returncode != 0
+        # The restart is the operator's second chance for this node: the fault record is cleared.
+        assert f"[fault-reset] host={host}: cleared the GPU-fault record" in out and not fault.exists()
     finally:
         if process.poll() is None:
             process.kill()
@@ -222,6 +227,19 @@ def test_recorded_gpu_fault_blocks_gpu_work_on_that_host(tmp_path):
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "run"], cwd=ROOT, env=inner,
                             capture_output=True, text=True, timeout=120)
     assert "[blocked] host=" in result.stdout + result.stderr, result.stdout + result.stderr
+    assert result.returncode == 78
+    # A first strike expires after EXPERIMENTS_FAULT_TTL_SECONDS: the probe decides again.
+    (faults / f"{os.uname().nodename}.json").write_text(json.dumps({"phase": "train", "time": time.time() - 4000, "strikes": 1}))
+    result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "run"], cwd=ROOT, env=inner,
+                            capture_output=True, text=True, timeout=120)
+    out = result.stdout + result.stderr
+    assert "[fault-expired] host=" in out and "[blocked] host=" not in out, out
+    assert result.returncode != 78, out
+    # A second strike blocks until an operator restart clears the record.
+    (faults / f"{os.uname().nodename}.json").write_text(json.dumps({"phase": "train", "time": time.time() - 4000, "strikes": 2}))
+    result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "run"], cwd=ROOT, env=inner,
+                            capture_output=True, text=True, timeout=120)
+    assert "[blocked] host=" in result.stdout + result.stderr and "strike 2" in result.stdout + result.stderr
     assert result.returncode == 78
 
 

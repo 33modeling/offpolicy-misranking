@@ -277,10 +277,37 @@ printf '[launcher-start] host=%s pid=%s mode=%s commit=%s utc=%s\n' "$HOST" "$$"
 trap 'rc=$?; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE" "$rc" "$(date -u +%FT%TZ)"' EXIT
 echo "[logs] $OUT_ROOT/logs/launcher.$HOST.log"
 # A host recorded with a GPU fault by the stall watchdog does no GPU work again in this job.
+# A host the stall watchdog recorded with a GPU fault does no GPU work while the
+# record is fresh (EXPERIMENTS_FAULT_TTL_SECONDS, default 1800) or after a second
+# strike; an operator restart (run_experiments.sh run) clears the record and the
+# admission probe decides again. A transient hang thus costs a node half an hour,
+# not the rest of the job.
 NODE_FAULT="$WORK/runs/experiments/node-faults/$(hostname).json"
 if [ -f "$NODE_FAULT" ]; then
-  echo "[blocked] host=$(hostname) was recorded with a GPU fault ($NODE_FAULT); refusing GPU work on this node (use another one)"
-  exit 78
+  fault_state=$(CUDA_VISIBLE_DEVICES="" "$PY" - "$NODE_FAULT" "${EXPERIMENTS_FAULT_TTL_SECONDS:-1800}" <<'PYEOF'
+import json, sys, time
+path, ttl = sys.argv[1], float(sys.argv[2])
+try:
+    record = json.load(open(path))
+except Exception:
+    record = {}
+strikes = int(record.get("strikes", 1) or 1)
+age = time.time() - float(record.get("time") or time.time())
+if strikes >= 2:
+    print(f"blocked strike {strikes}")
+elif age < ttl:
+    print(f"blocked {age:.0f}s ago (< {ttl:.0f}s)")
+else:
+    print(f"expired {age:.0f}s ago")
+PYEOF
+)
+  case "$fault_state" in
+    expired*)
+      echo "[fault-expired] host=$(hostname): GPU fault recorded $fault_state; re-admitting through the probe ($NODE_FAULT kept)" ;;
+    *)
+      echo "[blocked] host=$(hostname) was recorded with a GPU fault ($NODE_FAULT, $fault_state); refusing GPU work on this node (use another one, or restart it with run_experiments.sh run)"
+      exit 78 ;;
+  esac
 fi
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1

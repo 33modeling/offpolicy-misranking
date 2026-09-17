@@ -13,7 +13,7 @@
 #                                            (also what either launcher's why writes)
 #
 # EXPERIMENTS_HOLD_SECONDS (default 300) is the pause between passes,
-# EXPERIMENTS_AUTO_PULL=1 runs 'git pull --ff-only' before each pass.
+# EXPERIMENTS_AUTO_PULL=0 stops the per-pass 'git pull --ff-only' and in-place restart on new code.
 set -euo pipefail
 LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
@@ -199,7 +199,7 @@ recover_root() {
   # infrastructure loss, not selector cost: return the allocation, discard the
   # attempt, and let the queue rerun it (waivers/ keeps the receipt).
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/waive_stalled_attempts.py --root "$1" --apply 2>&1 \
-    | grep -v 'no branch failed with an exhausted allocation$' | sed 's/^/[auto-waive] /' || true
+    | grep -v 'no failed branch to waive$' | sed 's/^/[auto-waive] /' || true
 }
 # Every experiment root on the shared volume: nodes come and go and run several
 # experiments, so a start or a stop sweeps them all, not just the two of this launcher.
@@ -294,6 +294,12 @@ if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
     echo "[restart] host=$HOST: a node launcher is already running (pid $(cat "$PID_FILE")); stopping it first"
     stop_node
   fi
+  # An operator restart is a deliberate second chance for this node: clear the
+  # watchdog's GPU-fault record and let the admission probe decide.
+  fault_record="$WORK/runs/experiments/node-faults/$(hostname).json"
+  if [ -f "$fault_record" ]; then
+    rm -f "$fault_record" && echo "[fault-reset] host=$HOST: cleared the GPU-fault record ($fault_record); the admission probe decides again"
+  fi
   if [ "${EXPERIMENTS_PULL:-1}" != 0 ]; then
     if git pull -q --ff-only 2>/dev/null; then
       echo "[pull] checkout at $(git rev-parse --short HEAD)"
@@ -354,8 +360,18 @@ blocked_passes=0
 need_clean=1
 while :; do
   pass=$((pass+1))
-  if [ "${EXPERIMENTS_AUTO_PULL:-0}" = 1 ]; then
-    git pull -q --ff-only 2>&1 | tail -1 || true
+  # Between passes nothing of this node runs, so pull the shared checkout and, if
+  # it moved, restart this launcher in place (same pid, same pid file) so fixes
+  # reach every node without anyone typing a command. EXPERIMENTS_AUTO_PULL=0 disables it.
+  if [ "${EXPERIMENTS_AUTO_PULL:-1}" != 0 ]; then
+    before=$(git rev-parse HEAD 2>/dev/null || true)
+    git pull -q --ff-only >/dev/null 2>&1 || true
+    after=$(git rev-parse HEAD 2>/dev/null || true)
+    if [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; then
+      echo "[pull] checkout moved ${before:0:7} -> ${after:0:7}; restarting this launcher with the new code"
+      stop_keepalive
+      exec env EXPERIMENTS_DETACHED=1 bash "$LAUNCHER_SELF" run
+    fi
   fi
   # Before the first pass, and again whenever a pass found the node busy.
   if [ "$need_clean" -eq 1 ] && [ "${EXPERIMENTS_CLEAN:-1}" != 0 ]; then

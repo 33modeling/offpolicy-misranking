@@ -112,8 +112,12 @@ def scan(roots, faults_dir, *, host=None, stall_seconds=1500., phases=DEFAULT_PH
             (directory / "stalled.json").write_text(json.dumps(record, indent=2) + "\n")
             faults_dir = Path(faults_dir)
             faults_dir.mkdir(parents=True, exist_ok=True)
-            (faults_dir / f"{host}.json").write_text(json.dumps(record, indent=2) + "\n")
-            print(f"[stall] host {host} recorded under {faults_dir}; launchers refuse GPU work here from now on", flush=True)
+            fault_path = faults_dir / f"{host}.json"
+            previous = read_json(fault_path) or {}
+            record["strikes"] = int(previous.get("strikes", 0) or 0) + 1
+            fault_path.write_text(json.dumps(record, indent=2) + "\n")
+            print(f"[stall] host {host} recorded under {faults_dir} (strike {record['strikes']}); launchers refuse GPU "
+                  "work here until the record expires or an operator restart clears it", flush=True)
         stopped.append(record)
     return stopped
 

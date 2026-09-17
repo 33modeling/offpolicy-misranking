@@ -150,17 +150,22 @@ def rounds_waived(directory):
 
 
 def candidates(root):
-    """Branch directories whose recorded failure is an exhausted allocation."""
+    """Branch directories with a recorded failure and no published result.
+
+    Every failed attempt is examined at once, not only after the branch's
+    allocation is exhausted: an attempt lost to a faulty node must not eat into
+    the allocation of the retry, or a branch that meets three or four such
+    nodes ends exhausted before it ever trains.
+    """
     out = []
     for failure in sorted(root.glob("states/**/failure.json")):
-        if "discarded" in failure.parts:
+        if "discarded" in failure.parts or (failure.parent / "result.json").exists():
             continue
         try:
-            error = str(core.read(failure).get("error", ""))
+            core.read(failure)
         except (OSError, ValueError):
             continue
-        if error.startswith(EXHAUSTED) or TIMEOUT.match(error):
-            out.append(failure.parent)
+        out.append(failure.parent)
     return out
 
 
@@ -174,7 +179,7 @@ def waive(root, directory, *, apply):
                 + ", ".join(f"{u['phase']} {u['event_id'][:8]} exit {u['exit_code']}" for u in unattributed)
                 + "; needs an operator")
     if not found:
-        return f"[waive] {rel}: skipped, no failed attempt with fault evidence (log signature, stall watchdog, signal, or no checkpoint)"
+        return f"[waive] {rel}: skipped, no failed attempt with fault evidence (log signature, stall watchdog, signal, stale close, or no checkpoint); the queue retries it as is"
     rounds = rounds_waived(directory)
     if rounds >= MAX_ROUNDS:
         return f"[waive] {rel}: skipped, {rounds} waiver rounds already; the branch keeps failing, needs an operator"
@@ -276,7 +281,7 @@ def main():
         return 0
     dirs = candidates(root)
     if not dirs:
-        print(f"[waive] {root.name}: no branch failed with an exhausted allocation")
+        print(f"[waive] {root.name}: no failed branch to waive")
         return 0
     for directory in dirs:
         print(waive(root, directory, apply=args.apply), flush=True)

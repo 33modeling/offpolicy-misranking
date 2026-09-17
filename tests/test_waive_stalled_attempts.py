@@ -217,3 +217,14 @@ def test_waiver_accepts_events_closed_after_their_owner_vanished(tmp_path):
     _, found, unattributed = waive.stalled_attempts(directory)
     assert unattributed == [] and found[0]["fault"]["kind"] == "stale-closed"
     assert "waived" in waive.waive(tmp_path, directory, apply=True) and base.spent(directory) < 100
+
+
+def test_every_failed_attempt_is_waived_at_once_not_only_after_exhaustion(tmp_path):
+    core.atomic_json(tmp_path / "switch.json", {"schema": "x"})
+    early = branch(tmp_path, "random_reduced", exhausted=False)
+    core.atomic_json(early / "failure.json", {"error": "train worker failed: [None, 1, None, None]", "host": "h", "time": 1.0})
+    published = branch(tmp_path, "gated", exhausted=False, result=True)
+    core.atomic_json(published / "failure.json", {"error": "stale", "host": "h", "time": 1.0})
+    assert waive.candidates(tmp_path) == [early]
+    assert "waived" in waive.waive(tmp_path, early, apply=True)
+    assert not (early / "failure.json").exists() and base.spent(early) < 100

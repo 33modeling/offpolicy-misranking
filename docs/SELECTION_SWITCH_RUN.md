@@ -147,6 +147,15 @@ disjoint from every run's candidate and validation prompts (all remaining
 ones if fewer). Contracts record dataset `mbpp` and verifier
 `code_execution`; MATH roots are published through the unchanged MATH path.
 
+A node launcher is started once and runs until every experiment is complete:
+before each pass it pulls the shared checkout and, when the checkout moved,
+restarts itself in place with the new code (same pid); a host the stall
+watchdog recorded with a GPU fault is refused GPU work for
+`EXPERIMENTS_FAULT_TTL_SECONDS` (default 1800) and then re-admitted through
+the probe, blocked for good only after a second strike, which an operator
+restart (`run`) clears; and every failed attempt is waived at the next pass so
+the branch reruns with its allocation intact.
+
 A node launcher works its own root first and, when that root has nothing
 claimable (or only failed branches), takes the other prepared switch roots'
 work in priority order (v1, difficulty, hard, quality, long, then the rest by
@@ -160,12 +169,12 @@ the next claim).
 `waive` (from either launcher, and automatically before every node pass)
 returns the allocation of attempts lost to infrastructure: a rank that dies
 with a CUDA fault leaves the trainer hung until the stall watchdog or the
-phase's allocation limit stops it, the minutes are charged, and after a few
-such nodes every retry ends with "branch allocation exhausted before a valid
-checkpoint" (or "train exceeded Ns allocation limit" when a sliver is left).
-The waiver moves those attempts' ledger lines to `cost-waived.jsonl`, writes a
-receipt under `waivers/` with the evidence, and removes `failure.json` so the
-next pass reruns the branch. Evidence is a CUDA/NCCL fault line in the phase
+phase's allocation limit stops it, and the minutes are charged. Every failed
+attempt is waived as soon as the next pass sees its `failure.json`, so a
+branch that meets several faulty nodes never reaches "branch allocation
+exhausted before a valid checkpoint". The waiver moves those attempts' ledger
+lines to `cost-waived.jsonl`, writes a receipt under `waivers/` with the
+evidence, and removes `failure.json` so the next pass reruns the branch. Evidence is a CUDA/NCCL fault line in the phase
 log, a stall the watchdog stopped (`stalled.json`), a signal kill, or a branch
 that never reached a checkpoint (the attempts bought no training). It also
 moves the attempts' `policy/`, `evaluation/`, progress and result files to
