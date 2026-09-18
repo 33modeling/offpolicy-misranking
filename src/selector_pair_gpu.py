@@ -7,12 +7,14 @@ evaluation, atomic publication, and failed-attempt ledgers remain unchanged.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import io
 import json
 import os
 from pathlib import Path
 import statistics
+import sys
 import time
 from types import SimpleNamespace
 
@@ -29,12 +31,68 @@ EXTRA_CODE = ("src/selector_pair.py", "src/selector_pair_gpu.py", TRAINER,
 BOOTSTRAP_SCHEMA = "offpolicy-selector-pair/setup-v1"
 CONFIG_KEYS = ("matrix", "prefix_source", "target_reward", "budget_gpu_seconds", "curve_points",
                "eval_k", "dataset", "gpu_type", "eval_timeout")
-# c78ca17: only startup/CLI handling changes in this patch. Preserve existing
-# manifests, protocol IDs, labels and decisions, and reject any scientific change.
+# Reviewed operational predecessors only. Preserve manifests, protocol IDs,
+# labels and decisions; CPU scheduling changes get a separate runtime receipt.
 PRE_BOOTSTRAP_CODE = "3ad11e06bc7670012c91898b6d4e09802eab195422f4a62919ffaf4e95725f9b"
 PRE_DEFAULTS_CODE = "b589d47572403fe0c217ac3e2f925e69906db54822f1f29c6dca9dd1fba3b98b"
+PRE_RESOURCES_CODE = "d5d354a91ec95ae5d941c619a5a50da10e1606072a36dbe06e83d974aed41ec5"
 STARTUP_FILES = {"src/selector_pair_gpu.py", "scripts/run_selector_pair.sh"}
 RUN_DEFAULTS = {"target_reward": .35, "budget_gpu_seconds": 87120.}
+CPU_ENV = {**dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+    "OPENBLAS_DEFAULT_NUM_THREADS", "GOTO_NUM_THREADS", "BLIS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS", "NUMEXPR_MAX_THREADS", "OMP_THREAD_LIMIT", "RAYON_NUM_THREADS"), "1"),
+    "TOKENIZERS_PARALLELISM": "false"}
+
+
+def configure_cpu_runtime():
+    # Also cover direct Python invocation, before importing torch/numpy/tokenizers.
+    # Do not change GPU concurrency, generation batches, samples or seeds.
+    os.environ.update(CPU_ENV)
+
+
+def resource_diagnostics():
+    """Best-effort, read-only limits; never dump the user's full environment."""
+    import resource
+    value = {"cpu_environment": {key: os.environ.get(key) for key in CPU_ENV},
+             "max_user_processes": resource.getrlimit(resource.RLIMIT_NPROC)}
+    try:
+        value["controller_threads"] = next(line.split(":", 1)[1].strip()
+            for line in Path("/proc/self/status").read_text().splitlines() if line.startswith("Threads:"))
+    except (OSError, StopIteration):
+        pass
+    # Common cgroup v2 and v1 layouts, including namespace-rooted containers.
+    roots = [Path("/sys/fs/cgroup"), Path("/sys/fs/cgroup/pids")]
+    try:
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            _, controllers, relative = line.split(":", 2)
+            if not controllers or "pids" in controllers.split(","):
+                mount = Path("/sys/fs/cgroup") / ("pids" if controllers else "")
+                candidate = (mount / relative.lstrip("/")).resolve()
+                if candidate.is_relative_to(mount):
+                    roots.extend([candidate, *[p for p in candidate.parents if p.is_relative_to(mount)]])
+    except (OSError, ValueError):
+        pass
+    value["pids_limits"] = {}
+    for root in dict.fromkeys(roots):
+        try:
+            value["pids_limits"][str(root)] = {
+                name: (root / f"pids.{name}").read_text().strip() for name in ("current", "max")}
+        except OSError:
+            pass
+    print("[pair-resources] " + json.dumps(value, sort_keys=True), file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def pair_lease(path):
+    # Catch acquisition only: EAGAIN from a subprocess inside the lease is not
+    # evidence of lock contention and must retain its original traceback.
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(base.lease(path))
+        except BlockingIOError as exc:
+            raise ValueError(f"pair lock busy: {path}; another controller/worker holds it. "
+                             "Do not delete the lock or reset results.") from exc
+        yield
 
 
 def code_hashes():
@@ -44,32 +102,48 @@ def code_hashes():
 def compatible_code(recorded):
     current = code_hashes()
     return recorded == current or (
-        isinstance(recorded, dict) and core.fingerprint(recorded) in {PRE_BOOTSTRAP_CODE, PRE_DEFAULTS_CODE}
+        isinstance(recorded, dict) and core.fingerprint(recorded) in {
+            PRE_BOOTSTRAP_CODE, PRE_DEFAULTS_CODE, PRE_RESOURCES_CODE}
         and set(recorded) == set(current)
         and all(recorded[name] == value for name, value in current.items() if name not in STARTUP_FILES))
 
 
 def bind_startup_runtime(root, recorded):
     if recorded != code_hashes():
-        # Pin the first reviewed upgrade too. Later edits to these entry points
-        # must not acquire an unlimited exemption on a predecessor's run.
+        # Preserve and validate the exact historical upgrade chain. The resource
+        # patch has its own pinned receipt, never rewrites a scientific manifest,
+        # and does not grant future entrypoint edits an unlimited exemption.
         path = root / "startup-runtime.json"
         receipt = {
             "schema": "offpolicy-selector-pair/startup-runtime-v1",
-            "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+            "frozen_code_hashes": recorded,
             "change": "setup placeholder, actionable first launch and interrupted prepare recovery only"}
+        prior = {}
         if path.exists():
             previous = core.read(path)
             runtime = previous.get("runtime_code_hashes", {})
-            if (core.fingerprint(runtime) == PRE_DEFAULTS_CODE and compatible_code(runtime)
-                    and previous == {**receipt, "runtime_code_hashes": runtime}):
-                # Preserve the first upgrade receipt; pin this reviewed second
-                # startup-only upgrade separately, without changing the study.
-                base.bind(root / "startup-defaults-runtime.json", {
-                    **receipt, "previous_receipt_sha256": base.digest(path),
-                    "change": "no-argument launch and defaults for unfrozen setup only"})
-                return
-        base.bind(path, receipt)
+            if (core.fingerprint(runtime) not in {PRE_DEFAULTS_CODE, PRE_RESOURCES_CODE}
+                    or not compatible_code(runtime)
+                    or previous != {**receipt, "runtime_code_hashes": runtime}):
+                raise ValueError(f"frozen contract changed: {path}")
+            prior[path.name] = base.digest(path)
+        defaults = root / "startup-defaults-runtime.json"
+        if defaults.exists():
+            previous_defaults = core.read(defaults)
+            runtime_defaults = previous_defaults.get("runtime_code_hashes", {})
+            if (not path.exists() or core.fingerprint(runtime) != PRE_DEFAULTS_CODE
+                    or core.fingerprint(runtime_defaults) != PRE_RESOURCES_CODE
+                    or not compatible_code(runtime_defaults)
+                    or previous_defaults != {**receipt, "runtime_code_hashes": runtime_defaults,
+                        "previous_receipt_sha256": base.digest(path),
+                        "change": "no-argument launch and defaults for unfrozen setup only"}):
+                raise ValueError(f"frozen contract changed: {defaults}")
+            prior[defaults.name] = base.digest(defaults)
+        base.bind(root / "startup-resources-runtime.json", {
+            "schema": "offpolicy-selector-pair/resources-runtime-v1",
+            "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+            "previous_receipt_sha256": prior, "cpu_environment": CPU_ENV,
+            "change": "bound CPU thread pools and distinguish lock contention; actual elapsed costs retained"})
 
 
 def setup_config():
@@ -90,7 +164,7 @@ def initialize(root, configuration=None):
     root = root.resolve()
     if root in {base.ROOT, Path.home(), Path(root.anchor)}:
         raise ValueError("use a dedicated pair output directory")
-    with base.lease(root / ".pair.lock"):
+    with pair_lease(root / ".pair.lock"):
         path = root / "pair.json"
         if path.exists():
             value = core.read(path)
@@ -184,7 +258,7 @@ def prepare(args):
                "curve_points": args.curve_points, "eval_k": args.eval_k, "gpu_type": args.gpu_type,
                "dataset": args.dataset, "eval_timeout": args.eval_timeout,
                "code_hashes": code_hashes()}
-    with base.lease(root / ".pair.lock"):
+    with pair_lease(root / ".pair.lock"):
         if (root / "request.json").exists():
             previous = core.read(root / "request.json")
             if compatible_code(previous.get("code_hashes")):
@@ -270,8 +344,9 @@ def diagnostic(entry, env):
 
 
 def environment(c):
+    configure_cpu_runtime()
     import additive_experiment as ae
-    return ae.model_environment(c["config"])
+    return {**ae.model_environment(c["config"]), **CPU_ENV}
 
 
 def execute(entry, arm, devices):
@@ -279,7 +354,7 @@ def execute(entry, arm, devices):
     root = branch.parent.parent
     manifest(root)  # Recheck before starting a new process from on-disk code.
     env = {**environment(c), "PAIR_PROTOCOL_ROOT": str(root)}
-    with base.lease(out / arm / ".task.lock"):
+    with pair_lease(out / arm / ".task.lock"):
         switch.runtime.run_arm(out, suite, protocol, arm, devices, env)
         switch.curve_once(branch, switch.manifest(branch), out, c, arm, suite, devices, env)
         if not switch.branch_finished(switch.manifest(branch), out / arm):
@@ -571,6 +646,7 @@ def status(root, p):
 
 
 def main():
+    configure_cpu_runtime()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("init", "prepare", "ensure-prepared", "run", "develop", "fit", "freeze", "test", "report", "status", "check-code"))
     parser.add_argument("--root", type=Path, required=True)
@@ -604,16 +680,17 @@ def main():
         print(f"[ready] {args.root / 'pair.json'}")
         return
     if args.command == "check-code":
-        print("[verified] pair and legacy code compatible (including reviewed startup-only migration)")
+        print("[verified] pair and legacy code compatible (including reviewed operational migrations)")
         return
     if args.command == "status":
         status(args.root, p)
         return
     if args.command == "report":
-        with base.lease(args.root / ".pair.lock"):
+        with pair_lease(args.root / ".pair.lock"):
             report(args.root, p)
         return
-    with base.lease(args.root / ".pair.lock"):
+    with pair_lease(args.root / ".pair.lock"):
+        resource_diagnostics()
         devices = switch.admitted_devices(p) if args.command in ("run", "develop", "freeze", "test") else None
         if args.command in ("run", "develop"):
             develop(args.root, p, devices)
@@ -631,5 +708,8 @@ if __name__ == "__main__":
     install_signal_handlers()
     try:
         main()
-    except (ValueError, FileNotFoundError, BlockingIOError) as exc:
+    except (ValueError, FileNotFoundError) as exc:
         raise SystemExit(f"[pair] {exc}") from None
+    except (OSError, RuntimeError):
+        resource_diagnostics()
+        raise

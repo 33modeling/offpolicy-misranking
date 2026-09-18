@@ -11,6 +11,11 @@ PY=${PAIR_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 [ -x "$PY" ] || PY=python3
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+# Apply before the first Python import, including all four rollout/scoring
+# workers. OMP/MKL alone do not bound pthread OpenBLAS or tokenizer Rayon pools.
+export OPENBLAS_NUM_THREADS=1 OPENBLAS_DEFAULT_NUM_THREADS=1 GOTO_NUM_THREADS=1
+export BLIS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
+export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
   cpu)
     export CUDA_VISIBLE_DEVICES=""

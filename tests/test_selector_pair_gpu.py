@@ -414,6 +414,20 @@ def defaults_predecessor():
     return hashes
 
 
+def resources_predecessor():
+    hashes = gpu.code_hashes()
+    hashes["src/selector_pair_gpu.py"] = "a5a875b7745fd2c183fc458c8018a079c1a782a30b4fd4057eeac9e217b508d6"
+    hashes["scripts/run_selector_pair.sh"] = "748ea06f9fdd3f9d843aa115eda68ac9b3a59a1c12a8f43b12f7e20eca8e7f06"
+    assert core.fingerprint(hashes) == gpu.PRE_RESOURCES_CODE
+    return hashes
+
+
+def legacy_startup_receipt(recorded, runtime):
+    return {"schema": "offpolicy-selector-pair/startup-runtime-v1",
+            "frozen_code_hashes": recorded, "runtime_code_hashes": runtime,
+            "change": "setup placeholder, actionable first launch and interrupted prepare recovery only"}
+
+
 def test_init_creates_only_setup_and_preserves_edits(tmp_path, monkeypatch):
     monkeypatch.setenv("OM_WORK", str(tmp_path / "storage"))
     value = gpu.initialize(tmp_path)
@@ -492,7 +506,7 @@ def test_prepare_promotes_setup_only_after_real_preparation(tmp_path, monkeypatc
     assert gpu.ensure_prepared(root) == ready and len(calls) == 4
 
 
-@pytest.mark.parametrize("legacy", [None, bootstrap_predecessor, defaults_predecessor])
+@pytest.mark.parametrize("legacy", [None, bootstrap_predecessor, defaults_predecessor, resources_predecessor])
 def test_failed_prepare_keeps_placeholder_and_resumes_frozen_request(tmp_path, monkeypatch, legacy):
     root, prefix = tmp_path / "pair", tmp_path / "prefix"
     core.atomic_json(prefix / "switch.json", {"fixture": True})
@@ -523,7 +537,7 @@ def test_failed_prepare_keeps_placeholder_and_resumes_frozen_request(tmp_path, m
     assert core.read(root / "pair.json")["schema"] == pair.SCHEMA
 
 
-@pytest.mark.parametrize("predecessor", [bootstrap_predecessor, defaults_predecessor])
+@pytest.mark.parametrize("predecessor", [bootstrap_predecessor, defaults_predecessor, resources_predecessor])
 def test_startup_fix_preserves_predecessor_manifest_without_rebinding(tmp_path, predecessor):
     value = {"schema": pair.SCHEMA, "code_hashes": predecessor(), "branch_manifests": {}}
     value["protocol_id"] = core.fingerprint(value)
@@ -532,25 +546,63 @@ def test_startup_fix_preserves_predecessor_manifest_without_rebinding(tmp_path, 
     assert gpu.initialize(tmp_path) == value
     assert gpu.ensure_prepared(tmp_path) == value
     assert (tmp_path / "pair.json").read_bytes() == before
-    assert core.read(tmp_path / "startup-runtime.json")["runtime_code_hashes"] == gpu.code_hashes()
+    receipt = core.read(tmp_path / "startup-resources-runtime.json")
+    assert receipt["runtime_code_hashes"] == gpu.code_hashes()
+    assert receipt["cpu_environment"] == gpu.CPU_ENV
 
 
-def test_second_startup_upgrade_preserves_receipt_and_rejects_later_edits(tmp_path, monkeypatch):
+@pytest.mark.parametrize("chain", ["defaults", "resources", "both"])
+def test_resource_upgrade_preserves_receipts_and_rejects_later_edits(tmp_path, monkeypatch, chain):
     value = {"schema": pair.SCHEMA, "code_hashes": bootstrap_predecessor(), "branch_manifests": {}}
     value["protocol_id"] = core.fingerprint(value)
     core.atomic_json(tmp_path / "pair.json", value)
-    with monkeypatch.context() as patch:
-        previous = defaults_predecessor()
-        patch.setattr(gpu, "code_hashes", lambda: previous)
-        gpu.manifest(tmp_path)
-    before = (tmp_path / "startup-runtime.json").read_bytes()
+    prior = legacy_startup_receipt(value["code_hashes"],
+                                  resources_predecessor() if chain == "resources" else defaults_predecessor())
+    core.atomic_json(tmp_path / "startup-runtime.json", prior)
+    if chain == "both":
+        core.atomic_json(tmp_path / "startup-defaults-runtime.json", {
+            **prior, "runtime_code_hashes": resources_predecessor(),
+            "previous_receipt_sha256": base.digest(tmp_path / "startup-runtime.json"),
+            "change": "no-argument launch and defaults for unfrozen setup only"})
+    before = {path: path.read_bytes() for path in tmp_path.glob("*.json")}
     assert gpu.manifest(tmp_path) == value
-    assert (tmp_path / "startup-runtime.json").read_bytes() == before
-    assert core.read(tmp_path / "startup-defaults-runtime.json")["runtime_code_hashes"] == gpu.code_hashes()
+    assert gpu.manifest(tmp_path) == value  # Repeat resume must be idempotent.
+    assert all(path.read_bytes() == content for path, content in before.items())
+    receipt = core.read(tmp_path / "startup-resources-runtime.json")
+    assert receipt["runtime_code_hashes"] == gpu.code_hashes()
+    assert receipt["previous_receipt_sha256"] == {
+        path.name: base.digest(path) for path in before if path.name != "pair.json"}
     changed = {**gpu.code_hashes(), "src/selector_pair_gpu.py": "unreviewed-later-change"}
     monkeypatch.setattr(gpu, "code_hashes", lambda: changed)
     with pytest.raises(ValueError, match="frozen contract changed"):
         gpu.manifest(tmp_path)
+
+
+@pytest.mark.parametrize("bad", ["runtime", "frozen", "orphan-defaults", "defaults-runtime", "defaults-parent"])
+def test_resource_upgrade_rejects_unreviewed_or_broken_history(tmp_path, bad):
+    value = {"schema": pair.SCHEMA, "code_hashes": bootstrap_predecessor(), "branch_manifests": {}}
+    value["protocol_id"] = core.fingerprint(value)
+    core.atomic_json(tmp_path / "pair.json", value)
+    prior = legacy_startup_receipt(value["code_hashes"], defaults_predecessor())
+    if bad == "runtime":
+        prior["runtime_code_hashes"]["src/selector_pair_gpu.py"] = "unreviewed"
+    if bad == "frozen":
+        prior["frozen_code_hashes"] = resources_predecessor()
+    core.atomic_json(tmp_path / "startup-runtime.json", prior)
+    if "defaults" in bad:
+        defaults = {**prior, "runtime_code_hashes": resources_predecessor(),
+                    "previous_receipt_sha256": base.digest(tmp_path / "startup-runtime.json"),
+                    "change": "no-argument launch and defaults for unfrozen setup only"}
+        if bad == "defaults-runtime":
+            defaults["runtime_code_hashes"]["src/selector_pair_gpu.py"] = "unreviewed"
+        if bad == "defaults-parent":
+            defaults["previous_receipt_sha256"] = "wrong-parent"
+        core.atomic_json(tmp_path / "startup-defaults-runtime.json", defaults)
+        if bad == "orphan-defaults":
+            (tmp_path / "startup-runtime.json").unlink()
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        gpu.manifest(tmp_path)
+    assert not (tmp_path / "startup-resources-runtime.json").exists()
 
 
 def test_first_startup_upgrade_does_not_allow_later_entrypoint_edits(tmp_path, monkeypatch):
@@ -564,9 +616,10 @@ def test_first_startup_upgrade_does_not_allow_later_entrypoint_edits(tmp_path, m
         gpu.manifest(tmp_path)
 
 
+@pytest.mark.parametrize("predecessor", [bootstrap_predecessor, defaults_predecessor, resources_predecessor])
 @pytest.mark.parametrize("filename", ["src/selector_pair.py", gpu.TRAINER, "src/selection_switch_gpu.py"])
-def test_startup_migration_does_not_allow_scientific_changes(monkeypatch, filename):
-    previous, current = bootstrap_predecessor(), gpu.code_hashes()
+def test_startup_migration_does_not_allow_scientific_changes(monkeypatch, filename, predecessor):
+    previous, current = predecessor(), gpu.code_hashes()
     current[filename] = "changed"
     monkeypatch.setattr(gpu, "code_hashes", lambda: current)
     assert not gpu.compatible_code(previous)
@@ -577,3 +630,108 @@ def test_unrecognized_dummy_is_preserved_not_blessed(tmp_path):
     with pytest.raises(ValueError, match="unrecognized"):
         gpu.initialize(tmp_path)
     assert core.read(tmp_path / "pair.json") == {}
+
+
+def test_launcher_bounds_native_pools_before_first_python_and_in_children(tmp_path):
+    # Intercept the first Python process: no model, GPU, or cluster storage used.
+    wrapper = tmp_path / "inspect-python"
+    code = "import json, os; print(json.dumps(dict(os.environ)))"
+    wrapper.write_text(f"#!{sys.executable}\nimport subprocess, sys\n"
+                       f"subprocess.run([sys.executable, '-c', {code!r}], check=True)\n")
+    wrapper.chmod(0o755)
+    process = subprocess.run(["bash", "scripts/run_selector_pair.sh", "init"], cwd=base.ROOT,
+        env={**os.environ, **dict.fromkeys(gpu.CPU_ENV, "64"), "TOKENIZERS_PARALLELISM": "true",
+             "PAIR_PYTHON": str(wrapper), "OM_WORK": str(tmp_path)},
+        capture_output=True, text=True, timeout=20, check=True)
+    actual = json.loads(process.stdout)
+    assert {key: actual[key] for key in gpu.CPU_ENV} == gpu.CPU_ENV
+
+
+def test_direct_worker_environment_bounds_cpu_without_changing_model_settings(monkeypatch):
+    for key in gpu.CPU_ENV:
+        monkeypatch.setenv(key, "64")
+    def model_environment(config):
+        assert {key: os.environ[key] for key in gpu.CPU_ENV} == gpu.CPU_ENV
+        return {"OM_GEN_BATCH": "32", "CUDA_VISIBLE_DEVICES": "0,1,2,3", "OMP_NUM_THREADS": "32"}
+    monkeypatch.setitem(sys.modules, "additive_experiment", SimpleNamespace(model_environment=model_environment))
+    env = gpu.environment({"config": {}})
+    assert {key: env[key] for key in gpu.CPU_ENV} == gpu.CPU_ENV
+    assert env["OM_GEN_BATCH"] == "32" and env["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+
+
+def test_native_numpy_and_tokenizer_pools_are_bounded_and_tokens_unchanged():
+    pytest.importorskip("numpy")
+    pytest.importorskip("tokenizers")
+    code = '''
+import json
+from pathlib import Path
+import numpy as np
+from tokenizers import Tokenizer, models, pre_tokenizers
+tok = Tokenizer(models.WordLevel({"[UNK]": 0, "hello": 1, "world": 2}, unk_token="[UNK]"))
+tok.pre_tokenizer = pre_tokenizers.Whitespace()
+assert [row.ids for row in tok.encode_batch(["hello world"] * 128)] == [[1, 2]] * 128
+assert np.all(np.ones((128, 128)) @ np.ones((128, 128)) == 128)
+threads = len(list(Path("/proc/self/task").iterdir()))
+print(json.dumps({"threads": threads}))
+'''
+    process = subprocess.run([sys.executable, "-c", code],
+        env={**os.environ, **gpu.CPU_ENV, "CUDA_VISIBLE_DEVICES": ""},
+        capture_output=True, text=True, timeout=30, check=True)
+    assert json.loads(process.stdout)["threads"] <= 2
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or os.geteuid() == 0,
+                    reason="RLIMIT_NPROC thread refusal requires unprivileged Linux")
+def test_tokenizer_eagain_reproduces_and_serial_runtime_works_without_new_threads():
+    pytest.importorskip("tokenizers")
+    # Restrict only the disposable child, never the shell/host or other jobs.
+    # Deny new tasks rather than exhausting any real machine resource.
+    code = '''
+import resource
+resource.setrlimit(resource.RLIMIT_NPROC, (0, resource.getrlimit(resource.RLIMIT_NPROC)[1]))
+from tokenizers import Tokenizer, models, pre_tokenizers
+tok = Tokenizer(models.WordLevel({"[UNK]": 0, "hello": 1, "world": 2}, unk_token="[UNK]"))
+tok.pre_tokenizer = pre_tokenizers.Whitespace()
+assert [row.ids for row in tok.encode_batch(["hello world"] * 128)] == [[1, 2]] * 128
+print("completed")
+'''
+    env = {**os.environ, **gpu.CPU_ENV, "CUDA_VISIBLE_DEVICES": ""}
+    broken = subprocess.run([sys.executable, "-c", code],
+        env={**env, "TOKENIZERS_PARALLELISM": "true"}, capture_output=True, text=True, timeout=20)
+    assert broken.returncode != 0
+    assert "Resource temporarily unavailable" in broken.stderr
+    fixed = subprocess.run([sys.executable, "-c", code],
+        env=env, capture_output=True, text=True, timeout=20, check=True)
+    assert fixed.stdout.strip() == "completed"
+
+
+def test_pair_lock_reports_path_and_releases_without_deleting_file(tmp_path):
+    lock = tmp_path / ".pair.lock"
+    with base.lease(lock):
+        with pytest.raises(ValueError, match="pair lock busy") as exc:
+            gpu.initialize(tmp_path)
+        assert str(lock) in str(exc.value)
+        assert not (tmp_path / "pair.json").exists()
+    assert gpu.initialize(tmp_path)["schema"] == gpu.BOOTSTRAP_SCHEMA
+    assert lock.exists()
+
+
+def test_eagain_inside_pair_lock_is_not_misdiagnosed_as_lock_conflict(tmp_path):
+    import errno
+    failure = BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
+    with pytest.raises(BlockingIOError) as exc:
+        with gpu.pair_lease(tmp_path / ".pair.lock"):
+            raise failure
+    assert exc.value is failure
+    with gpu.pair_lease(tmp_path / ".pair.lock"):
+        pass
+
+
+def test_resource_diagnostics_omits_unrelated_secrets(monkeypatch, capsys):
+    monkeypatch.setenv("PRIVATE_TOKEN", "do-not-log-this-value")
+    gpu.resource_diagnostics()
+    output = capsys.readouterr().err
+    assert output.startswith("[pair-resources] ")
+    parsed = json.loads(output.removeprefix("[pair-resources] "))
+    assert "max_user_processes" in parsed and "pids_limits" in parsed
+    assert "PRIVATE_TOKEN" not in output and "do-not-log-this-value" not in output

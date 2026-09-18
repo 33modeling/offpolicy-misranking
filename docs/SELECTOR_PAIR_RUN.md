@@ -78,7 +78,7 @@ bash scripts/run_selector_pair.sh
 `pair.json`이 없으면 자동 생성하고, 예전 `init`이 남긴 미고정 설정의 빈
 target/budget도 자동으로 채운다. 직접 지정한 값은 유지한다. `request.json`이
 이미 고정되었거나 준비가 완료되었다면 기본값을 덮어쓰지 않고 그대로 재개한다.
-`c78ca17`, `5086e15`의 실험 manifest/decision도 보존하며, 검토된 실행부 수정만
+`c78ca17`, `5086e15`, `c054c67`의 실험 manifest/decision도 보존하며, 검토된 실행부 수정만
 별도 영수증으로 기록한다. 빈 `{}`나 가짜 학습 결과로 검증을 우회하지 않는다.
 
 기본 GPU 종류는 NVIDIA H100 80GB HBM3다. 준비 완료 후 target, cap, seed,
@@ -137,6 +137,22 @@ root에서 해야 하며, 이전 시도를 숨기면 안 된다. 검열된 라�
 원본 실험에 남아 있으며, 0이라고 가정하지 않는다. 개발 fit 비용도 따로 기록한다.
 
 ## 중단 / 재개
+
+`Resource temporarily unavailable`만으로 CUDA OOM이라고 단정하지 않는다.
+런처는 Python 시작 전 OpenBLAS/MKL/OpenMP/Rayon/NumExpr의 CPU 스레드 수를
+1로 제한하고 토크나이저 병렬화를 끈다. 이 설정은 네 GPU의 rollout·scoring·학습·평가
+자식 프로세스에도 적용된다. GPU 수, generation batch, 응답 수, seed는 바꾸지 않는다.
+따로 환경변수를 입력할 필요 없이 아래의 같은 명령으로 재개한다.
+
+시작/실패 로그의 `[pair-resources]`에는 프로세스 제한과 읽을 수 있는 cgroup의
+`pids.current/max`가 표시된다. 노드 전체의 PID 한도가 이미 소진된 경우에는 이
+제한만으로 해결되지 않을 수 있다. `pair lock busy: ...`는 별개의 실행 잠금 충돌이다.
+잠금 파일을 삭제하거나 다른 작업을 자동 종료하여 우회하지 않는다.
+
+검토된 이전 버전의 실행은 원본 manifest·이전 업그레이드 영수증을 그대로 보존하고
+`startup-resources-runtime.json`에 새 코드 해시와 CPU 제한을 별도로 고정한다.
+이 운영 설정은 처리 시간에 영향을 줄 수 있으므로 변경 전후 시간을 동일 환경의
+측정처럼 취급하지 않는다. 실패·재시도 비용은 기존 장부에 계속 포함한다.
 
 같은 root에서 `bash scripts/run_selector_pair.sh`를 다시 실행한다. 완료된 selection, checkpoint, 결과,
 동결된 decision을 재사용한다. 중간 checkpoint의 cost receipt는 checkpoint
