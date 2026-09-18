@@ -68,8 +68,15 @@ def test_prepare_is_idempotent_and_does_not_mutate_live_parent(tmp_path):
     assert not list(parent.rglob("*.lock"))
 
 
-def code_compat_predecessor():
+def original_shared_hashes():
     hashes = run.hashes()
+    hashes["src/net_gain_gate_gpu.py"] = "f4604802211d5bac9f7c759e1a199957883d69c04fa7eb6b15f41e58d09637a3"
+    hashes["src/train_selection_gate_grpo.py"] = "14b74afcdab6230d4706f26f823e64239e6d1caea627a6ef78acc3a2c68f1c2c"
+    return hashes
+
+
+def code_compat_predecessor():
+    hashes = original_shared_hashes()
     hashes["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     hashes["src/selection_gate_gpu.py"] = switch.COST_METER
     hashes.update({"src/selection_switch_gpu.py": "f87119d0f40cc0166f9095049b234c0b25a6fbaf0b910cc13bef688ce494f753",
@@ -108,7 +115,7 @@ def test_lifecycle_upgrade_preserves_existing_mopps_manifest_and_receipt(tmp_pat
     parent, _ = source(tmp_path)
     root = tmp_path / "comparison"
     p = run.prepare(root, parent)
-    previous = run.hashes()
+    previous = original_shared_hashes()
     previous["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     previous.update({"src/selection_gate_gpu.py": switch.COST_METER,
         "src/selection_switch_gpu.py": "23faf38b352f31ee64a2f2989f3b2086cc47b54508c5bd5c89571a670b3e66e8",
@@ -134,7 +141,7 @@ def test_queue_failure_upgrade_preserves_f258c46_manifests_and_receipts(tmp_path
     parent, _ = source(tmp_path)
     root = tmp_path / "comparison"
     p = run.prepare(root, parent)
-    previous = run.hashes()
+    previous = original_shared_hashes()
     previous["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     previous.update({"src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
                      "src/selection_switch_gpu.py": "05aa36a41197cca605933df9d62bba0e4482d6f592c17954c632b45e5cf51195"})
@@ -167,7 +174,7 @@ def test_cache_guard_preserves_existing_mopps_parent_costs_and_receipts(tmp_path
     parent, _ = source(tmp_path)
     root = tmp_path / "comparison"
     p = run.prepare(root, parent)
-    previous = run.hashes()
+    previous = original_shared_hashes()
     previous["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     previous.update({"src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
         "src/selection_switch_gpu.py": "05aa36a41197cca605933df9d62bba0e4482d6f592c17954c632b45e5cf51195",
@@ -197,7 +204,7 @@ def test_cache_guard_preserves_existing_mopps_parent_costs_and_receipts(tmp_path
 
 
 def parallel_predecessor():
-    hashes = run.hashes()
+    hashes = original_shared_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "0c0ac3aed8c5c53378c91ae5c357bcfc4e0d11fd0ffb7d2a53e9874db3e4a0b6"
     hashes["src/mopps_comparison_gpu.py"] = "e7b55d8aac5a6a347f83651d080e1253857e41721c49c69563f69ac1d852f6dd"
@@ -206,7 +213,7 @@ def parallel_predecessor():
 
 
 def fit_resilience_predecessor():
-    hashes = run.hashes()
+    hashes = original_shared_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "af2aa2fe039da46d5f686fe80c0833aaca5cbdf4ed9e30ae38248e0c841524a9"
     hashes["src/mopps_comparison_gpu.py"] = "cb7051a21a39260753f6e5fd15612f6beab3c3cd77af423e117fb98a7dc60a32"
@@ -215,7 +222,7 @@ def fit_resilience_predecessor():
 
 
 def variant_root_predecessor():
-    hashes = run.hashes()
+    hashes = original_shared_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "a3001f512fa99a801e32783a60ff8983fb567005319e61e6df170b7865732fa8"
     hashes["src/mopps_comparison_gpu.py"] = "689771dfb643be2ed9b5d1037d98ce1cc36fa92da3668df577dfce1b8f46f653"
@@ -224,7 +231,7 @@ def variant_root_predecessor():
 
 
 def dataset_predecessor():
-    hashes = run.hashes()
+    hashes = original_shared_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "8d9e94df8c3813e989b447ea918f60e1283c8587e872818ba8cb29fa2b2b3521"
     hashes["src/mopps_comparison_gpu.py"] = "88caa40bf7106a9b47039b280fbd80db0db47d7f41d48e0a808b548133b39a92"

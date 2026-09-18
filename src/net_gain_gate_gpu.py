@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import socket
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import time
 import traceback
+from dataclasses import asdict
 from pathlib import Path
 
 import net_gain_gate as net
@@ -238,9 +240,76 @@ def select_once(out, c, p, arm, choice, env, devices):
     return base.select_once(private, c, directory, choice["budget_gpu_seconds"], env, devices, ledger="deployment")
 
 
+def local_training_exists(policy):
+    stats = policy / "grpo_stats.jsonl"
+    return (any(policy.glob("checkpoint-*")) or any(policy.glob(".checkpoint-*.tmp"))
+            or any((policy / name).exists() or (policy / name).is_symlink()
+                   for name in ("adapter_model.safetensors", "adapter_config.json", "optimizer.pt",
+                                "policy_train.json", "checkpoint_state.json", "curve-checkpoints"))
+            or stats.is_symlink() or (stats.exists() and stats.stat().st_size > 0))
+
+
+def restore_budget_stop(out, c, arm):
+    """Repair interrupted final publication on CPU, never by training again."""
+    policy = out / arm / "policy"
+    stop = policy / "budget_stop.json"
+    if stop.exists():
+        record = core.read(stop)
+        if not isinstance(record, dict):
+            raise ValueError("saved budget stop is not an object; preserve local training files")
+        if record.get("use_parent_policy") is True and local_training_exists(policy):
+            raise ValueError("parent-only budget stop conflicts with saved local training; preserve both, do not publish")
+        return False
+    if stop.is_symlink():
+        raise ValueError("saved budget stop is a broken link; preserve local training files")
+    final = policy / "policy_train.json"
+    if not final.exists():
+        return False
+    import evidence_downstream as ed
+    from train_policy_grpo import GrpoConfig, validate_policy_lineage
+
+    manifest = core.read(final)
+    if not isinstance(manifest, dict):
+        raise ValueError("saved final policy manifest is not an object; preserve it, do not restart")
+    record = manifest.get("training_budget", {})
+    cfg = c["config"]
+    completed = manifest.get("completed_steps")
+    if (not isinstance(record, dict) or type(completed) is not int
+            or not cfg["drift"] < completed <= cfg["drift"] + c["max_steps"]
+            or record.get("completed_steps") != completed
+            or record.get("requested_target_steps") != cfg["drift"] + c["max_steps"]
+            or record.get("stop_reason") not in {"budget_exhausted", "no_block_fits"}):
+        raise ValueError("saved final policy has no matching fixed-budget record; preserve it, do not restart")
+    validate_policy_lineage(
+        policy, target_steps=completed, world_size=4, training_objective="grpo",
+        expected_start_step=cfg["drift"],
+        expected_parent=Path(c["source_run"]) / f"policy_step_{cfg['drift']}",
+        expected_model=Path(cfg["model"]), expected_seed=cfg["seed"],
+        expected_max_new_tokens=cfg["max_new_tokens"], expected_prompt_format=cfg["prompt_format"],
+        expected_config=asdict(GrpoConfig(**dict(
+            {field.removeprefix("grpo_"): cfg[field] for field in ed.TRAIN_FLAGS.values()
+             if field != "grpo_logprob_micro_batch"}, checkpoint_every=5))),
+        expected_prompts=out / "subsets" / f"subset-{arm}.json", require_complete_hashes=True,
+    )
+    expected = {**record, "use_parent_policy": False}
+    # The trainer sorts keys. Preserve its exact bytes if a sealed result already
+    # names this stop file; a semantically equal but differently ordered repair
+    # would invalidate the surviving completion receipt.
+    raw = (json.dumps(expected, indent=2, sort_keys=True, allow_nan=False) + "\n").encode()
+    result_path = out / arm / "result.json"
+    if result_path.exists():
+        result = core.read(result_path)
+        expected_hash = result.get("artifact_hashes", {}).get(str(stop.relative_to(out)))
+        if expected_hash != hashlib.sha256(raw).hexdigest():
+            raise ValueError("saved result and final policy disagree on missing budget stop; preserve both")
+    base.bind(stop, json.loads(raw))
+    return True
+
+
 def run_arm(out, suite, p, arm, devices, env):
     directory = out / arm
     c = core.read(out / "contract.json")
+    restored_stop = restore_budget_stop(out, c, arm)
     if (directory / "result.json").exists():
         if not (directory / "result.sha256.json").exists():
             # Publication may have stopped after the atomic payload rename.
@@ -260,7 +329,10 @@ def run_arm(out, suite, p, arm, devices, env):
         (directory / "failure.json").unlink(missing_ok=True)
         return
     base.spent(directory)
-    base.meter(directory, "verify-inputs", c["scope"]["gpu_type"], action=lambda: base.verify(out), ledger="deployment")
+    if restored_stop:
+        base.verify(out)
+    else:
+        base.meter(directory, "verify-inputs", c["scope"]["gpu_type"], action=lambda: base.verify(out), ledger="deployment")
     choice = decision(out, suite, p, arm, env)
     cap = choice["budget_gpu_seconds"]
     subset = out / "subsets" / f"subset-{arm}.json"
@@ -311,6 +383,8 @@ def run_arm(out, suite, p, arm, devices, env):
         if remaining <= 0:
             raise ValueError("branch allocation exhausted before a valid checkpoint")
         if remaining/4 <= 30:
+            if local_training_exists(stop_path.parent):
+                raise ValueError("saved local training work cannot be replaced with a parent-only budget stop")
             base.bind(stop_path, {"completed_steps": c["config"]["drift"], "stop_reason": "no_block_fits",
                                   "use_parent_policy": True, "requested_target_steps": c["config"]["drift"]+c["max_steps"]})
         else:

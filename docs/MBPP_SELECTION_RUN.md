@@ -33,6 +33,7 @@ versus random; the shared states permit the fresh/difficulty comparison.
 ## Commands
 
 ```bash
+bash scripts/check_random_storage.sh           # ALL discovered suites: RF/RR/RO separately; <=4 KiB TXT in home
 bash scripts/check_mbpp_storage.sh             # saves <=4 KiB TXT in home; never starts training
 bash scripts/run_mbpp_experiments.sh plan       # settings only, no writes/GPU work
 bash scripts/run_mbpp_experiments.sh check      # read-only local input checks
@@ -62,6 +63,15 @@ An absent root is not labelled "deleted"; if none of the requested existing run
 manifests can be found, recovery refuses to initialize replacement runs silently.
 Unprepared quality/difficulty roots are allowed alongside the existing fresh root.
 
+For missing random-control work, `check_random_storage.sh` scans every switch and
+MoPPS root under the configured work directory, not just MBPP. It separates
+`random_full`, `random_reduced`, and `random_online` from selector results, lists
+sealed random results, and prioritizes missing stops, archives and conflicting
+parent-only stops. It saves `~/random-storage-*.txt` (at most 4 KiB), never resets
+or restores anything, and does not certify tensor contents. An absent result is
+not proof of deletion. In explanations, the on-policy suite keeps its existing
+storage names for compatibility; no saved paths or protocol keys are renamed.
+
 The separate audit saves a unique `~/mbpp-storage-*.txt` (at most 4 KiB), prints
 its full path, and prints exact configured roots. Send that TXT file for diagnosis;
 no archive, model or rollout upload is needed. A blocked audit still saves its TXT
@@ -83,6 +93,14 @@ candidate. The trainer refuses to fall back to parent weights if all local
 checkpoints fail validation, and automatic waivers never archive saved training
 or completion evidence. These protections preserve existing files and costs;
 they do not restore files already missing or certify damaged checkpoints.
+
+A missing `budget_stop.json` can now be reconstructed from an intact final
+policy only after full lineage, tensor and budget-record validation. A surviving
+result must also agree with the exact restored file hash. This repair does not
+restart training or refund previous costs. A parent-only stop that conflicts
+with saved local training is blocked without overwriting either record.
+Automatic refunds require interruption evidence tied to the failed event;
+an old CUDA log line or absence of a checkpoint alone is not sufficient.
 
 `run` and `stop` use `scripts/run_experiments.sh` for the existing queue,
 detached console, keepalive, watchdog, automatic Git updates, stale-event

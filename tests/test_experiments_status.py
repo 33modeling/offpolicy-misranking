@@ -115,7 +115,7 @@ def test_both_launchers_status_show_one_screen_and_stay_read_only(tmp_path):
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert set(payload) == {"updated", "nodes", "node_summary", "selection_switch", "mopps_comparison"}
+    assert set(payload) == {"updated", "nodes", "node_summary", "selection_switch", "mopps_comparison", "other_experiments"}
     single = subprocess.run(["bash", "scripts/run_selection_switch.sh", "status"], cwd=ROOT,
                             env={**env, "EXPERIMENTS_COMBINED": "0"}, capture_output=True, text=True, timeout=30)
     assert single.returncode == 0 and "MOPPS COMPARISON" not in single.stdout
@@ -188,3 +188,60 @@ def test_progress_screen_lists_every_root_with_running_updates_and_failures(tmp_
     node_lines = text[text.index("\nNODES  "):].splitlines()[1:]
     assert any(l.startswith("  RUN    run1-wss-3-gab12") and "s1/t50 difficulty: random_r" in l for l in node_lines), node_lines
     assert any(l.startswith("  RUN    node-1") for l in node_lines)
+
+
+def mbpp_results(work, count=21):
+    from test_selection_switch_status import completed_prefix, point, prepared, published
+    import selection_switch as rule
+    root = work / "runs/selection-switch-mbpp-v1"
+    prepared(root)
+    remaining = count
+    for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
+        for step in rule.STEPS:
+            completed_prefix(root, seed, step)
+            for arm in rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS:
+                if remaining:
+                    published(point(root, seed, step) / arm)
+                    remaining -= 1
+    return root
+
+
+def test_generic_status_keeps_twenty_one_saved_mbpp_results_visible_under_default_math_view(tmp_path):
+    from test_selection_switch_status import prepared
+    work = tmp_path / "work"
+    fresh = mbpp_results(work)
+    primary = work / "runs/selection-switch-v1"
+    quality = work / "runs/selection-switch-mbpp-quality-v1"
+    prepared(primary)
+    prepared(quality)
+    before = {p: p.read_bytes() for p in work.rglob("*") if p.is_file()}
+    env = {**os.environ, "OM_WORK": str(work), "SWITCH_PYTHON": sys.executable}
+    for key in ("SWITCH_ROOT", "MOPPS_ROOT", "EXPERIMENTS_MBPP_SUITE", "OUT_ROOT"):
+        env.pop(key, None)
+    result = subprocess.run(["bash", "scripts/run_experiments.sh", "status", "--json"],
+                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["selection_switch"]["root"] == str(primary)
+    by_root = {item["root"]: item for item in data["other_experiments"]}
+    assert by_root[str(fresh)]["branch_counts"]["DONE"] == 21
+    assert by_root[str(fresh)]["training_published"] == 21
+    assert by_root[str(quality)]["training_published"] == 0
+    text = combined.render(data, width=120)
+    assert "selection-switch-mbpp-v1: DONE 21/48  TRAINED 21" in text
+    assert "selection-switch-mbpp-quality-v1: DONE 0/48  TRAINED 0" in text
+    assert before == {p: p.read_bytes() for p in work.rglob("*") if p.is_file()}
+
+
+def test_mbpp_status_routes_fresh_saved_results_not_generic_math_root(tmp_path):
+    work = tmp_path / "work"
+    fresh = mbpp_results(work)
+    env = {**os.environ, "OM_WORK": str(work), "SWITCH_PYTHON": sys.executable,
+           "SWITCH_ROOT": str(work / "runs/wrong-math-root")}
+    for key in ("SWITCH_MBPP_ROOT", "SWITCH_MBPP_QUALITY_ROOT", "SWITCH_MBPP_DIFFICULTY_ROOT"):
+        env.pop(key, None)
+    result = subprocess.run(["bash", "scripts/run_mbpp_experiments.sh", "status", "fresh"],
+                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert str(fresh) in result.stdout and "TRAINING RESULTS  21/48 published" in result.stdout
+    assert "wrong-math-root" not in result.stdout and "MOPPS COMPARISON" not in result.stdout

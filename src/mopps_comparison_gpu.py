@@ -36,6 +36,14 @@ PRE_FIT_RESILIENCE_CODE = "ca5486eda6ba169460ea15378986a6c514d76c421d05137d98bf1
 PRE_VARIANT_ROOT_CODE = "2989e14c8cfb391158cb00171881afbc37cca0682c58447625fa8dffcc01f21c"
 # Exact 47339ca runtime before Switch prepare could build an MBPP root.
 PRE_DATASET_CODE = "c12c6e7956f4a61e648c29b3da2762bc71fc0713b68bd77012aed59004ecdddd"
+# Exact released shared runtimes; MoPPS's own selector and trainer are unchanged.
+PRE_SHARED_ALLOCATION_CODE = "3b6ad4bb17b2e0c7cec64c535f86430bb5dd2af0f7940cec9b173634c9d462e6"
+PRE_SHARED_RECOVERY_CODE = "1e57e00d07645d49e28cbacc693917d1c00a41f9d3b2df16e818c9756ce30419"
+RECOVERY_PREDECESSORS = {PRE_SHARED_ALLOCATION_CODE, PRE_SHARED_RECOVERY_CODE}
+PRIOR_RUNTIME_CODES = {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE,
+                       PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE,
+                       PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE,
+                       *RECOVERY_PREDECESSORS}
 
 
 def hashes():
@@ -86,11 +94,12 @@ def protocol(root):
     current = hashes()
     recorded = p.get("code_hashes")
     if recorded != current:
-        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE}
+        if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in PRIOR_RUNTIME_CODES
                 or set(recorded) != set(current)
                 or current["src/net_gate_memory_worker.py"] not in {switch.PRE_CACHE_GUARD_WORKER, switch.CACHE_GUARD_WORKER}
+                or any(current[name] not in allowed for name, allowed in switch.PUBLICATION_PATCH_HASHES.items())
                 or any(recorded[name] != sha for name, sha in current.items()
-                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py", "src/selection_gate_gpu.py", "src/net_gate_memory_worker.py"})):
+                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py", "src/selection_gate_gpu.py", "src/net_gate_memory_worker.py", "src/net_gain_gate_gpu.py", "src/train_selection_gate_grpo.py"})):
             raise ValueError("frozen MoPPS experiment changed: unreviewed code hashes")
         switch.validate_code_hashes({name: recorded[name] for name in switch.CODE})
     if (p["schema"] != mopps.SCHEMA
@@ -119,7 +128,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != receipt and
                         (previous != {**receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, *RECOVERY_PREDECESSORS})):
                     raise ValueError(f"frozen contract changed: {path}")
             else:
                 base.bind(path, receipt)
@@ -136,7 +145,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != lifecycle_receipt and
                         (previous != {**lifecycle_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_QUEUE_FAILURE_CODE, PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, *RECOVERY_PREDECESSORS})):
                     raise ValueError(f"frozen contract changed: {lifecycle_path}")
             else:
                 base.bind(lifecycle_path, lifecycle_receipt)
@@ -153,7 +162,7 @@ def protocol(root):
                 previous_code = previous.get("runtime_code_hashes")
                 if (previous != queue_receipt and
                         (previous != {**queue_receipt, "runtime_code_hashes": previous_code}
-                         or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                         or core.fingerprint(previous_code) not in {PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, *RECOVERY_PREDECESSORS})):
                     raise ValueError(f"frozen contract changed: {queue_path}")
             else:
                 base.bind(queue_path, queue_receipt)
@@ -171,7 +180,7 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != cache_receipt and
                             (previous != {**cache_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, *RECOVERY_PREDECESSORS})):
                         raise ValueError(f"frozen contract changed: {cache_path}")
                 else:
                     base.bind(cache_path, cache_receipt)
@@ -188,7 +197,7 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != retry_receipt and
                             (previous != {**retry_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_TEST_PARALLEL_CODE, PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, *RECOVERY_PREDECESSORS})):
                         raise ValueError(f"frozen contract changed: {retry_path}")
                 else:
                     base.bind(retry_path, retry_receipt)
@@ -206,7 +215,7 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != parallel_receipt and
                             (previous != {**parallel_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, *RECOVERY_PREDECESSORS})):
                         raise ValueError(f"frozen contract changed: {parallel_path}")
                 else:
                     base.bind(parallel_path, parallel_receipt)
@@ -223,7 +232,7 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != resilience_receipt and
                             (previous != {**resilience_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE})):
+                             or core.fingerprint(previous_code) not in {PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE, *RECOVERY_PREDECESSORS})):
                         raise ValueError(f"frozen contract changed: {resilience_path}")
                 else:
                     base.bind(resilience_path, resilience_receipt)
@@ -240,17 +249,36 @@ def protocol(root):
                     previous_code = previous.get("runtime_code_hashes")
                     if (previous != variant_receipt and
                             (previous != {**variant_receipt, "runtime_code_hashes": previous_code}
-                             or core.fingerprint(previous_code) != PRE_DATASET_CODE)):
+                             or core.fingerprint(previous_code) not in {PRE_DATASET_CODE, *RECOVERY_PREDECESSORS})):
                         raise ValueError(f"frozen contract changed: {variant_path}")
                 else:
                     base.bind(variant_path, variant_receipt)
-                base.bind(root / "dataset-runtime.json", {
+                dataset_path = root / "dataset-runtime.json"
+                dataset_receipt = {
                     "schema": "mopps-dataset-runtime/v1",
                     "protocol_sha256": base.digest(root / "mopps.json"),
                     "variant_root_runtime_sha256": base.digest(variant_path), "runtime_code_hashes": current,
                     "change": "shared Switch prepare accepts --dataset mbpp; this MATH comparison is unchanged",
                     "cost_policy": "same selectors, policies and budgets; no parent writes or cost waivers",
-                })
+                }
+                if dataset_path.exists():
+                    previous = core.read(dataset_path)
+                    previous_code = previous.get("runtime_code_hashes")
+                    if (previous != dataset_receipt and
+                            (previous != {**dataset_receipt, "runtime_code_hashes": previous_code}
+                             or core.fingerprint(previous_code) not in RECOVERY_PREDECESSORS)):
+                        raise ValueError(f"frozen contract changed: {dataset_path}")
+                else:
+                    base.bind(dataset_path, dataset_receipt)
+                if core.fingerprint(current) not in PRIOR_RUNTIME_CODES:
+                    base.bind(root / "shared-recovery-runtime.json", {
+                        "schema": "mopps-shared-recovery-runtime/v1",
+                        "protocol_sha256": base.digest(root / "mopps.json"),
+                        "dataset_runtime_sha256": base.digest(dataset_path), "runtime_code_hashes": current,
+                        "change": "reviewed shared Switch saved-policy/checkpoint publication recovery only; "
+                                  "MoPPS selector and training implementation unchanged",
+                        "cost_policy": "preserve all prior receipts, policies, costs, frozen choices and budgets",
+                    })
     return p
 
 

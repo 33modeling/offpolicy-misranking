@@ -351,6 +351,7 @@ def test_automatic_waiver_preserves_successful_training_receipt_when_outputs_are
 
 def test_automatic_waiver_rechecks_training_evidence_after_acquiring_locks(tmp_path, monkeypatch):
     directory = branch(tmp_path, "random_reduced")
+    core.atomic_json(directory / "stalled.json", {"event_id": "train1", "silent_seconds": 2000})
     before = (directory / "cost.jsonl").read_bytes()
     real_lease = base.lease
 
@@ -397,3 +398,49 @@ def test_automatic_waiver_does_not_assume_unvalidated_policy_is_disposable(tmp_p
     assert "preserved training/completion evidence and all costs" in message
     assert (directory / "cost.jsonl").read_bytes() == before
     assert not (directory / "discarded").exists()
+
+
+@pytest.mark.parametrize("old_cuda_log", [False, True])
+def test_automatic_waiver_does_not_refund_no_checkpoint_or_unattributed_old_fault(tmp_path, old_cuda_log):
+    directory = branch(tmp_path, "random_reduced", fault=old_cuda_log)
+    core.atomic_json(directory / "failure.json", {"error": "train worker rejected invalid input"})
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    for _ in range(3):
+        message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+        assert "without event-bound infrastructure evidence" in message
+        assert before == {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    assert not (directory / "waivers").exists()
+
+
+@pytest.mark.parametrize("evidence_kind", ["watchdog", "signal", "stale"])
+def test_automatic_waiver_still_recovers_event_bound_infrastructure_loss_without_saved_work(tmp_path, evidence_kind):
+    directory = branch(tmp_path, "random_full", fault=True)
+    rows = [json.loads(line) for line in (directory / "cost.jsonl").read_text().splitlines()]
+    if evidence_kind == "watchdog":
+        core.atomic_json(directory / "stalled.json", {"event_id": "train1", "silent_seconds": 2000})
+    else:
+        for row in rows:
+            if row["event_id"] == "train1" and row["state"] == "finished":
+                if evidence_kind == "signal":
+                    row["exit_code"] = -15
+                else:
+                    row["recovery"] = {"kind": "stale_owner_last_evidence"}
+        (directory / "cost.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+    message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+    assert "waived train train1" in message
+    receipt = core.read(directory / "waivers/train1.json")
+    assert receipt["attempt"]["fault"]["kind"] == {"watchdog": "stall-watchdog", "signal": "killed", "stale": "stale-closed"}[evidence_kind]
+
+
+def test_automatic_waiver_does_not_treat_a_failed_finish_receipt_as_a_lost_node(tmp_path):
+    directory = branch(tmp_path, "random_reduced", fault=False)
+    rows = [json.loads(line) for line in (directory / "cost.jsonl").read_text().splitlines()]
+    for row in rows:
+        if row["event_id"] == "train1" and row["state"] == "finished":
+            row["recovery"] = {"kind": "atomic_finish_receipt"}
+    (directory / "cost.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+    before = (directory / "cost.jsonl").read_bytes()
+    message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+    assert "without event-bound infrastructure evidence" in message
+    assert (directory / "cost.jsonl").read_bytes() == before
+    assert (directory / "failure.json").exists()

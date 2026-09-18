@@ -382,3 +382,30 @@ def test_published_replay_and_archive_are_reported_without_choosing_one(auditor,
     assert any(item['code'] == 'ACTIVE_AND_ARCHIVED_WORK' for item in report['findings'])
     assert (directory / 'result.json').is_file()
     assert (directory / 'discarded/old-policy/policy/grpo_stats.jsonl').is_file()
+
+
+def test_missing_stop_with_saved_final_can_reach_worker_hash_validated_repair(auditor, storage):
+    work, root = storage
+    directory = branch(root)
+    policy = directory / 'policy'
+    write_json(policy / 'policy_train.json', {'completed_steps': 30})
+    (policy / 'adapter_model.safetensors').write_bytes(b'adapter')
+    (policy / 'optimizer.pt').write_bytes(b'optimizer')
+    write_json(directory / 'result.json', {'complete': True, 'artifact_hashes': {
+        'random_full/policy/budget_stop.json': '0' * 64}})
+    write_json(directory / 'result.sha256.json', {
+        'sha256': hashlib.sha256((directory / 'result.json').read_bytes()).hexdigest()})
+    report = auditor.audit(work, [root])
+    assert report['status'] == 'ok'
+    assert any(item['code'] == 'FINAL_STOP_REPAIR_CANDIDATE' for item in report['findings'])
+    assert not (policy / 'budget_stop.json').exists()  # Only the worker may repair after full validation.
+
+
+def test_parent_only_stop_conflicting_with_saved_training_blocks_startup(auditor, storage):
+    work, root = storage
+    directory = branch(root)
+    complete_checkpoint(directory)
+    write_json(directory / 'policy/budget_stop.json', {'use_parent_policy': True, 'completed_steps': 25})
+    report = auditor.audit(work, [root])
+    assert_blocked(report)
+    assert any(item['code'] == 'PARENT_STOP_WITH_SAVED_POLICY' for item in report['findings'])

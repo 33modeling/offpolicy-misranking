@@ -99,6 +99,10 @@ def audit(work, roots):
         if stop.is_file():
             value, _ = json_bytes(stop)
             parent_only = value.get('use_parent_policy') is True
+        if parent_only and (final.is_file() or good or (stats.is_file() and stats.stat().st_size > 0)
+                            or present(adapter) or present(policy / 'optimizer.pt')):
+            note('error', 'PARENT_STOP_WITH_SAVED_POLICY', policy,
+                 'parent-only stop conflicts with saved local training; preserve both and review before publication')
         if final.is_file():
             manifest, _ = json_bytes(final)
             if (not adapter.is_file() or adapter.stat().st_size == 0
@@ -204,7 +208,12 @@ def audit(work, roots):
                                 if not artifact.resolve().is_relative_to(point.resolve()):
                                     note('error', 'ARTIFACT_PATH_ESCAPE', result, 'recorded result artifact escapes its state point')
                                 elif not artifact.is_file():
-                                    note('error', 'RESULT_ARTIFACT_MISSING', artifact, 'completed result references a now-missing artifact')
+                                    if (artifact == directory / 'policy/budget_stop.json'
+                                            and (directory / 'policy/policy_train.json').is_file()):
+                                        note('warning', 'FINAL_STOP_REPAIR_CANDIDATE', artifact,
+                                             'saved final policy may reconstruct missing stop; worker must validate full lineage and original result hash before repair')
+                                    else:
+                                        note('error', 'RESULT_ARTIFACT_MISSING', artifact, 'completed result references a now-missing artifact')
                             if manifest.get('gate') == 'convergence' and not (directory / 'curve.json').is_file():
                                 note('warning', 'CURVE_PENDING', directory,
                                      'result exists: training is complete; remaining curve is evaluation, not new training')

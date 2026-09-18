@@ -61,6 +61,7 @@ def publication_predecessor():
 
 def allocation_guard_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/net_gain_gate_gpu.py"] = "3334c50158451751bf6cbbcf84afe67b9c85bcfaea8e6488a494032256b11df3"
     hashes["src/selection_switch_gpu.py"] = "ebe252fd7c2fcb3171d79123b59e0623d3dea9a591a8989305c73ee9c2bf29ed"
     hashes["src/train_selection_gate_grpo.py"] = "9fe00567bf1b9e4637d0ef2d5d5aa5e6d8d76742878dd2587fc4de9d51bae997"
     assert core.fingerprint(hashes) == switch.PRE_ALLOCATION_GUARD_CODE
@@ -69,10 +70,67 @@ def allocation_guard_predecessor():
 
 def resume_preservation_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/net_gain_gate_gpu.py"] = "3334c50158451751bf6cbbcf84afe67b9c85bcfaea8e6488a494032256b11df3"
     hashes["src/selection_switch_gpu.py"] = "7e2e16eae01ba03194c9f8802e45c05a18995249eef58d679a1bbce8834c9e0e"
     hashes["src/train_selection_gate_grpo.py"] = "9fe00567bf1b9e4637d0ef2d5d5aa5e6d8d76742878dd2587fc4de9d51bae997"
     assert core.fingerprint(hashes) == switch.PRE_RESUME_PRESERVATION_CODE
     return hashes
+
+
+def saved_policy_recovery_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "3886e97f49888d63e4683cc4222d6b7a7b1b1ecd3c1839b53e114f9d108ee616"
+    hashes["src/net_gain_gate_gpu.py"] = "3334c50158451751bf6cbbcf84afe67b9c85bcfaea8e6488a494032256b11df3"
+    hashes["src/train_selection_gate_grpo.py"] = "c84f4a63cdeb40ee63feedffec4f3491089db35fb9fd9bbe243e1a2f09efbc9f"
+    assert core.fingerprint(hashes) == switch.PRE_SAVED_POLICY_RECOVERY_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_saved_policy_recovery_upgrade_preserves_all_previous_receipts_and_training(tmp_path, monkeypatch, migrated):
+    previous = saved_policy_recovery_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "resume-preservation-runtime.json")["runtime_code_hashes"] == previous
+        assert not (tmp_path / "saved-policy-recovery-runtime.json").exists()
+    branch = tmp_path / "states/s3-t25/points/view-25/random_full"
+    core.atomic_json(branch / "result.json", {"complete": True, "completed_steps": 40})
+    core.atomic_json(branch / "policy/policy_train.json", {"completed_steps": 40})
+    (branch / "policy/adapter_model.safetensors").write_bytes(b"saved policy unchanged")
+    (branch / "cost.jsonl").write_text("retain all prior charges\n")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    assert switch.check_code(tmp_path) == frozen
+    assert before == {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    for _ in range(2):
+        assert switch.manifest(tmp_path) == frozen
+        assert {path: path.read_bytes() for path in before} == before
+    receipt_path = tmp_path / "saved-policy-recovery-runtime.json"
+    receipt = core.read(receipt_path)
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["resume_preservation_runtime_sha256"] == base.digest(tmp_path / "resume-preservation-runtime.json")
+    receipt["cost_policy"] = "waive all past training"
+    core.atomic_json(receipt_path, receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+def test_saved_policy_recovery_rejects_changed_previous_resume_receipt(tmp_path, monkeypatch):
+    previous = saved_policy_recovery_predecessor()
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": initial_predecessor()})
+    with monkeypatch.context() as patch:
+        patch.setattr(switch, "code_hashes", lambda: previous)
+        switch.manifest(tmp_path)
+    path = tmp_path / "resume-preservation-runtime.json"
+    receipt = core.read(path)
+    receipt["cost_policy"] = "discard checkpoint state"
+    core.atomic_json(path, receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+    assert not (tmp_path / "saved-policy-recovery-runtime.json").exists()
 
 
 @pytest.mark.parametrize("migrated", [False, True])

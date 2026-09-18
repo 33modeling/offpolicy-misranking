@@ -19,6 +19,8 @@ selection work, and their costs are never reset automatically. A missing valid
 checkpoint is not evidence that an attempt saved no useful work. Explicit
 operator waivers still archive outputs and remove the failure marker; the
 waived lines and phase logs remain.
+Automatic refunds additionally require event-bound interruption evidence; an
+old CUDA line in an appended log or no checkpoint does not qualify.
 """
 from __future__ import annotations
 
@@ -185,11 +187,15 @@ def stall_records(directory):
     return {record["event_id"]: record} if isinstance(record, dict) and record.get("event_id") else {}
 
 
-def evidence(directory, fin, *, stalls, progressed):
+def evidence(directory, fin, *, stalls, progressed, automatic=False):
     """Why a failed attempt is infrastructure loss, or None when it is not known to be."""
-    excerpt = fault_excerpt(directory, fin.get("phase", ""))
-    if excerpt is not None:
-        return {"kind": "gpu-fault", **excerpt}
+    # Phase logs are append-only across attempts. Without an event delimiter a
+    # historical CUDA line cannot authorize refunding a current input/code
+    # error, or clearing its failure marker for yet another automatic retry.
+    if not automatic:
+        excerpt = fault_excerpt(directory, fin.get("phase", ""))
+        if excerpt is not None:
+            return {"kind": "gpu-fault", **excerpt}
     stall = stalls.get(fin["event_id"])
     if stall is not None:
         return {"kind": "stall-watchdog", "silent_seconds": stall.get("silent_seconds"), "host": stall.get("host")}
@@ -197,15 +203,18 @@ def evidence(directory, fin, *, stalls, progressed):
     if isinstance(code, int) and code < 0:
         return {"kind": "killed", "signal": -code}
     recovery = fin.get("recovery")
-    if isinstance(recovery, dict) and recovery.get("kind"):
+    if (isinstance(recovery, dict) and recovery.get("kind")
+            and (not automatic or recovery["kind"] in {"stale_owner_last_evidence", "operator_reported_stopped_job"})):
         # Closed from evidence after its owner vanished (a reclaimed or dead node), not by the meter.
+        # atomic_finish_receipt merely repairs publication of a finish row; a
+        # nonzero application exit in that receipt is not evidence of node loss.
         return {"kind": "stale-closed", "recovery": recovery.get("kind"), "silent_seconds": recovery.get("silent_seconds")}
-    if not progressed and not scoring_phase(fin.get("phase")):
+    if not automatic and not progressed and not scoring_phase(fin.get("phase")):
         return {"kind": "no-progress", "note": "the branch never reached a checkpoint, so the attempt bought no training"}
     return None
 
 
-def stalled_attempts(directory):
+def stalled_attempts(directory, *, automatic=False):
     """Finished failed (nonzero exit) deployment events with infrastructure-loss evidence.
 
     Returns (events, found, unattributed): ``found`` are the waivable attempts and
@@ -225,7 +234,7 @@ def stalled_attempts(directory):
         row = {"event_id": event_id, "phase": fin.get("phase"), "host": fin.get("host"),
                "seconds": fin.get("seconds"), "allocated_gpu_seconds": fin.get("allocated_gpu_seconds"),
                "exit_code": fin.get("exit_code")}
-        why = evidence(directory, fin, stalls=stalls, progressed=progressed)
+        why = evidence(directory, fin, stalls=stalls, progressed=progressed, automatic=automatic)
         if why is None:
             unattributed.append(row)
         else:
@@ -270,7 +279,7 @@ def waive(root, directory, *, apply, automatic=False):
     rel = str(directory.relative_to(root))
     if (directory / "result.json").exists():
         return f"[waive] {rel}: skipped, result already published"
-    events, found, unattributed = stalled_attempts(directory)
+    events, found, unattributed = stalled_attempts(directory, automatic=automatic)
     # Selection can save expensive rollouts and per-prompt gradients before the
     # first *training* checkpoint exists. Never reset that work, or refund its
     # charge, merely because the controller is making another queue pass.
@@ -281,6 +290,10 @@ def waive(root, directory, *, apply, automatic=False):
     if automatic and (saved := training_evidence(directory, events)):
         return preserve_training_message(rel, saved)
     if unattributed:
+        if automatic:
+            return (f"[waive] {rel}: preserved failure and all costs: failed attempt(s) without event-bound infrastructure evidence: "
+                    + ", ".join(f"{u['phase']} {u['event_id'][:8]} exit {u['exit_code']}" for u in unattributed)
+                    + "; no automatic refund for absent checkpoints or historical fault logs; needs an operator")
         return (f"[waive] {rel}: skipped, failed attempt(s) without fault evidence after training progress or during selection: "
                 + ", ".join(f"{u['phase']} {u['event_id'][:8]} exit {u['exit_code']}" for u in unattributed)
                 + "; needs an operator")

@@ -8,12 +8,14 @@ snapshots. --watch [N] refreshes every N seconds (default 15).
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
 import shutil
 import sys
+import textwrap
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -23,15 +25,13 @@ import selection_switch_status as switch_status
 SEPARATOR = "=" * 24
 
 
-def sibling_tasks(switch_root, mopps_root, *, now):
-    """Running tasks of every other experiment root next to these two (long, difficulty,
-    quality, ...). A node training a branch of another root is otherwise silent on
-    its console for hours and would be counted GONE."""
+def sibling_status(switch_root, mopps_root, *, now):
+    """Show sibling results as well as workers; another suite is not a reset."""
     runs = Path(switch_root).resolve().parent
     known = {Path(switch_root).resolve(), Path(mopps_root).resolve()}
-    tasks = []
+    tasks, summaries = [], []
     if not runs.is_dir():
-        return tasks
+        return tasks, summaries
     for marker, module in (("switch.json", switch_status), ("mopps.json", mopps_status)):
         for path in sorted(runs.glob(f"*/{marker}")):
             root = path.parent.resolve()
@@ -39,14 +39,20 @@ def sibling_tasks(switch_root, mopps_root, *, now):
                 continue
             try:
                 data = module.snapshot(root, now=now)
-            except Exception:
+            except Exception as exc:
+                summaries.append({"root": str(root), "error": str(exc)})
                 continue
+            branches = [task for task in data.get("tasks", []) if task.get("kind", "branch") == "branch"]
+            summaries.append({"root": str(root), "kind": "switch" if marker == "switch.json" else "mopps",
+                              "prepared": data.get("prepared", False), "branches": len(branches),
+                              "branch_counts": dict(Counter(task["status"] for task in branches)),
+                              "training_published": data.get("training_published", 0)})
             for task in data.get("tasks", []):
                 if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
                     label = root.name.replace("selection-switch-", "").replace("mopps-comparison", "mopps")
                     label = label[:-3] if label.endswith("-v1") else label
                     tasks.append({**task, "arm": f"{label}: {task.get('arm', '')}"})
-    return tasks
+    return tasks, summaries
 
 
 def snapshot(switch_root, mopps_root, *, now=None):
@@ -54,10 +60,11 @@ def snapshot(switch_root, mopps_root, *, now=None):
     switch = switch_status.snapshot(switch_root, now=now)
     mopps = mopps_status.snapshot(mopps_root, now=now)
     # Every host once: the node launcher's logs plus every experiment's launcher logs and tasks.
-    tasks = switch.get("tasks", []) + mopps.get("tasks", []) + sibling_tasks(switch_root, mopps_root, now=now)
+    sibling_tasks, summaries = sibling_status(switch_root, mopps_root, now=now)
+    tasks = switch.get("tasks", []) + mopps.get("tasks", []) + sibling_tasks
     nodes = switch_status.node_view.launcher_nodes(switch_root, tasks, now=now)
     return {"updated": now, "nodes": nodes, "node_summary": switch_status.node_view.summarize(nodes),
-            "selection_switch": switch, "mopps_comparison": mopps}
+            "selection_switch": switch, "mopps_comparison": mopps, "other_experiments": summaries}
 
 
 def render(data, *, all_tasks=False, width=120):
@@ -69,6 +76,20 @@ def render(data, *, all_tasks=False, width=120):
              switch_status.node_view.render_idle(data["nodes"]),
              "", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
     lines += switch_status.node_view.render_nodes(data["nodes"], switch_status.table, width)
+    if data.get("other_experiments"):
+        lines += ["", "OTHER EXPERIMENT RESULTS (separate roots; not a restart of the primary suite)"]
+        for item in data["other_experiments"]:
+            counts = item.get("branch_counts", {})
+            if item.get("error"):
+                summary = f"{Path(item['root']).name}: UNREADABLE: {item['error']}"
+            else:
+                parts = [f"DONE {counts.get('DONE', 0)}/{item['branches']}"]
+                if item["kind"] == "switch":
+                    parts.append(f"TRAINED {item['training_published']}")
+                parts += [f"{name} {counts[name]}" for name in switch_status.CELLS if name != "DONE" and counts.get(name)]
+                summary = f"{Path(item['root']).name}: " + "  ".join(parts)
+            lines += textwrap.wrap(summary, width=width, subsequent_indent="  ")
+            lines += textwrap.wrap(f"  ROOT {item['root']}", width=width, subsequent_indent="    ")
     lines += ["", f"{SEPARATOR} SELECTION SWITCH {SEPARATOR}",
               switch_status.render(data["selection_switch"], all_tasks=all_tasks, width=width, local_gpus=False, nodes=False),
               "", f"{SEPARATOR} MOPPS COMPARISON {SEPARATOR}",
