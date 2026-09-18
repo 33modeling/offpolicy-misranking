@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 MODE=${1:-status}
 [ "$#" -eq 0 ] || shift
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
+export OM_WORK="$WORK"
 PAIR_ROOT=${PAIR_ROOT:-$WORK/runs/selector-pair-v1}
 PY=${PAIR_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 [ -x "$PY" ] || PY=python3
@@ -14,16 +15,22 @@ case "$MODE" in
   cpu)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py "$@" ;;
-  prepare|fit|report|status|check-code)
+  init|prepare|fit|report|status|check-code)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" "$@" ;;
   run|develop|freeze|test) ;;
-  *) echo 'usage: run_selector_pair.sh prepare|run|develop|fit|freeze|test|report|status|check-code|cpu'; exit 2 ;;
+  *) echo 'usage: run_selector_pair.sh init|prepare|run|develop|fit|freeze|test|report|status|check-code|cpu'; exit 2 ;;
 esac
 if [ "$#" -ne 0 ]; then
   echo '[abort] run uses the frozen preparation; new options require a new root'; exit 2
 fi
-CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py check-code --root "$PAIR_ROOT"
+if [ "$MODE" = run ] || [ "$MODE" = develop ]; then
+  # First launch writes an explicit setup template, or resumes an interrupted
+  # prepare from request.json. Missing target/budget never silently start GPUs.
+  CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py ensure-prepared --root "$PAIR_ROOT"
+else
+  CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py check-code --root "$PAIR_ROOT"
+fi
 export OM_WORK="$WORK" OUT_ROOT="$PAIR_ROOT"
 source scripts/_e5_node.sh
 export E5_FORCE=0

@@ -12,6 +12,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import statistics
 import time
 from types import SimpleNamespace
@@ -26,21 +27,116 @@ BRANCHES = {"on_policy": "fresh_r", "cached": "difficulty",
 TRAINER = "src/selector_pair_train.py"
 EXTRA_CODE = ("src/selector_pair.py", "src/selector_pair_gpu.py", TRAINER,
               "src/selection_switch_curve_train.py", "scripts/run_selector_pair.sh")
+BOOTSTRAP_SCHEMA = "offpolicy-selector-pair/setup-v1"
+CONFIG_KEYS = ("matrix", "prefix_source", "target_reward", "budget_gpu_seconds", "curve_points",
+               "eval_k", "dataset", "gpu_type", "eval_timeout")
+# c78ca17: only startup/CLI handling changes in this patch. Preserve existing
+# manifests, protocol IDs, labels and decisions, and reject any scientific change.
+PRE_BOOTSTRAP_CODE = "3ad11e06bc7670012c91898b6d4e09802eab195422f4a62919ffaf4e95725f9b"
+STARTUP_FILES = {"src/selector_pair_gpu.py", "scripts/run_selector_pair.sh"}
 
 
 def code_hashes():
     return {**switch.code_hashes(), **{name: base.digest(base.ROOT / name) for name in EXTRA_CODE}}
 
 
+def compatible_code(recorded):
+    current = code_hashes()
+    return recorded == current or (
+        isinstance(recorded, dict) and core.fingerprint(recorded) == PRE_BOOTSTRAP_CODE
+        and set(recorded) == set(current)
+        and all(recorded[name] == value for name, value in current.items() if name not in STARTUP_FILES))
+
+
+def bind_startup_runtime(root, recorded):
+    if recorded != code_hashes():
+        # Pin the first reviewed upgrade too. Later edits to these entry points
+        # must not acquire an unlimited exemption on a predecessor's run.
+        base.bind(root / "startup-runtime.json", {
+            "schema": "offpolicy-selector-pair/startup-runtime-v1",
+            "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+            "change": "setup placeholder, actionable first launch and interrupted prepare recovery only"})
+
+
+def setup_config():
+    work = Path(os.environ.get("OM_WORK", f"/group-volume/{os.environ.get('OM_USER', 'minsoo3.kim')}/offpolicy-misranking"))
+    return {"matrix": os.environ.get("OM_OLMO3_ROOT", str(work / "runs" /
+                os.environ.get("OM_OLMO3_MODEL_TAG", "olmo3-1025-7b-base-rlzero-grpo-h100-v2"))),
+            "prefix_source": os.environ.get("SWITCH_PREFIX_SOURCE", str(work / "runs/selection-switch-v1")),
+            "target_reward": None, "budget_gpu_seconds": None, "curve_points": 9, "eval_k": 8,
+            "dataset": "math500", "gpu_type": "NVIDIA H100 80GB HBM3", "eval_timeout": 14400.}
+
+
+def request_config(request):
+    return {key: request["training_cap_gpu_seconds" if key == "budget_gpu_seconds" else key] for key in CONFIG_KEYS}
+
+
+def initialize(root, configuration=None):
+    """Publish a clearly non-runnable setup file; never invent a frozen study."""
+    root = root.resolve()
+    if root in {base.ROOT, Path.home(), Path(root.anchor)}:
+        raise ValueError("use a dedicated pair output directory")
+    with base.lease(root / ".pair.lock"):
+        path = root / "pair.json"
+        if path.exists():
+            value = core.read(path)
+            if value.get("schema") not in {BOOTSTRAP_SCHEMA, pair.SCHEMA}:
+                raise ValueError(f"unrecognized pair.json; preserved without overwriting: {path}")
+            return value
+        config = setup_config() if configuration is None else configuration
+        request = root / "request.json"
+        status = "needs_configuration"
+        if request.exists():
+            saved = core.read(request)
+            if saved.get("schema") != pair.SCHEMA or not compatible_code(saved.get("code_hashes")):
+                raise ValueError("partial preparation has an incompatible frozen request; preserved")
+            config, status = request_config(saved), "preparation_incomplete"
+        value = {"schema": BOOTSTRAP_SCHEMA, "status": status, "configuration": config,
+                 "note": "Setup only, not a completed experiment. Set target_reward and budget_gpu_seconds, "
+                         "then run prepare. No training/results/code validation are bypassed."}
+        base.bind(path, value)
+        print(f"[initialized] {path}", flush=True)
+        return value
+
+
+def preparation_options(root, overrides=None):
+    value = initialize(root)
+    config = value["configuration"] if value["schema"] == BOOTSTRAP_SCHEMA else request_config(value)
+    if set(config) != set(CONFIG_KEYS):
+        raise ValueError("setup configuration fields changed; expected " + ", ".join(CONFIG_KEYS))
+    config = {**config, **{k: v for k, v in (overrides or {}).items() if v is not None}}
+    missing = [key for key in CONFIG_KEYS if config[key] is None or config[key] == ""]
+    if missing:
+        command = f"PAIR_ROOT={shlex.quote(str(root))} bash scripts/run_selector_pair.sh prepare"
+        raise ValueError(f"setup file created: {root / 'pair.json'}; missing {', '.join(missing)}. "
+                         "prepare requires --matrix, --prefix-source, --target-reward and --budget-gpu-seconds "
+                         f"(paths may come from the setup file). Edit configuration or run: {command} "
+                         "--target-reward TARGET --budget-gpu-seconds BUDGET. No GPU work started.")
+    config["matrix"], config["prefix_source"] = Path(config["matrix"]), Path(config["prefix_source"])
+    return SimpleNamespace(root=root, **config)
+
+
+def ensure_prepared(root):
+    value = initialize(root)
+    if value["schema"] == BOOTSTRAP_SCHEMA:
+        prepare(preparation_options(root))
+    return manifest(root)
+
+
 def manifest(root):
+    if not (root / "pair.json").exists():
+        raise ValueError(f"pair is not prepared: {root}; run the launcher prepare command first")
     p = core.read(root / "pair.json")
-    if p.get("schema") != pair.SCHEMA or p.get("code_hashes") != code_hashes():
+    if p.get("schema") == BOOTSTRAP_SCHEMA:
+        raise ValueError(f"pair.json is a setup template, not a runnable experiment: {root}; run prepare")
+    if p.get("schema") != pair.SCHEMA or not compatible_code(p.get("code_hashes")):
         raise ValueError("pair runtime changed; preserve this frozen run and use its original code")
     if p.get("protocol_id") != core.fingerprint({k: v for k, v in p.items() if k != "protocol_id"}):
         raise ValueError("pair manifest changed")
     for name, digest in p["branch_manifests"].items():
         if base.digest(root / "branches" / name / "switch.json") != digest:
             raise ValueError("frozen branch manifest changed")
+    bind_startup_runtime(root, p["code_hashes"])
     return p
 
 
@@ -56,6 +152,9 @@ def prepare(args):
     core.number(args.budget_gpu_seconds, "training GPU-second cap", 120.)
     core.integer(args.curve_points, "curve points", 1)
     core.integer(args.eval_k, "evaluation responses", 1)
+    config = {key: str(getattr(args, key)) if key in {"matrix", "prefix_source"} else getattr(args, key)
+              for key in CONFIG_KEYS}
+    initialize(root, config)
     request = {"schema": pair.SCHEMA, "matrix": str(matrix), "prefix_source": str(prefix),
                "prefix_sha256": base.digest(prefix / "switch.json"),
                "target_reward": args.target_reward, "training_cap_gpu_seconds": args.budget_gpu_seconds,
@@ -63,11 +162,21 @@ def prepare(args):
                "dataset": args.dataset, "eval_timeout": args.eval_timeout,
                "code_hashes": code_hashes()}
     with base.lease(root / ".pair.lock"):
+        if (root / "request.json").exists():
+            previous = core.read(root / "request.json")
+            if compatible_code(previous.get("code_hashes")):
+                request["code_hashes"] = previous["code_hashes"]
         base.bind(root / "request.json", request)
-        if (root / "pair.json").exists():
+        bind_startup_runtime(root, request["code_hashes"])
+        existing = core.read(root / "pair.json")
+        if existing.get("schema") == pair.SCHEMA:
             manifest(root)
             print(f"[prepared] unchanged pair protocol: {root}")
             return
+        if existing.get("schema") != BOOTSTRAP_SCHEMA:
+            raise ValueError("unrecognized pair.json; refusing to overwrite")
+        core.atomic_json(root / "pair.json", {**existing, "configuration": request_config(request),
+                                               "status": "preparation_incomplete"})
         for name, selector in BRANCHES.items():
             options = SimpleNamespace(root=root / "branches" / name, matrix=matrix,
                 prefix_source=prefix, selector=selector, gate="convergence", accounting="matched",
@@ -87,7 +196,9 @@ def prepare(args):
              "trainer_override": TRAINER,
              "branch_manifests": {name: base.digest(root / "branches" / name / "switch.json") for name in BRANCHES}}
         p["protocol_id"] = core.fingerprint(p)
-        base.bind(root / "pair.json", p)
+        # The setup placeholder is replaced only after all real inputs and four
+        # branch manifests have been validated, under the same preparation lock.
+        core.atomic_json(root / "pair.json", p)
     print(f"[prepared] 18 development + 24 held-out continuations; target={args.target_reward}; {root}")
 
 
@@ -438,7 +549,7 @@ def status(root, p):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("prepare", "run", "develop", "fit", "freeze", "test", "report", "status", "check-code"))
+    parser.add_argument("command", choices=("init", "prepare", "ensure-prepared", "run", "develop", "fit", "freeze", "test", "report", "status", "check-code"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--matrix", type=Path)
     parser.add_argument("--prefix-source", type=Path)
@@ -453,19 +564,24 @@ def main():
     args.root = args.root.resolve()
     install_runtime()
     if args.command == "prepare":
-        if any(getattr(args, k) is None for k in ("matrix", "prefix_source", "target_reward", "budget_gpu_seconds")):
-            parser.error("prepare requires --matrix, --prefix-source, --target-reward and --budget-gpu-seconds")
-        for key, default in {"curve_points": 9, "eval_k": 8, "dataset": "math500",
-                             "gpu_type": "NVIDIA H100 80GB HBM3", "eval_timeout": 14400.}.items():
-            if getattr(args, key) is None:
-                setattr(args, key, default)
-        prepare(args)
+        prepare(preparation_options(args.root, {key: getattr(args, key) for key in CONFIG_KEYS}))
         return
     if any(v is not None for k, v in vars(args).items() if k not in {"command", "root"}):
         parser.error("preparation options cannot change a frozen run; prepare a new root")
-    p = manifest(args.root)
+    if args.command in {"init", "status"}:
+        value = initialize(args.root)
+        if value["schema"] == BOOTSTRAP_SCHEMA:
+            print(json.dumps({"root": str(args.root), **value}, indent=2))
+            return
+    p = ensure_prepared(args.root) if args.command in {"run", "develop", "ensure-prepared"} else manifest(args.root)
+    if args.command == "init":
+        print(f"[prepared] existing experiment preserved: {args.root / 'pair.json'}")
+        return
+    if args.command == "ensure-prepared":
+        print(f"[ready] {args.root / 'pair.json'}")
+        return
     if args.command == "check-code":
-        print("[verified] pair and legacy code hashes match")
+        print("[verified] pair and legacy code compatible (including reviewed startup-only migration)")
         return
     if args.command == "status":
         status(args.root, p)
@@ -490,4 +606,7 @@ def main():
 if __name__ == "__main__":
     from light_selection_gate_gpu import install_signal_handlers
     install_signal_handlers()
-    main()
+    try:
+        main()
+    except (ValueError, FileNotFoundError, BlockingIOError) as exc:
+        raise SystemExit(f"[pair] {exc}") from None

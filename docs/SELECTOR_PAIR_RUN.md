@@ -51,6 +51,23 @@ GPU를 할당받은 동안의 wall time × GPU 개수이며 FLOPs/순수 커널 
 
 ## 준비와 실행
 
+처음 `run`이나 `status`를 실행했을 때 `pair.json`이 없으면 초기 설정용 파일을
+자동 생성한다. 직접 생성만 하려면 다음을 실행한다.
+
+```bash
+bash scripts/run_selector_pair.sh init
+```
+
+생성되는 파일은 `setup-v1` 형식이며 완료된 실험 manifest가 아니다.
+`configuration.target_reward`, `configuration.budget_gpu_seconds`는 `null`로
+남겨 두고 원본 경로는 기존 환경변수/기본 경로로 채운다. 두 수치와 원본 경로를
+파일에서 설정하거나 아래 `prepare` 옵션으로 지정한다. 숫자가 비어 있으면
+GPU를 잡기 전에 필요한 설정을 안내한다. 빈 `{}`로 검증을 통과시키지는 않는다.
+설정이 채워졌다면 `run`이 실제 준비·검증을 먼저 수행한다. 준비가 중단되어
+`request.json`만 남았던 경우도 해당 고정 설정에서 이어서 준비한다.
+기존의 정상 `pair.json`은 덮어쓰지 않으며, 이 초기화 수정은 `c78ca17`에서
+만든 manifest/decision을 변경하지 않고 이어서 사용할 수 있다.
+
 기존 실험과 다른 새 저장 경로를 사용한다. `--prefix-source`에는 다섯 seed의
 25/50/100 checkpoint와 optimizer가 모두 인증된 기존 switch root를 넣는다.
 `--matrix`는 그 prefix를 만들 때 사용한 동일한 matrix 경로다.
@@ -73,7 +90,8 @@ bash scripts/run_selector_pair.sh prepare \
 bash scripts/run_selector_pair.sh run
 ```
 
-`prepare`와 `run`은 분리되어 있다. `run`에서 target, cap, seed, scoring 방법을
+`prepare`로 준비를 명시적으로 끝내거나, 설정용 파일을 채운 뒤 `run`으로 준비와
+실행을 이어갈 수 있다. 준비 완료 후 `run`에서 target, cap, seed, scoring 방법을
 바꿀 수 없다. 기본 GPU 종류는 NVIDIA H100 80GB HBM3이며 준비할 때
 `--gpu-type`으로 지정할 수 있다. 코드와 설정을 고정한 별도 checkout에서
 실행하고, 실행 중 그 checkout을 업데이트하지 않는다. 코드 해시가 바뀌면 중단한다.
