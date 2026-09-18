@@ -494,6 +494,10 @@ trap 'rc=$?; stop_keepalive; printf "[node-launcher-exit] pid=%s rc=%s utc=%s\n"
 trap 'exit 143' TERM
 trap 'exit 130' INT
 HOLD=${EXPERIMENTS_HOLD_SECONDS:-300}
+POLL=${EXPERIMENTS_HOLD_POLL_SECONDS:-60}
+[[ "$POLL" =~ ^[0-9]+$ ]] && [ "$POLL" -gt 0 ] || {
+  echo '[abort] EXPERIMENTS_HOLD_POLL_SECONDS must be a positive whole number'; exit 2;
+}
 # Keep the allocated GPUs visibly busy for this launcher's whole life: the
 # cluster reclaims idle allocations, and an inner pass may spend minutes in
 # admission or find nothing to claim. 727 MiB per GPU, well under the inner
@@ -595,10 +599,20 @@ while :; do
   else
     blocked_passes=0
   fi
-  if [ "$rc_switch" -eq 0 ] && [ "$rc_mopps" -eq 0 ]; then wait_seconds=$HOLD; else wait_seconds=$(( wait_seconds*2 > 3600 ? 3600 : wait_seconds*2 )); fi
+  if [ "$rc_switch" -eq 0 ] && [ "$rc_mopps" -eq 0 ]; then
+    wait_seconds=$HOLD
+  else
+    max_wait=3600
+    # Ordinary MBPP failures/leases must not park a healthy allocation for an
+    # hour. Preserve the admission/cooldown backoff for actual GPU faults.
+    if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ]; then
+      max_wait=60
+    fi
+    wait_seconds=$(( wait_seconds*2 > max_wait ? max_wait : wait_seconds*2 ))
+  fi
   echo "[hold] pass $pass ended ($reason); keeping this node's GPUs; next pass in ${wait_seconds}s (stop: bash scripts/run_experiments.sh stop)"
   remaining=$wait_seconds
-  poll=${EXPERIMENTS_HOLD_POLL_SECONDS:-60}
+  poll=$POLL
   since_poll=0
   while [ "$remaining" -gt 0 ]; do
     step=$(( remaining < 15 ? remaining : 15 ))

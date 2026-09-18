@@ -39,7 +39,7 @@ bash scripts/run_mbpp_experiments.sh status
 bash scripts/run_mbpp_experiments.sh progress   # shared experiment/node view
 bash scripts/run_mbpp_experiments.sh stop       # stop/clean THIS node, not peer nodes
 bash scripts/run_mbpp_experiments.sh results    # one report per suite, also copied home
-bash scripts/run_mbpp_experiments.sh why
+bash scripts/run_mbpp_experiments.sh why        # ONE diagnostic TXT, at most 16 KiB
 bash scripts/run_mbpp_experiments.sh run fresh
 bash scripts/run_mbpp_experiments.sh run quality
 bash scripts/run_mbpp_experiments.sh run difficulty
@@ -78,9 +78,12 @@ finishes normally before yielding; no active branch is interrupted for fairness.
   including suites whose inputs were initially pending. An unrelated unfinished
   MoPPS run does not keep this MBPP allocation alive.
 
-The MBPP hold defaults to 600 seconds (`MBPP_HOLD_SECONDS`), with
+The MBPP hold defaults to 15 seconds (`MBPP_HOLD_SECONDS`), with
 `EXPERIMENTS_HOLD_SECONDS` taking precedence when set. Holds poll for newly
-available work and exit early when peers complete the queue. Setting
+available work every 5 seconds and exit early when peers complete the queue.
+Ordinary failure/busy-lock retry backoff is capped at 60 seconds; the separate
+GPU admission/cooldown policy is unchanged. Zero/invalid poll intervals are
+rejected instead of leaving a hold loop unable to advance. Setting
 `EXPERIMENTS_HELP_SIBLINGS=0` explicitly restricts a node to the first root;
 leave it enabled to serve all requested suites.
 Terminal launches detach as before: Ctrl-C stops the log view, not the workers.
@@ -92,6 +95,14 @@ MoPPS roots. PID files are checked for an actual MBPP launcher before signalling
 Existing untagged legacy workers cannot be safely adopted as dead just because
 they hold a lock; their ownership must be checked rather than deleting locks.
 Completed outputs and cost ledgers are not reset by this ownership fix.
+
+`why` now writes one attachment across the requested suites, capped at 16 KiB.
+It includes the newest two saved failures per suite, selection/publication file
+presence, the original CUDA/NCCL warning context, the latest node admission and
+two short MBPP node-console tails. File presence is not a hash-validation result,
+and a saved failure is not proof that the current retry is failing. Full rollouts,
+model data, cost ledgers and repeated full-suite exports are excluded. Existing
+experiment logs are only read, never truncated, deleted or repaired.
 
 ## Inputs And Outputs
 

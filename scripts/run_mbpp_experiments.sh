@@ -18,7 +18,7 @@
 #   bash scripts/run_mbpp_experiments.sh progress   per-root progress, running branches, node names
 #   bash scripts/run_mbpp_experiments.sh results    one results file per suite
 #
-# MBPP_HOLD_SECONDS (default 600) is the pause between passes.
+# MBPP_HOLD_SECONDS (default 15) is the pause between passes.
 # EXPERIMENTS_HELP_SIBLINGS=0 keeps this node on the first suite's root only.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -32,7 +32,7 @@ case "$MODE" in run|stop|plan|check|status|progress|results|why) ;; -h|--help) u
 case "$SUITE" in all|fresh|quality|difficulty) ;; *) usage; exit 2 ;; esac
 
 export OM_WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
-HOLD=${MBPP_HOLD_SECONDS:-600}
+HOLD=${MBPP_HOLD_SECONDS:-15}
 [[ "$HOLD" =~ ^[0-9]+$ ]] && [ "$HOLD" -gt 0 ] || { echo '[abort] MBPP_HOLD_SECONDS must be positive'; exit 2; }
 
 # Root names, their prerequisites and per-suite settings live in one file that
@@ -40,6 +40,15 @@ HOLD=${MBPP_HOLD_SECONDS:-600}
 export EXPERIMENTS_MBPP_SUITE="$SUITE"
 source scripts/_mbpp_experiments.sh
 mbpp_queue_init
+
+if [ "$MODE" = why ]; then
+  PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
+  [ -x "$PY" ] || PY=python3
+  ROOT_ARGS=()
+  for root in "${MBPP_ROOTS[@]}"; do ROOT_ARGS+=(--root "$root"); done
+  exec env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
+    "$PY" scripts/mbpp_failure_summary.py --work "$OM_WORK" "${ROOT_ARGS[@]}"
+fi
 
 for root in "${MBPP_ROOTS[@]}"; do
   mbpp_queue_settings "$root"
@@ -66,7 +75,7 @@ if [ "$MODE" = check ]; then
 fi
 
 # Read-only views, one per suite root. Report errors without skipping other roots.
-if [ "$MODE" = status ] || [ "$MODE" = results ] || [ "$MODE" = why ]; then
+if [ "$MODE" = status ] || [ "$MODE" = results ]; then
   failed=0
   for root in "${MBPP_ROOTS[@]}"; do
     mbpp_queue_settings "$root"
@@ -94,4 +103,5 @@ exec env -u OUT_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_DATASET -u SWITCH_SELECTO
   SWITCH_ROOT="${MBPP_ROOTS[0]}" EXPERIMENTS_SKIP_MOPPS=1 \
   EXPERIMENTS_HELP_SIBLINGS="${EXPERIMENTS_HELP_SIBLINGS:-1}" \
   EXPERIMENTS_HOLD_SECONDS="${EXPERIMENTS_HOLD_SECONDS:-$HOLD}" \
+  EXPERIMENTS_HOLD_POLL_SECONDS="${EXPERIMENTS_HOLD_POLL_SECONDS:-5}" \
   bash scripts/run_experiments.sh "$MODE"

@@ -275,6 +275,34 @@ def test_peer_completion_releases_node_without_waiting_out_a_long_hold(cluster):
     assert "peers completed every experiment" in log.read_text()
 
 
+@pytest.mark.parametrize('code', ['1', '75'])
+def test_ordinary_failure_and_busy_lock_backoff_are_capped_at_sixty_seconds(cluster, code):
+    _work, start = cluster
+    process, log = start('node-short-hold', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC=code,
+                         EXPERIMENTS_HOLD_SECONDS='40', TEST_DELAY_PREFIXES='1', EXPERIMENTS_HELP_SIBLINGS='0')
+    wait_for(lambda: '[holding]' in log.read_text())
+    assert 'next pass in 60s' in log.read_text()
+    assert 'next pass in 80s' not in log.read_text()
+    assert process.poll() is None
+
+
+def test_gpu_cooldown_keeps_its_separate_backoff(cluster):
+    _work, start = cluster
+    process, log = start('node-cooldown', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC='79',
+                         EXPERIMENTS_HOLD_SECONDS='40')
+    wait_for(lambda: '[holding]' in log.read_text())
+    assert 'next pass in 80s' in log.read_text()
+    assert process.poll() is None
+
+
+def test_zero_poll_interval_is_rejected_instead_of_spinning_forever(cluster):
+    work, start = cluster
+    process, log = start('node-invalid-poll', EXPERIMENTS_HOLD_POLL_SECONDS='0')
+    assert process.wait(timeout=10) == 2, log.read_text()
+    assert 'must be a positive whole number' in log.read_text()
+    assert not events(work)
+
+
 def test_duplicate_node_launch_does_not_stop_or_duplicate_the_live_controller(cluster):
     work, start = cluster
     first, log = start("node-duplicate", TEST_BLOCK_NODE="node-duplicate")

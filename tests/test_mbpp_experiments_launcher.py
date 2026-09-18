@@ -134,7 +134,7 @@ def launcher(tmp_path):
     repo = tmp_path / "repo with spaces"
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
-    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh"):
+    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh", "mbpp_failure_summary.py", "selection_switch_errors.py"):
         shutil.copy(ROOT / "scripts" / name, scripts)
     (scripts / "setup_env.sh").write_text('echo "preflight must not source setup_env" >&2\nexit 99\n')
     venv = tmp_path / "venv"
@@ -178,13 +178,35 @@ def test_lifecycle_is_delegated_to_original_node_controller_without_preflight(la
     assert not Path(env["CHECK_LOG"]).exists()
 
 
-@pytest.mark.parametrize("mode", ["status", "results", "why"])
+@pytest.mark.parametrize("mode", ["status", "results"])
 def test_readers_do_not_check_or_start_training(launcher, mode):
     run, env = launcher
     result = run(mode)
     assert result.returncode == 0, result.stderr
     assert not Path(env["CHECK_LOG"]).exists()
     assert all(json.loads(line)["args"] == [mode] for line in Path(env["CALLS"]).read_text().splitlines())
+
+
+def test_why_writes_one_small_report_without_training_or_full_exports(launcher):
+    run, env = launcher
+    result = run('why')
+    assert result.returncode == 0, result.stderr
+    assert not Path(env['CHECK_LOG']).exists()
+    assert not Path(env['CALLS']).exists()
+    reports = list((Path(env['OM_WORK']) / 'reports/selection-switch').glob('*.txt'))
+    assert len(reports) == 1 and reports[0].stat().st_size <= 16 * 1024
+    assert result.stdout.count('[saved]') == 1
+    assert all(name in reports[0].read_text() for name in
+               ('selection-switch-mbpp-v1', 'selection-switch-mbpp-quality-v1', 'selection-switch-mbpp-difficulty-v1'))
+
+
+def test_default_hold_is_short_and_polls_without_extra_environment_variables(launcher):
+    run, env = launcher
+    result = run('run', MBPP_HOLD_SECONDS='', EXPERIMENTS_HOLD_SECONDS='', EXPERIMENTS_HOLD_POLL_SECONDS='')
+    assert result.returncode == 0, result.stderr
+    passed = json.loads(Path(env['CALLS']).read_text())['env']
+    assert passed['EXPERIMENTS_HOLD_SECONDS'] == '15'
+    assert passed['EXPERIMENTS_HOLD_POLL_SECONDS'] == '5'
 
 
 @pytest.mark.parametrize("code", ["1", "75", "78", "130", "143"])
