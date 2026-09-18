@@ -44,8 +44,8 @@ def environment(tmp_path, fake):
             "EXPERIMENTS_PULL": "0", "EXPERIMENTS_AUTO_PULL": "0", "EXPERIMENTS_NODE_ID": os.uname().nodename}
 
 
-def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
-    """One command per node: run stops the launcher already running here, then starts."""
+def test_explicit_restart_restarts_a_launcher_already_running_on_this_node(tmp_path):
+    """Only explicit restart stops a running launcher and starts its replacement."""
     env = environment(tmp_path, fake_inner(tmp_path, 0, 0))
     env.pop("EXPERIMENTS_DETACHED")
     log_dir = Path(env["OM_WORK"]) / "runs/experiments/logs"
@@ -59,7 +59,7 @@ def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
     fault = Path(env["OM_WORK"]) / "runs/experiments/node-faults" / f"{os.uname().nodename}.json"
     fault.parent.mkdir(parents=True)
     fault.write_text('{"phase": "train", "strikes": 2}\n')
-    process = subprocess.Popen(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+    process = subprocess.Popen(["bash", "scripts/run_experiments.sh", "restart"], cwd=ROOT, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
     lines, deadline = [], time.monotonic() + 90
     try:
@@ -73,7 +73,6 @@ def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
         os.killpg(process.pid, 15)
         process.wait(timeout=30)
         out = "\n".join(lines)
-        assert f"[restart] host={host}: a node launcher is already running (pid {old_pid}); stopping it first" in out
         assert "[stop] host=" in out and "[pass 1]" in out
         assert subprocess.run(["kill", "-0", str(old_pid)], capture_output=True).returncode != 0
         # The restart is the operator's second chance for this node: the fault record is cleared.
@@ -198,19 +197,25 @@ def test_start_and_stop_close_this_hosts_dead_cost_events_in_every_root(tmp_path
     assert finished_rows(live_node) == []
 
 
-def test_a_branch_exhausted_by_a_gpu_fault_is_waived_before_the_pass(tmp_path):
+def test_historical_gpu_fault_without_event_binding_preserves_costs_and_failure(tmp_path):
     from test_waive_stalled_attempts import branch as faulted_branch
     env = environment(tmp_path, fake_inner(tmp_path, 78, 78))
     root = Path(env["SWITCH_ROOT"])
     core.atomic_json(root / "switch.json", {"schema": "x"})
     directory = faulted_branch(root, "random_reduced")
     assert (directory / "failure.json").exists()
+    # This shared fixture has an old append-only CUDA log, not an event-bound
+    # watchdog/signal/stale-owner receipt. It cannot authorize an automatic refund.
+    before_cost = (directory / "cost.jsonl").read_bytes()
+    before_failure = (directory / "failure.json").read_bytes()
     result = subprocess.run(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=120)
     out = result.stdout + result.stderr
-    assert "[auto-waive] [waive] states/s3-t100/points/view-100/random_reduced: waived train train1" in out
-    assert "29041 GPU-s returned to the allocation" in out and "discarded/" not in out
-    assert not (directory / "failure.json").exists() and (directory / "waivers/train1.json").exists()
+    assert "without event-bound infrastructure evidence" in out
+    assert "GPU-s returned to the allocation" not in out
+    assert (directory / "cost.jsonl").read_bytes() == before_cost
+    assert (directory / "failure.json").read_bytes() == before_failure
+    assert not (directory / "waivers/train1.json").exists()
     assert out.index("[auto-waive]") < out.index("[pass 1] selection switch")
 
 
@@ -328,6 +333,83 @@ def test_a_holding_node_resumes_as_soon_as_a_branch_becomes_claimable(tmp_path):
     assert "[hold] claimable work in selection-switch-v1; starting the next pass now" in out, out
     assert out.index("[holding]") < out.index("claimable work") < out.index("[pass 2]")
     assert out.count("[holding]") <= 3
+
+
+def test_controller_finishes_owned_work_then_yields_primary_peer_wait_to_long_suite(tmp_path):
+    calls = tmp_path / "queue-calls.jsonl"
+    fake = tmp_path / "queue-inner.py"
+    fake.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+root = Path(os.environ["SWITCH_ROOT"])
+with open(os.environ["QUEUE_CALLS"], "a") as handle:
+    handle.write(json.dumps({"root": root.name, "queue": os.environ.get("SWITCH_QUEUE_PASS")}) + "\\n")
+if root.name == "selection-switch-v1":
+    if os.environ.get("SWITCH_QUEUE_PASS") != "1":
+        sys.exit(78)
+    # A claimed task finishes before the peer-wait callback can yield.
+    Path(os.environ["OWNED_FINISHED"]).write_text("published")
+    print("[queue-yield] peer-owned tasks; returning to shared queue", flush=True)
+    sys.exit(0)
+assert Path(os.environ["OWNED_FINISHED"]).read_text() == "published"
+sys.exit(130)
+''')
+    fake.chmod(0o755)
+    env = environment(tmp_path, fake)
+    env.update({"EXPERIMENTS_CLEAN": "0", "QUEUE_CALLS": str(calls),
+                "OWNED_FINISHED": str(tmp_path / "owned-finished")})
+    for name in ("selection-switch-v1", "selection-switch-long-v1"):
+        core.atomic_json(Path(env["OM_WORK"]) / "runs" / name / "switch.json", {"schema": "fake"})
+    result = subprocess.run(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=20, check=False)
+    assert result.returncode == 130, result.stdout + result.stderr
+    rows = [json.loads(line) for line in calls.read_text().splitlines()]
+    assert rows == [{"root": "selection-switch-v1", "queue": "1"},
+                    {"root": "selection-switch-long-v1", "queue": "1"}]
+    assert "[queue-yield]" in result.stdout and "sibling selection-switch-long-v1" in result.stdout
+
+
+def test_controller_mopps_pass_has_no_internal_peer_or_prefix_wait(tmp_path):
+    calls = tmp_path / "mopps-args.json"
+    fake = tmp_path / "mopps-inner.py"
+    fake.write_text('''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["QUEUE_CALLS"], "w") as handle:
+    json.dump({"args": sys.argv[1:], "queue": os.environ.get("SWITCH_QUEUE_PASS")}, handle)
+sys.exit(130)
+''')
+    fake.chmod(0o755)
+    env = environment(tmp_path, fake)
+    env.update({"EXPERIMENTS_CLEAN": "0", "EXPERIMENTS_SKIP_SWITCH": "1",
+                "EXPERIMENTS_HELP_SIBLINGS": "0", "QUEUE_CALLS": str(calls)})
+    result = subprocess.run(["bash", "scripts/run_experiments.sh", "run"], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=20, check=False)
+    assert result.returncode == 130, result.stdout + result.stderr
+    assert json.loads(calls.read_text()) == {"args": ["scripts/run_mopps_comparison.sh"], "queue": "1"}
+
+
+@pytest.mark.parametrize("queue", ["0", "1"])
+def test_mopps_queue_yield_keeps_automatic_failed_branch_retry(tmp_path, queue):
+    """Execute the real launcher loop with CPU-only worker callbacks."""
+    root = tmp_path / "comparison"
+    core.atomic_json(root / "states/s3-t25/random_online/failure.json", {"error": "interrupted"})
+    checkpoint = root / "states/s3-t25/random_online/policy/checkpoint-000030/checkpoint_state.json"
+    core.atomic_json(checkpoint, {"completed_steps": 30})
+    before = checkpoint.read_bytes()
+    calls = tmp_path / "worker-calls.txt"
+    launcher = (ROOT / "scripts/run_mopps_comparison.sh").read_text()
+    tail = "mopps_retry_failures()" + launcher.split("mopps_retry_failures()", 1)[1]
+    script = 'set -euo pipefail\nrc=0\nselection_run_worker() { printf "%s\\n" "$*" >> "$QUEUE_CALLS"; }\n' + tail
+    result = subprocess.run(["bash", "-c", script], cwd=ROOT, text=True, capture_output=True, timeout=10, check=False,
+        env={**os.environ, "OUT_ROOT": str(root), "PY": sys.executable, "MODE": "run",
+             "SWITCH_QUEUE_PASS": queue, "SWITCH_HOLD_SECONDS": "0", "SWITCH_AUTO_RECOVER": "0",
+             "MOPPS_AUTO_RETRY": "1", "QUEUE_CALLS": str(calls)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = calls.read_text().splitlines()
+    assert len(rows) == 2 and " retry --root " in rows[0] and " run --root " in rows[1]
+    assert "--idle-timeout 0" in rows[0]
+    assert ("--idle-timeout 0" in rows[1]) is (queue == "1")
+    assert checkpoint.read_bytes() == before
 
 
 def test_node_identity_tells_two_containers_with_one_hostname_apart(tmp_path):

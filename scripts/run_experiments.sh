@@ -4,7 +4,8 @@
 # recorded failures first), and keeps the node between passes. The node is
 # never assigned to one experiment: whatever has claimable work gets it.
 #
-#   bash scripts/run_experiments.sh          detach on this node and follow
+#   bash scripts/run_experiments.sh          start, or preserve the existing controller
+#   bash scripts/run_experiments.sh restart  explicitly interrupt and reload this node
 #   bash scripts/run_experiments.sh stop     stop this node's launcher and workers
 #   bash scripts/run_experiments.sh status   one screen for both experiments (also
 #                                            what run_selection_switch.sh status and
@@ -150,7 +151,10 @@ fi
 # Inner launchers: foreground, single pass, no hold, no keepalive (this launcher holds the node).
 # EXPERIMENTS_INNER replaces bash for the inner launchers in tests only.
 inner() {
-  env -u EXPERIMENTS_DETACHED -u OUT_ROOT SWITCH_FOREGROUND=1 SWITCH_HOLD_SECONDS=0 SWITCH_KEEPALIVE=0 "${EXPERIMENTS_INNER:-bash}" "$@"
+  # Returning after an unclaimable pass is what lets this node serve other
+  # suites. HOLD=0 alone does not disable a worker's internal peer wait.
+  env -u EXPERIMENTS_DETACHED -u OUT_ROOT SWITCH_FOREGROUND=1 SWITCH_HOLD_SECONDS=0 SWITCH_KEEPALIVE=0 \
+    SWITCH_QUEUE_PASS=1 "${EXPERIMENTS_INNER:-bash}" "$@"
 }
 run_switch_root() {
   if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
@@ -448,6 +452,18 @@ stop_node() {
   # MBPP uses owner-scoped teardown; retain the legacy cleanup for other modes.
   full_clean
 }
+# Generic cleanup spans all prepared roots. A dedicated MBPP controller on this
+# allocation is not a leftover: preserve it even when the other entry point is
+# used. Reuse its strict PID/work/node/suite verification before any mutation.
+if [ -z "${EXPERIMENTS_MBPP_SUITE:-}" ] && \
+    EXPERIMENTS_MBPP_SUITE=all PID_FILE="$LOG_DIR/launcher.mbpp.$HOST.pid" launcher_pid_alive; then
+  echo "[already running] MBPP controller pid=$NODE_LAUNCHER_PID; existing work continues: $LOG_DIR/console.mbpp.$HOST.log"
+  if [ "$MODE" = stop ] || [ "$MODE" = restart ]; then
+    echo '[abort] use the MBPP launcher to explicitly stop or restart its controller'
+    exit 75
+  fi
+  exit 0
+fi
 if [ "$MODE" = stop ]; then
   stop_node
   exit 0
@@ -462,18 +478,17 @@ if [ "$MODE" = restart ]; then
   unset EXPERIMENTS_DETACHED
 fi
 # --- run ---
-# Legacy modes restart a node: a launcher already running here is stopped first
-# (its ranks reaped, receipts closed), the shared checkout is pulled, then the
-# node starts fresh. EXPERIMENTS_PULL=0 skips the pull.
-# MBPP repeated runs instead leave an existing controller running.
+# Repeating run is idempotent: leave an existing controller and its workers
+# untouched. Only an explicit restart above authorizes stopping that work.
+# EXPERIMENTS_PULL=0 skips the pull when starting an idle node.
 if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if launcher_pid_alive; then
     if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
       echo "[already running] MBPP controller pid=$NODE_LAUNCHER_PID; existing work continues: $CONSOLE_LOG"
       exit 0
     fi
-    echo "[restart] host=$HOST: a node launcher is already running (pid $NODE_LAUNCHER_PID); stopping it first"
-    stop_node
+    echo "[already running] controller pid=$NODE_LAUNCHER_PID; existing work continues: $CONSOLE_LOG"
+    exit 0
   fi
   # Keep the legacy reset for non-MBPP launchers. MBPP restart is a code reload,
   # not authority to erase repeated-fault protection or its diagnostic evidence.
@@ -632,6 +647,7 @@ while :; do
   case "$rc_switch" in 75|78|79) why_mopps=node-unavailable ;; esac
   if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ] && [ -f "$MOPPS_ROOT/mopps.json" ] && ! mopps_complete; then
     echo "[pass $pass] MoPPS comparison"
+    # Finish owned work, then yield peer/prerequisite waits to this shared queue.
     inner scripts/run_mopps_comparison.sh || rc_mopps=$?
     case "$rc_mopps" in 130|143) exit "$rc_mopps" ;; esac
     why_mopps=$rc_mopps

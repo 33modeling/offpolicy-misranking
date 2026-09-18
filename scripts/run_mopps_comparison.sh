@@ -375,6 +375,13 @@ else
   # MOPPS_AUTO_RETRY=0 keeps the old behaviour of leaving them to 'retry'.
   pass=0
   wait_seconds=$HOLD
+  QUEUE_ARGS=()
+  if [ "$MODE" = run ] && [ "${SWITCH_QUEUE_PASS:-0}" = 1 ]; then
+    # The outer controller owns peer/prerequisite waits. Keep its control flag
+    # separate from operator arguments so the automatic failure retry below
+    # remains enabled for this ordinary no-argument run.
+    QUEUE_ARGS=(--idle-timeout 0)
+  fi
   while :; do
     pass=$((pass+1))
     rc=0
@@ -395,7 +402,7 @@ else
       rc=0
     fi
     selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
-      "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" || rc=$?
+      "$PY" src/mopps_comparison_gpu.py "$MODE" --root "$OUT_ROOT" "$@" "${QUEUE_ARGS[@]}" || rc=$?
     case "$rc" in 78|130|137|143) break ;; esac
     if [ "$rc" -ne 0 ]; then
       CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true

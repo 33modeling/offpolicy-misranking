@@ -189,9 +189,20 @@ work in priority order (v1, difficulty, hard, quality, long, then the rest by
 name) before holding, so one node started for difficulty finishes v1's last
 rerun or helps long instead of idling; the stale-cost close and the auto-waive
 run for every root each pass. `EXPERIMENTS_HELP_SIBLINGS=0` keeps a node on its
-own root. One node runs one launcher: starting another experiment's launcher on
-a node restarts the node (the running attempt resumes from its checkpoint on
-the next claim).
+own root. Each worker returns idle peer/prerequisite waits to this controller;
+owned training and evaluation finish before another suite is selected. MoPPS
+also yields idle waits without disabling automatic failed-branch retries.
+One node runs one launcher: repeating `bash scripts/run_experiments.sh` leaves
+its existing controller and workers running. Use an explicit `restart` only
+on a node whose current work you intend to interrupt; saved checkpoints remain
+subject to validation on resume. A dedicated MBPP controller is also preserved
+by the generic command, and only the MBPP entry point may stop or restart it.
+
+To load these fixes immediately on a **stuck idle** generic node, run
+`git pull --ff-only && bash scripts/run_experiments.sh restart`. For a dedicated
+MBPP node, use `git pull --ff-only && bash scripts/run_mbpp_experiments.sh restart`.
+Do not restart healthy training nodes. Pulling alone does not hot-patch a worker
+already running from a frozen snapshot; it uses updated code at its next pass.
 
 `waive` (from either launcher, and automatically before every node pass)
 returns the allocation of attempts lost to infrastructure: a rank that dies
