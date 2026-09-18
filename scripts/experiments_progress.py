@@ -22,6 +22,7 @@ sys.path.insert(0, str(HERE.parents[0] / "src"))
 sys.path.insert(0, str(HERE))
 import selection_switch_status as switch_status  # noqa: E402
 import mopps_comparison_status as mopps_status  # noqa: E402
+from _status_summary import random_counts, random_text, suite_label
 
 ORDER = ("selection-switch-v1", "difficulty", "hard", "quality", "long")
 
@@ -35,8 +36,7 @@ def rank(root):
 
 
 def label(root):
-    name = root.name.replace("selection-switch-", "").replace("mopps-comparison", "mopps")
-    return name[:-3] if name.endswith("-v1") else name
+    return suite_label(root)
 
 
 def prepared_roots(work):
@@ -75,6 +75,13 @@ def render_root(root, data, *, width, kind):
         gate = "READY" if data.get("gate_ready") else f"WAIT (dev {data.get('development_done', 0)}/18)"
         parts.append(f"gate {gate}")
     lines = textwrap.wrap(f"{name}: " + "  ".join(parts), width=width, subsequent_indent="  ")
+    random = random_text(random_counts(branches))
+    if random:
+        lines += textwrap.wrap('  RANDOM ' + random, width=width, subsequent_indent='    ')
+    histories = sum(bool(task.get('archived_work')) for task in branches)
+    if histories:
+        lines += textwrap.wrap(f'  HISTORY {histories}: archived attempts retained; current status shown separately.',
+                               width=width, subsequent_indent='    ')
     host_width = max(12, width - 52)
     for t in sorted(running, key=lambda t: (t["seed"], t["step"], t["arm"])):
         lines.append(clip(f"  RUN  s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('phase') or '-':<9} {updates(t):>5} "

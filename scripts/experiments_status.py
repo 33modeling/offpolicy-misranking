@@ -21,6 +21,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mopps_comparison_status as mopps_status
 import selection_switch_status as switch_status
+from _status_summary import random_counts, random_text, suite_label
 
 SEPARATOR = "=" * 24
 
@@ -46,6 +47,8 @@ def sibling_status(switch_root, mopps_root, *, now):
             summaries.append({"root": str(root), "kind": "switch" if marker == "switch.json" else "mopps",
                               "prepared": data.get("prepared", False), "branches": len(branches),
                               "branch_counts": dict(Counter(task["status"] for task in branches)),
+                              "random_counts": random_counts(branches),
+                              "archived_tasks": sum(bool(task.get("archived_work")) for task in branches),
                               "training_published": data.get("training_published", 0)})
             for task in data.get("tasks", []):
                 if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
@@ -76,6 +79,21 @@ def render(data, *, all_tasks=False, width=120):
              switch_status.node_view.render_idle(data["nodes"]),
              "", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
     lines += switch_status.node_view.render_nodes(data["nodes"], switch_status.table, width)
+    lines += ['', 'RANDOM CONTROLS (RF=full, RR=reduced, RO=online; current saved state)']
+    random_roots = [
+        {'root': item.get('root', name), 'random_counts': random_counts(item.get('tasks', [])),
+         'archived_tasks': sum(bool(task.get('archived_work')) for task in item.get('tasks', [])
+                               if task.get('kind', 'branch') == 'branch')}
+        for name, item in (('on-policy', data['selection_switch']), ('MoPPS', data['mopps_comparison']))
+        if item.get('prepared')
+    ] + data.get('other_experiments', [])
+    for item in random_roots:
+        counts = item.get('random_counts', {})
+        if not counts:
+            continue
+        history = f" | HISTORY {item['archived_tasks']}" if item.get('archived_tasks') else ''
+        lines += textwrap.wrap(f"{suite_label(item['root'])}: {random_text(counts)}{history}",
+                               width=width, subsequent_indent='  ')
     if data.get("other_experiments"):
         lines += ["", "OTHER EXPERIMENT RESULTS (separate roots; not a restart of the primary suite)"]
         for item in data["other_experiments"]:

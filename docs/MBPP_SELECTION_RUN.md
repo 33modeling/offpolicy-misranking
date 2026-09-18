@@ -94,6 +94,14 @@ checkpoints fail validation, and automatic waivers never archive saved training
 or completion evidence. These protections preserve existing files and costs;
 they do not restore files already missing or certify damaged checkpoints.
 
+Status now separates `HISTORY` (archived attempts) from current `DONE`, `EVAL`
+and `RESUME` states. An archive alone never downgrades a valid current result.
+A structurally consistent final policy and budget-stop record awaiting result
+publication is `EVAL`, subject to full worker validation, not a new `READY`
+training task. The combined status and progress screens show RF/RR/RO random
+counts separately from selector counts; display labels use on-policy while
+preserving the original storage paths and CLI keys.
+
 A missing `budget_stop.json` can now be reconstructed from an intact final
 policy only after full lineage, tensor and budget-record validation. A surviving
 result must also agree with the exact restored file hash. This repair does not

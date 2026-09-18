@@ -63,8 +63,34 @@ def last_training_step(path):
     return None
 
 
-def saved_policy_state(policy):
+def saved_policy_state(policy, *, kind="branch"):
     """Cheap inventory, not a tensor-hash or scientific-contract certificate."""
+    final = policy / "policy_train.json"
+    if final.is_file():
+        try:
+            manifest = core.read(final)
+            start, completed = manifest.get("start_step"), manifest.get("completed_steps")
+            files = ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt", "grpo_stats.jsonl")
+            complete = (manifest.get("schema") == "offpolicy-rlvr-policy/v1"
+                        and type(start) is int and type(completed) is int and 0 <= start < completed
+                        and all((policy / name).is_file() and (policy / name).stat().st_size > 0 for name in files)
+                        and all(isinstance(manifest.get(key), str) and re.fullmatch(r"[a-fA-F0-9]{64}", manifest[key])
+                                for key in ("adapter_sha256", "optimizer_sha256", "grpo_stats_sha256")))
+            if complete and kind == "prefix":
+                return "SAVING", "saved prefix policy candidate; validate hashes and lineage, then publish prefix receipt"
+            if complete:
+                stop = core.read(policy / "budget_stop.json")
+                budget = manifest.get("training_budget")
+                if (stop.get("use_parent_policy") is False and type(stop.get("completed_steps")) is int
+                        and stop["completed_steps"] == completed
+                        and type(stop.get("requested_target_steps")) is int
+                        and stop["requested_target_steps"] >= completed
+                        and stop.get("stop_reason") in {"budget_exhausted", "no_block_fits", "updates_completed"}
+                        and (budget is None or isinstance(budget, dict)
+                             and stop == {**budget, "use_parent_policy": False})):
+                    return "EVAL", "saved final policy candidate; validate hashes and lineage, then evaluate/publish (no parent restart)"
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
     checkpoints = list(policy.glob("checkpoint-*"))
     for checkpoint in sorted(checkpoints, reverse=True):
         try:
@@ -80,7 +106,6 @@ def saved_policy_state(policy):
                 return "RESUME", f"checkpoint step {step} present; trainer must validate hashes and contract before resume"
         except (OSError, ValueError, TypeError, AttributeError):
             continue
-    final = policy / "policy_train.json"
     if final.is_file():
         return "REVIEW", "saved final policy exists without a published result; verify lineage before retry"
     evidence = (checkpoints or list(policy.glob(".checkpoint-*.tmp"))
@@ -197,24 +222,23 @@ def snapshot(root, *, now=None):
         elif "_invalid" in progress:
             task.update(status="INVALID", reason="unreadable progress record")
         archived = archived_training_artifact(directory) if kind in {"prefix", "branch"} else None
-        if kind == "branch" and task["training_published"] and archived is not None:
-            task.update(status="REVIEW", archived_work=str(archived.relative_to(directory)), saved_work="REVIEW",
-                        reason="published result retained; archived training work also exists; review possible replay and preserve both attempts")
+        if archived is not None:
+            task["archived_work"] = str(archived.relative_to(directory))
+            task["history_warning"] = "archived attempt exists; history alone does not invalidate current saved work"
         if (kind in {"prefix", "branch"} and not fresh
                 and task["status"] in {"READY", "WAIT", "FAILED", "STALE"}):
-            saved = saved_policy_state(policy_dir)
-            if archived is not None:
-                task["archived_work"] = str(archived.relative_to(directory))
+            saved = saved_policy_state(policy_dir, kind=kind)
+            if archived is not None and saved is None:
                 evidence = "result" if archived.name == "result.json" else "training artifact"
                 reason = f"archived {evidence} exists under discarded; inspect saved work before retry"
-                if saved is not None and saved[0] == "RESUME":
-                    reason += "; active checkpoint also exists, reconcile attempts before resume"
                 saved = ("REVIEW", reason)
             if saved:
                 state, reason = saved
                 task["saved_work"] = state
                 task["resume_validation_required"] = True
-                if state == "REVIEW" or task["status"] in {"READY", "WAIT"}:
+                if state in {"REVIEW", "EVAL", "SAVING"} or task["status"] in {"READY", "WAIT"}:
+                    if failure.get("error"):
+                        task["last_failure"] = short_error(failure["error"])
                     task.update(status=state, reason=reason + (f"; waits for {dependency}" if dependency else ""))
 
         cost_path = directory / "cost.jsonl"
@@ -235,7 +259,8 @@ def snapshot(root, *, now=None):
         # peers and terminal diagnostic failures are not retryable work. EVAL
         # resumes reporting only; RESUME still requires the trainer's validation.
         task["retryable"] = (kind in {"prefix", "branch"} and not dependency
-                             and task["status"] in {"FAILED", "STALE", "EVAL", "RESUME"})
+                             and (task["status"] in {"FAILED", "STALE", "EVAL", "RESUME"}
+                                  or kind == "prefix" and task["status"] == "SAVING"))
         tasks.append(task)
         return task
 
@@ -375,7 +400,10 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
                  if data["development_done"] < 18 else "FIT PENDING: 18/18 development results published"))
     tasks = data["tasks"]
     if data.get("training_published"):
-        lines.append(f"TRAINING RESULTS  {data['training_published']}/48 published (EVAL means curve evaluation only)")
+        lines.append(f"TRAINING RESULTS  {data['training_published']}/48 published (receipt checked; EVAL is evaluation pending)")
+    history = sum(bool(task.get("history_warning")) for task in tasks)
+    if history:
+        lines.append(f"HISTORY  {history} task(s) have archived attempts; current valid saved work keeps its status.")
     alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"})
     if alerts:
         lines.append("ALERTS  " + "  ".join(f"{key} {value}" for key, value in alerts.items()) + "  (all phases)")
@@ -441,7 +469,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
                 lines.append("  " + task["reason"])
     lines += ["", "SEL/RND: diagnostic-paid selection/random; FULL-S/FULL-R: full-budget controls.",
               "DONE: published receipt checked. RUN: heartbeat <60s. STALE: not confirmed running.",
-              "EVAL: curve only. RESUME: checkpoint to verify. REVIEW: do not restart.",
+              "EVAL: saved policy/result; evaluation pending. RESUME: verify checkpoint.",
               f"ROOT  {data['root']}"]
     return "\n".join(part for line in lines for part in
                      (textwrap.wrap(line, width=width, subsequent_indent="  ", break_long_words=True, break_on_hyphens=False) if len(line) > width else [line]))

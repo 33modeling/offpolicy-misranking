@@ -42,6 +42,12 @@ export EXPERIMENTS_MBPP_SUITE="$SUITE"
 source scripts/_mbpp_experiments.sh
 mbpp_queue_init
 
+# Presentation only. Frozen protocol values, the `fresh` CLI key, and all
+# existing fresh-r output paths must remain unchanged when labels improve.
+mbpp_display_label() {
+  case "$1" in fresh|fresh_r) printf '%s' 'on-policy' ;; *) printf '%s' "$1" ;; esac
+}
+
 if [ "$MODE" = why ] || [ "$MODE" = saved ]; then
   PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
   [ -x "$PY" ] || PY=python3
@@ -55,16 +61,17 @@ fi
 for root in "${MBPP_ROOTS[@]}"; do
   mbpp_queue_settings "$root"
   printf '[mbpp:%s] selector=%s accounting=%s gate=%s\n  root=%s\n' \
-    "$MBPP_SUITE" "$MBPP_SELECTOR" "$MBPP_ACCOUNTING" "$MBPP_GATE" "$MBPP_ROOT"
+    "$(mbpp_display_label "$MBPP_SUITE")" "$(mbpp_display_label "$MBPP_SELECTOR")" \
+    "$MBPP_ACCOUNTING" "$MBPP_GATE" "$MBPP_ROOT"
   [ -z "$MBPP_PREFIX" ] || printf '  shared prefixes and evaluation=%s\n' "$MBPP_PREFIX"
 done
 
 if [ "$MODE" = plan ]; then
-  echo '[plan] seeds 0..4; fresh-selected states at 25/50/100 updates; 18 development + 30 held-out continuations per suite'
+  echo '[plan] seeds 0..4; on-policy-selected states at 25/50/100 updates; 18 development + 30 held-out continuations per suite'
   echo '[plan] MBPP execution rewards; final evaluation K=8; convergence curves: 3 checkpoints, K=4'
   echo '[plan] evaluation excludes every source train/validation prompt; available count checked before launch'
   echo "[plan] one queue over ${MBPP_SUITES[*]}: a node takes whichever root has claimable work, in that order"
-  echo '[plan] quality and difficulty stay unclaimable until the fresh root has certified all fifteen prefixes'
+  echo '[plan] quality and difficulty stay unclaimable until the on-policy root has certified all fifteen prefixes'
   echo '[plan] no files written or GPU work started; use check to validate local inputs'
   exit 0
 fi
@@ -81,13 +88,13 @@ if [ "$MODE" = status ] || [ "$MODE" = results ]; then
   failed=0
   for root in "${MBPP_ROOTS[@]}"; do
     mbpp_queue_settings "$root"
-    echo "[mbpp:$MBPP_SUITE] $MODE"
+    echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] $MODE"
     rc=0
     env -u OUT_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_ONLY_SEEDS -u SWITCH_ONLY_ARMS \
       -u SWITCH_BUDGET_GPU_SECONDS -u SWITCH_RUNTIME_REPO -u SWITCH_DETACHED -u EXPERIMENTS_DETACHED \
       SWITCH_ROOT="$MBPP_ROOT" EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
       bash scripts/run_selection_switch.sh "$MODE" || rc=$?
-    [ "$rc" -eq 0 ] || { echo "[mbpp:$MBPP_SUITE] $MODE rc=$rc"; failed=1; }
+    [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] $MODE rc=$rc"; failed=1; }
   done
   exit "$failed"
 fi

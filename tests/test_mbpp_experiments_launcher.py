@@ -220,6 +220,56 @@ def test_readers_do_not_check_or_start_training(launcher, mode):
     assert all(json.loads(line)["args"] == [mode] for line in Path(env["CALLS"]).read_text().splitlines())
 
 
+@pytest.mark.parametrize("suite,expected", [
+    ("all", ["selection-switch-mbpp-v1", "selection-switch-mbpp-quality-v1", "selection-switch-mbpp-difficulty-v1"]),
+    ("fresh", ["selection-switch-mbpp-v1"]),
+    ("quality", ["selection-switch-mbpp-quality-v1"]),
+    ("difficulty", ["selection-switch-mbpp-difficulty-v1"]),
+])
+def test_status_routes_exact_mbpp_suite_roots_despite_inherited_math_environment(launcher, suite, expected):
+    run, env = launcher
+    result = run("status", suite, OUT_ROOT="/wrong/old-math", SWITCH_ROOT="/wrong/math",
+                 EXPERIMENTS_COMBINED="1", SWITCH_RUNTIME_REPO="/wrong/old-code")
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
+    assert [call["env"]["SWITCH_ROOT"] for call in calls] == [str(Path(env["OM_WORK"]) / "runs" / name) for name in expected]
+    assert all(call["args"] == ["status"] for call in calls)
+    for call in calls:
+        passed = call["env"]
+        assert passed["EXPERIMENTS_COMBINED"] == "0"
+        assert passed["EXPERIMENTS_SKIP_MOPPS"] == "1"
+        assert all(key not in passed for key in ("OUT_ROOT", "SWITCH_ONLY_ARMS", "SWITCH_ONLY_SEEDS", "SWITCH_RUNTIME_REPO"))
+    assert not Path(env["AUDIT_LOG"]).exists()
+    assert not Path(env["CHECK_LOG"]).exists()
+
+
+def test_status_keeps_existing_custom_suite_roots_without_renaming_on_policy_storage(launcher):
+    run, env = launcher
+    paths = {"SWITCH_MBPP_ROOT": "/existing/saved-fresh-r",
+             "SWITCH_MBPP_QUALITY_ROOT": "/existing/saved-quality",
+             "SWITCH_MBPP_DIFFICULTY_ROOT": "/existing/saved-difficulty"}
+    result = run("status", **paths)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
+    assert [call["env"]["SWITCH_ROOT"] for call in calls] == list(paths.values())
+    assert "[mbpp:on-policy] selector=on-policy" in result.stdout
+    assert "[mbpp:quality] selector=on-policy" in result.stdout
+    assert "[mbpp:difficulty] selector=difficulty" in result.stdout
+    assert "[mbpp:fresh]" not in result.stdout
+    assert "selector=fresh_r" not in result.stdout
+
+
+def test_status_failure_for_a_root_does_not_hide_other_suite_roots(launcher):
+    run, env = launcher
+    result = run("status", FAKE_EXIT="2")
+    assert result.returncode == 1
+    calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
+    assert len(calls) == 3
+    assert len({call["env"]["SWITCH_ROOT"] for call in calls}) == 3
+    assert result.stdout.count("status rc=2") == 3
+    assert not Path(env["AUDIT_LOG"]).exists()
+
+
 def test_why_writes_one_small_report_without_training_or_full_exports(launcher):
     run, env = launcher
     result = run('why')

@@ -48,6 +48,20 @@ def test_progress_distinguishes_saved_training_from_new_ready_work(tmp_path):
     assert 'READY 4' not in text
 
 
+def test_random_progress_counts_are_separate_from_selectors_and_archive_history(tmp_path):
+    progress = load('experiments_progress')
+    tasks = [{'kind': 'branch', 'arm': arm, 'status': 'DONE', 'seed': 3, 'step': 25,
+              'archived_work': 'discarded/old/policy'}
+             for arm in ('random_full', 'random_reduced')]
+    tasks.append({'kind': 'branch', 'arm': 'selection_full', 'status': 'READY', 'seed': 3, 'step': 25})
+    text = '\n'.join(progress.render_root(tmp_path / 'selection-switch-v1', {'tasks': tasks},
+                                          width=80, kind='switch'))
+    assert text.startswith('on-policy:')
+    assert 'RF DONE 1/1' in text and 'RR DONE 1/1' in text
+    assert 'HISTORY 2' in text
+    assert all(len(line) <= 80 for line in text.splitlines())
+
+
 def test_one_screen_shows_both_experiments_and_this_node_once(tmp_path):
     switch_root, mopps_root = tmp_path / "switch", tmp_path / "mopps"
     now = time.time()
@@ -179,12 +193,12 @@ def test_progress_screen_lists_every_root_with_running_updates_and_failures(tmp_
     lines = text.splitlines()
     assert lines[0].startswith("PROGRESS  ") and all(len(line) <= 80 for line in lines)
     assert any(line.startswith("NODES TRAINING NOW  ") for line in lines)
-    assert text.index("\nv1:") < text.index("\ndifficulty:") < text.index("\nmopps:")
+    assert text.index("\non-policy:") < text.index("\ndifficulty:") < text.index("\nMoPPS:")
     assert "  RUN  s1/t50 random_reduced    train       37u" in text and "run1-wss-3-gab12" in text
     assert "  FAIL s1/t50 selection_reduced train worker failed" in text
     assert "difficulty: DONE 0/" in text and "gate WAIT (dev 0/18)" in text
     # The node list at the bottom names every node: state, identity, phase, and what it does.
-    assert "\nNODES  " in text and text.index("\nNODES  ") > text.index("\nmopps:")
+    assert "\nNODES  " in text and text.index("\nNODES  ") > text.index("\nMoPPS:")
     node_lines = text[text.index("\nNODES  "):].splitlines()[1:]
     assert any(l.startswith("  RUN    run1-wss-3-gab12") and "s1/t50 difficulty: random_r" in l for l in node_lines), node_lines
     assert any(l.startswith("  RUN    node-1") for l in node_lines)
