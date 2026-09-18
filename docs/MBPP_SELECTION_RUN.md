@@ -33,6 +33,7 @@ versus random; the shared states permit the fresh/difficulty comparison.
 ## Commands
 
 ```bash
+bash scripts/check_mbpp_storage.sh             # separate read-only storage audit; <=4 KiB; never starts training
 bash scripts/run_mbpp_experiments.sh plan       # settings only, no writes/GPU work
 bash scripts/run_mbpp_experiments.sh check      # read-only local input checks
 bash scripts/run_mbpp_experiments.sh status
@@ -47,6 +48,27 @@ bash scripts/run_mbpp_experiments.sh run difficulty
 ```
 
 ## Nodes Joining And Failing
+
+Before `run` or `restart` can enter the controller (including stopping an old
+controller during restart), the wrapper now runs `check_mbpp_storage.sh`.
+The controller repeats the check before every recovery/queue pass, including
+in-place automatic code reloads. A live task lease defers mutable checkpoint
+inspection so a peer's in-progress checkpoint is not mistaken for file loss.
+Missing work storage, lost result payloads with surviving seals/DONE log lines,
+archived completed results, incomplete checkpoint metadata without a complete
+alternative, and successful training costs with missing final policy/stop
+records block startup with exit 2. `stop` and read-only commands remain available.
+An absent root is not labelled "deleted"; if none of the requested existing run
+manifests can be found, recovery refuses to initialize replacement runs silently.
+Unprepared quality/difficulty roots are allowed alongside the existing fresh root.
+
+The separate audit prints exact configured roots and distinguishes active saved
+results from `discarded/`, waiver and explicit-reset receipts. It reads bounded
+metadata and short historical log tails, not model/optimizer/rollout payloads,
+and changes no experiment files. It cannot prove who deleted a file or detect
+historical deletion with no remaining evidence. Tensor hashes and checkpoint
+lineage still require trainer validation; passing metadata checks is not that
+certification. Already-running workers are not stopped by this read-only audit.
 
 `run` and `stop` use `scripts/run_experiments.sh` for the existing queue,
 detached console, keepalive, watchdog, automatic Git updates, stale-event

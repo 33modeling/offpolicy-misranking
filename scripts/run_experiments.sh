@@ -580,6 +580,14 @@ while :; do
     fi
   fi
   # Before the first pass, and again whenever a pass found the node busy.
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+    # Auto-pull re-enters this controller, not the outer wrapper. Check saved
+    # storage before recovery can move anything or a queue pass can retrain.
+    if ! CUDA_VISIBLE_DEVICES='' bash scripts/check_mbpp_storage.sh "$EXPERIMENTS_MBPP_SUITE"; then
+      echo '[storage-blocked] no recovery/reset/training pass started; preserve saved work and inspect storage'
+      exit 2
+    fi
+  fi
   if [ "$need_clean" -eq 1 ] && [ "${EXPERIMENTS_CLEAN:-1}" != 0 ]; then
     full_clean
   fi

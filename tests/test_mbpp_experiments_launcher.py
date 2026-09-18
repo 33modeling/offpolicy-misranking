@@ -143,6 +143,13 @@ def launcher(tmp_path):
     (scripts / "check_mbpp_experiments.py").write_text(
         'import os\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
         'open(os.environ["CHECK_LOG"], "a").write("checked\\n")\n')
+    (scripts / "check_mbpp_storage.sh").write_text(
+        '#!/usr/bin/env bash\n"$TEST_PYTHON" - "$@" <<\'PY\'\n'
+        'import json, os, sys\n'
+        'assert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'with open(os.environ["AUDIT_LOG"], "a") as f:\n'
+        '    f.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+        'sys.exit(int(os.environ.get("AUDIT_EXIT", "0")))\nPY\n')
     (scripts / "run_selection_switch.sh").write_text(
         '#!/usr/bin/env bash\n"$TEST_PYTHON" - "$@" <<\'PY\'\n'
         'import json, os, sys\n'
@@ -152,6 +159,7 @@ def launcher(tmp_path):
     shutil.copy(scripts / "run_selection_switch.sh", scripts / "run_experiments.sh")
     env = {**os.environ, "OM_WORK": str(tmp_path / "work"), "VENV_DIR": str(venv),
            "TEST_PYTHON": sys.executable, "CALLS": str(tmp_path / "calls.jsonl"),
+           "AUDIT_LOG": str(tmp_path / "storage-audits.jsonl"),
            "CHECK_LOG": str(tmp_path / "checks"), "SWITCH_ROOT": "/wrong/math",
            "SWITCH_PREFIX_SOURCE": "/wrong/math", "SWITCH_DATASET": "math500",
            "SWITCH_ONLY_SEEDS": "3,4", "SWITCH_ONLY_ARMS": "random_full",
@@ -163,7 +171,7 @@ def launcher(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["run", "restart", "stop", "progress"])
-def test_lifecycle_is_delegated_to_original_node_controller_without_preflight(launcher, mode):
+def test_lifecycle_is_delegated_without_input_preflight_after_required_storage_audit(launcher, mode):
     run, env = launcher
     result = run(mode, EXPERIMENTS_KEEPALIVE="1", EXPERIMENTS_WATCHDOG="1", EXPERIMENTS_AUTO_PULL="1")
     assert result.returncode == 0, result.stderr
@@ -176,6 +184,31 @@ def test_lifecycle_is_delegated_to_original_node_controller_without_preflight(la
     assert all(e[key] == "1" for key in ("EXPERIMENTS_KEEPALIVE", "EXPERIMENTS_WATCHDOG", "EXPERIMENTS_AUTO_PULL"))
     assert all(key not in e for key in ("SWITCH_PREFIX_SOURCE", "SWITCH_ONLY_SEEDS", "SWITCH_ONLY_ARMS", "OM_NODE_LOCK_HELD", "SWITCH_BUDGET_GPU_SECONDS"))
     assert not Path(env["CHECK_LOG"]).exists()
+    audit = Path(env["AUDIT_LOG"])
+    if mode in ("run", "restart"):
+        assert json.loads(audit.read_text()) == ["all"]
+    else:
+        assert not audit.exists()
+
+
+@pytest.mark.parametrize("mode", ["run", "restart"])
+@pytest.mark.parametrize("code", ["1", "2", "127"])
+def test_storage_audit_failure_blocks_start_and_restart_before_controller_or_input_preflight(launcher, mode, code):
+    run, env = launcher
+    result = run(mode, "fresh", AUDIT_EXIT=code)
+    assert result.returncode == 2, result.stderr
+    assert 'no controller was started or stopped' in result.stderr
+    assert json.loads(Path(env["AUDIT_LOG"]).read_text()) == ["fresh"]
+    assert not Path(env["CALLS"]).exists()
+    assert not Path(env["CHECK_LOG"]).exists()
+
+
+@pytest.mark.parametrize("mode", ["stop", "plan", "check", "status", "progress", "results", "saved", "why"])
+def test_non_start_modes_bypass_storage_audit(launcher, mode):
+    run, env = launcher
+    result = run(mode, AUDIT_EXIT="2")
+    assert result.returncode == 0, result.stderr
+    assert not Path(env["AUDIT_LOG"]).exists()
 
 
 @pytest.mark.parametrize("mode", ["status", "results"])

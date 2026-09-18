@@ -74,6 +74,8 @@ def cluster(tmp_path):
     (repo / "src").mkdir()
     shutil.copy(ROOT / "src/cleanup_run_processes.py", repo / "src")
     (scripts / "run_selection_switch.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+    (scripts / "check_mbpp_storage.sh").write_text(
+        '#!/usr/bin/env bash\nexit "${TEST_AUDIT_EXIT:-0}"\n')
     for name in ("recover_selection_switch_cost.py", "waive_stalled_attempts.py", "split_curve_ledger.py"):
         (scripts / name).write_text("pass\n")
     (scripts / "check_mbpp_experiments.py").write_text(
@@ -188,6 +190,17 @@ for index in range(3):
 def events(work):
     path = work / "events.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+@pytest.mark.parametrize("mode", ["run", "restart"])
+def test_blocked_storage_audit_never_enters_node_controller(cluster, mode):
+    work, start = cluster
+    process, log = start("node-audit-blocked", mode=mode, TEST_AUDIT_EXIT="2")
+    assert process.wait(timeout=10) == 2, log.read_text()
+    assert 'no controller was started or stopped' in log.read_text()
+    assert '[fake-check]' not in log.read_text()
+    assert events(work) == []
+    assert not (work / 'runs/experiments').exists()
 
 
 def test_two_nodes_and_a_replacement_resume_a_killed_owner_without_duplicate_results(cluster):

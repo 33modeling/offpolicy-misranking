@@ -92,7 +92,19 @@ if [ "$MODE" = status ] || [ "$MODE" = results ]; then
   exit "$failed"
 fi
 
-# run, stop, progress: the node launcher owns all three. It re-reads the suite
+# Inspect the shared storage before handing control to anything that can stop a
+# controller, recover an attempt, prepare roots or launch GPU work. In
+# particular, a blocked restart must leave the current controller untouched.
+if [ "$MODE" = run ] || [ "$MODE" = restart ]; then
+  if ! env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
+    bash scripts/check_mbpp_storage.sh "$SUITE"; then
+    echo '[abort] MBPP storage audit blocked startup; no controller was started or stopped.' >&2
+    echo '[abort] Review the storage audit before resuming; existing files were not changed by this launcher.' >&2
+    exit 2
+  fi
+fi
+
+# run, restart, stop, progress: the node launcher owns their lifecycle. It re-reads the suite
 # from EXPERIMENTS_MBPP_SUITE, takes the first root as its own and the rest as
 # siblings, prepares a root when its prerequisites are met, and retries ordinary
 # task failures. A math root's settings must not reach an MBPP branch, so they are
