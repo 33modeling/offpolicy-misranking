@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import selection_gate as core
 import selection_gate_gpu as base
+from _recovery_owners import local_event_owner
 
 
 def read_events(directory, *, repair=False):
@@ -64,11 +66,7 @@ def inspect(root):
     return pending
 
 
-def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_kind="operator_reported_stopped_job", evidence_extra=None):
-    root = root.resolve()
-    directory = (root / directory).resolve()
-    if not directory.is_relative_to(root) or directory == root:
-        raise ValueError("recovery directory must be inside the selection-switch root")
+def owner_lock_path(root, directory):
     relative = directory.relative_to(root).parts
     if len(relative) == 3 and relative[0] == "prefixes" and relative[2].startswith("segment-"):
         owner_lock = directory.parent / ".prefix.lock"
@@ -80,6 +78,31 @@ def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_ki
         owner_lock = directory.parent / ".import.lock"
     else:
         raise ValueError("expected a switch prefix segment or continuation/measurement directory")
+    return owner_lock
+
+
+def lease_in_use(root, directory):
+    """Probe existing leases without creating locks or waiting for another job."""
+    for path in (owner_lock_path(root, directory), directory / ".cost.lock"):
+        try:
+            with path.open("rb") as handle:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+                fcntl.flock(handle, fcntl.LOCK_UN)
+        except FileNotFoundError:
+            continue
+    return False
+
+
+def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_kind="operator_reported_stopped_job", evidence_extra=None,
+            verify_stopped_owner=False):
+    root = root.resolve()
+    directory = (root / directory).resolve()
+    if not directory.is_relative_to(root) or directory == root:
+        raise ValueError("recovery directory must be inside the selection-switch root")
+    owner_lock = owner_lock_path(root, directory)
     if not event_id or Path(event_id).name != event_id or event_id in {".", ".."}:
         raise ValueError("invalid cost event ID")
     with contextlib.ExitStack() as locks:
@@ -100,6 +123,11 @@ def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_ki
             return {"status": "already_closed", "event_id": event_id}
         if any((directory / name).exists() for name in ("result.json", "initial.json")):
             raise ValueError("cannot change costs already bound to a published result or measurement")
+        if verify_stopped_owner and not (directory / "cost-events" / f"{event_id}.json").exists():
+            # Recheck after BOTH leases are held. A dead supervisor is not proof
+            # that its detached GPU ranks stopped, and inspection can race.
+            if local_event_owner(start, event_progress(directory, start)) != "stopped":
+                raise ValueError("local job termination is no longer confirmed; cost event left open")
         raw, events = read_events(directory, repair=True)
         progress = event_progress(directory, start)
         pid = progress.get("pid", start.get("pid"))
@@ -176,8 +204,9 @@ def close_stale(root, *, min_age=900., now=None, host=None):
     (meter heartbeat or the ranks' phase-log writes, capped at any later attempt's
     start) minus the recorded start, plus STALE_MARGIN_SECONDS so the estimate
     over-counts rather than under-counts the interrupted attempt. Events with an
-    atomic finish receipt are closed from the receipt. Recent evidence and live
-    local owners are left alone.
+    atomic finish receipt are closed from the receipt. Recent remote/unknown
+    owners retain the grace period. A confirmed dead local owner with no live
+    event-tagged descendants can recover immediately, under both leases.
     """
     core.number(min_age, "minimum stale age", 0.)
     now = core.number(time.time() if now is None else now, "inspection time", 0.)
@@ -196,19 +225,32 @@ def close_stale(root, *, min_age=900., now=None, host=None):
                 row.update(recover(root, directory, event_id))
             else:
                 progress = item["progress"] or {}
+                if lease_in_use(root, directory):
+                    row.update(status="active", reason="owner/cost lease in use; left running; queue continues")
+                    outcome.append(row)
+                    continue
+                owner = local_event_owner(start, progress)
+                if owner == "live":
+                    row.update(status="active", reason="local owner or event worker is alive; left running; queue continues")
+                    outcome.append(row)
+                    continue
                 _, events = read_events(directory)
                 end = stale_end_time(directory, start, progress, events)
                 age = now - end
-                if age < min_age:
-                    row.update(status="skipped", reason=f"last evidence of the job is {age:.0f}s old (< {min_age:.0f}s)")
+                confirmed_stop = owner == "stopped"
+                if age < min_age and not confirmed_stop:
+                    row.update(status="skipped", reason=f"last evidence of the job is {age:.0f}s old (< {min_age:.0f}s); "
+                               "termination unconfirmed; left unchanged; queue continues (no sleep)")
                 else:
                     heartbeat = core.number(progress.get("seconds", 0.), "last recorded duration", 0.)
                     started = core.number(start["time"], "start time", 0.)
                     seconds = max(heartbeat, min(end, now) - started) + STALE_MARGIN_SECONDS
                     row.update(recover(root, directory, event_id, seconds=seconds,
-                        reason=(f"owner silent for {age:.0f}s; charged last observed evidence minus start "
+                        reason=(("local owner exited and no live event-tagged workers; " if confirmed_stop else f"owner silent for {age:.0f}s; ")
+                                + "charged last observed evidence minus start "
                                 f"plus {STALE_MARGIN_SECONDS:.0f}s margin (over-count, never under-count)"),
-                        evidence_kind="stale_owner_last_evidence",
+                        evidence_kind="confirmed_local_stop_last_evidence" if confirmed_stop else "stale_owner_last_evidence",
+                        verify_stopped_owner=confirmed_stop,
                         evidence_extra={"last_evidence_time": end, "silent_seconds": age,
                                         "heartbeat_seconds": heartbeat, "margin_seconds": STALE_MARGIN_SECONDS}))
         except (ValueError, OSError, BlockingIOError) as exc:
@@ -220,7 +262,10 @@ def close_stale(root, *, min_age=900., now=None, host=None):
 def brief(label, closed, remaining):
     """One line of counts, then one line per event that stayed open and why."""
     recovered = sum(row.get("status") == "recovered" for row in closed)
+    active = sum(row.get("status") == "active" for row in closed)
     lines = [f"[recover-cost] {label}: {recovered} stale event(s) closed, {len(remaining)} still open"]
+    if active:
+        lines[0] += f" ({active} active job(s) left running; queue continues)"
     for row in closed:
         if row.get("status") != "recovered":
             lines.append(f"[recover-cost]   {row.get('directory')} {str(row.get('event_id', ''))[:8]}: "

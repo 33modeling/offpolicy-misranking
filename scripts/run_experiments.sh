@@ -508,6 +508,8 @@ if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
       if [ -t 1 ]; then
         echo '[logs] Ctrl-C closes this viewer; existing workers continue.'
         tail -n 50 -F --pid="$NODE_LAUNCHER_PID" "$CONSOLE_LOG" 2>/dev/null || true
+      else
+        tail -n 50 "$CONSOLE_LOG" 2>/dev/null || echo "[logs] MBPP console log not available: $CONSOLE_LOG"
       fi
       exit 0
     fi

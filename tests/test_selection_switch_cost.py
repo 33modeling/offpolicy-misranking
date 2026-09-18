@@ -243,7 +243,7 @@ def test_stale_closure_uses_receipt_first_and_leaves_live_local_owner(tmp_path):
     base.journal(live_dir / "cost.jsonl", live)
     core.atomic_json(live_dir / "progress.json", {**live, "state": "running", "seconds": 5., "updated": start["time"] + 5.})
     outcome = recovery.close_stale(tmp_path, min_age=900., now=start["time"] + 5000.)
-    assert outcome[0]["status"] == "blocked" and "still alive" in outcome[0]["reason"]
+    assert outcome[0]["status"] == "active" and "alive" in outcome[0]["reason"]
     assert not base.cost(live_dir)["complete"]
 
 

@@ -75,11 +75,32 @@ def test_interactive_existing_mbpp_run_follows_only_its_log_and_ctrl_c_preserves
 
 def test_noninteractive_existing_mbpp_run_returns_without_following_or_mutating(mbpp_controller):
     owner, env, pid_file, saved = mbpp_controller
-    before = saved_bytes((*saved, pid_file))
+    log = pid_file.with_name(pid_file.name.replace("launcher.", "console.").replace(".pid", ".log"))
+    log.write_text("".join(f"MBPP entry {index:02d}\n" for index in range(60)))
+    math_log = log.with_name(log.name.replace(".mbpp.", "."))
+    math_log.write_text("UNRELATED MATH LOG\n")
+    before = saved_bytes((*saved, pid_file, log, math_log))
     result = subprocess.run(["bash", str(LAUNCHER), "run"], cwd=ROOT,
                             env={**env, "EXPERIMENTS_MBPP_SUITE": "all"}, capture_output=True,
                             text=True, timeout=5, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "[already running] MBPP" in result.stdout and "[logs]" not in result.stdout
+    assert result.stdout.splitlines()[1:] == [f"MBPP entry {index:02d}" for index in range(10, 60)]
+    assert "UNRELATED MATH LOG" not in result.stdout
+    assert owner.poll() is None and before == saved_bytes(before)
+    assert "[stop]" not in result.stdout and "[detached]" not in result.stdout
+
+
+def test_noninteractive_missing_mbpp_log_is_explicit_without_creating_it(mbpp_controller):
+    owner, env, pid_file, saved = mbpp_controller
+    log = pid_file.with_name(pid_file.name.replace("launcher.", "console.").replace(".pid", ".log"))
+    assert not log.exists()
+    before = saved_bytes((*saved, pid_file))
+    result = subprocess.run(["bash", str(LAUNCHER), "run"], cwd=ROOT,
+                            env={**env, "EXPERIMENTS_MBPP_SUITE": "all"}, capture_output=True,
+                            text=True, timeout=5, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"[logs] MBPP console log not available: {log}" in result.stdout
+    assert not log.exists()
     assert owner.poll() is None and before == saved_bytes(before)
     assert "[stop]" not in result.stdout and "[detached]" not in result.stdout
