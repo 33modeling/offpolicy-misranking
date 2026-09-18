@@ -8,8 +8,10 @@ entered through the canonical runner.
 
 Run `bash scripts/run_mbpp_experiments.sh` on every allocated node, including
 replacements. The MBPP fresh, learning-quality, and cached-difficulty suites
-share the original node controller's stop/restart, recovery, watchdog, and
-lease-based queue. The variants share MBPP prefixes and evaluation questions.
+share the original node controller's recovery, watchdog, and lease-based queue.
+A node ownership guard rejects duplicate launches and reaps only its own
+children after a crash; a busy lock does not trigger a node-wide cleanup.
+The variants share MBPP prefixes and evaluation questions.
 `stop`, `plan`, `check`, `status`, `progress`, `results`, and `why` are available.
 See the [node lifecycle, inputs, and evaluation split](docs/MBPP_SELECTION_RUN.md).
 

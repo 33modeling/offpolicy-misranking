@@ -55,6 +55,22 @@ def test_launcher_nodes_treat_dead_pid_as_exited_on_this_host(tmp_path, monkeypa
     assert item["launcher_alive"] is False and item["state"] == "EXITED"
 
 
+def test_mbpp_guard_namespace_does_not_invent_another_node(tmp_path, monkeypatch):
+    monkeypatch.setenv("EXPERIMENTS_NODE_ID", "node-mbpp")
+    root = tmp_path / "runs/selection-switch-mbpp-v1"
+    node_logs = view.node_launcher_logs(root)
+    node_logs.mkdir(parents=True)
+    (node_logs / "launcher.mbpp.node-mbpp_.pid").write_text(str(os.getpid()))
+    (node_logs / "console.mbpp.node-mbpp_.log").write_text("[holding] node retained (node busy)\n")
+    (node_logs / "keepalive.node-mbpp_.log").write_text("[keepalive] pid=12 devices=[0]\n")
+    nodes = view.launcher_nodes(root, [])
+    assert len(nodes) == 1 and nodes[0]["host"] == "node-mbpp"
+    assert nodes[0]["state"] == "HOLD" and nodes[0]["launcher_alive"] is True
+    assert nodes[0]["keepalive"] == "busy"
+    (node_logs / "console.mbpp.node-mbpp_.log").write_text("[node-launcher-exit] pid=1 rc=143 owner=mbpp-guard\n")
+    assert view.launcher_nodes(root, [])[0]["state"] == "EXITED"
+
+
 def test_local_gpus_without_nvidia_smi_and_with_a_fake_one(tmp_path, monkeypatch):
     monkeypatch.setattr(view.shutil, "which", lambda name: None)
     assert view.local_gpus()["available"] is False

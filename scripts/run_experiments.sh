@@ -46,11 +46,33 @@ export EXPERIMENTS_NODE_ID=${EXPERIMENTS_NODE_ID:-$(hostname)}
 HOST=$(printf '%s\n' "$EXPERIMENTS_NODE_ID" | tr -c 'a-zA-Z0-9._-' '_')
 PID_FILE="$LOG_DIR/launcher.$HOST.pid"
 CONSOLE_LOG="$LOG_DIR/console.$HOST.log"
+if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+  # A stale math launcher's PID file is not authority to stop it for MBPP.
+  PID_FILE="$LOG_DIR/launcher.mbpp.$HOST.pid"
+  CONSOLE_LOG="$LOG_DIR/console.mbpp.$HOST.log"
+fi
 launcher_pid_alive() {
+  local pid candidate command
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+    # PID files outlive processes; a reused PID must never authorize a signal.
+    # Accept the old shared filename only when it really belongs to MBPP here.
+    for candidate in "$PID_FILE" "$LOG_DIR/launcher.$HOST.pid"; do
+      pid=$(cat "$candidate" 2>/dev/null) || continue
+      [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || continue
+      command=$({ tr '\0' ' ' < "/proc/$pid/cmdline"; } 2>/dev/null) || continue
+      case "$command" in *run_experiments.sh*|*_mbpp_node_guard.py*) ;; *) continue ;; esac
+      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Fxq "OM_WORK=$WORK" || continue
+      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Fxq "EXPERIMENTS_NODE_ID=$EXPERIMENTS_NODE_ID" || continue
+      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Eq '^EXPERIMENTS_MBPP_SUITE=(all|fresh|quality|difficulty)$' || continue
+      NODE_LAUNCHER_PID=$pid
+      return 0
+    done
+    return 1
+  fi
   [ -f "$PID_FILE" ] || return 1
-  local pid
   pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
-  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  NODE_LAUNCHER_PID=$pid
 }
 if [ "$MODE" = progress ]; then
   # One phone-width screen: per experiment root, branch counts, each running
@@ -261,6 +283,12 @@ recover_root() {
 # experiments, so a start or a stop sweeps them all, not just the two of this launcher.
 all_roots() {
   local root
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+    for root in "${MBPP_ROOTS[@]}"; do
+      [ ! -f "$root/switch.json" ] || printf '%s\n' "$root"
+    done
+    return 0
+  fi
   {
     for root in "$WORK"/runs/*/; do
       root=${root%/}
@@ -368,22 +396,34 @@ close_dead_events() {
   done < <(all_roots)
 }
 full_clean() {
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+    # The guard reclaims proven children of a dead MBPP controller by token.
+    # A busy lease is NOT evidence that every process on this node is stale.
+    echo "[clean] host=$HOST: MBPP owner-scoped recovery; no node-wide process/GPU sweep"
+    close_dead_events
+    return 0
+  fi
   sweep_all_roots
   clean_node
   close_dead_events
 }
 stop_node() {
   if launcher_pid_alive; then
-    pid=$(cat "$PID_FILE")
+    pid=$NODE_LAUNCHER_PID
     echo "[stop] host=$HOST pid=$pid: sending TERM to the node launcher; inner launchers reap their ranks and close receipts"
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-    for _ in $(seq 1 240); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    kill -0 "$pid" 2>/dev/null && echo "[stop] pid=$pid still running after 240s; inspect $CONSOLE_LOG"
+    if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+      # The PID file names the guard, which reaps its token-bound controller/ranks.
+      # Never signal an unverified process group based on a stale PID file.
+      kill -TERM "$pid" 2>/dev/null || true
+    else
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    fi
+    for _ in $(seq 1 240); do launcher_pid_alive || break; sleep 1; done
+    launcher_pid_alive && echo "[stop] pid=$pid still running after 240s; inspect $CONSOLE_LOG"
   else
     echo "[stop] no live node launcher on $HOST (pid file: $PID_FILE)"
   fi
-  # Everything of every experiment on this node: launchers, ranks, keepalives, GPU
-  # memory, and the cost events those attempts left open.
+  # MBPP uses owner-scoped teardown; retain the legacy cleanup for other modes.
   full_clean
 }
 if [ "$MODE" = stop ]; then
@@ -391,12 +431,17 @@ if [ "$MODE" = stop ]; then
   exit 0
 fi
 # --- run ---
-# One command restarts a node: a launcher already running here is stopped first
+# Legacy modes restart a node: a launcher already running here is stopped first
 # (its ranks reaped, receipts closed), the shared checkout is pulled, then the
 # node starts fresh. EXPERIMENTS_PULL=0 skips the pull.
+# MBPP repeated runs instead leave an existing controller running.
 if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if launcher_pid_alive; then
-    echo "[restart] host=$HOST: a node launcher is already running (pid $(cat "$PID_FILE")); stopping it first"
+    if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+      echo "[already running] MBPP controller pid=$NODE_LAUNCHER_PID; existing work continues: $CONSOLE_LOG"
+      exit 0
+    fi
+    echo "[restart] host=$HOST: a node launcher is already running (pid $NODE_LAUNCHER_PID); stopping it first"
     stop_node
   fi
   # An operator restart is a deliberate second chance for this node: clear the
@@ -420,20 +465,30 @@ if [ -t 1 ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   EXPERIMENTS_DETACHED=1 setsid nohup bash "$LAUNCHER_SELF" run >> "$CONSOLE_LOG" 2>&1 < /dev/null &
   pid=$!
   disown 2>/dev/null || true
-  echo "$pid" > "$PID_FILE"
+  # Only the admitted MBPP controller publishes its guard PID. Two terminal
+  # launches racing here must not replace the winner's PID with the loser's.
+  if [ -z "${EXPERIMENTS_MBPP_SUITE:-}" ]; then echo "$pid" > "$PID_FILE"; fi
   echo "[detached] host=$HOST pid=$pid console=$CONSOLE_LOG"
   echo "[detached] Ctrl-C leaves the node working; stop with: bash scripts/run_experiments.sh stop"
   tail --pid="$pid" -c +"$((offset+1))" -F "$CONSOLE_LOG" 2>/dev/null || true
   exit 0
 fi
+if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "${MBPP_GUARD_PID:-}" != "$PPID" ]; then
+  exec "$PY" scripts/_mbpp_node_guard.py \
+    --lock "$LOG_DIR/mbpp-controller.$HOST.lock" -- bash "$LAUNCHER_SELF" run
+fi
 mkdir -p "$LOG_DIR"
+if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+  printf '%s\n' "$MBPP_GUARD_PID" > "$PID_FILE"
+fi
 LOADED_REV=$(git rev-parse HEAD 2>/dev/null || true)
 printf '[node-launcher-start] host=%s pid=%s utc=%s commit=%s\n' "$HOST" "$$" "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 KEEPALIVE_PID=
 WATCHDOG_PID=
 stop_keepalive() {
-  [ -n "$KEEPALIVE_PID" ] && kill -TERM "$KEEPALIVE_PID" 2>/dev/null; KEEPALIVE_PID=
-  [ -n "$WATCHDOG_PID" ] && kill -TERM "$WATCHDOG_PID" 2>/dev/null; WATCHDOG_PID=
+  [ -z "$KEEPALIVE_PID" ] || kill -TERM "$KEEPALIVE_PID" 2>/dev/null || true
+  [ -z "$WATCHDOG_PID" ] || kill -TERM "$WATCHDOG_PID" 2>/dev/null || true
+  KEEPALIVE_PID= WATCHDOG_PID=
 }
 trap 'rc=$?; stop_keepalive; printf "[node-launcher-exit] pid=%s rc=%s utc=%s\n" "$$" "$rc" "$(date -u +%FT%TZ)"' EXIT
 trap 'exit 143' TERM
@@ -454,7 +509,8 @@ fi
 # under runs/experiments/node-faults so no launcher does GPU work here again.
 if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
   mapfile -t WATCH_ROOTS < <(sibling_roots)
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --host "$EXPERIMENTS_NODE_ID" --roots "$SWITCH_ROOT" "$MOPPS_ROOT" "${WATCH_ROOTS[@]}" \
+  if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ]; then WATCH_ROOTS+=("$MOPPS_ROOT"); fi
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --host "$EXPERIMENTS_NODE_ID" --roots "$SWITCH_ROOT" "${WATCH_ROOTS[@]}" \
     --faults-dir "$WORK/runs/experiments/node-faults" --stall-seconds "${EXPERIMENTS_STALL_SECONDS:-1500}" \
     > "$LOG_DIR/stall.$HOST.log" 2>&1 7>&- 8>&- &
   WATCHDOG_PID=$!
@@ -487,7 +543,7 @@ while :; do
   fi
   need_clean=0
   recover_root "$SWITCH_ROOT"
-  recover_root "$MOPPS_ROOT"
+  if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ]; then recover_root "$MOPPS_ROOT"; fi
   while IFS= read -r root; do recover_root "$root"; done < <(sibling_roots)
   rc_switch=0 why_switch=skipped
   if [ "${EXPERIMENTS_SKIP_SWITCH:-0}" != 1 ] && ! switch_complete; then

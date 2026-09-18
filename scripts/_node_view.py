@@ -41,8 +41,10 @@ def _last(lines):
     return next((line for line in reversed(lines) if line.strip()), "")
 
 
-def _host_of(path, prefix):
-    return path.name[len(prefix):].rsplit(".", 1)[0].rstrip("_")
+def _host_of(path, prefix, *, node_launcher=False):
+    host = path.name[len(prefix):].rsplit(".", 1)[0].rstrip("_")
+    # MBPP has a separate PID/console namespace, not a second physical node.
+    return host.removeprefix("mbpp.") if node_launcher else host
 
 
 LIVE_STATES = ("RUN", "ADMIT", "WAIT", "HOLD", "COOL", "LIVE")
@@ -113,7 +115,7 @@ def launcher_nodes(root, tasks, *, now=None):
     sources = [(Path(root) / "logs", False), (node_launcher_logs(root), True)]
     for logs, node_launcher in sources:
         for path in logs.glob("launcher.*.pid"):
-            host = _host_of(path, "launcher.")
+            host = _host_of(path, "launcher.", node_launcher=node_launcher)
             try:
                 pid = int(path.read_text().strip())
             except (OSError, ValueError):
@@ -132,7 +134,8 @@ def launcher_nodes(root, tasks, *, now=None):
                     item["launcher_alive"] = True
     for logs, node_launcher in sources:
         for path in list(logs.glob("console.*.log")) + list(logs.glob("launcher.*.log")):
-            host = _host_of(path, "console." if path.name.startswith("console.") else "launcher.")
+            host = _host_of(path, "console." if path.name.startswith("console.") else "launcher.",
+                            node_launcher=node_launcher)
             item = row(host)
             try:
                 age = now - path.stat().st_mtime

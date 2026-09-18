@@ -69,8 +69,10 @@ def cluster(tmp_path):
     repo = tmp_path / "repo"
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
-    for name in ("run_experiments.sh", "run_mbpp_experiments.sh", "_mbpp_experiments.sh", "_stall_watchdog.py"):
+    for name in ("run_experiments.sh", "run_mbpp_experiments.sh", "_mbpp_experiments.sh", "_stall_watchdog.py", "_mbpp_node_guard.py"):
         shutil.copy(ROOT / "scripts" / name, scripts)
+    (repo / "src").mkdir()
+    shutil.copy(ROOT / "src/cleanup_run_processes.py", repo / "src")
     (scripts / "run_selection_switch.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
     for name in ("recover_selection_switch_cost.py", "waive_stalled_attempts.py", "split_curve_ledger.py"):
         (scripts / name).write_text("pass\n")
@@ -153,10 +155,10 @@ for index in range(3):
            "EXPERIMENTS_HOLD_SECONDS": "1", "EXPERIMENTS_HOLD_POLL_SECONDS": "1",
            "EXPERIMENTS_INNER": str(inner), "CUDA_VISIBLE_DEVICES": "", "PATH": str(binaries) + os.pathsep + os.environ["PATH"]}
     processes = []
-    def start(node, **overrides):
-        log = work / f"{node}.log"
+    def start(node, mode="run", **overrides):
+        log = work / f"{node}-{len(processes)}.log"
         handle = log.open("w")
-        process = subprocess.Popen(["bash", "scripts/run_mbpp_experiments.sh"], cwd=repo,
+        process = subprocess.Popen(["bash", "scripts/run_mbpp_experiments.sh", mode], cwd=repo,
                                    env={**env, "EXPERIMENTS_NODE_ID": node, **overrides},
                                    stdout=handle, stderr=subprocess.STDOUT, start_new_session=True)
         processes.append((process, handle))
@@ -164,9 +166,16 @@ for index in range(3):
     yield work, start
     for process, handle in processes:
         if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-        process.wait(timeout=10)
+            process.terminate()
+        process.wait(timeout=20)
         handle.close()
+    # Even a failed test that deliberately killed the guard must not leak its
+    # separately-sessioned children into other tests or the developer's node.
+    import cleanup_run_processes as cleanup
+    for receipt in (work / "runs/experiments/logs").glob("mbpp-controller.*.owner.json"):
+        token = json.loads(receipt.read_text())["token"]
+        cleanup.terminate("/unused-test-mbpp-scope", timeout=2, command_patterns=("",),
+                          required_environment=(("OM_MBPP_CONTROLLER_TOKEN", token),), compact=True)
 
 
 def events(work):
@@ -182,16 +191,18 @@ def test_two_nodes_and_a_replacement_resume_a_killed_owner_without_duplicate_res
     # Quality/difficulty must be claimable while fresh's task 0 is still running.
     wait_for(lambda: any(row["kind"] == "finished" and "difficulty" in row["root"] for row in events(work)))
     assert first.poll() is None
-    os.killpg(first.pid, signal.SIGKILL)
+    # Kill the owner only. Its separately-sessioned child must be reclaimed by
+    # the replacement on the SAME node, not mistaken for a healthy peer.
+    os.kill(first.pid, signal.SIGKILL)
     first.wait(timeout=5)
-    replacement, replacement_log = start("node-c")
+    replacement, replacement_log = start("node-a")
     assert second.wait(timeout=30) == 0, second_log.read_text()
     assert replacement.wait(timeout=30) == 0, replacement_log.read_text()
     rows = [row for row in events(work) if row["kind"] == "finished"]
     assert len(rows) == len({(row["root"], row["task"]) for row in rows}) == 9
     recovered = json.loads((work / "runs/selection-switch-mbpp-v1/tasks/0/result.json").read_text())
     assert recovered["resumed"] == {"node": "node-a"}
-    assert recovered["node"] in ("node-b", "node-c")
+    assert recovered["node"] in ("node-b", "node-a")
     expected = {"selection-switch-mbpp-v1": ("fresh_r", "budget", "final"),
                 "selection-switch-mbpp-quality-v1": ("fresh_r", "matched", "convergence"),
                 "selection-switch-mbpp-difficulty-v1": ("difficulty", "budget", "convergence")}
@@ -242,6 +253,7 @@ def test_watchdog_already_watches_variant_roots_before_they_are_prepared(cluster
     wait_for(lambda: watchdog.exists() and "roots=" in watchdog.read_text())
     text = watchdog.read_text()
     assert "selection-switch-mbpp-quality-v1" in text and "selection-switch-mbpp-difficulty-v1" in text
+    assert "mopps-comparison-v1" not in text
     assert not (work / "runs/selection-switch-mbpp-quality-v1").exists()
     os.killpg(process.pid, signal.SIGTERM)
     process.wait(timeout=10)
@@ -261,3 +273,68 @@ def test_peer_completion_releases_node_without_waiting_out_a_long_hold(cluster):
             (task / "result.json").write_text("{}")
     assert process.wait(timeout=5) == 0, log.read_text()
     assert "peers completed every experiment" in log.read_text()
+
+
+def test_duplicate_node_launch_does_not_stop_or_duplicate_the_live_controller(cluster):
+    work, start = cluster
+    first, log = start("node-duplicate", TEST_BLOCK_NODE="node-duplicate")
+    wait_for(lambda: (work / "node-blocked").exists())
+    claims = [row for row in events(work) if row["kind"] == "claim"]
+    duplicate, duplicate_log = start("node-duplicate")
+    assert duplicate.wait(timeout=10) == 0, duplicate_log.read_text()
+    assert "[already running]" in duplicate_log.read_text()
+    assert first.poll() is None
+    assert [row for row in events(work) if row["kind"] == "claim"] == claims
+
+
+def test_busy_mbpp_pass_never_sweeps_other_experiment_processes(cluster):
+    work, start = cluster
+    # Looks like a real GPU worker, even under the same work volume. It is not
+    # owned by this MBPP controller and must survive both initial and busy passes.
+    unrelated = subprocess.Popen(["bash", "-c", 'exec -a "python src/selection_switch_gpu.py run" sleep 120'],
+        env={**os.environ, "OUT_ROOT": str(work / "runs/selection-switch-math-v1")}, start_new_session=True)
+    try:
+        process, log = start("node-busy", EXPERIMENTS_CLEAN="1", TEST_FAIL_SUITE="mbpp-v1", TEST_FAIL_RC="75")
+        wait_for(lambda: log.exists() and "[pass 2]" in log.read_text())
+        assert process.poll() is None and unrelated.poll() is None
+        assert "no node-wide process/GPU sweep" in log.read_text()
+        assert "[clean] leftover pid=" not in log.read_text()
+    finally:
+        unrelated.terminate()
+        unrelated.wait(timeout=5)
+
+
+def test_explicit_stop_reaps_guard_and_same_node_can_resume(cluster):
+    work, start = cluster
+    first, log = start("node-stop", TEST_BLOCK_NODE="node-stop")
+    wait_for(lambda: (work / "node-blocked").exists())
+    stopped, stop_log = start("node-stop", mode="stop")
+    assert stopped.wait(timeout=20) == 0, stop_log.read_text()
+    assert first.wait(timeout=20) == 143, log.read_text()
+    replacement, replacement_log = start("node-stop")
+    assert replacement.wait(timeout=30) == 0, replacement_log.read_text()
+    result = json.loads((work / "runs/selection-switch-mbpp-v1/tasks/0/result.json").read_text())
+    assert result["resumed"] == {"node": "node-stop"}
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("wrong_node", [False, True])
+def test_stop_ignores_reused_pid_file_and_preserves_bystander(cluster, legacy, wrong_node):
+    work, start = cluster
+    env = {key: value for key, value in {**os.environ, "OM_WORK": str(work)}.items()
+           if key != "EXPERIMENTS_MBPP_SUITE"}
+    if wrong_node:
+        env.update(EXPERIMENTS_MBPP_SUITE="all", EXPERIMENTS_NODE_ID="another-node")
+    unrelated = subprocess.Popen(["bash", "-c", 'exec -a "bash scripts/run_experiments.sh run" sleep 120'],
+        env=env, start_new_session=True)
+    try:
+        logs = work / "runs/experiments/logs"
+        logs.mkdir(parents=True)
+        (logs / ("launcher.node-stale_.pid" if legacy else "launcher.mbpp.node-stale_.pid")).write_text(str(unrelated.pid))
+        stopped, stop_log = start("node-stale", mode="stop")
+        assert stopped.wait(timeout=10) == 0, stop_log.read_text()
+        assert "no live node launcher" in stop_log.read_text()
+        assert unrelated.poll() is None
+    finally:
+        unrelated.terminate()
+        unrelated.wait(timeout=5)

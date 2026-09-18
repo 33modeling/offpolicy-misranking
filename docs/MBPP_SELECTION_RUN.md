@@ -47,17 +47,22 @@ bash scripts/run_mbpp_experiments.sh run difficulty
 
 ## Nodes Joining And Failing
 
-`run` and `stop` delegate directly to `scripts/run_experiments.sh`. Its existing
-restart, cleanup, detached console, keepalive, watchdog, automatic Git updates,
-stale-event recovery and GPU-fault waiver policy are retained. There is no
-separate MBPP controller or serial hold loop.
+`run` and `stop` use `scripts/run_experiments.sh` for the existing queue,
+detached console, keepalive, watchdog, automatic Git updates, stale-event
+recovery and GPU-fault waiver policy. A small MBPP ownership guard now holds
+one controller lease per node and supervises shutdown; it does not schedule
+another queue or change the learner, selectors, costs, or checkpoints.
 The inner worker yields its idle peer-wait to this shared controller, instead
 of waiting inside one suite while another has work. Owned training/evaluation
 finishes normally before yielding; no active branch is interrupted for fairness.
 
-- On the same node, running the command again stops its previous controller,
-  reaps workers, closes recoverable receipts, clears the node fault record,
-  and re-enters through the GPU admission probe.
+- On the same node, a duplicate command reports `already running` and leaves
+  the healthy controller working. It does not stop it or create another worker.
+  Use `stop` only when an intentional interruption is needed.
+- After a controller is killed, run the same command. Its durable owner token
+  identifies its own surviving children, including separately-sessioned ranks.
+  Those children are stopped before the replacement starts. The node lock is
+  held by the guard only, never inherited by rollout/scoring workers.
 - On a new node, the same command reads the shared queue and claims available
   tasks using the existing leases. Busy branches are skipped, not duplicated.
 - If a node dies, its locks are released; surviving nodes use the existing
@@ -79,10 +84,14 @@ available work and exit early when peers complete the queue. Setting
 `EXPERIMENTS_HELP_SIBLINGS=0` explicitly restricts a node to the first root;
 leave it enabled to serve all requested suites.
 Terminal launches detach as before: Ctrl-C stops the log view, not the workers.
-Use `stop` to stop the current node. **Like the original controller, restart/stop
-cleans old experiment processes on that node's allocation, across experiment
-roots.** It does not stop healthy workers on other nodes. Queue work is limited
-to the requested MBPP suites, rather than adding unrelated math/MoPPS jobs.
+Use `stop` to stop this node's MBPP controller and its token-bound children.
+**A busy lock no longer triggers a node-wide process or GPU sweep.** Other
+experiments are not cleanup targets merely because they use the same account,
+work volume, or GPUs. MBPP recovery/watchdog roots exclude unrelated math and
+MoPPS roots. PID files are checked for an actual MBPP launcher before signalling.
+Existing untagged legacy workers cannot be safely adopted as dead just because
+they hold a lock; their ownership must be checked rather than deleting locks.
+Completed outputs and cost ledgers are not reset by this ownership fix.
 
 ## Inputs And Outputs
 
