@@ -297,7 +297,7 @@ def test_inventory_does_not_change_any_file_or_directory(auditor, storage):
 
 
 @pytest.mark.parametrize("unsafe", [False, True])
-def test_cli_exit_code_and_small_output_match_preflight_safety(storage, unsafe):
+def test_cli_exit_code_and_small_output_match_preflight_safety(storage, unsafe, tmp_path):
     work, root = storage
     for index in range(100):
         directory = root / f"states/s{index}-t25/points/view-25/random_full"
@@ -307,9 +307,78 @@ def test_cli_exit_code_and_small_output_match_preflight_safety(storage, unsafe):
         else:
             sealed_result(directory)
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--work", str(work), "--root", str(root)],
+        [sys.executable, str(SCRIPT), "--work", str(work), "--root", str(root),
+         "--report-dir", str(tmp_path)],
         text=True, capture_output=True, check=False, timeout=10,
     )
     assert result.returncode == (2 if unsafe else 0), result.stdout + result.stderr
     assert len((result.stdout + result.stderr).encode()) <= 8192
     assert result.stdout.strip()
+    reports = list(tmp_path.glob('mbpp-storage-*.txt'))
+    assert len(reports) == 1
+    assert reports[0].stat().st_size <= 4096
+    assert reports[0].read_text() in result.stdout
+    assert f'[saved] {reports[0]}' in result.stdout
+
+
+@pytest.mark.parametrize('automatic', [False, True])
+def test_missing_volume_still_saves_report_in_home(tmp_path, monkeypatch, automatic):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    missing = tmp_path / 'unmounted-volume'
+    command = [sys.executable, str(SCRIPT), '--work', str(missing), '--root', str(missing / 'runs/root')]
+    if automatic:
+        command.append('--report-on-error')
+    result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=10)
+    assert result.returncode == 2
+    assert not missing.exists()
+    report, = tmp_path.glob('mbpp-storage-*.txt')
+    assert 'STORAGE_UNAVAILABLE' in report.read_text()
+    assert str(report) in result.stdout
+
+
+def test_successful_automatic_preflight_does_not_accumulate_files(storage, tmp_path):
+    work, root = storage
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), '--work', str(work), '--root', str(root),
+         '--report-dir', str(tmp_path), '--report-on-error'],
+        text=True, capture_output=True, check=False, timeout=10)
+    assert result.returncode == 0
+    assert not list(tmp_path.glob('mbpp-storage-*.txt'))
+
+
+def test_report_save_failure_is_explicit(storage, tmp_path):
+    work, root = storage
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), '--work', str(work), '--root', str(root),
+         '--report-dir', str(tmp_path / 'missing')],
+        text=True, capture_output=True, check=False, timeout=10)
+    assert result.returncode == 2
+    assert '[report-save-failed]' in result.stderr
+    assert '[saved]' not in result.stdout
+
+
+@pytest.mark.parametrize('active_checkpoint', [False, True])
+def test_archived_training_without_result_blocks_retraining(auditor, storage, active_checkpoint):
+    work, root = storage
+    directory = branch(root)
+    archived = directory / 'discarded/old-auto-waiver/policy'
+    write_json(archived / 'grpo_stats.jsonl', {'step': 30})
+    write_json(directory / 'waivers/failed-train.json', {'discarded_outputs': ['policy']})
+    if active_checkpoint:
+        complete_checkpoint(directory)
+    report = auditor.audit(work, [root])
+    assert report['status'] == 'blocked'
+    finding, = (item for item in report['findings'] if item['code'] == 'ARCHIVED_TRAINING')
+    assert finding['path'] == str(archived)
+    assert (archived / 'grpo_stats.jsonl').is_file()
+
+
+def test_published_replay_and_archive_are_reported_without_choosing_one(auditor, storage):
+    work, root = storage
+    directory = branch(root)
+    sealed_result(directory)
+    write_json(directory / 'discarded/old-policy/policy/grpo_stats.jsonl', {'step': 30})
+    report = auditor.audit(work, [root])
+    assert any(item['code'] == 'ACTIVE_AND_ARCHIVED_WORK' for item in report['findings'])
+    assert (directory / 'result.json').is_file()
+    assert (directory / 'discarded/old-policy/policy/grpo_stats.jsonl').is_file()

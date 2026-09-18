@@ -96,7 +96,7 @@ fi
 # controller, recover an attempt, prepare roots or launch GPU work. In
 # particular, a blocked restart must leave the current controller untouched.
 if [ "$MODE" = run ] || [ "$MODE" = restart ]; then
-  if ! env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
+  if ! env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 MBPP_STORAGE_AUDIT_AUTOMATIC=1 \
     bash scripts/check_mbpp_storage.sh "$SUITE"; then
     echo '[abort] MBPP storage audit blocked startup; no controller was started or stopped.' >&2
     echo '[abort] Review the storage audit before resuming; existing files were not changed by this launcher.' >&2

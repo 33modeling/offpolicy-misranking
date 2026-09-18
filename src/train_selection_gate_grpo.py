@@ -51,6 +51,38 @@ from train_policy_grpo import (
 )
 
 
+def _preserved_local_checkpoint(out_dir, upper_bound, expected_contract):
+    """Never silently replace local training work with the parent's weights.
+
+    The underlying reader may skip corrupt or incompatible checkpoints. That
+    is safe when an older validated checkpoint remains, but is not permission
+    to start this branch over or truncate its saved update history.
+    """
+    out_dir = Path(out_dir)
+    checkpoint, step = _latest_checkpoint(out_dir, upper_bound, expected_contract)
+    if checkpoint is not None:
+        return checkpoint, step
+    evidence = list(out_dir.glob('checkpoint-*')) + list(out_dir.glob('.checkpoint-*.tmp'))
+    for name in ('adapter_model.safetensors', 'adapter_config.json', 'optimizer.pt',
+                 'policy_train.json', 'checkpoint_state.json', 'curve-checkpoints'):
+        path = out_dir / name
+        if path.exists() or path.is_symlink():
+            evidence.append(path)
+    stats = out_dir / 'grpo_stats.jsonl'
+    if stats.is_symlink() or (stats.exists() and stats.stat().st_size > 0):
+        evidence.append(stats)
+    stop = out_dir / 'budget_stop.json'
+    if stop.exists() or stop.is_symlink():
+        record = json.loads(stop.read_text())
+        if record.get('use_parent_policy') is not True:
+            evidence.append(stop)
+    if evidence:
+        raise ValueError('local training artifacts exist but no valid checkpoint matches this run; '
+                         'refusing parent restart; preserve files and review: '
+                         + ', '.join(str(path) for path in evidence[:8]))
+    return checkpoint, step
+
+
 def train(args: argparse.Namespace) -> None:
     from peft import LoraConfig, PeftModel, get_peft_model
     from torch.nn.parallel import DistributedDataParallel
@@ -140,7 +172,7 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError("parent adapter/optimizer require a positive start step")
 
     checkpoint_contract = _checkpoint_contract(args, config, world_size)
-    local_checkpoint, local_step = _latest_checkpoint(
+    local_checkpoint, local_step = _preserved_local_checkpoint(
         out_dir, args.target_steps, checkpoint_contract
     )
     if published_error is not None and local_checkpoint is None:

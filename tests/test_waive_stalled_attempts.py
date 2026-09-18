@@ -1,9 +1,12 @@
 import importlib.util
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from contextlib import contextmanager
+from pathlib import Path
+
+import pytest
 
 import selection_gate as core
 import selection_gate_gpu as base
@@ -312,3 +315,85 @@ def test_no_training_checkpoint_is_not_evidence_that_selection_bought_no_work(tm
     assert found == [] and len(unattributed) == 1
     assert "needs an operator" in waive.waive(tmp_path, directory, apply=True)
     assert base.spent(directory) == 28380.
+
+
+@pytest.mark.parametrize("saved", [
+    "policy/grpo_stats.jsonl", "policy/optimizer.pt", "policy/policy_train.json",
+    "policy/checkpoint-000040/checkpoint_state.json", "policy/.checkpoint-000040.tmp/optimizer.pt",
+    "policy/checkpoint-000040/adapter_model.safetensors", "policy/adapter_model.safetensors",
+    "policy/budget_stop.json", "result.sha256.json", "curve.json", "curve.sha256.json",
+    "evaluation/rewards.json", "discarded/old/policy/grpo_stats.jsonl", "discarded/old/result.json",
+])
+def test_automatic_waiver_never_resets_saved_training_or_completion_evidence(tmp_path, saved):
+    directory = branch(tmp_path, "random_reduced")
+    target = directory / saved
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"saved work; may need validation or recovery")
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    for _ in range(2):
+        message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+        assert "preserved training/completion evidence and all costs" in message
+        assert before == {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    assert not (directory / "waivers").exists()
+
+
+def test_automatic_waiver_preserves_successful_training_receipt_when_outputs_are_missing(tmp_path):
+    directory = branch(tmp_path, "random_full")
+    for state in ("started", "finished"):
+        base.journal(directory / "cost.jsonl", event("completed", "train", state, seconds=3000.))
+    before = (directory / "cost.jsonl").read_bytes()
+    message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+    assert "preserved training/completion evidence and all costs" in message
+    assert (directory / "cost.jsonl").read_bytes() == before
+    assert (directory / "failure.json").exists()
+    assert not (directory / "discarded").exists()
+
+
+def test_automatic_waiver_rechecks_training_evidence_after_acquiring_locks(tmp_path, monkeypatch):
+    directory = branch(tmp_path, "random_reduced")
+    before = (directory / "cost.jsonl").read_bytes()
+    real_lease = base.lease
+
+    @contextmanager
+    def publish_before_lock(path, **kwargs):
+        if path.name == ".task.lock":
+            core.atomic_json(directory / "policy/policy_train.json", {"completed_steps": 175})
+        with real_lease(path, **kwargs):
+            yield
+
+    monkeypatch.setattr(base, "lease", publish_before_lock)
+    message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+    assert "preserved training/completion evidence and all costs" in message
+    assert core.read(directory / "policy/policy_train.json") == {"completed_steps": 175}
+    assert (directory / "cost.jsonl").read_bytes() == before
+    assert (directory / "failure.json").exists()
+    assert not (directory / "discarded").exists()
+
+
+@pytest.mark.parametrize("progress", [
+    {"training_step": 165}, {"completed_steps": 165}, {"step": 165},
+    {"phase": "train", "state": "finished", "exit_code": 0}, [],
+])
+def test_automatic_waiver_preserves_training_progress_and_invalid_progress(tmp_path, progress):
+    directory = branch(tmp_path, "random_reduced")
+    core.atomic_json(directory / "progress.json", progress)
+    before = (directory / "cost.jsonl").read_bytes()
+    message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+    assert "preserved training/completion evidence and all costs" in message
+    assert (directory / "cost.jsonl").read_bytes() == before
+    assert core.read(directory / "progress.json") == progress
+    assert not (directory / "discarded").exists()
+
+
+@pytest.mark.parametrize("broken_link", [False, True])
+def test_automatic_waiver_does_not_assume_unvalidated_policy_is_disposable(tmp_path, broken_link):
+    directory = branch(tmp_path, "random_reduced")
+    if broken_link:
+        (directory / "policy").symlink_to("missing-policy-directory", target_is_directory=True)
+    else:
+        (directory / "policy").mkdir()
+    before = (directory / "cost.jsonl").read_bytes()
+    message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+    assert "preserved training/completion evidence and all costs" in message
+    assert (directory / "cost.jsonl").read_bytes() == before
+    assert not (directory / "discarded").exists()

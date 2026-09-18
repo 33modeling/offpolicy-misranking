@@ -14,19 +14,20 @@ signal killed it, or the branch never reached a checkpoint (the attempt bought
 no training). A branch that has trained to a checkpoint keeps any failed attempt
 without such evidence and is left to an operator, as is a branch already waived
 MAX_ROUNDS times. Live branches and published results are never touched.
-The controller uses --automatic: failed selection work and its costs are never
-reset automatically. A missing training checkpoint is not evidence of wasted
-selection work. Explicit operator waivers still archive outputs and remove the
-failure marker; the waived lines and phase logs remain.
+The controller uses --automatic: saved training/completion evidence, failed
+selection work, and their costs are never reset automatically. A missing valid
+checkpoint is not evidence that an attempt saved no useful work. Explicit
+operator waivers still archive outputs and remove the failure marker; the
+waived lines and phase logs remain.
 """
 from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import selection_gate as core  # noqa: E402
@@ -98,6 +99,59 @@ def has_checkpoint(directory):
     if checkpoints(directory):
         return True
     return (policy / "adapter_model.safetensors").is_file() or (policy / "budget_stop.json").is_file()
+
+
+def training_evidence(directory, events):
+    """Conservative evidence, not a declaration that saved state is resumable.
+
+    Automatic recovery must not turn an incomplete/corrupt checkpoint or a
+    missing publication receipt into permission to archive the policy and start
+    from its parent. Even an empty policy directory or a broken symlink needs
+    inspection; validation belongs to the trainer/storage audit, not a waiver.
+    """
+    names = ("policy", "evaluation", "result.json", "result.sha256.json", "curve.json", "curve.sha256.json",
+             "policy_train.json", "grpo_stats.jsonl", "adapter_model.safetensors", "optimizer.pt", "budget_stop.json")
+
+    def present(path):
+        try:
+            path.lstat()  # Do not follow a broken link and mistake it for no saved work.
+        except FileNotFoundError:
+            return False
+        return True  # Other I/O errors fail closed in the caller.
+
+    try:
+        for name in names:
+            if present(directory / name):
+                return name
+        archived = directory / "discarded"
+        if present(archived):
+            for attempt in archived.iterdir():
+                for name in names:
+                    if present(attempt / name):
+                        return str((attempt / name).relative_to(directory))
+        progress_path = directory / "progress.json"
+        if present(progress_path):
+            try:
+                progress = json.loads(progress_path.read_text())
+            except (ValueError, TypeError):
+                return "unreadable progress.json"
+            if not isinstance(progress, dict):
+                return "invalid progress.json"
+            if any(isinstance(progress.get(key), (int, float)) and progress[key] > 0
+                   for key in ("training_step", "completed_steps", "step")):
+                return "progress.json training steps"
+            if progress.get("phase") == "train" and progress.get("state") == "finished" and progress.get("exit_code") == 0:
+                return "progress.json completed training"
+    except OSError as exc:
+        return f"saved-state inspection failed ({type(exc).__name__})"
+    if any(e.get("phase") == "train" and e.get("state") == "finished" and e.get("exit_code") == 0 for e in events):
+        return "successful train event in cost.jsonl"
+    return None
+
+
+def preserve_training_message(rel, evidence):
+    return (f"[waive] {rel}: preserved training/completion evidence and all costs ({evidence}); "
+            "automatic training reset/refund disabled; inspect saved state before retrying from the parent policy")
 
 
 def kept_seconds(directory, start, fin):
@@ -224,6 +278,8 @@ def waive(root, directory, *, apply, automatic=False):
                          and e.get("exit_code") not in (0, None) and not e.get("waiver") for e in events):
         return (f"[waive] {rel}: preserved selection outputs and all costs; automatic scoring reset disabled; "
                 "unfinished shards may resume only within the remaining allocation; exhausted budgets need review")
+    if automatic and (saved := training_evidence(directory, events)):
+        return preserve_training_message(rel, saved)
     if unattributed:
         return (f"[waive] {rel}: skipped, failed attempt(s) without fault evidence after training progress or during selection: "
                 + ", ".join(f"{u['phase']} {u['event_id'][:8]} exit {u['exit_code']}" for u in unattributed)
@@ -244,6 +300,10 @@ def waive(root, directory, *, apply, automatic=False):
             latest = [json.loads(line) for line in (directory / "cost.jsonl").read_text().splitlines() if line.strip()]
             if latest != events or (directory / "result.json").exists():
                 return f"[waive] {rel}: skipped, branch changed during inspection"
+            # A trainer may have saved a checkpoint/final policy while the
+            # read-only inspection was running, without another ledger event.
+            if automatic and (saved := training_evidence(directory, latest)):
+                return preserve_training_message(rel, saved)
             kept = {f["event_id"]: f["kept_seconds"] for f in found if f["kept_seconds"] > 0}
             drop = {f["event_id"] for f in found if f["kept_seconds"] <= 0}
             # A waived scoring attempt takes the whole scoring stage with it: its shard
@@ -366,7 +426,7 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--apply", action="store_true", help="write the waivers; without it, only report")
     parser.add_argument("--automatic", action="store_true",
-                        help="controller mode: never reset or waive failed selection work")
+                        help="controller mode: preserve failed selection work and any saved training/completion evidence")
     parser.add_argument("--reset-waived", action="store_true",
                         help="reset branches whose retry resumed a waived attempt's checkpoints (rerun from scratch)")
     args = parser.parse_args()

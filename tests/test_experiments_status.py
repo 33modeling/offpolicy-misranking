@@ -32,6 +32,22 @@ def test_progress_shows_budget_block_instead_of_hiding_it(tmp_path):
     assert 'BUDGET 1' in text and 'BUDGET s3/t100' in text and 'saved work preserved' in text
 
 
+def test_progress_distinguishes_saved_training_from_new_ready_work(tmp_path):
+    progress = load('experiments_progress')
+    data = {'training_published': 1, 'tasks': [
+        {'kind': 'branch', 'status': status, 'seed': 3, 'step': 25, 'arm': arm,
+         'reason': 'saved work; do not restart from parent'}
+        for status, arm in [('EVAL', 'random_full'), ('RESUME', 'random_reduced'),
+                            ('REVIEW', 'selection_full'), ('SAVING', 'selection_reduced')]
+    ]}
+    text = '\n'.join(progress.render_root(tmp_path, data, width=120, kind='switch'))
+    for status in ('EVAL', 'RESUME', 'REVIEW', 'SAVING'):
+        assert f'{status} 1' in text
+    assert 'TRAINED 1' in text
+    assert 'REVIEW s3/t25' in text
+    assert 'READY 4' not in text
+
+
 def test_one_screen_shows_both_experiments_and_this_node_once(tmp_path):
     switch_root, mopps_root = tmp_path / "switch", tmp_path / "mopps"
     now = time.time()

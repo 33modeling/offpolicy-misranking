@@ -583,7 +583,7 @@ while :; do
   if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
     # Auto-pull re-enters this controller, not the outer wrapper. Check saved
     # storage before recovery can move anything or a queue pass can retrain.
-    if ! CUDA_VISIBLE_DEVICES='' bash scripts/check_mbpp_storage.sh "$EXPERIMENTS_MBPP_SUITE"; then
+    if ! CUDA_VISIBLE_DEVICES='' MBPP_STORAGE_AUDIT_AUTOMATIC=1 bash scripts/check_mbpp_storage.sh "$EXPERIMENTS_MBPP_SUITE"; then
       echo '[storage-blocked] no recovery/reset/training pass started; preserve saved work and inspect storage'
       exit 2
     fi

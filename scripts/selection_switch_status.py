@@ -27,6 +27,7 @@ import _node_view as node_view
 ARM_LABELS = {"selection_reduced": "SEL", "random_reduced": "RND",
               "selection_full": "FULL-S", "random_full": "FULL-R", "gated": "GATE"}
 CELLS = {"DONE": "DONE", "RUNNING": "RUN", "READY": "READY", "WAIT": "WAIT",
+         "EVAL": "EVAL", "RESUME": "RESUME", "REVIEW": "REVIEW",
          "FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVALID", "SAVING": "SAVING", "BUDGET": "BUDGET"}
 
 
@@ -59,6 +60,51 @@ def last_training_step(path):
                 return step
     except OSError:
         pass
+    return None
+
+
+def saved_policy_state(policy):
+    """Cheap inventory, not a tensor-hash or scientific-contract certificate."""
+    checkpoints = list(policy.glob("checkpoint-*"))
+    for checkpoint in sorted(checkpoints, reverse=True):
+        try:
+            names = ("checkpoint_state.json", "adapter_config.json", "adapter_model.safetensors",
+                     "optimizer.pt", "grpo_stats.jsonl")
+            if not all((checkpoint / name).is_file() and (checkpoint / name).stat().st_size > 0 for name in names):
+                continue
+            state = core.read(checkpoint / "checkpoint_state.json")
+            step = state.get("completed_steps")
+            if (type(step) is int and step > 0 and checkpoint.name == f"checkpoint-{step:06d}"
+                    and all(isinstance(state.get(key), str) and re.fullmatch(r"[a-fA-F0-9]{64}", state[key])
+                            for key in ("adapter_sha256", "optimizer_sha256", "grpo_stats_sha256"))):
+                return "RESUME", f"checkpoint step {step} present; trainer must validate hashes and contract before resume"
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    final = policy / "policy_train.json"
+    if final.is_file():
+        return "REVIEW", "saved final policy exists without a published result; verify lineage before retry"
+    evidence = (checkpoints or list(policy.glob(".checkpoint-*.tmp"))
+                or any((policy / name).exists() or (policy / name).is_symlink() for name in
+                       ("adapter_model.safetensors", "optimizer.pt", "grpo_stats.jsonl", "budget_stop.json")))
+    if evidence:
+        return "REVIEW", "prior training files exist but no complete checkpoint metadata; do not restart from parent"
+    return None
+
+
+def archived_training_artifact(directory):
+    """A moved attempt is evidence, even when its result was never published."""
+    names = ("result.json", "result.sha256.json", "policy", "evaluation", "fresh_r/policy",
+             "policy_train.json", "budget_stop.json", "checkpoint_state.json",
+             "adapter_model.safetensors", "optimizer.pt", "grpo_stats.jsonl")
+    for base in (directory, directory / "fresh_r"):
+        for archive in sorted((base / "discarded").glob("*")):
+            for name in names:
+                path = archive / name
+                if path.exists() or path.is_symlink():
+                    return path
+            candidate = next(archive.glob("checkpoint-*"), None)
+            if candidate is not None:
+                return candidate
     return None
 
 
@@ -106,14 +152,15 @@ def snapshot(root, *, now=None):
                 "directory": str(directory.relative_to(root)), "status": "WAIT" if dependency else "READY",
                 "reason": dependency or "", "host": progress.get("host", ""), "pid": progress.get("pid"),
                 "phase": progress.get("phase", ""), "seconds": number(progress.get("seconds")),
-                "timeout": number(progress.get("timeout")), "heartbeat_age": max(0., age) if progress else None}
+                "timeout": number(progress.get("timeout")), "heartbeat_age": max(0., age) if progress else None,
+                "training_published": False}
         policy_dir = directory / ("fresh_r/policy" if kind == "prefix" else "policy")
         task["training_step"] = last_training_step(policy_dir / "grpo_stats.jsonl") if kind != "diagnostic" else None
         # `also` is a second published artefact the worker also requires before it
         # stops claiming this task (the reward curve of a convergence root). Counting
         # such a branch DONE made the launcher call the root complete and release the
         # node while the worker still re-claimed the branch and re-ran its curve.
-        if done_path is not None and done_path.is_file() and (also is None or also.is_file()):
+        if done_path is not None and done_path.is_file():
             result = read(done_path)
             task.update(status="DONE", reason="published")
             if "_invalid" in result:
@@ -121,11 +168,22 @@ def snapshot(root, *, now=None):
             elif kind == "branch":
                 receipt_path = directory / "result.sha256.json"
                 receipt = read(receipt_path)
-                if not receipt_path.exists():
+                if result.get("complete") is not True or result.get("schema") != rule.SCHEMA:
+                    task.update(status="INVALID", reason="result completion flag or schema invalid")
+                elif not receipt_path.exists():
                     task.update(status="SAVING", reason="result receipt pending")
-                elif (result.get("complete") is not True or result.get("schema") != rule.SCHEMA
-                      or receipt.get("sha256") != hashlib.sha256(done_path.read_bytes()).hexdigest()):
+                elif receipt.get("sha256") != hashlib.sha256(done_path.read_bytes()).hexdigest():
                     task.update(status="INVALID", reason="result receipt or completion flag invalid")
+                else:
+                    task["training_published"] = True
+                    if also is not None:
+                        if not also.is_file():
+                            task.update(status="EVAL", reason="training result published; reward curve pending (no retraining)")
+                        else:
+                            curve = read(also)
+                            if (curve.get("schema") != rule.SCHEMA
+                                    or curve.get("result_sha256") != receipt["sha256"]):
+                                task.update(status="INVALID", reason="training result published; curve record invalid or bound to another result")
             elif kind == "diagnostic" and result.get("status") != "complete":
                 task.update(status="FAILED", reason="diagnostic failed; no retry")
         elif fresh:
@@ -138,9 +196,26 @@ def snapshot(root, *, now=None):
             task.update(status="STALE", reason="heartbeat older than 60s; owner not confirmed alive")
         elif "_invalid" in progress:
             task.update(status="INVALID", reason="unreadable progress record")
-        if (also is not None and not also.is_file() and done_path is not None and done_path.is_file()
-                and task["status"] == "READY"):
-            task["reason"] = "result published; reward curve pending"
+        archived = archived_training_artifact(directory) if kind in {"prefix", "branch"} else None
+        if kind == "branch" and task["training_published"] and archived is not None:
+            task.update(status="REVIEW", archived_work=str(archived.relative_to(directory)), saved_work="REVIEW",
+                        reason="published result retained; archived training work also exists; review possible replay and preserve both attempts")
+        if (kind in {"prefix", "branch"} and not fresh
+                and task["status"] in {"READY", "WAIT", "FAILED", "STALE"}):
+            saved = saved_policy_state(policy_dir)
+            if archived is not None:
+                task["archived_work"] = str(archived.relative_to(directory))
+                evidence = "result" if archived.name == "result.json" else "training artifact"
+                reason = f"archived {evidence} exists under discarded; inspect saved work before retry"
+                if saved is not None and saved[0] == "RESUME":
+                    reason += "; active checkpoint also exists, reconcile attempts before resume"
+                saved = ("REVIEW", reason)
+            if saved:
+                state, reason = saved
+                task["saved_work"] = state
+                task["resume_validation_required"] = True
+                if state == "REVIEW" or task["status"] in {"READY", "WAIT"}:
+                    task.update(status=state, reason=reason + (f"; waits for {dependency}" if dependency else ""))
 
         cost_path = directory / "cost.jsonl"
         if cost_path.is_file():
@@ -157,9 +232,10 @@ def snapshot(root, *, now=None):
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 notices.append({"path": str(cost_path.relative_to(root)), "error": f"cost snapshot unreadable: {exc}"})
         # Failed/stale work may wake the controller, but dependencies, live
-        # peers and terminal diagnostic failures are not retryable work.
+        # peers and terminal diagnostic failures are not retryable work. EVAL
+        # resumes reporting only; RESUME still requires the trainer's validation.
         task["retryable"] = (kind in {"prefix", "branch"} and not dependency
-                             and task["status"] in {"FAILED", "STALE"})
+                             and task["status"] in {"FAILED", "STALE", "EVAL", "RESUME"})
         tasks.append(task)
         return task
 
@@ -262,6 +338,7 @@ def snapshot(root, *, now=None):
             "prefix_done": sum(task["status"] == "DONE" for task in tasks if task["kind"] == "prefix"),
             "development_done": sum(task["status"] == "DONE" and task["role"] == "DEV" for task in branches),
             "test_done": sum(task["status"] == "DONE" and task["role"] == "TEST" for task in branches),
+            "training_published": sum(task["training_published"] for task in branches),
             "tasks": tasks, "cost_pending": cost_pending, "notices": notices,
             "verification": "published result receipts only; full scientific validation is separate"}
 
@@ -297,7 +374,9 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
                  else f"WAIT: {18-data['development_done']} development branches unpublished (only the 6 GATE arms wait; held-out controls run now)"
                  if data["development_done"] < 18 else "FIT PENDING: 18/18 development results published"))
     tasks = data["tasks"]
-    alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "BUDGET"})
+    if data.get("training_published"):
+        lines.append(f"TRAINING RESULTS  {data['training_published']}/48 published (EVAL means curve evaluation only)")
+    alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"})
     if alerts:
         lines.append("ALERTS  " + "  ".join(f"{key} {value}" for key, value in alerts.items()) + "  (all phases)")
     observed = [task for task in tasks if task["status"] in {"RUNNING", "STALE"}]
@@ -341,7 +420,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
             rows.append([f"s{seed}/t{step}", "DEV" if seed in rule.DEV_SEEDS else "TEST",
                          *[CELLS[items[arm]["status"]] if arm in items else "-" for arm in ARM_LABELS], ", ".join(reasons)])
     lines += table(["STATE", "ROLE", *ARM_LABELS.values(), "WAIT FOR"], rows, [8, 5, 7, 7, 7, 7, 7, max(15, width-70)])
-    attention = [task for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "SAVING", "BUDGET"}]
+    attention = [task for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "SAVING", "BUDGET", "REVIEW"}]
     if attention or data["cost_pending"] or data["notices"]:
         lines += ["", "ATTENTION"]
         for task in attention[:8]:
@@ -362,6 +441,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
                 lines.append("  " + task["reason"])
     lines += ["", "SEL/RND: diagnostic-paid selection/random; FULL-S/FULL-R: full-budget controls.",
               "DONE: published receipt checked. RUN: heartbeat <60s. STALE: not confirmed running.",
+              "EVAL: curve only. RESUME: checkpoint to verify. REVIEW: do not restart.",
               f"ROOT  {data['root']}"]
     return "\n".join(part for line in lines for part in
                      (textwrap.wrap(line, width=width, subsequent_indent="  ", break_long_words=True, break_on_hyphens=False) if len(line) > width else [line]))

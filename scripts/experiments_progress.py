@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sys
+import textwrap
 import time
 
 HERE = Path(__file__).resolve().parent
@@ -64,19 +65,22 @@ def render_root(root, data, *, width, kind):
     counts = Counter(t["status"] for t in branches)
     running = [t for t in tasks if t["status"] == "RUNNING"]
     parts = [f"DONE {counts.get('DONE', 0)}/{len(branches)}", f"RUN {len(running)}"]
-    for key in ("READY", "WAIT", "FAILED", "STALE", "INVALID", "BUDGET"):
+    for key in ("EVAL", "RESUME", "SAVING", "REVIEW", "READY", "WAIT", "FAILED", "STALE", "INVALID", "BUDGET"):
         if counts.get(key):
             parts.append(f"{'FAIL' if key == 'FAILED' else key} {counts[key]}")
     if kind == "switch":
+        published = data.get("training_published", 0)
+        if published:
+            parts.append(f"TRAINED {published}")
         gate = "READY" if data.get("gate_ready") else f"WAIT (dev {data.get('development_done', 0)}/18)"
         parts.append(f"gate {gate}")
-    lines = [f"{name}: " + "  ".join(parts)]
+    lines = textwrap.wrap(f"{name}: " + "  ".join(parts), width=width, subsequent_indent="  ")
     host_width = max(12, width - 52)
     for t in sorted(running, key=lambda t: (t["seed"], t["step"], t["arm"])):
         lines.append(clip(f"  RUN  s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('phase') or '-':<9} {updates(t):>5} "
                           f"{switch_status.duration(t.get('seconds')):>6} {clip(t.get('host') or '?', host_width)}", width))
-    for t in sorted((t for t in tasks if t["status"] in {"FAILED", "STALE", "INVALID", "BUDGET"}), key=lambda t: (t["status"], t["seed"], t["step"])):
-        tag = {"FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVAL", "BUDGET": "BUDGET"}[t["status"]]
+    for t in sorted((t for t in tasks if t["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"}), key=lambda t: (t["status"], t["seed"], t["step"])):
+        tag = {"FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVAL", "BUDGET": "BUDGET", "REVIEW": "REVIEW"}[t["status"]]
         prefix = (tag + " ").ljust(5)
         lines.append(clip(f"  {prefix}s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('reason') or ''}", width))
     return lines
@@ -87,6 +91,7 @@ def render(work, *, width=80, now=None):
     stamp = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     switch, mopps = prepared_roots(work)
     lines = [f"PROGRESS  {stamp}", clip("RUN: updates (u), elapsed, node. BUDGET: allocation exhausted; needs review.", width)]
+    lines.append(clip("EVAL: evaluation only. RESUME: checkpoint validation. REVIEW: saved work blocked.", width))
     hosts = set()
     for root in switch:
         try:

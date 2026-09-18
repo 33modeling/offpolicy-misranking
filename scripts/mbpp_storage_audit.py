@@ -10,6 +10,8 @@ import fcntl
 import hashlib
 import json
 import re
+import sys
+import tempfile
 from pathlib import Path
 
 MAX_OUTPUT_BYTES = 4096
@@ -179,6 +181,7 @@ def audit(work, roots):
                                             key=lambda p: (not p.name.startswith('random'), p.name)):
                         result, seal = directory / 'result.json', directory / 'result.sha256.json'
                         archives = sorted((directory / 'discarded').glob('*/result.json'))
+                        archived_policies = sorted((directory / 'discarded').glob('*/policy'))
                         summary['archived_results'] += len(archives)
                         summary['waivers'] += len(list((directory / 'waivers').glob('*.json')))
                         discards = list((directory / 'discards').glob('*.json'))
@@ -210,9 +213,15 @@ def audit(work, roots):
                         if archives and not result.is_file():
                             note('error', 'ARCHIVED_RESULT', archives[-1],
                                  'completed result moved under discarded; active result absent; review before any retraining')
+                        elif archived_policies and not result.is_file():
+                            note('error', 'ARCHIVED_TRAINING', archived_policies[-1],
+                                 'prior policy/training files moved under discarded; do not start over or overwrite; inspect archive and waiver receipts')
                         elif discards and not result.is_file():
                             note('error', 'RESET_RECEIPT', directory / 'discards',
                                  'explicit reset receipt exists; active completed result absent; inspect archived files')
+                        if result.is_file() and (archives or archived_policies):
+                            note('warning', 'ACTIVE_AND_ARCHIVED_WORK', directory / 'discarded',
+                                 'active result and older saved work coexist: possible replay; preserve both, compare reset/waiver receipts before choosing a result')
                         inspect_policy(directory, summary)
             for policy in sorted((root / 'prefixes').glob('seed-*/segment-*/fresh_r/policy')):
                 inspect_policy(policy.parent, summary)
@@ -253,9 +262,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--root', type=Path, action='append', required=True)
+    parser.add_argument('--report-dir', type=Path, default=Path.home(),
+                        help='save the shareable <=4 KiB TXT here (default: home directory)')
+    parser.add_argument('--report-on-error', action='store_true',
+                        help='automatic preflight: save a file only when startup is blocked')
     args = parser.parse_args()
     report = audit(args.work, args.root)
-    print(render(report), end='')
+    output = render(report)
+    print(output, end='')
+    if not args.report_on_error or report['status'] != 'ok':
+        try:
+            # Home remains available when shared storage is missing. Exclusive
+            # creation never overwrites a prior report or follows its symlink.
+            with tempfile.NamedTemporaryFile(prefix='mbpp-storage-', suffix='.txt',
+                                             dir=args.report_dir, mode='wb', delete=False) as handle:
+                handle.write(output.encode())
+                saved = Path(handle.name).resolve()
+            print(f'[saved] {saved} ({len(output.encode())} bytes; send this TXT)')
+        except OSError as exc:
+            print(f'[report-save-failed] {exc}', file=sys.stderr)
+            return 2
     return 0 if report['status'] == 'ok' else 2
 
 

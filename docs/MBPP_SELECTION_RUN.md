@@ -33,7 +33,7 @@ versus random; the shared states permit the fresh/difficulty comparison.
 ## Commands
 
 ```bash
-bash scripts/check_mbpp_storage.sh             # separate read-only storage audit; <=4 KiB; never starts training
+bash scripts/check_mbpp_storage.sh             # saves <=4 KiB TXT in home; never starts training
 bash scripts/run_mbpp_experiments.sh plan       # settings only, no writes/GPU work
 bash scripts/run_mbpp_experiments.sh check      # read-only local input checks
 bash scripts/run_mbpp_experiments.sh status
@@ -62,13 +62,27 @@ An absent root is not labelled "deleted"; if none of the requested existing run
 manifests can be found, recovery refuses to initialize replacement runs silently.
 Unprepared quality/difficulty roots are allowed alongside the existing fresh root.
 
-The separate audit prints exact configured roots and distinguishes active saved
+The separate audit saves a unique `~/mbpp-storage-*.txt` (at most 4 KiB), prints
+its full path, and prints exact configured roots. Send that TXT file for diagnosis;
+no archive, model or rollout upload is needed. A blocked audit still saves its TXT
+and exits 2. Automatic startup/pass checks save a file only when blocked, avoiding
+report accumulation during successful queue passes.
+It distinguishes active saved
 results from `discarded/`, waiver and explicit-reset receipts. It reads bounded
 metadata and short historical log tails, not model/optimizer/rollout payloads,
 and changes no experiment files. It cannot prove who deleted a file or detect
 historical deletion with no remaining evidence. Tensor hashes and checkpoint
 lineage still require trainer validation; passing metadata checks is not that
 certification. Already-running workers are not stopped by this read-only audit.
+
+Published training with a missing convergence curve is `EVAL`, not `READY`:
+only evaluation remains. `RESUME` means a checkpoint candidate exists and must
+pass the trainer's original hash/contract validation; it is not a fresh start.
+`REVIEW` means saved training evidence remains without a complete checkpoint
+candidate. The trainer refuses to fall back to parent weights if all local
+checkpoints fail validation, and automatic waivers never archive saved training
+or completion evidence. These protections preserve existing files and costs;
+they do not restore files already missing or certify damaged checkpoints.
 
 `run` and `stop` use `scripts/run_experiments.sh` for the existing queue,
 detached console, keepalive, watchdog, automatic Git updates, stale-event

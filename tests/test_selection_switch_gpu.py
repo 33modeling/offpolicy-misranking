@@ -62,8 +62,62 @@ def publication_predecessor():
 def allocation_guard_predecessor():
     hashes = switch.code_hashes()
     hashes["src/selection_switch_gpu.py"] = "ebe252fd7c2fcb3171d79123b59e0623d3dea9a591a8989305c73ee9c2bf29ed"
+    hashes["src/train_selection_gate_grpo.py"] = "9fe00567bf1b9e4637d0ef2d5d5aa5e6d8d76742878dd2587fc4de9d51bae997"
     assert core.fingerprint(hashes) == switch.PRE_ALLOCATION_GUARD_CODE
     return hashes
+
+
+def resume_preservation_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "7e2e16eae01ba03194c9f8802e45c05a18995249eef58d679a1bbce8834c9e0e"
+    hashes["src/train_selection_gate_grpo.py"] = "9fe00567bf1b9e4637d0ef2d5d5aa5e6d8d76742878dd2587fc4de9d51bae997"
+    assert core.fingerprint(hashes) == switch.PRE_RESUME_PRESERVATION_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_resume_preservation_upgrade_keeps_frozen_saved_work_and_receipts(tmp_path, monkeypatch, migrated):
+    previous = resume_preservation_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "allocation-guard-runtime.json")["runtime_code_hashes"] == previous
+        assert not (tmp_path / "resume-preservation-runtime.json").exists()
+    core.atomic_json(tmp_path / "states/s3-t25/points/view-25/random_full/result.json",
+                     {"complete": True, "completed_steps": 30})
+    core.atomic_json(tmp_path / "states/s3-t25/points/view-25/random_full/policy/checkpoint-000030/checkpoint_state.json",
+                     {"completed_steps": 30})
+    (tmp_path / "cost.jsonl").write_text("unchanged accounting\n")
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    for _ in range(2):
+        assert switch.manifest(tmp_path) == frozen
+        assert {p: p.read_bytes() for p in before} == before
+    receipt_path = tmp_path / "resume-preservation-runtime.json"
+    receipt = core.read(receipt_path)
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["allocation_guard_runtime_sha256"] == base.digest(tmp_path / "allocation-guard-runtime.json")
+    receipt["cost_policy"] = "reset budgets and replay training"
+    core.atomic_json(receipt_path, receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+def test_resume_preservation_does_not_accept_tampered_previous_allocation_receipt(tmp_path, monkeypatch):
+    previous = resume_preservation_predecessor()
+    core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": initial_predecessor()})
+    with monkeypatch.context() as patch:
+        patch.setattr(switch, "code_hashes", lambda: previous)
+        switch.manifest(tmp_path)
+    receipt_path = tmp_path / "allocation-guard-runtime.json"
+    receipt = core.read(receipt_path)
+    receipt["cost_policy"] = "discard saved charges"
+    core.atomic_json(receipt_path, receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+    assert not (tmp_path / "resume-preservation-runtime.json").exists()
 
 
 @pytest.mark.parametrize("migrated", [False, True])

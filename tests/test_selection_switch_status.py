@@ -49,6 +49,11 @@ def published(directory):
     core.atomic_json(directory / "result.sha256.json", {"sha256": hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()})
 
 
+def published_curve(directory):
+    core.atomic_json(directory / "curve.json", {"schema": rule.SCHEMA, "points": {},
+        "result_sha256": hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()})
+
+
 def running(directory, host, *, now, phase="prefix-train", pid=123):
     core.atomic_json(directory / "progress.json", {"state": "running", "host": host, "pid": pid,
         "phase": phase, "updated": now-2, "seconds": 1234., "timeout": 14400., "event_id": host})
@@ -349,15 +354,17 @@ def test_a_convergence_branch_without_its_curve_is_not_counted_done(tmp_path):
     completed_prefix(tmp_path)
     published(point(tmp_path) / "selection_reduced")
     published(point(tmp_path) / "random_reduced")
-    core.atomic_json(point(tmp_path) / "random_reduced/curve.json", {"schema": rule.SCHEMA, "points": {}})
+    published_curve(point(tmp_path) / "random_reduced")
     data = status.snapshot(tmp_path, now=now)
     by_arm = {task["arm"]: task for task in data["tasks"] if task["kind"] == "branch" and task["seed"] == 0 and task["step"] == 25}
     assert by_arm["random_reduced"]["status"] == "DONE"
-    assert by_arm["selection_reduced"]["status"] == "READY"
-    assert by_arm["selection_reduced"]["reason"] == "result published; reward curve pending"
+    assert by_arm["selection_reduced"]["status"] == "EVAL"
+    assert by_arm["selection_reduced"]["reason"] == "training result published; reward curve pending (no retraining)"
+    assert by_arm["selection_reduced"]["retryable"] is True
+    assert data["training_published"] == 2
     assert data["development_done"] == 1
     # Its curve arrives: the branch is done and the root can be called complete.
-    core.atomic_json(point(tmp_path) / "selection_reduced/curve.json", {"schema": rule.SCHEMA, "points": {}})
+    published_curve(point(tmp_path) / "selection_reduced")
     assert status.snapshot(tmp_path, now=now)["development_done"] == 2
 
 
@@ -368,3 +375,161 @@ def test_a_final_gate_branch_is_done_on_its_result_alone(tmp_path):
     completed_prefix(tmp_path)
     published(point(tmp_path) / "selection_reduced")
     assert status.snapshot(tmp_path, now=now)["development_done"] == 1
+
+
+@pytest.mark.parametrize("arm", ["random_reduced", "random_full"])
+def test_completed_random_result_waiting_for_curve_never_becomes_ready(tmp_path, arm):
+    convergence_root(tmp_path)
+    completed_prefix(tmp_path, seed=3)
+    directory = point(tmp_path, seed=3) / arm
+    published(directory)
+    core.atomic_json(directory / "failure.json", {"error": "old training failure"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    data = status.snapshot(tmp_path)
+    task = next(t for t in data["tasks"] if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert task["status"] == "EVAL" and task["training_published"] is True
+    assert task["retryable"] is True and data["test_done"] == 0
+    assert "no retraining" in task["reason"]
+    assert "TRAINING RESULTS  1/48 published" in status.render(data)
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("problem,expected", [
+    ("receipt-missing", "SAVING"), ("receipt-wrong", "INVALID"),
+    ("incomplete", "INVALID"), ("bad-json", "INVALID"), ("curve-wrong", "INVALID"),
+    ("curve-bad-json", "INVALID"),
+])
+def test_missing_curve_never_hides_invalid_or_unsealed_result(tmp_path, problem, expected):
+    convergence_root(tmp_path)
+    completed_prefix(tmp_path)
+    directory = point(tmp_path) / "random_reduced"
+    published(directory)
+    if problem == "receipt-missing":
+        (directory / "result.sha256.json").unlink()
+    elif problem == "receipt-wrong":
+        core.atomic_json(directory / "result.sha256.json", {"sha256": "wrong"})
+    elif problem == "incomplete":
+        core.atomic_json(directory / "result.json", {"schema": rule.SCHEMA, "complete": False})
+        (directory / "result.sha256.json").unlink()
+    elif problem == "bad-json":
+        (directory / "result.json").write_text("not json")
+    elif problem == "curve-wrong":
+        core.atomic_json(directory / "curve.json", {"schema": rule.SCHEMA, "result_sha256": "wrong"})
+    else:
+        (directory / "curve.json").write_text("not json")
+    data = status.snapshot(tmp_path)
+    task = next(t for t in data["tasks"] if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert task["status"] == expected and task["retryable"] is False
+    assert data["development_done"] == 0
+
+
+@pytest.mark.parametrize("kind", ["prefix", "branch"])
+@pytest.mark.parametrize("evidence", ["partial-checkpoint", "stats-only", "final-policy", "temporary-checkpoint"])
+def test_incomplete_saved_training_is_review_not_ready_or_silent_parent_restart(tmp_path, kind, evidence):
+    prepared(tmp_path)
+    completed_prefix(tmp_path, seed=3)
+    directory = prefix(tmp_path) if kind == "prefix" else point(tmp_path, seed=3) / "random_full"
+    policy = directory / ("fresh_r/policy" if kind == "prefix" else "policy")
+    policy.mkdir(parents=True)
+    if evidence == "partial-checkpoint":
+        checkpoint = policy / "checkpoint-000030"
+        checkpoint.mkdir()
+        (checkpoint / "adapter_model.safetensors").write_bytes(b"partial")
+    elif evidence == "temporary-checkpoint":
+        (policy / ".checkpoint-000030.tmp").mkdir()
+    elif evidence == "stats-only":
+        (policy / "grpo_stats.jsonl").write_text('{"step": 30}\n')
+    else:
+        core.atomic_json(policy / "policy_train.json", {"completed_steps": 30})
+    data = status.snapshot(tmp_path)
+    task = next(t for t in data["tasks"] if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert task["status"] == "REVIEW" and task["retryable"] is False
+    assert task["training_published"] is False
+    assert "REVIEW" in status.render(data)
+
+
+def test_complete_checkpoint_candidate_is_resume_with_validation_required(tmp_path):
+    prepared(tmp_path)
+    completed_prefix(tmp_path)
+    directory = point(tmp_path) / "random_reduced"
+    checkpoint = directory / "policy/checkpoint-000030"
+    checkpoint.mkdir(parents=True)
+    for name in ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt", "grpo_stats.jsonl"):
+        (checkpoint / name).write_bytes(b"fixture")
+    core.atomic_json(checkpoint / "checkpoint_state.json", {"completed_steps": 30,
+        "adapter_sha256": "a" * 64, "optimizer_sha256": "b" * 64, "grpo_stats_sha256": "c" * 64})
+    data = status.snapshot(tmp_path)
+    task = next(t for t in data["tasks"] if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert task["status"] == "RESUME" and task["retryable"] is True
+    assert task["resume_validation_required"] is True
+    assert "validate hashes and contract" in task["reason"]
+    assert task["training_published"] is False and data["development_done"] == 0
+
+
+def test_archived_result_is_review_not_an_unstarted_random_branch(tmp_path):
+    prepared(tmp_path)
+    completed_prefix(tmp_path)
+    directory = point(tmp_path) / "random_reduced"
+    published(directory / "discarded/old-attempt")
+    data = status.snapshot(tmp_path)
+    task = next(t for t in data["tasks"] if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert task["status"] == "REVIEW" and task["retryable"] is False
+    assert "archived result exists" in task["reason"]
+    assert data["development_done"] == 0
+
+
+@pytest.mark.parametrize("artifact", ["policy", "evaluation", "result.sha256.json", "policy_train.json",
+                                     "adapter_model.safetensors", "grpo_stats.jsonl", "checkpoint-000010"])
+@pytest.mark.parametrize("active_checkpoint", [False, True])
+def test_archived_training_without_result_overrides_fresh_or_resume_status(tmp_path, artifact, active_checkpoint):
+    prepared(tmp_path)
+    completed_prefix(tmp_path)
+    directory = point(tmp_path) / "random_reduced"
+    archive = directory / "discarded/old-attempt"
+    archive.mkdir(parents=True)
+    if artifact in {"policy", "evaluation", "checkpoint-000010"}:
+        (archive / artifact).mkdir()
+    else:
+        (archive / artifact).write_bytes(b"surviving evidence")
+    if active_checkpoint:
+        checkpoint = directory / "policy/checkpoint-000030"
+        checkpoint.mkdir(parents=True)
+        for name in ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt", "grpo_stats.jsonl"):
+            (checkpoint / name).write_bytes(b"fixture")
+        core.atomic_json(checkpoint / "checkpoint_state.json", {"completed_steps": 30,
+            "adapter_sha256": "a" * 64, "optimizer_sha256": "b" * 64, "grpo_stats_sha256": "c" * 64})
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    task = next(t for t in status.snapshot(tmp_path)["tasks"]
+                if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert task["status"] == "REVIEW" and task["retryable"] is False
+    assert task["archived_work"] == f"discarded/old-attempt/{artifact}"
+    assert "archived training artifact" in task["reason"]
+    if active_checkpoint:
+        assert "active checkpoint also exists" in task["reason"]
+    assert before == {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_archived_prefix_policy_is_not_ready(tmp_path, nested):
+    prepared(tmp_path)
+    directory = prefix(tmp_path)
+    base = directory / "fresh_r" if nested else directory
+    (base / "discarded/old-attempt/policy").mkdir(parents=True)
+    task = next(t for t in status.snapshot(tmp_path)["tasks"]
+                if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert task["status"] == "REVIEW" and task["retryable"] is False
+
+
+def test_published_result_and_archived_policy_are_preserved_but_flag_possible_replay(tmp_path):
+    prepared(tmp_path)
+    completed_prefix(tmp_path)
+    directory = point(tmp_path) / "random_reduced"
+    published(directory)
+    (directory / "discarded/old-attempt/policy").mkdir(parents=True)
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    data = status.snapshot(tmp_path)
+    task = next(t for t in data["tasks"] if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert task["status"] == "REVIEW" and task["retryable"] is False
+    assert task["training_published"] is True and data["training_published"] == 1
+    assert "possible replay" in task["reason"] and "published result retained" in task["reason"]
+    assert before == {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
