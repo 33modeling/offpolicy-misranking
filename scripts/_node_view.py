@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -53,8 +54,6 @@ STATE_ORDER = ("RUN", "ADMIT", "WAIT", "HOLD", "COOL", "LIVE", "STALE", "BLOCKED
 # A launcher log alone never proves training: hosts change with every cluster
 # job, so an old "[claimed]" line is a dead host unless a task heartbeat is fresh.
 HEARTBEAT_GRACE = 180.
-# Hosts whose only evidence is older than this are counted, not listed.
-LISTING_AGE = 6*3600.
 
 
 def node_launcher_logs(root):
@@ -167,6 +166,9 @@ def launcher_nodes(root, tasks, *, now=None):
     for task in tasks:
         if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
             item = row(str(task["host"]).rstrip("_"))
+            if task["status"] == "STALE" and item["state"] in LIVE_STATES:
+                # An old attempt must not hide this host's current live work.
+                continue
             item["state"] = "RUN" if task["status"] == "RUNNING" else "STALE"
             item["task"] = f"s{task['seed']}/t{task['step']} {task['arm']}"
             item["phase"] = task.get("phase", "")
@@ -185,16 +187,16 @@ def summarize(nodes):
     return {"live": sum(counts.get(state, 0) for state in LIVE_STATES), "counts": counts}
 
 
-def render_summary(nodes):
+def render_summary(nodes, *, all_nodes=False):
     """First line of a status screen: how many nodes are live and what they are doing."""
     summary = summarize(nodes)
     live = [f"{state} {summary['counts'][state]}" for state in LIVE_STATES if summary["counts"].get(state)]
     dead = [f"{state} {summary['counts'][state]}" for state in STATE_ORDER
             if state not in LIVE_STATES and summary["counts"].get(state)]
-    if not live and not dead:
+    if not nodes:
         return "NODES  0 live  |  no launcher evidence yet"
     line = f"NODES  {summary['live']} live  |  " + ("  ".join(live) if live else "none")
-    return line + (f"  |  not live: " + "  ".join(dead) if dead else "")
+    return line + ("  |  not live: " + "  ".join(dead) if all_nodes and dead else "")
 
 
 def idle(nodes):
@@ -214,10 +216,16 @@ def render_idle(nodes, *, limit=8):
     return f"IDLE  {len(hosts)} node(s) with GPUs and no task: " + ", ".join(shown) + more
 
 
-def listed(nodes):
-    """Live and stale hosts, plus dead ones whose evidence is recent enough to matter."""
-    return [item for item in nodes if item["state"] in (*LIVE_STATES, "STALE", "STOPPING")
-            or item["last_age"] is None or item["last_age"] <= LISTING_AGE]
+def host_sort_key(host):
+    """Keep numbered hosts in human order (node-2 before node-10)."""
+    return tuple(int(part) if part.isdigit() else part for part in re.split(r"(\d+)", host or ""))
+
+
+def listed(nodes, *, all_nodes=False):
+    """Display live hosts first; history is opt-in and never removed from data."""
+    order = {state: index for index, state in enumerate(STATE_ORDER)}
+    return sorted((item for item in nodes if all_nodes or item["state"] in LIVE_STATES),
+                  key=lambda item: (order.get(item["state"], len(order)), host_sort_key(item["host"])))
 
 
 def _role(pid):
@@ -260,16 +268,19 @@ def local_gpus():
     return {"host": node_id(), "available": gpus.returncode == 0, "gpus": rows, "processes": processes}
 
 
-def render_nodes(nodes, table, width):
+def render_nodes(nodes, table, width, *, all_nodes=False):
     if not nodes:
         return ["No launcher evidence under logs/ yet."]
-    hidden = len(nodes) - len(listed(nodes))
-    nodes = listed(nodes)
+    shown = listed(nodes, all_nodes=all_nodes)
+    hidden = len(nodes) - len(shown)
+    nodes = shown
     rows = [[item["host"], item["launcher_pid"] or "-",
              "yes" if item["launcher_alive"] else "no" if item["launcher_alive"] is False else "?",
              item["state"], item["task"] or "-", item["phase"] or "-", item["keepalive"],
              f"{int(item['last_age'])}s" if item["last_age"] is not None else "-"] for item in nodes]
-    if width < 100:
+    if not nodes:
+        lines = ["No live nodes observed."]
+    elif width < 100:
         # 12+8+5+8+9+7 fixed columns and six separators leave width-61 for TASK.
         lines = table(["NODE", "LAUNCHER", "ALIVE", "STATE", "TASK", "KEEPALIVE", "LOG AGE"],
                       [row[:5] + row[6:] for row in rows], [12, 8, 5, 8, max(8, width-61), 9, 7])
@@ -283,7 +294,7 @@ def render_nodes(nodes, table, width):
             lines += textwrap.wrap(f"{item['host']} holds: {item['reason']}", width=width,
                                    initial_indent="  ", subsequent_indent="    ", break_long_words=True)
     if hidden:
-        lines.append(f"  and {hidden} older host(s) with no live launcher (logs older than {LISTING_AGE/3600:.0f}h) not listed")
+        lines.append(f"  {hidden} inactive node(s) hidden; --all shows history.")
     return lines
 
 

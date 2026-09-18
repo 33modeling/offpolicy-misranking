@@ -97,7 +97,8 @@ def test_stale_heartbeat_is_not_running_or_ready(tmp_path):
     assert data["active_nodes"] == 0 and data["stale_nodes"] == 1
     assert data["tasks"][0]["status"] == "STALE"
     assert data["tasks"][0]["retryable"]
-    assert "old-node" in status.render(data)
+    assert "old-node" not in status.render(data)
+    assert "old-node" in status.render(data, all_tasks=True)
 
 
 def test_retryable_failure_never_wakes_for_a_live_peer_or_unmet_dependency(tmp_path):

@@ -96,6 +96,26 @@ they do not restore files already missing or certify damaged checkpoints.
 
 Status now separates `HISTORY` (archived attempts) from current `DONE`, `EVAL`
 and `RESUME` states. An archive alone never downgrades a valid current result.
+Default status shows live nodes only, grouped by state and then node number;
+inactive node logs and records remain untouched. The generic
+`bash scripts/run_experiments.sh status --all` includes node history, while
+`--json` always retains the full snapshot. The experiment name and exact ROOT
+now appear at the top of each suite so a new quality suite is not confused with
+the original completed on-policy suite.
+
+Saved switch points are resolved from `suite.json`, matching the worker, rather
+than inferred from directory count. Ambiguous paths are `REVIEW`, not `READY`.
+MoPPS checkpoints and final policies are also displayed as `RESUME`/`EVAL`
+candidates, subject to runtime validation. None of these views restores missing
+files or turns unvalidated work into `DONE`.
+
+After updating, reopen any previously running status watcher once; subsequent
+viewer-code changes reload only the read-only viewer, never GPU workers.
+The controller logs `[dispatch]` evidence before each queue root: exact path,
+loaded revision, frozen protocol, task counts, and up to three relevant task
+reasons. `checkpoint_step` and `logged_step` are distinct. Metadata logging is
+CPU-only, time-bounded, and cannot change worker exit codes.
+
 A structurally consistent final policy and budget-stop record awaiting result
 publication is `EVAL`, subject to full worker validation, not a new `READY`
 training task. The combined status and progress screens show RF/RR/RO random

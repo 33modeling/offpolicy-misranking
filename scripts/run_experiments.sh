@@ -156,7 +156,20 @@ inner() {
   env -u EXPERIMENTS_DETACHED -u OUT_ROOT SWITCH_FOREGROUND=1 SWITCH_HOLD_SECONDS=0 SWITCH_KEEPALIVE=0 \
     SWITCH_QUEUE_PASS=1 "${EXPERIMENTS_INNER:-bash}" "$@"
 }
+dispatch_evidence() {
+  local root=$1 log_rc=0
+  [ -f scripts/queue_dispatch_evidence.py ] || return 0
+  # Informational only: one root, CPU metadata, no unbounded node/GPU scan.
+  # Snapshot errors/timeouts must never change dispatch or its actual exit code.
+  timeout -k 1 3 env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
+    "$PY" scripts/queue_dispatch_evidence.py --root "$root" --checkout "${LOADED_REV:-unknown}" || log_rc=$?
+  if [ "$log_rc" -ne 0 ]; then
+    echo "[dispatch] root=$root metadata logging rc=$log_rc; continuing to worker validation"
+  fi
+  return 0
+}
 run_switch_root() {
+  dispatch_evidence "$1"
   if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
     mbpp_queue_run "$1"
   else
@@ -647,6 +660,7 @@ while :; do
   case "$rc_switch" in 75|78|79) why_mopps=node-unavailable ;; esac
   if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ] && [ -f "$MOPPS_ROOT/mopps.json" ] && ! mopps_complete; then
     echo "[pass $pass] MoPPS comparison"
+    dispatch_evidence "$MOPPS_ROOT"
     # Finish owned work, then yield peer/prerequisite waits to this shared queue.
     inner scripts/run_mopps_comparison.sh || rc_mopps=$?
     case "$rc_mopps" in 130|143) exit "$rc_mopps" ;; esac

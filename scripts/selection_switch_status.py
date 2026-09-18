@@ -23,6 +23,9 @@ import selection_switch as rule
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _node_view as node_view
+from _status_summary import random_counts, random_text, suite_label
+from _status_watch import StatusWatch
+from _switch_state_point import resolve_state_point
 
 ARM_LABELS = {"selection_reduced": "SEL", "random_reduced": "RND",
               "selection_full": "FULL-S", "random_full": "FULL-R", "gated": "GATE"}
@@ -275,10 +278,9 @@ def snapshot(root, *, now=None):
                     dependency=f"prefix {previous}" if previous is not None and previous not in reached else None)
             previous = step
             child = root / "states" / f"s{seed}-t{step}"
-            points = sorted(path for path in (child / "points").glob("*") if path.is_dir())
-            out = points[0] if len(points) == 1 else child / "points" / f"view-{step}"
-            if len(points) > 1:
-                notices.append({"path": str(child.relative_to(root)), "error": "multiple state points; cannot select an owner"})
+            out, point_error = resolve_state_point(child, step)
+            if point_error:
+                notices.append({"path": str(child.relative_to(root)), "error": point_error})
             diagnostic_dir = out / ("measurement" if seed in rule.DEV_SEEDS else "gate_measurement")
             diagnostic = None
             if diagnostic_dir.is_dir():
@@ -299,9 +301,12 @@ def snapshot(root, *, now=None):
                     arm_dependency = "development gate"
                 if arm_dependency is None:
                     arm_dependency = diagnostic_dependency
-                observe(out / arm, seed=seed, step=step, kind="branch", arm=arm,
-                        done_path=out / arm / "result.json", dependency=arm_dependency,
-                        also=(out / arm / "curve.json") if curve_required else None)
+                task = observe(out / arm, seed=seed, step=step, kind="branch", arm=arm,
+                               done_path=out / arm / "result.json", dependency=arm_dependency,
+                               also=(out / arm / "curve.json") if curve_required else None)
+                if point_error:
+                    task.update(status="REVIEW", reason=f"saved state path unresolved: {point_error}",
+                                retryable=False, training_published=False)
 
     # Metered phases outside the branch directories: the reward-curve evaluations
     # (points/<view>/curve-parent and <arm>/curve/step-N). A node in one of them
@@ -389,16 +394,20 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     if not data["prepared"]:
         return f"NOT PREPARED  {data['root']}"
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    lines = [f"SELECTION SWITCH  {stamp}",
-             node_view.render_summary(data.get("nodes", [])),
+    lines = [f"SELECTION SWITCH [{suite_label(data['root'])}]  {stamp}",
+             f"ROOT  {data['root']}",
+             node_view.render_summary(data.get("nodes", []), all_nodes=all_tasks),
              f"WORK  {data['active_nodes']} active  |  {len(data['waiting_nodes'])} waiting  |  {data['stale_nodes']} stale",
              f"PROGRESS  Prefix {data['prefix_done']}/15 segments  |  Dev {data['development_done']}/18  |  Test {data['test_done']}/30",
-             "BRANCHES  " + "  ".join(f"{name} {data['branch_counts'].get(name, 0)}" for name in CELLS)]
+             "BRANCHES  " + "  ".join(f"{name} {data['branch_counts'][name]}" for name in CELLS if data['branch_counts'].get(name))]
     lines.append("GATE  " + ("READY" if data["gate_ready"] else
                  f"FIT FAILED: {data['gate_fit_failure'][:150]} (see errors; controls keep running)" if data.get("gate_fit_failure")
                  else f"WAIT: {18-data['development_done']} development branches unpublished (only the 6 GATE arms wait; held-out controls run now)"
                  if data["development_done"] < 18 else "FIT PENDING: 18/18 development results published"))
     tasks = data["tasks"]
+    saved_random = random_text(random_counts(tasks))
+    if saved_random:
+        lines.append("RANDOM  " + saved_random)
     if data.get("training_published"):
         lines.append(f"TRAINING RESULTS  {data['training_published']}/48 published (receipt checked; EVAL is evaluation pending)")
     history = sum(bool(task.get("history_warning")) for task in tasks)
@@ -407,14 +416,15 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"})
     if alerts:
         lines.append("ALERTS  " + "  ".join(f"{key} {value}" for key, value in alerts.items()) + "  (all phases)")
-    observed = [task for task in tasks if task["status"] in {"RUNNING", "STALE"}]
+    observed = [task for task in tasks if task["status"] == "RUNNING" or (all_tasks and task["status"] == "STALE")]
     lines += ["", "CURRENT WORK"]
     rows = [[task["host"] or "unknown", task["pid"] or "-", CELLS[task["status"]], f"s{task['seed']}/t{task['step']} {ARM_LABELS.get(task['arm'], task['arm'])}",
              task["phase"] or "-", duration(task["seconds"]), duration(task["timeout"]) if task["timeout"] else "-",
-             duration(task["heartbeat_age"])] for task in sorted(observed, key=lambda item: (item["host"], item["seed"], item["step"]))]
+             duration(task["heartbeat_age"])] for task in sorted(observed, key=lambda item: (
+                 item["status"] != "RUNNING", node_view.host_sort_key(item["host"]), item["seed"], item["step"]))]
     rows += [[item["host"], "-", item.get("state", "WAIT"), "-",
               "between passes" if item.get("state") == "HOLD" else "no claimable task", "-", "-", "<60s"]
-             for item in data["waiting_nodes"]]
+             for item in sorted(data["waiting_nodes"], key=lambda item: node_view.host_sort_key(item["host"]))]
     if rows:
         headers = ["NODE", "PID", "STATE", "TASK", "PHASE", "ELAPSED", "LIMIT", "BEAT"]
         if width < 100:
@@ -424,8 +434,8 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     else:
         lines.append("No fresh worker heartbeat or waiting launcher observed.")
     if nodes:
-        lines += ["", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
-        lines += node_view.render_nodes(data.get("nodes", []), table, width)
+        lines += ["", "NODES (state then node number; inactive history: --all)"]
+        lines += node_view.render_nodes(data.get("nodes", []), table, width, all_nodes=all_tasks)
     if local_gpus:
         lines += ["", "THIS NODE GPUS"]
         lines += node_view.render_local_gpus(data.get("local_gpus", {"host": "?", "available": False, "gpus": [], "processes": []}), table, width)
@@ -468,9 +478,9 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
             if task["reason"]:
                 lines.append("  " + task["reason"])
     lines += ["", "SEL/RND: diagnostic-paid selection/random; FULL-S/FULL-R: full-budget controls.",
-              "DONE: published receipt checked. RUN: heartbeat <60s. STALE: not confirmed running.",
+              "DONE: receipt checked. RUN: heartbeat <60s. STALE: no fresh heartbeat.",
               "EVAL: saved policy/result; evaluation pending. RESUME: verify checkpoint.",
-              f"ROOT  {data['root']}"]
+              "READY: no recognized saved work at this task path; not a reset command."]
     return "\n".join(part for line in lines for part in
                      (textwrap.wrap(line, width=width, subsequent_indent="  ", break_long_words=True, break_on_hyphens=False) if len(line) > width else [line]))
 
@@ -484,8 +494,11 @@ def main():
     args = parser.parse_args()
     if args.watch is not None and (not math.isfinite(args.watch) or args.watch < 1):
         parser.error("watch interval must be at least one second")
+    watcher = StatusWatch() if args.watch is not None else None
     try:
         while True:
+            if watcher:
+                watcher.refresh()
             data = snapshot(args.root)
             if args.watch is not None and sys.stdout.isatty() and not args.as_json:
                 print("\033[2J\033[H", end="")

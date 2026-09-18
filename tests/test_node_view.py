@@ -144,7 +144,8 @@ def test_node_launcher_logs_next_to_the_roots_are_read_and_summarized(tmp_path, 
     idle_line = view.render_idle(list(nodes.values()))
     assert idle_line.startswith("IDLE  3 node(s) with GPUs and no task: node-a (HOLD ") and "node-e (ADMIT" in idle_line
     assert view.render_idle([{**nodes["node-b"], "task": "s1/t25 gated"}]) == "IDLE  none: every live node has a task"
-    assert view.render_summary(list(nodes.values())) == "NODES  3 live  |  ADMIT 1  HOLD 1  LIVE 1  |  not live: BLOCKED 1  GONE 1"
+    assert view.render_summary(list(nodes.values())) == "NODES  3 live  |  ADMIT 1  HOLD 1  LIVE 1"
+    assert "not live: BLOCKED 1  GONE 1" in view.render_summary(list(nodes.values()), all_nodes=True)
     assert view.render_summary([]) == "NODES  0 live  |  no launcher evidence yet"
     def table(headers, rows, widths):
         return ["  ".join(str(cell)[:w].ljust(w) for cell, w in zip(row, widths)).rstrip() for row in [headers, *rows]]
@@ -171,10 +172,42 @@ def test_old_claimed_lines_are_dead_hosts_not_running_nodes(tmp_path, monkeypatc
     summary = view.summarize(nodes)
     assert summary["live"] == 2 and summary["counts"]["RUN"] == 1 and summary["counts"]["LIVE"] == 1, summary
     assert summary["counts"]["GONE"] == 16
-    assert view.render_summary(nodes) == "NODES  2 live  |  RUN 1  LIVE 1  |  not live: GONE 16"
-    assert [item["host"] for item in view.listed(nodes)] == ["recent-dead", "starting", "training"]
+    assert view.render_summary(nodes) == "NODES  2 live  |  RUN 1  LIVE 1"
+    assert [item["host"] for item in view.listed(nodes)] == ["training", "starting"]
+    assert len(view.listed(nodes, all_nodes=True)) == 18
     def table(headers, rows, widths):
         return ["  ".join(str(cell)[:w].ljust(w) for cell, w in zip(row, widths)).rstrip() for row in [headers, *rows]]
     rendered = view.render_nodes(nodes, table, 120)
-    assert rendered[-1].startswith("  and 15 older host(s)")
+    assert rendered[-1] == "  16 inactive node(s) hidden; --all shows history."
     assert not any("old-0" in line for line in rendered)
+    assert not any("recent-dead" in line for line in rendered)
+    assert any("recent-dead" in line for line in view.render_nodes(nodes, table, 120, all_nodes=True))
+
+
+def test_node_display_sorts_live_states_and_numbers_without_mutating_records():
+    nodes = [{"host": host, "state": state} for host, state in
+             [("node-10", "RUN"), ("node-1", "EXITED"), ("node-2", "RUN"), ("node-3", "HOLD")]]
+    before = [dict(item) for item in nodes]
+    assert [item["host"] for item in view.listed(nodes)] == ["node-2", "node-10", "node-3"]
+    assert [item["host"] for item in view.listed(nodes, all_nodes=True)] == ["node-2", "node-10", "node-3", "node-1"]
+    assert nodes == before
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_old_task_cannot_hide_a_current_live_task_on_the_same_node(tmp_path, reverse):
+    tasks = [{"status": state, "host": "node-2", "seed": seed, "step": 25, "arm": "random_reduced"}
+             for state, seed in [("RUNNING", 1), ("STALE", 0)]]
+    if reverse:
+        tasks.reverse()
+    node = view.launcher_nodes(tmp_path, tasks)[0]
+    assert node["state"] == "RUN" and node["task"] == "s1/t25 random_reduced"
+
+
+def test_hiding_all_inactive_nodes_keeps_their_files(tmp_path):
+    logs(tmp_path, "dead-node", console="[launcher-exit] rc=0\n", pid=999999999)
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in tmp_path.rglob("*") if path.is_file()}
+    nodes = view.launcher_nodes(tmp_path, [])
+    rendered = view.render_nodes(nodes, lambda *args: [], 80)
+    assert rendered == ["No live nodes observed.", "  1 inactive node(s) hidden; --all shows history."]
+    assert nodes[0]["host"] == "dead-node" and nodes[0]["state"] == "EXITED"
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}

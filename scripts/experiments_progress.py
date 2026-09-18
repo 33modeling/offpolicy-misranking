@@ -23,6 +23,7 @@ sys.path.insert(0, str(HERE))
 import selection_switch_status as switch_status  # noqa: E402
 import mopps_comparison_status as mopps_status  # noqa: E402
 from _status_summary import random_counts, random_text, suite_label
+from _status_watch import StatusWatch
 
 ORDER = ("selection-switch-v1", "difficulty", "hard", "quality", "long")
 
@@ -140,8 +141,7 @@ def render_nodes(switch, mopps, *, width, now):
     view = switch_status.node_view
     nodes = view.listed(view.launcher_nodes(anchor, tasks, now=now))
     lines = [f"NODES  {view.render_summary(nodes)[7:]}"]
-    order = {state: i for i, state in enumerate(view.STATE_ORDER)}
-    for item in sorted(nodes, key=lambda n: (order.get(n["state"], 99), n["host"])):
+    for item in nodes:
         age = "" if item["last_age"] is None else f"{int(item['last_age'])//60}m"
         what = item["task"] or ("between passes" if item["state"] == "HOLD" else item["reason"] or "")
         lines.append(clip(f"  {item['state']:<6} {clip(item['host'], 24):<24} {clip(item['phase'] or '', 12):<12} {age:>4} {what}", width))
@@ -156,8 +156,11 @@ def main():
     args = parser.parse_args()
     if not args.work or not str(args.work):
         parser.error("--work or OM_WORK is required")
+    watcher = StatusWatch() if args.watch is not None else None
     try:
         while True:
+            if watcher:
+                watcher.refresh()
             text = render(args.work, width=args.width)
             if args.watch:
                 print("\033[2J\033[H", end="")

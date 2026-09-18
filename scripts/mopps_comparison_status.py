@@ -22,10 +22,13 @@ import selection_switch as rule
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _node_view as node_view
+from _status_watch import StatusWatch
+from selection_switch_status import archived_training_artifact, saved_policy_state
 
 ARM_LABELS = {"mopps": "MOPPS", "random_online": "RANDOM"}
 CELLS = {"DONE": "DONE", "RUNNING": "RUN", "READY": "READY", "WAIT": "WAIT", "BLOCKED": "BLOCKED",
-         "FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVALID", "SAVING": "SAVING"}
+         "FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVALID", "SAVING": "SAVING",
+         "EVAL": "EVAL", "RESUME": "RESUME", "REVIEW": "REVIEW"}
 PARENT_CELLS = {"DONE": "DONE", "RUNNING": "RUN", "FAILED": "FAIL", "STALE": "STALE", "QUEUED": "QUEUED"}
 
 
@@ -178,6 +181,34 @@ def snapshot(root, *, now=None):
             task.update(status="STALE", reason="heartbeat older than 60s; owner not confirmed alive")
         elif "_invalid" in progress:
             task.update(status="INVALID", reason="unreadable progress record")
+        if kind == "branch":
+            archived = archived_training_artifact(directory)
+            if archived is not None:
+                task["archived_work"] = str(archived.relative_to(directory))
+                task["history_warning"] = "archived attempt retained; current saved work is shown separately"
+            if not fresh and task["status"] in {"READY", "WAIT", "BLOCKED", "FAILED", "STALE"}:
+                saved = saved_policy_state(directory / "policy")
+                if saved and saved[0] == "EVAL":
+                    # MoPPS and random_online save the online-selector state in
+                    # addition to the shared GRPO policy files. Check presence
+                    # only; runtime still validates selector replay and hashes.
+                    final = read(directory / "policy/policy_train.json")
+                    selector_state = directory / "policy/selector_state.json"
+                    digest = final.get("selector_state_sha256")
+                    if (not selector_state.is_file() or selector_state.stat().st_size == 0
+                            or not isinstance(digest, str) or len(digest) != 64
+                            or any(c not in "0123456789abcdefABCDEF" for c in digest)):
+                        saved = ("REVIEW", "saved policy lacks complete online-selector state metadata; do not restart from parent")
+                if saved is None and archived is not None:
+                    saved = ("REVIEW", "archived training work exists; inspect saved files before retry")
+                if saved:
+                    state, reason = saved
+                    task["saved_work"] = state
+                    task["resume_validation_required"] = True
+                    if state == "REVIEW" or task["status"] in {"READY", "WAIT", "BLOCKED"}:
+                        task.update(status=state, reason=reason + (f"; waits for {dependency}" if dependency else ""))
+        task["retryable"] = (kind == "branch" and not dependency
+                             and task["status"] in {"FAILED", "STALE", "EVAL", "RESUME"})
         costs(directory, task, "shared import" if kind == "import" else "branch budget")
         tasks.append(task)
         return task
@@ -283,24 +314,27 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     states = len(seeds)*len(steps)
     gate_available = sum(data["gate_results"].values())
     lines = [f"MOPPS COMPARISON  {stamp}",
-             node_view.render_summary(data.get("nodes", [])),
+             f"ROOT  {data['root']}",
+             node_view.render_summary(data.get("nodes", []), all_nodes=all_tasks),
              f"WORK  {data['active_nodes']} active  |  {len(data['waiting_nodes'])} waiting  |  {data['stale_nodes']} stale",
              f"PROGRESS  Imports {data['imports_done']}/{states} states  |  Branches {data['branches_done']}/{states*len(arms)}"
              f"  |  Parent gate results {gate_available}/{states}",
-             "BRANCHES  " + "  ".join(f"{name} {data['branch_counts'].get(name, 0)}" for name in CELLS)]
+             "BRANCHES  " + "  ".join(f"{name} {data['branch_counts'][name]}" for name in CELLS if data['branch_counts'].get(name))]
     tasks = data["tasks"]
-    alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "BLOCKED", "STALE", "INVALID"})
+    alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "BLOCKED", "STALE", "INVALID", "REVIEW"})
     if alerts:
         lines.append("ALERTS  " + "  ".join(f"{key} {value}" for key, value in alerts.items()) + "  (all phases)")
-    observed = [task for task in tasks if task["status"] in {"RUNNING", "STALE"}]
+    observed = [task for task in tasks if task["status"] == "RUNNING" or (all_tasks and task["status"] == "STALE")]
     lines += ["", "CURRENT WORK"]
     rows = [[task["host"] or "unknown", task["pid"] or "-", CELLS[task["status"]],
              f"s{task['seed']}/t{task['step']} {ARM_LABELS.get(task['arm'], task['arm'])}",
              task["phase"] or "-", duration(task["seconds"]), duration(task["timeout"]) if task["timeout"] else "-",
-             duration(task["heartbeat_age"])] for task in sorted(observed, key=lambda item: (item["host"], item["seed"], item["step"]))]
+             duration(task["heartbeat_age"])] for task in sorted(observed, key=lambda item: (
+                 item["status"] != "RUNNING", node_view.host_sort_key(item["host"]), item["seed"], item["step"]))]
     rows += [[item["host"], "-", item["state"], "-",
               "between passes" if item["state"] == "HOLD" else "admission failed" if item["state"] == "BLOCKED" else "no claimable task",
-              "-", "-", "<60s"] for item in data["waiting_nodes"]]
+              "-", "-", "<60s"] for item in sorted(data["waiting_nodes"], key=lambda item: node_view.host_sort_key(item["host"]))
+             if all_tasks or item["state"] in node_view.LIVE_STATES]
     if rows:
         headers = ["NODE", "PID", "STATE", "TASK", "PHASE", "ELAPSED", "LIMIT", "BEAT"]
         if width < 100:
@@ -310,16 +344,19 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     else:
         lines.append("No fresh worker heartbeat or waiting launcher observed.")
     if nodes:
-        lines += ["", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
-        lines += node_view.render_nodes(data.get("nodes", []), table, width)
+        lines += ["", "NODES (state then node number; inactive history: --all)"]
+        lines += node_view.render_nodes(data.get("nodes", []), table, width, all_nodes=all_tasks)
     if local_gpus:
         lines += ["", "THIS NODE GPUS"]
         lines += node_view.render_local_gpus(data.get("local_gpus", {"host": "?", "available": False, "gpus": [], "processes": []}), table, width)
-    if data["admissions"]:
+    live_hosts = {item["host"] for item in node_view.listed(data.get("nodes", []))}
+    admissions = [item for item in data["admissions"] if all_tasks or item["host"].rstrip("_") in live_hosts]
+    if admissions:
         lines += ["", "NODE ADMISSION (latest NCCL probe per host)"]
         rows = [[item["host"], item["state"], str(item["attempts"]),
                  ",".join(f"{k}={v}" for k, v in item["overrides"].items()) or "-",
-                 item["failure_kind"] or "-", duration(item["age"]) + " ago"] for item in data["admissions"]]
+                 item["failure_kind"] or "-", duration(item["age"]) + " ago"]
+                for item in sorted(admissions, key=lambda item: node_view.host_sort_key(item["host"]))]
         # 18+9+6+22+9 fixed columns plus five two-space separators leave width-74 for overrides.
         lines += table(["HOST", "STATE", "PROBES", "OVERRIDES", "FAILURE", "AGE"], rows,
                        [18, 9, 6, max(6, width-74), 22, 9])
@@ -349,7 +386,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
                          "; ".join(reasons) if reasons else ", ".join(progress)])
     lines += table(["STATE", "IMPORT", *[ARM_LABELS.get(arm, arm) for arm in arms], "GATE", "WAIT FOR / PHASE"],
                    rows, [8, 7, 8, 8, 6, max(15, width-52)])
-    attention = [task for task in tasks if task["status"] in {"FAILED", "BLOCKED", "STALE", "INVALID", "SAVING"}]
+    attention = [task for task in tasks if task["status"] in {"FAILED", "BLOCKED", "STALE", "INVALID", "SAVING", "EVAL", "RESUME", "REVIEW"}]
     if attention or data["cost_pending"] or data["notices"]:
         lines += ["", "ATTENTION"]
         shown = 0
@@ -393,8 +430,11 @@ def main():
     args = parser.parse_args()
     if args.watch is not None and (not math.isfinite(args.watch) or args.watch < 1):
         parser.error("watch interval must be at least one second")
+    watcher = StatusWatch() if args.watch is not None else None
     try:
         while True:
+            if watcher:
+                watcher.refresh()
             data = snapshot(args.root)
             if args.watch is not None and sys.stdout.isatty() and not args.as_json:
                 print("\033[2J\033[H", end="")

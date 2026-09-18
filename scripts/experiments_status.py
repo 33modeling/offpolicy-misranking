@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mopps_comparison_status as mopps_status
 import selection_switch_status as switch_status
 from _status_summary import random_counts, random_text, suite_label
+from _status_watch import StatusWatch
 
 SEPARATOR = "=" * 24
 
@@ -73,12 +74,11 @@ def snapshot(switch_root, mopps_root, *, now=None):
 def render(data, *, all_tasks=False, width=120):
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines = [f"EXPERIMENTS  {stamp}",
-             switch_status.node_view.render_summary(data["nodes"]),
+             switch_status.node_view.render_summary(data["nodes"], all_nodes=all_tasks),
              "RUN training/claiming  ADMIT NCCL probe  WAIT no claimable task  HOLD between passes  COOL GPU-fault cooldown",
-             "GONE launcher stopped writing  EXITED/BLOCKED launcher left  (see TASK/REASON)",
              switch_status.node_view.render_idle(data["nodes"]),
-             "", "NODES (every host with launcher evidence; ALIVE is known only on that host)"]
-    lines += switch_status.node_view.render_nodes(data["nodes"], switch_status.table, width)
+             "", "NODES (state then node number; inactive history: --all)"]
+    lines += switch_status.node_view.render_nodes(data["nodes"], switch_status.table, width, all_nodes=all_tasks)
     lines += ['', 'RANDOM CONTROLS (RF=full, RR=reduced, RO=online; current saved state)']
     random_roots = [
         {'root': item.get('root', name), 'random_counts': random_counts(item.get('tasks', [])),
@@ -124,14 +124,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--switch-root", type=Path, required=True)
     parser.add_argument("--mopps-root", type=Path, required=True)
-    parser.add_argument("--all", action="store_true", dest="all_tasks")
+    parser.add_argument("--all", action="store_true", dest="all_tasks", help="include inactive node history and task details")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--watch", nargs="?", const=15., type=float)
     args = parser.parse_args()
     if args.watch is not None and (not math.isfinite(args.watch) or args.watch < 1):
         parser.error("watch interval must be at least one second")
+    watcher = StatusWatch() if args.watch is not None else None
     try:
         while True:
+            if watcher:
+                watcher.refresh()
             data = snapshot(args.switch_root, args.mopps_root)
             if args.watch is not None and sys.stdout.isatty() and not args.as_json:
                 print("\033[2J\033[H", end="")
