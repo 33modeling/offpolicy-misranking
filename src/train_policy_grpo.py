@@ -698,8 +698,21 @@ def _save_checkpoint(
         state,
     )
     temporary.rename(target)
-    checkpoints = sorted(out_dir.glob("checkpoint-*"))
-    for stale in checkpoints[:-2]:
+    # Retention counts validated predecessors, not arbitrary directory names.
+    # Corrupt/foreign/future checkpoints must neither evict the checkpoint just
+    # committed nor become permission to delete saved evidence from another run.
+    checkpoints = []
+    for path in out_dir.glob("checkpoint-*"):
+        if path == target or path.is_symlink() or not path.is_dir():
+            continue
+        step = _checkpoint_step(path, contract)
+        if (step is not None and 0 < step < completed_steps
+                and path.name == f"checkpoint-{step:06d}"):
+            checkpoints.append((step, path))
+    # Keep the new checkpoint and its newest validated predecessor. Unexpected
+    # future-step artifacts remain untouched for inspection instead of counting
+    # against this run's two-checkpoint retention window.
+    for _, stale in sorted(checkpoints)[:-1]:
         shutil.rmtree(stale)
 
 

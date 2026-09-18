@@ -12,6 +12,7 @@ from test_mopps_comparison_gpu import dataset_predecessor, snapshot, source
 def historical_hashes(commit):
     value = run.hashes()
     value.update({
+        "src/train_policy_grpo.py": "1560015999552b9481de78b69c58502543656e61216fda41ef210ad666090b42",
         "src/mopps_comparison_gpu.py": "206bed483696b1babc609f12bb399fa06b9486391b5336bce7eb9f47d0ccd7aa",
         "src/net_gain_gate_gpu.py": "3334c50158451751bf6cbbcf84afe67b9c85bcfaea8e6488a494032256b11df3",
         "src/selection_switch_gpu.py": "3886e97f49888d63e4683cc4222d6b7a7b1b1ecd3c1839b53e114f9d108ee616",

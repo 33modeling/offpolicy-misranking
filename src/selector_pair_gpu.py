@@ -36,6 +36,15 @@ CONFIG_KEYS = ("matrix", "prefix_source", "target_reward", "budget_gpu_seconds",
 PRE_BOOTSTRAP_CODE = "3ad11e06bc7670012c91898b6d4e09802eab195422f4a62919ffaf4e95725f9b"
 PRE_DEFAULTS_CODE = "b589d47572403fe0c217ac3e2f925e69906db54822f1f29c6dca9dd1fba3b98b"
 PRE_RESOURCES_CODE = "d5d354a91ec95ae5d941c619a5a50da10e1606072a36dbe06e83d974aed41ec5"
+# Exact released resource/shared runtimes (045dcc1, 6345433, 2444e51, cff7832).
+# Their shared-file changes require Switch's independent reviewed hash pins;
+# pair selectors, pair trainer, curve trainer and branch protocols stay frozen.
+PRE_SHARED_RUNTIME_CODES = {
+    "9eab1b016f5f897a4bd3b85998a25b1bc724b8bf3383ef9e6cfe2ba43f9a6d67",
+    "cec86006408b80d7901f3f44a3b113d702c860e6c4a84a40cd2422e6438ef27a",
+    "b5dfeae35bc95922893636bc5ad1c6d801e68648f1d60907353a016e7c0c1738",
+    "1cf6c9ff347ec6db413c5603170a2e64914a85daa3a06b55bf4705d8367e53d7",
+}
 STARTUP_FILES = {"src/selector_pair_gpu.py", "scripts/run_selector_pair.sh"}
 RUN_DEFAULTS = {"target_reward": .35, "budget_gpu_seconds": 87120.}
 CPU_ENV = {**dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
@@ -101,11 +110,22 @@ def code_hashes():
 
 def compatible_code(recorded):
     current = code_hashes()
-    return recorded == current or (
-        isinstance(recorded, dict) and core.fingerprint(recorded) in {
-            PRE_BOOTSTRAP_CODE, PRE_DEFAULTS_CODE, PRE_RESOURCES_CODE}
-        and set(recorded) == set(current)
-        and all(recorded[name] == value for name, value in current.items() if name not in STARTUP_FILES))
+    if recorded == current:
+        return True
+    if (not isinstance(recorded, dict) or core.fingerprint(recorded) not in {
+            PRE_BOOTSTRAP_CODE, PRE_DEFAULTS_CODE, PRE_RESOURCES_CODE, *PRE_SHARED_RUNTIME_CODES}
+            or set(recorded) != set(current)
+            or any(recorded[name] != value for name, value in current.items()
+                   if name not in STARTUP_FILES and name not in switch.CODE)):
+        return False
+    shared_recorded = {name: recorded[name] for name in switch.CODE}
+    shared_current = {name: current[name] for name in switch.CODE}
+    if shared_recorded == shared_current:
+        return True
+    try:
+        return switch.validate_code_hashes(shared_recorded) == shared_current
+    except (ValueError, TypeError, KeyError):
+        return False
 
 
 def bind_startup_runtime(root, recorded):
@@ -139,11 +159,29 @@ def bind_startup_runtime(root, recorded):
                         "change": "no-argument launch and defaults for unfrozen setup only"}):
                 raise ValueError(f"frozen contract changed: {defaults}")
             prior[defaults.name] = base.digest(defaults)
-        base.bind(root / "startup-resources-runtime.json", {
+        resources_path = root / "startup-resources-runtime.json"
+        resources_receipt = {
             "schema": "offpolicy-selector-pair/resources-runtime-v1",
             "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
             "previous_receipt_sha256": prior, "cpu_environment": CPU_ENV,
-            "change": "bound CPU thread pools and distinguish lock contention; actual elapsed costs retained"})
+            "change": "bound CPU thread pools and distinguish lock contention; actual elapsed costs retained"}
+        if resources_path.exists():
+            previous_resources = core.read(resources_path)
+            previous_code = previous_resources.get("runtime_code_hashes", {})
+            if (previous_resources != resources_receipt and
+                    (core.fingerprint(previous_code) not in PRE_SHARED_RUNTIME_CODES
+                     or not compatible_code(previous_code)
+                     or previous_resources != {**resources_receipt, "runtime_code_hashes": previous_code})):
+                raise ValueError(f"frozen contract changed: {resources_path}")
+        else:
+            base.bind(resources_path, resources_receipt)
+        base.bind(root / "shared-checkpoint-recovery-runtime.json", {
+            "schema": "offpolicy-selector-pair/shared-checkpoint-recovery-runtime-v1",
+            "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+            "resources_runtime_sha256": base.digest(resources_path),
+            "change": "shared Switch runtime recovery and validated checkpoint retention only; pair design, selectors and trainer unchanged",
+            "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or parent restart",
+        })
 
 
 def setup_config():

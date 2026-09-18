@@ -39,7 +39,8 @@ PRE_DATASET_CODE = "c12c6e7956f4a61e648c29b3da2762bc71fc0713b68bd77012aed59004ec
 # Exact released shared runtimes; MoPPS's own selector and trainer are unchanged.
 PRE_SHARED_ALLOCATION_CODE = "3b6ad4bb17b2e0c7cec64c535f86430bb5dd2af0f7940cec9b173634c9d462e6"
 PRE_SHARED_RECOVERY_CODE = "1e57e00d07645d49e28cbacc693917d1c00a41f9d3b2df16e818c9756ce30419"
-RECOVERY_PREDECESSORS = {PRE_SHARED_ALLOCATION_CODE, PRE_SHARED_RECOVERY_CODE}
+PRE_CHECKPOINT_RETENTION_CODE = "af93d909a6f2afc3545ea23e7b3c43939d2163e29811ee652e6ce52cf53299e1"
+RECOVERY_PREDECESSORS = {PRE_SHARED_ALLOCATION_CODE, PRE_SHARED_RECOVERY_CODE, PRE_CHECKPOINT_RETENTION_CODE}
 PRIOR_RUNTIME_CODES = {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE,
                        PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE,
                        PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE,
@@ -99,7 +100,7 @@ def protocol(root):
                 or current["src/net_gate_memory_worker.py"] not in {switch.PRE_CACHE_GUARD_WORKER, switch.CACHE_GUARD_WORKER}
                 or any(current[name] not in allowed for name, allowed in switch.PUBLICATION_PATCH_HASHES.items())
                 or any(recorded[name] != sha for name, sha in current.items()
-                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py", "src/selection_gate_gpu.py", "src/net_gate_memory_worker.py", "src/net_gain_gate_gpu.py", "src/train_selection_gate_grpo.py"})):
+                       if name not in {"src/selection_switch_gpu.py", "src/mopps_comparison_gpu.py", "src/selection_gate_gpu.py", "src/net_gate_memory_worker.py", "src/net_gain_gate_gpu.py", "src/train_selection_gate_grpo.py", "src/train_policy_grpo.py"})):
             raise ValueError("frozen MoPPS experiment changed: unreviewed code hashes")
         switch.validate_code_hashes({name: recorded[name] for name in switch.CODE})
     if (p["schema"] != mopps.SCHEMA
@@ -270,15 +271,33 @@ def protocol(root):
                         raise ValueError(f"frozen contract changed: {dataset_path}")
                 else:
                     base.bind(dataset_path, dataset_receipt)
-                if core.fingerprint(current) not in PRIOR_RUNTIME_CODES:
-                    base.bind(root / "shared-recovery-runtime.json", {
+                if core.fingerprint(current) not in PRIOR_RUNTIME_CODES - {PRE_CHECKPOINT_RETENTION_CODE}:
+                    recovery_path = root / "shared-recovery-runtime.json"
+                    recovery_receipt = {
                         "schema": "mopps-shared-recovery-runtime/v1",
                         "protocol_sha256": base.digest(root / "mopps.json"),
                         "dataset_runtime_sha256": base.digest(dataset_path), "runtime_code_hashes": current,
                         "change": "reviewed shared Switch saved-policy/checkpoint publication recovery only; "
                                   "MoPPS selector and training implementation unchanged",
                         "cost_policy": "preserve all prior receipts, policies, costs, frozen choices and budgets",
-                    })
+                    }
+                    if recovery_path.exists():
+                        previous = core.read(recovery_path)
+                        previous_code = previous.get("runtime_code_hashes")
+                        if (previous != recovery_receipt and
+                                (previous != {**recovery_receipt, "runtime_code_hashes": previous_code}
+                                 or core.fingerprint(previous_code) != PRE_CHECKPOINT_RETENTION_CODE)):
+                            raise ValueError(f"frozen contract changed: {recovery_path}")
+                    else:
+                        base.bind(recovery_path, recovery_receipt)
+                    if core.fingerprint(current) != PRE_CHECKPOINT_RETENTION_CODE:
+                        base.bind(root / "checkpoint-retention-runtime.json", {
+                            "schema": "mopps-checkpoint-retention-runtime/v1",
+                            "protocol_sha256": base.digest(root / "mopps.json"),
+                            "shared_recovery_runtime_sha256": base.digest(recovery_path), "runtime_code_hashes": current,
+                            "change": "shared checkpoint retention validates older checkpoint contracts and never prunes the newly committed checkpoint",
+                            "cost_policy": "preserve all policies, results, costs, choices and budgets; no MoPPS selector or optimizer change",
+                        })
     return p
 
 

@@ -70,6 +70,7 @@ def test_prepare_is_idempotent_and_does_not_mutate_live_parent(tmp_path):
 
 def original_shared_hashes():
     hashes = run.hashes()
+    hashes["src/train_policy_grpo.py"] = switch.runtime.PRE_RETENTION_TRAINER
     hashes["src/net_gain_gate_gpu.py"] = "f4604802211d5bac9f7c759e1a199957883d69c04fa7eb6b15f41e58d09637a3"
     hashes["src/train_selection_gate_grpo.py"] = "14b74afcdab6230d4706f26f823e64239e6d1caea627a6ef78acc3a2c68f1c2c"
     return hashes

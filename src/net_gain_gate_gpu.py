@@ -29,6 +29,11 @@ CODE_FILES = ("src/net_gain_gate.py", "src/net_gain_gate_gpu.py", "src/selection
               "src/selection_gate_study.py", "src/selection_gate_gpu.py", "src/selection_gate_budget.py",
               "src/train_selection_gate_grpo.py", "src/train_policy_grpo.py", "src/low_order_experiment.py",
               "src/low_order_backend.py", "src/low_order_reuse.py", "src/evidence_downstream.py")
+# Exact released runtime; only checkpoint-file retention and this compatibility
+# validator differ. Sampling, optimization, accounting and frozen outputs do not.
+PRE_CHECKPOINT_RETENTION_CODE = "753e98086c67dfce224c1aa554c5fb37e1b7fc4e4dd8373fb00673fd638691fe"
+PRE_RETENTION_TRAINER = "1560015999552b9481de78b69c58502543656e61216fda41ef210ad666090b42"
+RETENTION_TRAINER = "e53b8eb2b2135ed246ace8f68c9011f8fb8fa442690902575121c680ed45b070"
 
 
 def identity(c):
@@ -59,9 +64,23 @@ def protocol(root):
         raise ValueError("study collects development labels; it does not run a fitted gate")
     core.number(value["max_measurement_fraction"], "measurement fraction", 1e-12, .1)
     core.integer(value["recent_window"], "recent window", 1)
-    for name, sha in value.get("code_hashes", {}).items():
-        if name not in CODE_FILES or base.digest(base.ROOT / name) != sha:
-            raise ValueError(f"frozen experiment code changed: {name}; preserve the original code for this suite")
+    recorded = value.get("code_hashes", {})
+    current = {name: base.digest(base.ROOT / name) for name in CODE_FILES}
+    changed = [name for name, sha in recorded.items() if name not in current or current[name] != sha]
+    if changed:
+        if (set(recorded) != set(current) or core.fingerprint(recorded) != PRE_CHECKPOINT_RETENTION_CODE
+                or current["src/train_policy_grpo.py"] != RETENTION_TRAINER
+                or any(recorded[name] != sha for name, sha in current.items()
+                       if name not in {"src/train_policy_grpo.py", "src/net_gain_gate_gpu.py"})):
+            raise ValueError(f"frozen experiment code changed: {changed[0]}; preserve the original code for this suite")
+        with base.lease(root / ".checkpoint-retention-runtime.lock", blocking=True):
+            base.bind(root / "checkpoint-retention-runtime.json", {
+                "schema": "net-gain-checkpoint-retention-runtime/v1",
+                "protocol_sha256": base.digest(root / "net_protocol.json"),
+                "original_code_hashes": recorded, "runtime_code_hashes": current,
+                "change": "prune only validated older checkpoints of the same contract; never prune the newly committed checkpoint",
+                "cost_policy": "preserve all policies, results, costs, choices and budgets; no training or optimizer change",
+            })
     return value
 
 

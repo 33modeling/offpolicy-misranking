@@ -398,8 +398,38 @@ def test_real_checkpoint_writer_publishes_cost_and_archive_together(tmp_path, mo
         assert core.read(tmp_path / f"curve-checkpoints/step-{step}/cost-receipt.json") == receipt
 
 
-def bootstrap_predecessor():
+def historical_startup_hashes():
     hashes = gpu.code_hashes()
+    hashes.update({
+        "src/selection_switch_gpu.py": "ebe252fd7c2fcb3171d79123b59e0623d3dea9a591a8989305c73ee9c2bf29ed",
+        "src/net_gain_gate_gpu.py": "3334c50158451751bf6cbbcf84afe67b9c85bcfaea8e6488a494032256b11df3",
+        "src/train_selection_gate_grpo.py": "9fe00567bf1b9e4637d0ef2d5d5aa5e6d8d76742878dd2587fc4de9d51bae997",
+        "src/train_policy_grpo.py": "1560015999552b9481de78b69c58502543656e61216fda41ef210ad666090b42",
+    })
+    return hashes
+
+
+def released_shared_hashes(commit):
+    hashes = historical_startup_hashes()
+    hashes["src/selector_pair_gpu.py"] = "f0780f6f01ab6b6a6013c351a9c5afb81ee092b77ed9f9e74209582b8363ce28"
+    hashes["scripts/run_selector_pair.sh"] = "25e3f9156caa200205f12d1501d82da48299947a649b0c7abcf7e815dfac628c"
+    if commit == "6345433":
+        hashes["src/selection_switch_gpu.py"] = "7e2e16eae01ba03194c9f8802e45c05a18995249eef58d679a1bbce8834c9e0e"
+    elif commit == "2444e51":
+        hashes["src/selection_switch_gpu.py"] = "3886e97f49888d63e4683cc4222d6b7a7b1b1ecd3c1839b53e114f9d108ee616"
+        hashes["src/train_selection_gate_grpo.py"] = "c84f4a63cdeb40ee63feedffec4f3491089db35fb9fd9bbe243e1a2f09efbc9f"
+    elif commit == "cff7832":
+        hashes["src/selection_switch_gpu.py"] = "955727844dd4a2d824ebdf5972a44fee8495c40ab51575594d9a0f1f7707a382"
+        hashes["src/net_gain_gate_gpu.py"] = "1ee7c1fa81d32a4a61627c12ee4956c8c0e2436f62a10907919291ce9140f423"
+        hashes["src/train_selection_gate_grpo.py"] = "c84f4a63cdeb40ee63feedffec4f3491089db35fb9fd9bbe243e1a2f09efbc9f"
+    else:
+        assert commit == "045dcc1"
+    assert core.fingerprint(hashes) in gpu.PRE_SHARED_RUNTIME_CODES
+    return hashes
+
+
+def bootstrap_predecessor():
+    hashes = historical_startup_hashes()
     hashes["src/selector_pair_gpu.py"] = "0d537c620cc778963bfb3dbd98387b9f3417b6dba43b9779b9fac05a810fe72a"
     hashes["scripts/run_selector_pair.sh"] = "cfd0d2273ddbf2cd945d6d677eff2407814efe7b1a4dfc45b3428cb22793cef7"
     assert core.fingerprint(hashes) == gpu.PRE_BOOTSTRAP_CODE
@@ -407,7 +437,7 @@ def bootstrap_predecessor():
 
 
 def defaults_predecessor():
-    hashes = gpu.code_hashes()
+    hashes = historical_startup_hashes()
     hashes["src/selector_pair_gpu.py"] = "6db840bcb82e8a9c2089c7e836ef5735a8b9e5a68e3707c397245f790b84e095"
     hashes["scripts/run_selector_pair.sh"] = "49ea934118bf4c88a451801fb225ed6b25cb7c9892a2ecf421a85a340dc5b3a2"
     assert core.fingerprint(hashes) == gpu.PRE_DEFAULTS_CODE
@@ -415,7 +445,7 @@ def defaults_predecessor():
 
 
 def resources_predecessor():
-    hashes = gpu.code_hashes()
+    hashes = historical_startup_hashes()
     hashes["src/selector_pair_gpu.py"] = "a5a875b7745fd2c183fc458c8018a079c1a782a30b4fd4057eeac9e217b508d6"
     hashes["scripts/run_selector_pair.sh"] = "748ea06f9fdd3f9d843aa115eda68ac9b3a59a1c12a8f43b12f7e20eca8e7f06"
     assert core.fingerprint(hashes) == gpu.PRE_RESOURCES_CODE
@@ -623,6 +653,58 @@ def test_startup_migration_does_not_allow_scientific_changes(monkeypatch, filena
     current[filename] = "changed"
     monkeypatch.setattr(gpu, "code_hashes", lambda: current)
     assert not gpu.compatible_code(previous)
+
+
+@pytest.mark.parametrize("commit", ["045dcc1", "6345433", "2444e51", "cff7832"])
+@pytest.mark.parametrize("migrated", [False, True])
+def test_reviewed_shared_checkpoint_upgrade_preserves_pair_science_outputs_and_receipts(tmp_path, commit, migrated):
+    previous = released_shared_hashes(commit)
+    recorded = bootstrap_predecessor() if migrated else previous
+    value = {"schema": pair.SCHEMA, "code_hashes": recorded, "branch_manifests": {}}
+    value["protocol_id"] = core.fingerprint(value)
+    core.atomic_json(tmp_path / "pair.json", value)
+    if migrated:
+        core.atomic_json(tmp_path / "startup-resources-runtime.json", {
+            "schema": "offpolicy-selector-pair/resources-runtime-v1", "frozen_code_hashes": recorded,
+            "runtime_code_hashes": previous, "previous_receipt_sha256": {}, "cpu_environment": gpu.CPU_ENV,
+            "change": "bound CPU thread pools and distinguish lock contention; actual elapsed costs retained"})
+    core.atomic_json(tmp_path / "saved/policy/checkpoint_state.json", {"completed_steps": 35})
+    (tmp_path / "saved/policy/adapter_model.safetensors").write_bytes(b"preserve saved pair training")
+    (tmp_path / "saved/cost.jsonl").write_text("every prior charge stays\n")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    for _ in range(2):
+        assert gpu.manifest(tmp_path) == value
+        assert {path: path.read_bytes() for path in before} == before
+    receipt = core.read(tmp_path / "shared-checkpoint-recovery-runtime.json")
+    assert receipt["runtime_code_hashes"] == gpu.code_hashes()
+    assert receipt["resources_runtime_sha256"] == base.digest(tmp_path / "startup-resources-runtime.json")
+    receipt["cost_policy"] = "waive prior compute"
+    core.atomic_json(tmp_path / "shared-checkpoint-recovery-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        gpu.manifest(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["src/train_policy_grpo.py", "src/net_gain_gate_gpu.py", "src/selector_pair.py", gpu.TRAINER])
+def test_shared_checkpoint_upgrade_rejects_unknown_scientific_changes(monkeypatch, name):
+    previous, current = released_shared_hashes("cff7832"), gpu.code_hashes()
+    current[name] = "unreviewed"
+    monkeypatch.setattr(gpu, "code_hashes", lambda: current)
+    assert not gpu.compatible_code(previous)
+
+
+def test_shared_checkpoint_upgrade_rejects_tampered_historical_resources_receipt(tmp_path):
+    previous = released_shared_hashes("cff7832")
+    value = {"schema": pair.SCHEMA, "code_hashes": bootstrap_predecessor(), "branch_manifests": {}}
+    value["protocol_id"] = core.fingerprint(value)
+    core.atomic_json(tmp_path / "pair.json", value)
+    core.atomic_json(tmp_path / "startup-resources-runtime.json", {
+        "schema": "offpolicy-selector-pair/resources-runtime-v1", "frozen_code_hashes": value["code_hashes"],
+        "runtime_code_hashes": previous, "previous_receipt_sha256": {}, "cpu_environment": {"tampered": "yes"},
+        "change": "bound CPU thread pools and distinguish lock contention; actual elapsed costs retained"})
+    before = {path: path.read_bytes() for path in tmp_path.glob("*.json")}
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        gpu.manifest(tmp_path)
+    assert {path: path.read_bytes() for path in tmp_path.glob("*.json")} == before
 
 
 def test_unrecognized_dummy_is_preserved_not_blessed(tmp_path):

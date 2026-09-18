@@ -44,6 +44,7 @@ def test_generic_parent_is_rejected(tmp_path, monkeypatch):
 
 def pre_publication_hashes():
     hashes = switch.code_hashes()
+    hashes["src/train_policy_grpo.py"] = runtime.PRE_RETENTION_TRAINER
     hashes.update({
         "src/net_gain_gate_gpu.py": "f4604802211d5bac9f7c759e1a199957883d69c04fa7eb6b15f41e58d09637a3",
         "src/train_selection_gate_grpo.py": "14b74afcdab6230d4706f26f823e64239e6d1caea627a6ef78acc3a2c68f1c2c",
@@ -61,6 +62,7 @@ def publication_predecessor():
 
 def allocation_guard_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/train_policy_grpo.py"] = runtime.PRE_RETENTION_TRAINER
     hashes["src/net_gain_gate_gpu.py"] = "3334c50158451751bf6cbbcf84afe67b9c85bcfaea8e6488a494032256b11df3"
     hashes["src/selection_switch_gpu.py"] = "ebe252fd7c2fcb3171d79123b59e0623d3dea9a591a8989305c73ee9c2bf29ed"
     hashes["src/train_selection_gate_grpo.py"] = "9fe00567bf1b9e4637d0ef2d5d5aa5e6d8d76742878dd2587fc4de9d51bae997"
@@ -70,6 +72,7 @@ def allocation_guard_predecessor():
 
 def resume_preservation_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/train_policy_grpo.py"] = runtime.PRE_RETENTION_TRAINER
     hashes["src/net_gain_gate_gpu.py"] = "3334c50158451751bf6cbbcf84afe67b9c85bcfaea8e6488a494032256b11df3"
     hashes["src/selection_switch_gpu.py"] = "7e2e16eae01ba03194c9f8802e45c05a18995249eef58d679a1bbce8834c9e0e"
     hashes["src/train_selection_gate_grpo.py"] = "9fe00567bf1b9e4637d0ef2d5d5aa5e6d8d76742878dd2587fc4de9d51bae997"
@@ -79,6 +82,7 @@ def resume_preservation_predecessor():
 
 def saved_policy_recovery_predecessor():
     hashes = switch.code_hashes()
+    hashes["src/train_policy_grpo.py"] = runtime.PRE_RETENTION_TRAINER
     hashes["src/selection_switch_gpu.py"] = "3886e97f49888d63e4683cc4222d6b7a7b1b1ecd3c1839b53e114f9d108ee616"
     hashes["src/net_gain_gate_gpu.py"] = "3334c50158451751bf6cbbcf84afe67b9c85bcfaea8e6488a494032256b11df3"
     hashes["src/train_selection_gate_grpo.py"] = "c84f4a63cdeb40ee63feedffec4f3491089db35fb9fd9bbe243e1a2f09efbc9f"
