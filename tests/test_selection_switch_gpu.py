@@ -20,7 +20,7 @@ from test_selection_switch import development
 @pytest.fixture
 def installed(monkeypatch):
     for target, names in ((runtime, ("net", "HERE", "TEST_ARMS", "SELECTORS", "CODE_FILES", "study", "protocol", "select_once", "measurement_worker", "decision")),
-                          (base, ("verify",))):
+                          (base, ("verify", "train_command"))):
         for name in names:
             monkeypatch.setattr(target, name, getattr(target, name))
     switch.install_runtime()
@@ -42,8 +42,59 @@ def test_generic_parent_is_rejected(tmp_path, monkeypatch):
         switch.verify(tmp_path)
 
 
-def cache_predecessor():
+def pre_publication_hashes():
     hashes = switch.code_hashes()
+    hashes.update({
+        "src/net_gain_gate_gpu.py": "f4604802211d5bac9f7c759e1a199957883d69c04fa7eb6b15f41e58d09637a3",
+        "src/train_selection_gate_grpo.py": "14b74afcdab6230d4706f26f823e64239e6d1caea627a6ef78acc3a2c68f1c2c",
+        "src/selection_gate_gpu.py": switch.NODE_ID_METER,
+    })
+    return hashes
+
+
+def publication_predecessor():
+    hashes = pre_publication_hashes()
+    hashes["src/selection_switch_gpu.py"] = "9131a63f309fda8dd1c16f9f0a547307a343935c33458d2901593d1b88d5a48b"
+    assert core.fingerprint(hashes) == switch.PRE_PUBLICATION_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_publication_upgrade_preserves_previous_run_and_receipts(tmp_path, monkeypatch, migrated):
+    previous = publication_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "curve-wait-runtime.json")["runtime_code_hashes"] == previous
+    base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "unknown"})
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    for _ in range(2):
+        assert switch.manifest(tmp_path) == frozen
+        assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "publication-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    assert receipt["curve_wait_runtime_sha256"] == base.digest(tmp_path / "curve-wait-runtime.json")
+    receipt["cost_policy"] = "discard unknown costs"
+    core.atomic_json(tmp_path / "publication-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["src/net_gain_gate_gpu.py", "src/train_selection_gate_grpo.py", "src/selection_gate_gpu.py"])
+def test_publication_upgrade_rejects_unreviewed_runtime_changes(monkeypatch, name):
+    previous = publication_predecessor()
+    current = switch.code_hashes()
+    current[name] = "unreviewed"
+    monkeypatch.setattr(switch, "code_hashes", lambda: current)
+    with pytest.raises(ValueError, match="scientific code changed"):
+        switch.validate_code_hashes(previous)
+
+
+def cache_predecessor():
+    hashes = pre_publication_hashes()
     hashes["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     hashes.update({
         "src/grads.py": "112d6a18747d324d91d3fdea0ae316ba0b5248dc7f12eb72eaf51bb391688245",
@@ -62,7 +113,7 @@ def initial_predecessor():
 
 
 def code_compat_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     hashes["src/selection_gate_gpu.py"] = switch.COST_METER
     hashes["src/selection_switch_gpu.py"] = "f87119d0f40cc0166f9095049b234c0b25a6fbaf0b910cc13bef688ce494f753"
@@ -71,7 +122,7 @@ def code_compat_predecessor():
 
 
 def shutdown_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/net_gate_memory_worker.py"] = switch.PRE_CACHE_GUARD_WORKER
     hashes.update({"src/selection_gate_gpu.py": switch.COST_METER,
                    "src/selection_switch_gpu.py": "23faf38b352f31ee64a2f2989f3b2086cc47b54508c5bd5c89571a670b3e66e8"})
@@ -80,7 +131,7 @@ def shutdown_predecessor():
 
 
 def cache_guard_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes.update({"src/net_gate_memory_worker.py": switch.PRE_CACHE_GUARD_WORKER,
                    "src/selection_switch_gpu.py": "05aa36a41197cca605933df9d62bba0e4482d6f592c17954c632b45e5cf51195"})
@@ -89,7 +140,7 @@ def cache_guard_predecessor():
 
 
 def parallel_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "0c0ac3aed8c5c53378c91ae5c357bcfc4e0d11fd0ffb7d2a53e9874db3e4a0b6"
     assert core.fingerprint(hashes) == switch.PRE_TEST_PARALLEL_CODE
@@ -97,7 +148,7 @@ def parallel_predecessor():
 
 
 def fit_resilience_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "af2aa2fe039da46d5f686fe80c0833aaca5cbdf4ed9e30ae38248e0c841524a9"
     assert core.fingerprint(hashes) == switch.PRE_FIT_RESILIENCE_CODE
@@ -105,7 +156,7 @@ def fit_resilience_predecessor():
 
 
 def variant_root_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "a3001f512fa99a801e32783a60ff8983fb567005319e61e6df170b7865732fa8"
     assert core.fingerprint(hashes) == switch.PRE_VARIANT_ROOT_CODE
@@ -113,7 +164,7 @@ def variant_root_predecessor():
 
 
 def dataset_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "8d9e94df8c3813e989b447ea918f60e1283c8587e872818ba8cb29fa2b2b3521"
     assert core.fingerprint(hashes) == switch.PRE_DATASET_CODE
@@ -121,7 +172,7 @@ def dataset_predecessor():
 
 
 def selector_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "8b3ed402eed90b80b78078319988a37f6d55abbb7fa78f12d0c535ea7efddf85"
     assert core.fingerprint(hashes) == switch.PRE_SELECTOR_CODE
@@ -166,7 +217,7 @@ def test_selector_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monke
 
 
 def curve_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "337cea75e12718e35c4063205c2e5de568a5ad54eb1f67bd52681f37d0c7a42b"
     assert core.fingerprint(hashes) == switch.PRE_CURVE_CODE
@@ -209,7 +260,7 @@ def test_curve_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkeypa
 
 
 def pilot_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "d984197e2bce0c231682c4a9ca5e4475a668bdfc681365f4b206dfc568e1212c"
     assert core.fingerprint(hashes) == switch.PRE_PILOT_CODE
@@ -229,7 +280,7 @@ def test_roots_prepared_with_the_convergence_runtime_keep_running(tmp_path):
 
 
 def quality_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "e09500b8bf1d5f8bfa537aaab83e1391a73c57d59546ba2351d72abe07de0379"
     assert core.fingerprint(hashes) == switch.PRE_QUALITY_CODE
@@ -237,7 +288,7 @@ def quality_predecessor():
 
 
 def scoring_label_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "fb09987c2dd984584eeb4c394d4bca5cac01758492e60f000ee51ffe13187d18"
     assert core.fingerprint(hashes) == switch.PRE_SCORING_LABEL_CODE
@@ -245,7 +296,7 @@ def scoring_label_predecessor():
 
 
 def curve_ledger_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     hashes["src/selection_switch_gpu.py"] = "901c728102d98206459918b076a9a9a27c4b8e273265350e68e29f26cd709e18"
     assert core.fingerprint(hashes) == switch.PRE_CURVE_LEDGER_CODE
@@ -253,7 +304,7 @@ def curve_ledger_predecessor():
 
 
 def node_id_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_switch_gpu.py"] = "eaabf75f8e37cd05d2dad5e3d8257af6b0e9f3c270bf242c993eee508b10205b"
     hashes["src/selection_gate_gpu.py"] = switch.SHUTDOWN_METER
     assert core.fingerprint(hashes) == switch.PRE_NODE_ID_CODE
@@ -281,7 +332,7 @@ def test_node_id_upgrade_preserves_frozen_run_and_receipt_chain(tmp_path, monkey
     receipt = core.read(tmp_path / "node-id-runtime.json")
     assert receipt["runtime_code_hashes"] == switch.code_hashes()
     assert receipt["curve_ledger_runtime_sha256"] == base.digest(tmp_path / "curve-ledger-runtime.json")
-    assert switch.code_hashes()["src/selection_gate_gpu.py"] == switch.NODE_ID_METER
+    assert switch.code_hashes()["src/selection_gate_gpu.py"] == switch.PUBLICATION_METER
     with pytest.raises(ValueError, match="unknown cost"):
         base.spent(tmp_path)
 
@@ -650,6 +701,8 @@ def test_convergence_branches_finish_only_with_their_curve(tmp_path):
     directory = tmp_path / "random_full"
     assert not switch.branch_finished({"gate": "convergence"}, directory)
     core.atomic_json(directory / "result.json", {"complete": True})
+    assert not switch.branch_finished({}, directory)
+    core.atomic_json(directory / "result.sha256.json", {"sha256": base.digest(directory / "result.json")})
     assert switch.branch_finished({}, directory)
     assert not switch.branch_finished({"gate": "convergence"}, directory)
     core.atomic_json(directory / "curve.json", {"points": {}})
@@ -1540,6 +1593,7 @@ def simulated_queue(tmp_path, monkeypatch):
             gate_seen.append((arm, (tmp_path / "model.json").exists()))
         calls.append(key)
         core.atomic_json(out / arm / "result.json", {})
+        core.atomic_json(out / arm / "result.sha256.json", {"sha256": base.digest(out / arm / "result.json")})
     monkeypatch.setattr(runtime, "run_arm", run)
     return calls, gate_seen
 
@@ -1612,6 +1666,7 @@ def run(out, suite, protocol, arm, devices, env):
             time.sleep(.01)
     time.sleep(.15)
     s.core.atomic_json(directory / 'result.json', {'pid': os.getpid(), 'finished': time.monotonic()})
+    s.core.atomic_json(directory / 'result.sha256.json', {'sha256': s.base.digest(directory / 'result.json')})
 s.runtime.run_arm = run
 if len(sys.argv) > 2:
     (root / f'ready-{os.getpid()}').touch()
@@ -1807,7 +1862,7 @@ def test_failed_gate_fit_and_bad_state_do_not_stop_the_node(tmp_path, monkeypatc
 
 
 def curve_wait_predecessor():
-    hashes = switch.code_hashes()
+    hashes = pre_publication_hashes()
     hashes["src/selection_switch_gpu.py"] = "1631daac5ab40d1d6b9463e120cbd7faee6aa3ed51cafc5eaa19262b95a515fa"
     assert core.fingerprint(hashes) == switch.PRE_CURVE_WAIT_CODE
     return hashes

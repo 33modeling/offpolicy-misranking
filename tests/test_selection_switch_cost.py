@@ -49,6 +49,72 @@ def test_interrupted_finish_append_recovers_from_atomic_receipt(tmp_path, monkey
     assert (directory / "cost.jsonl").read_bytes() == repaired
 
 
+@pytest.mark.parametrize("entry", ["spent", "recovery", "stale"])
+def test_torn_finish_append_recovers_once_and_archives_original(tmp_path, monkeypatch, entry):
+    directory = tmp_path / "prefixes/seed-0/segment-25"
+    journal = base.journal
+    def tear_finish(path, row):
+        if row["state"] == "finished":
+            with path.open("ab") as handle:
+                data = json.dumps(row).encode()
+                handle.write(data[:len(data)//2])
+            raise OSError("torn finish append")
+        return journal(path, row)
+    with monkeypatch.context() as patch:
+        patch.setattr(base, "journal", tear_finish)
+        with pytest.raises(OSError, match="torn finish append"):
+            base.meter(directory, "prefix-train", "H100", action=lambda: None)
+    original = (directory / "cost.jsonl").read_bytes()
+    receipt = core.read(next((directory / "cost-events").glob("*.json")))
+    pending = recovery.inspect(tmp_path)
+    assert len(pending) == 1 and pending[0]["finish_receipt"]
+    assert (directory / "cost.jsonl").read_bytes() == original, "inspection must be read-only"
+    with base.lease(directory / ".cost.lock"), pytest.raises(BlockingIOError):
+        base.spent(directory)
+    assert (directory / "cost.jsonl").read_bytes() == original
+    if entry == "recovery":
+        assert recovery.recover(tmp_path, directory, receipt["event_id"])["status"] == "recovered"
+    elif entry == "stale":
+        assert recovery.close_stale(tmp_path)[0]["status"] == "recovered"
+    assert base.spent(directory) == receipt["allocated_gpu_seconds"]
+    repaired = (directory / "cost.jsonl").read_bytes()
+    assert base.spent(directory) == receipt["allocated_gpu_seconds"]
+    assert (directory / "cost.jsonl").read_bytes() == repaired
+    assert len(base.read_cost_events(directory)[1]) == 2
+    assert bytes.fromhex(core.read(next((directory / "cost-repairs").glob("*.json")))["original_hex"]) == original
+    assert recovery.inspect(tmp_path) == []
+
+
+@pytest.mark.parametrize("damage", ["missing_receipt", "wrong_receipt", "interior", "terminated"])
+def test_cost_tail_repair_never_discards_unverified_damage(tmp_path, damage):
+    directory, start = open_event(tmp_path)
+    finish = {**start, "state": "finished", "seconds": 15., "allocated_gpu_seconds": 60., "exit_code": 0}
+    encoded = json.dumps(finish).encode()
+    if damage != "missing_receipt":
+        core.atomic_json(directory / "cost-events/aborted.json", {**finish, "event_id": "other"} if damage == "wrong_receipt" else finish)
+    with (directory / "cost.jsonl").open("ab") as handle:
+        handle.write(encoded[:len(encoded)//2])
+        if damage in {"interior", "terminated"}:
+            handle.write(b"\n")
+        if damage == "interior":
+            handle.write(encoded + b"\n")
+    original = (directory / "cost.jsonl").read_bytes()
+    with pytest.raises(ValueError):
+        base.spent(directory)
+    assert (directory / "cost.jsonl").read_bytes() == original
+    assert not (directory / "cost-repairs").exists()
+
+
+def test_complete_cost_row_missing_newline_does_not_join_next_start(tmp_path):
+    base.meter(tmp_path, "first", "H100", action=lambda: None)
+    path = tmp_path / "cost.jsonl"
+    path.write_bytes(path.read_bytes().removesuffix(b"\n"))
+    paid = base.spent(tmp_path)
+    base.meter(tmp_path, "second", "H100", action=lambda: None)
+    assert base.spent(tmp_path) > paid
+    assert len(base.read_cost_events(tmp_path)[1]) == 4
+
+
 def test_legacy_recovery_preserves_prior_cost_and_partial_outputs(tmp_path):
     directory, start = open_event(tmp_path)
     original = (directory / "cost.jsonl").read_bytes()

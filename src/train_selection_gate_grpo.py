@@ -115,6 +115,19 @@ def train(args: argparse.Namespace) -> None:
             published_error = exc
         else:
             if rank == 0:
+                if budget_deadline is not None:
+                    record = previous_manifest.get("training_budget", {})
+                    if (record.get("requested_target_steps") != args.target_steps
+                            or record.get("completed_steps") != previous_manifest["completed_steps"]
+                            or record.get("stop_reason") not in {"budget_exhausted", "no_block_fits", "updates_completed"}):
+                        raise ValueError("published policy has no matching training budget record")
+                    stop_path = out_dir / "budget_stop.json"
+                    expected_stop = {**record, "use_parent_policy": False}
+                    if stop_path.exists():
+                        if json.loads(stop_path.read_text()) != expected_stop:
+                            raise ValueError("published policy budget stop changed")
+                    else:
+                        _atomic_json(stop_path, expected_stop)
                 print(f"[grpo] validated completed policy: {out_dir}", flush=True)
             dist.destroy_process_group()
             return
@@ -570,11 +583,11 @@ def train(args: argparse.Namespace) -> None:
                 expected_prompts=Path(args.prompts),
                 require_complete_hashes=True,
             )
+            if budget_deadline is not None:
+                _atomic_json(out_dir / "budget_stop.json", {**budget_record, "use_parent_policy": False})
             for checkpoint in out_dir.glob("checkpoint-*"):
                 shutil.rmtree(checkpoint)
             print(f"[grpo] published {out_dir}", flush=True)
-            if budget_deadline is not None:
-                _atomic_json(out_dir / "budget_stop.json", {**budget_record, "use_parent_policy": False})
         if world_size > 1:
             dist.barrier()
     finally:

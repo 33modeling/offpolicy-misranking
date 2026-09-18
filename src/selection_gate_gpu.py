@@ -63,9 +63,72 @@ def journal(path, row):
         os.fsync(handle.fileno())
 
 
-def cost(directory):
+def read_cost_events(directory, *, repair=False):
+    """Read a ledger without treating a torn append as free work.
+
+    Only an unterminated final fragment matching exactly one validated atomic
+    finish receipt is recoverable. Interior damage, unknown starts and missing
+    receipts stay fail-closed. repair=True requires the caller's cost lease.
+    """
     path = directory / "cost.jsonl"
-    events = [json.loads(v) for v in path.read_text().splitlines() if v.strip()] if path.exists() else []
+    raw = path.read_bytes() if path.exists() else b""
+    lines, events, offset = raw.splitlines(keepends=True), [], 0
+    repaired = raw
+    for index, line in enumerate(lines):
+        if line.strip():
+            try:
+                events.append(json.loads(line))
+            except (ValueError, UnicodeDecodeError):
+                if index != len(lines)-1 or line.endswith(b"\n"):
+                    raise ValueError(f"damaged cost ledger (not a torn final append): {path}")
+                summary = gate.cost_summary(events)
+                matches = []
+                for event_id in summary["incomplete_events"]:
+                    if Path(event_id).name != event_id or event_id in {".", ".."}:
+                        raise ValueError("invalid pending cost event ID")
+                    receipt = directory / "cost-events" / f"{event_id}.json"
+                    if not receipt.exists():
+                        continue
+                    finish = gate.read(receipt)
+                    encoded = (json.dumps(finish, allow_nan=False) + "\n").encode()
+                    if (finish.get("event_id") == event_id and finish.get("state") == "finished"
+                            and encoded.startswith(line)):
+                        gate.cost_summary([*events, finish])
+                        matches.append(finish)
+                if len(matches) != 1:
+                    raise ValueError(f"torn cost append has no unique matching atomic finish receipt: {path}")
+                # Leave the complete start open for the usual receipt replay.
+                repaired = raw[:offset]
+        offset += len(line)
+    if repaired == raw and raw and not raw.endswith(b"\n"):
+        # A complete JSON object may have lost only its line terminator.
+        repaired = raw + b"\n"
+    if repair and repaired != raw:
+        prior_sha = hashlib.sha256(raw).hexdigest()
+        bind(directory / "cost-repairs" / f"{prior_sha}.json",
+             {"prior_sha256": prior_sha, "original_hex": raw.hex(),
+              "repaired_sha256": hashlib.sha256(repaired).hexdigest(),
+              "reason": "recover interrupted ledger append; replay finish receipt separately"})
+        tmp = path.with_name(path.name + f".repair.{os.getpid()}")
+        try:
+            with tmp.open("wb") as handle:
+                handle.write(repaired)
+                handle.flush()
+                os.fsync(handle.fileno())
+            tmp.replace(path)
+            fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        finally:
+            tmp.unlink(missing_ok=True)
+        raw = repaired
+    return raw, events
+
+
+def cost(directory):
+    _, events = read_cost_events(directory)
     return gate.cost_summary(events)
 
 
@@ -82,7 +145,7 @@ def recover_cost_receipts(directory):
     """Replay completed events only, after the writer releases its cost lock."""
     with lease(directory / ".cost.lock"):
         path = directory / "cost.jsonl"
-        events = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        _, events = read_cost_events(directory, repair=True)
         result = gate.cost_summary(events)
         for event_id in result["incomplete_events"]:
             if Path(event_id).name != event_id or event_id in {".", ".."}:
@@ -223,6 +286,7 @@ def _meter(directory, name, gpu_type, *, action=None, commands=None, env=None,
            timeout=None, ledger="research", devices=GPUS):
     """One allocation interval, including idle GPUs while a CPU phase runs."""
     directory.mkdir(parents=True, exist_ok=True)
+    read_cost_events(directory, repair=True)
     base = {"event_id": uuid.uuid4().hex, "phase": name, "ledger": ledger,
             "gpus": devices, "gpu_type": gpu_type, "host": node_id()}
     path = directory / "cost.jsonl"

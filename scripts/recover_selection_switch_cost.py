@@ -19,9 +19,8 @@ import selection_gate as core
 import selection_gate_gpu as base
 
 
-def read_events(directory):
-    raw = (directory / "cost.jsonl").read_bytes()
-    return raw, [json.loads(line) for line in raw.splitlines() if line.strip()]
+def read_events(directory, *, repair=False):
+    return base.read_cost_events(directory, repair=repair)
 
 
 def event_progress(directory, start):
@@ -101,6 +100,7 @@ def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_ki
             return {"status": "already_closed", "event_id": event_id}
         if any((directory / name).exists() for name in ("result.json", "initial.json")):
             raise ValueError("cannot change costs already bound to a published result or measurement")
+        raw, events = read_events(directory, repair=True)
         progress = event_progress(directory, start)
         pid = progress.get("pid", start.get("pid"))
         receipt_path = directory / "cost-events" / f"{event_id}.json"

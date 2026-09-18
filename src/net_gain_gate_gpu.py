@@ -242,7 +242,22 @@ def run_arm(out, suite, p, arm, devices, env):
     directory = out / arm
     c = core.read(out / "contract.json")
     if (directory / "result.json").exists():
+        if not (directory / "result.sha256.json").exists():
+            # Publication may have stopped after the atomic payload rename.
+            # Recheck its independently bound artifacts, accounting and rewards
+            # before sealing it; never meter new work into this result's ledger.
+            result = validate_result(out, p, arm, require_hash=False)
+            base.policy(out, c, arm)
+            stop = core.read(directory / "policy/budget_stop.json")
+            actual = core.read(directory / "execution.json")
+            if (result["rewards"] != base.rewards(out, c, arm)
+                    or result["action"] != actual["action"]
+                    or result["completed_steps"] != stop["completed_steps"]
+                    or result["stop_reason"] != stop["stop_reason"]):
+                raise ValueError("unsealed result differs from completed artifacts")
+            base.bind(directory / "result.sha256.json", {"sha256": base.digest(directory / "result.json")})
         validate_result(out, p, arm)
+        (directory / "failure.json").unlink(missing_ok=True)
         return
     base.spent(directory)
     base.meter(directory, "verify-inputs", c["scope"]["gpu_type"], action=lambda: base.verify(out), ledger="deployment")
@@ -250,6 +265,22 @@ def run_arm(out, suite, p, arm, devices, env):
     cap = choice["budget_gpu_seconds"]
     subset = out / "subsets" / f"subset-{arm}.json"
     execution = directory / "execution.json"
+    if execution.exists() and not (directory / "execution.sha256.json").exists():
+        # Reconstruct from the frozen choice and selector artifacts. bind() must
+        # agree with the existing payload; hashing an unchecked payload would
+        # silently bless corruption. A gated fallback is frozen, not reselected.
+        actual = core.read(execution)
+        if arm == "gated" and choice["action"] == "select" and actual.get("action") == "random":
+            if (actual.get("reason") != "selector_failed" or not isinstance(actual.get("error"), str)
+                    or actual.get("indices") is not None
+                    or set(actual) != {"action", "reason", "error", "indices"}):
+                raise ValueError("invalid unsealed selector fallback")
+            expected = actual
+        else:
+            indices = select_once(out, c, p, arm, choice, env, devices) if choice["action"] == "select" else None
+            expected = {"action": choice["action"], "reason": choice["reason"], "indices": indices}
+        base.bind(execution, expected)
+        base.bind(directory / "execution.sha256.json", {"sha256": base.digest(execution)})
     if execution.exists():
         if core.read(directory / "execution.sha256.json") != {"sha256": base.digest(execution)}:
             raise ValueError("frozen execution changed")
@@ -270,6 +301,8 @@ def run_arm(out, suite, p, arm, devices, env):
     if not subset.exists():
         base.meter(directory, "freeze-subset", c["scope"]["gpu_type"],
                    action=lambda: base.freeze_subset(out, c, arm, actual["indices"]), ledger="deployment")
+    elif not subset.with_suffix(".sha256.json").exists():
+        base.freeze_subset(out, c, arm, actual["indices"])
     if core.read(subset.with_suffix(".sha256.json")) != {"sha256": base.digest(subset)}:
         raise ValueError("fixed training subset changed")
     stop_path = directory / "policy/budget_stop.json"
@@ -308,10 +341,10 @@ def run_arm(out, suite, p, arm, devices, env):
     (directory / "failure.json").unlink(missing_ok=True)
 
 
-def validate_result(out, p, arm):
+def validate_result(out, p, arm, *, require_hash=True):
     directory = out / arm
     result = core.read(directory / "result.json")
-    if core.read(directory / "result.sha256.json") != {"sha256": base.digest(directory / "result.json")}:
+    if require_hash and core.read(directory / "result.sha256.json") != {"sha256": base.digest(directory / "result.json")}:
         raise ValueError("result hash changed")
     c = core.read(out / "contract.json")
     if result["binding"] != {"protocol_sha256": core.fingerprint(p), "contract_sha256": base.digest(out / "contract.json")}:
