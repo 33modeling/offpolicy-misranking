@@ -505,6 +505,10 @@ if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if launcher_pid_alive; then
     if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
       echo "[already running] MBPP controller pid=$NODE_LAUNCHER_PID; existing work continues: $CONSOLE_LOG"
+      if [ -t 1 ]; then
+        echo '[logs] Ctrl-C closes this viewer; existing workers continue.'
+        tail -n 50 -F --pid="$NODE_LAUNCHER_PID" "$CONSOLE_LOG" 2>/dev/null || true
+      fi
       exit 0
     fi
     echo "[already running] controller pid=$NODE_LAUNCHER_PID; existing work continues: $CONSOLE_LOG"
