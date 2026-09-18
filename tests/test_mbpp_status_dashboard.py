@@ -1,6 +1,7 @@
 """One MBPP-only dashboard preserves completions while showing every live task."""
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -18,7 +19,7 @@ def mbpp_roots(roots):
             roots["selection-switch-mbpp-v1"].with_name("selection-switch-mbpp-difficulty-v1")]
 
 
-def test_three_suites_have_one_summary_one_arm_table_and_one_run_list(six_suites):
+def test_three_suites_have_one_summary_full_matrices_and_one_run_list(six_suites):
     roots, _, now = six_suites
     report = dashboard.snapshot(mbpp_roots(roots), now=now)
     output = dashboard.render(report)
@@ -28,21 +29,54 @@ def test_three_suites_have_one_summary_one_arm_table_and_one_run_list(six_suites
     assert "21/48" in on_policy and "27" in on_policy and "15/15" in on_policy
     assert "CURRENT RUN 4" in output and "difficulty: NOT PREPARED" in output
     assert "CONTINUATIONS" not in output and "MOPPS" not in output and "MATH" not in output
-    assert "ROOT " not in output and len(output.splitlines()) <= 35
+    assert "ROOT " not in output
+    assert output.count("FULL STATUS —") == 3
+    assert len(re.findall(r"^s\d/t\d+\s", output, re.MULTILINE)) == 30
     for index in range(4):
         assert f"live-node-{index}" in output
     assert all(line.count("/48") <= 1 for line in output.splitlines())
 
 
-def test_per_arm_progress_shows_which_random_controls_are_finished(six_suites):
+def test_full_matrix_shows_each_completed_random_control_and_unfinished_arm(six_suites):
     roots, _, now = six_suites
     output = dashboard.render(dashboard.snapshot(mbpp_roots(roots), now=now))
-    rnd = next(line for line in output.splitlines() if line.startswith("RND "))
-    full_random = next(line for line in output.splitlines() if line.startswith("FULL-R "))
-    selection = next(line for line in output.splitlines() if line.startswith("SEL "))
-    assert "15/15" in rnd and "0/15" in rnd
-    assert "6/6" in full_random
-    assert "0/15" in selection
+    section = output.split("FULL STATUS — on-policy", 1)[1].split("FULL STATUS — quality", 1)[0]
+    rows = [line.split() for line in section.splitlines() if re.match(r"^s\d/t\d+\s", line)]
+    assert len(rows) == 15
+    assert all(row[2] == "DONE" and row[4] == "DONE" for row in rows)
+    held_out = [row for row in rows if row[1] == "TEST"]
+    assert len(held_out) == 6 and all(row[6] == "DONE" for row in held_out)
+    assert all(row[3] != "DONE" and row[7] != "DONE" for row in rows)
+    assert "READY" in section and "WAIT" in section
+
+
+def test_all_45_state_rows_are_visible_by_default_for_three_prepared_suites(six_suites):
+    from test_selection_switch_status import prepared
+
+    roots, _, now = six_suites
+    wanted = mbpp_roots(roots)
+    prepared(wanted[2])
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in wanted[0].parent.rglob("*") if p.is_file()}
+    output = dashboard.render(dashboard.snapshot(wanted, now=now))
+    rows = re.findall(r"^s\d/t\d+\s.*$", output, re.MULTILINE)
+    assert len(rows) == 45
+    for seed in range(5):
+        for step in (25, 50, 100):
+            assert sum(row.startswith(f"s{seed}/t{step} ") for row in rows) == 3
+    assert all(status in output for status in ("DONE", "RUN", "READY", "WAIT"))
+    assert output.count("CURRENT RUN 4") == 1
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in wanted[0].parent.rglob("*") if p.is_file()}
+
+
+def test_matrix_preserves_evaluation_resume_and_failure_states(six_suites):
+    roots, _, now = six_suites
+    report = dashboard.snapshot(mbpp_roots(roots), now=now)
+    branches = [task for task in report["suites"][0]["tasks"] if task["kind"] == "branch"]
+    for task, state in zip(branches, ("EVAL", "RESUME", "FAILED", "REVIEW")):
+        task["status"] = state
+    output = dashboard.render(report)
+    section = output.split("FULL STATUS — on-policy", 1)[1].split("FULL STATUS — quality", 1)[0]
+    assert all(state in section for state in ("EVAL", "RESUME", "FAIL", "REVIEW"))
 
 
 def test_all_shows_exact_roots_and_status_never_mutates_files(six_suites):

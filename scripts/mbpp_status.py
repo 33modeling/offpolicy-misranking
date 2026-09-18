@@ -59,17 +59,28 @@ def render(data, *, width=120, all_tasks=False):
             notices.append(f"{name}: {trained} training results saved; {counts['EVAL']} task(s) await evaluation/publication.")
     lines += switch_status.table(["SUITE", "DONE/TOTAL", "LEFT", "RUN", "EVAL", "RESUME", "BLOCK", "READY/WAIT", "PREFIX"],
                                  rows, [12, 10, 5, 4, 4, 6, 5, 10, 7])
-    lines += ["", "PER ARM — DONE/TOTAL (equal numbers mean finished)"]
-    arm_rows = []
-    for arm, short in switch_status.ARM_LABELS.items():
-        row = [short]
-        for suite in data["suites"]:
-            tasks = [task for task in suite.get("tasks", []) if task.get("kind") == "branch" and task.get("arm") == arm]
-            row.append(f"{sum(task['status'] == 'DONE' for task in tasks)}/{len(tasks)}" if tasks else "--")
-        arm_rows.append(row)
-    lines += switch_status.table(["ARM", *[label(suite['root']) for suite in data['suites']]], arm_rows,
-                                 [9, *[14 for _ in data['suites']]])
+    for suite in data["suites"]:
+        lines += ["", f"FULL STATUS — {label(suite['root'])}"]
+        if not suite.get("prepared"):
+            lines.append("ERROR: suite could not be read." if suite.get("error") else "NOT PREPARED (no saved suite manifest)")
+            continue
+        tasks = suite.get("tasks", [])
+        prefixes = {(task["seed"], task["step"]): task for task in tasks if task.get("kind") == "prefix"}
+        branches = {(task["seed"], task["step"], task["arm"]): task for task in tasks if task.get("kind") == "branch"}
+
+        def cell(task):
+            return switch_status.CELLS.get(task["status"], task["status"]) if task else "-"
+
+        matrix = []
+        for seed in (*switch_status.rule.DEV_SEEDS, *switch_status.rule.TEST_SEEDS):
+            for step in switch_status.rule.STEPS:
+                matrix.append([f"s{seed}/t{step}", "DEV" if seed in switch_status.rule.DEV_SEEDS else "TEST",
+                               cell(prefixes.get((seed, step))),
+                               *[cell(branches.get((seed, step, arm))) for arm in switch_status.ARM_LABELS]])
+        lines += switch_status.table(["STATE", "ROLE", "PREFIX", *switch_status.ARM_LABELS.values()],
+                                     matrix, [8, 5, 8, 7, 7, 7, 7, 7])
     lines += ["SEL/RND: measured selection/random. FULL-S/FULL-R: full budget. GATE: gated policy.",
+              "DONE: receipt checked. RUN: fresh heartbeat. READY: no saved work at that task path. -: not scheduled.",
               "", f"CURRENT RUN {len(running)}"]
     if not running:
         lines.append("No fresh RUN heartbeat in these MBPP suites; saved completions above are retained.")
