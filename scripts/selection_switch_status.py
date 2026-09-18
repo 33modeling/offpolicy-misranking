@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
@@ -390,6 +391,47 @@ def table(headers, rows, widths):
             for row in [headers, *rows]]
 
 
+def render_compact(data, *, width=120):
+    """One suite-sized block, so MBPP's three suites fit in one status view."""
+    root = data["root"]
+    label = suite_label(root)
+    lines = [f"SUITE {label}", f"ROOT {root}"]
+    if not data.get("prepared"):
+        return "\n".join([*lines, "NOT PREPARED (no saved suite manifest at this root)"])
+    tasks = data.get("tasks", [])
+    branches = [task for task in tasks if task.get("kind") == "branch"]
+    counts = data.get("branch_counts", {})
+    total = len(branches)
+    lines += [f"DONE {counts.get('DONE', 0)}/{total} branches",
+              f"TRAINING RESULTS  {data.get('training_published', 0)}/{total} published (receipt checked)",
+              "BRANCHES " + "  ".join(f"{name} {counts[name]}" for name in CELLS if counts.get(name))]
+    random = random_text(random_counts(branches))
+    if random:
+        lines.append("RANDOM " + random)
+    running = sorted((task for task in tasks if task.get("status") == "RUNNING"), key=lambda task: (
+        node_view.host_sort_key(task.get("host", "")), task["seed"], task["step"], task["arm"]))
+    lines.append(f"CURRENT RUN {len(running)}")
+    for task in running:
+        step = task.get("training_step")
+        lines.append(f"RUN {task.get('host') or '?'} s{task['seed']}/t{task['step']} {task['arm']} "
+                     f"phase={task.get('phase') or '?'} elapsed={duration(task.get('seconds'))} "
+                     f"step={step if step is not None else '?'}")
+    if not running:
+        lines.append("No current RUN heartbeat in this suite (not a reset of its saved results).")
+    history = sum(bool(task.get("history_warning")) for task in tasks)
+    if history:
+        lines.append(f"HISTORY {history}: archived attempts retained; current saved status unchanged.")
+    attention = [f"{task['status']} s{task['seed']}/t{task['step']} {task['arm']}: {task.get('reason', '')}"
+                 for task in tasks if task.get("status") in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"}]
+    attention += [f"NOTICE {item.get('path', '?')}: {item.get('error', '')}" for item in data.get("notices", [])]
+    lines += ["ATTENTION " + clip(item, width - 10) for item in attention[:3]]
+    if len(attention) > 3:
+        lines.append(f"{len(attention) - 3} additional attention items; use --all for details.")
+    return "\n".join(part for line in lines for part in
+                     (textwrap.wrap(line, width=width, subsequent_indent="  ", break_long_words=True,
+                                    break_on_hyphens=False) if len(line) > width else [line]))
+
+
 def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     if not data["prepared"]:
         return f"NOT PREPARED  {data['root']}"
@@ -502,8 +544,14 @@ def main():
             data = snapshot(args.root)
             if args.watch is not None and sys.stdout.isatty() and not args.as_json:
                 print("\033[2J\033[H", end="")
-            print(json.dumps(data, indent=2) if args.as_json else render(data, all_tasks=args.all_tasks,
-                  width=max(80, shutil.get_terminal_size((120, 40)).columns)), flush=True)
+            width = max(80, shutil.get_terminal_size((120, 40)).columns)
+            if args.as_json:
+                output = json.dumps(data, indent=2)
+            elif os.environ.get("SWITCH_STATUS_COMPACT") == "1" and not args.all_tasks:
+                output = render_compact(data, width=width)
+            else:
+                output = render(data, all_tasks=args.all_tasks, width=width)
+            print(output, flush=True)
             if args.watch is None:
                 return 0
             time.sleep(args.watch)

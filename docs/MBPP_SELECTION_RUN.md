@@ -38,6 +38,7 @@ bash scripts/check_mbpp_storage.sh             # saves <=4 KiB TXT in home; neve
 bash scripts/run_mbpp_experiments.sh plan       # settings only, no writes/GPU work
 bash scripts/run_mbpp_experiments.sh check      # read-only local input checks
 bash scripts/run_mbpp_experiments.sh status
+bash scripts/run_mbpp_experiments.sh status --watch
 bash scripts/run_mbpp_experiments.sh progress   # shared experiment/node view
 bash scripts/run_mbpp_experiments.sh saved      # READ-ONLY saved-work/archived-work inventory, <=4 KiB stdout
 bash scripts/run_mbpp_experiments.sh stop       # stop/clean THIS node, not peer nodes
@@ -47,6 +48,13 @@ bash scripts/run_mbpp_experiments.sh run fresh
 bash scripts/run_mbpp_experiments.sh run quality
 bash scripts/run_mbpp_experiments.sh run difficulty
 ```
+
+For MBPP monitoring, use `bash scripts/run_mbpp_experiments.sh status --watch`.
+It refreshes all three MBPP suites together, showing saved completion counts and
+current RUN node/task/phase/step without the math overview. `status --all` opens
+the detailed task/history tables; `status quality --watch 5` watches just quality.
+This is read-only and does not restart training. The generic
+`run_experiments.sh status` defaults to the math-root overview, not this MBPP view.
 
 ## Nodes Joining And Failing
 

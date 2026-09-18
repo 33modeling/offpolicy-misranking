@@ -17,6 +17,7 @@
 #   bash scripts/run_mbpp_experiments.sh stop       stop this node's launcher and workers
 #   bash scripts/run_mbpp_experiments.sh restart    load fixes; retain checkpoints and fault receipts
 #   bash scripts/run_mbpp_experiments.sh progress   per-root progress, running branches, node names
+#   bash scripts/run_mbpp_experiments.sh status --watch  MBPP-only live status; never the math view
 #   bash scripts/run_mbpp_experiments.sh results    one results file per suite
 #
 # MBPP_HOLD_SECONDS (default 15) is the pause between passes.
@@ -24,13 +25,29 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
-SUITE=${2:-all}
+[ "$#" -eq 0 ] || shift
+SUITE=all
+if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then SUITE=$1; shift; fi
+STATUS_ARGS=()
+STATUS_WATCH=
 usage() {
   echo 'usage: bash scripts/run_mbpp_experiments.sh [run|restart|stop|plan|check|status|progress|results|saved|why] [all|fresh|quality|difficulty]'
+  echo '       bash scripts/run_mbpp_experiments.sh status [all|fresh|quality|difficulty] [--all] [--watch [SECONDS]]'
 }
-[ "$#" -le 2 ] || { usage; exit 2; }
 case "$MODE" in run|restart|stop|plan|check|status|progress|results|saved|why) ;; -h|--help) usage; exit 0 ;; *) usage; exit 2 ;; esac
 case "$SUITE" in all|fresh|quality|difficulty) ;; *) usage; exit 2 ;; esac
+while [ "$#" -gt 0 ]; do
+  [ "$MODE" = status ] || { usage; exit 2; }
+  case "$1" in
+    --all) STATUS_ARGS+=(--all); shift ;;
+    --watch)
+      STATUS_WATCH=15; shift
+      if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then STATUS_WATCH=$1; shift; fi
+      [[ "$STATUS_WATCH" =~ ^[1-9][0-9]*$ ]] || { echo '[abort] watch interval must be a positive integer'; exit 2; }
+      ;;
+    *) usage; exit 2 ;;
+  esac
+done
 
 export OM_WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 HOLD=${MBPP_HOLD_SECONDS:-15}
@@ -85,18 +102,25 @@ fi
 
 # Read-only views, one per suite root. Report errors without skipping other roots.
 if [ "$MODE" = status ] || [ "$MODE" = results ]; then
-  failed=0
-  for root in "${MBPP_ROOTS[@]}"; do
-    mbpp_queue_settings "$root"
-    echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] $MODE"
-    rc=0
-    env -u OUT_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_ONLY_SEEDS -u SWITCH_ONLY_ARMS \
-      -u SWITCH_BUDGET_GPU_SECONDS -u SWITCH_RUNTIME_REPO -u SWITCH_DETACHED -u EXPERIMENTS_DETACHED \
-      SWITCH_ROOT="$MBPP_ROOT" EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
-      bash scripts/run_selection_switch.sh "$MODE" || rc=$?
-    [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] $MODE rc=$rc"; failed=1; }
+  # Watch belongs to the whole MBPP view, not the first inner suite. Each
+  # iteration invokes the current read-only viewer code for all requested roots.
+  while :; do
+    if [ -n "$STATUS_WATCH" ] && [ -t 1 ]; then printf '\033[2J\033[H'; fi
+    if [ "$MODE" = status ]; then echo "MBPP STATUS (read-only; MBPP roots only) $(date -u +%FT%TZ)"; fi
+    failed=0
+    for root in "${MBPP_ROOTS[@]}"; do
+      mbpp_queue_settings "$root"
+      echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] $MODE"
+      rc=0
+      env -u OUT_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_ONLY_SEEDS -u SWITCH_ONLY_ARMS \
+        -u SWITCH_BUDGET_GPU_SECONDS -u SWITCH_RUNTIME_REPO -u SWITCH_DETACHED -u EXPERIMENTS_DETACHED \
+        SWITCH_ROOT="$MBPP_ROOT" SWITCH_STATUS_COMPACT=1 EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
+        bash scripts/run_selection_switch.sh "$MODE" "${STATUS_ARGS[@]}" || rc=$?
+      [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] $MODE rc=$rc"; failed=1; }
+    done
+    [ -n "$STATUS_WATCH" ] || exit "$failed"
+    sleep "$STATUS_WATCH"
   done
-  exit "$failed"
 fi
 
 # Inspect the shared storage before handing control to anything that can stop a
