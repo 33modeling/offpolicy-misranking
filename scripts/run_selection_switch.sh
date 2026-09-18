@@ -17,6 +17,30 @@ PY=${SWITCH_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 [ -x "$PY" ] || PY=python3
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+# Direct/legacy MBPP entrypoints also reach this launcher. Inspect the actual
+# root before cleanup, admission or prepare can turn missing active results
+# (with an orphan seal or archived policy) into a new training attempt.
+case "$MODE" in
+  run|smoke|prepare)
+    MBPP_STORAGE_GUARD=0
+    case "${SWITCH_DATASET:-}:$(basename "$OUT_ROOT")" in
+      mbpp:*|*:selection-switch-mbpp-*) MBPP_STORAGE_GUARD=1 ;;
+    esac
+    if [ "$MBPP_STORAGE_GUARD" = 0 ] && [ -f "$OUT_ROOT/switch.json" ]; then
+      if CUDA_VISIBLE_DEVICES='' "$PY" -c 'import json,sys; p=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(p,dict) and p.get("dataset")=="mbpp" else 1)' \
+          "$OUT_ROOT/switch.json" 2>/dev/null; then
+        MBPP_STORAGE_GUARD=1
+      fi
+    fi
+    if [ "$MBPP_STORAGE_GUARD" = 1 ]; then
+      if ! CUDA_VISIBLE_DEVICES='' "$PY" scripts/mbpp_storage_audit.py \
+          --work "$WORK" --root "$OUT_ROOT" --report-on-error; then
+        echo '[abort] MBPP storage audit blocked this root; no cleanup, preparation or GPU work started.' >&2
+        exit 2
+      fi
+    fi
+    ;;
+esac
 if [ "$MODE" = cpu ]; then
   export CUDA_VISIBLE_DEVICES=""
   exec "${SWITCH_CPU_PYTHON:-$PY}" -m pytest -q tests/test_selection_switch.py tests/test_selection_switch_gpu.py \
