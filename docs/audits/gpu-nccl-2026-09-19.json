@@ -1,0 +1,142 @@
+{
+  "date": "2026-09-19",
+  "baseline_commit": "e0f091d",
+  "tested_source_tree": "9623bdcb04baaa221609f1ab84df7e3d8a0060f3",
+  "remote_h100_verified": false,
+  "runs": [
+    {
+      "name": "full_cpu_initial",
+      "scope": "mutable working tree; initial dependencies",
+      "junit_path": "/tmp/offpolicy-full-audit-20260919.xml",
+      "tests": 1796,
+      "failed": 84,
+      "skipped": 16,
+      "duration_seconds": 671.351,
+      "failures_by_module": {
+        "tests.test_mopps_comparison_gpu": 28,
+        "tests.test_net_gain_gate": 12,
+        "tests.test_net_gain_gate_gpu": 1,
+        "tests.test_run_experiments": 2,
+        "tests.test_selection_gate_study": 10,
+        "tests.test_selection_switch_runtime": 19,
+        "tests.test_status_reward_audit": 11,
+        "tests.test_switch_evidence_export": 1
+      },
+      "passed": 1696
+    },
+    {
+      "name": "initial_failure_modules_recheck",
+      "scope": "mutable working tree; gate dependencies installed",
+      "junit_path": "/tmp/offpolicy-failure-recheck-20260919.xml",
+      "tests": 237,
+      "failed": 40,
+      "skipped": 0,
+      "duration_seconds": 19.678,
+      "failures_by_module": {
+        "tests.test_mopps_comparison_gpu": 28,
+        "tests.test_status_reward_audit": 11,
+        "tests.test_switch_evidence_export": 1
+      },
+      "passed": 197,
+      "failed_cases": [
+        "tests.test_mopps_comparison_gpu::test_code_compat_keeps_existing_mopps_run_and_parent_unchanged",
+        "tests.test_mopps_comparison_gpu::test_lifecycle_upgrade_preserves_existing_mopps_manifest_and_receipt[False]",
+        "tests.test_mopps_comparison_gpu::test_lifecycle_upgrade_preserves_existing_mopps_manifest_and_receipt[True]",
+        "tests.test_mopps_comparison_gpu::test_queue_failure_upgrade_preserves_f258c46_manifests_and_receipts[False]",
+        "tests.test_mopps_comparison_gpu::test_queue_failure_upgrade_preserves_f258c46_manifests_and_receipts[True]",
+        "tests.test_mopps_comparison_gpu::test_cache_guard_preserves_existing_mopps_parent_costs_and_receipts[False]",
+        "tests.test_mopps_comparison_gpu::test_cache_guard_preserves_existing_mopps_parent_costs_and_receipts[True]",
+        "tests.test_mopps_comparison_gpu::test_dataset_preserves_47339ca_manifest_receipts_and_costs[False]",
+        "tests.test_mopps_comparison_gpu::test_dataset_preserves_47339ca_manifest_receipts_and_costs[True]",
+        "tests.test_mopps_comparison_gpu::test_variant_root_preserves_b8d90c0_manifest_receipts_and_costs[False]",
+        "tests.test_mopps_comparison_gpu::test_variant_root_preserves_b8d90c0_manifest_receipts_and_costs[True]",
+        "tests.test_mopps_comparison_gpu::test_fit_resilience_preserves_091ae20_manifest_receipts_and_costs[False]",
+        "tests.test_mopps_comparison_gpu::test_fit_resilience_preserves_091ae20_manifest_receipts_and_costs[True]",
+        "tests.test_mopps_comparison_gpu::test_test_parallel_preserves_89c26af_manifest_receipts_and_costs[False]",
+        "tests.test_mopps_comparison_gpu::test_test_parallel_preserves_89c26af_manifest_receipts_and_costs[True]",
+        "tests.test_mopps_comparison_gpu::test_nonblocking_retry_preserves_bdd727e_manifest_receipts_and_costs[False]",
+        "tests.test_mopps_comparison_gpu::test_nonblocking_retry_preserves_bdd727e_manifest_receipts_and_costs[True]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[recorded-src/mopps.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[recorded-src/train_mopps_grpo.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[recorded-src/grads.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[recorded-src/selection_switch.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[recorded-src/net_gate_memory_worker.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[current-src/mopps.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[current-src/train_mopps_grpo.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[current-src/grads.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[current-src/selection_switch.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_rejects_mopps_scientific_changes[current-src/net_gate_memory_worker.py]",
+        "tests.test_mopps_comparison_gpu::test_code_compat_prepare_still_rejects_changed_frozen_design",
+        "tests.test_status_reward_audit::test_qwen_error_search_matches_actual_abort_and_legacy_markers[[abort]]",
+        "tests.test_status_reward_audit::test_qwen_error_search_matches_actual_abort_and_legacy_markers[GPU0 \\u2718 job rc=1]",
+        "tests.test_status_reward_audit::test_qwen_successful_launcher_is_not_complete_with_missing_points",
+        "tests.test_status_reward_audit::test_qwen_complete_matrix_still_reports_done",
+        "tests.test_status_reward_audit::test_qwen_default_status_includes_unstarted_and_completed_points",
+        "tests.test_status_reward_audit::test_qwen_empty_work_path_still_displays_the_entire_design",
+        "tests.test_status_reward_audit::test_qwen_status_on_an_idle_node_does_not_declare_a_remote_launcher_dead[0]",
+        "tests.test_status_reward_audit::test_qwen_status_on_an_idle_node_does_not_declare_a_remote_launcher_dead[7200]",
+        "tests.test_status_reward_audit::test_qwen_counts_registered_points_not_forty_arbitrary_done_files",
+        "tests.test_status_reward_audit::test_qwen_status_handles_work_paths_with_spaces",
+        "tests.test_status_reward_audit::test_qwen_public_status_command_defaults_to_completion_grid",
+        "tests.test_switch_evidence_export::test_records_are_cut_to_the_fields_the_audit_reads"
+      ]
+    },
+    {
+      "name": "commit_snapshot_cpu_initial",
+      "scope": "staged snapshot; before exec-readiness fixture",
+      "junit_path": "/tmp/offpolicy-commit-snapshot-audit-20260919.xml",
+      "tests": 141,
+      "failed": 1,
+      "skipped": 11,
+      "duration_seconds": 112.859,
+      "failures_by_module": {
+        "tests.test_nccl_runtime_audit": 1
+      },
+      "passed": 129,
+      "failed_cases": [
+        "tests.test_nccl_runtime_audit::test_gpu_cleanup_does_not_target_unrelated_or_other_allocation_processes"
+      ]
+    },
+    {
+      "name": "commit_snapshot_cpu_final",
+      "scope": "staged snapshot; final exec-readiness fixture",
+      "junit_path": "/tmp/offpolicy-commit-snapshot-final-audit-20260919.xml",
+      "tests": 141,
+      "failed": 0,
+      "skipped": 11,
+      "duration_seconds": 111.256,
+      "failures_by_module": {},
+      "passed": 130,
+      "failed_cases": []
+    },
+    {
+      "name": "commit_snapshot_cuda",
+      "scope": "staged production code; SWITCH_TEST_CUDA=0",
+      "junit_path": "/tmp/offpolicy-cuda-extended-audit-20260919.xml",
+      "tests": 30,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 98.536,
+      "failures_by_module": {},
+      "passed": 30,
+      "failed_cases": [],
+      "actual_gpu_cases": [
+        "tests.test_selection_nccl_preflight::test_real_cuda_nccl_admission_runs_ddp_then_executes_worker[None]",
+        "tests.test_selection_nccl_preflight::test_real_cuda_nccl_admission_runs_ddp_then_executes_worker[0]",
+        "tests.test_selection_nccl_preflight::test_real_cuda_rank_allocation_error_blocks_worker_before_model_load",
+        "tests.test_selection_worker_shutdown::test_cleanup_kills_resistant_descendant_after_leader_exit[cuda-True-True]",
+        "tests.test_selection_worker_shutdown::test_cleanup_kills_resistant_descendant_after_leader_exit[cuda-True-False]",
+        "tests.test_selection_worker_shutdown::test_cleanup_kills_resistant_descendant_after_leader_exit[cuda-False-True]",
+        "tests.test_selection_worker_shutdown::test_cleanup_kills_resistant_descendant_after_leader_exit[cuda-False-False]",
+        "tests.test_selection_worker_shutdown::test_launcher_stop_closes_cost_and_lock_then_restarts[cuda-2-selection_switch_gpu]",
+        "tests.test_selection_worker_shutdown::test_launcher_stop_closes_cost_and_lock_then_restarts[cuda-2-mopps_comparison_gpu]",
+        "tests.test_selection_worker_shutdown::test_launcher_stop_closes_cost_and_lock_then_restarts[cuda-15-selection_switch_gpu]",
+        "tests.test_selection_worker_shutdown::test_launcher_stop_closes_cost_and_lock_then_restarts[cuda-15-mopps_comparison_gpu]",
+        "tests.test_net_gate_memory_math::test_decoder_guard_prevents_537_token_cache_doubling[False-eager-cuda]",
+        "tests.test_net_gate_memory_math::test_decoder_guard_prevents_537_token_cache_doubling[False-sdpa-cuda]",
+        "tests.test_net_gate_memory_math::test_decoder_guard_prevents_537_token_cache_doubling[True-eager-cuda]",
+        "tests.test_net_gate_memory_math::test_decoder_guard_prevents_537_token_cache_doubling[True-sdpa-cuda]"
+      ]
+    }
+  ]
+}

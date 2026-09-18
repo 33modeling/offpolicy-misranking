@@ -6,7 +6,7 @@
 node_identity() {
   local host suffix material
   host=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || echo unknown-host)
-  material=$( { nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null; printf '%s\n' "${CUDA_VISIBLE_DEVICES:-}";
+  material=$( { timeout -k 2 10 nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null; printf '%s\n' "${CUDA_VISIBLE_DEVICES:-}";
                 cat /proc/1/cgroup 2>/dev/null; hostname -I 2>/dev/null; } | tr -d '[:space:]' || true)
   if [ -n "$material" ] && command -v sha256sum >/dev/null 2>&1; then
     suffix=$(printf '%s' "$material" | sha256sum | cut -c1-4)

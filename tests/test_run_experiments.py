@@ -52,7 +52,9 @@ def test_run_restarts_a_launcher_already_running_on_this_node(tmp_path):
     log_dir.mkdir(parents=True)
     host = subprocess.check_output(["bash", "-c", "hostname | tr -c 'a-zA-Z0-9._-' '_'"], text=True).strip()
     # Reparented to init so its death is reaped there, not left as a zombie of this test.
-    old_pid = int(subprocess.check_output(["bash", "-c", "setsid sleep 300 >/dev/null 2>&1 & echo $!"], text=True).strip())
+    old_pid = int(subprocess.check_output(["bash", "-c",
+        '''setsid bash -c 'exec -a "bash scripts/run_experiments.sh run" sleep 300' >/dev/null 2>&1 & echo $!'''],
+        env=env, text=True).strip())
     (log_dir / f"launcher.{host}.pid").write_text(str(old_pid))
     fault = Path(env["OM_WORK"]) / "runs/experiments/node-faults" / f"{os.uname().nodename}.json"
     fault.parent.mkdir(parents=True)
@@ -89,10 +91,10 @@ def test_two_blocked_passes_release_the_node_and_every_hold_line_says_why(tmp_pa
     assert result.returncode == 78, result.stdout + result.stderr
     out = result.stdout
     assert "[pass 1] selection switch ended: rc=78, admission failed: NCCL/CUDA probe" in out
-    assert "[pass 1] MoPPS comparison ended: rc=78, admission failed: NCCL/CUDA probe" in out
+    assert "[pass 1] MoPPS comparison" not in out
     assert ("[hold] pass 1 ended (switch rc=78 admission failed: NCCL/CUDA probe | "
-            "mopps rc=78 admission failed: NCCL/CUDA probe); keeping this node's GPUs") in out
-    assert "[holding] node retained (switch rc=78 admission failed: NCCL/CUDA probe | mopps rc=78 admission failed: NCCL/CUDA probe); next pass in" in out
+            "mopps rc=0 skipped: node busy, failed admission or cooling down); keeping this node's GPUs") in out
+    assert "[holding] node retained (switch rc=78 admission failed: NCCL/CUDA probe | mopps rc=0 skipped: node busy, failed admission or cooling down); next pass in" in out
     assert "[blocked] node admission failed on two passes" in out
     assert "[node-launcher-exit]" in out and "rc=78" in out.splitlines()[-1]
 

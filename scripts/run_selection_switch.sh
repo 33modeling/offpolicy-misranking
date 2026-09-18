@@ -96,19 +96,34 @@ launcher_pid_alive() {
   [ -f "$PID_FILE" ] || return 1
   local pid
   pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
-  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  root_worker_cmdline "$pid" || return 1
+  { tr '\0' ' ' < "/proc/$pid/cmdline"; } 2>/dev/null | grep -Fq "$(basename "$LAUNCHER_SELF")"
 }
 # Read-only viewers (status --watch, why, errors) also carry OUT_ROOT; only
 # launchers, controllers, ranks, probes, scorers and keepalives are "the run".
 root_worker_cmdline() {
+  local environment
+  [ -O "/proc/$1" ] || return 1
+  environment=$({ tr '\0' '\n' < "/proc/$1/environ"; } 2>/dev/null) || return 1
+  grep -Fxq "OUT_ROOT=$OUT_ROOT" <<< "$environment" || return 1
+  grep -Fxq "EXPERIMENTS_NODE_ID=$EXPERIMENTS_NODE_ID" <<< "$environment" || return 1
   { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null | grep -qE \
     'run_selection_switch\.sh|run_mopps_comparison\.sh|selection_switch_runtime\.py|selection_switch_gpu\.py|mopps_comparison_gpu\.py|torch\.distributed\.run|train_[a-z_]*grpo\.py|_gpu_keepalive\.py|selection_nccl_preflight\.py|selection_switch_score\.py|light_selection_gate_gpu\.py'
+}
+node_launcher_pid_alive() {
+  local pid=$1 environment
+  [[ "$pid" =~ ^[0-9]+$ ]] && [ -O "/proc/$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  environment=$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null) || return 1
+  grep -Fxq "OM_WORK=$WORK" <<< "$environment" || return 1
+  grep -Fxq "EXPERIMENTS_NODE_ID=$EXPERIMENTS_NODE_ID" <<< "$environment" || return 1
+  { tr '\0' ' ' < "/proc/$pid/cmdline"; } 2>/dev/null | grep -Fq 'run_experiments.sh'
 }
 if [ "$MODE" = stop ]; then
   NODE_PID_FILE="$WORK/runs/experiments/logs/launcher.$LAUNCH_HOST.pid"
   if [ -f "$NODE_PID_FILE" ] && [ "${EXPERIMENTS_STOPPING:-0}" != 1 ]; then
     node_pid=$(cat "$NODE_PID_FILE" 2>/dev/null || true)
-    if [[ "$node_pid" =~ ^[0-9]+$ ]] && kill -0 "$node_pid" 2>/dev/null; then
+    if node_launcher_pid_alive "$node_pid"; then
       echo "[stop] node launcher (run_experiments.sh) pid=$node_pid is running; stopping it first"
       kill -TERM -- "-$node_pid" 2>/dev/null || kill -TERM "$node_pid" 2>/dev/null || true
       for _ in $(seq 1 240); do kill -0 "$node_pid" 2>/dev/null || break; sleep 1; done
@@ -119,15 +134,15 @@ if [ "$MODE" = stop ]; then
   # own process carrying this root, TERM its process group (the new code reaps
   # ranks and closes receipts on TERM), then sweep what is left.
   stop_root_processes() {
-    local pid stat pgid found=0 groups=""
+    local pid stat pgid own_pgid found=0 groups=""
+    own_pgid=$(ps -o pgid= -p "$$" | tr -d ' ')
     for pid in $(ls /proc | grep -E '^[0-9]+$'); do
       [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] || continue
       [ -O "/proc/$pid" ] || continue
-      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -qx "OUT_ROOT=$OUT_ROOT" || continue
       root_worker_cmdline "$pid" || continue
       stat=$(cut -d')' -f2 "/proc/$pid/stat" 2>/dev/null) || continue
       pgid=$(echo "$stat" | awk '{print $3}')
-      [ -n "$pgid" ] && [ "$pgid" != "$$" ] || continue
+      [ -n "$pgid" ] && [ "$pgid" != "$own_pgid" ] || continue
       found=1
       echo "[stop] found pid=$pid pgid=$pgid $(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-90)"
       case " $groups " in *" $pgid "*) ;; *) groups="$groups $pgid" ;; esac
@@ -158,11 +173,10 @@ if [ "$MODE" = stop ]; then
   if ! launcher_pid_alive; then
     echo "[stop] no detached launcher pid file on $LAUNCH_HOST; looking for older launchers and workers of this root"
     if stop_root_processes; then
-      echo "[stop] TERM sent to every process group of this root; sweeping orphaned GPU ranks whose driver is gone"
+      echo "[stop] TERM sent to verified process groups of this root and allocation"
     else
       echo "[stop] no process of this root is running on $LAUNCH_HOST"
     fi
-    CUDA_VISIBLE_DEVICES="" "$PY" src/queue_status.py --kill-orphans 2>/dev/null || true
     exit 0
   fi
   pid=$(cat "$PID_FILE")
@@ -178,7 +192,6 @@ if [ "$MODE" = stop ]; then
   echo "[stop] launcher exited; last console lines:"
   tail -n 5 "$CONSOLE_LOG" 2>/dev/null || true
   stop_root_processes && echo "[stop] leftover processes of this root were also signalled"
-  CUDA_VISIBLE_DEVICES="" "$PY" src/queue_status.py --kill-orphans 2>/dev/null || true
   exit 0
 fi
 case "$MODE" in run|smoke)
@@ -197,7 +210,6 @@ case "$MODE" in run|smoke)
     for pid in $(ls /proc | grep -E '^[0-9]+$'); do
       [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] || continue
       [ -O "/proc/$pid" ] || continue
-      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -qx "OUT_ROOT=$OUT_ROOT" || continue
       root_worker_cmdline "$pid" || continue
       older="$older $pid"
     done

@@ -72,6 +72,10 @@ launcher_pid_alive() {
   [ -f "$PID_FILE" ] || return 1
   pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
   [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  command=$({ tr '\0' ' ' < "/proc/$pid/cmdline"; } 2>/dev/null) || return 1
+  case "$command" in *run_experiments.sh*) ;; *) return 1 ;; esac
+  { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Fxq "OM_WORK=$WORK" || return 1
+  { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Fxq "EXPERIMENTS_NODE_ID=$EXPERIMENTS_NODE_ID" || return 1
   NODE_LAUNCHER_PID=$pid
 }
 if [ "$MODE" = progress ]; then
@@ -170,13 +174,24 @@ group_alive() {
   done
   return 1
 }
-cmdline_of() { { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null | cut -c1-90; }
+cmdline_of() { { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null; }
+owned_experiment_process() {
+  local pid=$1 environment marker
+  [ "$pid" != "$$" ] && [ -O "/proc/$pid" ] || return 1
+  environment=$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null) || return 1
+  grep -Fxq "EXPERIMENTS_NODE_ID=$EXPERIMENTS_NODE_ID" <<< "$environment" || return 1
+  cmdline_of "$pid" | grep -qE "$ROOT_PROCESS_PATTERN" || return 1
+  marker=$(grep -m1 '^OUT_ROOT=' <<< "$environment" | cut -d= -f2-) || true
+  case "$marker" in "$WORK"/runs/*) return 0 ;; esac
+  # The outer keepalive intentionally has no OUT_ROOT, but is still scoped.
+  grep -Fxq "OM_WORK=$WORK" <<< "$environment" && cmdline_of "$pid" | grep -q '_gpu_keepalive.py'
+}
 # Process groups of our own leftover experiment processes (either root's
 # marker, our command names) outside this launcher's group.
 leftover_groups() {
   local pid marker pgid
   for pid in $(ls /proc | grep -E '^[0-9]+$'); do
-    [ "$pid" != "$$" ] && [ -O "/proc/$pid" ] || continue
+    owned_experiment_process "$pid" || continue
     marker=$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -m1 '^OUT_ROOT=' | cut -d= -f2-) || true
     case "$marker" in "$WORK"/runs/*) ;; *) continue ;; esac
     cmdline_of "$pid" | grep -qE "$ROOT_PROCESS_PATTERN" || continue
@@ -190,11 +205,15 @@ leftover_groups() {
 gpu_holder_groups() {
   local pid mem pgid
   command -v nvidia-smi >/dev/null 2>&1 || return 0
-  timeout 20 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null \
+  timeout -k 2 20 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null \
     | while IFS=, read -r pid mem; do
     pid=$(echo "$pid" | tr -d ' '); mem=$(echo "$mem" | tr -d ' ')
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     if [ ! -O "/proc/$pid" ]; then echo "[clean] gpu pid=$pid ${mem}MiB belongs to another user; cannot stop it" >&2; continue; fi
+    if ! owned_experiment_process "$pid"; then
+      echo "[clean] gpu pid=$pid is not a verified worker of this allocation; leaving it running" >&2
+      continue
+    fi
     pgid=$(pgid_of "$pid")
     [ -n "$pgid" ] && [ "$pgid" != "$MY_PGID" ] || continue
     echo "[clean] gpu pid=$pid pgid=$pgid ${mem}MiB $(cmdline_of "$pid")" >&2
@@ -203,16 +222,18 @@ gpu_holder_groups() {
 }
 gpu_memory_line() {
   command -v nvidia-smi >/dev/null 2>&1 || { echo "no nvidia-smi"; return 0; }
-  timeout 20 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
+  timeout -k 2 20 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
     | awk -F, '{gsub(/ /,"",$1); gsub(/ /,"",$2); printf "gpu%s %sMiB  ", $1, $2}'
 }
 gpus_free() {
-  command -v nvidia-smi >/dev/null 2>&1 || return 0
-  local used
+  command -v nvidia-smi >/dev/null 2>&1 || return 1
+  local used readings
+  readings=$(timeout -k 2 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null) || return 1
+  [ -n "$readings" ] || return 1
   while read -r used; do
     used=$(echo "$used" | tr -d ' ')
     [[ "$used" =~ ^[0-9]+$ ]] && [ "$used" -le 4000 ] || return 1
-  done < <(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null)
+  done <<< "$readings"
 }
 clean_node() {
   echo "[clean] host=$HOST: stopping leftover experiment processes and freeing the allocated GPUs"
@@ -241,7 +262,7 @@ clean_node() {
   # own process still holding GPU memory.)
   for _ in $(seq 1 30); do gpus_free && break; sleep 2; done
   echo "[clean] gpu memory now: $(gpu_memory_line)"
-  gpus_free || echo "[clean] a GPU still holds more than 4000MiB; the pass will report the node as busy"
+  gpus_free || echo "[clean] GPU memory is unavailable or above 4000MiB; cleanup cannot verify a free GPU"
 }
 switch_complete() {
   root_complete "$SWITCH_ROOT"
@@ -259,6 +280,7 @@ rc_reason() {
     79) echo "cooling down after a GPU fault; GPU work resumes when the record expires" ;;
     130|143) echo "interrupted" ;;
     skipped) echo "skipped: complete or not prepared" ;;
+    node-unavailable) echo "skipped: node busy, failed admission or cooling down" ;;
     *) echo "launcher error, see lines above" ;;
   esac
 }
@@ -577,7 +599,8 @@ while :; do
     done < <(sibling_roots)
   fi
   rc_mopps=0 why_mopps=skipped
-  if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ] && [ -f "$MOPPS_ROOT/mopps.json" ] && ! mopps_complete; then
+  case "$rc_switch" in 75|78|79) why_mopps=node-unavailable ;; esac
+  if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ] && [ -f "$MOPPS_ROOT/mopps.json" ] && ! mopps_complete; then
     echo "[pass $pass] MoPPS comparison"
     inner scripts/run_mopps_comparison.sh || rc_mopps=$?
     case "$rc_mopps" in 130|143) exit "$rc_mopps" ;; esac
@@ -630,7 +653,7 @@ while :; do
         echo '[done] peers completed every experiment; releasing the node during hold'
         exit 0
       fi
-      if [ "$rc_switch" -ne 79 ] && [ "$rc_switch" -ne 78 ] && found=$(claimable_work); then
+      if [ "$rc_switch" -ne 79 ] && [ "$rc_switch" -ne 78 ] && [ "$rc_mopps" -ne 79 ] && [ "$rc_mopps" -ne 78 ] && found=$(claimable_work); then
         echo "[hold] claimable work in $found; starting the next pass now"
         break
       fi

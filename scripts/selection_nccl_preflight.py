@@ -193,8 +193,9 @@ def preflight(root, *, world_size=4, timeout=90.):
                 overrides = {**overrides, **extra}
                 print(f"[nccl-preflight] retrying only the tiny probe as {name} with {json.dumps(extra)}; "
                       "no policy training was started", flush=True)
-            elif name == "baseline" and host_allocation_fallback(reports, combined_error, env, world_size):
-                name, overrides = "legacy-host-allocation", {"NCCL_CUMEM_HOST_ENABLE": "0"}
+            elif host_allocation_fallback(reports, combined_error, env, world_size):
+                name = "legacy-host-allocation"
+                overrides = {**overrides, "NCCL_CUMEM_HOST_ENABLE": "0"}
                 print("[nccl-preflight] retrying only the tiny probe with legacy host allocation; "
                       "no policy training was started", flush=True)
             else:
