@@ -12,7 +12,6 @@ import io
 import json
 import os
 from pathlib import Path
-import shlex
 import statistics
 import time
 from types import SimpleNamespace
@@ -33,7 +32,9 @@ CONFIG_KEYS = ("matrix", "prefix_source", "target_reward", "budget_gpu_seconds",
 # c78ca17: only startup/CLI handling changes in this patch. Preserve existing
 # manifests, protocol IDs, labels and decisions, and reject any scientific change.
 PRE_BOOTSTRAP_CODE = "3ad11e06bc7670012c91898b6d4e09802eab195422f4a62919ffaf4e95725f9b"
+PRE_DEFAULTS_CODE = "b589d47572403fe0c217ac3e2f925e69906db54822f1f29c6dca9dd1fba3b98b"
 STARTUP_FILES = {"src/selector_pair_gpu.py", "scripts/run_selector_pair.sh"}
+RUN_DEFAULTS = {"target_reward": .35, "budget_gpu_seconds": 87120.}
 
 
 def code_hashes():
@@ -43,7 +44,7 @@ def code_hashes():
 def compatible_code(recorded):
     current = code_hashes()
     return recorded == current or (
-        isinstance(recorded, dict) and core.fingerprint(recorded) == PRE_BOOTSTRAP_CODE
+        isinstance(recorded, dict) and core.fingerprint(recorded) in {PRE_BOOTSTRAP_CODE, PRE_DEFAULTS_CODE}
         and set(recorded) == set(current)
         and all(recorded[name] == value for name, value in current.items() if name not in STARTUP_FILES))
 
@@ -52,10 +53,23 @@ def bind_startup_runtime(root, recorded):
     if recorded != code_hashes():
         # Pin the first reviewed upgrade too. Later edits to these entry points
         # must not acquire an unlimited exemption on a predecessor's run.
-        base.bind(root / "startup-runtime.json", {
+        path = root / "startup-runtime.json"
+        receipt = {
             "schema": "offpolicy-selector-pair/startup-runtime-v1",
             "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
-            "change": "setup placeholder, actionable first launch and interrupted prepare recovery only"})
+            "change": "setup placeholder, actionable first launch and interrupted prepare recovery only"}
+        if path.exists():
+            previous = core.read(path)
+            runtime = previous.get("runtime_code_hashes", {})
+            if (core.fingerprint(runtime) == PRE_DEFAULTS_CODE and compatible_code(runtime)
+                    and previous == {**receipt, "runtime_code_hashes": runtime}):
+                # Preserve the first upgrade receipt; pin this reviewed second
+                # startup-only upgrade separately, without changing the study.
+                base.bind(root / "startup-defaults-runtime.json", {
+                    **receipt, "previous_receipt_sha256": base.digest(path),
+                    "change": "no-argument launch and defaults for unfrozen setup only"})
+                return
+        base.bind(path, receipt)
 
 
 def setup_config():
@@ -63,7 +77,7 @@ def setup_config():
     return {"matrix": os.environ.get("OM_OLMO3_ROOT", str(work / "runs" /
                 os.environ.get("OM_OLMO3_MODEL_TAG", "olmo3-1025-7b-base-rlzero-grpo-h100-v2"))),
             "prefix_source": os.environ.get("SWITCH_PREFIX_SOURCE", str(work / "runs/selection-switch-v1")),
-            "target_reward": None, "budget_gpu_seconds": None, "curve_points": 9, "eval_k": 8,
+            **RUN_DEFAULTS, "curve_points": 9, "eval_k": 8,
             "dataset": "math500", "gpu_type": "NVIDIA H100 80GB HBM3", "eval_timeout": 14400.}
 
 
@@ -82,18 +96,27 @@ def initialize(root, configuration=None):
             value = core.read(path)
             if value.get("schema") not in {BOOTSTRAP_SCHEMA, pair.SCHEMA}:
                 raise ValueError(f"unrecognized pair.json; preserved without overwriting: {path}")
+            if value["schema"] == BOOTSTRAP_SCHEMA and not (root / "request.json").exists():
+                config = value.get("configuration", {})
+                missing = {key: default for key, default in RUN_DEFAULTS.items()
+                           if key in config and config[key] in (None, "")}
+                if missing:
+                    value = {**value, "configuration": {**config, **missing},
+                             "status": "ready_to_prepare",
+                             "note": "Setup only. The launcher validates inputs and freezes the experiment before training."}
+                    core.atomic_json(path, value)
+                    print(f"[defaults] filled unset setup values: {', '.join(missing)}", flush=True)
             return value
         config = setup_config() if configuration is None else configuration
         request = root / "request.json"
-        status = "needs_configuration"
+        status = "ready_to_prepare"
         if request.exists():
             saved = core.read(request)
             if saved.get("schema") != pair.SCHEMA or not compatible_code(saved.get("code_hashes")):
                 raise ValueError("partial preparation has an incompatible frozen request; preserved")
             config, status = request_config(saved), "preparation_incomplete"
         value = {"schema": BOOTSTRAP_SCHEMA, "status": status, "configuration": config,
-                 "note": "Setup only, not a completed experiment. Set target_reward and budget_gpu_seconds, "
-                         "then run prepare. No training/results/code validation are bypassed."}
+                 "note": "Setup only. The launcher validates inputs and freezes the experiment before training."}
         base.bind(path, value)
         print(f"[initialized] {path}", flush=True)
         return value
@@ -107,11 +130,8 @@ def preparation_options(root, overrides=None):
     config = {**config, **{k: v for k, v in (overrides or {}).items() if v is not None}}
     missing = [key for key in CONFIG_KEYS if config[key] is None or config[key] == ""]
     if missing:
-        command = f"PAIR_ROOT={shlex.quote(str(root))} bash scripts/run_selector_pair.sh prepare"
-        raise ValueError(f"setup file created: {root / 'pair.json'}; missing {', '.join(missing)}. "
-                         "prepare requires --matrix, --prefix-source, --target-reward and --budget-gpu-seconds "
-                         f"(paths may come from the setup file). Edit configuration or run: {command} "
-                         "--target-reward TARGET --budget-gpu-seconds BUDGET. No GPU work started.")
+        raise ValueError(f"incomplete setup configuration: {root / 'pair.json'}; "
+                         f"missing {', '.join(missing)}. No GPU work started.")
     config["matrix"], config["prefix_source"] = Path(config["matrix"]), Path(config["prefix_source"])
     return SimpleNamespace(root=root, **config)
 
@@ -155,6 +175,9 @@ def prepare(args):
     config = {key: str(getattr(args, key)) if key in {"matrix", "prefix_source"} else getattr(args, key)
               for key in CONFIG_KEYS}
     initialize(root, config)
+    if not (prefix / "switch.json").is_file():
+        raise ValueError(f"certified prefix source is missing: {prefix / 'switch.json'}. "
+                         "Run on the node with the original experiment storage mounted. No GPU work started.")
     request = {"schema": pair.SCHEMA, "matrix": str(matrix), "prefix_source": str(prefix),
                "prefix_sha256": base.digest(prefix / "switch.json"),
                "target_reward": args.target_reward, "training_cap_gpu_seconds": args.budget_gpu_seconds,

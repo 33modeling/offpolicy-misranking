@@ -201,12 +201,17 @@ def test_shell_syntax_and_cpu_help_need_no_gpu():
     assert "--target-reward" in process.stdout
 
 
-def test_prepare_requires_preregistered_target_and_explicit_training_cap(tmp_path):
-    process = subprocess.run([sys.executable, "src/selector_pair_gpu.py", "prepare", "--root", str(tmp_path)],
-        cwd=base.ROOT, env={**os.environ, "CUDA_VISIBLE_DEVICES": ""}, capture_output=True, text=True, timeout=20)
+def test_prepare_uses_defaults_but_requires_real_source(tmp_path):
+    root = tmp_path / "pair"
+    process = subprocess.run([sys.executable, "src/selector_pair_gpu.py", "prepare", "--root", str(root)],
+        cwd=base.ROOT, env={**os.environ, "CUDA_VISIBLE_DEVICES": "",
+                           "SWITCH_PREFIX_SOURCE": str(tmp_path / "missing-source")},
+        capture_output=True, text=True, timeout=20)
     assert process.returncode != 0
-    assert "--target-reward and --budget-gpu-seconds" in process.stderr
-    assert core.read(tmp_path / "pair.json")["schema"] == gpu.BOOTSTRAP_SCHEMA
+    assert "certified prefix source is missing" in process.stderr
+    assert core.read(root / "pair.json")["schema"] == gpu.BOOTSTRAP_SCHEMA
+    for key, value in gpu.RUN_DEFAULTS.items():
+        assert core.read(root / "pair.json")["configuration"][key] == value
 
 
 def test_direct_entry_does_not_silently_ignore_changed_target(tmp_path):
@@ -401,12 +406,20 @@ def bootstrap_predecessor():
     return hashes
 
 
+def defaults_predecessor():
+    hashes = gpu.code_hashes()
+    hashes["src/selector_pair_gpu.py"] = "6db840bcb82e8a9c2089c7e836ef5735a8b9e5a68e3707c397245f790b84e095"
+    hashes["scripts/run_selector_pair.sh"] = "49ea934118bf4c88a451801fb225ed6b25cb7c9892a2ecf421a85a340dc5b3a2"
+    assert core.fingerprint(hashes) == gpu.PRE_DEFAULTS_CODE
+    return hashes
+
+
 def test_init_creates_only_setup_and_preserves_edits(tmp_path, monkeypatch):
     monkeypatch.setenv("OM_WORK", str(tmp_path / "storage"))
     value = gpu.initialize(tmp_path)
     assert value["schema"] == gpu.BOOTSTRAP_SCHEMA
-    assert value["configuration"]["target_reward"] is None
-    assert value["configuration"]["budget_gpu_seconds"] is None
+    assert value["configuration"]["target_reward"] == .35
+    assert value["configuration"]["budget_gpu_seconds"] == 87120.
     assert value["configuration"]["prefix_source"] == str(tmp_path / "storage/runs/selection-switch-v1")
     assert "protocol_id" not in value and "branch_manifests" not in value
     value["configuration"]["target_reward"] = .42
@@ -418,43 +431,68 @@ def test_init_creates_only_setup_and_preserves_edits(tmp_path, monkeypatch):
         gpu.manifest(tmp_path)
 
 
-@pytest.mark.parametrize("command", ["init", "status", "run"])
+@pytest.mark.parametrize("command", ["init", "status", "run", None])
 def test_first_shell_launch_creates_pair_json_without_touching_gpus(tmp_path, command):
     root = tmp_path / "pair"
-    process = subprocess.run(["bash", "scripts/run_selector_pair.sh", command], cwd=base.ROOT,
+    process = subprocess.run(["bash", "scripts/run_selector_pair.sh", *([command] if command else [])], cwd=base.ROOT,
         env={**os.environ, "CUDA_VISIBLE_DEVICES": "", "PAIR_ROOT": str(root),
-             "OM_WORK": str(tmp_path / "storage"), "PAIR_PYTHON": sys.executable},
+             "OM_WORK": str(tmp_path / "storage"), "PAIR_PYTHON": sys.executable,
+             "SWITCH_PREFIX_SOURCE": str(tmp_path / "missing-source")},
         capture_output=True, text=True, timeout=20)
     assert core.read(root / "pair.json")["schema"] == gpu.BOOTSTRAP_SCHEMA
     assert "Traceback" not in process.stderr and "FileNotFoundError" not in process.stderr
     assert "[node]" not in process.stdout and "nvidia-smi" not in process.stderr
-    if command == "run":
+    if command in ("run", None):
         assert process.returncode != 0 and "No GPU work started" in process.stderr
-        assert "target_reward, budget_gpu_seconds" in process.stderr
+        assert "certified prefix source is missing" in process.stderr
     else:
-        assert process.returncode == 0 and "needs_configuration" in process.stdout
+        assert process.returncode == 0 and "ready_to_prepare" in process.stdout
+
+
+@pytest.mark.parametrize("target", [None, .42, 0])
+def test_old_unfrozen_setup_fills_only_empty_defaults(tmp_path, target):
+    value = gpu.initialize(tmp_path)
+    value["configuration"].update(target_reward=target, budget_gpu_seconds=None)
+    core.atomic_json(tmp_path / "pair.json", value)
+    result = gpu.initialize(tmp_path)
+    assert result["configuration"] == {**value["configuration"],
+        "target_reward": .35 if target is None else target, "budget_gpu_seconds": 87120.}
+    before = (tmp_path / "pair.json").read_bytes()
+    assert gpu.initialize(tmp_path) == result
+    assert (tmp_path / "pair.json").read_bytes() == before
+
+
+def test_defaults_never_change_setup_with_frozen_request(tmp_path):
+    value = gpu.initialize(tmp_path)
+    value["configuration"].update(target_reward=None, budget_gpu_seconds=None)
+    core.atomic_json(tmp_path / "pair.json", value)
+    core.atomic_json(tmp_path / "request.json", {"frozen": True})
+    before = (tmp_path / "pair.json").read_bytes()
+    assert gpu.initialize(tmp_path) == value
+    assert (tmp_path / "pair.json").read_bytes() == before
 
 
 def test_prepare_promotes_setup_only_after_real_preparation(tmp_path, monkeypatch):
     root, prefix = tmp_path / "pair", tmp_path / "prefix"
     core.atomic_json(prefix / "switch.json", {"fixture": True})
     value = gpu.initialize(root)
-    value["configuration"].update(matrix=str(tmp_path / "matrix"), prefix_source=str(prefix),
-                                   target_reward=.35, budget_gpu_seconds=1000.)
+    value["configuration"].update(matrix=str(tmp_path / "matrix"), prefix_source=str(prefix))
     core.atomic_json(root / "pair.json", value)
     calls = []
     def prepare(options):
         assert core.read(root / "pair.json")["schema"] == gpu.BOOTSTRAP_SCHEMA
+        assert options.budget_gpu_seconds == 87120.
         calls.append(options)
         core.atomic_json(options.root / "switch.json", {"selector": options.selector})
     monkeypatch.setattr(gpu.switch, "prepare", prepare)
     ready = gpu.ensure_prepared(root)
     assert ready["schema"] == pair.SCHEMA and len(calls) == 4
     assert ready["target_reward"] == .35
+    assert ready["training_cap_gpu_seconds"] == 87120.
     assert gpu.ensure_prepared(root) == ready and len(calls) == 4
 
 
-@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("legacy", [None, bootstrap_predecessor, defaults_predecessor])
 def test_failed_prepare_keeps_placeholder_and_resumes_frozen_request(tmp_path, monkeypatch, legacy):
     root, prefix = tmp_path / "pair", tmp_path / "prefix"
     core.atomic_json(prefix / "switch.json", {"fixture": True})
@@ -473,7 +511,7 @@ def test_failed_prepare_keeps_placeholder_and_resumes_frozen_request(tmp_path, m
     assert core.read(root / "pair.json")["status"] == "preparation_incomplete"
     if legacy:
         value = core.read(root / "request.json")
-        value["code_hashes"] = bootstrap_predecessor()
+        value["code_hashes"] = legacy()
         core.atomic_json(root / "request.json", value)
     request = (root / "request.json").read_bytes()
     # Reproduce the predecessor's publication gap: request exists, pair absent.
@@ -485,8 +523,9 @@ def test_failed_prepare_keeps_placeholder_and_resumes_frozen_request(tmp_path, m
     assert core.read(root / "pair.json")["schema"] == pair.SCHEMA
 
 
-def test_startup_fix_preserves_predecessor_manifest_without_rebinding(tmp_path):
-    value = {"schema": pair.SCHEMA, "code_hashes": bootstrap_predecessor(), "branch_manifests": {}}
+@pytest.mark.parametrize("predecessor", [bootstrap_predecessor, defaults_predecessor])
+def test_startup_fix_preserves_predecessor_manifest_without_rebinding(tmp_path, predecessor):
+    value = {"schema": pair.SCHEMA, "code_hashes": predecessor(), "branch_manifests": {}}
     value["protocol_id"] = core.fingerprint(value)
     core.atomic_json(tmp_path / "pair.json", value)
     before = (tmp_path / "pair.json").read_bytes()
@@ -494,6 +533,24 @@ def test_startup_fix_preserves_predecessor_manifest_without_rebinding(tmp_path):
     assert gpu.ensure_prepared(tmp_path) == value
     assert (tmp_path / "pair.json").read_bytes() == before
     assert core.read(tmp_path / "startup-runtime.json")["runtime_code_hashes"] == gpu.code_hashes()
+
+
+def test_second_startup_upgrade_preserves_receipt_and_rejects_later_edits(tmp_path, monkeypatch):
+    value = {"schema": pair.SCHEMA, "code_hashes": bootstrap_predecessor(), "branch_manifests": {}}
+    value["protocol_id"] = core.fingerprint(value)
+    core.atomic_json(tmp_path / "pair.json", value)
+    with monkeypatch.context() as patch:
+        previous = defaults_predecessor()
+        patch.setattr(gpu, "code_hashes", lambda: previous)
+        gpu.manifest(tmp_path)
+    before = (tmp_path / "startup-runtime.json").read_bytes()
+    assert gpu.manifest(tmp_path) == value
+    assert (tmp_path / "startup-runtime.json").read_bytes() == before
+    assert core.read(tmp_path / "startup-defaults-runtime.json")["runtime_code_hashes"] == gpu.code_hashes()
+    changed = {**gpu.code_hashes(), "src/selector_pair_gpu.py": "unreviewed-later-change"}
+    monkeypatch.setattr(gpu, "code_hashes", lambda: changed)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        gpu.manifest(tmp_path)
 
 
 def test_first_startup_upgrade_does_not_allow_later_entrypoint_edits(tmp_path, monkeypatch):

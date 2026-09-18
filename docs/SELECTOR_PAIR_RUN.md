@@ -51,50 +51,39 @@ GPU를 할당받은 동안의 wall time × GPU 개수이며 FLOPs/순수 커널 
 
 ## 준비와 실행
 
-처음 `run`이나 `status`를 실행했을 때 `pair.json`이 없으면 초기 설정용 파일을
-자동 생성한다. 직접 생성만 하려면 다음을 실행한다.
+저장소에서 **이 스크립트 하나만 실행한다.** `init`, `prepare`, `run` 인자나
+환경변수를 따로 입력할 필요가 없다. 4-GPU 할당 노드에서 tmux 또는 배치
+스케줄러 안에서 실행한다.
 
 ```bash
-bash scripts/run_selector_pair.sh init
+bash scripts/run_selector_pair.sh
 ```
 
-생성되는 파일은 `setup-v1` 형식이며 완료된 실험 manifest가 아니다.
-`configuration.target_reward`, `configuration.budget_gpu_seconds`는 `null`로
-남겨 두고 원본 경로는 기존 환경변수/기본 경로로 채운다. 두 수치와 원본 경로를
-파일에서 설정하거나 아래 `prepare` 옵션으로 지정한다. 숫자가 비어 있으면
-GPU를 잡기 전에 필요한 설정을 안내한다. 빈 `{}`로 검증을 통과시키지는 않는다.
-설정이 채워졌다면 `run`이 실제 준비·검증을 먼저 수행한다. 준비가 중단되어
-`request.json`만 남았던 경우도 해당 고정 설정에서 이어서 준비한다.
-기존의 정상 `pair.json`은 덮어쓰지 않으며, 이 초기화 수정은 `c78ca17`에서
-만든 manifest/decision을 변경하지 않고 이어서 사용할 수 있다.
+설정 생성 → 원본 검증·준비 → 개발 곡선 수집 → predictor 학습 → 테스트 결정
+고정 → 테스트 학습·평가 → 보고서까지 진행한다. 목표 미도달 등 실험의 검증
+조건을 충족하지 못하면 해당 단계에서 중단하며, 결과를 만들어 통과시키지 않는다.
 
-기존 실험과 다른 새 저장 경로를 사용한다. `--prefix-source`에는 다섯 seed의
-25/50/100 checkpoint와 optimizer가 모두 인증된 기존 switch root를 넣는다.
-`--matrix`는 그 prefix를 만들 때 사용한 동일한 matrix 경로다.
+새 실험의 기본값은 목표 보상 **0.35**, 분기당 학습 예산 **87,120 GPU초**,
+중간 평가점 9개, eval-k 8이다. 학습 예산은 분기당 24.2 GPU시간이며 scoring과
+평가 비용은 별도다. 목표에 실제로 도달한다는 보장은 없다. 수치는 결과를 보기
+전에 고정되며, 기존에 고정된 실험의 값을 바꾸지 않는다.
 
-```bash
-cd /path/to/offpolicy-misranking
-export PAIR_ROOT=/group-volume/USER/offpolicy-misranking/runs/selector-pair-v1
+기본 저장소는 `/group-volume/minsoo3.kim/offpolicy-misranking`이다.
+그 아래 `runs/selection-switch-v1`의 인증된 prefix와
+`runs/olmo3-1025-7b-base-rlzero-grpo-h100-v2` matrix를 사용하고,
+새 결과는 `runs/selector-pair-v1`에 저장한다. 원본에는 다섯 seed의
+25/50/100 checkpoint와 optimizer가 모두 있어야 한다. 원본 저장소가
+마운트되지 않았거나 검증을 통과하지 못하면 GPU 학습 전에 중단한다.
 
-# 숫자는 사용자가 실험 전에 정한다. 아래 0.35, 87120은 실행 형식 예시이며
-# 현재 데이터에서 모든 branch가 도달한다는 뜻이 아니다.
-bash scripts/run_selector_pair.sh prepare \
-  --matrix /path/to/original-matrix \
-  --prefix-source /path/to/certified-selection-switch-root \
-  --target-reward 0.35 \
-  --budget-gpu-seconds 87120 \
-  --curve-points 9 --eval-k 8
+`pair.json`이 없으면 자동 생성하고, 예전 `init`이 남긴 미고정 설정의 빈
+target/budget도 자동으로 채운다. 직접 지정한 값은 유지한다. `request.json`이
+이미 고정되었거나 준비가 완료되었다면 기본값을 덮어쓰지 않고 그대로 재개한다.
+`c78ca17`, `5086e15`의 실험 manifest/decision도 보존하며, 검토된 실행부 수정만
+별도 영수증으로 기록한다. 빈 `{}`나 가짜 학습 결과로 검증을 우회하지 않는다.
 
-# 4-GPU 할당 노드에서 실행. 다른 프로세스가 점유한 노드는 사용하지 않는다.
-# 오래 실행되므로 tmux 또는 배치 스케줄러 안에서 실행한다.
-bash scripts/run_selector_pair.sh run
-```
-
-`prepare`로 준비를 명시적으로 끝내거나, 설정용 파일을 채운 뒤 `run`으로 준비와
-실행을 이어갈 수 있다. 준비 완료 후 `run`에서 target, cap, seed, scoring 방법을
-바꿀 수 없다. 기본 GPU 종류는 NVIDIA H100 80GB HBM3이며 준비할 때
-`--gpu-type`으로 지정할 수 있다. 코드와 설정을 고정한 별도 checkout에서
-실행하고, 실행 중 그 checkout을 업데이트하지 않는다. 코드 해시가 바뀌면 중단한다.
+기본 GPU 종류는 NVIDIA H100 80GB HBM3다. 준비 완료 후 target, cap, seed,
+scoring 방법을 바꿀 수 없다. 실행 중인 checkout은 업데이트하지 않는다.
+검토되지 않은 코드 변경이 발견되면 중단한다.
 
 한 root는 한 controller만 실행한다. 여러 노드에 분산하는 큐가 아니다.
 다른 controller가 같은 root를 사용 중이면 잠금 오류로 종료한다.
@@ -149,7 +138,7 @@ root에서 해야 하며, 이전 시도를 숨기면 안 된다. 검열된 라�
 
 ## 중단 / 재개
 
-같은 root에서 `run`을 다시 실행한다. 완료된 selection, checkpoint, 결과,
+같은 root에서 `bash scripts/run_selector_pair.sh`를 다시 실행한다. 완료된 selection, checkpoint, 결과,
 동결된 decision을 재사용한다. 중간 checkpoint의 cost receipt는 checkpoint
 디렉터리와 함께 atomic하게 저장되고 archive에도 보존된다. 최종 policy가 저장된
 직후 끊긴 경우, 검증된 policy와 종료된 train 장부에서 최종 비용을 복구한다.

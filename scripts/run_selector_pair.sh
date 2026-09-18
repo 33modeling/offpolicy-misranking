@@ -2,7 +2,7 @@
 # A new, isolated G/D experiment. Never invokes the legacy selector/random fit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MODE=${1:-status}
+MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -25,8 +25,8 @@ if [ "$#" -ne 0 ]; then
   echo '[abort] run uses the frozen preparation; new options require a new root'; exit 2
 fi
 if [ "$MODE" = run ] || [ "$MODE" = develop ]; then
-  # First launch writes an explicit setup template, or resumes an interrupted
-  # prepare from request.json. Missing target/budget never silently start GPUs.
+  # No arguments needed: create the default setup and validate real inputs,
+  # or resume the existing frozen request before admitting any GPU work.
   CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py ensure-prepared --root "$PAIR_ROOT"
 else
   CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py check-code --root "$PAIR_ROOT"
