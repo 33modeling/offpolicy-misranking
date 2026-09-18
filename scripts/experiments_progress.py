@@ -47,6 +47,22 @@ def prepared_roots(work):
     return switch, mopps
 
 
+def scoped_roots(roots):
+    """Explicit switch roots in the order given, prepared or not.
+
+    The MBPP launcher hands over its three suite roots; a sibling that is still
+    waiting for the on-policy prefixes has no switch.json yet and must be shown
+    as not prepared rather than silently dropped. MoPPS is never in scope here.
+    """
+    seen, ordered = set(), []
+    for root in roots:
+        root = Path(root).resolve()
+        if root not in seen:
+            seen.add(root)
+            ordered.append(root)
+    return ordered, []
+
+
 def updates(task):
     step = task.get("training_step")
     return f"{int(step) - int(task['step'])}u" if isinstance(step, (int, float)) and task.get("step") is not None and step >= task["step"] else ""
@@ -94,14 +110,18 @@ def render_root(root, data, *, width, kind):
     return lines
 
 
-def render(work, *, width=80, now=None):
+def render(work, *, width=80, now=None, roots=None):
     now = time.time() if now is None else now
     stamp = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    switch, mopps = prepared_roots(work)
-    lines = [f"PROGRESS  {stamp}", clip("RUN: updates (u), elapsed, node. BUDGET: allocation exhausted; needs review.", width)]
+    switch, mopps = scoped_roots(roots) if roots else prepared_roots(work)
+    scope = "  (MBPP roots only)" if roots and all("mbpp" in Path(r).name for r in roots) else ("  (selected roots only)" if roots else "")
+    lines = [f"PROGRESS  {stamp}{scope}", clip("RUN: updates (u), elapsed, node. BUDGET: allocation exhausted; needs review.", width)]
     lines.append(clip("EVAL: evaluation only. RESUME: checkpoint validation. REVIEW: saved work blocked.", width))
     hosts = set()
     for root in switch:
+        if not (root / "switch.json").is_file():
+            lines += ["", f"{label(root)}: not prepared"]
+            continue
         try:
             data = switch_status.snapshot(root, now=now)
         except Exception as exc:  # noqa: BLE001 - one unreadable root must not hide the others
@@ -119,6 +139,8 @@ def render(work, *, width=80, now=None):
         lines += ["", *render_root(root, data, width=width, kind="mopps")]
     if not switch and not mopps:
         lines += ["", "no prepared experiment root under " + str(Path(work) / "runs")]
+    elif roots and not any((root / "switch.json").is_file() for root in switch):
+        lines += ["", "none of the selected roots is prepared yet"]
     lines.insert(2, f"NODES TRAINING NOW  {len(hosts)}  (distinct node identities with a running task)")
     lines += ["", *render_nodes(switch, mopps, width=width, now=now)]
     return "\n".join(lines)
@@ -153,6 +175,8 @@ def main():
     parser.add_argument("--work", type=Path, default=Path(os.environ.get("OM_WORK", "")))
     parser.add_argument("--width", type=int, default=80)
     parser.add_argument("--watch", type=float, nargs="?", const=60.)
+    parser.add_argument("--root", type=Path, action="append", default=None,
+                        help="show only this switch root (repeatable); unprepared roots are listed as such")
     args = parser.parse_args()
     if not args.work or not str(args.work):
         parser.error("--work or OM_WORK is required")
@@ -161,7 +185,7 @@ def main():
         while True:
             if watcher:
                 watcher.refresh()
-            text = render(args.work, width=args.width)
+            text = render(args.work, width=args.width, roots=args.root)
             if args.watch:
                 print("\033[2J\033[H", end="")
             print(text, flush=True)

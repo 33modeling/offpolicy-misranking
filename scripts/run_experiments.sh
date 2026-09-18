@@ -83,7 +83,14 @@ if [ "$MODE" = progress ]; then
   # One phone-width screen: per experiment root, branch counts, each running
   # branch with its updates so far and node, each failed branch with why. Read-only.
   export CUDA_VISIBLE_DEVICES=""
-  exec "$PY" scripts/experiments_progress.py --work "$WORK" "$@"
+  PROGRESS_ROOTS=()
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+    # MBPP progress must show the MBPP suites only: the generic screen lists every
+    # prepared root under runs/, which buried the MBPP root under the math suites
+    # and omitted MBPP siblings that were still waiting for their prefixes.
+    for root in "${MBPP_ROOTS[@]}"; do PROGRESS_ROOTS+=(--root "$root"); done
+  fi
+  exec "$PY" scripts/experiments_progress.py --work "$WORK" "${PROGRESS_ROOTS[@]}" "$@"
 fi
 if [ "$MODE" = status ]; then
   # One screen for both experiments (switch first, MoPPS second, this node's
