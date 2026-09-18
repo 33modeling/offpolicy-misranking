@@ -33,8 +33,14 @@ case "$MODE" in
       fi
     fi
     if [ "$MBPP_STORAGE_GUARD" = 1 ]; then
+      MBPP_STORAGE_ROOT_ARGS=(--root "$OUT_ROOT")
+      # New sibling suites have no manifest until prepare imports their saved
+      # prefixes. Audit that explicit source too, without skipping the target.
+      if [ -n "${SWITCH_PREFIX_SOURCE:-}" ]; then
+        MBPP_STORAGE_ROOT_ARGS+=(--root "$SWITCH_PREFIX_SOURCE")
+      fi
       if ! CUDA_VISIBLE_DEVICES='' "$PY" scripts/mbpp_storage_audit.py \
-          --work "$WORK" --root "$OUT_ROOT" --report-on-error; then
+          --work "$WORK" "${MBPP_STORAGE_ROOT_ARGS[@]}" --report-on-error; then
         echo '[abort] MBPP storage audit blocked this root; no cleanup, preparation or GPU work started.' >&2
         exit 2
       fi

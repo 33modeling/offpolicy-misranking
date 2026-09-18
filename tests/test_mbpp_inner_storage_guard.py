@@ -121,3 +121,33 @@ def test_non_mbpp_launch_behavior_is_unchanged(launcher):
     result = invoke(launcher, "run_selection_switch.sh")
     assert result.returncode == 0, result.stdout + result.stderr
     assert Path(env["INNER_CAPTURE"]).exists() and not Path(env["AUDIT_CAPTURE"]).exists()
+
+
+@pytest.mark.parametrize("suite", ["quality", "difficulty"])
+def test_new_sibling_root_can_prepare_from_audited_existing_prefix_source(launcher, suite):
+    _, work, parent, env = launcher
+    target = work / f"runs/selection-switch-mbpp-{suite}-v1"
+    write_json(parent / "switch.json", {"dataset": "mbpp"})
+    sealed_result(parent / "states/s3-t25/points/view-25/random_full")
+    env.update(SWITCH_ROOT=str(target), SWITCH_PREFIX_SOURCE=str(parent), SWITCH_DATASET="mbpp")
+    result = invoke(launcher, "run_selection_switch.sh", ["prepare"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert Path(env["INNER_CAPTURE"]).read_text().splitlines() == [str(target), "mbpp", "prepare"]
+    args = json.loads(Path(env["AUDIT_CAPTURE"]).read_text())["args"]
+    assert [args[i + 1] for i, value in enumerate(args) if value == "--root"] == [str(target), str(parent)]
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("fault", ["saved-target-without-manifest", "wrong-parent-dataset"])
+def test_existing_prefix_source_never_bypasses_target_or_source_safety(launcher, fault):
+    _, work, parent, env = launcher
+    target = work / "runs/selection-switch-mbpp-quality-v1"
+    write_json(parent / "switch.json", {"dataset": "math500" if fault == "wrong-parent-dataset" else "mbpp"})
+    if fault == "saved-target-without-manifest":
+        sealed_result(target / "states/s3-t25/points/view-25/random_full")
+    env.update(SWITCH_ROOT=str(target), SWITCH_PREFIX_SOURCE=str(parent), SWITCH_DATASET="mbpp")
+    before = {p: p.read_bytes() for p in work.rglob("*") if p.is_file()}
+    result = invoke(launcher, "run_selection_switch.sh", ["prepare"])
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert not Path(env["INNER_CAPTURE"]).exists()
+    assert before == {p: p.read_bytes() for p in work.rglob("*") if p.is_file()}
