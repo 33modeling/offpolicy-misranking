@@ -37,6 +37,7 @@ bash scripts/run_mbpp_experiments.sh plan       # settings only, no writes/GPU w
 bash scripts/run_mbpp_experiments.sh check      # read-only local input checks
 bash scripts/run_mbpp_experiments.sh status
 bash scripts/run_mbpp_experiments.sh progress   # shared experiment/node view
+bash scripts/run_mbpp_experiments.sh saved      # READ-ONLY saved-work/archived-work inventory, <=4 KiB stdout
 bash scripts/run_mbpp_experiments.sh stop       # stop/clean THIS node, not peer nodes
 bash scripts/run_mbpp_experiments.sh results    # one report per suite, also copied home
 bash scripts/run_mbpp_experiments.sh why        # ONE diagnostic TXT, at most 16 KiB
@@ -79,15 +80,30 @@ finishes normally before yielding; no active branch is interrupted for fairness.
   MoPPS run does not keep this MBPP allocation alive.
 
 The MBPP hold defaults to 15 seconds (`MBPP_HOLD_SECONDS`), with
-`EXPERIMENTS_HOLD_SECONDS` taking precedence when set. Holds poll for newly
-available work every 5 seconds and exit early when peers complete the queue.
-Ordinary failure/busy-lock retry backoff is capped at 60 seconds; the separate
-GPU admission/cooldown policy is unchanged. Zero/invalid poll intervals are
-rejected instead of leaving a hold loop unable to advance. Setting
+`EXPERIMENTS_HOLD_SECONDS` taking precedence within the enforced 1–60 second
+range. This cap also applies to inherited settings after an in-place code reload,
+idle passes, busy locks, and GPU-error retry backoff. Polling is at most 5 seconds;
+dependency-free failed/stale tasks wake a hold as well as READY tasks, and peer
+completion ends it early. The countdown includes time spent checking status.
+Pending siblings do not erase a failed pass's retry state.
+
+A first recorded MBPP GPU fault now waits 60 seconds, then must pass the existing
+NCCL/CUDA admission probe before any training resumes. An explicit
+`EXPERIMENTS_FAULT_TTL_SECONDS` still overrides that cooldown, but expiry is not
+followed by another long exponential delay. A second recorded GPU fault or an
+invalid receipt blocks admission; two blocked passes release the controller
+instead of holding indefinitely. Legacy receipts without `time` expire from
+their file modification time, not from the time they are read. Fault receipts
+are atomically published and never cleared by MBPP `run` or `restart`.
+Zero/invalid poll intervals are rejected. Setting
 `EXPERIMENTS_HELP_SIBLINGS=0` explicitly restricts a node to the first root;
 leave it enabled to serve all requested suites.
 Terminal launches detach as before: Ctrl-C stops the log view, not the workers.
 Use `stop` to stop this node's MBPP controller and its token-bound children.
+After pulling an update, `bash scripts/run_mbpp_experiments.sh restart` stops
+this node's verified MBPP controller and starts it with the new code in one
+command. Valid checkpoints, selections, completed results, and fault receipts
+remain on disk. Ordinary `run` still leaves a live controller alone.
 **A busy lock no longer triggers a node-wide process or GPU sweep.** Other
 experiments are not cleanup targets merely because they use the same account,
 work volume, or GPUs. MBPP recovery/watchdog roots exclude unrelated math and
@@ -96,6 +112,13 @@ Existing untagged legacy workers cannot be safely adopted as dead just because
 they hold a lock; their ownership must be checked rather than deleting locks.
 Completed outputs and cost ledgers are not reset by this ownership fix.
 
+The holding regression audit traced the behavior through `d52ed90` (fault TTL),
+`d59d6fd` (separate cooldown exit), `32813f0` (READY-only wakeup), `888e99d`
+(duplicate-controller guard), and `e0f091d` (ordinary-failure-only hold cap).
+CPU controller tests cover all five pass outcomes (0/1/75/78/79), legacy 600s
+settings, cooldown expiry and invalid receipts, failed/stale wakeups, and
+checkpoint-preserving restart. They do not certify the health of a live GPU node.
+
 `why` now writes one attachment across the requested suites, capped at 16 KiB.
 It includes the newest two saved failures per suite, selection/publication file
 presence, the original CUDA/NCCL warning context, the latest node admission and
@@ -103,6 +126,36 @@ two short MBPP node-console tails. File presence is not a hash-validation result
 and a saved failure is not proof that the current retry is failing. Full rollouts,
 model data, cost ledgers and repeated full-suite exports are excluded. Existing
 experiment logs are only read, never truncated, deleted or repaired.
+
+### Selection retries and saved work
+
+The controller no longer automatically waives/resets a failed `fresh-r-*`
+selection stage. Selection can save rollouts and per-prompt gradients before
+there is any training checkpoint; "no training checkpoint" is not evidence
+that the selection accomplished nothing. Both the saved work and its charges
+stay in place. With allocation remaining, completed shards are skipped, rollout
+collection resumes from complete prompt groups, and hash-bound prompt gradients
+are reused. `fresh-r-candidate` covers both rollout and gradient work; the phase
+label alone does not mean all candidates are being regenerated.
+
+An exhausted allocation is rejected before metering another attempt, reported
+as `BUDGET` rather than an ordinary retryable `FAIL`. It does not get a new budget,
+silently switch selectors, or count as a completed experimental result. Existing
+publication recovery is still allowed. The runtime migration preserves the
+frozen `switch.json`, prior migration receipts, decisions, costs and policies.
+
+`saved` prints active checkpoint/adapter presence, partial selection counts,
+archived attempts under `discarded/`, and budget usage for two failed branches
+per suite. It is at most 4 KiB, opens no model/rollout contents, writes nothing,
+and starts no controller. Presence is not integrity/resume certification.
+Archived selection work whose costs were waived cannot be restored for free;
+its provenance and the corresponding charges require review first. Do not run
+`reset-waived`, remove experiment directories, or increase a frozen allocation
+to make an exhausted branch appear successful.
+
+These fixes prevent repeat reset/retry damage; they cannot certify or restore
+files on an unmounted GPU server. Keep the original root and its `discarded/`
+and `waivers/` directories for recovery inspection.
 
 ## Inputs And Outputs
 

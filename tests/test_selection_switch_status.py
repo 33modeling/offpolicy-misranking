@@ -22,6 +22,16 @@ def prepared(root):
     core.atomic_json(root / "switch.json", {"schema": rule.SCHEMA, "code_hashes": {"old": "unchanged"}})
 
 
+def test_exhausted_budget_is_distinct_from_retryable_failure(tmp_path):
+    prepared(tmp_path)
+    completed_prefix(tmp_path)
+    core.atomic_json(point(tmp_path) / "selection_reduced/failure.json", {
+        "error": "branch allocation exhausted before further GPU work: used=10; saved work preserved"})
+    data = status.snapshot(tmp_path)
+    task = next(t for t in data["tasks"] if t["directory"].endswith("view-25/selection_reduced"))
+    assert task["status"] == "BUDGET" and task["retryable"] is False
+
+
 def point(root, seed=0, step=25):
     return root / f"states/s{seed}-t{step}/points/view-{step}"
 
@@ -81,7 +91,19 @@ def test_stale_heartbeat_is_not_running_or_ready(tmp_path):
     data = status.snapshot(tmp_path, now=now)
     assert data["active_nodes"] == 0 and data["stale_nodes"] == 1
     assert data["tasks"][0]["status"] == "STALE"
+    assert data["tasks"][0]["retryable"]
     assert "old-node" in status.render(data)
+
+
+def test_retryable_failure_never_wakes_for_a_live_peer_or_unmet_dependency(tmp_path):
+    now = time.time()
+    four_nodes(tmp_path, now)
+    # Old failures do not override the current live peer, or a missing prefix.
+    core.atomic_json(point(tmp_path, 4) / 'selection_reduced/failure.json', {'error': 'old'})
+    tasks = status.snapshot(tmp_path, now=now)['tasks']
+    retryable = [task for task in tasks if task['retryable']]
+    assert len(retryable) == 1
+    assert retryable[0]['kind'] == 'prefix' and retryable[0]['seed'] == 4
 
 
 def test_held_out_controls_are_ready_before_the_gate_and_only_gate_arms_wait(tmp_path):
@@ -109,6 +131,7 @@ def test_failed_diagnostic_blocks_dev_but_allows_held_out_fallback(tmp_path, see
     data = status.snapshot(tmp_path)
     branches = [task for task in data["tasks"] if task["kind"] == "branch" and task["seed"] == seed and task["step"] == 25]
     assert all(task["status"] == expected for task in branches)
+    assert not any(task['retryable'] for task in data['tasks'] if task['kind'] == 'diagnostic')
 
 
 def test_running_diagnostic_has_owner_and_blocks_branch_barrier(tmp_path):

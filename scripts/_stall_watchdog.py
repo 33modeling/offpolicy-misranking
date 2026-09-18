@@ -20,6 +20,7 @@ from pathlib import Path
 import signal
 import socket
 import sys
+import tempfile
 import time
 
 DEFAULT_PHASES = ("train", "prefix-train")
@@ -38,6 +39,20 @@ def running_phases(roots, host, phases):
             p = read_json(progress)
             if p.get("state") == "running" and p.get("host") == host and p.get("phase") in phases and p.get("event_id"):
                 yield progress.parent, p
+
+
+def publish(path, record):
+    # Readers must see one complete receipt, never truncated JSON.
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            json.dump(record, handle)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def log_silence(directory, phase, now):
@@ -109,7 +124,7 @@ def scan(roots, faults_dir, *, host=None, stall_seconds=1500., phases=DEFAULT_PH
               f"stopping {len(pids)} worker process(es) of event {p['event_id'][:8]}", flush=True)
         if not dry_run:
             record["process_groups"] = stop(pids) if pids else []
-            (directory / "stalled.json").write_text(json.dumps(record, indent=2) + "\n")
+            publish(directory / "stalled.json", record)
             faults_dir = Path(faults_dir)
             faults_dir.mkdir(parents=True, exist_ok=True)
             fault_path = faults_dir / f"{host}.json"
@@ -122,7 +137,7 @@ def scan(roots, faults_dir, *, host=None, stall_seconds=1500., phases=DEFAULT_PH
             else:
                 record["strikes"] = int(previous.get("strikes", 0) or 0) + 1
                 record["events"] = handled + [p["event_id"]]
-                fault_path.write_text(json.dumps(record, indent=2) + "\n")
+                publish(fault_path, record)
                 print(f"[stall] host {host} recorded under {faults_dir} (strike {record['strikes']}); launchers refuse GPU "
                       "work here until the record expires or an operator restart clears it", flush=True)
         stopped.append(record)

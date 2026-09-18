@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import subprocess
 import tempfile
@@ -13,6 +14,101 @@ from selection_switch_errors import log_tail, utc_time
 
 MAX_BYTES = 16 * 1024
 ROOT_BYTES = 4000
+STORAGE_BYTES = 4096
+
+
+def charged(directory):
+    """Small ledger-only audit; never open a model, rollout, or worker log."""
+    path = directory / 'cost.jsonl'
+    if not path.exists():
+        return 0.
+    try:
+        checked(directory, path)
+        if path.stat().st_size > 2 * 1024 * 1024:
+            return 'unknown (ledger >2 MiB)'
+        events = {}
+        with path.open('rb') as handle:
+            data = handle.read(2 * 1024 * 1024 + 1)
+        if len(data) > 2 * 1024 * 1024:
+            return 'unknown (ledger grew >2 MiB)'
+        for line in data.splitlines():
+            row = json.loads(line)
+            state, key = row['state'], row['event_id']
+            if state not in ('started', 'finished'):
+                raise ValueError('unknown event state')
+            pair = events.setdefault(key, {})
+            if state in pair and pair[state] != row:
+                raise ValueError('conflicting cost events')
+            pair[state] = row
+        total = 0.
+        for pair in events.values():
+            if set(pair) != {'started', 'finished'}:
+                return 'unknown (open/missing cost event)'
+            end = pair['finished']
+            value = end['allocated_gpu_seconds']
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError('invalid charge')
+            if end.get('ledger') != pair['started'].get('ledger'):
+                raise ValueError('ledger mismatch')
+            if end.get('ledger') != 'reporting':
+                total += value
+        return round(total, 3)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return 'unknown (' + str(exc)[:100] + ')'
+
+
+def saved_inventory(directory):
+    """Presence counts only; explicitly not checkpoint/hash certification."""
+    policy = directory / 'policy'
+    checkpoints = sorted(policy.glob('checkpoint-*/adapter_model.safetensors'))
+    latest = max((p.parent.name for p in checkpoints),
+                 key=lambda name: int(name.split('-')[-1]) if name.split('-')[-1].isdigit() else -1,
+                 default='none')
+    scoring = directory / 'fresh-r'
+    return (f"policy={int((policy / 'adapter_model.safetensors').is_file())} "
+            f'checkpoints={len(checkpoints)} latest={latest} '
+            f"rollouts={len(list(scoring.glob('*.jsonl')))} partial={len(list(scoring.glob('*.partial')))} "
+            f"gradients={len(list(scoring.glob('*/prompt-*.json')))} "
+            f"shards={len(list(scoring.glob('*.done.json')))}")
+
+
+def storage_report(roots):
+    sections = [('MBPP SAVED-WORK AUDIT (read-only; <=4 KiB)\n'
+                'Presence only, NOT hash/resume validation. Archived/waived work is NOT free to reuse.\n'
+                'No files moved, deleted, restored or training started.')]
+    for root in roots:
+        lines = [f'\nROOT {root.name}']
+        if not root.is_dir():
+            sections.append('\n'.join(lines + ['ROOT MISSING here; cannot determine remote data loss.']))
+            continue
+        branches = sorted(p for p in root.glob('states/*/points/*/*') if p.is_dir() and p.name in {
+            'selection_reduced', 'random_reduced', 'selection_full', 'random_full', 'gated'})
+        prefixes = sorted(root.glob('prefixes/seed-*/segment-*/fresh_r'))
+        training = branches + prefixes
+        active = [p for p in training if (p / 'policy/adapter_model.safetensors').is_file()
+                  or any((p / 'policy').glob('checkpoint-*/adapter_model.safetensors'))]
+        archived = [(p, a) for p in branches for a in sorted((p / 'discarded').glob('*')) if a.is_dir()]
+        lines.append(f'active training dirs with adapter/checkpoint={len(active)}; '
+                     f'archived attempt dirs={len(archived)}; branches={len(branches)}')
+        for p in active[:2]:
+            lines.append(f'SAVED {p.relative_to(root)}: {saved_inventory(p)}')
+        failed = [p for p in branches if (p / 'failure.json').is_file()]
+        lines.append(f'failed branches={len(failed)}; showing first two')
+        for p in failed[:2]:
+            decision = record(root, p / 'decision.json')
+            cost, cap = charged(p), decision.get('budget_gpu_seconds', '?')
+            remaining = round(cap-cost, 3) if type(cap) in (int, float) and math.isfinite(cap) and type(cost) in (int, float) else 'unknown'
+            lines.append(f'BRANCH {p.relative_to(root)}: GPU-s used={cost} cap={cap} remaining={remaining}')
+            lines.append('  active ' + saved_inventory(p))
+            archives = [a for parent, a in archived if parent == p]
+            lines.append(f"  waivers={len(list((p / 'waivers').glob('*.json')))} archived={len(archives)}")
+            for a in archives[-1:]:
+                lines.append(f'  ARCHIVE {a.relative_to(root)}: {saved_inventory(a)}')
+        if not failed:
+            for _, a in archived[-1:]:
+                lines.append(f'ARCHIVE {a.relative_to(root)}: {saved_inventory(a)}')
+        sections.append(clipped('\n'.join(lines), 1230))
+    return clipped('\n'.join(sections) + '\n', STORAGE_BYTES)
 
 
 def clipped(value, limit):
@@ -161,9 +257,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--root', type=Path, action='append', required=True)
+    parser.add_argument('--storage', action='store_true', help='read-only saved-work audit to stdout, <=4 KiB')
     args = parser.parse_args()
     if len(args.root) > 3:
         parser.error('at most three MBPP suite roots')
+    if args.storage:
+        print(storage_report(args.root), end='')
+        return 0
     text = report(args.work, args.root)
     destination = args.work / 'reports/selection-switch'
     destination.mkdir(parents=True, exist_ok=True)

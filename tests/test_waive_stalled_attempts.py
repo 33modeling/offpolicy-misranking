@@ -280,3 +280,35 @@ def test_waived_scoring_stage_discards_its_outputs_and_their_charges(tmp_path):
     assert {r["event_id"] for r in rows} == {"verify1"} and base.spent(directory) == 4
     receipt = core.read(directory / "waivers/score2.json")
     assert receipt["scoring_reset"] is True and receipt["kept_seconds"] == 0
+
+
+def test_automatic_waiver_preserves_partial_selection_even_after_gpu_fault(tmp_path):
+    core.atomic_json(tmp_path / "switch.json", {"schema": "x"})
+    directory = tmp_path / "states/s3-t100/points/view-100/selection_full"
+    for state in ("started", "finished"):
+        base.journal(directory / "cost.jsonl", event("score1", "fresh-r-candidate", state,
+                     seconds=7095., exit_code=1))
+    core.atomic_json(directory / "fresh-r/candidate/prompt-2.json", {"saved": "gradient"})
+    core.atomic_json(directory / "fresh-r/validation-0.done.json", {"sha256": "saved shard"})
+    (directory / "fresh-r/candidate-0.partial").write_text('saved complete prompt groups\n')
+    (directory / "fresh-r-candidate-3.log").write_text("NCCL WARN Cuda failure 1\n")
+    core.atomic_json(directory / "failure.json", {"error": "GPU phases need commands and a positive finite timeout"})
+    before = {p: p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    for _ in range(8):
+        message = waive.waive(tmp_path, directory, apply=True, automatic=True)
+        assert "automatic scoring reset disabled" in message
+        assert before == {p: p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    assert not (directory / "discarded").exists()
+    assert base.spent(directory) == 28380.
+
+
+def test_no_training_checkpoint_is_not_evidence_that_selection_bought_no_work(tmp_path):
+    directory = tmp_path / "states/s3-t100/points/view-100/selection_full"
+    for state in ("started", "finished"):
+        base.journal(directory / "cost.jsonl", event("score1", "fresh-r-candidate", state,
+                     seconds=7095., exit_code=1))
+    core.atomic_json(directory / "failure.json", {"error": "allocation limit"})
+    _, found, unattributed = waive.stalled_attempts(directory)
+    assert found == [] and len(unattributed) == 1
+    assert "needs an operator" in waive.waive(tmp_path, directory, apply=True)
+    assert base.spent(directory) == 28380.

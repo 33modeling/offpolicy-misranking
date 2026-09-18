@@ -14,7 +14,10 @@ signal killed it, or the branch never reached a checkpoint (the attempt bought
 no training). A branch that has trained to a checkpoint keeps any failed attempt
 without such evidence and is left to an operator, as is a branch already waived
 MAX_ROUNDS times. Live branches and published results are never touched.
-Nothing is deleted: the waived lines and the phase logs remain.
+The controller uses --automatic: failed selection work and its costs are never
+reset automatically. A missing training checkpoint is not evidence of wasted
+selection work. Explicit operator waivers still archive outputs and remove the
+failure marker; the waived lines and phase logs remain.
 """
 from __future__ import annotations
 
@@ -143,7 +146,7 @@ def evidence(directory, fin, *, stalls, progressed):
     if isinstance(recovery, dict) and recovery.get("kind"):
         # Closed from evidence after its owner vanished (a reclaimed or dead node), not by the meter.
         return {"kind": "stale-closed", "recovery": recovery.get("kind"), "silent_seconds": recovery.get("silent_seconds")}
-    if not progressed:
+    if not progressed and not scoring_phase(fin.get("phase")):
         return {"kind": "no-progress", "note": "the branch never reached a checkpoint, so the attempt bought no training"}
     return None
 
@@ -209,13 +212,20 @@ def candidates(root):
     return out
 
 
-def waive(root, directory, *, apply):
+def waive(root, directory, *, apply, automatic=False):
     rel = str(directory.relative_to(root))
     if (directory / "result.json").exists():
         return f"[waive] {rel}: skipped, result already published"
     events, found, unattributed = stalled_attempts(directory)
+    # Selection can save expensive rollouts and per-prompt gradients before the
+    # first *training* checkpoint exists. Never reset that work, or refund its
+    # charge, merely because the controller is making another queue pass.
+    if automatic and any(scoring_phase(e.get("phase")) and e.get("state") == "finished"
+                         and e.get("exit_code") not in (0, None) and not e.get("waiver") for e in events):
+        return (f"[waive] {rel}: preserved selection outputs and all costs; automatic scoring reset disabled; "
+                "unfinished shards may resume only within the remaining allocation; exhausted budgets need review")
     if unattributed:
-        return (f"[waive] {rel}: skipped, failed attempt(s) without fault evidence after training progress: "
+        return (f"[waive] {rel}: skipped, failed attempt(s) without fault evidence after training progress or during selection: "
                 + ", ".join(f"{u['phase']} {u['event_id'][:8]} exit {u['exit_code']}" for u in unattributed)
                 + "; needs an operator")
     if not found:
@@ -229,6 +239,11 @@ def waive(root, directory, *, apply):
             + (f", {f['kept_seconds']:.0f}s kept to its checkpoint" if f["kept_seconds"] else "") + f") [{f['fault']['kind']}]" for f in found)
     try:
         with base.lease(directory / ".task.lock"), base.lease(directory / ".cost.lock"):
+            # The inspection above is read-only and can race a worker. Do not
+            # replace a newer ledger or touch a result published in the meantime.
+            latest = [json.loads(line) for line in (directory / "cost.jsonl").read_text().splitlines() if line.strip()]
+            if latest != events or (directory / "result.json").exists():
+                return f"[waive] {rel}: skipped, branch changed during inspection"
             kept = {f["event_id"]: f["kept_seconds"] for f in found if f["kept_seconds"] > 0}
             drop = {f["event_id"] for f in found if f["kept_seconds"] <= 0}
             # A waived scoring attempt takes the whole scoring stage with it: its shard
@@ -350,6 +365,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--apply", action="store_true", help="write the waivers; without it, only report")
+    parser.add_argument("--automatic", action="store_true",
+                        help="controller mode: never reset or waive failed selection work")
     parser.add_argument("--reset-waived", action="store_true",
                         help="reset branches whose retry resumed a waived attempt's checkpoints (rerun from scratch)")
     args = parser.parse_args()
@@ -372,7 +389,7 @@ def main():
         return 0
     for directory in dirs:
         try:
-            print(waive(root, directory, apply=args.apply), flush=True)
+            print(waive(root, directory, apply=args.apply, automatic=args.automatic), flush=True)
         except Exception as exc:  # noqa: BLE001 - one branch's broken ledger must not block the others
             print(f"[waive] {directory.relative_to(root)}: skipped, {exc}", flush=True)
     if not args.apply:

@@ -24,6 +24,14 @@ from test_mopps_comparison_status import fixture as mopps_fixture  # noqa: E402
 from test_selection_switch_status import four_nodes  # noqa: E402
 
 
+def test_progress_shows_budget_block_instead_of_hiding_it(tmp_path):
+    progress = load("experiments_progress")
+    data = {"tasks": [{"kind": "branch", "status": "BUDGET", "seed": 3, "step": 100,
+                       "arm": "selection_full", "reason": "allocation exhausted; saved work preserved"}]}
+    text = '\n'.join(progress.render_root(tmp_path, data, width=120, kind="switch"))
+    assert 'BUDGET 1' in text and 'BUDGET s3/t100' in text and 'saved work preserved' in text
+
+
 def test_one_screen_shows_both_experiments_and_this_node_once(tmp_path):
     switch_root, mopps_root = tmp_path / "switch", tmp_path / "mopps"
     now = time.time()

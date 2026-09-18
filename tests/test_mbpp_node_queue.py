@@ -69,7 +69,7 @@ def cluster(tmp_path):
     repo = tmp_path / "repo"
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
-    for name in ("run_experiments.sh", "run_mbpp_experiments.sh", "_mbpp_experiments.sh", "_stall_watchdog.py", "_mbpp_node_guard.py"):
+    for name in ("run_experiments.sh", "run_mbpp_experiments.sh", "_mbpp_experiments.sh", "_stall_watchdog.py", "_mbpp_node_guard.py", "node_fault_state.py"):
         shutil.copy(ROOT / "scripts" / name, scripts)
     (repo / "src").mkdir()
     shutil.copy(ROOT / "src/cleanup_run_processes.py", repo / "src")
@@ -82,13 +82,14 @@ def cluster(tmp_path):
         'print("[fake-check] input check", flush=True)\n'
         'sys.exit(1 if os.environ.get("TEST_REQUIRE_INPUTS") and not Path(os.environ["OM_WORK"], "inputs-ready").exists() else 0)\n')
     (scripts / "selection_switch_status.py").write_text(
-        'import json, sys\nfrom pathlib import Path\n'
+        'import json, os, sys\nfrom pathlib import Path\n'
         'root = Path(sys.argv[sys.argv.index("--root")+1])\n'
         'done = len(list(root.glob("tasks/*/result.json"))) == 3\n'
         'print(json.dumps({"development_done": 18 if done else 0, "test_done": 30 if done else 0, '
-        '"tasks": [] if done else [{"status": "READY"}]}))\n')
+        '"tasks": [] if done else [{"status": os.environ.get("TEST_TASK_STATUS", "READY"), '
+        '"retryable": os.environ.get("TEST_TASK_STATUS") in ("FAILED", "STALE")}]}))\n')
     engine = scripts / "fake_engine.py"
-    engine.write_text('''import fcntl, json, os, sys, time
+    engine.write_text('''import fcntl, json, os, subprocess, sys, time
 from pathlib import Path
 root = Path(os.environ["SWITCH_ROOT"])
 node = os.environ["EXPERIMENTS_NODE_ID"]
@@ -99,6 +100,12 @@ def event(kind, **fields):
     with open(os.environ["TEST_EVENTS"], "a") as f:
         f.write(json.dumps(row) + "\\n")
 event("pass")
+if os.environ.get("TEST_FAULT_CHECK"):
+    receipt = Path(os.environ["OM_WORK"], "runs/experiments/node-faults", node + ".json")
+    rc = subprocess.run([sys.executable, "scripts/node_fault_state.py", str(receipt)]).returncode
+    if rc:
+        sys.exit(rc)
+    event("admission")
 if os.environ.get("TEST_FAIL_SUITE") and os.environ["TEST_FAIL_SUITE"] in root.name:
     sys.exit(int(os.environ.get("TEST_FAIL_RC", "78")))
 (root / "switch.json").write_text("{}")
@@ -286,13 +293,92 @@ def test_ordinary_failure_and_busy_lock_backoff_are_capped_at_sixty_seconds(clus
     assert process.poll() is None
 
 
-def test_gpu_cooldown_keeps_its_separate_backoff(cluster):
-    _work, start = cluster
+def test_gpu_cooldown_retry_is_bounded_without_bypassing_the_receipt(cluster):
+    work, start = cluster
+    fault = work / 'runs/experiments/node-faults/node-cooldown.json'
+    fault.parent.mkdir(parents=True)
+    fault.write_text(json.dumps({'time': time.time(), 'strikes': 1}))
     process, log = start('node-cooldown', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC='79',
-                         EXPERIMENTS_HOLD_SECONDS='40')
+                         EXPERIMENTS_HOLD_SECONDS='40', EXPERIMENTS_FAULT_TTL_SECONDS='1800')
     wait_for(lambda: '[holding]' in log.read_text())
-    assert 'next pass in 80s' in log.read_text()
+    assert 'next pass in 60s' in log.read_text()
+    assert 'next pass in 80s' not in log.read_text()
     assert process.poll() is None
+    assert not any(row['kind'] == 'claim' for row in events(work))
+
+
+@pytest.mark.parametrize('code', ['0', '1', '75', '78', '79'])
+def test_inherited_six_hundred_second_hold_cannot_return_on_reload(cluster, code):
+    work, start = cluster
+    fault = work / 'runs/experiments/node-faults/node-inherited.json'
+    fault.parent.mkdir(parents=True)
+    fault.write_text(json.dumps({'time': time.time(), 'strikes': 1}))
+    process, log = start('node-inherited', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC=code,
+                         EXPERIMENTS_HOLD_SECONDS='600', EXPERIMENTS_HOLD_POLL_SECONDS='60',
+                         EXPERIMENTS_FAULT_TTL_SECONDS='1800')
+    wait_for(lambda: '[holding]' in log.read_text())
+    text = log.read_text()
+    assert 'idle=60s poll=5s maximum=60s' in text
+    assert 'next pass in 60s' in text
+    assert 'next pass in 600s' not in text and 'next pass in 1200s' not in text
+    assert process.poll() is None
+
+
+def test_pending_sibling_does_not_erase_failed_primary_retry_backoff(cluster):
+    _work, start = cluster
+    process, log = start('node-pending-failure', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC='1',
+                         EXPERIMENTS_HOLD_SECONDS='20')
+    wait_for(lambda: '[holding]' in log.read_text())
+    assert 'shared fresh prefixes are not ready' in log.read_text()
+    assert 'next pass in 40s' in log.read_text()
+    assert process.poll() is None
+
+
+@pytest.mark.parametrize('status', ['FAILED', 'STALE'])
+def test_retryable_work_wakes_hold_without_needing_ready_status(cluster, status):
+    work, start = cluster
+    root = work / 'runs/selection-switch-mbpp-v1'
+    root.mkdir(parents=True)
+    (root / 'switch.json').write_text('{}')
+    process, log = start('node-retry', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC='1',
+                         TEST_TASK_STATUS=status, EXPERIMENTS_HOLD_SECONDS='40',
+                         EXPERIMENTS_HELP_SIBLINGS='0')
+    wait_for(lambda: '[pass 2]' in log.read_text(), timeout=10)
+    assert 'claimable work in selection-switch-mbpp-v1' in log.read_text()
+    assert process.poll() is None
+
+
+def test_fault_expiry_resumes_through_admission_without_full_backoff_or_data_reset(cluster):
+    work, start = cluster
+    fault = work / 'runs/experiments/node-faults/node-expiry.json'
+    fault.parent.mkdir(parents=True)
+    record = json.dumps({'time': time.time(), 'strikes': 1})
+    fault.write_text(record)
+    process, log = start('node-expiry', TEST_FAULT_CHECK='1', EXPERIMENTS_FAULT_TTL_SECONDS='3',
+                         EXPERIMENTS_HOLD_SECONDS='600')
+    assert process.wait(timeout=25) == 0, log.read_text()
+    assert '[cooldown]' in log.read_text() and '[fault-expired]' in log.read_text()
+    cooldown_holds = [line for line in log.read_text().splitlines()
+                      if line.startswith('[hold] pass') and 'rc=79' in line]
+    assert cooldown_holds and all('next pass in 60s' not in line for line in cooldown_holds)
+    assert fault.read_text() == record
+    rows = events(work)
+    assert len([row for row in rows if row['kind'] == 'finished']) == 9
+    assert next(i for i, row in enumerate(rows) if row['kind'] == 'admission') < next(
+        i for i, row in enumerate(rows) if row['kind'] == 'claim')
+
+
+def test_corrupt_fault_releases_node_instead_of_repeating_cooldown(cluster):
+    work, start = cluster
+    fault = work / 'runs/experiments/node-faults/node-corrupt.json'
+    fault.parent.mkdir(parents=True)
+    fault.write_text('{')
+    process, log = start('node-corrupt', TEST_FAULT_CHECK='1')
+    assert process.wait(timeout=15) == 78, log.read_text()
+    assert 'invalid GPU-fault record' in log.read_text()
+    assert '[cooldown]' not in log.read_text()
+    assert fault.read_text() == '{'
+    assert not any(row['kind'] in ('admission', 'claim') for row in events(work))
 
 
 def test_zero_poll_interval_is_rejected_instead_of_spinning_forever(cluster):
@@ -343,6 +429,22 @@ def test_explicit_stop_reaps_guard_and_same_node_can_resume(cluster):
     assert replacement.wait(timeout=30) == 0, replacement_log.read_text()
     result = json.loads((work / "runs/selection-switch-mbpp-v1/tasks/0/result.json").read_text())
     assert result["resumed"] == {"node": "node-stop"}
+
+
+def test_one_command_restart_preserves_checkpoint_and_fault_receipt(cluster):
+    work, start = cluster
+    fault = work / 'runs/experiments/node-faults/node-restart.json'
+    fault.parent.mkdir(parents=True)
+    record = json.dumps({'strikes': 1, 'time': time.time() - 100})
+    fault.write_text(record)
+    first, first_log = start('node-restart', TEST_BLOCK_NODE='node-restart')
+    wait_for(lambda: (work / 'node-blocked').exists())
+    replacement, log = start('node-restart', mode='restart')
+    assert replacement.wait(timeout=30) == 0, log.read_text()
+    assert first.wait(timeout=10) == 143, first_log.read_text()
+    result = json.loads((work / 'runs/selection-switch-mbpp-v1/tasks/0/result.json').read_text())
+    assert result['resumed'] == {'node': 'node-restart'}
+    assert fault.read_text() == record
 
 
 @pytest.mark.parametrize("legacy", [False, True])

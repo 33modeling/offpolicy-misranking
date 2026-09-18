@@ -12,10 +12,13 @@ share the original node controller's recovery, watchdog, and lease-based queue.
 A node ownership guard rejects duplicate launches and reaps only its own
 children after a crash; a busy lock does not trigger a node-wide cleanup.
 The variants share MBPP prefixes and evaluation questions.
-`stop`, `plan`, `check`, `status`, `progress`, `results`, and `why` are available.
+`restart`, `stop`, `plan`, `check`, `status`, `progress`, `results`, and `why` are available.
 `why` writes one error summary of at most 16 KiB, including the original CUDA/NCCL
-warning context. Idle passes wait 15 seconds and poll every 5 seconds; ordinary
-failure/busy-lock backoff is capped at 60 seconds (GPU cooldown stays separate).
+warning context. Idle passes wait 15 seconds and poll every 5 seconds; all MBPP
+scheduler holds are capped at 60 seconds, including inherited old settings and
+GPU-error retries. A first GPU fault waits 60 seconds before mandatory re-admission;
+repeated faults still block the node. `restart` reloads the controller without
+resetting checkpoints or fault receipts.
 See the [node lifecycle, inputs, and evaluation split](docs/MBPP_SELECTION_RUN.md).
 
 ## Fixed-Checkpoint Gate

@@ -27,7 +27,7 @@ import _node_view as node_view
 ARM_LABELS = {"selection_reduced": "SEL", "random_reduced": "RND",
               "selection_full": "FULL-S", "random_full": "FULL-R", "gated": "GATE"}
 CELLS = {"DONE": "DONE", "RUNNING": "RUN", "READY": "READY", "WAIT": "WAIT",
-         "FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVALID", "SAVING": "SAVING"}
+         "FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVALID", "SAVING": "SAVING", "BUDGET": "BUDGET"}
 
 
 def number(value, default=0.):
@@ -132,6 +132,8 @@ def snapshot(root, *, now=None):
             task.update(status="RUNNING", reason="")
         elif failure or progress.get("state") == "failed":
             task.update(status="FAILED", reason=short_error(failure.get("error", "worker failed; inspect errors")))
+            if kind == "branch" and task["reason"].startswith("branch allocation exhausted before further GPU work:"):
+                task.update(status="BUDGET")
         elif progress.get("state") == "running":
             task.update(status="STALE", reason="heartbeat older than 60s; owner not confirmed alive")
         elif "_invalid" in progress:
@@ -154,6 +156,10 @@ def snapshot(root, *, now=None):
                     notices.append({"path": str(cost_path.relative_to(root)), "error": "missing cost start records"})
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 notices.append({"path": str(cost_path.relative_to(root)), "error": f"cost snapshot unreadable: {exc}"})
+        # Failed/stale work may wake the controller, but dependencies, live
+        # peers and terminal diagnostic failures are not retryable work.
+        task["retryable"] = (kind in {"prefix", "branch"} and not dependency
+                             and task["status"] in {"FAILED", "STALE"})
         tasks.append(task)
         return task
 
@@ -291,7 +297,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
                  else f"WAIT: {18-data['development_done']} development branches unpublished (only the 6 GATE arms wait; held-out controls run now)"
                  if data["development_done"] < 18 else "FIT PENDING: 18/18 development results published"))
     tasks = data["tasks"]
-    alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID"})
+    alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "BUDGET"})
     if alerts:
         lines.append("ALERTS  " + "  ".join(f"{key} {value}" for key, value in alerts.items()) + "  (all phases)")
     observed = [task for task in tasks if task["status"] in {"RUNNING", "STALE"}]
@@ -335,7 +341,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
             rows.append([f"s{seed}/t{step}", "DEV" if seed in rule.DEV_SEEDS else "TEST",
                          *[CELLS[items[arm]["status"]] if arm in items else "-" for arm in ARM_LABELS], ", ".join(reasons)])
     lines += table(["STATE", "ROLE", *ARM_LABELS.values(), "WAIT FOR"], rows, [8, 5, 7, 7, 7, 7, 7, max(15, width-70)])
-    attention = [task for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "SAVING"}]
+    attention = [task for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "SAVING", "BUDGET"}]
     if attention or data["cost_pending"] or data["notices"]:
         lines += ["", "ATTENTION"]
         for task in attention[:8]:

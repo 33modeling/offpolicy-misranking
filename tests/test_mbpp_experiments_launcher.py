@@ -162,7 +162,7 @@ def launcher(tmp_path):
     return run, env
 
 
-@pytest.mark.parametrize("mode", ["run", "stop", "progress"])
+@pytest.mark.parametrize("mode", ["run", "restart", "stop", "progress"])
 def test_lifecycle_is_delegated_to_original_node_controller_without_preflight(launcher, mode):
     run, env = launcher
     result = run(mode, EXPERIMENTS_KEEPALIVE="1", EXPERIMENTS_WATCHDOG="1", EXPERIMENTS_AUTO_PULL="1")
@@ -198,6 +198,16 @@ def test_why_writes_one_small_report_without_training_or_full_exports(launcher):
     assert result.stdout.count('[saved]') == 1
     assert all(name in reports[0].read_text() for name in
                ('selection-switch-mbpp-v1', 'selection-switch-mbpp-quality-v1', 'selection-switch-mbpp-difficulty-v1'))
+
+
+def test_saved_command_is_read_only_small_and_does_not_start_controller(launcher):
+    run, env = launcher
+    result = run('saved')
+    assert result.returncode == 0, result.stderr
+    assert 'MBPP SAVED-WORK AUDIT' in result.stdout
+    assert len(result.stdout.encode()) <= 4096
+    assert not Path(env['CALLS']).exists() and not Path(env['CHECK_LOG']).exists()
+    assert not (Path(env['OM_WORK']) / 'reports').exists()
 
 
 def test_default_hold_is_short_and_polls_without_extra_environment_variables(launcher):

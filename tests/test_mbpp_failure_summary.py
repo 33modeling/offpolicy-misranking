@@ -23,6 +23,36 @@ def failure(root, arm='selection_full'):
     return directory
 
 
+def test_saved_work_audit_is_small_read_only_and_shows_archived_progress(tmp_path):
+    from test_waive_stalled_attempts import event
+    import selection_gate_gpu as base
+    roots = [tmp_path / f'root-{i}' for i in range(3)]
+    for root in roots:
+        directory = failure(root)
+        core.atomic_json(directory / 'decision.json', {'budget_gpu_seconds': 28380.})
+        for state in ('started', 'finished'):
+            base.journal(directory / 'cost.jsonl', event('score1', 'fresh-r-candidate', state,
+                         seconds=7095., exit_code=1))
+        core.atomic_json(directory / 'policy/checkpoint-45/adapter_model.safetensors', {'test': 'not read'})
+        archive = directory / 'discarded/old-attempt/fresh-r'
+        core.atomic_json(archive / 'candidate/prompt-1.json', {'test': 'not read'})
+        (archive / 'candidate-0.partial').write_text('not read')
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    result = summary.storage_report(roots)
+    assert len(result.encode()) <= 4096
+    assert result.count('ROOT root-') == 3
+    assert 'remaining=0.0' in result and 'latest=checkpoint-45' in result
+    assert 'discarded/old-attempt' in result and 'gradients=1' in result and 'partial=1' in result
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+
+
+def test_saved_work_audit_does_not_mistake_missing_storage_or_open_cost_for_zero(tmp_path):
+    assert 'ROOT MISSING' in summary.storage_report([tmp_path / 'absent'])
+    directory = failure(tmp_path)
+    (directory / 'cost.jsonl').write_text('{"state":"started", "event_id":"open"}\n')
+    assert 'unknown (open/missing cost event)' == summary.charged(directory)
+
+
 def test_nccl_warning_survives_shutdown_noise_and_run_is_not_modified(tmp_path):
     failure(tmp_path)
     before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}

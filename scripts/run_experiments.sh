@@ -19,8 +19,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|stop|status|progress|why|evidence) ;;
-  *) echo 'usage: bash scripts/run_experiments.sh [run|stop|status|progress|why|evidence]'; exit 2 ;;
+case "$MODE" in run|restart|stop|status|progress|why|evidence) ;;
+  *) echo 'usage: bash scripts/run_experiments.sh [run|restart|stop|status|progress|why|evidence]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -290,9 +290,9 @@ recover_root() {
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/recover_selection_switch_cost.py --root "$1" --stale --min-age "$STALE_CLOSE" --brief 2>&1 \
     | sed 's/^\[recovery blocked\]/[recover-cost] blocked:/' || true
   # A branch whose attempt hung after a GPU fault until its allocation limit is
-  # infrastructure loss, not selector cost: return the allocation, discard the
-  # attempt, and let the queue rerun it (waivers/ keeps the receipt).
-  CUDA_VISIBLE_DEVICES="" "$PY" scripts/waive_stalled_attempts.py --root "$1" --apply 2>&1 \
+  # infrastructure loss. Selection failures are excluded: saved rollout/shard
+  # work must not be automatically moved away or reused with refunded costs.
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/waive_stalled_attempts.py --root "$1" --apply --automatic 2>&1 \
     | grep -v 'no failed branch to waive$' | sed 's/^/[auto-waive] /' || true
   # Curve rows metered in a sealed branch ledger by the pre-curve-ledger runtime block
   # the curve retry ("cost ledger changed"); move them to curve/cost.jsonl.
@@ -363,7 +363,7 @@ siblings_complete() {
   return 0
 }
 # Any branch claimable right now in a root this node serves (own root first, then the
-# siblings it helps): READY in the status snapshot, which reads receipts only.
+# siblings it helps): READY or a dependency-free retryable failure/stale receipt.
 claimable_work() {
   local root
   local roots=("$SWITCH_ROOT") siblings=()
@@ -378,7 +378,7 @@ claimable_work() {
     fi
     [ -f "$root/switch.json" ] || continue
     if CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$root" --json 2>/dev/null \
-        | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if any(t.get("status")=="READY" for t in d.get("tasks",[])) else 1)'; then
+        | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if any(t.get("status")=="READY" or t.get("retryable") is True for t in d.get("tasks",[])) else 1)'; then
       basename "$root"
       return 0
     fi
@@ -452,6 +452,15 @@ if [ "$MODE" = stop ]; then
   stop_node
   exit 0
 fi
+if [ "$MODE" = restart ]; then
+  stop_node
+  if launcher_pid_alive; then
+    echo '[abort] previous controller has not stopped; refusing a second controller'
+    exit 75
+  fi
+  MODE=run
+  unset EXPERIMENTS_DETACHED
+fi
 # --- run ---
 # Legacy modes restart a node: a launcher already running here is stopped first
 # (its ranks reaped, receipts closed), the shared checkout is pulled, then the
@@ -466,14 +475,14 @@ if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
     echo "[restart] host=$HOST: a node launcher is already running (pid $NODE_LAUNCHER_PID); stopping it first"
     stop_node
   fi
-  # An operator restart is a deliberate second chance for this node: clear the
-  # watchdog's GPU-fault record and let the admission probe decide.
+  # Keep the legacy reset for non-MBPP launchers. MBPP restart is a code reload,
+  # not authority to erase repeated-fault protection or its diagnostic evidence.
   fault_record="$WORK/runs/experiments/node-faults/$EXPERIMENTS_NODE_ID.json"
-  if [ -f "$fault_record" ]; then
+  if [ -z "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ -f "$fault_record" ]; then
     rm -f "$fault_record" && echo "[fault-reset] host=$HOST: cleared the GPU-fault record ($fault_record); the admission probe decides again"
   fi
   if [ "${EXPERIMENTS_PULL:-1}" != 0 ]; then
-    if git pull -q --ff-only 2>/dev/null; then
+    if timeout -k 5 20 env GIT_TERMINAL_PROMPT=0 git pull -q --ff-only 2>/dev/null; then
       echo "[pull] checkout at $(git rev-parse --short HEAD)"
     else
       echo "[pull] skipped (offline or diverged); checkout at $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -517,9 +526,17 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 HOLD=${EXPERIMENTS_HOLD_SECONDS:-300}
 POLL=${EXPERIMENTS_HOLD_POLL_SECONDS:-60}
+[[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] EXPERIMENTS_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
 [[ "$POLL" =~ ^[0-9]+$ ]] && [ "$POLL" -gt 0 ] || {
   echo '[abort] EXPERIMENTS_HOLD_POLL_SECONDS must be a positive whole number'; exit 2;
 }
+if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+  # An in-place reload does not re-enter the wrapper: inherited legacy 600s
+  # settings must be bounded here too, regardless of the inner exit code.
+  HOLD=$(( HOLD < 1 ? 1 : HOLD > 60 ? 60 : HOLD ))
+  POLL=$(( POLL > 5 ? 5 : POLL ))
+  echo "[hold-policy] MBPP idle=${HOLD}s poll=${POLL}s maximum=60s; GPU faults require re-admission"
+fi
 # Keep the allocated GPUs visibly busy for this launcher's whole life: the
 # cluster reclaims idle allocations, and an inner pass may spend minutes in
 # admission or find nothing to claim. 727 MiB per GPU, well under the inner
@@ -542,7 +559,6 @@ if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
   WATCHDOG_PID=$!
   echo "[watchdog] pid=$WATCHDOG_PID stops a phase whose logs are silent for ${EXPERIMENTS_STALL_SECONDS:-1500}s (log: $LOG_DIR/stall.$HOST.log)"
 fi
-[[ "$HOLD" =~ ^[0-9]+$ ]] || { echo '[abort] EXPERIMENTS_HOLD_SECONDS must be a whole number of seconds'; exit 2; }
 pass=0
 wait_seconds=$HOLD
 blocked_passes=0
@@ -553,7 +569,7 @@ while :; do
   # it moved, restart this launcher in place (same pid, same pid file) so fixes
   # reach every node without anyone typing a command. EXPERIMENTS_AUTO_PULL=0 disables it.
   if [ "${EXPERIMENTS_AUTO_PULL:-1}" != 0 ]; then
-    git pull -q --ff-only >/dev/null 2>&1 || true
+    timeout -k 5 20 env GIT_TERMINAL_PROMPT=0 git pull -q --ff-only >/dev/null 2>&1 || true
     after=$(git rev-parse HEAD 2>/dev/null || true)
     # Compare with the revision this launcher loaded, not with the checkout before
     # its own pull: a peer node may already have moved the shared checkout.
@@ -595,7 +611,13 @@ while :; do
       helped="$helped | $name rc=$rc_sib $(rc_reason "$rc_sib")"
       if [ "$rc_sib" -eq 75 ]; then rc_switch=$rc_sib; need_clean=1; break; fi
       if [ "$rc_sib" -eq 78 ] || [ "$rc_sib" -eq 79 ]; then rc_switch=$rc_sib; break; fi
-      [ "$rc_sib" -eq 0 ] && rc_switch=0
+      # A pending sibling returns 0 without doing work. Do not erase the
+      # MBPP failure that needs retrying or reset its retry backoff.
+      if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+        if [ "$rc_sib" -ne 0 ]; then rc_switch=$rc_sib; fi
+      elif [ "$rc_sib" -eq 0 ]; then
+        rc_switch=0
+      fi
     done < <(sibling_roots)
   fi
   rc_mopps=0 why_mopps=skipped
@@ -626,15 +648,25 @@ while :; do
     wait_seconds=$HOLD
   else
     max_wait=3600
-    # Ordinary MBPP failures/leases must not park a healthy allocation for an
-    # hour. Preserve the admission/cooldown backoff for actual GPU faults.
-    if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ]; then
+    # Bound the scheduler retry, NOT permission to use a faulty GPU: receipt
+    # TTL, repeat-fault refusal and the admission probe remain mandatory.
+    if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
       max_wait=60
     fi
     wait_seconds=$(( wait_seconds*2 > max_wait ? max_wait : wait_seconds*2 ))
   fi
+  if [ "$rc_switch" -eq 79 ] || [ "$rc_mopps" -eq 79 ]; then
+    fault_wait=$(CUDA_VISIBLE_DEVICES="" "$PY" scripts/node_fault_state.py \
+      "$WORK/runs/experiments/node-faults/$EXPERIMENTS_NODE_ID.json" --remaining) || fault_wait=$wait_seconds
+    if [[ "$fault_wait" =~ ^[0-9]+$ ]]; then
+      # Do not overshoot expiry by another exponential backoff interval.
+      fault_wait=$(( fault_wait < 1 ? 1 : fault_wait ))
+      wait_seconds=$(( wait_seconds < fault_wait ? wait_seconds : fault_wait ))
+    fi
+  fi
   echo "[hold] pass $pass ended ($reason); keeping this node's GPUs; next pass in ${wait_seconds}s (stop: bash scripts/run_experiments.sh stop)"
   remaining=$wait_seconds
+  hold_deadline=$((SECONDS+wait_seconds))
   poll=$POLL
   since_poll=0
   while [ "$remaining" -gt 0 ]; do
@@ -642,7 +674,8 @@ while :; do
     [ "$step" -gt "$poll" ] && step=$poll
     printf '[holding] node retained (%s); next pass in %ss\n' "$reason" "$remaining"
     sleep "$step" & wait $! || true
-    remaining=$((remaining-step))
+    # Status I/O counts toward the deadline, not as extra unreported delay.
+    remaining=$((hold_deadline-SECONDS))
     since_poll=$((since_poll+step))
     # A hold is not a timer: the moment a branch becomes claimable (a waiver, a fitted
     # gate, a stale event closed elsewhere), the node goes back to work. A cooling-down
@@ -658,5 +691,6 @@ while :; do
         break
       fi
     fi
+    remaining=$((hold_deadline-SECONDS))
   done
 done

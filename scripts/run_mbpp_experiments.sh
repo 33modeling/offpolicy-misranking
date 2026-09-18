@@ -15,6 +15,7 @@
 #
 #   bash scripts/run_mbpp_experiments.sh            this node joins the MBPP queue
 #   bash scripts/run_mbpp_experiments.sh stop       stop this node's launcher and workers
+#   bash scripts/run_mbpp_experiments.sh restart    load fixes; retain checkpoints and fault receipts
 #   bash scripts/run_mbpp_experiments.sh progress   per-root progress, running branches, node names
 #   bash scripts/run_mbpp_experiments.sh results    one results file per suite
 #
@@ -25,10 +26,10 @@ cd "$(dirname "$0")/.."
 MODE=${1:-run}
 SUITE=${2:-all}
 usage() {
-  echo 'usage: bash scripts/run_mbpp_experiments.sh [run|stop|plan|check|status|progress|results|why] [all|fresh|quality|difficulty]'
+  echo 'usage: bash scripts/run_mbpp_experiments.sh [run|restart|stop|plan|check|status|progress|results|saved|why] [all|fresh|quality|difficulty]'
 }
 [ "$#" -le 2 ] || { usage; exit 2; }
-case "$MODE" in run|stop|plan|check|status|progress|results|why) ;; -h|--help) usage; exit 0 ;; *) usage; exit 2 ;; esac
+case "$MODE" in run|restart|stop|plan|check|status|progress|results|saved|why) ;; -h|--help) usage; exit 0 ;; *) usage; exit 2 ;; esac
 case "$SUITE" in all|fresh|quality|difficulty) ;; *) usage; exit 2 ;; esac
 
 export OM_WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
@@ -41,11 +42,12 @@ export EXPERIMENTS_MBPP_SUITE="$SUITE"
 source scripts/_mbpp_experiments.sh
 mbpp_queue_init
 
-if [ "$MODE" = why ]; then
+if [ "$MODE" = why ] || [ "$MODE" = saved ]; then
   PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
   [ -x "$PY" ] || PY=python3
   ROOT_ARGS=()
   for root in "${MBPP_ROOTS[@]}"; do ROOT_ARGS+=(--root "$root"); done
+  [ "$MODE" != saved ] || ROOT_ARGS+=(--storage)
   exec env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
     "$PY" scripts/mbpp_failure_summary.py --work "$OM_WORK" "${ROOT_ARGS[@]}"
 fi

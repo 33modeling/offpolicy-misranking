@@ -305,42 +305,10 @@ exec > >(tee -p -a "$OUT_ROOT/logs/launcher.$HOST.log") 2>&1
 printf '[launcher-start] host=%s pid=%s mode=%s commit=%s utc=%s\n' "$HOST" "$$" "$MODE" "${SWITCH_RUNTIME_COMMIT:-unknown}" "$(date -u +%FT%TZ)"
 trap 'rc=$?; printf "[launcher-exit] pid=%s mode=%s rc=%s utc=%s\n" "$$" "$MODE" "$rc" "$(date -u +%FT%TZ)"' EXIT
 echo "[logs] $OUT_ROOT/logs/launcher.$HOST.log"
-# A host recorded with a GPU fault by the stall watchdog does no GPU work again in this job.
-# A host the stall watchdog recorded with a GPU fault does no GPU work while the
-# record is fresh (EXPERIMENTS_FAULT_TTL_SECONDS, default 1800) or after a second
-# strike; an operator restart (run_experiments.sh run) clears the record and the
-# admission probe decides again. A transient hang thus costs a node half an hour,
-# not the rest of the job.
+# First fault: wait 60s for MBPP (1800s otherwise), then the mandatory admission
+# probe decides. Repeated faults and corrupt receipts fail closed.
 NODE_FAULT="$WORK/runs/experiments/node-faults/$EXPERIMENTS_NODE_ID.json"
-if [ -f "$NODE_FAULT" ]; then
-  fault_state=$(CUDA_VISIBLE_DEVICES="" "$PY" - "$NODE_FAULT" "${EXPERIMENTS_FAULT_TTL_SECONDS:-1800}" <<'PYEOF'
-import json, sys, time
-path, ttl = sys.argv[1], float(sys.argv[2])
-try:
-    record = json.load(open(path))
-except Exception:
-    record = {}
-strikes = int(record.get("strikes", 1) or 1)
-age = time.time() - float(record.get("time") or time.time())
-if strikes >= 2:
-    print(f"blocked strike {strikes}")
-elif age < ttl:
-    print(f"blocked {age:.0f}s ago (< {ttl:.0f}s)")
-else:
-    print(f"expired {age:.0f}s ago")
-PYEOF
-)
-  case "$fault_state" in
-    expired*)
-      echo "[fault-expired] host=$EXPERIMENTS_NODE_ID: GPU fault recorded $fault_state; re-admitting through the probe ($NODE_FAULT kept)" ;;
-    "blocked strike"*)
-      echo "[blocked] host=$EXPERIMENTS_NODE_ID was recorded with a GPU fault twice ($NODE_FAULT, $fault_state); refusing GPU work on this node (use another one, or restart it with run_experiments.sh run)"
-      exit 78 ;;
-    *)
-      echo "[cooldown] host=$EXPERIMENTS_NODE_ID: GPU fault recorded $fault_state; no GPU work until the record expires ($NODE_FAULT)"
-      exit 79 ;;
-  esac
-fi
+CUDA_VISIBLE_DEVICES="" "$PY" scripts/node_fault_state.py "$NODE_FAULT"
 export OM_ONLINE=0
 source scripts/setup_env.sh >/dev/null 2>&1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN

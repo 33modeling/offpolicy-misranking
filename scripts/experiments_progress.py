@@ -64,7 +64,7 @@ def render_root(root, data, *, width, kind):
     counts = Counter(t["status"] for t in branches)
     running = [t for t in tasks if t["status"] == "RUNNING"]
     parts = [f"DONE {counts.get('DONE', 0)}/{len(branches)}", f"RUN {len(running)}"]
-    for key in ("READY", "WAIT", "FAILED", "STALE", "INVALID"):
+    for key in ("READY", "WAIT", "FAILED", "STALE", "INVALID", "BUDGET"):
         if counts.get(key):
             parts.append(f"{'FAIL' if key == 'FAILED' else key} {counts[key]}")
     if kind == "switch":
@@ -75,9 +75,10 @@ def render_root(root, data, *, width, kind):
     for t in sorted(running, key=lambda t: (t["seed"], t["step"], t["arm"])):
         lines.append(clip(f"  RUN  s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('phase') or '-':<9} {updates(t):>5} "
                           f"{switch_status.duration(t.get('seconds')):>6} {clip(t.get('host') or '?', host_width)}", width))
-    for t in sorted((t for t in tasks if t["status"] in {"FAILED", "STALE", "INVALID"}), key=lambda t: (t["status"], t["seed"], t["step"])):
-        tag = {"FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVAL"}[t["status"]]
-        lines.append(clip(f"  {tag:<5}s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('reason') or ''}", width))
+    for t in sorted((t for t in tasks if t["status"] in {"FAILED", "STALE", "INVALID", "BUDGET"}), key=lambda t: (t["status"], t["seed"], t["step"])):
+        tag = {"FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVAL", "BUDGET": "BUDGET"}[t["status"]]
+        prefix = (tag + " ").ljust(5)
+        lines.append(clip(f"  {prefix}s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('reason') or ''}", width))
     return lines
 
 
@@ -85,7 +86,7 @@ def render(work, *, width=80, now=None):
     now = time.time() if now is None else now
     stamp = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     switch, mopps = prepared_roots(work)
-    lines = [f"PROGRESS  {stamp}", "RUN rows: updates so far (u), elapsed, node. FAIL/STALE rows: reason."]
+    lines = [f"PROGRESS  {stamp}", clip("RUN: updates (u), elapsed, node. BUDGET: allocation exhausted; needs review.", width)]
     hosts = set()
     for root in switch:
         try:

@@ -72,7 +72,7 @@ def wait_for(path, worker):
 def test_shared_queue_entrypoint_is_pinned_and_yields_live_peer_waits(tmp_path):
     repo = repository(tmp_path)
     for name in ("run_selection_switch.sh", "selection_switch_runtime.py", "_selection_worker.sh",
-                 "queue_selection_switch_gpu.py"):
+                 "queue_selection_switch_gpu.py", "node_fault_state.py"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     (repo / "scripts/setup_env.sh").write_text('export DATASETS_DIR="$OM_WORK/data"\n')
     (repo / "scripts/_e5_node.sh").write_text('e5_acquire_node() { return 0; }\n')
@@ -219,7 +219,7 @@ def test_snapshot_cache_cannot_be_inside_live_repository(tmp_path):
 @pytest.mark.parametrize("hold_seconds", [0, 1])
 def test_real_shell_entrypoint_pins_before_setup_and_keeps_runtime_and_storage(tmp_path, kind, mode, preflight_code, hold_seconds):
     repo = repository(tmp_path)
-    for name in (*runtime.LAUNCHERS.values(), "selection_switch_runtime.py", "selection_switch_errors.py", "_selection_worker.sh"):
+    for name in (*runtime.LAUNCHERS.values(), "selection_switch_runtime.py", "selection_switch_errors.py", "_selection_worker.sh", "node_fault_state.py"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     (repo / "scripts/setup_env.sh").write_text('export DATASETS_DIR="$OM_WORK/data"\nexport PYTHONPATH="$OM_REPO/src:$PYTHONPATH"\n')
     (repo / "scripts/_e5_node.sh").write_text('e5_acquire_node() { return 0; }\n')

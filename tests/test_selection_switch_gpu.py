@@ -59,6 +59,61 @@ def publication_predecessor():
     return hashes
 
 
+def allocation_guard_predecessor():
+    hashes = switch.code_hashes()
+    hashes["src/selection_switch_gpu.py"] = "ebe252fd7c2fcb3171d79123b59e0623d3dea9a591a8989305c73ee9c2bf29ed"
+    assert core.fingerprint(hashes) == switch.PRE_ALLOCATION_GUARD_CODE
+    return hashes
+
+
+@pytest.mark.parametrize("migrated", [False, True])
+def test_allocation_guard_upgrade_preserves_existing_publication_receipts(tmp_path, monkeypatch, migrated):
+    previous = allocation_guard_predecessor()
+    frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor() if migrated else previous}
+    core.atomic_json(tmp_path / "switch.json", frozen)
+    if migrated:
+        with monkeypatch.context() as patch:
+            patch.setattr(switch, "code_hashes", lambda: previous)
+            switch.manifest(tmp_path)
+        assert core.read(tmp_path / "publication-runtime.json")["runtime_code_hashes"] == previous
+        assert not (tmp_path / "allocation-guard-runtime.json").exists()
+    (tmp_path / "cost.jsonl").write_text('unchanged accounting\n')
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    for _ in range(2):
+        assert switch.manifest(tmp_path) == frozen
+        assert {p: p.read_bytes() for p in before} == before
+    receipt = core.read(tmp_path / "allocation-guard-runtime.json")
+    assert receipt["runtime_code_hashes"] == switch.code_hashes()
+    receipt["cost_policy"] = "reset budgets"
+    core.atomic_json(tmp_path / "allocation-guard-runtime.json", receipt)
+    with pytest.raises(ValueError, match="frozen contract changed"):
+        switch.manifest(tmp_path)
+
+
+@pytest.mark.parametrize("spent", [1000., 1001.])
+def test_exhausted_allocation_is_rejected_without_meter_or_artifact_mutation(tmp_path, monkeypatch, spent):
+    out, c = toy_source(tmp_path)
+    c["scope"]["selector"] = "fresh_r"
+    parent = Path(c["source_run"]) / "policy_step_100"
+    parent.mkdir(parents=True)
+    (parent / "adapter_model.safetensors").write_text("adapter")
+    directory = out / "selection_full"
+    private = directory / "fresh-r"
+    core.atomic_json(private / "validation/prompt-0.json", {"saved": True})
+    (private / "validation-0.partial").write_text('saved rollout bytes\n')
+    before = {p: p.read_bytes() for p in private.rglob('*') if p.is_file()}
+    monkeypatch.setattr(base, "spent", lambda _: spent)
+    def never_meter(*a, **kw):
+        pytest.fail("exhausted selection must not meter another attempt")
+    monkeypatch.setattr(base, "meter", never_meter)
+    for _ in range(2):
+        with pytest.raises(ValueError, match="branch allocation exhausted before further GPU work"):
+            switch.select_once(out, c, {"mode": "test"}, "selection_full",
+                               {"budget_gpu_seconds": 1000.}, {}, list('0123'))
+        assert {p: p.read_bytes() for p in before} == before
+        assert not (directory / "cost.jsonl").exists()
+
+
 @pytest.mark.parametrize("migrated", [False, True])
 def test_publication_upgrade_preserves_previous_run_and_receipts(tmp_path, monkeypatch, migrated):
     previous = publication_predecessor()
@@ -528,12 +583,13 @@ def test_matched_accounting_meters_selection_on_the_scoring_ledger(tmp_path, mon
     parent = Path(c["source_run"]) / "policy_step_100"
     parent.mkdir(parents=True)
     (parent / "adapter_model.safetensors").write_text("adapter")
-    ledgers = []
+    ledgers, spawned = [], []
     def meter(directory, name, gpu_type, **kwargs):
         ledgers.append((name, kwargs.get("ledger")))
         if "commands" in kwargs:
             for command, _ in kwargs["commands"]:
                 stage, shard = command[command.index("--stage")+1], command[command.index("--shard")+1]
+                spawned.append((stage, shard))
                 core.atomic_json(out / "selection_full/fresh-r" / f"{stage}-{shard}.done.json", {})
         elif "action" in kwargs:
             kwargs["action"]()
@@ -541,12 +597,18 @@ def test_matched_accounting_meters_selection_on_the_scoring_ledger(tmp_path, mon
     monkeypatch.setattr(switch.scoring, "merge", lambda private, stage: None)
     monkeypatch.setattr(base, "spent", lambda directory: 0.)
     private = out / "selection_full/fresh-r"
+    for shard in (0, 2):
+        core.atomic_json(private / f"candidate-{shard}.done.json", {})
     core.atomic_json(private / "selected.json", {"indices": [1, 2, 3, 4]})
     core.atomic_json(private / "selected.sha256.json", {"sha256": base.digest(private / "selected.json")})
     choice = {"profile_sha256": None, "budget_gpu_seconds": 1000.}
     assert switch.select_once(out, c, {"mode": "test"}, "selection_full", choice, {}, ["0", "1", "2", "3"]) == [1, 2, 3, 4]
     assert ledgers and all(ledger == "reporting" for _, ledger in ledgers)
     assert {name for name, _ in ledgers} == {"fresh-r-validation", "fresh-r-merge-validation", "fresh-r-candidate", "fresh-r-merge-candidate"}
+    assert [shard for stage, shard in spawned if stage == "candidate"] == ["1", "3"]
+    spawned.clear()
+    switch.select_once(out, c, {"mode": "test"}, "selection_full", choice, {}, ["0", "1", "2", "3"])
+    assert spawned == [], "completed scoring shards must not launch again"
     with pytest.raises(ValueError, match="unregistered accounting"):
         switch.accounting_of({"accounting": "free"})
 
@@ -1573,6 +1635,8 @@ def simulated_queue(tmp_path, monkeypatch):
     monkeypatch.setattr(switch, "fit_once", fit)
     def freeze(out, *a):
         core.atomic_json(out / "decisions-frozen.json", {})
+        for arm in rule.TEST_ARMS:
+            core.atomic_json(out / arm / "decision.json", {"budget_gpu_seconds": 1000.})
     monkeypatch.setattr(switch, "freeze_decisions", freeze)
     monkeypatch.setattr(switch, "bind_gate", lambda root, child, p=None: {} if (root / "model.json").exists() else None)
     def freeze_gate(out, *a):
@@ -1610,6 +1674,28 @@ def test_all_48_tasks_run_and_only_the_gated_arms_wait_for_the_gate(tmp_path, mo
     before = len(calls)
     assert switch.work(tmp_path, idle_timeout=0) == 0
     assert len(calls) == before
+
+
+def test_queue_exhausted_selection_never_reenters_arm_or_charges_retry(tmp_path, monkeypatch):
+    from test_waive_stalled_attempts import event
+    calls, _ = simulated_queue(tmp_path, monkeypatch)
+    ledgers = {}
+    for seed in rule.TEST_SEEDS:
+        for step in rule.STEPS:
+            directory = switch.child_root(tmp_path, seed, step) / f"points/{seed}-{step}/selection_full"
+            for state in ("started", "finished"):
+                base.journal(directory / 'cost.jsonl', event('score1', 'fresh-r-candidate', state,
+                             seconds=250., exit_code=1))
+            core.atomic_json(directory / 'fresh-r/candidate/prompt-0.json', {'saved': True})
+            ledgers[directory / 'cost.jsonl'] = (directory / 'cost.jsonl').read_bytes()
+    for _ in range(2):
+        assert switch.work(tmp_path, idle_timeout=0) == 1
+        assert not any(arm == 'selection_full' for _, _, arm in calls)
+        assert any(arm == 'random_full' for _, _, arm in calls)
+        for path, before in ledgers.items():
+            assert path.read_bytes() == before
+            assert core.read(path.parent / 'fresh-r/candidate/prompt-0.json') == {'saved': True}
+            assert 'allocation exhausted' in core.read(path.parent / 'failure.json')['error']
 
 
 def test_pilot_filter_claims_only_the_held_out_controls_and_leaves_the_rest_for_later(tmp_path, monkeypatch):
@@ -1652,7 +1738,7 @@ s.publish_state = publish
 s.protocol = lambda child: s.core.read(child / 'net_protocol.json')
 s.base.entries = lambda child: iter((child / 'points').iterdir())
 def decide(out, suite, protocol, arm, env):
-    s.base.bind(out / arm / 'decision.json', {'action': 'random'})
+    s.base.bind(out / arm / 'decision.json', {'action': 'random', 'budget_gpu_seconds': 1000.})
 s.runtime.decision = decide
 def run(out, suite, protocol, arm, devices, env):
     directory = out / arm
@@ -1691,7 +1777,7 @@ def ready_queue(root, *, published=False):
             core.atomic_json(child / "suite.json", {})
             core.atomic_json(child / "net_protocol.json", p)
             for arm in rule.DEV_ARMS:
-                core.atomic_json(out / arm / "decision.json", {"action": "random"})
+                core.atomic_json(out / arm / "decision.json", {"action": "random", "budget_gpu_seconds": 1000.})
             core.atomic_json(out / "decisions-frozen.json", {"protocol_sha256": core.fingerprint(p),
                 "decisions": {arm: base.digest(out / arm / "decision.json") for arm in rule.DEV_ARMS}})
 
@@ -1844,7 +1930,11 @@ def test_failed_gate_fit_and_bad_state_do_not_stop_the_node(tmp_path, monkeypatc
     monkeypatch.setattr(switch, "protocol", lambda child: core.read(child / "net_protocol.json"))
     monkeypatch.setattr(base, "entries", lambda child: iter((child / "points").iterdir()))
     monkeypatch.setattr(switch, "bind_gate", lambda root, child, p=None: None)
-    monkeypatch.setattr(switch, "freeze_decisions", lambda out, *a: core.atomic_json(out / "decisions-frozen.json", {}))
+    def freeze(out, *a):
+        core.atomic_json(out / "decisions-frozen.json", {})
+        for arm in rule.TEST_ARMS:
+            core.atomic_json(out / arm / "decision.json", {"budget_gpu_seconds": 1000.})
+    monkeypatch.setattr(switch, "freeze_decisions", freeze)
     calls = []
     def run(out, suite, protocol, arm, devices, env):
         c = core.read(out / "contract.json")
