@@ -157,6 +157,21 @@ def launcher(tmp_path):
         '    f.write(json.dumps({"args": sys.argv[1:], "env": dict(os.environ)}) + "\\n")\n'
         'sys.exit(int(os.environ.get("FAKE_EXIT", "0")))\nPY\n')
     shutil.copy(scripts / "run_selection_switch.sh", scripts / "run_experiments.sh")
+    (scripts / "mbpp_status.py").write_text(
+        'import argparse, json, os, sys\n'
+        'p = argparse.ArgumentParser()\n'
+        'p.add_argument("--root", action="append", required=True)\n'
+        'p.add_argument("--all", action="store_true")\n'
+        'a = p.parse_args()\n'
+        'assert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'print("MBPP EXPERIMENTS")\n'
+        'with open(os.environ["CALLS"], "a") as f:\n'
+        '    for root in a.root:\n'
+        '        f.write(json.dumps({"args": ["status"] + (["--all"] if a.all else []), '
+        '"root": root, "dashboard_pid": os.getpid(), "dashboard_argv": sys.argv[1:], '
+        '"env": dict(os.environ)}) + "\\n")\n'
+        '        if os.environ.get("FAKE_EXIT", "0") != "0": print("ERROR " + root)\n'
+        'sys.exit(int(os.environ.get("FAKE_EXIT", "0") != "0"))\n')
     env = {**os.environ, "OM_WORK": str(tmp_path / "work"), "VENV_DIR": str(venv),
            "TEST_PYTHON": sys.executable, "CALLS": str(tmp_path / "calls.jsonl"),
            "AUDIT_LOG": str(tmp_path / "storage-audits.jsonl"),
@@ -232,13 +247,15 @@ def test_status_routes_exact_mbpp_suite_roots_despite_inherited_math_environment
                  EXPERIMENTS_COMBINED="1", SWITCH_RUNTIME_REPO="/wrong/old-code")
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
-    assert [call["env"]["SWITCH_ROOT"] for call in calls] == [str(Path(env["OM_WORK"]) / "runs" / name) for name in expected]
+    assert [call["root"] for call in calls] == [str(Path(env["OM_WORK"]) / "runs" / name) for name in expected]
+    assert len({call["dashboard_pid"] for call in calls}) == 1
+    assert result.stdout.count("MBPP EXPERIMENTS") == 1
     assert all(call["args"] == ["status"] for call in calls)
     for call in calls:
         passed = call["env"]
         assert passed["EXPERIMENTS_COMBINED"] == "0"
         assert passed["EXPERIMENTS_SKIP_MOPPS"] == "1"
-        assert all(key not in passed for key in ("OUT_ROOT", "SWITCH_ONLY_ARMS", "SWITCH_ONLY_SEEDS", "SWITCH_RUNTIME_REPO"))
+        assert all(key not in passed for key in ("OUT_ROOT", "SWITCH_ROOT", "SWITCH_ONLY_ARMS", "SWITCH_ONLY_SEEDS", "SWITCH_RUNTIME_REPO"))
     assert not Path(env["AUDIT_LOG"]).exists()
     assert not Path(env["CHECK_LOG"]).exists()
 
@@ -251,10 +268,9 @@ def test_status_keeps_existing_custom_suite_roots_without_renaming_on_policy_sto
     result = run("status", **paths)
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
-    assert [call["env"]["SWITCH_ROOT"] for call in calls] == list(paths.values())
-    assert "[mbpp:on-policy] selector=on-policy" in result.stdout
-    assert "[mbpp:quality] selector=on-policy" in result.stdout
-    assert "[mbpp:difficulty] selector=difficulty" in result.stdout
+    assert [call["root"] for call in calls] == list(paths.values())
+    assert len({call["dashboard_pid"] for call in calls}) == 1
+    assert result.stdout.count("MBPP EXPERIMENTS") == 1
     assert "[mbpp:fresh]" not in result.stdout
     assert "selector=fresh_r" not in result.stdout
 
@@ -265,8 +281,8 @@ def test_status_failure_for_a_root_does_not_hide_other_suite_roots(launcher):
     assert result.returncode == 1
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
     assert len(calls) == 3
-    assert len({call["env"]["SWITCH_ROOT"] for call in calls}) == 3
-    assert result.stdout.count("status rc=2") == 3
+    assert len({call["root"] for call in calls}) == 3
+    assert result.stdout.count("ERROR ") == 3
     assert not Path(env["AUDIT_LOG"]).exists()
 
 

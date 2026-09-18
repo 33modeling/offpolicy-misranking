@@ -257,5 +257,7 @@ def test_mbpp_status_routes_fresh_saved_results_not_generic_math_root(tmp_path):
     result = subprocess.run(["bash", "scripts/run_mbpp_experiments.sh", "status", "fresh"],
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
-    assert str(fresh) in result.stdout and "TRAINING RESULTS  21/48 published" in result.stdout
+    assert "MBPP EXPERIMENTS" in result.stdout and "21/48" in result.stdout
+    assert "on-policy" in result.stdout and "CURRENT RUN 0" in result.stdout
+    assert fresh.exists()
     assert "wrong-math-root" not in result.stdout and "MOPPS COMPARISON" not in result.stdout

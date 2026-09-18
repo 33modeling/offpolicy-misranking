@@ -16,7 +16,7 @@
 #   bash scripts/run_mbpp_experiments.sh            this node joins the MBPP queue
 #   bash scripts/run_mbpp_experiments.sh stop       stop this node's launcher and workers
 #   bash scripts/run_mbpp_experiments.sh restart    load fixes; retain checkpoints and fault receipts
-#   bash scripts/run_mbpp_experiments.sh progress   per-root progress, running branches, node names
+#   bash scripts/run_mbpp_experiments.sh progress   MBPP suites only: branch counts, running branches, node names
 #   bash scripts/run_mbpp_experiments.sh status --watch  MBPP-only live status; never the math view
 #   bash scripts/run_mbpp_experiments.sh results    one results file per suite
 #
@@ -75,6 +75,27 @@ if [ "$MODE" = why ] || [ "$MODE" = saved ]; then
     "$PY" scripts/mbpp_failure_summary.py --work "$OM_WORK" "${ROOT_ARGS[@]}"
 fi
 
+# One view over all requested MBPP roots. Never enter a worker launcher or let
+# inherited math settings choose the status root. Reload viewer code each frame.
+if [ "$MODE" = status ]; then
+  PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
+  [ -x "$PY" ] || PY=python3
+  ROOT_ARGS=()
+  for root in "${MBPP_ROOTS[@]}"; do ROOT_ARGS+=(--root "$root"); done
+  while :; do
+    if [ -n "$STATUS_WATCH" ] && [ -t 1 ]; then printf '\033[2J\033[H'; fi
+    rc=0
+    env -u OUT_ROOT -u SWITCH_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_DATASET \
+      -u SWITCH_SELECTOR -u SWITCH_ACCOUNTING -u SWITCH_GATE \
+      -u SWITCH_ONLY_SEEDS -u SWITCH_ONLY_ARMS -u SWITCH_RUNTIME_REPO \
+      CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
+      EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
+      "$PY" scripts/mbpp_status.py "${ROOT_ARGS[@]}" "${STATUS_ARGS[@]}" || rc=$?
+    [ -n "$STATUS_WATCH" ] || exit "$rc"
+    sleep "$STATUS_WATCH"
+  done
+fi
+
 for root in "${MBPP_ROOTS[@]}"; do
   mbpp_queue_settings "$root"
   printf '[mbpp:%s] selector=%s accounting=%s gate=%s\n  root=%s\n' \
@@ -100,27 +121,20 @@ if [ "$MODE" = check ]; then
   exit 0
 fi
 
-# Read-only views, one per suite root. Report errors without skipping other roots.
-if [ "$MODE" = status ] || [ "$MODE" = results ]; then
-  # Watch belongs to the whole MBPP view, not the first inner suite. Each
-  # iteration invokes the current read-only viewer code for all requested roots.
-  while :; do
-    if [ -n "$STATUS_WATCH" ] && [ -t 1 ]; then printf '\033[2J\033[H'; fi
-    if [ "$MODE" = status ]; then echo "MBPP STATUS (read-only; MBPP roots only) $(date -u +%FT%TZ)"; fi
-    failed=0
-    for root in "${MBPP_ROOTS[@]}"; do
-      mbpp_queue_settings "$root"
-      echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] $MODE"
-      rc=0
-      env -u OUT_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_ONLY_SEEDS -u SWITCH_ONLY_ARMS \
-        -u SWITCH_BUDGET_GPU_SECONDS -u SWITCH_RUNTIME_REPO -u SWITCH_DETACHED -u EXPERIMENTS_DETACHED \
-        SWITCH_ROOT="$MBPP_ROOT" SWITCH_STATUS_COMPACT=1 EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
-        bash scripts/run_selection_switch.sh "$MODE" "${STATUS_ARGS[@]}" || rc=$?
-      [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] $MODE rc=$rc"; failed=1; }
-    done
-    [ -n "$STATUS_WATCH" ] || exit "$failed"
-    sleep "$STATUS_WATCH"
+# Results are exported per suite root; status above is one consolidated view.
+if [ "$MODE" = results ]; then
+  failed=0
+  for root in "${MBPP_ROOTS[@]}"; do
+    mbpp_queue_settings "$root"
+    echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] results"
+    rc=0
+    env -u OUT_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_ONLY_SEEDS -u SWITCH_ONLY_ARMS \
+      -u SWITCH_BUDGET_GPU_SECONDS -u SWITCH_RUNTIME_REPO -u SWITCH_DETACHED -u EXPERIMENTS_DETACHED \
+      SWITCH_ROOT="$MBPP_ROOT" EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
+      bash scripts/run_selection_switch.sh results || rc=$?
+    [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] results rc=$rc"; failed=1; }
   done
+  exit "$failed"
 fi
 
 # Inspect the shared storage before handing control to anything that can stop a

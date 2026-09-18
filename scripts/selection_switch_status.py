@@ -112,9 +112,10 @@ def saved_policy_state(policy, *, kind="branch"):
             continue
     if final.is_file():
         return "REVIEW", "saved final policy exists without a published result; verify lineage before retry"
-    evidence = (checkpoints or list(policy.glob(".checkpoint-*.tmp"))
+    evidence = (policy.is_symlink() or checkpoints or list(policy.glob(".checkpoint-*.tmp"))
                 or any((policy / name).exists() or (policy / name).is_symlink() for name in
-                       ("adapter_model.safetensors", "optimizer.pt", "grpo_stats.jsonl", "budget_stop.json")))
+                       ("adapter_config.json", "adapter_model.safetensors", "optimizer.pt", "grpo_stats.jsonl",
+                        "budget_stop.json", "policy_train.json", "checkpoint_state.json")))
     if evidence:
         return "REVIEW", "prior training files exist but no complete checkpoint metadata; do not restart from parent"
     return None
@@ -137,7 +138,7 @@ def archived_training_artifact(directory):
     return None
 
 
-def snapshot(root, *, now=None):
+def snapshot(root, *, now=None, local_gpus=True):
     root = root.resolve()
     now = time.time() if now is None else now
     notices = []
@@ -232,6 +233,14 @@ def snapshot(root, *, now=None):
         if (kind in {"prefix", "branch"} and not fresh
                 and task["status"] in {"READY", "WAIT", "FAILED", "STALE"}):
             saved = saved_policy_state(policy_dir, kind=kind)
+            if kind == "branch":
+                # A missing/unavailable result is not a fresh branch when its
+                # completion record or seal survives. Never silently schedule
+                # retraining around an orphan receipt or broken storage link.
+                orphan = next((name for name in ("result.json", "result.sha256.json")
+                               if (directory / name).exists() or (directory / name).is_symlink()), None)
+                if orphan is not None:
+                    saved = ("REVIEW", f"saved completion artifact {orphan} exists without a readable result; inspect before retry")
             if archived is not None and saved is None:
                 evidence = "result" if archived.name == "result.json" else "training artifact"
                 reason = f"archived {evidence} exists under discarded; inspect saved work before retry"
@@ -363,7 +372,7 @@ def snapshot(root, *, now=None):
     nodes = node_view.launcher_nodes(root, tasks, now=now)
     return {"prepared": True, "root": str(root), "updated": now, "gate_ready": gate_ready,
             "gate_fit_failure": gate_fit_failure,
-            "nodes": nodes, "local_gpus": node_view.local_gpus(),
+            "nodes": nodes, "local_gpus": node_view.local_gpus() if local_gpus else [],
             "active_nodes": len(active_hosts), "stale_nodes": len(stale_hosts), "waiting_nodes": waiting,
             "branch_counts": dict(Counter(task["status"] for task in branches)),
             "prefix_done": sum(task["status"] == "DONE" for task in tasks if task["kind"] == "prefix"),

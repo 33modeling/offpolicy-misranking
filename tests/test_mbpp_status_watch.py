@@ -1,6 +1,7 @@
 """The user-facing MBPP status command must never fall back to the math view."""
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -44,12 +45,15 @@ def test_watch_visits_every_mbpp_root_each_frame_without_starting_workers(launch
     assert result.returncode == 143, result.stdout + result.stderr
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
     expected = ["selection-switch-mbpp-v1", "selection-switch-mbpp-quality-v1", "selection-switch-mbpp-difficulty-v1"]
-    assert [Path(call["env"]["SWITCH_ROOT"]).name for call in calls] == expected * 2
+    assert [Path(call["root"]).name for call in calls] == expected * 2
     assert all(call["args"] == ["status", *(["--all"] if "--all" in options else [])] for call in calls)
-    assert all(call["env"]["SWITCH_STATUS_COMPACT"] == "1" for call in calls)
+    assert len({call["dashboard_pid"] for call in calls[:3]}) == 1
+    assert len({call["dashboard_pid"] for call in calls[3:]}) == 1
+    assert calls[0]["dashboard_pid"] != calls[3]["dashboard_pid"]
+    assert all("SWITCH_ROOT" not in call["env"] for call in calls)
     assert all(call["env"]["EXPERIMENTS_COMBINED"] == "0" for call in calls)
     assert json.loads(Path(extra["SLEEP_LOG"]).read_text()) == [[interval], [interval]]
-    assert result.stdout.count("MBPP STATUS (read-only; MBPP roots only)") == 2
+    assert result.stdout.count("MBPP EXPERIMENTS") == 2
     assert not Path(env["AUDIT_LOG"]).exists() and not Path(env["CHECK_LOG"]).exists()
 
 
@@ -76,9 +80,10 @@ def test_real_mbpp_watch_keeps_saved_results_and_live_work_visible_not_math(tmp_
     result = subprocess.run(["bash", "scripts/run_mbpp_experiments.sh", "status", "--watch", "1"],
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=15, check=False)
     assert result.returncode == 143, result.stdout + result.stderr
-    assert result.stdout.count("MBPP STATUS (read-only; MBPP roots only)") == 2
-    assert result.stdout.count("TRAINING RESULTS  21/48 published") == 2
+    assert result.stdout.count("MBPP EXPERIMENTS") == 2
+    assert len(re.findall(r"^on-policy\s+21/48\s+27\s+1\b", result.stdout, re.MULTILINE)) == 2
+    assert result.stdout.count("CURRENT RUN 1") == 2
     assert result.stdout.count("mbpp-active-node") >= 2
     assert "wrong/math-root" not in result.stdout and "MOPPS COMPARISON" not in result.stdout
-    assert "mbpp-quality" in result.stdout and "mbpp-difficulty" in result.stdout
-    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
+    assert "quality: NOT PREPARED" in result.stdout and "difficulty: NOT PREPARED" in result.stdout
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in work.rglob("*") if path.is_file()}

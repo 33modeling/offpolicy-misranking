@@ -39,7 +39,7 @@ bash scripts/run_mbpp_experiments.sh plan       # settings only, no writes/GPU w
 bash scripts/run_mbpp_experiments.sh check      # read-only local input checks
 bash scripts/run_mbpp_experiments.sh status
 bash scripts/run_mbpp_experiments.sh status --watch
-bash scripts/run_mbpp_experiments.sh progress   # shared experiment/node view
+bash scripts/run_mbpp_experiments.sh progress   # MBPP suites only (fresh, quality, difficulty), unprepared ones listed
 bash scripts/run_mbpp_experiments.sh saved      # READ-ONLY saved-work/archived-work inventory, <=4 KiB stdout
 bash scripts/run_mbpp_experiments.sh stop       # stop/clean THIS node, not peer nodes
 bash scripts/run_mbpp_experiments.sh results    # one report per suite, also copied home
@@ -50,9 +50,13 @@ bash scripts/run_mbpp_experiments.sh run difficulty
 ```
 
 For MBPP monitoring, use `bash scripts/run_mbpp_experiments.sh status --watch`.
-It refreshes all three MBPP suites together, showing saved completion counts and
-current RUN node/task/phase/step without the math overview. `status --all` opens
-the detailed task/history tables; `status quality --watch 5` watches just quality.
+It refreshes one dashboard for all three MBPP suites: completed/total and
+unfinished counts, running/evaluation/resume/blocked work, and completion by
+selector, random, full-selection, full-random, and gate. A single current-run
+list shows task, node, phase, and training step; inactive node history is hidden,
+not deleted. Missing suites say `NOT PREPARED`, never an invented `READY` count.
+`status --all` adds exact roots and individual task states;
+`status quality --watch 5` watches just quality.
 This is read-only and does not restart training. The generic
 `run_experiments.sh status` defaults to the math-root overview, not this MBPP view.
 
