@@ -43,7 +43,11 @@ def display_state(task, running_directories=()):
 
 def remark(task):
     parts = []
-    if task.get("status") in REMARKS:
+    if task.get("status") == "EVAL" and task.get("training_published"):
+        # A sealed result already contains the final evaluation. Only the
+        # convergence curve remains; do not describe this as unfinished training.
+        parts.append("최종 평가 저장됨; 곡선 평가 남음 (재학습 없음)")
+    elif task.get("status") in REMARKS:
         parts.append(REMARKS[task["status"]])
     if active(task) and task.get("phase"):
         parts.append("단계: " + task["phase"].replace("fresh-r", "on-policy").replace("fresh_r", "on-policy"))
@@ -245,7 +249,9 @@ def node_assignments(data):
                                or age is not None and -5 <= age < switch_status.node_view.HEARTBEAT_GRACE)
         if node["state"] == "-":
             node["state"] = "UNKNOWN"
-    return sorted(hosts.values(), key=lambda node: (not node["current"], not bool(node["assignments"]),
+    # Keep a server in the same name-sorted position as it changes RUN/WAIT.
+    # Historical nodes remain opt-in and below current nodes, never deleted.
+    return sorted(hosts.values(), key=lambda node: (not node["current"],
                                                    switch_status.node_view.host_sort_key(node["host"])))
 
 
@@ -340,15 +346,19 @@ def render(data, *, width=120, all_tasks=False):
             note += f"; 기록 미확인 {count['unknown']}개"
         budgets = sum(task['status'] == 'BUDGET' for task in branches)
         evaluations = sum(task['status'] == 'EVAL' for task in branches)
+        curves = sum(task['status'] == 'EVAL' and task.get('training_published', False) for task in branches)
         if budgets:
             note += f"; GPU 시간 한도 도달 {budgets}개 (결과 미완료)"
-        if evaluations:
-            note += f"; 평가·결과 저장 남음 {evaluations}개"
+        if evaluations > curves:
+            note += f"; 평가·결과 저장 남음 {evaluations - curves}개"
+        if curves:
+            note += f"; 최종 평가 저장됨·곡선 남음 {curves}개"
         rows.append([name, count["planned"], count["done"], count["remaining"], count["progress"],
                      states["READY"], states["WAIT"], states["RUN"], note])
         trained = suite.get("training_published", 0)
         if trained > count['done']:
-            notices.append(f"{name}: 학습 결과 {trained}개 저장됨; 평가·결과 확정 대기 {evaluations}개.")
+            notices.append(f"{name}: 최종 평가 결과 {trained}개 저장됨; 곡선 평가 남음 {curves}개"
+                           f"; 곡선 기록 확인 필요 {max(0, trained - count['done'] - curves)}개.")
     lines += table(["Experiment", "계획", "DONE", "남음", "Progress", "READY", "WAIT", "RUN", "Remarks"],
                    rows, [26, 4, 4, 4, 8, 5, 4, 3, width - 74])
     for suite in data["suites"]:

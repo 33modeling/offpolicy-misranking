@@ -2,6 +2,7 @@
 
 import os
 import re
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,34 @@ def host_row(data, host):
     matches = [node for node in dashboard.node_assignments(data) if node["host"] == host]
     assert len(matches) == 1
     return matches[0]
+
+
+@pytest.mark.parametrize("active_index", [2, 10])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_server_order_is_natural_name_order_not_run_wait_priority(tmp_path, active_index, reverse):
+    root = roots_at(tmp_path)[1]
+    hosts = {index: f"run284000-wts-{index}-g1234" for index in (2, 10)}
+    old_host = "run283999-wts-1-g0000"
+    nodes = [{"host": host, "state": "WAIT", "last_age": 5} for host in hosts.values()]
+    nodes.append({"host": old_host, "state": "EXITED", "last_age": 900})
+    data = {"suites": [{"root": str(root), "nodes": nodes[::-1] if reverse else nodes,
+        "tasks": [{"kind": "branch", "status": "RUNNING", "host": hosts[active_index],
+                   "seed": 0, "step": 25, "arm": "random_reduced", "phase": "train",
+                   "directory": "states/s0-t25/points/view-25/random_reduced"}]}]}
+    before = deepcopy(data)
+    assert [node["host"] for node in dashboard.node_assignments(data)] == [hosts[2], hosts[10], old_host]
+    for show_history in (False, True):
+        rows = [line for line in dashboard.render_nodes(data, width=120, all_nodes=show_history)
+                if re.match(r"^\d+\. ", line)]
+        assert rows[0].startswith(f"1. {hosts[2]} ->")
+        assert rows[1].startswith(f"2. {hosts[10]} ->")
+        assert len(rows) == (3 if show_history else 2)
+        if show_history:
+            assert rows[2].startswith(f"3. {old_host} ->")
+        active_row = rows[0 if active_index == 2 else 1]
+        idle_row = rows[1 if active_index == 2 else 0]
+        assert "| RUN |" in active_row and "| WAIT |" in idle_row
+    assert data == before
 
 
 def test_live_curve_heartbeat_keeps_sealed_result_eval_and_node_visible(tmp_path):
@@ -312,7 +341,7 @@ def test_parent_branch_and_curve_phase_share_one_numbered_experiment_row(tmp_pat
     assert mapping.count("1. curve-worker ->") == 1
     assert "On-policy · 선택비용 별도 / seed 0 / step 25 / Random | RUN |" in mapping
     assert '현재 단계 시간 한도 사용률' in mapping
-    assert "단계: curve-evaluation" in mapping and "평가·결과 저장 남음" in mapping
+    assert "단계: curve-evaluation" in mapping and "최종 평가 저장됨; 곡선 평가 남음 (재학습 없음)" in mapping
     assert "Random/curve" not in mapping
     assert "CURRENT RUN 1" in dashboard.render(data)
     suite = data["suites"][0]

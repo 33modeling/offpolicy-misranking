@@ -483,6 +483,10 @@ def test_first_shell_launch_creates_pair_json_without_touching_gpus(tmp_path, co
              "OM_WORK": str(tmp_path / "storage"), "PAIR_PYTHON": sys.executable,
              "SWITCH_PREFIX_SOURCE": str(tmp_path / "missing-source")},
         capture_output=True, text=True, timeout=20)
+    if command == "status":
+        assert not root.exists()
+        assert process.returncode == 0 and "not prepared" in process.stdout
+        return
     assert core.read(root / "pair.json")["schema"] == gpu.BOOTSTRAP_SCHEMA
     assert "Traceback" not in process.stderr and "FileNotFoundError" not in process.stderr
     assert "[node]" not in process.stdout and "nvidia-smi" not in process.stderr

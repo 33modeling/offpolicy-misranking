@@ -161,7 +161,11 @@ certification. Already-running workers are not stopped by this read-only audit.
 
 Published training with a missing convergence curve has internal state `EVAL`,
 not `READY`: evaluation/publication remains. The MBPP dashboard shows `WAIT`
-with “평가·결과 저장 남음”, or `RUN` while that work has a fresh heartbeat.
+with “최종 평가 저장됨; 곡선 평가 남음 (재학습 없음)”, or `RUN` while that work
+has a fresh heartbeat. This distinguishes a sealed final evaluation awaiting
+its curve from a saved policy still awaiting final evaluation. Once the bound
+curve is published, the next refresh shows `DONE`; old failure/heartbeat records
+do not override that completion. No restart is needed to refresh this view.
 Internal state `RESUME` means a checkpoint candidate exists and must
 pass the trainer's original hash/contract validation; it is not a fresh start.
 `REVIEW` means saved training evidence remains without a complete checkpoint

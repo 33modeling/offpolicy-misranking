@@ -87,6 +87,8 @@ scoring 방법을 바꿀 수 없다. 실행 중인 checkout은 업데이트하�
 
 한 root는 한 controller만 실행한다. 여러 노드에 분산하는 큐가 아니다.
 다른 controller가 같은 root를 사용 중이면 잠금 오류로 종료한다.
+`status`는 실행 잠금을 요구하지 않는 읽기 전용 조회다. 실행 중에도 조회할 수
+있으며, 준비되지 않은 root를 생성하거나 frozen manifest/런타임 영수증을 바꾸지 않는다.
 
 단계별 실행도 가능하다.
 
@@ -138,6 +140,23 @@ root에서 해야 하며, 이전 시도를 숨기면 안 된다. 검열된 라�
 
 ## 중단 / 재개
 
+GPU 작업 전에 Switch/MBPP와 같은 4-rank NCCL/DDP 사전 검사를 수행한다.
+실제로 재검사에 성공한 통신 설정만 자식 작업에 전달한다. 검사 기록과 공유
+노드 검사 비용은 `node-preflight/`에 남는다. 검사 실패 시 exit 78로 종료하고
+학습을 시작하지 않는다. CPU 테스트 통과가 실제 노드의 CUDA 정상 동작을 보장하지는 않는다.
+
+분기 작업의 일반 실행 오류는 저장 작업을 보존하고, 노드를 재검사한 뒤 한 번만
+자동 재시도한다. 두 번째에도 실패하면 재검사에 통과한 노드에서 다른 분기를
+진행한다. 계약/비용 검증 오류는 해당 분기를 재시도하지 않는다. 남은 실패는
+분기의 `pair-attempt.json`과 `development-pass.json` 또는 `test-pass.json`에
+기록하며, 미완료 개발 결과로 predictor를 학습하거나 테스트 결정을 만들지 않는다.
+종료 신호와 노드 사전 검사 실패는 후속 작업으로 넘어가지 않는다.
+
+학습 예산이 소진되고 유효한 최종 저장/결과 후보가 없는 분기는 검증 비용부터
+다시 적립하지 않고 거부한다. 최종 policy/stop 또는 결과 후보가 있으면 기존
+검증 절차를 통해 남은 평가·곡선·발행만 재개할 수 있다. 예산 초기화나 증액,
+목표 변경, 체크포인트 삭제는 하지 않는다.
+
 `Resource temporarily unavailable`만으로 CUDA OOM이라고 단정하지 않는다.
 런처는 Python 시작 전 OpenBLAS/MKL/OpenMP/Rayon/NumExpr의 CPU 스레드 수를
 1로 제한하고 토크나이저 병렬화를 끈다. 이 설정은 네 GPU의 rollout·scoring·학습·평가
@@ -153,6 +172,8 @@ root에서 해야 하며, 이전 시도를 숨기면 안 된다. 검열된 라�
 `startup-resources-runtime.json`에 새 코드 해시와 CPU 제한을 별도로 고정한다.
 이 운영 설정은 처리 시간에 영향을 줄 수 있으므로 변경 전후 시간을 동일 환경의
 측정처럼 취급하지 않는다. 실패·재시도 비용은 기존 장부에 계속 포함한다.
+이번 운영 수정은 `pair-operations-runtime.json`으로 별도 기록하며, 검토된 이전
+코드의 manifest와 기존 런타임 영수증을 덮어쓰지 않는다.
 
 같은 root에서 `bash scripts/run_selector_pair.sh`를 다시 실행한다. 완료된 selection, checkpoint, 결과,
 동결된 decision을 재사용한다. 중간 checkpoint의 cost receipt는 checkpoint

@@ -40,8 +40,10 @@ PRE_RESOURCES_CODE = "d5d354a91ec95ae5d941c619a5a50da10e1606072a36dbe06e83d974ae
 # Their shared-file changes require Switch's independent reviewed hash pins;
 # pair selectors, pair trainer, curve trainer and branch protocols stay frozen.
 PRE_BUDGET_STOP_EVALUATION_CODE = "bfe7b00d57a365d9ddd8936422a723c86938e2feb1f82ae5c72d648a42ce7c30"
+PRE_PAIR_OPERATIONS_CODE = "ad310eefce6b1d6e9d7f9ed634b0a121b491fb496899870363e2affb7f42adb7"
 PRE_SHARED_RUNTIME_CODES = {
     PRE_BUDGET_STOP_EVALUATION_CODE,
+    PRE_PAIR_OPERATIONS_CODE,
     "9eab1b016f5f897a4bd3b85998a25b1bc724b8bf3383ef9e6cfe2ba43f9a6d67",
     "cec86006408b80d7901f3f44a3b113d702c860e6c4a84a40cd2422e6438ef27a",
     "b5dfeae35bc95922893636bc5ad1c6d801e68648f1d60907353a016e7c0c1738",
@@ -53,6 +55,36 @@ CPU_ENV = {**dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_
     "OPENBLAS_DEFAULT_NUM_THREADS", "GOTO_NUM_THREADS", "BLIS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
     "NUMEXPR_NUM_THREADS", "NUMEXPR_MAX_THREADS", "OMP_THREAD_LIMIT", "RAYON_NUM_THREADS"), "1"),
     "TOKENIZERS_PARALLELISM": "false"}
+
+
+class NodeAdmissionError(RuntimeError):
+    """Do not dispatch more work on a node without successful GPU admission."""
+
+
+class IncompletePairRun(ValueError):
+    """A pass kept independent work moving but cannot advance the fit barrier."""
+
+
+def admission_probe(root):
+    # The same tested four-rank NCCL/DDP probe used by Switch/MBPP. Import here
+    # so read-only status and CPU analysis never initialize CUDA.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "pair_nccl_preflight", base.ROOT / "scripts/selection_nccl_preflight.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.preflight(root)
+
+
+def admit_node(root, p):
+    try:
+        devices = switch.admitted_devices(p)
+        overrides = admission_probe(root)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise NodeAdmissionError(f"pair node admission failed; no further work dispatched: {exc}") from exc
+    os.environ.update(overrides)
+    os.environ.setdefault("NCCL_DEBUG", "WARN")
+    return devices
 
 
 def configure_cpu_runtime():
@@ -184,14 +216,22 @@ def bind_startup_runtime(root, recorded):
             "resources_runtime_sha256": base.digest(resources_path),
             "change": "shared Switch runtime recovery and validated checkpoint retention only; pair design, selectors and trainer unchanged",
             "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or parent restart",
-        }, {PRE_BUDGET_STOP_EVALUATION_CODE})
+        }, {PRE_BUDGET_STOP_EVALUATION_CODE, PRE_PAIR_OPERATIONS_CODE})
         if core.fingerprint(code_hashes()) != PRE_BUDGET_STOP_EVALUATION_CODE:
-            base.bind(root / "budget-stop-evaluation-runtime.json", {
+            evaluation_path = root / "budget-stop-evaluation-runtime.json"
+            switch.bind_reviewed_runtime_receipt(evaluation_path, {
                 "schema": "offpolicy-selector-pair/budget-stop-evaluation-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "shared_checkpoint_recovery_runtime_sha256": base.digest(recovery_path),
                 "change": "shared Switch completed-policy evaluation resume only; pair design, selectors and trainer unchanged",
                 "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or retraining",
+            }, {PRE_PAIR_OPERATIONS_CODE})
+            base.bind(root / "pair-operations-runtime.json", {
+                "schema": "offpolicy-selector-pair/operations-runtime-v1",
+                "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                "evaluation_runtime_sha256": base.digest(evaluation_path),
+                "change": "read-only status, bounded branch retries with NCCL admission, exhausted-allocation guard",
+                "cost_policy": "preserve selectors, trainer, target, caps, checkpoints, decisions and all prior costs",
             })
 
 
@@ -266,7 +306,7 @@ def ensure_prepared(root):
     return manifest(root)
 
 
-def manifest(root):
+def manifest(root, *, bind_runtime=True):
     if not (root / "pair.json").exists():
         raise ValueError(f"pair is not prepared: {root}; run the launcher prepare command first")
     p = core.read(root / "pair.json")
@@ -279,7 +319,8 @@ def manifest(root):
     for name, digest in p["branch_manifests"].items():
         if base.digest(root / "branches" / name / "switch.json") != digest:
             raise ValueError("frozen branch manifest changed")
-    bind_startup_runtime(root, p["code_hashes"])
+    if bind_runtime:
+        bind_startup_runtime(root, p["code_hashes"])
     return p
 
 
@@ -404,10 +445,64 @@ def execute(entry, arm, devices):
     manifest(root)  # Recheck before starting a new process from on-disk code.
     env = {**environment(c), "PAIR_PROTOCOL_ROOT": str(root)}
     with pair_lease(out / arm / ".task.lock"):
+        directory = out / arm
+        # Exhausted attempts must not meter verification/scoring again. Let the
+        # original validated final-policy/result recovery finish reporting work.
+        if not any((directory / name).exists() for name in (
+                "result.json", "policy/budget_stop.json", "policy/policy_train.json")):
+            choice_path = directory / "decision.json"
+            choice = core.read(choice_path) if choice_path.exists() else {
+                "budget_gpu_seconds": c["budget_gpu_seconds"]}
+            switch.remaining_allocation(directory, choice)
         switch.runtime.run_arm(out, suite, protocol, arm, devices, env)
         switch.curve_once(branch, switch.manifest(branch), out, c, arm, suite, devices, env)
         if not switch.branch_finished(switch.manifest(branch), out / arm):
             raise ValueError(f"curve publication is pending: {out / arm}")
+
+
+def attempt_branch(root, p, entry, arm, devices):
+    """Keep unrelated branches moving; at most one runtime retry per pass.
+
+    Cost/contract failures are not retried. Runtime failures require a fresh
+    admission probe before either retrying or proceeding to another branch.
+    Signals are never swallowed and previous work/costs are never reset.
+    """
+    directory = entry[1] / arm
+    path = directory / "pair-attempt.json"
+    task = str(directory.relative_to(root))
+    for attempt in (1, 2):
+        core.atomic_json(path, {"state": "RUN", "task": task, "attempt": attempt,
+                               "host": base.node_id(), "pid": os.getpid(), "updated": time.time()})
+        try:
+            execute(entry, arm, devices)
+        except (ValueError, OSError, RuntimeError) as exc:
+            failure = {"state": "WAIT", "task": task, "attempt": attempt,
+                       "host": base.node_id(), "updated": time.time(),
+                       "error": f"{type(exc).__name__}: {exc}"}
+            core.atomic_json(path, failure)
+            print(f"[pair-task] {task}: {failure['error']}", file=sys.stderr, flush=True)
+            if isinstance(exc, NodeAdmissionError):
+                raise
+            if isinstance(exc, (OSError, RuntimeError)):
+                admitted = admit_node(root, p)
+                if admitted != devices:
+                    raise NodeAdmissionError("allocated GPUs changed during the pair pass")
+                if attempt == 1:
+                    print(f"[pair-retry] {task}: resume saved work after successful node admission", flush=True)
+                    continue
+            return failure
+        else:
+            core.atomic_json(path, {"state": "DONE", "task": task, "attempt": attempt,
+                                   "host": base.node_id(), "updated": time.time()})
+            return None
+
+
+def finish_pass(root, stage, failures):
+    core.atomic_json(root / f"{stage}-pass.json", {"stage": stage, "updated": time.time(),
+                     "state": "WAIT" if failures else "DONE", "failures": failures})
+    if failures:
+        raise IncompletePairRun(f"{stage}: {len(failures)} task(s) remain; other available work was attempted; "
+                                f"saved work and costs preserved; see {root / (stage + '-pass.json')}")
 
 
 def final_receipt(directory, events, completed, adapter):
@@ -502,15 +597,22 @@ def development_row(root, p, seed, step):
 
 
 def develop(root, p, devices):
+    failures = []
     for seed in pair.DEV_SEEDS:
         for step in pair.STEPS:
             identity, entries = verify_pair(root, seed, step)
             folder = root / "development" / f"s{seed}-t{step}"
             base.bind(folder / "state.json", {"state_id": identity, "protocol_id": p["protocol_id"]})
+            state_failures = []
             for name in (tuple(pair.SELECTORS) if seed % 2 == 0 else tuple(pair.SELECTORS)[::-1]):
                 print(f"[pair] development s{seed}/t{step}/{name}", flush=True)
-                execute(entries[name], "selection_reduced", devices)
-            base.bind(folder / "result.json", development_row(root, p, seed, step))
+                failure = attempt_branch(root, p, entries[name], "selection_reduced", devices)
+                if failure:
+                    state_failures.append(failure)
+            failures.extend(state_failures)
+            if not state_failures:
+                base.bind(folder / "result.json", development_row(root, p, seed, step))
+    finish_pass(root, "development", failures)
 
 
 def fit(root, p):
@@ -597,6 +699,7 @@ def decisions(root, p):
 
 def test(root, p, devices):
     choices = decisions(root, p)
+    failures = []
     for seed in pair.TEST_SEEDS:
         for step in pair.STEPS:
             name = f"s{seed}-t{step}"
@@ -607,10 +710,16 @@ def test(root, p, devices):
             adaptive = entries[f"adaptive-{decision['selector']}"]
             tasks = [(entries["on_policy"], "selection_full"), (entries["cached"], "selection_full"),
                      (adaptive, "selection_full"), (entries["on_policy"], "random_full")]
+            state_failures = []
             for entry, arm in tasks if seed % 2 == 0 else tasks[::-1]:
                 print(f"[pair] test {name}/{entry[0].name}/{arm}", flush=True)
-                execute(entry, arm, devices)
-            base.bind(root / "test" / name / "result.json", test_row(root, p, seed, step, choices))
+                failure = attempt_branch(root, p, entry, arm, devices)
+                if failure:
+                    state_failures.append(failure)
+            failures.extend(state_failures)
+            if not state_failures:
+                base.bind(root / "test" / name / "result.json", test_row(root, p, seed, step, choices))
+    finish_pass(root, "test", failures)
 
 
 def test_row(root, p, seed, step, choices):
@@ -694,6 +803,19 @@ def status(root, p):
                      "test_decisions_frozen": (root / "test-decisions.json").exists()}, indent=2))
 
 
+def read_status(root):
+    """Observation only: no initialization, exclusive lock, migration or GPU work."""
+    path = root / "pair.json"
+    if not path.exists():
+        print(json.dumps({"root": str(root), "state": "WAIT", "reason": "pair is not prepared"}))
+        return
+    p = core.read(path)
+    if p.get("schema") == BOOTSTRAP_SCHEMA:
+        print(json.dumps({"root": str(root), **p}, indent=2))
+        return
+    status(root, manifest(root, bind_runtime=False))
+
+
 def main():
     configure_cpu_runtime()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -716,7 +838,10 @@ def main():
         return
     if any(v is not None for k, v in vars(args).items() if k not in {"command", "root"}):
         parser.error("preparation options cannot change a frozen run; prepare a new root")
-    if args.command in {"init", "status"}:
+    if args.command == "status":
+        read_status(args.root)
+        return
+    if args.command == "init":
         value = initialize(args.root)
         if value["schema"] == BOOTSTRAP_SCHEMA:
             print(json.dumps({"root": str(args.root), **value}, indent=2))
@@ -731,16 +856,13 @@ def main():
     if args.command == "check-code":
         print("[verified] pair and legacy code compatible (including reviewed operational migrations)")
         return
-    if args.command == "status":
-        status(args.root, p)
-        return
     if args.command == "report":
         with pair_lease(args.root / ".pair.lock"):
             report(args.root, p)
         return
     with pair_lease(args.root / ".pair.lock"):
         resource_diagnostics()
-        devices = switch.admitted_devices(p) if args.command in ("run", "develop", "freeze", "test") else None
+        devices = admit_node(args.root, p) if args.command in ("run", "develop", "freeze", "test") else None
         if args.command in ("run", "develop"):
             develop(args.root, p, devices)
         if args.command in ("run", "fit"):
@@ -757,6 +879,9 @@ if __name__ == "__main__":
     install_signal_handlers()
     try:
         main()
+    except NodeAdmissionError as exc:
+        print(f"[blocked] {exc}", file=sys.stderr, flush=True)
+        raise SystemExit(78) from None
     except (ValueError, FileNotFoundError) as exc:
         raise SystemExit(f"[pair] {exc}") from None
     except (OSError, RuntimeError):

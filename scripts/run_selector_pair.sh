@@ -19,7 +19,7 @@ export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
   cpu)
     export CUDA_VISIBLE_DEVICES=""
-    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py "$@" ;;
+    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py "$@" ;;
   init|prepare|fit|report|status|check-code)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" "$@" ;;
