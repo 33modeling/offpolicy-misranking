@@ -6,6 +6,8 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+
 from test_status_saved_random_integration import six_suites as suite_fixture
 
 six_suites = suite_fixture
@@ -25,10 +27,11 @@ def test_three_suites_have_one_summary_full_matrices_and_one_run_list(six_suites
     report = dashboard.snapshot(mbpp_roots(roots), now=now)
     output = dashboard.render(report)
     assert output.count("MBPP EXPERIMENTS") == 1 and output.count("CURRENT RUN") == 1
-    assert "Progress" in output and "Completed" in output and "Remarks" in output
+    assert "Progress" in output and "계획" in output and "남음" in output and "Remarks" in output
     on_policy = next(line for line in output.splitlines() if line.startswith("On-policy · 선택비용 포함 "))
-    assert "21/48" in on_policy and "43.8%" in on_policy and "15/15" in on_policy
-    assert "CURRENT RUN 4" in output and "Difficulty · 선택비용 포함: 준비 전" in output
+    assert re.search(r"선택비용 포함\s+48\s+21\s+27\s+43\.8%", on_policy)
+    assert "CURRENT RUN 4" in output and "기록 미확인 48개" in output
+    assert "총 계획 144개 | 완료 확인 21개 | 남음 123개" in output
     assert "CONTINUATIONS" not in output and "MOPPS" not in output and "MATH" not in output
     assert "ROOT " not in output
     assert output.count("FULL STATUS —") == 3
@@ -118,7 +121,7 @@ def test_cli_accepts_repeated_roots_and_missing_suite_without_initializing(six_s
         args += ["--root", str(root)]
     monkeypatch.setattr(sys, "argv", args)
     assert dashboard.main() == 0
-    assert "Difficulty · 선택비용 포함: 준비 전" in capsys.readouterr().out
+    assert "계획 48개 | 완료 확인 0/48 | 남음 48개" in capsys.readouterr().out
     assert not wanted[2].exists()
 
 
@@ -142,7 +145,8 @@ def test_cli_reports_unreadable_root_as_failure_without_hiding_other_roots(monke
     })
     assert dashboard.main() == 1
     output = capsys.readouterr().out
-    assert "missing: 준비 전" in output and "broken: 설정 읽기 실패: unreadable manifest" in output
+    assert "실험 설정 확인 불가" in output and "broken: 설정 읽기 실패: unreadable manifest" in output
+    assert "총 계획 96개 | 완료 확인 0개 | 남음 96개" in output
 
 
 def test_only_four_display_statuses_full_names_and_evaluation_budget_remarks(six_suites):
@@ -169,7 +173,7 @@ def test_progress_is_completed_fraction_not_elapsed_or_timeout(six_suites):
                 task.update(seconds=elapsed, timeout=10)
         output = dashboard.render(report)
         summary = next(line for line in output.splitlines() if line.startswith("On-policy · 선택비용 포함 "))
-        assert "43.8%" in summary and "21/48" in summary
+        assert re.search(r"선택비용 포함\s+48\s+21\s+27\s+43\.8%", summary)
     assert dashboard.completion(report["suites"][0]) == ("43.8%", 21, 48)
 
 
@@ -219,3 +223,60 @@ def test_custom_root_uses_frozen_selector_accounting_and_gate_metadata(tmp_path)
     assert report["suites"][0]["protocol"] == {
         "dataset": "mbpp", "selector": "fresh_r", "accounting": "matched", "gate": "convergence"}
     assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()}
+
+
+def test_counts_show_plan_done_remaining_for_each_condition_including_missing(six_suites):
+    roots, _, now = six_suites
+    report = dashboard.snapshot(mbpp_roots(roots), now=now)
+    before = deepcopy(report)
+    values = [dashboard.counts(suite) for suite in report["suites"]]
+    assert [(value["planned"], value["done"], value["remaining"], value["unknown"])
+            for value in values] == [(48, 21, 27, 0), (48, 0, 48, 0), (48, 0, 48, 48)]
+    output = dashboard.render(report, width=160)
+    assert "남음 123개 = RUN 4개 + READY 59개 + WAIT 60개" in output
+    assert "총 계획 144개 | 완료 확인 21개 | 남음 123개" in output
+    assert "준비 전" not in output
+    assert report == before
+    for value in values:
+        assert value["remaining"] == sum(value["states"][key] for key in ("READY", "RUN", "WAIT"))
+
+
+@pytest.mark.parametrize("state", ["BUDGET", "EVAL", "RESUME", "FAILED"])
+def test_unfinished_result_states_never_count_as_done(six_suites, state):
+    roots, _, now = six_suites
+    report = dashboard.snapshot(mbpp_roots(roots)[:1], now=now)
+    suite = report["suites"][0]
+    task = next(task for task in suite["tasks"] if task["kind"] == "branch" and task["status"] == "DONE")
+    task["status"] = state
+    count = dashboard.counts(suite)
+    assert (count["planned"], count["done"], count["remaining"]) == (48, 20, 28)
+    assert "총 계획 48개 | 완료 확인 20개 | 남음 28개" in dashboard.render(report)
+
+
+def test_registered_slots_prevent_partial_duplicate_and_phase_counts_from_inflating_progress():
+    task = {"kind": "branch", "seed": 0, "step": 25, "arm": "random_reduced", "status": "DONE"}
+    extras = [{**task, "kind": "prefix"}, {**task, "kind": "phase"},
+              {**task, "seed": 100}, {**task, "arm": "gated"}, {**task, "step": 76}]
+    for tasks in ([task], [task] * 48, [task, *extras]):
+        count = dashboard.counts({"tasks": tasks})
+        assert (count["planned"], count["done"], count["remaining"], count["unknown"]) == (48, 1, 47, 47)
+        assert count["progress"] == "2.1%" and count["states"]["WAIT"] == 47
+    conflict = dashboard.counts({"tasks": [task, {**task, "status": "FAILED"}]})
+    assert conflict["done"] == 0 and conflict["unknown"] == 48
+
+
+def test_unreadable_record_shows_numeric_unverified_counts_not_a_reset():
+    suite = {"root": "/broken", "prepared": False, "error": "fixture unreadable"}
+    output = dashboard.render({"updated": 1000, "suites": [suite]}, width=160)
+    assert "총 계획 48개 | 완료 확인 0개 | 남음 48개" in output
+    assert "기록 미확인 48개" in output and "완료 여부 미확인" in output
+    assert "기록 없음은 삭제·미실행의 증거가 아닙니다" in output
+    assert "준비 전" not in output
+
+
+def test_repeated_root_is_counted_once_in_summary(six_suites):
+    roots, _, now = six_suites
+    root = mbpp_roots(roots)[0]
+    report = dashboard.snapshot([root, root / ".", str(root)], now=now)
+    assert len(report["suites"]) == 1
+    assert "총 계획 48개 | 완료 확인 21개 | 남음 27개" in dashboard.render(report)

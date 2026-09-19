@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import selection_switch_status as switch_status
-from _status_summary import gate_label, mbpp_suite_label
+from _status_summary import MBPP_SUITE_LABELS, gate_label, mbpp_suite_label
 
 
 ARM_NAMES = {"selection_reduced": "Selection", "random_reduced": "Random",
@@ -52,9 +52,35 @@ def remark(task):
 
 
 def completion(suite):
-    branches = [task for task in suite.get("tasks", []) if task.get("kind") == "branch"]
-    done = sum(task["status"] == "DONE" for task in branches)
-    return (f"{100 * done / len(branches):.1f}%" if branches else "-", done, len(branches))
+    value = counts(suite)
+    return value["progress"], value["done"], value["planned"]
+
+
+def counts(suite):
+    """Count planned continuation branches, never phases or shared prefixes."""
+    rule = switch_status.rule
+    registered = {(seed, step, arm) for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS)
+                  for step in rule.STEPS for arm in (rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS)}
+    planned = len(registered)
+    tasks = suite.get("tasks", [])
+    branches, conflicting = {}, set()
+    for task in tasks:
+        key = (task.get("seed"), task.get("step"), task.get("arm"))
+        if task.get("kind") != "branch" or key not in registered:
+            continue
+        if key in branches and branches[key] != task:
+            conflicting.add(key)
+        branches[key] = task
+    for key in conflicting:
+        branches.pop(key)
+    directories = [task.get("directory", "") for task in tasks if active(task)]
+    states = Counter(display_state(task, directories) for task in branches.values())
+    # A missing/unreadable root is not proof that its old results disappeared.
+    # Its planned slots remain visible, but are explicitly unverified.
+    unknown = max(0, planned - len(branches))
+    states["WAIT"] += unknown
+    return {"planned": planned, "done": states["DONE"], "remaining": planned - states["DONE"],
+            "unknown": unknown, "states": states, "progress": f"{100 * states['DONE'] / planned:.1f}%"}
 
 
 def columns(text):
@@ -100,7 +126,7 @@ def label(root, protocol=None):
 def snapshot(roots, *, now=None):
     now = time.time() if now is None else now
     suites = []
-    for root in roots:
+    for root in dict.fromkeys(Path(root).resolve() for root in roots):
         try:
             suites.append(switch_status.snapshot(Path(root), now=now, local_gpus=False,
                                                 node_namespace="mbpp"))
@@ -175,7 +201,7 @@ def render_nodes(data, *, width, all_nodes=False):
     current = [node for node in nodes if node["current"]]
     lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current",
              "# Node -> Experiment | Status | Progress | Remarks"]
-    progress = {suite["root"]: completion(suite)[0] for suite in data["suites"]}
+    progress = {suite["root"]: counts(suite)["progress"] for suite in data["suites"]}
     labels = {suite["root"]: label(suite["root"], suite.get("protocol")) for suite in data["suites"]}
     visible = nodes if all_nodes else current
     for index, node in enumerate(visible, 1):
@@ -207,42 +233,65 @@ def render_nodes(data, *, width, all_nodes=False):
 def render(data, *, width=120, all_tasks=False):
     width = max(80, width)
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    totals = [counts(suite) for suite in data["suites"]]
+    planned = sum(item["planned"] for item in totals)
+    done = sum(item["done"] for item in totals)
+    unknown = sum(item["unknown"] for item in totals)
+    remaining = planned - done
+    aggregate = Counter()
+    for item in totals:
+        aggregate.update(item["states"])
     lines = [f"MBPP EXPERIMENTS  {stamp}",
-             "READY: 실행 가능 | DONE: 결과 저장 완료 | WAIT: 대기·중단 | RUN: 실행 중",
-             "Progress: 실험 묶음의 완료 분기 수 / 전체 분기 수. 시간 경과로 추정하지 않습니다."]
+             f"현재 조회 범위 {len(totals)}개 조건 | 총 계획 {planned}개 | 완료 확인 {done}개 | 남음 {remaining}개",
+             f"남음 {remaining}개 = RUN {aggregate['RUN']}개 + READY {aggregate['READY']}개 + WAIT {aggregate['WAIT']}개"
+             + (f" (기록 미확인 {unknown}개 포함)" if unknown else ""),
+             "READY: 실행 가능 | DONE: 결과 저장 완료 | WAIT: 대기·중단·확인 필요 | RUN: 실행 중",
+             "Progress: 완료 확인 / 계획. 남음에는 미확인 분기가 포함되며, 기록 없음은 삭제·미실행의 증거가 아닙니다.",
+             "학습 분기 수 기준입니다. 공통 학습·선택·평가 단계를 별도 실험으로 더하지 않습니다."]
     rows, running, notices = [], [], []
     for suite in data["suites"]:
         name = label(suite["root"], suite.get("protocol"))
+        count = counts(suite)
+        states = count["states"]
+        condition = ("기본 조건" if name == MBPP_SUITE_LABELS["fresh"] else
+                     "추가 조건" if name in MBPP_SUITE_LABELS.values() else "")
         if not suite.get("prepared"):
-            rows.append([name, "-", "-", "-", "-", "-", "-", "설정 읽기 실패" if suite.get("error") else "준비 전"])
-            notices.append(f"{name}: 설정 읽기 실패: {suite['error']}" if suite.get("error") else f"{name}: 준비 전")
+            note = ("설정 읽기 실패" if suite.get("error") else "실험 설정 확인 불가") + f"; 기록 미확인 {count['unknown']}개"
+            rows.append([name, count["planned"], count["done"], count["remaining"], count["progress"],
+                         states["READY"], states["WAIT"], states["RUN"], f"{condition}; {note}".lstrip("; ")])
+            if suite.get("error"):
+                notices.append(f"{name}: 설정 읽기 실패: {suite['error']}")
             continue
         tasks = suite.get("tasks", [])
         branches = [task for task in tasks if task.get("kind") == "branch"]
         active_tasks = [task for task in tasks if active(task)]
         running += [(name, task) for task in active_tasks]
-        directories = [task.get("directory", "") for task in active_tasks]
-        counts = Counter(display_state(task, directories) for task in branches)
         prefixes = [task for task in tasks if task.get("kind") == "prefix"]
         prefix_done = sum(task["status"] == "DONE" for task in prefixes)
-        note = f"공통 학습 {prefix_done}/{len(prefixes)}"
+        note = f"{condition}; 공통 학습 {prefix_done}/{len(prefixes)}".lstrip("; ")
+        if count["unknown"]:
+            note += f"; 기록 미확인 {count['unknown']}개"
         budgets = sum(task['status'] == 'BUDGET' for task in branches)
         evaluations = sum(task['status'] == 'EVAL' for task in branches)
         if budgets:
             note += f"; 예산 소진 {budgets}개"
         if evaluations:
             note += f"; 평가·결과 저장 남음 {evaluations}개"
-        rows.append([name, completion(suite)[0], f"{counts['DONE']}/{len(branches)}", counts['READY'],
-                     counts['DONE'], counts['WAIT'], counts['RUN'], note])
+        rows.append([name, count["planned"], count["done"], count["remaining"], count["progress"],
+                     states["READY"], states["WAIT"], states["RUN"], note])
         trained = suite.get("training_published", 0)
-        if trained > counts['DONE']:
+        if trained > count['done']:
             notices.append(f"{name}: 학습 결과 {trained}개 저장됨; 평가·결과 확정 대기 {evaluations}개.")
-    lines += table(["Experiment", "Progress", "Completed", "READY", "DONE", "WAIT", "RUN", "Remarks"],
-                   rows, [26, 8, 9, 5, 4, 4, 3, width - 73])
+    lines += table(["Experiment", "계획", "DONE", "남음", "Progress", "READY", "WAIT", "RUN", "Remarks"],
+                   rows, [26, 4, 4, 4, 8, 5, 4, 3, width - 74])
     for suite in data["suites"]:
         lines += ["", f"FULL STATUS — {label(suite['root'], suite.get('protocol'))}"]
+        count = counts(suite)
+        lines.append(f"계획 {count['planned']}개 | 완료 확인 {count['done']}/{count['planned']}"
+                     f" | 남음 {count['remaining']}개 | {count['progress']}")
         if not suite.get("prepared"):
-            lines.append("WAIT: 설정 읽기 실패" if suite.get("error") else "WAIT: 준비 전 (저장된 실험 설정 없음)")
+            lines.append(f"WAIT {count['unknown']}개: " + ("설정 읽기 실패" if suite.get("error") else "실험 설정 확인 불가")
+                         + "; 완료 여부 미확인")
             continue
         if suite.get("protocol", {}).get("gate"):
             lines.append("Gate policy 판단: " + gate_label(suite["protocol"]["gate"]))

@@ -86,12 +86,20 @@ bash scripts/run_mbpp_experiments.sh run difficulty
 For MBPP monitoring, use `bash scripts/run_mbpp_experiments.sh status --watch`.
 It refreshes one dashboard for the three named MBPP suites, with all seed/step
 rows and the full names Selection, Random, Full selection, Full random and
-Gate policy. Progress is completed branches divided by registered branches,
-not elapsed time. Display states are `READY`, `DONE`, `WAIT`, and `RUN`; Remarks
+Gate policy. The top line shows planned / verified completed / remaining counts
+for the requested roots, and each condition has the same numeric columns.
+Each registered condition has 48 continuation branches; prefix, selection and
+evaluation phases are not extra experiments. Remaining means planned minus
+verified completed, including unverified records. Progress uses the same fixed
+planned denominator, not elapsed time or just the subset of records found.
+Display states are `READY`, `DONE`, `WAIT`, and `RUN`; Remarks
 explains evaluation, checkpoint validation, budget exhaustion, and failures.
 Numbered full node names map to their experiment and phase. Inactive node
-history is hidden, not deleted. Missing suites say `준비 전`, never an invented
-`READY` count.
+history is hidden, not deleted. A missing or unreadable condition shows
+planned 48 / verified completed 0 / remaining 48, with `WAIT` and
+“미확인 48개”. This does not claim its past work disappeared or must restart.
+The totals describe the current view, not a requirement to run every optional
+condition; viewing status does not change the execution queue.
 `status --all` adds exact roots and individual task states;
 `status quality --watch 5` watches only **On-policy · 선택비용 별도**.
 This is read-only and does not restart training. The generic
