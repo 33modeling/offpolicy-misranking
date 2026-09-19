@@ -196,3 +196,35 @@ def test_cleanup_waits_for_delayed_cuda_release(monkeypatch):
     monkeypatch.setattr(guard.time, 'sleep', lambda _: None)
     guard.wait_gpu_release([target], timeout=1)
     assert len(calls) == 2
+
+
+def test_cleanup_inspection_labels_keepalive_and_training_without_signals_or_env_dump(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    lock = tmp_path / 'node.lock'
+    guard.publish(lock.with_suffix('.owner.json'), {
+        'schema': 'mbpp-node-owner-v1', 'lock': str(lock.resolve()),
+        'pid': os.getpid(), 'token': 'a' * 32})
+    processes = [SimpleNamespace(pid=101, ppid=10, argv=('python', 'scripts/_gpu_keepalive.py')),
+                 SimpleNamespace(pid=102, ppid=10, argv=('python', 'src/train_selection_gate_grpo.py')),
+                 SimpleNamespace(pid=103, ppid=10, argv=('python', 'src/selection_switch_gpu.py', '--phase', 'curve'))]
+    monkeypatch.setattr(guard.cleanup, 'list_processes', lambda *args, **kwargs: processes)
+    monkeypatch.setattr(guard.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(stdout='0, 800, 3\n'))
+    monkeypatch.setattr(guard.os, 'kill', lambda *args: pytest.fail('inspection must not signal processes'))
+    before = lock.with_suffix('.owner.json').read_bytes()
+    guard.inspect_cleanup(lock, os.getpid())
+    text = capsys.readouterr().out
+    assert 'GPU 유지용' in text and '학습' in text and 'phase=curve' in text
+    assert 'owned processes remaining=3' in text and 'used MiB' in text
+    assert 'unknown owners are not killed' in text
+    assert lock.with_suffix('.owner.json').read_bytes() == before
+
+
+def test_cleanup_inspection_rejects_missing_token_without_claiming_all_processes(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    lock = tmp_path / 'node.lock'
+    guard.publish(lock.with_suffix('.owner.json'), {
+        'schema': 'mbpp-node-owner-v1', 'lock': str(lock.resolve()), 'pid': os.getpid(), 'token': None})
+    monkeypatch.setattr(guard.cleanup, 'list_processes', lambda *args, **kwargs: pytest.fail('invalid owner scope'))
+    monkeypatch.setattr(guard.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(stdout=''))
+    guard.inspect_cleanup(lock, os.getpid())
+    assert 'invalid owner token' in capsys.readouterr().out

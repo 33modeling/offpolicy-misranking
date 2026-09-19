@@ -90,6 +90,45 @@ def wait_gpu_release(targets, timeout=10.):
         time.sleep(min(.5, max(0., deadline - time.monotonic())))
 
 
+def inspect_cleanup(lock_path, pid):
+    """Bounded, read-only stop evidence; never signals or prints environments."""
+    print(f"[cleanup-status] controller pid={pid} alive={identity(pid) is not None}", flush=True)
+    try:
+        owner = json.loads(lock_path.with_suffix('.owner.json').read_text())
+        if (owner.get('schema') != 'mbpp-node-owner-v1' or owner.get('pid') != pid
+                or owner.get('lock') != str(lock_path.resolve())):
+            raise ValueError('owner receipt does not match this controller')
+        token = owner['token']
+        if not isinstance(token, str) or len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
+            raise ValueError('invalid owner token')
+        children = cleanup.list_processes('/unused-mbpp-token-scope', command_patterns=('',),
+                                         required_environment=((TOKEN, token),))
+        print(f"[cleanup-status] owned processes remaining={len(children)}", flush=True)
+        for process in children[:12]:
+            scripts = [Path(arg).name for arg in process.argv if arg.endswith(('.py', '.sh'))]
+            role = 'GPU 유지용' if '_gpu_keepalive.py' in scripts else 'MBPP 작업'
+            if any(name.startswith('train_') for name in scripts):
+                role = '학습'
+            details = []
+            for key in ('--phase', '--arm'):
+                if key in process.argv and process.argv.index(key) + 1 < len(process.argv):
+                    details.append(f"{key[2:]}={process.argv[process.argv.index(key)+1][:60]}")
+            print(f"  pid={process.pid} parent={process.ppid} {role} {' '.join(scripts) or 'child process'} {' '.join(details)}", flush=True)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f'[cleanup-status] owner details unavailable: {exc}', flush=True)
+    for label, query in (
+            ('GPU index, used MiB, utilization %', '--query-gpu=index,memory.used,utilization.gpu'),
+            ('GPU owner PID, used MiB, process', '--query-compute-apps=pid,used_memory,process_name')):
+        try:
+            value = subprocess.run(['nvidia-smi', query, '--format=csv,noheader,nounits'],
+                                   capture_output=True, text=True, timeout=2, check=True)
+            print(f'[cleanup-status] {label}', flush=True)
+            print('\n'.join(value.stdout.splitlines()[:12])[:1600] or 'none reported', flush=True)
+        except (OSError, subprocess.SubprocessError):
+            print(f'[cleanup-status] {label}: unavailable (not proof of free memory)', flush=True)
+    print('[cleanup-status] GPU PID visibility can differ inside containers; unknown owners are not killed.', flush=True)
+
+
 def reap(token):
     # No root wildcard, GPU PID sweep or group signal. The fresh unguessable
     # marker is required on every initial target; their descendants are included.
@@ -182,6 +221,7 @@ def main():
     parser.add_argument("--fingerprint", action="store_true")
     parser.add_argument("--runtime-current", type=int)
     parser.add_argument("--record-runtime", type=int)
+    parser.add_argument("--inspect-cleanup", type=int)
     parser.add_argument("--loaded-fingerprint")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -190,6 +230,9 @@ def main():
         return 0
     if args.lock is None:
         parser.error("--lock required")
+    if args.inspect_cleanup is not None:
+        inspect_cleanup(args.lock, args.inspect_cleanup)
+        return 0
     if args.runtime_current is not None or args.record_runtime is not None:
         if not args.loaded_fingerprint:
             parser.error("--loaded-fingerprint required")

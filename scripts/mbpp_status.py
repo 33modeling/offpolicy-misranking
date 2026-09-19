@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 import time
@@ -157,6 +158,49 @@ def active(task):
     return task.get("heartbeat_fresh", task.get("status") == "RUNNING")
 
 
+def task_progress(root, task):
+    """Current phase evidence only: bounded log tails, never model/rollout files."""
+    phase = str(task.get("phase") or "")
+    if re.fullmatch(r"[\w-]+", phase) and "train" not in phase:
+        directory = Path(root) / task.get("directory", "")
+        if directory.resolve().is_relative_to(Path(root).resolve()):
+            batches = []
+            for rank in range(4):
+                path = directory / f"{phase}-{rank}.log"
+                if not path.resolve().is_relative_to(Path(root).resolve()):
+                    break
+                lines = switch_status.node_view._tail_lines(path, size=16384)
+                # Reports from completed previous attempts must not look like
+                # current progress while a new worker is still loading.
+                try:
+                    progress = directory / "progress.json"
+                    if path.stat().st_mtime < progress.stat().st_mtime - switch_status.number(task.get("seconds")) - 2:
+                        break
+                except OSError:
+                    break
+                gradients = re.findall(r"\[(?:fresh_r|on.policy)\].*?\((\d+)/(\d+)\)", "\n".join(lines))
+                rollouts = re.findall(r"\brollout\s+(\d+)/(\d+)", "\n".join(lines))
+                matches, basis = (gradients, "Gradient 처리") if gradients else (rollouts, "응답 생성")
+                if not matches:
+                    break
+                done, total = map(int, matches[-1])
+                if not 0 <= done <= total or total <= 0:
+                    break
+                batches.append((basis, done, total))
+            if len(batches) == 4 and len({row[0] for row in batches}) == 1:
+                done, total = sum(row[1] for row in batches), sum(row[2] for row in batches)
+                return f"{100 * done / total:.1f}%", f"{batches[0][0]} {done}/{total}개"
+    elapsed = switch_status.number(task.get("seconds"), -1)
+    limit = switch_status.number(task.get("timeout"), 0)
+    if elapsed >= 0 and limit > 0:
+        note = "학습 시간 한도 사용률" if "train" in phase else "현재 단계 시간 한도 사용률"
+        step, start = task.get("training_step"), task.get("step")
+        if "train" in phase and isinstance(step, int) and isinstance(start, int) and step >= start:
+            note += f"; 업데이트 {step - start}회 완료"
+        return f"{min(100., 100 * elapsed / limit):.1f}%", note + " (결과 완료율 아님)"
+    return "확인 중", "처리 건수·시간 한도 기록 없음"
+
+
 def node_assignments(data):
     """Merge shared launcher evidence once, retaining *every* live assignment."""
     hosts = {}
@@ -211,7 +255,6 @@ def render_nodes(data, *, width, all_nodes=False):
     current = [node for node in nodes if node["current"]]
     lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current",
              "# Node -> Experiment | Status | Progress | Remarks"]
-    progress = {suite["root"]: counts(suite)["progress"] for suite in observed_suites(data)}
     retained = {suite["root"] for suite in data.get("retained_suites", [])}
     labels = {suite["root"]: label(suite["root"], suite.get("protocol"))
               + (" (기본 실행 제외)" if suite["root"] in retained else "") for suite in observed_suites(data)}
@@ -222,18 +265,26 @@ def render_nodes(data, *, width, all_nodes=False):
             for root, task in node["assignments"]:
                 key = (root, task["seed"], task["step"], arm_name(task["arm"]))
                 detail = remark(task)
-                details = grouped.setdefault(key, [])
+                entry = grouped.setdefault(key, {"details": [], "tasks": []})
+                entry["tasks"].append(task)
+                details = entry["details"]
                 if detail and detail not in details:
                     details.append(detail)
-            for (root, seed, step, arm), details in grouped.items():
+            for (root, seed, step, arm), entry in grouped.items():
+                details = entry["details"]
+                # A nested curve phase is more specific than its parent branch.
+                task = max(entry["tasks"], key=lambda row: row.get("directory", "").count("/"))
+                percent, basis = task_progress(root, task)
+                details.append(basis)
                 lines.append(f"{index}. {node['host']} -> {labels[root]} / seed {seed} / step {step} / {arm}"
-                             f" | RUN | {progress.get(root, '-')} | {'; '.join(details) or '-'}")
+                             f" | RUN | {percent} | {'; '.join(details) or '-'}")
         else:
             detail = {"WAIT": "작업 배정 대기", "HOLD": "작업 배정 대기", "ADMIT": "장치 점검 중",
                       "COOL": "장치 오류 후 대기", "LIVE": "작업 배정 확인 중",
                       "STALE": "실행 신호 끊김", "UNKNOWN": "배정 확인 안 됨",
                       "EXITED": "실행 종료", "GONE": "오래된 실행 기록"}.get(node["state"], "배정 확인 안 됨")
             lines.append(f"{index}. {node['host']} -> 배정 없음 | WAIT | - | {detail}")
+    lines.append("노드 Progress는 현재 단계 기준입니다. 시간 한도 사용률과 실제 처리 건수는 비고에서 구분합니다.")
     if not nodes or not all_nodes and not current:
         lines.append("No current MBPP node evidence.")
     hidden = len(nodes) - len(current)

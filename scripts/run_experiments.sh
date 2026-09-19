@@ -460,7 +460,7 @@ stop_node() {
       echo '[reload] another invocation already replaced the controller; leaving its replacement running'
       return 0
     fi
-    echo "[stop] host=$HOST pid=$pid: sending TERM to the node launcher; inner launchers reap their ranks and close receipts"
+    echo "[stop] host=$HOST pid=$pid: 기존 실행 종료 요청 (TERM); 자식 GPU 프로세스·비용 기록 정리 대기"
     if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
       # The PID file names the guard, which reaps its token-bound controller/ranks.
       # Never signal an unverified process group based on a stale PID file.
@@ -468,8 +468,24 @@ stop_node() {
     else
       kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
     fi
-    for _ in $(seq 1 240); do launcher_pid_alive || break; sleep 1; done
-    launcher_pid_alive && echo "[stop] pid=$pid still running after 240s; inspect $CONSOLE_LOG"
+    stop_started=$SECONDS
+    stop_report=$SECONDS
+    while launcher_pid_alive && [ "$NODE_LAUNCHER_PID" = "$pid" ] && [ $((SECONDS-stop_started)) -lt 240 ]; do
+      if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "$SECONDS" -ge "$stop_report" ]; then
+        {
+          echo "[stop] host=$HOST pid=$pid 종료 대기 $((SECONDS-stop_started))s / 240s; 아직 재시작하지 않았습니다"
+          timeout -k 1 5 "$PY" scripts/_mbpp_node_guard.py \
+            --lock "$LOG_DIR/mbpp-controller.$HOST.lock" --inspect-cleanup "$pid" || true
+        } | tee -a "$LOG_DIR/cleanup.mbpp.$HOST.log"
+        stop_report=$((SECONDS+5))
+      fi
+      sleep 1
+    done
+    if launcher_pid_alive && [ "$NODE_LAUNCHER_PID" = "$pid" ]; then
+      echo "[stop] pid=$pid still running after 240s; new worker was not started. Cleanup log: $LOG_DIR/cleanup.mbpp.$HOST.log"
+      return 75
+    fi
+    echo "[stop] host=$HOST pid=$pid: 기존 컨트롤러 종료 확인"
   else
     echo "[stop] no live node launcher on $HOST (pid file: $PID_FILE)"
   fi

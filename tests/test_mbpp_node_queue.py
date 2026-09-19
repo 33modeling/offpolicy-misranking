@@ -473,6 +473,22 @@ def test_same_code_plain_run_restarts_controller_and_resumes_checkpoint(cluster)
     assert result['resumed'] == {'node': 'node-duplicate'}
 
 
+def test_stop_shows_and_saves_live_cleanup_evidence_while_child_resists_term(cluster):
+    work, start = cluster
+    engine = work.parent / 'repo/scripts/fake_engine.py'
+    engine.write_text('import signal\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n' + engine.read_text())
+    first, _ = start('node-stop-visible', TEST_BLOCK_NODE='node-stop-visible')
+    wait_for(lambda: (work / 'node-blocked').exists())
+    replacement, log = start('node-stop-visible')
+    assert replacement.wait(timeout=30) == 0, log.read_text()
+    assert first.wait(timeout=10) == 143
+    text = log.read_text()
+    assert '종료 대기' in text and '아직 재시작하지 않았습니다' in text
+    assert 'owned processes remaining=' in text and 'used MiB' in text
+    saved = work / 'runs/experiments/logs/cleanup.mbpp.node-stop-visible_.log'
+    assert '[cleanup-status]' in saved.read_text()
+
+
 def test_busy_mbpp_pass_never_sweeps_other_experiment_processes(cluster):
     work, start = cluster
     # Looks like a real GPU worker, even under the same work volume. It is not

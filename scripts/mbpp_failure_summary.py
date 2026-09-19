@@ -258,6 +258,8 @@ def report(work, roots):
         'Limit: 16 KiB. Only latest failures and short log tails; no rollouts, model data or full cost ledgers.')]
     logs = recent(work, ('runs/experiments/logs/console.mbpp.*.log',))
     nodes = [f'\nNODE {path.name}\n{tail(work, path, 1400)}' for path in logs[:2]]
+    cleanup_logs = recent(work, ('runs/experiments/logs/cleanup.mbpp.*.log',))
+    nodes.extend(f'\nCLEANUP {path.name}\n{tail(work, path, 1600)}' for path in cleanup_logs[:1])
     reserved = len(('\n'.join([sections[0], *nodes]) + '\n').encode('utf-8'))
     per_root = min(ROOT_BYTES, (MAX_BYTES - reserved - len(roots)) // max(1, len(roots)))
     sections.extend(clipped(root_summary(root), per_root) for root in roots)

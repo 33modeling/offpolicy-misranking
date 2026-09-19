@@ -310,7 +310,8 @@ def test_parent_branch_and_curve_phase_share_one_numbered_experiment_row(tmp_pat
     data = dashboard.snapshot([root], now=NOW)
     mapping = "\n".join(dashboard.render_nodes(data, width=120))
     assert mapping.count("1. curve-worker ->") == 1
-    assert "On-policy · 선택비용 별도 / seed 0 / step 25 / Random | RUN | 0.0% |" in mapping
+    assert "On-policy · 선택비용 별도 / seed 0 / step 25 / Random | RUN |" in mapping
+    assert '현재 단계 시간 한도 사용률' in mapping
     assert "단계: curve-evaluation" in mapping and "평가·결과 저장 남음" in mapping
     assert "Random/curve" not in mapping
     assert "CURRENT RUN 1" in dashboard.render(data)

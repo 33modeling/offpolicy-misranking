@@ -276,6 +276,19 @@ seconds before admitting a replacement. Surviving processes or an unverifiable
 GPU query block new GPU work;
 neither a node-wide kill nor a GPU reset is attempted. The existing four-GPU
 memory check and NCCL/DDP probe remain mandatory before a training task is claimed.
+While a controller is stopping, the terminal displays elapsed shutdown time,
+owned process IDs/roles and bounded GPU memory/owner queries at roughly five-second
+intervals. Unknown/container-hidden owners are not assumed to belong to MBPP.
+These observations are saved in `cleanup.mbpp.<node>.log`; `why` includes the
+newest short cleanup excerpt without exceeding its 16 KiB attachment limit.
+No new worker is started while the old controller is still alive.
+
+Each node's `Progress` describes its current phase, not the suite-wide completed
+branch fraction. Four observed rollout/gradient shard counters provide processed
+item progress when available; otherwise the column explicitly reports phase-time
+allocation usage (not result completion), with completed training updates in the
+remarks. Missing evidence stays `확인 중`. The reader uses bounded log tails only;
+it does not run GPU queries or load model/rollout payloads during status refresh.
 **A busy lock no longer triggers a node-wide process or GPU sweep.** Other
 experiments are not cleanup targets merely because they use the same account,
 work volume, or GPUs. MBPP recovery/watchdog roots exclude unrelated math and

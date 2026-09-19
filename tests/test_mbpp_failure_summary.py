@@ -77,10 +77,13 @@ def test_roots_and_huge_unicode_logs_fit_one_sixteen_kib_report(tmp_path, root_c
     logs.mkdir(parents=True)
     for index in range(4):
         (logs / f'console.mbpp.node-{index}.log').write_text('한글 CUDA 내용' * 10000)
+    (logs / 'cleanup.mbpp.node-0.log').write_text('old cleanup\n' * 10000 +
+                                               '[cleanup-status] GPU owner PID, used MiB, process\n1234, 50000, python\n')
     text = summary.report(tmp_path, roots)
     assert len(text.encode('utf-8')) <= summary.MAX_BYTES
     assert all('ROOT ' + root.name in text for root in roots)
     assert text.count('\nNODE ') == 2
+    assert 'CLEANUP cleanup.mbpp.node-0.log' in text and '1234, 50000, python' in text
 
 
 def test_nccl_admission_without_task_failure_keeps_rank_error_and_versions(tmp_path):
