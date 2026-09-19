@@ -97,17 +97,16 @@ def render_nodes(data, *, width, all_nodes=False):
     """One full node name -> experiment mapping, with no interleaved columns."""
     nodes = node_assignments(data)
     current = [node for node in nodes if node["current"]]
-    lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current", "NODE -> EXPERIMENT"]
-    for node in nodes:
-        if not all_nodes and not node["current"]:
-            continue
+    lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current", "# NODE -> EXPERIMENT"]
+    visible = nodes if all_nodes else current
+    for index, node in enumerate(visible, 1):
         if node["assignments"]:
             for root, task in node["assignments"]:
                 arm = "/".join(switch_status.ARM_LABELS.get(part, part) for part in task["arm"].split("/"))
-                lines.append(f"{node['host']} -> {label(root)} / s{task['seed']}/t{task['step']} / {arm}")
+                lines.append(f"{index}. {node['host']} -> {label(root)} / s{task['seed']}/t{task['step']} / {arm}")
         else:
             assignment = "배정 없음" if node["state"] in {"WAIT", "HOLD"} else "배정 확인 안 됨"
-            lines.append(f"{node['host']} -> {assignment} ({node['state']})")
+            lines.append(f"{index}. {node['host']} -> {assignment} ({node['state']})")
     if not nodes or not all_nodes and not current:
         lines.append("No current MBPP node evidence.")
     hidden = len(nodes) - len(current)

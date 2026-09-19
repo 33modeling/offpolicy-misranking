@@ -117,6 +117,10 @@ def test_all_twelve_long_node_names_and_task_assignments_are_visible(tmp_path, w
         assert host_row(data, host)["assignments"]
     assert "... more" not in output
     assert all(len(line) <= width for line in output.splitlines())
+    numbered = [line for line in dashboard.render_nodes(data, width=width) if re.match(r"^\d+\. ", line)]
+    assert len(numbered) == 12
+    for index, host in enumerate(hosts, 1):
+        assert numbered[index - 1].startswith(f"{index}. {host} -> ")
 
 
 def test_one_host_in_two_suites_retains_both_assignments_and_counts_once(tmp_path):
@@ -133,6 +137,8 @@ def test_one_host_in_two_suites_retains_both_assignments_and_counts_once(tmp_pat
     assert re.search(r"NODES\s+1 current", output)
     assignment_section = output.split("NODE ASSIGNMENTS", 1)[1]
     assert "on-policy" in assignment_section and "quality" in assignment_section
+    assert assignment_section.count("1. shared-node ->") == 2
+    assert "2. shared-node" not in assignment_section
 
 
 @pytest.mark.parametrize("line,state", [
@@ -179,6 +185,8 @@ def test_old_node_history_hidden_by_default_but_all_preserves_it_read_only(tmp_p
     detailed = dashboard.render(data, all_tasks=True)
     assert "current-code-node" in output and "old-code-node" not in output
     assert "old-code-node" in detailed and "GONE" in detailed
+    assert "1. current-code-node ->" in output
+    assert "1. current-code-node ->" in detailed and "2. old-code-node ->" in detailed
     assert before == contents(tmp_path)
 
 
