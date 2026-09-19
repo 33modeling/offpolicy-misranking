@@ -285,7 +285,7 @@ def test_explicit_profile_owner_is_recognized_and_preserved_on_duplicate_run(clu
     publish_prefixes(work / "runs/selection-switch-mbpp-v1")
     owner, log = start(f"node-owner-{suite}", suite=suite, TEST_REQUIRE_INPUTS="1")
     wait_for(lambda: "[holding]" in log.read_text())
-    duplicate, duplicate_log = start(f"node-owner-{suite}", suite=suite, TEST_REQUIRE_INPUTS="1")
+    duplicate, duplicate_log = start(f"node-owner-{suite}", mode="logs", suite=suite, TEST_REQUIRE_INPUTS="1")
     assert duplicate.wait(timeout=10) == 0, duplicate_log.read_text()
     assert "already running" in duplicate_log.read_text()
     assert owner.poll() is None and events(work) == []
@@ -461,16 +461,16 @@ def test_zero_poll_interval_is_rejected_instead_of_spinning_forever(cluster):
     assert not events(work)
 
 
-def test_duplicate_node_launch_does_not_stop_or_duplicate_the_live_controller(cluster):
+def test_same_code_plain_run_restarts_controller_and_resumes_checkpoint(cluster):
     work, start = cluster
     first, _log = start("node-duplicate", TEST_BLOCK_NODE="node-duplicate")
     wait_for(lambda: (work / "node-blocked").exists())
-    claims = [row for row in events(work) if row["kind"] == "claim"]
     duplicate, duplicate_log = start("node-duplicate")
-    assert duplicate.wait(timeout=10) == 0, duplicate_log.read_text()
-    assert "[already running]" in duplicate_log.read_text()
-    assert first.poll() is None
-    assert [row for row in events(work) if row["kind"] == "claim"] == claims
+    assert duplicate.wait(timeout=30) == 0, duplicate_log.read_text()
+    assert "even with unchanged code" in duplicate_log.read_text()
+    assert first.wait(timeout=10) == 143
+    result = json.loads((work / 'runs/selection-switch-mbpp-quality-v1/tasks/0/result.json').read_text())
+    assert result['resumed'] == {'node': 'node-duplicate'}
 
 
 def test_busy_mbpp_pass_never_sweeps_other_experiment_processes(cluster):

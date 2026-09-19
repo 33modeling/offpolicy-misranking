@@ -15,6 +15,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -61,6 +62,34 @@ def identity(pid):
         return None
 
 
+def wait_gpu_release(targets, timeout=10.):
+    """Wait for the driver to drop only proven old CUDA owners; never reset GPUs."""
+    owned = {p.pid for p in targets if p.environ.get("CUDA_VISIBLE_DEVICES", "") not in ("", "-1")
+             or "_gpu_keepalive.py" in p.command}
+    if not owned:
+        return
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, check=True,
+                timeout=max(.1, min(3., deadline - time.monotonic())))
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError("cannot verify old CUDA memory release; refusing restart") from exc
+        rows = [row.strip() for row in result.stdout.splitlines() if row.strip()]
+        if any(not row.isdigit() for row in rows):
+            raise RuntimeError("invalid GPU process report; refusing restart")
+        remaining = owned & {int(row) for row in rows}
+        if not remaining:
+            print('[mbpp-clean] driver confirms previous owned CUDA PIDs released', flush=True)
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"GPU still reports previous CUDA PIDs {sorted(remaining)}; refusing restart")
+        print(f"[mbpp-clean] waiting for CUDA release: pids={sorted(remaining)}", flush=True)
+        time.sleep(min(.5, max(0., deadline - time.monotonic())))
+
+
 def reap(token):
     # No root wildcard, GPU PID sweep or group signal. The fresh unguessable
     # marker is required on every initial target; their descendants are included.
@@ -72,6 +101,7 @@ def reap(token):
         command_patterns=("",), required_environment=((TOKEN, token),))
     if remaining:
         raise RuntimeError(f"MBPP children still alive; refusing new GPU work: {[p.pid for p in remaining]}")
+    wait_gpu_release(targets)
     print(f"[mbpp-clean] previous owned processes stopped={len(targets)}; remaining=0", flush=True)
     return targets
 

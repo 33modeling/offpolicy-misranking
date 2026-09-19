@@ -12,7 +12,8 @@
 # do not authorize starting the legacy fresh continuation suite. Every node runs the same command,
 # and a node that loses its GPUs rejoins with the same command.
 #
-#   bash scripts/run_mbpp_experiments.sh            update, reload changed code, or follow this node's log
+#   bash scripts/run_mbpp_experiments.sh            update and restart this node from saved checkpoints
+#   bash scripts/run_mbpp_experiments.sh logs       follow this node's log without restarting
 #   bash scripts/run_mbpp_experiments.sh stop       stop this node's launcher and workers
 #   bash scripts/run_mbpp_experiments.sh restart    load fixes; retain checkpoints and fault receipts
 #   bash scripts/run_mbpp_experiments.sh progress   MBPP suites only: branch counts, running branches, node names
@@ -30,13 +31,13 @@ if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then SUITE=$1; shift; fi
 STATUS_ARGS=()
 STATUS_WATCH=
 usage() {
-  echo 'usage: bash scripts/run_mbpp_experiments.sh [run|restart|stop|plan|check|status|progress|results|saved|why] [all|fresh|difficulty|long|quality]'
+  echo 'usage: bash scripts/run_mbpp_experiments.sh [run|restart|stop|logs|plan|check|status|progress|results|saved|why] [all|fresh|difficulty|long|quality]'
   echo '       bash scripts/run_mbpp_experiments.sh status [all|fresh|difficulty|long|quality] [--all] [--watch [SECONDS]]'
   echo '       default all = On-policy · 선택비용 별도; matched/convergence; 48 continuations'
   echo '       selection cost is recorded separately; existing training allocation is unchanged'
   echo '       fresh, difficulty, long are explicit legacy commands; saved work remains visible'
 }
-case "$MODE" in run|restart|stop|plan|check|status|progress|results|saved|why) ;; -h|--help) usage; exit 0 ;; *) usage; exit 2 ;; esac
+case "$MODE" in run|restart|stop|logs|plan|check|status|progress|results|saved|why) ;; -h|--help) usage; exit 0 ;; *) usage; exit 2 ;; esac
 case "$SUITE" in all|fresh|quality|difficulty|long) ;; *) usage; exit 2 ;; esac
 while [ "$#" -gt 0 ]; do
   [ "$MODE" = status ] || { usage; exit 2; }
@@ -109,7 +110,7 @@ for root in "${MBPP_ROOTS[@]}"; do
 done
 if [ "$SUITE" = all ]; then
   echo '[mbpp] 기본 실행: On-policy · 선택비용 별도, 48개. 다른 조건의 결과·노드 기록은 보존하며 자동 재실행하지 않습니다.'
-  echo '[mbpp] 그냥 실행하면 업데이트 확인 후 구버전만 자동 재시작합니다. 같은 코드로 실행 중이면 로그를 표시합니다.'
+  echo '[mbpp] 그냥 다시 실행하면 같은 코드여도 기존 MBPP 프로세스를 정리하고 마지막 저장 지점에서 재시작합니다. logs는 조회만 합니다.'
 fi
 
 if [ "$MODE" = plan ]; then

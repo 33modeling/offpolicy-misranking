@@ -20,8 +20,8 @@ LAUNCHER_SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
-case "$MODE" in run|restart|stop|status|progress|why|evidence) ;;
-  *) echo 'usage: bash scripts/run_experiments.sh [run|restart|stop|status|progress|why|evidence]'; exit 2 ;;
+case "$MODE" in run|restart|stop|logs|status|progress|why|evidence) ;;
+  *) echo 'usage: bash scripts/run_experiments.sh [run|restart|stop|logs|status|progress|why|evidence]'; exit 2 ;;
 esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
@@ -476,6 +476,21 @@ stop_node() {
   # MBPP uses owner-scoped teardown; retain the legacy cleanup for other modes.
   full_clean
 }
+if [ "$MODE" = logs ]; then
+  if launcher_pid_alive; then
+    echo "[already running] ${EXPERIMENTS_MBPP_SUITE:+MBPP }controller pid=$NODE_LAUNCHER_PID; existing work continues: $CONSOLE_LOG"
+    if [ -t 1 ]; then
+      echo '[logs] Ctrl-C closes this viewer; existing workers continue.'
+      tail -n 50 -F --pid="$NODE_LAUNCHER_PID" "$CONSOLE_LOG" 2>/dev/null || true
+    else
+      tail -n 50 "$CONSOLE_LOG" 2>/dev/null || echo "[logs] MBPP console log not available: $CONSOLE_LOG"
+    fi
+  else
+    echo "[logs] no live controller on $HOST; last saved output: $CONSOLE_LOG"
+    tail -n 50 "$CONSOLE_LOG" 2>/dev/null || true
+  fi
+  exit 0
+fi
 # Generic cleanup spans all prepared roots. A dedicated MBPP controller on this
 # allocation is not a leftover: preserve it even when the other entry point is
 # used. Reuse its strict PID/work/node/suite verification before any mutation.
@@ -492,7 +507,7 @@ if [ "$MODE" = stop ]; then
   stop_node
   exit 0
 fi
-# A plain MBPP invocation updates before deciding to follow an existing log.
+# A plain MBPP invocation updates and restarts this node from saved state.
 # Re-enter the wrapper after a pull so its settings and storage audit are fresh.
 if { [ "$MODE" = run ] || [ "$MODE" = restart ]; } && [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if [ "${EXPERIMENTS_PULL:-1}" != 0 ] && [ "${EXPERIMENTS_START_PULL_DONE:-0}" != 1 ]; then
@@ -509,15 +524,18 @@ if { [ "$MODE" = run ] || [ "$MODE" = restart ]; } && [ -n "${EXPERIMENTS_MBPP_S
   fi
   unset EXPERIMENTS_START_PULL_DONE
   current_fingerprint=$("$PY" scripts/_mbpp_node_guard.py --fingerprint)
-  if [ "$MODE" = run ] && launcher_pid_alive && ! "$PY" scripts/_mbpp_node_guard.py \
-      --lock "$LOG_DIR/mbpp-controller.$HOST.lock" --runtime-current "$NODE_LAUNCHER_PID" \
-      --loaded-fingerprint "$current_fingerprint"; then
+  if [ "$MODE" = run ] && launcher_pid_alive; then
     # Direct/legacy entry points must audit too, before sending any signal.
     if ! CUDA_VISIBLE_DEVICES='' MBPP_STORAGE_AUDIT_AUTOMATIC=1 bash scripts/check_mbpp_storage.sh "$EXPERIMENTS_MBPP_SUITE"; then
       echo '[abort] storage audit blocked automatic reload; existing controller continues' >&2
       exit 2
     fi
-    echo '[reload] MBPP code changed or legacy controller detected; restarting this node from saved checkpoints'
+    if "$PY" scripts/_mbpp_node_guard.py --lock "$LOG_DIR/mbpp-controller.$HOST.lock" \
+        --runtime-current "$NODE_LAUNCHER_PID" --loaded-fingerprint "$current_fingerprint"; then
+      echo '[reload] MBPP run requested again; stopping owned workers and resuming saved checkpoints even with unchanged code'
+    else
+      echo '[reload] MBPP code changed or legacy controller detected; restarting this node from saved checkpoints'
+    fi
     AUTO_RELOAD_PID=$NODE_LAUNCHER_PID
     MODE=restart
   fi
@@ -532,7 +550,8 @@ if [ "$MODE" = restart ]; then
   unset EXPERIMENTS_DETACHED
 fi
 # --- run ---
-# Repeating run follows a current controller; MBPP reloads changed code above.
+# Generic run preserves its controller. MBPP run requests a restart above;
+# this remaining live-owner branch handles a concurrent replacement safely.
 # EXPERIMENTS_PULL=0 skips the pull when starting an idle node.
 if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if launcher_pid_alive; then

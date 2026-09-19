@@ -1,4 +1,4 @@
-"""Re-running MBPP follows its existing log without touching the live owner."""
+"""Explicit logs mode follows MBPP output without touching the live owner."""
 
 import json
 import os
@@ -42,7 +42,7 @@ def test_interactive_existing_mbpp_run_follows_only_its_log_and_ctrl_c_preserves
     tail.chmod(0o755)
     master, slave = pty.openpty()
     viewer = subprocess.Popen(
-        ["bash", str(LAUNCHER)], cwd=ROOT,
+        ["bash", str(LAUNCHER), "logs"], cwd=ROOT,
         env={**env, "EXPERIMENTS_MBPP_SUITE": "all", "TAIL_CALLS": str(tail_calls), "REAL_TAIL": real_tail},
         stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, start_new_session=True,
     )
@@ -80,7 +80,7 @@ def test_noninteractive_existing_mbpp_run_returns_without_following_or_mutating(
     math_log = log.with_name(log.name.replace(".mbpp.", "."))
     math_log.write_text("UNRELATED MATH LOG\n")
     before = saved_bytes((*saved, pid_file, log, math_log))
-    result = subprocess.run(["bash", str(LAUNCHER), "run"], cwd=ROOT,
+    result = subprocess.run(["bash", str(LAUNCHER), "logs"], cwd=ROOT,
                             env={**env, "EXPERIMENTS_MBPP_SUITE": "all"}, capture_output=True,
                             text=True, timeout=5, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -96,7 +96,7 @@ def test_noninteractive_missing_mbpp_log_is_explicit_without_creating_it(mbpp_co
     log = pid_file.with_name(pid_file.name.replace("launcher.", "console.").replace(".pid", ".log"))
     assert not log.exists()
     before = saved_bytes((*saved, pid_file))
-    result = subprocess.run(["bash", str(LAUNCHER), "run"], cwd=ROOT,
+    result = subprocess.run(["bash", str(LAUNCHER), "logs"], cwd=ROOT,
                             env={**env, "EXPERIMENTS_MBPP_SUITE": "all"}, capture_output=True,
                             text=True, timeout=5, check=False)
     assert result.returncode == 0, result.stdout + result.stderr

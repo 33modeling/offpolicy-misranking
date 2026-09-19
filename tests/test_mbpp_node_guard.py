@@ -164,3 +164,35 @@ def test_cleanup_failure_does_not_start_replacement_or_release_owner_receipt(tmp
     with pytest.raises(RuntimeError, match="cannot exit"):
         guard.run(lock, ["unused"])
     assert json.loads(owner_path.read_text()) == owner
+
+
+@pytest.mark.parametrize("outcome", ["released", "still-owned", "driver-error", "invalid"])
+def test_cleanup_checks_driver_release_without_touching_other_gpu_owners(monkeypatch, outcome):
+    from types import SimpleNamespace
+    target = SimpleNamespace(pid=123, environ={"CUDA_VISIBLE_DEVICES": "0"}, command="worker")
+    def query(*args, **kwargs):
+        assert args[0] == ['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader,nounits']
+        if outcome == 'driver-error':
+            raise subprocess.TimeoutExpired(args[0], 3)
+        return SimpleNamespace(stdout={'released': '999\n', 'still-owned': '123\n999\n',
+                                      'invalid': '[Not Supported]\n'}[outcome])
+    monkeypatch.setattr(guard.subprocess, 'run', query)
+    if outcome == 'released':
+        guard.wait_gpu_release([target], timeout=0)
+    else:
+        with pytest.raises(RuntimeError, match='refusing restart'):
+            guard.wait_gpu_release([target], timeout=0)
+
+
+def test_cleanup_waits_for_delayed_cuda_release(monkeypatch):
+    from types import SimpleNamespace
+    target = SimpleNamespace(pid=123, environ={"CUDA_VISIBLE_DEVICES": "0"}, command="worker")
+    outputs = iter(['123\n999\n', '999\n'])
+    calls = []
+    def query(*args, **kwargs):
+        calls.append(args[0])
+        return SimpleNamespace(stdout=next(outputs))
+    monkeypatch.setattr(guard.subprocess, 'run', query)
+    monkeypatch.setattr(guard.time, 'sleep', lambda _: None)
+    guard.wait_gpu_release([target], timeout=1)
+    assert len(calls) == 2

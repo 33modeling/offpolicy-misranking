@@ -202,7 +202,7 @@ def launcher(tmp_path):
     return run, env
 
 
-@pytest.mark.parametrize("mode", ["run", "restart", "stop", "progress"])
+@pytest.mark.parametrize("mode", ["run", "restart", "stop", "logs", "progress"])
 def test_lifecycle_is_delegated_without_input_preflight_after_required_storage_audit(launcher, mode):
     run, env = launcher
     result = run(mode, EXPERIMENTS_KEEPALIVE="1", EXPERIMENTS_WATCHDOG="1", EXPERIMENTS_AUTO_PULL="1")
