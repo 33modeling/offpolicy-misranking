@@ -101,19 +101,34 @@ def hold_reason(last):
     return ""
 
 
-def launcher_nodes(root, tasks, *, now=None):
-    """One row per host that has launcher evidence under ROOT/logs or the node launcher's logs."""
+def launcher_nodes(root, tasks, *, now=None, node_namespace=None):
+    """One row per host with launcher evidence, optionally scoped to MBPP.
+
+    Root-local logs belong to this root. Shared MBPP controller logs do not:
+    they cover several suites, and their freshest log's provenance lets a
+    combined view avoid attributing the same controller to every suite.
+    Unnamespaced shared logs are intentionally not evidence of MBPP ownership.
+    """
+    if node_namespace not in (None, "mbpp"):
+        raise ValueError("node_namespace must be None or 'mbpp'")
+    tasks = list(tasks)
     now = time.time() if now is None else now
     here = node_id().rstrip("_")
     hosts = {}
 
     def row(host):
-        return hosts.setdefault(host, {"host": host, "launcher_pid": None, "launcher_alive": None,
+        return hosts.setdefault(host, {"host": host, "launcher_pid": None, "launcher_alive": None, "pid_age": None,
                                        "state": "-", "detail": "", "last_age": None, "keepalive": "-",
-                                       "task": "", "phase": "", "reason": ""})
+                                       "task": "", "phase": "", "reason": "",
+                                       "source_root": None, "source_log": None})
+
+    def pattern(prefix, suffix, node_launcher):
+        namespace = "mbpp." if node_launcher and node_namespace == "mbpp" else ""
+        return f"{prefix}.{namespace}*.{suffix}"
+
     sources = [(Path(root) / "logs", False), (node_launcher_logs(root), True)]
     for logs, node_launcher in sources:
-        for path in logs.glob("launcher.*.pid"):
+        for path in logs.glob(pattern("launcher", "pid", node_launcher)):
             host = _host_of(path, "launcher.", node_launcher=node_launcher)
             try:
                 pid = int(path.read_text().strip())
@@ -123,6 +138,10 @@ def launcher_nodes(root, tasks, *, now=None):
             if item["launcher_pid"] is not None and not node_launcher:
                 continue
             item["launcher_pid"] = pid
+            try:
+                item["pid_age"] = now - path.stat().st_mtime
+            except OSError:
+                item["pid_age"] = None
             if host == here:
                 try:
                     os.kill(pid, 0)
@@ -132,7 +151,8 @@ def launcher_nodes(root, tasks, *, now=None):
                 except PermissionError:
                     item["launcher_alive"] = True
     for logs, node_launcher in sources:
-        for path in list(logs.glob("console.*.log")) + list(logs.glob("launcher.*.log")):
+        for path in (list(logs.glob(pattern("console", "log", node_launcher)))
+                     + list(logs.glob(pattern("launcher", "log", node_launcher)))):
             host = _host_of(path, "console." if path.name.startswith("console.") else "launcher.",
                             node_launcher=node_launcher)
             item = row(host)
@@ -143,8 +163,10 @@ def launcher_nodes(root, tasks, *, now=None):
             if item["last_age"] is not None and age > item["last_age"]:
                 continue
             item["last_age"] = age
+            item["source_root"] = None if node_launcher else str(Path(root).resolve())
+            item["source_log"] = str(path)
             last = _last(_tail_lines(path))
-            item["detail"] = last[:160]
+            item["detail"] = last if node_namespace == "mbpp" else last[:160]
             state = classify(last, node_launcher=node_launcher)
             if state is None:
                 state = "LIVE" if age < HEARTBEAT_GRACE else "QUIET"
@@ -152,9 +174,15 @@ def launcher_nodes(root, tasks, *, now=None):
                 state = "GONE"
             item["state"] = state
             item["reason"] = hold_reason(last) if state == "HOLD" else ""
-    for logs, _ in sources:
+    task_hosts = {str(task["host"]).rstrip("_") for task in tasks
+                  if (task.get("status") in {"RUNNING", "STALE"} or task.get("heartbeat_fresh")) and task.get("host")}
+    for logs, node_launcher in sources:
         for path in logs.glob("keepalive.*.log"):
             host = _host_of(path, "keepalive.")
+            if node_namespace == "mbpp" and node_launcher and host not in hosts and host not in task_hosts:
+                # Shared keepalive names have no suite namespace. They may
+                # describe a math allocation, not another MBPP controller.
+                continue
             last = _last(_tail_lines(path, 2048))
             item = row(host)
             if last.startswith("[keepalive] stopped"):
@@ -164,12 +192,13 @@ def launcher_nodes(root, tasks, *, now=None):
             elif last:
                 item["keepalive"] = "off"
     for task in tasks:
-        if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
+        active = task.get("status") == "RUNNING" or bool(task.get("heartbeat_fresh"))
+        if (active or task.get("status") == "STALE") and task.get("host"):
             item = row(str(task["host"]).rstrip("_"))
-            if task["status"] == "STALE" and item["state"] in LIVE_STATES:
+            if not active and item["state"] in LIVE_STATES:
                 # An old attempt must not hide this host's current live work.
                 continue
-            item["state"] = "RUN" if task["status"] == "RUNNING" else "STALE"
+            item["state"] = "RUN" if active else "STALE"
             item["task"] = f"s{task['seed']}/t{task['step']} {task['arm']}"
             item["phase"] = task.get("phase", "")
     for item in hosts.values():

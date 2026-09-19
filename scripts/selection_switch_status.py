@@ -138,7 +138,7 @@ def archived_training_artifact(directory):
     return None
 
 
-def snapshot(root, *, now=None, local_gpus=True):
+def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
     root = root.resolve()
     now = time.time() if now is None else now
     notices = []
@@ -157,7 +157,9 @@ def snapshot(root, *, now=None, local_gpus=True):
 
     manifest = read(root / "switch.json")
     if not manifest:
-        return {"prepared": False, "root": str(root), "updated": now}
+        return {"prepared": False, "root": str(root), "updated": now,
+                "nodes": node_view.launcher_nodes(root, [], now=now, node_namespace=node_namespace)
+                if node_namespace else []}
     if manifest.get("schema") != rule.SCHEMA:
         raise ValueError("switch.json has an invalid or unsupported schema")
     # A convergence root's branch is finished only once its reward curve is published;
@@ -183,6 +185,7 @@ def snapshot(root, *, now=None, local_gpus=True):
                 "reason": dependency or "", "host": progress.get("host", ""), "pid": progress.get("pid"),
                 "phase": progress.get("phase", ""), "seconds": number(progress.get("seconds")),
                 "timeout": number(progress.get("timeout")), "heartbeat_age": max(0., age) if progress else None,
+                "heartbeat_fresh": fresh,
                 "training_published": False}
         policy_dir = directory / ("fresh_r/policy" if kind == "prefix" else "policy")
         task["training_step"] = last_training_step(policy_dir / "grpo_stats.jsonl") if kind != "diagnostic" else None
@@ -341,8 +344,8 @@ def snapshot(root, *, now=None, local_gpus=True):
                       "directory": str(directory.relative_to(root)), "status": "RUNNING", "reason": "",
                       "host": progress.get("host", ""), "pid": progress.get("pid"), "phase": progress.get("phase", ""),
                       "seconds": number(progress.get("seconds")), "timeout": number(progress.get("timeout")),
-                      "heartbeat_age": max(0., age), "training_step": None})
-    active = [task for task in tasks if task["status"] == "RUNNING"]
+                      "heartbeat_age": max(0., age), "heartbeat_fresh": True, "training_step": None})
+    active = [task for task in tasks if task.get("heartbeat_fresh")]
     active_hosts = {task["host"] for task in active if task["host"]}
     stale_hosts = {task["host"] for task in tasks if task["status"] == "STALE" and task["host"]} - active_hosts
     waiting = []
@@ -369,7 +372,7 @@ def snapshot(root, *, now=None, local_gpus=True):
                             "reason": f"node retained between queue passes; last pass: {reason}" if reason
                             else "node retained between queue passes"})
     branches = [task for task in tasks if task["kind"] == "branch"]
-    nodes = node_view.launcher_nodes(root, tasks, now=now)
+    nodes = node_view.launcher_nodes(root, tasks, now=now, node_namespace=node_namespace)
     return {"prepared": True, "root": str(root), "updated": now, "gate_ready": gate_ready,
             "gate_fit_failure": gate_fit_failure,
             "nodes": nodes, "local_gpus": node_view.local_gpus() if local_gpus else [],

@@ -1,0 +1,238 @@
+"""Every current MBPP node maps to its work without changing completion state."""
+
+import os
+import re
+from pathlib import Path
+
+import pytest
+from test_mbpp_status_dashboard import dashboard
+from test_selection_switch_status import (
+    completed_prefix,
+    convergence_root,
+    point,
+    prefix,
+    prepared,
+    published,
+    running,
+)
+
+NOW = 1900000000.
+
+
+@pytest.fixture(autouse=True)
+def no_gpu_query(monkeypatch):
+    def forbidden():
+        pytest.fail("node assignment status must not query a GPU")
+
+    monkeypatch.setattr(dashboard.switch_status.node_view, "local_gpus", forbidden)
+
+
+def roots_at(tmp_path):
+    return [tmp_path / "runs" / name for name in (
+        "selection-switch-mbpp-v1", "selection-switch-mbpp-quality-v1", "selection-switch-mbpp-difficulty-v1")]
+
+
+def contents(base):
+    return {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in base.rglob("*") if path.is_file()}
+
+
+def host_row(data, host):
+    matches = [node for node in dashboard.node_assignments(data) if node["host"] == host]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def test_live_curve_heartbeat_keeps_sealed_result_eval_and_node_visible(tmp_path):
+    root = roots_at(tmp_path)[1]
+    convergence_root(root)
+    completed_prefix(root)
+    directory = point(root) / "random_reduced"
+    published(directory)
+    running(directory, "eval-node", now=NOW, phase="curve")
+    before = contents(tmp_path)
+    data = dashboard.snapshot([root], now=NOW)
+    suite = data["suites"][0]
+    task = next(task for task in suite["tasks"] if task["directory"] == str(directory.relative_to(root)))
+    assert task["status"] == "EVAL" and task["heartbeat_fresh"] is True
+    assert suite["branch_counts"]["EVAL"] == 1 and suite["training_published"] == 1
+    assert suite["active_nodes"] == 1
+    node = host_row(data, "eval-node")
+    assert node["state"] == "RUN"
+    assert any(Path(suite_root) == root and assignment["status"] == "EVAL"
+               for suite_root, assignment in node["assignments"])
+    output = dashboard.render(data)
+    assert "eval-node" in output and "NODE ASSIGNMENTS" in output
+    assert re.search(r"NODES\s+1 current", output)
+    assert before == contents(tmp_path)
+
+
+def test_published_prefix_with_current_heartbeat_retains_done_and_node(tmp_path):
+    root = roots_at(tmp_path)[0]
+    prepared(root)
+    completed_prefix(root)
+    running(prefix(root), "prefix-publication-node", now=NOW, phase="prefix-train")
+    data = dashboard.snapshot([root], now=NOW)
+    task = next(task for task in data["suites"][0]["tasks"]
+                if task["kind"] == "prefix" and task["seed"] == 0 and task["step"] == 25)
+    assert task["status"] == "DONE" and task["heartbeat_fresh"] is True
+    node = host_row(data, "prefix-publication-node")
+    assert any(assignment["kind"] == "prefix" for _, assignment in node["assignments"])
+    assert "prefix-publication-node" in dashboard.render(data)
+
+
+@pytest.mark.parametrize("suffix", ["curve-parent", "random_reduced/curve", "selection_full/curve/step-50"])
+def test_nested_curve_phase_node_is_mapped_even_outside_branch_task(tmp_path, suffix):
+    root = roots_at(tmp_path)[1]
+    prepared(root)
+    completed_prefix(root)
+    directory = point(root) / suffix
+    running(directory, "curve-node", now=NOW, phase="curve")
+    data = dashboard.snapshot([root], now=NOW)
+    node = host_row(data, "curve-node")
+    assert any(task["kind"] == "phase" and task["arm"] == suffix and task["heartbeat_fresh"]
+               for _, task in node["assignments"])
+    assert "curve-node" in dashboard.render(data)
+
+
+@pytest.mark.parametrize("width", [80, 100, 120])
+def test_all_twelve_long_node_names_and_task_assignments_are_visible(tmp_path, width):
+    root = roots_at(tmp_path)[0]
+    prepared(root)
+    hosts = []
+    for index in range(12):
+        seed, step = index // 3, (25, 50, 100)[index % 3]
+        completed_prefix(root, seed, step)
+        host = f"gpu-node-{index:02d}-" + "allocation-name-that-must-not-be-clipped-" * 2
+        hosts.append(host)
+        running(point(root, seed, step) / "random_reduced", host, now=NOW, phase="train")
+    data = dashboard.snapshot([root], now=NOW)
+    output = dashboard.render(data, width=width)
+    # A long NODE value wraps in its own first column. Join that
+    # column, not whole rows (which would interleave SUITE/TASK with the name).
+    node_section = output.split("NODE ASSIGNMENTS", 1)[1]
+    node_header = next(line for line in node_section.splitlines() if line.startswith("NODE ") and "STATUS" in line)
+    node_width = node_header.index("STATUS") - 2
+    node_column = "".join(line[:node_width].strip() for line in node_section.splitlines())
+    assert re.search(r"NODES\s+12 current", output)
+    assert len([node for node in dashboard.node_assignments(data) if node["state"] == "RUN"]) == 12
+    for host in hosts:
+        assert host in node_column
+        assert host_row(data, host)["assignments"]
+    assert "... more" not in output
+    assert all(len(line) <= width for line in output.splitlines())
+
+
+def test_one_host_in_two_suites_retains_both_assignments_and_counts_once(tmp_path):
+    roots = roots_at(tmp_path)[:2]
+    for root in roots:
+        prepared(root)
+        completed_prefix(root)
+        running(point(root) / "random_reduced", "shared-node", now=NOW, phase="train")
+    data = dashboard.snapshot(roots, now=NOW)
+    node = host_row(data, "shared-node")
+    assert {Path(suite_root) for suite_root, _ in node["assignments"]} == set(roots)
+    assert len(node["assignments"]) == 2
+    output = dashboard.render(data)
+    assert re.search(r"NODES\s+1 current", output)
+    assignment_section = output.split("NODE ASSIGNMENTS", 1)[1]
+    assert "on-policy" in assignment_section and "quality" in assignment_section
+
+
+@pytest.mark.parametrize("line,state", [
+    ("[waiting] all shared prefixes pending", "WAIT"),
+    ("[holding] node retained (peer work active)", "HOLD"),
+    ("[recover-cost] open events inspected", "LIVE"),
+    ("[nccl-preflight] probe running", "ADMIT"),
+])
+def test_shared_mbpp_controller_visible_without_prepared_suite_and_math_is_excluded(tmp_path, line, state):
+    roots = roots_at(tmp_path)
+    logs = roots[0].parent / "experiments/logs"
+    logs.mkdir(parents=True)
+    for name, text in (("console.mbpp.code-node_.log", line),
+                       ("console.math-node_.log", "[holding] unrelated math"),
+                       ("keepalive.math-ghost_.log", "[keepalive] pid=99 devices=[0]")):
+        path = logs / name
+        path.write_text(text + "\n")
+        os.utime(path, (NOW - 5, NOW - 5))
+    before = contents(tmp_path)
+    data = dashboard.snapshot(roots, now=NOW)
+    node = host_row(data, "code-node")
+    assert node["state"] == state and not node["assignments"]
+    assert node.get("source_root") is None
+    output = dashboard.render(data)
+    assert "code-node" in output and state in output
+    assert re.search(r"NODES\s+1 current", output)
+    assert "math-node" not in output and "math-ghost" not in output
+    assert all(not root.exists() for root in roots)
+    assert before == contents(tmp_path)
+
+
+def test_old_node_history_hidden_by_default_but_all_preserves_it_read_only(tmp_path):
+    root = roots_at(tmp_path)[0]
+    prepared(root)
+    logs = root.parent / "experiments/logs"
+    logs.mkdir(parents=True)
+    for host, age in (("current-code-node", 5), ("old-code-node", 900)):
+        log = logs / f"console.mbpp.{host}_.log"
+        log.write_text("[holding] waiting for prerequisites\n")
+        os.utime(log, (NOW - age, NOW - age))
+    before = contents(tmp_path)
+    data = dashboard.snapshot([root], now=NOW)
+    output = dashboard.render(data)
+    detailed = dashboard.render(data, all_tasks=True)
+    assert "current-code-node" in output and "old-code-node" not in output
+    assert "old-code-node" in detailed and "GONE" in detailed
+    assert before == contents(tmp_path)
+
+
+def test_recent_stale_task_without_launcher_log_remains_visible_as_unconfirmed(tmp_path):
+    root = roots_at(tmp_path)[0]
+    prepared(root)
+    completed_prefix(root)
+    running(point(root) / "random_reduced", "recent-stale-node", now=NOW - 88, phase="train")
+    data = dashboard.snapshot([root], now=NOW)
+    node = host_row(data, "recent-stale-node")
+    assert node["state"] == "STALE" and node["current"] is True
+    assert node["evidence_age"] == 90 and not node["assignments"]
+    output = dashboard.render(data)
+    assert "recent-stale-node" in output and "STALE" in output and "unconfirmed" in output
+    assert re.search(r"NODES\s+1 current\s*\| RUN 0", output)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_old_assignment_never_hides_same_nodes_current_work_in_another_suite(tmp_path, reverse):
+    roots = roots_at(tmp_path)[:2]
+    for root in roots:
+        prepared(root)
+        completed_prefix(root)
+    running(point(roots[0]) / "random_reduced", "reused-node", now=NOW - 900, phase="train")
+    running(point(roots[1]) / "selection_reduced", "reused-node", now=NOW, phase="fresh-r-candidate")
+    data = dashboard.snapshot(list(reversed(roots)) if reverse else roots, now=NOW)
+    node = host_row(data, "reused-node")
+    assert node["state"] == "RUN" and node["current"] is True
+    assert len(node["assignments"]) == 1
+    suite_root, task = node["assignments"][0]
+    assert Path(suite_root) == roots[1] and task["arm"] == "selection_reduced"
+    output = dashboard.render(data)
+    assert re.search(r"NODES\s+1 current\s*\| RUN 1", output)
+
+
+def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_path):
+    root = roots_at(tmp_path)[0]
+    logs = root.parent / "experiments/logs"
+    logs.mkdir(parents=True)
+    old_log = logs / "console.mbpp.pid-pending-node_.log"
+    old_log.write_text("[holding] prior controller waited for prerequisites\n")
+    os.utime(old_log, (NOW - 900, NOW - 900))
+    pid_file = logs / "launcher.mbpp.pid-pending-node_.pid"
+    pid_file.write_text("1234\n")
+    os.utime(pid_file, (NOW - 5, NOW - 5))
+    before = contents(tmp_path)
+    data = dashboard.snapshot([root], now=NOW)
+    node = host_row(data, "pid-pending-node")
+    assert node["state"] == "UNKNOWN" and node["current"] is True
+    assert not node["assignments"] and node["evidence_age"] == 5
+    output = dashboard.render(data)
+    assert "pid-pending-node" in output and "UNKNOWN" in output
+    assert re.search(r"NODES\s+1 current\s*\| RUN 0", output)
+    assert before == contents(tmp_path)

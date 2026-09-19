@@ -211,3 +211,151 @@ def test_hiding_all_inactive_nodes_keeps_their_files(tmp_path):
     assert rendered == ["No live nodes observed.", "  1 inactive node(s) hidden; --all shows history."]
     assert nodes[0]["host"] == "dead-node" and nodes[0]["state"] == "EXITED"
     assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
+
+
+def test_mbpp_namespace_excludes_unattributed_shared_math_and_legacy_logs(tmp_path):
+    root = tmp_path / "runs/selection-switch-mbpp-v1"
+    shared = view.node_launcher_logs(root)
+    shared.mkdir(parents=True)
+    (shared / "console.math-node_.log").write_text("[holding] math work\n")
+    (shared / "launcher.math-node_.pid").write_text("1\n")
+    (shared / "launcher.legacy-node_.log").write_text("[pass 1] selection switch\n")
+    (shared / "console.mbpp.code-node_.log").write_text("[waiting] prefixes are not ready\n")
+    (shared / "launcher.mbpp.code-node_.pid").write_text("2\n")
+    (shared / "launcher.mbpp.second-code-node_.log").write_text("[nccl-preflight] probing\n")
+    logs(root, "root-node", console="[recover-cost] closed interrupted event\n")
+    scoped = {row["host"]: row for row in view.launcher_nodes(root, [], node_namespace="mbpp")}
+    assert set(scoped) == {"code-node", "second-code-node", "root-node"}
+    assert scoped["code-node"]["state"] == "WAIT" and scoped["code-node"]["launcher_pid"] == 2
+    assert scoped["second-code-node"]["state"] == "ADMIT"
+    assert scoped["root-node"]["source_root"] == str(root.resolve())
+    unscoped = {row["host"] for row in view.launcher_nodes(root, [])}
+    assert unscoped == set(scoped) | {"math-node", "legacy-node"}
+
+
+@pytest.mark.parametrize("last,state", [
+    ("[waiting] shared prefixes not ready", "WAIT"),
+    ("[holding] node retained (peer work active)", "HOLD"),
+    ("[nccl-preflight] probing", "ADMIT"),
+    ("[recover-cost] open events inspected; queue continues", "LIVE"),
+])
+def test_mbpp_controller_visible_without_prepared_root_and_without_mutation(tmp_path, monkeypatch, last, state):
+    root = tmp_path / "runs/selection-switch-mbpp-difficulty-v1"
+    shared = view.node_launcher_logs(root)
+    shared.mkdir(parents=True)
+    console = shared / "console.mbpp.code-node_.log"
+    console.write_text(last + "\n")
+    stamp = console.stat().st_mtime
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()}
+    monkeypatch.setattr(view, "local_gpus", lambda: pytest.fail("read-only node metadata must not query GPUs"))
+    nodes = view.launcher_nodes(root, [], now=stamp + 10, node_namespace="mbpp")
+    assert len(nodes) == 1
+    assert nodes[0]["host"] == "code-node" and nodes[0]["state"] == state
+    assert nodes[0]["source_root"] is None and nodes[0]["source_log"] == str(console)
+    assert nodes[0]["last_age"] == 10
+    assert not root.exists()
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("root_is_newer", [False, True])
+def test_node_provenance_tracks_only_the_freshest_selected_log(tmp_path, root_is_newer):
+    root = tmp_path / "runs/selection-switch-mbpp-quality-v1"
+    shared = view.node_launcher_logs(root)
+    shared.mkdir(parents=True)
+    local = root / "logs/console.code-node_.log"
+    logs(root, "code-node", console="[nccl-preflight] probing quality\n")
+    console = shared / "console.mbpp.code-node_.log"
+    console.write_text("[holding] node retained (all suites waiting)\n")
+    now = 1000
+    newest, oldest = (local, console) if root_is_newer else (console, local)
+    os.utime(newest, (now - 5, now - 5))
+    os.utime(oldest, (now - 20, now - 20))
+    node = view.launcher_nodes(root, [], now=now, node_namespace="mbpp")[0]
+    assert node["source_log"] == str(newest)
+    assert node["source_root"] == (str(root.resolve()) if root_is_newer else None)
+    assert node["last_age"] == 5
+    assert node["state"] == ("ADMIT" if root_is_newer else "HOLD")
+
+
+def test_mbpp_shared_keepalive_requires_prior_controller_or_root_task_evidence(tmp_path):
+    root = tmp_path / "runs/selection-switch-mbpp-v1"
+    shared = view.node_launcher_logs(root)
+    shared.mkdir(parents=True)
+    (shared / "console.mbpp.code-node_.log").write_text("[holding] waiting for peer\n")
+    for host in ("code-node", "task-node", "math-ghost"):
+        (shared / f"keepalive.{host}_.log").write_text("[keepalive] pid=99 devices=[0]\n")
+    tasks = [{"status": "RUNNING", "host": "task-node", "seed": 0, "step": 25, "arm": "random_full"}]
+    nodes = {row["host"]: row for row in view.launcher_nodes(root, tasks, node_namespace="mbpp")}
+    assert set(nodes) == {"code-node", "task-node"}
+    assert all(row["keepalive"] == "busy" for row in nodes.values())
+    assert nodes["task-node"]["state"] == "RUN"
+    assert "math-ghost" in {row["host"] for row in view.launcher_nodes(root, tasks)}
+
+
+def test_mbpp_shared_waiting_does_not_inherit_old_dispatched_suite(tmp_path):
+    root = tmp_path / "runs/selection-switch-mbpp-v1"
+    shared = view.node_launcher_logs(root)
+    shared.mkdir(parents=True)
+    detail = "[holding] " + "all suite prerequisites pending; " * 12
+    (shared / "console.mbpp.code-node_.log").write_text(f"[dispatch] root={root} checkout=old\n{detail}\n")
+    node = view.launcher_nodes(root, [], node_namespace="mbpp")[0]
+    assert node["source_root"] is None and node["detail"] == detail
+    assert node["state"] == "HOLD" and not node["task"]
+    assert len(view.launcher_nodes(root, [])[0]["detail"]) == 160
+
+
+def test_mbpp_namespace_rejects_unknown_filter_without_creating_paths(tmp_path):
+    root = tmp_path / "not-created"
+    with pytest.raises(ValueError, match="node_namespace"):
+        view.launcher_nodes(root, [], node_namespace="typo")
+    assert not root.exists()
+
+
+def test_pid_only_starting_node_has_age_without_claiming_remote_liveness(tmp_path, monkeypatch):
+    root = tmp_path / "runs/selection-switch-mbpp-v1"
+    shared = view.node_launcher_logs(root)
+    shared.mkdir(parents=True)
+    pid_file = shared / "launcher.mbpp.starting-node_.pid"
+    pid_file.write_text("42\n")
+    os.utime(pid_file, (995, 995))
+    monkeypatch.setattr(view, "node_id", lambda: "another-node")
+    monkeypatch.setattr(view.os, "kill", lambda *_: pytest.fail("a remote PID is not locally verifiable"))
+    node = view.launcher_nodes(root, [], now=1000, node_namespace="mbpp")[0]
+    assert node["host"] == "starting-node" and node["launcher_pid"] == 42
+    assert node["pid_age"] == 5 and node["last_age"] is None
+    assert node["launcher_alive"] is None and node["state"] == "-"
+    assert node["source_log"] is None and node["source_root"] is None
+
+
+def test_pid_age_does_not_replace_selected_log_age(tmp_path):
+    root = tmp_path / "runs/selection-switch-mbpp-v1"
+    shared = view.node_launcher_logs(root)
+    shared.mkdir(parents=True)
+    pid_file = shared / "launcher.mbpp.code-node_.pid"
+    console = shared / "console.mbpp.code-node_.log"
+    pid_file.write_text("42\n")
+    console.write_text("[waiting] for shared prefixes\n")
+    os.utime(pid_file, (500, 500))
+    os.utime(console, (990, 990))
+    node = view.launcher_nodes(root, [], now=1000, node_namespace="mbpp")[0]
+    assert node["pid_age"] == 500 and node["last_age"] == 10 and node["state"] == "WAIT"
+
+
+@pytest.mark.parametrize("status", ["DONE", "EVAL", "STALE"])
+def test_fresh_task_heartbeat_keeps_owner_visible_without_relabeling_saved_task(tmp_path, status):
+    root = tmp_path / "runs/selection-switch-mbpp-v1"
+    shared = view.node_launcher_logs(root)
+    shared.mkdir(parents=True)
+    (shared / "keepalive.curve-node_.log").write_text("[keepalive] pid=42 devices=[0]\n")
+    task = {"status": status, "heartbeat_fresh": True, "host": "curve-node", "seed": 3,
+            "step": 100, "arm": "random_reduced", "phase": "curve-evaluate"}
+    node = view.launcher_nodes(root, [task], node_namespace="mbpp")[0]
+    assert node["state"] == "RUN" and node["host"] == "curve-node"
+    assert node["task"] == "s3/t100 random_reduced" and node["phase"] == "curve-evaluate"
+    assert node["keepalive"] == "busy" and task["status"] == status
+
+
+def test_saved_task_without_fresh_heartbeat_does_not_create_live_node(tmp_path):
+    task = {"status": "EVAL", "heartbeat_fresh": False, "host": "old-node", "seed": 3,
+            "step": 100, "arm": "random_reduced", "phase": "curve-evaluate"}
+    assert view.launcher_nodes(tmp_path, [task], node_namespace="mbpp") == []
