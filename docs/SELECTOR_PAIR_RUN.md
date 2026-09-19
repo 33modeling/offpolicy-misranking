@@ -86,7 +86,11 @@ scoring 방법을 바꿀 수 없다. 실행 중인 checkout은 업데이트하�
 검토되지 않은 코드 변경이 발견되면 중단한다.
 
 한 root는 한 controller만 실행한다. 여러 노드에 분산하는 큐가 아니다.
-다른 controller가 같은 root를 사용 중이면 잠금 오류로 종료한다.
+다른 controller가 같은 root를 사용 중이면 기본 실행 명령은 `[already running]`과
+관측된 노드·현재 단계를 출력하고 추가 GPU 작업 없이 정상 종료한다. 설정 생성과
+GPU 점검 전에 확인하며 잠금 파일을 삭제하거나 기존 작업을 중단하지 않는다.
+오래된 진행 기록은 현재 실행이 아닌 마지막 관측으로 표시한다. 이 동작은 여러
+노드에서 같은 실험을 병렬 실행하도록 바꾸는 것이 아니다.
 `status`는 실행 잠금을 요구하지 않는 읽기 전용 조회다. 실행 중에도 조회할 수
 있으며, 준비되지 않은 root를 생성하거나 frozen manifest/런타임 영수증을 바꾸지 않는다.
 
@@ -174,6 +178,9 @@ GPU 작업 전에 Switch/MBPP와 같은 4-rank NCCL/DDP 사전 검사를 수행�
 측정처럼 취급하지 않는다. 실패·재시도 비용은 기존 장부에 계속 포함한다.
 이번 운영 수정은 `pair-operations-runtime.json`으로 별도 기록하며, 검토된 이전
 코드의 manifest와 기존 런타임 영수증을 덮어쓰지 않는다.
+중복 실행 조회 수정은 `pair-lock-observation-runtime.json`에 별도로 기록한다.
+기존 operations 영수증도 보존한다. 실행 중인 pair의 checkout을 변경하기 위한
+자동 pull/restart 기능은 추가하지 않았으며, 조회는 기존 실행을 중단하지 않는다.
 
 같은 root에서 `bash scripts/run_selector_pair.sh`를 다시 실행한다. 완료된 selection, checkpoint, 결과,
 동결된 decision을 재사용한다. 중간 checkpoint의 cost receipt는 checkpoint

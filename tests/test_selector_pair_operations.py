@@ -56,12 +56,10 @@ def test_operations_upgrade_preserves_frozen_work_and_prior_receipts(tmp_path, m
     old = previous_runtime()
     p = frozen(tmp_path, bootstrap_predecessor() if migrated else old)
     if migrated:
-        original = base.bind
-        with monkeypatch.context() as patch:
-            patch.setattr(gpu, "code_hashes", lambda: old)
-            patch.setattr(base, "bind", lambda path, value: None if path.name == "pair-operations-runtime.json"
-                          else original(path, value))
-            gpu.bind_startup_runtime(tmp_path, p["code_hashes"])
+        from test_selector_pair_lock_migration import prior_receipts
+        prior_receipts(tmp_path, p["code_hashes"], old)
+        # This exact historical runtime predates the operations receipt.
+        (tmp_path / "pair-operations-runtime.json").unlink()
     core.atomic_json(tmp_path / "saved/decision.json", {"budget": 87120, "target": .35})
     (tmp_path / "saved/checkpoint.bin").write_bytes(b"preserve checkpoint")
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}

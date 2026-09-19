@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import fcntl
 import io
 import json
 import os
@@ -41,9 +42,11 @@ PRE_RESOURCES_CODE = "d5d354a91ec95ae5d941c619a5a50da10e1606072a36dbe06e83d974ae
 # pair selectors, pair trainer, curve trainer and branch protocols stay frozen.
 PRE_BUDGET_STOP_EVALUATION_CODE = "bfe7b00d57a365d9ddd8936422a723c86938e2feb1f82ae5c72d648a42ce7c30"
 PRE_PAIR_OPERATIONS_CODE = "ad310eefce6b1d6e9d7f9ed634b0a121b491fb496899870363e2affb7f42adb7"
+PRE_PAIR_LOCK_OBSERVATION_CODE = "89983f762d8fe1ea0af35bda9088e48c6ff2335d6d2c22192471377b196d0798"
 PRE_SHARED_RUNTIME_CODES = {
     PRE_BUDGET_STOP_EVALUATION_CODE,
     PRE_PAIR_OPERATIONS_CODE,
+    PRE_PAIR_LOCK_OBSERVATION_CODE,
     "9eab1b016f5f897a4bd3b85998a25b1bc724b8bf3383ef9e6cfe2ba43f9a6d67",
     "cec86006408b80d7901f3f44a3b113d702c860e6c4a84a40cd2422e6438ef27a",
     "b5dfeae35bc95922893636bc5ad1c6d801e68648f1d60907353a016e7c0c1738",
@@ -63,6 +66,13 @@ class NodeAdmissionError(RuntimeError):
 
 class IncompletePairRun(ValueError):
     """A pass kept independent work moving but cannot advance the fit barrier."""
+
+
+class PairLockBusy(ValueError):
+    def __init__(self, path):
+        self.path = Path(path)
+        super().__init__(f"pair lock busy: {path}; another controller/worker holds it. "
+                         "Do not delete the lock or reset results.")
 
 
 def admission_probe(root):
@@ -133,9 +143,59 @@ def pair_lease(path):
         try:
             stack.enter_context(base.lease(path))
         except BlockingIOError as exc:
-            raise ValueError(f"pair lock busy: {path}; another controller/worker holds it. "
-                             "Do not delete the lock or reset results.") from exc
+            raise PairLockBusy(path) from exc
         yield
+
+
+def show_pair_activity(root):
+    """Bounded metadata observation only; never claim a stale owner is live."""
+    print(f"[already running] pair root is locked: {root}; existing work left untouched", flush=True)
+    print("[pair] One controller per root; this invocation starts no additional GPU work.", flush=True)
+    observations = []
+    now = time.time()
+    for path in root.glob("branches/*/states/*/points/*/**/progress.json"):
+        try:
+            if not path.resolve().is_relative_to(root.resolve()):
+                continue
+            with path.open("rb") as handle:
+                raw = handle.read(65537)
+            if len(raw) > 65536:
+                continue
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                continue
+            updated = core.number(value.get("updated", 0.), "progress timestamp", 0.)
+            observations.append((updated, path, value))
+        except (OSError, ValueError, TypeError):
+            continue
+    observations.sort(key=lambda row: row[0], reverse=True)
+    active = [row for row in observations if row[2].get("state") == "running" and -5 <= now-row[0] < 60]
+    for updated, path, value in (active or observations[:1])[:4]:
+        marker = "pair-active" if active else "pair-last"
+        print(f"[{marker}] host={value.get('host', '?')} phase={value.get('phase', '?')} "
+              f"age={max(0., now-updated):.0f}s task={path.parent.relative_to(root)}"
+              + ("" if active else " (historical evidence; not confirmed running)"), flush=True)
+    if not observations:
+        print("[pair] Owner/phase metadata unavailable; preparation or CPU work may hold the lock.", flush=True)
+
+
+def check_running(root):
+    """Probe an existing root lease before setup or GPU admission, without writes."""
+    try:
+        handle = (root / ".pair.lock").open("rb")
+    except FileNotFoundError:
+        return False
+    with handle:
+        try:
+            # Controllers hold EX; a shared probe detects them without needing
+            # a writable descriptor (required for EX on NFS).
+            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            show_pair_activity(root)
+            return True
+        else:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+    return False
 
 
 def code_hashes():
@@ -216,7 +276,7 @@ def bind_startup_runtime(root, recorded):
             "resources_runtime_sha256": base.digest(resources_path),
             "change": "shared Switch runtime recovery and validated checkpoint retention only; pair design, selectors and trainer unchanged",
             "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or parent restart",
-        }, {PRE_BUDGET_STOP_EVALUATION_CODE, PRE_PAIR_OPERATIONS_CODE})
+        }, {PRE_BUDGET_STOP_EVALUATION_CODE, PRE_PAIR_OPERATIONS_CODE, PRE_PAIR_LOCK_OBSERVATION_CODE})
         if core.fingerprint(code_hashes()) != PRE_BUDGET_STOP_EVALUATION_CODE:
             evaluation_path = root / "budget-stop-evaluation-runtime.json"
             switch.bind_reviewed_runtime_receipt(evaluation_path, {
@@ -225,13 +285,21 @@ def bind_startup_runtime(root, recorded):
                 "shared_checkpoint_recovery_runtime_sha256": base.digest(recovery_path),
                 "change": "shared Switch completed-policy evaluation resume only; pair design, selectors and trainer unchanged",
                 "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or retraining",
-            }, {PRE_PAIR_OPERATIONS_CODE})
-            base.bind(root / "pair-operations-runtime.json", {
+            }, {PRE_PAIR_OPERATIONS_CODE, PRE_PAIR_LOCK_OBSERVATION_CODE})
+            operations_path = root / "pair-operations-runtime.json"
+            switch.bind_reviewed_runtime_receipt(operations_path, {
                 "schema": "offpolicy-selector-pair/operations-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "evaluation_runtime_sha256": base.digest(evaluation_path),
                 "change": "read-only status, bounded branch retries with NCCL admission, exhausted-allocation guard",
                 "cost_policy": "preserve selectors, trainer, target, caps, checkpoints, decisions and all prior costs",
+            }, {PRE_PAIR_LOCK_OBSERVATION_CODE})
+            base.bind(root / "pair-lock-observation-runtime.json", {
+                "schema": "offpolicy-selector-pair/lock-observation-runtime-v1",
+                "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                "operations_runtime_sha256": base.digest(operations_path),
+                "change": "observe an existing controller before setup/GPU admission; no duplicate worker",
+                "cost_policy": "preserve targets, allocations, costs, results, decisions and all previous receipts",
             })
 
 
@@ -819,7 +887,7 @@ def read_status(root):
 def main():
     configure_cpu_runtime()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("init", "prepare", "ensure-prepared", "run", "develop", "fit", "freeze", "test", "report", "status", "check-code"))
+    parser.add_argument("command", choices=("init", "prepare", "ensure-prepared", "run", "develop", "fit", "freeze", "test", "report", "status", "check-code", "check-running"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--matrix", type=Path)
     parser.add_argument("--prefix-source", type=Path)
@@ -832,6 +900,8 @@ def main():
     parser.add_argument("--eval-timeout", type=float)
     args = parser.parse_args()
     args.root = args.root.resolve()
+    if args.command == "check-running":
+        raise SystemExit(75 if check_running(args.root) else 0)
     install_runtime()
     if args.command == "prepare":
         prepare(preparation_options(args.root, {key: getattr(args, key) for key in CONFIG_KEYS}))
@@ -879,6 +949,11 @@ if __name__ == "__main__":
     install_signal_handlers()
     try:
         main()
+    except PairLockBusy as exc:
+        if exc.path.name == ".pair.lock":
+            show_pair_activity(exc.path.parent)
+            raise SystemExit(75) from None
+        raise SystemExit(f"[pair] {exc}") from None
     except NodeAdmissionError as exc:
         print(f"[blocked] {exc}", file=sys.stderr, flush=True)
         raise SystemExit(78) from None

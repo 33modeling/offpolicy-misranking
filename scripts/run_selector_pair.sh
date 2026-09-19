@@ -19,7 +19,7 @@ export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
   cpu)
     export CUDA_VISIBLE_DEVICES=""
-    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py "$@" ;;
+    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py "$@" ;;
   init|prepare|fit|report|status|check-code)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" "$@" ;;
@@ -29,12 +29,21 @@ esac
 if [ "$#" -ne 0 ]; then
   echo '[abort] run uses the frozen preparation; new options require a new root'; exit 2
 fi
+pair_cpu_step() {
+  local rc=0
+  CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py "$1" --root "$PAIR_ROOT" || rc=$?
+  # The existing controller owns the run. Observation is a successful no-op;
+  # do not proceed to node locks, GPU probes, preparation or another worker.
+  [ "$rc" -ne 75 ] || exit 0
+  return "$rc"
+}
+pair_cpu_step check-running
 if [ "$MODE" = run ] || [ "$MODE" = develop ]; then
   # No arguments needed: create the default setup and validate real inputs,
   # or resume the existing frozen request before admitting any GPU work.
-  CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py ensure-prepared --root "$PAIR_ROOT"
+  pair_cpu_step ensure-prepared
 else
-  CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py check-code --root "$PAIR_ROOT"
+  pair_cpu_step check-code
 fi
 export OM_WORK="$WORK" OUT_ROOT="$PAIR_ROOT"
 source scripts/_e5_node.sh
@@ -54,4 +63,7 @@ done <<< "$PAIR_MEMORY"
 PAIR_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$WORK/runtime-deps")
 export PYTHONPATH="$PAIR_VERIFY_PATH:$PYTHONPATH" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
 source scripts/_selection_worker.sh
-selection_run_worker "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT"
+PAIR_WORKER_RC=0
+selection_run_worker "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" || PAIR_WORKER_RC=$?
+[ "$PAIR_WORKER_RC" -ne 75 ] || exit 0
+exit "$PAIR_WORKER_RC"
