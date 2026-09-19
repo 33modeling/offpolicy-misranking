@@ -115,6 +115,21 @@ exit 76으로 종료한다. 이 상한은 무한 대기를 막는 운영상 제�
 표시하지만, 그 기록이 실제 잠금 소유자를 확정하는 증거는 아니다. 소유 PID가
 로컬에서 보이지 않는다고 노드가 죽었다고 판단하거나 잠금을 제거하지 않는다.
 
+`previous single-controller` 대기가 계속되면, 대기 중인 노드의 저장소에서
+아래 명령으로 잠금 증거를 **4 KiB 이하 TXT 하나**에 저장한다. Python 표준
+라이브러리만 사용하며 frozen 실행 코드를 import하거나 변경하지 않는다.
+프로세스 종료·잠금 삭제·GPU 작업·학습 재시작은 하지 않는다.
+
+```bash
+bash scripts/check_selector_pair.sh
+```
+
+마지막 `[saved]`의 `selector-pair-lock-*.txt`를 전달한다. `ROOT_LOCK`은 그 순간의
+공유 잠금 획득 가능 여부, `OWNER confirmed-local`은 로컬 커널의 배타 잠금
+소유 PID다. `OBSERVED` 노드는 진행 기록일 뿐 실제 잠금 소유자를 확정하지 않는다.
+`CHECKOUT`도 현재 파일의 Git revision이며 이미 실행 중인 Python의 revision이
+아니다. 보고서만 만들고 잠금 문제가 복구되었다고 판단하면 안 된다.
+
 구버전에서 처음 전환할 때는 **기존 구버전 pair를 실행 중인 노드에서만**
 실행 터미널의 `Ctrl+C`로 정상 종료를 요청하고, 자식 프로세스·비용 영수증
 정리가 끝나 명령이 반환된 뒤 checkout을 갱신하고 위 명령을 실행한다.
