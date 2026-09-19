@@ -334,7 +334,7 @@ def render(data, *, width=120, all_tasks=False):
     aggregate = Counter()
     for item in totals:
         aggregate.update(item["states"])
-    lines = [f"MBPP EXPERIMENTS  {stamp}", *render_idle_nodes(data), "",
+    lines = [f"MBPP EXPERIMENTS  {stamp}",
              f"현재 조회 범위 {len(totals)}개 조건 | 총 계획 {planned}개 | 완료 확인 {done}개 | 남음 {remaining}개",
              f"남음 {remaining}개 = RUN {aggregate['RUN']}개 + READY {aggregate['READY']}개 + WAIT {aggregate['WAIT']}개"
              + (f" (기록 미확인 {unknown}개 포함)" if unknown else ""),
@@ -451,6 +451,7 @@ def render(data, *, width=120, all_tasks=False):
             lines += ["", f"ROOT {suite['root']}"]
             for task in suite.get("tasks", []):
                 lines.append(f"{display_state(task)} {task['directory']}" + (f" — {remark(task)}" if remark(task) else ""))
+    lines += ["", *render_idle_nodes(data)]
     return "\n".join(part for line in lines for part in
                      (wrap(line, width) if columns(line) > width else [line]))
 

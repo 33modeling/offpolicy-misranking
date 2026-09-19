@@ -112,11 +112,13 @@ def test_waiting_hosts_are_deduplicated_naturally_sorted_and_never_abbreviated()
     assert sum("작업 배정 대기" in line for line in lines) == 2
 
 
-def test_summary_is_at_dashboard_top_with_zero_case_visible():
+@pytest.mark.parametrize("all_tasks", [False, True])
+def test_summary_is_at_dashboard_bottom_with_zero_case_visible(all_tasks):
     data = report()
-    lines = dashboard.render(data).splitlines()
+    lines = dashboard.render(data, all_tasks=all_tasks).splitlines()
     assert lines[0].startswith("MBPP EXPERIMENTS")
-    assert lines[1] == "작업 없는 노드: 0개 (배정 대기 확인)"
+    assert lines[-2] == "작업 없는 노드: 0개 (배정 대기 확인)"
+    assert lines.count("작업 없는 노드: 0개 (배정 대기 확인)") == 1
     assert "NODE ASSIGNMENTS" in lines
 
 
@@ -143,7 +145,21 @@ def test_snapshot_keeps_nested_and_retained_work_out_of_idle_list_read_only(tmp_
     data = dashboard.snapshot([quality], now=NOW, retained_roots=[retained])
     assert hosts(data) == ["idle-node"]
     output = dashboard.render(data)
-    assert output.splitlines()[1] == "작업 없는 노드: 1개 (배정 대기 확인)"
+    assert output.splitlines()[-3] == "작업 없는 노드: 1개 (배정 대기 확인)"
     assert "1. idle-node | WAIT | 작업 배정 대기" in output
     assert "nested-curve-node ->" in output and "retained-node ->" in output
     assert contents() == before
+
+
+def test_plain_status_cli_prints_waiting_nodes_at_bottom_without_watch(monkeypatch, capsys):
+    import sys
+
+    data = report([{"host": "run284000-wts-2-g1234", "state": "WAIT", "last_age": 5}])
+    monkeypatch.setattr(sys, "argv", ["mbpp_status.py", "--root", data["suites"][0]["root"]])
+    monkeypatch.setattr(dashboard, "snapshot", lambda roots: data)
+    assert dashboard.main() == 0
+    text = capsys.readouterr().out
+    footer = text[text.index("작업 없는 노드:"):]
+    assert "1. run284000-wts-2-g1234 | WAIT | 작업 배정 대기" in footer
+    assert text.index("NODE ASSIGNMENTS") < text.index("작업 없는 노드:")
+    assert text.rstrip().endswith(dashboard.render_idle_nodes(data)[-1])

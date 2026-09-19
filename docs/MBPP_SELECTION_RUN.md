@@ -97,8 +97,9 @@ bash scripts/run_mbpp_experiments.sh run difficulty    # optional cached-selecto
 bash scripts/run_mbpp_experiments.sh run long          # optional old longer-budget condition
 ```
 
-For MBPP monitoring, use `bash scripts/run_mbpp_experiments.sh status --watch`.
-It refreshes the main quality experiment and retains observation of earlier
+For a single MBPP status snapshot, use `bash scripts/run_mbpp_experiments.sh status`.
+Add `--watch` only when continuous refresh is wanted. The view shows the main
+quality experiment and retains observation of earlier
 MBPP roots and their nodes; observation is not permission to schedule them.
 The view includes all seed/step
 rows and the full names Selection, Random, Full selection, Full random and
@@ -121,7 +122,8 @@ condition; viewing status does not change the execution queue.
 This is read-only and does not restart training. The generic
 `run_experiments.sh status` defaults to the math-root overview, not this MBPP view.
 
-The top of status separately lists **작업 없는 노드**: full, numbered node names
+The bottom of ordinary `bash scripts/run_mbpp_experiments.sh status` separately
+lists **작업 없는 노드**; `--watch` is not required. It shows full, numbered node names
 with recent explicit waiting/holding evidence and no live task in any observed
 MBPP condition (including retained conditions). Admission, recovery, cooldown,
 unknown and stale nodes are not called idle. This is a read-only scheduling
