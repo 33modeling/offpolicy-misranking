@@ -60,7 +60,8 @@ def test_distributed_upgrade_preserves_manifest_and_every_previous_receipt(tmp_p
     assert receipt["runtime_code_hashes"] == gpu.code_hashes()
     assert receipt["lock_observation_runtime_sha256"] == base.digest(tmp_path / HISTORICAL_RECEIPTS[-1])
     if history != "frozen-at-release":
-        assert set(file_bytes(tmp_path)) - set(before) == {Path("pair-distributed-runtime.json")}
+        assert set(file_bytes(tmp_path)) - set(before) == {
+            Path("pair-distributed-runtime.json"), Path("pair-wait-guard-runtime.json")}
         assert core.read(tmp_path / HISTORICAL_RECEIPTS[-1])["runtime_code_hashes"] == previous
 
     after = file_bytes(tmp_path)

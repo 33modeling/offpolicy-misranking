@@ -19,7 +19,7 @@ export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
   cpu)
     export CUDA_VISIBLE_DEVICES=""
-    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py tests/test_selector_pair_queue.py tests/test_selector_pair_queue_migration.py tests/test_selector_pair_queue_barrier.py "$@" ;;
+    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py tests/test_selector_pair_queue.py tests/test_selector_pair_queue_migration.py tests/test_selector_pair_queue_barrier.py tests/test_selector_pair_wait.py tests/test_selector_pair_wait_migration.py "$@" ;;
   init|prepare|fit|report|status|check-code)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" "$@" ;;
@@ -30,12 +30,17 @@ if [ "$#" -ne 0 ]; then
   echo '[abort] run uses the frozen preparation; new options require a new root'; exit 2
 fi
 pair_cpu_step() {
-  local rc=0
+  local rc=0 retries=0
   while :; do
     rc=0
     CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py "$1" --root "$PAIR_ROOT" || rc=$?
     [ "$rc" -eq 75 ] || return "$rc"
-    echo '[WAIT] pair preparation is in progress on another node; retry in 15s'
+    if [ "$retries" -ge 12 ]; then
+      echo "[pair-wait-timeout] preparation lock still held: $PAIR_ROOT; stopped waiting without touching existing work" >&2
+      return 76
+    fi
+    retries=$((retries+1))
+    echo "[WAIT] pair preparation is in progress on another node; retry in 15s ($retries/12)"
     sleep 15
   done
 }
@@ -66,5 +71,4 @@ export PYTHONPATH="$PAIR_VERIFY_PATH:$PYTHONPATH" OM_MATH_VERIFIER=math_verify O
 source scripts/_selection_worker.sh
 PAIR_WORKER_RC=0
 selection_run_worker "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" || PAIR_WORKER_RC=$?
-[ "$PAIR_WORKER_RC" -ne 75 ] || exit 0
 exit "$PAIR_WORKER_RC"

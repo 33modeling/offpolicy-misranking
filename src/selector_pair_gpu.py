@@ -46,11 +46,14 @@ PRE_PAIR_OPERATIONS_CODE = "ad310eefce6b1d6e9d7f9ed634b0a121b491fb496899870363e2
 PRE_PAIR_LOCK_OBSERVATION_CODE = "89983f762d8fe1ea0af35bda9088e48c6ff2335d6d2c22192471377b196d0798"
 # Exact released 1aebf1d code map, before distributed task leases.
 PRE_PAIR_DISTRIBUTED_CODE = "76dd34fc37746ad2a1be05a8e29c7c13c620b2d281919acbea0b28119656b201"
+# Exact released 5fd2410 code map, before bounded waits and owner diagnostics.
+PRE_PAIR_WAIT_GUARD_CODE = "2a6c4dcd2fb062159f3212efb7d19f5898774e3f0d18a90953e76b6e3cf309a6"
 PRE_SHARED_RUNTIME_CODES = {
     PRE_BUDGET_STOP_EVALUATION_CODE,
     PRE_PAIR_OPERATIONS_CODE,
     PRE_PAIR_LOCK_OBSERVATION_CODE,
     PRE_PAIR_DISTRIBUTED_CODE,
+    PRE_PAIR_WAIT_GUARD_CODE,
     "9eab1b016f5f897a4bd3b85998a25b1bc724b8bf3383ef9e6cfe2ba43f9a6d67",
     "cec86006408b80d7901f3f44a3b113d702c860e6c4a84a40cd2422e6438ef27a",
     "b5dfeae35bc95922893636bc5ad1c6d801e68648f1d60907353a016e7c0c1738",
@@ -70,6 +73,10 @@ class NodeAdmissionError(RuntimeError):
 
 class IncompletePairRun(ValueError):
     """A pass kept independent work moving but cannot advance the fit barrier."""
+
+
+class PairWaitTimeout(ValueError):
+    """Stop this waiting invocation, never an existing worker or its lease."""
 
 
 class PairLockBusy(ValueError):
@@ -151,19 +158,114 @@ def pair_lease(path):
         yield
 
 
+def pair_progress(root, states=None):
+    """Read bounded, relevant metadata; no ledger scans or GPU queries."""
+    names = states if states is not None else [f"s{s}-t{t}" for s in (*pair.DEV_SEEDS, *pair.TEST_SEEDS) for t in pair.STEPS]
+    pending = [(root / "branches" / branch / "states" / name, 0) for branch in BRANCHES for name in names]
+    if states is None:
+        pending.append((root / "node-preflight", 0))
+    observations, examined = [], 0
+    deadline = time.monotonic() + 2.
+    resolved = root.resolve()
+    while pending and examined < 2048 and len(observations) < 256 and time.monotonic() < deadline:
+        directory, depth = pending.pop()
+        try:
+            if not directory.resolve().is_relative_to(resolved):
+                continue
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    examined += 1
+                    if examined > 2048 or time.monotonic() >= deadline:
+                        break
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if depth < 7 and entry.name not in {"policy", "curve-checkpoints", "selector-work"}:
+                            pending.append((Path(entry.path), depth + 1))
+                    elif entry.name == "progress.json":
+                        path = Path(entry.path)
+                        try:
+                            with path.open("rb") as handle:
+                                raw = handle.read(65537)
+                            if len(raw) > 65536:
+                                continue
+                            value = json.loads(raw)
+                            if not isinstance(value, dict):
+                                continue
+                            updated = core.number(value.get("updated", 0.), "progress timestamp", 0.)
+                            observations.append((updated, path, value))
+                        except (OSError, ValueError, TypeError):
+                            continue
+        except (OSError, RuntimeError):
+            continue
+    return sorted(observations, key=lambda row: row[0], reverse=True)
+
+
+def wait_diagnostics(path):
+    # Diagnostics must never replace the terminal timeout with another error.
+    try:
+        _wait_diagnostics(path)
+    except Exception as exc:
+        print(f"[pair-wait] diagnostics unavailable ({type(exc).__name__}); lock={path}", flush=True)
+
+
+def _wait_diagnostics(path):
+    """Do not confuse local lock ownership with an observed remote heartbeat."""
+    print(f"[pair-wait] lock={path}; existing processes, lock and saved work preserved", flush=True)
+    try:
+        stat = path.stat()
+        with Path("/proc/locks").open() as handle:
+            rows = handle.read(1_048_576).splitlines()
+        owners = []
+        for row in rows:
+            fields = row.split()
+            if len(fields) < 8 or "->" in fields or fields[3] != "WRITE":
+                continue
+            device = fields[5].split(":")
+            if len(device) == 3 and (int(device[0], 16), int(device[1], 16), int(device[2])) == (
+                    os.major(stat.st_dev), os.minor(stat.st_dev), stat.st_ino) and int(fields[4]) > 0:
+                owners.append(fields[4])
+        for pid in owners[:4]:
+            print(f"[pair-lock-owner] local host={base.node_id()} pid={pid}", flush=True)
+    except (OSError, ValueError):
+        owners = []
+    if not owners:
+        print("[pair-lock-owner] not visible locally; this is not proof that the owner died", flush=True)
+    root = path.parent
+    if path.name == ".state.lock":
+        root = path.parents[2]
+    observations = pair_progress(root)
+    now = time.time()
+    for updated, item, value in observations[:4]:
+        fresh = value.get("state") == "running" and -5 <= now - updated < 60
+        print(f"[pair-observed] host={value.get('host', '?')} phase={value.get('phase', '?')} "
+              f"age={max(0., now-updated):.0f}s task={item.parent.relative_to(root)}; "
+              + ("recent heartbeat, not proof of lock ownership" if fresh else "historical record, not confirmed running"), flush=True)
+
+
 @contextlib.contextmanager
-def queue_lease(path, *, shared=False, wait_seconds=15.):
+def queue_lease(path, *, shared=False, wait_seconds=15., max_wait_seconds=180.):
     """Shared worker lifetime vs legacy exclusive controller; never break locks."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    core.number(wait_seconds, "wait interval", 1e-6)
+    core.number(max_wait_seconds, "lock wait limit", 0.)
+    deadline = time.monotonic() + max_wait_seconds
     with path.open("a+") as handle:
         while True:
             try:
                 fcntl.flock(handle, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
             except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    wait_diagnostics(path)
+                    raise PairWaitTimeout(f"lock wait exceeded {max_wait_seconds:g}s: {path}; "
+                                          "this waiting worker stopped; no lock was bypassed or deleted") from None
                 detail = ("previous single-controller run or preparation must finish before queue handoff"
                           if shared else "another node is publishing the shared preparation/decision barrier")
-                print(f"[WAIT] host={base.node_id()} {detail}; retry in {wait_seconds:g}s", flush=True)
-                time.sleep(wait_seconds)
+                delay = min(wait_seconds, remaining)
+                print(f"[WAIT] host={base.node_id()} lock={path} {detail}; "
+                      f"retry in {delay:g}s; remaining wait={remaining:.0f}s", flush=True)
+                time.sleep(delay)
             else:
                 break
         yield
@@ -299,7 +401,7 @@ def bind_startup_runtime(root, recorded):
             "change": "shared Switch runtime recovery and validated checkpoint retention only; pair design, selectors and trainer unchanged",
             "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or parent restart",
         }, {PRE_BUDGET_STOP_EVALUATION_CODE, PRE_PAIR_OPERATIONS_CODE,
-            PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE})
+            PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE, PRE_PAIR_WAIT_GUARD_CODE})
         if core.fingerprint(code_hashes()) != PRE_BUDGET_STOP_EVALUATION_CODE:
             evaluation_path = root / "budget-stop-evaluation-runtime.json"
             switch.bind_reviewed_runtime_receipt(evaluation_path, {
@@ -308,7 +410,8 @@ def bind_startup_runtime(root, recorded):
                 "shared_checkpoint_recovery_runtime_sha256": base.digest(recovery_path),
                 "change": "shared Switch completed-policy evaluation resume only; pair design, selectors and trainer unchanged",
                 "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or retraining",
-            }, {PRE_PAIR_OPERATIONS_CODE, PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE})
+            }, {PRE_PAIR_OPERATIONS_CODE, PRE_PAIR_LOCK_OBSERVATION_CODE,
+                PRE_PAIR_DISTRIBUTED_CODE, PRE_PAIR_WAIT_GUARD_CODE})
             operations_path = root / "pair-operations-runtime.json"
             switch.bind_reviewed_runtime_receipt(operations_path, {
                 "schema": "offpolicy-selector-pair/operations-runtime-v1",
@@ -316,7 +419,7 @@ def bind_startup_runtime(root, recorded):
                 "evaluation_runtime_sha256": base.digest(evaluation_path),
                 "change": "read-only status, bounded branch retries with NCCL admission, exhausted-allocation guard",
                 "cost_policy": "preserve selectors, trainer, target, caps, checkpoints, decisions and all prior costs",
-            }, {PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE})
+            }, {PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE, PRE_PAIR_WAIT_GUARD_CODE})
             observation_path = root / "pair-lock-observation-runtime.json"
             switch.bind_reviewed_runtime_receipt(observation_path, {
                 "schema": "offpolicy-selector-pair/lock-observation-runtime-v1",
@@ -324,13 +427,21 @@ def bind_startup_runtime(root, recorded):
                 "operations_runtime_sha256": base.digest(operations_path),
                 "change": "observe an existing controller before setup/GPU admission; no duplicate worker",
                 "cost_policy": "preserve targets, allocations, costs, results, decisions and all previous receipts",
-            }, {PRE_PAIR_DISTRIBUTED_CODE})
-            base.bind(root / "pair-distributed-runtime.json", {
+            }, {PRE_PAIR_DISTRIBUTED_CODE, PRE_PAIR_WAIT_GUARD_CODE})
+            distributed_path = root / "pair-distributed-runtime.json"
+            switch.bind_reviewed_runtime_receipt(distributed_path, {
                 "schema": "offpolicy-selector-pair/distributed-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "lock_observation_runtime_sha256": base.digest(observation_path),
                 "change": "matched-state leases across nodes with shared preparation and fit/freeze barriers",
                 "cost_policy": "preserve selectors, trainer, targets, caps, all saved work, costs, decisions and previous receipts; no refunds",
+            }, {PRE_PAIR_WAIT_GUARD_CODE})
+            base.bind(root / "pair-wait-guard-runtime.json", {
+                "schema": "offpolicy-selector-pair/wait-guard-runtime-v1",
+                "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                "distributed_runtime_sha256": base.digest(distributed_path),
+                "change": "bounded queue waits and owner diagnostics without breaking peer leases or restarting saved work",
+                "cost_policy": "preserve targets, caps, protocols, decisions, results, checkpoints, costs and all previous receipts; no refunds",
             })
 
 
@@ -611,7 +722,7 @@ def finish_pass(root, stage, failures):
                                 f"saved work and costs preserved; see {root / (stage + '-pass.json')}")
 
 
-def distributed_stage(root, p, devices, stage, *, wait_seconds=15.):
+def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout=180.):
     """Claim matched states, not the entire study; retain within-state order.
 
     Every caller from main holds a shared .pair.lock for its lifetime. That
@@ -621,6 +732,8 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15.):
     """
     if stage not in {"development", "test"}:
         raise ValueError("unknown pair queue stage")
+    core.number(wait_seconds, "queue wait interval", 1e-6)
+    core.number(idle_timeout, "queue idle limit", 0.)
     choices = decisions(root, p) if stage == "test" else None
     seeds = pair.DEV_SEEDS if stage == "development" else pair.TEST_SEEDS
     states = [(seed, step) for seed in seeds for step in pair.STEPS]
@@ -630,6 +743,8 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15.):
     observation = {"host": base.node_id(), "pid": os.getpid(), "stage": stage,
                    "protocol_id": p["protocol_id"], "worker": worker}
     waited = 0.
+    last_activity = time.monotonic()
+    seen_progress = {}
 
     def record(state, task=None):
         core.atomic_json(worker_path, {**observation, "state": state, "task": task,
@@ -644,6 +759,7 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15.):
     try:
         while len(verified) < len(states):
             busy = []
+            previous_verified = len(verified)
             for seed, step in states:
                 key = (seed, step)
                 if key in verified:
@@ -701,12 +817,27 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15.):
                 record("WAIT")
                 raise IncompletePairRun(f"{stage}: {len(states)-len(verified)} state(s) remain; "
                                         f"saved work preserved; see {worker_path}")
+            if len(verified) > previous_verified:
+                last_activity = time.monotonic()
+            for updated, path, value in pair_progress(root, busy):
+                if (value.get("state") == "running" and -5 <= time.time()-updated < 60
+                        and updated > seen_progress.get(path, 0.)):
+                    last_activity = time.monotonic()
+                    seen_progress[path] = updated
+            remaining = idle_timeout - (time.monotonic()-last_activity)
+            if remaining <= 0:
+                for name in busy[:4]:
+                    wait_diagnostics(root / stage / name / ".state.lock")
+                raise PairWaitTimeout(f"{stage}: no new peer heartbeat or completed state for {idle_timeout:g}s; "
+                                      f"busy states={','.join(busy)}; this idle worker stopped, saved work preserved")
             record("WAIT", "peer states: " + ", ".join(busy))
+            delay = min(wait_seconds, remaining)
             print(f"[WAIT] host={base.node_id()} {stage}: verified {len(verified)}/{len(states)}; "
-                  f"peer states={','.join(busy)}; checking for the next task in {wait_seconds:g}s", flush=True)
+                  f"peer states={','.join(busy)}; checking for the next task in {delay:g}s; "
+                  f"no-progress limit remaining={remaining:.0f}s", flush=True)
             started = time.monotonic()
             try:
-                time.sleep(wait_seconds)
+                time.sleep(delay)
             finally:
                 waited += time.monotonic() - started
     except BaseException:
@@ -1144,6 +1275,9 @@ if __name__ == "__main__":
     install_signal_handlers()
     try:
         main()
+    except PairWaitTimeout as exc:
+        print(f"[pair-wait-timeout] {exc}", file=sys.stderr, flush=True)
+        raise SystemExit(76) from None
     except PairLockBusy as exc:
         if exc.path.name == ".pair.lock":
             show_pair_activity(exc.path.parent)
