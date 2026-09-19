@@ -17,10 +17,32 @@ export OPENBLAS_NUM_THREADS=1 OPENBLAS_DEFAULT_NUM_THREADS=1 GOTO_NUM_THREADS=1
 export BLIS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
 export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
+  status)
+    export CUDA_VISIBLE_DEVICES=""
+    STATUS_ARGS=()
+    STATUS_WATCH=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --all|--json) STATUS_ARGS+=("$1"); shift ;;
+        --watch)
+          STATUS_WATCH=15; shift
+          if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then STATUS_WATCH=$1; shift; fi
+          [[ "$STATUS_WATCH" =~ ^[1-9][0-9]*$ ]] || { echo '[abort] watch interval must be a positive integer'; exit 2; }
+          ;;
+        *) echo 'usage: bash scripts/run_selector_pair.sh status [--all] [--watch [SECONDS]] [--json]'; exit 2 ;;
+      esac
+    done
+    while :; do
+      if [ -n "$STATUS_WATCH" ] && [ -t 1 ]; then printf '\033[2J\033[H'; fi
+      rc=0
+      "$PY" scripts/selector_pair_status.py --root "$PAIR_ROOT" "${STATUS_ARGS[@]}" || rc=$?
+      [ -n "$STATUS_WATCH" ] || exit "$rc"
+      sleep "$STATUS_WATCH"
+    done ;;
   cpu)
     export CUDA_VISIBLE_DEVICES=""
-    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py tests/test_selector_pair_queue.py tests/test_selector_pair_queue_migration.py tests/test_selector_pair_queue_barrier.py tests/test_selector_pair_wait.py tests/test_selector_pair_wait_migration.py "$@" ;;
-  init|prepare|fit|report|status|check-code)
+    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py tests/test_selector_pair_queue.py tests/test_selector_pair_queue_migration.py tests/test_selector_pair_queue_barrier.py tests/test_selector_pair_wait.py tests/test_selector_pair_wait_migration.py tests/test_selector_pair_status.py "$@" ;;
+  init|prepare|fit|report|check-code)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" "$@" ;;
   run|develop|freeze|test) ;;

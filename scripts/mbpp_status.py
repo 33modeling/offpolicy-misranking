@@ -24,8 +24,8 @@ REMARKS = {"EVAL": "평가·결과 저장 남음", "RESUME": "체크포인트 �
            "INVALID": "저장 기록 검증 필요", "SAVING": "결과 저장 중", "BLOCKED": "진행 차단"}
 
 
-def arm_name(arm):
-    return ARM_NAMES.get(arm.split("/", 1)[0],
+def arm_name(arm, names=None):
+    return (ARM_NAMES if names is None else names).get(arm.split("/", 1)[0],
                          {"prefix": "Shared training", "diagnostic": "Shared diagnostic",
                           "curve-parent": "Shared evaluation"}.get(arm.split("/", 1)[0], arm))
 
@@ -66,6 +66,8 @@ def counts(suite):
     rule = switch_status.rule
     registered = {(seed, step, arm) for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS)
                   for step in rule.STEPS for arm in (rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS)}
+    if "registered_tasks" in suite:
+        registered = {tuple(key) for key in suite["registered_tasks"]}
     planned = len(registered)
     tasks = suite.get("tasks", [])
     branches, conflicting = {}, set()
@@ -126,6 +128,10 @@ def table(headers, rows, widths):
 
 def label(root, protocol=None):
     return mbpp_suite_label(root, protocol)
+
+
+def suite_label(suite):
+    return suite.get("display_label") or label(suite["root"], suite.get("protocol"))
 
 
 def snapshot(roots, *, now=None, retained_roots=()):
@@ -262,14 +268,15 @@ def render_nodes(data, *, width, all_nodes=False):
     lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current"]
     rows = []
     retained = {suite["root"] for suite in data.get("retained_suites", [])}
-    labels = {suite["root"]: label(suite["root"], suite.get("protocol"))
+    names = data.get("arm_names", ARM_NAMES)
+    labels = {suite["root"]: suite_label(suite)
               + (" (기본 실행 제외)" if suite["root"] in retained else "") for suite in observed_suites(data)}
     visible = nodes if all_nodes else current
     for index, node in enumerate(visible, 1):
         if node["assignments"]:
             grouped = {}
             for root, task in node["assignments"]:
-                key = (root, task["seed"], task["step"], arm_name(task["arm"]))
+                key = (root, task["seed"], task["step"], arm_name(task["arm"], names))
                 detail = remark(task)
                 entry = grouped.setdefault(key, {"details": [], "tasks": []})
                 entry["tasks"].append(task)
@@ -318,7 +325,7 @@ def render_nodes(data, *, width, all_nodes=False):
             lines.extend("  " + line for line in table(headers[2:], [row[2:]], widths))
     lines.append("노드 Progress는 현재 단계 기준입니다. 시간 한도 사용률과 실제 처리 건수는 비고에서 구분합니다.")
     if not nodes or not all_nodes and not current:
-        lines.append("No current MBPP node evidence.")
+        lines.append(f"No current {data.get('subject', 'MBPP')} node evidence.")
     hidden = len(nodes) - len(current)
     if hidden and not all_nodes:
         lines.append(f"{hidden} old node(s) hidden; --all shows history.")
@@ -351,6 +358,8 @@ def render_idle_nodes(data):
 
 def render(data, *, width=120, all_tasks=False):
     width = max(80, width)
+    names = data.get("arm_names", ARM_NAMES)
+    subject = data.get("subject", "MBPP")
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     totals = [counts(suite) for suite in data["suites"]]
     planned = sum(item["planned"] for item in totals)
@@ -360,7 +369,7 @@ def render(data, *, width=120, all_tasks=False):
     aggregate = Counter()
     for item in totals:
         aggregate.update(item["states"])
-    lines = [f"MBPP EXPERIMENTS  {stamp}",
+    lines = [f"{subject} EXPERIMENTS  {stamp}",
              f"현재 조회 범위 {len(totals)}개 조건 | 총 계획 {planned}개 | 완료 확인 {done}개 | 남음 {remaining}개",
              f"남음 {remaining}개 = RUN {aggregate['RUN']}개 + READY {aggregate['READY']}개 + WAIT {aggregate['WAIT']}개"
              + (f" (기록 미확인 {unknown}개 포함)" if unknown else ""),
@@ -372,7 +381,7 @@ def render(data, *, width=120, all_tasks=False):
         lines.append(f"다른 조건의 완료 결과 {preserved_done}개 보존 — 현재 조건과 합산하지 않음; 아래 기존 기록에 표시")
     rows, running, notices = [], [], []
     for suite in data["suites"]:
-        name = label(suite["root"], suite.get("protocol"))
+        name = suite_label(suite)
         count = counts(suite)
         states = count["states"]
         condition = ("학습 한도 공통; 선택 비용 별도 기록"
@@ -412,7 +421,7 @@ def render(data, *, width=120, all_tasks=False):
     lines += table(["Experiment", "계획", "DONE", "남음", "Progress", "READY", "WAIT", "RUN", "Remarks"],
                    rows, [26, 4, 4, 4, 8, 5, 4, 3, width - 74])
     for suite in data["suites"]:
-        lines += ["", f"FULL STATUS — {label(suite['root'], suite.get('protocol'))}"]
+        lines += ["", f"FULL STATUS — {suite_label(suite)}"]
         count = counts(suite)
         lines.append(f"계획 {count['planned']}개 | 완료 확인 {count['done']}/{count['planned']}"
                      f" | 남음 {count['remaining']}개 | {count['progress']}")
@@ -428,6 +437,7 @@ def render(data, *, width=120, all_tasks=False):
             lines.append(f"{kind}: {budget} GPU-seconds")
         if suite.get("protocol", {}).get("accounting") == "matched":
             lines.append("선택 비용은 위 학습 한도에서 차감하지 않으며, 총 GPU 시간에 포함합니다. 평가·곡선 저장까지 끝나야 DONE입니다.")
+        lines += suite.get("details", [])
         tasks = suite.get("tasks", [])
         prefixes = {(task["seed"], task["step"]): task for task in tasks if task.get("kind") == "prefix"}
         branches = {(task["seed"], task["step"], task["arm"]): task for task in tasks if task.get("kind") == "branch"}
@@ -437,19 +447,22 @@ def render(data, *, width=120, all_tasks=False):
         matrix = []
         for seed in (*switch_status.rule.DEV_SEEDS, *switch_status.rule.TEST_SEEDS):
             for step in switch_status.rule.STEPS:
-                notes = [f"{arm_name(task['arm'])}: {remark(task)}" for task in tasks
+                notes = [f"{arm_name(task['arm'], names)}: {remark(task)}" for task in tasks
                          if task["seed"] == seed and task["step"] == step and remark(task)]
                 matrix.append([f"{seed} / {step}", "개발" if seed in switch_status.rule.DEV_SEEDS else "검증",
                                display_state(prefixes.get((seed, step)), directories),
-                               *[display_state(branches.get((seed, step, arm)), directories) for arm in ARM_NAMES],
+                               *[display_state(branches.get((seed, step, arm)), directories) for arm in names],
                                "; ".join(dict.fromkeys(notes)) or "-"])
         widths = ([11, 5, 6, 9, 6, 14, 11, 11, width - 89] if width >= 110
                   else [11, 4, 5, 9, 6, 9, 6, 6, width - 72])
-        lines += table(["Seed / Step", "Role", "Prefix", *ARM_NAMES.values(), "Remarks"], matrix, widths)
+        if names != ARM_NAMES:
+            fixed = [11, 5, 6, *[max(6, columns(name)) for name in names.values()]]
+            widths = [*fixed, width - sum(fixed) - 2 * len(fixed)]
+        lines += table(["Seed / Step", "Role", "Prefix", *names.values(), "Remarks"], matrix, widths)
     if data.get("retained_suites"):
         lines += ["", "기본 실행 제외 — 기존 기록 보존 (위 계획·완료·남음 합계에서 제외)"]
         for suite in data["retained_suites"]:
-            name = label(suite["root"], suite.get("protocol"))
+            name = suite_label(suite)
             count = counts(suite)
             states = count["states"]
             lines.append(f"{name}: 기존 계획 {count['planned']}개 | 완료 확인 {count['done']}개 | 남음 {count['remaining']}개"
@@ -460,16 +473,16 @@ def render(data, *, width=120, all_tasks=False):
                 notices.append(f"{name}: 설정 읽기 실패: {suite['error']}")
             running += [(name, task) for task in suite.get("tasks", []) if active(task)]
         lines.append("이 표시는 기존 작업을 중단하지 않습니다. 기본 실행 제외 작업의 노드도 아래에 표시합니다.")
-    running_experiments = {(name, task["seed"], task["step"], arm_name(task["arm"])) for name, task in running}
-    lines += ["On-policy: 현재 정책으로 계산한 gradient 기반 선택. Difficulty: 저장된 정답률 기반 선택.",
+    running_experiments = {(name, task["seed"], task["step"], arm_name(task["arm"], names)) for name, task in running}
+    lines += data.get("legend", ["On-policy: 현재 정책으로 계산한 gradient 기반 선택. Difficulty: 저장된 정답률 기반 선택.",
               "선택비용 포함: 선택·진단·학습에 같은 예산 적용. 선택비용 별도: 선택 비용을 예산 밖에 기록.",
               "선택비용 별도도 총 GPU 비용에는 포함합니다. 평가 비용은 모든 조건에서 별도로 기록합니다.",
               "GPU 시간 한도에 도달해도 평가 결과가 없으면 미완료이며, 보상 0점이 아닙니다.",
               "Selection / Random: 공통 진단 비용 차감 후 비교. Full selection / Full random: 전체 예산 대조군.",
-              "Gate policy: 전환 규칙 적용. '-': 해당 상태에서 실행 대상 아님.",
-              "", f"CURRENT RUN {len(running_experiments)}"]
+              "Gate policy: 전환 규칙 적용. '-': 해당 상태에서 실행 대상 아님."])
+    lines += ["", f"CURRENT RUN {len(running_experiments)}"]
     if not running:
-        lines.append("No fresh RUN heartbeat in these MBPP suites; saved completions above are retained.")
+        lines.append(f"No fresh RUN heartbeat in these {subject} suites; saved completions above are retained.")
     lines += render_nodes(data, width=width, all_nodes=all_tasks)
     lines += notices
     if all_tasks:

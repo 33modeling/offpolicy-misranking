@@ -485,7 +485,7 @@ def test_first_shell_launch_creates_pair_json_without_touching_gpus(tmp_path, co
         capture_output=True, text=True, timeout=20)
     if command == "status":
         assert not root.exists()
-        assert process.returncode == 0 and "not prepared" in process.stdout
+        assert process.returncode == 0 and "실험 설정 확인 불가" in process.stdout
         return
     assert core.read(root / "pair.json")["schema"] == gpu.BOOTSTRAP_SCHEMA
     assert "Traceback" not in process.stderr and "FileNotFoundError" not in process.stderr

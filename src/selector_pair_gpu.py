@@ -50,7 +50,9 @@ PRE_PAIR_DISTRIBUTED_CODE = "76dd34fc37746ad2a1be05a8e29c7c13c620b2d281919acbea0
 PRE_PAIR_WAIT_GUARD_CODE = "2a6c4dcd2fb062159f3212efb7d19f5898774e3f0d18a90953e76b6e3cf309a6"
 # Exact 9be50a8 pair map before the shared MBPP quarantine compatibility patch.
 PRE_SHARED_MBPP_QUARANTINE_CODE = "0894fdfe1edb03163abc02589bfd941dc8ffc5e41f000b5ef6981be74c791b5d"
+PRE_PAIR_STATUS_CODE = "ad4d1718999848103a577e2efc2ce6b1352a9c5d7f76fccdc875924c15cd57f3"
 PRE_SHARED_RUNTIME_CODES = {
+    PRE_PAIR_STATUS_CODE,
     PRE_BUDGET_STOP_EVALUATION_CODE,
     PRE_PAIR_OPERATIONS_CODE,
     PRE_PAIR_LOCK_OBSERVATION_CODE,
@@ -350,6 +352,9 @@ def compatible_code(recorded):
 
 
 def bind_startup_runtime(root, recorded):
+    def reviewed_receipt(path, receipt, predecessors):
+        switch.bind_reviewed_runtime_receipt(path, receipt, {*predecessors, PRE_PAIR_STATUS_CODE})
+
     if recorded != code_hashes():
         # Preserve and validate the exact historical upgrade chain. The resource
         # patch has its own pinned receipt, never rewrites a scientific manifest,
@@ -397,7 +402,7 @@ def bind_startup_runtime(root, recorded):
         else:
             base.bind(resources_path, resources_receipt)
         recovery_path = root / "shared-checkpoint-recovery-runtime.json"
-        switch.bind_reviewed_runtime_receipt(recovery_path, {
+        reviewed_receipt(recovery_path, {
             "schema": "offpolicy-selector-pair/shared-checkpoint-recovery-runtime-v1",
             "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
             "resources_runtime_sha256": base.digest(resources_path),
@@ -407,7 +412,7 @@ def bind_startup_runtime(root, recorded):
             PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE, PRE_PAIR_WAIT_GUARD_CODE, PRE_SHARED_MBPP_QUARANTINE_CODE})
         if core.fingerprint(code_hashes()) != PRE_BUDGET_STOP_EVALUATION_CODE:
             evaluation_path = root / "budget-stop-evaluation-runtime.json"
-            switch.bind_reviewed_runtime_receipt(evaluation_path, {
+            reviewed_receipt(evaluation_path, {
                 "schema": "offpolicy-selector-pair/budget-stop-evaluation-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "shared_checkpoint_recovery_runtime_sha256": base.digest(recovery_path),
@@ -416,7 +421,7 @@ def bind_startup_runtime(root, recorded):
             }, {PRE_PAIR_OPERATIONS_CODE, PRE_PAIR_LOCK_OBSERVATION_CODE,
                 PRE_PAIR_DISTRIBUTED_CODE, PRE_PAIR_WAIT_GUARD_CODE, PRE_SHARED_MBPP_QUARANTINE_CODE})
             operations_path = root / "pair-operations-runtime.json"
-            switch.bind_reviewed_runtime_receipt(operations_path, {
+            reviewed_receipt(operations_path, {
                 "schema": "offpolicy-selector-pair/operations-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "evaluation_runtime_sha256": base.digest(evaluation_path),
@@ -424,7 +429,7 @@ def bind_startup_runtime(root, recorded):
                 "cost_policy": "preserve selectors, trainer, target, caps, checkpoints, decisions and all prior costs",
             }, {PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE, PRE_PAIR_WAIT_GUARD_CODE, PRE_SHARED_MBPP_QUARANTINE_CODE})
             observation_path = root / "pair-lock-observation-runtime.json"
-            switch.bind_reviewed_runtime_receipt(observation_path, {
+            reviewed_receipt(observation_path, {
                 "schema": "offpolicy-selector-pair/lock-observation-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "operations_runtime_sha256": base.digest(operations_path),
@@ -432,7 +437,7 @@ def bind_startup_runtime(root, recorded):
                 "cost_policy": "preserve targets, allocations, costs, results, decisions and all previous receipts",
             }, {PRE_PAIR_DISTRIBUTED_CODE, PRE_PAIR_WAIT_GUARD_CODE, PRE_SHARED_MBPP_QUARANTINE_CODE})
             distributed_path = root / "pair-distributed-runtime.json"
-            switch.bind_reviewed_runtime_receipt(distributed_path, {
+            reviewed_receipt(distributed_path, {
                 "schema": "offpolicy-selector-pair/distributed-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "lock_observation_runtime_sha256": base.digest(observation_path),
@@ -440,7 +445,7 @@ def bind_startup_runtime(root, recorded):
                 "cost_policy": "preserve selectors, trainer, targets, caps, all saved work, costs, decisions and previous receipts; no refunds",
             }, {PRE_PAIR_WAIT_GUARD_CODE, PRE_SHARED_MBPP_QUARANTINE_CODE})
             wait_path = root / "pair-wait-guard-runtime.json"
-            switch.bind_reviewed_runtime_receipt(wait_path, {
+            reviewed_receipt(wait_path, {
                 "schema": "offpolicy-selector-pair/wait-guard-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "distributed_runtime_sha256": base.digest(distributed_path),
@@ -448,12 +453,18 @@ def bind_startup_runtime(root, recorded):
                 "cost_policy": "preserve targets, caps, protocols, decisions, results, checkpoints, costs and all previous receipts; no refunds",
             }, {PRE_SHARED_MBPP_QUARANTINE_CODE})
             if core.fingerprint(code_hashes()) not in PRE_SHARED_RUNTIME_CODES:
-                base.bind(root / "shared-mbpp-quarantine-runtime.json", {
+                reviewed_receipt(root / "shared-mbpp-quarantine-runtime.json", {
                     "schema": "offpolicy-selector-pair/shared-mbpp-quarantine-runtime-v1",
                     "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                     "wait_guard_runtime_sha256": base.digest(wait_path),
                     "change": "shared Switch MBPP branch quarantine compatibility only; pair scheduling and science unchanged",
                     "cost_policy": "preserve all protocols, receipts, checkpoints, results, costs, targets and budgets; no refunds or restart",
+                }, set())
+                base.bind(root / "pair-status-runtime.json", {
+                    "schema": "offpolicy-selector-pair/status-runtime-v1",
+                    "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                    "quarantine_runtime_sha256": base.digest(root / "shared-mbpp-quarantine-runtime.json"),
+                    "change": "read-only dashboard dispatch; training and accounting unchanged",
                 })
 
 
