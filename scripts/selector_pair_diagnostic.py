@@ -66,7 +66,7 @@ def process_label(proc, pid):
     return 'unrecognized process; do not assume it belongs to selector_pair'
 
 
-def observations(root):
+def observations(root, limit=8):
     """Bounded metadata traversal, without reading tensors, logs or ledgers."""
     pending = [(root / name, 0) for name in ('branches', 'queue-workers', 'node-preflight')]
     seen, rows = 0, []
@@ -97,7 +97,8 @@ def observations(root):
                             continue
         except OSError:
             continue
-    return sorted(rows, key=lambda row: row[0], reverse=True)[:8]
+    ordered = sorted(rows, key=lambda row: row[0], reverse=True)
+    return ordered if limit is None else ordered[:limit]
 
 
 def collect(root, proc=Path('/proc')):

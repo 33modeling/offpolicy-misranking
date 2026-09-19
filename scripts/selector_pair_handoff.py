@@ -1,0 +1,381 @@
+"""Hand an exclusively locked legacy Pair controller to the distributed queue.
+
+No lock, checkpoint, manifest, receipt or budget is edited by this helper.
+Only a verified local controller receives TERM. Its existing cleanup handles
+its workers; unfinished updates are not saved on TERM.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import fcntl
+import json
+import os
+from pathlib import Path
+import select
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from selector_pair_diagnostic import collect, local_owners, observations, read_small
+
+
+def shared_available(lock):
+    if lock.is_symlink():
+        raise RuntimeError('refusing a symlinked root lock')
+    with lock.open('rb') as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+
+
+def process(proc, pid):
+    path = proc / str(pid)
+    fields = read_small(path / 'stat').decode().rsplit(') ', 1)[1].split()
+    uid = next(line.split()[1:] for line in read_small(path / 'status').decode().splitlines()
+               if line.startswith('Uid:'))
+    if not uid or any(int(value) != os.getuid() for value in uid):
+        raise RuntimeError('process belongs to another user')
+    argv = [os.fsdecode(word) for word in read_small(path / 'cmdline').split(b'\0') if word]
+    return {'pid': pid, 'start': fields[19], 'ppid': int(fields[1]), 'state': fields[0],
+            'argv': argv, 'cwd': (path / 'cwd').resolve(strict=True),
+            'exe': (path / 'exe').resolve(strict=True), 'proc': proc}
+
+
+def identity(value):
+    return value['pid'], value['start'], value['argv'], value['cwd'], value['exe']
+
+
+def option(words, key):
+    positions = [index for index, word in enumerate(words) if word == key]
+    if len(positions) != 1 or positions[0] + 1 == len(words):
+        raise RuntimeError(f'missing or ambiguous {key}; no process stopped')
+    return words[positions[0] + 1]
+
+
+def verify_owner(proc, pid, root, repo):
+    value = process(proc, pid)
+    words = value['argv']
+    if not value['exe'].name.startswith('python'):
+        raise RuntimeError('lock holder is not a Python Pair controller')
+    # Only the exact launcher argv is accepted, not -c, -m, injected flags, or
+    # an unrelated program that merely mentions selector_pair_gpu.py.
+    if (len(words) != 5 or words[2] not in {'run', 'develop', 'test', 'freeze'}
+            or words[3] != '--root'
+            or (value['cwd'] / words[1]).resolve() != repo / 'src/selector_pair_gpu.py'
+            or (value['cwd'] / words[4]).resolve() != root):
+        raise RuntimeError('lock owner does not match this Pair root, checkout and running stage')
+    value['mode'] = words[2]
+    return value
+
+
+def descendants(proc, owner):
+    found, pending = {}, [owner['pid']]
+    while pending:
+        pid = pending.pop()
+        for task in (proc / str(pid) / 'task').iterdir():
+            try:
+                children = read_small(task / 'children').split()
+            except FileNotFoundError:
+                continue
+            for child in children:
+                child = int(child)
+                if child in found:
+                    continue
+                try:
+                    value = process(proc, child)
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                found[child] = value
+                pending.append(child)
+                if len(found) > 2048:
+                    raise RuntimeError('too many descendants; no process stopped')
+    return found
+
+
+def nonces(value):
+    try:
+        fields = read_small(value['proc'] / str(value['pid']) / 'environ', 1048576).split(b'\0')
+    except FileNotFoundError:
+        return set()
+    return {field.split(b'=', 1)[0] for field in fields
+            if field.startswith(b'OM_SELECTION_COST_') and field.endswith(b'=1')}
+
+
+def nonce_workers(proc, keys):
+    if not keys:
+        return {}
+    found = {}
+    for path in proc.iterdir():
+        if not path.name.isdecimal():
+            continue
+        try:
+            value = process(proc, int(path.name))
+            if value['state'] != 'Z' and nonces(value) & keys:
+                found[value['pid']] = value
+        except (FileNotFoundError, ProcessLookupError, PermissionError, RuntimeError):
+            continue
+    return found
+
+
+def process_environment(value):
+    """Read a verified process environment privately; never print its contents."""
+    raw = read_small(value['proc'] / str(value['pid']) / 'environ', 1048576)
+    return {os.fsdecode(key): os.fsdecode(item)
+            for key, item in (field.split(b'=', 1) for field in raw.split(b'\0') if b'=' in field)}
+
+
+def diagnostic_environment(env, repo):
+    # A validator is NOT a metered worker. Retaining the phase nonce lets the
+    # live trainer's cleanup accidentally target this diagnostic's process group.
+    env = {key: value for key, value in env.items() if not key.startswith('OM_SELECTION_COST_')}
+    env.update(CUDA_VISIBLE_DEVICES='', PYTHONDONTWRITEBYTECODE='1',
+               OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
+    env['PYTHONPATH'] = str(repo / 'src') + os.pathsep + env.get('PYTHONPATH', '')
+    return env
+
+
+def process_python(value, env):
+    """Retain the actual venv invocation path, not /proc/exe's resolved binary."""
+    import shutil
+
+    words = value['argv']
+    if not words:
+        raise RuntimeError('process has no interpreter argv; no process stopped')
+    original = words[0]
+    if os.path.isabs(original):
+        executable = original
+    elif os.sep in original:
+        executable = str(value['cwd'] / original)
+    else:
+        # Resolve relative PATH entries against the observed process cwd.
+        search = os.pathsep.join(str(value['cwd'] / part) if not os.path.isabs(part)
+                                 else part for part in env.get('PATH', os.defpath).split(os.pathsep))
+        executable = shutil.which(original, path=search)
+    if not executable:
+        raise RuntimeError('original Python invocation cannot be resolved; no process stopped')
+    executable = Path(os.path.abspath(executable))
+    if (not executable.is_file() or not os.access(executable, os.X_OK)
+            or executable.resolve(strict=True) != value['exe']
+            or not value['exe'].name.startswith('python')):
+        raise RuntimeError('original Python invocation no longer matches its process; no process stopped')
+    # Do not resolve this return value: doing so discards the venv's pyvenv.cfg.
+    return str(executable)
+
+
+def validate_runtime(root, repo, owner):
+    """Validate compatibility without locks or writes to the experiment root."""
+    env = process_environment(owner)
+    python = process_python(owner, env)
+    env = diagnostic_environment(env, repo)
+    code = '''
+import sys, tempfile
+from pathlib import Path
+import selector_pair_gpu as pair
+root = Path(sys.argv[1])
+manifest = pair.manifest(root, bind_runtime=False)
+names = (
+    'startup-runtime.json', 'startup-defaults-runtime.json', 'startup-resources-runtime.json',
+    'shared-checkpoint-recovery-runtime.json', 'budget-stop-evaluation-runtime.json',
+    'pair-operations-runtime.json', 'pair-lock-observation-runtime.json',
+    'pair-distributed-runtime.json', 'pair-wait-guard-runtime.json',
+    'shared-mbpp-quarantine-runtime.json',
+)
+with tempfile.TemporaryDirectory(prefix='selector-pair-runtime-check-') as directory:
+    snapshot = Path(directory)
+    for name in names:
+        source = root / name
+        if source.is_symlink():
+            raise ValueError('refusing a symlinked runtime receipt')
+        if not source.exists():
+            continue
+        with source.open('rb') as handle:
+            raw = handle.read(1048577)
+        if len(raw) > 1048576:
+            raise ValueError('runtime receipt exceeds the metadata read limit')
+        (snapshot / name).write_bytes(raw)
+    pair.bind_startup_runtime(snapshot, manifest['code_hashes'])
+print('[handoff] frozen manifest and runtime receipt compatibility validated', flush=True)
+'''
+    result = subprocess.run([python, '-B', '-c', code, str(root)], cwd=repo,
+                            env=env, capture_output=True, text=True, timeout=120,
+                            start_new_session=True)
+    if result.returncode:
+        raise RuntimeError('frozen runtime compatibility validation failed; live controller was NOT stopped')
+    print(result.stdout.strip(), flush=True)
+
+
+CHECK_CHECKPOINT = '''
+import json, sys
+from pathlib import Path
+import train_selection_gate_grpo as trainer
+import train_policy_grpo as checkpoints
+captured = []
+trainer.train = captured.append
+sys.argv = ['train_selection_gate_grpo.py', *json.loads(sys.argv[1])]
+trainer.main()
+args = captured[0]
+config = checkpoints.GrpoConfig(**{name: getattr(args, name) for name in (
+    'group_size', 'clip_epsilon', 'learning_rate', 'epochs_per_batch',
+    'max_grad_norm', 'advantage_epsilon', 'lora_rank', 'lora_alpha', 'checkpoint_every')})
+contract = checkpoints._checkpoint_contract(args, config, args.expected_world_size)
+checkpoint, step = checkpoints._latest_checkpoint(Path(args.output), args.target_steps, contract)
+if checkpoint is None:
+    raise SystemExit('no validated local checkpoint; current training was NOT stopped')
+print('[checkpoint] validated local saved update', step, flush=True)
+'''
+
+
+def validate_training_checkpoints(root, repo, processes):
+    """Use the trainer's own parser, contract and hash validator, CPU-only."""
+    checked = set()
+    names = {'selector_pair_train.py', 'train_selection_gate_grpo.py',
+             'selection_switch_curve_train.py', 'train_policy_grpo.py'}
+    for value in processes.values():
+        words = value['argv']
+        matches = [i for i, word in enumerate(words) if Path(word).name in names]
+        if not matches:
+            continue
+        if len(matches) != 1:
+            raise RuntimeError('ambiguous training command; no process stopped')
+        index = matches[0]
+        script = (value['cwd'] / words[index]).resolve()
+        if script.parent != repo / 'src':
+            raise RuntimeError('training child is outside this checkout')
+        args = words[index + 1:]
+        output = (value['cwd'] / option(args, '--output')).resolve()
+        if not output.is_relative_to(root):
+            raise RuntimeError('training output is outside this Pair root')
+        if output in checked:
+            continue
+        # Read only. Importing the parser never calls distributed setup or train.
+        env = process_environment(value)
+        python = process_python(value, env)
+        env = diagnostic_environment(env, repo)
+        result = subprocess.run([str(python), '-B', '-c', CHECK_CHECKPOINT, json.dumps(args)],
+                                cwd=value['cwd'], env=env, capture_output=True, text=True, timeout=120,
+                                start_new_session=True)
+        if result.returncode:
+            # No arbitrary environment/argv/traceback dump into the small report.
+            raise RuntimeError(f'local checkpoint validation failed: {output}; live training was NOT stopped')
+        print(result.stdout.strip(), flush=True)
+        checked.add(output)
+
+
+def active_receipts(root, owner, keys):
+    rows = []
+    host = process_environment(owner).get('EXPERIMENTS_NODE_ID', socket.gethostname())
+    for _, relative, value in observations(root, limit=None):
+        event = value.get('event_id', '')
+        if (value.get('pid') == owner['pid'] and value.get('host') == host
+                and value.get('state') == 'running' and event
+                and Path(event).name == event and event not in {'.', '..'}):
+            rows.append((root / relative.parent / 'cost-events' / f'{event}.json', event))
+    known = {b'OM_SELECTION_COST_' + event.encode() for _, event in rows}
+    if keys - known:
+        raise RuntimeError('cannot locate owned phase receipts; no process stopped')
+    return rows
+
+
+def handoff(root, repo, timeout=240, proc=Path('/proc')):
+    root, repo, proc = Path(root).resolve(strict=True), Path(repo).resolve(strict=True), Path(proc)
+    if not (root / 'pair.json').is_file():
+        raise RuntimeError('existing pair.json is missing; refusing to initialize a different run')
+    lock = root / '.pair.lock'
+    if shared_available(lock):
+        print('[handoff] root accepts queue workers; no controller stopped', flush=True)
+        return 'run'
+    owners = local_owners(lock, proc)
+    if len(owners) != 1:
+        raise RuntimeError('exclusive owner not uniquely visible on this node; run this bash on its owner node')
+    owner = verify_owner(proc, owners[0], root, repo)
+    if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
+        raise RuntimeError('safe pidfd signalling unavailable; no process stopped')
+    with contextlib.ExitStack() as stack:
+        watched = {}
+
+        def watch(value):
+            fd = os.pidfd_open(value['pid'], 0)
+            stack.callback(os.close, fd)
+            if identity(process(proc, value['pid'])) != identity(value):
+                raise RuntimeError('process identity changed; no process stopped')
+            watched[value['pid']] = fd
+            return fd
+
+        owner_fd = watch(owner)
+        children = descendants(proc, owner)
+        keys = set().union(*(nonces(child) for child in children.values()))
+        children.update(nonce_workers(proc, keys))
+        for child in children.values():
+            watch(child)
+        try:
+            parent = process(proc, owner['ppid'])
+        except (FileNotFoundError, ProcessLookupError):
+            parent = None
+        if parent and len(parent['argv']) >= 2 and parent['exe'].name in {'bash', 'dash', 'sh'}:
+            if (parent['cwd'] / parent['argv'][1]).resolve() == repo / 'scripts/run_selector_pair.sh':
+                watch(parent)
+        receipts = active_receipts(root, owner, keys)
+        validate_runtime(root, repo, owner)
+        validate_training_checkpoints(root, repo, children)
+        # Recheck after potentially slow disk/hash reads. A changed phase must
+        # be inspected afresh, never interrupted using an older phase's proof.
+        current = descendants(proc, owner)
+        current.update(nonce_workers(proc, keys))
+        if {pid: identity(v) for pid, v in current.items()} != {pid: identity(v) for pid, v in children.items()}:
+            raise RuntimeError('worker set changed during inspection; no process stopped; run this bash again')
+        if (identity(verify_owner(proc, owner['pid'], root, repo)) != identity(owner)
+                or local_owners(lock, proc) != owners or shared_available(lock)
+                or active_receipts(root, owner, keys) != receipts):
+            raise RuntimeError('owner or phase changed; no process stopped')
+        print(f"[handoff] verified local Pair controller pid={owner['pid']} stage={owner['mode']}; sending TERM", flush=True)
+        signal.pidfd_send_signal(owner_fd, signal.SIGTERM)
+        deadline, next_message = time.monotonic() + timeout, 0
+        while True:
+            live = [pid for pid, fd in watched.items() if not select.select([fd], [], [], 0)[0]]
+            residual = nonce_workers(proc, keys)
+            if not live and not residual and shared_available(lock):
+                break
+            now = time.monotonic()
+            if now >= deadline:
+                raise RuntimeError('cleanup not confirmed before timeout; no forced kill or restart; files preserved')
+            if now >= next_message:
+                print(f'[handoff] waiting for owned workers/launcher and root lease; processes={len(set(live) | set(residual))}', flush=True)
+                next_message = now + 5
+            time.sleep(min(.2, max(0, deadline - now)))
+        for path, event in receipts:
+            value = json.loads(read_small(path))
+            if value.get('event_id') != event or value.get('state') != 'finished':
+                raise RuntimeError('owned phase has no valid finish receipt; refusing restart')
+    print('[handoff] old controller and owned workers exited; saved work and charged costs preserved', flush=True)
+    return owner['mode']
+
+
+def main():
+    default_repo = Path(__file__).resolve().parents[1]
+    work = Path(os.environ.get('OM_WORK', f"/group-volume/{os.environ.get('OM_USER', 'minsoo3.kim')}/offpolicy-misranking"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--root', type=Path, default=Path(os.environ.get('PAIR_ROOT', work / 'runs/selector-pair-v1')))
+    parser.add_argument('--repo', type=Path, default=default_repo)
+    parser.add_argument('--timeout', type=float, default=240)
+    args = parser.parse_args()
+    try:
+        if not 0 < args.timeout <= 900:
+            raise ValueError('timeout must be between 0 and 900 seconds')
+        mode = handoff(args.root, args.repo, args.timeout)
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f'[handoff-abort] {exc}', file=sys.stderr, flush=True)
+        print(collect(args.root), file=sys.stderr, flush=True)
+        return 2
+    env = dict(os.environ, PAIR_ROOT=str(args.root.resolve()), E5_FORCE='0')
+    print(f'[restart] same Pair root, stage={mode}; normal GPU/node admission remains enabled', flush=True)
+    os.execve('/bin/bash', ['bash', str(args.repo.resolve() / 'scripts/run_selector_pair.sh'), mode], env)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
