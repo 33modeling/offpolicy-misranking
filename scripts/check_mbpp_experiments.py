@@ -10,9 +10,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import evidence_downstream as ed
 from selection_switch_gpu import mbpp_items, resolve_sources
+from _status_summary import MBPP_SUITE_LABELS, gate_label
 
 
 def check(args):
@@ -64,38 +66,40 @@ def check(args):
     fresh_evaluation = None
     for name in inspect:
         root, selector, accounting, gate = specs[name]
+        label = MBPP_SUITE_LABELS[name]
+        print(f"[experiment] {label}; gate={gate_label(gate)}; root={root}")
         path = root / "switch.json"
         if not path.exists():
             if name == "fresh" and args.suite in ("quality", "difficulty"):
-                raise ValueError("run the fresh suite first; MBPP prefixes/evaluation are not prepared")
+                raise ValueError("On-policy · 선택비용 포함: shared MBPP prefixes/evaluation are not prepared")
             continue
         p = ed.read(path)
         expected = {"dataset": "mbpp", "selector": selector, "accounting": accounting, "gate": gate}
         actual = {key: p.get(key, "budget" if key == "accounting" else "final" if key == "gate" else None)
                   for key in expected}
         if actual != expected:
-            raise ValueError(f"existing {name} root has a different protocol: {actual}; use a new root")
+            raise ValueError(f"existing {label} root has a different protocol: {actual}; use a new root")
         evaluation = p["evaluation"]
         if (evaluation.get("provenance", {}).get("dataset") != provenance["source_repository"]
                 or evaluation["provenance"].get("revision") != provenance["source_revision"]
                 or len(evaluation.get("test", [])) < 4):
-            raise ValueError(f"{name} evaluation is not a held-out set from this MBPP revision")
+            raise ValueError(f"{label} evaluation is not a held-out set from this MBPP revision")
         if any(key not in eligible or row["answer"] != pool_answers[key]
                for key, row in zip(ed.questions(evaluation["test"]), evaluation["test"])):
-            raise ValueError(f"{name} evaluation differs from the disjoint MBPP pool")
+            raise ValueError(f"{label} evaluation differs from the disjoint MBPP pool")
         for run in runs:
             ed.independent_test(ed.read(run / "prompts.json"), evaluation)
         if name == "fresh":
             fresh_evaluation = p["evaluation"]
         elif (p.get("prefix_source", {}).get("root") != str(args.fresh_root.resolve())
               or p["evaluation"] != fresh_evaluation):
-            raise ValueError(f"{name} must reuse the MBPP fresh prefixes and identical evaluation")
+            raise ValueError(f"{label} must reuse the MBPP on-policy prefixes and identical evaluation")
     if args.suite in ("quality", "difficulty"):
         for seed in range(5):
             for step in (25, 50, 100):
                 path = args.fresh_root / "prefixes" / f"seed-{seed}" / f"prefix-{step}.json"
                 if not path.is_file():
-                    raise ValueError(f"fresh prefix not ready: {path}; run the fresh suite first")
+                    raise ValueError(f"shared on-policy prefix not ready: {path}; requires On-policy · 선택비용 포함")
     print("[check] inputs ready; full artifact/code/GRPO contracts are checked by the original launcher before GPU work")
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MBPP counterpart of the fresh / quality / difficulty switch suites, as one
+# MBPP selector/cost-accounting comparison, as one
 # command per node. This script chooses the roots and then hands the node to
 # scripts/run_experiments.sh, which already owns everything a node needs to run
 # unattended: stale cost recovery, one queue pass per root, sibling help in
@@ -7,9 +7,9 @@
 # 'git pull' with an in-place restart, and a hold that ends the moment a branch
 # becomes claimable. Nothing here loops, holds, or decides when to stop.
 #
-# The three suites are one queue, not three stages. quality and difficulty reuse
-# the fresh root's certified prefixes, so they stay unclaimable until those
-# prefixes exist; until then a node takes whatever fresh work is left instead of
+# The three conditions are one queue, not three stages. The scoring-separate
+# on-policy and difficulty conditions reuse the primary on-policy prefixes, so
+# they stay unclaimable until those prefixes exist; a node takes other work instead of
 # waiting for a stage to end. Every node runs the same command at the same time,
 # and a node that loses its GPUs rejoins with the same command.
 #
@@ -33,6 +33,7 @@ STATUS_WATCH=
 usage() {
   echo 'usage: bash scripts/run_mbpp_experiments.sh [run|restart|stop|plan|check|status|progress|results|saved|why] [all|fresh|quality|difficulty]'
   echo '       bash scripts/run_mbpp_experiments.sh status [all|fresh|quality|difficulty] [--all] [--watch [SECONDS]]'
+  echo '       compatibility keys: fresh = On-policy · 선택비용 포함; quality = On-policy · 선택비용 별도; difficulty = Difficulty · 선택비용 포함'
 }
 case "$MODE" in run|restart|stop|plan|check|status|progress|results|saved|why) ;; -h|--help) usage; exit 0 ;; *) usage; exit 2 ;; esac
 case "$SUITE" in all|fresh|quality|difficulty) ;; *) usage; exit 2 ;; esac
@@ -59,11 +60,7 @@ export EXPERIMENTS_MBPP_SUITE="$SUITE"
 source scripts/_mbpp_experiments.sh
 mbpp_queue_init
 
-# Presentation only. Frozen protocol values, the `fresh` CLI key, and all
-# existing fresh-r output paths must remain unchanged when labels improve.
-mbpp_display_label() {
-  case "$1" in fresh|fresh_r) printf '%s' 'on-policy' ;; *) printf '%s' "$1" ;; esac
-}
+# Labels come from _mbpp_experiments.sh. Frozen keys and saved paths are unchanged.
 
 if [ "$MODE" = why ] || [ "$MODE" = saved ]; then
   PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
@@ -99,8 +96,8 @@ fi
 for root in "${MBPP_ROOTS[@]}"; do
   mbpp_queue_settings "$root"
   printf '[mbpp:%s] selector=%s accounting=%s gate=%s\n  root=%s\n' \
-    "$(mbpp_display_label "$MBPP_SUITE")" "$(mbpp_display_label "$MBPP_SELECTOR")" \
-    "$MBPP_ACCOUNTING" "$MBPP_GATE" "$MBPP_ROOT"
+    "$(mbpp_suite_label "$MBPP_SUITE")" "$(mbpp_selector_label "$MBPP_SELECTOR")" \
+    "$(mbpp_accounting_label "$MBPP_ACCOUNTING")" "$(mbpp_gate_label "$MBPP_GATE")" "$MBPP_ROOT"
   [ -z "$MBPP_PREFIX" ] || printf '  shared prefixes and evaluation=%s\n' "$MBPP_PREFIX"
 done
 
@@ -108,8 +105,10 @@ if [ "$MODE" = plan ]; then
   echo '[plan] seeds 0..4; on-policy-selected states at 25/50/100 updates; 18 development + 30 held-out continuations per suite'
   echo '[plan] MBPP execution rewards; final evaluation K=8; convergence curves: 3 checkpoints, K=4'
   echo '[plan] evaluation excludes every source train/validation prompt; available count checked before launch'
-  echo "[plan] one queue over ${MBPP_SUITES[*]}: a node takes whichever root has claimable work, in that order"
-  echo '[plan] quality and difficulty stay unclaimable until the on-policy root has certified all fifteen prefixes'
+  echo "[plan] ${#MBPP_SUITES[@]} condition(s), $((48 * ${#MBPP_SUITES[@]})) continuation branches; shared prefix preparation and evaluation are additional work"
+  echo '[plan] one queue over the conditions listed above, in that order; the two on-policy conditions use the SAME selector, not different methods'
+  echo '[plan] scoring-separate on-policy and difficulty reuse all fifteen certified prefixes; their continuation training is separate'
+  echo '[plan] scoring-separate costs still count toward total GPU use; evaluation is recorded separately in every condition'
   echo '[plan] no files written or GPU work started; use check to validate local inputs'
   exit 0
 fi
@@ -126,13 +125,13 @@ if [ "$MODE" = results ]; then
   failed=0
   for root in "${MBPP_ROOTS[@]}"; do
     mbpp_queue_settings "$root"
-    echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] results"
+    echo "[mbpp:$(mbpp_suite_label "$MBPP_SUITE")] results"
     rc=0
     env -u OUT_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_ONLY_SEEDS -u SWITCH_ONLY_ARMS \
       -u SWITCH_BUDGET_GPU_SECONDS -u SWITCH_RUNTIME_REPO -u SWITCH_DETACHED -u EXPERIMENTS_DETACHED \
       SWITCH_ROOT="$MBPP_ROOT" EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
       bash scripts/run_selection_switch.sh results || rc=$?
-    [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_display_label "$MBPP_SUITE")] results rc=$rc"; failed=1; }
+    [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_suite_label "$MBPP_SUITE")] results rc=$rc"; failed=1; }
   done
   exit "$failed"
 fi

@@ -19,7 +19,8 @@ error and the actual gated training outcome.
 ## Correct common history
 
 Create a selected-training prefix for each seed. The primary selector is the
-paper's fresh gradient selector, with its exact score/grouping contract; do
+paper's on-policy gradient selector (gradients computed under the current
+policy; frozen key `fresh_r`), with its exact score/grouping contract; do
 not silently substitute low_order, pair_u2 or a different gradient estimator.
 Use the same candidate pool, subset fraction, learner and verifier as the
 existing continuation study. The prefix uses one initial selected subset.
@@ -53,12 +54,30 @@ to each applicable counterfactual budget. These controls determine whether
 the gate chose correctly after observing the diagnostic. The diagnostic-free
 CONTINUE and SWITCH controls determine whether the complete gate is useful.
 
-All branches at a checkpoint have the same remaining total GPU-second cap.
+In the primary cost-inclusive protocol, all branches at a checkpoint have the
+same remaining total GPU-second cap.
 Freeze that cap before comparing outcomes. Final test questions and verifier
 are identical and independent of ranking/diagnostic inputs. Evaluation has
 a separate common reporting budget. Record actual completed updates and all
 diagnostic/scoring/training/retry charges. Preserve unfavorable and failed
 conditions rather than dropping them from the report.
+
+The MBPP implementation names its three registered suites
+**On-policy · 선택비용 포함** (`fresh`: `fresh_r` / `budget` / `final`),
+**On-policy · 선택비용 별도** (`quality`: `fresh_r` / `matched` / `convergence`), and
+**Difficulty · 선택비용 포함** (`difficulty`: `difficulty` / `budget` / `convergence`),
+where the triples are selector/accounting/gate. The first two have the same
+selector, not two different gradient methods. In the separate-cost suite,
+selection is recorded on the `reporting` ledger outside the diagnostic/training
+cap and still included in total actual GPU cost; evaluation is separately
+reported for every suite. Cost accounting and gate criterion both differ.
+These are 48 separate continuation-training branches per suite (18 development
+plus 30 held-out), 144 across all three; sharing prefixes does not turn them
+into repeated evaluations of the same trained model. CLI keys, file paths and
+frozen fields are unchanged; see [the MBPP run guide](MBPP_SELECTION_RUN.md).
+Budget exhaustion without a valid evaluated result is reported as incomplete,
+never converted to reward zero or `DONE`. Retain its actual costs and explain
+the missing result instead of treating it as a measured negative reward.
 
 This tests whether to renew selection now or switch to random. CONTINUE
 explicitly renews scoring; merely training longer on a cached fixed subset
@@ -195,7 +214,7 @@ selected-training prefix. The replacement is `scripts/run_selection_switch.sh`;
 see [the implementation and run guide](SELECTION_SWITCH_RUN.md). Existing E5,
 Qwen and net-gain entry points/results are unchanged. Before full GPU launch:
 
-- Audit reusable selected-prefix checkpoints and exact fresh-selector code.
+- Audit reusable selected-prefix checkpoints and exact on-policy-selector code.
 - Freeze the diagnostic-paid control design and remaining-budget convention.
 - Bind the selector, prior selection history, checkpoint, optimizer, model,
   decision timestamp/hash, evaluation identities and cost ledgers.
@@ -214,7 +233,8 @@ is tested in the [separate MoPPS extension](MOPPS_COMPARISON.md): 12 held-out
 continuations, original checkpoints/budgets, and a matched online-random
 control. The primary comparison is **executed GATE versus reward-based MoPPS**,
 including diagnostic cost, reported as GATE-minus-MoPPS final reward. Random
-and fresh-r are secondary controls. The live fresh-r gate study is unchanged. This is not the cached
+and on-policy selection (`fresh_r`) are secondary controls. The live on-policy
+gate study is unchanged. This is not the cached
 `passrate_beta` baseline and not a claim to reproduce MoPPS's full training
 system. GPU results remain pending.
 

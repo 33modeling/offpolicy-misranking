@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import selection_gate as core
 import selection_gate_gpu as base
 
@@ -56,7 +58,8 @@ def test_results_file_lists_branches_contrasts_flags_and_rewards(tmp_path):
     subprocess.run([sys.executable, str(ROOT / "scripts/switch_results.py"), "--root", str(tmp_path), "--out", str(out), "--draws", "200"],
                    check=True, capture_output=True, text=True)
     text = out.read_text()
-    assert "SELECTOR difficulty  GATE convergence" in text and "GATE MODEL intercept=-0.01500" in text
+    assert "SELECTOR Difficulty  ACCOUNTING ?  GATE 비용 보정 학습 효율 기준" in text
+    assert "GATE MODEL intercept=-0.01500" in text
     assert "s3/t25   selection_full     reward= 45.83 updates=  16 used= 28700 action=select" in text
     assert "'fresh-r-candidate': 20000" in text
     assert "s4/t25   gated              reward= 58.33 updates= 191" in text and "INVALID" in text
@@ -74,3 +77,47 @@ def test_results_file_lists_branches_contrasts_flags_and_rewards(tmp_path):
     assert "s3/t25 random_full: 100.0 50.0 25.0 0.0 75.0" in rewards
     assert "s4/t25 gated INVALID: " in rewards
     assert "development-report.json" not in text
+
+
+def result_text(root):
+    return subprocess.run([sys.executable, str(ROOT / "scripts/switch_results.py"), "--root", str(root), "--draws", "20"],
+                          check=True, capture_output=True, text=True).stdout
+
+
+@pytest.mark.parametrize("accounting,label", [("budget", "선택비용 포함"), ("matched", "선택비용 별도")])
+def test_mbpp_result_header_distinguishes_actual_accounting_without_rewriting_protocol(tmp_path, accounting, label):
+    # Actual frozen settings win even when a directory has the other condition's name.
+    root = tmp_path / "selection-switch-mbpp-v1"
+    protocol = {"dataset": "mbpp", "selector": "fresh_r", "accounting": accounting,
+                "gate": "convergence", "budget_gpu_seconds": 29040}
+    core.atomic_json(root / "switch.json", protocol)
+    before = (root / "switch.json").read_bytes()
+    text = result_text(root)
+    assert f"EXPERIMENT On-policy · {label}" in text
+    assert f"SELECTOR On-policy  ACCOUNTING {label}  GATE 비용 보정 학습 효율 기준" in text
+    assert "fresh_r" not in text.split("BRANCHES", 1)[0]
+    assert f"ROOT {root}" in text and "BUDGET 29040  DATASET mbpp" in text
+    assert "reward=" not in text and not (root / "states").exists()
+    assert (root / "switch.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("manifest", [None, "{broken", "[]"])
+def test_results_missing_or_invalid_manifest_does_not_invent_protocol_or_results(tmp_path, manifest):
+    root = tmp_path / "selection-switch-mbpp-quality-v1"
+    if manifest is not None:
+        root.mkdir()
+        (root / "switch.json").write_text(manifest)
+    text = result_text(root)
+    assert "MANIFEST missing, unreadable or not an object" in text
+    assert "SELECTOR ?  ACCOUNTING ?  GATE ?" in text and "DATASET ?" in text
+    assert "reward=" not in text and "fresh_r" not in text
+    assert not (root / "states").exists()
+
+
+def test_results_wrong_dataset_is_not_labeled_as_a_verified_mbpp_condition(tmp_path):
+    root = tmp_path / "selection-switch-mbpp-quality-v1"
+    core.atomic_json(root / "switch.json", {"dataset": "math500", "selector": "difficulty", "accounting": "budget", "gate": "final"})
+    text = result_text(root)
+    assert f"EXPERIMENT {root.name}" in text and "DATASET math500" in text
+    assert "WARNING MBPP-named root has a different frozen dataset" in text
+    assert "GATE 최종 보상 기준" in text

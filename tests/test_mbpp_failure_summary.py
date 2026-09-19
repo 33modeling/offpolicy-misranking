@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import selection_gate as core
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -116,3 +117,28 @@ def test_symlinked_logs_and_records_never_include_outside_data(tmp_path):
 def test_clipping_counts_utf8_bytes_and_marks_omission():
     text = summary.clipped('가나다' * 1000, 127)
     assert len(text.encode()) <= 127 and '[... omitted ...]' in text
+
+
+@pytest.mark.parametrize('accounting,label', [('budget', '선택비용 포함'), ('matched', '선택비용 별도')])
+def test_failure_summary_labels_actual_condition_and_retains_raw_protocol_audit(tmp_path, accounting, label):
+    root = tmp_path / 'selection-switch-mbpp-v1'
+    protocol = {'dataset': 'mbpp', 'selector': 'fresh_r', 'accounting': accounting, 'gate': 'convergence'}
+    core.atomic_json(root / 'switch.json', protocol)
+    before = (root / 'switch.json').read_bytes()
+    text = summary.root_summary(root)
+    assert f'EXPERIMENT On-policy · {label}' in text and f'ROOT {root.name}' in text
+    assert f'SELECTOR On-policy  ACCOUNTING {label}  GATE 비용 보정 학습 효율 기준' in text
+    assert 'protocol (raw audit): ' + str(protocol) in text
+    assert 'No saved branch failure found; missing logs do not prove success.' in text
+    assert f'EXPERIMENT On-policy · {label}' in summary.storage_report([root])
+    assert (root / 'switch.json').read_bytes() == before
+
+
+def test_failure_summary_missing_and_wrong_manifest_remain_explicit(tmp_path):
+    root = tmp_path / 'selection-switch-mbpp-quality-v1'
+    text = summary.root_summary(root)
+    assert 'manifest missing: switch.json' in text and 'SELECTOR ?  ACCOUNTING ?  GATE ?' in text
+    core.atomic_json(root / 'switch.json', {'dataset': 'math500', 'selector': 'fresh_r', 'accounting': 'matched'})
+    text = summary.root_summary(root)
+    assert f'EXPERIMENT {root.name}' in text and 'manifest dataset is not MBPP' in text
+    assert "'dataset': 'math500'" in text

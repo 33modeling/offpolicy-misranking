@@ -7,11 +7,21 @@ entered through the canonical runner.
 ## MBPP Selection And Switching
 
 Run `bash scripts/run_mbpp_experiments.sh` on every allocated node, including
-replacements. The MBPP fresh, learning-quality, and cached-difficulty suites
-share the original node controller's recovery, watchdog, and lease-based queue.
+replacements. The three MBPP suites are **On-policy · 선택비용 포함** (`fresh`),
+**On-policy · 선택비용 별도** (`quality`), and
+**Difficulty · 선택비용 포함** (`difficulty`). They share the original node
+controller's recovery, watchdog, and lease-based queue. Both on-policy suites
+use the same on-policy gradient selector, computed under the current policy
+(`selector=fresh_r`); `quality`
+changes cost accounting and the gate criterion, not the selector. Selection
+cost recorded separately remains in total actual GPU cost; evaluation costs
+are separately reported in every suite. CLI keys and saved paths are unchanged.
 A node ownership guard rejects duplicate launches and reaps only its own
 children after a crash; a busy lock does not trigger a node-wide cleanup.
-The variants share MBPP prefixes and evaluation questions.
+The variants share MBPP prefixes and evaluation questions, but train separate
+continuations: 48 per suite, 144 total, not three evaluations of the same run.
+A budget-exhausted branch without a valid evaluated result stays incomplete;
+do not substitute reward zero or mark it `DONE`.
 `restart`, `stop`, `plan`, `check`, `status`, `progress`, `results`, and `why` are available.
 `why` writes one error summary of at most 16 KiB, including the original CUDA/NCCL
 warning context. Idle passes wait 15 seconds and poll every 5 seconds; all MBPP

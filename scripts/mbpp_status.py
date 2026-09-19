@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import selection_switch_status as switch_status
+from _status_summary import gate_label, mbpp_suite_label
 
 
 ARM_NAMES = {"selection_reduced": "Selection", "random_reduced": "Random",
@@ -92,11 +93,8 @@ def table(headers, rows, widths):
     return lines
 
 
-def label(root):
-    name = Path(root).name
-    if name == "selection-switch-mbpp-v1":
-        return "on-policy"
-    return name.removeprefix("selection-switch-mbpp-").removesuffix("-v1")
+def label(root, protocol=None):
+    return mbpp_suite_label(root, protocol)
 
 
 def snapshot(roots, *, now=None):
@@ -178,6 +176,7 @@ def render_nodes(data, *, width, all_nodes=False):
     lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current",
              "# Node -> Experiment | Status | Progress | Remarks"]
     progress = {suite["root"]: completion(suite)[0] for suite in data["suites"]}
+    labels = {suite["root"]: label(suite["root"], suite.get("protocol")) for suite in data["suites"]}
     visible = nodes if all_nodes else current
     for index, node in enumerate(visible, 1):
         if node["assignments"]:
@@ -189,7 +188,7 @@ def render_nodes(data, *, width, all_nodes=False):
                 if detail and detail not in details:
                     details.append(detail)
             for (root, seed, step, arm), details in grouped.items():
-                lines.append(f"{index}. {node['host']} -> {label(root)} / seed {seed} / step {step} / {arm}"
+                lines.append(f"{index}. {node['host']} -> {labels[root]} / seed {seed} / step {step} / {arm}"
                              f" | RUN | {progress.get(root, '-')} | {'; '.join(details) or '-'}")
         else:
             detail = {"WAIT": "작업 배정 대기", "HOLD": "작업 배정 대기", "ADMIT": "장치 점검 중",
@@ -213,7 +212,7 @@ def render(data, *, width=120, all_tasks=False):
              "Progress: 실험 묶음의 완료 분기 수 / 전체 분기 수. 시간 경과로 추정하지 않습니다."]
     rows, running, notices = [], [], []
     for suite in data["suites"]:
-        name = label(suite["root"])
+        name = label(suite["root"], suite.get("protocol"))
         if not suite.get("prepared"):
             rows.append([name, "-", "-", "-", "-", "-", "-", "설정 읽기 실패" if suite.get("error") else "준비 전"])
             notices.append(f"{name}: 설정 읽기 실패: {suite['error']}" if suite.get("error") else f"{name}: 준비 전")
@@ -239,12 +238,14 @@ def render(data, *, width=120, all_tasks=False):
         if trained > counts['DONE']:
             notices.append(f"{name}: 학습 결과 {trained}개 저장됨; 평가·결과 확정 대기 {evaluations}개.")
     lines += table(["Experiment", "Progress", "Completed", "READY", "DONE", "WAIT", "RUN", "Remarks"],
-                   rows, [12, 8, 9, 5, 4, 4, 3, width - 59])
+                   rows, [26, 8, 9, 5, 4, 4, 3, width - 73])
     for suite in data["suites"]:
-        lines += ["", f"FULL STATUS — {label(suite['root'])}"]
+        lines += ["", f"FULL STATUS — {label(suite['root'], suite.get('protocol'))}"]
         if not suite.get("prepared"):
             lines.append("WAIT: 설정 읽기 실패" if suite.get("error") else "WAIT: 준비 전 (저장된 실험 설정 없음)")
             continue
+        if suite.get("protocol", {}).get("gate"):
+            lines.append("Gate policy 판단: " + gate_label(suite["protocol"]["gate"]))
         tasks = suite.get("tasks", [])
         prefixes = {(task["seed"], task["step"]): task for task in tasks if task.get("kind") == "prefix"}
         branches = {(task["seed"], task["step"], task["arm"]): task for task in tasks if task.get("kind") == "branch"}
@@ -264,7 +265,11 @@ def render(data, *, width=120, all_tasks=False):
                   else [11, 4, 5, 9, 6, 9, 6, 6, width - 72])
         lines += table(["Seed / Step", "Role", "Prefix", *ARM_NAMES.values(), "Remarks"], matrix, widths)
     running_experiments = {(name, task["seed"], task["step"], arm_name(task["arm"])) for name, task in running}
-    lines += ["Selection / Random: 공통 진단 비용 차감 후 비교. Full selection / Full random: 전체 예산 대조군.",
+    lines += ["On-policy: 현재 정책으로 계산한 gradient 기반 선택. Difficulty: 저장된 정답률 기반 선택.",
+              "선택비용 포함: 선택·진단·학습에 같은 예산 적용. 선택비용 별도: 선택 비용을 예산 밖에 기록.",
+              "선택비용 별도도 총 GPU 비용에는 포함합니다. 평가 비용은 모든 조건에서 별도로 기록합니다.",
+              "예산 소진으로 중단된 분기는 유효한 평가 결과가 없으면 미완료이며, 보상 0점이 아닙니다.",
+              "Selection / Random: 공통 진단 비용 차감 후 비교. Full selection / Full random: 전체 예산 대조군.",
               "Gate policy: 전환 규칙 적용. '-': 해당 상태에서 실행 대상 아님.",
               "", f"CURRENT RUN {len(running_experiments)}"]
     if not running:

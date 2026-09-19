@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from selection_switch_errors import log_tail, utc_time
+from _status_summary import accounting_label, gate_label, mbpp_suite_label, selector_label
 
 MAX_BYTES = 16 * 1024
 ROOT_BYTES = 4000
@@ -77,7 +78,8 @@ def storage_report(roots):
                 'Presence only, NOT hash/resume validation. Archived/waived work is NOT free to reuse.\n'
                 'No files moved, deleted, restored or training started.')]
     for root in roots:
-        lines = [f'\nROOT {root.name}']
+        manifest = record(root, root / 'switch.json')
+        lines = [f'\nEXPERIMENT {mbpp_suite_label(root, manifest)}', f'ROOT {root.name}']
         if not root.is_dir():
             sections.append('\n'.join(lines + ['ROOT MISSING here; cannot determine remote data loss.']))
             continue
@@ -182,11 +184,18 @@ def error_excerpt(root, path):
 
 
 def root_summary(root):
-    lines = [f'\nROOT {root.name}']
     manifest = record(root, root / 'switch.json')
-    lines.append('protocol: ' + str({key: manifest.get(key) for key in ('dataset', 'selector', 'accounting', 'gate')}))
+    lines = [f'\nEXPERIMENT {mbpp_suite_label(root, manifest)}', f'ROOT {root.name}',
+             f"SELECTOR {selector_label(manifest.get('selector', '?'))}  "
+             f"ACCOUNTING {accounting_label(manifest.get('accounting', '?'))}  "
+             f"GATE {gate_label(manifest.get('gate', '?'))}"]
+    lines.append('protocol (raw audit): ' + str({key: manifest.get(key) for key in ('dataset', 'selector', 'accounting', 'gate')}))
     if '_read_error' in manifest:
         lines.append('manifest unreadable: ' + manifest['_read_error'])
+    elif not (root / 'switch.json').is_file():
+        lines.append('manifest missing: switch.json; protocol values are unknown')
+    elif manifest.get('dataset') not in (None, 'mbpp'):
+        lines.append('manifest dataset is not MBPP; shown as stored, not relabeled')
     failures = recent(root, ('prefixes/seed-*/segment-*/failure.json',
         'states/*/points/*/*/failure.json', 'states/*/failure.json', 'gate-fit/failure.json'))
     lines.append(f'recorded failures: {len(failures)}; newest two below (historical, not proof of a live failure)')

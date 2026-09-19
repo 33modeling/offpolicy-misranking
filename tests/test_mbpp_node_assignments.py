@@ -136,7 +136,7 @@ def test_one_host_in_two_suites_retains_both_assignments_and_counts_once(tmp_pat
     output = dashboard.render(data)
     assert re.search(r"NODES\s+1 current", output)
     assignment_section = output.split("NODE ASSIGNMENTS", 1)[1]
-    assert "on-policy" in assignment_section and "quality" in assignment_section
+    assert "On-policy · 선택비용 포함" in assignment_section and "On-policy · 선택비용 별도" in assignment_section
     assert assignment_section.count("1. shared-node ->") == 2
     assert "2. shared-node" not in assignment_section
 
@@ -219,7 +219,7 @@ def test_old_assignment_never_hides_same_nodes_current_work_in_another_suite(tmp
     suite_root, task = node["assignments"][0]
     assert Path(suite_root) == roots[1] and task["arm"] == "selection_reduced"
     output = dashboard.render(data)
-    assert "reused-node -> quality / seed 0 / step 25 / Selection" in output
+    assert "reused-node -> On-policy · 선택비용 별도 / seed 0 / step 25 / Selection" in " ".join(output.split())
 
 
 def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_path):
@@ -265,7 +265,7 @@ def test_simple_mapping_shows_busy_and_two_unassigned_nodes_without_extra_diagno
     assert f"{names[0]} -> 배정 없음 | WAIT" in joined
     assert f"{names[1]} -> 배정 없음 | WAIT" in joined
     assert mapping.index(names[0]) < mapping.index(names[1])
-    assert "busy-node -> quality / seed 0 / step 25 / Random" in joined
+    assert "busy-node -> On-policy · 선택비용 별도 / seed 0 / step 25 / Random" in joined
     assert ("old-node" in mapping) is all_tasks
     assert not any(text in mapping for text in ("PID", "AGE", "PHASE", "peer work active", "checking receipts"))
     assert all(len(line) <= 80 for line in output.splitlines())
@@ -310,7 +310,7 @@ def test_parent_branch_and_curve_phase_share_one_numbered_experiment_row(tmp_pat
     data = dashboard.snapshot([root], now=NOW)
     mapping = "\n".join(dashboard.render_nodes(data, width=120))
     assert mapping.count("1. curve-worker ->") == 1
-    assert "quality / seed 0 / step 25 / Random | RUN | 0.0% |" in mapping
+    assert "On-policy · 선택비용 별도 / seed 0 / step 25 / Random | RUN | 0.0% |" in mapping
     assert "단계: curve-evaluation" in mapping and "평가·결과 저장 남음" in mapping
     assert "Random/curve" not in mapping
     assert "CURRENT RUN 1" in dashboard.render(data)

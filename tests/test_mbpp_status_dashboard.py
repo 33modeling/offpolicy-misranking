@@ -26,9 +26,9 @@ def test_three_suites_have_one_summary_full_matrices_and_one_run_list(six_suites
     output = dashboard.render(report)
     assert output.count("MBPP EXPERIMENTS") == 1 and output.count("CURRENT RUN") == 1
     assert "Progress" in output and "Completed" in output and "Remarks" in output
-    on_policy = next(line for line in output.splitlines() if line.startswith("on-policy "))
+    on_policy = next(line for line in output.splitlines() if line.startswith("On-policy · 선택비용 포함 "))
     assert "21/48" in on_policy and "43.8%" in on_policy and "15/15" in on_policy
-    assert "CURRENT RUN 4" in output and "difficulty: 준비 전" in output
+    assert "CURRENT RUN 4" in output and "Difficulty · 선택비용 포함: 준비 전" in output
     assert "CONTINUATIONS" not in output and "MOPPS" not in output and "MATH" not in output
     assert "ROOT " not in output
     assert output.count("FULL STATUS —") == 3
@@ -41,7 +41,7 @@ def test_three_suites_have_one_summary_full_matrices_and_one_run_list(six_suites
 def test_full_matrix_shows_each_completed_random_control_and_unfinished_arm(six_suites):
     roots, _, now = six_suites
     output = dashboard.render(dashboard.snapshot(mbpp_roots(roots), now=now))
-    section = output.split("FULL STATUS — on-policy", 1)[1].split("FULL STATUS — quality", 1)[0]
+    section = output.split("FULL STATUS — On-policy · 선택비용 포함", 1)[1].split("FULL STATUS — On-policy · 선택비용 별도", 1)[0]
     rows = [line.split() for line in section.splitlines() if re.match(r"^\d\s*/\s*\d+\s", line)]
     assert len(rows) == 15
     assert all(row[4] == "DONE" and row[6] == "DONE" for row in rows)
@@ -76,7 +76,7 @@ def test_matrix_preserves_evaluation_resume_and_failure_states(six_suites):
     for task, state in zip(branches, ("EVAL", "RESUME", "FAILED", "REVIEW")):
         task["status"] = state
     output = dashboard.render(report)
-    section = output.split("FULL STATUS — on-policy", 1)[1].split("FULL STATUS — quality", 1)[0]
+    section = output.split("FULL STATUS — On-policy · 선택비용 포함", 1)[1].split("FULL STATUS — On-policy · 선택비용 별도", 1)[0]
     joined = " ".join(section.split())
     assert all(dashboard.REMARKS[state] in joined for state in ("EVAL", "RESUME", "FAILED", "REVIEW"))
     assert "WAIT" in section
@@ -107,7 +107,7 @@ def test_unreadable_suite_does_not_hide_other_completions_or_workers(six_suites,
     monkeypatch.setattr(dashboard.switch_status, "snapshot", unreadable)
     output = dashboard.render(dashboard.snapshot(wanted, now=now))
     assert "21/48" in output and "CURRENT RUN 4" in output
-    assert "difficulty: 설정 읽기 실패: fixture broken manifest" in output
+    assert "Difficulty · 선택비용 포함: 설정 읽기 실패: fixture broken manifest" in output
 
 
 def test_cli_accepts_repeated_roots_and_missing_suite_without_initializing(six_suites, monkeypatch, capsys):
@@ -118,7 +118,7 @@ def test_cli_accepts_repeated_roots_and_missing_suite_without_initializing(six_s
         args += ["--root", str(root)]
     monkeypatch.setattr(sys, "argv", args)
     assert dashboard.main() == 0
-    assert "difficulty: 준비 전" in capsys.readouterr().out
+    assert "Difficulty · 선택비용 포함: 준비 전" in capsys.readouterr().out
     assert not wanted[2].exists()
 
 
@@ -168,7 +168,7 @@ def test_progress_is_completed_fraction_not_elapsed_or_timeout(six_suites):
             for task in suite.get("tasks", []):
                 task.update(seconds=elapsed, timeout=10)
         output = dashboard.render(report)
-        summary = next(line for line in output.splitlines() if line.startswith("on-policy "))
+        summary = next(line for line in output.splitlines() if line.startswith("On-policy · 선택비용 포함 "))
         assert "43.8%" in summary and "21/48" in summary
     assert dashboard.completion(report["suites"][0]) == ("43.8%", 21, 48)
 
@@ -187,3 +187,35 @@ def test_full_korean_remarks_wrap_without_exceeding_terminal_columns(six_suites)
         wrapped = dashboard.wrap(remark, 8)
         assert "".join(wrapped).replace(" ", "") == remark.replace(" ", "")
         assert all(dashboard.columns(line) <= 8 for line in wrapped)
+
+
+def test_condition_names_show_cost_accounting_without_renaming_saved_roots(six_suites):
+    roots, _, now = six_suites
+    report = dashboard.snapshot(mbpp_roots(roots), now=now)
+    before = deepcopy(report)
+    output = dashboard.render(report, width=160)
+    for name in ("On-policy · 선택비용 포함", "On-policy · 선택비용 별도", "Difficulty · 선택비용 포함"):
+        assert f"FULL STATUS — {name}" in output
+    assert "quality" not in output and "fresh_r" not in output
+    assert "별도도 총 GPU 비용에는 포함" in output
+    assert "보상 0점이 아닙니다" in output
+    assert report == before
+
+
+def test_custom_root_uses_frozen_selector_accounting_and_gate_metadata(tmp_path):
+    import selection_gate as core
+    from test_selection_switch_status import prepared
+
+    root = tmp_path / "unchanged-custom-storage"
+    prepared(root)
+    protocol = core.read(root / "switch.json")
+    protocol.update(dataset="mbpp", selector="fresh_r", accounting="matched", gate="convergence")
+    core.atomic_json(root / "switch.json", protocol)
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()}
+    report = dashboard.snapshot([root])
+    output = dashboard.render(report, width=160)
+    assert "FULL STATUS — On-policy · 선택비용 별도" in output
+    assert "Gate policy 판단: 비용 보정 학습 효율 기준" in output
+    assert report["suites"][0]["protocol"] == {
+        "dataset": "mbpp", "selector": "fresh_r", "accounting": "matched", "gate": "convergence"}
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()}

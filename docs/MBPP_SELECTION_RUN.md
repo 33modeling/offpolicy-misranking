@@ -9,26 +9,60 @@ bash scripts/run_mbpp_experiments.sh
 
 The command joins the existing node controller's shared MBPP queue:
 
-| Suite | Continuation selection | Accounting | Gate |
+| 표시명 | 선택 방식 | 분기 예산에 차감하는 비용 | Gate 판단 기준 |
 | --- | --- | --- | --- |
-| `fresh` | Fresh gradient scores | Scoring and training share the allocation | Final reward |
-| `quality` | Fresh gradient scores | Scoring recorded separately from training allocation | Updates saved minus selection cost in update units |
-| `difficulty` | Cached success rate closest to 0.5 | Scoring and training share the allocation | Updates saved minus selection cost in update units |
+| On-policy · 선택비용 포함 | 현재 정책에서 계산한 gradient | 선택 + 진단 + 학습 | 최종 보상 차이 |
+| On-policy · 선택비용 별도 | 같은 on-policy gradient | 진단 + 학습; 선택 비용은 별도 기록 | 비용 보정 학습 효율 |
+| Difficulty · 선택비용 포함 | 저장된 정답률이 0.5에 가까운 문제 | 선택 + 진단 + 학습 | 비용 보정 학습 효율 |
 
-All suites include random controls. The fresh suite creates five fresh-selected
+Compatibility keys remain `fresh` → `fresh_r/budget/final`, `quality` →
+`fresh_r/matched/convergence`, and `difficulty` → `difficulty/budget/convergence`
+(selector/accounting/gate). These are saved identifiers, not extra methods.
+
+The first two suites use the **same on-policy gradient selector**, with gradients
+computed under the current policy. `quality` is not another selector: it changes
+the cost accounting and gate criterion. Difficulty ranks cached success rates
+by closeness to 0.5. `final` uses final-reward differences; `convergence` uses
+updates saved to a common reward target, minus selection cost in update units.
+
+“선택비용 포함” charges selection GPU time to the diagnostic/training branch
+allocation. “선택비용 별도” records selection GPU time on the `reporting` ledger,
+outside that allocation; it is **not free** and remains part of total actual
+compute. Evaluation has a common, separate reporting allocation in all three
+suites. Reporting-ledger selection and evaluation costs are distinguished by
+phase, not omitted or combined into a supposedly free selector.
+
+All suites include random controls. `fresh` creates five on-policy-selected
 training prefixes. The other two reuse these exact prefixes, states at
 25/50/100 updates, and the same evaluation questions. They do not import MATH
 prefixes. Each suite uses the existing 18 development and 30 held-out
-continuations, with development seeds 0/1/2 and held-out seeds 3/4.
-Once all shared prefix certificates are ready, quality and difficulty can start
-even while fresh continuations are still running elsewhere. No node is assigned
+continuations: **48 per suite, 144 across the three**, with development seeds
+0/1/2 and held-out seeds 3/4. These are separate continuation-training branches,
+not merely re-evaluations of the first suite's trained results. Shared prefixes
+do not make the later continuation training identical or free.
+Once all shared prefix certificates are ready, `quality` and `difficulty` can start
+even while `fresh` continuations are still running elsewhere. No node is assigned
 permanently to one suite. Final evaluation uses eight responses per question;
 convergence curves use three archived checkpoints with four responses per question.
 
 This is a port of the current switch suites, not a new difficulty definition,
-an E5 fixed-checkpoint run, or a gate that directly chooses fresh versus
+an E5 fixed-checkpoint run, or a gate that directly chooses on-policy versus
 difficulty in one branch. The original gates choose their suite's selector
-versus random; the shared states permit the fresh/difficulty comparison.
+versus random; the shared states permit the on-policy/difficulty comparison.
+The display names do not rename CLI keys (`fresh`, `quality`, `difficulty`),
+saved directories, scoring phase names, or any frozen protocol fields.
+
+### Result tables
+
+Keep the cost-inclusive and separate-cost conditions in distinct blocks;
+they are not the same total-compute comparison. Within each block compare
+Full selection, Full random and Gate policy at matched seed/checkpoint states.
+Report valid-result count / planned count, completed training updates, measured
+reward, diagnostic/selection/training GPU time, and evaluation GPU time separately.
+Include interrupted and failed attempts in an explicit cost/failure audit.
+An unevaluated budget-exhausted branch has no measured reward: show “미완료”,
+not zero. If no valid paired outcomes exist, a runtime/cost table is possible,
+but there is no completed selection-versus-random performance comparison.
 
 ## Commands
 
@@ -50,13 +84,16 @@ bash scripts/run_mbpp_experiments.sh run difficulty
 ```
 
 For MBPP monitoring, use `bash scripts/run_mbpp_experiments.sh status --watch`.
-It refreshes one dashboard for all three MBPP suites: completed/total and
-unfinished counts, running/evaluation/resume/blocked work, and completion by
-selector, random, full-selection, full-random, and gate. A single current-run
-list shows task, node, phase, and training step; inactive node history is hidden,
-not deleted. Missing suites say `NOT PREPARED`, never an invented `READY` count.
+It refreshes one dashboard for the three named MBPP suites, with all seed/step
+rows and the full names Selection, Random, Full selection, Full random and
+Gate policy. Progress is completed branches divided by registered branches,
+not elapsed time. Display states are `READY`, `DONE`, `WAIT`, and `RUN`; Remarks
+explains evaluation, checkpoint validation, budget exhaustion, and failures.
+Numbered full node names map to their experiment and phase. Inactive node
+history is hidden, not deleted. Missing suites say `준비 전`, never an invented
+`READY` count.
 `status --all` adds exact roots and individual task states;
-`status quality --watch 5` watches just quality.
+`status quality --watch 5` watches only **On-policy · 선택비용 별도**.
 This is read-only and does not restart training. The generic
 `run_experiments.sh status` defaults to the math-root overview, not this MBPP view.
 
@@ -73,7 +110,7 @@ alternative, and successful training costs with missing final policy/stop
 records block startup with exit 2. `stop` and read-only commands remain available.
 An absent root is not labelled "deleted"; if none of the requested existing run
 manifests can be found, recovery refuses to initialize replacement runs silently.
-Unprepared quality/difficulty roots are allowed alongside the existing fresh root.
+Unprepared `quality`/`difficulty` roots are allowed alongside the existing `fresh` root.
 
 For missing random-control work, `check_random_storage.sh` scans every switch and
 MoPPS root under the configured work directory, not just MBPP. It separates
@@ -81,8 +118,8 @@ MoPPS root under the configured work directory, not just MBPP. It separates
 sealed random results, and prioritizes missing stops, archives and conflicting
 parent-only stops. It saves `~/random-storage-*.txt` (at most 4 KiB), never resets
 or restores anything, and does not certify tensor contents. An absent result is
-not proof of deletion. In explanations, the on-policy suite keeps its existing
-storage names for compatibility; no saved paths or protocol keys are renamed.
+not proof of deletion. Both on-policy suites keep their existing storage names
+for compatibility; no saved paths or protocol keys are renamed.
 
 The separate audit saves a unique `~/mbpp-storage-*.txt` (at most 4 KiB), prints
 its full path, and prints exact configured roots. Send that TXT file for diagnosis;
@@ -97,8 +134,10 @@ historical deletion with no remaining evidence. Tensor hashes and checkpoint
 lineage still require trainer validation; passing metadata checks is not that
 certification. Already-running workers are not stopped by this read-only audit.
 
-Published training with a missing convergence curve is `EVAL`, not `READY`:
-only evaluation remains. `RESUME` means a checkpoint candidate exists and must
+Published training with a missing convergence curve has internal state `EVAL`,
+not `READY`: evaluation/publication remains. The MBPP dashboard shows `WAIT`
+with “평가·결과 저장 남음”, or `RUN` while that work has a fresh heartbeat.
+Internal state `RESUME` means a checkpoint candidate exists and must
 pass the trainer's original hash/contract validation; it is not a fresh start.
 `REVIEW` means saved training evidence remains without a complete checkpoint
 candidate. The trainer refuses to fall back to parent weights if all local
@@ -106,14 +145,15 @@ checkpoints fail validation, and automatic waivers never archive saved training
 or completion evidence. These protections preserve existing files and costs;
 they do not restore files already missing or certify damaged checkpoints.
 
-Status now separates `HISTORY` (archived attempts) from current `DONE`, `EVAL`
-and `RESUME` states. An archive alone never downgrades a valid current result.
+The saved-work views separate archived history from current `DONE`, `EVAL`
+and `RESUME` records; the MBPP dashboard uses the four display states above.
+An archive alone never downgrades a valid current result.
 Default status shows live nodes only, grouped by state and then node number;
 inactive node logs and records remain untouched. The generic
 `bash scripts/run_experiments.sh status --all` includes node history, while
-`--json` always retains the full snapshot. The experiment name and exact ROOT
-now appear at the top of each suite so a new quality suite is not confused with
-the original completed on-policy suite.
+`--json` always retains the full snapshot. Distinct cost-qualified display names
+identify the two on-policy suites; `status --all` includes their exact roots.
+A new `quality` root does not erase or replace completed `fresh` results.
 
 Saved switch points are resolved from `suite.json`, matching the worker, rather
 than inferred from directory count. Ambiguous paths are `REVIEW`, not `READY`.
@@ -129,8 +169,9 @@ reasons. `checkpoint_step` and `logged_step` are distinct. Metadata logging is
 CPU-only, time-bounded, and cannot change worker exit codes.
 
 A structurally consistent final policy and budget-stop record awaiting result
-publication is `EVAL`, subject to full worker validation, not a new `READY`
-training task. The combined status and progress screens show RF/RR/RO random
+publication is internally `EVAL`, subject to full worker validation, not a new
+`READY` training task. The MBPP dashboard explains it in Remarks. The combined
+status and progress screens show RF/RR/RO random
 counts separately from selector counts; display labels use on-policy while
 preserving the original storage paths and CLI keys.
 
@@ -232,11 +273,17 @@ collection resumes from complete prompt groups, and hash-bound prompt gradients
 are reused. `fresh-r-candidate` covers both rollout and gradient work; the phase
 label alone does not mean all candidates are being regenerated.
 
-An exhausted allocation is rejected before metering another attempt, reported
-as `BUDGET` rather than an ordinary retryable `FAIL`. It does not get a new budget,
+An exhausted allocation is rejected before metering another attempt, recorded
+internally as `BUDGET`; the MBPP dashboard shows `WAIT` with “예산 소진으로 중단”.
+It does not get a new budget,
 silently switch selectors, or count as a completed experimental result. Existing
 publication recovery is still allowed. The runtime migration preserves the
 frozen `switch.json`, prior migration receipts, decisions, costs and policies.
+Without a valid published evaluation, report this branch as **incomplete**, not
+as reward zero or `DONE`; keep its actual costs and saved artifacts in the report.
+A normally budget-limited training run with a validated saved policy may still
+finish evaluation/publication. Only valid result receipts (and the required
+convergence curve) establish completion; budget exhaustion alone does not.
 
 `saved` prints active checkpoint/adapter presence, partial selection counts,
 archived attempts under `discarded/`, and budget usage for two failed branches
@@ -275,9 +322,9 @@ and assertion-execution reward are unchanged from the original MBPP matrix.
 
 Default roots under `$OM_WORK/runs`:
 
-- `selection-switch-mbpp-v1`
-- `selection-switch-mbpp-quality-v1`
-- `selection-switch-mbpp-difficulty-v1`
+- `selection-switch-mbpp-v1` — On-policy · 선택비용 포함 (`fresh`)
+- `selection-switch-mbpp-quality-v1` — On-policy · 선택비용 별도 (`quality`)
+- `selection-switch-mbpp-difficulty-v1` — Difficulty · 선택비용 포함 (`difficulty`)
 
 Override with `SWITCH_MBPP_ROOT`, `SWITCH_MBPP_QUALITY_ROOT`, and
 `SWITCH_MBPP_DIFFICULTY_ROOT`. Roots must be separate, non-nested directories.

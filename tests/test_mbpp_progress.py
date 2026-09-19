@@ -37,14 +37,14 @@ def test_mbpp_progress_shows_only_mbpp_roots_including_unprepared_suites(tmp_pat
     assert result.returncode == 0, result.stderr
     out = result.stdout
     labels = [line.split(":", 1)[0] for line in out.splitlines() if ":" in line and not line.startswith(" ")]
-    assert "MBPP on-policy" in labels
-    assert "mbpp-quality" in labels
-    assert "mbpp-difficulty" in labels, out
-    assert "mbpp-difficulty: not prepared" in out
+    assert "MBPP On-policy · 선택비용 포함" in labels
+    assert "MBPP On-policy · 선택비용 별도" in labels
+    assert "MBPP Difficulty · 선택비용 포함" in labels, out
+    assert "MBPP Difficulty · 선택비용 포함: not prepared" in out
     assert "on-policy" not in labels, out            # math suite must not appear
     assert "difficulty" not in labels, out           # math difficulty suite must not appear
     screen = out[out.index("PROGRESS"):]          # launcher banner lines carry root paths; judge the screen only
-    assert screen.index("MBPP on-policy:") < screen.index("mbpp-quality:") < screen.index("mbpp-difficulty:")
+    assert screen.index("MBPP On-policy · 선택비용 포함:") < screen.index("MBPP On-policy · 선택비용 별도:") < screen.index("MBPP Difficulty · 선택비용 포함:")
     assert "MBPP roots only" in screen
 
 
@@ -53,7 +53,7 @@ def test_generic_progress_still_lists_every_prepared_root(tmp_path):
     result = run_progress("run_experiments.sh", work)
     assert result.returncode == 0, result.stderr
     labels = [line.split(":", 1)[0] for line in result.stdout.splitlines() if ":" in line and not line.startswith(" ")]
-    assert {"on-policy", "difficulty", "MBPP on-policy", "mbpp-quality"} <= set(labels), result.stdout
+    assert {"on-policy", "difficulty", "MBPP On-policy · 선택비용 포함", "MBPP On-policy · 선택비용 별도"} <= set(labels), result.stdout
     assert "MBPP roots only" not in result.stdout
 
 
@@ -65,6 +65,6 @@ def test_progress_root_option_accepts_unprepared_root(tmp_path):
                              "--root", str(work / "runs/selection-switch-mbpp-v1"), "--root", str(missing)],
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr
-    assert "mbpp-difficulty: not prepared" in result.stdout
-    assert "MBPP on-policy:" in result.stdout
-    assert "on-policy:" not in result.stdout.replace("MBPP on-policy:", "")
+    assert "MBPP Difficulty · 선택비용 포함: not prepared" in result.stdout
+    assert "MBPP On-policy · 선택비용 포함:" in result.stdout
+    assert "on-policy:" not in result.stdout

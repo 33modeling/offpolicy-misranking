@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import selection_gate as core  # noqa: E402
 import selection_switch as rule  # noqa: E402
+from _status_summary import accounting_label, gate_label, mbpp_suite_label, selector_label, suite_label
 
 CONTRASTS = (("selection_full", "random_full"), ("gated", "random_full"), ("gated", "selection_full"),
              ("selection_reduced", "random_reduced"))
@@ -105,10 +106,21 @@ def update_limit(p, rows):
 
 
 def report(root, *, draws=10000):
-    p = read(root / "switch.json") or {}
+    manifest = read(root / "switch.json")
+    p = manifest if isinstance(manifest, dict) else {}
+    mbpp_named = root.name.startswith("selection-switch-mbpp-")
+    is_mbpp = p.get("dataset") == "mbpp" or (mbpp_named and p.get("dataset") is None)
+    experiment = mbpp_suite_label(root, p) if is_mbpp else (root.name if mbpp_named else suite_label(root))
     lines = [f"SELECTION SWITCH RESULTS  {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
-             f"ROOT {root}", f"SELECTOR {p.get('selector', 'fresh_r')}  GATE {p.get('gate', 'final')}  "
-             f"BUDGET {p.get('budget_gpu_seconds')}  DATASET {p.get('dataset', 'math500')}"]
+             f"ROOT {root}", f"EXPERIMENT {experiment}",
+             f"SELECTOR {selector_label(p.get('selector', '?'))}  "
+             f"ACCOUNTING {accounting_label(p.get('accounting', '?'))}  "
+             f"GATE {gate_label(p.get('gate', '?'))}",
+             f"BUDGET {p.get('budget_gpu_seconds', '?')}  DATASET {p.get('dataset', '?')}"]
+    if not isinstance(manifest, dict):
+        lines.append("MANIFEST missing, unreadable or not an object; protocol values are unknown")
+    elif mbpp_named and p.get("dataset") not in (None, "mbpp"):
+        lines.append("WARNING MBPP-named root has a different frozen dataset; displayed values are from the manifest")
     try:
         lines[1] += "  COMMIT " + subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True,
                                                           cwd=Path(__file__).resolve().parents[1]).strip()

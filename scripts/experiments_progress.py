@@ -36,8 +36,8 @@ def rank(root):
     return len(ORDER)
 
 
-def label(root):
-    return suite_label(root)
+def label(root, protocol=None):
+    return suite_label(root, protocol)
 
 
 def prepared_roots(work):
@@ -74,7 +74,7 @@ def clip(value, width):
 
 
 def render_root(root, data, *, width, kind):
-    name = label(root)
+    name = label(root, data.get("protocol"))
     if not data.get("prepared", True) or "tasks" not in data:
         return [f"{name}: not prepared"]
     tasks = data["tasks"]

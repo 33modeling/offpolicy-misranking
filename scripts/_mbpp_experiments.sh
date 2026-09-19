@@ -1,5 +1,26 @@
 # MBPP queue configuration. Lifecycle, recovery and GPU ownership stay in
 # run_experiments.sh; this file only supplies roots and their prerequisites.
+mbpp_suite_label() {
+  case "$1" in
+    fresh) printf '%s' 'On-policy · 선택비용 포함' ;;
+    quality) printf '%s' 'On-policy · 선택비용 별도' ;;
+    difficulty) printf '%s' 'Difficulty · 선택비용 포함' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+mbpp_selector_label() {
+  case "$1" in fresh_r) printf '%s' 'On-policy' ;; difficulty) printf '%s' 'Difficulty' ;; *) printf '%s' "$1" ;; esac
+}
+
+mbpp_accounting_label() {
+  case "$1" in budget) printf '%s' '선택비용 포함' ;; matched) printf '%s' '선택비용 별도' ;; *) printf '%s' "$1" ;; esac
+}
+
+mbpp_gate_label() {
+  case "$1" in final) printf '%s' '최종 보상 기준' ;; convergence) printf '%s' '비용 보정 학습 효율 기준' ;; *) printf '%s' "$1" ;; esac
+}
+
 mbpp_queue_init() {
   case "${EXPERIMENTS_MBPP_SUITE:-all}" in
     all) MBPP_SUITES=(fresh quality difficulty) ;;
@@ -20,7 +41,7 @@ mbpp_queue_init() {
     done
   done
   [ "${roots[0]}" != "${roots[1]}" ] && [ "${roots[0]}" != "${roots[2]}" ] && [ "${roots[1]}" != "${roots[2]}" ] || {
-    echo '[abort] fresh, quality and difficulty need separate output roots'; return 2;
+    echo '[abort] the three MBPP experiment conditions need separate output roots'; return 2;
   }
   MBPP_ROOTS=()
   local suite
@@ -84,7 +105,7 @@ mbpp_queue_preparable() {
 mbpp_queue_run() (
   mbpp_queue_settings "$1" || return
   if [ -n "$MBPP_PREFIX" ] && ! mbpp_prefixes_ready; then
-    echo "[waiting] mbpp:$MBPP_SUITE: shared fresh prefixes are not ready; taking other queue work"
+    echo "[waiting] mbpp:$(mbpp_suite_label "$MBPP_SUITE"): shared on-policy prefixes are not ready; taking other queue work"
     return 0
   fi
   mbpp_queue_check "$MBPP_SUITE" || return 1

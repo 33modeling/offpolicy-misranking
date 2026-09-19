@@ -258,6 +258,6 @@ def test_mbpp_status_routes_fresh_saved_results_not_generic_math_root(tmp_path):
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     assert "MBPP EXPERIMENTS" in result.stdout and "21/48" in result.stdout
-    assert "on-policy" in result.stdout and "CURRENT RUN 0" in result.stdout
+    assert "On-policy · 선택비용 포함" in result.stdout and "CURRENT RUN 0" in result.stdout
     assert fresh.exists()
     assert "wrong-math-root" not in result.stdout and "MOPPS COMPARISON" not in result.stdout

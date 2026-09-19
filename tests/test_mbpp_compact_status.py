@@ -13,7 +13,7 @@ def test_compact_on_policy_keeps_21_random_results_visible(six_suites):
     roots, _, now = six_suites
     root = roots["selection-switch-mbpp-v1"]
     output = status.render_compact(status.snapshot(root, now=now))
-    assert "SUITE MBPP on-policy" in output and f"ROOT {root}" in output
+    assert "SUITE MBPP On-policy · 선택비용 포함" in output and f"ROOT {root}" in output
     assert "DONE 21/48 branches" in output
     assert "TRAINING RESULTS  21/48 published" in output
     assert "RF DONE 6/6" in output and "RR DONE 15/15" in output
@@ -49,7 +49,7 @@ def test_compact_saved_final_and_checkpoint_counts_are_not_ready(six_suites):
 
 def test_missing_suite_is_explicit_not_a_fresh_ready_grid(tmp_path):
     output = status.render_compact({"prepared": False, "root": str(tmp_path / "selection-switch-mbpp-difficulty-v1")})
-    assert "NOT PREPARED" in output and "mbpp-difficulty" in output
+    assert "NOT PREPARED" in output and "Difficulty · 선택비용 포함" in output
     assert "READY" not in output and "DONE 0" not in output
     assert len(output.splitlines()) == 3
 
@@ -75,5 +75,5 @@ def test_cli_uses_compact_only_with_mbpp_marker_and_without_all(six_suites, monk
     monkeypatch.setattr(sys, "argv", ["status", "--root", str(root), *arguments])
     assert status.main() == 0
     output = capsys.readouterr().out
-    assert ("SUITE MBPP on-policy" in output) is compact
+    assert ("SUITE MBPP On-policy · 선택비용 포함" in output) is compact
     assert ("CONTINUATIONS" in output) is not compact

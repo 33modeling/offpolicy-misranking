@@ -237,7 +237,7 @@ def test_pending_variants_keep_node_alive_and_open_when_peer_publishes_prefixes(
     wait_for(lambda: len(list(fresh.glob("tasks/*/result.json"))) == 3)
     time.sleep(.3)
     assert process.poll() is None, log.read_text()
-    assert "shared fresh prefixes are not ready" in log.read_text()
+    assert "shared on-policy prefixes are not ready" in log.read_text()
     publish_prefixes(fresh)
     assert process.wait(timeout=30) == 0, log.read_text()
     assert len([row for row in events(work) if row["kind"] == "finished"]) == 9
@@ -342,7 +342,7 @@ def test_pending_sibling_does_not_erase_failed_primary_retry_backoff(cluster):
     process, log = start('node-pending-failure', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC='1',
                          EXPERIMENTS_HOLD_SECONDS='20')
     wait_for(lambda: '[holding]' in log.read_text())
-    assert 'shared fresh prefixes are not ready' in log.read_text()
+    assert 'shared on-policy prefixes are not ready' in log.read_text()
     assert 'next pass in 40s' in log.read_text()
     assert process.poll() is None
 

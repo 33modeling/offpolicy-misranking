@@ -21,7 +21,7 @@ bash scripts/run_selection_switch.sh smoke
 ```
 
 This creates seed 0's selected prefix through update 25, measures once, then
-executes CONTINUE_D including fresh_r scoring, training and independent
+executes CONTINUE_D including on-policy (`fresh_r`) scoring, training and independent
 evaluation. It is a real registered experiment, not a disposable artificial
 GPU benchmark. Its outputs and charges are reused by the full queue. Its
 time limits are the prefix timeout, frozen branch allocation and evaluation
@@ -76,7 +76,7 @@ only this experiment's report under `reports/selection-switch/`.
 root (`runs/selection-switch-long-v1`) that imports the five certified prefixes
 and the evaluation set of `runs/selection-switch-v1` (`prepare --prefix-source`)
 and gives every continuation three times the allocation (87,120 GPU-seconds, a
-300-update equivalent), so fresh gradient scoring is about a quarter of a branch
+300-update equivalent), so on-policy gradient scoring is about a quarter of a branch
 instead of four fifths. It has its own development labels, gate, ledgers and
 status; the MoPPS pass is skipped. Same modes as the switch launcher.
 
@@ -124,19 +124,32 @@ pilot`) is a cheaper first look: the worker claims only the six held-out
 selector beats random anywhere before the development labels, gate and
 reduced arms are run; a later plain `run` completes the rest of the root.
 
-`bash scripts/run_switch_quality.sh` runs the data-quality variant: fresh
-gradient selection as in the primary run, the same prefixes, states and
-evaluation set, but `prepare --accounting matched`. Fresh scoring is metered
-on the reporting ledger, which the allocation does not count, under its
-usual phase names (`fresh-r-validation`, `fresh-r-candidate`, ...), so the
-selection arms train as many updates as random and the comparison is how
-much better fresh-selected data learns per update; the scoring cost is
-recorded and reported; the convergence-gate label subtracts it in the random arm's
-update units, so the label is the paper's criterion (updates saved to the common
-target minus selection cost). The convergence gate is on by
-default, so its label is the updates saved to the common target. Root
-`runs/selection-switch-quality-v1`; `pilot` runs the six held-out fresh and
-random branches first.
+`bash scripts/run_switch_quality.sh` runs the separate-selection-cost variant:
+the same on-policy gradient selector (gradients computed under the current
+policy), prefixes, states and evaluation set as the primary run, but
+`prepare --accounting matched`. Selection is metered on the `reporting` ledger,
+outside the diagnostic/training allocation, under the unchanged phase names
+(`fresh-r-validation`, `fresh-r-candidate`, ...). This isolates learning quality
+from the selection charge within that allocation; it does not make selection
+free or guarantee identical completed updates. Selection cost remains in total
+actual GPU cost. The default convergence gate also subtracts this reported
+selection cost in the random arm's update units: updates saved to the common
+target minus selection cost. Root `runs/selection-switch-quality-v1`; `pilot`
+runs the held-out on-policy-selection and random controls first. `quality` is
+an accounting/gate variant, not a new selector.
+
+The MBPP queue uses the following display names; internal keys remain frozen:
+
+| Display name | CLI suite | `selector` | `accounting` | `gate` |
+| --- | --- | --- | --- | --- |
+| On-policy · 선택비용 포함 | `fresh` | `fresh_r` | `budget` | `final` |
+| On-policy · 선택비용 별도 | `quality` | `fresh_r` | `matched` | `convergence` |
+| Difficulty · 선택비용 포함 | `difficulty` | `difficulty` | `budget` | `convergence` |
+
+Each has 18 development and 30 held-out continuation-training branches: 48 per
+suite, 144 in total. Shared prefixes and evaluation questions are reused, not
+the first suite's trained continuation results. See the
+[MBPP run guide](MBPP_SELECTION_RUN.md) for the one-command queue and exact roots.
 
 `bash scripts/run_switch_mbpp.sh` runs the code variant: the same protocol on
 the OLMo MBPP matrix family (`family-mbpp-s<seed>`, 512-prompt pool, top 10%
@@ -446,7 +459,7 @@ cost, not free deployment scoring. New prefix training costs are recorded.
 Preparation compatibility fix (2026-09-14): the first launcher rejected legacy
 `oracle_protocol.json` metadata at `selection_switch_gpu.py:145`, even after
 live rollout validation. If the saved protocol lacks the current validation
-record/schema, preparation now reconstructs the exact fresh_r scalar scores
+record/schema, preparation now reconstructs the exact `fresh_r` scalar scores
 on CPU from `oracle_micro_groups.pt` and `val_groups.pt`. It verifies shapes,
 prompt coverage, finite values and any surviving recorded input hashes, and
 records the recovery source hashes. No original matrix artifact is overwritten,
@@ -460,7 +473,7 @@ lineage: 0 to 25, 25 to 50, 50 to 100. A generic drift checkpoint is rejected.
 Dedicated read-only input views reference the original pool and new prefix;
 they do not modify matrix checkpoints or claim those checkpoints were selected.
 
-Fresh_r renewal samples eight candidate responses, computes two four-response
+On-policy selection renewal (`fresh_r`) samples eight candidate responses, computes two four-response
 LOO gradient groups, averages the vectors, and takes their cosine with the
 ranking-validation direction. It uses only the first half of the original
 validation pool. This matches `experiment.score_oracle_microgroups(...)[1]['r']`;
@@ -513,8 +526,14 @@ It is an experimental allocation, **not a wall-time completion estimate**.
 
 Use `--budget-gpu-seconds N` on the first `prepare`/`smoke`/`run` invocation to
 override it before outcomes. Later conflicting preparation flags are rejected.
-Scoring, verification, training and failed attempts consume the branch cap.
-Evaluation has an identical separate reporting allocation. Prefixes, initial
+Under `accounting=budget`, scoring, verification, training and failed attempts
+consume the branch cap. Under `matched`, selection phases instead use the
+reporting ledger outside that cap, but remain included in actual total compute.
+Evaluation has an identical separate reporting allocation in either case.
+An allocation-exhausted branch without a valid evaluated result must remain
+listed as incomplete, not assigned reward zero or marked `DONE`. A saved policy
+is not a completed result until validation/evaluation/publication succeeds;
+convergence roots also require the bound curve. Prefixes, initial
 cached scores, preparation and fitting are research overhead, separately
 identified; fitting records occupied GPU allocation when run on an admitted node.
 
@@ -530,7 +549,7 @@ invented or replaced with existing seeds.
 
 ## Verification
 
-CPU tests exercise exact fresh_r score equality, 12/13-prompt validation-shard
+CPU tests exercise exact `fresh_r` score equality, 12/13-prompt validation-shard
 weighting, four-feature ridge fitting, split leakage, decision-before-control
 ordering, diagnostic failure fallback, real gated evaluation calls, shared
 task exclusion and all 48 queued continuations with mocked GPU phases.

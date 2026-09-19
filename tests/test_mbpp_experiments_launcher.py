@@ -97,10 +97,10 @@ def frozen_fresh(inputs):
 
 def test_variant_requires_all_shared_prefixes(inputs):
     inputs.suite = "difficulty"
-    with pytest.raises(ValueError, match="fresh suite first"):
+    with pytest.raises(ValueError, match="shared MBPP prefixes/evaluation are not prepared"):
         preflight.check(inputs)
     p = frozen_fresh(inputs)
-    with pytest.raises(ValueError, match="fresh prefix not ready"):
+    with pytest.raises(ValueError, match="shared on-policy prefix not ready"):
         preflight.check(inputs)
     for seed in range(5):
         for step in (25, 50, 100):
@@ -111,7 +111,7 @@ def test_variant_requires_all_shared_prefixes(inputs):
     preflight.check(inputs)
     p["prefix_source"]["root"] = "/some/math/root"
     write_json(inputs.difficulty_root / "switch.json", p)
-    with pytest.raises(ValueError, match="reuse the MBPP fresh"):
+    with pytest.raises(ValueError, match="reuse the MBPP on-policy"):
         preflight.check(inputs)
 
 
@@ -134,7 +134,7 @@ def launcher(tmp_path):
     repo = tmp_path / "repo with spaces"
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
-    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh", "mbpp_failure_summary.py", "selection_switch_errors.py"):
+    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh", "mbpp_failure_summary.py", "selection_switch_errors.py", "_status_summary.py"):
         shutil.copy(ROOT / "scripts" / name, scripts)
     (scripts / "setup_env.sh").write_text('echo "preflight must not source setup_env" >&2\nexit 99\n')
     venv = tmp_path / "venv"
@@ -333,6 +333,26 @@ def test_plan_and_check_do_not_launch(launcher):
     assert run("check").returncode == 0
     assert Path(env["CHECK_LOG"]).read_text() == "checked\n"
     assert not Path(env["CALLS"]).exists()
+
+
+def test_plan_distinguishes_selector_from_accounting_and_preserves_legacy_keys(launcher):
+    from _status_summary import MBPP_SUITE_LABELS
+
+    run, env = launcher
+    result = run("plan")
+    assert result.returncode == 0, result.stderr
+    assert "3 condition(s), 144 continuation branches" in result.stdout
+    expected = {"fresh": ("On-policy", "선택비용 포함", "최종 보상 기준"),
+                "quality": ("On-policy", "선택비용 별도", "비용 보정 학습 효율 기준"),
+                "difficulty": ("Difficulty", "선택비용 포함", "비용 보정 학습 효율 기준")}
+    for key, (selector, accounting, gate) in expected.items():
+        header = f"[mbpp:{MBPP_SUITE_LABELS[key]}] selector={selector} accounting={accounting} gate={gate}"
+        assert header in result.stdout
+        selected = run("plan", key)
+        assert selected.returncode == 0 and header in selected.stdout
+        assert "1 condition(s), 48 continuation branches" in selected.stdout
+    assert "[mbpp:quality]" not in result.stdout and "selector=fresh_r" not in result.stdout
+    assert not Path(env["CALLS"]).exists() and not Path(env["AUDIT_LOG"]).exists()
 
 
 @pytest.mark.parametrize("args,overrides", [

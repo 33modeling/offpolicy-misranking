@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MBPP (code) variant of the selection-switch experiment: the same protocol on
 # the OLMo MBPP matrix family (512-prompt pool, top 10% = 51, execution-verified
-# rewards): five fresh-gradient-selected prefixes, 18 development and 30
+# rewards): five on-policy-gradient-selected prefixes, 18 development and 30
 # held-out continuations, one budget per branch derived from the MBPP seed-0
 # d100 update timings, an independent MBPP test set disjoint from the runs'
 # prompts. Its own root, ledgers, gate and status; the MoPPS pass is skipped.

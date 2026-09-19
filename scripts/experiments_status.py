@@ -92,7 +92,7 @@ def render(data, *, all_tasks=False, width=120):
         if not counts:
             continue
         history = f" | HISTORY {item['archived_tasks']}" if item.get('archived_tasks') else ''
-        lines += textwrap.wrap(f"{suite_label(item['root'])}: {random_text(counts)}{history}",
+        lines += textwrap.wrap(f"{suite_label(item['root'], item.get('protocol'))}: {random_text(counts)}{history}",
                                width=width, subsequent_indent='  ')
     if data.get("other_experiments"):
         lines += ["", "OTHER EXPERIMENT RESULTS (separate roots; not a restart of the primary suite)"]

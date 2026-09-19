@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Data-quality variant of the selection-switch experiment: the same five
-# certified prefixes, the same 15 states and evaluation set, fresh gradient
-# selection as in the primary run, but matched-update accounting: fresh scoring
-# is metered on a separate "scoring" ledger that the allocation does not count,
-# so the selection arms train as many updates as random. The comparison is
-# then how much better fresh-selected data learns per update, and the
+# Separate-selection-cost variant: the same five certified prefixes, the same
+# 15 states and evaluation set, and the same on-policy gradient selector as in
+# the primary run. Selection uses the reporting ledger outside the branch
+# allocation; it is not free and equal completed update counts are not guaranteed.
+# The comparison measures how on-policy-selected data learns per update, and the
 # convergence gate learns at which states that advantage still saves updates.
 # Scoring cost is recorded, reported, and subtracted from the gate label in update
 # units (not from the training allocation). Own root, labels,
@@ -12,7 +11,7 @@
 #
 #   bash scripts/run_switch_quality.sh          prepare on first use, then run
 #   bash scripts/run_switch_quality.sh status
-#   bash scripts/run_switch_quality.sh pilot    held-out fresh vs random only
+#   bash scripts/run_switch_quality.sh pilot    held-out on-policy vs random only
 set -euo pipefail
 cd "$(dirname "$0")/.."
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}

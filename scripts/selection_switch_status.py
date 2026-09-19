@@ -374,6 +374,8 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
     branches = [task for task in tasks if task["kind"] == "branch"]
     nodes = node_view.launcher_nodes(root, tasks, now=now, node_namespace=node_namespace)
     return {"prepared": True, "root": str(root), "updated": now, "gate_ready": gate_ready,
+            "protocol": {key: manifest[key] for key in ("dataset", "selector", "accounting", "gate")
+                         if key in manifest},
             "gate_fit_failure": gate_fit_failure,
             "nodes": nodes, "local_gpus": node_view.local_gpus() if local_gpus else [],
             "active_nodes": len(active_hosts), "stale_nodes": len(stale_hosts), "waiting_nodes": waiting,
@@ -406,7 +408,7 @@ def table(headers, rows, widths):
 def render_compact(data, *, width=120):
     """One suite-sized block, so MBPP's three suites fit in one status view."""
     root = data["root"]
-    label = suite_label(root)
+    label = suite_label(root, data.get("protocol"))
     lines = [f"SUITE {label}", f"ROOT {root}"]
     if not data.get("prepared"):
         return "\n".join([*lines, "NOT PREPARED (no saved suite manifest at this root)"])
@@ -448,7 +450,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     if not data["prepared"]:
         return f"NOT PREPARED  {data['root']}"
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    lines = [f"SELECTION SWITCH [{suite_label(data['root'])}]  {stamp}",
+    lines = [f"SELECTION SWITCH [{suite_label(data['root'], data.get('protocol'))}]  {stamp}",
              f"ROOT  {data['root']}",
              node_view.render_summary(data.get("nodes", []), all_nodes=all_tasks),
              f"WORK  {data['active_nodes']} active  |  {len(data['waiting_nodes'])} waiting  |  {data['stale_nodes']} stale",
