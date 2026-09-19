@@ -48,21 +48,31 @@ def event_progress(directory, start):
     return max(candidates, key=lambda row: core.number(row.get("seconds", 0.), "last recorded duration", 0.), default={})
 
 
-def inspect(root):
+def inspect(root, *, errors=None):
     pending = []
     for path in sorted(root.rglob("cost.jsonl")):
-        if not path.resolve().is_relative_to(root):
-            raise ValueError(f"cost ledger is outside the switch root: {path}")
-        _, events = read_events(path.parent)
-        summary = core.cost_summary(events)
-        if summary["missing_starts"]:
-            raise ValueError(f"missing cost starts: {path}")
-        for event_id in summary["incomplete_events"]:
-            start = next(row for row in events if row["event_id"] == event_id and row["state"] == "started")
-            progress = event_progress(path.parent, start)
-            pending.append({"directory": str(path.parent.relative_to(root)), "start": start,
-                            "progress": progress if progress.get("event_id") == event_id else None,
-                            "finish_receipt": (path.parent / "cost-events" / f"{event_id}.json").is_file()})
+        try:
+            if not path.resolve().is_relative_to(root):
+                raise ValueError(f"cost ledger is outside the switch root: {path}")
+            _, events = read_events(path.parent)
+            summary = core.cost_summary(events)
+            if summary["missing_starts"]:
+                raise ValueError(f"missing cost starts: {path}")
+            current = []
+            for event_id in summary["incomplete_events"]:
+                start = next(row for row in events if row["event_id"] == event_id and row["state"] == "started")
+                progress = event_progress(path.parent, start)
+                current.append({"directory": str(path.parent.relative_to(root)), "start": start,
+                                "progress": progress if progress.get("event_id") == event_id else None,
+                                "finish_receipt": (path.parent / "cost-events" / f"{event_id}.json").is_file()})
+            pending.extend(current)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            if errors is None:
+                raise
+            # Preserve and report the bad ledger, but do not prevent unrelated
+            # stopped branches from recovering on this queue pass.
+            errors.append({"directory": str(path.parent.relative_to(root)), "event_id": "?",
+                           "status": "blocked", "inspection_error": True, "reason": str(exc)})
     return pending
 
 
@@ -70,8 +80,15 @@ def owner_lock_path(root, directory):
     relative = directory.relative_to(root).parts
     if len(relative) == 3 and relative[0] == "prefixes" and relative[2].startswith("segment-"):
         owner_lock = directory.parent / ".prefix.lock"
+    elif (len(relative) == 6 and relative[0] == "states" and relative[2] == "points"
+          and relative[4] in {"selection_reduced", "random_reduced", "selection_full", "random_full", "gated"}
+          and relative[5] == "curve"):
+        # Archived checkpoint evaluations use a separate ledger under the arm,
+        # while their worker still holds the arm's task lease.
+        owner_lock = directory.parent / ".task.lock"
     elif len(relative) == 5 and relative[0] == "states" and relative[2] == "points":
-        owner_lock = directory / (".measurement.lock" if directory.name in {"measurement", "gate_measurement"} else ".task.lock")
+        owner_lock = directory / (".point.lock" if directory.name == "curve-parent" else
+                                  ".measurement.lock" if directory.name in {"measurement", "gate_measurement"} else ".task.lock")
     elif (root / "mopps.json").is_file() and len(relative) == 3 and relative[0] == "states" and relative[2] in {"mopps", "random_online"}:
         owner_lock = directory / ".task.lock"
     elif (root / "mopps.json").is_file() and len(relative) == 3 and relative[0] == "states" and relative[2] == "import-cost":
@@ -211,7 +228,8 @@ def close_stale(root, *, min_age=900., now=None, host=None):
     core.number(min_age, "minimum stale age", 0.)
     now = core.number(time.time() if now is None else now, "inspection time", 0.)
     outcome = []
-    for item in inspect(root):
+    pending = inspect(root, errors=outcome)
+    for item in pending:
         directory = root / item["directory"]
         start = item["start"]
         event_id = start["event_id"]
@@ -253,7 +271,7 @@ def close_stale(root, *, min_age=900., now=None, host=None):
                         verify_stopped_owner=confirmed_stop,
                         evidence_extra={"last_evidence_time": end, "silent_seconds": age,
                                         "heartbeat_seconds": heartbeat, "margin_seconds": STALE_MARGIN_SECONDS}))
-        except (ValueError, OSError, BlockingIOError) as exc:
+        except (ValueError, OSError, KeyError, TypeError, AttributeError) as exc:
             row.update(status="blocked", reason=str(exc))
         outcome.append(row)
     return outcome
@@ -263,7 +281,10 @@ def brief(label, closed, remaining):
     """One line of counts, then one line per event that stayed open and why."""
     recovered = sum(row.get("status") == "recovered" for row in closed)
     active = sum(row.get("status") == "active" for row in closed)
+    unreadable = sum(row.get("inspection_error", False) for row in closed)
     lines = [f"[recover-cost] {label}: {recovered} stale event(s) closed, {len(remaining)} still open"]
+    if unreadable:
+        lines[0] += f" ({unreadable} ledger(s) unreadable; open count incomplete)"
     if active:
         lines[0] += f" ({active} active job(s) left running; queue continues)"
     for row in closed:
@@ -301,7 +322,10 @@ def main():
                 closed = close_stale(root, min_age=args.min_age, host=base.node_id() if args.this_host else None)
             except (ValueError, OSError) as exc:
                 parser.exit(2, f"[recovery blocked] {exc}\n")
-            remaining = inspect(root)
+            inspection_errors = []
+            remaining = inspect(root, errors=inspection_errors)
+            known_errors = {row["directory"] for row in closed if row.get("inspection_error")}
+            closed.extend(row for row in inspection_errors if row["directory"] not in known_errors)
             if args.brief:
                 print(brief(root.name, closed, remaining))
             else:

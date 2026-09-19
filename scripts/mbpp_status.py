@@ -299,6 +299,30 @@ def render_nodes(data, *, width, all_nodes=False):
     return lines
 
 
+def idle_nodes(data):
+    """Only fresh, explicitly waiting controllers without observed GPU work.
+
+    Missing/stale task evidence alone is not an idle-node certificate. In
+    particular, admission, recovery, and a task in a retained suite must not
+    be listed as an unused allocation.
+    """
+    grace = switch_status.node_view.HEARTBEAT_GRACE
+    return [node for node in node_assignments(data)
+            if node["current"] and not node["assignments"] and node["state"] in {"WAIT", "HOLD"}
+            and node.get("launcher_alive") is not False
+            and node.get("evidence_age") is not None and -5 <= node["evidence_age"] < grace]
+
+
+def render_idle_nodes(data):
+    nodes = idle_nodes(data)
+    lines = [f"작업 없는 노드: {len(nodes)}개 (배정 대기 확인)"]
+    for index, node in enumerate(nodes, 1):
+        age = max(0, int(node["evidence_age"]))
+        lines.append(f"{index}. {node['host']} | WAIT | 작업 배정 대기; 확인 {age}초 전")
+    lines.append("최근 대기 신호가 있는 노드만 표시합니다. 장치 점검·복구 중·신호 끊김은 제외합니다.")
+    return lines
+
+
 def render(data, *, width=120, all_tasks=False):
     width = max(80, width)
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -310,7 +334,7 @@ def render(data, *, width=120, all_tasks=False):
     aggregate = Counter()
     for item in totals:
         aggregate.update(item["states"])
-    lines = [f"MBPP EXPERIMENTS  {stamp}",
+    lines = [f"MBPP EXPERIMENTS  {stamp}", *render_idle_nodes(data), "",
              f"현재 조회 범위 {len(totals)}개 조건 | 총 계획 {planned}개 | 완료 확인 {done}개 | 남음 {remaining}개",
              f"남음 {remaining}개 = RUN {aggregate['RUN']}개 + READY {aggregate['READY']}개 + WAIT {aggregate['WAIT']}개"
              + (f" (기록 미확인 {unknown}개 포함)" if unknown else ""),
@@ -319,7 +343,7 @@ def render(data, *, width=120, all_tasks=False):
              "학습 분기 수 기준입니다. 공통 학습·선택·평가 단계를 별도 실험으로 더하지 않습니다."]
     if data.get("retained_suites"):
         preserved_done = sum(counts(suite)["done"] for suite in data["retained_suites"])
-        lines.insert(2, f"다른 조건의 완료 결과 {preserved_done}개 보존 — 현재 조건과 합산하지 않음; 아래 기존 기록에 표시")
+        lines.append(f"다른 조건의 완료 결과 {preserved_done}개 보존 — 현재 조건과 합산하지 않음; 아래 기존 기록에 표시")
     rows, running, notices = [], [], []
     for suite in data["suites"]:
         name = label(suite["root"], suite.get("protocol"))

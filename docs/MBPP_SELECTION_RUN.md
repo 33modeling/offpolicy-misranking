@@ -121,6 +121,12 @@ condition; viewing status does not change the execution queue.
 This is read-only and does not restart training. The generic
 `run_experiments.sh status` defaults to the math-root overview, not this MBPP view.
 
+The top of status separately lists **작업 없는 노드**: full, numbered node names
+with recent explicit waiting/holding evidence and no live task in any observed
+MBPP condition (including retained conditions). Admission, recovery, cooldown,
+unknown and stale nodes are not called idle. This is a read-only scheduling
+view, not a node-wide GPU/process inspection or automatic cleanup.
+
 ## Nodes Joining And Failing
 
 Before `run` or `restart` can enter the controller (including stopping an old
@@ -233,6 +239,12 @@ finishes normally before yielding; no active branch is interrupted for fairness.
 - If a node dies, its locks are released; surviving nodes use the existing
   heartbeat/stale-cost recovery and recorded GPU-fault waiver rules before
   retrying its work. Completed results and valid checkpoints remain reusable.
+- Stale-cost recovery includes the archived-checkpoint `curve/` reporting
+  ledger and takes its parent branch's task lease. Shared `curve-parent/`
+  recovery takes the same point lease as its evaluator. A malformed ledger is
+  reported as blocked without preventing independent ledgers from recovering;
+  an incomplete scan never reports all costs as known. Existing result seals,
+  training allocations and saved work are not reset.
 - If a branch fails, the controller attempts other available work and retries
   later. Missing source inputs or prefixes wait in the queue; they do not
   prevent cleanup or terminate the whole launcher.
