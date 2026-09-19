@@ -2,7 +2,8 @@
 
 No lock, checkpoint, manifest, receipt or budget is edited by this helper.
 Only a verified local controller receives TERM. Its existing cleanup handles
-its workers; unfinished updates are not saved on TERM.
+its workers; unfinished updates are not saved on TERM. Restarts use a separately
+staged, pinned distributed runtime, never the unchanged legacy serial launcher.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from selector_pair_diagnostic import collect, local_owners, observations, read_small
+from selector_pair_deploy import stage_runtime
 
 
 def shared_available(lock):
@@ -178,6 +180,8 @@ import sys, tempfile
 from pathlib import Path
 import selector_pair_gpu as pair
 root = Path(sys.argv[1])
+if not all(callable(getattr(pair, name, None)) for name in ('queue_lease', 'distributed_stage', 'run_distributed')):
+    raise SystemExit('restart target is not a distributed Pair runtime; refusing another exclusive controller')
 manifest = pair.manifest(root, bind_runtime=False)
 names = (
     'startup-runtime.json', 'startup-defaults-runtime.json', 'startup-resources-runtime.json',
@@ -202,6 +206,7 @@ with tempfile.TemporaryDirectory(prefix='selector-pair-runtime-check-') as direc
     pair.bind_startup_runtime(snapshot, manifest['code_hashes'])
 print('[handoff] frozen manifest and runtime receipt compatibility validated', flush=True)
 '''
+    print('[handoff] checking restart-target compatibility before stopping any controller', flush=True)
     result = subprocess.run([python, '-B', '-c', code, str(root)], cwd=repo,
                             env=env, capture_output=True, text=True, timeout=120,
                             start_new_session=True)
@@ -257,6 +262,7 @@ def validate_training_checkpoints(root, repo, processes):
         env = process_environment(value)
         python = process_python(value, env)
         env = diagnostic_environment(env, repo)
+        print(f'[checkpoint] verifying saved training state: {output}', flush=True)
         result = subprocess.run([str(python), '-B', '-c', CHECK_CHECKPOINT, json.dumps(args)],
                                 cwd=value['cwd'], env=env, capture_output=True, text=True, timeout=120,
                                 start_new_session=True)
@@ -282,8 +288,9 @@ def active_receipts(root, owner, keys):
     return rows
 
 
-def handoff(root, repo, timeout=240, proc=Path('/proc')):
+def handoff(root, repo, timeout=240, proc=Path('/proc'), *, launch_repo=None):
     root, repo, proc = Path(root).resolve(strict=True), Path(repo).resolve(strict=True), Path(proc)
+    launch_repo = Path(launch_repo).resolve(strict=True) if launch_repo is not None else repo
     if not (root / 'pair.json').is_file():
         raise RuntimeError('existing pair.json is missing; refusing to initialize a different run')
     lock = root / '.pair.lock'
@@ -321,7 +328,9 @@ def handoff(root, repo, timeout=240, proc=Path('/proc')):
             if (parent['cwd'] / parent['argv'][1]).resolve() == repo / 'scripts/run_selector_pair.sh':
                 watch(parent)
         receipts = active_receipts(root, owner, keys)
-        validate_runtime(root, repo, owner)
+        # Ownership/checkpoints refer to the old process checkout. Compatibility
+        # must instead be checked against the code that will actually restart.
+        validate_runtime(root, launch_repo, owner)
         validate_training_checkpoints(root, repo, children)
         # Recheck after potentially slow disk/hash reads. A changed phase must
         # be inspected afresh, never interrupted using an older phase's proof.
@@ -367,14 +376,18 @@ def main():
     try:
         if not 0 < args.timeout <= 900:
             raise ValueError('timeout must be between 0 and 900 seconds')
-        mode = handoff(args.root, args.repo, args.timeout)
+        if not (args.root / 'pair.json').is_file():
+            raise RuntimeError('existing pair.json is missing; no run was initialized')
+        launch_repo = stage_runtime(args.repo)
+        mode = handoff(args.root, args.repo, args.timeout, launch_repo=launch_repo)
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f'[handoff-abort] {exc}', file=sys.stderr, flush=True)
         print(collect(args.root), file=sys.stderr, flush=True)
         return 2
     env = dict(os.environ, PAIR_ROOT=str(args.root.resolve()), E5_FORCE='0')
-    print(f'[restart] same Pair root, stage={mode}; normal GPU/node admission remains enabled', flush=True)
-    os.execve('/bin/bash', ['bash', str(args.repo.resolve() / 'scripts/run_selector_pair.sh'), mode], env)
+    print(f'[restart] same Pair root, stage={mode}; pinned distributed runtime={launch_repo}; '
+          'normal GPU/node admission remains enabled', flush=True)
+    os.execve('/bin/bash', ['bash', str(launch_repo / 'scripts/run_selector_pair.sh'), mode], env)
 
 
 if __name__ == '__main__':

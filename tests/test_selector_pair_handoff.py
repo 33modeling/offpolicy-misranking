@@ -34,6 +34,7 @@ def handoff(monkeypatch):
     # real runtime validator is exercised separately through its subprocess API.
     module._test_validate_runtime = getattr(module, "validate_runtime", None)
     monkeypatch.setattr(module, "validate_runtime", lambda *args: None, raising=False)
+    monkeypatch.setattr(module, "stage_runtime", lambda repo: repo, raising=False)
     return module
 
 
@@ -659,24 +660,27 @@ def test_cli_missing_root_exits_without_launching_training(tmp_path, repo):
 
 
 def test_main_restarts_exact_same_root_and_stage_only_after_successful_handoff(
-        handoff, root, repo, monkeypatch):
+        handoff, root, repo, tmp_path, monkeypatch):
     calls, launches = [], []
+    staged = tmp_path / "reviewed-runtime"
+    staged.mkdir()
 
-    def approved(received_root, received_repo, timeout):
-        calls.append((received_root, received_repo, timeout))
+    def approved(received_root, received_repo, timeout, *, launch_repo=None):
+        calls.append((received_root, received_repo, timeout, launch_repo))
         return "develop"
 
     monkeypatch.setattr(handoff, "handoff", approved)
+    monkeypatch.setattr(handoff, "stage_runtime", lambda original: staged)
     monkeypatch.setattr(os, "execve", lambda *args: launches.append(args))
     monkeypatch.setenv("E5_FORCE", "1")
     monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--root", str(root), "--repo", str(repo),
                                       "--timeout", "1"])
     handoff.main()
-    assert calls == [(root, repo, 1)]
+    assert calls == [(root, repo, 1, staged)]
     assert len(launches) == 1
     executable, argv, env = launches[0]
     assert executable == "/bin/bash"
-    assert argv == ["bash", str(repo / "scripts/run_selector_pair.sh"), "develop"]
+    assert argv == ["bash", str(staged / "scripts/run_selector_pair.sh"), "develop"]
     assert env["PAIR_ROOT"] == str(root)
     assert env["E5_FORCE"] == "0"
 
@@ -693,6 +697,21 @@ def test_main_does_not_launch_after_handoff_refusal(handoff, root, repo, monkeyp
     monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--root", str(root), "--repo", str(repo)])
     assert handoff.main() != 0
     assert launches == []
+
+
+def test_runtime_staging_failure_does_not_stop_or_restart_controller(handoff, root, repo, monkeypatch):
+    calls = []
+
+    def staging_failed(*args, **kwargs):
+        raise RuntimeError("reviewed runtime unavailable")
+
+    monkeypatch.setattr(handoff, "stage_runtime", staging_failed)
+    monkeypatch.setattr(handoff, "handoff", lambda *args, **kwargs: calls.append("handoff"))
+    monkeypatch.setattr(handoff, "collect", lambda root: "small diagnostic report")
+    monkeypatch.setattr(os, "execve", lambda *args: calls.append("launch"))
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--root", str(root), "--repo", str(repo)])
+    assert handoff.main() != 0
+    assert calls == []
 
 
 def test_bash_entrypoint_runs_from_any_directory_and_refuses_missing_root(tmp_path, repo):

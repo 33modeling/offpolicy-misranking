@@ -147,7 +147,7 @@ worker가 참여하지 못한다는 뜻이다. 잠금 파일의 존재 자체가
 
 `restart_selector_pair.sh` **파일 하나만** 기존 저장소의 `scripts/`에 복사한 뒤,
 **기존 Pair를 실행한 노드에서** 다음 하나를 실행한다. Python 도우미가 파일 안에
-포함되어 있어 별도 파일 복사나 패키지 설치가 필요하지 않다. 실행 중인 checkout에
+포함되어 있어 별도 Python 도우미 복사가 필요하지 않다. 실행 중인 checkout에
 `git pull`을 먼저 하지 않는다.
 
 ```bash
@@ -155,7 +155,14 @@ bash scripts/restart_selector_pair.sh
 ```
 
 도구는 로컬 커널에서 실제 배타 잠금 소유 PID를 확인하고, 같은 사용자·Pair root·
-checkout의 controller인지 다시 검증한다. 학습 중이면 trainer의 기존 검증기로
+checkout의 controller인지 다시 검증한다. 재시작할 코드는 기존 checkout을 그대로
+재실행하지 않고, 검토된 분산 실행 버전 `6066d11091c71ef9ec2c43dbc271ff0824c6bc4e`를
+`.work/pair-runtimes/`의 별도 경로에 준비한다. 필요한 Git 객체가 없을 때만 정확한
+commit을 가져오며 checkout·branch·실행 중인 소스는 바꾸지 않는다. 이미 준비된
+경로도 파일 내용을 다시 검증하고, 변조·누락이 있으면 덮어쓰지 않고 중단한다.
+이렇게 해야 구버전 checkout에 bash만 복사한 경우에도 구버전 EX controller를
+다시 띄우지 않는다. 원래 학습 경로의 소유권과 새 실행 경로의 frozen 호환성을
+각각 확인한 다음 종료한다. 학습 중이면 trainer의 기존 검증기로
 유효한 로컬 체크포인트를 확인한 뒤 그 controller에만 TERM을 전달한다. 기존
 종료 처리가 소유 자식 작업을 정리하고 비용 영수증을 닫으며, controller·자식·
 기존 launcher의 종료와 root 잠금 해제를 확인한 후 같은 root와 단계로 재개한다.
@@ -167,7 +174,8 @@ TERM 전에 중단하고 실행 중인 작업은 그대로 둔다. TERM 이후 �
 비용 종료 영수증을 확인하지 못하면 강제 종료·중복 시작을 하지 않고 중단한다.
 도구는 lock 파일 삭제, 예산 초기화, 결과·체크포인트 삭제, checkout 업데이트를
 하지 않으며 별도 MBPP 작업을 종료하지 않는다. root가 이미 공유 잠금을
-허용하면 controller를 종료하지 않고 기존 GPU·노드 입장 검사를 거쳐 참여한다.
+허용하면 controller를 종료하지 않고 같은 고정 분산 버전의 GPU·노드 입장 검사를
+거쳐 참여한다. Git 다운로드·별도 코드 검증 실패 시 현재 controller는 종료하지 않는다.
 유지보수 시 Python 도우미를 수정하면 `python3 scripts/build_selector_pair_handoff.py`로
 단일 파일을 재생성하고, 같은 명령의 `--check`로 원본과 일치하는지 검증한다.
 
