@@ -52,7 +52,7 @@ def test_missing_or_mixed_rank_versions_do_not_guess_a_compatibility_fix():
     assert not check.host_allocation_fallback(rows, "ncclUnhandledCudaError", {}, 4)
 
 
-def fake_attempt(monkeypatch, outcomes):
+def fake_attempt(monkeypatch, outcomes, warning_lines=()):
     calls = []
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
     monkeypatch.delenv("NCCL_CUMEM_HOST_ENABLE", raising=False)
@@ -62,6 +62,8 @@ def fake_attempt(monkeypatch, outcomes):
         rows = reports(count=world_size)
         for row in rows:
             core.atomic_json(directory / f"rank-{row['rank']}.json", {**row, "state": "failed" if error else "passed"})
+        if warning_lines:
+            (directory / 'nccl-check-0.log').write_text(warning_lines[len(calls)-1])
         def action():
             if error:
                 raise RuntimeError(error)
@@ -113,6 +115,100 @@ def test_unresolved_probe_exits_without_repeated_training_attempts(tmp_path, mon
     assert value["state"] == "failed"
     assert all(row["cost"]["complete"] for row in value["attempts"])
     assert not (tmp_path / "states").exists()
+
+
+NVLS_WARNING = "host:123:456 [0] transport/nvls.cc:254 NCCL WARN Cuda failure 1 'invalid argument'"
+CUDA1 = "ncclUnhandledCudaError: Cuda failure 1 'invalid argument'"
+
+
+def test_nvls_cuda1_retries_only_after_real_warning_and_exports_only_verified_setting(tmp_path, monkeypatch):
+    monkeypatch.delenv('NCCL_NVLS_ENABLE', raising=False)
+    calls = fake_attempt(monkeypatch, [CUDA1, None], [NVLS_WARNING, 'DDP passed'])
+    assert check.preflight(tmp_path) == {'NCCL_NVLS_ENABLE': '0'}
+    assert len(calls) == 2
+    assert 'NCCL_NVLS_ENABLE' not in calls[0]
+    assert calls[1]['NCCL_NVLS_ENABLE'] == '0'
+    assert 'NCCL_CUMEM_HOST_ENABLE' not in calls[1]
+    value = admission(tmp_path)
+    assert value['state'] == 'passed'
+    assert value['attempts'][0]['warnings'] == ['nccl-check-0.log: ' + NVLS_WARNING]
+    assert value['attempts'][1]['name'] == 'nvls-invalid-argument'
+    assert all(attempt['cost']['complete'] for attempt in value['attempts'])
+    assert not (tmp_path / 'states').exists()
+    assert 'NCCL_NVLS_ENABLE' not in os.environ
+
+
+def test_unresolved_nvls_cuda1_has_bounded_probes_and_never_starts_training(tmp_path, monkeypatch):
+    monkeypatch.delenv('NCCL_NVLS_ENABLE', raising=False)
+    calls = fake_attempt(monkeypatch, [CUDA1] * 3, [NVLS_WARNING] * 3)
+    with pytest.raises(RuntimeError, match='no training task claimed'):
+        check.preflight(tmp_path)
+    assert len(calls) == 3
+    value = admission(tmp_path)
+    assert value['state'] == 'failed'
+    assert [row['name'] for row in value['attempts']] == [
+        'baseline', 'nvls-invalid-argument', 'legacy-host-allocation']
+    assert not (tmp_path / 'states').exists()
+
+
+@pytest.mark.parametrize('warning', ['', CUDA1, 'NCCL WARN Cuda failure 1 invalid argument',
+    "transport/shm.cc:254 NCCL WARN Cuda failure 1 'invalid argument'",
+    "transport/nvls.cc:254 NCCL WARN Cuda failure 11 'invalid argument'",
+    "transport/nvls.cc:254 NCCL WARN Cuda failure 802 'system not yet initialized'"])
+def test_nvls_workaround_requires_the_exact_original_call_site(warning):
+    assert not check.nvls_invalid_argument_fallback(reports(), CUDA1, [warning], {}, 4)
+
+
+@pytest.mark.parametrize('value', ['0', '1', '2', ''])
+def test_nvls_workaround_preserves_explicit_operator_configuration(value):
+    assert not check.nvls_invalid_argument_fallback(reports(), CUDA1, [NVLS_WARNING],
+                                                   {'NCCL_NVLS_ENABLE': value}, 4)
+
+
+@pytest.mark.parametrize('rows,error', [(reports(count=3), CUDA1), (reports((2, 27, 0)), CUDA1),
+    (reports(), CUDA1 + ': out of memory'), (reports(), CUDA1 + ': illegal memory access'),
+    (reports(), CUDA1 + ': GPU allocation mismatch')])
+def test_nvls_workaround_does_not_guess_version_or_mask_other_failures(rows, error):
+    assert not check.nvls_invalid_argument_fallback(rows, error, [NVLS_WARNING], {}, 4)
+
+
+def test_original_warning_survives_large_torchrun_shutdown_tail(tmp_path):
+    (tmp_path / 'nccl-check-0.log').write_text('NCCL INFO setup\n' + NVLS_WARNING + '\n' +
+                                             'shutdown noise\n' * 20000)
+    assert check.original_warnings(tmp_path) == ['nccl-check-0.log: ' + NVLS_WARNING]
+
+
+def test_warning_reader_does_not_follow_external_log_symlinks(tmp_path):
+    directory = tmp_path / 'probe'
+    directory.mkdir()
+    outside = tmp_path / 'outside.log'
+    outside.write_text(NVLS_WARNING)
+    (directory / 'nccl-check-0.log').symlink_to(outside)
+    assert check.original_warnings(directory) == []
+
+
+def test_worker_records_failing_stage_without_any_real_cuda_work(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import torch
+    import torch.distributed as dist
+    for key in ('RANK', 'LOCAL_RANK'):
+        monkeypatch.setenv(key, '0')
+    for key in ('WORLD_SIZE', 'LOCAL_WORLD_SIZE'):
+        monkeypatch.setenv(key, '4')
+    monkeypatch.setattr(torch.cuda.nccl, 'version', lambda: (2, 26, 2))
+    monkeypatch.setattr(torch.cuda, 'device_count', lambda: 4)
+    monkeypatch.setattr(torch.cuda, 'set_device', lambda _: None)
+    monkeypatch.setattr(torch.cuda, 'get_device_properties',
+                        lambda _: SimpleNamespace(name='fixture', uuid='GPU-0'))
+    monkeypatch.setattr(dist, 'is_initialized', lambda: False)
+    def fail(*args, **kwargs):
+        raise RuntimeError(CUDA1)
+    monkeypatch.setattr(dist, 'init_process_group', fail)
+    with pytest.raises(RuntimeError, match='invalid argument'):
+        check.worker(tmp_path, 4)
+    value = core.read(tmp_path / 'rank-0.json')
+    assert value['state'] == 'failed' and value['stage'] == 'nccl-init'
+    assert value['error'] == 'RuntimeError: ' + CUDA1
 
 
 E802 = ("ncclUnhandledCudaError: Call to CUDA function failed.\n"

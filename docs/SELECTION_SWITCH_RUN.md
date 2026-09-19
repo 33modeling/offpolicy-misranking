@@ -315,9 +315,23 @@ terminal (tests, pipelines) or with `SWITCH_FOREGROUND=1`, the launcher keeps th
 direct foreground behaviour, where Ctrl-C stops the worker as before.
 
 Node admission (`scripts/selection_nccl_preflight.py`) runs a tiny four-rank NCCL
-probe before any task is claimed. A CUDA 802 "system not yet initialized" failure
-means single-process CUDA works but the NVSwitch fabric is not ready, so the probe
-is retried with one fabric-dependent transport disabled at a time:
+probe before any task is claimed. For NCCL 2.26.2, an **original**
+`transport/nvls.cc:... NCCL WARN Cuda failure 1 'invalid argument'` line permits
+one probe-only retry with `NCCL_NVLS_ENABLE=0`, before the existing host-allocation
+fallback. A generic `invalid argument` exception does not trigger this NVLS
+workaround; explicit operator settings are preserved. Only a successful complete
+DDP probe exports the override to training, and all probe costs remain recorded.
+This is a conditional compatibility workaround, not proof of the reported node's
+root cause or recovery. See the [PyTorch reproduction](https://github.com/pytorch/pytorch/issues/150852)
+and [NVIDIA's NVLS setting](https://docs.nvidia.com/deeplearning/nccl/archives/nccl_2265/user-guide/docs/env.html#nccl-nvls-enable).
+Per-rank failure records include the failing probe stage; admission records and
+the <=16 KiB MBPP `why` attachment preserve bounded original NCCL warnings even
+when torchrun shutdown output hides them at the end of the log. No checkpoint,
+completion receipt, or training budget is reset by this admission logic.
+
+A CUDA 802 "system not yet initialized" failure indicates system readiness trouble;
+it does not by itself establish that single-process CUDA works or which driver/fabric
+component failed. The probe is retried with one fabric-dependent transport disabled at a time:
 `NCCL_NVLS_ENABLE=0`, then `NCCL_CUMEM_ENABLE=0`, then `NCCL_P2P_DISABLE=1`
 (shared-memory transport). Only the overrides of the probe that passed are
 exported to the training workers; settings already present in the environment

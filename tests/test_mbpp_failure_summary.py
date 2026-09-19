@@ -98,6 +98,40 @@ def test_nccl_admission_without_task_failure_keeps_rank_error_and_versions(tmp_p
     assert 'No saved branch failure' in text
 
 
+@pytest.mark.parametrize('legacy', [False, True])
+def test_admission_original_call_site_is_preserved_with_large_branch_errors(tmp_path, legacy):
+    for arm in ('selection_full', 'random_full'):
+        failure(tmp_path, arm)
+    directory = tmp_path / 'node-preflight/node-a'
+    warning = "transport/nvls.cc:254 NCCL WARN Cuda failure 1 'invalid argument'"
+    attempt = {'name': 'baseline', 'error': 'ChildFailedError\n' * 1000, 'ranks': [{
+        'rank': 0, 'stage': 'nccl-init', 'error': 'Cuda failure 1 invalid argument'}]}
+    if not legacy:
+        attempt['warnings'] = [warning]
+    core.atomic_json(directory / 'admission.json', {
+        'host': 'node-a', 'state': 'failed', 'attempts': [attempt]})
+    if legacy:
+        (directory / 'baseline').mkdir()
+        (directory / 'baseline/nccl-check-0.log').write_text(warning + '\n' + 'noise\n' * 50000)
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    text = summary.root_summary(tmp_path)
+    assert 'ORIGINAL NCCL baseline:' in text and warning in text
+    assert len(text.encode()) <= summary.ROOT_BYTES
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+
+
+def test_legacy_admission_does_not_follow_external_attempt_directory(tmp_path):
+    root = tmp_path / 'root'
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'nccl-check-0.log').write_text("NCCL WARN DO_NOT_INCLUDE_OUTSIDE_DATA")
+    directory = root / 'node-preflight/node-a'
+    core.atomic_json(directory / 'admission.json', {'attempts': [{
+        'name': 'baseline', 'error': 'failed', 'directory': str(outside)}]})
+    (directory / 'baseline').symlink_to(outside)
+    assert 'DO_NOT_INCLUDE_OUTSIDE_DATA' not in summary.root_summary(root)
+
+
 def test_missing_or_corrupt_records_are_explicit_and_do_not_hide_other_suites(tmp_path):
     good, bad, missing = (tmp_path / name for name in ('good', 'bad', 'missing'))
     failure(good)

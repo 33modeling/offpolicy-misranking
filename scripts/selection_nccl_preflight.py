@@ -16,7 +16,9 @@ import uuid
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "scripts"))
 
+from _nccl_diagnostics import original_warnings
 import selection_gate as core
 import selection_gate_gpu as base
 
@@ -33,6 +35,7 @@ def worker(directory, world_size):
         "torch": torch.__version__, "cuda_runtime": torch.version.cuda,
         "nccl": list(torch.cuda.nccl.version()), "visible": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "cumem_host": os.environ.get("NCCL_CUMEM_HOST_ENABLE"),
+        "nvls": os.environ.get("NCCL_NVLS_ENABLE"), "stage": "allocation-check",
     }
     path = directory / f"rank-{rank}.json"
     core.atomic_json(path, {**evidence, "state": "starting"})
@@ -42,28 +45,35 @@ def worker(directory, world_size):
         count = torch.cuda.device_count()
         if count != world_size or not 0 <= local_rank < count:
             raise ValueError(f"GPU allocation mismatch: visible CUDA devices={count}, ranks={world_size}, local_rank={local_rank}")
+        evidence["stage"] = "cuda-device"
         torch.cuda.set_device(local_rank)
         device = torch.device("cuda", local_rank)
         properties = torch.cuda.get_device_properties(device)
         evidence.update(gpu=properties.name, gpu_uuid=str(properties.uuid))
+        evidence["stage"] = "nccl-init"
         core.atomic_json(path, {**evidence, "state": "initializing"})
         print("[nccl-rank] " + json.dumps(evidence, sort_keys=True), flush=True)
         dist.init_process_group("nccl", device_id=device, timeout=timedelta(seconds=30))
+        evidence["stage"] = "all-reduce"
         value = torch.tensor([rank + 1.], device=device)
         dist.all_reduce(value)
         if value.item() != world_size * (world_size + 1) / 2:
             raise RuntimeError("NCCL all-reduce returned an incorrect result")
+        evidence["stage"] = "ddp-forward-backward"
         torch.manual_seed(1701)
         model = DistributedDataParallel(torch.nn.Linear(8, 4).to(device), device_ids=[local_rank])
         optimizer = torch.optim.SGD(model.parameters(), lr=.01)
         model(torch.ones(2, 8, device=device) * (rank + 1)).sum().backward()
         optimizer.step()
         parameters = torch.cat([p.detach().flatten() for p in model.parameters()])
+        evidence["stage"] = "all-gather"
         gathered = [torch.empty_like(parameters) for _ in range(world_size)]
         dist.all_gather(gathered, parameters)
         if not torch.isfinite(parameters).all().item() or any(not torch.equal(parameters, p) for p in gathered):
             raise RuntimeError("DDP update differs across ranks or is nonfinite")
+        evidence["stage"] = "cuda-synchronize"
         torch.cuda.synchronize(device)
+        evidence["stage"] = "nccl-destroy"
         dist.destroy_process_group()
         core.atomic_json(path, {**evidence, "state": "passed"})
         print(f"[nccl-rank] rank={rank} DDP forward/backward and collectives passed", flush=True)
@@ -115,6 +125,25 @@ def host_allocation_fallback(reports, error, env, world_size):
     return "ncclunhandledcudaerror" in lower or ("nccl warn" in lower and "cuda failure" in lower)
 
 
+def nvls_invalid_argument_fallback(reports, error, warnings, env, world_size):
+    """One probe-only workaround, requiring the actual NVLS CUDA-1 call site.
+
+    NCCL 2.26.2/CUDA 12.6 reproduction: pytorch/pytorch#150852.
+    Do not infer NVLS failure from the generic ncclUnhandledCudaError wrapper.
+    """
+    if "NCCL_NVLS_ENABLE" in env or len(reports) != world_size:
+        return False
+    if {tuple(row.get("nccl", ())) for row in reports} != {(2, 26, 2)}:
+        return False
+    lower = (error + "\n" + "\n".join(warnings)).lower()
+    if cuda_system_not_ready(lower) or any(message in lower for message in (
+            "out of memory", "illegal memory", "duplicate gpu", "insufficient driver",
+            "driver version is insufficient", "no kernel image", "allocation mismatch")):
+        return False
+    return any(re.search(r"\btransport/nvls\.cc:\d+\b.*\bNCCL WARN\s+Cuda failure\s+1\s+['\"]invalid argument['\"]",
+                         line, re.IGNORECASE) for line in warnings)
+
+
 def rank_reports(directory, world_size):
     return [core.read(directory / f"rank-{rank}.json") for rank in range(world_size)
             if (directory / f"rank-{rank}.json").is_file()]
@@ -159,6 +188,7 @@ def preflight(root, *, world_size=4, timeout=90.):
             print(f"[nccl-preflight] {name}: {world_size} ranks; timeout={timeout:.0f}s; {attempt}", flush=True)
             error = None
             reports = []
+            warnings = []
             try:
                 reports = check_attempt(attempt, visible, env, world_size, timeout)
             except BaseException as exc:
@@ -167,17 +197,22 @@ def preflight(root, *, world_size=4, timeout=90.):
                 if not isinstance(exc, Exception):
                     raise
             finally:
+                if error is not None:
+                    warnings = original_warnings(attempt, world_size)
                 report["attempts"].append({"name": name, "directory": str(attempt), "ranks": reports,
-                                           "overrides": dict(overrides), "error": error, "cost": base.cost(attempt)})
+                                           "overrides": dict(overrides), "error": error,
+                                           "warnings": warnings, "cost": base.cost(attempt)})
             if error is None:
                 report.update(state="passed", overrides=dict(overrides))
                 print(f"[nccl-preflight] passed; overrides={json.dumps(overrides)}", flush=True)
                 return overrides
             print(f"[nccl-preflight] failed: {error}", flush=True)
+            for warning in warnings:
+                print(f"[nccl-preflight] original warning: {warning}", flush=True)
             rank_errors = "\n".join(f"rank {row['rank']}: {row['error']}" for row in reports if row.get("error"))
             if rank_errors:
                 print(f"[nccl-preflight] original rank errors:\n{rank_errors}", flush=True)
-            combined_error = error + "\n" + rank_errors
+            combined_error = error + "\n" + rank_errors + "\n" + "\n".join(warnings)
             if cuda_system_not_ready(combined_error):
                 following = fabric_fallback(reports, combined_error, env, world_size)
                 if following is None:
@@ -193,6 +228,11 @@ def preflight(root, *, world_size=4, timeout=90.):
                 overrides = {**overrides, **extra}
                 print(f"[nccl-preflight] retrying only the tiny probe as {name} with {json.dumps(extra)}; "
                       "no policy training was started", flush=True)
+            elif nvls_invalid_argument_fallback(reports, combined_error, warnings, env, world_size):
+                name = "nvls-invalid-argument"
+                overrides = {**overrides, "NCCL_NVLS_ENABLE": "0"}
+                print("[nccl-preflight] observed NVLS CUDA 1 call site; retrying only the tiny probe "
+                      "with NCCL_NVLS_ENABLE=0; training requires a successful DDP check", flush=True)
             elif host_allocation_fallback(reports, combined_error, env, world_size):
                 name = "legacy-host-allocation"
                 overrides = {**overrides, "NCCL_CUMEM_HOST_ENABLE": "0"}

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from selection_switch_errors import log_tail, utc_time
+from _nccl_diagnostics import original_warnings
 from _status_summary import accounting_label, gate_label, mbpp_suite_label, selector_label
 
 MAX_BYTES = 16 * 1024
@@ -185,6 +186,7 @@ def error_excerpt(root, path):
 
 
 def root_summary(root):
+    admission_warnings = []
     manifest = record(root, root / 'switch.json')
     lines = [f'\nEXPERIMENT {mbpp_suite_label(root, manifest)}', f'ROOT {root.name}',
              f"SELECTOR {selector_label(manifest.get('selector', '?'))}  "
@@ -234,17 +236,35 @@ def root_summary(root):
                 if not isinstance(attempt, dict):
                     continue
                 lines.append(clipped(f"probe {attempt.get('name', '?')}: {attempt.get('error') or 'passed'}", 550))
+                warnings = attempt.get('warnings', [])
+                if not warnings and attempt.get('error'):
+                    # Legacy admissions lack saved call sites. Read only a bounded
+                    # portion of this admission's own logs, never an arbitrary path.
+                    name = attempt.get('name')
+                    if isinstance(name, str) and re.fullmatch(r'[\w-]+', name):
+                        directory = admissions[0].parent / name
+                        try:
+                            checked(root, directory)
+                            warnings = original_warnings(directory)
+                        except (OSError, ValueError):
+                            warnings = []
+                if isinstance(warnings, list):
+                    admission_warnings.extend(f"ORIGINAL NCCL {attempt.get('name', '?')}: {line}"
+                        for line in warnings[:2] if isinstance(line, str))
                 ranks = attempt.get('ranks', [])
                 if isinstance(ranks, list):
                     for rank in [r for r in ranks if isinstance(r, dict) and r.get('error')][:1]:
                         lines.append(clipped(f"rank={rank.get('rank')} torch={rank.get('torch')} cuda={rank.get('cuda_runtime')} "
-                            f"nccl={rank.get('nccl')}: {rank.get('error')}", 700))
+                            f"nccl={rank.get('nccl')} stage={rank.get('stage', '?')}: {rank.get('error')}", 700))
     if not failures:
         lines.append('No saved branch failure found; missing logs do not prove success.')
         logs = recent(root, ('logs/launcher.*.log', 'logs/console.*.log'))
         if logs:
             lines.append(f'LOG {logs[0].relative_to(root)}\n{tail(root, logs[0], 1800)}')
-    return clipped('\n'.join(lines), ROOT_BYTES)
+    # Reserve the end of the root section so old training failures and torchrun
+    # shutdown noise cannot clip the actionable CUDA call site out of the report.
+    original = clipped('\n'.join(admission_warnings), 900) if admission_warnings else ''
+    return clipped('\n'.join(lines), ROOT_BYTES - len(original.encode('utf-8')) - 1) + '\n' + original
 
 
 def report(work, roots):
