@@ -89,6 +89,88 @@ def test_missing_stop_with_existing_sealed_result_restores_exact_original_bytes(
     assert {p: p.read_bytes() for p in before} == before
 
 
+@pytest.mark.parametrize("remaining", [0, 80])
+@pytest.mark.parametrize("existing_stop", [False, True])
+def test_saved_policy_runs_only_pending_reporting_evaluation(tmp_path, monkeypatch, remaining, existing_stop):
+    out, c, policy = saved_policy(tmp_path, monkeypatch, remaining)
+    directory = out / "random_full"
+    if existing_stop:
+        assert runtime.restore_budget_stop(out, c, "random_full") is True
+    for shard in (1, 3):
+        (directory / f"evaluation/shard-{shard}.done.json").unlink()
+    before = bytes_under(out)
+    ledger = directory / "cost.jsonl"
+    mtimes = {path: path.stat().st_mtime_ns for path in before if path != ledger}
+    calls = []
+
+    def reporting_only(target, phase, gpu_type, **kwargs):
+        assert target == directory
+        assert phase == "evaluate", "saved training must not be verified, selected, or trained on the deployment ledger again"
+        assert kwargs["ledger"] == "reporting"
+        assert "action" not in kwargs
+        commands = kwargs["commands"]
+        shards = [(int(command[command.index("--shard") + 1]), device) for command, device in commands]
+        assert shards == [(1, "1"), (3, "3")]
+        calls.append(phase)
+        for state in ("started", "finished"):
+            row = event("pending-evaluation", phase, state, seconds=3)
+            row["ledger"] = "reporting"
+            base.journal(ledger, row)
+        for shard, _ in shards:
+            core.atomic_json(directory / f"evaluation/shard-{shard}.done.json", {})
+
+    monkeypatch.setattr(base, "meter", reporting_only)
+    monkeypatch.setattr(runtime, "select_once", lambda *a, **k: pytest.fail("saved policy restarted selection"))
+    runtime.run_arm(out, {"eval_timeout": 5}, protocol(), "random_full", list("0123"), {})
+
+    result = runtime.validate_result(out, protocol(), "random_full")
+    assert calls == ["evaluate"]
+    assert result["completed_steps"] == 150
+    assert result["used_gpu_seconds"] == c["budget_gpu_seconds"] - remaining
+    assert result["cost"]["ledgers"]["reporting"]["gpu_seconds"] == 12
+    assert base.spent(directory) == c["budget_gpu_seconds"] - remaining
+    assert core.read(policy / "budget_stop.json")["use_parent_policy"] is False
+    assert ledger.read_bytes().startswith(before[ledger])
+    for path, previous in before.items():
+        if path != ledger:
+            assert path.read_bytes() == previous
+            assert path.stat().st_mtime_ns == mtimes[path]
+    finished = bytes_under(out)
+    runtime.run_arm(out, {}, protocol(), "random_full", [], {})
+    assert calls == ["evaluate"]
+    assert bytes_under(out) == finished
+
+
+@pytest.mark.parametrize("name", ["adapter_model.safetensors", "optimizer.pt", "grpo_stats.jsonl"])
+def test_existing_stop_does_not_publish_or_meter_a_damaged_final_policy(tmp_path, monkeypatch, name):
+    out, c, policy = saved_policy(tmp_path, monkeypatch, remaining=0)
+    assert runtime.restore_budget_stop(out, c, "random_full") is True
+    (policy / name).write_bytes(b"corrupt")
+    before = bytes_under(out)
+    mtimes = {path: path.stat().st_mtime_ns for path in before}
+    monkeypatch.setattr(base, "meter", lambda *a, **k: pytest.fail("damaged saved policy reached metered work"))
+    with pytest.raises(ValueError):
+        runtime.run_arm(out, {"eval_timeout": 5}, protocol(), "random_full", list("0123"), {})
+    assert not (out / "random_full/result.json").exists()
+    assert not (out / "random_full/result.sha256.json").exists()
+    assert {path: path.read_bytes() for path in before} == before
+    assert {path: path.stat().st_mtime_ns for path in before} == mtimes
+
+
+@pytest.mark.parametrize("remaining", [-1, -80])
+def test_existing_stop_over_budget_never_becomes_a_completed_result(tmp_path, monkeypatch, remaining):
+    out, c, _ = saved_policy(tmp_path, monkeypatch, remaining)
+    assert runtime.restore_budget_stop(out, c, "random_full") is True
+    before = bytes_under(out)
+    monkeypatch.setattr(base, "meter", lambda *a, **k: pytest.fail("over-budget saved policy was charged again"))
+    with pytest.raises(ValueError, match="exceeded|exhausted"):
+        runtime.run_arm(out, {"eval_timeout": 5}, protocol(), "random_full", list("0123"), {})
+    assert not (out / "random_full/result.json").exists()
+    assert not (out / "random_full/result.sha256.json").exists()
+    assert base.spent(out / "random_full") == c["budget_gpu_seconds"] - remaining
+    assert {path: path.read_bytes() for path in before} == before
+
+
 @pytest.mark.parametrize("damage", ["adapter", "optimizer", "stats", "parent", "prompts",
                                    "budget-target", "budget-step", "budget-reason", "budget-missing"])
 def test_unverified_final_policy_never_writes_parent_stop_or_starts_work(tmp_path, monkeypatch, damage):

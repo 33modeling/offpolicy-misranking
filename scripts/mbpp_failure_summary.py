@@ -77,6 +77,7 @@ def storage_report(roots):
     sections = [('MBPP SAVED-WORK AUDIT (read-only; <=4 KiB)\n'
                 'Presence only, NOT hash/resume validation. Archived/waived work is NOT free to reuse.\n'
                 'No files moved, deleted, restored or training started.')]
+    per_root = min(1230, (STORAGE_BYTES - len(sections[0].encode('utf-8')) - len(roots) - 1) // max(1, len(roots)))
     for root in roots:
         manifest = record(root, root / 'switch.json')
         lines = [f'\nEXPERIMENT {mbpp_suite_label(root, manifest)}', f'ROOT {root.name}']
@@ -109,7 +110,7 @@ def storage_report(roots):
         if not failed:
             for _, a in archived[-1:]:
                 lines.append(f'ARCHIVE {a.relative_to(root)}: {saved_inventory(a)}')
-        sections.append(clipped('\n'.join(lines), 1230))
+        sections.append(clipped('\n'.join(lines), per_root))
     return clipped('\n'.join(sections) + '\n', STORAGE_BYTES)
 
 
@@ -255,10 +256,12 @@ def report(work, roots):
     sections = [(f'MBPP FAILURE SUMMARY\nUTC {datetime.now(timezone.utc).isoformat(timespec="seconds")}\n'
         f'checkout={commit or "unknown"} (running workers may use an older snapshot)\n'
         'Limit: 16 KiB. Only latest failures and short log tails; no rollouts, model data or full cost ledgers.')]
-    sections.extend(root_summary(root) for root in roots)
     logs = recent(work, ('runs/experiments/logs/console.mbpp.*.log',))
-    for path in logs[:2]:
-        sections.append(f'\nNODE {path.name}\n{tail(work, path, 1400)}')
+    nodes = [f'\nNODE {path.name}\n{tail(work, path, 1400)}' for path in logs[:2]]
+    reserved = len(('\n'.join([sections[0], *nodes]) + '\n').encode('utf-8'))
+    per_root = min(ROOT_BYTES, (MAX_BYTES - reserved - len(roots)) // max(1, len(roots)))
+    sections.extend(clipped(root_summary(root), per_root) for root in roots)
+    sections.extend(nodes)
     return clipped('\n'.join(sections) + '\n', MAX_BYTES)
 
 
@@ -268,8 +271,8 @@ def main():
     parser.add_argument('--root', type=Path, action='append', required=True)
     parser.add_argument('--storage', action='store_true', help='read-only saved-work audit to stdout, <=4 KiB')
     args = parser.parse_args()
-    if len(args.root) > 3:
-        parser.error('at most three MBPP suite roots')
+    if len(args.root) > 4:
+        parser.error('at most four MBPP suite roots (including retained legacy work)')
     if args.storage:
         print(storage_report(args.root), end='')
         return 0

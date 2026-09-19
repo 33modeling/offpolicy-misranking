@@ -12,13 +12,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import selection_switch_status as switch_status
-from _status_summary import MBPP_SUITE_LABELS, gate_label, mbpp_suite_label
+from _status_summary import gate_label, mbpp_suite_label
 
 
 ARM_NAMES = {"selection_reduced": "Selection", "random_reduced": "Random",
              "selection_full": "Full selection", "random_full": "Full random", "gated": "Gate policy"}
 REMARKS = {"EVAL": "평가·결과 저장 남음", "RESUME": "체크포인트 검증·재개 대기",
-           "REVIEW": "저장 파일 확인 필요", "BUDGET": "예산 소진으로 중단",
+           "REVIEW": "저장 파일 확인 필요", "BUDGET": "GPU 시간 한도 도달; 결과 미완료",
            "FAILED": "실패 원인 확인 필요", "STALE": "실행 신호 끊김; 확인 필요",
            "INVALID": "저장 기록 검증 필요", "SAVING": "결과 저장 중", "BLOCKED": "진행 차단"}
 
@@ -123,7 +123,7 @@ def label(root, protocol=None):
     return mbpp_suite_label(root, protocol)
 
 
-def snapshot(roots, *, now=None):
+def snapshot(roots, *, now=None, retained_roots=()):
     now = time.time() if now is None else now
     suites = []
     for root in dict.fromkeys(Path(root).resolve() for root in roots):
@@ -138,7 +138,17 @@ def snapshot(roots, *, now=None):
             except OSError:
                 suite["nodes"] = []
             suites.append(suite)
-    return {"updated": now, "suites": suites}
+    data = {"updated": now, "suites": suites}
+    observed = {suite["root"] for suite in suites}
+    retained = [root for root in dict.fromkeys(Path(root).resolve() for root in retained_roots)
+                if str(root) not in observed and root.is_dir()]
+    if retained:
+        data["retained_suites"] = snapshot(retained, now=now)["suites"]
+    return data
+
+
+def observed_suites(data):
+    return [*data["suites"], *data.get("retained_suites", [])]
 
 
 def active(task):
@@ -150,7 +160,7 @@ def active(task):
 def node_assignments(data):
     """Merge shared launcher evidence once, retaining *every* live assignment."""
     hosts = {}
-    for suite in data["suites"]:
+    for suite in observed_suites(data):
         for node in suite.get("nodes", []):
             host = str(node["host"]).rstrip("_")
             previous = hosts.get(host)
@@ -164,7 +174,7 @@ def node_assignments(data):
             prior_age = previous.get("evidence_age") if previous else None
             if previous is None or (age is not None and (prior_age is None or age < prior_age)):
                 hosts[host] = {**node, "host": host, "evidence_age": age, "assignments": []}
-    for suite in data["suites"]:
+    for suite in observed_suites(data):
         for task in suite.get("tasks", []):
             if task.get("status") == "STALE" and task.get("host"):
                 host = str(task["host"]).rstrip("_")
@@ -201,8 +211,10 @@ def render_nodes(data, *, width, all_nodes=False):
     current = [node for node in nodes if node["current"]]
     lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current",
              "# Node -> Experiment | Status | Progress | Remarks"]
-    progress = {suite["root"]: counts(suite)["progress"] for suite in data["suites"]}
-    labels = {suite["root"]: label(suite["root"], suite.get("protocol")) for suite in data["suites"]}
+    progress = {suite["root"]: counts(suite)["progress"] for suite in observed_suites(data)}
+    retained = {suite["root"] for suite in data.get("retained_suites", [])}
+    labels = {suite["root"]: label(suite["root"], suite.get("protocol"))
+              + (" (기본 실행 제외)" if suite["root"] in retained else "") for suite in observed_suites(data)}
     visible = nodes if all_nodes else current
     for index, node in enumerate(visible, 1):
         if node["assignments"]:
@@ -248,13 +260,17 @@ def render(data, *, width=120, all_tasks=False):
              "READY: 실행 가능 | DONE: 결과 저장 완료 | WAIT: 대기·중단·확인 필요 | RUN: 실행 중",
              "Progress: 완료 확인 / 계획. 남음에는 미확인 분기가 포함되며, 기록 없음은 삭제·미실행의 증거가 아닙니다.",
              "학습 분기 수 기준입니다. 공통 학습·선택·평가 단계를 별도 실험으로 더하지 않습니다."]
+    if data.get("retained_suites"):
+        preserved_done = sum(counts(suite)["done"] for suite in data["retained_suites"])
+        lines.insert(2, f"다른 조건의 완료 결과 {preserved_done}개 보존 — 현재 조건과 합산하지 않음; 아래 기존 기록에 표시")
     rows, running, notices = [], [], []
     for suite in data["suites"]:
         name = label(suite["root"], suite.get("protocol"))
         count = counts(suite)
         states = count["states"]
-        condition = ("기본 조건" if name == MBPP_SUITE_LABELS["fresh"] else
-                     "추가 조건" if name in MBPP_SUITE_LABELS.values() else "")
+        condition = ("학습 한도 공통; 선택 비용 별도 기록"
+                     if suite.get("protocol", {}).get("accounting") == "matched" else
+                     "선택·학습 한도 공통" if suite.get("protocol", {}).get("accounting") == "budget" else "")
         if not suite.get("prepared"):
             note = ("설정 읽기 실패" if suite.get("error") else "실험 설정 확인 불가") + f"; 기록 미확인 {count['unknown']}개"
             rows.append([name, count["planned"], count["done"], count["remaining"], count["progress"],
@@ -274,7 +290,7 @@ def render(data, *, width=120, all_tasks=False):
         budgets = sum(task['status'] == 'BUDGET' for task in branches)
         evaluations = sum(task['status'] == 'EVAL' for task in branches)
         if budgets:
-            note += f"; 예산 소진 {budgets}개"
+            note += f"; GPU 시간 한도 도달 {budgets}개 (결과 미완료)"
         if evaluations:
             note += f"; 평가·결과 저장 남음 {evaluations}개"
         rows.append([name, count["planned"], count["done"], count["remaining"], count["progress"],
@@ -295,6 +311,12 @@ def render(data, *, width=120, all_tasks=False):
             continue
         if suite.get("protocol", {}).get("gate"):
             lines.append("Gate policy 판단: " + gate_label(suite["protocol"]["gate"]))
+        if suite.get("protocol", {}).get("budget_gpu_seconds") is not None:
+            budget = suite['protocol']['budget_gpu_seconds']
+            kind = "진단·학습 시간 한도" if suite['protocol'].get('accounting') == 'matched' else "선택·진단·학습 시간 한도"
+            lines.append(f"{kind}: {budget} GPU-seconds")
+        if suite.get("protocol", {}).get("accounting") == "matched":
+            lines.append("선택 비용은 위 학습 한도에서 차감하지 않으며, 총 GPU 시간에 포함합니다. 평가·곡선 저장까지 끝나야 DONE입니다.")
         tasks = suite.get("tasks", [])
         prefixes = {(task["seed"], task["step"]): task for task in tasks if task.get("kind") == "prefix"}
         branches = {(task["seed"], task["step"], task["arm"]): task for task in tasks if task.get("kind") == "branch"}
@@ -313,11 +335,25 @@ def render(data, *, width=120, all_tasks=False):
         widths = ([11, 5, 6, 9, 6, 14, 11, 11, width - 89] if width >= 110
                   else [11, 4, 5, 9, 6, 9, 6, 6, width - 72])
         lines += table(["Seed / Step", "Role", "Prefix", *ARM_NAMES.values(), "Remarks"], matrix, widths)
+    if data.get("retained_suites"):
+        lines += ["", "기본 실행 제외 — 기존 기록 보존 (위 계획·완료·남음 합계에서 제외)"]
+        for suite in data["retained_suites"]:
+            name = label(suite["root"], suite.get("protocol"))
+            count = counts(suite)
+            states = count["states"]
+            lines.append(f"{name}: 기존 계획 {count['planned']}개 | 완료 확인 {count['done']}개 | 남음 {count['remaining']}개"
+                         f" | RUN {states['RUN']}개 | READY {states['READY']}개 | WAIT {states['WAIT']}개")
+            if count["unknown"]:
+                lines.append(f"기록 미확인 {count['unknown']}개; 기존 결과가 삭제됐다는 뜻이 아닙니다.")
+            if suite.get("error"):
+                notices.append(f"{name}: 설정 읽기 실패: {suite['error']}")
+            running += [(name, task) for task in suite.get("tasks", []) if active(task)]
+        lines.append("이 표시는 기존 작업을 중단하지 않습니다. 기본 실행 제외 작업의 노드도 아래에 표시합니다.")
     running_experiments = {(name, task["seed"], task["step"], arm_name(task["arm"])) for name, task in running}
     lines += ["On-policy: 현재 정책으로 계산한 gradient 기반 선택. Difficulty: 저장된 정답률 기반 선택.",
               "선택비용 포함: 선택·진단·학습에 같은 예산 적용. 선택비용 별도: 선택 비용을 예산 밖에 기록.",
               "선택비용 별도도 총 GPU 비용에는 포함합니다. 평가 비용은 모든 조건에서 별도로 기록합니다.",
-              "예산 소진으로 중단된 분기는 유효한 평가 결과가 없으면 미완료이며, 보상 0점이 아닙니다.",
+              "GPU 시간 한도에 도달해도 평가 결과가 없으면 미완료이며, 보상 0점이 아닙니다.",
               "Selection / Random: 공통 진단 비용 차감 후 비교. Full selection / Full random: 전체 예산 대조군.",
               "Gate policy: 전환 규칙 적용. '-': 해당 상태에서 실행 대상 아님.",
               "", f"CURRENT RUN {len(running_experiments)}"]
@@ -326,7 +362,7 @@ def render(data, *, width=120, all_tasks=False):
     lines += render_nodes(data, width=width, all_nodes=all_tasks)
     lines += notices
     if all_tasks:
-        for suite in data["suites"]:
+        for suite in observed_suites(data):
             lines += ["", f"ROOT {suite['root']}"]
             for task in suite.get("tasks", []):
                 lines.append(f"{display_state(task)} {task['directory']}" + (f" — {remark(task)}" if remark(task) else ""))
@@ -337,12 +373,14 @@ def render(data, *, width=120, all_tasks=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, action="append", required=True)
+    parser.add_argument("--retained-root", type=Path, action="append", default=[],
+                        help="observe legacy work without adding it to the current experiment plan")
     parser.add_argument("--all", action="store_true", dest="all_tasks")
     args = parser.parse_args()
-    data = snapshot(args.root)
+    data = snapshot(args.root, retained_roots=args.retained_root) if args.retained_root else snapshot(args.root)
     print(render(data, width=max(80, shutil.get_terminal_size((120, 40)).columns),
                  all_tasks=args.all_tasks))
-    return int(any(suite.get("error") for suite in data["suites"]))
+    return int(any(suite.get("error") for suite in observed_suites(data)))
 
 
 if __name__ == "__main__":

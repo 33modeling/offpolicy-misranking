@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import subprocess
 import sys
@@ -25,6 +26,8 @@ from _status_summary import accounting_label, gate_label, mbpp_suite_label, sele
 
 CONTRASTS = (("selection_full", "random_full"), ("gated", "random_full"), ("gated", "selection_full"),
              ("selection_reduced", "random_reduced"))
+SCORING_PHASES = {"fresh-r-validation", "fresh-r-merge-validation", "fresh-r-candidate", "fresh-r-merge-candidate",
+                  "difficulty-select", "hard-select"}
 
 
 def read(path):
@@ -41,13 +44,83 @@ def phases(directory):
     for path in (directory / "cost.jsonl", directory / "curve" / "cost.jsonl"):
         if not path.exists():
             continue
+        seen = set()
         for line in path.read_text().splitlines():
             if not line.strip():
                 continue
-            row = json.loads(line)
-            if row.get("state") == "finished":
-                totals[(row.get("ledger", "?"), row["phase"])] += row.get("allocated_gpu_seconds", 0.)
+            try:
+                row = json.loads(line)
+                if (row.get("state") != "finished" or not finite_cost(row.get("allocated_gpu_seconds"))
+                        or not isinstance(row.get("phase"), str) or not isinstance(row.get("ledger"), str)):
+                    continue
+                key = row["event_id"]
+                if key in seen:
+                    continue
+                seen.add(key)
+                totals[(row["ledger"], row["phase"])] += row["allocated_gpu_seconds"]
+            except (ValueError, KeyError, TypeError, AttributeError):
+                # Keep readable finished subtotals; coverage marks the total unknown.
+                continue
     return totals
+
+
+def finite_cost(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+
+
+def ledger_coverage(directory):
+    """Read-only completeness check, not recovery or result-seal certification."""
+    if not (directory / "cost.jsonl").is_file():
+        return "unknown: branch ledger missing"
+    any_event = False
+    try:
+        for path in (directory / "cost.jsonl", directory / "curve/cost.jsonl"):
+            if not path.exists():
+                continue
+            events = {}
+            for line in path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                event = events.setdefault(row["event_id"], {})
+                state = row["state"]
+                if state not in {"started", "finished"} or state in event:
+                    return "unknown: duplicate/invalid cost event"
+                event[state] = row
+                any_event = True
+            for event in events.values():
+                if set(event) != {"started", "finished"}:
+                    return "unknown: open/missing cost event"
+                start, finish = event["started"], event["finished"]
+                if (not finite_cost(finish.get("allocated_gpu_seconds"))
+                        or any(start.get(key) != finish.get(key) for key in ("ledger", "phase"))
+                        or not isinstance(finish.get("ledger"), str) or not isinstance(finish.get("phase"), str)):
+                    return "unknown: invalid cost event"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return "unknown: unreadable cost ledger"
+    return "closed events" if any_event else "unknown: empty cost ledger"
+
+
+def cost_detail(branch):
+    totals = branch["phases"]
+    subtotal = sum(totals.values())
+    coverage = ledger_coverage(branch["directory"])
+    known = coverage == "closed events"
+    diagnostic = branch["decision"].get("measurement_gpu_seconds")
+    budget = branch["decision"].get("budget_gpu_seconds")
+    def fmt_cost(value):
+        return f"{value:.3f}" if finite_cost(value) else "unknown"
+    scoring = sum(value for (_, phase), value in totals.items() if phase in SCORING_PHASES)
+    training = sum(value for (_, phase), value in totals.items() if phase == "train")
+    evaluation = sum(value for (_, phase), value in totals.items() if phase in {"evaluate", "curve"})
+    return ("    COST GPU-s "
+            f"scoring={fmt_cost(scoring)} training={fmt_cost(training)} evaluation={fmt_cost(evaluation)} "
+            f"other={fmt_cost(subtotal-scoring-training-evaluation)} "
+            f"finished_events_subtotal={fmt_cost(subtotal)} "
+            f"branch_total_incl_reporting={fmt_cost(subtotal) if known else 'unknown'} "
+            f"diagnostic_charge={fmt_cost(diagnostic)} "
+            f"action_total_with_diagnostic={fmt_cost(subtotal+diagnostic) if known and finite_cost(diagnostic) else 'unknown'} "
+            f"branch_allocation={fmt_cost(budget)} coverage={coverage}")
 
 
 def paired(a, b, draws=10000, seed=0):
@@ -121,6 +194,10 @@ def report(root, *, draws=10000):
         lines.append("MANIFEST missing, unreadable or not an object; protocol values are unknown")
     elif mbpp_named and p.get("dataset") not in (None, "mbpp"):
         lines.append("WARNING MBPP-named root has a different frozen dataset; displayed values are from the manifest")
+    if p.get("accounting") == "matched":
+        lines.append("MATCHED: training allocation matched, total compute not matched; selection scoring is separately charged, not free")
+    lines.append("COST SOURCE switch.json budget_gpu_seconds=" + str(p.get("budget_gpu_seconds", "unknown"))
+                 + " budget_source=" + json.dumps(p.get("budget_source"), sort_keys=True))
     try:
         lines[1] += "  COMMIT " + subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True,
                                                           cwd=Path(__file__).resolve().parents[1]).strip()
@@ -138,6 +215,12 @@ def report(root, *, draws=10000):
     lines += ["", f"BRANCHES  (updates = completed_steps - state step; used = deployment GPU-s; flags: INVALID = "
                   f"more than {limit:.0f} updates, which one allocation cannot buy; RESET = rerun from the parent "
                   "policy after a reset receipt, valid on its own ledger; RERUN = waiver without a result)"]
+    lines += ["COST totals use finished events, including failed attempts, in each branch's cost.jsonl + curve/cost.jsonl; reporting is included.",
+              "Open/missing/invalid ledger totals are unknown, not zero; phase values are finished-event subtotals only.",
+              "diagnostic_charge and branch_allocation come from decision.json; diagnostic is shared, so do not sum action totals across arms.",
+              "Shared point/curve-parent/cost.jsonl is excluded from branch totals: count it once per point, not once per arm.",
+              "These are branch-local recorded costs, not cluster/job billing; shared prefixes and archived/waived costs are not included.",
+              "Read-only display only: result seals and ledger provenance are not independently certified here."]
     by_state = defaultdict(dict)
     for b in rows:
         result, stop = b["result"], b["stop"]
@@ -165,6 +248,8 @@ def report(root, *, draws=10000):
                       f"action={b['execution'].get('action', b['decision'].get('action', '?'))} "
                       f"pred={b['decision'].get('prediction')} deployment={dep} reporting={rep}"
                       + (f" scoring={scoring}" if scoring else "") + f" {' '.join(flags)}")
+        lines.append(cost_detail(b))
+        lines.append(f"    COST PATH {b['directory']} (cost.jsonl; curve/cost.jsonl; decision.json)")
         if b["curve"]:
             pts = ", ".join(f"{v['updates']}:{100*v['reward']:.2f}" for v in sorted(b['curve']['points'].values(), key=lambda v: v['updates']))
             lines.append(f"    curve k={b['curve']['k']} points(updates:reward) {pts}")

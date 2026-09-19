@@ -64,7 +64,7 @@ launcher_pid_alive() {
       case "$command" in *run_experiments.sh*|*_mbpp_node_guard.py*) ;; *) continue ;; esac
       { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Fxq "OM_WORK=$WORK" || continue
       { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Fxq "EXPERIMENTS_NODE_ID=$EXPERIMENTS_NODE_ID" || continue
-      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Eq '^EXPERIMENTS_MBPP_SUITE=(all|fresh|quality|difficulty)$' || continue
+      { tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -Eq '^EXPERIMENTS_MBPP_SUITE=(all|fresh|quality|difficulty|long)$' || continue
       NODE_LAUNCHER_PID=$pid
       return 0
     done
@@ -88,7 +88,7 @@ if [ "$MODE" = progress ]; then
     # MBPP progress must show the MBPP suites only: the generic screen lists every
     # prepared root under runs/, which buried the MBPP root under the math suites
     # and omitted MBPP siblings that were still waiting for their prefixes.
-    for root in "${MBPP_ROOTS[@]}"; do PROGRESS_ROOTS+=(--root "$root"); done
+    while IFS= read -r root; do PROGRESS_ROOTS+=(--root "$root"); done < <(mbpp_observation_roots)
   fi
   exec "$PY" scripts/experiments_progress.py --work "$WORK" "${PROGRESS_ROOTS[@]}" "$@"
 fi

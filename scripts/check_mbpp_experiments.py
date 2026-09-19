@@ -12,9 +12,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _status_summary import MBPP_SUITE_LABELS, gate_label
+
 import evidence_downstream as ed
 from selection_switch_gpu import mbpp_items, resolve_sources
-from _status_summary import MBPP_SUITE_LABELS, gate_label
 
 
 def check(args):
@@ -59,8 +60,11 @@ def check(args):
 
     specs = {"fresh": (args.fresh_root, "fresh_r", "budget", "final"),
              "quality": (args.quality_root, "fresh_r", "matched", "convergence"),
-             "difficulty": (args.difficulty_root, "difficulty", "budget", "convergence")}
-    selected = list(specs) if args.suite == "all" else [args.suite]
+             "difficulty": (args.difficulty_root, "difficulty", "budget", "convergence"),
+             "long": (getattr(args, "long_root", None) or args.fresh_root.with_name("selection-switch-mbpp-long-v1"),
+                      "fresh_r", "budget", "final")}
+    selected = ["quality"] if args.suite == "all" else [args.suite]
+    needs_prefixes = any(name != "fresh" for name in selected)
     # Variant-only launches still depend on the fresh root's certified prefixes.
     inspect = list(dict.fromkeys(["fresh", *selected]))
     fresh_evaluation = None
@@ -70,7 +74,7 @@ def check(args):
         print(f"[experiment] {label}; gate={gate_label(gate)}; root={root}")
         path = root / "switch.json"
         if not path.exists():
-            if name == "fresh" and args.suite in ("quality", "difficulty"):
+            if name == "fresh" and needs_prefixes:
                 raise ValueError("On-policy · 선택비용 포함: shared MBPP prefixes/evaluation are not prepared")
             continue
         p = ed.read(path)
@@ -79,6 +83,8 @@ def check(args):
                   for key in expected}
         if actual != expected:
             raise ValueError(f"existing {label} root has a different protocol: {actual}; use a new root")
+        if name == "long" and (isinstance(p.get("budget_gpu_seconds"), bool) or p.get("budget_gpu_seconds") != 87120):
+            raise ValueError(f"existing {label} has a different budget; expected MATH long cap 87120 GPU-seconds; saved settings were not changed")
         evaluation = p["evaluation"]
         if (evaluation.get("provenance", {}).get("dataset") != provenance["source_repository"]
                 or evaluation["provenance"].get("revision") != provenance["source_revision"]
@@ -94,12 +100,13 @@ def check(args):
         elif (p.get("prefix_source", {}).get("root") != str(args.fresh_root.resolve())
               or p["evaluation"] != fresh_evaluation):
             raise ValueError(f"{label} must reuse the MBPP on-policy prefixes and identical evaluation")
-    if args.suite in ("quality", "difficulty"):
+    if needs_prefixes:
         for seed in range(5):
             for step in (25, 50, 100):
                 path = args.fresh_root / "prefixes" / f"seed-{seed}" / f"prefix-{step}.json"
                 if not path.is_file():
                     raise ValueError(f"shared on-policy prefix not ready: {path}; requires On-policy · 선택비용 포함")
+    print(f"[check] {len(selected)} condition(s), {48 * len(selected)} continuation branches; existing frozen allocations are unchanged")
     print("[check] inputs ready; full artifact/code/GRPO contracts are checked by the original launcher before GPU work")
 
 
@@ -107,7 +114,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for key in ("matrix", "pool", "manifest", "fresh-root", "quality-root", "difficulty-root"):
         parser.add_argument(f"--{key}", type=Path, required=True)
-    parser.add_argument("--suite", choices=("all", "fresh", "quality", "difficulty"), default="all")
+    parser.add_argument("--long-root", type=Path)
+    parser.add_argument("--suite", choices=("all", "fresh", "quality", "difficulty", "long"), default="all")
     args = parser.parse_args()
     try:
         check(args)

@@ -121,3 +121,91 @@ def test_results_wrong_dataset_is_not_labeled_as_a_verified_mbpp_condition(tmp_p
     assert f"EXPERIMENT {root.name}" in text and "DATASET math500" in text
     assert "WARNING MBPP-named root has a different frozen dataset" in text
     assert "GATE 최종 보상 기준" in text
+
+
+def cost_event(directory, event_id, phase, seconds, *, ledger="reporting", exit_code=0, open_event=False):
+    for state in (("started",) if open_event else ("started", "finished")):
+        row = {"event_id": event_id, "phase": phase, "ledger": ledger, "state": state}
+        if state == "finished":
+            row.update(allocated_gpu_seconds=4*seconds, seconds=seconds, exit_code=exit_code)
+        base.journal(directory / "cost.jsonl", row)
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_matched_cost_display_includes_failed_scoring_and_own_curves_not_shared_parent(tmp_path, completed):
+    core.atomic_json(tmp_path / "switch.json", {"dataset": "mbpp", "selector": "fresh_r", "accounting": "matched",
+                                               "gate": "convergence", "budget_gpu_seconds": 29040,
+                                               "budget_source": {"kind": "explicit", "gpu_seconds": 29040}})
+    directory = branch(tmp_path, "s3-t25", "selection_full", rewards=[.5, 1.], updates=100)
+    core.atomic_json(directory / "decision.json", {"action": "select", "measurement_gpu_seconds": 36,
+                                                   "budget_gpu_seconds": 29004})
+    if not completed:
+        (directory / "result.json").unlink()
+        core.atomic_json(directory / "failure.json", {"error": "evaluation interrupted"})
+    cost_event(directory, "val", "fresh-r-validation", 100)
+    cost_event(directory, "candidate-failed", "fresh-r-candidate", 200, exit_code=1)
+    cost_event(directory, "candidate-ok", "fresh-r-candidate", 300)
+    cost_event(directory, "eval", "evaluate", 50)
+    cost_event(directory / "curve", "curve-failed", "curve", 5, exit_code=1)
+    cost_event(directory / "curve", "curve-ok", "curve", 10)
+    cost_event(directory.parent / "curve-parent", "shared-parent", "curve", 1000)
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    text = result_text(tmp_path)
+    assert "training allocation matched, total compute not matched" in text
+    assert 'budget_source={"gpu_seconds": 29040, "kind": "explicit"}' in text
+    assert "scoring=2400.000 training=28000.000 evaluation=260.000 other=4.000" in text
+    assert "finished_events_subtotal=30664.000 branch_total_incl_reporting=30664.000" in text
+    assert "diagnostic_charge=36.000 action_total_with_diagnostic=30700.000 branch_allocation=29004.000" in text
+    assert f"COST PATH {directory}" in text
+    assert "count it once per point, not once per arm" in text
+    assert "do not sum action totals across arms" in text
+    assert "result seals and ledger provenance are not independently certified" in text
+    assert "reward= 75.00" in text if completed else "reward=  none" in text
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+@pytest.mark.parametrize("damage", ["open", "missing-start", "missing-ledger", "empty", "nonfinite", "duplicate", "torn"])
+def test_incomplete_or_invalid_cost_is_unknown_not_zero(tmp_path, damage):
+    core.atomic_json(tmp_path / "switch.json", {"dataset": "mbpp", "accounting": "matched"})
+    directory = branch(tmp_path, "s0-t25", "selection_reduced", rewards=[.5], updates=50)
+    (directory / "result.json").unlink()
+    path = directory / "cost.jsonl"
+    if damage == "open":
+        cost_event(directory, "open", "fresh-r-candidate", 50, open_event=True)
+    elif damage == "missing-start":
+        base.journal(path, {"event_id": "missing-start", "phase": "train", "ledger": "deployment",
+                            "state": "finished", "allocated_gpu_seconds": 30})
+    elif damage == "missing-ledger":
+        path.unlink()
+    elif damage == "empty":
+        path.write_text("")
+    elif damage == "nonfinite":
+        cost_event(directory, "invalid", "evaluate", 0, open_event=True)
+        with path.open("a") as handle:
+            handle.write(json.dumps({"event_id": "invalid", "phase": "evaluate", "ledger": "reporting",
+                                     "state": "finished", "allocated_gpu_seconds": float("nan")}) + "\n")
+    elif damage == "duplicate":
+        cost_event(directory, "same", "curve", 30)
+        cost_event(directory, "same", "curve", 30)
+    else:
+        with path.open("a") as handle:
+            handle.write('{"torn":')
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    text = result_text(tmp_path)
+    assert "reward=  none" in text
+    assert "branch_total_incl_reporting=unknown" in text
+    assert "diagnostic_charge=unknown action_total_with_diagnostic=unknown branch_allocation=unknown" in text
+    assert "coverage=unknown:" in text
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+
+def test_budget_mode_cost_display_counts_selection_without_claiming_matched_training(tmp_path):
+    core.atomic_json(tmp_path / "switch.json", {"accounting": "budget", "budget_gpu_seconds": 87120})
+    directory = branch(tmp_path, "s3-t25", "selection_full", rewards=[.5], updates=100,
+                       extra_phases=(("fresh-r-candidate", 5000),))
+    core.atomic_json(directory / "decision.json", {"action": "select", "measurement_gpu_seconds": 0,
+                                                   "budget_gpu_seconds": 87120})
+    text = result_text(tmp_path)
+    assert "training allocation matched" not in text
+    assert "scoring=20000.000 training=28000.000" in text
+    assert "branch_total_incl_reporting=48004.000 diagnostic_charge=0.000 action_total_with_diagnostic=48004.000" in text

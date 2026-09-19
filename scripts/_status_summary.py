@@ -7,11 +7,13 @@ MBPP_SUITE_LABELS = {
     'fresh': 'On-policy · 선택비용 포함',
     'quality': 'On-policy · 선택비용 별도',
     'difficulty': 'Difficulty · 선택비용 포함',
+    'long': 'On-policy · 장시간 예산',
 }
 _MBPP_ROOT_SUITES = {
     'selection-switch-mbpp-v1': 'fresh',
     'selection-switch-mbpp-quality-v1': 'quality',
     'selection-switch-mbpp-difficulty-v1': 'difficulty',
+    'selection-switch-mbpp-long-v1': 'long',
 }
 
 
@@ -22,6 +24,9 @@ def mbpp_suite_label(root, protocol=None):
         if protocol.get('dataset') not in (None, 'mbpp'):
             return name
         selector, accounting = protocol.get('selector'), protocol.get('accounting')
+        if (selector == 'fresh_r' and accounting == 'budget'
+                and (protocol.get('budget_gpu_seconds') == 87120 or name == 'selection-switch-mbpp-long-v1')):
+            return MBPP_SUITE_LABELS['long']
         suite = ({('fresh_r', 'budget'): 'fresh', ('fresh_r', 'matched'): 'quality',
                   ('difficulty', 'budget'): 'difficulty'}.get((selector, accounting))
                  if isinstance(selector, str) and isinstance(accounting, str) else None)

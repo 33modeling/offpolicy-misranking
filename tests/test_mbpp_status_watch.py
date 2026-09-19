@@ -1,7 +1,6 @@
 """The user-facing MBPP status command must never fall back to the math view."""
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -44,12 +43,10 @@ def test_watch_visits_every_mbpp_root_each_frame_without_starting_workers(launch
     result = run("status", *options, **extra)
     assert result.returncode == 143, result.stdout + result.stderr
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
-    expected = ["selection-switch-mbpp-v1", "selection-switch-mbpp-quality-v1", "selection-switch-mbpp-difficulty-v1"]
+    expected = ["selection-switch-mbpp-quality-v1"]
     assert [Path(call["root"]).name for call in calls] == expected * 2
     assert all(call["args"] == ["status", *(["--all"] if "--all" in options else [])] for call in calls)
-    assert len({call["dashboard_pid"] for call in calls[:3]}) == 1
-    assert len({call["dashboard_pid"] for call in calls[3:]}) == 1
-    assert calls[0]["dashboard_pid"] != calls[3]["dashboard_pid"]
+    assert calls[0]["dashboard_pid"] != calls[1]["dashboard_pid"]
     assert all("SWITCH_ROOT" not in call["env"] for call in calls)
     assert all(call["env"]["EXPERIMENTS_COMBINED"] == "0" for call in calls)
     assert json.loads(Path(extra["SLEEP_LOG"]).read_text()) == [[interval], [interval]]
@@ -74,18 +71,19 @@ def test_real_mbpp_watch_keeps_saved_results_and_live_work_visible_not_math(tmp_
     extra = two_frame_sleep(tmp_path)
     env = {**os.environ, **extra, "OM_WORK": str(work), "SWITCH_PYTHON": sys.executable,
            "SWITCH_ROOT": "/wrong/math-root", "OUT_ROOT": "/wrong/math-root", "EXPERIMENTS_COMBINED": "1"}
-    for key in ("SWITCH_MBPP_ROOT", "SWITCH_MBPP_QUALITY_ROOT", "SWITCH_MBPP_DIFFICULTY_ROOT"):
+    for key in ("SWITCH_MBPP_ROOT", "SWITCH_MBPP_QUALITY_ROOT", "SWITCH_MBPP_DIFFICULTY_ROOT", "SWITCH_MBPP_LONG_ROOT"):
         env.pop(key, None)
     before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in work.rglob("*") if path.is_file()}
     result = subprocess.run(["bash", "scripts/run_mbpp_experiments.sh", "status", "--watch", "1"],
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=15, check=False)
     assert result.returncode == 143, result.stdout + result.stderr
     assert result.stdout.count("MBPP EXPERIMENTS") == 2
-    assert len(re.findall(r"^On-policy · 선택비용 포함\s+48\s+21\s+27\s+43\.8%\s+\d+\s+\d+\s+1\b", result.stdout, re.MULTILINE)) == 2
+    assert result.stdout.count("다른 조건의 완료 결과 21개 보존") == 2
     assert result.stdout.count("CURRENT RUN 1") == 2
     assert result.stdout.count("mbpp-active-node") >= 2
     assert "wrong/math-root" not in result.stdout and "MOPPS COMPARISON" not in result.stdout
-    assert result.stdout.count("계획 48개 | 완료 확인 0/48 | 남음 48개") == 4
-    assert "총 계획 144개 | 완료 확인 21개 | 남음 123개" in result.stdout
+    assert result.stdout.count("계획 48개 | 완료 확인 0/48 | 남음 48개") == 2
+    assert "총 계획 48개 | 완료 확인 0개 | 남음 48개" in result.stdout
+    assert "기존 계획 48개 | 완료 확인 21개 | 남음 27개" in result.stdout
     assert "Remarks" in result.stdout and "Full selection" in result.stdout
     assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in work.rglob("*") if path.is_file()}

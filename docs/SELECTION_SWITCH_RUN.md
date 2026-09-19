@@ -138,20 +138,33 @@ target minus selection cost. Root `runs/selection-switch-quality-v1`; `pilot`
 runs the held-out on-policy-selection and random controls first. `quality` is
 an accounting/gate variant, not a new selector.
 
-The MBPP queue uses the following display names; internal keys remain frozen:
+The default MBPP experiment applies the paper's **Separating learning quality
+from selection cost** protocol, reusing the existing quality root:
 
 | Display name | CLI suite | `selector` | `accounting` | `gate` |
 | --- | --- | --- | --- | --- |
-| On-policy · 선택비용 포함 | `fresh` | `fresh_r` | `budget` | `final` |
 | On-policy · 선택비용 별도 | `quality` | `fresh_r` | `matched` | `convergence` |
-| Difficulty · 선택비용 포함 | `difficulty` | `difficulty` | `budget` | `convergence` |
 
-Each has 18 development and 30 held-out continuation-training branches: 48 per
-suite, 144 in total. Shared prefixes and evaluation questions are reused, not
-the first suite's trained continuation results. See the
+The main condition has 18 development and 30 held-out continuation-training
+branches, **48 planned in total**. Existing quality checkpoints/results and
+certified MBPP prefixes are reused subject to validation. Selection is recorded
+on the reporting ledger outside the common diagnostic/training allocation;
+actual total GPU cost is not matched. Report Full selection / Full random /
+Gate policy final held-out rewards, completed updates, and selection, diagnosis,
+training and evaluation costs separately. Convergence uses three intermediate
+checkpoints and four responses per question, and its decision label includes
+the separately metered selection cost. This differs from the MATH fixed-total-
+budget comparison; do not force its budget number onto the frozen MBPP contract.
+No new GPU results are supplied by this queue update, and missing outcomes are not zero.
+
+Earlier MBPP `fresh`, `difficulty` and `long` conditions require explicit execution.
+Their saved roots/results and node evidence remain observable, not deleted or
+renamed. Updating code does not kill in-flight branches or establish that a
+remote explicitly scoped controller has stopped. See the
 [MBPP run guide](MBPP_SELECTION_RUN.md) for the one-command queue and exact roots.
 
-`bash scripts/run_switch_mbpp.sh` runs the code variant: the same protocol on
+The optional legacy `bash scripts/run_switch_mbpp.sh` runs the cost-inclusive
+code variant, not the new default quality condition: the original protocol on
 the OLMo MBPP matrix family (`family-mbpp-s<seed>`, 512-prompt pool, top 10%
 = 51, execution-verified rewards) in its own root
 (`runs/selection-switch-mbpp-v1`). `prepare --dataset mbpp` resolves the five

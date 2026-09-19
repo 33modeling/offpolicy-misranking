@@ -1,14 +1,14 @@
 """Real node controllers with a CPU-only leased worker; no physical GPU access."""
 
-import json
 import importlib.util
+import json
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -98,7 +98,8 @@ node = os.environ["EXPERIMENTS_NODE_ID"]
 root.mkdir(parents=True, exist_ok=True)
 def event(kind, **fields):
     row = dict(kind=kind, node=node, root=root.name, selector=os.environ["SWITCH_SELECTOR"],
-               accounting=os.environ["SWITCH_ACCOUNTING"], gate=os.environ["SWITCH_GATE"], **fields)
+               accounting=os.environ["SWITCH_ACCOUNTING"], gate=os.environ["SWITCH_GATE"],
+               budget=os.environ.get("SWITCH_BUDGET_GPU_SECONDS"), **fields)
     with open(os.environ["TEST_EVENTS"], "a") as f:
         f.write(json.dumps(row) + "\\n")
 event("pass")
@@ -132,7 +133,7 @@ for index in range(3):
         if previous is None:
             checkpoint.write_text(json.dumps({"node": node}))
         event("claim", task=index, resumed=previous)
-        if os.environ.get("TEST_BLOCK_NODE") == node and root.name == "selection-switch-mbpp-v1" and index == 0:
+        if os.environ.get("TEST_BLOCK_NODE") == node and root.name == "selection-switch-mbpp-quality-v1" and index == 0:
             Path(os.environ["OM_WORK"], "node-blocked").write_text(node)
             time.sleep(300)
         time.sleep(.1)
@@ -153,6 +154,7 @@ for index in range(3):
     nvidia.chmod(0o755)
     work = tmp_path / "shared work"
     work.mkdir()
+    publish_prefixes(work / "runs/selection-switch-mbpp-v1")
     # An unfinished unrelated experiment must not block the MBPP completion check.
     unrelated = work / "runs/mopps-comparison-v1"
     unrelated.mkdir(parents=True)
@@ -164,10 +166,13 @@ for index in range(3):
            "EXPERIMENTS_HOLD_SECONDS": "1", "EXPERIMENTS_HOLD_POLL_SECONDS": "1",
            "EXPERIMENTS_INNER": str(inner), "CUDA_VISIBLE_DEVICES": "", "PATH": str(binaries) + os.pathsep + os.environ["PATH"]}
     processes = []
-    def start(node, mode="run", **overrides):
+    def start(node, mode="run", suite=None, **overrides):
         log = work / f"{node}-{len(processes)}.log"
         handle = log.open("w")
-        process = subprocess.Popen(["bash", "scripts/run_mbpp_experiments.sh", mode], cwd=repo,
+        arguments = ["bash", "scripts/run_mbpp_experiments.sh", mode]
+        if suite is not None:
+            arguments.append(suite)
+        process = subprocess.Popen(arguments, cwd=repo,
                                    env={**env, "EXPERIMENTS_NODE_ID": node, **overrides},
                                    stdout=handle, stderr=subprocess.STDOUT, start_new_session=True)
         processes.append((process, handle))
@@ -205,11 +210,11 @@ def test_blocked_storage_audit_never_enters_node_controller(cluster, mode):
 
 def test_two_nodes_and_a_replacement_resume_a_killed_owner_without_duplicate_results(cluster):
     work, start = cluster
-    first, first_log = start("node-a", TEST_BLOCK_NODE="node-a")
+    first, _first_log = start("node-a", TEST_BLOCK_NODE="node-a")
     wait_for(lambda: (work / "node-blocked").exists())
     second, second_log = start("node-b")
-    # Quality/difficulty must be claimable while fresh's task 0 is still running.
-    wait_for(lambda: any(row["kind"] == "finished" and "difficulty" in row["root"] for row in events(work)))
+    # Peer nodes can claim another quality task while task 0 remains owned.
+    wait_for(lambda: any(row["kind"] == "finished" and "quality" in row["root"] for row in events(work)))
     assert first.poll() is None
     # Kill the owner only. Its separately-sessioned child must be reclaimed by
     # the replacement on the SAME node, not mistaken for a healthy peer.
@@ -219,28 +224,71 @@ def test_two_nodes_and_a_replacement_resume_a_killed_owner_without_duplicate_res
     assert second.wait(timeout=30) == 0, second_log.read_text()
     assert replacement.wait(timeout=30) == 0, replacement_log.read_text()
     rows = [row for row in events(work) if row["kind"] == "finished"]
-    assert len(rows) == len({(row["root"], row["task"]) for row in rows}) == 9
-    recovered = json.loads((work / "runs/selection-switch-mbpp-v1/tasks/0/result.json").read_text())
+    assert len(rows) == len({(row["root"], row["task"]) for row in rows}) == 3
+    recovered = json.loads((work / "runs/selection-switch-mbpp-quality-v1/tasks/0/result.json").read_text())
     assert recovered["resumed"] == {"node": "node-a"}
     assert recovered["node"] in ("node-b", "node-a")
-    expected = {"selection-switch-mbpp-v1": ("fresh_r", "budget", "final"),
-                "selection-switch-mbpp-quality-v1": ("fresh_r", "matched", "convergence"),
-                "selection-switch-mbpp-difficulty-v1": ("difficulty", "budget", "convergence")}
+    expected = {"selection-switch-mbpp-quality-v1": ("fresh_r", "matched", "convergence")}
     for row in rows:
         assert (row["selector"], row["accounting"], row["gate"]) == expected[row["root"]]
+        assert row["budget"] == ("87120" if row["root"].endswith("-long-v1") else None)
 
 
 def test_pending_variants_keep_node_alive_and_open_when_peer_publishes_prefixes(cluster):
     work, start = cluster
-    process, log = start("node-pending", TEST_DELAY_PREFIXES="1")
     fresh = work / "runs/selection-switch-mbpp-v1"
-    wait_for(lambda: len(list(fresh.glob("tasks/*/result.json"))) == 3)
-    time.sleep(.3)
+    for path in fresh.glob("prefixes/seed-*/prefix-*.json"):
+        path.unlink()
+    process, log = start("node-pending", TEST_DELAY_PREFIXES="1")
+    wait_for(lambda: "shared on-policy prefixes are not ready" in log.read_text())
     assert process.poll() is None, log.read_text()
-    assert "shared on-policy prefixes are not ready" in log.read_text()
+    assert "no fresh continuation is started automatically" in log.read_text()
+    assert events(work) == []
     publish_prefixes(fresh)
     assert process.wait(timeout=30) == 0, log.read_text()
-    assert len([row for row in events(work) if row["kind"] == "finished"]) == 9
+    assert len([row for row in events(work) if row["kind"] == "finished"]) == 3
+    assert all("quality" in row["root"] for row in events(work))
+
+
+def test_default_queue_never_dispatches_or_rewrites_retained_variant_work(cluster):
+    work, start = cluster
+    roots = [work / "runs" / name for name in ("selection-switch-mbpp-v1", "selection-switch-mbpp-difficulty-v1", "selection-switch-mbpp-long-v1")]
+    for root in roots:
+        policy = root / "states/s0-t25/points/view-25/random_reduced/policy"
+        policy.mkdir(parents=True)
+        (policy / "optimizer.pt").write_bytes(b"historical optimizer")
+        (policy.parent / "cost.jsonl").write_text('{"event_id":"existing-charge"}\n')
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for root in roots for path in root.rglob("*") if path.is_file()}
+    process, log = start("node-default-parity")
+    assert process.wait(timeout=30) == 0, log.read_text()
+    rows = events(work)
+    assert {row["root"] for row in rows} == {"selection-switch-mbpp-quality-v1"}
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for root in roots for path in root.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("suite", ["fresh", "difficulty", "quality", "long"])
+def test_explicit_profiles_can_run_without_dispatching_other_suites(cluster, suite):
+    work, start = cluster
+    publish_prefixes(work / "runs/selection-switch-mbpp-v1")
+    process, log = start(f"node-explicit-{suite}", suite=suite)
+    assert process.wait(timeout=30) == 0, log.read_text()
+    rows = events(work)
+    expected = "selection-switch-mbpp-v1" if suite == "fresh" else f"selection-switch-mbpp-{suite}-v1"
+    assert rows and all(row["root"] == expected for row in rows)
+    assert len([row for row in rows if row["kind"] == "finished"]) == 3
+    assert all(row["budget"] == ("87120" if suite == "long" else None) for row in rows)
+
+
+@pytest.mark.parametrize("suite", ["quality", "long"])
+def test_explicit_profile_owner_is_recognized_and_preserved_on_duplicate_run(cluster, suite):
+    work, start = cluster
+    publish_prefixes(work / "runs/selection-switch-mbpp-v1")
+    owner, log = start(f"node-owner-{suite}", suite=suite, TEST_REQUIRE_INPUTS="1")
+    wait_for(lambda: "[holding]" in log.read_text())
+    duplicate, duplicate_log = start(f"node-owner-{suite}", suite=suite, TEST_REQUIRE_INPUTS="1")
+    assert duplicate.wait(timeout=10) == 0, duplicate_log.read_text()
+    assert "already running" in duplicate_log.read_text()
+    assert owner.poll() is None and events(work) == []
 
 
 @pytest.mark.parametrize("code", ["78", "79"])
@@ -252,7 +300,7 @@ def test_sibling_gpu_fault_stops_other_work_and_repeated_admission_failure_relea
         assert "node admission failed on two passes" in log.read_text()
     else:
         wait_for(lambda: "cooling down after a GPU fault" in log.read_text())
-    assert not any("difficulty" in row["root"] for row in events(work))
+    assert not any("long" in row["root"] for row in events(work))
 
 
 def test_cleanup_precedes_input_check_and_missing_inputs_retry_instead_of_exiting(cluster):
@@ -268,13 +316,14 @@ def test_cleanup_precedes_input_check_and_missing_inputs_retry_instead_of_exitin
 
 def test_watchdog_already_watches_variant_roots_before_they_are_prepared(cluster):
     work, start = cluster
-    process, log = start("node-watch", EXPERIMENTS_WATCHDOG="1", TEST_REQUIRE_INPUTS="1")
+    process, _log = start("node-watch", EXPERIMENTS_WATCHDOG="1", TEST_REQUIRE_INPUTS="1")
     watchdog = work / "runs/experiments/logs/stall.node-watch_.log"
     wait_for(lambda: watchdog.exists() and "roots=" in watchdog.read_text())
     text = watchdog.read_text()
-    assert "selection-switch-mbpp-quality-v1" in text and "selection-switch-mbpp-difficulty-v1" in text
+    assert "selection-switch-mbpp-long-v1" not in text and "selection-switch-mbpp-difficulty-v1" not in text
+    assert "selection-switch-mbpp-quality-v1" in text
     assert "mopps-comparison-v1" not in text
-    assert not (work / "runs/selection-switch-mbpp-quality-v1").exists()
+    assert not (work / "runs/selection-switch-mbpp-long-v1").exists()
     os.killpg(process.pid, signal.SIGTERM)
     process.wait(timeout=10)
 
@@ -283,7 +332,7 @@ def test_peer_completion_releases_node_without_waiting_out_a_long_hold(cluster):
     work, start = cluster
     process, log = start("node-idle", TEST_REQUIRE_INPUTS="1", EXPERIMENTS_HOLD_SECONDS="40")
     wait_for(lambda: "[holding]" in log.read_text())
-    for name in ("selection-switch-mbpp-v1", "selection-switch-mbpp-quality-v1", "selection-switch-mbpp-difficulty-v1"):
+    for name in ("selection-switch-mbpp-quality-v1",):
         root = work / "runs" / name
         root.mkdir(parents=True, exist_ok=True)
         (root / "switch.json").write_text("{}")
@@ -298,7 +347,7 @@ def test_peer_completion_releases_node_without_waiting_out_a_long_hold(cluster):
 @pytest.mark.parametrize('code', ['1', '75'])
 def test_ordinary_failure_and_busy_lock_backoff_are_capped_at_sixty_seconds(cluster, code):
     _work, start = cluster
-    process, log = start('node-short-hold', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC=code,
+    process, log = start('node-short-hold', TEST_FAIL_SUITE='quality', TEST_FAIL_RC=code,
                          EXPERIMENTS_HOLD_SECONDS='40', TEST_DELAY_PREFIXES='1', EXPERIMENTS_HELP_SIBLINGS='0')
     wait_for(lambda: '[holding]' in log.read_text())
     assert 'next pass in 60s' in log.read_text()
@@ -311,7 +360,7 @@ def test_gpu_cooldown_retry_is_bounded_without_bypassing_the_receipt(cluster):
     fault = work / 'runs/experiments/node-faults/node-cooldown.json'
     fault.parent.mkdir(parents=True)
     fault.write_text(json.dumps({'time': time.time(), 'strikes': 1}))
-    process, log = start('node-cooldown', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC='79',
+    process, log = start('node-cooldown', TEST_FAIL_SUITE='quality', TEST_FAIL_RC='79',
                          EXPERIMENTS_HOLD_SECONDS='40', EXPERIMENTS_FAULT_TTL_SECONDS='1800')
     wait_for(lambda: '[holding]' in log.read_text())
     assert 'next pass in 60s' in log.read_text()
@@ -326,7 +375,7 @@ def test_inherited_six_hundred_second_hold_cannot_return_on_reload(cluster, code
     fault = work / 'runs/experiments/node-faults/node-inherited.json'
     fault.parent.mkdir(parents=True)
     fault.write_text(json.dumps({'time': time.time(), 'strikes': 1}))
-    process, log = start('node-inherited', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC=code,
+    process, log = start('node-inherited', TEST_FAIL_SUITE='quality', TEST_FAIL_RC=code,
                          EXPERIMENTS_HOLD_SECONDS='600', EXPERIMENTS_HOLD_POLL_SECONDS='60',
                          EXPERIMENTS_FAULT_TTL_SECONDS='1800')
     wait_for(lambda: '[holding]' in log.read_text())
@@ -337,12 +386,11 @@ def test_inherited_six_hundred_second_hold_cannot_return_on_reload(cluster, code
     assert process.poll() is None
 
 
-def test_pending_sibling_does_not_erase_failed_primary_retry_backoff(cluster):
+def test_failed_quality_primary_keeps_its_retry_backoff(cluster):
     _work, start = cluster
-    process, log = start('node-pending-failure', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC='1',
+    process, log = start('node-pending-failure', TEST_FAIL_SUITE='quality', TEST_FAIL_RC='1',
                          EXPERIMENTS_HOLD_SECONDS='20')
     wait_for(lambda: '[holding]' in log.read_text())
-    assert 'shared on-policy prefixes are not ready' in log.read_text()
     assert 'next pass in 40s' in log.read_text()
     assert process.poll() is None
 
@@ -350,14 +398,14 @@ def test_pending_sibling_does_not_erase_failed_primary_retry_backoff(cluster):
 @pytest.mark.parametrize('status', ['FAILED', 'STALE'])
 def test_retryable_work_wakes_hold_without_needing_ready_status(cluster, status):
     work, start = cluster
-    root = work / 'runs/selection-switch-mbpp-v1'
+    root = work / 'runs/selection-switch-mbpp-quality-v1'
     root.mkdir(parents=True)
     (root / 'switch.json').write_text('{}')
-    process, log = start('node-retry', TEST_FAIL_SUITE='mbpp-v1', TEST_FAIL_RC='1',
+    process, log = start('node-retry', TEST_FAIL_SUITE='quality', TEST_FAIL_RC='1',
                          TEST_TASK_STATUS=status, EXPERIMENTS_HOLD_SECONDS='40',
                          EXPERIMENTS_HELP_SIBLINGS='0')
     wait_for(lambda: '[pass 2]' in log.read_text(), timeout=10)
-    assert 'claimable work in selection-switch-mbpp-v1' in log.read_text()
+    assert 'claimable work in selection-switch-mbpp-quality-v1' in log.read_text()
     assert process.poll() is None
 
 
@@ -376,7 +424,7 @@ def test_fault_expiry_resumes_through_admission_without_full_backoff_or_data_res
     assert cooldown_holds and all('next pass in 60s' not in line for line in cooldown_holds)
     assert fault.read_text() == record
     rows = events(work)
-    assert len([row for row in rows if row['kind'] == 'finished']) == 9
+    assert len([row for row in rows if row['kind'] == 'finished']) == 3
     assert next(i for i, row in enumerate(rows) if row['kind'] == 'admission') < next(
         i for i, row in enumerate(rows) if row['kind'] == 'claim')
 
@@ -404,7 +452,7 @@ def test_zero_poll_interval_is_rejected_instead_of_spinning_forever(cluster):
 
 def test_duplicate_node_launch_does_not_stop_or_duplicate_the_live_controller(cluster):
     work, start = cluster
-    first, log = start("node-duplicate", TEST_BLOCK_NODE="node-duplicate")
+    first, _log = start("node-duplicate", TEST_BLOCK_NODE="node-duplicate")
     wait_for(lambda: (work / "node-blocked").exists())
     claims = [row for row in events(work) if row["kind"] == "claim"]
     duplicate, duplicate_log = start("node-duplicate")
@@ -421,7 +469,7 @@ def test_busy_mbpp_pass_never_sweeps_other_experiment_processes(cluster):
     unrelated = subprocess.Popen(["bash", "-c", 'exec -a "python src/selection_switch_gpu.py run" sleep 120'],
         env={**os.environ, "OUT_ROOT": str(work / "runs/selection-switch-math-v1")}, start_new_session=True)
     try:
-        process, log = start("node-busy", EXPERIMENTS_CLEAN="1", TEST_FAIL_SUITE="mbpp-v1", TEST_FAIL_RC="75")
+        process, log = start("node-busy", EXPERIMENTS_CLEAN="1", TEST_FAIL_SUITE="quality", TEST_FAIL_RC="75")
         wait_for(lambda: log.exists() and "[pass 2]" in log.read_text())
         assert process.poll() is None and unrelated.poll() is None
         assert "no node-wide process/GPU sweep" in log.read_text()
@@ -440,7 +488,7 @@ def test_explicit_stop_reaps_guard_and_same_node_can_resume(cluster):
     assert first.wait(timeout=20) == 143, log.read_text()
     replacement, replacement_log = start("node-stop")
     assert replacement.wait(timeout=30) == 0, replacement_log.read_text()
-    result = json.loads((work / "runs/selection-switch-mbpp-v1/tasks/0/result.json").read_text())
+    result = json.loads((work / "runs/selection-switch-mbpp-quality-v1/tasks/0/result.json").read_text())
     assert result["resumed"] == {"node": "node-stop"}
 
 
@@ -455,7 +503,7 @@ def test_one_command_restart_preserves_checkpoint_and_fault_receipt(cluster):
     replacement, log = start('node-restart', mode='restart')
     assert replacement.wait(timeout=30) == 0, log.read_text()
     assert first.wait(timeout=10) == 143, first_log.read_text()
-    result = json.loads((work / 'runs/selection-switch-mbpp-v1/tasks/0/result.json').read_text())
+    result = json.loads((work / 'runs/selection-switch-mbpp-quality-v1/tasks/0/result.json').read_text())
     assert result['resumed'] == {'node': 'node-restart'}
     assert fault.read_text() == record
 

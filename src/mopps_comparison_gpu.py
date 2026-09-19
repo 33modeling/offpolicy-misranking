@@ -40,7 +40,9 @@ PRE_DATASET_CODE = "c12c6e7956f4a61e648c29b3da2762bc71fc0713b68bd77012aed59004ec
 PRE_SHARED_ALLOCATION_CODE = "3b6ad4bb17b2e0c7cec64c535f86430bb5dd2af0f7940cec9b173634c9d462e6"
 PRE_SHARED_RECOVERY_CODE = "1e57e00d07645d49e28cbacc693917d1c00a41f9d3b2df16e818c9756ce30419"
 PRE_CHECKPOINT_RETENTION_CODE = "af93d909a6f2afc3545ea23e7b3c43939d2163e29811ee652e6ce52cf53299e1"
-RECOVERY_PREDECESSORS = {PRE_SHARED_ALLOCATION_CODE, PRE_SHARED_RECOVERY_CODE, PRE_CHECKPOINT_RETENTION_CODE}
+PRE_BUDGET_STOP_EVALUATION_CODE = "6b64892808064a75a0126287f75cb0cac12e55046b3dd0f9546c3cc9e8ab38d4"
+RECOVERY_PREDECESSORS = {PRE_SHARED_ALLOCATION_CODE, PRE_SHARED_RECOVERY_CODE, PRE_CHECKPOINT_RETENTION_CODE,
+                         PRE_BUDGET_STOP_EVALUATION_CODE}
 PRIOR_RUNTIME_CODES = {PRE_CODE_COMPAT_CODE, PRE_LIFECYCLE_CODE, PRE_QUEUE_FAILURE_CODE,
                        PRE_CACHE_GUARD_CODE, PRE_NONBLOCKING_RETRY_CODE, PRE_TEST_PARALLEL_CODE,
                        PRE_FIT_RESILIENCE_CODE, PRE_VARIANT_ROOT_CODE, PRE_DATASET_CODE,
@@ -271,7 +273,7 @@ def protocol(root):
                         raise ValueError(f"frozen contract changed: {dataset_path}")
                 else:
                     base.bind(dataset_path, dataset_receipt)
-                if core.fingerprint(current) not in PRIOR_RUNTIME_CODES - {PRE_CHECKPOINT_RETENTION_CODE}:
+                if core.fingerprint(current) not in PRIOR_RUNTIME_CODES - {PRE_CHECKPOINT_RETENTION_CODE, PRE_BUDGET_STOP_EVALUATION_CODE}:
                     recovery_path = root / "shared-recovery-runtime.json"
                     recovery_receipt = {
                         "schema": "mopps-shared-recovery-runtime/v1",
@@ -286,18 +288,28 @@ def protocol(root):
                         previous_code = previous.get("runtime_code_hashes")
                         if (previous != recovery_receipt and
                                 (previous != {**recovery_receipt, "runtime_code_hashes": previous_code}
-                                 or core.fingerprint(previous_code) != PRE_CHECKPOINT_RETENTION_CODE)):
+                                 or core.fingerprint(previous_code) not in {PRE_CHECKPOINT_RETENTION_CODE, PRE_BUDGET_STOP_EVALUATION_CODE})):
                             raise ValueError(f"frozen contract changed: {recovery_path}")
                     else:
                         base.bind(recovery_path, recovery_receipt)
                     if core.fingerprint(current) != PRE_CHECKPOINT_RETENTION_CODE:
-                        base.bind(root / "checkpoint-retention-runtime.json", {
+                        retention_path = root / "checkpoint-retention-runtime.json"
+                        switch.bind_reviewed_runtime_receipt(retention_path, {
                             "schema": "mopps-checkpoint-retention-runtime/v1",
                             "protocol_sha256": base.digest(root / "mopps.json"),
                             "shared_recovery_runtime_sha256": base.digest(recovery_path), "runtime_code_hashes": current,
                             "change": "shared checkpoint retention validates older checkpoint contracts and never prunes the newly committed checkpoint",
                             "cost_policy": "preserve all policies, results, costs, choices and budgets; no MoPPS selector or optimizer change",
-                        })
+                        }, {PRE_BUDGET_STOP_EVALUATION_CODE})
+                        if core.fingerprint(current) != PRE_BUDGET_STOP_EVALUATION_CODE:
+                            base.bind(root / "budget-stop-evaluation-runtime.json", {
+                                "schema": "mopps-budget-stop-evaluation-runtime/v1",
+                                "protocol_sha256": base.digest(root / "mopps.json"),
+                                "checkpoint_retention_runtime_sha256": base.digest(retention_path),
+                                "runtime_code_hashes": current,
+                                "change": "shared Switch completed-policy evaluation resume only; MoPPS selector and optimizer unchanged",
+                                "cost_policy": "preserve all recorded costs, policies, results, choices and budgets; no refunds or retraining",
+                            })
     return p
 
 

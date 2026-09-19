@@ -123,7 +123,7 @@ def test_non_mbpp_launch_behavior_is_unchanged(launcher):
     assert Path(env["INNER_CAPTURE"]).exists() and not Path(env["AUDIT_CAPTURE"]).exists()
 
 
-@pytest.mark.parametrize("suite", ["quality", "difficulty"])
+@pytest.mark.parametrize("suite", ["quality", "difficulty", "long"])
 def test_new_sibling_root_can_prepare_from_audited_existing_prefix_source(launcher, suite):
     _, work, parent, env = launcher
     target = work / f"runs/selection-switch-mbpp-{suite}-v1"

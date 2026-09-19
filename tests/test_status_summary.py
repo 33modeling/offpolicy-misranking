@@ -16,6 +16,7 @@ SPEC.loader.exec_module(summary)
     ('selection-switch-mbpp-v1', 'fresh'),
     ('selection-switch-mbpp-quality-v1', 'quality'),
     ('selection-switch-mbpp-difficulty-v1', 'difficulty'),
+    ('selection-switch-mbpp-long-v1', 'long'),
 ])
 def test_known_mbpp_root_names_have_full_distinct_fallback_labels(name, key):
     label = summary.MBPP_SUITE_LABELS[key]
@@ -51,6 +52,15 @@ def test_wrong_dataset_does_not_claim_a_mbpp_protocol():
 def test_unregistered_explicit_protocol_does_not_inherit_known_root_label():
     root = 'selection-switch-mbpp-v1'
     assert summary.mbpp_suite_label(root, {'selector': 'difficulty', 'accounting': 'matched'}) == root
+
+
+def test_long_budget_is_distinct_from_base_on_policy_even_at_a_custom_root():
+    protocol = {'dataset': 'mbpp', 'selector': 'fresh_r', 'accounting': 'budget',
+                'gate': 'final', 'budget_gpu_seconds': 87120}
+    assert summary.mbpp_suite_label('/saved/custom-long', protocol) == 'On-policy · 장시간 예산'
+    assert summary.suite_label('/saved/custom-long', protocol) == 'MBPP On-policy · 장시간 예산'
+    protocol['budget_gpu_seconds'] = 28380
+    assert summary.mbpp_suite_label('/saved/custom-base', protocol) == 'On-policy · 선택비용 포함'
 
 
 def test_other_experiment_suite_labels_remain_unchanged():

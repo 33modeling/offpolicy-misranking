@@ -62,19 +62,30 @@ a separate common reporting budget. Record actual completed updates and all
 diagnostic/scoring/training/retry charges. Preserve unfavorable and failed
 conditions rather than dropping them from the report.
 
-The MBPP implementation names its three registered suites
-**On-policy · 선택비용 포함** (`fresh`: `fresh_r` / `budget` / `final`),
-**On-policy · 선택비용 별도** (`quality`: `fresh_r` / `matched` / `convergence`), and
-**Difficulty · 선택비용 포함** (`difficulty`: `difficulty` / `budget` / `convergence`),
-where the triples are selector/accounting/gate. The first two have the same
-selector, not two different gradient methods. In the separate-cost suite,
-selection is recorded on the `reporting` ledger outside the diagnostic/training
-cap and still included in total actual GPU cost; evaluation is separately
-reported for every suite. Cost accounting and gate criterion both differ.
-These are 48 separate continuation-training branches per suite (18 development
-plus 30 held-out), 144 across all three; sharing prefixes does not turn them
-into repeated evaluations of the same trained model. CLI keys, file paths and
-frozen fields are unchanged; see [the MBPP run guide](MBPP_SELECTION_RUN.md).
+The main MBPP protocol is **On-policy · 선택비용 별도** (`quality`:
+`fresh_r` / `matched` / `convergence`, or selector/accounting/gate). It applies
+the manuscript's **Separating learning quality from selection cost** design:
+selection is metered separately on the reporting ledger, outside a common
+diagnostic/training allocation, so scoring alone does not shorten selected-data
+training. Equal allocation does not promise equal completed updates or equal
+total GPU cost. Its convergence label still charges separately recorded selection
+in random-training update units; three intermediate checkpoints use four responses
+per question. This is a different accounting protocol from the MATH total-budget
+comparison, not evidence obtained by substituting a MATH budget number.
+
+The existing quality root, trained checkpoints and validated results are reused.
+The main plan is **48 continuations: 18 development plus 30 held-out** from the
+certified MBPP prefix states. Report Full selection / Full random / Gate policy
+final held-out reward, completed updates and selection/diagnosis/training/evaluation
+GPU costs separately, retaining the additional diagnostic-paid controls.
+Their sum measures actual total compute; a learning-quality gain alone is not
+a total-cost benefit or a test of a direct on-policy-to-difficulty switch.
+
+Older `fresh`, `difficulty` and `long` roots remain observable and explicitly
+runnable but are not scheduled by the default `all` request. Nothing deletes
+or renames their files or kills their in-flight work. Existing keys and frozen
+contracts are preserved; see [the MBPP run guide](MBPP_SELECTION_RUN.md).
+This scope update does not establish new GPU results.
 Budget exhaustion without a valid evaluated result is reported as incomplete,
 never converted to reward zero or `DONE`. Retain its actual costs and explain
 the missing result instead of treating it as a measured negative reward.

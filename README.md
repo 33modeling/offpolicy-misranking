@@ -7,19 +7,26 @@ entered through the canonical runner.
 ## MBPP Selection And Switching
 
 Run `bash scripts/run_mbpp_experiments.sh` on every allocated node, including
-replacements. The three MBPP suites are **On-policy · 선택비용 포함** (`fresh`),
-**On-policy · 선택비용 별도** (`quality`), and
-**Difficulty · 선택비용 포함** (`difficulty`). They share the original node
-controller's recovery, watchdog, and lease-based queue. Both on-policy suites
-use the same on-policy gradient selector, computed under the current policy
-(`selector=fresh_r`); `quality`
-changes cost accounting and the gate criterion, not the selector. Selection
-cost recorded separately remains in total actual GPU cost; evaluation costs
-are separately reported in every suite. CLI keys and saved paths are unchanged.
+replacements. The default MBPP experiment is now the existing
+**On-policy · 선택비용 별도** (`quality`) condition: on-policy selection with
+`accounting=matched` and `gate=convergence`. It applies the paper's
+“Separating learning quality from selection cost” protocol: selection is metered
+outside the common diagnostic/training allocation, not treated as free.
+Report selection, diagnosis, training and evaluation GPU costs separately;
+their sum is actual total compute, which is not constrained to be equal across arms.
+Existing quality checkpoints and results are reused subject to validation.
+The older `fresh`, `difficulty` and `long` variants require explicit execution;
+their saved work and active-node evidence remain visible without deleting or
+renaming roots. Updating the queue does not kill in-flight work or prove remote
+controllers have changed scope. The controller retains its recovery, watchdog
+and lease-based queue.
 A node ownership guard rejects duplicate launches and reaps only its own
 children after a crash; a busy lock does not trigger a node-wide cleanup.
-The variants share MBPP prefixes and evaluation questions, but train separate
-continuations: 48 per suite, 144 total, not three evaluations of the same run.
+The main experiment reuses certified MBPP prefixes and evaluation questions:
+48 planned continuations (18 development, 30 held-out), not a new copy of
+previous quality training. Report Full selection / Full random / Gate policy
+final held-out reward, completed updates and phase-level GPU costs. No new
+GPU outcomes are established by this queue update.
 A budget-exhausted branch without a valid evaluated result stays incomplete;
 do not substitute reward zero or mark it `DONE`.
 `restart`, `stop`, `plan`, `check`, `status`, `progress`, `results`, and `why` are available.

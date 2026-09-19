@@ -39,12 +39,11 @@ def test_mbpp_progress_shows_only_mbpp_roots_including_unprepared_suites(tmp_pat
     labels = [line.split(":", 1)[0] for line in out.splitlines() if ":" in line and not line.startswith(" ")]
     assert "MBPP On-policy · 선택비용 포함" in labels
     assert "MBPP On-policy · 선택비용 별도" in labels
-    assert "MBPP Difficulty · 선택비용 포함" in labels, out
-    assert "MBPP Difficulty · 선택비용 포함: not prepared" in out
+    assert "MBPP Difficulty · 선택비용 포함" not in labels, out
     assert "on-policy" not in labels, out            # math suite must not appear
     assert "difficulty" not in labels, out           # math difficulty suite must not appear
     screen = out[out.index("PROGRESS"):]          # launcher banner lines carry root paths; judge the screen only
-    assert screen.index("MBPP On-policy · 선택비용 포함:") < screen.index("MBPP On-policy · 선택비용 별도:") < screen.index("MBPP Difficulty · 선택비용 포함:")
+    assert screen.index("MBPP On-policy · 선택비용 별도:") < screen.index("MBPP On-policy · 선택비용 포함:")
     assert "MBPP roots only" in screen
 
 

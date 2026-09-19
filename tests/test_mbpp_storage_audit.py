@@ -12,6 +12,34 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/mbpp_storage_audit.py"
 
 
+@pytest.mark.parametrize("automatic", [False, True])
+def test_default_storage_check_separates_run_targets_from_retained_history(tmp_path, automatic):
+    import os
+    import shutil
+
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    for name in ("check_mbpp_storage.sh", "_mbpp_experiments.sh"):
+        shutil.copy2(SCRIPT.parent / name, scripts / name)
+    (scripts / "mbpp_storage_audit.py").write_text("import json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+    work = tmp_path / "work"
+    names = ("selection-switch-mbpp-quality-v1", "selection-switch-mbpp-v1",
+             "selection-switch-mbpp-difficulty-v1", "selection-switch-mbpp-long-v1")
+    for name in names:
+        (work / "runs" / name).mkdir(parents=True)
+    env = {key: value for key, value in os.environ.items() if not key.startswith("SWITCH_")}
+    env.update(OM_WORK=str(work), SWITCH_PYTHON=sys.executable,
+               MBPP_STORAGE_AUDIT_AUTOMATIC="1" if automatic else "0")
+    result = subprocess.run(["bash", "scripts/check_mbpp_storage.sh", "all"], cwd=repo,
+                            env=env, capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == 0, result.stderr
+    args = json.loads(result.stdout)
+    roots = [Path(args[i + 1]).name for i, arg in enumerate(args) if arg == "--root"]
+    assert roots == list(names[:2] if automatic else names)
+    assert ("--report-on-error" in args) == automatic
+
+
 @pytest.fixture
 def auditor():
     spec = importlib.util.spec_from_file_location("mbpp_storage_audit_test", SCRIPT)

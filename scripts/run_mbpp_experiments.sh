@@ -7,10 +7,9 @@
 # 'git pull' with an in-place restart, and a hold that ends the moment a branch
 # becomes claimable. Nothing here loops, holds, or decides when to stop.
 #
-# The three conditions are one queue, not three stages. The scoring-separate
-# on-policy and difficulty conditions reuse the primary on-policy prefixes, so
-# they stay unclaimable until those prefixes exist; a node takes other work instead of
-# waiting for a stage to end. Every node runs the same command at the same time,
+# The default queue is the existing matched/convergence MBPP condition (quality),
+# with 48 continuations. It reuses the primary on-policy prefixes; missing prefixes
+# do not authorize starting the legacy fresh continuation suite. Every node runs the same command,
 # and a node that loses its GPUs rejoins with the same command.
 #
 #   bash scripts/run_mbpp_experiments.sh            this node joins the MBPP queue
@@ -31,12 +30,14 @@ if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then SUITE=$1; shift; fi
 STATUS_ARGS=()
 STATUS_WATCH=
 usage() {
-  echo 'usage: bash scripts/run_mbpp_experiments.sh [run|restart|stop|plan|check|status|progress|results|saved|why] [all|fresh|quality|difficulty]'
-  echo '       bash scripts/run_mbpp_experiments.sh status [all|fresh|quality|difficulty] [--all] [--watch [SECONDS]]'
-  echo '       compatibility keys: fresh = On-policy · 선택비용 포함; quality = On-policy · 선택비용 별도; difficulty = Difficulty · 선택비용 포함'
+  echo 'usage: bash scripts/run_mbpp_experiments.sh [run|restart|stop|plan|check|status|progress|results|saved|why] [all|fresh|difficulty|long|quality]'
+  echo '       bash scripts/run_mbpp_experiments.sh status [all|fresh|difficulty|long|quality] [--all] [--watch [SECONDS]]'
+  echo '       default all = On-policy · 선택비용 별도; matched/convergence; 48 continuations'
+  echo '       selection cost is recorded separately; existing training allocation is unchanged'
+  echo '       fresh, difficulty, long are explicit legacy commands; saved work remains visible'
 }
 case "$MODE" in run|restart|stop|plan|check|status|progress|results|saved|why) ;; -h|--help) usage; exit 0 ;; *) usage; exit 2 ;; esac
-case "$SUITE" in all|fresh|quality|difficulty) ;; *) usage; exit 2 ;; esac
+case "$SUITE" in all|fresh|quality|difficulty|long) ;; *) usage; exit 2 ;; esac
 while [ "$#" -gt 0 ]; do
   [ "$MODE" = status ] || { usage; exit 2; }
   case "$1" in
@@ -66,7 +67,7 @@ if [ "$MODE" = why ] || [ "$MODE" = saved ]; then
   PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
   [ -x "$PY" ] || PY=python3
   ROOT_ARGS=()
-  for root in "${MBPP_ROOTS[@]}"; do ROOT_ARGS+=(--root "$root"); done
+  while IFS= read -r root; do ROOT_ARGS+=(--root "$root"); done < <(mbpp_observation_roots)
   [ "$MODE" != saved ] || ROOT_ARGS+=(--storage)
   exec env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
     "$PY" scripts/mbpp_failure_summary.py --work "$OM_WORK" "${ROOT_ARGS[@]}"
@@ -79,6 +80,11 @@ if [ "$MODE" = status ]; then
   [ -x "$PY" ] || PY=python3
   ROOT_ARGS=()
   for root in "${MBPP_ROOTS[@]}"; do ROOT_ARGS+=(--root "$root"); done
+  if [ "$SUITE" = all ]; then
+    while IFS= read -r root; do
+      [ "$root" = "$SWITCH_MBPP_QUALITY_ROOT" ] || ROOT_ARGS+=(--retained-root "$root")
+    done < <(mbpp_observation_roots)
+  fi
   while :; do
     if [ -n "$STATUS_WATCH" ] && [ -t 1 ]; then printf '\033[2J\033[H'; fi
     rc=0
@@ -99,16 +105,22 @@ for root in "${MBPP_ROOTS[@]}"; do
     "$(mbpp_suite_label "$MBPP_SUITE")" "$(mbpp_selector_label "$MBPP_SELECTOR")" \
     "$(mbpp_accounting_label "$MBPP_ACCOUNTING")" "$(mbpp_gate_label "$MBPP_GATE")" "$MBPP_ROOT"
   [ -z "$MBPP_PREFIX" ] || printf '  shared prefixes and evaluation=%s\n' "$MBPP_PREFIX"
+  [ -z "$MBPP_BUDGET" ] || printf '  continuation budget=%s GPU-seconds (same as MATH long)\n' "$MBPP_BUDGET"
 done
+if [ "$SUITE" = all ]; then
+  echo '[mbpp] 기본 실행: On-policy · 선택비용 별도, 48개. 다른 조건의 결과·노드 기록은 보존하며 자동 재실행하지 않습니다.'
+  echo '[mbpp] an already-running old controller changes queue only after its active worker returns and the launcher reloads; no worker is interrupted'
+fi
 
 if [ "$MODE" = plan ]; then
   echo '[plan] seeds 0..4; on-policy-selected states at 25/50/100 updates; 18 development + 30 held-out continuations per suite'
   echo '[plan] MBPP execution rewards; final evaluation K=8; convergence curves: 3 checkpoints, K=4'
   echo '[plan] evaluation excludes every source train/validation prompt; available count checked before launch'
   echo "[plan] ${#MBPP_SUITES[@]} condition(s), $((48 * ${#MBPP_SUITES[@]})) continuation branches; shared prefix preparation and evaluation are additional work"
-  echo '[plan] one queue over the conditions listed above, in that order; the two on-policy conditions use the SAME selector, not different methods'
-  echo '[plan] scoring-separate on-policy and difficulty reuse all fifteen certified prefixes; their continuation training is separate'
-  echo '[plan] scoring-separate costs still count toward total GPU use; evaluation is recorded separately in every condition'
+  echo '[plan] default: On-policy · 선택비용 별도; matched accounting, convergence gate; existing frozen training allocation is retained'
+  echo '[plan] selection GPU cost is recorded on reporting, outside diagnostic+training allocation, and included in actual total cost; evaluation is also reported separately'
+  echo '[plan] all fifteen certified MBPP prefixes are reused; missing prefixes wait for separate preparation, never automatic legacy fresh continuation training'
+  echo '[plan] fresh/difficulty/long require explicit selection; their policies, results and ledgers are preserved; explicit long retains its 87120 GPU-second cap'
   echo '[plan] no files written or GPU work started; use check to validate local inputs'
   exit 0
 fi
@@ -123,7 +135,7 @@ fi
 # Results are exported per suite root; status above is one consolidated view.
 if [ "$MODE" = results ]; then
   failed=0
-  for root in "${MBPP_ROOTS[@]}"; do
+  while IFS= read -r root; do
     mbpp_queue_settings "$root"
     echo "[mbpp:$(mbpp_suite_label "$MBPP_SUITE")] results"
     rc=0
@@ -132,7 +144,7 @@ if [ "$MODE" = results ]; then
       SWITCH_ROOT="$MBPP_ROOT" EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
       bash scripts/run_selection_switch.sh results || rc=$?
     [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_suite_label "$MBPP_SUITE")] results rc=$rc"; failed=1; }
-  done
+  done < <(mbpp_observation_roots)
   exit "$failed"
 fi
 

@@ -43,10 +43,14 @@ def inputs(tmp_path):
     write_json(reference, {"step_seconds": 72.0})
     return SimpleNamespace(pool=pool, manifest=manifest, matrix=matrix,
                            fresh_root=tmp_path / "fresh", quality_root=tmp_path / "quality",
-                           difficulty_root=tmp_path / "difficulty", suite="all")
+                           difficulty_root=tmp_path / "difficulty", long_root=tmp_path / "long", suite="all")
 
 
 def test_preflight_is_read_only_and_excludes_every_seed(inputs, capsys):
+    frozen_fresh(inputs)
+    for seed in range(5):
+        for step in (25, 50, 100):
+            write_json(inputs.fresh_root / f"prefixes/seed-{seed}/prefix-{step}.json", {})
     before = {str(p): p.read_bytes() for p in inputs.pool.parent.rglob("*") if p.is_file()}
     preflight.check(inputs)
     assert "10 disjoint questions" in capsys.readouterr().out
@@ -95,8 +99,14 @@ def frozen_fresh(inputs):
     return p
 
 
-def test_variant_requires_all_shared_prefixes(inputs):
-    inputs.suite = "difficulty"
+@pytest.mark.parametrize("suite,selector,accounting,gate", [
+    ("difficulty", "difficulty", "budget", "convergence"),
+    ("long", "fresh_r", "budget", "final"),
+    ("quality", "fresh_r", "matched", "convergence"),
+    ("all", "fresh_r", "matched", "convergence"),
+])
+def test_variant_requires_all_shared_prefixes(inputs, suite, selector, accounting, gate):
+    inputs.suite = suite
     with pytest.raises(ValueError, match="shared MBPP prefixes/evaluation are not prepared"):
         preflight.check(inputs)
     p = frozen_fresh(inputs)
@@ -106,11 +116,15 @@ def test_variant_requires_all_shared_prefixes(inputs):
         for step in (25, 50, 100):
             write_json(inputs.fresh_root / f"prefixes/seed-{seed}/prefix-{step}.json", {})
     preflight.check(inputs)
-    p.update(selector="difficulty", gate="convergence", prefix_source={"root": str(inputs.fresh_root)})
-    write_json(inputs.difficulty_root / "switch.json", p)
+    p.update(selector=selector, accounting=accounting, gate=gate,
+             prefix_source={"root": str(inputs.fresh_root)})
+    if suite == "long":
+        p["budget_gpu_seconds"] = 87120
+    root = getattr(inputs, f"{'quality' if suite == 'all' else suite}_root")
+    write_json(root / "switch.json", p)
     preflight.check(inputs)
     p["prefix_source"]["root"] = "/some/math/root"
-    write_json(inputs.difficulty_root / "switch.json", p)
+    write_json(root / "switch.json", p)
     with pytest.raises(ValueError, match="reuse the MBPP on-policy"):
         preflight.check(inputs)
 
@@ -141,8 +155,9 @@ def launcher(tmp_path):
     (venv / "bin").mkdir(parents=True)
     (venv / "bin/python").symlink_to(sys.executable)
     (scripts / "check_mbpp_experiments.py").write_text(
-        'import os\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
-        'open(os.environ["CHECK_LOG"], "a").write("checked\\n")\n')
+        'import json, os, sys\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'open(os.environ["CHECK_LOG"], "a").write("checked\\n")\n'
+        'open(os.environ["CHECK_ARGS"], "a").write(json.dumps(sys.argv[1:]) + "\\n")\n')
     (scripts / "check_mbpp_storage.sh").write_text(
         '#!/usr/bin/env bash\n"$TEST_PYTHON" - "$@" <<\'PY\'\n'
         'import json, os, sys\n'
@@ -161,6 +176,7 @@ def launcher(tmp_path):
         'import argparse, json, os, sys\n'
         'p = argparse.ArgumentParser()\n'
         'p.add_argument("--root", action="append", required=True)\n'
+        'p.add_argument("--retained-root", action="append", default=[])\n'
         'p.add_argument("--all", action="store_true")\n'
         'a = p.parse_args()\n'
         'assert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
@@ -175,13 +191,14 @@ def launcher(tmp_path):
     env = {**os.environ, "OM_WORK": str(tmp_path / "work"), "VENV_DIR": str(venv),
            "TEST_PYTHON": sys.executable, "CALLS": str(tmp_path / "calls.jsonl"),
            "AUDIT_LOG": str(tmp_path / "storage-audits.jsonl"),
-           "CHECK_LOG": str(tmp_path / "checks"), "SWITCH_ROOT": "/wrong/math",
+           "CHECK_LOG": str(tmp_path / "checks"), "CHECK_ARGS": str(tmp_path / "check-args.jsonl"),
+           "SWITCH_ROOT": "/wrong/math",
            "SWITCH_PREFIX_SOURCE": "/wrong/math", "SWITCH_DATASET": "math500",
            "SWITCH_ONLY_SEEDS": "3,4", "SWITCH_ONLY_ARMS": "random_full",
            "OM_NODE_LOCK_HELD": "1", "SWITCH_BUDGET_GPU_SECONDS": "29040"}
     def run(*args, **overrides):
         return subprocess.run(["bash", str(scripts / "run_mbpp_experiments.sh"), *args],
-                              cwd=tmp_path, env={**env, **overrides}, text=True, capture_output=True, timeout=10)
+                              cwd=tmp_path, env={**env, **overrides}, text=True, capture_output=True, timeout=10, check=False)
     return run, env
 
 
@@ -194,7 +211,7 @@ def test_lifecycle_is_delegated_without_input_preflight_after_required_storage_a
     assert len(calls) == 1 and calls[0]["args"] == [mode]
     e = calls[0]["env"]
     assert e["EXPERIMENTS_MBPP_SUITE"] == "all"
-    assert e["SWITCH_ROOT"] == e["SWITCH_MBPP_ROOT"]
+    assert e["SWITCH_ROOT"] == e["SWITCH_MBPP_QUALITY_ROOT"]
     assert e["EXPERIMENTS_HELP_SIBLINGS"] == "1" and e["EXPERIMENTS_SKIP_MOPPS"] == "1"
     assert all(e[key] == "1" for key in ("EXPERIMENTS_KEEPALIVE", "EXPERIMENTS_WATCHDOG", "EXPERIMENTS_AUTO_PULL"))
     assert all(key not in e for key in ("SWITCH_PREFIX_SOURCE", "SWITCH_ONLY_SEEDS", "SWITCH_ONLY_ARMS", "OM_NODE_LOCK_HELD", "SWITCH_BUDGET_GPU_SECONDS"))
@@ -236,10 +253,11 @@ def test_readers_do_not_check_or_start_training(launcher, mode):
 
 
 @pytest.mark.parametrize("suite,expected", [
-    ("all", ["selection-switch-mbpp-v1", "selection-switch-mbpp-quality-v1", "selection-switch-mbpp-difficulty-v1"]),
+    ("all", ["selection-switch-mbpp-quality-v1"]),
     ("fresh", ["selection-switch-mbpp-v1"]),
     ("quality", ["selection-switch-mbpp-quality-v1"]),
     ("difficulty", ["selection-switch-mbpp-difficulty-v1"]),
+    ("long", ["selection-switch-mbpp-long-v1"]),
 ])
 def test_status_routes_exact_mbpp_suite_roots_despite_inherited_math_environment(launcher, suite, expected):
     run, env = launcher
@@ -262,9 +280,7 @@ def test_status_routes_exact_mbpp_suite_roots_despite_inherited_math_environment
 
 def test_status_keeps_existing_custom_suite_roots_without_renaming_on_policy_storage(launcher):
     run, env = launcher
-    paths = {"SWITCH_MBPP_ROOT": "/existing/saved-fresh-r",
-             "SWITCH_MBPP_QUALITY_ROOT": "/existing/saved-quality",
-             "SWITCH_MBPP_DIFFICULTY_ROOT": "/existing/saved-difficulty"}
+    paths = {"SWITCH_MBPP_QUALITY_ROOT": "/existing/saved-quality"}
     result = run("status", **paths)
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
@@ -280,9 +296,9 @@ def test_status_failure_for_a_root_does_not_hide_other_suite_roots(launcher):
     result = run("status", FAKE_EXIT="2")
     assert result.returncode == 1
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
-    assert len(calls) == 3
-    assert len({call["root"] for call in calls}) == 3
-    assert result.stdout.count("ERROR ") == 3
+    assert len(calls) == 1
+    assert len({call["root"] for call in calls}) == 1
+    assert result.stdout.count("ERROR ") == 1
     assert not Path(env["AUDIT_LOG"]).exists()
 
 
@@ -295,8 +311,8 @@ def test_why_writes_one_small_report_without_training_or_full_exports(launcher):
     reports = list((Path(env['OM_WORK']) / 'reports/selection-switch').glob('*.txt'))
     assert len(reports) == 1 and reports[0].stat().st_size <= 16 * 1024
     assert result.stdout.count('[saved]') == 1
-    assert all(name in reports[0].read_text() for name in
-               ('selection-switch-mbpp-v1', 'selection-switch-mbpp-quality-v1', 'selection-switch-mbpp-difficulty-v1'))
+    assert 'selection-switch-mbpp-quality-v1' in reports[0].read_text()
+    assert 'selection-switch-mbpp-long-v1' not in reports[0].read_text()
 
 
 def test_saved_command_is_read_only_small_and_does_not_start_controller(launcher):
@@ -335,19 +351,158 @@ def test_plan_and_check_do_not_launch(launcher):
     assert not Path(env["CALLS"]).exists()
 
 
+def test_long_check_receives_its_root_and_explicit_suite(launcher):
+    run, env = launcher
+    result = run("check", "long")
+    assert result.returncode == 0, result.stdout + result.stderr
+    arguments = json.loads(Path(env["CHECK_ARGS"]).read_text().splitlines()[-1])
+    assert arguments[arguments.index("--long-root") + 1] == str(Path(env["OM_WORK"]) / "runs/selection-switch-mbpp-long-v1")
+    assert arguments[arguments.index("--suite") + 1] == "long"
+    assert not Path(env["CALLS"]).exists()
+
+
+def test_default_preflight_does_not_reinterpret_or_modify_legacy_variants(inputs):
+    frozen_fresh(inputs)
+    for seed in range(5):
+        for step in (25, 50, 100):
+            write_json(inputs.fresh_root / f"prefixes/seed-{seed}/prefix-{step}.json", {})
+    for root in (inputs.difficulty_root, inputs.long_root):
+        write_json(root / "switch.json", {"dataset": "historical-do-not-relabel"})
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+              for path in inputs.pool.parent.rglob("*") if path.is_file()}
+    preflight.check(inputs)
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                      for path in inputs.pool.parent.rglob("*") if path.is_file()}
+
+
+def test_default_preflight_checks_existing_quality_without_changing_its_budget(inputs):
+    protocol = frozen_fresh(inputs)
+    for seed in range(5):
+        for step in (25, 50, 100):
+            write_json(inputs.fresh_root / f"prefixes/seed-{seed}/prefix-{step}.json", {})
+    protocol.update(accounting="matched", gate="convergence", budget_gpu_seconds=12345,
+                    prefix_source={"root": str(inputs.fresh_root)})
+    path = inputs.quality_root / "switch.json"
+    write_json(path, protocol)
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    preflight.check(inputs)
+    assert before == (path.read_bytes(), path.stat().st_mtime_ns)
+    protocol["accounting"] = "budget"
+    write_json(path, protocol)
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    with pytest.raises(ValueError, match="different protocol"):
+        preflight.check(inputs)
+    assert before == (path.read_bytes(), path.stat().st_mtime_ns)
+
+
+@pytest.mark.parametrize("cap", [0, 29040, 87121, True, "87120"])
+def test_long_preflight_rejects_wrong_frozen_cap_without_rewriting_it(inputs, cap):
+    inputs.suite = "long"
+    protocol = frozen_fresh(inputs)
+    for seed in range(5):
+        for step in (25, 50, 100):
+            write_json(inputs.fresh_root / f"prefixes/seed-{seed}/prefix-{step}.json", {})
+    protocol.update(prefix_source={"root": str(inputs.fresh_root)}, budget_gpu_seconds=cap)
+    write_json(inputs.long_root / "switch.json", protocol)
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+              for path in inputs.pool.parent.rglob("*") if path.is_file()}
+    with pytest.raises(ValueError, match="expected MATH long cap 87120"):
+        preflight.check(inputs)
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                      for path in inputs.pool.parent.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("name", ["selection-switch-mbpp-v1", "selection-switch-mbpp-difficulty-v1", "selection-switch-mbpp-long-v1"])
+def test_status_retains_existing_variants_outside_the_default_quality_root(launcher, name):
+    run, env = launcher
+    root = Path(env["OM_WORK"]) / "runs" / name
+    marker = root / "policy/checkpoint-000150/optimizer.pt"
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(b"preserved historical optimizer")
+    before = marker.read_bytes(), marker.stat().st_mtime_ns
+    result = run("status")
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
+    assert len(calls) == 1 and calls[0]["root"].endswith("selection-switch-mbpp-quality-v1")
+    arguments = calls[0]["dashboard_argv"]
+    assert arguments[arguments.index("--retained-root") + 1] == str(root)
+    assert before == (marker.read_bytes(), marker.stat().st_mtime_ns)
+
+
+def test_default_results_reads_existing_variants_without_dispatching_training(launcher):
+    run, env = launcher
+    root_names = ("selection-switch-mbpp-quality-v1", "selection-switch-mbpp-v1",
+                  "selection-switch-mbpp-difficulty-v1", "selection-switch-mbpp-long-v1")
+    for name in root_names[1:]:
+        write_json(Path(env["OM_WORK"]) / "runs" / name / "switch.json", {"keep": name})
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+              for path in Path(env["OM_WORK"]).rglob("*") if path.is_file()}
+    result = run("results")
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
+    assert [Path(call["env"]["SWITCH_ROOT"]).name for call in calls] == list(root_names)
+    assert all(call["args"] == ["results"] for call in calls)
+    assert not Path(env["CHECK_LOG"]).exists()
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                      for path in Path(env["OM_WORK"]).rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("suite", ["fresh", "difficulty", "long", "quality"])
+def test_mbpp_profile_budget_is_local_and_math_variant_settings_match(launcher, suite):
+    _, env = launcher
+    repo = Path(env["CHECK_LOG"]).parent / "repo with spaces"
+    fresh = Path(env["OM_WORK"]) / "runs/selection-switch-mbpp-v1"
+    write_json(fresh / "switch.json", {})
+    for seed in range(5):
+        for step in (25, 50, 100):
+            write_json(fresh / f"prefixes/seed-{seed}/prefix-{step}.json", {})
+    script = ('source scripts/_mbpp_experiments.sh\nmbpp_queue_init\n'
+              'inner() { bash "$@"; }\nmbpp_queue_run "$1"\n')
+    result = subprocess.run(["bash", "-c", script, "profile-probe", suite], cwd=repo,
+                            env={**env, "EXPERIMENTS_MBPP_SUITE": suite, "SWITCH_BUDGET_GPU_SECONDS": "999999"},
+                            capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    passed = json.loads(Path(env["CALLS"]).read_text().splitlines()[-1])["env"]
+    assert passed["SWITCH_DATASET"] == "mbpp"
+    assert passed.get("SWITCH_BUDGET_GPU_SECONDS") == ("87120" if suite == "long" else None)
+    expected = {"fresh": ("fresh_r", "budget", "final"),
+                "difficulty": ("difficulty", "budget", "convergence"),
+                "long": ("fresh_r", "budget", "final"),
+                "quality": ("fresh_r", "matched", "convergence")}[suite]
+    assert tuple(passed[key] for key in ("SWITCH_SELECTOR", "SWITCH_ACCOUNTING", "SWITCH_GATE")) == expected
+    assert passed["SWITCH_PREFIX_SOURCE"] == ("" if suite == "fresh" else str(fresh))
+    if suite not in ("difficulty", "long"):
+        return
+    wrapper = f"run_switch_{suite}.sh"
+    shutil.copy(ROOT / "scripts" / wrapper, repo / "scripts" / wrapper)
+    math_env = {key: value for key, value in env.items()
+                if not key.startswith("SWITCH_") and key != "EXPERIMENTS_MBPP_SUITE"}
+    result = subprocess.run(["bash", f"scripts/{wrapper}", "status"], cwd=repo, env=math_env,
+                            capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    math = json.loads(Path(env["CALLS"]).read_text().splitlines()[-1])["env"]
+    assert tuple(math.get(key, default) for key, default in (
+        ("SWITCH_SELECTOR", "fresh_r"), ("SWITCH_ACCOUNTING", "budget"), ("SWITCH_GATE", "final"))) == expected
+    assert math.get("SWITCH_BUDGET_GPU_SECONDS") == passed.get("SWITCH_BUDGET_GPU_SECONDS")
+
+
 def test_plan_distinguishes_selector_from_accounting_and_preserves_legacy_keys(launcher):
     from _status_summary import MBPP_SUITE_LABELS
 
     run, env = launcher
     result = run("plan")
     assert result.returncode == 0, result.stderr
-    assert "3 condition(s), 144 continuation branches" in result.stdout
+    assert "1 condition(s), 48 continuation branches" in result.stdout
+    assert "matched accounting, convergence gate" in result.stdout
+    assert "recorded on reporting" in result.stdout
+    assert "existing frozen training allocation is retained" in result.stdout
     expected = {"fresh": ("On-policy", "선택비용 포함", "최종 보상 기준"),
                 "quality": ("On-policy", "선택비용 별도", "비용 보정 학습 효율 기준"),
-                "difficulty": ("Difficulty", "선택비용 포함", "비용 보정 학습 효율 기준")}
+                "difficulty": ("Difficulty", "선택비용 포함", "비용 보정 학습 효율 기준"),
+                "long": ("On-policy", "선택비용 포함", "최종 보상 기준")}
     for key, (selector, accounting, gate) in expected.items():
         header = f"[mbpp:{MBPP_SUITE_LABELS[key]}] selector={selector} accounting={accounting} gate={gate}"
-        assert header in result.stdout
+        assert (header in result.stdout) is (key == "quality")
         selected = run("plan", key)
         assert selected.returncode == 0 and header in selected.stdout
         assert "1 condition(s), 48 continuation branches" in selected.stdout
@@ -360,6 +515,8 @@ def test_plan_distinguishes_selector_from_accounting_and_preserves_legacy_keys(l
     (("plan",), {"MBPP_HOLD_SECONDS": "0"}),
     (("plan",), {"SWITCH_MBPP_ROOT": "/tmp/same", "SWITCH_MBPP_QUALITY_ROOT": "/tmp/same"}),
     (("plan",), {"SWITCH_MBPP_ROOT": "/tmp/parent", "SWITCH_MBPP_QUALITY_ROOT": "/tmp/parent/child"}),
+    (("plan",), {"SWITCH_MBPP_ROOT": "/tmp/same", "SWITCH_MBPP_LONG_ROOT": "/tmp/same"}),
+    (("plan",), {"SWITCH_MBPP_ROOT": "/tmp/parent", "SWITCH_MBPP_LONG_ROOT": "/tmp/parent/child"}),
 ])
 def test_bad_arguments_and_roots_fail_before_launch(launcher, args, overrides):
     run, env = launcher

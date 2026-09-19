@@ -34,6 +34,8 @@ CODE_FILES = ("src/net_gain_gate.py", "src/net_gain_gate_gpu.py", "src/selection
 PRE_CHECKPOINT_RETENTION_CODE = "753e98086c67dfce224c1aa554c5fb37e1b7fc4e4dd8373fb00673fd638691fe"
 PRE_RETENTION_TRAINER = "1560015999552b9481de78b69c58502543656e61216fda41ef210ad666090b42"
 RETENTION_TRAINER = "e53b8eb2b2135ed246ace8f68c9011f8fb8fa442690902575121c680ed45b070"
+PRE_EVALUATION_RESUME_CODE = "63c98f76161b27dba40564593bbeece7affe29977329e8bd5caec856a721fc9d"
+PRE_EVALUATION_RESUME_NET = "fe323c553277d6b5367dd85fd651481a2c982752871a21de3285e9ec7f9722ff"
 
 
 def identity(c):
@@ -68,18 +70,31 @@ def protocol(root):
     current = {name: base.digest(base.ROOT / name) for name in CODE_FILES}
     changed = [name for name, sha in recorded.items() if name not in current or current[name] != sha]
     if changed:
-        if (set(recorded) != set(current) or core.fingerprint(recorded) != PRE_CHECKPOINT_RETENTION_CODE
+        predecessor = {**current, "src/net_gain_gate_gpu.py": PRE_EVALUATION_RESUME_NET}
+        if (set(recorded) != set(current)
+                or core.fingerprint(predecessor) != PRE_EVALUATION_RESUME_CODE
+                or core.fingerprint(recorded) not in {PRE_CHECKPOINT_RETENTION_CODE, PRE_EVALUATION_RESUME_CODE}
                 or current["src/train_policy_grpo.py"] != RETENTION_TRAINER
                 or any(recorded[name] != sha for name, sha in current.items()
                        if name not in {"src/train_policy_grpo.py", "src/net_gain_gate_gpu.py"})):
             raise ValueError(f"frozen experiment code changed: {changed[0]}; preserve the original code for this suite")
         with base.lease(root / ".checkpoint-retention-runtime.lock", blocking=True):
-            base.bind(root / "checkpoint-retention-runtime.json", {
-                "schema": "net-gain-checkpoint-retention-runtime/v1",
+            retention = root / "checkpoint-retention-runtime.json"
+            if core.fingerprint(recorded) == PRE_CHECKPOINT_RETENTION_CODE:
+                base.bind(retention, {
+                    "schema": "net-gain-checkpoint-retention-runtime/v1",
+                    "protocol_sha256": base.digest(root / "net_protocol.json"),
+                    "original_code_hashes": recorded, "runtime_code_hashes": predecessor,
+                    "change": "prune only validated older checkpoints of the same contract; never prune the newly committed checkpoint",
+                    "cost_policy": "preserve all policies, results, costs, choices and budgets; no training or optimizer change",
+                })
+            base.bind(root / "evaluation-resume-runtime.json", {
+                "schema": "net-gain-evaluation-resume-runtime/v1",
                 "protocol_sha256": base.digest(root / "net_protocol.json"),
+                "checkpoint_retention_runtime_sha256": base.digest(retention) if core.fingerprint(recorded) == PRE_CHECKPOINT_RETENTION_CODE else None,
                 "original_code_hashes": recorded, "runtime_code_hashes": current,
-                "change": "prune only validated older checkpoints of the same contract; never prune the newly committed checkpoint",
-                "cost_policy": "preserve all policies, results, costs, choices and budgets; no training or optimizer change",
+                "change": "resume a saved final policy with CPU validation and reporting-only evaluation; no repeated deployment verification charge",
+                "cost_policy": "preserve all previous costs, policies, choices and budgets; no retraining, waivers or synthetic results",
             })
     return value
 
@@ -348,7 +363,10 @@ def run_arm(out, suite, p, arm, devices, env):
         (directory / "failure.json").unlink(missing_ok=True)
         return
     base.spent(directory)
-    if restored_stop:
+    if restored_stop or (directory / "policy/budget_stop.json").is_file():
+        # A stopped training run resumes publication, not another deployment.
+        # Its evaluation is separately metered below. Recharging verification
+        # here could push a valid exactly-at-cap policy over its frozen budget.
         base.verify(out)
     else:
         base.meter(directory, "verify-inputs", c["scope"]["gpu_type"], action=lambda: base.verify(out), ledger="deployment")

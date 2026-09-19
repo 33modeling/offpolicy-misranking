@@ -158,7 +158,7 @@ def test_only_four_display_statuses_full_names_and_evaluation_budget_remarks(six
     before = deepcopy(report)
     output = dashboard.render(report, width=200)
     assert all(name in output for name in ("Selection", "Random", "Full selection", "Full random", "Gate policy"))
-    assert "평가·결과 저장 남음" in output and "예산 소진으로 중단" in output
+    assert "평가·결과 저장 남음" in output and "GPU 시간 한도 도달; 결과 미완료" in output
     assert "Remarks" in output and "WAIT" in output
     assert not re.search(r"\b(?:SEL|RND|FULL-S|FULL-R|DEV|TEST|EVAL|RESUME|FAIL|FAILED|REVIEW|INVALID|SAVING|STALE|BUDGET|RUNNING)\b", output)
     assert report == before
@@ -187,7 +187,7 @@ def test_full_korean_remarks_wrap_without_exceeding_terminal_columns(six_suites)
         output = dashboard.render(report, width=width)
         assert all(dashboard.columns(line) <= width for line in output.splitlines())
         assert len(re.findall(r"^\d\s*/\s*\d+\s", output, re.MULTILINE)) == 30
-    for remark in ("평가·결과 저장 남음", "예산 소진으로 중단"):
+    for remark in ("평가·결과 저장 남음", "GPU 시간 한도 도달; 결과 미완료"):
         wrapped = dashboard.wrap(remark, 8)
         assert "".join(wrapped).replace(" ", "") == remark.replace(" ", "")
         assert all(dashboard.columns(line) <= 8 for line in wrapped)
@@ -280,3 +280,48 @@ def test_repeated_root_is_counted_once_in_summary(six_suites):
     report = dashboard.snapshot([root, root / ".", str(root)], now=now)
     assert len(report["suites"]) == 1
     assert "총 계획 48개 | 완료 확인 21개 | 남음 27개" in dashboard.render(report)
+
+
+def test_retained_quality_workers_remain_visible_without_inflating_new_plan(six_suites):
+    roots, _, now = six_suites
+    base = roots["selection-switch-mbpp-v1"]
+    quality = roots["selection-switch-mbpp-quality-v1"]
+    wanted = [base, base.with_name("selection-switch-mbpp-difficulty-v1"), base.with_name("selection-switch-mbpp-long-v1")]
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in base.parent.rglob("*") if p.is_file()}
+    report = dashboard.snapshot(wanted, retained_roots=[quality], now=now)
+    output = dashboard.render(report, width=200)
+    assert len(report["suites"]) == 3 and len(report["retained_suites"]) == 1
+    assert "총 계획 144개 | 완료 확인 21개 | 남음 123개" in output
+    assert "총 계획 192" not in output
+    assert "FULL STATUS — On-policy · 장시간 예산" in output
+    assert "기본 실행 제외 — 기존 기록 보존" in output and "CURRENT RUN 4" in output
+    assert "On-policy · 선택비용 별도 (기본 실행 제외)" in output
+    for index in range(4):
+        assert f"live-node-{index}" in output
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in base.parent.rglob("*") if p.is_file()}
+
+
+def test_retained_absent_or_already_selected_roots_are_not_double_counted(six_suites):
+    roots, _, now = six_suites
+    base = roots["selection-switch-mbpp-v1"]
+    report = dashboard.snapshot([base], retained_roots=[base, base.with_name("missing")], now=now)
+    assert not report.get("retained_suites")
+    assert "총 계획 48개 | 완료 확인 21개 | 남음 27개" in dashboard.render(report)
+
+
+def test_mbpp_training_comparison_shows_48_and_keeps_old_21_done_visible(six_suites):
+    roots, _, now = six_suites
+    base = roots["selection-switch-mbpp-v1"]
+    quality = roots["selection-switch-mbpp-quality-v1"]
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in base.parent.rglob("*") if p.is_file()}
+    report = dashboard.snapshot([quality], retained_roots=[base], now=now)
+    report['suites'][0]['protocol'].update(accounting='matched', budget_gpu_seconds=28380)
+    output = dashboard.render(report, width=200)
+    assert "총 계획 48개 | 완료 확인 0개 | 남음 48개" in output
+    assert "다른 조건의 완료 결과 21개 보존" in output
+    assert "학습 한도 공통; 선택 비용 별도 기록" in output
+    assert "진단·학습 시간 한도: 28380 GPU-seconds" in output
+    assert "선택 비용은 위 학습 한도에서 차감하지 않으며" in output
+    assert "CURRENT RUN 4" in output
+    assert "On-policy · 선택비용 포함 (기본 실행 제외)" not in output  # No live legacy branch in this fixture.
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in base.parent.rglob("*") if p.is_file()}

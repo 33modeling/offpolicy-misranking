@@ -7,62 +7,73 @@ Run this same command from the original `offpolicy-misranking` checkout on
 bash scripts/run_mbpp_experiments.sh
 ```
 
-The command joins the existing node controller's shared MBPP queue:
+The command joins the existing node controller with one default experiment,
+reusing the existing quality root and its validated training work:
 
 | 표시명 | 선택 방식 | 분기 예산에 차감하는 비용 | Gate 판단 기준 |
 | --- | --- | --- | --- |
-| On-policy · 선택비용 포함 | 현재 정책에서 계산한 gradient | 선택 + 진단 + 학습 | 최종 보상 차이 |
-| On-policy · 선택비용 별도 | 같은 on-policy gradient | 진단 + 학습; 선택 비용은 별도 기록 | 비용 보정 학습 효율 |
-| Difficulty · 선택비용 포함 | 저장된 정답률이 0.5에 가까운 문제 | 선택 + 진단 + 학습 | 비용 보정 학습 효율 |
+| On-policy · 선택비용 별도 | 현재 정책에서 계산한 gradient | 진단 + 학습; 선택 비용은 별도 계측 | 비용 보정 학습 효율 |
 
-Compatibility keys remain `fresh` → `fresh_r/budget/final`, `quality` →
-`fresh_r/matched/convergence`, and `difficulty` → `difficulty/budget/convergence`
-(selector/accounting/gate). These are saved identifiers, not extra methods.
+Default `run`/`all` schedules `quality`, with frozen settings
+`fresh_r/matched/convergence` (selector/accounting/gate). This applies the
+paper's **Separating learning quality from selection cost** protocol to MBPP.
+It does not force a MATH GPU-second number onto MBPP or change an existing cap:
+the MBPP calibration and frozen root contract remain authoritative.
 
-The first two suites use the **same on-policy gradient selector**, with gradients
-computed under the current policy. `quality` is not another selector: it changes
-the cost accounting and gate criterion. Difficulty ranks cached success rates
-by closeness to 0.5. `final` uses final-reward differences; `convergence` uses
-updates saved to a common reward target, minus selection cost in update units.
+On-policy gradients are computed under the current policy. “선택비용 별도”
+means selection GPU time goes to the `reporting` ledger outside the common
+diagnostic/training allocation. Selection is **not free**: report actual
+selection, diagnosis, training and evaluation costs separately and include all
+four in total compute. Equal training-allocation caps do not mean equal total
+GPU cost or identical completed update counts. The convergence gate uses
+updates saved to a common reward target minus the separately recorded selection
+cost expressed in random-training update units.
 
-“선택비용 포함” charges selection GPU time to the diagnostic/training branch
-allocation. “선택비용 별도” records selection GPU time on the `reporting` ledger,
-outside that allocation; it is **not free** and remains part of total actual
-compute. Evaluation has a common, separate reporting allocation in all three
-suites. Reporting-ledger selection and evaluation costs are distinguished by
-phase, not omitted or combined into a supposedly free selector.
+This is a deliberate accounting difference from the paper's MATH fixed-total-
+budget comparisons. An MBPP learning-quality advantage under this protocol
+would not by itself establish a total-compute advantage or validate a direct
+on-policy-to-difficulty switch.
 
-All suites include random controls. `fresh` creates five on-policy-selected
-training prefixes. The other two reuse these exact prefixes, states at
-25/50/100 updates, and the same evaluation questions. They do not import MATH
-prefixes. Each suite uses the existing 18 development and 30 held-out
-continuations: **48 per suite, 144 across the three**, with development seeds
-0/1/2 and held-out seeds 3/4. These are separate continuation-training branches,
-not merely re-evaluations of the first suite's trained results. Shared prefixes
-do not make the later continuation training identical or free.
-Once all shared prefix certificates are ready, `quality` and `difficulty` can start
-even while `fresh` continuations are still running elsewhere. No node is assigned
-permanently to one suite. Final evaluation uses eight responses per question;
-convergence curves use three archived checkpoints with four responses per question.
+The older `fresh` (cost-inclusive on-policy), `difficulty` and `long` conditions
+remain available only through explicit execution commands. Their saved files,
+historical results and active-node evidence are retained; no root is renamed
+or deleted. A code update does not kill their in-flight work, and an explicitly
+scoped controller can continue until its requested scope is changed. This guide
+does not claim any remote controller has already stopped.
 
-This is a port of the current switch suites, not a new difficulty definition,
-an E5 fixed-checkpoint run, or a gate that directly chooses on-policy versus
-difficulty in one branch. The original gates choose their suite's selector
-versus random; the shared states permit the on-policy/difficulty comparison.
-The display names do not rename CLI keys (`fresh`, `quality`, `difficulty`),
+The main condition includes random controls and reuses the five certified
+on-policy-selected MBPP prefixes from the original `fresh` root, at 25/50/100
+updates, and the same MBPP evaluation questions. It does not import MATH prefixes
+or relabel cost-inclusive continuation results as quality results. Existing
+quality training is resumed and validated, not copied to a new experiment root.
+There are **48 planned branches: 18 development and 30 held-out**, with
+development seeds 0/1/2 and held-out seeds 3/4. Final evaluation uses eight
+responses per question; convergence curves evaluate three archived checkpoints
+with four responses per question. Prefix availability remains a prerequisite.
+
+This is the existing matched-training-budget switch protocol, not an E5
+fixed-checkpoint run or a gate that directly chooses on-policy versus difficulty.
+The gate compares on-policy selection with random.
+The display names do not rename existing CLI keys (`fresh`, `quality`, `difficulty`),
 saved directories, scoring phase names, or any frozen protocol fields.
 
 ### Result tables
 
-Keep the cost-inclusive and separate-cost conditions in distinct blocks;
-they are not the same total-compute comparison. Within each block compare
-Full selection, Full random and Gate policy at matched seed/checkpoint states.
+For the main quality condition, compare **Full selection, Full random and Gate
+policy** at matched seed/checkpoint states using their **final held-out reward**.
+The gate's development target comes from the additional convergence measurements.
 Report valid-result count / planned count, completed training updates, measured
 reward, diagnostic/selection/training GPU time, and evaluation GPU time separately.
+Retain the additional diagnostic-paid Selection/Random controls: 18 development
+and 30 held-out continuations, as in the registered protocol. Results from the
+older cost-inclusive, difficulty and long conditions belong in separately
+labeled blocks outside the main condition's 48-branch denominator.
 Include interrupted and failed attempts in an explicit cost/failure audit.
 An unevaluated budget-exhausted branch has no measured reward: show “미완료”,
 not zero. If no valid paired outcomes exist, a runtime/cost table is possible,
 but there is no completed selection-versus-random performance comparison.
+This scope update supplies no new GPU measurements; unfinished branches must
+not be presented as completed runs or assigned invented rewards.
 
 ## Commands
 
@@ -73,18 +84,23 @@ bash scripts/run_mbpp_experiments.sh plan       # settings only, no writes/GPU w
 bash scripts/run_mbpp_experiments.sh check      # read-only local input checks
 bash scripts/run_mbpp_experiments.sh status
 bash scripts/run_mbpp_experiments.sh status --watch
-bash scripts/run_mbpp_experiments.sh progress   # MBPP suites only (fresh, quality, difficulty), unprepared ones listed
+bash scripts/run_mbpp_experiments.sh progress   # main quality progress and retained saved-work evidence
 bash scripts/run_mbpp_experiments.sh saved      # READ-ONLY saved-work/archived-work inventory, <=4 KiB stdout
 bash scripts/run_mbpp_experiments.sh stop       # stop/clean THIS node, not peer nodes
 bash scripts/run_mbpp_experiments.sh results    # one report per suite, also copied home
 bash scripts/run_mbpp_experiments.sh why        # ONE diagnostic TXT, at most 16 KiB
-bash scripts/run_mbpp_experiments.sh run fresh
-bash scripts/run_mbpp_experiments.sh run quality
-bash scripts/run_mbpp_experiments.sh run difficulty
+bash scripts/run_mbpp_experiments.sh run quality       # same main condition as the default
+bash scripts/run_mbpp_experiments.sh status quality    # main condition only; no training
+bash scripts/run_mbpp_experiments.sh results quality   # main results; no training
+bash scripts/run_mbpp_experiments.sh run fresh         # optional old cost-inclusive condition
+bash scripts/run_mbpp_experiments.sh run difficulty    # optional cached-selector condition
+bash scripts/run_mbpp_experiments.sh run long          # optional old longer-budget condition
 ```
 
 For MBPP monitoring, use `bash scripts/run_mbpp_experiments.sh status --watch`.
-It refreshes one dashboard for the three named MBPP suites, with all seed/step
+It refreshes the main quality experiment and retains observation of earlier
+MBPP roots and their nodes; observation is not permission to schedule them.
+The view includes all seed/step
 rows and the full names Selection, Random, Full selection, Full random and
 Gate policy. The top line shows planned / verified completed / remaining counts
 for the requested roots, and each condition has the same numeric columns.
@@ -118,7 +134,8 @@ alternative, and successful training costs with missing final policy/stop
 records block startup with exit 2. `stop` and read-only commands remain available.
 An absent root is not labelled "deleted"; if none of the requested existing run
 manifests can be found, recovery refuses to initialize replacement runs silently.
-Unprepared `quality`/`difficulty` roots are allowed alongside the existing `fresh` root.
+The main quality condition retains the shared-prefix prerequisite checks.
+Observing an absent optional root does not schedule a replacement experiment.
 
 For missing random-control work, `check_random_storage.sh` scans every switch and
 MoPPS root under the configured work directory, not just MBPP. It separates
@@ -126,8 +143,8 @@ MoPPS root under the configured work directory, not just MBPP. It separates
 sealed random results, and prioritizes missing stops, archives and conflicting
 parent-only stops. It saves `~/random-storage-*.txt` (at most 4 KiB), never resets
 or restores anything, and does not certify tensor contents. An absent result is
-not proof of deletion. Both on-policy suites keep their existing storage names
-for compatibility; no saved paths or protocol keys are renamed.
+not proof of deletion. Existing roots, including the active `quality` root, keep their
+storage names for compatibility; no saved paths or protocol keys are renamed.
 
 The separate audit saves a unique `~/mbpp-storage-*.txt` (at most 4 KiB), prints
 its full path, and prints exact configured roots. Send that TXT file for diagnosis;
@@ -159,9 +176,9 @@ An archive alone never downgrades a valid current result.
 Default status shows live nodes only, grouped by state and then node number;
 inactive node logs and records remain untouched. The generic
 `bash scripts/run_experiments.sh status --all` includes node history, while
-`--json` always retains the full snapshot. Distinct cost-qualified display names
-identify the two on-policy suites; `status --all` includes their exact roots.
-A new `quality` root does not erase or replace completed `fresh` results.
+`--json` always retains the full snapshot. Display names distinguish the main
+quality condition from earlier cost-inclusive and long conditions; `status --all`
+includes exact roots. Changing the default does not erase or replace completed results.
 
 Saved switch points are resolved from `suite.json`, matching the worker, rather
 than inferred from directory count. Ambiguous paths are `REVIEW`, not `READY`.
@@ -328,14 +345,16 @@ remaining set limits evaluation precision. This is an internal held-out
 MBPP experiment, **not the official MBPP test-split benchmark**. The prompt
 and assertion-execution reward are unchanged from the original MBPP matrix.
 
-Default roots under `$OM_WORK/runs`:
+Main root under `$OM_WORK/runs`:
 
-- `selection-switch-mbpp-v1` — On-policy · 선택비용 포함 (`fresh`)
 - `selection-switch-mbpp-quality-v1` — On-policy · 선택비용 별도 (`quality`)
-- `selection-switch-mbpp-difficulty-v1` — Difficulty · 선택비용 포함 (`difficulty`)
 
-Override with `SWITCH_MBPP_ROOT`, `SWITCH_MBPP_QUALITY_ROOT`, and
-`SWITCH_MBPP_DIFFICULTY_ROOT`. Roots must be separate, non-nested directories.
+Override with `SWITCH_MBPP_QUALITY_ROOT`. The shared-prefix source is the existing
+`selection-switch-mbpp-v1` (`SWITCH_MBPP_ROOT`), not a newly initialized training
+history. The retained optional roots are `selection-switch-mbpp-difficulty-v1`
+(`SWITCH_MBPP_DIFFICULTY_ROOT`) and `selection-switch-mbpp-long-v1`
+(`SWITCH_MBPP_LONG_ROOT`); the original `fresh` root also remains explicitly runnable.
+Roots must be separate, non-nested directories.
 `OM_WORK`, `OM_OLMO3_ROOT`, `DATASETS_DIR`, and `VENV_DIR` retain their existing
 meanings. Status and results never start training. Trainers, scoring code,
 data splits, gate calculations, and frozen experiment contracts are unchanged.

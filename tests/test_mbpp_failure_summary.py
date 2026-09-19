@@ -24,10 +24,11 @@ def failure(root, arm='selection_full'):
     return directory
 
 
-def test_saved_work_audit_is_small_read_only_and_shows_archived_progress(tmp_path):
+@pytest.mark.parametrize('root_count', [3, 4])
+def test_saved_work_audit_is_small_read_only_and_shows_archived_progress(tmp_path, root_count):
     from test_waive_stalled_attempts import event
     import selection_gate_gpu as base
-    roots = [tmp_path / f'root-{i}' for i in range(3)]
+    roots = [tmp_path / f'root-{i}' for i in range(root_count)]
     for root in roots:
         directory = failure(root)
         core.atomic_json(directory / 'decision.json', {'budget_gpu_seconds': 28380.})
@@ -41,7 +42,7 @@ def test_saved_work_audit_is_small_read_only_and_shows_archived_progress(tmp_pat
     before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
     result = summary.storage_report(roots)
     assert len(result.encode()) <= 4096
-    assert result.count('ROOT root-') == 3
+    assert result.count('ROOT root-') == root_count
     assert 'remaining=0.0' in result and 'latest=checkpoint-45' in result
     assert 'discarded/old-attempt' in result and 'gradients=1' in result and 'partial=1' in result
     assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
@@ -66,8 +67,9 @@ def test_nccl_warning_survives_shutdown_noise_and_run_is_not_modified(tmp_path):
     assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
 
 
-def test_three_roots_and_huge_unicode_logs_fit_one_sixteen_kib_report(tmp_path):
-    roots = [tmp_path / f'root-{i}' for i in range(3)]
+@pytest.mark.parametrize('root_count', [3, 4])
+def test_roots_and_huge_unicode_logs_fit_one_sixteen_kib_report(tmp_path, root_count):
+    roots = [tmp_path / f'root-{i}' for i in range(root_count)]
     for root in roots:
         for arm in ('selection_full', 'random_full'):
             failure(root, arm)

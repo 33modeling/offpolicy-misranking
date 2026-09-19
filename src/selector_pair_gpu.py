@@ -39,7 +39,9 @@ PRE_RESOURCES_CODE = "d5d354a91ec95ae5d941c619a5a50da10e1606072a36dbe06e83d974ae
 # Exact released resource/shared runtimes (045dcc1, 6345433, 2444e51, cff7832).
 # Their shared-file changes require Switch's independent reviewed hash pins;
 # pair selectors, pair trainer, curve trainer and branch protocols stay frozen.
+PRE_BUDGET_STOP_EVALUATION_CODE = "bfe7b00d57a365d9ddd8936422a723c86938e2feb1f82ae5c72d648a42ce7c30"
 PRE_SHARED_RUNTIME_CODES = {
+    PRE_BUDGET_STOP_EVALUATION_CODE,
     "9eab1b016f5f897a4bd3b85998a25b1bc724b8bf3383ef9e6cfe2ba43f9a6d67",
     "cec86006408b80d7901f3f44a3b113d702c860e6c4a84a40cd2422e6438ef27a",
     "b5dfeae35bc95922893636bc5ad1c6d801e68648f1d60907353a016e7c0c1738",
@@ -175,13 +177,22 @@ def bind_startup_runtime(root, recorded):
                 raise ValueError(f"frozen contract changed: {resources_path}")
         else:
             base.bind(resources_path, resources_receipt)
-        base.bind(root / "shared-checkpoint-recovery-runtime.json", {
+        recovery_path = root / "shared-checkpoint-recovery-runtime.json"
+        switch.bind_reviewed_runtime_receipt(recovery_path, {
             "schema": "offpolicy-selector-pair/shared-checkpoint-recovery-runtime-v1",
             "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
             "resources_runtime_sha256": base.digest(resources_path),
             "change": "shared Switch runtime recovery and validated checkpoint retention only; pair design, selectors and trainer unchanged",
             "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or parent restart",
-        })
+        }, {PRE_BUDGET_STOP_EVALUATION_CODE})
+        if core.fingerprint(code_hashes()) != PRE_BUDGET_STOP_EVALUATION_CODE:
+            base.bind(root / "budget-stop-evaluation-runtime.json", {
+                "schema": "offpolicy-selector-pair/budget-stop-evaluation-runtime-v1",
+                "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                "shared_checkpoint_recovery_runtime_sha256": base.digest(recovery_path),
+                "change": "shared Switch completed-policy evaluation resume only; pair design, selectors and trainer unchanged",
+                "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or retraining",
+            })
 
 
 def setup_config():

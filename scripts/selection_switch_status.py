@@ -374,7 +374,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
     branches = [task for task in tasks if task["kind"] == "branch"]
     nodes = node_view.launcher_nodes(root, tasks, now=now, node_namespace=node_namespace)
     return {"prepared": True, "root": str(root), "updated": now, "gate_ready": gate_ready,
-            "protocol": {key: manifest[key] for key in ("dataset", "selector", "accounting", "gate")
+            "protocol": {key: manifest[key] for key in ("dataset", "selector", "accounting", "gate", "budget_gpu_seconds")
                          if key in manifest},
             "gate_fit_failure": gate_fit_failure,
             "nodes": nodes, "local_gpus": node_view.local_gpus() if local_gpus else [],
