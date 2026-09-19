@@ -148,7 +148,8 @@ def launcher(tmp_path):
     repo = tmp_path / "repo with spaces"
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
-    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh", "mbpp_failure_summary.py", "selection_switch_errors.py", "_status_summary.py"):
+    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh", "mbpp_failure_summary.py",
+                 "selection_switch_errors.py", "_status_summary.py", "_nccl_diagnostics.py"):
         shutil.copy(ROOT / "scripts" / name, scripts)
     (scripts / "setup_env.sh").write_text('echo "preflight must not source setup_env" >&2\nexit 99\n')
     venv = tmp_path / "venv"

@@ -58,6 +58,78 @@ def complete_checkpoint(path):
                     for key in ('adapter_sha256', 'optimizer_sha256', 'grpo_stats_sha256')))
 
 
+def checkpoint_inventory(policy):
+    """Metadata candidates only; this does not certify tensor hashes/lineage."""
+    checkpoints = sorted(policy.glob('checkpoint-*'))
+    good = []
+    for checkpoint in checkpoints:
+        try:
+            if complete_checkpoint(checkpoint):
+                good.append(checkpoint)
+        except (OSError, ValueError, TypeError):
+            pass
+    return checkpoints, good
+
+
+def _policy_resume_blocked(policy, checkpoints, good):
+    if (policy / 'policy_train.json').is_file() or (policy / 'budget_stop.json').is_file() or good:
+        return False
+    stats = policy / 'grpo_stats.jsonl'
+    return bool(checkpoints or any(policy.glob('.checkpoint-*.tmp'))
+                or (stats.is_file() and stats.stat().st_size > 0)
+                or present(policy / 'adapter_model.safetensors') or present(policy / 'optimizer.pt'))
+
+
+def policy_resume_blocked(directory):
+    """Identify CHECKPOINT_MISSING without modifying work or probing its lease.
+
+    A worker must call this while holding the branch's task lease, before any
+    selection, metering or training. False is NOT a checkpoint certificate:
+    final/stop validation and full checkpoint hash/contract checks still apply.
+    The other audit error classes remain global startup blockers.
+    """
+    policy = Path(directory) / 'policy'
+    return _policy_resume_blocked(policy, *checkpoint_inventory(policy))
+
+
+def quarantinable_branches(report):
+    """Return branch paths only when EVERY error is narrowly quarantinable."""
+    errors = [item for item in report['findings'] if item['severity'] == 'error']
+    if not errors or report['status'] != 'blocked':
+        return []
+    roots = [Path(item['root']) for item in report['roots']]
+    branches = set()
+    for item in errors:
+        if item['code'] != 'CHECKPOINT_MISSING':
+            return []
+        policy = Path(item['path'])
+        matched = False
+        for root in roots:
+            try:
+                parts = policy.relative_to(root).parts
+                if (len(parts) != 6 or parts[0] != 'states' or parts[2] != 'points'
+                        or parts[4] not in ARMS or parts[5] != 'policy'):
+                    continue
+                state = re.fullmatch(r's([0-4])-t(25|50|100)', parts[1])
+                if (state is None or parts[3] != f'view-{state[2]}'
+                        or (int(state[1]) < 3 and parts[4] not in {'selection_reduced', 'random_reduced'})):
+                    continue
+                # A source-prefix link, escaped directory or non-MBPP manifest
+                # must never acquire this branch-only exception.
+                if (any(root.joinpath(*parts[:i]).is_symlink() for i in range(1, 7))
+                        or not policy.resolve().is_relative_to(root.resolve())
+                        or json_bytes(root / 'switch.json')[0].get('dataset') != 'mbpp'):
+                    continue
+                branches.add(str(policy.parent))
+                matched = True
+                break
+            except (OSError, ValueError, TypeError, RuntimeError):
+                continue
+        if not matched:
+            return []
+    return sorted(branches)
+
+
 def audit(work, roots):
     work = Path(work)
     findings, summaries = [], []
@@ -82,14 +154,7 @@ def audit(work, roots):
             note('warning', 'ACTIVE_WORKER', directory,
                  'owner holds lease; mutable checkpoint inspection deferred, do not interrupt or reset it')
             return
-        checkpoints = sorted(policy.glob('checkpoint-*'))
-        good = []
-        for checkpoint in checkpoints:
-            try:
-                if complete_checkpoint(checkpoint):
-                    good.append(checkpoint)
-            except (OSError, ValueError, TypeError):
-                pass
+        checkpoints, good = checkpoint_inventory(policy)
         summary['checkpoints'] += len(good)
         final = policy / 'policy_train.json'
         stop = policy / 'budget_stop.json'
@@ -116,9 +181,7 @@ def audit(work, roots):
         elif stop.is_file() and not parent_only:
             note('error', 'FINAL_MANIFEST_MISSING', policy,
                  'training stop exists but final policy manifest is missing; do not restart from parent')
-        elif not parent_only and not good and (checkpoints or any(policy.glob('.checkpoint-*.tmp'))
-                or (stats.is_file() and stats.stat().st_size > 0) or present(adapter)
-                or present(policy / 'optimizer.pt')):
+        elif _policy_resume_blocked(policy, checkpoints, good):
             note('error', 'CHECKPOINT_MISSING', policy,
                  'prior training state exists but no complete checkpoint metadata; refusing parent restart')
         if good and len(good) < len(checkpoints):
@@ -251,6 +314,10 @@ def render(report):
              'READ-ONLY. No model/rollout payloads read; no files moved/deleted; no GPU work.',
              'Cannot prove who/when deleted files. Missing path may mean unmounted storage.',
              'Checkpoint presence is NOT tensor-hash/lineage validation; trainer must verify.']
+    quarantined = report.get('quarantined_branches', [])
+    if quarantined:
+        lines.insert(2, f'[branch-quarantine] {len(quarantined)} continuation(s) remain BLOCKED; '
+                     'skip their training/recovery; only independent work may proceed.')
     for item in report['roots']:
         lines += [f"ROOT {item['root']}",
                   (f"  results={item['results']} policies={item['policies']} checkpoints={item['checkpoints']} "
@@ -258,8 +325,11 @@ def render(report):
                   f"waivers={item['waivers']} resets={item['discards']}")]
     for finding in sorted(report['findings'], key=lambda f: f['severity'] != 'error'):
         lines.append(f"{finding['severity'].upper()} {finding['code']} {finding['path']}: {finding['detail']}")
-    lines.append('START BLOCKED; preserve files and inspect the findings.' if report['status'] != 'ok'
-                 else 'Metadata preflight passed. Historical deletion without surviving evidence cannot be ruled out.')
+    if quarantined:
+        lines.append('PARTIAL START ONLY; blocked branches are not complete. Preserve their files and costs.')
+    else:
+        lines.append('START BLOCKED; preserve files and inspect the findings.' if report['status'] != 'ok'
+                     else 'Metadata preflight passed. Historical deletion without surviving evidence cannot be ruled out.')
     raw = ('\n'.join(lines) + '\n').encode()
     if len(raw) <= MAX_OUTPUT_BYTES:
         return raw.decode()
@@ -275,8 +345,13 @@ def main():
                         help='save the shareable <=4 KiB TXT here (default: home directory)')
     parser.add_argument('--report-on-error', action='store_true',
                         help='automatic preflight: save a file only when startup is blocked')
+    parser.add_argument('--allow-branch-quarantine', action='store_true',
+                        help='guarded workers only: skip canonical CHECKPOINT_MISSING branches; '
+                             'all other errors still block startup')
     args = parser.parse_args()
     report = audit(args.work, args.root)
+    if args.allow_branch_quarantine:
+        report['quarantined_branches'] = quarantinable_branches(report)
     output = render(report)
     print(output, end='')
     if not args.report_on_error or report['status'] != 'ok':
@@ -291,7 +366,7 @@ def main():
         except OSError as exc:
             print(f'[report-save-failed] {exc}', file=sys.stderr)
             return 2
-    return 0 if report['status'] == 'ok' else 2
+    return 0 if report['status'] == 'ok' or report.get('quarantined_branches') else 2
 
 
 if __name__ == '__main__':

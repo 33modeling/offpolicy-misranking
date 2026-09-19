@@ -23,6 +23,7 @@ def released_distributed_runtime():
     # Exact SHA-256 of `git show 5fd2410:path`, independent of concurrent edits.
     hashes = gpu.code_hashes()
     hashes.update({
+        "src/selection_switch_gpu.py": "48d593db8a6abd8d3363a5fa2b8421cb0528fd4f6e8068e2330d141c5f4f4122",
         "src/selector_pair_gpu.py": "5f961d578efcef717c6a0a32aaa96f210cbb145dee98c97668b0a588b0c6c002",
         "scripts/run_selector_pair.sh": "b6299c946160325e0e733500fc1d843aea0339752c778522486abc12eb6f2d66",
     })
@@ -63,7 +64,8 @@ def test_wait_upgrade_preserves_work_caps_and_all_eight_historical_receipts(tmp_
     assert receipt["runtime_code_hashes"] == gpu.code_hashes()
     assert receipt["distributed_runtime_sha256"] == base.digest(tmp_path / PREVIOUS_RECEIPTS[-1])
     if history != "frozen-at-release":
-        assert set(file_bytes(tmp_path)) - set(before) == {Path("pair-wait-guard-runtime.json")}
+        assert set(file_bytes(tmp_path)) - set(before) == {
+            Path("pair-wait-guard-runtime.json"), Path("shared-mbpp-quarantine-runtime.json")}
         assert core.read(tmp_path / PREVIOUS_RECEIPTS[-1])["runtime_code_hashes"] == previous
 
     after = file_bytes(tmp_path)

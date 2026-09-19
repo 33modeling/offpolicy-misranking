@@ -38,6 +38,7 @@ def test_default_storage_check_separates_run_targets_from_retained_history(tmp_p
     roots = [Path(args[i + 1]).name for i, arg in enumerate(args) if arg == "--root"]
     assert roots == list(names[:2] if automatic else names)
     assert ("--report-on-error" in args) == automatic
+    assert ("--allow-branch-quarantine" in args) == automatic
 
 
 @pytest.fixture
@@ -437,3 +438,134 @@ def test_parent_only_stop_conflicting_with_saved_training_blocks_startup(auditor
     report = auditor.audit(work, [root])
     assert_blocked(report)
     assert any(item['code'] == 'PARENT_STOP_WITH_SAVED_POLICY' for item in report['findings'])
+
+
+@pytest.mark.parametrize('saved', ['fresh', 'checkpoint', 'final', 'stop'])
+def test_resume_guard_does_not_quarantine_fresh_or_recoverable_work(auditor, storage, saved):
+    _, root = storage
+    directory = branch(root)
+    if saved == 'checkpoint':
+        complete_checkpoint(directory)
+        write_json(directory / 'policy/grpo_stats.jsonl', {'step': 32})
+    elif saved == 'final':
+        write_json(directory / 'policy/policy_train.json', {'completed_steps': 30})
+    elif saved == 'stop':
+        write_json(directory / 'policy/budget_stop.json', {'use_parent_policy': True})
+    # Final/stop validation belongs to the pre-existing audit/worker checks.
+    assert auditor.policy_resume_blocked(directory) is False
+
+
+@pytest.mark.parametrize('saved', ['stats', 'adapter', 'optimizer', 'partial-checkpoint', 'temporary-checkpoint'])
+def test_resume_guard_and_audit_use_same_missing_checkpoint_rule(auditor, storage, saved):
+    work, root = storage
+    directory = branch(root)
+    policy = directory / 'policy'
+    if saved == 'stats':
+        write_json(policy / 'grpo_stats.jsonl', {'step': 28})
+    elif saved in {'adapter', 'optimizer'}:
+        policy.mkdir()
+        (policy / ('adapter_model.safetensors' if saved == 'adapter' else 'optimizer.pt')).write_bytes(b'saved')
+    elif saved == 'partial-checkpoint':
+        checkpoint = complete_checkpoint(directory)
+        (checkpoint / 'optimizer.pt').unlink()
+    else:
+        (policy / '.checkpoint-000030.tmp').mkdir(parents=True)
+    before = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    assert auditor.policy_resume_blocked(directory) is True
+    report = auditor.audit(work, [root])
+    assert {item['code'] for item in report['findings'] if item['severity'] == 'error'} == {'CHECKPOINT_MISSING'}
+    assert auditor.quarantinable_branches(report) == [str(directory)]
+    assert before == {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+
+
+def test_complete_older_checkpoint_keeps_partial_newer_checkpoint_resumable(auditor, storage):
+    _, root = storage
+    directory = branch(root)
+    complete_checkpoint(directory, 30)
+    (directory / 'policy/checkpoint-000035').mkdir()
+    assert auditor.policy_resume_blocked(directory) is False
+
+
+@pytest.mark.parametrize('relative', [
+    'prefixes/seed-3/segment-25/fresh_r',
+    'states/s8-t25/points/view-25/random_full',
+    'states/s3-t30/points/view-30/random_full',
+    'states/s3-t25/points/view-50/random_full',
+    'states/s0-t25/points/view-25/random_full',
+])
+def test_missing_checkpoint_outside_registered_continuation_is_not_quarantinable(auditor, storage, relative):
+    work, root = storage
+    directory = root / relative
+    write_json(directory / 'policy/grpo_stats.jsonl', {'step': 28})
+    report = auditor.audit(work, [root])
+    assert_blocked(report)
+    assert auditor.quarantinable_branches(report) == []
+
+
+def test_quarantine_rejects_symlinked_branch_even_inside_root(auditor, storage):
+    work, root = storage
+    directory = branch(root)
+    original = root / 'saved-policy'
+    write_json(original / 'grpo_stats.jsonl', {'step': 28})
+    (directory / 'policy').symlink_to(original, target_is_directory=True)
+    report = auditor.audit(work, [root])
+    assert_blocked(report)
+    assert auditor.quarantinable_branches(report) == []
+
+
+@pytest.mark.parametrize('extra', ['orphan-result', 'wrong-dataset', 'missing-root-manifest', 'successful-train'])
+def test_other_error_never_acquires_branch_quarantine_exception(auditor, storage, extra):
+    work, root = storage
+    directory = branch(root)
+    write_json(directory / 'policy/grpo_stats.jsonl', {'step': 28})
+    if extra == 'orphan-result':
+        write_json(directory / 'result.sha256.json', {'sha256': '0' * 64})
+    elif extra == 'wrong-dataset':
+        write_json(root / 'switch.json', {'dataset': 'math500'})
+    elif extra == 'missing-root-manifest':
+        (root / 'switch.json').unlink()
+    else:
+        write_json(directory / 'cost.jsonl', {'phase': 'train', 'state': 'finished', 'exit_code': 0})
+    report = auditor.audit(work, [root])
+    assert_blocked(report)
+    assert auditor.quarantinable_branches(report) == []
+
+
+@pytest.mark.parametrize('allow', [False, True])
+def test_cli_only_guarded_partial_start_preserves_errors_and_saved_work(storage, tmp_path, allow):
+    work, root = storage
+    for relative in ('states/s3-t25/points/view-25/selection_full',
+                     'states/s4-t100/points/view-100/random_reduced'):
+        write_json(root / relative / 'policy/grpo_stats.jsonl', {'step': 28})
+    before = {str(p): p.read_bytes() for p in work.rglob('*') if p.is_file()}
+    command = [sys.executable, str(SCRIPT), '--work', str(work), '--root', str(root),
+               '--report-dir', str(tmp_path), '--report-on-error']
+    if allow:
+        command.append('--allow-branch-quarantine')
+    result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=10)
+    assert result.returncode == (0 if allow else 2), result.stdout + result.stderr
+    assert 'MBPP STORAGE AUDIT: BLOCKED' in result.stdout
+    assert result.stdout.count('ERROR CHECKPOINT_MISSING') == 2
+    assert ('[branch-quarantine] 2 continuation(s) remain BLOCKED' in result.stdout) == allow
+    assert ('PARTIAL START ONLY' in result.stdout) == allow
+    report, = tmp_path.glob('mbpp-storage-*.txt')
+    assert report.stat().st_size <= 4096
+    assert before == {str(p): p.read_bytes() for p in work.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('fault', ['prefix', 'orphan-result', 'missing-volume'])
+def test_cli_quarantine_option_never_suppresses_global_blockers(storage, tmp_path, fault):
+    work, root = storage
+    if fault == 'prefix':
+        write_json(root / 'prefixes/seed-0/segment-25/fresh_r/policy/grpo_stats.jsonl', {'step': 3})
+    elif fault == 'orphan-result':
+        directory = branch(root)
+        write_json(directory / 'policy/grpo_stats.jsonl', {'step': 28})
+        write_json(directory / 'result.sha256.json', {'sha256': '0' * 64})
+    else:
+        work = tmp_path / 'unmounted-volume'
+    result = subprocess.run([sys.executable, str(SCRIPT), '--work', str(work), '--root', str(root),
+                             '--report-dir', str(tmp_path), '--allow-branch-quarantine'],
+                            text=True, capture_output=True, check=False, timeout=10)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert '[branch-quarantine]' not in result.stdout

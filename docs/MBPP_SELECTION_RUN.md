@@ -151,6 +151,31 @@ manifests can be found, recovery refuses to initialize replacement runs silently
 The main quality condition retains the shared-prefix prerequisite checks.
 Observing an absent optional root does not schedule a replacement experiment.
 
+One narrow exception lets independent work continue: an automatic startup whose
+only errors are `CHECKPOINT_MISSING` in canonical MBPP continuation branches
+quarantines those branches instead of blocking the entire queue. The audit still
+prints `BLOCKED` and the exact affected paths; this is **not** recovered training
+or a passing integrity check. Manual storage checks continue to exit 2. Missing
+prefixes/checkpoints in shared prefixes, lost results, wrong storage, malformed
+metadata and all other audit error types still block startup globally.
+
+The worker rechecks the affected branch while holding its task lease, before
+selection, decision work or metering. It leaves that branch in `WAIT` for
+checkpoint review and continues independent branches and pending curve evaluations.
+Automatic stale-cost recovery also leaves the quarantined branch's ledger and
+finish receipts unchanged, including on repeated launches. Full tensor/hash and
+lineage validation is still required if a checkpoint candidate becomes available.
+No budget, result, denominator, checkpoint or parent-policy restart is reset.
+When every other scoped task is complete and only these branches remain, exit 80
+releases this node without a holding/GPU-admission retry loop. Exit 80 is **not**
+experiment completion; the affected branches still require storage recovery.
+
+The reviewed runtime upgrade preserves original manifests and previous runtime
+receipts, adding `mbpp-branch-quarantine-runtime.json` with the storage guard's
+hash. Shared-code compatibility for Selector Pair and MoPPS is recorded separately;
+their experimental designs and scheduling are unchanged. This update does not
+release an existing Selector Pair controller's exclusive lock.
+
 For missing random-control work, `check_random_storage.sh` scans every switch and
 MoPPS root under the configured work directory, not just MBPP. It separates
 `random_full`, `random_reduced`, and `random_online` from selector results, lists

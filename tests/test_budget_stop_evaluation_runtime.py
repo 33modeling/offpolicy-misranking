@@ -64,6 +64,7 @@ def previous_pair():
     hashes = pair_run.code_hashes()
     hashes.update(previous_switch())
     hashes["src/selector_pair_gpu.py"] = OLD_PAIR
+    hashes["scripts/run_selector_pair.sh"] = "25e3f9156caa200205f12d1501d82da48299947a649b0c7abcf7e815dfac628c"
     assert core.fingerprint(hashes) == pair_run.PRE_BUDGET_STOP_EVALUATION_CODE
     return hashes
 

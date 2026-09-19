@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import selection_gate as core
 import selection_gate_gpu as base
 from _recovery_owners import local_event_owner
+from mbpp_storage_audit import ARMS, policy_resume_blocked
 
 
 def read_events(directory, *, repair=False):
@@ -113,8 +114,20 @@ def lease_in_use(root, directory):
     return False
 
 
+def checkpoint_quarantined(root, directory):
+    """Automatic recovery must preserve the same incomplete MBPP branches."""
+    manifest = root / "switch.json"
+    if not manifest.is_file() or core.read(manifest).get("dataset") != "mbpp":
+        return False
+    parts = directory.relative_to(root).parts
+    if (len(parts) < 5 or parts[0] != "states" or parts[2] != "points"
+            or parts[4] not in ARMS):
+        return False
+    return policy_resume_blocked(root.joinpath(*parts[:5]))
+
+
 def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_kind="operator_reported_stopped_job", evidence_extra=None,
-            verify_stopped_owner=False):
+            verify_stopped_owner=False, quarantine_training=False):
     root = root.resolve()
     directory = (root / directory).resolve()
     if not directory.is_relative_to(root) or directory == root:
@@ -124,6 +137,8 @@ def recover(root, directory, event_id, *, seconds=None, reason=None, evidence_ki
         raise ValueError("invalid cost event ID")
     with contextlib.ExitStack() as locks:
         locks.enter_context(base.lease(owner_lock))
+        if quarantine_training and checkpoint_quarantined(root, directory):
+            raise ValueError("WAIT: incomplete saved MBPP checkpoint; automatic cost repair deferred; files and costs preserved")
         locks.enter_context(base.lease(directory / ".cost.lock"))
         raw, events = read_events(directory)
         summary = core.cost_summary(events)
@@ -239,8 +254,12 @@ def close_stale(root, *, min_age=900., now=None, host=None):
             outcome.append(row)
             continue
         try:
+            if checkpoint_quarantined(root, directory):
+                row.update(status="blocked", reason="WAIT: incomplete saved MBPP checkpoint; automatic cost repair deferred; files and costs preserved")
+                outcome.append(row)
+                continue
             if item["finish_receipt"]:
-                row.update(recover(root, directory, event_id))
+                row.update(recover(root, directory, event_id, quarantine_training=True))
             else:
                 progress = item["progress"] or {}
                 if lease_in_use(root, directory):
@@ -269,6 +288,7 @@ def close_stale(root, *, min_age=900., now=None, host=None):
                                 f"plus {STALE_MARGIN_SECONDS:.0f}s margin (over-count, never under-count)"),
                         evidence_kind="confirmed_local_stop_last_evidence" if confirmed_stop else "stale_owner_last_evidence",
                         verify_stopped_owner=confirmed_stop,
+                        quarantine_training=True,
                         evidence_extra={"last_evidence_time": end, "silent_seconds": age,
                                         "heartbeat_seconds": heartbeat, "margin_seconds": STALE_MARGIN_SECONDS}))
         except (ValueError, OSError, KeyError, TypeError, AttributeError) as exc:

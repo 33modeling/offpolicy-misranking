@@ -11,7 +11,7 @@ AUDIT_PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
 [ -x "$AUDIT_PY" ] || AUDIT_PY=python3
 AUDIT_ROOTS=()
 AUDIT_OPTIONS=()
-[ "${MBPP_STORAGE_AUDIT_AUTOMATIC:-0}" != 1 ] || AUDIT_OPTIONS+=(--report-on-error)
+[ "${MBPP_STORAGE_AUDIT_AUTOMATIC:-0}" != 1 ] || AUDIT_OPTIONS+=(--report-on-error --allow-branch-quarantine)
 if [ "${MBPP_STORAGE_AUDIT_AUTOMATIC:-0}" = 1 ]; then
   for root in "${MBPP_ROOTS[@]}"; do AUDIT_ROOTS+=(--root "$root"); done
 else

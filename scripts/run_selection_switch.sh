@@ -34,13 +34,17 @@ case "$MODE" in
     fi
     if [ "$MBPP_STORAGE_GUARD" = 1 ]; then
       MBPP_STORAGE_ROOT_ARGS=(--root "$OUT_ROOT")
+      MBPP_STORAGE_OPTIONS=(--report-on-error)
+      # smoke enters a dedicated single-branch path rather than the guarded
+      # queue; retain its strict preflight. Preparation never trains branches.
+      [ "$MODE" = smoke ] || MBPP_STORAGE_OPTIONS+=(--allow-branch-quarantine)
       # New sibling suites have no manifest until prepare imports their saved
       # prefixes. Audit that explicit source too, without skipping the target.
       if [ -n "${SWITCH_PREFIX_SOURCE:-}" ]; then
         MBPP_STORAGE_ROOT_ARGS+=(--root "$SWITCH_PREFIX_SOURCE")
       fi
       if ! CUDA_VISIBLE_DEVICES='' "$PY" scripts/mbpp_storage_audit.py \
-          --work "$WORK" "${MBPP_STORAGE_ROOT_ARGS[@]}" --report-on-error; then
+          --work "$WORK" "${MBPP_STORAGE_ROOT_ARGS[@]}" "${MBPP_STORAGE_OPTIONS[@]}"; then
         echo '[abort] MBPP storage audit blocked this root; no cleanup, preparation or GPU work started.' >&2
         exit 2
       fi
@@ -440,7 +444,12 @@ while :; do
   selection_run_worker "$PY" scripts/selection_nccl_preflight.py --root "$OUT_ROOT" -- \
     "$PY" "$WORKER" "$MODE" --root "$OUT_ROOT" \
       ${SWITCH_ONLY_SEEDS:+--only-seeds "$SWITCH_ONLY_SEEDS"} ${SWITCH_ONLY_ARMS:+--only-arms "$SWITCH_ONLY_ARMS"} || rc=$?
-  case "$rc" in 78|130|137|143) break ;; esac
+  case "$rc" in
+    80)
+      echo '[WAIT] only checkpoint-review branches remain; preserving saved work and releasing this node without holding or retrying'
+      break ;;
+    78|130|137|143) break ;;
+  esac
   if [ "$rc" -ne 0 ]; then
     CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_errors.py --root "$OUT_ROOT" || true
   fi

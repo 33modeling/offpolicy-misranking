@@ -151,3 +151,39 @@ def test_existing_prefix_source_never_bypasses_target_or_source_safety(launcher,
     assert result.returncode == 2, result.stdout + result.stderr
     assert not Path(env["INNER_CAPTURE"]).exists()
     assert before == {p: p.read_bytes() for p in work.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize('entry', ['run_switch_mbpp.sh', 'run_selection_switch.sh'])
+@pytest.mark.parametrize('mode', ['run', 'prepare', 'smoke'])
+def test_missing_continuation_checkpoint_only_passes_guarded_queue_preflight(launcher, entry, mode):
+    _, work, root, env = launcher
+    write_json(root / 'switch.json', {'dataset': 'mbpp'})
+    write_json(root / 'states/s3-t25/points/view-25/selection_full/policy/grpo_stats.jsonl', {'step': 28})
+    before = {p: p.read_bytes() for p in work.rglob('*') if p.is_file()}
+    result = invoke(launcher, entry, [mode])
+    assert result.returncode == (2 if mode == 'smoke' else 0), result.stdout + result.stderr
+    assert Path(env['INNER_CAPTURE']).exists() == (mode != 'smoke')
+    assert 'MBPP STORAGE AUDIT: BLOCKED' in result.stdout
+    args = json.loads(Path(env['AUDIT_CAPTURE']).read_text())['args']
+    assert ('--allow-branch-quarantine' in args) == (mode != 'smoke')
+    assert before == {p: p.read_bytes() for p in work.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('hold', [0, 600])
+def test_direct_queue_does_not_hold_or_retry_checkpoint_review_exit(tmp_path, hold):
+    source = (ROOT / 'scripts/run_selection_switch.sh').read_text()
+    loop = source[source.index('pass=0\nwait_seconds=$HOLD'):]
+    script = '''set -euo pipefail
+selection_run_worker() { echo worker-called; return 80; }
+selection_hold_node() { echo unexpected-hold; return 99; }
+switch_complete() { echo unexpected-completion-check; return 99; }
+''' + loop
+    env = {**os.environ, 'HOLD': str(hold), 'MODE': 'run', 'SWITCH_AUTO_RECOVER': '0',
+           'OUT_ROOT': str(tmp_path), 'PY': sys.executable}
+    result = subprocess.run(['bash', '-c', script], env=env, cwd=tmp_path,
+                            capture_output=True, text=True, check=False, timeout=5)
+    assert result.returncode == 80, result.stdout + result.stderr
+    assert result.stdout.count('worker-called') == 1
+    assert '[WAIT] only checkpoint-review branches remain' in result.stdout
+    assert 'unexpected-' not in result.stdout
+    assert '[hold]' not in result.stdout

@@ -28,6 +28,7 @@ def released_operations_runtime():
     # Exact git-show bytes from 0caa8a0/75d1716, before the lock-observation fix.
     hashes = gpu.code_hashes()
     hashes.update({
+        "src/selection_switch_gpu.py": "48d593db8a6abd8d3363a5fa2b8421cb0528fd4f6e8068e2330d141c5f4f4122",
         "src/selector_pair_gpu.py": "2ac7b5eafdcec149721940c0fd800528d6e5aeec2cfb8e2c8b80e42f2b3b6dcd",
         "scripts/run_selector_pair.sh": "6636fe98423e6e71b7a74dfe4a386bf6ef0d3def0378e4c44e90e391a8e65e90",
     })

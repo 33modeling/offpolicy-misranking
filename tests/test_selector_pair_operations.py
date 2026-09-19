@@ -16,6 +16,7 @@ from test_selector_pair_gpu import bootstrap_predecessor, fake_study
 def previous_runtime():
     value = gpu.code_hashes()
     value.update({
+        "src/selection_switch_gpu.py": "48d593db8a6abd8d3363a5fa2b8421cb0528fd4f6e8068e2330d141c5f4f4122",
         "src/selector_pair_gpu.py": "c1b2d1478bdfb56ef1e7403df084011443552e825db626cde70bf42ed468aa45",
         "scripts/run_selector_pair.sh": "25e3f9156caa200205f12d1501d82da48299947a649b0c7abcf7e815dfac628c",
     })

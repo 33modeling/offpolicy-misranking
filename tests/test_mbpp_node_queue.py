@@ -166,10 +166,12 @@ for index in range(3):
            "EXPERIMENTS_HOLD_SECONDS": "1", "EXPERIMENTS_HOLD_POLL_SECONDS": "1",
            "EXPERIMENTS_INNER": str(inner), "CUDA_VISIBLE_DEVICES": "", "PATH": str(binaries) + os.pathsep + os.environ["PATH"]}
     processes = []
-    def start(node, mode="run", suite=None, **overrides):
+    def start(node, mode="run", suite=None, *, launcher="mbpp", **overrides):
         log = work / f"{node}-{len(processes)}.log"
         handle = log.open("w")
-        arguments = ["bash", "scripts/run_mbpp_experiments.sh", mode]
+        assert launcher in ("mbpp", "generic")
+        script = "run_mbpp_experiments.sh" if launcher == "mbpp" else "run_experiments.sh"
+        arguments = ["bash", f"scripts/{script}", mode]
         if suite is not None:
             arguments.append(suite)
         process = subprocess.Popen(arguments, cwd=repo,
@@ -505,6 +507,62 @@ def test_busy_mbpp_pass_never_sweeps_other_experiment_processes(cluster):
     finally:
         unrelated.terminate()
         unrelated.wait(timeout=5)
+
+
+def test_checkpoint_review_releases_mbpp_controller_once_without_done_or_stopping_peer(cluster):
+    work, start = cluster
+    root = work / "runs/selection-switch-mbpp-quality-v1"
+    root.mkdir(parents=True)
+    (root / "switch.json").write_text("{}")
+    branch = root / "states/s3-t25/points/view-25/selection_full"
+    checkpoint = branch / "policy/checkpoint-8"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "checkpoint_state.json").write_text('{"completed_steps":8}')
+    (branch / "cost.jsonl").write_text('{"existing_cost":"preserve"}\n')
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+              for path in root.rglob("*") if path.is_file()}
+    # A different owner's worker on the same MBPP root is not this node's
+    # cleanup target, even when this controller has nothing runnable left.
+    peer = subprocess.Popen(
+        ["bash", "-c", 'exec -a "python src/selection_switch_gpu.py run" sleep 120'],
+        env={**os.environ, "OUT_ROOT": str(root), "OM_MBPP_CONTROLLER_TOKEN": "unrelated-review-peer"},
+        start_new_session=True)
+    try:
+        process, log = start(
+            "node-checkpoint-review", TEST_FAIL_SUITE="quality", TEST_FAIL_RC="80",
+            TEST_TASK_STATUS="REVIEW", TEST_FAULT_CHECK="1", EXPERIMENTS_CLEAN="1")
+        assert process.wait(timeout=15) == 80, log.read_text()
+        text = log.read_text()
+        assert "[WAIT] only MBPP checkpoint-review branches remain" in text
+        assert "incomplete results preserved" in text
+        assert "[done]" not in text and "[holding]" not in text and "[pass 2]" not in text
+        assert "no node-wide process/GPU sweep" in text
+        own = [row for row in events(work) if row["node"] == "node-checkpoint-review"]
+        assert [row["kind"] for row in own] == ["pass", "admission"]
+        assert not list(root.glob("tasks/*/result.json")), "incomplete quarantine must not publish DONE"
+        assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                          for path in root.rglob("*") if path.is_file()}
+        assert peer.poll() is None
+    finally:
+        peer.terminate()
+        peer.wait(timeout=5)
+
+
+def test_non_mbpp_exit_eighty_keeps_existing_controller_retry_behavior(cluster):
+    work, start = cluster
+    root = work / "runs/selection-switch-math-v1"
+    root.mkdir(parents=True)
+    (root / "switch.json").write_text("{}")
+    process, log = start(
+        "node-non-mbpp-eighty", launcher="generic", SWITCH_ROOT=str(root),
+        SWITCH_SELECTOR="fresh_r", SWITCH_ACCOUNTING="inclusive", SWITCH_GATE="net_gain",
+        TEST_FAIL_SUITE="selection-switch-math", TEST_FAIL_RC="80", TEST_TASK_STATUS="REVIEW",
+        EXPERIMENTS_SKIP_MOPPS="1", EXPERIMENTS_HELP_SIBLINGS="0", EXPERIMENTS_HOLD_SECONDS="40")
+    wait_for(lambda: "[holding]" in log.read_text(), timeout=10)
+    assert process.poll() is None, log.read_text()
+    assert "[WAIT] only MBPP checkpoint-review branches remain" not in log.read_text()
+    assert "[done]" not in log.read_text()
+    assert [row["kind"] for row in events(work)] == ["pass"]
 
 
 def test_explicit_stop_reaps_guard_and_same_node_can_resume(cluster):

@@ -302,6 +302,7 @@ rc_reason() {
     75) echo "node busy: lock held or GPUs occupied" ;;
     78) echo "admission failed: NCCL/CUDA probe" ;;
     79) echo "cooling down after a GPU fault; GPU work resumes when the record expires" ;;
+    80) echo "only checkpoint-review branches remain; saved work preserved, not complete" ;;
     130|143) echo "interrupted" ;;
     skipped) echo "skipped: complete or not prepared" ;;
     node-unavailable) echo "skipped: node busy, failed admission or cooling down" ;;
@@ -758,6 +759,10 @@ while :; do
   if experiments_complete; then
     echo '[done] every experiment this node can work on is complete; releasing the node'
     exit 0
+  fi
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "$rc_own" -eq 80 ] && siblings_complete; then
+    echo '[WAIT] only MBPP checkpoint-review branches remain; incomplete results preserved; releasing this node without another GPU admission'
+    exit 80
   fi
   if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
     case "$rc_switch" in
