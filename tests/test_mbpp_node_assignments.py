@@ -163,7 +163,7 @@ def test_shared_mbpp_controller_visible_without_prepared_suite_and_math_is_exclu
     assert node["state"] == state and not node["assignments"]
     assert node.get("source_root") is None
     output = dashboard.render(data)
-    assert "code-node" in output and state in output
+    assert "code-node -> 배정 없음 | WAIT" in output
     assert re.search(r"NODES\s+1 current", output)
     assert "math-node" not in output and "math-ghost" not in output
     assert all(not root.exists() for root in roots)
@@ -184,7 +184,7 @@ def test_old_node_history_hidden_by_default_but_all_preserves_it_read_only(tmp_p
     output = dashboard.render(data)
     detailed = dashboard.render(data, all_tasks=True)
     assert "current-code-node" in output and "old-code-node" not in output
-    assert "old-code-node" in detailed and "GONE" in detailed
+    assert "old-code-node" in detailed and "오래된 실행 기록" in detailed
     assert "1. current-code-node ->" in output
     assert "1. current-code-node ->" in detailed and "2. old-code-node ->" in detailed
     assert before == contents(tmp_path)
@@ -200,7 +200,7 @@ def test_recent_stale_task_without_launcher_log_remains_visible_as_unconfirmed(t
     assert node["state"] == "STALE" and node["current"] is True
     assert node["evidence_age"] == 90 and not node["assignments"]
     output = dashboard.render(data)
-    assert "recent-stale-node -> 배정 확인 안 됨 (STALE)" in output
+    assert "recent-stale-node -> 배정 없음 | WAIT | - | 실행 신호 끊김" in output
     assert re.search(r"NODES\s+1 current", output)
 
 
@@ -219,7 +219,7 @@ def test_old_assignment_never_hides_same_nodes_current_work_in_another_suite(tmp
     suite_root, task = node["assignments"][0]
     assert Path(suite_root) == roots[1] and task["arm"] == "selection_reduced"
     output = dashboard.render(data)
-    assert "reused-node -> quality / s0/t25 / SEL" in output
+    assert "reused-node -> quality / seed 0 / step 25 / Selection" in output
 
 
 def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_path):
@@ -238,8 +238,7 @@ def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_
     assert node["state"] == "UNKNOWN" and node["current"] is True
     assert not node["assignments"] and node["evidence_age"] == 5
     output = dashboard.render(data)
-    assert "pid-pending-node" in output and "UNKNOWN" in output
-    assert "pid-pending-node -> 배정 확인 안 됨 (UNKNOWN)" in output
+    assert "pid-pending-node -> 배정 없음 | WAIT | - | 배정 확인 안 됨" in output
     assert before == contents(tmp_path)
 
 
@@ -261,11 +260,12 @@ def test_simple_mapping_shows_busy_and_two_unassigned_nodes_without_extra_diagno
         os.utime(path, (NOW - age, NOW - age))
     before = contents(tmp_path)
     output = dashboard.render(dashboard.snapshot(roots, now=NOW), width=80, all_tasks=all_tasks)
-    mapping = output.split("NODE ASSIGNMENTS", 1)[1].split("EVAL: evaluate", 1)[0]
-    assert f"{names[0]} -> 배정 없음 (HOLD)" in mapping
-    assert f"{names[1]} -> 배정 없음 (WAIT)" in mapping
+    mapping = output.split("NODE ASSIGNMENTS", 1)[1].split("ROOT ", 1)[0]
+    joined = re.sub(r"\s+", " ", mapping)
+    assert f"{names[0]} -> 배정 없음 | WAIT" in joined
+    assert f"{names[1]} -> 배정 없음 | WAIT" in joined
     assert mapping.index(names[0]) < mapping.index(names[1])
-    assert "busy-node -> quality / s0/t25 / RND" in mapping
+    assert "busy-node -> quality / seed 0 / step 25 / Random" in joined
     assert ("old-node" in mapping) is all_tasks
     assert not any(text in mapping for text in ("PID", "AGE", "PHASE", "peer work active", "checking receipts"))
     assert all(len(line) <= 80 for line in output.splitlines())
@@ -286,13 +286,35 @@ def test_unassigned_mapping_does_not_invent_a_suite_for_recovery_admission_or_un
     pid.write_text("1234\n")
     os.utime(pid, (NOW - 5, NOW - 5))
     mapping = "\n".join(dashboard.render_nodes(dashboard.snapshot([root], now=NOW), width=120))
-    assert "wait-node -> 배정 없음 (WAIT)" in mapping
-    assert "probe-node -> 배정 확인 안 됨 (ADMIT)" in mapping
-    assert "recover-node -> 배정 확인 안 됨 (LIVE)" in mapping
-    assert "unknown-node -> 배정 확인 안 됨 (UNKNOWN)" in mapping
+    assert "wait-node -> 배정 없음 | WAIT | - | 작업 배정 대기" in mapping
+    assert "probe-node -> 배정 없음 | WAIT | - | 장치 점검 중" in mapping
+    assert "recover-node -> 배정 없음 | WAIT | - | 작업 배정 확인 중" in mapping
+    assert "unknown-node -> 배정 없음 | WAIT | - | 배정 확인 안 됨" in mapping
 
 
 def test_mapping_states_absence_of_evidence_when_no_nodes_are_observed(tmp_path):
     mapping = "\n".join(dashboard.render_nodes(dashboard.snapshot(roots_at(tmp_path), now=NOW), width=120))
     assert "NODES 0 current" in mapping
     assert "No current MBPP node evidence." in mapping
+
+
+def test_parent_branch_and_curve_phase_share_one_numbered_experiment_row(tmp_path):
+    root = roots_at(tmp_path)[1]
+    convergence_root(root)
+    completed_prefix(root)
+    directory = point(root) / "random_reduced"
+    published(directory)
+    running(directory, "curve-worker", now=NOW, phase="curve")
+    running(directory / "curve", "curve-worker", now=NOW, phase="curve-evaluation")
+    before = contents(tmp_path)
+    data = dashboard.snapshot([root], now=NOW)
+    mapping = "\n".join(dashboard.render_nodes(data, width=120))
+    assert mapping.count("1. curve-worker ->") == 1
+    assert "quality / seed 0 / step 25 / Random | RUN | 0.0% |" in mapping
+    assert "단계: curve-evaluation" in mapping and "평가·결과 저장 남음" in mapping
+    assert "Random/curve" not in mapping
+    assert "CURRENT RUN 1" in dashboard.render(data)
+    suite = data["suites"][0]
+    assert suite["branch_counts"]["EVAL"] == 1
+    assert len([task for task in suite["tasks"] if task["kind"] == "branch"]) == 48
+    assert before == contents(tmp_path)

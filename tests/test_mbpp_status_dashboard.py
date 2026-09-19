@@ -3,6 +3,7 @@
 import importlib.util
 import re
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 from test_status_saved_random_integration import six_suites as suite_fixture
@@ -24,14 +25,14 @@ def test_three_suites_have_one_summary_full_matrices_and_one_run_list(six_suites
     report = dashboard.snapshot(mbpp_roots(roots), now=now)
     output = dashboard.render(report)
     assert output.count("MBPP EXPERIMENTS") == 1 and output.count("CURRENT RUN") == 1
-    assert "DONE/TOTAL" in output and "LEFT" in output and "PREFIX" in output
+    assert "Progress" in output and "Completed" in output and "Remarks" in output
     on_policy = next(line for line in output.splitlines() if line.startswith("on-policy "))
-    assert "21/48" in on_policy and "27" in on_policy and "15/15" in on_policy
-    assert "CURRENT RUN 4" in output and "difficulty: NOT PREPARED" in output
+    assert "21/48" in on_policy and "43.8%" in on_policy and "15/15" in on_policy
+    assert "CURRENT RUN 4" in output and "difficulty: 준비 전" in output
     assert "CONTINUATIONS" not in output and "MOPPS" not in output and "MATH" not in output
     assert "ROOT " not in output
     assert output.count("FULL STATUS —") == 3
-    assert len(re.findall(r"^s\d/t\d+\s", output, re.MULTILINE)) == 30
+    assert len(re.findall(r"^\d\s*/\s*\d+\s", output, re.MULTILINE)) == 30
     for index in range(4):
         assert f"live-node-{index}" in output
     assert all(line.count("/48") <= 1 for line in output.splitlines())
@@ -41,12 +42,12 @@ def test_full_matrix_shows_each_completed_random_control_and_unfinished_arm(six_
     roots, _, now = six_suites
     output = dashboard.render(dashboard.snapshot(mbpp_roots(roots), now=now))
     section = output.split("FULL STATUS — on-policy", 1)[1].split("FULL STATUS — quality", 1)[0]
-    rows = [line.split() for line in section.splitlines() if re.match(r"^s\d/t\d+\s", line)]
+    rows = [line.split() for line in section.splitlines() if re.match(r"^\d\s*/\s*\d+\s", line)]
     assert len(rows) == 15
-    assert all(row[2] == "DONE" and row[4] == "DONE" for row in rows)
-    held_out = [row for row in rows if row[1] == "TEST"]
-    assert len(held_out) == 6 and all(row[6] == "DONE" for row in held_out)
-    assert all(row[3] != "DONE" and row[7] != "DONE" for row in rows)
+    assert all(row[4] == "DONE" and row[6] == "DONE" for row in rows)
+    held_out = [row for row in rows if row[3] == "검증"]
+    assert len(held_out) == 6 and all(row[8] == "DONE" for row in held_out)
+    assert all(row[5] != "DONE" and row[9] != "DONE" for row in rows)
     assert "READY" in section and "WAIT" in section
 
 
@@ -58,11 +59,11 @@ def test_all_45_state_rows_are_visible_by_default_for_three_prepared_suites(six_
     prepared(wanted[2])
     before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in wanted[0].parent.rglob("*") if p.is_file()}
     output = dashboard.render(dashboard.snapshot(wanted, now=now))
-    rows = re.findall(r"^s\d/t\d+\s.*$", output, re.MULTILINE)
+    rows = re.findall(r"^(\d)\s*/\s*(\d+)\s", output, re.MULTILINE)
     assert len(rows) == 45
     for seed in range(5):
         for step in (25, 50, 100):
-            assert sum(row.startswith(f"s{seed}/t{step} ") for row in rows) == 3
+            assert rows.count((str(seed), str(step))) == 3
     assert all(status in output for status in ("DONE", "RUN", "READY", "WAIT"))
     assert output.count("CURRENT RUN 4") == 1
     assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in wanted[0].parent.rglob("*") if p.is_file()}
@@ -76,7 +77,10 @@ def test_matrix_preserves_evaluation_resume_and_failure_states(six_suites):
         task["status"] = state
     output = dashboard.render(report)
     section = output.split("FULL STATUS — on-policy", 1)[1].split("FULL STATUS — quality", 1)[0]
-    assert all(state in section for state in ("EVAL", "RESUME", "FAIL", "REVIEW"))
+    joined = " ".join(section.split())
+    assert all(dashboard.REMARKS[state] in joined for state in ("EVAL", "RESUME", "FAILED", "REVIEW"))
+    assert "WAIT" in section
+    assert not re.search(r"\b(?:EVAL|RESUME|FAIL|FAILED|REVIEW)\b", section)
 
 
 def test_all_shows_exact_roots_and_status_never_mutates_files(six_suites):
@@ -86,7 +90,7 @@ def test_all_shows_exact_roots_and_status_never_mutates_files(six_suites):
     before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in runs.rglob("*") if p.is_file()}
     output = dashboard.render(dashboard.snapshot(wanted, now=now), all_tasks=True, width=200)
     assert all(f"ROOT {root}" in output for root in wanted)
-    assert "DONE states/" in output and "RUNNING states/" in output
+    assert "DONE states/" in output and "RUN states/" in output
     assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in runs.rglob("*") if p.is_file()}
 
 
@@ -103,7 +107,7 @@ def test_unreadable_suite_does_not_hide_other_completions_or_workers(six_suites,
     monkeypatch.setattr(dashboard.switch_status, "snapshot", unreadable)
     output = dashboard.render(dashboard.snapshot(wanted, now=now))
     assert "21/48" in output and "CURRENT RUN 4" in output
-    assert "difficulty: ERROR fixture broken manifest" in output
+    assert "difficulty: 설정 읽기 실패: fixture broken manifest" in output
 
 
 def test_cli_accepts_repeated_roots_and_missing_suite_without_initializing(six_suites, monkeypatch, capsys):
@@ -114,7 +118,7 @@ def test_cli_accepts_repeated_roots_and_missing_suite_without_initializing(six_s
         args += ["--root", str(root)]
     monkeypatch.setattr(sys, "argv", args)
     assert dashboard.main() == 0
-    assert "difficulty: NOT PREPARED" in capsys.readouterr().out
+    assert "difficulty: 준비 전" in capsys.readouterr().out
     assert not wanted[2].exists()
 
 
@@ -138,4 +142,48 @@ def test_cli_reports_unreadable_root_as_failure_without_hiding_other_roots(monke
     })
     assert dashboard.main() == 1
     output = capsys.readouterr().out
-    assert "missing: NOT PREPARED" in output and "broken: ERROR unreadable manifest" in output
+    assert "missing: 준비 전" in output and "broken: 설정 읽기 실패: unreadable manifest" in output
+
+
+def test_only_four_display_statuses_full_names_and_evaluation_budget_remarks(six_suites):
+    roots, _, now = six_suites
+    report = dashboard.snapshot(mbpp_roots(roots), now=now)
+    branches = [task for task in report["suites"][0]["tasks"] if task["kind"] == "branch"]
+    for task, state in zip(branches, ("EVAL", "BUDGET", "RESUME", "FAILED", "REVIEW", "INVALID", "SAVING", "STALE")):
+        task["status"] = state
+    before = deepcopy(report)
+    output = dashboard.render(report, width=200)
+    assert all(name in output for name in ("Selection", "Random", "Full selection", "Full random", "Gate policy"))
+    assert "평가·결과 저장 남음" in output and "예산 소진으로 중단" in output
+    assert "Remarks" in output and "WAIT" in output
+    assert not re.search(r"\b(?:SEL|RND|FULL-S|FULL-R|DEV|TEST|EVAL|RESUME|FAIL|FAILED|REVIEW|INVALID|SAVING|STALE|BUDGET|RUNNING)\b", output)
+    assert report == before
+
+
+def test_progress_is_completed_fraction_not_elapsed_or_timeout(six_suites):
+    roots, _, now = six_suites
+    report = dashboard.snapshot(mbpp_roots(roots), now=now)
+    for elapsed in (1, 1000000):
+        for suite in report["suites"]:
+            for task in suite.get("tasks", []):
+                task.update(seconds=elapsed, timeout=10)
+        output = dashboard.render(report)
+        summary = next(line for line in output.splitlines() if line.startswith("on-policy "))
+        assert "43.8%" in summary and "21/48" in summary
+    assert dashboard.completion(report["suites"][0]) == ("43.8%", 21, 48)
+
+
+def test_full_korean_remarks_wrap_without_exceeding_terminal_columns(six_suites):
+    roots, _, now = six_suites
+    report = dashboard.snapshot(mbpp_roots(roots), now=now)
+    branches = [task for task in report["suites"][0]["tasks"] if task["kind"] == "branch"]
+    branches[0]["status"] = "EVAL"
+    branches[1]["status"] = "BUDGET"
+    for width in (80, 100, 120):
+        output = dashboard.render(report, width=width)
+        assert all(dashboard.columns(line) <= width for line in output.splitlines())
+        assert len(re.findall(r"^\d\s*/\s*\d+\s", output, re.MULTILINE)) == 30
+    for remark in ("평가·결과 저장 남음", "예산 소진으로 중단"):
+        wrapped = dashboard.wrap(remark, 8)
+        assert "".join(wrapped).replace(" ", "") == remark.replace(" ", "")
+        assert all(dashboard.columns(line) <= 8 for line in wrapped)

@@ -81,9 +81,10 @@ def test_real_mbpp_watch_keeps_saved_results_and_live_work_visible_not_math(tmp_
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=15, check=False)
     assert result.returncode == 143, result.stdout + result.stderr
     assert result.stdout.count("MBPP EXPERIMENTS") == 2
-    assert len(re.findall(r"^on-policy\s+21/48\s+27\s+1\b", result.stdout, re.MULTILINE)) == 2
+    assert len(re.findall(r"^on-policy\s+43\.8%\s+21/48\s+\d+\s+21\s+\d+\s+1\b", result.stdout, re.MULTILINE)) == 2
     assert result.stdout.count("CURRENT RUN 1") == 2
     assert result.stdout.count("mbpp-active-node") >= 2
     assert "wrong/math-root" not in result.stdout and "MOPPS COMPARISON" not in result.stdout
-    assert "quality: NOT PREPARED" in result.stdout and "difficulty: NOT PREPARED" in result.stdout
+    assert "quality: 준비 전" in result.stdout and "difficulty: 준비 전" in result.stdout
+    assert "Remarks" in result.stdout and "Full selection" in result.stdout
     assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in work.rglob("*") if path.is_file()}
