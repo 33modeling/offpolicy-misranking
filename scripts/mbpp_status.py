@@ -93,62 +93,26 @@ def node_assignments(data):
                                                    switch_status.node_view.host_sort_key(node["host"])))
 
 
-def wrapped_table(headers, rows, widths):
-    """Wrap inside columns instead of truncating distinguishing node suffixes."""
-    lines = []
-    for row in [headers, *rows]:
-        cells = [textwrap.wrap(str(value), width=width, break_on_hyphens=False) or [""]
-                 for value, width in zip(row, widths)]
-        for index in range(max(map(len, cells))):
-            lines.append("  ".join((cell[index] if index < len(cell) else "").ljust(width)
-                                   for cell, width in zip(cells, widths)).rstrip())
-    return lines
-
-
 def render_nodes(data, *, width, all_nodes=False):
+    """One full node name -> experiment mapping, with no interleaved columns."""
     nodes = node_assignments(data)
     current = [node for node in nodes if node["current"]]
-    running = sum(bool(node["assignments"]) for node in current)
-    lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current | RUN {running} | OTHER {len(current) - running}",
-             "RUN = fresh task heartbeat; other rows show launcher evidence, not confirmed GPU activity."]
-    rows, details = [], []
-    labels = {str(Path(suite["root"]).resolve()): label(suite["root"]) for suite in data["suites"]}
+    lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current", "NODE -> EXPERIMENT"]
     for node in nodes:
         if not all_nodes and not node["current"]:
             continue
         if node["assignments"]:
             for root, task in node["assignments"]:
-                arm = switch_status.ARM_LABELS.get(task["arm"], task["arm"])
-                step = task.get("training_step")
-                age = task.get("heartbeat_age")
-                rows.append([node["host"], "RUN", label(root), f"s{task['seed']}/t{task['step']} {arm}",
-                             task.get("phase") or "?", step if step is not None else "-",
-                             task.get("pid") or "?", switch_status.duration(age) if age is not None else "?"])
-            if len(node["assignments"]) > 1:
-                details.append(f"{node['host']}: {len(node['assignments'])} fresh task records; all shown above.")
+                arm = "/".join(switch_status.ARM_LABELS.get(part, part) for part in task["arm"].split("/"))
+                lines.append(f"{node['host']} -> {label(root)} / s{task['seed']}/t{task['step']} / {arm}")
         else:
-            age = node.get("evidence_age")
-            suite = labels.get(node.get("source_root"), "MBPP queue")
-            detail = node.get("reason") or node.get("detail") or "No fresh task heartbeat; assignment unconfirmed."
-            if not all_nodes:
-                detail = switch_status.clip(detail, 200)
-            phase = {"ADMIT": "GPU admission", "HOLD": "between passes", "WAIT": "waiting",
-                     "COOL": "GPU cooldown"}.get(node["state"], "unconfirmed")
-            if node.get("detail", "").startswith("[recover-cost]"):
-                phase = "cost recovery"
-            rows.append([node["host"], node["state"], suite, "-", phase, "-",
-                         node.get("launcher_pid") or "?", switch_status.duration(age) if age is not None else "?"])
-            details.append(f"{node['host']}: {detail}")
-    # Even at 80 columns all identity text is kept, with continuation lines.
-    widths = [width - 81, 7, 12, 17, 14, 5, 7, 5] if width >= 100 else [15, 7, 10, 12, 9, 4, 5, 4]
-    lines += wrapped_table(["NODE", "STATUS", "SUITE", "TASK", "PHASE", "STEP", "PID", "AGE"], rows, widths)
-    if not rows:
-        lines.append("No current MBPP node evidence; saved experiment results are retained.")
-    lines += details
+            assignment = "배정 없음" if node["state"] in {"WAIT", "HOLD"} else "배정 확인 안 됨"
+            lines.append(f"{node['host']} -> {assignment} ({node['state']})")
+    if not nodes or not all_nodes and not current:
+        lines.append("No current MBPP node evidence.")
     hidden = len(nodes) - len(current)
     if hidden and not all_nodes:
-        lines.append(f"{hidden} old node(s) grouped in history; status --all shows them. Nothing deleted.")
-    lines.append("AGE: last task heartbeat (RUN) or launcher evidence. '-' TASK: no confirmed task assignment.")
+        lines.append(f"{hidden} old node(s) hidden; --all shows history.")
     return lines
 
 

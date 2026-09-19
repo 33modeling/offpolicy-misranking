@@ -107,12 +107,9 @@ def test_all_twelve_long_node_names_and_task_assignments_are_visible(tmp_path, w
         running(point(root, seed, step) / "random_reduced", host, now=NOW, phase="train")
     data = dashboard.snapshot([root], now=NOW)
     output = dashboard.render(data, width=width)
-    # A long NODE value wraps in its own first column. Join that
-    # column, not whole rows (which would interleave SUITE/TASK with the name).
+    # Long node names wrap without interleaved table columns or truncation.
     node_section = output.split("NODE ASSIGNMENTS", 1)[1]
-    node_header = next(line for line in node_section.splitlines() if line.startswith("NODE ") and "STATUS" in line)
-    node_width = node_header.index("STATUS") - 2
-    node_column = "".join(line[:node_width].strip() for line in node_section.splitlines())
+    node_column = re.sub(r"\s+", "", node_section)
     assert re.search(r"NODES\s+12 current", output)
     assert len([node for node in dashboard.node_assignments(data) if node["state"] == "RUN"]) == 12
     for host in hosts:
@@ -195,8 +192,8 @@ def test_recent_stale_task_without_launcher_log_remains_visible_as_unconfirmed(t
     assert node["state"] == "STALE" and node["current"] is True
     assert node["evidence_age"] == 90 and not node["assignments"]
     output = dashboard.render(data)
-    assert "recent-stale-node" in output and "STALE" in output and "unconfirmed" in output
-    assert re.search(r"NODES\s+1 current\s*\| RUN 0", output)
+    assert "recent-stale-node -> 배정 확인 안 됨 (STALE)" in output
+    assert re.search(r"NODES\s+1 current", output)
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -214,7 +211,7 @@ def test_old_assignment_never_hides_same_nodes_current_work_in_another_suite(tmp
     suite_root, task = node["assignments"][0]
     assert Path(suite_root) == roots[1] and task["arm"] == "selection_reduced"
     output = dashboard.render(data)
-    assert re.search(r"NODES\s+1 current\s*\| RUN 1", output)
+    assert "reused-node -> quality / s0/t25 / SEL" in output
 
 
 def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_path):
@@ -234,5 +231,60 @@ def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_
     assert not node["assignments"] and node["evidence_age"] == 5
     output = dashboard.render(data)
     assert "pid-pending-node" in output and "UNKNOWN" in output
-    assert re.search(r"NODES\s+1 current\s*\| RUN 0", output)
+    assert "pid-pending-node -> 배정 확인 안 됨 (UNKNOWN)" in output
     assert before == contents(tmp_path)
+
+
+@pytest.mark.parametrize("all_tasks", [False, True])
+def test_simple_mapping_shows_busy_and_two_unassigned_nodes_without_extra_diagnostics(tmp_path, all_tasks):
+    roots = roots_at(tmp_path)
+    for root in roots:
+        prepared(root)
+    running(point(roots[1]) / "random_reduced", "busy-node", now=NOW, phase="train")
+    logs = roots[0].parent / "experiments/logs"
+    logs.mkdir(parents=True)
+    names = ["run1234-mbpp-2-long-cluster-allocation-g1234", "run1234-mbpp-10-long-cluster-allocation-g5678"]
+    for host, state, reason in ((names[0], "holding", "peer work active"),
+                                (names[1], "waiting", "shared prefixes pending"),
+                                ("old-node", "holding", "old history")):
+        path = logs / f"console.mbpp.{host}_.log"
+        path.write_text(f"[{state}] {reason}\n")
+        age = 900 if host == "old-node" else 5
+        os.utime(path, (NOW - age, NOW - age))
+    before = contents(tmp_path)
+    output = dashboard.render(dashboard.snapshot(roots, now=NOW), width=80, all_tasks=all_tasks)
+    mapping = output.split("NODE ASSIGNMENTS", 1)[1].split("EVAL: evaluate", 1)[0]
+    assert f"{names[0]} -> 배정 없음 (HOLD)" in mapping
+    assert f"{names[1]} -> 배정 없음 (WAIT)" in mapping
+    assert mapping.index(names[0]) < mapping.index(names[1])
+    assert "busy-node -> quality / s0/t25 / RND" in mapping
+    assert ("old-node" in mapping) is all_tasks
+    assert not any(text in mapping for text in ("PID", "AGE", "PHASE", "peer work active", "checking receipts"))
+    assert all(len(line) <= 80 for line in output.splitlines())
+    assert before == contents(tmp_path)
+
+
+def test_unassigned_mapping_does_not_invent_a_suite_for_recovery_admission_or_unknown(tmp_path):
+    root = roots_at(tmp_path)[0]
+    logs = root.parent / "experiments/logs"
+    logs.mkdir(parents=True)
+    for host, line in (("wait-node", "[waiting] peers busy"),
+                       ("probe-node", "[nccl-preflight] probing GPUs"),
+                       ("recover-node", "[recover-cost] checking receipts")):
+        path = logs / f"console.mbpp.{host}_.log"
+        path.write_text(line + "\n")
+        os.utime(path, (NOW - 5, NOW - 5))
+    pid = logs / "launcher.mbpp.unknown-node_.pid"
+    pid.write_text("1234\n")
+    os.utime(pid, (NOW - 5, NOW - 5))
+    mapping = "\n".join(dashboard.render_nodes(dashboard.snapshot([root], now=NOW), width=120))
+    assert "wait-node -> 배정 없음 (WAIT)" in mapping
+    assert "probe-node -> 배정 확인 안 됨 (ADMIT)" in mapping
+    assert "recover-node -> 배정 확인 안 됨 (LIVE)" in mapping
+    assert "unknown-node -> 배정 확인 안 됨 (UNKNOWN)" in mapping
+
+
+def test_mapping_states_absence_of_evidence_when_no_nodes_are_observed(tmp_path):
+    mapping = "\n".join(dashboard.render_nodes(dashboard.snapshot(roots_at(tmp_path), now=NOW), width=120))
+    assert "NODES 0 current" in mapping
+    assert "No current MBPP node evidence." in mapping
