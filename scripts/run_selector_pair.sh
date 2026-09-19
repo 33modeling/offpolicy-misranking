@@ -19,7 +19,7 @@ export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
   cpu)
     export CUDA_VISIBLE_DEVICES=""
-    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py "$@" ;;
+    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py tests/test_selector_pair_queue.py tests/test_selector_pair_queue_migration.py tests/test_selector_pair_queue_barrier.py "$@" ;;
   init|prepare|fit|report|status|check-code)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" "$@" ;;
@@ -31,13 +31,14 @@ if [ "$#" -ne 0 ]; then
 fi
 pair_cpu_step() {
   local rc=0
-  CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py "$1" --root "$PAIR_ROOT" || rc=$?
-  # The existing controller owns the run. Observation is a successful no-op;
-  # do not proceed to node locks, GPU probes, preparation or another worker.
-  [ "$rc" -ne 75 ] || exit 0
-  return "$rc"
+  while :; do
+    rc=0
+    CUDA_VISIBLE_DEVICES="" "$PY" src/selector_pair_gpu.py "$1" --root "$PAIR_ROOT" || rc=$?
+    [ "$rc" -eq 75 ] || return "$rc"
+    echo '[WAIT] pair preparation is in progress on another node; retry in 15s'
+    sleep 15
+  done
 }
-pair_cpu_step check-running
 if [ "$MODE" = run ] || [ "$MODE" = develop ]; then
   # No arguments needed: create the default setup and validate real inputs,
   # or resume the existing frozen request before admitting any GPU work.

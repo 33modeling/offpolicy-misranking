@@ -17,6 +17,7 @@ from pathlib import Path
 import statistics
 import sys
 import time
+import uuid
 from types import SimpleNamespace
 
 import selection_gate as core
@@ -43,10 +44,13 @@ PRE_RESOURCES_CODE = "d5d354a91ec95ae5d941c619a5a50da10e1606072a36dbe06e83d974ae
 PRE_BUDGET_STOP_EVALUATION_CODE = "bfe7b00d57a365d9ddd8936422a723c86938e2feb1f82ae5c72d648a42ce7c30"
 PRE_PAIR_OPERATIONS_CODE = "ad310eefce6b1d6e9d7f9ed634b0a121b491fb496899870363e2affb7f42adb7"
 PRE_PAIR_LOCK_OBSERVATION_CODE = "89983f762d8fe1ea0af35bda9088e48c6ff2335d6d2c22192471377b196d0798"
+# Exact released 1aebf1d code map, before distributed task leases.
+PRE_PAIR_DISTRIBUTED_CODE = "76dd34fc37746ad2a1be05a8e29c7c13c620b2d281919acbea0b28119656b201"
 PRE_SHARED_RUNTIME_CODES = {
     PRE_BUDGET_STOP_EVALUATION_CODE,
     PRE_PAIR_OPERATIONS_CODE,
     PRE_PAIR_LOCK_OBSERVATION_CODE,
+    PRE_PAIR_DISTRIBUTED_CODE,
     "9eab1b016f5f897a4bd3b85998a25b1bc724b8bf3383ef9e6cfe2ba43f9a6d67",
     "cec86006408b80d7901f3f44a3b113d702c860e6c4a84a40cd2422e6438ef27a",
     "b5dfeae35bc95922893636bc5ad1c6d801e68648f1d60907353a016e7c0c1738",
@@ -144,6 +148,24 @@ def pair_lease(path):
             stack.enter_context(base.lease(path))
         except BlockingIOError as exc:
             raise PairLockBusy(path) from exc
+        yield
+
+
+@contextlib.contextmanager
+def queue_lease(path, *, shared=False, wait_seconds=15.):
+    """Shared worker lifetime vs legacy exclusive controller; never break locks."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        while True:
+            try:
+                fcntl.flock(handle, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+            except BlockingIOError:
+                detail = ("previous single-controller run or preparation must finish before queue handoff"
+                          if shared else "another node is publishing the shared preparation/decision barrier")
+                print(f"[WAIT] host={base.node_id()} {detail}; retry in {wait_seconds:g}s", flush=True)
+                time.sleep(wait_seconds)
+            else:
+                break
         yield
 
 
@@ -276,7 +298,8 @@ def bind_startup_runtime(root, recorded):
             "resources_runtime_sha256": base.digest(resources_path),
             "change": "shared Switch runtime recovery and validated checkpoint retention only; pair design, selectors and trainer unchanged",
             "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or parent restart",
-        }, {PRE_BUDGET_STOP_EVALUATION_CODE, PRE_PAIR_OPERATIONS_CODE, PRE_PAIR_LOCK_OBSERVATION_CODE})
+        }, {PRE_BUDGET_STOP_EVALUATION_CODE, PRE_PAIR_OPERATIONS_CODE,
+            PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE})
         if core.fingerprint(code_hashes()) != PRE_BUDGET_STOP_EVALUATION_CODE:
             evaluation_path = root / "budget-stop-evaluation-runtime.json"
             switch.bind_reviewed_runtime_receipt(evaluation_path, {
@@ -285,7 +308,7 @@ def bind_startup_runtime(root, recorded):
                 "shared_checkpoint_recovery_runtime_sha256": base.digest(recovery_path),
                 "change": "shared Switch completed-policy evaluation resume only; pair design, selectors and trainer unchanged",
                 "cost_policy": "preserve all protocols, receipts, policies, costs, choices and budgets; no refunds or retraining",
-            }, {PRE_PAIR_OPERATIONS_CODE, PRE_PAIR_LOCK_OBSERVATION_CODE})
+            }, {PRE_PAIR_OPERATIONS_CODE, PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE})
             operations_path = root / "pair-operations-runtime.json"
             switch.bind_reviewed_runtime_receipt(operations_path, {
                 "schema": "offpolicy-selector-pair/operations-runtime-v1",
@@ -293,13 +316,21 @@ def bind_startup_runtime(root, recorded):
                 "evaluation_runtime_sha256": base.digest(evaluation_path),
                 "change": "read-only status, bounded branch retries with NCCL admission, exhausted-allocation guard",
                 "cost_policy": "preserve selectors, trainer, target, caps, checkpoints, decisions and all prior costs",
-            }, {PRE_PAIR_LOCK_OBSERVATION_CODE})
-            base.bind(root / "pair-lock-observation-runtime.json", {
+            }, {PRE_PAIR_LOCK_OBSERVATION_CODE, PRE_PAIR_DISTRIBUTED_CODE})
+            observation_path = root / "pair-lock-observation-runtime.json"
+            switch.bind_reviewed_runtime_receipt(observation_path, {
                 "schema": "offpolicy-selector-pair/lock-observation-runtime-v1",
                 "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                 "operations_runtime_sha256": base.digest(operations_path),
                 "change": "observe an existing controller before setup/GPU admission; no duplicate worker",
                 "cost_policy": "preserve targets, allocations, costs, results, decisions and all previous receipts",
+            }, {PRE_PAIR_DISTRIBUTED_CODE})
+            base.bind(root / "pair-distributed-runtime.json", {
+                "schema": "offpolicy-selector-pair/distributed-runtime-v1",
+                "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                "lock_observation_runtime_sha256": base.digest(observation_path),
+                "change": "matched-state leases across nodes with shared preparation and fit/freeze barriers",
+                "cost_policy": "preserve selectors, trainer, targets, caps, all saved work, costs, decisions and previous receipts; no refunds",
             })
 
 
@@ -368,6 +399,13 @@ def preparation_options(root, overrides=None):
 
 
 def ensure_prepared(root):
+    path = root / "pair.json"
+    if path.exists() and core.read(path).get("schema") == pair.SCHEMA:
+        # New controllers may join a running queue. An old exclusive controller
+        # must release its lease first: it does not know the new state locks.
+        with queue_lease(root / ".pair.lock", shared=True):
+            with queue_lease(root / ".pair-runtime.lock"):
+                return manifest(root)
     value = initialize(root)
     if value["schema"] == BOOTSTRAP_SCHEMA:
         prepare(preparation_options(root))
@@ -571,6 +609,165 @@ def finish_pass(root, stage, failures):
     if failures:
         raise IncompletePairRun(f"{stage}: {len(failures)} task(s) remain; other available work was attempted; "
                                 f"saved work and costs preserved; see {root / (stage + '-pass.json')}")
+
+
+def distributed_stage(root, p, devices, stage, *, wait_seconds=15.):
+    """Claim matched states, not the entire study; retain within-state order.
+
+    Every caller from main holds a shared .pair.lock for its lifetime. That
+    prevents unsafe mixing with the old exclusive, single-controller runner.
+    GPU/cost/task leases remain in execute; a dead node releases its state
+    lease automatically and another node can resume the saved work.
+    """
+    if stage not in {"development", "test"}:
+        raise ValueError("unknown pair queue stage")
+    choices = decisions(root, p) if stage == "test" else None
+    seeds = pair.DEV_SEEDS if stage == "development" else pair.TEST_SEEDS
+    states = [(seed, step) for seed in seeds for step in pair.STEPS]
+    verified, failed = set(), {}
+    worker = uuid.uuid4().hex
+    worker_path = root / "queue-workers" / f"{worker}.json"
+    observation = {"host": base.node_id(), "pid": os.getpid(), "stage": stage,
+                   "protocol_id": p["protocol_id"], "worker": worker}
+    waited = 0.
+
+    def record(state, task=None):
+        core.atomic_json(worker_path, {**observation, "state": state, "task": task,
+                         "updated": time.time(), "verified_states": len(verified),
+                         "total_states": len(states), "queue_wait_wall_seconds": waited,
+                         "failures": list(failed.values())})
+
+    def result_row(seed, step):
+        return (development_row(root, p, seed, step) if stage == "development"
+                else test_row(root, p, seed, step, choices))
+
+    try:
+        while len(verified) < len(states):
+            busy = []
+            for seed, step in states:
+                key = (seed, step)
+                if key in verified:
+                    continue
+                folder = root / stage / f"s{seed}-t{step}"
+                path = folder / "result.json"
+                # A peer may have repaired a state that failed on this node.
+                if key in failed and not path.exists():
+                    continue
+                try:
+                    with pair_lease(folder / ".state.lock"):
+                        if path.exists():
+                            base.bind(path, result_row(seed, step))
+                            verified.add(key)
+                            failed.pop(key, None)
+                            continue
+                        identity, entries = verify_pair(root, seed, step)
+                        record("RUN", f"{stage}/s{seed}-t{step}")
+                        print(f"[RUN] host={base.node_id()} {stage}/s{seed}-t{step}", flush=True)
+                        if stage == "development":
+                            base.bind(folder / "state.json", {"state_id": identity, "protocol_id": p["protocol_id"]})
+                            names = tuple(pair.SELECTORS)
+                            tasks = [(entries[name], "selection_reduced") for name in names]
+                        else:
+                            decision = choices[f"s{seed}-t{step}"]
+                            if identity != decision["state_id"]:
+                                raise ValueError("test parent state differs from the frozen decision")
+                            tasks = [(entries["on_policy"], "selection_full"),
+                                     (entries["cached"], "selection_full"),
+                                     (entries[f"adaptive-{decision['selector']}"], "selection_full"),
+                                     (entries["on_policy"], "random_full")]
+                        errors = []
+                        for entry, arm in tasks if seed % 2 == 0 else tasks[::-1]:
+                            failure = attempt_branch(root, p, entry, arm, devices)
+                            if failure:
+                                errors.append(failure)
+                        if errors:
+                            failed[key] = {"state": f"s{seed}-t{step}", "failures": errors}
+                        else:
+                            base.bind(path, result_row(seed, step))
+                            verified.add(key)
+                except PairLockBusy as exc:
+                    if exc.path != folder / ".state.lock":
+                        raise
+                    busy.append(f"s{seed}-t{step}")
+                except NodeAdmissionError:
+                    raise
+                except (ValueError, OSError, RuntimeError) as exc:
+                    failed[key] = {"state": f"s{seed}-t{step}", "error": f"{type(exc).__name__}: {exc}"}
+                    print(f"[WAIT] {stage}/s{seed}-t{step}: {exc}; trying other states", flush=True)
+            if len(verified) == len(states):
+                record("DONE")
+                return
+            if not busy:
+                record("WAIT")
+                raise IncompletePairRun(f"{stage}: {len(states)-len(verified)} state(s) remain; "
+                                        f"saved work preserved; see {worker_path}")
+            record("WAIT", "peer states: " + ", ".join(busy))
+            print(f"[WAIT] host={base.node_id()} {stage}: verified {len(verified)}/{len(states)}; "
+                  f"peer states={','.join(busy)}; checking for the next task in {wait_seconds:g}s", flush=True)
+            started = time.monotonic()
+            try:
+                time.sleep(wait_seconds)
+            finally:
+                waited += time.monotonic() - started
+    except BaseException:
+        record("WAIT", "worker stopped; existing results/checkpoints preserved")
+        raise
+
+
+@contextlib.contextmanager
+def completed_state_leases(root, stages=("development",), *, require_complete=True):
+    """Use the same locks for barrier validation as for peer state validation."""
+    folders = []
+    for stage in stages:
+        seeds = pair.DEV_SEEDS if stage == "development" else pair.TEST_SEEDS
+        for seed in seeds:
+            for step in pair.STEPS:
+                folder = root / stage / f"s{seed}-t{step}"
+                if (folder / "result.json").exists():
+                    folders.append(folder)
+                elif require_complete:
+                    raise IncompletePairRun(f"{stage}/s{seed}-t{step}: validated result is not published")
+    with contextlib.ExitStack() as stack:
+        for folder in folders:
+            stack.enter_context(queue_lease(folder / ".state.lock"))
+        yield
+
+
+def admission_required(root, command):
+    """A publication hint may skip GPU admission, never scientific validation."""
+    if command == "freeze":
+        return not ((root / "model.json").is_file() and (root / "test-decisions.json").is_file())
+    if command not in {"run", "develop", "test"}:
+        return False
+    stages = ("development", "test") if command == "run" else ("development" if command == "develop" else "test",)
+    if command in {"run", "test"} and not all((root / name).is_file() for name in ("model.json", "test-decisions.json")):
+        return True
+    return any(not (root / stage / f"s{seed}-t{step}" / "result.json").is_file()
+               for stage in stages for seed in (pair.DEV_SEEDS if stage == "development" else pair.TEST_SEEDS)
+               for step in pair.STEPS)
+
+
+def run_distributed(root, p, devices, command):
+    if command in {"run", "develop"}:
+        distributed_stage(root, p, devices, "development")
+        if command == "develop":
+            return
+    # Only this short barrier is exclusive across queue workers. No held-out
+    # execution starts until every development label and all six decisions
+    # have been validated and frozen. Long GPU continuations are outside it.
+    with queue_lease(root / ".pair-barrier.lock"):
+        if command in {"run", "fit"}:
+            with completed_state_leases(root):
+                fit(root, p)
+            finish_pass(root, "development", [])
+        if command in {"run", "freeze"}:
+            freeze(root, p)
+    if command in {"run", "test"}:
+        distributed_stage(root, p, devices, "test")
+        with queue_lease(root / ".pair-barrier.lock"):
+            with completed_state_leases(root, ("development", "test"), require_complete=False):
+                report(root, p)
+            finish_pass(root, "test", [])
 
 
 def final_receipt(directory, events, completed, adapter):
@@ -916,7 +1113,12 @@ def main():
         if value["schema"] == BOOTSTRAP_SCHEMA:
             print(json.dumps({"root": str(args.root), **value}, indent=2))
             return
-    p = ensure_prepared(args.root) if args.command in {"run", "develop", "ensure-prepared"} else manifest(args.root)
+    if args.command in {"run", "develop", "ensure-prepared"}:
+        p = ensure_prepared(args.root)
+    else:
+        with queue_lease(args.root / ".pair.lock", shared=True):
+            with queue_lease(args.root / ".pair-runtime.lock"):
+                p = manifest(args.root)
     if args.command == "init":
         print(f"[prepared] existing experiment preserved: {args.root / 'pair.json'}")
         return
@@ -926,22 +1128,15 @@ def main():
     if args.command == "check-code":
         print("[verified] pair and legacy code compatible (including reviewed operational migrations)")
         return
-    if args.command == "report":
-        with pair_lease(args.root / ".pair.lock"):
-            report(args.root, p)
-        return
-    with pair_lease(args.root / ".pair.lock"):
+    with queue_lease(args.root / ".pair.lock", shared=True):
+        if args.command == "report":
+            with queue_lease(args.root / ".pair-barrier.lock"):
+                with completed_state_leases(args.root, ("development", "test"), require_complete=False):
+                    report(args.root, p)
+            return
         resource_diagnostics()
-        devices = admit_node(args.root, p) if args.command in ("run", "develop", "freeze", "test") else None
-        if args.command in ("run", "develop"):
-            develop(args.root, p, devices)
-        if args.command in ("run", "fit"):
-            fit(args.root, p)
-        if args.command in ("run", "freeze"):
-            freeze(args.root, p)
-        if args.command in ("run", "test"):
-            test(args.root, p, devices)
-            report(args.root, p)
+        devices = admit_node(args.root, p) if admission_required(args.root, args.command) else None
+        run_distributed(args.root, p, devices, args.command)
 
 
 if __name__ == "__main__":

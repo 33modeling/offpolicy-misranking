@@ -1,17 +1,21 @@
-"""Duplicate pair launches observe their owner without touching GPU work."""
+"""Queue workers join shared leases or wait safely for legacy controllers."""
 
 import errno
 import fcntl
 import os
+import select
+import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 import selection_gate as core
 import selection_gate_gpu as base
 import selector_pair_gpu as gpu
+from test_selector_pair_lock_migration import frozen_work
 
 
 def contents(root):
@@ -131,11 +135,38 @@ def test_check_running_cli_exit_code_and_files_are_observation_only(tmp_path, he
             assert not root.exists()
 
 
-@pytest.mark.parametrize("mode", ["run", "develop", "freeze", "test"])
-@pytest.mark.parametrize("bootstrap", [False, True])
-def test_shell_duplicate_launch_succeeds_before_source_checks_or_gpu_admission(tmp_path, mode, bootstrap):
+def wait_for_output(process, needle, timeout=8):
+    output, deadline = "", time.monotonic() + timeout
+    while needle not in output and time.monotonic() < deadline:
+        if select.select([process.stdout], [], [], .1)[0]:
+            chunk = os.read(process.stdout.fileno(), 65536).decode()
+            if not chunk:
+                break
+            output += chunk
+        elif process.poll() is not None:
+            break
+    assert needle in output, f"did not observe {needle!r}; exit={process.poll()}; output={output}"
+    return output
+
+
+def stop_own_process(process):
+    if process.poll() is None:
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        return process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        return process.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("mode,kind", [
+    (mode, "frozen") for mode in ("run", "develop", "freeze", "test")
+] + [(mode, kind) for mode in ("run", "develop") for kind in ("missing", "bootstrap")])
+def test_shell_legacy_controller_waits_before_source_checks_or_gpu_admission(tmp_path, mode, kind):
     root = tmp_path / "pair"
-    if bootstrap:
+    if kind == "frozen":
+        frozen_work(root, gpu.code_hashes())
+    elif kind == "bootstrap":
         core.atomic_json(root / "pair.json", {"schema": gpu.BOOTSTRAP_SCHEMA,
                                               "status": "preparation_incomplete"})
     progress(root)
@@ -152,16 +183,73 @@ def test_shell_duplicate_launch_succeeds_before_source_checks_or_gpu_admission(t
            "PAIR_GPU_TEST_MARKER": str(gpu_marker)}
     with base.lease(root / ".pair.lock"):
         before = contents(tmp_path)
-        process = subprocess.run(["bash", "scripts/run_selector_pair.sh", mode], cwd=base.ROOT,
-                                 env=env, capture_output=True, text=True, timeout=20)
-        assert process.returncode == 0, process.stdout + process.stderr
-        assert "[already running]" in process.stdout
-        assert "run284000-wts-10-g1234" in process.stdout and "evaluate" in process.stdout
-        assert "[node]" not in process.stdout and "certified prefix source is missing" not in process.stderr
-        assert "pair lock busy" not in process.stderr and "Traceback" not in process.stderr
+        process = subprocess.Popen(["bash", "scripts/run_selector_pair.sh", mode], cwd=base.ROOT,
+                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, start_new_session=True)
+        try:
+            output = wait_for_output(process, "[WAIT]")
+            assert process.poll() is None, "the worker must wait, not silently exit without joining"
+            assert "retry in 15s" in output
+        finally:
+            remaining, errors = stop_own_process(process)
+        assert "[node]" not in output + remaining
+        assert "certified prefix source is missing" not in errors
+        assert "pair lock busy" not in errors
         assert not gpu_marker.exists() and not (tmp_path / "missing-storage").exists()
         assert contents(tmp_path) == before
-        assert (root / "pair.json").exists() is bootstrap
+        assert (root / "pair.json").exists() is (kind != "missing")
+
+
+def test_prepared_worker_can_join_an_existing_shared_worker_without_gpu_work(tmp_path):
+    value = frozen_work(tmp_path, gpu.code_hashes())
+    lock = tmp_path / ".pair.lock"
+    lock.touch()
+    with lock.open("rb") as held:
+        fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        before = contents(tmp_path)
+        process = subprocess.run([sys.executable, str(base.ROOT / "src/selector_pair_gpu.py"),
+                                  "ensure-prepared", "--root", str(tmp_path)],
+                                 env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+                                 capture_output=True, text=True, timeout=10)
+        assert process.returncode == 0, process.stdout + process.stderr
+        assert "[ready]" in process.stdout and "[WAIT]" not in process.stdout
+        assert core.read(tmp_path / "pair.json") == value
+        after = contents(tmp_path)
+        after.pop(Path(".pair-runtime.lock"))
+        assert before == after
+
+
+def test_prepared_worker_resumes_automatically_after_legacy_lease_releases(tmp_path):
+    frozen_work(tmp_path, gpu.code_hashes())
+    code = """
+from pathlib import Path
+import sys
+import selector_pair_gpu as gpu
+original = gpu.queue_lease
+gpu.queue_lease = lambda path, **options: original(path, wait_seconds=.01, **options)
+gpu.ensure_prepared(Path(sys.argv[1]))
+print('[joined]', flush=True)
+"""
+    process = None
+    try:
+        with base.lease(tmp_path / ".pair.lock"):
+            before = contents(tmp_path)
+            process = subprocess.Popen([sys.executable, "-c", code, str(tmp_path)],
+                                       env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, start_new_session=True)
+            wait_for_output(process, "[WAIT]")
+            assert process.poll() is None
+            assert contents(tmp_path) == before
+        output, errors = process.communicate(timeout=5)
+        assert process.returncode == 0, output + errors
+        assert "[joined]" in output
+        after = contents(tmp_path)
+        after.pop(Path(".pair-runtime.lock"))
+        assert after == before
+    finally:
+        if process is not None:
+            stop_own_process(process)
 
 
 def test_busy_probe_keeps_lease_body_eagain_distinct_from_lock_contention(tmp_path):
