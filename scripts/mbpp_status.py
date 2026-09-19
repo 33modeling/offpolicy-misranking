@@ -256,11 +256,11 @@ def node_assignments(data):
 
 
 def render_nodes(data, *, width, all_nodes=False):
-    """One full node name -> experiment mapping, with no interleaved columns."""
+    """Aligned, display-width-aware assignments; never truncate a node name."""
     nodes = node_assignments(data)
     current = [node for node in nodes if node["current"]]
-    lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current",
-             "# Node -> Experiment | Status | Progress | Remarks"]
+    lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current"]
+    rows = []
     retained = {suite["root"] for suite in data.get("retained_suites", [])}
     labels = {suite["root"]: label(suite["root"], suite.get("protocol"))
               + (" (기본 실행 제외)" if suite["root"] in retained else "") for suite in observed_suites(data)}
@@ -282,14 +282,40 @@ def render_nodes(data, *, width, all_nodes=False):
                 task = max(entry["tasks"], key=lambda row: row.get("directory", "").count("/"))
                 percent, basis = task_progress(root, task)
                 details.append(basis)
-                lines.append(f"{index}. {node['host']} -> {labels[root]} / seed {seed} / step {step} / {arm}"
-                             f" | RUN | {percent} | {'; '.join(details) or '-'}")
+                rows.append([f"{index}.", node['host'],
+                             f"{labels[root]} / seed {seed} / step {step} / {arm}",
+                             "RUN", percent, '; '.join(details) or '-'])
         else:
             detail = {"WAIT": "작업 배정 대기", "HOLD": "작업 배정 대기", "ADMIT": "장치 점검 중",
                       "COOL": "장치 오류 후 대기", "LIVE": "작업 배정 확인 중",
                       "STALE": "실행 신호 끊김", "UNKNOWN": "배정 확인 안 됨",
                       "EXITED": "실행 종료", "GONE": "오래된 실행 기록"}.get(node["state"], "배정 확인 안 됨")
-            lines.append(f"{index}. {node['host']} -> 배정 없음 | WAIT | - | {detail}")
+            rows.append([f"{index}.", node['host'], "배정 없음", "WAIT", "-", detail])
+    headers = ["#", "Node", "Experiment", "Status", "Progress", "Remarks"]
+    number_width = max([columns(headers[0]), *(columns(row[0]) for row in rows)])
+    node_width = max([columns(headers[1]), *(columns(row[1]) for row in rows)])
+    # Keep full host names on one line when six useful columns fit. Padding is
+    # based on terminal cells, not Python len(): Korean labels occupy two cells.
+    remaining = width - number_width - node_width - 6 - 8 - 10
+    if remaining >= 40:
+        experiment_width = min(max([24, *(columns(row[2]) for row in rows)]),
+                               max(24, remaining * 3 // 5))
+        widths = [number_width, node_width, experiment_width, 6, 8,
+                  remaining - experiment_width]
+        lines += table(headers, rows, widths)
+    else:
+        # A very narrow terminal or exceptionally long host cannot hold all six
+        # columns. Put each complete host above its aligned work columns, so a
+        # wrapped hostname is never interleaved with another field's content.
+        lines.append("# Node")
+        detail_width = max(40, width - 2)
+        experiment_width = max(18, (detail_width - 20) * 3 // 5)
+        widths = [experiment_width, 6, 8, detail_width - experiment_width - 20]
+        for row in rows:
+            host_lines = wrap(row[1], width - number_width - 1)
+            lines.append(row[0].ljust(number_width) + " " + host_lines[0])
+            lines.extend(" " * (number_width + 1) + part for part in host_lines[1:])
+            lines.extend("  " + line for line in table(headers[2:], [row[2:]], widths))
     lines.append("노드 Progress는 현재 단계 기준입니다. 시간 한도 사용률과 실제 처리 건수는 비고에서 구분합니다.")
     if not nodes or not all_nodes and not current:
         lines.append("No current MBPP node evidence.")

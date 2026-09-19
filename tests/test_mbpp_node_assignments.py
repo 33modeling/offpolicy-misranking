@@ -43,6 +43,44 @@ def host_row(data, host):
     return matches[0]
 
 
+@pytest.mark.parametrize("width", [120, 160, 240])
+def test_twenty_nodes_have_exact_display_width_column_alignment(tmp_path, width):
+    root = roots_at(tmp_path)[1]
+    nodes, tasks = [], []
+    for index in range(20):
+        host = f"run284000-{'노드' if index == 3 else 'wts'}-{index + 1}-g1234"
+        nodes.append({"host": host, "state": "WAIT", "last_age": 5})
+        if index % 3:
+            tasks.append({"kind": "branch", "status": "RUNNING", "host": host,
+                          "seed": index % 5, "step": 25, "phase": "train",
+                          "arm": "selection_full" if index % 2 else "random_reduced",
+                          "seconds": 25, "timeout": 100, "training_step": 30,
+                          "directory": f"states/s{index % 5}-t25/points/view-25/random_reduced"})
+    data = {"updated": NOW, "suites": [{"root": str(root), "nodes": nodes, "tasks": tasks}]}
+    before = deepcopy(data)
+    direct = dashboard.render_nodes(data, width=width)
+    complete = dashboard.render(data, width=width).splitlines()
+    for lines in (direct, complete[complete.index("NODE ASSIGNMENTS"):]):
+        header = next(line for line in lines if line.startswith("# ") and "Experiment" in line)
+        positions = {name: dashboard.columns(header[:header.index(name)])
+                     for name in ("Node", "Experiment", "Status", "Progress", "Remarks")}
+        rows = [line for line in lines if re.match(r"^\d+\.\s+run284000", line) and "| WAIT |" not in line]
+        assert len(rows) == 20
+        for line in rows:
+            host = re.search(r"run284000-\S+", line).group()
+            status = re.search(r"\b(RUN|WAIT)\b", line)
+            experiment = "On-policy" if status.group() == "RUN" else "배정 없음"
+            progress = "25.0%" if status.group() == "RUN" else "-"
+            assert dashboard.columns(line[:line.index(host)]) == positions["Node"]
+            assert dashboard.columns(line[:line.index(experiment)]) == positions["Experiment"]
+            assert dashboard.columns(line[:status.start()]) == positions["Status"]
+            progress_at = line.index(progress, status.end())
+            assert dashboard.columns(line[:progress_at]) == positions["Progress"]
+            assert dashboard.columns(line) <= width
+        assert "NODES 20 current" in lines
+    assert data == before
+
+
 @pytest.mark.parametrize("active_index", [2, 10])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_server_order_is_natural_name_order_not_run_wait_priority(tmp_path, active_index, reverse):
@@ -58,16 +96,16 @@ def test_server_order_is_natural_name_order_not_run_wait_priority(tmp_path, acti
     before = deepcopy(data)
     assert [node["host"] for node in dashboard.node_assignments(data)] == [hosts[2], hosts[10], old_host]
     for show_history in (False, True):
-        rows = [line for line in dashboard.render_nodes(data, width=120, all_nodes=show_history)
+        rows = [" ".join(line.split()) for line in dashboard.render_nodes(data, width=300, all_nodes=show_history)
                 if re.match(r"^\d+\. ", line)]
-        assert rows[0].startswith(f"1. {hosts[2]} ->")
-        assert rows[1].startswith(f"2. {hosts[10]} ->")
+        assert rows[0].startswith(f"1. {hosts[2]} ")
+        assert rows[1].startswith(f"2. {hosts[10]} ")
         assert len(rows) == (3 if show_history else 2)
         if show_history:
-            assert rows[2].startswith(f"3. {old_host} ->")
+            assert rows[2].startswith(f"3. {old_host} ")
         active_row = rows[0 if active_index == 2 else 1]
         idle_row = rows[1 if active_index == 2 else 0]
-        assert "| RUN |" in active_row and "| WAIT |" in idle_row
+        assert " RUN " in active_row and " WAIT " in idle_row
     assert data == before
 
 
@@ -146,10 +184,13 @@ def test_all_twelve_long_node_names_and_task_assignments_are_visible(tmp_path, w
         assert host_row(data, host)["assignments"]
     assert "... more" not in output
     assert all(len(line) <= width for line in output.splitlines())
-    numbered = [line for line in dashboard.render_nodes(data, width=width) if re.match(r"^\d+\. ", line)]
+    node_lines = dashboard.render_nodes(data, width=width)
+    numbered = [line for line in node_lines if re.match(r"^\d+\. ", line)]
     assert len(numbered) == 12
     for index, host in enumerate(hosts, 1):
-        assert numbered[index - 1].startswith(f"{index}. {host} -> ")
+        assert numbered[index - 1].startswith(f"{index}. ")
+        assert host in re.sub(r"\s+", "", "\n".join(node_lines))
+    assert all(dashboard.columns(line) <= width for line in node_lines if not line.startswith("노드 Progress"))
 
 
 def test_one_host_in_two_suites_retains_both_assignments_and_counts_once(tmp_path):
@@ -162,11 +203,11 @@ def test_one_host_in_two_suites_retains_both_assignments_and_counts_once(tmp_pat
     node = host_row(data, "shared-node")
     assert {Path(suite_root) for suite_root, _ in node["assignments"]} == set(roots)
     assert len(node["assignments"]) == 2
-    output = dashboard.render(data)
+    output = dashboard.render(data, width=400)
     assert re.search(r"NODES\s+1 current", output)
     assignment_section = output.split("NODE ASSIGNMENTS", 1)[1]
     assert "On-policy · 선택비용 포함" in assignment_section and "On-policy · 선택비용 별도" in assignment_section
-    assert assignment_section.count("1. shared-node ->") == 2
+    assert " ".join(assignment_section.split()).count("1. shared-node ") == 2
     assert "2. shared-node" not in assignment_section
 
 
@@ -192,7 +233,7 @@ def test_shared_mbpp_controller_visible_without_prepared_suite_and_math_is_exclu
     assert node["state"] == state and not node["assignments"]
     assert node.get("source_root") is None
     output = dashboard.render(data)
-    assert "code-node -> 배정 없음 | WAIT" in output
+    assert "code-node 배정 없음 WAIT" in " ".join(output.split())
     assert re.search(r"NODES\s+1 current", output)
     assert "math-node" not in output and "math-ghost" not in output
     assert all(not root.exists() for root in roots)
@@ -214,8 +255,9 @@ def test_old_node_history_hidden_by_default_but_all_preserves_it_read_only(tmp_p
     detailed = dashboard.render(data, all_tasks=True)
     assert "current-code-node" in output and "old-code-node" not in output
     assert "old-code-node" in detailed and "오래된 실행 기록" in detailed
-    assert "1. current-code-node ->" in output
-    assert "1. current-code-node ->" in detailed and "2. old-code-node ->" in detailed
+    assert "1. current-code-node " in " ".join(output.split())
+    assert "1. current-code-node " in " ".join(detailed.split())
+    assert "2. old-code-node " in " ".join(detailed.split())
     assert before == contents(tmp_path)
 
 
@@ -229,7 +271,7 @@ def test_recent_stale_task_without_launcher_log_remains_visible_as_unconfirmed(t
     assert node["state"] == "STALE" and node["current"] is True
     assert node["evidence_age"] == 90 and not node["assignments"]
     output = dashboard.render(data)
-    assert "recent-stale-node -> 배정 없음 | WAIT | - | 실행 신호 끊김" in output
+    assert "recent-stale-node 배정 없음 WAIT - 실행 신호 끊김" in " ".join(output.split())
     assert re.search(r"NODES\s+1 current", output)
 
 
@@ -247,8 +289,8 @@ def test_old_assignment_never_hides_same_nodes_current_work_in_another_suite(tmp
     assert len(node["assignments"]) == 1
     suite_root, task = node["assignments"][0]
     assert Path(suite_root) == roots[1] and task["arm"] == "selection_reduced"
-    output = dashboard.render(data)
-    assert "reused-node -> On-policy · 선택비용 별도 / seed 0 / step 25 / Selection" in " ".join(output.split())
+    output = dashboard.render(data, width=400)
+    assert "reused-node On-policy · 선택비용 별도 / seed 0 / step 25 / Selection" in " ".join(output.split())
 
 
 def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_path):
@@ -267,7 +309,7 @@ def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_
     assert node["state"] == "UNKNOWN" and node["current"] is True
     assert not node["assignments"] and node["evidence_age"] == 5
     output = dashboard.render(data)
-    assert "pid-pending-node -> 배정 없음 | WAIT | - | 배정 확인 안 됨" in output
+    assert "pid-pending-node 배정 없음 WAIT - 배정 확인 안 됨" in " ".join(output.split())
     assert before == contents(tmp_path)
 
 
@@ -291,10 +333,10 @@ def test_simple_mapping_shows_busy_and_two_unassigned_nodes_without_extra_diagno
     output = dashboard.render(dashboard.snapshot(roots, now=NOW), width=80, all_tasks=all_tasks)
     mapping = output.split("NODE ASSIGNMENTS", 1)[1].split("ROOT ", 1)[0]
     joined = re.sub(r"\s+", " ", mapping)
-    assert f"{names[0]} -> 배정 없음 | WAIT" in joined
-    assert f"{names[1]} -> 배정 없음 | WAIT" in joined
+    assert names[0] in joined and names[1] in joined
+    assert joined.count("배정 없음 WAIT") >= 2
     assert mapping.index(names[0]) < mapping.index(names[1])
-    assert "busy-node -> On-policy · 선택비용 별도 / seed 0 / step 25 / Random" in joined
+    assert "busy-node" in joined and "On-policy" in joined and "Random" in joined
     assert ("old-node" in mapping) is all_tasks
     assert not any(text in mapping for text in ("PID", "AGE", "PHASE", "peer work active", "checking receipts"))
     assert all(len(line) <= 80 for line in output.splitlines())
@@ -314,11 +356,11 @@ def test_unassigned_mapping_does_not_invent_a_suite_for_recovery_admission_or_un
     pid = logs / "launcher.mbpp.unknown-node_.pid"
     pid.write_text("1234\n")
     os.utime(pid, (NOW - 5, NOW - 5))
-    mapping = "\n".join(dashboard.render_nodes(dashboard.snapshot([root], now=NOW), width=120))
-    assert "wait-node -> 배정 없음 | WAIT | - | 작업 배정 대기" in mapping
-    assert "probe-node -> 배정 없음 | WAIT | - | 장치 점검 중" in mapping
-    assert "recover-node -> 배정 없음 | WAIT | - | 작업 배정 확인 중" in mapping
-    assert "unknown-node -> 배정 없음 | WAIT | - | 배정 확인 안 됨" in mapping
+    mapping = " ".join("\n".join(dashboard.render_nodes(dashboard.snapshot([root], now=NOW), width=120)).split())
+    assert "wait-node 배정 없음 WAIT - 작업 배정 대기" in mapping
+    assert "probe-node 배정 없음 WAIT - 장치 점검 중" in mapping
+    assert "recover-node 배정 없음 WAIT - 작업 배정 확인 중" in mapping
+    assert "unknown-node 배정 없음 WAIT - 배정 확인 안 됨" in mapping
 
 
 def test_mapping_states_absence_of_evidence_when_no_nodes_are_observed(tmp_path):
@@ -337,9 +379,9 @@ def test_parent_branch_and_curve_phase_share_one_numbered_experiment_row(tmp_pat
     running(directory / "curve", "curve-worker", now=NOW, phase="curve-evaluation")
     before = contents(tmp_path)
     data = dashboard.snapshot([root], now=NOW)
-    mapping = "\n".join(dashboard.render_nodes(data, width=120))
-    assert mapping.count("1. curve-worker ->") == 1
-    assert "On-policy · 선택비용 별도 / seed 0 / step 25 / Random | RUN |" in mapping
+    mapping = "\n".join(dashboard.render_nodes(data, width=400))
+    assert " ".join(mapping.split()).count("1. curve-worker ") == 1
+    assert "On-policy · 선택비용 별도 / seed 0 / step 25 / Random RUN" in " ".join(mapping.split())
     assert '현재 단계 시간 한도 사용률' in mapping
     assert "단계: curve-evaluation" in mapping and "최종 평가 저장됨; 곡선 평가 남음 (재학습 없음)" in mapping
     assert "Random/curve" not in mapping

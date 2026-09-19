@@ -147,7 +147,7 @@ def test_snapshot_keeps_nested_and_retained_work_out_of_idle_list_read_only(tmp_
     output = dashboard.render(data)
     assert output.splitlines()[-3] == "작업 없는 노드: 1개 (배정 대기 확인)"
     assert "1. idle-node | WAIT | 작업 배정 대기" in output
-    assert "nested-curve-node ->" in output and "retained-node ->" in output
+    assert "nested-curve-node" in output and "retained-node" in output
     assert contents() == before
 
 

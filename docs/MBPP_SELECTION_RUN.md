@@ -117,6 +117,12 @@ planned 48 / verified completed 0 / remaining 48, with `WAIT` and
 “미확인 48개”. This does not claim its past work disappeared or must restart.
 The totals describe the current view, not a requirement to run every optional
 condition; viewing status does not change the execution queue.
+The `NODES ... current` table pads the Node, Experiment, Status, Progress and
+Remarks columns using terminal character widths, including Korean text. Long
+experiment/remark text wraps inside its own column. If the terminal is too
+narrow for a full node name and useful work columns, the complete node name
+appears above its aligned work row instead of being truncated or mixed into
+other columns.
 `status --all` adds exact roots and individual task states;
 `status quality --watch 5` watches only **On-policy · 선택비용 별도**.
 This is read-only and does not restart training. The generic

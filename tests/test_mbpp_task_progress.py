@@ -18,8 +18,9 @@ def task(**extra):
 def test_node_specific_training_allocation_not_suite_completion(tmp_path):
     suite = {'root': str(tmp_path), 'tasks': [task(), task(host='node-b', seconds=70.)]}
     text = '\n'.join(dashboard.render_nodes({'suites': [suite]}, width=200))
-    assert 'node-a ->' in text and '| RUN | 25.0% |' in text
-    assert 'node-b ->' in text and '| RUN | 70.0% |' in text
+    rows = [' '.join(line.split()) for line in text.splitlines()]
+    assert any('node-a ' in line and ' RUN 25.0% ' in line for line in rows)
+    assert any('node-b ' in line and ' RUN 70.0% ' in line for line in rows)
     assert '업데이트 10회 완료' in text and '결과 완료율 아님' in text
 
 
