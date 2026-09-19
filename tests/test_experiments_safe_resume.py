@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,11 @@ def mbpp_controller(controller):
     )
     pid_file = original_pid_file.with_name(original_pid_file.name.replace("launcher.", "launcher.mbpp.", 1))
     pid_file.write_text(str(process.pid))
+    guard = ROOT / "scripts/_mbpp_node_guard.py"
+    fingerprint = subprocess.check_output([sys.executable, str(guard), "--fingerprint"], text=True).strip()
+    subprocess.run([sys.executable, str(guard), "--lock",
+                    str(pid_file.parent / "mbpp-controller.safe-resume-fixture_.lock"),
+                    "--record-runtime", str(process.pid), "--loaded-fingerprint", fingerprint], check=True)
     try:
         yield process, env, pid_file, saved
     finally:

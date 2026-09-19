@@ -297,7 +297,8 @@ def test_sibling_gpu_fault_stops_other_work_and_repeated_admission_failure_relea
     process, log = start("node-fault", TEST_FAIL_SUITE="quality", TEST_FAIL_RC=code)
     if code == "78":
         assert process.wait(timeout=30) == 78, log.read_text()
-        assert "node admission failed on two passes" in log.read_text()
+        assert "no holding/retry loop" in log.read_text()
+        assert '[holding]' not in log.read_text()
     else:
         wait_for(lambda: "cooling down after a GPU fault" in log.read_text())
     assert not any("long" in row["root"] for row in events(work))
@@ -349,6 +350,10 @@ def test_ordinary_failure_and_busy_lock_backoff_are_capped_at_sixty_seconds(clus
     _work, start = cluster
     process, log = start('node-short-hold', TEST_FAIL_SUITE='quality', TEST_FAIL_RC=code,
                          EXPERIMENTS_HOLD_SECONDS='40', TEST_DELAY_PREFIXES='1', EXPERIMENTS_HELP_SIBLINGS='0')
+    if code == '75':
+        assert process.wait(timeout=10) == 75, log.read_text()
+        assert '[holding]' not in log.read_text()
+        return
     wait_for(lambda: '[holding]' in log.read_text())
     assert 'next pass in 60s' in log.read_text()
     assert 'next pass in 80s' not in log.read_text()
@@ -378,6 +383,12 @@ def test_inherited_six_hundred_second_hold_cannot_return_on_reload(cluster, code
     process, log = start('node-inherited', TEST_FAIL_SUITE='quality', TEST_FAIL_RC=code,
                          EXPERIMENTS_HOLD_SECONDS='600', EXPERIMENTS_HOLD_POLL_SECONDS='60',
                          EXPERIMENTS_FAULT_TTL_SECONDS='1800')
+    if code in ('75', '78'):
+        assert process.wait(timeout=10) == int(code), log.read_text()
+        assert 'no holding/retry loop' in log.read_text()
+        assert '[holding]' not in log.read_text()
+        assert not any(row['kind'] == 'claim' for row in events(work))
+        return
     wait_for(lambda: '[holding]' in log.read_text())
     text = log.read_text()
     assert 'idle=60s poll=5s maximum=60s' in text
@@ -470,8 +481,9 @@ def test_busy_mbpp_pass_never_sweeps_other_experiment_processes(cluster):
         env={**os.environ, "OUT_ROOT": str(work / "runs/selection-switch-math-v1")}, start_new_session=True)
     try:
         process, log = start("node-busy", EXPERIMENTS_CLEAN="1", TEST_FAIL_SUITE="quality", TEST_FAIL_RC="75")
-        wait_for(lambda: log.exists() and "[pass 2]" in log.read_text())
-        assert process.poll() is None and unrelated.poll() is None
+        assert process.wait(timeout=10) == 75, log.read_text()
+        assert '[holding]' not in log.read_text()
+        assert unrelated.poll() is None
         assert "no node-wide process/GPU sweep" in log.read_text()
         assert "[clean] leftover pid=" not in log.read_text()
     finally:
@@ -506,6 +518,61 @@ def test_one_command_restart_preserves_checkpoint_and_fault_receipt(cluster):
     result = json.loads((work / 'runs/selection-switch-mbpp-quality-v1/tasks/0/result.json').read_text())
     assert result['resumed'] == {'node': 'node-restart'}
     assert fault.read_text() == record
+
+
+@pytest.mark.parametrize("change", ["code", "legacy", "bad-storage"])
+def test_plain_command_automatically_reloads_changed_code_and_resumes(cluster, change):
+    work, start = cluster
+    first, first_log = start('node-auto-reload', TEST_BLOCK_NODE='node-auto-reload')
+    wait_for(lambda: (work / 'node-blocked').exists())
+    checkpoint = work / 'runs/selection-switch-mbpp-quality-v1/tasks/0/checkpoint.json'
+    before = checkpoint.read_bytes()
+    if change == "legacy":
+        (work / 'runs/experiments/logs/mbpp-controller.node-auto-reload_.runtime.json').unlink()
+    else:
+        script = work.parent / 'repo/scripts/run_experiments.sh'
+        script.write_text(script.read_text() + '\n# Simulated installed code update.\n')
+    replacement, log = start('node-auto-reload', TEST_AUDIT_EXIT='2' if change == 'bad-storage' else '0')
+    assert replacement.wait(timeout=30) == (2 if change == 'bad-storage' else 0), log.read_text()
+    assert checkpoint.read_bytes() == before
+    if change == 'bad-storage':
+        assert first.poll() is None
+        assert '[stop]' not in log.read_text()
+    else:
+        assert first.wait(timeout=10) == 143, first_log.read_text()
+        assert '[reload]' in log.read_text()
+        result = json.loads(checkpoint.with_name('result.json').read_text())
+        assert result['resumed'] == {'node': 'node-auto-reload'}
+
+
+def test_plain_command_pulls_before_following_live_owner_and_reenters_updated_wrapper(cluster):
+    work, start = cluster
+    git = work.parent / 'bin/git'
+    git.write_text(f'''#!{sys.executable}
+import os, sys
+from pathlib import Path
+work = Path(os.environ["OM_WORK"])
+marker = work / "pulled"
+if sys.argv[1] == "rev-parse":
+    print("b" * 40 if marker.exists() else "a" * 40)
+elif sys.argv[1] == "pull":
+    with (work / "pull-calls").open("a") as f:
+        f.write("pull\\n")
+    if not marker.exists():
+        script = Path("scripts/run_experiments.sh")
+        script.write_text(script.read_text() + "\\n# Installed by simulated pull.\\n")
+        marker.write_text("updated")
+''')
+    git.chmod(0o755)
+    first, first_log = start('node-pull', TEST_BLOCK_NODE='node-pull')
+    wait_for(lambda: (work / 'node-blocked').exists())
+    replacement, log = start('node-pull', EXPERIMENTS_PULL='1')
+    assert replacement.wait(timeout=30) == 0, log.read_text()
+    assert first.wait(timeout=10) == 143, first_log.read_text()
+    assert '[pull]' in log.read_text() and '[reload]' in log.read_text()
+    assert (work / 'pull-calls').read_text().splitlines() == ['pull']
+    result = json.loads((work / 'runs/selection-switch-mbpp-quality-v1/tasks/0/result.json').read_text())
+    assert result['resumed'] == {'node': 'node-pull'}
 
 
 @pytest.mark.parametrize("legacy", [False, True])

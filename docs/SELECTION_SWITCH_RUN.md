@@ -226,8 +226,10 @@ by the generic command, and only the MBPP entry point may stop or restart it.
 
 To load these fixes immediately on a **stuck idle** generic node, run
 `git pull --ff-only && bash scripts/run_experiments.sh restart`. For a dedicated
-MBPP node, use `git pull --ff-only && bash scripts/run_mbpp_experiments.sh restart`.
-Do not restart healthy training nodes. Pulling alone does not hot-patch a worker
+MBPP node, just use `bash scripts/run_mbpp_experiments.sh`: it pulls updates,
+automatically reloads changed code from saved checkpoints, and otherwise shows
+the existing log. Unsaved work since the last checkpoint may need repeating.
+Do not force-restart unchanged healthy training nodes. Pulling alone does not hot-patch a worker
 already running from a frozen snapshot; it uses updated code at its next pass.
 
 `waive` (from either launcher, and automatically before every node pass)

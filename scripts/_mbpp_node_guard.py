@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import cleanup_run_processes as cleanup
 
 TOKEN = "OM_MBPP_CONTROLLER_TOKEN"
+
+
+def runtime_fingerprint():
+    """CPU-only identity of executable checkout contents, including local fixes."""
+    repo = Path(__file__).resolve().parents[1]
+    digest = hashlib.sha256()
+    for folder in ("scripts", "src"):
+        for path in sorted((repo / folder).iterdir()):
+            if path.is_file() and path.suffix in (".py", ".sh"):
+                digest.update(str(path.relative_to(repo)).encode() + b"\0")
+                digest.update(path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def runtime_record(lock_path, pid, fingerprint, guard_hash=None):
+    start = identity(pid)
+    if start is None:
+        raise ValueError("MBPP controller is no longer alive")
+    return {"schema": "mbpp-controller-runtime-v1", "pid": pid, "start_time": start,
+            "lock": str(lock_path.resolve()), "fingerprint": fingerprint,
+            "guard_hash": guard_hash or hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+
+
+def runtime_current(lock_path, pid, fingerprint):
+    try:
+        recorded = json.loads(lock_path.with_suffix(".runtime.json").read_text())
+        return recorded == runtime_record(lock_path, pid, fingerprint)
+    except (OSError, ValueError):
+        # A legacy controller without a bound version receipt is upgraded once.
+        return False
 
 
 def identity(pid):
@@ -35,8 +66,14 @@ def reap(token):
     # marker is required on every initial target; their descendants are included.
     if not isinstance(token, str) or len(token) != 32 or any(c not in "0123456789abcdef" for c in token):
         raise ValueError("invalid MBPP owner token; refusing cleanup")
-    return cleanup.terminate("/unused-mbpp-token-scope", timeout=10,
+    targets = cleanup.terminate("/unused-mbpp-token-scope", timeout=10,
         command_patterns=("",), required_environment=((TOKEN, token),), compact=True)
+    remaining = cleanup.list_processes("/unused-mbpp-token-scope",
+        command_patterns=("",), required_environment=((TOKEN, token),))
+    if remaining:
+        raise RuntimeError(f"MBPP children still alive; refusing new GPU work: {[p.pid for p in remaining]}")
+    print(f"[mbpp-clean] previous owned processes stopped={len(targets)}; remaining=0", flush=True)
+    return targets
 
 
 def publish(path, value):
@@ -85,6 +122,7 @@ def run(lock_path, command):
             signal.signal(sig, stop)
         try:
             env = {**os.environ, TOKEN: token, "MBPP_GUARD_PID": str(os.getpid()),
+                   "MBPP_GUARD_CODE_HASH": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                    "EXPERIMENTS_DETACHED": "1"}
             # close_fds prevents inheriting this guard's flock into any worker.
             child = subprocess.Popen(command, env=env, start_new_session=True, close_fds=True)
@@ -110,9 +148,27 @@ def run(lock_path, command):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lock", type=Path, required=True)
+    parser.add_argument("--lock", type=Path)
+    parser.add_argument("--fingerprint", action="store_true")
+    parser.add_argument("--runtime-current", type=int)
+    parser.add_argument("--record-runtime", type=int)
+    parser.add_argument("--loaded-fingerprint")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.fingerprint:
+        print(runtime_fingerprint())
+        return 0
+    if args.lock is None:
+        parser.error("--lock required")
+    if args.runtime_current is not None or args.record_runtime is not None:
+        if not args.loaded_fingerprint:
+            parser.error("--loaded-fingerprint required")
+        if args.runtime_current is not None:
+            return 0 if runtime_current(args.lock, args.runtime_current, args.loaded_fingerprint) else 1
+        publish(args.lock.with_suffix(".runtime.json"),
+                runtime_record(args.lock, args.record_runtime, args.loaded_fingerprint,
+                               os.environ.get("MBPP_GUARD_CODE_HASH")))
+        return 0
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("controller command required")

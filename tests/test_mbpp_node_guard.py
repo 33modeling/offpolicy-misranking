@@ -120,3 +120,47 @@ def test_failed_controller_reaps_child_before_returning_original_failure(node):
     assert guard.identity(int(marker.read_text())) is None
     again, completed, again_log = start("complete")
     assert again.wait(timeout=20) == 0, again_log.read_text()
+
+
+def test_runtime_receipt_binds_exact_code_pid_and_process_start(tmp_path):
+    lock = tmp_path / "node.lock"
+    fingerprint = guard.runtime_fingerprint()
+    assert len(fingerprint) == 64
+    assert not guard.runtime_current(lock, os.getpid(), fingerprint)
+    record = guard.runtime_record(lock, os.getpid(), fingerprint)
+    guard.publish(lock.with_suffix(".runtime.json"), record)
+    assert guard.runtime_current(lock, os.getpid(), fingerprint)
+    assert not guard.runtime_current(lock, os.getpid(), "changed-code")
+    assert not guard.runtime_current(lock, 999999999, fingerprint)
+    record["guard_hash"] = "old-guard-code"
+    guard.publish(lock.with_suffix(".runtime.json"), record)
+    assert not guard.runtime_current(lock, os.getpid(), fingerprint)
+    record = guard.runtime_record(lock, os.getpid(), fingerprint)
+    record["start_time"] -= 1
+    guard.publish(lock.with_suffix(".runtime.json"), record)
+    assert not guard.runtime_current(lock, os.getpid(), fingerprint)
+
+
+def test_cleanup_refuses_start_when_owned_process_survives(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(guard.cleanup, "terminate", lambda *args, **kwargs: [])
+    monkeypatch.setattr(guard.cleanup, "list_processes", lambda *args, **kwargs: [SimpleNamespace(pid=123)])
+    with pytest.raises(RuntimeError, match="refusing new GPU work.*123"):
+        guard.reap("a" * 32)
+
+
+def test_cleanup_failure_does_not_start_replacement_or_release_owner_receipt(tmp_path, monkeypatch):
+    lock = tmp_path / "node.lock"
+    owner_path = lock.with_suffix(".owner.json")
+    owner = {"schema": "mbpp-node-owner-v1", "lock": str(lock.resolve()),
+             "pid": 999999999, "start_time": 0, "token": "a" * 32, "state": "active"}
+    guard.publish(owner_path, owner)
+    def failed_reap(token):
+        raise RuntimeError("owned CUDA process cannot exit")
+    monkeypatch.setattr(guard, "reap", failed_reap)
+    def no_spawn(*args, **kwargs):
+        pytest.fail("cleanup failure must block the new controller")
+    monkeypatch.setattr(guard.subprocess, "Popen", no_spawn)
+    with pytest.raises(RuntimeError, match="cannot exit"):
+        guard.run(lock, ["unused"])
+    assert json.loads(owner_path.read_text()) == owner

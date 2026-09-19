@@ -217,7 +217,7 @@ The inner worker yields its idle peer-wait to this shared controller, instead
 of waiting inside one suite while another has work. Owned training/evaluation
 finishes normally before yielding; no active branch is interrupted for fairness.
 
-- On the same node, a duplicate command reports `already running` and leaves
+- On the same node with unchanged code, a duplicate command reports `already running` and leaves
   the healthy controller working. It does not stop it or create another worker.
   Use `stop` only when an intentional interruption is needed.
 - After a controller is killed, run the same command. Its durable owner token
@@ -242,7 +242,8 @@ finishes normally before yielding; no active branch is interrupted for fairness.
 The MBPP hold defaults to 15 seconds (`MBPP_HOLD_SECONDS`), with
 `EXPERIMENTS_HOLD_SECONDS` taking precedence within the enforced 1–60 second
 range. This cap also applies to inherited settings after an in-place code reload,
-idle passes, busy locks, and GPU-error retry backoff. Polling is at most 5 seconds;
+idle passes and recoverable retry backoff. Busy GPU/node locks and failed
+GPU/NCCL admission exit without holding. Polling is at most 5 seconds;
 dependency-free failed/stale tasks wake a hold as well as READY tasks, and peer
 completion ends it early. The countdown includes time spent checking status.
 Pending siblings do not erase a failed pass's retry state.
@@ -251,8 +252,9 @@ A first recorded MBPP GPU fault now waits 60 seconds, then must pass the existin
 NCCL/CUDA admission probe before any training resumes. An explicit
 `EXPERIMENTS_FAULT_TTL_SECONDS` still overrides that cooldown, but expiry is not
 followed by another long exponential delay. A second recorded GPU fault or an
-invalid receipt blocks admission; two blocked passes release the controller
-instead of holding indefinitely. Legacy receipts without `time` expire from
+invalid receipt blocks admission. A busy GPU/node lock or failed NCCL/CUDA
+admission releases the MBPP controller immediately, with the original cause
+in its log, rather than entering a holding/retry loop. Legacy receipts without `time` expire from
 their file modification time, not from the time they are read. Fault receipts
 are atomically published and never cleared by MBPP `run` or `restart`.
 Zero/invalid poll intervals are rejected. Setting
@@ -260,10 +262,18 @@ Zero/invalid poll intervals are rejected. Setting
 leave it enabled to serve all requested suites.
 Terminal launches detach as before: Ctrl-C stops the log view, not the workers.
 Use `stop` to stop this node's MBPP controller and its token-bound children.
-After pulling an update, `bash scripts/run_mbpp_experiments.sh restart` stops
-this node's verified MBPP controller and starts it with the new code in one
-command. Valid checkpoints, selections, completed results, and fault receipts
-remain on disk. Ordinary `run` still leaves a live controller alone.
+Just run `bash scripts/run_mbpp_experiments.sh`: it checks for a fast-forward
+update before inspecting the running controller. Changed executable code (or a
+legacy controller without a version receipt) triggers an automatic, owner-scoped
+restart after the storage audit. No separate `git pull` or `restart` is needed.
+The same code follows the existing log without interrupting workers. Valid
+checkpoints, selections, completed results, and fault receipts remain on disk;
+work after the last saved checkpoint may need repeating. An offline pull uses
+the local checkout. `restart` remains available for an intentional forced reload.
+Shutdown verifies that the previous controller's token-bound processes have
+exited before admitting a replacement. Surviving processes block new GPU work;
+neither a node-wide kill nor a GPU reset is attempted. The existing four-GPU
+memory check and NCCL/DDP probe remain mandatory before a training task is claimed.
 **A busy lock no longer triggers a node-wide process or GPU sweep.** Other
 experiments are not cleanup targets merely because they use the same account,
 work volume, or GPUs. MBPP recovery/watchdog roots exclude unrelated math and

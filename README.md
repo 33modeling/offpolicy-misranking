@@ -30,6 +30,9 @@ GPU outcomes are established by this queue update.
 A budget-exhausted branch without a valid evaluated result stays incomplete;
 do not substitute reward zero or mark it `DONE`.
 `restart`, `stop`, `plan`, `check`, `status`, `progress`, `results`, and `why` are available.
+The plain command checks for updates and automatically reloads changed MBPP
+code from saved checkpoints; unchanged code only displays the running log.
+No separate `git pull` or `restart` command is needed.
 `why` writes one error summary of at most 16 KiB, including the original CUDA/NCCL
 warning context. Idle passes wait 15 seconds and poll every 5 seconds; all MBPP
 scheduler holds are capped at 60 seconds, including inherited old settings and

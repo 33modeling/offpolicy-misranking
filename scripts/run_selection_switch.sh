@@ -368,17 +368,27 @@ CUDA_VISIBLE_DEVICES="" "$PY" src/selection_switch_gpu.py check-code --root "$OU
 source scripts/_e5_node.sh
 export E5_FORCE=0
 e5_acquire_node
+GPU_ADMISSION_RC=2
+[ -z "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "${SWITCH_DATASET:-}" != mbpp ] || GPU_ADMISSION_RC=78
 if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
-  mapfile -t GPUS < <(timeout 20 nvidia-smi --query-gpu=index --format=csv,noheader)
+  if ! GPU_INDICES=$(timeout -k 5 20 nvidia-smi --query-gpu=index --format=csv,noheader); then
+    echo '[blocked] cannot enumerate allocated GPUs; no training started'; exit "$GPU_ADMISSION_RC"
+  fi
+  mapfile -t GPUS <<< "$GPU_INDICES"
   export CUDA_VISIBLE_DEVICES="$(IFS=,; echo "${GPUS[*]}")"
 fi
 IFS=, read -r -a GPUS <<< "$CUDA_VISIBLE_DEVICES"
-[ "${#GPUS[@]}" -eq 4 ] || { echo '[abort] four allocated GPUs required'; exit 2; }
-MEMORY=$(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i "$CUDA_VISIBLE_DEVICES")
+[ "${#GPUS[@]}" -eq 4 ] || { echo '[blocked] four allocated GPUs required'; exit "$GPU_ADMISSION_RC"; }
+if ! MEMORY=$(timeout -k 5 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i "$CUDA_VISIBLE_DEVICES"); then
+  echo '[blocked] GPU memory query failed; no training started'; exit "$GPU_ADMISSION_RC"
+fi
+GPU_MEMORY_ROWS=0
 while read -r used; do
-  [[ "$used" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]] || { echo '[abort] invalid GPU memory status'; exit 2; }
+  [[ "$used" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]] || { echo '[blocked] invalid GPU memory status'; exit "$GPU_ADMISSION_RC"; }
+  GPU_MEMORY_ROWS=$((GPU_MEMORY_ROWS+1))
   [ "$used" -le 4000 ] || { echo '[busy] allocated GPU is occupied; other experiments were not stopped'; exit 75; }
 done <<< "$MEMORY"
+[ "$GPU_MEMORY_ROWS" -eq 4 ] || { echo '[blocked] incomplete GPU memory status; no training started'; exit "$GPU_ADMISSION_RC"; }
 # The allocation is reclaimed when its GPUs sit idle, which is what a launcher
 # looks like while it waits for a prerequisite or holds between passes. Keep a
 # tiny kernel running on every visible GPU for the launcher's lifetime

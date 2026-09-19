@@ -456,6 +456,10 @@ full_clean() {
 stop_node() {
   if launcher_pid_alive; then
     pid=$NODE_LAUNCHER_PID
+    if [ -n "${AUTO_RELOAD_PID:-}" ] && [ "$pid" != "$AUTO_RELOAD_PID" ]; then
+      echo '[reload] another invocation already replaced the controller; leaving its replacement running'
+      return 0
+    fi
     echo "[stop] host=$HOST pid=$pid: sending TERM to the node launcher; inner launchers reap their ranks and close receipts"
     if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
       # The PID file names the guard, which reaps its token-bound controller/ranks.
@@ -488,9 +492,39 @@ if [ "$MODE" = stop ]; then
   stop_node
   exit 0
 fi
+# A plain MBPP invocation updates before deciding to follow an existing log.
+# Re-enter the wrapper after a pull so its settings and storage audit are fresh.
+if { [ "$MODE" = run ] || [ "$MODE" = restart ]; } && [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
+  if [ "${EXPERIMENTS_PULL:-1}" != 0 ] && [ "${EXPERIMENTS_START_PULL_DONE:-0}" != 1 ]; then
+    before=$(git rev-parse HEAD 2>/dev/null || true)
+    if timeout -k 5 20 env GIT_TERMINAL_PROMPT=0 git pull -q --ff-only 2>/dev/null; then
+      echo "[pull] checkout at $(git rev-parse --short HEAD)"
+    else
+      echo '[pull] skipped (offline or diverged); checking the local code'
+    fi
+    after=$(git rev-parse HEAD 2>/dev/null || true)
+    if [ -n "$after" ] && [ "$before" != "$after" ]; then
+      exec env EXPERIMENTS_START_PULL_DONE=1 bash scripts/run_mbpp_experiments.sh "$MODE" "$EXPERIMENTS_MBPP_SUITE"
+    fi
+  fi
+  unset EXPERIMENTS_START_PULL_DONE
+  current_fingerprint=$("$PY" scripts/_mbpp_node_guard.py --fingerprint)
+  if [ "$MODE" = run ] && launcher_pid_alive && ! "$PY" scripts/_mbpp_node_guard.py \
+      --lock "$LOG_DIR/mbpp-controller.$HOST.lock" --runtime-current "$NODE_LAUNCHER_PID" \
+      --loaded-fingerprint "$current_fingerprint"; then
+    # Direct/legacy entry points must audit too, before sending any signal.
+    if ! CUDA_VISIBLE_DEVICES='' MBPP_STORAGE_AUDIT_AUTOMATIC=1 bash scripts/check_mbpp_storage.sh "$EXPERIMENTS_MBPP_SUITE"; then
+      echo '[abort] storage audit blocked automatic reload; existing controller continues' >&2
+      exit 2
+    fi
+    echo '[reload] MBPP code changed or legacy controller detected; restarting this node from saved checkpoints'
+    AUTO_RELOAD_PID=$NODE_LAUNCHER_PID
+    MODE=restart
+  fi
+fi
 if [ "$MODE" = restart ]; then
   stop_node
-  if launcher_pid_alive; then
+  if launcher_pid_alive && { [ -z "${AUTO_RELOAD_PID:-}" ] || [ "$NODE_LAUNCHER_PID" = "$AUTO_RELOAD_PID" ]; }; then
     echo '[abort] previous controller has not stopped; refusing a second controller'
     exit 75
   fi
@@ -498,8 +532,7 @@ if [ "$MODE" = restart ]; then
   unset EXPERIMENTS_DETACHED
 fi
 # --- run ---
-# Repeating run is idempotent: leave an existing controller and its workers
-# untouched. Only an explicit restart above authorizes stopping that work.
+# Repeating run follows a current controller; MBPP reloads changed code above.
 # EXPERIMENTS_PULL=0 skips the pull when starting an idle node.
 if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if launcher_pid_alive; then
@@ -522,7 +555,7 @@ if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if [ -z "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ -f "$fault_record" ]; then
     rm -f "$fault_record" && echo "[fault-reset] host=$HOST: cleared the GPU-fault record ($fault_record); the admission probe decides again"
   fi
-  if [ "${EXPERIMENTS_PULL:-1}" != 0 ]; then
+  if [ -z "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "${EXPERIMENTS_PULL:-1}" != 0 ]; then
     if timeout -k 5 20 env GIT_TERMINAL_PROMPT=0 git pull -q --ff-only 2>/dev/null; then
       echo "[pull] checkout at $(git rev-parse --short HEAD)"
     else
@@ -550,10 +583,15 @@ if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "${MBPP_GUARD_PID:-}" != "$PPID" ];
     --lock "$LOG_DIR/mbpp-controller.$HOST.lock" -- bash "$LAUNCHER_SELF" run
 fi
 mkdir -p "$LOG_DIR"
+LOADED_REV=$(git rev-parse HEAD 2>/dev/null || true)
 if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+  LOADED_FINGERPRINT=$("$PY" scripts/_mbpp_node_guard.py --fingerprint)
+  "$PY" scripts/_mbpp_node_guard.py --lock "$LOG_DIR/mbpp-controller.$HOST.lock" \
+    --record-runtime "$MBPP_GUARD_PID" --loaded-fingerprint "$LOADED_FINGERPRINT"
+  # Publish the PID only after its version binding exists; a simultaneous
+  # invocation must not mistake a newly admitted controller for a legacy one.
   printf '%s\n' "$MBPP_GUARD_PID" > "$PID_FILE"
 fi
-LOADED_REV=$(git rev-parse HEAD 2>/dev/null || true)
 printf '[node-launcher-start] host=%s pid=%s utc=%s commit=%s\n' "$HOST" "$$" "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 KEEPALIVE_PID=
 WATCHDOG_PID=
@@ -685,6 +723,17 @@ while :; do
   if experiments_complete; then
     echo '[done] every experiment this node can work on is complete; releasing the node'
     exit 0
+  fi
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
+    case "$rc_switch" in
+      75|78)
+        # Occupancy is not a stale-owner proof. NCCL preflight has already
+        # exhausted its bounded, evidence-based probe fallbacks. Neither case
+        # should retain this allocation in an endless holding/retry loop.
+        echo "[blocked] MBPP node unavailable: $(rc_reason "$rc_switch"); no holding/retry loop; releasing owned processes"
+        exit "$rc_switch"
+        ;;
+    esac
   fi
   if [ "$rc_switch" -eq 78 ] || [ "$rc_mopps" -eq 78 ]; then
     blocked_passes=$((blocked_passes+1))

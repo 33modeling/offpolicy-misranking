@@ -12,7 +12,7 @@
 # do not authorize starting the legacy fresh continuation suite. Every node runs the same command,
 # and a node that loses its GPUs rejoins with the same command.
 #
-#   bash scripts/run_mbpp_experiments.sh            this node joins the MBPP queue
+#   bash scripts/run_mbpp_experiments.sh            update, reload changed code, or follow this node's log
 #   bash scripts/run_mbpp_experiments.sh stop       stop this node's launcher and workers
 #   bash scripts/run_mbpp_experiments.sh restart    load fixes; retain checkpoints and fault receipts
 #   bash scripts/run_mbpp_experiments.sh progress   MBPP suites only: branch counts, running branches, node names
@@ -109,7 +109,7 @@ for root in "${MBPP_ROOTS[@]}"; do
 done
 if [ "$SUITE" = all ]; then
   echo '[mbpp] 기본 실행: On-policy · 선택비용 별도, 48개. 다른 조건의 결과·노드 기록은 보존하며 자동 재실행하지 않습니다.'
-  echo '[mbpp] an already-running old controller changes queue only after its active worker returns and the launcher reloads; no worker is interrupted'
+  echo '[mbpp] 그냥 실행하면 업데이트 확인 후 구버전만 자동 재시작합니다. 같은 코드로 실행 중이면 로그를 표시합니다.'
 fi
 
 if [ "$MODE" = plan ]; then
