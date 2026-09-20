@@ -11,6 +11,7 @@ import ast
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -22,7 +23,8 @@ import rloo_experiment as frozen_experiment
 from paper_result_text import write_export
 
 
-EXPORTER_VERSION = "rloo-paper-results/v2"
+EXPORTER_VERSION = "rloo-paper-results/v3"
+MAX_COST_LEDGER_BYTES = 20000
 # This standalone Qwen status entry point is never imported by the scientific
 # modules. Keep the exception report-only and fail closed if that changes.
 REPORT_DISPLAY_FILES = frozenset({"src/matrix_status.py"})
@@ -182,6 +184,31 @@ def point_report(out):
         _display_isolation.reset(token)
 
 
+def cost_ledger(path):
+    """Bound unverified operational data without dropping measured rewards."""
+    if not path.is_file():
+        return {"status": "missing", "events": []}
+    try:
+        with path.open('rb') as handle:
+            raw = handle.read(MAX_COST_LEDGER_BYTES + 1)
+        if len(raw) <= MAX_COST_LEDGER_BYTES:
+            events = [json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
+            if not all(isinstance(event, dict) for event in events):
+                raise ValueError('cost ledger entries must be objects')
+            encoded = json.dumps(events, ensure_ascii=True, separators=(',', ':'), allow_nan=False)
+            if len(encoded.encode('utf-8')) <= MAX_COST_LEDGER_BYTES:
+                return {"status": "snapshot", "events": events,
+                        "note": "Raw metered events, not a certified total; open events have unknown final cost."}
+        with path.open('rb') as handle:
+            digest = hashlib.file_digest(handle, 'sha256').hexdigest()
+        return {"status": "omitted_size_limit", "events": [], "source_path": str(path),
+                "source_bytes": path.stat().st_size, "source_sha256": digest,
+                "note": "Raw ledger exceeds the per-arm TXT allowance; no cost total is inferred. "
+                        "The full ledger remains at source_path; validated reward measurements are retained."}
+    except (OSError, ValueError, UnicodeError, TypeError) as exc:
+        return {"status": "unreadable", "error": str(exc), "events": []}
+
+
 def _point_report(out):
     c, _ = experiment.validate(out)
     values, evaluations = {}, []
@@ -199,15 +226,7 @@ def _point_report(out):
         complete = len(completed_shards) == 4
         if complete:
             values[arm] = np.array([measured[str(i)] for i in range(c["eval_n"])])
-        cost_path = out / arm / "cost.jsonl"
-        costs = {"status": "missing", "events": []}
-        if cost_path.is_file():
-            try:
-                costs = {"status": "snapshot", "events": [json.loads(line)
-                         for line in cost_path.read_text().splitlines() if line.strip()],
-                         "note": "Raw metered events, not a certified total; open events have unknown final cost."}
-            except (OSError, ValueError) as exc:
-                costs = {"status": "unreadable", "error": str(exc), "events": []}
+        costs = cost_ledger(out / arm / "cost.jsonl")
         evaluations.append({
             "arm": arm, "complete": complete, "completed_shards": completed_shards,
             "missing_shards": [s for s in range(4) if s not in completed_shards],
@@ -249,7 +268,7 @@ def report(root):
         else:
             try:
                 point.update(point_report(out))
-            except (ValueError, OSError, KeyError) as exc:
+            except (ValueError, OSError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as exc:
                 point.update(status="invalid", error=str(exc), code_diagnostics=code_diagnostics(out))
         points.append(point)
     return {"schema": "rloo-progress-report/v1", "scope": experiment.SCOPE,

@@ -48,6 +48,41 @@ def test_finished_cost_receipt_overrides_stale_running_meter(prepared):
         assert not status.display.active(task(data))
 
 
+@pytest.mark.parametrize('arm', ['before', 'random'])
+def test_independent_evaluation_worker_remains_visible_without_controller_lease(prepared, arm):
+    root, out = prepared
+    directory = out / arm
+    write(directory / 'progress.json', dict(host='former-controller', pid=123,
+          worker_id='old-worker', state='failed', phase='evaluation', updated=NOW-3600))
+    evaluation = directory / 'evaluation'
+    evaluation.mkdir()
+    with (evaluation / 'shard-2.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = files(root)
+        data = status.snapshot(root, now=NOW)
+        row = task(data, arm=arm)
+        assert row['status'] == 'RUNNING' and row['owner_active']
+        assert row['active_evaluation_shards'] == [2]
+        assert row['phase'] == 'evaluation' and row['host'] is None
+        assert row['activity_identity_unconfirmed']
+        assert 'CURRENT RUN 1' in status.display.render(data)
+        assert files(root) == before
+    row = task(status.snapshot(root, now=NOW), arm=arm)
+    assert not row['owner_active'] and row['active_evaluation_shards'] == []
+
+
+def test_finished_evaluation_publication_does_not_hide_held_shard_worker(prepared):
+    root, out = prepared
+    seal(out, 'random')
+    with (out / 'random/evaluation/shard-0.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(root, now=NOW)
+        row = task(data)
+        assert row['status'] == 'DONE' and row['active_evaluation_shards'] == [0]
+        assert status.display.display_state(row) == 'RUN'
+        assert status.display.counts(data['suites'][0])['done'] == 0
+
+
 @pytest.mark.parametrize('location', ['branch', 'admission'])
 @pytest.mark.parametrize('change', ['heartbeat', 'event', 'pid', 'state'])
 def test_clock_skew_meter_recheck_allows_heartbeat_but_not_owner_change(prepared, monkeypatch, location, change):

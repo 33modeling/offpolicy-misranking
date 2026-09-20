@@ -163,16 +163,21 @@ def observe(out, arm, seed, drift, c, error, *, now):
                 task.update(status="WAIT", reason="invalid progress: " + str(exc))
     # The branch lease spans CPU validation and publication between metered
     # phases. A finished/absent heartbeat must not hide its still-held owner.
-    held = display.switch_status.meter_lease_held(directory, '.worker.lock')
+    evaluation_shards = [shard for shard in range(4)
+                         if display.switch_status.meter_lease_held(directory / 'evaluation', f'shard-{shard}.lock')]
+    task['active_evaluation_shards'] = evaluation_shards
+    held = display.switch_status.meter_lease_held(directory, '.worker.lock') or bool(evaluation_shards)
     task['task_lease_held'] = held
     if held:
         if not task.get('heartbeat_fresh') and not task.get('owner_active'):
             # The previous meter's host/UUID may belong to another worker.
-            task.update(host=None, pid=None, worker_id=None, phase='validation/publication',
+            task.update(host=None, pid=None, worker_id=None,
+                        phase='evaluation' if evaluation_shards else 'validation/publication',
                         seconds=None, timeout=None, activity_identity_unconfirmed=True)
         task['owner_active'] = True
         if task['status'] != 'DONE':
-            task.update(status='RUNNING', reason='branch worker lease held')
+            task.update(status='RUNNING', reason='evaluation shard lease held' if evaluation_shards
+                        else 'branch worker lease held')
     return task
 
 

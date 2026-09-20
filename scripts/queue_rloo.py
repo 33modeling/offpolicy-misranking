@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+import fcntl
 import math
 import os
 from pathlib import Path
@@ -24,6 +25,21 @@ def record(directory, state, error=""):
         "state": state, "error": error, "updated": time.time(), "pid": os.getpid()})
 
 
+def evaluation_busy(directory):
+    """An evaluation child may survive its controller; do not launch it twice."""
+    for shard in range(4):
+        try:
+            handle = (directory / 'evaluation' / f'shard-{shard}.lock').open('rb')
+        except FileNotFoundError:
+            continue
+        with handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+    return False
+
+
 def run(root, seconds):
     if not math.isfinite(seconds) or seconds <= 0:
         raise ValueError("phase timeout must be positive and finite")
@@ -41,6 +57,10 @@ def run(root, seconds):
                     busy += 1
                     continue
                 try:
+                    if evaluation_busy(directory):
+                        busy += 1
+                        print(f"[rloo-peer] {directory}: evaluation shard lease held; existing work preserved", flush=True)
+                        continue
                     if not experiment.complete(out, arm):
                         experiment.run_arm(out, arm, seconds)
                     if not experiment.complete(out, arm):

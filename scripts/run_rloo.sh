@@ -58,6 +58,8 @@ fi
 CUDA_VISIBLE_DEVICES="" "$PY" src/rloo_experiment.py ensure-prepared --root "$RLOO_ROOT"
 CUDA_VISIBLE_DEVICES="" "$PY" src/rloo_experiment.py check --root "$RLOO_ROOT"
 export OUT_ROOT="$RLOO_ROOT" E5_FORCE=0
+# An inherited Pair scope must never trigger Pair-only cleanup on RLOO entry.
+unset PAIR_ROOT
 source scripts/_e5_node.sh
 e5_acquire_node
 if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then

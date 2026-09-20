@@ -376,3 +376,46 @@ def test_bad_contract_diagnostics_do_not_hide_other_points(tmp_path):
     assert result["points"][0]["status"] == "invalid"
     assert "error" in result["points"][0]["code_diagnostics"]
     assert result["points"][1]["status"] == "unprepared"
+
+
+@pytest.mark.parametrize('payload', ['null', '[]', '{"schema":null}', '{"schema":"x","source":null}'])
+def test_malformed_contract_still_writes_one_partial_results_txt(tmp_path, payload):
+    out = tmp_path / 'math500-d0/s0'
+    out.mkdir(parents=True)
+    (out / 'experiment.json').write_text(payload)
+    target = tmp_path / 'rloo-results.txt'
+    result = subprocess.run([sys.executable, str(Path(reporting.__file__)), '--root', str(tmp_path),
+                             '--out', str(target)], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1, result.stderr
+    exported = json.loads(target.read_text().split('DATA_JSON\n', 1)[1])
+    assert exported['points'][0]['status'] == 'invalid'
+    assert exported['points'][1]['status'] == 'unprepared'
+    assert not (out / 'results.json').exists()
+
+
+def test_large_raw_cost_ledger_cannot_hide_measured_results_txt(measured, tmp_path):
+    for arm in ('before', *reporting.experiment.ARMS):
+        seal(measured, arm)
+    path = measured / 'random/cost.jsonl'
+    original = (json.dumps({'event_id': 'large-diagnostic', 'note': 'x' * 2_000_000}) + '\n').encode()
+    path.write_bytes(original)
+    report = reporting.point_report(measured)
+    target = tmp_path / 'bounded.txt'
+    reporting.write_export('rloo', report, target=target)
+    assert target.stat().st_size < 1_900_000
+    assert report['status'] == 'complete' and len(report['rows']) == 3
+    cost = next(item for item in report['evaluations'] if item['arm'] == 'random')['cost_ledger']
+    assert cost['status'] == 'omitted_size_limit' and cost['events'] == []
+    assert cost['source_bytes'] == len(original)
+    assert cost['source_sha256'] == reporting.experiment.ed.digest(path)
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('raw', ['{"seconds":NaN}\n', '[]\n', '{"seconds":Infinity}\n'])
+def test_invalid_cost_metadata_does_not_prevent_valid_reward_export(measured, tmp_path, raw):
+    seal(measured, 'random')
+    (measured / 'random/cost.jsonl').write_text(raw)
+    report = reporting.point_report(measured)
+    assert report['rows'][0]['mean_reward'] == .25
+    assert next(item for item in report['evaluations'] if item['arm'] == 'random')['cost_ledger']['status'] == 'unreadable'
+    reporting.write_export('rloo', report, target=tmp_path / 'valid-rewards.txt')

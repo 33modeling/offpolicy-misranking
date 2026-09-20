@@ -1,6 +1,7 @@
 """One failed RLOO branch must not prevent independent work on healthy GPUs."""
 from contextlib import contextmanager
 import errno
+import fcntl
 import os
 from pathlib import Path
 import signal
@@ -171,3 +172,57 @@ raise SystemExit(queue.main())
         marker = tmp_path / "worker.pid"
         if marker.exists() and alive(int(marker.read_text())):
             os.killpg(int(marker.read_text()), signal.SIGKILL)
+
+
+def test_rloo_admission_cannot_inherit_pair_cleanup_scope(tmp_path):
+    import shutil
+    repo = tmp_path / 'repo'
+    scripts = repo / 'scripts'
+    scripts.mkdir(parents=True)
+    (repo / 'src').mkdir()
+    shutil.copy(queue.experiment.ROOT / 'scripts/run_rloo.sh', scripts)
+    (repo / 'src/rloo_experiment.py').write_text('pass\n')
+    (scripts / '_e5_node.sh').write_text(
+        'e5_acquire_node() {\n'
+        '  [ -z "${PAIR_ROOT:-}" ] || { echo unexpected-pair-cleanup; exit 99; }\n'
+        '  [ "$OUT_ROOT" = "$RLOO_ROOT" ] || exit 98\n'
+        '  echo rloo-only-admission\n'
+        '  exit 85\n}\n')
+    result = subprocess.run(['bash', str(scripts / 'run_rloo.sh')],
+                            env={**os.environ, 'RLOO_PYTHON': sys.executable,
+                                 'OM_WORK': str(tmp_path / 'work'), 'PAIR_ROOT': '/unrelated/pair'},
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 85, result.stdout + result.stderr
+    assert 'rloo-only-admission' in result.stdout and 'unexpected-pair-cleanup' not in result.stdout
+
+
+@pytest.mark.parametrize('arm', ['before', 'random'])
+def test_orphan_evaluation_lock_yields_and_resumes_after_owner_releases(tmp_path, work, arm):
+    _, _, calls, _ = work
+    out = tmp_path / 'math500-d0/s0'
+    directory = out / arm
+    evaluation = directory / 'evaluation'
+    evaluation.mkdir(parents=True)
+    marker = evaluation / 'shard-2.lock'
+    marker.write_text('existing worker evidence')
+    with marker.open('rb') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert queue.run(tmp_path, 10) == 75
+        assert (out, arm) not in calls
+        assert not (directory / 'queue-attempt.json').exists()
+        assert marker.read_text() == 'existing worker evidence'
+    assert queue.run(tmp_path, 10) == 0
+    assert calls.count((out, arm)) == 1
+
+
+def test_unheld_shard_lock_file_does_not_block_or_create_other_probe_files(tmp_path):
+    directory = tmp_path / 'arm'
+    evaluation = directory / 'evaluation'
+    evaluation.mkdir(parents=True)
+    marker = evaluation / 'shard-0.lock'
+    marker.write_text('historical owner')
+    assert not queue.evaluation_busy(directory)
+    assert list(evaluation.iterdir()) == [marker]
+    assert marker.read_text() == 'historical owner'
+    assert not queue.evaluation_busy(tmp_path / 'absent')
+    assert not (tmp_path / 'absent').exists()
