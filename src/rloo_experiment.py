@@ -23,9 +23,15 @@ SCHEMA = "rloo-frozen-selection/v2"
 TAG = "olmo3-1025-7b-base-rlzero-grpo-h100-v2"
 ROOT = Path(__file__).resolve().parents[1]
 PRE_QUEUE_OBSERVATION_CODE = 'f23ccd63e564d1a9cbf65aa21de835b1317f5aa5bae9ad3530a4e01e6ca1ad92'
-PAIR_OBSERVATION_UPGRADE = (
-    'f02238e97e9d691e2e13491f33653916ab5a51db82f4c98a72fa299e5b9739bf',
-    '042446a0513d8eaeba2dc93ad0b4401a85f8ae9013c3042f80691afa81901f0f')
+# src/selector_pair_gpu.py is never imported by RLOO code, but the frozen
+# contract hashes it. Each reviewed Pair-runtime revision is pinned by digest so
+# the RLOO matrix neither stops on it nor silently accepts an unreviewed change;
+# tests/test_rloo_observation_runtime.py fails until a new revision is pinned.
+PAIR_OBSERVATION_FROZEN = 'f02238e97e9d691e2e13491f33653916ab5a51db82f4c98a72fa299e5b9739bf'
+PAIR_OBSERVATION_REVIEWED = (
+    '042446a0513d8eaeba2dc93ad0b4401a85f8ae9013c3042f80691afa81901f0f',  # curve observation
+    'd8414a62a7ca805e0218487f64eb0fa923f87c2c59def6c88cda808890a4e081')  # branch parallelism
+PAIR_OBSERVATION_UPGRADE = (PAIR_OBSERVATION_FROZEN, PAIR_OBSERVATION_REVIEWED[-1])
 SCOPE = ("Matched GRPO-study data, selections, checkpoints, optimizer state, updates and evaluation; "
          "only the continuation objective changes to RLOO. d0 starts from the base model; "
          "d400 inherits the real GRPO parent and optimizer. Selection is not recomputed. "
@@ -87,7 +93,9 @@ def reviewed_code_changes(recorded):
         if current == digest:
             continue
         reviewed = ((name == 'src/rloo_experiment.py' and digest == PRE_QUEUE_OBSERVATION_CODE)
-                    or (name == 'src/selector_pair_gpu.py' and (digest, current) == PAIR_OBSERVATION_UPGRADE)
+                    or (name == 'src/selector_pair_gpu.py'
+                        and digest in (PAIR_OBSERVATION_FROZEN, *PAIR_OBSERVATION_REVIEWED)
+                        and current in PAIR_OBSERVATION_REVIEWED)
                     or (name in DISPLAY_MODULES and display_is_isolated(name)))
         if not reviewed:
             raise ValueError(f"code changed since preparation: {name}")
@@ -100,6 +108,31 @@ def observation_receipt(out, changes):
             'experiment_sha256': ed.digest(out / 'experiment.json'), 'changes': changes,
             'change': 'reviewed queue/status compatibility only; training objective, inputs, optimizer, '
                       'steps, evaluations, checkpoints and costs unchanged'}
+
+
+def bind_receipt(out, changes):
+    """Record the launcher's acknowledgement of reviewed code drift.
+
+    A receipt for the same frozen contract is refreshed in place when a later
+    reviewed revision moved only the acknowledged runtime hashes or the set of
+    waived files; a receipt from another contract or a tampered one is refused.
+    """
+    path = out / 'queue-observation-runtime.json'
+    receipt = observation_receipt(out, changes)
+    if not path.exists():
+        ed.atomic_json(path, receipt)
+        return
+    existing = ed.read(path)
+    if existing == receipt:
+        return
+    recorded = ed.read(out / 'experiment.json')['code_hashes']
+    genuine = (isinstance(existing, dict) and isinstance(existing.get('changes'), dict)
+               and all(existing.get(key) == receipt[key] for key in ('schema', 'experiment_sha256', 'change'))
+               and all(isinstance(value, dict) and value.get('frozen_sha256') == recorded.get(name)
+                       for name, value in existing['changes'].items()))
+    if not genuine:
+        raise ValueError(f"contract changed: {path}; use a new output root, do not mix runs")
+    ed.atomic_json(path, receipt)
 
 
 def prepare(run, out, evaluation, *, dry=False):
@@ -134,7 +167,7 @@ def prepare(run, out, evaluation, *, dry=False):
     with lock(out / ".prepare.lock"):
         ed.bind(out / "experiment.json", contract)
         if changes:
-            ed.bind(out / 'queue-observation-runtime.json', observation_receipt(out, changes))
+            bind_receipt(out, changes)
         ed.bind(out / "evaluation.json", {"val": rows, "provenance": test["provenance"]})
         hashes = out / "inputs.json"
         if not hashes.exists():

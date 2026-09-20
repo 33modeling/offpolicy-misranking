@@ -90,11 +90,14 @@ full source/model/optimizer validation remains in `check` and `report`. The
 dashboard lives outside frozen training sources so this display update does not
 invalidate existing RLOO contracts.
 
-The original contract also hashes unrelated Pair source code. The reviewed Pair
-curve-observation change has an exact compatibility pin; RLOO preparation retains
-the existing contract byte-for-byte and appends `queue-observation-runtime.json`.
-Only that pinned operational change and the reviewed RLOO validation update are
-allowed. Unknown code, training/input changes and altered receipts still fail.
+The original contract also hashes unrelated Pair source code. Reviewed Pair
+runtime revisions are pinned by digest (`PAIR_OBSERVATION_REVIEWED`); a change to
+`src/selector_pair_gpu.py` fails `tests/test_rloo_observation_runtime.py` until
+its digest is reviewed and pinned. RLOO preparation retains the existing contract
+byte-for-byte and appends `queue-observation-runtime.json`; when a later reviewed
+revision of a waived file lands, `bash scripts/run_rloo.sh prepare` (CPU-only)
+refreshes that receipt in place, and validation refuses to run until it has.
+Unknown code, training/input changes and foreign or tampered receipts still fail.
 There is no checkpoint reset, retraining requirement, or cost refund.
 
 ## Readout And Costs
