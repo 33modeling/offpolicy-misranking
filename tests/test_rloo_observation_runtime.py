@@ -53,3 +53,44 @@ def test_tampered_runtime_receipt_not_overwritten(tmp_path):
     with pytest.raises(ValueError, match='contract changed'):
         rloo.prepare(run, out, evaluation)
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('name', rloo.DISPLAY_MODULES)
+def test_isolated_display_module_drift_is_recorded_not_rejected(tmp_path, name):
+    run, out, evaluation = fixture(tmp_path)
+    c = legacy_contract(out)
+    c['code_hashes'][name] = 'display-before-status-change'
+    rloo.ed.atomic_json(out / 'experiment.json', c)
+    frozen = (out / 'experiment.json').read_bytes()
+    with pytest.raises(ValueError, match='runtime receipt'):
+        rloo.validate(out)
+    assert rloo.prepare(run, out, evaluation) == c
+    receipt = rloo.ed.read(out / 'queue-observation-runtime.json')
+    assert receipt['changes'][name] == {'frozen_sha256': 'display-before-status-change',
+                                        'runtime_sha256': rloo.ed.digest(rloo.ROOT / name)}
+    assert (out / 'experiment.json').read_bytes() == frozen
+    assert rloo.validate(out)[0] == c
+
+
+def test_display_exception_fails_closed_when_the_module_is_referenced(tmp_path, monkeypatch):
+    run, out, evaluation = fixture(tmp_path)
+    c = legacy_contract(out)
+    c['code_hashes']['src/matrix_status.py'] = 'display-before-status-change'
+    rloo.ed.atomic_json(out / 'experiment.json', c)
+    monkeypatch.setattr(rloo, 'display_is_isolated', lambda name: False)
+    with pytest.raises(ValueError, match='code changed since preparation: src/matrix_status.py'):
+        rloo.prepare(run, out, evaluation)
+    assert not (out / 'queue-observation-runtime.json').exists()
+
+
+@pytest.mark.parametrize('reference', ['import matrix_status', 'from matrix_status import main',
+                                       "importlib.import_module('matrix_status')"])
+def test_display_isolation_scans_source_references(tmp_path, monkeypatch, reference):
+    source = tmp_path / 'src'
+    source.mkdir()
+    (source / 'matrix_status.py').write_text('print(1)\n')
+    (source / 'other.py').write_text('x = 1\n')
+    monkeypatch.setattr(rloo, 'ROOT', tmp_path)
+    assert rloo.display_is_isolated('src/matrix_status.py')
+    (source / 'other.py').write_text(reference + '\n')
+    assert not rloo.display_is_isolated('src/matrix_status.py')

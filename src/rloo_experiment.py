@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 
 import numpy as np
@@ -61,14 +62,34 @@ def runtime_env(config):
             "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1", "TOKENIZERS_PARALLELISM": "false"}
 
 
+# Status display modules: read by the status and report tools only, imported by
+# no other module under src/. Their drift cannot change training, selection,
+# evaluation, checkpoints or costs, so it is recorded in the observation
+# receipt instead of refusing to start. Every other src module stays frozen.
+DISPLAY_MODULES = ('src/matrix_status.py', 'src/rlzero_status.py',
+                   'src/downstream_status.py', 'src/queue_status.py')
+
+
+def display_is_isolated(name):
+    """True when no other src module imports or names the display module."""
+    module = re.escape(Path(name).stem)
+    reference = re.compile(rf"^\s*(?:import|from)\s+{module}\b|['\"]{module}['\"]", re.M)
+    for path in sorted((ROOT / 'src').glob('*.py')):
+        if str(path.relative_to(ROOT)) != name and reference.search(path.read_text()):
+            return False
+    return True
+
+
 def reviewed_code_changes(recorded):
     changes = {}
     for name, digest in recorded.items():
         current = ed.digest(ROOT / name)
         if current == digest:
             continue
-        if not ((name == 'src/rloo_experiment.py' and digest == PRE_QUEUE_OBSERVATION_CODE)
-                or (name == 'src/selector_pair_gpu.py' and (digest, current) == PAIR_OBSERVATION_UPGRADE)):
+        reviewed = ((name == 'src/rloo_experiment.py' and digest == PRE_QUEUE_OBSERVATION_CODE)
+                    or (name == 'src/selector_pair_gpu.py' and (digest, current) == PAIR_OBSERVATION_UPGRADE)
+                    or (name in DISPLAY_MODULES and display_is_isolated(name)))
+        if not reviewed:
             raise ValueError(f"code changed since preparation: {name}")
         changes[name] = {'frozen_sha256': digest, 'runtime_sha256': current}
     return changes
