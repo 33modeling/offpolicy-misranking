@@ -15,12 +15,13 @@ def joined(paths):
     return ''.join(path.read_text().split('\n\n', 1)[1] for path in paths)
 
 
-@pytest.mark.parametrize('text', ['x' * (parts.PART_BYTES - 256),
-                                   '한글복구사유' * 20000, 'a\n' * 30000])
+@pytest.mark.parametrize('text', ['x' * (parts.PART_BYTES - 512),
+                                   '한글복구사유' * 200000, 'a\n' * 1000000])
 def test_parts_preserve_all_content_and_fit_byte_limit(tmp_path, text):
     paths = parts.write_parts(iter([text[:17], text[17:]]), tmp_path)
     assert joined(paths) == text
-    assert all(path.stat().st_size <= 8192 for path in paths)
+    assert all(path.stat().st_size <= 1_900_000 for path in paths)
+    assert len(paths) <= 3
     assert paths == sorted(paths)
     again = parts.write_parts([text], tmp_path)
     assert again[0].parent != paths[0].parent
@@ -58,7 +59,7 @@ def test_every_recovery_blocker_and_checkpoint_metadata_is_exported_read_only(tm
     assert '"canonical_complete": false' in text
     assert 'rc=80' in text and 'missing development labels' in text
     assert 'PRIVATE_' not in text and '[... omitted ...]' not in text
-    assert all(path.stat().st_size <= 8192 for path in paths)
+    assert all(path.stat().st_size <= 1_900_000 for path in paths)
     assert before == {p: p.read_bytes() for p in before}
     assert not list(root.rglob('*.lock'))
 
@@ -84,5 +85,45 @@ def test_existing_why_entry_point_writes_parts(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, 'argv', ['why', '--work', str(tmp_path), '--root', str(root)])
     assert summary.main() == 0
     paths = sorted((tmp_path / 'reports/selection-switch').glob('mbpp-why-*/*.txt'))
-    assert paths and all(path.stat().st_size <= 8192 for path in paths)
+    assert paths and all(path.stat().st_size <= 1_900_000 for path in paths)
     assert '[parts]' in capsys.readouterr().out
+
+
+def test_eight_hundred_old_parts_produce_at_most_three_overleaf_files(tmp_path):
+    chunks = ('x' * 8192 for _ in range(800))
+    paths = parts.write_parts(chunks, tmp_path)
+    assert len(paths) == 3
+    assert all(path.stat().st_size < 2_000_000 for path in paths)
+    assert sum(path.stat().st_size for path in paths) <= 5_700_000
+    assert 'EXPORT LIMIT' in paths[-1].read_text()
+    assert 'NOT a complete export' in paths[-1].read_text()
+
+
+def test_all_roots_blockers_precede_large_inventories_and_logs(tmp_path, monkeypatch):
+    roots = [tmp_path / f'root-{i}' for i in range(4)]
+    for index, root in enumerate(roots):
+        core.atomic_json(root / 'states/s2-t50/points/view-50/selection_reduced/budget-recovery/review.json',
+                         {'error': f'critical-blocker-{index}'})
+    monkeypatch.setattr(parts, 'policy_inventory', lambda *args: iter(['inventory\n' * 900000]))
+    paths = parts.write_parts(parts.sections(tmp_path, roots), tmp_path / 'reports')
+    text = joined(paths)
+    assert len(paths) == 3
+    assert all(f'critical-blocker-{index}' in text for index in range(4))
+    assert 'EXPORT LIMIT' in text
+
+
+def test_large_embedded_decision_model_is_not_copied(tmp_path):
+    branch = tmp_path / 'states/s2-t50/points/view-50/selection_reduced'
+    core.atomic_json(branch / 'decision.json', {'budget_gpu_seconds': 28380,
+                     'action': 'select', 'model': {'history': 'UNNEEDED' * 100000}})
+    text = ''.join(parts.sections(tmp_path, [tmp_path]))
+    assert 'UNNEEDED' not in text
+    assert '28380' in text and len(text.encode()) < 10000
+
+
+def test_repeated_holding_is_condensed_without_losing_exit(tmp_path):
+    path = tmp_path / 'console.log'
+    path.write_text('[holding] next pass\n' * 100 + '[WAIT] missing checkpoint\n[node-launcher-exit] rc=80\n')
+    text = ''.join(parts.log_excerpt(tmp_path, path))
+    assert text.count('[holding]') == 1
+    assert 'rc=80' in text and 'missing checkpoint' in text and 'Collapsed 100' in text

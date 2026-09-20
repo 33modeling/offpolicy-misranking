@@ -325,7 +325,8 @@ def main():
     from mbpp_diagnostic_parts import sections, write_parts
     destination = args.work / 'reports/selection-switch'
     paths = write_parts(sections(args.work, args.root), destination)
-    print(f'[parts] {len(paths)} TXT files; maximum 8 KiB each; send all numbered parts')
+    print(f'[parts] {len(paths)} TXT files; maximum 1.9 MB each, 3 files / 5.7 MB total; send this set only')
+    print('[upload] Existing project text also counts toward the Overleaf 7 MB total limit; do not upload old 8 KiB sets.')
     for path in paths:
         print(f'[saved] {path} ({path.stat().st_size} bytes)')
     return 0

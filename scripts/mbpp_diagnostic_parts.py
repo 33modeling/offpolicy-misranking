@@ -7,7 +7,10 @@ from pathlib import Path
 
 import mbpp_failure_summary as summary
 
-PART_BYTES = 8 * 1024
+# Overleaf: 2 MB per editable file and 7 MB editable material per project.
+# Decimal bytes keep each file below either interpretation of those limits.
+PART_BYTES = 1_900_000
+MAX_PARTS = 3
 LOG_BYTES = 8 * 1024
 ARMS = {'selection_reduced', 'random_reduced', 'selection_full', 'random_full', 'gated'}
 POLICY_FILES = ('adapter_config.json', 'adapter_model.safetensors', 'optimizer.pt',
@@ -54,17 +57,25 @@ def log_excerpt(root, path):
             data = handle.read(LOG_BYTES)
         if size > LOG_BYTES:
             yield '[Earlier log bytes not collected; metadata records below are exported separately.]\n'
-        yield data.decode('utf-8', errors='replace') + '\n'
+        lines = data.decode('utf-8', errors='replace').splitlines()
+        holding = [line for line in lines if line.startswith('[holding]')]
+        lines = [line for line in lines if not line.startswith('[holding]')]
+        if holding:
+            lines += [f'[Collapsed {len(holding)} holding lines; last follows]', holding[-1]]
+        yield '\n'.join(lines) + '\n'
     except (OSError, ValueError) as exc:
         yield f'LOG ERROR {exc}\n'
 
 
 def sections(work, roots):
+    inventories, worker_logs, admissions = [], [], []
     yield ('MBPP DIAGNOSTIC DETAILS\nREAD-ONLY. No training, repair or lock creation.\n'
            'No model/optimizer/rollout payloads. Presence is NOT hash/lineage validation.\n'
-           'All discovered branch records included, not only two recent failures.\n'
+           'Branch blockers first, inventories and logs afterward; not only two recent failures.\n'
            'JSON reads limited to 1 MiB each; oversize/unreadable records show errors.\n'
-           'Log excerpts are bounded; this is not an atomic snapshot of live workers.\n')
+           'Log excerpts are bounded; this is not an atomic snapshot of live workers.\n'
+           'At most 3 files of 1,900,000 bytes; any total-limit omission is explicitly marked.\n'
+           'Existing project text also counts toward the Overleaf 7 MB total limit.\n')
     for root in roots:
         yield f'\nROOT {root}\n'
         if not root.is_dir():
@@ -81,7 +92,10 @@ def sections(work, roots):
             try:
                 summary.checked(root, directory)
                 yield f'charged deployment GPU-s={summary.charged(directory)}\n'
-                for name in ('decision.json', 'failure.json', 'progress.json',
+                path = directory / 'decision.json'
+                yield metadata(root, path, ('binding', 'action', 'reason', 'budget_gpu_seconds',
+                                            'measurement_gpu_seconds')) if path.exists() else f'MISSING {path.relative_to(root)}\n'
+                for name in ('failure.json', 'progress.json',
                              'budget-recovery/review.json', 'budget-recovery/failure.json',
                              'budget-recovery/progress.json'):
                     path = directory / name
@@ -95,13 +109,12 @@ def sections(work, roots):
                                                     'plan_sha256', 'used_gpu_seconds', 'budget_gpu_seconds', 'over_budget_gpu_seconds'))):
                     path = directory / name
                     yield metadata(root, path, keys) if path.exists() else f'MISSING {path.relative_to(root)}\n'
-                yield from policy_inventory(root, directory / 'policy')
+                inventories.append((root, directory / 'policy'))
                 progress = summary.record(root, directory / 'progress.json')
                 phase = progress.get('phase')
                 if isinstance(phase, str) and re.fullmatch(r'[\w-]+', phase):
                     for path in summary.recent(directory, (f'{phase}-*.log',))[:4]:
-                        yield f'ERROR EXCERPT {path.relative_to(root)} (bounded log context)\n'
-                        yield summary.error_excerpt(root, path) + '\n'
+                        worker_logs.append((root, path))
             except (OSError, ValueError) as exc:
                 yield f'BRANCH ERROR {exc}\n'
         for path in sorted(root.glob('prefixes/seed-*/segment-*/failure.json')):
@@ -109,19 +122,30 @@ def sections(work, roots):
         for path in sorted(root.glob('states/*/failure.json')):
             yield metadata(root, path)
         for path in sorted(root.glob('node-preflight/*/admission.json')):
-            yield metadata(root, path)
+            admissions.append((root, path))
+    yield '\nCHECKPOINT INVENTORIES\n'
+    for root, policy in inventories:
+        yield f'ROOT {root}\n'
+        yield from policy_inventory(root, policy)
+    yield '\nADMISSIONS AND LOGS (lower priority than branch blockers)\n'
+    for root, path in admissions:
+        yield f'ROOT {root}\n'
+        yield metadata(root, path)
+    for root, path in worker_logs:
+        yield f'ROOT {root}\nERROR EXCERPT {path.relative_to(root)} (bounded log context)\n'
+        yield summary.error_excerpt(root, path) + '\n'
     for pattern in ('runs/experiments/logs/console.mbpp.*.log', 'runs/experiments/logs/cleanup.mbpp.*.log'):
         for path in sorted(work.glob(pattern)):
             yield from log_excerpt(work, path)
 
 
 def write_parts(chunks, destination):
-    """Split bytes without dropping content or splitting a UTF-8 code point."""
+    """Bound file count and bytes; explicitly mark any omitted trailing content."""
     destination.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix='mbpp-why-', dir=destination))
     paths, buffer = [], b''
-    # Fixed payload headroom keeps headers inside the per-file byte cap.
-    capacity = PART_BYTES - 256
+    # Reserve room for both the part header and the final truncation notice.
+    capacity = PART_BYTES - 512
 
     def save(data):
         path = folder / f'mbpp-why-{len(paths) + 1:03d}.txt'
@@ -134,10 +158,14 @@ def write_parts(chunks, destination):
 
     for chunk in chunks:
         buffer += chunk.encode('utf-8')
-        while len(buffer) >= capacity:
+        while len(buffer) > capacity:
             end = capacity
             while end < len(buffer) and buffer[end] & 0xC0 == 0x80:
                 end -= 1
+            if len(paths) == MAX_PARTS - 1:
+                save(buffer[:end] + b'\n[EXPORT LIMIT: remaining content omitted to keep at most 3 TXT files '
+                     b'below 2 MB each. Source files unchanged; this is NOT a complete export.]\n')
+                return paths
             save(buffer[:end])
             buffer = buffer[end:]
     if buffer:

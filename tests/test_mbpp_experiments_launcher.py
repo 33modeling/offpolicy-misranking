@@ -310,7 +310,8 @@ def test_why_writes_small_parts_without_training_or_full_exports(launcher):
     assert not Path(env['CHECK_LOG']).exists()
     assert not Path(env['CALLS']).exists()
     reports = sorted((Path(env['OM_WORK']) / 'reports/selection-switch').glob('mbpp-why-*/*.txt'))
-    assert reports and all(path.stat().st_size <= 8 * 1024 for path in reports)
+    assert 1 <= len(reports) <= 3
+    assert all(path.stat().st_size <= 1_900_000 for path in reports)
     assert result.stdout.count('[saved]') == len(reports)
     text = ''.join(path.read_text() for path in reports)
     assert 'selection-switch-mbpp-quality-v1' in text

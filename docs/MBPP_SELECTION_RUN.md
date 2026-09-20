@@ -88,7 +88,7 @@ bash scripts/run_mbpp_experiments.sh progress   # main quality progress and reta
 bash scripts/run_mbpp_experiments.sh saved      # READ-ONLY saved-work/archived-work inventory, <=4 KiB stdout
 bash scripts/run_mbpp_experiments.sh stop       # stop/clean THIS node, not peer nodes
 bash scripts/run_mbpp_experiments.sh results    # one report per suite, also copied home
-bash scripts/run_mbpp_experiments.sh why        # numbered diagnostic TXT parts, at most 8 KiB each
+bash scripts/run_mbpp_experiments.sh why        # Overleaf-sized TXT: at most 3 files, 1.9 MB each
 bash scripts/run_mbpp_experiments.sh run quality       # same main condition as the default
 bash scripts/run_mbpp_experiments.sh status quality    # main condition only; no training
 bash scripts/run_mbpp_experiments.sh results quality   # main results; no training
@@ -339,7 +339,7 @@ While a controller is stopping, the terminal displays elapsed shutdown time,
 owned process IDs/roles and bounded GPU memory/owner queries at roughly five-second
 intervals. Unknown/container-hidden owners are not assumed to belong to MBPP.
 These observations are saved in `cleanup.mbpp.<node>.log`; `why` includes
-bounded cleanup excerpts in its numbered 8 KiB attachments.
+bounded cleanup excerpts in its numbered Overleaf-sized attachments.
 No new worker is started while the old controller is still alive.
 
 Each node's `Progress` describes its current phase, not the suite-wide completed
@@ -363,14 +363,21 @@ CPU controller tests cover all five pass outcomes (0/1/75/78/79), legacy 600s
 settings, cooldown expiry and invalid receipts, failed/stale wakeups, and
 checkpoint-preserving restart. They do not certify the health of a live GPU node.
 
-`why` writes numbered TXT parts, each at most 8 KiB, under
+`why` writes at most three numbered TXT parts, each at most 1,900,000 bytes, under
 `reports/selection-switch/mbpp-why-*/mbpp-why-NNN.txt`. Send all parts from the
-same folder in numeric order. Each invocation creates a new folder.
+same folder in numeric order. Each invocation creates a new folder. Upload only
+the new set, not the earlier 8 KiB exports. Existing exports are not deleted.
+The new set is at most 5.7 MB total. Overleaf allows 2 MB per editable text file
+and 7 MB editable material per project; existing paper text counts toward that
+project limit too. See [Overleaf plan limits](https://docs.overleaf.com/getting-started/free-and-premium-plans/plan-limits).
 It includes every discovered branch's failure/progress and budget-recovery
 review/failure records, recovery completion metadata, checkpoint presence and
 step/hash metadata, gate-fit errors, admission records and bounded node logs.
-Long metadata content is split across files instead of silently clipped to the
-newest two failures. Individual JSON reads are bounded at 1 MiB; larger or
+Branch blockers from all roots come before checkpoint inventories and logs.
+Embedded decision models are not copied and repeated holding lines are condensed.
+Long metadata content is split across files; if it exceeds the three-file limit,
+the final file explicitly marks the remaining content as omitted and the export
+as incomplete. Individual JSON reads are bounded at 1 MiB; larger or
 unreadable records are explicitly reported, not treated as missing or successful.
 File presence is not hash/lineage validation, and the read-only export is not an
 atomic snapshot of active workers. Model, optimizer and rollout payloads are not
