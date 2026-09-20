@@ -151,10 +151,13 @@ def snapshot(root, *, now=None):
         node["current"] |= fresh and worker.get("state") in {"RUN", "WAIT"}
         node.setdefault("state", "WAIT" if fresh and worker.get("state") == "WAIT" else
                         "LIVE" if fresh and worker.get("state") == "RUN" else "STALE")
-        match = re.fullmatch(r"(?:development|test)/s(\d+)-t(\d+)", str(worker.get("task", "")))
+        match = re.fullmatch(r"(?:development|test)/s(\d+)-t(\d+)(?:/([\w-]+)/([\w-]+))?",
+                             str(worker.get("task", "")))
         if (fresh and worker.get("state") == "RUN" and match
                 and not any(task["host"] == node["host"] for task in activity)):
-            activity.append(dict(host=node["host"], kind="phase", arm="상태 작업", seed=int(match[1]),
+            arm = ("random" if match[4] == "random_full" else "adaptive" if str(match[3]).startswith("adaptive-")
+                   else match[3] or "상태 작업")
+            activity.append(dict(host=node["host"], kind="phase", arm=arm, seed=int(match[1]),
                                  step=int(match[2]), directory=worker["task"], status="RUNNING",
                                  heartbeat_fresh=True, phase="분기 단계 확인 중"))
     tasks = []

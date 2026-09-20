@@ -51,7 +51,9 @@ PRE_PAIR_WAIT_GUARD_CODE = "2a6c4dcd2fb062159f3212efb7d19f5898774e3f0d18a90953e7
 # Exact 9be50a8 pair map before the shared MBPP quarantine compatibility patch.
 PRE_SHARED_MBPP_QUARANTINE_CODE = "0894fdfe1edb03163abc02589bfd941dc8ffc5e41f000b5ef6981be74c791b5d"
 PRE_PAIR_STATUS_CODE = "ad4d1718999848103a577e2efc2ce6b1352a9c5d7f76fccdc875924c15cd57f3"
+PRE_PAIR_BRANCH_QUEUE_CODE = "456af840a1bd6f184078f9cee6b30a2c7554523fa611b1156e53ce6f49400c28"
 PRE_SHARED_RUNTIME_CODES = {
+    PRE_PAIR_BRANCH_QUEUE_CODE,
     PRE_PAIR_STATUS_CODE,
     PRE_BUDGET_STOP_EVALUATION_CODE,
     PRE_PAIR_OPERATIONS_CODE,
@@ -82,6 +84,10 @@ class IncompletePairRun(ValueError):
 
 class PairWaitTimeout(ValueError):
     """Stop this waiting invocation, never an existing worker or its lease."""
+
+
+class PairWorkPending(Exception):
+    """A peer owns shared curve evaluation; retry publication without GPU admission."""
 
 
 class PairLockBusy(ValueError):
@@ -152,12 +158,17 @@ def resource_diagnostics():
 
 
 @contextlib.contextmanager
-def pair_lease(path):
+def pair_lease(path, *, shared=False):
     # Catch acquisition only: EAGAIN from a subprocess inside the lease is not
     # evidence of lock contention and must retain its original traceback.
     with contextlib.ExitStack() as stack:
         try:
-            stack.enter_context(base.lease(path))
+            if shared:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                handle = stack.enter_context(path.open("a+"))
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            else:
+                stack.enter_context(base.lease(path))
         except BlockingIOError as exc:
             raise PairLockBusy(path) from exc
         yield
@@ -353,7 +364,8 @@ def compatible_code(recorded):
 
 def bind_startup_runtime(root, recorded):
     def reviewed_receipt(path, receipt, predecessors):
-        switch.bind_reviewed_runtime_receipt(path, receipt, {*predecessors, PRE_PAIR_STATUS_CODE})
+        switch.bind_reviewed_runtime_receipt(path, receipt,
+                                            {*predecessors, PRE_PAIR_STATUS_CODE, PRE_PAIR_BRANCH_QUEUE_CODE})
 
     if recorded != code_hashes():
         # Preserve and validate the exact historical upgrade chain. The resource
@@ -460,11 +472,18 @@ def bind_startup_runtime(root, recorded):
                     "change": "shared Switch MBPP branch quarantine compatibility only; pair scheduling and science unchanged",
                     "cost_policy": "preserve all protocols, receipts, checkpoints, results, costs, targets and budgets; no refunds or restart",
                 }, set())
-                base.bind(root / "pair-status-runtime.json", {
+                reviewed_receipt(root / "pair-status-runtime.json", {
                     "schema": "offpolicy-selector-pair/status-runtime-v1",
                     "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                     "quarantine_runtime_sha256": base.digest(root / "shared-mbpp-quarantine-runtime.json"),
                     "change": "read-only dashboard dispatch; training and accounting unchanged",
+                }, {PRE_PAIR_BRANCH_QUEUE_CODE})
+                base.bind(root / "pair-branch-queue-runtime.json", {
+                    "schema": "offpolicy-selector-pair/branch-queue-runtime-v1",
+                    "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                    "status_runtime_sha256": base.digest(root / "pair-status-runtime.json"),
+                    "change": "independent branch leases, serialized state preparation/publication, existing fit/freeze barriers",
+                    "cost_policy": "preserve selectors, targets, budgets, checkpoints, decisions, all costs and prior receipts",
                 })
 
 
@@ -697,7 +716,7 @@ def execute(entry, arm, devices):
         switch.runtime.run_arm(out, suite, protocol, arm, devices, env)
         switch.curve_once(branch, switch.manifest(branch), out, c, arm, suite, devices, env)
         if not switch.branch_finished(switch.manifest(branch), out / arm):
-            raise ValueError(f"curve publication is pending: {out / arm}")
+            raise PairWorkPending(f"curve publication is pending: {out / arm}")
 
 
 def attempt_branch(root, p, entry, arm, devices):
@@ -715,6 +734,11 @@ def attempt_branch(root, p, entry, arm, devices):
                                "host": base.node_id(), "pid": os.getpid(), "updated": time.time()})
         try:
             execute(entry, arm, devices)
+        except PairWorkPending:
+            core.atomic_json(path, {"state": "WAIT", "task": task, "attempt": attempt,
+                                   "host": base.node_id(), "updated": time.time(),
+                                   "reason": "shared curve evaluation is held by a peer"})
+            raise
         except (ValueError, OSError, RuntimeError) as exc:
             failure = {"state": "WAIT", "task": task, "attempt": attempt,
                        "host": base.node_id(), "updated": time.time(),
@@ -745,13 +769,24 @@ def finish_pass(root, stage, failures):
                                 f"saved work and costs preserved; see {root / (stage + '-pass.json')}")
 
 
-def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout=180.):
-    """Claim matched states, not the entire study; retain within-state order.
+def queue_branches(entries, seed, stage, choice=None):
+    names = [(name, "selection_reduced") for name in pair.SELECTORS] if stage == "development" else [
+        ("on_policy", "selection_full"), ("cached", "selection_full"),
+        (f"adaptive-{choice['selector']}", "selection_full"), ("on_policy", "random_full")]
+    return [(name, arm, entries[name]) for name, arm in (names[::-1] if seed % 2 else names)]
 
-    Every caller from main holds a shared .pair.lock for its lifetime. That
-    prevents unsafe mixing with the old exclusive, single-controller runner.
-    GPU/cost/task leases remain in execute; a dead node releases its state
-    lease automatically and another node can resume the saved work.
+
+def branch_receipt(p, identity, name, arm, entry):
+    return {"protocol_id": p["protocol_id"], "state_id": identity, "branch": name, "arm": arm,
+            "curve": measured_curve(entry, arm)}
+
+
+def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout=180.):
+    """Share a state among independent branches; publish only after all finish.
+
+    Shared state leases exclude older exclusive state workers and the final
+    fit/report validators. Preparation is serialized separately, and each
+    branch claim remains exclusive through execution and its validated receipt.
     """
     if stage not in {"development", "test"}:
         raise ValueError("unknown pair queue stage")
@@ -760,7 +795,7 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
     choices = decisions(root, p) if stage == "test" else None
     seeds = pair.DEV_SEEDS if stage == "development" else pair.TEST_SEEDS
     states = [(seed, step) for seed in seeds for step in pair.STEPS]
-    verified, failed = set(), {}
+    verified, completed, failed = set(), set(), {}
     worker = uuid.uuid4().hex
     worker_path = root / "queue-workers" / f"{worker}.json"
     observation = {"host": base.node_id(), "pid": os.getpid(), "stage": stage,
@@ -772,7 +807,9 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
     def record(state, task=None):
         core.atomic_json(worker_path, {**observation, "state": state, "task": task,
                          "updated": time.time(), "verified_states": len(verified),
-                         "total_states": len(states), "queue_wait_wall_seconds": waited,
+                         "total_states": len(states), "verified_branches": len(completed),
+                         "total_branches": len(states) * (2 if stage == "development" else 4),
+                         "queue_wait_wall_seconds": waited,
                          "failures": list(failed.values())})
 
     def result_row(seed, step):
@@ -781,53 +818,81 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
 
     try:
         while len(verified) < len(states):
-            busy = []
-            previous_verified = len(verified)
+            busy, busy_directories = set(), set()
+            previous_verified = (len(verified), len(completed))
             for seed, step in states:
                 key = (seed, step)
                 if key in verified:
                     continue
                 folder = root / stage / f"s{seed}-t{step}"
                 path = folder / "result.json"
-                # A peer may have repaired a state that failed on this node.
+                # Invalid published summaries must never restart their branches.
                 if key in failed and not path.exists():
                     continue
+                entered_state = False
                 try:
-                    with pair_lease(folder / ".state.lock"):
-                        if path.exists():
+                    if path.exists():
+                        with pair_lease(folder / ".state.lock"):
                             base.bind(path, result_row(seed, step))
                             verified.add(key)
                             failed.pop(key, None)
-                            continue
-                        identity, entries = verify_pair(root, seed, step)
-                        record("RUN", f"{stage}/s{seed}-t{step}")
-                        print(f"[RUN] host={base.node_id()} {stage}/s{seed}-t{step}", flush=True)
-                        if stage == "development":
-                            base.bind(folder / "state.json", {"state_id": identity, "protocol_id": p["protocol_id"]})
-                            names = tuple(pair.SELECTORS)
-                            tasks = [(entries[name], "selection_reduced") for name in names]
-                        else:
-                            decision = choices[f"s{seed}-t{step}"]
-                            if identity != decision["state_id"]:
+                        continue
+                    with pair_lease(folder / ".state.lock", shared=True):
+                        entered_state = True
+                        with pair_lease(folder / ".prepare-state.lock"):
+                            identity, entries = verify_pair(root, seed, step)
+                            if stage == "development":
+                                base.bind(folder / "state.json", {"state_id": identity, "protocol_id": p["protocol_id"]})
+                            choice = choices[f"s{seed}-t{step}"] if choices is not None else None
+                            if choice is not None and identity != choice["state_id"]:
                                 raise ValueError("test parent state differs from the frozen decision")
-                            tasks = [(entries["on_policy"], "selection_full"),
-                                     (entries["cached"], "selection_full"),
-                                     (entries[f"adaptive-{decision['selector']}"], "selection_full"),
-                                     (entries["on_policy"], "random_full")]
-                        errors = []
-                        for entry, arm in tasks if seed % 2 == 0 else tasks[::-1]:
-                            failure = attempt_branch(root, p, entry, arm, devices)
-                            if failure:
-                                errors.append(failure)
-                        if errors:
-                            failed[key] = {"state": f"s{seed}-t{step}", "failures": errors}
-                        else:
+                        tasks = queue_branches(entries, seed, stage, choice)
+                        for name, arm, entry in tasks:
+                            branch_key = (seed, step, name, arm)
+                            receipt = folder / "queue-branches" / f"{name}--{arm}.json"
+                            if branch_key in completed or branch_key in failed and not receipt.exists():
+                                continue
+                            directory = entry[1] / arm
+                            try:
+                                with pair_lease(receipt.with_suffix(".lock")):
+                                    if not receipt.exists() and not all((directory / item).is_file()
+                                                                      for item in ("result.json", "curve.json")):
+                                        record("RUN", f"{stage}/s{seed}-t{step}/{name}/{arm}")
+                                        print(f"[RUN] host={base.node_id()} {stage}/s{seed}-t{step}/{name}/{arm}", flush=True)
+                                        failure = attempt_branch(root, p, entry, arm, devices)
+                                        if failure:
+                                            failed[branch_key] = failure
+                                            continue
+                                    base.bind(receipt, branch_receipt(p, identity, name, arm, entry))
+                                    completed.add(branch_key)
+                                    failed.pop(branch_key, None)
+                            except PairLockBusy as exc:
+                                if exc.path != receipt.with_suffix(".lock"):
+                                    raise
+                                busy.add(f"s{seed}-t{step}")
+                                busy_directories.add(directory)
+                            except PairWorkPending:
+                                busy.add(f"s{seed}-t{step}")
+                                busy_directories.update((directory, entry[1] / "curve-parent"))
+                            except NodeAdmissionError:
+                                raise
+                            except (ValueError, OSError, RuntimeError) as exc:
+                                failed[branch_key] = {"task": str(directory.relative_to(root)),
+                                                      "error": f"{type(exc).__name__}: {exc}"}
+                                print(f"[WAIT] {directory}: {exc}; trying other branches", flush=True)
+                    # EX cannot be acquired while any new or old peer still
+                    # owns this state. Validate the complete curves again here.
+                    with pair_lease(folder / ".state.lock"):
+                        if all((seed, step, name, arm) in completed for name, arm, _ in tasks):
                             base.bind(path, result_row(seed, step))
                             verified.add(key)
                 except PairLockBusy as exc:
-                    if exc.path != folder / ".state.lock":
+                    if exc.path not in {folder / ".state.lock", folder / ".prepare-state.lock"}:
                         raise
-                    busy.append(f"s{seed}-t{step}")
+                    busy.add(f"s{seed}-t{step}")
+                    if not entered_state:
+                        busy_directories.update(root / "branches" / branch / "states" / f"s{seed}-t{step}"
+                                                for branch in BRANCHES)
                 except NodeAdmissionError:
                     raise
                 except (ValueError, OSError, RuntimeError) as exc:
@@ -840,23 +905,24 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
                 record("WAIT")
                 raise IncompletePairRun(f"{stage}: {len(states)-len(verified)} state(s) remain; "
                                         f"saved work preserved; see {worker_path}")
-            if len(verified) > previous_verified:
+            if (len(verified), len(completed)) != previous_verified:
                 last_activity = time.monotonic()
             for updated, path, value in pair_progress(root, busy):
                 if (value.get("state") == "running" and -5 <= time.time()-updated < 60
-                        and updated > seen_progress.get(path, 0.)):
+                        and updated > seen_progress.get(path, 0.)
+                        and any(directory in path.parents for directory in busy_directories)):
                     last_activity = time.monotonic()
                     seen_progress[path] = updated
             remaining = idle_timeout - (time.monotonic()-last_activity)
             if remaining <= 0:
-                for name in busy[:4]:
+                for name in sorted(busy)[:4]:
                     wait_diagnostics(root / stage / name / ".state.lock")
                 raise PairWaitTimeout(f"{stage}: no new peer heartbeat or completed state for {idle_timeout:g}s; "
-                                      f"busy states={','.join(busy)}; this idle worker stopped, saved work preserved")
-            record("WAIT", "peer states: " + ", ".join(busy))
+                                      f"busy states={','.join(sorted(busy))}; this idle worker stopped, saved work preserved")
+            record("WAIT", "peer branches: " + ", ".join(sorted(busy)))
             delay = min(wait_seconds, remaining)
             print(f"[WAIT] host={base.node_id()} {stage}: verified {len(verified)}/{len(states)}; "
-                  f"peer states={','.join(busy)}; checking for the next task in {delay:g}s; "
+                  f"peer states={','.join(sorted(busy))}; checking for the next task in {delay:g}s; "
                   f"no-progress limit remaining={remaining:.0f}s", flush=True)
             started = time.monotonic()
             try:

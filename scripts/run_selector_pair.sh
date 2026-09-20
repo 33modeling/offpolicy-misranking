@@ -41,7 +41,7 @@ case "$MODE" in
     done ;;
   cpu)
     export CUDA_VISIBLE_DEVICES=""
-    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py tests/test_selector_pair_queue.py tests/test_selector_pair_queue_migration.py tests/test_selector_pair_queue_barrier.py tests/test_selector_pair_wait.py tests/test_selector_pair_wait_migration.py tests/test_selector_pair_status.py "$@" ;;
+    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_selector_pair.py tests/test_selector_pair_gpu.py tests/test_selector_pair_operations.py tests/test_selector_pair_busy.py tests/test_selector_pair_lock_migration.py tests/test_selector_pair_queue.py tests/test_selector_pair_branch_queue.py tests/test_selector_pair_queue_migration.py tests/test_selector_pair_queue_barrier.py tests/test_selector_pair_wait.py tests/test_selector_pair_wait_migration.py tests/test_selector_pair_status.py "$@" ;;
   init|prepare|fit|report|check-code)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" "$@" ;;

@@ -202,6 +202,16 @@ def test_same_mbpp_numbered_node_table_and_idle_list(tmp_path):
     assert "branches/" not in output
 
 
+def test_new_branch_assignment_is_visible_before_phase_heartbeat(tmp_path):
+    p = prepared(tmp_path)
+    core.atomic_json(tmp_path / "queue-workers/worker.json", {
+        "host": "parallel-branch-node", "state": "RUN", "updated": 995,
+        "protocol_id": p["protocol_id"], "task": "test/s3-t25/adaptive-cached/selection_full"})
+    output = status.render(status.snapshot(tmp_path, now=1000), width=160)
+    assert "parallel-branch-node" in output and "CURRENT RUN 1" in output
+    assert "Selector pair / seed 3 / step 25 / Adaptive" in output
+
+
 def test_previous_runtime_and_receipts_are_preserved(tmp_path, monkeypatch):
     from test_selector_pair_gpu import bootstrap_predecessor
     previous = gpu.code_hashes()
@@ -217,6 +227,7 @@ def test_previous_runtime_and_receipts_are_preserved(tmp_path, monkeypatch):
         patch.setattr(gpu, "PRE_SHARED_RUNTIME_CODES", gpu.PRE_SHARED_RUNTIME_CODES - {gpu.PRE_PAIR_STATUS_CODE})
         gpu.bind_startup_runtime(tmp_path, p["code_hashes"])
     (tmp_path / "pair-status-runtime.json").unlink()
+    (tmp_path / "pair-branch-queue-runtime.json").unlink()
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     assert gpu.manifest(tmp_path) == p
     assert gpu.manifest(tmp_path) == p

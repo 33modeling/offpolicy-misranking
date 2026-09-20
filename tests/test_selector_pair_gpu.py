@@ -54,6 +54,7 @@ def fake_study(tmp_path, monkeypatch):
         curve = {"points": points(cost), "artifact_hashes": {}, "path": str(out / arm)}
         curves[(str(out), arm)] = curve
         core.atomic_json(out / arm / "result.json", curve)
+        core.atomic_json(out / arm / "curve.json", {"result_sha256": base.digest(out / arm / "result.json")})
     def measured(entry, arm):
         return core.read(entry[1] / arm / "result.json")
     monkeypatch.setattr(gpu, "verify_pair", states)

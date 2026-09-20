@@ -66,7 +66,7 @@ def test_wait_upgrade_preserves_work_caps_and_all_eight_historical_receipts(tmp_
     if history != "frozen-at-release":
         assert set(file_bytes(tmp_path)) - set(before) == {
             Path("pair-wait-guard-runtime.json"), Path("shared-mbpp-quarantine-runtime.json"),
-            Path("pair-status-runtime.json")}
+            Path("pair-status-runtime.json"), Path("pair-branch-queue-runtime.json")}
         assert core.read(tmp_path / PREVIOUS_RECEIPTS[-1])["runtime_code_hashes"] == previous
 
     after = file_bytes(tmp_path)
