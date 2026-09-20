@@ -19,9 +19,12 @@ RLOO includes sealed per-question rewards, available complete-arm comparisons
 against cached selection (`passrate_beta`), confidence intervals, raw cost events,
 and explicit missing arms/shards. An incomplete `before` no longer blocks other
 measurements. Partial-shard averages are descriptive, not final benchmark scores.
-Reporting permits the explicitly reviewed status-help-only code change and
-records both code hashes; training validation and scientific code checks remain
-unchanged. Unrecognized code changes continue to fail validation.
+Reporting excludes the standalone `src/matrix_status.py` display entry point
+from scientific code checks only while no scientific module references it.
+Both code hashes are recorded; training validation is unchanged. Scientific
+code changes continue to fail validation. Every RLOO TXT records the exporter
+version, script hash, validator hash, and Git commit; invalid points also list
+their frozen/current code mismatches so an error-only export is diagnosable.
 Invalid experiment points are labeled and excluded while other points are kept;
 the command exits nonzero if any point fails validation. Canonical `results.json`
 and frozen training code are not changed by the progress exporter.

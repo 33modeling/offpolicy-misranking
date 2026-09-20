@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import rloo_report as reporting
 from test_rloo_experiment import fixture
 
+OLD_DISPLAY_SHA256 = "49feb79c5c401a832fe590bcf1c1d36a1e660328054a2b9384fed9eb7d6a6a02"
+
 
 @pytest.fixture
 def measured(tmp_path, monkeypatch):
@@ -126,8 +128,7 @@ def test_missing_root_is_not_created(tmp_path):
 def old_display_contract(out):
     ed = reporting.experiment.ed
     contract = ed.read(out / "experiment.json")
-    contract["code_hashes"]["src/matrix_status.py"] = reporting.REPORT_DISPLAY_UPGRADES[
-        "src/matrix_status.py"][0]
+    contract["code_hashes"]["src/matrix_status.py"] = OLD_DISPLAY_SHA256
     ed.atomic_json(out / "experiment.json", contract)
     return contract
 
@@ -173,7 +174,7 @@ def test_reviewed_status_drift_exports_real_sealed_comparison_read_only(tmp_path
     assert fresh["mean_reward"] == .75
     assert fresh["vs_passrate_beta"] == {"mean": .25, "lower": .25, "upper": .25}
     assert result["report_display_code_changes"]["src/matrix_status.py"]["frozen_sha256"] == (
-        reporting.REPORT_DISPLAY_UPGRADES["src/matrix_status.py"][0])
+        OLD_DISPLAY_SHA256)
     assert before == {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     with pytest.raises(ValueError, match="code changed since preparation"):
         reporting.frozen_experiment.training_command(out, "fresh_r")
@@ -201,7 +202,7 @@ def test_results_launcher_exports_reviewed_drift_to_one_txt(tmp_path):
 
 
 @pytest.mark.parametrize("name", ["src/train_policy_rloo.py", "src/train_policy_grpo.py",
-                                 "src/evidence_downstream.py", "src/matrix_status.py"])
+                                 "src/evidence_downstream.py", "src/selector_pair_gpu.py"])
 def test_report_rejects_unreviewed_code_even_with_display_upgrade(tmp_path, name):
     _, out, _ = fixture(tmp_path)
     contract = old_display_contract(out)
@@ -211,15 +212,18 @@ def test_report_rejects_unreviewed_code_even_with_display_upgrade(tmp_path, name
         reporting.point_report(out)
 
 
-def test_report_rejects_unknown_runtime_display_version(tmp_path, monkeypatch):
+def test_report_allows_another_isolated_display_revision(tmp_path, monkeypatch):
     _, out, _ = fixture(tmp_path)
     old_display_contract(out)
     ed = reporting.experiment.ed
     digest = ed.digest
     monkeypatch.setattr(ed, "digest", lambda p: "0" * 64
                         if p == reporting.experiment.ROOT / "src/matrix_status.py" else digest(p))
+    result = reporting.point_report(out)
+    assert result["status"] == "incomplete"
+    assert result["report_display_code_changes"]["src/matrix_status.py"]["runtime_sha256"] == "0" * 64
     with pytest.raises(ValueError, match="code changed since preparation: src/matrix_status.py"):
-        reporting.point_report(out)
+        reporting.frozen_experiment.validate(out)
 
 
 @pytest.mark.parametrize("artifact,reason", [
@@ -234,3 +238,82 @@ def test_display_upgrade_keeps_data_policy_and_seal_validation(tmp_path, artifac
     (out / artifact).write_text("tampered")
     with pytest.raises(ValueError, match=reason):
         reporting.point_report(out)
+
+
+def test_any_recorded_display_revision_preserves_sealed_measurements(tmp_path):
+    _, out, _ = fixture(tmp_path)
+    contract = old_display_contract(out)
+    contract["code_hashes"]["src/matrix_status.py"] = "1" * 64
+    reporting.experiment.ed.atomic_json(out / "experiment.json", contract)
+    measured_policy(out, "fresh_r", .75)
+    result = reporting.point_report(out)
+    assert result["rows"][0]["mean_reward"] == .75
+    assert result["report_display_code_changes"]["src/matrix_status.py"]["frozen_sha256"] == "1" * 64
+
+
+def test_display_dependency_scan_is_once_per_point_not_per_shard(tmp_path, monkeypatch):
+    _, out, _ = fixture(tmp_path)
+    old_display_contract(out)
+    measured_policy(out, "fresh_r", .75)
+    calls = []
+    original = reporting.display_is_isolated
+    monkeypatch.setattr(reporting, "display_is_isolated",
+                        lambda name: calls.append(name) or original(name))
+    reporting.point_report(out)
+    assert calls == ["src/matrix_status.py"]
+    reporting.point_report(out)
+    assert calls == ["src/matrix_status.py"] * 2
+
+
+def test_display_exception_fails_closed_if_module_is_referenced(tmp_path, monkeypatch):
+    _, out, _ = fixture(tmp_path)
+    old_display_contract(out)
+    monkeypatch.setattr(reporting, "display_is_isolated", lambda name: False)
+    with pytest.raises(ValueError, match="code changed since preparation: src/matrix_status.py"):
+        reporting.point_report(out)
+
+
+@pytest.mark.parametrize("reference", ["import matrix_status", "from matrix_status import main",
+                                      "importlib.import_module('matrix_status')"])
+def test_display_isolation_checks_scientific_source_references(tmp_path, monkeypatch, reference):
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "matrix_status.py").write_text('"""matrix_status standalone."""\n')
+    other = source / "trainer.py"
+    other.write_text("print('training')\n")
+    monkeypatch.setattr(reporting.frozen_experiment, "ROOT", tmp_path)
+    assert reporting.display_is_isolated("src/matrix_status.py")
+    other.write_text(reference + "\n")
+    assert not reporting.display_is_isolated("src/matrix_status.py")
+
+
+def test_invalid_point_includes_exporter_identity_and_all_code_mismatches(tmp_path):
+    _, prepared, _ = fixture(tmp_path)
+    out = tmp_path / "matrix/math500-d0/s0"
+    out.parent.mkdir(parents=True)
+    prepared.rename(out)
+    contract = old_display_contract(out)
+    contract["code_hashes"]["src/train_policy_rloo.py"] = "2" * 64
+    reporting.experiment.ed.atomic_json(out / "experiment.json", contract)
+    result = reporting.report(out.parent.parent)
+    identity = result["exporter"]
+    assert identity["version"] == reporting.EXPORTER_VERSION
+    assert identity["script_sha256"] == reporting.experiment.ed.digest(Path(reporting.__file__))
+    assert len(identity["git_commit"]) == 40
+    point = result["points"][0]
+    assert point["status"] == "invalid" and point["rows"] == []
+    mismatches = point["code_diagnostics"]["mismatches"]
+    assert set(mismatches) == {"src/matrix_status.py", "src/train_policy_rloo.py"}
+    assert mismatches["src/train_policy_rloo.py"]["frozen_sha256"] == "2" * 64
+    assert mismatches["src/train_policy_rloo.py"]["runtime_sha256"] == (
+        reporting.experiment.ed.digest(reporting.experiment.ROOT / "src/train_policy_rloo.py"))
+
+
+def test_bad_contract_diagnostics_do_not_hide_other_points(tmp_path):
+    out = tmp_path / "math500-d0/s0"
+    out.mkdir(parents=True)
+    (out / "experiment.json").write_text("not json")
+    result = reporting.report(tmp_path)
+    assert result["points"][0]["status"] == "invalid"
+    assert "error" in result["points"][0]["code_diagnostics"]
+    assert result["points"][1]["status"] == "unprepared"
