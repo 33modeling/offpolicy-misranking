@@ -19,14 +19,20 @@ RLOO includes sealed per-question rewards, available complete-arm comparisons
 against cached selection (`passrate_beta`), confidence intervals, raw cost events,
 and explicit missing arms/shards. An incomplete `before` no longer blocks other
 measurements. Partial-shard averages are descriptive, not final benchmark scores.
+Reporting permits the explicitly reviewed status-help-only code change and
+records both code hashes; training validation and scientific code checks remain
+unchanged. Unrecognized code changes continue to fail validation.
 Invalid experiment points are labeled and excluded while other points are kept;
 the command exits nonzero if any point fails validation. Canonical `results.json`
 and frozen training code are not changed by the progress exporter.
 
 Pair regenerates its validated partial report, then packs its development/test
 measurements, costs, missing states, and curve CSV into the TXT. A failed report
-does not re-export a stale report as new data. States without a published result
-remain missing; ongoing unfinished curves are not certified benchmark results.
+does not re-export a stale report as new data. States without a published paired
+result remain missing. Independently completed branch endpoints and saved curves
+are included separately with source hashes, result-seal/curve binding checks,
+and explicit limits on validation. These do not supply H, target-crossing costs,
+paired completion, or independent certification of checkpoint lineage.
 
 MBPP combines all configured, existing observed suites into one TXT, preserving
 the full results export's per-question rewards and comparisons. Missing suites

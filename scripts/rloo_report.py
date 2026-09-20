@@ -8,13 +8,53 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import importlib.util
 import json
 from pathlib import Path
 
 import numpy as np
 
-import rloo_experiment as experiment
+import rloo_experiment as frozen_experiment
 from paper_result_text import write_export
+
+
+# d4653da -> 5167143 changes only the Qwen status help line. Neither version
+# participates in RLOO training, policy validation, or evaluation.
+REPORT_DISPLAY_UPGRADES = {
+    "src/matrix_status.py": (
+        "49feb79c5c401a832fe590bcf1c1d36a1e660328054a2b9384fed9eb7d6a6a02",
+        "8dd1464d9aa75a2177e2cea77078c1e58d1c256246f72a11b1c7d5b52bf6b5c9",
+    ),
+}
+
+
+def display_changes(recorded):
+    changes = {}
+    for name, (previous, current) in REPORT_DISPLAY_UPGRADES.items():
+        if recorded.get(name) == previous and frozen_experiment.ed.digest(
+                frozen_experiment.ROOT / name) == current:
+            changes[name] = {"frozen_sha256": previous, "runtime_sha256": current}
+    return changes
+
+
+def reporting_experiment():
+    # Isolate the report's compatibility rule: importing this exporter must
+    # never relax the validator used by training in the same Python process.
+    spec = importlib.util.spec_from_file_location(
+        "_rloo_report_validation", frozen_experiment.__file__)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def reviewed_code_changes(recorded):
+        display = display_changes(recorded)
+        return frozen_experiment.reviewed_code_changes(
+            {name: digest for name, digest in recorded.items() if name not in display})
+
+    module.reviewed_code_changes = reviewed_code_changes
+    return module
+
+
+experiment = reporting_experiment()
 
 
 def point_report(out):
@@ -67,6 +107,7 @@ def point_report(out):
     missing = [e["arm"] for e in evaluations if not e["complete"]]
     return {"seed": c["source"]["seed"], "drift": c["source"]["drift"],
             "experiment_sha256": experiment.ed.digest(out / "experiment.json"),
+            "report_display_code_changes": display_changes(c.get("code_hashes", {})),
             "status": "incomplete" if missing else "complete", "missing_arms": missing,
             "rows": rows, "evaluations": evaluations}
 
