@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -17,6 +18,7 @@ import tempfile
 import time
 
 MAX_BYTES = 4096
+COST_REPORT_BYTES = 1024 * 1024 - MAX_BYTES - 1
 
 
 def bounded(text):
@@ -35,13 +37,13 @@ def read_small(path, limit=65536):
     return data
 
 
-def local_owners(lock, proc):
+def local_owners(lock, proc, *, kind='WRITE'):
     stat = lock.stat()
     identity = (os.major(stat.st_dev), os.minor(stat.st_dev), stat.st_ino)
     owners = []
     for row in read_small(proc / 'locks', 1048576).decode(errors='replace').splitlines():
         fields = row.split()
-        if len(fields) < 8 or '->' in fields or fields[3] != 'WRITE':
+        if len(fields) < 8 or '->' in fields or fields[3] != kind:
             continue
         try:
             major, minor, inode = fields[5].split(':')
@@ -68,8 +70,37 @@ def process_label(proc, pid):
 
 def observations(root, limit=8):
     """Bounded metadata traversal, without reading tensors, logs or ledgers."""
-    pending = [(root / name, 0) for name in ('branches', 'queue-workers', 'node-preflight')]
-    seen, rows = 0, []
+    root = Path(root)
+    resolved = root.resolve()
+    pending = [(root / name, 0) for name in ('node-preflight', 'queue-workers', 'branches')]
+    seen, rows, recorded = 0, [], set()
+
+    def remember(path):
+        if path in recorded or path.is_symlink():
+            return
+        try:
+            if not path.resolve().is_relative_to(resolved):
+                return
+            value = json.loads(read_small(path))
+            updated = float(value.get('updated', 0))
+            if not math.isfinite(updated):
+                return
+            rows.append((updated, path.relative_to(root), value))
+            recorded.add(path)
+        except (OSError, ValueError, TypeError, AttributeError):
+            return
+
+    # Fixed meter paths must not compete with historical admission receipts or
+    # thousands of per-rollout/cost files for the fallback traversal's budget.
+    for branch in ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached'):
+        for seed in range(5):
+            for step in (25, 50, 100):
+                point = root / 'branches' / branch / 'states' / f's{seed}-t{step}' / 'points' / f'view-{step}'
+                for name in ('curve-parent', 'measurement', 'gate_measurement',
+                             'selection_reduced', 'selection_full', 'random_full'):
+                    directory = point / name
+                    remember(directory / 'progress.json')
+                    remember(directory / 'curve/progress.json')
     deadline = time.monotonic() + 2
     while pending and seen < 2048 and time.monotonic() < deadline:
         directory, depth = pending.pop()
@@ -84,17 +115,11 @@ def observations(root, limit=8):
                     if entry.is_symlink():
                         continue
                     if entry.is_dir(follow_symlinks=False):
-                        if depth < 8 and entry.name not in {'policy', 'curve-checkpoints', 'selector-work', 'discarded'}:
+                        if depth < 8 and entry.name not in {'policy', 'curve-checkpoints', 'selector-work',
+                                                          'discarded', 'cost-events', 'rollouts', 'rollout'}:
                             pending.append((Path(entry.path), depth + 1))
                     elif entry.name == 'progress.json' or (directory.name == 'queue-workers' and entry.name.endswith('.json')):
-                        try:
-                            value = json.loads(read_small(Path(entry.path)))
-                            updated = float(value.get('updated', 0))
-                            if not math.isfinite(updated):
-                                continue
-                            rows.append((updated, Path(entry.path).relative_to(root), value))
-                        except (OSError, ValueError, TypeError, AttributeError):
-                            continue
+                        remember(Path(entry.path))
         except OSError:
             continue
     ordered = sorted(rows, key=lambda row: row[0], reverse=True)
@@ -153,16 +178,131 @@ def collect(root, proc=Path('/proc')):
     return bounded('\n'.join(lines) + '\n')
 
 
+def cost_report(root):
+    """Export interrupted-event evidence, never estimate or close an event."""
+    root = Path(root).resolve()
+    lines = ['SELECTOR PAIR COST EVIDENCE', f'ROOT {root}',
+             'READ-ONLY. No cost repair, inferred durations, GPU work or process termination.',
+             'Saved metadata only, not independent scientific validation or proof an owner stopped.',
+             'Only ledgers with unmatched events, parse errors or saved cost failures are expanded.']
+    examined = expanded = 0
+
+    def checked(path, limit):
+        if not path.resolve().is_relative_to(root):
+            raise ValueError('metadata escapes Pair root')
+        return read_small(path, limit)
+
+    def metadata(path):
+        relative = path.relative_to(root)
+        try:
+            raw = checked(path, 65536)
+            lines.append(f'FILE {relative} bytes={len(raw)} sha256={hashlib.sha256(raw).hexdigest()}')
+            lines.append(raw.decode('utf-8'))
+        except FileNotFoundError:
+            lines.append(f'MISSING {relative}')
+        except (OSError, ValueError, UnicodeError) as exc:
+            lines.append(f'UNREADABLE {relative}: {type(exc).__name__}: {exc}')
+
+    for branch in ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached'):
+        for seed in range(5):
+            for step in (25, 50, 100):
+                point = root / 'branches' / branch / 'states' / f's{seed}-t{step}' / 'points' / f'view-{step}'
+                for arm in ('selection_reduced', 'selection_full', 'random_full',
+                            'measurement', 'gate_measurement', 'curve-parent'):
+                    for directory in (point / arm, point / arm / 'curve'):
+                        path = directory / 'cost.jsonl'
+                        try:
+                            raw = checked(path, 2 * 1024 * 1024)
+                        except FileNotFoundError:
+                            continue
+                        except (OSError, ValueError) as exc:
+                            lines.append(f'UNREADABLE {path.relative_to(root)}: {type(exc).__name__}: {exc}')
+                            continue
+                        examined += 1
+                        events, errors = [], []
+                        for index, row in enumerate(raw.splitlines(), 1):
+                            if not row.strip():
+                                continue
+                            try:
+                                value = json.loads(row)
+                                if not isinstance(value, dict):
+                                    raise ValueError('event is not an object')
+                                events.append(value)
+                            except (ValueError, UnicodeError) as exc:
+                                errors.append(f'line {index}: {exc}; bytes_hex={row[:4096].hex()}')
+                        starts = {str(e.get('event_id')) for e in events if e.get('state') == 'started'}
+                        finishes = {str(e.get('event_id')) for e in events if e.get('state') == 'finished'}
+                        pending = sorted(starts - finishes)
+                        failures = []
+                        for name in ('pair-attempt.json', 'failure.json'):
+                            try:
+                                saved = json.loads(checked(directory / name, 65536))
+                                if 'cost' in str(saved.get('error', '')).lower():
+                                    failures.append(name)
+                            except (OSError, ValueError, AttributeError):
+                                pass
+                        if not pending and not errors and not finishes - starts and not failures:
+                            continue
+                        expanded += 1
+                        lines.append(f'\nLEDGER {path.relative_to(root)} bytes={len(raw)} sha256={hashlib.sha256(raw).hexdigest()}')
+                        lines.append(json.dumps({'events': len(events), 'open_event_ids': pending,
+                                                 'missing_start_ids': sorted(finishes - starts), 'parse_errors': errors}))
+                        for event in events:
+                            if str(event.get('event_id')) in pending:
+                                lines.append('OPEN_EVENT ' + json.dumps(event, sort_keys=True))
+                        for event in pending:
+                            if not event or Path(event).name != event or event in {'.', '..'}:
+                                lines.append('INVALID event id; receipt paths not traversed')
+                                continue
+                            metadata(directory / 'cost-events' / f'{event}.json')
+                            metadata(directory / 'pending-costs' / f'{event}.json')
+                        metadata(directory / 'progress.json')
+                        for name in failures:
+                            metadata(directory / name)
+                        policy = directory / 'policy'
+                        if policy.resolve().is_relative_to(root):
+                            candidates = [policy, *sorted(policy.glob('checkpoint-*')),
+                                          *sorted(policy.glob('.checkpoint-*.tmp')),
+                                          *sorted((policy / 'curve-checkpoints').glob('step-*'))]
+                            for candidate in candidates[:128]:
+                                if not candidate.resolve().is_relative_to(root):
+                                    lines.append('POLICY path escapes root; skipped')
+                                    continue
+                                inventory = {}
+                                for name in ('adapter_config.json', 'adapter_model.safetensors', 'optimizer.pt',
+                                             'grpo_stats.jsonl', 'checkpoint_state.json', 'policy_train.json', 'budget_stop.json'):
+                                    artifact = candidate / name
+                                    try:
+                                        if not artifact.resolve().is_relative_to(root):
+                                            inventory[name] = 'outside-root; not inspected'
+                                        else:
+                                            inventory[name] = artifact.stat().st_size if artifact.is_file() else None
+                                    except OSError as exc:
+                                        inventory[name] = 'unreadable: ' + type(exc).__name__
+                                lines.append(f'POLICY {candidate.relative_to(root)} bytes=' + json.dumps(inventory, sort_keys=True))
+                            if len(candidates) > 128:
+                                lines.append('Additional policy inventory candidates omitted (128 limit).')
+    lines.append(f'LEDGERS examined={examined} expanded={expanded}; file presence is not hash/lineage certification.')
+    raw = ('\n'.join(lines) + '\n').encode()
+    if len(raw) <= COST_REPORT_BYTES:
+        return raw.decode()
+    footer = b'\n[COST EVIDENCE OMITTED: single TXT capped at 1 MiB including lock summary.]\n'
+    return raw[:COST_REPORT_BYTES - len(footer)].decode(errors='ignore') + footer.decode()
+
+
 def main():
     work = Path(os.environ.get('OM_WORK', f'/group-volume/{os.environ.get("OM_USER", "minsoo3.kim")}/offpolicy-misranking'))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path(os.environ.get('PAIR_ROOT', str(work / 'runs/selector-pair-v1'))))
     parser.add_argument('--report-dir', type=Path, default=Path.home())
+    parser.add_argument('--costs', action='store_true', help='include interrupted-event evidence in one upload-sized TXT')
     args = parser.parse_args()
     output = collect(args.root)
+    if args.costs:
+        output += '\n' + cost_report(args.root)
     print(output, end='')
     try:
-        with tempfile.NamedTemporaryFile(prefix='selector-pair-lock-', suffix='.txt',
+        with tempfile.NamedTemporaryFile(prefix='selector-pair-cost-' if args.costs else 'selector-pair-lock-', suffix='.txt',
                                          dir=args.report_dir, mode='wb', delete=False) as handle:
             handle.write(output.encode())
             saved = Path(handle.name).resolve()

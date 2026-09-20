@@ -116,6 +116,7 @@ def process(proc, pid, repo, root, *, mode="run", ppid=1, uid=None,
     task = directory / "task" / str(pid)
     task.mkdir(parents=True)
     (task / "children").write_text(" ".join(str(child) for child in children))
+    allocation(proc, pid)
     return directory
 
 
@@ -441,6 +442,34 @@ def test_active_receipt_not_hidden_by_newer_queue_heartbeats(
     assert rows == [(progress.parent / "cost-events/owned-event.json", "owned-event")]
 
 
+@pytest.mark.parametrize('phase', ['train', 'curve'])
+def test_owned_phase_receipt_survives_large_admission_and_cost_history(
+        handoff, root, repo, proc, phase):
+    pid = 90001
+    process(proc, pid, repo, root)
+    admission = root / 'node-preflight'
+    admission.mkdir()
+    for index in range(1000):
+        path = admission / f'old-{index}'
+        path.mkdir()
+        (path / 'progress.json').write_text('{"updated": 9999999999, "state": "finished"}')
+    directory = root / 'branches/on_policy/states/s2-t50/points/view-50/selection_reduced'
+    directory.mkdir(parents=True)
+    costs = directory / 'cost-events'
+    costs.mkdir()
+    for index in range(5000):
+        (costs / f'old-{index}.json').touch()
+    if phase == 'curve':
+        directory = directory / 'curve'
+        directory.mkdir()
+    (directory / 'progress.json').write_text(json.dumps({
+        'updated': 1, 'host': socket.gethostname(), 'pid': pid,
+        'state': 'running', 'event_id': 'owned-event', 'phase': phase}))
+    rows = handoff.active_receipts(root, handoff.process(proc, pid),
+                                  {b'OM_SELECTION_COST_owned-event'})
+    assert rows == [(directory / 'cost-events/owned-event.json', 'owned-event')]
+
+
 def test_process_python_preserves_original_virtualenv_path(handoff, root, repo, proc, tmp_path):
     interpreter = tmp_path / "worker-venv/bin/python"
     interpreter.parent.mkdir(parents=True)
@@ -623,6 +652,9 @@ def test_owned_cost_event_must_have_finished_receipt_before_restart(
     (proc / "locks").write_text(owner_record(root / ".pair.lock", pid))
     receipt = root / "cost-events/active-event.json"
     receipt.parent.mkdir()
+    progress = dict(event_id='active-event', phase='curve', ledger='reporting',
+                    gpus=4, gpu_type='H100', host='local-owner')
+    (root / 'progress.json').write_text(json.dumps(progress))
     receipt.write_text(json.dumps({"event_id": "active-event", "state": "running"}))
     monkeypatch.setattr(handoff, "active_receipts",
                         lambda *args: [(receipt, "active-event")])
@@ -634,7 +666,8 @@ def test_owned_cost_event_must_have_finished_receipt_before_restart(
             pidfds.finish(pid)
             (proc / "locks").write_text("")
             if finish:
-                receipt.write_text(json.dumps({"event_id": "active-event", "state": "finished"}))
+                receipt.write_text(json.dumps({**progress, 'state': 'finished', 'exit_code': -15,
+                                               'seconds': 3., 'allocated_gpu_seconds': 12., 'time': 123.}))
 
         pidfds.on_term = stopped
         if finish:
@@ -665,7 +698,8 @@ def test_main_restarts_exact_same_root_and_stage_only_after_successful_handoff(
     staged = tmp_path / "reviewed-runtime"
     staged.mkdir()
 
-    def approved(received_root, received_repo, timeout, *, launch_repo=None):
+    def approved(received_root, received_repo, timeout, *, launch_repo=None, restart_shared=False):
+        assert restart_shared is True
         calls.append((received_root, received_repo, timeout, launch_repo))
         return "develop"
 
@@ -683,6 +717,185 @@ def test_main_restarts_exact_same_root_and_stage_only_after_successful_handoff(
     assert argv == ["bash", str(staged / "scripts/run_selector_pair.sh"), "develop"]
     assert env["PAIR_ROOT"] == str(root)
     assert env["E5_FORCE"] == "0"
+
+
+def allocation(proc, pid):
+    (proc / 'self/ns').mkdir(parents=True, exist_ok=True)
+    (proc / str(pid) / 'ns').mkdir(exist_ok=True)
+    for name in ('mnt', 'pid'):
+        source = proc / 'self/ns' / name
+        if not source.exists():
+            source.write_bytes(b'namespace')
+        target = proc / str(pid) / 'ns' / name
+        if not target.exists():
+            os.link(source, target)
+    for directory in (proc / 'self', proc / str(pid)):
+        (directory / 'cgroup').write_text('0::/allocation-one\n')
+
+
+def test_explicit_shared_restart_stops_verified_local_controller_only(
+        handoff, root, repo, proc, pidfds):
+    pid = 90001
+    process(proc, pid, repo, root)
+    allocation(proc, pid)
+    (proc / 'locks').write_text(owner_record(root / '.pair.lock', pid, kind='READ'))
+    before = snapshot(root)
+    with lease(root, fcntl.LOCK_SH):
+        pidfds.on_term = lambda target: pidfds.finish(target)
+        assert handoff.handoff(root, repo, timeout=.1, proc=proc, restart_shared=True) == 'run'
+    assert pidfds.signals == [(pid, signal.SIGTERM)]
+    assert snapshot(root) == before
+
+
+@pytest.mark.parametrize('shell_python', [None, '/wrong-shell-venv/bin/python'])
+def test_main_restarts_with_verified_owner_virtualenv_not_shell_default(
+        handoff, root, repo, proc, pidfds, monkeypatch, tmp_path, shell_python):
+    pid = 90001
+    interpreter = tmp_path / 'owner-venv/bin/python'
+    interpreter.parent.mkdir(parents=True)
+    interpreter.symlink_to(sys.executable)
+    process(proc, pid, repo, root,
+            argv=[str(interpreter), 'src/selector_pair_gpu.py', 'develop', '--root', str(root)])
+    (proc / str(pid) / 'environ').write_bytes(b'PAIR_PYTHON=/untrusted-environment-path\0')
+    (proc / 'locks').write_text(owner_record(root / '.pair.lock', pid, kind='READ'))
+    if shell_python is None:
+        monkeypatch.delenv('PAIR_PYTHON', raising=False)
+    else:
+        monkeypatch.setenv('PAIR_PYTHON', shell_python)
+    validated, launched = [], []
+    monkeypatch.setattr(handoff, 'validate_runtime', lambda root, repo, owner:
+        validated.append(handoff.process_python(owner, handoff.process_environment(owner))))
+    actual_handoff = handoff.handoff
+    monkeypatch.setattr(handoff, 'handoff', lambda *args, **kwargs:
+        actual_handoff(*args, **kwargs, proc=proc))
+    monkeypatch.setattr(os, 'execve', lambda *args: launched.append(args))
+    monkeypatch.setattr(sys, 'argv', [str(SCRIPT), '--root', str(root), '--repo', str(repo), '--timeout', '.1'])
+    with lease(root, fcntl.LOCK_SH):
+        pidfds.on_term = lambda target: pidfds.finish(target)
+        handoff.main()
+    assert validated == [str(interpreter)]
+    assert pidfds.signals == [(pid, signal.SIGTERM)]
+    assert launched[0][2]['PAIR_PYTHON'] == str(interpreter)
+    assert launched[0][2]['PAIR_ROOT'] == str(root)
+    assert launched[0][1][-1] == 'develop'
+
+
+def test_owner_interpreter_disappearing_during_validation_aborts_before_term(
+        handoff, root, repo, proc, pidfds, monkeypatch, tmp_path):
+    pid = 90001
+    interpreter = tmp_path / 'owner-venv/bin/python'
+    interpreter.parent.mkdir(parents=True)
+    interpreter.symlink_to(sys.executable)
+    process(proc, pid, repo, root,
+            argv=[str(interpreter), 'src/selector_pair_gpu.py', 'run', '--root', str(root)])
+    (proc / 'locks').write_text(owner_record(root / '.pair.lock', pid, kind='READ'))
+    monkeypatch.setenv('PAIR_PYTHON', '/original-shell-python')
+    monkeypatch.setattr(handoff, 'validate_runtime', lambda *args: interpreter.unlink())
+    with lease(root, fcntl.LOCK_SH), pytest.raises((OSError, RuntimeError)):
+        handoff.handoff(root, repo, timeout=.1, proc=proc, restart_shared=True)
+    assert pidfds.signals == []
+    assert os.environ['PAIR_PYTHON'] == '/original-shell-python'
+
+
+@pytest.mark.parametrize('mismatch', ['namespace', 'cgroup', 'gpu', 'multiple', 'foreign-root'])
+@pytest.mark.parametrize('shared', [False, True])
+def test_shared_restart_ambiguous_or_foreign_allocation_is_not_stopped(
+        handoff, root, repo, proc, pidfds, monkeypatch, mismatch, shared):
+    pid = 90001
+    process(proc, pid, repo, root if mismatch != 'foreign-root' else root / 'another-run')
+    allocation(proc, pid)
+    kind = 'READ' if shared else 'WRITE'
+    record = owner_record(root / '.pair.lock', pid, kind=kind)
+    if mismatch == 'namespace':
+        path = proc / str(pid) / 'ns/mnt'
+        path.unlink()
+        path.write_text('different namespace')
+    elif mismatch == 'cgroup':
+        (proc / str(pid) / 'cgroup').write_text('0::/different-allocation\n')
+    elif mismatch == 'gpu':
+        monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '0,1,2,3')
+        (proc / str(pid) / 'environ').write_bytes(b'CUDA_VISIBLE_DEVICES=4,5,6,7\0')
+    elif mismatch == 'multiple':
+        record += owner_record(root / '.pair.lock', pid + 1, kind=kind)
+    (proc / 'locks').write_text(record)
+    before = snapshot(root)
+    with lease(root, fcntl.LOCK_SH if shared else fcntl.LOCK_EX), pytest.raises(RuntimeError):
+        handoff.handoff(root, repo, timeout=.1, proc=proc, restart_shared=True)
+    assert pidfds.signals == []
+    assert snapshot(root) == before
+
+
+@pytest.mark.parametrize('name', ['pair-status-runtime.json', 'pair-curve-progress-runtime.json',
+                                'pair-branch-queue-runtime.json'])
+def test_runtime_validation_copies_new_receipts_before_checking(
+        handoff, root, repo, proc, name):
+    pid = 90001
+    process(proc, pid, repo, root)
+    (root / name).write_text('{"must_be_copied": true}\n')
+    (repo / 'src/selector_pair_gpu.py').write_text(
+        'import json\n'
+        'def queue_lease(): pass\n'
+        'def distributed_stage(): pass\n'
+        'def run_distributed(): pass\n'
+        'def manifest(root, bind_runtime=False): return {"code_hashes": {}}\n'
+        'def bind_startup_runtime(root, hashes):\n'
+        f'    assert json.loads((root / {name!r}).read_text()) == {{"must_be_copied": True}}\n')
+    handoff._test_validate_runtime(root, repo, handoff.process(proc, pid))
+
+
+@pytest.mark.parametrize('corrupt', [False, True])
+def test_shared_restart_verifies_existing_isolated_runtime_against_its_git_commit(
+        handoff, root, repo, proc, pidfds, monkeypatch, corrupt):
+    import selector_pair_deploy as deploy
+    from test_selector_pair_deploy import git, commit
+
+    git(repo, 'init', '-q')
+    (repo / '.gitignore').write_text('.work/\n')
+    old = commit(repo, 'old controller fixture')
+    monkeypatch.setattr(deploy, 'PINNED_COMMIT', old)
+    runtime = deploy.stage_runtime(repo)
+    (repo / 'src/selector_pair_gpu.py').write_text('# newer queue fixture\n')
+    new = commit(repo, 'new controller fixture')
+    monkeypatch.setattr(deploy, 'PINNED_COMMIT', new)
+    if corrupt:
+        (runtime / 'src/selector_pair_gpu.py').write_text('# unverified modification\n')
+    pid = 90001
+    process(proc, pid, runtime, root)
+    allocation(proc, pid)
+    (proc / 'locks').write_text(owner_record(root / '.pair.lock', pid, kind='READ'))
+    before = snapshot(root)
+    with lease(root, fcntl.LOCK_SH):
+        if corrupt:
+            with pytest.raises(RuntimeError, match='changed'):
+                handoff.handoff(root, repo, timeout=.1, proc=proc, restart_shared=True)
+            assert pidfds.signals == []
+        else:
+            pidfds.on_term = lambda target: pidfds.finish(target)
+            assert handoff.handoff(root, repo, timeout=.1, proc=proc, restart_shared=True) == 'run'
+            assert pidfds.signals == [(pid, signal.SIGTERM)]
+    assert snapshot(root) == before
+
+
+@pytest.mark.parametrize('damage', ['phase', 'host', 'gpus', 'exit_code', 'seconds', 'allocated_gpu_seconds', 'time'])
+def test_handoff_requires_bound_finite_finish_cost_receipt(handoff, damage):
+    progress = dict(event_id='event', phase='curve', ledger='reporting',
+                    gpus=4, gpu_type='H100', host='node')
+    receipt = dict(progress, state='finished', exit_code=-15, seconds=3., allocated_gpu_seconds=12., time=123.)
+    assert handoff.valid_finish_receipt(receipt, 'event', progress)
+    receipt[damage] = float('nan') if damage in {'seconds', 'allocated_gpu_seconds', 'time'} else 'changed'
+    assert not handoff.valid_finish_receipt(receipt, 'event', progress)
+
+
+def test_restart_retains_verified_owner_gpu_selection(handoff, root, repo, proc, pidfds, monkeypatch):
+    pid = 90001
+    directory = process(proc, pid, repo, root)
+    (directory / 'environ').write_bytes(b'CUDA_VISIBLE_DEVICES=0,1,2,3\0')
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '')
+    (proc / 'locks').write_text(owner_record(root / '.pair.lock', pid, kind='READ'))
+    with lease(root, fcntl.LOCK_SH):
+        pidfds.on_term = lambda target: pidfds.finish(target)
+        assert handoff.handoff(root, repo, timeout=.1, proc=proc, restart_shared=True) == 'run'
+    assert os.environ['CUDA_VISIBLE_DEVICES'] == '0,1,2,3'
 
 
 def test_main_does_not_launch_after_handoff_refusal(handoff, root, repo, monkeypatch):

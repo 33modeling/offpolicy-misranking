@@ -21,6 +21,29 @@ import selector_pair_gpu as gpu
 LABELS = {"on_policy": "On-policy", "cached": "Cached", "adaptive": "Adaptive", "random": "Random"}
 
 
+def queue_assignment(root, worker):
+    match = re.fullmatch(r"(development|test)/s(\d+)-t(\d+)(?:/([\w-]+)/([\w-]+))?",
+                         str(worker.get('task', '')))
+    if not match or worker.get('state') != 'RUN':
+        return None
+    stage, seed, step, branch, arm = match.groups()
+    seed, step = int(seed), int(step)
+    if step not in pair.STEPS or seed not in (pair.DEV_SEEDS if stage == 'development' else pair.TEST_SEEDS):
+        return None
+    folder = root / stage / f's{seed}-t{step}'
+    if branch:
+        if branch not in gpu.BRANCHES or arm not in {'selection_reduced', 'selection_full', 'random_full'}:
+            return None
+        point, error = resolve_state_point(root / 'branches' / branch / 'states' / f's{seed}-t{step}', step)
+        if error:
+            return None
+        directory = str((point / arm).relative_to(root))
+        lock = folder / 'queue-branches' / f'{branch}--{arm}.lock'
+    else:
+        directory, lock = worker['task'], folder / '.state.lock'
+    return dict(seed=seed, step=step, branch=branch, arm=arm, directory=directory, lock=lock)
+
+
 def read(path):
     try:
         value = json.loads(path.read_text())
@@ -118,7 +141,8 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
     fresh = [(updated, path, value) for updated, path, value in relevant if value.get("_active")]
     if fresh:
         task.update(**{key: fresh[0][2].get(key) for key in
-                    ("host", "worker_id", "phase", "seconds", "timeout", "owner_active", "heartbeat_fresh")})
+                    ("host", "worker_id", "work_id", "activity_identity_unconfirmed", "phase", "seconds", "timeout",
+                     "owner_active", "heartbeat_fresh")})
         if task['status'] != 'DONE':
             task.update(status='RUN', reason='')
     elif relevant and task["status"] == "READY":
@@ -151,6 +175,11 @@ def snapshot(root, *, now=None):
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         error = str(exc)
     observations = progress_records(root)
+    active_paths = {}
+    for updated, path, value in observations:
+        if (value.get('state') == 'running'
+                and (-5 <= now - updated < 60 or display.switch_status.meter_lease_held(path.parent))):
+            active_paths.setdefault(str(value.get('host') or 'unknown'), set()).add(str(path.parent))
     nodes, activity = {}, []
     for path in sorted((root / 'queue-workers').glob('*.json')):
         worker = read(path)
@@ -163,13 +192,15 @@ def snapshot(root, *, now=None):
     for updated, path, value in observations:
         value.update(finished_meter(path.parent, value))
         fresh = value.get("state") == "running" and -5 <= now - updated < 60
-        event = value.get('event_id')
         owned = (not fresh and value.get('state') == 'running'
-                 and isinstance(event, str) and bool(event) and Path(event).name == event
-                 and event not in {'.', '..'} and display.switch_status.meter_lease_held(path.parent))
+                 and display.switch_status.meter_lease_held(path.parent))
         if owned:
             latest = finished_meter(path.parent, read(path))
-            owned = latest == value
+            owned = (latest.get('state') == 'running'
+                     and all(latest.get(key) == value.get(key) for key in ('host', 'pid', 'event_id')))
+            if owned:
+                value.update(latest)
+                updated = display.switch_status.number(value.get('updated'))
         value["_fresh"] = fresh
         value['heartbeat_fresh'], value['owner_active'] = fresh, owned
         value['_active'] = fresh or owned
@@ -191,13 +222,19 @@ def snapshot(root, *, now=None):
                        and part != assignment[4] for part in path.parts):
                     continue
             candidates.append(candidate)
-        if len(candidates) > 1 and value.get('pid') is not None:
-            candidates = [node for node in candidates if node['worker'].get('pid') == value['pid']]
+        if value.get('pid') is not None:
+            candidates = [node for node in candidates if node['worker'].get('pid') in {None, value['pid']}]
         if len(candidates) == 1:
             node = candidates[0]
             value['worker_id'] = node['worker_id']
         else:
-            node = nodes.setdefault((host, None), {"host": host, "current": False})
+            # Containers can share both hostname and PID; an independent
+            # meter path must not disappear into another worker's row.
+            identity = ('meter-' + hashlib.sha256(relative.encode()).hexdigest()[:16]
+                        if len(active_paths.get(host, ())) > 1 else None)
+            node = nodes.setdefault((host, identity), {"host": host, "worker_id": identity, "current": False})
+            if identity:
+                value['worker_id'] = identity
         if not (fresh or owned):
             continue
         node["current"] = True
@@ -219,27 +256,68 @@ def snapshot(root, *, now=None):
                 "kind": "phase", "arm": arm, "status": "RUNNING", "heartbeat_fresh": fresh,
                 "training_step": display.switch_status.last_training_step(path.parent / "policy/grpo_stats.jsonl")}
         activity.append(task)
+    assignments = {}
+    for node in nodes.values():
+        claimed = queue_assignment(root, node.get('worker', {}))
+        if claimed:
+            node['assignment'] = claimed
+            assignments.setdefault(str(claimed['lock']), []).append(node)
+    for claims in assignments.values():
+        claimed = claims[0]['assignment']
+        fresh_claim = len(claims) == 1 and -5 <= now - claims[0].get('worker_updated', 0) < 60
+        if (fresh_claim
+                or not display.switch_status.meter_lease_held(claimed['lock'].parent, claimed['lock'].name)
+                or any(task.get('directory') == claimed['directory']
+                       or task.get('directory', '').startswith(claimed['directory'] + '/')
+                       or any(task.get('worker_id') == node.get('worker_id') and task.get('host') == node['host']
+                              for node in claims) for task in activity)):
+            continue
+        # Even one stale claim can belong to the previous owner. An exclusive
+        # lease proves work, not the old hostname/PID; expose it anonymously.
+        host = 'unknown-owner'
+        identity = 'lease-' + hashlib.sha256(str(claimed['lock']).encode()).hexdigest()[:16]
+        nodes[(host, identity)] = dict(host=host, worker_id=identity, work_id=identity, current=True, state='RUN')
+        arm = ('random' if claimed['arm'] == 'random_full' else
+               'adaptive' if str(claimed['branch']).startswith('adaptive-') else claimed['branch'] or '상태 작업')
+        activity.append(dict(host=host, worker_id=identity, work_id=identity, kind='phase', arm=arm,
+                             seed=claimed['seed'], step=claimed['step'], directory=claimed['directory'],
+                             status='RUNNING', heartbeat_fresh=False, owner_active=True,
+                             phase='분기 단계 확인 중', activity_identity_unconfirmed=True))
     for node in nodes.values():
         worker = node.get("worker", {})
         fresh = -5 <= now - node.get("worker_updated", 0) < 60
-        match = re.fullmatch(r"(?:development|test)/s(\d+)-t(\d+)(?:/([\w-]+)/([\w-]+))?",
-                             str(worker.get("task", "")))
-        node["current"] |= fresh and worker.get("state") in {"RUN", "WAIT"}
+        claimed = node.pop('assignment', None)
+        contradicted = bool(claimed and any(
+            task.get('worker_id') != node.get('worker_id')
+            and (task.get('owner_active') or task.get('phase') != '분기 단계 확인 중')
+            and (task.get('directory') == claimed['directory']
+                 or task.get('directory', '').startswith(claimed['directory'] + '/')) for task in activity))
+        unambiguous = bool(claimed and len(assignments[str(claimed['lock'])]) == 1 and not contradicted)
+        if claimed and (claimed['branch'] or contradicted) and not unambiguous:
+            fresh = False
+        # A root SH lease belongs to the study, not necessarily this worker.
+        # Only an unambiguous branch EX (or legacy state EX) supports its claim.
+        owned = bool(unambiguous
+                     and display.switch_status.meter_lease_held(claimed['lock'].parent, claimed['lock'].name))
+        node["current"] |= (fresh or owned) and worker.get("state") in {"RUN", "WAIT"}
         stopped = str(worker.get('task', '')).startswith('worker stopped;')
         queue_state = ('EXITED' if stopped or worker.get('state') == 'DONE' else
                        'WAIT' if worker.get('state') == 'WAIT' else
                        'LIVE' if worker.get('state') == 'RUN' else 'STALE')
         if stopped:
             node['current'] = bool(node.get('progress_age') is not None)
-        node.setdefault("state", queue_state if fresh else "STALE")
-        if (fresh and worker.get("state") == "RUN" and match
+        node.setdefault("state", 'RUN' if owned else queue_state if fresh else "STALE")
+        if ((fresh or owned) and claimed
                 and not any(task.get('worker_id') == node.get('worker_id') and task['host'] == node['host']
                             for task in activity)):
-            arm = ("random" if match[4] == "random_full" else "adaptive" if str(match[3]).startswith("adaptive-")
-                   else match[3] or "상태 작업")
-            activity.append(dict(host=node["host"], worker_id=node.get('worker_id'), kind="phase", arm=arm, seed=int(match[1]),
-                                 step=int(match[2]), directory=worker["task"], status="RUNNING",
-                                 heartbeat_fresh=True, phase="분기 단계 확인 중"))
+            arm = ("random" if claimed['arm'] == "random_full" else "adaptive" if str(claimed['branch']).startswith("adaptive-")
+                   else claimed['branch'] or "상태 작업")
+            activity.append(dict(host=node["host"], worker_id=node.get('worker_id'), kind="phase", arm=arm,
+                                 seed=claimed['seed'], step=claimed['step'], directory=claimed['directory'], status="RUNNING",
+                                 heartbeat_fresh=fresh, owner_active=owned, phase="분기 단계 확인 중"))
+    for task in activity:
+        if task.get('phase') == '분기 단계 확인 중' and task['directory'].startswith('branches/'):
+            observations.append((now, root / task['directory'] / 'progress.json', {**task, '_active': True}))
     tasks = []
     for seed in (*pair.DEV_SEEDS, *pair.TEST_SEEDS):
         for step in pair.STEPS:
@@ -291,7 +369,8 @@ def dashboard_data(data):
         age = data["updated"] - node.get("worker_updated", 0)
         if "progress_age" in node:
             age = min(age, node["progress_age"])
-        nodes.append(dict(host=node["host"], worker_id=node.get('worker_id'), state=node["state"], last_age=age))
+        nodes.append(dict(host=node["host"], worker_id=node.get('worker_id'), work_id=node.get('work_id'),
+                          state=node["state"], last_age=age))
     suite = dict(root=data["root"], prepared=data["prepared"], error=data["error"],
                  display_label="Selector pair", tasks=tasks, nodes=nodes,
                  registered_tasks=[(s, t, arm) for s in (*pair.DEV_SEEDS, *pair.TEST_SEEDS)

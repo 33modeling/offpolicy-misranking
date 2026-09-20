@@ -80,6 +80,80 @@ def test_missing_root_and_lock_are_not_created(diagnostic, proc, tmp_path):
     assert not (tmp_path / "missing-volume").exists()
 
 
+def cost_fixture(root, *, receipt=False):
+    directory = root / 'branches/on_policy/states/s0-t25/points/view-25/selection_reduced'
+    directory.mkdir(parents=True)
+    start = dict(event_id='open-event', phase='train', ledger='deployment', gpus=4,
+                 gpu_type='H100', host='old-node', pid=12345, state='started', time=100.)
+    (directory / 'cost.jsonl').write_text(json.dumps(start) + '\n')
+    (directory / 'progress.json').write_text(json.dumps({**start, 'state': 'running',
+                                                        'updated': 130., 'seconds': 30.}))
+    if receipt:
+        target = directory / 'cost-events/open-event.json'
+        target.parent.mkdir()
+        target.write_text(json.dumps({**start, 'state': 'finished', 'seconds': 42.,
+                                     'allocated_gpu_seconds': 168., 'exit_code': 1, 'time': 142.}))
+    return directory
+
+
+@pytest.mark.parametrize('receipt', [False, True])
+def test_cost_evidence_exports_exact_open_start_and_receipt_without_repair(diagnostic, tmp_path, receipt):
+    root = tmp_path / 'pair'
+    directory = cost_fixture(root, receipt=receipt)
+    before = snapshot(root)
+    report = diagnostic.cost_report(root)
+    assert '"open_event_ids": ["open-event"]' in report
+    assert 'OPEN_EVENT ' in report and '"time": 100.0' in report
+    prefix = 'FILE' if receipt else 'MISSING'
+    assert f'{prefix} branches/on_policy/states/s0-t25/points/view-25/selection_reduced/cost-events/open-event.json' in report
+    assert ('"allocated_gpu_seconds": 168.0' in report) is receipt
+    assert 'No cost repair, inferred durations' in report
+    assert snapshot(root) == before
+    assert not (directory / '.cost.lock').exists()
+
+
+def test_cost_evidence_preserves_torn_ledger_and_exports_damage(diagnostic, tmp_path):
+    root = tmp_path / 'pair'
+    directory = cost_fixture(root)
+    with (directory / 'cost.jsonl').open('ab') as handle:
+        handle.write(b'{"event_id":"open-event","state":"fin')
+    before = snapshot(root)
+    report = diagnostic.cost_report(root)
+    assert 'bytes_hex=' in report and '"open_event_ids": ["open-event"]' in report
+    assert snapshot(root) == before
+
+
+def test_cost_evidence_cli_writes_one_bounded_txt(diagnostic, tmp_path, monkeypatch, capsys):
+    root = tmp_path / 'pair'
+    cost_fixture(root)
+    target = tmp_path / 'reports'
+    target.mkdir()
+    monkeypatch.setattr(sys, 'argv', [str(SCRIPT), '--root', str(root), '--report-dir', str(target), '--costs'])
+    before = snapshot(root)
+    assert diagnostic.main() == 0
+    paths = list(target.iterdir())
+    assert len(paths) == 1 and paths[0].name.startswith('selector-pair-cost-')
+    assert paths[0].stat().st_size <= 1024 * 1024
+    assert 'SELECTOR PAIR COST EVIDENCE' in paths[0].read_text()
+    assert snapshot(root) == before
+    assert '[saved]' in capsys.readouterr().out
+
+
+def test_cost_evidence_missing_root_and_external_symlink_are_not_followed(diagnostic, tmp_path):
+    root = tmp_path / 'absent'
+    assert 'examined=0' in diagnostic.cost_report(root)
+    assert not root.exists()
+    external = tmp_path / 'outside'
+    external.mkdir()
+    (external / 'cost.jsonl').write_text('DO-NOT-COPY-EXTERNAL\n')
+    branch = root / 'branches/on_policy/states/s0-t25/points/view-25'
+    branch.mkdir(parents=True)
+    (branch / 'selection_reduced').symlink_to(external, target_is_directory=True)
+    report = diagnostic.cost_report(root)
+    assert 'metadata escapes Pair root' in report
+    assert 'DO-NOT-COPY-EXTERNAL' not in report
+
+
 def test_existing_root_without_lock_is_not_initialized(diagnostic, proc, tmp_path):
     root = tmp_path / "root"
     root.mkdir()

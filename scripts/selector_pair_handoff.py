@@ -1,4 +1,4 @@
-"""Hand an exclusively locked legacy Pair controller to the distributed queue.
+"""Explicitly hand a verified local Pair controller to the pinned queue.
 
 No lock, checkpoint, manifest, receipt or budget is edited by this helper.
 Only a verified local controller receives TERM. Its existing cleanup handles
@@ -11,6 +11,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import select
@@ -22,7 +23,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from selector_pair_diagnostic import collect, local_owners, observations, read_small
-from selector_pair_deploy import stage_runtime
+from selector_pair_deploy import stage_runtime, pinned_files, manifest_for, verify
 
 
 def shared_available(lock):
@@ -74,6 +75,36 @@ def verify_owner(proc, pid, root, repo):
         raise RuntimeError('lock owner does not match this Pair root, checkout and running stage')
     value['mode'] = words[2]
     return value
+
+
+def owner_checkout(proc, pid, repo):
+    value = process(proc, pid)
+    candidate = value['cwd']
+    if candidate == repo:
+        return repo
+    cache = repo / '.work/pair-runtimes'
+    if (candidate.parent != cache or len(candidate.name) != 40
+            or any(c not in '0123456789abcdef' for c in candidate.name)):
+        raise RuntimeError('controller checkout is outside this repository and its pinned runtimes')
+    files = pinned_files(repo, commit=candidate.name)
+    verify(candidate, manifest_for(files, commit=candidate.name))
+    return candidate
+
+
+def verify_local_allocation(proc, owner):
+    # Same hostname is insufficient: separate jobs may share that name. These
+    # are kernel namespace/cgroup identities, not timestamps or user labels.
+    for namespace in ('pid', 'mnt'):
+        current = (proc / 'self/ns' / namespace).stat()
+        other = (proc / str(owner['pid']) / 'ns' / namespace).stat()
+        if (current.st_dev, current.st_ino) != (other.st_dev, other.st_ino):
+            raise RuntimeError('controller is in another allocation namespace; no process stopped')
+    if read_small(proc / 'self/cgroup') != read_small(proc / str(owner['pid']) / 'cgroup'):
+        raise RuntimeError('controller belongs to another allocation cgroup; no process stopped')
+    env = process_environment(owner)
+    for key in ('CUDA_VISIBLE_DEVICES', 'NVIDIA_VISIBLE_DEVICES'):
+        if os.environ.get(key) and env.get(key) != os.environ[key]:
+            raise RuntimeError('controller GPU allocation differs from this restart; no process stopped')
 
 
 def descendants(proc, owner):
@@ -189,6 +220,8 @@ names = (
     'pair-operations-runtime.json', 'pair-lock-observation-runtime.json',
     'pair-distributed-runtime.json', 'pair-wait-guard-runtime.json',
     'shared-mbpp-quarantine-runtime.json',
+    'pair-status-runtime.json', 'pair-curve-progress-runtime.json',
+    'pair-branch-queue-runtime.json',
 )
 with tempfile.TemporaryDirectory(prefix='selector-pair-runtime-check-') as directory:
     snapshot = Path(directory)
@@ -288,19 +321,33 @@ def active_receipts(root, owner, keys):
     return rows
 
 
-def handoff(root, repo, timeout=240, proc=Path('/proc'), *, launch_repo=None):
+def valid_finish_receipt(value, event, progress):
+    fields = ('event_id', 'phase', 'ledger', 'gpus', 'gpu_type', 'host')
+    return (value.get('event_id') == event and value.get('state') == 'finished'
+            and type(value.get('exit_code')) is int
+            and all(key in progress and value.get(key) == progress[key] for key in fields)
+            and all(type(value.get(key)) in (int, float) and math.isfinite(value[key])
+                    and value[key] >= 0 for key in ('seconds', 'allocated_gpu_seconds', 'time')))
+
+
+def handoff(root, repo, timeout=240, proc=Path('/proc'), *, launch_repo=None, restart_shared=False):
     root, repo, proc = Path(root).resolve(strict=True), Path(repo).resolve(strict=True), Path(proc)
     launch_repo = Path(launch_repo).resolve(strict=True) if launch_repo is not None else repo
     if not (root / 'pair.json').is_file():
         raise RuntimeError('existing pair.json is missing; refusing to initialize a different run')
     lock = root / '.pair.lock'
-    if shared_available(lock):
+    shared = shared_available(lock)
+    owners = local_owners(lock, proc, kind='READ') if shared and restart_shared else local_owners(lock, proc)
+    if shared and (not restart_shared or not owners):
         print('[handoff] root accepts queue workers; no controller stopped', flush=True)
         return 'run'
-    owners = local_owners(lock, proc)
     if len(owners) != 1:
-        raise RuntimeError('exclusive owner not uniquely visible on this node; run this bash on its owner node')
-    owner = verify_owner(proc, owners[0], root, repo)
+        raise RuntimeError('controller owner not uniquely visible on this node; no process stopped')
+    source_repo = owner_checkout(proc, owners[0], repo)
+    owner = verify_owner(proc, owners[0], root, source_repo)
+    verify_local_allocation(proc, owner)
+    owner_environment = process_environment(owner)
+    owner_python = process_python(owner, owner_environment)
     if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
         raise RuntimeError('safe pidfd signalling unavailable; no process stopped')
     with contextlib.ExitStack() as stack:
@@ -325,21 +372,26 @@ def handoff(root, repo, timeout=240, proc=Path('/proc'), *, launch_repo=None):
         except (FileNotFoundError, ProcessLookupError):
             parent = None
         if parent and len(parent['argv']) >= 2 and parent['exe'].name in {'bash', 'dash', 'sh'}:
-            if (parent['cwd'] / parent['argv'][1]).resolve() == repo / 'scripts/run_selector_pair.sh':
+            if (parent['cwd'] / parent['argv'][1]).resolve() == source_repo / 'scripts/run_selector_pair.sh':
                 watch(parent)
         receipts = active_receipts(root, owner, keys)
+        receipt_progress = {path: json.loads(read_small(path.parent.parent / 'progress.json'))
+                            for path, _ in receipts}
         # Ownership/checkpoints refer to the old process checkout. Compatibility
         # must instead be checked against the code that will actually restart.
         validate_runtime(root, launch_repo, owner)
-        validate_training_checkpoints(root, repo, children)
+        validate_training_checkpoints(root, source_repo, children)
         # Recheck after potentially slow disk/hash reads. A changed phase must
         # be inspected afresh, never interrupted using an older phase's proof.
         current = descendants(proc, owner)
         current.update(nonce_workers(proc, keys))
         if {pid: identity(v) for pid, v in current.items()} != {pid: identity(v) for pid, v in children.items()}:
             raise RuntimeError('worker set changed during inspection; no process stopped; run this bash again')
-        if (identity(verify_owner(proc, owner['pid'], root, repo)) != identity(owner)
-                or local_owners(lock, proc) != owners or shared_available(lock)
+        verify_local_allocation(proc, owner)
+        if (identity(verify_owner(proc, owner['pid'], root, source_repo)) != identity(owner)
+                or process_python(owner, process_environment(owner)) != owner_python
+                or local_owners(lock, proc, kind='READ' if shared else 'WRITE') != owners
+                or shared_available(lock) != shared
                 or active_receipts(root, owner, keys) != receipts):
             raise RuntimeError('owner or phase changed; no process stopped')
         print(f"[handoff] verified local Pair controller pid={owner['pid']} stage={owner['mode']}; sending TERM", flush=True)
@@ -359,8 +411,16 @@ def handoff(root, repo, timeout=240, proc=Path('/proc'), *, launch_repo=None):
             time.sleep(min(.2, max(0, deadline - now)))
         for path, event in receipts:
             value = json.loads(read_small(path))
-            if value.get('event_id') != event or value.get('state') != 'finished':
+            if not valid_finish_receipt(value, event, receipt_progress[path]):
                 raise RuntimeError('owned phase has no valid finish receipt; refusing restart')
+    # An interactive shell often lacks the launcher's selected GPU variables.
+    # Preserve that verified allocation instead of widening it on restart.
+    for key in ('CUDA_VISIBLE_DEVICES', 'NVIDIA_VISIBLE_DEVICES'):
+        if not os.environ.get(key) and owner_environment.get(key):
+            os.environ[key] = owner_environment[key]
+    # Compatibility was checked with this interpreter, including its venv.
+    # The interactive shell's defaults must not select a different one later.
+    os.environ['PAIR_PYTHON'] = owner_python
     print('[handoff] old controller and owned workers exited; saved work and charged costs preserved', flush=True)
     return owner['mode']
 
@@ -379,7 +439,7 @@ def main():
         if not (args.root / 'pair.json').is_file():
             raise RuntimeError('existing pair.json is missing; no run was initialized')
         launch_repo = stage_runtime(args.repo)
-        mode = handoff(args.root, args.repo, args.timeout, launch_repo=launch_repo)
+        mode = handoff(args.root, args.repo, args.timeout, launch_repo=launch_repo, restart_shared=True)
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f'[handoff-abort] {exc}', file=sys.stderr, flush=True)
         print(collect(args.root), file=sys.stderr, flush=True)

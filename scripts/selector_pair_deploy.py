@@ -20,7 +20,7 @@ import tempfile
 import time
 
 
-PINNED_COMMIT = '6066d11091c71ef9ec2c43dbc271ff0824c6bc4e'
+PINNED_COMMIT = 'b5f174c01af49ab48ce0c7c98407d0309351bd28'
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_FILES = 20000
 MANIFEST = '.pair-runtime.json'
@@ -72,24 +72,27 @@ def safe_name(name):
     return relative
 
 
-def pinned_files(repo):
+def pinned_files(repo, *, commit=None):
+    commit = PINNED_COMMIT if commit is None else commit
+    if len(commit) != 40 or any(c not in '0123456789abcdef' for c in commit):
+        raise RuntimeError('invalid pinned Pair commit')
     try:
-        kind = git(repo, 'cat-file', '-t', PINNED_COMMIT, limit=1024).strip()
+        kind = git(repo, 'cat-file', '-t', commit, limit=1024).strip()
     except RuntimeError:
-        print(f'[pair-runtime] fetching reviewed commit {PINNED_COMMIT}; no checkout update', flush=True)
-        git(repo, 'fetch', '--no-tags', '--no-write-fetch-head', 'origin', PINNED_COMMIT,
+        print(f'[pair-runtime] fetching reviewed commit {commit}; no checkout update', flush=True)
+        git(repo, 'fetch', '--no-tags', '--no-write-fetch-head', 'origin', commit,
             limit=1024 * 1024)
-        kind = git(repo, 'cat-file', '-t', PINNED_COMMIT, limit=1024).strip()
-    if kind != b'commit' or git(repo, 'rev-parse', '--verify', PINNED_COMMIT + '^{commit}',
-                              limit=1024).decode().strip() != PINNED_COMMIT:
+        kind = git(repo, 'cat-file', '-t', commit, limit=1024).strip()
+    if kind != b'commit' or git(repo, 'rev-parse', '--verify', commit + '^{commit}',
+                              limit=1024).decode().strip() != commit:
         raise RuntimeError('reviewed Pair commit identity does not match')
-    roots = git(repo, 'ls-tree', '--name-only', '-z', PINNED_COMMIT,
+    roots = git(repo, 'ls-tree', '--name-only', '-z', commit,
                 limit=1024 * 1024).decode().rstrip('\0').split('\0')
     if not {'src', 'scripts'}.issubset(roots):
         raise RuntimeError('reviewed Pair runtime is missing source or launcher')
     paths = [name for name in roots if name in {'src', 'scripts', 'vendor'}
              or name.startswith('requirements') and name.endswith('.txt')]
-    tree = git(repo, 'ls-tree', '-r', '-l', '-z', PINNED_COMMIT, '--', *paths,
+    tree = git(repo, 'ls-tree', '-r', '-l', '-z', commit, '--', *paths,
                limit=4 * 1024 * 1024)
     expected, total = {}, 0
     for row in tree.split(b'\0'):
@@ -110,7 +113,7 @@ def pinned_files(repo):
             raise RuntimeError('pinned Pair runtime exceeds its size limit')
     if not {'src/selector_pair_gpu.py', 'scripts/run_selector_pair.sh'}.issubset(expected):
         raise RuntimeError('reviewed Pair source or launcher is missing')
-    archive = git(repo, 'archive', '--format=tar', PINNED_COMMIT, '--', *paths)
+    archive = git(repo, 'archive', '--format=tar', commit, '--', *paths)
     files = {}
     with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as bundle:
         for member in bundle:
@@ -138,8 +141,8 @@ def pinned_files(repo):
     return files
 
 
-def manifest_for(files):
-    return {'schema': 'selector-pair-isolated-runtime-v1', 'commit': PINNED_COMMIT,
+def manifest_for(files, *, commit=None):
+    return {'schema': 'selector-pair-isolated-runtime-v1', 'commit': PINNED_COMMIT if commit is None else commit,
             'files': {name: {'sha256': hashlib.sha256(data).hexdigest(), 'mode': mode, 'size': len(data)}
                       for name, (data, mode) in sorted(files.items())}}
 

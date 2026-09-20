@@ -285,3 +285,133 @@ def test_curve_direct_read_survives_exhausted_recursive_scan(tmp_path, monkeypat
     data = status.snapshot(tmp_path, now=1000)
     assert data['tasks'][0]['status'] == 'RUN'
     assert data['nodes'][0]['current']
+
+
+@pytest.mark.parametrize('offset', [-3600, 3600])
+def test_branch_lease_keeps_skewed_assignment_visible_between_meters(tmp_path, offset):
+    p = prepared(tmp_path)
+    worker = {'host': 'same-name', 'worker': 'branch-owner', 'state': 'RUN',
+              'updated': 10000 + offset, 'protocol_id': p['protocol_id'],
+              'task': 'development/s0-t25/on_policy/selection_reduced'}
+    core.atomic_json(tmp_path / 'queue-workers/branch-owner.json', worker)
+    lock = tmp_path / 'development/s0-t25/queue-branches/on_policy--selection_reduced.lock'
+    lock.parent.mkdir(parents=True)
+    with lock.open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                  for path in tmp_path.rglob('*') if path.is_file()}
+        data = status.snapshot(tmp_path, now=10000)
+        assert data['tasks'][0]['status'] == 'RUN'
+        assert data['tasks'][0]['owner_active']
+        active = [node for node in data['nodes'] if node['current']]
+        assert len(active) == 1 and active[0]['state'] == 'RUN'
+        assert active[0]['host'] == 'unknown-owner'
+        assert active[0]['worker_id'].startswith('lease-')
+        assert data['tasks'][0]['host'] == 'unknown-owner'
+        assert 'CURRENT RUN 1' in status.render(data, width=160)
+        json.dumps(data)
+        assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
+    data = status.snapshot(tmp_path, now=10000)
+    assert data['tasks'][0]['status'] != 'RUN'
+    assert not data['nodes'][0]['current']
+
+
+def test_root_shared_lease_does_not_revive_stale_branch_assignment(tmp_path):
+    p = prepared(tmp_path)
+    core.atomic_json(tmp_path / 'queue-workers/old.json', {
+        'host': 'old-node', 'state': 'RUN', 'updated': 1, 'protocol_id': p['protocol_id'],
+        'task': 'development/s0-t25/on_policy/selection_reduced'})
+    with (tmp_path / '.pair.lock').open('w') as peer:
+        fcntl.flock(peer, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        data = status.snapshot(tmp_path, now=10000)
+    assert not any(node['current'] for node in data['nodes'])
+    assert not data['activity']
+
+
+def test_legacy_ex_state_lease_identifies_assignment_without_heartbeat(tmp_path):
+    p = prepared(tmp_path)
+    core.atomic_json(tmp_path / 'queue-workers/legacy.json', {
+        'host': 'legacy-node', 'state': 'RUN', 'updated': 1, 'protocol_id': p['protocol_id'],
+        'task': 'development/s0-t25'})
+    lock = tmp_path / 'development/s0-t25/.state.lock'
+    lock.parent.mkdir(parents=True)
+    with lock.open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(tmp_path, now=10000)
+        assert len(data['activity']) == 1 and data['activity'][0]['owner_active']
+        assert 'CURRENT RUN 1' in status.render(data, width=160)
+        fcntl.flock(owner, fcntl.LOCK_SH)
+        assert not status.snapshot(tmp_path, now=10000)['activity']
+
+
+def test_same_hostname_and_pid_independent_meters_remain_separate(tmp_path):
+    prepared(tmp_path)
+    for name in ('on_policy', 'cached'):
+        point = tmp_path / f'branches/{name}/states/s0-t25/points/view-25/selection_reduced/curve'
+        core.atomic_json(point / 'progress.json', {'host': 'same-node', 'pid': 123,
+            'state': 'running', 'updated': 995, 'phase': 'curve', 'event_id': name})
+    data = status.snapshot(tmp_path, now=1000)
+    assert len(data['nodes']) == 2
+    assert len({task['worker_id'] for task in data['activity']}) == 2
+    assert 'CURRENT RUN 2' in status.render(data, width=160)
+
+
+def test_skewed_legacy_meter_without_event_id_is_backed_by_real_lease(tmp_path):
+    prepared(tmp_path)
+    point = branch(tmp_path) / 'curve'
+    core.atomic_json(point / 'progress.json', {'host': 'legacy-peer', 'state': 'running',
+                                              'updated': 1, 'phase': 'curve'})
+    with (point / '.cost.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert status.snapshot(tmp_path, now=10000)['tasks'][0]['status'] == 'RUN'
+    assert status.snapshot(tmp_path, now=10000)['tasks'][0]['status'] == 'WAIT'
+
+
+@pytest.mark.parametrize('updated', [1, 9995])
+def test_restarted_branch_with_old_claims_shows_one_unattributed_live_lease(tmp_path, updated):
+    p = prepared(tmp_path)
+    for worker in ('old', 'new'):
+        core.atomic_json(tmp_path / f'queue-workers/{worker}.json', {
+            'host': 'same-host', 'pid': 123, 'state': 'RUN', 'updated': updated,
+            'protocol_id': p['protocol_id'], 'task': 'development/s0-t25/on_policy/selection_reduced'})
+    lock = tmp_path / 'development/s0-t25/queue-branches/on_policy--selection_reduced.lock'
+    lock.parent.mkdir(parents=True)
+    with lock.open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(tmp_path, now=10000)
+        active = [node for node in data['nodes'] if node['current']]
+        assert len(active) == 1 and active[0]['worker_id'].startswith('lease-')
+        assert active[0]['host'] == 'unknown-owner'
+        assert data['tasks'][0]['status'] == 'RUN'
+        assert active[0]['work_id'] == active[0]['worker_id']
+        assert data['activity'][0]['activity_identity_unconfirmed']
+        assert data['tasks'][0]['activity_identity_unconfirmed']
+        dashboard = status.dashboard_data(data)
+        adapted_node = next(node for node in dashboard['suites'][0]['nodes'] if node['host'] == 'unknown-owner')
+        assert adapted_node['work_id'] == active[0]['work_id']
+        work = status.display.current_work(dashboard['suites'][0])
+        assert len(work) == 1 and work[0][0]['activity_identity_unconfirmed']
+        assert 'CURRENT RUN 1' in status.render(data, width=160)
+    assert not any(node['current'] for node in status.snapshot(tmp_path, now=10000)['nodes'])
+
+
+def test_heartbeat_advancing_during_lease_verification_is_not_lost(tmp_path, monkeypatch):
+    prepared(tmp_path)
+    point = branch(tmp_path) / 'curve'
+    path = point / 'progress.json'
+    core.atomic_json(path, {'host': 'skewed-peer', 'pid': 5, 'event_id': 'current-curve',
+                           'state': 'running', 'updated': 1, 'seconds': 1, 'phase': 'curve'})
+    original = status.read
+    reads = []
+    def advancing(candidate):
+        value = original(candidate)
+        if candidate == path:
+            reads.append(1)
+            return {**value, 'updated': len(reads), 'seconds': len(reads)}
+        return value
+    monkeypatch.setattr(status, 'read', advancing)
+    with (point / '.cost.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(tmp_path, now=10000)
+        assert len(reads) >= 2
+        assert data['tasks'][0]['status'] == 'RUN' and data['tasks'][0]['owner_active']

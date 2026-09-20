@@ -519,14 +519,17 @@ def render(data, *, width=120, all_tasks=False):
     if selected_work or any(task.get('task_lease_held') for suite in data['suites'] for task in suite.get('tasks', [])):
         lines.append('전체 실행 상태: RUN (진행 중인 작업 있음; 전체 종료 아님)')
     live_hosts = {(task.get('host'), task.get('worker_id')) for task, _ in selected_work
-                  if active(task) and task.get('host')}
+                  if active(task) and task.get('host') not in {None, '', 'unknown', 'unknown-owner'}
+                  and not task.get('activity_identity_unconfirmed')}
     owner_label = '작업자' if any(worker for _, worker in live_hosts) else '작업 노드'
     lines.append(f"현재 실행: 분기 RUN {aggregate['RUN']}개 | 공통 단계 RUN {sum(shared for _, shared in selected_work)}개"
                  f" | {owner_label} {len(live_hosts)}개 (분기 수와 작업자 수는 다름)")
-    unknown_owners = sum(bool(task.get('task_lease_held')) and not active(task) for task, _ in selected_work)
+    unknown_owners = sum(bool(task.get('task_lease_held') and not active(task)
+                              or task.get('activity_identity_unconfirmed')) for task, _ in selected_work)
     if unknown_owners:
         lines.append(f"작업 잠금 확인 {unknown_owners}개: 현재 작업자·단계 미확인; 작업자 수에 합산하지 않음.")
-    host_work = Counter(task.get('host') for task, _ in selected_work if active(task) and task.get('host'))
+    host_work = Counter(task.get('host') for task, _ in selected_work
+                        if active(task) and (task.get('host'), task.get('worker_id')) in live_hosts)
     ambiguous_hosts = [host for host, count in host_work.items()
                        if count > 1 and not re.search(r'-g[0-9a-f]{4}$', host)]
     if ambiguous_hosts:
