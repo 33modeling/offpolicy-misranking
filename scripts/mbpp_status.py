@@ -75,7 +75,7 @@ def counts(suite):
     branches, conflicting = {}, set()
     for task in tasks:
         key = (task.get("seed"), task.get("step"), task.get("arm"))
-        if task.get("kind") != "branch" or key not in registered:
+        if task.get("kind") != "branch" or key not in registered or task.get("unverified"):
             continue
         if key in branches and branches[key] != task:
             conflicting.add(key)
@@ -419,7 +419,8 @@ def render(data, *, width=120, all_tasks=False):
         running += [(name, task) for task in active_tasks]
         prefixes = [task for task in tasks if task.get("kind") == "prefix"]
         prefix_done = sum(task["status"] == "DONE" for task in prefixes)
-        note = f"{condition}; 공통 학습 {prefix_done}/{len(prefixes)}".lstrip("; ")
+        shared_label = suite.get("shared_label", "공통 학습")
+        note = f"{condition}; {shared_label} {prefix_done}/{len(prefixes)}".lstrip("; ")
         if count["unknown"]:
             note += f"; 기록 미확인 {count['unknown']}개"
         budgets = sum(task['status'] == 'BUDGET' for task in branches)
@@ -468,20 +469,23 @@ def render(data, *, width=120, all_tasks=False):
         directories = [task.get("directory", "") for task in tasks if active(task)]
 
         matrix = []
-        for seed in (*switch_status.rule.DEV_SEEDS, *switch_status.rule.TEST_SEEDS):
-            for step in switch_status.rule.STEPS:
-                notes = [f"{arm_name(task['arm'], names)}: {remark(task)}" for task in tasks
-                         if task["seed"] == seed and task["step"] == step and remark(task)]
-                matrix.append([f"{seed} / {step}", "개발" if seed in switch_status.rule.DEV_SEEDS else "검증",
-                               display_state(prefixes.get((seed, step)), directories),
-                               *[display_state(branches.get((seed, step, arm)), directories) for arm in names],
-                               "; ".join(dict.fromkeys(notes)) or "-"])
+        state_points = suite.get("state_points", [
+            (seed, step, "개발" if seed in switch_status.rule.DEV_SEEDS else "검증")
+            for seed in (*switch_status.rule.DEV_SEEDS, *switch_status.rule.TEST_SEEDS)
+            for step in switch_status.rule.STEPS])
+        for seed, step, role in state_points:
+            notes = [f"{arm_name(task['arm'], names)}: {remark(task)}" for task in tasks
+                     if task["seed"] == seed and task["step"] == step and remark(task)]
+            matrix.append([f"{seed} / {step}", role,
+                           display_state(prefixes.get((seed, step)), directories),
+                           *[display_state(branches.get((seed, step, arm)), directories) for arm in names],
+                           "; ".join(dict.fromkeys(notes)) or "-"])
         widths = ([11, 5, 6, 9, 6, 14, 11, 11, width - 89] if width >= 110
                   else [11, 4, 5, 9, 6, 9, 6, 6, width - 72])
         if names != ARM_NAMES:
             fixed = [11, 5, 6, *[max(6, columns(name)) for name in names.values()]]
             widths = [*fixed, width - sum(fixed) - 2 * len(fixed)]
-        lines += table(["Seed / Step", "Role", "Prefix", *names.values(), "Remarks"], matrix, widths)
+        lines += table(["Seed / Step", "Role", suite.get("prefix_heading", "Prefix"), *names.values(), "Remarks"], matrix, widths)
     if data.get("retained_suites"):
         lines += ["", "기본 실행 제외 — 기존 기록 보존 (위 계획·완료·남음 합계에서 제외)"]
         for suite in data["retained_suites"]:

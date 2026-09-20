@@ -65,6 +65,18 @@ GPUs; no cleanup or cancellation of existing experiments is performed.
 Interrupted training resumes the canonical trainer's checkpoints. Completed
 evaluation shards are reused only after checking hashes and exact coverage.
 Run `status` for global completion, not a single worker's exit message.
+The launcher status uses the same dashboard as MBPP and Selector Pair:
+summary counts, FULL STATUS per seed/checkpoint, CURRENT RUN, node assignments,
+and phase progress. `status --all`, `status --json`, and `status --watch [SECONDS]`
+are supported; watch defaults to 15 seconds. The 18 continuation arms are the
+training total. Six shared baseline evaluations appear in the Before column,
+outside that total. Training without all four sealed evaluation shards is not
+DONE, and stale heartbeats or a lock file alone never establish RUN.
+Status is read-only and does not create worker locks or touch GPU admission.
+It verifies evaluation receipt bindings, rollout hashes and question coverage;
+full source/model/optimizer validation remains in `check` and `report`. The
+dashboard lives outside frozen training sources so this display update does not
+invalidate existing RLOO contracts.
 
 ## Readout And Costs
 

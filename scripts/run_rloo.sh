@@ -13,12 +13,34 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 MKL_NUM_TH
 export OPENBLAS_NUM_THREADS=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
 case "$MODE" in
-  plan|prepare|status|report|check)
+  status)
+    export CUDA_VISIBLE_DEVICES=""
+    STATUS_ARGS=()
+    STATUS_WATCH=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --all|--json) STATUS_ARGS+=("$1"); shift ;;
+        --watch)
+          STATUS_WATCH=15; shift
+          if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then STATUS_WATCH=$1; shift; fi
+          [[ "$STATUS_WATCH" =~ ^[1-9][0-9]*$ ]] || { echo '[abort] watch interval must be a positive integer'; exit 2; }
+          ;;
+        *) echo 'usage: run_rloo.sh status [--all] [--watch [SECONDS]] [--json]'; exit 2 ;;
+      esac
+    done
+    while :; do
+      if [ -n "$STATUS_WATCH" ] && [ -t 1 ]; then printf '\033[2J\033[H'; fi
+      rc=0
+      "$PY" scripts/rloo_status.py --root "$RLOO_ROOT" "${STATUS_ARGS[@]}" || rc=$?
+      [ -n "$STATUS_WATCH" ] || exit "$rc"
+      sleep "$STATUS_WATCH"
+    done ;;
+  plan|prepare|report|check)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/rloo_experiment.py "$MODE" --root "$RLOO_ROOT" "$@" ;;
   cpu)
     export CUDA_VISIBLE_DEVICES=""
-    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_rloo_experiment.py tests/test_grpo_policy.py "$@" ;;
+    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_rloo_experiment.py tests/test_rloo_status.py tests/test_grpo_policy.py "$@" ;;
   run) ;;
   *) echo 'usage: run_rloo.sh [run]|plan|prepare|status|report|check|cpu'; exit 2 ;;
 esac

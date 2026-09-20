@@ -186,7 +186,8 @@ def test_launcher_cpu_modes_no_gpu(tmp_path):
     result = subprocess.run(["bash", str(script), "plan"], env=env, text=True, capture_output=True, check=True)
     assert json.loads(result.stdout)["training_runs"] == 18
     result = subprocess.run(["bash", str(script), "status"], env=env, text=True, capture_output=True, check=True)
-    assert result.stdout.count("not prepared") == 6
+    assert "RLOO EXPERIMENTS" in result.stdout
+    assert "FULL STATUS" in result.stdout and "NODE ASSIGNMENTS" in result.stdout
     assert not (tmp_path / "absent").exists()
 
 
