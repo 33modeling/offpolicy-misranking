@@ -519,6 +519,9 @@ fi
 printf '[node-launcher-start] host=%s pid=%s utc=%s commit=%s\n' "$HOST" "$$" "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 KEEPALIVE_PID=
 WATCHDOG_PID=
+# A shared host/root is not authority to stop another controller's workers.
+OM_EXPERIMENT_CONTROLLER_TOKEN=$("$PY" -c 'import uuid; print(uuid.uuid4().hex)')
+export OM_EXPERIMENT_CONTROLLER_TOKEN
 stop_keepalive() {
   [ -z "$KEEPALIVE_PID" ] || kill -TERM "$KEEPALIVE_PID" 2>/dev/null || true
   [ -z "$WATCHDOG_PID" ] || kill -TERM "$WATCHDOG_PID" 2>/dev/null || true
@@ -557,6 +560,7 @@ if [ "${EXPERIMENTS_WATCHDOG:-1}" != 0 ]; then
   mapfile -t WATCH_ROOTS < <(sibling_roots)
   if [ "${EXPERIMENTS_SKIP_MOPPS:-0}" != 1 ]; then WATCH_ROOTS+=("$MOPPS_ROOT"); fi
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/_stall_watchdog.py --host "$EXPERIMENTS_NODE_ID" --roots "$SWITCH_ROOT" "${WATCH_ROOTS[@]}" \
+    --owner-token "$OM_EXPERIMENT_CONTROLLER_TOKEN" \
     --faults-dir "$WORK/runs/experiments/node-faults" --stall-seconds "${EXPERIMENTS_STALL_SECONDS:-1500}" \
     > "$LOG_DIR/stall.$HOST.log" 2>&1 7>&- 8>&- &
   WATCHDOG_PID=$!

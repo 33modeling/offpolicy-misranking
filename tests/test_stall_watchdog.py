@@ -63,3 +63,32 @@ def test_dry_run_and_phase_filter(tmp_path):
     stalled = phase(root, "gated", "evt-train", age=5000)
     stopped = watchdog.scan([root], faults, stall_seconds=1500, dry_run=True)
     assert len(stopped) == 1 and not (stalled / "stalled.json").exists() and not faults.exists()
+
+
+def test_controller_watchdog_cannot_stop_peer_even_in_same_process_group(tmp_path):
+    root, faults = tmp_path / 'switch', tmp_path / 'node-faults'
+    directory = phase(root, 'random_full', 'shared-event', age=5000)
+    token = 'a' * 32
+    environment = {**os.environ, 'OM_SELECTION_COST_shared-event': '1'}
+    own = subprocess.Popen(['sleep', '300'], process_group=0,
+        env={**environment, watchdog.OWNER_TOKEN: token})
+    peer = subprocess.Popen(['sleep', '300'], process_group=own.pid,
+        env={**environment, watchdog.OWNER_TOKEN: 'b' * 32})
+    try:
+        time.sleep(.1)
+        assert watchdog.scan([root], faults, owner_token='c' * 32) == []
+        assert own.poll() is None and peer.poll() is None
+        assert not faults.exists() and not (directory / 'stalled.json').exists()
+        stopped = watchdog.scan([root], faults, owner_token=token)
+        assert len(stopped) == 1 and stopped[0]['pids'] == [own.pid]
+        assert own.wait(timeout=5) == -15
+        assert peer.poll() is None
+        before = (faults / f'{socket.gethostname()}.json').read_bytes()
+        assert watchdog.scan([root], faults, owner_token=token) == []
+        assert peer.poll() is None
+        assert (faults / f'{socket.gethostname()}.json').read_bytes() == before
+    finally:
+        for process in (own, peer):
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=5)

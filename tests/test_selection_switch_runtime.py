@@ -74,6 +74,8 @@ def test_shared_queue_entrypoint_is_pinned_and_yields_live_peer_waits(tmp_path):
     for name in ("run_selection_switch.sh", "selection_switch_runtime.py", "_selection_worker.sh",
                  "queue_selection_switch_gpu.py", "node_fault_state.py"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
+    (repo / "scripts/mbpp_budget_recovery.py").write_text(
+        'def required(*args):\n    raise AssertionError("peer-wait fixture must not recover budgets")\n')
     (repo / "scripts/setup_env.sh").write_text('export DATASETS_DIR="$OM_WORK/data"\n')
     (repo / "scripts/_e5_node.sh").write_text('e5_acquire_node() { return 0; }\n')
     (repo / "src/bootstrap_math_verify.py").write_text("print('/unused-test-dependencies')\n")
@@ -90,6 +92,10 @@ def wait_for_peers(*args, **kwargs):
     raise AssertionError('the node queue must own the wait')
 def fit_once(root):
     return False
+def mbpp_resume_blocked(*args):
+    return False
+def work(root, **kwargs):
+    raise AssertionError('peer-wait fixture must not start GPU work')
 def main():
     root = Path(os.environ['OUT_ROOT'])
     if sys.argv[1] == 'prepare':

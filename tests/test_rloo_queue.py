@@ -126,7 +126,7 @@ def test_launcher_sigterm_reaps_worker_and_closes_cost(tmp_path):
     from test_selection_worker_shutdown import alive, make_worker, wait_until
     import selection_gate_gpu as base
     command = make_worker(tmp_path, "")
-    probe = tmp_path / "queue-probe.py"
+    probe = tmp_path / "queue_rloo.py"
     probe.write_text('''
 import sys
 from pathlib import Path
@@ -138,6 +138,7 @@ queue.experiment.POINTS = ((0, 0),)
 queue.experiment.validate = lambda out: ({}, {})
 queue.experiment.complete = lambda out, arm: False
 def run(out, arm, seconds):
+    print("[gate] test phase", flush=True)
     base.meter(out / arm, "train", "cpu-process-test", devices=1, timeout=seconds,
                commands=[([sys.executable, child, str(root / "worker.pid")], "")])
 queue.experiment.run_arm = run
@@ -156,6 +157,7 @@ raise SystemExit(queue.main())
         launcher.send_signal(signal.SIGTERM)
         output = launcher.communicate(timeout=15)
         assert launcher.returncode == 143, output
+        assert '[gate] test phase [rloo]' in output[0]
         assert not alive(pid)
         directory = tmp_path / "math500-d0/s0/before"
         assert base.cost(directory)["complete"]

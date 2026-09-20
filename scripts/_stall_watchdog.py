@@ -24,6 +24,7 @@ import tempfile
 import time
 
 DEFAULT_PHASES = ("train", "prefix-train")
+OWNER_TOKEN = "OM_EXPERIMENT_CONTROLLER_TOKEN"
 
 
 def read_json(path):
@@ -67,7 +68,7 @@ def log_silence(directory, phase, now):
     return None if newest is None else now - newest
 
 
-def workers_of(event_id, me=None):
+def workers_of(event_id, me=None, *, owner_token=None):
     """Own processes carrying the meter's cost-event marker for this phase."""
     marker = f"OM_SELECTION_COST_{event_id}=1".encode()
     me = os.getpid() if me is None else me
@@ -77,7 +78,9 @@ def workers_of(event_id, me=None):
         if pid == me:
             continue
         try:
-            if marker in (proc / "environ").read_bytes().split(b"\0"):
+            environment = (proc / "environ").read_bytes().split(b"\0")
+            if (marker in environment and (owner_token is None
+                    or f"{OWNER_TOKEN}={owner_token}".encode() in environment)):
                 found.append(pid)
         except OSError:
             continue
@@ -108,7 +111,8 @@ def stop(pids, grace=30.):
     return sorted(groups)
 
 
-def scan(roots, faults_dir, *, host=None, stall_seconds=1500., phases=DEFAULT_PHASES, now=None, dry_run=False):
+def scan(roots, faults_dir, *, host=None, stall_seconds=1500., phases=DEFAULT_PHASES, now=None, dry_run=False,
+         owner_token=None):
     """One pass; returns the phases it stopped."""
     host = (os.environ.get("EXPERIMENTS_NODE_ID") or socket.gethostname()) if host is None else host
     now = time.time() if now is None else now
@@ -117,13 +121,28 @@ def scan(roots, faults_dir, *, host=None, stall_seconds=1500., phases=DEFAULT_PH
         silence = log_silence(directory, p["phase"], now)
         if silence is None or silence < stall_seconds:
             continue
-        pids = workers_of(p["event_id"])
+        pids = workers_of(p["event_id"], owner_token=owner_token)
+        if owner_token is not None and not pids:
+            continue
         record = {"host": host, "phase": p["phase"], "event_id": p["event_id"], "directory": str(directory),
                   "silent_seconds": silence, "pids": pids, "time": now}
         print(f"[stall] {directory}: {p['phase']} logs silent for {silence:.0f}s; "
               f"stopping {len(pids)} worker process(es) of event {p['event_id'][:8]}", flush=True)
         if not dry_run:
-            record["process_groups"] = stop(pids) if pids else []
+            if owner_token is None:
+                record["process_groups"] = stop(pids) if pids else []
+            else:
+                # Reuse PID/start-time-checked teardown, never kill a process
+                # group that can also contain a different controller's workers.
+                sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+                import cleanup_run_processes as cleanup
+                targets = cleanup.terminate('/unused-watchdog-token-scope', timeout=30.,
+                    command_patterns=('',), required_environment=((OWNER_TOKEN, owner_token),
+                    (f"OM_SELECTION_COST_{p['event_id']}", '1')), compact=True)
+                if not targets:
+                    continue
+                record.update(owner_token=owner_token, pids=[target.pid for target in targets],
+                              process_groups=[])
             publish(directory / "stalled.json", record)
             faults_dir = Path(faults_dir)
             faults_dir.mkdir(parents=True, exist_ok=True)
@@ -152,15 +171,20 @@ def main():
     parser.add_argument("--interval", type=float, default=60.)
     parser.add_argument("--phases", default=",".join(DEFAULT_PHASES))
     parser.add_argument("--host", default=None, help="node identity to match progress records and record faults under")
+    parser.add_argument("--owner-token", help="restrict automatic teardown to this controller's workers")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
+    if args.owner_token is not None and (len(args.owner_token) != 32
+            or any(c not in '0123456789abcdef' for c in args.owner_token)):
+        parser.error('owner token must be a nonempty UUID hex value')
     phases = tuple(p for p in args.phases.split(",") if p)
     parent = os.getppid()
     print(f"[watchdog] pid={os.getpid()} host={args.host or os.environ.get('EXPERIMENTS_NODE_ID') or socket.gethostname()} roots={[str(r) for r in args.roots]} "
           f"stall={args.stall_seconds:.0f}s phases={phases}", flush=True)
     while True:
         try:
-            scan(args.roots, args.faults_dir, host=args.host, stall_seconds=args.stall_seconds, phases=phases)
+            scan(args.roots, args.faults_dir, host=args.host, stall_seconds=args.stall_seconds, phases=phases,
+                 owner_token=args.owner_token)
         except Exception as exc:  # the watchdog must outlive one bad file
             print(f"[watchdog] scan error: {exc}", flush=True)
         if args.once or os.getppid() != parent:

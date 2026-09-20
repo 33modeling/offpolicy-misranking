@@ -193,7 +193,8 @@ runpy.run_path(str(base.ROOT / 'src' / (kind + '.py')), run_name='__main__')
             launcher = subprocess.Popen([
                 'bash', '-c', 'source "$1"; shift; selection_run_worker "$@"', 'test-launcher',
                 str(base.ROOT / 'scripts/_selection_worker.sh'), sys.executable, str(probe), str(tmp_path),
-                kind, command[1], device], env={**os.environ, 'OM_NODE_LOCK_HELD': '1'},
+                kind, command[1], device], env={**os.environ, 'OM_NODE_LOCK_HELD': '1',
+                                              'SWITCH_DATASET': 'mbpp' if kind == 'selection_switch_gpu' else 'math500'},
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
             wait_until(lambda: (tmp_path / 'worker.pid').exists() or launcher.poll() is not None)
             assert launcher.poll() is None, launcher.communicate(timeout=5)

@@ -31,6 +31,21 @@
   and interrupted curve metadata allow normal reporting resumption.
 - Lease-checked cost recovery remains; wall-clock age alone is not ownership.
   Existing checkpoints, cost ledgers, completion seals and budgets are preserved.
+- Automatic stall watchdogs now require the current controller's unique token
+  as well as the cost-event marker. A duplicate/busy controller cannot stop a
+  peer or publish a fault strike for that peer's stalled-looking metadata.
+  Scoped teardown signals identity-checked PIDs and their children, not an entire
+  process group that may contain unrelated work. The existing stall threshold
+  and train-only phase defaults are unchanged.
+
+## Log identification
+
+The shared foreground worker launcher appends `[mbpp]`, `[pair]`, or `[rloo]`
+to each worker stdout/stderr line, including `[gate] curve curve` progress.
+The actual Pair/RLOO worker takes precedence over inherited MBPP dataset flags.
+Existing leading markers stay intact for status parsers. Untagged experiments
+are unchanged. The formatter is drained before returning, does not hold node
+locks, and never replaces the real worker PID used for signal handling.
 
 ## Scope and remaining evidence
 
