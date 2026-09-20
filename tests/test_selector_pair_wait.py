@@ -157,14 +157,15 @@ def test_idle_peer_wait_cannot_be_kept_alive_by_irrelevant_or_old_metadata(tmp_p
             assert progress.exists()
 
 
-def test_fresh_relevant_nested_progress_allows_long_training_then_lock_release(tmp_path, fake_study, clock):
+@pytest.mark.parametrize('age', [0, -3600, 3600])
+def test_fresh_relevant_nested_progress_allows_long_training_then_lock_release(tmp_path, fake_study, clock, age):
     p = prepare_other_states(tmp_path, fake_study)
     _, calls, _ = fake_study
-    metadata(tmp_path, clock)
+    metadata(tmp_path, clock, age=age)
     lock = tmp_path / "development/s0-t25/.state.lock"
     with held(lock) as owner:
         def heartbeat():
-            metadata(tmp_path, clock)
+            metadata(tmp_path, clock, age=age)
             if clock.elapsed >= 240:
                 fcntl.flock(owner, fcntl.LOCK_UN)
         clock.after_sleep = heartbeat

@@ -36,6 +36,21 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def finished_meter(directory, progress):
+    event = progress.get('event_id')
+    if (progress.get('state') != 'running' or not isinstance(event, str)
+            or not event or Path(event).name != event or event in {'.', '..'}):
+        return progress
+    receipt = read(directory / 'cost-events' / f'{event}.json')
+    fields = ('event_id', 'phase', 'ledger', 'gpus', 'gpu_type', 'host')
+    if (receipt.get('state') == 'finished' and type(receipt.get('exit_code')) is int
+            and all(key in progress and key in receipt and progress[key] == receipt[key] for key in fields)
+            and all(display.switch_status.number(receipt.get(key), -1) >= 0
+                    for key in ('seconds', 'allocated_gpu_seconds', 'time'))):
+        return {**progress, 'state': 'finished' if receipt['exit_code'] == 0 else 'failed'}
+    return progress
+
+
 def observe_branch(root, seed, step, name, branch, *, ready, observations):
     role = "development" if seed in pair.DEV_SEEDS else "test"
     task = dict(seed=seed, step=step, name=name, role=role, status="READY" if ready else "WAIT",
@@ -77,10 +92,10 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
             task.update(status="WAIT", reason="이전 실행 기록; 완료 여부 미확인")
     relevant = [(updated, path, value) for updated, path, value in observations
                 if path.parent == directory or directory in path.parents]
-    fresh = [(updated, path, value) for updated, path, value in relevant if value.get("_fresh")]
+    fresh = [(updated, path, value) for updated, path, value in relevant if value.get("_active")]
     if fresh and task["status"] != "DONE":
         task.update(status="RUN", reason="", **{key: fresh[0][2].get(key) for key in
-                    ("host", "phase", "seconds", "timeout")})
+                    ("host", "phase", "seconds", "timeout", "owner_active", "heartbeat_fresh")})
     elif relevant and task["status"] == "READY":
         task.update(status="WAIT", reason="실행 신호 끊김; 확인 필요")
     return task
@@ -113,11 +128,21 @@ def snapshot(root, *, now=None):
     observations = gpu.pair_progress(root)
     nodes, activity = {}, []
     for updated, path, value in observations:
+        value.update(finished_meter(path.parent, value))
         fresh = value.get("state") == "running" and -5 <= now - updated < 60
+        event = value.get('event_id')
+        owned = (not fresh and value.get('state') == 'running' and value.get('phase') == 'curve'
+                 and isinstance(event, str) and bool(event) and Path(event).name == event
+                 and event not in {'.', '..'} and display.switch_status.meter_lease_held(path.parent))
+        if owned:
+            latest = finished_meter(path.parent, read(path))
+            owned = latest == value
         value["_fresh"] = fresh
+        value['heartbeat_fresh'], value['owner_active'] = fresh, owned
+        value['_active'] = fresh or owned
         host = str(value.get("host") or "unknown")
         node = nodes.setdefault(host, {"host": host, "current": False})
-        if not fresh:
+        if not (fresh or owned):
             continue
         node["current"] = True
         node["progress_age"] = now - updated
@@ -134,7 +159,7 @@ def snapshot(root, *, now=None):
         elif "/measurement" in relative or "/gate_measurement" in relative:
             arm = "diagnostic"
         task = {**value, "directory": relative, "seed": int(match[1]), "step": int(match[2]),
-                "kind": "phase", "arm": arm, "status": "RUNNING", "heartbeat_fresh": True,
+                "kind": "phase", "arm": arm, "status": "RUNNING", "heartbeat_fresh": fresh,
                 "training_step": display.switch_status.last_training_step(path.parent / "policy/grpo_stats.jsonl")}
         activity.append(task)
     for path in sorted((root / "queue-workers").glob("*.json")):

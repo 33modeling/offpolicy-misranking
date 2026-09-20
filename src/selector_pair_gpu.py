@@ -51,7 +51,9 @@ PRE_PAIR_WAIT_GUARD_CODE = "2a6c4dcd2fb062159f3212efb7d19f5898774e3f0d18a90953e7
 # Exact 9be50a8 pair map before the shared MBPP quarantine compatibility patch.
 PRE_SHARED_MBPP_QUARANTINE_CODE = "0894fdfe1edb03163abc02589bfd941dc8ffc5e41f000b5ef6981be74c791b5d"
 PRE_PAIR_STATUS_CODE = "ad4d1718999848103a577e2efc2ce6b1352a9c5d7f76fccdc875924c15cd57f3"
+PRE_PAIR_CURVE_PROGRESS_CODE = "456af840a1bd6f184078f9cee6b30a2c7554523fa611b1156e53ce6f49400c28"
 PRE_SHARED_RUNTIME_CODES = {
+    PRE_PAIR_CURVE_PROGRESS_CODE,
     PRE_PAIR_STATUS_CODE,
     PRE_BUDGET_STOP_EVALUATION_CODE,
     PRE_PAIR_OPERATIONS_CODE,
@@ -169,9 +171,35 @@ def pair_progress(root, states=None):
     pending = [(root / "branches" / branch / "states" / name, 0) for branch in BRANCHES for name in names]
     if states is None:
         pending.append((root / "node-preflight", 0))
-    observations, examined = [], 0
-    deadline = time.monotonic() + 2.
+    observations, examined, seen = [], 0, set()
     resolved = root.resolve()
+    # Direct meter locations must not compete with thousands of cost events or
+    # selector artifacts for the diagnostic traversal's time/entry budget.
+    for branch in BRANCHES:
+        for name in names:
+            step = name.rsplit('-t', 1)[-1]
+            point = root / 'branches' / branch / 'states' / name / 'points' / f'view-{step}'
+            directories = [point / item for item in ('curve-parent', 'measurement', 'gate_measurement')]
+            for arm in ('selection_reduced', 'selection_full', 'random_full'):
+                directories += [point / arm, point / arm / 'curve']
+            for directory in directories:
+                path = directory / 'progress.json'
+                try:
+                    if not path.resolve().is_relative_to(resolved):
+                        continue
+                    with path.open('rb') as handle:
+                        raw = handle.read(65537)
+                    if len(raw) > 65536:
+                        continue
+                    value = json.loads(raw)
+                    if not isinstance(value, dict):
+                        continue
+                    updated = core.number(value.get('updated', 0.), 'progress timestamp', 0.)
+                    observations.append((updated, path, value))
+                    seen.add(path)
+                except (OSError, ValueError, TypeError):
+                    continue
+    deadline = time.monotonic() + 2.
     while pending and examined < 2048 and len(observations) < 256 and time.monotonic() < deadline:
         directory, depth = pending.pop()
         try:
@@ -189,6 +217,8 @@ def pair_progress(root, states=None):
                             pending.append((Path(entry.path), depth + 1))
                     elif entry.name == "progress.json":
                         path = Path(entry.path)
+                        if path in seen:
+                            continue
                         try:
                             with path.open("rb") as handle:
                                 raw = handle.read(65537)
@@ -353,7 +383,8 @@ def compatible_code(recorded):
 
 def bind_startup_runtime(root, recorded):
     def reviewed_receipt(path, receipt, predecessors):
-        switch.bind_reviewed_runtime_receipt(path, receipt, {*predecessors, PRE_PAIR_STATUS_CODE})
+        switch.bind_reviewed_runtime_receipt(path, receipt, {*predecessors, PRE_PAIR_STATUS_CODE,
+                                                           PRE_PAIR_CURVE_PROGRESS_CODE})
 
     if recorded != code_hashes():
         # Preserve and validate the exact historical upgrade chain. The resource
@@ -460,11 +491,18 @@ def bind_startup_runtime(root, recorded):
                     "change": "shared Switch MBPP branch quarantine compatibility only; pair scheduling and science unchanged",
                     "cost_policy": "preserve all protocols, receipts, checkpoints, results, costs, targets and budgets; no refunds or restart",
                 }, set())
-                base.bind(root / "pair-status-runtime.json", {
+                reviewed_receipt(root / "pair-status-runtime.json", {
                     "schema": "offpolicy-selector-pair/status-runtime-v1",
                     "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                     "quarantine_runtime_sha256": base.digest(root / "shared-mbpp-quarantine-runtime.json"),
                     "change": "read-only dashboard dispatch; training and accounting unchanged",
+                }, {PRE_PAIR_CURVE_PROGRESS_CODE})
+                base.bind(root / "pair-curve-progress-runtime.json", {
+                    "schema": "offpolicy-selector-pair/curve-progress-runtime-v1",
+                    "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                    "status_runtime_sha256": base.digest(root / "pair-status-runtime.json"),
+                    "change": "prioritize known meter paths and observe peer progress without cross-host clock comparisons",
+                    "cost_policy": "preserve training, evaluations, state leases, protocols, costs and all saved work",
                 })
 
 
@@ -843,10 +881,13 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
             if len(verified) > previous_verified:
                 last_activity = time.monotonic()
             for updated, path, value in pair_progress(root, busy):
-                if (value.get("state") == "running" and -5 <= time.time()-updated < 60
-                        and updated > seen_progress.get(path, 0.)):
+                signature = (value.get("event_id"), value.get("seconds"), updated)
+                previous = seen_progress.get(path)
+                # Observe changes on this waiter's monotonic clock. A frozen
+                # stale/future timestamp never extends the deadline by itself.
+                if value.get("state") == "running" and previous is not None and signature != previous:
                     last_activity = time.monotonic()
-                    seen_progress[path] = updated
+                seen_progress[path] = signature
             remaining = idle_timeout - (time.monotonic()-last_activity)
             if remaining <= 0:
                 for name in busy[:4]:

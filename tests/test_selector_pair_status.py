@@ -217,6 +217,7 @@ def test_previous_runtime_and_receipts_are_preserved(tmp_path, monkeypatch):
         patch.setattr(gpu, "PRE_SHARED_RUNTIME_CODES", gpu.PRE_SHARED_RUNTIME_CODES - {gpu.PRE_PAIR_STATUS_CODE})
         gpu.bind_startup_runtime(tmp_path, p["code_hashes"])
     (tmp_path / "pair-status-runtime.json").unlink()
+    (tmp_path / "pair-curve-progress-runtime.json").unlink(missing_ok=True)
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     assert gpu.manifest(tmp_path) == p
     assert gpu.manifest(tmp_path) == p
@@ -224,3 +225,34 @@ def test_previous_runtime_and_receipts_are_preserved(tmp_path, monkeypatch):
     assert core.read(tmp_path / "pair-status-runtime.json")["runtime_code_hashes"] == gpu.code_hashes()
     tampered = {**previous, "scripts/run_selector_pair.sh": "unreviewed"}
     assert not gpu.compatible_code(tampered)
+
+
+@pytest.mark.parametrize('offset', [-3600, 3600])
+def test_curve_meter_is_visible_with_clock_skew_and_live_lease(tmp_path, offset):
+    prepared(tmp_path)
+    directory = branch(tmp_path) / 'curve'
+    core.atomic_json(directory / 'progress.json', {'host': 'curve-peer', 'state': 'running',
+        'phase': 'curve', 'updated': 10000 + offset, 'seconds': 200, 'timeout': 14400, 'event_id': 'curve-event'})
+    with (directory / '.cost.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(tmp_path, now=10000)
+        assert data['tasks'][0]['status'] == 'RUN'
+        assert data['tasks'][0]['owner_active'] and not data['tasks'][0]['heartbeat_fresh']
+        assert data['nodes'][0]['current']
+        output = status.render(data, width=160)
+        assert 'CURRENT RUN 1' in output and 'curve-peer' in output
+        assert '실행 신호 끊김' not in output
+    assert status.snapshot(tmp_path, now=10000)['tasks'][0]['status'] == 'WAIT'
+
+
+def test_curve_direct_read_survives_exhausted_recursive_scan(tmp_path, monkeypatch):
+    prepared(tmp_path)
+    directory = branch(tmp_path) / 'curve'
+    core.atomic_json(directory / 'progress.json', {'host': 'curve-peer', 'state': 'running',
+        'phase': 'curve', 'updated': 995, 'seconds': 200, 'timeout': 14400})
+    # Force the recursive scan's two-second deadline to expire immediately.
+    ticks = iter(range(0, 100000, 3))
+    monkeypatch.setattr(gpu.time, 'monotonic', lambda: next(ticks))
+    data = status.snapshot(tmp_path, now=1000)
+    assert data['tasks'][0]['status'] == 'RUN'
+    assert data['nodes'][0]['current']

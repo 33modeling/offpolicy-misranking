@@ -149,7 +149,11 @@ def test_pair_quarantine_compatibility_preserves_all_nine_receipts(tmp_path, mon
     assert receipt["runtime_code_hashes"] == pair.code_hashes()
     assert receipt["wait_guard_runtime_sha256"] == base.digest(tmp_path / PAIR_RECEIPTS[-1])
     if migrated:
-        assert set(files(tmp_path)) - set(before) == {tmp_path / "shared-mbpp-quarantine-runtime.json"}
+        assert set(files(tmp_path)) - set(before) == {
+            tmp_path / "shared-mbpp-quarantine-runtime.json", tmp_path / "pair-status-runtime.json",
+            tmp_path / "pair-curve-progress-runtime.json"}
+        status_receipt = core.read(tmp_path / "pair-status-runtime.json")
+        assert status_receipt["runtime_code_hashes"] == pair.code_hashes()
     after = files(tmp_path)
     assert pair.manifest(tmp_path) == frozen
     assert files(tmp_path) == after
