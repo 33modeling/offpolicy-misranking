@@ -103,3 +103,23 @@ while a changed identity/mask reopens the original console without a PID file.
 The final controller/resume regression suite passed 122 tests. This is live
 rediscovery only, not evidence authorizing cleanup of an unverified dead guard,
 nor a way to manufacture the missing canonical development result behind rc=80.
+
+## rc=80 follow-up
+
+Do not equate every dashboard REVIEW label with an unclaimable task. For example,
+a saved final policy with a missing budget_stop.json can be validated and repaired
+by the existing worker before evaluation; a parent-only stop may also still be
+evaluatable. The CPU admission shortcut therefore requires either a verified
+posthoc evaluation or the worker's existing policy_resume_blocked quarantine,
+in addition to the full task/dependency checks. Repairable REVIEW tasks are left
+to the original worker rather than prematurely returning 80.
+
+For the actual uploaded quality set, the three posthoc results remain over their
+original caps, and the two interrupted branches have unknown open-event cost,
+not proven exhausted budgets. Their inventories finish normally in the export,
+so their missing active checkpoints are not caused by truncation. Older archives
+were not inventoried by that exporter; their absence on the server is unproven.
+The old budget-accounted root's saved policy has a different protocol/contract
+and cannot be substituted into quality. No rc=80 bypass can establish these
+missing canonical inputs. Continuing with new training or relaxed conditions
+requires a separately identified recovery experiment, not relabeling old results.
