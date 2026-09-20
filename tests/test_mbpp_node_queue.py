@@ -37,12 +37,14 @@ def test_original_worker_yields_when_only_live_peer_tasks_remain(tmp_path, monke
 def test_queue_callback_is_restored_after_worker_failure(monkeypatch):
     worker = queue_worker.worker
     original = worker.wait_for_peers
+    original_fit = worker.fit_once
     def fail():
         raise RuntimeError("node failure")
     monkeypatch.setattr(worker, "main", fail)
     with pytest.raises(RuntimeError, match="node failure"):
         queue_worker.run()
     assert worker.wait_for_peers is original
+    assert worker.fit_once is original_fit
 
 
 def wait_for(predicate, timeout=30):

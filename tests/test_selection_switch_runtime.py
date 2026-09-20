@@ -88,6 +88,8 @@ import json, os, sys
 from pathlib import Path
 def wait_for_peers(*args, **kwargs):
     raise AssertionError('the node queue must own the wait')
+def fit_once(root):
+    return False
 def main():
     root = Path(os.environ['OUT_ROOT'])
     if sys.argv[1] == 'prepare':
