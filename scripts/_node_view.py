@@ -49,7 +49,7 @@ def _host_of(path, prefix, *, node_launcher=False):
 
 
 LIVE_STATES = ("RUN", "ADMIT", "WAIT", "HOLD", "COOL", "LIVE")
-STATE_ORDER = ("RUN", "ADMIT", "WAIT", "HOLD", "COOL", "LIVE", "STALE", "BLOCKED", "STOPPING", "EXITED", "GONE", "QUIET", "-")
+STATE_ORDER = ("RUN", "ADMIT", "WAIT", "HOLD", "COOL", "LIVE", "STALE", "BLOCKED", "FAILED", "STOPPING", "EXITED", "GONE", "QUIET", "-")
 # A holding or waiting launcher prints every 15s; longer silence means it is gone.
 # A launcher log alone never proves training: hosts change with every cluster
 # job, so an old "[claimed]" line is a dead host unless a task heartbeat is fresh.
@@ -65,14 +65,18 @@ def classify(last, *, node_launcher):
     """State from the last log line. In the node launcher's console an inner
     launcher's exit is just the end of one pass, not the node leaving."""
     if last.startswith("[node-launcher-exit]"):
-        return "BLOCKED" if "rc=78" in last else "EXITED"
+        match = re.search(r"\brc=(\d+)\b", last)
+        rc = int(match[1]) if match else None
+        if rc in (75, 78, 79, 80):
+            return "BLOCKED"
+        return "FAILED" if rc not in (None, 0, 130, 143) else "EXITED"
     if last.startswith("[launcher-exit]"):
         if node_launcher:
             return "LIVE"
         return "BLOCKED" if "rc=78" in last else "EXITED"
     if last.startswith(("[hold]", "[holding]")):
         return "HOLD"
-    if last.startswith("[waiting]"):
+    if last.startswith(("[waiting]", "[WAIT]", "[queue-yield]")):
         return "WAIT"
     if last.startswith("[blocked]"):
         return "BLOCKED"
@@ -92,6 +96,31 @@ def classify(last, *, node_launcher):
     if last.startswith("[stopping]"):
         return "STOPPING"
     return None
+
+
+def exit_detail(lines):
+    """Retain the current controller's cause through guard-cleanup log noise."""
+    last = _last(lines)
+    if not last.startswith(("[node-launcher-exit]", "[launcher-exit]")):
+        return ""
+    match = re.search(r"\brc=(\d+)\b", last)
+    if match is None:
+        return last
+    rc = int(match[1])
+    labels = {0: "controller exited", 75: "node busy or cleanup blocked",
+              78: "GPU admission failed", 79: "GPU fault cooldown",
+              80: "checkpoint review blocks remaining work; NOT complete",
+              130: "interrupted", 143: "terminated"}
+    reason = f"rc={rc}: {labels.get(rc, 'controller failed')}"
+    if rc in (0, 130, 143):
+        return reason
+    for line in reversed(lines[:-1]):
+        if line.startswith("[node-launcher-start]"):
+            break
+        if line.startswith(("[blocked]", "[abort]", "[storage-blocked]", "[WAIT]",
+                            "[runtime preflight failed]", "[mbpp-guard]")) or re.match(r"\w+(?:Error|Exception):", line):
+            return reason + "; " + line[:400]
+    return reason
 
 
 def hold_reason(last):
@@ -165,7 +194,8 @@ def launcher_nodes(root, tasks, *, now=None, node_namespace=None):
             item["last_age"] = age
             item["source_root"] = None if node_launcher else str(Path(root).resolve())
             item["source_log"] = str(path)
-            last = _last(_tail_lines(path))
+            lines = _tail_lines(path)
+            last = _last(lines)
             item["detail"] = last if node_namespace == "mbpp" else last[:160]
             state = classify(last, node_launcher=node_launcher)
             if state is None:
@@ -173,7 +203,7 @@ def launcher_nodes(root, tasks, *, now=None, node_namespace=None):
             elif state in LIVE_STATES and age > HEARTBEAT_GRACE:
                 state = "GONE"
             item["state"] = state
-            item["reason"] = hold_reason(last) if state == "HOLD" else ""
+            item["reason"] = hold_reason(last) if state == "HOLD" else exit_detail(lines)
     task_hosts = {str(task["host"]).rstrip("_") for task in tasks
                   if (task.get("status") in {"RUNNING", "STALE"} or task.get("heartbeat_fresh")) and task.get("host")}
     for logs, node_launcher in sources:

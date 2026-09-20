@@ -605,14 +605,20 @@ if [ -t 1 ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   offset=$(stat -c %s "$CONSOLE_LOG")
   EXPERIMENTS_DETACHED=1 setsid nohup bash "$LAUNCHER_SELF" run >> "$CONSOLE_LOG" 2>&1 < /dev/null &
   pid=$!
-  disown 2>/dev/null || true
   # Only the admitted MBPP controller publishes its guard PID. Two terminal
   # launches racing here must not replace the winner's PID with the loser's.
   if [ -z "${EXPERIMENTS_MBPP_SUITE:-}" ]; then echo "$pid" > "$PID_FILE"; fi
   echo "[detached] host=$HOST pid=$pid console=$CONSOLE_LOG"
   echo "[detached] Ctrl-C leaves the node working; stop with: bash scripts/run_experiments.sh stop"
-  tail --pid="$pid" -c +"$((offset+1))" -F "$CONSOLE_LOG" 2>/dev/null || true
-  exit 0
+  viewer_rc=0
+  tail --pid="$pid" -c +"$((offset+1))" -F "$CONSOLE_LOG" 2>/dev/null || viewer_rc=$?
+  # Closing the viewer never stops the detached controller. If the controller
+  # itself exited, preserve its failure instead of reporting successful launch.
+  [ "$viewer_rc" -eq 0 ] || exit "$viewer_rc"
+  controller_rc=0
+  wait "$pid" || controller_rc=$?
+  printf '[detached-exit] host=%s pid=%s rc=%s console=%s\n' "$HOST" "$pid" "$controller_rc" "$CONSOLE_LOG"
+  exit "$controller_rc"
 fi
 if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "${MBPP_GUARD_PID:-}" != "$PPID" ]; then
   exec "$PY" scripts/_mbpp_node_guard.py \

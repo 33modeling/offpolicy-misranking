@@ -123,6 +123,16 @@ experiment/remark text wraps inside its own column. If the terminal is too
 narrow for a full node name and useful work columns, the complete node name
 appears above its aligned work row instead of being truncated or mixed into
 other columns.
+Unassigned nodes do not all mean `WAIT`: `CHECK` is pre-task validation or
+queue inspection, `ADMIT` is device admission, `COOL` is GPU-fault cooldown,
+and `BLOCK` / `FAIL` / `EXIT` show blocked, failed or exited controllers.
+The Remarks column preserves the controller exit code and the most recent
+failure reason even when cleanup messages follow it. Code 80 means remaining
+work requires checkpoint review; it is not experiment completion. The compact
+`why` attachment preserves this exit reason as well.
+When an interactive launch's detached controller exits, the launcher now returns
+that actual exit code instead of unconditional success. Closing the log viewer
+still leaves the controller and its workers running.
 `status --all` adds exact roots and individual task states;
 `status quality --watch 5` watches only **On-policy · 선택비용 별도**.
 This is read-only and does not restart training. The generic

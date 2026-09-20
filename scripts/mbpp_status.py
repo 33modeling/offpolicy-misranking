@@ -298,10 +298,22 @@ def render_nodes(data, *, width, all_nodes=False):
                              "RUN", percent, '; '.join(details) or '-'])
         else:
             detail = {"WAIT": "작업 배정 대기", "HOLD": "작업 배정 대기", "ADMIT": "장치 점검 중",
-                      "COOL": "장치 오류 후 대기", "LIVE": "작업 배정 확인 중",
+                      "COOL": "장치 오류 후 대기", "LIVE": "작업 시작 전 검증 중",
+                      "BLOCKED": "작업 차단; 실험 미완료", "FAILED": "실행 실패; 실험 미완료",
+                      "STOPPING": "실행 종료 처리 중",
                       "STALE": "실행 신호 끊김", "UNKNOWN": "배정 확인 안 됨",
                       "EXITED": "실행 종료", "GONE": "오래된 실행 기록"}.get(node["state"], "배정 확인 안 됨")
-            rows.append([f"{index}.", node['host'], "배정 없음", "WAIT", "-", detail])
+            state = {"HOLD": "WAIT", "LIVE": "CHECK", "UNKNOWN": "CHECK", "-": "CHECK",
+                     "BLOCKED": "BLOCK", "FAILED": "FAIL", "EXITED": "EXIT", "STOPPING": "STOP"}.get(node["state"], node["state"])
+            if node["state"] in {"BLOCKED", "FAILED", "EXITED"} and node.get("reason"):
+                detail += "; " + node["reason"]
+            elif node["state"] == "LIVE":
+                last = node.get("detail", "")
+                if last.startswith(("[recover-cost]", "[sweep ")):
+                    detail = "비용·저장 기록 확인 중; 아직 작업 미배정"
+                elif last.startswith(("[dispatch]", "[dispatch-task]", "[pass ", "[queue]")):
+                    detail = "실행 가능한 작업 검색 중; 아직 작업 미배정"
+            rows.append([f"{index}.", node['host'], "배정 없음", state, "-", detail])
     headers = ["#", "Node", "Experiment", "Status", "Progress", "Remarks"]
     number_width = max([columns(headers[0]), *(columns(row[0]) for row in rows)])
     node_width = max([columns(headers[1]), *(columns(row[1]) for row in rows)])

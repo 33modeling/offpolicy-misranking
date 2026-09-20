@@ -13,6 +13,7 @@ from pathlib import Path
 from selection_switch_errors import log_tail, utc_time
 from _nccl_diagnostics import original_warnings
 from _status_summary import accounting_label, gate_label, mbpp_suite_label, selector_label
+from _node_view import exit_detail
 
 MAX_BYTES = 16 * 1024
 ROOT_BYTES = 4000
@@ -272,6 +273,14 @@ def root_summary(root):
     return clipped('\n'.join(lines), ROOT_BYTES - len(original.encode('utf-8')) - 1) + '\n' + original
 
 
+def controller_exit(work, path):
+    try:
+        checked(work, path)
+        return exit_detail(log_tail(path, 250).splitlines())
+    except (OSError, ValueError):
+        return ''
+
+
 def report(work, roots):
     try:
         commit = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
@@ -282,7 +291,18 @@ def report(work, roots):
         f'checkout={commit or "unknown"} (running workers may use an older snapshot)\n'
         'Limit: 16 KiB. Only latest failures and short log tails; no rollouts, model data or full cost ledgers.')]
     logs = recent(work, ('runs/experiments/logs/console.mbpp.*.log',))
-    nodes = [f'\nNODE {path.name}\n{tail(work, path, 1400)}' for path in logs[:2]]
+    reasons = {path: controller_exit(work, path) for path in logs[:20]}
+    # Active workers update logs every few seconds. Reserve a slot for the
+    # latest failed controller so their healthy tails cannot hide its exit.
+    failed = next((path for path in logs[:20]
+                   if reasons[path] and not re.match(r'rc=(?:0|130|143):', reasons[path])), None)
+    selected = ([failed] if failed else [])
+    selected += [path for path in logs if path not in selected][:2-len(selected)]
+    nodes = []
+    for path in selected:
+        reason = reasons.get(path, '')
+        nodes.append(f'\nNODE {path.name}\n' + (f'EXIT {clipped(reason, 650)}\n' if reason else '')
+                     + tail(work, path, 1400))
     cleanup_logs = recent(work, ('runs/experiments/logs/cleanup.mbpp.*.log',))
     nodes.extend(f'\nCLEANUP {path.name}\n{tail(work, path, 1600)}' for path in cleanup_logs[:1])
     reserved = len(('\n'.join([sections[0], *nodes]) + '\n').encode('utf-8'))
