@@ -61,7 +61,7 @@ def process_label(proc, pid):
     # Do not copy full argv or environ: either could contain unrelated secrets.
     words = read_small(proc / str(pid) / 'cmdline').decode(errors='replace').split('\0')
     for index, word in enumerate(words):
-        if Path(word).name in {'selector_pair_gpu.py', 'run_selector_pair.sh'}:
+        if Path(word).name in {'selector_pair_gpu.py', 'queue_selector_pair_gpu.py', 'run_selector_pair.sh'}:
             following = words[index + 1] if index + 1 < len(words) else ''
             modes = {'run', 'develop', 'test', 'freeze', 'prepare', 'ensure-prepared',
                      'init', 'fit', 'report', 'status', 'check-code', 'check-running'}

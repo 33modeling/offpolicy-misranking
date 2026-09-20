@@ -116,10 +116,14 @@ def phases(directory):
     # The branch ledger, plus the curve/ sub-ledger where archived-checkpoint curve
     # evaluations are metered (the parent point's curve lives in the state's curve-parent/).
     for path in (directory / "cost.jsonl", directory / "curve" / "cost.jsonl"):
-        if not path.exists():
+        try:
+            lines = path.read_text().splitlines()
+        except (OSError, ValueError, RuntimeError):
+            # A damaged ledger must not hide another branch's measured rewards.
+            # ledger_coverage keeps its total unknown, never a certified zero.
             continue
         seen = set()
-        for line in path.read_text().splitlines():
+        for line in lines:
             if not line.strip():
                 continue
             try:
@@ -144,12 +148,12 @@ def finite_cost(value):
 
 def ledger_coverage(directory):
     """Read-only completeness check, not recovery or result-seal certification."""
-    if not (directory / "cost.jsonl").is_file():
-        return "unknown: branch ledger missing"
     any_event = False
     try:
+        if not (directory / "cost.jsonl").is_file():
+            return "unknown: branch ledger missing"
         for path in (directory / "cost.jsonl", directory / "curve/cost.jsonl"):
-            if not path.exists():
+            if not path.exists() and not path.is_symlink():
                 continue
             events = {}
             for line in path.read_text().splitlines():
@@ -170,7 +174,7 @@ def ledger_coverage(directory):
                         or any(start.get(key) != finish.get(key) for key in ("ledger", "phase"))
                         or not isinstance(finish.get("ledger"), str) or not isinstance(finish.get("phase"), str)):
                     return "unknown: invalid cost event"
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError):
         return "unknown: unreadable cost ledger"
     return "closed events" if any_event else "unknown: empty cost ledger"
 

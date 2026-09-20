@@ -13,12 +13,21 @@ selection_stop_worker() {
 }
 
 selection_run_worker() {
-  local tag= argument log_fd
+  local tag= argument log_fd worker_repo
+  local worker_argv=("$@")
+  worker_repo=$(realpath -m "$(dirname "${BASH_SOURCE[0]}")/..")
+  if [ "$#" -eq 5 ] && [ "$4" = --root ] \
+      && [[ "${1##*/}" = python* ]] \
+      && [ "$(realpath -m "$2")" = "$worker_repo/src/selector_pair_gpu.py" ]; then
+    case "$3" in
+      run|develop|test|freeze) worker_argv[1]="$worker_repo/scripts/queue_selector_pair_gpu.py" ;;
+    esac
+  fi
   # Inspect the actual worker before inherited dataset settings: Pair can use
   # MBPP data without being the MBPP switch experiment.
-  for argument in "$@"; do
+  for argument in "${worker_argv[@]}"; do
     case "$argument" in
-      */selector_pair_gpu.py) tag=pair; break ;;
+      */selector_pair_gpu.py|*/queue_selector_pair_gpu.py) tag=pair; break ;;
       */queue_rloo.py|*/rloo_experiment.py) tag=rloo; break ;;
     esac
   done
@@ -40,11 +49,11 @@ selection_run_worker() {
     # output on both success and signal shutdown, without inheriting node locks.
     exec {log_fd}> >(trap '' INT TERM; exec 7>&- 8>&-; exec sed -u "/\\[$tag\\]$/!s/$/ [$tag]/")
     SELECTION_LOG_PID=$!
-    "$@" 7>&- 8>&- >&"$log_fd" 2>&1 {log_fd}>&- &
+    "${worker_argv[@]}" 7>&- 8>&- >&"$log_fd" 2>&1 {log_fd}>&- &
     CHILD=$!
     exec {log_fd}>&-
   else
-    "$@" 7>&- 8>&- &
+    "${worker_argv[@]}" 7>&- 8>&- &
     CHILD=$!
   fi
   if [ "$STOP_STATUS" -ne 0 ]; then

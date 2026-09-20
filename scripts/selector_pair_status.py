@@ -88,7 +88,11 @@ def progress_records(root):
                     paths.add(directory / 'progress.json')
                     paths.add(directory / 'curve/progress.json')
                     paths.update((directory / 'curve').glob('*/progress.json'))
-    found = {path: value for _, path, value in gpu.pair_progress(root)}
+    try:
+        found = {path: value for _, path, value in gpu.pair_progress(root)}
+    except (OSError, ValueError, RuntimeError):
+        # A damaged legacy scan path must not hide the known meter locations.
+        found = {}
     for path in paths:
         value = read(path)
         if value and not value.get('_error'):

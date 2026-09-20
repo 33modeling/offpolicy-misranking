@@ -213,3 +213,46 @@ def test_budget_mode_cost_display_counts_selection_without_claiming_matched_trai
     assert "training allocation matched" not in text
     assert "scoring=20000.000 training=28000.000" in text
     assert "branch_total_incl_reporting=48004.000 diagnostic_charge=0.000 action_total_with_diagnostic=48004.000" in text
+
+
+@pytest.mark.parametrize("ledger", ["cost.jsonl", "curve/cost.jsonl"])
+@pytest.mark.parametrize("damage", ["encoding", "directory", "cycle", "dangling"])
+def test_unreadable_cost_preserves_measured_siblings_and_unknown_total(tmp_path, ledger, damage):
+    core.atomic_json(tmp_path / "switch.json", {"dataset": "mbpp", "accounting": "matched"})
+    damaged = branch(tmp_path, "s0-t25", "selection_reduced", rewards=[.25], updates=50)
+    healthy = branch(tmp_path, "s0-t25", "random_reduced", rewards=[.5], updates=50)
+    path = damaged / ledger
+    path.parent.mkdir(exist_ok=True)
+    path.unlink(missing_ok=True)
+    if damage == "encoding":
+        path.write_bytes(b"\xff")
+    elif damage == "directory":
+        path.mkdir()
+    else:
+        path.symlink_to(path.name if damage == "cycle" else "missing-ledger")
+    healthy_bytes = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in healthy.rglob("*") if p.is_file()}
+    text = result_text(tmp_path)
+    assert "selection_reduced  " in text and "reward= 25.00" in text
+    assert "random_reduced     reward= 50.00" in text
+    assert "selection_reduced-random_reduced=-25.00" in text
+    detail = text.split("s0/t25   selection_reduced", 1)[1].split("    COST PATH", 1)[0]
+    assert "branch_total_incl_reporting=unknown" in detail and "coverage=unknown:" in detail
+    assert healthy_bytes == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in healthy.rglob("*") if p.is_file()}
+
+
+def test_permission_denied_cost_does_not_hide_other_ledgers(tmp_path, monkeypatch):
+    from switch_results import compact_cost, ledger_coverage, phases
+    directory = branch(tmp_path, "s0-t25", "selection_reduced", rewards=[.25], updates=50)
+    cost_event(directory / "curve", "curve", "curve", 10)
+    path = directory / "cost.jsonl"
+    read_text = Path.read_text
+
+    def denied(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("test unreadable ledger")
+        return read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    assert phases(directory) == {("reporting", "curve"): 40}
+    assert ledger_coverage(directory) == "unknown: unreadable cost ledger"
+    assert compact_cost(directory)["total"] is None

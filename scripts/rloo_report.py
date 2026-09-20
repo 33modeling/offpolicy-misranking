@@ -174,12 +174,12 @@ def reporting_experiment():
 experiment = reporting_experiment()
 
 
-def point_report(out):
+def point_report(out, *, allow_partial=False):
     # Nested policy/shard validation retains every scientific hash check but
     # only needs one display-dependency scan per point, not one per check.
     token = _display_isolation.set({})
     try:
-        return _point_report(out)
+        return _point_report(out, allow_partial=allow_partial)
     finally:
         _display_isolation.reset(token)
 
@@ -209,32 +209,48 @@ def cost_ledger(path):
         return {"status": "unreadable", "error": str(exc), "events": []}
 
 
-def _point_report(out):
+def arm_evaluation(out, arm, c):
+    rewards = [[] for _ in range(c["eval_n"])]
+    completed_shards = []
+    for shard in range(4):
+        if not (out / arm / "evaluation" / f"shard-{shard}.done.json").is_file():
+            continue
+        # Only sealed shards count; live rollout files are not evidence.
+        for row in experiment.checked_rows(out, arm, shard):
+            rewards[row["prompt_idx"]].append(row["reward"])
+        completed_shards.append(shard)
+    measured = {str(i): float(np.mean(r)) for i, r in enumerate(rewards) if r}
+    return {
+        "arm": arm, "complete": len(completed_shards) == 4,
+        "completed_shards": completed_shards,
+        "missing_shards": [s for s in range(4) if s not in completed_shards],
+        "measured_prompts": len(measured), "expected_prompts": c["eval_n"],
+        "prompt_rewards": measured,
+        "observed_mean_reward": float(np.mean(list(measured.values()))) if measured else None,
+        "cost_ledger": cost_ledger(out / arm / "cost.jsonl"),
+    }
+
+
+def _point_report(out, *, allow_partial=False):
     c, _ = experiment.validate(out)
     values, evaluations = {}, []
     for arm in ("before", *experiment.ARMS):
-        rewards = [[] for _ in range(c["eval_n"])]
-        completed_shards = []
-        for shard in range(4):
-            if not (out / arm / "evaluation" / f"shard-{shard}.done.json").is_file():
-                continue
-            # Only sealed shards count; live rollout files are not evidence.
-            for row in experiment.checked_rows(out, arm, shard):
-                rewards[row["prompt_idx"]].append(row["reward"])
-            completed_shards.append(shard)
-        measured = {str(i): float(np.mean(r)) for i, r in enumerate(rewards) if r}
-        complete = len(completed_shards) == 4
-        if complete:
-            values[arm] = np.array([measured[str(i)] for i in range(c["eval_n"])])
-        costs = cost_ledger(out / arm / "cost.jsonl")
-        evaluations.append({
-            "arm": arm, "complete": complete, "completed_shards": completed_shards,
-            "missing_shards": [s for s in range(4) if s not in completed_shards],
-            "measured_prompts": len(measured), "expected_prompts": c["eval_n"],
-            "prompt_rewards": measured,
-            "observed_mean_reward": float(np.mean(list(measured.values()))) if measured else None,
-            "cost_ledger": costs,
-        })
+        try:
+            evaluation = arm_evaluation(out, arm, c)
+            if evaluation["complete"]:
+                values[arm] = np.array([evaluation["prompt_rewards"][str(i)] for i in range(c["eval_n"])])
+        except (ValueError, OSError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as exc:
+            if not allow_partial:
+                raise
+            # Arm-local damage is not permission to relax the shared contract.
+            experiment.validate(out)
+            evaluation = {"arm": arm, "complete": False, "status": "invalid", "error": str(exc),
+                          "completed_shards": [], "missing_shards": list(range(4)),
+                          "measured_prompts": 0, "expected_prompts": c["eval_n"],
+                          "prompt_rewards": {}, "observed_mean_reward": None}
+        evaluations.append(evaluation)
+    if allow_partial:
+        experiment.validate(out)
     rows = []
     for arm in experiment.ARMS:
         if arm not in values:
@@ -249,10 +265,12 @@ def _point_report(out):
             row["vs_" + reference] = {"mean": float(delta.mean()), "lower": lo, "upper": hi}
         rows.append(row)
     missing = [e["arm"] for e in evaluations if not e["complete"]]
+    invalid = [e["arm"] for e in evaluations if e.get("status") == "invalid"]
     return {"seed": c["source"]["seed"], "drift": c["source"]["drift"],
             "experiment_sha256": experiment.ed.digest(out / "experiment.json"),
             "report_display_code_changes": display_changes(c.get("code_hashes", {})),
-            "status": "incomplete" if missing else "complete", "missing_arms": missing,
+            "status": "invalid" if invalid else "incomplete" if missing else "complete",
+            "missing_arms": missing, "invalid_arms": invalid,
             "rows": rows, "evaluations": evaluations}
 
 
@@ -267,7 +285,7 @@ def report(root):
             point["status"] = "unprepared"
         else:
             try:
-                point.update(point_report(out))
+                point.update(point_report(out, allow_partial=True))
             except (ValueError, OSError, KeyError, TypeError, AttributeError, RuntimeError, ImportError) as exc:
                 point.update(status="invalid", error=str(exc), code_diagnostics=code_diagnostics(out))
         points.append(point)

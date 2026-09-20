@@ -70,7 +70,8 @@ def verify_owner(proc, pid, root, repo):
     # an unrelated program that merely mentions selector_pair_gpu.py.
     if (len(words) != 5 or words[2] not in {'run', 'develop', 'test', 'freeze'}
             or words[3] != '--root'
-            or (value['cwd'] / words[1]).resolve() != repo / 'src/selector_pair_gpu.py'
+            or (value['cwd'] / words[1]).resolve() not in {
+                repo / 'src/selector_pair_gpu.py', repo / 'scripts/queue_selector_pair_gpu.py'}
             or (value['cwd'] / words[4]).resolve() != root):
         raise RuntimeError('lock owner does not match this Pair root, checkout and running stage')
     value['mode'] = words[2]
