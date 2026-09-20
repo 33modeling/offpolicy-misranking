@@ -159,6 +159,8 @@ def launcher(tmp_path):
         'import json, os, sys\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
         'open(os.environ["CHECK_LOG"], "a").write("checked\\n")\n'
         'open(os.environ["CHECK_ARGS"], "a").write(json.dumps(sys.argv[1:]) + "\\n")\n')
+    (scripts / "mbpp_queue_readiness.py").write_text(
+        'import os\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n')
     (scripts / "check_mbpp_storage.sh").write_text(
         '#!/usr/bin/env bash\n"$TEST_PYTHON" - "$@" <<\'PY\'\n'
         'import json, os, sys\n'

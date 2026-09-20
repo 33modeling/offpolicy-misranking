@@ -129,6 +129,13 @@ mbpp_queue_run() (
     return 0
   fi
   mbpp_queue_check "$MBPP_SUITE" || return 1
+  # Historical failures and completed posthoc evaluations must not trigger
+  # another four-rank admission when no canonical task can make progress.
+  if [ -f "$MBPP_ROOT/switch.json" ]; then
+    local python=${PY:-${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}}
+    [ -x "$python" ] || python=python3
+    CUDA_VISIBLE_DEVICES='' "$python" scripts/mbpp_queue_readiness.py --root "$MBPP_ROOT" || return $?
+  fi
   unset SWITCH_ONLY_SEEDS SWITCH_ONLY_ARMS SWITCH_BUDGET_GPU_SECONDS OM_NODE_LOCK_HELD SWITCH_RUNTIME_REPO
   [ -z "$MBPP_BUDGET" ] || export SWITCH_BUDGET_GPU_SECONDS="$MBPP_BUDGET"
   export SWITCH_ROOT="$MBPP_ROOT" SWITCH_PREFIX_SOURCE="$MBPP_PREFIX" SWITCH_DATASET=mbpp

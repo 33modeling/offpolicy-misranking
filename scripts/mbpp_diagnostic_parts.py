@@ -1,8 +1,10 @@
 """Read-only MBPP metadata export split into upload-sized UTF-8 text files."""
 
 import json
+import fcntl
 import re
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import mbpp_failure_summary as summary
@@ -12,6 +14,8 @@ import mbpp_failure_summary as summary
 PART_BYTES = 1_900_000
 MAX_PARTS = 3
 LOG_BYTES = 8 * 1024
+ADMISSION_LIMIT = 8
+ADMISSION_BYTES = 16 * 1024
 ARMS = {'selection_reduced', 'random_reduced', 'selection_full', 'random_full', 'gated'}
 POLICY_FILES = ('adapter_config.json', 'adapter_model.safetensors', 'optimizer.pt',
                 'grpo_stats.jsonl', 'checkpoint_state.json', 'policy_train.json', 'budget_stop.json')
@@ -67,15 +71,56 @@ def log_excerpt(root, path):
         yield f'LOG ERROR {exc}\n'
 
 
+def lease_record(root, path):
+    try:
+        summary.checked(root, path)
+        with path.open('rb') as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                state = 'held'
+            else:
+                state = 'free-at-probe'
+                fcntl.flock(handle, fcntl.LOCK_UN)
+    except FileNotFoundError:
+        state = 'missing'
+    except (OSError, ValueError) as exc:
+        state = f'unknown: {exc}'
+    return f'LEASE {path.relative_to(root)} {state} (observation only, not owner identity)\n'
+
+
+def phase_logs(root, directory):
+    summary.checked(root, directory)
+    progress = summary.record(root, directory / 'progress.json')
+    failure = summary.record(root, directory / 'failure.json')
+    phase = progress.get('phase') or failure.get('phase')
+    pattern = f'{phase}-*.log' if isinstance(phase, str) and re.fullmatch(r'[\w-]+', phase) else '*.log'
+    return [(root, path) for path in summary.recent(directory, (pattern,))[:4]]
+
+
 def sections(work, roots):
     inventories, worker_logs, admissions = [], [], []
     yield ('MBPP DIAGNOSTIC DETAILS\nREAD-ONLY. No training, repair or lock creation.\n'
+           f'UTC {datetime.now(timezone.utc).isoformat(timespec="seconds")}\n'
            'No model/optimizer/rollout payloads. Presence is NOT hash/lineage validation.\n'
-           'Branch blockers first, inventories and logs afterward; not only two recent failures.\n'
+           'Recent controller exits first, then all branch blockers; historical admissions are sampled last.\n'
            'JSON reads limited to 1 MiB each; oversize/unreadable records show errors.\n'
            'Log excerpts are bounded; this is not an atomic snapshot of live workers.\n'
            'At most 3 files of 1,900,000 bytes; any total-limit omission is explicitly marked.\n'
            'Existing project text also counts toward the Overleaf 7 MB total limit.\n')
+    yield '\nRECENT CONTROLLER AND CLEANUP LOGS\n'
+    for pattern in ('runs/experiments/logs/console.mbpp.*.log', 'runs/experiments/logs/cleanup.mbpp.*.log'):
+        logs = summary.recent(work, (pattern,))
+        exits = {path: summary.controller_exit(work, path) for path in logs[:20]}
+        failed = next((path for path in logs[:20]
+                       if exits[path] and not re.match(r'rc=(?:0|130|143):', exits[path])), None)
+        selected = [failed] if failed else []
+        selected += [path for path in logs if path not in selected][:12-len(selected)]
+        yield f'LOG SET {pattern}: total={len(logs)}; at most 12 recent logs, including latest failure among newest 20\n'
+        for path in selected:
+            if exits.get(path):
+                yield f'CONTROLLER EXIT {path.name} {summary.clipped(exits[path], 650)}\n'
+            yield from log_excerpt(work, path)
     for root in roots:
         yield f'\nROOT {root}\n'
         if not root.is_dir():
@@ -100,6 +145,26 @@ def sections(work, roots):
                              'budget-recovery/progress.json'):
                     path = directory / name
                     yield metadata(root, path) if path.exists() else f'MISSING {path.relative_to(root)}\n'
+                yield lease_record(root, directory / '.task.lock')
+                yield lease_record(root, directory / '.cost.lock')
+                nested = {path.parent for name in ('progress.json', 'failure.json')
+                          for path in directory.glob(f'**/{name}')}
+                for phase_directory in sorted(nested):
+                    if phase_directory == directory or any(
+                        part.startswith('discarded') for part in phase_directory.relative_to(directory).parts
+                    ):
+                        continue
+                    try:
+                        summary.checked(root, phase_directory)
+                    except (OSError, ValueError) as exc:
+                        yield f'PHASE ERROR {phase_directory.relative_to(root)}: {exc}\n'
+                        continue
+                    for name in ('progress.json', 'failure.json'):
+                        path = phase_directory / name
+                        if path.exists():
+                            yield metadata(root, path)
+                    yield lease_record(root, phase_directory / '.cost.lock')
+                    worker_logs.extend(phase_logs(root, phase_directory))
                 for name, keys in (
                     ('result.json', ('complete', 'completed_steps', 'stop_reason', 'used_gpu_seconds', 'budget_gpu_seconds')),
                     ('curve.json', ('result_sha256',)),
@@ -110,33 +175,28 @@ def sections(work, roots):
                     path = directory / name
                     yield metadata(root, path, keys) if path.exists() else f'MISSING {path.relative_to(root)}\n'
                 inventories.append((root, directory / 'policy'))
-                progress = summary.record(root, directory / 'progress.json')
-                phase = progress.get('phase')
-                if isinstance(phase, str) and re.fullmatch(r'[\w-]+', phase):
-                    for path in summary.recent(directory, (f'{phase}-*.log',))[:4]:
-                        worker_logs.append((root, path))
+                worker_logs.extend(phase_logs(root, directory))
             except (OSError, ValueError) as exc:
                 yield f'BRANCH ERROR {exc}\n'
         for path in sorted(root.glob('prefixes/seed-*/segment-*/failure.json')):
             yield metadata(root, path)
         for path in sorted(root.glob('states/*/failure.json')):
             yield metadata(root, path)
-        for path in sorted(root.glob('node-preflight/*/admission.json')):
-            admissions.append((root, path))
+        paths = summary.recent(root, ('node-preflight/*/admission.json',))
+        yield f'ADMISSION HISTORY total={len(paths)}; latest {ADMISSION_LIMIT} records only; older records omitted\n'
+        admissions.extend((root, path) for path in paths[:ADMISSION_LIMIT])
+    yield '\nWORKER ERROR EXCERPTS\n'
+    for root, path in worker_logs:
+        yield f'ROOT {root}\nERROR EXCERPT {path.relative_to(root)} (bounded log context)\n'
+        yield summary.error_excerpt(root, path) + '\n'
     yield '\nCHECKPOINT INVENTORIES\n'
     for root, policy in inventories:
         yield f'ROOT {root}\n'
         yield from policy_inventory(root, policy)
-    yield '\nADMISSIONS AND LOGS (lower priority than branch blockers)\n'
+    yield '\nRECENT ADMISSIONS (bounded historical sample)\n'
     for root, path in admissions:
         yield f'ROOT {root}\n'
-        yield metadata(root, path)
-    for root, path in worker_logs:
-        yield f'ROOT {root}\nERROR EXCERPT {path.relative_to(root)} (bounded log context)\n'
-        yield summary.error_excerpt(root, path) + '\n'
-    for pattern in ('runs/experiments/logs/console.mbpp.*.log', 'runs/experiments/logs/cleanup.mbpp.*.log'):
-        for path in sorted(work.glob(pattern)):
-            yield from log_excerpt(work, path)
+        yield summary.clipped(metadata(root, path), ADMISSION_BYTES) + '\n'
 
 
 def write_parts(chunks, destination):

@@ -127,3 +127,74 @@ def test_repeated_holding_is_condensed_without_losing_exit(tmp_path):
     text = ''.join(parts.log_excerpt(tmp_path, path))
     assert text.count('[holding]') == 1
     assert 'rc=80' in text and 'missing checkpoint' in text and 'Collapsed 100' in text
+
+
+def test_admission_history_cannot_bury_current_exit_or_another_root(tmp_path):
+    import os
+
+    roots = [tmp_path / 'runs/quality', tmp_path / 'runs/difficulty']
+    for root in roots:
+        for index in range(12):
+            path = root / f'node-preflight/node-{index}/admission.json'
+            core.atomic_json(path, {'state': 'passed', 'index': index, 'detail': 'historical' * 10000})
+            os.utime(path, (index + 1, index + 1))
+    log = tmp_path / 'runs/experiments/logs/console.mbpp.node.log'
+    log.parent.mkdir(parents=True)
+    log.write_text('[node-launcher-exit] rc=80\n')
+    paths = parts.write_parts(parts.sections(tmp_path, roots), tmp_path / 'reports')
+    text = joined(paths)
+    assert 'EXPORT LIMIT' not in text
+    assert text.index('rc=80') < text.index('RECENT ADMISSIONS')
+    assert text.count('ADMISSION HISTORY total=12') == 2
+    assert text.count('FILE node-preflight/') == 2 * parts.ADMISSION_LIMIT
+    assert text.count('FILE node-preflight/node-11/') == 2
+    assert 'FILE node-preflight/node-0/' not in text
+
+
+def test_nested_curve_lease_evidence_is_exported_without_creating_locks(tmp_path):
+    import fcntl
+
+    branch = tmp_path / 'states/s2-t50/points/view-50/selection_reduced'
+    core.atomic_json(branch / 'curve/progress.json', {'event_id': 'phase', 'state': 'running'})
+    with (branch / 'curve/.cost.lock').open('w') as lease:
+        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        text = ''.join(parts.sections(tmp_path, [tmp_path]))
+        assert 'FILE states/s2-t50/points/view-50/selection_reduced/curve/progress.json' in text
+        assert 'curve/.cost.lock held' in text
+    assert not (branch / '.task.lock').exists()
+    assert '.task.lock missing' in text
+
+
+@pytest.mark.parametrize('phase_path', ['curve/step-90', 'budget-recovery/curve/step-90'])
+@pytest.mark.parametrize('has_progress', [False, True])
+def test_nested_phase_failures_and_bounded_logs_are_exported(tmp_path, phase_path, has_progress):
+    import os
+
+    root = tmp_path / 'root'
+    branch = root / 'states/s2-t50/points/view-50/selection_reduced'
+    phase = branch / phase_path
+    core.atomic_json(phase / 'failure.json', {'phase': 'evaluate', 'error': 'NESTED_FAILURE'})
+    if has_progress:
+        core.atomic_json(phase / 'progress.json', {'phase': 'evaluate', 'state': 'failed'})
+    for index in range(6):
+        path = phase / f'evaluate-{index}.log'
+        path.write_text(f'NESTED_LOG_{index}\n' * 1000)
+        os.utime(path, (index + 1, index + 1))
+    for name in ('discarded', 'discarded-old'):
+        discarded = branch / name / 'curve'
+        core.atomic_json(discarded / 'failure.json', {'error': 'DISCARDED_FAILURE'})
+        (discarded / 'evaluate-0.log').write_text('DISCARDED_LOG')
+    outside = tmp_path / 'outside'
+    core.atomic_json(outside / 'failure.json', {'error': 'PRIVATE_FAILURE'})
+    (outside / 'evaluate-0.log').write_text('PRIVATE_LOG')
+    (phase / 'evaluate-9.log').symlink_to(outside / 'evaluate-0.log')
+    (branch / 'external-phase').symlink_to(outside, target_is_directory=True)
+    paths = parts.write_parts(parts.sections(tmp_path, [root]), tmp_path / 'reports')
+    text = joined(paths)
+    assert 'NESTED_FAILURE' in text
+    assert text.count(f'ERROR EXCERPT states/s2-t50/points/view-50/selection_reduced/{phase_path}/') == 4
+    assert 'NESTED_LOG_5' in text and 'NESTED_LOG_2' in text
+    assert 'NESTED_LOG_0' not in text and 'NESTED_LOG_1' not in text
+    assert 'DISCARDED_FAILURE' not in text and 'DISCARDED_LOG' not in text
+    assert 'PRIVATE_FAILURE' not in text and 'PRIVATE_LOG' not in text
+    assert len(text.encode()) < 10000

@@ -80,6 +80,9 @@ def cluster(tmp_path):
         '#!/usr/bin/env bash\nexit "${TEST_AUDIT_EXIT:-0}"\n')
     for name in ("recover_selection_switch_cost.py", "waive_stalled_attempts.py", "split_curve_ledger.py"):
         (scripts / name).write_text("pass\n")
+    (scripts / "mbpp_queue_readiness.py").write_text(
+        'import os, sys\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'sys.exit(int(os.environ.get("TEST_READINESS_RC", "0")))\n')
     (scripts / "check_mbpp_experiments.py").write_text(
         'import os, sys\nfrom pathlib import Path\n'
         'assert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
@@ -210,6 +213,16 @@ def test_blocked_storage_audit_never_enters_node_controller(cluster, mode):
     assert '[fake-check]' not in log.read_text()
     assert events(work) == []
     assert not (work / 'runs/experiments').exists()
+
+
+def test_review_only_readiness_exits_before_any_gpu_worker(cluster):
+    work, start = cluster
+    publish_prefixes(work / 'runs/selection-switch-mbpp-quality-v1')
+    process, log = start('node-review-only', TEST_READINESS_RC='80')
+    assert process.wait(timeout=15) == 80, log.read_text()
+    assert events(work) == []
+    assert 'checkpoint-review branches remain' in log.read_text()
+    assert '[holding]' not in log.read_text()
 
 
 def test_two_nodes_and_a_replacement_resume_a_killed_owner_without_duplicate_results(cluster):
