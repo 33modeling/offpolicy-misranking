@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from datetime import datetime, timezone
+import fcntl
 import hashlib
 import json
 import math
@@ -37,6 +38,23 @@ CELLS = {"DONE": "DONE", "RUNNING": "RUN", "READY": "READY", "WAIT": "WAIT",
 
 def number(value, default=0.):
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else default
+
+
+def meter_lease_held(directory):
+    """Probe an existing meter lease read-only; never create or repair a lock."""
+    path = directory / ".cost.lock"
+    try:
+        if not path.resolve().is_relative_to(directory.resolve()):
+            return False
+        with path.open('rb') as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(handle, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    return False
 
 
 def short_error(value):
@@ -193,18 +211,31 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                     "seconds": receipt["seconds"], "updated": receipt["time"]}
         return progress
 
+    def activity(directory, progress):
+        age = now-number(progress.get("updated"), -1e30)
+        fresh = progress.get("state") == "running" and -5 <= age < 60
+        event = progress.get("event_id")
+        owned = False
+        # Remote wall clocks are not a liveness test. A held meter lease keeps
+        # a curve visible, but does not certify fresh heartbeat or forward progress.
+        if (not fresh and manifest.get("dataset") == "mbpp" and progress.get("phase") == "curve"
+                and progress.get("state") == "running" and isinstance(event, str)
+                and event and Path(event).name == event and event not in {".", ".."}
+                and meter_lease_held(directory)):
+            owned = read_progress(directory) == progress
+        return age, fresh, owned
+
     def observe(directory, *, seed, step, kind, arm, done_path=None, dependency=None, also=None):
         progress = read_progress(directory)
         failure = read(directory / "failure.json")
-        age = now-number(progress.get("updated"), -1e30)
-        fresh = progress.get("state") == "running" and -5 <= age < 60
+        age, fresh, owned = activity(directory, progress)
         task = {"seed": seed, "step": step, "kind": kind, "arm": arm,
                 "role": "DEV" if seed in rule.DEV_SEEDS else "TEST",
                 "directory": str(directory.relative_to(root)), "status": "WAIT" if dependency else "READY",
                 "reason": dependency or "", "host": progress.get("host", ""), "pid": progress.get("pid"),
                 "phase": progress.get("phase", ""), "seconds": number(progress.get("seconds")),
                 "timeout": number(progress.get("timeout")), "heartbeat_age": max(0., age) if progress else None,
-                "heartbeat_fresh": fresh,
+                "heartbeat_fresh": fresh, "owner_active": owned,
                 "training_published": False}
         policy_dir = directory / ("fresh_r/policy" if kind == "prefix" else "policy")
         task["training_step"] = last_training_step(policy_dir / "grpo_stats.jsonl") if kind != "diagnostic" else None
@@ -238,7 +269,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                                 task.update(status="INVALID", reason="training result published; curve record invalid or bound to another result")
             elif kind == "diagnostic" and result.get("status") != "complete":
                 task.update(status="FAILED", reason="diagnostic failed; no retry")
-        elif fresh:
+        elif fresh or owned:
             task.update(status="RUNNING", reason="")
         elif failure or progress.get("state") == "failed":
             task.update(status="FAILED", reason=short_error(failure.get("error", "worker failed; inspect errors")))
@@ -252,7 +283,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         if archived is not None:
             task["archived_work"] = str(archived.relative_to(directory))
             task["history_warning"] = "archived attempt exists; history alone does not invalidate current saved work"
-        if (kind in {"prefix", "branch"} and not fresh
+        if (kind in {"prefix", "branch"} and not (fresh or owned)
                 and task["status"] in {"READY", "WAIT", "FAILED", "STALE"}):
             saved = saved_policy_state(policy_dir, kind=kind)
             if kind == "branch":
@@ -282,7 +313,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                 events = [json.loads(line) for line in cost_path.read_text().splitlines() if line.strip()]
                 summary = core.cost_summary(events)
                 for event_id in summary["incomplete_events"]:
-                    if fresh and event_id == progress.get("event_id"):
+                    if (fresh or owned) and event_id == progress.get("event_id"):
                         continue
                     cost_pending.append({"directory": task["directory"], "event_id": event_id,
                                          "scope": "prefix research" if kind == "prefix" else "branch budget"})
@@ -360,8 +391,8 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         if directory in observed or "discarded" in directory.parts:
             continue
         progress = read_progress(directory)
-        age = now-number(progress.get("updated"), -1e30)
-        if progress.get("state") != "running" or not (-5 <= age < 60):
+        age, fresh, owned = activity(directory, progress)
+        if not (fresh or owned):
             continue
         state_dir = directory.relative_to(root / "states").parts[0]
         match = re.fullmatch(r"s(\d+)-t(\d+)", state_dir)
@@ -374,8 +405,9 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                       "directory": str(directory.relative_to(root)), "status": "RUNNING", "reason": "",
                       "host": progress.get("host", ""), "pid": progress.get("pid"), "phase": progress.get("phase", ""),
                       "seconds": number(progress.get("seconds")), "timeout": number(progress.get("timeout")),
-                      "heartbeat_age": max(0., age), "heartbeat_fresh": True, "training_step": None})
-    active = [task for task in tasks if task.get("heartbeat_fresh")]
+                      "heartbeat_age": max(0., age), "heartbeat_fresh": fresh, "owner_active": owned,
+                      "training_step": None})
+    active = [task for task in tasks if task.get("heartbeat_fresh") or task.get("owner_active")]
     active_hosts = {task["host"] for task in active if task["host"]}
     stale_hosts = {task["host"] for task in tasks if task["status"] == "STALE" and task["host"]} - active_hosts
     waiting = []

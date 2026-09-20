@@ -205,7 +205,8 @@ def launcher_nodes(root, tasks, *, now=None, node_namespace=None):
             item["state"] = state
             item["reason"] = hold_reason(last) if state == "HOLD" else exit_detail(lines)
     task_hosts = {str(task["host"]).rstrip("_") for task in tasks
-                  if (task.get("status") in {"RUNNING", "STALE"} or task.get("heartbeat_fresh")) and task.get("host")}
+                  if (task.get("status") in {"RUNNING", "STALE"} or task.get("heartbeat_fresh")
+                      or task.get("owner_active")) and task.get("host")}
     for logs, node_launcher in sources:
         for path in logs.glob("keepalive.*.log"):
             host = _host_of(path, "keepalive.")
@@ -222,7 +223,7 @@ def launcher_nodes(root, tasks, *, now=None, node_namespace=None):
             elif last:
                 item["keepalive"] = "off"
     for task in tasks:
-        active = task.get("status") == "RUNNING" or bool(task.get("heartbeat_fresh"))
+        active = task.get("status") == "RUNNING" or bool(task.get("heartbeat_fresh") or task.get("owner_active"))
         if (active or task.get("status") == "STALE") and task.get("host"):
             item = row(str(task["host"]).rstrip("_"))
             if not active and item["state"] in LIVE_STATES:

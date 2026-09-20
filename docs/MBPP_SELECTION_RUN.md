@@ -385,6 +385,18 @@ read; cost ledgers are summarized rather than copied. Existing experiment files
 are never truncated, deleted or repaired. This diagnostic export does not resolve
 an `rc=80` blocker or mark the experiment complete.
 
+### Curve status and server clocks
+
+MBPP curve status also checks the existing `.cost.lock` read-only when its
+running heartbeat is outside the viewer's wall-clock freshness window. A held
+meter lease keeps the evaluation visible as RUN despite inter-server clock skew,
+with an explicit note that heartbeat timing/progress still needs checking.
+It does not mark the heartbeat fresh or prove forward progress. Finished cost
+receipts and terminal phase states take precedence; missing/released locks do
+not revive stale work. This viewer change neither restarts evaluations nor
+changes their timeouts. The repeated `curve curve` log text is the meter directory
+name followed by the phase name, not evidence of two evaluations.
+
 ### Selection retries and saved work
 
 The controller no longer automatically waives/resets a failed `fresh-r-*`
