@@ -215,6 +215,11 @@ def root_summary(root):
                      'execution.sha256.json', 'policy/budget_stop.json', 'result.sha256.json')
         lines.append('files present (not hash-validated): ' + ', '.join(name for name in artifacts
             if (directory / name).is_file()))
+        lines.append('saved work (presence only): ' + saved_inventory(directory))
+        recovered = record(root, directory / 'budget-recovery/result.json')
+        if recovered.get('evaluation_complete'):
+            lines.append('posthoc saved-policy evaluation present; NOT canonical DONE; '
+                         f"over-budget GPU-s={recovered.get('over_budget_gpu_seconds', '?')}")
         lines.append(f"branch budget GPU-s={decision.get('budget_gpu_seconds', '?')}")
         lines.append(clipped(failure.get('error', failure.get('_read_error', 'unknown failure')), 800))
         phase = progress.get('phase')

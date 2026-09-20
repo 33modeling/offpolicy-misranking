@@ -43,7 +43,9 @@ def display_state(task, running_directories=()):
 
 def remark(task):
     parts = []
-    if task.get("status") == "EVAL" and task.get("training_published"):
+    if task.get("posthoc_evaluation_saved"):
+        parts.append("복구 평가 저장됨; 동일예산 완료 아님")
+    elif task.get("status") == "EVAL" and task.get("training_published"):
         # A sealed result already contains the final evaluation. Only the
         # convergence curve remains; do not describe this as unfinished training.
         parts.append("최종 평가 저장됨; 곡선 평가 남음 (재학습 없음)")

@@ -277,6 +277,17 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         task["retryable"] = (kind in {"prefix", "branch"} and not dependency
                              and (task["status"] in {"FAILED", "STALE", "EVAL", "RESUME"}
                                   or kind == "prefix" and task["status"] == "SAVING"))
+        if (kind == "branch" and manifest.get("dataset") == "mbpp"
+                and not (directory / "result.json").exists()):
+            recovered_path = directory / "budget-recovery/result.json"
+            recovered = read(recovered_path)
+            seal = read(recovered_path.with_suffix(".sha256.json"))
+            if (recovered.get("schema") == "mbpp-budget-recovery/v1"
+                    and recovered.get("evaluation_complete") is True
+                    and recovered.get("canonical_complete") is False
+                    and seal.get("sha256") == hashlib.sha256(recovered_path.read_bytes()).hexdigest()):
+                task.update(status="REVIEW", posthoc_evaluation_saved=True, retryable=False,
+                            reason="posthoc saved-policy evaluation published; not canonical budget completion")
         tasks.append(task)
         return task
 

@@ -83,8 +83,8 @@ def owner_lock_path(root, directory):
         owner_lock = directory.parent / ".prefix.lock"
     elif (len(relative) == 6 and relative[0] == "states" and relative[2] == "points"
           and relative[4] in {"selection_reduced", "random_reduced", "selection_full", "random_full", "gated"}
-          and relative[5] == "curve"):
-        # Archived checkpoint evaluations use a separate ledger under the arm,
+          and relative[5] in {"curve", "budget-recovery"}):
+        # Curve and posthoc recovery evaluations use separate ledgers under the arm,
         # while their worker still holds the arm's task lease.
         owner_lock = directory.parent / ".task.lock"
     elif len(relative) == 5 and relative[0] == "states" and relative[2] == "points":

@@ -37,13 +37,13 @@ def test_bad_directory_does_not_block_other_stopped_branches(tmp_path, damage):
     assert "open count incomplete" in recovery.brief("run", rows, [])
 
 
-def curve_event(root, parent=False):
+def curve_event(root, parent=False, subledger="curve"):
     directory, start = open_event(root)
     # Leave a sealed final result untouched while recovering its reporting ledger.
     finish = {**start, "state": "finished", "seconds": 12., "allocated_gpu_seconds": 48., "exit_code": 0}
     base.journal(directory / "cost.jsonl", finish)
     core.atomic_json(directory / "result.json", {"complete": True})
-    target = directory.parent / "curve-parent" if parent else directory / "curve"
+    target = directory.parent / "curve-parent" if parent else directory / subledger
     curve = {**start, "event_id": "curve-interrupted", "phase": "curve", "ledger": "reporting"}
     base.journal(target / "cost.jsonl", curve)
     core.atomic_json(target / "progress.json", {**curve, "state": "running", "seconds": 12., "updated": 112.})
@@ -51,8 +51,9 @@ def curve_event(root, parent=False):
 
 
 @pytest.mark.parametrize("parent", [False, True])
-def test_curve_recovery_uses_real_worker_lease_and_preserves_final_result(tmp_path, parent):
-    directory, target = curve_event(tmp_path, parent)
+@pytest.mark.parametrize("subledger", ["curve", "budget-recovery"])
+def test_curve_recovery_uses_real_worker_lease_and_preserves_final_result(tmp_path, parent, subledger):
+    directory, target = curve_event(tmp_path, parent, subledger)
     lock = target / ".point.lock" if parent else directory / ".task.lock"
     assert recovery.owner_lock_path(tmp_path, target) == lock
     before = {p: p.read_bytes() for p in (directory / "result.json", directory / "cost.jsonl", target / "cost.jsonl")}

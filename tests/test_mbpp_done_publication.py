@@ -68,3 +68,24 @@ def test_all_48_published_branches_count_done_without_model_or_restart(tmp_path)
     assert (count["done"], count["remaining"], count["progress"]) == (48, 0, "100.0%")
     assert "총 계획 48개 | 완료 확인 48개 | 남음 0개" in dashboard.render(report)
     assert inventory(tmp_path) == before
+
+
+def test_posthoc_recovery_is_visible_but_never_canonical_done(tmp_path):
+    import hashlib
+    convergence_root(tmp_path)
+    manifest = core.read(tmp_path / "switch.json")
+    core.atomic_json(tmp_path / "switch.json", {**manifest, "dataset": "mbpp"})
+    completed_prefix(tmp_path, seed=3)
+    directory = point(tmp_path, seed=3) / "random_full"
+    result = directory / "budget-recovery/result.json"
+    core.atomic_json(result, {"schema": "mbpp-budget-recovery/v1", "evaluation_complete": True,
+                              "canonical_complete": False})
+    core.atomic_json(result.with_suffix(".sha256.json"), {"sha256": hashlib.sha256(result.read_bytes()).hexdigest()})
+    before = inventory(tmp_path)
+    report = dashboard.snapshot([tmp_path])
+    suite = report["suites"][0]
+    task = next(t for t in suite["tasks"] if t["directory"] == str(directory.relative_to(tmp_path)))
+    assert dashboard.display_state(task) == "WAIT"
+    assert "복구 평가 저장됨" in dashboard.remark(task)
+    assert not task["retryable"] and dashboard.counts(suite)["done"] == 0
+    assert inventory(tmp_path) == before

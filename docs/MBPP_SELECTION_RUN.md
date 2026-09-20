@@ -384,6 +384,17 @@ A normally budget-limited training run with a validated saved policy may still
 finish evaluation/publication. Only valid result receipts (and the required
 convergence curve) establish completion; budget exhaustion alone does not.
 
+The operational MBPP queue can now evaluate a fully validated saved continuation
+after allocation exhaustion, without training or changing its cap. These
+posthoc measurements, curve points and their separate reporting costs are saved
+under `<branch>/budget-recovery/`, never substituted for canonical results or
+development gate labels. Already sealed matching evaluation shards are reused.
+The dashboard keeps the branch in WAIT with a recovery-evaluation remark, not
+DONE. If only review branches remain, the existing exit-80 path releases the
+node rather than retrying training. Missing or corrupt checkpoints still need
+review. See `docs/MBPP_BUDGET_RECOVERY_2026-09-20.md` for the observed incident,
+cost constraints and validation/deployment boundaries.
+
 `saved` prints active checkpoint/adapter presence, partial selection counts,
 archived attempts under `discarded/`, and budget usage for two failed branches
 per suite. It is at most 4 KiB, opens no model/rollout contents, writes nothing,
