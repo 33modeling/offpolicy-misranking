@@ -37,7 +37,7 @@ def branch(root):
 
 def published(root):
     path = branch(root)
-    core.atomic_json(path / "result.json", {"complete": True, "schema": gpu.switch.runtime.net.SCHEMA})
+    core.atomic_json(path / "result.json", {"complete": True, "schema": "offpolicy-selected-prefix-switch/v1"})
     value = status.digest(path / "result.json")
     core.atomic_json(path / "result.sha256.json", {"sha256": value})
     core.atomic_json(path / "curve.json", {"schema": status.display.switch_status.rule.SCHEMA,
@@ -105,6 +105,46 @@ def test_frozen_adaptive_choice_counts_only_one_branch(tmp_path, monkeypatch):
     assert len(adaptive) == 6
     assert all("adaptive-cached" in task["directory"] for task in adaptive)
     assert all(task["status"] == "READY" for task in data["tasks"])
+
+
+def test_copied_export_layout_keeps_eight_endpoints_and_one_curve_out_of_42(tmp_path):
+    prepared(tmp_path)
+    # Matches the eight independently saved branches in export_2.txt. None is
+    # a completed two-selector state; that must not hide the eight endpoints.
+    saved = [(0, 100, 'cached'), (0, 25, 'cached'), (2, 25, 'cached'), (2, 50, 'cached'),
+             (0, 50, 'on_policy'), (1, 100, 'on_policy'), (1, 25, 'on_policy'), (2, 100, 'on_policy')]
+    for seed, step, selector in saved:
+        directory = tmp_path / f'branches/{selector}/states/s{seed}-t{step}/points/view-{step}/selection_reduced'
+        core.atomic_json(directory / 'result.json', {'complete': True,
+            'schema': 'offpolicy-selected-prefix-switch/v1', 'completed_steps': step+100,
+            'rewards': {'0': .5, '1': .75}})
+        digest = status.digest(directory / 'result.json')
+        core.atomic_json(directory / 'result.sha256.json', {'sha256': digest})
+        if (seed, step, selector) == (0, 50, 'on_policy'):
+            core.atomic_json(directory / 'curve.json', {'schema': 'offpolicy-selected-prefix-switch/v1',
+                'result_sha256': digest, 'points': {'150': {'updates': 100, 'reward': .625, 'final': True}}})
+    data = status.snapshot(tmp_path, now=10000)
+    assert sum(bool(task.get('training_published')) for task in data['tasks']) == 8
+    suite = status.dashboard_data(data)['suites'][0]
+    counts = status.display.counts(suite)
+    assert (counts['planned'], counts['done'], counts['remaining']) == (42, 1, 41)
+    assert sum(task['status'] == 'EVAL' for task in data['tasks']) == 7
+    text = status.render(data, width=160)
+    assert '최종 평가 저장 8/42' in text
+    assert '결과·곡선 저장 1/42' in text
+    assert '개발 9상태 x 2분기 + 검증 6상태 x 4분기' in text
+
+
+def test_old_net_gain_schema_cannot_count_as_pair_result(tmp_path):
+    prepared(tmp_path)
+    path = published(tmp_path)
+    core.atomic_json(path / 'result.json', {'complete': True, 'schema': 'offpolicy-net-gain-gate/v3-1'})
+    digest = status.digest(path / 'result.json')
+    core.atomic_json(path / 'result.sha256.json', {'sha256': digest})
+    curve = core.read(path / 'curve.json')
+    core.atomic_json(path / 'curve.json', {**curve, 'result_sha256': digest})
+    task = status.snapshot(tmp_path)['tasks'][0]
+    assert task['status'] == 'WAIT' and not task.get('training_published')
 
 
 def test_bad_test_barrier_preserves_published_development(tmp_path):

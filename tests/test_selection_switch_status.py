@@ -45,7 +45,7 @@ def completed_prefix(root, seed=0, step=25):
 
 
 def published(directory):
-    core.atomic_json(directory / "result.json", {"schema": status.net.SCHEMA, "complete": True})
+    core.atomic_json(directory / "result.json", {"schema": rule.SCHEMA, "complete": True})
     core.atomic_json(directory / "result.sha256.json", {"sha256": hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()})
 
 

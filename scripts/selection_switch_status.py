@@ -258,7 +258,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
             elif kind == "branch":
                 receipt_path = directory / "result.sha256.json"
                 receipt = read(receipt_path)
-                if result.get("complete") is not True or result.get("schema") != net.SCHEMA:
+                if result.get("complete") is not True or result.get("schema") != rule.SCHEMA:
                     task.update(status="INVALID", reason="result completion flag or schema invalid")
                 elif not receipt_path.exists():
                     task.update(status="SAVING", reason="result receipt pending")

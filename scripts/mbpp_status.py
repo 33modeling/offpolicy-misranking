@@ -104,7 +104,8 @@ def counts(suite):
     planned = len(registered_tasks(suite))
     tasks = suite.get('tasks', [])
     branches = branch_index(suite)
-    directories = [task.get("directory", "") for task in tasks if active(task)]
+    directories = [task.get("directory", "") for task in tasks
+                   if active(task) or task.get('task_lease_held')]
     states = Counter(display_state(task, directories) for task in branches.values())
     # A missing/unreadable root is not proof that its old results disappeared.
     # Its planned slots remain visible, but are explicitly unverified.
@@ -563,7 +564,8 @@ def render(data, *, width=120, all_tasks=False):
         active_tasks = [task for task in tasks if active(task)]
         running += [(name, task) for task in active_tasks]
         prefixes = [task for task in tasks if task.get("kind") == "prefix"]
-        running_dirs = [task.get('directory', '') for task in tasks if active(task)]
+        running_dirs = [task.get('directory', '') for task in tasks
+                        if active(task) or task.get('task_lease_held')]
         prefix_done = sum(display_state(task, running_dirs) == 'DONE' for task in prefixes)
         shared_label = suite.get("shared_label", "공통 학습")
         note = f"{condition}; {shared_label} {prefix_done}/{len(prefixes)}".lstrip("; ")
@@ -618,7 +620,8 @@ def render(data, *, width=120, all_tasks=False):
         branches = branch_index(suite)
         registered = registered_tasks(suite)
 
-        directories = [task.get("directory", "") for task in tasks if active(task)]
+        directories = [task.get("directory", "") for task in tasks
+                       if active(task) or task.get('task_lease_held')]
 
         matrix = []
         state_points = suite.get("state_points", [
@@ -669,7 +672,8 @@ def render(data, *, width=120, all_tasks=False):
     if all_tasks:
         for suite in observed_suites(data):
             lines += ["", f"ROOT {suite['root']}"]
-            directories = [task.get("directory", "") for task in suite.get("tasks", []) if active(task)]
+            directories = [task.get("directory", "") for task in suite.get("tasks", [])
+                           if active(task) or task.get('task_lease_held')]
             for task in suite.get("tasks", []):
                 lines.append(f"{display_state(task, directories)} {task['directory']}"
                              + (f" — {remark(task)}" if remark(task) else ""))

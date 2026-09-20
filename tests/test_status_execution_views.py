@@ -46,6 +46,34 @@ def test_descendant_activity_has_path_boundary_and_never_mutates_snapshot():
     assert branch["status"] == "DONE"
 
 
+@pytest.mark.parametrize("evidence", [{"heartbeat_fresh": True}, {"task_lease_held": True}])
+def test_same_directory_phase_overrides_saved_publication(evidence):
+    branch = task()
+    phase = task(kind="phase", status="WAIT", **evidence)
+    projected = execution_tasks([branch, phase])
+    assert [item["status"] for item in projected] == ["RUNNING", "RUNNING"]
+    assert projected[0]["publication_status"] == "DONE"
+    assert projected[0]["execution_inferred"]
+    assert current_tasks(projected) == [projected[1]]
+    assert branch["status"] == "DONE"
+
+
+@pytest.mark.parametrize("pids", [(123, 456), (123, 123)])
+def test_current_nested_work_does_not_merge_duplicate_hosts_without_owner_id(pids):
+    branch = task(status="RUNNING", heartbeat_fresh=True, pid=pids[0])
+    child = task(status="RUNNING", heartbeat_fresh=True, pid=pids[1], kind="curve",
+                 directory=branch["directory"] + "/curve/step-25")
+    assert current_tasks([branch, child]) == [branch, child]
+
+
+@pytest.mark.parametrize("identity", ["worker_id", "event_id"])
+def test_current_nested_work_collapses_only_confirmed_same_owner(identity):
+    branch = task(status="RUNNING", heartbeat_fresh=True, **{identity: "allocation-unique"})
+    child = task(status="RUNNING", heartbeat_fresh=True, kind="curve",
+                 directory=branch["directory"] + "/curve/step-25", **{identity: "allocation-unique"})
+    assert current_tasks([branch, child]) == [child]
+
+
 @pytest.mark.parametrize("nested", [False, True])
 def test_compact_progress_and_dispatch_agree_on_active_saved_result(tmp_path, nested):
     branch = task(heartbeat_fresh=not nested)
@@ -95,7 +123,8 @@ def test_sibling_published_live_task_is_in_node_input_and_counts(tmp_path, monke
         "prepared": True, "tasks": [source]})
     tasks, summaries = combined.sibling_status(tmp_path / "primary", tmp_path / "mopps", now=1)
     assert len(tasks) == 1 and tasks[0]["status"] == "RUNNING"
-    assert summaries[0]["branch_counts"] == {"RUNNING": 1}
+    assert summaries[0]["branches"] == 48
+    assert summaries[0]["branch_counts"] == {"RUNNING": 1, "WAIT": 47}
     assert source["status"] == "DONE"
 
 

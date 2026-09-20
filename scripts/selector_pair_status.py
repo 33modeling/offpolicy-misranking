@@ -112,7 +112,7 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
         task.update(status="WAIT", reason=error)
     elif result or receipt or curve:
         try:
-            if (result.get("complete") is not True or result.get("schema") != display.switch_status.net.SCHEMA
+            if (result.get("complete") is not True or result.get("schema") != display.switch_status.rule.SCHEMA
                     or receipt.get("sha256") != digest(directory / "result.json")):
                 raise ValueError("결과·발행 영수증 검증 필요")
             task["training_published"] = True
@@ -368,6 +368,8 @@ def dashboard_data(data):
               "status": "RUNNING" if task["status"] == "RUN" else task["status"]}
              for task in data["tasks"] if data["prepared"]]
     tasks += data["activity"]
+    endpoint_count = sum(bool(task.get('training_published')) for task in data['tasks'])
+    curve_count = sum(task['status'] == 'DONE' for task in data['tasks'])
     root = Path(data["root"])
     branch_root = root / "branches/on_policy"
     protocol = read(branch_root / "switch.json")
@@ -397,8 +399,11 @@ def dashboard_data(data):
                  registered_tasks=[(s, t, arm) for s in (*pair.DEV_SEEDS, *pair.TEST_SEEDS)
                                    for t in pair.STEPS for arm in (pair.SELECTORS if s in pair.DEV_SEEDS else LABELS)],
                  protocol={"accounting": "matched", "budget_gpu_seconds": data["budget_gpu_seconds"]},
-                 training_published=sum(task.get("training_published", False) for task in tasks),
+                 training_published=endpoint_count,
                  details=[f"개발 18개 / 검증 24개 | 목표 보상: {data['target_reward']}",
+                          "42개는 분기 수: 개발 9상태 x 2분기 + 검증 6상태 x 4분기",
+                          f"최종 평가 저장 {endpoint_count}/42 | 결과·곡선 저장 {curve_count}/42",
+                          "상태별 쌍 비교 검증은 report에서 별도 수행합니다.",
                           "테스트 결정 고정: " + ("DONE" if data["test_decisions_frozen"] else "WAIT"),
                           *(["WAIT: " + data["error"]] if data["error"] else [])])
     return dict(updated=data["updated"], suites=[suite], subject="SELECTOR PAIR", arm_names=LABELS,

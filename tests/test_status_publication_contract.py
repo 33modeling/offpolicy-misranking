@@ -9,28 +9,46 @@ from test_selector_pair_status import prepared as pair_prepared, status as pair_
 from test_selection_switch_status import status as switch_status, rule
 from test_rloo_status import status as rloo_status, inputs, write, seal
 import mbpp_status as display
+import selection_switch_gpu as switch
+import net_gain_gate as generic_net
+
+
+def installed_switch_publisher(monkeypatch):
+    # Preserve shared globals, then use the production install path. This
+    # fixture isolates publication from selection and the toy input contract.
+    decision, select_once = gpu.decision, gpu.select_once
+    for module, names in ((gpu, ('net', 'HERE', 'TEST_ARMS', 'SELECTORS', 'CODE_FILES',
+                                'study', 'protocol', 'select_once', 'measurement_worker', 'decision')),
+                          (base, ('verify', 'train_command'))):
+        for name in names:
+            monkeypatch.setattr(module, name, getattr(module, name))
+    switch.install_runtime()
+    monkeypatch.setattr(gpu, 'decision', decision)
+    monkeypatch.setattr(gpu, 'select_once', select_once)
 
 
 @pytest.mark.parametrize('experiment', ['pair', 'mbpp'])
 @pytest.mark.parametrize('damage', [None, 'result-schema', 'curve-schema', 'receipt'])
 def test_real_runtime_publication_is_recognized_without_changing_artifacts(tmp_path, monkeypatch, experiment, damage):
+    installed_switch_publisher(monkeypatch)
     out, c = source(tmp_path / 'source')
     monkeypatch.setattr(base, 'verify', lambda _: c)
     monkeypatch.setattr(base, 'policy', lambda *args: Path(c['source_run']))
     monkeypatch.setattr(base, 'rewards', lambda *args: {'q0': .5})
     completed(out, 'random_full')
-    gpu.run_arm(out, {'eval_timeout': 5}, protocol(), 'random_full', list('0123'), {})
+    p = {**protocol(), 'schema': rule.SCHEMA, 'schedule': rule.SCHEDULE}
+    gpu.run_arm(out, {'eval_timeout': 5}, p, 'random_full', list('0123'), {})
     result = out / 'random_full/result.json'
-    assert core.read(result)['schema'] == gpu.net.SCHEMA != rule.SCHEMA
+    assert core.read(result)['schema'] == gpu.net.SCHEMA == rule.SCHEMA
     curve = out / 'random_full/curve.json'
     core.atomic_json(curve, {'schema': rule.SCHEMA, 'result_sha256': base.digest(result),
                             'points': {'100': {'updates': 0, 'reward': .5}}})
     if damage == 'result-schema':
-        core.atomic_json(result, {**core.read(result), 'schema': rule.SCHEMA})
+        core.atomic_json(result, {**core.read(result), 'schema': generic_net.SCHEMA})
         core.atomic_json(result.with_suffix('.sha256.json'), {'sha256': base.digest(result)})
         core.atomic_json(curve, {**core.read(curve), 'result_sha256': base.digest(result)})
     elif damage == 'curve-schema':
-        core.atomic_json(curve, {**core.read(curve), 'schema': gpu.net.SCHEMA})
+        core.atomic_json(curve, {**core.read(curve), 'schema': generic_net.SCHEMA})
     elif damage == 'receipt':
         core.atomic_json(result.with_suffix('.sha256.json'), {'sha256': 'wrong'})
     root = tmp_path / 'status-root'
@@ -50,6 +68,7 @@ def test_real_runtime_publication_is_recognized_without_changing_artifacts(tmp_p
 
 
 def test_all_42_pair_slots_accept_the_publishers_result_schema(tmp_path, monkeypatch):
+    installed_switch_publisher(monkeypatch)
     pair_prepared(tmp_path)
     choices = {f's{s}-t{t}': {'selector': 'cached'} for s in pair_status.pair.TEST_SEEDS for t in pair_status.pair.STEPS}
     core.atomic_json(tmp_path / 'test-decisions.json', choices)

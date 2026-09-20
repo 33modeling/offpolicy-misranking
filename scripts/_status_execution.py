@@ -8,7 +8,8 @@ def active(task):
 def execution_state(task, running_directories=()):
     directory = str(task.get("directory") or "").rstrip("/")
     if (active(task) or task.get("task_lease_held") or
-            directory and any(path.startswith(directory + "/") for path in running_directories)):
+            directory and any(str(path).rstrip("/") == directory or str(path).startswith(directory + "/")
+                              for path in running_directories)):
         return "RUNNING"
     return task.get("status", "UNKNOWN")
 
@@ -30,5 +31,14 @@ def current_tasks(tasks):
     return [task for task in running if not any(
         other is not task and task.get("directory") and
         str(other.get("directory", "")).startswith(task["directory"].rstrip("/") + "/") and
-        (other.get("host"), other.get("worker_id")) == (task.get("host"), task.get("worker_id"))
+        same_owner(other, task)
         for other in running)]
+
+
+def same_owner(first, second):
+    # Hostnames and PIDs can both repeat across allocations. Missing worker IDs
+    # are not evidence that two independently active phases share an owner.
+    if first.get("host") != second.get("host"):
+        return False
+    return any(first.get(key) and first[key] == second.get(key)
+               for key in ("worker_id", "event_id"))

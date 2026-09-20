@@ -32,7 +32,7 @@ def branch(root, seed, step, arm="random_reduced"):
     return root / f"states/s{seed}-t{step}/points/view-{step}" / arm
 
 
-def result(directory, step, schema=net.SCHEMA):
+def result(directory, step, schema=rule.SCHEMA):
     core.atomic_json(directory / "result.json", {"schema": schema, "complete": True, "completed_steps": step})
     core.atomic_json(directory / "result.sha256.json", {
         "sha256": hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()})

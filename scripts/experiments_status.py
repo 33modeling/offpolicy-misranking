@@ -28,6 +28,36 @@ from _status_execution import execution_tasks
 SEPARATOR = "=" * 24
 
 
+def planned_branches(data, kind):
+    """Keep registered slots even when their files cannot be observed."""
+    if "registered_tasks" in data:
+        registered = {tuple(key) for key in data["registered_tasks"]}
+    elif kind == "switch":
+        rule = switch_status.rule
+        registered = {(seed, step, arm) for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS)
+                      for step in rule.STEPS
+                      for arm in (rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS)}
+    else:
+        registered = {(seed, step, arm)
+                      for seed in data.get("seeds", mopps_status.rule.TEST_SEEDS)
+                      for step in data.get("steps", mopps_status.rule.STEPS)
+                      for arm in data.get("arms", mopps_status.ARM_LABELS)}
+    branches, conflicts = {}, set()
+    for task in execution_tasks(data.get("tasks", [])):
+        key = (task.get("seed"), task.get("step"), task.get("arm"))
+        if task.get("kind", "branch") != "branch" or key not in registered or task.get("unverified"):
+            continue
+        if key in branches and branches[key] != task:
+            conflicts.add(key)
+        branches[key] = task
+    for key in conflicts:
+        branches.pop(key)
+    return [branches.get(key, {"kind": "branch", "seed": key[0], "step": key[1], "arm": key[2],
+                               "status": "WAIT", "unverified": True,
+                               "reason": "registered branch record missing or conflicting"})
+            for key in sorted(registered)]
+
+
 def sibling_status(switch_root, mopps_root, *, now):
     """Show sibling results as well as workers; another suite is not a reset."""
     runs = Path(switch_root).resolve().parent
@@ -46,11 +76,13 @@ def sibling_status(switch_root, mopps_root, *, now):
                 summaries.append({"root": str(root), "error": str(exc)})
                 continue
             observed = execution_tasks(data.get("tasks", []))
-            branches = [task for task in observed if task.get("kind", "branch") == "branch"]
-            summaries.append({"root": str(root), "kind": "switch" if marker == "switch.json" else "mopps",
+            kind = "switch" if marker == "switch.json" else "mopps"
+            branches = planned_branches(data, kind)
+            summaries.append({"root": str(root), "kind": kind,
                               "prepared": data.get("prepared", False), "branches": len(branches),
                               "branch_counts": dict(Counter(task["status"] for task in branches)),
-                              "random_counts": random_counts(data.get("tasks", [])),
+                              "random_counts": random_counts(branches),
+                              "unverified_branches": sum(bool(task.get("unverified")) for task in branches),
                               "archived_tasks": sum(bool(task.get("archived_work")) for task in branches),
                               "training_published": data.get("training_published", 0)})
             for task in observed:
@@ -83,10 +115,11 @@ def render(data, *, all_tasks=False, width=120):
     lines += switch_status.node_view.render_nodes(data["nodes"], switch_status.table, width, all_nodes=all_tasks)
     lines += ['', 'RANDOM CONTROLS (RF=full, RR=reduced, RO=online; current saved state)']
     random_roots = [
-        {'root': item.get('root', name), 'random_counts': random_counts(item.get('tasks', [])),
+        {'root': item.get('root', name), 'random_counts': random_counts(planned_branches(item, kind)),
          'archived_tasks': sum(bool(task.get('archived_work')) for task in item.get('tasks', [])
                                if task.get('kind', 'branch') == 'branch')}
-        for name, item in (('on-policy', data['selection_switch']), ('MoPPS', data['mopps_comparison']))
+        for name, kind, item in (('on-policy', 'switch', data['selection_switch']),
+                                 ('MoPPS', 'mopps', data['mopps_comparison']))
         if item.get('prepared')
     ] + data.get('other_experiments', [])
     for item in random_roots:
@@ -107,6 +140,8 @@ def render(data, *, all_tasks=False, width=120):
                 if item["kind"] == "switch":
                     parts.append(f"TRAINED {item['training_published']}")
                 parts += [f"{name} {counts[name]}" for name in switch_status.CELLS if name != "DONE" and counts.get(name)]
+                if item.get("unverified_branches"):
+                    parts.append(f"UNVERIFIED {item['unverified_branches']} (included in WAIT)")
                 summary = f"{Path(item['root']).name}: " + "  ".join(parts)
             lines += textwrap.wrap(summary, width=width, subsequent_indent="  ")
             lines += textwrap.wrap(f"  ROOT {item['root']}", width=width, subsequent_indent="    ")

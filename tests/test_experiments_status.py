@@ -261,3 +261,45 @@ def test_mbpp_status_routes_fresh_saved_results_not_generic_math_root(tmp_path):
     assert "On-policy · 선택비용 포함" in result.stdout and "CURRENT RUN 0" in result.stdout
     assert fresh.exists()
     assert "wrong-math-root" not in result.stdout and "MOPPS COMPARISON" not in result.stdout
+
+
+def test_sibling_missing_records_keep_all_48_slots_and_running_curve(monkeypatch, tmp_path):
+    sibling = tmp_path / "selection-switch-other-v1"
+    sibling.mkdir()
+    (sibling / "switch.json").write_text("{}")
+    rule = combined.switch_status.rule
+    tasks = [dict(kind="branch", seed=seed, step=step, arm=arm, status="DONE",
+                  directory=f"states/s{seed}-t{step}/{arm}")
+             for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS) for step in rule.STEPS
+             for arm in (rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS)]
+    tasks = tasks[:42]
+    branch = next(task for task in tasks if task["arm"] == "random_full")
+    tasks.append(dict(kind="phase", seed=branch["seed"], step=branch["step"], arm="curve",
+                      directory=branch["directory"] + "/curve/25", status="RUNNING",
+                      owner_active=True, host="same", worker_id="worker-b"))
+    monkeypatch.setattr(combined.switch_status, "snapshot", lambda *args, **kwargs: {
+        "prepared": True, "tasks": tasks, "training_published": 42})
+    _, rows = combined.sibling_status(tmp_path / "primary", tmp_path / "mopps", now=1)
+    row = rows[0]
+    assert row["branches"] == 48
+    assert row["branch_counts"] == {"DONE": 41, "RUNNING": 1, "WAIT": 6}
+    assert row["unverified_branches"] == 6
+    assert row["random_counts"]["RF"]["RUNNING"] == 1
+    assert sum(row["random_counts"]["RF"].values()) == 6
+
+
+def test_planned_branches_conflicting_records_are_not_double_done():
+    task = dict(kind="branch", seed=0, step=25, arm="random_reduced", status="DONE")
+    values = combined.planned_branches({"tasks": [task, {**task, "status": "READY"}]}, "switch")
+    assert len(values) == 48
+    assert all(task["status"] == "WAIT" for task in values)
+
+
+def test_mopps_registry_and_random_counts_use_execution_projection():
+    data = {"seeds": [3], "steps": [25], "arms": ["random_online", "cached"], "tasks": [
+        dict(kind="branch", seed=3, step=25, arm="random_online", status="DONE",
+             directory="s3/online", heartbeat_fresh=True)]}
+    values = combined.planned_branches(data, "mopps")
+    assert len(values) == 2
+    assert combined.random_counts(values) == {"RO": {"RUNNING": 1}}
+    assert sum(task["status"] == "WAIT" for task in values) == 1
