@@ -139,6 +139,25 @@ def test_cost_evidence_cli_writes_one_bounded_txt(diagnostic, tmp_path, monkeypa
     assert '[saved]' in capsys.readouterr().out
 
 
+def test_no_argument_bash_exports_cost_evidence_to_one_txt(tmp_path):
+    work = tmp_path / 'work'
+    root = work / 'runs/selector-pair-v1'
+    cost_fixture(root)
+    home = tmp_path / 'home'
+    home.mkdir()
+    before = snapshot(root)
+    environment = {key: value for key, value in os.environ.items() if key != 'PAIR_ROOT'}
+    result = subprocess.run(['bash', str(SCRIPT.with_name('check_selector_pair.sh'))],
+                            env={**environment, 'HOME': str(home), 'OM_WORK': str(work)},
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    reports = list(home.iterdir())
+    assert len(reports) == 1 and reports[0].name.startswith('selector-pair-cost-')
+    assert reports[0].stat().st_size <= 1024 * 1024
+    assert '"open_event_ids": ["open-event"]' in reports[0].read_text()
+    assert snapshot(root) == before
+
+
 def test_cost_evidence_missing_root_and_external_symlink_are_not_followed(diagnostic, tmp_path):
     root = tmp_path / 'absent'
     assert 'examined=0' in diagnostic.cost_report(root)
