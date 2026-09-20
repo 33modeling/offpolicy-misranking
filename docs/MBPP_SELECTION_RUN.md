@@ -88,7 +88,7 @@ bash scripts/run_mbpp_experiments.sh progress   # main quality progress and reta
 bash scripts/run_mbpp_experiments.sh saved      # READ-ONLY saved-work/archived-work inventory, <=4 KiB stdout
 bash scripts/run_mbpp_experiments.sh stop       # stop/clean THIS node, not peer nodes
 bash scripts/run_mbpp_experiments.sh results    # one report per suite, also copied home
-bash scripts/run_mbpp_experiments.sh why        # ONE diagnostic TXT, at most 16 KiB
+bash scripts/run_mbpp_experiments.sh why        # numbered diagnostic TXT parts, at most 8 KiB each
 bash scripts/run_mbpp_experiments.sh run quality       # same main condition as the default
 bash scripts/run_mbpp_experiments.sh status quality    # main condition only; no training
 bash scripts/run_mbpp_experiments.sh results quality   # main results; no training
@@ -338,8 +338,8 @@ memory check and NCCL/DDP probe remain mandatory before a training task is claim
 While a controller is stopping, the terminal displays elapsed shutdown time,
 owned process IDs/roles and bounded GPU memory/owner queries at roughly five-second
 intervals. Unknown/container-hidden owners are not assumed to belong to MBPP.
-These observations are saved in `cleanup.mbpp.<node>.log`; `why` includes the
-newest short cleanup excerpt without exceeding its 16 KiB attachment limit.
+These observations are saved in `cleanup.mbpp.<node>.log`; `why` includes
+bounded cleanup excerpts in its numbered 8 KiB attachments.
 No new worker is started while the old controller is still alive.
 
 Each node's `Progress` describes its current phase, not the suite-wide completed
@@ -363,13 +363,20 @@ CPU controller tests cover all five pass outcomes (0/1/75/78/79), legacy 600s
 settings, cooldown expiry and invalid receipts, failed/stale wakeups, and
 checkpoint-preserving restart. They do not certify the health of a live GPU node.
 
-`why` now writes one attachment across the requested suites, capped at 16 KiB.
-It includes the newest two saved failures per suite, selection/publication file
-presence, the original CUDA/NCCL warning context, the latest node admission and
-two short MBPP node-console tails. File presence is not a hash-validation result,
-and a saved failure is not proof that the current retry is failing. Full rollouts,
-model data, cost ledgers and repeated full-suite exports are excluded. Existing
-experiment logs are only read, never truncated, deleted or repaired.
+`why` writes numbered TXT parts, each at most 8 KiB, under
+`reports/selection-switch/mbpp-why-*/mbpp-why-NNN.txt`. Send all parts from the
+same folder in numeric order. Each invocation creates a new folder.
+It includes every discovered branch's failure/progress and budget-recovery
+review/failure records, recovery completion metadata, checkpoint presence and
+step/hash metadata, gate-fit errors, admission records and bounded node logs.
+Long metadata content is split across files instead of silently clipped to the
+newest two failures. Individual JSON reads are bounded at 1 MiB; larger or
+unreadable records are explicitly reported, not treated as missing or successful.
+File presence is not hash/lineage validation, and the read-only export is not an
+atomic snapshot of active workers. Model, optimizer and rollout payloads are not
+read; cost ledgers are summarized rather than copied. Existing experiment files
+are never truncated, deleted or repaired. This diagnostic export does not resolve
+an `rc=80` blocker or mark the experiment complete.
 
 ### Selection retries and saved work
 

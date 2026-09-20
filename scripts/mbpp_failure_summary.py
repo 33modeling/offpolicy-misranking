@@ -1,4 +1,4 @@
-"""One bounded MBPP diagnostic attachment; never starts or repairs experiments."""
+"""Bounded MBPP diagnostics; CLI writes TXT parts without starting or repairing work."""
 from __future__ import annotations
 
 import argparse
@@ -6,7 +6,6 @@ import json
 import math
 import re
 import subprocess
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -323,14 +322,12 @@ def main():
     if args.storage:
         print(storage_report(args.root), end='')
         return 0
-    text = report(args.work, args.root)
+    from mbpp_diagnostic_parts import sections, write_parts
     destination = args.work / 'reports/selection-switch'
-    destination.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', prefix='mbpp-why-', suffix='.txt',
-                                     dir=destination, delete=False) as handle:
-        handle.write(text)
-    print(f'[size] {len(text.encode("utf-8"))} bytes (maximum {MAX_BYTES})')
-    print(f'[saved] {handle.name}')
+    paths = write_parts(sections(args.work, args.root), destination)
+    print(f'[parts] {len(paths)} TXT files; maximum 8 KiB each; send all numbered parts')
+    for path in paths:
+        print(f'[saved] {path} ({path.stat().st_size} bytes)')
     return 0
 
 

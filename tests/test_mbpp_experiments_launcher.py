@@ -148,7 +148,7 @@ def launcher(tmp_path):
     repo = tmp_path / "repo with spaces"
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
-    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh", "mbpp_failure_summary.py",
+    for name in ("run_mbpp_experiments.sh", "_mbpp_experiments.sh", "mbpp_failure_summary.py", "mbpp_diagnostic_parts.py",
                  "selection_switch_errors.py", "_status_summary.py", "_nccl_diagnostics.py", "_node_view.py"):
         shutil.copy(ROOT / "scripts" / name, scripts)
     (scripts / "setup_env.sh").write_text('echo "preflight must not source setup_env" >&2\nexit 99\n')
@@ -303,17 +303,18 @@ def test_status_failure_for_a_root_does_not_hide_other_suite_roots(launcher):
     assert not Path(env["AUDIT_LOG"]).exists()
 
 
-def test_why_writes_one_small_report_without_training_or_full_exports(launcher):
+def test_why_writes_small_parts_without_training_or_full_exports(launcher):
     run, env = launcher
     result = run('why')
     assert result.returncode == 0, result.stderr
     assert not Path(env['CHECK_LOG']).exists()
     assert not Path(env['CALLS']).exists()
-    reports = list((Path(env['OM_WORK']) / 'reports/selection-switch').glob('*.txt'))
-    assert len(reports) == 1 and reports[0].stat().st_size <= 16 * 1024
-    assert result.stdout.count('[saved]') == 1
-    assert 'selection-switch-mbpp-quality-v1' in reports[0].read_text()
-    assert 'selection-switch-mbpp-long-v1' not in reports[0].read_text()
+    reports = sorted((Path(env['OM_WORK']) / 'reports/selection-switch').glob('mbpp-why-*/*.txt'))
+    assert reports and all(path.stat().st_size <= 8 * 1024 for path in reports)
+    assert result.stdout.count('[saved]') == len(reports)
+    text = ''.join(path.read_text() for path in reports)
+    assert 'selection-switch-mbpp-quality-v1' in text
+    assert 'selection-switch-mbpp-long-v1' not in text
 
 
 def test_saved_command_is_read_only_small_and_does_not_start_controller(launcher):
