@@ -135,8 +135,63 @@ def test_cost_evidence_cli_writes_one_bounded_txt(diagnostic, tmp_path, monkeypa
     assert len(paths) == 1 and paths[0].name.startswith('selector-pair-cost-')
     assert paths[0].stat().st_size <= 1024 * 1024
     assert 'SELECTOR PAIR COST EVIDENCE' in paths[0].read_text()
+    assert 'SELECTOR PAIR TASK WAIT EVIDENCE' in paths[0].read_text()
     assert snapshot(root) == before
     assert '[saved]' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('mode,label', [(fcntl.LOCK_EX, 'exclusive-holder'),
+                                     (fcntl.LOCK_SH, 'shared-holder-or-owner-changed')])
+def test_queue_evidence_distinguishes_state_and_branch_holders_readonly(diagnostic, tmp_path, mode, label):
+    root = tmp_path / 'pair'
+    folder = root / 'development/s2-t100'
+    folder.mkdir(parents=True)
+    state = folder / '.state.lock'
+    state.write_bytes(b'preserve state lock')
+    branch = folder / 'queue-branches/cached--selection_reduced.lock'
+    branch.parent.mkdir()
+    branch.write_bytes(b'preserve branch lock')
+    with state.open('rb') as state_owner, branch.open('rb') as branch_owner:
+        fcntl.flock(state_owner, mode | fcntl.LOCK_NB)
+        fcntl.flock(branch_owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = snapshot(root)
+        report = diagnostic.queue_report(root)
+        assert f'STATE development/s2-t100 state-lock={label}' in report
+        assert 'TASK development/s2-t100/cached/selection_reduced branch-lock=exclusive-holder' in report
+        assert snapshot(root) == before
+        with branch.open('rb') as probe, pytest.raises(BlockingIOError):
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    assert 'STATE development/s2-t100 state-lock=free-at-probe' in diagnostic.queue_report(root)
+
+
+def test_queue_evidence_does_not_create_missing_root_or_follow_external_records(diagnostic, tmp_path):
+    root = tmp_path / 'missing'
+    report = diagnostic.queue_report(root)
+    assert 'STATE development/s0-t100 state-lock=missing' in report
+    assert not root.exists()
+    external = tmp_path / 'outside'
+    external.mkdir()
+    (external / 'pair-attempt.json').write_text('{"error":"EXTERNAL-SECRET"}')
+    target = root / 'branches/on_policy/states/s0-t100/points/view-100'
+    target.mkdir(parents=True)
+    (target / 'selection_reduced').symlink_to(external, target_is_directory=True)
+    report = diagnostic.queue_report(root)
+    assert 'UNREADABLE branches/on_policy/states/s0-t100/points/view-100/selection_reduced/pair-attempt.json: ValueError' in report
+    assert 'EXTERNAL-SECRET' not in report
+
+
+def test_queue_evidence_exports_failure_and_curve_progress_with_a_byte_limit(diagnostic, tmp_path):
+    root = tmp_path / 'pair'
+    directory = root / 'branches/cached/states/s1-t25/points/view-25/selection_reduced'
+    directory.mkdir(parents=True)
+    (directory / 'pair-attempt.json').write_text(json.dumps({'state': 'WAIT', 'error': 'unclosed cost event'}))
+    (directory / 'curve').mkdir()
+    (directory / 'curve/progress.json').write_text(json.dumps({'state': 'running', 'seconds': 123}))
+    before = snapshot(root)
+    report = diagnostic.queue_report(root)
+    assert 'unclosed cost event' in report and '"seconds": 123' in report
+    assert len(report.encode()) <= diagnostic.QUEUE_REPORT_BYTES
+    assert snapshot(root) == before
 
 
 def test_no_argument_bash_exports_cost_evidence_to_one_txt(tmp_path):

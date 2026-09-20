@@ -18,7 +18,8 @@ import tempfile
 import time
 
 MAX_BYTES = 4096
-COST_REPORT_BYTES = 1024 * 1024 - MAX_BYTES - 1
+QUEUE_REPORT_BYTES = 64 * 1024
+COST_REPORT_BYTES = 1024 * 1024 - MAX_BYTES - QUEUE_REPORT_BYTES - 2
 
 
 def bounded(text):
@@ -178,6 +179,80 @@ def collect(root, proc=Path('/proc')):
     return bounded('\n'.join(lines) + '\n')
 
 
+def queue_report(root):
+    """Inspect existing state/branch leases without creating or breaking locks."""
+    root = Path(root).resolve()
+    lines = ['SELECTOR PAIR TASK WAIT EVIDENCE',
+             'Lock probes are momentary observations, not permission to stop an owner.',
+             'Progress and worker records may be historical; timestamps do not prove ownership.']
+
+    def contained(path):
+        if not path.resolve().is_relative_to(root):
+            raise ValueError('metadata escapes Pair root')
+
+    def lock_record(path):
+        try:
+            contained(path)
+            with path.open('rb') as handle:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return 'exclusive-holder'
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return 'shared-holder-or-owner-changed'
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                return 'free-at-probe'
+        except FileNotFoundError:
+            return 'missing'
+        except (OSError, ValueError, RuntimeError) as exc:
+            return f'unknown:{type(exc).__name__}'
+
+    def observe(path, keys):
+        try:
+            contained(path)
+            value = json.loads(read_small(path))
+            if not isinstance(value, dict):
+                raise ValueError('expected object')
+            value = {key: value[key] for key in keys if key in value}
+            lines.append(f'RECORD {path.relative_to(root)} ' + json.dumps(value, ensure_ascii=True))
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, RuntimeError) as exc:
+            lines.append(f'UNREADABLE {path.relative_to(root)}: {type(exc).__name__}')
+
+    for stage, seeds in (('development', range(3)), ('test', range(3, 5))):
+        for seed in seeds:
+            for step in (25, 50, 100):
+                state = f's{seed}-t{step}'
+                folder = root / stage / state
+                lines.append(f'STATE {stage}/{state} state-lock={lock_record(folder / ".state.lock")} '
+                             f'prepare-lock={lock_record(folder / ".prepare-state.lock")}')
+                branches = (('on_policy', 'selection_reduced'), ('cached', 'selection_reduced')) if stage == 'development' else (
+                    ('on_policy', 'selection_full'), ('cached', 'selection_full'),
+                    ('adaptive-on_policy', 'selection_full'), ('adaptive-cached', 'selection_full'),
+                    ('on_policy', 'random_full'))
+                for branch, arm in branches:
+                    point = root / 'branches' / branch / 'states' / state / 'points' / f'view-{step}'
+                    directory = point / arm
+                    lock = folder / 'queue-branches' / f'{branch}--{arm}.lock'
+                    lines.append(f'TASK {stage}/{state}/{branch}/{arm} branch-lock={lock_record(lock)} '
+                                 f'task-lock={lock_record(directory / ".task.lock")} '
+                                 f'parent-curve-lock={lock_record(point / "curve-parent/.point.lock")}')
+                    for path in (directory / 'pair-attempt.json', directory / 'failure.json',
+                                 directory / 'progress.json', directory / 'curve/progress.json',
+                                 point / 'curve-parent/progress.json'):
+                        observe(path, ('state', 'phase', 'event_id', 'seconds', 'updated', 'host',
+                                       'pid', 'attempt', 'error', 'reason'))
+    raw = ('\n'.join(lines) + '\n').encode()
+    if len(raw) <= QUEUE_REPORT_BYTES:
+        return raw.decode()
+    footer = b'\n[Further task observations omitted; task evidence capped at 64 KiB.]\n'
+    return raw[:QUEUE_REPORT_BYTES - len(footer)].decode(errors='ignore') + footer.decode()
+
+
 def cost_report(root):
     """Export interrupted-event evidence, never estimate or close an event."""
     root = Path(root).resolve()
@@ -299,7 +374,7 @@ def main():
     args = parser.parse_args()
     output = collect(args.root)
     if args.costs:
-        output += '\n' + cost_report(args.root)
+        output += '\n' + queue_report(args.root) + '\n' + cost_report(args.root)
     print(output, end='')
     try:
         with tempfile.NamedTemporaryFile(prefix='selector-pair-cost-' if args.costs else 'selector-pair-lock-', suffix='.txt',
