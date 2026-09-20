@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import shutil
 import sys
@@ -14,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import selection_switch_status as switch_status
 from _status_summary import gate_label, mbpp_suite_label
+from _status_execution import active, execution_state
 
 
 ARM_NAMES = {"selection_reduced": "Selection", "random_reduced": "Random",
@@ -34,9 +36,7 @@ def arm_name(arm, names=None):
 def display_state(task, running_directories=()):
     if not task:
         return "-"
-    directory = task.get("directory", "")
-    if (active(task) or task.get('task_lease_held') or
-            directory and any(path.startswith(directory + "/") for path in running_directories)):
+    if execution_state(task, running_directories) == "RUNNING":
         return "RUN"
     if task["status"] == "DONE":
         return "DONE"
@@ -233,12 +233,6 @@ def current_work(suite):
     return [(task, shared) for _, task, shared in work]
 
 
-def active(task):
-    # Publication status and process activity are independent: an EVAL branch
-    # can still have a worker. Never downgrade its saved result to RUN/READY.
-    return bool(task.get("owner_active") or task.get("heartbeat_fresh", task.get("status") == "RUNNING"))
-
-
 def task_progress(root, task):
     """Current phase evidence only: bounded log tails, never model/rollout files."""
     phase = str(task.get("phase") or "")
@@ -320,7 +314,29 @@ def node_assignments(data):
                                            "assignments": []})
             node["state"] = "RUN"
             node["assignments"].append((suite["root"], task))
+    expanded = []
     for node in hosts.values():
+        groups = []
+        for root, task in sorted(node['assignments'], key=lambda pair: pair[1].get('directory', '').count('/')):
+            directory = task.get('directory', '')
+            group = next((group for group in groups if group[0][0] == root and directory and
+                          (directory == group[0][1].get('directory') or
+                           directory.startswith(group[0][1].get('directory', '') + '/'))), None)
+            if group is None:
+                groups.append([(root, task)])
+            else:
+                group.append((root, task))
+        if not node.get('worker_id') and len(groups) > 1:
+            # A hostname alone cannot prove independent work belongs to one
+            # machine. Show each work identity, without inventing node counts.
+            for group in groups:
+                root, task = group[0]
+                identity = str(root) + '/' + task.get('directory', '')
+                code = hashlib.sha256(identity.encode()).hexdigest()[:10]
+                expanded.append({**node, 'assignments': group, 'work_id': 'work-' + code})
+        else:
+            expanded.append(node)
+    for node in expanded:
         if node["assignments"]:
             node["state"] = "RUN"
         node["assignments"].sort(key=lambda pair: (pair[0], str(pair[1]["seed"]), str(pair[1]["step"]), pair[1]["arm"]))
@@ -331,13 +347,13 @@ def node_assignments(data):
             node["state"] = "UNKNOWN"
     # Keep a server in the same name-sorted position as it changes RUN/WAIT.
     # Historical nodes remain opt-in and below current nodes, never deleted.
-    return sorted(hosts.values(), key=lambda node: (not node["current"],
+    return sorted(expanded, key=lambda node: (not node["current"],
                                                    switch_status.node_view.host_sort_key(node["host"]),
-                                                   str(node.get('worker_id') or '')))
+                                                   str(node.get('worker_id') or node.get('work_id') or '')))
 
 
 def node_label(node):
-    worker = node.get('worker_id')
+    worker = node.get('worker_id') or node.get('work_id')
     return node['host'] + (f" / {worker}" if worker and worker != node['host'] else '')
 
 
@@ -345,8 +361,11 @@ def render_nodes(data, *, width, all_nodes=False):
     """Aligned, display-width-aware assignments; never truncate a node name."""
     nodes = node_assignments(data)
     current = [node for node in nodes if node["current"]]
-    unit = 'WORKERS' if any(node.get('worker_id') for node in nodes) else 'NODES'
+    unit = ('WORK ITEMS' if any(node.get('work_id') for node in nodes) else
+            'WORKERS' if any(node.get('worker_id') for node in nodes) else 'NODES')
     lines = ["NODE ASSIGNMENTS", f"{unit} {len(current)} current"]
+    if unit == 'WORK ITEMS':
+        lines.append('동일 이름의 독립 작업을 구분합니다. 작업 코드 수는 물리 노드 수가 아닙니다.')
     rows = []
     retained = {suite["root"] for suite in data.get("retained_suites", [])}
     names = data.get("arm_names", ARM_NAMES)

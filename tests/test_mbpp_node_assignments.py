@@ -193,22 +193,23 @@ def test_all_twelve_long_node_names_and_task_assignments_are_visible(tmp_path, w
     assert all(dashboard.columns(line) <= width for line in node_lines if not line.startswith("노드 Progress"))
 
 
-def test_one_host_in_two_suites_retains_both_assignments_and_counts_once(tmp_path):
+def test_one_host_in_two_suites_keeps_work_separate_without_claiming_physical_count(tmp_path):
     roots = roots_at(tmp_path)[:2]
     for root in roots:
         prepared(root)
         completed_prefix(root)
         running(point(root) / "random_reduced", "shared-node", now=NOW, phase="train")
     data = dashboard.snapshot(roots, now=NOW)
-    node = host_row(data, "shared-node")
-    assert {Path(suite_root) for suite_root, _ in node["assignments"]} == set(roots)
-    assert len(node["assignments"]) == 2
+    nodes = [node for node in dashboard.node_assignments(data) if node["host"] == "shared-node"]
+    assert len(nodes) == 2
+    assert {Path(suite_root) for node in nodes for suite_root, _ in node["assignments"]} == set(roots)
+    assert len({node['work_id'] for node in nodes}) == 2
     output = dashboard.render(data, width=400)
-    assert re.search(r"NODES\s+1 current", output)
+    assert "WORK ITEMS 2 current" in output
     assignment_section = output.split("NODE ASSIGNMENTS", 1)[1]
     assert "On-policy · 선택비용 포함" in assignment_section and "On-policy · 선택비용 별도" in assignment_section
-    assert " ".join(assignment_section.split()).count("1. shared-node ") == 2
-    assert "2. shared-node" not in assignment_section
+    assert "1. shared-node / work-" in " ".join(assignment_section.split())
+    assert "2. shared-node / work-" in " ".join(assignment_section.split())
 
 
 @pytest.mark.parametrize("line,state", [

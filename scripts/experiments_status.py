@@ -23,6 +23,7 @@ import mopps_comparison_status as mopps_status
 import selection_switch_status as switch_status
 from _status_summary import random_counts, random_text, suite_label
 from _status_watch import StatusWatch
+from _status_execution import execution_tasks
 
 SEPARATOR = "=" * 24
 
@@ -44,14 +45,15 @@ def sibling_status(switch_root, mopps_root, *, now):
             except Exception as exc:
                 summaries.append({"root": str(root), "error": str(exc)})
                 continue
-            branches = [task for task in data.get("tasks", []) if task.get("kind", "branch") == "branch"]
+            observed = execution_tasks(data.get("tasks", []))
+            branches = [task for task in observed if task.get("kind", "branch") == "branch"]
             summaries.append({"root": str(root), "kind": "switch" if marker == "switch.json" else "mopps",
                               "prepared": data.get("prepared", False), "branches": len(branches),
                               "branch_counts": dict(Counter(task["status"] for task in branches)),
-                              "random_counts": random_counts(branches),
+                              "random_counts": random_counts(data.get("tasks", [])),
                               "archived_tasks": sum(bool(task.get("archived_work")) for task in branches),
                               "training_published": data.get("training_published", 0)})
-            for task in data.get("tasks", []):
+            for task in observed:
                 if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
                     label = root.name.replace("selection-switch-", "").replace("mopps-comparison", "mopps")
                     label = label[:-3] if label.endswith("-v1") else label

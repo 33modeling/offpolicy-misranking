@@ -231,7 +231,10 @@ def test_current_count_does_not_merge_different_roots_with_same_label():
         suite['tasks'][0].update(status='RUNNING', host='worker-1', heartbeat_fresh=True)
     data = {'updated': 10000, 'suites': suites, 'arm_names': {'x': 'X'}}
     assert 'CURRENT RUN 2' in display.render(data)
-    assert len(display.node_assignments(data)[0]['assignments']) == 2
+    nodes = display.node_assignments(data)
+    assert len(nodes) == 2
+    assert sum(len(node['assignments']) for node in nodes) == 2
+    assert len({node['work_id'] for node in nodes}) == 2
 
 
 @pytest.mark.parametrize('experiment', ['mbpp', 'pair', 'rloo'])

@@ -125,3 +125,31 @@ Pair 1/42 and RLOO output still require the user's current evidence; these
 local tests do not establish how many GPU runs actually completed remotely.
 After updating the six-suite fixture to the real publisher's result schema,
 the additional dashboard/progress/controller regressions passed 113 tests.
+
+## Alternate views and duplicate names
+
+The compact/full switch tables, progress command, sibling summaries and dispatch
+evidence still counted raw published DONE while their CURRENT rows detected an
+active meter. They now share a read-only execution projection: active progress,
+owned meters, held task leases and running descendants take precedence in the
+operational view. A branch remains RUN in the matrix while CURRENT shows its
+actual nested curve phase once, without duplicating an inferred parent row.
+Saved random-result totals are explicitly labeled as saved evidence.
+
+Raw switch snapshot/JSON publication fields and development/test publication
+counts remain unchanged for existing controller consumers. They are not process
+liveness claims; the operational renderers project activity separately. No
+result, gate-fit input or scientific source is changed by this correction.
+
+MBPP/RLOO observations without a worker UUID also merged independent active work
+under one hostname. Distinct root/task paths now appear as separate stable
+work-coded rows when hostname alone is ambiguous. Parent/nested phases remain
+one work group; Pair's explicit worker UUIDs are preserved. Such rows are labeled
+WORK ITEMS rather than claiming that path counts prove physical node counts.
+
+Verification: 289 focused status tests passed, with the existing inapplicable
+RLOO nested-curve case skipped. Tests include the actual publisher contract,
+DONE plus active leases/meters, nested phase deduplication, and identical host
+labels across independent roots/tasks. Remote GPU/controller state is not
+established by these local tests. Uploaded MBPP blockers are documented in
+`MBPP_WHY_ANALYSIS_2026-09-20.md`.

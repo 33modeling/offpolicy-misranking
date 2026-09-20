@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _node_view as node_view
 from _status_summary import random_counts, random_text, suite_label
 from _status_watch import StatusWatch
+from _status_execution import current_tasks, execution_tasks
 from _switch_state_point import resolve_state_point
 import _status_operations as operations
 
@@ -501,18 +502,17 @@ def render_compact(data, *, width=120):
     lines = [f"SUITE {label}", f"ROOT {root}"]
     if not data.get("prepared"):
         return "\n".join([*lines, "NOT PREPARED (no saved suite manifest at this root)"])
-    tasks = data.get("tasks", [])
+    tasks = execution_tasks(data.get("tasks", []))
     branches = [task for task in tasks if task.get("kind") == "branch"]
-    counts = data.get("branch_counts", {})
+    counts = Counter(task["status"] for task in branches)
     total = len(branches)
     lines += [f"DONE {counts.get('DONE', 0)}/{total} branches",
               f"TRAINING RESULTS  {data.get('training_published', 0)}/{total} published (receipt checked)",
               "BRANCHES " + "  ".join(f"{name} {counts[name]}" for name in CELLS if counts.get(name))]
-    random = random_text(random_counts(branches))
+    random = random_text(random_counts(data.get("tasks", [])))
     if random:
-        lines.append("RANDOM " + random)
-    running = sorted((task for task in tasks if task.get("status") == "RUNNING"
-                      or task.get('owner_active') or task.get('heartbeat_fresh')), key=lambda task: (
+        lines.append("RANDOM (saved results) " + random)
+    running = sorted(current_tasks(tasks), key=lambda task: (
         node_view.host_sort_key(task.get("host", "")), str(task["seed"]), str(task["step"]), task["arm"]))
     lines.append(f"CURRENT RUN {len(running)}")
     for task in running:
@@ -539,21 +539,27 @@ def render_compact(data, *, width=120):
 def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     if not data["prepared"]:
         return f"NOT PREPARED  {data['root']}"
+    tasks = execution_tasks(data["tasks"])
+    branch_counts = Counter(task["status"] for task in tasks if task["kind"] == "branch")
+    prefix_done = sum(task["status"] == "DONE" for task in tasks if task["kind"] == "prefix")
+    development_done = sum(task["status"] == "DONE" and task["role"] == "DEV"
+                           for task in tasks if task["kind"] == "branch")
+    test_done = sum(task["status"] == "DONE" and task["role"] == "TEST"
+                    for task in tasks if task["kind"] == "branch")
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines = [f"SELECTION SWITCH [{suite_label(data['root'], data.get('protocol'))}]  {stamp}",
              f"ROOT  {data['root']}",
              node_view.render_summary(data.get("nodes", []), all_nodes=all_tasks),
              f"WORK  {data['active_nodes']} active  |  {len(data['waiting_nodes'])} waiting  |  {data['stale_nodes']} stale",
-             f"PROGRESS  Prefix {data['prefix_done']}/15 segments  |  Dev {data['development_done']}/18  |  Test {data['test_done']}/30",
-             "BRANCHES  " + "  ".join(f"{name} {data['branch_counts'][name]}" for name in CELLS if data['branch_counts'].get(name))]
+             f"PROGRESS  Prefix {prefix_done}/15 segments  |  Dev {development_done}/18  |  Test {test_done}/30",
+             "BRANCHES  " + "  ".join(f"{name} {branch_counts[name]}" for name in CELLS if branch_counts.get(name))]
     lines.append("GATE  " + ("READY" if data["gate_ready"] else
                  f"FIT FAILED: {data['gate_fit_failure'][:150]} (see errors; controls keep running)" if data.get("gate_fit_failure")
                  else f"WAIT: {18-data['development_done']} development branches unpublished (only the 6 GATE arms wait; held-out controls run now)"
                  if data["development_done"] < 18 else "FIT PENDING: 18/18 development results published"))
-    tasks = data["tasks"]
-    saved_random = random_text(random_counts(tasks))
+    saved_random = random_text(random_counts(data["tasks"]))
     if saved_random:
-        lines.append("RANDOM  " + saved_random)
+        lines.append("RANDOM (saved results)  " + saved_random)
     if data.get("training_published"):
         lines.append(f"TRAINING RESULTS  {data['training_published']}/48 published (receipt checked; EVAL is evaluation pending)")
     history = sum(bool(task.get("history_warning")) for task in tasks)
@@ -562,8 +568,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"})
     if alerts:
         lines.append("ALERTS  " + "  ".join(f"{key} {value}" for key, value in alerts.items()) + "  (all phases)")
-    observed = [task for task in tasks if task["status"] == "RUNNING" or task.get('owner_active')
-                or task.get('heartbeat_fresh') or (all_tasks and task["status"] == "STALE")]
+    observed = current_tasks(tasks) + [task for task in tasks if all_tasks and task["status"] == "STALE"]
     lines += ["", "CURRENT WORK"]
     rows = [[task["host"] or "unknown", task["pid"] or "-", CELLS[task["status"]], f"s{task['seed']}/t{task['step']} {ARM_LABELS.get(task['arm'], task['arm'])}",
              task["phase"] or "-", duration(task["seconds"]), duration(task["timeout"]) if task["timeout"] else "-",
@@ -590,7 +595,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     rows = []
     for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
         items = [task for task in tasks if task["kind"] == "prefix" and task["seed"] == seed]
-        reached = max((task["step"] for task in items if task["status"] == "DONE"), default=0)
+        reached = max((task["step"] for task in items if task.get("publication_status") == "DONE"), default=0)
         logged = max((task["training_step"] for task in items if task["training_step"] is not None), default=None)
         rows.append([f"s{seed}", items[0]["role"], f"{reached}/100", logged if logged is not None else "-",
                      *[CELLS[task["status"]] for task in items]])

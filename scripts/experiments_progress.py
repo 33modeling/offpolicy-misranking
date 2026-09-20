@@ -24,6 +24,7 @@ import selection_switch_status as switch_status  # noqa: E402
 import mopps_comparison_status as mopps_status  # noqa: E402
 from _status_summary import random_counts, random_text, suite_label
 from _status_watch import StatusWatch
+from _status_execution import current_tasks, execution_tasks
 
 ORDER = ("selection-switch-v1", "difficulty", "hard", "quality", "long")
 
@@ -77,10 +78,10 @@ def render_root(root, data, *, width, kind):
     name = label(root, data.get("protocol"))
     if not data.get("prepared", True) or "tasks" not in data:
         return [f"{name}: not prepared"]
-    tasks = data["tasks"]
+    tasks = execution_tasks(data["tasks"])
     branches = [t for t in tasks if t.get("kind", "branch") == "branch"]
     counts = Counter(t["status"] for t in branches)
-    running = [t for t in tasks if t["status"] == "RUNNING" or t.get('owner_active') or t.get('heartbeat_fresh')]
+    running = current_tasks(tasks)
     parts = [f"DONE {counts.get('DONE', 0)}/{len(branches)}", f"RUN {len(running)}"]
     for key in ("EVAL", "RESUME", "SAVING", "REVIEW", "READY", "WAIT", "FAILED", "STALE", "INVALID", "BUDGET"):
         if counts.get(key):
@@ -92,9 +93,9 @@ def render_root(root, data, *, width, kind):
         gate = "READY" if data.get("gate_ready") else f"WAIT (dev {data.get('development_done', 0)}/18)"
         parts.append(f"gate {gate}")
     lines = textwrap.wrap(f"{name}: " + "  ".join(parts), width=width, subsequent_indent="  ")
-    random = random_text(random_counts(branches))
+    random = random_text(random_counts(data["tasks"]))
     if random:
-        lines += textwrap.wrap('  RANDOM ' + random, width=width, subsequent_indent='    ')
+        lines += textwrap.wrap('  RANDOM (saved results) ' + random, width=width, subsequent_indent='    ')
     histories = sum(bool(task.get('archived_work')) for task in branches)
     if histories:
         lines += textwrap.wrap(f'  HISTORY {histories}: archived attempts retained; current status shown separately.',
@@ -127,8 +128,8 @@ def render(work, *, width=80, now=None, roots=None):
         except Exception as exc:  # noqa: BLE001 - one unreadable root must not hide the others
             lines += ["", f"{label(root)}: unreadable ({exc})"]
             continue
-        hosts |= {t.get("host") for t in data.get("tasks", []) if t.get("host") and
-                  (t["status"] == "RUNNING" or t.get('owner_active') or t.get('heartbeat_fresh'))}
+        hosts |= {t.get("host") for t in execution_tasks(data.get("tasks", []))
+                  if t.get("host") and t["status"] == "RUNNING"}
         lines += ["", *render_root(root, data, width=width, kind="switch")]
     for root in mopps:
         try:
@@ -136,13 +137,14 @@ def render(work, *, width=80, now=None, roots=None):
         except Exception as exc:  # noqa: BLE001
             lines += ["", f"{label(root)}: unreadable ({exc})"]
             continue
-        hosts |= {t.get("host") for t in data.get("tasks", []) if t.get("status") == "RUNNING" and t.get("host")}
+        hosts |= {t.get("host") for t in execution_tasks(data.get("tasks", []))
+                  if t.get("status") == "RUNNING" and t.get("host")}
         lines += ["", *render_root(root, data, width=width, kind="mopps")]
     if not switch and not mopps:
         lines += ["", "no prepared experiment root under " + str(Path(work) / "runs")]
     elif roots and not any((root / "switch.json").is_file() for root in switch):
         lines += ["", "none of the selected roots is prepared yet"]
-    lines.insert(2, f"NODES TRAINING NOW  {len(hosts)}  (distinct node identities with a running task)")
+    lines.insert(2, f"NODES TRAINING NOW  {len(hosts)}  (recorded host labels; duplicate names may share a label)")
     lines += ["", *render_nodes(switch, mopps, width=width, now=now)]
     return "\n".join(lines)
 
@@ -155,7 +157,7 @@ def render_nodes(switch, mopps, *, width, now):
             data = module.snapshot(root, now=now)
         except Exception:  # noqa: BLE001
             continue
-        for task in data.get("tasks", []):
+        for task in execution_tasks(data.get("tasks", [])):
             if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
                 tasks.append({**task, "arm": f"{label(root)}: {task.get('arm', '')}"})
     anchor = switch[0] if switch else (mopps[0] if mopps else None)

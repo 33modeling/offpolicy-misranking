@@ -8,6 +8,10 @@ import json
 import re
 from collections import Counter
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _status_execution import execution_tasks
 
 STATUSES = ("DONE", "EVAL", "RESUME", "REVIEW", "READY", "RUNNING", "FAILED", "STALE", "INVALID", "BUDGET", "WAIT", "SAVING")
 PRIORITY = {name: i for i, name in enumerate(("REVIEW", "INVALID", "BUDGET", "FAILED", "STALE", "RESUME", "EVAL", "SAVING", "RUNNING", "WAIT"))}
@@ -53,7 +57,7 @@ def describe(root, revision, *, snapshot_loader=None):
         fields = " ".join(f"{key}={clean(manifest.get(key, '?'), 80)}" for key in ("dataset", "selector", "accounting", "gate"))
         yield f"[dispatch] frozen {fields} (stored protocol values; no relabel/reset)"
         data = (snapshot_loader or load_snapshot)(kind, root)
-        tasks = data.get("tasks", [])
+        tasks = execution_tasks(data.get("tasks", []))
         branches = [task for task in tasks if task.get("kind", "branch") == "branch"]
         counts = Counter(task.get("status", "UNKNOWN") for task in branches)
         labels = {"RUNNING": "RUN", "FAILED": "FAIL"}
