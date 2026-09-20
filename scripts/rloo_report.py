@@ -7,6 +7,7 @@ Partial exports never publish the worker's canonical results.json.
 from __future__ import annotations
 
 import argparse
+import ast
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import importlib.util
@@ -33,7 +34,31 @@ def display_is_isolated(name):
     for source in (frozen_experiment.ROOT / "src").rglob("*.py"):
         if source.relative_to(frozen_experiment.ROOT).as_posix() == name:
             continue
-        if re.search(rf"\b{re.escape(module)}\b", source.read_text()):
+        text = source.read_text()
+        if source.relative_to(frozen_experiment.ROOT).as_posix() == 'src/rloo_experiment.py':
+            # The frozen validator lists display paths as compatibility metadata,
+            # not imports. Exclude only that exact reviewed declaration; using
+            # its value outside a membership check must still fail closed.
+            try:
+                tree = ast.parse(text)
+                declarations = [node for node in tree.body if isinstance(node, ast.Assign)
+                                and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                                and node.targets[0].id == 'DISPLAY_MODULES']
+                if len(declarations) == 1 and ast.literal_eval(declarations[0].value) == (
+                        'src/matrix_status.py', 'src/rlzero_status.py',
+                        'src/downstream_status.py', 'src/queue_status.py'):
+                    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Name) and node.id == 'DISPLAY_MODULES' and isinstance(node.ctx, ast.Load):
+                            parent = parents[node]
+                            if not (isinstance(parent, ast.Compare) and len(parent.ops) == 1
+                                    and isinstance(parent.ops[0], ast.In) and parent.comparators == [node]):
+                                return False
+                    tree.body.remove(declarations[0])
+                    text = ast.unparse(tree)
+            except (SyntaxError, ValueError, TypeError):
+                return False
+        if re.search(rf"\b{re.escape(module)}\b", text):
             return False
     return True
 
@@ -109,10 +134,38 @@ def reporting_experiment():
 
     def reviewed_code_changes(recorded):
         display = display_changes(recorded)
+        for name in REPORT_DISPLAY_FILES.intersection(recorded):
+            if name not in display and frozen_experiment.ed.digest(frozen_experiment.ROOT / name) != recorded[name]:
+                raise ValueError(f"code changed since preparation: {name}")
         return frozen_experiment.reviewed_code_changes(
             {name: digest for name, digest in recorded.items() if name not in display})
 
+    def observation_receipt(out, changes):
+        expected = frozen_experiment.observation_receipt(out, changes)
+        path = out / 'queue-observation-runtime.json'
+        if not path.is_file():
+            return expected
+        receipt = frozen_experiment.ed.read(path)
+        recorded = frozen_experiment.ed.read(out / 'experiment.json')['code_hashes']
+        saved_changes = receipt.get('changes') if isinstance(receipt, dict) else None
+        if not isinstance(saved_changes, dict):
+            return expected
+        # A valid training receipt may include the exempt display revision
+        # alongside required operational changes. Preserve only those exact
+        # metadata entries; every scientific/runtime entry is still compared.
+        display = display_changes(recorded)
+        extras = {}
+        for name in display.keys() & saved_changes.keys():
+            item = saved_changes[name]
+            if (isinstance(item, dict) and set(item) == {'frozen_sha256', 'runtime_sha256'}
+                    and item['frozen_sha256'] == recorded[name]
+                    and isinstance(item['runtime_sha256'], str)
+                    and re.fullmatch(r'[0-9a-f]{64}', item['runtime_sha256'])):
+                extras[name] = item
+        return {**expected, 'changes': {**changes, **extras}}
+
     module.reviewed_code_changes = reviewed_code_changes
+    module.observation_receipt = observation_receipt
     return module
 
 

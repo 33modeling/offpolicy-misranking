@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import rloo_report as reporting
 from test_rloo_experiment import fixture
 
-OLD_DISPLAY_SHA256 = "49feb79c5c401a832fe590bcf1c1d36a1e660328054a2b9384fed9eb7d6a6a02"
+# A deterministic synthetic predecessor, not a historical hash that can become
+# identical to the current checked-out display file after a revert.
+OLD_DISPLAY_SHA256 = "d" * 64
 
 
 @pytest.fixture
@@ -127,6 +129,7 @@ def test_missing_root_is_not_created(tmp_path):
 
 def old_display_contract(out):
     ed = reporting.experiment.ed
+    assert ed.digest(reporting.experiment.ROOT / 'src/matrix_status.py') != OLD_DISPLAY_SHA256
     contract = ed.read(out / "experiment.json")
     contract["code_hashes"]["src/matrix_status.py"] = OLD_DISPLAY_SHA256
     ed.atomic_json(out / "experiment.json", contract)
@@ -162,7 +165,7 @@ def measured_policy(out, arm, reward):
 def test_reviewed_status_drift_exports_real_sealed_comparison_read_only(tmp_path):
     _, out, _ = fixture(tmp_path)
     old_display_contract(out)
-    with pytest.raises(ValueError, match="code changed since preparation: src/matrix_status.py"):
+    with pytest.raises(ValueError, match="reviewed runtime receipt missing or changed"):
         reporting.frozen_experiment.validate(out)
     measured_policy(out, "passrate_beta", .5)
     measured_policy(out, "fresh_r", .75)
@@ -176,7 +179,7 @@ def test_reviewed_status_drift_exports_real_sealed_comparison_read_only(tmp_path
     assert result["report_display_code_changes"]["src/matrix_status.py"]["frozen_sha256"] == (
         OLD_DISPLAY_SHA256)
     assert before == {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    with pytest.raises(ValueError, match="code changed since preparation"):
+    with pytest.raises(ValueError, match="reviewed runtime receipt missing or changed"):
         reporting.frozen_experiment.training_command(out, "fresh_r")
 
 
@@ -222,7 +225,7 @@ def test_report_allows_another_isolated_display_revision(tmp_path, monkeypatch):
     result = reporting.point_report(out)
     assert result["status"] == "incomplete"
     assert result["report_display_code_changes"]["src/matrix_status.py"]["runtime_sha256"] == "0" * 64
-    with pytest.raises(ValueError, match="code changed since preparation: src/matrix_status.py"):
+    with pytest.raises(ValueError, match="reviewed runtime receipt missing or changed"):
         reporting.frozen_experiment.validate(out)
 
 
@@ -285,6 +288,62 @@ def test_display_isolation_checks_scientific_source_references(tmp_path, monkeyp
     assert reporting.display_is_isolated("src/matrix_status.py")
     other.write_text(reference + "\n")
     assert not reporting.display_is_isolated("src/matrix_status.py")
+
+
+@pytest.mark.parametrize('reference', ['', 'import matrix_status', 'from matrix_status import main',
+    "importlib.import_module('matrix_status')", 'import matrix_status as status',
+    "exec(open('src/matrix_status.py').read())", 'for path in DISPLAY_MODULES: exec(open(path).read())',
+    'loader(DISPLAY_MODULES)', "DISPLAY_MODULES = ('src/matrix_status.py',)"])
+def test_only_exact_validator_metadata_declaration_is_exempt(tmp_path, monkeypatch, reference):
+    source = tmp_path / 'src'
+    source.mkdir()
+    (source / 'matrix_status.py').write_text('pass\n')
+    declaration = ("DISPLAY_MODULES = ('src/matrix_status.py', 'src/rlzero_status.py', "
+                   "'src/downstream_status.py', 'src/queue_status.py')\n")
+    (source / 'rloo_experiment.py').write_text(declaration + 'allowed = name in DISPLAY_MODULES\n' + reference + '\n')
+    monkeypatch.setattr(reporting.frozen_experiment, 'ROOT', tmp_path)
+    assert reporting.display_is_isolated('src/matrix_status.py') is (not reference)
+
+
+def test_declaration_exception_does_not_hide_same_line_import(tmp_path, monkeypatch):
+    source = tmp_path / 'src'
+    source.mkdir()
+    (source / 'matrix_status.py').write_text('pass\n')
+    (source / 'rloo_experiment.py').write_text(
+        "DISPLAY_MODULES = ('src/matrix_status.py', 'src/rlzero_status.py', "
+        "'src/downstream_status.py', 'src/queue_status.py'); import matrix_status\n")
+    monkeypatch.setattr(reporting.frozen_experiment, 'ROOT', tmp_path)
+    assert not reporting.display_is_isolated('src/matrix_status.py')
+
+
+@pytest.mark.parametrize('damage', [None, 'display_runtime_old', 'missing', 'scientific_runtime',
+                                   'display_frozen', 'receipt_binding', 'unknown_file'])
+def test_mixed_reviewed_runtime_receipt_retains_only_display_exception(tmp_path, damage):
+    _, out, _ = fixture(tmp_path)
+    c = old_display_contract(out)
+    c['code_hashes']['src/rloo_experiment.py'] = reporting.frozen_experiment.PRE_QUEUE_OBSERVATION_CODE
+    reporting.experiment.ed.atomic_json(out / 'experiment.json', c)
+    changes = reporting.frozen_experiment.reviewed_code_changes(c['code_hashes'])
+    receipt = reporting.frozen_experiment.observation_receipt(out, changes)
+    if damage == 'display_runtime_old':
+        receipt['changes']['src/matrix_status.py']['runtime_sha256'] = 'e' * 64
+    elif damage == 'scientific_runtime':
+        receipt['changes']['src/rloo_experiment.py']['runtime_sha256'] = 'e' * 64
+    elif damage == 'display_frozen':
+        receipt['changes']['src/matrix_status.py']['frozen_sha256'] = 'f' * 64
+    elif damage == 'receipt_binding':
+        receipt['experiment_sha256'] = 'f' * 64
+    elif damage == 'unknown_file':
+        receipt['changes']['src/train_policy_rloo.py'] = dict(frozen_sha256='f' * 64, runtime_sha256='e' * 64)
+    if damage != 'missing':
+        reporting.experiment.ed.atomic_json(out / 'queue-observation-runtime.json', receipt)
+    before = {str(p): p.read_bytes() for p in out.rglob('*') if p.is_file()}
+    if damage in {None, 'display_runtime_old'}:
+        assert reporting.point_report(out)['status'] == 'incomplete'
+    else:
+        with pytest.raises(ValueError, match='reviewed runtime receipt missing or changed'):
+            reporting.point_report(out)
+    assert before == {str(p): p.read_bytes() for p in out.rglob('*') if p.is_file()}
 
 
 def test_invalid_point_includes_exporter_identity_and_all_code_mismatches(tmp_path):

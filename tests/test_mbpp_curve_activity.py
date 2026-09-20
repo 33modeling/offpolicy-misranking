@@ -126,3 +126,54 @@ def test_held_task_lease_blocks_dispatch_before_progress_is_published(tmp_path, 
         assert current['status'] == ('EVAL' if published_result else 'WAIT')
     assert task()['status'] == ('EVAL' if published_result else 'READY')
     assert task()['retryable'] is published_result
+
+
+@pytest.mark.parametrize('progress_state', [None, 'failed', 'finished', 'running'])
+@pytest.mark.parametrize('published_result', [False, True])
+def test_task_lease_is_visible_without_claiming_a_stale_worker(tmp_path, progress_state, published_result):
+    core.atomic_json(tmp_path / 'switch.json', {'schema': rule.SCHEMA, 'dataset': 'mbpp', 'gate': 'convergence'})
+    completed_prefix(tmp_path)
+    branch = point(tmp_path) / 'selection_reduced'
+    branch.mkdir(parents=True)
+    if published_result:
+        published(branch)
+    if progress_state:
+        core.atomic_json(branch / 'progress.json', {
+            'host': 'old-node', 'worker_id': 'old-worker', 'state': progress_state,
+            'phase': 'train', 'updated': 1, 'seconds': 90, 'timeout': 100})
+    lock = branch / '.task.lock'
+    lock.touch()
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    with lock.open('rb') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = mbpp_status.snapshot([tmp_path], now=10000)
+        suite = data['suites'][0]
+        assert mbpp_status.counts(suite)['states']['RUN'] == 1
+        work = mbpp_status.current_work(suite)
+        assert len(work) == 1 and work[0][0]['task_lease_held']
+        assert mbpp_status.task_progress(tmp_path, work[0][0])[0] == '확인 중'
+        assigned = [node for node in mbpp_status.node_assignments(data) if node['assignments']]
+        assert len(assigned) == 1
+        assert assigned[0]['host'] == 'unknown-owner' and assigned[0].get('worker_id') is None
+        assert assigned[0]['work_id'].startswith('work-')
+        rendered = mbpp_status.render(data, width=160)
+        assert 'CURRENT RUN 1' in rendered and 'WORK ITEMS 1 current' in rendered
+        assert '작업 노드 0개' in rendered
+        assert '90.0%' not in rendered
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    assert not mbpp_status.current_work(mbpp_status.snapshot([tmp_path], now=10000)['suites'][0])
+
+
+def test_task_lease_does_not_duplicate_its_live_nested_curve(tmp_path):
+    directory, meter_lock = curve(tmp_path, -3600)
+    task_lock = directory.parent / '.task.lock'
+    task_lock.touch()
+    with task_lock.open('rb') as task_owner, meter_lock.open('rb') as meter_owner:
+        fcntl.flock(task_owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(meter_owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = mbpp_status.snapshot([tmp_path], now=10000)
+        work = mbpp_status.current_work(data['suites'][0])
+        assert len(work) == 1 and work[0][0]['directory'].endswith('/curve')
+        nodes = [node for node in mbpp_status.node_assignments(data) if node['assignments']]
+        assert len(nodes) == 1 and nodes[0]['host'] == 'remote-curve-node'
+        assert 'CURRENT RUN 1' in mbpp_status.render(data, width=160)

@@ -215,13 +215,18 @@ def current_work(suite):
     work = []
     for task in sorted(suite.get('tasks', []),
                        key=lambda row: row.get('directory', '').count('/'), reverse=True):
-        if not active(task):
+        lease_only = task.get('task_lease_held') and not active(task)
+        if not (active(task) or lease_only):
             continue
         directory = task.get('directory', '')
+        if lease_only and any(directory and previous.get('directory', '').startswith(directory + '/')
+                              for _, previous, _ in work):
+            continue
         parent = next((branch for branch in branches if branch.get('directory') and
                        (directory == branch['directory'] or directory.startswith(branch['directory'] + '/'))), None)
         arm = parent['arm'] if parent else arm_name(task.get('arm', ''))
-        key = (task.get('host'), task.get('worker_id'), task.get('seed'), task.get('step'), arm)
+        key = (None if lease_only else task.get('host'),
+               None if lease_only else task.get('worker_id'), task.get('seed'), task.get('step'), arm)
         # A parent and its child describe one operation; sibling paths do not.
         # Legacy workers can share an identical host string (and even PID).
         if any(previous_key == key and
@@ -235,6 +240,8 @@ def current_work(suite):
 
 def task_progress(root, task):
     """Current phase evidence only: bounded log tails, never model/rollout files."""
+    if task.get('task_lease_held') and not active(task):
+        return "확인 중", "작업 잠금 확인; 현재 단계·작업자 미확인"
     phase = str(task.get("phase") or "")
     if re.fullmatch(r"[\w-]+", phase) and "train" not in phase:
         directory = Path(root) / task.get("directory", "")
@@ -306,11 +313,18 @@ def node_assignments(data):
                 if age is not None and (prior_age is None or age < prior_age):
                     node.update(evidence_age=age, state="STALE", source_root=str(Path(suite["root"]).resolve()),
                                 detail=f"Last task s{task['seed']}/t{task['step']} {task['arm']}; heartbeat stale, ownership unconfirmed.")
-            if not active(task):
+            lease_only = task.get('task_lease_held') and not active(task)
+            if not (active(task) or lease_only):
                 continue
-            host = str(task.get("host") or "unknown-owner").rstrip("_")
-            key = (host, task.get('worker_id'))
-            node = hosts.setdefault(key, {"host": host, "worker_id": task.get('worker_id'), "state": "RUN", "evidence_age": None,
+            directory = task.get('directory', '')
+            if lease_only and any(active(other) and directory and
+                                  other.get('directory', '').startswith(directory + '/')
+                                  for other in suite.get('tasks', [])):
+                continue
+            host = str((None if lease_only else task.get("host")) or "unknown-owner").rstrip("_")
+            worker_id = None if lease_only else task.get('worker_id')
+            key = (host, worker_id)
+            node = hosts.setdefault(key, {"host": host, "worker_id": worker_id, "state": "RUN", "evidence_age": None,
                                            "assignments": []})
             node["state"] = "RUN"
             node["assignments"].append((suite["root"], task))
@@ -326,7 +340,7 @@ def node_assignments(data):
                 groups.append([(root, task)])
             else:
                 group.append((root, task))
-        if not node.get('worker_id') and len(groups) > 1:
+        if not node.get('worker_id') and (len(groups) > 1 or node['host'] == 'unknown-owner'):
             # A hostname alone cannot prove independent work belongs to one
             # machine. Show each work identity, without inventing node counts.
             for group in groups:
@@ -504,11 +518,15 @@ def render(data, *, width=120, all_tasks=False):
         selected_work += [(task, True) for task in data['operational_tasks'] if active(task)]
     if selected_work or any(task.get('task_lease_held') for suite in data['suites'] for task in suite.get('tasks', [])):
         lines.append('전체 실행 상태: RUN (진행 중인 작업 있음; 전체 종료 아님)')
-    live_hosts = {(task.get('host'), task.get('worker_id')) for task, _ in selected_work if task.get('host')}
+    live_hosts = {(task.get('host'), task.get('worker_id')) for task, _ in selected_work
+                  if active(task) and task.get('host')}
     owner_label = '작업자' if any(worker for _, worker in live_hosts) else '작업 노드'
     lines.append(f"현재 실행: 분기 RUN {aggregate['RUN']}개 | 공통 단계 RUN {sum(shared for _, shared in selected_work)}개"
                  f" | {owner_label} {len(live_hosts)}개 (분기 수와 작업자 수는 다름)")
-    host_work = Counter(task.get('host') for task, _ in selected_work if task.get('host'))
+    unknown_owners = sum(bool(task.get('task_lease_held')) and not active(task) for task, _ in selected_work)
+    if unknown_owners:
+        lines.append(f"작업 잠금 확인 {unknown_owners}개: 현재 작업자·단계 미확인; 작업자 수에 합산하지 않음.")
+    host_work = Counter(task.get('host') for task, _ in selected_work if active(task) and task.get('host'))
     ambiguous_hosts = [host for host, count in host_work.items()
                        if count > 1 and not re.search(r'-g[0-9a-f]{4}$', host)]
     if ambiguous_hosts:

@@ -118,8 +118,12 @@ def test_published_mbpp_with_held_task_lease_is_not_done_or_assigned_to_old_host
         data = display.snapshot([tmp_path], now=10000)
         assert display.counts(data['suites'][0])['done'] == 0
         assert display.counts(data['suites'][0])['states']['RUN'] == 1
-        assert not any(node['assignments'] for node in display.node_assignments(data))
-        assert '현재 작업자·단계 미확인' in display.render(data, width=160)
+        assigned = [node for node in display.node_assignments(data) if node['assignments']]
+        assert len(assigned) == 1 and assigned[0]['host'] == 'unknown-owner'
+        text = display.render(data, width=160)
+        assert 'CURRENT RUN 1' in text
+        assert '현재 작업자·단계 미확인' in text
+        assert '작업 노드 0개' in text
 
 
 @pytest.mark.parametrize('phase', ['train', 'fresh-r-candidate', 'fresh-r-validation', 'evaluate', 'curve'])

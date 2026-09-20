@@ -48,6 +48,13 @@ def meter_progress(directory):
     return progress
 
 
+def same_meter(left, right):
+    # Heartbeats may advance while the held lease is probed. Revalidate the
+    # owner/event identity, not mutable elapsed-time and timestamp fields.
+    return all(left.get(key) == right.get(key) for key in (
+        'host', 'pid', 'worker_id', 'event_id', 'state', 'phase', 'ledger', 'gpus', 'gpu_type'))
+
+
 def contract(out, seed, drift):
     c = read(out / "experiment.json")
     if (c.get("schema") != experiment.SCHEMA or c.get("objective") != "rloo"
@@ -138,8 +145,8 @@ def observe(out, arm, seed, drift, c, error, *, now):
             owned = (not fresh and progress.get('state') == 'running' and isinstance(event, str)
                      and bool(event) and Path(event).name == event and event not in {'.', '..'}
                      and display.switch_status.meter_lease_held(directory)
-                     and meter_progress(directory) == progress)
-            task.update({key: progress.get(key) for key in ("host", "pid", "event_id", "phase", "seconds", "timeout")})
+                     and same_meter(meter_progress(directory), progress))
+            task.update({key: progress.get(key) for key in ("host", "pid", "worker_id", "event_id", "phase", "seconds", "timeout")})
             task['meter_state'] = progress.get('state')
             task.update(heartbeat_age=age, heartbeat_fresh=fresh, owner_active=owned,
                         training_step=display.switch_status.last_training_step(directory / "policy/grpo_stats.jsonl"))
@@ -154,6 +161,18 @@ def observe(out, arm, seed, drift, c, error, *, now):
         except (OSError, ValueError, TypeError) as exc:
             if task["status"] != "DONE":
                 task.update(status="WAIT", reason="invalid progress: " + str(exc))
+    # The branch lease spans CPU validation and publication between metered
+    # phases. A finished/absent heartbeat must not hide its still-held owner.
+    held = display.switch_status.meter_lease_held(directory, '.worker.lock')
+    task['task_lease_held'] = held
+    if held:
+        if not task.get('heartbeat_fresh') and not task.get('owner_active'):
+            # The previous meter's host/UUID may belong to another worker.
+            task.update(host=None, pid=None, worker_id=None, phase='validation/publication',
+                        seconds=None, timeout=None, activity_identity_unconfirmed=True)
+        task['owner_active'] = True
+        if task['status'] != 'DONE':
+            task.update(status='RUNNING', reason='branch worker lease held')
     return task
 
 
@@ -183,12 +202,13 @@ def snapshot(root, *, now=None):
             state = ('RUN' if display.active(task) else
                      'FAILED' if task.get('meter_state') == 'failed' or task.get('attempt_state') == 'FAILED' else
                      'EXITED' if task.get('meter_state') == 'finished' else 'STALE')
-            node = dict(host=task["host"], state=state,
+            node = dict(host=task["host"], worker_id=task.get('worker_id'), state=state,
                         last_age=age)
-            previous = nodes.get(node['host'])
+            key = (node['host'], node['worker_id'])
+            previous = nodes.get(key)
             if (previous is None or node['state'] == 'RUN' and previous['state'] != 'RUN'
                     or node['state'] == previous['state'] and age < previous['last_age']):
-                nodes[node["host"]] = node
+                nodes[key] = node
         baselines = sum(t["status"] == "DONE" for t in tasks if t["kind"] == "prefix")
         suites.append(dict(root=str(root / f"math500-d{drift}"), display_label=f"RLOO MATH d{drift}", prepared=prepared,
                            error="; ".join(errors), tasks=tasks, nodes=list(nodes.values()),
@@ -207,18 +227,29 @@ def snapshot(root, *, now=None):
             owned = (not fresh and progress.get('state') == 'running' and isinstance(event, str)
                      and event and Path(event).name == event and event not in {'.', '..'}
                      and display.switch_status.meter_lease_held(path.parent)
-                     and meter_progress(path.parent) == progress)
+                     and same_meter(meter_progress(path.parent), progress))
             if fresh or owned:
                 operational.append(operations.task(root, path.parent, progress, fresh=fresh, owned=bool(owned), age=age))
         except (OSError, ValueError, TypeError):
             continue
+    leases = [(root, '.matrix-prepare.lock', 'prepare')]
+    leases += [(root / f'math500-d{drift}/s{seed}', name, phase)
+               for drift in (0, 400) for seed in range(3)
+               for name, phase in (('.prepare.lock', 'prepare'), ('.report.lock', 'report'))]
+    for directory, name, phase in leases:
+        if display.switch_status.meter_lease_held(directory, name):
+            operational.append(dict(kind='phase', arm=phase, phase=phase, host=None,
+                                    directory=str(directory.relative_to(root)), status='RUNNING',
+                                    owner_active=True, task_lease_held=True, heartbeat_fresh=False,
+                                    activity_identity_unconfirmed=True, shared_operation=True,
+                                    seed='-', step='-', reason='CPU operation lease held'))
     # Admission is shared across both checkpoint suites, not another training arm.
     return dict(updated=now, suites=suites, operational_root=str(root), operational_tasks=operational,
                 subject="RLOO", arm_names=LABELS,
                 legend=["18 training arms; 6 shared baseline evaluations are counted separately.",
                         "Cached / On-policy reuse the frozen GRPO selections; only continuation training uses RLOO.",
                         "DONE requires all four evaluation receipts and rollout hashes. Full model/input validation: check/report.",
-                        "Node activity uses phase heartbeats; a lock file alone never proves RUN."])
+                        "Activity uses phase heartbeats or a held kernel lease, never a lock file alone."])
 
 
 def main():

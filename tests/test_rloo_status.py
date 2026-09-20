@@ -48,6 +48,40 @@ def test_finished_cost_receipt_overrides_stale_running_meter(prepared):
         assert not status.display.active(task(data))
 
 
+@pytest.mark.parametrize('location', ['branch', 'admission'])
+@pytest.mark.parametrize('change', ['heartbeat', 'event', 'pid', 'state'])
+def test_clock_skew_meter_recheck_allows_heartbeat_but_not_owner_change(prepared, monkeypatch, location, change):
+    root, out = prepared
+    directory = out / 'random' if location == 'branch' else root / 'node-preflight/node/attempt'
+    progress = dict(host='peer', pid=123, worker_id='worker-a', state='running', phase='evaluation',
+                    event_id='event-a', updated=NOW-3600, seconds=100)
+    write(directory / 'progress.json', progress)
+    original = status.meter_progress
+    calls = []
+
+    def read_heartbeat(path):
+        value = original(path)
+        if path == directory:
+            calls.append(path)
+            if len(calls) > 1:
+                value.update(updated=NOW-3599, seconds=101)
+                if change == 'event':
+                    value['event_id'] = 'event-b'
+                elif change == 'pid':
+                    value['pid'] = 456
+                elif change == 'state':
+                    value['state'] = 'finished'
+        return value
+
+    monkeypatch.setattr(status, 'meter_progress', read_heartbeat)
+    with (directory / '.cost.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(root, now=NOW)
+        assert len(calls) >= 2
+        active = status.display.active(task(data)) if location == 'branch' else bool(data['operational_tasks'])
+        assert active is (change == 'heartbeat')
+
+
 @pytest.fixture
 def prepared(tmp_path):
     run, evaluation = inputs(tmp_path / "inputs")
@@ -179,6 +213,66 @@ def test_lock_file_alone_does_not_prove_running(prepared):
     root, out = prepared
     write(out / "random/.worker.lock", {})
     assert task(status.snapshot(root, now=NOW))["status"] == "READY"
+
+
+@pytest.mark.parametrize('meter', [None, 'finished', 'failed', 'skewed', 'malformed'])
+def test_held_branch_lease_is_visible_between_meter_phases(prepared, meter):
+    root, out = prepared
+    directory = out / 'random'
+    directory.mkdir(exist_ok=True)
+    if meter == 'malformed':
+        (directory / 'progress.json').write_text('{')
+    elif meter:
+        write(directory / 'progress.json', dict(state='running' if meter == 'skewed' else meter,
+              host='previous-node', worker_id='previous-worker', updated=NOW+3600, phase='train'))
+    with (directory / '.worker.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = files(root)
+        data = status.snapshot(root, now=NOW)
+        observed = task(data)
+        assert observed['status'] == 'RUNNING' and observed['task_lease_held']
+        assert observed['owner_active'] and observed['activity_identity_unconfirmed']
+        assert observed['host'] is None and observed['worker_id'] is None
+        assert 'CURRENT RUN 1' in status.display.render(data)
+        assert before == files(root)
+    assert not status.display.active(task(status.snapshot(root, now=NOW)))
+
+
+def test_published_evaluations_do_not_hide_active_validation(prepared):
+    root, out = prepared
+    seal(out, 'random')
+    with (out / 'random/.worker.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(root, now=NOW)
+        assert task(data)['status'] == 'DONE'
+        assert task(data)['owner_active'] and task(data)['task_lease_held']
+        assert 'CURRENT RUN 1' in status.display.render(data)
+
+
+def test_same_host_distinct_worker_ids_are_not_merged(prepared):
+    root, out = prepared
+    for arm, worker in [('random', 'worker-a'), ('fresh_r', 'worker-b')]:
+        write(out / arm / 'progress.json', dict(state='running', host='identical-host', pid=123,
+              worker_id=worker, updated=NOW-1, phase='evaluation'))
+    data = status.snapshot(root, now=NOW)
+    assert {row['worker_id'] for row in data['suites'][0]['nodes']} == {'worker-a', 'worker-b'}
+    assert {row['worker_id'] for row in status.display.node_assignments(data)} == {'worker-a', 'worker-b'}
+    assert 'CURRENT RUN 2' in status.display.render(data)
+
+
+@pytest.mark.parametrize('name', ['.prepare.lock', '.report.lock'])
+def test_held_unmetered_cpu_operation_visible_without_gpu_or_timestamp(prepared, name):
+    root, out = prepared
+    with (out / name).open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = files(root)
+        data = status.snapshot(root, now=NOW)
+        operation, = data['operational_tasks']
+        assert operation['phase'] == name[1:].split('.')[0]
+        assert operation['owner_active'] and operation['activity_identity_unconfirmed']
+        assert 'CURRENT RUN 1' in status.display.render(data)
+        assert before == files(root)
+    assert not status.snapshot(root, now=NOW)['operational_tasks']
 
 
 def test_queue_error_remains_visible_with_failed_phase(prepared):
