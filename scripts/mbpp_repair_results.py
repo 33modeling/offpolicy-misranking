@@ -17,6 +17,7 @@ import switch_results
 
 LIMIT = 1024 * 1024
 READ_LIMIT = 8 * LIMIT
+RESULT_SCHEMA = 'offpolicy-selected-prefix-switch/v1'
 GROUPS = ('reused_branches', 'rerun_branches', 'dependent_branches')
 PATH = re.compile(r'states/s([0-4])-t(25|50|100)/points/view-(25|50|100)/'
                   r'(selection_reduced|random_reduced|selection_full|random_full|gated)')
@@ -135,7 +136,8 @@ def measurement(root, relative, step, snapshots=None):
             raise ValueError('result seal does not match endpoint')
         rewards = result.get('rewards') if isinstance(result, dict) else None
         stop = result.get('completed_steps') if isinstance(result, dict) else None
-        if (not isinstance(result, dict) or result.get('complete') is not True
+        if (not isinstance(result, dict) or result.get('schema') != RESULT_SCHEMA
+                or result.get('complete') is not True
                 or not isinstance(rewards, dict) or not rewards
                 or any(not number(value) or value > 1 for value in rewards.values())
                 or type(stop) is not int or stop < step):
@@ -151,7 +153,8 @@ def measurement(root, relative, step, snapshots=None):
         if snapshots is not None and snapshots.get(relative + '/curve.json') != hashlib.sha256(curve_raw).hexdigest():
             raise ValueError('reused curve differs from its frozen repair snapshot')
         curve = json.loads(curve_raw)
-        if not isinstance(curve, dict) or curve.get('result_sha256') != digest:
+        if (not isinstance(curve, dict) or curve.get('schema') != RESULT_SCHEMA
+                or curve.get('result_sha256') != digest):
             raise ValueError('curve is not bound to the accepted endpoint')
         points = curve.get('points')
         if not isinstance(points, dict):

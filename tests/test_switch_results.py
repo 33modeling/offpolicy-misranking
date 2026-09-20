@@ -1,4 +1,5 @@
 import json
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +8,7 @@ import pytest
 
 import selection_gate as core
 import selection_gate_gpu as base
+import selection_switch as rule
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,8 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def branch(root, state, arm, *, rewards, updates, extra_phases=(), discard=False, waiver=False, curve=False):
     seed, step = state[1:].split("-t")
     directory = root / "states" / state / "points" / f"view-{step}" / arm
-    core.atomic_json(directory / "result.json", {"complete": True, "rewards": {str(i): r for i, r in enumerate(rewards)},
+    core.atomic_json(directory / "result.json", {"schema": rule.SCHEMA, "complete": True, "rewards": {str(i): r for i, r in enumerate(rewards)},
                                                  "used_gpu_seconds": 28700., "completed_steps": int(step)+updates})
+    digest = hashlib.sha256((directory / 'result.json').read_bytes()).hexdigest()
+    core.atomic_json(directory / 'result.sha256.json', {'sha256': digest})
     core.atomic_json(directory / "policy/budget_stop.json", {"completed_steps": int(step)+updates, "stop_reason": "budget_exhausted"})
     core.atomic_json(directory / "decision.json", {"action": "select" if arm.startswith("selection") else "random",
                                                    "prediction": -0.004 if arm == "gated" else None})
@@ -32,7 +36,7 @@ def branch(root, state, arm, *, rewards, updates, extra_phases=(), discard=False
     if waiver:
         core.atomic_json(directory / "waivers/train1.json", {"schema": "waiver"})
     if curve:
-        core.atomic_json(directory / "curve.json", {"k": 4, "points": {str(step): {"updates": 0, "reward": .25},
+        core.atomic_json(directory / "curve.json", {"schema": rule.SCHEMA, "result_sha256": digest, "k": 4, "points": {str(step): {"updates": 0, "reward": .25},
                                                                         str(int(step)+50): {"updates": 50, "reward": .28},
                                                                         str(int(step)+updates): {"updates": updates, "reward": .30, "final": True}}})
     return directory
@@ -159,7 +163,7 @@ def test_matched_cost_display_includes_failed_scoring_and_own_curves_not_shared_
     assert f"COST PATH {directory}" in text
     assert "count it once per point, not once per arm" in text
     assert "do not sum action totals across arms" in text
-    assert "result seals and ledger provenance are not independently certified" in text
+    assert "checkpoint lineage and ledger provenance not certified" in text
     assert "reward= 75.00" in text if completed else "reward=  none" in text
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 

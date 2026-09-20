@@ -22,7 +22,7 @@ def main():
             sections.append(f"SUITE {root}\n" + switch_results.report(root))
             coverage.append({"root": str(root), "status": "exported",
                              "validation": "saved result snapshot; not full checkpoint lineage validation"})
-        except (ValueError, OSError, KeyError, TypeError) as exc:
+        except (ValueError, OSError, KeyError, TypeError, AttributeError) as exc:
             failed = True
             coverage.append({"root": str(root), "status": "error", "error": str(exc)})
     write_export("mbpp", {"suites": coverage}, "\n\n".join(sections), args.out)

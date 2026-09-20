@@ -2,8 +2,10 @@
 
 import json
 import hashlib
+import os
 from pathlib import Path
 import sys
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -58,12 +60,13 @@ def test_exports_current_partial_report_and_curves(tmp_path, monkeypatch, missin
 def branch_fixture(root, *, selector="on_policy", seed=0, step=25, arm="selection_reduced"):
     directory = root / f"branches/{selector}/states/s{seed}-t{step}/points/view-{step}/{arm}"
     directory.mkdir(parents=True)
-    result = {"complete": True, "completed_steps": step+10, "rewards": {"q0": .25, "q1": .75},
+    result = {"schema": "offpolicy-selected-prefix-switch/v1", "complete": True,
+              "completed_steps": step+10, "rewards": {"q0": .25, "q1": .75},
               "used_gpu_seconds": 80, "cost": {"train": 80}}
     (directory / "result.json").write_text(json.dumps(result))
     digest = hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()
     (directory / "result.sha256.json").write_text(json.dumps({"sha256": digest}))
-    curve = {"result_sha256": digest, "points": {
+    curve = {"schema": "offpolicy-selected-prefix-switch/v1", "result_sha256": digest, "points": {
         str(step): {"updates": 0, "reward": .25},
         str(step+5): {"updates": 5, "reward": .375},
         str(step+10): {"updates": 10, "reward": .5, "final": True}}}
@@ -110,6 +113,77 @@ def test_endpoint_export_does_not_require_curve_or_other_selector(tmp_path):
     assert not errors
     assert rows[0]["mean_reward"] == .5
     assert rows[0]["curve_points"] == []
+
+
+def test_real_pair_results_bash_exports_one_partial_txt(tmp_path):
+    root = tmp_path / 'run'
+    branch_fixture(root)
+    before = {path: path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    env = {**os.environ, 'HOME': str(tmp_path), 'PAIR_ROOT': str(root),
+           'PAIR_PYTHON': sys.executable, 'OM_WORK': str(tmp_path / 'work')}
+    result = subprocess.run(['bash', 'scripts/run_paper_results.sh', 'results', 'pair'],
+                            cwd=Path(__file__).resolve().parents[1], env=env,
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    output, = tmp_path.glob('*.txt')
+    data = json.loads(output.read_text().split('DATA_JSON\n', 1)[1])
+    assert output.name == 'selector-pair-results.txt' and output.stat().st_size < 1_900_000
+    assert data['branch_measurements'][0]['mean_reward'] == .5 and not data['complete']
+    assert before == {path: path.read_bytes() for path in root.rglob('*') if path.is_file()}
+
+
+def test_oversized_raw_metadata_keeps_validated_partial_measurements_in_one_txt(tmp_path, monkeypatch):
+    root = tmp_path / 'run'
+    directory, endpoint, curve = branch_fixture(root)
+    endpoint['unvalidated_debug'] = 'x' * 2_000_000
+    raw = json.dumps(endpoint).encode()
+    (directory / 'result.json').write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    (directory / 'result.sha256.json').write_text(json.dumps({'sha256': digest}))
+    curve['result_sha256'] = digest
+    curve['points']['25']['unvalidated_debug'] = 'y' * 2_000_000
+    (directory / 'curve.json').write_text(json.dumps(curve))
+    target = tmp_path / 'results.txt'
+    monkeypatch.setattr(sys, 'argv', ['results', '--root', str(root), '--out', str(target)])
+    results.main()
+    data = json.loads(target.read_text().split('DATA_JSON\n', 1)[1])
+    row, = data['branch_measurements']
+    assert target.stat().st_size < 1_900_000
+    assert list(tmp_path.glob('*.txt')) == [target]
+    assert row['mean_reward'] == .5 and row['question_rewards'] == endpoint['rewards']
+    assert row['source_result_reference']['sha256'] == digest
+    assert row['source_result_reference']['source_bytes'] == len(raw)
+    assert row['source_curve_reference']['raw_omitted']
+    assert [point['reward'] for point in row['curve_points']] == [.25, .375, .5]
+    assert row['issues'] == [] and data['complete'] is False
+
+
+@pytest.mark.parametrize('schema', [None, 'offpolicy-net-gain-gate/v3-1'])
+def test_wrong_schema_does_not_become_pair_measurement(tmp_path, schema):
+    directory, endpoint, _ = branch_fixture(tmp_path)
+    endpoint['schema'] = schema
+    (directory / 'result.json').write_text(json.dumps(endpoint))
+    digest = hashlib.sha256((directory / 'result.json').read_bytes()).hexdigest()
+    (directory / 'result.sha256.json').write_text(json.dumps({'sha256': digest}))
+    rows, errors = results.saved_branch_measurements(tmp_path)
+    assert not errors and rows[0]['mean_reward'] is None and rows[0]['issues']
+
+
+def test_symlink_loop_cannot_prevent_other_partial_results_txt(tmp_path, monkeypatch):
+    root = tmp_path / 'run'
+    directory, _, _ = branch_fixture(root)
+    other, _, _ = branch_fixture(root, selector='cached')
+    path = directory / 'result.json'
+    path.unlink()
+    path.symlink_to(path.name)
+    target = tmp_path / 'results.txt'
+    monkeypatch.setattr(sys, 'argv', ['results', '--root', str(root), '--out', str(target)])
+    with pytest.raises(SystemExit):
+        results.main()
+    data = json.loads(target.read_text().split('DATA_JSON\n', 1)[1])
+    assert len(data['branch_measurements']) == 1
+    assert data['branch_measurements'][0]['mean_reward'] == .5
+    assert data['branch_measurement_errors']
 
 
 @pytest.mark.parametrize("damage", ["seal_missing", "seal_changed", "incomplete", "negative", "nan", "stop_before_prefix"])

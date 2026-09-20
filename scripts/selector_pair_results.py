@@ -29,6 +29,7 @@ BRANCH_SCOPE = (
 )
 
 OBSERVATION_LIMIT = 196608
+RESULT_SCHEMA = 'offpolicy-selected-prefix-switch/v1'
 OBSERVATION_SCOPE = (
     "Read-only, unverified execution metadata, separate from scientific results. "
     "Recorded RUN/DONE and timestamps are not proof of current process liveness or paired completion. "
@@ -174,7 +175,11 @@ def execution_observations(root, measurements):
 
 
 def read_source(path, root):
-    if not path.resolve().is_relative_to(root):
+    try:
+        resolved = path.resolve()
+    except RuntimeError as exc:
+        raise ValueError('source path contains a symlink loop') from exc
+    if not resolved.is_relative_to(root):
         raise ValueError("source path escapes experiment root")
     raw = path.read_bytes()
     def reject_constant(value):
@@ -226,7 +231,8 @@ def saved_branch_measurements(root):
                 raise ValueError("result seal does not match result bytes")
             rewards = result.get("rewards")
             stop = result.get("completed_steps")
-            if (result.get("complete") is not True or not isinstance(rewards, dict) or not rewards
+            if (result.get('schema') != RESULT_SCHEMA or result.get("complete") is not True
+                    or not isinstance(rewards, dict) or not rewards
                     or any(isinstance(v, bool) or not isinstance(v, (int, float))
                            or not math.isfinite(v) or not 0 <= v <= 1 for v in rewards.values())
                     or isinstance(stop, bool) or not isinstance(stop, int) or stop < step):
@@ -236,11 +242,12 @@ def saved_branch_measurements(root):
         except (OSError, ValueError) as exc:
             row["issues"].append(str(exc))
         curve_path = path.with_name("curve.json")
-        if curve_path.exists():
+        if curve_path.exists() or curve_path.is_symlink():
             try:
                 curve, curve_hash = read_source(curve_path, root)
                 row.update(source_curve=curve, source_curve_sha256=curve_hash)
-                if row["mean_reward"] is None or curve.get("result_sha256") != result_hash:
+                if (row["mean_reward"] is None or curve.get('schema') != RESULT_SCHEMA
+                        or curve.get("result_sha256") != result_hash):
                     raise ValueError("curve is not bound to an accepted saved endpoint")
                 points = curve.get("points")
                 if not isinstance(points, dict):
@@ -261,6 +268,30 @@ def saved_branch_measurements(root):
             except (OSError, ValueError, TypeError) as exc:
                 row["issues"].append(str(exc))
         row['status'] = 'saved_branch_measurement' if row['mean_reward'] is not None else 'unverified_source_only'
+        # Raw diagnostic payloads are not measurements. Keep their provenance
+        # without allowing one oversized field to suppress every partial row.
+        for field, source_path in (('source_result', path), ('source_curve', curve_path),
+                                   ('source_result_seal', path.with_name('result.sha256.json'))):
+            if field not in row:
+                continue
+            encoded = json.dumps(row[field], ensure_ascii=True, separators=(',', ':')).encode()
+            if len(encoded) <= 8192:
+                continue
+            try:
+                source_bytes = source_path.stat().st_size
+            except OSError:
+                source_bytes = None
+            row[field + '_reference'] = {'path': str(source_path.relative_to(root)),
+                'sha256': row[field + '_sha256'], 'source_bytes': source_bytes,
+                'raw_omitted': True, 'reason': 'oversized unvalidated source metadata'}
+            del row[field]
+            if field == 'source_result' and row['mean_reward'] is not None:
+                row['question_rewards'] = result['rewards']
+            if field == 'source_curve':
+                row['curve_points'] = [{key: value for key, value in point.items()
+                    if key in {'checkpoint_step', 'updates', 'reward'}
+                    or (type(value) in (int, float, bool) or value is None)}
+                    for point in row['curve_points']]
         rows.append(row)
     return rows, errors
 

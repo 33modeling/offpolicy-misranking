@@ -419,6 +419,29 @@ def test_same_hostname_and_pid_independent_meters_remain_separate(tmp_path):
     assert 'CURRENT RUN 2' in status.render(data, width=160)
 
 
+def test_parent_and_nested_phase_share_one_fallback_work_identity(tmp_path):
+    prepared(tmp_path)
+    directory = branch(tmp_path)
+    for path in (directory, directory / 'curve'):
+        core.atomic_json(path / 'progress.json', {'host': 'legacy-worker', 'pid': 123,
+            'state': 'running', 'updated': 995, 'phase': 'curve', 'event_id': 'same-owner'})
+    data = status.snapshot(tmp_path, now=1000)
+    assert len([node for node in data['nodes'] if node['current']]) == 1
+    assert 'CURRENT RUN 1' in status.render(data, width=160)
+
+
+@pytest.mark.parametrize('identity_key', ['worker_id', 'pid', 'event_id'])
+def test_nested_meters_with_explicit_different_owners_remain_separate(tmp_path, identity_key):
+    prepared(tmp_path)
+    directory = branch(tmp_path)
+    for index, path in enumerate((directory, directory / 'curve')):
+        core.atomic_json(path / 'progress.json', {'host': 'same-node', 'pid': 123,
+            'state': 'running', 'updated': 995, 'phase': 'curve', identity_key: str(index)})
+    data = status.snapshot(tmp_path, now=1000)
+    assert len([node for node in data['nodes'] if node['current']]) == 2
+    assert 'CURRENT RUN 2' in status.render(data, width=160)
+
+
 def test_skewed_legacy_meter_without_event_id_is_backed_by_real_lease(tmp_path):
     prepared(tmp_path)
     point = branch(tmp_path) / 'curve'

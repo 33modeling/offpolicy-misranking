@@ -16,9 +16,9 @@
 #   bash scripts/run_mbpp_experiments.sh logs       follow this node's log without restarting
 #   bash scripts/run_mbpp_experiments.sh stop       stop this node's launcher and workers
 #   bash scripts/run_mbpp_experiments.sh restart    load fixes; retain checkpoints and fault receipts
-#   bash scripts/run_mbpp_experiments.sh progress   MBPP suites only: branch counts, running branches, node names
+#   bash scripts/run_mbpp_experiments.sh progress   per-root progress, running branches, node names
 #   bash scripts/run_mbpp_experiments.sh status --watch  MBPP-only live status; never the math view
-#   bash scripts/run_mbpp_experiments.sh results    one results file per suite
+#   bash scripts/run_mbpp_experiments.sh results    one combined ~/mbpp-results.txt
 #
 # MBPP_HOLD_SECONDS (default 15) is the pause between passes.
 # EXPERIMENTS_HELP_SIBLINGS=0 keeps this node on the first suite's root only.
@@ -133,20 +133,15 @@ if [ "$MODE" = check ]; then
   exit 0
 fi
 
-# Results are exported per suite root; status above is one consolidated view.
+# Export every observed suite into one bounded TXT without entering a worker.
 if [ "$MODE" = results ]; then
-  failed=0
-  while IFS= read -r root; do
-    mbpp_queue_settings "$root"
-    echo "[mbpp:$(mbpp_suite_label "$MBPP_SUITE")] results"
-    rc=0
-    env -u OUT_ROOT -u SWITCH_PREFIX_SOURCE -u SWITCH_ONLY_SEEDS -u SWITCH_ONLY_ARMS \
-      -u SWITCH_BUDGET_GPU_SECONDS -u SWITCH_RUNTIME_REPO -u SWITCH_DETACHED -u EXPERIMENTS_DETACHED \
-      SWITCH_ROOT="$MBPP_ROOT" EXPERIMENTS_COMBINED=0 EXPERIMENTS_SKIP_MOPPS=1 \
-      bash scripts/run_selection_switch.sh results || rc=$?
-    [ "$rc" -eq 0 ] || { echo "[mbpp:$(mbpp_suite_label "$MBPP_SUITE")] results rc=$rc"; failed=1; }
-  done < <(mbpp_observation_roots)
-  exit "$failed"
+  PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
+  [ -x "$PY" ] || PY=python3
+  ROOT_ARGS=()
+  while IFS= read -r root; do ROOT_ARGS+=(--root "$root"); done < <(mbpp_observation_roots)
+  exec env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
+    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    "$PY" scripts/mbpp_paper_results.py "${ROOT_ARGS[@]}"
 fi
 
 # Inspect the shared storage before handing control to anything that can stop a

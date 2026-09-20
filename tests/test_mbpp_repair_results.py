@@ -3,7 +3,9 @@
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -27,9 +29,10 @@ def endpoint(root, relative, reward=.5):
     step = int(relative.split('/')[1].split('-t')[1])
     directory = root / relative
     digest = save(directory / 'result.json', {
+        'schema': 'offpolicy-selected-prefix-switch/v1',
         'complete': True, 'completed_steps': step + 10, 'rewards': {'q0': reward, 'q1': reward}})
     save(directory / 'result.sha256.json', {'sha256': digest})
-    save(directory / 'curve.json', {'result_sha256': digest,
+    save(directory / 'curve.json', {'schema': 'offpolicy-selected-prefix-switch/v1', 'result_sha256': digest,
         'points': {str(step+10): {'updates': 10, 'reward': reward, 'final': True}}})
 
 
@@ -93,6 +96,44 @@ def test_partial_export_reuses_37_and_never_pools_failed_original_and_new_cost(r
     assert not data['complete'] and not data['endpoint_coverage_complete']
     assert all(row['measurement']['mean_reward'] is None for row in data['branches']
                if row['origin'] == 'dependent_branches')
+
+
+def test_real_results_bash_writes_one_partial_txt_without_touching_run(results, tmp_path):
+    root, source, _ = prepared(tmp_path)
+    repo = Path(__file__).resolve().parents[1]
+    before = {path: path.read_bytes() for directory in (root, source)
+              for path in directory.rglob('*') if path.is_file()}
+    env = {**os.environ, 'HOME': str(tmp_path), 'MBPP_REPAIR_ROOT': str(root),
+           'MBPP_REPAIR_SOURCE': str(source), 'SWITCH_PYTHON': sys.executable,
+           'OM_WORK': str(tmp_path / 'work')}
+    env.pop('PYTHONPATH', None)
+    result = subprocess.run(['bash', 'scripts/run_mbpp_repair.sh', 'results'],
+                            cwd=repo, env=env, text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    output, = tmp_path.glob('*.txt')
+    data = json.loads(output.read_text().split('DATA_JSON\n', 1)[1])
+    assert output.name == 'mbpp-repair-results.txt' and output.stat().st_size <= 1024*1024
+    assert data['measured']['reused_branches'] == 37 and not data['complete']
+    assert before == {path: path.read_bytes() for directory in (root, source)
+                      for path in directory.rglob('*') if path.is_file()}
+
+
+@pytest.mark.parametrize('filename', ['result.json', 'curve.json'])
+@pytest.mark.parametrize('schema', [None, 'offpolicy-net-gain-gate/v3-1'])
+def test_wrong_schema_is_not_accepted_even_with_matching_seal(results, tmp_path, filename, schema):
+    relative = 'states/s0-t25/points/view-25/selection_reduced'
+    endpoint(tmp_path, relative)
+    path = tmp_path / relative / filename
+    value = json.loads(path.read_text())
+    value.pop('schema')
+    if schema is not None:
+        value['schema'] = schema
+    digest = save(path, value)
+    if filename == 'result.json':
+        save(path.with_name('result.sha256.json'), {'sha256': digest})
+    row = results.measurement(tmp_path, relative, 25)
+    assert row['issues'] and not row['curve_complete']
+    assert row['mean_reward'] == (.5 if filename == 'curve.json' else None)
 
 
 def test_frozen_original_cost_remains_available_without_source_root(results, tmp_path):
@@ -213,7 +254,8 @@ def test_oversized_question_identifiers_keep_endpoint_rows_in_one_bounded_file(r
     relative = meta['rerun_branches'][0]
     directory = root / relative
     step = int(relative.split('/')[1].split('-t')[1])
-    digest = save(directory / 'result.json', {'complete': True, 'completed_steps': step + 1,
+    digest = save(directory / 'result.json', {'schema': 'offpolicy-selected-prefix-switch/v1',
+                                              'complete': True, 'completed_steps': step + 1,
                                               'rewards': {'q' * (1024 * 1024): .5}})
     save(directory / 'result.sha256.json', {'sha256': digest})
     output = tmp_path / 'results.txt'

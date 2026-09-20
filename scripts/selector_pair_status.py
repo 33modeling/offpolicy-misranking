@@ -141,7 +141,7 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
     fresh = [(updated, path, value) for updated, path, value in relevant if value.get("_active")]
     if fresh:
         task.update(**{key: fresh[0][2].get(key) for key in
-                    ("host", "worker_id", "work_id", "activity_identity_unconfirmed", "phase", "seconds", "timeout",
+                    ("host", "worker_id", "work_id", "pid", "event_id", "activity_identity_unconfirmed", "phase", "seconds", "timeout",
                      "owner_active", "heartbeat_fresh")})
         if task['status'] != 'DONE':
             task.update(status='RUN', reason='')
@@ -176,10 +176,22 @@ def snapshot(root, *, now=None):
         error = str(exc)
     observations = progress_records(root)
     active_paths = {}
+    active_owners = {}
     for updated, path, value in observations:
         if (value.get('state') == 'running'
                 and (-5 <= now - updated < 60 or display.switch_status.meter_lease_held(path.parent))):
             active_paths.setdefault(str(value.get('host') or 'unknown'), set()).add(str(path.parent))
+            active_owners[str(path.parent)] = value
+    def compatible_paths(left, right):
+        a, b = active_owners.get(left, {}), active_owners.get(right, {})
+        return not any(a.get(key) is not None and b.get(key) is not None
+                       and a[key] != b[key] for key in ('worker_id', 'pid', 'event_id'))
+    # Parent and nested meters are stages of one work item. Separate sibling
+    # paths still need separate identities even if hostname and PID are equal.
+    active_paths = {host: {path for path in paths if not any(
+        path.startswith(parent + '/') and compatible_paths(path, parent)
+        for parent in paths if parent != path)}
+        for host, paths in active_paths.items()}
     nodes, activity = {}, []
     for path in sorted((root / 'queue-workers').glob('*.json')):
         worker = read(path)
@@ -224,14 +236,22 @@ def snapshot(root, *, now=None):
             candidates.append(candidate)
         if value.get('pid') is not None:
             candidates = [node for node in candidates if node['worker'].get('pid') in {None, value['pid']}]
+        if value.get('worker_id'):
+            candidates = [node for node in candidates if node['worker_id'] == value['worker_id']]
         if len(candidates) == 1:
             node = candidates[0]
             value['worker_id'] = node['worker_id']
         else:
             # Containers can share both hostname and PID; an independent
             # meter path must not disappear into another worker's row.
-            identity = ('meter-' + hashlib.sha256(relative.encode()).hexdigest()[:16]
-                        if len(active_paths.get(host, ())) > 1 else None)
+            work_path = next((parent for parent in active_paths.get(host, ())
+                              if (str(path.parent) == parent or str(path.parent).startswith(parent + '/'))
+                              and compatible_paths(str(path.parent), parent)),
+                             str(path.parent))
+            work_relative = str(Path(work_path).relative_to(root))
+            identity = value.get('worker_id') or (
+                'meter-' + hashlib.sha256(work_relative.encode()).hexdigest()[:16]
+                if len(active_paths.get(host, ())) > 1 else None)
             node = nodes.setdefault((host, identity), {"host": host, "worker_id": identity, "current": False})
             if identity:
                 value['worker_id'] = identity
