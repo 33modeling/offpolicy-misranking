@@ -28,6 +28,7 @@ import _node_view as node_view
 from _status_summary import random_counts, random_text, suite_label
 from _status_watch import StatusWatch
 from _switch_state_point import resolve_state_point
+import _status_operations as operations
 
 ARM_LABELS = {"selection_reduced": "SEL", "random_reduced": "RND",
               "selection_full": "FULL-S", "random_full": "FULL-R", "gated": "GATE"}
@@ -216,9 +217,8 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         fresh = progress.get("state") == "running" and -5 <= age < 60
         event = progress.get("event_id")
         owned = False
-        # Remote wall clocks are not a liveness test. A held meter lease keeps
-        # a curve visible, but does not certify fresh heartbeat or forward progress.
-        if (not fresh and manifest.get("dataset") == "mbpp" and progress.get("phase") == "curve"
+        # Remote wall clocks are not a liveness test for any MBPP phase.
+        if (not fresh and manifest.get("dataset") == "mbpp"
                 and progress.get("state") == "running" and isinstance(event, str)
                 and event and Path(event).name == event and event not in {".", ".."}
                 and meter_lease_held(directory)):
@@ -265,8 +265,12 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                         else:
                             curve = read(also)
                             if (curve.get("schema") != rule.SCHEMA
-                                    or curve.get("result_sha256") != receipt["sha256"]):
+                                    or curve.get("result_sha256") != receipt["sha256"]
+                                    or not isinstance(curve.get('points'), dict) or not curve['points']):
                                 task.update(status="INVALID", reason="training result published; curve record invalid or bound to another result")
+            elif kind == 'prefix' and (result.get('schema') != rule.SCHEMA
+                    or result.get('seed', seed) != seed or result.get('step', step) != step):
+                task.update(status='INVALID', reason='prefix certificate schema or state identity invalid')
             elif kind == "diagnostic" and result.get("status") != "complete":
                 task.update(status="FAILED", reason="diagnostic failed; no retry")
         elif fresh or owned:
@@ -319,7 +323,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                                          "scope": "prefix research" if kind == "prefix" else "branch budget"})
                 if summary["missing_starts"]:
                     notices.append({"path": str(cost_path.relative_to(root)), "error": "missing cost start records"})
-            except (OSError, ValueError, KeyError, TypeError) as exc:
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
                 notices.append({"path": str(cost_path.relative_to(root)), "error": f"cost snapshot unreadable: {exc}"})
         # Failed/stale work may wake the controller, but dependencies, live
         # peers and terminal diagnostic failures are not retryable work. EVAL
@@ -344,8 +348,12 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
 
     for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS):
         prefix = root / "prefixes" / f"seed-{seed}"
-        reached = {step for step in rule.STEPS if (prefix / f"prefix-{step}.json").is_file()
-                   and "_invalid" not in read(prefix / f"prefix-{step}.json")}
+        reached = set()
+        for step in rule.STEPS:
+            certificate = read(prefix / f'prefix-{step}.json')
+            if (certificate.get('schema') == rule.SCHEMA and certificate.get('seed', seed) == seed
+                    and certificate.get('step', step) == step):
+                reached.add(step)
         previous = None
         for step in rule.STEPS:
             observe(prefix / f"segment-{step}", seed=seed, step=step, kind="prefix", arm="prefix",
@@ -408,6 +416,11 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                       "seconds": number(progress.get("seconds")), "timeout": number(progress.get("timeout")),
                       "heartbeat_age": max(0., age), "heartbeat_fresh": fresh, "owner_active": owned,
                       "training_step": None})
+    for path in operations.progress_paths(root):
+        progress = read_progress(path.parent)
+        age, fresh, owned = activity(path.parent, progress)
+        if fresh or owned:
+            tasks.append(operations.task(root, path.parent, progress, fresh=fresh, owned=owned, age=age))
     active = [task for task in tasks if task.get("heartbeat_fresh") or task.get("owner_active")]
     # A branch can publish its training result before its nested curve finishes.
     # The controller consumes retryable, not the dashboard's derived RUN label.
@@ -497,8 +510,9 @@ def render_compact(data, *, width=120):
     random = random_text(random_counts(branches))
     if random:
         lines.append("RANDOM " + random)
-    running = sorted((task for task in tasks if task.get("status") == "RUNNING"), key=lambda task: (
-        node_view.host_sort_key(task.get("host", "")), task["seed"], task["step"], task["arm"]))
+    running = sorted((task for task in tasks if task.get("status") == "RUNNING"
+                      or task.get('owner_active') or task.get('heartbeat_fresh')), key=lambda task: (
+        node_view.host_sort_key(task.get("host", "")), str(task["seed"]), str(task["step"]), task["arm"]))
     lines.append(f"CURRENT RUN {len(running)}")
     for task in running:
         step = task.get("training_step")
@@ -547,12 +561,13 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"})
     if alerts:
         lines.append("ALERTS  " + "  ".join(f"{key} {value}" for key, value in alerts.items()) + "  (all phases)")
-    observed = [task for task in tasks if task["status"] == "RUNNING" or (all_tasks and task["status"] == "STALE")]
+    observed = [task for task in tasks if task["status"] == "RUNNING" or task.get('owner_active')
+                or task.get('heartbeat_fresh') or (all_tasks and task["status"] == "STALE")]
     lines += ["", "CURRENT WORK"]
     rows = [[task["host"] or "unknown", task["pid"] or "-", CELLS[task["status"]], f"s{task['seed']}/t{task['step']} {ARM_LABELS.get(task['arm'], task['arm'])}",
              task["phase"] or "-", duration(task["seconds"]), duration(task["timeout"]) if task["timeout"] else "-",
              duration(task["heartbeat_age"])] for task in sorted(observed, key=lambda item: (
-                 item["status"] != "RUNNING", node_view.host_sort_key(item["host"]), item["seed"], item["step"]))]
+                 item["status"] != "RUNNING", node_view.host_sort_key(item["host"]), str(item["seed"]), str(item["step"])))]
     rows += [[item["host"], "-", item.get("state", "WAIT"), "-",
               "between passes" if item.get("state") == "HOLD" else "no claimable task", "-", "-", "<60s"]
              for item in sorted(data["waiting_nodes"], key=lambda item: node_view.host_sort_key(item["host"]))]

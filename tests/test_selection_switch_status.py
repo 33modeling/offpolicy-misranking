@@ -50,7 +50,7 @@ def published(directory):
 
 
 def published_curve(directory):
-    core.atomic_json(directory / "curve.json", {"schema": rule.SCHEMA, "points": {},
+    core.atomic_json(directory / "curve.json", {"schema": rule.SCHEMA, "points": {'25': {'reward': .1}},
         "result_sha256": hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()})
 
 

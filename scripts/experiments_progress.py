@@ -80,7 +80,7 @@ def render_root(root, data, *, width, kind):
     tasks = data["tasks"]
     branches = [t for t in tasks if t.get("kind", "branch") == "branch"]
     counts = Counter(t["status"] for t in branches)
-    running = [t for t in tasks if t["status"] == "RUNNING"]
+    running = [t for t in tasks if t["status"] == "RUNNING" or t.get('owner_active') or t.get('heartbeat_fresh')]
     parts = [f"DONE {counts.get('DONE', 0)}/{len(branches)}", f"RUN {len(running)}"]
     for key in ("EVAL", "RESUME", "SAVING", "REVIEW", "READY", "WAIT", "FAILED", "STALE", "INVALID", "BUDGET"):
         if counts.get(key):
@@ -100,7 +100,7 @@ def render_root(root, data, *, width, kind):
         lines += textwrap.wrap(f'  HISTORY {histories}: archived attempts retained; current status shown separately.',
                                width=width, subsequent_indent='    ')
     host_width = max(12, width - 52)
-    for t in sorted(running, key=lambda t: (t["seed"], t["step"], t["arm"])):
+    for t in sorted(running, key=lambda t: (str(t["seed"]), str(t["step"]), t["arm"])):
         lines.append(clip(f"  RUN  s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('phase') or '-':<9} {updates(t):>5} "
                           f"{switch_status.duration(t.get('seconds')):>6} {clip(t.get('host') or '?', host_width)}", width))
     for t in sorted((t for t in tasks if t["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"}), key=lambda t: (t["status"], t["seed"], t["step"])):
@@ -127,7 +127,8 @@ def render(work, *, width=80, now=None, roots=None):
         except Exception as exc:  # noqa: BLE001 - one unreadable root must not hide the others
             lines += ["", f"{label(root)}: unreadable ({exc})"]
             continue
-        hosts |= {t.get("host") for t in data.get("tasks", []) if t["status"] == "RUNNING" and t.get("host")}
+        hosts |= {t.get("host") for t in data.get("tasks", []) if t.get("host") and
+                  (t["status"] == "RUNNING" or t.get('owner_active') or t.get('heartbeat_fresh'))}
         lines += ["", *render_root(root, data, width=width, kind="switch")]
     for root in mopps:
         try:

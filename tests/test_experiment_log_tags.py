@@ -43,3 +43,30 @@ def test_existing_tag_is_not_duplicated_and_final_unterminated_line_is_kept(tmp_
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 0
     assert result.stdout.splitlines() == ['[gate] curve curve [pair]', 'last line [pair]']
+
+
+@pytest.mark.parametrize('name', ['selector_pair_gpu.py', 'queue_rloo.py'])
+def test_direct_workers_distinguish_same_hostname_and_preserve_explicit_identity(tmp_path, name):
+    worker = tmp_path / name
+    worker.write_text('import os\nprint(os.environ["EXPERIMENTS_NODE_ID"])\n')
+    script = '''set -euo pipefail
+hostname() { printf 'same-node\\n'; }
+timeout() { printf '%s\\n' "$TEST_GPU_UUID"; }
+source "$1"
+shift
+selection_run_worker "$@"
+'''
+    env = {key: value for key, value in os.environ.items() if key != 'EXPERIMENTS_NODE_ID'}
+    def run(uuid, explicit=None):
+        setting = {**env, 'TEST_GPU_UUID': uuid}
+        if explicit is not None:
+            setting['EXPERIMENTS_NODE_ID'] = explicit
+        result = subprocess.run(['bash', '-c', script, 'identity-test', str(HELPER), sys.executable, str(worker)],
+                                env=setting, capture_output=True, text=True, timeout=5)
+        assert result.returncode == 0, result.stderr
+        return result.stdout.split()[0]
+    first, second = run('GPU-one'), run('GPU-two')
+    assert first.startswith('same-node-g') and second.startswith('same-node-g')
+    assert first != second
+    assert run('GPU-one') == first
+    assert run('GPU-two', 'operator-node-g1234') == 'operator-node-g1234'

@@ -25,6 +25,11 @@ selection_run_worker() {
   if [ -z "$tag" ] && { [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] || [ "${SWITCH_DATASET:-}" = mbpp ]; }; then
     tag=mbpp
   fi
+  # Direct Pair/RLOO launchers do not pass through run_experiments.sh. Set the
+  # same GPU/container identity before their first meter or queue receipt.
+  if [ "$tag" = pair ] || [ "$tag" = rloo ]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/_node_id.sh" || return $?
+  fi
   CHILD=
   SELECTION_LOG_PID=
   STOP_STATUS=0

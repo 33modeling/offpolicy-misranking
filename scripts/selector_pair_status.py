@@ -13,6 +13,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mbpp_status as display
 from _switch_state_point import resolve_state_point
+import _status_operations as operations
 import selection_gate as core
 import selector_pair as pair
 import selector_pair_gpu as gpu
@@ -49,6 +50,28 @@ def finished_meter(directory, progress):
                     for key in ('seconds', 'allocated_gpu_seconds', 'time'))):
         return {**progress, 'state': 'finished' if receipt['exit_code'] == 0 else 'failed'}
     return progress
+
+
+def progress_records(root):
+    """Status must not lose known paths to the worker's bounded queue scan."""
+    paths = set(operations.progress_paths(root))
+    for branch_name in gpu.BRANCHES:
+        for seed in (*pair.DEV_SEEDS, *pair.TEST_SEEDS):
+            for step in pair.STEPS:
+                point, _ = resolve_state_point(root / 'branches' / branch_name / 'states' / f's{seed}-t{step}', step)
+                for name in ('measurement', 'gate_measurement', 'curve-parent',
+                             'selection_reduced', 'selection_full', 'random_full'):
+                    directory = point / name
+                    paths.add(directory / 'progress.json')
+                    paths.add(directory / 'curve/progress.json')
+                    paths.update((directory / 'curve').glob('*/progress.json'))
+    found = {path: value for _, path, value in gpu.pair_progress(root)}
+    for path in paths:
+        value = read(path)
+        if value and not value.get('_error'):
+            found[path] = value
+    return sorted(((display.switch_status.number(value.get('updated')), path, value)
+                   for path, value in found.items()), key=lambda row: row[0], reverse=True)
 
 
 def observe_branch(root, seed, step, name, branch, *, ready, observations):
@@ -125,13 +148,13 @@ def snapshot(root, *, now=None):
             raise ValueError("Unknown pair manifest")
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         error = str(exc)
-    observations = gpu.pair_progress(root)
+    observations = progress_records(root)
     nodes, activity = {}, []
     for updated, path, value in observations:
         value.update(finished_meter(path.parent, value))
         fresh = value.get("state") == "running" and -5 <= now - updated < 60
         event = value.get('event_id')
-        owned = (not fresh and value.get('state') == 'running' and value.get('phase') == 'curve'
+        owned = (not fresh and value.get('state') == 'running'
                  and isinstance(event, str) and bool(event) and Path(event).name == event
                  and event not in {'.', '..'} and display.switch_status.meter_lease_held(path.parent))
         if owned:
@@ -149,7 +172,9 @@ def snapshot(root, *, now=None):
         relative = str(path.parent.relative_to(root))
         match = re.search(r"states/s(\d+)-t(\d+)/", relative)
         if not match:
-            node["state"] = "ADMIT"
+            task = operations.task(root, path.parent, value, fresh=fresh, owned=owned, age=now-updated)
+            node["state"] = "ADMIT" if task['arm'] == 'admission' else 'RUN'
+            activity.append(task)
             continue
         node['state'] = 'RUN'
         branch_name = relative.split("/")[1]
@@ -174,10 +199,15 @@ def snapshot(root, *, now=None):
     for node in nodes.values():
         worker = node.get("worker", {})
         fresh = -5 <= now - node.get("worker_updated", 0) < 60
-        node["current"] |= fresh and worker.get("state") in {"RUN", "WAIT"}
-        node.setdefault("state", "WAIT" if fresh and worker.get("state") == "WAIT" else
-                        "LIVE" if fresh and worker.get("state") == "RUN" else "STALE")
         match = re.fullmatch(r"(?:development|test)/s(\d+)-t(\d+)", str(worker.get("task", "")))
+        node["current"] |= fresh and worker.get("state") in {"RUN", "WAIT"}
+        stopped = str(worker.get('task', '')).startswith('worker stopped;')
+        queue_state = ('EXITED' if stopped or worker.get('state') == 'DONE' else
+                       'WAIT' if worker.get('state') == 'WAIT' else
+                       'LIVE' if worker.get('state') == 'RUN' else 'STALE')
+        if stopped:
+            node['current'] = bool(node.get('progress_age') is not None)
+        node.setdefault("state", queue_state if fresh else "STALE")
         if (fresh and worker.get("state") == "RUN" and match
                 and not any(task["host"] == node["host"] for task in activity)):
             activity.append(dict(host=node["host"], kind="phase", arm="상태 작업", seed=int(match[1]),

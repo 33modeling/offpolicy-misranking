@@ -27,7 +27,8 @@ REMARKS = {"EVAL": "평가·결과 저장 남음", "RESUME": "체크포인트 �
 def arm_name(arm, names=None):
     return (ARM_NAMES if names is None else names).get(arm.split("/", 1)[0],
                          {"prefix": "Shared training", "diagnostic": "Shared diagnostic",
-                          "curve-parent": "Shared evaluation"}.get(arm.split("/", 1)[0], arm))
+                          "curve-parent": "Shared evaluation", "admission": "GPU admission",
+                          "decision": "Switch decision"}.get(arm.split("/", 1)[0], arm))
 
 
 def display_state(task, running_directories=()):
@@ -57,6 +58,8 @@ def remark(task):
         parts.append("단계: " + task["phase"].replace("fresh-r", "on-policy").replace("fresh_r", "on-policy"))
     if task.get("status") == "WAIT" and task.get("reason"):
         parts.append(task["reason"])
+    elif task.get('status') in {'FAILED', 'INVALID', 'REVIEW', 'BUDGET'} and task.get('reason'):
+        parts.append(task['reason'])
     return "; ".join(parts)
 
 
@@ -65,14 +68,18 @@ def completion(suite):
     return value["progress"], value["done"], value["planned"]
 
 
-def counts(suite):
-    """Count planned continuation branches, never phases or shared prefixes."""
+def registered_tasks(suite):
     rule = switch_status.rule
     registered = {(seed, step, arm) for seed in (*rule.DEV_SEEDS, *rule.TEST_SEEDS)
                   for step in rule.STEPS for arm in (rule.DEV_ARMS if seed in rule.DEV_SEEDS else rule.TEST_ARMS)}
     if "registered_tasks" in suite:
         registered = {tuple(key) for key in suite["registered_tasks"]}
-    planned = len(registered)
+    return registered
+
+
+def branch_index(suite):
+    """One interpretation of registered slots for both summary and full table."""
+    registered = registered_tasks(suite)
     tasks = suite.get("tasks", [])
     branches, conflicting = {}, set()
     for task in tasks:
@@ -84,6 +91,14 @@ def counts(suite):
         branches[key] = task
     for key in conflicting:
         branches.pop(key)
+    return branches
+
+
+def counts(suite):
+    """Count planned continuation branches, never phases or shared prefixes."""
+    planned = len(registered_tasks(suite))
+    tasks = suite.get('tasks', [])
+    branches = branch_index(suite)
     directories = [task.get("directory", "") for task in tasks if active(task)]
     states = Counter(display_state(task, directories) for task in branches.values())
     # A missing/unreadable root is not proof that its old results disappeared.
@@ -93,7 +108,7 @@ def counts(suite):
     return {"planned": planned, "done": states["DONE"], "remaining": planned - states["DONE"],
             "recovered": sum(bool(task.get("posthoc_evaluation_saved")) and task["status"] != "DONE"
                              for task in branches.values()),
-            "unknown": unknown, "states": states, "progress": f"{100 * states['DONE'] / planned:.1f}%"}
+            "unknown": unknown, "states": states, "progress": f"{100 * states['DONE'] / planned if planned else 0:.1f}%"}
 
 
 def columns(text):
@@ -165,7 +180,35 @@ def snapshot(roots, *, now=None, retained_roots=()):
 
 
 def observed_suites(data):
-    return [*data["suites"], *data.get("retained_suites", [])]
+    suites = [*data["suites"], *data.get("retained_suites", [])]
+    if data.get('operational_tasks'):
+        suites.append({'root': data['operational_root'], 'display_label': data.get('subject', '') + ' shared',
+                       'tasks': data['operational_tasks'], 'registered_tasks': [], 'prepared': True})
+    return suites
+
+
+def current_work(suite):
+    """Deduplicate a branch and its nested meter, not different roots or hosts."""
+    branches = list(branch_index(suite).values())
+    work = []
+    for task in sorted(suite.get('tasks', []),
+                       key=lambda row: row.get('directory', '').count('/'), reverse=True):
+        if not active(task):
+            continue
+        directory = task.get('directory', '')
+        parent = next((branch for branch in branches if branch.get('directory') and
+                       (directory == branch['directory'] or directory.startswith(branch['directory'] + '/'))), None)
+        arm = parent['arm'] if parent else arm_name(task.get('arm', ''))
+        key = (task.get('host'), task.get('seed'), task.get('step'), arm)
+        # A parent and its child describe one operation; sibling paths do not.
+        # Legacy workers can share an identical host string (and even PID).
+        if any(previous_key == key and
+               (directory == previous.get('directory', '') or
+                directory and previous.get('directory', '').startswith(directory + '/'))
+               for previous_key, previous, _ in work):
+            continue
+        work.append((key, task, parent is None and task.get('kind') != 'branch'))
+    return [(task, shared) for _, task, shared in work]
 
 
 def active(task):
@@ -255,7 +298,7 @@ def node_assignments(data):
     for node in hosts.values():
         if node["assignments"]:
             node["state"] = "RUN"
-        node["assignments"].sort(key=lambda pair: (pair[0], pair[1]["seed"], pair[1]["step"], pair[1]["arm"]))
+        node["assignments"].sort(key=lambda pair: (pair[0], str(pair[1]["seed"]), str(pair[1]["step"]), pair[1]["arm"]))
         age = node.get("evidence_age")
         node["current"] = bool(node["assignments"] or node.get("launcher_alive") is True
                                or age is not None and -5 <= age < switch_status.node_view.HEARTBEAT_GRACE)
@@ -277,26 +320,29 @@ def render_nodes(data, *, width, all_nodes=False):
     names = data.get("arm_names", ARM_NAMES)
     labels = {suite["root"]: suite_label(suite)
               + (" (기본 실행 제외)" if suite["root"] in retained else "") for suite in observed_suites(data)}
+    visible_tasks = {id(task) for suite in observed_suites(data) for task, _ in current_work(suite)}
     visible = nodes if all_nodes else current
     for index, node in enumerate(visible, 1):
         if node["assignments"]:
             grouped = {}
             for root, task in node["assignments"]:
-                key = (root, task["seed"], task["step"], arm_name(task["arm"], names))
+                if id(task) not in visible_tasks:
+                    continue
+                key = (root, task["seed"], task["step"], arm_name(task["arm"], names), task.get('directory', ''))
                 detail = remark(task)
                 entry = grouped.setdefault(key, {"details": [], "tasks": []})
                 entry["tasks"].append(task)
                 details = entry["details"]
                 if detail and detail not in details:
                     details.append(detail)
-            for (root, seed, step, arm), entry in grouped.items():
+            for (root, seed, step, arm, directory), entry in grouped.items():
                 details = entry["details"]
                 # A nested curve phase is more specific than its parent branch.
-                task = max(entry["tasks"], key=lambda row: row.get("directory", "").count("/"))
+                task = max(entry["tasks"], key=lambda row: (row.get("directory", "").count("/"), row.get('kind') == 'phase'))
                 percent, basis = task_progress(root, task)
                 details.append(basis)
                 rows.append([f"{index}.", node['host'],
-                             f"{labels[root]} / seed {seed} / step {step} / {arm}",
+                             f"{labels[root]} / " + (f"seed {seed} / step {step} / " if seed != '-' else '') + arm,
                              "RUN", percent, '; '.join(details) or '-'])
         else:
             detail = {"WAIT": "작업 배정 대기", "HOLD": "작업 배정 대기", "ADMIT": "장치 점검 중",
@@ -394,6 +440,18 @@ def render(data, *, width=120, all_tasks=False):
              "READY: 실행 가능 | DONE: 결과 저장 완료 | WAIT: 대기·중단·확인 필요 | RUN: 실행 중",
              "Progress: 완료 확인 / 계획. 남음에는 미확인 분기가 포함되며, 기록 없음은 삭제·미실행의 증거가 아닙니다.",
              "학습 분기 수 기준입니다. 공통 학습·선택·평가 단계를 별도 실험으로 더하지 않습니다."]
+    selected_work = [entry for suite in data['suites'] for entry in current_work(suite)]
+    if data.get('operational_tasks'):
+        selected_work += [(task, True) for task in data['operational_tasks'] if active(task)]
+    live_hosts = {task.get('host') for task, _ in selected_work if task.get('host')}
+    lines.append(f"현재 실행: 분기 RUN {aggregate['RUN']}개 | 공통 단계 RUN {sum(shared for _, shared in selected_work)}개"
+                 f" | 작업 노드 {len(live_hosts)}개 (분기 수와 노드 수는 다름)")
+    host_work = Counter(task.get('host') for task, _ in selected_work if task.get('host'))
+    ambiguous_hosts = [host for host, count in host_work.items()
+                       if count > 1 and not re.search(r'-g[0-9a-f]{4}$', host)]
+    if ambiguous_hosts:
+        lines.append('노드 식별 주의: ' + ', '.join(sorted(ambiguous_hosts))
+                     + ': 동일 이름의 작업을 모두 표시; 노드 수는 기록된 ID 기준이며 실제 노드 수 미확인.')
     recovered = sum(item["recovered"] for item in totals)
     if recovered:
         lines.insert(3, f"복구 평가 완료 {recovered}개 (동일예산 DONE 제외; 위 남음에 포함)")
@@ -403,6 +461,8 @@ def render(data, *, width=120, all_tasks=False):
     rows, running, notices = [], [], []
     for suite in data["suites"]:
         name = suite_label(suite)
+        notices += [f"{name}: {item.get('path', '?')}: {item.get('error', '')}"
+                    for item in suite.get('notices', [])]
         count = counts(suite)
         states = count["states"]
         condition = ("학습 한도 공통; 선택 비용 별도 기록"
@@ -423,6 +483,9 @@ def render(data, *, width=120, all_tasks=False):
         prefix_done = sum(task["status"] == "DONE" for task in prefixes)
         shared_label = suite.get("shared_label", "공통 학습")
         note = f"{condition}; {shared_label} {prefix_done}/{len(prefixes)}".lstrip("; ")
+        shared_running = sum(shared for _, shared in current_work(suite))
+        if shared_running:
+            note += f"; 공통 단계 RUN {shared_running}개"
         if count["unknown"]:
             note += f"; 기록 미확인 {count['unknown']}개"
         budgets = sum(task['status'] == 'BUDGET' for task in branches)
@@ -466,7 +529,8 @@ def render(data, *, width=120, all_tasks=False):
         lines += suite.get("details", [])
         tasks = suite.get("tasks", [])
         prefixes = {(task["seed"], task["step"]): task for task in tasks if task.get("kind") == "prefix"}
-        branches = {(task["seed"], task["step"], task["arm"]): task for task in tasks if task.get("kind") == "branch"}
+        branches = branch_index(suite)
+        registered = registered_tasks(suite)
 
         directories = [task.get("directory", "") for task in tasks if active(task)]
 
@@ -480,7 +544,9 @@ def render(data, *, width=120, all_tasks=False):
                      if task["seed"] == seed and task["step"] == step and remark(task)]
             matrix.append([f"{seed} / {step}", role,
                            display_state(prefixes.get((seed, step)), directories),
-                           *[display_state(branches.get((seed, step, arm)), directories) for arm in names],
+                           *[display_state(branches.get((seed, step, arm)), directories)
+                             if (seed, step, arm) in branches else 'WAIT' if (seed, step, arm) in registered else '-'
+                             for arm in names],
                            "; ".join(dict.fromkeys(notes)) or "-"])
         widths = ([11, 5, 6, 9, 6, 14, 11, 11, width - 89] if width >= 110
                   else [11, 4, 5, 9, 6, 9, 6, 6, width - 72])
@@ -502,7 +568,7 @@ def render(data, *, width=120, all_tasks=False):
                 notices.append(f"{name}: 설정 읽기 실패: {suite['error']}")
             running += [(name, task) for task in suite.get("tasks", []) if active(task)]
         lines.append("이 표시는 기존 작업을 중단하지 않습니다. 기본 실행 제외 작업의 노드도 아래에 표시합니다.")
-    running_experiments = {(name, task["seed"], task["step"], arm_name(task["arm"], names)) for name, task in running}
+    running_experiments = [(suite['root'], task) for suite in observed_suites(data) for task, _ in current_work(suite)]
     lines += data.get("legend", ["On-policy: 현재 정책으로 계산한 gradient 기반 선택. Difficulty: 저장된 정답률 기반 선택.",
               "선택비용 포함: 선택·진단·학습에 같은 예산 적용. 선택비용 별도: 선택 비용을 예산 밖에 기록.",
               "선택비용 별도도 총 GPU 비용에는 포함합니다. 평가 비용은 모든 조건에서 별도로 기록합니다.",
@@ -510,8 +576,8 @@ def render(data, *, width=120, all_tasks=False):
               "Selection / Random: 공통 진단 비용 차감 후 비교. Full selection / Full random: 전체 예산 대조군.",
               "Gate policy: 전환 규칙 적용. '-': 해당 상태에서 실행 대상 아님."])
     lines += ["", f"CURRENT RUN {len(running_experiments)}"]
-    if not running:
-        lines.append(f"No fresh RUN heartbeat in these {subject} suites; saved completions above are retained.")
+    if not running_experiments:
+        lines.append(f"No active worker evidence in these {subject} suites; saved completions above are retained.")
     lines += render_nodes(data, width=width, all_nodes=all_tasks)
     lines += notices
     if all_tasks:

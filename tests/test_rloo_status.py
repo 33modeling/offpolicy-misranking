@@ -74,7 +74,7 @@ def write(path, value):
 def seal(out, arm):
     manifest = out / arm / "policy/policy_train.json"
     if arm != "before":
-        write(manifest, dict(training_objective="rloo", start_step=0, completed_steps=100))
+        write(manifest, dict(training_objective="rloo", start_step=0, completed_steps=100, adapter_sha256='a' * 64))
     for shard in range(4):
         target = out / arm / "evaluation"
         target.mkdir(parents=True, exist_ok=True)
@@ -83,7 +83,7 @@ def seal(out, arm):
                                 for i in range(75 * shard, 75 * (shard + 1)) for j in range(8)))
         binding = dict(experiment_sha256=status.digest(out / "experiment.json"),
                        inputs_sha256=status.digest(out / "inputs.json"), arm=arm, shard=shard,
-                       adapter_sha256=None if arm == "before" else "saved-adapter-hash",
+                       adapter_sha256=None if arm == "before" else 'a' * 64,
                        manifest_sha256=None if arm == "before" else status.digest(manifest))
         write(target / f"shard-{shard}.done.json", dict(binding=binding, rollouts_sha256=status.digest(path)))
 

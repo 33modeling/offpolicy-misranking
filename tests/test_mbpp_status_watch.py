@@ -35,7 +35,7 @@ if len(rows) == 1 and os.environ.get("TEST_COMPLETE_BRANCH"):
     result.write_text(json.dumps({"schema": schema, "complete": True}))
     digest = hashlib.sha256(result.read_bytes()).hexdigest()
     (branch / "result.sha256.json").write_text(json.dumps({"sha256": digest}))
-    (branch / "curve.json").write_text(json.dumps({"schema": schema, "result_sha256": digest, "points": {}}))
+    (branch / "curve.json").write_text(json.dumps({"schema": schema, "result_sha256": digest, "points": {"25": {"reward": .1}}}))
 sys.exit(143 if len(rows) == 2 else 0)
 PY
 ''')

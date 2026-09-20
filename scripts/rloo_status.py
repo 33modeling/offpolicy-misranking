@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import sys
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mbpp_status as display
 import rloo_experiment as experiment
+import _status_operations as operations
 
 LABELS = {"random": "Random", "passrate_beta": "Cached", "fresh_r": "On-policy"}
 
@@ -77,8 +79,13 @@ def saved_evaluation(out, arm, c):
         if policy is None:
             if binding.get("manifest_sha256") is not None or binding.get("adapter_sha256") is not None:
                 raise ValueError("base-model evaluation binding mismatch")
-        elif binding.get("manifest_sha256") != digest(policy / "policy_train.json"):
-            raise ValueError("evaluation policy manifest mismatch")
+        else:
+            manifest = read(policy / 'policy_train.json')
+            adapter_hash = manifest.get('adapter_sha256')
+            if (binding.get("manifest_sha256") != digest(policy / "policy_train.json")
+                    or not isinstance(adapter_hash, str) or re.fullmatch(r'[a-fA-F0-9]{64}', adapter_hash) is None
+                    or binding.get('adapter_sha256') != adapter_hash):
+                raise ValueError("evaluation policy manifest or adapter binding mismatch")
         path = target / f"shard-{shard}.jsonl"
         if seal.get("rollouts_sha256") != digest(path):
             raise ValueError(f"evaluation seal mismatch: shard {shard}")
@@ -118,21 +125,22 @@ def observe(out, arm, seed, drift, c, error, *, now):
         try:
             attempt = read(attempt_path)
             if attempt.get("state") == "FAILED":
-                task.update(status="WAIT", reason=str(attempt.get("error") or "queue attempt failed"))
+                task.update(status="WAIT", attempt_state='FAILED', reason=str(attempt.get("error") or "queue attempt failed"))
         except (OSError, ValueError, TypeError) as exc:
             task.update(status="WAIT", reason="invalid queue receipt: " + str(exc))
     progress_path = directory / "progress.json"
     if progress_path.exists():
         try:
             progress = meter_progress(directory)
-            age = now - float(progress.get("updated", 0))
+            age = now - display.switch_status.number(progress.get("updated"), -1e30)
             fresh = progress.get("state") == "running" and -5 <= age < 60
             event = progress.get('event_id')
             owned = (not fresh and progress.get('state') == 'running' and isinstance(event, str)
                      and bool(event) and Path(event).name == event and event not in {'.', '..'}
                      and display.switch_status.meter_lease_held(directory)
                      and meter_progress(directory) == progress)
-            task.update({key: progress.get(key) for key in ("host", "phase", "seconds", "timeout")})
+            task.update({key: progress.get(key) for key in ("host", "pid", "event_id", "phase", "seconds", "timeout")})
+            task['meter_state'] = progress.get('state')
             task.update(heartbeat_age=age, heartbeat_fresh=fresh, owner_active=owned,
                         training_step=display.switch_status.last_training_step(directory / "policy/grpo_stats.jsonl"))
             if task["status"] != "DONE":
@@ -172,9 +180,14 @@ def snapshot(root, *, now=None):
             if not task.get("host"):
                 continue
             age = task.get("heartbeat_age", float("inf"))
-            node = dict(host=task["host"], state="RUN" if display.active(task) else "STALE",
+            state = ('RUN' if display.active(task) else
+                     'FAILED' if task.get('meter_state') == 'failed' or task.get('attempt_state') == 'FAILED' else
+                     'EXITED' if task.get('meter_state') == 'finished' else 'STALE')
+            node = dict(host=task["host"], state=state,
                         last_age=age)
-            if node["host"] not in nodes or age < nodes[node["host"]]["last_age"]:
+            previous = nodes.get(node['host'])
+            if (previous is None or node['state'] == 'RUN' and previous['state'] != 'RUN'
+                    or node['state'] == previous['state'] and age < previous['last_age']):
                 nodes[node["host"]] = node
         baselines = sum(t["status"] == "DONE" for t in tasks if t["kind"] == "prefix")
         suites.append(dict(root=str(root / f"math500-d{drift}"), display_label=f"RLOO MATH d{drift}", prepared=prepared,
@@ -184,7 +197,24 @@ def snapshot(root, *, now=None):
                            shared_label="Baseline evaluation", prefix_heading="Before",
                            details=[f"100 updates per arm | baseline evaluation {baselines}/3 (not extra training)",
                                     *errors]))
-    return dict(updated=now, suites=suites, subject="RLOO", arm_names=LABELS,
+    operational = []
+    for path in operations.progress_paths(root):
+        try:
+            progress = meter_progress(path.parent)
+            age = now - display.switch_status.number(progress.get('updated'), -1e30)
+            fresh = progress.get('state') == 'running' and -5 <= age < 60
+            event = progress.get('event_id')
+            owned = (not fresh and progress.get('state') == 'running' and isinstance(event, str)
+                     and event and Path(event).name == event and event not in {'.', '..'}
+                     and display.switch_status.meter_lease_held(path.parent)
+                     and meter_progress(path.parent) == progress)
+            if fresh or owned:
+                operational.append(operations.task(root, path.parent, progress, fresh=fresh, owned=bool(owned), age=age))
+        except (OSError, ValueError, TypeError):
+            continue
+    # Admission is shared across both checkpoint suites, not another training arm.
+    return dict(updated=now, suites=suites, operational_root=str(root), operational_tasks=operational,
+                subject="RLOO", arm_names=LABELS,
                 legend=["18 training arms; 6 shared baseline evaluations are counted separately.",
                         "Cached / On-policy reuse the frozen GRPO selections; only continuation training uses RLOO.",
                         "DONE requires all four evaluation receipts and rollout hashes. Full model/input validation: check/report.",
