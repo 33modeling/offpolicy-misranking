@@ -252,7 +252,8 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                 and meter_lease_held(directory)):
             latest = read_progress(directory)
             owned = (latest.get('state') == 'running'
-                     and all(latest.get(key) == progress.get(key) for key in ('event_id', 'host', 'pid')))
+                     and all(latest.get(key) == progress.get(key)
+                             for key in ('event_id', 'worker_id', 'host', 'pid')))
             if owned:
                 progress.update(latest)
                 age = now-number(progress.get('updated'), -1e30)
@@ -266,6 +267,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                 "role": "DEV" if seed in rule.DEV_SEEDS else "TEST",
                 "directory": str(directory.relative_to(root)), "status": "WAIT" if dependency else "READY",
                 "reason": dependency or "", "host": progress.get("host", ""), "pid": progress.get("pid"),
+                "worker_id": progress.get("worker_id"), "event_id": progress.get("event_id"),
                 "phase": progress.get("phase", ""), "seconds": number(progress.get("seconds")),
                 "timeout": number(progress.get("timeout")), "heartbeat_age": max(0., age) if progress else None,
                 "heartbeat_fresh": fresh, "owner_active": owned,
@@ -388,10 +390,19 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                     and certificate.get('step', step) == step):
                 reached.add(step)
         previous = None
+        claimed_prefix = next((step for step in rule.STEPS if step not in reached), None)
+        prefix_owned = (manifest.get("dataset") == "mbpp" and claimed_prefix is not None
+                        and meter_lease_held(prefix, ".prefix.lock"))
         for step in rule.STEPS:
-            observe(prefix / f"segment-{step}", seed=seed, step=step, kind="prefix", arm="prefix",
-                    done_path=prefix / f"prefix-{step}.json",
-                    dependency=f"prefix {previous}" if previous is not None and previous not in reached else None)
+            prefix_task = observe(prefix / f"segment-{step}", seed=seed, step=step, kind="prefix", arm="prefix",
+                                  done_path=prefix / f"prefix-{step}.json",
+                                  dependency=f"prefix {previous}" if previous is not None and previous not in reached else None)
+            if prefix_owned and step == claimed_prefix:
+                # The seed lease is acquired before preparation publishes its
+                # first meter. It proves work exists, not which node owns it.
+                prefix_task.update(task_lease_held=True, retryable=False)
+                if prefix_task["status"] == "READY":
+                    prefix_task.update(status="WAIT", reason="prefix task lease held; progress publication pending")
             previous = step
             child = root / "states" / f"s{seed}-t{step}"
             out, point_error = resolve_state_point(child, step)
@@ -446,6 +457,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                       "role": "DEV" if seed in rule.DEV_SEEDS else "TEST",
                       "directory": str(directory.relative_to(root)), "status": "RUNNING", "reason": "",
                       "host": progress.get("host", ""), "pid": progress.get("pid"), "phase": progress.get("phase", ""),
+                      "worker_id": progress.get("worker_id"), "event_id": progress.get("event_id"),
                       "seconds": number(progress.get("seconds")), "timeout": number(progress.get("timeout")),
                       "heartbeat_age": max(0., age), "heartbeat_fresh": fresh, "owner_active": owned,
                       "training_step": None})
