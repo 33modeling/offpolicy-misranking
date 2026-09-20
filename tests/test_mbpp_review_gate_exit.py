@@ -17,7 +17,7 @@ def review_queue(root, monkeypatch):
             worker.core.atomic_json(worker.prefix_dir(root, seed) / f"prefix-{step}.json", {})
             worker.publish_state(root, seed, step)
     blocked = next(worker.base.entries(worker.child_root(root, 0, 25))) / "selection_reduced"
-    monkeypatch.setattr(queue_worker, "finish_exhausted", lambda p, path, original: path == blocked)
+    monkeypatch.setattr(queue_worker, "finish_exhausted", lambda p, path, original, **kwargs: path == blocked)
     monkeypatch.setattr(worker, "main", lambda: worker.work(root, idle_timeout=0))
     return blocked, calls
 

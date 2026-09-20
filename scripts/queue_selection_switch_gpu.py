@@ -48,12 +48,16 @@ def fit_when_ready(root, original):
     return original(root)
 
 
-def finish_exhausted(p, directory, original):
+def finish_exhausted(p, directory, original, *, deferred=None):
     # Called by the original queue only while it owns the branch task lease.
     if original(p, directory):
         return True
     if not recovery.required(p, directory):
         return False
+    if deferred is not None:
+        deferred[directory] = p
+        print(f"[budget-stop] {directory}: no training retry; yielding to other runnable branches before recovery", flush=True)
+        return True
     import additive_experiment as ae
     try:
         prepared = recovery.prepare(p, directory)
@@ -115,16 +119,36 @@ def run():
     original_blocked = worker.mbpp_resume_blocked
     original_work = worker.work
     reviewed = set()
+    deferred = {}
 
     def blocked(p, directory):
-        result = finish_exhausted(p, directory, original_blocked)
+        result = finish_exhausted(p, directory, original_blocked, deferred=deferred)
         if result:
             reviewed.add(directory)
         return result
 
     def work(root, *, idle_timeout=600., only=None):
         reviewed.clear()
+        deferred.clear()
         result = original_work(root, idle_timeout=idle_timeout, only=only)
+        # The original pass has tried every independent task. Only now may a
+        # stopped branch use this node for reporting-only checkpoint recovery.
+        for directory, p in deferred.items():
+            try:
+                with worker.base.lease(directory / ".task.lock"):
+                    if worker.branch_finished(p, directory):
+                        continue
+                    if not finish_exhausted(p, directory, original_blocked):
+                        reviewed.discard(directory)
+                        result = 1
+            except BlockingIOError:
+                reviewed.discard(directory)
+                result = 1
+                print(f"[queue-yield] recovery owned by a peer: {directory}", flush=True)
+            except Exception as exc:
+                reviewed.discard(directory)
+                result = 1
+                worker.record_failure(directory / "budget-recovery", exc)
         if result == 1 and only_review_dependencies(root, reviewed, only):
             print("[WAIT] only MBPP review branches and dependent gate tasks remain; "
                   "releasing this worker without another GPU admission; NOT complete", flush=True)

@@ -399,6 +399,10 @@ after allocation exhaustion, without training or changing its cap. These
 posthoc measurements, curve points and their separate reporting costs are saved
 under `<branch>/budget-recovery/`, never substituted for canonical results or
 development gate labels. Already sealed matching evaluation shards are reused.
+The queue defers exhausted-branch recovery until it has attempted every
+independent runnable branch. Recovery reacquires the original task lease
+without waiting; peer-owned recovery yields, and a recovery failure cannot
+prevent other branches from being assigned. No exhausted training is restarted.
 The dashboard keeps the branch in WAIT with a recovery-evaluation remark, not
 DONE. If only review branches remain, the existing exit-80 path releases the
 node rather than retrying training. Missing or corrupt checkpoints still need
