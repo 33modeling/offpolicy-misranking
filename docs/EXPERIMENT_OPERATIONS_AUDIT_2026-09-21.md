@@ -107,3 +107,21 @@ exclusion of model, optimizer and rollout payloads remain explicit.
 Publication is atomic; a failed export does not leave a partial TXT.
 Focused diagnostic and launcher regression: 144 passed, including actual Bash
 execution, content beyond the old cap, UTF-8 preservation and failure cleanup.
+
+To send MBPP and Pair together as exactly one diagnostic TXT:
+
+```bash
+bash scripts/check_mbpp_pair.sh
+```
+
+The command includes both original and repair MBPP roots plus the configured
+Pair root, writes one `mbpp-pair-why-single.txt` in a new folder under the user's
+home, and prints its full path. It creates no intermediate per-experiment TXT
+files. Combined output has no aggregate cap, including Pair's lock, queue and
+cost evidence; normal individual diagnostic commands keep their existing
+limits. Per-record/read/log safety limits and excluded binary payloads remain
+explicit. Missing roots are reported without creating them. A read failure in
+one diagnostic section does not suppress the other experiment's evidence.
+Combined diagnostic, launcher and handoff regression: 264 passed, including
+actual Bash export, custom roots, held locks, unchanged file bytes/mtime/inodes,
+and Pair evidence beyond its normal 1 MiB limit.

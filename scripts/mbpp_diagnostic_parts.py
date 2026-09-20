@@ -202,15 +202,18 @@ def sections(work, roots, *, single_file=False):
         yield summary.clipped(metadata(root, path), ADMISSION_BYTES) + '\n'
 
 
-def write_single(chunks, destination):
+def write_single(chunks, destination, *, prefix='mbpp-why'):
     """Stream all diagnostic sections into one atomically published UTF-8 file."""
+    if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', prefix):
+        raise ValueError('invalid diagnostic filename prefix')
     destination.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(prefix='mbpp-why-', dir=destination))
-    path = folder / 'mbpp-why-single.txt'
-    temporary = folder / '.mbpp-why-single.tmp'
+    folder = Path(tempfile.mkdtemp(prefix=prefix + '-', dir=destination))
+    path = folder / f'{prefix}-single.txt'
+    temporary = folder / f'.{prefix}-single.tmp'
     try:
         with temporary.open('x', encoding='utf-8') as handle:
-            handle.write(f'MBPP WHY single file; set={folder.name}\nNo total output-size cap.\n\n')
+            handle.write(f'{prefix.upper().replace("-", " ")} single file; set={folder.name}\n'
+                         'No total output-size cap.\n\n')
             for chunk in chunks:
                 handle.write(chunk)
         temporary.rename(path)

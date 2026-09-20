@@ -127,7 +127,7 @@ def observations(root, limit=8):
     return ordered if limit is None else ordered[:limit]
 
 
-def collect(root, proc=Path('/proc')):
+def collect(root, proc=Path('/proc'), *, uncapped=False):
     root = Path(root)
     host = socket.gethostname()
     lines = ['SELECTOR PAIR LOCK DIAGNOSTIC', f'LOCAL_HOST {host}', f'ROOT {root}',
@@ -166,7 +166,7 @@ def collect(root, proc=Path('/proc')):
     if not owners:
         lines.append('OWNER not visible locally; remote/NFS/namespace owner may exist. NOT proof of a dead owner.')
     now = time.time()
-    for updated, path, value in observations(root):
+    for updated, path, value in observations(root, limit=None if uncapped else 8):
         age = now - updated
         fresh = value.get('state') == 'running' and -5 <= age < 60
         # These fields are observations only, never an authorization to signal.
@@ -176,10 +176,11 @@ def collect(root, proc=Path('/proc')):
                 + '; NOT confirmed lock ownership')
         lines.append(text[:700].replace('\n', ' ').replace('\r', ' '))
     lines.append('Do not delete .pair.lock: unlinking does not release an existing kernel lock.')
-    return bounded('\n'.join(lines) + '\n')
+    output = '\n'.join(lines) + '\n'
+    return output if uncapped else bounded(output)
 
 
-def queue_report(root):
+def queue_report(root, *, uncapped=False):
     """Inspect existing state/branch leases without creating or breaking locks."""
     root = Path(root).resolve()
     lines = ['SELECTOR PAIR TASK WAIT EVIDENCE',
@@ -247,13 +248,13 @@ def queue_report(root):
                         observe(path, ('state', 'phase', 'event_id', 'seconds', 'updated', 'host',
                                        'pid', 'attempt', 'error', 'reason'))
     raw = ('\n'.join(lines) + '\n').encode()
-    if len(raw) <= QUEUE_REPORT_BYTES:
+    if uncapped or len(raw) <= QUEUE_REPORT_BYTES:
         return raw.decode()
     footer = b'\n[Further task observations omitted; task evidence capped at 64 KiB.]\n'
     return raw[:QUEUE_REPORT_BYTES - len(footer)].decode(errors='ignore') + footer.decode()
 
 
-def cost_report(root):
+def cost_report(root, *, uncapped=False):
     """Export interrupted-event evidence, never estimate or close an event."""
     root = Path(root).resolve()
     lines = ['SELECTOR PAIR COST EVIDENCE', f'ROOT {root}',
@@ -359,7 +360,7 @@ def cost_report(root):
                                 lines.append('Additional policy inventory candidates omitted (128 limit).')
     lines.append(f'LEDGERS examined={examined} expanded={expanded}; file presence is not hash/lineage certification.')
     raw = ('\n'.join(lines) + '\n').encode()
-    if len(raw) <= COST_REPORT_BYTES:
+    if uncapped or len(raw) <= COST_REPORT_BYTES:
         return raw.decode()
     footer = b'\n[COST EVIDENCE OMITTED: single TXT capped at 1 MiB including lock summary.]\n'
     return raw[:COST_REPORT_BYTES - len(footer)].decode(errors='ignore') + footer.decode()
