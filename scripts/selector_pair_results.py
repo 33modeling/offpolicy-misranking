@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -9,8 +10,10 @@ import math
 import os
 from pathlib import Path
 import re
+import signal
 import statistics
 import subprocess
+import uuid
 
 from paper_result_text import write_export
 
@@ -134,25 +137,98 @@ def branch_table(rows):
     return output.getvalue()
 
 
+def exporter_metadata(repo):
+    try:
+        git = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
+                             capture_output=True, text=True, timeout=3)
+        commit = git.stdout.strip() if git.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        commit = None
+    return {'version': 'selector-pair-results/v2', 'git_commit': commit,
+            'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            'created_at': datetime.now(timezone.utc).isoformat(), 'export_id': uuid.uuid4().hex}
+
+
+def run_report(root, repo, timeout):
+    """Bound only this export's CPU report process group, never existing workers."""
+    command = ['bash', 'scripts/run_selector_pair.sh', 'report']
+    process = subprocess.Popen(command, cwd=repo,
+                               env={**os.environ, 'PAIR_ROOT': str(root), 'CUDA_VISIBLE_DEVICES': ''},
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = process.communicate()
+        return subprocess.CompletedProcess(command, 124, stdout,
+                                           f'report timed out after {timeout:g} seconds\n{stderr}')
+
+
+def empty_paired_report():
+    return {'rows': [], 'development_rows': [], 'complete': False,
+            'missing_states': [f's{s}-t{t}' for s in (3, 4) for t in (25, 50, 100)],
+            'missing_development_states': [f's{s}-t{t}' for s in (0, 1, 2) for t in (25, 50, 100)],
+            'summary': None}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--report-timeout", type=float, default=60,
+                        help="Maximum seconds for strict paired validation (default: 60)")
     args = parser.parse_args()
+    if not math.isfinite(args.report_timeout) or args.report_timeout <= 0:
+        parser.error('--report-timeout must be finite and positive')
     root = args.root.resolve()
     repo = Path(__file__).resolve().parents[1]
-    # Regenerate first. Never package a stale report after validation failed.
-    result = subprocess.run(["bash", "scripts/run_selector_pair.sh", "report"], cwd=repo,
-                            env={**os.environ, "PAIR_ROOT": str(root), "CUDA_VISIBLE_DEVICES": ""})
-    if result.returncode:
-        raise SystemExit(result.returncode)
-    data = json.loads((root / "report.json").read_text())
+    data, curves, exit_code = empty_paired_report(), '', 0
+    validation = {'status': 'not_run_no_published_paired_results', 'error': None}
+    published = [root / role / f's{s}-t{t}/result.json'
+                 for role, seeds in [('development', (0, 1, 2)), ('test', (3, 4))]
+                 for s in seeds for t in (25, 50, 100)]
+    if not root.is_dir():
+        exit_code = 2
+        validation = {'status': 'failed', 'error': 'experiment root does not exist'}
+    elif any(path.is_file() for path in published):
+        try:
+            result = run_report(root, repo, args.report_timeout)
+            if result.returncode:
+                exit_code = result.returncode if result.returncode > 0 else 1
+                validation = {'status': 'failed', 'returncode': result.returncode,
+                              'error': f'strict paired report failed (rc={result.returncode})',
+                              'stdout_tail': result.stdout[-8000:], 'stderr_tail': result.stderr[-8000:]}
+            else:
+                fresh, _ = read_source(root / 'report.json', root)
+                if any(not isinstance(fresh.get(key), list) for key in
+                       ('rows', 'missing_states', 'missing_development_states')):
+                    raise ValueError('malformed strict paired report')
+                curves = (root / 'curves.csv').read_text()
+                data = fresh
+                data['complete'] = not (data['missing_states'] or data['missing_development_states'])
+                validation = {'status': 'validated', 'error': None, 'returncode': 0}
+        except (OSError, ValueError) as exc:
+            data, curves, exit_code = empty_paired_report(), '', 2
+            validation = {'status': 'failed', 'error': str(exc)}
     data["source_root"] = str(root)
-    data["complete"] = not (data["missing_states"] or data["missing_development_states"])
     rows, errors = saved_branch_measurements(root)
     data.update(branch_measurements=rows, branch_measurement_errors=errors,
-                branch_measurement_scope=BRANCH_SCOPE)
-    write_export("selector-pair", data, (root / "curves.csv").read_text() + branch_table(rows), args.out)
+                branch_measurement_scope=BRANCH_SCOPE, paired_validation=validation,
+                exporter=exporter_metadata(repo))
+    if not exit_code and (errors or any(row['issues'] for row in rows)):
+        exit_code = 2
+    data['export_exit_code'] = exit_code
+    header = 'EXPORTER ' + json.dumps(data['exporter'], sort_keys=True) + '\n'
+    header += 'PAIRED VALIDATION ' + json.dumps(validation, sort_keys=True) + '\n'
+    header += f'CURRENT SAVED BRANCHES {len(rows)}; ERRORS {len(errors)}\n'
+    write_export("selector-pair", data, header + curves + branch_table(rows), args.out)
+    if exit_code:
+        raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":

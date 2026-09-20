@@ -20,33 +20,38 @@ import selector_pair_results as results
 def test_exports_current_partial_report_and_curves(tmp_path, monkeypatch, missing, development, complete):
     root = tmp_path / "run"
     root.mkdir()
+    paired = root / 'test/s3-t25/result.json'
+    paired.parent.mkdir(parents=True)
+    paired.write_text('{}')
     target = tmp_path / "selector-pair-results.txt"
     report = {"missing_states": missing, "missing_development_states": development,
               "rows": [{"state": "s3-t25", "score": 0.5}]}
     curves = "state,step,score\ns3-t25,10,0.5\n"
     calls = []
 
-    def regenerate(command, **kwargs):
-        calls.append((command, kwargs))
+    def regenerate(actual_root, repo, timeout):
+        calls.append((actual_root, repo, timeout))
         (root / "report.json").write_text(json.dumps(report))
         (root / "curves.csv").write_text(curves)
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(results.subprocess, "run", regenerate)
+    monkeypatch.setattr(results, "run_report", regenerate)
     monkeypatch.setattr(sys, "argv", ["selector_pair_results", "--root", str(root), "--out", str(target)])
     results.main()
 
     assert len(calls) == 1
-    command, kwargs = calls[0]
-    assert command == ["bash", "scripts/run_selector_pair.sh", "report"]
-    assert kwargs["env"]["PAIR_ROOT"] == str(root.resolve())
-    assert kwargs["env"]["CUDA_VISIBLE_DEVICES"] == ""
+    assert calls[0][0] == root.resolve()
+    assert calls[0][2] == 60
     content = target.read_text()
     assert curves in content
     data = json.loads(content.split("DATA_JSON\n", 1)[1])
-    assert data == {**report, "source_root": str(root.resolve()), "complete": complete,
-                    "branch_measurements": [], "branch_measurement_errors": [],
-                    "branch_measurement_scope": results.BRANCH_SCOPE}
+    assert data['rows'] == report['rows']
+    assert data['complete'] == complete
+    assert data['branch_measurements'] == data['branch_measurement_errors'] == []
+    assert data['paired_validation']['status'] == 'validated'
+    assert data['exporter']['version'] == 'selector-pair-results/v2'
+    assert len(data['exporter']['script_sha256']) == 64
+    assert data['exporter']['created_at'] and data['exporter']['export_id']
     assert list(tmp_path.glob("*.txt")) == [target]
 
 
@@ -70,20 +75,17 @@ def test_incomplete_pair_exports_independent_measured_arm_without_h(tmp_path, mo
     root = tmp_path / "run"
     directory, endpoint, curve = branch_fixture(root)
     before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in directory.iterdir()}
-    report = {"rows": [], "development_rows": [], "missing_states": ["s3-t25"],
-              "missing_development_states": ["s0-t25"], "summary": {"complete_test_states": 0}}
     target = tmp_path / "results.txt"
     def regenerate(*args, **kwargs):
-        (root / "report.json").write_text(json.dumps(report))
-        (root / "curves.csv").write_text("role,seed,arm,reward\n")
-        return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(results.subprocess, "run", regenerate)
+        pytest.fail('no paired result exists; strict report must not run or wait for a lock')
+    monkeypatch.setattr(results, "run_report", regenerate)
     monkeypatch.setattr(sys, "argv", ["selector_pair_results", "--root", str(root), "--out", str(target)])
     results.main()
     text = target.read_text()
     data = json.loads(text.split("DATA_JSON\n")[1])
     assert data["rows"] == data["development_rows"] == []
-    assert data["summary"] == report["summary"]
+    assert data["summary"] is None
+    assert data['paired_validation']['status'] == 'not_run_no_published_paired_results'
     assert data["complete"] is False
     row, = data["branch_measurements"]
     assert row["source_result"] == endpoint and row["source_curve"] == curve
@@ -182,19 +184,96 @@ def test_symlink_outside_root_is_not_exported(tmp_path):
     assert "escapes experiment root" in errors[0]["error"]
 
 
-def test_failed_report_never_exports_stale_data(tmp_path, monkeypatch):
+@pytest.mark.parametrize('returncode', [80, 124])
+def test_failed_report_replaces_stale_txt_with_current_error_and_branches(tmp_path, monkeypatch, returncode):
     root = tmp_path / "run"
     root.mkdir()
+    paired = root / 'test/s3-t25/result.json'
+    paired.parent.mkdir(parents=True)
+    paired.write_text('{}')
+    branch_fixture(root)
     (root / "report.json").write_text(json.dumps({"missing_states": [], "missing_development_states": []}))
     (root / "curves.csv").write_text("stale curves")
     target = tmp_path / "selector-pair-results.txt"
     target.write_text("previous valid export")
-    monkeypatch.setattr(results.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=80))
+    monkeypatch.setattr(results, "run_report", lambda *a, **kw:
+                        SimpleNamespace(returncode=returncode, stdout='', stderr='current validation error'))
     monkeypatch.setattr(sys, "argv", ["selector_pair_results", "--root", str(root), "--out", str(target)])
 
     with pytest.raises(SystemExit) as failure:
         results.main()
 
-    assert failure.value.code == 80
-    assert target.read_text() == "previous valid export"
+    assert failure.value.code == returncode
+    text = target.read_text()
+    assert 'previous valid export' not in text and 'stale curves' not in text
+    data = json.loads(text.split('DATA_JSON\n')[1])
+    assert data['rows'] == data['development_rows'] == []
+    assert data['complete'] is False and data['summary'] is None
+    assert data['paired_validation']['status'] == 'failed'
+    assert data['paired_validation']['stderr_tail'] == 'current validation error'
+    assert data['export_exit_code'] == returncode
+    assert data['branch_measurements'][0]['mean_reward'] == .5
+    assert data['exporter']['version'] == 'selector-pair-results/v2'
     assert list(tmp_path.glob("*.txt")) == [target]
+
+
+def test_fresh_exports_differ_even_with_unchanged_measurements(tmp_path, monkeypatch):
+    branch_fixture(tmp_path / 'run')
+    target = tmp_path / 'results.txt'
+    monkeypatch.setattr(sys, 'argv', ['results', '--root', str(tmp_path / 'run'), '--out', str(target)])
+    results.main()
+    first = json.loads(target.read_text().split('DATA_JSON\n')[1])
+    results.main()
+    second = json.loads(target.read_text().split('DATA_JSON\n')[1])
+    assert first['exporter']['export_id'] != second['exporter']['export_id']
+    assert first['branch_measurements'] == second['branch_measurements']
+
+
+def test_report_timeout_terminates_only_export_child_group(tmp_path, monkeypatch):
+    calls = []
+    class Process:
+        pid = 123456
+        def communicate(self, timeout=None):
+            calls.append(timeout)
+            if timeout is not None:
+                raise results.subprocess.TimeoutExpired('report', timeout)
+            return 'partial CPU output', 'waiting for lock'
+    def popen(command, **kwargs):
+        assert kwargs['start_new_session'] is True
+        assert kwargs['env']['CUDA_VISIBLE_DEVICES'] == ''
+        assert kwargs['env']['PAIR_ROOT'] == str(tmp_path)
+        return Process()
+    killed = []
+    monkeypatch.setattr(results.subprocess, 'Popen', popen)
+    monkeypatch.setattr(results.os, 'killpg', lambda pid, sig: killed.append((pid, sig)))
+    result = results.run_report(tmp_path, tmp_path, 0.25)
+    assert result.returncode == 124 and 'timed out' in result.stderr
+    assert calls == [0.25, None]
+    assert killed == [(123456, results.signal.SIGKILL)]
+
+
+def test_missing_root_writes_fresh_error_txt(tmp_path, monkeypatch):
+    target = tmp_path / 'results.txt'
+    target.write_text('previous export')
+    monkeypatch.setattr(sys, 'argv', ['results', '--root', str(tmp_path / 'missing'), '--out', str(target)])
+    with pytest.raises(SystemExit) as exc:
+        results.main()
+    assert exc.value.code == 2
+    data = json.loads(target.read_text().split('DATA_JSON\n')[1])
+    assert data['paired_validation']['error'] == 'experiment root does not exist'
+    assert data['branch_measurements'] == []
+
+
+def test_real_cli_exports_zero_paired_states_without_launcher_or_gpu(tmp_path):
+    root = tmp_path / 'run'
+    branch_fixture(root)
+    target = tmp_path / 'results.txt'
+    # No pair manifest exists, so invoking the frozen report would fail.
+    completed = results.subprocess.run(
+        [sys.executable, str(Path(results.__file__).resolve()), '--root', str(root), '--out', str(target)],
+        capture_output=True, text=True, timeout=5)
+    assert completed.returncode == 0, completed.stderr
+    data = json.loads(target.read_text().split('DATA_JSON\n')[1])
+    assert data['paired_validation']['status'] == 'not_run_no_published_paired_results'
+    assert data['rows'] == [] and data['complete'] is False
+    assert data['branch_measurements'][0]['mean_reward'] == .5

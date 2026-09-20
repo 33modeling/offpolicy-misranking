@@ -29,10 +29,15 @@ Invalid experiment points are labeled and excluded while other points are kept;
 the command exits nonzero if any point fails validation. Canonical `results.json`
 and frozen training code are not changed by the progress exporter.
 
-Pair regenerates its validated partial report, then packs its development/test
-measurements, costs, missing states, and curve CSV into the TXT. A failed report
-does not re-export a stale report as new data. States without a published paired
-result remain missing. Independently completed branch endpoints and saved curves
+Pair regenerates its validated partial report when a paired state is published,
+then packs its development/test measurements, costs, missing states, and curve
+CSV into the TXT. With no paired state, independent branches are exported without
+waiting on the paired-report lock. Failed or timed-out paired validation writes a
+fresh TXT containing the current error and independent branch evidence, never
+the previous report or curves. The command retains a nonzero failure exit code.
+Every Pair export includes UTC time, a unique export ID, and exporter Git/script
+identity. States without a published paired result remain missing.
+Independently completed branch endpoints and saved curves
 are included separately with source hashes, result-seal/curve binding checks,
 and explicit limits on validation. These do not supply H, target-crossing costs,
 paired completion, or independent certification of checkpoint lineage.
