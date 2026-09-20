@@ -60,6 +60,16 @@ quarantined branches remain and all other scoped work is complete, the original
 queue's exit 80 releases the node without claiming successful experiment
 completion. A missing development result can still block dependent gate work;
 this repair does not manufacture that result or train a replacement gate.
+The follow-up queue fix treats only-reviewed development branches plus their
+dependent gated branches as exit 80 as well. Previously those unstartable gate
+tasks prevented terminal detection and the controller kept holding the node.
+Independent failures, missing prefixes/states, live peer leases, existing gate
+models and non-MBPP runs do not use this shortcut. This stops an unproductive
+retry; it does not resolve the scientific missing-result problem or claim DONE.
+The follow-up was reproduced locally before the fix (worker returned 1 instead
+of 80), then verified by 52 queue/recovery tests and four targeted real-shell
+controller tests. The user's current holding line was requested but not yet
+provided, so this is a confirmed code path, not a confirmed live-node diagnosis.
 
 The dashboard shows saved recovery evaluations as WAIT with a separate remark,
 never increments canonical DONE, and retains the original 48-branch denominator.

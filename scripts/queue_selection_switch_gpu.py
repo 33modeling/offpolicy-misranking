@@ -9,6 +9,7 @@ code stay in the original driver. Active owned work is never interrupted.
 
 import os
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -68,17 +69,78 @@ def finish_exhausted(p, directory, original):
     return True
 
 
+def only_review_dependencies(root, reviewed, only=None):
+    """No runnable work remains when an unavailable dev result blocks the gate."""
+    if not reviewed:
+        return False
+    try:
+        p = worker.manifest(root)
+        if p.get("dataset") != "mbpp" or (root / "model.json").exists():
+            return False
+        pending, development_review = [], False
+        for seed in (*worker.rule.DEV_SEEDS, *worker.rule.TEST_SEEDS):
+            if only and seed not in only["seeds"]:
+                continue
+            for step in worker.rule.STEPS:
+                if not (worker.prefix_dir(root, seed) / f"prefix-{step}.json").is_file():
+                    return False
+                child = worker.child_root(root, seed, step)
+                protocol = worker.protocol(child)
+                out = next(worker.base.entries(child))
+                for arm in protocol["arms"]:
+                    if only and arm not in only["arms"]:
+                        continue
+                    directory = out / arm
+                    if worker.branch_finished(p, directory):
+                        continue
+                    if directory in reviewed:
+                        development_review |= seed in worker.rule.DEV_SEEDS and arm in worker.rule.DEV_ARMS
+                    elif arm != "gated":
+                        return False
+                    pending.append(directory)
+        if not development_review:
+            return False
+        # A peer may have claimed a reviewed branch after this worker released it.
+        # Never turn that live evaluation/recovery into a terminal queue decision.
+        with ExitStack() as locks:
+            for directory in pending:
+                locks.enter_context(worker.base.lease(directory / ".task.lock"))
+            return not (root / "model.json").exists()
+    except (OSError, ValueError, KeyError, StopIteration):
+        return False
+
+
 def run():
     original_wait, original_fit = worker.wait_for_peers, worker.fit_once
     original_blocked = worker.mbpp_resume_blocked
+    original_work = worker.work
+    reviewed = set()
+
+    def blocked(p, directory):
+        result = finish_exhausted(p, directory, original_blocked)
+        if result:
+            reviewed.add(directory)
+        return result
+
+    def work(root, *, idle_timeout=600., only=None):
+        reviewed.clear()
+        result = original_work(root, idle_timeout=idle_timeout, only=only)
+        if result == 1 and only_review_dependencies(root, reviewed, only):
+            print("[WAIT] only MBPP review branches and dependent gate tasks remain; "
+                  "releasing this worker without another GPU admission; NOT complete", flush=True)
+            return 80
+        return result
+
     worker.wait_for_peers = yield_to_node_queue
     worker.fit_once = lambda root: fit_when_ready(root, original_fit)
-    worker.mbpp_resume_blocked = lambda p, directory: finish_exhausted(p, directory, original_blocked)
+    worker.mbpp_resume_blocked = blocked
+    worker.work = work
     try:
         return worker.main()
     finally:
         worker.wait_for_peers, worker.fit_once = original_wait, original_fit
         worker.mbpp_resume_blocked = original_blocked
+        worker.work = original_work
 
 
 if __name__ == "__main__":
