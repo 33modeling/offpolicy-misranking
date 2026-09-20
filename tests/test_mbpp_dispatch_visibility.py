@@ -35,7 +35,7 @@ def test_controller_exit_is_not_wait_and_keeps_cause(tmp_path, rc, state, label)
     nodes = view.launcher_nodes(root, [], now=NOW, node_namespace="mbpp")
     assert nodes[0]["state"] == state
     rendered = " ".join(dashboard.render(dashboard.snapshot([root], now=NOW), width=240).split())
-    assert f"failed-node 배정 없음 {label}" in rendered
+    assert f"failed-node 배정 미확인 {label}" in rendered
     assert "failed-node 배정 없음 WAIT" not in rendered
     assert f"rc={rc}" in rendered
     if rc:

@@ -55,7 +55,7 @@ def meter_lease_held(directory, name=".cost.lock"):
             except BlockingIOError:
                 return True
             fcntl.flock(handle, fcntl.LOCK_UN)
-    except OSError:
+    except (OSError, RuntimeError):
         pass
     return False
 
@@ -466,6 +466,8 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         age, fresh, owned = activity(path.parent, progress)
         if fresh or owned:
             tasks.append(operations.task(root, path.parent, progress, fresh=fresh, owned=owned, age=age))
+    if manifest.get('dataset') == 'mbpp':
+        tasks.extend(operations.curve_lease_tasks(root, tasks, meter_lease_held))
     active = [task for task in tasks if task.get("heartbeat_fresh") or task.get("owner_active")]
     # A branch can publish its training result before its nested curve finishes.
     # The controller consumes retryable, not the dashboard's derived RUN label.

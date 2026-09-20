@@ -34,7 +34,7 @@ def evaluation_busy(directory):
             continue
         with handle:
             try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
                 return True
     return False

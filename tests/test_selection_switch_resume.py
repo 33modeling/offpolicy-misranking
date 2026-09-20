@@ -123,8 +123,10 @@ def interrupted(path, value):
 base.bind = interrupted
 runtime.run_arm(out, {'eval_timeout': 5}, protocol(), 'selection_full', list('0123'), {})
 """
+    child_env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "PYTHONPATH": os.pathsep.join(
+        (str(base.ROOT / "src"), str(Path(__file__).resolve().parent), os.environ.get("PYTHONPATH", "")))}
     result = subprocess.run([sys.executable, "-c", child, str(out), artifact], cwd=base.ROOT,
-                            env={**os.environ, "CUDA_VISIBLE_DEVICES": ""}, capture_output=True, text=True, timeout=20)
+                            env=child_env, capture_output=True, text=True, timeout=20)
     assert result.returncode == -signal.SIGKILL, result.stdout + result.stderr
     target = out / "selection_full" / artifact
     before = target.read_bytes()

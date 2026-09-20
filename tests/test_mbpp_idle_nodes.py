@@ -162,4 +162,4 @@ def test_plain_status_cli_prints_waiting_nodes_at_bottom_without_watch(monkeypat
     footer = text[text.index("작업 없는 노드:"):]
     assert "1. run284000-wts-2-g1234 | WAIT | 작업 배정 대기" in footer
     assert text.index("NODE ASSIGNMENTS") < text.index("작업 없는 노드:")
-    assert text.rstrip().endswith(dashboard.render_idle_nodes(data)[-1])
+    assert " ".join(text.split()).endswith(dashboard.render_idle_nodes(data)[-1])

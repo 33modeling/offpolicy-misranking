@@ -3,12 +3,12 @@
 paper's audit reads, all roots in one file.
 
 The full `why` report carries every log tail and every record of every root, which
-is tens of megabytes and cannot be moved off the cluster comfortably. The paper's
-importer keeps only `switch.json` and, per branch, `result.json`, `decision.json`,
-`cost.jsonl` and `policy/budget_stop.json`. This writes exactly those, for one
-root, with the `UTC:` and `COMMIT:` header lines the importer reads for
-provenance. On the 09-16 export the same content is 13.4 MB as a why report and
-about 1 MB here.
+is tens of megabytes and cannot be moved off the cluster. This carries only what the
+paper's audit actually opens: `switch.json`, each branch's `result.json`,
+`decision.json` and `policy/budget_stop.json`, and the selection arm's `cost.jsonl`,
+each cut to the fields the audit reads and written without indentation, plus the
+`UTC:` and `COMMIT:` header lines it reads for provenance. On the 09-16 export the
+same evidence is 13.4 MB as a why report and a fraction of a megabyte here.
 
 Read-only: it opens nothing but the root's own records and needs no GPU.
 
@@ -34,6 +34,38 @@ from pathlib import Path
 POINT_ARMS = ("selection_full", "selection_reduced", "random_full", "random_reduced", "gated")
 STATE_ARMS = ("mopps", "random_online")
 FILES = ("result.json", "decision.json", "cost.jsonl", "policy/budget_stop.json")
+# The audit reads one cost ledger, the selection arm's, to total the pre-training
+# phases; the other arms' ledgers are never opened, so they are not carried.
+COST_ARM = "selection_full"
+# Exactly the keys the audit reads out of each record. Dropping the rest, and the
+# indentation, changes the bytes that have to leave the cluster and nothing the
+# audit sees: it parses every block before using it.
+COST_KEYS = ("state", "event_id", "allocated_gpu_seconds", "ledger", "phase")
+SWITCH_KEYS = ("schema", "budget_gpu_seconds", "test_seeds")
+DECISION_KEYS = ("action", "measurement_gpu_seconds")
+
+
+def slim(text: str, name: str) -> str:
+    """One record, reduced to the fields the audit reads and serialised compactly."""
+    if name.endswith("cost.jsonl"):
+        rows = (json.loads(line) for line in text.splitlines() if line.strip())
+        kept = [{k: row[k] for k in COST_KEYS if k in row}
+                for row in rows if row.get("state") == "finished"]
+        return "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in kept)
+    value = json.loads(text)
+    if name.endswith("switch.json"):
+        value = {k: value[k] for k in SWITCH_KEYS if k in value}
+    elif name.endswith("result.json"):
+        # completed_steps and rewards are cross-checked against the results report;
+        # complete and cost.complete decide eligibility.
+        value = {"completed_steps": value.get("completed_steps"), "complete": value.get("complete"),
+                 "cost": {"complete": (value.get("cost") or {}).get("complete")},
+                 "rewards": value.get("rewards")}
+    elif name.endswith("decision.json"):
+        value = {k: value[k] for k in DECISION_KEYS if k in value}
+    elif name.endswith("budget_stop.json"):
+        value = {"completed_steps": value.get("completed_steps")}
+    return json.dumps(value, separators=(",", ":")) + "\n"
 
 
 def blocks(root: Path, prefix: str = ""):
@@ -45,16 +77,19 @@ def blocks(root: Path, prefix: str = ""):
     switch = root / "switch.json"
     if not switch.is_file():
         raise SystemExit(f"[abort] not a selection-switch root: {root}")
-    yield prefix + "switch.json", switch.read_text()
+    yield prefix + "switch.json", slim(switch.read_text(), "switch.json")
     for state in sorted((root / "states").glob("s[0-9]-t[0-9]*")):
         directories = [point / arm for point in sorted((state / "points").glob("view-[0-9]*"))
                        for arm in POINT_ARMS]
         directories += [state / arm for arm in STATE_ARMS]
         for directory in directories:
             for name in FILES:
+                if name == "cost.jsonl" and directory.name != COST_ARM:
+                    continue
                 path = directory / name
                 if path.is_file():
-                    yield prefix + str(path.relative_to(root)), path.read_text()
+                    relative = str(path.relative_to(root))
+                    yield prefix + relative, slim(path.read_text(), relative)
 
 
 def commit() -> str:
@@ -71,8 +106,10 @@ def report(roots) -> str:
         raise SystemExit("[abort] roots must have distinct directory names")
     out = [f"SELECTION SWITCH EVIDENCE\nUTC: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
            f"COMMIT: {commit()}",
-           "CONTENT: per root, switch.json plus each branch's result.json, decision.json, "
-           "cost.jsonl and policy/budget_stop.json; no logs",
+           "CONTENT: per root, switch.json plus each branch's result.json, decision.json and "
+           "policy/budget_stop.json, and the selection arm's cost.jsonl; each reduced to the "
+           "fields the audit reads, no indentation, no logs",
+           "COST: finished-event subtotals only; omitted start records cannot certify ledger closure or total cost",
            "NAMES: every block name is prefixed with its root's directory name"]
     for root in roots:
         out.append(f"ROOT: {root}")

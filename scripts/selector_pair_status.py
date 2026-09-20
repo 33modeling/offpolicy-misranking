@@ -142,7 +142,7 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
     if fresh:
         task.update(**{key: fresh[0][2].get(key) for key in
                     ("host", "worker_id", "work_id", "pid", "event_id", "activity_identity_unconfirmed", "phase", "seconds", "timeout",
-                     "owner_active", "heartbeat_fresh")})
+                      "owner_active", "heartbeat_fresh", "task_lease_held")})
         if task['status'] != 'DONE':
             task.update(status='RUN', reason='')
     elif relevant and task["status"] == "READY":
@@ -356,8 +356,15 @@ def snapshot(root, *, now=None):
             activity.append(dict(host=node["host"], worker_id=node.get('worker_id'), kind="phase", arm=arm,
                                  seed=claimed['seed'], step=claimed['step'], directory=claimed['directory'], status="RUNNING",
                                  heartbeat_fresh=fresh, owner_active=owned, phase="분기 단계 확인 중"))
+    for branch_name in gpu.BRANCHES:
+        activity.extend(operations.curve_lease_tasks(root / 'branches' / branch_name, activity,
+                        display.switch_status.meter_lease_held, prefix=f'branches/{branch_name}/'))
+    if any(task.get('task_lease_held') for task in activity):
+        nodes.setdefault(('unknown-owner', None), dict(host='unknown-owner', worker_id=None,
+                         state='RUN', current=True, progress_age=0))
     for task in activity:
-        if task.get('phase') == '분기 단계 확인 중' and task['directory'].startswith('branches/'):
+        if ((task.get('phase') == '분기 단계 확인 중' or task.get('task_lease_held'))
+                and task['directory'].startswith('branches/')):
             observations.append((now, root / task['directory'] / 'progress.json', {**task, '_active': True}))
     tasks = []
     for seed in (*pair.DEV_SEEDS, *pair.TEST_SEEDS):

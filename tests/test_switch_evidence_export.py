@@ -30,13 +30,20 @@ def parse(text):
 
 @pytest.fixture
 def root(tmp_path):
-    core.atomic_json(tmp_path / "switch.json", {"schema": "s", "budget_gpu_seconds": 29040, "test_seeds": [3, 4]})
+    core.atomic_json(tmp_path / "switch.json", {"schema": "s", "budget_gpu_seconds": 29040,
+                                                "test_seeds": [3, 4], "evaluation": {"test": ["unread"]*300}})
     point = tmp_path / "states/s3-t50/points/view-50"
     for arm in ("selection_full", "random_full", "gated"):
-        core.atomic_json(point / arm / "result.json", {"rewards": {"1": .5}, "arm": arm})
-        core.atomic_json(point / arm / "decision.json", {"action": "select"})
-        core.atomic_json(point / arm / "policy/budget_stop.json", {"completed_steps": 150})
-        (point / arm / "cost.jsonl").write_text('{"state": "finished", "event_id": "a"}\n')
+        core.atomic_json(point / arm / "result.json",
+                         {"rewards": {"1": .5}, "completed_steps": 150, "complete": True,
+                          "cost": {"complete": True, "events": ["unread"]}, "arm": arm})
+        core.atomic_json(point / arm / "decision.json", {"action": "select", "measurement_gpu_seconds": 12.,
+                                                         "features": {"unread": 1}})
+        core.atomic_json(point / arm / "policy/budget_stop.json", {"completed_steps": 150, "reason": "unread"})
+        (point / arm / "cost.jsonl").write_text(
+            '{"state": "started", "event_id": "a"}\n'
+            '{"state": "finished", "event_id": "a", "allocated_gpu_seconds": 5.0, '
+            '"ledger": "deployment", "phase": "train", "host": "unread"}\n')
     # A state-level arm, which does not live under the point.
     core.atomic_json(tmp_path / "states/s3-t50/mopps/result.json", {"rewards": {"1": .25}})
     # Set aside by a waiver or a reset: never evidence.
@@ -57,7 +64,38 @@ def test_only_the_records_the_importer_accepts_are_written(root):
     assert all(ACCEPTED.match(name) for name in blocks if name != "switch.json")
     assert "states/s3-t50/mopps/result.json" in blocks
     assert not any("discards" in name or "waivers" in name or "execution" in name for name in blocks)
-    assert len(blocks) == 3*4 + 1 + 1
+    # Three arms x result/decision/stop, one cost ledger, the state-level arm, switch.json.
+    assert len(blocks) == 3*3 + 1 + 1 + 1
+
+
+def test_only_the_selection_arm_carries_a_cost_ledger(root):
+    """The audit totals pre-training phases from selection_full alone; the other
+    ledgers are never opened, so they are not worth moving."""
+    ledgers = [name for name in unprefixed(root) if name.endswith("cost.jsonl")]
+    assert ledgers == ["states/s3-t50/points/view-50/selection_full/cost.jsonl"]
+
+
+def test_records_are_cut_to_the_fields_the_audit_reads(root):
+    blocks = unprefixed(root)
+    assert json.loads(blocks["switch.json"]) == {"schema": "s", "budget_gpu_seconds": 29040,
+                                                 "test_seeds": [3, 4]}
+    result = json.loads(blocks["states/s3-t50/points/view-50/gated/result.json"])
+    assert result == {"completed_steps": 150, "complete": True, "cost": {"complete": True},
+                      "rewards": {"1": .5}}
+    assert json.loads(blocks["states/s3-t50/points/view-50/gated/decision.json"]) == {
+        "action": "select", "measurement_gpu_seconds": 12.}
+    assert json.loads(blocks["states/s3-t50/points/view-50/gated/policy/budget_stop.json"]) == {
+        "completed_steps": 150}
+    ledger = [json.loads(line) for line
+              in blocks["states/s3-t50/points/view-50/selection_full/cost.jsonl"].splitlines() if line.strip()]
+    # Unfinished events and unread keys are dropped; the audit reads finished ones only.
+    assert ledger == [{"state": "finished", "event_id": "a", "allocated_gpu_seconds": 5.0,
+                       "ledger": "deployment", "phase": "train"}]
+
+
+def test_nothing_is_indented(root):
+    for name, body in unprefixed(root).items():
+        assert "\n  " not in body, name
 
 
 def test_one_file_holds_several_roots_and_splits_back_per_root(tmp_path, root):

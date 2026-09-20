@@ -234,8 +234,9 @@ def test_shared_mbpp_controller_visible_without_prepared_suite_and_math_is_exclu
     assert node["state"] == state and not node["assignments"]
     assert node.get("source_root") is None
     output = dashboard.render(data)
-    display = {"HOLD": "WAIT", "LIVE": "CHECK"}.get(state, state)
-    assert f"code-node 배정 없음 {display}" in " ".join(output.split())
+    display = {"HOLD": "WAIT", "LIVE": "UNKN"}.get(state, state)
+    assignment = "배정 없음" if state in {"WAIT", "HOLD"} else "배정 미확인"
+    assert f"code-node {assignment} {display}" in " ".join(output.split())
     assert re.search(r"NODES\s+1 current", output)
     assert "math-node" not in output and "math-ghost" not in output
     assert all(not root.exists() for root in roots)
@@ -273,7 +274,7 @@ def test_recent_stale_task_without_launcher_log_remains_visible_as_unconfirmed(t
     assert node["state"] == "STALE" and node["current"] is True
     assert node["evidence_age"] == 90 and not node["assignments"]
     output = dashboard.render(data)
-    assert "recent-stale-node 배정 없음 STALE - 실행 신호 끊김" in " ".join(output.split())
+    assert "recent-stale-node 배정 미확인 STALE - 실행 신호 끊김" in " ".join(output.split())
     assert re.search(r"NODES\s+1 current", output)
 
 
@@ -311,7 +312,7 @@ def test_recent_pid_after_old_controller_log_is_unknown_current_not_running(tmp_
     assert node["state"] == "UNKNOWN" and node["current"] is True
     assert not node["assignments"] and node["evidence_age"] == 5
     output = dashboard.render(data)
-    assert "pid-pending-node 배정 없음 CHECK - 배정 확인 안 됨" in " ".join(output.split())
+    assert "pid-pending-node 배정 미확인 UNKN - 현재 작업·실행 여부 미확인" in " ".join(output.split())
     assert before == contents(tmp_path)
 
 
@@ -360,9 +361,9 @@ def test_unassigned_mapping_does_not_invent_a_suite_for_recovery_admission_or_un
     os.utime(pid, (NOW - 5, NOW - 5))
     mapping = " ".join("\n".join(dashboard.render_nodes(dashboard.snapshot([root], now=NOW), width=120)).split())
     assert "wait-node 배정 없음 WAIT - 작업 배정 대기" in mapping
-    assert "probe-node 배정 없음 ADMIT - 장치 점검 중" in mapping
-    assert "recover-node 배정 없음 CHECK - 비용·저장 기록 확인 중" in mapping
-    assert "unknown-node 배정 없음 CHECK - 배정 확인 안 됨" in mapping
+    assert "probe-node 배정 미확인 ADMIT - 장치 점검 중" in mapping
+    assert "recover-node 배정 미확인 UNKN - 최근 로그: 비용·저장 기록 확인" in mapping
+    assert "unknown-node 배정 미확인 UNKN - 현재 작업·실행 여부 미확인" in mapping
 
 
 def test_mapping_states_absence_of_evidence_when_no_nodes_are_observed(tmp_path):

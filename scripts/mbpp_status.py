@@ -48,7 +48,8 @@ def remark(task):
     if task.get('status') == 'DONE' and active(task):
         parts.append('결과 저장됨; 작업 실행 중')
     if task.get('task_lease_held') and not active(task):
-        parts.append('작업 잠금 유지; 현재 작업자·단계 미확인')
+        parts.append('곡선 평가 잠금 유지; 작업자 미확인' if task.get('phase') == 'curve'
+                     else '작업 잠금 유지; 현재 작업자·단계 미확인')
     if task.get("owner_active") and not task.get("heartbeat_fresh"):
         parts.append("작업 잠금 유지; 시간 차이·진행 신호 확인 필요")
     if task.get("posthoc_evaluation_saved"):
@@ -248,6 +249,8 @@ def compatible_owner(first, second):
 def task_progress(root, task):
     """Current phase evidence only: bounded log tails, never model/rollout files."""
     if task.get('task_lease_held') and not active(task):
+        if task.get('phase') == 'curve':
+            return "확인 중", "곡선 평가 작업 확인; 처리량·작업자 미확인"
         return "확인 중", "작업 잠금 확인; 현재 단계·작업자 미확인"
     phase = str(task.get("phase") or "")
     if re.fullmatch(r"[\w-]+", phase) and "train" not in phase:

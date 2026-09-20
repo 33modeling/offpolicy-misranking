@@ -161,6 +161,12 @@ def launcher(tmp_path):
         'open(os.environ["CHECK_ARGS"], "a").write(json.dumps(sys.argv[1:]) + "\\n")\n')
     (scripts / "mbpp_queue_readiness.py").write_text(
         'import os\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n')
+    (scripts / "mbpp_paper_results.py").write_text(
+        'import argparse, json, os\n'
+        'p = argparse.ArgumentParser()\np.add_argument("--root", action="append", required=True)\n'
+        'a = p.parse_args()\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'with open(os.environ["CALLS"], "a") as f:\n'
+        '    f.write(json.dumps({"args": ["results"], "roots": a.root}) + "\\n")\n')
     (scripts / "check_mbpp_storage.sh").write_text(
         '#!/usr/bin/env bash\n"$TEST_PYTHON" - "$@" <<\'PY\'\n'
         'import json, os, sys\n'
@@ -453,7 +459,8 @@ def test_default_results_reads_existing_variants_without_dispatching_training(la
     result = run("results")
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
-    assert [Path(call["env"]["SWITCH_ROOT"]).name for call in calls] == list(root_names)
+    assert len(calls) == 1
+    assert [Path(root).name for root in calls[0]["roots"]] == list(root_names)
     assert all(call["args"] == ["results"] for call in calls)
     assert not Path(env["CHECK_LOG"]).exists()
     assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
