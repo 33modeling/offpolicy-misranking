@@ -779,7 +779,7 @@ def render_brief(rows: list[FamilyRow], drifts: list[int], overall: str,
         for reason, count, _ in reasons[1:3]:
             out.append(f"         also {count}x: {elide(reason, 70)}")
     out.append("next     bash scripts/doctor_qwen35.sh        (why a blocked point cannot be repaired)")
-    out.append("detail   bash scripts/run_qwen35_9b.sh status full")
+    out.append("detail   bash scripts/run_qwen35_9b.sh status        (completion grid of every point)")
     return out
 
 

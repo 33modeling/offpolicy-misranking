@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Complete Qwen status from shared artifacts; no GPU or checkout updates.
-#   bash scripts/run_qwen35_9b.sh status          # one screen
-#   bash scripts/run_qwen35_9b.sh status full     # completion grid
+#   bash scripts/run_qwen35_9b.sh status          # completion grid: every registered point's state
+#   bash scripts/run_qwen35_9b.sh status brief    # one screen: counts and the one blocking reason
 #   bash scripts/run_qwen35_9b.sh status verbose  # every point and launcher
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -28,11 +28,13 @@ full_args=(--root "$RUNS" --console-logs "$OM_WORK/console-logs" --log-glob 'add
 if [ "${1:-}" = verbose ] || [ "${OM_QWEN_STATUS_VERBOSE:-0}" = 1 ]; then
   full_args+=(--verbose)
   echo "work     $OM_WORK   host $(hostname)   code $(git rev-parse --short HEAD 2>/dev/null || printf unknown)"
-elif [ "${1:-}" = full ]; then
-  full_args+=(--compact)
-else
-  # The default is one screen; "full" keeps the completion grid and "verbose" everything.
+elif [ "${1:-}" = brief ]; then
+  # One screen: counts, whether anything is being written, and the one blocking reason.
   full_args+=(--brief)
+else
+  # The default (and "full") is the completion grid: DONE/RUN/WAIT/ERROR/CHECK/STOP for
+  # every registered point, so an unfinished or unverified point is never summarized away.
+  full_args+=(--compact)
 fi
 if [ ! -f "$FULL_TOOL" ]; then
   echo "[status-error] missing $FULL_TOOL; full status is unavailable from this checkout" >&2

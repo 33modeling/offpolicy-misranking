@@ -265,6 +265,7 @@ single-session/global-PROGRESS override is no longer used by status.
 ```bash
 bash scripts/run_qwen35_9b.sh status            # completion grid, current work and errors
 bash scripts/run_qwen35_9b.sh status verbose    # all points, launchers, scores and attempt details
+bash scripts/run_qwen35_9b.sh status brief      # one screen: counts, whether anything is being written, the one blocking reason
 ```
 
 Since 2026-09-13 the default is a ten-row completion grid, covering all forty

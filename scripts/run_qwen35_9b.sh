@@ -15,11 +15,11 @@ esac
 # Update explicitly in a separate idle checkout after reviewing local changes.
 # Status reports the installed revision without changing shared executable files.
 if [ "$MODE" = status ]; then
-  # `status`, `status verbose`; an extra profile word (`status h100`) is accepted
-  # and ignored: the 9B matrix has one profile.
+  # `status`, `status brief`, `status verbose`; an extra profile word (`status h100`)
+  # is accepted and ignored: the 9B matrix has one profile.
   echo "[code] $(git rev-parse --short HEAD 2>/dev/null || printf unknown) (read-only status; no automatic update)"
   status_args=()
-  for word in "${@:2}"; do [ "$word" != verbose ] || status_args+=(verbose); done
+  for word in "${@:2}"; do case "$word" in verbose|brief|full) status_args+=("$word") ;; esac; done
   exec bash scripts/status_qwen35.sh "${status_args[@]}"
 fi
 echo "[code] $(git rev-parse --short HEAD) (no automatic fetch/merge/reset)"
