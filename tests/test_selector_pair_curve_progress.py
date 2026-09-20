@@ -11,6 +11,7 @@ from test_selector_pair_lock_migration import file_bytes, frozen_work
 def previous_code():
     code = gpu.code_hashes()
     code['src/selector_pair_gpu.py'] = 'f02238e97e9d691e2e13491f33653916ab5a51db82f4c98a72fa299e5b9739bf'
+    code['scripts/run_selector_pair.sh'] = '562eea6fbb53a7e024572839860bad02c3af304016ec63e7269a6b054054f12d'
     assert core.fingerprint(code) == gpu.PRE_PAIR_CURVE_PROGRESS_CODE
     return code
 
@@ -26,6 +27,7 @@ def test_curve_upgrade_preserves_frozen_results_and_existing_receipts(tmp_path, 
             patch.setattr(gpu, 'PRE_SHARED_RUNTIME_CODES', gpu.PRE_SHARED_RUNTIME_CODES - {gpu.PRE_PAIR_CURVE_PROGRESS_CODE})
             gpu.bind_startup_runtime(tmp_path, recorded)
         (tmp_path / 'pair-curve-progress-runtime.json').unlink()
+        (tmp_path / 'pair-branch-queue-runtime.json').unlink()
     before = file_bytes(tmp_path)
     assert gpu.compatible_code(recorded)
     assert gpu.manifest(tmp_path) == value

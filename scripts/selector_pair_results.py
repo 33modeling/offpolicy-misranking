@@ -5,6 +5,7 @@ import csv
 from datetime import datetime, timezone
 import hashlib
 import io
+import itertools
 import json
 import math
 import os
@@ -13,6 +14,7 @@ import re
 import signal
 import statistics
 import subprocess
+import sys
 import uuid
 
 from paper_result_text import write_export
@@ -25,6 +27,150 @@ BRANCH_SCOPE = (
     "Recorded used_gpu_seconds is deployment accounting, not measured cost to target. "
     "No H, crossing, censoring cost, adaptive decision, or paired completion is inferred."
 )
+
+OBSERVATION_LIMIT = 196608
+OBSERVATION_SCOPE = (
+    "Read-only, unverified execution metadata, separate from scientific results. "
+    "Recorded RUN/DONE and timestamps are not proof of current process liveness or paired completion. "
+    "Clocks may differ between servers; no heartbeat age or current-live classification is inferred. "
+    "File presence and shard receipts are not independent seal/lineage validation. "
+    "Adaptive storage candidates may include both selectors, but only one is a planned test branch."
+)
+
+
+def execution_observations(root, measurements):
+    """Bounded metadata only: never recover work, load a model or probe a GPU."""
+    data = {'scope': OBSERVATION_SCOPE, 'independently_certified': False,
+            'planned_branches': {'total': 42, 'development': 18, 'test': 24},
+            'saved_endpoint_files': 0,
+            'accepted_endpoint_measurements': sum(row['mean_reward'] is not None for row in measurements),
+            'saved_curve_files': 0, 'workers': [], 'progress': [], 'branches': [],
+            'limits': {'json_read_bytes': 65536, 'worker_files_scanned': 2048,
+                       'worker_records': 32, 'progress_records': 64,
+                       'branch_records': 48, 'checkpoint_directories_per_branch': 64,
+                       'section_bytes': OBSERVATION_LIMIT},
+            'omitted_counts_are_lower_bounds': True,
+            'omitted': {'workers': 0, 'progress': 0, 'checkpoint_directories': 0}, 'errors': []}
+
+    def read(path):
+        try:
+            if not path.resolve().is_relative_to(root):
+                raise ValueError('metadata path escapes experiment root')
+            with path.open('rb') as handle:
+                raw = handle.read(65537)
+            if len(raw) > 65536:
+                raise ValueError('metadata exceeds 65536 bytes')
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise ValueError('metadata is not an object')
+            return value
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError, RuntimeError) as exc:
+            if len(data['errors']) < 16:
+                data['errors'].append({'path': str(path.relative_to(root))[:384], 'error': str(exc)[:256]})
+            return {}
+
+    def scalars(value, keys):
+        return {key: item[:512] if isinstance(item, str) else item
+                for key in keys if (item := value.get(key)) is not None
+                and (type(item) in (str, bool, int) or type(item) is float and math.isfinite(item))}
+
+    def present(path):
+        try:
+            return path.resolve().is_relative_to(root) and path.is_file()
+        except (OSError, RuntimeError):
+            return False
+
+    workers = []
+    try:
+        with os.scandir(root / 'queue-workers') as entries:
+            for index, entry in enumerate(entries):
+                if index >= 2048:
+                    data['worker_scan_truncated'] = True
+                    break
+                if entry.name.endswith('.json') and not entry.is_symlink() and entry.is_file():
+                    workers.append((entry.stat().st_mtime_ns, Path(entry.path)))
+    except OSError:
+        pass
+    for _, path in sorted(workers, reverse=True)[:32]:
+        value = read(path)
+        row = {'path': str(path.relative_to(root)), **scalars(value, (
+            'worker', 'host', 'pid', 'stage', 'state', 'task', 'updated', 'protocol_id',
+            'verified_states', 'total_states', 'verified_branches', 'total_branches',
+            'queue_wait_wall_seconds'))}
+        failures = value.get('failures')
+        if isinstance(failures, list):
+            row['recorded_failure_count'] = len(failures)
+            row['failures'] = [scalars(item, ('task', 'state', 'error'))
+                               for item in failures[:3] if isinstance(item, dict)]
+        data['workers'].append(row)
+    data['omitted']['workers'] = max(0, len(workers) - 32)
+    try:
+        source = str(Path(__file__).resolve().parents[1] / 'src')
+        if source not in sys.path:
+            sys.path.insert(0, source)
+        from selector_pair_gpu import pair_progress
+        progress = pair_progress(root)
+        for _, path, value in progress[:64]:
+            data['progress'].append({'path': str(path.relative_to(root))[:384], **scalars(value, (
+                'state', 'phase', 'event_id', 'host', 'pid', 'worker_id', 'updated',
+                'seconds', 'timeout', 'exit_code', 'gpus'))})
+        data['omitted']['progress'] = max(0, len(progress) - 64)
+        data['progress_scan_bounded'] = True
+    except (ImportError, OSError, ValueError, RuntimeError) as exc:
+        data['errors'].append({'path': 'progress', 'error': str(exc)[:256]})
+
+    def shards(directory):
+        return [shard for shard in range(4) if present(directory / f'shard-{shard}.done.json')]
+
+    for seed in range(5):
+        for step in (25, 50, 100):
+            candidates = [('on_policy', 'selection_reduced'), ('cached', 'selection_reduced')]
+            if seed >= 3:
+                candidates = [(name, 'selection_full') for name in
+                              ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached')]
+                candidates.append(('on_policy', 'random_full'))
+            for selector, arm in candidates:
+                point = root / f'branches/{selector}/states/s{seed}-t{step}/points/view-{step}'
+                directory = point / arm
+                try:
+                    contained = directory.is_dir() and directory.resolve().is_relative_to(root)
+                except (OSError, RuntimeError):
+                    contained = False
+                if not contained:
+                    continue
+                row = {'path': str(directory.relative_to(root)),
+                       'result_file': present(directory / 'result.json'),
+                       'curve_file': present(directory / 'curve.json'),
+                       'endpoint_shards_done': shards(directory / 'evaluation'),
+                       'parent_shards_done': shards(point / 'curve-parent'), 'curve_checkpoints': []}
+                data['saved_curve_files'] += row['curve_file']
+                data['saved_endpoint_files'] += row['result_file']
+                policy = read(directory / 'policy/policy_train.json')
+                row['policy'] = scalars(policy, ('completed_steps', 'start_step', 'training_objective'))
+                for name in ('pair-attempt.json', 'failure.json'):
+                    value = read(directory / name)
+                    if value:
+                        row[name] = scalars(value, ('error', 'state', 'host', 'pid', 'time', 'updated'))
+                checkpoint_dirs = list(itertools.islice((directory / 'curve').glob('step-*'), 65))
+                data['omitted']['checkpoint_directories'] += max(0, len(checkpoint_dirs) - 64)
+                for checkpoint in sorted(checkpoint_dirs[:64]):
+                    if re.fullmatch(r'step-[0-9]+', checkpoint.name):
+                        row['curve_checkpoints'].append({'step': int(checkpoint.name[5:]),
+                                                        'shards_done': shards(checkpoint)})
+                row['curve_shards_done_count'] = sum(len(item['shards_done']) for item in row['curve_checkpoints'])
+                archived = list(itertools.islice((directory / 'policy/curve-checkpoints').glob('step-*'), 65))
+                row['archived_checkpoint_steps'] = sorted(int(path.name[5:]) for path in archived[:64]
+                    if re.fullmatch(r'step-[0-9]+', path.name) and present(path / 'adapter_model.safetensors'))
+                data['omitted']['checkpoint_directories'] += max(0, len(archived) - 64)
+                data['branches'].append(row)
+    # Keep the diagnostic section small even with unusually long metadata fields.
+    while len(json.dumps(data, ensure_ascii=True, separators=(',', ':')).encode()) > OBSERVATION_LIMIT:
+        key = next(key for key in ('progress', 'workers', 'branches') if data[key])
+        data[key].pop()
+        data['omitted'][key] = data['omitted'].get(key, 0) + 1
+    return data
 
 
 def read_source(path, root):
@@ -144,7 +290,7 @@ def exporter_metadata(repo):
         commit = git.stdout.strip() if git.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         commit = None
-    return {'version': 'selector-pair-results/v2', 'git_commit': commit,
+    return {'version': 'selector-pair-results/v3', 'git_commit': commit,
             'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'created_at': datetime.now(timezone.utc).isoformat(), 'export_id': uuid.uuid4().hex}
 
@@ -219,7 +365,7 @@ def main():
     rows, errors = saved_branch_measurements(root)
     data.update(branch_measurements=rows, branch_measurement_errors=errors,
                 branch_measurement_scope=BRANCH_SCOPE, paired_validation=validation,
-                exporter=exporter_metadata(repo))
+                exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows))
     if not exit_code and (errors or any(row['issues'] for row in rows)):
         exit_code = 2
     data['export_exit_code'] = exit_code

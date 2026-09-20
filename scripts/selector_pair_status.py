@@ -176,10 +176,21 @@ def snapshot(root, *, now=None):
         host = str(value.get("host") or "unknown")
         relative = str(path.parent.relative_to(root))
         match = re.search(r"states/s(\d+)-t(\d+)/", relative)
-        candidates = [node for node in nodes.values() if match and node['host'] == host
-                      and node.get('worker', {}).get('state') == 'RUN'
-                      and node['worker'].get('task') ==
-                      f"{'development' if int(match[1]) in pair.DEV_SEEDS else 'test'}/s{match[1]}-t{match[2]}"]
+        candidates = []
+        for candidate in nodes.values():
+            worker = candidate.get('worker', {})
+            assignment = re.fullmatch(r"(?:development|test)/s(\d+)-t(\d+)(?:/([\w-]+)/([\w-]+))?",
+                                      str(worker.get('task', '')))
+            if (not match or not assignment or candidate['host'] != host or worker.get('state') != 'RUN'
+                    or assignment.groups()[:2] != match.groups()[:2]):
+                continue
+            if assignment[3]:
+                if relative.split('/')[1] != assignment[3]:
+                    continue
+                if any(part in {'selection_reduced', 'selection_full', 'random_full'}
+                       and part != assignment[4] for part in path.parts):
+                    continue
+            candidates.append(candidate)
         if len(candidates) > 1 and value.get('pid') is not None:
             candidates = [node for node in candidates if node['worker'].get('pid') == value['pid']]
         if len(candidates) == 1:
@@ -211,7 +222,8 @@ def snapshot(root, *, now=None):
     for node in nodes.values():
         worker = node.get("worker", {})
         fresh = -5 <= now - node.get("worker_updated", 0) < 60
-        match = re.fullmatch(r"(?:development|test)/s(\d+)-t(\d+)", str(worker.get("task", "")))
+        match = re.fullmatch(r"(?:development|test)/s(\d+)-t(\d+)(?:/([\w-]+)/([\w-]+))?",
+                             str(worker.get("task", "")))
         node["current"] |= fresh and worker.get("state") in {"RUN", "WAIT"}
         stopped = str(worker.get('task', '')).startswith('worker stopped;')
         queue_state = ('EXITED' if stopped or worker.get('state') == 'DONE' else
@@ -223,7 +235,9 @@ def snapshot(root, *, now=None):
         if (fresh and worker.get("state") == "RUN" and match
                 and not any(task.get('worker_id') == node.get('worker_id') and task['host'] == node['host']
                             for task in activity)):
-            activity.append(dict(host=node["host"], worker_id=node.get('worker_id'), kind="phase", arm="상태 작업", seed=int(match[1]),
+            arm = ("random" if match[4] == "random_full" else "adaptive" if str(match[3]).startswith("adaptive-")
+                   else match[3] or "상태 작업")
+            activity.append(dict(host=node["host"], worker_id=node.get('worker_id'), kind="phase", arm=arm, seed=int(match[1]),
                                  step=int(match[2]), directory=worker["task"], status="RUNNING",
                                  heartbeat_fresh=True, phase="분기 단계 확인 중"))
     tasks = []

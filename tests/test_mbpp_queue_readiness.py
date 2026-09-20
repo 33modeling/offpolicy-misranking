@@ -108,7 +108,7 @@ def test_snapshot_without_root_cannot_prove_checkpoint_quarantine(tmp_path):
     assert readiness.review_blockers(data) is None
 
 
-def test_real_status_snapshot_recognizes_uploaded_file_pattern(tmp_path):
+def saved_uploaded_snapshot(tmp_path):
     import hashlib
     from test_selection_switch_status import core, completed_prefix, published, published_curve
 
@@ -132,6 +132,56 @@ def test_real_status_snapshot_recognizes_uploaded_file_pattern(tmp_path):
         elif task['status'] == 'REVIEW':
             core.atomic_json(directory / 'policy/grpo_stats.jsonl', {'step': task['step'] + 4})
             core.atomic_json(directory / 'failure.json', {'error': 'unclosed cost event; unknown cost'})
-    data = readiness.status.snapshot(tmp_path, local_gpus=False)
+    return readiness.status.snapshot(tmp_path, local_gpus=False)
+
+
+def test_real_status_snapshot_recognizes_uploaded_file_pattern(tmp_path):
+    data = saved_uploaded_snapshot(tmp_path)
     assert data['branch_counts'] == {'DONE': 37, 'REVIEW': 5, 'WAIT': 6}
     assert len(readiness.review_blockers(data)) == 5
+
+
+@pytest.mark.parametrize('seed,step,arm', [
+    (2, 50, 'selection_reduced'), (4, 25, 'random_full'), (4, 50, 'selection_reduced'),
+])
+@pytest.mark.parametrize('recovery', ['absent', 'unsealed', 'changed'])
+@pytest.mark.parametrize('stop_saved', [False, True])
+def test_uploaded_recoverable_policy_is_not_closed_before_publication(
+        tmp_path, monkeypatch, seed, step, arm, recovery, stop_saved):
+    from test_selection_switch_status import core
+
+    saved_uploaded_snapshot(tmp_path)
+    directory = tmp_path / f'states/s{seed}-t{step}/points/view-{step}/{arm}'
+    result = directory / 'budget-recovery/result.json'
+    if recovery == 'absent':
+        result.unlink()
+    elif recovery == 'unsealed':
+        result.with_suffix('.sha256.json').unlink()
+    else:
+        core.atomic_json(result, {'schema': 'mbpp-budget-recovery/v1',
+                         'evaluation_complete': True, 'canonical_complete': False,
+                         'changed_after_seal': True})
+    policy = directory / 'policy'
+    policy.mkdir()
+    for filename in ('adapter_config.json', 'adapter_model.safetensors',
+                     'optimizer.pt', 'grpo_stats.jsonl'):
+        (policy / filename).write_bytes(b'fixture payload\n')
+    core.atomic_json(policy / 'policy_train.json', {
+        'schema': 'offpolicy-rlvr-policy/v1', 'start_step': step,
+        'completed_steps': step + 1, 'adapter_sha256': 'a' * 64,
+        'optimizer_sha256': 'b' * 64, 'grpo_stats_sha256': 'c' * 64})
+    if stop_saved:
+        core.atomic_json(policy / 'budget_stop.json', {
+            'use_parent_policy': False, 'completed_steps': step + 1,
+            'requested_target_steps': step + 10, 'stop_reason': 'budget_exhausted'})
+    core.atomic_json(directory / 'failure.json', {
+        'error': 'branch allocation exhausted before further GPU work; saved work preserved'})
+
+    data = readiness.status.snapshot(tmp_path, local_gpus=False)
+    task = next(t for t in data['tasks'] if t.get('directory') == str(directory.relative_to(tmp_path)))
+    assert task['status'] == ('EVAL' if stop_saved else 'REVIEW')
+    assert not task.get('posthoc_evaluation_saved')
+    assert readiness.review_blockers(data) is None
+    monkeypatch.setattr(readiness.status, 'snapshot', lambda *args, **kwargs: data)
+    monkeypatch.setattr(sys, 'argv', ['readiness', '--root', str(tmp_path)])
+    assert readiness.main() == 0

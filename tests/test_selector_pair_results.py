@@ -49,7 +49,7 @@ def test_exports_current_partial_report_and_curves(tmp_path, monkeypatch, missin
     assert data['complete'] == complete
     assert data['branch_measurements'] == data['branch_measurement_errors'] == []
     assert data['paired_validation']['status'] == 'validated'
-    assert data['exporter']['version'] == 'selector-pair-results/v2'
+    assert data['exporter']['version'] == 'selector-pair-results/v3'
     assert len(data['exporter']['script_sha256']) == 64
     assert data['exporter']['created_at'] and data['exporter']['export_id']
     assert list(tmp_path.glob("*.txt")) == [target]
@@ -213,7 +213,7 @@ def test_failed_report_replaces_stale_txt_with_current_error_and_branches(tmp_pa
     assert data['paired_validation']['stderr_tail'] == 'current validation error'
     assert data['export_exit_code'] == returncode
     assert data['branch_measurements'][0]['mean_reward'] == .5
-    assert data['exporter']['version'] == 'selector-pair-results/v2'
+    assert data['exporter']['version'] == 'selector-pair-results/v3'
     assert list(tmp_path.glob("*.txt")) == [target]
 
 
@@ -277,3 +277,94 @@ def test_real_cli_exports_zero_paired_states_without_launcher_or_gpu(tmp_path):
     assert data['paired_validation']['status'] == 'not_run_no_published_paired_results'
     assert data['rows'] == [] and data['complete'] is False
     assert data['branch_measurements'][0]['mean_reward'] == .5
+    assert data['execution_observations']['planned_branches'] == {'total': 42, 'development': 18, 'test': 24}
+
+
+def put_metadata(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value))
+
+
+def test_execution_observations_distinguish_endpoint_curve_and_worker_records(tmp_path):
+    directory, _, _ = branch_fixture(tmp_path)
+    (directory / 'curve.json').unlink()
+    for shard in (0, 2):
+        put_metadata(directory / f'curve/step-30/shard-{shard}.done.json', {'unverified': True})
+    put_metadata(directory.parent / 'curve-parent/shard-1.done.json', {})
+    put_metadata(directory / 'policy/policy_train.json', {'completed_steps': 35})
+    put_metadata(directory / 'pair-attempt.json', {'error': 'evaluation timeout', 'time': 1})
+    put_metadata(directory / 'curve/progress.json', {'state': 'running', 'phase': 'curve',
+                 'updated': 999999999999, 'host': 'same-host', 'pid': 3, 'event_id': 'curve-30'})
+    for worker, timestamp in [('a', 1), ('b', 999999999999)]:
+        put_metadata(tmp_path / f'queue-workers/{worker}.json',
+                     {'worker': worker, 'host': 'same-host', 'state': 'RUN',
+                      'task': 'development/s0-t25/on_policy/selection_reduced', 'updated': timestamp})
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob('*') if p.is_file()}
+    rows, _ = results.saved_branch_measurements(tmp_path)
+    data = results.execution_observations(tmp_path, rows)
+    assert data['saved_endpoint_files'] == data['accepted_endpoint_measurements'] == 1
+    assert data['saved_curve_files'] == 0
+    assert {row['worker'] for row in data['workers']} == {'a', 'b'}
+    assert {row['updated'] for row in data['workers']} == {1, 999999999999}
+    branch, = data['branches']
+    assert branch['curve_checkpoints'] == [{'step': 30, 'shards_done': [0, 2]}]
+    assert branch['curve_shards_done_count'] == 2
+    assert branch['parent_shards_done'] == [1]
+    assert branch['policy']['completed_steps'] == 35
+    assert branch['pair-attempt.json']['error'] == 'evaluation timeout'
+    assert data['progress'][0]['phase'] == 'curve'
+    assert data['independently_certified'] is False
+    assert 'no heartbeat age' in data['scope']
+    assert not any(key in json.dumps(data) for key in ('"active"', '"live"', '"heartbeat_fresh"'))
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob('*') if p.is_file()} == before
+
+
+def test_execution_observation_limits_and_malformed_metadata(tmp_path, monkeypatch):
+    import selector_pair_gpu
+    directory, _, _ = branch_fixture(tmp_path)
+    for index in range(40):
+        put_metadata(tmp_path / f'queue-workers/w{index}.json',
+                     {'worker': f'w{index}', 'task': 'x' * 5000, 'failures': [{'error': 'x' * 5000}] * 5})
+    put_metadata(directory / 'failure.json', {'error': 'x' * 70000})
+    for step in range(80):
+        put_metadata(directory / f'curve/step-{step}/shard-0.done.json', {})
+    monkeypatch.setattr(selector_pair_gpu, 'pair_progress', lambda root:
+        [(index, directory / f'curve/step-{index}/progress.json',
+          {'state': 'running', 'phase': 'x' * 10000, 'seconds': float('nan')}) for index in range(100)])
+    rows, _ = results.saved_branch_measurements(tmp_path)
+    data = results.execution_observations(tmp_path, rows)
+    assert len(data['workers']) == 32 and data['omitted']['workers'] == 8
+    assert len(data['progress']) == 64 and data['omitted']['progress'] == 36
+    assert len(data['branches'][0]['curve_checkpoints']) == 64
+    assert data['omitted']['checkpoint_directories'] == 1
+    assert any('exceeds 65536' in row['error'] for row in data['errors'])
+    assert len(json.dumps(data, ensure_ascii=True, separators=(',', ':'), allow_nan=False).encode()) <= results.OBSERVATION_LIMIT
+    assert all(len(row['task']) <= 512 for row in data['workers'])
+
+
+def test_observations_do_not_follow_external_metadata(tmp_path):
+    root = tmp_path / 'run'
+    directory, _, _ = branch_fixture(root)
+    outside = tmp_path / 'secret.json'
+    outside.write_text('{"error":"private outside data"}')
+    (directory / 'failure.json').symlink_to(outside)
+    (directory / 'curve').symlink_to(tmp_path, target_is_directory=True)
+    rows, _ = results.saved_branch_measurements(root)
+    data = results.execution_observations(root, rows)
+    assert 'private outside data' not in json.dumps(data)
+    assert any('escapes experiment root' in row['error'] for row in data['errors'])
+
+
+def test_observation_byte_cap_omits_metadata_without_changing_scientific_rows(tmp_path, monkeypatch):
+    directory, _, _ = branch_fixture(tmp_path)
+    for index in range(32):
+        put_metadata(tmp_path / f'queue-workers/w{index}.json',
+                     {key: 'x' * 512 for key in ('worker', 'host', 'task', 'stage', 'protocol_id')})
+    rows, _ = results.saved_branch_measurements(tmp_path)
+    original = json.dumps(rows, sort_keys=True)
+    monkeypatch.setattr(results, 'OBSERVATION_LIMIT', 4000)
+    data = results.execution_observations(tmp_path, rows)
+    assert len(json.dumps(data, ensure_ascii=True, separators=(',', ':')).encode()) <= 4000
+    assert data['omitted']['workers'] > 0
+    assert data['saved_endpoint_files'] == data['accepted_endpoint_measurements'] == 1
+    assert json.dumps(rows, sort_keys=True) == original

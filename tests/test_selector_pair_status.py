@@ -202,6 +202,34 @@ def test_same_mbpp_numbered_node_table_and_idle_list(tmp_path):
     assert "branches/" not in output
 
 
+def test_new_branch_assignment_is_visible_before_phase_heartbeat(tmp_path):
+    p = prepared(tmp_path)
+    core.atomic_json(tmp_path / "queue-workers/worker.json", {
+        "host": "parallel-branch-node", "state": "RUN", "updated": 995,
+        "protocol_id": p["protocol_id"], "task": "test/s3-t25/adaptive-cached/selection_full"})
+    output = status.render(status.snapshot(tmp_path, now=1000), width=160)
+    assert "parallel-branch-node" in output and "CURRENT RUN 1" in output
+    assert "Selector pair / seed 3 / step 25 / Adaptive" in output
+
+
+def test_same_host_independent_branch_heartbeats_keep_worker_identity(tmp_path):
+    p = prepared(tmp_path)
+    for index, name in enumerate(("on_policy", "cached")):
+        worker = f"worker-{index}"
+        core.atomic_json(tmp_path / f"queue-workers/{worker}.json", {
+            "host": "same-node", "worker": worker, "state": "RUN", "updated": 995,
+            "protocol_id": p["protocol_id"], "task": f"development/s0-t25/{name}/selection_reduced"})
+        point = tmp_path / f"branches/{name}/states/s0-t25/points/view-25/selection_reduced"
+        core.atomic_json(point / "curve/progress.json", {
+            "host": "same-node", "state": "running", "updated": 995, "phase": "curve"})
+    data = status.snapshot(tmp_path, now=1000)
+    assert len(data["nodes"]) == 2
+    assert {task["worker_id"] for task in data["activity"]} == {"worker-0", "worker-1"}
+    assert {task["worker_id"] for task in data["tasks"] if task["status"] == "RUN"} == {
+        "worker-0", "worker-1"}
+    assert "CURRENT RUN 2" in status.render(data, width=160)
+
+
 def test_previous_runtime_and_receipts_are_preserved(tmp_path, monkeypatch):
     from test_selector_pair_gpu import bootstrap_predecessor
     previous = gpu.code_hashes()
@@ -218,6 +246,7 @@ def test_previous_runtime_and_receipts_are_preserved(tmp_path, monkeypatch):
         gpu.bind_startup_runtime(tmp_path, p["code_hashes"])
     (tmp_path / "pair-status-runtime.json").unlink()
     (tmp_path / "pair-curve-progress-runtime.json").unlink(missing_ok=True)
+    (tmp_path / "pair-branch-queue-runtime.json").unlink(missing_ok=True)
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     assert gpu.manifest(tmp_path) == p
     assert gpu.manifest(tmp_path) == p

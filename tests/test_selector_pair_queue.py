@@ -1,4 +1,4 @@
-"""Shared pair states are exclusive work units across real processes."""
+"""Independent Pair branches share states across real processes."""
 
 import json
 import fcntl
@@ -27,7 +27,7 @@ def assert_development_order(calls):
             assert state_calls(calls, seed, step) == [(name, "selection_reduced") for name in expected]
 
 
-def test_two_real_controllers_skip_peer_state_and_execute_each_branch_once(tmp_path, fake_study, monkeypatch):
+def test_two_real_controllers_share_peer_state_and_execute_each_branch_once(tmp_path, fake_study, monkeypatch):
     p, _, _ = fake_study
     context = multiprocessing.get_context("fork")
     ready, release = context.Event(), context.Event()
@@ -72,8 +72,9 @@ def test_two_real_controllers_skip_peer_state_and_execute_each_branch_once(tmp_p
     def poll(seconds):
         if not release.is_set():
             rows = [json.loads(line) for line in journal.read_text().splitlines()]
-            assert len(rows) == 16
-            assert all(row[1:3] != [0, 25] for row in rows)
+            assert len(rows) == 17
+            assert ["cached", 0, 25, "selection_reduced", parent_pid] in rows
+            assert not any(row[:3] == ["on_policy", 0, 25] for row in rows)
             assert len(list((tmp_path / "development").glob("*/result.json"))) == 8
             assert not (tmp_path / "model.json").exists()
             assert not (tmp_path / "test-decisions.json").exists()
@@ -100,7 +101,8 @@ def test_two_real_controllers_skip_peer_state_and_execute_each_branch_once(tmp_p
     assert len(rows) == 18 and len({tuple(row[:4]) for row in rows}) == 18
     assert {row[4] for row in rows} == {parent_pid, process.pid}
     assert len(list((tmp_path / "development").glob("*/result.json"))) == 9
-    assert_development_order([row[:4] for row in rows])
+    assert set(state_calls([row[:4] for row in rows], 0, 25)) == {
+        ("on_policy", "selection_reduced"), ("cached", "selection_reduced")}
 
 
 def test_completed_development_is_revalidated_without_another_gpu_attempt(tmp_path, fake_study, monkeypatch):
