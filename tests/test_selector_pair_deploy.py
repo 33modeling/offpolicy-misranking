@@ -89,7 +89,8 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
     original_head = git(checkout, 'rev-parse', 'HEAD')
     target = deploy.stage_runtime(checkout)
     assert target.name == deploy.PINNED_COMMIT
-    for name in ('scripts/queue_selector_pair_gpu.py', 'scripts/_selection_worker.sh',
+    for name in ('scripts/queue_selector_pair_gpu.py', 'scripts/selector_pair_cost_recovery.py',
+                 'scripts/recover_selection_switch_cost.py', 'scripts/_selection_worker.sh',
                  'scripts/selector_pair_handoff.py', 'scripts/selector_pair_diagnostic.py',
                  'src/selector_pair_gpu.py', 'src/selection_switch_gpu.py',
                  'scripts/run_selector_pair.sh'):

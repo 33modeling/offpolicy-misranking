@@ -9,11 +9,15 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import selector_pair_gpu as worker
+import selector_pair_cost_recovery as cost_recovery
 
 MODES = {"run", "develop", "test", "freeze"}
 RECEIPT = "pair-curve-shard-guard-runtime.json"
+COST_RECEIPT = "pair-cost-recovery-runtime.json"
+PRE_COST_GUARD_SHA256 = "3199888c2460768a09da64c098efd7aaaf8898e1707575e67a20f61abe5d4e43"
 
 
 def known_point(root, branch, out, arm):
@@ -87,13 +91,8 @@ def activated(root):
         switch.curve_once = original_curve
 
 
-def bind_receipt(root, protocol):
-    with worker.queue_lease(root / ".pair-runtime.lock"):
-        if worker.manifest(root, bind_runtime=False) != protocol:
-            raise ValueError("Pair protocol changed before curve guard activation")
-        if (root / RECEIPT).is_symlink():
-            raise ValueError("refusing a symlinked Pair curve guard receipt")
-        worker.base.bind(root / RECEIPT, {
+def guard_receipt(root, protocol):
+    return {
             "schema": "offpolicy-selector-pair/curve-shard-guard-v1",
             "root": str(root), "protocol_id": protocol["protocol_id"],
             "pair_manifest_sha256": worker.base.digest(root / "pair.json"),
@@ -101,7 +100,54 @@ def bind_receipt(root, protocol):
             "frozen_code_hashes": protocol["code_hashes"],
             "change": "defer curve points while an unfinished shard holds its exclusive lease",
             "cost_policy": "preserve all costs, budgets, checkpoints, evaluations and task leases",
-        })
+        }
+
+
+def recovery_receipt(root, protocol):
+    scripts = Path(__file__).resolve().parent
+    return {
+        "schema": "offpolicy-selector-pair/cost-recovery-v1",
+        "root": str(root), "protocol_id": protocol["protocol_id"],
+        "pair_manifest_sha256": worker.base.digest(root / "pair.json"),
+        "curve_guard_receipt_sha256": worker.base.digest(root / RECEIPT),
+        "runtime_code_hashes": {name: worker.base.digest(scripts / name) for name in (
+            "queue_selector_pair_gpu.py", "selector_pair_cost_recovery.py",
+            "recover_selection_switch_cost.py", "_recovery_owners.py", "mbpp_storage_audit.py")},
+        "frozen_code_hashes": protocol["code_hashes"],
+        "change": "recover interrupted costs before Pair admission using the existing stale-owner policy",
+        "cost_policy": "append explicit evidence-based estimates; preserve prior costs, budgets, live leases and published costs",
+    }
+
+
+def validate_receipts(root, protocol):
+    """Read-only preflight, also used by handoff before stopping any worker."""
+    root = Path(root).resolve()
+    if worker.manifest(root, bind_runtime=False) != protocol:
+        raise ValueError("Pair protocol changed before curve guard activation")
+    for name in (RECEIPT, COST_RECEIPT):
+        if (root / name).is_symlink():
+            raise ValueError(f"refusing a symlinked Pair runtime receipt: {name}")
+    expected = guard_receipt(root, protocol)
+    if (root / RECEIPT).exists():
+        previous = worker.core.read(root / RECEIPT)
+        if previous not in (expected, {**expected, "guard_sha256": PRE_COST_GUARD_SHA256}):
+            raise ValueError(f"frozen contract changed: {root / RECEIPT}")
+    if (root / COST_RECEIPT).exists():
+        if not (root / RECEIPT).exists() or worker.core.read(root / COST_RECEIPT) != recovery_receipt(root, protocol):
+            raise ValueError(f"frozen contract changed: {root / COST_RECEIPT}")
+
+
+def bind_receipt(root, protocol):
+    with worker.queue_lease(root / ".pair-runtime.lock"):
+        validate_receipts(root, protocol)
+        if not (root / RECEIPT).exists():
+            worker.base.bind(root / RECEIPT, guard_receipt(root, protocol))
+
+
+def bind_recovery_receipt(root, protocol):
+    with worker.queue_lease(root / ".pair-runtime.lock"):
+        validate_receipts(root, protocol)
+        worker.base.bind(root / COST_RECEIPT, recovery_receipt(root, protocol))
 
 
 def run():
@@ -110,11 +156,17 @@ def run():
     root = Path(sys.argv[3]).resolve()
     original_stage = worker.run_distributed
     original_admission = worker.admit_node
+    prepared = False
 
     def prepare(stage_root, protocol):
+        nonlocal prepared
         if Path(stage_root).resolve() != root:
             raise ValueError("Pair queue adapter root changed")
         bind_receipt(root, protocol)
+        bind_recovery_receipt(root, protocol)
+        if not prepared:
+            cost_recovery.recover(root, protocol)
+            prepared = True
 
     def admit(stage_root, protocol):
         prepare(stage_root, protocol)

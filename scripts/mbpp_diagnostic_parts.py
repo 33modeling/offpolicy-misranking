@@ -84,7 +84,7 @@ def lease_record(root, path):
                 fcntl.flock(handle, fcntl.LOCK_UN)
     except FileNotFoundError:
         state = 'missing'
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         state = f'unknown: {exc}'
     return f'LEASE {path.relative_to(root)} {state} (observation only, not owner identity)\n'
 
@@ -131,6 +131,8 @@ def sections(work, roots, *, single_file=False):
             continue
         yield metadata(root, root / 'switch.json', ('dataset', 'selector', 'accounting', 'gate'))
         yield f'gate model present={int((root / "model.json").is_file())}\n'
+        for name in ('.fit.lock', 'gate-fit/.task.lock', 'gate-fit/.cost.lock'):
+            yield lease_record(root, root / name)
         for path in sorted((root / 'gate-fit').glob('failure.json')):
             yield metadata(root, path)
         for directory in sorted(root.glob('states/*/points/*/*')):

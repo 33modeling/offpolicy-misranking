@@ -1,6 +1,7 @@
 """Upload-sized diagnostics retain recovery blockers without reading payloads."""
 
 import sys
+import fcntl
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,38 @@ import selection_gate as core
 
 def joined(paths):
     return ''.join(path.read_text().split('\n\n', 1)[1] for path in paths)
+
+
+@pytest.mark.parametrize('name', ['.fit.lock', 'gate-fit/.task.lock', 'gate-fit/.cost.lock'])
+def test_gate_lease_is_exported_without_mutation_or_unlock(tmp_path, name):
+    root = tmp_path / 'run'
+    core.atomic_json(root / 'switch.json', {'dataset': 'mbpp', 'gate': 'convergence'})
+    lock = root / name
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_bytes(b'original owner lock')
+    lock.chmod(0o444)
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino)
+              for path in root.rglob('*') if path.is_file()}
+    with lock.open('rb') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        text = ''.join(parts.sections(tmp_path, [root], single_file=True))
+        assert f'LEASE {name} held (observation only, not owner identity)' in text
+        with lock.open('rb') as probe, pytest.raises(BlockingIOError):
+            fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino)
+                      for path in root.rglob('*') if path.is_file()}
+    assert f'LEASE {name} free-at-probe' in ''.join(parts.sections(tmp_path, [root]))
+
+
+def test_missing_gate_leases_are_not_created_and_loops_are_unknown(tmp_path):
+    root = tmp_path / 'run'
+    core.atomic_json(root / 'switch.json', {'dataset': 'mbpp'})
+    (root / '.fit.lock').symlink_to('.fit.lock')
+    text = ''.join(parts.sections(tmp_path, [root]))
+    assert 'LEASE .fit.lock unknown:' in text
+    assert 'LEASE gate-fit/.task.lock missing' in text
+    assert 'LEASE gate-fit/.cost.lock missing' in text
+    assert not (root / 'gate-fit').exists()
 
 
 @pytest.mark.parametrize('text', ['x' * (parts.PART_BYTES - 512),

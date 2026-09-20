@@ -170,7 +170,8 @@ def diagnostic_environment(env, repo):
     env = {key: value for key, value in env.items() if not key.startswith('OM_SELECTION_COST_')}
     env.update(CUDA_VISIBLE_DEVICES='', PYTHONDONTWRITEBYTECODE='1',
                OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
-    env['PYTHONPATH'] = str(repo / 'src') + os.pathsep + env.get('PYTHONPATH', '')
+    env['PYTHONPATH'] = os.pathsep.join((str(repo / 'src'), str(repo / 'scripts'),
+                                       env.get('PYTHONPATH', '')))
     return env
 
 
@@ -211,10 +212,12 @@ def validate_runtime(root, repo, owner):
 import sys, tempfile
 from pathlib import Path
 import selector_pair_gpu as pair
+import queue_selector_pair_gpu as queue_adapter
 root = Path(sys.argv[1])
 if not all(callable(getattr(pair, name, None)) for name in ('queue_lease', 'distributed_stage', 'run_distributed')):
     raise SystemExit('restart target is not a distributed Pair runtime; refusing another exclusive controller')
 manifest = pair.manifest(root, bind_runtime=False)
+queue_adapter.validate_receipts(root, manifest)
 names = (
     'startup-runtime.json', 'startup-defaults-runtime.json', 'startup-resources-runtime.json',
     'shared-checkpoint-recovery-runtime.json', 'budget-stop-evaluation-runtime.json',

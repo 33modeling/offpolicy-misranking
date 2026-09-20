@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import socket
+import stat
 import subprocess
 import tempfile
 import time
@@ -224,6 +225,85 @@ def queue_report(root, *, uncapped=False):
         except (OSError, ValueError, RuntimeError) as exc:
             lines.append(f'UNREADABLE {path.relative_to(root)}: {type(exc).__name__}')
 
+    def metadata(path):
+        relative = path.relative_to(root)
+        try:
+            contained(path)
+            if not stat.S_ISREG(path.stat().st_mode):
+                raise ValueError('metadata is not a regular file')
+            raw = read_small(path)
+            lines.append(f'FILE {relative} bytes={len(raw)} sha256={hashlib.sha256(raw).hexdigest()}')
+            lines.append(raw.decode('utf-8'))
+        except FileNotFoundError:
+            lines.append(f'MISSING {relative}')
+        except (OSError, ValueError, RuntimeError) as exc:
+            lines.append(f'UNREADABLE {relative}: {type(exc).__name__}: {str(exc)[:256]}')
+
+    for name in ('.pair.lock', '.pair-runtime.lock', '.pair-barrier.lock', '.fit.lock',
+                 'gate-fit/.task.lock', 'gate-fit/.cost.lock'):
+        lines.append(f'GLOBAL_LOCK {name} {lock_record(root / name)}')
+    for branch in ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached'):
+        for name in ('.fit.lock', 'gate-fit/.task.lock', 'gate-fit/.cost.lock'):
+            path = root / 'branches' / branch / name
+            lines.append(f'GLOBAL_LOCK {path.relative_to(root)} {lock_record(path)}')
+
+    if uncapped:
+        lines += ['SELECTOR PAIR SAVED RUNTIME AND QUEUE EVIDENCE',
+                  'Raw metadata and byte hashes, not validation or current process ownership.',
+                  'Each metadata file is limited to 64 KiB; omitted/unreadable files are explicit.',
+                  'Queue timestamps may differ across servers; ordering is not a liveness test.']
+        for name in ('pair.json', 'model.json', 'test-decisions.json', 'gate-fit/failure.json',
+                     'gate-fit/progress.json'):
+            metadata(root / name)
+        for directory in (root, *(root / 'branches' / branch for branch in
+                                  ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached'))):
+            if directory != root:
+                for name in ('switch.json', 'model.json', 'gate-fit/failure.json', 'gate-fit/progress.json'):
+                    metadata(directory / name)
+            # Always expose the receipt implicated in historical Pair errors,
+            # even when it is now missing or hidden behind a broken link.
+            metadata(directory / 'mbpp-branch-quarantine-runtime.json')
+            try:
+                contained(directory)
+                with os.scandir(directory) as entries:
+                    paths = []
+                    for index, entry in enumerate(entries):
+                        if index >= 2048:
+                            lines.append(f'RUNTIME_SCAN {directory.relative_to(root)} truncated at 2048 entries')
+                            break
+                        if entry.name.endswith('-runtime.json') and entry.name != 'mbpp-branch-quarantine-runtime.json':
+                            paths.append(Path(entry.path))
+                for path in sorted(paths)[:128]:
+                    metadata(path)
+                if len(paths) > 128:
+                    lines.append(f'RUNTIME_SCAN {directory.relative_to(root)} omitted={len(paths)-128} records')
+            except FileNotFoundError:
+                pass
+            except (OSError, ValueError, RuntimeError) as exc:
+                lines.append(f'UNREADABLE {directory.relative_to(root)} runtime scan: {type(exc).__name__}')
+        workers = []
+        try:
+            directory = root / 'queue-workers'
+            contained(directory)
+            with os.scandir(directory) as entries:
+                for index, entry in enumerate(entries):
+                    if index >= 2048:
+                        lines.append('QUEUE_SCAN truncated at 2048 entries; omitted count is a lower bound')
+                        break
+                    if entry.name.endswith('.json'):
+                        try:
+                            workers.append((entry.stat(follow_symlinks=False).st_mtime_ns, Path(entry.path)))
+                        except OSError as exc:
+                            lines.append(f'UNREADABLE queue-workers/{entry.name}: {type(exc).__name__}')
+            lines.append(f'QUEUE_RECORDS found={len(workers)} exported={min(len(workers), 256)} '
+                         f'omitted={max(0, len(workers)-256)}; no live-owner claim')
+            for _, path in sorted(workers, reverse=True)[:256]:
+                metadata(path)
+        except FileNotFoundError:
+            lines.append('QUEUE_RECORDS missing; no ownership inference')
+        except (OSError, ValueError, RuntimeError) as exc:
+            lines.append(f'UNREADABLE queue-workers: {type(exc).__name__}')
+
     for stage, seeds in (('development', range(3)), ('test', range(3, 5))):
         for seed in seeds:
             for step in (25, 50, 100):
@@ -231,6 +311,8 @@ def queue_report(root, *, uncapped=False):
                 folder = root / stage / state
                 lines.append(f'STATE {stage}/{state} state-lock={lock_record(folder / ".state.lock")} '
                              f'prepare-lock={lock_record(folder / ".prepare-state.lock")}')
+                if uncapped:
+                    metadata(folder / 'result.json')
                 branches = (('on_policy', 'selection_reduced'), ('cached', 'selection_reduced')) if stage == 'development' else (
                     ('on_policy', 'selection_full'), ('cached', 'selection_full'),
                     ('adaptive-on_policy', 'selection_full'), ('adaptive-cached', 'selection_full'),
@@ -242,6 +324,12 @@ def queue_report(root, *, uncapped=False):
                     lines.append(f'TASK {stage}/{state}/{branch}/{arm} branch-lock={lock_record(lock)} '
                                  f'task-lock={lock_record(directory / ".task.lock")} '
                                  f'parent-curve-lock={lock_record(point / "curve-parent/.point.lock")}')
+                    if uncapped:
+                        for location in (directory, directory / 'curve', point / 'curve-parent'):
+                            path = location / '.cost.lock'
+                            lines.append(f'METER_LOCK {path.relative_to(root)} {lock_record(path)}')
+                        for name in ('result.json', 'result.sha256.json', 'curve.json'):
+                            metadata(directory / name)
                     for path in (directory / 'pair-attempt.json', directory / 'failure.json',
                                  directory / 'progress.json', directory / 'curve/progress.json',
                                  point / 'curve-parent/progress.json'):

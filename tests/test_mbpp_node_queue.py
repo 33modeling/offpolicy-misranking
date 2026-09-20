@@ -301,6 +301,28 @@ def test_review_only_readiness_exits_before_any_gpu_worker(cluster):
     assert '[holding]' not in log.read_text()
 
 
+def test_peer_only_readiness_holds_without_admission_then_dispatches_new_work(cluster):
+    work, start = cluster
+    root = work / 'runs/selection-switch-mbpp-quality-v1'
+    publish_prefixes(root)
+    scripts = work.parent / 'repo/scripts'
+    (scripts / 'mbpp_queue_readiness.py').write_text(
+        'import os, sys\nfrom pathlib import Path\n'
+        'assert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'pending = not Path(os.environ["OM_WORK"], "peer-finished").exists()\n'
+        'print("[waiting] peer-owned branches; no GPU admission" if pending else "[ready] peer released work", flush=True)\n'
+        'sys.exit(82 if pending else 0)\n')
+    process, log = start('node-peer-wait', TEST_TASK_STATUS='WAIT', TEST_FAULT_CHECK='1')
+    wait_for(lambda: '[holding]' in log.read_text())
+    assert events(work) == []
+    assert 'switch rc=0 nothing left to claim' in log.read_text()
+    assert process.poll() is None
+    (work / 'peer-finished').write_text('development complete or lease released')
+    assert process.wait(timeout=20) == 0, log.read_text()
+    assert len([row for row in events(work) if row['kind'] == 'finished']) == 3
+    assert '[ready] peer released work' in log.read_text()
+
+
 @pytest.mark.parametrize('launcher', ['mbpp', 'generic'])
 def test_inherited_generic_skip_cannot_leave_mbpp_holding_without_assignments(cluster, launcher):
     work, start = cluster

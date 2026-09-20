@@ -45,11 +45,10 @@ opt-in CUDA cases). The final guard CLI and wait regressions separately passed
 handoff-source synchronization checks passed. No remote H100 execution is
 claimed. Local integrated report: `/tmp/experiment-operations-20260921.xml`.
 
-These checks do not establish the cause of every remote WAIT. The supplied
-older diagnostic showed an exclusive root-lock owner. Current remote lock
-ownership still requires a fresh diagnostic; a local test is not proof that a
-server allocation resumed. Never unlink a lock or infer owner death from a
-hostname or timestamp alone.
+These checks do not establish the cause of every remote WAIT. The older
+exclusive-root-lock diagnosis is superseded by the new snapshot below. A local
+test is not proof that a server allocation resumed. Never unlink a lock or infer
+owner death from a hostname or timestamp alone.
 
 The frozen scientific sources, Pair launcher, selectors, trainers, targets,
 budgets, checkpoints and measured results are not changed by these repairs.
@@ -126,3 +125,39 @@ one diagnostic section does not suppress the other experiment's evidence.
 Combined diagnostic, launcher and handoff regression: 264 passed, including
 actual Bash export, custom roots, held locks, unchanged file bytes/mtime/inodes,
 and Pair evidence beyond its normal 1 MiB limit.
+
+## Copied Diagnostic: 2026-09-20 23:40 UTC
+
+Source: `~/mbpp-pair-why-single.txt`, 1,675,720 bytes, 11,263 lines,
+checkout `9e46420a6fe7`. This is a captured remote snapshot, not live access.
+
+- MBPP repair has 42 nongated endpoints and 39 completed curves: the queue
+  reports 39 DONE, 3 RUN, 6 WAIT. The three curves hold real task/cost leases.
+  Development has 17 of 18 curves; `s2-t50/selection_reduced` is still running
+  and blocks gate fitting. The other two active curves are held-out controls,
+  `s3-t25/selection_full` and `s4-t50/selection_reduced`. The six gated branches
+  are dependent work, not six independently runnable jobs at this point.
+- The original MBPP root has 37 completed branches. Its earlier rc=80 logs
+  are not a new failure of the repair root; the two histories must not be mixed.
+- Pair's root accepts shared workers. Cached `s0-t25` has an active parent
+  curve, and cached `s2-t100` has active training, supported by both leases and
+  fresh meter records. Neither should be interrupted to repair other branches.
+- Nine development attempts are blocked by open main cost events with no
+  atomic finish receipt. Pair did not invoke the existing interrupted-cost
+  recovery used by Switch/MBPP. Recovery estimates must retain their evidence
+  and remain distinguishable from measured finish-receipt costs; no costs may
+  be refunded and no already-published cost history may be rewritten.
+- Six other saved attempt errors report the branch quarantine runtime receipt
+  mismatch. Those errors are several hours old, and this upload omits the
+  actual runtime receipts, so it does not prove a mismatch in the current
+  runtime. The current reviewed migration must be validated before GPU
+  admission, rather than adding an unverified hash exception.
+- Pair's 18 saved attempt records classify as 15 WAIT, 2 RUN, 1 DONE. These
+  are attempt records, not a revalidated experiment completion total.
+
+The operational follow-up preserves the scientific sources and adds Pair
+cost recovery with active/published-work exclusions, read-only adapter receipt
+validation before a handoff can stop a controller, and MBPP peer-only readiness
+deferral before GPU admission. Diagnostic exports include previously omitted
+runtime/publication/queue evidence so old errors can be separated from current
+artifacts. Healthy workers do not need a restart; update idle allocations.

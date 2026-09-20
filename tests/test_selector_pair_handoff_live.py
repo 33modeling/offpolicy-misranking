@@ -122,8 +122,9 @@ def test_live_serial_restart_target_is_rejected_before_term(handoff, legacy):
     assert snapshot(root) == before
 
 
+@pytest.mark.parametrize('guard_compatible', [False, True])
 def test_live_legacy_exclusive_controller_hands_off_to_staged_shared_queue(
-        handoff, legacy, tmp_path):
+        handoff, legacy, tmp_path, guard_compatible):
     """Copied handoff must start a queue, not immediately re-lock via old code."""
     repo, root, launcher, pid = legacy
     staged = tmp_path / "staged-runtime"
@@ -132,8 +133,18 @@ def test_live_legacy_exclusive_controller_hands_off_to_staged_shared_queue(
     (staged / "src/selector_pair_gpu.py").write_text(
         LEGACY_CONTROLLER.replace("fcntl.LOCK_EX", "fcntl.LOCK_SH") + QUEUE_CAPABILITIES)
     (staged / "scripts/run_selector_pair.sh").write_text(LAUNCHER)
+    (staged / 'scripts/queue_selector_pair_gpu.py').write_text(
+        'def validate_receipts(root, protocol):\n'
+        + ('    pass\n' if guard_compatible else '    raise ValueError("incompatible recovery receipt")\n'))
     original_runtime = snapshot(repo)
     before = snapshot(root)
+    if not guard_compatible:
+        with pytest.raises(RuntimeError, match='live controller was NOT stopped'):
+            handoff.handoff(root, repo, timeout=2, launch_repo=staged)
+        assert launcher.poll() is None
+        assert handoff.local_owners(root / '.pair.lock', Path('/proc')) == [pid]
+        assert snapshot(root) == before and snapshot(repo) == original_runtime
+        return
     mode = handoff.handoff(root, repo, timeout=2, launch_repo=staged)
     assert launcher.wait(timeout=2) != 0
     env = dict(os.environ, FIXTURE_PYTHON=sys.executable, PAIR_ROOT=str(root),

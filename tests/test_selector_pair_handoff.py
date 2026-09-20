@@ -45,6 +45,8 @@ def repo(tmp_path):
     (directory / "scripts").mkdir()
     (directory / "src/selector_pair_gpu.py").write_text("# test fixture\n")
     (directory / "scripts/run_selector_pair.sh").write_text("# test fixture\n")
+    (directory / "scripts/queue_selector_pair_gpu.py").write_text(
+        "def validate_receipts(root, protocol): pass\n")
     return directory
 
 
@@ -842,6 +844,33 @@ def test_runtime_validation_copies_new_receipts_before_checking(
         'def bind_startup_runtime(root, hashes):\n'
         f'    assert json.loads((root / {name!r}).read_text()) == {{"must_be_copied": True}}\n')
     handoff._test_validate_runtime(root, repo, handoff.process(proc, pid))
+
+
+@pytest.mark.parametrize('compatible', [False, True])
+def test_runtime_validation_checks_operational_receipts_without_writes(
+        handoff, root, repo, proc, compatible):
+    pid = 90001
+    process(proc, pid, repo, root)
+    (root / 'pair-curve-shard-guard-runtime.json').write_text('{"guard": "frozen"}\n')
+    (repo / 'src/selector_pair_gpu.py').write_text(
+        'def queue_lease(): pass\n'
+        'def distributed_stage(): pass\n'
+        'def run_distributed(): pass\n'
+        'def manifest(root, bind_runtime=False): return {"code_hashes": {}}\n'
+        'def bind_startup_runtime(root, hashes): pass\n')
+    (repo / 'scripts/queue_selector_pair_gpu.py').write_text(
+        'import json\n'
+        'def validate_receipts(root, protocol):\n'
+        '    assert protocol == {"code_hashes": {}}\n'
+        '    assert json.loads((root / "pair-curve-shard-guard-runtime.json").read_text()) == {"guard": "frozen"}\n'
+        + ('    raise ValueError("incompatible operational receipt")\n' if not compatible else ''))
+    before = snapshot(root)
+    if compatible:
+        handoff._test_validate_runtime(root, repo, handoff.process(proc, pid))
+    else:
+        with pytest.raises(RuntimeError, match='live controller was NOT stopped'):
+            handoff._test_validate_runtime(root, repo, handoff.process(proc, pid))
+    assert snapshot(root) == before
 
 
 @pytest.mark.parametrize('corrupt', [False, True])

@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import statistics
 import subprocess
 import sys
@@ -37,6 +38,66 @@ OBSERVATION_SCOPE = (
     "File presence and shard receipts are not independent seal/lineage validation. "
     "Adaptive storage candidates may include both selectors, but only one is a planned test branch."
 )
+
+
+def cost_provenance(root):
+    """Expose recovery annotations without certifying or changing any cost."""
+    data = {'scope': 'Read-only ledger annotations, not independent cost certification. '
+            'A recovery without an atomic finish receipt is reconstructed accounting, '
+            'not a directly measured finish. Do not describe affected totals as wholly measured.',
+            'recovered_events': [], 'reconstructed_events': 0, 'inspection_complete': True,
+            'omitted_events': 0, 'errors': []}
+    paths = set()
+    for name in ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached'):
+        for seed in range(5):
+            for step in (25, 50, 100):
+                point = root / f'branches/{name}/states/s{seed}-t{step}/points/view-{step}'
+                paths.add(point / 'curve-parent/cost.jsonl')
+                for arm in ('selection_reduced', 'selection_full', 'random_full'):
+                    paths.update((point / arm / 'cost.jsonl', point / arm / 'curve/cost.jsonl'))
+    for path in sorted(paths):
+        try:
+            if not path.resolve().is_relative_to(root):
+                raise ValueError('cost ledger escapes experiment root')
+            with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK), 'rb') as handle:
+                if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                    raise ValueError('cost ledger is not a regular file')
+                raw = handle.read(1048577)
+            if len(raw) > 1048576:
+                raise ValueError('cost ledger exceeds 1 MiB provenance read limit')
+            seen = set()
+            for line in raw.splitlines():
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                if not isinstance(event, dict):
+                    raise ValueError('cost event is not an object')
+                recovery = event.get('recovery')
+                if event.get('state') != 'finished' or not recovery:
+                    continue
+                if not isinstance(recovery, dict) or not isinstance(event.get('event_id'), str):
+                    raise ValueError('invalid recovery annotation')
+                if event['event_id'] in seen:
+                    continue
+                seen.add(event['event_id'])
+                kind = recovery.get('kind')
+                reconstructed = kind != 'atomic_finish_receipt'
+                data['reconstructed_events'] += reconstructed
+                if len(data['recovered_events']) >= 128:
+                    data['omitted_events'] += 1
+                    data['inspection_complete'] = False
+                    continue
+                data['recovered_events'].append({
+                    'path': str(path.relative_to(root)), 'event_id': event['event_id'][:128],
+                    'ledger_sha256': hashlib.sha256(raw).hexdigest(),
+                    'evidence_kind': str(kind)[:128], 'reconstructed': reconstructed})
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError, RuntimeError) as exc:
+            data['inspection_complete'] = False
+            if len(data['errors']) < 16:
+                data['errors'].append({'path': str(path.relative_to(root)), 'error': str(exc)[:256]})
+    return data
 
 
 def execution_observations(root, measurements):
@@ -321,7 +382,7 @@ def exporter_metadata(repo):
         commit = git.stdout.strip() if git.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         commit = None
-    return {'version': 'selector-pair-results/v3', 'git_commit': commit,
+    return {'version': 'selector-pair-results/v4', 'git_commit': commit,
             'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'created_at': datetime.now(timezone.utc).isoformat(), 'export_id': uuid.uuid4().hex}
 
@@ -396,12 +457,17 @@ def main():
     rows, errors = saved_branch_measurements(root)
     data.update(branch_measurements=rows, branch_measurement_errors=errors,
                 branch_measurement_scope=BRANCH_SCOPE, paired_validation=validation,
-                exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows))
+                exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows),
+                cost_provenance=cost_provenance(root))
     if not exit_code and (errors or any(row['issues'] for row in rows)):
         exit_code = 2
     data['export_exit_code'] = exit_code
     header = 'EXPORTER ' + json.dumps(data['exporter'], sort_keys=True) + '\n'
     header += 'PAIRED VALIDATION ' + json.dumps(validation, sort_keys=True) + '\n'
+    header += ('COST PROVENANCE: reconstructed events='
+               f"{data['cost_provenance']['reconstructed_events']}; "
+               f"inspection_complete={data['cost_provenance']['inspection_complete']}. "
+               + data['cost_provenance']['scope'] + '\n')
     header += f'CURRENT SAVED BRANCHES {len(rows)}; ERRORS {len(errors)}\n'
     write_export("selector-pair", data, header + curves + branch_table(rows), args.out)
     if exit_code:

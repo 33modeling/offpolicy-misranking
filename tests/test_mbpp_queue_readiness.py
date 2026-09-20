@@ -40,6 +40,102 @@ def test_uploaded_blockers_are_not_a_reason_for_another_admission(tmp_path):
     assert sum(t['status'] == 'DONE' and t['kind'] == 'branch' for t in data['tasks']) == 37
 
 
+def active_repair_snapshot(root):
+    data = uploaded_state(root)
+    active = {(2, 50, 'selection_reduced'), (3, 25, 'selection_full'),
+              (4, 50, 'selection_reduced')}
+    for task in data['tasks']:
+        if task['kind'] != 'branch':
+            continue
+        task.pop('posthoc_evaluation_saved', None)
+        key = task['seed'], task['step'], task['arm']
+        if key in active:
+            task.update(status='EVAL', task_lease_held=True, training_published=True)
+        elif task['arm'] != 'gated':
+            task['status'] = 'DONE'
+    return data
+
+
+def test_latest_repair_peers_do_not_need_another_admission(tmp_path, monkeypatch, capsys):
+    data = active_repair_snapshot(tmp_path)
+    assert len(readiness.peer_blockers(data)) == 3
+    assert sum(t['kind'] == 'branch' and t['status'] == 'DONE' for t in data['tasks']) == 39
+    monkeypatch.setattr(readiness.status, 'snapshot', lambda *args, **kwargs: data)
+    monkeypatch.setattr(sys, 'argv', ['readiness', '--root', str(tmp_path)])
+    assert readiness.main() == 82
+    output = capsys.readouterr().out
+    assert '3 peer task leases' in output and 'no GPU admission' in output
+    assert '[peer] states/s2-t50/points/view-50/selection_reduced' in output
+    assert readiness.review_blockers(data) is None
+
+
+@pytest.mark.parametrize('change', ['dev_finished', 'lease_released', 'gate_ready', 'missing',
+                                   'duplicate', 'prefix', 'notice', 'unprepared', 'math',
+                                   'fresh_heartbeat_only', 'unowned_failure', 'missing_field'])
+def test_peer_wait_never_hides_new_or_uncertain_work(tmp_path, change):
+    data = active_repair_snapshot(tmp_path)
+    task = next(t for t in data['tasks'] if t.get('task_lease_held') and t['seed'] == 2)
+    if change == 'dev_finished':
+        task['status'] = 'DONE'
+    elif change == 'lease_released':
+        task.pop('task_lease_held')
+    elif change == 'fresh_heartbeat_only':
+        task.pop('task_lease_held')
+        task.update(status='RUNNING', heartbeat_fresh=True)
+    elif change == 'gate_ready':
+        data['gate_ready'] = True
+    elif change == 'missing':
+        data['tasks'].pop()
+    elif change == 'duplicate':
+        data['tasks'].append(data['tasks'][-1])
+    elif change == 'missing_field':
+        task.pop('seed')
+    elif change == 'prefix':
+        data['tasks'][0]['status'] = 'WAIT'
+    elif change == 'notice':
+        data['notices'] = [{'error': 'unreadable manifest'}]
+    elif change == 'unprepared':
+        data['prepared'] = False
+    elif change == 'math':
+        data['protocol']['dataset'] = 'math500'
+    else:
+        next(t for t in data['tasks'] if t['kind'] == 'branch' and t['status'] == 'DONE')['status'] = 'FAILED'
+    assert readiness.peer_blockers(data) is None
+
+
+def test_real_repair_task_locks_defer_admission_until_development_finishes(tmp_path):
+    import contextlib
+    import fcntl
+    from test_selection_switch_status import core, completed_prefix, published, published_curve
+
+    data = active_repair_snapshot(tmp_path)
+    core.atomic_json(tmp_path / 'switch.json', {'schema': readiness.status.rule.SCHEMA,
+                     'dataset': 'mbpp', 'gate': 'convergence'})
+    with contextlib.ExitStack() as locks:
+        for task in data['tasks']:
+            if task['kind'] == 'prefix':
+                completed_prefix(tmp_path, task['seed'], task['step'])
+                continue
+            directory = tmp_path / task['directory']
+            if task['arm'] == 'gated':
+                continue
+            published(directory)
+            if task['status'] == 'DONE':
+                published_curve(directory)
+            else:
+                handle = locks.enter_context((directory / '.task.lock').open('a+'))
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                  for path in tmp_path.rglob('*') if path.is_file()}
+        live = readiness.status.snapshot(tmp_path, local_gpus=False)
+        assert len(readiness.peer_blockers(live)) == 3
+        assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                          for path in tmp_path.rglob('*') if path.is_file()}
+        published_curve(tmp_path / 'states/s2-t50/points/view-50/selection_reduced')
+        assert readiness.peer_blockers(readiness.status.snapshot(tmp_path, local_gpus=False)) is None
+    assert readiness.peer_blockers(readiness.status.snapshot(tmp_path, local_gpus=False)) is None
+
+
 @pytest.mark.parametrize('state', ['BUDGET', 'EVAL', 'RESUME', 'READY', 'FAILED', 'STALE', 'SAVING', 'INVALID'])
 def test_potential_work_is_not_hidden_by_reviewed_development(state, tmp_path):
     data = uploaded_state(tmp_path)

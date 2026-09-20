@@ -1,4 +1,4 @@
-"""Avoid GPU admission when only reviewed MBPP work and its gate remain."""
+"""Avoid GPU admission when MBPP work is reviewed or already owned by peers."""
 
 import argparse
 from collections import Counter
@@ -24,6 +24,52 @@ def terminal_review(data, task):
         return False
 
 
+def registered_branches(data):
+    tasks = data.get('tasks', [])
+    prefixes = [t for t in tasks if t.get('kind') == 'prefix']
+    expected_prefixes = {(seed, step) for seed in (*status.rule.DEV_SEEDS, *status.rule.TEST_SEEDS)
+                         for step in status.rule.STEPS}
+    if (len(prefixes) != len(expected_prefixes)
+            or {(t.get('seed'), t.get('step')) for t in prefixes} != expected_prefixes
+            or any(t.get('status') != 'DONE' for t in prefixes)):
+        return None
+    branches = [t for t in tasks if t.get('kind') == 'branch']
+    expected = {(seed, step, arm) for seed in (*status.rule.DEV_SEEDS, *status.rule.TEST_SEEDS)
+                for step in status.rule.STEPS
+                for arm in (status.rule.DEV_ARMS if seed in status.rule.DEV_SEEDS else status.rule.TEST_ARMS)}
+    if (len(branches) != len(expected)
+            or {(t.get('seed'), t.get('step'), t.get('arm')) for t in branches} != expected):
+        return None
+    return branches
+
+
+def peer_blockers(data):
+    """Defer only a complete registry whose unfinished work has real task leases."""
+    if (not data.get('prepared') or data.get('protocol', {}).get('dataset') != 'mbpp'
+            or data.get('notices')):
+        return None
+    branches = registered_branches(data)
+    if branches is None:
+        return None
+    peers, dependent = [], False
+    for task in branches:
+        if task.get('status') == 'DONE':
+            continue
+        if task.get('task_lease_held'):
+            peers.append(task)
+        elif task['arm'] == 'gated' and task.get('status') == 'WAIT' and not data.get('gate_ready'):
+            dependent = True
+        else:
+            return None
+    if not peers:
+        return None
+    # Once development curves finish, an idle worker can fit the gate even
+    # while other controls remain peer-owned.
+    if dependent and not any(task['seed'] in status.rule.DEV_SEEDS for task in peers):
+        return None
+    return peers
+
+
 def review_blockers(data):
     if (not data.get('prepared') or data.get('protocol', {}).get('dataset') != 'mbpp'
             or data.get('gate_ready')):
@@ -32,19 +78,8 @@ def review_blockers(data):
     if any(t.get('status') == 'RUNNING' or t.get('owner_active') or t.get('heartbeat_fresh')
            or t.get('task_lease_held') for t in tasks):
         return None
-    prefixes = [t for t in tasks if t.get('kind') == 'prefix']
-    expected_prefixes = {(seed, step) for seed in (*status.rule.DEV_SEEDS, *status.rule.TEST_SEEDS)
-                         for step in status.rule.STEPS}
-    if (len(prefixes) != len(expected_prefixes)
-            or {(t['seed'], t['step']) for t in prefixes} != expected_prefixes
-            or any(t.get('status') != 'DONE' for t in prefixes)):
-        return None
-    branches = [t for t in tasks if t.get('kind') == 'branch']
-    expected = {(seed, step, arm) for seed in (*status.rule.DEV_SEEDS, *status.rule.TEST_SEEDS)
-                for step in status.rule.STEPS
-                for arm in (status.rule.DEV_ARMS if seed in status.rule.DEV_SEEDS else status.rule.TEST_ARMS)}
-    if (len(branches) != len(expected)
-            or {(t['seed'], t['step'], t['arm']) for t in branches} != expected):
+    branches = registered_branches(data)
+    if branches is None:
         return None
     reviewed = [t for t in branches if t.get('status') == 'REVIEW']
     if not any(t['seed'] in status.rule.DEV_SEEDS for t in reviewed):
@@ -69,6 +104,15 @@ def main():
     data = status.snapshot(args.root, local_gpus=False)
     reviewed = review_blockers(data)
     if reviewed is None:
+        peers = peer_blockers(data)
+        if peers is not None:
+            gate_wait = sum(task.get('arm') == 'gated' and task.get('status') == 'WAIT'
+                            for task in data['tasks'])
+            print(f'[waiting] MBPP unfinished branches are held by {len(peers)} peer task leases; '
+                  f'gate-wait={gate_wait}; no GPU admission on this idle node [mbpp]', flush=True)
+            for task in peers:
+                print(f"[peer] {task['directory']}: task lease held [mbpp]", flush=True)
+            return 82
         return 0
     counts = Counter(t['status'] for t in data['tasks'] if t.get('kind') == 'branch')
     print(f"[blocked] MBPP has no runnable branch: saved={counts['DONE']} review={counts['REVIEW']} "

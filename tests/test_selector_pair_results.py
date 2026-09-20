@@ -51,7 +51,7 @@ def test_exports_current_partial_report_and_curves(tmp_path, monkeypatch, missin
     assert data['complete'] == complete
     assert data['branch_measurements'] == data['branch_measurement_errors'] == []
     assert data['paired_validation']['status'] == 'validated'
-    assert data['exporter']['version'] == 'selector-pair-results/v3'
+    assert data['exporter']['version'] == 'selector-pair-results/v4'
     assert len(data['exporter']['script_sha256']) == 64
     assert data['exporter']['created_at'] and data['exporter']['export_id']
     assert list(tmp_path.glob("*.txt")) == [target]
@@ -72,6 +72,70 @@ def branch_fixture(root, *, selector="on_policy", seed=0, step=25, arm="selectio
         str(step+10): {"updates": 10, "reward": .5, "final": True}}}
     (directory / "curve.json").write_text(json.dumps(curve))
     return directory, result, curve
+
+
+def test_export_labels_reconstructed_cost_without_changing_measured_rewards(tmp_path, monkeypatch):
+    root = tmp_path / 'run'
+    directory, _, _ = branch_fixture(root)
+    ledger = directory / 'cost.jsonl'
+    events = [
+        {'event_id': 'estimate', 'state': 'finished',
+         'recovery': {'kind': 'stale_owner_last_evidence'}},
+        {'event_id': 'receipt', 'state': 'finished',
+         'recovery': {'kind': 'atomic_finish_receipt'}},
+    ]
+    ledger.write_text(''.join(json.dumps(event) + '\n' for event in events))
+    before = ledger.read_bytes(), ledger.stat().st_mtime_ns
+    target = tmp_path / 'results.txt'
+    monkeypatch.setattr(sys, 'argv', ['results', '--root', str(root), '--out', str(target)])
+    results.main()
+    text = target.read_text()
+    data = json.loads(text.split('DATA_JSON\n', 1)[1])
+    evidence = data['cost_provenance']
+    assert evidence['inspection_complete'] and evidence['reconstructed_events'] == 1
+    assert [row['reconstructed'] for row in evidence['recovered_events']] == [True, False]
+    assert all(row['ledger_sha256'] == hashlib.sha256(before[0]).hexdigest()
+               for row in evidence['recovered_events'])
+    assert 'COST PROVENANCE: reconstructed events=1' in text
+    assert data['branch_measurements'][0]['mean_reward'] == .5
+    assert (ledger.read_bytes(), ledger.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize('damage', ['malformed', 'oversized', 'outside', 'fifo', 'directory', 'loop'])
+def test_cost_provenance_is_bounded_and_isolates_unreadable_ledger(tmp_path, damage):
+    first, _, _ = branch_fixture(tmp_path)
+    second, _, _ = branch_fixture(tmp_path, selector='cached')
+    good = first / 'cost.jsonl'
+    good.write_text(json.dumps({'event_id': 'kept', 'state': 'finished',
+                               'recovery': {'kind': 'stale_owner_last_evidence'}}) + '\n')
+    bad = second / 'cost.jsonl'
+    if damage == 'malformed':
+        bad.write_text('{')
+    elif damage == 'oversized':
+        bad.write_bytes(b' ' * 1048577)
+    elif damage == 'outside':
+        bad.symlink_to('/etc/passwd')
+    elif damage == 'fifo':
+        os.mkfifo(bad)
+    elif damage == 'directory':
+        bad.mkdir()
+    else:
+        bad.symlink_to(bad)
+    evidence = results.cost_provenance(tmp_path)
+    assert not evidence['inspection_complete'] and evidence['errors']
+    assert evidence['reconstructed_events'] == 1
+    assert evidence['recovered_events'][0]['event_id'] == 'kept'
+
+
+def test_cost_provenance_caps_rows_and_preserves_count(tmp_path):
+    directory, _, _ = branch_fixture(tmp_path)
+    (directory / 'cost.jsonl').write_text(''.join(json.dumps({
+        'event_id': str(index), 'state': 'finished',
+        'recovery': {'kind': 'stale_owner_last_evidence'}}) + '\n' for index in range(130)))
+    evidence = results.cost_provenance(tmp_path)
+    assert evidence['reconstructed_events'] == 130
+    assert len(evidence['recovered_events']) == 128 and evidence['omitted_events'] == 2
+    assert not evidence['inspection_complete']
 
 
 def test_incomplete_pair_exports_independent_measured_arm_without_h(tmp_path, monkeypatch):
@@ -287,7 +351,7 @@ def test_failed_report_replaces_stale_txt_with_current_error_and_branches(tmp_pa
     assert data['paired_validation']['stderr_tail'] == 'current validation error'
     assert data['export_exit_code'] == returncode
     assert data['branch_measurements'][0]['mean_reward'] == .5
-    assert data['exporter']['version'] == 'selector-pair-results/v3'
+    assert data['exporter']['version'] == 'selector-pair-results/v4'
     assert list(tmp_path.glob("*.txt")) == [target]
 
 
