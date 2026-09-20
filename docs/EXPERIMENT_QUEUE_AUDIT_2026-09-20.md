@@ -57,3 +57,31 @@ The quarantine migration test had an obsolete expected-file list: the current
 released code also creates `pair-status-runtime.json`. Its assertion now checks
 that receipt, the curve-progress upgrade, and runtime bindings while still requiring all prior receipts
 and saved work to remain byte-identical. No migration validation was relaxed.
+
+### Pair startup recovery and duplicate hostnames
+
+Pair previously checked occupied GPU memory without first recovering children
+left behind when a phase owner died. The operational node admission helper now
+performs local recovery before taking the node lease and before the launcher's
+memory check. Recovery requires all of: the exact output root, a unique cost
+event environment marker, a log path inside that root, a matching progress or
+finished-event receipt, and exclusive acquisition of the existing phase cost
+lease. Held or missing leases do not authorize cleanup. The lease remains held
+through PID/start-time-checked termination and bounded CUDA PID release checks.
+No host-name or wall-clock inference, GPU reset, root-wide process sweep, cost
+refund, result rewrite, or scientific-code/hash change is involved. Processes
+without this evidence remain untouched; failed CUDA release blocks admission.
+
+On shared filesystems Pair/RLOO node admission also used a bare-hostname fallback,
+which collided for distinct hosts with identical names. Updated launchers take
+an exclusive boot-identity lock and a shared legacy-hostname guard. Distinct
+boot identities can share a hostname; changing a display node ID cannot bypass
+the same boot's lock. Existing exclusive legacy-hostname owners remain protected.
+This is Linux boot identity, not a claim that every container platform exposes
+unique host hardware identifiers.
+
+Validation includes real local process recovery versus held-lease preservation,
+same-event/different-root isolation, invalid or missing ownership evidence,
+CUDA-release failure, duplicate-hostname ownership, and legacy-lock coexistence.
+Remote GPU release and the user's current server launch are not yet verified.
+MBPP startup failures and all alternate status views remain separate open checks.
