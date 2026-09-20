@@ -186,6 +186,7 @@ def launcher(tmp_path):
         'p = argparse.ArgumentParser()\n'
         'p.add_argument("--root", action="append", required=True)\n'
         'p.add_argument("--retained-root", action="append", default=[])\n'
+        'p.add_argument("--repair-root")\n'
         'p.add_argument("--all", action="store_true")\n'
         'a = p.parse_args()\n'
         'assert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
@@ -446,6 +447,26 @@ def test_status_retains_existing_variants_outside_the_default_quality_root(launc
     arguments = calls[0]["dashboard_argv"]
     assert arguments[arguments.index("--retained-root") + 1] == str(root)
     assert before == (marker.read_bytes(), marker.stat().st_mtime_ns)
+
+
+def test_repair_candidate_is_only_an_observation_override(launcher):
+    run, env = launcher
+    repair = Path(env["OM_WORK"]) / "runs/custom-repair"
+    write_json(repair / "repair.json", {"schema": "mbpp-repair/v1"})
+    assert run("status", MBPP_REPAIR_ROOT=str(repair)).returncode == 0
+    calls = [json.loads(line) for line in Path(env["CALLS"]).read_text().splitlines()]
+    args = calls[-1]["dashboard_argv"]
+    assert args[args.index("--repair-root") + 1] == str(repair)
+    for suite in ("quality", "fresh", "difficulty", "long"):
+        assert run("status", suite, MBPP_REPAIR_ROOT=str(repair)).returncode == 0
+        call = json.loads(Path(env["CALLS"]).read_text().splitlines()[-1])
+        assert "--repair-root" not in call["dashboard_argv"]
+    result = run("plan", MBPP_REPAIR_ROOT=str(repair))
+    assert result.returncode == 0 and "48 continuation branches" in result.stdout
+    assert str(repair) not in result.stdout
+    assert run("run", MBPP_REPAIR_ROOT=str(repair)).returncode == 0
+    call = json.loads(Path(env["CALLS"]).read_text().splitlines()[-1])
+    assert call["env"]["SWITCH_ROOT"].endswith("selection-switch-mbpp-quality-v1")
 
 
 def test_default_results_reads_existing_variants_without_dispatching_training(launcher):

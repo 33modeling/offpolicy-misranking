@@ -82,6 +82,7 @@ if [ "$MODE" = status ]; then
   ROOT_ARGS=()
   for root in "${MBPP_ROOTS[@]}"; do ROOT_ARGS+=(--root "$root"); done
   if [ "$SUITE" = all ]; then
+    ROOT_ARGS+=(--repair-root "${MBPP_REPAIR_ROOT:-$OM_WORK/runs/selection-switch-mbpp-quality-repair-v1}")
     while IFS= read -r root; do
       [ "$root" = "$SWITCH_MBPP_QUALITY_ROOT" ] || ROOT_ARGS+=(--retained-root "$root")
     done < <(mbpp_observation_roots)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import shutil
 import sys
@@ -179,10 +180,39 @@ def suite_label(suite):
     return suite.get("display_label") or label(suite["root"], suite.get("protocol"))
 
 
-def snapshot(roots, *, now=None, retained_roots=()):
+def verified_repair_root(source, candidate):
+    """Recognize a prepared repair from small identity files, without runtime checks."""
+    try:
+        source, candidate = Path(source).resolve(), Path(candidate).resolve()
+        if source == candidate or source in candidate.parents or candidate in source.parents:
+            return None
+        receipt = json.loads((candidate / "repair.json").read_text())
+        if (receipt.get("schema") != "mbpp-repair/v1"
+                or Path(receipt["source_root"]).resolve() != source
+                or Path(receipt["root"]).resolve() != candidate):
+            return None
+        source_bytes = (source / "switch.json").read_bytes()
+        if (hashlib.sha256(source_bytes).hexdigest() != receipt["source_switch_sha256"]
+                or (candidate / "switch.json").read_bytes() != source_bytes
+                or json.loads(source_bytes).get("dataset") != "mbpp"):
+            return None
+        return candidate
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError):
+        return None
+
+
+def snapshot(roots, *, now=None, retained_roots=(), repair_root=None):
     now = time.time() if now is None else now
+    roots = list(dict.fromkeys(Path(root).resolve() for root in roots))
+    repair_source = None
+    if repair_root is not None and len(roots) == 1:
+        repair = verified_repair_root(roots[0], repair_root)
+        if repair is not None:
+            repair_source = str(roots[0])
+            retained_roots = [roots[0], *retained_roots]
+            roots = [repair]
     suites = []
-    for root in dict.fromkeys(Path(root).resolve() for root in roots):
+    for root in roots:
         try:
             suites.append(switch_status.snapshot(Path(root), now=now, local_gpus=False,
                                                 node_namespace="mbpp"))
@@ -195,6 +225,8 @@ def snapshot(roots, *, now=None, retained_roots=()):
                 suite["nodes"] = []
             suites.append(suite)
     data = {"updated": now, "suites": suites}
+    if repair_source is not None:
+        data["repair_source"] = repair_source
     observed = {suite["root"] for suite in suites}
     retained = [root for root in dict.fromkeys(Path(root).resolve() for root in retained_roots)
                 if str(root) not in observed and root.is_dir()]
@@ -393,9 +425,10 @@ def render_nodes(data, *, width, all_nodes=False):
         lines.append('동일 이름의 독립 작업을 구분합니다. 작업 코드 수는 물리 노드 수가 아닙니다.')
     rows = []
     retained = {suite["root"] for suite in data.get("retained_suites", [])}
+    retained_label = "조회 합계 제외" if data.get("repair_source") else "기본 실행 제외"
     names = data.get("arm_names", ARM_NAMES)
     labels = {suite["root"]: suite_label(suite)
-              + (" (기본 실행 제외)" if suite["root"] in retained else "") for suite in observed_suites(data)}
+              + (f" ({retained_label})" if suite["root"] in retained else "") for suite in observed_suites(data)}
     visible_tasks = {id(task) for suite in observed_suites(data) for task, _ in current_work(suite)}
     visible = nodes if all_nodes else current
     for index, node in enumerate(visible, 1):
@@ -525,6 +558,9 @@ def render(data, *, width=120, all_tasks=False):
              "READY: 실행 가능 | DONE: 결과 저장 완료 | WAIT: 대기·중단·확인 필요 | RUN: 실행 중",
              "Progress: 완료 확인 / 계획. 남음에는 미확인 분기가 포함되며, 기록 없음은 삭제·미실행의 증거가 아닙니다.",
              "학습 분기 수 기준입니다. 공통 학습·선택·평가 단계를 별도 실험으로 더하지 않습니다."]
+    if data.get("repair_source"):
+        lines += [f"복구 조회: {data['suites'][0]['root']}",
+                  f"원본 기록: {data['repair_source']} (조회 합계 제외)"]
     selected_work = [entry for suite in data['suites'] for entry in current_work(suite)]
     if data.get('operational_tasks'):
         selected_work += [(task, True) for task in data['operational_tasks'] if active(task)]
@@ -660,7 +696,8 @@ def render(data, *, width=120, all_tasks=False):
             widths = [*fixed, width - sum(fixed) - 2 * len(fixed)]
         lines += table(["Seed / Step", "Role", suite.get("prefix_heading", "Prefix"), *names.values(), "Remarks"], matrix, widths)
     if data.get("retained_suites"):
-        lines += ["", "기본 실행 제외 — 기존 기록 보존 (위 계획·완료·남음 합계에서 제외)"]
+        retained_label = "조회 합계 제외" if data.get("repair_source") else "기본 실행 제외"
+        lines += ["", f"{retained_label} — 기존 기록 보존 (위 계획·완료·남음 합계에서 제외)"]
         for suite in data["retained_suites"]:
             name = suite_label(suite)
             count = counts(suite)
@@ -672,7 +709,7 @@ def render(data, *, width=120, all_tasks=False):
             if suite.get("error"):
                 notices.append(f"{name}: 설정 읽기 실패: {suite['error']}")
             running += [(name, task) for task in suite.get("tasks", []) if active(task)]
-        lines.append("이 표시는 기존 작업을 중단하지 않습니다. 기본 실행 제외 작업의 노드도 아래에 표시합니다.")
+        lines.append(f"이 표시는 기존 작업을 중단하지 않습니다. {retained_label} 작업의 노드도 아래에 표시합니다.")
     running_experiments = [(suite['root'], task) for suite in observed_suites(data) for task, _ in current_work(suite)]
     lines += data.get("legend", ["On-policy: 현재 정책으로 계산한 gradient 기반 선택. Difficulty: 저장된 정답률 기반 선택.",
               "선택비용 포함: 선택·진단·학습에 같은 예산 적용. 선택비용 별도: 선택 비용을 예산 밖에 기록.",
@@ -703,9 +740,16 @@ def main():
     parser.add_argument("--root", type=Path, action="append", required=True)
     parser.add_argument("--retained-root", type=Path, action="append", default=[],
                         help="observe legacy work without adding it to the current experiment plan")
+    parser.add_argument("--repair-root", type=Path,
+                        help="prefer a verified repair of the single selected root; retain original history")
     parser.add_argument("--all", action="store_true", dest="all_tasks")
     args = parser.parse_args()
-    data = snapshot(args.root, retained_roots=args.retained_root) if args.retained_root else snapshot(args.root)
+    options = {}
+    if args.retained_root:
+        options["retained_roots"] = args.retained_root
+    if args.repair_root is not None:
+        options["repair_root"] = args.repair_root
+    data = snapshot(args.root, **options)
     print(render(data, width=max(80, shutil.get_terminal_size((120, 40)).columns),
                  all_tasks=args.all_tasks))
     return int(any(suite.get("error") for suite in observed_suites(data)))
