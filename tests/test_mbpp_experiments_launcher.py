@@ -339,6 +339,14 @@ def test_default_hold_is_short_and_polls_without_extra_environment_variables(lau
     assert passed['EXPERIMENTS_HOLD_POLL_SECONDS'] == '5'
 
 
+def test_mbpp_cannot_inherit_the_generic_switch_queue_disable_flag(launcher):
+    run, env = launcher
+    result = run(EXPERIMENTS_SKIP_SWITCH="1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    passed = json.loads(Path(env["CALLS"]).read_text())["env"]
+    assert passed["EXPERIMENTS_SKIP_SWITCH"] == "0"
+
+
 @pytest.mark.parametrize("code", ["1", "75", "78", "130", "143"])
 def test_wrapper_preserves_the_node_controllers_exit_status(launcher, code):
     run, env = launcher

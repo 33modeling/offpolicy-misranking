@@ -28,6 +28,9 @@ mbpp_queue_init() {
     fresh|quality|difficulty|long) MBPP_SUITES=("$EXPERIMENTS_MBPP_SUITE") ;;
     *) echo '[abort] unknown MBPP suite'; return 2 ;;
   esac
+  # MBPP is the switch queue. Clear a generic controller's inherited skip flag
+  # here too: an existing node re-enters run_experiments.sh after an auto-pull.
+  export EXPERIMENTS_SKIP_SWITCH=0
   export SWITCH_MBPP_ROOT SWITCH_MBPP_QUALITY_ROOT SWITCH_MBPP_DIFFICULTY_ROOT SWITCH_MBPP_LONG_ROOT
   SWITCH_MBPP_ROOT=$(realpath -m "${SWITCH_MBPP_ROOT:-$OM_WORK/runs/selection-switch-mbpp-v1}")
   SWITCH_MBPP_QUALITY_ROOT=$(realpath -m "${SWITCH_MBPP_QUALITY_ROOT:-$OM_WORK/runs/selection-switch-mbpp-quality-v1}")

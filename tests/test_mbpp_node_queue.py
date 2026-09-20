@@ -225,6 +225,20 @@ def test_review_only_readiness_exits_before_any_gpu_worker(cluster):
     assert '[holding]' not in log.read_text()
 
 
+@pytest.mark.parametrize('launcher', ['mbpp', 'generic'])
+def test_inherited_generic_skip_cannot_leave_mbpp_holding_without_assignments(cluster, launcher):
+    work, start = cluster
+    process, log = start('node-inherited-skip', launcher=launcher,
+                         EXPERIMENTS_MBPP_SUITE='all', EXPERIMENTS_SKIP_SWITCH='1')
+    assert process.wait(timeout=20) == 0, log.read_text()
+    claimed = [row for row in events(work) if row['kind'] == 'claim']
+    finished = [row for row in events(work) if row['kind'] == 'finished']
+    assert len(claimed) == len(finished) == 3
+    assert {row['task'] for row in finished} == {0, 1, 2}
+    assert all(row['root'] == 'selection-switch-mbpp-quality-v1' for row in claimed)
+    assert '[done] every experiment' in log.read_text()
+
+
 def test_two_nodes_and_a_replacement_resume_a_killed_owner_without_duplicate_results(cluster):
     work, start = cluster
     first, _first_log = start("node-a", TEST_BLOCK_NODE="node-a")
