@@ -1,5 +1,7 @@
 """Reviewed observation changes never rewrite RLOO experiment evidence."""
 
+import json
+
 import pytest
 
 import rloo_experiment as rloo
@@ -94,3 +96,42 @@ def test_display_isolation_scans_source_references(tmp_path, monkeypatch, refere
     assert rloo.display_is_isolated('src/matrix_status.py')
     (source / 'other.py').write_text(reference + '\n')
     assert not rloo.display_is_isolated('src/matrix_status.py')
+
+
+def test_prepare_refreshes_receipt_after_a_later_reviewed_runtime(tmp_path):
+    run, out, evaluation = fixture(tmp_path)
+    legacy_contract(out)
+    rloo.prepare(run, out, evaluation)
+    path = out / 'queue-observation-runtime.json'
+    receipt = rloo.ed.read(path)
+    stale = json.loads(json.dumps(receipt))
+    stale['changes']['src/rloo_experiment.py']['runtime_sha256'] = 'earlier-reviewed-runtime'
+    rloo.ed.atomic_json(path, stale)
+    frozen = (out / 'experiment.json').read_bytes()
+    with pytest.raises(ValueError, match='runtime receipt'):
+        rloo.validate(out)
+    assert rloo.prepare(run, out, evaluation) == rloo.ed.read(out / 'experiment.json')
+    assert rloo.ed.read(path) == receipt
+    assert (out / 'experiment.json').read_bytes() == frozen
+    rloo.validate(out)
+
+
+def test_receipt_of_another_contract_is_refused_not_refreshed(tmp_path):
+    run, out, evaluation = fixture(tmp_path)
+    legacy_contract(out)
+    rloo.prepare(run, out, evaluation)
+    path = out / 'queue-observation-runtime.json'
+    foreign = rloo.ed.read(path)
+    foreign['changes']['src/rloo_experiment.py']['frozen_sha256'] = 'another-contract'
+    rloo.ed.atomic_json(path, foreign)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match='contract changed'):
+        rloo.prepare(run, out, evaluation)
+    assert path.read_bytes() == before
+
+
+def test_current_pair_runtime_is_a_reviewed_revision():
+    current = rloo.ed.digest(rloo.ROOT / 'src/selector_pair_gpu.py')
+    assert current in rloo.PAIR_OBSERVATION_REVIEWED, (
+        'src/selector_pair_gpu.py changed; confirm RLOO still never imports it, then pin '
+        f'{current} in PAIR_OBSERVATION_REVIEWED so prepared RLOO matrices keep validating')
