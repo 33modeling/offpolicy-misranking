@@ -65,18 +65,37 @@ GPUs; no cleanup or cancellation of existing experiments is performed.
 Interrupted training resumes the canonical trainer's checkpoints. Completed
 evaluation shards are reused only after checking hashes and exact coverage.
 Run `status` for global completion, not a single worker's exit message.
+The launcher uses `scripts/queue_rloo.py` to isolate branch failures: a bad
+completion receipt or branch error is recorded without stopping independent
+arms or later seed/checkpoint points. Each failed arm is attempted only once
+per invocation. Runtime failures require a fresh bounded NCCL admission probe
+before another GPU task; failed admission returns 78. Peer-owned task leases
+are skipped without waiting. A pass with failures returns 1, and a pass with
+peer-owned work returns 75, never a false all-complete result. Signals unwind
+the existing meter's child cleanup and cost-finalization path. Frozen source
+validation, training, checkpoint resume and evaluation contracts are unchanged.
 The launcher status uses the same dashboard as MBPP and Selector Pair:
 summary counts, FULL STATUS per seed/checkpoint, CURRENT RUN, node assignments,
 and phase progress. `status --all`, `status --json`, and `status --watch [SECONDS]`
 are supported; watch defaults to 15 seconds. The 18 continuation arms are the
 training total. Six shared baseline evaluations appear in the Before column,
 outside that total. Training without all four sealed evaluation shards is not
-DONE, and stale heartbeats or a lock file alone never establish RUN.
+DONE. A stale heartbeat or the mere existence of a lock file never establishes
+RUN. A running phase with an actively held meter lease remains visible across
+server clock skew, with an explicit timing/progress warning. Finished cost
+receipts take precedence over a stale running heartbeat.
 Status is read-only and does not create worker locks or touch GPU admission.
 It verifies evaluation receipt bindings, rollout hashes and question coverage;
 full source/model/optimizer validation remains in `check` and `report`. The
 dashboard lives outside frozen training sources so this display update does not
 invalidate existing RLOO contracts.
+
+The original contract also hashes unrelated Pair source code. The reviewed Pair
+curve-observation change has an exact compatibility pin; RLOO preparation retains
+the existing contract byte-for-byte and appends `queue-observation-runtime.json`.
+Only that pinned operational change and the reviewed RLOO validation update are
+allowed. Unknown code, training/input changes and altered receipts still fail.
+There is no checkpoint reset, retraining requirement, or cost refund.
 
 ## Readout And Costs
 

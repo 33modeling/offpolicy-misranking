@@ -1,5 +1,6 @@
 """Read-only RLOO status, using the same renderer and states as MBPP/Pair."""
 import json
+import fcntl
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +14,38 @@ import rloo_status as status
 from test_rloo_experiment import inputs
 
 NOW = 1800000000.
+
+
+@pytest.mark.parametrize('offset', [-3600, 3600])
+def test_live_evaluation_with_clock_skew_remains_visible(prepared, offset):
+    root, out = prepared
+    directory = out / 'random'
+    write(directory / 'progress.json', dict(host='rloo-peer', state='running', phase='evaluation',
+          updated=NOW + offset, event_id='evaluation-1', seconds=123, timeout=86400))
+    with (directory / '.cost.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = files(root)
+        data = status.snapshot(root, now=NOW)
+        assert task(data)['status'] == 'RUNNING' and task(data)['owner_active']
+        assert not task(data)['heartbeat_fresh']
+        assert 'CURRENT RUN 1' in status.display.render(data)
+        assert before == files(root)
+    assert task(status.snapshot(root, now=NOW))['status'] == 'STALE'
+
+
+def test_finished_cost_receipt_overrides_stale_running_meter(prepared):
+    root, out = prepared
+    directory = out / 'random'
+    progress = dict(host='rloo-peer', state='running', phase='evaluation', updated=NOW-3600,
+                    event_id='evaluation-1', ledger='research', gpus=4, gpu_type='test')
+    write(directory / 'progress.json', progress)
+    write(directory / 'cost-events/evaluation-1.json', dict(progress, state='finished',
+          exit_code=1, seconds=30, allocated_gpu_seconds=120, time=NOW-3500))
+    with (directory / '.cost.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(root, now=NOW)
+        assert task(data)['status'] == 'WAIT'
+        assert not status.display.active(task(data))
 
 
 @pytest.fixture
@@ -146,6 +179,25 @@ def test_lock_file_alone_does_not_prove_running(prepared):
     root, out = prepared
     write(out / "random/.worker.lock", {})
     assert task(status.snapshot(root, now=NOW))["status"] == "READY"
+
+
+def test_queue_error_remains_visible_with_failed_phase(prepared):
+    root, out = prepared
+    write(out / "random/queue-attempt.json", dict(state="FAILED", error="specific branch validation failure"))
+    write(out / "random/progress.json", dict(state="failed", phase="train", updated=NOW-5))
+    observed = task(status.snapshot(root, now=NOW))
+    assert observed["status"] == "WAIT"
+    assert observed["reason"] == "specific branch validation failure"
+
+
+def test_malformed_source_metadata_does_not_crash_dashboard(prepared):
+    root, out = prepared
+    c = status.read(out / "experiment.json")
+    c["source"] = []
+    write(out / "experiment.json", c)
+    data = status.snapshot(root, now=NOW)
+    assert data["suites"][0]["error"]
+    assert task(data)["status"] == "WAIT"
 
 
 def test_d400_matrix_and_node_assignment_keep_correct_checkpoint(prepared, tmp_path):

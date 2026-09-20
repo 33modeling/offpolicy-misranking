@@ -29,6 +29,23 @@ def digest(path):
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
+def meter_progress(directory):
+    progress = read(directory / 'progress.json')
+    event = progress.get('event_id')
+    if (progress.get('state') == 'running' and isinstance(event, str) and event
+            and Path(event).name == event and event not in {'.', '..'}):
+        path = directory / 'cost-events' / f'{event}.json'
+        if path.is_file():
+            receipt = read(path)
+            fields = ('event_id', 'phase', 'ledger', 'gpus', 'gpu_type', 'host')
+            if (receipt.get('state') == 'finished' and type(receipt.get('exit_code')) is int
+                    and all(key in progress and key in receipt and progress[key] == receipt[key] for key in fields)
+                    and all(display.switch_status.number(receipt.get(key), -1) >= 0
+                            for key in ('seconds', 'allocated_gpu_seconds', 'time'))):
+                progress = {**progress, 'state': 'finished' if receipt['exit_code'] == 0 else 'failed'}
+    return progress
+
+
 def contract(out, seed, drift):
     c = read(out / "experiment.json")
     if (c.get("schema") != experiment.SCHEMA or c.get("objective") != "rloo"
@@ -93,24 +110,39 @@ def observe(out, arm, seed, drift, c, error, *, now):
                 task.update(status="DONE", reason="four sealed evaluation shards saved")
             elif count:
                 task.update(status="EVAL", reason=f"evaluation shards {count}/4")
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         task.update(status="WAIT", reason=str(exc))
+    attempt = {}
+    attempt_path = directory / "queue-attempt.json"
+    if attempt_path.exists() and task["status"] != "DONE":
+        try:
+            attempt = read(attempt_path)
+            if attempt.get("state") == "FAILED":
+                task.update(status="WAIT", reason=str(attempt.get("error") or "queue attempt failed"))
+        except (OSError, ValueError, TypeError) as exc:
+            task.update(status="WAIT", reason="invalid queue receipt: " + str(exc))
     progress_path = directory / "progress.json"
     if progress_path.exists():
         try:
-            progress = read(progress_path)
+            progress = meter_progress(directory)
             age = now - float(progress.get("updated", 0))
             fresh = progress.get("state") == "running" and -5 <= age < 60
+            event = progress.get('event_id')
+            owned = (not fresh and progress.get('state') == 'running' and isinstance(event, str)
+                     and bool(event) and Path(event).name == event and event not in {'.', '..'}
+                     and display.switch_status.meter_lease_held(directory)
+                     and meter_progress(directory) == progress)
             task.update({key: progress.get(key) for key in ("host", "phase", "seconds", "timeout")})
-            task.update(heartbeat_age=age, heartbeat_fresh=fresh,
+            task.update(heartbeat_age=age, heartbeat_fresh=fresh, owner_active=owned,
                         training_step=display.switch_status.last_training_step(directory / "policy/grpo_stats.jsonl"))
             if task["status"] != "DONE":
-                if fresh:
+                if fresh or owned:
                     task["status"] = "RUNNING"
                 elif progress.get("state") == "running":
                     task.update(status="STALE", reason="heartbeat expired; ownership unconfirmed")
                 elif progress.get("state") == "failed":
-                    task.update(status="WAIT", reason=f"{progress.get('phase', 'phase')} failed; see phase logs")
+                    task.update(status="WAIT", reason=str(attempt.get("error") or
+                                f"{progress.get('phase', 'phase')} failed; see phase logs"))
         except (OSError, ValueError, TypeError) as exc:
             if task["status"] != "DONE":
                 task.update(status="WAIT", reason="invalid progress: " + str(exc))
@@ -130,7 +162,7 @@ def snapshot(root, *, now=None):
                 try:
                     c = contract(out, seed, drift)
                     prepared = True
-                except (OSError, ValueError, KeyError, TypeError) as exc:
+                except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
                     error = str(exc)
                     errors.append(f"s{seed}: {error}")
             tasks += [observe(out, arm, seed, drift, c, error, now=now)
@@ -140,7 +172,7 @@ def snapshot(root, *, now=None):
             if not task.get("host"):
                 continue
             age = task.get("heartbeat_age", float("inf"))
-            node = dict(host=task["host"], state="RUN" if task.get("heartbeat_fresh") else "STALE",
+            node = dict(host=task["host"], state="RUN" if display.active(task) else "STALE",
                         last_age=age)
             if node["host"] not in nodes or age < nodes[node["host"]]["last_age"]:
                 nodes[node["host"]] = node

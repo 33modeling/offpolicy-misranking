@@ -151,6 +151,7 @@ def snapshot(root, *, now=None):
         if not match:
             node["state"] = "ADMIT"
             continue
+        node['state'] = 'RUN'
         branch_name = relative.split("/")[1]
         arm = ("random" if "random_full" in path.parts else "adaptive" if branch_name.startswith("adaptive-")
                else branch_name)

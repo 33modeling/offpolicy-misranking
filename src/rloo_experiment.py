@@ -21,6 +21,10 @@ POINTS = tuple((drift, seed) for drift in (0, 400) for seed in range(3))
 SCHEMA = "rloo-frozen-selection/v2"
 TAG = "olmo3-1025-7b-base-rlzero-grpo-h100-v2"
 ROOT = Path(__file__).resolve().parents[1]
+PRE_QUEUE_OBSERVATION_CODE = 'f23ccd63e564d1a9cbf65aa21de835b1317f5aa5bae9ad3530a4e01e6ca1ad92'
+PAIR_OBSERVATION_UPGRADE = (
+    'f02238e97e9d691e2e13491f33653916ab5a51db82f4c98a72fa299e5b9739bf',
+    '042446a0513d8eaeba2dc93ad0b4401a85f8ae9013c3042f80691afa81901f0f')
 SCOPE = ("Matched GRPO-study data, selections, checkpoints, optimizer state, updates and evaluation; "
          "only the continuation objective changes to RLOO. d0 starts from the base model; "
          "d400 inherits the real GRPO parent and optimizer. Selection is not recomputed. "
@@ -57,6 +61,26 @@ def runtime_env(config):
             "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1", "TOKENIZERS_PARALLELISM": "false"}
 
 
+def reviewed_code_changes(recorded):
+    changes = {}
+    for name, digest in recorded.items():
+        current = ed.digest(ROOT / name)
+        if current == digest:
+            continue
+        if not ((name == 'src/rloo_experiment.py' and digest == PRE_QUEUE_OBSERVATION_CODE)
+                or (name == 'src/selector_pair_gpu.py' and (digest, current) == PAIR_OBSERVATION_UPGRADE)):
+            raise ValueError(f"code changed since preparation: {name}")
+        changes[name] = {'frozen_sha256': digest, 'runtime_sha256': current}
+    return changes
+
+
+def observation_receipt(out, changes):
+    return {'schema': 'rloo-queue-observation-runtime/v1',
+            'experiment_sha256': ed.digest(out / 'experiment.json'), 'changes': changes,
+            'change': 'reviewed queue/status compatibility only; training objective, inputs, optimizer, '
+                      'steps, evaluations, checkpoints and costs unchanged'}
+
+
 def prepare(run, out, evaluation, *, dry=False):
     run, out, evaluation = run.resolve(), out.resolve(), evaluation.resolve()
     config = ed.read(run / "run_config.json")
@@ -76,11 +100,20 @@ def prepare(run, out, evaluation, *, dry=False):
                 "arms": list(ARMS), "environment": runtime_env(config),
                 "code_hashes": {str(p.relative_to(ROOT)): ed.digest(p)
                                 for p in sorted((ROOT / "src").glob("*.py"))}}
+    changes = {}
+    if (out / 'experiment.json').exists():
+        frozen = ed.read(out / 'experiment.json')
+        changes = reviewed_code_changes(frozen['code_hashes'])
+        contract['code_hashes'] = frozen['code_hashes']
+        if contract != frozen:
+            raise ValueError(f'contract changed: {out / "experiment.json"}')
     if dry:
         return contract
     out.mkdir(parents=True, exist_ok=True)
     with lock(out / ".prepare.lock"):
         ed.bind(out / "experiment.json", contract)
+        if changes:
+            ed.bind(out / 'queue-observation-runtime.json', observation_receipt(out, changes))
         ed.bind(out / "evaluation.json", {"val": rows, "provenance": test["provenance"]})
         hashes = out / "inputs.json"
         if not hashes.exists():
@@ -106,9 +139,11 @@ def validate(out):
     config = ed.read(run / "run_config.json")
     if ed.digest(Path(config["model"]) / "config.json") != source["model_config_sha256"]:
         raise ValueError("model configuration changed")
-    for name, digest in c["code_hashes"].items():
-        if ed.digest(ROOT / name) != digest:
-            raise ValueError(f"code changed since preparation: {name}")
+    changes = reviewed_code_changes(c['code_hashes'])
+    if changes:
+        receipt = out / 'queue-observation-runtime.json'
+        if not receipt.is_file() or ed.read(receipt) != observation_receipt(out, changes):
+            raise ValueError('reviewed runtime receipt missing or changed; use the RLOO launcher to prepare safely')
     for name, digest in ed.read(out / "inputs.json").items():
         if ed.digest(out / name) != digest:
             raise ValueError(f"prepared input changed: {name}")

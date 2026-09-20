@@ -44,7 +44,7 @@ def display_state(task, running_directories=()):
 def remark(task):
     parts = []
     if task.get("owner_active") and not task.get("heartbeat_fresh"):
-        parts.append("평가 작업 잠금 유지; 시간 차이·진행 신호 확인 필요")
+        parts.append("작업 잠금 유지; 시간 차이·진행 신호 확인 필요")
     if task.get("posthoc_evaluation_saved"):
         parts.append("복구 평가 저장됨; 동일예산 완료 아님")
     elif task.get("status") == "EVAL" and task.get("training_published"):

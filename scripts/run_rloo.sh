@@ -40,7 +40,7 @@ case "$MODE" in
     exec "$PY" src/rloo_experiment.py "$MODE" --root "$RLOO_ROOT" "$@" ;;
   cpu)
     export CUDA_VISIBLE_DEVICES=""
-    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_rloo_experiment.py tests/test_rloo_status.py tests/test_grpo_policy.py "$@" ;;
+    exec "$PY" -m pytest -q -p no:cacheprovider tests/test_rloo_experiment.py tests/test_rloo_status.py tests/test_rloo_queue.py tests/test_grpo_policy.py "$@" ;;
   run) ;;
   *) echo 'usage: run_rloo.sh [run]|plan|prepare|status|report|check|cpu'; exit 2 ;;
 esac
@@ -73,4 +73,4 @@ RLOO_GPU_TYPE=$(timeout 20 nvidia-smi --query-gpu=name --format=csv,noheader -i 
 VERIFY=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps")
 export PYTHONPATH="$VERIFY:$PYTHONPATH" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
 source scripts/_selection_worker.sh
-selection_run_worker "$PY" src/rloo_experiment.py "$MODE" --root "$RLOO_ROOT" "$@"
+selection_run_worker "$PY" scripts/queue_rloo.py --root "$RLOO_ROOT" "$@"

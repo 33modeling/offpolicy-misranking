@@ -179,7 +179,8 @@ def test_tampered_completed_summary_cannot_count_as_finished_or_restart_training
     assert not (tmp_path / "model.json").exists()
 
 
-def test_failed_state_is_not_reclaimed_this_pass_and_independent_work_finishes(tmp_path, fake_study, monkeypatch):
+@pytest.mark.parametrize("error", ["saved contract needs inspection", "branch allocation exhausted before further GPU work"])
+def test_failed_state_is_not_reclaimed_this_pass_and_independent_work_finishes(tmp_path, fake_study, monkeypatch, error):
     p, calls, _ = fake_study
     execute = gpu.execute
     failures = []
@@ -187,7 +188,7 @@ def test_failed_state_is_not_reclaimed_this_pass_and_independent_work_finishes(t
     def fail_one(entry, arm, devices):
         if (entry[0].name, entry[2]["config"]["seed"], entry[2]["config"]["drift"]) == ("cached", 0, 25):
             failures.append(1)
-            raise ValueError("saved contract needs inspection")
+            raise ValueError(error)
         execute(entry, arm, devices)
 
     monkeypatch.setattr(gpu, "execute", fail_one)
