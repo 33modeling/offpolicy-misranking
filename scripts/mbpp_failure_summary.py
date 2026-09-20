@@ -1,9 +1,10 @@
-"""Bounded MBPP diagnostics; CLI writes TXT parts without starting or repairing work."""
+"""Read-only MBPP diagnostics; bounded TXT parts by default, one TXT by opt-in."""
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -316,17 +317,23 @@ def main():
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--root', type=Path, action='append', required=True)
     parser.add_argument('--storage', action='store_true', help='read-only saved-work audit to stdout, <=4 KiB')
+    parser.add_argument('--single-file', action='store_true', default=os.environ.get('MBPP_WHY_SINGLE') == '1',
+                        help='one TXT without the total upload cap; also enabled by MBPP_WHY_SINGLE=1')
     args = parser.parse_args()
     if len(args.root) > 4:
         parser.error('at most four MBPP suite roots (including retained legacy work)')
     if args.storage:
         print(storage_report(args.root), end='')
         return 0
-    from mbpp_diagnostic_parts import sections, write_parts
+    from mbpp_diagnostic_parts import sections, write_parts, write_single
     destination = args.work / 'reports/selection-switch'
-    paths = write_parts(sections(args.work, args.root), destination)
-    print(f'[parts] {len(paths)} TXT files; maximum 1.9 MB each, 3 files / 5.7 MB total; send this set only')
-    print('[upload] Existing project text also counts toward the Overleaf 7 MB total limit; do not upload old 8 KiB sets.')
+    if args.single_file:
+        paths = write_single(sections(args.work, args.root, single_file=True), destination)
+        print('[single] 1 TXT file; no total output-size cap; per-record/log safety bounds retained')
+    else:
+        paths = write_parts(sections(args.work, args.root), destination)
+        print(f'[parts] {len(paths)} TXT files; maximum 1.9 MB each, 3 files / 5.7 MB total; send this set only')
+        print('[upload] Existing project text also counts toward the Overleaf 7 MB total limit; do not upload old 8 KiB sets.')
     for path in paths:
         print(f'[saved] {path} ({path.stat().st_size} bytes)')
     return 0

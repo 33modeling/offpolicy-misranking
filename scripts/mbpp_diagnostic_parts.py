@@ -1,4 +1,4 @@
-"""Read-only MBPP metadata export split into upload-sized UTF-8 text files."""
+"""Read-only MBPP metadata export, split by default or one uncapped TXT on request."""
 
 import json
 import fcntl
@@ -98,16 +98,19 @@ def phase_logs(root, directory):
     return [(root, path) for path in summary.recent(directory, (pattern,))[:4]]
 
 
-def sections(work, roots):
+def sections(work, roots, *, single_file=False):
     inventories, worker_logs, admissions = [], [], []
+    upload_scope = ('One TXT file; no total output-size cap. Per-record/log safety bounds still apply.\n'
+                    if single_file else
+                    'At most 3 files of 1,900,000 bytes; any total-limit omission is explicitly marked.\n'
+                    'Existing project text also counts toward the Overleaf 7 MB total limit.\n')
     yield ('MBPP DIAGNOSTIC DETAILS\nREAD-ONLY. No training, repair or lock creation.\n'
            f'UTC {datetime.now(timezone.utc).isoformat(timespec="seconds")}\n'
            'No model/optimizer/rollout payloads. Presence is NOT hash/lineage validation.\n'
            'Recent controller exits first, then all branch blockers; historical admissions are sampled last.\n'
            'JSON reads limited to 1 MiB each; oversize/unreadable records show errors.\n'
            'Log excerpts are bounded; this is not an atomic snapshot of live workers.\n'
-           'At most 3 files of 1,900,000 bytes; any total-limit omission is explicitly marked.\n'
-           'Existing project text also counts toward the Overleaf 7 MB total limit.\n')
+           + upload_scope)
     yield '\nRECENT CONTROLLER AND CLEANUP LOGS\n'
     for pattern in ('runs/experiments/logs/console.mbpp.*.log', 'runs/experiments/logs/cleanup.mbpp.*.log'):
         logs = summary.recent(work, (pattern,))
@@ -197,6 +200,25 @@ def sections(work, roots):
     for root, path in admissions:
         yield f'ROOT {root}\n'
         yield summary.clipped(metadata(root, path), ADMISSION_BYTES) + '\n'
+
+
+def write_single(chunks, destination):
+    """Stream all diagnostic sections into one atomically published UTF-8 file."""
+    destination.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix='mbpp-why-', dir=destination))
+    path = folder / 'mbpp-why-single.txt'
+    temporary = folder / '.mbpp-why-single.tmp'
+    try:
+        with temporary.open('x', encoding='utf-8') as handle:
+            handle.write(f'MBPP WHY single file; set={folder.name}\nNo total output-size cap.\n\n')
+            for chunk in chunks:
+                handle.write(chunk)
+        temporary.rename(path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        folder.rmdir()
+        raise
+    return [path]
 
 
 def write_parts(chunks, destination):

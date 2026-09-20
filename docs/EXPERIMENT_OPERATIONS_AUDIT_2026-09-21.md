@@ -92,3 +92,18 @@ bash scripts/check_selector_pair.sh
 ```
 
 The command prints its output path. It does not restart or stop a worker.
+
+For a one-off MBPP diagnostic upload without the total file-size cap:
+
+```bash
+MBPP_WHY_SINGLE=1 bash scripts/run_mbpp_repair.sh why
+```
+
+This invocation writes one TXT and prints its path. The environment override
+applies only to that command; ordinary `why` still uses at most three
+upload-sized parts. All generated sections are streamed without the old
+5.7 MB aggregate truncation. Existing per-record/log safety bounds and
+exclusion of model, optimizer and rollout payloads remain explicit.
+Publication is atomic; a failed export does not leave a partial TXT.
+Focused diagnostic and launcher regression: 144 passed, including actual Bash
+execution, content beyond the old cap, UTF-8 preservation and failure cleanup.

@@ -99,6 +99,78 @@ def test_eight_hundred_old_parts_produce_at_most_three_overleaf_files(tmp_path):
     assert 'NOT a complete export' in paths[-1].read_text()
 
 
+def test_single_file_keeps_all_content_beyond_old_total_limit(tmp_path):
+    text = '한글\n' * 900000 + 'LAST_DIAGNOSTIC_SECTION\n'
+    paths = parts.write_single((text[i:i+8192] for i in range(0, len(text), 8192)), tmp_path)
+    assert len(paths) == 1 and paths[0].stat().st_size > 5_700_000
+    assert joined(paths) == text and 'EXPORT LIMIT' not in paths[0].read_text()
+    assert list(paths[0].parent.iterdir()) == paths
+    again = parts.write_single(['another export'], tmp_path)
+    assert again[0] != paths[0] and joined(paths) == text
+
+
+@pytest.mark.parametrize('failure', [OSError('disk unavailable'), KeyboardInterrupt()])
+def test_single_file_failure_does_not_publish_partial_txt(tmp_path, failure):
+    preserved = tmp_path / 'previous.txt'
+    preserved.write_text('prior diagnostic')
+
+    def chunks():
+        yield 'partial content'
+        raise failure
+
+    with pytest.raises(type(failure)):
+        parts.write_single(chunks(), tmp_path)
+    assert list(tmp_path.iterdir()) == [preserved]
+    assert preserved.read_text() == 'prior diagnostic'
+
+
+@pytest.mark.parametrize('mode', ['flag', 'environment', 'default'])
+def test_single_file_opt_in_does_not_change_default(tmp_path, monkeypatch, capsys, mode):
+    root = tmp_path / 'runs/quality'
+    core.atomic_json(root / 'switch.json', {'dataset': 'mbpp'})
+    args = ['why', '--work', str(tmp_path), '--root', str(root)]
+    monkeypatch.delenv('MBPP_WHY_SINGLE', raising=False)
+    if mode == 'flag':
+        args.append('--single-file')
+    elif mode == 'environment':
+        monkeypatch.setenv('MBPP_WHY_SINGLE', '1')
+    monkeypatch.setattr(sys, 'argv', args)
+    before = (root / 'switch.json').read_bytes(), (root / 'switch.json').stat().st_mtime_ns
+    assert summary.main() == 0
+    paths = list((tmp_path / 'reports/selection-switch').glob('mbpp-why-*/*.txt'))
+    assert len(paths) == 1
+    message = capsys.readouterr().out
+    text = paths[0].read_text()
+    if mode == 'default':
+        assert '[parts]' in message and 'At most 3 files' in text
+    else:
+        assert '[single]' in message and 'no total output-size cap' in text
+        assert 'Overleaf' not in text and '[upload]' not in message
+    assert before == ((root / 'switch.json').read_bytes(), (root / 'switch.json').stat().st_mtime_ns)
+
+
+def test_real_repair_bash_why_exports_one_read_only_txt(tmp_path):
+    import os
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+    work = tmp_path / 'shared work'
+    root = work / 'runs/selection-switch-mbpp-quality-repair-v1'
+    core.atomic_json(root / 'switch.json', {'dataset': 'mbpp', 'gate': 'convergence'})
+    core.atomic_json(root / 'gate-fit/failure.json', {'error': 'TEST_GATE_BLOCKER'})
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob('*') if p.is_file()}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('MBPP_', 'SWITCH_MBPP_'))}
+    env.update(OM_WORK=str(work), SWITCH_PYTHON=sys.executable, MBPP_WHY_SINGLE='1')
+    result = subprocess.run(['bash', 'scripts/run_mbpp_repair.sh', 'why'], cwd=repo,
+                            env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+    paths = list((work / 'reports/selection-switch').glob('mbpp-why-*/*.txt'))
+    assert len(paths) == 1 and '[single]' in result.stdout
+    assert 'TEST_GATE_BLOCKER' in paths[0].read_text()
+    assert not list(root.rglob('*.lock'))
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob('*') if p.is_file()}
+
+
 def test_all_roots_blockers_precede_large_inventories_and_logs(tmp_path, monkeypatch):
     roots = [tmp_path / f'root-{i}' for i in range(4)]
     for index, root in enumerate(roots):
