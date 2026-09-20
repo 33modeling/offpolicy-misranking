@@ -19,12 +19,23 @@ def two_frame_sleep(tmp_path):
     sleep = binaries / "sleep"
     sleep.write_text('''#!/usr/bin/env bash
 "$TEST_PYTHON" - "$@" <<'PY'
-import json, os, sys
+import hashlib, json, os, sys
 from pathlib import Path
 path = Path(os.environ["SLEEP_LOG"])
 rows = json.loads(path.read_text()) if path.exists() else []
 rows.append(sys.argv[1:])
 path.write_text(json.dumps(rows))
+if len(rows) == 1 and os.environ.get("TEST_COMPLETE_BRANCH"):
+    branch = Path(os.environ["TEST_COMPLETE_BRANCH"])
+    schema = json.loads(Path(os.environ["TEST_SWITCH_MANIFEST"]).read_text())["schema"]
+    progress = json.loads((branch / "progress.json").read_text())
+    progress["state"] = "finished"
+    (branch / "progress.json").write_text(json.dumps(progress))
+    result = branch / "result.json"
+    result.write_text(json.dumps({"schema": schema, "complete": True}))
+    digest = hashlib.sha256(result.read_bytes()).hexdigest()
+    (branch / "result.sha256.json").write_text(json.dumps({"sha256": digest}))
+    (branch / "curve.json").write_text(json.dumps({"schema": schema, "result_sha256": digest, "points": {}}))
 sys.exit(143 if len(rows) == 2 else 0)
 PY
 ''')
@@ -87,3 +98,27 @@ def test_real_mbpp_watch_keeps_saved_results_and_live_work_visible_not_math(tmp_
     assert "기존 계획 48개 | 완료 확인 21개 | 남음 27개" in result.stdout
     assert "Remarks" in result.stdout and "Full selection" in result.stdout
     assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in work.rglob("*") if path.is_file()}
+
+
+def test_real_watch_updates_full_status_run_and_done_between_frames(tmp_path):
+    import time
+    from test_selection_switch_status import convergence_root, completed_prefix, point, running
+
+    work = tmp_path / "work"
+    root = work / "runs/selection-switch-mbpp-quality-v1"
+    convergence_root(root)
+    completed_prefix(root)
+    branch = point(root) / "random_reduced"
+    running(branch, "finishing-node", now=time.time(), phase="evaluate")
+    extra = two_frame_sleep(tmp_path)
+    env = {**os.environ, **extra, "OM_WORK": str(work), "SWITCH_PYTHON": sys.executable,
+           "TEST_COMPLETE_BRANCH": str(branch), "TEST_SWITCH_MANIFEST": str(root / "switch.json")}
+    for key in ("SWITCH_MBPP_ROOT", "SWITCH_MBPP_QUALITY_ROOT", "SWITCH_MBPP_DIFFICULTY_ROOT", "SWITCH_MBPP_LONG_ROOT"):
+        env.pop(key, None)
+    result = subprocess.run(["bash", "scripts/run_mbpp_experiments.sh", "status", "--watch", "1"],
+                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=15, check=False)
+    assert result.returncode == 143, result.stdout + result.stderr
+    first, second = result.stdout.split("MBPP EXPERIMENTS")[1:]
+    assert "완료 확인 0개" in first and "CURRENT RUN 1" in first
+    assert "완료 확인 1개" in second and "CURRENT RUN 0" in second
+    assert "완료 확인 1/48" in second

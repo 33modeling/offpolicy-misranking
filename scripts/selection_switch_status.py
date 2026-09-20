@@ -174,8 +174,27 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         notices.append({"path": str(path.relative_to(root)), "error": f"state not published/validated: {read(path).get('error', '')}"})
     tasks, cost_pending = [], []
 
-    def observe(directory, *, seed, step, kind, arm, done_path=None, dependency=None, also=None):
+    def read_progress(directory):
         progress = read(directory / "progress.json")
+        event = progress.get("event_id")
+        if (progress.get("state") != "running" or not isinstance(event, str)
+                or not event or Path(event).name != event or event in {".", ".."}):
+            return progress
+        receipt = read(directory / "cost-events" / f"{event}.json")
+        fields = ("event_id", "phase", "ledger", "gpus", "gpu_type", "host")
+        # Meter finalization publishes its atomic receipt before updating the
+        # heartbeat. A crash in between must not leave completed work as RUN.
+        if (receipt.get("state") == "finished" and type(receipt.get("exit_code")) is int
+                and all(key in progress and key in receipt and progress[key] == receipt[key] for key in fields)
+                and number(receipt.get("seconds"), -1) >= 0
+                and number(receipt.get("allocated_gpu_seconds"), -1) >= 0
+                and number(receipt.get("time"), -1) >= 0):
+            return {**progress, "state": "finished" if receipt["exit_code"] == 0 else "failed",
+                    "seconds": receipt["seconds"], "updated": receipt["time"]}
+        return progress
+
+    def observe(directory, *, seed, step, kind, arm, done_path=None, dependency=None, also=None):
+        progress = read_progress(directory)
         failure = read(directory / "failure.json")
         age = now-number(progress.get("updated"), -1e30)
         fresh = progress.get("state") == "running" and -5 <= age < 60
@@ -340,7 +359,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         directory = progress_path.parent
         if directory in observed or "discarded" in directory.parts:
             continue
-        progress = read(progress_path)
+        progress = read_progress(directory)
         age = now-number(progress.get("updated"), -1e30)
         if progress.get("state") != "running" or not (-5 <= age < 60):
             continue

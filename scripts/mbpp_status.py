@@ -89,6 +89,8 @@ def counts(suite):
     unknown = max(0, planned - len(branches))
     states["WAIT"] += unknown
     return {"planned": planned, "done": states["DONE"], "remaining": planned - states["DONE"],
+            "recovered": sum(bool(task.get("posthoc_evaluation_saved")) and task["status"] != "DONE"
+                             for task in branches.values()),
             "unknown": unknown, "states": states, "progress": f"{100 * states['DONE'] / planned:.1f}%"}
 
 
@@ -378,6 +380,9 @@ def render(data, *, width=120, all_tasks=False):
              "READY: 실행 가능 | DONE: 결과 저장 완료 | WAIT: 대기·중단·확인 필요 | RUN: 실행 중",
              "Progress: 완료 확인 / 계획. 남음에는 미확인 분기가 포함되며, 기록 없음은 삭제·미실행의 증거가 아닙니다.",
              "학습 분기 수 기준입니다. 공통 학습·선택·평가 단계를 별도 실험으로 더하지 않습니다."]
+    recovered = sum(item["recovered"] for item in totals)
+    if recovered:
+        lines.insert(3, f"복구 평가 완료 {recovered}개 (동일예산 DONE 제외; 위 남음에 포함)")
     if data.get("retained_suites"):
         preserved_done = sum(counts(suite)["done"] for suite in data["retained_suites"])
         lines.append(f"다른 조건의 완료 결과 {preserved_done}개 보존 — 현재 조건과 합산하지 않음; 아래 기존 기록에 표시")
@@ -414,6 +419,8 @@ def render(data, *, width=120, all_tasks=False):
             note += f"; 평가·결과 저장 남음 {evaluations - curves}개"
         if curves:
             note += f"; 최종 평가 저장됨·곡선 남음 {curves}개"
+        if count["recovered"]:
+            note += f"; 복구 평가 완료 {count['recovered']}개 (동일예산 DONE 제외)"
         rows.append([name, count["planned"], count["done"], count["remaining"], count["progress"],
                      states["READY"], states["WAIT"], states["RUN"], note])
         trained = suite.get("training_published", 0)
@@ -427,6 +434,8 @@ def render(data, *, width=120, all_tasks=False):
         count = counts(suite)
         lines.append(f"계획 {count['planned']}개 | 완료 확인 {count['done']}/{count['planned']}"
                      f" | 남음 {count['remaining']}개 | {count['progress']}")
+        if count["recovered"]:
+            lines.append(f"복구 평가 완료 {count['recovered']}개 (동일예산 DONE 제외)")
         if not suite.get("prepared"):
             lines.append(f"WAIT {count['unknown']}개: " + ("설정 읽기 실패" if suite.get("error") else "실험 설정 확인 불가")
                          + "; 완료 여부 미확인")
@@ -490,8 +499,10 @@ def render(data, *, width=120, all_tasks=False):
     if all_tasks:
         for suite in observed_suites(data):
             lines += ["", f"ROOT {suite['root']}"]
+            directories = [task.get("directory", "") for task in suite.get("tasks", []) if active(task)]
             for task in suite.get("tasks", []):
-                lines.append(f"{display_state(task)} {task['directory']}" + (f" — {remark(task)}" if remark(task) else ""))
+                lines.append(f"{display_state(task, directories)} {task['directory']}"
+                             + (f" — {remark(task)}" if remark(task) else ""))
     lines += ["", *render_idle_nodes(data)]
     return "\n".join(part for line in lines for part in
                      (wrap(line, width) if columns(line) > width else [line]))
