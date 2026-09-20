@@ -53,8 +53,8 @@ owner death from a hostname or timestamp alone.
 The frozen scientific sources, Pair launcher, selectors, trainers, targets,
 budgets, checkpoints and measured results are not changed by these repairs.
 The isolated restart runtime is pinned to
-`1459371b24e650c990a930f4f668d05320c57960`, including the operational curve guard
-and the combined diagnostic entrypoint.
+`c321461fcb22ede9735777a6626d9a68186762ea`, including interrupted Pair cost
+recovery, operational receipt validation, the curve guard and combined diagnostics.
 The self-contained restart bundle is regenerated from its maintained sources.
 Final deployment/guard/handoff regression: 180 passed. This includes staging
 the actual pinned Git commit in a temporary checkout and checking that its
@@ -161,3 +161,45 @@ validation before a handoff can stop a controller, and MBPP peer-only readiness
 deferral before GPU admission. Diagnostic exports include previously omitted
 runtime/publication/queue evidence so old errors can be separated from current
 artifacts. Healthy workers do not need a restart; update idle allocations.
+
+The v4 Pair results TXT carries `cost_provenance`, including source ledger
+hashes and explicit reconstructed-cost warnings. Reward measurements remain
+unchanged. A recovered interruption without an atomic finish receipt is not
+called a directly measured finish or a guaranteed cost upper bound.
+
+To apply this release on an idle allocation without editing the checkout used
+by a live worker, create a separate Git worktree from the published master:
+
+```bash
+git fetch origin master
+FIX=$(mktemp -d /tmp/offpolicy-ops-fix.XXXXXX)
+git worktree add --detach "$FIX" origin/master
+cd "$FIX"
+```
+
+Then run the command for that allocation's experiment, not both on one node:
+
+```bash
+# Pair allocation that is waiting, not currently training or evaluating:
+bash scripts/restart_selector_pair.sh
+```
+
+```bash
+# MBPP allocation that is waiting, not currently training or evaluating:
+EXPERIMENTS_AUTO_PULL=0 bash scripts/run_mbpp_repair.sh restart
+```
+
+The Pair launcher stages the pinned runtime and validates local ownership
+before handoff. The MBPP command explicitly restarts only its allocation's
+controller; automatic checkout updates are disabled in this detached worktree.
+Do not restart the three active MBPP curves or two active Pair tasks identified
+in this snapshot just to update idle workers. Remote progress after deployment
+still requires confirmation; the copied diagnostic is not a live server view.
+
+Final follow-up integrated regression: **2,257 passed, 10 skipped** in 70.35s.
+This includes the newly pinned Git deployment, generated Bash synchronization,
+real-process handoff acceptance/refusal, MBPP queue readiness, cost recovery,
+status and partial results exports. The skips include eight opt-in CUDA cases;
+no remote GPU execution is claimed. There were 47 existing Python fork/thread
+deprecation warnings, no test failures. Report:
+`/tmp/experiment-operations-new-why-20260921.xml`.
