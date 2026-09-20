@@ -123,7 +123,7 @@ def test_published_mbpp_with_held_task_lease_is_not_done_or_assigned_to_old_host
         text = display.render(data, width=160)
         assert 'CURRENT RUN 1' in text
         assert '현재 작업자·단계 미확인' in text
-        assert '작업 노드 0개' in text
+        assert '작업자 0개' in text
 
 
 @pytest.mark.parametrize('phase', ['train', 'fresh-r-candidate', 'fresh-r-validation', 'evaluate', 'curve'])
@@ -147,7 +147,7 @@ def test_all_metered_phases_remain_in_summary_matrix_and_current_across_clock_sk
         assert display.counts(data['suites'][0])['states']['RUN'] == 1
         assert len(display.node_assignments(data)[0]['assignments']) >= 1
         text = display.render(data, width=160)
-        assert 'CURRENT RUN 1' in text and '작업 노드 1개' in text
+        assert 'CURRENT RUN 1' in text and '실행 작업 1개' in text
         assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
 
 
@@ -187,7 +187,7 @@ def test_shared_parent_evaluation_visible_without_inventing_running_branches(tmp
     count = display.counts(data['suites'][0])
     assert count['planned'] == 48 and count['states']['RUN'] == 0
     text = display.render(data, width=160)
-    assert '분기 RUN 0개 | 공통 단계 RUN 1개 | 작업 노드 1개' in text
+    assert '분기 RUN 0개 | 공통 단계 RUN 1개 | 실행 작업 1개' in text
     assert 'CURRENT RUN 1' in text and 'Shared evaluation' in text
 
 
@@ -200,7 +200,7 @@ def test_admission_is_current_shared_work_not_an_extra_training_arm(tmp_path, ex
             else rloo_status.snapshot(tmp_path, now=10000))
     text = display.render(data, width=160)
     assert 'CURRENT RUN 1' in text and 'GPU admission' in text
-    assert '분기 RUN 0개 | 공통 단계 RUN 1개 | 작업 노드 1개' in text
+    assert '분기 RUN 0개 | 공통 단계 RUN 1개 | 실행 작업 1개' in text
     assert sum(display.counts(s)['planned'] for s in data['suites']) == (48 if experiment == 'mbpp' else 18)
 
 
@@ -268,7 +268,7 @@ def test_same_hostname_different_suffixes_stay_separate_in_all_views(tmp_path, p
     assert {node['host'] for node in nodes if node['assignments']} == set(hosts)
     for width in (60, 160):
         text = display.render(data, width=width)
-        assert 'CURRENT RUN 2' in text and '작업 노드 2개' in text
+        assert 'CURRENT RUN 2' in text and '실행 작업 2개' in text
         assert all(host in text for host in hosts)
 
 

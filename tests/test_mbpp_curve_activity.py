@@ -183,7 +183,7 @@ def test_task_lease_is_visible_without_claiming_a_stale_worker(tmp_path, progres
         assert assigned[0]['work_id'].startswith('work-')
         rendered = mbpp_status.render(data, width=160)
         assert 'CURRENT RUN 1' in rendered and 'WORK ITEMS 1 current' in rendered
-        assert '작업 노드 0개' in rendered
+        assert '작업자 0개' in rendered
         assert '90.0%' not in rendered
     assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
     assert not mbpp_status.current_work(mbpp_status.snapshot([tmp_path], now=10000)['suites'][0])

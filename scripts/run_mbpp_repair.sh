@@ -6,9 +6,9 @@ cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
 case "$MODE" in
-  run|restart|stop|logs|status|results) ;;
+  run|restart|stop|logs|status|results|why) ;;
   -h|--help)
-    echo 'usage: bash scripts/run_mbpp_repair.sh [run|restart|stop|logs|status|results]'
+    echo 'usage: bash scripts/run_mbpp_repair.sh [run|restart|stop|logs|status|results|why]'
     exit 0 ;;
   *) echo '[abort] unknown MBPP repair mode' >&2; exit 2 ;;
 esac

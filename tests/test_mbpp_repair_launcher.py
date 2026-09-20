@@ -70,7 +70,7 @@ def test_start_prepares_separate_root_then_dispatches_existing_gpu_launcher(laun
     assert all(key not in dispatched['env'] for key in ('OUT_ROOT', 'SWITCH_ROOT', 'SWITCH_RUNTIME_REPO'))
 
 
-@pytest.mark.parametrize('mode', ['status', 'logs', 'stop'])
+@pytest.mark.parametrize('mode', ['status', 'logs', 'stop', 'why'])
 def test_readers_and_stop_do_not_prepare_or_train(launcher, mode):
     run, env = launcher
     result = run(mode)

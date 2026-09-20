@@ -204,6 +204,82 @@ def events(work):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
+@pytest.mark.parametrize('fresh_exists', [False, True])
+def test_prepared_repair_uses_its_own_prefixes_without_fresh_or_new_input_checks(cluster, fresh_exists):
+    work, start = cluster
+    fresh = work / 'runs/selection-switch-mbpp-v1'
+    if not fresh_exists:
+        shutil.rmtree(fresh)
+    repair = work / 'runs/selection-switch-mbpp-quality-repair-v1'
+    publish_prefixes(repair)
+    (repair / 'repair.json').write_text('{}')
+    scripts = work.parent / 'repo/scripts'
+    (scripts / 'mbpp_repair_runtime.py').write_text(
+        'import os,sys\n'
+        'assert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'assert sys.argv[1:] == ["check-code", "--root", os.environ["SWITCH_MBPP_QUALITY_ROOT"]]\n'
+        'print("[repair-check] strict frozen repair preflight", flush=True)\n')
+    (scripts / 'fake_inner.sh').write_text(
+        '#!/usr/bin/env bash\n'
+        '[ -z "$SWITCH_PREFIX_SOURCE" ] || exit 93\n'
+        'exec "$TEST_PYTHON" "$TEST_ENGINE" "$@"\n')
+    process, log = start('node-repair', suite='quality', SWITCH_MBPP_QUALITY_ROOT=str(repair),
+                         TEST_REQUIRE_INPUTS='1')
+    assert process.wait(timeout=20) == 0, log.read_text()
+    text = log.read_text()
+    assert '[repair-check]' in text and '[fake-check]' not in text
+    assert 'shared on-policy prefixes are not ready' not in text
+    assert len([row for row in events(work) if row['kind'] == 'finished']) == 3
+    assert {row['root'] for row in events(work)} == {repair.name}
+
+
+def test_invalid_repair_exits_before_gpu_admission_without_holding(cluster):
+    work, start = cluster
+    repair = work / 'runs/selection-switch-mbpp-quality-repair-v1'
+    publish_prefixes(repair)
+    (repair / 'repair.json').write_text('{}')
+    scripts = work.parent / 'repo/scripts'
+    (scripts / 'mbpp_repair_runtime.py').write_text(
+        'import sys\nprint("snapshot changed", flush=True)\nsys.exit(2)\n')
+    process, log = start('node-repair-invalid', suite='quality', SWITCH_MBPP_QUALITY_ROOT=str(repair))
+    assert process.wait(timeout=10) == 81, log.read_text()
+    text = log.read_text()
+    assert 'snapshot changed' in text and 'repair contract validation blocked' in text
+    assert '[holding]' not in text and '[hold]' not in text
+    assert events(work) == []
+
+
+def test_sibling_repair_validation_failure_is_not_erased_by_successful_primary(cluster):
+    work, start = cluster
+    scripts = work.parent / 'repo/scripts'
+    config = scripts / '_mbpp_experiments.sh'
+    config.write_text(config.read_text().replace('all) MBPP_SUITES=(quality)',
+                                                'all) MBPP_SUITES=(fresh quality)'))
+    repair = work / 'runs/selection-switch-mbpp-quality-repair-v1'
+    publish_prefixes(repair)
+    (repair / 'repair.json').write_text('{}')
+    (scripts / 'mbpp_repair_runtime.py').write_text('raise SystemExit(2)\n')
+    process, log = start('node-repair-sibling', suite='all', SWITCH_MBPP_QUALITY_ROOT=str(repair))
+    assert process.wait(timeout=10) == 81, log.read_text()
+    assert '[holding]' not in log.read_text()
+    rows = events(work)
+    assert {row['root'] for row in rows} == {'selection-switch-mbpp-v1'}
+    assert len([row for row in rows if row['kind'] == 'finished']) == 1
+    assert (work / 'runs/selection-switch-mbpp-v1/tasks/0/checkpoint.json').is_file()
+
+
+def test_inner_configuration_error_releases_mbpp_without_automatic_hold(cluster):
+    work, start = cluster
+    process, log = start('node-configuration-error', suite='quality',
+                         TEST_FAIL_SUITE='quality', TEST_FAIL_RC='2')
+    assert process.wait(timeout=10) == 2, log.read_text()
+    text = log.read_text()
+    assert 'configuration/runtime preflight failed; no automatic hold' in text
+    assert '[holding]' not in text and '[hold]' not in text
+    assert len([row for row in events(work) if row['kind'] == 'pass']) == 1
+    assert not any(row['kind'] == 'claim' for row in events(work))
+
+
 @pytest.mark.parametrize("mode", ["run", "restart"])
 def test_blocked_storage_audit_never_enters_node_controller(cluster, mode):
     work, start = cluster

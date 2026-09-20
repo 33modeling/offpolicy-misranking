@@ -218,10 +218,12 @@ rc_reason() {
   case "$1" in
     0) echo "nothing left to claim" ;;
     1) echo "failed tasks, see [failed] lines above" ;;
+    2) echo "configuration/runtime preflight failed; inspect errors above" ;;
     75) echo "node busy: lock held or GPUs occupied" ;;
     78) echo "admission failed: NCCL/CUDA probe" ;;
     79) echo "cooling down after a GPU fault; GPU work resumes when the record expires" ;;
     80) echo "only checkpoint-review branches remain; saved work preserved, not complete" ;;
+    81) echo "repair contract validation blocked; original results preserved" ;;
     130|143) echo "interrupted" ;;
     skipped) echo "skipped: complete or not prepared" ;;
     node-unavailable) echo "skipped: node busy, failed admission or cooling down" ;;
@@ -633,9 +635,13 @@ while :; do
   fi
   # Own root busy-or-blocked means the node itself is unusable; otherwise, once the
   # own root has nothing claimable, take the sibling experiments' work in priority order.
+  if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "$rc_switch" -eq 2 ]; then
+    echo '[blocked] MBPP configuration/runtime preflight failed; no automatic hold; saved work preserved'
+    exit 2
+  fi
   rc_own=$rc_switch
   helped=""
-  if [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ]; then
+  if [ "${EXPERIMENTS_HELP_SIBLINGS:-1}" != 0 ] && [ "$rc_switch" -ne 75 ] && [ "$rc_switch" -ne 78 ] && [ "$rc_switch" -ne 79 ] && [ "$rc_switch" -ne 81 ]; then
     while IFS= read -r root; do
       root_complete "$root" && continue
       name=$(basename "$root")
@@ -647,6 +653,8 @@ while :; do
       helped="$helped | $name rc=$rc_sib $(rc_reason "$rc_sib")"
       if [ "$rc_sib" -eq 75 ]; then rc_switch=$rc_sib; need_clean=1; break; fi
       if [ "$rc_sib" -eq 78 ] || [ "$rc_sib" -eq 79 ]; then rc_switch=$rc_sib; break; fi
+      if [ "$rc_sib" -eq 81 ]; then rc_switch=$rc_sib; break; fi
+      if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "$rc_sib" -eq 2 ]; then rc_switch=$rc_sib; break; fi
       # A pending sibling returns 0 without doing work. Do not erase the
       # MBPP failure that needs retrying or reset its retry backoff.
       if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
@@ -679,6 +687,14 @@ while :; do
   fi
   if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
     case "$rc_switch" in
+      2)
+        echo '[blocked] MBPP configuration/runtime preflight failed; no automatic hold; saved work preserved'
+        exit 2
+        ;;
+      81)
+        echo '[blocked] MBPP repair validation failed; no holding/retry loop; original results preserved'
+        exit 81
+        ;;
       75|78)
         # Occupancy is not a stale-owner proof. NCCL preflight has already
         # exhausted its bounded, evidence-based probe fallbacks. Neither case

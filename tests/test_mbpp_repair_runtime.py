@@ -170,3 +170,62 @@ def test_real_check_code_process_preserves_original_bytes(prepared):
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["status"] == "exact"
     assert before == {str(path): path.read_bytes() for path in source.rglob("*") if path.is_file()}
+
+
+def test_real_queue_claims_five_repairs_then_six_gates_without_retraining_37(prepared, monkeypatch):
+    from test_mbpp_node_queue import queue_worker
+    root, source, meta = prepared
+    protocol = {"dataset": "mbpp", "gate": "convergence", "gpu_type": "H100",
+                "sources": {str(seed): {"config": {}} for seed in range(5)}}
+    monkeypatch.setattr(switch, "manifest", lambda _: protocol)
+    monkeypatch.setattr(switch, "admitted_devices", lambda _: list('0123'))
+    monkeypatch.setattr(switch, "status", lambda _: None)
+    monkeypatch.setattr(switch.base, "entries", lambda child: iter((child / 'points').iterdir()))
+    monkeypatch.setattr(switch, "protocol", lambda child: switch.core.read(child / 'net_protocol.json'))
+    monkeypatch.setattr(switch, "mbpp_resume_blocked", lambda *_: False)
+    monkeypatch.setattr(queue_worker.recovery, 'required', lambda *_: False)
+    calls = []
+    for seed in range(5):
+        for step in switch.rule.STEPS:
+            child = switch.child_root(root, seed, step)
+            point = child / f'points/view-{step}'
+            switch.core.atomic_json(point / 'contract.json', {'seed': seed, 'step': step})
+            switch.core.atomic_json(child / 'suite.json', {})
+            switch.core.atomic_json(child / 'net_protocol.json', {
+                'arms': list(switch.rule.DEV_ARMS if seed < 3 else switch.rule.TEST_ARMS)})
+            for arm in switch.rule.DEV_ARMS if seed < 3 else switch.rule.TEST_ARMS:
+                switch.core.atomic_json(point / arm / 'decision.json', {'budget_gpu_seconds': 1000})
+    for relative in meta['reused_branches']:
+        directory = root / relative
+        switch.core.atomic_json(directory / 'result.json', {'complete': True})
+        switch.core.atomic_json(directory / 'result.sha256.json', {
+            'sha256': switch.base.digest(directory / 'result.json')})
+        switch.core.atomic_json(directory / 'curve.json', {})
+    def fit(candidate):
+        if all(switch.branch_finished(protocol, root / adapter.branch_name(seed, step, arm))
+               for seed in switch.rule.DEV_SEEDS for step in switch.rule.STEPS for arm in switch.rule.DEV_ARMS):
+            switch.core.atomic_json(candidate / 'model.json', {})
+            return True
+        return False
+    monkeypatch.setattr(switch, 'fit_once', fit)
+    monkeypatch.setattr(switch, 'bind_gate', lambda *_: {} if (root / 'model.json').exists() else None)
+    monkeypatch.setattr(switch, 'freeze_decisions', lambda *_: None)
+    monkeypatch.setattr(switch, 'freeze_gate', lambda *_: None)
+    def execute(point, suite, protocol, arm, devices, env):
+        relative = str((point / arm).relative_to(root))
+        assert relative not in calls and relative not in meta['reused_branches']
+        if arm == 'gated':
+            assert (root / 'model.json').exists()
+        calls.append(relative)
+        switch.core.atomic_json(point / arm / 'result.json', {'complete': True})
+        switch.core.atomic_json(point / arm / 'result.sha256.json', {
+            'sha256': switch.base.digest(point / arm / 'result.json')})
+    monkeypatch.setattr(switch.runtime, 'run_arm', execute)
+    monkeypatch.setattr(switch, 'curve_once', lambda r, p, point, c, arm, *args:
+                        switch.core.atomic_json(point / arm / 'curve.json', {}))
+    monkeypatch.setattr(sys, 'argv', ['queue_selection_switch_gpu.py', 'run', '--root', str(root)])
+    before = {path: path.read_bytes() for path in source.rglob('*') if path.is_file()}
+    assert queue_worker.run() == 0
+    assert set(calls) == set(meta['rerun_branches'] + meta['dependent_branches'])
+    assert len(calls) == 11
+    assert before == {path: path.read_bytes() for path in before}

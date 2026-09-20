@@ -86,6 +86,9 @@ mbpp_queue_settings() {
       MBPP_PREFIX=$SWITCH_MBPP_ROOT; MBPP_BUDGET=87120 ;;
     *) echo "[abort] not a configured MBPP root: $1"; return 2 ;;
   esac
+  # Repair preparation already copied all certified prefixes and froze their
+  # original source identity. A separate fresh root is not its prerequisite.
+  [ ! -f "$MBPP_ROOT/repair.json" ] || MBPP_PREFIX=
 }
 
 mbpp_prefixes_ready() {
@@ -99,7 +102,20 @@ mbpp_prefixes_ready() {
 }
 
 mbpp_queue_check() {
-  local suite=$1 volume=${GROUP_VOLUME:-/group-volume} datasets python
+  local suite=$1 volume=${GROUP_VOLUME:-/group-volume} datasets python root
+  python=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
+  [ -x "$python" ] || python=python3
+  case "$suite" in
+    all|quality) root=$SWITCH_MBPP_QUALITY_ROOT ;;
+    fresh) root=$SWITCH_MBPP_ROOT ;;
+    difficulty) root=$SWITCH_MBPP_DIFFICULTY_ROOT ;;
+    long) root=$SWITCH_MBPP_LONG_ROOT ;;
+  esac
+  if [ -n "${root:-}" ] && [ -f "$root/repair.json" ]; then
+    CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 "$python" \
+      scripts/mbpp_repair_runtime.py check-code --root "$root"
+    return $?
+  fi
   if [ -d "$volume/${OM_USER:-minsoo3.kim}/datasets" ]; then
     datasets="$volume/${OM_USER:-minsoo3.kim}/datasets"
   elif [ -d "$volume/datasets" ]; then
@@ -108,8 +124,6 @@ mbpp_queue_check() {
     datasets="$OM_WORK/data"
   fi
   datasets=${DATASETS_DIR:-$datasets}
-  python=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
-  [ -x "$python" ] || python=python3
   CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 "$python" scripts/check_mbpp_experiments.py \
     --matrix "${OM_OLMO3_ROOT:-$OM_WORK/runs/${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-h100-v2}}" \
     --pool "$datasets/mbpp/mbpp.jsonl" --manifest "$datasets/mbpp/dataset_manifest.json" \
@@ -131,7 +145,13 @@ mbpp_queue_run() (
     echo "[waiting] mbpp:$(mbpp_suite_label "$MBPP_SUITE"): shared on-policy prefixes are not ready; existing prefixes must be prepared separately; no fresh continuation is started automatically"
     return 0
   fi
-  mbpp_queue_check "$MBPP_SUITE" || return 1
+  if ! mbpp_queue_check "$MBPP_SUITE"; then
+    if [ -f "$MBPP_ROOT/repair.json" ]; then
+      echo '[blocked] MBPP repair contract validation failed; no GPU admission, original results preserved [mbpp]' >&2
+      return 81
+    fi
+    return 1
+  fi
   # Historical failures and completed posthoc evaluations must not trigger
   # another four-rank admission when no canonical task can make progress.
   if [ -f "$MBPP_ROOT/switch.json" ]; then

@@ -37,6 +37,12 @@ bash scripts/run_mbpp_repair.sh status
 bash scripts/run_mbpp_repair.sh results
 ```
 
+If the controller remains in HOLDING, export its repair-root diagnostic TXT:
+
+```bash
+bash scripts/run_mbpp_repair.sh why
+```
+
 Preparation is CPU-only, serialized and atomic. It rejects changed source
 evidence, a live original lease, unexpected completed retries and overlapping
 output roots. Repeated launches preserve new retry progress. Every worker checks

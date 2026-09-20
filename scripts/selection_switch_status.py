@@ -195,12 +195,38 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         notices.append({"path": str(path.relative_to(root)), "error": f"state not published/validated: {read(path).get('error', '')}"})
     tasks, cost_pending = [], []
 
+    repair = read(root / "repair.json") if manifest.get("dataset") == "mbpp" else {}
+    imported_progress = {}
+    if repair.get("schema") == "mbpp-repair/v1" and isinstance(repair.get("snapshot_files"), dict):
+        try:
+            if repair.get("source_switch_sha256") == hashlib.sha256((root / "switch.json").read_bytes()).hexdigest():
+                imported_progress = repair["snapshot_files"]
+        except OSError:
+            pass
+
+    def current_progress(directory, progress):
+        # A repair copies metadata, including recent source heartbeats, but not
+        # ownership. Only identical snapshot bytes without a live meter are old.
+        path = directory / "progress.json"
+        expected = imported_progress.get(str(path.relative_to(root)))
+        if progress.get("state") != "running" or not isinstance(expected, str):
+            return progress
+        if meter_lease_held(directory):
+            return progress
+        try:
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() == expected and json.loads(raw) == progress:
+                return {**progress, "state": "archived", "copied_progress": True}
+        except (OSError, ValueError):
+            pass
+        return progress
+
     def read_progress(directory):
         progress = read(directory / "progress.json")
         event = progress.get("event_id")
         if (progress.get("state") != "running" or not isinstance(event, str)
                 or not event or Path(event).name != event or event in {".", ".."}):
-            return progress
+            return current_progress(directory, progress)
         receipt = read(directory / "cost-events" / f"{event}.json")
         fields = ("event_id", "phase", "ledger", "gpus", "gpu_type", "host")
         # Meter finalization publishes its atomic receipt before updating the
@@ -212,7 +238,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                 and number(receipt.get("time"), -1) >= 0):
             return {**progress, "state": "finished" if receipt["exit_code"] == 0 else "failed",
                     "seconds": receipt["seconds"], "updated": receipt["time"]}
-        return progress
+        return current_progress(directory, progress)
 
     def activity(directory, progress):
         age = now-number(progress.get("updated"), -1e30)
