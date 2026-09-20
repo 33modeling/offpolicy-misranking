@@ -116,9 +116,11 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
     relevant = [(updated, path, value) for updated, path, value in observations
                 if path.parent == directory or directory in path.parents]
     fresh = [(updated, path, value) for updated, path, value in relevant if value.get("_active")]
-    if fresh and task["status"] != "DONE":
-        task.update(status="RUN", reason="", **{key: fresh[0][2].get(key) for key in
-                    ("host", "phase", "seconds", "timeout", "owner_active", "heartbeat_fresh")})
+    if fresh:
+        task.update(**{key: fresh[0][2].get(key) for key in
+                    ("host", "worker_id", "phase", "seconds", "timeout", "owner_active", "heartbeat_fresh")})
+        if task['status'] != 'DONE':
+            task.update(status='RUN', reason='')
     elif relevant and task["status"] == "READY":
         task.update(status="WAIT", reason="실행 신호 끊김; 확인 필요")
     return task
@@ -150,6 +152,14 @@ def snapshot(root, *, now=None):
         error = str(exc)
     observations = progress_records(root)
     nodes, activity = {}, []
+    for path in sorted((root / 'queue-workers').glob('*.json')):
+        worker = read(path)
+        if not worker or not p.get('protocol_id') or worker.get('protocol_id') != p['protocol_id']:
+            continue
+        host = str(worker.get('host') or 'unknown')
+        worker_id = str(worker.get('worker') or path.stem)
+        nodes[(host, worker_id)] = dict(host=host, worker_id=worker_id, current=False,
+                                       worker=worker, worker_updated=display.switch_status.number(worker.get('updated')))
     for updated, path, value in observations:
         value.update(finished_meter(path.parent, value))
         fresh = value.get("state") == "running" and -5 <= now - updated < 60
@@ -164,13 +174,23 @@ def snapshot(root, *, now=None):
         value['heartbeat_fresh'], value['owner_active'] = fresh, owned
         value['_active'] = fresh or owned
         host = str(value.get("host") or "unknown")
-        node = nodes.setdefault(host, {"host": host, "current": False})
+        relative = str(path.parent.relative_to(root))
+        match = re.search(r"states/s(\d+)-t(\d+)/", relative)
+        candidates = [node for node in nodes.values() if match and node['host'] == host
+                      and node.get('worker', {}).get('state') == 'RUN'
+                      and node['worker'].get('task') ==
+                      f"{'development' if int(match[1]) in pair.DEV_SEEDS else 'test'}/s{match[1]}-t{match[2]}"]
+        if len(candidates) > 1 and value.get('pid') is not None:
+            candidates = [node for node in candidates if node['worker'].get('pid') == value['pid']]
+        if len(candidates) == 1:
+            node = candidates[0]
+            value['worker_id'] = node['worker_id']
+        else:
+            node = nodes.setdefault((host, None), {"host": host, "current": False})
         if not (fresh or owned):
             continue
         node["current"] = True
         node["progress_age"] = now - updated
-        relative = str(path.parent.relative_to(root))
-        match = re.search(r"states/s(\d+)-t(\d+)/", relative)
         if not match:
             task = operations.task(root, path.parent, value, fresh=fresh, owned=owned, age=now-updated)
             node["state"] = "ADMIT" if task['arm'] == 'admission' else 'RUN'
@@ -188,14 +208,6 @@ def snapshot(root, *, now=None):
                 "kind": "phase", "arm": arm, "status": "RUNNING", "heartbeat_fresh": fresh,
                 "training_step": display.switch_status.last_training_step(path.parent / "policy/grpo_stats.jsonl")}
         activity.append(task)
-    for path in sorted((root / "queue-workers").glob("*.json")):
-        worker = read(path)
-        if not worker or worker.get("protocol_id") != p.get("protocol_id"):
-            continue
-        host = str(worker.get("host") or "unknown")
-        node = nodes.setdefault(host, {"host": host, "current": False})
-        if display.switch_status.number(worker.get("updated")) > node.get("worker_updated", 0):
-            node.update(worker=worker, worker_updated=display.switch_status.number(worker.get("updated")))
     for node in nodes.values():
         worker = node.get("worker", {})
         fresh = -5 <= now - node.get("worker_updated", 0) < 60
@@ -209,8 +221,9 @@ def snapshot(root, *, now=None):
             node['current'] = bool(node.get('progress_age') is not None)
         node.setdefault("state", queue_state if fresh else "STALE")
         if (fresh and worker.get("state") == "RUN" and match
-                and not any(task["host"] == node["host"] for task in activity)):
-            activity.append(dict(host=node["host"], kind="phase", arm="상태 작업", seed=int(match[1]),
+                and not any(task.get('worker_id') == node.get('worker_id') and task['host'] == node['host']
+                            for task in activity)):
+            activity.append(dict(host=node["host"], worker_id=node.get('worker_id'), kind="phase", arm="상태 작업", seed=int(match[1]),
                                  step=int(match[2]), directory=worker["task"], status="RUNNING",
                                  heartbeat_fresh=True, phase="분기 단계 확인 중"))
     tasks = []
@@ -264,7 +277,7 @@ def dashboard_data(data):
         age = data["updated"] - node.get("worker_updated", 0)
         if "progress_age" in node:
             age = min(age, node["progress_age"])
-        nodes.append(dict(host=node["host"], state=node["state"], last_age=age))
+        nodes.append(dict(host=node["host"], worker_id=node.get('worker_id'), state=node["state"], last_age=age))
     suite = dict(root=data["root"], prepared=data["prepared"], error=data["error"],
                  display_label="Selector pair", tasks=tasks, nodes=nodes,
                  registered_tasks=[(s, t, arm) for s in (*pair.DEV_SEEDS, *pair.TEST_SEEDS)

@@ -41,10 +41,12 @@ def test_final_evaluation_then_curve_becomes_done_without_restart(tmp_path, arm)
     assert dashboard.counts(suite)["done"] == 0
 
     published_curve(directory)
+    core.atomic_json(directory / 'curve/progress.json', {'state': 'finished', 'updated': now})
     before = inventory(tmp_path)
     report = dashboard.snapshot([tmp_path], now=now)
     suite = report["suites"][0]
     task = next(t for t in suite["tasks"] if t["directory"] == str(directory.relative_to(tmp_path)))
+    running_dirs = [t['directory'] for t in suite['tasks'] if dashboard.active(t)]
     assert dashboard.display_state(task, running_dirs) == "DONE"
     assert dashboard.counts(suite)["done"] == 1
     assert "곡선 평가 남음" not in dashboard.remark(task)

@@ -18,6 +18,110 @@ def meter(directory, phase='train', offset=0):
     return directory / '.cost.lock'
 
 
+@pytest.mark.parametrize('experiment', ['mbpp', 'pair', 'rloo'])
+@pytest.mark.parametrize('nested', [False, True])
+def test_saved_result_never_masks_current_execution(tmp_path, prepared, experiment, nested):
+    from test_selection_switch_status import published_curve
+    from test_selector_pair_status import published as pair_published
+    from test_rloo_status import seal
+    if experiment == 'mbpp':
+        core.atomic_json(tmp_path / 'switch.json', {'schema': rule.SCHEMA, 'dataset': 'mbpp', 'gate': 'convergence'})
+        directory = point(tmp_path) / 'selection_reduced'
+        published(directory)
+        published_curve(directory)
+    elif experiment == 'pair':
+        prepare_pair(tmp_path)
+        pair_published(tmp_path)
+        directory = branch(tmp_path)
+    else:
+        if nested:
+            pytest.skip('RLOO publishes one arm meter, not nested curve meters')
+        root, out = prepared
+        seal(out, 'random')
+        directory = out / 'random'
+    meter(directory / 'curve' if nested else directory, phase='curve' if nested else 'evaluate')
+    if experiment == 'mbpp':
+        data = display.snapshot([tmp_path], now=10000)
+    elif experiment == 'pair':
+        data = pair_status.dashboard_data(pair_status.snapshot(tmp_path, now=10000))
+    else:
+        data = rloo_status.snapshot(root, now=10000)
+    suite = data['suites'][0]
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    assert display.counts(suite)['states']['RUN'] == 1
+    assert display.counts(suite)['done'] == 0
+    assert display.counts(suite)['saved_done'] == 1
+    text = display.render(data, width=160)
+    assert 'CURRENT RUN 1' in text and '결과 저장 후 실행 중 1개' in text
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('second_state', ['RUN', 'WAIT', 'DONE'])
+def test_pair_same_hostname_keeps_each_queue_worker_even_when_newer_one_finished(tmp_path, second_state):
+    protocol = prepare_pair(tmp_path)
+    for index, state in enumerate(('RUN', second_state)):
+        write(tmp_path / f'queue-workers/worker-{index}.json', {
+            'host': 'identical-host', 'pid': 42, 'worker': f'worker-{index}',
+            'protocol_id': protocol['protocol_id'], 'state': state, 'updated': 9998 + index,
+            'task': f'development/s0-t{25 if index == 0 else 50}'})
+    snapshot = pair_status.snapshot(tmp_path, now=10000)
+    assert len(snapshot['nodes']) == 2
+    data = pair_status.dashboard_data(snapshot)
+    nodes = display.node_assignments(data)
+    assert {node['worker_id'] for node in nodes} == {'worker-0', 'worker-1'}
+    assert next(node for node in nodes if node['worker_id'] == 'worker-0')['state'] == 'RUN'
+    text = display.render(data, width=160)
+    assert 'worker-0' in text and 'worker-1' in text
+    assert f"CURRENT RUN {2 if second_state == 'RUN' else 1}" in text
+
+
+def test_pair_same_hostname_matches_meters_to_worker_state_not_hostname(tmp_path):
+    protocol = prepare_pair(tmp_path)
+    for index, step in enumerate((25, 50)):
+        worker = f'worker-{index}'
+        write(tmp_path / f'queue-workers/{worker}.json', {
+            'host': 'worker-1', 'pid': 42, 'worker': worker, 'state': 'RUN',
+            'protocol_id': protocol['protocol_id'], 'updated': 10000, 'task': f'development/s0-t{step}'})
+        meter(tmp_path / f'branches/on_policy/states/s0-t{step}/points/view-{step}/selection_reduced')
+    snapshot = pair_status.snapshot(tmp_path, now=10000)
+    assert len(snapshot['activity']) == 2
+    assert {task['worker_id'] for task in snapshot['activity']} == {'worker-0', 'worker-1'}
+    data = pair_status.dashboard_data(snapshot)
+    assert len(display.node_assignments(data)) == 2
+    assert 'CURRENT RUN 2' in display.render(data, width=160)
+
+
+def test_pair_same_host_pid_and_task_keep_distinct_worker_codes_in_current(tmp_path):
+    protocol = prepare_pair(tmp_path)
+    codes = ['a' * 31 + '1', 'a' * 31 + '2']
+    for code in codes:
+        write(tmp_path / f'queue-workers/{code}.json', {
+            'host': 'identical-host', 'pid': 42, 'worker': code, 'state': 'RUN',
+            'protocol_id': protocol['protocol_id'], 'updated': 10000, 'task': 'development/s0-t25'})
+    data = pair_status.dashboard_data(pair_status.snapshot(tmp_path, now=10000))
+    assert len(display.node_assignments(data)) == 2
+    for width in (60, 160):
+        text = display.render(data, width=width)
+        assert 'CURRENT RUN 2' in text
+        assert all(code in ''.join(text.split()) for code in codes)
+
+
+def test_published_mbpp_with_held_task_lease_is_not_done_or_assigned_to_old_host(tmp_path):
+    from test_selection_switch_status import published_curve
+    core.atomic_json(tmp_path / 'switch.json', {'schema': rule.SCHEMA, 'dataset': 'mbpp', 'gate': 'convergence'})
+    directory = point(tmp_path) / 'selection_reduced'
+    published(directory)
+    published_curve(directory)
+    core.atomic_json(directory / 'progress.json', {'host': 'old-host', 'state': 'finished', 'updated': 1})
+    with (directory / '.task.lock').open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = display.snapshot([tmp_path], now=10000)
+        assert display.counts(data['suites'][0])['done'] == 0
+        assert display.counts(data['suites'][0])['states']['RUN'] == 1
+        assert not any(node['assignments'] for node in display.node_assignments(data))
+        assert '현재 작업자·단계 미확인' in display.render(data, width=160)
+
+
 @pytest.mark.parametrize('phase', ['train', 'fresh-r-candidate', 'fresh-r-validation', 'evaluate', 'curve'])
 @pytest.mark.parametrize('offset', [-3600, 3600])
 @pytest.mark.parametrize('experiment', ['mbpp', 'pair'])

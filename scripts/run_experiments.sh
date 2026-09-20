@@ -309,7 +309,7 @@ claimable_work() {
 }
 root_complete() {
   CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$1" --json 2>/dev/null \
-    | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("development_done")==18 and d.get("test_done")==30 else 1)'
+    | "$PY" -c 'import json,sys; d=json.load(sys.stdin); busy=any(t.get("status")=="RUNNING" or t.get("heartbeat_fresh") or t.get("owner_active") or t.get("task_lease_held") for t in d.get("tasks",[])); sys.exit(0 if d.get("development_done")==18 and d.get("test_done")==30 and not busy else 1)'
 }
 experiments_complete() {
   switch_complete && { [ "${EXPERIMENTS_SKIP_MOPPS:-0}" = 1 ] || [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; } && siblings_complete

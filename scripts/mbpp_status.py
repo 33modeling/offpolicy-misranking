@@ -34,16 +34,21 @@ def arm_name(arm, names=None):
 def display_state(task, running_directories=()):
     if not task:
         return "-"
+    directory = task.get("directory", "")
+    if (active(task) or task.get('task_lease_held') or
+            directory and any(path.startswith(directory + "/") for path in running_directories)):
+        return "RUN"
     if task["status"] == "DONE":
         return "DONE"
-    directory = task.get("directory", "")
-    if active(task) or directory and any(path.startswith(directory + "/") for path in running_directories):
-        return "RUN"
     return "READY" if task["status"] == "READY" else "WAIT"
 
 
 def remark(task):
     parts = []
+    if task.get('status') == 'DONE' and active(task):
+        parts.append('결과 저장됨; 작업 실행 중')
+    if task.get('task_lease_held') and not active(task):
+        parts.append('작업 잠금 유지; 현재 작업자·단계 미확인')
     if task.get("owner_active") and not task.get("heartbeat_fresh"):
         parts.append("작업 잠금 유지; 시간 차이·진행 신호 확인 필요")
     if task.get("posthoc_evaluation_saved"):
@@ -106,6 +111,7 @@ def counts(suite):
     unknown = max(0, planned - len(branches))
     states["WAIT"] += unknown
     return {"planned": planned, "done": states["DONE"], "remaining": planned - states["DONE"],
+            "saved_done": sum(task['status'] == 'DONE' for task in branches.values()),
             "recovered": sum(bool(task.get("posthoc_evaluation_saved")) and task["status"] != "DONE"
                              for task in branches.values()),
             "unknown": unknown, "states": states, "progress": f"{100 * states['DONE'] / planned if planned else 0:.1f}%"}
@@ -199,7 +205,7 @@ def current_work(suite):
         parent = next((branch for branch in branches if branch.get('directory') and
                        (directory == branch['directory'] or directory.startswith(branch['directory'] + '/'))), None)
         arm = parent['arm'] if parent else arm_name(task.get('arm', ''))
-        key = (task.get('host'), task.get('seed'), task.get('step'), arm)
+        key = (task.get('host'), task.get('worker_id'), task.get('seed'), task.get('step'), arm)
         # A parent and its child describe one operation; sibling paths do not.
         # Legacy workers can share an identical host string (and even PID).
         if any(previous_key == key and
@@ -266,7 +272,8 @@ def node_assignments(data):
     for suite in observed_suites(data):
         for node in suite.get("nodes", []):
             host = str(node["host"]).rstrip("_")
-            previous = hosts.get(host)
+            key = (host, node.get('worker_id'))
+            previous = hosts.get(key)
             log_age, pid_age = node.get("last_age"), node.get("pid_age")
             ages = [age for age in (log_age, pid_age) if age is not None]
             age = min(ages) if ages else None
@@ -276,12 +283,13 @@ def node_assignments(data):
                         "detail": "Recent launcher PID record; waiting for current task or controller log."}
             prior_age = previous.get("evidence_age") if previous else None
             if previous is None or (age is not None and (prior_age is None or age < prior_age)):
-                hosts[host] = {**node, "host": host, "evidence_age": age, "assignments": []}
+                hosts[key] = {**node, "host": host, "evidence_age": age, "assignments": []}
     for suite in observed_suites(data):
         for task in suite.get("tasks", []):
             if task.get("status") == "STALE" and task.get("host"):
                 host = str(task["host"]).rstrip("_")
-                node = hosts.setdefault(host, {"host": host, "state": "STALE", "evidence_age": None,
+                key = (host, task.get('worker_id'))
+                node = hosts.setdefault(key, {"host": host, "worker_id": task.get('worker_id'), "state": "STALE", "evidence_age": None,
                                                "assignments": []})
                 age = task.get("heartbeat_age")
                 prior_age = node.get("evidence_age")
@@ -291,7 +299,8 @@ def node_assignments(data):
             if not active(task):
                 continue
             host = str(task.get("host") or "unknown-owner").rstrip("_")
-            node = hosts.setdefault(host, {"host": host, "state": "RUN", "evidence_age": None,
+            key = (host, task.get('worker_id'))
+            node = hosts.setdefault(key, {"host": host, "worker_id": task.get('worker_id'), "state": "RUN", "evidence_age": None,
                                            "assignments": []})
             node["state"] = "RUN"
             node["assignments"].append((suite["root"], task))
@@ -307,14 +316,21 @@ def node_assignments(data):
     # Keep a server in the same name-sorted position as it changes RUN/WAIT.
     # Historical nodes remain opt-in and below current nodes, never deleted.
     return sorted(hosts.values(), key=lambda node: (not node["current"],
-                                                   switch_status.node_view.host_sort_key(node["host"])))
+                                                   switch_status.node_view.host_sort_key(node["host"]),
+                                                   str(node.get('worker_id') or '')))
+
+
+def node_label(node):
+    worker = node.get('worker_id')
+    return node['host'] + (f" / {worker}" if worker and worker != node['host'] else '')
 
 
 def render_nodes(data, *, width, all_nodes=False):
     """Aligned, display-width-aware assignments; never truncate a node name."""
     nodes = node_assignments(data)
     current = [node for node in nodes if node["current"]]
-    lines = ["NODE ASSIGNMENTS", f"NODES {len(current)} current"]
+    unit = 'WORKERS' if any(node.get('worker_id') for node in nodes) else 'NODES'
+    lines = ["NODE ASSIGNMENTS", f"{unit} {len(current)} current"]
     rows = []
     retained = {suite["root"] for suite in data.get("retained_suites", [])}
     names = data.get("arm_names", ARM_NAMES)
@@ -323,6 +339,7 @@ def render_nodes(data, *, width, all_nodes=False):
     visible_tasks = {id(task) for suite in observed_suites(data) for task, _ in current_work(suite)}
     visible = nodes if all_nodes else current
     for index, node in enumerate(visible, 1):
+        label = node_label(node)
         if node["assignments"]:
             grouped = {}
             for root, task in node["assignments"]:
@@ -335,13 +352,20 @@ def render_nodes(data, *, width, all_nodes=False):
                 details = entry["details"]
                 if detail and detail not in details:
                     details.append(detail)
+                for parent_root, parent in node['assignments']:
+                    parent_dir = parent.get('directory', '')
+                    if (parent_root == root and parent_dir and
+                            task.get('directory', '').startswith(parent_dir + '/')):
+                        parent_detail = remark(parent)
+                        if parent_detail and parent_detail not in details:
+                            details.append(parent_detail)
             for (root, seed, step, arm, directory), entry in grouped.items():
                 details = entry["details"]
                 # A nested curve phase is more specific than its parent branch.
                 task = max(entry["tasks"], key=lambda row: (row.get("directory", "").count("/"), row.get('kind') == 'phase'))
                 percent, basis = task_progress(root, task)
                 details.append(basis)
-                rows.append([f"{index}.", node['host'],
+                rows.append([f"{index}.", label,
                              f"{labels[root]} / " + (f"seed {seed} / step {step} / " if seed != '-' else '') + arm,
                              "RUN", percent, '; '.join(details) or '-'])
         else:
@@ -361,7 +385,7 @@ def render_nodes(data, *, width, all_nodes=False):
                     detail = "비용·저장 기록 확인 중; 아직 작업 미배정"
                 elif last.startswith(("[dispatch]", "[dispatch-task]", "[pass ", "[queue]")):
                     detail = "실행 가능한 작업 검색 중; 아직 작업 미배정"
-            rows.append([f"{index}.", node['host'], "배정 없음", state, "-", detail])
+            rows.append([f"{index}.", label, "배정 없음", state, "-", detail])
     headers = ["#", "Node", "Experiment", "Status", "Progress", "Remarks"]
     number_width = max([columns(headers[0]), *(columns(row[0]) for row in rows)])
     node_width = max([columns(headers[1]), *(columns(row[1]) for row in rows)])
@@ -415,7 +439,7 @@ def render_idle_nodes(data):
     lines = [f"작업 없는 노드: {len(nodes)}개 (배정 대기 확인)"]
     for index, node in enumerate(nodes, 1):
         age = max(0, int(node["evidence_age"]))
-        lines.append(f"{index}. {node['host']} | WAIT | 작업 배정 대기; 확인 {age}초 전")
+        lines.append(f"{index}. {node_label(node)} | WAIT | 작업 배정 대기; 확인 {age}초 전")
     lines.append("최근 대기 신호가 있는 노드만 표시합니다. 장치 점검·복구 중·신호 끊김은 제외합니다.")
     return lines
 
@@ -443,9 +467,10 @@ def render(data, *, width=120, all_tasks=False):
     selected_work = [entry for suite in data['suites'] for entry in current_work(suite)]
     if data.get('operational_tasks'):
         selected_work += [(task, True) for task in data['operational_tasks'] if active(task)]
-    live_hosts = {task.get('host') for task, _ in selected_work if task.get('host')}
+    live_hosts = {(task.get('host'), task.get('worker_id')) for task, _ in selected_work if task.get('host')}
+    owner_label = '작업자' if any(worker for _, worker in live_hosts) else '작업 노드'
     lines.append(f"현재 실행: 분기 RUN {aggregate['RUN']}개 | 공통 단계 RUN {sum(shared for _, shared in selected_work)}개"
-                 f" | 작업 노드 {len(live_hosts)}개 (분기 수와 노드 수는 다름)")
+                 f" | {owner_label} {len(live_hosts)}개 (분기 수와 작업자 수는 다름)")
     host_work = Counter(task.get('host') for task, _ in selected_work if task.get('host'))
     ambiguous_hosts = [host for host, count in host_work.items()
                        if count > 1 and not re.search(r'-g[0-9a-f]{4}$', host)]
@@ -480,9 +505,12 @@ def render(data, *, width=120, all_tasks=False):
         active_tasks = [task for task in tasks if active(task)]
         running += [(name, task) for task in active_tasks]
         prefixes = [task for task in tasks if task.get("kind") == "prefix"]
-        prefix_done = sum(task["status"] == "DONE" for task in prefixes)
+        running_dirs = [task.get('directory', '') for task in tasks if active(task)]
+        prefix_done = sum(display_state(task, running_dirs) == 'DONE' for task in prefixes)
         shared_label = suite.get("shared_label", "공통 학습")
         note = f"{condition}; {shared_label} {prefix_done}/{len(prefixes)}".lstrip("; ")
+        if count['saved_done'] > count['done']:
+            note += f"; 결과 저장 후 실행 중 {count['saved_done'] - count['done']}개"
         shared_running = sum(shared for _, shared in current_work(suite))
         if shared_running:
             note += f"; 공통 단계 RUN {shared_running}개"
@@ -502,9 +530,9 @@ def render(data, *, width=120, all_tasks=False):
         rows.append([name, count["planned"], count["done"], count["remaining"], count["progress"],
                      states["READY"], states["WAIT"], states["RUN"], note])
         trained = suite.get("training_published", 0)
-        if trained > count['done']:
+        if trained > count['saved_done']:
             notices.append(f"{name}: 최종 평가 결과 {trained}개 저장됨; 곡선 평가 남음 {curves}개"
-                           f"; 곡선 기록 확인 필요 {max(0, trained - count['done'] - curves)}개.")
+                           f"; 곡선 기록 확인 필요 {max(0, trained - count['saved_done'] - curves)}개.")
     lines += table(["Experiment", "계획", "DONE", "남음", "Progress", "READY", "WAIT", "RUN", "Remarks"],
                    rows, [26, 4, 4, 4, 8, 5, 4, 3, width - 74])
     for suite in data["suites"]:

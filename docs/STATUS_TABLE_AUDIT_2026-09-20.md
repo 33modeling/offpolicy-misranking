@@ -55,3 +55,42 @@ A broader status sweep reported 847 passed and 11 failed. All 11 failures are
 in unrelated Qwen display assertions in test_status_reward_audit.py; the same
 11 failures were reproduced in a clean worktree at pre-change d61f690 (that
 file: 28 passed, 11 failed). They are not fixed or hidden by this change.
+
+## Follow-up: issues missed by 657fdd5
+
+The initial fix was insufficient. Pair's queue already writes a UUID in each
+queue-workers receipt, but status discarded it and retained only the newest
+receipt per hostname. Two different live workers could collapse into one;
+a newer completed worker could hide an older running worker with the same
+hostname. Preserve (host, worker ID) through the snapshot, task association,
+CURRENT deduplication, node table, and idle table. Match meters to a queue
+worker using the state point, not hostname alone; PID is only an additional
+disambiguator, never a global identity. Show the complete worker code.
+
+The renderer also prioritized a saved DONE record over a live meter. Runtime
+display now prioritizes RUN, while saved_done preserves publication evidence.
+Pair must carry live flags even for a published branch. Parent publication
+details remain visible when a more specific nested meter represents the row.
+
+The MBPP controller used only development_done=18 and test_done=30 to skip a
+root or release its node. Completion now also requires no RUNNING task, fresh
+running heartbeat, held meter ownership, or held branch task lease. This is
+not permission to reassign a leased task; existing queue locks remain intact.
+
+These fixes do not resolve every MBPP non-start condition. The supplied
+mbpp_shy_new.txt contains a development branch (s2/t50/selection_reduced)
+with 28387.865 GPU-s consumed against 28376.947 GPU-s allocated. A genuine
+rc=80 review/dependency stop is not DONE and is not bypassed. No cost refund,
+budget extension, checkpoint reset, or posthoc-to-canonical relabel is made.
+
+New regression cases exercise equal host/PID/task but different worker UUIDs,
+RUN plus newer WAIT/DONE receipts, per-state meter/worker matching, published
+results with active meters for all three experiments, and the actual shell
+completion predicate with each kind of active evidence.
+
+Follow-up verification: the broad MBPP/status/controller run had 794 passes,
+one expected-case mismatch in the changed idle worker label, and one skipped
+RLOO nested-curve case (RLOO has no such meter layout). After correcting the
+label regression and updating the worker-count heading expectation, the
+focused suite passed 135 tests with that one skip; the switch/RLOO/node/watch
+suite passed another 149 tests. Bash syntax and git diff checks passed.

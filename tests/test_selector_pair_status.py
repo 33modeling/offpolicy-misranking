@@ -195,7 +195,7 @@ def test_same_mbpp_numbered_node_table_and_idle_list(tmp_path):
     output = status.render(data, width=160)
     header = next(line.split() for line in output.splitlines() if line.startswith("# "))
     assert header == ["#", "Node", "Experiment", "Status", "Progress", "Remarks"]
-    assert "CURRENT RUN 1" in output and "NODES 2 current" in output
+    assert "CURRENT RUN 1" in output and "WORKERS 2 current" in output
     assert "작업 없는 노드: 1개 (배정 대기 확인)" in output
     assert "1. run-idle-02 | WAIT | 작업 배정 대기; 확인 2초 전" in output
     assert "run-old-03" not in output and "run-old-03" in status.render(data, width=160, all_tasks=True)
