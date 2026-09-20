@@ -35,14 +35,17 @@ case "$MODE" in
       [ -n "$STATUS_WATCH" ] || exit "$rc"
       sleep "$STATUS_WATCH"
     done ;;
-  plan|prepare|report|check)
+  report|results)
+    export CUDA_VISIBLE_DEVICES=""
+    exec "$PY" scripts/rloo_report.py --root "$RLOO_ROOT" "$@" ;;
+  plan|prepare|check)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/rloo_experiment.py "$MODE" --root "$RLOO_ROOT" "$@" ;;
   cpu)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" -m pytest -q -p no:cacheprovider tests/test_rloo_experiment.py tests/test_rloo_status.py tests/test_rloo_queue.py tests/test_grpo_policy.py "$@" ;;
   run) ;;
-  *) echo 'usage: run_rloo.sh [run]|plan|prepare|status|report|check|cpu'; exit 2 ;;
+  *) echo 'usage: run_rloo.sh [run]|plan|prepare|status|report|results|check|cpu'; exit 2 ;;
 esac
 # Validate arguments and inputs before touching GPU admission or runtime setup.
 if [ "$#" -eq 0 ]; then
