@@ -3,7 +3,7 @@
 import fcntl
 import pytest
 
-from test_selection_switch_status import core, point, published, rule, running, status
+from test_selection_switch_status import completed_prefix, core, point, published, rule, running, status
 import mbpp_status
 
 
@@ -75,6 +75,7 @@ def test_missing_lock_is_not_created_and_unrelated_experiment_unchanged(tmp_path
 
 def test_published_result_keeps_completion_state_and_live_owner(tmp_path):
     directory, lock = curve(tmp_path, -3600, 'selection_reduced')
+    completed_prefix(tmp_path)
     published(directory)
     with lock.open('rb') as owner:
         fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -82,4 +83,46 @@ def test_published_result_keeps_completion_state_and_live_owner(tmp_path):
         task = next(t for t in data['tasks'] if t['directory'] == str(directory.relative_to(tmp_path)))
         assert task['status'] == 'EVAL' and task['training_published'] and task['owner_active']
         assert not task['heartbeat_fresh']
+        assert not task['retryable']
         assert next(n for n in data['nodes'] if n['host'] == 'remote-curve-node')['state'] == 'RUN'
+
+
+@pytest.mark.parametrize('offset', [-3600, 0, 3600])
+def test_nested_curve_does_not_advertise_parent_branch_for_retry(tmp_path, offset):
+    directory, lock = curve(tmp_path, offset)
+    branch = directory.parent
+    completed_prefix(tmp_path)
+    published(branch)
+    def task():
+        return next(t for t in status.snapshot(tmp_path, now=10000, local_gpus=False)['tasks']
+                    if t['directory'] == str(branch.relative_to(tmp_path)))
+    with lock.open('rb') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        current = task()
+        assert current['status'] == 'EVAL' and not current['retryable']
+        assert current['training_published']
+    progress = core.read(directory / 'progress.json')
+    core.atomic_json(directory / 'progress.json', {**progress, 'state': 'failed'})
+    assert task()['retryable'], 'interrupted evaluation must become resumable after its owner exits'
+
+
+@pytest.mark.parametrize('published_result', [False, True])
+def test_held_task_lease_blocks_dispatch_before_progress_is_published(tmp_path, published_result):
+    core.atomic_json(tmp_path / 'switch.json', {'schema': rule.SCHEMA, 'dataset': 'mbpp', 'gate': 'convergence'})
+    completed_prefix(tmp_path)
+    branch = point(tmp_path) / 'selection_reduced'
+    branch.mkdir(parents=True)
+    if published_result:
+        published(branch)
+    lock = branch / '.task.lock'
+    lock.touch()
+    def task():
+        return next(t for t in status.snapshot(tmp_path, local_gpus=False)['tasks']
+                    if t['directory'] == str(branch.relative_to(tmp_path)))
+    with lock.open('rb') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        current = task()
+        assert current['task_lease_held'] and not current['retryable']
+        assert current['status'] == ('EVAL' if published_result else 'WAIT')
+    assert task()['status'] == ('EVAL' if published_result else 'READY')
+    assert task()['retryable'] is published_result

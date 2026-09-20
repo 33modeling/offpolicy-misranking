@@ -134,15 +134,15 @@ def test_failed_and_idle_passes_hold_with_their_reasons_until_stopped(tmp_path):
     assert view.render_summary([node]) == "NODES  1 live  |  HOLD 1"
 
 
-def test_leftover_processes_of_either_root_are_stopped_before_the_first_pass(tmp_path):
+def test_start_never_stops_existing_processes_based_on_node_or_root_markers(tmp_path):
     env = environment(tmp_path, fake_inner(tmp_path, 78, 78))
-    # An orphaned keepalive of an earlier launcher: our marker, our command name, its own group.
+    # Matching markers and command names do not establish that a process is orphaned.
     leftover = subprocess.Popen(["bash", "-c", 'exec -a "python scripts/_gpu_keepalive.py" sleep 300'],
                                 env={**env, "OUT_ROOT": env["SWITCH_ROOT"]}, start_new_session=True)
     # A marked process that is not an experiment command must be left alone.
     bystander = subprocess.Popen(["bash", "-c", 'exec -a "python scripts/selection_switch_status.py" sleep 300'],
                                  env={**env, "OUT_ROOT": env["SWITCH_ROOT"]}, start_new_session=True)
-    # A worker of another experiment root on this node (long, difficulty, ...) is ours too.
+    # A worker of another experiment root on this node is not ours to stop.
     other_root = str(Path(env["OM_WORK"]) / "runs/selection-switch-long-v1")
     other = subprocess.Popen(["bash", "-c", 'exec -a "python src/selection_switch_gpu.py run" sleep 300'],
                              env={**env, "OUT_ROOT": other_root}, start_new_session=True)
@@ -152,11 +152,10 @@ def test_leftover_processes_of_either_root_are_stopped_before_the_first_pass(tmp
                                 capture_output=True, text=True, timeout=120)
         out = result.stdout + result.stderr
         assert result.returncode == 78, out
-        # Swept either by a root's own stop (orphans of a dead driver) or by the node clean.
-        assert f"pid={leftover.pid}" in out or "[orphans] stopping" in out
+        assert "[orphans] stopping" not in out
         assert f"pid={bystander.pid}" not in out
-        assert out.index("[sweep ") < out.index("[clean] host=") < out.index("[pass 1] selection switch")
-        assert leftover.wait(timeout=10) != 0 and other.wait(timeout=10) != 0
+        assert "no node-wide process/GPU sweep" in out
+        assert leftover.poll() is None and other.poll() is None
         assert bystander.poll() is None
     finally:
         for proc in (leftover, bystander, other):

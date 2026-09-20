@@ -23,6 +23,9 @@ MODE=${1:-run}
 case "$MODE" in run|restart|stop|logs|status|progress|why|evidence) ;;
   *) echo 'usage: bash scripts/run_experiments.sh [run|restart|stop|logs|status|progress|why|evidence]'; exit 2 ;;
 esac
+case "$MODE" in run|restart|stop|logs)
+  [ "$#" -eq 0 ] || { echo "[abort] $MODE takes no arguments; existing work untouched"; exit 2; } ;;
+esac
 WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
 if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
@@ -183,111 +186,6 @@ run_switch_root() {
     SWITCH_ROOT=$1 inner scripts/run_selection_switch.sh
   fi
 }
-# --- node cleanup: the node is ours; nothing of an earlier run may hold it ---
-ROOT_PROCESS_PATTERN='run_selection_switch\.sh|run_mopps_comparison\.sh|selection_switch_runtime\.py|selection_switch_gpu\.py|mopps_comparison_gpu\.py|torch\.distributed\.run|train_[a-z_]*grpo\.py|_gpu_keepalive\.py|selection_nccl_preflight\.py|selection_switch_score\.py|light_selection_gate_gpu\.py'
-MY_PGID=$(cut -d')' -f2 "/proc/$$/stat" | awk '{print $3}')
-pgid_of() { cut -d')' -f2 "/proc/$1/stat" 2>/dev/null | awk '{print $3}'; }
-# A process group is alive while it has a member that is not a zombie
-# (kill -0 on the group also counts unreaped zombies).
-group_alive() {
-  local pid fields
-  for pid in $(ls /proc | grep -E '^[0-9]+$'); do
-    fields=$(cut -d')' -f2 "/proc/$pid/stat" 2>/dev/null) || continue
-    [ "$(echo "$fields" | awk '{print $3}')" = "$1" ] || continue
-    [ "$(echo "$fields" | awk '{print $1}')" = "Z" ] || return 0
-  done
-  return 1
-}
-cmdline_of() { { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null; }
-owned_experiment_process() {
-  local pid=$1 environment marker
-  [ "$pid" != "$$" ] && [ -O "/proc/$pid" ] || return 1
-  environment=$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null) || return 1
-  grep -Fxq "EXPERIMENTS_NODE_ID=$EXPERIMENTS_NODE_ID" <<< "$environment" || return 1
-  cmdline_of "$pid" | grep -qE "$ROOT_PROCESS_PATTERN" || return 1
-  marker=$(grep -m1 '^OUT_ROOT=' <<< "$environment" | cut -d= -f2-) || true
-  case "$marker" in "$WORK"/runs/*) return 0 ;; esac
-  # The outer keepalive intentionally has no OUT_ROOT, but is still scoped.
-  grep -Fxq "OM_WORK=$WORK" <<< "$environment" && cmdline_of "$pid" | grep -q '_gpu_keepalive.py'
-}
-# Process groups of our own leftover experiment processes (either root's
-# marker, our command names) outside this launcher's group.
-leftover_groups() {
-  local pid marker pgid
-  for pid in $(ls /proc | grep -E '^[0-9]+$'); do
-    owned_experiment_process "$pid" || continue
-    marker=$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | grep -m1 '^OUT_ROOT=' | cut -d= -f2-) || true
-    case "$marker" in "$WORK"/runs/*) ;; *) continue ;; esac
-    cmdline_of "$pid" | grep -qE "$ROOT_PROCESS_PATTERN" || continue
-    pgid=$(pgid_of "$pid")
-    [ -n "$pgid" ] && [ "$pgid" != "$MY_PGID" ] || continue
-    echo "[clean] leftover pid=$pid pgid=$pgid $(cmdline_of "$pid")" >&2
-    echo "$pgid"
-  done | sort -u
-}
-# Process groups of our own processes still holding memory on the visible GPUs.
-gpu_holder_groups() {
-  local pid mem pgid
-  command -v nvidia-smi >/dev/null 2>&1 || return 0
-  timeout -k 2 20 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null \
-    | while IFS=, read -r pid mem; do
-    pid=$(echo "$pid" | tr -d ' '); mem=$(echo "$mem" | tr -d ' ')
-    [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    if [ ! -O "/proc/$pid" ]; then echo "[clean] gpu pid=$pid ${mem}MiB belongs to another user; cannot stop it" >&2; continue; fi
-    if ! owned_experiment_process "$pid"; then
-      echo "[clean] gpu pid=$pid is not a verified worker of this allocation; leaving it running" >&2
-      continue
-    fi
-    pgid=$(pgid_of "$pid")
-    [ -n "$pgid" ] && [ "$pgid" != "$MY_PGID" ] || continue
-    echo "[clean] gpu pid=$pid pgid=$pgid ${mem}MiB $(cmdline_of "$pid")" >&2
-    echo "$pgid"
-  done | sort -u
-}
-gpu_memory_line() {
-  command -v nvidia-smi >/dev/null 2>&1 || { echo "no nvidia-smi"; return 0; }
-  timeout -k 2 20 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
-    | awk -F, '{gsub(/ /,"",$1); gsub(/ /,"",$2); printf "gpu%s %sMiB  ", $1, $2}'
-}
-gpus_free() {
-  command -v nvidia-smi >/dev/null 2>&1 || return 1
-  local used readings
-  readings=$(timeout -k 2 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null) || return 1
-  [ -n "$readings" ] || return 1
-  while read -r used; do
-    used=$(echo "$used" | tr -d ' ')
-    [[ "$used" =~ ^[0-9]+$ ]] && [ "$used" -le 4000 ] || return 1
-  done <<< "$readings"
-}
-clean_node() {
-  echo "[clean] host=$HOST: stopping leftover experiment processes and freeing the allocated GPUs"
-  local groups g alive
-  groups=$({ leftover_groups; gpu_holder_groups; } | sort -u | tr '\n' ' ')
-  if [ -n "${groups// /}" ]; then
-    for g in $groups; do kill -TERM -- "-$g" 2>/dev/null || true; done
-    for _ in $(seq 1 120); do
-      alive=0
-      for g in $groups; do group_alive "$g" && alive=1; done
-      [ "$alive" -eq 1 ] || break
-      sleep 1
-    done
-    for g in $groups; do
-      if group_alive "$g"; then
-        echo "[clean] pgid=$g ignored TERM for 120s; killing it (its open cost events close as stale later)"
-        kill -KILL -- "-$g" 2>/dev/null || true
-      fi
-    done
-  else
-    echo "[clean] no leftover experiment process on $HOST"
-  fi
-  # (queue_status --kill-orphans is not used here: it stops every process that
-  # carries the marker, read-only status viewers included; the sweeps above
-  # cover launchers, controllers, ranks, probes, scorers, keepalives and any
-  # own process still holding GPU memory.)
-  for _ in $(seq 1 30); do gpus_free && break; sleep 2; done
-  echo "[clean] gpu memory now: $(gpu_memory_line)"
-  gpus_free || echo "[clean] GPU memory is unavailable or above 4000MiB; cleanup cannot verify a free GPU"
-}
 switch_complete() {
   root_complete "$SWITCH_ROOT"
 }
@@ -326,8 +224,7 @@ recover_root() {
       | grep -v 'no published branch carries curve rows in its ledger$' | sed 's/^/[auto-repair] /' || true
   fi
 }
-# Every experiment root on the shared volume: nodes come and go and run several
-# experiments, so a start or a stop sweeps them all, not just the two of this launcher.
+# Prepared roots for lease-checked cost recovery, never process termination.
 all_roots() {
   local root
   if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ]; then
@@ -417,21 +314,8 @@ root_complete() {
 experiments_complete() {
   switch_complete && { [ "${EXPERIMENTS_SKIP_MOPPS:-0}" = 1 ] || [ ! -f "$MOPPS_ROOT/mopps.json" ] || mopps_complete; } && siblings_complete
 }
-sweep_all_roots() {
-  local root
-  while IFS= read -r root; do
-    if [ -f "$root/switch.json" ]; then
-      SWITCH_ROOT=$root EXPERIMENTS_STOPPING=1 bash scripts/run_selection_switch.sh stop 2>&1 | sed "s|^|[sweep $(basename "$root")] |" || true
-    else
-      MOPPS_ROOT=$root EXPERIMENTS_STOPPING=1 bash scripts/run_mopps_comparison.sh stop 2>&1 | sed "s|^|[sweep $(basename "$root")] |" || true
-    fi
-  done < <(all_roots)
-}
-# Open cost events of dead attempts block their branch's retry. Ones this host
-# started are dead once the node is swept (closed at once); ones a killed node
-# left behind are closed after EXPERIMENTS_STALE_CLOSE_SECONDS (default 180) of
-# silence: the meter heartbeat is written every 15s, so three minutes without it
-# means the attempt is gone.
+# Recover abandoned cost events only after the recovery tool checks owner and
+# meter leases. A timestamp or shared node/root marker does not prove death.
 STALE_CLOSE=${EXPERIMENTS_STALE_CLOSE_SECONDS:-180}
 close_dead_events() {
   local root
@@ -450,8 +334,9 @@ full_clean() {
     close_dead_events
     return 0
   fi
-  sweep_all_roots
-  clean_node
+  # A new controller does not own existing processes merely because their
+  # node ID, command or root matches. Busy GPU admission must leave them alone.
+  echo "[clean] host=$HOST: lease-checked cost recovery; no node-wide process/GPU sweep"
   close_dead_events
 }
 stop_node() {
@@ -490,7 +375,7 @@ stop_node() {
   else
     echo "[stop] no live node launcher on $HOST (pid file: $PID_FILE)"
   fi
-  # MBPP uses owner-scoped teardown; retain the legacy cleanup for other modes.
+  # Never expand an explicit controller stop into a sweep of other experiments.
   full_clean
 }
 if [ "$MODE" = logs ]; then
@@ -524,7 +409,21 @@ if [ "$MODE" = stop ]; then
   stop_node
   exit 0
 fi
-# A plain MBPP invocation updates and restarts this node from saved state.
+# Repeating run is observational while a controller owns this node. Check
+# before pulling shared code: neither an update nor a missing runtime receipt
+# authorizes interrupting an active training/evaluation phase.
+if [ "$MODE" = run ] && [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && \
+    [ "${EXPERIMENTS_DETACHED:-0}" != 1 ] && launcher_pid_alive; then
+  echo "[already running] MBPP controller pid=$NODE_LAUNCHER_PID; existing work continues: $CONSOLE_LOG"
+  if [ -t 1 ]; then
+    echo '[logs] Ctrl-C closes this viewer; existing workers continue.'
+    tail -n 50 -F --pid="$NODE_LAUNCHER_PID" "$CONSOLE_LOG" 2>/dev/null || true
+  else
+    tail -n 50 "$CONSOLE_LOG" 2>/dev/null || true
+  fi
+  exit 0
+fi
+# Pull only for an idle start or an explicitly requested restart.
 # Re-enter the wrapper after a pull so its settings and storage audit are fresh.
 if { [ "$MODE" = run ] || [ "$MODE" = restart ]; } && [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if [ "${EXPERIMENTS_PULL:-1}" != 0 ] && [ "${EXPERIMENTS_START_PULL_DONE:-0}" != 1 ]; then
@@ -540,22 +439,6 @@ if { [ "$MODE" = run ] || [ "$MODE" = restart ]; } && [ -n "${EXPERIMENTS_MBPP_S
     fi
   fi
   unset EXPERIMENTS_START_PULL_DONE
-  current_fingerprint=$("$PY" scripts/_mbpp_node_guard.py --fingerprint)
-  if [ "$MODE" = run ] && launcher_pid_alive; then
-    # Direct/legacy entry points must audit too, before sending any signal.
-    if ! CUDA_VISIBLE_DEVICES='' MBPP_STORAGE_AUDIT_AUTOMATIC=1 bash scripts/check_mbpp_storage.sh "$EXPERIMENTS_MBPP_SUITE"; then
-      echo '[abort] storage audit blocked automatic reload; existing controller continues' >&2
-      exit 2
-    fi
-    if "$PY" scripts/_mbpp_node_guard.py --lock "$LOG_DIR/mbpp-controller.$HOST.lock" \
-        --runtime-current "$NODE_LAUNCHER_PID" --loaded-fingerprint "$current_fingerprint"; then
-      echo '[reload] MBPP run requested again; stopping owned workers and resuming saved checkpoints even with unchanged code'
-    else
-      echo '[reload] MBPP code changed or legacy controller detected; restarting this node from saved checkpoints'
-    fi
-    AUTO_RELOAD_PID=$NODE_LAUNCHER_PID
-    MODE=restart
-  fi
 fi
 if [ "$MODE" = restart ]; then
   stop_node
@@ -567,8 +450,7 @@ if [ "$MODE" = restart ]; then
   unset EXPERIMENTS_DETACHED
 fi
 # --- run ---
-# Generic run preserves its controller. MBPP run requests a restart above;
-# this remaining live-owner branch handles a concurrent replacement safely.
+# Run preserves its controller, including a concurrent replacement.
 # EXPERIMENTS_PULL=0 skips the pull when starting an idle node.
 if [ "${EXPERIMENTS_DETACHED:-0}" != 1 ]; then
   if launcher_pid_alive; then

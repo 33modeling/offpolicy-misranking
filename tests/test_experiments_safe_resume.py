@@ -65,6 +65,26 @@ def test_repeating_queue_command_preserves_existing_controller_checkpoint_and_fa
     assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
 
 
+@pytest.mark.parametrize('launcher,arguments', [
+    ('run_experiments.sh', ['run', '--bad']),
+    ('run_experiments.sh', ['restart', '--bad']),
+    ('run_experiments.sh', ['stop', '--bad']),
+    ('run_mbpp_experiments.sh', ['run', '--bad']),
+    ('run_mbpp_experiments.sh', ['restart', '--bad']),
+    ('run_selector_pair.sh', ['run', '--bad']),
+    ('run_rloo.sh', ['run', '--bad']),
+])
+def test_invalid_launch_never_signals_existing_controller(controller, launcher, arguments):
+    process, env, pid_file, saved = controller
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (*saved, pid_file)}
+    result = subprocess.run(['bash', str(ROOT / 'scripts' / launcher), *arguments], cwd=ROOT,
+                            env=env, capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert process.poll() is None
+    assert '[stop]' not in result.stdout and '[clean]' not in result.stdout
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}
+
+
 @pytest.fixture
 def mbpp_controller(controller):
     original, env, original_pid_file, saved = controller

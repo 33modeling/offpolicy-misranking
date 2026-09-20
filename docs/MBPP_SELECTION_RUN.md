@@ -270,9 +270,10 @@ The inner worker yields its idle peer-wait to this shared controller, instead
 of waiting inside one suite while another has work. Owned training/evaluation
 finishes normally before yielding; no active branch is interrupted for fairness.
 
-- On the same node, re-running the plain command stops its previous MBPP
-  controller and resumes from saved checkpoints, even with unchanged code.
-  Use `logs` for a read-only view or `stop` to stop without restarting.
+- On the same node, re-running the plain command preserves its previous MBPP
+  controller and follows its log. Changed code or a missing runtime receipt
+  does not authorize interruption. Use explicit `restart` for a reload or
+  `stop` to stop without restarting.
 - After a controller is killed, run the same command. Its durable owner token
   identifies its own surviving children, including separately-sessioned ranks.
   Those children are stopped before the replacement starts. The node lock is
@@ -321,14 +322,13 @@ Zero/invalid poll intervals are rejected. Setting
 leave it enabled to serve all requested suites.
 Terminal launches detach as before: Ctrl-C stops the log view, not the workers.
 Use `stop` to stop this node's MBPP controller and its token-bound children.
-Just run `bash scripts/run_mbpp_experiments.sh`: it checks for a fast-forward
-update before inspecting the running controller. Re-running the command always
-requests an owner-scoped restart after the storage audit, including unchanged
-code. No separate `git pull` or `restart` is needed. `logs` follows the existing
-log without interrupting workers. Valid
+The plain command first preserves a running controller, without pulling code
+or sending a signal. An idle start or explicit `restart` can check for a
+fast-forward update. Between-pass updates still occur only after the worker
+returns. `logs` also follows the existing log without interrupting workers. Valid
 checkpoints, selections, completed results, and fault receipts remain on disk;
-work after the last saved checkpoint may need repeating. An offline pull uses
-the local checkout. `restart` remains available for an intentional forced reload.
+work after the last saved checkpoint may need repeating after an explicit
+restart. An offline pull uses the local checkout.
 Shutdown verifies that the previous controller's token-bound processes have
 exited and checks the driver's process list for old CUDA PIDs for up to ten
 seconds before admitting a replacement. Surviving processes or an unverifiable

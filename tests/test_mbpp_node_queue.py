@@ -465,16 +465,17 @@ def test_zero_poll_interval_is_rejected_instead_of_spinning_forever(cluster):
     assert not events(work)
 
 
-def test_same_code_plain_run_restarts_controller_and_resumes_checkpoint(cluster):
+def test_same_code_plain_run_preserves_controller_and_checkpoint(cluster):
     work, start = cluster
     first, _log = start("node-duplicate", TEST_BLOCK_NODE="node-duplicate")
     wait_for(lambda: (work / "node-blocked").exists())
     duplicate, duplicate_log = start("node-duplicate")
     assert duplicate.wait(timeout=30) == 0, duplicate_log.read_text()
-    assert "even with unchanged code" in duplicate_log.read_text()
-    assert first.wait(timeout=10) == 143
-    result = json.loads((work / 'runs/selection-switch-mbpp-quality-v1/tasks/0/result.json').read_text())
-    assert result['resumed'] == {'node': 'node-duplicate'}
+    assert "[already running]" in duplicate_log.read_text()
+    assert "[stop]" not in duplicate_log.read_text()
+    assert first.poll() is None
+    claims = [row for row in events(work) if row['kind'] == 'claim']
+    assert len(claims) == 1 and claims[0]['resumed'] is None
 
 
 def test_stop_shows_and_saves_live_cleanup_evidence_while_child_resists_term(cluster):
@@ -483,7 +484,7 @@ def test_stop_shows_and_saves_live_cleanup_evidence_while_child_resists_term(clu
     engine.write_text('import signal\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n' + engine.read_text())
     first, _ = start('node-stop-visible', TEST_BLOCK_NODE='node-stop-visible')
     wait_for(lambda: (work / 'node-blocked').exists())
-    replacement, log = start('node-stop-visible')
+    replacement, log = start('node-stop-visible', mode='restart')
     assert replacement.wait(timeout=30) == 0, log.read_text()
     assert first.wait(timeout=10) == 143
     text = log.read_text()
@@ -597,7 +598,7 @@ def test_one_command_restart_preserves_checkpoint_and_fault_receipt(cluster):
 
 
 @pytest.mark.parametrize("change", ["code", "legacy", "bad-storage"])
-def test_plain_command_automatically_reloads_changed_code_and_resumes(cluster, change):
+def test_plain_command_preserves_running_work_even_with_changed_code(cluster, change):
     work, start = cluster
     first, first_log = start('node-auto-reload', TEST_BLOCK_NODE='node-auto-reload')
     wait_for(lambda: (work / 'node-blocked').exists())
@@ -611,17 +612,12 @@ def test_plain_command_automatically_reloads_changed_code_and_resumes(cluster, c
     replacement, log = start('node-auto-reload', TEST_AUDIT_EXIT='2' if change == 'bad-storage' else '0')
     assert replacement.wait(timeout=30) == (2 if change == 'bad-storage' else 0), log.read_text()
     assert checkpoint.read_bytes() == before
-    if change == 'bad-storage':
-        assert first.poll() is None
-        assert '[stop]' not in log.read_text()
-    else:
-        assert first.wait(timeout=10) == 143, first_log.read_text()
-        assert '[reload]' in log.read_text()
-        result = json.loads(checkpoint.with_name('result.json').read_text())
-        assert result['resumed'] == {'node': 'node-auto-reload'}
+    assert first.poll() is None, first_log.read_text()
+    assert '[stop]' not in log.read_text() and '[reload]' not in log.read_text()
+    assert not checkpoint.with_name('result.json').exists()
 
 
-def test_plain_command_pulls_before_following_live_owner_and_reenters_updated_wrapper(cluster):
+def test_plain_command_never_pulls_shared_code_while_following_live_owner(cluster):
     work, start = cluster
     git = work.parent / 'bin/git'
     git.write_text(f'''#!{sys.executable}
@@ -644,11 +640,10 @@ elif sys.argv[1] == "pull":
     wait_for(lambda: (work / 'node-blocked').exists())
     replacement, log = start('node-pull', EXPERIMENTS_PULL='1')
     assert replacement.wait(timeout=30) == 0, log.read_text()
-    assert first.wait(timeout=10) == 143, first_log.read_text()
-    assert '[pull]' in log.read_text() and '[reload]' in log.read_text()
-    assert (work / 'pull-calls').read_text().splitlines() == ['pull']
-    result = json.loads((work / 'runs/selection-switch-mbpp-quality-v1/tasks/0/result.json').read_text())
-    assert result['resumed'] == {'node': 'node-pull'}
+    assert first.poll() is None, first_log.read_text()
+    assert '[already running]' in log.read_text()
+    assert '[pull]' not in log.read_text() and '[stop]' not in log.read_text()
+    assert not (work / 'pull-calls').exists()
 
 
 @pytest.mark.parametrize("legacy", [False, True])

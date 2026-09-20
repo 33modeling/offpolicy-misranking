@@ -40,9 +40,9 @@ def number(value, default=0.):
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else default
 
 
-def meter_lease_held(directory):
-    """Probe an existing meter lease read-only; never create or repair a lock."""
-    path = directory / ".cost.lock"
+def meter_lease_held(directory, name=".cost.lock"):
+    """Probe an existing lease read-only; never create or repair a lock."""
+    path = directory / name
     try:
         if not path.resolve().is_relative_to(directory.resolve()):
             return False
@@ -325,6 +325,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
         # peers and terminal diagnostic failures are not retryable work. EVAL
         # resumes reporting only; RESUME still requires the trainer's validation.
         task["retryable"] = (kind in {"prefix", "branch"} and not dependency
+                             and not (fresh or owned)
                              and (task["status"] in {"FAILED", "STALE", "EVAL", "RESUME"}
                                   or kind == "prefix" and task["status"] == "SAVING"))
         if (kind == "branch" and manifest.get("dataset") == "mbpp"
@@ -408,6 +409,18 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                       "heartbeat_age": max(0., age), "heartbeat_fresh": fresh, "owner_active": owned,
                       "training_step": None})
     active = [task for task in tasks if task.get("heartbeat_fresh") or task.get("owner_active")]
+    # A branch can publish its training result before its nested curve finishes.
+    # The controller consumes retryable, not the dashboard's derived RUN label.
+    for task in tasks:
+        if (manifest.get("dataset") == "mbpp" and task["kind"] == "branch"
+                and meter_lease_held(root / task["directory"], ".task.lock")):
+            task["retryable"] = False
+            task["task_lease_held"] = True
+            if task["status"] == "READY":
+                task.update(status="WAIT", reason="branch task lease held; progress publication pending")
+        if task.get("retryable") and any(
+                phase["directory"].startswith(task["directory"] + "/") for phase in active):
+            task["retryable"] = False
     active_hosts = {task["host"] for task in active if task["host"]}
     stale_hosts = {task["host"] for task in tasks if task["status"] == "STALE" and task["host"]} - active_hosts
     waiting = []
