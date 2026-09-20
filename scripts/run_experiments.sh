@@ -47,6 +47,18 @@ LOG_DIR="$WORK/runs/experiments/logs"
 # Node identity (hostname plus GPU suffix); copies of this launcher without the helper use the hostname.
 if [ -f scripts/_node_id.sh ]; then source scripts/_node_id.sh; fi
 export EXPERIMENTS_NODE_ID=${EXPERIMENTS_NODE_ID:-$(hostname)}
+if [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ -z "${MBPP_GUARD_PID:-}" ] \
+    && [ -f scripts/mbpp_controller_identity.py ]; then
+  case "$MODE" in run|restart|stop|logs)
+    live_node=$("$PY" scripts/mbpp_controller_identity.py --logs "$LOG_DIR" \
+      --work "$WORK" --suite "$EXPERIMENTS_MBPP_SUITE") || exit $?
+    if [ -n "$live_node" ] && [ "$live_node" != "$EXPERIMENTS_NODE_ID" ]; then
+      echo "[node] preserving live local MBPP controller identity: $live_node (current probe: $EXPERIMENTS_NODE_ID)"
+      export EXPERIMENTS_NODE_ID="$live_node"
+    fi
+    ;;
+  esac
+fi
 HOST=$(printf '%s\n' "$EXPERIMENTS_NODE_ID" | tr -c 'a-zA-Z0-9._-' '_')
 PID_FILE="$LOG_DIR/launcher.$HOST.pid"
 CONSOLE_LOG="$LOG_DIR/console.$HOST.log"
@@ -71,6 +83,15 @@ launcher_pid_alive() {
       NODE_LAUNCHER_PID=$pid
       return 0
     done
+    if [ -z "${MBPP_GUARD_PID:-}" ] && [ -f scripts/mbpp_controller_identity.py ]; then
+      pid=$("$PY" scripts/mbpp_controller_identity.py --logs "$LOG_DIR" \
+        --work "$WORK" --suite "$EXPERIMENTS_MBPP_SUITE" --field pid \
+        --node "$EXPERIMENTS_NODE_ID") || exit $?
+      if [[ "$pid" =~ ^[0-9]+$ ]]; then
+        NODE_LAUNCHER_PID=$pid
+        return 0
+      fi
+    fi
     return 1
   fi
   [ -f "$PID_FILE" ] || return 1

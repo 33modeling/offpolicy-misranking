@@ -85,3 +85,21 @@ The current server's controller exit was omitted by the old export, so these
 files cannot establish the exact latest launch error. Local regression tests
 cover the exported blocker pattern and the real controller's no-admission exit.
 Remote execution, current leases and missing-file recovery remain unverified.
+
+## Live controller rediscovery
+
+A separate reproduced restart defect came from recomputing the display node ID
+before locating the current PID/console files. CUDA-mask ordering or an empty
+versus explicit full allocation could change that ID. MBPP now discovers a live
+local guard through its owner receipt, requiring matching PID/start time, UID,
+PID namespace, cgroup, exact guard lock argument, work root, and a live controller
+child carrying the guard's unique token. It verifies GPU allocation equivalence
+before retaining the old node identity. Missing PID files use the same fresh
+validation; no PID file is manufactured. Disjoint allocations are not adopted,
+and overlapping/unknown allocations or a different suite fail closed.
+
+The real-process regression verifies that the guard and its worker remain alive
+while a changed identity/mask reopens the original console without a PID file.
+The final controller/resume regression suite passed 122 tests. This is live
+rediscovery only, not evidence authorizing cleanup of an unverified dead guard,
+nor a way to manufacture the missing canonical development result behind rc=80.
