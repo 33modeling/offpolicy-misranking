@@ -153,7 +153,7 @@ def test_pair_quarantine_compatibility_preserves_all_nine_receipts(tmp_path, mon
         assert set(files(tmp_path)) - set(before) == {
             tmp_path / "shared-mbpp-quarantine-runtime.json", tmp_path / "pair-status-runtime.json",
             tmp_path / "pair-curve-progress-runtime.json", tmp_path / "pair-branch-queue-runtime.json",
-            tmp_path / "pair-curve-spawn-runtime.json"}
+            tmp_path / "pair-curve-spawn-runtime.json", tmp_path / "pair-recollection-runtime.json"}
         status_receipt = core.read(tmp_path / "pair-status-runtime.json")
         assert status_receipt["runtime_code_hashes"] == pair.code_hashes()
     after = files(tmp_path)

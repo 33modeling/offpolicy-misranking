@@ -222,6 +222,7 @@ names = (
     'shared-mbpp-quarantine-runtime.json',
     'pair-status-runtime.json', 'pair-curve-progress-runtime.json',
     'pair-branch-queue-runtime.json', 'pair-curve-spawn-runtime.json',
+    'pair-recollection-runtime.json',
 )
 with tempfile.TemporaryDirectory(prefix='selector-pair-runtime-check-') as directory:
     snapshot = Path(directory)

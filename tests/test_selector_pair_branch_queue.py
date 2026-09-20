@@ -161,6 +161,136 @@ def test_peer_curve_wait_resumes_only_publication_without_readmission(tmp_path, 
     assert core.read(pending_dir / "pair-attempt.json")["state"] == "DONE"
 
 
+@pytest.mark.parametrize('publication', ['complete', 'missing-result', 'missing-curve', 'tampered'])
+def test_failed_branch_recollects_peer_curve_without_queue_receipt(tmp_path, fake_study, monkeypatch, clock, publication):
+    protocol = prepare_other_states(tmp_path, fake_study)
+    _, calls, states = fake_study
+    _, entries = states(tmp_path, 0, 25)
+    execute = gpu.execute
+    failures = []
+    branch_receipt = gpu.branch_receipt
+
+    def validate_receipt(p, identity, name, arm, entry):
+        directory = entry[1] / arm
+        if core.read(directory / 'curve.json')['result_sha256'] != base.digest(directory / 'result.json'):
+            raise ValueError('curve/result binding changed')
+        return branch_receipt(p, identity, name, arm, entry)
+
+    def failed_once(entry, arm, devices):
+        if entry[0].name == 'cached':
+            failures.append(1)
+            raise ValueError('original local failure')
+        execute(entry, arm, devices)
+
+    monkeypatch.setattr(gpu, 'execute', failed_once)
+    monkeypatch.setattr(gpu, 'branch_receipt', validate_receipt)
+    peer_lock = tmp_path / 'development/s0-t25/queue-branches/on_policy--selection_reduced.lock'
+    with held(peer_lock) as handle:
+        def peer_finishes_payloads_then_exits():
+            execute(entries['cached'], 'selection_reduced', [])
+            directory = entries['cached'][1] / 'selection_reduced'
+            if publication.startswith('missing-'):
+                (directory / (publication.removeprefix('missing-') + '.json')).unlink()
+            elif publication == 'tampered':
+                core.atomic_json(directory / 'curve.json', {'result_sha256': 'changed'})
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        clock.after_sleep = peer_finishes_payloads_then_exits
+        if publication == 'complete':
+            gpu.distributed_stage(tmp_path, protocol, [], 'development', wait_seconds=1, idle_timeout=10)
+        else:
+            with pytest.raises(gpu.IncompletePairRun):
+                gpu.distributed_stage(tmp_path, protocol, [], 'development', wait_seconds=1, idle_timeout=10)
+    assert failures == [1]
+    assert len(calls) == 18
+    assert (tmp_path / 'development/s0-t25/queue-branches/cached--selection_reduced.json').is_file() == (publication == 'complete')
+    assert len(list(tmp_path.glob('development/*/result.json'))) == (9 if publication == 'complete' else 8)
+
+
+@pytest.mark.parametrize('publication', ['complete', 'missing', 'tampered'])
+def test_failed_state_recollects_peer_receipts_without_execution(tmp_path, fake_study, monkeypatch, clock, publication):
+    protocol = prepare_other_states(tmp_path, fake_study, excluded=((0, 25), (0, 50)))
+    _, _, states = fake_study
+    execute, verify = gpu.execute, gpu.verify_pair
+    failures = []
+
+    def fail_prepare_once(root, seed, step):
+        if (seed, step) == (0, 25) and not failures:
+            failures.append(1)
+            raise ValueError('initial preparation failed')
+        return verify(root, seed, step)
+
+    monkeypatch.setattr(gpu, 'verify_pair', fail_prepare_once)
+    monkeypatch.setattr(gpu, 'execute', lambda *a: pytest.fail('recollection must not execute GPU work'))
+    with held(tmp_path / 'development/s0-t50/.state.lock') as handle:
+        def peer_publish():
+            for step in (25, 50):
+                identity, entries = states(tmp_path, 0, step)
+                folder = tmp_path / 'development' / f's0-t{step}'
+                for name, arm, entry in gpu.queue_branches(entries, 0, 'development'):
+                    execute(entry, arm, [])
+                    base.bind(folder / 'queue-branches' / f'{name}--{arm}.json',
+                              gpu.branch_receipt(protocol, identity, name, arm, entry))
+                if step == 50:
+                    base.bind(folder / 'result.json', gpu.development_row(tmp_path, protocol, 0, step))
+            receipt = tmp_path / 'development/s0-t25/queue-branches/cached--selection_reduced.json'
+            if publication == 'missing':
+                receipt.unlink()
+            elif publication == 'tampered':
+                core.atomic_json(receipt, {**core.read(receipt), 'state_id': 'wrong'})
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        clock.after_sleep = peer_publish
+        if publication == 'complete':
+            gpu.distributed_stage(tmp_path, protocol, [], 'development', wait_seconds=1, idle_timeout=10)
+        else:
+            with pytest.raises(gpu.IncompletePairRun):
+                gpu.distributed_stage(tmp_path, protocol, [], 'development', wait_seconds=1, idle_timeout=10)
+    assert len(list(tmp_path.glob('development/*/result.json'))) == (9 if publication == 'complete' else 8)
+    if publication == 'complete':
+        assert core.read(next(tmp_path.glob('queue-workers/*.json')))['failures'] == []
+
+
+@pytest.mark.parametrize('peer_repair_after_unlock', [False, True])
+def test_failed_payload_is_bounded_and_unlock_publication_is_not_missed(tmp_path, fake_study, monkeypatch, clock, peer_repair_after_unlock):
+    protocol = prepare_other_states(tmp_path, fake_study)
+    _, _, states = fake_study
+    identity, entries = states(tmp_path, 0, 25)
+    cached = entries['cached'][1] / 'selection_reduced'
+    gpu.execute(entries['cached'], 'selection_reduced', [])
+    core.atomic_json(cached / 'curve.json', {'result_sha256': 'bad'})
+    validate, lease = gpu.branch_receipt, gpu.pair_lease
+    checks = []
+
+    def validate_payload(p, state, name, arm, entry):
+        if name == 'cached':
+            checks.append(1)
+            if core.read(cached / 'curve.json')['result_sha256'] != base.digest(cached / 'result.json'):
+                raise ValueError('invalid existing payload')
+        return validate(p, state, name, arm, entry)
+
+    @contextlib.contextmanager
+    def publication_race(path, **kwargs):
+        try:
+            with lease(path, **kwargs):
+                yield
+        finally:
+            if peer_repair_after_unlock and path.name == 'cached--selection_reduced.lock':
+                core.atomic_json(cached / 'curve.json', {'result_sha256': base.digest(cached / 'result.json')})
+
+    monkeypatch.setattr(gpu, 'branch_receipt', validate_payload)
+    monkeypatch.setattr(gpu, 'pair_lease', publication_race)
+    with held(tmp_path / 'development/s0-t25/queue-branches/on_policy--selection_reduced.lock') as handle:
+        def release_later():
+            if len(clock.sleeps) == 3:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+        clock.after_sleep = release_later
+        if peer_repair_after_unlock:
+            gpu.distributed_stage(tmp_path, protocol, [], 'development', wait_seconds=1, idle_timeout=10)
+        else:
+            with pytest.raises(gpu.IncompletePairRun):
+                gpu.distributed_stage(tmp_path, protocol, [], 'development', wait_seconds=1, idle_timeout=10)
+    assert len(checks) == (2 if peer_repair_after_unlock else 1)
+
+
 def test_real_execute_defers_peer_parent_curve_without_repeating_paid_evaluation(tmp_path, monkeypatch):
     from test_selection_switch_gpu import convergence_manifest
 

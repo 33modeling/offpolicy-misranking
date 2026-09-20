@@ -54,7 +54,9 @@ PRE_PAIR_STATUS_CODE = "ad4d1718999848103a577e2efc2ce6b1352a9c5d7f76fccdc875924c
 PRE_PAIR_CURVE_PROGRESS_CODE = "456af840a1bd6f184078f9cee6b30a2c7554523fa611b1156e53ce6f49400c28"
 PRE_PAIR_BRANCH_QUEUE_CODE = "86652cc3b03a6f8b7b8f24b4835993e68ebcf0ec3019514d90e0349a1e558dd4"
 PRE_PAIR_CURVE_SPAWN_CODE = "985d4ed2ecc795a15ec73abe8d1ef8e6fa7f9e20f27ca8eea7d974748630e316"
+PRE_PAIR_RECOLLECTION_CODE = "b086a5992362ae690fcb1f6955fe9d1117f5162391c859725683097385f11387"
 PRE_SHARED_RUNTIME_CODES = {
+    PRE_PAIR_RECOLLECTION_CODE,
     PRE_PAIR_CURVE_SPAWN_CODE,
     PRE_PAIR_BRANCH_QUEUE_CODE,
     PRE_PAIR_CURVE_PROGRESS_CODE,
@@ -398,7 +400,7 @@ def bind_startup_runtime(root, recorded):
     def reviewed_receipt(path, receipt, predecessors):
         switch.bind_reviewed_runtime_receipt(path, receipt, {*predecessors, PRE_PAIR_STATUS_CODE,
                                                            PRE_PAIR_CURVE_PROGRESS_CODE, PRE_PAIR_BRANCH_QUEUE_CODE,
-                                                           PRE_PAIR_CURVE_SPAWN_CODE})
+                                                           PRE_PAIR_CURVE_SPAWN_CODE, PRE_PAIR_RECOLLECTION_CODE})
 
     if recorded != code_hashes():
         # Preserve and validate the exact historical upgrade chain. The resource
@@ -527,13 +529,21 @@ def bind_startup_runtime(root, recorded):
                 }, {PRE_PAIR_CURVE_SPAWN_CODE})
                 shared = {name: code_hashes()[name] for name in switch.CODE}
                 if core.fingerprint(shared) not in switch.PRIOR_RUNTIME_CODES:
-                    base.bind(root / "pair-curve-spawn-runtime.json", {
+                    reviewed_receipt(root / "pair-curve-spawn-runtime.json", {
                         "schema": "offpolicy-selector-pair/curve-spawn-runtime-v1",
                         "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                         "branch_queue_runtime_sha256": base.digest(root / "pair-branch-queue-runtime.json"),
                         "change": "shared curve worker startup failures use bounded retry, not peer-wait loops",
                         "cost_policy": "preserve all protocols, selections, checkpoints, evaluations, costs and budgets",
-                    })
+                    }, {PRE_PAIR_RECOLLECTION_CODE})
+                    if core.fingerprint(code_hashes()) != PRE_PAIR_RECOLLECTION_CODE:
+                        base.bind(root / "pair-recollection-runtime.json", {
+                            "schema": "offpolicy-selector-pair/recollection-runtime-v1",
+                            "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                            "curve_spawn_runtime_sha256": base.digest(root / "pair-curve-spawn-runtime.json"),
+                            "change": "revalidate completed peer branches/states after local failure without repeating execution",
+                            "cost_policy": "preserve all protocols, costs, budgets, checkpoints, evaluations and task leases",
+                        })
 
 
 def setup_config():
@@ -845,6 +855,7 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
     seeds = pair.DEV_SEEDS if stage == "development" else pair.TEST_SEEDS
     states = [(seed, step) for seed in seeds for step in pair.STEPS]
     verified, completed, failed = set(), set(), {}
+    failed_publications = {}
     worker = uuid.uuid4().hex
     worker_path = root / "queue-workers" / f"{worker}.json"
     observation = {"host": base.node_id(), "pid": os.getpid(), "stage": stage,
@@ -852,6 +863,16 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
     waited = 0.
     last_activity = time.monotonic()
     seen_progress = {}
+
+    def publication_signature(paths):
+        values = []
+        for path in paths:
+            try:
+                stat = path.stat()
+                values.append((stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+            except OSError as exc:
+                values.append((type(exc).__name__, exc.errno))
+        return tuple(values)
 
     def record(state, task=None):
         branch_count = len(verified) * (2 if stage == "development" else 4)
@@ -877,13 +898,22 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
                     continue
                 folder = root / stage / f"s{seed}-t{step}"
                 path = folder / "result.json"
-                # Invalid published summaries must never restart their branches.
-                if key in failed and not path.exists():
+                choice = choices[f"s{seed}-t{step}"] if choices is not None else None
+                expected = queue_branches(dict.fromkeys(BRANCHES), seed, stage, choice)
+                state_publications = [folder / "queue-branches" / f"{name}--{arm}.json" for name, arm, _ in expected]
+                state_payloads = [path, *state_publications]
+                if key in failed and failed_publications.get(key) == publication_signature(state_payloads):
                     continue
+                recovering = key in failed and not path.exists()
+                if recovering:
+                    if not all(receipt.is_file() for receipt in state_publications):
+                        continue
                 entered_state = False
+                state_signature = publication_signature(state_payloads)
                 try:
                     if path.exists():
                         with pair_lease(folder / ".state.lock"):
+                            state_signature = publication_signature(state_payloads)
                             base.bind(path, result_row(seed, step))
                             verified.add(key)
                             failed.pop(key, None)
@@ -891,6 +921,7 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
                     with pair_lease(folder / ".state.lock", shared=True):
                         entered_state = True
                         with pair_lease(folder / ".prepare-state.lock"):
+                            state_signature = publication_signature(state_payloads)
                             identity, entries = verify_pair(root, seed, step)
                             if stage == "development":
                                 base.bind(folder / "state.json", {"state_id": identity, "protocol_id": p["protocol_id"]})
@@ -901,18 +932,33 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
                         for name, arm, entry in tasks:
                             branch_key = (seed, step, name, arm)
                             receipt = folder / "queue-branches" / f"{name}--{arm}.json"
-                            if branch_key in completed or branch_key in failed and not receipt.exists():
-                                continue
                             directory = entry[1] / arm
+                            branch_publications = [receipt, directory / "result.json", directory / "curve.json"]
+                            published = all((directory / item).is_file() for item in ("result.json", "curve.json"))
+                            # A peer may finish both payloads then die before its
+                            # queue receipt. Revalidate that work, never rerun a
+                            # failed branch whose publication is still incomplete.
+                            if branch_key in completed or branch_key in failed and not (receipt.exists() or published):
+                                continue
+                            if (branch_key in failed and failed_publications.get(branch_key)
+                                    == publication_signature(branch_publications)):
+                                continue
+                            branch_signature = publication_signature(branch_publications)
                             try:
                                 with pair_lease(receipt.with_suffix(".lock")):
+                                    branch_signature = publication_signature(branch_publications)
+                                    if recovering and not receipt.is_file():
+                                        continue
                                     if not receipt.exists() and not all((directory / item).is_file()
                                                                       for item in ("result.json", "curve.json")):
+                                        if branch_key in failed:
+                                            continue
                                         record("RUN", f"{stage}/s{seed}-t{step}/{name}/{arm}")
                                         print(f"[RUN] host={base.node_id()} {stage}/s{seed}-t{step}/{name}/{arm}", flush=True)
                                         failure = attempt_branch(root, p, entry, arm, devices)
                                         if failure:
                                             failed[branch_key] = failure
+                                            failed_publications[branch_key] = publication_signature(branch_publications)
                                             continue
                                     base.bind(receipt, branch_receipt(p, identity, name, arm, entry))
                                     completed.add(branch_key)
@@ -930,13 +976,16 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
                             except (ValueError, OSError, RuntimeError) as exc:
                                 failed[branch_key] = {"task": str(directory.relative_to(root)),
                                                       "error": f"{type(exc).__name__}: {exc}"}
+                                failed_publications[branch_key] = branch_signature
                                 print(f"[WAIT] {directory}: {exc}; trying other branches", flush=True)
                     # EX cannot be acquired while any new or old peer still
                     # owns this state. Validate the complete curves again here.
                     with pair_lease(folder / ".state.lock"):
                         if all((seed, step, name, arm) in completed for name, arm, _ in tasks):
+                            state_signature = publication_signature(state_payloads)
                             base.bind(path, result_row(seed, step))
                             verified.add(key)
+                            failed.pop(key, None)
                 except PairLockBusy as exc:
                     if exc.path not in {folder / ".state.lock", folder / ".prepare-state.lock"}:
                         raise
@@ -948,6 +997,7 @@ def distributed_stage(root, p, devices, stage, *, wait_seconds=15., idle_timeout
                     raise
                 except (ValueError, OSError, RuntimeError) as exc:
                     failed[key] = {"state": f"s{seed}-t{step}", "error": f"{type(exc).__name__}: {exc}"}
+                    failed_publications[key] = state_signature
                     print(f"[WAIT] {stage}/s{seed}-t{step}: {exc}; trying other states", flush=True)
             if len(verified) == len(states):
                 record("DONE")

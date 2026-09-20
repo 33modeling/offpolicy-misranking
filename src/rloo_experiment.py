@@ -24,6 +24,7 @@ TAG = "olmo3-1025-7b-base-rlzero-grpo-h100-v2"
 ROOT = Path(__file__).resolve().parents[1]
 PRE_QUEUE_OBSERVATION_CODE = 'f23ccd63e564d1a9cbf65aa21de835b1317f5aa5bae9ad3530a4e01e6ca1ad92'
 PRE_CURVE_SPAWN_COMPAT_CODE = '1cfcdc6f537b82cbc3f0dd4ae0656e99e11f2bd6bccea0f7010016aac3417a6d'
+PRE_PAIR_RECOLLECTION_COMPAT_CODE = '7b189b5a13586cc4e8678e27111b8046590a9de0dfdbf8d2f0cf1bff5ac7862c'
 # RLOO does not execute the shared Switch controller. Only this reviewed
 # exception-scope repair is accepted, never arbitrary future controller edits.
 SWITCH_CURVE_SPAWN_UPGRADE = (
@@ -37,7 +38,8 @@ PAIR_OBSERVATION_FROZEN = 'f02238e97e9d691e2e13491f33653916ab5a51db82f4c98a72fa2
 PAIR_OBSERVATION_REVIEWED = (
     '042446a0513d8eaeba2dc93ad0b4401a85f8ae9013c3042f80691afa81901f0f',  # curve observation
     'd8414a62a7ca805e0218487f64eb0fa923f87c2c59def6c88cda808890a4e081',  # branch parallelism
-    '0451e210de533ef3c8ec48a322d0f25dff90a91eeb9a73f2be532b86cc5158f4')  # curve startup retry
+    '0451e210de533ef3c8ec48a322d0f25dff90a91eeb9a73f2be532b86cc5158f4',  # curve startup retry
+    '1260557028f726c3511244ad1cd9995d57aaf55ddb67a0761fcfcf2f42d1f3af')  # peer publication recovery
 PAIR_OBSERVATION_UPGRADE = (PAIR_OBSERVATION_FROZEN, PAIR_OBSERVATION_REVIEWED[-1])
 SCOPE = ("Matched GRPO-study data, selections, checkpoints, optimizer state, updates and evaluation; "
          "only the continuation objective changes to RLOO. d0 starts from the base model; "
@@ -100,7 +102,8 @@ def reviewed_code_changes(recorded):
         if current == digest:
             continue
         reviewed = ((name == 'src/rloo_experiment.py' and digest in
-                     (PRE_QUEUE_OBSERVATION_CODE, PRE_CURVE_SPAWN_COMPAT_CODE))
+                     (PRE_QUEUE_OBSERVATION_CODE, PRE_CURVE_SPAWN_COMPAT_CODE,
+                      PRE_PAIR_RECOLLECTION_COMPAT_CODE))
                     or (name == 'src/selection_switch_gpu.py'
                         and (digest, current) == SWITCH_CURVE_SPAWN_UPGRADE)
                     or (name == 'src/selector_pair_gpu.py'

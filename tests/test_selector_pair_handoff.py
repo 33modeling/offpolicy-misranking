@@ -826,7 +826,8 @@ def test_shared_restart_ambiguous_or_foreign_allocation_is_not_stopped(
 
 
 @pytest.mark.parametrize('name', ['pair-status-runtime.json', 'pair-curve-progress-runtime.json',
-                                'pair-branch-queue-runtime.json', 'pair-curve-spawn-runtime.json'])
+                                'pair-branch-queue-runtime.json', 'pair-curve-spawn-runtime.json',
+                                'pair-recollection-runtime.json'])
 def test_runtime_validation_copies_new_receipts_before_checking(
         handoff, root, repo, proc, name):
     pid = 90001
