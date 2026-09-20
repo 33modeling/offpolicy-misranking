@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Isolated RLOO workflow. No cleanup, job cancellation, or implicit GPU launch.
+# Direct RLOO GPU launcher. Existing experiments are never cleaned up or stopped.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MODE=${1:-status}
+MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
 export OM_WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
-export RLOO_ROOT=${RLOO_ROOT:-$OM_WORK/runs/rloo-selector-v1}
+export RLOO_ROOT=${RLOO_ROOT:-$OM_WORK/runs/rloo-selector-v2}
 PY=${RLOO_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
 [ -x "$PY" ] || PY=python3
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -19,14 +19,18 @@ case "$MODE" in
   cpu)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" -m pytest -q -p no:cacheprovider tests/test_rloo_experiment.py tests/test_grpo_policy.py "$@" ;;
-  smoke|run) ;;
-  *) echo 'usage: run_rloo.sh plan|prepare|status|smoke|run|report|check|cpu'; exit 2 ;;
+  run) ;;
+  *) echo 'usage: run_rloo.sh [run]|plan|prepare|status|report|check|cpu'; exit 2 ;;
 esac
 # Validate arguments and inputs before touching GPU admission or runtime setup.
+if [ "$#" -eq 0 ]; then
+  set -- --max-phase-seconds "${RLOO_MAX_PHASE_SECONDS:-86400}"
+fi
 [ "$#" -eq 2 ] && [ "$1" = --max-phase-seconds ] || {
-  echo '[abort] GPU modes require --max-phase-seconds SECONDS'; exit 2;
+  echo '[abort] optional run argument: --max-phase-seconds SECONDS'; exit 2;
 }
 "$PY" -c 'import math,sys; n=float(sys.argv[1]); sys.exit(0 if math.isfinite(n) and n>0 else 2)' "$2"
+CUDA_VISIBLE_DEVICES="" "$PY" src/rloo_experiment.py ensure-prepared --root "$RLOO_ROOT"
 CUDA_VISIBLE_DEVICES="" "$PY" src/rloo_experiment.py check --root "$RLOO_ROOT"
 export OUT_ROOT="$RLOO_ROOT" E5_FORCE=0
 source scripts/_e5_node.sh

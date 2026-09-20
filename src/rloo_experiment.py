@@ -1,4 +1,4 @@
-"""Isolated d0 RLOO comparison using frozen E5 selections, not a new H measurement."""
+"""Matched E5 comparison changing only the continuation objective to RLOO."""
 
 from __future__ import annotations
 
@@ -17,19 +17,21 @@ import numpy as np
 import evidence_downstream as ed
 
 ARMS = ("random", "passrate_beta", "fresh_r")
-SCHEMA = "rloo-frozen-selection/v1"
+POINTS = tuple((drift, seed) for drift in (0, 400) for seed in range(3))
+SCHEMA = "rloo-frozen-selection/v2"
 TAG = "olmo3-1025-7b-base-rlzero-grpo-h100-v2"
 ROOT = Path(__file__).resolve().parents[1]
-SCOPE = ("Native RLOO training from the base model on frozen GRPO-study selections. "
-         "Matched updates; selection is not recomputed. Costs cover new training/evaluation "
-         "only, not historical selection. No H, switching-time, or RLOO-native selector claim.")
+SCOPE = ("Matched GRPO-study data, selections, checkpoints, optimizer state, updates and evaluation; "
+         "only the continuation objective changes to RLOO. d0 starts from the base model; "
+         "d400 inherits the real GRPO parent and optimizer. Selection is not recomputed. "
+         "New costs exclude historical selection; no H or RLOO-native full-history claim.")
 
 
 @contextlib.contextmanager
-def lock(path):
+def lock(path, *, blocking=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
         yield
 
 
@@ -55,21 +57,22 @@ def runtime_env(config):
             "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1", "TOKENIZERS_PARALLELISM": "false"}
 
 
-def prepare(run, out, evaluation, *, smoke=False, dry=False):
+def prepare(run, out, evaluation, *, dry=False):
     run, out, evaluation = run.resolve(), out.resolve(), evaluation.resolve()
     config = ed.read(run / "run_config.json")
-    if config.get("drift") != 0:
-        raise ValueError("d0 only: a GRPO parent cannot be resumed as RLOO; no implicit algorithm handoff")
     disjoint(out, [run, evaluation.parent, Path(config["model"])])
-    steps, k = (2, 2) if smoke else (100, 8)
+    steps, k = 100, 8
     source = ed.prepare(run, out, evaluation, steps, k, ARMS, dry=True)
+    from train_policy_rloo import handoff_tree, lineage_tree
+    handoff_tree()
+    lineage_tree()
     test = ed.read(evaluation)
-    rows = test["test"][:4] if smoke else test["test"]
-    if not smoke and len(rows) != 300:
+    rows = test["test"]
+    if len(rows) != 300:
         raise ValueError("full protocol requires the frozen 300-question independent test")
     contract = {"schema": SCHEMA, "objective": "rloo", "scope": SCOPE,
                 "source": source, "evaluation_input": str(evaluation),
-                "steps": steps, "eval_k": k, "eval_n": len(rows), "smoke": smoke,
+                "steps": steps, "eval_k": k, "eval_n": len(rows),
                 "arms": list(ARMS), "environment": runtime_env(config),
                 "code_hashes": {str(p.relative_to(ROOT)): ed.digest(p)
                                 for p in sorted((ROOT / "src").glob("*.py"))}}
@@ -117,6 +120,7 @@ def training_command(out, arm):
     if arm not in ARMS:
         raise ValueError("unknown RLOO arm")
     args = ed.train_args(config, Path(c["source"]["source_run"]), out, arm, c["steps"])
+    args[args.index(str(ed.ROOT / "src/train_policy_grpo.py"))] = str(ROOT / "src/train_policy_rloo.py")
     ed._replace_flag(args, "--objective", "rloo")
     if "--reliability-log" in args:
         args.remove("--reliability-log")
@@ -125,15 +129,17 @@ def training_command(out, arm):
 
 def policy(out, arm):
     c, config = validate(out)
+    drift = c["source"]["drift"]
+    parent = Path(c["source"]["source_run"]) / f"policy_step_{drift}" if drift else None
     if arm == "before":
-        return None
+        return parent
     if arm not in ARMS:
         raise ValueError("unknown RLOO arm")
-    from train_policy_grpo import validate_policy_lineage
+    from train_policy_rloo import validate_policy_lineage
     path = out / arm / "policy"
     validate_policy_lineage(
-        path, target_steps=c["steps"], world_size=4, training_objective="rloo",
-        expected_start_step=0, expected_parent=None, expected_model=Path(config["model"]),
+        path, target_steps=drift + c["steps"], world_size=4, training_objective="rloo",
+        expected_start_step=drift, expected_parent=parent, expected_model=Path(config["model"]),
         expected_seed=config["seed"], expected_max_new_tokens=config["max_new_tokens"],
         expected_prompt_format=config["prompt_format"], expected_config=ed._expected_config(config),
         expected_prompts=out / "subsets" / f"subset-{arm}.json", require_complete_hashes=True)
@@ -224,7 +230,8 @@ def report(out):
             lo, hi = ed.paired_interval(delta, c["source"]["seed"])
             row["vs_" + reference] = {"mean": float(delta.mean()), "lower": lo, "upper": hi}
         rows.append(row)
-    result = {"schema": SCHEMA, "scope": SCOPE, "smoke": c["smoke"],
+    result = {"schema": SCHEMA, "scope": SCOPE, "seed": c["source"]["seed"],
+              "drift": c["source"]["drift"],
               "experiment_sha256": ed.digest(out / "experiment.json"), "rows": rows,
               "interval_scope": "Paired prompt bootstrap, conditional on this training seed; not across-seed uncertainty."}
     ed.atomic_json(out / "results.json", result)
@@ -261,71 +268,83 @@ def run_arm(out, arm, seconds):
         raise ValueError("evaluation did not complete")
 
 
-def source_paths(work, source_root, seed):
+def source_paths(work, source_root, seed, drift=0):
     root = source_root or work / "runs" / TAG
-    return root / f"family-math500-s{seed}" / f"{TAG}-s{seed}-math500-d0"
+    return root / f"family-math500-s{seed}" / f"{TAG}-s{seed}-math500-d{drift}"
+
+
+def prepare_matrix(args, root, outs):
+    existing = [ed.read(out / "experiment.json") if (out / "experiment.json").exists() else None for out in outs]
+    evaluations = [args.eval_prompts or (Path(c["evaluation_input"]) if c else
+                   args.work / f"inputs/e5-reduced/test-math500-d{drift}.json")
+                   for (drift, _), c in zip(POINTS, existing, strict=True)]
+    for drift in (0, 400):
+        if len({e.resolve() for (d, _), e in zip(POINTS, evaluations, strict=True) if d == drift}) != 1:
+            raise ValueError("prepared seeds use different evaluation inputs within a checkpoint")
+    runs = [Path(c["source"]["source_run"]) if c and args.source_root is None else
+            source_paths(args.work, args.source_root, seed, drift)
+            for (drift, seed), c in zip(POINTS, existing, strict=True)]
+    disjoint(root, [*runs, *(e.parent for e in evaluations)])
+    configs = [ed.read(run / "run_config.json") for run in runs]
+    fields = ("model", "dataset", "max_new_tokens", "temperature", "prompt_format",
+              "attn", "gen_batch", "lora_targets", "thinking", "top_p",
+              "grpo_gradient_checkpointing", *ed.TRAIN_FLAGS.values())
+    if any(any(config.get(key) != configs[0].get(key) for key in fields) for config in configs[1:]):
+        raise ValueError("source model/runtime/training configuration differs across seeds")
+    for (drift, seed), config, run, out, evaluation in zip(POINTS, configs, runs, outs, evaluations, strict=True):
+        if config["seed"] != seed or config["drift"] != drift:
+            raise ValueError("source seed/checkpoint does not match matrix position")
+        prepare(run, out, evaluation, dry=True)
+    for run, out, evaluation in zip(runs, outs, evaluations, strict=True):
+        prepare(run, out, evaluation)
+    print("Prepared 18 matched RLOO training arms; no smoke stage.")
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command", choices=("plan", "prepare", "status", "smoke", "run", "report", "evaluate", "check"))
-    p.add_argument("--root", type=Path, default=Path(os.environ.get("RLOO_ROOT", "/tmp/rloo-selector-v1")))
+    p.add_argument("command", choices=("plan", "prepare", "ensure-prepared", "status", "run", "report", "evaluate", "check"))
+    p.add_argument("--root", type=Path, default=Path(os.environ.get("RLOO_ROOT", "/tmp/rloo-selector-v2")))
     p.add_argument("--work", type=Path, default=Path(os.environ.get("OM_WORK", "/group-volume/minsoo3.kim/offpolicy-misranking")))
     p.add_argument("--source-root", type=Path)
     p.add_argument("--eval-prompts", type=Path)
-    p.add_argument("--max-phase-seconds", type=float)
+    p.add_argument("--max-phase-seconds", type=float, default=float(os.environ.get("RLOO_MAX_PHASE_SECONDS", 86400)))
     p.add_argument("--out", type=Path)
     p.add_argument("--arm", choices=("before", *ARMS))
     p.add_argument("--shard", type=int)
     args = p.parse_args()
     root = args.root.resolve()
     if args.command == "plan":
-        print(json.dumps({"scope": SCOPE, "dataset": "math500", "drift": 0, "seeds": [0, 1, 2],
-                          "arms": ARMS, "training_runs": 9, "updates": 100, "eval_prompts": 300,
-                          "eval_k": 8, "d400": "blocked: needs an explicit algorithm-handoff protocol",
-                          "smoke": "2 updates, 4 questions x 2 responses, isolated output",
-                          "launch": "manual only; smoke required; phase timeout must be specified"}, indent=2))
+        print(json.dumps({"scope": SCOPE, "dataset": "math500", "drifts": [0, 400], "seeds": [0, 1, 2],
+                          "arms": ARMS, "training_runs": 18, "updates": 100, "eval_prompts": 300,
+                          "eval_k": 8,
+                          "launch": "default launcher prepares inputs then runs GPU experiment directly; no smoke",
+                          "default_phase_timeout_seconds": 86400}, indent=2))
         return
     if args.command == "evaluate":
         if args.out is None or args.arm is None or args.shard is None:
             p.error("evaluate requires --out, --arm and --shard")
         evaluate(args.out, args.arm, args.shard)
         return
-    outs = [root / f"s{seed}" for seed in range(3)]
-    if args.command == "prepare":
-        evaluation = args.eval_prompts or args.work / "inputs/e5-reduced/test-math500-d0.json"
-        runs = [source_paths(args.work, args.source_root, seed) for seed in range(3)]
-        disjoint(root, [*runs, evaluation.parent])
-        configs = [ed.read(run / "run_config.json") for run in runs]
-        fields = ("model", "dataset", "max_new_tokens", "temperature", "prompt_format",
-                  "attn", "gen_batch", "lora_targets", "thinking", "top_p",
-                  "grpo_gradient_checkpointing", *ed.TRAIN_FLAGS.values())
-        if any(any(config.get(key) != configs[0].get(key) for key in fields) for config in configs[1:]):
-            raise ValueError("source model/runtime/training configuration differs across seeds")
-        for seed, run in enumerate(runs):
-            if ed.read(run / "run_config.json")["seed"] != seed:
-                raise ValueError("source seed does not match matrix position")
-            prepare(run, outs[seed], evaluation, dry=True)
-        for seed, run in enumerate(runs):
-            prepare(run, outs[seed], evaluation)
-        prepare(runs[0], root / "smoke", evaluation, smoke=True)
-        print("Prepared 9 RLOO training arms + isolated smoke; no GPU work launched.")
+    outs = [root / f"math500-d{drift}" / f"s{seed}" for drift, seed in POINTS]
+    if args.command in ("prepare", "ensure-prepared"):
+        with lock(root / ".matrix-prepare.lock", blocking=True):
+            prepare_matrix(args, root, outs)
         return
     if args.command == "status":
-        for out in [root / "smoke", *outs]:
+        for out in outs:
             if not (out / "experiment.json").exists():
-                print(f"{out.name}: not prepared")
+                print(f"{out.parent.name}/{out.name}: not prepared")
                 continue
             validate(out)
-            for arm in (("random",) if out.name == "smoke" else ("before", *ARMS)):
+            for arm in ("before", *ARMS):
                 try:
                     with lock(out / arm / ".worker.lock"):
                         progress = state(out, arm)
                 except BlockingIOError:
                     progress = "running (lock held)"
-                print(f"{out.name}/{arm}: {progress}")
+                print(f"{out.parent.name}/{out.name}/{arm}: {progress}")
         return
-    for out in [root / "smoke", *outs]:
+    for out in outs:
         validate(out)
     if args.command == "check":
         print("RLOO inputs and code hashes verified.")
@@ -336,13 +355,6 @@ def main():
     seconds = args.max_phase_seconds
     if seconds is None or not math.isfinite(seconds) or seconds <= 0:
         p.error("GPU modes require positive --max-phase-seconds (timeout is failure, not completion)")
-    if args.command == "smoke":
-        with lock(root / "smoke/random/.worker.lock"):
-            run_arm(root / "smoke", "random", seconds)
-        print("Smoke training and evaluation passed; not included in benchmark results.")
-        return
-    if not complete(root / "smoke", "random"):
-        raise ValueError("isolated GPU smoke must pass before the full experiment")
     busy = 0
     for out in outs:
         for arm in ("before", *ARMS):
@@ -352,6 +364,12 @@ def main():
                         run_arm(out, arm, seconds)
             except BlockingIOError:
                 busy += 1
+        if all(complete(out, arm) for arm in ("before", *ARMS)):
+            try:
+                with lock(out / ".report.lock"):
+                    report(out)
+            except BlockingIOError:
+                pass
     print(f"Worker finished; {busy} arms held by other workers. Use status for global completion.")
 
 
