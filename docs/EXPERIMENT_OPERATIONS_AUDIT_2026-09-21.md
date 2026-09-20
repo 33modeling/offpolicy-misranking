@@ -53,6 +53,13 @@ hostname or timestamp alone.
 
 The frozen scientific sources, Pair launcher, selectors, trainers, targets,
 budgets, checkpoints and measured results are not changed by these repairs.
+The isolated restart runtime is pinned to
+`95213b3f2317978d2fabbe43f42d688bb55536de`, including the operational curve guard.
+The self-contained restart bundle is regenerated from its maintained sources.
+Final deployment/guard/handoff regression: 180 passed. This includes staging
+the actual pinned Git commit in a temporary checkout and checking that its
+guard, launch hook, ownership checks and frozen science match the reviewed
+files, with no live checkout update or rewrite on reuse.
 
 ## Bash Entry Points
 

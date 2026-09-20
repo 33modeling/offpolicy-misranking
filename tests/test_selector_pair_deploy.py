@@ -82,6 +82,26 @@ def test_old_dirty_checkout_preserved_but_reviewed_queue_staged(prepared, deploy
     assert not (repo / '.git/FETCH_HEAD').exists()
 
 
+def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_path, deploy):
+    source = SCRIPT.parents[1]
+    checkout = tmp_path / 'checkout'
+    git(tmp_path, 'clone', '--shared', '--no-checkout', '-q', str(source), str(checkout))
+    original_head = git(checkout, 'rev-parse', 'HEAD')
+    target = deploy.stage_runtime(checkout)
+    assert target.name == deploy.PINNED_COMMIT
+    for name in ('scripts/queue_selector_pair_gpu.py', 'scripts/_selection_worker.sh',
+                 'scripts/selector_pair_handoff.py', 'scripts/selector_pair_diagnostic.py',
+                 'src/selector_pair_gpu.py', 'src/selection_switch_gpu.py',
+                 'scripts/run_selector_pair.sh'):
+        assert (target / name).read_bytes() == (source / name).read_bytes(), name
+    assert 'queue_selector_pair_gpu.py' in (target / 'scripts/_selection_worker.sh').read_text()
+    assert git(checkout, 'rev-parse', 'HEAD') == original_head
+    assert not (checkout / 'src').exists()
+    saved = {p: (p.stat().st_mtime_ns, p.stat().st_ino) for p in target.rglob('*')}
+    assert deploy.stage_runtime(checkout) == target
+    assert saved == {p: (p.stat().st_mtime_ns, p.stat().st_ino) for p in target.rglob('*')}
+
+
 def test_clean_cache_reused_without_file_rewrites(prepared, deploy):
     repo, *_ = prepared
     target = deploy.stage_runtime(repo)
