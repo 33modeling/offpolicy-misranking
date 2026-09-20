@@ -53,7 +53,9 @@ PRE_SHARED_MBPP_QUARANTINE_CODE = "0894fdfe1edb03163abc02589bfd941dc8ffc5e41f000
 PRE_PAIR_STATUS_CODE = "ad4d1718999848103a577e2efc2ce6b1352a9c5d7f76fccdc875924c15cd57f3"
 PRE_PAIR_CURVE_PROGRESS_CODE = "456af840a1bd6f184078f9cee6b30a2c7554523fa611b1156e53ce6f49400c28"
 PRE_PAIR_BRANCH_QUEUE_CODE = "86652cc3b03a6f8b7b8f24b4835993e68ebcf0ec3019514d90e0349a1e558dd4"
+PRE_PAIR_CURVE_SPAWN_CODE = "985d4ed2ecc795a15ec73abe8d1ef8e6fa7f9e20f27ca8eea7d974748630e316"
 PRE_SHARED_RUNTIME_CODES = {
+    PRE_PAIR_CURVE_SPAWN_CODE,
     PRE_PAIR_BRANCH_QUEUE_CODE,
     PRE_PAIR_CURVE_PROGRESS_CODE,
     PRE_PAIR_STATUS_CODE,
@@ -395,7 +397,8 @@ def compatible_code(recorded):
 def bind_startup_runtime(root, recorded):
     def reviewed_receipt(path, receipt, predecessors):
         switch.bind_reviewed_runtime_receipt(path, receipt, {*predecessors, PRE_PAIR_STATUS_CODE,
-                                                           PRE_PAIR_CURVE_PROGRESS_CODE, PRE_PAIR_BRANCH_QUEUE_CODE})
+                                                           PRE_PAIR_CURVE_PROGRESS_CODE, PRE_PAIR_BRANCH_QUEUE_CODE,
+                                                           PRE_PAIR_CURVE_SPAWN_CODE})
 
     if recorded != code_hashes():
         # Preserve and validate the exact historical upgrade chain. The resource
@@ -515,13 +518,22 @@ def bind_startup_runtime(root, recorded):
                     "change": "prioritize known meter paths and observe peer progress without cross-host clock comparisons",
                     "cost_policy": "preserve training, evaluations, state leases, protocols, costs and all saved work",
                 }, {PRE_PAIR_BRANCH_QUEUE_CODE})
-                base.bind(root / "pair-branch-queue-runtime.json", {
+                reviewed_receipt(root / "pair-branch-queue-runtime.json", {
                     "schema": "offpolicy-selector-pair/branch-queue-runtime-v1",
                     "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
                     "curve_progress_runtime_sha256": base.digest(root / "pair-curve-progress-runtime.json"),
                     "change": "independent branch leases, serialized state preparation/publication, existing fit/freeze barriers",
                     "cost_policy": "preserve selectors, targets, budgets, checkpoints, decisions, all costs and prior receipts",
-                })
+                }, {PRE_PAIR_CURVE_SPAWN_CODE})
+                shared = {name: code_hashes()[name] for name in switch.CODE}
+                if core.fingerprint(shared) not in switch.PRIOR_RUNTIME_CODES:
+                    base.bind(root / "pair-curve-spawn-runtime.json", {
+                        "schema": "offpolicy-selector-pair/curve-spawn-runtime-v1",
+                        "frozen_code_hashes": recorded, "runtime_code_hashes": code_hashes(),
+                        "branch_queue_runtime_sha256": base.digest(root / "pair-branch-queue-runtime.json"),
+                        "change": "shared curve worker startup failures use bounded retry, not peer-wait loops",
+                        "cost_policy": "preserve all protocols, selections, checkpoints, evaluations, costs and budgets",
+                    })
 
 
 def setup_config():

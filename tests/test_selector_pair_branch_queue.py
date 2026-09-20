@@ -264,6 +264,7 @@ def test_busy_branch_progress_uses_local_monotonic_clock(tmp_path, fake_study, c
 
 def released_status_runtime():
     previous = gpu.code_hashes()
+    previous['src/selection_switch_gpu.py'] = '7cd13cca9a1299bd3bd571cfb1e4109b65d5f790b82811a85e7604b9ad034606'
     previous.update({"src/selector_pair_gpu.py": "042446a0513d8eaeba2dc93ad0b4401a85f8ae9013c3042f80691afa81901f0f",
                      "scripts/run_selector_pair.sh": "562eea6fbb53a7e024572839860bad02c3af304016ec63e7269a6b054054f12d"})
     assert core.fingerprint(previous) == gpu.PRE_PAIR_BRANCH_QUEUE_CODE

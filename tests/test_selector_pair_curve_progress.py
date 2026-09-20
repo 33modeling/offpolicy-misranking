@@ -10,6 +10,7 @@ from test_selector_pair_lock_migration import file_bytes, frozen_work
 
 def previous_code():
     code = gpu.code_hashes()
+    code['src/selection_switch_gpu.py'] = '7cd13cca9a1299bd3bd571cfb1e4109b65d5f790b82811a85e7604b9ad034606'
     code['src/selector_pair_gpu.py'] = 'f02238e97e9d691e2e13491f33653916ab5a51db82f4c98a72fa299e5b9739bf'
     code['scripts/run_selector_pair.sh'] = '562eea6fbb53a7e024572839860bad02c3af304016ec63e7269a6b054054f12d'
     assert core.fingerprint(code) == gpu.PRE_PAIR_CURVE_PROGRESS_CODE

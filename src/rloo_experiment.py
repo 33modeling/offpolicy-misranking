@@ -23,6 +23,12 @@ SCHEMA = "rloo-frozen-selection/v2"
 TAG = "olmo3-1025-7b-base-rlzero-grpo-h100-v2"
 ROOT = Path(__file__).resolve().parents[1]
 PRE_QUEUE_OBSERVATION_CODE = 'f23ccd63e564d1a9cbf65aa21de835b1317f5aa5bae9ad3530a4e01e6ca1ad92'
+PRE_CURVE_SPAWN_COMPAT_CODE = '1cfcdc6f537b82cbc3f0dd4ae0656e99e11f2bd6bccea0f7010016aac3417a6d'
+# RLOO does not execute the shared Switch controller. Only this reviewed
+# exception-scope repair is accepted, never arbitrary future controller edits.
+SWITCH_CURVE_SPAWN_UPGRADE = (
+    '7cd13cca9a1299bd3bd571cfb1e4109b65d5f790b82811a85e7604b9ad034606',
+    'ebcfecd32674bfc0df240f1c62829936002e154cf7d33ccee9261621491180b6')
 # src/selector_pair_gpu.py is never imported by RLOO code, but the frozen
 # contract hashes it. Each reviewed Pair-runtime revision is pinned by digest so
 # the RLOO matrix neither stops on it nor silently accepts an unreviewed change;
@@ -30,7 +36,8 @@ PRE_QUEUE_OBSERVATION_CODE = 'f23ccd63e564d1a9cbf65aa21de835b1317f5aa5bae9ad3530
 PAIR_OBSERVATION_FROZEN = 'f02238e97e9d691e2e13491f33653916ab5a51db82f4c98a72fa299e5b9739bf'
 PAIR_OBSERVATION_REVIEWED = (
     '042446a0513d8eaeba2dc93ad0b4401a85f8ae9013c3042f80691afa81901f0f',  # curve observation
-    'd8414a62a7ca805e0218487f64eb0fa923f87c2c59def6c88cda808890a4e081')  # branch parallelism
+    'd8414a62a7ca805e0218487f64eb0fa923f87c2c59def6c88cda808890a4e081',  # branch parallelism
+    '0451e210de533ef3c8ec48a322d0f25dff90a91eeb9a73f2be532b86cc5158f4')  # curve startup retry
 PAIR_OBSERVATION_UPGRADE = (PAIR_OBSERVATION_FROZEN, PAIR_OBSERVATION_REVIEWED[-1])
 SCOPE = ("Matched GRPO-study data, selections, checkpoints, optimizer state, updates and evaluation; "
          "only the continuation objective changes to RLOO. d0 starts from the base model; "
@@ -92,7 +99,10 @@ def reviewed_code_changes(recorded):
         current = ed.digest(ROOT / name)
         if current == digest:
             continue
-        reviewed = ((name == 'src/rloo_experiment.py' and digest == PRE_QUEUE_OBSERVATION_CODE)
+        reviewed = ((name == 'src/rloo_experiment.py' and digest in
+                     (PRE_QUEUE_OBSERVATION_CODE, PRE_CURVE_SPAWN_COMPAT_CODE))
+                    or (name == 'src/selection_switch_gpu.py'
+                        and (digest, current) == SWITCH_CURVE_SPAWN_UPGRADE)
                     or (name == 'src/selector_pair_gpu.py'
                         and digest in (PAIR_OBSERVATION_FROZEN, *PAIR_OBSERVATION_REVIEWED)
                         and current in PAIR_OBSERVATION_REVIEWED)
