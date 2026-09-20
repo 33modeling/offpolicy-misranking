@@ -51,6 +51,31 @@ def test_finished_receipt_wins_even_while_meter_lock_remains_held(tmp_path):
         assert status.snapshot(tmp_path, now=10000, local_gpus=False)['active_nodes'] == 0
 
 
+@pytest.mark.parametrize('changed', [None, 'event_id', 'host', 'pid', 'state'])
+def test_skewed_meter_reread_accepts_heartbeat_not_owner_change(tmp_path, monkeypatch, changed):
+    directory, lock = curve(tmp_path, -3600)
+    path = directory / 'progress.json'
+    original = core.read
+    reads = []
+
+    def advancing(candidate):
+        value = original(candidate)
+        if candidate == path:
+            reads.append(1)
+            value = {**value, 'updated': 6400 + len(reads), 'seconds': len(reads)}
+            if changed and len(reads) > 1:
+                value[changed] = 'finished' if changed == 'state' else 'new-owner'
+        return value
+
+    monkeypatch.setattr(core, 'read', advancing)
+    with lock.open('rb') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = status.snapshot(tmp_path, now=10000, local_gpus=False)
+        tasks = [t for t in data['tasks'] if t['directory'] == str(directory.relative_to(tmp_path))]
+        assert len(reads) >= 2
+        assert any(t['owner_active'] for t in tasks) is (changed is None)
+
+
 @pytest.mark.parametrize('state', ['failed', 'finished'])
 def test_terminal_phase_not_resurrected_by_a_lock(tmp_path, state):
     directory, lock = curve(tmp_path, -3600)

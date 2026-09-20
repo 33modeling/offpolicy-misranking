@@ -233,6 +233,7 @@ def test_same_host_independent_branch_heartbeats_keep_worker_identity(tmp_path):
 def test_previous_runtime_and_receipts_are_preserved(tmp_path, monkeypatch):
     from test_selector_pair_gpu import bootstrap_predecessor
     previous = gpu.code_hashes()
+    previous['src/selection_switch_gpu.py'] = '7cd13cca9a1299bd3bd571cfb1e4109b65d5f790b82811a85e7604b9ad034606'
     previous.update({"src/selector_pair_gpu.py": "5e2c5ca5446a609dad0f999ad134fef39d17fc6ac490cdea0b66d2479292e84f",
                      "scripts/run_selector_pair.sh": "40a7df854a6b866118164198956225468351bca81f87309fa6700a2c51549092"})
     assert core.fingerprint(previous) == gpu.PRE_PAIR_STATUS_CODE
@@ -326,6 +327,28 @@ def test_root_shared_lease_does_not_revive_stale_branch_assignment(tmp_path):
         data = status.snapshot(tmp_path, now=10000)
     assert not any(node['current'] for node in data['nodes'])
     assert not data['activity']
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_live_lease_before_first_worker_record_is_visible_readonly(tmp_path, legacy):
+    prepared(tmp_path)
+    lock = tmp_path / 'development/s0-t25' / ('.state.lock' if legacy else
+                                             'queue-branches/on_policy--selection_reduced.lock')
+    lock.parent.mkdir(parents=True)
+    with lock.open('w') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+        data = status.snapshot(tmp_path, now=10000)
+        active = [node for node in data['nodes'] if node['current']]
+        assert len(active) == 1 and active[0]['host'] == 'unknown-owner'
+        assert data['activity'][0]['activity_identity_unconfirmed']
+        assert 'CURRENT RUN 1' in status.render(data, width=160)
+        if not legacy:
+            assert data['tasks'][0]['status'] == 'RUN'
+        assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+        fcntl.flock(owner, fcntl.LOCK_SH)
+        assert not status.snapshot(tmp_path, now=10000)['activity']
+    assert not any(node['current'] for node in status.snapshot(tmp_path, now=10000)['nodes'])
 
 
 def test_legacy_ex_state_lease_identifies_assignment_without_heartbeat(tmp_path):

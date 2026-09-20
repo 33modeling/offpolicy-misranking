@@ -224,7 +224,12 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                 and progress.get("state") == "running" and isinstance(event, str)
                 and event and Path(event).name == event and event not in {".", ".."}
                 and meter_lease_held(directory)):
-            owned = read_progress(directory) == progress
+            latest = read_progress(directory)
+            owned = (latest.get('state') == 'running'
+                     and all(latest.get(key) == progress.get(key) for key in ('event_id', 'host', 'pid')))
+            if owned:
+                progress.update(latest)
+                age = now-number(progress.get('updated'), -1e30)
         return age, fresh, owned
 
     def observe(directory, *, seed, step, kind, arm, done_path=None, dependency=None, also=None):

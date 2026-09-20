@@ -262,13 +262,34 @@ def snapshot(root, *, now=None):
         if claimed:
             node['assignment'] = claimed
             assignments.setdefault(str(claimed['lock']), []).append(node)
-    for claims in assignments.values():
-        claimed = claims[0]['assignment']
+    lease_assignments = {path: claims[0]['assignment'] for path, claims in assignments.items()}
+    # Lock acquisition precedes publication of the worker record. Discover
+    # existing task leases independently, without attributing them to old PIDs.
+    for stage, seeds in (('development', pair.DEV_SEEDS), ('test', pair.TEST_SEEDS)):
+        for seed in seeds:
+            for step in pair.STEPS:
+                task = f'{stage}/s{seed}-t{step}'
+                folder = root / task
+                locks = [(folder / '.state.lock', task)]
+                for lock in (folder / 'queue-branches').glob('*.lock'):
+                    parts = lock.stem.split('--')
+                    if len(parts) == 2:
+                        locks.append((lock, task + '/' + '/'.join(parts)))
+                for lock, assignment in locks:
+                    if not lock.is_file() or str(lock) in lease_assignments:
+                        continue
+                    claimed = queue_assignment(root, {'state': 'RUN', 'task': assignment})
+                    if claimed:
+                        lease_assignments[str(lock)] = claimed
+    for lease_path, claimed in lease_assignments.items():
+        claims = assignments.get(lease_path, [])
         fresh_claim = len(claims) == 1 and -5 <= now - claims[0].get('worker_updated', 0) < 60
         if (fresh_claim
                 or not display.switch_status.meter_lease_held(claimed['lock'].parent, claimed['lock'].name)
                 or any(task.get('directory') == claimed['directory']
                        or task.get('directory', '').startswith(claimed['directory'] + '/')
+                       or (not claimed['branch'] and task.get('seed') == claimed['seed']
+                           and task.get('step') == claimed['step'])
                        or any(task.get('worker_id') == node.get('worker_id') and task.get('host') == node['host']
                               for node in claims) for task in activity)):
             continue
