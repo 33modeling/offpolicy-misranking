@@ -12,6 +12,8 @@ WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
 export OUT_ROOT
 OUT_ROOT=$(realpath -m "${SWITCH_ROOT:-$WORK/runs/selection-switch-v1}")
+SWITCH_DRIVER=src/selection_switch_gpu.py
+[ ! -f "$OUT_ROOT/repair.json" ] || SWITCH_DRIVER=scripts/mbpp_repair_runtime.py
 case "$OUT_ROOT" in /|"$PWD"|"$WORK"|"$WORK/runs") echo '[abort] unsafe experiment root'; exit 2 ;; esac
 PY=${SWITCH_PYTHON:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 [ -x "$PY" ] || PY=python3
@@ -75,7 +77,7 @@ if [ "$MODE" = status ]; then
 fi
 if [ "$MODE" = check-code ]; then
   export CUDA_VISIBLE_DEVICES=""
-  exec "$PY" src/selection_switch_gpu.py check-code --root "$OUT_ROOT" "$@"
+  exec "$PY" "$SWITCH_DRIVER" check-code --root "$OUT_ROOT" "$@"
 fi
 if [ "$MODE" = errors ]; then
   export CUDA_VISIBLE_DEVICES=""
@@ -278,7 +280,7 @@ case "$MODE" in
 esac
 if [ "$MODE" = fit ] || [ "$MODE" = summarize ]; then
   export CUDA_VISIBLE_DEVICES=""
-  "$PY" src/selection_switch_gpu.py "$MODE" --root "$OUT_ROOT" "$@"
+  "$PY" "$SWITCH_DRIVER" "$MODE" --root "$OUT_ROOT" "$@"
   if [ "$MODE" = summarize ]; then
     "$PY" src/selection_switch_plot.py --root "$OUT_ROOT"
   fi
@@ -298,7 +300,7 @@ if [ "$MODE" = export ] || [ "$MODE" = why ]; then
     git rev-parse HEAD
     CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$OUT_ROOT"
     if [ "$MODE" = export ] && [ -f "$OUT_ROOT/switch.json" ]; then
-      CUDA_VISIBLE_DEVICES="" "$PY" src/selection_switch_gpu.py summarize --root "$OUT_ROOT"
+      CUDA_VISIBLE_DEVICES="" "$PY" "$SWITCH_DRIVER" summarize --root "$OUT_ROOT"
     fi
     while IFS= read -r -d '' path; do
       printf '\n===== %s =====\n' "${path#"$OUT_ROOT"/}"
@@ -356,7 +358,7 @@ if [ "$MODE" = prepare ] || [ ! -f "$OUT_ROOT/switch.json" ]; then
   else
     POOL="$DATASETS_DIR/math_train/math_train.jsonl"; POOL_MANIFEST="$DATASETS_DIR/math_train/dataset_manifest.json"
   fi
-  "$PY" src/selection_switch_gpu.py prepare --root "$OUT_ROOT" --matrix "$MATRIX" \
+  "$PY" "$SWITCH_DRIVER" prepare --root "$OUT_ROOT" --matrix "$MATRIX" \
     --gpu-type "${GATE_GPU_TYPE:-NVIDIA H100 80GB HBM3}" \
     --dataset "${SWITCH_DATASET:-math500}" --selector "${SWITCH_SELECTOR:-fresh_r}" \
     --gate "${SWITCH_GATE:-final}" --curve-points "${SWITCH_CURVE_POINTS:-3}" --curve-k "${SWITCH_CURVE_K:-4}" \
@@ -368,7 +370,7 @@ elif [ "$#" -gt 0 ]; then
   echo '[abort] experiment already frozen; run takes no new preparation options'; exit 2
 fi
 [ "$MODE" != prepare ] || exit 0
-CUDA_VISIBLE_DEVICES="" "$PY" src/selection_switch_gpu.py check-code --root "$OUT_ROOT"
+CUDA_VISIBLE_DEVICES="" "$PY" "$SWITCH_DRIVER" check-code --root "$OUT_ROOT"
 source scripts/_e5_node.sh
 export E5_FORCE=0
 e5_acquire_node
@@ -426,7 +428,7 @@ switch_complete() {
 }
 pass=0
 wait_seconds=$HOLD
-WORKER=src/selection_switch_gpu.py
+WORKER=$SWITCH_DRIVER
 if [ "$MODE" = run ] && [ "${SWITCH_QUEUE_PASS:-0}" = 1 ]; then
   WORKER=scripts/queue_selection_switch_gpu.py
 fi

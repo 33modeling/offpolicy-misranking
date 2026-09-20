@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import selection_switch_gpu as worker
 import mbpp_budget_recovery as recovery
+import mbpp_repair_runtime as repair
 
 
 def yield_to_node_queue(busy, *, last_progress, idle_timeout):
@@ -160,7 +161,8 @@ def run():
     worker.mbpp_resume_blocked = blocked
     worker.work = work
     try:
-        return worker.main()
+        with repair.activated(repair.cli_root(required=False)):
+            return worker.main()
     finally:
         worker.wait_for_peers, worker.fit_once = original_wait, original_fit
         worker.mbpp_resume_blocked = original_blocked
