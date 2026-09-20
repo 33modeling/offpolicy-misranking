@@ -72,7 +72,7 @@ def wait_for(path, worker):
 def test_shared_queue_entrypoint_is_pinned_and_yields_live_peer_waits(tmp_path):
     repo = repository(tmp_path)
     for name in ("run_selection_switch.sh", "selection_switch_runtime.py", "_selection_worker.sh",
-                 "queue_selection_switch_gpu.py", "node_fault_state.py"):
+                 "queue_selection_switch_gpu.py", "mbpp_repair_runtime.py", "node_fault_state.py"):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     (repo / "scripts/mbpp_budget_recovery.py").write_text(
         'def required(*args):\n    raise AssertionError("peer-wait fixture must not recover budgets")\n')

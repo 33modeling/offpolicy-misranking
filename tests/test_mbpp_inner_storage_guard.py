@@ -179,7 +179,8 @@ selection_hold_node() { echo unexpected-hold; return 99; }
 switch_complete() { echo unexpected-completion-check; return 99; }
 ''' + loop
     env = {**os.environ, 'HOLD': str(hold), 'MODE': 'run', 'SWITCH_AUTO_RECOVER': '0',
-           'OUT_ROOT': str(tmp_path), 'PY': sys.executable}
+           'OUT_ROOT': str(tmp_path), 'PY': sys.executable,
+           'SWITCH_DRIVER': 'src/selection_switch_gpu.py'}
     result = subprocess.run(['bash', '-c', script], env=env, cwd=tmp_path,
                             capture_output=True, text=True, check=False, timeout=5)
     assert result.returncode == 80, result.stdout + result.stderr
