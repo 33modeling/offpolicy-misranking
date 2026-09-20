@@ -10,6 +10,7 @@ import pytest
 
 import selection_gate as core
 import selection_switch as rule
+import net_gain_gate as net
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -31,7 +32,7 @@ def branch(root, seed, step, arm="random_reduced"):
     return root / f"states/s{seed}-t{step}/points/view-{step}" / arm
 
 
-def result(directory, step, schema=rule.SCHEMA):
+def result(directory, step, schema=net.SCHEMA):
     core.atomic_json(directory / "result.json", {"schema": schema, "complete": True, "completed_steps": step})
     core.atomic_json(directory / "result.sha256.json", {
         "sha256": hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()})

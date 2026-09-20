@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import selection_gate as core
 import selection_switch as rule
+import net_gain_gate as net
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _node_view as node_view
@@ -251,7 +252,7 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
             elif kind == "branch":
                 receipt_path = directory / "result.sha256.json"
                 receipt = read(receipt_path)
-                if result.get("complete") is not True or result.get("schema") != rule.SCHEMA:
+                if result.get("complete") is not True or result.get("schema") != net.SCHEMA:
                     task.update(status="INVALID", reason="result completion flag or schema invalid")
                 elif not receipt_path.exists():
                     task.update(status="SAVING", reason="result receipt pending")

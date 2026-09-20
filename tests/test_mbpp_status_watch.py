@@ -32,7 +32,7 @@ if len(rows) == 1 and os.environ.get("TEST_COMPLETE_BRANCH"):
     progress["state"] = "finished"
     (branch / "progress.json").write_text(json.dumps(progress))
     result = branch / "result.json"
-    result.write_text(json.dumps({"schema": schema, "complete": True}))
+    result.write_text(json.dumps({"schema": "offpolicy-net-gain-gate/v3-1", "complete": True}))
     digest = hashlib.sha256(result.read_bytes()).hexdigest()
     (branch / "result.sha256.json").write_text(json.dumps({"sha256": digest}))
     (branch / "curve.json").write_text(json.dumps({"schema": schema, "result_sha256": digest, "points": {"25": {"reward": .1}}}))

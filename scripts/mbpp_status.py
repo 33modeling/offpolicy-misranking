@@ -110,11 +110,27 @@ def counts(suite):
     # Its planned slots remain visible, but are explicitly unverified.
     unknown = max(0, planned - len(branches))
     states["WAIT"] += unknown
+    executing = any(active(task) or task.get('task_lease_held') for task in tasks)
+    shared_pending = any(task.get('kind') == 'prefix' and display_state(task, directories) != 'DONE'
+                         for task in tasks)
+    progress = f"{100 * states['DONE'] / planned if planned else 0:.1f}%"
+    if planned and states['DONE'] == planned:
+        if executing:
+            progress = 'RUN'
+        elif shared_pending:
+            progress = 'WAIT'
     return {"planned": planned, "done": states["DONE"], "remaining": planned - states["DONE"],
             "saved_done": sum(task['status'] == 'DONE' for task in branches.values()),
             "recovered": sum(bool(task.get("posthoc_evaluation_saved")) and task["status"] != "DONE"
                              for task in branches.values()),
-            "unknown": unknown, "states": states, "progress": f"{100 * states['DONE'] / planned if planned else 0:.1f}%"}
+            "unknown": unknown, "states": states, "progress": progress}
+
+
+def displayed_counts(suite, data):
+    count = counts(suite)
+    if count['progress'] == '100.0%' and any(active(task) for task in data.get('operational_tasks', [])):
+        count['progress'] = 'RUN'
+    return count
 
 
 def columns(text):
@@ -449,7 +465,7 @@ def render(data, *, width=120, all_tasks=False):
     names = data.get("arm_names", ARM_NAMES)
     subject = data.get("subject", "MBPP")
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    totals = [counts(suite) for suite in data["suites"]]
+    totals = [displayed_counts(suite, data) for suite in data["suites"]]
     planned = sum(item["planned"] for item in totals)
     done = sum(item["done"] for item in totals)
     unknown = sum(item["unknown"] for item in totals)
@@ -467,6 +483,8 @@ def render(data, *, width=120, all_tasks=False):
     selected_work = [entry for suite in data['suites'] for entry in current_work(suite)]
     if data.get('operational_tasks'):
         selected_work += [(task, True) for task in data['operational_tasks'] if active(task)]
+    if selected_work or any(task.get('task_lease_held') for suite in data['suites'] for task in suite.get('tasks', [])):
+        lines.append('전체 실행 상태: RUN (진행 중인 작업 있음; 전체 종료 아님)')
     live_hosts = {(task.get('host'), task.get('worker_id')) for task, _ in selected_work if task.get('host')}
     owner_label = '작업자' if any(worker for _, worker in live_hosts) else '작업 노드'
     lines.append(f"현재 실행: 분기 RUN {aggregate['RUN']}개 | 공통 단계 RUN {sum(shared for _, shared in selected_work)}개"
@@ -488,7 +506,7 @@ def render(data, *, width=120, all_tasks=False):
         name = suite_label(suite)
         notices += [f"{name}: {item.get('path', '?')}: {item.get('error', '')}"
                     for item in suite.get('notices', [])]
-        count = counts(suite)
+        count = displayed_counts(suite, data)
         states = count["states"]
         condition = ("학습 한도 공통; 선택 비용 별도 기록"
                      if suite.get("protocol", {}).get("accounting") == "matched" else
@@ -537,7 +555,7 @@ def render(data, *, width=120, all_tasks=False):
                    rows, [26, 4, 4, 4, 8, 5, 4, 3, width - 74])
     for suite in data["suites"]:
         lines += ["", f"FULL STATUS — {suite_label(suite)}"]
-        count = counts(suite)
+        count = displayed_counts(suite, data)
         lines.append(f"계획 {count['planned']}개 | 완료 확인 {count['done']}/{count['planned']}"
                      f" | 남음 {count['remaining']}개 | {count['progress']}")
         if count["recovered"]:

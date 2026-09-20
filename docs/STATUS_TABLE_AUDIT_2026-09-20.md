@@ -94,3 +94,34 @@ RLOO nested-curve case (RLOO has no such meter layout). After correcting the
 label regression and updating the worker-count heading expectation, the
 focused suite passed 135 tests with that one skip; the switch/RLOO/node/watch
 suite passed another 149 tests. Bash syntax and git diff checks passed.
+
+## Publisher schema and RLOO completion follow-up
+
+Pair and switch status incorrectly required the switch protocol schema on
+branch result.json. The actual net_gain_gate_gpu.run_arm publisher writes
+offpolicy-net-gain-gate/v3-1 results, while curve.json and prefix certificates
+use offpolicy-selected-prefix-switch/v1. Rejecting that real result format
+can undercount completed Pair and MBPP branches. Status now checks each
+artifact against its actual publisher's schema and retains receipt/hash
+validation. The old tests repeated the wrong schema; their fixtures have
+been corrected, and an additional regression calls the real CPU publication
+path with model/GPU operations stubbed, then feeds its output to both status
+readers. Swapping result/curve schemas or corrupting the receipt still fails.
+
+RLOO's nine continuation results are not proof that shared baseline evaluation
+or admission has stopped. Progress must not show 100% while that suite's
+shared work or the root admission work is running. An active branch still
+counts as RUN, with saved publication counted separately. With all branch
+results saved but shared work pending, Progress is RUN or WAIT instead of
+100%; the top line explicitly says the overall execution has not stopped.
+One completed drift condition is not reclassified merely because another
+independent drift condition is running.
+
+Tests now cover all 42 Pair result slots using the actual result schema and
+three prepared RLOO seeds with all nine results saved, plus active branch,
+baseline, admission, and fully stopped cases. The focused run passed 200
+tests with one inapplicable RLOO nested-curve case skipped. Server-specific
+Pair 1/42 and RLOO output still require the user's current evidence; these
+local tests do not establish how many GPU runs actually completed remotely.
+After updating the six-suite fixture to the real publisher's result schema,
+the additional dashboard/progress/controller regressions passed 113 tests.

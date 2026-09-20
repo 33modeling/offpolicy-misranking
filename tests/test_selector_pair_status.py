@@ -37,7 +37,7 @@ def branch(root):
 
 def published(root):
     path = branch(root)
-    core.atomic_json(path / "result.json", {"complete": True, "schema": status.display.switch_status.rule.SCHEMA})
+    core.atomic_json(path / "result.json", {"complete": True, "schema": gpu.switch.runtime.net.SCHEMA})
     value = status.digest(path / "result.json")
     core.atomic_json(path / "result.sha256.json", {"sha256": value})
     core.atomic_json(path / "curve.json", {"schema": status.display.switch_status.rule.SCHEMA,

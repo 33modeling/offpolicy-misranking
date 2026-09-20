@@ -89,7 +89,7 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
         task.update(status="WAIT", reason=error)
     elif result or receipt or curve:
         try:
-            if (result.get("complete") is not True or result.get("schema") != display.switch_status.rule.SCHEMA
+            if (result.get("complete") is not True or result.get("schema") != display.switch_status.net.SCHEMA
                     or receipt.get("sha256") != digest(directory / "result.json")):
                 raise ValueError("결과·발행 영수증 검증 필요")
             task["training_published"] = True
