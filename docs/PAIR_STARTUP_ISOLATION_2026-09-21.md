@@ -40,7 +40,23 @@ cost is changed. Existing workers are not restarted by this patch.
 
 ## Bash Usage
 
-From the experiment checkout, after updating it, add a worker on a free node:
+From the existing experiment checkout, retrieve the standalone wrapper without
+replacing source files that running workers may still read:
+
+```bash
+(
+  set -e
+  git fetch origin master
+  START=$(mktemp /tmp/selector-start.XXXXXX.sh)
+  trap 'rm -f "$START"' EXIT
+  git show origin/master:scripts/restart_selector_pair.sh > "$START"
+  bash "$START"
+)
+```
+
+This does not run `git pull`, reset the checkout, or change live source files.
+The wrapper stages its exact reviewed runtime separately. When the checkout
+already contains this fix, the equivalent command is:
 
 ```bash
 bash scripts/restart_selector_pair.sh
@@ -73,3 +89,20 @@ leftover recovery, and preservation of other experiment roots. Handoff tests
 cover default non-interruption and explicit-only local restart. Deployment
 tests compare the staged safety helpers against the current maintained files.
 No remote GPU task is launched or signalled by this validation.
+
+## Validation Results
+
+- Focused cleanup, local/shared ownership and helper tests: 45 passed.
+- Updated cleanup and explicit/default handoff tests: 108 passed.
+- Pair/RLOO, process cleanup and shutdown regression sweep: 835 passed,
+  8 skipped; one staging equality test correctly rejected the old runtime pin.
+  The pin was then updated to `c0c38d62e893fdcf25920d5a70d3149a06b5450f`.
+- Final deployment, handoff, cleanup and node-ownership suite: 152 passed,
+  including the previously failing staging equality test and comparisons of
+  both startup safety helpers inside the staged runtime.
+- Eight CUDA-dependent shutdown tests were skipped because no explicit test
+  GPU was assigned. Remote GPU behavior is not claimed as verified.
+- Bash syntax, generated-wrapper synchronization, and diff checks passed.
+
+The new runtime is staged alongside existing versions. No live runtime cache
+is overwritten, and the existing launcher's source checkout need not change.

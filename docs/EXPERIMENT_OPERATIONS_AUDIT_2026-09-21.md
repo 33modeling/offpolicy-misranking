@@ -180,7 +180,7 @@ cd "$FIX"
 Then run the command for that allocation's experiment, not both on one node:
 
 ```bash
-# Pair allocation that is waiting, not currently training or evaluating:
+# Add a Pair worker without stopping an existing controller:
 bash scripts/restart_selector_pair.sh
 ```
 
@@ -189,8 +189,10 @@ bash scripts/restart_selector_pair.sh
 EXPERIMENTS_AUTO_PULL=0 bash scripts/run_mbpp_repair.sh restart
 ```
 
-The Pair launcher stages the pinned runtime and validates local ownership
-before handoff. The MBPP command explicitly restarts only its allocation's
+The Pair launcher stages the pinned runtime; its default invocation no longer
+stops an existing controller. An intentional local handoff requires
+`--restart-current`; see `PAIR_STARTUP_ISOLATION_2026-09-21.md`.
+The MBPP command explicitly restarts only its allocation's
 controller; automatic checkout updates are disabled in this detached worktree.
 Do not restart the three active MBPP curves or two active Pair tasks identified
 in this snapshot just to update idle workers. Remote progress after deployment
