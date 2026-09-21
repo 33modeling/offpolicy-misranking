@@ -102,7 +102,10 @@ def live_identity(receipt, work, suite, current, *, proc=Path('/proc'), inventor
                                            'is ambiguous; no new controller started')
                     if devices is False:
                         continue
-                    if previous.get('EXPERIMENTS_MBPP_SUITE') != suite:
+                    previous_suite = previous.get('EXPERIMENTS_MBPP_SUITE')
+                    # The default "all" queue contains only quality. The repair
+                    # wrapper spells it "quality"; both own the same allocation.
+                    if previous_suite != suite and {previous_suite, suite} != {'all', 'quality'}:
                         raise RuntimeError('another MBPP suite already owns these GPUs; '
                                            'existing work preserved')
                     return (node, owner['pid']) if with_pid else node

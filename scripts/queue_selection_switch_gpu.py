@@ -172,4 +172,6 @@ def run():
 if __name__ == "__main__":
     if sys.argv[1:2] != ["run"]:
         raise SystemExit("queue worker accepts only run; use the original driver for other commands")
+    from light_selection_gate_gpu import install_signal_handlers
+    install_signal_handlers()
     sys.exit(run())

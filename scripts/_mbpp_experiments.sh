@@ -36,6 +36,25 @@ mbpp_queue_init() {
   SWITCH_MBPP_QUALITY_ROOT=$(realpath -m "${SWITCH_MBPP_QUALITY_ROOT:-$OM_WORK/runs/selection-switch-mbpp-quality-v1}")
   SWITCH_MBPP_DIFFICULTY_ROOT=$(realpath -m "${SWITCH_MBPP_DIFFICULTY_ROOT:-$OM_WORK/runs/selection-switch-mbpp-difficulty-v1}")
   SWITCH_MBPP_LONG_ROOT=$(realpath -m "${SWITCH_MBPP_LONG_ROOT:-$OM_WORK/runs/selection-switch-mbpp-long-v1}")
+  # The default viewer already follows a certified repair. New/default queue
+  # entries must choose the same existing run, including an in-place reload.
+  # Explicit suites and nondefault roots remain an operator's choice.
+  if [ "${EXPERIMENTS_MBPP_SUITE:-all}" = all ] && \
+      { [ "${MODE:-}" = run ] || [ "${MODE:-}" = restart ]; } && \
+      [ "$SWITCH_MBPP_QUALITY_ROOT" = "$(realpath -m "$OM_WORK/runs/selection-switch-mbpp-quality-v1")" ]; then
+    local candidate=${MBPP_REPAIR_ROOT:-$OM_WORK/runs/selection-switch-mbpp-quality-repair-v1} selected python
+    if [ -f "$candidate/repair.json" ]; then
+      python=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
+      [ -x "$python" ] || python=python3
+      selected=$(CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 "$python" \
+        scripts/mbpp_queue_readiness.py --root "$candidate" --repair-source "$SWITCH_MBPP_QUALITY_ROOT") || return $?
+      if [ -n "$selected" ]; then
+        printf '[mbpp-route] default queue uses prepared repair=%s; original preserved=%s\n' \
+          "$selected" "$SWITCH_MBPP_QUALITY_ROOT"
+        SWITCH_MBPP_QUALITY_ROOT=$selected
+      fi
+    fi
+  fi
   local root other work
   work=$(realpath -m "$OM_WORK")
   local roots=("$SWITCH_MBPP_ROOT" "$SWITCH_MBPP_QUALITY_ROOT" "$SWITCH_MBPP_DIFFICULTY_ROOT" "$SWITCH_MBPP_LONG_ROOT")

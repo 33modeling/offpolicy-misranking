@@ -1,6 +1,7 @@
 """Real node controllers with a CPU-only leased worker; no physical GPU access."""
 
 import importlib.util
+import hashlib
 import json
 import os
 import shutil
@@ -204,6 +205,79 @@ def events(work):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
+def default_repair(work):
+    source = work / 'runs/selection-switch-mbpp-quality-v1'
+    repair = work / 'runs/selection-switch-mbpp-quality-repair-v1'
+    for root in (source, repair):
+        publish_prefixes(root)
+        (root / 'switch.json').write_text(json.dumps({'dataset': 'mbpp'}))
+    (repair / 'repair.json').write_text(json.dumps({
+        'schema': 'mbpp-repair/v1', 'source_root': str(source), 'root': str(repair),
+        'source_switch_sha256': hashlib.sha256((source / 'switch.json').read_bytes()).hexdigest()}))
+    scripts = work.parent / 'repo/scripts'
+    (scripts / 'mbpp_queue_readiness.py').write_text(
+        f'import runpy,sys\nsys.path.insert(0, {str(ROOT / "scripts")!r})\n'
+        'if "--repair-source" in sys.argv:\n'
+        f'    runpy.run_path({str(ROOT / "scripts/mbpp_queue_readiness.py")!r}, run_name="__main__")\n')
+    (scripts / 'mbpp_repair_runtime.py').write_text(
+        'import os,sys\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'assert sys.argv[1:] == ["check-code", "--root", os.environ["SWITCH_MBPP_QUALITY_ROOT"]]\n'
+        'print("[repair-check] strict frozen repair preflight", flush=True)\n'
+        'sys.exit(int(os.environ.get("TEST_REPAIR_INVALID", "0")))\n')
+    return source, repair
+
+
+@pytest.mark.parametrize('invalid_contract', [False, True])
+def test_default_controller_selects_repair_but_still_requires_strict_preflight(cluster, invalid_contract):
+    work, start = cluster
+    source, repair = default_repair(work)
+    before = {path: path.read_bytes() for path in source.rglob('*') if path.is_file()}
+    process, log = start('node-default-repair', TEST_REPAIR_INVALID='2' if invalid_contract else '0')
+    assert process.wait(timeout=20) == (81 if invalid_contract else 0), log.read_text()
+    assert '[mbpp-route]' in log.read_text() and '[repair-check]' in log.read_text()
+    assert before == {path: path.read_bytes() for path in source.rglob('*') if path.is_file()}
+    if invalid_contract:
+        assert events(work) == []
+        assert '[blocked] MBPP repair contract validation failed' in log.read_text()
+    else:
+        assert {row['root'] for row in events(work)} == {repair.name}
+        assert len([row for row in events(work) if row['kind'] == 'finished']) == 3
+
+
+def test_default_repair_routing_does_not_stop_an_existing_original_controller(cluster):
+    work, start = cluster
+    original, original_log = start('node-original', TEST_BLOCK_NODE='node-original')
+    wait_for(lambda: (work / 'node-blocked').exists())
+    source, _ = default_repair(work)
+    before = {path: path.read_bytes() for path in source.rglob('*') if path.is_file()}
+    repeated, log = start('node-original')
+    assert repeated.wait(timeout=10) == 0, log.read_text()
+    assert '[already running] MBPP controller' in log.read_text()
+    assert original.poll() is None, original_log.read_text()
+    assert [row['kind'] for row in events(work)] == ['pass', 'claim']
+    assert before == {path: path.read_bytes() for path in source.rglob('*') if path.is_file()}
+
+
+def test_invalid_default_repair_cannot_stop_controller_or_recover_costs(cluster):
+    work, start = cluster
+    original, original_log = start('node-original', TEST_BLOCK_NODE='node-original')
+    wait_for(lambda: (work / 'node-blocked').exists())
+    source, repair = default_repair(work)
+    scripts = work.parent / 'repo/scripts'
+    marker = work / 'recovery-called'
+    (scripts / 'recover_selection_switch_cost.py').write_text(
+        f'from pathlib import Path\nPath({str(marker)!r}).touch()\n')
+    before = {path: path.read_bytes() for root in (source, repair)
+              for path in root.rglob('*') if path.is_file()}
+    restart, log = start('node-original', mode='restart', TEST_REPAIR_INVALID='2')
+    assert restart.wait(timeout=10) == 81, log.read_text()
+    assert original.poll() is None, original_log.read_text()
+    assert not marker.exists()
+    assert '[stop]' not in log.read_text()
+    assert before == {path: path.read_bytes() for root in (source, repair)
+                      for path in root.rglob('*') if path.is_file()}
+
+
 @pytest.mark.parametrize('fresh_exists', [False, True])
 def test_prepared_repair_uses_its_own_prefixes_without_fresh_or_new_input_checks(cluster, fresh_exists):
     work, start = cluster
@@ -244,7 +318,7 @@ def test_invalid_repair_exits_before_gpu_admission_without_holding(cluster):
     process, log = start('node-repair-invalid', suite='quality', SWITCH_MBPP_QUALITY_ROOT=str(repair))
     assert process.wait(timeout=10) == 81, log.read_text()
     text = log.read_text()
-    assert 'snapshot changed' in text and 'repair contract validation blocked' in text
+    assert 'snapshot changed' in text and 'repair contract validation failed' in text
     assert '[holding]' not in text and '[hold]' not in text
     assert events(work) == []
 

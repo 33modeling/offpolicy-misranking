@@ -463,6 +463,15 @@ if { [ "$MODE" = run ] || [ "$MODE" = restart ]; } && [ -n "${EXPERIMENTS_MBPP_S
   fi
   unset EXPERIMENTS_START_PULL_DONE
 fi
+# A default queue may now select an existing repair directly. Validate its
+# immutable contract before stopping a controller or recovering any cost event.
+if { [ "$MODE" = run ] || [ "$MODE" = restart ]; } && \
+    [ -n "${EXPERIMENTS_MBPP_SUITE:-}" ] && [ -f "$SWITCH_ROOT/repair.json" ]; then
+  if ! mbpp_queue_check "$EXPERIMENTS_MBPP_SUITE"; then
+    echo '[blocked] MBPP repair contract validation failed before restart or recovery; existing controller and costs preserved [mbpp]' >&2
+    exit 81
+  fi
+fi
 if [ "$MODE" = restart ]; then
   stop_node
   if launcher_pid_alive && { [ -z "${AUTO_RELOAD_PID:-}" ] || [ "$NODE_LAUNCHER_PID" = "$AUTO_RELOAD_PID" ]; }; then

@@ -121,10 +121,19 @@ def test_overlapping_gpu_allocations_fail_closed(local):
         discover(local, inventory=lambda: {str(i): f'GPU-{i}' for i in range(4)})
 
 
-def test_another_suite_is_not_silently_adopted(local):
-    envfile(local['proc'] / '123/environ', {**local['env'], 'EXPERIMENTS_MBPP_SUITE': 'quality'})
+@pytest.mark.parametrize('suite', ['fresh', 'difficulty', 'long'])
+def test_another_suite_is_not_silently_adopted(local, suite):
+    envfile(local['proc'] / '123/environ', {**local['env'], 'EXPERIMENTS_MBPP_SUITE': suite})
     with pytest.raises(RuntimeError, match='another MBPP suite'):
         discover(local)
+
+
+@pytest.mark.parametrize('previous,current', [('all', 'quality'), ('quality', 'all')])
+def test_default_quality_alias_recovers_same_verified_controller(local, previous, current):
+    envfile(local['proc'] / '123/environ', {**local['env'], 'EXPERIMENTS_MBPP_SUITE': previous})
+    result = identity.live_identity(local['receipt'], local['work'], current, local['env'],
+                                    proc=local['proc'], with_pid=True)
+    assert result == ('same-host-gabcd', 123)
 
 
 def test_cli_multiple_live_guards_are_blocked(local, monkeypatch, capsys):
@@ -149,7 +158,8 @@ def test_another_user_controller_is_not_adopted(local, monkeypatch):
     assert discover(local) is None
 
 
-def test_real_guard_and_worker_survive_rediscovery_without_pid_file(tmp_path):
+@pytest.mark.parametrize('requested_suite', ['all', 'quality'])
+def test_real_guard_and_worker_survive_rediscovery_without_pid_file(tmp_path, requested_suite):
     work = tmp_path / 'work'
     logs = work / 'runs/experiments/logs'
     logs.mkdir(parents=True)
@@ -181,6 +191,7 @@ def test_real_guard_and_worker_survive_rediscovery_without_pid_file(tmp_path):
         assert not list(logs.glob('*.pid'))
         result = subprocess.run(['bash', str(ROOT / 'scripts/run_experiments.sh'), 'logs'],
                                 cwd=ROOT, env={**env, 'CUDA_VISIBLE_DEVICES': '1,0',
+                                               'EXPERIMENTS_MBPP_SUITE': requested_suite,
                                                'EXPERIMENTS_NODE_ID': 'same-host-gffff'},
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, result.stdout + result.stderr

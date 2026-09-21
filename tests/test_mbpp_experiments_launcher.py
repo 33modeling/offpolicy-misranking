@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import shutil
@@ -231,6 +232,88 @@ def test_lifecycle_is_delegated_without_input_preflight_after_required_storage_a
         assert json.loads(audit.read_text()) == ["all"]
     else:
         assert not audit.exists()
+
+
+def prepared_repair(launcher, *, override=False):
+    from selection_switch import SCHEMA
+
+    _, env = launcher
+    work = Path(env['OM_WORK'])
+    source = work / 'runs/selection-switch-mbpp-quality-v1'
+    repair = work / 'runs' / ('authorized-repair' if override else 'selection-switch-mbpp-quality-repair-v1')
+    write_json(source / 'switch.json', {'schema': SCHEMA, 'dataset': 'mbpp',
+                                      'gate': 'convergence'})
+    repair.mkdir(parents=True)
+    (repair / 'switch.json').write_bytes((source / 'switch.json').read_bytes())
+    write_json(repair / 'repair.json', {
+        'schema': 'mbpp-repair/v1', 'root': str(repair), 'source_root': str(source),
+        'source_switch_sha256': hashlib.sha256((source / 'switch.json').read_bytes()).hexdigest()})
+    scripts = Path(env['CHECK_LOG']).parent / 'repo with spaces/scripts'
+    (scripts / 'mbpp_queue_readiness.py').write_text(
+        f'import runpy,sys\nsys.path.insert(0, {str(ROOT / "scripts")!r})\n'
+        f'runpy.run_path({str(ROOT / "scripts/mbpp_queue_readiness.py")!r}, run_name="__main__")\n')
+    return source, repair
+
+
+@pytest.mark.parametrize('mode', ['run', 'restart'])
+@pytest.mark.parametrize('override', [False, True])
+@pytest.mark.parametrize('inherited_default', [False, True])
+def test_default_start_and_status_choose_same_existing_repair(launcher, mode, override, inherited_default):
+    import mbpp_status
+
+    run, env = launcher
+    source, repair = prepared_repair(launcher, override=override)
+    overrides = {'MBPP_REPAIR_ROOT': str(repair)} if override else {}
+    if inherited_default:
+        overrides['SWITCH_MBPP_QUALITY_ROOT'] = str(source)
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+              for path in source.parent.rglob('*') if path.is_file()}
+    result = run(mode, **overrides)
+    assert result.returncode == 0, result.stdout + result.stderr
+    call = json.loads(Path(env['CALLS']).read_text())
+    assert call['env']['SWITCH_ROOT'] == call['env']['SWITCH_MBPP_QUALITY_ROOT'] == str(repair)
+    assert call['args'] == [mode]
+    assert 'original preserved=' + str(source) in result.stdout
+    displayed = mbpp_status.snapshot([source], repair_root=repair)
+    assert displayed['suites'][0]['root'] == str(repair)
+    assert displayed['repair_source'] == str(source)
+    assert [suite['root'] for suite in displayed['retained_suites']] == [str(source)]
+    assert sum(task['kind'] == 'branch' for task in displayed['suites'][0]['tasks']) == 48
+    assert '1 condition(s), 48 continuation branches' in run('plan', **overrides).stdout
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                      for path in source.parent.rglob('*') if path.is_file()}
+
+
+@pytest.mark.parametrize('suite,custom', [('quality', False), ('all', True)])
+def test_explicit_quality_or_custom_root_does_not_follow_default_repair(launcher, suite, custom):
+    run, env = launcher
+    source, _ = prepared_repair(launcher)
+    selected = source.parent / 'custom-quality' if custom else source
+    overrides = {'SWITCH_MBPP_QUALITY_ROOT': str(selected)} if custom else {}
+    result = run('restart', suite, **overrides)
+    assert result.returncode == 0, result.stdout + result.stderr
+    call = json.loads(Path(env['CALLS']).read_text())
+    assert call['env']['SWITCH_ROOT'] == str(selected)
+    assert '[mbpp-route]' not in result.stdout
+
+
+@pytest.mark.parametrize('problem', ['schema', 'source', 'hash', 'manifest', 'missing'])
+def test_default_start_never_selects_an_unverified_repair(launcher, problem):
+    run, env = launcher
+    source, repair = prepared_repair(launcher)
+    receipt = json.loads((repair / 'repair.json').read_text())
+    if problem in {'schema', 'source', 'hash'}:
+        key = {'schema': 'schema', 'source': 'source_root', 'hash': 'source_switch_sha256'}[problem]
+        receipt[key] = '/wrong' if problem == 'source' else 'wrong'
+        write_json(repair / 'repair.json', receipt)
+    elif problem == 'manifest':
+        write_json(repair / 'switch.json', {'dataset': 'math500'})
+    else:
+        (repair / 'repair.json').unlink()
+    result = run('run')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(Path(env['CALLS']).read_text())['env']['SWITCH_ROOT'] == str(source)
+    assert '[mbpp-route]' not in result.stdout
 
 
 @pytest.mark.parametrize("mode", ["run", "restart"])

@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import importlib.util
 import json
@@ -34,8 +35,10 @@ root = Path(os.environ['OUT_ROOT'])
 source = Path(science.__file__)
 frozen = hashlib.sha256(source.read_bytes()).hexdigest()
 root.mkdir(parents=True, exist_ok=True)
-(root / 'started.json').write_text(json.dumps({'file': str(source), 'hash': frozen,
+started = root / f'.started-{os.getpid()}.json'
+started.write_text(json.dumps({'file': str(source), 'hash': frozen,
     'value': science.VALUE, 'repo': os.environ['OM_REPO'], 'args': sys.argv[1:]}))
+started.replace(root / 'started.json')
 deadline = time.monotonic() + 15
 while not (root / 'continue').exists():
     if time.monotonic() >= deadline: raise RuntimeError('fixture timeout')
@@ -76,6 +79,12 @@ def test_shared_queue_entrypoint_is_pinned_and_yields_live_peer_waits(tmp_path):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     (repo / "scripts/mbpp_budget_recovery.py").write_text(
         'def required(*args):\n    raise AssertionError("peer-wait fixture must not recover budgets")\n')
+    source = (ROOT / "src/light_selection_gate_gpu.py").read_text()
+    handler = next(node for node in ast.parse(source).body
+                   if isinstance(node, ast.FunctionDef) and node.name == "install_signal_handlers")
+    # Keep the real shared handler without importing unrelated scientific modules.
+    (repo / "src/light_selection_gate_gpu.py").write_text(
+        "import signal\n\n" + ast.get_source_segment(source, handler) + "\n")
     (repo / "scripts/setup_env.sh").write_text('export DATASETS_DIR="$OM_WORK/data"\n')
     (repo / "scripts/_e5_node.sh").write_text('e5_acquire_node() { return 0; }\n')
     (repo / "src/bootstrap_math_verify.py").write_text("print('/unused-test-dependencies')\n")
@@ -86,7 +95,7 @@ assert command[1] == 'scripts/queue_selection_switch_gpu.py'
 os.execvpe(command[0], command, os.environ)
 ''')
     (repo / "src/selection_switch_gpu.py").write_text('''
-import json, os, sys
+import json, os, signal, sys
 from pathlib import Path
 def wait_for_peers(*args, **kwargs):
     raise AssertionError('the node queue must own the wait')
@@ -102,6 +111,7 @@ def main():
         root.mkdir(parents=True, exist_ok=True)
         (root / 'switch.json').write_text('{}')
     elif sys.argv[1] == 'run':
+        assert callable(signal.getsignal(signal.SIGTERM))
         assert not wait_for_peers([{'active': True}], last_progress=0, idle_timeout=600)
         (root / 'queue.json').write_text(json.dumps({'repo': os.environ['OM_REPO'], 'module': __file__}))
     return 0

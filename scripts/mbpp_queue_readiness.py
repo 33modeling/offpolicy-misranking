@@ -100,7 +100,15 @@ def review_blockers(data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
+    parser.add_argument('--repair-source', type=Path,
+                        help='print only a verified existing repair root; no preparation or worker checks')
     args = parser.parse_args()
+    if args.repair_source is not None:
+        from mbpp_status import verified_repair_root
+        repair = verified_repair_root(args.repair_source, args.root)
+        if repair is not None:
+            print(repair)
+        return 0
     data = status.snapshot(args.root, local_gpus=False)
     reviewed = review_blockers(data)
     if reviewed is None:

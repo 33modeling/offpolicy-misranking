@@ -203,3 +203,54 @@ status and partial results exports. The skips include eight opt-in CUDA cases;
 no remote GPU execution is claimed. There were 47 existing Python fork/thread
 deprecation warnings, no test failures. Report:
 `/tmp/experiment-operations-new-why-20260921.xml`.
+
+## MBPP Follow-up After Partial Pair Recovery
+
+The user confirmed partial Pair recovery but reported that MBPP was unchanged.
+No newer remote diagnostic had been copied at this point. The previous upload
+actually shows increasing rollout counts for all three active MBPP curves,
+not merely a periodic supervisor heartbeat. That older snapshot cannot establish
+the cause of the user's current server state.
+
+Three separate defects were reproduced and corrected without changing frozen
+scientific code, budgets, saved measurements, or the Pair runtime:
+
+- The MBPP queue adapter omitted the frozen driver's signal-handler setup.
+  A real CPU meter receiving SIGTERM left only a cost start record and a live
+  detached child holding its shard lease. The adapter now installs the same
+  signal handlers as the original driver. SIGTERM and SIGINT regressions verify
+  a matching atomic finish receipt, owned child termination, and release of task,
+  cost and shard leases without deleting or replacing their lock files.
+- Default MBPP status selected a verified prepared repair, while default
+  `run`/`restart` still selected the original quality root. Thus an idle node
+  could run the old rc=80 path while the viewer showed repair work. Default
+  startup now chooses the same already-prepared repair. It does not create a
+  repair, authorize additional retries, or relax runtime validation. Explicit
+  `quality` and custom quality roots retain their existing meaning; an ordinary
+  repeated `run` still does not interrupt a live controller.
+  Strict repair validation now also runs before an explicit controller restart
+  or any cost recovery, not merely before GPU admission. Invalid repair
+  metadata leaves the existing controller and every cost ledger untouched.
+- Allocation identity treated `all` and `quality` as different suites although
+  the default `all` plan contains only `quality`. This blocked switching between
+  the normal and repair launchers on the same verified allocation. Only these
+  two aliases are now equivalent; process identity, random owner token, GPU
+  allocation, namespace, user and work-directory checks remain mandatory.
+
+After fetching the new master into a separate worktree as above, an **idle MBPP
+allocation** can apply the fix using the default launcher:
+
+```bash
+EXPERIMENTS_PULL=0 EXPERIMENTS_AUTO_PULL=0 bash scripts/run_mbpp_experiments.sh restart
+```
+
+The launch log prints `[mbpp-route]` when it selects the verified repair.
+Running evaluations on other allocations must be left alone. A new read-only
+snapshot, when needed, remains one TXT from `bash scripts/check_mbpp_pair.sh`.
+
+Final MBPP follow-up regression: **2,283 passed, 10 skipped** in 97.84s,
+including actual Bash routing, actual signal/child/flock cleanup, preservation
+of a live controller on an invalid repair, and Pair/RLOO/status/results checks.
+Eight CUDA checks remain opt-in; remote GPU resumption was not verified locally.
+The 47 fork/thread deprecation warnings are unchanged. Report:
+`/tmp/mbpp-resume-followup-20260921.xml`.
