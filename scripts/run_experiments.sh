@@ -308,7 +308,7 @@ siblings_complete() {
   return 0
 }
 # Any branch claimable right now in a root this node serves (own root first, then the
-# siblings it helps): READY or a dependency-free retryable failure/stale receipt.
+# siblings it helps): READY, retryable, or a validated pending MBPP gate fit.
 claimable_work() {
   local root
   local roots=("$SWITCH_ROOT") siblings=()
@@ -323,7 +323,14 @@ claimable_work() {
     fi
     [ -f "$root/switch.json" ] || continue
     if CUDA_VISIBLE_DEVICES="" "$PY" scripts/selection_switch_status.py --root "$root" --json 2>/dev/null \
-        | "$PY" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if any(t.get("status")=="READY" or t.get("retryable") is True for t in d.get("tasks",[])) else 1)'; then
+        | CUDA_VISIBLE_DEVICES="" "$PY" -c 'import json,sys
+d=json.load(sys.stdin)
+ready=any(t.get("status")=="READY" or t.get("retryable") is True for t in d.get("tasks",[]))
+if not ready and d.get("protocol",{}).get("dataset")=="mbpp":
+    sys.path.insert(0,"scripts")
+    from mbpp_queue_readiness import gate_fit_claimable
+    ready=gate_fit_claimable(d)
+sys.exit(0 if ready else 1)'; then
       basename "$root"
       return 0
     fi

@@ -254,3 +254,41 @@ of a live controller on an invalid repair, and Pair/RLOO/status/results checks.
 Eight CUDA checks remain opt-in; remote GPU resumption was not verified locally.
 The 47 fork/thread deprecation warnings are unchanged. Report:
 `/tmp/mbpp-resume-followup-20260921.xml`.
+
+## New-node Allocation Follow-up
+
+The user reported no assignment on a new MBPP node and Pair assignments on ten
+nodes but WAIT on subsequent nodes. The available diagnostic still predates
+these reports; current runnable counts and the exact remote blocker remain
+unverified. No active remote worker was stopped during this investigation.
+
+Pair has no ten-worker limit. Its development stage contains eighteen branches;
+after development validation and decision freezing, its test stage contains
+twenty-four branches. These are separate stages, not forty-two simultaneously
+eligible tasks. Real-process CPU queue tests admit all eighteen or twenty-four
+independent branches concurrently. A partially completed stage can have fewer
+eligible branches, but this does not establish the current remote count.
+An additional restart regression preserves eight completed branches with no
+queue receipts and an obsolete RUN worker record, then starts eleven processes.
+Ten distinct processes claim the ten remaining branches; the eleventh waits.
+All finish after release without rewriting saved results or old worker records.
+
+One MBPP scheduling omission was identified: the hold poll recognized READY or
+retryable branch work but not a newly ready gate fit after all development
+results arrived. The regular pass could still fit the gate, so this omission
+delays dispatch until the hold deadline rather than proving a permanent block.
+The MBPP wrapper defaults to a fifteen-second hold; inherited overrides can
+make it longer. The follow-up adds a read-only gate-fit readiness wake-up,
+without bypassing worker validation or claiming peer-owned work.
+
+The remote diagnosis still requires a fresh combined TXT from the affected
+allocation using `bash scripts/check_mbpp_pair.sh`. Do not infer ownership from
+hostname equality or stale timestamps, remove held lock files, or restart the
+ten working Pair allocations to make an idle allocation pass admission.
+
+Verification: the actual Bash gate-fit wake regression failed in its two
+positive cases before the patch and passes all ten cases afterward. The wider
+MBPP/controller/Pair queue suite passes **975 tests** in 47.38s, with 56 Python
+fork/thread deprecation warnings and no failures. Bash syntax and whitespace
+checks pass. Report: `/tmp/new-node-allocation-20260921.xml`. These are local
+CPU/process tests, not proof that either remote allocation issue is resolved.

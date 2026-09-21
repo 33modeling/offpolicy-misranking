@@ -205,6 +205,80 @@ def events(work):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
+@pytest.mark.parametrize('case, expected', [
+    ('ready', 0), ('test_peer', 0), ('missing_dev', 1), ('invalid_dev', 1),
+    ('gate_ready', 1), ('fit_failure', 1), ('fit_held', 1), ('fit_unreadable', 1),
+    ('malformed_registry', 1), ('no_gated_work', 1),
+])
+def test_bash_claimable_work_wakes_only_valid_unowned_gate_fit(tmp_path, case, expected):
+    import fcntl
+    import selection_switch_status as status
+
+    root = tmp_path / 'mbpp root'
+    root.mkdir()
+    (root / 'switch.json').write_text('{}')
+    tasks = [dict(kind='prefix', seed=seed, step=step, status='DONE')
+             for seed in (*status.rule.DEV_SEEDS, *status.rule.TEST_SEEDS)
+             for step in status.rule.STEPS]
+    tasks += [dict(kind='branch', seed=seed, step=step, arm=arm,
+                   status='WAIT' if arm == 'gated' else 'DONE')
+              for seed in (*status.rule.DEV_SEEDS, *status.rule.TEST_SEEDS)
+              for step in status.rule.STEPS
+              for arm in (status.rule.DEV_ARMS if seed in status.rule.DEV_SEEDS else status.rule.TEST_ARMS)]
+    data = dict(root=str(root), prepared=True, protocol={'dataset': 'mbpp', 'gate': 'convergence'},
+                gate_ready=False, development_done=18, tasks=tasks, notices=[])
+    if case == 'test_peer':
+        task = next(t for t in tasks if t['kind'] == 'branch' and t['seed'] in status.rule.TEST_SEEDS
+                    and t['arm'] != 'gated')
+        task.update(status='RUNNING', task_lease_held=True)
+    elif case in {'missing_dev', 'invalid_dev'}:
+        task = next(t for t in tasks if t['kind'] == 'branch' and t['seed'] in status.rule.DEV_SEEDS)
+        task['status'] = 'WAIT' if case == 'missing_dev' else 'INVALID'
+        data['development_done'] = 17
+    elif case == 'gate_ready':
+        data['gate_ready'] = True
+    elif case == 'fit_failure':
+        data['gate_fit_failure'] = 'invalid development result'
+    elif case == 'malformed_registry':
+        tasks.pop(0)
+    elif case == 'no_gated_work':
+        for task in tasks:
+            if task.get('arm') == 'gated':
+                task['status'] = 'DONE'
+    elif case == 'fit_unreadable':
+        (root / '.fit.lock').mkdir()
+    lock = None
+    if case == 'fit_held':
+        lock = (root / '.fit.lock').open('wb')
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    fixture = tmp_path / 'status.json'
+    fixture.write_text(json.dumps(data))
+    python = tmp_path / 'python-status-fixture'
+    python.write_text(
+        f'#!{sys.executable}\nimport os, sys\nfrom pathlib import Path\n'
+        'if sys.argv[1] == "scripts/selection_switch_status.py":\n'
+        '    assert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        f'    print(Path({str(fixture)!r}).read_text())\n'
+        'else:\n'
+        f'    os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n')
+    python.chmod(0o755)
+    source = (ROOT / 'scripts/run_experiments.sh').read_text()
+    function = 'claimable_work() {' + source.split('claimable_work() {', 1)[1].split('\nroot_complete()', 1)[0]
+    before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    try:
+        result = subprocess.run(['bash', '-c', 'mbpp_queue_preparable() { return 1; }\n' + function
+                                 + '\nclaimable_work'], cwd=ROOT, text=True, capture_output=True,
+                                timeout=15, env={**os.environ, 'PY': str(python), 'SWITCH_ROOT': str(root),
+                                'EXPERIMENTS_HELP_SIBLINGS': '0', 'EXPERIMENTS_MBPP_SUITE': 'quality',
+                                'CUDA_VISIBLE_DEVICES': ''})
+        assert result.returncode == expected, result.stdout + result.stderr
+        assert result.stdout.strip() == (root.name if expected == 0 else '')
+        assert before == {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    finally:
+        if lock is not None:
+            lock.close()
+
+
 def default_repair(work):
     source = work / 'runs/selection-switch-mbpp-quality-v1'
     repair = work / 'runs/selection-switch-mbpp-quality-repair-v1'

@@ -91,6 +91,75 @@ def test_every_branch_can_run_concurrently_without_duplicate_work(tmp_path, fake
     assert all(row["verified_branches"] == count and row["state"] == "DONE" for row in workers)
 
 
+def test_saved_states_and_stale_worker_leave_ten_claims_for_eleven_resuming_workers(
+        tmp_path, fake_study, monkeypatch):
+    protocol, calls, states = fake_study
+    saved_states = [(seed, step) for seed in pair.DEV_SEEDS for step in pair.STEPS][:4]
+    for seed, step in saved_states:
+        _, entries = states(tmp_path, seed, step)
+        for _, arm, entry in gpu.queue_branches(entries, seed, "development"):
+            gpu.execute(entry, arm, [])
+        base.bind(tmp_path / "development" / f"s{seed}-t{step}" / "result.json",
+                  gpu.development_row(tmp_path, protocol, seed, step))
+    assert len(calls) == 8 and not list(tmp_path.glob("development/*/queue-branches/*.json"))
+    core.atomic_json(tmp_path / "queue-workers/old-controller.json", {
+        "state": "RUN", "stage": "development", "pid": 99999999,
+        "host": "old-worker", "task": "old-owned-work", "updated": 1})
+    saved = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in tmp_path.rglob("*.json")}
+    ctx = multiprocessing.get_context("fork")
+    started, finished = ctx.Queue(), ctx.Queue()
+    release = ctx.Event()
+    execute = gpu.execute
+
+    def paused(entry, arm, devices):
+        started.put((entry[0].name, entry[2]["config"]["seed"], entry[2]["config"]["drift"], arm, os.getpid()))
+        if not release.wait(25):
+            raise AssertionError("remaining saved-run branches were not assigned concurrently")
+        return execute(entry, arm, devices)
+
+    monkeypatch.setattr(gpu, "execute", paused)
+
+    def worker():
+        try:
+            gpu.distributed_stage(tmp_path, protocol, [], "development", wait_seconds=.02, idle_timeout=30)
+            finished.put(None)
+        except BaseException as exc:
+            finished.put((type(exc).__name__, str(exc)))
+
+    workers = [ctx.Process(target=worker) for _ in range(11)]
+    try:
+        for process in workers:
+            process.start()
+        claims = [started.get(timeout=20) for _ in range(10)]
+        assert len({claim[:4] for claim in claims}) == len({claim[-1] for claim in claims}) == 10
+        unassigned = {process.pid for process in workers} - {claim[-1] for claim in claims}
+        assert len(unassigned) == 1
+        deadline = time.monotonic() + 5
+        while True:
+            records = [core.read(path) for path in tmp_path.glob("queue-workers/*.json")]
+            if any(row.get("pid") in unassigned and row["state"] == "WAIT" for row in records):
+                break
+            assert time.monotonic() < deadline, "eleventh worker did not yield to the ten claimed branches"
+            time.sleep(.01)
+        release.set()
+        outcomes = [finished.get(timeout=25) for _ in workers]
+        assert outcomes == [None] * 11, outcomes
+        for process in workers:
+            process.join(5)
+            assert process.exitcode == 0
+    finally:
+        release.set()
+        for process in workers:
+            if process.is_alive():
+                process.terminate()
+            process.join(5)
+        started.close()
+        finished.close()
+    assert all((path.read_bytes(), path.stat().st_mtime_ns) == value for path, value in saved.items())
+    assert len(list(tmp_path.glob("development/*/result.json"))) == 9
+    assert len(list(tmp_path.glob("development/*/queue-branches/*.json"))) == 10
+
+
 def test_death_after_curve_before_queue_receipt_reuses_saved_work(tmp_path, fake_study, monkeypatch):
     protocol, calls, _ = fake_study
     ctx = multiprocessing.get_context("fork")

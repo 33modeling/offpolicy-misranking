@@ -2,7 +2,10 @@
 
 import argparse
 from collections import Counter
+import fcntl
+import os
 from pathlib import Path
+import stat
 
 import selection_switch_status as status
 from mbpp_storage_audit import policy_resume_blocked
@@ -41,6 +44,38 @@ def registered_branches(data):
             or {(t.get('seed'), t.get('step'), t.get('arm')) for t in branches} != expected):
         return None
     return branches
+
+
+def gate_fit_claimable(data):
+    """Wake the controller for a validated, currently unowned CPU gate fit."""
+    if (not data.get('prepared') or data.get('protocol', {}).get('dataset') != 'mbpp'
+            or data.get('protocol', {}).get('gate') != 'convergence'
+            or data.get('gate_ready') or data.get('gate_fit_failure') or data.get('notices')
+            or data.get('development_done') != 18):
+        return False
+    branches = registered_branches(data)
+    if branches is None or any(
+            task.get('status') != 'DONE' or task.get('task_lease_held')
+            for task in branches if task['seed'] in status.rule.DEV_SEEDS):
+        return False
+    if not any(task['arm'] == 'gated' and task.get('status') == 'WAIT'
+               and not task.get('task_lease_held') for task in branches):
+        return False
+    try:
+        path = Path(data['root']) / '.fit.lock'
+        # Read-only, nonblocking and no symlink following: unknown leases are
+        # not permission to wake. The worker rechecks the lease before fitting.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'rb') as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return False
+            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return False
+    return True
 
 
 def peer_blockers(data):
