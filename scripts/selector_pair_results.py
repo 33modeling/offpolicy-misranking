@@ -164,7 +164,9 @@ def execution_observations(root, measurements):
         try:
             if not path.resolve().is_relative_to(root):
                 raise ValueError('metadata path escapes experiment root')
-            with path.open('rb') as handle:
+            with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK), 'rb') as handle:
+                if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                    raise ValueError('metadata is not a regular file')
                 raw = handle.read(65537)
             if len(raw) > 65536:
                 raise ValueError('metadata exceeds 65536 bytes')
@@ -288,7 +290,12 @@ def read_source(path, root):
         raise ValueError('source path contains a symlink loop') from exc
     if not resolved.is_relative_to(root):
         raise ValueError("source path escapes experiment root")
-    raw = path.read_bytes()
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK), 'rb') as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError('source metadata is not a regular file')
+        raw = handle.read(8 * 1024 * 1024 + 1)
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError('source metadata exceeds 8 MiB read limit')
     def reject_constant(value):
         raise ValueError(f"non-finite JSON constant: {value}")
     def finite_float(value):

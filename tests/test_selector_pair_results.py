@@ -498,6 +498,29 @@ def test_real_cli_exports_zero_paired_states_without_launcher_or_gpu(tmp_path):
     assert data['execution_observations']['planned_branches'] == {'total': 42, 'development': 18, 'test': 24}
 
 
+@pytest.mark.parametrize('filename', ['result.json', 'curve.json', 'pair-attempt.json'])
+def test_fifo_metadata_does_not_hang_or_hide_other_pair_measurements(tmp_path, filename):
+    root = tmp_path / 'run'
+    directory, _, _ = branch_fixture(root)
+    import shutil
+    other = root / 'branches/cached/states/s0-t25/points/view-25/selection_reduced'
+    shutil.copytree(directory, other)
+    path = directory / filename
+    path.unlink(missing_ok=True)
+    os.mkfifo(path)
+    target = tmp_path / 'results.txt'
+    completed = subprocess.run(
+        [sys.executable, str(Path(results.__file__).resolve()), '--root', str(root), '--out', str(target)],
+        capture_output=True, text=True, timeout=5)
+    assert completed.returncode in (0, 2), completed.stderr
+    data = json.loads(target.read_text().split('DATA_JSON\n', 1)[1])
+    cached = next(row for row in data['branch_measurements'] if row['selector_branch'] == 'cached')
+    assert cached['mean_reward'] == .5
+    errors = (data['branch_measurement_errors'] + data['execution_observations']['errors']
+              + [issue for row in data['branch_measurements'] for issue in row['issues']])
+    assert 'not a regular file' in str(errors)
+
+
 def put_metadata(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value))

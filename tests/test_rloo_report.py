@@ -127,6 +127,22 @@ def test_missing_root_is_not_created(tmp_path):
     assert not (tmp_path / "absent").exists()
 
 
+def test_missing_root_replaces_stale_export_with_explicit_error(tmp_path, monkeypatch):
+    target = tmp_path / 'rloo-results.txt'
+    target.write_text('old completed results')
+    root = tmp_path / 'absent'
+    monkeypatch.setattr(sys, 'argv', ['report', '--root', str(root), '--out', str(target)])
+    with pytest.raises(SystemExit) as exc:
+        reporting.main()
+    assert exc.value.code == 1
+    value = json.loads(target.read_text().split('DATA_JSON\n', 1)[1])
+    assert not value['complete'] and value['points'] == []
+    assert value['errors'] and str(root) in value['errors'][0]
+    assert value['export_status'] == 'failed'
+    assert not root.exists()
+    assert list(tmp_path.glob('*.txt')) == [target]
+
+
 def old_display_contract(out):
     ed = reporting.experiment.ed
     assert ed.digest(reporting.experiment.ROOT / 'src/matrix_status.py') != OLD_DISPLAY_SHA256

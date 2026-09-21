@@ -305,7 +305,13 @@ def main():
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     root = args.root.resolve()
-    value = report(root)
+    try:
+        value = report(root)
+    except (OSError, ValueError, RuntimeError) as exc:
+        value = {"schema": "rloo-progress-report/v1", "scope": experiment.SCOPE,
+                 "exporter": exporter_provenance(),
+                 "created_at": datetime.now(timezone.utc).isoformat(), "root": str(root),
+                 "complete": False, "points": [], "export_status": "failed", "errors": [str(exc)]}
     lines = ["drift\tseed\tstatus\tarm\tmean_reward\tvs_cached\tvs_cached_lower\tvs_cached_upper"]
     for point in value["points"]:
         for row in point["rows"]:
@@ -314,7 +320,7 @@ def main():
                 point["drift"], point["seed"], point["status"], row["arm"], row["mean_reward"],
                 cached.get("mean", "NA"), cached.get("lower", "NA"), cached.get("upper", "NA"))))
     write_export("rloo", value, "\n".join(lines), args.out)
-    if any(p["status"] == "invalid" for p in value["points"]):
+    if value.get("errors") or any(p["status"] == "invalid" for p in value["points"]):
         raise SystemExit(1)
 
 
