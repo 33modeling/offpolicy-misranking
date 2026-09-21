@@ -140,6 +140,10 @@ if [ "$MODE" = results ]; then
   [ -x "$PY" ] || PY=python3
   ROOT_ARGS=()
   while IFS= read -r root; do ROOT_ARGS+=(--root "$root"); done < <(mbpp_observation_roots)
+  REPAIR_ROOT=${MBPP_REPAIR_ROOT:-$OM_WORK/runs/selection-switch-mbpp-quality-repair-v1}
+  if [ "$SUITE" = all ] && { [ -e "$REPAIR_ROOT" ] || [ -L "$REPAIR_ROOT" ]; }; then
+    ROOT_ARGS+=(--repair-root "$REPAIR_ROOT")
+  fi
   exec env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
     OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
     "$PY" scripts/mbpp_paper_results.py "${ROOT_ARGS[@]}"

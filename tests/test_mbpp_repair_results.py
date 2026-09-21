@@ -118,6 +118,42 @@ def test_real_results_bash_writes_one_partial_txt_without_touching_run(results, 
                       for path in directory.rglob('*') if path.is_file()}
 
 
+@pytest.mark.parametrize('command', [
+    ['scripts/run_mbpp_experiments.sh', 'results'],
+    ['scripts/run_paper_results.sh', 'results', 'mbpp'],
+])
+@pytest.mark.parametrize('complete', [False, True])
+def test_default_results_includes_repair_without_pooling_costs(results, tmp_path, command, complete):
+    root, source, meta = prepared(tmp_path)
+    if complete:
+        for relative in meta['rerun_branches'] + meta['dependent_branches']:
+            endpoint(root, relative, .75)
+            ledger(root, relative, 20)
+    repo = Path(__file__).resolve().parents[1]
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+              for directory in (root, source) for path in directory.rglob('*') if path.is_file()}
+    env = {**os.environ, 'HOME': str(tmp_path), 'MBPP_REPAIR_ROOT': str(root),
+           'SWITCH_MBPP_QUALITY_ROOT': str(source), 'SWITCH_PYTHON': sys.executable,
+           'OM_WORK': str(tmp_path / 'work'), 'PYTHONDONTWRITEBYTECODE': '1'}
+    result = subprocess.run(['bash', *command], cwd=repo, env=env,
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    output, = tmp_path.glob('*.txt')
+    assert output.name == 'mbpp-results.txt' and output.stat().st_size < 1_900_000
+    data = json.loads(output.read_text().split('DATA_JSON\n', 1)[1])
+    repair, = data['repair_runs']
+    assert repair['complete'] is complete
+    assert repair['measured'] == {'reused_branches': 37, 'rerun_branches': 5 if complete else 0,
+                                  'dependent_branches': 6 if complete else 0}
+    retry = next(row for row in repair['branches'] if row['path'] == meta['rerun_branches'][0])
+    assert retry['original_source_cost']['total'] == 123
+    assert retry['new_repair_cost']['total'] == (20 if complete else None)
+    assert any(suite['root'] == str(source) for suite in data['suites'])
+    assert 'REPAIR FOLLOW-UP' in output.read_text()
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                      for directory in (root, source) for path in directory.rglob('*') if path.is_file()}
+
+
 @pytest.mark.parametrize('filename', ['result.json', 'curve.json'])
 @pytest.mark.parametrize('schema', [None, 'offpolicy-net-gain-gate/v3-1'])
 def test_wrong_schema_is_not_accepted_even_with_matching_seal(results, tmp_path, filename, schema):

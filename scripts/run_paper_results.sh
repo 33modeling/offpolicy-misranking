@@ -28,6 +28,10 @@ case "$KIND" in
     mbpp_queue_init
     ROOT_ARGS=()
     while IFS= read -r root; do ROOT_ARGS+=(--root "$root"); done < <(mbpp_observation_roots)
+    REPAIR_ROOT=${MBPP_REPAIR_ROOT:-$OM_WORK/runs/selection-switch-mbpp-quality-repair-v1}
+    if [ -e "$REPAIR_ROOT" ] || [ -L "$REPAIR_ROOT" ]; then
+      ROOT_ARGS+=(--repair-root "$REPAIR_ROOT")
+    fi
     exec "$PY" scripts/mbpp_paper_results.py "${ROOT_ARGS[@]}" "$@" ;;
   *) echo 'usage: bash scripts/run_paper_results.sh results rloo|pair|mbpp'; exit 2 ;;
 esac
