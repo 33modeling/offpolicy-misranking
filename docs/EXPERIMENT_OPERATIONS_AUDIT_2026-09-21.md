@@ -332,3 +332,11 @@ requires frozen choices, and altered fixed outcomes do not change the DEV model.
 Receipt migration, hook restoration, pending-work handling and artifact path
 validation are also covered. GPU training is substituted in these local tests;
 this does not constitute a remote GPU execution check.
+
+Final MBPP/Pair/RLOO/status/results/controller regression suite, including the
+exact pinned runtime and generated Bash checks: **2,399 passed, 10 skipped** in
+80.83s, with 76 Python fork/thread deprecation warnings. The first broad run
+detected an out-of-sync generated launcher; it was regenerated before this full
+passing rerun. No test was deselected in the final run. Report:
+`/tmp/pair-fixed-controls-final-20260921.xml`. The deployment pins runtime commit
+`d628e7467f209248f91bb7c272dabafd26dd73a3`; Bash syntax and whitespace checks pass.

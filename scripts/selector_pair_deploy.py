@@ -20,7 +20,7 @@ import tempfile
 import time
 
 
-PINNED_COMMIT = 'c321461fcb22ede9735777a6626d9a68186762ea'
+PINNED_COMMIT = 'd628e7467f209248f91bb7c272dabafd26dd73a3'
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_FILES = 20000
 MANIFEST = '.pair-runtime.json'
