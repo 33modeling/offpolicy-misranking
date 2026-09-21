@@ -66,3 +66,19 @@ still needed before updating the paper's endpoint tables and learning figures.
 Figure 2 is a different score-calibration experiment: the current archived
 data contain no MBPP off-policy rows, and `run_stale_splithalf.sh` targets MATH.
 MBPP continuation rewards cannot be substituted for those calibration inputs.
+
+## Re-Copied Results and Additional Calibration
+
+The next `mbpp_results_1.txt` has SHA-256
+`7641b2ef5bbfae9a1eef6d2377a1585aaef6975d6bb36611a612a5a339987caa`.
+It now contains the complete, separate repair cohort: 37 reused endpoints,
+five reruns, and six dependent gated branches, with all 48 curves. The repair
+export fix is therefore confirmed by supplied output, not only by unit tests.
+Manuscript commit `582a361` preserves this evidence and reports the full six-state
+held-out selection-minus-random mean of +0.7916667 percentage points. Original
+attempt costs and additional execution costs remain separate.
+
+The missing Figure 2 MBPP off-policy calibration is prepared separately through
+`bash scripts/run_mbpp_offpolicy.sh`. See `MBPP_OFFPOLICY_CALIBRATION.md` for
+the fixed six-point scope, safe resume, partial single-TXT export, and commands.
+This code preparation does not claim new GPU measurements or launch new training.

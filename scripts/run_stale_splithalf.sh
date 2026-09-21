@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Split-half scores of the reuse estimators (g00, g10, g01, g11) on the
-# completed MATH-500 points, so that the reuse selectors carry the same
+# completed MATH-500 or MBPP points, so that the reuse selectors carry the same
 # two-measurement reliability diagnostic as the fresh and difficulty scores.
 #
 #   bash scripts/run_stale_splithalf.sh          # d400 points of seeds 0 1 2 on THIS idle 4xH100 node
@@ -14,11 +14,12 @@
 # running launcher (node lock). Afterwards: bash scripts/run_gate_decision.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
-MODE=run; DRIFT=${E5_DRIFT:-400}
+MODE=run; DRIFT=${E5_DRIFT:-400}; DATASET=math500
 for arg in "$@"; do
   case "$arg" in
     d0) DRIFT=0 ;; d400) DRIFT=400 ;; status) MODE=status ;;
-    *) echo "usage: bash scripts/run_stale_splithalf.sh [status] [d0|d400]"; exit 2 ;;
+    math500|mbpp) DATASET=$arg ;;
+    *) echo "usage: bash scripts/run_stale_splithalf.sh [status] [math500|mbpp] [d0|d400]"; exit 2 ;;
   esac
 done
 trap '' HUP
@@ -31,8 +32,9 @@ TAG=${OM_OLMO3_MODEL_TAG:-olmo3-1025-7b-base-rlzero-grpo-h100-v2}
 ROOT=${OM_OLMO3_ROOT:-$OM_WORK/runs/$TAG}
 read -r -a SEEDS <<< "${E5_SEEDS:-0 1 2}"
 CHECK=${STALE_CHECK_FULL:-4}
-run_dir() { printf '%s/family-math500-s%s/%s-s%s-math500-d%s\n' "$ROOT" "$1" "$TAG" "$1" "$DRIFT"; }
-export OUT_ROOT="$ROOT/.stale-splithalf-d$DRIFT"   # process marker for cleanup; no directory is created
+ATTN_OVERRIDE=${OM_ATTN:-}
+run_dir() { printf '%s/family-%s-s%s/%s-s%s-%s-d%s\n' "$ROOT" "$DATASET" "$1" "$TAG" "$1" "$DATASET" "$DRIFT"; }
+export OUT_ROOT="$ROOT/.stale-splithalf-$DATASET-d$DRIFT"
 if [ "$MODE" = status ]; then
   for seed in "${SEEDS[@]}"; do
     run=$(run_dir "$seed")
@@ -45,7 +47,9 @@ unset HF_TOKEN HUGGING_FACE_HUB_TOKEN
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 source scripts/_lease.sh
 source scripts/_e5_node.sh || exit 1
-e5_cleanup_previous "$OUT_ROOT" || exit 1
+# Repeated scoring must not terminate an existing node owner.
+unset PAIR_ROOT RLOO_ROOT
+export E5_FORCE=0
 e5_acquire_node || exit "$?"
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then IFS=, read -ra GPUS <<< "$CUDA_VISIBLE_DEVICES"
 else mapfile -t GPUS < <(timeout 20 nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null); fi
@@ -64,7 +68,7 @@ for seed in "${SEEDS[@]}"; do
   { read -r CFG_ATTN; read -r CFG_LORA; read -r CFG_FMT; } < <(
     "$PY" -c 'import json,sys; c=json.load(open(sys.argv[1])); print(*(str(c.get(k) if c.get(k) is not None else "") for k in sys.argv[2:]), sep="\n")' \
       "$run/run_config.json" attn lora_targets prompt_format)
-  export OM_ATTN=${OM_ATTN:-${CFG_ATTN:-eager}} OM_LORA_TARGETS="$CFG_LORA" OM_PROMPT_FORMAT=${CFG_FMT:-olmo_rlzero_math}
+  export OM_ATTN=${ATTN_OVERRIDE:-${CFG_ATTN:-eager}} OM_LORA_TARGETS="$CFG_LORA" OM_PROMPT_FORMAT=${CFG_FMT:-olmo_rlzero_math}
   mkdir -p "$run/logs"
   exec 9>>"$run/.stale-splithalf.lock"
   if ! flock -n 9; then echo "  claimed on another node; skipped"; continue; fi
@@ -72,7 +76,7 @@ for seed in "${SEEDS[@]}"; do
   CHILDREN=()
   for shard in 0 1 2 3; do
     setsid env CUDA_VISIBLE_DEVICES="${GPUS[$shard]}" "$PY" src/stale_splithalf.py --run "$run" --shard "$shard" --shards 4 --check-full "$CHECK" \
-      > "$run/logs/stale-splithalf-shard$shard.log" 2>&1 7>&- 8>&- 9>&- &
+      > "$run/logs/stale-splithalf-shard$shard.log" 2>&1 &
     CHILDREN+=("$!")
   done
   echo "  four shard processes; progress every 5 min, logs in $run/logs/stale-splithalf-shard<s>.log"
@@ -95,5 +99,9 @@ for seed in "${SEEDS[@]}"; do
   CUDA_VISIBLE_DEVICES="" "$PY" src/stale_splithalf.py --run "$run" --merge --shards 4 || rc_all=1
   flock -u 9
 done
-echo "[stale] pass complete; next:  bash scripts/run_gate_decision.sh   and   bash scripts/run_gain_law.sh"
+if [ "$DATASET" = mbpp ]; then
+  echo '[stale][mbpp] pass complete; results: bash scripts/run_mbpp_offpolicy.sh results'
+else
+  echo '[stale][math500] pass complete; next: bash scripts/run_gate_decision.sh and bash scripts/run_gain_law.sh'
+fi
 exit "$rc_all"
