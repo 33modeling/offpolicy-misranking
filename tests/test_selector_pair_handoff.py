@@ -710,7 +710,7 @@ def test_main_restarts_exact_same_root_and_stage_only_after_successful_handoff(
     monkeypatch.setattr(os, "execve", lambda *args: launches.append(args))
     monkeypatch.setenv("E5_FORCE", "1")
     monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--root", str(root), "--repo", str(repo),
-                                      "--timeout", "1"])
+                                      "--timeout", "1", "--restart-current"])
     handoff.main()
     assert calls == [(root, repo, 1, staged)]
     assert len(launches) == 1
@@ -771,7 +771,7 @@ def test_main_restarts_with_verified_owner_virtualenv_not_shell_default(
     monkeypatch.setattr(handoff, 'handoff', lambda *args, **kwargs:
         actual_handoff(*args, **kwargs, proc=proc))
     monkeypatch.setattr(os, 'execve', lambda *args: launched.append(args))
-    monkeypatch.setattr(sys, 'argv', [str(SCRIPT), '--root', str(root), '--repo', str(repo), '--timeout', '.1'])
+    monkeypatch.setattr(sys, 'argv', [str(SCRIPT), '--root', str(root), '--repo', str(repo), '--timeout', '.1', '--restart-current'])
     with lease(root, fcntl.LOCK_SH):
         pidfds.on_term = lambda target: pidfds.finish(target)
         handoff.main()
@@ -937,9 +937,29 @@ def test_main_does_not_launch_after_handoff_refusal(handoff, root, repo, monkeyp
     monkeypatch.setattr(handoff, "handoff", refused)
     monkeypatch.setattr(handoff, "collect", lambda root: "small diagnostic report")
     monkeypatch.setattr(os, "execve", lambda *args: launches.append(args))
-    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--root", str(root), "--repo", str(repo)])
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--root", str(root), "--repo", str(repo), "--restart-current"])
     assert handoff.main() != 0
     assert launches == []
+
+
+@pytest.mark.parametrize('exclusive', [False, True])
+def test_default_main_never_stops_existing_controller(handoff, root, repo, monkeypatch, exclusive):
+    launches = []
+    monkeypatch.setattr(handoff, 'handoff', lambda *a, **k: pytest.fail('default must not hand off'))
+    monkeypatch.setattr(handoff, 'collect', lambda root: 'existing work preserved')
+    monkeypatch.setattr(os, 'execve', lambda *args: launches.append(args))
+    monkeypatch.setattr(sys, 'argv', [str(SCRIPT), '--root', str(root), '--repo', str(repo)])
+    before = snapshot(root)
+    with lease(root, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH):
+        result = handoff.main()
+        if exclusive:
+            assert result == 2
+            assert not launches
+        else:
+            assert len(launches) == 1
+            assert launches[0][1] == ['bash', str(repo / 'scripts/run_selector_pair.sh'), 'run']
+            assert launches[0][2]['E5_FORCE'] == '0'
+    assert snapshot(root) == before
 
 
 def test_runtime_staging_failure_does_not_stop_or_restart_controller(handoff, root, repo, monkeypatch):

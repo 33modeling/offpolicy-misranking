@@ -31,6 +31,17 @@ e5_physical_node_id() {
   printf '%s' "$boot"
 }
 
+e5_recover_pair_gpu() {
+  [ -n "${PAIR_ROOT:-}" ] || return 0
+  local rc=0
+  "$PY" "$(dirname "${BASH_SOURCE[0]}")/_pair_gpu_cleanup.py" --root "$PAIR_ROOT" 7>&- 8>&- || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    exec 7>&- 8>&-
+    E5_HOST_LOCK_HELD=0
+  fi
+  return "$rc"
+}
+
 e5_acquire_shared_pair_node() {
   local directory=$1 host physical holders
   physical=$(e5_physical_node_id) || {
@@ -70,16 +81,14 @@ e5_acquire_node() {
   local directory="${OM_LOCAL_LOCK_DIR:-/tmp/offpolicy-misranking-$(id -u)}"
   local holders filesystem error_file node
   E5_HOST_LOCK_HELD=0
-  if [ -n "${PAIR_ROOT:-}" ]; then
-    "$PY" "$(dirname "${BASH_SOURCE[0]}")/_pair_gpu_cleanup.py" --root "$PAIR_ROOT" || return $?
-  fi
   mkdir -p "$directory" || return 1
   LOCK_FILE="$directory/primary.lock"
   filesystem=$(stat -f -c %T "$directory" 2>/dev/null || printf unknown)
   if [ -n "${PAIR_ROOT:-}" ] || [ -n "${RLOO_ROOT:-}" ]; then
     source "$(dirname "${BASH_SOURCE[0]}")/_node_id.sh" || return $?
     case "$filesystem" in nfs*|cifs|smb*|ceph|lustre|gpfs)
-      e5_acquire_shared_pair_node "$directory"
+      e5_acquire_shared_pair_node "$directory" || return $?
+      e5_recover_pair_gpu
       return $? ;;
     esac
   fi
@@ -147,4 +156,7 @@ e5_acquire_node() {
     esac
   fi
   echo "[node] node ownership acquired for this E5 controller"
+  # Only the admitted controller may recover leftovers. A duplicate launch
+  # must leave before any Pair event inspection can send process signals.
+  e5_recover_pair_gpu
 }

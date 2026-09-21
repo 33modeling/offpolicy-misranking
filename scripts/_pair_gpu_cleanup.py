@@ -17,6 +17,36 @@ import cleanup_run_processes as cleanup
 MARKER = re.compile(r"OM_SELECTION_COST_([a-f0-9]{32})\Z")
 
 
+def same_allocation(pid, *, proc=Path("/proc")):
+    """A shared UID or hostname does not prove ownership of another job."""
+    try:
+        own, other = proc / "self", proc / str(pid)
+        for namespace in ("pid", "mnt"):
+            a, b = (own / "ns" / namespace).stat(), (other / "ns" / namespace).stat()
+            if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino):
+                return False
+        return (own / "cgroup").read_bytes() == (other / "cgroup").read_bytes()
+    except OSError:
+        return False
+
+
+def live_controllers(root, processes):
+    controllers = []
+    for process in processes.values():
+        words = process.argv
+        if (len(words) == 5 and Path(words[1]).name in {
+                "selector_pair_gpu.py", "queue_selector_pair_gpu.py"}
+                and words[2] in {"run", "develop", "test", "freeze"}
+                and words[3] == "--root" and same_allocation(process.pid)):
+            try:
+                cwd = (Path("/proc") / str(process.pid) / "cwd").resolve(strict=True)
+                if (cwd / words[4]).resolve() == root:
+                    controllers.append(process.pid)
+            except OSError:
+                continue
+    return controllers
+
+
 def event_record(directory, event):
     for path in (directory / "progress.json", directory / "cost-events" / f"{event}.json"):
         try:
@@ -33,7 +63,7 @@ def candidates(root, processes):
     found = {}
     for process in processes.values():
         out = process.environ.get("OUT_ROOT", "")
-        if not out or Path(out).resolve() != root:
+        if not out or Path(out).resolve() != root or not same_allocation(process.pid):
             continue
         events = [match[1] for key, value in process.environ.items()
                   if value == "1" and (match := MARKER.fullmatch(key))]
@@ -73,7 +103,12 @@ def wait_release(targets, timeout=15.):
 def recover(root):
     root = root.resolve()
     total = 0
-    for directory, event, out in candidates(root, cleanup._snapshot()):
+    processes = cleanup._snapshot()
+    controllers = live_controllers(root, processes)
+    if controllers:
+        print(f"[cleanup] live Pair controllers preserved: {controllers}; no process stopped [pair]", flush=True)
+        return 0
+    for directory, event, out in candidates(root, processes):
         try:
             lease = (directory / ".cost.lock").open("r+")
         except FileNotFoundError:
@@ -88,7 +123,15 @@ def recover(root):
             # cannot enter while old ranks are releasing their CUDA contexts.
             if not event_record(directory, event):
                 continue
+            if live_controllers(root, cleanup._snapshot()):
+                print("[cleanup] Pair controller became active; no further processes stopped [pair]", flush=True)
+                break
             required = (("OUT_ROOT", out), (f"OM_SELECTION_COST_{event}", "1"))
+            targets = cleanup.list_processes("/unused-pair-event-scope",
+                command_patterns=("",), required_environment=required)
+            if any(not same_allocation(process.pid) for process in targets):
+                print(f"[cleanup] other or unknown allocation preserved: event={event} [pair]", flush=True)
+                continue
             print(f"[cleanup] recovering ended phase: {directory} event={event} [pair]", flush=True)
             targets = cleanup.terminate("/unused-pair-event-scope", timeout=3,
                 command_patterns=("",), required_environment=required, compact=True)

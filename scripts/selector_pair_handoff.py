@@ -1,7 +1,7 @@
-"""Explicitly hand a verified local Pair controller to the pinned queue.
+"""Join the pinned Pair queue; restart a controller only on explicit request.
 
 No lock, checkpoint, manifest, receipt or budget is edited by this helper.
-Only a verified local controller receives TERM. Its existing cleanup handles
+Only --restart-current permits a verified local controller to receive TERM. Its cleanup handles
 its workers; unfinished updates are not saved on TERM. Restarts use a separately
 staged, pinned distributed runtime, never the unchanged legacy serial launcher.
 """
@@ -437,20 +437,28 @@ def main():
     parser.add_argument('--root', type=Path, default=Path(os.environ.get('PAIR_ROOT', work / 'runs/selector-pair-v1')))
     parser.add_argument('--repo', type=Path, default=default_repo)
     parser.add_argument('--timeout', type=float, default=240)
+    parser.add_argument('--restart-current', action='store_true',
+                        help='explicitly stop and restart the verified controller in this allocation; '
+                             'default starts without stopping existing work')
     args = parser.parse_args()
     try:
         if not 0 < args.timeout <= 900:
             raise ValueError('timeout must be between 0 and 900 seconds')
         if not (args.root / 'pair.json').is_file():
             raise RuntimeError('existing pair.json is missing; no run was initialized')
+        if not args.restart_current and not shared_available(args.root / '.pair.lock'):
+            raise RuntimeError('existing exclusive Pair controller preserved; no process stopped. '
+                               'Use --restart-current only to intentionally restart this allocation')
         launch_repo = stage_runtime(args.repo)
-        mode = handoff(args.root, args.repo, args.timeout, launch_repo=launch_repo, restart_shared=True)
+        mode = (handoff(args.root, args.repo, args.timeout, launch_repo=launch_repo, restart_shared=True)
+                if args.restart_current else 'run')
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f'[handoff-abort] {exc}', file=sys.stderr, flush=True)
         print(collect(args.root), file=sys.stderr, flush=True)
         return 2
     env = dict(os.environ, PAIR_ROOT=str(args.root.resolve()), E5_FORCE='0')
-    print(f'[restart] same Pair root, stage={mode}; pinned distributed runtime={launch_repo}; '
+    action = 'restart' if args.restart_current else 'start; existing workers preserved'
+    print(f'[{action}] same Pair root, stage={mode}; pinned distributed runtime={launch_repo}; '
           'normal GPU/node admission remains enabled', flush=True)
     os.execve('/bin/bash', ['bash', str(launch_repo / 'scripts/run_selector_pair.sh'), mode], env)
 
