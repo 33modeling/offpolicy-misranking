@@ -321,6 +321,8 @@ def queue_report(root, *, uncapped=False):
                     point = root / 'branches' / branch / 'states' / state / 'points' / f'view-{step}'
                     directory = point / arm
                     lock = folder / 'queue-branches' / f'{branch}--{arm}.lock'
+                    if uncapped:
+                        metadata(lock.with_suffix('.json'))
                     lines.append(f'TASK {stage}/{state}/{branch}/{arm} branch-lock={lock_record(lock)} '
                                  f'task-lock={lock_record(directory / ".task.lock")} '
                                  f'parent-curve-lock={lock_record(point / "curve-parent/.point.lock")}')

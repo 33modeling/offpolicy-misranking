@@ -107,6 +107,85 @@ def test_frozen_adaptive_choice_counts_only_one_branch(tmp_path, monkeypatch):
     assert all(task["status"] == "READY" for task in data["tasks"])
 
 
+def parallel_receipt(root, protocol):
+    import selector_pair_parallel as parallel
+
+    core.atomic_json(root / parallel.RECEIPT, parallel.receipt_value(root, protocol))
+
+
+def test_parallel_receipt_opens_only_eighteen_fixed_controls_before_gate(tmp_path):
+    protocol = prepared(tmp_path)
+    parallel_receipt(tmp_path, protocol)
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+              for path in tmp_path.rglob('*') if path.is_file()}
+    data = status.snapshot(tmp_path)
+    fixed = [task for task in data['tasks'] if task['role'] == 'test' and task['name'] != 'adaptive']
+    adaptive = [task for task in data['tasks'] if task['name'] == 'adaptive']
+    assert len(fixed) == 18 and {task['status'] for task in fixed} == {'READY'}
+    assert len(adaptive) == 6 and {task['status'] for task in adaptive} == {'WAIT'}
+    assert all(task['directory'] == '' for task in adaptive)
+    assert len(data['tasks']) == 42 and data['parallel_controls_ready']
+    assert not data['test_decisions_frozen'] and not data['parallel_controls_error']
+    output = status.render(data, width=160)
+    assert '고정 대조군 병렬 실행 승인: READY' in output and '테스트 결정 고정: WAIT' in output
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                      for path in tmp_path.rglob('*') if path.is_file()}
+
+
+@pytest.mark.parametrize('name,selector,arm', [
+    ('on_policy', 'on_policy', 'selection_full'), ('cached', 'cached', 'selection_full'),
+    ('random', 'on_policy', 'random_full'),
+])
+@pytest.mark.parametrize('record', ['RUN', 'DONE'])
+@pytest.mark.parametrize('authorized', [False, True])
+def test_pre_gate_fixed_controls_keep_canonical_assignment_and_results(tmp_path, name, selector, arm, record, authorized):
+    protocol = prepared(tmp_path)
+    if authorized:
+        parallel_receipt(tmp_path, protocol)
+    directory = tmp_path / f'branches/{selector}/states/s3-t25/points/view-25/{arm}'
+    if record == 'RUN':
+        core.atomic_json(tmp_path / 'queue-workers/early-fixed.json', {
+            'worker': 'early-fixed', 'host': 'new-fixed-node', 'state': 'RUN', 'updated': 995,
+            'protocol_id': protocol['protocol_id'], 'stage': 'test',
+            'task': f'test/s3-t25/{selector}/{arm}'})
+    else:
+        core.atomic_json(directory / 'result.json', {'complete': True,
+                         'schema': status.display.switch_status.rule.SCHEMA})
+        digest = status.digest(directory / 'result.json')
+        core.atomic_json(directory / 'result.sha256.json', {'sha256': digest})
+        core.atomic_json(directory / 'curve.json', {'schema': status.display.switch_status.rule.SCHEMA,
+                         'result_sha256': digest, 'points': {'25': {'reward': .1}}})
+    data = status.snapshot(tmp_path, now=1000)
+    task = next(task for task in data['tasks'] if task['seed'] == 3 and task['step'] == 25
+                and task['name'] == name)
+    assert task['status'] == record and task['directory'] == str(directory.relative_to(tmp_path))
+    assert not data['test_decisions_frozen']
+    assert {task['status'] for task in data['tasks'] if task['name'] == 'adaptive'} == {'WAIT'}
+
+
+@pytest.mark.parametrize('damage', ['missing', 'changed', 'symlink', 'directory', 'fifo'])
+def test_unapproved_parallel_schedule_keeps_fixed_controls_waiting(tmp_path, damage):
+    protocol = prepared(tmp_path)
+    parallel_receipt(tmp_path, protocol)
+    path = tmp_path / 'pair-parallel-controls-runtime.json'
+    if damage == 'changed':
+        value = core.read(path)
+        value['protocol_id'] = 'changed'
+        core.atomic_json(path, value)
+    else:
+        path.unlink()
+        if damage == 'symlink':
+            path.symlink_to(tmp_path / 'pair.json')
+        elif damage == 'directory':
+            path.mkdir()
+        elif damage == 'fifo':
+            os.mkfifo(path)
+    data = status.snapshot(tmp_path)
+    assert not data['parallel_controls_ready']
+    assert bool(data['parallel_controls_error']) == (damage != 'missing')
+    assert {task['status'] for task in data['tasks'] if task['role'] == 'test'} == {'WAIT'}
+
+
 def test_copied_export_layout_keeps_eight_endpoints_and_one_curve_out_of_42(tmp_path):
     prepared(tmp_path)
     # Matches the eight independently saved branches in export_2.txt. None is

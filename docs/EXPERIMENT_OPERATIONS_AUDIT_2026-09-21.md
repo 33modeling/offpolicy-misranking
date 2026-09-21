@@ -292,3 +292,43 @@ MBPP/controller/Pair queue suite passes **975 tests** in 47.38s, with 56 Python
 fork/thread deprecation warnings and no failures. Bash syntax and whitespace
 checks pass. Report: `/tmp/new-node-allocation-20260921.xml`. These are local
 CPU/process tests, not proof that either remote allocation issue is resolved.
+
+## Authorized Pair Scheduling Amendment
+
+The user explicitly requested that independent held-out controls no longer
+wait for development completion. This changes the previous global execution
+order, not the DEV/TEST split or the scientific inputs to the fitted rule.
+
+- Development keeps priority. When its remaining branches are peer-owned or
+  otherwise unavailable on this controller, the controller can claim one of
+  eighteen fixed held-out controls, then checks development again.
+- Fixed controls are exactly TEST seeds 3/4 at steps 25/50/100, with
+  on-policy selection, cached selection, and the on-policy random control.
+  Six adaptive continuations still require all development labels and frozen
+  held-out decisions. Their outcomes never enter gate fitting or prediction.
+- `pair-parallel-controls-runtime.json` records the amendment and binds the
+  protocol, unchanged manifest, operational code, and exact control registry.
+  Initial authorization refuses pre-existing unfrozen held-out work instead of
+  retroactively approving it. Existing valid frozen decisions remain valid.
+- Old guard and cost-recovery receipts are preserved byte-for-byte through a
+  narrowly bound predecessor migration. Frozen source files, budgets,
+  checkpoints, costs and published measurements are not rewritten.
+- Existing DEV workers retain their leases and can finish. An old worker that
+  later reaches the previous all-TEST barrier can reject early control work;
+  a new worker must perform the amended freeze. A frozen-science test still
+  verifies the original refusal outside the authorized operational context.
+- Status exposes pre-gate fixed-control readiness only for a valid amendment;
+  result TXT exports retain explicit schedule provenance separately from
+  measured results, cost provenance, and paired completion.
+
+This is an explicit schedule amendment, not a claim that wall-clock execution
+conditions were unchanged or that the remote queue was independently observed
+to resume. Healthy remote workers must not be stopped to update idle nodes.
+
+Focused verification passed **30 tests**: eighteen actual CPU processes claim
+distinct fixed controls while all DEV leases remain owned, the real scheduler
+completes all 42 branches and resumes without repeating work, adaptive work
+requires frozen choices, and altered fixed outcomes do not change the DEV model.
+Receipt migration, hook restoration, pending-work handling and artifact path
+validation are also covered. GPU training is substituted in these local tests;
+this does not constitute a remote GPU execution check.

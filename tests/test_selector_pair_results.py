@@ -51,7 +51,7 @@ def test_exports_current_partial_report_and_curves(tmp_path, monkeypatch, missin
     assert data['complete'] == complete
     assert data['branch_measurements'] == data['branch_measurement_errors'] == []
     assert data['paired_validation']['status'] == 'validated'
-    assert data['exporter']['version'] == 'selector-pair-results/v4'
+    assert data['exporter']['version'] == 'selector-pair-results/v5'
     assert len(data['exporter']['script_sha256']) == 64
     assert data['exporter']['created_at'] and data['exporter']['export_id']
     assert list(tmp_path.glob("*.txt")) == [target]
@@ -72,6 +72,86 @@ def branch_fixture(root, *, selector="on_policy", seed=0, step=25, arm="selectio
         str(step+10): {"updates": 10, "reward": .5, "final": True}}}
     (directory / "curve.json").write_text(json.dumps(curve))
     return directory, result, curve
+
+
+def test_export_preserves_early_fixed_measurements_and_schedule_amendment(tmp_path, monkeypatch):
+    from test_selector_pair_status import prepared, parallel_receipt
+
+    root = tmp_path / 'run'
+    protocol = prepared(root)
+    parallel_receipt(root, protocol)
+    for selector, arm in [('on_policy', 'selection_full'), ('cached', 'selection_full'),
+                          ('on_policy', 'random_full')]:
+        branch_fixture(root, selector=selector, seed=3, arm=arm)
+    workers = root / 'queue-workers'
+    workers.mkdir()
+    (workers / 'early-fixed.json').write_text(json.dumps({
+        'worker': 'early-fixed', 'stage': 'test', 'state': 'WAIT',
+        'schedule': 'parallel-fixed-controls', 'total_branches': 24, 'fixed_control_branches': 18}))
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+              for path in root.rglob('*') if path.is_file()}
+    target = tmp_path / 'results.txt'
+    monkeypatch.setattr(sys, 'argv', ['results', '--root', str(root), '--out', str(target)])
+    results.main()
+    text = target.read_text()
+    data = json.loads(text.split('DATA_JSON\n', 1)[1])
+    provenance = data['schedule_provenance']
+    assert provenance['status'] == 'validated_current_runtime_receipt' and provenance['error'] is None
+    receipt = root / provenance['path']
+    assert provenance['source_receipt'] == json.loads(receipt.read_text())
+    assert provenance['source_receipt_sha256'] == hashlib.sha256(receipt.read_bytes()).hexdigest()
+    assert not provenance['independently_certified']
+    assert 'SCHEDULE PROVENANCE' in text and '18 fixed held-out controls' in text
+    assert 'six adaptive branches still require frozen' in text
+    assert len(data['branch_measurements']) == 3
+    worker, = data['execution_observations']['workers']
+    assert worker['schedule'] == 'parallel-fixed-controls'
+    assert worker['total_branches'] == 24 and worker['fixed_control_branches'] == 18
+    assert all(row['role'] == 'test' and row['mean_reward'] == .5
+               and not row['eligible_for_paired_comparison'] for row in data['branch_measurements'])
+    assert data['rows'] == [] and not data['complete'] and data['summary'] is None
+    assert not (root / 'test-decisions.json').exists() and not (root / 'model.json').exists()
+    assert before == {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                      for path in root.rglob('*') if path.is_file()}
+
+
+def test_schedule_provenance_does_not_authorize_a_missing_or_changed_receipt(tmp_path):
+    from test_selector_pair_status import prepared, parallel_receipt
+
+    assert results.schedule_provenance(tmp_path)['status'] == 'not_recorded'
+    protocol = prepared(tmp_path)
+    parallel_receipt(tmp_path, protocol)
+    path = tmp_path / 'pair-parallel-controls-runtime.json'
+    value = json.loads(path.read_text())
+    value['protocol_id'] = 'different-protocol'
+    path.write_text(json.dumps(value))
+    data = results.schedule_provenance(tmp_path)
+    assert data['status'] == 'unverified' and data['error']
+    assert data['source_receipt'] == value
+    assert data['source_receipt_sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('damage', ['malformed', 'oversized', 'outside', 'fifo', 'directory',
+                                   'loop', 'nonfinite', 'overflow'])
+def test_schedule_provenance_refuses_unreadable_or_unbounded_metadata(tmp_path, damage):
+    path = tmp_path / 'pair-parallel-controls-runtime.json'
+    if damage == 'malformed':
+        path.write_text('{')
+    elif damage == 'oversized':
+        path.write_bytes(b' ' * 65537)
+    elif damage == 'outside':
+        path.symlink_to('/etc/passwd')
+    elif damage == 'fifo':
+        os.mkfifo(path)
+    elif damage == 'directory':
+        path.mkdir()
+    elif damage == 'loop':
+        path.symlink_to(path)
+    else:
+        path.write_text('{"bad": ' + ('NaN' if damage == 'nonfinite' else '1e999') + '}')
+    data = results.schedule_provenance(tmp_path)
+    assert data['status'] == 'unverified' and data['error']
+    assert data['source_receipt'] is None and data['source_receipt_sha256'] is None
 
 
 def test_export_labels_reconstructed_cost_without_changing_measured_rewards(tmp_path, monkeypatch):
@@ -351,7 +431,7 @@ def test_failed_report_replaces_stale_txt_with_current_error_and_branches(tmp_pa
     assert data['paired_validation']['stderr_tail'] == 'current validation error'
     assert data['export_exit_code'] == returncode
     assert data['branch_measurements'][0]['mean_reward'] == .5
-    assert data['exporter']['version'] == 'selector-pair-results/v4'
+    assert data['exporter']['version'] == 'selector-pair-results/v5'
     assert list(tmp_path.glob("*.txt")) == [target]
 
 

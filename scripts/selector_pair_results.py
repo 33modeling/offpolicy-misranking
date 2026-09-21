@@ -40,6 +40,52 @@ OBSERVATION_SCOPE = (
 )
 
 
+def schedule_provenance(root):
+    """Export the explicit scheduling amendment, separate from measurements."""
+    name = 'pair-parallel-controls-runtime.json'
+    data = {'status': 'not_recorded', 'path': name, 'independently_certified': False,
+            'scope': 'Operational schedule amendment: 18 fixed held-out controls may run alongside '
+                     'development; six adaptive branches still require frozen development decisions. '
+                     'This receipt does not certify measurements, infer adaptive choices, or establish paired completion.',
+            'source_receipt': None, 'source_receipt_sha256': None, 'error': None}
+    path = root / name
+    if not path.exists() and not path.is_symlink():
+        return data
+    data['status'] = 'unverified'
+    def reject_constant(value):
+        raise ValueError(f'non-finite schedule metadata: {value}')
+    def finite_float(value):
+        number = float(value)
+        if not math.isfinite(number):
+            reject_constant(value)
+        return number
+    try:
+        records = []
+        for source in (path, root / 'pair.json'):
+            if source.resolve() != source:
+                raise ValueError('schedule provenance refuses symlinked metadata')
+            with os.fdopen(os.open(source, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), 'rb') as handle:
+                if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                    raise ValueError('schedule metadata is not a regular file')
+                raw = handle.read(65537)
+            if len(raw) > 65536:
+                raise ValueError('schedule metadata exceeds 64 KiB read limit')
+            value = json.loads(raw, parse_constant=reject_constant, parse_float=finite_float)
+            if not isinstance(value, dict):
+                raise ValueError('schedule metadata is not an object')
+            records.append(value)
+            if source == path:
+                data.update(source_receipt=value, source_receipt_sha256=hashlib.sha256(raw).hexdigest())
+        from selector_pair_parallel import receipt_value, validate_receipt
+        validate_receipt(root, records[1])
+        if records[0] != receipt_value(root, records[1]):
+            raise ValueError('schedule receipt changed during export')
+        data['status'] = 'validated_current_runtime_receipt'
+    except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
+        data['error'] = str(exc)
+    return data
+
+
 def cost_provenance(root):
     """Expose recovery annotations without certifying or changing any cost."""
     data = {'scope': 'Read-only ledger annotations, not independent cost certification. '
@@ -160,7 +206,7 @@ def execution_observations(root, measurements):
         row = {'path': str(path.relative_to(root)), **scalars(value, (
             'worker', 'host', 'pid', 'stage', 'state', 'task', 'updated', 'protocol_id',
             'verified_states', 'total_states', 'verified_branches', 'total_branches',
-            'queue_wait_wall_seconds'))}
+            'queue_wait_wall_seconds', 'schedule', 'fixed_control_branches'))}
         failures = value.get('failures')
         if isinstance(failures, list):
             row['recorded_failure_count'] = len(failures)
@@ -382,7 +428,7 @@ def exporter_metadata(repo):
         commit = git.stdout.strip() if git.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         commit = None
-    return {'version': 'selector-pair-results/v4', 'git_commit': commit,
+    return {'version': 'selector-pair-results/v5', 'git_commit': commit,
             'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'created_at': datetime.now(timezone.utc).isoformat(), 'export_id': uuid.uuid4().hex}
 
@@ -458,12 +504,14 @@ def main():
     data.update(branch_measurements=rows, branch_measurement_errors=errors,
                 branch_measurement_scope=BRANCH_SCOPE, paired_validation=validation,
                 exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows),
-                cost_provenance=cost_provenance(root))
+                cost_provenance=cost_provenance(root), schedule_provenance=schedule_provenance(root))
     if not exit_code and (errors or any(row['issues'] for row in rows)):
         exit_code = 2
     data['export_exit_code'] = exit_code
     header = 'EXPORTER ' + json.dumps(data['exporter'], sort_keys=True) + '\n'
     header += 'PAIRED VALIDATION ' + json.dumps(validation, sort_keys=True) + '\n'
+    header += ('SCHEDULE PROVENANCE: ' + data['schedule_provenance']['status'] + '. '
+               + data['schedule_provenance']['scope'] + '\n')
     header += ('COST PROVENANCE: reconstructed events='
                f"{data['cost_provenance']['reconstructed_events']}; "
                f"inspection_complete={data['cost_provenance']['inspection_complete']}. "

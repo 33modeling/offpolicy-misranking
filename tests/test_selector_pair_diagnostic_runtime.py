@@ -42,6 +42,10 @@ def test_uncapped_raw_receipts_and_distinct_same_host_workers_keep_hashes(diagno
              record(tmp_path / 'branches/cached/mbpp-branch-quarantine-runtime.json',
                     {'frozen_sha256': 'previous', 'runtime_sha256': 'actual-current-revision'}),
              record(tmp_path / 'pair-recollection-runtime.json', {'runtime_sha256': 'pair-revision'}),
+             record(tmp_path / 'pair-parallel-controls-runtime.json',
+                    {'schedule': 'fixed-controls-during-development-wait'}),
+             record(tmp_path / 'test/s3-t25/queue-branches/cached--selection_full.json',
+                    {'published': True, 'schedule_scope': 'parallel-fixed-controls'}),
              record(tmp_path / 'development/s0-t25/result.json', {'published': True})]
     for worker in ('worker-one', 'worker-two'):
         paths.append(record(tmp_path / f'queue-workers/{worker}.json', {

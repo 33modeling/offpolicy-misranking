@@ -60,6 +60,19 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def parallel_controls(root, protocol):
+    """Observe the schedule amendment without binding any runtime receipt."""
+    path = root / 'pair-parallel-controls-runtime.json'
+    if not path.exists() and not path.is_symlink():
+        return False, ''
+    try:
+        from selector_pair_parallel import validate_receipt
+        validate_receipt(root, protocol)
+        return True, ''
+    except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
+        return False, str(exc)
+
+
 def finished_meter(directory, progress):
     event = progress.get('event_id')
     if (progress.get('state') != 'running' or not isinstance(event, str)
@@ -178,6 +191,7 @@ def snapshot(root, *, now=None):
             raise ValueError("Unknown pair manifest")
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         error = str(exc)
+    fixed_ready, schedule_error = parallel_controls(root, p) if prepared else (False, '')
     observations = progress_records(root)
     active_paths = {}
     active_owners = {}
@@ -380,7 +394,8 @@ def snapshot(root, *, now=None):
                     choice = choices.get(f"s{seed}-t{step}", {}).get("selector")
                     branch = f"adaptive-{choice}" if choice in pair.SELECTORS else None
                 task = observe_branch(root, seed, step, name, branch,
-                                      ready=prepared and (development or bool(choices)),
+                                      ready=prepared and (development or bool(choices)
+                                                          or fixed_ready and name != 'adaptive'),
                                       observations=observations)
                 if not prepared or (not development and error):
                     task.update(status="RUN" if task["status"] == "RUN" else "WAIT",
@@ -390,7 +405,8 @@ def snapshot(root, *, now=None):
                 nodes=sorted(nodes.values(), key=lambda node: display.switch_status.node_view.host_sort_key(node["host"])),
                 activity=activity, target_reward=p.get("target_reward"),
                 budget_gpu_seconds=p.get("training_cap_gpu_seconds"),
-                test_decisions_frozen=bool(choices))
+                test_decisions_frozen=bool(choices), parallel_controls_ready=fixed_ready,
+                parallel_controls_error=schedule_error)
 
 
 def dashboard_data(data):
@@ -435,7 +451,10 @@ def dashboard_data(data):
                           "42개는 분기 수: 개발 9상태 x 2분기 + 검증 6상태 x 4분기",
                           f"최종 평가 저장 {endpoint_count}/42 | 결과·곡선 저장 {curve_count}/42",
                           "상태별 쌍 비교 검증은 report에서 별도 수행합니다.",
+                          "고정 대조군 병렬 실행 승인: " + ("READY" if data.get("parallel_controls_ready") else "WAIT"),
                           "테스트 결정 고정: " + ("DONE" if data["test_decisions_frozen"] else "WAIT"),
+                          *(["병렬 실행 승인 확인 필요: " + data['parallel_controls_error']]
+                            if data.get('parallel_controls_error') else []),
                           *(["WAIT: " + data["error"]] if data["error"] else [])])
     return dict(updated=data["updated"], suites=[suite], subject="SELECTOR PAIR", arm_names=LABELS,
                 legend=["On-policy: 현재 정책 gradient 기반 선택. Cached: 저장된 정답률 기반 선택.",
