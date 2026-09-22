@@ -108,6 +108,8 @@ def observe(out, arm, seed, drift, c, error, *, now):
                 seed=seed, step=drift, directory=str(directory.relative_to(out.parent)),
                 status="READY" if c else "WAIT", reason=error or ("" if c else "not prepared"),
                 unverified=c is None)
+    if c and arm != 'before':
+        task['training_total'] = c['steps']
     try:
         if c:
             if arm != "before" and (directory / "policy/policy_train.json").exists():

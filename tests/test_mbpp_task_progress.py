@@ -16,13 +16,13 @@ def task(**extra):
             'seconds': 25., 'timeout': 100., 'training_step': 35, **extra}
 
 
-def test_node_specific_training_allocation_not_suite_completion(tmp_path):
-    suite = {'root': str(tmp_path), 'tasks': [task(), task(host='node-b', seconds=70.)]}
+def test_node_specific_training_work_not_elapsed_time(tmp_path):
+    suite = {'root': str(tmp_path), 'tasks': [task(), task(host='node-b', seconds=70., training_step=45)]}
     text = '\n'.join(dashboard.render_nodes({'suites': [suite]}, width=200))
     rows = [' '.join(line.split()) for line in text.splitlines()]
-    assert any('node-a ' in line and ' RUN 25.0% ' in line for line in rows)
-    assert any('node-b ' in line and ' RUN 70.0% ' in line for line in rows)
-    assert '업데이트 10회 완료' in text and '결과 완료율 아님' in text
+    assert any('node-a ' in line and ' RUN 10회 완료 ' in line for line in rows)
+    assert any('node-b ' in line and ' RUN 20회 완료 ' in line for line in rows)
+    assert '업데이트 10회 완료' in text and '25.0%' not in text and '70.0%' not in text
 
 
 @pytest.mark.parametrize('gradient', [False, True])
@@ -48,12 +48,13 @@ def test_stale_shard_logs_do_not_make_a_new_attempt_look_complete(tmp_path):
         path.write_text('rollout 10/10')
         os.utime(path, (0, 0))
     percent, basis = dashboard.task_progress(tmp_path, task(phase='curve'))
-    assert percent == '25.0%' and '시간 한도' in basis
+    assert percent == '?' and '미확인' in basis
 
 
 def test_unknown_progress_is_not_zero_and_limit_reached_is_not_done(tmp_path):
-    assert dashboard.task_progress(tmp_path, task(seconds=None, timeout=None))[0] == '확인 중'
-    assert dashboard.task_progress(tmp_path, task(seconds=200.))[0] == '100.0%'
+    assert dashboard.task_progress(tmp_path, task(seconds=None, timeout=None))[0] == '10회 완료'
+    assert dashboard.task_progress(tmp_path, task(seconds=200.))[0] == '10회 완료'
+    assert dashboard.task_progress(tmp_path, task(training_step=None, seconds=200.))[0] == '?'
     assert task(seconds=200.)['status'] == 'RUNNING'
 
 
@@ -65,7 +66,7 @@ def test_outside_log_symlinks_are_not_read(tmp_path):
     outside = tmp_path / 'private.log'
     outside.write_text('rollout 100/100')
     (directory / 'curve-0.log').symlink_to(outside)
-    assert dashboard.task_progress(root, task(phase='curve'))[0] == '25.0%'
+    assert dashboard.task_progress(root, task(phase='curve'))[0] == '?'
 
 
 def phase_logs(root, lines):
@@ -126,8 +127,8 @@ def test_time_allocation_is_separate_from_completed_stage_percentages(tmp_path):
     (directory / 'cost.jsonl').write_text(json.dumps(dict(
         phase='verify-inputs', state='finished', event_id='one', exit_code=0)) + '\n')
     percent, basis = dashboard.task_progress(tmp_path, task(seconds=78.))
-    assert percent == '100.0% / 시간 78.0%'
-    assert '결과 완료율 아님' in basis
+    assert percent == '100.0% / 10회 완료'
+    assert '최종 업데이트 수 미확정' in basis and '시간' not in percent
 
 
 def test_late_old_receipt_cannot_complete_a_new_attempt(tmp_path):
@@ -161,3 +162,25 @@ def test_phase_history_does_not_read_outside_root(tmp_path):
 def test_incomplete_counter_never_rounds_up_to_100(tmp_path):
     phase_logs(tmp_path, 'rollout 9999/10000\n')
     assert dashboard.task_progress(tmp_path, task(phase='fresh-r-candidate'))[0] == '99.9%'
+
+
+def test_fixed_update_training_uses_actual_completed_steps(tmp_path):
+    for seconds in (0, 7.3, 1000):
+        percent, basis = dashboard.task_progress(tmp_path, task(training_total=100, seconds=seconds))
+        assert percent == '10.0%' and '10/100회' in basis
+
+
+@pytest.mark.parametrize('step,start,total', [(None, 25, 100), (20, 25, 100), (True, 0, 100)])
+def test_invalid_training_counter_has_no_estimated_percentage(tmp_path, step, start, total):
+    percent, _ = dashboard.task_progress(tmp_path, task(training_step=step, step=start, training_total=total))
+    assert percent == '?'
+
+
+def test_loading_next_checkpoint_clears_old_generation_completion(tmp_path):
+    directory = phase_logs(tmp_path, 'rollout 100/100\n[load_model] GPU free 70GB\n')
+    percent, _ = dashboard.task_progress(tmp_path, task(phase='fresh-r-candidate'))
+    assert percent == '?'
+    for rank in range(4):
+        (directory / f'fresh-r-candidate-{rank}.log').write_text(
+            'rollout 100/100\nmodel loaded: test\nrollout 3/100\n')
+    assert dashboard.task_progress(tmp_path, task(phase='fresh-r-candidate'))[0] == '3.0%'

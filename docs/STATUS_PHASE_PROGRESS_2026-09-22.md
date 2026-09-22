@@ -18,7 +18,13 @@ Progress                     Remarks
   Four shard counters are aggregated separately for each stage. Missing, stale,
   or invalid counters stay `?`; a finished shard cannot stand for missing peers.
 - A current phase's old finish record cannot overwrite its live counters.
-- Time-allocation use is identified separately and does not imply result completion.
+- Elapsed time is never converted into a Progress percentage. Missing counters
+  stay `?`, even after the phase timeout has elapsed.
+- Budget-stopped training reports completed updates (for example `10회 완료`),
+  because its final update count is not known in advance. Fixed-update RLOO
+  reports completed/required updates and the corresponding percentage.
+- Model-load and rollout-start markers clear counters from a previous
+  checkpoint or attempt in appended logs.
 - An incomplete processed counter cannot round up to 100%.
 - This is a read-only display change in the shared MBPP/Pair/RLOO renderer.
   It does not restart training, change budgets, or alter completion validation.
@@ -34,5 +40,9 @@ bash scripts/run_rloo.sh status
 
 Regression cases cover simultaneous stages, uneven shards, retries, old logs,
 incomplete counters, path confinement, and narrow/wide terminal layouts.
-Verification: 277 tests passed; one existing RLOO nested-curve case was skipped
+Initial phase-display verification: 277 tests passed; one existing RLOO nested-curve case was skipped
 because that workflow publishes a single arm meter, not nested curve meters.
+
+The subsequent elapsed-time removal and fixed-update progress changes passed
+282 tests in the same dashboard regression suite, with the same one skip.
+No GPU training or evaluation was launched, stopped, or modified.

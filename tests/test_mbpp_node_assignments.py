@@ -70,7 +70,7 @@ def test_twenty_nodes_have_exact_display_width_column_alignment(tmp_path, width)
             host = re.search(r"run284000-\S+", line).group()
             status = re.search(r"\b(RUN|WAIT)\b", line)
             experiment = "On-policy" if status.group() == "RUN" else "배정 없음"
-            progress = "25.0%" if status.group() == "RUN" else "-"
+            progress = "5회 완료" if status.group() == "RUN" else "-"
             assert dashboard.columns(line[:line.index(host)]) == positions["Node"]
             assert dashboard.columns(line[:line.index(experiment)]) == positions["Experiment"]
             assert dashboard.columns(line[:status.start()]) == positions["Status"]
@@ -385,7 +385,8 @@ def test_parent_branch_and_curve_phase_share_one_numbered_experiment_row(tmp_pat
     mapping = "\n".join(dashboard.render_nodes(data, width=400))
     assert " ".join(mapping.split()).count("1. curve-worker ") == 1
     assert "On-policy · 선택비용 별도 / seed 0 / step 25 / Random RUN" in " ".join(mapping.split())
-    assert '현재 단계 시간 한도 사용률' in mapping
+    assert '처리 완료 건수 미확인' in mapping
+    assert '시간 한도 사용률' not in mapping
     assert "단계: curve-evaluation" in mapping and "최종 평가 저장됨; 곡선 평가 남음 (재학습 없음)" in mapping
     assert "Random/curve" not in mapping
     assert "CURRENT RUN 1" in dashboard.render(data)

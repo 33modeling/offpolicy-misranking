@@ -315,6 +315,11 @@ def completed_phase_progress(root, task):
     return result
 
 
+def work_percent(done, total):
+    value = 100 * done / total
+    return f'{min(value, 99.9) if done < total else 100.:.1f}%'
+
+
 def current_phase_progress(root, task):
     """Current phase evidence only: bounded log tails, never model/rollout files."""
     if task.get('task_lease_held') and not active(task):
@@ -322,6 +327,16 @@ def current_phase_progress(root, task):
             return "확인 중", "곡선 평가 작업 확인; 처리량·작업자 미확인"
         return "확인 중", "작업 잠금 확인; 현재 단계·작업자 미확인"
     phase = str(task.get("phase") or "")
+    if 'train' in phase:
+        step, start = task.get('training_step'), task.get('step')
+        total = task.get('training_total')
+        if type(step) is int and type(start) is int and step >= start:
+            done = step - start
+            if type(total) is int and total > 0 and done <= total:
+                percent = work_percent(done, total)
+                return percent, f'학습 업데이트: {percent} ({done}/{total}회); 평가·저장 완료와 별개'
+            return f'{done}회 완료', f'학습 업데이트 {done}회 완료; 최종 업데이트 수 미확정'
+        return '?', '학습 업데이트 완료 기록 없음'
     if re.fullmatch(r"[\w-]+", phase) and "train" not in phase:
         directory = Path(root) / task.get("directory", "")
         if directory.resolve().is_relative_to(Path(root).resolve()):
@@ -343,6 +358,10 @@ def current_phase_progress(root, task):
                 lines = switch_status.node_view._tail_lines(path, size=16384)
                 counters = {}
                 for line in lines:
+                    # Logs append across retries/checkpoints. A newly loaded
+                    # worker must not inherit the previous worker's 100%.
+                    if 'model loaded:' in line or '[load_model]' in line or 'rollout 시작:' in line:
+                        counters = {}
                     rollout = re.search(r'\brollout\s+(\d+)/(\d+)', line)
                     gradient = re.search(r'\[(?:fresh_r|on.policy)\]\s+(\w+).*?\((\d+)/(\d+)\)', line)
                     if rollout:
@@ -365,20 +384,11 @@ def current_phase_progress(root, task):
                         descriptions.append(f'{label}: 확인 중 ({sum(v is not None for v in values)}/4 shards)')
                         continue
                     done, total = sum(v[0] for v in values), sum(v[1] for v in values)
-                    value = 100 * done / total
-                    percent = f'{min(value, 99.9) if done < total else 100.:.1f}%'
+                    percent = work_percent(done, total)
                     percentages.append(percent)
                     descriptions.append(f'{label}: {percent} ({done}/{total}개)')
                 return ' / '.join(percentages), '; '.join(descriptions)
-    elapsed = switch_status.number(task.get("seconds"), -1)
-    limit = switch_status.number(task.get("timeout"), 0)
-    if elapsed >= 0 and limit > 0:
-        note = "학습 시간 한도 사용률" if "train" in phase else "현재 단계 시간 한도 사용률"
-        step, start = task.get("training_step"), task.get("step")
-        if "train" in phase and isinstance(step, int) and isinstance(start, int) and step >= start:
-            note += f"; 업데이트 {step - start}회 완료"
-        return f"{min(100., 100 * elapsed / limit):.1f}%", note + " (결과 완료율 아님)"
-    return "확인 중", "처리 건수·시간 한도 기록 없음"
+    return '?', '처리 완료 건수 미확인'
 
 
 def task_progress(root, task):
@@ -388,8 +398,6 @@ def task_progress(root, task):
         return current, basis
     # Every percentage has its own label in Remarks, in the same order.
     current_label = str(task.get('phase') or '현재 단계')
-    if '시간 한도' in basis:
-        current = '시간 ' + current
     return (' / '.join([*(percent for percent, _ in previous), current]),
             '; '.join([*(note for _, note in previous), f'{current_label}: {basis}']))
 
@@ -578,7 +586,7 @@ def render_nodes(data, *, width, all_nodes=False):
             lines.extend(" " * (number_width + 1) + part for part in host_lines[1:])
             lines.extend("  " + line for line in table(headers[2:], [row[2:]], widths))
     lines.extend(wrap("Progress는 단계별로 표시합니다. 비고의 단계명과 같은 순서이며, 한 단계의 100%는 전체 완료가 아닙니다.", width))
-    lines.extend(wrap("시간 한도 사용률은 처리 완료율과 구분하며, 기록이 부족한 단계는 ?로 표시합니다.", width))
+    lines.extend(wrap("Progress는 실제 처리 건수만 사용합니다. 학습 총량이 미정이면 완료 업데이트 수, 기록이 없으면 ?로 표시합니다.", width))
     if not nodes or not all_nodes and not current:
         lines.append(f"No current {data.get('subject', 'MBPP')} node evidence.")
     hidden = len(nodes) - len(current)
