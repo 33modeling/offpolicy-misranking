@@ -30,7 +30,7 @@ def write_point(tmp_path):
     micro, val, rates = inputs()
     torch.save(micro, point / "oracle_micro_groups.pt")
     torch.save(val, point / "val_groups.pt")
-    (point / "run_config.json").write_text(json.dumps({"seed": 0, "model": "fixture"}))
+    (point / "run_config.json").write_text(json.dumps({"seed": 0, "drift": 25, "model": "fixture"}))
     (point / "prompts.json").write_text(json.dumps({"train": list(range(4)), "val": list(range(8))}))
     with (point / "rollouts_behavior_train.jsonl").open("w") as handle:
         for i, p in rates.items():
@@ -127,11 +127,15 @@ def test_corrupt_tensor_exported_as_error(tmp_path):
     assert len(doc["errors"]) == 1
 
 
-def test_discovery_deduplicates_symlinks_and_cycles(tmp_path):
+def test_explicit_source_does_not_search_children_or_cycles(tmp_path):
     point = write_point(tmp_path)
     (tmp_path / "runs" / "source-link").symlink_to(point, target_is_directory=True)
     (point / "cycle").symlink_to(tmp_path / "runs", target_is_directory=True)
-    assert audit.discover([tmp_path / "runs"]) == [point.resolve()]
+    result = audit.discover([point, tmp_path / "runs/source-link"])
+    assert len(result) == 1
+    assert result[0]["point"] == str(point.resolve())
+    with pytest.raises(ValueError, match="recursive search disabled"):
+        audit.discover([tmp_path / "runs"])
 
 
 def test_missing_seed_not_silently_zero(tmp_path):
@@ -150,9 +154,10 @@ def test_cli_output_protection_and_partial_status(tmp_path):
         audit.main([str(point), "--out", str(point / "output")])
     broken = tmp_path / "runs" / "broken"
     broken.mkdir()
-    (broken / "scores_splithalf.json").write_text('{}')
+    (broken / "run_config.json").write_text('{}')
+    (broken / "prompts.json").write_text('{}')
     out = tmp_path / "exports" / "audit"
-    assert audit.main([str(tmp_path / "runs"), "--out", str(out), "--frac", ".25"]) == 2
+    assert audit.main([str(point), str(broken), "--out", str(out), "--frac", ".25"]) == 2
     doc = json.loads((out / "data.json").read_text())
     assert len(doc["results"]) == len(doc["errors"]) == 1
     assert doc["results"][0]["h_gpu_seconds"] is None
@@ -169,3 +174,88 @@ def test_wrapper(tmp_path):
                              env={**os.environ, "SR_AUDIT_PYTHON": sys.executable}, capture_output=True, text=True)
     assert process.returncode == 0, process.stderr
     assert "No H predictions generated" in process.stdout
+
+
+def write_experiment(tmp_path):
+    point = write_point(tmp_path)
+    experiment = tmp_path / "runs/e5-reduced/math400-d25/s0"
+    experiment.mkdir(parents=True)
+    (experiment / "experiment.json").write_text(json.dumps({
+        "schema": audit.E5_SCHEMA, "source_run": str(point), "seed": 0, "drift": 25,
+        "source_hashes": {"run_config.json": audit.digest(point / "run_config.json")}}))
+    for arm in audit.ARMS:
+        for directory, step, name in (("", 525, "policy_train.json"),
+                                      ("checkpoint-000125", 125, "checkpoint_state.json"),
+                                      ("curve-checkpoints/step-425", 425, "checkpoint_state.json")):
+            path = experiment / arm / "policy" / directory
+            path.mkdir(parents=True, exist_ok=True)
+            (path / name).write_text(json.dumps({"completed_steps": step}))
+            (path / "adapter_model.safetensors").write_bytes(b"not loaded")
+    return point, experiment
+
+
+def test_e5_discovery_uses_contract_not_recursive_score_glob(tmp_path):
+    point, experiment = write_experiment(tmp_path)
+    root = tmp_path / "runs/e5-reduced"
+    for unrelated in ("archive/math400-d25/s0", "quarantine/math400-d25/s0", "math400-d25-old/s0", "smoke"):
+        directory = root / unrelated
+        directory.mkdir(parents=True)
+        (directory / "scores_splithalf.json").write_text('{}')
+        (directory / "experiment.json").write_text('{"schema":"wrong"}')
+    result = audit.discover([root])
+    assert len(result) == 1
+    assert result[0]["point"] == str(point)
+    assert result[0]["experiment"] == str(experiment)
+    assert len(result[0]["checkpoints"]) == 9
+    assert {c["step"] for c in result[0]["checkpoints"]} == {125, 425, 525}
+    assert not result[0]["missing_scoring_inputs"]
+
+
+def test_default_e5_root_and_list_only_does_not_load_tensors(tmp_path, monkeypatch):
+    point, experiment = write_experiment(tmp_path)
+    monkeypatch.setenv("OM_WORK", str(tmp_path))
+    monkeypatch.setattr(torch, "load", lambda *a, **k: pytest.fail("inventory loaded tensors"))
+    out = tmp_path / "exports/inventory"
+    assert audit.main(["--list-only", "--out", str(out)]) == 0
+    doc = json.loads((out / "data.json").read_text())
+    assert doc["roots"] == [str(tmp_path / "runs/e5-reduced")]
+    assert doc["targets"][0]["point"] == str(point)
+    assert doc["targets"][0]["experiment"] == str(experiment)
+    assert doc["results"] == []
+
+
+def test_registered_missing_gradients_keeps_checkpoint_inventory(tmp_path):
+    point, experiment = write_experiment(tmp_path)
+    (point / "oracle_micro_groups.pt").unlink()
+    out = tmp_path / "exports"
+    assert audit.main([str(experiment), "--out", str(out)]) == 2
+    doc = json.loads((out / "data.json").read_text())
+    assert len(doc["targets"][0]["checkpoints"]) == 9
+    assert doc["targets"][0]["missing_scoring_inputs"] == ["oracle_micro_groups.pt"]
+    assert len(doc["errors"]) == 1
+
+
+def test_registered_source_hash_mismatch_not_replaced_by_another_point(tmp_path):
+    point, experiment = write_experiment(tmp_path)
+    config = point / "run_config.json"
+    config.write_text(config.read_text() + " ")
+    target = audit.discover([experiment])[0]
+    with pytest.raises(ValueError, match="experiment-bound source hash"):
+        audit.check_target(target)
+
+
+def test_wrong_experiment_identity_rejected(tmp_path):
+    _, experiment = write_experiment(tmp_path)
+    path = experiment / "experiment.json"
+    value = json.loads(path.read_text())
+    value["seed"] = 100
+    path.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="identity differs"):
+        audit.discover([experiment])
+
+
+def test_explicit_group_and_source_output_protection(tmp_path):
+    point, experiment = write_experiment(tmp_path)
+    assert audit.discover([experiment.parent])[0]["point"] == str(point)
+    with pytest.raises(SystemExit):
+        audit.main([str(experiment), "--out", str(point / "exports")])

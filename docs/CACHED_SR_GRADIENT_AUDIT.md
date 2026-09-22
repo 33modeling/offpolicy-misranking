@@ -4,15 +4,40 @@ Run on the machine holding the original experiment artifacts:
 
 ```bash
 git pull --ff-only origin master
+bash scripts/run_cached_sr_gradient_audit.sh --list-only
 bash scripts/run_cached_sr_gradient_audit.sh
 ```
 
-The default scans `$OM_WORK/runs` (`OM_WORK` defaults to
-`/group-volume/minsoo3.kim/offpolicy-misranking`). Explicit scoring directories
-or run roots can be passed as positional arguments. It follows source symlinks
-once, deduplicates canonical paths, and skips policy/checkpoint directories.
-It includes saved MATH/MBPP scoring points at all available stages, not only d0.
-It does not evaluate a checkpoint or create a scoring point where none exists.
+The default reads **only** `$OM_WORK/runs/e5-reduced/<dataset>-dN/sN/experiment.json`
+(`OM_WORK` defaults to `/group-volume/minsoo3.kim/offpolicy-misranking`). Automatic
+dataset groups are `math<number>-d<number>` and `mbpp[<number>]-d<number>`.
+It follows each experiment's recorded absolute `source_run`, verifies seed/drift
+and available source hashes, and never substitutes a similarly named directory.
+Broad recursive discovery of `runs/`, archives, backups and matrix roots is disabled.
+Nonstandard experiment groups must be explicitly specified, not silently included.
+
+For one experiment family:
+
+```bash
+bash scripts/run_cached_sr_gradient_audit.sh "$OM_WORK/runs/e5-reduced/math400-d0" --list-only
+```
+
+Accepted explicit inputs: an E5 root, a dataset-dN group, one sN experiment,
+or an exact scoring point containing `run_config.json` and `prompts.json`.
+An exact scoring point does not trigger discovery of any of its children.
+
+Before calculation, the tool prints experiment -> scoring-source bindings and
+inventories on-policy/SR/random policies in that experiment. It includes final
+policies, `policy/checkpoint-N` and `policy/curve-checkpoints/step-N`, without an
+end-step cap. The inventory records adapter/optimizer/log presence and step metadata;
+it does not load model tensors. `--list-only` writes just this inventory and does not
+load gradient tensors either. Missing source gradients remain explicit even when
+learning checkpoints exist. Checkpoint inventories survive individual audit errors.
+
+**Scoring points and training checkpoints are different artifacts.** This command
+calculates the directional diagnostic only at the recorded scoring-source state.
+It does not claim to compute that diagnostic at every inventoried checkpoint,
+evaluate checkpoints, or reconstruct missing gradients from model weights.
 
 Reports go to a separate timestamped `exports/sr-gradient-*/` directory.
 Send `data.json`; `comparison.csv` is the compact table. Inputs are read-only,

@@ -183,22 +183,109 @@ def audit_point(point: Path, *, seed: int | None = None, frac: float = 0.1) -> d
     return result
 
 
-def discover(roots: list[Path]) -> list[Path]:
-    points, visited = set(), set()
+E5_SCHEMA = "offpolicy-downstream-independent/v2"
+ARMS = ("fresh_r", "passrate_beta", "random")
+GROUP = re.compile(r"(?:math\d+|mbpp\d*)-d\d+")
+
+
+def checkpoint_inventory(experiment: Path) -> list[dict]:
+    """Only documented policy locations inside the selected experiment."""
+    rows = []
+    for arm in ARMS:
+        policy = experiment / arm / "policy"
+        candidates = [policy]
+        candidates += sorted(p for p in policy.glob("checkpoint-*") if re.fullmatch(r"checkpoint-\d+", p.name))
+        candidates += sorted(p for p in (policy / "curve-checkpoints").glob("step-*") if re.fullmatch(r"step-\d+", p.name))
+        for path in candidates:
+            if not path.is_dir():
+                continue
+            manifest = path / ("policy_train.json" if path == policy else "checkpoint_state.json")
+            item = {"selector": arm, "path": str(path.resolve()), "step": None,
+                    "adapter_present": (path / "adapter_model.safetensors").is_file(),
+                    "optimizer_present": (path / "optimizer.pt").is_file(),
+                    "log_present": (path / "grpo_stats.jsonl").is_file()}
+            if not manifest.is_file() and not any(item[key] for key in ("adapter_present", "optimizer_present", "log_present")):
+                continue
+            if manifest.is_file():
+                try:
+                    state = json.loads(manifest.read_text())
+                    step = state["completed_steps"]
+                    if type(step) is not int or step < 0:
+                        raise ValueError("invalid completed_steps")
+                    if path != policy and step != int(path.name.split("-")[-1]):
+                        raise ValueError("checkpoint folder/metadata step mismatch")
+                    item.update(step=step, manifest=str(manifest), manifest_sha256=digest(manifest))
+                except (OSError, ValueError, TypeError, KeyError) as exc:
+                    item["error"] = str(exc)
+            elif path != policy:
+                item.update(step=int(path.name.split("-")[-1]), step_source="folder_name_only")
+            rows.append(item)
+    return rows
+
+
+def experiment_target(experiment: Path) -> dict:
+    path = experiment / "experiment.json"
+    contract = json.loads(path.read_text())
+    if contract.get("schema") != E5_SCHEMA:
+        raise ValueError(f"not an E5 GRPO experiment: {path}")
+    match = re.fullmatch(r"s(\d+)", experiment.name)
+    group = re.fullmatch(r".+-d(\d+)(?:-.*)?", experiment.parent.name)
+    if not match or not group or contract.get("seed") != int(match[1]) or contract.get("drift") != int(group[1]):
+        raise ValueError(f"experiment identity differs from its folder: {path}")
+    source = Path(contract["source_run"])
+    if not source.is_absolute():
+        raise ValueError(f"source_run must be an absolute recorded path: {path}")
+    source = source.resolve()
+    return {"point": str(source), "experiment": str(experiment),
+            "experiment_sha256": digest(path), "seed": contract["seed"], "drift": contract["drift"],
+            "source_hashes": contract.get("source_hashes", {}),
+            "source_exists": source.is_dir(),
+            "missing_scoring_inputs": [name for name in REQUIRED if not (source / name).is_file()],
+            "checkpoints": checkpoint_inventory(experiment)}
+
+
+def discover(roots: list[Path]) -> list[dict]:
+    targets = {}
     for root in roots:
         if not root.is_dir():
             raise ValueError(f"root does not exist: {root}")
-        for directory, children, files in os.walk(root, followlinks=True):
-            path = Path(directory).resolve()
-            if path in visited:
-                children[:] = []
-                continue
-            visited.add(path)
-            children[:] = sorted(c for c in children if not c.startswith((".", "checkpoint-"))
-                                 and c not in {"policy", "exports", "node_modules", "__pycache__"})
-            if "oracle_micro_groups.pt" in files or "scores_splithalf.json" in files:
-                points.add(path)
-    return sorted(points)
+        # Explicit source points are allowed, but are never recursively searched.
+        if (root / "run_config.json").is_file() and (root / "prompts.json").is_file():
+            target = {"point": str(root.resolve()), "experiment": None,
+                      "source_exists": True, "checkpoints": [],
+                      "missing_scoring_inputs": [name for name in REQUIRED if not (root / name).is_file()]}
+            targets[(target["point"], None)] = target
+            continue
+        if (root / "experiment.json").is_file():
+            experiments = [root]
+        else:
+            # Accept an explicit group or the E5 root. Never walk runs/, backups,
+            # old matrix roots, selector workspaces, or arbitrary symlink trees.
+            experiments = [p for p in root.glob("s*/experiment.json") if re.fullmatch(r"s\d+", p.parent.name)]
+            experiments = [p.parent for p in experiments]
+            if not experiments:
+                experiments = [p for group in sorted(root.iterdir()) if GROUP.fullmatch(group.name) and group.is_dir()
+                               for p in sorted(group.glob("s*/experiment.json")) if re.fullmatch(r"s\d+", p.parent.name)]
+                experiments = [p.parent for p in experiments]
+        if not experiments:
+            raise ValueError(f"no registered E5 experiments at {root}; specify e5-reduced, a dataset-dN group, sN, or an exact scoring point (recursive search disabled)")
+        for experiment in sorted(experiments):
+            target = experiment_target(experiment.resolve())
+            targets[(target["point"], target["experiment"])] = target
+    return sorted(targets.values(), key=lambda row: (row["experiment"] or "", row["point"]))
+
+
+def check_target(target: dict) -> None:
+    if target["experiment"] is None:
+        return
+    source = Path(target["point"])
+    config = json.loads((source / "run_config.json").read_text())
+    if config.get("seed") != target["seed"] or config.get("drift") != target["drift"]:
+        raise ValueError("source config seed/drift differs from selected experiment")
+    for name in REQUIRED:
+        expected = target["source_hashes"].get(name)
+        if expected is not None and digest(source / name) != expected:
+            raise ValueError(f"experiment-bound source hash mismatch: {name}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -208,34 +295,49 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path)
     parser.add_argument("--seed", type=int, help="Override selection seed for every point")
     parser.add_argument("--frac", type=float, default=0.1)
+    parser.add_argument("--list-only", action="store_true", help="List exact source bindings and checkpoint locations; do not load tensors")
     args = parser.parse_args(argv)
     if not 0 < args.frac <= 1:
         parser.error("--frac must be in (0, 1]")
-    roots = [p.resolve() for p in (args.roots or [work / "runs"])]
+    roots = [p.resolve() for p in (args.roots or [work / "runs/e5-reduced"])]
     out = (args.out or work / "exports" / ("sr-gradient-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ"))).resolve()
     if any(out == root or root in out.parents for root in roots):
         parser.error("output must be outside the input roots")
     if out.exists():
         parser.error("output already exists; choose a new directory")
-    points = discover(roots)
-    if not points:
-        parser.error("no saved scoring points found under the supplied roots")
+    try:
+        targets = discover(roots)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        parser.error(str(exc))
+    if any(out == Path(t["point"]) or Path(t["point"]) in out.parents for t in targets):
+        parser.error("output must be outside the resolved source points")
     torch.set_num_threads(1)
     started = time.monotonic()
     results, errors = [], []
-    for point in points:
+    for target in targets:
+        point = Path(target["point"])
+        print(f"[experiment] {target['experiment'] or 'explicit scoring point'}\n[source] {point}", flush=True)
+        for checkpoint in target["checkpoints"]:
+            print(f"[checkpoint] {checkpoint['selector']} step={checkpoint['step']} {checkpoint['path']}", flush=True)
+        if target["missing_scoring_inputs"]:
+            print(f"[missing scoring inputs] {', '.join(target['missing_scoring_inputs'])}", flush=True)
+        if args.list_only:
+            continue
         try:
+            check_target(target)
             row = audit_point(point, seed=args.seed, frac=args.frac)
+            row["experiment"] = target["experiment"]
             results.append(row)
             print(f"[point] {point.name}: on-SR dot={row['on_minus_sr_projected_dot']:+.6g}; H=unavailable", flush=True)
         except (OSError, ValueError, TypeError, KeyError, RuntimeError, EOFError, pickle.UnpicklingError) as exc:
             errors.append({"point": str(point), "error": str(exc)})
             print(f"[skip] {point}: {exc}", flush=True)
     out.mkdir(parents=True, exist_ok=False)
-    document = {"schema": "cached-sr-gradient-audit/v1", "scope": SCOPE,
+    document = {"schema": "cached-sr-gradient-audit/v2", "scope": SCOPE,
                 "created_at": datetime.now(timezone.utc).isoformat(), "roots": list(map(str, roots)),
                 "analysis_wall_seconds": time.monotonic() - started,
-                "new_gpu_work": False, "results": results, "errors": errors}
+                "new_gpu_work": False, "list_only": args.list_only,
+                "targets": targets, "results": results, "errors": errors}
     (out / "data.json").write_text(json.dumps(document, indent=2, allow_nan=False) + "\n")
     with (out / "comparison.csv").open("w", newline="") as handle:
         fields = ["point", "seed", "selector", "reference_projected_dot", "reference_dot_a", "reference_dot_b",
@@ -247,6 +349,9 @@ def main(argv: list[str] | None = None) -> int:
                 writer.writerow({**{k: row[k] for k in ("point", "seed", "on_minus_sr_projected_dot", "h_gpu_seconds", "h_status")},
                                  "selector": selector, **{k: values[k] for k in fields if k in values}})
     print(f"REPORT {out / 'data.json'}\nTABLE  {out / 'comparison.csv'}\n{len(results)} calculated; {len(errors)} skipped. No H predictions generated.")
+    if args.list_only:
+        print("Inventory only. Checkpoints and scoring gradients are distinct artifacts; no tensors loaded.")
+        return 0
     return 0 if results and not errors else 2
 
 
