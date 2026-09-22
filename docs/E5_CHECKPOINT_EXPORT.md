@@ -3,7 +3,7 @@
 Run on the machine containing the original experiment directories:
 
 ```sh
-python3 scripts/export_e5_checkpoint_curves.py
+bash scripts/export_e5_checkpoint_curves.sh
 ```
 
 The default root is `$OM_WORK/runs/e5-reduced` (fallback:
@@ -12,8 +12,14 @@ such as `math400-d0/s0`, `math500-d100/s1`, and `math500-d400/s2` are discovered
 automatically. A different parent can be supplied with `--root`:
 
 ```sh
-python3 scripts/export_e5_checkpoint_curves.py --root /path/to/runs --out /path/to/exports/e5-checkpoints.json
+bash scripts/export_e5_checkpoint_curves.sh --root /path/to/runs --out /path/to/exports/e5-checkpoints.json
 ```
+
+The shell entry point selects the existing virtual-environment Python, falling
+back to `python3`, and requires Python 3.9 or newer. Set `E5_EXPORT_PYTHON` to
+override it. It works from any current directory and does not bootstrap the
+training environment. Do not run the `.py` file with `bash`; direct Python use
+is `python3 scripts/export_e5_checkpoint_curves.py`.
 
 The script prints the paths of a portable JSON report and a plotting CSV.
 Transfer both files back to the manuscript workspace; model tensors are not

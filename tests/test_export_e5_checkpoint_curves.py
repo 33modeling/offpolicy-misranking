@@ -1,6 +1,9 @@
 import csv
 import importlib.util
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -136,3 +139,33 @@ def test_adapter_only_archive_inventory(run):
     result = arm(exporter.export(root), "random")
     assert result["checkpoints"][0]["adapter_present"]
     assert result["needs_evaluation"] == [str(path.parent.relative_to(root))]
+
+
+def test_bash_entry_from_another_directory(run, tmp_path):
+    root, directory = run
+    wrapper = Path(__file__).resolve().parents[1] / "scripts/export_e5_checkpoint_curves.sh"
+    out = tmp_path / "export with spaces/curves.json"
+    result = subprocess.run(["bash", str(wrapper), "--root", str(root), "--out", str(out)],
+                            cwd=tmp_path, capture_output=True, text=True,
+                            env={**os.environ, "E5_EXPORT_PYTHON": sys.executable})
+    assert result.returncode == 0, result.stderr
+    assert "JSON:" in result.stdout
+    assert len(json.loads(out.read_text())["experiments"]) == 1
+
+
+def test_bash_entry_help(tmp_path):
+    wrapper = Path(__file__).resolve().parents[1] / "scripts/export_e5_checkpoint_curves.sh"
+    result = subprocess.run(["bash", str(wrapper), "--help"], cwd=tmp_path,
+                            capture_output=True, text=True,
+                            env={**os.environ, "E5_EXPORT_PYTHON": sys.executable})
+    assert result.returncode == 0, result.stderr
+    assert "--root" in result.stdout
+
+
+def test_bash_entry_propagates_failure(tmp_path):
+    wrapper = Path(__file__).resolve().parents[1] / "scripts/export_e5_checkpoint_curves.sh"
+    result = subprocess.run(["bash", str(wrapper), "--root", str(tmp_path / "missing")],
+                            capture_output=True, text=True,
+                            env={**os.environ, "E5_EXPORT_PYTHON": sys.executable})
+    assert result.returncode == 2
+    assert "Export failed:" in result.stderr
