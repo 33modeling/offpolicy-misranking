@@ -278,7 +278,44 @@ def compatible_owner(first, second):
         first.get(field) and second.get(field) for field in ('worker_id', 'event_id'))
 
 
-def task_progress(root, task):
+def completed_phase_progress(root, task):
+    """Keep separate phase receipts, in journal order, without reading payloads."""
+    directory = Path(root) / task.get('directory', '')
+    path = directory / 'cost.jsonl'
+    if not path.resolve().is_relative_to(Path(root).resolve()) or not path.is_file():
+        return []
+    latest, started_phases = {}, set()
+    for line in switch_status.node_view._tail_lines(path, size=65536):
+        try:
+            event = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        phase = event.get('phase')
+        if not isinstance(phase, str) or not re.fullmatch(r'[\w-]+', phase):
+            continue
+        if not isinstance(event.get('event_id'), str) or not event['event_id']:
+            continue
+        if event.get('state') == 'started':
+            started_phases.add(phase)
+            latest[phase] = event
+        elif event.get('state') == 'finished':
+            previous = latest.get(phase, {})
+            if phase not in started_phases or previous.get('event_id') == event['event_id']:
+                latest[phase] = event
+    result = []
+    for phase, event in latest.items():
+        if phase == task.get('phase'):
+            continue
+        if event.get('state') == 'finished' and type(event.get('exit_code')) is int and event['exit_code'] == 0:
+            result.append(('100.0%', f'{phase}: 100.0% (단계 종료 기록)'))
+        else:
+            result.append(('?', f'{phase}: 완료 미확인'))
+    return result
+
+
+def current_phase_progress(root, task):
     """Current phase evidence only: bounded log tails, never model/rollout files."""
     if task.get('task_lease_held') and not active(task):
         if task.get('phase') == 'curve':
@@ -293,27 +330,46 @@ def task_progress(root, task):
                 path = directory / f"{phase}-{rank}.log"
                 if not path.resolve().is_relative_to(Path(root).resolve()):
                     break
-                lines = switch_status.node_view._tail_lines(path, size=16384)
                 # Reports from completed previous attempts must not look like
                 # current progress while a new worker is still loading.
                 try:
                     progress = directory / "progress.json"
-                    if path.stat().st_mtime < progress.stat().st_mtime - switch_status.number(task.get("seconds")) - 2:
-                        break
+                    if not path.is_file() or path.stat().st_mtime < progress.stat().st_mtime - switch_status.number(task.get("seconds")) - 2:
+                        batches.append({})
+                        continue
                 except OSError:
-                    break
-                gradients = re.findall(r"\[(?:fresh_r|on.policy)\].*?\((\d+)/(\d+)\)", "\n".join(lines))
-                rollouts = re.findall(r"\brollout\s+(\d+)/(\d+)", "\n".join(lines))
-                matches, basis = (gradients, "Gradient 처리") if gradients else (rollouts, "응답 생성")
-                if not matches:
-                    break
-                done, total = map(int, matches[-1])
-                if not 0 <= done <= total or total <= 0:
-                    break
-                batches.append((basis, done, total))
-            if len(batches) == 4 and len({row[0] for row in batches}) == 1:
-                done, total = sum(row[1] for row in batches), sum(row[2] for row in batches)
-                return f"{100 * done / total:.1f}%", f"{batches[0][0]} {done}/{total}개"
+                    batches.append({})
+                    continue
+                lines = switch_status.node_view._tail_lines(path, size=16384)
+                counters = {}
+                for line in lines:
+                    rollout = re.search(r'\brollout\s+(\d+)/(\d+)', line)
+                    gradient = re.search(r'\[(?:fresh_r|on.policy)\]\s+(\w+).*?\((\d+)/(\d+)\)', line)
+                    if rollout:
+                        label, values = '응답 생성', rollout.groups()
+                    elif gradient:
+                        label, values = f'Gradient {gradient[1]}', gradient.groups()[1:]
+                    else:
+                        continue
+                    done, total = map(int, values)
+                    counters[label] = (done, total) if total > 0 and 0 <= done <= total else None
+                batches.append(counters)
+            labels = sorted({label for batch in batches for label in batch},
+                            key=lambda label: (label != '응답 생성', label))
+            if labels:
+                percentages, descriptions = [], []
+                for label in labels:
+                    values = [batch.get(label) for batch in batches]
+                    if len(values) != 4 or any(value is None for value in values):
+                        percentages.append('?')
+                        descriptions.append(f'{label}: 확인 중 ({sum(v is not None for v in values)}/4 shards)')
+                        continue
+                    done, total = sum(v[0] for v in values), sum(v[1] for v in values)
+                    value = 100 * done / total
+                    percent = f'{min(value, 99.9) if done < total else 100.:.1f}%'
+                    percentages.append(percent)
+                    descriptions.append(f'{label}: {percent} ({done}/{total}개)')
+                return ' / '.join(percentages), '; '.join(descriptions)
     elapsed = switch_status.number(task.get("seconds"), -1)
     limit = switch_status.number(task.get("timeout"), 0)
     if elapsed >= 0 and limit > 0:
@@ -323,6 +379,19 @@ def task_progress(root, task):
             note += f"; 업데이트 {step - start}회 완료"
         return f"{min(100., 100 * elapsed / limit):.1f}%", note + " (결과 완료율 아님)"
     return "확인 중", "처리 건수·시간 한도 기록 없음"
+
+
+def task_progress(root, task):
+    current, basis = current_phase_progress(root, task)
+    previous = completed_phase_progress(root, task)
+    if not previous:
+        return current, basis
+    # Every percentage has its own label in Remarks, in the same order.
+    current_label = str(task.get('phase') or '현재 단계')
+    if '시간 한도' in basis:
+        current = '시간 ' + current
+    return (' / '.join([*(percent for percent, _ in previous), current]),
+            '; '.join([*(note for _, note in previous), f'{current_label}: {basis}']))
 
 
 def node_assignments(data):
@@ -485,11 +554,12 @@ def render_nodes(data, *, width, all_nodes=False):
     node_width = max([columns(headers[1]), *(columns(row[1]) for row in rows)])
     # Keep full host names on one line when six useful columns fit. Padding is
     # based on terminal cells, not Python len(): Korean labels occupy two cells.
-    remaining = width - number_width - node_width - 6 - 8 - 10
+    progress_width = min(32, max([8, *(columns(row[4]) for row in rows)]))
+    remaining = width - number_width - node_width - 6 - progress_width - 10
     if remaining >= 40:
         experiment_width = min(max([24, *(columns(row[2]) for row in rows)]),
                                max(24, remaining * 3 // 5))
-        widths = [number_width, node_width, experiment_width, 6, 8,
+        widths = [number_width, node_width, experiment_width, 6, progress_width,
                   remaining - experiment_width]
         lines += table(headers, rows, widths)
     else:
@@ -498,14 +568,17 @@ def render_nodes(data, *, width, all_nodes=False):
         # wrapped hostname is never interleaved with another field's content.
         lines.append("# Node")
         detail_width = max(40, width - 2)
-        experiment_width = max(18, (detail_width - 20) * 3 // 5)
-        widths = [experiment_width, 6, 8, detail_width - experiment_width - 20]
+        narrow_progress = min(progress_width, max(8, (detail_width - 30) // 2))
+        overhead = 12 + narrow_progress
+        experiment_width = max(12, (detail_width - overhead) * 3 // 5)
+        widths = [experiment_width, 6, narrow_progress, max(8, detail_width - experiment_width - overhead)]
         for row in rows:
             host_lines = wrap(row[1], width - number_width - 1)
             lines.append(row[0].ljust(number_width) + " " + host_lines[0])
             lines.extend(" " * (number_width + 1) + part for part in host_lines[1:])
             lines.extend("  " + line for line in table(headers[2:], [row[2:]], widths))
-    lines.append("노드 Progress는 현재 단계 기준입니다. 시간 한도 사용률과 실제 처리 건수는 비고에서 구분합니다.")
+    lines.extend(wrap("Progress는 단계별로 표시합니다. 비고의 단계명과 같은 순서이며, 한 단계의 100%는 전체 완료가 아닙니다.", width))
+    lines.extend(wrap("시간 한도 사용률은 처리 완료율과 구분하며, 기록이 부족한 단계는 ?로 표시합니다.", width))
     if not nodes or not all_nodes and not current:
         lines.append(f"No current {data.get('subject', 'MBPP')} node evidence.")
     hidden = len(nodes) - len(current)
