@@ -883,6 +883,7 @@ def test_shared_restart_verifies_existing_isolated_runtime_against_its_git_commi
     (repo / '.gitignore').write_text('.work/\n')
     old = commit(repo, 'old controller fixture')
     monkeypatch.setattr(deploy, 'PINNED_COMMIT', old)
+    monkeypatch.setattr(deploy, 'OPERATIONS_COMMIT', None)
     runtime = deploy.stage_runtime(repo)
     (repo / 'src/selector_pair_gpu.py').write_text('# newer queue fixture\n')
     new = commit(repo, 'new controller fixture')
@@ -914,6 +915,23 @@ def test_handoff_requires_bound_finite_finish_cost_receipt(handoff, damage):
     assert handoff.valid_finish_receipt(receipt, 'event', progress)
     receipt[damage] = float('nan') if damage in {'seconds', 'allocated_gpu_seconds', 'time'} else 'changed'
     assert not handoff.valid_finish_receipt(receipt, 'event', progress)
+
+
+@pytest.mark.parametrize('corrupt', [False, True])
+def test_owner_checkout_verifies_science_and_operations_pins(tmp_path, handoff, monkeypatch, corrupt):
+    import selector_pair_deploy as deploy
+    from test_selector_pair_deploy import git
+
+    checkout = tmp_path / 'checkout'
+    git(tmp_path, 'clone', '--shared', '--no-checkout', '-q', str(SCRIPT.parents[1]), str(checkout))
+    runtime = deploy.stage_runtime(checkout)
+    monkeypatch.setattr(handoff, 'process', lambda *args: {'cwd': runtime})
+    if corrupt:
+        (runtime / 'scripts/selector_pair_parallel.py').write_text('# unverified queue\n')
+        with pytest.raises(RuntimeError, match='changed'):
+            handoff.owner_checkout(tmp_path, 123, checkout)
+    else:
+        assert handoff.owner_checkout(tmp_path, 123, checkout) == runtime
 
 
 def test_restart_retains_verified_owner_gpu_selection(handoff, root, repo, proc, pidfds, monkeypatch):

@@ -23,7 +23,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from selector_pair_diagnostic import collect, local_owners, observations, read_small
-from selector_pair_deploy import stage_runtime, pinned_files, manifest_for, verify
+from selector_pair_deploy import stage_runtime, pinned_files, manifest_for, verify, OPERATIONS_FILES
 
 
 def shared_available(lock):
@@ -84,11 +84,22 @@ def owner_checkout(proc, pid, repo):
     if candidate == repo:
         return repo
     cache = repo / '.work/pair-runtimes'
-    if (candidate.parent != cache or len(candidate.name) != 40
-            or any(c not in '0123456789abcdef' for c in candidate.name)):
+    commits = candidate.name.split('-')
+    if (candidate.parent != cache or len(commits) not in {1, 2}
+            or any(len(commit) != 40 or any(c not in '0123456789abcdef' for c in commit)
+                   for commit in commits)):
         raise RuntimeError('controller checkout is outside this repository and its pinned runtimes')
-    files = pinned_files(repo, commit=candidate.name)
-    verify(candidate, manifest_for(files, commit=candidate.name))
+    files = pinned_files(repo, commit=commits[0])
+    if len(commits) == 2:
+        operations = pinned_files(repo, commit=commits[1])
+        for name in OPERATIONS_FILES:
+            if name not in files or name not in operations:
+                raise RuntimeError('controller operations overlay is incomplete')
+            files[name] = operations[name]
+    expected = manifest_for(files, commit=commits[0])
+    if len(commits) == 2:
+        expected['operations_commit'] = commits[1]
+    verify(candidate, expected)
     return candidate
 
 

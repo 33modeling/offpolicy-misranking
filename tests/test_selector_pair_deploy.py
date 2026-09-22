@@ -33,6 +33,7 @@ def deploy():
 
 @pytest.fixture
 def prepared(tmp_path, deploy, monkeypatch):
+    monkeypatch.setattr(deploy, 'OPERATIONS_COMMIT', None)
     upstream, checkout = tmp_path / 'upstream', tmp_path / 'checkout'
     upstream.mkdir()
     git(upstream, 'init', '-q')
@@ -88,12 +89,12 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
     git(tmp_path, 'clone', '--shared', '--no-checkout', '-q', str(source), str(checkout))
     original_head = git(checkout, 'rev-parse', 'HEAD')
     target = deploy.stage_runtime(checkout)
-    assert target.name == deploy.PINNED_COMMIT
+    assert target.name == deploy.PINNED_COMMIT + '-' + deploy.OPERATIONS_COMMIT
     for name in ('scripts/queue_selector_pair_gpu.py', 'scripts/selector_pair_cost_recovery.py',
                  'scripts/selector_pair_parallel.py',
                  'scripts/recover_selection_switch_cost.py', 'scripts/_selection_worker.sh',
                  'scripts/_e5_node.sh', 'scripts/_pair_gpu_cleanup.py',
-                 'scripts/selector_pair_handoff.py', 'scripts/selector_pair_diagnostic.py',
+                 'scripts/selector_pair_diagnostic.py',
                  'src/selector_pair_gpu.py', 'src/selection_switch_gpu.py',
                  'scripts/run_selector_pair.sh'):
         assert (target / name).read_bytes() == (source / name).read_bytes(), name
@@ -103,6 +104,12 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
     saved = {p: (p.stat().st_mtime_ns, p.stat().st_ino) for p in target.rglob('*')}
     assert deploy.stage_runtime(checkout) == target
     assert saved == {p: (p.stat().st_mtime_ns, p.stat().st_ino) for p in target.rglob('*')}
+    expected = deploy.pinned_files(source, commit=deploy.PINNED_COMMIT)
+    for name, (content, _) in expected.items():
+        if name not in deploy.OPERATIONS_FILES:
+            assert (target / name).read_bytes() == content, name
+    manifest = json.loads((target / deploy.MANIFEST).read_text())
+    assert manifest['operations_commit'] == deploy.OPERATIONS_COMMIT
 
 
 def test_clean_cache_reused_without_file_rewrites(prepared, deploy):

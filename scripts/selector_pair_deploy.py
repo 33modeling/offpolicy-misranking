@@ -21,6 +21,9 @@ import time
 
 
 PINNED_COMMIT = 'c0c38d62e893fdcf25920d5a70d3149a06b5450f'
+OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
+OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
+                    'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_FILES = 20000
 MANIFEST = '.pair-runtime.json'
@@ -73,6 +76,7 @@ def safe_name(name):
 
 
 def pinned_files(repo, *, commit=None):
+    overlay = commit is None and OPERATIONS_COMMIT is not None
     commit = PINNED_COMMIT if commit is None else commit
     if len(commit) != 40 or any(c not in '0123456789abcdef' for c in commit):
         raise RuntimeError('invalid pinned Pair commit')
@@ -138,11 +142,20 @@ def pinned_files(repo, *, commit=None):
             files[name] = (data, mode)
     if files.keys() != expected.keys():
         raise RuntimeError('Pair archive omits pinned runtime files')
+    if overlay:
+        # Keep the live study's scientific source pin. Only reviewed queue and
+        # status helpers come from the newer operations commit.
+        operations = pinned_files(repo, commit=OPERATIONS_COMMIT)
+        for name in OPERATIONS_FILES:
+            if name not in files or name not in operations:
+                raise RuntimeError('Pair operations overlay is missing a required helper')
+            files[name] = operations[name]
     return files
 
 
 def manifest_for(files, *, commit=None):
     return {'schema': 'selector-pair-isolated-runtime-v1', 'commit': PINNED_COMMIT if commit is None else commit,
+            **({'operations_commit': OPERATIONS_COMMIT} if commit is None and OPERATIONS_COMMIT else {}),
             'files': {name: {'sha256': hashlib.sha256(data).hexdigest(), 'mode': mode, 'size': len(data)}
                       for name, (data, mode) in sorted(files.items())}}
 
@@ -216,7 +229,8 @@ def stage_runtime(repo):
     directory(repo / '.work')
     cache = repo / '.work/pair-runtimes'
     directory(cache)
-    target = cache / PINNED_COMMIT
+    runtime_id = PINNED_COMMIT + ('-' + OPERATIONS_COMMIT if OPERATIONS_COMMIT else '')
+    target = cache / runtime_id
     lock_path = cache / '.stage.lock'
     if lock_path.is_symlink():
         raise RuntimeError('refusing symlinked Pair runtime staging lock')
@@ -232,7 +246,7 @@ def stage_runtime(repo):
                 time.sleep(.1)
         if target.exists() or target.is_symlink():
             verify(target, expected)
-            print(f'[pair-runtime] verified existing queue runtime {PINNED_COMMIT}', flush=True)
+            print(f'[pair-runtime] verified existing queue runtime {runtime_id}', flush=True)
             return target
         temporary = Path(tempfile.mkdtemp(prefix='.stage-', dir=cache))
         try:
@@ -249,5 +263,5 @@ def stage_runtime(repo):
             if temporary.exists():
                 # Only our unique unpublished staging directory, never a runtime.
                 shutil.rmtree(temporary)
-    print(f'[pair-runtime] staged reviewed queue runtime {PINNED_COMMIT}; live checkout unchanged', flush=True)
+    print(f'[pair-runtime] staged reviewed queue runtime {runtime_id}; live checkout unchanged', flush=True)
     return target
