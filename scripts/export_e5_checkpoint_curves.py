@@ -86,7 +86,7 @@ def sharded_reward(directory, prompts, k, provenance):
     return statistics.fmean(statistics.fmean(v) for v in rewards.values())
 
 
-def export(root):
+def export(root, starts=None):
     root = root.resolve(strict=True)
     all_files = list(files(root))
     candidates = sorted({p.parent for p in all_files if p.name in
@@ -103,9 +103,11 @@ def export(root):
         branch = re.fullmatch(r"(.+)-d(\d+)(.*)", directory.parent.name)
         if not match or not branch:
             continue
+        start, seed = int(branch[2]), int(match[1])
+        if starts is not None and start not in starts:
+            continue
         contract_path = directory / "experiment.json"
         contract = read(contract_path) if contract_path.is_file() else {}
-        start, seed = int(branch[2]), int(match[1])
         if contract.get("drift", start) != start or contract.get("seed", seed) != seed:
             raise ValueError(f"folder/experiment identity mismatch: {directory}")
         if contract:
