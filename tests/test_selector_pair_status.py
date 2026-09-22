@@ -55,6 +55,19 @@ def test_missing_root_is_readonly_and_keeps_all_planned_slots(tmp_path):
     assert not root.exists()
 
 
+def test_nonattainment_explains_terminal_adaptive_dependency(tmp_path):
+    p = prepared(tmp_path)
+    core.atomic_json(tmp_path / "development/s0-t25/result.json", {
+        "protocol_id": p["protocol_id"], "seed": 0, "step": 25, "role": "development",
+        "contrast": {"status": "censored", "h_gpu_seconds": None}})
+    data = status.snapshot(tmp_path)
+    adaptive = [task for task in data["tasks"] if task["name"] == "adaptive"]
+    assert len(adaptive) == 6
+    assert all(task["status"] == "BLOCKED" for task in adaptive)
+    assert all("s0/t25" in task["reason"] for task in adaptive)
+    assert "테스트 결정 고정: BLOCKED" in status.render(data)
+
+
 @pytest.mark.parametrize("damage", [None, "receipt", "curve", "missing_curve", "budget"])
 def test_only_published_result_and_bound_curve_count_as_done(tmp_path, damage):
     prepared(tmp_path)

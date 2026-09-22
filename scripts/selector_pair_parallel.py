@@ -9,6 +9,10 @@ import uuid
 import selector_pair_gpu as worker
 
 RECEIPT = "pair-parallel-controls-runtime.json"
+PRE_NONATTAINMENT_HASHES = {
+    "selector_pair_parallel.py": "cdc531e6a7210ac0cbe920324d6551d8e3cc0c383bcb680c3a0f792e1758b3fc",
+    "queue_selector_pair_gpu.py": "7c833839ccb31e77a259831c77b31d4de52480bc64ee59fa509a07f0b487da3c",
+}
 FIXED_CONTROLS = (("on_policy", "selection_full"), ("cached", "selection_full"),
                   ("on_policy", "random_full"))
 
@@ -64,7 +68,9 @@ def validate_receipt(root, protocol):
     for name in worker.BRANCHES:
         checked(root / "branches" / name)
     path = checked(root / RECEIPT)
-    if not path.is_file() or worker.core.read(path) != receipt_value(root, protocol):
+    expected = receipt_value(root, protocol)
+    previous = {**expected, "runtime_code_hashes": PRE_NONATTAINMENT_HASHES}
+    if not path.is_file() or worker.core.read(path) not in (expected, previous):
         raise ValueError(f"parallel Pair schedule receipt missing or changed: {path}")
 
 
@@ -249,15 +255,32 @@ class _ControlProgress(BaseException):
     pass
 
 
+class AdaptiveUnavailable(ValueError):
+    """A terminal model dependency failure, not a live worker's lock."""
+
+
 def run_distributed(root, protocol, devices, command, original):
     """Keep the frozen scheduler, inserting fixed work only at its idle point."""
     root = Path(root).resolve()
     validate_receipt(root, protocol)
     original_stage, original_progress, original_attempt = worker.distributed_stage, worker.pair_progress, worker.attempt_branch
     original_freeze, original_verify, original_atomic = worker.freeze, worker.verify_pair, worker.core.atomic_json
+    original_fit = worker.fit
     controls = FixedQueue(root, protocol, devices)
     development_failures = {}
     observation = {}
+
+    def fit(candidate, p):
+        try:
+            return original_fit(candidate, p)
+        except ValueError as exc:
+            if str(exc) != "unreached or ineligible target: no point label; do not fit on successful states only":
+                raise
+            raise AdaptiveUnavailable(
+                "Adaptive BLOCKED: a development target was not reached or was already met at the parent; "
+                "the legacy H model cannot be fitted. Fixed Pair controls remain independent. "
+                "No target, result, cost or active lock was changed."
+            ) from exc
 
     def atomic(path, value):
         original_atomic(path, value)
@@ -318,10 +341,22 @@ def run_distributed(root, protocol, devices, command, original):
             worker.pair_progress = original_progress
 
     worker.distributed_stage, worker.attempt_branch = stage, attempt
-    worker.freeze, worker.core.atomic_json = freeze, atomic
+    worker.freeze, worker.core.atomic_json, worker.fit = freeze, atomic, fit
     try:
         with allow_fixed_before_decisions(root, protocol):
-            return original(root, protocol, devices, command)
+            try:
+                return original(root, protocol, devices, command)
+            except AdaptiveUnavailable as exc:
+                if command != "run":
+                    raise
+                print(f"[BLOCKED] {exc}; continuing all available fixed controls", flush=True)
+                # The original fit barrier has unwound. Fixed GPU work must
+                # never run while holding the global model/decision lock.
+                while fixed_pass():
+                    pass
+                controls.record("BLOCKED", str(exc))
+                raise
     finally:
         worker.distributed_stage, worker.pair_progress, worker.attempt_branch = original_stage, original_progress, original_attempt
         worker.freeze, worker.verify_pair, worker.core.atomic_json = original_freeze, original_verify, original_atomic
+        worker.fit = original_fit

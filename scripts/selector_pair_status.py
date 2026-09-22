@@ -167,6 +167,30 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
     return task
 
 
+def adaptive_dependency(root, protocol):
+    """Read published development evidence, without evaluating future arms."""
+    blocked = []
+    completed = 0
+    for seed in pair.DEV_SEEDS:
+        for step in pair.STEPS:
+            row = read(root / "development" / f"s{seed}-t{step}" / "result.json")
+            if (row.get("protocol_id") != protocol.get("protocol_id")
+                    or row.get("seed") != seed or row.get("step") != step
+                    or row.get("role") != "development"):
+                continue
+            contrast = row.get("contrast")
+            if not isinstance(contrast, dict):
+                continue
+            state = contrast.get("status")
+            completed += state in {"observed", "censored", "ineligible"}
+            if state in {"censored", "ineligible"}:
+                blocked.append(f"s{seed}/t{step}")
+    if blocked:
+        return "BLOCKED", "목표 미도달 또는 시작점에서 이미 달성: " + ", ".join(blocked) + "; 기존 H 회귀 Adaptive 확정 불가. 고정 Pair는 계속 실행 가능"
+    return "WAIT", (f"개발 결과 {completed}/9; 기존 H 회귀 모델·결정 확정 필요" if completed == 9
+                    else f"개발 결과 {completed}/9; 개발 분기 완료 대기")
+
+
 def snapshot(root, *, now=None):
     root = Path(root).resolve()
     now = time.time() if now is None else now
@@ -192,6 +216,9 @@ def snapshot(root, *, now=None):
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         error = str(exc)
     fixed_ready, schedule_error = parallel_controls(root, p) if prepared else (False, '')
+    adaptive_state, adaptive_reason = adaptive_dependency(root, p) if prepared else ("WAIT", "실험 준비 대기")
+    if choices:
+        adaptive_state, adaptive_reason = "READY", ""
     observations = progress_records(root)
     active_paths = {}
     active_owners = {}
@@ -400,12 +427,15 @@ def snapshot(root, *, now=None):
                 if not prepared or (not development and error):
                     task.update(status="RUN" if task["status"] == "RUN" else "WAIT",
                                 reason=error or "실험 설정 확인 불가; 완료 여부 미확인")
+                elif name == "adaptive" and not choices and task["status"] == "WAIT":
+                    task.update(status=adaptive_state, reason=adaptive_reason)
                 tasks.append(task)
     return dict(root=str(root), updated=now, prepared=prepared, error=error, tasks=tasks,
                 nodes=sorted(nodes.values(), key=lambda node: display.switch_status.node_view.host_sort_key(node["host"])),
                 activity=activity, target_reward=p.get("target_reward"),
                 budget_gpu_seconds=p.get("training_cap_gpu_seconds"),
                 test_decisions_frozen=bool(choices), parallel_controls_ready=fixed_ready,
+                adaptive_state=adaptive_state, adaptive_reason=adaptive_reason,
                 parallel_controls_error=schedule_error)
 
 
@@ -452,7 +482,8 @@ def dashboard_data(data):
                           f"최종 평가 저장 {endpoint_count}/42 | 결과·곡선 저장 {curve_count}/42",
                           "상태별 쌍 비교 검증은 report에서 별도 수행합니다.",
                           "고정 대조군 병렬 실행 승인: " + ("READY" if data.get("parallel_controls_ready") else "WAIT"),
-                          "테스트 결정 고정: " + ("DONE" if data["test_decisions_frozen"] else "WAIT"),
+                          "테스트 결정 고정: " + ("DONE" if data["test_decisions_frozen"] else data.get("adaptive_state", "WAIT")),
+                          *(["Adaptive: " + data["adaptive_reason"]] if data.get("adaptive_reason") else []),
                           *(["병렬 실행 승인 확인 필요: " + data['parallel_controls_error']]
                             if data.get('parallel_controls_error') else []),
                           *(["WAIT: " + data["error"]] if data["error"] else [])])

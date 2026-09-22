@@ -20,6 +20,7 @@ RECEIPT = "pair-curve-shard-guard-runtime.json"
 COST_RECEIPT = "pair-cost-recovery-runtime.json"
 PRE_COST_GUARD_SHA256 = "3199888c2460768a09da64c098efd7aaaf8898e1707575e67a20f61abe5d4e43"
 PRE_PARALLEL_GUARD_SHA256 = "e3ec449a74e7dddac4bba0d6313a9ca93cd729dc20d4b0c00cfb26ea5f3ba2ac"
+PRE_NONATTAINMENT_GUARD_SHA256 = parallel.PRE_NONATTAINMENT_HASHES["queue_selector_pair_gpu.py"]
 
 
 def known_point(root, branch, out, arm):
@@ -133,7 +134,8 @@ def validate_receipts(root, protocol):
     if (root / RECEIPT).exists():
         previous = worker.core.read(root / RECEIPT)
         if previous not in (expected, {**expected, "guard_sha256": PRE_COST_GUARD_SHA256},
-                            {**expected, "guard_sha256": PRE_PARALLEL_GUARD_SHA256}):
+                            {**expected, "guard_sha256": PRE_PARALLEL_GUARD_SHA256},
+                            {**expected, "guard_sha256": PRE_NONATTAINMENT_GUARD_SHA256}):
             raise ValueError(f"frozen contract changed: {root / RECEIPT}")
     if (root / COST_RECEIPT).exists():
         if not (root / RECEIPT).exists():
@@ -141,7 +143,9 @@ def validate_receipts(root, protocol):
         expected = recovery_receipt(root, protocol)
         previous = {**expected, "runtime_code_hashes": {
             **expected["runtime_code_hashes"], "queue_selector_pair_gpu.py": PRE_PARALLEL_GUARD_SHA256}}
-        if worker.core.read(root / COST_RECEIPT) not in (expected, previous):
+        pre_nonattainment = {**expected, "runtime_code_hashes": {
+            **expected["runtime_code_hashes"], "queue_selector_pair_gpu.py": PRE_NONATTAINMENT_GUARD_SHA256}}
+        if worker.core.read(root / COST_RECEIPT) not in (expected, previous, pre_nonattainment):
             raise ValueError(f"frozen contract changed: {root / COST_RECEIPT}")
     if (root / parallel.RECEIPT).exists():
         parallel.validate_receipt(root, protocol)
@@ -167,7 +171,8 @@ def bind_parallel_receipt(root, protocol):
     with worker.queue_lease(root / ".pair-barrier.lock"):
         with worker.queue_lease(root / ".pair-runtime.lock"):
             validate_receipts(root, protocol)
-            worker.base.bind(root / parallel.RECEIPT, parallel.receipt_value(root, protocol))
+            if not (root / parallel.RECEIPT).exists():
+                worker.base.bind(root / parallel.RECEIPT, parallel.receipt_value(root, protocol))
 
 
 def run():

@@ -39,6 +39,24 @@ def test_parallel_amendment_preserves_both_predecessor_receipts(tmp_path):
     assert saved(amendment) == published
 
 
+def test_nonattainment_fix_preserves_all_existing_parallel_receipts(tmp_path):
+    protocol = frozen_protocol(tmp_path)
+    guard = {**adapter.guard_receipt(tmp_path, protocol),
+             'guard_sha256': adapter.PRE_NONATTAINMENT_GUARD_SHA256}
+    adapter.worker.core.atomic_json(tmp_path / adapter.RECEIPT, guard)
+    recovery = adapter.recovery_receipt(tmp_path, protocol)
+    recovery['runtime_code_hashes']['queue_selector_pair_gpu.py'] = adapter.PRE_NONATTAINMENT_GUARD_SHA256
+    adapter.worker.core.atomic_json(tmp_path / adapter.COST_RECEIPT, recovery)
+    schedule = {**adapter.parallel.receipt_value(tmp_path, protocol),
+                'runtime_code_hashes': adapter.parallel.PRE_NONATTAINMENT_HASHES}
+    adapter.worker.core.atomic_json(tmp_path / adapter.parallel.RECEIPT, schedule)
+    before = {path: saved(path) for path in tmp_path.glob('*.json')}
+    adapter.bind_receipt(tmp_path, protocol)
+    adapter.bind_recovery_receipt(tmp_path, protocol)
+    adapter.bind_parallel_receipt(tmp_path, protocol)
+    assert all(saved(path) == value for path, value in before.items())
+
+
 @pytest.mark.parametrize('name', ['selector_pair_cost_recovery.py', 'recover_selection_switch_cost.py',
                                 '_recovery_owners.py', 'mbpp_storage_audit.py'])
 def test_predecessor_exception_never_accepts_unreviewed_helper_changes(tmp_path, name):

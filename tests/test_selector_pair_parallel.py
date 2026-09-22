@@ -200,6 +200,54 @@ def test_fixed_outcomes_cannot_change_real_fit_or_frozen_choices(tmp_path, study
         assert all(value[key] == item for key, item in expected.items())
 
 
+def test_nonattainment_does_not_block_fixed_controls_or_repeat_training(tmp_path, study, monkeypatch):
+    protocol, calls, _ = study
+    execute = gpu.execute
+    original_fit = gpu.fit
+
+    def censored(entry, arm, devices):
+        execute(entry, arm, devices)
+        if entry[2]["config"]["seed"] == 0 and entry[2]["config"]["drift"] == 25:
+            path = entry[1] / arm / "result.json"
+            value = core.read(path)
+            for point in value["points"]:
+                point["reward"] = .1
+            core.atomic_json(path, value)
+            core.atomic_json(entry[1] / arm / "curve.json", {"result_sha256": base.digest(path)})
+        if entry[2]["config"]["seed"] in pair.TEST_SEEDS:
+            # No global barrier is held during independent GPU work.
+            with gpu.pair_lease(tmp_path / ".pair-barrier.lock"):
+                pass
+
+    monkeypatch.setattr(gpu, "execute", censored)
+    for _ in range(2):
+        with pytest.raises(parallel.AdaptiveUnavailable, match="Adaptive BLOCKED"):
+            parallel.run_distributed(tmp_path, protocol, [], "run", gpu.run_distributed)
+        assert len(calls) == 36
+        assert len(list(tmp_path.glob("test/*/queue-branches/*.json"))) == 18
+        assert not (tmp_path / "model.json").exists()
+        assert not (tmp_path / "test-decisions.json").exists()
+        assert gpu.fit is original_fit
+        row = core.read(tmp_path / "development/s0-t25/result.json")
+        assert row["contrast"]["status"] == "censored"
+        assert row["contrast"]["h_gpu_seconds"] is None
+
+
+def test_known_old_schedule_receipt_is_preserved(tmp_path, study):
+    protocol, _, _ = study
+    path = tmp_path / parallel.RECEIPT
+    value = {**parallel.receipt_value(tmp_path, protocol),
+             "runtime_code_hashes": parallel.PRE_NONATTAINMENT_HASHES}
+    core.atomic_json(path, value)
+    before = path.read_bytes()
+    parallel.validate_receipt(tmp_path, protocol)
+    assert path.read_bytes() == before
+    value["runtime_code_hashes"] = {**parallel.PRE_NONATTAINMENT_HASHES, "selector_pair_parallel.py": "unknown"}
+    core.atomic_json(path, value)
+    with pytest.raises(ValueError):
+        parallel.validate_receipt(tmp_path, protocol)
+
+
 @pytest.mark.parametrize("branch,arm", [("adaptive-on_policy", "selection_full"),
                                         ("adaptive-cached", "selection_full"),
                                         ("on_policy", "gated"), ("cached", "random_full")])
