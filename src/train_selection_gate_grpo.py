@@ -617,8 +617,6 @@ def train(args: argparse.Namespace) -> None:
             )
             if budget_deadline is not None:
                 _atomic_json(out_dir / "budget_stop.json", {**budget_record, "use_parent_policy": False})
-            for checkpoint in out_dir.glob("checkpoint-*"):
-                shutil.rmtree(checkpoint)
             print(f"[grpo] published {out_dir}", flush=True)
         if world_size > 1:
             dist.barrier()

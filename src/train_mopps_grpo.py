@@ -601,8 +601,6 @@ def train(args: argparse.Namespace) -> None:
                 require_complete_hashes=True,
             )
             validate_policy_evidence(out_dir, selector_spec)
-            for checkpoint in out_dir.glob("checkpoint-*"):
-                shutil.rmtree(checkpoint)
             print(f"[grpo] published {out_dir}", flush=True)
             if budget_deadline is not None:
                 _atomic_json(out_dir / "budget_stop.json", {**budget_record, "use_parent_policy": False})

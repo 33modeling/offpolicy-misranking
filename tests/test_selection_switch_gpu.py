@@ -862,14 +862,14 @@ def test_archiving_entry_keeps_each_checkpoint_adapter_before_removal(tmp_path):
         (checkpoint / name).write_text(name)
     entry.archive_then_remove(checkpoint)
     kept = tmp_path / "policy" / "curve-checkpoints" / "step-50"
-    assert not checkpoint.exists()
+    assert checkpoint.exists()
     assert sorted(p.name for p in kept.iterdir()) == ["adapter_config.json", "adapter_model.safetensors", "checkpoint_state.json"]
     other = tmp_path / "policy" / ".checkpoint-000055.tmp"
     other.mkdir()
     entry.archive_then_remove(other)
     assert not other.exists() and not (tmp_path / "policy" / "curve-checkpoints" / "step-55").exists()
     again = tmp_path / "policy" / "checkpoint-000050"
-    again.mkdir()
+    again.mkdir(exist_ok=True)
     (again / "adapter_model.safetensors").write_text("changed")
     entry.archive_then_remove(again)
     assert (kept / "adapter_model.safetensors").read_text() == "adapter_model.safetensors"

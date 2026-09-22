@@ -672,10 +672,7 @@ def _save_checkpoint(
     if target.exists():
         if target.is_dir() and _checkpoint_step(target, contract) == completed_steps:
             return
-        if target.is_dir():
-            shutil.rmtree(target)
-        else:
-            target.unlink()
+        raise ValueError(f"checkpoint path already contains incompatible artifacts; preserve and review: {target}")
     temporary = out_dir / f".checkpoint-{completed_steps:06d}.tmp"
     shutil.rmtree(temporary, ignore_errors=True)
     temporary.mkdir(parents=True)
@@ -698,22 +695,7 @@ def _save_checkpoint(
         state,
     )
     temporary.rename(target)
-    # Retention counts validated predecessors, not arbitrary directory names.
-    # Corrupt/foreign/future checkpoints must neither evict the checkpoint just
-    # committed nor become permission to delete saved evidence from another run.
-    checkpoints = []
-    for path in out_dir.glob("checkpoint-*"):
-        if path == target or path.is_symlink() or not path.is_dir():
-            continue
-        step = _checkpoint_step(path, contract)
-        if (step is not None and 0 < step < completed_steps
-                and path.name == f"checkpoint-{step:06d}"):
-            checkpoints.append((step, path))
-    # Keep the new checkpoint and its newest validated predecessor. Unexpected
-    # future-step artifacts remain untouched for inspection instead of counting
-    # against this run's two-checkpoint retention window.
-    for _, stale in sorted(checkpoints)[:-1]:
-        shutil.rmtree(stale)
+    # Every published checkpoint remains available for evaluation and recovery.
 
 
 def _latest_checkpoint(
@@ -1265,8 +1247,6 @@ def train(args: argparse.Namespace) -> None:
                 expected_prompts=Path(args.prompts),
                 require_complete_hashes=True,
             )
-            for checkpoint in out_dir.glob("checkpoint-*"):
-                shutil.rmtree(checkpoint)
             print(f"[grpo] published {out_dir}", flush=True)
         if world_size > 1:
             dist.barrier()

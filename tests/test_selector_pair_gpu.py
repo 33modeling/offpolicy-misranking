@@ -371,7 +371,7 @@ def test_archive_copies_cost_receipt_with_checkpoint(tmp_path, monkeypatch):
     core.atomic_json(checkpoint / "cost-receipt.json", {"event_id": "train", "time": 100})
     monkeypatch.setattr(archive, "KEEP", (*archive.KEEP, "cost-receipt.json"))
     archive.archive_then_remove(checkpoint)
-    assert not checkpoint.exists()
+    assert checkpoint.exists()
     assert core.read(tmp_path / "curve-checkpoints/step-30/cost-receipt.json")["event_id"] == "train"
 
 

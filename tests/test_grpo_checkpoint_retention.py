@@ -55,12 +55,12 @@ def contents(path):
             for item in path.rglob("*") if item.is_file()}
 
 
-def test_normal_retention_keeps_two_latest_valid_checkpoints(tmp_path):
+def test_normal_retention_keeps_all_valid_checkpoints(tmp_path):
     first = save(tmp_path, 5)
     previous = save(tmp_path, 10)
     newest = save(tmp_path, 15)
-    assert not first.exists()
-    assert sorted(tmp_path.glob("checkpoint-*")) == [previous, newest]
+    assert first.exists()
+    assert sorted(tmp_path.glob("checkpoint-*")) == [first, previous, newest]
     assert trainer._latest_checkpoint(tmp_path, 100, CONTRACT) == (newest, 15)
 
 
@@ -109,7 +109,7 @@ def test_pruning_valid_predecessors_preserves_unrecognized_older_artifacts(tmp_p
     old = checkpoint(tmp_path, 20)
     previous = checkpoint(tmp_path, 30)
     newest = save(tmp_path, 35)
-    assert not old.exists()
+    assert old.exists()
     assert previous.is_dir() and newest.is_dir()
     assert contents(unexpected) == before
     if artifact == "symlink":
