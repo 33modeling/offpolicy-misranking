@@ -4,6 +4,10 @@ This repository runs the paper experiment with a real verifier-reward GRPO
 policy update. The earlier positive-rollout SFT drift is retired and cannot be
 entered through the canonical runner.
 
+The [complete experiment record (Korean)](docs/EXPERIMENTS_COMPLETE_GUIDE_KO.md)
+describes every experiment family, comparison, processing stage, completion
+criterion and result interpretation, including the MBPP off-policy follow-up.
+
 ## MBPP Selection And Switching
 
 Run `bash scripts/run_mbpp_experiments.sh` on every allocated node, including
