@@ -135,3 +135,24 @@ def test_current_pair_runtime_is_a_reviewed_revision():
     assert current in rloo.PAIR_OBSERVATION_REVIEWED, (
         'src/selector_pair_gpu.py changed; confirm RLOO still never imports it, then pin '
         f'{current} in PAIR_OBSERVATION_REVIEWED so prepared RLOO matrices keep validating')
+
+
+def test_checkpoint_retention_trainer_revisions_are_reviewed_drift_only_for_exact_pairs():
+    import rloo_experiment as rloo
+    recorded = {str(path.relative_to(rloo.ROOT)): rloo.ed.digest(path)
+                for path in sorted((rloo.ROOT / 'src').glob('*.py'))}
+    for name, (frozen, current) in rloo.CHECKPOINT_RETENTION_UPGRADES.items():
+        assert recorded[name] == current, name
+        recorded[name] = frozen
+    changes = rloo.reviewed_code_changes(recorded)
+    assert set(changes) == set(rloo.CHECKPOINT_RETENTION_UPGRADES)
+    name = 'src/train_policy_grpo.py'
+    recorded[name] = '0' * 64
+    with pytest.raises(ValueError, match="code changed since preparation: src/train_policy_grpo.py"):
+        rloo.reviewed_code_changes(recorded)
+
+
+def test_rloo_frozen_gain_file_is_byte_identical():
+    import rloo_experiment as rloo
+    assert rloo.ed.digest(rloo.ROOT / 'src/gain_vs_reliability.py') == \
+        'ccd77161107f0acec82f6dc2a21c841957b6573885a8b4de4cc5b4cf17f6d36b'

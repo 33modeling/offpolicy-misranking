@@ -81,6 +81,23 @@ def runtime_env(config):
 # no other module under src/. Their drift cannot change training, selection,
 # evaluation, checkpoints or costs, so it is recorded in the observation
 # receipt instead of refusing to start. Every other src module stays frozen.
+# ba2f4d8 publishes every checkpoint instead of deleting older ones. Learner
+# updates, inputs, evaluations and completed RLOO results are unchanged; only
+# these exact (frozen, reviewed) trainer revisions are accepted.
+CHECKPOINT_RETENTION_UPGRADES = {
+    'src/selection_switch_curve_train.py': (
+        '49a36f999ae0e65ee1335d14af39d61c5a6467906534341af4ea593a70e456f5',
+        '44fdc6d62065cc104cb23dd5391098cfea9f2cbbbf8a2dfd2c07841ea61a7952'),
+    'src/train_mopps_grpo.py': (
+        'da79c48c2c41679322e61481f613f772d8744927a23cfbd9b5c7d30d5e12af9a',
+        '13ae041af1d827920f85924ba3e128b5c65bef1438502c939e64186cc3a16fe8'),
+    'src/train_policy_grpo.py': (
+        'e53b8eb2b2135ed246ace8f68c9011f8fb8fa442690902575121c680ed45b070',
+        '67a04484d896aaaf12e33334fc9b2186e8e3e49fcc427b4e6fae0b8cce810093'),
+    'src/train_selection_gate_grpo.py': (
+        'c84f4a63cdeb40ee63feedffec4f3491089db35fb9fd9bbe243e1a2f09efbc9f',
+        '13181f71a475630797b2ec6527ea27ce445c8bd4c2ab54b95a8580ece292b899'),
+}
 DISPLAY_MODULES = ('src/matrix_status.py', 'src/rlzero_status.py',
                    'src/downstream_status.py', 'src/queue_status.py')
 
@@ -109,6 +126,7 @@ def reviewed_code_changes(recorded):
                     or (name == 'src/selector_pair_gpu.py'
                         and digest in (PAIR_OBSERVATION_FROZEN, *PAIR_OBSERVATION_REVIEWED)
                         and current in PAIR_OBSERVATION_REVIEWED)
+                    or (digest, current) == CHECKPOINT_RETENTION_UPGRADES.get(name)
                     or (name in DISPLAY_MODULES and display_is_isolated(name)))
         if not reviewed:
             raise ValueError(f"code changed since preparation: {name}")
