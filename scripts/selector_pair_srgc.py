@@ -20,6 +20,10 @@ PRE_FAILURE_HANDLING_HASHES = {
     "selector_pair_srgc.py": "8feaa80610e51f55d960d056d1f3b327846e0c3290b75ee68047bbe384758924",
     "selector_pair_srgc_score.py": "29b30516d0678ef041bd873c9d3ca56e4800c6a4c23d2e211940ebbfe463b8f6",
 }
+PRE_BUDGET_RECOVERY_HASHES = {
+    **PRE_FAILURE_HANDLING_HASHES,
+    "selector_pair_srgc.py": "07c5bb63c0d2361b155d1c0ec87abed001ad95757c7dd482fc4ccb8e7e21bcb8",
+}
 RULE = {"name": "SR-GC", "threshold": 0., "negative": "cached", "nonnegative": "on_policy",
         "statistic": "mean_A_B(dot(validation_h, mean(on_h)-mean(cached_h)))",
         "references": "independent eight-response LOO4 candidate groups; disjoint A/B validation prompts",
@@ -48,9 +52,10 @@ def receipt(root, p):
 def validate(root, p):
     path = root / RECEIPT
     expected = receipt(root, p)
-    # The predecessor differs only in failed-worker handling, not the statistic.
+    # These predecessors differ only in queue recovery, not the statistic.
     previous = {**expected, "code_sha256": PRE_FAILURE_HANDLING_HASHES}
-    if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (expected, previous):
+    before_recovery = {**expected, "code_sha256": PRE_BUDGET_RECOVERY_HASHES}
+    if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (expected, previous, before_recovery):
         raise ValueError("SR-GC runtime receipt missing or changed")
 
 
@@ -295,7 +300,9 @@ def activated(root, p, devices, *, initialize=True):
 
     worker.decisions, worker.switch.runtime.select_once = decisions, select
     try:
-        yield
+        import selector_pair_budget_recovery as recovery
+        with recovery.activated(root):
+            yield
     finally:
         worker.decisions, worker.switch.runtime.select_once = old_decisions, old_select
 

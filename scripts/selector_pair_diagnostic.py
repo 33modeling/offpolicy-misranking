@@ -406,7 +406,8 @@ def cost_report(root, *, uncapped=False):
                         for name in ('pair-attempt.json', 'failure.json'):
                             try:
                                 saved = json.loads(checked(directory / name, 65536))
-                                if 'cost' in str(saved.get('error', '')).lower():
+                                error = str(saved.get('error', '')).lower()
+                                if any(word in error for word in ('cost', 'budget', 'allocation')):
                                     failures.append(name)
                             except (OSError, ValueError, AttributeError):
                                 pass
@@ -426,6 +427,8 @@ def cost_report(root, *, uncapped=False):
                             metadata(directory / 'cost-events' / f'{event}.json')
                             metadata(directory / 'pending-costs' / f'{event}.json')
                         metadata(directory / 'progress.json')
+                        metadata(directory / 'decision.json')
+                        metadata(directory / 'budget-recovery/result.json')
                         for name in failures:
                             metadata(directory / name)
                         policy = directory / 'policy'

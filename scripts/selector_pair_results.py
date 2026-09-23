@@ -435,6 +435,98 @@ def branch_table(rows):
     return output.getvalue()
 
 
+def budget_recovery_measurements(root):
+    """Export separately sealed saved-checkpoint evaluations, never paired wins."""
+    data = {'rows': [], 'errors': [], 'scope':
+            'Saved-checkpoint evaluations after the original allocation was exhausted. '
+            'Result seals and plan bindings checked; full lineage and ledgers not independently certified. '
+            'Original training and separate recovery evaluation costs retained. '
+            'Not budget-compliant Pair completion, H labels, or SR-GC prediction accuracy.'}
+    for seed in range(5):
+        for step in (25, 50, 100):
+            tasks = [('on_policy', 'selection_reduced'), ('cached', 'selection_reduced')]
+            if seed >= 3:
+                tasks = [(name, 'selection_full') for name in
+                         ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached')]
+                tasks.append(('on_policy', 'random_full'))
+            for selector, arm in tasks:
+                path = root / f'branches/{selector}/states/s{seed}-t{step}/points/view-{step}/{arm}/budget-recovery/result.json'
+                if not path.exists() and not path.is_symlink():
+                    continue
+                try:
+                    result, digest = read_source(path, root)
+                    seal, _ = read_source(path.with_suffix('.sha256.json'), root)
+                    plan, plan_hash = read_source(path.with_name('plan.json'), root)
+                    schema = 'selector-pair-budget-recovery/v1'
+                    if (seal != {'sha256': digest} or result.get('schema') != schema
+                            or plan.get('schema') != schema or result.get('plan_sha256') != plan_hash
+                            or result.get('evaluation_complete') is not True
+                            or result.get('canonical_complete') is not False
+                            or plan.get('canonical_complete') is not False
+                            or plan.get('start_step') != step or plan.get('arm') != arm):
+                        raise ValueError('recovery seal, schema, or plan binding changed')
+                    stop = plan.get('completed_steps')
+                    if type(stop) is not int or stop <= step:
+                        raise ValueError('invalid recovery endpoint step')
+                    costs = {}
+                    for key in ('budget_gpu_seconds', 'used_gpu_seconds', 'over_budget_gpu_seconds'):
+                        value = result.get(key)
+                        if (type(value) not in (int, float) or not math.isfinite(value)
+                                or value < 0 or value != plan.get(key)):
+                            raise ValueError('invalid recovery allocation')
+                        costs[key] = value
+                    if (costs['used_gpu_seconds'] < costs['budget_gpu_seconds']
+                            or not math.isclose(costs['over_budget_gpu_seconds'],
+                                                costs['used_gpu_seconds'] - costs['budget_gpu_seconds'],
+                                                abs_tol=1e-9)):
+                        raise ValueError('inconsistent recovery allocation')
+                    points, planned = result.get('points'), plan.get('points')
+                    if not isinstance(points, list) or not points or not isinstance(planned, list) or len(points) != len(planned):
+                        raise ValueError('missing recovery checkpoint points')
+                    curves = []
+                    for index, (point, source) in enumerate(zip(points, planned)):
+                        if not isinstance(point, dict) or not isinstance(source, dict):
+                            raise ValueError('malformed recovery checkpoint point')
+                        checkpoint, rewards = point.get('step'), point.get('rewards')
+                        if (type(checkpoint) is not int or not step <= checkpoint <= stop
+                                or any(point.get(key) != source.get(key) for key in ('step', 'k', 'final'))
+                                or point.get('final') is not (index == len(points) - 1)
+                                or type(point.get('k')) is not int or point['k'] <= 0
+                                or not isinstance(rewards, dict) or not rewards
+                                or any(type(v) not in (int, float) or not math.isfinite(v)
+                                       or not 0 <= v <= 1 for v in rewards.values())
+                                or (curves and checkpoint < curves[-1]['checkpoint_step'])
+                                or (point['final'] and checkpoint != stop)):
+                            raise ValueError('invalid recovery checkpoint measurement')
+                        curves.append({'checkpoint_step': checkpoint, 'updates': checkpoint - step,
+                                       'reward': statistics.fmean(rewards.values()), 'k': point['k'],
+                                       'final': point['final'], 'question_count': len(rewards)})
+                    data['rows'].append({
+                        'role': 'development' if seed < 3 else 'test', 'seed': seed,
+                        'prefix_updates': step, 'selector_branch': selector, 'arm': arm,
+                        'path': str(path.relative_to(root)), 'source_result_sha256': digest,
+                        'source_plan_sha256': plan_hash, 'canonical_complete': False,
+                        'eligible_for_paired_comparison': False, 'independently_certified': False,
+                        'mean_reward': curves[-1]['reward'], 'updates': stop-step,
+                        'curve_points': curves, 'original_cost': result.get('original_cost'),
+                        'recovery_cost': result.get('recovery_cost'), **costs})
+                except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+                    data['errors'].append({'path': str(path.relative_to(root)), 'error': str(exc)})
+    return data
+
+
+def recovery_table(data):
+    output = io.StringIO()
+    output.write('\nSAVED-CHECKPOINT BUDGET RECOVERY\n' + data['scope'] + '\n')
+    writer = csv.writer(output)
+    keys = ('role', 'seed', 'prefix_updates', 'selector_branch', 'arm', 'updates',
+            'mean_reward', 'used_gpu_seconds', 'over_budget_gpu_seconds')
+    writer.writerow(keys)
+    for row in data['rows']:
+        writer.writerow([row[key] for key in keys])
+    return output.getvalue()
+
+
 def exporter_metadata(repo):
     try:
         git = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
@@ -584,11 +676,13 @@ def main():
                 exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows),
                 cost_provenance=cost_provenance(root), schedule_provenance=schedule_provenance(root))
     data['srgc'] = srgc_results(root)
+    data['budget_recovery_measurements'] = budget_recovery_measurements(root)
     if data['srgc']['method']:
         data['adaptive_method'] = data['srgc']['method']
     if data['srgc']['errors'] and not exit_code:
         exit_code = 2
-    if not exit_code and (errors or any(row['issues'] for row in rows)):
+    if not exit_code and (errors or any(row['issues'] for row in rows)
+                          or data['budget_recovery_measurements']['errors']):
         exit_code = 2
     data['export_exit_code'] = exit_code
     header = 'EXPORTER ' + json.dumps(data['exporter'], sort_keys=True) + '\n'
@@ -600,7 +694,8 @@ def main():
                f"inspection_complete={data['cost_provenance']['inspection_complete']}. "
                + data['cost_provenance']['scope'] + '\n')
     header += f'CURRENT SAVED BRANCHES {len(rows)}; ERRORS {len(errors)}\n'
-    write_export("selector-pair", data, header + srgc_table(data['srgc']) + curves + branch_table(rows), args.out)
+    write_export("selector-pair", data, header + srgc_table(data['srgc']) + curves + branch_table(rows)
+                 + recovery_table(data['budget_recovery_measurements']), args.out)
     if exit_code:
         raise SystemExit(exit_code)
 

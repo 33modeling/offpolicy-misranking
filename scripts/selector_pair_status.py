@@ -106,6 +106,7 @@ def progress_records(root):
                     directory = point / name
                     paths.add(directory / 'progress.json')
                     paths.add(directory / 'curve/progress.json')
+                    paths.add(directory / 'budget-recovery/progress.json')
                     paths.update((directory / 'curve').glob('*/progress.json'))
     try:
         found = {path: value for _, path, value in gpu.pair_progress(root)}
@@ -159,6 +160,16 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
             task.update(status=saved[0], reason=saved[1])
         elif attempt:
             task.update(status="WAIT", reason="이전 실행 기록; 완료 여부 미확인")
+        recovered = directory / "budget-recovery/result.json"
+        recovery = read(recovered)
+        if recovery.get("schema") == "selector-pair-budget-recovery/v1":
+            seal = read(recovered.with_suffix(".sha256.json"))
+            plan = recovered.with_name("plan.json")
+            if (recovery.get("evaluation_complete") is True and recovery.get("canonical_complete") is False
+                    and seal.get("sha256") == digest(recovered) and plan.is_file()
+                    and recovery.get("plan_sha256") == digest(plan)):
+                task.update(status="REVIEW", recovery_evaluation_saved=True,
+                            reason="저장 체크포인트 평가 복구 완료; 예산 초과 별도 결과")
     relevant = [(updated, path, value) for updated, path, value in observations
                 if path.parent == directory or directory in path.parents]
     fresh = [(updated, path, value) for updated, path, value in relevant if value.get("_active")]

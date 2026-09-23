@@ -164,10 +164,11 @@ def test_target_and_future_outcomes_do_not_enter_frozen_decisions(tmp_path, srgc
         assert all(path.read_bytes() == saved for path, saved in before.items())
 
 
-def test_previous_runtime_receipt_and_saved_decisions_are_preserved(tmp_path, srgc_study):
+@pytest.mark.parametrize('hashes', [srgc.PRE_FAILURE_HANDLING_HASHES, srgc.PRE_BUDGET_RECOVERY_HASHES])
+def test_previous_runtime_receipt_and_saved_decisions_are_preserved(tmp_path, srgc_study, hashes):
     p, _, measurements, _ = srgc_study
     core.atomic_json(tmp_path / srgc.RECEIPT, {
-        **srgc.receipt(tmp_path, p), "code_sha256": srgc.PRE_FAILURE_HANDLING_HASHES})
+        **srgc.receipt(tmp_path, p), "code_sha256": hashes})
     receipt_before = (tmp_path / srgc.RECEIPT).read_bytes()
     with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
         choices = srgc.freeze(tmp_path, p, ["0", "1", "2", "3"])

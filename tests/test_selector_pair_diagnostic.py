@@ -123,6 +123,24 @@ def test_cost_evidence_preserves_torn_ledger_and_exports_damage(diagnostic, tmp_
     assert snapshot(root) == before
 
 
+@pytest.mark.parametrize('error', ['branch allocation exhausted', 'budget exceeded'])
+def test_exhausted_budget_exports_saved_checkpoint_inventory(diagnostic, tmp_path, error):
+    root = tmp_path / 'pair'
+    directory = cost_fixture(root)
+    with (directory / 'cost.jsonl').open('a') as handle:
+        handle.write(json.dumps({'event_id': 'open-event', 'state': 'finished'}) + '\n')
+    (directory / 'pair-attempt.json').write_text(json.dumps({'state': 'WAIT', 'error': error}))
+    (directory / 'decision.json').write_text(json.dumps({'budget_gpu_seconds': 100}))
+    checkpoint = directory / 'policy/checkpoint-345'
+    checkpoint.mkdir(parents=True)
+    (checkpoint / 'checkpoint_state.json').write_text('{"completed_steps":345}')
+    before = snapshot(root)
+    report = diagnostic.cost_report(root)
+    assert 'expanded=1' in report and '"open_event_ids": []' in report
+    assert 'checkpoint-345' in report and '"budget_gpu_seconds": 100' in report
+    assert snapshot(root) == before
+
+
 def test_cost_evidence_cli_writes_one_bounded_txt(diagnostic, tmp_path, monkeypatch, capsys):
     root = tmp_path / 'pair'
     cost_fixture(root)
