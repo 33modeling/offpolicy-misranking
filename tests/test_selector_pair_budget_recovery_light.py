@@ -4,18 +4,22 @@ import json
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 import selector_pair_budget_recovery as recovery
 
 
-def test_saved_s1_t50_checkpoint_gets_meters_training_before_resume(tmp_path, monkeypatch):
+@pytest.mark.parametrize("seed,step,arm", [(1, 50, "selection_reduced"),
+                                            (4, 100, "random_full")])
+def test_saved_checkpoint_gets_metered_training_before_resume(tmp_path, monkeypatch, seed, step, arm):
     branch = tmp_path / "branches/on_policy"
-    out = branch / "states/s1-t50/points/view-50"
-    directory = out / "selection_reduced"
+    out = branch / f"states/s{seed}-t{step}/points/view-{step}"
+    directory = out / arm
     checkpoint = directory / "policy/checkpoint-345/checkpoint_state.json"
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_text("{}")
     (directory / "decision.json").write_text("{}")
-    c = {"config": {"seed": 1, "drift": 50}, "budget_gpu_seconds": 100.,
+    c = {"config": {"seed": seed, "drift": step}, "budget_gpu_seconds": 100.,
          "scope": {"gpu_type": "test-gpu"}}
     calls = []
     held = set()
@@ -59,7 +63,7 @@ def test_saved_s1_t50_checkpoint_gets_meters_training_before_resume(tmp_path, mo
     monkeypatch.setitem(sys.modules, "selector_pair_gpu", worker)
     entry = (branch, out, c, {}, {})
     with recovery.activated(tmp_path):
-        worker.execute(entry, "selection_reduced", list("0123"))
+        worker.execute(entry, arm, list("0123"))
     assert worker.execute is execute
     assert calls == ["train", "execute"]
     receipt = json.loads((directory / "supplemental-allocation.json").read_text())

@@ -1,4 +1,4 @@
-"""Resume the approved Pair overrun; evaluate other exhausted checkpoints separately."""
+"""Resume approved Pair overruns; evaluate other exhausted checkpoints separately."""
 from __future__ import annotations
 
 import argparse
@@ -13,7 +13,10 @@ HERE = Path(__file__).resolve()
 HELPER_SHA256 = "60313da41bbbd312c23c1c0a5c9125f2d4ffe246104c946063444711e61e5236"
 _backend = None
 SUPPLEMENTAL_GPU_SECONDS = 28800.
-SUPPLEMENTAL_BRANCH = ("on_policy", 1, 50, "selection_reduced")
+SUPPLEMENTAL_BRANCHES = {
+    ("on_policy", 1, 50, "selection_reduced"),
+    ("on_policy", 4, 100, "random_full"),
+}
 
 
 def backend():
@@ -48,7 +51,7 @@ def supplemental_required(branch, out, c, arm):
     """Only the explicitly approved branch may train past its frozen cap."""
     import selector_pair_gpu as worker
     directory = out / arm
-    if ((branch.name, c["config"]["seed"], c["config"]["drift"], arm) != SUPPLEMENTAL_BRANCH
+    if ((branch.name, c["config"]["seed"], c["config"]["drift"], arm) not in SUPPLEMENTAL_BRANCHES
             or not (directory / "decision.json").is_file()
             or (directory / "result.json").exists()
             or any((directory / "policy" / name).exists()
@@ -72,9 +75,10 @@ def supplemental_train(root, entry, arm, devices):
         "branch": branch.name, "seed": c["config"]["seed"], "start_step": c["config"]["drift"],
         "original_budget_gpu_seconds": cap,
         "additional_gpu_seconds": SUPPLEMENTAL_GPU_SECONDS,
-        "purpose": "complete saved s1-t50 On training; report actual over-budget cost",
+        "purpose": "complete saved Pair training; report actual over-budget cost",
     })
-    print(f"[pair-over-budget] {branch.name} s1-t50: resuming saved checkpoint; "
+    print(f"[pair-over-budget] {branch.name} s{c['config']['seed']}-t{c['config']['drift']} "
+          f"{arm}: resuming saved checkpoint; "
           f"used={used:.3f}, original cap={cap:.3f}, additional allocation="
           f"{SUPPLEMENTAL_GPU_SECONDS:.0f} GPU-s", file=sys.stderr, flush=True)
     env = {**worker.environment(c), "PAIR_PROTOCOL_ROOT": str(root)}
