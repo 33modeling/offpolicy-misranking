@@ -29,7 +29,9 @@ def test_partial_srgc_decision_is_exported_before_any_continuation(tmp_path, srg
     assert data['srgc']['decisions'][0]['d'] == -1.
     assert len(data['srgc']['pending_states']) == 5
     assert not data['complete'] and data['rows'] == []
-    assert data['exporter']['version'] == 'selector-pair-results/v7'
+    assert data['exporter']['version'] == 'selector-pair-results/v8'
+    assert data['srgc_repeated']['sr_is_absorbing'] is True
+    assert data['srgc_repeated']['trajectories'][0]['first_sr_step'] == 25
     assert all(path.read_bytes() == saved for path, saved in before.items())
 
 

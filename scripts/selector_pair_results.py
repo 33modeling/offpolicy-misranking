@@ -653,7 +653,7 @@ def exporter_metadata(repo):
         commit = git.stdout.strip() if git.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         commit = None
-    return {'version': 'selector-pair-results/v7', 'git_commit': commit,
+    return {'version': 'selector-pair-results/v8', 'git_commit': commit,
             'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'created_at': datetime.now(timezone.utc).isoformat(), 'export_id': uuid.uuid4().hex}
 
@@ -755,9 +755,13 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--report-timeout", type=float, default=60,
                         help="Maximum seconds for strict paired validation (default: 60)")
+    parser.add_argument("--srgc-interval", type=int, default=25,
+                        help="Recheck saved On checkpoints at this update interval; retain SR after first SR choice")
     args = parser.parse_args()
     if not math.isfinite(args.report_timeout) or args.report_timeout <= 0:
         parser.error('--report-timeout must be finite and positive')
+    if args.srgc_interval <= 0:
+        parser.error('--srgc-interval must be positive')
     root = args.root.resolve()
     repo = Path(__file__).resolve().parents[1]
     data, curves, exit_code = empty_paired_report(), '', 0
@@ -798,11 +802,15 @@ def main():
                 exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows),
                 cost_provenance=cost_provenance(root), schedule_provenance=schedule_provenance(root))
     data['srgc'] = srgc_results(root)
+    import selector_pair_srgc_repeat as repeat
+    data['srgc_repeated'] = repeat.collect(root, data['srgc'], args.srgc_interval)
     data['branch_completion'] = branch_completion(rows, data['execution_observations'], data['srgc'])
     data['budget_recovery_measurements'] = budget_recovery_measurements(root)
     if data['srgc']['method']:
         data['adaptive_method'] = data['srgc']['method']
     if data['srgc']['errors'] and not exit_code:
+        exit_code = 2
+    if data['srgc_repeated']['status'] == 'invalid' and not exit_code:
         exit_code = 2
     if not exit_code and (errors or any(row['issues'] for row in rows)
                           or data['budget_recovery_measurements']['errors']):
@@ -818,7 +826,8 @@ def main():
                f"inspection_complete={data['cost_provenance']['inspection_complete']}. "
                + data['cost_provenance']['scope'] + '\n')
     header += f'CURRENT SAVED BRANCHES {len(rows)}; ERRORS {len(errors)}\n'
-    write_export("selector-pair", data, header + srgc_table(data['srgc']) + curves + branch_table(rows)
+    write_export("selector-pair", data, header + srgc_table(data['srgc'])
+                 + repeat.table(data['srgc_repeated']) + curves + branch_table(rows)
                  + recovery_table(data['budget_recovery_measurements']), args.out)
     if exit_code:
         raise SystemExit(exit_code)
