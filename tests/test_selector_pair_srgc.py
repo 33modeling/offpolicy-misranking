@@ -137,7 +137,8 @@ def test_srgc_runs_before_development_and_resumes_without_regression(tmp_path, s
         choices = gpu.decisions(tmp_path, p)
     assert gpu.decisions is old_decisions and gpu.switch.runtime.select_once is old_select
     assert len(calls) == 42
-    assert all(seed in gpu.pair.TEST_SEEDS for _, seed, _, _ in calls[:24])
+    assert all(seed in gpu.pair.DEV_SEEDS for _, seed, _, _ in calls[:18])
+    assert all(seed in gpu.pair.TEST_SEEDS for _, seed, _, _ in calls[18:])
     assert sum(name.startswith("adaptive-") for name, *_ in calls) == 6
     assert len(measurements) == 6 * 6
     assert not (tmp_path / "model.json").exists()
@@ -165,7 +166,8 @@ def test_target_and_future_outcomes_do_not_enter_frozen_decisions(tmp_path, srgc
 
 
 @pytest.mark.parametrize('hashes', [srgc.PRE_FAILURE_HANDLING_HASHES, srgc.PRE_BUDGET_RECOVERY_HASHES,
-                                  srgc.PRE_SRGC_COST_RECOVERY_HASHES, srgc.PRE_FREEZE_RETRY_HASHES, srgc.PRE_EXCEPTION_CONTAINMENT_HASHES])
+                                  srgc.PRE_SRGC_COST_RECOVERY_HASHES, srgc.PRE_FREEZE_RETRY_HASHES,
+                                  srgc.PRE_EXCEPTION_CONTAINMENT_HASHES, srgc.PRE_DEVELOPMENT_FIRST_HASHES])
 def test_previous_runtime_receipt_and_saved_decisions_are_preserved(tmp_path, srgc_study, hashes):
     p, _, measurements, _ = srgc_study
     core.atomic_json(tmp_path / srgc.RECEIPT, {

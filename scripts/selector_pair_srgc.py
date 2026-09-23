@@ -38,6 +38,10 @@ PRE_FREEZE_RETRY_HASHES = {
     **PRE_FAILURE_HANDLING_HASHES,
     "selector_pair_srgc.py": "ec7a7539366e897af9cb3831029e81f66fb33bd12ed25a2bc19675bd184cf3d3",
 }
+PRE_DEVELOPMENT_FIRST_HASHES = {
+    **PRE_FAILURE_HANDLING_HASHES,
+    "selector_pair_srgc.py": "803925c4e907edba26cee00e9388f8a6c64a096615802d330f653b797b7ce8d4",
+}
 # Recomputing a frozen contrast on another node may differ in the last bits
 # (BLAS kernels depend on the CPU). The selector must still match exactly.
 CONTRAST_REL_TOL, CONTRAST_ABS_TOL = 1e-9, 1e-9
@@ -81,8 +85,10 @@ def validate(root, p):
     before_srgc_cost = {**expected, "code_sha256": PRE_SRGC_COST_RECOVERY_HASHES}
     before_freeze_retry = {**expected, "code_sha256": PRE_FREEZE_RETRY_HASHES}
     before_containment = {**expected, "code_sha256": PRE_EXCEPTION_CONTAINMENT_HASHES}
+    before_development_first = {**expected, "code_sha256": PRE_DEVELOPMENT_FIRST_HASHES}
     if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (
-            expected, previous, before_recovery, before_srgc_cost, before_freeze_retry, before_containment):
+            expected, previous, before_recovery, before_srgc_cost, before_freeze_retry,
+            before_containment, before_development_first):
         raise ValueError("SR-GC runtime receipt missing or changed")
 
 
@@ -392,15 +398,22 @@ def run_stages(root, p, devices, command):
             pass
         if isinstance(failure, FreezePending):
             failure = wait_for_freeze(root, p, devices)
+    development_failure = None
+    if command == "run":
+        try:
+            worker.distributed_stage(root, p, devices, "development")
+        except (worker.IncompletePairRun, worker.PairWaitTimeout) as exc:
+            # A pending development branch must not stop independent held-out work.
+            development_failure = exc
     if not failure and command in {"run", "test"}:
         try:
             worker.distributed_stage(root, p, devices, "test")
         except (worker.IncompletePairRun, worker.PairWaitTimeout) as exc:
             failure = exc
-    if command == "run":
-        worker.distributed_stage(root, p, devices, "development")
     if failure:
         raise failure
+    if development_failure:
+        raise development_failure
     with worker.queue_lease(root / ".pair-barrier.lock"):
         with worker.completed_state_leases(root, ("development", "test"), require_complete=False):
             report(root, p)
