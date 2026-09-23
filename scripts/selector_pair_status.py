@@ -91,6 +91,8 @@ def finished_meter(directory, progress):
 def progress_records(root):
     """Status must not lose known paths to the worker's bounded queue scan."""
     paths = set(operations.progress_paths(root))
+    paths.update(root / 'sr-gc' / f's{seed}-t{step}' / 'progress.json'
+                 for seed in pair.TEST_SEEDS for step in pair.STEPS)
     for branch_name in gpu.BRANCHES:
         for seed in (*pair.DEV_SEEDS, *pair.TEST_SEEDS):
             for step in pair.STEPS:
@@ -169,6 +171,14 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
 
 def adaptive_dependency(root, protocol):
     """Read published development evidence, without evaluating future arms."""
+    if (root / "pair-sr-gc-runtime.json").exists():
+        import selector_pair_srgc as srgc
+        try:
+            srgc.validate(root, protocol)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return "BLOCKED", "SR-GC 설정 검증 실패: " + str(exc)
+        count = len(list((root / "sr-gc").glob("*/decision.json")))
+        return "WAIT", f"SR-GC 현재 gradient 측정·결정 {count}/6; 회귀 학습·목표 도달 대기 없음"
     blocked = []
     completed = 0
     for seed in pair.DEV_SEEDS:
@@ -210,7 +220,11 @@ def snapshot(root, *, now=None):
                     raise ValueError("Frozen branch manifest changed: " + name)
             prepared = True
             if (root / "test-decisions.json").exists():
-                choices = gpu.decisions(root, p)
+                if read(root / "test-decisions.json").get("schema") == "offpolicy-selector-pair/sr-gc-v1":
+                    import selector_pair_srgc as srgc
+                    choices = srgc.decisions(root, p)
+                else:
+                    choices = gpu.decisions(root, p)
         elif p and p.get("schema") != gpu.BOOTSTRAP_SCHEMA:
             raise ValueError("Unknown pair manifest")
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
@@ -263,7 +277,7 @@ def snapshot(root, *, now=None):
         value['_active'] = fresh or owned
         host = str(value.get("host") or "unknown")
         relative = str(path.parent.relative_to(root))
-        match = re.search(r"states/s(\d+)-t(\d+)/", relative)
+        match = re.search(r"(?:states|sr-gc)/s(\d+)-t(\d+)(?:/|$)", relative)
         candidates = []
         for candidate in nodes.values():
             worker = candidate.get('worker', {})
@@ -313,6 +327,8 @@ def snapshot(root, *, now=None):
         branch_name = relative.split("/")[1]
         arm = ("random" if "random_full" in path.parts else "adaptive" if branch_name.startswith("adaptive-")
                else branch_name)
+        if relative.startswith("sr-gc/"):
+            arm = "adaptive"
         if "/curve-parent" in relative:
             arm = "curve-parent"
         elif "/measurement" in relative or "/gate_measurement" in relative:
@@ -429,6 +445,12 @@ def snapshot(root, *, now=None):
                                 reason=error or "실험 설정 확인 불가; 완료 여부 미확인")
                 elif name == "adaptive" and not choices and task["status"] == "WAIT":
                     task.update(status=adaptive_state, reason=adaptive_reason)
+                    measurement_state = read(root / "sr-gc" / f"s{seed}-t{step}" / "measurement-status.json")
+                    if measurement_state.get("protocol_id") == p.get("protocol_id") and measurement_state.get("state") == "BLOCKED":
+                        task.update(status="BLOCKED", reason="SR-GC 측정 실패: " + str(measurement_state.get("error", "")))
+                    measurement = root / "sr-gc" / f"s{seed}-t{step}" / "progress.json"
+                    if any(path == measurement and value.get('_active') for _, path, value in observations):
+                        task.update(status="RUN", reason="SR-GC 현재 정책 A/B gradient 측정 중")
                 tasks.append(task)
     return dict(root=str(root), updated=now, prepared=prepared, error=error, tasks=tasks,
                 nodes=sorted(nodes.values(), key=lambda node: display.switch_status.node_view.host_sort_key(node["host"])),
@@ -489,7 +511,9 @@ def dashboard_data(data):
                           *(["WAIT: " + data["error"]] if data["error"] else [])])
     return dict(updated=data["updated"], suites=[suite], subject="SELECTOR PAIR", arm_names=LABELS,
                 legend=["On-policy: 현재 정책 gradient 기반 선택. Cached: 저장된 정답률 기반 선택.",
-                        "Adaptive: 개발 데이터로 고정한 전환 규칙. Random: 무작위 선택 대조군.",
+                        ("Adaptive: SR-GC 현재 gradient 부호로 선택; 회귀 학습 없음. Random: 무작위 선택 대조군."
+                         if (root / "pair-sr-gc-runtime.json").exists()
+                         else "Adaptive: 기존 H 회귀 방식(아직 SR-GC로 인계되지 않음). Random: 무작위 선택 대조군."),
                         "선택비용 별도도 총 GPU 비용에는 포함합니다. 평가 비용은 모든 조건에서 별도로 기록합니다.",
                         "GPU 시간 한도에 도달해도 평가 결과가 없으면 미완료이며, 보상 0점이 아닙니다.",
                         "'-': 해당 상태에서 실행 대상 아님. 완료는 결과 영수증·곡선 기록 기준이며 전체 검증은 report에서 수행합니다."])

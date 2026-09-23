@@ -1,0 +1,230 @@
+"""Real SR-GC decisions/barriers/scheduling, with only GPU projections replaced."""
+import copy
+from pathlib import Path
+
+import pytest
+
+import selection_gate as core
+import selection_gate_gpu as base
+import selector_pair_gpu as gpu
+import selector_pair_srgc as srgc
+import selector_pair_srgc_score as score
+import selector_pair_parallel as parallel
+from test_selector_pair_gpu import fake_study
+from test_selector_pair_parallel import study
+
+
+@pytest.mark.parametrize("a,b,selector", [(-2., 1., "cached"), (2., -1., "on_policy"),
+                                         (0., 0., "on_policy"), (-1., 1., "on_policy")])
+def test_zero_threshold_rule(a, b, selector):
+    assert srgc.choose(a, b)["selector"] == selector
+    assert "h_hat_gpu_seconds" not in srgc.choose(a, b)
+
+
+@pytest.mark.parametrize("bad", [None, True, float("nan"), float("inf"), "0"])
+def test_missing_or_invalid_reference_never_becomes_a_default(bad):
+    with pytest.raises(ValueError):
+        srgc.choose(bad, 1.)
+
+
+@pytest.fixture
+def current_policy(tmp_path, monkeypatch):
+    calls = []
+
+    def inputs(entry):
+        branch, out, c, protocol, suite = entry
+        c = copy.deepcopy(c)
+        run = tmp_path / "parents" / f"s{c['config']['seed']}-t{c['config']['drift']}"
+        parent = run / f"policy_step_{c['config']['drift']}"
+        parent.mkdir(parents=True, exist_ok=True)
+        (parent / "adapter_model.safetensors").write_bytes(b"current saved parent")
+        core.atomic_json(run / "prompts.json", {"train": list(range(20)), "val": list(range(8))})
+        import json
+        (run / "rollouts_behavior_train.jsonl").write_text("".join(json.dumps({
+            "prompt_idx": i, "rollout_idx": j, "reward": int(i < 2 and j < 4)}) + "\n"
+            for i in range(20) for j in range(8)))
+        c.update(source_run=str(run), n=20)
+        c["config"].update(fresh_k=32, micro_group=4, behavior_k=8, val_k=8, proj_dim=2, topk_frac=.1)
+        core.atomic_json(out / "contract.json", c)
+        return branch, out, c, protocol, suite
+
+    def paid(directory, p, phase, commands, env):
+        calls.append(phase)
+        with gpu.pair_lease(tmp_path / ".pair-barrier.lock"):
+            pass
+        for command, device in commands:
+            target = Path(command[command.index("--root") + 1])
+            stage = command[command.index("--stage") + 1]
+            shard = int(command[command.index("--shard") + 1])
+            reference = (target / "reference.json").exists()
+            contract_path = target / ("reference.json" if reference else "scoring.json")
+            c = core.read(contract_path)
+            prompts = core.read(Path(c["prompts"]))
+            if reference:
+                ids = score.indices(c, prompts, stage)
+            else:
+                ids = list(range(4 if stage == "validation" else 20))
+            indices = ids[len(ids) * shard // 4:len(ids) * (shard + 1) // 4]
+            sign = -1. if c["config"]["drift"] == 25 else 1.
+            payload = {}
+            for i in indices:
+                if stage.startswith("validation"):
+                    payload[str(i)] = [1., 0.]
+                elif reference:
+                    payload[str(i)] = [sign if i >= 18 else 0., 0.]
+                else:
+                    payload[str(i)] = i / 20.
+            path = target / f"{stage}-{shard}.json"
+            core.atomic_json(path, payload)
+            binding = {"reference_sha256" if reference else "contract_sha256": base.digest(contract_path),
+                       "stage": stage, "shard": shard, "sha256": base.digest(path)}
+            core.atomic_json(target / f"{stage}-{shard}.done.json", binding)
+        base.meter(directory, phase, p["gpu_type"], action=lambda: None, ledger="deployment")
+
+    monkeypatch.setattr(srgc, "paid", paid)
+    return inputs, calls
+
+
+def test_independent_validation_partitions_and_selected_union_only():
+    c = {"sets": {"on_policy": [2, 3], "cached": [1, 3]}}
+    prompts = {"train": list(range(4)), "val": list(range(100))}
+    assert score.indices(c, prompts, "candidate-a") == [1, 2, 3]
+    assert score.indices(c, prompts, "candidate-b") == [1, 2, 3]
+    assert score.indices(c, prompts, "validation-a") == list(range(50, 75))
+    assert score.indices(c, prompts, "validation-b") == list(range(75, 100))
+
+
+@pytest.fixture
+def srgc_study(tmp_path, study, current_policy, monkeypatch):
+    p, calls, original = study
+    inputs, measurements = current_policy
+
+    def states(root, seed, step):
+        identity, entries = original(root, seed, step)
+        return identity, {name: inputs(entry) for name, entry in entries.items()}
+
+    monkeypatch.setattr(gpu, "verify_pair", states)
+    monkeypatch.setattr(gpu, "fit", lambda *args: pytest.fail("SR-GC must never fit a regression"))
+    monkeypatch.setattr(gpu.pair, "fit", lambda *args: pytest.fail("SR-GC must never read H labels"))
+    return p, calls, measurements, states
+
+
+def test_srgc_runs_before_development_and_resumes_without_regression(tmp_path, srgc_study):
+    p, calls, measurements, _ = srgc_study
+    old_decisions, old_select = gpu.decisions, gpu.switch.runtime.select_once
+    with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
+        for _ in range(2):
+            parallel.run_distributed(tmp_path, p, ["0", "1", "2", "3"], "run", srgc.run_stages)
+        choices = gpu.decisions(tmp_path, p)
+    assert gpu.decisions is old_decisions and gpu.switch.runtime.select_once is old_select
+    assert len(calls) == 42
+    assert all(seed in gpu.pair.TEST_SEEDS for _, seed, _, _ in calls[:24])
+    assert sum(name.startswith("adaptive-") for name, *_ in calls) == 6
+    assert len(measurements) == 6 * 6
+    assert not (tmp_path / "model.json").exists()
+    assert not (tmp_path / "fit-cost.json").exists()
+    assert all(value["method"] == "SR-GC" and "h_hat_gpu_seconds" not in value for value in choices.values())
+    assert choices["s3-t25"]["selector"] == "cached"
+    assert choices["s3-t50"]["selector"] == "on_policy"
+    assert not core.read(tmp_path / "report.json")["missing_states"]
+
+
+def test_target_and_future_outcomes_do_not_enter_frozen_decisions(tmp_path, srgc_study):
+    p, _, _, _ = srgc_study
+    with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
+        srgc.freeze(tmp_path, p, ["0", "1", "2", "3"])
+        before = {path: path.read_bytes() for path in (tmp_path / "sr-gc").glob("*/decision.json")}
+        for seed in gpu.pair.DEV_SEEDS:
+            for step in gpu.pair.STEPS:
+                core.atomic_json(tmp_path / "development" / f"s{seed}-t{step}" / "result.json",
+                                 {"contrast": {"status": "censored", "h_gpu_seconds": None}})
+        core.atomic_json(tmp_path / "report.json", {"future_reward": -1e99})
+        core.atomic_json(tmp_path / "model.json", {"unused_legacy_regression": 1e99})
+        altered = {**p, "target_reward": .9999}
+        srgc.freeze(tmp_path, altered, [])
+        assert all(path.read_bytes() == saved for path, saved in before.items())
+
+
+@pytest.mark.parametrize("artifact", ["test-decisions.json", "decisions/s3-t25/decision.json",
+    "branches/adaptive-cached/states/s3-t25/points/view-25/selection_full/execution.json"])
+def test_legacy_decisions_or_training_are_never_relabelled(tmp_path, study, artifact):
+    p, _, _ = study
+    path = tmp_path / artifact
+    core.atomic_json(path, {"legacy": True})
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="legacy"):
+        srgc.activate(tmp_path, p)
+    assert path.read_bytes() == before and not (tmp_path / srgc.RECEIPT).exists()
+
+
+def test_executed_subset_is_the_exact_frozen_srgc_subset(tmp_path, srgc_study):
+    p, _, _, states = srgc_study
+    with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
+        choices = srgc.freeze(tmp_path, p, ["0", "1", "2", "3"])
+        for step in gpu.pair.STEPS:
+            value = choices[f"s3-t{step}"]
+            _, entries = states(tmp_path, 3, step)
+            _, out, c, protocol, _ = entries["adaptive-" + value["selector"]]
+            # Fake study has no Switch manifests, but uses the real adaptive namespace.
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(gpu.switch, "switch_root", lambda _: tmp_path / "branches" / ("adaptive-" + value["selector"]))
+                selected = gpu.switch.runtime.select_once(out, c, protocol, "selection_full", {}, {}, [])
+            assert selected == value["sets"][value["selector"]]
+
+
+def test_reference_tampering_is_rejected(tmp_path, srgc_study):
+    p, _, _, _ = srgc_study
+    with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
+        srgc.freeze(tmp_path, p, ["0", "1", "2", "3"])
+        core.atomic_json(tmp_path / "sr-gc/s3-t25/candidate-a-0.json", {"forged": [99., 0.]})
+        with pytest.raises(ValueError, match="projections changed"):
+            gpu.decisions(tmp_path, p)
+
+
+def test_reference_failure_keeps_all_fixed_pair_work_runnable(tmp_path, srgc_study, monkeypatch):
+    p, calls, _, _ = srgc_study
+    def unavailable(*args):
+        raise ValueError("missing independent A/B measurements")
+    monkeypatch.setattr(srgc, "measure", unavailable)
+    with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
+        with pytest.raises(gpu.IncompletePairRun, match="missing independent A/B"):
+            parallel.run_distributed(tmp_path, p, ["0", "1", "2", "3"], "run", srgc.run_stages)
+    assert len(calls) == 36
+    assert not any(name.startswith("adaptive-") for name, *_ in calls)
+    assert not (tmp_path / "test-decisions.json").exists()
+
+
+def test_peer_owned_measurement_preserves_other_decisions_and_resumes(tmp_path, srgc_study):
+    p, _, measurements, _ = srgc_study
+    with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
+        with gpu.pair_lease(tmp_path / "sr-gc/s3-t25/.decision.lock"):
+            with pytest.raises(gpu.IncompletePairRun, match="owned by peer"):
+                srgc.freeze(tmp_path, p, ["0", "1", "2", "3"])
+        assert len(measurements) == 30
+        before = {path: path.read_bytes() for path in (tmp_path / "sr-gc").glob("*/decision.json")}
+        srgc.freeze(tmp_path, p, ["0", "1", "2", "3"])
+        assert len(measurements) == 36
+        assert all(path.read_bytes() == value for path, value in before.items())
+
+
+def test_reuses_current_ranking_without_repeating_r_scoring_or_refunding_cost(tmp_path, srgc_study):
+    import shutil
+    p, _, measurements, states = srgc_study
+    identity, entries = states(tmp_path, 3, 25)
+    initial = tmp_path / "initial-measurement"
+    srgc.measure(initial, identity, entries["on_policy"], ["0", "1", "2", "3"], p)
+    source = entries["on_policy"][1] / "selection_full/fresh-r"
+    shutil.copytree(initial / "ranking", source)
+    for phase in ("fresh-r-validation", "fresh-r-candidate"):
+        base.meter(source.parent, phase, p["gpu_type"], action=lambda: None, ledger="deployment")
+    cost = srgc.ranking_cost(source.parent)
+    before = (source.parent / "cost.jsonl").read_bytes()
+    count = len(measurements)
+    directory = tmp_path / "sr-gc/s3-t25"
+    value = srgc.measure(directory, identity, entries["on_policy"], ["0", "1", "2", "3"], p)
+    assert len(measurements) - count == 4
+    assert not any(phase.startswith("sr-gc-r-") for phase in measurements[count:])
+    assert value["reused_ranking_gpu_seconds"] == cost > 0
+    assert value["diagnosis_gpu_seconds"] == cost + value["new_measurement_gpu_seconds"]
+    assert (source.parent / "cost.jsonl").read_bytes() == before
+    assert srgc.validate_choice(tmp_path, p, 3, 25) == value

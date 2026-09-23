@@ -94,6 +94,9 @@ def observations(root, limit=8):
 
     # Fixed meter paths must not compete with historical admission receipts or
     # thousands of per-rollout/cost files for the fallback traversal's budget.
+    for seed in (3, 4):
+        for step in (25, 50, 100):
+            remember(root / 'sr-gc' / f's{seed}-t{step}' / 'progress.json')
     for branch in ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached'):
         for seed in range(5):
             for step in (25, 50, 100):

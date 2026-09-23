@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import selector_pair_gpu as worker
 import selector_pair_cost_recovery as cost_recovery
 import selector_pair_parallel as parallel
+import selector_pair_srgc as srgc
 
 MODES = {"run", "develop", "test", "freeze"}
 RECEIPT = "pair-curve-shard-guard-runtime.json"
@@ -21,6 +22,7 @@ COST_RECEIPT = "pair-cost-recovery-runtime.json"
 PRE_COST_GUARD_SHA256 = "3199888c2460768a09da64c098efd7aaaf8898e1707575e67a20f61abe5d4e43"
 PRE_PARALLEL_GUARD_SHA256 = "e3ec449a74e7dddac4bba0d6313a9ca93cd729dc20d4b0c00cfb26ea5f3ba2ac"
 PRE_NONATTAINMENT_GUARD_SHA256 = parallel.PRE_NONATTAINMENT_HASHES["queue_selector_pair_gpu.py"]
+PRE_SRGC_GUARD_SHA256 = parallel.PRE_SRGC_HASHES["queue_selector_pair_gpu.py"]
 
 
 def known_point(root, branch, out, arm):
@@ -127,7 +129,7 @@ def validate_receipts(root, protocol):
     root = Path(root).resolve()
     if worker.manifest(root, bind_runtime=False) != protocol:
         raise ValueError("Pair protocol changed before curve guard activation")
-    for name in (RECEIPT, COST_RECEIPT, parallel.RECEIPT):
+    for name in (RECEIPT, COST_RECEIPT, parallel.RECEIPT, srgc.RECEIPT):
         if (root / name).is_symlink():
             raise ValueError(f"refusing a symlinked Pair runtime receipt: {name}")
     expected = guard_receipt(root, protocol)
@@ -135,7 +137,8 @@ def validate_receipts(root, protocol):
         previous = worker.core.read(root / RECEIPT)
         if previous not in (expected, {**expected, "guard_sha256": PRE_COST_GUARD_SHA256},
                             {**expected, "guard_sha256": PRE_PARALLEL_GUARD_SHA256},
-                            {**expected, "guard_sha256": PRE_NONATTAINMENT_GUARD_SHA256}):
+                            {**expected, "guard_sha256": PRE_NONATTAINMENT_GUARD_SHA256},
+                            {**expected, "guard_sha256": PRE_SRGC_GUARD_SHA256}):
             raise ValueError(f"frozen contract changed: {root / RECEIPT}")
     if (root / COST_RECEIPT).exists():
         if not (root / RECEIPT).exists():
@@ -145,12 +148,16 @@ def validate_receipts(root, protocol):
             **expected["runtime_code_hashes"], "queue_selector_pair_gpu.py": PRE_PARALLEL_GUARD_SHA256}}
         pre_nonattainment = {**expected, "runtime_code_hashes": {
             **expected["runtime_code_hashes"], "queue_selector_pair_gpu.py": PRE_NONATTAINMENT_GUARD_SHA256}}
-        if worker.core.read(root / COST_RECEIPT) not in (expected, previous, pre_nonattainment):
+        pre_srgc = {**expected, "runtime_code_hashes": {
+            **expected["runtime_code_hashes"], "queue_selector_pair_gpu.py": PRE_SRGC_GUARD_SHA256}}
+        if worker.core.read(root / COST_RECEIPT) not in (expected, previous, pre_nonattainment, pre_srgc):
             raise ValueError(f"frozen contract changed: {root / COST_RECEIPT}")
     if (root / parallel.RECEIPT).exists():
         parallel.validate_receipt(root, protocol)
     else:
         parallel.validate_activation(root, protocol)
+    if (root / srgc.RECEIPT).exists():
+        srgc.validate(root, protocol)
 
 
 def bind_receipt(root, protocol):
@@ -202,7 +209,8 @@ def run():
 
     def stage(stage_root, protocol, devices, mode):
         prepare(stage_root, protocol)
-        return parallel.run_distributed(stage_root, protocol, devices, mode, original_stage)
+        with srgc.activated(stage_root, protocol, devices):
+            return parallel.run_distributed(stage_root, protocol, devices, mode, srgc.run_stages)
 
     worker.run_distributed = stage
     worker.admit_node = admit

@@ -13,6 +13,10 @@ PRE_NONATTAINMENT_HASHES = {
     "selector_pair_parallel.py": "cdc531e6a7210ac0cbe920324d6551d8e3cc0c383bcb680c3a0f792e1758b3fc",
     "queue_selector_pair_gpu.py": "7c833839ccb31e77a259831c77b31d4de52480bc64ee59fa509a07f0b487da3c",
 }
+PRE_SRGC_HASHES = {
+    "selector_pair_parallel.py": "e7c175cc40c1e5989bf25c5e396fd164f38d68e19d42ebb1ae6e8629a46424c4",
+    "queue_selector_pair_gpu.py": "623035c734ab1e5aa445c066b3a09e0e033aa84806f5e42481f59471e5da73e0",
+}
 FIXED_CONTROLS = (("on_policy", "selection_full"), ("cached", "selection_full"),
                   ("on_policy", "random_full"))
 
@@ -70,7 +74,8 @@ def validate_receipt(root, protocol):
     path = checked(root / RECEIPT)
     expected = receipt_value(root, protocol)
     previous = {**expected, "runtime_code_hashes": PRE_NONATTAINMENT_HASHES}
-    if not path.is_file() or worker.core.read(path) not in (expected, previous):
+    before_srgc = {**expected, "runtime_code_hashes": PRE_SRGC_HASHES}
+    if not path.is_file() or worker.core.read(path) not in (expected, previous, before_srgc):
         raise ValueError(f"parallel Pair schedule receipt missing or changed: {path}")
 
 

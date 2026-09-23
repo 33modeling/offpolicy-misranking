@@ -443,6 +443,11 @@ def exporter_metadata(repo):
 def run_report(root, repo, timeout):
     """Bound only this export's CPU report process group, never existing workers."""
     command = ['bash', 'scripts/run_selector_pair.sh', 'report']
+    if (root / 'pair-sr-gc-runtime.json').is_file():
+        python = os.environ.get('PAIR_PYTHON') or str(repo / '.venv-cu126/bin/python')
+        if not Path(python).is_file():
+            python = sys.executable
+        command = [python, 'scripts/report_selector_pair_srgc.py', '--root', str(root)]
     process = subprocess.Popen(command, cwd=repo,
                                env={**os.environ, 'PAIR_ROOT': str(root), 'CUDA_VISIBLE_DEVICES': ''},
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

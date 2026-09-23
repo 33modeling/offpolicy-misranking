@@ -68,6 +68,22 @@ def test_nonattainment_explains_terminal_adaptive_dependency(tmp_path):
     assert "테스트 결정 고정: BLOCKED" in status.render(data)
 
 
+def test_srgc_does_not_wait_for_development_target_and_shows_measurement(tmp_path):
+    import selector_pair_srgc as srgc
+    p = prepared(tmp_path)
+    srgc.activate(tmp_path, p)
+    core.atomic_json(tmp_path / "development/s0-t25/result.json", {
+        "protocol_id": p["protocol_id"], "seed": 0, "step": 25, "role": "development",
+        "contrast": {"status": "censored", "h_gpu_seconds": None}})
+    core.atomic_json(tmp_path / "sr-gc/s3-t25/progress.json", {
+        "state": "running", "phase": "sr-gc-candidate-a", "host": "node-srgc", "updated": 100.})
+    data = status.snapshot(tmp_path, now=100.)
+    task = next(row for row in data["tasks"] if row["name"] == "adaptive" and row["seed"] == 3 and row["step"] == 25)
+    assert task["status"] == "RUN" and "SR-GC" in task["reason"]
+    assert "회귀 학습·목표 도달 대기 없음" in data["adaptive_reason"]
+    assert any(row.get("phase") == "sr-gc-candidate-a" for row in data["activity"])
+
+
 @pytest.mark.parametrize("damage", [None, "receipt", "curve", "missing_curve", "budget"])
 def test_only_published_result_and_bound_curve_count_as_done(tmp_path, damage):
     prepared(tmp_path)

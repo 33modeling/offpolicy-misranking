@@ -272,7 +272,7 @@ def test_recovery_precedes_gpu_admission_once_and_bad_branch_stays_local(case, m
 
     monkeypatch.setattr(recovery, "recover", recover)
     monkeypatch.setattr(worker, "admit_node", admit)
-    monkeypatch.setattr(worker, "run_distributed", lambda *args: calls.append("stage"))
+    monkeypatch.setattr(adapter.srgc, "run_stages", lambda *args: calls.append("stage"))
     monkeypatch.setattr(worker, "main", main)
     adapter.run()
     assert calls == ["recovery", "admit", "stage", "admit"]
