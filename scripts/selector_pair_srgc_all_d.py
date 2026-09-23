@@ -14,10 +14,21 @@ from pathlib import Path
 
 import selector_pair_srgc as srgc
 import selector_pair_srgc_repeat as repeat
+from selector_pair_srgc_uncertainty import estimate
 from paper_result_text import write_export
 from selector_pair_results import srgc_results
 
 SCHEMA = "offpolicy-selector-pair/sr-gc-all-d-v1"
+
+
+def add_uncertainty(point, directory, sets, check_index):
+    try:
+        value = estimate(directory, sets, check_index)
+        if not math.isclose(value["d"], point["d"], rel_tol=1e-8, abs_tol=1e-8):
+            raise ValueError("uncertainty contrast differs from validated D")
+        point["uncertainty"] = value
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+        point["uncertainty"] = {"status": "unavailable", "error": str(exc)}
 
 
 def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=14400.):
@@ -28,11 +39,12 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
         raise ValueError("invalid frozen initial SR-GC contrast")
     checkpoints = repeat.inventory(root, seed, start)
     last = max(checkpoints, default=start)
+    first = {"step": start, "status": "measured", "d_a": initial["d_a"],
+             "d_b": initial["d_b"], "d": initial["d"], "source": "initial_parent"}
+    add_uncertainty(first, root / f"sr-gc/s{seed}-t{start}", initial["sets"], 1)
     result = {"state": f"s{seed}-t{start}", "seed": seed,
               "start_step": start, "last_saved_checkpoint": last,
-              "points": [{"step": start, "status": "measured", "d_a": initial["d_a"],
-                          "d_b": initial["d_b"], "d": initial["d"],
-                          "source": "initial_parent"}], "pending": [], "errors": []}
+              "points": [first], "pending": [], "errors": []}
     for step in range(start + interval, last + 1, interval):
         checkpoint = checkpoints.get(step)
         if checkpoint is None:
@@ -48,11 +60,13 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
                 with srgc.worker.pair_lease(directory / ".measurement.lock"):
                     repeat.measure_point(directory, expected, contract, protocol, devices, cap)
             value = repeat.check_projections(directory, root, expected)
-            result["points"].append({"step": step, "status": "measured",
-                                     "d_a": value["d_a"], "d_b": value["d_b"],
-                                     "d": value["d"], "source": "saved_on_checkpoint",
-                                     "measurement_gpu_seconds": value["measurement_gpu_seconds"],
-                                     "measurement_cost_complete": value["measurement_cost_complete"]})
+            point = {"step": step, "status": "measured",
+                     "d_a": value["d_a"], "d_b": value["d_b"],
+                     "d": value["d"], "source": "saved_on_checkpoint",
+                     "measurement_gpu_seconds": value["measurement_gpu_seconds"],
+                     "measurement_cost_complete": value["measurement_cost_complete"]}
+            add_uncertainty(point, directory, initial["sets"], 1 + (step - start) // interval)
+            result["points"].append(point)
             if devices is not None:
                 print(f"[SR-GC all-D] s{seed}-t{start} step={step} D={value['d']:.6g}", flush=True)
         except srgc.worker.PairLockBusy:
@@ -99,15 +113,17 @@ def table(report):
     output = io.StringIO()
     output.write("SR-GC D DIAGNOSTICS: saved t25 On trajectories, every 25 steps\n")
     writer = csv.writer(output)
-    writer.writerow(("state", "step", "d_a", "d_b", "d", "status"))
+    writer.writerow(("state", "step", "d_a", "d_b", "d", "upper", "confirmed_sr", "status"))
     for row in report["trajectories"]:
         for point in row["points"]:
+            uncertainty = point["uncertainty"]
             writer.writerow((row["state"], point["step"], point["d_a"],
-                             point["d_b"], point["d"], point["status"]))
+                             point["d_b"], point["d"], uncertainty.get("upper", ""),
+                             uncertainty.get("confirmed_sr", ""), point["status"]))
         for item in row["pending"]:
-            writer.writerow((row["state"], item["step"], "", "", "", item["reason"]))
+            writer.writerow((row["state"], item["step"], "", "", "", "", "", item["reason"]))
         for item in row["errors"]:
-            writer.writerow((row["state"], item["step"], "", "", "", "invalid"))
+            writer.writerow((row["state"], item["step"], "", "", "", "", "", "invalid"))
     return output.getvalue()
 
 

@@ -128,6 +128,7 @@ def test_all_d_diagnostics_continue_after_negative_and_missing_steps(tmp_path, s
     row = all_d.scan_state(tmp_path, initial)
     assert [(p["step"], p["d"]) for p in row["points"]] == [
         (50, 1.), (75, -3.), (125, 2.)]
+    assert all("upper" in point["uncertainty"] for point in row["points"])
     assert row["pending"][0]["step"] == 100
     assert row["scheduled_steps"] == [50, 75, 100, 125]
     assert all(p.read_bytes() == raw for p, raw in before.items())
