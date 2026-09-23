@@ -733,3 +733,16 @@ def test_malformed_validated_report_is_unverified_not_missing(tmp_path, monkeypa
     assert data['paired_validation']['status'] == 'failed'
     assert data['missing_states'] is None and data['missing_development_states'] is None
     assert data['paired_status'] == 'unverified' and data['branch_completion']['endpoints'] == 1
+
+
+def test_attempt_failures_prefer_the_newest_worker_record():
+    task = 'branches/on_policy/states/s1-t50/points/view-50/selection_reduced'
+    observations = {'workers': [  # newest first, as execution_observations orders them
+        {'failures': [{'task': task, 'error': 'ValueError: saved-checkpoint evaluation complete; '
+                       'original allocation exceeded by 5.411 GPU-s; see budget-recovery/result.json'}]},
+        {'failures': [{'task': task, 'error': 'RuntimeError: NCCL timeout'}]}]}
+    assert results.attempt_failures(observations)[task].startswith('ValueError: saved-checkpoint')
+    completion = results.branch_completion([], observations)
+    development = completion['groups']['development']
+    assert development['budget_exhausted_needs_review'] == ['on_policy s1-t50']
+    assert development['failed_attempt'] == []

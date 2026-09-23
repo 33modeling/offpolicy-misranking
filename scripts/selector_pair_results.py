@@ -435,14 +435,22 @@ def completion_label(selector, arm, seed, step):
     return f'{name} s{seed}-t{step}'
 
 
+BUDGET_FAILURE_MARKERS = ('allocation exhausted', 'original allocation exceeded')
+
+
 def attempt_failures(observations):
-    """Latest recorded worker failure text per branch path (lower bound; omitted workers unseen)."""
+    """Most recent recorded worker failure text per branch path.
+
+    execution_observations lists workers newest first by file mtime, so the first
+    record seen for a task wins. Only the exported failures of the newest 32
+    workers are visible, so this is a lower bound, not a complete history.
+    """
     failures = {}
     for worker in (observations or {}).get('workers') or []:
-        for failure in worker.get('failures') or []:
+        for failure in reversed(worker.get('failures') or []):
             task, error = failure.get('task'), failure.get('error')
             if isinstance(task, str) and isinstance(error, str):
-                failures[task] = error
+                failures.setdefault(task, error)
     return failures
 
 
@@ -481,7 +489,7 @@ def branch_completion(rows, observations=None, srgc=None):
                     names = [selector]
                 paths = [f"branches/{name}/states/s{seed}-t{step}/points/view-{step}/{arm}" for name in names]
                 error = next((failures[path] for path in paths if path in failures), None)
-                if error and 'allocation exhausted' in error:
+                if error and any(marker in error for marker in BUDGET_FAILURE_MARKERS):
                     group['budget_exhausted_needs_review'].append(label)
                 elif error:
                     group['failed_attempt'].append(label)
