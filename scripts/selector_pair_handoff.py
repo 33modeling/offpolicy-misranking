@@ -23,7 +23,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from selector_pair_diagnostic import collect, local_owners, observations, read_small
-from selector_pair_deploy import stage_runtime, pinned_files, manifest_for, verify, OPERATIONS_FILES
+from selector_pair_deploy import stage_runtime, pinned_files, manifest_for, verify, operations_files
 
 
 def shared_available(lock):
@@ -92,8 +92,8 @@ def owner_checkout(proc, pid, repo):
     files = pinned_files(repo, commit=commits[0])
     if len(commits) == 2:
         operations = pinned_files(repo, commit=commits[1])
-        for name in OPERATIONS_FILES:
-            if name not in files or name not in operations:
+        for name in operations_files(commits[1]):
+            if name not in operations:
                 raise RuntimeError('controller operations overlay is incomplete')
             files[name] = operations[name]
     expected = manifest_for(files, commit=commits[0])

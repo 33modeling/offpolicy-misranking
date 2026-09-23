@@ -918,12 +918,15 @@ def test_handoff_requires_bound_finite_finish_cost_receipt(handoff, damage):
 
 
 @pytest.mark.parametrize('corrupt', [False, True])
-def test_owner_checkout_verifies_science_and_operations_pins(tmp_path, handoff, monkeypatch, corrupt):
+@pytest.mark.parametrize('legacy_operations', [False, True])
+def test_owner_checkout_verifies_science_and_operations_pins(tmp_path, handoff, monkeypatch, corrupt, legacy_operations):
     import selector_pair_deploy as deploy
     from test_selector_pair_deploy import git
 
     checkout = tmp_path / 'checkout'
     git(tmp_path, 'clone', '--shared', '--no-checkout', '-q', str(SCRIPT.parents[1]), str(checkout))
+    if legacy_operations:
+        monkeypatch.setattr(deploy, 'OPERATIONS_COMMIT', deploy.PRE_SRGC_OPERATIONS_COMMIT)
     runtime = deploy.stage_runtime(checkout)
     monkeypatch.setattr(handoff, 'process', lambda *args: {'cwd': runtime})
     if corrupt:

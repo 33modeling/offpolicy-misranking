@@ -21,12 +21,22 @@ import time
 
 
 PINNED_COMMIT = 'c0c38d62e893fdcf25920d5a70d3149a06b5450f'
-OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
+PRE_SRGC_OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
+OPERATIONS_COMMIT = '29903457ccbab9bbed96221794019004ceeb34ad'
+PRE_SRGC_OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
+                            'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
 OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
-                    'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
+                    'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py',
+                    'scripts/selector_pair_srgc.py', 'scripts/selector_pair_srgc_score.py',
+                    'scripts/report_selector_pair_srgc.py', 'scripts/selector_pair_results.py',
+                    'scripts/selector_pair_diagnostic.py')
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_FILES = 20000
 MANIFEST = '.pair-runtime.json'
+
+
+def operations_files(commit):
+    return PRE_SRGC_OPERATIONS_FILES if commit == PRE_SRGC_OPERATIONS_COMMIT else OPERATIONS_FILES
 
 
 def git(repo, *args, limit=MAX_ARCHIVE_BYTES, timeout=90):
@@ -143,11 +153,11 @@ def pinned_files(repo, *, commit=None):
     if files.keys() != expected.keys():
         raise RuntimeError('Pair archive omits pinned runtime files')
     if overlay:
-        # Keep the live study's scientific source pin. Only reviewed queue and
-        # status helpers come from the newer operations commit.
+        # Keep the existing learner and fixed-control source pin. The SR-GC
+        # decision/scoring extension and its queue helpers are pinned separately.
         operations = pinned_files(repo, commit=OPERATIONS_COMMIT)
-        for name in OPERATIONS_FILES:
-            if name not in files or name not in operations:
+        for name in operations_files(OPERATIONS_COMMIT):
+            if name not in operations:
                 raise RuntimeError('Pair operations overlay is missing a required helper')
             files[name] = operations[name]
     return files

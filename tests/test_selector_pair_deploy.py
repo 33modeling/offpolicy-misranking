@@ -92,6 +92,8 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
     assert target.name == deploy.PINNED_COMMIT + '-' + deploy.OPERATIONS_COMMIT
     for name in ('scripts/queue_selector_pair_gpu.py', 'scripts/selector_pair_cost_recovery.py',
                  'scripts/selector_pair_parallel.py',
+                 'scripts/selector_pair_srgc.py', 'scripts/selector_pair_srgc_score.py',
+                 'scripts/report_selector_pair_srgc.py',
                  'scripts/recover_selection_switch_cost.py', 'scripts/_selection_worker.sh',
                  'scripts/_e5_node.sh', 'scripts/_pair_gpu_cleanup.py',
                  'scripts/selector_pair_diagnostic.py',
