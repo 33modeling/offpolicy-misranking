@@ -212,6 +212,50 @@ def test_queue_evidence_exports_failure_and_curve_progress_with_a_byte_limit(dia
     assert snapshot(root) == before
 
 
+def test_srgc_failure_and_phase_are_exported_before_branch_history(diagnostic, tmp_path):
+    root = tmp_path / 'pair'
+    directory = root / 'sr-gc/s3-t50'
+    directory.mkdir(parents=True)
+    error = 'sr-gc-candidate-a worker failed: [1, None, None, None]\nTraceback\nRuntimeError: example failure'
+    (directory / 'measurement-status.json').write_text(json.dumps({'state': 'BLOCKED', 'error': error}))
+    (directory / 'progress.json').write_text(json.dumps({'state': 'finished', 'phase': 'sr-gc-candidate-a',
+                                                       'seconds': 123, 'updated': 321}))
+    (directory / 'decision.json').write_text(json.dumps({'method': 'SR-GC', 'd': -.001, 'selector': 'cached'}))
+    before = snapshot(root)
+    report = diagnostic.queue_report(root)
+    assert 'sr-gc/s3-t50/measurement-status.json' in report
+    assert 'RuntimeError: example failure' in report and '"phase": "sr-gc-candidate-a"' in report
+    assert '"d": -0.001' in report
+    assert report.index('SRGC s3-t50') < report.index('STATE development/')
+    assert len(report.encode()) <= diagnostic.QUEUE_REPORT_BYTES
+    assert snapshot(root) == before
+
+
+def test_srgc_diagnostic_refuses_external_state_directory(diagnostic, tmp_path):
+    root, outside = tmp_path / 'pair', tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'measurement-status.json').write_text('{"error":"EXTERNAL-SRGC-SECRET"}')
+    (root / 'sr-gc').mkdir(parents=True)
+    (root / 'sr-gc/s4-t100').symlink_to(outside, target_is_directory=True)
+    report = diagnostic.queue_report(root)
+    assert 'EXTERNAL-SRGC-SECRET' not in report
+    assert 'UNREADABLE sr-gc/s4-t100/measurement-status.json: ValueError' in report
+
+
+def test_srgc_failure_is_in_default_cost_txt(diagnostic, tmp_path, monkeypatch):
+    directory = tmp_path / 'pair/sr-gc/s3-t25'
+    directory.mkdir(parents=True)
+    (directory / 'measurement-status.json').write_text('{"state":"BLOCKED","error":"SRGC-TEST-ERROR"}')
+    monkeypatch.setattr(sys, 'argv', [str(SCRIPT), '--root', str(tmp_path / 'pair'),
+                                    '--report-dir', str(tmp_path), '--costs'])
+    before = snapshot(tmp_path / 'pair')
+    assert diagnostic.main() == 0
+    report, = tmp_path.glob('selector-pair-cost-*.txt')
+    assert 'SRGC-TEST-ERROR' in report.read_text()
+    assert report.stat().st_size <= 1024 * 1024
+    assert snapshot(tmp_path / 'pair') == before
+
+
 def test_no_argument_bash_exports_cost_evidence_to_one_txt(tmp_path):
     work = tmp_path / 'work'
     root = work / 'runs/selector-pair-v1'

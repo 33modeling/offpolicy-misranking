@@ -242,6 +242,22 @@ def queue_report(root, *, uncapped=False):
         except (OSError, ValueError, RuntimeError) as exc:
             lines.append(f'UNREADABLE {relative}: {type(exc).__name__}: {str(exc)[:256]}')
 
+    # Measurement failures are recorded outside the continuation branches.
+    # Put them first so historical branch errors cannot hide the current stop.
+    lines.append('SR-GC MEASUREMENT EVIDENCE (saved records, not verified decisions or liveness)')
+    for seed in (3, 4):
+        for step in (25, 50, 100):
+            directory = root / 'sr-gc' / f's{seed}-t{step}'
+            lines.append(f'SRGC s{seed}-t{step} decision-lock={lock_record(directory / ".decision.lock")} '
+                         f'meter-lock={lock_record(directory / ".cost.lock")}')
+            observe(directory / 'measurement-status.json', ('state', 'updated', 'error', 'protocol_id'))
+            observe(directory / 'progress.json', ('state', 'phase', 'event_id', 'host', 'pid',
+                                                  'seconds', 'timeout', 'updated', 'exit_code'))
+            observe(directory / 'decision.json', ('method', 'seed', 'step', 'd', 'd_a', 'd_b', 'selector',
+                                                  'new_measurement_gpu_seconds', 'reused_ranking_gpu_seconds'))
+            if uncapped:
+                metadata(directory / 'cost.jsonl')
+
     for name in ('.pair.lock', '.pair-runtime.lock', '.pair-barrier.lock', '.fit.lock',
                  'gate-fit/.task.lock', 'gate-fit/.cost.lock'):
         lines.append(f'GLOBAL_LOCK {name} {lock_record(root / name)}')
