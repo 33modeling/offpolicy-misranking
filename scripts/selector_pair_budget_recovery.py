@@ -1,4 +1,4 @@
-"""Evaluate exhausted Pair checkpoints separately, without changing frozen budgets."""
+"""Resume the approved Pair overrun; evaluate other exhausted checkpoints separately."""
 from __future__ import annotations
 
 import argparse
@@ -6,11 +6,14 @@ import contextlib
 import hashlib
 import importlib.util
 from pathlib import Path
+import sys
 
 SCHEMA = "selector-pair-budget-recovery/v1"
 HERE = Path(__file__).resolve()
 HELPER_SHA256 = "60313da41bbbd312c23c1c0a5c9125f2d4ffe246104c946063444711e61e5236"
 _backend = None
+SUPPLEMENTAL_GPU_SECONDS = 28800.
+SUPPLEMENTAL_BRANCH = ("on_policy", 1, 50, "selection_reduced")
 
 
 def backend():
@@ -41,6 +44,49 @@ def required(directory):
     return used > cap or (used == cap and not finalized)
 
 
+def supplemental_required(branch, out, c, arm):
+    """Only the explicitly approved branch may train past its frozen cap."""
+    import selector_pair_gpu as worker
+    directory = out / arm
+    if ((branch.name, c["config"]["seed"], c["config"]["drift"], arm) != SUPPLEMENTAL_BRANCH
+            or not (directory / "decision.json").is_file()
+            or (directory / "result.json").exists()
+            or any((directory / "policy" / name).exists()
+                   for name in ("budget_stop.json", "policy_train.json"))
+            or not any((directory / "policy").glob("checkpoint-*/checkpoint_state.json"))):
+        return False
+    cap = worker.core.number(c["budget_gpu_seconds"], "branch budget", 0.)
+    return worker.base.spent(directory) >= cap
+
+
+def supplemental_train(root, entry, arm, devices):
+    import selector_pair_gpu as worker
+    branch, out, c, _, _ = entry
+    directory = out / arm
+    worker.manifest(root)
+    worker.switch.manifest(branch)
+    cap = worker.core.number(c["budget_gpu_seconds"], "branch budget", 0.)
+    used = worker.base.spent(directory)
+    worker.base.bind(directory / "supplemental-allocation.json", {
+        "schema": "selector-pair-supplemental-allocation/v1",
+        "branch": branch.name, "seed": c["config"]["seed"], "start_step": c["config"]["drift"],
+        "original_budget_gpu_seconds": cap,
+        "additional_gpu_seconds": SUPPLEMENTAL_GPU_SECONDS,
+        "purpose": "complete saved s1-t50 On training; report actual over-budget cost",
+    })
+    print(f"[pair-over-budget] {branch.name} s1-t50: resuming saved checkpoint; "
+          f"used={used:.3f}, original cap={cap:.3f}, additional allocation="
+          f"{SUPPLEMENTAL_GPU_SECONDS:.0f} GPU-s", file=sys.stderr, flush=True)
+    env = {**worker.environment(c), "PAIR_PROTOCOL_ROOT": str(root)}
+    worker.base.meter(directory, "train", c["scope"]["gpu_type"],
+                      commands=[(worker.base.train_command(out, c, arm, SUPPLEMENTAL_GPU_SECONDS),
+                                 ",".join(devices))],
+                      env=env, timeout=SUPPLEMENTAL_GPU_SECONDS / worker.base.GPUS,
+                      ledger="deployment")
+    if not (directory / "policy" / "budget_stop.json").is_file():
+        raise ValueError("supplemental training did not publish a final policy; saved checkpoints remain")
+
+
 @contextlib.contextmanager
 def activated(root):
     import selector_pair_gpu as worker
@@ -51,7 +97,9 @@ def activated(root):
         expected = branch / "states" / f"s{c['config']['seed']}-t{c['config']['drift']}" / "points" / f"view-{c['config']['drift']}"
         if branch.parent.parent == root and branch.name in worker.BRANCHES and out == expected:
             with worker.pair_lease(out / arm / ".task.lock"):
-                if required(out / arm):
+                if supplemental_required(branch, out, c, arm):
+                    supplemental_train(root, entry, arm, devices)
+                elif required(out / arm):
                     worker.manifest(root)
                     evaluator = backend()
                     result = evaluator.recover(worker.switch.manifest(branch), out / arm,
@@ -60,7 +108,16 @@ def activated(root):
                         "saved-checkpoint evaluation complete; original allocation exceeded by "
                         f"{result['over_budget_gpu_seconds']:.3f} GPU-s; "
                         "see budget-recovery/result.json; not a budget-compliant Pair completion")
-        return original(entry, arm, devices)
+        try:
+            return original(entry, arm, devices)
+        except ValueError as exc:
+            if ("branch allocation exhausted" not in str(exc)
+                    or branch.parent.parent != root or out != expected
+                    or not supplemental_required(branch, out, c, arm)):
+                raise
+            with worker.pair_lease(out / arm / ".task.lock"):
+                supplemental_train(root, entry, arm, devices)
+            return original(entry, arm, devices)
 
     worker.execute = execute
     try:

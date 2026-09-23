@@ -105,6 +105,72 @@ def test_dispatch_and_original_hook_restored(tmp_path, monkeypatch, exhausted):
         assert failure is None
 
 
+def test_approved_overrun_resumes_saved_checkpoint_and_records_extra_cost(tmp_path, monkeypatch):
+    branch = tmp_path / 'branches/on_policy'
+    out = branch / 'states/s1-t50/points/view-50'
+    directory = out / 'selection_reduced'
+    checkpoint = directory / 'policy/checkpoint-345/checkpoint_state.json'
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_text('{}')
+    (directory / 'decision.json').write_text('{}')
+    config = {'config': {'seed': 1, 'drift': 50}, 'budget_gpu_seconds': 100.,
+              'scope': {'gpu_type': 'test-gpu'}}
+    entry = branch, out, config, {}, {}
+    calls = []
+    original = lambda *args: calls.append('execute')
+    monkeypatch.setattr(worker, 'execute', original)
+    monkeypatch.setattr(worker, 'manifest', lambda _: {})
+    monkeypatch.setattr(worker.switch, 'manifest', lambda _: {})
+    monkeypatch.setattr(worker, 'environment', lambda _: {})
+    monkeypatch.setattr(worker.base, 'spent', lambda _: 101.)
+    monkeypatch.setattr(worker.base, 'train_command', lambda *args: ['train'])
+    def meter(path, phase, gpu, **kwargs):
+        assert path == directory and phase == 'train' and gpu == 'test-gpu'
+        assert kwargs['timeout'] == recovery.SUPPLEMENTAL_GPU_SECONDS / worker.base.GPUS
+        assert kwargs['ledger'] == 'deployment'
+        assert kwargs['commands'] == [(['train'], '0,1,2,3')]
+        calls.append('train')
+        (directory / 'policy/budget_stop.json').write_text('{}')
+    monkeypatch.setattr(worker.base, 'meter', meter)
+    with recovery.activated(tmp_path):
+        worker.execute(entry, 'selection_reduced', list('0123'))
+    assert worker.execute is original
+    assert calls == ['train', 'execute']
+    receipt = worker.core.read(directory / 'supplemental-allocation.json')
+    assert receipt['original_budget_gpu_seconds'] == 100.
+    assert receipt['additional_gpu_seconds'] == recovery.SUPPLEMENTAL_GPU_SECONDS
+
+
+def test_overrun_retries_immediately_after_original_hits_cap(tmp_path, monkeypatch):
+    branch = tmp_path / 'branches/on_policy'
+    out = branch / 'states/s1-t50/points/view-50'
+    directory = out / 'selection_reduced'
+    checkpoint = directory / 'policy/checkpoint-345/checkpoint_state.json'
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_text('{}')
+    (directory / 'decision.json').write_text('{}')
+    config = {'config': {'seed': 1, 'drift': 50}, 'budget_gpu_seconds': 100.,
+              'scope': {'gpu_type': 'test-gpu'}}
+    calls = []
+    def original(*args):
+        calls.append('execute')
+        if len(calls) == 1:
+            raise ValueError('branch allocation exhausted before further GPU work')
+    monkeypatch.setattr(worker, 'execute', original)
+    monkeypatch.setattr(worker, 'manifest', lambda _: {})
+    monkeypatch.setattr(worker.switch, 'manifest', lambda _: {})
+    monkeypatch.setattr(worker, 'environment', lambda _: {})
+    monkeypatch.setattr(worker.base, 'spent', lambda _: 99. if len(calls) == 0 else 101.)
+    monkeypatch.setattr(worker.base, 'train_command', lambda *args: ['train'])
+    def meter(*args, **kwargs):
+        calls.append('train')
+        (directory / 'policy/budget_stop.json').write_text('{}')
+    monkeypatch.setattr(worker.base, 'meter', meter)
+    with recovery.activated(tmp_path):
+        worker.execute((branch, out, config, {}, {}), 'selection_reduced', list('0123'))
+    assert calls == ['execute', 'train', 'execute']
+
+
 def recovery_files(root):
     directory = root / 'branches/on_policy/states/s0-t25/points/view-25/selection_reduced/budget-recovery'
     points = [{'step': 25, 'k': 4, 'final': False}, {'step': 60, 'k': 8, 'final': True}]
