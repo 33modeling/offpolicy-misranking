@@ -8,6 +8,7 @@ import selection_gate_gpu as base
 import selector_pair_results as results
 import selector_pair_srgc as srgc
 import selector_pair_srgc_repeat as repeat
+import selector_pair_srgc_all_d as all_d
 import export_selector_pair_srgc_inventory as inventory_export
 import selector_pair_srgc_score as score
 from test_selector_pair_gpu import fake_study
@@ -115,6 +116,36 @@ def test_inventory_scans_saved_d_after_missing_step_without_writing(tmp_path, sa
     assert "validation-b-0.json" in row["points"][1]["missing_files"]
     assert row["points"][2]["d"] == -3.
     assert all(p.read_bytes() == raw for p, raw in before.items())
+
+
+def test_all_d_diagnostics_continue_after_negative_and_missing_steps(tmp_path, saved_path, monkeypatch):
+    initial, checkpoint, _ = saved_path
+    checkpoint(75, projected_d=-3.)
+    checkpoint(100)
+    checkpoint(125, projected_d=2.)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    monkeypatch.setattr(repeat, "measure_point", lambda *a: pytest.fail("results must be read-only"))
+    row = all_d.scan_state(tmp_path, initial)
+    assert [(p["step"], p["d"]) for p in row["points"]] == [
+        (50, 1.), (75, -3.), (125, 2.)]
+    assert row["pending"][0]["step"] == 100
+    assert row["scheduled_steps"] == [50, 75, 100, 125]
+    assert all(p.read_bytes() == raw for p, raw in before.items())
+    report = all_d.collect(tmp_path, {"status": "validated", "decisions": [initial]},
+                           start_step=50, seed=3)
+    assert report["status"] == "partial" and report["measured_points"] == 3
+    assert report["scheduled_points"] == 4
+
+
+def test_all_d_measurement_visits_checkpoints_after_negative(tmp_path, saved_path, monkeypatch):
+    initial, checkpoint, protocol = saved_path
+    checkpoint(75, projected_d=-3.)
+    checkpoint(100, projected_d=2.)
+    calls = []
+    monkeypatch.setattr(repeat, "measure_point", lambda directory, *a: calls.append(directory.name))
+    row = all_d.scan_state(tmp_path, initial, protocol=protocol, devices=list("0123"))
+    assert calls == ["step-75", "step-100"]
+    assert [point["d"] for point in row["points"]] == [1., -3., 2.]
 
 
 def test_no_outcome_inputs_no_source_writes_and_no_other_t_join(tmp_path, saved_path):

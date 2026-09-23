@@ -13,8 +13,8 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
-  results) export CUDA_VISIBLE_DEVICES="" ;;
-  measure)
+  results|all-results) export CUDA_VISIBLE_DEVICES="" ;;
+  measure|all-measure)
     export OUT_ROOT="$PAIR_ROOT/sr-gc-repeat"
     source scripts/_e5_node.sh
     export E5_FORCE=0
@@ -33,7 +33,11 @@ case "$MODE" in
     VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps")
     export PYTHONPATH="$VERIFY_PATH:$PYTHONPATH" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
     ;;
-  *) echo 'usage: run_selector_pair_srgc_repeat.sh results|measure [--interval 25] [--out FILE.txt]'; exit 2 ;;
+  *) echo 'usage: run_selector_pair_srgc_repeat.sh results|measure|all-results|all-measure [--interval 25] [--out FILE.txt]'; exit 2 ;;
 esac
 # Keep the shell alive until the child exits so the allocation lease is retained.
-"$PY" scripts/selector_pair_srgc_repeat.py "$MODE" --root "$PAIR_ROOT" "$@"
+if [[ "$MODE" == all-* ]]; then
+  "$PY" scripts/selector_pair_srgc_all_d.py "${MODE#all-}" --root "$PAIR_ROOT" "$@"
+else
+  "$PY" scripts/selector_pair_srgc_repeat.py "$MODE" --root "$PAIR_ROOT" "$@"
+fi
