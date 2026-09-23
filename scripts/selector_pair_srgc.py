@@ -16,6 +16,10 @@ import selector_pair_srgc_score as score
 
 SCHEMA = "offpolicy-selector-pair/sr-gc-v1"
 RECEIPT = "pair-sr-gc-runtime.json"
+PRE_FAILURE_HANDLING_HASHES = {
+    "selector_pair_srgc.py": "8feaa80610e51f55d960d056d1f3b327846e0c3290b75ee68047bbe384758924",
+    "selector_pair_srgc_score.py": "29b30516d0678ef041bd873c9d3ca56e4800c6a4c23d2e211940ebbfe463b8f6",
+}
 RULE = {"name": "SR-GC", "threshold": 0., "negative": "cached", "nonnegative": "on_policy",
         "statistic": "mean_A_B(dot(validation_h, mean(on_h)-mean(cached_h)))",
         "references": "independent eight-response LOO4 candidate groups; disjoint A/B validation prompts",
@@ -43,7 +47,10 @@ def receipt(root, p):
 
 def validate(root, p):
     path = root / RECEIPT
-    if path.is_symlink() or not path.is_file() or worker.core.read(path) != receipt(root, p):
+    expected = receipt(root, p)
+    # The predecessor differs only in failed-worker handling, not the statistic.
+    previous = {**expected, "code_sha256": PRE_FAILURE_HANDLING_HASHES}
+    if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (expected, previous):
         raise ValueError("SR-GC runtime receipt missing or changed")
 
 
@@ -253,7 +260,7 @@ def freeze(root, p, devices):
                     print(f"[SR-GC] {name}: D={value['d']:.6g}, selector={value['selector']}", flush=True)
             except worker.PairLockBusy:
                 pending.append(name)
-            except (ValueError, OSError) as exc:
+            except (ValueError, OSError, RuntimeError) as exc:
                 failures.append(f"{name}: {exc}")
                 worker.core.atomic_json(directory / "measurement-status.json", {
                     "protocol_id": p["protocol_id"], "state": "BLOCKED", "updated": time.time(), "error": str(exc)})

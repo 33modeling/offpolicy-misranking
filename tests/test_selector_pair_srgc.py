@@ -27,6 +27,25 @@ def test_missing_or_invalid_reference_never_becomes_a_default(bad):
         srgc.choose(bad, 1.)
 
 
+def test_reference_contrast_matches_paper_equation_and_cancels_overlap(monkeypatch, tmp_path):
+    import numpy as np
+    shared = np.array([1000., -900.])
+    projections = {
+        "candidate-a": {0: np.array([2., 4.]), 1: shared, 2: np.array([6., 0.])},
+        "validation-a": {2: np.array([1., 0.]), 3: np.array([3., 2.])},
+        "candidate-b": {0: np.array([0., 2.]), 1: shared, 2: np.array([4., 6.])},
+        "validation-b": {4: np.array([0., 1.]), 5: np.array([2., 3.])},
+    }
+    monkeypatch.setattr(score, "projections", lambda _, stage: projections[stage])
+    result = srgc.reference_contrast(tmp_path, {"on_policy": [0, 1], "cached": [1, 2]})
+    assert result == {"method": "SR-GC", "d_a": -2., "d_b": -6., "d": -4., "selector": "cached"}
+    identical = srgc.reference_contrast(tmp_path, {"on_policy": [0, 1], "cached": [0, 1]})
+    assert identical["d"] == 0. and identical["selector"] == "on_policy"
+    for stage in ("candidate-a", "candidate-b"):
+        projections[stage] = {i: 3 * v for i, v in projections[stage].items()}
+    assert srgc.reference_contrast(tmp_path, {"on_policy": [0, 1], "cached": [1, 2]})["d"] == -12.
+
+
 @pytest.fixture
 def current_policy(tmp_path, monkeypatch):
     calls = []
@@ -145,6 +164,30 @@ def test_target_and_future_outcomes_do_not_enter_frozen_decisions(tmp_path, srgc
         assert all(path.read_bytes() == saved for path, saved in before.items())
 
 
+def test_previous_runtime_receipt_and_saved_decisions_are_preserved(tmp_path, srgc_study):
+    p, _, measurements, _ = srgc_study
+    core.atomic_json(tmp_path / srgc.RECEIPT, {
+        **srgc.receipt(tmp_path, p), "code_sha256": srgc.PRE_FAILURE_HANDLING_HASHES})
+    receipt_before = (tmp_path / srgc.RECEIPT).read_bytes()
+    with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
+        choices = srgc.freeze(tmp_path, p, ["0", "1", "2", "3"])
+        before = {path: path.read_bytes() for path in (tmp_path / "sr-gc").glob("*/decision.json")}
+        measured = len(measurements)
+        assert srgc.freeze(tmp_path, p, []) == choices
+        assert len(measurements) == measured
+        assert all(path.read_bytes() == value for path, value in before.items())
+    assert (tmp_path / srgc.RECEIPT).read_bytes() == receipt_before
+
+
+def test_unknown_runtime_is_not_accepted_as_predecessor(tmp_path, study):
+    p, _, _ = study
+    value = srgc.receipt(tmp_path, p)
+    value["code_sha256"]["selector_pair_srgc_score.py"] = "changed-scoring"
+    core.atomic_json(tmp_path / srgc.RECEIPT, value)
+    with pytest.raises(ValueError, match="runtime receipt"):
+        srgc.activate(tmp_path, p)
+
+
 @pytest.mark.parametrize("artifact", ["test-decisions.json", "decisions/s3-t25/decision.json",
     "branches/adaptive-cached/states/s3-t25/points/view-25/selection_full/execution.json"])
 def test_legacy_decisions_or_training_are_never_relabelled(tmp_path, study, artifact):
@@ -181,10 +224,11 @@ def test_reference_tampering_is_rejected(tmp_path, srgc_study):
             gpu.decisions(tmp_path, p)
 
 
-def test_reference_failure_keeps_all_fixed_pair_work_runnable(tmp_path, srgc_study, monkeypatch):
+@pytest.mark.parametrize("failure", [ValueError, RuntimeError, TimeoutError])
+def test_reference_failure_keeps_all_fixed_pair_work_runnable(tmp_path, srgc_study, monkeypatch, failure):
     p, calls, _, _ = srgc_study
     def unavailable(*args):
-        raise ValueError("missing independent A/B measurements")
+        raise failure("missing independent A/B measurements")
     monkeypatch.setattr(srgc, "measure", unavailable)
     with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
         with pytest.raises(gpu.IncompletePairRun, match="missing independent A/B"):
@@ -192,6 +236,9 @@ def test_reference_failure_keeps_all_fixed_pair_work_runnable(tmp_path, srgc_stu
     assert len(calls) == 36
     assert not any(name.startswith("adaptive-") for name, *_ in calls)
     assert not (tmp_path / "test-decisions.json").exists()
+    statuses = list((tmp_path / "sr-gc").glob("*/measurement-status.json"))
+    assert len(statuses) == 6
+    assert all(core.read(path)["state"] == "BLOCKED" for path in statuses)
 
 
 def test_peer_owned_measurement_preserves_other_decisions_and_resumes(tmp_path, srgc_study):
