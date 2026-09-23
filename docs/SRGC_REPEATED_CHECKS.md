@@ -38,9 +38,14 @@ projections from the saved weights, on a separately available four-GPU
 allocation (no policy training):
 
 ```bash
-bash scripts/run_selector_pair_srgc_repeat.sh measure --interval 25
-bash scripts/run_selector_pair_results.sh --srgc-interval 25
+bash scripts/run_selector_pair_srgc_t25.sh
 ```
+
+This command resumes sealed shards, writes a per-node log and snapshot, then
+refreshes `~/step-latest.txt` even when another node owns a check or measurement
+stops early. A nonzero exit means the repeated check is still pending or failed;
+read the printed status and log before rerunning. Node and checkpoint locks
+prevent duplicate work on an occupied node.
 
 The same score worker and A/B definition are retained. The union of the two
 already selected subsets is scored, without reranking the full candidate
