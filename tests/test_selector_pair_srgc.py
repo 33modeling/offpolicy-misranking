@@ -165,7 +165,7 @@ def test_target_and_future_outcomes_do_not_enter_frozen_decisions(tmp_path, srgc
 
 
 @pytest.mark.parametrize('hashes', [srgc.PRE_FAILURE_HANDLING_HASHES, srgc.PRE_BUDGET_RECOVERY_HASHES,
-                                  srgc.PRE_SRGC_COST_RECOVERY_HASHES, srgc.PRE_FREEZE_RETRY_HASHES])
+                                  srgc.PRE_SRGC_COST_RECOVERY_HASHES, srgc.PRE_FREEZE_RETRY_HASHES, srgc.PRE_EXCEPTION_CONTAINMENT_HASHES])
 def test_previous_runtime_receipt_and_saved_decisions_are_preserved(tmp_path, srgc_study, hashes):
     p, _, measurements, _ = srgc_study
     core.atomic_json(tmp_path / srgc.RECEIPT, {

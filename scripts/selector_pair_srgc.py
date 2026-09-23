@@ -29,6 +29,11 @@ PRE_SRGC_COST_RECOVERY_HASHES = {
     **PRE_FAILURE_HANDLING_HASHES,
     "selector_pair_srgc.py": "b17c2b804106e493937374b9b7c5225da78d3f91451c65acc559c4d3a8067dfa",
 }
+# The deployed 74c652f srgc.py, before any freeze exception is contained.
+PRE_EXCEPTION_CONTAINMENT_HASHES = {
+    **PRE_FAILURE_HANDLING_HASHES,
+    "selector_pair_srgc.py": "4f1fad2de488c8c504568b3eef62d37e921ba69f41a6acb95d0eb11407e8b059",
+}
 PRE_FREEZE_RETRY_HASHES = {
     **PRE_FAILURE_HANDLING_HASHES,
     "selector_pair_srgc.py": "ec7a7539366e897af9cb3831029e81f66fb33bd12ed25a2bc19675bd184cf3d3",
@@ -75,8 +80,9 @@ def validate(root, p):
     before_recovery = {**expected, "code_sha256": PRE_BUDGET_RECOVERY_HASHES}
     before_srgc_cost = {**expected, "code_sha256": PRE_SRGC_COST_RECOVERY_HASHES}
     before_freeze_retry = {**expected, "code_sha256": PRE_FREEZE_RETRY_HASHES}
+    before_containment = {**expected, "code_sha256": PRE_EXCEPTION_CONTAINMENT_HASHES}
     if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (
-            expected, previous, before_recovery, before_srgc_cost, before_freeze_retry):
+            expected, previous, before_recovery, before_srgc_cost, before_freeze_retry, before_containment):
         raise ValueError("SR-GC runtime receipt missing or changed")
 
 
@@ -296,8 +302,10 @@ def freeze(root, p, devices):
                     print(f"[SR-GC] {name}: D={value['d']:.6g}, selector={value['selector']}", flush=True)
             except worker.PairLockBusy:
                 pending.append(name)
-            except (ValueError, OSError, RuntimeError) as exc:
-                failures.append(f"{name}: {exc}")
+            except Exception as exc:
+                # Any error while measuring one state (including malformed artifacts that
+                # raise KeyError/TypeError/IndexError) blocks only that state.
+                failures.append(f"{name}: {type(exc).__name__}: {exc}")
                 worker.core.atomic_json(directory / "measurement-status.json", {
                     "protocol_id": p["protocol_id"], "state": "BLOCKED", "updated": time.time(), "error": str(exc)})
                 print(f"[SR-GC unavailable] {name}: {exc}; checking other states", flush=True)
@@ -342,7 +350,9 @@ def activated(root, p, devices, *, initialize=True):
 def attempt_freeze(root, p, devices):
     try:
         freeze(root, p, devices)
-    except (worker.IncompletePairRun, worker.PairWaitTimeout, ValueError, OSError) as exc:
+    except Exception as exc:
+        # Contain every freeze error so fixed controls still run; run_stages re-raises it
+        # afterwards. KeyboardInterrupt/SystemExit (SIGTERM) are not Exception and propagate.
         return exc
     return None
 
