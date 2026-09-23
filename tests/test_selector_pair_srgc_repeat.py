@@ -186,6 +186,26 @@ def test_all_d_diagnostics_continue_after_negative_and_missing_steps(tmp_path, s
     assert report["scheduled_points"] == 4
 
 
+def test_all_d_requested_horizon_waits_for_unsaved_checkpoint(tmp_path, saved_path):
+    initial, checkpoint, _ = saved_path
+    checkpoint(75, projected_d=-3.)
+    row = all_d.scan_state(tmp_path, initial, through_step=100)
+    assert row["last_saved_checkpoint"] == 75
+    assert row["scheduled_steps"] == [50, 75, 100]
+    assert [point["step"] for point in row["points"]] == [50, 75]
+    assert row["pending"] == [{"step": 100, "reason": "checkpoint_not_saved"}]
+    report = all_d.collect(tmp_path, {"status": "validated", "decisions": [initial]},
+                           start_step=50, through_step=100)
+    assert report["status"] == "partial"
+
+
+def test_all_d_rejects_unscheduled_horizon(tmp_path, saved_path):
+    initial, _, _ = saved_path
+    with pytest.raises(ValueError, match="scheduled check"):
+        all_d.collect(tmp_path, {"status": "validated", "decisions": [initial]},
+                      start_step=50, through_step=101)
+
+
 def test_all_d_measurement_visits_checkpoints_after_negative(tmp_path, saved_path, monkeypatch, capsys):
     initial, checkpoint, protocol = saved_path
     checkpoint(75, projected_d=-3.)

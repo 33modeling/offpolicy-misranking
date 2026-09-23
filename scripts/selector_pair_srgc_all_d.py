@@ -39,14 +39,13 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None,
             choice["d"], initial["d"], abs_tol=1e-9):
         raise ValueError("invalid frozen initial SR-GC contrast")
     checkpoints = repeat.inventory(root, seed, start)
-    last = max(checkpoints, default=start)
-    if through_step is not None:
-        last = min(last, through_step)
+    last_saved = max(checkpoints, default=start)
+    last = through_step if through_step is not None else last_saved
     first = {"step": start, "status": "measured", "d_a": initial["d_a"],
              "d_b": initial["d_b"], "d": initial["d"], "source": "initial_parent"}
     add_uncertainty(first, root / f"sr-gc/s{seed}-t{start}", initial["sets"], 1)
     result = {"state": f"s{seed}-t{start}", "seed": seed,
-              "start_step": start, "last_saved_checkpoint": last,
+              "start_step": start, "last_saved_checkpoint": last_saved,
               "points": [first], "pending": [], "errors": []}
     for step in range(start + interval, last + 1, interval):
         checkpoint = checkpoints.get(step)
@@ -109,6 +108,10 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None,
 def collect(root, initial, interval=25, *, start_step=25, protocol=None, devices=None,
             cap=14400., seed=None, through_step=None):
     repeat.positive_int(interval)
+    if through_step is not None and (type(through_step) is not int or
+                                     through_step < start_step or
+                                     (through_step - start_step) % interval):
+        raise ValueError("through-step must be a scheduled check at or after the start step")
     report = {"schema": SCHEMA, "interval": interval, "scope":
               "D at every scheduled checkpoint on each saved t25 fixed-On trajectory; "
               "negative D does not stop this diagnostic or imply an executed switch.",
