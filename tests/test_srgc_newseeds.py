@@ -181,3 +181,56 @@ def test_launcher_rejects_unknown_modes_and_extra_options():
     for argv in (["bogus"], ["run", "--seeds", "5"]):
         result = subprocess.run(["bash", str(script), *argv], capture_output=True, text=True, timeout=30)
         assert result.returncode == 2, result.stdout + result.stderr
+
+
+def test_status_reads_frozen_decisions_and_progress_without_crashing(tmp_path):
+    root = tmp_path / "root"
+    run, _, _ = point(tmp_path, seed=3, drift=100)
+    out = root / "math500-d100" / "s3"
+    out.parent.mkdir(parents=True)
+    prepared(out.parent, run, [0, 2, 4, 6], [1, 3, 5, 7], name="s3")
+    newseeds.freeze(run, out, root / "decisions/s3-d100.json")
+    # Parent evaluated; fresh_r training at update 140 (cumulative), passrate_beta evaluated.
+    for shard in range(4):
+        path = out / "before/evaluation" / f"shard-{shard}.done.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+        done = out / "passrate_beta/evaluation" / f"shard-{shard}.done.json"
+        done.parent.mkdir(parents=True, exist_ok=True)
+        done.write_text("{}")
+    (out / "passrate_beta/policy").mkdir(parents=True)
+    (out / "passrate_beta/policy/policy_train.json").write_text("{}")
+    stats = out / "fresh_r/policy/grpo_stats.jsonl"
+    stats.parent.mkdir(parents=True)
+    stats.write_text("\n".join(json.dumps({"step": step, "rank": 0}) for step in range(101, 141)) + "\n")
+    now = stats.stat().st_mtime + 60
+    data = newseeds.status(root, now=now)
+    state = next(s for s in data["states"] if s["state"] == "s3-d100")
+    arms = {arm["arm"]: arm for arm in state["arms"]}
+    assert state["decision"]["prospective"] is True and state["parent_shards"] == 4
+    assert arms["passrate_beta"]["state"] == "DONE"
+    assert arms["fresh_r"]["state"] == "TRAIN" and arms["fresh_r"]["detail"] == "updates 40/100"
+    assert not arms["fresh_r"]["stalled"] and arms["random"]["state"] == "WAIT"
+    assert data["totals"]["decisions"] == 1 and data["totals"]["arms_done"] == 1 and not data["complete"]
+    text = newseeds.status_text(data)
+    assert "IN PROGRESS" in text and "SR-GC D=" in text and "s3-d100/random" in text
+    stalled = newseeds.status(root, now=now + 3600)
+    arms = {arm["arm"]: arm for arm in next(s for s in stalled["states"] if s["state"] == "s3-d100")["arms"]}
+    assert arms["fresh_r"]["stalled"] and "no update for over 30 min" in newseeds.status_text(stalled)
+
+
+def test_status_reports_complete_only_when_every_parent_and_arm_is_evaluated(tmp_path):
+    root = tmp_path / "root"
+    for drift in newseeds.STATE_STEPS:
+        for seed in newseeds.STATE_SEEDS:
+            out = root / f"math500-d{drift}" / f"s{seed}"
+            for arm in ("before", *newseeds.STATUS_ARMS):
+                for shard in range(4):
+                    path = out / arm / "evaluation" / f"shard-{shard}.done.json"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("{}")
+    data = newseeds.status(root)
+    assert data["complete"] and data["totals"]["arms_done"] == 18 and data["totals"]["parents"] == 6
+    assert newseeds.status_text(data).startswith("[srgc-newseeds] COMPLETE")
+    empty = newseeds.status(tmp_path / "missing")
+    assert not empty["complete"] and "SR-GC not frozen" in newseeds.status_text(empty)

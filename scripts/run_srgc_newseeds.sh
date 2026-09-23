@@ -52,21 +52,7 @@ if [ "$MODE" = results ]; then
 fi
 
 if [ "$MODE" = status ]; then
-  echo "[srgc-newseeds] root=$ROOT seeds=${SEEDS[*]} steps=${DRIFTS[*]} arms=$SELECTORS"
-  for drift in "${DRIFTS[@]}"; do
-    for seed in "${SEEDS[@]}"; do
-      out=$(out_dir "$seed" "$drift"); decision=$(decision_file "$seed" "$drift")
-      echo "== s$seed d$drift"
-      if [ -s "$decision" ]; then
-        "$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print(f"  SR-GC frozen: D={d[\"d\"]:+.6g} selector={d[\"selector\"]} prospective={d[\"prospective\"]} at {d[\"frozen_at_utc\"]}")' "$decision"
-      else
-        echo "  SR-GC: not frozen yet"
-      fi
-      if [ -s "$out/experiment.json" ]; then "$PY" src/downstream_status.py --out "$out"; else echo "  not prepared"; fi
-      [ -s "$out/downstream_results.csv" ] && echo "  RESULT ready: $out/downstream_results.csv"
-    done
-  done
-  exit 0
+  exec "$PY" scripts/srgc_newseeds.py status --root "$ROOT"
 fi
 
 # 1. Every source point must be complete (read only).

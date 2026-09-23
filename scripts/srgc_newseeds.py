@@ -8,6 +8,7 @@ an existing experiment is modified.
   srgc_newseeds.py copy-test --source SRC --dest DEST
   srgc_newseeds.py freeze --run POINT --out EXPERIMENT --decision FILE
   srgc_newseeds.py results --root ROOT [--out TXT]
+  srgc_newseeds.py status --root ROOT
 """
 from __future__ import annotations
 
@@ -255,6 +256,120 @@ def table(data: dict) -> str:
     return "\n".join(lines)
 
 
+STATE_STEPS = (0, 100, 400)
+STATE_SEEDS = (3, 4)
+STATUS_ARMS = ("random", "passrate_beta", "fresh_r")
+STALE_SECONDS = 1800
+
+
+def _age(path: Path, now: float) -> float | None:
+    try:
+        return max(0., now - path.stat().st_mtime)
+    except OSError:
+        return None
+
+
+def _minutes(seconds: float | None) -> str:
+    if seconds is None:
+        return "-"
+    minutes = int(seconds // 60)
+    return f"{minutes // 60}h{minutes % 60:02d}m" if minutes >= 60 else f"{minutes}m"
+
+
+def _last_step(stats: Path) -> int | None:
+    """Largest recorded update in grpo_stats.jsonl (tail only; no locks are taken)."""
+    try:
+        with stats.open("rb") as handle:
+            handle.seek(max(0, stats.stat().st_size - 65536))
+            lines = handle.read().decode(errors="replace").splitlines()
+    except OSError:
+        return None
+    steps = []
+    for line in lines:
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and isinstance(value.get("step"), int):
+            steps.append(value["step"])
+    return max(steps) if steps else None
+
+
+def _shards(out: Path, arm: str) -> int:
+    return sum((out / arm / "evaluation" / f"shard-{i}.done.json").is_file() for i in range(4))
+
+
+def arm_status(out: Path, arm: str, drift: int, now: float, steps: int = 100) -> dict:
+    policy = out / arm / "policy"
+    shards = _shards(out, arm)
+    trained = (policy / "policy_train.json").is_file()
+    progress = [policy / "grpo_stats.jsonl", *sorted((out / "logs").glob(f"*{arm}*.log")),
+                *sorted((out / arm / "evaluation").glob("shard-*.jsonl.partial"))]
+    ages = [age for age in (_age(path, now) for path in progress) if age is not None]
+    age = min(ages) if ages else None
+    if shards == 4:
+        state, detail = "DONE", "trained and evaluated"
+    elif trained:
+        state, detail = ("EVAL" if shards else "TRAINED"), f"evaluation shards {shards}/4"
+    elif policy.exists():
+        step = _last_step(policy / "grpo_stats.jsonl")
+        done = None if step is None else min(steps, max(0, step - drift))
+        state, detail = "TRAIN", f"updates {'?' if done is None else done}/{steps}"
+    else:
+        state, detail = "WAIT", "not started"
+    stalled = state in ("TRAIN", "EVAL") and age is not None and age > STALE_SECONDS
+    return {"arm": arm, "state": state, "detail": detail, "last_update": _minutes(age),
+            "stalled": stalled}
+
+
+def status(root: Path, now: float | None = None) -> dict:
+    import time
+    now = time.time() if now is None else now
+    states, totals = [], {"decisions": 0, "parents": 0, "arms_done": 0, "arms": 0, "results": 0}
+    for drift in STATE_STEPS:
+        for seed in STATE_SEEDS:
+            out = root / f"math500-d{drift}" / f"s{seed}"
+            decision_path = root / "decisions" / f"s{seed}-d{drift}.json"
+            decision = read(decision_path) if decision_path.is_file() else None
+            parent = _shards(out, "before")
+            arms = [arm_status(out, arm, drift, now) for arm in STATUS_ARMS]
+            ready = (out / "downstream_results.csv").is_file()
+            totals["decisions"] += decision is not None
+            totals["parents"] += parent == 4
+            totals["arms_done"] += sum(arm["state"] == "DONE" for arm in arms)
+            totals["arms"] += len(arms)
+            totals["results"] += ready
+            states.append({"state": f"s{seed}-d{drift}", "prepared": (out / "experiment.json").is_file(),
+                           "decision": None if decision is None else {
+                               key: decision[key] for key in ("d", "selector", "prospective", "frozen_at_utc")},
+                           "parent_shards": parent, "arms": arms, "result_ready": ready})
+    complete = totals["arms_done"] == totals["arms"] and totals["parents"] == len(states)
+    return {"root": str(root), "states": states, "totals": totals, "complete": complete}
+
+
+def status_text(data: dict) -> str:
+    t = data["totals"]
+    lines = [f"[srgc-newseeds] {'COMPLETE' if data['complete'] else 'IN PROGRESS'}  "
+             f"decisions {t['decisions']}/6  parent evals {t['parents']}/6  "
+             f"arms done {t['arms_done']}/{t['arms']}  result files {t['results']}/6",
+             f"root {data['root']}", ""]
+    for state in data["states"]:
+        decision = state["decision"]
+        head = (f"SR-GC D={decision['d']:+.6g} -> {decision['selector']}"
+                f"{'' if decision['prospective'] else ' (NOT prospective: frozen after training started)'}"
+                if decision else "SR-GC not frozen")
+        prepared = "" if state["prepared"] else "  [not prepared]"
+        lines.append(f"{state['state']:8s} {head}  parent eval {state['parent_shards']}/4{prepared}")
+        for arm in state["arms"]:
+            flag = "  <- no update for over 30 min" if arm["stalled"] else ""
+            lines.append(f"  {arm['arm']:14s} {arm['state']:7s} {arm['detail']:26s} last update {arm['last_update']}{flag}")
+    if not data["complete"]:
+        waiting = [f"{s['state']}/{a['arm']}" for s in data["states"] for a in s["arms"] if a["state"] == "WAIT"]
+        if waiting:
+            lines += ["", "not started: " + ", ".join(waiting)]
+    return "\n".join(lines)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -268,7 +383,12 @@ def main(argv=None) -> int:
     p = sub.add_parser("results")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--out", type=Path)
+    p = sub.add_parser("status")
+    p.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.command == "status":
+        print(status_text(status(args.root.resolve())))
+        return 0
     if args.command == "copy-test":
         print(json.dumps(copy_test(args.source, args.dest)))
     elif args.command == "freeze":
