@@ -24,6 +24,10 @@ PRE_BUDGET_RECOVERY_HASHES = {
     **PRE_FAILURE_HANDLING_HASHES,
     "selector_pair_srgc.py": "07c5bb63c0d2361b155d1c0ec87abed001ad95757c7dd482fc4ccb8e7e21bcb8",
 }
+PRE_SRGC_COST_RECOVERY_HASHES = {
+    **PRE_FAILURE_HANDLING_HASHES,
+    "selector_pair_srgc.py": "b17c2b804106e493937374b9b7c5225da78d3f91451c65acc559c4d3a8067dfa",
+}
 RULE = {"name": "SR-GC", "threshold": 0., "negative": "cached", "nonnegative": "on_policy",
         "statistic": "mean_A_B(dot(validation_h, mean(on_h)-mean(cached_h)))",
         "references": "independent eight-response LOO4 candidate groups; disjoint A/B validation prompts",
@@ -55,7 +59,8 @@ def validate(root, p):
     # These predecessors differ only in queue recovery, not the statistic.
     previous = {**expected, "code_sha256": PRE_FAILURE_HANDLING_HASHES}
     before_recovery = {**expected, "code_sha256": PRE_BUDGET_RECOVERY_HASHES}
-    if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (expected, previous, before_recovery):
+    before_srgc_cost = {**expected, "code_sha256": PRE_SRGC_COST_RECOVERY_HASHES}
+    if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (expected, previous, before_recovery, before_srgc_cost):
         raise ValueError("SR-GC runtime receipt missing or changed")
 
 
@@ -239,6 +244,8 @@ def decisions(root, p):
 
 def freeze(root, p, devices):
     validate(root, p)
+    import selector_pair_srgc_cost_recovery as recovery
+    recovery.recover(root, p)
     if (root / "test-decisions.json").exists():
         return decisions(root, p)
     pending = []

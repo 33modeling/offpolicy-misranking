@@ -164,7 +164,8 @@ def test_target_and_future_outcomes_do_not_enter_frozen_decisions(tmp_path, srgc
         assert all(path.read_bytes() == saved for path, saved in before.items())
 
 
-@pytest.mark.parametrize('hashes', [srgc.PRE_FAILURE_HANDLING_HASHES, srgc.PRE_BUDGET_RECOVERY_HASHES])
+@pytest.mark.parametrize('hashes', [srgc.PRE_FAILURE_HANDLING_HASHES, srgc.PRE_BUDGET_RECOVERY_HASHES,
+                                  srgc.PRE_SRGC_COST_RECOVERY_HASHES])
 def test_previous_runtime_receipt_and_saved_decisions_are_preserved(tmp_path, srgc_study, hashes):
     p, _, measurements, _ = srgc_study
     core.atomic_json(tmp_path / srgc.RECEIPT, {
@@ -187,6 +188,35 @@ def test_unknown_runtime_is_not_accepted_as_predecessor(tmp_path, study):
     core.atomic_json(tmp_path / srgc.RECEIPT, value)
     with pytest.raises(ValueError, match="runtime receipt"):
         srgc.activate(tmp_path, p)
+
+
+def test_freeze_recovers_s4_t100_and_reuses_finished_reference_shards(tmp_path, srgc_study, monkeypatch):
+    p, _, measurements, _ = srgc_study
+    directory = tmp_path / 'sr-gc/s4-t100'
+    original = base.meter
+    def interrupted(target, phase, gpu_type, **kwargs):
+        if target == directory and phase == 'sr-gc-aggregate':
+            start = {'event_id': 'interrupted', 'state': 'started', 'phase': phase,
+                     'ledger': 'deployment', 'gpus': 4, 'gpu_type': gpu_type,
+                     'host': 'remote-stopped-worker', 'time': 100.}
+            base.journal(target / 'cost.jsonl', start)
+            core.atomic_json(target / 'progress.json', {**start, 'seconds': 12., 'updated': 112.})
+            raise RuntimeError('simulated interrupted aggregate')
+        return original(target, phase, gpu_type, **kwargs)
+    with srgc.activated(tmp_path, p, list('0123')):
+        monkeypatch.setattr(base, 'meter', interrupted)
+        with pytest.raises(gpu.IncompletePairRun):
+            srgc.freeze(tmp_path, p, list('0123'))
+        shards = {path: path.read_bytes() for path in directory.glob('*.done.json')}
+        assert len(shards) == 16 and not (directory / 'decision.json').exists()
+        measured = len(measurements)
+        monkeypatch.setattr(base, 'meter', original)
+        choices = srgc.freeze(tmp_path, p, list('0123'))
+        assert choices['s4-t100']['method'] == 'SR-GC'
+        assert len(measurements) == measured
+        assert all(path.read_bytes() == data for path, data in shards.items())
+        assert not base.cost(directory)['incomplete_events']
+        assert choices['s4-t100']['new_measurement_gpu_seconds'] >= 288.
 
 
 @pytest.mark.parametrize("artifact", ["test-decisions.json", "decisions/s3-t25/decision.json",
