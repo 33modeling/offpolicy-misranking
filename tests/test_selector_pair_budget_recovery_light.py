@@ -11,14 +11,22 @@ import selector_pair_budget_recovery as recovery
 
 @pytest.mark.parametrize("seed,step,arm", [(1, 50, "selection_reduced"),
                                             (4, 100, "random_full")])
-def test_saved_checkpoint_gets_metered_training_before_resume(tmp_path, monkeypatch, seed, step, arm):
+@pytest.mark.parametrize("checkpoint", [False, True])
+def test_saved_inputs_get_metered_training_before_resume(tmp_path, monkeypatch, seed, step, arm, checkpoint):
     branch = tmp_path / "branches/on_policy"
     out = branch / f"states/s{seed}-t{step}/points/view-{step}"
     directory = out / arm
-    checkpoint = directory / "policy/checkpoint-345/checkpoint_state.json"
-    checkpoint.parent.mkdir(parents=True)
-    checkpoint.write_text("{}")
+    if checkpoint:
+        saved = directory / "policy/checkpoint-345/checkpoint_state.json"
+        saved.parent.mkdir(parents=True)
+        saved.write_text("{}")
+    else:
+        directory.mkdir(parents=True)
     (directory / "decision.json").write_text("{}")
+    subset = out / "subsets" / f"subset-{arm}.json"
+    subset.parent.mkdir(parents=True)
+    subset.write_text("{}")
+    subset.with_suffix(".sha256.json").write_text(json.dumps({"sha256": "subset-hash"}))
     c = {"config": {"seed": seed, "drift": step}, "budget_gpu_seconds": 100.,
          "scope": {"gpu_type": "test-gpu"}}
     calls = []
@@ -41,6 +49,7 @@ def test_saved_checkpoint_gets_metered_training_before_resume(tmp_path, monkeypa
         assert kwargs["ledger"] == "deployment"
         assert kwargs["env"]["PAIR_PROTOCOL_ROOT"] == str(tmp_path)
         calls.append("train")
+        (directory / "policy").mkdir(exist_ok=True)
         (directory / "policy/budget_stop.json").write_text("{}")
 
     def bind(path, value):
@@ -53,9 +62,10 @@ def test_saved_checkpoint_gets_metered_training_before_resume(tmp_path, monkeypa
         assert not held
         calls.append("execute")
 
-    base = SimpleNamespace(spent=lambda _: 101., bind=bind, meter=meter,
+    base = SimpleNamespace(spent=lambda _: 101., bind=bind, meter=meter, digest=lambda _: "subset-hash",
                            train_command=lambda *_: ["train"], GPUS=4)
-    core = SimpleNamespace(number=lambda value, *_: float(value))
+    core = SimpleNamespace(number=lambda value, *_: float(value),
+                           read=lambda path: json.loads(path.read_text()))
     worker = SimpleNamespace(execute=execute, BRANCHES=("on_policy",), pair_lease=lease,
                              base=base, core=core, manifest=lambda _: {},
                              switch=SimpleNamespace(manifest=lambda _: {}),

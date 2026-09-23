@@ -113,6 +113,10 @@ def test_approved_overrun_resumes_saved_checkpoint_and_records_extra_cost(tmp_pa
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_text('{}')
     (directory / 'decision.json').write_text('{}')
+    subset = out / 'subsets/subset-selection_reduced.json'
+    subset.parent.mkdir(parents=True)
+    subset.write_text('{}')
+    worker.core.atomic_json(subset.with_suffix('.sha256.json'), {'sha256': worker.base.digest(subset)})
     config = {'config': {'seed': 1, 'drift': 50}, 'budget_gpu_seconds': 100.,
               'scope': {'gpu_type': 'test-gpu'}}
     entry = branch, out, config, {}, {}
@@ -149,6 +153,10 @@ def test_overrun_retries_immediately_after_original_hits_cap(tmp_path, monkeypat
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_text('{}')
     (directory / 'decision.json').write_text('{}')
+    subset = out / 'subsets/subset-selection_reduced.json'
+    subset.parent.mkdir(parents=True)
+    subset.write_text('{}')
+    worker.core.atomic_json(subset.with_suffix('.sha256.json'), {'sha256': worker.base.digest(subset)})
     config = {'config': {'seed': 1, 'drift': 50}, 'budget_gpu_seconds': 100.,
               'scope': {'gpu_type': 'test-gpu'}}
     calls = []

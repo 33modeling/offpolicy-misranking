@@ -48,15 +48,19 @@ def required(directory):
 
 
 def supplemental_required(branch, out, c, arm):
-    """Only the explicitly approved branch may train past its frozen cap."""
+    """Approved branches may resume from a checkpoint or an untouched parent."""
     import selector_pair_gpu as worker
     directory = out / arm
+    subset = out / "subsets" / f"subset-{arm}.json"
     if ((branch.name, c["config"]["seed"], c["config"]["drift"], arm) not in SUPPLEMENTAL_BRANCHES
             or not (directory / "decision.json").is_file()
             or (directory / "result.json").exists()
             or any((directory / "policy" / name).exists()
                    for name in ("budget_stop.json", "policy_train.json"))
-            or not any((directory / "policy").glob("checkpoint-*/checkpoint_state.json"))):
+            or not subset.is_file()
+            or not subset.with_suffix(".sha256.json").is_file()):
+        return False
+    if worker.core.read(subset.with_suffix(".sha256.json")) != {"sha256": worker.base.digest(subset)}:
         return False
     cap = worker.core.number(c["budget_gpu_seconds"], "branch budget", 0.)
     return worker.base.spent(directory) >= cap
@@ -78,7 +82,7 @@ def supplemental_train(root, entry, arm, devices):
         "purpose": "complete saved Pair training; report actual over-budget cost",
     })
     print(f"[pair-over-budget] {branch.name} s{c['config']['seed']}-t{c['config']['drift']} "
-          f"{arm}: resuming saved checkpoint; "
+          f"{arm}: resuming saved training inputs; "
           f"used={used:.3f}, original cap={cap:.3f}, additional allocation="
           f"{SUPPLEMENTAL_GPU_SECONDS:.0f} GPU-s", file=sys.stderr, flush=True)
     env = {**worker.environment(c), "PAIR_PROTOCOL_ROOT": str(root)}
