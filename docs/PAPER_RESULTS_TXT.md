@@ -37,6 +37,14 @@ fresh TXT containing the current error and independent branch evidence, never
 the previous report or curves. The command retains a nonzero failure exit code.
 Every Pair export includes UTC time, a unique export ID, and exporter Git/script
 identity. States without a published paired result remain missing.
+From exporter version v7, the TABLE starts with a BRANCH COMPLETION block that
+counts saved endpoints and curves for all 42 designed branches (18 development,
+18 fixed held-out controls, 6 adaptive) independently of paired validation.
+Branches without an endpoint are split into remaining, budget exhausted (needs
+review), and failed attempt, using recorded worker failures. Adaptive endpoints
+count only for the frozen SR-GC choice. If strict paired validation fails,
+`missing_states` and `missing_development_states` are null and
+`paired_status` is `unverified`: the paired state is unknown, not missing.
 Independently completed branch endpoints and saved curves
 are included separately with source hashes, result-seal/curve binding checks,
 and explicit limits on validation. These do not supply H, target-crossing costs,

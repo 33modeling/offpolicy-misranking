@@ -417,6 +417,117 @@ def saved_branch_measurements(root):
     return rows, errors
 
 
+COMPLETION_GROUPS = (
+    ('development', 'development',
+     tuple((selector, 'selection_reduced', seed, step) for seed in (0, 1, 2) for step in (25, 50, 100)
+           for selector in ('on_policy', 'cached'))),
+    ('test_fixed_controls', 'test fixed controls',
+     tuple((selector, arm, seed, step) for seed in (3, 4) for step in (25, 50, 100)
+           for selector, arm in (('on_policy', 'selection_full'), ('cached', 'selection_full'),
+                                 ('on_policy', 'random_full')))),
+    ('test_adaptive', 'test adaptive',
+     tuple(('adaptive', 'selection_full', seed, step) for seed in (3, 4) for step in (25, 50, 100))),
+)
+
+
+def completion_label(selector, arm, seed, step):
+    name = 'random' if arm == 'random_full' else selector
+    return f'{name} s{seed}-t{step}'
+
+
+def attempt_failures(observations):
+    """Latest recorded worker failure text per branch path (lower bound; omitted workers unseen)."""
+    failures = {}
+    for worker in (observations or {}).get('workers') or []:
+        for failure in worker.get('failures') or []:
+            task, error = failure.get('task'), failure.get('error')
+            if isinstance(task, str) and isinstance(error, str):
+                failures[task] = error
+    return failures
+
+
+def branch_completion(rows, observations=None, srgc=None):
+    """Designed-branch progress from saved endpoints only; paired validation is separate."""
+    chosen = {item.get('state'): item.get('selector') for item in (srgc or {}).get('decisions') or []
+              if item.get('selector') in ('on_policy', 'cached')}
+    failures = attempt_failures(observations)
+    saved, not_chosen = {}, []
+    for row in rows:
+        selector = row['selector_branch']
+        state = f"s{row['seed']}-t{row['prefix_updates']}"
+        if selector.startswith('adaptive-'):
+            if state in chosen and selector != 'adaptive-' + chosen[state]:
+                not_chosen.append(f"{selector} {state}")
+                continue
+            selector = 'adaptive'
+        key = (selector, row['arm'], row['seed'], row['prefix_updates'])
+        clean = not row['issues'] and row['mean_reward'] is not None
+        previous = saved.get(key)
+        if previous is None or (clean and (previous['issues'] or previous['mean_reward'] is None)):
+            saved[key] = row
+    groups, planned_total, endpoint_total = {}, 0, 0
+    for key, _, planned in COMPLETION_GROUPS:
+        group = {'planned': len(planned), 'endpoints': 0, 'curves': 0, 'remaining': [],
+                 'budget_exhausted_needs_review': [], 'failed_attempt': [],
+                 'endpoint_without_curve': [], 'endpoint_with_issues': []}
+        for branch in planned:
+            selector, arm, seed, step = branch
+            label, row = completion_label(*branch), saved.get(branch)
+            if row is None:
+                if selector == 'adaptive':
+                    names = ([f"adaptive-{chosen[f's{seed}-t{step}']}"] if f's{seed}-t{step}' in chosen
+                             else ['adaptive-on_policy', 'adaptive-cached'])
+                else:
+                    names = [selector]
+                paths = [f"branches/{name}/states/s{seed}-t{step}/points/view-{step}/{arm}" for name in names]
+                error = next((failures[path] for path in paths if path in failures), None)
+                if error and 'allocation exhausted' in error:
+                    group['budget_exhausted_needs_review'].append(label)
+                elif error:
+                    group['failed_attempt'].append(label)
+                else:
+                    group['remaining'].append(label)
+            elif row['issues'] or row['mean_reward'] is None:
+                group['endpoint_with_issues'].append(label)
+            else:
+                group['endpoints'] += 1
+                if row['curve_points']:
+                    group['curves'] += 1
+                else:
+                    group['endpoint_without_curve'].append(label)
+        groups[key] = group
+        planned_total += group['planned']
+        endpoint_total += group['endpoints']
+    return {'scope': 'Saved endpoints per designed branch, independent of paired validation. '
+                     'An endpoint is not a paired comparison, an H value or a checkpoint cost. '
+                     'Worker failures are a lower bound; omitted worker records are not inspected.',
+            'planned': planned_total, 'endpoints': endpoint_total, 'groups': groups,
+            'adaptive_decisions_used': sorted(chosen), 'non_chosen_adaptive_endpoints': not_chosen}
+
+
+def completion_table(completion, validation):
+    lines = ['BRANCH COMPLETION (saved endpoints; independent of paired validation)']
+    for key, title, _ in COMPLETION_GROUPS:
+        group = completion['groups'][key]
+        line = f"{title}: endpoints {group['endpoints']}/{group['planned']}; curves {group['curves']}/{group['endpoints']}"
+        for field, name in (('remaining', 'remaining'),
+                            ('budget_exhausted_needs_review', 'budget exhausted, needs review'),
+                            ('failed_attempt', 'failed attempt'), ('endpoint_without_curve', 'no curve yet'),
+                            ('endpoint_with_issues', 'endpoint with issues')):
+            if group[field]:
+                line += f"; {name}: " + ', '.join(group[field])
+        lines.append(line)
+    lines.append(f"total endpoints {completion['endpoints']}/{completion['planned']}")
+    if completion['non_chosen_adaptive_endpoints']:
+        lines.append('adaptive endpoints outside the frozen SR-GC choice (not counted): '
+                     + ', '.join(completion['non_chosen_adaptive_endpoints']))
+    if validation.get('status') == 'failed':
+        lines.append('PAIRED STATUS: UNVERIFIED because strict paired validation failed. Paired rows, H and '
+                     'checkpoint costs are not exported, and paired state lists are unknown (null), not missing. '
+                     'The branch counts above are unaffected.')
+    return '\n'.join(lines) + '\n\n'
+
+
 def branch_table(rows):
     output = io.StringIO()
     output.write("\nINDEPENDENT BRANCH MEASUREMENTS\n" + BRANCH_SCOPE + "\n")
@@ -534,7 +645,7 @@ def exporter_metadata(repo):
         commit = git.stdout.strip() if git.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         commit = None
-    return {'version': 'selector-pair-results/v6', 'git_commit': commit,
+    return {'version': 'selector-pair-results/v7', 'git_commit': commit,
             'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'created_at': datetime.now(timezone.utc).isoformat(), 'export_id': uuid.uuid4().hex}
 
@@ -669,6 +780,9 @@ def main():
         except (OSError, ValueError, RuntimeError) as exc:
             data, curves, exit_code = empty_paired_report(), '', 2
             validation = {'status': 'failed', 'error': str(exc)}
+    if validation.get('status') == 'failed':
+        # A failed check says nothing about which states are missing.
+        data.update(missing_states=None, missing_development_states=None, paired_status='unverified')
     data["source_root"] = str(root)
     rows, errors = saved_branch_measurements(root)
     data.update(branch_measurements=rows, branch_measurement_errors=errors,
@@ -676,6 +790,7 @@ def main():
                 exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows),
                 cost_provenance=cost_provenance(root), schedule_provenance=schedule_provenance(root))
     data['srgc'] = srgc_results(root)
+    data['branch_completion'] = branch_completion(rows, data['execution_observations'], data['srgc'])
     data['budget_recovery_measurements'] = budget_recovery_measurements(root)
     if data['srgc']['method']:
         data['adaptive_method'] = data['srgc']['method']
@@ -685,7 +800,8 @@ def main():
                           or data['budget_recovery_measurements']['errors']):
         exit_code = 2
     data['export_exit_code'] = exit_code
-    header = 'EXPORTER ' + json.dumps(data['exporter'], sort_keys=True) + '\n'
+    header = completion_table(data['branch_completion'], validation)
+    header += 'EXPORTER ' + json.dumps(data['exporter'], sort_keys=True) + '\n'
     header += 'PAIRED VALIDATION ' + json.dumps(validation, sort_keys=True) + '\n'
     header += ('SCHEDULE PROVENANCE: ' + data['schedule_provenance']['status'] + '. '
                + data['schedule_provenance']['scope'] + '\n')

@@ -51,7 +51,7 @@ def test_exports_current_partial_report_and_curves(tmp_path, monkeypatch, missin
     assert data['complete'] == complete
     assert data['branch_measurements'] == data['branch_measurement_errors'] == []
     assert data['paired_validation']['status'] == 'validated'
-    assert data['exporter']['version'] == 'selector-pair-results/v6'
+    assert data['exporter']['version'] == 'selector-pair-results/v7'
     assert len(data['exporter']['script_sha256']) == 64
     assert data['exporter']['created_at'] and data['exporter']['export_id']
     assert list(tmp_path.glob("*.txt")) == [target]
@@ -431,7 +431,7 @@ def test_failed_report_replaces_stale_txt_with_current_error_and_branches(tmp_pa
     assert data['paired_validation']['stderr_tail'] == 'current validation error'
     assert data['export_exit_code'] == returncode
     assert data['branch_measurements'][0]['mean_reward'] == .5
-    assert data['exporter']['version'] == 'selector-pair-results/v6'
+    assert data['exporter']['version'] == 'selector-pair-results/v7'
     assert list(tmp_path.glob("*.txt")) == [target]
 
 
@@ -609,3 +609,127 @@ def test_observation_byte_cap_omits_metadata_without_changing_scientific_rows(tm
     assert data['omitted']['workers'] > 0
     assert data['saved_endpoint_files'] == data['accepted_endpoint_measurements'] == 1
     assert json.dumps(rows, sort_keys=True) == original
+
+
+def test_failed_validation_marks_paired_states_unknown_and_keeps_branch_completion(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir()
+    paired = root / 'test/s3-t25/result.json'
+    paired.parent.mkdir(parents=True)
+    paired.write_text('{}')
+    branch_fixture(root)
+    branch_fixture(root, selector="on_policy", seed=3, step=50, arm="random_full")
+    target = tmp_path / "selector-pair-results.txt"
+    monkeypatch.setattr(results, "run_report", lambda *a, **kw:
+                        SimpleNamespace(returncode=1, stdout='', stderr='pair runtime changed'))
+    monkeypatch.setattr(sys, "argv", ["selector_pair_results", "--root", str(root), "--out", str(target)])
+
+    with pytest.raises(SystemExit):
+        results.main()
+
+    text = target.read_text()
+    data = json.loads(text.split('DATA_JSON\n')[1])
+    assert data['missing_states'] is None and data['missing_development_states'] is None
+    assert data['paired_status'] == 'unverified' and data['complete'] is False
+    table = text.split('TABLE\n')[1]
+    assert table.startswith('BRANCH COMPLETION')
+    assert 'PAIRED STATUS: UNVERIFIED' in table and 'not missing' in table
+    assert 'development: endpoints 1/18; curves 1/1;' in table
+    assert 'test fixed controls: endpoints 1/18; curves 1/1;' in table
+    assert 'test adaptive: endpoints 0/6;' in table and 'total endpoints 2/42' in table
+    development = data['branch_completion']['groups']['development']
+    assert 'cached s0-t25' in development['remaining'] and 'on_policy s0-t25' not in development['remaining']
+    fixed = data['branch_completion']['groups']['test_fixed_controls']
+    assert 'random s3-t50' not in fixed['remaining'] and 'on_policy s3-t50' in fixed['remaining']
+
+
+def test_unrun_validation_keeps_paired_state_lists_without_unverified_note(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    branch_fixture(root)
+    target = tmp_path / "results.txt"
+    monkeypatch.setattr(results, "run_report", lambda *a, **kw: pytest.fail('no paired result exists'))
+    monkeypatch.setattr(sys, "argv", ["selector_pair_results", "--root", str(root), "--out", str(target)])
+    results.main()
+    text = target.read_text()
+    data = json.loads(text.split('DATA_JSON\n')[1])
+    assert len(data['missing_states']) == 6 and len(data['missing_development_states']) == 9
+    assert 'paired_status' not in data and 'PAIRED STATUS: UNVERIFIED' not in text
+    assert data['branch_completion']['endpoints'] == 1 and data['branch_completion']['planned'] == 42
+
+
+def test_branch_completion_counts_designed_branches_and_separates_issues():
+    def row(selector, arm, seed, step, *, curve=True, issues=(), reward=.5):
+        return {'selector_branch': selector, 'arm': arm, 'seed': seed, 'prefix_updates': step,
+                'mean_reward': reward, 'issues': list(issues), 'curve_points': [{'updates': 0}] if curve else []}
+    rows = [row('cached', 'selection_reduced', 1, 50),
+            row('on_policy', 'selection_reduced', 1, 50, curve=False),
+            row('on_policy', 'selection_reduced', 2, 25, issues=['seal mismatch']),
+            row('adaptive-cached', 'selection_full', 4, 100),
+            row('cached', 'selection_full', 3, 25, reward=None, issues=['incomplete']),
+            row('on_policy', 'selection_reduced', 3, 25)]
+    completion = results.branch_completion(rows)
+    development = completion['groups']['development']
+    assert development['endpoints'] == 2 and development['curves'] == 1
+    assert development['endpoint_without_curve'] == ['on_policy s1-t50']
+    assert development['endpoint_with_issues'] == ['on_policy s2-t25']
+    assert len(development['remaining']) == 15
+    adaptive = completion['groups']['test_adaptive']
+    assert adaptive['endpoints'] == 1 and 'adaptive s4-t100' not in adaptive['remaining']
+    fixed = completion['groups']['test_fixed_controls']
+    assert fixed['endpoints'] == 0 and fixed['endpoint_with_issues'] == ['cached s3-t25']
+    assert completion['planned'] == 42 and completion['endpoints'] == 3
+
+
+def test_branch_completion_separates_budget_exhausted_and_failed_attempts_from_remaining():
+    observations = {'workers': [{'failures': [
+        {'task': 'branches/on_policy/states/s1-t50/points/view-50/selection_reduced',
+         'error': 'ValueError: branch allocation exhausted before further GPU work: used=87123.372 GPU-s'},
+        {'task': 'branches/cached/states/s4-t50/points/view-50/selection_full', 'error': 'RuntimeError: NCCL timeout'},
+        {'task': 'branches/adaptive-cached/states/s3-t25/points/view-25/selection_full',
+         'error': 'branch allocation exhausted before further GPU work'}]}]}
+    completion = results.branch_completion([], observations)
+    development = completion['groups']['development']
+    assert development['budget_exhausted_needs_review'] == ['on_policy s1-t50']
+    assert 'on_policy s1-t50' not in development['remaining']
+    fixed = completion['groups']['test_fixed_controls']
+    assert fixed['failed_attempt'] == ['cached s4-t50'] and 'cached s4-t50' not in fixed['remaining']
+    adaptive = completion['groups']['test_adaptive']
+    assert adaptive['budget_exhausted_needs_review'] == ['adaptive s3-t25']
+    text = results.completion_table(completion, {'status': 'validated'})
+    assert 'budget exhausted, needs review: on_policy s1-t50' in text
+    assert 'failed attempt: cached s4-t50' in text and 'PAIRED STATUS' not in text
+
+
+def test_branch_completion_counts_only_the_frozen_adaptive_choice():
+    def row(selector, issues=()):
+        return {'selector_branch': selector, 'arm': 'selection_full', 'seed': 3, 'prefix_updates': 25,
+                'mean_reward': .5, 'issues': list(issues), 'curve_points': [{'updates': 0}]}
+    srgc = {'decisions': [{'state': 's3-t25', 'selector': 'cached'}]}
+    completion = results.branch_completion([row('adaptive-on_policy')], None, srgc)
+    assert completion['groups']['test_adaptive']['endpoints'] == 0
+    assert completion['non_chosen_adaptive_endpoints'] == ['adaptive-on_policy s3-t25']
+    assert 'not counted' in results.completion_table(completion, {'status': 'validated'})
+    completion = results.branch_completion([row('adaptive-cached'), row('adaptive-on_policy', ['seal'])], None, srgc)
+    assert completion['groups']['test_adaptive']['endpoints'] == 1
+    undecided = results.branch_completion([row('adaptive-cached'), row('adaptive-on_policy', ['seal'])])
+    assert undecided['groups']['test_adaptive']['endpoints'] == 1
+    assert undecided['groups']['test_adaptive']['endpoint_with_issues'] == []
+
+
+def test_malformed_validated_report_is_unverified_not_missing(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    root.mkdir()
+    paired = root / 'development/s0-t25/result.json'
+    paired.parent.mkdir(parents=True)
+    paired.write_text('{}')
+    branch_fixture(root)
+    (root / "report.json").write_text(json.dumps({"rows": "not a list"}))
+    target = tmp_path / "selector-pair-results.txt"
+    monkeypatch.setattr(results, "run_report", lambda *a, **kw: SimpleNamespace(returncode=0, stdout='', stderr=''))
+    monkeypatch.setattr(sys, "argv", ["selector_pair_results", "--root", str(root), "--out", str(target)])
+    with pytest.raises(SystemExit):
+        results.main()
+    data = json.loads(target.read_text().split('DATA_JSON\n')[1])
+    assert data['paired_validation']['status'] == 'failed'
+    assert data['missing_states'] is None and data['missing_development_states'] is None
+    assert data['paired_status'] == 'unverified' and data['branch_completion']['endpoints'] == 1
