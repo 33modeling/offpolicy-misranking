@@ -8,6 +8,7 @@ import selection_gate_gpu as base
 import selector_pair_results as results
 import selector_pair_srgc as srgc
 import selector_pair_srgc_repeat as repeat
+import export_selector_pair_srgc_inventory as inventory_export
 import selector_pair_srgc_score as score
 from test_selector_pair_gpu import fake_study
 from test_selector_pair_parallel import study
@@ -100,6 +101,20 @@ def test_missing_checkpoint_or_gradient_is_not_on_and_not_skipped(tmp_path, save
     row = repeat.scan_state(tmp_path, initial, 25)
     assert row["status"] == "awaiting_projections" and len(row["decisions"]) == 1
     assert row["pending"][0]["step"] == 75
+
+
+def test_inventory_scans_saved_d_after_missing_step_without_writing(tmp_path, saved_path, monkeypatch):
+    initial, checkpoint, _ = saved_path
+    checkpoint(75)
+    checkpoint(100, projected_d=-3.)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    monkeypatch.setattr(repeat, "measure_point", lambda *a: pytest.fail("inventory must not measure"))
+    row = inventory_export.scan_state(tmp_path, initial)
+    assert [(p["step"], p["status"]) for p in row["points"]] == [
+        (50, "measured"), (75, "projection_missing"), (100, "measured")]
+    assert "validation-b-0.json" in row["points"][1]["missing_files"]
+    assert row["points"][2]["d"] == -3.
+    assert all(p.read_bytes() == raw for p, raw in before.items())
 
 
 def test_no_outcome_inputs_no_source_writes_and_no_other_t_join(tmp_path, saved_path):
