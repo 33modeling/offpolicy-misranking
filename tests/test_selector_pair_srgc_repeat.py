@@ -369,6 +369,38 @@ def test_unknown_measurement_cost_does_not_erase_d_or_repair_files(tmp_path, sav
     assert all(p.read_bytes() == raw for p, raw in before.items())
 
 
+def test_preempted_measurement_resumes_missing_shard_without_zeroing_cost(
+        tmp_path, saved_path, monkeypatch, capsys):
+    initial, checkpoint, protocol = saved_path
+    checkpoint(75, projected_d=-3.)
+    directory = repeat.output_dir(tmp_path, 3, 50, 25) / "step-75"
+    done = directory / "candidate-b-0.done.json"
+    done.unlink()
+    event = {"event_id": "operator-preempted", "state": "started",
+             "phase": "sr-gc-repeat-candidate-b", "ledger": "research",
+             "gpus": 4, "gpu_type": "H100", "time": 1.}
+    (directory / "cost.jsonl").write_text(json.dumps(event) + "\n")
+    calls = []
+
+    def finish_saved_shard(path, name, gpu_type, **kwargs):
+        calls.append((name, kwargs["timeout"], kwargs["commands"]))
+        payload = path / "candidate-b-0.json"
+        core.atomic_json(done, {
+            "reference_sha256": base.digest(path / "reference.json"),
+            "stage": "candidate-b", "shard": 0, "sha256": base.digest(payload)})
+
+    monkeypatch.setattr(base, "meter", finish_saved_shard)
+    row = all_d.scan_state(tmp_path, initial, protocol=protocol, devices=list("0123"),
+                           through_step=75)
+    assert [(point["step"], point["d"]) for point in row["points"]] == [(50, 1.), (75, -3.)]
+    assert row["points"][-1]["measurement_gpu_seconds"] is None
+    assert row["points"][-1]["measurement_cost_complete"] is False
+    assert len(calls) == 1 and calls[0][0] == "sr-gc-repeat-candidate-b"
+    assert calls[0][1] == 3600.
+    assert len(calls[0][2]) == 1
+    assert "prior GPU cost is unknown" in capsys.readouterr().out
+
+
 def test_export_includes_recomputed_history_without_running_gpu(tmp_path, saved_path, monkeypatch):
     _, checkpoint, _ = saved_path
     checkpoint(75, projected_d=-3.)

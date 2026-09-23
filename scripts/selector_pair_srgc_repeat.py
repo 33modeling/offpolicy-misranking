@@ -140,12 +140,26 @@ def measure_point(directory, reference, contract, protocol, devices, cap):
     if len(devices) != 4 or len(set(devices)) != 4:
         raise ValueError("missing projections require four distinct allocated GPUs")
     base.bind(directory / "reference.json", reference)
+    closed_at_resume = None
     for stage in score.STAGES:
         commands = [([sys.executable, str(Path(score.__file__).resolve()), "--root", str(directory),
                       "--stage", stage, "--shard", str(i)], devices[i])
                     for i in range(4) if not (directory / f"{stage}-{i}.done.json").exists()]
         if commands:
-            remaining = cap - base.spent(directory)
+            try:
+                remaining = cap - base.spent(directory)
+            except ValueError as exc:
+                if "unclosed cost event" not in str(exc):
+                    raise
+                costs = base.cost(directory)
+                closed = sum(value["gpu_seconds"] for ledger, value in costs["ledgers"].items()
+                             if ledger != "reporting")
+                if closed_at_resume is None:
+                    closed_at_resume = closed
+                    print(f"[SR-GC repeat] {directory}: prior GPU cost is unknown after "
+                          "an interrupted allocation; new work has a separate cap and "
+                          "total measurement cost remains unknown", flush=True)
+                remaining = cap - (closed - closed_at_resume)
             if remaining <= 0:
                 raise ValueError("repeated SR-GC measurement cap exhausted")
             base.meter(directory, "sr-gc-repeat-" + stage, protocol["gpu_type"],
