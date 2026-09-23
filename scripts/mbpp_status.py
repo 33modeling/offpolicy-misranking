@@ -61,6 +61,8 @@ def remark(task):
         parts.append("최종 평가 저장됨; 곡선 평가 남음 (재학습 없음)")
     elif task.get("status") in REMARKS:
         parts.append(REMARKS[task["status"]])
+    if task.get("last_failure"):
+        parts.append("최근 실패: " + task["last_failure"])
     if active(task) and task.get("phase"):
         parts.append("단계: " + task["phase"].replace("fresh-r", "on-policy").replace("fresh_r", "on-policy"))
     if task.get("status") == "WAIT" and task.get("reason"):
@@ -169,6 +171,48 @@ def table(headers, rows, widths):
             values = [cell[index] if index < len(cell) else "" for cell in cells]
             lines.append("  ".join(value + " " * (width - columns(value))
                                    for value, width in zip(values, widths)).rstrip())
+    return lines
+
+
+NARROW, NOTE_MIN = 80, 24
+
+
+def packed(items, width, indent="  "):
+    """Join `label value` items on indented lines, never splitting one item."""
+    lines, line = [], ""
+    for item in items:
+        if line and columns(indent + line + " | " + item) <= width:
+            line += " | " + item
+            continue
+        if line:
+            lines.append(indent + line)
+        line = item
+        if columns(indent + item) > width:
+            *full, line = wrap(item, width - len(indent))
+            lines += [indent + part for part in full]
+    return lines + ([indent + line] if line else [])
+
+
+def remarks_table(headers, rows, widths, width, *, titled=True, stack=True):
+    """Last column is Remarks. A column narrower than NOTE_MIN prints one word
+    per line, so below 100 columns it moves to full-width lines under its row;
+    below NARROW the fixed columns do not fit either, so each row is a block."""
+    if width >= 100 or widths[-1] >= NOTE_MIN and (width >= NARROW or not stack):
+        return table(headers, rows, widths)
+    lines = []
+    if width >= NARROW or not stack:
+        for row in (headers, *rows):
+            lines += table(row[:-1], [], widths[:-1])
+            if str(row[-1]) not in {"", "-"}:
+                lines += ["  " + part for part in wrap(row[-1], width - 2)]
+        return lines
+    for row in rows:
+        lines += wrap(f"{headers[0]} {row[0]}" if titled else row[0], width)
+        # '-' is "not run in this state" (legend); a block need not list it.
+        lines += packed([f"{header} {value}" for header, value in zip(headers[1:-1], row[1:-1])
+                         if str(value) != "-"], width)
+        if str(row[-1]) not in {"", "-"}:
+            lines += ["  " + part for part in wrap(f"{headers[-1]}: {row[-1]}", width - 2)]
     return lines
 
 
@@ -569,22 +613,30 @@ def render_nodes(data, *, width, all_nodes=False):
                                max(24, remaining * 3 // 5))
         widths = [number_width, node_width, experiment_width, 6, progress_width,
                   remaining - experiment_width]
-        lines += table(headers, rows, widths)
+        if widths[-1] < NOTE_MIN and width < 100:
+            # Remarks move under the row, so Experiment takes their cells.
+            widths[2:] = [min(max([24, *(columns(row[2]) for row in rows)]), remaining + 2), 6, progress_width, 0]
+        lines += remarks_table(headers, rows, widths, width, stack=False)
     else:
         # A very narrow terminal or exceptionally long host cannot hold all six
         # columns. Put each complete host above its aligned work columns, so a
         # wrapped hostname is never interleaved with another field's content.
         lines.append("# Node")
-        detail_width = max(40, width - 2)
+        detail_width = max(38, width - 2)
         narrow_progress = min(progress_width, max(8, (detail_width - 30) // 2))
         overhead = 12 + narrow_progress
-        experiment_width = max(12, (detail_width - overhead) * 3 // 5)
+        experiment_width = max(min(12, detail_width - overhead - 8), (detail_width - overhead) * 3 // 5)
         widths = [experiment_width, 6, narrow_progress, max(8, detail_width - experiment_width - overhead)]
+        notes = widths[-1] < NOTE_MIN and width < 100
+        if notes:
+            widths = [detail_width - overhead + 2, 6, narrow_progress, 0]
         for row in rows:
             host_lines = wrap(row[1], width - number_width - 1)
             lines.append(row[0].ljust(number_width) + " " + host_lines[0])
             lines.extend(" " * (number_width + 1) + part for part in host_lines[1:])
-            lines.extend("  " + line for line in table(headers[2:], [row[2:]], widths))
+            block = (remarks_table(headers[2:], [row[2:]], widths, detail_width, stack=False) if notes
+                     else table(headers[2:], [row[2:]], widths))
+            lines.extend("  " + line for line in block)
     lines.extend(wrap("Progress는 단계별로 표시합니다. 비고의 단계명과 같은 순서이며, 한 단계의 100%는 전체 완료가 아닙니다.", width))
     lines.extend(wrap("Progress는 실제 처리 건수만 사용합니다. 학습 총량이 미정이면 완료 업데이트 수, 기록이 없으면 ?로 표시합니다.", width))
     if not nodes or not all_nodes and not current:
@@ -620,7 +672,8 @@ def render_idle_nodes(data):
 
 
 def render(data, *, width=120, all_tasks=False):
-    width = max(80, width)
+    # Phone terminals are 60-79 columns; laying out 80 made every row soft-wrap.
+    width = max(40, width)
     names = data.get("arm_names", ARM_NAMES)
     subject = data.get("subject", "MBPP")
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -712,12 +765,15 @@ def render(data, *, width=120, all_tasks=False):
         budgets = sum(task['status'] == 'BUDGET' for task in branches)
         evaluations = sum(task['status'] == 'EVAL' for task in branches)
         curves = sum(task['status'] == 'EVAL' and task.get('training_published', False) for task in branches)
+        failed_after_save = sum(bool(task.get('last_failure')) for task in branches)
         if budgets:
             note += f"; GPU 시간 한도 도달 {budgets}개 (결과 미완료)"
         if evaluations > curves:
             note += f"; 평가·결과 저장 남음 {evaluations - curves}개"
         if curves:
             note += f"; 최종 평가 저장됨·곡선 남음 {curves}개"
+        if failed_after_save:
+            note += f"; 저장 후 실패 {failed_after_save}개 (원인은 비고)"
         if count["recovered"]:
             note += f"; 복구 평가 완료 {count['recovered']}개 (동일예산 DONE 제외)"
         rows.append([name, count["planned"], count["done"], count["remaining"], count["progress"],
@@ -726,8 +782,8 @@ def render(data, *, width=120, all_tasks=False):
         if trained > count['saved_done']:
             notices.append(f"{name}: 최종 평가 결과 {trained}개 저장됨; 곡선 평가 남음 {curves}개"
                            f"; 곡선 기록 확인 필요 {max(0, trained - count['saved_done'] - curves)}개.")
-    lines += table(["Experiment", "계획", "DONE", "남음", "Progress", "READY", "WAIT", "RUN", "Remarks"],
-                   rows, [26, 4, 4, 4, 8, 5, 4, 3, width - 74])
+    lines += remarks_table(["Experiment", "계획", "DONE", "남음", "Progress", "READY", "WAIT", "RUN", "Remarks"],
+                           rows, [26, 4, 4, 4, 8, 5, 4, 3, width - 74], width, titled=False)
     for suite in data["suites"]:
         lines += ["", f"FULL STATUS — {suite_label(suite)}"]
         count = displayed_counts(suite, data)
@@ -775,7 +831,8 @@ def render(data, *, width=120, all_tasks=False):
         if names != ARM_NAMES:
             fixed = [11, 5, 6, *[max(6, columns(name)) for name in names.values()]]
             widths = [*fixed, width - sum(fixed) - 2 * len(fixed)]
-        lines += table(["Seed / Step", "Role", suite.get("prefix_heading", "Prefix"), *names.values(), "Remarks"], matrix, widths)
+        lines += remarks_table(["Seed / Step", "Role", suite.get("prefix_heading", "Prefix"), *names.values(), "Remarks"],
+                               matrix, widths, width)
     if data.get("retained_suites"):
         retained_label = "조회 합계 제외" if data.get("repair_source") else "기본 실행 제외"
         lines += ["", f"{retained_label} — 기존 기록 보존 (위 계획·완료·남음 합계에서 제외)"]
@@ -831,7 +888,7 @@ def main():
     if args.repair_root is not None:
         options["repair_root"] = args.repair_root
     data = snapshot(args.root, **options)
-    print(render(data, width=max(80, shutil.get_terminal_size((120, 40)).columns),
+    print(render(data, width=shutil.get_terminal_size((120, 40)).columns,
                  all_tasks=args.all_tasks))
     return int(any(suite.get("error") for suite in observed_suites(data)))
 

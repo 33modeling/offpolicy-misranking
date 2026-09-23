@@ -59,8 +59,11 @@ HOLD=${MBPP_HOLD_SECONDS:-15}
 # Root names, their prerequisites and per-suite settings live in one file that
 # the node launcher sources too, so both agree on what "the MBPP queue" is.
 export EXPERIMENTS_MBPP_SUITE="$SUITE"
+# progress/why/saved follow a verified repair like run; why/saved keep its source as history.
+case "$MODE" in why|saved) QUALITY_REQUESTED=${SWITCH_MBPP_QUALITY_ROOT:-} ;; esac
 source scripts/_mbpp_experiments.sh
-mbpp_queue_init
+# saved promises at most 4 KiB on stdout, so its [mbpp-route] line goes to stderr.
+if [ "$MODE" = saved ]; then mbpp_queue_init >&2; else mbpp_queue_init; fi
 
 # Labels come from _mbpp_experiments.sh. Frozen keys and saved paths are unchanged.
 
@@ -68,7 +71,17 @@ if [ "$MODE" = why ] || [ "$MODE" = saved ]; then
   PY=${SWITCH_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
   [ -x "$PY" ] || PY=python3
   ROOT_ARGS=()
-  while IFS= read -r root; do ROOT_ARGS+=(--root "$root"); done < <(mbpp_observation_roots)
+  mapfile -t ROOTS < <(mbpp_observation_roots)
+  # mbpp_queue_init replaced the quality root only for a verified repair. List its
+  # source right after it, as history, while mbpp_failure_summary's 4 roots allow.
+  ORIGINAL=$(realpath -m "${QUALITY_REQUESTED:-$OM_WORK/runs/selection-switch-mbpp-quality-v1}")
+  for root in "${ROOTS[@]}"; do
+    ROOT_ARGS+=(--root "$root")
+    if [ "$root" = "$SWITCH_MBPP_QUALITY_ROOT" ] && [ "$root" != "$ORIGINAL" ] && \
+        [ -d "$ORIGINAL" ] && [ "${#ROOTS[@]}" -lt 4 ]; then
+      ROOT_ARGS+=(--root "$ORIGINAL")
+    fi
+  done
   [ "$MODE" != saved ] || ROOT_ARGS+=(--storage)
   exec env CUDA_VISIBLE_DEVICES='' PYTHONDONTWRITEBYTECODE=1 \
     "$PY" scripts/mbpp_failure_summary.py --work "$OM_WORK" "${ROOT_ARGS[@]}"

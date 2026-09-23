@@ -19,6 +19,10 @@ import selector_pair as pair
 import selector_pair_gpu as gpu
 
 LABELS = {"on_policy": "On-policy", "cached": "Cached", "adaptive": "Adaptive", "random": "Random"}
+# Owner/phase fields a branch row takes from its active meter, so the branch
+# and the meter's phase row collapse into one work item for one owner.
+OWNER_FIELDS = ("host", "worker_id", "work_id", "pid", "event_id", "activity_identity_unconfirmed", "phase", "seconds",
+                "timeout", "owner_active", "heartbeat_fresh", "task_lease_held")
 
 
 def queue_assignment(root, worker):
@@ -159,9 +163,7 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
                 if path.parent == directory or directory in path.parents]
     fresh = [(updated, path, value) for updated, path, value in relevant if value.get("_active")]
     if fresh:
-        task.update(**{key: fresh[0][2].get(key) for key in
-                    ("host", "worker_id", "work_id", "pid", "event_id", "activity_identity_unconfirmed", "phase", "seconds", "timeout",
-                      "owner_active", "heartbeat_fresh", "task_lease_held")})
+        task.update(**{key: fresh[0][2].get(key) for key in OWNER_FIELDS})
         if task['status'] != 'DONE':
             task.update(status='RUN', reason='')
     elif relevant and task["status"] == "READY":
@@ -449,8 +451,14 @@ def snapshot(root, *, now=None):
                     if measurement_state.get("protocol_id") == p.get("protocol_id") and measurement_state.get("state") == "BLOCKED":
                         task.update(status="BLOCKED", reason="SR-GC 측정 실패: " + str(measurement_state.get("error", "")))
                     measurement = root / "sr-gc" / f"s{seed}-t{step}" / "progress.json"
-                    if any(path == measurement and value.get('_active') for _, path, value in observations):
-                        task.update(status="RUN", reason="SR-GC 현재 정책 A/B gradient 측정 중")
+                    meter = next((value for _, path, value in observations
+                                  if path == measurement and value.get('_active')), None)
+                    if meter:
+                        # The meter already yields a phase row for its real host. Without
+                        # its owner and path this row became a second, anonymous work item.
+                        task.update(**{key: meter.get(key) for key in OWNER_FIELDS}, status="RUN",
+                                    reason="SR-GC 현재 정책 A/B gradient 측정 중",
+                                    directory=str(measurement.parent.relative_to(root)))
                 tasks.append(task)
     return dict(root=str(root), updated=now, prepared=prepared, error=error, tasks=tasks,
                 nodes=sorted(nodes.values(), key=lambda node: display.switch_status.node_view.host_sort_key(node["host"])),

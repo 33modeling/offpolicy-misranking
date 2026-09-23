@@ -71,7 +71,7 @@ def sibling_status(switch_root, mopps_root, *, now):
             if root in known:
                 continue
             try:
-                data = module.snapshot(root, now=now)
+                data = module.snapshot(root, now=now, local_gpus=False)  # GPUs are shown once, not per root
             except Exception as exc:
                 summaries.append({"root": str(root), "error": str(exc)})
                 continue
@@ -95,8 +95,15 @@ def sibling_status(switch_root, mopps_root, *, now):
 
 def snapshot(switch_root, mopps_root, *, now=None):
     now = time.time() if now is None else now
-    switch = switch_status.snapshot(switch_root, now=now)
-    mopps = mopps_status.snapshot(mopps_root, now=now)
+    # nvidia-smi waits out a 20 s timeout per call on a GPU-faulted node, exactly when status
+    # is needed: query this node's GPUs once per frame and give both views the same result.
+    switch = switch_status.snapshot(switch_root, now=now, local_gpus=False)
+    mopps = mopps_status.snapshot(mopps_root, now=now, local_gpus=False)
+    if switch.get("prepared") or mopps.get("prepared"):
+        gpus = switch_status.node_view.local_gpus()
+        for item in (switch, mopps):
+            if item.get("prepared"):
+                item["local_gpus"] = gpus
     # Every host once: the node launcher's logs plus every experiment's launcher logs and tasks.
     sibling_tasks, summaries = sibling_status(switch_root, mopps_root, now=now)
     tasks = switch.get("tasks", []) + mopps.get("tasks", []) + sibling_tasks
@@ -150,7 +157,7 @@ def render(data, *, all_tasks=False, width=120):
               "", f"{SEPARATOR} MOPPS COMPARISON {SEPARATOR}",
               mopps_status.render(data["mopps_comparison"], all_tasks=all_tasks, width=width, local_gpus=False, nodes=False)]
     view = (data["selection_switch"] if data["selection_switch"].get("prepared") else data["mopps_comparison"]).get("local_gpus")
-    if view is None:
+    if not view:  # neither root prepared (or a snapshot taken with local_gpus=False): query here, once
         view = switch_status.node_view.local_gpus()
     lines += ["", "THIS NODE GPUS"]
     lines += switch_status.node_view.render_local_gpus(view, switch_status.table, width)

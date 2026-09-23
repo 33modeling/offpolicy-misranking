@@ -66,6 +66,52 @@ def contract(out, seed, drift):
     return c
 
 
+CHANGED = "code changed since preparation: "
+
+
+def launch_refusal(out, c, verdicts):
+    """(task reason, suite line) when the launcher would refuse this point, else None.
+
+    run/check and every queue worker call rloo_experiment.validate(), which stops on
+    unreviewed src drift or on reviewed drift without the current runtime receipt.
+    READY must not advertise arms that cannot start, so the same gate runs here.
+    Only the read-only halves are called; prepare/bind_receipt would write.
+    """
+    try:
+        key = json.dumps(c["code_hashes"], sort_keys=True)
+        if key not in verdicts:  # one src-tree pass per distinct contract, not per point
+            try:
+                verdicts[key] = experiment.reviewed_code_changes(c["code_hashes"])
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                verdicts[key] = exc
+        changes = verdicts[key]
+        if isinstance(changes, Exception):
+            detail = str(changes)
+            if detail.startswith(CHANGED):
+                return f"launch blocked: {detail[len(CHANGED):]} changed", detail
+            return f"launch blocked: {detail}", detail
+        if changes:
+            try:
+                current = (experiment.ed.read(out / "queue-observation-runtime.json")
+                           == experiment.observation_receipt(out, changes))
+            except (OSError, ValueError):
+                current = False  # missing or unreadable: validate() refuses both
+            if not current:
+                return (f"launch blocked: {next(iter(changes))} changed; run 'run_rloo.sh prepare' first",
+                        "reviewed runtime receipt missing or changed; run 'run_rloo.sh prepare' first")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        return f"launch blocked: {exc}", f"launch gate unreadable: {exc}"
+    return None
+
+
+def attempt_error(attempt, fallback):
+    # A failed GPU phase records the meter's RuntimeError plus up to 120 worker-log
+    # lines per rank. Show the causing exception line; the full text stays in
+    # queue-attempt.json and the phase logs under the task directory.
+    detail = display.switch_status.short_error(attempt.get("error") or fallback)
+    return detail if len(detail) <= 160 else detail[:157] + "..."
+
+
 def saved_evaluation(out, arm, c):
     """Verify reporting receipts/data without hashing model or optimizer files."""
     target = out / arm / "evaluation"
@@ -134,7 +180,7 @@ def observe(out, arm, seed, drift, c, error, *, now):
         try:
             attempt = read(attempt_path)
             if attempt.get("state") == "FAILED":
-                task.update(status="WAIT", attempt_state='FAILED', reason=str(attempt.get("error") or "queue attempt failed"))
+                task.update(status="WAIT", attempt_state='FAILED', reason=attempt_error(attempt, "queue attempt failed"))
         except (OSError, ValueError, TypeError) as exc:
             task.update(status="WAIT", reason="invalid queue receipt: " + str(exc))
     progress_path = directory / "progress.json"
@@ -158,8 +204,8 @@ def observe(out, arm, seed, drift, c, error, *, now):
                 elif progress.get("state") == "running":
                     task.update(status="STALE", reason="heartbeat expired; ownership unconfirmed")
                 elif progress.get("state") == "failed":
-                    task.update(status="WAIT", reason=str(attempt.get("error") or
-                                f"{progress.get('phase', 'phase')} failed; see phase logs"))
+                    task.update(status="WAIT", reason=attempt_error(
+                        attempt, f"{progress.get('phase', 'phase')} failed; see phase logs"))
         except (OSError, ValueError, TypeError) as exc:
             if task["status"] != "DONE":
                 task.update(status="WAIT", reason="invalid progress: " + str(exc))
@@ -186,9 +232,9 @@ def observe(out, arm, seed, drift, c, error, *, now):
 def snapshot(root, *, now=None):
     root = Path(root).resolve()
     now = time.time() if now is None else now
-    suites = []
+    suites, verdicts = [], {}
     for drift in (0, 400):
-        tasks, errors, prepared = [], [], False
+        tasks, errors, prepared, blocked = [], [], False, {}
         for seed in range(3):
             out = root / f"math500-d{drift}" / f"s{seed}"
             c, error = None, ""
@@ -199,8 +245,18 @@ def snapshot(root, *, now=None):
                 except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
                     error = str(exc)
                     errors.append(f"s{seed}: {error}")
-            tasks += [observe(out, arm, seed, drift, c, error, now=now)
-                      for arm in ("before", *experiment.ARMS)]
+            point = [observe(out, arm, seed, drift, c, error, now=now)
+                     for arm in ("before", *experiment.ARMS)]
+            refusal = launch_refusal(out, c, verdicts) if c else None
+            if refusal:
+                # Only READY changes; sealed, running, resumable and failed arms keep their state.
+                blocked.setdefault(refusal[1], []).append(f"s{seed}")
+                for task in point:
+                    if task["status"] == "READY":
+                        task.update(status="WAIT", reason=refusal[0])
+            tasks += point
+        # One line per distinct refusal; it also makes the status command exit non-zero.
+        errors += [f"launch blocked ({', '.join(seeds)}): {line}" for line, seeds in blocked.items()]
         nodes = {}
         for task in tasks:
             if not task.get("host"):

@@ -38,9 +38,11 @@ mbpp_queue_init() {
   SWITCH_MBPP_LONG_ROOT=$(realpath -m "${SWITCH_MBPP_LONG_ROOT:-$OM_WORK/runs/selection-switch-mbpp-long-v1}")
   # The default viewer already follows a certified repair. New/default queue
   # entries must choose the same existing run, including an in-place reload.
+  # Read-only progress/why/saved describe that same run, not its source.
   # Explicit suites and nondefault roots remain an operator's choice.
   if [ "${EXPERIMENTS_MBPP_SUITE:-all}" = all ] && \
-      { [ "${MODE:-}" = run ] || [ "${MODE:-}" = restart ]; } && \
+      { [ "${MODE:-}" = run ] || [ "${MODE:-}" = restart ] || [ "${MODE:-}" = progress ] || \
+        [ "${MODE:-}" = why ] || [ "${MODE:-}" = saved ]; } && \
       [ "$SWITCH_MBPP_QUALITY_ROOT" = "$(realpath -m "$OM_WORK/runs/selection-switch-mbpp-quality-v1")" ]; then
     local candidate=${MBPP_REPAIR_ROOT:-$OM_WORK/runs/selection-switch-mbpp-quality-repair-v1} selected python
     if [ -f "$candidate/repair.json" ]; then

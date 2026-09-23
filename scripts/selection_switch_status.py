@@ -67,6 +67,26 @@ def short_error(value):
     return (causes[0] if causes else next((line.strip() for line in lines if line.strip()), "unknown failure"))
 
 
+def failure_not_older(failure, record, progress, *saved):
+    """Branch failure.json is never cleared on success: a failure recorded before
+    a later attempt's heartbeat, or before the saved work it would contradict,
+    is history, not a current fault."""
+    recorded, later = number(record.get("time"), None), number(progress.get("updated"), None)
+    if recorded is not None and later is not None and recorded < later:
+        return False
+    try:
+        failed = failure.stat().st_mtime
+    except OSError:
+        return False
+    for path in saved:
+        try:
+            if path.stat().st_mtime > failed:
+                return False
+        except OSError:
+            continue
+    return True
+
+
 def last_training_step(path):
     if not path.is_file():
         return None
@@ -297,6 +317,10 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                     if also is not None:
                         if not also.is_file():
                             task.update(status="EVAL", reason="training result published; reward curve pending (no retraining)")
+                            # A crashing curve evaluation otherwise looks like ordinary queued work.
+                            if failure.get("error") and failure_not_older(
+                                    directory / "failure.json", failure, progress, done_path, receipt_path):
+                                task["last_failure"] = short_error(failure["error"])
                         else:
                             curve = read(also)
                             if (curve.get("schema") != rule.SCHEMA
@@ -342,7 +366,10 @@ def snapshot(root, *, now=None, local_gpus=True, node_namespace=None):
                 task["saved_work"] = state
                 task["resume_validation_required"] = True
                 if state in {"REVIEW", "EVAL", "SAVING"} or task["status"] in {"READY", "WAIT"}:
-                    if failure.get("error"):
+                    if failure.get("error") and failure_not_older(
+                            directory / "failure.json", failure, progress,
+                            policy_dir / "policy_train.json", policy_dir / "budget_stop.json",
+                            directory / "result.json", directory / "result.sha256.json", *policy_dir.glob("checkpoint-*")):
                         task["last_failure"] = short_error(failure["error"])
                     task.update(status=state, reason=reason + (f"; waits for {dependency}" if dependency else ""))
 
@@ -611,6 +638,10 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     if history:
         lines.append(f"HISTORY  {history} task(s) have archived attempts; current valid saved work keeps its status.")
     alerts = Counter(task["status"] for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"})
+    failed_after_save = sum(bool(task.get("last_failure")) for task in tasks
+                            if task["status"] not in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"})
+    if failed_after_save:
+        alerts["FAILED AFTER SAVE"] = failed_after_save
     if alerts:
         lines.append("ALERTS  " + "  ".join(f"{key} {value}" for key, value in alerts.items()) + "  (all phases)")
     observed = current_tasks(tasks) + [task for task in tasks if all_tasks and task["status"] == "STALE"]
@@ -655,11 +686,14 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
             rows.append([f"s{seed}/t{step}", "DEV" if seed in rule.DEV_SEEDS else "TEST",
                          *[CELLS[items[arm]["status"]] if arm in items else "-" for arm in ARM_LABELS], ", ".join(reasons)])
     lines += table(["STATE", "ROLE", *ARM_LABELS.values(), "WAIT FOR"], rows, [8, 5, 7, 7, 7, 7, 7, max(15, width-70)])
-    attention = [task for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "SAVING", "BUDGET", "REVIEW"}]
+    attention = [task for task in tasks if task["status"] in {"FAILED", "STALE", "INVALID", "SAVING", "BUDGET", "REVIEW"}
+                 or task.get("last_failure")]
     if attention or data["cost_pending"] or data["notices"]:
         lines += ["", "ATTENTION"]
         for task in attention[:8]:
-            lines.append(clip(f"{CELLS[task['status']]} s{task['seed']}/t{task['step']} {task['arm']}: {task['reason']}", width))
+            # The failure goes first so clipping cannot hide it behind the reason.
+            failure = f"last failure: {task['last_failure']}; " if task.get("last_failure") else ""
+            lines.append(clip(f"{CELLS[task['status']]} s{task['seed']}/t{task['step']} {task['arm']}: {failure}{task['reason']}", width))
         if len(attention) > 8:
             lines.append(f"... {len(attention)-8} more; use --all or --json")
         if data["cost_pending"]:
@@ -674,6 +708,8 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
             lines.append(f"{task['status']:8} {task['directory']}")
             if task["reason"]:
                 lines.append("  " + task["reason"])
+            if task.get("last_failure"):
+                lines.append("  last failure: " + task["last_failure"])
     lines += ["", "SEL/RND: diagnostic-paid selection/random; FULL-S/FULL-R: full-budget controls.",
               "DONE: receipt checked. RUN: heartbeat <60s. STALE: no fresh heartbeat.",
               "EVAL: saved policy/result; evaluation pending. RESUME: verify checkpoint.",
@@ -696,13 +732,14 @@ def main():
         while True:
             if watcher:
                 watcher.refresh()
-            data = snapshot(args.root)
+            compact = os.environ.get("SWITCH_STATUS_COMPACT") == "1" and not args.all_tasks and not args.as_json
+            data = snapshot(args.root, local_gpus=False) if compact else snapshot(args.root)
             if args.watch is not None and sys.stdout.isatty() and not args.as_json:
                 print("\033[2J\033[H", end="")
             width = max(80, shutil.get_terminal_size((120, 40)).columns)
             if args.as_json:
                 output = json.dumps(data, indent=2)
-            elif os.environ.get("SWITCH_STATUS_COMPACT") == "1" and not args.all_tasks:
+            elif compact:
                 output = render_compact(data, width=width)
             else:
                 output = render(data, all_tasks=args.all_tasks, width=width)

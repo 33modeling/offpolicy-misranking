@@ -70,7 +70,7 @@ def test_cli_uses_compact_only_with_mbpp_marker_and_without_all(six_suites, monk
     roots, _, now = six_suites
     root = roots["selection-switch-mbpp-v1"]
     data = status.snapshot(root, now=now)
-    monkeypatch.setattr(status, "snapshot", lambda _: data)
+    monkeypatch.setattr(status, "snapshot", lambda _, **__: data)
     monkeypatch.setenv("SWITCH_STATUS_COMPACT", "1")
     monkeypatch.setattr(sys, "argv", ["status", "--root", str(root), *arguments])
     assert status.main() == 0

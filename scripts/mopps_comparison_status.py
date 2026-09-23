@@ -65,7 +65,7 @@ def last_training_step(path):
     return None
 
 
-def snapshot(root, *, now=None):
+def snapshot(root, *, now=None, local_gpus=True):
     root = root.resolve()
     now = time.time() if now is None else now
     notices = []
@@ -276,7 +276,9 @@ def snapshot(root, *, now=None):
     branches = [task for task in tasks if task["kind"] == "branch"]
     nodes = node_view.launcher_nodes(root, tasks, now=now)
     return {"prepared": True, "root": str(root), "parent": str(parent), "updated": now,
-            "nodes": nodes, "local_gpus": node_view.local_gpus(),
+            # Combined screens query nvidia-smi once per frame (20 s timeout per call on a
+            # GPU-faulted node) and pass local_gpus=False here, as for the switch snapshot.
+            "nodes": nodes, "local_gpus": node_view.local_gpus() if local_gpus else [],
             "seeds": seeds, "steps": steps, "arms": arms,
             "active_nodes": len(active_hosts), "stale_nodes": len(stale_hosts), "waiting_nodes": waiting,
             "branch_counts": dict(Counter(task["status"] for task in branches)),

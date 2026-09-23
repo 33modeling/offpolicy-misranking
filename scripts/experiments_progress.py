@@ -13,6 +13,7 @@ from collections import Counter
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import shutil
 import sys
 import textwrap
 import time
@@ -74,6 +75,12 @@ def clip(value, width):
     return value if len(value) <= width else value[:width - 1] + "~"
 
 
+def fit(text, width, indent="  "):
+    """Wrap rather than clip, so a phone-width screen keeps every word."""
+    return [text] if len(text) <= width else textwrap.wrap(text, width=width, subsequent_indent=indent,
+                                                           break_on_hyphens=False)
+
+
 def render_root(root, data, *, width, kind):
     name = label(root, data.get("protocol"))
     if not data.get("prepared", True) or "tasks" not in data:
@@ -102,8 +109,14 @@ def render_root(root, data, *, width, kind):
                                width=width, subsequent_indent='    ')
     host_width = max(12, width - 52)
     for t in sorted(running, key=lambda t: (str(t["seed"]), str(t["step"]), t["arm"])):
-        lines.append(clip(f"  RUN  s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('phase') or '-':<9} {updates(t):>5} "
-                          f"{switch_status.duration(t.get('seconds')):>6} {clip(t.get('host') or '?', host_width)}", width))
+        head = f"  RUN  s{t['seed']}/t{t['step']} {t['arm']:<17} {t.get('phase') or '-':<9}"
+        tail = f"{updates(t):>5} {switch_status.duration(t.get('seconds')):>6}"
+        row = f"{head} {tail} {clip(t.get('host') or '?', host_width)}"
+        if width >= 100 or len(row) <= width:
+            lines.append(clip(row, width))
+        else:
+            # Narrow terminal: updates, elapsed and node move to their own line instead of being clipped away.
+            lines += [clip(head.rstrip(), width), clip(f"{'':7}{tail} {t.get('host') or '?'}", width)]
     for t in sorted((t for t in tasks if t["status"] in {"FAILED", "STALE", "INVALID", "BUDGET", "REVIEW"}), key=lambda t: (t["status"], t["seed"], t["step"])):
         tag = {"FAILED": "FAIL", "STALE": "STALE", "INVALID": "INVAL", "BUDGET": "BUDGET", "REVIEW": "REVIEW"}[t["status"]]
         prefix = (tag + " ").ljust(5)
@@ -116,16 +129,19 @@ def render(work, *, width=80, now=None, roots=None):
     stamp = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     switch, mopps = scoped_roots(roots) if roots else prepared_roots(work)
     scope = "  (MBPP roots only)" if roots and all("mbpp" in Path(r).name for r in roots) else ("  (selected roots only)" if roots else "")
-    lines = [f"PROGRESS  {stamp}{scope}", clip("RUN: updates (u), elapsed, node. BUDGET: allocation exhausted; needs review.", width)]
-    lines.append(clip("EVAL: evaluation only. RESUME: checkpoint validation. REVIEW: saved work blocked.", width))
+    lines = [f"PROGRESS  {stamp}{scope}", *fit("RUN: updates (u), elapsed, node. BUDGET: allocation exhausted; needs review.", width)]
+    at = len(lines)
+    lines += fit("EVAL: evaluation only. RESUME: checkpoint validation. REVIEW: saved work blocked.", width)
     hosts = set()
+    snapshots = {}  # one snapshot per root, reused by render_nodes; this screen never shows GPUs
     for root in switch:
         if not (root / "switch.json").is_file():
             lines += ["", f"{label(root)}: not prepared"]
             continue
         try:
-            data = switch_status.snapshot(root, now=now)
+            data = snapshots[switch_status, root] = switch_status.snapshot(root, now=now, local_gpus=False)
         except Exception as exc:  # noqa: BLE001 - one unreadable root must not hide the others
+            snapshots[switch_status, root] = None
             lines += ["", f"{label(root)}: unreadable ({exc})"]
             continue
         hosts |= {t.get("host") for t in execution_tasks(data.get("tasks", []))
@@ -133,8 +149,9 @@ def render(work, *, width=80, now=None, roots=None):
         lines += ["", *render_root(root, data, width=width, kind="switch")]
     for root in mopps:
         try:
-            data = mopps_status.snapshot(root, now=now)
+            data = snapshots[mopps_status, root] = mopps_status.snapshot(root, now=now, local_gpus=False)
         except Exception as exc:  # noqa: BLE001
+            snapshots[mopps_status, root] = None
             lines += ["", f"{label(root)}: unreadable ({exc})"]
             continue
         hosts |= {t.get("host") for t in execution_tasks(data.get("tasks", []))
@@ -144,18 +161,26 @@ def render(work, *, width=80, now=None, roots=None):
         lines += ["", "no prepared experiment root under " + str(Path(work) / "runs")]
     elif roots and not any((root / "switch.json").is_file() for root in switch):
         lines += ["", "none of the selected roots is prepared yet"]
-    lines.insert(2, f"NODES TRAINING NOW  {len(hosts)}  (recorded host labels; duplicate names may share a label)")
-    lines += ["", *render_nodes(switch, mopps, width=width, now=now)]
+    lines[at:at] = fit(f"NODES TRAINING NOW  {len(hosts)}  (recorded host labels; duplicate names may share a label)", width)
+    lines += ["", *render_nodes(switch, mopps, width=width, now=now, snapshots=snapshots)]
     return "\n".join(lines)
 
 
-def render_nodes(switch, mopps, *, width, now):
-    """Every node with launcher evidence or a running task: state, task, phase, silence."""
-    tasks = []
+def render_nodes(switch, mopps, *, width, now, snapshots=None):
+    """Every node with launcher evidence or a running task: state, task, phase, silence.
+
+    snapshots maps (module, root) to the snapshot render already took (None: unreadable),
+    so each root is read once per frame."""
+    tasks, snapshots = [], snapshots or {}
     for root, module in [(r, switch_status) for r in switch] + [(r, mopps_status) for r in mopps]:
-        try:
-            data = module.snapshot(root, now=now)
-        except Exception:  # noqa: BLE001
+        if (module, root) in snapshots:
+            data = snapshots[module, root]
+        else:
+            try:
+                data = module.snapshot(root, now=now, local_gpus=False)
+            except Exception:  # noqa: BLE001
+                data = None
+        if data is None:
             continue
         for task in execution_tasks(data.get("tasks", [])):
             if task.get("status") in {"RUNNING", "STALE"} and task.get("host"):
@@ -166,17 +191,29 @@ def render_nodes(switch, mopps, *, width, now):
     view = switch_status.node_view
     nodes = view.listed(view.launcher_nodes(anchor, tasks, now=now))
     lines = [f"NODES  {view.render_summary(nodes)[7:]}"]
-    for item in nodes:
-        age = "" if item["last_age"] is None else f"{int(item['last_age'])//60}m"
-        what = item["task"] or ("between passes" if item["state"] == "HOLD" else item["reason"] or "")
-        lines.append(clip(f"  {item['state']:<6} {clip(item['host'], 24):<24} {clip(item['phase'] or '', 12):<12} {age:>4} {what}", width))
+    rows = [(item["state"], clip(item["host"], 24), clip(item["phase"] or "", 12),
+             "" if item["last_age"] is None else f"{int(item['last_age'])//60}m",
+             item["task"] or ("between passes" if item["state"] == "HOLD" else item["reason"] or ""))
+            for item in nodes]
+    host_width, phase_width = 24, 12
+    if width < 100 and any(len(f"  {s:<6} {h:<24} {p:<12} {a:>4} {w}") > width for s, h, p, a, w in rows):
+        # Narrow terminal: size the node and phase columns to their longest entry first ...
+        host_width, phase_width = max(len(r[1]) for r in rows), max(len(r[2]) for r in rows)
+    for state, host, phase, age, what in rows:
+        head = f"  {state:<6} {host:<{host_width}} {phase:<{phase_width}} {age:>4}"
+        if width >= 100 or len(f"{head} {what}") <= width:
+            lines.append(clip(f"{head} {what}", width))
+        else:
+            # ... then give a task that still does not fit its own line instead of clipping it.
+            lines += [clip(head.rstrip(), width)] + ([clip(f"{'':9}{what}", width)] if what else [])
     return lines
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, default=Path(os.environ.get("OM_WORK", "")))
-    parser.add_argument("--width", type=int, default=80)
+    parser.add_argument("--width", type=int, default=None,
+                        help="columns (default: COLUMNS or this terminal's width, else 80)")
     parser.add_argument("--watch", type=float, nargs="?", const=60.)
     parser.add_argument("--root", type=Path, action="append", default=None,
                         help="show only this switch root (repeatable); unprepared roots are listed as such")
@@ -188,7 +225,9 @@ def main():
         while True:
             if watcher:
                 watcher.refresh()
-            text = render(args.work, width=args.width, roots=args.root)
+            # Re-read every frame so a rotated phone or resized pane gets its own width.
+            width = args.width if args.width is not None else shutil.get_terminal_size((80, 24)).columns
+            text = render(args.work, width=width, roots=args.root)
             if args.watch:
                 print("\033[2J\033[H", end="")
             print(text, flush=True)
