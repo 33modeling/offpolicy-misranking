@@ -22,7 +22,7 @@ import time
 
 PINNED_COMMIT = 'c0c38d62e893fdcf25920d5a70d3149a06b5450f'
 PRE_SRGC_OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
-OPERATIONS_COMMIT = 'cbb4a206ae943b8cf2772c9d35633e0a6d48180f'
+OPERATIONS_COMMIT = 'd7e6a61b60da1e560e60693c2e005230e0f9ab7c'
 PRE_SRGC_OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
                             'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
 PRE_BUDGET_RECOVERY_COMMITS = ('29903457ccbab9bbed96221794019004ceeb34ad',
