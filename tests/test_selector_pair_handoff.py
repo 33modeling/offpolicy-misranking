@@ -918,7 +918,7 @@ def test_handoff_requires_bound_finite_finish_cost_receipt(handoff, damage):
 
 
 @pytest.mark.parametrize('corrupt', [False, True])
-@pytest.mark.parametrize('legacy_operations', [False, True])
+@pytest.mark.parametrize('legacy_operations', [None, 'pre_srgc', 'srgc', 'worker_failure'])
 def test_owner_checkout_verifies_science_and_operations_pins(tmp_path, handoff, monkeypatch, corrupt, legacy_operations):
     import selector_pair_deploy as deploy
     from test_selector_pair_deploy import git
@@ -926,7 +926,10 @@ def test_owner_checkout_verifies_science_and_operations_pins(tmp_path, handoff, 
     checkout = tmp_path / 'checkout'
     git(tmp_path, 'clone', '--shared', '--no-checkout', '-q', str(SCRIPT.parents[1]), str(checkout))
     if legacy_operations:
-        monkeypatch.setattr(deploy, 'OPERATIONS_COMMIT', deploy.PRE_SRGC_OPERATIONS_COMMIT)
+        commits = {'pre_srgc': deploy.PRE_SRGC_OPERATIONS_COMMIT,
+                   'srgc': deploy.PRE_BUDGET_RECOVERY_COMMITS[0],
+                   'worker_failure': deploy.PRE_BUDGET_RECOVERY_COMMITS[1]}
+        monkeypatch.setattr(deploy, 'OPERATIONS_COMMIT', commits[legacy_operations])
     runtime = deploy.stage_runtime(checkout)
     monkeypatch.setattr(handoff, 'process', lambda *args: {'cwd': runtime})
     if corrupt:

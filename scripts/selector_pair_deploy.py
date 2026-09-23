@@ -22,21 +22,28 @@ import time
 
 PINNED_COMMIT = 'c0c38d62e893fdcf25920d5a70d3149a06b5450f'
 PRE_SRGC_OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
-OPERATIONS_COMMIT = '428780570cdba64e779408eb4f87af644b9ced3d'
+OPERATIONS_COMMIT = '91c02dda3e1d111d5b8f62ca39d6ff18d8e10d89'
 PRE_SRGC_OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
                             'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
-OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
+PRE_BUDGET_RECOVERY_COMMITS = ('29903457ccbab9bbed96221794019004ceeb34ad',
+                               '428780570cdba64e779408eb4f87af644b9ced3d')
+PRE_BUDGET_RECOVERY_FILES = ('scripts/queue_selector_pair_gpu.py',
                     'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py',
                     'scripts/selector_pair_srgc.py', 'scripts/selector_pair_srgc_score.py',
                     'scripts/report_selector_pair_srgc.py', 'scripts/selector_pair_results.py',
                     'scripts/selector_pair_diagnostic.py')
+OPERATIONS_FILES = (*PRE_BUDGET_RECOVERY_FILES, 'scripts/selector_pair_budget_recovery.py')
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_FILES = 20000
 MANIFEST = '.pair-runtime.json'
 
 
 def operations_files(commit):
-    return PRE_SRGC_OPERATIONS_FILES if commit == PRE_SRGC_OPERATIONS_COMMIT else OPERATIONS_FILES
+    if commit == PRE_SRGC_OPERATIONS_COMMIT:
+        return PRE_SRGC_OPERATIONS_FILES
+    if commit in PRE_BUDGET_RECOVERY_COMMITS:
+        return PRE_BUDGET_RECOVERY_FILES
+    return OPERATIONS_FILES
 
 
 def git(repo, *args, limit=MAX_ARCHIVE_BYTES, timeout=90):
