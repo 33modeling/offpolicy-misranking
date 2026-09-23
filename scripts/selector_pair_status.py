@@ -175,6 +175,10 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
     fresh = [(updated, path, value) for updated, path, value in relevant if value.get("_active")]
     if fresh:
         task.update(**{key: fresh[0][2].get(key) for key in OWNER_FIELDS})
+        if 'train' in str(task.get('phase') or ''):
+            # The renderer keeps this branch row and deduplicates its meter row.
+            task['training_step'] = display.switch_status.last_training_step(
+                fresh[0][1].parent / 'policy/grpo_stats.jsonl')
         if task['status'] != 'DONE':
             task.update(status='RUN', reason='')
     elif relevant and task["status"] == "READY":

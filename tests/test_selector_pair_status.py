@@ -140,6 +140,59 @@ def test_frozen_adaptive_choice_counts_only_one_branch(tmp_path, monkeypatch):
     assert all(task["status"] == "READY" for task in data["tasks"])
 
 
+@pytest.mark.parametrize('branch_name,arm', [
+    ('adaptive-cached', 'selection_full'), ('adaptive-on_policy', 'selection_full'),
+    ('on_policy', 'selection_full'), ('cached', 'selection_full'), ('on_policy', 'random_full'),
+])
+def test_visible_training_row_keeps_completed_updates_after_deduplication(tmp_path, monkeypatch, branch_name, arm):
+    prepared(tmp_path)
+    choice = branch_name.removeprefix('adaptive-') if branch_name.startswith('adaptive-') else 'cached'
+    core.atomic_json(tmp_path / 'test-decisions.json', {'saved': True})
+    monkeypatch.setattr(gpu, 'decisions', lambda *_: {f's{s}-t{t}': {'selector': choice}
+                                                    for s in pair.TEST_SEEDS for t in pair.STEPS})
+    directory = tmp_path / f'branches/{branch_name}/states/s4-t100/points/view-100/{arm}'
+    (directory / 'policy').mkdir(parents=True)
+    (directory / 'policy/grpo_stats.jsonl').write_text(json.dumps({'step': 107}) + '\n')
+    core.atomic_json(directory / 'progress.json', {
+        'host': 'training-node', 'pid': 123, 'state': 'running', 'updated': 995,
+        'phase': 'train', 'event_id': 'current-train', 'seconds': 95, 'timeout': 1000})
+    for phase in ('first', 'second'):
+        for state in ('started', 'finished'):
+            gpu.base.journal(directory / 'cost.jsonl', {
+                'event_id': phase, 'phase': phase, 'state': state, 'exit_code': 0})
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    data = status.snapshot(tmp_path, now=1000)
+    assert next(row for row in data['activity'] if row.get('phase') == 'train')['training_step'] == 107
+    suite = status.dashboard_data(data)['suites'][0]
+    visible = status.display.current_work(suite)
+    assert len(visible) == 1
+    task, shared = visible[0]
+    assert not shared and task.get('training_step') == 107
+    progress, note = status.display.task_progress(tmp_path, task)
+    assert progress == '100.0% / 100.0% / 7회 완료'
+    assert '학습 업데이트 7회 완료' in note
+    assert '7회 완료' in status.render(data, width=200)
+    assert all(p.read_bytes() == content for p, content in before.items())
+
+
+def test_training_count_refreshes_and_missing_rows_remain_unknown(tmp_path):
+    prepared(tmp_path)
+    directory = branch(tmp_path)
+    core.atomic_json(directory / 'progress.json', {
+        'host': 'training-node', 'state': 'running', 'updated': 995,
+        'phase': 'train', 'event_id': 'current-train'})
+    stats = directory / 'policy/grpo_stats.jsonl'
+    stats.parent.mkdir(parents=True)
+    for raw, expected in [('', '?'), ('{"step":26}\n', '1회 완료'),
+                          ('{"step":26}\n{"step":27}\n{"step":', '2회 완료')]:
+        stats.write_text(raw)
+        data = status.snapshot(tmp_path, now=1000)
+        task = status.display.current_work(status.dashboard_data(data)['suites'][0])[0][0]
+        assert status.display.task_progress(tmp_path, task)[0] == expected
+        assert task['status'] == 'RUNNING'
+        assert not any(row['status'] == 'DONE' for row in data['tasks'])
+
+
 def parallel_receipt(root, protocol):
     import selector_pair_parallel as parallel
 
