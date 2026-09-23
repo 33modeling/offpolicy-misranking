@@ -126,12 +126,43 @@ def test_inventory_lists_all_initial_d_and_discovered_repeat_paths(tmp_path, sav
         "state": "s3-t50", "step": 50, "d_a": initial["d_a"],
         "d_b": initial["d_b"], "d": initial["d"],
         "source_path": "sr-gc/s3-t50/decision.json"}]
-    assert report["stored_repeat_references"] == [{
-        "path": "sr-gc-repeat/every-25/s3-t50/step-75/reference.json",
-        "done_receipts": 16}]
+    stored = report["stored_repeat_references"]
+    assert len(stored) == 1
+    assert stored[0]["path"] == "sr-gc-repeat/every-25/s3-t50/step-75/reference.json"
+    assert stored[0]["done_receipts"] == 16
+    assert stored[0]["status"] == "measured" and stored[0]["d"] == -3.
     table = inventory_export.table(report)
     assert "PAIR START-STATE D" in table
     assert "sr-gc-repeat/every-25/s3-t50/step-75/reference.json" in table
+
+
+def test_legacy_reference_restores_saved_d_without_weakening_identity(tmp_path, saved_path, monkeypatch):
+    initial, checkpoint, protocol = saved_path
+    checkpoint(75, projected_d=-3.)
+    directory = repeat.output_dir(tmp_path, 3, 50, 25) / "step-75"
+    reference_path = directory / "reference.json"
+    legacy = core.read(reference_path)
+    legacy["repeat"]["schema"] = repeat.LEGACY_SCHEMA
+    core.atomic_json(reference_path, legacy)
+    for stage in score.STAGES:
+        for shard in range(4):
+            receipt_path = directory / f"{stage}-{shard}.done.json"
+            receipt = core.read(receipt_path)
+            receipt["reference_sha256"] = base.digest(reference_path)
+            core.atomic_json(receipt_path, receipt)
+
+    assert all_d.scan_state(tmp_path, initial)["points"][1]["d"] == -3.
+    assert inventory_export.scan_state(tmp_path, initial)["points"][1]["status"] == "measured"
+    assert inventory_export.collect(tmp_path, {"status": "validated", "decisions": [initial]})[
+        "stored_repeat_references"][0]["d"] == -3.
+    seen = []
+    monkeypatch.setattr(repeat, "measure_point", lambda _, reference, *args: seen.append(reference))
+    all_d.scan_state(tmp_path, initial, protocol=protocol, devices=list("0123"))
+    assert seen == [legacy]
+
+    legacy["sampling_seed"] += 1
+    core.atomic_json(reference_path, legacy)
+    assert "reference differs" in all_d.scan_state(tmp_path, initial)["errors"][0]["error"]
 
 
 def test_all_d_diagnostics_continue_after_negative_and_missing_steps(tmp_path, saved_path, monkeypatch):

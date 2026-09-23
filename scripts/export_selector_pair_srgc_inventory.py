@@ -55,6 +55,8 @@ def collect(root, initial, interval=25):
     repeat.positive_int(interval)
     rows = [scan_state(root, item, interval)
             for item in initial.get("decisions", []) if item["step"] == 25]
+    initial_by_state = {(item["seed"], item["step"]): item
+                        for item in initial.get("decisions", [])}
     initial_decisions = [
         {"state": f"s{item['seed']}-t{item['step']}", "step": item["step"],
          "d_a": item["d_a"], "d_b": item["d_b"], "d": item["d"],
@@ -66,8 +68,28 @@ def collect(root, initial, interval=25):
             raise ValueError("SR-GC reference escaped Pair root")
         receipt_count = sum((path.parent / f"{stage}-{shard}.done.json").is_file()
                             for stage in score.STAGES for shard in range(4))
-        stored_references.append({"path": str(path.relative_to(root)),
-                                  "done_receipts": receipt_count})
+        item = {"path": str(path.relative_to(root)), "done_receipts": receipt_count,
+                "state": None, "step": None, "d_a": None, "d_b": None,
+                "d": None, "status": None}
+        try:
+            saved = repeat.read(path, root)
+            metadata = saved["repeat"]
+            seed, start, step, check_interval = (
+                metadata[key] for key in ("seed", "start_step", "step", "interval"))
+            item.update(state=f"s{seed}-t{start}", step=step)
+            initial_point = initial_by_state[(seed, start)]
+            checkpoint = repeat.inventory(root, seed, start).get(step)
+            if checkpoint is None:
+                raise ValueError("matching On-policy checkpoint not saved")
+            expected, _ = repeat.checkpoint_reference(
+                root, seed, start, step, checkpoint, initial_point, check_interval)
+            value = repeat.check_projections(path.parent, root, expected)
+            item.update(status="measured", d_a=value["d_a"], d_b=value["d_b"], d=value["d"])
+        except FileNotFoundError as exc:
+            item.update(status="projection_missing", error=str(exc.filename))
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+            item.update(status="invalid", error=str(exc))
+        stored_references.append(item)
     return {"schema": "offpolicy-selector-pair/sr-gc-inventory-v1",
             "scope": "Read-only saved t25 On-policy checkpoint diagnostics; later values do not imply an executed switch.",
             "pair_root": str(root), "interval": interval, "initial_status": initial["status"],
@@ -97,9 +119,12 @@ def table(report):
                              missing[0] if missing else "", point["source_path"],
                              point.get("error", "")))
     output.write("\nDISCOVERED REPEAT REFERENCES (all stored locations)\n")
-    writer.writerow(("path", "done_receipts", "required_receipts"))
+    writer.writerow(("path", "state", "step", "status", "d_a", "d_b", "d",
+                     "done_receipts", "required_receipts", "error"))
     for item in report["stored_repeat_references"]:
-        writer.writerow((item["path"], item["done_receipts"], 16))
+        writer.writerow((item["path"], item["state"], item["step"], item["status"],
+                         item["d_a"], item["d_b"], item["d"], item["done_receipts"],
+                         16, item.get("error", "")))
     return output.getvalue()
 
 

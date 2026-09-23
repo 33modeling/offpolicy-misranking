@@ -61,7 +61,10 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
                 from selector_pair_parallel import checked
                 checked(directory)
                 with srgc.worker.pair_lease(directory / ".measurement.lock"):
-                    repeat.measure_point(directory, expected, contract, protocol, devices, cap)
+                    reference = (repeat.saved_reference(directory, root, expected)
+                                 if (directory / "reference.json").exists() or
+                                 (directory / "reference.json").is_symlink() else expected)
+                    repeat.measure_point(directory, reference, contract, protocol, devices, cap)
             value = repeat.check_projections(directory, root, expected)
             point = {"step": step, "status": "measured",
                      "d_a": value["d_a"], "d_b": value["d_b"],

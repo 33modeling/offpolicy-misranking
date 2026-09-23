@@ -21,6 +21,7 @@ import selector_pair_srgc as srgc
 import selector_pair_srgc_score as score
 
 SCHEMA = "offpolicy-selector-pair/sr-gc-repeat-v2"
+LEGACY_SCHEMA = "offpolicy-selector-pair/sr-gc-repeat-v1"
 DEFAULT_INTERVAL = 25
 DEFAULT_START_STEP = 25
 SCOPE = (
@@ -108,9 +109,16 @@ def checkpoint_reference(root, seed, start, step, checkpoint, initial, interval)
     return reference, contract
 
 
-def check_projections(directory, root, expected):
-    if read(directory / "reference.json", root) != expected:
+def saved_reference(directory, root, expected):
+    actual = read(directory / "reference.json", root)
+    legacy = {**expected, "repeat": {**expected["repeat"], "schema": LEGACY_SCHEMA}}
+    if actual != expected and actual != legacy:
         raise ValueError("repeated SR-GC reference differs from this checkpoint")
+    return actual
+
+
+def check_projections(directory, root, expected):
+    saved_reference(directory, root, expected)
     # Bounded regular-file reads precede the existing projection validator.
     for stage in score.STAGES:
         for shard in range(4):
@@ -179,7 +187,10 @@ def scan_state(root, initial, interval, *, protocol=None, devices=None, cap=None
                 from selector_pair_parallel import checked
                 checked(directory)
                 with srgc.worker.pair_lease(directory / ".measurement.lock"):
-                    measure_point(directory, expected, contract, protocol, devices, cap)
+                    reference = (saved_reference(directory, root, expected)
+                                 if (directory / "reference.json").exists() or
+                                 (directory / "reference.json").is_symlink() else expected)
+                    measure_point(directory, reference, contract, protocol, devices, cap)
             value = check_projections(directory, root, expected)
             item = {**value, "step": step, "updates": step - start, "source": "saved_on_checkpoint"}
             result["decisions"].append(item)
