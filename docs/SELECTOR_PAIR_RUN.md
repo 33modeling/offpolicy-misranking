@@ -176,6 +176,13 @@ SR-GC 보고서는 해당 격리 런타임에서 `python scripts/report_selector
 --root "$PAIR_ROOT"`로 검증한다. 기존 결과 내보내기 도구도 SR-GC root를
 감지하여 이 경로를 사용한다. 과거 `fit` 명령은 SR-GC 실행 절차가 아니다.
 
+기존 `bash scripts/run_paper_results.sh results pair` 명령은 완료된 Pair가
+없어도 저장된 SR-GC 판단의 D_A/D_B/D, 선택, 새 측정 비용과 재사용 R 비용을
+TXT 및 DATA_JSON의 `srgc` 항목에 포함한다. 아직 없는 상태는 pending으로
+남긴다. 이 판단값을 실행 완료나 예측 적중으로 간주하지 않는다. 엄격한 Pair
+보고서 검증은 고정된 학습 코드 런타임에서 수행하므로 최신 checkout의 별도
+학습기 변경 때문에 기존 Pair 보고서를 읽지 못하는 일을 피한다.
+
 `previous single-controller`는 구버전 controller의 실제 배타 잠금 때문에 새
 worker가 참여하지 못한다는 뜻이다. 잠금 파일의 존재 자체가 원인은 아니다.
 2026-09-19 전달된 진단에는 `run284168-wts-3`의 최근 학습 진행이 관측되었지만,

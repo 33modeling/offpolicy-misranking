@@ -76,11 +76,16 @@ def schedule_provenance(root):
             records.append(value)
             if source == path:
                 data.update(source_receipt=value, source_receipt_sha256=hashlib.sha256(raw).hexdigest())
-        from selector_pair_parallel import receipt_value, validate_receipt
+        from selector_pair_parallel import validate_receipt
         validate_receipt(root, records[1])
-        if records[0] != receipt_value(root, records[1]):
+        _, latest_digest = read_source(path, root)
+        if latest_digest != data['source_receipt_sha256']:
             raise ValueError('schedule receipt changed during export')
         data['status'] = 'validated_current_runtime_receipt'
+        if (root / 'pair-sr-gc-runtime.json').is_file():
+            data['scope'] = ('Operational fixed-control schedule retained; the SR-GC amendment replaces '
+                             'the legacy development-label barrier. Adaptive requires frozen current-policy '
+                             'SR-GC decisions, not fitted H labels. Neither receipt establishes paired completion.')
     except (ImportError, OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
         data['error'] = str(exc)
     return data
@@ -94,6 +99,8 @@ def cost_provenance(root):
             'recovered_events': [], 'reconstructed_events': 0, 'inspection_complete': True,
             'omitted_events': 0, 'errors': []}
     paths = set()
+    paths.update(root / 'sr-gc' / f's{seed}-t{step}' / 'cost.jsonl'
+                 for seed in (3, 4) for step in (25, 50, 100))
     for name in ('on_policy', 'cached', 'adaptive-on_policy', 'adaptive-cached'):
         for seed in range(5):
             for step in (25, 50, 100):
@@ -435,7 +442,7 @@ def exporter_metadata(repo):
         commit = git.stdout.strip() if git.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         commit = None
-    return {'version': 'selector-pair-results/v5', 'git_commit': commit,
+    return {'version': 'selector-pair-results/v6', 'git_commit': commit,
             'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'created_at': datetime.now(timezone.utc).isoformat(), 'export_id': uuid.uuid4().hex}
 
@@ -447,6 +454,9 @@ def run_report(root, repo, timeout):
         python = os.environ.get('PAIR_PYTHON') or str(repo / '.venv-cu126/bin/python')
         if not Path(python).is_file():
             python = sys.executable
+        if not (repo / '.pair-runtime.json').is_file():
+            from selector_pair_deploy import stage_runtime
+            repo = stage_runtime(repo)
         command = [python, 'scripts/report_selector_pair_srgc.py', '--root', str(root)]
     process = subprocess.Popen(command, cwd=repo,
                                env={**os.environ, 'PAIR_ROOT': str(root), 'CUDA_VISIBLE_DEVICES': ''},
@@ -470,6 +480,62 @@ def empty_paired_report():
             'missing_states': [f's{s}-t{t}' for s in (3, 4) for t in (25, 50, 100)],
             'missing_development_states': [f's{s}-t{t}' for s in (0, 1, 2) for t in (25, 50, 100)],
             'summary': None}
+
+
+def srgc_results(root):
+    """Export frozen decisions before endpoints arrive; never run a measurement."""
+    data = {'status': 'not_recorded', 'method': None, 'decisions': [], 'pending_states': [],
+            'errors': [], 'decision_barrier_frozen': False,
+            'scope': 'Current-parent SR-GC decisions. Outcomes and crossing times are separate evidence; '
+                     'a decision is not proof of an executed switch or a successful prediction.'}
+    receipt = root / 'pair-sr-gc-runtime.json'
+    if not receipt.exists() and not receipt.is_symlink():
+        return data
+    data.update(status='partial', method='SR-GC')
+    try:
+        import selector_pair_srgc as srgc
+        protocol, _ = read_source(root / 'pair.json', root)
+        _, data['runtime_sha256'] = read_source(receipt, root)
+        srgc.validate(root, protocol)
+        barrier = root / 'test-decisions.json'
+        if barrier.exists() or barrier.is_symlink():
+            read_source(barrier, root)
+            srgc.decisions(root, protocol)
+            data['decision_barrier_frozen'] = True
+        for seed in (3, 4):
+            for step in (25, 50, 100):
+                name = f's{seed}-t{step}'
+                path = root / 'sr-gc' / name / 'decision.json'
+                if not path.exists() and not path.is_symlink():
+                    data['pending_states'].append(name)
+                    continue
+                try:
+                    saved, digest = read_source(path, root)
+                    validated = srgc.validate_choice(root, protocol, seed, step)
+                    if saved != validated:
+                        raise ValueError('SR-GC decision changed during export')
+                    data['decisions'].append({**saved, 'state': name, 'source_sha256': digest})
+                except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+                    data['errors'].append({'state': name, 'error': str(exc)})
+        data['status'] = ('invalid' if data['errors'] else 'validated' if data['decision_barrier_frozen'] else 'partial')
+    except (ImportError, OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+        data.update(status='invalid', errors=[{'error': str(exc)}])
+    return data
+
+
+def srgc_table(data):
+    if data['method'] is None:
+        return ''
+    output = io.StringIO()
+    output.write('\nSR-GC DECISIONS: ' + data['status'] + '\n')
+    output.write(data['scope'] + '\n')
+    writer = csv.writer(output)
+    keys = ('state', 'd_a', 'd_b', 'd', 'selector', 'new_measurement_gpu_seconds',
+            'reused_ranking_gpu_seconds', 'diagnosis_gpu_seconds')
+    writer.writerow(keys)
+    for row in data['decisions']:
+        writer.writerow([row[key] for key in keys])
+    return output.getvalue()
 
 
 def main():
@@ -508,7 +574,7 @@ def main():
                 data = fresh
                 data['complete'] = not (data['missing_states'] or data['missing_development_states'])
                 validation = {'status': 'validated', 'error': None, 'returncode': 0}
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             data, curves, exit_code = empty_paired_report(), '', 2
             validation = {'status': 'failed', 'error': str(exc)}
     data["source_root"] = str(root)
@@ -517,6 +583,11 @@ def main():
                 branch_measurement_scope=BRANCH_SCOPE, paired_validation=validation,
                 exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows),
                 cost_provenance=cost_provenance(root), schedule_provenance=schedule_provenance(root))
+    data['srgc'] = srgc_results(root)
+    if data['srgc']['method']:
+        data['adaptive_method'] = data['srgc']['method']
+    if data['srgc']['errors'] and not exit_code:
+        exit_code = 2
     if not exit_code and (errors or any(row['issues'] for row in rows)):
         exit_code = 2
     data['export_exit_code'] = exit_code
@@ -529,7 +600,7 @@ def main():
                f"inspection_complete={data['cost_provenance']['inspection_complete']}. "
                + data['cost_provenance']['scope'] + '\n')
     header += f'CURRENT SAVED BRANCHES {len(rows)}; ERRORS {len(errors)}\n'
-    write_export("selector-pair", data, header + curves + branch_table(rows), args.out)
+    write_export("selector-pair", data, header + srgc_table(data['srgc']) + curves + branch_table(rows), args.out)
     if exit_code:
         raise SystemExit(exit_code)
 
