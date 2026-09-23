@@ -80,8 +80,12 @@ def test_srgc_does_not_wait_for_development_target_and_shows_measurement(tmp_pat
     data = status.snapshot(tmp_path, now=100.)
     task = next(row for row in data["tasks"] if row["name"] == "adaptive" and row["seed"] == 3 and row["step"] == 25)
     assert task["status"] == "RUN" and "SR-GC" in task["reason"]
-    assert "회귀 학습·목표 도달 대기 없음" in data["adaptive_reason"]
+    assert data["adaptive_reason"] == "SR-GC 현재 gradient 측정·결정 0/6"
     assert any(row.get("phase") == "sr-gc-candidate-a" for row in data["activity"])
+    rendered = status.render(data)
+    assert "SR-GC" in rendered
+    assert "회귀" not in rendered
+    assert "목표 도달 대기" not in rendered
 
 
 @pytest.mark.parametrize("damage", [None, "receipt", "curve", "missing_curve", "budget"])

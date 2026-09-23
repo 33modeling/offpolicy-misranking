@@ -180,7 +180,7 @@ def adaptive_dependency(root, protocol):
         except (OSError, ValueError, KeyError, TypeError) as exc:
             return "BLOCKED", "SR-GC 설정 검증 실패: " + str(exc)
         count = len(list((root / "sr-gc").glob("*/decision.json")))
-        return "WAIT", f"SR-GC 현재 gradient 측정·결정 {count}/6; 회귀 학습·목표 도달 대기 없음"
+        return "WAIT", f"SR-GC 현재 gradient 측정·결정 {count}/6"
     blocked = []
     completed = 0
     for seed in pair.DEV_SEEDS:
@@ -519,7 +519,7 @@ def dashboard_data(data):
                           *(["WAIT: " + data["error"]] if data["error"] else [])])
     return dict(updated=data["updated"], suites=[suite], subject="SELECTOR PAIR", arm_names=LABELS,
                 legend=["On-policy: 현재 정책 gradient 기반 선택. Cached: 저장된 정답률 기반 선택.",
-                        ("Adaptive: SR-GC 현재 gradient 부호로 선택; 회귀 학습 없음. Random: 무작위 선택 대조군."
+                        ("Adaptive: SR-GC 현재 gradient 부호로 선택. Random: 무작위 선택 대조군."
                          if (root / "pair-sr-gc-runtime.json").exists()
                          else "Adaptive: 기존 H 회귀 방식(아직 SR-GC로 인계되지 않음). Random: 무작위 선택 대조군."),
                         "선택비용 별도도 총 GPU 비용에는 포함합니다. 평가 비용은 모든 조건에서 별도로 기록합니다.",
