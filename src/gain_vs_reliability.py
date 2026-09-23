@@ -70,10 +70,10 @@ def cross_half_gain(a: np.ndarray, b: np.ndarray, k: int) -> float:
     return float(np.mean(gains))
 
 
-def point_rows(run: Path, frac: float, constant_cache: dict, signals=SIGNALS) -> list[dict]:
+def point_rows(run: Path, frac: float, constant_cache: dict) -> list[dict]:
     config = json.loads((run / "run_config.json").read_text())
     rows = []
-    for signal in signals:
+    for signal in SIGNALS:
         try:
             halves = signal_halves(run, signal)
         except FileNotFoundError:

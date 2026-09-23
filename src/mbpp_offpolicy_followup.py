@@ -166,6 +166,21 @@ def active(run):
     return False
 
 
+def estimator_rows(run, cache):
+    """Calibration rows for the four stored-response estimators only.
+
+    gain_vs_reliability.py stays byte-identical to the version the RLOO contract
+    froze, so its module-level signal list is narrowed for this call only.
+    """
+    import gain_vs_reliability as gain
+    original = gain.SIGNALS
+    gain.SIGNALS = ESTIMATORS
+    try:
+        return gain.point_rows(run, .1, cache)
+    finally:
+        gain.SIGNALS = original
+
+
 def collect(root, tag, include_scores=False):
     records, cache = [], {}
     for seed, drift, run in points(root, tag):
@@ -177,8 +192,7 @@ def collect(root, tag, include_scores=False):
                 record['inputs'] = validate_binding(run, seed, drift)
                 if (run / 'scores_stale_splithalf.json').exists():
                     scores, protocol = validate_scores(run)
-                    from gain_vs_reliability import point_rows
-                    rows = point_rows(run, .1, cache, signals=ESTIMATORS)
+                    rows = estimator_rows(run, cache)
                     if len(rows) != 4:
                         raise ValueError('expected four estimator rows')
                     record.update(status='DONE', rows=rows, scoring_protocol=protocol)
