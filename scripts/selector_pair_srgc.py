@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+import os
 from pathlib import Path
 import sys
 import time
@@ -28,6 +29,19 @@ PRE_SRGC_COST_RECOVERY_HASHES = {
     **PRE_FAILURE_HANDLING_HASHES,
     "selector_pair_srgc.py": "b17c2b804106e493937374b9b7c5225da78d3f91451c65acc559c4d3a8067dfa",
 }
+PRE_FREEZE_RETRY_HASHES = {
+    **PRE_FAILURE_HANDLING_HASHES,
+    "selector_pair_srgc.py": "ec7a7539366e897af9cb3831029e81f66fb33bd12ed25a2bc19675bd184cf3d3",
+}
+# Recomputing a frozen contrast on another node may differ in the last bits
+# (BLAS kernels depend on the CPU). The selector must still match exactly.
+CONTRAST_REL_TOL, CONTRAST_ABS_TOL = 1e-9, 1e-9
+FREEZE_POLL_SECONDS = 60.
+FREEZE_WAIT_SECONDS = 14400.
+
+
+class FreezePending(worker.IncompletePairRun):
+    """Only peer-owned states remain; no local measurement failed."""
 RULE = {"name": "SR-GC", "threshold": 0., "negative": "cached", "nonnegative": "on_policy",
         "statistic": "mean_A_B(dot(validation_h, mean(on_h)-mean(cached_h)))",
         "references": "independent eight-response LOO4 candidate groups; disjoint A/B validation prompts",
@@ -60,7 +74,9 @@ def validate(root, p):
     previous = {**expected, "code_sha256": PRE_FAILURE_HANDLING_HASHES}
     before_recovery = {**expected, "code_sha256": PRE_BUDGET_RECOVERY_HASHES}
     before_srgc_cost = {**expected, "code_sha256": PRE_SRGC_COST_RECOVERY_HASHES}
-    if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (expected, previous, before_recovery, before_srgc_cost):
+    before_freeze_retry = {**expected, "code_sha256": PRE_FREEZE_RETRY_HASHES}
+    if path.is_symlink() or not path.is_file() or worker.core.read(path) not in (
+            expected, previous, before_recovery, before_srgc_cost, before_freeze_retry):
         raise ValueError("SR-GC runtime receipt missing or changed")
 
 
@@ -175,6 +191,9 @@ def measure(directory, identity, entry, devices, p):
                     for i in range(4) if not (directory / f"{stage}-{i}.done.json").exists()]
         if commands:
             paid(directory, p, "sr-gc-" + stage, commands, worker.environment(c))
+    # Fail closed before appending: a new row after an open event would make the
+    # ledger unrecoverable, whereas a trailing open event is closed by recovery.
+    base.spent(directory)
     contrast = base.meter(directory, "sr-gc-aggregate", p["gpu_type"],
                           action=lambda: reference_contrast(directory, sets), ledger="deployment")
     value = {**contrast, "sets": sets, "state_id": identity,
@@ -213,13 +232,18 @@ def validate_choice(root, p, seed, step):
             or source["reused_gpu_seconds"] != value["reused_ranking_gpu_seconds"]
             or value["diagnosis_gpu_seconds"] != value["new_measurement_gpu_seconds"] + source["reused_gpu_seconds"]):
         raise ValueError("SR-GC ranking or total cost binding changed")
-    if source["reused"] and ranking_cost(Path(source["path"]).parent) != source["reused_gpu_seconds"]:
-        raise ValueError("reused SR-GC scoring costs changed")
+    # The source arm may append its own later scoring events; the ranking SR-GC used
+    # is pinned by selected.json above. Only a smaller ledger indicates tampering.
+    if source["reused"] and ranking_cost(Path(source["path"]).parent) < source["reused_gpu_seconds"] - 1e-6:
+        raise ValueError("reused SR-GC scoring costs decreased")
     expected = {f"{stage}-{i}.json" for stage in score.STAGES for i in range(4)}
     if set(value["reference_shards"]) != expected or any(base.digest(directory / name) != digest
                                                        for name, digest in value["reference_shards"].items()):
         raise ValueError("SR-GC reference projections changed")
-    if any(value[key] != item for key, item in reference_contrast(directory, value["sets"]).items()):
+    recomputed = reference_contrast(directory, value["sets"])
+    if (recomputed["method"] != value["method"] or recomputed["selector"] != value["selector"]
+            or any(not math.isclose(recomputed[key], value[key], rel_tol=CONTRAST_REL_TOL,
+                                    abs_tol=CONTRAST_ABS_TOL) for key in ("d_a", "d_b", "d"))):
         raise ValueError("SR-GC decision does not match its independent projections")
     return value
 
@@ -278,7 +302,8 @@ def freeze(root, p, devices):
                     "protocol_id": p["protocol_id"], "state": "BLOCKED", "updated": time.time(), "error": str(exc)})
                 print(f"[SR-GC unavailable] {name}: {exc}; checking other states", flush=True)
     if pending or failures:
-        raise worker.IncompletePairRun("SR-GC pending measurements: " + "; ".join([
+        kind = worker.IncompletePairRun if failures else FreezePending
+        raise kind("SR-GC pending measurements: " + "; ".join([
             *(f"{name} owned by peer" for name in pending), *failures]))
     with worker.queue_lease(root / ".pair-barrier.lock"):
         worker.base.bind(root / "test-decisions.json", {"schema": SCHEMA, "protocol_id": p["protocol_id"],
@@ -314,16 +339,38 @@ def activated(root, p, devices, *, initialize=True):
         worker.decisions, worker.switch.runtime.select_once = old_decisions, old_select
 
 
+def attempt_freeze(root, p, devices):
+    try:
+        freeze(root, p, devices)
+    except (worker.IncompletePairRun, worker.PairWaitTimeout, ValueError, OSError) as exc:
+        return exc
+    return None
+
+
+def wait_for_freeze(root, p, devices, *, limit=None, poll=None, sleep=None, clock=None):
+    """Retry while peers own the remaining states, so the barrier does not depend on
+    one worker seeing all six states free in a single pass. Real failures stop at once."""
+    if limit is None:
+        limit = float(os.environ.get("PAIR_SRGC_FREEZE_WAIT_SECONDS", FREEZE_WAIT_SECONDS))
+    poll = FREEZE_POLL_SECONDS if poll is None else poll
+    sleep, clock = sleep or time.sleep, clock or time.monotonic
+    deadline = clock() + limit
+    while True:
+        failure = attempt_freeze(root, p, devices)
+        if not isinstance(failure, FreezePending) or clock() >= deadline:
+            return failure
+        print(f"[SR-GC] waiting for peer-owned measurements: {failure}", flush=True)
+        sleep(poll)
+
+
 def run_stages(root, p, devices, command):
     """No fit, development-label barrier, or target-attainment prerequisite."""
     if command == "develop":
         return worker.distributed_stage(root, p, devices, "development")
-    failure = None
-    try:
-        freeze(root, p, devices)
-    except (worker.IncompletePairRun, worker.PairWaitTimeout, ValueError, OSError) as exc:
-        failure = exc
+    failure = attempt_freeze(root, p, devices)
     if command == "freeze":
+        if isinstance(failure, FreezePending):
+            failure = wait_for_freeze(root, p, devices)
         if failure:
             raise failure
         return
@@ -333,7 +380,9 @@ def run_stages(root, p, devices, command):
         controls = parallel.FixedQueue(root, p, devices)
         while controls.step():
             pass
-    elif command in {"run", "test"}:
+        if isinstance(failure, FreezePending):
+            failure = wait_for_freeze(root, p, devices)
+    if not failure and command in {"run", "test"}:
         try:
             worker.distributed_stage(root, p, devices, "test")
         except (worker.IncompletePairRun, worker.PairWaitTimeout) as exc:

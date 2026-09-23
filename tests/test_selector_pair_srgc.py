@@ -165,7 +165,7 @@ def test_target_and_future_outcomes_do_not_enter_frozen_decisions(tmp_path, srgc
 
 
 @pytest.mark.parametrize('hashes', [srgc.PRE_FAILURE_HANDLING_HASHES, srgc.PRE_BUDGET_RECOVERY_HASHES,
-                                  srgc.PRE_SRGC_COST_RECOVERY_HASHES])
+                                  srgc.PRE_SRGC_COST_RECOVERY_HASHES, srgc.PRE_FREEZE_RETRY_HASHES])
 def test_previous_runtime_receipt_and_saved_decisions_are_preserved(tmp_path, srgc_study, hashes):
     p, _, measurements, _ = srgc_study
     core.atomic_json(tmp_path / srgc.RECEIPT, {
@@ -306,3 +306,106 @@ def test_reuses_current_ranking_without_repeating_r_scoring_or_refunding_cost(tm
     assert value["diagnosis_gpu_seconds"] == cost + value["new_measurement_gpu_seconds"]
     assert (source.parent / "cost.jsonl").read_bytes() == before
     assert srgc.validate_choice(tmp_path, p, 3, 25) == value
+
+
+def test_waiting_freeze_writes_the_barrier_after_a_peer_finishes(tmp_path, srgc_study):
+    import contextlib
+    p, _, measurements, _ = srgc_study
+    devices = ["0", "1", "2", "3"]
+    with srgc.activated(tmp_path, p, devices):
+        peer = contextlib.ExitStack()
+        peer.enter_context(gpu.pair_lease(tmp_path / "sr-gc/s3-t25/.decision.lock"))
+        with pytest.raises(srgc.FreezePending, match="owned by peer"):
+            srgc.freeze(tmp_path, p, devices)
+        naps = []
+        failure = srgc.wait_for_freeze(tmp_path, p, devices, limit=3600, poll=5,
+                                       sleep=lambda seconds: (naps.append(seconds), peer.close()))
+        assert failure is None and naps == [5]
+        assert (tmp_path / "test-decisions.json").is_file() and len(measurements) == 36
+        assert len(gpu.decisions(tmp_path, p)) == 6
+
+
+def test_waiting_freeze_gives_up_on_real_failures_and_after_its_limit(tmp_path, srgc_study, monkeypatch):
+    p, _, _, _ = srgc_study
+    devices = ["0", "1", "2", "3"]
+    with srgc.activated(tmp_path, p, devices):
+        with gpu.pair_lease(tmp_path / "sr-gc/s3-t25/.decision.lock"):
+            ticks = iter([0., 10., 20.])
+            failure = srgc.wait_for_freeze(tmp_path, p, devices, limit=15, poll=1,
+                                           sleep=lambda seconds: None, clock=lambda: next(ticks))
+            assert isinstance(failure, srgc.FreezePending)
+        def unavailable(*args):
+            raise ValueError("missing independent A/B measurements")
+        monkeypatch.setattr(srgc, "measure", unavailable)
+        slept = []
+        failure = srgc.wait_for_freeze(tmp_path, p, devices, limit=3600, poll=1, sleep=slept.append)
+        assert not isinstance(failure, srgc.FreezePending) and isinstance(failure, gpu.IncompletePairRun)
+        assert slept == [] and not (tmp_path / "test-decisions.json").exists()
+
+
+def test_run_waits_for_peer_measurements_then_executes_adaptive(tmp_path, srgc_study, monkeypatch):
+    import contextlib
+    p, calls, _, _ = srgc_study
+    devices = ["0", "1", "2", "3"]
+    peer = contextlib.ExitStack()
+    monkeypatch.setattr(srgc.time, "sleep", lambda seconds: peer.close())
+    with srgc.activated(tmp_path, p, devices):
+        peer.enter_context(gpu.pair_lease(tmp_path / "sr-gc/s3-t25/.decision.lock"))
+        parallel.run_distributed(tmp_path, p, devices, "run", srgc.run_stages)
+    assert (tmp_path / "test-decisions.json").is_file()
+    assert sum(name.startswith("adaptive-") for name, *_ in calls) == 6
+
+
+def test_recomputed_contrast_tolerates_last_bit_differences_but_not_a_new_choice(tmp_path, srgc_study, monkeypatch):
+    p, _, _, _ = srgc_study
+    with srgc.activated(tmp_path, p, ["0", "1", "2", "3"]):
+        srgc.freeze(tmp_path, p, ["0", "1", "2", "3"])
+        saved = srgc.validate_choice(tmp_path, p, 3, 25)
+        original = srgc.reference_contrast
+
+        def nudged(directory, sets):
+            value = original(directory, sets)
+            return srgc.choose(value["d_a"] * (1 + 1e-13), value["d_b"] * (1 - 1e-13))
+        monkeypatch.setattr(srgc, "reference_contrast", nudged)
+        assert srgc.validate_choice(tmp_path, p, 3, 25) == saved
+
+        def flipped(directory, sets):
+            value = original(directory, sets)
+            return srgc.choose(-value["d_a"], -value["d_b"])
+        monkeypatch.setattr(srgc, "reference_contrast", flipped)
+        with pytest.raises(ValueError, match="independent projections"):
+            srgc.validate_choice(tmp_path, p, 3, 25)
+
+
+def test_reused_ranking_may_gain_later_source_events_but_never_lose_cost(tmp_path, srgc_study, monkeypatch):
+    import shutil
+    p, _, _, states = srgc_study
+    identity, entries = states(tmp_path, 3, 25)
+    initial = tmp_path / "initial-measurement"
+    srgc.measure(initial, identity, entries["on_policy"], ["0", "1", "2", "3"], p)
+    source = entries["on_policy"][1] / "selection_full/fresh-r"
+    shutil.copytree(initial / "ranking", source)
+    for phase in ("fresh-r-validation", "fresh-r-candidate"):
+        base.meter(source.parent, phase, p["gpu_type"], action=lambda: None, ledger="deployment")
+    value = srgc.measure(tmp_path / "sr-gc/s3-t25", identity, entries["on_policy"], ["0", "1", "2", "3"], p)
+    base.meter(source.parent, "fresh-r-merge-candidate", p["gpu_type"], action=lambda: None, ledger="deployment")
+    assert srgc.ranking_cost(source.parent) > value["reused_ranking_gpu_seconds"]
+    assert srgc.validate_choice(tmp_path, p, 3, 25) == value
+    monkeypatch.setattr(srgc, "ranking_cost", lambda directory: value["reused_ranking_gpu_seconds"] - 1.)
+    with pytest.raises(ValueError, match="decreased"):
+        srgc.validate_choice(tmp_path, p, 3, 25)
+
+
+def test_open_measurement_event_is_not_followed_by_a_new_aggregate_row(tmp_path, srgc_study):
+    p, _, _, states = srgc_study
+    identity, entries = states(tmp_path, 3, 25)
+    directory = tmp_path / "sr-gc/s3-t25"
+    srgc.measure(directory, identity, entries["on_policy"], ["0", "1", "2", "3"], p)
+    (directory / "decision.json").unlink()
+    base.journal(directory / "cost.jsonl", {"event_id": "interrupted", "phase": "sr-gc-aggregate",
+                                            "ledger": "deployment", "gpus": 4, "gpu_type": p["gpu_type"],
+                                            "host": "dead-node", "state": "started", "time": 1., "pid": 1})
+    before = (directory / "cost.jsonl").read_bytes()
+    with pytest.raises(ValueError, match="unclosed cost event"):
+        srgc.measure(directory, identity, entries["on_policy"], ["0", "1", "2", "3"], p)
+    assert (directory / "cost.jsonl").read_bytes() == before
