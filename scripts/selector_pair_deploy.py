@@ -22,7 +22,7 @@ import time
 
 PINNED_COMMIT = 'c0c38d62e893fdcf25920d5a70d3149a06b5450f'
 PRE_SRGC_OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
-OPERATIONS_COMMIT = '29903457ccbab9bbed96221794019004ceeb34ad'
+OPERATIONS_COMMIT = '428780570cdba64e779408eb4f87af644b9ced3d'
 PRE_SRGC_OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
                             'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
 OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
