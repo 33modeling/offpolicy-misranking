@@ -284,13 +284,20 @@ MBPP처럼 매 갱신마다 조회 프로세스를 새로 실행한다. 기본 �
 
 ```bash
 bash scripts/run_selector_pair.sh develop  # 개발용 18개 곡선 수집
-bash scripts/run_selector_pair.sh report   # 미도달/부적격 목표를 포함한 개발 결과
-bash scripts/run_selector_pair.sh fit      # CPU, 개발 데이터만으로 H 예측기 고정
-bash scripts/run_selector_pair.sh freeze   # 테스트 6개 결정 고정; 진단 비용 기록
+bash scripts/run_selector_pair.sh freeze   # 테스트 6개 SR-GC 결정 고정; 측정 비용 기록
 bash scripts/run_selector_pair.sh test     # 별도 adaptive 포함 24개 학습·평가
 bash scripts/run_selector_pair.sh status
-bash scripts/run_selector_pair.sh report
+bash scripts/run_paper_results.sh results pair   # SR-GC 보고서 재생성 + TXT 한 개
 ```
+
+보고서는 `run_paper_results.sh results pair`로 만든다. 이 명령은 SR-GC 보고서
+(`report.json`, `curves.csv`)를 실험을 시작한 고정 런타임에서 다시 만들고,
+그 결과와 분기별 완료 현황을 `~/selector-pair-results.txt` 하나로 내보낸다.
+`run_selector_pair.sh report`와 `fit`은 SR-GC 이전의 H 회귀 경로다. SR-GC 결정
+장벽(`test-decisions.json`)이 생긴 뒤에는 `report`가 예전 형식의 결정 파일을
+기대해 KeyError로 멈춘다. 이 launcher와 `src/selector_pair_gpu.py`는 실행 중인
+Pair의 코드 해시(`pair.json`)에 묶여 있어 실행 도중 고치지 않는다. 고치면 같은
+checkout의 `run`·`report`·`check-code`가 "pair runtime changed"로 거부될 수 있다.
 
 `freeze`도 점유 중인 4-GPU 할당에서 수행한다. 진단은 CPU cache/log 읽기지만
 기다리는 GPU 할당 시간을 포함한다. 결과 파일은 다음과 같다.
