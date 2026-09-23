@@ -243,6 +243,25 @@ def test_all_d_measurement_does_not_skip_missing_projection(
     assert "check_step=100 STOP projection_missing" in capsys.readouterr().out
 
 
+def test_all_d_targeted_recovery_never_visits_later_checkpoint(
+        tmp_path, saved_path, monkeypatch):
+    initial, checkpoint, protocol = saved_path
+    checkpoint(75, projected_d=-3.)
+    checkpoint(100, projected_d=2.)
+    later = checkpoint(125, projected_d=4.)
+    (later / "checkpoint_state.json").write_text("must not inspect step 125")
+    calls = []
+    monkeypatch.setattr(repeat, "measure_point", lambda directory, *args: calls.append(directory.name))
+    row = all_d.scan_state(tmp_path, initial, protocol=protocol,
+                           devices=list("0123"), through_step=100)
+    assert calls == ["step-75", "step-100"]
+    assert [point["step"] for point in row["points"]] == [50, 75, 100]
+    assert row["scheduled_steps"] == [50, 75, 100]
+    report = all_d.collect(tmp_path, {"status": "validated", "decisions": [initial]},
+                           start_step=50, seed=3, through_step=100)
+    assert report["status"] == "complete" and report["measured_points"] == 3
+
+
 def test_show_step_distinguishes_saved_d_from_missing_shards(tmp_path, saved_path, monkeypatch):
     initial, checkpoint, _ = saved_path
     checkpoint(75, projected_d=-3.)

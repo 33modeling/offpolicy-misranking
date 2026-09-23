@@ -31,7 +31,8 @@ def add_uncertainty(point, directory, sets, check_index):
         point["uncertainty"] = {"status": "unavailable", "error": str(exc)}
 
 
-def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=14400.):
+def scan_state(root, initial, interval=25, *, protocol=None, devices=None,
+               cap=14400., through_step=None):
     seed, start = initial["seed"], initial["step"]
     choice = srgc.choose(initial["d_a"], initial["d_b"])
     if choice["selector"] != initial["selector"] or not math.isclose(
@@ -39,6 +40,8 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
         raise ValueError("invalid frozen initial SR-GC contrast")
     checkpoints = repeat.inventory(root, seed, start)
     last = max(checkpoints, default=start)
+    if through_step is not None:
+        last = min(last, through_step)
     first = {"step": start, "status": "measured", "d_a": initial["d_a"],
              "d_b": initial["d_b"], "d": initial["d"], "source": "initial_parent"}
     add_uncertainty(first, root / f"sr-gc/s{seed}-t{start}", initial["sets"], 1)
@@ -104,7 +107,7 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
 
 
 def collect(root, initial, interval=25, *, start_step=25, protocol=None, devices=None,
-            cap=14400., seed=None):
+            cap=14400., seed=None, through_step=None):
     repeat.positive_int(interval)
     report = {"schema": SCHEMA, "interval": interval, "scope":
               "D at every scheduled checkpoint on each saved t25 fixed-On trajectory; "
@@ -121,7 +124,8 @@ def collect(root, initial, interval=25, *, start_step=25, protocol=None, devices
     for item in sorted(selected, key=lambda value: value["seed"]):
         try:
             report["trajectories"].append(scan_state(
-                root, item, interval, protocol=protocol, devices=devices, cap=cap))
+                root, item, interval, protocol=protocol, devices=devices, cap=cap,
+                through_step=through_step))
         except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
             report["errors"].append({"state": f"s{item['seed']}-t{start_step}", "error": str(exc)})
     report["scheduled_points"] = sum(len(row["scheduled_steps"]) for row in report["trajectories"])
@@ -157,10 +161,13 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--interval", type=int, default=25)
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--through-step", type=int)
     parser.add_argument("--max-gpu-seconds-per-checkpoint", type=float, default=14400.)
     args = parser.parse_args()
     if not math.isfinite(args.max_gpu_seconds_per_checkpoint) or args.max_gpu_seconds_per_checkpoint <= 0:
         parser.error("measurement cap must be finite and positive")
+    if args.through_step is not None and args.through_step < 25:
+        parser.error("through step must be at least 25")
     root = args.root.resolve()
     devices = None
     protocol = None
@@ -173,7 +180,7 @@ def main():
         protocol = repeat.read(root / "pair.json", root)
     report = collect(root, srgc_results(root), args.interval, protocol=protocol,
                      devices=devices, cap=args.max_gpu_seconds_per_checkpoint,
-                     seed=args.seed)
+                     seed=args.seed, through_step=args.through_step)
     write_export("selector-pair-srgc-all-d", report, table(report), args.out)
     if report["status"] in {"invalid", "initial_decisions_unavailable"} or (
             args.command == "measure" and report["status"] != "complete"):
