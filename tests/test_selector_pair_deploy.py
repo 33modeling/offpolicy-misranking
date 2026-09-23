@@ -1,4 +1,5 @@
 """Pinned runtime deployment never updates or repairs a live working tree."""
+import ast
 import hashlib
 import importlib.util
 import json
@@ -92,7 +93,7 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
     assert target.name == deploy.PINNED_COMMIT + '-' + deploy.OPERATIONS_COMMIT
     for name in ('scripts/queue_selector_pair_gpu.py', 'scripts/selector_pair_cost_recovery.py',
                  'scripts/selector_pair_parallel.py',
-                 'scripts/selector_pair_srgc.py', 'scripts/selector_pair_srgc_score.py',
+                 'scripts/selector_pair_srgc.py',
                  'scripts/report_selector_pair_srgc.py',
                  'scripts/selector_pair_budget_recovery.py',
                  'scripts/selector_pair_srgc_cost_recovery.py',
@@ -102,6 +103,21 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
                  'src/selector_pair_gpu.py', 'src/selection_switch_gpu.py',
                  'scripts/run_selector_pair.sh'):
         assert (target / name).read_bytes() == (source / name).read_bytes(), name
+    # The live scorer adds only diagnostic log context; the pinned scorer's
+    # measurement functions must otherwise remain identical.
+    def without_logs(path):
+        class StripLogs(ast.NodeTransformer):
+            def visit_Expr(self, node):
+                if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == 'print':
+                    return None
+                return self.generic_visit(node)
+
+        tree = ast.parse(path.read_text())
+        tree.body = [node for node in tree.body if not isinstance(node, ast.FunctionDef) or node.name != 'log_location']
+        return ast.dump(StripLogs().visit(tree), include_attributes=False)
+
+    score = 'scripts/selector_pair_srgc_score.py'
+    assert without_logs(target / score) == without_logs(source / score)
     assert 'queue_selector_pair_gpu.py' in (target / 'scripts/_selection_worker.sh').read_text()
     assert git(checkout, 'rev-parse', 'HEAD') == original_head
     assert not (checkout / 'src').exists()
