@@ -146,7 +146,7 @@ def measure_point(directory, reference, contract, protocol, devices, cap):
                        timeout=remaining / 4, ledger="research")
 
 
-def scan_state(root, initial, interval, *, protocol=None, devices=None, cap=None):
+def scan_state(root, initial, interval, *, protocol=None, devices=None, cap=None, through_step=None):
     seed, start = initial["seed"], initial["step"]
     state_name = f"s{seed}-t{start}"
     initial_choice = srgc.choose(initial["d_a"], initial["d_b"])
@@ -171,7 +171,8 @@ def scan_state(root, initial, interval, *, protocol=None, devices=None, cap=None
     if not checkpoints:
         result.update(status="awaiting_checkpoint")
         return result
-    for step in range(start + interval, max(checkpoints) + 1, interval):
+    last_step = min(max(checkpoints), through_step) if through_step is not None else max(checkpoints)
+    for step in range(start + interval, last_step + 1, interval):
         result["next_check_step"] = step
         if step not in checkpoints:
             result["pending"].append({"step": step, "reason": "checkpoint_not_saved"})
@@ -214,22 +215,28 @@ def scan_state(root, initial, interval, *, protocol=None, devices=None, cap=None
 
 
 def collect(root, initial, interval=DEFAULT_INTERVAL, *, start_step=DEFAULT_START_STEP,
-            protocol=None, devices=None, cap=None):
+            protocol=None, devices=None, cap=None, seed=None, through_step=None):
     positive_int(interval)
+    if through_step is not None and (type(through_step) is not int or
+                                     through_step < start_step or
+                                     (through_step - start_step) % interval):
+        raise ValueError("through-step must be a scheduled check at or after the start step")
     report = {"schema": SCHEMA, "interval": interval, "scope": SCOPE,
               "start_step": start_step,
+              "seed_filter": seed, "through_step": through_step,
               "threshold": 0., "sr_is_absorbing": True, "trajectories": [], "errors": []}
     if initial.get("status") not in {"validated", "partial"}:
         report["status"] = "initial_decisions_unavailable"
         return report
-    selected = [value for value in initial["decisions"] if value["step"] == start_step]
+    selected = [value for value in initial["decisions"]
+                if value["step"] == start_step and (seed is None or value["seed"] == seed)]
     if not selected:
         report["status"] = "initial_decisions_unavailable"
         return report
     for value in sorted(selected, key=lambda v: v["seed"]):
         try:
             report["trajectories"].append(scan_state(root, value, interval,
-                protocol=protocol, devices=devices, cap=cap))
+                protocol=protocol, devices=devices, cap=cap, through_step=through_step))
         except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
             report["errors"].append({"state": f"s{value['seed']}-t{value['step']}", "error": str(exc)})
     report["status"] = "invalid" if report["errors"] or any(
@@ -261,6 +268,8 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL)
+    parser.add_argument("--seed", type=int, help="measure only one seed's t25 path")
+    parser.add_argument("--through-step", type=int, help="stop this measurement pass after a scheduled check")
     parser.add_argument("--max-gpu-seconds-per-checkpoint", type=float, default=14400.)
     args = parser.parse_args()
     root = args.root.resolve()
@@ -278,7 +287,8 @@ def main():
         if len(devices) != 4 or len(set(devices)) != 4 or not all(devices):
             parser.error("measure requires four allocated CUDA_VISIBLE_DEVICES; results never launches GPU work")
         protocol = read(root / "pair.json", root)
-    report = collect(root, initial, args.interval, protocol=protocol, devices=devices, cap=cap)
+    report = collect(root, initial, args.interval, protocol=protocol, devices=devices,
+                     cap=cap, seed=args.seed, through_step=args.through_step)
     write_export("selector-pair-srgc-repeat", report, table(report), args.out)
     if report["status"] in {"invalid", "initial_decisions_unavailable"} or (
             args.command == "measure" and any(row["pending"] for row in report["trajectories"])):

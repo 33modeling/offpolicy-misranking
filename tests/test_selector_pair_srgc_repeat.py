@@ -79,6 +79,17 @@ def test_zero_retains_on_and_initial_sr_never_scans(tmp_path, saved_path, monkey
     assert repeat.scan_state(tmp_path, negative, 25)["first_sr_step"] == 50
 
 
+def test_targeted_recovery_stops_at_requested_checkpoint(tmp_path, saved_path):
+    initial, checkpoint, _ = saved_path
+    checkpoint(75, projected_d=2.)
+    later = checkpoint(100, projected_d=-3.)
+    (later / "checkpoint_state.json").write_text("must not inspect later checkpoint")
+    row = repeat.scan_state(tmp_path, initial, 25, through_step=75)
+    assert [decision["step"] for decision in row["decisions"]] == [50, 75]
+    assert row["status"] == "on_through_checked_step"
+    assert row["next_check_step"] == 100
+
+
 def test_missing_checkpoint_or_gradient_is_not_on_and_not_skipped(tmp_path, saved_path):
     initial, checkpoint, _ = saved_path
     checkpoint(100, projected_d=-3.)
@@ -203,6 +214,21 @@ def test_default_collect_scans_only_t25(tmp_path, monkeypatch):
     assert report["start_step"] == 25 and report["status"] == "recorded"
     assert repeat.collect(tmp_path, {"status": "validated", "decisions": [
         {"seed": 3, "step": 50}]})["status"] == "initial_decisions_unavailable"
+
+
+def test_targeted_collect_filters_seed_and_through_step(tmp_path, monkeypatch):
+    checked = []
+    def scan(root, value, interval, **kwargs):
+        checked.append((value["seed"], kwargs["through_step"]))
+        return {"decisions": [], "errors": [], "first_sr_step": None}
+    monkeypatch.setattr(repeat, "scan_state", scan)
+    initial = {"status": "validated", "decisions": [
+        {"seed": 3, "step": 25}, {"seed": 4, "step": 25}, {"seed": 4, "step": 50}]}
+    report = repeat.collect(tmp_path, initial, seed=4, through_step=75)
+    assert checked == [(4, 75)]
+    assert report["seed_filter"] == 4 and report["through_step"] == 75
+    with pytest.raises(ValueError, match="scheduled check"):
+        repeat.collect(tmp_path, initial, through_step=76)
 
 
 @pytest.mark.parametrize("interval", [0, -1, True, 2.5])

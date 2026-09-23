@@ -41,6 +41,12 @@ allocation (no policy training):
 bash scripts/run_selector_pair_srgc_t25.sh
 ```
 
+To recover only the s4 step-75 projection without advancing later checks:
+
+```bash
+bash scripts/run_selector_pair_srgc_t25.sh --seed 4 --through-step 75
+```
+
 This command resumes sealed shards, writes a per-node log and snapshot, then
 refreshes `~/step-latest.txt` even when another node owns a check or measurement
 stops early. A nonzero exit means the repeated check is still pending or failed;

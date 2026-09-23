@@ -9,7 +9,7 @@ snapshot="$HOME/srgc-repeat-$node.txt"
 latest="$HOME/step-latest.txt"
 
 bash scripts/run_selector_pair_srgc_repeat.sh measure --interval 25 \
-  --out "$snapshot" 2>&1 | tee -a "$log"
+  --out "$snapshot" "$@" 2>&1 | tee -a "$log"
 measure_status=${PIPESTATUS[0]}
 
 bash scripts/run_selector_pair_srgc_repeat.sh results --interval 25 \
