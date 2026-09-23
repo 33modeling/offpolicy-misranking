@@ -153,6 +153,8 @@ def test_all_d_measurement_visits_checkpoints_after_negative(tmp_path, saved_pat
 
 
 def test_score_worker_log_location_names_seed_and_check():
+    assert score.log_location({"repeat": {"seed": 4, "start_step": 25, "step": 75}}) == (
+        "seed=4 start_step=25 check_step=75")
     assert score.log_location({"repeat": {"seed": 4, "start": 25, "step": 75}}) == (
         "seed=4 start_step=25 check_step=75")
     assert score.log_location({"state_id": "s4-t25"}) == "state=s4-t25"

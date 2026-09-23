@@ -15,7 +15,8 @@ STAGES = ("validation-a", "candidate-a", "validation-b", "candidate-b")
 def log_location(reference):
     repeated = reference.get("repeat")
     if repeated:
-        return (f"seed={repeated['seed']} start_step={repeated['start']} "
+        start = repeated["start_step"] if "start_step" in repeated else repeated["start"]
+        return (f"seed={repeated['seed']} start_step={start} "
                 f"check_step={repeated['step']}")
     return f"state={reference.get('state_id', 'initial')}"
 
