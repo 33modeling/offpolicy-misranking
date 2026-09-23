@@ -14,6 +14,7 @@ import pytest
 
 import selection_gate as core
 import selection_gate_gpu as base
+import pinned_trainers
 import selector_pair_gpu as gpu
 from test_selector_pair_lock_migration import frozen_work
 
@@ -207,7 +208,7 @@ def test_prepared_worker_can_join_an_existing_shared_worker_without_gpu_work(tmp
     with lock.open("rb") as held:
         fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
         before = contents(tmp_path)
-        process = subprocess.run([sys.executable, str(base.ROOT / "src/selector_pair_gpu.py"),
+        process = subprocess.run([sys.executable, pinned_trainers.COMMAND, str(base.ROOT / "src/selector_pair_gpu.py"),
                                   "ensure-prepared", "--root", str(tmp_path)],
                                  env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
                                  capture_output=True, text=True, timeout=10)
@@ -234,7 +235,7 @@ print('[joined]', flush=True)
     try:
         with base.lease(tmp_path / ".pair.lock"):
             before = contents(tmp_path)
-            process = subprocess.Popen([sys.executable, "-c", code, str(tmp_path)],
+            process = subprocess.Popen([sys.executable, pinned_trainers.COMMAND, "-c", code, str(tmp_path)],
                                        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        text=True, start_new_session=True)

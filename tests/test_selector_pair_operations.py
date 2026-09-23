@@ -7,6 +7,7 @@ import pytest
 
 import selection_gate as core
 import selection_gate_gpu as base
+import pinned_trainers
 import selector_pair as pair
 import selector_pair_gpu as gpu
 from test_selector_pair import allocation
@@ -37,7 +38,7 @@ def test_live_status_is_readonly_and_does_not_need_controller_lock(tmp_path, old
     frozen(tmp_path, previous_runtime() if old_runtime else None)
     with base.lease(tmp_path / ".pair.lock"):
         before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-        process = subprocess.run([sys.executable, str(base.ROOT / "src/selector_pair_gpu.py"),
+        process = subprocess.run([sys.executable, pinned_trainers.COMMAND, str(base.ROOT / "src/selector_pair_gpu.py"),
             "status", "--root", str(tmp_path)], capture_output=True, text=True, timeout=15,
             env={**os.environ, "CUDA_VISIBLE_DEVICES": ""})
         assert process.returncode == 0, process.stderr
