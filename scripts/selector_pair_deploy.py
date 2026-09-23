@@ -22,7 +22,7 @@ import time
 
 PINNED_COMMIT = 'c0c38d62e893fdcf25920d5a70d3149a06b5450f'
 PRE_SRGC_OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
-OPERATIONS_COMMIT = '6c5e02f70c87b6a5b0253339063881e24012f89b'
+OPERATIONS_COMMIT = 'b929caf0067b5298264fe7d62391919d3e45d3c1'
 PRE_SRGC_OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
                             'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
 PRE_BUDGET_RECOVERY_COMMITS = ('29903457ccbab9bbed96221794019004ceeb34ad',
@@ -32,7 +32,10 @@ PRE_BUDGET_RECOVERY_FILES = ('scripts/queue_selector_pair_gpu.py',
                     'scripts/selector_pair_srgc.py', 'scripts/selector_pair_srgc_score.py',
                     'scripts/report_selector_pair_srgc.py', 'scripts/selector_pair_results.py',
                     'scripts/selector_pair_diagnostic.py')
-OPERATIONS_FILES = (*PRE_BUDGET_RECOVERY_FILES, 'scripts/selector_pair_budget_recovery.py')
+PRE_SRGC_COST_RECOVERY_COMMITS = ('91c02dda3e1d111d5b8f62ca39d6ff18d8e10d89',
+                                 '6c5e02f70c87b6a5b0253339063881e24012f89b')
+PRE_SRGC_COST_RECOVERY_FILES = (*PRE_BUDGET_RECOVERY_FILES, 'scripts/selector_pair_budget_recovery.py')
+OPERATIONS_FILES = (*PRE_SRGC_COST_RECOVERY_FILES, 'scripts/selector_pair_srgc_cost_recovery.py')
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_FILES = 20000
 MANIFEST = '.pair-runtime.json'
@@ -43,6 +46,8 @@ def operations_files(commit):
         return PRE_SRGC_OPERATIONS_FILES
     if commit in PRE_BUDGET_RECOVERY_COMMITS:
         return PRE_BUDGET_RECOVERY_FILES
+    if commit in PRE_SRGC_COST_RECOVERY_COMMITS:
+        return PRE_SRGC_COST_RECOVERY_FILES
     return OPERATIONS_FILES
 
 
