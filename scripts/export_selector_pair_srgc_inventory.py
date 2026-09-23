@@ -17,10 +17,13 @@ def scan_state(root, initial, interval=25):
     checkpoints = repeat.inventory(root, seed, start)
     end = max(checkpoints, default=start)
     points = [{"step": start, "status": "measured", "d": initial["d"],
-               "selector": initial["selector"], "missing_files": []}]
+               "selector": initial["selector"], "missing_files": [],
+               "source_path": f"sr-gc/s{seed}-t{start}/decision.json"}]
     for step in range(start + interval, end + 1, interval):
         point = {"step": step, "status": None, "d": None, "selector": None,
-                 "missing_files": []}
+                 "missing_files": [], "source_path": str(
+                     (repeat.output_dir(root, seed, start, interval) / f"step-{step}/reference.json")
+                     .relative_to(root))}
         checkpoint = checkpoints.get(step)
         if checkpoint is None:
             point["status"] = "checkpoint_missing"
@@ -52,23 +55,51 @@ def collect(root, initial, interval=25):
     repeat.positive_int(interval)
     rows = [scan_state(root, item, interval)
             for item in initial.get("decisions", []) if item["step"] == 25]
+    initial_decisions = [
+        {"state": f"s{item['seed']}-t{item['step']}", "step": item["step"],
+         "d_a": item["d_a"], "d_b": item["d_b"], "d": item["d"],
+         "source_path": f"sr-gc/s{item['seed']}-t{item['step']}/decision.json"}
+        for item in initial.get("decisions", [])]
+    stored_references = []
+    for path in sorted((root / "sr-gc-repeat").rglob("reference.json")):
+        if not path.resolve().is_relative_to(root.resolve()):
+            raise ValueError("SR-GC reference escaped Pair root")
+        receipt_count = sum((path.parent / f"{stage}-{shard}.done.json").is_file()
+                            for stage in score.STAGES for shard in range(4))
+        stored_references.append({"path": str(path.relative_to(root)),
+                                  "done_receipts": receipt_count})
     return {"schema": "offpolicy-selector-pair/sr-gc-inventory-v1",
             "scope": "Read-only saved t25 On-policy checkpoint diagnostics; later values do not imply an executed switch.",
-            "interval": interval, "initial_status": initial["status"],
+            "pair_root": str(root), "interval": interval, "initial_status": initial["status"],
+            "initial_decisions": sorted(initial_decisions, key=lambda item: item["state"]),
+            "stored_repeat_references": stored_references,
             "trajectories": sorted(rows, key=lambda row: row["state"])}
 
 
 def table(report):
     output = io.StringIO()
-    output.write("SR-GC t25 SAVED CHECKPOINT INVENTORY (read-only)\n")
+    output.write(f"Pair root: {report['pair_root']}\n\n")
+    output.write("PAIR START-STATE D (separate starting states, not one trajectory)\n")
     writer = csv.writer(output)
-    writer.writerow(("state", "step", "status", "D", "selector", "missing_count", "first_missing", "error"))
+    writer.writerow(("state", "step", "d_a", "d_b", "d", "source_path"))
+    for item in report["initial_decisions"]:
+        writer.writerow(tuple(item[key] for key in
+                              ("state", "step", "d_a", "d_b", "d", "source_path")))
+    output.write("\n")
+    output.write("SR-GC t25 SAVED CHECKPOINT INVENTORY (read-only)\n")
+    writer.writerow(("state", "step", "status", "D", "selector", "missing_count",
+                     "first_missing", "source_path", "error"))
     for row in report["trajectories"]:
         for point in row["points"]:
             missing = point["missing_files"]
             writer.writerow((row["state"], point["step"], point["status"],
                              point["d"], point["selector"], len(missing),
-                             missing[0] if missing else "", point.get("error", "")))
+                             missing[0] if missing else "", point["source_path"],
+                             point.get("error", "")))
+    output.write("\nDISCOVERED REPEAT REFERENCES (all stored locations)\n")
+    writer.writerow(("path", "done_receipts", "required_receipts"))
+    for item in report["stored_repeat_references"]:
+        writer.writerow((item["path"], item["done_receipts"], 16))
     return output.getvalue()
 
 

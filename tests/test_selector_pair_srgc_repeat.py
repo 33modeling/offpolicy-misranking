@@ -118,6 +118,22 @@ def test_inventory_scans_saved_d_after_missing_step_without_writing(tmp_path, sa
     assert all(p.read_bytes() == raw for p, raw in before.items())
 
 
+def test_inventory_lists_all_initial_d_and_discovered_repeat_paths(tmp_path, saved_path):
+    initial, checkpoint, _ = saved_path
+    checkpoint(75, projected_d=-3.)
+    report = inventory_export.collect(tmp_path, {"status": "validated", "decisions": [initial]})
+    assert report["initial_decisions"] == [{
+        "state": "s3-t50", "step": 50, "d_a": initial["d_a"],
+        "d_b": initial["d_b"], "d": initial["d"],
+        "source_path": "sr-gc/s3-t50/decision.json"}]
+    assert report["stored_repeat_references"] == [{
+        "path": "sr-gc-repeat/every-25/s3-t50/step-75/reference.json",
+        "done_receipts": 16}]
+    table = inventory_export.table(report)
+    assert "PAIR START-STATE D" in table
+    assert "sr-gc-repeat/every-25/s3-t50/step-75/reference.json" in table
+
+
 def test_all_d_diagnostics_continue_after_negative_and_missing_steps(tmp_path, saved_path, monkeypatch):
     initial, checkpoint, _ = saved_path
     checkpoint(75, projected_d=-3.)
