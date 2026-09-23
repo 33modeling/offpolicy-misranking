@@ -9,6 +9,7 @@ import selector_pair_results as results
 import selector_pair_srgc as srgc
 import selector_pair_srgc_repeat as repeat
 import selector_pair_srgc_all_d as all_d
+import inspect_selector_pair_srgc_step as inspect_step
 import export_selector_pair_srgc_inventory as inventory_export
 import selector_pair_srgc_score as score
 from test_selector_pair_gpu import fake_study
@@ -240,6 +241,23 @@ def test_all_d_measurement_does_not_skip_missing_projection(
     assert row["pending"][0]["step"] == 100
     assert row["pending"][0]["reason"] == "projection_missing"
     assert "check_step=100 STOP projection_missing" in capsys.readouterr().out
+
+
+def test_show_step_distinguishes_saved_d_from_missing_shards(tmp_path, saved_path, monkeypatch):
+    initial, checkpoint, _ = saved_path
+    checkpoint(75, projected_d=-3.)
+    step_100 = checkpoint(100)
+    monkeypatch.setattr(inspect_step, "srgc_results", lambda root: {
+        "status": "validated", "decisions": [initial]})
+    assert "D=-3" in inspect_step.inspect(tmp_path, 3, 50, 75)
+    assert "reference missing" in inspect_step.inspect(tmp_path, 3, 50, 100)
+    expected, _ = repeat.checkpoint_reference(tmp_path, 3, 50, 100, step_100, initial, 25)
+    directory = repeat.output_dir(tmp_path, 3, 50, 25) / "step-100"
+    core.atomic_json(directory / "reference.json", expected)
+    missing = inspect_step.inspect(tmp_path, 3, 50, 100)
+    assert "D incomplete" in missing
+    assert "completed shards=0/16" in missing
+    assert "first missing=validation-a-0.json" in missing
 
 
 def test_score_worker_log_location_names_seed_and_check():

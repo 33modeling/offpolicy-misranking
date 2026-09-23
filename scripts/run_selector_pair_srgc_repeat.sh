@@ -13,7 +13,7 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
-  results|all-results) export CUDA_VISIBLE_DEVICES="" ;;
+  results|all-results|show-step) export CUDA_VISIBLE_DEVICES="" ;;
   measure|all-measure)
     export OUT_ROOT="$PAIR_ROOT/sr-gc-repeat"
     source scripts/_e5_node.sh
@@ -36,7 +36,9 @@ case "$MODE" in
   *) echo 'usage: run_selector_pair_srgc_repeat.sh results|measure|all-results|all-measure [--interval 25] [--out FILE.txt]'; exit 2 ;;
 esac
 # Keep the shell alive until the child exits so the allocation lease is retained.
-if [[ "$MODE" == all-* ]]; then
+if [[ "$MODE" == show-step ]]; then
+  "$PY" scripts/inspect_selector_pair_srgc_step.py --root "$PAIR_ROOT" "$@"
+elif [[ "$MODE" == all-* ]]; then
   "$PY" scripts/selector_pair_srgc_all_d.py "${MODE#all-}" --root "$PAIR_ROOT" "$@"
 else
   "$PY" scripts/selector_pair_srgc_repeat.py "$MODE" --root "$PAIR_ROOT" "$@"
