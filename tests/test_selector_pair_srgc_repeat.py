@@ -199,6 +199,49 @@ def test_all_d_measurement_visits_checkpoints_after_negative(tmp_path, saved_pat
     assert "seed=3 start_step=50 check_step=100 D=2 complete" in logged
 
 
+def test_all_d_measurement_stops_at_failed_check_and_resumes_in_order(
+        tmp_path, saved_path, monkeypatch, capsys):
+    initial, checkpoint, protocol = saved_path
+    checkpoint(75, projected_d=-3.)
+    checkpoint(100, projected_d=2.)
+    checkpoint(125, projected_d=4.)
+    calls = []
+
+    def fail_at_100(directory, *args):
+        calls.append(directory.name)
+        if directory.name == "step-100":
+            raise ValueError("incomplete projection")
+
+    monkeypatch.setattr(repeat, "measure_point", fail_at_100)
+    row = all_d.scan_state(tmp_path, initial, protocol=protocol, devices=list("0123"))
+    assert calls == ["step-75", "step-100"]
+    assert [point["step"] for point in row["points"]] == [50, 75]
+    assert row["errors"] == [{"step": 100, "error": "incomplete projection"}]
+    assert "check_step=100 STOP ValueError: incomplete projection" in capsys.readouterr().out
+
+    calls.clear()
+    monkeypatch.setattr(repeat, "measure_point", lambda directory, *args: calls.append(directory.name))
+    resumed = all_d.scan_state(tmp_path, initial, protocol=protocol, devices=list("0123"))
+    assert calls == ["step-75", "step-100", "step-125"]
+    assert [point["step"] for point in resumed["points"]] == [50, 75, 100, 125]
+
+
+def test_all_d_measurement_does_not_skip_missing_projection(
+        tmp_path, saved_path, monkeypatch, capsys):
+    initial, checkpoint, protocol = saved_path
+    checkpoint(75, projected_d=-3.)
+    checkpoint(100)
+    checkpoint(125, projected_d=4.)
+    calls = []
+    monkeypatch.setattr(repeat, "measure_point", lambda directory, *args: calls.append(directory.name))
+    row = all_d.scan_state(tmp_path, initial, protocol=protocol, devices=list("0123"))
+    assert calls == ["step-75", "step-100"]
+    assert [point["step"] for point in row["points"]] == [50, 75]
+    assert row["pending"][0]["step"] == 100
+    assert row["pending"][0]["reason"] == "projection_missing"
+    assert "check_step=100 STOP projection_missing" in capsys.readouterr().out
+
+
 def test_score_worker_log_location_names_seed_and_check():
     assert score.log_location({"repeat": {"seed": 4, "start_step": 25, "step": 75}}) == (
         "seed=4 start_step=25 check_step=75")

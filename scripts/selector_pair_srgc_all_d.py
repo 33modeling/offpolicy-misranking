@@ -49,6 +49,10 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
         checkpoint = checkpoints.get(step)
         if checkpoint is None:
             result["pending"].append({"step": step, "reason": "checkpoint_not_saved"})
+            if devices is not None:
+                print(f"[SR-GC all-D] seed={seed} start_step={start} "
+                      f"check_step={step} STOP checkpoint_not_saved", flush=True)
+                break
             continue
         directory = repeat.output_dir(root, seed, start, interval) / f"step-{step}"
         try:
@@ -78,11 +82,23 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
                       f"check_step={step} D={value['d']:.6g} complete", flush=True)
         except srgc.worker.PairLockBusy:
             result["pending"].append({"step": step, "reason": "measurement_owned_by_peer"})
+            if devices is not None:
+                print(f"[SR-GC all-D] seed={seed} start_step={start} "
+                      f"check_step={step} STOP measurement_owned_by_peer", flush=True)
+                break
         except FileNotFoundError as exc:
             result["pending"].append({"step": step, "reason": "projection_missing",
                                       "path": str(exc.filename)})
+            if devices is not None:
+                print(f"[SR-GC all-D] seed={seed} start_step={start} "
+                      f"check_step={step} STOP projection_missing: {exc.filename}", flush=True)
+                break
         except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
             result["errors"].append({"step": step, "error": str(exc)})
+            if devices is not None:
+                print(f"[SR-GC all-D] seed={seed} start_step={start} "
+                      f"check_step={step} STOP {type(exc).__name__}: {exc}", flush=True)
+                break
     result["scheduled_steps"] = list(range(start, last + 1, interval))
     return result
 
