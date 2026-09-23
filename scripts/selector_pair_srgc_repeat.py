@@ -1,4 +1,4 @@
-"""Recheck SR-GC every 25 steps on the single t25 On trajectory.
+"""Measure SR-GC every 25 steps on the single t25 On trajectory.
 
 Results export only aggregates saved projections. The explicit measure command
 can generate missing current-policy projections, never train a policy. Each
@@ -20,15 +20,14 @@ import selection_gate_gpu as base
 import selector_pair_srgc as srgc
 import selector_pair_srgc_score as score
 
-SCHEMA = "offpolicy-selector-pair/sr-gc-repeat-v1"
+SCHEMA = "offpolicy-selector-pair/sr-gc-repeat-v2"
 DEFAULT_INTERVAL = 25
 DEFAULT_START_STEP = 25
 SCOPE = (
-    "Repeated SR-GC on the saved t25 fixed-On trajectory for each seed: recheck while On, "
-    "stop at the first negative D and retain SR thereafter. No reward inputs, "
-    "regression, interpolated D, or joining different Pair starting states. "
-    "Replaying saved checkpoints identifies a rule trigger, not an executed "
-    "switched-policy reward curve. Missing projections remain unmeasured."
+    "Repeated SR-GC on the saved t25 fixed-On trajectory for each seed: measure all "
+    "available checks regardless of D sign. No switch decision, reward inputs, "
+    "regression, interpolated D, joining different Pair starting states, or "
+    "executed switched-policy reward curves. Missing projections remain unmeasured."
 )
 
 
@@ -157,16 +156,11 @@ def scan_state(root, initial, interval, *, protocol=None, devices=None, cap=None
              "reference_sha256": initial["reference_sha256"], "source": "initial_parent"}
     result = {"state": state_name, "state_id": initial["state_id"], "seed": seed,
               "start_step": start, "interval": interval, "decisions": [first],
-              "first_sr_step": start if first["selector"] == "cached" else None,
-              "first_sr_updates": 0 if first["selector"] == "cached" else None,
-              "status": "sr_locked" if first["selector"] == "cached" else "on_through_checked_step",
+              "first_negative_step": start if first["d"] < 0 else None,
+              "status": "diagnostic_through_checked_step",
               "on_through_step": start, "next_check_step": start + interval,
               "pending": [], "errors": [], "executed_switch": False,
               "switched_policy_rewards": None}
-    # Do not even read later checkpoints after SR, including opposite later D.
-    if result["first_sr_step"] is not None:
-        result["next_check_step"] = None
-        return result
     checkpoints = inventory(root, seed, start)
     if not checkpoints:
         result.update(status="awaiting_checkpoint")
@@ -191,12 +185,11 @@ def scan_state(root, initial, interval, *, protocol=None, devices=None, cap=None
             result["decisions"].append(item)
             if devices is not None:
                 print(f"[SR-GC repeat] {state_name} step={step} D={value['d']:.6g} "
-                      f"{'SR locked' if value['selector'] == 'cached' else 'On; check again'}", flush=True)
-            if value["selector"] == "cached":
-                result.update(first_sr_step=step, first_sr_updates=step-start,
-                              status="sr_locked", next_check_step=None)
-                break
-            result.update(on_through_step=step, next_check_step=step + interval)
+                      "diagnostic only", flush=True)
+            if value["d"] < 0 and result["first_negative_step"] is None:
+                result["first_negative_step"] = step
+            result.update(status="diagnostic_through_checked_step",
+                          on_through_step=step, next_check_step=step + interval)
         except srgc.worker.PairLockBusy:
             result["pending"].append({"step": step, "reason": "measurement_owned_by_peer"})
             result["status"] = "awaiting_projections"
@@ -224,7 +217,7 @@ def collect(root, initial, interval=DEFAULT_INTERVAL, *, start_step=DEFAULT_STAR
     report = {"schema": SCHEMA, "interval": interval, "scope": SCOPE,
               "start_step": start_step,
               "seed_filter": seed, "through_step": through_step,
-              "threshold": 0., "sr_is_absorbing": True, "trajectories": [], "errors": []}
+              "threshold": 0., "diagnostic_only": True, "trajectories": [], "errors": []}
     if initial.get("status") not in {"validated", "partial"}:
         report["status"] = "initial_decisions_unavailable"
         return report
@@ -242,19 +235,21 @@ def collect(root, initial, interval=DEFAULT_INTERVAL, *, start_step=DEFAULT_STAR
     report["status"] = "invalid" if report["errors"] or any(
         row["errors"] for row in report["trajectories"]) else "recorded"
     report["checked_points"] = sum(len(row["decisions"]) for row in report["trajectories"])
-    report["sr_triggers"] = sum(row["first_sr_step"] is not None for row in report["trajectories"])
+    report["negative_checks"] = sum(
+        point["d"] < 0 for row in report["trajectories"] for point in row["decisions"])
     return report
 
 
 def table(report):
     output = io.StringIO()
-    output.write(f"\nSR-GC REPEATED CHECKS: t={report['start_step']}, every {report['interval']} updates; SR is absorbing\n")
+    output.write(f"\nSR-GC D DIAGNOSTICS: t={report['start_step']}, every {report['interval']} updates; no switch executed\n")
     writer = csv.writer(output)
-    writer.writerow(("state", "step", "updates", "d_a", "d_b", "d", "selector", "first_sr_step", "status"))
+    writer.writerow(("state", "step", "updates", "d_a", "d_b", "d", "sign", "first_negative_step", "status"))
     for row in report["trajectories"]:
         for point in row["decisions"]:
-            writer.writerow((row["state"], *(point[key] for key in ("step", "updates", "d_a", "d_b", "d", "selector")),
-                             row["first_sr_step"], row["status"]))
+            writer.writerow((row["state"], *(point[key] for key in ("step", "updates", "d_a", "d_b", "d")),
+                             "negative" if point["d"] < 0 else "nonnegative",
+                             row["first_negative_step"], row["status"]))
         if row["pending"]:
             output.write(f"{row['state']}: {row['pending'][0]['reason']} at step {row['pending'][0]['step']}\n")
     return output.getvalue()

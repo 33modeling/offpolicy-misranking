@@ -56,29 +56,29 @@ def saved_path(tmp_path, srgc_study):
     return initial, checkpoint, protocol
 
 
-def test_rechecks_on_then_locks_sr_and_never_reads_later_d(tmp_path, saved_path, monkeypatch):
+def test_rechecks_every_saved_step_even_after_negative_d(tmp_path, saved_path, monkeypatch):
     initial, checkpoint, _ = saved_path
     checkpoint(75, projected_d=2.)
     checkpoint(100, projected_d=-3.)
-    later = checkpoint(125, projected_d=9.)
-    (later / "checkpoint_state.json").write_text("corrupt later data must not be read")
+    checkpoint(125, projected_d=9.)
     monkeypatch.setattr(repeat, "measure_point", lambda *a: pytest.fail("export cannot launch GPU work"))
     result = repeat.scan_state(tmp_path, initial, 25)
-    assert [(d["step"], d["d"]) for d in result["decisions"]] == [(50, 1.), (75, 2.), (100, -3.)]
-    assert result["first_sr_step"] == 100 and result["first_sr_updates"] == 50
-    assert result["status"] == "sr_locked" and result["next_check_step"] is None
+    assert [(d["step"], d["d"]) for d in result["decisions"]] == [(50, 1.), (75, 2.), (100, -3.), (125, 9.)]
+    assert result["first_negative_step"] == 100
+    assert result["status"] == "diagnostic_through_checked_step" and result["next_check_step"] == 150
     assert result["executed_switch"] is False and result["switched_policy_rewards"] is None
 
 
-def test_zero_retains_on_and_initial_sr_never_scans(tmp_path, saved_path, monkeypatch):
+def test_zero_is_nonnegative_and_initial_negative_d_does_not_stop_scan(tmp_path, saved_path):
     initial, checkpoint, _ = saved_path
     checkpoint(75, projected_d=0.)
     row = repeat.scan_state(tmp_path, initial, 25)
-    assert row["first_sr_step"] is None and row["on_through_step"] == 75
+    assert row["first_negative_step"] is None and row["on_through_step"] == 75
     assert row["next_check_step"] == 100
     negative = {**initial, **srgc.choose(-1., -1.)}
-    monkeypatch.setattr(repeat, "inventory", lambda *a: pytest.fail("SR is absorbing"))
-    assert repeat.scan_state(tmp_path, negative, 25)["first_sr_step"] == 50
+    negative_row = repeat.scan_state(tmp_path, negative, 25)
+    assert negative_row["first_negative_step"] == 50
+    assert [point["step"] for point in negative_row["decisions"]] == [50, 75]
 
 
 def test_targeted_recovery_stops_at_requested_checkpoint(tmp_path, saved_path):
@@ -88,7 +88,7 @@ def test_targeted_recovery_stops_at_requested_checkpoint(tmp_path, saved_path):
     (later / "checkpoint_state.json").write_text("must not inspect later checkpoint")
     row = repeat.scan_state(tmp_path, initial, 25, through_step=75)
     assert [decision["step"] for decision in row["decisions"]] == [50, 75]
-    assert row["status"] == "on_through_checked_step"
+    assert row["status"] == "diagnostic_through_checked_step"
     assert row["next_check_step"] == 100
 
 
@@ -96,7 +96,7 @@ def test_missing_checkpoint_or_gradient_is_not_on_and_not_skipped(tmp_path, save
     initial, checkpoint, _ = saved_path
     checkpoint(100, projected_d=-3.)
     row = repeat.scan_state(tmp_path, initial, 25)
-    assert row["status"] == "awaiting_checkpoint" and row["first_sr_step"] is None
+    assert row["status"] == "awaiting_checkpoint" and row["first_negative_step"] is None
     assert row["pending"][0]["step"] == 75
     checkpoint(75)
     row = repeat.scan_state(tmp_path, initial, 25)
@@ -138,7 +138,7 @@ def test_all_d_diagnostics_continue_after_negative_and_missing_steps(tmp_path, s
     assert report["scheduled_points"] == 4
 
 
-def test_all_d_measurement_visits_checkpoints_after_negative(tmp_path, saved_path, monkeypatch):
+def test_all_d_measurement_visits_checkpoints_after_negative(tmp_path, saved_path, monkeypatch, capsys):
     initial, checkpoint, protocol = saved_path
     checkpoint(75, projected_d=-3.)
     checkpoint(100, projected_d=2.)
@@ -147,6 +147,15 @@ def test_all_d_measurement_visits_checkpoints_after_negative(tmp_path, saved_pat
     row = all_d.scan_state(tmp_path, initial, protocol=protocol, devices=list("0123"))
     assert calls == ["step-75", "step-100"]
     assert [point["d"] for point in row["points"]] == [1., -3., 2.]
+    logged = capsys.readouterr().out
+    assert "seed=3 start_step=50 check_step=75 begin" in logged
+    assert "seed=3 start_step=50 check_step=100 D=2 complete" in logged
+
+
+def test_score_worker_log_location_names_seed_and_check():
+    assert score.log_location({"repeat": {"seed": 4, "start": 25, "step": 75}}) == (
+        "seed=4 start_step=25 check_step=75")
+    assert score.log_location({"state_id": "s4-t25"}) == "state=s4-t25"
 
 
 def test_no_outcome_inputs_no_source_writes_and_no_other_t_join(tmp_path, saved_path):
@@ -183,7 +192,7 @@ def test_wrong_checkpoint_or_projection_is_rejected(tmp_path, saved_path, damage
         value["sampling_seed"] += 1
         core.atomic_json(directory / "reference.json", value)
     row = repeat.scan_state(tmp_path, initial, 25)
-    assert row["status"] == "invalid" and row["first_sr_step"] is None and row["errors"]
+    assert row["status"] == "invalid" and row["first_negative_step"] is None and row["errors"]
 
 
 def test_measure_is_explicit_resumes_existing_shards_and_no_training(tmp_path, saved_path, monkeypatch):
@@ -225,7 +234,7 @@ def test_unknown_measurement_cost_does_not_erase_d_or_repair_files(tmp_path, sav
     before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
     monkeypatch.setattr(base, "recover_cost_receipts", lambda *a: pytest.fail("read-only export"))
     row = repeat.scan_state(tmp_path, initial, 25)
-    assert row["status"] == "sr_locked" and row["first_sr_step"] == 75
+    assert row["status"] == "diagnostic_through_checked_step" and row["first_negative_step"] == 75
     assert row["decisions"][-1]["measurement_gpu_seconds"] is None
     assert row["decisions"][-1]["measurement_cost_complete"] is False
     assert all(p.read_bytes() == raw for p, raw in before.items())
@@ -245,15 +254,15 @@ def test_export_includes_recomputed_history_without_running_gpu(tmp_path, saved_
     text = output.read_text()
     data = json.loads(text.split("DATA_JSON\n")[1])
     row = data["srgc_repeated"]["trajectories"][0]
-    assert row["first_sr_step"] == 75 and len(row["decisions"]) == 2
-    assert "SR-GC REPEATED CHECKS: t=50, every 25 updates; SR is absorbing" in text
+    assert row["first_negative_step"] == 75 and len(row["decisions"]) == 2
+    assert "SR-GC D DIAGNOSTICS: t=50, every 25 updates; no switch executed" in text
 
 
 def test_default_collect_scans_only_t25(tmp_path, monkeypatch):
     checked = []
     monkeypatch.setattr(repeat, "scan_state", lambda root, value, interval, **kwargs:
                         checked.append(value["step"]) or {"decisions": [], "errors": [],
-                        "first_sr_step": None})
+                        "first_negative_step": None})
     report = repeat.collect(tmp_path, {"status": "validated", "decisions": [
         {"seed": 4, "step": 100}, {"seed": 3, "step": 50},
         {"seed": 4, "step": 25}, {"seed": 3, "step": 25}]})
@@ -267,7 +276,7 @@ def test_targeted_collect_filters_seed_and_through_step(tmp_path, monkeypatch):
     checked = []
     def scan(root, value, interval, **kwargs):
         checked.append((value["seed"], kwargs["through_step"]))
-        return {"decisions": [], "errors": [], "first_sr_step": None}
+        return {"decisions": [], "errors": [], "first_negative_step": None}
     monkeypatch.setattr(repeat, "scan_state", scan)
     initial = {"status": "validated", "decisions": [
         {"seed": 3, "step": 25}, {"seed": 4, "step": 25}, {"seed": 4, "step": 50}]}

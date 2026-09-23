@@ -12,6 +12,14 @@ import selection_gate_gpu as base
 STAGES = ("validation-a", "candidate-a", "validation-b", "candidate-b")
 
 
+def log_location(reference):
+    repeated = reference.get("repeat")
+    if repeated:
+        return (f"seed={repeated['seed']} start_step={repeated['start']} "
+                f"check_step={repeated['step']}")
+    return f"state={reference.get('state_id', 'initial')}"
+
+
 def indices(contract, prompts, stage):
     if stage not in STAGES:
         raise ValueError("unknown SR-GC reference stage")
@@ -87,7 +95,7 @@ def worker(root, stage, shard):
             value = torch.stack(vectors).mean(0).tolist()
             base.bind(saved, {"binding": bound, "value": value})
             output[str(ids[i])] = value
-            print(f"[SR-GC] {stage} shard={shard} prompt={ids[i]}", flush=True)
+            print(f"[SR-GC] {log_location(c)} {stage} shard={shard} prompt={ids[i]}", flush=True)
         base.bind(payload, output)
         base.bind(done, {**binding, "sha256": base.digest(payload)})
 

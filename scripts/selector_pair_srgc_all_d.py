@@ -52,6 +52,9 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
             continue
         directory = repeat.output_dir(root, seed, start, interval) / f"step-{step}"
         try:
+            if devices is not None:
+                print(f"[SR-GC all-D] seed={seed} start_step={start} "
+                      f"check_step={step} begin", flush=True)
             expected, contract = repeat.checkpoint_reference(
                 root, seed, start, step, checkpoint, initial, interval)
             if devices is not None:
@@ -68,7 +71,8 @@ def scan_state(root, initial, interval=25, *, protocol=None, devices=None, cap=1
             add_uncertainty(point, directory, initial["sets"], 1 + (step - start) // interval)
             result["points"].append(point)
             if devices is not None:
-                print(f"[SR-GC all-D] s{seed}-t{start} step={step} D={value['d']:.6g}", flush=True)
+                print(f"[SR-GC all-D] seed={seed} start_step={start} "
+                      f"check_step={step} D={value['d']:.6g} complete", flush=True)
         except srgc.worker.PairLockBusy:
             result["pending"].append({"step": step, "reason": "measurement_owned_by_peer"})
         except FileNotFoundError as exc:
