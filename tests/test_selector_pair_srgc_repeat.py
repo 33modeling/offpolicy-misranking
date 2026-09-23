@@ -178,6 +178,9 @@ def test_export_includes_recomputed_history_without_running_gpu(tmp_path, saved_
     checkpoint(75, projected_d=-3.)
     monkeypatch.setattr(results, "run_report", lambda *a: pytest.fail("no complete paired outcomes"))
     monkeypatch.setattr(repeat, "measure_point", lambda *a: pytest.fail("results must be read-only"))
+    original_collect = repeat.collect
+    monkeypatch.setattr(repeat, "collect", lambda root, initial, interval:
+                        original_collect(root, initial, interval, start_step=50))
     output = tmp_path / "results.txt"
     monkeypatch.setattr(sys, "argv", ["results", "--root", str(tmp_path), "--out", str(output)])
     results.main()
@@ -185,7 +188,21 @@ def test_export_includes_recomputed_history_without_running_gpu(tmp_path, saved_
     data = json.loads(text.split("DATA_JSON\n")[1])
     row = data["srgc_repeated"]["trajectories"][0]
     assert row["first_sr_step"] == 75 and len(row["decisions"]) == 2
-    assert "SR-GC REPEATED CHECKS: every 25 updates; SR is absorbing" in text
+    assert "SR-GC REPEATED CHECKS: t=50, every 25 updates; SR is absorbing" in text
+
+
+def test_default_collect_scans_only_t25(tmp_path, monkeypatch):
+    checked = []
+    monkeypatch.setattr(repeat, "scan_state", lambda root, value, interval, **kwargs:
+                        checked.append(value["step"]) or {"decisions": [], "errors": [],
+                        "first_sr_step": None})
+    report = repeat.collect(tmp_path, {"status": "validated", "decisions": [
+        {"seed": 4, "step": 100}, {"seed": 3, "step": 50},
+        {"seed": 4, "step": 25}, {"seed": 3, "step": 25}]})
+    assert checked == [25, 25]
+    assert report["start_step"] == 25 and report["status"] == "recorded"
+    assert repeat.collect(tmp_path, {"status": "validated", "decisions": [
+        {"seed": 3, "step": 50}]})["status"] == "initial_decisions_unavailable"
 
 
 @pytest.mark.parametrize("interval", [0, -1, True, 2.5])

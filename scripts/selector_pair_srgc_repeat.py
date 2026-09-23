@@ -1,4 +1,4 @@
-"""Recheck SR-GC on saved On checkpoints; the first SR choice is absorbing.
+"""Recheck SR-GC every 25 steps on the single t25 On trajectory.
 
 Results export only aggregates saved projections. The explicit measure command
 can generate missing current-policy projections, never train a policy. Each
@@ -22,8 +22,9 @@ import selector_pair_srgc_score as score
 
 SCHEMA = "offpolicy-selector-pair/sr-gc-repeat-v1"
 DEFAULT_INTERVAL = 25
+DEFAULT_START_STEP = 25
 SCOPE = (
-    "Repeated SR-GC on each saved fixed-On trajectory: recheck while On, "
+    "Repeated SR-GC on the saved t25 fixed-On trajectory for each seed: recheck while On, "
     "stop at the first negative D and retain SR thereafter. No reward inputs, "
     "regression, interpolated D, or joining different Pair starting states. "
     "Replaying saved checkpoints identifies a rule trigger, not an executed "
@@ -212,14 +213,20 @@ def scan_state(root, initial, interval, *, protocol=None, devices=None, cap=None
     return result
 
 
-def collect(root, initial, interval=DEFAULT_INTERVAL, *, protocol=None, devices=None, cap=None):
+def collect(root, initial, interval=DEFAULT_INTERVAL, *, start_step=DEFAULT_START_STEP,
+            protocol=None, devices=None, cap=None):
     positive_int(interval)
     report = {"schema": SCHEMA, "interval": interval, "scope": SCOPE,
+              "start_step": start_step,
               "threshold": 0., "sr_is_absorbing": True, "trajectories": [], "errors": []}
     if initial.get("status") not in {"validated", "partial"}:
         report["status"] = "initial_decisions_unavailable"
         return report
-    for value in sorted(initial["decisions"], key=lambda v: (v["seed"], v["step"])):
+    selected = [value for value in initial["decisions"] if value["step"] == start_step]
+    if not selected:
+        report["status"] = "initial_decisions_unavailable"
+        return report
+    for value in sorted(selected, key=lambda v: v["seed"]):
         try:
             report["trajectories"].append(scan_state(root, value, interval,
                 protocol=protocol, devices=devices, cap=cap))
@@ -234,7 +241,7 @@ def collect(root, initial, interval=DEFAULT_INTERVAL, *, protocol=None, devices=
 
 def table(report):
     output = io.StringIO()
-    output.write(f"\nSR-GC REPEATED CHECKS: every {report['interval']} updates; SR is absorbing\n")
+    output.write(f"\nSR-GC REPEATED CHECKS: t={report['start_step']}, every {report['interval']} updates; SR is absorbing\n")
     writer = csv.writer(output)
     writer.writerow(("state", "step", "updates", "d_a", "d_b", "d", "selector", "first_sr_step", "status"))
     for row in report["trajectories"]:

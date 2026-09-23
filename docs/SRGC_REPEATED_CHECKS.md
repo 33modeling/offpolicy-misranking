@@ -1,14 +1,16 @@
 # Repeated SR-GC Checks
 
-While On is active, evaluate the existing SR-GC contrast at a fixed interval
-(default: 25 additional updates). D >= 0 retains On for the next interval.
+Follow one continuation per seed from the common step-25 checkpoint. While On
+is active, evaluate the existing SR-GC contrast at steps 25, 50, 75, and so
+on. D >= 0 retains On for the next 25 updates.
 The first D < 0 selects SR permanently; there is no SR-to-On return and no
 further gradient measurement after that decision.
 
 ## Existing Data
 
-Each `sSEED-tSTART` is processed independently, using its saved fixed-On
-checkpoint path. The initial frozen SR-GC measurement is reused. Subsequent
+Only `sSEED-t25` is processed, using its saved fixed-On checkpoint path.
+The separately started `t50` and `t100` Pair branches are not repeated-check
+trajectories. The initial frozen SR-GC measurement is reused. Subsequent
 checks compare the same On and initial-cache SR subsets using current-policy
 A/B gradient projections and the unchanged zero threshold. No reward curves,
 future endpoints, target costs, fitted predictor, or other starting states
@@ -17,7 +19,7 @@ it never counts as an On decision.
 
 The additional script does not rerun training or alter any Pair checkpoint,
 cost ledger, receipt, original decision, or queue task. New projection files
-are isolated in `PAIR_ROOT/sr-gc-repeat/every-25/sSEED-tSTART/step-STEP/`.
+are isolated in `PAIR_ROOT/sr-gc-repeat/every-25/sSEED-t25/step-STEP/`.
 An absorbing-rule replay is not a measured post-switch learning curve. The
 existing independently trained SR arm must not be spliced onto the On arm
 and relabeled as an executed adaptive trajectory.
