@@ -1,5 +1,6 @@
 """Checkpoint lineage, real reward provenance, queue ownership and resumption."""
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -39,6 +40,8 @@ def checkpoint(policy, step, subset, parent, config):
 
 @pytest.fixture
 def study(tmp_path, monkeypatch):
+    import selector_pair_gpu
+    monkeypatch.setattr(selector_pair_gpu, "admission_probe", lambda _: {})
     root, output = tmp_path / "pair", tmp_path / "switch"
     model, prompts = tmp_path / "model", root / "prompts.json"
     core.atomic_json(model / "config.json", {"model_type": "fixture"})
@@ -189,6 +192,40 @@ def test_unavailable_seed_does_not_abort_other_seed(study, monkeypatch):
     monkeypatch.setattr(selector_pair_gpu, "environment", lambda _: {})
     with pytest.raises(ReachedTraining):
         switch.worker(root, output, [3, 4], list("0123"), 1, 1)
+
+
+def test_nccl_failure_stops_before_claiming_training_or_creating_plan(study, monkeypatch):
+    import selector_pair_gpu
+    root, output, _ = study
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    def probe(path):
+        assert path == output
+        raise RuntimeError("NCCL node admission failed")
+    monkeypatch.setattr(selector_pair_gpu, "admission_probe", probe)
+    monkeypatch.setattr(switch, "ensure_plan", lambda *a: pytest.fail("claimed work before NCCL passed"))
+    with pytest.raises(RuntimeError, match="NCCL node admission failed"):
+        switch.worker(root, output, [3], list("0123"), 1, 1)
+    assert all(p.read_bytes() == raw for p, raw in before.items())
+
+
+@pytest.mark.parametrize("recover", [False, True])
+def test_verified_nccl_overrides_are_inherited_by_replay_and_suffix(study, monkeypatch, recover):
+    import selector_pair_gpu
+    root, output, _ = study
+    if recover:
+        (switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125/optimizer.pt").unlink()
+    monkeypatch.delenv("NCCL_NVLS_ENABLE", raising=False)
+    monkeypatch.setattr(selector_pair_gpu, "admission_probe", lambda path: {"NCCL_NVLS_ENABLE": "0"})
+    class ReachedTraining(Exception):
+        pass
+    def attempt(directory, name, frozen, commands, env, seconds, lock_fd):
+        assert name == ("replay" if recover else "train")
+        assert {**os.environ, **env}["NCCL_NVLS_ENABLE"] == "0"
+        raise ReachedTraining
+    monkeypatch.setattr(selector_pair_gpu, "environment", lambda _: {})
+    monkeypatch.setattr(switch, "attempt", attempt)
+    with pytest.raises(ReachedTraining):
+        switch.worker(root, output, [3], list("0123"), 1, 1)
 
 
 def test_horizon_never_uses_rewards_or_arbitrary_100_cap():

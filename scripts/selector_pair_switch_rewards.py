@@ -748,6 +748,10 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
     if len(devices) != 4 or len(set(devices)) != 4:
         raise ValueError("worker needs four distinct allocated GPUs; training world size remains four")
     deadline, idle_since = time.monotonic() + hours*3600, time.monotonic()
+    # Reuse Pair's bounded four-rank probe and only its verified overrides.
+    # Receipts belong to this new root; no source experiment is changed.
+    overrides = pair.admission_probe(output)
+    nccl_env = {"NCCL_DEBUG": os.environ.get("NCCL_DEBUG", "WARN"), **overrides}
     plans, blocked = [], []
     for seed in seeds:
         try:
@@ -789,7 +793,8 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
                     print(f"[switch] seed={plan['seed']} recover On-policy {START} -> {plan['switch_step']} "
                           "with saved optimizer; keeping EVERY full checkpoint", flush=True)
                     attempt(directory, "replay", plan, [(train_command(directory, plan, replay=True), ",".join(devices))],
-                            pair.environment(plan["contract"]), max(1, deadline-time.monotonic()), lock_fd)
+                            {**pair.environment(plan["contract"]), **nccl_env},
+                            max(1, deadline-time.monotonic()), lock_fd)
                     if not training_complete(directory, plan, replay=True):
                         raise ValueError("trainer exited without a validated On-policy replay")
                     if time.monotonic() >= deadline:
@@ -798,7 +803,8 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
                 preserve_early_interruption(directory, plan)
                 print(f"[switch] seed={plan['seed']} train SR suffix {plan['switch_step']} -> {plan['end_step']}", flush=True)
                 attempt(directory, "train", plan, [(train_command(directory, plan), ",".join(devices))],
-                        pair.environment(plan["contract"]), max(1, deadline-time.monotonic()), lock_fd)
+                        {**pair.environment(plan["contract"]), **nccl_env},
+                        max(1, deadline-time.monotonic()), lock_fd)
                 if not training_complete(directory, plan):
                     raise ValueError("trainer exited without a validated final switch policy")
                 finished_training.add(plan["seed"])
@@ -830,7 +836,8 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
                                   "--arm", arm, "--step", str(step), "--shard", str(shard)], devices[shard])
                                 for shard in range(4) if not (target / f"shard-{shard}.done.json").exists()]
                     print(f"[switch] seed={plan['seed']} evaluate {arm} step={step} ({len(commands)} shards)", flush=True)
-                    attempt(directory, f"eval-{arm}-{step}", plan, commands, pair.environment(plan["contract"]),
+                    attempt(directory, f"eval-{arm}-{step}", plan, commands,
+                            {**pair.environment(plan["contract"]), **nccl_env},
                             max(1, deadline-time.monotonic()), lock_fd)
                     measured_point(directory, plan, arm, step)
                     finished_jobs.add(job_key)

@@ -123,6 +123,14 @@ not a claim that the rule was designed on an untouched prospective test set.
 
 ## Interruptions and Isolation
 
+Before claiming work, each worker runs the existing Pair four-rank NCCL/DDP
+admission probe. It records original rank errors and only carries a transport
+override into training after the corresponding probe succeeds. Bounded failed
+probes stop the node without claiming training or changing source checkpoints.
+Evidence is saved under the new output root's `node-preflight/`, not the old
+Pair experiment. This does not guarantee recovery from every NCCL failure;
+hardware, driver and training-time errors still require their original logs.
+
 Full model/optimizer checkpoints are retained every five updates, both under
 `s<seed>/replay/policy/` and `s<seed>/policy/`. Completing a stage does not delete
 them. The existing trainer resumes the latest validated checkpoint and
