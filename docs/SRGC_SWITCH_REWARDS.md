@@ -34,6 +34,26 @@ bash scripts/run_selector_pair_switch_rewards.sh plan
 bash scripts/run_selector_pair_switch_rewards.sh results
 ```
 
+If the trigger directory contains only archived adapter weights, the launcher
+also searches the Pair tree, sibling run/backup directories, and the work area's
+`checkpoints/` directory for the original optimizer. It accepts only the saved
+checkpoint's exact hash; other seeds/steps and optimizer resets are not substitutes.
+Missing checkpoint statistics may be recovered from the exact byte prefix of the
+original training log, again only when its saved hash matches. Source files are
+never changed. A missing seed does not prevent another resumable seed from running.
+
+For a CPU-only search of both seeds and a report at
+`~/selector-pair-switch-checkpoints.txt`:
+
+```bash
+bash scripts/run_selector_pair_switch_rewards.sh checkpoints
+```
+
+An additional mounted backup location can be supplied through the optional
+`PAIR_CHECKPOINT_SEARCH_ROOTS` environment variable (colon-separated paths).
+If no matching optimizer exists in the searched locations, the script reports
+that limitation instead of silently changing the experiment.
+
 `plan` is read-only and reports the stored-D trigger, full source checkpoint,
 common terminal step, and median/p90 suffix-training estimates from saved SR
 step timings. These are not end-to-end completion guarantees: evaluation,

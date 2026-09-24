@@ -27,6 +27,12 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 import selector_pair_srgc as srgc
 import selector_pair_srgc_repeat as repeat
+from selector_pair_resume_artifacts import (
+    ResumeArtifactsUnavailable,
+    artifact_bytes,
+    artifact_digest,
+    find_resume_artifacts,
+)
 
 import selection_gate as core
 import selection_gate_gpu as base
@@ -199,12 +205,12 @@ def make_plan(root, seed):
             bindings[str(path)] = base.digest(path)
     horizon = common_horizon(inventories, switch)
     checkpoint = inventories["on_policy"].get(switch)
-    if checkpoint is None or not (checkpoint / "optimizer.pt").is_file():
-        raise ValueError(f"seed={seed} step={switch}: full On-policy checkpoint with optimizer.pt required; "
-                         "an adapter-only archive cannot resume training")
+    if checkpoint is None:
+        raise ValueError(f"seed={seed} step={switch}: On-policy checkpoint not found")
     state = checked_checkpoint(checkpoint, seed=seed, step=switch, start=START,
                                subset=on.parent / "subsets/subset-selection_full.json",
-                               parent=parent, config=config, full=True)
+                               parent=parent, config=config)
+    artifacts, discovery = find_resume_artifacts(root, checkpoint, on / "policy", state)
     endpoints = {}
     for arm, inventory in inventories.items():
         directory = Path(controls[arm])
@@ -224,6 +230,8 @@ def make_plan(root, seed):
             "d_checks_through_switch": checks, "config": config, "contract": contract,
             "source_bindings": bindings, "controls": controls, "endpoints": endpoints,
             "checkpoint": str(checkpoint), "checkpoint_state": state,
+            "resume_artifacts": artifacts, "resume_discovery": discovery,
+            "source_policy": str(on / "policy"),
             "sr_subset": str(Path(controls["cached"]).parent / "subsets/subset-selection_full.json"),
             "training_estimate": estimate_hours(Path(controls["cached"]) / "policy/grpo_stats.jsonl", horizon-switch),
             "comparison": "Common On-policy prefix 0-25; controls differ from step 25. "
@@ -238,8 +246,9 @@ def verify_plan(plan):
             raise ValueError(f"frozen source changed: {filename}")
     checkpoint = Path(plan["checkpoint"])
     for key, filename in FILES.items():
-        if base.digest(checkpoint / filename) != plan["checkpoint_state"][key]:
-            raise ValueError(f"resume checkpoint changed: {checkpoint / filename}")
+        descriptor = plan.get("resume_artifacts", {}).get(filename, {"path": str(checkpoint / filename)})
+        if artifact_digest(descriptor) != plan["checkpoint_state"][key]:
+            raise ValueError(f"resume checkpoint changed: {descriptor['path']}")
 
 
 def ensure_plan(root, output, seed):
@@ -251,9 +260,36 @@ def ensure_plan(root, output, seed):
                 raise ValueError(f"incompatible saved switch plan: {path}")
             verify_plan(plan)
         else:
-            plan = make_plan(root, seed)
+            try:
+                plan = make_plan(root, seed)
+            except ResumeArtifactsUnavailable as exc:
+                core.atomic_json(path.parent / "resume-sources.json", exc.report)
+                print(f"[switch] resume search report: {path.parent / 'resume-sources.json'}", flush=True)
+                raise
             base.bind(path, plan)
     return plan
+
+
+def inspect_checkpoints(root, output, seeds):
+    reports = []
+    for seed in seeds:
+        try:
+            plan = make_plan(root, seed)
+            reports.append({"status": "ready", **plan["resume_discovery"]})
+        except ResumeArtifactsUnavailable as exc:
+            reports.append({"status": "missing_resume_artifacts", **exc.report})
+        except (OSError, ValueError, KeyError) as exc:
+            reports.append({"seed": seed, "status": "invalid_source", "error": str(exc)})
+        current = reports[-1]
+        print(f"[checkpoints] seed={seed} status={current['status']} "
+              f"step={current.get('step')} missing={current.get('missing', [])}", flush=True)
+    core.atomic_json(output / "checkpoint-search.json", {"seeds": reports})
+    path = Path.home() / "selector-pair-switch-checkpoints.txt"
+    temporary = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
+    temporary.write_text("SR-GC SWITCH RESUME CHECKPOINT SEARCH\n" + json.dumps(reports, indent=2) + "\n")
+    temporary.replace(path)
+    print(f"[checkpoints] report: {path}", flush=True)
+    return all(row["status"] == "ready" for row in reports)
 
 
 def materialize_parent(directory, plan):
@@ -261,7 +297,7 @@ def materialize_parent(directory, plan):
     from train_policy_grpo import validate_policy_lineage, validate_policy_manifest
     target = directory / "parent"
     checkpoint, state = Path(plan["checkpoint"]), plan["checkpoint_state"]
-    source_policy = checkpoint.parent
+    source_policy = Path(plan.get("source_policy", checkpoint.parent))
     final = validate_policy_manifest(source_policy, world_size=4, training_objective="grpo",
                                      require_complete_hashes=True)
     if final["completed_steps"] < plan["switch_step"] or final["start_step"] != START:
@@ -275,7 +311,11 @@ def materialize_parent(directory, plan):
         temporary = directory / f".parent-{uuid.uuid4().hex}"
         temporary.mkdir(parents=True)
         for filename in (*FILES.values(), "adapter_config.json"):
-            shutil.copy2(checkpoint / filename, temporary / filename)
+            descriptor = plan.get("resume_artifacts", {}).get(filename, {"path": str(checkpoint / filename)})
+            if "through_step" in descriptor:
+                (temporary / filename).write_bytes(artifact_bytes(descriptor))
+            else:
+                shutil.copy2(descriptor["path"], temporary / filename)
         core.atomic_json(temporary / "policy_train.json", manifest)
         temporary.rename(target)
     else:
@@ -636,7 +676,17 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
     if len(devices) != 4 or len(set(devices)) != 4:
         raise ValueError("worker needs four distinct allocated GPUs; training world size remains four")
     deadline, idle_since = time.monotonic() + hours*3600, time.monotonic()
-    plans = [(output / f"s{seed}", ensure_plan(root, output, seed)) for seed in seeds]
+    plans, blocked = [], []
+    for seed in seeds:
+        try:
+            plans.append((output / f"s{seed}", ensure_plan(root, output, seed)))
+        except ResumeArtifactsUnavailable as exc:
+            blocked.append(seed)
+            print(f"[switch] {exc}; checking other seeds", flush=True)
+    if not plans:
+        print("[switch] no resumable seed. Run: bash scripts/run_selector_pair_switch_rewards.sh checkpoints", flush=True)
+        return False
+    active_seeds = [plan["seed"] for _, plan in plans]
     caches = {plan["seed"]: reuse_cache(directory, plan) for directory, plan in plans}
     finished_jobs = set()
     finished_training = set()
@@ -706,12 +756,12 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
         if worked:
             idle_since = time.monotonic()
             continue
-        data = report(output, seeds)
+        data = report(output, active_seeds)
         if data["complete"]:
             with base.lease(output / ".publication.lock", blocking=True):
                 data = write_report(output, seeds)
                 plot_report(output, data)
-            return
+            return not blocked
         if time.monotonic()-idle_since >= idle_minutes*60:
             print("[switch] no unclaimed ready work; worker exits without changing peer jobs. Rerun the same command.", flush=True)
             return
@@ -721,7 +771,7 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("plan", "run", "results", "evaluate-shard"))
+    parser.add_argument("mode", choices=("plan", "run", "results", "checkpoints", "evaluate-shard"))
     parser.add_argument("--root", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, choices=(3, 4), action="append")
@@ -751,6 +801,10 @@ def main():
         parser.error("--root is required")
     root = args.root.resolve()
     check_paths(root, output)
+    if args.mode == "checkpoints":
+        if not inspect_checkpoints(root, output, seeds):
+            raise SystemExit(2)
+        return
     if args.mode == "plan":
         for seed in seeds:
             plan = make_plan(root, seed)
@@ -760,7 +814,9 @@ def main():
     def interrupted(signum, frame):
         raise KeyboardInterrupt(f"signal {signum}; saved checkpoints and shard receipts are retained")
     signal.signal(signal.SIGTERM, interrupted)
-    worker(root, output, seeds, os.environ.get("CUDA_VISIBLE_DEVICES", "").split(","), args.hours, args.idle_minutes)
+    if worker(root, output, seeds, os.environ.get("CUDA_VISIBLE_DEVICES", "").split(","),
+              args.hours, args.idle_minutes) is False:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

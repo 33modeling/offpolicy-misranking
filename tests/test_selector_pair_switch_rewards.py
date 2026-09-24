@@ -93,8 +93,91 @@ def test_missing_optimizer_cannot_be_replaced_with_weights_only(study):
     root, _, _ = study
     full = switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125"
     (full / "optimizer.pt").unlink()
-    with pytest.raises(ValueError, match="optimizer.pt required"):
+    with pytest.raises(ValueError, match="matching optimizer.pt not found"):
         switch.make_plan(root, 3)
+
+
+def test_archived_adapter_finds_moved_full_checkpoint_and_resumes(study):
+    root, output, _ = study
+    source = switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125"
+    backup = root.parent / "checkpoint-backup/seed3/step125"
+    backup.parent.mkdir(parents=True)
+    source.rename(backup)
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    plan = switch.ensure_plan(root, output, 3)
+    assert Path(plan["checkpoint"]).name == "step-125"
+    assert plan["resume_artifacts"]["optimizer.pt"]["path"] == str(backup / "optimizer.pt")
+    parent = switch.materialize_parent(output / "s3", plan)
+    assert (parent / "optimizer.pt").read_bytes() == (backup / "optimizer.pt").read_bytes()
+    validate_policy_manifest(parent, target_steps=125, world_size=4, require_complete_hashes=True)
+    assert all(p.read_bytes() == raw for p, raw in before.items())
+
+
+def test_optimizer_only_backup_recovers_exact_statistics_prefix(study):
+    root, output, _ = study
+    source = switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125"
+    backup = root.parent / "checkpoint-backup/optimizer.pt"
+    backup.parent.mkdir()
+    shutil.copy2(source / "optimizer.pt", backup)
+    expected_stats = (source / "grpo_stats.jsonl").read_bytes()
+    shutil.rmtree(source)
+    plan = switch.ensure_plan(root, output, 3)
+    assert plan["resume_artifacts"]["grpo_stats.jsonl"]["through_step"] == 125
+    parent = switch.materialize_parent(output / "s3", plan)
+    assert (parent / "grpo_stats.jsonl").read_bytes() == expected_stats
+    backup.write_bytes(b"changed optimizer")
+    with pytest.raises(ValueError, match="resume checkpoint changed"):
+        switch.verify_plan(plan)
+
+
+def test_wrong_seed_backup_is_not_accepted_even_if_optimizer_bytes_match(study):
+    root, _, _ = study
+    source = switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125"
+    backup = root.parent / "checkpoint-backup/seed4"
+    backup.parent.mkdir()
+    source.rename(backup)
+    state = core.read(backup / "checkpoint_state.json")
+    state["seed"] = 4
+    core.atomic_json(backup / "checkpoint_state.json", state)
+    with pytest.raises(switch.ResumeArtifactsUnavailable) as failure:
+        switch.make_plan(root, 3)
+    assert "optimizer.pt" in failure.value.report["missing"]
+    assert any("seed" in row.get("fields", []) for row in failure.value.report["candidates"])
+
+
+def test_inspection_writes_both_seeds_without_gpu_or_source_changes(study, monkeypatch):
+    root, output, _ = study
+    monkeypatch.setattr(Path, "home", lambda: output)
+    source = switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125/optimizer.pt"
+    source.unlink()
+    assert switch.inspect_checkpoints(root, output, [3, 4]) is False
+    report = core.read(output / "checkpoint-search.json")
+    assert [row["seed"] for row in report["seeds"]] == [3, 4]
+    assert report["seeds"][0]["missing"] == ["optimizer.pt"]
+    assert (output / "selector-pair-switch-checkpoints.txt").exists()
+
+
+def test_unavailable_seed_does_not_abort_other_seed(study, monkeypatch):
+    import selector_pair_gpu
+    root, output, _ = study
+    plan = switch.make_plan(root, 3)
+    plan = {**plan, "seed": 4, "config": {**plan["config"], "seed": 4}}
+    def ensure(root, output, seed):
+        if seed == 3:
+            raise switch.ResumeArtifactsUnavailable({"seed": 3, "step": 125, "missing": ["optimizer.pt"]})
+        return plan
+    class ReachedTraining(Exception):
+        pass
+    def attempt(directory, name, frozen, *args):
+        assert frozen["seed"] == 4 and name == "train"
+        raise ReachedTraining
+    monkeypatch.setattr(switch, "ensure_plan", ensure)
+    monkeypatch.setattr(switch, "verify_plan", lambda _: None)
+    monkeypatch.setattr(switch, "materialize_parent", lambda *a: None)
+    monkeypatch.setattr(switch, "attempt", attempt)
+    monkeypatch.setattr(selector_pair_gpu, "environment", lambda _: {})
+    with pytest.raises(ReachedTraining):
+        switch.worker(root, output, [3, 4], list("0123"), 1, 1)
 
 
 def test_horizon_never_uses_rewards_or_arbitrary_100_cap():
