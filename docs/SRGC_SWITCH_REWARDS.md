@@ -35,9 +35,21 @@ defaults to `/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking`.
 Optional overrides are `PAIR_ROOT`, `PAIR_SWITCH_ROOT` and `PAIR_PYTHON`.
 
 ```bash
+bash scripts/run_selector_pair_switch_rewards.sh status
+bash scripts/run_selector_pair_switch_rewards.sh status --watch
 bash scripts/run_selector_pair_switch_rewards.sh plan
 bash scripts/run_selector_pair_switch_rewards.sh results
 ```
+
+`status` is a lightweight CPU-only snapshot. It shows each seed's logged and
+saved step separately for On-policy replay and SR continuation, evaluation
+receipt counts, and each node's last recorded phase/elapsed time/heartbeat/error. A heartbeat
+older than 120 seconds is labeled stale/unknown, not automatically dead. Status
+does not hash large checkpoints, acquire training locks, repair costs, initialize
+CUDA or alter experiments. `--watch` refreshes every 15 seconds (`--watch 30`
+overrides that); `--json` prints the structured snapshot. It also writes
+`~/selector-pair-switch-status.txt`, including JSON and diagnostic log paths.
+Existing workers need not restart to appear: their saved progress records suffice.
 
 If the trigger directory contains only archived adapter weights, the launcher
 also searches the Pair tree, sibling run/backup directories, and the work area's
@@ -76,7 +88,17 @@ no claimable work rather than wait forever. Reuse the same command to resume.
 `results` writes `switch-rewards.txt` and `switch-rewards.json` under the new
 experiment root, including all four measured curves, final rewards at a common
 step, missing points, last saved training step and per-attempt cost ledgers.
-Copy `switch-rewards.txt` for manuscript ingestion. Unknown interrupted cost
+It also copies the export to `~/selector-pair-switch-results.txt`. The text
+summary uses reward percentages; JSON retains reward fractions. Before completion,
+it shows latest measured points and missing evaluation steps, never a zero for
+missing reward. One invalid seed is reported explicitly without discarding another
+seed's valid results; the overall report remains incomplete. Status observations
+are included separately and are not treated as verified reward measurements.
+The text also separates closed-attempt wall time and GPU-hours for prefix
+recovery, SR continuation and evaluation, with counts of open/unknown attempts.
+Those durations sum work across nodes, not the parallel job's elapsed makespan.
+`--out PATH` selects a TXT export destination instead of the default/home copies.
+Copy `selector-pair-switch-results.txt` for manuscript ingestion. Unknown interrupted cost
 remains unknown, not zero. Historical source costs remain in the source ledgers.
 When all curves are complete, optional `matplotlib` also writes
 `switch-rewards.pdf` and `switch-rewards.png`. To enable plots:

@@ -631,11 +631,13 @@ def export_seed(directory, plan, reused):
         if not (path / "cost.jsonl").exists():
             continue
         try:
-            costs.append({"source": str(path), **base.cost(path)})
+            costs.append({"source": str(path), "phase": path.name.split("-", 1)[0], **base.cost(path)})
         except (OSError, ValueError) as exc:
-            costs.append({"source": str(path), "complete": False, "total_gpu_seconds": None, "error": str(exc)})
-    saved_step = max(saved_checkpoints(directory / "policy"), default=plan["switch_step"])
-    executed = saved_step > plan["switch_step"] and point_adapter(directory, plan, "switch", saved_step) is not False
+            costs.append({"source": str(path), "phase": path.name.split("-", 1)[0],
+                          "complete": False, "total_gpu_seconds": None, "error": str(exc)})
+    saved_step = max(saved_checkpoints(directory / "policy"), default=None)
+    executed = (saved_step is not None and saved_step > plan["switch_step"]
+                and point_adapter(directory, plan, "switch", saved_step) is not False)
     return {"seed": plan["seed"], "switch_step": plan["switch_step"], "end_step": plan["end_step"],
             "executed_switch": executed,
             "training_complete": complete, "complete": complete and not missing,
@@ -654,36 +656,79 @@ def export_seed(directory, plan, reused):
             "new_work_cost_complete": all(cost["complete"] for cost in costs)}
 
 
-def report(output, seeds):
-    rows, pending = [], []
+def report(output, seeds, *, tolerate_errors=False):
+    rows, pending, errors = [], [], []
     for seed in seeds:
         directory = output / f"s{seed}"
         if not (directory / "plan.json").exists():
             pending.append(seed)
             continue
-        plan = core.read(directory / "plan.json")
-        reused = core.read(directory / "reused-curves.json") if (directory / "reused-curves.json").exists() else {}
-        rows.append(export_seed(directory, plan, reused))
-    result = {"schema": SCHEMA, "complete": not pending and all(row["complete"] for row in rows),
-              "seeds": rows, "pending_seeds": pending}
+        try:
+            plan = core.read(directory / "plan.json")
+            reused = core.read(directory / "reused-curves.json") if (directory / "reused-curves.json").exists() else {}
+            rows.append(export_seed(directory, plan, reused))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            if not tolerate_errors:
+                raise
+            errors.append({"seed": seed, "error": str(exc)})
+    result = {"schema": SCHEMA, "complete": not pending and not errors and all(row["complete"] for row in rows),
+              "seeds": rows, "pending_seeds": pending, "errors": errors}
     return result
 
 
 def write_report(output, seeds, out=None):
-    data = report(output, seeds)
+    from selector_pair_switch_status import atomic_text, duration, snapshot
+    data = report(output, seeds, tolerate_errors=True)
+    data["status"] = snapshot(output, seeds, tasks)
     stream = io.StringIO()
     stream.write("EXECUTED SR-GC SWITCH REWARDS\n")
+    stream.write(f"Root: {output}\n")
+    stream.write(f"Overall: {'COMPLETE' if data['complete'] else 'PARTIAL'}\n")
+    if data["pending_seeds"]:
+        stream.write(f"Plan not yet saved: seeds {data['pending_seeds']}\n")
+    for error in data["errors"]:
+        stream.write(f"Seed {error['seed']} ERROR: {error['error']}\n")
+    stream.write("Rewards below are percentages at the common final step; missing is not zero.\n")
     writer = csv.writer(stream)
-    writer.writerow(("seed", "switch_step", "last_saved_switch_step", "common_final_step", *ARMS, "complete"))
+    writer.writerow(("seed", "switch_step", "last_saved_switch_step", "common_final_step",
+                     *(LABELS[arm] + " (%)" for arm in ARMS), "complete"))
     for row in data["seeds"]:
         writer.writerow((row["seed"], row["switch_step"], row["last_saved_switch_step"], row["end_step"],
-                         *(row["final_rewards"][arm] for arm in ARMS), row["complete"]))
+                         *(f"{100*row['final_rewards'][arm]:.3f}" if row["final_rewards"][arm] is not None
+                           else "pending" for arm in ARMS), row["complete"]))
+    for row in data["seeds"]:
+        stream.write(f"Seed {row['seed']}: training_complete={row['training_complete']}; "
+                     f"missing evaluations={len(row['missing_evaluations'])}\n")
+        for arm in ARMS:
+            points = row["curves"][arm]
+            if points:
+                latest = max(points, key=lambda point: point["step"])
+                stream.write(f"  {LABELS[arm]} latest measured: step {latest['step']}, "
+                             f"reward {100*latest['reward']:.3f}%\n")
+        for arm in ARMS:
+            missing = [str(point["step"]) for point in row["missing_evaluations"] if point["arm"] == arm]
+            if missing:
+                stream.write(f"  Pending {LABELS[arm]} steps: {', '.join(missing)}\n")
+        for phase, label in (("replay", "On-policy replay"), ("train", "SR continuation"), ("eval", "Evaluation")):
+            costs = [cost for cost in row["new_work_cost"] if cost["phase"] == phase]
+            if not costs:
+                continue
+            closed = [cost for cost in costs if cost["complete"]]
+            wall = sum(item["wall_seconds"] for cost in closed for item in cost["ledgers"].values())
+            gpu = sum(item["gpu_seconds"] for cost in closed for item in cost["ledgers"].values())
+            stream.write(f"  {label} recorded closed-attempt time: "
+                         f"{duration(wall) if closed else 'unknown'} wall, "
+                         f"{f'{gpu/3600:.3f}' if closed else 'unknown'} GPU-hours; "
+                         f"open/unknown attempts={len(costs)-len(closed)}\n")
+    stream.write("Phase durations are summed work, not parallel elapsed completion time. "
+                 "Open/interrupted costs are not treated as zero.\n")
     stream.write("\nJSON\n" + json.dumps(data, allow_nan=False, separators=(",", ":")) + "\n")
     target = Path(out) if out else output / "switch-rewards.txt"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + f".{uuid.uuid4().hex}.tmp")
-    temporary.write_text(stream.getvalue())
-    temporary.replace(target)
+    atomic_text(target, stream.getvalue())
+    if out is None:
+        home_copy = Path.home() / "selector-pair-switch-results.txt"
+        atomic_text(home_copy, stream.getvalue())
+        print(f"[results] copy for export: {home_copy}", flush=True)
     with base.lease(output / ".report.lock", blocking=True):
         core.atomic_json(output / "switch-rewards.json", data)
     print(stream.getvalue().split("\nJSON\n")[0], flush=True)
@@ -861,19 +906,25 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("plan", "run", "results", "checkpoints", "evaluate-shard"))
+    parser.add_argument("mode", choices=("plan", "run", "status", "results", "checkpoints", "evaluate-shard"))
     parser.add_argument("--root", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, choices=(3, 4), action="append")
     parser.add_argument("--hours", type=float, default=24)
     parser.add_argument("--idle-minutes", type=float, default=120)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--watch", type=float, nargs="?", const=15)
+    parser.add_argument("--json", action="store_true")
     parser.add_argument("--arm", choices=ARMS)
     parser.add_argument("--step", type=int)
     parser.add_argument("--shard", type=int, choices=range(4))
     args = parser.parse_args()
     seeds = args.seed or [3, 4]
     output = args.output.resolve()
+    if args.watch is not None and (args.mode != "status" or not math.isfinite(args.watch) or args.watch <= 0):
+        parser.error("--watch requires status and a positive finite interval")
+    if args.json and args.mode != "status":
+        parser.error("--json is only available for status")
     for value in (args.hours, args.idle_minutes):
         if not math.isfinite(value) or value <= 0:
             parser.error("worker hours and idle minutes must be positive and finite")
@@ -881,6 +932,17 @@ def main():
         if len(seeds) != 1 or args.arm is None or args.step is None or args.shard is None:
             parser.error("evaluate-shard needs one seed, arm, step and shard")
         evaluate_shard(output / f"s{seeds[0]}", args.arm, args.step, args.shard)
+        return
+    if args.mode == "status":
+        from selector_pair_switch_status import write_status
+        try:
+            while True:
+                write_status(output, seeds, tasks, out=args.out, json_output=args.json)
+                if args.watch is None:
+                    break
+                time.sleep(args.watch)
+        except KeyboardInterrupt:
+            pass
         return
     if args.mode == "results":
         with base.lease(output / ".publication.lock", blocking=True):

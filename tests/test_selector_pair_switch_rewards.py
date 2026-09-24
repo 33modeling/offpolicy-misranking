@@ -42,6 +42,7 @@ def checkpoint(policy, step, subset, parent, config):
 def study(tmp_path, monkeypatch):
     import selector_pair_gpu
     monkeypatch.setattr(selector_pair_gpu, "admission_probe", lambda _: {})
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     root, output = tmp_path / "pair", tmp_path / "switch"
     model, prompts = tmp_path / "model", root / "prompts.json"
     core.atomic_json(model / "config.json", {"model_type": "fixture"})
@@ -533,3 +534,115 @@ def test_plot_has_four_trajectories_and_real_switch_colors(tmp_path, monkeypatch
     assert sum(call["color"] == "#1565b0" for call in calls) == 2
     assert sum(call["color"] == "#17843c" for call in calls) == 2
     assert all(call["lw"] <= 1 for call in calls)
+
+
+def test_status_reads_partial_logs_and_full_checkpoint_presence_without_mutation(study):
+    import selector_pair_switch_status as status
+    root, output, config = study
+    plan = switch.ensure_plan(root, output, 3)
+    directory = output / "s3"
+    command = switch.train_command(directory, plan, replay=True)
+    write_policy(parse(command[command.index("--model"):]))
+    policy, parent, _, _, subset = switch.training_spec(directory, plan, replay=True)
+    checkpoint(policy, 75, subset, parent, config)
+    (policy / "policy_train.json").unlink()
+    (policy / "grpo_stats.jsonl").write_text('{"step": 76}\n{"step":')
+    core.atomic_json(directory / "attempts/replay-fixture/progress.json",
+                     {"host": "node-a", "phase": "s3-replay", "state": "running", "updated": 1, "seconds": 3661})
+    before = {p: p.read_bytes() for p in output.rglob("*") if p.is_file()}
+    data = status.snapshot(output, [3, 4], switch.tasks)
+    assert data["seeds"][0]["replay"] == {"logged_step": 76, "saved_step": 75,
+                                          "published_step": None, "checkpoint_count": 1}
+    assert data["nodes"][0]["state"] == "stale/unknown"
+    assert "elapsed 01:01:01" in status.format_status(data)
+    assert data["seeds"][1]["plan"] == "not available"
+    assert all(p.read_bytes() == raw for p, raw in before.items())
+    assert {p for p in output.rglob("*") if p.is_file()} == set(before)
+
+
+def test_status_survives_bad_json_and_reports_nccl_failure(tmp_path):
+    import selector_pair_switch_status as status
+    core.atomic_json(tmp_path / "node-preflight/node-a/admission.json",
+                     {"host": "node-a", "state": "failed", "error": "NCCL WARN CUDA error 802"})
+    (tmp_path / "s3").mkdir()
+    (tmp_path / "s3/plan.json").write_text("{broken")
+    data = status.snapshot(tmp_path, [3, 4], lambda *a: [])
+    assert data["errors"] and data["nodes"][0]["state"] == "failed"
+    assert "NCCL WARN CUDA error 802" in status.format_status(data)
+
+
+def test_partial_results_keep_good_seed_and_export_home_copy(study):
+    root, output, _ = study
+    switch.ensure_plan(root, output, 3)
+    (output / "s4").mkdir()
+    (output / "s4/plan.json").write_text("{broken")
+    data = switch.write_report(output, [3, 4])
+    assert not data["complete"]
+    assert data["errors"][0]["seed"] == 4
+    assert data["seeds"][0]["last_saved_switch_step"] is None
+    assert data["seeds"][0]["final_rewards"]["switch"] is None
+    result = Path.home() / "selector-pair-switch-results.txt"
+    assert result.read_bytes() == (output / "switch-rewards.txt").read_bytes()
+    assert "pending" in result.read_text() and "Seed 4 ERROR" in result.read_text()
+    with pytest.raises(ValueError):
+        switch.report(output, [3, 4])  # Training workers keep strict verification.
+
+
+@pytest.mark.parametrize("mode", ["status", "results"])
+def test_cpu_launcher_exports_without_pair_root_gpu_or_preflight(tmp_path, mode):
+    import subprocess
+    import sys
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "OM_WORK": str(tmp_path),
+           "PAIR_ROOT": str(tmp_path / "absent-source"), "PAIR_SWITCH_ROOT": str(tmp_path / "output"),
+           "PAIR_PYTHON": sys.executable, "CUDA_VISIBLE_DEVICES": "invalid-must-not-be-used"}
+    command = ["bash", str(switch.REPO / "scripts/run_selector_pair_switch_rewards.sh"), mode]
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=20, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "[nccl-preflight]" not in result.stdout
+    assert (tmp_path / f"home/selector-pair-switch-{mode}.txt").is_file()
+    assert not (tmp_path / "output/node-preflight").exists()
+    assert not (tmp_path / "absent-source").exists()
+
+
+def test_status_counts_partial_evaluation_receipts(study):
+    import selector_pair_switch_status as status
+    root, output, _ = study
+    plan = switch.ensure_plan(root, output, 3)
+    for i in range(2):
+        core.atomic_json(output / f"s3/evaluations/switch/step-150/shard-{i}.done.json", {})
+    data = status.snapshot(output, [3], switch.tasks)
+    row = data["seeds"][0]
+    assert row["evaluation_jobs"] == len(switch.tasks(output / "s3", plan, {}))
+    assert row["evaluations_with_all_receipts"] == 0 and row["shard_receipts_present"] == 2
+    assert {"arm": "switch", "step": 150, "shards_present": 2} in row["missing_evaluations"]
+
+
+def test_results_separate_wall_gpu_and_unknown_recovery_cost(study, monkeypatch):
+    root, output, _ = study
+    switch.ensure_plan(root, output, 3)
+    for name in ("train-done", "replay-open"):
+        path = output / f"s3/attempts/{name}/cost.jsonl"
+        path.parent.mkdir(parents=True)
+        path.touch()
+    def cost(path):
+        if path.name == "replay-open":
+            raise ValueError("unclosed cost event")
+        return {"complete": True, "ledgers": {"deployment": {"wall_seconds": 3600, "gpu_seconds": 14400}}}
+    monkeypatch.setattr(base, "cost", cost)
+    data = switch.write_report(output, [3])
+    text = (output / "switch-rewards.txt").read_text()
+    assert "01:00:00 wall, 4.000 GPU-hours; open/unknown attempts=0" in text
+    assert "unknown wall, unknown GPU-hours; open/unknown attempts=1" in text
+    assert data["seeds"][0]["new_work_cost_complete"] is False
+
+
+def test_status_json_and_watch_validation_are_cpu_only(tmp_path, monkeypatch, capsys):
+    import sys
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setattr(sys, "argv", ["switch", "status", "--output", str(tmp_path / "absent"), "--json"])
+    switch.main()
+    assert len(json.loads(capsys.readouterr().out)["seeds"]) == 2
+    monkeypatch.setattr(sys, "argv", ["switch", "status", "--output", str(tmp_path / "absent"), "--watch", "0"])
+    with pytest.raises(SystemExit) as exit_info:
+        switch.main()
+    assert exit_info.value.code == 2

@@ -14,7 +14,7 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
-  plan|results|checkpoints) export CUDA_VISIBLE_DEVICES="" ;;
+  status|plan|results|checkpoints) export CUDA_VISIBLE_DEVICES="" ;;
   run)
     export OUT_ROOT="$OUTPUT"
     source scripts/_e5_node.sh
@@ -40,7 +40,7 @@ case "$MODE" in
     VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps")
     export PYTHONPATH="$VERIFY_PATH:$PYTHONPATH" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
     ;;
-  *) echo 'usage: bash scripts/run_selector_pair_switch_rewards.sh [run|plan|results|checkpoints] [--seed 3|4]'; exit 2 ;;
+  *) echo 'usage: bash scripts/run_selector_pair_switch_rewards.sh [run|status|plan|results|checkpoints] [--seed 3|4]'; exit 2 ;;
 esac
 # Keep the shell alive to retain the node lease while children own GPUs.
 "$PY" scripts/selector_pair_switch_rewards.py "$MODE" --root "$PAIR_ROOT" --output "$OUTPUT" "$@"
