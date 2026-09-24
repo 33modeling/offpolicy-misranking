@@ -36,7 +36,7 @@ def use_d100(module) -> None:
 
 def guard_root(root: Path) -> Path:
     root = root.resolve()
-    if root.name == ORIGINAL_ROOT_NAME or (root / "math500-d0").exists() or (root / "math500-d400").exists():
+    if ORIGINAL_ROOT_NAME in root.parts or (root / "math500-d0").exists() or (root / "math500-d400").exists():
         raise ValueError(f"refusing {root}: the original d0/d400 RLOO root is never reused")
     return root
 

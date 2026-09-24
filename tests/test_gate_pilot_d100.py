@@ -94,3 +94,26 @@ def test_launcher_is_valid_and_rejects_extra_options():
     assert bad.returncode == 2
     bad = subprocess.run(["bash", str(SCRIPT), "train"], text=True, capture_output=True)
     assert bad.returncode == 2
+
+
+def test_invalid_pilot_measurement_prints_na_instead_of_crashing(tmp_path, monkeypatch):
+    root, work = layout(tmp_path)
+    for seed in (0, 1, 2):
+        ed.atomic_json(root / f"math500-d100/s{seed}/gate_passrate/decision.json",
+                       {"decision": "random", "chosen_subset": "random", "r_half": None})
+    monkeypatch.setattr(ed, "evaluation_means", lambda out, arm: np.full(300, 0.3))
+    monkeypatch.setattr(ed, "paired_interval", lambda values, seed: (0.0, 0.0))
+    body = pilot.text(*pilot.results(root, work))
+    assert body.count("\tNA\trandom\t") == 3
+
+
+def test_real_gate_only_preparation_matches_an_e5_root_from_the_same_inputs(tmp_path):
+    from test_evidence_downstream import source_point
+    run, evaluation = source_point(tmp_path, drift=100)
+    e5 = tmp_path / "work/runs/e5-reduced/math500-d100/s0"
+    ed.prepare(run, e5, evaluation, 100, 8, ("random", "passrate_beta", "fresh_r", "g11"))
+    new = tmp_path / "gate-pilot-d100-v1/math500-d100/s0"
+    ed.prepare(run, new, evaluation, 100, 8, ("gate_passrate",))
+    pilot.same_inputs(new, e5)
+    assert (new / "subsets" / "train-gate_passrate-pilot.args").is_file()
+    assert ed.read(new / "gate_pilot.json")["pilot_steps"] == 10

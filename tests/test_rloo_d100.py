@@ -56,6 +56,7 @@ def test_prepare_rejects_a_source_from_another_checkpoint(tmp_path, monkeypatch)
 
 @pytest.mark.parametrize("make", [
     lambda root: root.with_name("rloo-selector-v2"),
+    lambda root: root.with_name("rloo-selector-v2") / "d100",
     lambda root: (root / "math500-d0").mkdir(parents=True) or root,
     lambda root: (root / "math500-d400").mkdir(parents=True) or root,
 ])
@@ -107,3 +108,18 @@ def test_launcher_ignores_an_exported_original_root_and_needs_no_gpu(tmp_path):
     assert not (tmp_path / "runs").exists()
     bad = subprocess.run(["bash", str(SCRIPT), "run", "--extra"], env=env, text=True, capture_output=True)
     assert bad.returncode == 2
+
+
+def test_results_export_lists_only_d100_points_and_never_the_default_file(tmp_path):
+    out = tmp_path / "rloo-d100-results.txt"
+    (tmp_path / "rloo-selector-d100").mkdir()
+    env = {**os.environ, "OM_WORK": str(tmp_path), "HOME": str(tmp_path / "home")}
+    subprocess.run([sys.executable, str(rloo.ROOT / "scripts/rloo_d100.py"), "results",
+                    "--root", str(tmp_path / "rloo-selector-d100"), "--out", str(out)],
+                   env=env, text=True, capture_output=True, check=True)
+    body = out.read_text()
+    assert body.startswith("RLOO PAPER DATA")
+    data = json.loads(body.split("DATA_JSON\n", 1)[1])
+    assert [(p["drift"], p["seed"], p["status"]) for p in data["points"]] == [
+        (100, 0, "unprepared"), (100, 1, "unprepared"), (100, 2, "unprepared")]
+    assert not (tmp_path / "home" / "rloo-results.txt").exists()

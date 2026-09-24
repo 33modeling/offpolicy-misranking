@@ -104,7 +104,9 @@ def text(rows, pending) -> str:
            "controls: unchanged E5 d=100 uniform and cached-SR arms (same source, subsets and questions)",
            "d\tseed\tr_half\tdecision\tvs_random\tvs_random_95\tvs_cached\tvs_cached_95"]
     for r in rows:
-        out.append(f"{r['drift']}\t{r['seed']}\t{r['r_half']:.2f}\t{r['chosen_subset']}\t{r['vs_random']:+.2f}\t"
+        # An invalid pilot measurement (e.g. zero variance) records r_half = None and decides random.
+        r_half = "NA" if r["r_half"] is None else f"{r['r_half']:.2f}"
+        out.append(f"{r['drift']}\t{r['seed']}\t{r_half}\t{r['chosen_subset']}\t{r['vs_random']:+.2f}\t"
                    f"[{r['vs_random_ci'][0]:+.2f}, {r['vs_random_ci'][1]:+.2f}]\t{r['vs_cached']:+.2f}\t"
                    f"[{r['vs_cached_ci'][0]:+.2f}, {r['vs_cached_ci'][1]:+.2f}]")
     out.append("pending: " + (", ".join(pending) if pending else "none"))

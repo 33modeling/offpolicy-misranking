@@ -35,22 +35,23 @@ TEST="$OM_WORK/inputs/e5-reduced/test-math500-d100.json"
 run_dir() { printf '%s/family-math500-s%s/%s-s%s-math500-d100\n' "$MATRIX" "$1" "$TAG" "$1"; }
 out_dir() { printf '%s/math500-d100/s%s\n' "$ROOT" "$1"; }
 PILOT=("$PY" scripts/gate_pilot_d100.py)
+WORK=(--work "$OM_WORK")
 
 case "$MODE" in
-  status) CUDA_VISIBLE_DEVICES="" exec "${PILOT[@]}" status --root "$ROOT" ;;
-  results) CUDA_VISIBLE_DEVICES="" exec "${PILOT[@]}" results --root "$ROOT" ;;
+  status) CUDA_VISIBLE_DEVICES="" exec "${PILOT[@]}" status --root "$ROOT" "${WORK[@]}" ;;
+  results) CUDA_VISIBLE_DEVICES="" exec "${PILOT[@]}" results --root "$ROOT" "${WORK[@]}" ;;
 esac
 [ -s "$TEST" ] || { echo "[abort] frozen E5 d=100 test file missing: $TEST"; exit 1; }
 for seed in "${SEEDS[@]}"; do
   [ -s "$(run_dir "$seed")/DONE" ] || { echo "[abort] source point is not complete: $(run_dir "$seed")"; exit 1; }
 done
 # The comparison needs the unchanged E5 controls; refuse before any preparation.
-CUDA_VISIBLE_DEVICES="" "${PILOT[@]}" check --root "$ROOT" >/dev/null || exit 1
+CUDA_VISIBLE_DEVICES="" "${PILOT[@]}" check --root "$ROOT" "${WORK[@]}" >/dev/null || exit 1
 for seed in "${SEEDS[@]}"; do
   DOWNSTREAM_SELECTORS="gate_passrate" bash scripts/run_downstream_independent.sh "$(run_dir "$seed")" "$(out_dir "$seed")" \
-    --eval-prompts "$TEST" --steps 100 --eval-k 8 --prepare-only >/dev/null || exit 1
+    --eval-prompts "$TEST" --steps 100 --eval-k 8 --prepare-only || exit 1
 done
-CUDA_VISIBLE_DEVICES="" "${PILOT[@]}" check --root "$ROOT" || exit 1
+CUDA_VISIBLE_DEVICES="" "${PILOT[@]}" check --root "$ROOT" "${WORK[@]}" || exit 1
 [ "$MODE" = run ] || exit 0
 
 export OUT_ROOT="$ROOT" E5_FORCE=0
