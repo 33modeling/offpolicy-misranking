@@ -1,6 +1,7 @@
 """Execute the measured SR-GC switch from existing Pair checkpoints.
 
-Only the SR suffix is trained. Shared-filesystem workers claim independent
+Missing trigger optimizers are recovered by replaying from the full step-25
+parent before training the SR suffix. Shared-filesystem workers claim independent
 training/evaluation jobs; source Pair artifacts are read-only. Stored D fixes
 the first two-negative trigger before any new reward is evaluated.
 """
@@ -166,7 +167,7 @@ def common_horizon(inventories, switch):
     return max(candidates)
 
 
-def estimate_hours(stats_path, updates):
+def estimate_hours(stats_path, updates, phase="SR suffix"):
     rows = [json.loads(line) for line in stats_path.read_text().splitlines() if line.strip()]
     seconds = sorted(float(row["step_seconds"]) for row in rows
                      if isinstance(row.get("step_seconds"), (int, float))
@@ -175,7 +176,7 @@ def estimate_hours(stats_path, updates):
         return None
     return {"median_hours": statistics.median(seconds) * updates / 3600,
             "p90_hours": seconds[math.ceil(.9 * len(seconds)) - 1] * updates / 3600,
-            "scope": "SR suffix training only; excludes evaluation, startup and interruptions"}
+            "scope": f"{phase} training only; excludes evaluation, startup and interruptions"}
 
 
 def make_plan(root, seed):
@@ -210,7 +211,27 @@ def make_plan(root, seed):
     state = checked_checkpoint(checkpoint, seed=seed, step=switch, start=START,
                                subset=on.parent / "subsets/subset-selection_full.json",
                                parent=parent, config=config)
-    artifacts, discovery = find_resume_artifacts(root, checkpoint, on / "policy", state)
+    resume_mode = "exact_checkpoint"
+    try:
+        artifacts, discovery = find_resume_artifacts(root, checkpoint, on / "policy", state)
+    except ResumeArtifactsUnavailable as exc:
+        if exc.report["missing"] != ["optimizer.pt"]:
+            raise
+        from train_policy_grpo import validate_policy_lineage, validate_policy_manifest
+        validate_policy_manifest(parent, target_steps=START, world_size=4,
+                                 training_objective="grpo", require_complete_hashes=True)
+        final = core.read(on / "policy/policy_train.json")
+        validate_policy_lineage(on / "policy", target_steps=final["completed_steps"], world_size=4,
+                                training_objective="grpo", expected_start_step=START,
+                                expected_parent=parent, expected_seed=seed,
+                                expected_model=Path(config["model"]), expected_config=state["config"],
+                                expected_prompts=on.parent / "subsets/subset-selection_full.json",
+                                expected_max_new_tokens=state["max_new_tokens"],
+                                expected_prompt_format=state["prompt_format"], require_complete_hashes=True)
+        artifacts, discovery = exc.report["artifacts"], exc.report
+        resume_mode = "replay_on_policy_from_25"
+        print(f"[switch] seed={seed} original trigger optimizer unavailable; "
+              f"replay On-policy {START} -> {switch} from saved model AND optimizer; originals retained", flush=True)
     endpoints = {}
     for arm, inventory in inventories.items():
         directory = Path(controls[arm])
@@ -221,7 +242,8 @@ def make_plan(root, seed):
                            config=config, subset=directory.parent / "subsets" / f"subset-{directory.name}.json")
         endpoints[arm] = str(selected)
     for path in (checkpoint / "checkpoint_state.json", parent / "policy_train.json",
-                 parent / "adapter_model.safetensors", parent / "optimizer.pt",
+                 parent / "adapter_model.safetensors", parent / "optimizer.pt", parent / "adapter_config.json",
+                 parent / "grpo_stats.jsonl", on / "policy/policy_train.json",
                  Path(config["model"]) / "config.json"):
         bindings[str(path)] = base.digest(path)
     return {"schema": SCHEMA, "seed": seed, "pair_root": str(root), "start_step": START,
@@ -230,14 +252,24 @@ def make_plan(root, seed):
             "d_checks_through_switch": checks, "config": config, "contract": contract,
             "source_bindings": bindings, "controls": controls, "endpoints": endpoints,
             "checkpoint": str(checkpoint), "checkpoint_state": state,
-            "resume_artifacts": artifacts, "resume_discovery": discovery,
+            "resume_artifacts": artifacts, "resume_discovery": discovery, "resume_mode": resume_mode,
+            "replay_training_estimate": estimate_hours(on / "policy/grpo_stats.jsonl", switch-START,
+                                                        "On-policy prefix replay")
+                if resume_mode == "replay_on_policy_from_25" else None,
             "source_policy": str(on / "policy"),
             "sr_subset": str(Path(controls["cached"]).parent / "subsets/subset-selection_full.json"),
             "training_estimate": estimate_hours(Path(controls["cached"]) / "policy/grpo_stats.jsonl", horizon-switch),
             "comparison": "Common On-policy prefix 0-25; controls differ from step 25. "
-                          "Only switch trains from the D trigger. Final rewards share one saved step.",
+                          "Switch uses the saved trigger checkpoint or a separately measured On-policy replay "
+                          "from step 25 when its optimizer is missing. Final rewards share one saved step.",
             "execution_scope": "Retrospective replay of a prefix-only decision rule, with a genuinely "
-                               "trained switched suffix; not an untouched prospective experiment."}
+                               "trained switched suffix; not an untouched prospective experiment. "
+                               "A regenerated prefix uses the previously frozen trigger, not newly measured D; "
+                               "original/replayed checkpoint hash agreement is reported separately."}
+
+
+def needs_replay(plan):
+    return plan.get("resume_mode") == "replay_on_policy_from_25"
 
 
 def verify_plan(plan):
@@ -246,6 +278,8 @@ def verify_plan(plan):
             raise ValueError(f"frozen source changed: {filename}")
     checkpoint = Path(plan["checkpoint"])
     for key, filename in FILES.items():
+        if filename == "optimizer.pt" and needs_replay(plan):
+            continue  # Never substitute a later optimizer for the missing one.
         descriptor = plan.get("resume_artifacts", {}).get(filename, {"path": str(checkpoint / filename)})
         if artifact_digest(descriptor) != plan["checkpoint_state"][key]:
             raise ValueError(f"resume checkpoint changed: {descriptor['path']}")
@@ -275,7 +309,10 @@ def inspect_checkpoints(root, output, seeds):
     for seed in seeds:
         try:
             plan = make_plan(root, seed)
-            reports.append({"status": "ready", **plan["resume_discovery"]})
+            reports.append({"status": "replay_required" if needs_replay(plan) else "ready",
+                            **plan["resume_discovery"], "resume_mode": plan["resume_mode"],
+                            "replay_from_step": START if needs_replay(plan) else None,
+                            "replay_training_estimate": plan["replay_training_estimate"]})
         except ResumeArtifactsUnavailable as exc:
             reports.append({"status": "missing_resume_artifacts", **exc.report})
         except (OSError, ValueError, KeyError) as exc:
@@ -289,7 +326,7 @@ def inspect_checkpoints(root, output, seeds):
     temporary.write_text("SR-GC SWITCH RESUME CHECKPOINT SEARCH\n" + json.dumps(reports, indent=2) + "\n")
     temporary.replace(path)
     print(f"[checkpoints] report: {path}", flush=True)
-    return all(row["status"] == "ready" for row in reports)
+    return all(row["status"] in ("ready", "replay_required") for row in reports)
 
 
 def materialize_parent(directory, plan):
@@ -297,21 +334,40 @@ def materialize_parent(directory, plan):
     from train_policy_grpo import validate_policy_lineage, validate_policy_manifest
     target = directory / "parent"
     checkpoint, state = Path(plan["checkpoint"]), plan["checkpoint_state"]
-    source_policy = Path(plan.get("source_policy", checkpoint.parent))
+    replay = needs_replay(plan)
+    if replay and not training_complete(directory, plan, replay=True):
+        raise ValueError("On-policy replay must finish before SR continuation")
+    source_policy = directory / "replay/policy" if replay else Path(plan.get("source_policy", checkpoint.parent))
     final = validate_policy_manifest(source_policy, world_size=4, training_objective="grpo",
                                      require_complete_hashes=True)
     if final["completed_steps"] < plan["switch_step"] or final["start_step"] != START:
         raise ValueError("source policy manifest does not cover the switch checkpoint")
-    manifest = {**final, "completed_steps": plan["switch_step"],
-                **{key: state[key] for key in FILES},
-                "materialized_from_checkpoint": str(checkpoint),
-                "checkpoint_state_sha256": base.digest(checkpoint / "checkpoint_state.json")}
+    if replay:
+        manifest = {**final, "materialized_from_replay": str(source_policy)}
+        comparison = {key: {"original": state[key], "replayed": final[key],
+                            "matches": state[key] == final[key]} for key in FILES}
+        audit = {"seed": plan["seed"], "start_step": START, "switch_step": plan["switch_step"],
+                 "source_manifest_sha256": base.digest(source_policy / "policy_train.json"),
+                 "original_checkpoint": str(checkpoint), "replayed_policy": str(source_policy),
+                 "hash_comparison": comparison,
+                 "model_optimizer_byte_identical": all(comparison[key]["matches"]
+                     for key in ("adapter_sha256", "optimizer_sha256")),
+                 "decision_scope": "Previously frozen original-trajectory trigger; D not recomputed on replay."}
+        base.bind(directory / "replay-audit.json", audit)
+        descriptors = {name: {"path": str(source_policy / name)}
+                       for name in (*FILES.values(), "adapter_config.json")}
+    else:
+        manifest = {**final, "completed_steps": plan["switch_step"],
+                    **{key: state[key] for key in FILES},
+                    "materialized_from_checkpoint": str(checkpoint),
+                    "checkpoint_state_sha256": base.digest(checkpoint / "checkpoint_state.json")}
+        descriptors = plan.get("resume_artifacts", {})
     manifest.pop("training_budget", None)
     if not target.exists():
         temporary = directory / f".parent-{uuid.uuid4().hex}"
         temporary.mkdir(parents=True)
         for filename in (*FILES.values(), "adapter_config.json"):
-            descriptor = plan.get("resume_artifacts", {}).get(filename, {"path": str(checkpoint / filename)})
+            descriptor = descriptors.get(filename, {"path": str(checkpoint / filename)})
             if "through_step" in descriptor:
                 (temporary / filename).write_bytes(artifact_bytes(descriptor))
             else:
@@ -331,39 +387,48 @@ def materialize_parent(directory, plan):
     return target
 
 
-def train_command(directory, plan):
+def training_spec(directory, plan, replay=False):
+    if replay:
+        return (directory / "replay/policy", Path(plan["contract"]["source_run"]) / "policy_step_25",
+                START, plan["switch_step"], Path(plan["controls"]["on_policy"]).parent /
+                "subsets/subset-selection_full.json")
+    return directory / "policy", directory / "parent", plan["switch_step"], plan["end_step"], Path(plan["sr_subset"])
+
+
+def train_command(directory, plan, replay=False):
     import evidence_downstream as ed
-    config = {**plan["config"], "drift": plan["switch_step"]}
-    args = ed.train_args(config, directory, directory, "switch", plan["end_step"]-plan["switch_step"])
+    policy, parent, start, end, subset = training_spec(directory, plan, replay)
+    config = {**plan["config"], "drift": start}
+    args = ed.train_args(config, directory, directory, "switch", end-start)
     args[args.index(str(REPO / "src/train_policy_grpo.py"))] = str(REPO / "src/selection_switch_curve_train.py")
-    for flag, value in (("--prompts", plan["sr_subset"]), ("--output", directory / "policy"),
-                        ("--resume-adapter", directory / "parent"),
-                        ("--resume-optimizer", directory / "parent/optimizer.pt")):
+    for flag, value in (("--prompts", subset), ("--output", policy),
+                        ("--resume-adapter", parent), ("--resume-optimizer", parent / "optimizer.pt")):
         args[args.index(flag)+1] = str(value)
     return [sys.executable, *args]
 
 
-def training_complete(directory, plan):
-    path = directory / "policy/policy_train.json"
+def training_complete(directory, plan, replay=False):
+    policy, parent, start, end, subset = training_spec(directory, plan, replay)
+    path = policy / "policy_train.json"
     if not path.is_file():
         return False
     from train_policy_grpo import validate_policy_lineage
     try:
-        validate_policy_lineage(path.parent, target_steps=plan["end_step"], world_size=4,
-                                training_objective="grpo", expected_start_step=plan["switch_step"],
-                                expected_parent=directory / "parent", expected_seed=plan["seed"],
+        validate_policy_lineage(path.parent, target_steps=end, world_size=4,
+                                training_objective="grpo", expected_start_step=start,
+                                expected_parent=parent, expected_seed=plan["seed"],
                                 expected_model=Path(plan["config"]["model"]),
                                 expected_config=plan["checkpoint_state"]["config"],
                                 expected_prompt_format=plan["config"]["prompt_format"],
                                 expected_max_new_tokens=plan["config"]["max_new_tokens"],
-                                expected_prompts=Path(plan["sr_subset"]), require_complete_hashes=True)
+                                expected_prompts=subset, require_complete_hashes=True)
     except (OSError, ValueError, KeyError):
         return False  # The existing trainer repairs interrupted final publication.
     return True
 
 
-def preserve_early_interruption(directory, plan):
-    policy = directory / "policy"
+def preserve_early_interruption(directory, plan, replay=False):
+    policy, _, start, _, _ = training_spec(directory, plan, replay)
     if not policy.exists() or list(policy.glob("checkpoint-*")) or (policy / "policy_train.json").exists():
         return
     # Before the first durable checkpoint, preserve the interrupted attempt and
@@ -382,11 +447,11 @@ def preserve_early_interruption(directory, plan):
             except ValueError:
                 if line != complete[-1]:
                     raise
-        first_save = (plan["switch_step"] // 5 + 1) * 5
+        first_save = (start // 5 + 1) * 5
         if any(row.get("step", 0) > first_save for row in rows):
             raise ValueError("training passed a checkpoint boundary but no checkpoint remains")
-    preserved = directory / "interrupted-attempts" / uuid.uuid4().hex
-    preserved.parent.mkdir(exist_ok=True)
+    preserved = policy.parent / "interrupted-attempts" / uuid.uuid4().hex
+    preserved.parent.mkdir(parents=True, exist_ok=True)
     policy.rename(preserved)
     print(f"[switch] seed={plan['seed']} preserved interrupted pre-checkpoint attempt: {preserved}", flush=True)
 
@@ -401,14 +466,15 @@ def point_adapter(directory, plan, arm, step):
         return None
     if step == START:
         return Path(plan["contract"]["source_run"]) / "policy_step_25"
-    if arm == "switch" and step <= plan["switch_step"]:
+    if arm == "switch" and step <= plan["switch_step"] and not needs_replay(plan):
         arm = "on_policy"
     if arm == "switch":
-        path = directory / f"policy/checkpoint-{step:06d}"
+        policy, parent, start, _, subset = training_spec(directory, plan, step <= plan["switch_step"])
+        path = policy / f"checkpoint-{step:06d}"
         if not (path / "checkpoint_state.json").is_file():
             return False
-        checked_checkpoint(path, seed=plan["seed"], step=step, start=plan["switch_step"],
-                           subset=Path(plan["sr_subset"]), parent=directory / "parent", config=plan["config"])
+        checked_checkpoint(path, seed=plan["seed"], step=step, start=start,
+                           subset=subset, parent=parent, config=plan["config"])
         return path
     path = Path(plan["endpoints"][arm]) if step == plan["end_step"] else saved_checkpoints(
         Path(plan["controls"][arm]) / "policy").get(step)
@@ -423,7 +489,8 @@ def point_adapter(directory, plan, arm, step):
 
 
 def canonical_arm(plan, arm, step):
-    return "on_policy" if step <= START or (arm == "switch" and step <= plan["switch_step"]) else arm
+    return "on_policy" if step <= START or (
+        arm == "switch" and step <= plan["switch_step"] and not needs_replay(plan)) else arm
 
 
 def evaluation_binding(directory, plan, arm, step, shard):
@@ -552,7 +619,7 @@ def export_seed(directory, plan, reused):
             points[arm][step] = point
     for arm in ARMS:
         for step, point in points["on_policy"].items():
-            if step <= START or (arm == "switch" and step <= plan["switch_step"]):
+            if step <= START or (arm == "switch" and canonical_arm(plan, arm, step) == "on_policy"):
                 points[arm][step] = {**point, "shared_on_policy_prefix": True}
     complete = training_complete(directory, plan)
     curves = {arm: [{**p, "segment": "on_policy" if arm == "switch" and step <= plan["switch_step"]
@@ -578,6 +645,11 @@ def export_seed(directory, plan, reused):
                 if final["switch"] is not None and final["on_policy"] is not None else None,
             "d_checks_through_switch": plan["d_checks_through_switch"],
             "comparison": plan["comparison"], "execution_scope": plan["execution_scope"],
+            "resume_mode": plan.get("resume_mode", "exact_checkpoint"),
+            "replay_training_complete": training_complete(directory, plan, replay=True) if needs_replay(plan) else None,
+            "replay_audit": core.read(directory / "replay-audit.json")
+                if (directory / "replay-audit.json").exists() else None,
+            "replay_training_estimate": plan.get("replay_training_estimate"),
             "training_estimate": plan["training_estimate"], "new_work_cost": costs,
             "new_work_cost_complete": all(cost["complete"] for cost in costs)}
 
@@ -668,7 +740,7 @@ def attempt(directory, name, plan, commands, env, seconds, lock_fd):
     with inherited_task_lock(lock_fd):
         base.meter(location, f"s{plan['seed']}-{name}", plan["contract"]["scope"]["gpu_type"],
                    commands=commands, env=env, timeout=seconds,
-                   ledger="deployment" if name == "train" else "reporting")
+                   ledger="deployment" if name == "train" else "research" if name == "replay" else "reporting")
 
 
 def worker(root, output, seeds, devices, hours, idle_minutes):
@@ -692,7 +764,8 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
     finished_training = set()
     for _, plan in plans:
         print(f"[switch] seed={plan['seed']} switch={plan['switch_step']} final={plan['end_step']} "
-              f"new_updates={plan['end_step']-plan['switch_step']} ETA={plan['training_estimate']}", flush=True)
+              f"suffix_updates={plan['end_step']-plan['switch_step']} suffix_ETA={plan['training_estimate']} "
+              f"replay_ETA={plan.get('replay_training_estimate')}", flush=True)
     while time.monotonic() < deadline:
         worked = False
         # Two independent training jobs at most. Extra nodes immediately claim
@@ -711,6 +784,16 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
                 if training_complete(directory, plan):
                     continue
                 verify_plan(plan)
+                if needs_replay(plan) and not training_complete(directory, plan, replay=True):
+                    preserve_early_interruption(directory, plan, replay=True)
+                    print(f"[switch] seed={plan['seed']} recover On-policy {START} -> {plan['switch_step']} "
+                          "with saved optimizer; keeping EVERY full checkpoint", flush=True)
+                    attempt(directory, "replay", plan, [(train_command(directory, plan, replay=True), ",".join(devices))],
+                            pair.environment(plan["contract"]), max(1, deadline-time.monotonic()), lock_fd)
+                    if not training_complete(directory, plan, replay=True):
+                        raise ValueError("trainer exited without a validated On-policy replay")
+                    if time.monotonic() >= deadline:
+                        return False
                 materialize_parent(directory, plan)
                 preserve_early_interruption(directory, plan)
                 print(f"[switch] seed={plan['seed']} train SR suffix {plan['switch_step']} -> {plan['end_step']}", flush=True)
@@ -732,7 +815,7 @@ def worker(root, output, seeds, devices, hours, idle_minutes):
                 if measured_point(directory, plan, arm, step) is not None:
                     finished_jobs.add(job_key)
                     continue
-                if arm == "switch" and not (directory / f"policy/checkpoint-{step:06d}/checkpoint_state.json").is_file():
+                if arm == "switch" and point_adapter(directory, plan, arm, step) is False:
                     continue
                 target = directory / f"evaluations/{arm}/step-{step}"
                 with contextlib.ExitStack() as stack:

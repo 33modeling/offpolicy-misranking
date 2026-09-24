@@ -10,12 +10,17 @@ git pull origin master
 bash scripts/run_selector_pair_switch_rewards.sh
 ```
 
-Two nodes can train the two independent suffixes. Other nodes automatically
+Start with four allocated four-GPU nodes: two train the independent seed
+trajectories and two evaluate. Other nodes automatically
 claim checkpoint evaluations, including checkpoints published while the learners
 are still running. Training world size remains four for comparability; adding
 nodes does not change the optimizer, batch size, sampling or update sequence.
 Final reward evaluations take priority over intermediate curve evaluations.
 There is no new selector scoring, D measurement, regression or control training.
+If the old trigger optimizer is missing, the learner first replays only the
+required On-policy interval from the existing full step-25 parent, in a new
+directory. Seed 3 needs 100 replay updates (25 to 125); seed 4 needs 75 (25 to
+100). The SR suffix follows automatically. No manual stage change is needed.
 
 The launcher does not provision nodes. Launch it on each available allocation.
 If only one node is available it handles both seeds and evaluations sequentially.
@@ -51,12 +56,19 @@ bash scripts/run_selector_pair_switch_rewards.sh checkpoints
 
 An additional mounted backup location can be supplied through the optional
 `PAIR_CHECKPOINT_SEARCH_ROOTS` environment variable (colon-separated paths).
-If no matching optimizer exists in the searched locations, the script reports
-that limitation instead of silently changing the experiment.
+If only the trigger optimizer is missing, the script explicitly reports
+`replay_on_policy_from_25` and validates the saved step-25 model AND optimizer
+before admitting GPU work. It does not reset the optimizer, take a later-step
+optimizer, or overwrite the old On-policy branch. Missing/corrupt parent files
+remain an error, not permission to restart from zero.
+
+The ordinary `run_selector_pair.sh` does not regenerate deleted intermediate
+optimizers of already completed branches. Use the switch command above: it
+reuses that experiment's saved parent, subsets, controls and D measurements.
 
 `plan` is read-only and reports the stored-D trigger, full source checkpoint,
-common terminal step, and median/p90 suffix-training estimates from saved SR
-step timings. These are not end-to-end completion guarantees: evaluation,
+common terminal step, and separate median/p90 prefix-replay and suffix-training
+estimates from the corresponding saved step timings. These are not end-to-end completion guarantees: evaluation,
 allocation and interruptions are additional. Workers default to a 24-hour
 allocation window, retain progress on expiry, and exit after 120 minutes with
 no claimable work rather than wait forever. Reuse the same command to resume.
@@ -85,9 +97,18 @@ implementation computes and validates these rather than hard-coding them.
 All branches share the existing On-policy prefix from step 0 to 25. The controls
 then continue with Random, On-policy or SR. Thus the SR control is **SR from step
 25**, not SR-only from initialization. The new Switch curve shares the actual
-On-policy prefix until the trigger, then trains on the existing cached SR subset
-from the exact trigger checkpoint, including its optimizer state. Never splice
-the SR control's rewards onto this trajectory.
+On-policy prefix until the trigger when its exact optimizer exists, then trains
+on the existing cached SR subset. If that optimizer was deleted by an older
+trainer, the new curve instead uses the genuinely replayed On-policy prefix
+and its regenerated trigger model/optimizer. Never splice either the old
+On-policy rewards or SR control rewards onto the regenerated trajectory.
+
+`s<seed>/replay-audit.json` compares original/replayed model, optimizer and log
+hashes. Byte identity is not assumed: GPU replay can differ. A non-identical
+replay tests continuation at the previously frozen original-trajectory trigger;
+it is not evidence of a newly evaluated D controller on that replay. The result
+JSON carries this distinction and the audit. Replay training costs are recorded
+separately in the research ledger, not hidden in evaluation or counted as zero.
 
 The terminal step is the latest checkpoint saved by all three controls, selected
 from checkpoint availability, not observed reward. No target35 or fixed step100
@@ -102,8 +123,9 @@ not a claim that the rule was designed on an untouched prospective test set.
 
 ## Interruptions and Isolation
 
-Full model/optimizer checkpoints are retained every five updates in the new
-directory. The existing trainer resumes the latest validated checkpoint and
+Full model/optimizer checkpoints are retained every five updates, both under
+`s<seed>/replay/policy/` and `s<seed>/policy/`. Completing a stage does not delete
+them. The existing trainer resumes the latest validated checkpoint and
 repairs interrupted final publication. Work interrupted before the first durable
 checkpoint is moved to `interrupted-attempts/`, never deleted. Evaluation shards
 have independent completion hashes and restart only incomplete work.
@@ -113,3 +135,12 @@ inherit the task lock, so killing a controller does not admit another writer
 while its workers remain alive. Each attempt has a separate cost ledger; a
 previous interrupted ledger cannot block resumption or become a zero-cost run.
 Original Pair checkpoints, subsets, results and running jobs are not modified.
+
+## Local Verification
+
+Replay and exact-resume paths are exercised with fixture policies, including
+separate replay rewards, optimizer lineage, repeated invocation, mid-replay
+interruption and retained checkpoints. These checks are not a remote GPU run.
+The unrelated legacy migration suite `test_checkpoint_retention_runtime.py`
+has 11 historical code-fingerprint fixture failures, reproduced unchanged on
+the pre-fix commit `be42f0b`; this new runner does not use that migration path.

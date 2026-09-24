@@ -89,12 +89,23 @@ def test_plan_uses_full_optimizer_checkpoint_and_latest_common_step(study):
     assert switch.ensure_plan(root, output, 3) == plan
 
 
-def test_missing_optimizer_cannot_be_replaced_with_weights_only(study):
-    root, _, _ = study
+def test_missing_optimizer_plans_replay_from_full_parent_not_reset(study):
+    root, output, _ = study
     full = switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125"
     (full / "optimizer.pt").unlink()
-    with pytest.raises(ValueError, match="matching optimizer.pt not found"):
-        switch.make_plan(root, 3)
+    plan = switch.ensure_plan(root, output, 3)
+    assert switch.needs_replay(plan)
+    assert "optimizer.pt" not in plan["resume_artifacts"]
+    assert plan["replay_training_estimate"]["median_hours"] == pytest.approx(100*70/3600)
+    switch.verify_plan(plan)
+    command = switch.train_command(output / "s3", plan, replay=True)
+    assert command[command.index("--start-step")+1] == "25"
+    assert command[command.index("--target-steps")+1] == "125"
+    assert command[command.index("--resume-optimizer")+1] == str(
+        Path(plan["contract"]["source_run"]) / "policy_step_25/optimizer.pt")
+    assert command[command.index("--prompts")+1] == str(full.parent.parent.parent / "subsets/subset-selection_full.json")
+    with pytest.raises(ValueError, match="replay must finish"):
+        switch.materialize_parent(output / "s3", plan)
 
 
 def test_archived_adapter_finds_moved_full_checkpoint_and_resumes(study):
@@ -139,10 +150,10 @@ def test_wrong_seed_backup_is_not_accepted_even_if_optimizer_bytes_match(study):
     state = core.read(backup / "checkpoint_state.json")
     state["seed"] = 4
     core.atomic_json(backup / "checkpoint_state.json", state)
-    with pytest.raises(switch.ResumeArtifactsUnavailable) as failure:
-        switch.make_plan(root, 3)
-    assert "optimizer.pt" in failure.value.report["missing"]
-    assert any("seed" in row.get("fields", []) for row in failure.value.report["candidates"])
+    plan = switch.make_plan(root, 3)
+    assert switch.needs_replay(plan)
+    assert "optimizer.pt" in plan["resume_discovery"]["missing"]
+    assert any("seed" in row.get("fields", []) for row in plan["resume_discovery"]["candidates"])
 
 
 def test_inspection_writes_both_seeds_without_gpu_or_source_changes(study, monkeypatch):
@@ -247,6 +258,43 @@ def test_precheckpoint_interruption_is_preserved_not_deleted(study):
     assert not stats.parent.exists()
 
 
+def test_replay_interruption_retains_and_resumes_saved_optimizer(study):
+    root, output, config = study
+    (switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125/optimizer.pt").unlink()
+    plan = switch.ensure_plan(root, output, 3)
+    directory = output / "s3"
+    command = switch.train_command(directory, plan, replay=True)
+    args = parse(command[command.index("--model"):])
+    write_policy(args)
+    policy, parent, _, _, subset = switch.training_spec(directory, plan, replay=True)
+    cp = checkpoint(policy, 75, subset, parent, config)
+    before = {p: p.read_bytes() for p in cp.iterdir() if p.is_file()}
+    (policy / "policy_train.json").unlink()
+    (policy / "grpo_stats.jsonl").write_text('{"step": 76}\n{"step":')
+    switch.preserve_early_interruption(directory, plan, replay=True)
+    state = core.read(cp / "checkpoint_state.json")
+    contract = {key: value for key, value in state.items() if key not in (*switch.FILES, "completed_steps")}
+    assert _latest_checkpoint(policy, 125, contract) == (cp, 75)
+    assert switch.training_complete(directory, plan, replay=True) is False
+    assert switch.train_command(directory, plan, replay=True) == command
+    assert all(p.read_bytes() == raw for p, raw in before.items())
+
+
+def test_corrupt_trigger_optimizer_never_silently_replayed(study):
+    root, _, _ = study
+    (switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125/optimizer.pt").write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="optimizer hash mismatch"):
+        switch.make_plan(root, 3)
+
+
+def test_missing_full_step25_parent_fails_before_gpu_work(study):
+    root, _, _ = study
+    (switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125/optimizer.pt").unlink()
+    (root / "shared/policy_step_25/optimizer.pt").unlink()
+    with pytest.raises(ValueError, match="optimizer"):
+        switch.make_plan(root, 3)
+
+
 def test_completed_checkpoint_resume_uses_suffix_not_parent(study):
     root, output, config = study
     plan = switch.ensure_plan(root, output, 3)
@@ -292,8 +340,11 @@ def test_decision_stops_at_first_two_negatives_without_future_rewards(tmp_path, 
     assert step == expected and seen[-1] == expected
 
 
-def test_end_to_end_cpu_workflow_only_trains_suffix_and_reuses_shards(study, monkeypatch):
+@pytest.mark.parametrize("recover", [False, True])
+def test_end_to_end_cpu_workflow_only_trains_required_intervals(study, monkeypatch, recover):
     root, output, config = study
+    if recover:
+        shutil.rmtree(switch.source_arm(root, 3, "on_policy") / "policy/checkpoint-000125")
     before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     import rollout
     import selector_pair_gpu
@@ -308,13 +359,22 @@ def test_end_to_end_cpu_workflow_only_trains_suffix_and_reuses_shards(study, mon
     monkeypatch.setattr(rollout, "collect_rollouts", collect)
     def attempt(directory, name, plan, commands, env, seconds, lock_fd):
         assert seconds > 0
-        if name == "train":
+        if name in ("train", "replay"):
             train_calls.append(name)
             command = commands[0][0]
             assert str(root) not in command[command.index("--output")+1]
             args = parse(command[command.index("--model"):])
             write_policy(args)
-            checkpoint(directory / "policy", 150, Path(plan["sr_subset"]), directory / "parent", config)
+            policy, parent, start, end, subset = switch.training_spec(directory, plan, replay=name == "replay")
+            if name == "replay":
+                # A non-identical replay must be measured as its own prefix.
+                (policy / "adapter_model.safetensors").write_bytes(b"replayed model")
+                (policy / "optimizer.pt").write_bytes(b"replayed optimizer")
+                manifest = core.read(policy / "policy_train.json")
+                manifest.update({key: base.digest(policy / filename) for key, filename in switch.FILES.items()})
+                core.atomic_json(policy / "policy_train.json", manifest)
+            for step in range(start+25, end+1, 25):
+                checkpoint(policy, step, subset, parent, config)
         else:
             for command, device in commands:
                 switch.evaluate_shard(directory, command[command.index("--arm")+1],
@@ -324,14 +384,24 @@ def test_end_to_end_cpu_workflow_only_trains_suffix_and_reuses_shards(study, mon
     monkeypatch.setattr(switch, "plot_report", lambda *a: None)
     switch.worker(root, output, [3], list("0123"), 1, 1)
     count = len(rollout_calls)
-    assert count > 0 and train_calls == ["train"]
+    expected_jobs = ["replay", "train"] if recover else ["train"]
+    assert count > 0 and train_calls == expected_jobs
     switch.worker(root, output, [3], list("0123"), 1, 1)
-    assert len(rollout_calls) == count and train_calls == ["train"]
+    assert len(rollout_calls) == count and train_calls == expected_jobs
     data = switch.report(output, [3])
     assert data["complete"] and data["seeds"][0]["executed_switch"]
     assert data["seeds"][0]["switch_minus_on_policy"] == .5
     assert all(data["seeds"][0]["final_rewards"][arm] is not None for arm in switch.ARMS)
     assert all(p.read_bytes() == raw for p, raw in before.items())
+    if recover:
+        audit = data["seeds"][0]["replay_audit"]
+        assert audit["model_optimizer_byte_identical"] is False
+        prefix = [point for point in data["seeds"][0]["curves"]["switch"] if 25 < point["step"] <= 125]
+        assert [point["step"] for point in prefix] == [50, 75, 100, 125]
+        assert all(point["reward"] == .75 for point in prefix)
+        assert all(not point.get("shared_on_policy_prefix") for point in prefix)
+        assert (output / "s3/replay/policy/checkpoint-000050/optimizer.pt").exists()
+        assert (output / "s3/parent/optimizer.pt").read_bytes() == b"replayed optimizer"
     shard = output / "s3/evaluations/switch/step-150/shard-1.jsonl"
     shard.write_text(shard.read_text().replace('0.75', '0.5'))
     with pytest.raises(ValueError, match="hash mismatch"):
