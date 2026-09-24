@@ -125,7 +125,7 @@ class CheckpointAuditTests(unittest.TestCase):
     def test_standalone_script_contains_current_auditor(self):
         shell = SOURCE.with_name("diagnose_selector_pair_hashes.sh").read_text()
         embedded = shell.split("<<'PAIR_HASH_AUDIT_PYTHON'\n", 1)[1]
-        self.assertEqual(embedded, SOURCE.read_text() + "PAIR_HASH_AUDIT_PYTHON\n")
+        self.assertEqual(embedded.split("\nPAIR_HASH_AUDIT_PYTHON\n", 1)[0] + "\n", SOURCE.read_text())
 
     def test_downloaded_script_reports_without_changing_existing_files(self):
         # A downloaded standalone script runs outside its source repository.
@@ -143,6 +143,7 @@ class CheckpointAuditTests(unittest.TestCase):
         shutil.copyfile(SOURCE.with_name("diagnose_selector_pair_hashes.sh"), shell)
         env = {**os.environ, "PAIR_PYTHON": sys.executable, "OM_WORK": str(self.root / "absent work"),
                "PAIR_ROOT": str(self.root / "absent root")}
+        reports = []
         for corrupt in (False, True):
             with self.subTest(corrupt=corrupt):
                 if corrupt:
@@ -152,12 +153,31 @@ class CheckpointAuditTests(unittest.TestCase):
                     ["bash", str(shell), "--repo", str(runtime), "--directory", str(self.directory)],
                     cwd=self.root, env=env, capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, int(corrupt), result.stderr)
+                report_path = Path(result.stderr.splitlines()[0].removeprefix("[report] "))
+                self.addCleanup(report_path.unlink, missing_ok=True)
+                self.assertEqual(report_path.parent, Path("/tmp"))
+                self.assertEqual(report_path.suffix, ".txt")
+                self.assertEqual(report_path.read_text(), result.stdout)
+                self.assertNotIn(report_path, reports)
+                reports.append(report_path)
                 report = json.loads(result.stdout)
                 self.assertTrue(report["read_only"])
                 checkpoint = report["branches"][0]["checkpoints"][0]
                 self.assertEqual(checkpoint["contract_and_hashes_match"], not corrupt)
                 self.assertEqual(self.snapshot(), before)
                 self.assertFalse(list(runtime.rglob("__pycache__")))
+
+    def test_runtime_failure_is_saved_in_txt_and_keeps_exit_status(self):
+        shell = SOURCE.with_name("diagnose_selector_pair_hashes.sh")
+        env = {**os.environ, "PAIR_PYTHON": sys.executable}
+        result = subprocess.run(
+            ["bash", str(shell), "--repo", str(self.root / "absent runtime")],
+            cwd=self.root, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        report_path = Path(result.stderr.splitlines()[0].removeprefix("[report] "))
+        self.addCleanup(report_path.unlink, missing_ok=True)
+        self.assertIn("Cannot inspect runtime", report_path.read_text())
+        self.assertEqual(report_path.read_text(), result.stdout)
 
 
 if __name__ == "__main__":

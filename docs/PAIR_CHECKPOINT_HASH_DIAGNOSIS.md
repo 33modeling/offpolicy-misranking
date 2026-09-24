@@ -17,7 +17,10 @@ This single file embeds the diagnostic; it does not download dependencies or
 update the checkout. It selects `PAIR_PYTHON`, then the existing `VENV_DIR` or
 `$OM_WORK/.venv-cu126`, then `python3`. It respects `PAIR_ROOT` and `OM_WORK`.
 Use `--repo`, `--root`, or repeated `--directory` arguments to override paths.
-Only the report is printed to stdout. Exit 1 means diagnostic issues were found;
+The shell script prints the report and saves the same output, including errors,
+to a new `/tmp/pair-hash-diagnostic-XXXXXXXX.txt` file on each run. It displays
+the path and never overwrites a previous report or writes inside the experiment.
+Exit 1 means diagnostic issues were found;
 exit 2 means the runtime could not be inspected. Neither triggers repair.
 The embedded Python must remain identical to `selector_pair_checkpoint_audit.py`;
 the tests check this and exercise a downloaded copy with unchanged source files.
@@ -39,7 +42,7 @@ This default does not establish that these are the user's two failing branches.
 For a different branch, pass `--directory /absolute/path/to/selection_full`
 (the directory containing `policy/`), repeating the option as needed.
 
-The script writes its report only to stdout. It does not acquire or remove
+The Python entry point writes its report only to stdout. It does not acquire or remove
 locks, change metadata/hashes/results, select a replacement recovery checkpoint,
 stop a process, start training, or execute the recovery workflow. It imports
 the existing recovery helper only to construct the exact expected contract;
@@ -58,7 +61,8 @@ validation to get past this error.
 
 Validation: `python3 -B tests/test_selector_pair_checkpoint_audit.py`.
 
-All ten diagnostic and standalone-launcher tests pass. The earlier broader recovery check reported 54
+All eleven diagnostic and standalone-launcher tests pass, including TXT output
+for valid checkpoints, hash failures, and runtime import failures. The earlier broader recovery check reported 54
 passing tests and one existing fixture failure:
 `test_overrun_retries_immediately_after_original_hits_cap` writes an empty
 `decision.json`, then raises `KeyError: budget_gpu_seconds`. This also fails

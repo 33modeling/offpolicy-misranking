@@ -24,7 +24,8 @@ elif [[ -x "${VENV_DIR:-$PAIR_AUDIT_WORK/.venv-cu126}/bin/python" ]]; then
 else
     PAIR_AUDIT_PYTHON=python3
 fi
-exec "$PAIR_AUDIT_PYTHON" -B - --repo "$PAIR_AUDIT_REPO" --root "$PAIR_AUDIT_ROOT" "$@" <<'PAIR_HASH_AUDIT_PYTHON'
+pair_run_audit() {
+"$PAIR_AUDIT_PYTHON" -B - --repo "$PAIR_AUDIT_REPO" --root "$PAIR_AUDIT_ROOT" "$@" <<'PAIR_HASH_AUDIT_PYTHON'
 #!/usr/bin/env python3
 """Read-only diagnosis of Pair checkpoint contract/hash failures.
 
@@ -203,3 +204,18 @@ def main(argv=None):
 if __name__ == "__main__":
     raise SystemExit(main())
 PAIR_HASH_AUDIT_PYTHON
+}
+
+# Always create a new report outside the experiment; never overwrite a file.
+PAIR_AUDIT_REPORT="$(mktemp /tmp/pair-hash-diagnostic-XXXXXXXX.txt)"
+printf '[report] %s\n' "$PAIR_AUDIT_REPORT" >&2
+set +e
+pair_run_audit "$@" 2>&1 | tee -- "$PAIR_AUDIT_REPORT"
+PAIR_AUDIT_STATUS=("${PIPESTATUS[@]}")
+set -e
+if [[ "${PAIR_AUDIT_STATUS[1]}" -ne 0 ]]; then
+    printf '[report] TXT write failed: %s\n' "$PAIR_AUDIT_REPORT" >&2
+    exit "${PAIR_AUDIT_STATUS[1]}"
+fi
+printf '[report] saved: %s (diagnostic exit %s)\n' "$PAIR_AUDIT_REPORT" "${PAIR_AUDIT_STATUS[0]}" >&2
+exit "${PAIR_AUDIT_STATUS[0]}"
