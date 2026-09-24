@@ -1,7 +1,11 @@
 """The diagnostic explains failures without modifying any saved experiment."""
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -117,6 +121,43 @@ class CheckpointAuditTests(unittest.TestCase):
             audit.digest = original
         self.assertFalse(report["contract_and_hashes_match"])
         self.assertIn({"file": "optimizer.pt", "problem": "changed during read; inconclusive"}, report["issues"])
+
+    def test_standalone_script_contains_current_auditor(self):
+        shell = SOURCE.with_name("diagnose_selector_pair_hashes.sh").read_text()
+        embedded = shell.split("<<'PAIR_HASH_AUDIT_PYTHON'\n", 1)[1]
+        self.assertEqual(embedded, SOURCE.read_text() + "PAIR_HASH_AUDIT_PYTHON\n")
+
+    def test_downloaded_script_reports_without_changing_existing_files(self):
+        # A downloaded standalone script runs outside its source repository.
+        # The frozen runtime is read from the explicitly supplied checkout.
+        runtime = self.root / "existing runtime with spaces"
+        scripts = runtime / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "mbpp_budget_recovery.py").write_text(
+            "import os, sys\n"
+            "assert sys.dont_write_bytecode\n"
+            "assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
+            f"def checkpoint_contract(*args): return {self.expected!r}\n")
+        shutil.copyfile(self.runner, scripts / "selector_pair_budget_recovery.py")
+        shell = self.root / "downloaded audit.sh"
+        shutil.copyfile(SOURCE.with_name("diagnose_selector_pair_hashes.sh"), shell)
+        env = {**os.environ, "PAIR_PYTHON": sys.executable, "OM_WORK": str(self.root / "absent work"),
+               "PAIR_ROOT": str(self.root / "absent root")}
+        for corrupt in (False, True):
+            with self.subTest(corrupt=corrupt):
+                if corrupt:
+                    (self.policy / "optimizer.pt").write_bytes(b"damaged")
+                before = self.snapshot()
+                result = subprocess.run(
+                    ["bash", str(shell), "--repo", str(runtime), "--directory", str(self.directory)],
+                    cwd=self.root, env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, int(corrupt), result.stderr)
+                report = json.loads(result.stdout)
+                self.assertTrue(report["read_only"])
+                checkpoint = report["branches"][0]["checkpoints"][0]
+                self.assertEqual(checkpoint["contract_and_hashes_match"], not corrupt)
+                self.assertEqual(self.snapshot(), before)
+                self.assertFalse(list(runtime.rglob("__pycache__")))
 
 
 if __name__ == "__main__":

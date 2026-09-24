@@ -4,6 +4,26 @@
 not proof that a kernel lock is stuck. Its existing validator returns the same
 failure for a changed contract, missing file, empty artifact, or hash mismatch.
 
+## Standalone shell script
+
+Download `scripts/diagnose_selector_pair_hashes.sh` and run it from the existing
+worker checkout:
+
+```bash
+bash /path/to/diagnose_selector_pair_hashes.sh
+```
+
+This single file embeds the diagnostic; it does not download dependencies or
+update the checkout. It selects `PAIR_PYTHON`, then the existing `VENV_DIR` or
+`$OM_WORK/.venv-cu126`, then `python3`. It respects `PAIR_ROOT` and `OM_WORK`.
+Use `--repo`, `--root`, or repeated `--directory` arguments to override paths.
+Only the report is printed to stdout. Exit 1 means diagnostic issues were found;
+exit 2 means the runtime could not be inspected. Neither triggers repair.
+The embedded Python must remain identical to `selector_pair_checkpoint_audit.py`;
+the tests check this and exercise a downloaded copy with unchanged source files.
+
+## Python entry point
+
 The read-only `scripts/selector_pair_checkpoint_audit.py` reports these causes
 separately. Use the Python environment and runtime checkout of the failed worker:
 
@@ -38,7 +58,7 @@ validation to get past this error.
 
 Validation: `python3 -B tests/test_selector_pair_checkpoint_audit.py`.
 
-The eight new diagnostic tests pass. The broader recovery check reports 54
+All ten diagnostic and standalone-launcher tests pass. The earlier broader recovery check reported 54
 passing tests and one existing fixture failure:
 `test_overrun_retries_immediately_after_original_hits_cap` writes an empty
 `decision.json`, then raises `KeyError: budget_gpu_seconds`. This also fails
