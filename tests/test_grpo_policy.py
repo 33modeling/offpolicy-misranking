@@ -440,7 +440,7 @@ def test_latest_checkpoint_accepts_complete_target_and_ignores_partial(tmp_path:
     assert path.name == "checkpoint-000005"
 
 
-def test_checkpoint_publish_replaces_an_invalid_same_step_directory(tmp_path: Path) -> None:
+def test_checkpoint_publish_preserves_an_invalid_same_step_directory(tmp_path: Path) -> None:
     class Model:
         @staticmethod
         def save_pretrained(path: Path, *, safe_serialization: bool) -> None:
@@ -463,10 +463,11 @@ def test_checkpoint_publish_replaces_an_invalid_same_step_directory(tmp_path: Pa
     stale.mkdir()
     (stale / "checkpoint_state.json").write_text("{}\n")
 
-    _save_checkpoint(Model(), Optimizer(), tmp_path, 5, 0, contract)
+    with pytest.raises(ValueError, match="preserve and review"):
+        _save_checkpoint(Model(), Optimizer(), tmp_path, 5, 0, contract)
 
-    assert _checkpoint_step(stale, contract) == 5
-    assert (stale / "adapter_model.safetensors").read_bytes() == b"valid-adapter"
+    assert (stale / "checkpoint_state.json").read_text() == "{}\n"
+    assert not (stale / "adapter_model.safetensors").exists()
 
 
 def test_canonical_path_contains_no_supervised_drift() -> None:

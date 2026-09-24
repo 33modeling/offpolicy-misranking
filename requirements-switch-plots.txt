@@ -1,0 +1,2 @@
+# Optional, only for the exported reward PDF/PNG; never needed to train/evaluate.
+matplotlib>=3.6,<4
