@@ -37,3 +37,10 @@ remain unchanged; do not delete a plan or lock, regenerate hashes, or disable
 validation to get past this error.
 
 Validation: `python3 -B tests/test_selector_pair_checkpoint_audit.py`.
+
+The eight new diagnostic tests pass. The broader recovery check reports 54
+passing tests and one existing fixture failure:
+`test_overrun_retries_immediately_after_original_hits_cap` writes an empty
+`decision.json`, then raises `KeyError: budget_gpu_seconds`. This also fails
+when run alone without importing the new diagnostic. Existing recovery code
+and fixtures were not changed; the complete recovery suite is not passing.
