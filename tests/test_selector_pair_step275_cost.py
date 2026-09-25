@@ -14,6 +14,7 @@ import selection_gate as core
 import selection_gate_gpu as base
 import selector_pair_step275_cost as sc
 from test_selector_pair import allocation
+from test_selector_pair_online_check_cost import add_check
 
 SEED, TRIGGER = 3, 125
 
@@ -112,6 +113,24 @@ def test_missing_selection_is_unknown_not_free_in_log_export(tmp_path, monkeypat
     table = list(csv.DictReader(io.StringIO(sc.render(data).split("\n\n")[1])))
     on = next(r for r in table if r["arm"] == "on_policy")
     assert on["selection_h"] == on["selection_training_subtotal_h"] == "unknown"
+
+
+def test_single_reference_column_uses_a_stage_receipts_not_ab_total(tmp_path, monkeypatch):
+    root, switch, evaluation = layout(tmp_path)
+    monkeypatch.setattr(sc.sw, "measured_point", lambda *args: {"step": 275, "reward": .33})
+    for step in range(25, TRIGGER + 1, 25):
+        directory = (root / "sr-gc/s3-t25" if step == 25 else
+                     root / f"sr-gc-repeat/every-25/s3-t25/step-{step}")
+        add_check(directory, step=step, b_open=step == 100)
+    data = sc.build(root, switch, evaluation, [SEED])
+    row = next(r for r in data["rows"] if r["arm"] == "switch")
+    assert row["online_check_gpu_seconds"] == 800 and row["online_check"]["complete"]
+    assert row["diagnosis_unknown"]  # An open B phase does not erase A-only timing.
+    assert row["trigger"] == TRIGGER and row["reward"] == .33
+    table = list(csv.DictReader(io.StringIO(sc.render(data).split("\n\n")[1])))
+    assert next(r for r in table if r["arm"] == "switch")["single_reference_check_h"] == "0.22"
+    assert all(r["single_reference_check_h"] == "0.00" for r in table if r["arm"] != "switch")
+    assert "SINGLE_REFERENCE_A seed=3 through=125 complete=True" in sc.render(data)
 
 
 def test_switch_is_charged_the_same_sr_preparation_as_the_sr_control(tmp_path, monkeypatch):

@@ -37,6 +37,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import selector_pair_srgc_repeat as repeat
 import selector_pair_switch_rewards as sw
 from selector_pair_cache_cost import cache_creation_cost
+from selector_pair_online_check_cost import single_reference_checks
 
 import selection_gate as core
 import selection_gate_gpu as base
@@ -124,8 +125,8 @@ def diagnosis_cost(root, seed, trigger):
     unknown = [c["step"] for c in checks if not c["complete"]]
     return {"checks": checks, "known_gpu_seconds": known, "unknown_steps": unknown,
             "reused_ranking_gpu_seconds": initial["reused_ranking_gpu_seconds"],
-            "scope": "experimental A/B references (two draws); a one-reference deployment cost was not measured "
-                     "and must not be taken as half of this"}
+            "scope": "experimental A/B references (two draws); reference-A stage costs are extracted "
+                     "separately, never by halving this total"}
 
 
 def switch_cost(switch_root, plan, on_control):
@@ -191,6 +192,7 @@ def build(root, switch_root, eval_root, seeds):
         controls = {arm: control_cost(Path(plan["controls"][arm]), STEP) for arm in ("random", "on_policy", "cached")}
         cache = cache_creation_cost(plan["contract"])
         diagnosis = diagnosis_cost(root, seed, trigger)
+        online_check = single_reference_checks(root, seed, trigger)
         switch = switch_cost(switch_root, plan, controls["on_policy"])
         for arm in ARMS:
             cost = switch if arm == "switch" else controls[arm]
@@ -206,12 +208,17 @@ def build(root, switch_root, eval_root, seeds):
                          "sr_preparation_gpu_seconds": (controls["cached"]["allocation_scoring_gpu_seconds"]
                                                         if arm in ("cached", "switch") else 0.),
                          "repeated_selection_gpu_seconds": None if arm in ("on_policy", "switch") else 0.,
+                         "online_check_gpu_seconds": online_check["gpu_seconds"] if arm == "switch" else 0.,
+                         "online_check": online_check if arm == "switch" else None,
                          "detail": cost, "diagnosis": diagnosis if arm == "switch" else None})
     return {"schema": SCHEMA, "step": STEP, "start": START, "rows": rows,
             "scope": "GPU-seconds after the shared step-25 state through step 275. update-timer = trainer update "
                      "seconds x 4 GPUs (startup, checkpointing and evaluation excluded); allocation = checkpoint-linked "
                      "allocated GPU-seconds from the branch ledgers where a receipt exists. Diagnosis = experimental "
                      "two-reference SR-GC measurements through the trigger, not an operating charge. "
+                     "Single-reference check cost uses only separately metered validation-a and candidate-a "
+                     "stages through the recorded Switch trigger, including closed retries; B and joint "
+                     "A/B CPU aggregation are excluded. This accounting does not change the recorded switch rule. "
                      "The existing runs rank once at the start; On-policy and Switch reuse that initial ranking. "
                      "Selection includes scoring rollouts and gradients, not isolated gradient-kernel time. "
                      "There is no repeated full-pool ranking cost in these logs. Rewards are fractions at step 275; "
@@ -226,6 +233,7 @@ def fmt_h(seconds):
 def render(data):
     out = io.StringIO()
     cache_notes = []
+    check_notes = []
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow(["seed", "arm", "trigger", "reward_275_percent", "cache_creation_h", "sr_preparation_h", "selection_h", "training_h",
                      "selection_training_subtotal_h", "single_reference_check_h", "ab_validation_h",
@@ -233,6 +241,14 @@ def render(data):
     for seed in sorted({r["seed"] for r in data["rows"]}):
         rows = {r["arm"]: r for r in data["rows"] if r["seed"] == seed}
         on = rows["on_policy"]
+        check = rows["switch"]["online_check"]
+        check_notes.append(f"SINGLE_REFERENCE_A seed={seed} through={check['through_step']} "
+                           f"complete={check['complete']} gpu_h={fmt_h(check['gpu_seconds'])} "
+                           f"known_gpu_h={fmt_h(check['known_gpu_seconds'])} missing_steps={check['unknown_steps']}")
+        for point in check["checks"]:
+            if point["included_before_switch"]:
+                check_notes.append(f"  step={point['step']} gpu_h={fmt_h(point['gpu_seconds'])} "
+                                   f"issues={'; '.join(point['issues']) or 'none'}")
         cache = rows["cached"].get("cache_creation") or {}
         cache_notes.append(f"CACHE_CREATION seed={seed} status={cache.get('status', 'unknown')} "
                            f"gpu_h={fmt_h(cache.get('gpu_seconds'))} "
@@ -255,7 +271,7 @@ def render(data):
                              fmt_h(r.get("initial_cache_gpu_seconds")),
                              "unknown" if preparation is None else f"{preparation / 3600:.9f}",
                              "unknown" if selection is None else f"{selection / 3600:.6f}",
-                             fmt_h(timer), fmt_h(subtotal), "unknown" if arm == "switch" else "0.00",
+                             fmt_h(timer), fmt_h(subtotal), fmt_h(r["online_check_gpu_seconds"]),
                              diag_text, fmt_h(alloc), delta])
     return (f"LOGGED GPU TIME AND REWARD AT COMMON STEP {STEP} (after shared step {START})\n"
             + data["scope"] + "\n\n" + out.getvalue()
@@ -263,10 +279,12 @@ def render(data):
             + "The same SR subset preparation is charged once to SR and Switch, as a reused input cost.\n"
             + "Cache creation is separate: recovered from a hash-matched original stage log when available, "
               "otherwise unknown. It is not included in the recorded subtotal.\n"
-            + "Switch single-reference check time is unknown, not zero or half of A/B validation.\n"
+            + "Single-reference check = validation-a + candidate-a allocated GPU time only, "
+              "through the recorded transition. B and joint A/B CPU aggregation are excluded; "
+              "missing A receipts are listed, never replaced by half of the A/B total.\n"
             + "A/B validation and allocation are separate views, not added to the subtotal.\n"
             + "These logs cannot establish the cost of repeated gradient-based reselection.\n"
-            + "\n" + "\n".join(cache_notes) + "\n")
+            + "\n" + "\n".join(cache_notes) + "\n\n" + "\n".join(check_notes) + "\n")
 
 
 def main():
