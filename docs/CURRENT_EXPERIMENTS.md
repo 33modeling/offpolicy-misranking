@@ -27,3 +27,25 @@ bash scripts/run_selector_pair_switch_rewards.sh results
 Exports: `~/selector-pair-switch-status.txt` and
 `~/selector-pair-switch-results.txt`. Phase wall time and GPU-hours are separate;
 their sums across workers are not the concurrent job's elapsed completion time.
+
+## Pair Two-Final Resume (2026-09-25)
+
+The remaining branches identified by the user are On-policy `s1/t50`
+(`selection_reduced`) and Random `s4/t100` (`random_full`). The copied
+`~/hash.txt` diagnosis pins missing checkpoints 355 and 155 and reports a
+recovery-runner hash mismatch; newer saved final policies were inventoried at
+457 and 256. These are copied observations, not live GPU status.
+
+`bash scripts/run_selector_pair.sh` now automatically resumes their final and
+curve evaluations when the other 40 sealed results are present. It validates
+the current final policy, optimizer, source inputs and lineage, without
+rebinding the obsolete recovery plan or training again. A busy source/output
+lease is respected. Failed evaluations resume only missing shards.
+
+The original results, checkpoint files and cost ledgers are unchanged. New
+outputs use `runs/selector-pair-final-eval-v1/seed-{1,4}` by default
+(`PAIR_FINAL_EVAL_ROOT` overrides it). The existing `status` command shows
+running and completed evaluations, explicitly excluding these over-budget
+results from matched-budget paired comparisons. Completion of GPU evaluation
+must be confirmed on the allocated node; local fixture tests are not evidence
+that a remote job restarted. No web publication is part of this change.

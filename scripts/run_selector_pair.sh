@@ -66,7 +66,21 @@ pair_cpu_step() {
     sleep 15
   done
 }
-if [ "$MODE" = run ] || [ "$MODE" = develop ]; then
+PAIR_RESUME_TWO=0
+if [ "$MODE" = run ]; then
+  PAIR_PROBE_RC=0
+  CUDA_VISIBLE_DEVICES="" "$PY" scripts/selector_pair_resume_two.py probe --root "$PAIR_ROOT" || PAIR_PROBE_RC=$?
+  case "$PAIR_PROBE_RC" in
+    0) PAIR_RESUME_TWO=1 ;;
+    3)
+      # Ordinary prepared runs retain their reviewed launcher/trainer hashes.
+      exec "$PY" scripts/selector_pair_resume_two.py frozen-run --root "$PAIR_ROOT" ;;
+    *) exit "$PAIR_PROBE_RC" ;;
+  esac
+fi
+if [ "$PAIR_RESUME_TWO" -eq 1 ]; then
+  echo '[pair-resume] s1/t50 On-policy + s4/t100 Random: evaluate current saved finals; preserve the other 40 branches'
+elif [ "$MODE" = run ] || [ "$MODE" = develop ]; then
   # No arguments needed: create the default setup and validate real inputs,
   # or resume the existing frozen request before admitting any GPU work.
   pair_cpu_step ensure-prepared
@@ -76,6 +90,11 @@ fi
 export OM_WORK="$WORK" OUT_ROOT="$PAIR_ROOT"
 source scripts/_e5_node.sh
 export E5_FORCE=0
+if [ "$PAIR_RESUME_TWO" -eq 1 ]; then
+  # This evaluation path must not repair or terminate source workers.
+  e5_recover_pair_gpu() { return 0; }
+  e5_cleanup_lock_helpers() { return 0; }
+fi
 e5_acquire_node
 if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
   mapfile -t PAIR_GPUS < <(timeout 20 nvidia-smi --query-gpu=index --format=csv,noheader)
@@ -92,5 +111,9 @@ PAIR_VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$WORK/runtim
 export PYTHONPATH="$PAIR_VERIFY_PATH:$PYTHONPATH" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
 source scripts/_selection_worker.sh
 PAIR_WORKER_RC=0
-selection_run_worker "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" || PAIR_WORKER_RC=$?
+if [ "$PAIR_RESUME_TWO" -eq 1 ]; then
+  selection_run_worker "$PY" scripts/selector_pair_resume_two.py run --root "$PAIR_ROOT" || PAIR_WORKER_RC=$?
+else
+  selection_run_worker "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" || PAIR_WORKER_RC=$?
+fi
 exit "$PAIR_WORKER_RC"

@@ -35,7 +35,10 @@ PRE_BUDGET_RECOVERY_FILES = ('scripts/queue_selector_pair_gpu.py',
 PRE_SRGC_COST_RECOVERY_COMMITS = ('91c02dda3e1d111d5b8f62ca39d6ff18d8e10d89',
                                  '6c5e02f70c87b6a5b0253339063881e24012f89b')
 PRE_SRGC_COST_RECOVERY_FILES = (*PRE_BUDGET_RECOVERY_FILES, 'scripts/selector_pair_budget_recovery.py')
-OPERATIONS_FILES = (*PRE_SRGC_COST_RECOVERY_FILES, 'scripts/selector_pair_srgc_cost_recovery.py')
+PRE_FINAL_EVALUATION_COMMIT = 'c9399738bcad4fbb8e86440898f15fa41c2aa302'
+PRE_FINAL_EVALUATION_FILES = (*PRE_SRGC_COST_RECOVERY_FILES, 'scripts/selector_pair_srgc_cost_recovery.py')
+OPERATIONS_FILES = (*PRE_FINAL_EVALUATION_FILES, 'scripts/_selection_worker.sh',
+                    'scripts/selector_pair_resume_two.py', 'scripts/selector_pair_finish_saved.py')
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_FILES = 20000
 MANIFEST = '.pair-runtime.json'
@@ -48,6 +51,8 @@ def operations_files(commit):
         return PRE_BUDGET_RECOVERY_FILES
     if commit in PRE_SRGC_COST_RECOVERY_COMMITS:
         return PRE_SRGC_COST_RECOVERY_FILES
+    if commit == PRE_FINAL_EVALUATION_COMMIT:
+        return PRE_FINAL_EVALUATION_FILES
     return OPERATIONS_FILES
 
 

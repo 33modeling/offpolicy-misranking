@@ -17,6 +17,7 @@ import _status_operations as operations
 import selection_gate as core
 import selector_pair as pair
 import selector_pair_gpu as gpu
+import selector_pair_resume_two as resume_two
 
 LABELS = {"on_policy": "On-policy", "cached": "Cached", "adaptive": "Adaptive", "random": "Random"}
 # Owner/phase fields a branch row takes from its active meter, so the branch
@@ -121,7 +122,7 @@ def progress_records(root):
                    for path, value in found.items()), key=lambda row: row[0], reverse=True)
 
 
-def observe_branch(root, seed, step, name, branch, *, ready, observations):
+def observe_branch(root, seed, step, name, branch, *, ready, observations, now=None):
     role = "development" if seed in pair.DEV_SEEDS else "test"
     task = dict(seed=seed, step=step, name=name, role=role, status="READY" if ready else "WAIT",
                 reason="" if ready else "준비·테스트 결정 고정 대기", directory="")
@@ -183,6 +184,23 @@ def observe_branch(root, seed, step, name, branch, *, ready, observations):
             task.update(status='RUN', reason='')
     elif relevant and task["status"] == "READY":
         task.update(status="WAIT", reason="실행 신호 끊김; 확인 필요")
+    if branch == "on_policy" and resume_two.TARGETS.get(seed) == (step, arm) and not result:
+        target = resume_two.output_root(root) / f"seed-{seed}"
+        try:
+            if resume_two.completed(root, seed):
+                task.update(status="DONE", training_published=True, canonical_complete=False,
+                            saved_final_evaluation=True,
+                            reason="추가 최종·곡선 평가 완료; 원래 예산 초과, 쌍 비교 제외")
+            else:
+                progress = finished_meter(target, read(target / "progress.json"))
+                observed_now = time.time() if now is None else now
+                if (progress.get("state") == "running" and
+                        (-5 <= observed_now - display.switch_status.number(progress.get("updated")) < 60
+                         or display.switch_status.meter_lease_held(target))):
+                    task.update(status="RUN", reason="저장된 최종 정책 평가 재개 중",
+                                **{key: progress.get(key) for key in OWNER_FIELDS})
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            task.update(status="WAIT", reason="추가 평가 확인 필요: " + str(exc))
     return task
 
 
@@ -456,7 +474,7 @@ def snapshot(root, *, now=None):
                 task = observe_branch(root, seed, step, name, branch,
                                       ready=prepared and (development or bool(choices)
                                                           or fixed_ready and name != 'adaptive'),
-                                      observations=observations)
+                                      observations=observations, now=now)
                 if not prepared or (not development and error):
                     task.update(status="RUN" if task["status"] == "RUN" else "WAIT",
                                 reason=error or "실험 설정 확인 불가; 완료 여부 미확인")
@@ -492,6 +510,7 @@ def dashboard_data(data):
     tasks += data["activity"]
     endpoint_count = sum(bool(task.get('training_published')) for task in data['tasks'])
     curve_count = sum(task['status'] == 'DONE' for task in data['tasks'])
+    supplemental_count = sum(bool(task.get('saved_final_evaluation')) for task in data['tasks'])
     root = Path(data["root"])
     branch_root = root / "branches/on_policy"
     protocol = read(branch_root / "switch.json")
@@ -525,6 +544,8 @@ def dashboard_data(data):
                  details=[f"개발 18개 / 검증 24개 | 목표 보상: {data['target_reward']}",
                           "42개는 분기 수: 개발 9상태 x 2분기 + 검증 6상태 x 4분기",
                           f"최종 평가 저장 {endpoint_count}/42 | 결과·곡선 저장 {curve_count}/42",
+                          *([f"추가 평가 완료 {supplemental_count}개 포함; 원래 예산 초과 결과는 쌍 비교에서 제외"]
+                            if supplemental_count else []),
                           "상태별 쌍 비교 검증은 report에서 별도 수행합니다.",
                           "고정 대조군 병렬 실행 승인: " + ("READY" if data.get("parallel_controls_ready") else "WAIT"),
                           "테스트 결정 고정: " + ("DONE" if data["test_decisions_frozen"] else data.get("adaptive_state", "WAIT")),

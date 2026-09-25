@@ -269,7 +269,7 @@ def test_adapter_preserves_runtime_error_diagnostics_and_traceback(monkeypatch, 
 @pytest.mark.parametrize("absolute", [False, True])
 def test_worker_helper_routes_exact_pair_argv_and_preserves_tag(tmp_path, mode, absolute):
     python = tmp_path / "python-probe"
-    python.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+    python.write_text('#!/usr/bin/env bash\n[[ "$2" != probe ]] || exit 3\nprintf "%s\\n" "$@"\n')
     python.chmod(0o755)
     source = "src/selector_pair_gpu.py"
     if absolute:

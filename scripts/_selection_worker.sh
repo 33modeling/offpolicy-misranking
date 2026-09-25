@@ -22,12 +22,21 @@ selection_run_worker() {
     case "$3" in
       run|develop|test|freeze) worker_argv[1]="$worker_repo/scripts/queue_selector_pair_gpu.py" ;;
     esac
+    if [ "$3" = run ] && [ -f "$worker_repo/scripts/selector_pair_resume_two.py" ]; then
+      local pair_probe_rc=0
+      CUDA_VISIBLE_DEVICES="" "$1" "$worker_repo/scripts/selector_pair_resume_two.py" probe --root "$5" || pair_probe_rc=$?
+      case "$pair_probe_rc" in
+        0) worker_argv[1]="$worker_repo/scripts/selector_pair_resume_two.py" ;;
+        3) ;;
+        *) return "$pair_probe_rc" ;;
+      esac
+    fi
   fi
   # Inspect the actual worker before inherited dataset settings: Pair can use
   # MBPP data without being the MBPP switch experiment.
   for argument in "${worker_argv[@]}"; do
     case "$argument" in
-      */selector_pair_gpu.py|*/queue_selector_pair_gpu.py) tag=pair; break ;;
+      */selector_pair_gpu.py|*/queue_selector_pair_gpu.py|*/selector_pair_resume_two.py) tag=pair; break ;;
       */queue_rloo.py|*/rloo_experiment.py) tag=rloo; break ;;
     esac
   done

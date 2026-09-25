@@ -101,7 +101,7 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
                  'scripts/_e5_node.sh', 'scripts/_pair_gpu_cleanup.py',
                  'scripts/selector_pair_diagnostic.py',
                  'src/selector_pair_gpu.py', 'src/selection_switch_gpu.py',
-                 'scripts/run_selector_pair.sh'):
+                 'scripts/selector_pair_resume_two.py', 'scripts/selector_pair_finish_saved.py'):
         assert (target / name).read_bytes() == (source / name).read_bytes(), name
     # The live scorer adds only diagnostic log context; the pinned scorer's
     # measurement functions must otherwise remain identical.
@@ -125,6 +125,9 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
     assert deploy.stage_runtime(checkout) == target
     assert saved == {p: (p.stat().st_mtime_ns, p.stat().st_ino) for p in target.rglob('*')}
     expected = deploy.pinned_files(source, commit=deploy.PINNED_COMMIT)
+    # The checkout launcher gains a two-final dispatch; deployed science keeps
+    # its exact old launcher hash and dispatches through _selection_worker.sh.
+    assert (target / 'scripts/run_selector_pair.sh').read_bytes() == expected['scripts/run_selector_pair.sh'][0]
     for name, (content, _) in expected.items():
         if name not in deploy.OPERATIONS_FILES:
             assert (target / name).read_bytes() == content, name
