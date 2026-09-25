@@ -3,6 +3,8 @@ import copy
 import csv
 import io
 import json
+import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -347,3 +349,28 @@ def test_launcher_default_is_plan_and_never_recovers_old_pair():
     assert "E5_FORCE=0" in shell
     assert "OM_NODE_LOCK_HELD=1" in shell
     assert 'exec "$PY"' not in shell
+
+
+@pytest.mark.parametrize("seed", ["3", "4"])
+@pytest.mark.parametrize("mode", ["plan", "status", "results"])
+def test_seed_launcher_uses_separate_root_and_seed(tmp_path, seed, mode):
+    env = {**os.environ, "OM_WORK": str(tmp_path), "PAIR_PYTHON": "/bin/echo",
+           "PAIR_COST_MEASURE_SEED": seed, "PAIR_COST_MEASURE_ROOT": ""}
+    result = subprocess.run(["bash", str(measure.REPO / "scripts/run_selector_pair_cost_measure.sh"), mode],
+                            env=env, text=True, capture_output=True, check=True)
+    assert f"--output {tmp_path}/runs/selector-pair-cost-measure-s{seed}-v1" in result.stdout
+    assert f"--seed {seed}" in result.stdout
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("seed,args", [("2", []), ("3", ["--seed", "4"]), ("3", ["--seed=4"])])
+def test_seed_launcher_rejects_conflicts_before_node_access(seed, args):
+    result = subprocess.run(["bash", str(measure.REPO / "scripts/run_selector_pair_cost_measure.sh"),
+                             "run", *args], env={**os.environ, "PAIR_COST_MEASURE_SEED": seed},
+                            text=True, capture_output=True, check=False)
+    assert result.returncode == 2 and "[abort]" in result.stdout
+
+
+@pytest.mark.parametrize("seeds,suffix", [([3], "-s3"), ([4], "-s4"), ([3, 4], "")])
+def test_seed_result_exports_do_not_overwrite_each_other(seeds, suffix):
+    assert measure.default_report_path({"seeds": seeds}).name == f"selector-pair-cost-measure{suffix}-results.txt"

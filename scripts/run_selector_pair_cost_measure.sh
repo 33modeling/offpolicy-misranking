@@ -6,7 +6,20 @@ MODE=${1:-plan}
 [ "$#" -eq 0 ] || shift
 export OM_WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 PAIR_ROOT=${PAIR_ROOT:-$OM_WORK/runs/selector-pair-v1}
-OUTPUT=${PAIR_COST_MEASURE_ROOT:-$OM_WORK/runs/selector-pair-cost-measure-v1}
+SEED=${PAIR_COST_MEASURE_SEED:-}
+case "$SEED" in
+  ""|3|4) ;;
+  *) echo '[abort] PAIR_COST_MEASURE_SEED must be 3 or 4'; exit 2 ;;
+esac
+if [ -n "$SEED" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      --seed|--seed=*) echo '[abort] use PAIR_COST_MEASURE_SEED or --seed, not both'; exit 2 ;;
+    esac
+  done
+  set -- --seed "$SEED" "$@"
+fi
+OUTPUT=${PAIR_COST_MEASURE_ROOT:-$OM_WORK/runs/selector-pair-cost-measure${SEED:+-s$SEED}-v1}
 PY=${PAIR_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
 [ -x "$PY" ] || PY=python3
 export PYTHONPATH="$PWD/src:$PWD/scripts${PYTHONPATH:+:$PYTHONPATH}"

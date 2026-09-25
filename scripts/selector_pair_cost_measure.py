@@ -403,7 +403,7 @@ def units(plan):
     for replica in range(1, plan["replicates"] + 1):
         for source in plan["sources"]:
             # Rotate execution order; report order never asserts a cost ordering.
-            offset = (replica - 1 + source["seed"] - plan["seeds"][0]) % len(ARMS)
+            offset = (replica - 1 + source["seed"] - 3) % len(ARMS)
             for arm in ARMS[offset:] + ARMS[:offset]:
                 yield Path(plan["output"]) / f"s{source['seed']}-r{replica}-{arm}", source, replica, arm
 
@@ -476,6 +476,11 @@ def render_csv(data):
     return out.getvalue()
 
 
+def default_report_path(plan):
+    suffix = f"-s{plan['seeds'][0]}" if len(plan["seeds"]) == 1 else ""
+    return Path.home() / f"selector-pair-cost-measure{suffix}-results.txt"
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("mode", choices=("plan", "run", "status", "results"))
@@ -488,7 +493,7 @@ def main():
                    help="gradient reranking cadence for On-policy and pre-switch Switch (default: 25)")
     p.add_argument("--replicates", type=int, default=1)
     p.add_argument("--max-gpu-hours", type=float, default=160., help="per-arm safety cap (default: 160 GPU-hours)")
-    p.add_argument("--out", type=Path, help="results TXT (defaults to ~/selector-pair-cost-measure-results.txt)")
+    p.add_argument("--out", type=Path, help="results TXT (seed-specific filename in home for single-seed runs)")
     args = p.parse_args()
     args.root, args.output = args.root.resolve(), args.output.resolve()
     separated(args.output, [args.root])
@@ -496,10 +501,12 @@ def main():
         plan = core.read(args.output / "plan.json")
         if plan["output"] != str(args.output) or plan["root"] != str(args.root):
             raise ValueError("output plan roots differ")
+        if args.seed and sorted(set(args.seed)) != plan["seeds"]:
+            raise ValueError("requested seed differs from output plan")
         data = report(plan)
         print(SCOPE + "\n" + render_csv(data))
         if args.mode == "results":
-            target = args.out or Path.home() / "selector-pair-cost-measure-results.txt"
+            target = args.out or default_report_path(plan)
             target = target.resolve()
             sources = [args.root, *[Path(s["parent"]).parent for s in plan["sources"]],
                        *[Path(s["contract"]["config"]["model"]) for s in plan["sources"]]]

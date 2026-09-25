@@ -12,7 +12,31 @@ All outputs go to a new sibling root. Existing Pair jobs and files are read-only
 
 ## Commands
 
-From the experiment repository on an idle four-GPU allocation:
+Run seeds on two separate nodes, each with four matching GPUs. Within each
+seed, the four methods run sequentially on that node's same four GPUs:
+
+```bash
+# Node 1: seed 3
+PAIR_COST_MEASURE_SEED=3 bash scripts/run_selector_pair_cost_measure.sh run
+
+# Node 2: seed 4
+PAIR_COST_MEASURE_SEED=4 bash scripts/run_selector_pair_cost_measure.sh run
+
+# Inspect/export independently (replace 3 with 4 for the second node).
+PAIR_COST_MEASURE_SEED=3 bash scripts/run_selector_pair_cost_measure.sh status
+PAIR_COST_MEASURE_SEED=3 bash scripts/run_selector_pair_cost_measure.sh results
+```
+
+This automatically separates roots and run locks into
+`runs/selector-pair-cost-measure-s3-v1` and `runs/selector-pair-cost-measure-s4-v1`.
+Home exports are also separate: `selector-pair-cost-measure-s3-results.txt`
+and `selector-pair-cost-measure-s4-results.txt`. Keep the seed environment
+setting for plan, run, status, results, and resumption; do not combine it with
+`--seed`. Explicit `PAIR_COST_MEASURE_ROOT` still overrides the root, so use
+distinct overrides when running on two nodes. Existing unseeded runs are
+unchanged and must not run concurrently with new copies of the same experiment.
+
+The original single-node, both-seed mode is still available:
 
 ```bash
 bash scripts/run_selector_pair_cost_measure.sh plan
@@ -22,7 +46,7 @@ bash scripts/run_selector_pair_cost_measure.sh results
 ```
 
 The default command is `plan`, not GPU execution. `run` trains and evaluates
-eight new continuations; it is not a quick CPU export. The per-arm safety cap
+four new continuations per seed (eight in unseeded mode); it is not a quick CPU export. The per-arm safety cap
 is 160 allocated GPU-hours, including evaluation and failed attempts. It is a
 cap, not a runtime prediction. All arms execute sequentially on the same
 four GPUs; their order rotates across seeds and replicas. The root is leased,
