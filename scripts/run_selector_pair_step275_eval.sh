@@ -7,6 +7,7 @@
 #   bash scripts/run_selector_pair_step275_eval.sh results    # CPU: ~/selector-pair-step275-results.txt
 #   bash scripts/run_selector_pair_step275_eval.sh cost       # CPU: GPU time through 275 per arm, ~/selector-pair-step275-cost.txt
 # Reads the Switch root; writes only under $OM_WORK/runs/selector-pair-step275-eval-v1.
+# Cost reports use the separate ${PAIR_STEP275_ROOT}-cost sibling (PAIR_STEP275_COST_ROOT overrides it).
 # Several nodes may run the same command; evaluations are leased, nothing is trained.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,6 +17,7 @@ export OM_WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misran
 PAIR_ROOT=${PAIR_ROOT:-$OM_WORK/runs/selector-pair-v1}
 SWITCH_ROOT=${PAIR_SWITCH_ROOT:-$OM_WORK/runs/selector-pair-srgc-switch-v1}
 OUTPUT=${PAIR_STEP275_ROOT:-$OM_WORK/runs/selector-pair-step275-eval-v1}
+COST_OUTPUT=${PAIR_STEP275_COST_ROOT:-${OUTPUT}-cost}
 PY=${PAIR_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
 [ -x "$PY" ] || PY=python3
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -27,7 +29,7 @@ case "$MODE" in
   cost)
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" scripts/selector_pair_step275_cost.py --root "$PAIR_ROOT" --switch-root "$SWITCH_ROOT" \
-      --eval-root "$OUTPUT" --output "$OUTPUT/cost" "$@" ;;
+      --eval-root "$OUTPUT" --output "$COST_OUTPUT" "$@" ;;
   run)
     export OUT_ROOT="$OUTPUT"
     source scripts/_e5_node.sh

@@ -1,9 +1,12 @@
 """CPU checks for the common-step (275) GPU-time export of the Switch comparison."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+
+import pytest
 
 import selection_gate as core
 import selection_gate_gpu as base
@@ -99,3 +102,29 @@ def test_output_root_must_be_separate(tmp_path):
                             env={"PYTHONPATH": f"{sc.REPO / 'src'}:{sc.REPO / 'scripts'}", "PATH": "/usr/bin:/bin"})
     assert result.returncode != 0 and "separate" in result.stderr
     subprocess.run(["bash", "-n", str(sc.REPO / "scripts/run_selector_pair_step275_eval.sh")], check=True)
+
+
+@pytest.mark.parametrize("custom_output", [False, True])
+def test_cost_shell_exports_to_separate_root_without_modifying_inputs(tmp_path, custom_output):
+    root, switch, evaluation = layout(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    output = tmp_path / "custom-cost" if custom_output else Path(f"{evaluation}-cost")
+    env = {**os.environ, "HOME": str(home), "OM_WORK": str(tmp_path / "work"),
+           "PAIR_PYTHON": sys.executable, "PAIR_ROOT": str(root),
+           "PAIR_SWITCH_ROOT": str(switch), "PAIR_STEP275_ROOT": str(evaluation)}
+    env.pop("PAIR_STEP275_COST_ROOT", None)
+    if custom_output:
+        env["PAIR_STEP275_COST_ROOT"] = str(output)
+    inputs = (root, switch, evaluation)
+    before = {path: base.digest(path) for directory in inputs for path in directory.rglob("*") if path.is_file()}
+    result = subprocess.run(["bash", str(sc.REPO / "scripts/run_selector_pair_step275_eval.sh"),
+                             "cost", "--seed", str(SEED)], env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads((output / "step275-cost.json").read_text())
+    assert data["step"] == 275 and len(data["rows"]) == 4
+    exported = home / "selector-pair-step275-cost.txt"
+    assert exported.read_text() == (output / "step275-cost.txt").read_text()
+    assert "[saved] " + str(exported) in result.stdout
+    after = {path: base.digest(path) for directory in inputs for path in directory.rglob("*") if path.is_file()}
+    assert after == before
