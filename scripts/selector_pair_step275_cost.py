@@ -14,7 +14,9 @@ metered differently:
 Selection and diagnosis are listed separately: the On-policy ranking at step 25
 (charged in the On branch ledger), and the SR-GC A/B measurements at 25, 50, ...
 through the trigger (experimental two-reference cost, not halved). Unknown cost
-is reported as unknown, never as zero. Nothing is written outside the output root.
+is reported as unknown, never as zero. Historical cache creation is recovered
+separately from the original source log when its provenance is unambiguous.
+SR and Switch each pay the same cached-subset preparation once.
 
     python scripts/selector_pair_step275_cost.py --root PAIR_ROOT --switch-root SWITCH_ROOT \
         --eval-root STEP275_EVAL_ROOT --output OUTPUT_ROOT [--out FILE.txt]
@@ -34,6 +36,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 import selector_pair_srgc_repeat as repeat
 import selector_pair_switch_rewards as sw
+from selector_pair_cache_cost import cache_creation_cost
 
 import selection_gate as core
 import selection_gate_gpu as base
@@ -186,6 +189,7 @@ def build(root, switch_root, eval_root, seeds):
         trigger = plan["switch_step"]
         rewards = rewards_at_step(eval_root, switch_root, plan)
         controls = {arm: control_cost(Path(plan["controls"][arm]), STEP) for arm in ("random", "on_policy", "cached")}
+        cache = cache_creation_cost(plan["contract"])
         diagnosis = diagnosis_cost(root, seed, trigger)
         switch = switch_cost(switch_root, plan, controls["on_policy"])
         for arm in ARMS:
@@ -197,6 +201,11 @@ def build(root, switch_root, eval_root, seeds):
                          "update_timer_gpu_seconds": cost["update_timer_gpu_seconds"],
                          "allocation_gpu_seconds": cost["allocation_gpu_seconds"],
                          "diagnosis_gpu_seconds": extra, "diagnosis_unknown": extra_unknown,
+                         "initial_cache_gpu_seconds": cache["gpu_seconds"] if arm in ("cached", "switch") else 0.,
+                         "cache_creation": cache if arm in ("cached", "switch") else None,
+                         "sr_preparation_gpu_seconds": (controls["cached"]["allocation_scoring_gpu_seconds"]
+                                                        if arm in ("cached", "switch") else 0.),
+                         "repeated_selection_gpu_seconds": None if arm in ("on_policy", "switch") else 0.,
                          "detail": cost, "diagnosis": diagnosis if arm == "switch" else None})
     return {"schema": SCHEMA, "step": STEP, "start": START, "rows": rows,
             "scope": "GPU-seconds after the shared step-25 state through step 275. update-timer = trainer update "
@@ -206,6 +215,7 @@ def build(root, switch_root, eval_root, seeds):
                      "The existing runs rank once at the start; On-policy and Switch reuse that initial ranking. "
                      "Selection includes scoring rollouts and gradients, not isolated gradient-kernel time. "
                      "There is no repeated full-pool ranking cost in these logs. Rewards are fractions at step 275; "
+                     "cache creation is a separate historical charge before the continuation window. "
                      "missing values are unknown, not zero."}
 
 
@@ -216,7 +226,7 @@ def fmt_h(seconds):
 def render(data):
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(["seed", "arm", "trigger", "reward_275_percent", "selection_h", "training_h",
+    writer.writerow(["seed", "arm", "trigger", "reward_275_percent", "cache_creation_h", "sr_preparation_h", "selection_h", "training_h",
                      "selection_training_subtotal_h", "single_reference_check_h", "ab_validation_h",
                      "allocation_h", "vs_on_reward_pp"])
     for seed in sorted({r["seed"] for r in data["rows"]}):
@@ -228,17 +238,25 @@ def render(data):
             diag_text = fmt_h(diag) + ("+unknown" if r["diagnosis_unknown"] else "") if arm == "switch" else "0.00"
             selection = r["detail"].get("on_ranking_gpu_seconds" if arm == "switch"
                                         else "allocation_scoring_gpu_seconds")
+            preparation = rows["cached"]["detail"].get("allocation_scoring_gpu_seconds") if arm in ("cached", "switch") else 0.
+            if arm == "switch":
+                selection = None if selection is None or preparation is None else selection + preparation
             subtotal = None if selection is None or timer is None else selection + timer
             reward = "unknown" if r["reward"] is None else f"{100 * r['reward']:.3f}"
             delta = ("unknown" if r["reward"] is None or on["reward"] is None
                      else f"{100 * (r['reward'] - on['reward']):+.2f}")
             writer.writerow([seed, arm, r["trigger"] or "", reward,
+                             fmt_h(r.get("initial_cache_gpu_seconds")),
+                             "unknown" if preparation is None else f"{preparation / 3600:.9f}",
                              "unknown" if selection is None else f"{selection / 3600:.6f}",
                              fmt_h(timer), fmt_h(subtotal), "unknown" if arm == "switch" else "0.00",
                              diag_text, fmt_h(alloc), delta])
     return (f"LOGGED GPU TIME AND REWARD AT COMMON STEP {STEP} (after shared step {START})\n"
             + data["scope"] + "\n\n" + out.getvalue()
             + "\nSubtotal = initial selection + update-timer training; not full allocated cost.\n"
+            + "The same SR subset preparation is charged once to SR and Switch, as a reused input cost.\n"
+            + "Cache creation is separate: recovered from a hash-matched original stage log when available, "
+              "otherwise unknown. It is not included in the recorded subtotal.\n"
             + "Switch single-reference check time is unknown, not zero or half of A/B validation.\n"
             + "A/B validation and allocation are separate views, not added to the subtotal.\n"
             + "These logs cannot establish the cost of repeated gradient-based reselection.\n")

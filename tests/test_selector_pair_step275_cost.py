@@ -113,6 +113,20 @@ def test_missing_selection_is_unknown_not_free_in_log_export(tmp_path, monkeypat
     assert on["selection_h"] == on["selection_training_subtotal_h"] == "unknown"
 
 
+def test_switch_is_charged_the_same_sr_preparation_as_the_sr_control(tmp_path, monkeypatch):
+    root, switch, evaluation = layout(tmp_path)
+    monkeypatch.setattr(sc.sw, "measured_point", lambda *args: {"step": 275, "reward": .33})
+    data = sc.build(root, switch, evaluation, [SEED])
+    cached = next(r for r in data["rows"] if r["arm"] == "cached")
+    cached["detail"]["allocation_scoring_gpu_seconds"] = 1.2
+    rows = {r["arm"]: r for r in csv.DictReader(io.StringIO(sc.render(data).split("\n\n")[1]))}
+    assert rows["cached"]["sr_preparation_h"] == rows["switch"]["sr_preparation_h"]
+    assert float(rows["switch"]["selection_h"]) == pytest.approx(401.2 / 3600, abs=1e-6)
+    assert rows["cached"]["cache_creation_h"] == rows["switch"]["cache_creation_h"] == "unknown"
+    assert all(r["repeated_selection_gpu_seconds"] is None for r in data["rows"]
+               if r["arm"] in ("switch", "on_policy"))
+
+
 def test_output_root_must_be_separate(tmp_path):
     root, switch, evaluation = layout(tmp_path)
     result = subprocess.run([sys.executable, str(sc.REPO / "scripts/selector_pair_step275_cost.py"),
