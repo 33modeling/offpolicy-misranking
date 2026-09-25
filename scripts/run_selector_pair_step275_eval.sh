@@ -5,6 +5,7 @@
 #   bash scripts/run_selector_pair_step275_eval.sh plan       # CPU: checkpoints that will be evaluated
 #   bash scripts/run_selector_pair_step275_eval.sh status     # CPU: measured / missing
 #   bash scripts/run_selector_pair_step275_eval.sh results    # CPU: ~/selector-pair-step275-results.txt
+#   bash scripts/run_selector_pair_step275_eval.sh cost       # CPU: GPU time through 275 per arm, ~/selector-pair-step275-cost.txt
 # Reads the Switch root; writes only under $OM_WORK/runs/selector-pair-step275-eval-v1.
 # Several nodes may run the same command; evaluations are leased, nothing is trained.
 set -euo pipefail
@@ -12,6 +13,7 @@ cd "$(dirname "$0")/.."
 MODE=${1:-run}
 [ "$#" -eq 0 ] || shift
 export OM_WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
+PAIR_ROOT=${PAIR_ROOT:-$OM_WORK/runs/selector-pair-v1}
 SWITCH_ROOT=${PAIR_SWITCH_ROOT:-$OM_WORK/runs/selector-pair-srgc-switch-v1}
 OUTPUT=${PAIR_STEP275_ROOT:-$OM_WORK/runs/selector-pair-step275-eval-v1}
 PY=${PAIR_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
@@ -22,14 +24,20 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
   plan|status|results) export CUDA_VISIBLE_DEVICES="" ;;
+  cost)
+    export CUDA_VISIBLE_DEVICES=""
+    exec "$PY" scripts/selector_pair_step275_cost.py --root "$PAIR_ROOT" --switch-root "$SWITCH_ROOT" \
+      --eval-root "$OUTPUT" --output "$OUTPUT/cost" "$@" ;;
   run)
     export OUT_ROOT="$OUTPUT"
     source scripts/_e5_node.sh
     export E5_FORCE=0
     # Common node lease only; no Pair recovery, no source ledger changes.
+    SOURCE_PAIR_ROOT=$PAIR_ROOT
     PAIR_ROOT=$OUTPUT
     e5_recover_pair_gpu() { return 0; }
     e5_acquire_node
+    PAIR_ROOT=$SOURCE_PAIR_ROOT
     if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
       mapfile -t DEVICES < <(timeout 20 nvidia-smi --query-gpu=index --format=csv,noheader)
       export CUDA_VISIBLE_DEVICES="$(IFS=,; echo "${DEVICES[*]}")"
@@ -44,6 +52,6 @@ case "$MODE" in
     VERIFY_PATH=$("$PY" src/bootstrap_math_verify.py --cache-root "$OM_WORK/runtime-deps")
     export PYTHONPATH="$VERIFY_PATH:$PYTHONPATH" OM_MATH_VERIFIER=math_verify OM_NODE_LOCK_HELD=1
     ;;
-  *) echo 'usage: bash scripts/run_selector_pair_step275_eval.sh [run|plan|status|results] [--seed 3|4]'; exit 2 ;;
+  *) echo 'usage: bash scripts/run_selector_pair_step275_eval.sh [run|plan|status|results|cost] [--seed 3|4]'; exit 2 ;;
 esac
 "$PY" scripts/selector_pair_step275_eval.py "$MODE" --switch-root "$SWITCH_ROOT" --output "$OUTPUT" "$@"
