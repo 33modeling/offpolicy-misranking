@@ -6,19 +6,39 @@ MODE=${1:-plan}
 [ "$#" -eq 0 ] || shift
 export OM_WORK=${OM_WORK:-/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 PAIR_ROOT=${PAIR_ROOT:-$OM_WORK/runs/selector-pair-v1}
+ARGS=("$@")
+CLI_SEED=
+for ((i=0; i<${#ARGS[@]}; i++)); do
+  case "${ARGS[i]}" in
+    --seed)
+      i=$((i + 1))
+      VALUE=${ARGS[i]:-}
+      ;;
+    --seed=*) VALUE=${ARGS[i]#--seed=} ;;
+    *) continue ;;
+  esac
+  case "$VALUE" in
+    3|4) ;;
+    *) echo '[abort] --seed requires 3 or 4'; exit 2 ;;
+  esac
+  if [ -n "$CLI_SEED" ] && [ "$CLI_SEED" != "$VALUE" ]; then
+    CLI_SEED=both
+  else
+    CLI_SEED=$VALUE
+  fi
+done
 SEED=${PAIR_COST_MEASURE_SEED:-}
 case "$SEED" in
   ""|3|4) ;;
   *) echo '[abort] PAIR_COST_MEASURE_SEED must be 3 or 4'; exit 2 ;;
 esac
 if [ -n "$SEED" ]; then
-  for arg in "$@"; do
-    case "$arg" in
-      --seed|--seed=*) echo '[abort] use PAIR_COST_MEASURE_SEED or --seed, not both'; exit 2 ;;
-    esac
-  done
+  [ -z "$CLI_SEED" ] || { echo '[abort] use --seed or PAIR_COST_MEASURE_SEED, not both'; exit 2; }
   set -- --seed "$SEED" "$@"
+else
+  SEED=$CLI_SEED
 fi
+[ "$SEED" != both ] || SEED=
 OUTPUT=${PAIR_COST_MEASURE_ROOT:-$OM_WORK/runs/selector-pair-cost-measure${SEED:+-s$SEED}-v1}
 PY=${PAIR_PYTHON:-${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python}
 [ -x "$PY" ] || PY=python3

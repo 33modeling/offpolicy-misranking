@@ -17,22 +17,23 @@ seed, the four methods run sequentially on that node's same four GPUs:
 
 ```bash
 # Node 1: seed 3
-PAIR_COST_MEASURE_SEED=3 bash scripts/run_selector_pair_cost_measure.sh run
+bash scripts/run_selector_pair_cost_measure.sh run --seed 3
 
 # Node 2: seed 4
-PAIR_COST_MEASURE_SEED=4 bash scripts/run_selector_pair_cost_measure.sh run
+bash scripts/run_selector_pair_cost_measure.sh run --seed 4
 
 # Inspect/export independently (replace 3 with 4 for the second node).
-PAIR_COST_MEASURE_SEED=3 bash scripts/run_selector_pair_cost_measure.sh status
-PAIR_COST_MEASURE_SEED=3 bash scripts/run_selector_pair_cost_measure.sh results
+bash scripts/run_selector_pair_cost_measure.sh status --seed 3
+bash scripts/run_selector_pair_cost_measure.sh results --seed 3
 ```
 
 This automatically separates roots and run locks into
 `runs/selector-pair-cost-measure-s3-v1` and `runs/selector-pair-cost-measure-s4-v1`.
 Home exports are also separate: `selector-pair-cost-measure-s3-results.txt`
-and `selector-pair-cost-measure-s4-results.txt`. Keep the seed environment
-setting for plan, run, status, results, and resumption; do not combine it with
-`--seed`. Explicit `PAIR_COST_MEASURE_ROOT` still overrides the root, so use
+and `selector-pair-cost-measure-s4-results.txt`. Use the same `--seed` for
+plan, run, status, results, and resumption. `--seed=3` also works. The earlier
+`PAIR_COST_MEASURE_SEED` environment setting remains supported, but do not
+combine it with `--seed`. Explicit `PAIR_COST_MEASURE_ROOT` overrides the root, so use
 distinct overrides when running on two nodes. Existing unseeded runs are
 unchanged and must not run concurrently with new copies of the same experiment.
 
@@ -54,8 +55,7 @@ so two nodes cannot write it at once. Busy GPUs are not cleared or preempted.
 
 ```bash
 # Measure only seed 3; use the same options when resuming.
-PAIR_COST_MEASURE_ROOT="$OM_WORK/runs/selector-pair-cost-measure-s3-v1" \
-  bash scripts/run_selector_pair_cost_measure.sh run --seed 3
+bash scripts/run_selector_pair_cost_measure.sh run --seed 3
 
 # Three timing replicas (new output root; substantial additional GPU work).
 PAIR_COST_MEASURE_ROOT="$OM_WORK/runs/selector-pair-cost-measure-r3-v1" \

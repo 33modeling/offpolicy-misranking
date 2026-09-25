@@ -363,6 +363,47 @@ def test_seed_launcher_uses_separate_root_and_seed(tmp_path, seed, mode):
     assert not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize("seed", ["3", "4"])
+@pytest.mark.parametrize("mode", ["plan", "status", "results"])
+@pytest.mark.parametrize("equals", [False, True])
+def test_cli_seed_automatically_routes_to_its_own_root(tmp_path, seed, mode, equals):
+    args = [f"--seed={seed}"] if equals else ["--seed", seed]
+    env = {**os.environ, "OM_WORK": str(tmp_path), "PAIR_PYTHON": "/bin/echo",
+           "PAIR_COST_MEASURE_SEED": "", "PAIR_COST_MEASURE_ROOT": ""}
+    result = subprocess.run(["bash", str(measure.REPO / "scripts/run_selector_pair_cost_measure.sh"),
+                             mode, "--interval", "25", *args],
+                            env=env, text=True, capture_output=True, check=True)
+    assert f"--output {tmp_path}/runs/selector-pair-cost-measure-s{seed}-v1" in result.stdout
+    assert " ".join(args) in result.stdout
+    assert "--interval 25" in result.stdout
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("args", [[], ["--seed", "3", "--seed", "4"]])
+def test_both_seed_launcher_keeps_original_root(tmp_path, args):
+    env = {**os.environ, "OM_WORK": str(tmp_path), "PAIR_PYTHON": "/bin/echo",
+           "PAIR_COST_MEASURE_SEED": "", "PAIR_COST_MEASURE_ROOT": ""}
+    result = subprocess.run(["bash", str(measure.REPO / "scripts/run_selector_pair_cost_measure.sh"),
+                             "plan", *args], env=env, text=True, capture_output=True, check=True)
+    assert f"--output {tmp_path}/runs/selector-pair-cost-measure-v1" in result.stdout
+
+
+def test_cli_seed_preserves_explicit_root_override(tmp_path):
+    env = {**os.environ, "OM_WORK": str(tmp_path), "PAIR_PYTHON": "/bin/echo",
+           "PAIR_COST_MEASURE_SEED": "", "PAIR_COST_MEASURE_ROOT": str(tmp_path / "custom")}
+    result = subprocess.run(["bash", str(measure.REPO / "scripts/run_selector_pair_cost_measure.sh"),
+                             "plan", "--seed", "3"], env=env, text=True, capture_output=True, check=True)
+    assert f"--output {tmp_path}/custom" in result.stdout
+
+
+@pytest.mark.parametrize("args", [["--seed"], ["--seed", "--interval", "25"], ["--seed=2"], ["--seed", "0"]])
+def test_bad_cli_seed_stops_before_node_access(args):
+    result = subprocess.run(["bash", str(measure.REPO / "scripts/run_selector_pair_cost_measure.sh"),
+                             "run", *args], env={**os.environ, "PAIR_COST_MEASURE_SEED": ""},
+                            text=True, capture_output=True, check=False)
+    assert result.returncode == 2 and "[abort] --seed requires 3 or 4" in result.stdout
+
+
 @pytest.mark.parametrize("seed,args", [("2", []), ("3", ["--seed", "4"]), ("3", ["--seed=4"])])
 def test_seed_launcher_rejects_conflicts_before_node_access(seed, args):
     result = subprocess.run(["bash", str(measure.REPO / "scripts/run_selector_pair_cost_measure.sh"),
