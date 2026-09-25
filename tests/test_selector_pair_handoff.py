@@ -919,7 +919,7 @@ def test_handoff_requires_bound_finite_finish_cost_receipt(handoff, damage):
 
 @pytest.mark.parametrize('corrupt', [False, True])
 @pytest.mark.parametrize('legacy_operations', [None, 'pre_srgc', 'srgc', 'worker_failure', 'budget_recovery', 'srgc_diagnostic',
-                                               'freeze_retry'])
+                                               'freeze_retry', 'saved_final'])
 def test_owner_checkout_verifies_science_and_operations_pins(tmp_path, handoff, monkeypatch, corrupt, legacy_operations):
     import selector_pair_deploy as deploy
     from test_selector_pair_deploy import git
@@ -932,7 +932,8 @@ def test_owner_checkout_verifies_science_and_operations_pins(tmp_path, handoff, 
                    'worker_failure': deploy.PRE_BUDGET_RECOVERY_COMMITS[1],
                    'budget_recovery': deploy.PRE_SRGC_COST_RECOVERY_COMMITS[0],
                    'srgc_diagnostic': deploy.PRE_SRGC_COST_RECOVERY_COMMITS[1],
-                   'freeze_retry': '74c652f4d041bb7d45db9a41623fee70e45ebec3'}
+                   'freeze_retry': '74c652f4d041bb7d45db9a41623fee70e45ebec3',
+                   'saved_final': deploy.PRE_COMPLETE_EXPORT_COMMIT}
         monkeypatch.setattr(deploy, 'OPERATIONS_COMMIT', commits[legacy_operations])
     runtime = deploy.stage_runtime(checkout)
     monkeypatch.setattr(handoff, 'process', lambda *args: {'cwd': runtime})

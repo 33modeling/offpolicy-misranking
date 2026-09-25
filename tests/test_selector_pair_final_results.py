@@ -107,6 +107,25 @@ def test_bash_results_need_no_gpu_lock_or_training(all_results, tmp_path, entry)
     assert '[node]' not in process.stdout and 'nvidia-smi' not in process.stderr
 
 
+def test_deployed_exporter_also_exports_42_without_gpu_admission(all_results, tmp_path):
+    import selector_pair_deploy as deploy
+    from test_selector_pair_deploy import git
+
+    root, output = all_results
+    checkout = tmp_path / 'checkout'
+    git(tmp_path, 'clone', '--shared', '--no-checkout', '-q', str(Path(results.__file__).parents[1]), str(checkout))
+    runtime = deploy.stage_runtime(checkout)
+    target = tmp_path / 'deployed-results.txt'
+    process = subprocess.run(['bash', str(runtime / 'scripts/run_selector_pair_results.sh'), '--out', str(target)],
+        env={**os.environ, 'PAIR_ROOT': str(root), 'PAIR_PYTHON': sys.executable,
+             'OM_WORK': str(tmp_path / 'work'), 'OM_LOCAL_LOCK_DIR': '/unwritable/no-gpu-lock'},
+        capture_output=True, text=True, timeout=15)
+    assert process.returncode == 0, process.stderr
+    data = json.loads(target.read_text().split('DATA_JSON\n', 1)[1])
+    assert data['branch_completion']['endpoints'] == 42 and data['exporter']['version'].endswith('/v9')
+    assert '[node]' not in process.stdout
+
+
 @pytest.mark.parametrize('damage', ['seal', 'plan', 'source', 'policy', 'seed', 'step', 'nan', 'questions',
                                    'final', 'k', 'points', 'schema', 'outside', 'costs'])
 def test_damaged_new_result_is_not_counted_and_does_not_hide_the_other_one(all_results, damage):

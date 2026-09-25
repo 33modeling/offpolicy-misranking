@@ -22,7 +22,7 @@ import time
 
 PINNED_COMMIT = 'c0c38d62e893fdcf25920d5a70d3149a06b5450f'
 PRE_SRGC_OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
-OPERATIONS_COMMIT = 'f1dee3d982e3fa7cdb141bc2043730946d48a84c'
+OPERATIONS_COMMIT = 'a36323d7a5219d6bda09f62f1d52223fa97ed0c6'
 PRE_SRGC_OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
                             'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
 PRE_BUDGET_RECOVERY_COMMITS = ('29903457ccbab9bbed96221794019004ceeb34ad',
@@ -46,8 +46,10 @@ PRE_FINAL_EVALUATION_COMMITS = (
     'c9399738bcad4fbb8e86440898f15fa41c2aa302',
 )
 PRE_FINAL_EVALUATION_FILES = (*PRE_SRGC_COST_RECOVERY_FILES, 'scripts/selector_pair_srgc_cost_recovery.py')
-OPERATIONS_FILES = (*PRE_FINAL_EVALUATION_FILES, 'scripts/_selection_worker.sh',
-                    'scripts/selector_pair_resume_two.py', 'scripts/selector_pair_finish_saved.py')
+PRE_COMPLETE_EXPORT_COMMIT = 'f1dee3d982e3fa7cdb141bc2043730946d48a84c'
+PRE_COMPLETE_EXPORT_FILES = (*PRE_FINAL_EVALUATION_FILES, 'scripts/_selection_worker.sh',
+                            'scripts/selector_pair_resume_two.py', 'scripts/selector_pair_finish_saved.py')
+OPERATIONS_FILES = (*PRE_COMPLETE_EXPORT_FILES, 'scripts/selector_pair_srgc_repeat.py')
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_FILES = 20000
 MANIFEST = '.pair-runtime.json'
@@ -62,6 +64,8 @@ def operations_files(commit):
         return PRE_SRGC_COST_RECOVERY_FILES
     if commit in PRE_FINAL_EVALUATION_COMMITS:
         return PRE_FINAL_EVALUATION_FILES
+    if commit == PRE_COMPLETE_EXPORT_COMMIT:
+        return PRE_COMPLETE_EXPORT_FILES
     return OPERATIONS_FILES
 
 
