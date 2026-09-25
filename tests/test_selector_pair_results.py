@@ -51,7 +51,7 @@ def test_exports_current_partial_report_and_curves(tmp_path, monkeypatch, missin
     assert data['complete'] == complete
     assert data['branch_measurements'] == data['branch_measurement_errors'] == []
     assert data['paired_validation']['status'] == 'validated'
-    assert data['exporter']['version'] == 'selector-pair-results/v8'
+    assert data['exporter']['version'] == 'selector-pair-results/v9'
     assert len(data['exporter']['script_sha256']) == 64
     assert data['exporter']['created_at'] and data['exporter']['export_id']
     assert list(tmp_path.glob("*.txt")) == [target]
@@ -431,7 +431,7 @@ def test_failed_report_replaces_stale_txt_with_current_error_and_branches(tmp_pa
     assert data['paired_validation']['stderr_tail'] == 'current validation error'
     assert data['export_exit_code'] == returncode
     assert data['branch_measurements'][0]['mean_reward'] == .5
-    assert data['exporter']['version'] == 'selector-pair-results/v8'
+    assert data['exporter']['version'] == 'selector-pair-results/v9'
     assert list(tmp_path.glob("*.txt")) == [target]
 
 

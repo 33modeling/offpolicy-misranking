@@ -53,3 +53,27 @@ that a remote job restarted. No web publication is part of this change.
 Local verification: 384 tests passed, 8 CUDA-dependent tests skipped. Covered
 normal/pinned launcher dispatch, historical runtime handoff, source preservation,
 resume-only-missing-shards, busy leases, status, budget recovery and shutdown.
+
+## Export All 42 Endpoints
+
+`bash scripts/run_selector_pair.sh results` and the existing
+`bash scripts/run_selector_pair_results.sh` now read the original endpoints and
+the two sealed saved-final evaluations together. They run on CPU without
+acquiring `primary.lock`, starting training, or rerunning evaluation. The
+default TXT is `~/selector-pair-results.txt`.
+
+The exporter checks each supplemental result's seal, plan, source identity,
+current policy manifest and question coverage, and includes both final reward
+and curve points in `branch_measurements`. A valid canonical result always
+takes precedence; the same branch is never counted twice. Only 40 valid
+original endpoints plus two valid saved-final evaluations produce `42/42`.
+Missing or damaged measurements remain missing, with their errors retained.
+
+`branch_results_complete` and `branch_completion` describe endpoint coverage;
+the existing `complete` field still describes strict paired validation, not
+endpoint coverage. Supplemental results remain explicitly ineligible for
+matched-budget paired comparison. Their presence no longer waits on the
+original strict paired report; `--validate-pairs` requests that separate check.
+`--final-eval-root` or `PAIR_FINAL_EVAL_ROOT` selects a nondefault output root.
+Old `budget-recovery` results are preserved separately and are not substituted
+for the newer final policies. No experiment files or web publications change.

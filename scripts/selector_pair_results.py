@@ -19,6 +19,7 @@ import sys
 import uuid
 
 from paper_result_text import write_export
+import selector_pair_resume_two as saved_final
 
 
 BRANCH_SCOPE = (
@@ -417,6 +418,101 @@ def saved_branch_measurements(root):
     return rows, errors
 
 
+def final_evaluation_measurements(root, output):
+    """Read the two sealed final evaluations without importing any GPU runtime."""
+    data = {'root': str(output), 'rows': [], 'errors': [], 'pending': [], 'scope':
+            'Current saved-final evaluations, counted as branch endpoints only. '
+            'Original budget eligibility is unchanged; not matched-budget paired completion. '
+            'Result seals, source contract and policy-manifest bindings, and question coverage checked. '
+            'Full checkpoint lineage and cost ledgers are not independently recertified here.'}
+    for seed, (step, arm) in saved_final.TARGETS.items():
+        source = saved_final.directory(root, seed, step, 'on_policy', arm)
+        target = output / f'seed-{seed}'
+        path = target / 'result.json'
+        if not path.exists() and not path.is_symlink():
+            data['pending'].append({'seed': seed, 'prefix_updates': step, 'arm': arm,
+                                    'path': str(path)})
+            continue
+        try:
+            if output.is_relative_to(root) or root.is_relative_to(output):
+                raise ValueError('final evaluation output must be separate from the original Pair root')
+            result, result_hash = read_source(path, output)
+            seal, _ = read_source(path.with_suffix('.sha256.json'), output)
+            plan, plan_hash = read_source(target / 'plan.json', output)
+            stop = result.get('completed_steps')
+            if (seal != {'sha256': result_hash} or result.get('schema') != saved_final.FINAL_SCHEMA
+                    or plan.get('schema') != saved_final.FINAL_SCHEMA
+                    or result.get('plan_sha256') != plan_hash
+                    or result.get('evaluation_complete') is not True
+                    or result.get('canonical_complete') is not False
+                    or result.get('training_performed') is not False
+                    or plan.get('canonical_complete') is not False
+                    or plan.get('source_root') != str(root) or plan.get('directory') != str(source)
+                    or plan.get('arm') != arm or type(stop) is not int or stop <= step
+                    or plan.get('completed_steps') != stop
+                    or result.get('original_costs') != plan.get('original_costs')
+                    or any(value.get('seed') != seed or value.get('start_step') != step
+                           for value in (plan, result))):
+                raise ValueError('saved final evaluation seal, schema, or source binding changed')
+            contract_path = source.parent / 'contract.json'
+            contract, contract_hash = read_source(contract_path, root)
+            policy_path = source / 'policy/policy_train.json'
+            policy, policy_hash = read_source(policy_path, root)
+            if (plan.get('inputs', {}).get(str(contract_path.resolve())) != contract_hash
+                    or (contract['config']['seed'], contract['config']['drift']) != (seed, step)
+                    or policy.get('completed_steps') != stop):
+                raise ValueError('saved final source contract or current policy changed')
+            expected_questions = {str(i) for i in range(len(contract['evaluation']['val']))}
+            points, planned = result.get('points'), plan.get('points')
+            if (not expected_questions or not isinstance(points, list) or not points
+                    or not isinstance(planned, list) or len(points) != len(planned)):
+                raise ValueError('missing saved final evaluation points')
+            curves = []
+            for index, (point, scheduled) in enumerate(zip(points, planned)):
+                checkpoint, rewards = point.get('step'), point.get('rewards')
+                if (type(checkpoint) is not int or not step <= checkpoint <= stop
+                        or any(point.get(key) != scheduled.get(key) for key in ('step', 'k', 'final'))
+                        or point.get('final') is not (index == len(points) - 1)
+                        or type(point.get('k')) is not int or point['k'] <= 0
+                        or not isinstance(rewards, dict) or set(rewards) != expected_questions
+                        or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1
+                               for v in rewards.values())
+                        or (curves and checkpoint < curves[-1]['checkpoint_step'])
+                        or (point['final'] and (checkpoint != stop or point['k'] != contract['eval_k']))):
+                    raise ValueError('invalid saved final checkpoint measurement or question coverage')
+                curves.append({'checkpoint_step': checkpoint, 'updates': checkpoint-step,
+                               'reward': statistics.fmean(rewards.values()), 'k': point['k'],
+                               'final': point['final'], 'question_count': len(rewards)})
+            final = planned[-1]
+            if (final.get('adapter') != str((source / 'policy').resolve())
+                    or final.get('hashes', {}).get('policy_train.json') != policy_hash):
+                raise ValueError('saved final evaluation is not for the current final policy')
+            data['rows'].append({
+                'role': 'development' if seed < 3 else 'test', 'seed': seed, 'prefix_updates': step,
+                'selector_branch': 'on_policy', 'arm': arm, 'path': str(source),
+                'status': 'saved_final_evaluation', 'result_source': 'saved_final_evaluation',
+                'source_result_path': str(path), 'source_result_sha256': result_hash,
+                'source_plan_sha256': plan_hash, 'canonical_complete': False,
+                'eligible_for_paired_comparison': False, 'independently_certified': False,
+                'validation_scope': data['scope'], 'original_budget_eligibility': 'unchanged',
+                'mean_reward': curves[-1]['reward'], 'updates': stop-step,
+                'question_count': len(expected_questions), 'question_rewards': points[-1]['rewards'],
+                'curve_points': curves, 'original_costs': result.get('original_costs'),
+                'new_evaluation_cost': result.get('new_evaluation_cost'), 'issues': []})
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError) as exc:
+            data['errors'].append({'path': str(path), 'error': str(exc)})
+    return data
+
+
+def merge_final_evaluations(rows, supplemental):
+    """Fill missing endpoints, never silently override a canonical publication."""
+    def identity(row):
+        return row['selector_branch'], row['arm'], row['seed'], row['prefix_updates']
+    existing = {identity(row) for row in rows}
+    return sorted([*rows, *(row for row in supplemental if identity(row) not in existing)],
+                  key=lambda row: (row['seed'], row['prefix_updates'], row['selector_branch'], row['arm']))
+
+
 COMPLETION_GROUPS = (
     ('development', 'development',
      tuple((selector, 'selection_reduced', seed, step) for seed in (0, 1, 2) for step in (25, 50, 100)
@@ -473,7 +569,7 @@ def branch_completion(rows, observations=None, srgc=None):
         previous = saved.get(key)
         if previous is None or (clean and (previous['issues'] or previous['mean_reward'] is None)):
             saved[key] = row
-    groups, planned_total, endpoint_total = {}, 0, 0
+    groups, planned_total, endpoint_total, supplemental_total = {}, 0, 0, 0
     for key, _, planned in COMPLETION_GROUPS:
         group = {'planned': len(planned), 'endpoints': 0, 'curves': 0, 'remaining': [],
                  'budget_exhausted_needs_review': [], 'failed_attempt': [],
@@ -499,6 +595,7 @@ def branch_completion(rows, observations=None, srgc=None):
                 group['endpoint_with_issues'].append(label)
             else:
                 group['endpoints'] += 1
+                supplemental_total += row.get('result_source') == 'saved_final_evaluation'
                 if row['curve_points']:
                     group['curves'] += 1
                 else:
@@ -510,6 +607,7 @@ def branch_completion(rows, observations=None, srgc=None):
                      'An endpoint is not a paired comparison, an H value or a checkpoint cost. '
                      'Worker failures are a lower bound; omitted worker records are not inspected.',
             'planned': planned_total, 'endpoints': endpoint_total, 'groups': groups,
+            'complete': endpoint_total == planned_total, 'supplemental_endpoints': supplemental_total,
             'adaptive_decisions_used': sorted(chosen), 'non_chosen_adaptive_endpoints': not_chosen}
 
 
@@ -526,6 +624,9 @@ def completion_table(completion, validation):
                 line += f"; {name}: " + ', '.join(group[field])
         lines.append(line)
     lines.append(f"total endpoints {completion['endpoints']}/{completion['planned']}")
+    if completion.get('supplemental_endpoints'):
+        lines.append(f"Includes {completion['supplemental_endpoints']} saved-final evaluations; "
+                     'included in endpoint counts, excluded only from matched-budget paired comparison.')
     if completion['non_chosen_adaptive_endpoints']:
         lines.append('adaptive endpoints outside the frozen SR-GC choice (not counted): '
                      + ', '.join(completion['non_chosen_adaptive_endpoints']))
@@ -533,6 +634,9 @@ def completion_table(completion, validation):
         lines.append('PAIRED STATUS: UNVERIFIED because strict paired validation failed. Paired rows, H and '
                      'checkpoint costs are not exported, and paired state lists are unknown (null), not missing. '
                      'The branch counts above are unaffected.')
+    elif validation.get('status') == 'not_run_supplemental_evaluations':
+        lines.append('PAIRED STATUS: not certified. Exporting saved-final endpoints without waiting '
+                     'for the original matched-budget report; use --validate-pairs for that separate check.')
     return '\n'.join(lines) + '\n\n'
 
 
@@ -541,10 +645,11 @@ def branch_table(rows):
     output.write("\nINDEPENDENT BRANCH MEASUREMENTS\n" + BRANCH_SCOPE + "\n")
     writer = csv.writer(output)
     writer.writerow(['role', 'seed', 'prefix_updates', 'selector_branch', 'arm', 'status',
-                     'updates', 'mean_reward_fraction', 'question_count', 'issues'])
+                     'updates', 'mean_reward_fraction', 'question_count', 'issues', 'result_source'])
     for row in rows:
         writer.writerow([row.get(key) for key in ['role', 'seed', 'prefix_updates', 'selector_branch',
-                         'arm', 'status', 'updates', 'mean_reward', 'question_count']] + ['; '.join(row['issues'])])
+                         'arm', 'status', 'updates', 'mean_reward', 'question_count']]
+                        + ['; '.join(row['issues']), row.get('result_source', 'canonical')])
     output.write("\nSAVED BRANCH CURVE POINTS (reward fractions; checkpoint costs unmeasured here)\n")
     writer.writerow(['role', 'seed', 'prefix_updates', 'selector_branch', 'arm', 'updates', 'reward', 'gpu_seconds'])
     for row in rows:
@@ -653,7 +758,7 @@ def exporter_metadata(repo):
         commit = git.stdout.strip() if git.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         commit = None
-    return {'version': 'selector-pair-results/v8', 'git_commit': commit,
+    return {'version': 'selector-pair-results/v9', 'git_commit': commit,
             'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'created_at': datetime.now(timezone.utc).isoformat(), 'export_id': uuid.uuid4().hex}
 
@@ -753,6 +858,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--final-eval-root", type=Path,
+                        help="Saved-final evaluation root (default: PAIR_FINAL_EVAL_ROOT or the sibling root)")
+    parser.add_argument("--validate-pairs", action="store_true",
+                        help="Also attempt strict paired validation when supplemental endpoints are present")
     parser.add_argument("--report-timeout", type=float, default=60,
                         help="Maximum seconds for strict paired validation (default: 60)")
     parser.add_argument("--srgc-interval", type=int, default=25,
@@ -764,6 +873,10 @@ def main():
         parser.error('--srgc-interval must be positive')
     root = args.root.resolve()
     repo = Path(__file__).resolve().parents[1]
+    rows, errors = saved_branch_measurements(root)
+    final_root = (args.final_eval_root or saved_final.output_root(root)).resolve()
+    final_evaluations = final_evaluation_measurements(root, final_root)
+    rows = merge_final_evaluations(rows, final_evaluations['rows'])
     data, curves, exit_code = empty_paired_report(), '', 0
     validation = {'status': 'not_run_no_published_paired_results', 'error': None}
     published = [root / role / f's{s}-t{t}/result.json'
@@ -772,6 +885,9 @@ def main():
     if not root.is_dir():
         exit_code = 2
         validation = {'status': 'failed', 'error': 'experiment root does not exist'}
+    elif any(row.get('result_source') == 'saved_final_evaluation' for row in rows) and not args.validate_pairs:
+        validation = {'status': 'not_run_supplemental_evaluations', 'error': None}
+        data.update(missing_states=None, missing_development_states=None, paired_status='unverified')
     elif any(path.is_file() for path in published):
         try:
             result = run_report(root, repo, args.report_timeout)
@@ -796,8 +912,8 @@ def main():
         # A failed check says nothing about which states are missing.
         data.update(missing_states=None, missing_development_states=None, paired_status='unverified')
     data["source_root"] = str(root)
-    rows, errors = saved_branch_measurements(root)
     data.update(branch_measurements=rows, branch_measurement_errors=errors,
+                final_evaluation_measurements=final_evaluations,
                 branch_measurement_scope=BRANCH_SCOPE, paired_validation=validation,
                 exporter=exporter_metadata(repo), execution_observations=execution_observations(root, rows),
                 cost_provenance=cost_provenance(root), schedule_provenance=schedule_provenance(root))
@@ -805,6 +921,7 @@ def main():
     import selector_pair_srgc_repeat as repeat
     data['srgc_repeated'] = repeat.collect(root, data['srgc'], args.srgc_interval)
     data['branch_completion'] = branch_completion(rows, data['execution_observations'], data['srgc'])
+    data['branch_results_complete'] = data['branch_completion']['complete']
     data['budget_recovery_measurements'] = budget_recovery_measurements(root)
     if data['srgc']['method']:
         data['adaptive_method'] = data['srgc']['method']
@@ -813,7 +930,7 @@ def main():
     if data['srgc_repeated']['status'] == 'invalid' and not exit_code:
         exit_code = 2
     if not exit_code and (errors or any(row['issues'] for row in rows)
-                          or data['budget_recovery_measurements']['errors']):
+                          or data['budget_recovery_measurements']['errors'] or final_evaluations['errors']):
         exit_code = 2
     data['export_exit_code'] = exit_code
     header = completion_table(data['branch_completion'], validation)
@@ -829,6 +946,8 @@ def main():
     write_export("selector-pair", data, header + srgc_table(data['srgc'])
                  + repeat.table(data['srgc_repeated']) + curves + branch_table(rows)
                  + recovery_table(data['budget_recovery_measurements']), args.out)
+    print(f"[pair-results] endpoints {data['branch_completion']['endpoints']}/42; "
+          f"saved-final evaluations {data['branch_completion']['supplemental_endpoints']}", flush=True)
     if exit_code:
         raise SystemExit(exit_code)
 

@@ -17,6 +17,9 @@ export OPENBLAS_NUM_THREADS=1 OPENBLAS_DEFAULT_NUM_THREADS=1 GOTO_NUM_THREADS=1
 export BLIS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
 export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 case "$MODE" in
+  results)
+    export CUDA_VISIBLE_DEVICES=""
+    exec "$PY" scripts/selector_pair_results.py --root "$PAIR_ROOT" "$@" ;;
   status)
     export CUDA_VISIBLE_DEVICES=""
     STATUS_ARGS=()
@@ -46,7 +49,7 @@ case "$MODE" in
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" src/selector_pair_gpu.py "$MODE" --root "$PAIR_ROOT" "$@" ;;
   run|develop|freeze|test) ;;
-  *) echo 'usage: run_selector_pair.sh init|prepare|run|develop|fit|freeze|test|report|status|check-code|cpu'; exit 2 ;;
+  *) echo 'usage: run_selector_pair.sh init|prepare|run|develop|fit|freeze|test|report|results|status|check-code|cpu'; exit 2 ;;
 esac
 if [ "$#" -ne 0 ]; then
   echo '[abort] run uses the frozen preparation; new options require a new root'; exit 2

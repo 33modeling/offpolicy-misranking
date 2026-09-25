@@ -101,7 +101,8 @@ def test_published_runtime_stages_current_curve_guard_and_unchanged_science(tmp_
                  'scripts/_e5_node.sh', 'scripts/_pair_gpu_cleanup.py',
                  'scripts/selector_pair_diagnostic.py',
                  'src/selector_pair_gpu.py', 'src/selection_switch_gpu.py',
-                 'scripts/selector_pair_resume_two.py', 'scripts/selector_pair_finish_saved.py'):
+                 'scripts/selector_pair_resume_two.py', 'scripts/selector_pair_finish_saved.py',
+                 'scripts/selector_pair_results.py'):
         assert (target / name).read_bytes() == (source / name).read_bytes(), name
     # The live scorer adds only diagnostic log context; the pinned scorer's
     # measurement functions must otherwise remain identical.
