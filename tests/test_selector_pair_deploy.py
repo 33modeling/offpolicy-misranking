@@ -145,6 +145,15 @@ def test_clean_cache_reused_without_file_rewrites(prepared, deploy):
                       for path in target.rglob('*')}
 
 
+def test_all_previous_final_evaluation_runtimes_keep_the_old_overlay(deploy):
+    source = SCRIPT.parents[1]
+    for commit in deploy.PRE_FINAL_EVALUATION_COMMITS:
+        assert deploy.operations_files(commit) == deploy.PRE_FINAL_EVALUATION_FILES
+        files = deploy.pinned_files(source, commit=commit)
+        assert set(deploy.operations_files(commit)) <= files.keys()
+        assert 'scripts/selector_pair_resume_two.py' not in deploy.operations_files(commit)
+
+
 def test_corrupt_cache_refused_without_repair(prepared, deploy):
     repo, *_ = prepared
     target = deploy.stage_runtime(repo)

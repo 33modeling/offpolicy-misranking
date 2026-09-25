@@ -152,7 +152,7 @@ def test_overrun_retries_immediately_after_original_hits_cap(tmp_path, monkeypat
     checkpoint = directory / 'policy/checkpoint-345/checkpoint_state.json'
     checkpoint.parent.mkdir(parents=True)
     checkpoint.write_text('{}')
-    (directory / 'decision.json').write_text('{}')
+    worker.core.atomic_json(directory / 'decision.json', {'budget_gpu_seconds': 100.})
     subset = out / 'subsets/subset-selection_reduced.json'
     subset.parent.mkdir(parents=True)
     subset.write_text('{}')

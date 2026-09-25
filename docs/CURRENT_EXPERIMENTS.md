@@ -49,3 +49,7 @@ running and completed evaluations, explicitly excluding these over-budget
 results from matched-budget paired comparisons. Completion of GPU evaluation
 must be confirmed on the allocated node; local fixture tests are not evidence
 that a remote job restarted. No web publication is part of this change.
+
+Local verification: 384 tests passed, 8 CUDA-dependent tests skipped. Covered
+normal/pinned launcher dispatch, historical runtime handoff, source preservation,
+resume-only-missing-shards, busy leases, status, budget recovery and shutdown.

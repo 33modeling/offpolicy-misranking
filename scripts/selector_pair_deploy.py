@@ -22,7 +22,7 @@ import time
 
 PINNED_COMMIT = 'c0c38d62e893fdcf25920d5a70d3149a06b5450f'
 PRE_SRGC_OPERATIONS_COMMIT = '0baf97d5b32e2453a14a7213802d9c3cd570a70a'
-OPERATIONS_COMMIT = 'c9399738bcad4fbb8e86440898f15fa41c2aa302'
+OPERATIONS_COMMIT = 'f1dee3d982e3fa7cdb141bc2043730946d48a84c'
 PRE_SRGC_OPERATIONS_FILES = ('scripts/queue_selector_pair_gpu.py',
                             'scripts/selector_pair_parallel.py', 'scripts/selector_pair_status.py')
 PRE_BUDGET_RECOVERY_COMMITS = ('29903457ccbab9bbed96221794019004ceeb34ad',
@@ -35,7 +35,16 @@ PRE_BUDGET_RECOVERY_FILES = ('scripts/queue_selector_pair_gpu.py',
 PRE_SRGC_COST_RECOVERY_COMMITS = ('91c02dda3e1d111d5b8f62ca39d6ff18d8e10d89',
                                  '6c5e02f70c87b6a5b0253339063881e24012f89b')
 PRE_SRGC_COST_RECOVERY_FILES = (*PRE_BUDGET_RECOVERY_FILES, 'scripts/selector_pair_budget_recovery.py')
-PRE_FINAL_EVALUATION_COMMIT = 'c9399738bcad4fbb8e86440898f15fa41c2aa302'
+PRE_FINAL_EVALUATION_COMMITS = (
+    'b929caf0067b5298264fe7d62391919d3e45d3c1',
+    '92bab3c7e5c318d4b04ffe4672aec25a3b49c595',
+    '74c652f4d041bb7d45db9a41623fee70e45ebec3',
+    'c6dfe9742b12c0301b3a0d3b55f420921123c8bd',
+    'cbb4a206ae943b8cf2772c9d35633e0a6d48180f',
+    'd7e6a61b60da1e560e60693c2e005230e0f9ab7c',
+    'fa7774eabe0ffd15e7bf3025e17967a46befbd0b',
+    'c9399738bcad4fbb8e86440898f15fa41c2aa302',
+)
 PRE_FINAL_EVALUATION_FILES = (*PRE_SRGC_COST_RECOVERY_FILES, 'scripts/selector_pair_srgc_cost_recovery.py')
 OPERATIONS_FILES = (*PRE_FINAL_EVALUATION_FILES, 'scripts/_selection_worker.sh',
                     'scripts/selector_pair_resume_two.py', 'scripts/selector_pair_finish_saved.py')
@@ -51,7 +60,7 @@ def operations_files(commit):
         return PRE_BUDGET_RECOVERY_FILES
     if commit in PRE_SRGC_COST_RECOVERY_COMMITS:
         return PRE_SRGC_COST_RECOVERY_FILES
-    if commit == PRE_FINAL_EVALUATION_COMMIT:
+    if commit in PRE_FINAL_EVALUATION_COMMITS:
         return PRE_FINAL_EVALUATION_FILES
     return OPERATIONS_FILES
 

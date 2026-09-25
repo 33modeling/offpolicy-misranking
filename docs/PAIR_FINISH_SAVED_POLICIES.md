@@ -6,6 +6,22 @@ optimizer search records newer final-policy locations at steps 457 and 256.
 Those records motivate checking the current policies; they do not themselves
 certify the policy bytes or prove that evaluation completed.
 
+## Normal launcher
+
+The normal `bash scripts/run_selector_pair.sh` command now resumes these two
+saved final evaluations automatically once the other 40 sealed branch results
+are present. No separate finisher command is required. This path ignores the
+obsolete recovery runner pin and missing checkpoint selection, but still
+validates the current policy, optimizer, source data and lineage. The deployed
+runtime also dispatches this path through its reviewed worker helper, keeping
+the original science launcher and trainer hashes unchanged.
+
+`bash scripts/run_selector_pair.sh status` includes these evaluations. A
+completed additional evaluation is explicitly distinguished from an eligible
+matched-budget paired result; original canonical results are never fabricated.
+
+## Standalone alternative
+
 `scripts/finish_selector_pair_two.sh` is a standalone launcher that embeds
 `selector_pair_finish_saved.py`. Download only this file, then run it from the
 existing experiment checkout on a node with four allocated GPUs:
