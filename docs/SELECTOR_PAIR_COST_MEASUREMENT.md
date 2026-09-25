@@ -1,5 +1,24 @@
 # Figure 3 Prospective Cost Measurement
 
+## Submission Uses Existing Logs
+
+The author's deadline revision uses existing logged costs, not this new
+training experiment. Do not launch these prospective runs for the current
+submission. Export existing checkpoint-linked costs on CPU only:
+
+```bash
+bash scripts/run_selector_pair_step275_eval.sh cost
+```
+
+This writes `~/selector-pair-step275-cost.txt` without training or evaluation.
+It separates initial selection, update-timer training, their subtotal,
+unknown single-reference checking, experimental A/B validation, and allocated
+time. A/B cost is not operating cost, and no repeated ranking is inferred.
+The earlier repeated-selection runner remains available as a separate future
+experiment; its method and costs must not be substituted for the logged runs.
+
+## Separate Prospective Experiment
+
 This is a new experiment, not a rewrite of the old cost export. It measures
 Random, cached SR, Switch, and On-policy from the same saved step-25 model
 **and optimizer**, to the same final step. Defaults: seeds 3 and 4, final step

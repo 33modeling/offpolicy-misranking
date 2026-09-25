@@ -1,5 +1,7 @@
 """CPU checks for the common-step (275) GPU-time export of the Switch comparison."""
 
+import csv
+import io
 import json
 import os
 from pathlib import Path
@@ -69,7 +71,7 @@ def layout(tmp_path):
     return root, switch, evaluation
 
 
-def test_costs_rewards_and_savings_are_assembled_without_inventing_unknowns(tmp_path, monkeypatch):
+def test_costs_and_rewards_are_assembled_without_inventing_unknowns(tmp_path, monkeypatch):
     root, switch, evaluation = layout(tmp_path)
     monkeypatch.setattr(sc.sw, "measured_point", lambda directory, plan, arm, step: {"step": 275, "reward": .33})
     data = sc.build(root, switch, evaluation, [SEED])
@@ -90,8 +92,25 @@ def test_costs_rewards_and_savings_are_assembled_without_inventing_unknowns(tmp_
     assert rows["switch"]["reward"] == .33 and rows["cached"]["reward"] == .31
     text = sc.render(data)
     assert "3,switch,125,33.000," in text and "+unknown" in text
-    assert "3,cached,,31.000,2.78,0.89,0.00,2.78,0.00,+1.00" in text
-    assert "vs_on_timer_saved_h" in text
+    table = list(csv.DictReader(io.StringIO(text.split("\n\n")[1])))
+    displayed = {r["arm"]: r for r in table}
+    assert displayed["cached"]["training_h"] == "2.78"
+    assert displayed["cached"]["vs_on_reward_pp"] == "+1.00"
+    assert displayed["switch"]["selection_h"] == displayed["on_policy"]["selection_h"] == "0.111111"
+    assert displayed["switch"]["selection_training_subtotal_h"] == "2.94"
+    assert displayed["switch"]["single_reference_check_h"] == "unknown"
+    assert displayed["switch"]["ab_validation_h"] == "4.00+unknown"
+    assert "vs_on_timer_saved_h" not in text and "timer+diag_h" not in text
+
+
+def test_missing_selection_is_unknown_not_free_in_log_export(tmp_path, monkeypatch):
+    root, switch, evaluation = layout(tmp_path)
+    monkeypatch.setattr(sc.sw, "measured_point", lambda *args: {"step": 275, "reward": .33})
+    data = sc.build(root, switch, evaluation, [SEED])
+    next(r for r in data["rows"] if r["arm"] == "on_policy")["detail"]["allocation_scoring_gpu_seconds"] = None
+    table = list(csv.DictReader(io.StringIO(sc.render(data).split("\n\n")[1])))
+    on = next(r for r in table if r["arm"] == "on_policy")
+    assert on["selection_h"] == on["selection_training_subtotal_h"] == "unknown"
 
 
 def test_output_root_must_be_separate(tmp_path):

@@ -22,19 +22,22 @@ is reported as unknown, never as zero. Nothing is written outside the output roo
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
-import selection_gate as core  # noqa: E402
-import selection_gate_gpu as base  # noqa: E402
-import selector_pair as pair  # noqa: E402
-import selector_pair_srgc_repeat as repeat  # noqa: E402
-import selector_pair_switch_rewards as sw  # noqa: E402
+import selector_pair_srgc_repeat as repeat
+import selector_pair_switch_rewards as sw
+
+import selection_gate as core
+import selection_gate_gpu as base
+import selector_pair as pair
 
 SCHEMA = "offpolicy-selector-pair/common-step-cost-v1"
 STEP = 275
@@ -199,7 +202,10 @@ def build(root, switch_root, eval_root, seeds):
             "scope": "GPU-seconds after the shared step-25 state through step 275. update-timer = trainer update "
                      "seconds x 4 GPUs (startup, checkpointing and evaluation excluded); allocation = checkpoint-linked "
                      "allocated GPU-seconds from the branch ledgers where a receipt exists. Diagnosis = experimental "
-                     "two-reference SR-GC measurements through the trigger. Rewards are fractions at step 275; "
+                     "two-reference SR-GC measurements through the trigger, not an operating charge. "
+                     "The existing runs rank once at the start; On-policy and Switch reuse that initial ranking. "
+                     "Selection includes scoring rollouts and gradients, not isolated gradient-kernel time. "
+                     "There is no repeated full-pool ranking cost in these logs. Rewards are fractions at step 275; "
                      "missing values are unknown, not zero."}
 
 
@@ -208,9 +214,11 @@ def fmt_h(seconds):
 
 
 def render(data):
-    lines = [f"GPU TIME AND REWARD AT COMMON STEP {STEP} (after shared step {START})", data["scope"], "",
-             "seed,arm,trigger,reward_275_percent,update_timer_h,allocation_h,diagnosis_h,timer+diag_h,"
-             "vs_on_timer_saved_h,vs_on_reward_pp"]
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["seed", "arm", "trigger", "reward_275_percent", "selection_h", "training_h",
+                     "selection_training_subtotal_h", "single_reference_check_h", "ab_validation_h",
+                     "allocation_h", "vs_on_reward_pp"])
     for seed in sorted({r["seed"] for r in data["rows"]}):
         rows = {r["arm"]: r for r in data["rows"] if r["seed"] == seed}
         on = rows["on_policy"]
@@ -218,18 +226,22 @@ def render(data):
             r = rows[arm]
             timer, alloc, diag = r["update_timer_gpu_seconds"], r["allocation_gpu_seconds"], r["diagnosis_gpu_seconds"]
             diag_text = fmt_h(diag) + ("+unknown" if r["diagnosis_unknown"] else "") if arm == "switch" else "0.00"
-            combined = None if timer is None or r["diagnosis_unknown"] else timer + diag
-            saved = (None if combined is None or on["update_timer_gpu_seconds"] is None
-                     else on["update_timer_gpu_seconds"] - combined)
+            selection = r["detail"].get("on_ranking_gpu_seconds" if arm == "switch"
+                                        else "allocation_scoring_gpu_seconds")
+            subtotal = None if selection is None or timer is None else selection + timer
             reward = "unknown" if r["reward"] is None else f"{100 * r['reward']:.3f}"
             delta = ("unknown" if r["reward"] is None or on["reward"] is None
                      else f"{100 * (r['reward'] - on['reward']):+.2f}")
-            lines.append(f"{seed},{arm},{r['trigger'] or ''},{reward},{fmt_h(timer)},{fmt_h(alloc)},{diag_text},"
-                         f"{fmt_h(combined)},{fmt_h(saved)},{delta}")
-    lines += ["", "vs_on_timer_saved_h = On-policy update-timer hours minus this arm's update-timer plus diagnosis hours "
-                  "(positive = this arm used less GPU time through step 275).",
-              "Switch diagnosis is the experimental A/B cost; a one-reference deployment was not measured."]
-    return "\n".join(lines) + "\n"
+            writer.writerow([seed, arm, r["trigger"] or "", reward,
+                             "unknown" if selection is None else f"{selection / 3600:.6f}",
+                             fmt_h(timer), fmt_h(subtotal), "unknown" if arm == "switch" else "0.00",
+                             diag_text, fmt_h(alloc), delta])
+    return (f"LOGGED GPU TIME AND REWARD AT COMMON STEP {STEP} (after shared step {START})\n"
+            + data["scope"] + "\n\n" + out.getvalue()
+            + "\nSubtotal = initial selection + update-timer training; not full allocated cost.\n"
+            + "Switch single-reference check time is unknown, not zero or half of A/B validation.\n"
+            + "A/B validation and allocation are separate views, not added to the subtotal.\n"
+            + "These logs cannot establish the cost of repeated gradient-based reselection.\n")
 
 
 def main():
