@@ -37,6 +37,41 @@ def test_reuse_is_followed_back_to_hash_matched_generation(tmp_path):
     assert cache_creation_cost(contract)["gpu_seconds"] is None
 
 
+@pytest.mark.parametrize("intermediate", [False, True])
+def test_selected_prefix_view_follows_cache_symlink_without_view_logs(tmp_path, intermediate):
+    run, contract = source(tmp_path)
+    origin = run
+    if intermediate:
+        origin = tmp_path / "reused"
+        origin.mkdir()
+        (origin / "rollouts_behavior_train.jsonl").write_bytes((run / "rollouts_behavior_train.jsonl").read_bytes())
+        (origin / "run_config.json").write_text(json.dumps({"behavior_source": str(run)}))
+    view = tmp_path / "branches/on_policy/prefixes/seed-3/view-25"
+    view.mkdir(parents=True)
+    (view / "rollouts_behavior_train.jsonl").symlink_to(origin / "rollouts_behavior_train.jsonl")
+    (view / "run_config.json").write_text(json.dumps({"n_train": 400, "behavior_k": 8, "drift": 25}))
+    contract["source_run"] = str(view)
+    result = cache_creation_cost(contract)
+    assert result["gpu_seconds"] == 2400
+    assert result["source_run"] == str(run)
+    assert result["log_path"] == str(run / "logs/main.log")
+    assert result["source_trace"][0] == {"from": str(view), "to": str(origin), "via": "cache_symlink"}
+    assert len(result["source_trace"]) == 1 + int(intermediate)
+    assert len(result["progress_records"]) == 2
+
+
+def test_selected_prefix_symlink_still_requires_the_contract_cache_hash(tmp_path):
+    run, contract = source(tmp_path)
+    view = tmp_path / "view-25"
+    view.mkdir()
+    (view / "rollouts_behavior_train.jsonl").symlink_to(run / "rollouts_behavior_train.jsonl")
+    contract["source_run"] = str(view)
+    contract["source_hashes"]["rollouts_behavior_train.jsonl"] = "wrong"
+    result = cache_creation_cost(contract)
+    assert result["gpu_seconds"] is None
+    assert "differs from the experiment contract" in result["reason"]
+
+
 @pytest.mark.parametrize("change", ["missing", "unclosed", "retried", "reused", "mismatch", "cycle"])
 def test_incomplete_or_ambiguous_provenance_is_not_a_zero_cost(tmp_path, change):
     run, contract = source(tmp_path)

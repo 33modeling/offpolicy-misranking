@@ -101,6 +101,7 @@ def test_costs_and_rewards_are_assembled_without_inventing_unknowns(tmp_path, mo
     assert displayed["switch"]["single_reference_check_h"] == "unknown"
     assert displayed["switch"]["ab_validation_h"] == "4.00+unknown"
     assert "vs_on_timer_saved_h" not in text and "timer+diag_h" not in text
+    assert "CACHE_CREATION seed=3 status=unknown gpu_h=unknown" in text
 
 
 def test_missing_selection_is_unknown_not_free_in_log_export(tmp_path, monkeypatch):

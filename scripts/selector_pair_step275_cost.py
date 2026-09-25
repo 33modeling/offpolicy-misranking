@@ -225,6 +225,7 @@ def fmt_h(seconds):
 
 def render(data):
     out = io.StringIO()
+    cache_notes = []
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow(["seed", "arm", "trigger", "reward_275_percent", "cache_creation_h", "sr_preparation_h", "selection_h", "training_h",
                      "selection_training_subtotal_h", "single_reference_check_h", "ab_validation_h",
@@ -232,6 +233,11 @@ def render(data):
     for seed in sorted({r["seed"] for r in data["rows"]}):
         rows = {r["arm"]: r for r in data["rows"] if r["seed"] == seed}
         on = rows["on_policy"]
+        cache = rows["cached"].get("cache_creation") or {}
+        cache_notes.append(f"CACHE_CREATION seed={seed} status={cache.get('status', 'unknown')} "
+                           f"gpu_h={fmt_h(cache.get('gpu_seconds'))} "
+                           f"source={cache.get('source_run', 'unknown')} "
+                           f"reason={cache.get('reason', 'none')}")
         for arm in ARMS:
             r = rows[arm]
             timer, alloc, diag = r["update_timer_gpu_seconds"], r["allocation_gpu_seconds"], r["diagnosis_gpu_seconds"]
@@ -259,7 +265,8 @@ def render(data):
               "otherwise unknown. It is not included in the recorded subtotal.\n"
             + "Switch single-reference check time is unknown, not zero or half of A/B validation.\n"
             + "A/B validation and allocation are separate views, not added to the subtotal.\n"
-            + "These logs cannot establish the cost of repeated gradient-based reselection.\n")
+            + "These logs cannot establish the cost of repeated gradient-based reselection.\n"
+            + "\n" + "\n".join(cache_notes) + "\n")
 
 
 def main():

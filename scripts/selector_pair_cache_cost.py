@@ -15,7 +15,7 @@ def digest(path):
 
 
 def cache_creation_cost(contract):
-    result = {"gpu_seconds": None, "status": "unknown",
+    result = {"gpu_seconds": None, "status": "unknown", "source_trace": [],
               "scope": "Original behavior-rollout stage wall time times its logged GPU count; "
               "includes generation, reward verification and stage overhead, at one-second log resolution. "
               "Not the cost of reading cached rewards. No timestamp-gap or per-prompt extrapolation."}
@@ -25,20 +25,32 @@ def cache_creation_cost(contract):
         visited = set()
         while source not in visited:
             visited.add(source)
-            if digest(source / "rollouts_behavior_train.jsonl") != expected:
+            result["source_run"] = str(source)
+            cache_path = source / "rollouts_behavior_train.jsonl"
+            if digest(cache_path) != expected:
                 raise ValueError("cache content differs from the experiment contract")
+            # Selected-prefix views link the cache file, not the source directory.
+            origin = cache_path.resolve(strict=True).parent
+            if origin != source:
+                result["source_trace"].append({"from": str(source), "to": str(origin), "via": "cache_symlink"})
+                source = origin
+                continue
             config = json.loads((source / "run_config.json").read_text())
             if not config.get("behavior_source"):
                 break
             parent = Path(config["behavior_source"])
             if not parent.is_absolute():
                 raise ValueError("relative cache source cannot be resolved unambiguously")
+            result["source_trace"].append({"from": str(source), "to": str(parent.resolve()),
+                                           "via": "behavior_source"})
             source = parent.resolve()
         else:
             raise ValueError("cycle in behavior-cache provenance")
         log = source / "logs/main.log"
+        result["log_path"] = str(log)
         text = log.read_text()
         events = parse_progress(text)
+        result["progress_records"] = [{**event, "time": event["time"].isoformat()} for event in events]
         starts = [i for i, event in enumerate(events) if event["stage"] == 2
                   and re.fullmatch(r"behavior-rollout \d+x\d+ on \d+ GPUs", event["label"])]
         if len(starts) != 1:
