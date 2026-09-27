@@ -27,14 +27,17 @@ The existing runner files and methods consulted are recorded in
 
 ## Exact online computation
 
-1. Fix the 40-prompt SR subset using eight cached binary rewards per candidate:
-   `score = -abs(mean(rewards) - 0.5)`. Cache rewards and membership remain fixed.
+1. Rank the full 400-prompt pool using eight cached binary rewards per candidate:
+   `score = -abs(mean(rewards) - 0.5)`, with seeded tie breaking. Cached scores
+   remain fixed. SR proposes the highest-scoring four prompts not yet trained
+   in the current pass, including exclusion of prompts trained in the prefix.
 2. While On-policy selection is active, draw 40 candidates uniformly without
    replacement within each draw from the 400-prompt pool every 25 updates.
    Previously drawn candidates may reappear at a later refresh. Compute fresh
-   current-policy gradients for these 40 candidates **and the 40 SR comparison
-   prompts**. Generate eight responses per distinct prompt. Reuse a single
-   gradient for overlap; the union has at most 80 prompts.
+   current-policy gradients for these 40 candidates **and the next four unused
+   SR prompts**. Generate eight responses per distinct prompt. Reuse a single
+   gradient for overlap; the union has at most 44 prompts. Merely scoring an
+   SR prompt does not mark it as trained.
 3. Candidate scoring uses two leave-one-out groups of four responses. Each
    gradient sums response-token contributions and averages the eight responses.
    Each validation prompt uses one group of eight. Average validation gradients.
@@ -47,13 +50,13 @@ The existing runner files and methods consulted are recorded in
 5. At a scheduled check, compute
 
    ```text
-   on_mean = mean(projected_gradients[i] for i in all_40_on_candidates)
-   sr_mean = mean(projected_gradients[i] for i in all_40_sr_prompts)
+   on_mean = mean(projected_gradients[i] for i in selected_on_four)
+   sr_mean = mean(projected_gradients[i] for i in next_unused_sr_four)
    D = dot(projected_validation_mean, on_mean - sr_mean)
    ```
 
-   D uses all 40 prompts on each side, not the four training prompts. It is an
-   inner product, not a cosine. No extra generation, differentiation or A/B
+   D compares the proposed four-prompt training batches, not the full candidate
+   means. It is an inner product, not a cosine. No extra generation, differentiation or A/B
    diagnostic reference batch is requested to compute D. Its sign favors SR
    when negative.
 6. Check every 25 updates. Two consecutive negative checks trigger switching.
@@ -68,7 +71,29 @@ The existing runner files and methods consulted are recorded in
    leave-one-out advantages and token sums. AdamW uses learning rate `1e-5`,
    betas `(0.9,0.999)`, epsilon `1e-8`, zero weight decay, and gradient-norm clip 1.
 8. On switching, retain model and optimizer state, stop gradient scoring and D
-   checks, and draw four training prompts from the fixed SR subset each update.
+   checks, and train on the same SR four just compared. Subsequent SR updates
+   take the next highest-scoring unused four from the full pool. The SR arm
+   uses this same rule from the start of its continuation.
+9. Random uses a seeded shuffle of all 400 candidate prompts and takes four
+   unused prompts on **every optimizer update**. There is no fixed 40-prompt
+   Random subset or 25-update batch reuse. It performs no gradient scoring.
+
+Random and SR exclude all actually trained prompts in the current pass,
+including the shared prefix and, for Switch, its On-policy training history.
+Only a successful training update consumes its prompts. After the full pool
+is exhausted, a new pass begins: Random reshuffles and SR reuses score order.
+A partial last batch uses the remaining prompts before filling from the new
+pass, without duplicates within a batch. With 400 prompts and batches of four,
+permanent non-reuse cannot support the existing 250-update continuations.
+On-policy still retains its selected batch for 25 updates; its selection rule
+and the temporal confirmation rule are unchanged.
+
+These author-requested Random/SR and four-vs-four SR-GC changes date to
+2026-09-28 and define a new experimental protocol, not a relabeling of old
+results. Old checkpoints cannot resume under it. Keep in-flight/archived runs
+on their original code and do not bypass implementation-hash checks.
+Checkpoints persist the used prompt IDs and pass number; per-update records
+retain training IDs, pool size, pass boundaries and the proposed SR four.
 
 The controller's `step=t` denotes **t completed optimizer updates**. A check
 at t scores that checkpoint's policy before update t+1; a triggered transition
@@ -83,7 +108,7 @@ selection for an update that will never be performed.
 
 | File | Responsibility | Manuscript |
 | --- | --- | --- |
-| `srgc.py` | 40+40 scoring, top-four training, D, confirmation, four arms, resume | Sections 2–4 |
+| `srgc.py` | 40+4 scoring, selected-four contrast, non-repeating Random/SR passes, four arms, resume | New protocol for V7; not the frozen submission |
 | `objectives.py` | LOO, GRPO/RLOO equations, cosine, fixed projection reference | Section 2, Appendix C |
 | `torch_backend.py` | Fresh generation, dense scoring derivatives, LoRA optimization, distributed reductions | Appendix C |
 | `run_experiment.py` | One seed, common prefix, four continuations, endpoint evaluation/checkpoints | Online experiments |

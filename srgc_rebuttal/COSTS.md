@@ -32,8 +32,12 @@ and `cache` start four local torchrun processes. `--task prefix` or
 scheduling, use `python scripts/run_srgc_rebuttal.py worker --dataset math`
 on each allocated node; it builds missing caches automatically. MBPP uses
 `worker --dataset mbpp` on each node with the included seed-5--9 inputs.
-The shared-prefix and four-arm protocol is unchanged: selection every 25
+The shared-prefix and four-arm schedule is unchanged: selection every 25
 updates, fresh training responses every update, endpoint at total update 275.
+The 2026-09-28 protocol scores 40 On-policy candidates plus the next four
+unused SR prompts, at most 44 distinct prompts per refresh. SR-GC compares
+the selected On-policy four with those SR four. Random and SR consume the
+full candidate pool without replacement within a pass; see [README.md](README.md).
 
 ## What is timed
 
@@ -41,8 +45,8 @@ updates, fresh training responses every update, endpoint at total update 275.
 | --- | --- |
 | Cache build | Tokenization, generation, decode, reward verification, response receipt writes, export, separate startup |
 | Startup | Tokenizer load, model/adapter load, backend setup |
-| Preparation | Cached-SR ranking and fixed random-set construction |
-| Selection | Candidate/SR union and validation timed separately: generation, reward verification, forward, backward, projection, communication; cosine ranking; SR-GC arithmetic |
+| Preparation | Cached-SR ranking and selector setup; no fixed Random subset is constructed |
+| Selection | 40-candidate/4-SR union and validation timed separately: generation, reward verification, forward, backward, projection, communication; cosine ranking; selected-four SR-GC arithmetic |
 | Training | Fresh generation, reward verification, forward, backward, gradient reduction, clipping/optimizer, communication |
 | Evaluation | Fresh generation and reward verification; communication |
 | Checkpoint | Model/optimizer snapshot, write, read and restore |

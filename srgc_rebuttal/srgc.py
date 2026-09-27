@@ -52,10 +52,10 @@ def gradient_contrast(
     on_ids: Sequence[str], sr_ids: Sequence[str],
     gradients: Mapping[str, np.ndarray], validation: np.ndarray,
 ) -> float:
-    """D = <Pv, mean(Pg for ALL on candidates) - mean(Pg for ALL SR prompts)>.
+    """D = <Pv, mean(Pg for selected On-policy prompts) - mean(Pg for next SR batch)>.
 
     Inputs are already projected. There is no cosine normalization here and
-    neither side is restricted to the four prompts selected for training.
+    both sides contain the four prompts proposed for the next training update.
     An overlapping prompt uses the same vector on both sides and cancels.
     """
     on, sr = _unique(on_ids, "On-policy set"), _unique(sr_ids, "SR set")
@@ -201,6 +201,7 @@ class Engine:
     """
 
     ARMS = {"on_policy", "switch", "sr", "random"}
+    SAMPLING_PROTOCOL = "full-pool-without-replacement-selected-four-contrast-v1"
 
     def __init__(self, backend: Backend, candidate_ids: Sequence[str],
                  validation_ids: Sequence[str], cached_rewards: Mapping[str, Sequence[float]],
@@ -219,11 +220,12 @@ class Engine:
         if type(backend.gpu_count) is not int or backend.gpu_count < 0:
             raise ValueError("gpu_count must describe the allocated GPUs (zero for CPU)")
         preparation_started = time.perf_counter()
-        self.sr_ids = cached_sr_set(self.candidates, cached_rewards, config.scoring_prompts,
-                                    config.seed, config.responses)
+        self.sr_ranked_ids = cached_sr_set(self.candidates, cached_rewards, len(self.candidates),
+                                         config.seed, config.responses)
         self.sr_preparation_wall_seconds = time.perf_counter() - preparation_started
-        rng = np.random.default_rng(config.seed + 424243)
-        self.random_ids = tuple(rng.choice(self.candidates, config.scoring_prompts, replace=False))
+        self.random_ids = self.candidates
+        self.used_training_ids: set[str] = set()
+        self.sampling_cycle = 0
         self.rule = TemporalRule(config.check_interval)
         self.active_selection: dict[str, Any] | None = None
         self.switched_at: int | None = None
@@ -238,6 +240,24 @@ class Engine:
     def _charge_preparation(self) -> None:
         self.costs["sr_preparation_wall_seconds"] = self.sr_preparation_wall_seconds
         self.costs["sr_preparation_gpu_seconds"] = self.sr_preparation_wall_seconds * self.backend.gpu_count
+
+    def _pool_training_batch(self, selector: str) -> tuple[tuple[str, ...], set[str], int]:
+        used, cycle = set(self.used_training_ids), self.sampling_cycle
+        selected: list[str] = []
+        while len(selected) < self.config.training_prompts:
+            if len(used) == len(self.candidates):
+                used.clear()
+                cycle += 1
+            if selector == "random":
+                rng = np.random.default_rng(stream_seed(self.config.seed, cycle, "random-pool-order"))
+                order = rng.permutation(self.random_ids)
+            else:
+                order = self.sr_ranked_ids
+            available = [i for i in order if i not in used and i not in selected]
+            batch = available[:self.config.training_prompts - len(selected)]
+            selected.extend(batch)
+            used.update(batch)
+        return tuple(selected), used, cycle
 
     def _vectors(self, ids: Sequence[str], group_size: int, purpose: str) -> dict[str, np.ndarray]:
         c = self.config
@@ -303,8 +323,9 @@ class Engine:
         if refresh:
             started = self._begin("selection")
             on_ids = tuple(rng.choice(self.candidates, c.scoring_prompts, replace=False))
-            # One shared realization for overlapping prompts: up to 80, not 80 unconditionally.
-            union = tuple(dict.fromkeys((*on_ids, *self.sr_ids)))
+            sr_ids, _, _ = self._pool_training_batch("sr")
+            # Score 40 On-policy candidates and the next four unused SR prompts, sharing overlap.
+            union = tuple(dict.fromkeys((*on_ids, *sr_ids)))
             gradients = self._vectors(union, c.candidate_group_size, "selection")
             val = self._vectors(self.validation, c.responses, "validation")
             with self._timing_scope("cosine_ranking"):
@@ -319,9 +340,9 @@ class Engine:
                 d_started = time.perf_counter()
                 # Pure array arithmetic. No backend call, no generation/backward pass.
                 with self._timing_scope("sr_gc_check"):
-                    d = gradient_contrast(on_ids, self.sr_ids, gradients, v)
-                    on_dot = float(np.dot(v, np.stack([gradients[i] for i in on_ids]).mean(axis=0)))
-                    sr_dot = float(np.dot(v, np.stack([gradients[i] for i in self.sr_ids]).mean(axis=0)))
+                    d = gradient_contrast(train_ids, sr_ids, gradients, v)
+                    on_dot = float(np.dot(v, np.stack([gradients[i] for i in train_ids]).mean(axis=0)))
+                    sr_dot = float(np.dot(v, np.stack([gradients[i] for i in sr_ids]).mean(axis=0)))
                     transition = self.rule.observe(self.step, d)
                 self.costs["d_arithmetic_wall_seconds"] += time.perf_counter() - d_started
                 record.update(d=d, switched=transition, on_mean_validation_dot=on_dot,
@@ -329,21 +350,26 @@ class Engine:
                 if transition:
                     self.switched_at = self.step
             self._end("selection", started)
-            record.update(on_ids=list(on_ids), sr_ids=list(self.sr_ids),
+            record.update(on_ids=list(on_ids), sr_ids=list(sr_ids),
                           ranking_scores=scores.tolist(), selected_on_ids=list(train_ids),
                           scored_distinct_prompts=len(union),
                           validation_ids=list(self.validation), scoring_responses_per_prompt=c.responses)
         if use_on:
             train_ids = tuple(self.active_selection["train_ids"])
             record["selection_step"] = self.active_selection["step"]
+        used, cycle = set(self.used_training_ids), self.sampling_cycle
         if not use_on or self.switched_at is not None:
-            fixed = self.random_ids if self.arm == "random" else self.sr_ids
-            draw = np.random.default_rng(stream_seed(c.seed, self.step, "fixed-subset-draw"))
-            train_ids = tuple(draw.choice(fixed, c.training_prompts, replace=False))
+            selector = "random" if self.arm == "random" else "sr"
+            train_ids, used, cycle = self._pool_training_batch(selector)
+            record.update(sampling_pool_size=len(self.candidates), sampling_cycle_start=self.sampling_cycle,
+                          sampling_cycle_end=cycle, unused_after=len(self.candidates) - len(used))
+        else:
+            used.update(train_ids)
         started = self._begin("training")
         metrics = dict(self.backend.train(train_ids, responses=c.responses, objective=c.objective,
                                           seed=stream_seed(c.seed, self.step, "training")))
         self._end("training", started)
+        self.used_training_ids, self.sampling_cycle = used, cycle
         self.step += 1
         record.update(completed_updates=self.step, train_ids=list(train_ids),
                       selection_gpu_seconds=self.costs["selection_gpu_seconds"] - before["selection_gpu_seconds"],
@@ -364,23 +390,35 @@ class Engine:
         """Contains model AND optimizer, selector state and temporal window."""
         return copy.deepcopy({"config": asdict(self.config), "arm": self.arm, "step": self.step,
             "candidates": self.candidates, "validation": self.validation,
-            "sr_ids": self.sr_ids, "random_ids": self.random_ids,
+            "random_ids": self.random_ids,
+            "sampling_protocol": self.SAMPLING_PROTOCOL, "sr_ranked_ids": self.sr_ranked_ids,
+            "used_training_ids": [i for i in self.candidates if i in self.used_training_ids],
+            "sampling_cycle": self.sampling_cycle,
             "active_selection": self.active_selection,
             "sr_preparation_wall_seconds": self.sr_preparation_wall_seconds,
             "rule": asdict(self.rule), "switched_at": self.switched_at,
             "costs": self.costs, "history": self.history, "backend": self.backend.state_dict()})
 
     def load_state_dict(self, state: Mapping[str, Any], *, fork_arm: str | None = None) -> None:
-        """A fork shares theta/optimizer and fixed subsets; its costs start at zero.
+        """A fork shares theta/optimizer and sampling pools; its costs start at zero.
 
         Pass fork_arm at the shared prefix only. Normal resume preserves all
         timing and check history. A fork never obtains a decision from another arm.
         """
         s = copy.deepcopy(dict(state))
+        if s.get("sampling_protocol") != self.SAMPLING_PROTOCOL:
+            raise ValueError("checkpoint sampling protocol mismatch; cannot resume legacy fixed-subset sampling")
+        if tuple(s["random_ids"]) != self.random_ids:
+            raise ValueError("checkpoint Random sampling pool mismatch; cannot resume a fixed-subset "
+                             "checkpoint with full-pool Random sampling")
         if (s["config"] != asdict(self.config) or tuple(s["candidates"]) != self.candidates or
-                tuple(s["validation"]) != self.validation or tuple(s["sr_ids"]) != self.sr_ids or
-                tuple(s["random_ids"]) != self.random_ids):
+                tuple(s["validation"]) != self.validation or
+                tuple(s["sr_ranked_ids"]) != self.sr_ranked_ids):
             raise ValueError("checkpoint protocol, data or cache mismatch")
+        used = s["used_training_ids"]
+        if (len(used) != len(set(used)) or not set(used) <= set(self.candidates) or
+                type(s["sampling_cycle"]) is not int or s["sampling_cycle"] < 0):
+            raise ValueError("invalid saved sampling progress")
         if fork_arm is not None and fork_arm not in self.ARMS:
             raise ValueError("invalid fork arm")
         active = s["active_selection"]
@@ -401,6 +439,7 @@ class Engine:
         self.backend.load_state_dict(s["backend"])
         self.step = s["step"]
         self.active_selection = active
+        self.used_training_ids, self.sampling_cycle = set(used), s["sampling_cycle"]
         self.sr_preparation_wall_seconds = s["sr_preparation_wall_seconds"]
         if fork_arm is None:
             self.arm, self.switched_at = s["arm"], s["switched_at"]

@@ -1,5 +1,6 @@
 import copy
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -7,19 +8,20 @@ from srgc_rebuttal.objectives import (CountSketch, grpo_advantages, grpo_loss,
                                         loo_advantages, rloo_loss, score_gradient)
 from srgc_rebuttal.plan import DEFAULT_PLAN, load_plan, validate_inputs
 from srgc_rebuttal.srgc import (Config, Engine, TemporalRule, cached_sr_set,
-                                   cosine_scores, gradient_contrast)
+                                   cosine_scores, gradient_contrast, stream_seed)
 from srgc_rebuttal.toy_backend import ToyBackend, make_problem
 
 
 class MathTests(unittest.TestCase):
-    def test_full_sets_not_training_top_four_and_not_cosines(self):
+    def test_selected_batches_not_full_candidate_mean_and_not_cosines(self):
         on, sr = [f"o{i}" for i in range(40)], [f"s{i}" for i in range(40)]
         gradients = {i: np.array([10., 0.]) if n < 4 else np.array([-2., 0.])
                      for n, i in enumerate(on)}
         gradients.update({i: np.array([1., 0.]) for i in sr})
-        # On full mean=-0.8, SR mean=1, v=2 -> -3.6. Top4-only would be +18.
+        # The selected four have +18 contrast; averaging all candidates would give -3.6.
+        self.assertAlmostEqual(gradient_contrast(on[:4], sr[:4], gradients, np.array([2., 0.])), 18)
+        self.assertAlmostEqual(gradient_contrast(on[:4], sr[:4], gradients, np.array([6., 0.])), 54)
         self.assertAlmostEqual(gradient_contrast(on, sr, gradients, np.array([2., 0.])), -3.6)
-        self.assertAlmostEqual(gradient_contrast(on, sr, gradients, np.array([6., 0.])), -10.8)
 
     def test_overlap_cancels_and_invalid_inputs_rejected(self):
         g = {"shared": np.array([1e10, 0.]), "a": np.array([3., 0.]), "b": np.array([1., 0.])}
@@ -106,11 +108,12 @@ class ScriptedBackend:
     def __init__(self):
         self.score_calls, self.training = [], []
         self.parameter, self.optimizer_steps = 0, 0
+        self.strengths = {}
 
     def score_gradients(self, ids, **kwargs):
         self.score_calls.append((tuple(ids), dict(kwargs)))
-        # The fixed SR first40 have higher gradients than other candidates.
-        return {i: np.array([2. if i.startswith("s") else 0., 0.]) for i in ids}
+        # Higher-ranked SR prompts have larger gradients; all nonzero cosines tie.
+        return {i: np.array([self.strengths.get(i, 1.), 0.]) for i in ids}
 
     def train(self, ids, **kwargs):
         self.training.append((tuple(ids), kwargs))
@@ -135,19 +138,21 @@ class EngineTests(unittest.TestCase):
         backend = ScriptedBackend()
         engine = Engine(backend, ids, ["sv"], cache, arm=arm,
                         config=Config(projection_dim=2), step=step)
+        backend.strengths = {i: float(len(ids) - n) for n, i in enumerate(engine.sr_ranked_ids)}
         return engine, backend
 
-    def test_refresh_both_sets_every_25_updates_and_reuse_top_four(self):
+    def test_refresh_40_candidates_and_four_sr_prompts_then_compare_selected_four(self):
         engine, backend = self.make_engine()
         record = engine.update()
         self.assertEqual(len(record["on_ids"]), 40)
-        self.assertEqual(len(record["sr_ids"]), 40)
+        self.assertEqual(len(record["sr_ids"]), 4)
         self.assertEqual(len(record["train_ids"]), 4)
         self.assertLess(record["d"], 0)
         self.assertEqual(len(backend.score_calls), 2)  # union + validation, no extra D batch
         union, kwargs = backend.score_calls[0]
         self.assertEqual(set(union), set(record["on_ids"]) | set(record["sr_ids"]))
         self.assertEqual(len(union), len(set(union)))
+        self.assertLessEqual(len(union), 44)
         self.assertEqual(kwargs["responses"], 8)
         self.assertEqual(kwargs["group_size"], 4)
         self.assertEqual(backend.score_calls[1][1]["group_size"], 8)
@@ -166,6 +171,10 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(renewed["selection_refreshed"])
         self.assertNotEqual(renewed["on_ids"], record["on_ids"])
         self.assertAlmostEqual(record["d"], record["on_mean_validation_dot"] - record["sr_mean_validation_dot"])
+        selected_mean = np.mean([backend.strengths[i] for i in record["selected_on_ids"]])
+        candidate_mean = np.mean([backend.strengths[i] for i in record["on_ids"]])
+        self.assertAlmostEqual(record["on_mean_validation_dot"], selected_mean)
+        self.assertNotAlmostEqual(record["on_mean_validation_dot"], candidate_mean)
 
     def test_midblock_resume_preserves_selection_and_avoids_extra_scoring(self):
         engine, backend = self.make_engine(arm="on_policy", step=0)
@@ -206,7 +215,9 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(backend.score_calls), calls)
         self.assertEqual(engine.costs["selection_wall_seconds"], before)
         self.assertEqual(record["selector"], "sr")
-        self.assertTrue(set(record["train_ids"]) <= set(engine.sr_ids))
+        self.assertTrue(set(record["train_ids"]) <= set(engine.sr_ranked_ids))
+        transition = next(r for r in engine.history if r["switched"])
+        self.assertEqual(transition["train_ids"], transition["sr_ids"])
         self.assertEqual(engine.costs["selection_gpu_seconds"], 0)
 
     def test_sr_and_random_have_no_gradient_scoring(self):
@@ -215,6 +226,138 @@ class EngineTests(unittest.TestCase):
             engine.run_until(27)
             self.assertEqual(backend.score_calls, [])
             self.assertEqual(len(backend.training), 2)
+
+    def test_random_exhausts_full_pool_before_repeating_and_reshuffles(self):
+        engine, backend = self.make_engine(arm="random")
+        self.assertEqual(engine.random_ids, engine.candidates)
+        engine.run_until(225)
+        expected = []
+        orders = []
+        for cycle in range(2):
+            rng = np.random.default_rng(stream_seed(engine.config.seed, cycle, "random-pool-order"))
+            order = rng.permutation(engine.candidates).tolist()
+            orders.append(order)
+            expected.extend([order[n:n + 4] for n in range(0, 400, 4)])
+        self.assertNotEqual(orders[0], orders[1])
+        self.assertEqual([r["train_ids"] for r in engine.history], expected)
+        for record, (trained, kwargs) in zip(engine.history, backend.training, strict=True):
+            self.assertEqual(list(trained), record["train_ids"])
+            self.assertEqual(len(set(trained)), 4)
+            self.assertEqual(record["sampling_pool_size"], 400)
+            self.assertEqual(record["selector"], "random")
+            self.assertFalse(record["selection_refreshed"])
+            self.assertEqual(kwargs["responses"], 8)
+        for start in (0, 100):
+            seen = [i for r in engine.history[start:start + 100] for i in r["train_ids"]]
+            self.assertEqual(len(seen), len(set(seen)))
+            self.assertEqual(set(seen), set(engine.candidates))
+        self.assertEqual(backend.score_calls, [])
+        self.assertEqual(engine.costs["selection_wall_seconds"], 0)
+
+    def test_random_resume_preserves_full_pool_and_per_update_draws(self):
+        engine, _ = self.make_engine(arm="random")
+        engine.run_until(38)
+        restored, _ = self.make_engine(arm="random")
+        restored.load_state_dict(engine.state_dict())
+        engine.run_until(60)
+        restored.run_until(60)
+        self.assertEqual([r["train_ids"] for r in engine.history],
+                         [r["train_ids"] for r in restored.history])
+        self.assertEqual(engine.backend.state_dict(), restored.backend.state_dict())
+
+    def test_random_fork_uses_full_pool_after_shared_on_policy_prefix(self):
+        prefix, _ = self.make_engine(arm="on_policy", step=0)
+        prefix.run_until(25)
+        random, backend = self.make_engine(arm="random")
+        random.load_state_dict(prefix.state_dict(), fork_arm="random")
+        self.assertEqual(random.backend.state_dict(), prefix.backend.state_dict())
+        random.run_until(50)
+        self.assertGreater(len({i for r in random.history for i in r["train_ids"]}), 40)
+        self.assertTrue(all(r["sampling_pool_size"] == 400 for r in random.history))
+        self.assertEqual(backend.score_calls, [])
+
+    def test_sr_consumes_score_order_without_replacement_before_next_pass(self):
+        engine, _ = self.make_engine(arm="sr")
+        engine.run_until(128)
+        trained = [i for r in engine.history for i in r["train_ids"]]
+        self.assertEqual(trained[:400], list(engine.sr_ranked_ids))
+        self.assertEqual(len(set(trained[:400])), 400)
+        self.assertEqual(trained[400:], list(engine.sr_ranked_ids[:12]))
+        self.assertEqual(engine.history[99]["unused_after"], 0)
+        self.assertEqual(engine.history[100]["sampling_cycle_end"], 1)
+        self.assertTrue(all(r["sampling_pool_size"] == 400 for r in engine.history))
+
+    def test_sr_excludes_prefix_prompts_and_restores_used_progress(self):
+        prefix, _ = self.make_engine(arm="on_policy", step=0)
+        prefix.run_until(25)
+        used = set(prefix.used_training_ids)
+        sr, _ = self.make_engine(arm="sr")
+        sr.load_state_dict(prefix.state_dict(), fork_arm="sr")
+        expected = [i for i in sr.sr_ranked_ids if i not in used]
+        sr.run_until(37)
+        self.assertEqual([i for r in sr.history for i in r["train_ids"]], expected[:48])
+        restored, _ = self.make_engine(arm="sr")
+        restored.load_state_dict(sr.state_dict())
+        sr.run_until(130)
+        restored.run_until(130)
+        self.assertEqual([r["train_ids"] for r in sr.history],
+                         [r["train_ids"] for r in restored.history])
+        self.assertEqual(sr.used_training_ids, restored.used_training_ids)
+        self.assertEqual(sr.sampling_cycle, restored.sampling_cycle)
+
+    def test_srgc_preview_excludes_trained_prompts_but_does_not_consume_comparison(self):
+        engine, _ = self.make_engine(arm="switch")
+        engine.used_training_ids = set(engine.sr_ranked_ids[:4])
+        expected = list(engine.sr_ranked_ids[4:8])
+        record = engine.update()
+        self.assertEqual(record["sr_ids"], expected)
+        self.assertEqual(engine.used_training_ids, set(engine.sr_ranked_ids[:4]) | set(record["train_ids"]))
+
+    def test_sampler_handles_partial_last_batch_without_duplicate_within_batch(self):
+        for arm in ("random", "sr"):
+            with self.subTest(arm=arm):
+                engine, _ = self.make_engine(arm=arm)
+                last = engine.sr_ranked_ids[-1]
+                engine.used_training_ids = set(engine.candidates) - {last}
+                record = engine.update()
+                self.assertEqual(record["train_ids"][0], last)
+                self.assertEqual(len(set(record["train_ids"])), 4)
+                self.assertEqual(engine.sampling_cycle, 1)
+                self.assertEqual(engine.used_training_ids, set(record["train_ids"][1:]))
+
+    def test_failed_training_does_not_consume_prompts(self):
+        engine, backend = self.make_engine(arm="sr")
+        with patch.object(backend, "train", side_effect=RuntimeError("training failed")):
+            with self.assertRaisesRegex(RuntimeError, "training failed"):
+                engine.update()
+        self.assertEqual(engine.used_training_ids, set())
+        self.assertEqual(engine.sampling_cycle, 0)
+        self.assertEqual(engine.step, 25)
+
+    def test_fixed_random_subset_checkpoint_cannot_silently_change_protocol(self):
+        for arm in ("random", "on_policy"):
+            with self.subTest(arm=arm):
+                engine, backend = self.make_engine(arm=arm)
+                legacy = engine.state_dict()
+                legacy["random_ids"] = tuple(np.random.default_rng(engine.config.seed + 424243)
+                                            .choice(engine.candidates, 40, replace=False))
+                before = backend.state_dict()
+                with self.assertRaisesRegex(ValueError, "Random sampling pool mismatch"):
+                    engine.load_state_dict(legacy)
+                self.assertEqual(backend.state_dict(), before)
+                legacy.pop("sampling_protocol")
+                with self.assertRaisesRegex(ValueError, "sampling protocol mismatch"):
+                    engine.load_state_dict(legacy)
+
+    def test_invalid_saved_sampling_progress_is_rejected(self):
+        engine, backend = self.make_engine(arm="sr")
+        original = engine.state_dict()
+        for change in ({"used_training_ids": ["sv"]}, {"used_training_ids": ["s0", "s0"]},
+                       {"sampling_cycle": -1}, {"sampling_cycle": True}):
+            with self.subTest(change=change):
+                with self.assertRaisesRegex(ValueError, "saved sampling progress"):
+                    engine.load_state_dict({**original, **change})
+                self.assertEqual(backend.state_dict(), original["backend"])
 
     def test_resume_and_shared_prefix_preserve_model_optimizer_and_window(self):
         engine, _ = self.make_engine(step=0, arm="on_policy")

@@ -32,9 +32,13 @@ seed follows `--seed`, unlike the integrated cohort's fixed split seed 0.
 
 The V7 reference implementation only needs an `srgc-inputs-v1` bundle per seed
 and a plan that names the verifier. The tools below build both for MATH train,
-GSM8K, MBPP or any JSONL file of `{question, answer}` rows. The new rebuttal protocol uses a 25-update shared prefix, total 275, 40 fresh scored
-candidates plus 40 SR-set prompts every 25 updates, retaining the top four for training, a check every
-25 updates, projection 4096.
+GSM8K, MBPP or any JSONL file of `{question, answer}` rows. The current protocol
+uses a 25-update shared prefix, total 275, 40 fresh scored candidates plus the
+next four unused SR prompts every 25 updates, retaining the On-policy top four
+for training, checks every 25 updates and projection 4096. SR-GC compares the
+selected four on each side. Random and SR use the whole candidate pool without
+replacement within each pass; SR follows cached score order. These rules apply
+to both MATH and MBPP and differ from the older fixed-subset protocol.
 
 ## 1. Build the bundle (CPU)
 

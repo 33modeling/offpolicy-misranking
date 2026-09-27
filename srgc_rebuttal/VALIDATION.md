@@ -1,4 +1,36 @@
-# Simple shell launcher on 2026-09-28
+# Full-pool sampling and selected-four SR-GC on 2026-09-28
+
+The author requested removal of the initial fixed 40-prompt Random pool,
+SR selection in cached score order while excluding already trained prompts,
+and the same unused top-four SR proposal in SR-GC. Random now consumes a
+seeded permutation of all candidates; SR consumes score order. Each pass
+excludes previously trained prompts, including the shared prefix. A new pass
+starts only after the entire pool is exhausted. This retains the requested
+training horizon without pretending that 400 prompts can supply 1,000 unique
+training slots. On-policy's 25-update retained-batch rule is unchanged.
+
+SR-GC compares the four selected On-policy prompts against the next unused
+SR four. Scoring requests the 40-candidate/four-SR union, at most 44 prompts,
+plus the existing single validation reference. A comparison alone does not
+consume SR prompts. On transition, training uses the same proposed SR batch.
+Actual used IDs and pass number are saved only after successful training and
+persist through checkpoint resume and prefix forks. Old sampling checkpoints
+are rejected; implementation-hash protection remains enabled.
+
+All 120 unit/integration tests passed with no skips using the existing isolated
+CPU test environment, including tiny OLMo tests. New controller tests cover
+the four-vs-four inner product, the 44-prompt bound, full-pool exhaustion,
+SR ordering, exclusion of prefix prompts, comparison without consumption,
+transition-batch identity, resume, partial pass boundaries, failed training,
+and rejection of legacy/invalid sampling state. No H100 job, historical result,
+input bundle or pretrained-model environment was changed by these checks.
+The synthetic CPU demo completed all four arms through update 275 for seeds
+5 and 6. The two-process CPU smoke test also passed: distributed global-batch
+updates and unequal-rank timing match the single-process reference, and
+rank-zero startup/timing-write failures propagate without hanging. These are
+software checks, not H100 throughput measurements or empirical paper results.
+
+## Simple shell launcher on 2026-09-28
 
 Added the POSIX-compatible `scripts/run_srgc.sh` entry point. Users select only
 `math` or `mbpp`, optionally followed by `status`, `results` or `costs`.

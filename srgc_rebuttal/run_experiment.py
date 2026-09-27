@@ -111,7 +111,7 @@ def main() -> None:
                         projection_dim=plan["projection_dim"])
 
         def engine(arm, ledger_name=None):
-            with meter.phase("preparation", gpu_count=world), meter.stage("cached_sr_and_random_sets"):
+            with meter.phase("preparation", gpu_count=world), meter.stage("selector_setup"):
                 return Engine(backend, data["candidate_ids"], data["ranking_validation_ids"],
                               data["cached_rewards"], arm=arm, config=config)
 
@@ -181,6 +181,7 @@ def main() -> None:
                     save(checkpoint_path, current)
                     primary(lambda: atomic_json(folder / f"{arm}-progress.json", {"seed": args.seed, "arm": arm,
                             "step": current.step, "switched_at": current.switched_at,
+                            "sampling_protocol": current.SAMPLING_PROTOCOL,
                             "costs": current.costs, "history": current.history}))
             with meter.phase("evaluation", current.step, world):
                 per_question = backend.evaluate(data["evaluation_ids"],
@@ -192,6 +193,8 @@ def main() -> None:
                     "prefix_checkpoint_sha256": prefix_hash,
                     "total_updates": current.step, "shared_prefix_updates": plan["shared_prefix_updates"],
                     "switched_at": current.switched_at,
+                    "sampling_protocol": current.SAMPLING_PROTOCOL,
+                    "sr_gc_comparison_prompts_per_set": config.training_prompts,
                     "reward": sum(per_question.values()) / len(per_question), "per_question_reward": per_question,
                     "costs": measured_costs, "cost_measurement_complete": ledger["complete"],
                     "cost_receipts": ledger,
