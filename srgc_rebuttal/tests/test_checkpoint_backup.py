@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zipfile
 
 from srgc_rebuttal.plan import digest, input_path, load_plan
@@ -162,18 +162,19 @@ class CheckpointBackupTests(unittest.TestCase):
         entry_spec.loader.exec_module(entry)
         with tempfile.TemporaryDirectory() as directory:
             plan, source, env = self.fixture(directory)
-            def worker(module, **kwargs):
-                self.assertEqual(module, "srgc_rebuttal.cluster")
+            def worker():
                 self.assertIn("--plan", sys.argv)
                 checkpoint(source, "step-50")
             with patch.dict(os.environ, env), patch.dict(sys.modules, {
-                    "srgc_shared_storage": storage, "srgc_checkpoint_backup": backup}), \
+                    "srgc_shared_storage": storage, "srgc_checkpoint_backup": backup,
+                    "srgc_step_checkpoints": Mock(worker_main=worker)}), \
                     patch("sys.argv", ["run_srgc_rebuttal.py", "worker", "--dataset", "math"]), \
                     patch("srgc_rebuttal.existing_runtime.select_python"), \
                     patch.object(storage, "route_plan", return_value=plan) as route, \
-                    patch.object(entry.runpy, "run_module", side_effect=worker), redirect_stdout(io.StringIO()):
+                    patch.object(entry.runpy, "run_module") as dispatch, redirect_stdout(io.StringIO()):
                 entry.main()
                 self.assertTrue(route.call_args.kwargs["start_or_continue"])
+                dispatch.assert_not_called()
             self.assertTrue(any(p.read_bytes() == source.read_bytes() for p in self.generations(source)))
 
     def test_auto_watcher_takes_final_copy_and_backup_errors_do_not_interrupt_training(self):
@@ -184,6 +185,33 @@ class CheckpointBackupTests(unittest.TestCase):
                 with backup.automatic_backup(plan):
                     pass
                 self.assertGreaterEqual(capture.call_count, 1)
+
+    def test_watcher_reports_each_scan_even_without_a_new_checkpoint(self):
+        for state, changes in (
+            ("waiting_for_checkpoint", {}),
+            ("no_new_checkpoint", {"found": 1, "unchanged": 1}),
+            ("copied", {"found": 1, "saved": 1}),
+            ("another_watcher_copying", {"busy": True}),
+            ("error", {"found": 1, "errors": ["copy failed"]}),
+        ):
+            with self.subTest(state=state):
+                report = {"found": 0, "saved": 0, "unchanged": 0, "busy": False, "errors": [], **changes}
+                stop = Mock()
+                stop.is_set.side_effect = [False, True]
+                output, errors = io.StringIO(), io.StringIO()
+                with patch.object(backup, "backup_once", return_value=report), \
+                        redirect_stdout(output), redirect_stderr(errors):
+                    backup.watch(Path("fixture.json"), stop)
+                stop.wait.assert_called_once_with(30)
+                lines = output.getvalue().splitlines()
+                self.assertEqual(len(lines), 2)
+                self.assertIn(f"state={state}", lines[0])
+                self.assertIn(f"saved={report['saved']}", lines[0])
+                self.assertIn("next_check_in=30s", lines[0])
+                self.assertIn("final=true", lines[1])
+                self.assertNotIn("next_check_in", lines[1])
+                if report["errors"]:
+                    self.assertIn("copy failed", errors.getvalue())
 
     @unittest.skipUnless(importlib.util.find_spec("torch"), "requires optional PyTorch")
     def test_real_torch_checkpoint_restores_model_and_optimizer_values(self):

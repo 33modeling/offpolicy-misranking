@@ -1,4 +1,35 @@
-# One-command automatic start/continuation on 2026-09-28
+# Per-update checkpoint saving on 2026-09-28
+
+New ordinary shell workers save after each completed optimizer update for
+the shared prefix and all four continuations. A storage adapter under
+`scripts/` fills the gaps between the frozen runner's five-/25-update saves;
+it does not change the experiment computations, cache, plan or queue identity.
+Checkpoint metadata records the interval and adapter SHA-256. Extra snapshot
+and write time is measured in the existing checkpoint cost ledger. Writes
+publish atomically after flush/fsync; failed writes preserve the prior file
+and leave their cost receipt unfinished, not zero. Partially executed updates
+are not checkpointed. Existing processes keep their old saving cadence until
+the worker is restarted; updating files or the backup watcher alone cannot
+change an already-running training process.
+
+Backup watchers now print one status line per completed scan, including
+waiting, unchanged and busy states. Polls are followed by a 30-second wait;
+copying duration is additional. A scan is not a claim that a new checkpoint
+was saved. The normal shell command still resumes existing work automatically.
+
+All 153 unit/integration tests passed without skips. Added coverage verifies
+prefix and every continuation, intermediate-state restoration matching the
+unchanged selector/model/optimizer trajectory, checkpoint cost stages,
+atomic failed-write recovery, preservation of the prior save on failed
+updates, unchanged cache task commands, and worker dispatch restoration.
+The two-process CPU distributed smoke test passed actual checkpoint saving,
+two-rank timing aggregation and propagation of an injected rank-zero write
+failure without hanging or replacing the previous checkpoint. Shell syntax
+and whitespace checks passed. The experiment implementation digest remains
+`1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a`.
+No H100 worker, running experiment or remote checkpoint was accessed or changed.
+
+## One-command automatic start/continuation on 2026-09-28
 
 Removed the newly introduced shell `resume` mode at the author's request.
 The ordinary `sh scripts/run_srgc.sh math|mbpp` command now initializes a

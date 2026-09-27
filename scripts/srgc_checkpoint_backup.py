@@ -111,13 +111,15 @@ def backup_once(plan_path, *, environment=None):
     plan = load_plan(plan_path)
     root = inside(run_root(plan_path, plan), group)
     destination = inside(root / "checkpoint-backups", group)
-    result = {"saved": 0, "unchanged": 0, "busy": False, "errors": [], "directory": str(destination)}
+    result = {"found": 0, "saved": 0, "unchanged": 0, "busy": False, "errors": [],
+              "directory": str(destination)}
     try:
         with lease(inside(destination / ".backup.lock", group)):
             for seed in plan["seeds"]:
                 folder = inside(root / f"seed-{seed}", group)
                 names = ["prefix-latest.pt", "prefix.pt", *[f"{arm}-latest.pt" for arm in plan["arms"]]]
                 available = [folder / name for name in names if (folder / name).is_file()]
+                result["found"] += len(available)
                 if not available:
                     continue
                 try:
@@ -142,9 +144,17 @@ def backup_once(plan_path, *, environment=None):
 
 
 def watch(plan_path, stop, *, interval=30):
-    def capture():
+    def capture(*, final=False):
         try:
             result = backup_once(plan_path)
+            state = ("error" if result["errors"] else "another_watcher_copying" if result["busy"] else
+                     "copied" if result["saved"] else "no_new_checkpoint" if result["found"] else
+                     "waiting_for_checkpoint")
+            checked = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            following = "final=true" if final else f"next_check_in={interval}s"
+            print(f"BACKUP CHECK {checked} state={state} found={result['found']} "
+                  f"saved={result['saved']} unchanged={result['unchanged']} "
+                  f"errors={len(result['errors'])} {following}", flush=True)
             for error in result["errors"]:
                 print(f"BACKUP ERROR {error}", file=sys.stderr, flush=True)
         except Exception as exc:
@@ -152,7 +162,7 @@ def watch(plan_path, stop, *, interval=30):
     while not stop.is_set():
         capture()
         stop.wait(interval)
-    capture()
+    capture(final=True)
 
 
 @contextmanager

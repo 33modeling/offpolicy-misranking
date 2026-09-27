@@ -21,11 +21,29 @@ These reporting commands do not start workers or create a fresh cohort.
 
 ## Checkpoint Backup and Resume
 
-Checkpoints already live on the group volume. The prefix saves every five
-updates; continuations save every 25. A node failure resumes the last completed
-save, including model/optimizer and selector state, and redoes the unsaved
-updates. Completed cache prompt receipts are reused. Completed endpoints are
+Checkpoints live on the group volume. Newly launched ordinary shell workers
+save after **every completed optimizer update**, for both the shared prefix
+and all four continuations. A node failure resumes the last completed save,
+including model/optimizer and selector state, and redoes the unsaved update.
+This does not preserve a partially completed rollout, gradient computation or
+update. Completed cache prompt receipts are reused. Completed endpoints are
 skipped. Loss of an allocated node does not mean loss of the group volume.
+
+Already-running processes retain their old cadence (prefix: every five
+updates; continuations: every 25). Pulling this change or starting a backup
+watcher cannot change a live training process. To apply the shorter interval,
+update the checkout and restart the worker with the same ordinary shell command.
+Stopping it before its next old-cadence save discards the currently unsaved
+work, so prefer restarting just after a save when the allocation permits.
+No cache reset or new cohort is needed.
+
+`scripts/srgc_step_checkpoints.py` adds storage-only saves between the frozen
+runner's original boundaries. Selection, training and identity guards remain
+unchanged; checkpoint metadata records the interval and storage adapter SHA-256.
+Extra snapshot/write time is recorded in the existing `checkpoint_save` cost
+ledger. Intermediate saves are atomic, flushed and synced before publication.
+The low-level direct `srgc_rebuttal.run_experiment` command retains its original
+cadence; the per-update policy applies through the ordinary shell worker.
 
 New worker launches also run a CPU-only backup watcher every 30 seconds. It
 copies published `.pt` files, not temporary writes, keeps the last two observed
@@ -51,6 +69,12 @@ sh scripts/run_srgc.sh mbpp backup-watch
 
 `backup` instead of `backup-watch` performs one immediate pass and exits.
 Watching is CPU-only and neither changes queues/inputs nor starts training.
+Every completed scan prints `BACKUP CHECK` with its UTC time, files found,
+new copies (`saved`), unchanged files and errors. `waiting_for_checkpoint`
+means no published checkpoint exists yet; `no_new_checkpoint` means the
+existing files have already been backed up. These are watcher status lines,
+not claims of training progress or new copies every 30 seconds. Each scan
+is followed by a 30-second wait; copying time is additional.
 The experiment package/implementation hash is unchanged by this addition.
 Watchers bind to the active cohort at startup; restart the watcher when
 explicitly selecting a different cohort. Backups copy the existing checkpoint
@@ -302,8 +326,9 @@ Per-prompt live cost snapshots are written under each seed cache's `live-costs/`
 completed synchronized phase costs remain under `cost-receipts/`.
 
 The next node can resume a task from its saved checkpoint after its old
-process and lock have gone away. Prefix checkpoints are saved every five
-updates; continuations every 25. Completed tasks are skipped before loading
+process and lock have gone away. New ordinary shell workers save every update;
+already-running legacy workers retain their five-/25-update cadence until
+restarted. Completed tasks are skipped before loading
 a model. Explicit failures are retained for inspection; after resolving an
 environmental failure, restart a worker with `--retry-failed`. Retries are
 bounded by `--max-attempts` (default 3) and spaced by `--retry-delay` (default
