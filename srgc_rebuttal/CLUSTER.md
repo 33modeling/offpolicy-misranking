@@ -1,5 +1,18 @@
 # Multi-node execution for rebuttal seeds
 
+## Simple shell commands
+
+After updating the checkout, run `sh scripts/run_srgc.sh math` on the two
+MATH nodes and `sh scripts/run_srgc.sh mbpp` on the two MBPP nodes. No Python
+flags, migration command or preparation command is needed. Each node needs
+four allocated H100s. Existing scheduler GPU visibility is preserved.
+The launcher selects the existing Pair/MBPP Python, group-volume storage and
+the shared `restart1` cohort. Repeating it joins/resumes that cohort, not a reset.
+
+Use `sh scripts/run_srgc.sh math status`, `sh scripts/run_srgc.sh math results`
+or `sh scripts/run_srgc.sh math costs`; substitute `mbpp` for the other dataset.
+These reporting commands do not start workers or create a fresh cohort.
+
 Run one four-H100 worker on each allocated node (full H100 GPUs with at least
 75,000 MiB each). Two nodes, eight GPUs total, are sufficient. Workers share a queue and take
 independent tasks as soon as dependencies finish. No cross-node gradient

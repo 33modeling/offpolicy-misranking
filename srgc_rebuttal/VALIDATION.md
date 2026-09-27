@@ -1,4 +1,17 @@
-# Fresh group-volume start on 2026-09-28
+# Simple shell launcher on 2026-09-28
+
+Added the POSIX-compatible `scripts/run_srgc.sh` entry point. Users select only
+`math` or `mbpp`, optionally followed by `status`, `results` or `costs`.
+Existing Python selection, bounded CPU thread pools, scheduler GPU visibility
+and the shared fresh-run name are handled inside the launcher. No experiment
+runtime module, cache format, plan or input changed in this update.
+
+`sh -n` and all four launcher tests passed. Tests execute the real shell script
+from another working directory with an instrumented Python executable, covering
+both datasets, paths with spaces, GPU visibility, reports and invalid arguments.
+No H100 experiment was launched by these checks.
+
+## Fresh group-volume start on 2026-09-28
 
 The author requested a clean start instead of preserving/migrating old caches.
 `worker --fresh NAME` now stages only prompt inputs into a new group-volume

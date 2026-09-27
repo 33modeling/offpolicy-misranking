@@ -12,7 +12,8 @@ criterion and result interpretation, including the MBPP off-policy follow-up.
 
 Additional-seed reproduction and stage-level cost measurement live on
 `master`, in [srgc_rebuttal](srgc_rebuttal/README.md).
-The Python entry point is `scripts/run_srgc_rebuttal.py`:
+The simple entry point is `sh scripts/run_srgc.sh math` or
+`sh scripts/run_srgc.sh mbpp`, one command on each dataset's allocated nodes.
 
 Update the shared checkout while workers are stopped:
 
@@ -23,9 +24,13 @@ git pull --ff-only origin master
 ```
 
 ```bash
-python scripts/run_srgc_rebuttal.py plan --check-inputs --allow-pending-cache
-python scripts/run_srgc_rebuttal.py --seed 5
-python scripts/run_srgc_rebuttal.py costs
+# On each MATH node:
+sh scripts/run_srgc.sh math
+# On each separate MBPP node:
+sh scripts/run_srgc.sh mbpp
+# From another terminal:
+sh scripts/run_srgc.sh math status
+sh scripts/run_srgc.sh math results
 ```
 
 For automatic node-parallel execution, run
