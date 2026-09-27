@@ -1,4 +1,36 @@
-# Restore 40-vs-40 SR-GC and expose cache progress on 2026-09-28
+# Random candidate-40 training and cache recovery on 2026-09-28
+
+The latest author instruction supersedes global non-repeating training passes.
+Both MATH and MBPP now draw 40 distinct random candidates from the full 400:
+Random takes random four within that draw; SR takes its cached-score top four;
+On-policy keeps its existing gradient top-four selection and 25-update refresh.
+Random/SR redraw each update; prompts may recur across draws. Switch uses the
+same new SR training rule from the transition update onward. SR-GC remains
+the original 40-vs-40 diagnostic, separate from training selection. Candidate
+and selected IDs are logged, and CPU sampling/ranking is inside measured
+training time. Old sampling checkpoints cannot silently resume as new runs.
+
+The shell launcher uses a new shared `candidate40-v2` cohort, avoiding the
+old queue's implementation mismatch without weakening identity guards or
+deleting old work. Both workers of a dataset join the same new cohort. Group
+storage, response/cost receipts and existing interpreter selection remain in
+place. Cache decode progress now reflects actual completed token steps, and
+verification progress reflects completed responses, not synthetic heartbeats.
+A restart with every response receipt saved exports without reloading 7B or
+regenerating responses. Missing interrupted timings are not reported as zero.
+
+All 131 unit/integration tests passed without skips. Tests exercise the real
+MATH and MBPP input IDs for all five shipped seeds, using synthetic rewards
+only in memory; no input bundle or scientific outcome was modified. They also
+verify distinct candidate draws, SR within-draw ranking, Random within-draw
+sampling, deterministic resume, unchanged diagnostic size, post-switch SR,
+old-protocol rejection, progress throttling, export-only cache recovery and
+unchanged tiny-OLMo sampled responses with/without the progress callback.
+The two-process CPU smoke test also passed distributed update/timing agreement
+and startup/write-failure propagation. Shell syntax and diff whitespace checks passed. H100 execution and the cause
+of the user's stalled remote node remain unverified without its logs/access.
+
+## Restore 40-vs-40 SR-GC and expose cache progress on 2026-09-28
 
 The author's latest instruction retains the original 40-vs-40 SR-GC contrast,
 separate from the four-prompt training batch. It compares all 40 randomly

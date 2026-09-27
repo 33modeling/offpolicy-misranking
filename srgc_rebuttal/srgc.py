@@ -201,7 +201,7 @@ class Engine:
     """
 
     ARMS = {"on_policy", "switch", "sr", "random"}
-    SAMPLING_PROTOCOL = "full-pool-without-replacement-candidate40-contrast-v1"
+    SAMPLING_PROTOCOL = "random-candidate40-training4-contrast40-v2"
 
     def __init__(self, backend: Backend, candidate_ids: Sequence[str],
                  validation_ids: Sequence[str], cached_rewards: Mapping[str, Sequence[float]],
@@ -241,26 +241,34 @@ class Engine:
         self.costs["sr_preparation_wall_seconds"] = self.sr_preparation_wall_seconds
         self.costs["sr_preparation_gpu_seconds"] = self.sr_preparation_wall_seconds * self.backend.gpu_count
 
-    def _pool_training_batch(self, selector: str, count: int | None = None) -> tuple[tuple[str, ...], set[str], int]:
-        count = self.config.training_prompts if count is None else count
+    def _sr_comparison(self) -> tuple[str, ...]:
+        """Preview the diagnostic SR set without consuming any training prompts."""
+        count = self.config.scoring_prompts
         if not 1 <= count <= len(self.candidates):
             raise ValueError("invalid sampling count")
-        used, cycle = set(self.used_training_ids), self.sampling_cycle
+        used = set(self.used_training_ids)
         selected: list[str] = []
         while len(selected) < count:
             if len(used) == len(self.candidates):
                 used.clear()
-                cycle += 1
-            if selector == "random":
-                rng = np.random.default_rng(stream_seed(self.config.seed, cycle, "random-pool-order"))
-                order = rng.permutation(self.random_ids)
-            else:
-                order = self.sr_ranked_ids
-            available = [i for i in order if i not in used and i not in selected]
+            available = [i for i in self.sr_ranked_ids if i not in used and i not in selected]
             batch = available[:count - len(selected)]
             selected.extend(batch)
             used.update(batch)
-        return tuple(selected), used, cycle
+        return tuple(selected)
+
+    def _draw_candidates(self) -> tuple[str, ...]:
+        rng = np.random.default_rng(stream_seed(self.config.seed, self.step, "candidate-draw"))
+        return tuple(rng.choice(self.candidates, self.config.scoring_prompts, replace=False))
+
+    def _training_batch(self, selector: str, candidates: Sequence[str]) -> tuple[str, ...]:
+        if selector == "random":
+            rng = np.random.default_rng(stream_seed(self.config.seed, self.step, "random-batch-draw"))
+            return tuple(rng.choice(candidates, self.config.training_prompts, replace=False))
+        if selector == "sr":
+            eligible = set(candidates)
+            return tuple(i for i in self.sr_ranked_ids if i in eligible)[:self.config.training_prompts]
+        raise ValueError("unsupported training selector")
 
     def _vectors(self, ids: Sequence[str], group_size: int, purpose: str) -> dict[str, np.ndarray]:
         c = self.config
@@ -315,7 +323,6 @@ class Engine:
 
     def update(self) -> dict[str, Any]:
         c = self.config
-        rng = np.random.default_rng(stream_seed(c.seed, self.step, "candidate-draw"))
         use_on = self.arm in {"on_policy", "switch"} and self.switched_at is None
         before = dict(self.costs)
         refresh = use_on and self.step % c.selection_interval == 0
@@ -325,8 +332,8 @@ class Engine:
             raise ValueError("mid-block continuation requires the saved selected prompts")
         if refresh:
             started = self._begin("selection")
-            on_ids = tuple(rng.choice(self.candidates, c.scoring_prompts, replace=False))
-            sr_ids, _, _ = self._pool_training_batch("sr", c.scoring_prompts)
+            on_ids = self._draw_candidates()
+            sr_ids = self._sr_comparison()
             # The 40-vs-40 diagnostic is separate from the four-prompt training batch.
             union = tuple(dict.fromkeys((*on_ids, *sr_ids)))
             gradients = self._vectors(union, c.candidate_group_size, "selection")
@@ -361,14 +368,17 @@ class Engine:
             train_ids = tuple(self.active_selection["train_ids"])
             record["selection_step"] = self.active_selection["step"]
         used, cycle = set(self.used_training_ids), self.sampling_cycle
+        started = self._begin("training")
         if not use_on or self.switched_at is not None:
             selector = "random" if self.arm == "random" else "sr"
-            train_ids, used, cycle = self._pool_training_batch(selector)
-            record.update(sampling_pool_size=len(self.candidates), sampling_cycle_start=self.sampling_cycle,
-                          sampling_cycle_end=cycle, unused_after=len(self.candidates) - len(used))
-        else:
-            used.update(train_ids)
-        started = self._begin("training")
+            with self._timing_scope("candidate_sampling_and_ranking"):
+                candidates = self._draw_candidates()
+                train_ids = self._training_batch(selector, candidates)
+            record.update(sampling_pool_size=len(self.candidates), training_candidate_ids=list(candidates))
+        used.update(train_ids)
+        if len(used) == len(self.candidates):
+            used.clear()
+            cycle += 1
         metrics = dict(self.backend.train(train_ids, responses=c.responses, objective=c.objective,
                                           seed=stream_seed(c.seed, self.step, "training")))
         self._end("training", started)
@@ -410,7 +420,7 @@ class Engine:
         """
         s = copy.deepcopy(dict(state))
         if s.get("sampling_protocol") != self.SAMPLING_PROTOCOL:
-            raise ValueError("checkpoint sampling protocol mismatch; cannot resume legacy fixed-subset sampling")
+            raise ValueError("checkpoint sampling protocol mismatch; changed sampling requires a new run")
         if tuple(s["random_ids"]) != self.random_ids:
             raise ValueError("checkpoint Random sampling pool mismatch; cannot resume a fixed-subset "
                              "checkpoint with full-pool Random sampling")

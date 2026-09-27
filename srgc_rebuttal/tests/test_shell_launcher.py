@@ -31,7 +31,7 @@ class ShellLauncherTests(unittest.TestCase):
             with self.subTest(dataset=dataset):
                 report = self.invoke(dataset)
                 self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", dataset,
-                                                  "--fresh", "restart1"])
+                                                  "--fresh", "candidate40-v2"])
                 self.assertEqual(report["cuda"], "0,1,2,3")
                 self.assertEqual(report["threads"], "1")
                 self.assertEqual(report["cwd"], str(SCRIPT.parents[1]))

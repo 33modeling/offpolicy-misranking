@@ -34,7 +34,7 @@ export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 
 if [ "$MODE" = run ]; then
     export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
-    exec "$PY" scripts/run_srgc_rebuttal.py worker --dataset "$DATASET" --fresh "${SRGC_RUN_NAME:-restart1}"
+    exec "$PY" scripts/run_srgc_rebuttal.py worker --dataset "$DATASET" --fresh "${SRGC_RUN_NAME:-candidate40-v2}"
 fi
 export CUDA_VISIBLE_DEVICES=""
 exec "$PY" scripts/run_srgc_rebuttal.py "$MODE" --dataset "$DATASET"

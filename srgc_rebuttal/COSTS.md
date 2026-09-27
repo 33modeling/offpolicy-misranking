@@ -36,8 +36,10 @@ The shared-prefix and four-arm schedule is unchanged: selection every 25
 updates, fresh training responses every update, endpoint at total update 275.
 The 2026-09-28 protocol scores 40 On-policy candidates plus the next 40
 unused SR prompts, at most 80 distinct prompts per refresh. SR-GC compares
-the means of those 40-prompt sets, not the four-prompt training batches. Random and SR consume the
-full candidate pool without replacement within a pass; see [README.md](README.md).
+the means of those 40-prompt sets, not the four-prompt training batches. Random
+and SR draw 40 distinct candidates from the full pool each update, then take
+random four or SR-score top four within that draw; see [README.md](README.md).
+Their CPU candidate sampling/ranking is included in the training phase.
 
 ## What is timed
 

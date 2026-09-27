@@ -29,8 +29,8 @@ The existing runner files and methods consulted are recorded in
 
 1. Rank the full 400-prompt pool using eight cached binary rewards per candidate:
    `score = -abs(mean(rewards) - 0.5)`, with seeded tie breaking. Cached scores
-   remain fixed. SR proposes the highest-scoring four prompts not yet trained
-   in the current pass, including exclusion of prompts trained in the prefix.
+   remain fixed. For SR training, draw 40 distinct random candidates from the
+   full pool and take the four highest cached scores within that draw.
 2. While On-policy selection is active, draw 40 candidates uniformly without
    replacement within each draw from the 400-prompt pool every 25 updates.
    Previously drawn candidates may reappear at a later refresh. Compute fresh
@@ -72,30 +72,36 @@ The existing runner files and methods consulted are recorded in
    leave-one-out advantages and token sums. AdamW uses learning rate `1e-5`,
    betas `(0.9,0.999)`, epsilon `1e-8`, zero weight decay, and gradient-norm clip 1.
 8. On switching, retain model and optimizer state, stop gradient scoring and D
-   checks, and train on the highest-ranked four from the SR comparison set. Subsequent SR updates
-   take the next highest-scoring unused four from the full pool. The SR arm
-   uses this same rule from the start of its continuation.
-9. Random uses a seeded shuffle of all 400 candidate prompts and takes four
-   unused prompts on **every optimizer update**. There is no fixed 40-prompt
-   Random subset or 25-update batch reuse. It performs no gradient scoring.
+   checks. On that update and every subsequent SR update, draw 40 distinct
+   random candidates from the full 400 and train on their SR-score top four.
+   The SR arm uses this same rule from the start of its continuation. Its
+   random training candidates are separate from the diagnostic SR comparison.
+9. Random draws 40 distinct random candidates from the full 400, then chooses
+   four of those 40 uniformly without replacement, on **every optimizer update**.
+   There is no fixed 40-prompt subset or 25-update batch reuse, and no gradient scoring.
 
-Random and SR exclude all actually trained prompts in the current pass,
-including the shared prefix and, for Switch, its On-policy training history.
-Only a successful training update consumes its prompts. After the full pool
-is exhausted, a new pass begins: Random reshuffles and SR reuses score order.
-A partial last batch uses the remaining prompts before filling from the new
-pass, without duplicates within a batch. With 400 prompts and batches of four,
-permanent non-reuse cannot support the existing 250-update continuations.
+For both MATH and MBPP, Random/SR redraw their 40 candidates every update;
+On-policy redraws its 40 at each scheduled refresh. No draw contains duplicate
+IDs. A prompt may reappear in a later draw, including one previously trained.
+This supersedes the intermediate global non-repeating-pass training rule.
 On-policy still retains its selected batch for 25 updates; its selection rule
 and the temporal confirmation rule are unchanged.
 
 These author-requested Random/SR changes date to 2026-09-28. SR-GC retains
 the original 40-vs-40 comparison; the interim four-vs-four change is superseded.
-Unused-prompt sampling defines a new experimental protocol, not a relabeling of old
+The new 400-to-40-to-four sampling defines a new protocol, not a relabeling of old
 results. Old checkpoints cannot resume under it. Keep in-flight/archived runs
 on their original code and do not bypass implementation-hash checks.
-Checkpoints persist the used prompt IDs and pass number; per-update records
-retain training IDs, pool size, pass boundaries and the SR comparison 40.
+Checkpoints persist trained IDs for the unchanged unused-SR diagnostic preview.
+Per-update records retain all 40 training candidate IDs and the selected four
+for Random/SR; refresh records retain the On-policy and diagnostic SR sets.
+Sampling/ranking CPU time is included in the measured Random/SR training phase.
+
+The shell launcher now uses the shared fresh cohort `candidate40-v2` for both
+datasets. Stop old workers before updating and restarting. The new cohort
+does not import old caches, checkpoints or queue state; existing files remain
+untouched. Repeated launches of this cohort join/resume it, including on a
+second node. Reports follow the active cohort.
 
 The controller's `step=t` denotes **t completed optimizer updates**. A check
 at t scores that checkpoint's policy before update t+1; a triggered transition
@@ -110,7 +116,7 @@ selection for an update that will never be performed.
 
 | File | Responsibility | Manuscript |
 | --- | --- | --- |
-| `srgc.py` | 40+40 scoring and contrast, non-repeating Random/SR passes, four arms, resume | New sampling protocol for V7; not the frozen submission |
+| `srgc.py` | 40+40 diagnostic, random candidate-40 draws, method-specific top/random four, four arms, resume | New sampling protocol for V7; not the frozen submission |
 | `objectives.py` | LOO, GRPO/RLOO equations, cosine, fixed projection reference | Section 2, Appendix C |
 | `torch_backend.py` | Fresh generation, dense scoring derivatives, LoRA optimization, distributed reductions | Appendix C |
 | `run_experiment.py` | One seed, common prefix, four continuations, endpoint evaluation/checkpoints | Online experiments |

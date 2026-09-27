@@ -217,7 +217,9 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(record["selector"], "sr")
         self.assertTrue(set(record["train_ids"]) <= set(engine.sr_ranked_ids))
         transition = next(r for r in engine.history if r["switched"])
-        self.assertEqual(transition["train_ids"], transition["sr_ids"][:4])
+        candidates = set(transition["training_candidate_ids"])
+        self.assertEqual(len(candidates), 40)
+        self.assertEqual(transition["train_ids"], [i for i in engine.sr_ranked_ids if i in candidates][:4])
         self.assertEqual(engine.costs["selection_gpu_seconds"], 0)
 
     def test_sr_and_random_have_no_gradient_scoring(self):
@@ -227,30 +229,28 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(backend.score_calls, [])
             self.assertEqual(len(backend.training), 2)
 
-    def test_random_exhausts_full_pool_before_repeating_and_reshuffles(self):
+    def test_random_draws_distinct_40_then_random_4_from_full_pool_each_update(self):
         engine, backend = self.make_engine(arm="random")
         self.assertEqual(engine.random_ids, engine.candidates)
         engine.run_until(225)
-        expected = []
-        orders = []
-        for cycle in range(2):
-            rng = np.random.default_rng(stream_seed(engine.config.seed, cycle, "random-pool-order"))
-            order = rng.permutation(engine.candidates).tolist()
-            orders.append(order)
-            expected.extend([order[n:n + 4] for n in range(0, 400, 4)])
-        self.assertNotEqual(orders[0], orders[1])
-        self.assertEqual([r["train_ids"] for r in engine.history], expected)
         for record, (trained, kwargs) in zip(engine.history, backend.training, strict=True):
+            step = record["checkpoint"]
+            rng = np.random.default_rng(stream_seed(engine.config.seed, step, "candidate-draw"))
+            expected_candidates = rng.choice(engine.candidates, 40, replace=False).tolist()
+            self.assertEqual(record["training_candidate_ids"], expected_candidates)
+            rng = np.random.default_rng(stream_seed(engine.config.seed, step, "random-batch-draw"))
+            self.assertEqual(record["train_ids"], rng.choice(expected_candidates, 4, replace=False).tolist())
+            self.assertEqual(len(set(record["training_candidate_ids"])), 40)
+            self.assertTrue(set(trained) <= set(record["training_candidate_ids"]))
             self.assertEqual(list(trained), record["train_ids"])
             self.assertEqual(len(set(trained)), 4)
             self.assertEqual(record["sampling_pool_size"], 400)
             self.assertEqual(record["selector"], "random")
             self.assertFalse(record["selection_refreshed"])
             self.assertEqual(kwargs["responses"], 8)
-        for start in (0, 100):
-            seen = [i for r in engine.history[start:start + 100] for i in r["train_ids"]]
-            self.assertEqual(len(seen), len(set(seen)))
-            self.assertEqual(set(seen), set(engine.candidates))
+        seen_candidates = {i for r in engine.history for i in r["training_candidate_ids"]}
+        self.assertEqual(seen_candidates, set(engine.candidates))
+        self.assertNotEqual(engine.history[0]["training_candidate_ids"], engine.history[1]["training_candidate_ids"])
         self.assertEqual(backend.score_calls, [])
         self.assertEqual(engine.costs["selection_wall_seconds"], 0)
 
@@ -263,6 +263,8 @@ class EngineTests(unittest.TestCase):
         restored.run_until(60)
         self.assertEqual([r["train_ids"] for r in engine.history],
                          [r["train_ids"] for r in restored.history])
+        self.assertEqual([r["training_candidate_ids"] for r in engine.history],
+                         [r["training_candidate_ids"] for r in restored.history])
         self.assertEqual(engine.backend.state_dict(), restored.backend.state_dict())
 
     def test_random_fork_uses_full_pool_after_shared_on_policy_prefix(self):
@@ -276,32 +278,36 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(all(r["sampling_pool_size"] == 400 for r in random.history))
         self.assertEqual(backend.score_calls, [])
 
-    def test_sr_consumes_score_order_without_replacement_before_next_pass(self):
+    def test_sr_draws_distinct_40_then_ranks_only_those_candidates(self):
         engine, _ = self.make_engine(arm="sr")
         engine.run_until(128)
-        trained = [i for r in engine.history for i in r["train_ids"]]
-        self.assertEqual(trained[:400], list(engine.sr_ranked_ids))
-        self.assertEqual(len(set(trained[:400])), 400)
-        self.assertEqual(trained[400:], list(engine.sr_ranked_ids[:12]))
-        self.assertEqual(engine.history[99]["unused_after"], 0)
-        self.assertEqual(engine.history[100]["sampling_cycle_end"], 1)
-        self.assertTrue(all(r["sampling_pool_size"] == 400 for r in engine.history))
+        for record in engine.history:
+            rng = np.random.default_rng(stream_seed(engine.config.seed, record["checkpoint"], "candidate-draw"))
+            expected = rng.choice(engine.candidates, 40, replace=False).tolist()
+            self.assertEqual(record["training_candidate_ids"], expected)
+            self.assertEqual(len(set(expected)), 40)
+            self.assertEqual(record["train_ids"], [i for i in engine.sr_ranked_ids if i in expected][:4])
+            self.assertEqual(len(set(record["train_ids"])), 4)
+            self.assertEqual(record["sampling_pool_size"], 400)
+        self.assertTrue(any(r["train_ids"] != list(engine.sr_ranked_ids[:4]) for r in engine.history))
+        self.assertNotEqual(engine.history[0]["training_candidate_ids"], engine.history[1]["training_candidate_ids"])
 
-    def test_sr_excludes_prefix_prompts_and_restores_used_progress(self):
+    def test_sr_fork_and_resume_preserve_candidate_draws_and_diagnostic_progress(self):
         prefix, _ = self.make_engine(arm="on_policy", step=0)
         prefix.run_until(25)
         used = set(prefix.used_training_ids)
         sr, _ = self.make_engine(arm="sr")
         sr.load_state_dict(prefix.state_dict(), fork_arm="sr")
-        expected = [i for i in sr.sr_ranked_ids if i not in used]
         sr.run_until(37)
-        self.assertEqual([i for r in sr.history for i in r["train_ids"]], expected[:48])
+        self.assertEqual(sr.used_training_ids, used | {i for r in sr.history for i in r["train_ids"]})
         restored, _ = self.make_engine(arm="sr")
         restored.load_state_dict(sr.state_dict())
         sr.run_until(130)
         restored.run_until(130)
         self.assertEqual([r["train_ids"] for r in sr.history],
                          [r["train_ids"] for r in restored.history])
+        self.assertEqual([r["training_candidate_ids"] for r in sr.history],
+                         [r["training_candidate_ids"] for r in restored.history])
         self.assertEqual(sr.used_training_ids, restored.used_training_ids)
         self.assertEqual(sr.sampling_cycle, restored.sampling_cycle)
 
@@ -313,17 +319,43 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(record["sr_ids"], expected)
         self.assertEqual(engine.used_training_ids, set(engine.sr_ranked_ids[:4]) | set(record["train_ids"]))
 
-    def test_sampler_handles_partial_last_batch_without_duplicate_within_batch(self):
+    def test_training_candidate_draw_uses_full_pool_even_after_prior_training(self):
         for arm in ("random", "sr"):
             with self.subTest(arm=arm):
                 engine, _ = self.make_engine(arm=arm)
-                last = engine.sr_ranked_ids[-1]
-                engine.used_training_ids = set(engine.candidates) - {last}
+                engine.used_training_ids = set(engine.candidates)
                 record = engine.update()
-                self.assertEqual(record["train_ids"][0], last)
+                self.assertEqual(len(set(record["training_candidate_ids"])), 40)
+                self.assertTrue(set(record["train_ids"]) <= set(record["training_candidate_ids"]))
                 self.assertEqual(len(set(record["train_ids"])), 4)
                 self.assertEqual(engine.sampling_cycle, 1)
-                self.assertEqual(engine.used_training_ids, set(record["train_ids"][1:]))
+
+    def test_diagnostic_partial_pool_preview_wraps_without_duplicate_or_consumption(self):
+        engine, _ = self.make_engine()
+        last = engine.sr_ranked_ids[-1]
+        engine.used_training_ids = set(engine.candidates) - {last}
+        original = set(engine.used_training_ids)
+        comparison = engine._sr_comparison()
+        self.assertEqual(comparison[0], last)
+        self.assertEqual(len(set(comparison)), 40)
+        self.assertEqual(engine.used_training_ids, original)
+
+    def test_all_arms_share_the_same_random_candidate_draw_at_refresh(self):
+        records = {}
+        for arm in ("random", "sr", "on_policy", "switch"):
+            engine, _ = self.make_engine(arm=arm)
+            records[arm] = engine.update()
+        candidates = records["on_policy"]["on_ids"]
+        self.assertEqual(candidates, records["switch"]["on_ids"])
+        for arm in ("random", "sr"):
+            self.assertEqual(candidates, records[arm]["training_candidate_ids"])
+
+    def test_global_no_repeat_checkpoint_cannot_resume_new_candidate_protocol(self):
+        engine, _ = self.make_engine(arm="sr")
+        state = engine.state_dict()
+        state["sampling_protocol"] = "full-pool-without-replacement-candidate40-contrast-v1"
+        with self.assertRaisesRegex(ValueError, "sampling protocol mismatch"):
+            engine.load_state_dict(state)
 
     def test_failed_training_does_not_consume_prompts(self):
         engine, backend = self.make_engine(arm="sr")

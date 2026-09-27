@@ -3,7 +3,7 @@
 The fixed schedule (prefix 25, total 275, 40 On-policy candidates, top-four
 training, checks every 25, projection 4096) is copied from the additional-seed
 plan; only the dataset name, verifier, seeds and paths change. The runtime
-implements non-repeating SR/Random sampling and 40-vs-40 SR-GC comparison.
+implements distinct random candidate-40 draws for SR/Random and 40-vs-40 SR-GC.
 
     python -m srgc_rebuttal.plan_dataset --dataset mbpp --seeds 5 6 7 8 9 \
         --verifier srgc_rebuttal.verifiers:code_reward

@@ -8,6 +8,8 @@ import unittest
 from srgc_rebuttal.plan import DEFAULT_PLAN, digest, input_path, load_plan, validate_inputs
 from srgc_rebuttal.prepare_inputs import prepare
 from srgc_rebuttal.cluster_queue import TaskQueue
+from srgc_rebuttal.srgc import Config, Engine
+from srgc_rebuttal.tests.test_reference import ScriptedBackend
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/run_srgc_rebuttal.py"
@@ -15,6 +17,37 @@ MBPP_PLAN = DEFAULT_PLAN.with_name("mbpp_seeds.json")
 
 
 class DatasetCLITests(unittest.TestCase):
+    def test_both_dataset_plans_use_400_to_distinct_40_to_4_for_every_arm(self):
+        for plan_path in (DEFAULT_PLAN, MBPP_PLAN):
+            plan = load_plan(plan_path)
+            for seed in plan["seeds"]:
+                with self.subTest(dataset=plan["dataset"], seed=seed):
+                    bundle = json.loads(input_path(plan_path, plan, seed).read_text())
+                    ids = bundle["candidate_ids"]
+                    self.assertEqual(len(ids), 400)
+                    # Synthetic rewards exercise selection only, never written to real inputs.
+                    cache = {i: [0, 1] * 4 for i in ids}
+                    config = Config(seed=seed, projection_dim=2,
+                                    scoring_prompts=plan["scoring_prompts_per_set"],
+                                    training_prompts=plan["training_prompts"],
+                                    selection_interval=plan["selection_interval"])
+                    draws = []
+                    for arm in plan["arms"]:
+                        engine = Engine(ScriptedBackend(), ids, bundle["ranking_validation_ids"],
+                                        cache, config=config, arm=arm)
+                        record = engine.update()
+                        candidates = record.get("training_candidate_ids", record.get("on_ids"))
+                        self.assertEqual(len(candidates), 40)
+                        self.assertEqual(len(set(candidates)), 40)
+                        self.assertEqual(len(set(record["train_ids"])), 4)
+                        self.assertTrue(set(record["train_ids"]) <= set(candidates))
+                        draws.append(candidates)
+                        if arm == "sr":
+                            self.assertEqual(record["train_ids"], [i for i in engine.sr_ranked_ids if i in candidates][:4])
+                        if arm in {"on_policy", "switch"}:
+                            self.assertEqual(len(set(record["sr_ids"])), 40)
+                    self.assertTrue(all(draw == draws[0] for draw in draws))
+
     def test_shipped_mbpp_inputs_are_real_valid_and_queue_ready_without_preparation(self):
         repo = SCRIPT.parents[1]
         plan = load_plan(MBPP_PLAN)

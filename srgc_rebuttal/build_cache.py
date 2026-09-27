@@ -82,9 +82,28 @@ class CacheStore:
                     "generation_and_verification_wall_seconds": elapsed})
 
 
+class GenerationProgress:
+    """Report completed decode work without stopping or changing sampling."""
+
+    def __init__(self, prompt_tokens, candidate, *, clock=time.monotonic):
+        self.prompt_tokens, self.candidate, self.clock = prompt_tokens, candidate, clock
+        self.last_report = None
+
+    def __call__(self, input_ids, scores, **kwargs):
+        generated = input_ids.shape[-1] - self.prompt_tokens
+        now = self.clock()
+        if generated > 0 and (self.last_report is None or now - self.last_report >= 30):
+            progress("cache_generation", prompt=self.candidate, generated_steps=generated)
+            print(f"[cache] rank={os.environ.get('RANK', '0')} prompt={self.candidate} "
+                  f"generated_steps={generated}", flush=True)
+            self.last_report = now
+        return False
+
+
 def generate_rewards(model, tokenizer, record: dict, verifier, *, responses: int, seed: int,
-                     max_new_tokens: int, meter=None) -> tuple[list[float], list[str]]:
+                     max_new_tokens: int, meter=None, candidate=None) -> tuple[list[float], list[str]]:
     import torch
+    from transformers import StoppingCriteriaList
     meter = meter or CostMeter()
     meter.count("prompts")
     meter.count("responses", responses)
@@ -99,11 +118,15 @@ def generate_rewards(model, tokenizer, record: dict, verifier, *, responses: int
         generated = model.generate(**inputs, do_sample=True, temperature=1.0, top_p=1.0, top_k=0,
                                    num_return_sequences=responses, max_new_tokens=max_new_tokens,
                                    use_cache=True, pad_token_id=tokenizer.pad_token_id,
-                                   eos_token_id=tokenizer.eos_token_id)
+                                   eos_token_id=tokenizer.eos_token_id,
+                                   stopping_criteria=StoppingCriteriaList([GenerationProgress(start, candidate)]))
     with meter.stage("decode"):
         texts = [tokenizer.decode(sequence[start:], skip_special_tokens=True) for sequence in generated]
     with meter.stage("reward_verification"):
-        rewards = [float(verifier(record, text)) for text in texts]
+        rewards = []
+        for index, text in enumerate(texts):
+            rewards.append(float(verifier(record, text)))
+            progress("cache_verification", prompt=candidate, verified_responses=index + 1)
     if any(r not in (0.0, 1.0) for r in rewards):
         raise ValueError("verifier must return binary rewards")
     return rewards, texts
@@ -164,16 +187,19 @@ def main() -> None:
         sessions = PhaseLedger(store.root / "invocations")
         meter = torch_meter(ledger.record)
         with invocation(sessions, meter, world, invocation_started):
-            with meter.phase("startup", gpu_count=world):
-                with meter.stage("model_and_tokenizer_load"):
-                    print(f"[cache] rank={rank} loading model attention={args.attention}", flush=True)
-                    model, tokenizer = load_model(args.model, args.model_revision,
-                        torch.device("cuda", torch.cuda.current_device()), attention=args.attention)
-            progress("model_ready")
+            if todo:
+                with meter.phase("startup", gpu_count=world):
+                    with meter.stage("model_and_tokenizer_load"):
+                        print(f"[cache] rank={rank} loading model attention={args.attention}", flush=True)
+                        model, tokenizer = load_model(args.model, args.model_revision,
+                            torch.device("cuda", torch.cuda.current_device()), attention=args.attention)
+                progress("model_ready")
+            elif rank == 0:
+                print("[cache] all response receipts saved; exporting without model reload", flush=True)
             with meter.phase("cache_generation", gpu_count=world):
                 rank_total = len(todo[rank::world])
                 rank_done, rank_seconds = 0, 0.0
-                print(f"[cache] rank={rank} model ready; pending_prompts={rank_total}", flush=True)
+                print(f"[cache] rank={rank} ready; pending_prompts={rank_total}", flush=True)
                 for index, candidate in enumerate(todo):
                     if index % world != rank:
                         continue
@@ -185,7 +211,8 @@ def main() -> None:
                         torch.cuda.synchronize()
                         started = time.perf_counter()
                         rewards, responses = generate_rewards(model, tokenizer, bundle["records"][candidate], verifier,
-                            responses=args.responses, seed=seed, max_new_tokens=args.max_new_tokens, meter=meter)
+                            responses=args.responses, seed=seed, max_new_tokens=args.max_new_tokens,
+                            meter=meter, candidate=candidate)
                         meter.count(f"candidate:{candidate}")
                         torch.cuda.synchronize()
                         with meter.stage("receipt_write"):

@@ -38,6 +38,15 @@ class ModelBackendTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(first[0]), 8)
         self.assertEqual(len(first[1]), 8)
+        # Progress reporting must not change sampled responses or EOS handling.
+        tokenizer = TinyTokenizer()
+        torch.manual_seed(kwargs["seed"])
+        with torch.no_grad():
+            plain = model.generate(**tokenizer("problem"), do_sample=True, temperature=1.0,
+                                   top_p=1.0, top_k=0, num_return_sequences=8,
+                                   max_new_tokens=2, use_cache=True,
+                                   pad_token_id=tokenizer.pad_token_id, eos_token_id=tokenizer.eos_token_id)
+        self.assertEqual(first[1], [tokenizer.decode(sequence[2:]) for sequence in plain])
 
     def setUp(self):
         from peft import LoraConfig, get_peft_model

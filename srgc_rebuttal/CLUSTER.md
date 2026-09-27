@@ -2,12 +2,14 @@
 
 ## Simple shell commands
 
-After updating the checkout, run `sh scripts/run_srgc.sh math` on the two
+Stop old workers, update the checkout, then run `sh scripts/run_srgc.sh math` on the two
 MATH nodes and `sh scripts/run_srgc.sh mbpp` on the two MBPP nodes. No Python
 flags, migration command or preparation command is needed. Each node needs
 four allocated H100s. Existing scheduler GPU visibility is preserved.
 The launcher selects the existing Pair/MBPP Python, group-volume storage and
-the shared `restart1` cohort. Repeating it joins/resumes that cohort, not a reset.
+the shared `candidate40-v2` cohort. Repeating it joins/resumes that cohort, not a reset.
+This fresh cohort keeps the new 400-to-40-to-four sampling separate from older
+cache/queue/checkpoint identities. Old files remain untouched.
 
 Use `sh scripts/run_srgc.sh math status`, `sh scripts/run_srgc.sh math results`
 or `sh scripts/run_srgc.sh math costs`; substitute `mbpp` for the other dataset.
@@ -31,9 +33,9 @@ update the checkout and run these commands on the respective node pairs:
 
 ```bash
 # MATH nodes 1 and 2: use the identical run name on both nodes.
-CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --dataset math --fresh restart1
+sh scripts/run_srgc.sh math
 # MBPP nodes 3 and 4: use the identical run name on both nodes.
-CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --dataset mbpp --fresh restart1
+sh scripts/run_srgc.sh mbpp
 ```
 
 `--fresh` initializes one shared queue per dataset/run name under
@@ -45,7 +47,12 @@ Default status/results commands follow the selected fresh cohort. Old files
 are ignored, not deleted. No claim of faster measured H100 throughput is made.
 Initial cache generation now uses PyTorch SDPA, records that backend in cache
 provenance, and logs per-rank completed prompts and estimated remaining time.
-Training/scoring attention and scientific sampling settings are unchanged.
+While generating, real completed decode steps are reported every 30 seconds,
+starting with the first generated token; each verified response also updates
+progress. A stuck model generates no artificial heartbeat. If all response
+receipts were saved before interruption, restart exports them without loading
+the model again. Training/scoring attention and eight-response cache settings
+are unchanged. Random/SR training sampling follows the revised protocol above.
 
 The Python entry point accepts `--dataset math` (default) or `--dataset mbpp`
 before or after the command. Both datasets' real seed-5--9 input bundles are

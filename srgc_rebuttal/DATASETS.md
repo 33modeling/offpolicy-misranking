@@ -36,8 +36,9 @@ GSM8K, MBPP or any JSONL file of `{question, answer}` rows. The current protocol
 uses a 25-update shared prefix, total 275, 40 fresh scored candidates plus the
 next 40 unused SR prompts every 25 updates, retaining the On-policy top four
 for training, checks every 25 updates and projection 4096. SR-GC compares the
-full 40-prompt sets, not the training four. Random and SR use the whole candidate pool without
-replacement within each pass; SR follows cached score order. These rules apply
+full 40-prompt sets, not the training four. Random and SR draw 40 distinct
+random candidates from the full 400 on each update, then choose random four
+or SR-score top four within that draw. Later draws may repeat earlier IDs. These rules apply
 to both MATH and MBPP and differ from the older fixed-subset protocol.
 
 ## 1. Build the bundle (CPU)
