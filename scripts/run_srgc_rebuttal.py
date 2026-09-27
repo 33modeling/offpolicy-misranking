@@ -104,8 +104,9 @@ def main():
         status_main()
     elif action == "cluster" and args[0] == "worker" and not any(a in {"-h", "--help"} for a in args):
         from srgc_checkpoint_backup import automatic_backup
+        from srgc_process_guard import process_guard
         from srgc_step_checkpoints import worker_main
-        with automatic_backup(plan):
+        with automatic_backup(plan), process_guard(plan):
             worker_main()
     else:
         runpy.run_module(f"srgc_rebuttal.{actions[action]}", run_name="__main__")

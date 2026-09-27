@@ -453,3 +453,24 @@ child leases, controlled stop, SSH preflight/acknowledgement, final summary
 publication, hash rejection and numerical equivalence
 of the computation changes. See [VALIDATION.md](VALIDATION.md). No real remote
 node or 7B GPU training job was launched while preparing this code.
+
+## Orphaned ranks and stale execution locks
+
+`torchrun` starts each rank in its own session, so a worker that is interrupted
+(Ctrl-C, `stop --now`, scheduler SIGTERM) can leave ranks alive after the
+launcher is gone. They keep GPU memory and `.<task>.execution.lock` /
+`.manifest.lock`, and every later attempt of that task fails at admission or
+blocks on the lock while only `BACKUP CHECK` lines keep printing.
+
+`scripts/run_srgc.sh ... run` now applies `scripts/srgc_process_guard.py`
+automatically: before each child starts it reaps Python processes of the same
+plan that have no live launcher ancestor, and after a child exits it terminates
+the whole tree it saw while running. To clean a node by hand before relaunching:
+
+```bash
+python scripts/srgc_process_guard.py --plan <group-storage plan path> --dry-run   # list
+python scripts/srgc_process_guard.py --plan <group-storage plan path>             # SIGTERM, then SIGKILL after 30 s
+```
+
+The guard lives outside the hashed `srgc_rebuttal` package, so an existing
+queue keeps its `implementation_sha256` and continues without a new root.
