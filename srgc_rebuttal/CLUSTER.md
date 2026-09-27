@@ -2,14 +2,18 @@
 
 ## Simple shell commands
 
-Stop old workers, update the checkout, then run `sh scripts/run_srgc.sh math` on the two
+Run `sh scripts/run_srgc.sh math` on the two
 MATH nodes and `sh scripts/run_srgc.sh mbpp` on the two MBPP nodes. No Python
 flags, migration command or preparation command is needed. Each node needs
 four allocated H100s. Existing scheduler GPU visibility is preserved.
-The launcher selects the existing Pair/MBPP Python, group-volume storage and
-the shared `candidate40-v2` cohort. Repeating it joins/resumes that cohort, not a reset.
-This fresh cohort keeps the new 400-to-40-to-four sampling separate from older
-cache/queue/checkpoint identities. Old files remain untouched.
+Leave healthy running workers alone. After a node failure, repeat the same
+command on the replacement allocation; there is no separate continuation mode.
+The launcher selects the existing Pair/MBPP Python and group-volume storage.
+With no active cohort it initializes the shared `candidate40-v2` cohort once;
+otherwise it rejoins the active cohort and reuses its saved progress. The same
+command starts a new experiment or continues an interrupted one automatically.
+Failed-task retries are enabled within the existing three-attempt limit.
+Live task/device leases prevent duplicate execution. Old files remain untouched.
 
 Use `sh scripts/run_srgc.sh math status`, `sh scripts/run_srgc.sh math results`
 or `sh scripts/run_srgc.sh math costs`; substitute `mbpp` for the other dataset.
@@ -55,13 +59,14 @@ contents; they do not reconstruct missing timing measurements after a crash.
 After a node failure, use the existing group volume and unchanged code/plan:
 
 ```sh
-sh scripts/run_srgc.sh math resume
+sh scripts/run_srgc.sh math
 # On an MBPP node instead:
-sh scripts/run_srgc.sh mbpp resume
+sh scripts/run_srgc.sh mbpp
 ```
 
-`resume` rejoins the active cohort without creating a fresh run and permits
-failed-task retries within the existing three-attempt limit. It does not
+There is no separate shell resume mode. The ordinary command detects the
+active cohort, reuses caches/checkpoints and retries failed tasks within the
+existing three-attempt limit. It does not
 override an intentional queue stop, exhausted retries, live GPU leases or
 identity mismatches. Normal resume loads `*-latest.pt`; it does not silently
 replace a damaged latest checkpoint with a backup. Restoring a backup requires
@@ -81,13 +86,14 @@ as soon as its own dependencies finish; other seeds need not finish first.
 
 ## MATH or MBPP
 
-For a new group-volume run without migrating any old cache, stop old workers,
-update the checkout and run these commands on the respective node pairs:
+For the first start or for continuing after a node failure, use these same
+commands on the respective node pairs. Do not stop a healthy running worker
+just to enable continuation; checkpoint saving is already active:
 
 ```bash
-# MATH nodes 1 and 2: use the identical run name on both nodes.
+# MATH nodes 1 and 2.
 sh scripts/run_srgc.sh math
-# MBPP nodes 3 and 4: use the identical run name on both nodes.
+# MBPP nodes 3 and 4.
 sh scripts/run_srgc.sh mbpp
 ```
 

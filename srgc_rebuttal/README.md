@@ -97,11 +97,13 @@ Per-update records retain all 40 training candidate IDs and the selected four
 for Random/SR; refresh records retain the On-policy and diagnostic SR sets.
 Sampling/ranking CPU time is included in the measured Random/SR training phase.
 
-The shell launcher now uses the shared fresh cohort `candidate40-v2` for both
-datasets. Stop old workers before updating and restarting. The new cohort
-does not import old caches, checkpoints or queue state; existing files remain
-untouched. Repeated launches of this cohort join/resume it, including on a
-second node. Reports follow the active cohort.
+The shell launcher initializes `candidate40-v2` only when there is no active
+cohort. Subsequent launches automatically rejoin the active cohort, reuse its
+cache/checkpoints and allow bounded retries of failed tasks. There is no
+separate shell resume command. Another node cannot duplicate a leased task.
+Do not stop healthy workers: their checkpoint saving is already active.
+Reports follow the active cohort, and incompatible identities are rejected
+instead of silently resetting an existing experiment.
 
 The controller's `step=t` denotes **t completed optimizer updates**. A check
 at t scores that checkpoint's policy before update t+1; a triggered transition

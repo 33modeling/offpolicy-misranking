@@ -22,6 +22,65 @@ spec.loader.exec_module(storage)
 
 
 class SharedStorageTests(unittest.TestCase):
+    def test_automatic_start_then_restart_preserves_cache_checkpoint_and_failed_task(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env = self.fixture(directory)
+            with patch.dict(os.environ, env):
+                target = storage.route_plan(plan, writing=True, start_or_continue=True)
+                self.assertIn("candidate40-v2", str(target))
+                queue = TaskQueue(target)
+                queue.bind()
+                protocol = (queue.directory / "protocol.json").read_bytes()
+                bundle = input_path(target, queue.plan, 5)
+                data = json.loads(bundle.read_text())
+                cache = CacheStore(bundle, data, {"cache_seed": 5})
+                cache.bind()
+                candidate = data["candidate_ids"][0]
+                cache.write(candidate, [1] * 8, ["saved response"] * 8, 1.0)
+                receipt = cache.path(candidate).read_bytes()
+                checkpoint = queue.root / "seed-5/prefix-latest.pt"
+                checkpoint.parent.mkdir(parents=True)
+                checkpoint.write_bytes(b"checkpoint preservation fixture")
+                with queue.claim() as task:
+                    self.assertEqual(task.key, "seed-5.cache")
+                    queue.finish(task, 1)
+                continued = storage.route_plan(plan, writing=True, start_or_continue=True)
+                self.assertEqual(continued, target)
+                self.assertEqual(cache.path(candidate).read_bytes(), receipt)
+                self.assertEqual(checkpoint.read_bytes(), b"checkpoint preservation fixture")
+                self.assertEqual((queue.directory / "protocol.json").read_bytes(), protocol)
+                restarted = TaskQueue(continued)
+                with restarted.claim(retry_failed=True, retry_delay=0) as task:
+                    self.assertEqual(task.key, "seed-5.cache")
+                    self.assertEqual(json.loads(restarted.receipt(task).read_text())["attempt"], 2)
+
+    def test_automatic_start_joins_active_cohort_and_does_not_duplicate_live_task(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env = self.fixture(directory)
+            target = storage.fresh_plan(plan, env, "already-running")
+            queue = TaskQueue(target)
+            queue.bind()
+            with patch.dict(os.environ, env), queue.claim() as first:
+                continued = storage.route_plan(plan, writing=True, start_or_continue=True)
+                self.assertEqual(continued, target)
+                second = TaskQueue(continued)
+                with second.claim(retry_failed=True) as task:
+                    self.assertNotEqual(task, first)
+                    self.assertEqual(task.key, "seed-6.cache")
+                _, root = storage.storage_root(env)
+                self.assertFalse((root / "fresh/candidate40-v2").exists())
+
+    def test_automatic_start_never_silently_replaces_an_incompatible_active_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env = self.fixture(directory)
+            target = storage.fresh_plan(plan, env, "already-running")
+            _, root = storage.storage_root(env)
+            atomic_json(root / f".{plan.stem}-active.json", {
+                "plan": str(target), "source_plan_sha256": "wrong"})
+            with patch.dict(os.environ, env), self.assertRaisesRegex(ValueError, "does not match"):
+                storage.route_plan(plan, writing=True, start_or_continue=True)
+            self.assertFalse((root / "fresh/candidate40-v2").exists())
+
     def test_all_runtime_caches_and_temporary_files_are_group_local(self):
         with tempfile.TemporaryDirectory() as directory:
             plan, env = self.fixture(directory)

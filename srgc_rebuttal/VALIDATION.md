@@ -1,4 +1,26 @@
-# External checkpoint backups on 2026-09-28
+# One-command automatic start/continuation on 2026-09-28
+
+Removed the newly introduced shell `resume` mode at the author's request.
+The ordinary `sh scripts/run_srgc.sh math|mbpp` command now initializes a
+cohort only when none is active, otherwise rejoining the active cohort with
+its existing cache/checkpoints. It enables failed-task retries within the
+unchanged three-attempt limit. Live task/device leases, intentional stops and
+protocol mismatches are still respected; existing work is never silently reset.
+Explicit run names remain opt-in. Healthy running workers need not restart:
+their per-prompt cache saving and five-/25-update checkpoint saving were
+already enabled. The separate rolling-backup feature remains intact.
+
+All 145 unit/integration tests passed without skips. New regressions check
+first start followed by a failed-task restart with byte-identical saved cache,
+checkpoint and queue protocol, reuse of a nondefault active cohort, exclusion
+of a live task, and rejection rather than replacement of an incompatible
+active run. Shell and worker-entry tests cover automatic routing/retry and
+removal of the shell resume mode. Shell syntax and whitespace checks passed.
+The experiment implementation digest remains
+`1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a`.
+No running H100 experiment, saved checkpoint or node process was modified.
+
+## External checkpoint backups on 2026-09-28
 
 Added a group-volume checkpoint watcher outside the frozen experiment package.
 New worker launches start it automatically; existing workers can keep running

@@ -67,7 +67,9 @@ def main():
         from srgc_shared_storage import route_plan
         if writing:
             original_plan = plan
-            plan = route_plan(plan, writing=True, fresh=settings.fresh)
+            auto = (action == "cluster" and args[0] == "worker" and
+                    settings.plan is None and settings.fresh is None)
+            plan = route_plan(plan, writing=True, fresh=settings.fresh, start_or_continue=auto)
             if action == "cluster" and args[0] == "worker" and not any(
                     a == "--node-lock-root" or a.startswith("--node-lock-root=") for a in args):
                 from srgc_shared_storage import storage_root

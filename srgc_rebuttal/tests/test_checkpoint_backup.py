@@ -168,11 +168,12 @@ class CheckpointBackupTests(unittest.TestCase):
                 checkpoint(source, "step-50")
             with patch.dict(os.environ, env), patch.dict(sys.modules, {
                     "srgc_shared_storage": storage, "srgc_checkpoint_backup": backup}), \
-                    patch("sys.argv", ["run_srgc_rebuttal.py", "worker", "--plan", str(plan)]), \
+                    patch("sys.argv", ["run_srgc_rebuttal.py", "worker", "--dataset", "math"]), \
                     patch("srgc_rebuttal.existing_runtime.select_python"), \
-                    patch.object(storage, "route_plan", return_value=plan), \
+                    patch.object(storage, "route_plan", return_value=plan) as route, \
                     patch.object(entry.runpy, "run_module", side_effect=worker), redirect_stdout(io.StringIO()):
                 entry.main()
+                self.assertTrue(route.call_args.kwargs["start_or_continue"])
             self.assertTrue(any(p.read_bytes() == source.read_bytes() for p in self.generations(source)))
 
     def test_auto_watcher_takes_final_copy_and_backup_errors_do_not_interrupt_training(self):

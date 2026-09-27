@@ -26,12 +26,12 @@ class ShellLauncherTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
 
-    def test_math_and_mbpp_start_shared_fresh_workers_without_user_options(self):
+    def test_math_and_mbpp_start_or_continue_with_one_command_and_automatic_retry(self):
         for dataset in ("math", "mbpp"):
             with self.subTest(dataset=dataset):
                 report = self.invoke(dataset)
                 self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", dataset,
-                                                  "--fresh", "candidate40-v2"])
+                                                  "--retry-failed"])
                 self.assertEqual(report["cuda"], "0,1,2,3")
                 self.assertEqual(report["threads"], "1")
                 self.assertEqual(report["cwd"], str(SCRIPT.parents[1]))
@@ -47,15 +47,15 @@ class ShellLauncherTests(unittest.TestCase):
                 self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", mode, "--dataset", dataset])
                 self.assertEqual(report["cuda"], "")
 
-    def test_resume_uses_active_run_and_bounded_failed_retries_without_new_cohort(self):
+    def test_explicit_run_name_is_only_used_when_the_user_sets_it(self):
         for dataset in ("math", "mbpp"):
-            report = self.invoke(dataset, "resume")
+            report = self.invoke(dataset, SRGC_RUN_NAME="explicit-study")
             self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", dataset,
-                                              "--retry-failed"])
+                                              "--retry-failed", "--fresh", "explicit-study"])
             self.assertEqual(report["cuda"], "0,1,2,3")
 
     def test_invalid_invocations_fail_before_python(self):
-        for args in ([], ["wrong"], ["math", "wrong"], ["math", "run", "extra"]):
+        for args in ([], ["wrong"], ["math", "wrong"], ["math", "resume"], ["math", "run", "extra"]):
             result = subprocess.run(["sh", str(SCRIPT), *args], capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 2)
             self.assertIn("usage:", result.stderr)

@@ -160,15 +160,19 @@ def fresh_plan(source, environment, name):
     return target
 
 
-def route_plan(source, *, writing, migrate=False, fresh=None):
+def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=False):
     source = source.resolve()
-    if fresh is not None:
+    if start_or_continue and (not writing or migrate or fresh is not None):
+        raise ValueError("automatic start/continuation requires writing without fresh or migration")
+    if fresh is not None or start_or_continue:
         group_path = Path(os.environ.get("GROUP_VOLUME", "/group-volume")).resolve()
         if "OM_WORK" in os.environ and not Path(os.environ["OM_WORK"]).resolve().is_relative_to(group_path):
             os.environ["OM_WORK"] = str(group_path / os.environ.get("OM_USER", "minsoo3.kim") / "offpolicy-misranking")
     group, root = storage_root(os.environ)
     plan = load_plan(source)
     active = root / f".{source.stem}-active.json"
+    if start_or_continue and not active.exists():
+        fresh = "candidate40-v2"
     if fresh is not None:
         target = fresh_plan(source, os.environ, fresh)
     elif active.exists() and not migrate:
