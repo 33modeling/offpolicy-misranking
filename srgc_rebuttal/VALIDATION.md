@@ -1,4 +1,24 @@
-# Per-update checkpoint saving on 2026-09-28
+# Current training-step logs on 2026-09-28
+
+The ordinary worker's storage adapter now prints the current optimizer step
+before selection/rollout work begins and the completed count after each update.
+Shared-prefix logs use the plan's 25-update denominator; continuations use the
+plan's total of 275, retaining the restored global step. Only rank zero prints.
+Cache prompt counts are separate and are not presented as training progress.
+No queue scheduling, training, checkpoint frequency or cache rules changed.
+Running training processes do not hot-reload these logs.
+
+All 156 unit/integration tests passed without skips. New regressions verify
+that the first running line precedes gradient scoring, completion counts only
+advance after successful updates, restored steps continue correctly, the final
+prefix step is 25/25, continuations start at 26/275, and nonzero ranks are silent.
+The two-process CPU distributed smoke test also passed with one set of training
+lines, per-update saving, measured checkpoint costs and failed-write recovery.
+Whitespace checks passed. The frozen experiment implementation digest remains
+`1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a`.
+No remote H100 process was accessed or restarted.
+
+## Per-update checkpoint saving on 2026-09-28
 
 New ordinary shell workers save after each completed optimizer update for
 the shared prefix and all four continuations. A storage adapter under

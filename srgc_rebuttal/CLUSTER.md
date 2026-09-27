@@ -19,6 +19,22 @@ Use `sh scripts/run_srgc.sh math status`, `sh scripts/run_srgc.sh math results`
 or `sh scripts/run_srgc.sh math costs`; substitute `mbpp` for the other dataset.
 These reporting commands do not start workers or create a fresh cohort.
 
+Training logs distinguish the shared 25-update prefix from each continuation:
+
+```text
+TRAIN seed=5 phase=shared-prefix arm=on_policy step=1/25 status=running completed=0/25
+TRAIN seed=5 phase=shared-prefix arm=on_policy step=1/25 status=completed completed=1/25
+TRAIN seed=5 phase=shared-prefix arm=on_policy step=25/25 status=completed completed=25/25
+TRAIN seed=5 phase=continuation arm=sr step=26/275 status=running completed=25/275
+```
+
+`running` is printed before selection/rollout work starts for that optimizer
+update; `completed` advances only after the update finishes. Resumed workers
+show their restored step rather than restarting the counter. Only rank zero
+prints these lines. Cache `prompt N/100` counts are not training steps. These
+logs apply to training processes newly launched through the updated worker;
+already-running training processes do not reload this code automatically.
+
 ## Checkpoint Backup and Resume
 
 Checkpoints live on the group volume. Newly launched ordinary shell workers

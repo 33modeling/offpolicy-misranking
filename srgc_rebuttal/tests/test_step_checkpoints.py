@@ -31,7 +31,8 @@ def make_engine(folder, task="prefix", step=0, *, adapted=True):
     backend.cost_meter = CostMeter(record=PhaseLedger(folder / "costs").record)
     ids = [f"s{i}" for i in range(40)] + [f"o{i}" for i in range(360)]
     cache = {i: ([0, 1] * 4 if i.startswith("s") else [1] * 8) for i in ids}
-    cls = checkpoints.checkpoint_engine(Engine, folder, task, POLICY) if adapted else Engine
+    cls = checkpoints.checkpoint_engine(Engine, folder, task, POLICY,
+        total_updates=25 if task == "prefix" else 275) if adapted else Engine
     engine = cls(backend, ids, ["sv"], cache, arm="on_policy" if task == "prefix" else task,
                  config=Config(projection_dim=2), step=step)
     backend.strengths = {i: float(len(ids) - n) for n, i in enumerate(engine.sr_ranked_ids)}
@@ -39,6 +40,58 @@ def make_engine(folder, task="prefix", step=0, *, adapted=True):
 
 
 class StepCheckpointTests(unittest.TestCase):
+    def test_logs_current_and_completed_steps_before_and_after_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            engine = make_engine(Path(directory))
+            original = engine.backend.score_gradients
+            def score(*args, **kwargs):
+                self.assertIn("step=1/25 status=running completed=0/25", output.getvalue())
+                self.assertNotIn("status=completed", output.getvalue())
+                return original(*args, **kwargs)
+            with redirect_stdout(output), patch.object(engine.backend, "score_gradients", side_effect=score):
+                engine.update()
+            lines = [line for line in output.getvalue().splitlines() if line.startswith("TRAIN ")]
+            self.assertEqual(len(lines), 2)
+            self.assertIn("phase=shared-prefix arm=on_policy step=1/25 status=running", lines[0])
+            self.assertIn("step=1/25 status=completed completed=1/25", lines[1])
+
+    def test_logs_resumed_step_and_final_prefix_step_not_cache_prompt_counts(self):
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            folder = Path(directory)
+            engine = make_engine(folder)
+            engine.update()
+            restored = make_engine(folder)
+            restored.load_state_dict(torch.load(folder / "prefix-latest.pt", weights_only=False))
+            output = io.StringIO()
+            with redirect_stdout(output):
+                restored.run_until(25)
+            self.assertIn("step=2/25 status=running completed=1/25", output.getvalue())
+            self.assertIn("step=25/25 status=completed completed=25/25", output.getvalue())
+            self.assertNotIn("step=26/25", output.getvalue())
+            continuation = make_engine(folder, "sr")
+            continuation.load_state_dict(restored.state_dict(), fork_arm="sr")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                continuation.update()
+            self.assertIn("phase=continuation arm=sr step=26/275 status=running completed=25/275",
+                          output.getvalue())
+            self.assertIn("step=26/275 status=completed completed=26/275", output.getvalue())
+
+    def test_logging_is_rank_zero_only_and_failed_updates_are_not_completed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engine = make_engine(Path(directory))
+            output = io.StringIO()
+            with redirect_stdout(output), patch("torch.distributed.is_initialized", return_value=True), \
+                    patch("torch.distributed.get_rank", return_value=1):
+                engine.log_step("running")
+            self.assertEqual(output.getvalue(), "")
+            with redirect_stdout(output), patch.object(engine.backend, "train", side_effect=RuntimeError("failed")):
+                with self.assertRaisesRegex(RuntimeError, "failed"):
+                    engine.update()
+            self.assertIn("step=1/25 status=running completed=0/25", output.getvalue())
+            self.assertNotIn("status=completed", output.getvalue())
+
     def test_every_completed_update_saved_with_original_boundaries_retained(self):
         for task in ("prefix", "random", "sr", "on_policy", "switch"):
             with self.subTest(task=task), tempfile.TemporaryDirectory() as directory, \
