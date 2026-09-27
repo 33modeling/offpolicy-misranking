@@ -50,12 +50,41 @@ class TaskQueue:
             self.protocol["inputs"][str(seed)] = info
         marker = self.directory / "protocol.json"
         if marker.exists():
+            proposed = self.protocol
             self.protocol = json.loads(marker.read_text())
+            if self.protocol.get("implementation_sha256") != proposed["implementation_sha256"]:
+                self._upgrade_unstarted(proposed)
         self.identities, self.cache_ready, self._prefix_cache = {}, {}, {}
         self.claim_fds = ()
         self.tasks = [Task(s, phase) for phase in ("cache", "prefix", "on_policy", "switch", "sr", "random")
                       for s in self.plan["seeds"]]
         self.verify()
+
+    def _upgrade_unstarted(self, proposed):
+        """A rejected node admission is not an experiment that has started."""
+        marker = self.directory / "protocol.json"
+        with lease(self.directory / "bind.lock", wait=True):
+            previous = json.loads(marker.read_text())
+            self.protocol = previous
+            if previous.get("implementation_sha256") == proposed["implementation_sha256"]:
+                return
+            if {**previous, "implementation_sha256": proposed["implementation_sha256"]} != proposed:
+                return
+            if any(any((self.directory / name).glob("*.json")) for name in ("tasks", "attempts")):
+                return
+            if any(self.root.glob("seed-*")):
+                return
+            for seed in self.plan["seeds"]:
+                cache = input_path(self.plan_path, self.plan, seed).with_suffix(".cache")
+                if any(cache.rglob("*.json")):
+                    return
+            for path in (self.directory / "workers").glob("*.json"):
+                record = json.loads(path.read_text())
+                if record.get("status") not in {"failed", "stopped"}:
+                    return
+            atomic_json(self.directory / "startup-history" / f"{previous['implementation_sha256']}.json", previous)
+            atomic_json(marker, proposed)
+            self.protocol = proposed
 
     def bind(self):
         with lease(self.directory / "bind.lock", wait=True):

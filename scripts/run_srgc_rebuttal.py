@@ -3,6 +3,7 @@
 
 import os
 import argparse
+import json
 from pathlib import Path
 import runpy
 import subprocess
@@ -19,6 +20,10 @@ def main():
     options.add_argument("--dataset", choices=("math", "mbpp"))
     options.add_argument("--plan", type=Path)
     settings, args = options.parse_known_args(sys.argv[1:])
+    dataset = settings.dataset or ("mbpp" if settings.plan and
+        json.loads(settings.plan.read_text()).get("dataset") == "mbpp" else "math")
+    from srgc_rebuttal.existing_runtime import select_python
+    select_python(dataset)
     if args in (["--help"], ["-h"]):
         parser = argparse.ArgumentParser(description=__doc__, parents=[options])
         parser.add_argument("action", nargs="?", default="run", choices=[*actions, "worker", "launch", "commands", "stop", "resume"])

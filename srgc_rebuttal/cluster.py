@@ -3,7 +3,6 @@
 import argparse
 from contextlib import contextmanager, ExitStack
 import hashlib
-import importlib.metadata
 import json
 import math
 import os
@@ -20,6 +19,7 @@ from .plan import DEFAULT_PLAN, input_path, load_plan
 from .runtime import Busy, atomic_json, finalize_seed, lease, run_root
 from .cluster_queue import Task, TaskQueue
 from .admission import admit
+from .existing_runtime import runtime_packages
 from .progress import signature as progress_signature
 
 
@@ -32,7 +32,8 @@ def child_environment():
         env[name] = "1"
     env.update(TOKENIZERS_PARALLELISM="false", PYTHONUNBUFFERED="1", PYTHONDONTWRITEBYTECODE="1")
     env.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH"))))
+    repo = Path(__file__).resolve().parents[1]
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(repo), str(repo / "src"), env.get("PYTHONPATH"))))
     return env
 
 
@@ -137,7 +138,7 @@ def direct(action, plan_path, arguments):
     environment["CUDA_VISIBLE_DEVICES"] = devices
     session = root / ".queue" / "admission" / f"manual-{uuid.uuid4().hex}"
     with device_leases(root.parent / "gpu-node-locks", uuids) as fds:
-        admit(session, environment, run_child, pass_fds=fds)
+        admit(session, environment, run_child, pass_fds=fds, plan=plan)
         progress_dir = session / "progress"
         environment["SRGC_PROGRESS_DIR"] = str(progress_dir)
         module = "run_experiment" if action == "run" else "build_cache"
@@ -192,7 +193,7 @@ def worker(args):
         environment["CUDA_VISIBLE_DEVICES"] = devices
         with device_leases(lock_root, uuids) as gpu_fds:
             base["admission"] = admit(queue.directory / "admission" / worker_id, environment, run_child,
-                pass_fds=gpu_fds, heartbeat=lambda pid: update("preflight", child_pid=pid),
+                pass_fds=gpu_fds, plan=queue.plan, heartbeat=lambda pid: update("preflight", child_pid=pid),
                 should_stop=lambda: stop_requested(queue))
             update("idle")
             run_worker(queue, args, environment, gpu_fds, worker_id, update)
@@ -248,7 +249,8 @@ def run_worker(queue, args, environment, gpu_fds, worker_id, update):
 def ssh_command(host, repo, python, plan, *, action="worker", options=(), worker_id=None):
     if not host or host.startswith("-") or any(c.isspace() for c in host):
         raise ValueError("invalid SSH host")
-    command = [python, "-m", "srgc_rebuttal.cluster", action, "--plan", str(plan), *options]
+    command = [python, str(Path(repo) / "scripts/run_srgc_rebuttal.py"),
+               "cluster", action, "--plan", str(plan), *options]
     if worker_id:
         command += ["--worker-id", worker_id]
     # Each argument is shell-quoted once; no user string becomes shell syntax.
@@ -283,7 +285,7 @@ def probe(queue, token):
     return {"host": socket.gethostname(), "devices": devices, "gpu_uuids": uuids,
             "gpu_models": sorted(torch.cuda.get_device_name(i) for i in range(4)),
             "python": list(sys.version_info[:2]),
-            "packages": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "peft", "math-verify")},
+            "packages": runtime_packages(),
             "code_verifier_environment": {k: os.environ.get(k) for k in ("SRGC_CODE_TIMEOUT", "SRGC_CODE_MEMORY_MB")}}
 
 

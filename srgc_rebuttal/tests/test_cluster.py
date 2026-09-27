@@ -356,7 +356,7 @@ class QueueTests(unittest.TestCase):
     def test_commands_are_parallel_workers_and_thread_pools_are_bounded(self):
         command = ssh_command("node-a", "/shared/repo with space", "/venv/bin/python", "v7/plan.json")
         self.assertEqual(command[0], "ssh")
-        self.assertIn("srgc_rebuttal.cluster", command[-1])
+        self.assertIn("run_srgc_rebuttal.py", command[-1])
         self.assertIn("nohup", command[-1])
         self.assertEqual(child_environment()["OPENBLAS_NUM_THREADS"], "1")
         self.assertEqual(child_environment()["TOKENIZERS_PARALLELISM"], "false")

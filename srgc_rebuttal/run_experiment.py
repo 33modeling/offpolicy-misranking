@@ -16,6 +16,7 @@ from .cost_ledger import PhaseLedger
 from .timing import invocation, torch_meter
 from .distributed import initialize, primary
 from .progress import record as progress
+from .existing_runtime import load_model
 
 
 def math_reward(record: dict, response: str) -> float:
@@ -42,7 +43,6 @@ def main() -> None:
     import torch
     import torch.distributed as dist
     from peft import LoraConfig, get_peft_model
-    from transformers import AutoModelForCausalLM, AutoTokenizer
     from .torch_backend import TorchBackend
     world = plan["world_size"]
     rank, local_rank = initialize(world)
@@ -93,16 +93,11 @@ def main() -> None:
                                        meter, world, invocation_started))
         with meter.phase("startup", gpu_count=world):
             torch.manual_seed(args.seed)
-            with meter.stage("tokenizer_load"):
-                tokenizer = AutoTokenizer.from_pretrained(plan["model"], revision=plan["model_revision"])
-                if tokenizer.pad_token_id is None:
-                    tokenizer.pad_token_id = tokenizer.eos_token_id
-            with meter.stage("model_load"):
-                model = AutoModelForCausalLM.from_pretrained(plan["model"], revision=plan["model_revision"], torch_dtype=torch.bfloat16,
-                                                            attn_implementation="eager")
+            with meter.stage("model_and_tokenizer_load"):
+                model, tokenizer = load_model(plan["model"], plan["model_revision"], torch.device("cuda", local_rank))
+            with meter.stage("adapter_load"):
                 model = get_peft_model(model, LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"],
                                                         lora_dropout=0.0, bias="none", task_type="CAUSAL_LM"))
-                model.to(torch.device("cuda", local_rank))
             module, function = plan["verifier"].split(":", 1)
             backend = TorchBackend(model, tokenizer, data["records"], getattr(importlib.import_module(module), function),
                 projection_dim=plan["projection_dim"], projection_seed=plan["projection_seed"],

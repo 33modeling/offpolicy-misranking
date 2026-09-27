@@ -27,6 +27,7 @@ from .cost_ledger import PhaseLedger
 from .timing import CostMeter, invocation, torch_meter
 from .distributed import initialize, primary
 from .progress import record as progress
+from .existing_runtime import load_model
 
 DEFAULT_MODEL = "allenai/Olmo-3-1025-7B"
 
@@ -130,7 +131,6 @@ def main() -> None:
                 ("model", "model_revision", "verifier", "responses", "max_new_tokens", "cache_seed")}
     import torch
     import torch.distributed as dist
-    from transformers import AutoModelForCausalLM, AutoTokenizer
     world = plan["world_size"]
     rank, _ = initialize(world)
     with ExitStack() as locks:
@@ -164,14 +164,8 @@ def main() -> None:
         meter = torch_meter(ledger.record)
         with invocation(sessions, meter, world, invocation_started):
             with meter.phase("startup", gpu_count=world):
-                with meter.stage("tokenizer_load"):
-                    tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.model_revision)
-                    if tokenizer.pad_token_id is None:
-                        tokenizer.pad_token_id = tokenizer.eos_token_id
-                with meter.stage("model_load"):
-                    model = AutoModelForCausalLM.from_pretrained(args.model, revision=args.model_revision,
-                        torch_dtype=torch.bfloat16, attn_implementation="eager")
-                    model.to("cuda").eval()
+                with meter.stage("model_and_tokenizer_load"):
+                    model, tokenizer = load_model(args.model, args.model_revision, torch.device("cuda", torch.cuda.current_device()))
             progress("model_ready")
             with meter.phase("cache_generation", gpu_count=world):
                 for index, candidate in enumerate(todo):

@@ -63,10 +63,14 @@ scratch copies with separate lock directories cannot coordinate these workers.
 The automated multi-process tests exercise local filesystem locking, not
 your cluster's filesystem. Use the site's validated shared-lock filesystem.
 
-Install `requirements.txt` in an environment available at the same path on
-each node, with a CUDA-capable PyTorch build. Stage model weights in the local
-or shared Hugging Face cache before starting workers to avoid simultaneous
-downloads. Use the same packages and GPU type for comparable measurements.
+Reuse the working seed-3/4 environment on each node. The entry point selects
+`PAIR_PYTHON` for MATH or `SWITCH_PYTHON` for MBPP, otherwise the existing
+`${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python`. Do not reinstall its packages.
+The runtime reuses the operational OLMo compatibility check, model loader and
+offline Math-Verify bundle. Weights resolve from `OM_OLMO3_MODEL_PATH`, the
+existing `MODELS_DIR` snapshot or the pinned local Hugging Face cache;
+workers do not download model weights. Use the same packages and GPU type
+for comparable measurements.
 Do not edit Python code, plan or inputs while the queue is active.
 
 Prepare the five real input bundles described in [README.md](README.md), then:
@@ -95,7 +99,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --datase
 
 Replace the device list with that node's four allocated GPUs. The worker
 checks their H100 type, memory capacity and occupancy, holds an exclusive
-device lease, validates pinned package requirements, and runs the existing
+device lease, uses the existing runtime compatibility check, and runs the existing
 `scripts/selection_nccl_preflight.py` four-rank CUDA/NCCL/DDP probe **before
 claiming any task**. Failure blocks training. Only probe-verified runtime
 workarounds are inherited. Evidence and separate admission GPU-time receipts
@@ -155,6 +159,11 @@ bounded by `--max-attempts` (default 3) and spaced by `--retry-delay` (default
 60 seconds). Abandoned and interrupted attempts count toward the same limit.
 Other ready work can proceed while a failed task waits. A code or input
 change requires a new output directory and plan, not an in-place resume.
+The sole code-change exception is an admission-only failure before any task,
+attempt, cache receipt or checkpoint exists and after all workers have stopped
+or failed. That empty queue may adopt the repaired implementation, preserving
+its old protocol in `.queue/startup-history/`. Plan/input changes and queues
+with actual work remain protected against incompatible resumes.
 
 SIGTERM/SIGINT is forwarded to the worker's own child process group; it waits
 for that group to exit before releasing leases. Preserve all attempt logs:

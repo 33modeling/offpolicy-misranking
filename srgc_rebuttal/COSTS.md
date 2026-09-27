@@ -6,10 +6,9 @@ not another active implementation. No historical reward or time is changed.
 
 ## Python entry point
 
-Run from the code repository root with the required environment installed:
+Run from the code repository root using the existing Pair/MBPP environment:
 
 ```bash
-python -m pip install -r srgc_rebuttal/requirements.txt
 python scripts/run_srgc_rebuttal.py plan --check-inputs --allow-pending-cache
 python scripts/run_srgc_rebuttal.py cache --bundle srgc_rebuttal/inputs/seed-5.json --cache-seed 5
 python scripts/run_srgc_rebuttal.py --seed 5
@@ -17,6 +16,12 @@ python scripts/run_srgc_rebuttal.py --seed 5 --resume
 python scripts/run_srgc_rebuttal.py costs
 python scripts/run_srgc_rebuttal.py summary
 ```
+
+The entry point selects `PAIR_PYTHON` for MATH or `SWITCH_PYTHON` for MBPP,
+otherwise the existing `${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python`.
+It reuses the operational OLMo compatibility check, local model loader and
+offline Math-Verify bundle. Do not reinstall packages in the working experiment
+environment. `requirements.txt` is only for a new isolated environment.
 
 Repeat cache generation and training for seeds 6 through 9. `run` (the default)
 and `cache` start four local torchrun processes. `--task prefix` or

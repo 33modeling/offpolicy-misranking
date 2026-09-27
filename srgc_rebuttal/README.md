@@ -113,7 +113,7 @@ prompts are a demo choice. PyTorch/OLMo tests are skipped without optional depen
 For the model adapter and tiny randomly initialized OLMo-3 tests:
 
 ```bash
-python -m pip install -r srgc_rebuttal/requirements.txt
+# Use the existing Pair/MBPP Python environment; do not reinstall its packages.
 python -m unittest discover -s srgc_rebuttal/tests -v
 torchrun --standalone --nproc_per_node=2 -m srgc_rebuttal.tests.distributed_smoke
 ```

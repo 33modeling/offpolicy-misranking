@@ -1,4 +1,25 @@
-# Master publication on 2026-09-28
+# Existing-runtime repair on 2026-09-28
+
+The additional-study entry point now reuses Pair/MBPP interpreter selection,
+the operational OLMo runtime gate and local model loader, and the existing
+offline verifier bundle. SSH workers use the same entry point. Exact new
+Transformers/PEFT pins no longer reject an otherwise compatible working
+environment. No existing experiment environment was modified or reinstalled.
+
+All 96 unit/integration tests passed with no skips. The six added regression
+tests cover interpreter selection, existing runtime/model-loader delegation,
+local snapshot provenance, and guarded recovery of an admission-only queue.
+Queues with tasks, cache receipts, checkpoints or live workers still reject
+implementation changes. The two-rank CPU distributed smoke also passed both
+global-update/timing parity and failure propagation without hanging.
+
+Verification used temporary CPU tooling with Transformers 4.57.6 and PEFT
+0.20.0; reuse of other compatible versions is covered by mocked compatibility
+tests, not a claim of GPU validation on every version. The user's exact
+Transformers traceback was not supplied. No H100 training or scientific
+result was produced by these tests. Existing inputs and protocol are unchanged.
+
+## Master publication on 2026-09-28
 
 The three experiment commits through `937b949` were fast-forwarded onto
 `master` at the author's request. Current execution guides now point to

@@ -33,7 +33,8 @@ class HardeningTests(unittest.TestCase):
                 self.assertEqual(len(gpu_identity()[1]), 4)
 
     def test_existing_nccl_preflight_is_required_and_runtime_fallback_is_inherited(self):
-        with tempfile.TemporaryDirectory() as directory, patch("srgc_rebuttal.admission.packages", return_value={"torch": "fixture"}):
+        with tempfile.TemporaryDirectory() as directory, patch("srgc_rebuttal.admission.packages", return_value={"torch": "fixture"}), \
+                patch("srgc_rebuttal.admission.verifier_environment"):
             root = Path(directory) / "admission"
             environment = {}
             def run(command, log, env, **kwargs):
