@@ -99,7 +99,10 @@ def main():
     if action in {"status", "results"}:
         args.insert(0, action)
     sys.argv = [f"{Path(__file__).name} {action}", *args]
-    if action == "cluster" and args[0] == "worker" and not any(a in {"-h", "--help"} for a in args):
+    if action == "status":
+        from srgc_live_status import main as status_main
+        status_main()
+    elif action == "cluster" and args[0] == "worker" and not any(a in {"-h", "--help"} for a in args):
         from srgc_checkpoint_backup import automatic_backup
         from srgc_step_checkpoints import worker_main
         with automatic_backup(plan):

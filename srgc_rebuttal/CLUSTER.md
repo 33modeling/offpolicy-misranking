@@ -19,6 +19,24 @@ Use `sh scripts/run_srgc.sh math status`, `sh scripts/run_srgc.sh math results`
 or `sh scripts/run_srgc.sh math costs`; substitute `mbpp` for the other dataset.
 These reporting commands do not start workers or create a fresh cohort.
 
+`status` separates `current_step` from `completed_steps`, with the task's
+planned denominator and assigned node. Cache progress is labeled `CACHE
+available_prompts=N/400`; decoding/prompt counts are never optimizer steps.
+Available cache counts include exported bundles even when separate per-prompt
+receipts were not imported. `saved_prompts` and `exported` remain separate.
+
+The status adapter reads the current attempt's existing phase receipts, so
+updating and running `status` does not require restarting a live worker. It
+reports selection/training in progress, completed updates, checkpoint I/O and
+evaluation separately. An update count is not a claim that a checkpoint is
+already saved. Older attempts are excluded after a restart; stopped attempts
+show `last_attempt_step`, not an actively running step. Missing evidence is
+shown as `-`, not an inferred zero. Completed updates do not imply completed
+evaluation or a published reward. No model/checkpoint tensors are loaded.
+JSON status retains the old numeric `step` (last observed completed updates)
+and adds the explicit progress fields. `results` retains the existing reward,
+cost, JSON/CSV export and complete-seed averaging rules.
+
 Training logs distinguish the shared 25-update prefix from each continuation:
 
 ```text

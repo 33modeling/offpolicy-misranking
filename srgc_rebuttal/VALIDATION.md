@@ -1,4 +1,36 @@
-# Current training-step logs on 2026-09-28
+# Live status and result verification on 2026-09-28
+
+Added a CPU-only status adapter outside the frozen experiment package. The
+ordinary status command separates current optimizer step, completed updates,
+task denominator, node and cache availability. It reads the latest existing
+phase receipt written after the queue attempt started, not the largest step
+from an earlier interrupted attempt. A stopped task's last observed step is
+not shown as active work. Evaluation/checkpoint phases do not imply a published
+reward, and completed updates do not imply a saved checkpoint. Missing or
+malformed progress is not fabricated as zero. Existing workers need not be
+restarted to use the updated read-only status command. No training protocol,
+prefix dependency, queue scheduling, cache or checkpoint cadence was changed.
+
+All 167 unit/integration tests passed without skips. New status cases cover
+selection before the first update, completed/saving/restored steps, continuation
+and evaluation, retry exclusion, stopped workers, completed receipts, malformed
+records, exported caches without separate receipts, and watch-mode interruption.
+Both MATH and MBPP status/results entry points passed with Torch, Transformers
+and PEFT imports blocked, without modifying inputs or initializing a queue.
+
+Results tests use synthetic receipts in temporary directories, matching the
+existing endpoint and cost schemas. They cover all twenty arms and five seeds,
+complete cost reconciliation including shared-prefix/cache/invocation overhead,
+legitimate zero-cost absent stages, null interrupted costs, partial means,
+malformed endpoint/cost isolation, twenty-row CSV output, JSON/text sidecars,
+and the worker's automatic final summary/cost-comparison publication. The
+existing results aggregation and export code was retained. These tests do not
+assert that uninspected remote H100 results are complete or error-free.
+
+Shell syntax and whitespace checks passed. The experiment digest remains
+`1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a`.
+
+## Current training-step logs on 2026-09-28
 
 The ordinary worker's storage adapter now prints the current optimizer step
 before selection/rollout work begins and the completed count after each update.
