@@ -52,6 +52,41 @@ no measured 7B speedup or completion time is claimed.
 
 ## Prepare the shared run directory
 
+### Group-volume storage
+
+Large artifacts must stay on group storage, not a user-volume checkout.
+The Python entry point stages byte-identical plans and inputs under
+`${SRGC_STORAGE_ROOT:-$OM_WORK/srgc-rebuttal}`. The default `OM_WORK` is
+`/group-volume/${OM_USER:-minsoo3.kim}/offpolicy-misranking`.
+Both the root and resolved input/output paths must be inside `GROUP_VOLUME`
+(default `/group-volume`). A missing group volume is an error, not permission
+to fall back to the user volume. If the original plan and all artifacts are
+already on group storage, their existing locations are retained.
+
+On a user-volume checkout, cache receipts now live in
+`$OM_WORK/srgc-rebuttal/inputs/{seed-file}.cache/` and checkpoints/results in
+`$OM_WORK/srgc-rebuttal/runs/{additional-seeds,mbpp-seeds}/`.
+The launcher prints both resolved locations before starting work.
+
+For an experiment already generating caches in the old checkout, first stop
+all four workers with Ctrl+C and wait for their child processes to exit.
+After updating the checkout, run once per dataset:
+
+```bash
+python scripts/run_srgc_rebuttal.py storage --dataset math --migrate
+python scripts/run_srgc_rebuttal.py storage --dataset mbpp --migrate
+```
+
+Then restart the same worker commands on the two nodes assigned to each dataset.
+Migration refuses live worker records or held task/execution leases. It copies
+completed prompt receipts, timing records and checkpoints without deleting
+originals or changing plan/input/implementation hashes. Finished prompts are
+reused on restart; an interrupted prompt may need regeneration. Original
+interrupted timing receipts remain incomplete, not invented measured totals.
+Do not restart an old launcher against the preserved original paths. If a
+dataset was stopped with the persistent `stop` command, use `resume --dataset`
+after migration before restarting its workers.
+
 Use a fixed checkout of `offpolicy-misranking` branch
 `master` on storage accessible at the **same path**
 on every node. Inputs, outputs and locks must be shared too. The filesystem

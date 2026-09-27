@@ -1,4 +1,24 @@
-# MBPP input packaging repair on 2026-09-28
+# Group-volume storage repair on 2026-09-28
+
+The launcher now routes runtime inputs/cache and checkpoints/results to group
+storage when the code checkout is on a user volume. A missing group mount,
+user-volume destination or symlink escape is rejected. Existing group-local
+plans retain their paths. Model/dataset library cache writes are redirected
+to group storage. The launcher and its storage helper are outside the frozen
+`srgc_rebuttal/*.py` implementation hash; no scientific runtime module, plan
+or existing input is changed by this repair.
+
+Added tests cover fresh staging, unchanged plan/input/implementation hashes,
+resuming an existing queue with copied real-format prompt receipts, live-worker
+and held-lock refusal, path guards and the CPU-only storage CLI. Migration
+preserves originals and refuses silent replacement of an existing destination.
+Actual node filesystems and running experiments are not available locally;
+the caller must stop all dataset workers before migration.
+All 103 unit/integration tests passed with no skips. The six storage tests
+also passed separately, and the runtime package modules match `fcf64cd`
+byte-for-byte, preserving their implementation digest for resumed work.
+
+## MBPP input packaging repair on 2026-09-28
 
 Earlier dataset tests generated temporary fixtures but did not check that the
 actual deployment contained MBPP input files. The default plan consequently

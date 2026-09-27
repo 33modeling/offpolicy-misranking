@@ -22,6 +22,9 @@ otherwise the existing `${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python`.
 It reuses the operational OLMo compatibility check, local model loader and
 offline Math-Verify bundle. Do not reinstall packages in the working experiment
 environment. `requirements.txt` is only for a new isolated environment.
+Large inputs, cache responses, checkpoints and results use group-volume
+storage, even when the code checkout is on the user volume. The default is
+`$OM_WORK/srgc-rebuttal`; see [CLUSTER.md](CLUSTER.md) for stopped-run migration.
 
 Repeat cache generation and training for seeds 6 through 9. `run` (the default)
 and `cache` start four local torchrun processes. `--task prefix` or
@@ -89,7 +92,7 @@ Selection is not extrapolated by multiplying a one-time measurement by updates.
 
 ## Output files
 
-`srgc_rebuttal/runs/additional-seeds/seed-N/` contains:
+The group-storage `runs/additional-seeds/seed-N/` contains:
 
 - `cost-receipts/{shared-prefix,random,sr,on_policy,switch,all}/`: durable
   phase receipts, exclusive sub-stages, workload counts and raw rank timings.
