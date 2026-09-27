@@ -1,4 +1,25 @@
-# Existing-runtime repair on 2026-09-28
+# MBPP input packaging repair on 2026-09-28
+
+Earlier dataset tests generated temporary fixtures but did not check that the
+actual deployment contained MBPP input files. The default plan consequently
+failed with FileNotFoundError if the separate preparation step had not succeeded.
+
+The five real `mbpp-seed-5.json` through `mbpp-seed-9.json` bundles are now
+included in Git, with explicit ignore exceptions and a source/hash manifest.
+They were generated from all 974 rows of the pinned full MBPP release using
+the existing preparation command, verified both offline and against the pinned
+Hub dataset. Splits remain 400/100/300 with 50 online validation prompts.
+Cached rewards remain empty for GPU generation; no results were fabricated.
+
+The new packaging regression checks the actual five files, plan and input
+hashes, source provenance, split validation and queue initialization without
+dataset downloads or preparation. Runtime Python, plan settings and existing
+MATH inputs are unchanged. No H100 workload was launched.
+All 97 unit/integration tests passed with no skips. The real MBPP
+`plan --check-inputs --allow-pending-cache` command also passed using Python
+without the `datasets` package installed.
+
+## Existing-runtime repair on 2026-09-28
 
 The additional-study entry point now reuses Pair/MBPP interpreter selection,
 the operational OLMo runtime gate and local model loader, and the existing

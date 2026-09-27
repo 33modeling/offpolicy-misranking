@@ -28,7 +28,7 @@ and `cache` start four local torchrun processes. `--task prefix` or
 `--task random|sr|on_policy|switch` runs a single task. For automatic multi-node
 scheduling, use `python scripts/run_srgc_rebuttal.py worker --dataset math`
 on each allocated node; it builds missing caches automatically. MBPP uses
-`prepare --dataset mbpp` once and `worker --dataset mbpp` on each node.
+`worker --dataset mbpp` on each node with the included seed-5--9 inputs.
 The shared-prefix and four-arm protocol is unchanged: selection every 25
 updates, fresh training responses every update, endpoint at total update 275.
 

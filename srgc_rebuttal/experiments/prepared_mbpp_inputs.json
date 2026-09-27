@@ -1,0 +1,22 @@
+{
+  "schema": "srgc-rebuttal-preparation-v1",
+  "plan_sha256": "e2e04fc65cb529784edc0eb305863c31e74b9f11b2fb3133f42ad80a64af2ac6",
+  "source": "google-research-datasets/mbpp",
+  "source_revision": "4bb6404fdc6cacfda99d4ac4205087b89d32030c",
+  "source_split": "all published splits, full config",
+  "source_rows": 974,
+  "source_rows_sha256": "a1dc18e42df590d5b6dc9ea79ec832c12a381396232ebcd1c6de83a21a24d589",
+  "split_seed": 0,
+  "candidate_count": 400,
+  "validation_pool_count": 100,
+  "ranking_validation_count": 50,
+  "evaluation_count": 300,
+  "status": "real inputs prepared; GPU cache generation pending",
+  "jobs": [
+    {"seed": 5, "input": "srgc_rebuttal/inputs/mbpp-seed-5.json", "input_sha256": "6367f597051004aa8a81c5348e177153aa6adf96cf90957c578772cdd326c5dc"},
+    {"seed": 6, "input": "srgc_rebuttal/inputs/mbpp-seed-6.json", "input_sha256": "4601f17f5c45a439bc90227e1f5b141a9a18b6a610e46538b1c9cb2edf2e83e6"},
+    {"seed": 7, "input": "srgc_rebuttal/inputs/mbpp-seed-7.json", "input_sha256": "09b280cfd37e1a197529ab7269546c946a2ae42d68c299740bc9ca2ae7434f2a"},
+    {"seed": 8, "input": "srgc_rebuttal/inputs/mbpp-seed-8.json", "input_sha256": "d08a5192ec44b23e509343f9017cc752dd02f2c01d93397f0a6a80a08b290c42"},
+    {"seed": 9, "input": "srgc_rebuttal/inputs/mbpp-seed-9.json", "input_sha256": "d98412af2b55193c02739e652ceac570288f534f361cd050515402a230a74883"}
+  ]
+}

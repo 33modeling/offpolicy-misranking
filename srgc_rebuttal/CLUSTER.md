@@ -14,13 +14,10 @@ as soon as its own dependencies finish; other seeds need not finish first.
 ## MATH or MBPP
 
 The Python entry point accepts `--dataset math` (default) or `--dataset mbpp`
-before or after the command. From the shared code repository, prepare inputs
-once on a CPU host, then run the same worker command on each allocated node:
+before or after the command. Both datasets' real seed-5--9 input bundles are
+included in the checkout. Run the worker on each allocated node:
 
 ```bash
-# One-time MBPP input preparation; no GPU work in this command.
-python scripts/run_srgc_rebuttal.py prepare --dataset mbpp
-
 # Run this on node A and node B, each with four allocated GPUs.
 CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --dataset mbpp
 
@@ -30,7 +27,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --datase
 
 Choose one dataset per allocation. Do not run both workers on the same GPUs.
 For concurrent MATH and MBPP with two workers each, allocate four four-H100
-nodes (sixteen GPUs). Prepare MBPP once, run the MATH worker on nodes 1 and 2,
+nodes (sixteen GPUs). Run the MATH worker on nodes 1 and 2,
 and the MBPP worker on nodes 3 and 4. With only two nodes available, one worker
 per dataset is also supported, with less concurrency within each dataset.
 MATH writes to `srgc_rebuttal/runs/additional-seeds/`; MBPP writes to
@@ -80,6 +77,11 @@ python scripts/run_srgc_rebuttal.py plan --dataset math --check-inputs --allow-p
 ```
 
 The real MATH-train input bundles for seeds 5–9 are prepared in `inputs/`.
+The corresponding `inputs/mbpp-seed-{seed}.json` files are also included.
+Their pinned source revision and file hashes are recorded in
+`experiments/prepared_mbpp_inputs.json`; no dataset download or `datasets`
+installation is needed to start these prepared MBPP workers. `prepare` remains
+available for explicitly rebuilding inputs or preparing a custom plan.
 See [REBUTTAL_READY.md](REBUTTAL_READY.md) for the fixed split, explicit 50-prompt
 online validation set, cache-generation commands and preparation manifest.
 The queue now generates missing initial-policy rewards itself, on different

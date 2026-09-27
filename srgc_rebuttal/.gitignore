@@ -6,4 +6,9 @@ inputs/*
 !inputs/seed-7.json
 !inputs/seed-8.json
 !inputs/seed-9.json
+!inputs/mbpp-seed-5.json
+!inputs/mbpp-seed-6.json
+!inputs/mbpp-seed-7.json
+!inputs/mbpp-seed-8.json
+!inputs/mbpp-seed-9.json
 runs/

@@ -30,9 +30,9 @@ python scripts/run_srgc_rebuttal.py costs
 
 For automatic node-parallel execution, run
 `python scripts/run_srgc_rebuttal.py worker --dataset math` on every allocated
-four-GPU node. MBPP is available with `--dataset mbpp`: first run
-`python scripts/run_srgc_rebuttal.py prepare --dataset mbpp` once, then start
-workers. Missing caches, shared prefixes and continuations are dispatched
+four-GPU node. MBPP is available with `--dataset mbpp`; its seed-5--9 input
+bundles are included, so start workers directly without a separate preparation
+step. Missing caches, shared prefixes and continuations are dispatched
 automatically. `status`, `results`, `launch`, `stop` and `resume` use the same dataset
 option. See [node execution](srgc_rebuttal/CLUSTER.md).
 

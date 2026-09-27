@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from srgc_rebuttal.plan import DEFAULT_PLAN, load_plan
+from srgc_rebuttal.plan import DEFAULT_PLAN, digest, input_path, load_plan, validate_inputs
 from srgc_rebuttal.prepare_inputs import prepare
 from srgc_rebuttal.cluster_queue import TaskQueue
 
@@ -15,6 +15,31 @@ MBPP_PLAN = DEFAULT_PLAN.with_name("mbpp_seeds.json")
 
 
 class DatasetCLITests(unittest.TestCase):
+    def test_shipped_mbpp_inputs_are_real_valid_and_queue_ready_without_preparation(self):
+        repo = SCRIPT.parents[1]
+        plan = load_plan(MBPP_PLAN)
+        manifest = json.loads(MBPP_PLAN.with_name("prepared_mbpp_inputs.json").read_text())
+        self.assertEqual(manifest["plan_sha256"], digest(MBPP_PLAN))
+        self.assertEqual(manifest["source_rows"], 974)
+        self.assertEqual([j["seed"] for j in manifest["jobs"]], plan["seeds"])
+        for job in manifest["jobs"]:
+            path = repo / job["input"]
+            self.assertEqual(path.resolve(), input_path(MBPP_PLAN, plan, job["seed"]))
+            self.assertEqual(digest(path), job["input_sha256"])
+            data = json.loads(path.read_text())
+            validate_inputs(data, require_cache=False)
+            self.assertEqual(data["cached_rewards"], {})
+            self.assertEqual(data["provenance"]["dataset_revision"], manifest["source_revision"])
+            self.assertEqual(data["provenance"]["source_rows_sha256"], manifest["source_rows_sha256"])
+            self.assertEqual(data["provenance"]["experiment_seed"], job["seed"])
+        with tempfile.TemporaryDirectory() as directory:
+            plan.update(input_pattern=str(input_path(MBPP_PLAN, plan, "{seed}")), output_root="runs")
+            path = Path(directory) / "plan.json"
+            path.write_text(json.dumps(plan))
+            queue = TaskQueue(path)
+            queue.bind()
+            self.assertEqual([r["status"] for r in queue.status()].count("ready"), 5)
+
     def test_math_and_mbpp_options_dispatch_to_separate_plans(self):
         for dataset, output in (("math", "additional-seeds"), ("mbpp", "mbpp-seeds")):
             result = subprocess.run([sys.executable, str(SCRIPT), "plan", "--dataset", dataset],

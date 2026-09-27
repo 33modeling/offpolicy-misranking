@@ -8,8 +8,8 @@ stage definitions and accounting boundaries.
 
 Node-parallel execution now includes missing-cache generation. Run
 `python scripts/run_srgc_rebuttal.py worker --dataset math` on every allocated
-four-GPU node. MBPP is selected with `--dataset mbpp`; prepare its inputs once
-with `python scripts/run_srgc_rebuttal.py prepare --dataset mbpp`. Dataset
+four-GPU node. MBPP is selected with `--dataset mbpp`; its real seed-5--9 input
+bundles are included in the checkout and need no separate preparation. Dataset
 queues and results are separate. See [CLUSTER.md](CLUSTER.md) for two-node
 execution, SSH launch, status, stop/resume and bounded retries.
 
