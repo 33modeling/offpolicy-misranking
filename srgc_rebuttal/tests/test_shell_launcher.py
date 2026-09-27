@@ -42,10 +42,17 @@ class ShellLauncherTests(unittest.TestCase):
 
     def test_reports_use_selected_dataset_without_starting_or_resetting_work(self):
         for dataset in ("math", "mbpp"):
-            for mode in ("status", "results", "costs"):
+            for mode in ("status", "results", "costs", "backup", "backup-watch"):
                 report = self.invoke(dataset, mode)
                 self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", mode, "--dataset", dataset])
                 self.assertEqual(report["cuda"], "")
+
+    def test_resume_uses_active_run_and_bounded_failed_retries_without_new_cohort(self):
+        for dataset in ("math", "mbpp"):
+            report = self.invoke(dataset, "resume")
+            self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", dataset,
+                                              "--retry-failed"])
+            self.assertEqual(report["cuda"], "0,1,2,3")
 
     def test_invalid_invocations_fail_before_python(self):
         for args in ([], ["wrong"], ["math", "wrong"], ["math", "run", "extra"]):

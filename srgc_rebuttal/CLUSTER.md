@@ -15,6 +15,59 @@ Use `sh scripts/run_srgc.sh math status`, `sh scripts/run_srgc.sh math results`
 or `sh scripts/run_srgc.sh math costs`; substitute `mbpp` for the other dataset.
 These reporting commands do not start workers or create a fresh cohort.
 
+## Checkpoint Backup and Resume
+
+Checkpoints already live on the group volume. The prefix saves every five
+updates; continuations save every 25. A node failure resumes the last completed
+save, including model/optimizer and selector state, and redoes the unsaved
+updates. Completed cache prompt receipts are reused. Completed endpoints are
+skipped. Loss of an allocated node does not mean loss of the group volume.
+
+New worker launches also run a CPU-only backup watcher every 30 seconds. It
+copies published `.pt` files, not temporary writes, keeps the last two observed
+versions per checkpoint, and verifies SHA-256 and PyTorch ZIP integrity before
+publishing a copy. An invalid new file never replaces a prior valid backup.
+Two nodes coordinate through a separate backup lease. Backups are under the
+active run's `checkpoint-backups/seed-N/CHECKPOINT/SHA256/`, with `checkpoint.pt`
+and an identity/checksum receipt. They are independent copies on the same group
+volume, not protection against loss of that entire volume. A 30-second poll
+may miss an intermediate save, and a node failure before copying leaves the
+ordinary latest checkpoint as the newest recovery point.
+
+For workers already running before this launcher update, leave training alone
+and start one watcher per dataset in separate persistent terminals:
+
+```sh
+sh scripts/run_srgc.sh math backup-watch
+```
+
+```sh
+sh scripts/run_srgc.sh mbpp backup-watch
+```
+
+`backup` instead of `backup-watch` performs one immediate pass and exits.
+Watching is CPU-only and neither changes queues/inputs nor starts training.
+The experiment package/implementation hash is unchanged by this addition.
+Watchers bind to the active cohort at startup; restart the watcher when
+explicitly selecting a different cohort. Backups copy the existing checkpoint
+contents; they do not reconstruct missing timing measurements after a crash.
+
+After a node failure, use the existing group volume and unchanged code/plan:
+
+```sh
+sh scripts/run_srgc.sh math resume
+# On an MBPP node instead:
+sh scripts/run_srgc.sh mbpp resume
+```
+
+`resume` rejoins the active cohort without creating a fresh run and permits
+failed-task retries within the existing three-attempt limit. It does not
+override an intentional queue stop, exhausted retries, live GPU leases or
+identity mismatches. Normal resume loads `*-latest.pt`; it does not silently
+replace a damaged latest checkpoint with a backup. Restoring a backup requires
+stopping the affected task, verifying its identity/receipt, and explicitly
+replacing that task's checkpoint before resuming.
+
 Run one four-H100 worker on each allocated node (full H100 GPUs with at least
 75,000 MiB each). Two nodes, eight GPUs total, are sufficient. Workers share a queue and take
 independent tasks as soon as dependencies finish. No cross-node gradient

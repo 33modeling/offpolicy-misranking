@@ -1,4 +1,32 @@
-# Random candidate-40 training and cache recovery on 2026-09-28
+# External checkpoint backups on 2026-09-28
+
+Added a group-volume checkpoint watcher outside the frozen experiment package.
+New worker launches start it automatically; existing workers can keep running
+while a separate `backup-watch` command monitors their published checkpoints.
+It retains two observed versions per checkpoint, uses a shared backup lease,
+copies from an open descriptor to survive concurrent atomic replacement, and
+verifies SHA-256 plus ZIP CRC before publishing. Invalid new checkpoints do
+not displace earlier valid copies. Receipts record the source run identity,
+file signatures, digest and copy duration. The original checkpoint is never
+rewritten by backup. Copies remain on the same group volume, not off-volume.
+
+`sh scripts/run_srgc.sh DATASET resume` rejoins the active cohort and permits
+failed-task retries within the existing three-attempt limit. It does not
+reset inputs, clear an intentional stop, bypass identity/device leases or
+automatically restore a damaged checkpoint from backup. The underlying saved
+model/optimizer/selector resume behavior and save intervals are unchanged.
+
+All 142 tests passed without skips, including atomic replacement while copying,
+two-generation retention, corrupt-file refusal, identity/path guards, lease
+exclusion, existing-queue invariance, worker-entry automatic backup, and real
+PyTorch tensor/optimizer checkpoint readback. The backup CLI also passed with
+Torch, Transformers and PEFT imports blocked; the existing package's NumPy
+dependency remains. Shell syntax and whitespace checks passed. Before and after
+this addition, the experiment implementation digest is unchanged:
+`1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a`.
+No H100 worker or its actual checkpoint files were accessed, stopped or modified.
+
+## Random candidate-40 training and cache recovery on 2026-09-28
 
 The latest author instruction supersedes global non-repeating training passes.
 Both MATH and MBPP now draw 40 distinct random candidates from the full 400:

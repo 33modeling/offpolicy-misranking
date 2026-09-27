@@ -15,7 +15,8 @@ def main():
     sys.path.insert(0, str(root))
     actions = {"run": "run_experiment", "cache": "build_cache", "plan": "plan",
                "summary": "summarize", "costs": "cost_report", "cluster": "cluster",
-               "prepare": "prepare_inputs", "status": "reports", "results": "reports", "storage": None}
+               "prepare": "prepare_inputs", "status": "reports", "results": "reports", "storage": None,
+               "backup": None, "backup-watch": None}
     options = argparse.ArgumentParser(add_help=False)
     options.add_argument("--dataset", choices=("math", "mbpp"))
     options.add_argument("--plan", type=Path)
@@ -45,6 +46,13 @@ def main():
     writing = action in {"run", "cache", "prepare"} or (action == "cluster" and args and args[0] in {"worker", "launch", "resume"})
     if settings.fresh and not (action == "storage" or (action == "cluster" and args and args[0] in {"worker", "launch"})):
         options.error("--fresh is supported by worker, launch and storage")
+    if action in {"backup", "backup-watch"}:
+        from srgc_shared_storage import route_plan
+        from srgc_checkpoint_backup import main as backup_main
+        if not settings.plan and not any(a in {"-h", "--help"} for a in args):
+            plan = route_plan(plan, writing=False)
+        backup_main([*args, "--plan", str(plan), *(["--watch"] if action == "backup-watch" else [])])
+        return
     if action == "storage":
         parser = argparse.ArgumentParser(description="Move stopped experiments to group storage without deleting originals")
         parser.add_argument("--migrate", action="store_true")
@@ -89,7 +97,12 @@ def main():
     if action in {"status", "results"}:
         args.insert(0, action)
     sys.argv = [f"{Path(__file__).name} {action}", *args]
-    runpy.run_module(f"srgc_rebuttal.{actions[action]}", run_name="__main__")
+    if action == "cluster" and args[0] == "worker" and not any(a in {"-h", "--help"} for a in args):
+        from srgc_checkpoint_backup import automatic_backup
+        with automatic_backup(plan):
+            runpy.run_module(f"srgc_rebuttal.{actions[action]}", run_name="__main__")
+    else:
+        runpy.run_module(f"srgc_rebuttal.{actions[action]}", run_name="__main__")
 
 
 if __name__ == "__main__":

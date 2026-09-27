@@ -3,7 +3,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 usage() {
-    printf '%s\n' 'usage: sh scripts/run_srgc.sh math|mbpp [run|status|results|costs]'
+    printf '%s\n' 'usage: sh scripts/run_srgc.sh math|mbpp [run|resume|status|results|costs|backup|backup-watch]'
 }
 
 DATASET=${1:-}
@@ -14,7 +14,7 @@ case "$DATASET" in
     *) usage >&2; exit 2 ;;
 esac
 [ "$#" -le 2 ] || { usage >&2; exit 2; }
-case "$MODE" in run|status|results|costs) ;; *) usage >&2; exit 2 ;; esac
+case "$MODE" in run|resume|status|results|costs|backup|backup-watch) ;; *) usage >&2; exit 2 ;; esac
 
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "$DATASET" in
@@ -32,8 +32,11 @@ export OPENBLAS_DEFAULT_NUM_THREADS=1 GOTO_NUM_THREADS=1 BLIS_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
 export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 
-if [ "$MODE" = run ]; then
+if [ "$MODE" = run ] || [ "$MODE" = resume ]; then
     export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
+    if [ "$MODE" = resume ]; then
+        exec "$PY" scripts/run_srgc_rebuttal.py worker --dataset "$DATASET" --retry-failed
+    fi
     exec "$PY" scripts/run_srgc_rebuttal.py worker --dataset "$DATASET" --fresh "${SRGC_RUN_NAME:-candidate40-v2}"
 fi
 export CUDA_VISIBLE_DEVICES=""
