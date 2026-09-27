@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+inputs/*
+!inputs/seed-5.json
+!inputs/seed-6.json
+!inputs/seed-7.json
+!inputs/seed-8.json
+!inputs/seed-9.json
+runs/

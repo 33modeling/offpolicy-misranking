@@ -8,6 +8,22 @@ The [complete experiment record (Korean)](docs/EXPERIMENTS_COMPLETE_GUIDE_KO.md)
 describes every experiment family, comparison, processing stage, completion
 criterion and result interpretation, including the MBPP off-policy follow-up.
 
+## SR-GC Rebuttal Branch
+
+Additional-seed reproduction and stage-level cost measurement live on
+`experiments/srgc-cost-replication`, in [srgc_rebuttal](srgc_rebuttal/README.md).
+The Python entry point is `scripts/run_srgc_rebuttal.py`:
+
+```bash
+python scripts/run_srgc_rebuttal.py plan --check-inputs --allow-pending-cache
+python scripts/run_srgc_rebuttal.py --seed 5
+python scripts/run_srgc_rebuttal.py costs
+```
+
+Training requires generated reward caches and four allocated GPUs. See the
+[cache and run commands](srgc_rebuttal/COSTS.md). This branch does not modify
+the historical runners or manuscript results.
+
 ## MBPP Selection And Switching
 
 Run `bash scripts/run_mbpp_experiments.sh` on every allocated node, including
