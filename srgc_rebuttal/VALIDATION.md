@@ -1,3 +1,26 @@
+# Cache-to-training activity reporting on 2026-09-28
+
+The user reported cache completion followed by repeated RUN/DONE and backup
+checks without a checkpoint. Local checks reproduced the normal cache-to-prefix
+handoff but did not reproduce or establish the remote stall's cause. No remote
+log, queue directory or GPU process was accessible for this check.
+
+The ordinary worker now reports its task, attempt, child PID, actual phase and
+rank progress receipts, or idle queue dependency states alongside backup scans.
+Reporting failures are surfaced without interrupting training; existing
+progress receipts and the stall watchdog are not rewritten. This is a
+diagnostic improvement, not a claim that the reported remote stall is fixed.
+The experiment implementation digest, cache, checkpoints, scientific protocol,
+task order, retry limits and device/task locks remain unchanged.
+
+New CPU regressions exercise all 30 cache/prefix/continuation handoffs, a held
+cache dependency, periodic phase/rank reporting without receipt writes, malformed
+progress, and preservation of the frozen experiment digest. A local simulation
+does not verify execution on the user's H100 nodes.
+All 172 unit/integration tests passed without skips; shell syntax and whitespace
+checks passed. The experiment digest remains
+`1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a`.
+
 # Live status and result verification on 2026-09-28
 
 Added a CPU-only status adapter outside the frozen experiment package. The

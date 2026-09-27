@@ -109,6 +109,17 @@ means no published checkpoint exists yet; `no_new_checkpoint` means the
 existing files have already been backed up. These are watcher status lines,
 not claims of training progress or new copies every 30 seconds. Each scan
 is followed by a 30-second wait; copying time is additional.
+Ordinary workers also print `WORKER` activity independently of the backup
+watcher, on task/state changes and every 30 seconds while waiting or running.
+Running lines identify the seed/task, attempt, child PID, latest phase receipt,
+each rank's last observed work and the task log. Idle lines list queue states
+and the tasks awaiting dependencies or another worker's lease. These lines
+read existing receipts; their appearance alone does not count as progress or
+reset the stall watchdog. `phase=child_startup` means no phase receipt for this
+attempt has been written yet, not that model loading has been verified.
+If only backup messages are visible on an older worker, use
+`sh scripts/run_srgc.sh math status` (or `mbpp status`) in a second terminal
+without stopping it. Updating the checkout does not hot-reload worker logs.
 The experiment package/implementation hash is unchanged by this addition.
 Watchers bind to the active cohort at startup; restart the watcher when
 explicitly selecting a different cohort. Backups copy the existing checkpoint

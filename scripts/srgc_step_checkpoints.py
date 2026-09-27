@@ -70,12 +70,16 @@ def checkpoint_command(original, queue, task):
 
 def worker_main():
     from srgc_rebuttal import cluster
+    from scripts.srgc_worker_status import run_with_status
     original = cluster.task_command
+    original_worker = cluster.run_worker
     cluster.task_command = lambda queue, task: checkpoint_command(original, queue, task)
+    cluster.run_worker = lambda *args, **kwargs: run_with_status(original_worker, *args, **kwargs)
     try:
         cluster.main()
     finally:
         cluster.task_command = original
+        cluster.run_worker = original_worker
 
 
 def main():
