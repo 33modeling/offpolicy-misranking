@@ -24,6 +24,9 @@ def make_plan(base: dict, *, dataset: str, seeds: list[int], verifier: str) -> d
                  "output_root": f"../runs/{dataset}-seeds",
                  "primary_outcome": f"Mean binary reward on the {dataset} evaluation questions at total step 275, "
                                     "averaged over 300 questions and eight responses per question"})
+    if dataset == "mbpp":
+        from .build_inputs import MBPP_REVISION
+        plan.update(dataset_revision=MBPP_REVISION, split_seed=0, ranking_validation_prompts=50)
     return load_plan_dict(plan)
 
 

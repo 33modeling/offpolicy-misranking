@@ -40,6 +40,9 @@
  "logprob_micro_batch": 2,
  "logit_chunk_tokens": 512,
  "dataset": "mbpp",
+ "dataset_revision": "4bb6404fdc6cacfda99d4ac4205087b89d32030c",
+ "split_seed": 0,
+ "ranking_validation_prompts": 50,
  "selection_interval": 25,
  "protocol_revision": "2026-09-27-selection-every-25"
 }

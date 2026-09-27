@@ -21,8 +21,9 @@ python scripts/run_srgc_rebuttal.py summary
 Repeat cache generation and training for seeds 6 through 9. `run` (the default)
 and `cache` start four local torchrun processes. `--task prefix` or
 `--task random|sr|on_policy|switch` runs a single task. For automatic multi-node
-scheduling, generate all caches first, then use
-`python scripts/run_srgc_rebuttal.py cluster worker` on each allocated node.
+scheduling, use `python scripts/run_srgc_rebuttal.py worker --dataset math`
+on each allocated node; it builds missing caches automatically. MBPP uses
+`prepare --dataset mbpp` once and `worker --dataset mbpp` on each node.
 The shared-prefix and four-arm protocol is unchanged: selection every 25
 updates, fresh training responses every update, endpoint at total update 275.
 
@@ -102,3 +103,8 @@ input, plan, implementation or prefix identities.
 No 7B GPU experiment or new scientific result is produced by CPU verification.
 Fine-grained synchronization adds measurement overhead; all arms use the same
 instrumentation, and total elapsed time includes that overhead.
+
+Node-parallel tasks write the same per-seed receipts; their GPU-seconds add
+across concurrent nodes, not their elapsed times on the calendar. Worker
+heartbeats and task start/end records are orchestration records, never extra
+selection/training charges. The final worker publishes both cohort reports.

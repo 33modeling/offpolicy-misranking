@@ -132,6 +132,8 @@ def main() -> None:
         prior = bundle.get("provenance", {}).get("cache", {})
         if not isinstance(prior, dict) or any(prior.get(k) != v for k, v in protocol.items()):
             parser.error("the complete cache has different or unverified generation settings")
+        if int(os.environ.get("RANK", "0")) == 0:
+            write_cost_summary(args.bundle, bundle)
         print(f"PASS: {args.bundle} already contains a complete cache; no generation")
         return
     if bundle.get("cached_rewards"):
@@ -190,23 +192,28 @@ def main() -> None:
             if rank == 0:
                 export_cache(args, bundle, store)
     if rank == 0:
-        report = ledger.totals()
-        # Old cache files remain usable but cannot silently acquire a measured zero cost.
-        report["candidate_count"] = len(bundle["candidate_ids"])
-        report["measured_prompts"] = report["counts"].get("cache_generation.prompts", 0)
-        covered = {name.removeprefix("cache_generation.candidate:") for name in report["counts"]
-                   if name.startswith("cache_generation.candidate:")}
-        report["complete"] = (report["complete"] and sessions.totals()["complete"] and
-                              covered == set(bundle["candidate_ids"]))
-        report["invocations"] = sessions.totals()
-        report["bundle_sha256"] = hashlib.sha256(args.bundle.read_bytes()).hexdigest()
-        if not report["complete"]:
-            report["total_gpu_seconds"] = None
-        atomic_json(store.root / "cost-summary.json", report)
+        write_cost_summary(args.bundle, bundle)
         print(f"PASS: cached {len(todo)} candidates into {args.bundle}; timings in {store.root}")
     if world > 1:
         dist.barrier()
         dist.destroy_process_group()
+
+
+def write_cost_summary(bundle_path, bundle):
+    root = bundle_path.with_suffix(".cache")
+    report = PhaseLedger(root / "cost-receipts").totals()
+    sessions = PhaseLedger(root / "invocations").totals()
+    report["candidate_count"] = len(bundle["candidate_ids"])
+    report["measured_prompts"] = report["counts"].get("cache_generation.prompts", 0)
+    covered = {name.removeprefix("cache_generation.candidate:") for name in report["counts"]
+               if name.startswith("cache_generation.candidate:")}
+    report["complete"] = (report["complete"] and sessions["complete"] and bool(sessions["recorded_phases"]) and
+                          covered == set(bundle["candidate_ids"]))
+    report["invocations"] = sessions
+    report["bundle_sha256"] = hashlib.sha256(bundle_path.read_bytes()).hexdigest()
+    if not report["complete"]:
+        report["total_gpu_seconds"] = None
+    atomic_json(root / "cost-summary.json", report)
 
 
 def export_cache(args, bundle, store):

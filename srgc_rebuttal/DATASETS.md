@@ -1,5 +1,35 @@
 # Running the switching experiment on other datasets
 
+## Integrated MBPP option
+
+```bash
+python scripts/run_srgc_rebuttal.py prepare --dataset mbpp
+python scripts/run_srgc_rebuttal.py worker --dataset mbpp
+python scripts/run_srgc_rebuttal.py status --dataset mbpp
+python scripts/run_srgc_rebuttal.py costs --dataset mbpp
+```
+
+Run `prepare` once, then `worker` on every allocated four-GPU node. Cache
+generation, shared-prefix training and the four arms are automatically queued.
+See [CLUSTER.md](CLUSTER.md) for two-node and SSH launch commands.
+
+The integrated option pins MBPP to the operational repository's release
+`4bb6404fdc6cacfda99d4ac4205087b89d32030c`, full configuration, all published
+splits. It makes one new 400/100/300 split with split seed 0 shared by training
+seeds 5–9, and fixes 50 ranking-validation prompts. This is a new reproduction
+cohort, not the official MBPP test split or a relabeling of historical results.
+The verifier runs the assertion tests, not the math verifier. `prepare --rows`
+accepts local question/answer JSONL and records its source hash. Existing
+different inputs are never overwritten. Prepared rewards remain empty until
+GPU generation; this option does not claim new experimental results.
+
+The code verifier's isolated Python process and resource limits are not a
+security sandbox. Run generated-code experiments on disposable compute with
+no credentials or sensitive files accessible to the verifier account.
+
+The lower-level per-bundle tools below remain available. Their default split
+seed follows `--seed`, unlike the integrated cohort's fixed split seed 0.
+
 The V7 reference implementation only needs an `srgc-inputs-v1` bundle per seed
 and a plan that names the verifier. The tools below build both for MATH train,
 GSM8K, MBPP or any JSONL file of `{question, answer}` rows. The new rebuttal protocol uses a 25-update shared prefix, total 275, 40 fresh scored

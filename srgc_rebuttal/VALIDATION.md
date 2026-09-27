@@ -1,4 +1,34 @@
-# Code-repository migration verification on 2026-09-27
+# Node-parallel and MBPP verification on 2026-09-27
+
+Branch: `experiments/srgc-cost-replication`. Changes are confined to the code
+repository. The manuscript repository and scientific outcomes are unchanged.
+
+- 76 unit/integration tests passed with no skips, including the tiny OLMo-3
+  generation, gradient, optimizer and timing tests from the migration suite.
+- Two spawned CPU worker processes executed all 30 synthetic cache/prefix/arm
+  tasks exactly once and respected per-seed dependencies. Four workers also
+  passed the existing 25-task already-cached case.
+- Tested immutable cache handoff, input-change rejection, completed-task skip,
+  bounded failed retries, preserved attempts and abandoned-task recovery.
+- Tested partially overlapping GPU-UUID leases and real subprocess inheritance
+  of a task lock after the parent descriptor closed. Immediate stop terminated
+  the owned test process and released its lease.
+- Tested worker-loop orchestration, mocked multi-host SSH preflight/startup
+  acknowledgements, failed remote-directory handling and final paired reports.
+- Tested MBPP input preparation from 800 synthetic fixture records, consistent
+  split across seeds, no overwrite of different data, independent plan/output
+  selection and dataset/plan mismatch rejection. Fixtures are temporary test
+  data, not experimental inputs or reported results.
+- CPU `status --dataset math` reports five ready cache tasks, five prefixes
+  waiting for cache and twenty continuations waiting for prefix; no worker was
+  launched by this inspection.
+
+Environment: Python 3.12, CPU PyTorch 2.14.0, Transformers 4.57.6, PEFT 0.21.0.
+No real remote SSH node, shared cross-node filesystem, CUDA allocation, MBPP
+download or 7B experiment was exercised. Actual node access is still required
+to validate cluster hardware and measure the new scientific outcomes.
+
+## Code-repository migration verification on 2026-09-27
 
 Branch: `experiments/srgc-cost-replication` in `33modeling/offpolicy-misranking`.
 The active implementation, tests and five input bundles are maintained here,

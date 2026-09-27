@@ -29,6 +29,9 @@ MATH_DATASET = "EleutherAI/hendrycks_math"
 MATH_REVISION = "21a5633873b6a120296cce3e2df9d5550074f4a3"
 MATH_SUBSETS = ("algebra", "counting_and_probability", "geometry", "intermediate_algebra",
                 "number_theory", "prealgebra", "precalculus")
+MBPP_DATASET = "google-research-datasets/mbpp"
+# Same pinned release as src/qualify_domain_data.py in the operational codebase.
+MBPP_REVISION = "4bb6404fdc6cacfda99d4ac4205087b89d32030c"
 # Released OLMo RL-Zero prompt formats, reproduced verbatim from the experiment code.
 MATH_PROMPT = ("Solve the following problem step by step. The last line of your response "
                "should be the answer to the problem in form Answer: $Answer (without quotes) "
@@ -95,7 +98,7 @@ def load_rows(dataset: str, rows_path: Path | None) -> list[dict]:
     if dataset == "gsm8k":
         return [{"question": r["question"], "answer": gsm8k_answer(r["answer"])} for r in load_dataset("openai/gsm8k", "main", split="train")]
     if dataset == "mbpp":
-        ds = load_dataset("google-research-datasets/mbpp", "full")
+        ds = load_dataset(MBPP_DATASET, "full", revision=MBPP_REVISION)
         rows = []
         for split in ds:
             for r in ds[split]:

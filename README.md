@@ -20,7 +20,15 @@ python scripts/run_srgc_rebuttal.py --seed 5
 python scripts/run_srgc_rebuttal.py costs
 ```
 
-Training requires generated reward caches and four allocated GPUs. See the
+For automatic node-parallel execution, run
+`python scripts/run_srgc_rebuttal.py worker --dataset math` on every allocated
+four-GPU node. MBPP is available with `--dataset mbpp`: first run
+`python scripts/run_srgc_rebuttal.py prepare --dataset mbpp` once, then start
+workers. Missing caches, shared prefixes and continuations are dispatched
+automatically. `status`, `launch`, `stop` and `resume` use the same dataset
+option. See [node execution](srgc_rebuttal/CLUSTER.md).
+
+Direct single-seed training requires generated reward caches and four allocated GPUs. See the
 [cache and run commands](srgc_rebuttal/COSTS.md). This branch does not modify
 the historical runners or manuscript results.
 

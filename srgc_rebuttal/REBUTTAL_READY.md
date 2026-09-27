@@ -55,25 +55,25 @@ OLMo RL-Zero prompt, math-verify 0.9.0, base-model revision은 입력·계획에
 
     python -m srgc_rebuttal.plan --check-inputs --allow-pending-cache
 
-CUDA용 PyTorch와 requirements.txt의 패키지가 설치된 4-GPU 노드에서 캐시를 생성한다.
-다른 노드에 시드 6–9를 각각 배정하면 다섯 캐시를 동시에 만들 수 있다.
+CUDA용 PyTorch와 requirements.txt의 패키지가 설치된 각 4-GPU 노드에서 같은
+worker 명령을 실행한다. 공유 저장소에서 2개 이상 노드가 작업을 자동 분담한다.
 
-    torchrun --standalone --nproc_per_node=4 -m srgc_rebuttal.build_cache \
-      --plan srgc_rebuttal/experiments/additional_seeds.json \
-      --bundle srgc_rebuttal/inputs/seed-5.json --cache-seed 5
+    python scripts/run_srgc_rebuttal.py worker --dataset math
 
 각 문제의 응답과 보상은 즉시 원자적으로 저장한다. 재시작은 저장된 결과를 재사용하고
 남은 문제도 같은 문제별 난수로 생성한다. 모델·입력·생성 설정이 달라진 재시작은 거부한다.
-모든 캐시가 완성되면 입력 검사를 통과한 후 각 할당 노드에서 worker 하나씩 실행한다.
+캐시가 완성된 시드부터 prefix를 실행하고, 이어 네 비교군을 분배한다.
+큐는 캐시 5개, prefix 5개, continuation 20개를 의존 순서에 맞춰 분배한다.
+이미 완료된 작업은 재실행하지 않는다. MBPP는 CPU 호스트에서 한 번 입력을 준비한 뒤
+각 노드에서 옵션만 바꿔 실행한다. MATH와 MBPP의 결과 경로와 큐는 분리된다.
 
-    python -m srgc_rebuttal.plan --check-inputs
-    python -m srgc_rebuttal.cluster worker
-
-큐는 5개 prefix와 20개 continuation을 의존 순서에 맞춰 분배한다.
+    python scripts/run_srgc_rebuttal.py prepare --dataset mbpp
+    python scripts/run_srgc_rebuttal.py worker --dataset mbpp
 사용 가능한 노드만 사용하며 자세한 명령은 [CLUSTER.md](CLUSTER.md)에 있다.
 
-    python -m srgc_rebuttal.cluster status
-    python -m srgc_rebuttal.summarize
+    python scripts/run_srgc_rebuttal.py status --dataset math
+    python scripts/run_srgc_rebuttal.py costs --dataset math
+    python scripts/run_srgc_rebuttal.py summary --dataset math
 
 ## 리뷰에 남길 데이터
 
@@ -83,7 +83,8 @@ CUDA용 PyTorch와 requirements.txt의 패키지가 설치된 4-GPU 노드에서
 
 선별·학습 비용은 단계별 receipt로 남긴다. 재시도한 완료 연산도 누락 없이 합산한다.
 시작 receipt만 있는 중단 연산은 비용 미측정으로 표시하고, 해당 군의 완전한 비용
-총합을 보고하지 않는다. 모델 초기화·checkpoint I/O·작업 대기는 함수 단위 시간 밖이다.
+총합을 보고하지 않는다. 모델 초기화와 checkpoint I/O는 별도 단계로 계측하고,
+전체 실행 시간에는 프로세스 내부 작업 대기와 계측 부대비용도 포함한다.
 SR-GC 산술 시간은 선별 시간의 일부이므로 다시 더하지 않는다.
 
 현재 작업 컴퓨터에서는 CUDA 드라이버가 작동하지 않는다. 실제 캐시·추가 시드 결과를
