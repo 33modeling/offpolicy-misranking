@@ -50,7 +50,7 @@ class DatasetCLITests(unittest.TestCase):
             queue = TaskQueue(path)
             queue.bind()
             self.assertEqual([r["status"] for r in queue.status()].count("ready"), 5)
-            result = subprocess.run([sys.executable, str(SCRIPT), "status", "--dataset", "mbpp", "--plan", str(path)],
+            result = subprocess.run([sys.executable, str(SCRIPT), "status", "--json", "--output", str(root / "status.txt"), "--dataset", "mbpp", "--plan", str(path)],
                                     cwd="/tmp", text=True, capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["dataset"], "mbpp")

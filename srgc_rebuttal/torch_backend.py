@@ -18,6 +18,7 @@ from torch.utils.checkpoint import checkpoint
 from .objectives import grpo_advantages, loo_advantages
 from .srgc import stream_seed
 from .timing import timed, torch_meter
+from .progress import record as progress
 
 
 class TorchBackend:
@@ -112,6 +113,7 @@ class TorchBackend:
             rewards.append(reward)
         if len(sequences) != responses:
             raise ValueError("generation returned the wrong response count")
+        progress("rollout", prompt=prompt_id, responses=responses)
         return sequences, np.asarray(rewards), start
 
     def _logps(self, sequence: torch.Tensor, start: int) -> torch.Tensor:
@@ -199,11 +201,15 @@ class TorchBackend:
                                 accumulated[j] = value.clone()
                             else:
                                 accumulated[j].add_(value)
+                    del gradients, values, objective
                 # Linearity permits one projection per prompt instead of eight full scans.
                 for (name, _), gradient in zip(self.score_parameters, accumulated):
                     if gradient is not None:
                         projected += self._project(name, gradient)
                 result[prompt_id] = projected
+                if not np.isfinite(projected).all():
+                    raise FloatingPointError(f"nonfinite scoring gradient for {prompt_id}")
+                progress("gradient_scoring", prompt=prompt_id)
         finally:
             for p, required in zip(all_params, prior):
                 p.requires_grad_(required)
@@ -246,8 +252,10 @@ class TorchBackend:
                 with self.cost_meter.stage("gradient_reduction"):
                     dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
         with self.cost_meter.stage("optimizer"):
-            norm = torch.nn.utils.clip_grad_norm_([p for _, p in self.train_parameters], 1.0)
+            norm = torch.nn.utils.clip_grad_norm_([p for _, p in self.train_parameters], 1.0,
+                                                 error_if_nonfinite=True)
             self.optimizer.step()
+        progress("policy_update")
         summaries = self._gather(summaries)
         return {"sample_reward": float(np.mean(list(summaries.values()))), "gradient_norm": float(norm)}
 

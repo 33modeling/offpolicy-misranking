@@ -1,6 +1,7 @@
 # Multi-node execution for rebuttal seeds
 
-Run one four-GPU worker on each allocated node. Workers share a queue and take
+Run one four-H100 worker on each allocated node (full H100 GPUs with at least
+75,000 MiB each). Two nodes, eight GPUs total, are sufficient. Workers share a queue and take
 independent tasks as soon as dependencies finish. No cross-node gradient
 all-reduce is needed: the four replicas of one task stay on one node.
 
@@ -28,6 +29,10 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --datase
 ```
 
 Choose one dataset per allocation. Do not run both workers on the same GPUs.
+For concurrent MATH and MBPP with two workers each, allocate four four-H100
+nodes (sixteen GPUs). Prepare MBPP once, run the MATH worker on nodes 1 and 2,
+and the MBPP worker on nodes 3 and 4. With only two nodes available, one worker
+per dataset is also supported, with less concurrency within each dataset.
 MATH writes to `srgc_rebuttal/runs/additional-seeds/`; MBPP writes to
 `srgc_rebuttal/runs/mbpp-seeds/`. Inputs, cache receipts, checkpoints, task
 leases and result reports are separate; device leases are shared between
@@ -43,7 +48,7 @@ queue also works with one or more nodes. No run-duration estimate is implied.
 | 10 | Up to ten ready continuations at a time |
 | 20 | Up to all twenty continuations after their respective prefixes finish |
 
-Five nodes are a practical starting allocation; more nodes shorten the
+Five nodes are an optional faster allocation; more nodes shorten the
 continuation queue. Prefix work initially has only five independent tasks.
 Actual speedup depends on rollout lengths, hardware and the longest arm;
 no measured 7B speedup or completion time is claimed.
@@ -89,8 +94,13 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --datase
 ```
 
 Replace the device list with that node's four allocated GPUs. The worker
-checks their occupancy, holds an exclusive device lease and starts four local
-processes with `torchrun`. Locks are per physical GPU UUID, so partially
+checks their H100 type, memory capacity and occupancy, holds an exclusive
+device lease, validates pinned package requirements, and runs the existing
+`scripts/selection_nccl_preflight.py` four-rank CUDA/NCCL/DDP probe **before
+claiming any task**. Failure blocks training. Only probe-verified runtime
+workarounds are inherited. Evidence and separate admission GPU-time receipts
+are in `.queue/admission/`. Manual `run` and `cache` use the same gate.
+It then starts four local processes with `torchrun`. Locks are per physical GPU UUID, so partially
 overlapping GPU groups also conflict. It does not stop unrelated GPU jobs. Use the same
 `--node-lock-root` for different queues sharing the same devices; its default
 is `srgc_rebuttal/runs/gpu-node-locks` next to the output cohort directory.
@@ -120,6 +130,8 @@ preserved. `launch` starts workers only; it does not wait for training to finish
 
 ```bash
 python scripts/run_srgc_rebuttal.py status --dataset mbpp
+python scripts/run_srgc_rebuttal.py status --dataset mbpp --watch
+python scripts/run_srgc_rebuttal.py results --dataset mbpp
 python scripts/run_srgc_rebuttal.py costs --dataset mbpp
 python scripts/run_srgc_rebuttal.py summary --dataset mbpp
 ```
@@ -140,7 +152,8 @@ updates; continuations every 25. Completed tasks are skipped before loading
 a model. Explicit failures are retained for inspection; after resolving an
 environmental failure, restart a worker with `--retry-failed`. Retries are
 bounded by `--max-attempts` (default 3) and spaced by `--retry-delay` (default
-60 seconds). Other ready work can proceed while a failed task waits. A code or input
+60 seconds). Abandoned and interrupted attempts count toward the same limit.
+Other ready work can proceed while a failed task waits. A code or input
 change requires a new output directory and plan, not an in-place resume.
 
 SIGTERM/SIGINT is forwarded to the worker's own child process group; it waits
@@ -153,6 +166,37 @@ Durable phase receipts count completed repeated work across attempts. An
 interrupted timer prevents reporting a complete GPU-time total for that arm.
 The summary requires every planned seed and all
 four arms, including unfavorable outcomes.
+
+`status` and `results` are CPU-only. `status --watch 10` refreshes every ten
+seconds; `--json` gives machine-readable output. Home exports are
+`~/srgc-rebuttal-math-status.txt` and `~/srgc-rebuttal-math-results.txt`
+(replace `math` with `mbpp` for MBPP). `--output PATH` overrides the text path.
+Results also save a JSON sidecar and cohort-local `results.txt`, `results.json`
+and `results.csv`. All twenty seed/arm rows are retained. A corrupt receipt
+does not hide valid results from other seeds; errors are reported with a
+nonzero exit code. Missing costs are null/blank, not zero; means require all
+five planned seeds. JSON includes cache, shared-prefix and exclusive stage
+costs. CSV includes selection, training, preparation, evaluation, checkpoint
+and startup costs. Node admission remains separate research overhead.
+Results remain readable after a code change even though incompatible resumes
+are blocked. `summary` still requires every seed and arm to finish.
+These are new seeds 5--9, not a replacement for the seed-3/4 historical export.
+This runner evaluates final rewards at the common terminal update; it does not
+yet reproduce the historical per-checkpoint reward curves or plot PDF/PNG
+exports. It retains selection/check history and per-stage timing receipts.
+
+Dependencies wait for the predecessor's task lease to close, including its
+final timing receipts. The worker stops its owned process group after 1,800
+seconds without actual task progress (`--stall-seconds` overrides this).
+Worker heartbeats and other tasks cannot reset that clock. Per-rank progress
+is in `.queue/progress/`. Stage model weights beforehand: downloading is not
+training progress. Nonfinite gradients stop the task. OOM never silently
+reduces response counts or changes the protocol. Rank-zero startup,
+checkpoint and timing-write failures propagate to other ranks.
+
+CPU tests and a two-process distributed CPU test do not certify H100 memory
+headroom, actual NCCL health or cross-node shared storage. The allocated
+nodes must pass runtime admission; no real H100 runtime is claimed here.
 
 To stop just the chosen cohort, drain current tasks or interrupt them explicitly:
 

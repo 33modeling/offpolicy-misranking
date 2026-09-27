@@ -113,6 +113,28 @@ class ModelBackendTests(unittest.TestCase):
         result = self.backend.score_gradients(["p0"], responses=8, group_size=4, seed=1)
         np.testing.assert_array_equal(result["p0"], np.zeros(16))
 
+    def test_nonfinite_training_gradient_never_reaches_optimizer(self):
+        from unittest.mock import patch
+        self.backend._rollout = self.deterministic_rollout
+        parameter = self.backend.train_parameters[0][1]
+        handle = parameter.register_hook(lambda g: torch.full_like(g, float("nan")))
+        try:
+            with patch.object(self.backend.optimizer, "step") as step:
+                with self.assertRaisesRegex(RuntimeError, "non-finite"):
+                    self.backend.train(["p0"], responses=8, objective="grpo", seed=1)
+                step.assert_not_called()
+        finally:
+            handle.remove()
+
+    def test_nonfinite_scoring_restores_trainability_and_stops_ranking(self):
+        from unittest.mock import patch
+        self.backend._rollout = self.deterministic_rollout
+        flags = [p.requires_grad for p in self.backend.model.parameters()]
+        with patch.object(self.backend, "_project", return_value=np.full(16, np.nan)):
+            with self.assertRaises(FloatingPointError):
+                self.backend.score_gradients(["p0"], responses=8, group_size=4, seed=1)
+        self.assertEqual(flags, [p.requires_grad for p in self.backend.model.parameters()])
+
     def test_microbatch_preserves_dense_gradient_and_training_update(self):
         self.backend._rollout = self.deterministic_rollout
         initial = copy.deepcopy(self.backend.state_dict())

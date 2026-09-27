@@ -39,7 +39,12 @@ class StageTimer:
         self.stack.append(frame)
         try:
             yield
-        finally:
+        except BaseException:
+            # Do not replace the original CUDA/verification error with another
+            # synchronize failure. Its containing phase stays unfinished.
+            self.stack.pop()
+            raise
+        else:
             self.synchronize()
             elapsed = self.clock() - frame[1]
             self.stack.pop()
@@ -102,17 +107,23 @@ def aggregate_ranks(parts):
 class CostMeter(StageTimer):
     def __init__(self, *, rank=0, local_gpu_count=0, synchronize=lambda: None,
                  synchronize_all=lambda: None, gather=lambda p: [p], record=lambda e: None,
-                 clock=time.perf_counter):
+                 clock=time.perf_counter, primary_action=None):
         super().__init__(synchronize, clock)
         self.rank, self.local_gpu_count = rank, local_gpu_count
         self.synchronize_all, self.gather, self.record = synchronize_all, gather, record
+        self.primary_action = primary_action
+
+    def primary(self, action):
+        if self.primary_action is not None:
+            return self.primary_action(action)
+        if self.rank == 0:
+            return action()
 
     def begin_phase(self, name, checkpoint=None, gpu_count=0):
         self.synchronize_all()
         self.event = {"id": uuid.uuid4().hex, "phase": name, "checkpoint": checkpoint,
                       "gpu_count": gpu_count, "state": "started"}
-        if self.rank == 0:
-            self.record(self.event)
+        self.primary(lambda: self.record(self.event))
         self.synchronize_all()
         self.begin()
 
@@ -123,8 +134,7 @@ class CostMeter(StageTimer):
         if report["gpu_count"] != self.event["gpu_count"]:
             raise ValueError("rank allocation differs from phase allocation")
         event = {**self.event, **report, "state": "finished"}
-        if self.rank == 0:
-            self.record(event)
+        self.primary(lambda: self.record(event))
         return event
 
     @contextmanager
@@ -154,6 +164,7 @@ def timed(name):
 def torch_meter(record=lambda e: None, *, cuda=None):
     import torch
     import torch.distributed as dist
+    from .distributed import primary
     distributed = dist.is_initialized()
     world = dist.get_world_size() if distributed else 1
     rank = dist.get_rank() if distributed else 0
@@ -176,7 +187,7 @@ def torch_meter(record=lambda e: None, *, cuda=None):
         return parts
 
     return CostMeter(rank=rank, local_gpu_count=int(cuda), synchronize=local_sync,
-                     synchronize_all=sync_all, gather=gather, record=record)
+                     synchronize_all=sync_all, gather=gather, record=record, primary_action=primary)
 
 
 @contextmanager
@@ -185,11 +196,11 @@ def invocation(ledger, meter, gpu_count, started=None):
     started = time.perf_counter() if started is None else started
     event = {"id": uuid.uuid4().hex, "phase": "session", "checkpoint": None,
              "gpu_count": gpu_count, "state": "started"}
-    if meter.rank == 0:
-        ledger.record(event)
+    meter.primary(lambda: ledger.record(event))
     yield
     meter.synchronize_all()
-    if meter.rank == 0:
+    def finish():
         elapsed = time.perf_counter() - started
         ledger.record({**event, "state": "finished", "wall_seconds": elapsed,
                        "gpu_seconds": elapsed * gpu_count})
+    meter.primary(finish)

@@ -99,6 +99,9 @@ class TimingTests(unittest.TestCase):
                 pass
             self.assertIsNone(report()["continuation_phases_gpu_seconds"])
             (root / "random-endpoint.json").write_text(json.dumps({"cost_measurement_complete": True}))
+            self.assertIsNone(report()["continuation_phases_gpu_seconds"])
+            with invocation(PhaseLedger(root / "invocations/random"), meter, 0):
+                pass
             self.assertEqual(report()["selection_gpu_seconds"], 0)
             self.assertEqual(report()["continuation_phases_gpu_seconds"], 0)
 
@@ -125,6 +128,8 @@ class TimingTests(unittest.TestCase):
             endpoint_path.write_text(json.dumps(endpoint))
             meter = CostMeter(record=PhaseLedger(root / "cost-receipts/sr").record)
             with meter.phase("training"):
+                pass
+            with invocation(PhaseLedger(root / "invocations/sr"), meter, 0):
                 pass
             self.assertTrue(seed_costs(root, root / "input.json", ["sr"])["arms"]["sr"]["complete"])
             endpoint_path.write_text(json.dumps({**endpoint, "implementation_sha256": "other"}))

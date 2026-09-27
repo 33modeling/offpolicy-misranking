@@ -131,7 +131,7 @@ class TaskQueue:
 
     def ready(self, task):
         parent = self.dependency(task)
-        return parent is None or self.complete(parent)
+        return parent is None or (self.complete(parent) and not self.locked(parent))
 
     def receipt(self, task):
         return self.directory / "tasks" / f"{task.key}.json"
@@ -156,11 +156,16 @@ class TaskQueue:
                     continue
                 previous = json.loads(self.receipt(task).read_text()) if self.receipt(task).exists() else {}
                 attempts = previous.get("attempt", 0)
+                if attempts >= max_attempts:
+                    continue
                 if previous.get("status") == "failed" and (not retry_failed or attempts >= max_attempts or
                         time.time() < previous.get("finished", 0) + retry_delay):
                     continue
                 if self.complete(task):
                     continue
+                if previous.get("status") == "running":
+                    atomic_json(self.directory / "attempts" / f"{previous['attempt_id']}.json",
+                                {**previous, "status": "abandoned", "recovered": time.time()})
                 record = {"task": task.key, "status": "running", "host": socket.gethostname(),
                           "pid": os.getpid(), "worker_id": worker_id, "attempt": attempts + 1,
                           "attempt_id": uuid.uuid4().hex, "started": time.time()}
@@ -174,27 +179,34 @@ class TaskQueue:
         yield None
 
     def finish(self, task, exit_code, *, interrupted=False):
-        self.verify()
-        if exit_code == 0 and not self.complete(task):
-            exit_code = 2
         previous = json.loads(self.receipt(task).read_text())
+        error = None
+        try:
+            self.verify()
+            if exit_code == 0 and not self.complete(task):
+                exit_code = 2
+        except Exception as exc:
+            exit_code = exit_code or 2
+            error = f"{type(exc).__name__}: {exc}"
         record = {**previous, "status": "complete" if exit_code == 0 else "interrupted" if interrupted else "failed",
-                  "exit_code": exit_code, "finished": time.time()}
+                  "exit_code": exit_code, "finished": time.time(), "validation_error": error}
         atomic_json(self.directory / "attempts" / f"{previous['attempt_id']}.json", record)
         atomic_json(self.receipt(task), record)
         return exit_code
 
-    def status(self):
+    def status(self, *, max_attempts=None):
         self.verify()
         rows = []
         for task in self.tasks:
             record = json.loads(self.receipt(task).read_text()) if self.receipt(task).exists() else {}
-            if self.complete(task):
+            if self.locked(task):
+                state = "running"
+            elif self.complete(task):
                 state = "complete"
             elif not self.ready(task):
                 state = f"waiting_for_{self.dependency(task).arm}"
-            elif self.locked(task):
-                state = "running"
+            elif max_attempts is not None and record.get("attempt", 0) >= max_attempts:
+                state = "attempts_exhausted"
             elif record.get("status") == "running":
                 state = "recoverable"
             else:

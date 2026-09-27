@@ -14,6 +14,8 @@ from .runtime import (arm_complete, atomic_json, finalize_seed, identity, lease,
 from .srgc import Config, Engine, stream_seed
 from .cost_ledger import PhaseLedger
 from .timing import invocation, torch_meter
+from .distributed import initialize, primary
+from .progress import record as progress
 
 
 def math_reward(record: dict, response: str) -> float:
@@ -36,31 +38,32 @@ def main() -> None:
     plan = load_plan(args.plan)
     if args.seed not in plan["seeds"]:
         parser.error("seed is not in the frozen plan")
-    data = json.loads(input_path(args.plan, plan, args.seed).read_text())
-    validate_inputs(data)
-    expected = identity(args.plan, plan, args.seed)
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
-    if args.task == "prefix" and prefix_ready(folder, expected, plan["shared_prefix_updates"]):
-        return
-    if args.task in plan["arms"] and arm_complete(folder, expected, args.task, plan["total_updates"]):
-        finalize_seed(folder, expected, plan["arms"], plan["total_updates"])
-        return
-    if args.task not in {"all", "prefix"} and not prefix_ready(folder, expected, plan["shared_prefix_updates"]):
-        parser.error("the verified shared prefix must finish before this arm can start")
     import torch
     import torch.distributed as dist
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from .torch_backend import TorchBackend
-    world = int(os.environ.get("WORLD_SIZE", "1"))
-    if world != plan["world_size"] or not torch.cuda.is_available():
-        parser.error("this plan requires four allocated CUDA GPUs per worker node")
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
-    dist.init_process_group("nccl")
-    rank = dist.get_rank()
+    world = plan["world_size"]
+    rank, local_rank = initialize(world)
     with ExitStack() as locks:
-        locks.callback(dist.destroy_process_group)
+        # On a rank-local fault, exit promptly so torchrun terminates its peers.
+        locks.push(lambda exc_type, *_: dist.destroy_process_group() if exc_type is None else None)
+        def startup():
+            data = json.loads(input_path(args.plan, plan, args.seed).read_text())
+            validate_inputs(data)
+            expected = identity(args.plan, plan, args.seed)
+            ready = prefix_ready(folder, expected, plan["shared_prefix_updates"])
+            complete = args.task == "prefix" and ready
+            if args.task in plan["arms"] and arm_complete(folder, expected, args.task, plan["total_updates"]):
+                finalize_seed(folder, expected, plan["arms"], plan["total_updates"])
+                complete = True
+            if not complete and args.task not in {"all", "prefix"} and not ready:
+                raise ValueError("the verified shared prefix must finish before this arm can start")
+            return data, expected, complete
+        data, expected, complete = primary(startup)
+        if complete:
+            return
         result = [None]
         if rank == 0:
             try:
@@ -105,6 +108,7 @@ def main() -> None:
                 projection_dim=plan["projection_dim"], projection_seed=plan["projection_seed"],
                 max_new_tokens=plan["max_new_tokens"], logprob_micro_batch=plan.get("logprob_micro_batch", 2),
                 logit_chunk_tokens=plan.get("logit_chunk_tokens", 512), cost_meter=meter)
+        progress("model_ready")
         config = Config(seed=args.seed, objective=plan["objective"],
                         selection_interval=plan["selection_interval"], check_interval=plan["check_interval"],
                         first_check=plan["first_check"], scoring_prompts=plan["scoring_prompts_per_set"],
@@ -120,11 +124,12 @@ def main() -> None:
             with meter.phase("checkpoint_save", current.step, world):
                 with meter.stage("state_snapshot"):
                     state = current.state_dict()
-                if rank == 0:
+                def write():
                     with meter.stage("write"):
                         temporary = path.with_suffix(".tmp")
                         torch.save(state, temporary)
                         temporary.replace(path)
+                primary(write)
 
         def load(path):
             with meter.phase("checkpoint_load", gpu_count=world), meter.stage("read"):
@@ -135,25 +140,24 @@ def main() -> None:
                 current.load_state_dict(state, **kwargs)
 
         prefix_path = folder / "prefix.pt"
-        ready = prefix_ready(folder, expected, plan["shared_prefix_updates"])
+        ready = primary(lambda: prefix_ready(folder, expected, plan["shared_prefix_updates"]))
         if args.task in {"all", "prefix"} and not ready:
             scope = "shared-prefix"
             prefix = engine("on_policy", "shared-prefix")
             partial = folder / "prefix-latest.pt"
-            if partial.exists():
+            if primary(partial.exists):
                 state = load(partial)
                 if state["arm"] != "on_policy" or state["step"] > plan["shared_prefix_updates"]:
                     raise ValueError("invalid prefix resume checkpoint")
                 restore(prefix, state)
             while prefix.step < plan["shared_prefix_updates"]:
                 prefix.update()
+                progress("update", arm="prefix", step=prefix.step)
                 if prefix.step % 5 == 0:
                     save(partial, prefix)
             save(prefix_path, prefix)
-            if rank == 0:
-                atomic_json(folder / "prefix-ready.json", {**expected,
-                    "completed_updates": prefix.step, "checkpoint_sha256": digest(prefix_path)})
-            dist.barrier()
+            primary(lambda: atomic_json(folder / "prefix-ready.json", {**expected,
+                    "completed_updates": prefix.step, "checkpoint_sha256": digest(prefix_path)}))
         if args.task == "prefix":
             return
         scope = args.task
@@ -163,12 +167,12 @@ def main() -> None:
         prefix_hash = json.loads((folder / "prefix-ready.json").read_text())["checkpoint_sha256"]
         arms = plan["arms"] if args.task == "all" else [args.task]
         for arm in arms:
-            if arm_complete(folder, expected, arm, plan["total_updates"]):
+            if primary(lambda: arm_complete(folder, expected, arm, plan["total_updates"])):
                 continue
             scope = arm
             current = engine(arm)
             checkpoint_path = folder / f"{arm}-latest.pt"
-            if checkpoint_path.exists():
+            if primary(checkpoint_path.exists):
                 state = load(checkpoint_path)
                 if state["arm"] != arm or not plan["shared_prefix_updates"] <= state["step"] <= plan["total_updates"]:
                     raise ValueError("resume checkpoint has the wrong arm or update count")
@@ -177,16 +181,16 @@ def main() -> None:
                 restore(current, shared, fork_arm=arm)
             while current.step < plan["total_updates"]:
                 current.update()
+                progress("update", arm=arm, step=current.step)
                 if current.step % 25 == 0 or current.step == plan["total_updates"]:
                     save(checkpoint_path, current)
-                    if rank == 0:
-                        atomic_json(folder / f"{arm}-progress.json", {"seed": args.seed, "arm": arm,
+                    primary(lambda: atomic_json(folder / f"{arm}-progress.json", {"seed": args.seed, "arm": arm,
                             "step": current.step, "switched_at": current.switched_at,
-                            "costs": current.costs, "history": current.history})
+                            "costs": current.costs, "history": current.history}))
             with meter.phase("evaluation", current.step, world):
                 per_question = backend.evaluate(data["evaluation_ids"],
                     seed=stream_seed(args.seed, current.step, "reporting-evaluation"), responses=8)
-            if rank == 0:
+            def endpoint():
                 ledger = PhaseLedger(folder / "cost-receipts" / arm).totals()
                 measured_costs = {**current.costs, **ledger["known_gpu_seconds"]}
                 atomic_json(folder / f"{arm}-endpoint.json", {**expected, "arm": arm,
@@ -200,9 +204,8 @@ def main() -> None:
                     "selection_interval": plan["selection_interval"],
                     "selection_steps": [r["checkpoint"] for r in current.history if r["selection_refreshed"]],
                     "checks": [{"step": r["checkpoint"], "d": r["d"]} for r in current.history if r["d"] is not None]})
-            dist.barrier()
-        if rank == 0:
-            finalize_seed(folder, expected, plan["arms"], plan["total_updates"])
+            primary(endpoint)
+        primary(lambda: finalize_seed(folder, expected, plan["arms"], plan["total_updates"]))
 
 
 if __name__ == "__main__":

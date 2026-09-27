@@ -4,6 +4,8 @@ import torch
 import torch.distributed as dist
 
 from .test_torch_backend import ModelBackendTests
+from srgc_rebuttal.distributed import primary
+from srgc_rebuttal.timing import torch_meter
 
 
 def main():
@@ -36,6 +38,19 @@ def main():
         assert events[-1]["state"] == "finished"
         assert len(events[-1]["rank_timings"]) == 2
         print("PASS: unequal-rank timing and global four-prompt update match one rank")
+    assert primary(lambda: "rank-zero decision") == "rank-zero decision"
+    def fail(*args):
+        raise OSError("injected rank-zero write failure")
+    for action in (lambda: primary(fail), lambda: torch_meter(fail, cuda=False).begin_phase("fault")):
+        try:
+            action()
+        except RuntimeError as exc:
+            assert "injected rank-zero write failure" in str(exc)
+        else:
+            raise AssertionError("rank-zero failure was not propagated to every rank")
+    dist.barrier()
+    if dist.get_rank() == 0:
+        print("PASS: rank-zero startup and timing-write failures reach every rank without hanging")
     dist.destroy_process_group()
 
 

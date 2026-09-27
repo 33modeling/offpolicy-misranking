@@ -12,6 +12,7 @@ provenance. Rerunning skips candidates already cached.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import hashlib
 import importlib
 import json
@@ -24,6 +25,8 @@ from .runtime import atomic_json, lease
 from .srgc import stream_seed
 from .cost_ledger import PhaseLedger
 from .timing import CostMeter, invocation, torch_meter
+from .distributed import initialize, primary
+from .progress import record as progress
 
 DEFAULT_MODEL = "allenai/Olmo-3-1025-7B"
 
@@ -123,80 +126,75 @@ def main() -> None:
     args.verifier = args.verifier or plan["verifier"]
     if args.responses != 8:
         parser.error("the experiment requires eight cached responses per candidate")
-    bundle = json.loads(args.bundle.read_text())
-    validate_inputs(bundle, require_cache=False)
     protocol = {k: getattr(args, k) for k in
                 ("model", "model_revision", "verifier", "responses", "max_new_tokens", "cache_seed")}
-    if len(bundle.get("cached_rewards", {})) == len(bundle["candidate_ids"]):
-        validate_inputs(bundle)
-        prior = bundle.get("provenance", {}).get("cache", {})
-        if not isinstance(prior, dict) or any(prior.get(k) != v for k, v in protocol.items()):
-            parser.error("the complete cache has different or unverified generation settings")
-        if int(os.environ.get("RANK", "0")) == 0:
-            write_cost_summary(args.bundle, bundle)
-        print(f"PASS: {args.bundle} already contains a complete cache; no generation")
-        return
-    if bundle.get("cached_rewards"):
-        parser.error("partial rewards without complete raw receipts cannot be mixed with a new cache")
-    store = CacheStore(args.bundle, bundle, protocol)
     import torch
     import torch.distributed as dist
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    world = int(os.environ.get("WORLD_SIZE", "1"))
-    rank = int(os.environ.get("RANK", "0"))
-    if not torch.cuda.is_available():
-        raise RuntimeError("cache generation requires a CUDA GPU; input preparation is CPU-only")
-    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
-    if world > 1:
-        dist.init_process_group("nccl" if torch.cuda.is_available() else "gloo")
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-    # Every rank sees the same immutable settings; prompts themselves are rank-sharded.
-    with lease(store.root / "bind.lock", wait=True):
-        store.bind()
-    module, function = args.verifier.split(":", 1)
-    verifier = getattr(importlib.import_module(module), function)
-    pending = [[i for i in bundle["candidate_ids"] if store.read(i) is None] if rank == 0 else None]
-    if world > 1:
-        dist.broadcast_object_list(pending, src=0)
-    todo = pending[0]
-    ledger = PhaseLedger(store.root / "cost-receipts")
-    sessions = PhaseLedger(store.root / "invocations")
-    meter = torch_meter(ledger.record)
-    with invocation(sessions, meter, world, invocation_started):
-        with meter.phase("startup", gpu_count=world):
-            with meter.stage("tokenizer_load"):
-                tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.model_revision)
-                if tokenizer.pad_token_id is None:
-                    tokenizer.pad_token_id = tokenizer.eos_token_id
-            with meter.stage("model_load"):
-                model = AutoModelForCausalLM.from_pretrained(args.model, revision=args.model_revision, torch_dtype=torch.bfloat16)
-                model.to("cuda").eval()
-        with meter.phase("cache_generation", gpu_count=world):
-            for index, candidate in enumerate(todo):
-                if index % world != rank:
-                    continue
-                with lease(store.path(candidate).with_suffix(".lock")):
-                    if store.read(candidate) is not None:
-                        continue
-                    seed = candidate_seed(args.cache_seed, candidate)
-                    torch.cuda.synchronize()
-                    started = time.perf_counter()
-                    rewards, responses = generate_rewards(model, tokenizer, bundle["records"][candidate], verifier,
-                                                           responses=args.responses, seed=seed,
-                                                           max_new_tokens=args.max_new_tokens, meter=meter)
-                    meter.count(f"candidate:{candidate}")
-                    torch.cuda.synchronize()
-                    with meter.stage("receipt_write"):
-                        store.write(candidate, rewards, responses, time.perf_counter() - started)
-        with meter.phase("cache_export", gpu_count=world):
+    world = plan["world_size"]
+    rank, _ = initialize(world)
+    with ExitStack() as locks:
+        locks.push(lambda exc_type, *_: dist.destroy_process_group() if exc_type is None else None)
+        def prepare():
+            locks.enter_context(lease(args.bundle.with_suffix(".cache") / "execution.lock"))
+            bundle = json.loads(args.bundle.read_text())
+            validate_inputs(bundle, require_cache=False)
+            complete = len(bundle.get("cached_rewards", {})) == len(bundle["candidate_ids"])
+            if complete:
+                validate_inputs(bundle)
+                prior = bundle.get("provenance", {}).get("cache", {})
+                if not isinstance(prior, dict) or any(prior.get(k) != v for k, v in protocol.items()):
+                    raise ValueError("the complete cache has different or unverified generation settings")
+                write_cost_summary(args.bundle, bundle)
+            elif bundle.get("cached_rewards"):
+                raise ValueError("partial rewards without complete raw receipts cannot be mixed with a new cache")
+            return bundle, complete
+        bundle, complete = primary(prepare)
+        if complete:
             if rank == 0:
-                export_cache(args, bundle, store)
-    if rank == 0:
-        write_cost_summary(args.bundle, bundle)
-        print(f"PASS: cached {len(todo)} candidates into {args.bundle}; timings in {store.root}")
-    if world > 1:
-        dist.barrier()
-        dist.destroy_process_group()
+                print(f"PASS: {args.bundle} already contains a complete cache; no generation")
+            return
+        store = CacheStore(args.bundle, bundle, protocol)
+        primary(store.bind)
+        module, function = args.verifier.split(":", 1)
+        verifier = getattr(importlib.import_module(module), function)
+        todo = primary(lambda: [i for i in bundle["candidate_ids"] if store.read(i) is None])
+        ledger = PhaseLedger(store.root / "cost-receipts")
+        sessions = PhaseLedger(store.root / "invocations")
+        meter = torch_meter(ledger.record)
+        with invocation(sessions, meter, world, invocation_started):
+            with meter.phase("startup", gpu_count=world):
+                with meter.stage("tokenizer_load"):
+                    tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.model_revision)
+                    if tokenizer.pad_token_id is None:
+                        tokenizer.pad_token_id = tokenizer.eos_token_id
+                with meter.stage("model_load"):
+                    model = AutoModelForCausalLM.from_pretrained(args.model, revision=args.model_revision,
+                        torch_dtype=torch.bfloat16, attn_implementation="eager")
+                    model.to("cuda").eval()
+            progress("model_ready")
+            with meter.phase("cache_generation", gpu_count=world):
+                for index, candidate in enumerate(todo):
+                    if index % world != rank:
+                        continue
+                    with lease(store.path(candidate).with_suffix(".lock")):
+                        if store.read(candidate) is not None:
+                            continue
+                        seed = candidate_seed(args.cache_seed, candidate)
+                        torch.cuda.synchronize()
+                        started = time.perf_counter()
+                        rewards, responses = generate_rewards(model, tokenizer, bundle["records"][candidate], verifier,
+                            responses=args.responses, seed=seed, max_new_tokens=args.max_new_tokens, meter=meter)
+                        meter.count(f"candidate:{candidate}")
+                        torch.cuda.synchronize()
+                        with meter.stage("receipt_write"):
+                            store.write(candidate, rewards, responses, time.perf_counter() - started)
+                        progress("cache_candidate", prompt=candidate)
+            with meter.phase("cache_export", gpu_count=world):
+                primary(lambda: export_cache(args, bundle, store))
+        primary(lambda: write_cost_summary(args.bundle, bundle))
+        if rank == 0:
+            print(f"PASS: cached {len(todo)} candidates into {args.bundle}; timings in {store.root}")
 
 
 def write_cost_summary(bundle_path, bundle):

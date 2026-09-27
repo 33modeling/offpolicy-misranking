@@ -30,12 +30,15 @@ def lease(path: Path, *, wait: bool = False):
 
 
 def atomic_json(path: Path, value: dict):
+    atomic_text(path, json.dumps(value, indent=2, allow_nan=False) + "\n")
+
+
+def atomic_text(path: Path, value: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         with temporary.open("w") as handle:
-            json.dump(value, handle, indent=2, allow_nan=False)
-            handle.write("\n")
+            handle.write(value)
             handle.flush()
             os.fsync(handle.fileno())
         temporary.replace(path)

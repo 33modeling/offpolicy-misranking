@@ -33,7 +33,7 @@ def seed_costs(folder, bundle_path, arms):
             raise ValueError("cost endpoint belongs to a different experiment identity")
         complete = ledger["complete"] and endpoint.get("cost_measurement_complete", False)
         relevant_sessions = [sessions[s] for s in (arm, "all") if s in sessions]
-        complete = complete and all(s["complete"] for s in relevant_sessions)
+        complete = complete and bool(relevant_sessions) and all(s["complete"] for s in relevant_sessions)
         values = ledger["known_gpu_seconds"]
         rows[arm] = {
             "complete": complete,
