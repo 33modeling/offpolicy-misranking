@@ -6,7 +6,7 @@ hold ``.<task>.execution.lock`` / ``.manifest.lock`` and GPU memory, and every
 later attempt of the same task fails or blocks. This guard lives outside the
 hashed ``srgc_rebuttal`` package: it patches ``cluster.run_child`` at runtime so
 that (a) stale processes of this plan without a live launcher ancestor are
-reaped before any child starts, and (b) the whole descendant tree of a finished
+reaped before GPU admission/leases and before any child starts, and (b) the whole descendant tree of a finished
 or interrupted child is terminated, not only its process group.
 """
 
@@ -184,6 +184,10 @@ def guarded_run_child(original, plan_path):
 def process_guard(plan_path):
     """Patch ``srgc_rebuttal.cluster.run_child`` for the lifetime of a worker."""
     from srgc_rebuttal import cluster
+    # worker() checks GPU occupancy and acquires device leases before its first
+    # run_child(). An orphan can retain either resource, so cleaning only in
+    # run_child() leaves restart blocked before cleanup can ever run.
+    reap_orphans(plan_path)
     original = cluster.run_child
     cluster.run_child = guarded_run_child(original, plan_path)
     try:

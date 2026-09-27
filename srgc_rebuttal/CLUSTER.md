@@ -463,8 +463,9 @@ launcher is gone. They keep GPU memory and `.<task>.execution.lock` /
 blocks on the lock while only `BACKUP CHECK` lines keep printing.
 
 `scripts/run_srgc.sh ... run` now applies `scripts/srgc_process_guard.py`
-automatically: before each child starts it reaps Python processes of the same
-plan that have no live launcher ancestor, and after a child exits it terminates
+automatically: on worker startup, **before GPU admission and device-lock
+acquisition**, and again before each child starts it reaps Python processes of
+the same plan that have no live launcher ancestor. After a child exits it terminates
 the whole tree it saw while running. To clean a node by hand before relaunching:
 
 ```bash
@@ -474,3 +475,9 @@ python scripts/srgc_process_guard.py --plan <group-storage plan path>           
 
 The guard lives outside the hashed `srgc_rebuttal` package, so an existing
 queue keeps its `implementation_sha256` and continues without a new root.
+Recovery examines only this node's `/proc` and preserves processes with a live
+worker ancestor. It does not delete lock files. Multiple nodes continue sharing
+one task queue, with device locks keyed by physical GPU UUID rather than local
+indices `0,1,2,3`. Restart the ordinary command on an affected stopped node;
+healthy workers on other nodes can keep running. A lock still held by a live
+worker must continue to exclude a second worker on those same GPUs.

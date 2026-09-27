@@ -1,3 +1,26 @@
+# Recover orphan-held GPU locks before admission on 2026-09-28
+
+Reproduced a startup-order bug with a real child process holding a
+`gpu-node-locks/*.lock` flock: the process guard only cleaned before launching
+a child, but worker GPU admission and device-lock acquisition happen first.
+That orphan therefore blocked the restart before cleanup was reached. The
+regression fails on the previous code and passes with cleanup on guard entry.
+This is a locally reproduced cause of the reported lock symptom, not a claim
+that the user's uninspected remote lock owner was independently identified.
+
+The guard now cleans this plan's local orphan processes before GPU admission
+and device leases. Existing live worker ancestry remains protected and lock
+files are never removed. The scientific runtime, inputs, cache, checkpoint
+identity, queue task ordering and GPU-UUID lock keys are unchanged.
+Tests also retain a live worker's real GPU lock and exercise two CPU-simulated
+node allocations with identical local GPU indices, distinct physical UUIDs and
+one shared 30-task cache/prefix/continuation queue. Each task completes once,
+dependencies hold, and the two allocations overlap. These are local process
+tests, not execution on the remote H100 nodes.
+All 181 unit/integration tests passed without skips, including the new real-lock
+and two-allocation regressions; whitespace checks passed. The frozen experiment
+digest remains `1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a`.
+
 # Suppress repeated empty backup scans on 2026-09-28
 
 The supplied status contains one stopped worker on seed-5.cache, last updated
