@@ -1,3 +1,21 @@
+# Suppress repeated empty backup scans on 2026-09-28
+
+The supplied status contains one stopped worker on seed-5.cache, last updated
+19,155 seconds earlier, and another worker reporting seed-6.prefix with a
+five-second heartbeat. A heartbeat is worker liveness, not evidence of optimizer
+progress. These lines do not establish that all training is stopped.
+
+The backup watcher previously printed the same missing/unchanged-checkpoint
+message after every 30-second scan. It now prints the initial state and then
+only state changes, successful copies, errors and its final scan. It continues
+checking and retains the final-copy behavior. Standalone backup-watch explicitly
+says that it does not start training. This fixes repeated backup output; it does
+not claim to resolve an unobserved training stall or change the worker lifecycle.
+Tests cover repeated empty/unchanged/busy states, state transitions, consecutive
+new copies, repeated errors, continued polling and final-copy execution.
+All 23 backup, worker-status and shell-launcher tests passed; whitespace checks
+passed. No remote worker or checkpoint was modified or restarted.
+
 # Cache-to-training activity reporting on 2026-09-28
 
 The user reported cache completion followed by repeated RUN/DONE and backup

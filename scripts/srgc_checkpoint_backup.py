@@ -144,14 +144,22 @@ def backup_once(plan_path, *, environment=None):
 
 
 def watch(plan_path, stop, *, interval=30):
+    previous = None
+
     def capture(*, final=False):
+        nonlocal previous
         try:
             result = backup_once(plan_path)
             state = ("error" if result["errors"] else "another_watcher_copying" if result["busy"] else
                      "copied" if result["saved"] else "no_new_checkpoint" if result["found"] else
                      "waiting_for_checkpoint")
+            signature = (state, result["found"], result["unchanged"])
+            unchanged = signature == previous
+            previous = signature
+            if unchanged and not final and not result["saved"] and not result["errors"]:
+                return
             checked = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            following = "final=true" if final else f"next_check_in={interval}s"
+            following = "final=true" if final else f"scan_interval={interval}s; unchanged_scans_silent=true"
             print(f"BACKUP CHECK {checked} state={state} found={result['found']} "
                   f"saved={result['saved']} unchanged={result['unchanged']} "
                   f"errors={len(result['errors'])} {following}", flush=True)
@@ -187,7 +195,8 @@ def main(args=None):
     if args.watch:
         group, _ = storage_root(os.environ)
         inside(args.plan.resolve(), group)
-        print(f"Watching checkpoints every 30s: {args.plan}; keep={KEEP}", flush=True)
+        print(f"Watching checkpoints every 30s: {args.plan}; keep={KEEP}; "
+              "backup only, does not start training; unchanged scans are silent", flush=True)
         try:
             watch(args.plan, threading.Event())
         except KeyboardInterrupt:

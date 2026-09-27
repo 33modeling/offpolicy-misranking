@@ -186,7 +186,7 @@ class CheckpointBackupTests(unittest.TestCase):
                     pass
                 self.assertGreaterEqual(capture.call_count, 1)
 
-    def test_watcher_reports_each_scan_even_without_a_new_checkpoint(self):
+    def test_watcher_reports_initial_state_and_final_scan(self):
         for state, changes in (
             ("waiting_for_checkpoint", {}),
             ("no_new_checkpoint", {"found": 1, "unchanged": 1}),
@@ -207,11 +207,44 @@ class CheckpointBackupTests(unittest.TestCase):
                 self.assertEqual(len(lines), 2)
                 self.assertIn(f"state={state}", lines[0])
                 self.assertIn(f"saved={report['saved']}", lines[0])
-                self.assertIn("next_check_in=30s", lines[0])
+                self.assertIn("scan_interval=30s", lines[0])
                 self.assertIn("final=true", lines[1])
                 self.assertNotIn("next_check_in", lines[1])
                 if report["errors"]:
                     self.assertIn("copy failed", errors.getvalue())
+
+    def test_unchanged_waiting_scans_are_silent_but_polling_and_final_copy_continue(self):
+        for changes in ({}, {"found": 1, "unchanged": 1}, {"busy": True}):
+            with self.subTest(changes=changes):
+                report = {"found": 0, "saved": 0, "unchanged": 0, "busy": False, "errors": [], **changes}
+                stop, output = Mock(), io.StringIO()
+                stop.is_set.side_effect = [False] * 5 + [True]
+                with patch.object(backup, "backup_once", return_value=report) as scan, redirect_stdout(output):
+                    backup.watch(Path("fixture.json"), stop)
+                self.assertEqual(scan.call_count, 6)
+                self.assertEqual(stop.wait.call_count, 5)
+                lines = output.getvalue().splitlines()
+                self.assertEqual(len(lines), 2)
+                self.assertIn("unchanged_scans_silent=true", lines[0])
+                self.assertIn("final=true", lines[1])
+
+    def test_state_changes_new_copies_and_repeated_errors_remain_visible(self):
+        empty = {"found": 0, "saved": 0, "unchanged": 0, "busy": False, "errors": []}
+        copied = {**empty, "found": 1, "saved": 1}
+        unchanged = {**empty, "found": 1, "unchanged": 1}
+        error = {**unchanged, "errors": ["copy failed"]}
+        reports = [empty, empty, copied, copied, unchanged, unchanged, error, error, unchanged]
+        stop, output, errors = Mock(), io.StringIO(), io.StringIO()
+        stop.is_set.side_effect = [False] * (len(reports) - 1) + [True]
+        with patch.object(backup, "backup_once", side_effect=reports), \
+                redirect_stdout(output), redirect_stderr(errors):
+            backup.watch(Path("fixture.json"), stop)
+        text = output.getvalue()
+        self.assertEqual(text.count("state=waiting_for_checkpoint"), 1)
+        self.assertEqual(text.count("state=copied"), 2)
+        self.assertEqual(text.count("state=no_new_checkpoint"), 2)
+        self.assertEqual(text.count("state=error"), 2)
+        self.assertEqual(errors.getvalue().count("copy failed"), 2)
 
     @unittest.skipUnless(importlib.util.find_spec("torch"), "requires optional PyTorch")
     def test_real_torch_checkpoint_restores_model_and_optimizer_values(self):

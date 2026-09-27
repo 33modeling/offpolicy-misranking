@@ -103,8 +103,9 @@ sh scripts/run_srgc.sh mbpp backup-watch
 
 `backup` instead of `backup-watch` performs one immediate pass and exits.
 Watching is CPU-only and neither changes queues/inputs nor starts training.
-Every completed scan prints `BACKUP CHECK` with its UTC time, files found,
-new copies (`saved`), unchanged files and errors. `waiting_for_checkpoint`
+The initial scan, state changes, new copies, errors and final scan print
+`BACKUP CHECK` with UTC time, files found, new copies (`saved`), unchanged
+files and errors. Repeated unchanged scans are silent. `waiting_for_checkpoint`
 means no published checkpoint exists yet; `no_new_checkpoint` means the
 existing files have already been backed up. These are watcher status lines,
 not claims of training progress or new copies every 30 seconds. Each scan
