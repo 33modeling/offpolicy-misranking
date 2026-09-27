@@ -83,12 +83,12 @@ def model_path(model, revision, environment):
     return snapshot_download(model, revision=revision, local_files_only=True)
 
 
-def load_model(model, revision, device):
+def load_model(model, revision, device, *, attention="eager"):
     sys.path.insert(0, str(REPO / "src"))
     from rollout import load_model as operational_load_model
     source = os.environ.get("SRGC_LOCAL_MODEL") or model_path(model, revision, os.environ)
     previous = os.environ.get("OM_ATTN")
-    os.environ["OM_ATTN"] = "eager"
+    os.environ["OM_ATTN"] = attention
     try:
         policy, tokenizer = operational_load_model(source, device=str(device), dtype="bfloat16")
     finally:

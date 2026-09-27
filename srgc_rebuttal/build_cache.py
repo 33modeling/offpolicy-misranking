@@ -120,6 +120,7 @@ def main() -> None:
     parser.add_argument("--responses", type=int, default=8)
     parser.add_argument("--max-new-tokens", type=int, default=2048)
     parser.add_argument("--cache-seed", type=int, default=0, help="sampling seed base for the initial-policy cache")
+    parser.add_argument("--attention", choices=("sdpa", "eager"), default="sdpa")
     args = parser.parse_args()
     plan = load_plan(args.plan)
     args.model = args.model or plan["model"]
@@ -128,7 +129,7 @@ def main() -> None:
     if args.responses != 8:
         parser.error("the experiment requires eight cached responses per candidate")
     protocol = {k: getattr(args, k) for k in
-                ("model", "model_revision", "verifier", "responses", "max_new_tokens", "cache_seed")}
+                ("model", "model_revision", "verifier", "responses", "max_new_tokens", "cache_seed", "attention")}
     import torch
     import torch.distributed as dist
     world = plan["world_size"]
@@ -165,9 +166,12 @@ def main() -> None:
         with invocation(sessions, meter, world, invocation_started):
             with meter.phase("startup", gpu_count=world):
                 with meter.stage("model_and_tokenizer_load"):
-                    model, tokenizer = load_model(args.model, args.model_revision, torch.device("cuda", torch.cuda.current_device()))
+                    model, tokenizer = load_model(args.model, args.model_revision,
+                        torch.device("cuda", torch.cuda.current_device()), attention=args.attention)
             progress("model_ready")
             with meter.phase("cache_generation", gpu_count=world):
+                rank_total = len(todo[rank::world])
+                rank_done, rank_seconds = 0, 0.0
                 for index, candidate in enumerate(todo):
                     if index % world != rank:
                         continue
@@ -184,6 +188,12 @@ def main() -> None:
                         with meter.stage("receipt_write"):
                             store.write(candidate, rewards, responses, time.perf_counter() - started)
                         progress("cache_candidate", prompt=candidate)
+                        elapsed = time.perf_counter() - started
+                        rank_done += 1
+                        rank_seconds += elapsed
+                        eta = rank_seconds / rank_done * (rank_total - rank_done)
+                        print(f"[cache] rank={rank} prompts={rank_done}/{rank_total} "
+                              f"last={elapsed:.1f}s remaining_estimate={eta / 60:.1f}min", flush=True)
             with meter.phase("cache_export", gpu_count=world):
                 primary(lambda: export_cache(args, bundle, store))
         primary(lambda: write_cost_summary(args.bundle, bundle))
@@ -217,6 +227,7 @@ def export_cache(args, bundle, store):
                                      "responses": args.responses, "temperature": 1.0, "top_p": 1.0,
                                      "max_new_tokens": args.max_new_tokens, "cache_seed": args.cache_seed,
                                      "verifier": args.verifier}
+    bundle["provenance"]["cache"]["attention"] = args.attention
     responses_path = args.bundle.with_suffix(".cache-responses.jsonl")
     temporary = responses_path.with_suffix(".tmp")
     with temporary.open("w") as handle:

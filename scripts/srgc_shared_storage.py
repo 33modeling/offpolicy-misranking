@@ -4,11 +4,12 @@ from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import uuid
 
-from srgc_rebuttal.plan import input_path, load_plan
+from srgc_rebuttal.plan import digest, input_path, load_plan, validate_inputs
 from srgc_rebuttal.cluster_queue import input_info
 from srgc_rebuttal.runtime import atomic_json, lease, run_root
 
@@ -120,11 +121,64 @@ def stage(source, *, environment, migrate=False):
         return target
 
 
-def route_plan(source, *, writing, migrate=False):
+def fresh_plan(source, environment, name):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        raise ValueError("fresh run name must contain only letters, numbers, underscores or hyphens")
+    group, root = storage_root(environment)
+    plan = load_plan(source)
+    cohort = root / "fresh" / name / source.stem
+    if not cohort.resolve().is_relative_to(group):
+        raise ValueError("fresh run directory resolves outside group storage")
+    target = cohort / "experiments" / source.name
+    active = root / f".{source.stem}-active.json"
+    with lease(root / ".storage.lock", wait=True):
+        if cohort.exists():
+            if not target.is_file() or target.read_bytes() != source.read_bytes():
+                raise ValueError("fresh run name already belongs to another plan; choose a different --fresh name")
+        else:
+            temporary = cohort.with_name(f".{cohort.name}.{uuid.uuid4().hex}.new")
+            temporary_plan = temporary / "experiments" / source.name
+            try:
+                publish_copy(source, temporary_plan)
+                for seed in plan["seeds"]:
+                    data = json.loads(input_path(source, plan, seed).read_text())
+                    data["cached_rewards"] = {}
+                    data["provenance"].pop("cache", None)
+                    validate_inputs(data, require_cache=False)
+                    destination = input_path(temporary_plan, plan, seed)
+                    if not destination.is_relative_to(temporary.resolve()):
+                        raise ValueError("fresh runs require relative input paths inside the run directory")
+                    atomic_json(destination, data)
+                if not run_root(temporary_plan, plan).is_relative_to(temporary.resolve()):
+                    raise ValueError("fresh run outputs must be inside the run directory")
+                cohort.parent.mkdir(parents=True, exist_ok=True)
+                temporary.replace(cohort)
+            finally:
+                if temporary.exists():
+                    shutil.rmtree(temporary)
+        atomic_json(active, {"plan": str(target), "source_plan_sha256": digest(source), "fresh_run": name})
+    return target
+
+
+def route_plan(source, *, writing, migrate=False, fresh=None):
     source = source.resolve()
+    if fresh is not None:
+        group_path = Path(os.environ.get("GROUP_VOLUME", "/group-volume")).resolve()
+        if "OM_WORK" in os.environ and not Path(os.environ["OM_WORK"]).resolve().is_relative_to(group_path):
+            os.environ["OM_WORK"] = str(group_path / os.environ.get("OM_USER", "minsoo3.kim") / "offpolicy-misranking")
     group, root = storage_root(os.environ)
     plan = load_plan(source)
-    if source.is_relative_to(group):
+    active = root / f".{source.stem}-active.json"
+    if fresh is not None:
+        target = fresh_plan(source, os.environ, fresh)
+    elif active.exists() and not migrate:
+        pointer = json.loads(active.read_text())
+        target = Path(pointer["plan"]).resolve()
+        if not target.is_relative_to(group) or pointer["source_plan_sha256"] != digest(source):
+            raise ValueError("active group-storage run does not match this plan")
+        if target.read_bytes() != source.read_bytes():
+            raise ValueError("active group-storage plan changed")
+    elif source.is_relative_to(group):
         paths = [run_root(source, plan), *(input_path(source, plan, s) for s in plan["seeds"])]
         if any(not p.is_relative_to(group) for p in paths):
             raise ValueError("group-storage plan points to a user-volume artifact")
@@ -136,6 +190,9 @@ def route_plan(source, *, writing, migrate=False):
         if not (root / f".{source.stem}-storage.json").exists():
             return source
     if writing:
+        if any(not p.is_relative_to(group) for p in
+               [run_root(target, plan), *(input_path(target, plan, s) for s in plan["seeds"])]):
+            raise ValueError("active run artifacts resolve outside group storage")
         os.environ.setdefault("OM_WORK", str(group / os.environ.get("OM_USER", "minsoo3.kim") / "offpolicy-misranking"))
         cache = root / "runtime-cache"
         for key, path in {"HF_HOME": cache / "huggingface", "HF_HUB_CACHE": cache / "huggingface/hub",

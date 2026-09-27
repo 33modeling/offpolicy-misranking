@@ -1,10 +1,12 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from srgc_rebuttal.cluster_queue import TaskQueue
 from srgc_rebuttal.build_cache import CacheStore
@@ -20,6 +22,47 @@ spec.loader.exec_module(storage)
 
 
 class SharedStorageTests(unittest.TestCase):
+    def test_fresh_ignores_old_work_and_partial_migration_and_never_resets_second_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env = self.fixture(directory)
+            old = TaskQueue(plan)
+            old.bind()
+            atomic_json(old.directory / "workers/stale.json", {"status": "running"})
+            bundle = input_path(plan, old.plan, 5)
+            data = json.loads(bundle.read_text())
+            data["cached_rewards"] = {data["candidate_ids"][0]: [1] * 8}
+            data["provenance"]["cache"] = {"old": True}
+            atomic_json(bundle, data)
+            _, root = storage.storage_root(env)
+            atomic_json(root / "experiments" / plan.name, {"partial": True})
+            target = storage.fresh_plan(plan, env, "restart1")
+            first = input_path(target, old.plan, 5)
+            clean = json.loads(first.read_text())
+            self.assertEqual(clean["cached_rewards"], {})
+            self.assertNotIn("cache", clean["provenance"])
+            queue = TaskQueue(target)
+            queue.bind()
+            marker = first.with_suffix(".cache") / "completed.json"
+            atomic_json(marker, {"new": True})
+            self.assertEqual(storage.fresh_plan(plan, env, "restart1"), target)
+            self.assertTrue(marker.exists())
+            with patch.dict(os.environ, env):
+                self.assertEqual(storage.route_plan(plan, writing=False), target)
+
+    def test_two_fresh_cli_processes_share_one_queue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env = self.fixture(directory)
+            command = [sys.executable, str(SCRIPT.with_name("run_srgc_rebuttal.py")),
+                       "storage", "--plan", str(plan), "--fresh", "node-pair"]
+            children = [subprocess.Popen(command, env={**os.environ, **env},
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
+            outputs = []
+            for child in children:
+                stdout, stderr = child.communicate(timeout=20)
+                self.assertEqual(child.returncode, 0, stderr)
+                outputs.append(stdout)
+            self.assertEqual(outputs[0], outputs[1])
+
     def fixture(self, directory):
         root = Path(directory)
         source = root / "user/experiments"

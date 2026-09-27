@@ -13,6 +13,27 @@ as soon as its own dependencies finish; other seeds need not finish first.
 
 ## MATH or MBPP
 
+For a new group-volume run without migrating any old cache, stop old workers,
+update the checkout and run these commands on the respective node pairs:
+
+```bash
+# MATH nodes 1 and 2: use the identical run name on both nodes.
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --dataset math --fresh restart1
+# MBPP nodes 3 and 4: use the identical run name on both nodes.
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/run_srgc_rebuttal.py worker --dataset mbpp --fresh restart1
+```
+
+`--fresh` initializes one shared queue per dataset/run name under
+`$OM_WORK/srgc-rebuttal/fresh/`, using only the prompt/split inputs and empty
+reward caches. It does not migrate old cache, checkpoints or queue records.
+The second node joins that queue instead of resetting it. Repeating the same
+name resumes that fresh cohort; choose another name for another clean start.
+Default status/results commands follow the selected fresh cohort. Old files
+are ignored, not deleted. No claim of faster measured H100 throughput is made.
+Initial cache generation now uses PyTorch SDPA, records that backend in cache
+provenance, and logs per-rank completed prompts and estimated remaining time.
+Training/scoring attention and scientific sampling settings are unchanged.
+
 The Python entry point accepts `--dataset math` (default) or `--dataset mbpp`
 before or after the command. Both datasets' real seed-5--9 input bundles are
 included in the checkout. Run the worker on each allocated node:

@@ -1,4 +1,23 @@
-# Group-volume storage repair on 2026-09-28
+# Fresh group-volume start on 2026-09-28
+
+The author requested a clean start instead of preserving/migrating old caches.
+`worker --fresh NAME` now stages only prompt inputs into a new group-volume
+cohort, clears cached rewards/provenance and ignores old queue/migration state.
+Publication is atomic under the storage lock. Two simultaneous CLI processes
+were tested to join the same cohort, and a repeated invocation preserves new
+work instead of resetting the second node's cache. Default reports follow the
+active fresh cohort. Existing files are not deleted.
+
+Cache-only attention changed from eager to PyTorch SDPA; the backend is bound
+in cache provenance. Training/scoring retain eager attention. Per-rank cache
+progress now reports completed prompts, last-prompt seconds and estimated
+remaining time. This runtime change requires the requested fresh cohort;
+old implementation hashes are not bypassed. H100 speedup is not measured here.
+All 106 unit/integration tests passed with no skips, including actual tiny
+OLMo SDPA cache generation (eight responses and repeatable sampling), clean
+start despite old partial migration state, and two-process shared startup.
+
+## Group-volume storage repair on 2026-09-28
 
 The launcher now routes runtime inputs/cache and checkpoints/results to group
 storage when the code checkout is on a user volume. A missing group mount,

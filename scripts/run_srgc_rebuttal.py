@@ -19,6 +19,8 @@ def main():
     options = argparse.ArgumentParser(add_help=False)
     options.add_argument("--dataset", choices=("math", "mbpp"))
     options.add_argument("--plan", type=Path)
+    options.add_argument("--fresh", nargs="?", const="restart1", metavar="RUN",
+                         help="start/join a new group-volume run, ignoring old caches (default name: restart1)")
     settings, args = options.parse_known_args(sys.argv[1:])
     dataset = settings.dataset or ("mbpp" if settings.plan and
         json.loads(settings.plan.read_text()).get("dataset") == "mbpp" else "math")
@@ -41,19 +43,27 @@ def main():
         if load_plan(plan).get("dataset") != expected:
             options.error("--dataset and --plan refer to different datasets")
     writing = action in {"run", "cache", "prepare"} or (action == "cluster" and args and args[0] in {"worker", "launch", "resume"})
+    if settings.fresh and not (action == "storage" or (action == "cluster" and args and args[0] in {"worker", "launch"})):
+        options.error("--fresh is supported by worker, launch and storage")
     if action == "storage":
         parser = argparse.ArgumentParser(description="Move stopped experiments to group storage without deleting originals")
         parser.add_argument("--migrate", action="store_true")
         storage_args = parser.parse_args(args)
         from srgc_shared_storage import route_plan
-        target = route_plan(plan, writing=True, migrate=storage_args.migrate)
+        if storage_args.migrate and settings.fresh:
+            parser.error("--fresh and --migrate are mutually exclusive")
+        target = route_plan(plan, writing=True, migrate=storage_args.migrate, fresh=settings.fresh)
         print(f"Group-storage plan: {target}")
         return
     if not any(a in {"-h", "--help"} for a in args):
         from srgc_shared_storage import route_plan
         if writing:
             original_plan = plan
-            plan = route_plan(plan, writing=True)
+            plan = route_plan(plan, writing=True, fresh=settings.fresh)
+            if action == "cluster" and args[0] == "worker" and not any(
+                    a == "--node-lock-root" or a.startswith("--node-lock-root=") for a in args):
+                from srgc_shared_storage import storage_root
+                args += ["--node-lock-root", str(storage_root(os.environ)[1] / "gpu-node-locks")]
             if action == "cache":
                 from srgc_rebuttal.plan import input_path, load_plan
                 bundle_parser = argparse.ArgumentParser(add_help=False)

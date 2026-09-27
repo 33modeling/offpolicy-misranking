@@ -25,6 +25,20 @@ class TinyTokenizer:
 
 @unittest.skipUnless(HAS_HF, "requires optional PyTorch, transformers and peft")
 class ModelBackendTests(unittest.TestCase):
+    def test_cache_sdpa_generates_eight_reproducible_responses(self):
+        from srgc_rebuttal.build_cache import generate_rewards
+        model = self.backend.model.get_base_model()
+        model.set_attn_implementation("sdpa")
+        model.eval()
+        kwargs = dict(responses=8, seed=19, max_new_tokens=2)
+        first = generate_rewards(model, TinyTokenizer(), {"prompt": "problem"},
+                                 lambda record, text: float("3" in text.split()), **kwargs)
+        second = generate_rewards(model, TinyTokenizer(), {"prompt": "problem"},
+                                  lambda record, text: float("3" in text.split()), **kwargs)
+        self.assertEqual(first, second)
+        self.assertEqual(len(first[0]), 8)
+        self.assertEqual(len(first[1]), 8)
+
     def setUp(self):
         from peft import LoraConfig, get_peft_model
         from transformers import Olmo3Config, Olmo3ForCausalLM
