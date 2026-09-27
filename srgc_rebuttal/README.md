@@ -1,7 +1,7 @@
 # SR-GC rebuttal: online switching and extra-seed cost experiments
 
 Canonical code repository: `33modeling/offpolicy-misranking`, branch
-`experiments/srgc-cost-replication`. Executable code, tests and input bundles
+`master`. Executable code, tests and input bundles
 are maintained here, not in the manuscript repository. Use the Python entry
 point `scripts/run_srgc_rebuttal.py`; see [COSTS.md](COSTS.md) for commands,
 stage definitions and accounting boundaries.

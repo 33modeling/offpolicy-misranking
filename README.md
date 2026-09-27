@@ -8,11 +8,19 @@ The [complete experiment record (Korean)](docs/EXPERIMENTS_COMPLETE_GUIDE_KO.md)
 describes every experiment family, comparison, processing stage, completion
 criterion and result interpretation, including the MBPP off-policy follow-up.
 
-## SR-GC Rebuttal Branch
+## SR-GC Rebuttal Experiments
 
 Additional-seed reproduction and stage-level cost measurement live on
-`experiments/srgc-cost-replication`, in [srgc_rebuttal](srgc_rebuttal/README.md).
+`master`, in [srgc_rebuttal](srgc_rebuttal/README.md).
 The Python entry point is `scripts/run_srgc_rebuttal.py`:
+
+Update the shared checkout while workers are stopped:
+
+```bash
+git fetch origin
+git switch master
+git pull --ff-only origin master
+```
 
 ```bash
 python scripts/run_srgc_rebuttal.py plan --check-inputs --allow-pending-cache
@@ -25,11 +33,11 @@ For automatic node-parallel execution, run
 four-GPU node. MBPP is available with `--dataset mbpp`: first run
 `python scripts/run_srgc_rebuttal.py prepare --dataset mbpp` once, then start
 workers. Missing caches, shared prefixes and continuations are dispatched
-automatically. `status`, `launch`, `stop` and `resume` use the same dataset
+automatically. `status`, `results`, `launch`, `stop` and `resume` use the same dataset
 option. See [node execution](srgc_rebuttal/CLUSTER.md).
 
 Direct single-seed training requires generated reward caches and four allocated GPUs. See the
-[cache and run commands](srgc_rebuttal/COSTS.md). This branch does not modify
+[cache and run commands](srgc_rebuttal/COSTS.md). These additional experiments do not modify
 the historical runners or manuscript results.
 
 ## MBPP Selection And Switching

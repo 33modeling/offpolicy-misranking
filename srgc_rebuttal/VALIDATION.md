@@ -1,4 +1,17 @@
-# Node-parallel and MBPP verification on 2026-09-27
+# Master publication on 2026-09-28
+
+The three experiment commits through `937b949` were fast-forwarded onto
+`master` at the author's request. Current execution guides now point to
+`master`; the branch names below describe historical verification runs.
+No experiment protocol, input data or historical result was changed by
+this publication. User-owned untracked files were left untouched.
+
+The full 90-test suite passed again on `master` with no skips, using CPU
+PyTorch, Transformers 4.57.6 and the deployment-pinned PEFT 0.20.0. The
+runtime code, tests and input bundles match `937b949` exactly; only branch
+guidance and repository instructions changed. No H100 workload was launched.
+
+## Node-parallel and MBPP verification on 2026-09-27
 
 Branch: `experiments/srgc-cost-replication`. Changes are confined to the code
 repository. The manuscript repository and scientific outcomes are unchanged.

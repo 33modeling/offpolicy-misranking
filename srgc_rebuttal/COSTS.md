@@ -1,6 +1,6 @@
 # Reproduction and measured costs
 
-Code branch: `experiments/srgc-cost-replication` in
+Code branch: `master` in
 `33modeling/offpolicy-misranking`. The manuscript repository holds a link,
 not another active implementation. No historical reward or time is changed.
 

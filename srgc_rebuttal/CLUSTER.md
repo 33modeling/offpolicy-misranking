@@ -56,7 +56,7 @@ no measured 7B speedup or completion time is claimed.
 ## Prepare the shared run directory
 
 Use a fixed checkout of `offpolicy-misranking` branch
-`experiments/srgc-cost-replication` on storage accessible at the **same path**
+`master` on storage accessible at the **same path**
 on every node. Inputs, outputs and locks must be shared too. The filesystem
 must implement coherent POSIX `flock` across nodes and atomic rename; local
 scratch copies with separate lock directories cannot coordinate these workers.
