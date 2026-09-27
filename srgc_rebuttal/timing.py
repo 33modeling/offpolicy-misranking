@@ -137,6 +137,17 @@ class CostMeter(StageTimer):
         self.primary(lambda: self.record(event))
         return event
 
+    def live_snapshot(self):
+        """Rank-local partial costs; never add these to finalized phase totals."""
+        if not self.active or self.stack:
+            raise ValueError("live costs require an active phase with no open stage")
+        elapsed = self.clock() - self.started
+        return {"phase_id": self.event["id"], "phase": self.event["phase"], "rank": self.rank,
+                "state": "partial", "additive_to_phase_totals": False,
+                "wall_seconds": elapsed, "local_gpu_count": self.local_gpu_count,
+                "local_gpu_seconds": elapsed * self.local_gpu_count,
+                "stages": {k: dict(v) for k, v in self.stages.items()}, "counts": dict(self.counts)}
+
     @contextmanager
     def phase(self, name, checkpoint=None, gpu_count=0):
         self.begin_phase(name, checkpoint, gpu_count)

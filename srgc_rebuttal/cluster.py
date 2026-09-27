@@ -69,7 +69,12 @@ def run_child(command, log_path, environment, *, pass_fds=(), heartbeat=lambda p
               should_stop=lambda: False, interval=5, timeout=None, progress=None, stall_seconds=1800):
     """Keep the real child process group; release leases only after it exits."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a") as log:
+    with log_path.open("a") as log, log_path.open("r", errors="replace") as reader:
+        reader.seek(0, os.SEEK_END)
+        def relay():
+            while chunk := reader.read(65536):
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                    env=environment, start_new_session=True, pass_fds=pass_fds)
         old_handlers = {}
@@ -88,6 +93,7 @@ def run_child(command, log_path, environment, *, pass_fds=(), heartbeat=lambda p
             for signum in (signal.SIGTERM, signal.SIGINT):
                 old_handlers[signum] = signal.signal(signum, stop)
             while True:
+                relay()
                 heartbeat(process.pid)
                 if should_stop():
                     raise KeyboardInterrupt
@@ -115,6 +121,7 @@ def run_child(command, log_path, environment, *, pass_fds=(), heartbeat=lambda p
                     terminate_group(signal.SIGKILL)
                     process.wait()
             terminate_group(signal.SIGKILL)
+            relay()
             for signum, handler in old_handlers.items():
                 signal.signal(signum, handler)
 

@@ -166,12 +166,14 @@ def main() -> None:
         with invocation(sessions, meter, world, invocation_started):
             with meter.phase("startup", gpu_count=world):
                 with meter.stage("model_and_tokenizer_load"):
+                    print(f"[cache] rank={rank} loading model attention={args.attention}", flush=True)
                     model, tokenizer = load_model(args.model, args.model_revision,
                         torch.device("cuda", torch.cuda.current_device()), attention=args.attention)
             progress("model_ready")
             with meter.phase("cache_generation", gpu_count=world):
                 rank_total = len(todo[rank::world])
                 rank_done, rank_seconds = 0, 0.0
+                print(f"[cache] rank={rank} model ready; pending_prompts={rank_total}", flush=True)
                 for index, candidate in enumerate(todo):
                     if index % world != rank:
                         continue
@@ -179,6 +181,7 @@ def main() -> None:
                         if store.read(candidate) is not None:
                             continue
                         seed = candidate_seed(args.cache_seed, candidate)
+                        print(f"[cache] rank={rank} generating prompt {rank_done + 1}/{rank_total}", flush=True)
                         torch.cuda.synchronize()
                         started = time.perf_counter()
                         rewards, responses = generate_rewards(model, tokenizer, bundle["records"][candidate], verifier,
@@ -187,6 +190,8 @@ def main() -> None:
                         torch.cuda.synchronize()
                         with meter.stage("receipt_write"):
                             store.write(candidate, rewards, responses, time.perf_counter() - started)
+                        atomic_json(store.root / "live-costs" / f"{meter.event['id']}-rank-{rank}.json",
+                                    meter.live_snapshot())
                         progress("cache_candidate", prompt=candidate)
                         elapsed = time.perf_counter() - started
                         rank_done += 1

@@ -13,15 +13,15 @@ from srgc_rebuttal.toy_backend import ToyBackend, make_problem
 
 
 class MathTests(unittest.TestCase):
-    def test_selected_batches_not_full_candidate_mean_and_not_cosines(self):
+    def test_full_candidate_mean_not_selected_training_batch_and_not_cosines(self):
         on, sr = [f"o{i}" for i in range(40)], [f"s{i}" for i in range(40)]
         gradients = {i: np.array([10., 0.]) if n < 4 else np.array([-2., 0.])
                      for n, i in enumerate(on)}
         gradients.update({i: np.array([1., 0.]) for i in sr})
-        # The selected four have +18 contrast; averaging all candidates would give -3.6.
-        self.assertAlmostEqual(gradient_contrast(on[:4], sr[:4], gradients, np.array([2., 0.])), 18)
-        self.assertAlmostEqual(gradient_contrast(on[:4], sr[:4], gradients, np.array([6., 0.])), 54)
+        # The full candidate mean gives -3.6; using only the selected four would give +18.
         self.assertAlmostEqual(gradient_contrast(on, sr, gradients, np.array([2., 0.])), -3.6)
+        self.assertAlmostEqual(gradient_contrast(on, sr, gradients, np.array([6., 0.])), -10.8)
+        self.assertAlmostEqual(gradient_contrast(on[:4], sr[:4], gradients, np.array([2., 0.])), 18)
 
     def test_overlap_cancels_and_invalid_inputs_rejected(self):
         g = {"shared": np.array([1e10, 0.]), "a": np.array([3., 0.]), "b": np.array([1., 0.])}
@@ -141,18 +141,18 @@ class EngineTests(unittest.TestCase):
         backend.strengths = {i: float(len(ids) - n) for n, i in enumerate(engine.sr_ranked_ids)}
         return engine, backend
 
-    def test_refresh_40_candidates_and_four_sr_prompts_then_compare_selected_four(self):
+    def test_refresh_and_compare_40_candidates_and_40_sr_prompts(self):
         engine, backend = self.make_engine()
         record = engine.update()
         self.assertEqual(len(record["on_ids"]), 40)
-        self.assertEqual(len(record["sr_ids"]), 4)
+        self.assertEqual(len(record["sr_ids"]), 40)
         self.assertEqual(len(record["train_ids"]), 4)
         self.assertLess(record["d"], 0)
         self.assertEqual(len(backend.score_calls), 2)  # union + validation, no extra D batch
         union, kwargs = backend.score_calls[0]
         self.assertEqual(set(union), set(record["on_ids"]) | set(record["sr_ids"]))
         self.assertEqual(len(union), len(set(union)))
-        self.assertLessEqual(len(union), 44)
+        self.assertLessEqual(len(union), 80)
         self.assertEqual(kwargs["responses"], 8)
         self.assertEqual(kwargs["group_size"], 4)
         self.assertEqual(backend.score_calls[1][1]["group_size"], 8)
@@ -173,8 +173,8 @@ class EngineTests(unittest.TestCase):
         self.assertAlmostEqual(record["d"], record["on_mean_validation_dot"] - record["sr_mean_validation_dot"])
         selected_mean = np.mean([backend.strengths[i] for i in record["selected_on_ids"]])
         candidate_mean = np.mean([backend.strengths[i] for i in record["on_ids"]])
-        self.assertAlmostEqual(record["on_mean_validation_dot"], selected_mean)
-        self.assertNotAlmostEqual(record["on_mean_validation_dot"], candidate_mean)
+        self.assertAlmostEqual(record["on_mean_validation_dot"], candidate_mean)
+        self.assertNotAlmostEqual(record["on_mean_validation_dot"], selected_mean)
 
     def test_midblock_resume_preserves_selection_and_avoids_extra_scoring(self):
         engine, backend = self.make_engine(arm="on_policy", step=0)
@@ -217,7 +217,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(record["selector"], "sr")
         self.assertTrue(set(record["train_ids"]) <= set(engine.sr_ranked_ids))
         transition = next(r for r in engine.history if r["switched"])
-        self.assertEqual(transition["train_ids"], transition["sr_ids"])
+        self.assertEqual(transition["train_ids"], transition["sr_ids"][:4])
         self.assertEqual(engine.costs["selection_gpu_seconds"], 0)
 
     def test_sr_and_random_have_no_gradient_scoring(self):
@@ -308,7 +308,7 @@ class EngineTests(unittest.TestCase):
     def test_srgc_preview_excludes_trained_prompts_but_does_not_consume_comparison(self):
         engine, _ = self.make_engine(arm="switch")
         engine.used_training_ids = set(engine.sr_ranked_ids[:4])
-        expected = list(engine.sr_ranked_ids[4:8])
+        expected = list(engine.sr_ranked_ids[4:44])
         record = engine.update()
         self.assertEqual(record["sr_ids"], expected)
         self.assertEqual(engine.used_training_ids, set(engine.sr_ranked_ids[:4]) | set(record["train_ids"]))

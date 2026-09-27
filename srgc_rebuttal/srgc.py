@@ -52,10 +52,10 @@ def gradient_contrast(
     on_ids: Sequence[str], sr_ids: Sequence[str],
     gradients: Mapping[str, np.ndarray], validation: np.ndarray,
 ) -> float:
-    """D = <Pv, mean(Pg for selected On-policy prompts) - mean(Pg for next SR batch)>.
+    """D = <Pv, mean(Pg for all On-policy candidates) - mean(Pg for SR comparison prompts)>.
 
     Inputs are already projected. There is no cosine normalization here and
-    both sides contain the four prompts proposed for the next training update.
+    both sides contain 40 comparison prompts, separate from the four-prompt training batch.
     An overlapping prompt uses the same vector on both sides and cancels.
     """
     on, sr = _unique(on_ids, "On-policy set"), _unique(sr_ids, "SR set")
@@ -201,7 +201,7 @@ class Engine:
     """
 
     ARMS = {"on_policy", "switch", "sr", "random"}
-    SAMPLING_PROTOCOL = "full-pool-without-replacement-selected-four-contrast-v1"
+    SAMPLING_PROTOCOL = "full-pool-without-replacement-candidate40-contrast-v1"
 
     def __init__(self, backend: Backend, candidate_ids: Sequence[str],
                  validation_ids: Sequence[str], cached_rewards: Mapping[str, Sequence[float]],
@@ -241,10 +241,13 @@ class Engine:
         self.costs["sr_preparation_wall_seconds"] = self.sr_preparation_wall_seconds
         self.costs["sr_preparation_gpu_seconds"] = self.sr_preparation_wall_seconds * self.backend.gpu_count
 
-    def _pool_training_batch(self, selector: str) -> tuple[tuple[str, ...], set[str], int]:
+    def _pool_training_batch(self, selector: str, count: int | None = None) -> tuple[tuple[str, ...], set[str], int]:
+        count = self.config.training_prompts if count is None else count
+        if not 1 <= count <= len(self.candidates):
+            raise ValueError("invalid sampling count")
         used, cycle = set(self.used_training_ids), self.sampling_cycle
         selected: list[str] = []
-        while len(selected) < self.config.training_prompts:
+        while len(selected) < count:
             if len(used) == len(self.candidates):
                 used.clear()
                 cycle += 1
@@ -254,7 +257,7 @@ class Engine:
             else:
                 order = self.sr_ranked_ids
             available = [i for i in order if i not in used and i not in selected]
-            batch = available[:self.config.training_prompts - len(selected)]
+            batch = available[:count - len(selected)]
             selected.extend(batch)
             used.update(batch)
         return tuple(selected), used, cycle
@@ -323,8 +326,8 @@ class Engine:
         if refresh:
             started = self._begin("selection")
             on_ids = tuple(rng.choice(self.candidates, c.scoring_prompts, replace=False))
-            sr_ids, _, _ = self._pool_training_batch("sr")
-            # Score 40 On-policy candidates and the next four unused SR prompts, sharing overlap.
+            sr_ids, _, _ = self._pool_training_batch("sr", c.scoring_prompts)
+            # The 40-vs-40 diagnostic is separate from the four-prompt training batch.
             union = tuple(dict.fromkeys((*on_ids, *sr_ids)))
             gradients = self._vectors(union, c.candidate_group_size, "selection")
             val = self._vectors(self.validation, c.responses, "validation")
@@ -340,8 +343,8 @@ class Engine:
                 d_started = time.perf_counter()
                 # Pure array arithmetic. No backend call, no generation/backward pass.
                 with self._timing_scope("sr_gc_check"):
-                    d = gradient_contrast(train_ids, sr_ids, gradients, v)
-                    on_dot = float(np.dot(v, np.stack([gradients[i] for i in train_ids]).mean(axis=0)))
+                    d = gradient_contrast(on_ids, sr_ids, gradients, v)
+                    on_dot = float(np.dot(v, np.stack([gradients[i] for i in on_ids]).mean(axis=0)))
                     sr_dot = float(np.dot(v, np.stack([gradients[i] for i in sr_ids]).mean(axis=0)))
                     transition = self.rule.observe(self.step, d)
                 self.costs["d_arithmetic_wall_seconds"] += time.perf_counter() - d_started

@@ -190,8 +190,7 @@ def route_plan(source, *, writing, migrate=False, fresh=None):
         if not (root / f".{source.stem}-storage.json").exists():
             return source
     if writing:
-        if any(not p.is_relative_to(group) for p in
-               [run_root(target, plan), *(input_path(target, plan, s) for s in plan["seeds"])]):
+        if any(not p.resolve().is_relative_to(group) for _, p in artifact_pairs(target, target)):
             raise ValueError("active run artifacts resolve outside group storage")
         os.environ.setdefault("OM_WORK", str(group / os.environ.get("OM_USER", "minsoo3.kim") / "offpolicy-misranking"))
         cache = root / "runtime-cache"
@@ -200,8 +199,19 @@ def route_plan(source, *, writing, migrate=False, fresh=None):
                           "TRANSFORMERS_CACHE": cache / "huggingface/hub",
                           "HF_MODULES_CACHE": cache / "huggingface/modules",
                           "HF_DATASETS_CACHE": cache / "huggingface/datasets", "XDG_CACHE_HOME": cache,
-                          "TORCH_HOME": cache / "torch"}.items():
+                          "TORCH_HOME": cache / "torch", "TORCHINDUCTOR_CACHE_DIR": cache / "torchinductor",
+                          "TRITON_CACHE_DIR": cache / "triton", "CUDA_CACHE_PATH": cache / "cuda",
+                          "TMPDIR": cache / "tmp"}.items():
+            path = path.resolve()
+            if not path.is_relative_to(group):
+                raise ValueError(f"{key} resolves outside group storage: {path}")
+            path.mkdir(parents=True, exist_ok=True)
             os.environ[key] = str(path)
         print(f"[storage] inputs/cache: {input_path(target, plan, plan['seeds'][0]).parent}; "
               f"results: {run_root(target, plan)}", file=sys.stderr, flush=True)
+        for seed in plan["seeds"]:
+            prompt_cache = input_path(target, plan, seed).with_suffix(".cache")
+            print(f"[storage] seed={seed} response_cache={prompt_cache} "
+                  f"costs={prompt_cache / 'cost-receipts'} live_costs={prompt_cache / 'live-costs'}",
+                  file=sys.stderr, flush=True)
     return target

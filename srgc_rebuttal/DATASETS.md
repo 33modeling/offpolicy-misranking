@@ -34,9 +34,9 @@ The V7 reference implementation only needs an `srgc-inputs-v1` bundle per seed
 and a plan that names the verifier. The tools below build both for MATH train,
 GSM8K, MBPP or any JSONL file of `{question, answer}` rows. The current protocol
 uses a 25-update shared prefix, total 275, 40 fresh scored candidates plus the
-next four unused SR prompts every 25 updates, retaining the On-policy top four
+next 40 unused SR prompts every 25 updates, retaining the On-policy top four
 for training, checks every 25 updates and projection 4096. SR-GC compares the
-selected four on each side. Random and SR use the whole candidate pool without
+full 40-prompt sets, not the training four. Random and SR use the whole candidate pool without
 replacement within each pass; SR follows cached score order. These rules apply
 to both MATH and MBPP and differ from the older fixed-subset protocol.
 

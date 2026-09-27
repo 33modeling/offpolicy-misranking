@@ -34,9 +34,9 @@ The existing runner files and methods consulted are recorded in
 2. While On-policy selection is active, draw 40 candidates uniformly without
    replacement within each draw from the 400-prompt pool every 25 updates.
    Previously drawn candidates may reappear at a later refresh. Compute fresh
-   current-policy gradients for these 40 candidates **and the next four unused
+   current-policy gradients for these 40 candidates **and the next 40 unused
    SR prompts**. Generate eight responses per distinct prompt. Reuse a single
-   gradient for overlap; the union has at most 44 prompts. Merely scoring an
+   gradient for overlap; the union has at most 80 prompts. Merely scoring an
    SR prompt does not mark it as trained.
 3. Candidate scoring uses two leave-one-out groups of four responses. Each
    gradient sums response-token contributions and averages the eight responses.
@@ -50,13 +50,14 @@ The existing runner files and methods consulted are recorded in
 5. At a scheduled check, compute
 
    ```text
-   on_mean = mean(projected_gradients[i] for i in selected_on_four)
-   sr_mean = mean(projected_gradients[i] for i in next_unused_sr_four)
+   on_mean = mean(projected_gradients[i] for i in all_40_on_candidates)
+   sr_mean = mean(projected_gradients[i] for i in next_unused_sr_40)
    D = dot(projected_validation_mean, on_mean - sr_mean)
    ```
 
-   D compares the proposed four-prompt training batches, not the full candidate
-   means. It is an inner product, not a cosine. No extra generation, differentiation or A/B
+   D compares 40 prompts on each side, independently of the four-prompt training
+   batch. The On-policy 40 are randomly sampled candidates, not a gradient-selected
+   top 40 from the entire pool. D is an inner product, not a cosine. No extra generation, differentiation or A/B
    diagnostic reference batch is requested to compute D. Its sign favors SR
    when negative.
 6. Check every 25 updates. Two consecutive negative checks trigger switching.
@@ -71,7 +72,7 @@ The existing runner files and methods consulted are recorded in
    leave-one-out advantages and token sums. AdamW uses learning rate `1e-5`,
    betas `(0.9,0.999)`, epsilon `1e-8`, zero weight decay, and gradient-norm clip 1.
 8. On switching, retain model and optimizer state, stop gradient scoring and D
-   checks, and train on the same SR four just compared. Subsequent SR updates
+   checks, and train on the highest-ranked four from the SR comparison set. Subsequent SR updates
    take the next highest-scoring unused four from the full pool. The SR arm
    uses this same rule from the start of its continuation.
 9. Random uses a seeded shuffle of all 400 candidate prompts and takes four
@@ -88,12 +89,13 @@ permanent non-reuse cannot support the existing 250-update continuations.
 On-policy still retains its selected batch for 25 updates; its selection rule
 and the temporal confirmation rule are unchanged.
 
-These author-requested Random/SR and four-vs-four SR-GC changes date to
-2026-09-28 and define a new experimental protocol, not a relabeling of old
+These author-requested Random/SR changes date to 2026-09-28. SR-GC retains
+the original 40-vs-40 comparison; the interim four-vs-four change is superseded.
+Unused-prompt sampling defines a new experimental protocol, not a relabeling of old
 results. Old checkpoints cannot resume under it. Keep in-flight/archived runs
 on their original code and do not bypass implementation-hash checks.
 Checkpoints persist the used prompt IDs and pass number; per-update records
-retain training IDs, pool size, pass boundaries and the proposed SR four.
+retain training IDs, pool size, pass boundaries and the SR comparison 40.
 
 The controller's `step=t` denotes **t completed optimizer updates**. A check
 at t scores that checkpoint's policy before update t+1; a triggered transition
@@ -108,7 +110,7 @@ selection for an update that will never be performed.
 
 | File | Responsibility | Manuscript |
 | --- | --- | --- |
-| `srgc.py` | 40+4 scoring, selected-four contrast, non-repeating Random/SR passes, four arms, resume | New protocol for V7; not the frozen submission |
+| `srgc.py` | 40+40 scoring and contrast, non-repeating Random/SR passes, four arms, resume | New sampling protocol for V7; not the frozen submission |
 | `objectives.py` | LOO, GRPO/RLOO equations, cosine, fixed projection reference | Section 2, Appendix C |
 | `torch_backend.py` | Fresh generation, dense scoring derivatives, LoRA optimization, distributed reductions | Appendix C |
 | `run_experiment.py` | One seed, common prefix, four continuations, endpoint evaluation/checkpoints | Online experiments |

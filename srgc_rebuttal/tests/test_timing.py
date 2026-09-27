@@ -20,6 +20,32 @@ class Clock:
 
 
 class TimingTests(unittest.TestCase):
+    def test_live_costs_survive_partial_cache_phase_without_double_counting(self):
+        from srgc_rebuttal.runtime import atomic_json
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = root / "seed-5.json"
+            clock = Clock()
+            ledger = PhaseLedger(bundle.with_suffix(".cache") / "cost-receipts")
+            meter = CostMeter(rank=0, local_gpu_count=1, clock=clock, record=ledger.record)
+            meter.begin_phase("cache_generation", gpu_count=1)
+            with meter.stage("generation"):
+                clock.value += 3
+                meter.count("prompts")
+            with meter.stage("reward_verification"):
+                clock.value += 2
+            snapshot = meter.live_snapshot()
+            atomic_json(bundle.with_suffix(".cache") / "live-costs/attempt-rank-1.json", snapshot)
+            report = seed_costs(root / "runs", bundle, ["random"])
+            self.assertEqual(report["cache_live_rank_costs"][0]["local_gpu_seconds"], 5)
+            self.assertEqual(snapshot["stages"]["generation"]["wall_seconds"], 3)
+            self.assertEqual(snapshot["stages"]["reward_verification"]["wall_seconds"], 2)
+            self.assertFalse(snapshot["additive_to_phase_totals"])
+            self.assertIsNone(report["experiment_accounting"]["cache_inclusive_gpu_seconds"])
+            self.assertFalse(ledger.totals()["complete"])
+            meter.end_phase()
+            self.assertEqual(ledger.totals()["total_gpu_seconds"], 5)
+
     def test_nested_stages_are_exclusive(self):
         clock = Clock()
         meter = StageTimer(clock=clock)

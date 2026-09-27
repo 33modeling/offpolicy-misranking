@@ -194,7 +194,7 @@ def main() -> None:
                     "total_updates": current.step, "shared_prefix_updates": plan["shared_prefix_updates"],
                     "switched_at": current.switched_at,
                     "sampling_protocol": current.SAMPLING_PROTOCOL,
-                    "sr_gc_comparison_prompts_per_set": config.training_prompts,
+                    "sr_gc_comparison_prompts_per_set": config.scoring_prompts,
                     "reward": sum(per_question.values()) / len(per_question), "per_question_reward": per_question,
                     "costs": measured_costs, "cost_measurement_complete": ledger["complete"],
                     "cost_receipts": ledger,

@@ -1,4 +1,31 @@
-# Full-pool sampling and selected-four SR-GC on 2026-09-28
+# Restore 40-vs-40 SR-GC and expose cache progress on 2026-09-28
+
+The author's latest instruction retains the original 40-vs-40 SR-GC contrast,
+separate from the four-prompt training batch. It compares all 40 randomly
+sampled On-policy candidates with the highest-scoring 40 unused SR prompts.
+The intermediate selected-four contrast below is superseded. Random/SR
+non-repeating passes and their persisted used-prompt state remain in place.
+
+Worker child logs are relayed live instead of appearing only in task files.
+Cache status reports saved prompt receipts, exported count and last-write age.
+All large runtime/compilation caches and temporary files are group-local;
+symlink escapes for response caches are rejected, and exact per-seed response
+and cost paths are printed before GPU work. Per-prompt rank-local partial
+cost snapshots preserve completed generation/verification/write stages before
+whole-phase completion. They are not added to finalized costs a second time.
+
+The actual stopped node and its last error output have not been supplied.
+These verified local defects do not establish the cause of that node's stall;
+no remote recovery or H100 run is claimed. Queue identity/lease protection
+remains enabled rather than mixing existing training under a changed protocol.
+
+All 125 unit/integration tests passed with no skips. The two-process CPU
+distributed smoke test passed both timing/update agreement and failure
+propagation checks. New regressions cover live child output, partial cache
+receipt status, group-local compilation/temporary caches, cache symlink
+escape refusal and durable partial cost snapshots without double counting.
+
+## Full-pool sampling and selected-four SR-GC on 2026-09-28 (Superseded Contrast)
 
 The author requested removal of the initial fixed 40-prompt Random pool,
 SR selection in cached score order while excluding already trained prompts,

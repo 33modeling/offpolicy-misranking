@@ -221,6 +221,20 @@ Each seed's prefix has a checksum receipt; all arms record that same checksum.
 Task and execution locks protect against duplicate workers and overlapping
 manual starts. Code, plan and input hashes reject incompatible resumes.
 
+Child output is now relayed to the worker terminal while remaining in the
+append-only task log. Cache messages identify model loading, generation start
+and completed prompts per rank. The shell `status` command also shows raw saved
+prompt receipts out of 400, exported reward count and time since the last write.
+Saved receipts can increase while exported rewards remain zero until final
+export. These diagnostics do not claim that a live stalled node has recovered,
+and do not disable code/plan/cache compatibility or active process locks.
+Every write launch prints each seed's exact response-cache and cost directories.
+Hugging Face, Torch, TorchInductor, Triton, CUDA compilation caches and temporary
+files are explicitly routed to group storage. A response-cache or runtime-cache
+symlink escaping the group volume is rejected before GPU work starts.
+Per-prompt live cost snapshots are written under each seed cache's `live-costs/`;
+completed synchronized phase costs remain under `cost-receipts/`.
+
 The next node can resume a task from its saved checkpoint after its old
 process and lock have gone away. Prefix checkpoints are saved every five
 updates; continuations every 25. Completed tasks are skipped before loading

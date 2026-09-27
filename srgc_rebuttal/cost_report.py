@@ -56,6 +56,8 @@ def seed_costs(folder, bundle_path, arms):
                 rows[arm][key] = None
     cache_path = bundle_path.with_suffix(".cache") / "cost-summary.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else None
+    live_costs = [json.loads(path.read_text()) for path in
+                  sorted((bundle_path.with_suffix(".cache") / "live-costs").glob("*.json"))]
     if cache is not None and cache["bundle_sha256"] != digest(bundle_path):
         raise ValueError("cache timings belong to a different input bundle")
     all_complete = (bool(scopes) and bool(sessions) and "shared-prefix" in scopes and
@@ -69,7 +71,7 @@ def seed_costs(folder, bundle_path, arms):
     cache_total = cache["invocations"]["total_gpu_seconds"] if cache_complete else None
     return {"arms": rows, "shared_prefix": scopes.get("shared-prefix"),
             "shared_all_task_startup_and_load": scopes.get("all"),
-            "cache_build": cache, "invocations": sessions,
+            "cache_build": cache, "cache_live_rank_costs": live_costs, "invocations": sessions,
             "experiment_accounting": {
                 "complete": all_complete,
                 "phase_gpu_seconds": phase_sum,

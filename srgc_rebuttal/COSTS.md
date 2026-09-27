@@ -34,9 +34,9 @@ on each allocated node; it builds missing caches automatically. MBPP uses
 `worker --dataset mbpp` on each node with the included seed-5--9 inputs.
 The shared-prefix and four-arm schedule is unchanged: selection every 25
 updates, fresh training responses every update, endpoint at total update 275.
-The 2026-09-28 protocol scores 40 On-policy candidates plus the next four
-unused SR prompts, at most 44 distinct prompts per refresh. SR-GC compares
-the selected On-policy four with those SR four. Random and SR consume the
+The 2026-09-28 protocol scores 40 On-policy candidates plus the next 40
+unused SR prompts, at most 80 distinct prompts per refresh. SR-GC compares
+the means of those 40-prompt sets, not the four-prompt training batches. Random and SR consume the
 full candidate pool without replacement within a pass; see [README.md](README.md).
 
 ## What is timed
@@ -46,7 +46,7 @@ full candidate pool without replacement within a pass; see [README.md](README.md
 | Cache build | Tokenization, generation, decode, reward verification, response receipt writes, export, separate startup |
 | Startup | Tokenizer load, model/adapter load, backend setup |
 | Preparation | Cached-SR ranking and selector setup; no fixed Random subset is constructed |
-| Selection | 40-candidate/4-SR union and validation timed separately: generation, reward verification, forward, backward, projection, communication; cosine ranking; selected-four SR-GC arithmetic |
+| Selection | 40-candidate/40-SR union and validation timed separately: generation, reward verification, forward, backward, projection, communication; cosine ranking; 40-vs-40 SR-GC arithmetic |
 | Training | Fresh generation, reward verification, forward, backward, gradient reduction, clipping/optimizer, communication |
 | Evaluation | Fresh generation and reward verification; communication |
 | Checkpoint | Model/optimizer snapshot, write, read and restore |
@@ -109,6 +109,12 @@ to the final input hash. A preexisting cache without complete measurement
 receipts remains usable but is not assigned a measured zero generation cost.
 `costs` permits inspection before all runs finish; cohort means stay `null`
 until every planned seed has the corresponding completed measurements.
+Cache generation also publishes `live-costs/` after every completed prompt.
+These rank-local cumulative partial records retain generation, verification,
+receipt-write and other elapsed stages before the whole cache phase finishes.
+`cache_live_rank_costs` exposes them in the cost report. They are not additive
+to finalized phase/invocation totals and do not turn interrupted work into a
+complete measurement. Earlier records without these snapshots stay unchanged.
 `summary` additionally requires all scientific endpoints and rejects mixed
 input, plan, implementation or prefix identities.
 

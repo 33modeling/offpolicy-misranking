@@ -4,6 +4,7 @@ import argparse
 from collections import Counter
 import csv
 import fcntl
+import hashlib
 import io
 import json
 import math
@@ -86,6 +87,20 @@ def snapshot(plan_path, *, include_costs=False):
                    "reward_percent": None, "switched_at": None, "attempt": receipt.get("attempt", 0),
                    "host": receipt.get("host"), "worker_id": receipt.get("worker_id"),
                    "log": str(directory / "logs" / f"{key}.log")}
+            if arm == "cache" and bundle is not None:
+                cache_root = bundle_path.with_suffix(".cache")
+                saved, latest = 0, None
+                for candidate in bundle["candidate_ids"]:
+                    path = cache_root / f"{hashlib.sha256(candidate.encode()).hexdigest()}.json"
+                    try:
+                        modified = path.stat().st_mtime
+                    except FileNotFoundError:
+                        continue
+                    saved += 1
+                    latest = modified if latest is None else max(latest, modified)
+                row.update(cache_saved_prompts=saved, cache_total_prompts=len(bundle["candidate_ids"]),
+                           cache_exported_prompts=len(bundle.get("cached_rewards", {})),
+                           cache_last_write_age_seconds=None if latest is None else max(0, time.time() - latest))
             progress = read(folder / f"{arm}-progress.json") if arm in plan["arms"] else None
             if progress:
                 row.update(step=progress.get("step"), switched_at=progress.get("switched_at"))
@@ -180,6 +195,16 @@ def render(report, *, results=False):
             continue
         lines.append(f"{row['seed']:4} {row['arm']:10} {row['status']:21} {cell(row['step']):>4} "
                      f"{cell(row['reward_percent']):>9} {cell(row.get('selection_training_preparation_gpu_seconds')):>24}")
+        if row["arm"] == "cache" and "cache_saved_prompts" in row:
+            age = row["cache_last_write_age_seconds"]
+            lines.append(f"     saved_prompts={row['cache_saved_prompts']}/{row['cache_total_prompts']} "
+                         f"exported={row['cache_exported_prompts']} "
+                         f"last_write_age={'none' if age is None else f'{age:.0f}s'}")
+            for progress in row.get("progress", []):
+                lines.append(f"     stage={progress.get('stage')} last_work_age="
+                             f"{max(0, time.time() - progress.get('updated', time.time())):.0f}s")
+            if row["status"] in {"failed", "interrupted", "recoverable"}:
+                lines.append(f"     log={row['log']}")
     for worker in report["workers"]:
         lines.append(f"node={worker.get('host')} {worker['status']} task={worker.get('task')} "
                      f"heartbeat_age={worker['heartbeat_age_seconds']:.0f}s")

@@ -22,6 +22,30 @@ spec.loader.exec_module(storage)
 
 
 class SharedStorageTests(unittest.TestCase):
+    def test_all_runtime_caches_and_temporary_files_are_group_local(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env = self.fixture(directory)
+            keys = ("HF_HOME", "HF_HUB_CACHE", "HF_DATASETS_CACHE", "TORCH_HOME", "CUDA_CACHE_PATH",
+                    "TRITON_CACHE_DIR", "TORCHINDUCTOR_CACHE_DIR", "TMPDIR")
+            overrides = {key: str(Path(directory) / "user-cache") for key in keys}
+            with patch.dict(os.environ, {**env, **overrides}):
+                target = storage.route_plan(plan, writing=True, fresh="cache-paths")
+                for key in keys:
+                    path = Path(os.environ[key])
+                    self.assertTrue(path.is_relative_to(Path(env["GROUP_VOLUME"])), key)
+                    self.assertTrue(path.is_dir(), key)
+                self.assertTrue(target.is_relative_to(Path(env["GROUP_VOLUME"])))
+
+    def test_existing_response_cache_cannot_symlink_to_user_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env = self.fixture(directory)
+            target = storage.fresh_plan(plan, env, "cache-paths")
+            outside = Path(directory) / "user/cache"
+            outside.mkdir(parents=True)
+            input_path(target, load_plan(target), 5).with_suffix(".cache").symlink_to(outside, target_is_directory=True)
+            with patch.dict(os.environ, env), self.assertRaisesRegex(ValueError, "outside group storage"):
+                storage.route_plan(plan, writing=True, fresh="cache-paths")
+
     def test_fresh_ignores_old_work_and_partial_migration_and_never_resets_second_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             plan, env = self.fixture(directory)

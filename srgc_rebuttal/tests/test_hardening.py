@@ -1,4 +1,5 @@
 import csv
+from contextlib import redirect_stdout
 import io
 import json
 import os
@@ -21,6 +22,21 @@ from srgc_rebuttal.timing import CostMeter, StageTimer
 
 
 class HardeningTests(unittest.TestCase):
+    def test_child_output_is_relayed_live_without_replaying_old_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "task.log"
+            log.write_text("previous attempt\n")
+            output = io.StringIO()
+            live = []
+            code = "import time; print('cache progress', flush=True); time.sleep(.1); print('cache finished', flush=True)"
+            with redirect_stdout(output):
+                result = run_child([sys.executable, "-c", code], log, child_environment(),
+                                   heartbeat=lambda pid: live.append(output.getvalue()), interval=.01)
+            self.assertEqual(result, 0)
+            self.assertTrue(any("cache progress" in value for value in live))
+            self.assertEqual(output.getvalue(), "cache progress\ncache finished\n")
+            self.assertIn("previous attempt\ncache progress\ncache finished", log.read_text())
+
     def test_h100_admission_rejects_wrong_hardware_busy_and_aliased_devices(self):
         def query(name="NVIDIA H100 80GB HBM3", used=0, memory=81559, alias=False):
             return SimpleNamespace(stdout="\n".join(f"GPU-{0 if alias else i}, {used}, {name}, {memory}" for i in range(4)))
@@ -130,6 +146,28 @@ class HardeningTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_cache_status_reports_partial_receipts_before_final_export(self):
+        from srgc_rebuttal.build_cache import CacheStore
+        from srgc_rebuttal.plan import input_path
+        from srgc_rebuttal.reports import render
+        with tempfile.TemporaryDirectory() as directory:
+            queue = TaskQueue(write_inputs(Path(directory), pending=True))
+            queue.bind()
+            path = input_path(queue.plan_path, queue.plan, 5)
+            data = json.loads(path.read_text())
+            store = CacheStore(path, data, {"cache_seed": 5})
+            store.bind()
+            for candidate in data["candidate_ids"][:3]:
+                store.write(candidate, [0, 1] * 4, ["response"] * 8, 1.0)
+            report = snapshot(queue.plan_path)
+            row = next(r for r in report["tasks"] if r["task"] == "seed-5.cache")
+            self.assertEqual(row["cache_saved_prompts"], 3)
+            self.assertEqual(row["cache_exported_prompts"], 0)
+            self.assertEqual(row["cache_total_prompts"], 400)
+            self.assertIsNotNone(row["cache_last_write_age_seconds"])
+            self.assertIn("saved_prompts=3/400 exported=0", render(report))
+            self.assertNotEqual(row["status"], "complete")
+
     def endpoint(self, queue, seed, arm):
         folder = queue.root / f"seed-{seed}"
         atomic_json(folder / "run.json", {**queue.identities[seed], "status": "running"})
