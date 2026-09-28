@@ -81,9 +81,11 @@ class ShellLauncherTests(unittest.TestCase):
                 self.assertEqual(report["cuda"], "")
 
     def test_explicit_run_name_is_only_used_when_the_user_sets_it(self):
-        for dataset in ("math", "mbpp"):
+        for dataset in ("math", "mbpp", "all"):
             report = self.invoke(dataset, SRGC_RUN_NAME="explicit-study")
-            self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", dataset,
+            self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset",
+                                              "math" if dataset == "all" else dataset,
+                                              *(["--with-dataset", "mbpp"] if dataset == "all" else []),
                                               "--retry-failed", "--max-attempts", "50", "--retry-delay", "120",
                                               "--fresh", "explicit-study"])
             self.assertEqual(report["cuda"], "0,1,2,3")

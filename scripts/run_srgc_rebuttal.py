@@ -55,8 +55,8 @@ def main():
         options.error("--fresh is supported by worker, launch and storage")
     if settings.with_dataset and not (action == "cluster" and args and args[0] == "worker"):
         options.error("--with-dataset is supported by worker only")
-    if settings.with_dataset and (settings.fresh or settings.plan or settings.with_dataset == dataset):
-        options.error("--with-dataset needs the default plans of two different datasets and no --fresh")
+    if settings.with_dataset and (settings.plan or settings.with_dataset == dataset):
+        options.error("--with-dataset needs the default plans of two different datasets")
     if action in {"backup", "backup-watch"}:
         from srgc_shared_storage import route_plan
         from srgc_checkpoint_backup import main as backup_main
@@ -126,7 +126,8 @@ def main():
             from srgc_pair_inputs import default_plan
             from srgc_shared_storage import route_plan
             extra = default_plan(root, settings.with_dataset, os.environ, writing=True)
-            extra_plans.append(route_plan(extra, writing=True, start_or_continue=True))
+            extra_plans.append(route_plan(extra, writing=True, fresh=settings.fresh,
+                                          start_or_continue=settings.fresh is None))
         with ExitStack() as stack:
             stack.enter_context(uniform_log())
             for each in (plan, *extra_plans):

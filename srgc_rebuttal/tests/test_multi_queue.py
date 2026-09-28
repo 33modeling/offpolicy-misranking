@@ -25,14 +25,14 @@ class MultiQueueTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         with patch.object(sys, "path", [str(root / "scripts"), *sys.path]):
             for primary, secondary in (("math", "mbpp"), ("mbpp", "math")):
-                for pair in (True, False):
-                    with self.subTest(primary=primary, pair=pair), ExitStack() as stack:
+                for pair, fresh in ((True, None), (False, None), (True, "code-fix"), (False, "code-fix")):
+                    with self.subTest(primary=primary, pair=pair, fresh=fresh), ExitStack() as stack:
                         paths = {"math": root / ("pair_seeds.json" if pair else "additional_seeds.json"),
                                  "mbpp": root / ("mbpp_pair_seeds.json" if pair else "mbpp_seeds.json")}
                         resolver = stack.enter_context(patch("srgc_pair_inputs.default_plan",
                             side_effect=lambda root, dataset, env, **kw: paths[dataset]))
                         stack.enter_context(patch("srgc_rebuttal.existing_runtime.select_python"))
-                        stack.enter_context(patch("srgc_shared_storage.route_plan", side_effect=lambda p, **kw: p))
+                        route = stack.enter_context(patch("srgc_shared_storage.route_plan", side_effect=lambda p, **kw: p))
                         stack.enter_context(patch("srgc_shared_storage.storage_root", return_value=(root, root)))
                         for module, method in (("srgc_checkpoint_backup", "automatic_backup"),
                                 ("srgc_log_format", "uniform_log"), ("srgc_process_guard", "process_guard"),
@@ -42,10 +42,15 @@ class MultiQueueTest(unittest.TestCase):
                                                           side_effect=lambda *a: nullcontext()))
                         stack.enter_context(patch("srgc_step_checkpoints.worker_main"))
                         stack.enter_context(patch.object(sys, "argv", ["run", "worker", "--dataset", primary,
-                                                                      "--with-dataset", secondary]))
+                                                                      "--with-dataset", secondary,
+                                                                      *(["--fresh", fresh] if fresh else [])]))
                         run_srgc_rebuttal.main()
                         self.assertEqual([c.args[1] for c in resolver.call_args_list], [primary, secondary])
                         self.assertTrue(all(c.kwargs["writing"] for c in resolver.call_args_list))
+                        self.assertEqual([c.args[0] for c in route.call_args_list], [paths[primary], paths[secondary]])
+                        self.assertTrue(all(c.kwargs["fresh"] == fresh for c in route.call_args_list))
+                        self.assertTrue(all(c.kwargs["start_or_continue"] == (fresh is None)
+                                            for c in route.call_args_list))
                         queues.assert_called_once_with([paths[secondary]])
 
     def fake_child(self, order):

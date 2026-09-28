@@ -90,7 +90,6 @@ if [ "$MODE" = run ]; then
     if [ "$DATASET" = all ]; then
         # One worker per node serves both queues: MATH first, MBPP when MATH has nothing claimable.
         set -- worker --dataset math --with-dataset mbpp --retry-failed --max-attempts "${SRGC_MAX_ATTEMPTS:-50}" --retry-delay 120
-        [ -z "${SRGC_RUN_NAME:-}" ] || { printf '%s\n' 'SRGC_RUN_NAME is not supported with all' >&2; exit 2; }
     else
         set -- worker --dataset "$DATASET" --retry-failed --max-attempts "${SRGC_MAX_ATTEMPTS:-50}" --retry-delay 120
     fi
