@@ -75,6 +75,8 @@ clear_gpu_memory() {
 
 if [ "$MODE" = run ]; then
     export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
+    # Reduce allocator fragmentation across thousands of variable-length rollouts.
+    export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
     if [ -n "${SRGC_SKIP_GPU_CLEANUP:-}" ]; then
         printf '[startup-cleanup] skipped (SRGC_SKIP_GPU_CLEANUP set)\n' >&2
     elif command -v nvidia-smi >/dev/null 2>&1; then

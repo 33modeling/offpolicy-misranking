@@ -30,12 +30,21 @@ if [ "$TARGET" = results ]; then
 fi
 case "$TARGET" in ''|*[!0-9]*) echo "seed must be an integer" >&2; exit 2 ;; esac
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+# Never share a node with a queue worker: an extra arm needs all four GPUs.
+if pgrep -u "$(id -u)" -f 'run_srgc_rebuttal.py worker' >/dev/null 2>&1; then
+    echo "[abort] a queue worker (run_srgc.sh ... run) is running on this node; stop it first or use another node" >&2
+    exit 75
+fi
 if command -v nvidia-smi >/dev/null 2>&1 && [ -z "${SRGC_SKIP_GPU_CLEANUP:-}" ]; then
-    uid=$(id -u)
-    for pid in $(timeout 20 nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | tr -d ' ' | grep -E '^[0-9]+$' || true); do
-        [ "$(stat -c %u "/proc/$pid" 2>/dev/null || true)" = "$uid" ] && kill -TERM "$pid" 2>/dev/null || true
-    done
-    sleep 5
+    memory=$(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i "$CUDA_VISIBLE_DEVICES" 2>/dev/null) || {
+        echo "[abort] nvidia-smi could not report GPU memory" >&2; exit 1; }
+    busy=$(printf '%s\n' "$memory" | awk '$1 > 2000 {n++} END {print n+0}')
+    if [ "$busy" -ne 0 ]; then
+        echo "[abort] GPUs are in use on this node (MiB per GPU): $(printf '%s' "$memory" | tr '\n' ' ')" >&2
+        timeout 20 nvidia-smi --query-compute-apps=pid,process_name,used_gpu_memory --format=csv,noheader >&2 || true
+        exit 75
+    fi
 fi
 echo "[sr-refresh] dataset=$DATASET seed=$TARGET scope=$SCOPE plan=$PLAN" >&2
 exec "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 --max_restarts=0 \
