@@ -25,7 +25,7 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 | 4 | P2 | 후보 40개의 SR 성공률 갱신 `sr_refresh` | 오래된 캐시를 유지하는 전략과 갱신 전략의 성능·비용 비교 | 구현됨; 순수 갱신 효과 주장에는 배치 유지 간격 통제 추가 필요 |
 | 5 | P2 | 반복 전환 `switch_repeat` | 한 번만 전환하고 점검을 끝내는 선택의 성능·비용 trade-off 확인 | 구현됨; 전환 후 scoring 비용 포함 |
 | 6 | P3 | 전체 400개 갱신 `sr_refresh-pool` | 후보 범위를 넓힌 갱신의 추가 이득과 비용 확인 | 구현됨; 4번 다음 확장 |
-| 7 | P3 | 다른 backbone에서 동일 온라인 Switch | 모델 의존성과 일반화 검증 | 기존 selection 매트릭스만 있음; 온라인 adapter/plan 검증 필요 |
+| 7 | P3 | 다른 backbone에서 동일 온라인 Switch | 모델 의존성과 일반화 검증 | Qwen3.5-9B 전용 온라인 runner 준비; CPU 검증, 9B GPU admission/실험은 대기 |
 | 8 | P3 | 초기 gradient 방향의 matched ablation | 초기 이점에 대한 인과적 설명 보강 | 전용 대조 미구현; 현재 핵심 결과 검증 이후 |
 
 ### 자원 배정과 완료 기준
@@ -55,7 +55,7 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 | 고정 schedule 대비 SR-GC timing 가치 | 현재 네 arm 및 두 변형은 이를 직접 검증하지 않음 | 사전 고정 total-step-200 대조, 동일 prefix/평가/길이 | 전용 runner 미구현 |
 | 같은 시작 상태의 독립 training replicate | 추가 base seed 실험과 다른 질문 | prefix/캐시를 고정하고 분기 이후 sampling stream만 바꾸는 paired SR/Switch 반복 | 전용 replicate ID/runner 미구현 |
 | 초기 gradient 방향의 인과적 효과 | retrospective 진단 및 objective 비교는 있음 | 방향 정보만 제거/대체하고 나머지를 맞추는 ablation | 전용 matched ablation 미구현 |
-| 다른 backbone에서도 온라인 Switch가 유효한가 | Qwen/도메인 확장의 기존 selection 매트릭스는 있음 | 같은 온라인 Switch 절차의 모델별 adapter/plan/검증 | 기존 매트릭스를 이 실험으로 대체할 수 없음 |
+| 다른 backbone에서도 온라인 Switch가 유효한가 | Qwen3.5-9B 전용 온라인 adapter 및 MATH/MBPP 5시드×4arm 준비 | [실행 안내](QWEN35_SRGC_KO.md); Qwen 캐시/prefix 새로 생성, 실제 9B GPU admission 후 실행 | CPU 검증; GPU 결과 미생성. 과거 selection 매트릭스와 별도 실험 |
 
 모든 행을 한꺼번에 실행할 수 있는 단일 runner가 있는 것은 아니다. 특히
 `switch_repeat`는 SR과 On-policy 사이를 여러 번 **전환**하는 방법이며, 같은

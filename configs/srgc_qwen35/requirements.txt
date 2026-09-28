@@ -1,0 +1,10 @@
+# Install into a separate CUDA venv; never upgrade the live OLMo environment.
+# Keep the cluster's CUDA-compatible PyTorch build (no torch replacement here).
+transformers==5.14.1
+peft==0.20.0
+fla-core==0.5.2
+accelerate>=1.10
+numpy>=1.26
+safetensors>=0.6
+math-verify==0.9.0
+datasets>=3
