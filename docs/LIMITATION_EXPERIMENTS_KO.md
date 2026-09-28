@@ -10,6 +10,38 @@
 H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격 실행을 완료 또는
 진행 중으로 기록하지 않는다. 기존 작업을 중단하거나 기존 결과를 덮어쓰지 않았다.
 
+## 우선순위
+
+2026-09-28 지정. 기준은 **핵심 결과의 재현성, SR-GC 시점 선택의 추가 가치,
+비용 비교의 신뢰성**이다. 코드가 이미 있다는 이유만으로 더 중요한 미구현 대조보다
+앞세우지 않는다. 아래 순서는 신규 자원 배정과 구현의 우선순위이며, 진행 중인
+작업의 중단이나 낮은 순위 실험의 취소를 뜻하지 않는다.
+
+| 순서 | 우선순위 | 실험/작업 | 먼저 하는 이유 | 준비 상태 |
+| --- | --- | --- | --- | --- |
+| 1 | P0 | 추가 seeds 5-9의 MATH/MBPP 네 arm 완성 및 전체 비용 수집 | 관측 이득의 재현성과 실제 계산 비용을 함께 검증하는 기본 증거 | 구현됨; 기존 진행 유지, 누락 결과 확인 |
+| 2 | P1 | 동일 prefix에서 SR/Switch의 독립 학습 반복 | 같은 조건의 실행 변동과 Switch 이득을 직접 구분 | 전용 replicate runner 미구현, 구현 우선 |
+| 3 | P1 | 사전 고정 total-step-200 전환 대조 | 전환 자체의 효과와 SR-GC timing rule의 추가 가치를 구분 | 전용 runner 미구현, 2번 다음 구현/실행 |
+| 4 | P2 | 후보 40개의 SR 성공률 갱신 `sr_refresh` | 오래된 캐시를 유지하는 전략과 갱신 전략의 성능·비용 비교 | 구현됨; 순수 갱신 효과 주장에는 배치 유지 간격 통제 추가 필요 |
+| 5 | P2 | 반복 전환 `switch_repeat` | 한 번만 전환하고 점검을 끝내는 선택의 성능·비용 trade-off 확인 | 구현됨; 전환 후 scoring 비용 포함 |
+| 6 | P3 | 전체 400개 갱신 `sr_refresh-pool` | 후보 범위를 넓힌 갱신의 추가 이득과 비용 확인 | 구현됨; 4번 다음 확장 |
+| 7 | P3 | 다른 backbone에서 동일 온라인 Switch | 모델 의존성과 일반화 검증 | 기존 selection 매트릭스만 있음; 온라인 adapter/plan 검증 필요 |
+| 8 | P3 | 초기 gradient 방향의 matched ablation | 초기 이점에 대한 인과적 설명 보강 | 전용 대조 미구현; 현재 핵심 결과 검증 이후 |
+
+### 자원 배정과 완료 기준
+
+- **기존 실행은 유지:** MATH/MBPP의 정상 작업을 끄거나 처음부터 다시 시작하지 않는다. 새로 배정할 자원이 경쟁하면 주 결과인 MATH의 누락 paired 결과를 먼저 완성하고 MBPP를 완성한다. 이는 MBPP의 기존 진행 중단이나 계획 seed 제외를 뜻하지 않는다.
+- **비용은 1번부터 동시 수집:** 모든 실험에서 cache 생성/재사용, prefix, selection, training, 평가·저장 비용과 불완전 계측을 함께 기록한다. 비용만 뒤로 미루거나 unknown을 0으로 채우지 않는다.
+- **구현은 GPU 작업과 병행:** P0가 도는 동안 2번, 3번의 runner와 회귀 테스트를 우선 준비한다. 새로 할당 가능한 GPU는 준비된 상위 순위 작업에 먼저 배정한다. P1 구현 전 남는 별도 노드는 P2에 쓸 수 있지만 상위 작업을 밀어내지는 않는다.
+- **이미 구현된 것만의 실행 순서:** 기본 네 arm 및 비용, `sr_refresh`, `switch_repeat`, `sr_refresh-pool` 순서다. 기존 목록의 30개 추가 continuation 전부를 P1 대조보다 먼저 완료해야 하는 것은 아니다.
+- **seed·비교 조건은 결과와 무관하게 고정:** 계획된 seeds 5-9를 유지하고 모든 결과를 수집한다. 좋은 seed만 골라 다음 실험을 하거나 유리한 결과가 나온 시점에 반복을 종료하지 않는다. P1의 반복 수와 sampling stream은 실행 전에 고정한다.
+- **P0 완료:** 예정된 네 arm/seed의 같은 total step 결과, paired 차이, 자기 경로의 전환 이력과 비용 receipt를 검증한다. 일부 arm만 끝난 평균을 최종 결과로 쓰지 않는다.
+- **P1 완료:** 2번은 동일 prefix·캐시·평가 조건의 SR/Switch 반복을 짝지어 보고하고, 3번은 같은 조건의 고정 전환과 Switch를 직접 비교한다. 결과가 무차이 또는 불리해도 함께 보고하며, 두 실험의 완료를 효과 입증과 동일시하지 않는다.
+
+6번은 refresh 한 번당 후보 응답 수가 320개에서 3,200개로 늘어난다. 이는
+전체 wall-time이 정확히 10배라는 추정이 아니다. 1-5번이 답하는 핵심 질문을
+먼저 다루고, 실측 자원 상황에 맞춰 나머지를 순서대로 실행한다.
+
 ## 1. Limitation과 실험 대응
 
 | 항목 | 이미 있는 구현 | 이번 실행 대상 / 남은 일 | 상태 |
@@ -97,12 +129,12 @@ Pair seed-3/4 캐시 재사용 plan과 별도 준비 입력 plan을 섞지 않�
 
 ```sh
 sh scripts/run_srgc_sr_refresh.sh math 5 candidates
-sh scripts/run_srgc_sr_refresh.sh math 5 pool
 sh scripts/run_srgc_sr_refresh.sh math 5 switch_repeat
+sh scripts/run_srgc_sr_refresh.sh math 5 pool
 
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 candidates
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_repeat
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
 ```
 
 추가 실행 목록은 2 datasets x 5 seeds x 3 arms = **30 continuations**다.
@@ -202,6 +234,7 @@ Limitation 대응과 코드/실험의 이름이 비슷하다는 이유로 서로
 | 2026-09-28 | 전체 suite 첫 점검 | 210 tests 수집·실행 시도 | torch 부재 2 errors, import identity 1 failure 발견 후 수정; 16 skipped |
 | 2026-09-28 | 전체 CPU 범위 재점검 | torch 필수인 두 항목을 명시적으로 제외하고 나머지 208 tests 실행 | 192개 통과, 선택 의존성 관련 16개 skipped; 나머지 오류 없음 |
 | 2026-09-28 | H100 실행 | 실행하지 않음 | 로컬 드라이버 사용 불가, 실제 대상 노드/빈 allocation 확인 필요 |
+| 2026-09-28 | 우선순위 지정 | P0-P3와 신규 자원/구현 순서 기록 | 문서 변경만 수행; 작업 실행·중단·계획 변경 없음 |
 
 두 제외 항목은 `test_build_cache.CacheTests.test_resume_after_last_receipt_exports_without_loading_model_or_regenerating`와
 torch를 import하는 `test_step_checkpoints` 모듈이다. 이 범위를 통과했다고
