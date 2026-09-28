@@ -9,9 +9,8 @@ from srgc_rebuttal.plan import input_path
 
 
 def activity(queue, task):
-    """One readable line: attempt, update count, current phase, and how recently each GPU rank worked."""
+    """'update 3/25 · training · gpus 4/4 busy (last 3-9s)' for the running task."""
     receipt = json.loads(queue.receipt(task).read_text())
-    attempt = receipt["attempt"]
     started = receipt["started"]
     progress_dir = queue.directory / "progress" / receipt["attempt_id"]
     ages = []
@@ -28,50 +27,74 @@ def activity(queue, task):
         total = queue.plan["shared_prefix_updates"] if task.arm == "prefix" else queue.plan["total_updates"]
     recent = [(path.stat().st_mtime_ns, path) for path in phases.glob("*.json")]
     recent = [(modified, path) for modified, path in recent if modified / 1e9 >= started]
-    phase, checkpoint = "child_startup", None
+    phase, checkpoint = "starting", None
     if recent:
         row = json.loads(max(recent)[1].read_text())
-        phase = f"{row['phase']}:{row['state']}"
+        phase = row["phase"].replace("_", " ")
         checkpoint = row.get("checkpoint")
-    parts = [f"attempt={attempt}"]
+    parts = []
     if total is not None:
-        parts.append(f"update={checkpoint if checkpoint is not None else 0}/{total}")
-    parts.append(f"phase={phase}")
+        parts.append(f"update {checkpoint if checkpoint is not None else 0}/{total}")
+    parts.append(phase)
     if ages:
         low, high = min(ages), max(ages)
         span = f"{low:.0f}s" if high - low < 1 else f"{low:.0f}-{high:.0f}s"
-        parts.append(f"ranks={len(ages)}/{world} last_activity={span}")
+        parts.append(f"gpus {len(ages)}/{world} busy (last {span})")
     else:
-        parts.append(f"ranks=0/{world} last_activity=-")
-    return " ".join(parts)
+        parts.append(f"gpus 0/{world} reporting")
+    return " · ".join(parts)
+
+
+def idle_summary(rows, max_attempts):
+    """'done 5 · running 3 · waiting 20 · needs attention 2: seed-6.prefix, seed-7.prefix (attempts exhausted)'."""
+    counts = Counter()
+    attention = []
+    for row in rows:
+        status = row["status"]
+        if status == "complete":
+            counts["done"] += 1
+        elif status == "running":
+            counts["running"] += 1
+        elif status.startswith("waiting_for_"):
+            counts["waiting"] += 1
+        elif status in {"failed", "attempts_exhausted", "recoverable", "interrupted"}:
+            attention.append((row["task"], status))
+        else:
+            counts[status] += 1
+    parts = [f"{name} {counts[name]}" for name in ("done", "running", "waiting", "ready") if counts[name]]
+    parts += [f"{name} {count}" for name, count in sorted(counts.items()) if name not in {"done", "running", "waiting", "ready"}]
+    if attention:
+        names = ", ".join(f"{task} ({status.replace('_', ' ')})" for task, status in attention)
+        parts.append(f"needs attention {len(attention)}: {names}")
+        if any(status == "attempts_exhausted" for _, status in attention):
+            parts.append(f"restart with SRGC_MAX_ATTEMPTS>{max_attempts} to retry exhausted tasks")
+    return " · ".join(parts)
 
 
 def run_with_status(original, queue, args, environment, gpu_fds, worker_id, update,
                     *, interval=600, clock=time.monotonic):
     """Print a WORKER line only when something changed; otherwise at most one heartbeat per ``interval``."""
     last_line, last_time = None, float("-inf")
+    announced = set()
 
     def report(state, task=None, child_pid=None, error=None):
         nonlocal last_line, last_time
         update(state, task, child_pid, error)
-        prefix = f"WORKER {state.upper()}" + (f" {task.key}" if task else "")
         try:
             if task is not None and state == "running":
-                detail = activity(queue, task)
-                detail += f" pid={child_pid or '-'} log={queue.directory / 'logs' / (task.key + '.log')}"
+                if task.key not in announced:
+                    announced.add(task.key)
+                    attempt = json.loads(queue.receipt(task).read_text()).get("attempt", "?")
+                    print(f"WORKER {task.key} started · attempt {attempt} · pid {child_pid or '-'} · "
+                          f"log {queue.directory / 'logs' / (task.key + '.log')}", flush=True)
+                line = f"WORKER {task.key} {activity(queue, task)}"
             elif state == "idle":
-                rows = queue.status(max_attempts=args.max_attempts)
-                counts = Counter(row["status"] for row in rows)
-                detail = " ".join(f"{name}={count}" for name, count in sorted(counts.items()))
-                waiting = [f"{row['task']}:{row['status']}" for row in rows if row["status"] != "complete"]
-                if waiting:
-                    detail += " | pending: " + ", ".join(waiting)
+                line = "WORKER idle · " + idle_summary(queue.status(max_attempts=args.max_attempts), args.max_attempts)
             else:
-                detail = error or ""
-            line = f"{prefix} {detail}".rstrip()
+                line = f"WORKER {state}" + (f" {task.key}" if task else "") + (f" · {error}" if error else "")
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            line = f"{prefix} status_read_error={type(exc).__name__}: {exc}"
-        stable = re.sub(r" last_activity=\S+", "", line)  # rank ages change every scan; not news
+            line = f"WORKER status read error · {type(exc).__name__}: {exc}"
+        stable = re.sub(r" \(last [^)]*\)", "", line)  # rank ages change every scan; not news
         now = clock()
         if stable == last_line and now - last_time < interval:
             return
@@ -80,7 +103,7 @@ def run_with_status(original, queue, args, environment, gpu_fds, worker_id, upda
 
     try:
         return original(queue, args, environment, gpu_fds, worker_id, report)
-    except RuntimeError as exc:
+    except RuntimeError:
         explain_blocked(queue, args)
         raise
 
