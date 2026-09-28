@@ -20,11 +20,29 @@ class ShellLauncherTests(unittest.TestCase):
             python.chmod(0o755)
             env = {k: v for k, v in os.environ.items() if k not in
                    ("PAIR_PYTHON", "SWITCH_PYTHON", "CUDA_VISIBLE_DEVICES", "SRGC_RUN_NAME", "SRGC_MAX_ATTEMPTS")}
-            env.update({"PAIR_PYTHON" if dataset in ("math", "all") else "SWITCH_PYTHON": str(python), **environment})
+            env.update({"PAIR_PYTHON" if dataset in ("math", "all") else "SWITCH_PYTHON": str(python),
+                        "SRGC_SKIP_GPU_CLEANUP": "1", **environment})
             command = ["sh", str(SCRIPT), dataset, *([mode] if mode else [])]
             result = subprocess.run(command, cwd="/tmp", env=env, text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
+
+    def test_run_clears_gpu_memory_before_the_worker_unless_skipped(self):
+        script = SCRIPT.read_text()
+        self.assertIn("clear_gpu_memory", script)
+        self.assertIn("--query-compute-apps=pid", script)
+        self.assertIn("kill -TERM", script)
+        with tempfile.TemporaryDirectory() as directory:
+            python = Path(directory) / "python"
+            python.write_text("#!/bin/sh\necho '{}'\n")
+            python.chmod(0o755)
+            env = {k: v for k, v in os.environ.items() if k not in ("CUDA_VISIBLE_DEVICES", "SRGC_SKIP_GPU_CLEANUP")}
+            env.update(PAIR_PYTHON=str(python), SRGC_SKIP_GPU_CLEANUP="1")
+            result = subprocess.run(["sh", str(SCRIPT), "math", "run"], cwd="/tmp", env=env, text=True,
+                                    capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("[startup-cleanup] skipped", result.stderr)
+            self.assertEqual(result.stdout.strip(), "{}")
 
     def test_all_runs_one_worker_for_both_queues(self):
         report = self.invoke("all")

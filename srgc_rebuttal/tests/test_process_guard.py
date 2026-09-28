@@ -74,6 +74,7 @@ class ProcessGuardTest(unittest.TestCase):
         self.assertFalse(guard.is_target(f"bash -c python -m srgc_rebuttal.run_experiment --plan {PLAN}", PLAN))
         self.assertTrue(guard.is_target(f"/x/bin/python3 -m torch.distributed.run -m srgc_rebuttal.run_experiment --plan {PLAN}", PLAN))
         self.assertFalse(guard.is_target(f"python3 -m srgc_rebuttal.run_experiment --plan /other/plan.json", PLAN))
+        self.assertTrue(guard.is_target("python3 -m srgc_rebuttal.run_experiment --plan /other/plan.json"))  # any plan when unrestricted
 
     def test_orphan_of_plan_is_reaped_but_owned_and_foreign_processes_survive(self):
         self.procs = []

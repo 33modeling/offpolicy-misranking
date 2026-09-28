@@ -76,22 +76,29 @@ def _has_live_owner(pid, table):
     return False
 
 
-def is_target(cmdline, plan):
-    """A Python interpreter running this plan's launcher, rank or cache module (never a shell wrapper)."""
+def is_target(cmdline, plan=None):
+    """A Python interpreter running an SRGC launcher, rank or cache module (never a shell wrapper).
+
+    ``plan`` restricts the match to one plan path; ``None`` matches any SRGC child, which is
+    what orphan reaping wants: a rank without a live launcher is garbage whichever plan it ran.
+    """
     argv0 = os.path.basename(cmdline.split(" ", 1)[0]) if cmdline else ""
-    return (argv0.startswith("python") and plan in cmdline and
+    return (argv0.startswith("python") and (plan is None or plan in cmdline) and
             any(marker in cmdline for marker in TARGET_MARKERS) and
             not any(marker in cmdline for marker in OWNER_MARKERS))
 
 
-def orphan_pids(plan_path, table=None):
-    """Processes of this plan (same user) whose ancestors no longer include a launcher."""
+def orphan_pids(plan_path=None, table=None):
+    """SRGC child processes (same user) whose ancestors no longer include a launcher.
+
+    ``plan_path`` is accepted for compatibility and logging only; every orphaned SRGC child
+    on the node is reaped because each one keeps GPU memory and execution locks.
+    """
     table = process_table() if table is None else table
-    plan = str(Path(plan_path).resolve())
     me = os.getpid()
     orphans = []
     for pid, (_, uid, cmdline) in table.items():
-        if pid == me or uid != os.getuid() or not is_target(cmdline, plan):
+        if pid == me or uid != os.getuid() or not is_target(cmdline):
             continue
         if not _has_live_owner(pid, table):
             orphans.append(pid)
@@ -154,11 +161,34 @@ def terminate(pids, *, grace=30.0, label="descendant"):
     return pids
 
 
-def reap_orphans(plan_path, *, grace=30.0):
+def gpu_memory_summary():
+    """'0:1200MiB 1:0MiB ...' from nvidia-smi, or None when it is unavailable."""
+    import shutil
+    import subprocess
+    if not shutil.which("nvidia-smi"):
+        return None
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=20, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    cells = []
+    for line in out.splitlines():
+        if "," in line:
+            index, used = (part.strip() for part in line.split(",", 1))
+            cells.append(f"{index}:{used}MiB")
+    return " ".join(cells) or None
+
+
+def reap_orphans(plan_path=None, *, grace=30.0, report_gpus=True):
     pids = orphan_pids(plan_path)
     if pids:
-        print(f"GUARD found {len(pids)} orphaned process(es) of {plan_path}; reaping before start", flush=True)
+        print(f"GUARD found {len(pids)} orphaned SRGC process(es) on this node; reaping before start", flush=True)
         terminate(pids, grace=grace, label="orphan")
+        if report_gpus:
+            summary = gpu_memory_summary()
+            if summary:
+                print(f"GUARD gpu memory after reaping: {summary}", flush=True)
     return pids
 
 
@@ -188,6 +218,9 @@ def process_guard(plan_path):
     # run_child(). An orphan can retain either resource, so cleaning only in
     # run_child() leaves restart blocked before cleanup can ever run.
     reap_orphans(plan_path)
+    summary = gpu_memory_summary()
+    if summary:
+        print(f"GUARD gpu memory at start: {summary}", flush=True)
     original = cluster.run_child
     cluster.run_child = guarded_run_child(original, plan_path)
     try:
