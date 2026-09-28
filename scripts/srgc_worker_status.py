@@ -78,4 +78,29 @@ def run_with_status(original, queue, args, environment, gpu_fds, worker_id, upda
         last_line, last_time = stable, now
         print(line, flush=True)
 
-    return original(queue, args, environment, gpu_fds, worker_id, report)
+    try:
+        return original(queue, args, environment, gpu_fds, worker_id, report)
+    except RuntimeError as exc:
+        explain_blocked(queue, args)
+        raise
+
+
+def explain_blocked(queue, args, *, lines=40):
+    """When failed tasks block the queue, show each one's receipt and the tail of its log."""
+    try:
+        rows = queue.status(max_attempts=args.max_attempts)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"BLOCKED status_read_error={type(exc).__name__}: {exc}", flush=True)
+        return
+    for row in rows:
+        if row["status"] not in {"failed", "attempts_exhausted"}:
+            continue
+        log = queue.directory / "logs" / f"{row['task']}.log"
+        print(f"BLOCKED {row['task']} status={row['status']} attempts={row.get('attempt', 0)} "
+              f"exit={row.get('exit_code', '-')} validation_error={row.get('validation_error') or '-'} log={log}", flush=True)
+        try:
+            tail = log.read_text(errors="replace").splitlines()[-lines:]
+        except OSError:
+            tail = ["(log file not readable)"]
+        for line in tail:
+            print(f"BLOCKED {row['task']} | {line}", flush=True)

@@ -86,6 +86,24 @@ class WorkerStatusTests(unittest.TestCase):
                 self.assertIn("attempt=1 update=0/25 phase=selection:started ranks=1/4 last_activity=", output.getvalue())
                 self.assertEqual(before, (phase.read_bytes(), progress.read_bytes(), queue.receipt(task).read_bytes()))
 
+    def test_blocked_queue_prints_failed_task_receipts_and_log_tails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = TaskQueue(write_inputs(Path(directory)))
+            with queue.claim() as task:
+                (queue.directory / "logs").mkdir(parents=True, exist_ok=True)
+                (queue.directory / "logs" / f"{task.key}.log").write_text("line1\nTraceback\nValueError: boom\n")
+                queue.finish(task, 1)
+            output = io.StringIO()
+
+            def blocked(queue, args, env, fds, worker, report):
+                raise RuntimeError("failed task blocks remaining work; inspect logs before retry")
+
+            with redirect_stdout(output), self.assertRaises(RuntimeError):
+                run_with_status(blocked, queue, self.args(), {}, (), "test", lambda *args: None)
+            text = output.getvalue()
+            self.assertIn("BLOCKED seed-5.prefix status=failed attempts=1 exit=1", text)
+            self.assertIn("BLOCKED seed-5.prefix | ValueError: boom", text)
+
     def test_bad_progress_is_reported_without_interrupting_the_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             queue = TaskQueue(write_inputs(Path(directory)))
