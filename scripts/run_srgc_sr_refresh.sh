@@ -12,16 +12,21 @@ if [ "$SCOPE" = switch_repeat ]; then ARM_ARGS="--arm switch_repeat"; else ARM_A
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "$DATASET" in math) EXPLICIT=${PAIR_PYTHON:-} ;; mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; esac
 PY=${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
-command -v "$PY" >/dev/null 2>&1 || PY=python3
+if ! command -v "$PY" >/dev/null 2>&1; then
+    [ -z "$EXPLICIT" ] || { printf 'Python not found: %s\n' "$PY" >&2; exit 2; }
+    PY=python3
+fi
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 PLAN=$("$PY" - "$DATASET" <<'PYEOF'
+import os
 import sys
 from pathlib import Path
 sys.path.insert(0, "scripts"); sys.path.insert(0, ".")
 from srgc_shared_storage import route_plan
-name = "mbpp_seeds.json" if sys.argv[1] == "mbpp" else "additional_seeds.json"
-print(route_plan(Path("srgc_rebuttal/experiments") / name, writing=False))
+from srgc_pair_inputs import default_plan
+source = default_plan(Path.cwd(), sys.argv[1], os.environ, writing=False)
+print(route_plan(source, writing=False))
 PYEOF
 )
 if [ "$TARGET" = results ]; then

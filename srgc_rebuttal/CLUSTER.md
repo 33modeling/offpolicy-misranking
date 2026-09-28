@@ -534,7 +534,7 @@ the live workers.
 four prompts whose success rate is closest to 0.5), but the success rates are
 re-measured under the current policy on On-policy's schedule. Every 25 updates
 it draws 40 candidates and generates eight fresh responses each (320 rollouts,
-On-policy's scoring budget without gradients), ranks them by |rate - 0.5| and
+without scoring gradients or validation generation), ranks them by |rate - 0.5| and
 trains the top four until the next refresh. `pool` scope re-measures all 400
 candidates per refresh instead (3200 rollouts; about one cache build each).
 
@@ -568,3 +568,11 @@ sh scripts/run_srgc_sr_refresh.sh math results           # rewards, transitions 
 ```
 
 CPU tests: `python -m unittest srgc_rebuttal.tests.test_switch_repeat`.
+
+The [limitation experiment inventory](../docs/LIMITATION_EXPERIMENTS_KO.md)
+records all three extra arms, execution prerequisites, cost boundaries and
+unimplemented controls. Extra arms follow the same active Pair/prepared cohort
+as the main dataset launcher. Their GPU processes set runtime caches on group
+storage, and results reject mismatched experiment/prefix identities rather than
+combining incompatible endpoints. Missing costs are reported as unknown.
+These extra arms are not automatically dispatched by the four-arm queue.

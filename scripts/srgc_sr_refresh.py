@@ -6,8 +6,8 @@ from the initial policy, and never updates that ranking. This arm keeps SR's
 rule (train the four prompts whose success rate is closest to 0.5) but re-measures
 the success rates under the CURRENT policy on the same schedule On-policy uses:
 every 25 updates it draws 40 candidates, generates eight fresh responses per
-candidate (320 rollouts, exactly On-policy's scoring budget without gradient
-computation), ranks them by |success rate - 0.5| and trains the top four until
+candidate (320 rollouts, without scoring gradients or validation generation),
+ranks them by |success rate - 0.5| and trains the top four until
 the next refresh. ``--scope pool`` instead re-measures all 400 candidates at
 every refresh (3200 rollouts per refresh; roughly one cache build per refresh).
 
@@ -19,7 +19,7 @@ modified: the engine variant lives here and is launched through torchrun.
 
     sh scripts/run_srgc_sr_refresh.sh math 5              # candidates scope, seed 5
     sh scripts/run_srgc_sr_refresh.sh math 5 pool         # full-pool refresh
-    python scripts/srgc_sr_refresh.py results --dataset math
+    sh scripts/run_srgc_sr_refresh.sh math results
 """
 
 import argparse
@@ -56,10 +56,7 @@ def make_engine(arm, backend, data, config):
                                arm="sr_refresh", config=config,
                                refresh_scope="candidates" if arm == "sr_refresh" else "pool"), "sr_refresh"
     if arm == "switch_repeat":
-        try:
-            from srgc_switch_repeat import SwitchRepeatEngine
-        except ImportError:
-            from scripts.srgc_switch_repeat import SwitchRepeatEngine
+        from scripts.srgc_switch_repeat import SwitchRepeatEngine
         return SwitchRepeatEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
                                   data["cached_rewards"], arm="switch_repeat", config=config), "switch_repeat"
     raise ValueError(f"unknown extra arm {arm!r}")
@@ -149,6 +146,7 @@ class SRRefreshEngine(Engine):
 
 def run(args):
     """Inside torchrun: fork the arm from the shared prefix and run it to the plan's total."""
+    prepare_run_storage(args)
     from srgc_rebuttal.plan import digest, input_path, load_plan, validate_inputs
     from srgc_rebuttal.runtime import arm_complete, atomic_json, identity, lease, matches, prefix_ready, run_root
     from srgc_rebuttal.srgc import Config
@@ -300,23 +298,50 @@ def run(args):
             print(f"PASS: {arm} seed {args.seed} reward={sum(per_question.values()) / len(per_question):.4f}")
 
 
+def prepare_run_storage(args):
+    """Set cache paths in the GPU process, not just the shell's plan lookup child."""
+    from scripts.srgc_shared_storage import route_plan, storage_root
+    from srgc_rebuttal.plan import load_plan
+    from srgc_rebuttal.runtime import identity, prefix_ready, run_root
+    plan = load_plan(args.plan)
+    if args.seed not in plan["seeds"]:
+        raise ValueError("seed is not in the frozen plan")
+    group, _ = storage_root(os.environ)
+    folder = run_root(args.plan, plan) / f"seed-{args.seed}"
+    if not folder.is_relative_to(group):
+        raise ValueError("extra arms require an existing group-volume run; start the main queue first")
+    if not prefix_ready(folder, identity(args.plan, plan, args.seed), plan["shared_prefix_updates"]):
+        raise ValueError("the verified shared prefix must finish before this arm can start")
+    args.plan = route_plan(args.plan, writing=True)
+
+
 def results(args):
     """Per-seed endpoint rewards of the refresh arm next to the recorded arms, plus costs."""
     from srgc_rebuttal.plan import load_plan
-    from srgc_rebuttal.runtime import run_root
+    from srgc_rebuttal.runtime import identity, matches, prefix_ready, run_root
     plan = load_plan(args.plan)
     root = run_root(args.plan, plan)
     arms = [*plan["arms"], *EXTRA_ARMS]
     rows = []
     for seed in plan["seeds"]:
         row = {"seed": seed}
+        folder = root / f"seed-{seed}"
         for arm in arms:
-            path = root / f"seed-{seed}" / f"{arm}-endpoint.json"
+            path = folder / f"{arm}-endpoint.json"
             if path.exists():
                 value = json.loads(path.read_text())
+                expected = identity(args.plan, plan, seed)
+                if (not matches(value, expected) or value.get("arm") != arm or
+                        value.get("total_updates") != plan["total_updates"] or
+                        not prefix_ready(folder, expected, plan["shared_prefix_updates"])):
+                    raise ValueError(f"{path}: endpoint identity, prefix or update count differs")
+                prefix = json.loads((folder / "prefix-ready.json").read_text())
+                if value.get("prefix_checkpoint_sha256") != prefix["checkpoint_sha256"]:
+                    raise ValueError(f"{path}: endpoint used a different shared prefix")
                 row[arm] = {"reward_percent": 100 * value["reward"],
                             "selection_gpu_seconds": value["costs"].get("selection_gpu_seconds"),
                             "training_gpu_seconds": value["costs"].get("training_gpu_seconds"),
+                            "cost_measurement_complete": value.get("cost_measurement_complete"),
                             "transitions": value.get("transitions"), "switched_at": value.get("switched_at")}
         rows.append(row)
     if args.json:
@@ -342,8 +367,14 @@ def results(args):
         cells = []
         for arm in arms:
             value = row.get(arm)
-            cells.append(f"{value['selection_gpu_seconds'] or 0:16.0f}" if value else f"{'-':>16}")
+            cost = value.get("selection_gpu_seconds") if value else None
+            cells.append(f"{cost:16.0f}" if cost is not None else f"{'unknown' if value else '-':>16}")
         print(f"{row['seed']:>4}  " + "  ".join(cells))
+    for row in rows:
+        for arm in arms:
+            value = row.get(arm)
+            if value and value["cost_measurement_complete"] is not True:
+                print(f"  seed {row['seed']} {arm}: cost measurement incomplete or unverified")
 
 
 def main():

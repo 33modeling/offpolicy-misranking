@@ -6,6 +6,9 @@ are maintained here, not in the manuscript repository. Use the Python entry
 point `scripts/run_srgc_rebuttal.py`; see [COSTS.md](COSTS.md) for commands,
 stage definitions and accounting boundaries.
 
+For implemented but not yet verified GPU experiments, including cache refresh
+and repeated transitions, see the [limitation experiment inventory and run record](../docs/LIMITATION_EXPERIMENTS_KO.md).
+
 Node-parallel execution now includes missing-cache generation. Run
 `python scripts/run_srgc_rebuttal.py worker --dataset math` on every allocated
 four-GPU node. MBPP is selected with `--dataset mbpp`; its real seed-5--9 input
