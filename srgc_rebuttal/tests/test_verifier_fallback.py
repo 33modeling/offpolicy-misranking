@@ -22,6 +22,11 @@ class NormalizationTest(unittest.TestCase):
         self.assertEqual(fallback.exact_match(r"$\boxed{(8,38)}$", "Answer: (8, 38)"), 1.0)
         self.assertEqual(fallback.exact_match(r"$\boxed{3}$", "Answer: 3.0"), 1.0)
         self.assertEqual(fallback.exact_match(r"$\boxed{\dfrac{1}{2}}$", r"Answer: \frac{1}{2}"), 1.0)
+        self.assertEqual(fallback.exact_match(r"\$18.90", "Answer: 18.90"), 1.0)
+        self.assertEqual(fallback.exact_match(r"\$18.90", r"Answer: \$18.9"), 1.0)
+        self.assertEqual(fallback.exact_match(r"\text{ellipse}", "Answer: ellipse"), 1.0)
+        self.assertEqual(fallback.exact_match(r"\text{ellipse}", "Answer: parabola"), 0.0)
+        self.assertEqual(fallback.exact_match(r"12\%", "Answer: 12%"), 1.0)
 
 
 @unittest.skipUnless(HAVE_MATH_VERIFY, "math-verify not installed")

@@ -27,7 +27,8 @@ _reported = set()
 
 def normalize(answer: str) -> str:
     """The original experiment's canonical answer string (src/data.py), plus ``\\boxed`` unwrapping."""
-    s = answer.strip().rstrip(".").replace("$", "").strip()
+    s = answer.strip().rstrip(".").replace("\\$", "").replace("$", "").strip()  # \$18.90 and $x$ alike
+    s = s.replace("\\%", "%")
     match = _BOXED_RE.search(s)
     if match:
         s = match.group(1)
