@@ -39,6 +39,7 @@ RULES = [
     (re.compile(r"^\[cache\] (.*)$"), lambda m: ("CACHE", m[1])),
     (re.compile(r"^PASS: (.*)$"), lambda m: ("CACHE", m[1])),
     (re.compile(r"^GUARD (.*)$"), lambda m: ("GUARD", m[1])),
+    (re.compile(r"^VERIFY (.*)$"), lambda m: ("VERIFY", m[1])),
     (re.compile(r"^ADMISSION (.*)$"), lambda m: ("ADMIT", m[1].lower())),
 ]
 

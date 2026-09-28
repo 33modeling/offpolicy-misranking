@@ -28,6 +28,7 @@ class LogFormatTest(unittest.TestCase):
             "[cache] rank=0 loading model attention=sdpa": "CACHE   rank=0 loading model attention=sdpa",
             "PASS: cached 100 candidates into /x.json; timings in /x.cache": "CACHE   cached 100 candidates into /x.json; timings in /x.cache",
             "GUARD terminating orphan pid=7 cmd=python": "GUARD   terminating orphan pid=7 cmd=python",
+            "VERIFY fallback exact-match gold='$\\boxed{7}$'": "VERIFY  fallback exact-match gold='$\\boxed{7}$'",
             "ADMISSION PASSED; task log: /x/task.log": "ADMIT   passed; task log: /x/task.log",
             "Traceback (most recent call last):": "LOG     Traceback (most recent call last):",
         }

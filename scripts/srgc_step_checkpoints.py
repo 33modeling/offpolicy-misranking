@@ -84,7 +84,9 @@ def worker_main():
 
 def main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from srgc_verifier_fallback import install as install_tolerant_verifier
     from srgc_rebuttal import run_experiment
+    install_tolerant_verifier()
     from srgc_rebuttal.plan import DEFAULT_PLAN, digest, load_plan
     from srgc_rebuttal.runtime import run_root
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
