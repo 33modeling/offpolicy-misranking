@@ -7,7 +7,7 @@ alarm can expire on a long gold (matrices, intervals), which surfaced as
 attempt. This replacement, installed at runtime by the training child
 (``srgc_step_checkpoints.py``) so the hashed package stays untouched:
 
-* parses each distinct gold once (cached) and retries with a longer timeout;
+* parses each distinct gold once (cached, 5 s bound) and never retries;
 * when the gold still does not parse, scores the response with the original
   experiment's normalized exact match on its last ``Answer:`` line instead
   of raising, and prints one ``VERIFY fallback`` line per such gold;
@@ -20,7 +20,7 @@ ANSWER_LINE_RE = re.compile(r"(?im)^\s*Answer:\s*(.+?)\s*$")
 _THOUSANDS_RE = re.compile(r"[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
 _TEXT_RE = re.compile(r"\\(?:text|mathrm|mbox)\{([^{}]*)\}")
 _BOXED_RE = re.compile(r"\\boxed\{(.*)\}\s*$", re.S)
-RETRY_TIMEOUT = 60
+GOLD_TIMEOUT = 5  # one bounded attempt per distinct gold; a miss falls back at once, never stalls a rank
 _gold_cache = {}
 _reported = set()
 
@@ -63,15 +63,10 @@ def parse_gold(answer: str):
     if answer in _gold_cache:
         return _gold_cache[answer]
     from math_verify import parse
-    extraction = _extraction()
-    gold = []
-    for timeout in (None, RETRY_TIMEOUT):
-        try:
-            gold = parse(answer, extraction_config=extraction, **({} if timeout is None else {"parsing_timeout": timeout}))
-        except Exception:  # noqa: BLE001 - parser failures are treated as unparsable, never fatal
-            gold = []
-        if gold:
-            break
+    try:
+        gold = parse(answer, extraction_config=_extraction(), parsing_timeout=GOLD_TIMEOUT)
+    except Exception:  # noqa: BLE001 - parser failures are treated as unparsable, never fatal
+        gold = []
     _gold_cache[answer] = gold
     return gold
 

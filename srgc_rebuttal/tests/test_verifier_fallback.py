@@ -42,15 +42,15 @@ class TolerantRewardTest(unittest.TestCase):
             self.assertEqual(fallback.tolerant_math_reward(record, "Answer: (D)"), 0.0)
         self.assertEqual(out.getvalue().count("VERIFY fallback"), 1)
 
-    def test_gold_parse_is_cached_and_retried_with_a_longer_timeout(self):
+    def test_gold_parse_is_cached_and_never_retried(self):
         calls = []
         def fake_parse(text, extraction_config, **kwargs):
             calls.append(kwargs.get("parsing_timeout"))
-            return ["x"] if kwargs.get("parsing_timeout") else []
+            return []
         with patch("math_verify.parse", fake_parse):
-            self.assertEqual(fallback.parse_gold("g"), ["x"])
-            self.assertEqual(fallback.parse_gold("g"), ["x"])
-        self.assertEqual(calls, [None, fallback.RETRY_TIMEOUT])
+            self.assertEqual(fallback.parse_gold("g"), [])
+            self.assertEqual(fallback.parse_gold("g"), [])
+        self.assertEqual(calls, [fallback.GOLD_TIMEOUT])
 
     def test_install_replaces_both_verifier_names(self):
         from srgc_rebuttal import run_experiment, verifiers
