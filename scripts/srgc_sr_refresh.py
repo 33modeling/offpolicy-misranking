@@ -29,6 +29,7 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -46,7 +47,14 @@ def arm_name(scope):
     return "sr_refresh" if scope == "candidates" else "sr_refresh-pool"
 
 
-EXTRA_ARMS = ("sr_refresh", "sr_refresh-pool", "switch_repeat")
+EXTRA_ARMS = ("sr_refresh", "sr_refresh-pool", "switch_repeat", "switch_fixed100", "switch_fixed125")
+
+
+def extra_arm(name):
+    """argparse type: a listed extra arm or any switch_fixed<N>."""
+    if name in EXTRA_ARMS or re.fullmatch(r"switch_fixed\d+", name):
+        return name
+    raise argparse.ArgumentTypeError(f"unknown extra arm {name!r}; use one of {EXTRA_ARMS} or switch_fixed<N>")
 
 
 def make_engine(arm, backend, data, config):
@@ -59,6 +67,11 @@ def make_engine(arm, backend, data, config):
         from scripts.srgc_switch_repeat import SwitchRepeatEngine
         return SwitchRepeatEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
                                   data["cached_rewards"], arm="switch_repeat", config=config), "switch_repeat"
+    if re.fullmatch(r"switch_fixed\d+", arm):
+        from scripts.srgc_switch_fixed import SwitchFixedEngine, fixed_step_of
+        return SwitchFixedEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
+                                 data["cached_rewards"], arm="switch_fixed", config=config,
+                                 fixed_step=fixed_step_of(arm)), "switch_fixed"
     raise ValueError(f"unknown extra arm {arm!r}")
 
 
@@ -357,7 +370,7 @@ def results(args):
             cells.append(f"{value['reward_percent']:15.2f}%" if value else f"{'-':>16}")
         print(f"{row['seed']:>4}  " + "  ".join(cells))
     for row in rows:
-        for arm in ("switch", "switch_repeat"):
+        for arm in ("switch", "switch_repeat", "switch_fixed100", "switch_fixed125"):
             value = row.get(arm)
             if value and (value.get("transitions") or value.get("switched_at") is not None):
                 moves = value.get("transitions") or [{"step": value["switched_at"], "to": "sr"}]
@@ -386,7 +399,8 @@ def main():
         if name == "run":
             p.add_argument("--seed", type=int, required=True)
             p.add_argument("--scope", choices=SCOPES, default="candidates")
-            p.add_argument("--arm", choices=EXTRA_ARMS, help="overrides --scope; switch_repeat for repeated transitions")
+            p.add_argument("--arm", type=extra_arm,
+                           help="overrides --scope: switch_repeat (repeated transitions) or switch_fixed<N> (fixed schedule)")
         else:
             p.add_argument("--json", action="store_true")
     args = parser.parse_args()

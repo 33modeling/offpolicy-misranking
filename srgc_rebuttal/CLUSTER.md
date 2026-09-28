@@ -576,3 +576,20 @@ as the main dataset launcher. Their GPU processes set runtime caches on group
 storage, and results reject mismatched experiment/prefix identities rather than
 combining incompatible endpoints. Missing costs are reported as unknown.
 These extra arms are not automatically dispatched by the four-arm queue.
+
+## Fixed-schedule switching control (rule versus a preset transition)
+
+`scripts/srgc_switch_fixed.py` adds `switch_fixed<N>`: On-policy through
+update N exactly as the recorded arms (same refreshes and 40-vs-40 scoring, so
+its pre-transition cost equals Switch's), no SR-GC decision, then SR from
+update N+1 as the recorded Switch does after its transition. N must be a
+multiple of the 25-update selection interval; 100 and 125 mirror the recorded
+seed-4 and seed-3 transitions.
+
+```bash
+sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed100
+sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed125
+sh scripts/run_srgc_sr_refresh.sh math results     # shows fixed arms next to switch / switch_repeat
+```
+
+CPU tests: `python -m unittest srgc_rebuttal.tests.test_switch_fixed`.

@@ -7,8 +7,12 @@ set -eu
 cd "$(dirname "$0")/.."
 DATASET=${1:-}; TARGET=${2:-}; SCOPE=${3:-candidates}
 case "$DATASET" in math|mbpp) ;; *) echo "usage: sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed>|results [candidates|pool]" >&2; exit 2 ;; esac
-case "$SCOPE" in candidates|pool|switch_repeat) ;; *) echo "third argument must be candidates, pool or switch_repeat" >&2; exit 2 ;; esac
-if [ "$SCOPE" = switch_repeat ]; then ARM_ARGS="--arm switch_repeat"; else ARM_ARGS="--scope $SCOPE"; fi
+case "$SCOPE" in
+    candidates|pool) ARM_ARGS="--scope $SCOPE" ;;
+    switch_repeat) ARM_ARGS="--arm switch_repeat" ;;
+    switch_fixed[0-9]*) ARM_ARGS="--arm $SCOPE" ;;
+    *) echo "third argument must be candidates, pool, switch_repeat or switch_fixed<N> (e.g. switch_fixed100)" >&2; exit 2 ;;
+esac
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "$DATASET" in math) EXPLICIT=${PAIR_PYTHON:-} ;; mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; esac
 PY=${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
