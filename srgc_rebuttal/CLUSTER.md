@@ -528,9 +528,17 @@ both plans; failed tasks retry automatically. `status` prints a per-seed table
 their step and node, the tasks that need attention with their log path, and
 the live workers.
 
-After an incompatible code update, ordinary `all run` still selects the old
-active run and correctly refuses to mix implementations. To explicitly start
-a separate corrected run for both datasets, use a new shared name:
+After an incompatible code update, ordinary `all run` automatically preserves
+the old run and starts/joins a separate run for the current implementation.
+No environment-variable prefix is required. Compatible runs continue unchanged;
+plan changes and corrupt queue identities still fail instead of being ignored.
+The `[new-run]` message reports both paths, and `automatic-restart.json` records
+the transition. Names are deterministic and selection is locked, so concurrent
+nodes join the same replacement without resetting progress. Input records come
+from the prior active cohort, while generated caches are rebuilt; historical
+Pair cache imports keep their existing provenance.
+
+An explicit name remains optional:
 
 ```sh
 SRGC_RUN_NAME=codefix-20260929 sh scripts/run_srgc.sh all run
@@ -539,8 +547,8 @@ SRGC_RUN_NAME=codefix-20260929 sh scripts/run_srgc.sh all run
 Use the same name on every allocated node and on retries: it creates or joins
 the same new MATH/MBPP queues, never resets them. Old results and checkpoints
 remain in their original roots; code/plan identity checks stay enabled. This
-is a new experiment, not continuation of the old training trajectory. Choose
-the new run only after stopping workers intended for the old active cohort.
+is a new experiment, not continuation of the old training trajectory. Stop
+workers intended for the old code before updating their checkout.
 The shell's existing GPU cleanup can terminate same-user GPU processes; run
 on a dedicated free node or set `SRGC_SKIP_GPU_CLEANUP=1` to disable cleanup
 and retain normal GPU admission checks.

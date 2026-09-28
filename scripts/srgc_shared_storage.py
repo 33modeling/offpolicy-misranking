@@ -1,6 +1,7 @@
 """Keep large rebuttal artifacts on group storage without changing run identities."""
 
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import uuid
 
 from srgc_rebuttal.plan import digest, input_path, load_plan, validate_inputs
 from srgc_rebuttal.cluster_queue import input_info
-from srgc_rebuttal.runtime import atomic_json, lease, run_root
+from srgc_rebuttal.runtime import atomic_json, code_digest, lease, run_root
 
 
 def storage_root(environment):
@@ -128,7 +129,7 @@ def imported_cache(data):
     return complete and isinstance(cache, dict) and {"file", "sha256"} <= set(cache)
 
 
-def fresh_plan(source, environment, name):
+def fresh_plan(source, environment, name, *, _locked=False):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
         raise ValueError("fresh run name must contain only letters, numbers, underscores or hyphens")
     group, root = storage_root(environment)
@@ -138,7 +139,7 @@ def fresh_plan(source, environment, name):
         raise ValueError("fresh run directory resolves outside group storage")
     target = cohort / "experiments" / source.name
     active = root / f".{source.stem}-active.json"
-    with lease(root / ".storage.lock", wait=True):
+    with nullcontext() if _locked else lease(root / ".storage.lock", wait=True):
         if cohort.exists():
             if not target.is_file() or target.read_bytes() != source.read_bytes():
                 raise ValueError("fresh run name already belongs to another plan; choose a different --fresh name")
@@ -164,8 +165,50 @@ def fresh_plan(source, environment, name):
             finally:
                 if temporary.exists():
                     shutil.rmtree(temporary)
-        atomic_json(active, {"plan": str(target), "source_plan_sha256": digest(source), "fresh_run": name})
+        atomic_json(active, {"plan": str(target), "source_plan_sha256": digest(source), "fresh_run": name,
+                             "implementation_sha256": code_digest()})
     return target
+
+
+def automatic_plan(source, environment):
+    """Join compatible work, or preserve it and start one shared code-version run."""
+    group, root = storage_root(environment)
+    active = root / f".{source.stem}-active.json"
+    with lease(root / ".storage.lock", wait=True):
+        if not active.exists():
+            fresh_plan(source, environment, "candidate40-v2", _locked=True)
+        pointer = json.loads(active.read_text())
+        target = Path(pointer["plan"]).resolve()
+        if not target.is_relative_to(group) or pointer["source_plan_sha256"] != digest(source):
+            raise ValueError("active group-storage run does not match this plan")
+        if target.read_bytes() != source.read_bytes():
+            raise ValueError("active group-storage plan changed")
+        if any(not p.resolve().is_relative_to(group) for _, p in artifact_pairs(target, target)):
+            raise ValueError("active run artifacts resolve outside group storage")
+        plan = load_plan(target)
+        marker = run_root(target, plan) / ".queue/protocol.json"
+        recorded = pointer.get("implementation_sha256")
+        if marker.exists():
+            protocol = json.loads(marker.read_text())
+            if protocol.get("schema") != "srgc-shared-queue-v2" or protocol.get("plan_sha256") != digest(target):
+                raise ValueError("saved queue plan changed; refusing automatic restart")
+            recorded = protocol.get("implementation_sha256")
+            if not isinstance(recorded, str) or not re.fullmatch(r"[0-9a-f]{64}", recorded):
+                raise ValueError("saved queue implementation identity is invalid")
+        current = code_digest()
+        if recorded is None or recorded == current:
+            return target
+        # Stable across nodes, but distinct for each previous run and code version.
+        origin = hashlib.sha256(str(target).encode()).hexdigest()[:16]
+        name = f"code-{current[:16]}-{origin}"
+        replacement = fresh_plan(target, environment, name, _locked=True)
+        receipt = {"previous_plan": str(target), "previous_implementation_sha256": recorded,
+                   "implementation_sha256": current, "plan": str(replacement),
+                   "old_artifacts_preserved": True, "reason": "implementation changed"}
+        atomic_json(replacement.parent.parent / "automatic-restart.json", receipt)
+        print(f"[new-run] code changed {recorded} -> {current}; old work preserved at "
+              f"{run_root(target, plan)}; starting/joining {run_root(replacement, plan)}", file=sys.stderr, flush=True)
+        return replacement
 
 
 def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=False):
@@ -179,9 +222,9 @@ def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=
     group, root = storage_root(os.environ)
     plan = load_plan(source)
     active = root / f".{source.stem}-active.json"
-    if start_or_continue and not active.exists():
-        fresh = "candidate40-v2"
-    if fresh is not None:
+    if start_or_continue:
+        target = automatic_plan(source, os.environ)
+    elif fresh is not None:
         target = fresh_plan(source, os.environ, fresh)
     elif active.exists() and not migrate:
         pointer = json.loads(active.read_text())

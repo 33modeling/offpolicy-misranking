@@ -22,6 +22,67 @@ spec.loader.exec_module(storage)
 
 
 class SharedStorageTests(unittest.TestCase):
+    def old_code_run(self, directory):
+        plan, env = self.fixture(directory)
+        target = storage.fresh_plan(plan, env, "old-code")
+        queue = TaskQueue(target)
+        queue.bind()
+        marker = queue.directory / "protocol.json"
+        protocol = json.loads(marker.read_text())
+        protocol["implementation_sha256"] = "0" * 64
+        atomic_json(marker, protocol)
+        checkpoint = queue.root / "seed-5/prefix-latest.pt"
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.write_bytes(b"old training must remain untouched")
+        bundle = input_path(target, queue.plan, 5)
+        data = json.loads(bundle.read_text())
+        data["cached_rewards"] = {data["candidate_ids"][0]: [1] * 8}
+        data["provenance"]["cache"] = {"old": True}
+        atomic_json(bundle, data)
+        for seed in queue.plan["seeds"]:
+            input_path(plan, queue.plan, seed).unlink()  # only the active cohort has the real inputs
+        return plan, env, target
+
+    def test_plain_run_rolls_changed_code_into_a_new_run_without_touching_old_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env, old = self.old_code_run(directory)
+            before = {p: p.read_bytes() for p in old.parent.parent.rglob("*") if p.is_file()}
+            with patch.dict(os.environ, env):
+                self.assertEqual(storage.route_plan(plan, writing=False), old)
+                target = storage.route_plan(plan, writing=True, start_or_continue=True)
+                self.assertNotEqual(target, old)
+                self.assertIn("code-" + code_digest()[:16], str(target))
+                queue = TaskQueue(target)
+                queue.bind()
+                for seed in queue.plan["seeds"]:
+                    self.assertEqual(json.loads(input_path(target, queue.plan, seed).read_text())["cached_rewards"], {})
+                checkpoint = queue.root / "seed-5/prefix-latest.pt"
+                checkpoint.parent.mkdir(parents=True)
+                checkpoint.write_bytes(b"new progress")
+                self.assertEqual(storage.route_plan(plan, writing=True, start_or_continue=True), target)
+                self.assertEqual(storage.route_plan(plan, writing=False), target)
+                self.assertEqual(checkpoint.read_bytes(), b"new progress")
+            self.assertEqual(before, {p: p.read_bytes() for p in old.parent.parent.rglob("*") if p.is_file()})
+            receipt = json.loads((target.parent.parent / "automatic-restart.json").read_text())
+            self.assertEqual(receipt["previous_plan"], str(old))
+
+    def test_two_plain_start_processes_join_the_same_code_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, env, old = self.old_code_run(directory)
+            code = ("import sys; from pathlib import Path; from scripts.srgc_shared_storage import route_plan; "
+                    "print(route_plan(Path(sys.argv[1]), writing=True, start_or_continue=True))")
+            children = [subprocess.Popen([sys.executable, "-c", code, str(plan)], cwd=SCRIPT.parent.parent,
+                        env={**os.environ, **env}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        for _ in range(2)]
+            outputs = []
+            for child in children:
+                stdout, stderr = child.communicate(timeout=20)
+                self.assertEqual(child.returncode, 0, stderr)
+                outputs.append(stdout.strip())
+            self.assertEqual(outputs[0], outputs[1])
+            self.assertNotEqual(outputs[0], str(old))
+            TaskQueue(Path(outputs[0])).bind()
+
     def test_automatic_start_then_restart_preserves_cache_checkpoint_and_failed_task(self):
         with tempfile.TemporaryDirectory() as directory:
             plan, env = self.fixture(directory)
