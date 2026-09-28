@@ -34,10 +34,14 @@ export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 
 if [ "$MODE" = run ]; then
     export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
+    # SRGC_MAX_ATTEMPTS raises the per-task attempt limit (default 3) so tasks marked
+    # attempts_exhausted by an earlier fault are claimed again after the fix.
+    set -- worker --dataset "$DATASET" --retry-failed
+    [ -z "${SRGC_MAX_ATTEMPTS:-}" ] || set -- "$@" --max-attempts "$SRGC_MAX_ATTEMPTS"
     if [ -n "${SRGC_RUN_NAME:-}" ]; then
-        exec "$PY" scripts/run_srgc_rebuttal.py worker --dataset "$DATASET" --retry-failed --fresh "$SRGC_RUN_NAME"
+        exec "$PY" scripts/run_srgc_rebuttal.py "$@" --fresh "$SRGC_RUN_NAME"
     fi
-    exec "$PY" scripts/run_srgc_rebuttal.py worker --dataset "$DATASET" --retry-failed
+    exec "$PY" scripts/run_srgc_rebuttal.py "$@"
 fi
 export CUDA_VISIBLE_DEVICES=""
 exec "$PY" scripts/run_srgc_rebuttal.py "$MODE" --dataset "$DATASET"

@@ -19,12 +19,20 @@ class ShellLauncherTests(unittest.TestCase):
                               "'threads': os.environ.get('OPENBLAS_NUM_THREADS')}))\n")
             python.chmod(0o755)
             env = {k: v for k, v in os.environ.items() if k not in
-                   ("PAIR_PYTHON", "SWITCH_PYTHON", "CUDA_VISIBLE_DEVICES", "SRGC_RUN_NAME")}
+                   ("PAIR_PYTHON", "SWITCH_PYTHON", "CUDA_VISIBLE_DEVICES", "SRGC_RUN_NAME", "SRGC_MAX_ATTEMPTS")}
             env.update({"PAIR_PYTHON" if dataset == "math" else "SWITCH_PYTHON": str(python), **environment})
             command = ["sh", str(SCRIPT), dataset, *([mode] if mode else [])]
             result = subprocess.run(command, cwd="/tmp", env=env, text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
+
+    def test_attempt_limit_override_reaches_the_worker(self):
+        report = self.invoke("math", SRGC_MAX_ATTEMPTS="6")
+        self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", "math",
+                                          "--retry-failed", "--max-attempts", "6"])
+        report = self.invoke("math", SRGC_MAX_ATTEMPTS="6", SRGC_RUN_NAME="explicit-study")
+        self.assertEqual(report["args"][-2:], ["--fresh", "explicit-study"])
+        self.assertIn("--max-attempts", report["args"])
 
     def test_math_and_mbpp_start_or_continue_with_one_command_and_automatic_retry(self):
         for dataset in ("math", "mbpp"):
