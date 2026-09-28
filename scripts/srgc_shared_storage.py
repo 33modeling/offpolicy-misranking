@@ -121,6 +121,13 @@ def stage(source, *, environment, migrate=False):
         return target
 
 
+def imported_cache(data):
+    """A complete cache copied from a finished source run (file + sha256) is reused, never regenerated."""
+    cache = data.get("provenance", {}).get("cache")
+    complete = set(data.get("cached_rewards", {})) == set(data["candidate_ids"])
+    return complete and isinstance(cache, dict) and {"file", "sha256"} <= set(cache)
+
+
 def fresh_plan(source, environment, name):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
         raise ValueError("fresh run name must contain only letters, numbers, underscores or hyphens")
@@ -142,8 +149,9 @@ def fresh_plan(source, environment, name):
                 publish_copy(source, temporary_plan)
                 for seed in plan["seeds"]:
                     data = json.loads(input_path(source, plan, seed).read_text())
-                    data["cached_rewards"] = {}
-                    data["provenance"].pop("cache", None)
+                    if not imported_cache(data):
+                        data["cached_rewards"] = {}
+                        data["provenance"].pop("cache", None)
                     validate_inputs(data, require_cache=False)
                     destination = input_path(temporary_plan, plan, seed)
                     if not destination.is_relative_to(temporary.resolve()):

@@ -13,6 +13,8 @@ import sys
 def main():
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root))
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.append(str(Path(__file__).resolve().parent))
     actions = {"run": "run_experiment", "cache": "build_cache", "plan": "plan",
                "summary": "summarize", "costs": "cost_report", "cluster": "cluster",
                "prepare": "prepare_inputs", "status": "reports", "results": "reports", "storage": None,
@@ -36,14 +38,17 @@ def main():
     if args and args[0] in {"worker", "launch", "commands", "stop", "resume"}:
         args.insert(0, "cluster")
     action = args.pop(0) if args and args[0] in actions else "run"
-    plan = settings.plan or root / "srgc_rebuttal/experiments" / (
-        "mbpp_seeds.json" if settings.dataset == "mbpp" else "additional_seeds.json")
+    writing = action in {"run", "cache", "prepare"} or (action == "cluster" and args and args[0] in {"worker", "launch", "resume"})
+    if settings.plan:
+        plan = settings.plan
+    else:
+        from srgc_pair_inputs import default_plan
+        plan = default_plan(root, "mbpp" if settings.dataset == "mbpp" else "math", os.environ, writing=bool(writing))
     if settings.plan and settings.dataset:
         from srgc_rebuttal.plan import load_plan
         expected = "math_train" if settings.dataset == "math" else "mbpp"
         if load_plan(plan).get("dataset") != expected:
             options.error("--dataset and --plan refer to different datasets")
-    writing = action in {"run", "cache", "prepare"} or (action == "cluster" and args and args[0] in {"worker", "launch", "resume"})
     if settings.fresh and not (action == "storage" or (action == "cluster" and args and args[0] in {"worker", "launch"})):
         options.error("--fresh is supported by worker, launch and storage")
     if action in {"backup", "backup-watch"}:
@@ -106,8 +111,9 @@ def main():
         from srgc_checkpoint_backup import automatic_backup
         from srgc_log_format import uniform_log
         from srgc_process_guard import process_guard
+        from srgc_seed_order import seed_first_queue
         from srgc_step_checkpoints import worker_main
-        with uniform_log(), automatic_backup(plan), process_guard(plan):
+        with uniform_log(), automatic_backup(plan), process_guard(plan), seed_first_queue():
             worker_main()
     else:
         runpy.run_module(f"srgc_rebuttal.{actions[action]}", run_name="__main__")

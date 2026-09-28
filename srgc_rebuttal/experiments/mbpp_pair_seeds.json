@@ -1,0 +1,49 @@
+{
+  "schema": "srgc-additional-seeds-v1",
+  "paper_commit": "e649d2ee84fe34a1e7e1ed742cd53fe896df1a40",
+  "model": "allenai/Olmo-3-1025-7B",
+  "model_revision": "a81bae42db3975be1671e27b9c9a56da1a9f980f",
+  "seeds": [
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "arms": [
+    "random",
+    "sr",
+    "on_policy",
+    "switch"
+  ],
+  "shared_prefix_updates": 25,
+  "total_updates": 275,
+  "world_size": 4,
+  "objective": "grpo",
+  "responses": 8,
+  "scoring_prompts_per_set": 40,
+  "training_prompts": 4,
+  "check_interval": 25,
+  "first_check": 25,
+  "projection_dim": 4096,
+  "projection_seed": 0,
+  "max_new_tokens": 2048,
+  "verifier": "srgc_rebuttal.verifiers:code_reward",
+  "input_pattern": "../inputs/mbpp-pair-seed-{seed}.json",
+  "output_root": "../runs/mbpp-pair-seeds",
+  "primary_outcome": "Mean binary reward on the mbpp evaluation questions at total step 275, averaged over 300 questions and eight responses per question",
+  "primary_contrasts": [
+    "switch-minus-on_policy",
+    "switch-minus-sr"
+  ],
+  "analysis": "Report every seed, paired reward differences, their across-seed mean and sample standard deviation. Report new seeds separately before pooling with seeds 3 and 4. Do not select seeds by outcomes or tune the switching rule.",
+  "logprob_micro_batch": 2,
+  "logit_chunk_tokens": 512,
+  "dataset": "mbpp",
+  "dataset_revision": "4bb6404fdc6cacfda99d4ac4205087b89d32030c",
+  "split_seed": 0,
+  "ranking_validation_prompts": 50,
+  "selection_interval": 25,
+  "protocol_revision": "2026-09-27-selection-every-25",
+  "inputs": "seed 3/4 MBPP selection-switch source splits and their eight initial-policy cache rewards per candidate (5=3 6=4 7=3 8=4 9=3); first 300 of the frozen independent evaluation; no GPU cache generation"
+}
