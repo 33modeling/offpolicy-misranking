@@ -34,10 +34,10 @@ export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 
 if [ "$MODE" = run ]; then
     export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
-    # SRGC_MAX_ATTEMPTS raises the per-task attempt limit (default 3) so tasks marked
-    # attempts_exhausted by an earlier fault are claimed again after the fix.
-    set -- worker --dataset "$DATASET" --retry-failed
-    [ -z "${SRGC_MAX_ATTEMPTS:-}" ] || set -- "$@" --max-attempts "$SRGC_MAX_ATTEMPTS"
+    # Failed tasks are retried automatically (two minutes apart) up to 50 attempts,
+    # so a transient fault never leaves a task parked as attempts_exhausted.
+    # SRGC_MAX_ATTEMPTS overrides the limit.
+    set -- worker --dataset "$DATASET" --retry-failed --max-attempts "${SRGC_MAX_ATTEMPTS:-50}" --retry-delay 120
     if [ -n "${SRGC_RUN_NAME:-}" ]; then
         exec "$PY" scripts/run_srgc_rebuttal.py "$@" --fresh "$SRGC_RUN_NAME"
     fi

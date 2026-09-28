@@ -29,7 +29,7 @@ class ShellLauncherTests(unittest.TestCase):
     def test_attempt_limit_override_reaches_the_worker(self):
         report = self.invoke("math", SRGC_MAX_ATTEMPTS="6")
         self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", "math",
-                                          "--retry-failed", "--max-attempts", "6"])
+                                          "--retry-failed", "--max-attempts", "6", "--retry-delay", "120"])
         report = self.invoke("math", SRGC_MAX_ATTEMPTS="6", SRGC_RUN_NAME="explicit-study")
         self.assertEqual(report["args"][-2:], ["--fresh", "explicit-study"])
         self.assertIn("--max-attempts", report["args"])
@@ -39,7 +39,7 @@ class ShellLauncherTests(unittest.TestCase):
             with self.subTest(dataset=dataset):
                 report = self.invoke(dataset)
                 self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", dataset,
-                                                  "--retry-failed"])
+                                                  "--retry-failed", "--max-attempts", "50", "--retry-delay", "120"])
                 self.assertEqual(report["cuda"], "0,1,2,3")
                 self.assertEqual(report["threads"], "1")
                 self.assertEqual(report["cwd"], str(SCRIPT.parents[1]))
@@ -59,7 +59,8 @@ class ShellLauncherTests(unittest.TestCase):
         for dataset in ("math", "mbpp"):
             report = self.invoke(dataset, SRGC_RUN_NAME="explicit-study")
             self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", dataset,
-                                              "--retry-failed", "--fresh", "explicit-study"])
+                                              "--retry-failed", "--max-attempts", "50", "--retry-delay", "120",
+                                              "--fresh", "explicit-study"])
             self.assertEqual(report["cuda"], "0,1,2,3")
 
     def test_invalid_invocations_fail_before_python(self):

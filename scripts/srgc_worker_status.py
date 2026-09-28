@@ -67,7 +67,7 @@ def idle_summary(rows, max_attempts):
         names = ", ".join(f"{task} ({status.replace('_', ' ')})" for task, status in attention)
         parts.append(f"needs attention {len(attention)}: {names}")
         if any(status == "attempts_exhausted" for _, status in attention):
-            parts.append(f"restart with SRGC_MAX_ATTEMPTS>{max_attempts} to retry exhausted tasks")
+            parts.append(f"{max_attempts} attempts used; the fault repeats, read the task log")
     return " · ".join(parts)
 
 
