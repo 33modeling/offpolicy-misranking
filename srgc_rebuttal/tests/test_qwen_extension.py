@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import srgc_qwen35 as qwen
 if HAS_QWEN:
-    from srgc_rebuttal.torch_backend import TorchBackend
+    from srgc_qwen35_memory import QwenBackend as TorchBackend, bounded_generate
     from srgc_rebuttal.tests.test_torch_backend import TinyTokenizer
 
 
@@ -43,6 +43,8 @@ class QwenModelTests(unittest.TestCase):
     def setUp(self):
         torch.set_num_threads(1)
         model = qwen.attach_adapter(tiny_model(), LoraConfig(r=2, lora_alpha=4, task_type="CAUSAL_LM"), get_peft_model)
+        base = model.get_base_model()
+        base.generate = bounded_generate(base.generate, torch.device("cpu"))
         self.backend = TorchBackend(model, TinyTokenizer(), {"p0": {"prompt": "problem", "answer": "3"}},
             lambda record, text: float("3" in text.split()), projection_dim=16, max_new_tokens=3)
 

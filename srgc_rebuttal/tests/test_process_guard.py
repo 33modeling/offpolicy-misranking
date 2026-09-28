@@ -127,7 +127,7 @@ class ProcessGuardTest(unittest.TestCase):
             child = ("import fcntl, time; "
                      f"handle = open({str(lock)!r}, 'a+'); "
                      "fcntl.flock(handle, fcntl.LOCK_EX); print('locked', flush=True); time.sleep(120)")
-            proc = subprocess.Popen([sys.executable, "-c", child, "torch.distributed.run", "--plan", PLAN],
+            proc = subprocess.Popen([sys.executable, "-c", child, "srgc_rebuttal.run_experiment", "--plan", PLAN],
                                     stdout=subprocess.PIPE, text=True, start_new_session=True)
             self.procs = [proc]
             self.assertEqual(proc.stdout.readline().strip(), "locked")
@@ -151,7 +151,7 @@ class ProcessGuardTest(unittest.TestCase):
                      "fcntl.flock(handle, fcntl.LOCK_EX); print('locked', flush=True); time.sleep(120)")
             owner_code = ("import subprocess, sys, time; "
                           f"p = subprocess.Popen([sys.executable, '-c', {child!r}, "
-                          f"'torch.distributed.run', '--plan', {PLAN!r}], "
+                          f"'srgc_rebuttal.run_experiment', '--plan', {PLAN!r}], "
                           "stdout=subprocess.PIPE, text=True, start_new_session=True); "
                           "p.stdout.readline(); print(p.pid, flush=True); time.sleep(120)")
             owner = subprocess.Popen([sys.executable, "-c", owner_code, "run_srgc_rebuttal.py", "worker"],

@@ -7,6 +7,10 @@
 네 arm 실험을 Qwen에서 수행한다. 모델과 초기 학습 상태가 함께 달라지므로
 순수 architecture ablation으로 해석하지 않는다.
 
+같은 날 메모리·여러 노드·저장 경로를 추가 감사해 실행 프로토콜을
+**`qwen35-9b-v2`**로 분리했다. 이전 v1 plan/cache/checkpoint를 덮어쓰거나
+새 코드로 이어서 실행하지 않는다. 기존 실행이 있다면 그 코드 snapshot을 유지한다.
+
 ## 실험 구성
 
 | 항목 | 설정 |
@@ -21,6 +25,7 @@
 | 초기 SR 캐시 | Qwen 초기 정책에서 400문제 × 8응답을 새로 생성; OLMo reward/prefix 재사용 금지 |
 | 평가 | 같은 300문제 × 8응답, total step 275 결과와 실제 phase별 비용 |
 | 생성 | temperature 1, top-p 1, top-k 0, 최대 2,048 새 토큰; thinking off |
+| 메모리 | 생성 micro-batch 2, log-prob micro-batch 1, vocabulary projection 64토큰, non-reentrant activation checkpointing |
 | 모델별 차이 | Qwen tokenizer chat wrapper; attention q/v 및 DeltaNet 4개 projection에 LoRA |
 
 On-policy/Switch의 refresh 비용에는 후보 두 집합의 합집합 및 validation
@@ -39,6 +44,9 @@ On-policy/Switch의 refresh 비용에는 후보 두 집합의 합집합 및 vali
 [`configs/srgc_qwen35/requirements.txt`](../configs/srgc_qwen35/requirements.txt).
 CUDA PyTorch는 노드의 검증된 빌드를 유지한다. FLA 0.5.2가 필요하며
 추론뿐 아니라 dense scoring/LoRA 역전파가 실제 GPU admission을 통과해야 한다.
+Transformers 5.14.1 / PEFT 0.20.0 / FLA 0.5.2를 검사하고, 최초 worker의
+PyTorch·CUDA·cuDNN·Python·나머지 패키지 버전을 각 queue에 기록한다.
+다른 환경의 노드나 환경이 바뀐 재시작은 작업을 받기 전에 거부한다.
 
 ```sh
 export QWEN_PYTHON="$OM_WORK/.venv-qwen35/bin/python"
@@ -61,9 +69,16 @@ sh scripts/run_srgc_qwen35.sh mbpp prepare --source-plan /absolute/path/to/mbpp-
 모델 가중치 다운로드 전 CPU에서 입력을 준비하려면 `prepare`에
 `--allow-tokenizer-download`를 붙인다. 이 옵션은 고정 revision의 tokenizer만 받는다.
 
-기본 결과 위치는 `$OM_WORK/srgc-rebuttal/qwen35-9b`이며
+기본 결과 위치는 `$OM_WORK/srgc-rebuttal/qwen35-9b-v2`이며
 `SRGC_QWEN_ROOT`로 별도 group-volume 하위 경로를 지정할 수 있다.
 **모든 노드에서 같은 코드, 환경, 모델 snapshot, Qwen root를 사용한다.**
+준비·다운로드·결과 export 단계부터 group volume과 경로를 검사한다.
+마운트 경로가 없으면 홈 저장으로 대체하지 않는다. group 밖으로 향하는
+root, model 경로, plan 출력 경로, 기존 심볼릭 링크를 거부한다.
+`OM_WORK`가 홈 경로라면 기본 group work 경로로 정규화한다.
+Hugging Face·Torch·Triton·CUDA 캐시와 임시 파일도
+`$OM_WORK/qwen-runtime-cache` 아래에 둔다. 각 rank가 과거 receipt 전체를
+반복 스캔하지 않고 해당 plan의 실제 입력·출력 경로를 검사한다.
 
 ```sh
 # 각 빈 4-H100 노드에서 실행. all은 MATH/MBPP 두 queue를 모두 처리한다.
@@ -83,11 +98,28 @@ sh scripts/run_srgc_qwen35.sh all run
 역전파·GRPO update**를 검사한다. 이 검사의 보상은 backward 확인용 합성
 보상이며 실험 cache/결과에 기록하지 않는다. 실패하면 cache 학습을 시작하지
 않고 `.queue/admission/.../qwen-smoke.log`를 확인하도록 중단한다.
+짧은 예제만 검사하지 않고 준비된 두 데이터셋에서 가장 긴 prompt와
+2,048-token 합성 응답으로 역전파를 검사한다. rank별 peak allocated/reserved
+메모리를 로그에 남기고, 성공·실패한 admission의 GPU 시간을 별도 JSON에 보존한다.
+이미 완료된 queue를 다시 조회·실행할 때 모델 admission을 반복하지 않는다.
 
 학습은 매 update 저장하고 공통 prefix의 모델/optimizer를 네 arm이 공유한다.
 완료 cache/arm은 재실행하지 않으며 코드·plan·입력이 다르면 resume을 거부한다.
 OLMo와 동일한 물리 GPU UUID lock을 사용한다. 기존 worker나 lock 파일을
 삭제하는 실행 옵션은 없다. 실패 원인 수정 후에만 `run --retry-failed`를 사용한다.
+
+`all` worker도 MATH/MBPP별 worker receipt와 로그 경로를 정확히 기록한다.
+전용 root가 다른 Qwen worker끼리도 공통 GPU UUID 잠금을 사용한다.
+정리 대상은 SRGC 실행으로 한정하고 무관한 `torchrun`을 종료하지 않는다.
+캐시 완료를 task 잠금 획득 후 다시 확인해 다른 노드와의 완료 경합을 처리한다.
+비용 receipt가 없는 완료 cache는 export 복구부터 수행하고 prefix를 시작하지 않는다.
+
+문제당 응답은 여전히 **8개**다. 생성만 2개씩 나누며 OOM이면 해당 호출의
+난수 상태를 복원하고 1개씩 다시 생성한다. 응답을 버리거나 길이를 줄이지 않는다.
+최소 배치에서도 실패하거나 다른 CUDA 오류가 나면 실패를 그대로 보고한다.
+8개 동시 생성과 난수 소비 순서가 달라질 수 있어 v1과 결과를 합치지 않는다.
+optimizer checkpoint는 GPU에서 deep-copy하지 않고 CPU로 복사하며,
+5/25-step 경계 저장도 flush/fsync 후 원자적으로 교체한다.
 
 ## 검증 범위와 결과 보고
 
@@ -96,8 +128,9 @@ LoRA update, optimizer 상태 복원 및 동일 결과 재현을 검사했다. �
 `model.language_model.*` 이름을 text-only decoder에 정확히 매핑하며, 누락된
 text weight가 있으면 실행을 거부하는 검사도 포함한다.
 
-회귀 검사: `python -m unittest discover -s srgc_rebuttal/tests -v` 전체
-229개 통과(Python 3.12, PyTorch 2.13 CPU, Transformers 5.14.1, PEFT 0.20.0).
+회귀 검사 명령은 `python -m unittest discover -s srgc_rebuttal/tests -v`다.
+환경은 Python 3.12, PyTorch 2.13 CPU, Transformers 5.14.1, PEFT 0.20.0.
+감사 결과와 실행한 검사는 [추가 감사 기록](QWEN35_SRGC_AUDIT_KO.md)에 정리한다.
 고정 revision의 실제 tokenizer로 MATH/MBPP 10개 입력 bundle을 생성하고,
 40개 continuation plan 및 양쪽 status/results export를 검증했다.
 기존 OLMo engine SHA-256은

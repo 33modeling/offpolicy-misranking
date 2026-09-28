@@ -17,7 +17,7 @@ import signal
 import sys
 import time
 
-TARGET_MARKERS = ("srgc_rebuttal.run_experiment", "srgc_rebuttal.build_cache", "torch.distributed.run",
+TARGET_MARKERS = ("srgc_rebuttal.run_experiment", "srgc_rebuttal.build_cache",
                   "srgc_step_checkpoints.py", "srgc_qwen35_rank.py")
 OWNER_MARKERS = ("run_srgc_rebuttal.py", "srgc_rebuttal.cluster", "run_srgc_qwen35.py")
 

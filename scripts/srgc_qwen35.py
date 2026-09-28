@@ -21,7 +21,8 @@ REVISION = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
 TARGETS = ("q_proj", "v_proj", "in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a")
 ADAPTER_FILES = ("scripts/srgc_qwen35.py", "scripts/run_srgc_qwen35.py",
                  "scripts/srgc_qwen35_rank.py", "scripts/srgc_verifier_fallback.py",
-                 "scripts/srgc_step_checkpoints.py", "src/model_matrix.py")
+                 "scripts/srgc_step_checkpoints.py", "scripts/srgc_qwen35_memory.py",
+                 "scripts/srgc_qwen35_storage.py", "scripts/srgc_qwen35_worker.py", "src/model_matrix.py")
 
 
 def adapter_digest():
@@ -60,6 +61,9 @@ def runtime_packages():
     from model_matrix import _require_runtime
     _require_runtime(specification())
     versions["fla-core"] = importlib.metadata.version("fla-core")
+    for name, expected in {"transformers": "5.14.1", "peft": "0.20.0", "fla-core": "0.5.2"}.items():
+        if versions[name] != expected:
+            raise ValueError(f"Qwen runtime requires {name}=={expected}; found {versions[name]}")
     return versions
 
 
@@ -67,11 +71,30 @@ def model_path(model, revision, environment):
     if (model, revision) != (MODEL, REVISION):
         raise ValueError("Qwen extension refuses another model/revision (including 9B-Base)")
     sys.path.insert(0, str(REPO / "src"))
-    from model_matrix import validate_snapshot_provenance
+    from model_matrix import validate_snapshot_provenance, _weight_shards, _manifest_files
+    from srgc_rebuttal.runtime import atomic_json, lease
+    from srgc_qwen35_storage import group_work, inside
+    import socket
     spec = specification()
     models = Path(environment.get("MODELS_DIR", str(Path(environment.get("GROUP_VOLUME", "/group-volume")) / "models")))
     path = Path(environment.get("SRGC_QWEN_MODEL_PATH", str(models / spec["local_directory"])))
-    validate_snapshot_provenance(spec, path)
+    group, work = group_work(environment)
+    path = inside(path, group)
+
+    def fingerprint():
+        files = [path / ".om_snapshot.json", *_manifest_files(path, _weight_shards(path))]
+        return {str(f.relative_to(path)): [f.stat().st_ino, f.stat().st_size,
+                f.stat().st_mtime_ns, f.stat().st_ctime_ns] for f in files}
+
+    key = hashlib.sha256(str(path).encode()).hexdigest()
+    marker = inside(work / "qwen-runtime-cache/verified-models" / socket.gethostname() / f"{key}.json", group)
+    with lease(marker.with_suffix(".lock"), wait=True):
+        current = {"model": model, "revision": revision, "files": fingerprint()}
+        if not marker.exists() or json.loads(marker.read_text()) != current:
+            validate_snapshot_provenance(spec, path)
+            if current["files"] != fingerprint():
+                raise ValueError("model snapshot changed during verification")
+            atomic_json(marker, current)
     return str(path.resolve())
 
 
@@ -97,6 +120,8 @@ def load_text_model(source, device, *, attention="eager"):
     # Avoid inherited generation defaults silently changing the matched sampling.
     policy.generation_config.repetition_penalty = 1.0
     policy.eval().to(device)
+    from srgc_qwen35_memory import bounded_generate
+    policy.generate = bounded_generate(policy.generate, torch.device(device))
     return policy, tokenizer
 
 
@@ -138,6 +163,7 @@ def make_bundle(source, tokenizer, *, source_plan, source_sha256):
         "source_plan": str(source_plan), "source_bundle_sha256": source_sha256,
         "source_provenance": copy.deepcopy(source["provenance"]),
         "model": MODEL, "model_revision": REVISION,
+        "qwen_extension": "qwen35-9b-v2", "generation_micro_batch": 2,
         "prompt_format": "qwen35_tokenizer_chat_thinking_off",
         "cache": "pending: Qwen initial-policy rewards; source rewards are NOT reused"}
     validate_inputs(bundle, require_cache=False)
@@ -157,8 +183,10 @@ def prepare(dataset, source_plan, destination, tokenizer):
     target = destination / "experiments" / f"qwen35-9b-{dataset}.json"
     plan = {**original, "model": MODEL, "model_revision": REVISION,
             "model_initialization": "posttrained", "model_loader": "Qwen3_5ForCausalLM",
-            "extension": "qwen35-9b-v1", "adapter_sha256": adapter_digest(),
+            "extension": "qwen35-9b-v2", "adapter_sha256": adapter_digest(),
             "engine_sha256": engine_digest(),
+            "generation_micro_batch": 2, "logprob_micro_batch": 1, "logit_chunk_tokens": 64,
+            "gradient_checkpointing": "nonreentrant", "checkpoint_snapshot": "cpu",
             "lora_targets": list(TARGETS), "thinking": "off", "attention": "eager",
             "input_pattern": f"../inputs/{dataset}-seed-{{seed}}.json",
             "output_root": f"../runs/{dataset}",
@@ -193,13 +221,40 @@ def prepare(dataset, source_plan, destination, tokenizer):
 def validate_extension(path):
     from srgc_rebuttal.plan import load_plan
     plan = load_plan(path)
-    expected = {"model": MODEL, "model_revision": REVISION, "extension": "qwen35-9b-v1",
+    dataset = {"math_train": "math", "mbpp": "mbpp"}.get(plan.get("dataset"))
+    if dataset is None:
+        raise ValueError("Qwen plan needs MATH or MBPP")
+    expected = {"model": MODEL, "model_revision": REVISION, "extension": "qwen35-9b-v2",
                 "adapter_sha256": adapter_digest(), "lora_targets": list(TARGETS),
                 "engine_sha256": engine_digest(), "thinking": "off", "attention": "eager",
-                "objective": "grpo", "max_new_tokens": 2048}
+                "objective": "grpo", "max_new_tokens": 2048,
+                "generation_micro_batch": 2, "logprob_micro_batch": 1, "logit_chunk_tokens": 64,
+                "gradient_checkpointing": "nonreentrant", "checkpoint_snapshot": "cpu",
+                "seeds": [5, 6, 7, 8, 9], "ranking_validation_prompts": 50,
+                "input_pattern": f"../inputs/{dataset}-seed-{{seed}}.json", "output_root": f"../runs/{dataset}",
+                "verifier": "srgc_rebuttal.run_experiment:math_reward" if dataset == "math" else "srgc_rebuttal.verifiers:code_reward"}
     if any(plan.get(k) != v for k, v in expected.items()):
         raise ValueError("Qwen plan/model/adapter differs; do not use the OLMo launcher or reuse a run")
+    from srgc_qwen35_storage import validate_plan_paths
+    validate_plan_paths(path, plan)
     return plan
+
+
+def validate_bundle_model(data, plan, seed):
+    provenance = data.get("provenance", {})
+    if data.get("dataset") != plan["dataset"] or len(data.get("ranking_validation_ids", [])) != 50:
+        raise ValueError("bundle dataset/reference size differs from the Qwen plan")
+    if (provenance.get("model"), provenance.get("model_revision")) != (MODEL, REVISION):
+        raise ValueError("input bundle is not prepared for the pinned Qwen model")
+    if provenance.get("qwen_extension") != "qwen35-9b-v2" or provenance.get("generation_micro_batch") != 2:
+        raise ValueError("bundle uses a different Qwen generation protocol")
+    if data.get("cached_rewards"):
+        expected = {"model": MODEL, "model_revision": REVISION, "responses": 8,
+                    "max_new_tokens": plan["max_new_tokens"], "cache_seed": seed,
+                    "verifier": plan["verifier"], "attention": "eager"}
+        cache = provenance.get("cache")
+        if not isinstance(cache, dict) or any(cache.get(k) != v for k, v in expected.items()):
+            raise ValueError("cached rewards do not match the pinned Qwen protocol")
 
 
 def task_command(queue, task):
@@ -220,11 +275,41 @@ def task_command(queue, task):
 def runtime_adapter():
     """Scope all substitutions to a dedicated Qwen process, including children."""
     from unittest.mock import patch
-    from srgc_rebuttal import existing_runtime, runtime, admission, cluster, cluster_queue, build_cache, run_experiment
+    from srgc_rebuttal import existing_runtime, runtime, admission, cluster, cluster_queue, build_cache, run_experiment, reports
     original_digest = runtime.code_digest
 
     def code_digest():
         return hashlib.sha256((original_digest() + adapter_digest()).encode()).hexdigest()
+
+    class QwenCacheStore(build_cache.CacheStore):
+        def __init__(self, bundle_path, bundle, protocol):
+            super().__init__(bundle_path, bundle, {**protocol, "qwen_extension": "qwen35-9b-v2",
+                "generation_micro_batch": 2, "adapter_sha256": adapter_digest()})
+
+    class QwenQueue(cluster_queue.TaskQueue):
+        @contextmanager
+        def claim(self, **kwargs):
+            with super().claim(**kwargs) as task:
+                if task is not None:
+                    # Another node can finish cache export after the initial
+                    # verify but before this node acquires the task lease.
+                    self.verify()
+                    if self.complete(task):
+                        self.finish(task, 0)
+                        yield None
+                        return
+                yield task
+
+        def verify(self):
+            super().verify()
+            from srgc_rebuttal.plan import input_path, digest
+            for seed in self.plan["seeds"]:
+                bundle = input_path(self.plan_path, self.plan, seed)
+                data = json.loads(bundle.read_text())
+                validate_bundle_model(data, self.plan, seed)
+                if self.cache_ready[seed]:
+                    receipt = bundle.with_suffix(".cache") / "cost-summary.json"
+                    self.cache_ready[seed] = receipt.exists() and json.loads(receipt.read_text()).get("bundle_sha256") == digest(bundle)
 
     # Patch both definitions and already-bound imports; restore all of them on exit.
     with ExitStack() as stack:
@@ -235,7 +320,9 @@ def runtime_adapter():
         for module, name, value in ((admission, "model_path", model_path),
                 (admission, "runtime_packages", runtime_packages), (cluster, "runtime_packages", runtime_packages),
                 (cluster_queue, "code_digest", code_digest), (build_cache, "load_model", load_model),
-                (run_experiment, "load_model", load_model), (cluster, "task_command", task_command)):
+                (run_experiment, "load_model", load_model), (cluster, "task_command", task_command),
+                (cluster_queue, "TaskQueue", QwenQueue), (cluster, "TaskQueue", QwenQueue),
+                (reports, "code_digest", code_digest), (build_cache, "CacheStore", QwenCacheStore)):
             stack.enter_context(patch.object(module, name, value))
         yield
 
@@ -244,8 +331,11 @@ def runtime_adapter():
 def training_adapter():
     from unittest.mock import patch
     import peft
+    from srgc_rebuttal import torch_backend
+    from srgc_qwen35_memory import QwenBackend, durable_checkpoints
     original = peft.get_peft_model
-    with patch.object(peft, "get_peft_model", lambda model, config: attach_adapter(model, config, original)):
+    with patch.object(peft, "get_peft_model", lambda model, config: attach_adapter(model, config, original)), \
+            patch.object(torch_backend, "TorchBackend", QwenBackend), durable_checkpoints():
         yield
 
 
@@ -260,35 +350,57 @@ def smoke(plan_path):
     import numpy as np
     from peft import LoraConfig, get_peft_model
     from srgc_rebuttal.distributed import initialize
-    from srgc_rebuttal.torch_backend import TorchBackend
+    from srgc_qwen35_memory import QwenBackend
     plan = validate_extension(plan_path)
     rank, local = initialize(4)
     try:
+        torch.manual_seed(104729)
+        torch.cuda.reset_peak_memory_stats()
         model, tokenizer = load_model(MODEL, REVISION, torch.device("cuda", local))
         model = attach_adapter(model, LoraConfig(r=16, lora_alpha=32, task_type="CAUSAL_LM"), get_peft_model)
-        prompt = tokenizer.apply_chat_template([{"role": "user", "content": "Compute 1 + 1."}],
-            tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        from srgc_rebuttal.plan import input_path
+        prompt, longest = "", 0
+        for entry in json.loads(os.environ.get("SRGC_QWEN_PLANS", json.dumps([str(plan_path)]))):
+            source = Path(entry)
+            spec = validate_extension(source)
+            for seed in spec["seeds"]:
+                data = json.loads(input_path(source, spec, seed).read_text())
+                for record in data["records"].values():
+                    length = len(tokenizer.encode(record["prompt"], add_special_tokens=True))
+                    if length > longest:
+                        prompt, longest = record["prompt"], length
+        if not prompt:
+            raise ValueError("admission needs the prepared experiment's prompts")
         records = {f"p{i}": {"prompt": prompt, "answer": "2"} for i in range(4)}
-        backend = TorchBackend(model, tokenizer, records, lambda record, text: 0.0,
+        backend = QwenBackend(model, tokenizer, records, lambda record, text: 0.0,
                                max_new_tokens=8, projection_dim=plan["projection_dim"])
         sequences, _, start = backend._rollout(f"p{rank}", 8, 17)
         # A capable model may generate the same answer eight times. Use two
         # distinct forced suffixes so admission still exercises real backward.
         prefix = sequences[0][:start]
         suffixes = [tokenizer.encode(text, add_special_tokens=False) for text in (" 2", " 3")]
-        sequences = [torch.cat((prefix, torch.tensor(suffixes[i % 2], device=prefix.device))) for i in range(8)]
+        sequences = [torch.cat((prefix, torch.tensor(
+            (suffixes[i % 2] * plan["max_new_tokens"])[:plan["max_new_tokens"]], device=prefix.device))) for i in range(8)]
         backend._rollout = lambda *args: (sequences, np.array([0., 1.] * 4), start)
         gradients = backend.score_gradients(list(records), responses=8, group_size=4, seed=17)
         if not all(np.isfinite(g).all() for g in gradients.values()) or not any(np.any(g) for g in gradients.values()):
             raise ValueError("Qwen scoring backward produced zero/nonfinite synthetic gradients")
-        before = [p.detach().clone() for _, p in backend.train_parameters]
+        before = [p.detach().cpu().clone() for _, p in backend.train_parameters]
         backend.train(list(records), responses=8, objective="grpo", seed=17)
         if not all(torch.isfinite(p).all() for _, p in backend.train_parameters):
             raise ValueError("nonfinite Qwen adapter update")
-        if not any(not torch.equal(a, p) for a, (_, p) in zip(before, backend.train_parameters)):
+        if not any(not torch.equal(a, p.detach().cpu()) for a, (_, p) in zip(before, backend.train_parameters)):
             raise ValueError("synthetic Qwen admission did not update adapters")
+        print(json.dumps({"rank": rank, "admission_prompt_tokens": longest,
+            "admission_response_tokens": plan["max_new_tokens"],
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+            "peak_reserved_bytes": torch.cuda.max_memory_reserved()}), flush=True)
         dist.barrier()
         if rank == 0:
             print("PASS: Qwen real-weight four-rank generation/scoring/GRPO; synthetic smoke only", flush=True)
-    finally:
+    except BaseException:
+        # Let torchrun terminate peers immediately on a rank-local CUDA failure.
+        # Destroying a failed NCCL group here can wait for its full timeout.
+        raise
+    else:
         dist.destroy_process_group()

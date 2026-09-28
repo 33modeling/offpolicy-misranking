@@ -116,7 +116,7 @@ sh scripts/run_srgc_qwen35.sh all results
 
 한 dataset만 실행/조회하려면 `all`을 `math` 또는 `mbpp`로 바꾼다.
 Qwen은 자기 초기 정책으로 cache와 prefix를 새로 만들며 OLMo 결과를 재사용하지
-않는다. 기본 Qwen root는 `$OM_WORK/srgc-rebuttal/qwen35-9b`이고
+않는다. 감사 후 v2 기본 Qwen root는 `$OM_WORK/srgc-rebuttal/qwen35-9b-v2`이고
 `SRGC_QWEN_ROOT`로 지정할 수 있다. `prepare`가 생성하는 plan은
 `<Qwen root>/experiments/qwen35-9b-{math,mbpp}.json`, 결과는
 `<Qwen root>/runs/{math,mbpp}/seed-N/`, TXT 보고는 `<Qwen root>/reports/`다.
