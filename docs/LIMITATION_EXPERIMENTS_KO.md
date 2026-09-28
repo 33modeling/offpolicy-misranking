@@ -10,6 +10,118 @@
 H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격 실행을 완료 또는
 진행 중으로 기록하지 않는다. 기존 작업을 중단하거나 기존 결과를 덮어쓰지 않았다.
 
+## 코드 위치와 명령 빠른 찾기
+
+- 코드 저장소: [33modeling/offpolicy-misranking](https://github.com/33modeling/offpolicy-misranking), branch **`master`**.
+- 현재 PC의 코드 위치: `/home/kms/dev/offpolicy-misranking`.
+- 현재 PC의 논문 목록: `/home/kms/dev/offpolicy-v3/offpolicy-misranking-paper-v2/v7/EXPERIMENTS.md`.
+- 아래 명령은 **코드 레포 루트 기준**이다. H100에서는 해당 노드의 코드 checkout으로 이동한다. `OM_WORK`는 저장 경로 설정이며 코드 checkout과 같은 위치라고 가정하지 않는다.
+- 실행 중인 checkout에서 `git pull` 또는 branch 전환을 하지 않는다. 빈 노드용 checkout과 기존 실행의 frozen code/plan을 구분한다. 이번 변경은 명령 정리이며 실험을 새로 실행하지 않았다.
+
+| 우선순위 | 실험 | Shell 진입점 | 실제 구현 위치 |
+| --- | --- | --- | --- |
+| P0 | OLMo MATH/MBPP 네 arm | [run_srgc.sh](../scripts/run_srgc.sh) | [run_srgc_rebuttal.py](../scripts/run_srgc_rebuttal.py), [run_experiment.py](../srgc_rebuttal/run_experiment.py), [srgc.py](../srgc_rebuttal/srgc.py) |
+| P0 | 비용·결과·checkpoint | 같은 `run_srgc.sh`의 `results/costs/backup` | [reports.py](../srgc_rebuttal/reports.py), [cost_report.py](../srgc_rebuttal/cost_report.py), [cost_ledger.py](../srgc_rebuttal/cost_ledger.py), [srgc_checkpoint_backup.py](../scripts/srgc_checkpoint_backup.py) |
+| P1 | 동일 prefix의 독립 재현 / fixed-step-200 | **미구현: 실행 명령 없음** | 전용 runner 없음. 기존 `run` 재호출이나 `switch_repeat`로 대체하지 않음 |
+| P2 | 후보 40개 SR 갱신 | [run_srgc_sr_refresh.sh](../scripts/run_srgc_sr_refresh.sh) | [srgc_sr_refresh.py](../scripts/srgc_sr_refresh.py)의 `SRRefreshEngine`, `scope=candidates` |
+| P2 | 반복 전환 | 같은 `run_srgc_sr_refresh.sh` | [srgc_switch_repeat.py](../scripts/srgc_switch_repeat.py)의 `SwitchRepeatEngine`; 위 runner가 호출 |
+| P3 | 전체 pool SR 갱신 | 같은 `run_srgc_sr_refresh.sh` | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=pool` |
+| P3 | Qwen3.5-9B 온라인 네 arm | [run_srgc_qwen35.sh](../scripts/run_srgc_qwen35.sh) | [run_srgc_qwen35.py](../scripts/run_srgc_qwen35.py), [srgc_qwen35.py](../scripts/srgc_qwen35.py), [srgc_qwen35_rank.py](../scripts/srgc_qwen35_rank.py) |
+| P3 | 초기 gradient 방향 matched ablation | **미구현: 실행 명령 없음** | 전용 runner 없음 |
+
+### OLMo: 시작·조회·비용
+
+`run`은 빈 4-H100 노드에서만 실행한다. MATH와 MBPP 명령은 서로 다른 작업 배정
+예시이며, 같은 노드에서 두 GPU worker를 동시에 실행하지 않는다.
+`status/results/costs`는 새 학습을 시작하지 않는다.
+
+```sh
+# 시작 또는 기존 활성 실험 이어서 실행
+sh scripts/run_srgc.sh math run
+sh scripts/run_srgc.sh mbpp run
+
+# 상태, 결과, 비용
+sh scripts/run_srgc.sh math status
+sh scripts/run_srgc.sh math results
+sh scripts/run_srgc.sh math costs
+sh scripts/run_srgc.sh mbpp status
+sh scripts/run_srgc.sh mbpp results
+sh scripts/run_srgc.sh mbpp costs
+
+# 저장된 checkpoint 백업 1회
+sh scripts/run_srgc.sh math backup
+sh scripts/run_srgc.sh mbpp backup
+```
+
+MATH plan은 [pair_seeds.json](../srgc_rebuttal/experiments/pair_seeds.json) 또는
+[additional_seeds.json](../srgc_rebuttal/experiments/additional_seeds.json),
+MBPP는 [mbpp_pair_seeds.json](../srgc_rebuttal/experiments/mbpp_pair_seeds.json) 또는
+[mbpp_seeds.json](../srgc_rebuttal/experiments/mbpp_seeds.json)이다.
+[default_plan](../scripts/srgc_pair_inputs.py)과 [route_plan](../scripts/srgc_shared_storage.py)이
+활성 cohort를 고른다. 기존 실행을 위해 plan 파일을 수동으로 바꾸지 않는다.
+구체적인 결과 root는 `status` 출력에서 확인한다.
+
+### OLMo 추가 arm: seed별 실행
+
+해당 seed의 prefix 완료 후 별도 빈 노드에서 실행한다. 아래는 seed 5의 명령이며
+`5`를 `6`, `7`, `8`, `9`로 바꾼다. 한 줄은 한 arm이고 seed 전체 자동 순회가 아니다.
+같은 노드에서는 앞 작업 완료 후 다음 작업을 실행한다.
+
+```sh
+# P2: 후보 40개 SR 갱신
+sh scripts/run_srgc_sr_refresh.sh math 5 candidates
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 candidates
+
+# P2: 반복 전환
+sh scripts/run_srgc_sr_refresh.sh math 5 switch_repeat
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_repeat
+
+# P3: 전체 pool SR 갱신
+sh scripts/run_srgc_sr_refresh.sh math 5 pool
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
+
+# 추가 arm 결과와 selection 비용 요약
+sh scripts/run_srgc_sr_refresh.sh math results
+sh scripts/run_srgc_sr_refresh.sh mbpp results
+```
+
+추가 arm에는 `status`/`costs` 명령이 없다. 상태는 콘솔과
+`seed-N/<arm>-progress.json`, 상세 비용은 `seed-N/cost-receipts/<arm>/`를 본다.
+`<arm>`은 `sr_refresh`, `switch_repeat`, `sr_refresh-pool`이다. 결과 요약을 전체
+비용 합계로 해석하지 않는다. 자세한 산출물과 재시작 조건은 아래 3-4절에 있다.
+
+### Qwen: 별도 환경과 전용 queue
+
+`56be4d1`에서 추가된 전용 온라인 실험이다. 과거 `run_qwen35_9b.sh` selection
+매트릭스와 구분한다. [상세 준비 안내](QWEN35_SRGC_KO.md)와
+[환경 명세](../configs/srgc_qwen35/requirements.txt)를 따르고, OLMo 환경을
+업그레이드하지 않는다. 아래 `QWEN_PYTHON` 예시는 group-volume `OM_WORK`가
+설정되어 있고 별도 Qwen 환경이 이미 준비되어 있을 때 사용한다.
+
+```sh
+export QWEN_PYTHON="$OM_WORK/.venv-qwen35/bin/python"
+
+# 모델 준비는 다운로드 가능한 환경에서 1회; doctor는 실제 GPU admission을 대신하지 않음
+sh scripts/run_srgc_qwen35.sh all download
+sh scripts/run_srgc_qwen35.sh all doctor
+sh scripts/run_srgc_qwen35.sh all prepare
+
+# 각 빈 4-H100 노드에서: MATH/MBPP queue의 작업을 자동 배정
+sh scripts/run_srgc_qwen35.sh all run
+
+# 결과에는 비용 보고도 포함; 별도 costs 하위 명령은 없음
+sh scripts/run_srgc_qwen35.sh all status
+sh scripts/run_srgc_qwen35.sh all results
+```
+
+한 dataset만 실행/조회하려면 `all`을 `math` 또는 `mbpp`로 바꾼다.
+Qwen은 자기 초기 정책으로 cache와 prefix를 새로 만들며 OLMo 결과를 재사용하지
+않는다. 기본 Qwen root는 `$OM_WORK/srgc-rebuttal/qwen35-9b`이고
+`SRGC_QWEN_ROOT`로 지정할 수 있다. `prepare`가 생성하는 plan은
+`<Qwen root>/experiments/qwen35-9b-{math,mbpp}.json`, 결과는
+`<Qwen root>/runs/{math,mbpp}/seed-N/`, TXT 보고는 `<Qwen root>/reports/`다.
+실제 9B GPU admission/실험 결과는 아직 확인되지 않았다.
+
 ## 우선순위
 
 2026-09-28 지정. 기준은 **핵심 결과의 재현성, SR-GC 시점 선택의 추가 가치,
@@ -33,7 +145,7 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 - **기존 실행은 유지:** MATH/MBPP의 정상 작업을 끄거나 처음부터 다시 시작하지 않는다. 새로 배정할 자원이 경쟁하면 주 결과인 MATH의 누락 paired 결과를 먼저 완성하고 MBPP를 완성한다. 이는 MBPP의 기존 진행 중단이나 계획 seed 제외를 뜻하지 않는다.
 - **비용은 1번부터 동시 수집:** 모든 실험에서 cache 생성/재사용, prefix, selection, training, 평가·저장 비용과 불완전 계측을 함께 기록한다. 비용만 뒤로 미루거나 unknown을 0으로 채우지 않는다.
 - **구현은 GPU 작업과 병행:** P0가 도는 동안 2번, 3번의 runner와 회귀 테스트를 우선 준비한다. 새로 할당 가능한 GPU는 준비된 상위 순위 작업에 먼저 배정한다. P1 구현 전 남는 별도 노드는 P2에 쓸 수 있지만 상위 작업을 밀어내지는 않는다.
-- **이미 구현된 것만의 실행 순서:** 기본 네 arm 및 비용, `sr_refresh`, `switch_repeat`, `sr_refresh-pool` 순서다. 기존 목록의 30개 추가 continuation 전부를 P1 대조보다 먼저 완료해야 하는 것은 아니다.
+- **이미 구현된 것만의 실행 순서:** OLMo 기본 네 arm 및 비용, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, Qwen 온라인 네 arm 순서다. 기존 목록의 30개 추가 continuation 전부를 P1 대조보다 먼저 완료해야 하는 것은 아니다.
 - **seed·비교 조건은 결과와 무관하게 고정:** 계획된 seeds 5-9를 유지하고 모든 결과를 수집한다. 좋은 seed만 골라 다음 실험을 하거나 유리한 결과가 나온 시점에 반복을 종료하지 않는다. P1의 반복 수와 sampling stream은 실행 전에 고정한다.
 - **P0 완료:** 예정된 네 arm/seed의 같은 total step 결과, paired 차이, 자기 경로의 전환 이력과 비용 receipt를 검증한다. 일부 arm만 끝난 평균을 최종 결과로 쓰지 않는다.
 - **P1 완료:** 2번은 동일 prefix·캐시·평가 조건의 SR/Switch 반복을 짝지어 보고하고, 3번은 같은 조건의 고정 전환과 Switch를 직접 비교한다. 결과가 무차이 또는 불리해도 함께 보고하며, 두 실험의 완료를 효과 입증과 동일시하지 않는다.
@@ -105,14 +217,7 @@ scoring 비용이 발생하므로 기존 일회 전환의 미미한 산술 비�
 기존 실행 노드에서는 상태만 확인한다. 아직 worker가 없는 빈 노드에서만 run을
 추가한다. dataset별 명령을 구분하면 해당 활성 cohort의 경로를 확인하기 쉽다.
 
-```sh
-sh scripts/run_srgc.sh math status
-sh scripts/run_srgc.sh mbpp status
-
-# 각각 빈 노드에서 실행. 이미 실행 중인 worker를 교체하는 명령이 아니다.
-sh scripts/run_srgc.sh math run
-sh scripts/run_srgc.sh mbpp run
-```
+실행·조회 명령은 문서 상단의 "OLMo: 시작·조회·비용"에 모았다.
 
 주 queue는 seed별 prefix 완료 후 네 continuation을 노드에 배정한다. 동일 명령은
 기존 활성 cohort와 checkpoint를 사용하며 새 replicate를 만들지 않는다.
@@ -127,15 +232,7 @@ Pair seed-3/4 캐시 재사용 plan과 별도 준비 입력 plan을 섞지 않�
 아래 한 줄은 한 seed의 한 arm만 실행한다. `5`를 `6`, `7`, `8`, `9`로 바꾸어
 각 seed를 실행한다. 같은 노드에서는 앞 명령이 끝난 다음 다음 명령을 실행한다.
 
-```sh
-sh scripts/run_srgc_sr_refresh.sh math 5 candidates
-sh scripts/run_srgc_sr_refresh.sh math 5 switch_repeat
-sh scripts/run_srgc_sr_refresh.sh math 5 pool
-
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 candidates
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_repeat
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
-```
+실행 명령과 구현 파일은 문서 상단의 "OLMo 추가 arm: seed별 실행"에 모았다.
 
 추가 실행 목록은 2 datasets x 5 seeds x 3 arms = **30 continuations**다.
 기본 네 arm이나 prefix를 여기에 다시 더해 "30회 새 seed"로 세지 않는다.
@@ -156,17 +253,7 @@ sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
 여기에 자동 적용되는 것은 아니다. 중단 시 마지막 checkpoint 이후의 작업은
 다시 수행될 수 있고, 기존 비용 receipt는 남는다.
 
-```sh
-# 기본 네 arm의 결과와 비용
-sh scripts/run_srgc.sh math results
-sh scripts/run_srgc.sh math costs
-sh scripts/run_srgc.sh mbpp results
-sh scripts/run_srgc.sh mbpp costs
-
-# 추가 세 arm 및 기본 대조군의 결과, selection 비용, 전환 이력
-sh scripts/run_srgc_sr_refresh.sh math results
-sh scripts/run_srgc_sr_refresh.sh mbpp results
-```
+결과·비용·백업 명령은 문서 상단의 빠른 찾기를 따른다.
 
 추가 runner에는 별도 `status` 하위 명령이 없다. 기본 queue의 status/results가
 추가 arm을 자동 집계한다고 안내하지 않는다. 학습 콘솔의 `TRAIN ... step=N/275`,
