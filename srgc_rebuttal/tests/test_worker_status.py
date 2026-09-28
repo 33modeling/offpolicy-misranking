@@ -39,8 +39,8 @@ class WorkerStatusTests(unittest.TestCase):
                                 lambda *args: updates.append(args))
             self.assertEqual(sum(state == "running" for state, *_ in updates), 30)
             self.assertEqual(updates[-1][0], "complete")
-            self.assertIn("WORKER seed-5.prefix started · attempt 1 · pid 123 · log ", output.getvalue())
-            self.assertIn("WORKER seed-5.prefix update 0/25 · starting · gpus 0/4 reporting",
+            self.assertIn("NODE running seed-5.prefix · attempt 1 · pid 123 · log ", output.getvalue())
+            self.assertIn("NODE seed-5.prefix update 0/25 · starting · gpus 0/4 reporting",
                           output.getvalue())
             self.assertEqual(output.getvalue().count("RUN seed-5.cache\n"), 1)
             self.assertEqual(before, (queue.directory / "protocol.json").read_bytes())
@@ -60,7 +60,7 @@ class WorkerStatusTests(unittest.TestCase):
 
                 with redirect_stdout(output):
                     run_with_status(waiting, queue, self.args(), {}, (), "test", lambda *args: None)
-                self.assertIn("WORKER idle · ", output.getvalue())
+                self.assertIn("NODE idle (nothing claimable) · ", output.getvalue())
                 self.assertIn("running 1", output.getvalue())
                 self.assertIn("waiting ", output.getvalue())
 
@@ -84,7 +84,7 @@ class WorkerStatusTests(unittest.TestCase):
                     run_with_status(running, queue, self.args(), {}, (), "test", lambda *args: calls.append(args),
                                     interval=30, clock=iter([0, 5, 30]).__next__)
                 self.assertEqual(len(calls), 3)
-                self.assertEqual(output.getvalue().count("WORKER seed-5.prefix update"), 2)
+                self.assertEqual(output.getvalue().count("NODE seed-5.prefix update"), 2)
                 self.assertIn("update 0/25 · selection · gpus 1/4 busy (last ", output.getvalue())
                 self.assertEqual(before, (phase.read_bytes(), progress.read_bytes(), queue.receipt(task).read_bytes()))
 
@@ -122,7 +122,7 @@ class WorkerStatusTests(unittest.TestCase):
                 with redirect_stdout(output):
                     result = run_with_status(running, queue, self.args(), {}, (), "test", lambda *args: None)
                 self.assertEqual(result, "still running")
-                self.assertIn("status read error · KeyError", output.getvalue())
+                self.assertIn("NODE status read error · KeyError", output.getvalue())
 
     def test_experiment_code_identity_is_preserved(self):
         self.assertEqual(code_digest(), "1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a")

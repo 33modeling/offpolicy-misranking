@@ -7,7 +7,7 @@ each print their own shapes (``RUN seed-5.cache``, ``TRAIN seed=8 ...``,
 to the same shape. Lines that are pure repetition (a step's "running" echo
 that is followed by its "completed" line) are dropped.
 
-Tags: TASK (start/finish of a queue task), CACHE, TRAIN, CKPT, BACKUP, WORKER,
+Tags: TASK (start/finish of a queue task), CACHE, TRAIN, CKPT, BACKUP, NODE,
 GUARD, ADMIT, LOG (anything else, unchanged).
 """
 
@@ -30,7 +30,8 @@ RULES = [
      lambda m: ("BACKUP", f"state={m[1]} found={m[2]} saved={m[3]} errors={m[5]}")),
     (re.compile(r"^BACKUP (\S+) -> (\S+)$"), lambda m: ("BACKUP", f"copied {m[1]}")),
     (re.compile(r"^BACKUP (ERROR|WARNING) (.*)$"), lambda m: ("BACKUP", f"{m[1].lower()}: {m[2]}")),
-    (re.compile(r"^WORKER (.*)$"), lambda m: ("WORKER", m[1])),
+    (re.compile(r"^NODE (.*)$"), lambda m: ("NODE", m[1])),
+    (re.compile(r"^WORKER (.*)$"), lambda m: ("NODE", m[1])),
     (re.compile(r"^\[cache\] rank=(\d+) prompts=(\d+)/(\d+) last=(\S+) remaining_estimate=(\S+)"),
      lambda m: ("CACHE", f"rank={m[1]} prompts={m[2]}/{m[3]} last={m[4]} eta={m[5]}")),
     (re.compile(r"^\[cache\] rank=(\d+) generating prompt \d+/\d+$"), lambda m: None),

@@ -125,6 +125,19 @@ class LiveStatusTests(unittest.TestCase):
                 report, _ = self.snapshot_row(queue, key)
                 self.assertIn("JSONDecodeError", report["errors"][-1])
 
+    def test_status_starts_with_what_this_node_is_doing(self):
+        report = {"dataset": "math", "output_root": "/r", "generated": 0, "counts": {}, "warnings": [], "errors": [],
+                  "tasks": [{"seed": 5, "arm": "prefix", "task": "seed-5.prefix", "status": "running", "host": "n1",
+                             "total_steps": 25, "completed_steps": 3, "current_step": 4, "attempt": 1, "log": "/l"}],
+                  "workers": [{"host": "n1", "status": "running", "task": "seed-5.prefix", "heartbeat_age_seconds": 5},
+                              {"host": "n2", "status": "stopped", "task": "seed-6.prefix", "heartbeat_age_seconds": 700}]}
+        text = live.render(report)
+        self.assertIn("this node (n1): running seed-5.prefix · 3/25 done · heartbeat 5s ago", live.this_node_lines(report, host="n1", gpu_summary=lambda: None)[0])
+        self.assertIn("this node (n2): NOT running · last worker stopped 12 min ago (was on seed-6.prefix)", live.this_node_lines(report, host="n2", gpu_summary=lambda: None)[0])
+        self.assertIn("this node (n3): NOT running · no worker has started here", live.this_node_lines(report, host="n3", gpu_summary=lambda: None)[0])
+        self.assertEqual(live.this_node_lines(report, host="n1", gpu_summary=lambda: "0:100MiB")[1], "gpu memory used: 0:100MiB")
+        self.assertIn("this node (", text)
+
     def test_completed_prefix_and_cache_counts_are_separate_from_training(self):
         with tempfile.TemporaryDirectory() as directory:
             queue = TaskQueue(write_inputs(Path(directory)))

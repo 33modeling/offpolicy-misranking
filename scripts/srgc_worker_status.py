@@ -73,7 +73,7 @@ def idle_summary(rows, max_attempts):
 
 def run_with_status(original, queue, args, environment, gpu_fds, worker_id, update,
                     *, interval=600, clock=time.monotonic):
-    """Print a WORKER line only when something changed; otherwise at most one heartbeat per ``interval``."""
+    """Print a NODE line only when something changed; otherwise at most one heartbeat per ``interval``."""
     last_line, last_time = None, float("-inf")
     announced = set()
 
@@ -85,15 +85,15 @@ def run_with_status(original, queue, args, environment, gpu_fds, worker_id, upda
                 if task.key not in announced:
                     announced.add(task.key)
                     attempt = json.loads(queue.receipt(task).read_text()).get("attempt", "?")
-                    print(f"WORKER {task.key} started · attempt {attempt} · pid {child_pid or '-'} · "
+                    print(f"NODE running {task.key} · attempt {attempt} · pid {child_pid or '-'} · "
                           f"log {queue.directory / 'logs' / (task.key + '.log')}", flush=True)
-                line = f"WORKER {task.key} {activity(queue, task)}"
+                line = f"NODE {task.key} {activity(queue, task)}"
             elif state == "idle":
-                line = "WORKER idle · " + idle_summary(queue.status(max_attempts=args.max_attempts), args.max_attempts)
+                line = "NODE idle (nothing claimable) · " + idle_summary(queue.status(max_attempts=args.max_attempts), args.max_attempts)
             else:
-                line = f"WORKER {state}" + (f" {task.key}" if task else "") + (f" · {error}" if error else "")
+                line = f"NODE {state}" + (f" {task.key}" if task else "") + (f" · {error}" if error else "")
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            line = f"WORKER status read error · {type(exc).__name__}: {exc}"
+            line = f"NODE status read error · {type(exc).__name__}: {exc}"
         stable = re.sub(r" \(last [^)]*\)", "", line)  # rank ages change every scan; not news
         now = clock()
         if stable == last_line and now - last_time < interval:

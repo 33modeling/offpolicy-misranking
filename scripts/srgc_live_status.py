@@ -152,6 +152,51 @@ def attention_detail(row):
     return " · ".join(parts)
 
 
+def gpu_memory_summary():
+    """'0:1200MiB 1:0MiB ...' from nvidia-smi, or None when unavailable."""
+    import shutil
+    import subprocess
+    if not shutil.which("nvidia-smi"):
+        return None
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=20, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    cells = [f"{i.strip()}:{u.strip()}MiB" for i, u in (line.split(",", 1) for line in out.splitlines() if "," in line)]
+    return " ".join(cells) or None
+
+
+def this_node_lines(report, host=None, gpu_summary=gpu_memory_summary):
+    """What THIS machine is doing right now, from the worker records that carry its hostname."""
+    import socket
+    host = host or socket.gethostname()
+    mine = [w for w in report["workers"] if w.get("host") == host]
+    live = [w for w in mine if w["status"] in {"preflight", "running", "idle"}]
+    if live:
+        worker = min(live, key=lambda w: w["heartbeat_age_seconds"])
+        task = worker.get("task")
+        what = {"running": f"running {task}", "idle": "idle (nothing claimable)", "preflight": "starting up"}[worker["status"]]
+        row = next((r for r in report["tasks"] if r["task"] == task), None) if task else None
+        if row and row.get("completed_steps") is not None and row.get("total_steps"):
+            what += f" · {row['completed_steps']}/{row['total_steps']} done"
+        line = f"this node ({host}): {what} · heartbeat {worker['heartbeat_age_seconds']:.0f}s ago"
+    elif mine:
+        worker = min(mine, key=lambda w: w["heartbeat_age_seconds"])
+        age = worker["heartbeat_age_seconds"]
+        when = f"{age / 60:.0f} min ago" if age >= 120 else f"{age:.0f}s ago"
+        line = f"this node ({host}): NOT running · last worker {worker['status'].replace('_', ' ')} {when}"
+        if worker.get("task"):
+            line += f" (was on {worker['task']})"
+    else:
+        line = f"this node ({host}): NOT running · no worker has started here"
+    lines = [line]
+    summary = gpu_summary()
+    if summary:
+        lines.append(f"gpu memory used: {summary}")
+    return lines
+
+
 def render(report, *, results=False):
     tasks = report["tasks"]
     generated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(report.get("generated", time.time())))
@@ -165,7 +210,7 @@ def render(report, *, results=False):
     if counts["attention"]:
         summary = summary.replace(f"attention {counts['attention']}", f"needs attention {counts['attention']}")
     lines = [f"SRGC {report['dataset']} · {generated}" + (" · STOP REQUESTED" if report.get("stop_requested") else ""),
-             str(report["output_root"]), summary or "no tasks", ""]
+             str(report["output_root"]), *this_node_lines(report), "", summary or "no tasks", ""]
     arms = []
     for row in tasks:
         if row["arm"] not in arms:
@@ -190,14 +235,14 @@ def render(report, *, results=False):
     active = [w for w in report["workers"] if w["status"] in {"preflight", "running", "idle", "heartbeat_stale"}]
     hidden = len(report["workers"]) - len(active)
     if active or hidden:
-        lines += ["", "workers:"]
+        lines += ["", "nodes:"]
         for worker in active:
             what = worker["status"].replace("_", " ") + (f" {worker['task']}" if worker.get("task") else "")
             lines.append(f"  {str(worker.get('host') or '-'):<24} {what} · heartbeat {worker['heartbeat_age_seconds']:.0f}s ago")
             if worker.get("error"):
                 lines.append(f"      {worker['error']}")
         if hidden:
-            lines.append(f"  ({hidden} finished or stopped worker record{'s' if hidden != 1 else ''} not shown)")
+            lines.append(f"  ({hidden} finished or stopped node record{'s' if hidden != 1 else ''} not shown)")
     lines.extend(f"WARNING {warning}" for warning in report["warnings"])
     lines.extend(f"ERROR {error}" for error in report["errors"])
     return "\n".join(lines) + "\n"
