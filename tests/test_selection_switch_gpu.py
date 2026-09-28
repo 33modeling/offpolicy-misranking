@@ -1337,12 +1337,13 @@ def test_code_error_identifies_unreviewed_file_and_full_fingerprints(monkeypatch
 
 def test_code_compat_four_processes_share_one_migration(tmp_path):
     import subprocess
+    import pinned_trainers
 
     frozen = {"schema": rule.SCHEMA, "code_hashes": initial_predecessor(), "budget_gpu_seconds": 1000.}
     core.atomic_json(tmp_path / "switch.json", frozen)
     base.journal(tmp_path / "cost.jsonl", {"state": "started", "event_id": "unknown-cost"})
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    command = [sys.executable, "-c", "import sys; from pathlib import Path; "
+    command = [sys.executable, pinned_trainers.COMMAND, "-c", "import sys; from pathlib import Path; "
                "import selection_switch_gpu as s; s.manifest(Path(sys.argv[1])); s.manifest(Path(sys.argv[1]))",
                str(tmp_path)]
     env = {**os.environ, "PYTHONPATH": str(base.ROOT / "src"), "CUDA_VISIBLE_DEVICES": "",
@@ -1368,13 +1369,15 @@ def test_code_compat_four_processes_share_one_migration(tmp_path):
 def test_check_code_launcher_is_read_only_and_needs_no_gpu(tmp_path, compatible):
     import json
     import subprocess
+    import pinned_trainers
 
     recorded = initial_predecessor()
     if not compatible:
         recorded["src/selection_switch.py"] = "unreviewed"
     core.atomic_json(tmp_path / "switch.json", {"schema": rule.SCHEMA, "code_hashes": recorded})
+    python = pinned_trainers.write_python_wrapper(tmp_path / "pinned-python")
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    env = {**os.environ, "SWITCH_ROOT": str(tmp_path), "SWITCH_PYTHON": sys.executable,
+    env = {**os.environ, "SWITCH_ROOT": str(tmp_path), "SWITCH_PYTHON": python,
            "OM_WORK": str(tmp_path / "absent-work"), "CUDA_VISIBLE_DEVICES": ""}
     result = subprocess.run(["bash", "scripts/run_selection_switch.sh", "check-code"],
                             cwd=base.ROOT, env=env, capture_output=True, text=True, timeout=20)

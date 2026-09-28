@@ -202,6 +202,10 @@ def simulate_node(plans, group, node, barrier):
         receipts = list((queue.directory / "workers").glob("*.json"))
         assert any(json.loads(p.read_text()).get("active_plan") == str(path) for p in receipts)
         start = time.monotonic()
+        # Hold each node's first claimed task until both are actually executing.
+        # A 25 ms sleep alone can serialize on a loaded CPU despite a correct queue.
+        if not work:
+            barrier.wait(timeout=30)
         time.sleep(0.025)
         folder = queue.root / f"seed-{seed}"
         if arm == "cache":
@@ -210,6 +214,8 @@ def simulate_node(plans, group, node, barrier):
             data["cached_rewards"] = {i: [0, 1] * 4 for i in data["candidate_ids"]}
             data["provenance"]["cache"] = {k: queue.plan[k] for k in ("model", "model_revision", "responses", "max_new_tokens", "verifier", "attention")}
             data["provenance"]["cache"]["cache_seed"] = seed
+            from srgc_rebuttal.verifiers import verifier_protocol
+            data["provenance"]["cache"].update(verifier_protocol(queue.plan["verifier"]))
             atomic_json(bundle, data)
             atomic_json(bundle.with_suffix(".cache") / "cost-summary.json", {"bundle_sha256": digest(bundle)})
         elif arm == "prefix":

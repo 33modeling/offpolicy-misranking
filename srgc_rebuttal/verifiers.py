@@ -9,9 +9,12 @@ exactly 0.0 or 1.0 and never raise on a bad response; they raise only when the
 from __future__ import annotations
 
 import os
+import json
 import math
+from pathlib import Path
 import re
 import resource
+import secrets
 import signal
 import subprocess
 import sys
@@ -20,6 +23,13 @@ import tempfile
 from .run_experiment import math_reward  # noqa: F401  (re-exported for plans)
 
 CODE_BLOCK = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
+CODE_REWARD_VERSION = "assertion-completion-v2"
+
+
+def verifier_protocol(name):
+    return {"code_verifier_version": CODE_REWARD_VERSION} if name == "srgc_rebuttal.verifiers:code_reward" else {}
+
+
 CODE_TIMEOUT_SECONDS = float(os.environ.get("SRGC_CODE_TIMEOUT", "10"))
 CODE_MEMORY_BYTES = int(os.environ.get("SRGC_CODE_MEMORY_MB", "1024")) * 1024 * 1024
 if not math.isfinite(CODE_TIMEOUT_SECONDS) or CODE_TIMEOUT_SECONDS <= 0 or CODE_MEMORY_BYTES <= 0:
@@ -46,20 +56,35 @@ def code_reward(record: dict, response: str) -> float:
     if not code:
         return 0.0
     with tempfile.TemporaryDirectory() as folder:
-        path = os.path.join(folder, "candidate.py")
+        path = os.path.join(folder, "candidate.json")
         with open(path, "w") as handle:
-            handle.write(code + "\n\n" + tests + "\n")
-        process = subprocess.Popen([sys.executable, "-I", "-B", path], cwd=folder,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
-            preexec_fn=_limits, env={"PATH": os.environ.get("PATH", ""), "PYTHONHASHSEED": "0"})
+            json.dump({"code": code, "tests": tests}, handle)
+        reader, writer = os.pipe()
+        token = secrets.token_hex(16).encode("ascii")
+        process = None
         try:
-            return 1.0 if process.wait(timeout=CODE_TIMEOUT_SECONDS) == 0 else 0.0
+            os.set_blocking(reader, False)
+            runner = Path(__file__).with_name("code_check.py")
+            process = subprocess.Popen([sys.executable, "-I", "-B", str(runner), path,
+                str(writer), token.decode("ascii")], cwd=folder, pass_fds=(writer,),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                preexec_fn=_limits, env={"PATH": os.environ.get("PATH", ""), "PYTHONHASHSEED": "0"})
+            if process.wait(timeout=CODE_TIMEOUT_SECONDS) != 0:
+                return 0.0
+            try:
+                completed = os.read(reader, len(token) + 1)
+            except BlockingIOError:
+                completed = b""
+            return float(completed == token)
         except subprocess.TimeoutExpired:
             return 0.0
         finally:
-            # A timed-out generated program must not leave descendants behind.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
+            os.close(reader)
+            os.close(writer)
+            if process is not None:
+                # A timed-out generated program must not leave descendants behind.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()

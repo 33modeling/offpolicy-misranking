@@ -30,7 +30,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-COLUMNS = ["source", "seed", "arm", "step", "d", "on_dot", "sr_dot", "validation_norm", "on_mean_norm", "sr_mean_norm",
+COLUMNS = ["source", "seed", "arm", "step", "d", "d_source", "on_dot", "sr_dot", "validation_norm", "on_mean_norm", "sr_mean_norm",
            "on_mean_cos", "sr_mean_cos", "on_top4_dot", "on_random4_expected_dot", "ranking_cos_mean",
            "ranking_cos_std", "ranking_cos_top4", "on_cos_top4_minus_mean", "ranking_gap4", "selector"]
 ARM_PATTERN = re.compile(r"^(on_policy|switch|switch_repeat|switch_fixed\d+)$")
@@ -58,6 +58,14 @@ def refresh_rows(root, arms=None):
             for key in COLUMNS:
                 if key in record and key not in row:
                     row[key] = record[key]
+            row["d_source"] = "decision" if row["d"] is not None else None
+            fields = ("validation_norm", "on_mean_norm", "sr_mean_norm", "on_mean_cos", "sr_mean_cos")
+            if row["d"] is None and all(isinstance(row.get(k), (int, float)) and math.isfinite(row[k]) for k in fields):
+                on_dot = row["validation_norm"] * row["on_mean_norm"] * row["on_mean_cos"]
+                sr_dot = row["validation_norm"] * row["sr_mean_norm"] * row["sr_mean_cos"]
+                if all(math.isfinite(v) for v in (on_dot, sr_dot, on_dot - sr_dot)):
+                    row.update(d=on_dot - sr_dot, on_dot=on_dot, sr_dot=sr_dot,
+                               d_source="reconstructed_diagnostic")
             if scores and "ranking_cos_mean" not in row:
                 ordered = sorted(scores, reverse=True)
                 k = min(4, len(ordered))
@@ -77,7 +85,8 @@ def legacy_d_rows(path):
         if not match or not match.group(6):
             continue
         rows.append({**{key: None for key in COLUMNS}, "source": Path(path).name, "seed": int(match.group(1)),
-                     "arm": "recorded-on-policy-path", "step": int(match.group(3)), "d": float(match.group(6))})
+                     "arm": "recorded-on-policy-path", "step": int(match.group(3)), "d": float(match.group(6)),
+                     "d_source": "legacy_recorded"})
     return rows
 
 
@@ -99,7 +108,7 @@ def summarize(rows):
         cos_diff = [r["on_mean_cos"] - r["sr_mean_cos"] for r in items
                     if r.get("on_mean_cos") is not None and r.get("sr_mean_cos") is not None]
         ratio = [r["sr_mean_norm"] / r["on_mean_norm"] for r in items
-                 if r.get("sr_mean_norm") and r.get("on_mean_norm")]
+                 if r.get("sr_mean_norm") is not None and r.get("on_mean_norm")]
         lines.append(f"{arm:<22} {str(step):>5} {len(items):>2}   {stat(d_values):<19} {negatives:>2}/{len(d_values):<2}  "
                      f"{stat(cos_diff):<18} {stat(ratio):<19} {stat([r.get('ranking_gap4') for r in items])}")
     return "\n".join(lines)

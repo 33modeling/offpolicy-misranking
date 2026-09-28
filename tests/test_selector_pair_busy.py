@@ -184,7 +184,7 @@ def test_shell_legacy_controller_waits_before_source_checks_or_gpu_admission(tmp
            "PAIR_GPU_TEST_MARKER": str(gpu_marker)}
     with base.lease(root / ".pair.lock"):
         before = contents(tmp_path)
-        process = subprocess.Popen(["bash", "scripts/run_selector_pair.sh", mode], cwd=base.ROOT,
+        process = subprocess.Popen(pinned_trainers.legacy_pair_command(mode), cwd=base.ROOT,
                                    env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True, start_new_session=True)
         try:

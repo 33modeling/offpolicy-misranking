@@ -90,9 +90,13 @@ def test_real_single_point_prepare_at_d100_and_grpo_subset_comparison(tmp_path, 
 def test_queue_and_report_see_only_d100_points():
     import queue_rloo
     import rloo_report
-    rloo_d100.use_d100(queue_rloo.experiment)
-    rloo_d100.use_d100(rloo_report.experiment)
-    assert queue_rloo.experiment.POINTS == rloo_report.experiment.POINTS == rloo_d100.POINTS
+    original_report_points = rloo_report.experiment.POINTS
+    try:
+        rloo_d100.use_d100(queue_rloo.experiment)
+        rloo_d100.use_d100(rloo_report.experiment)
+        assert queue_rloo.experiment.POINTS == rloo_report.experiment.POINTS == rloo_d100.POINTS
+    finally:
+        rloo_report.experiment.POINTS = original_report_points
 
 
 def test_launcher_ignores_an_exported_original_root_and_needs_no_gpu(tmp_path):

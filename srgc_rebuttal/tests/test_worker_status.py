@@ -125,7 +125,7 @@ class WorkerStatusTests(unittest.TestCase):
                 self.assertIn("NODE status read error · KeyError", output.getvalue())
 
     def test_experiment_code_identity_is_preserved(self):
-        self.assertEqual(code_digest(), "1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a")
+        self.assertEqual(code_digest(), "f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b")
 
 
 if __name__ == "__main__":

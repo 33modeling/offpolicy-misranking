@@ -2,6 +2,10 @@
 
 Status: review findings, not fixes or certification of remote experiment results.
 
+Follow-up: the [repair record](V7_EXPERIMENT_FIXES_2026-09-29.md) documents
+subsequent corrections and their separate verification. Findings and test
+counts below describe the audited revision, not the corrected implementation.
+
 ## Reviewed revisions and rules
 
 - Experiment repository: `master`, reviewed HEAD `e371590`.

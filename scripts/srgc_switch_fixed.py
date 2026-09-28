@@ -40,6 +40,7 @@ def fixed_step_of(arm):
 
 class SwitchFixedEngine(DirectionRecordMixin, Engine):
     ARMS = Engine.ARMS | {"switch_fixed"}
+    TRANSITION_PROTOCOL = "fixed-boundary-before-training-v2"
 
     def __init__(self, *args, fixed_step, **kwargs):
         super().__init__(*args, **kwargs)
@@ -50,31 +51,40 @@ class SwitchFixedEngine(DirectionRecordMixin, Engine):
         if self.arm == "switch_fixed":
             self._charge_preparation()
 
+    def _end(self, phase, started):
+        super()._end(phase, started)
+        # Keep the boundary refresh cost, but switch before its training update.
+        if (phase == "selection" and getattr(self, "_fixed_update", False)
+                and self.switched_at is None and self.step == self.fixed_step):
+            self.switched_at = self.step
+
     def update(self):
         if self.arm != "switch_fixed":
             return super().update()
         # Before the transition the base engine runs as On-policy (no check, no decision);
         # after it, a set switched_at makes the base engine train with the SR ranking.
+        previous = self.switched_at
         self.arm = "on_policy"
+        self._fixed_update = True
         try:
             record = super().update()
         finally:
             self.arm = "switch_fixed"
-        if self.switched_at is None and self.step > self.fixed_step:
-            # The update just completed was update fixed_step -> fixed_step + 1 trained On-policy,
-            # matching the recorded Switch, whose check at t affects update t + 1.
-            self.switched_at = self.fixed_step
-            record["switched"] = True
+            self._fixed_update = False
+        record["switched"] = previous is None and self.switched_at is not None
         record["fixed_step"] = self.fixed_step  # the base record already names the selector actually trained
         return record
 
     def state_dict(self):
         state = super().state_dict()
         state["fixed_step"] = self.fixed_step
+        state["fixed_transition_protocol"] = self.TRANSITION_PROTOCOL
         return state
 
     def load_state_dict(self, state, *, fork_arm=None):
         if fork_arm is None and state.get("arm") == "switch_fixed":
+            if state.get("fixed_transition_protocol") != self.TRANSITION_PROTOCOL:
+                raise ValueError("fixed transition protocol changed; start a new fixed-control run")
             if state.get("fixed_step") != self.fixed_step:
                 raise ValueError("checkpoint fixed transition step differs; use a new arm name for another step")
             # Validate the saved selection block as the base engine would for an On-policy phase.

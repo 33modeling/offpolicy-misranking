@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from srgc_rebuttal import build_inputs, plan_dataset, verifiers
 from srgc_rebuttal.plan import load_plan, validate_inputs
@@ -87,6 +88,39 @@ class BuildInputsTest(unittest.TestCase):
         for key in ("shared_prefix_updates", "total_updates", "check_interval", "scoring_prompts_per_set"):
             self.assertEqual(plan[key], base[key])
 
+    def test_code_reward_requires_assertion_completion(self):
+        for code in ("raise SystemExit(0)", "import sys; sys.exit(0)",
+                     "import os; os._exit(0)", "print('tests-completed')",
+                     "exec = lambda *args: None", "raise KeyboardInterrupt"):
+            with self.subTest(code=code):
+                self.assertEqual(verifiers.code_reward({"answer": "assert False"}, code), 0.0)
+        self.assertEqual(verifiers.code_reward({"answer": "assert x == 3"},
+                                              "x = 3\nprint('candidate output')"), 1.0)
+        self.assertEqual(verifiers.code_reward({"answer": "assert f() == 3"},
+                                              "def f():\n    raise SystemExit(0)"), 0.0)
+        self.assertEqual(verifiers.code_reward({"answer": "assert False"},
+                                              "import builtins\nbuiltins.exec = lambda *a: None"), 0.0)
+
+    def test_code_reward_timeout_and_runner_failure_close_descriptors(self):
+        with patch.object(verifiers, "CODE_TIMEOUT_SECONDS", 0.1):
+            self.assertEqual(verifiers.code_reward({"answer": "assert True"}, "while True: pass"), 0.0)
+        before = len(list(Path("/proc/self/fd").iterdir()))
+        with patch.object(verifiers.subprocess, "Popen", side_effect=OSError("runner unavailable")):
+            with self.assertRaises(OSError):
+                verifiers.code_reward({"answer": "assert True"}, "pass")
+        self.assertEqual(len(list(Path("/proc/self/fd").iterdir())), before)
+
+    def test_old_code_reward_caches_cannot_enter_the_corrected_experiment(self):
+        bundle = build_inputs.build("mbpp", rows("code"), split_seed=0, kind="code", ranking_validation=50,
+                                    cache=None, provenance={"source": "fixture"})
+        bundle["cached_rewards"] = {i: [0, 1] * 4 for i in bundle["candidate_ids"]}
+        bundle["provenance"]["cache"] = {"verifier": "srgc_rebuttal.verifiers:code_reward"}
+        for require in (True, False):
+            with self.assertRaisesRegex(ValueError, "unverified verifier version"):
+                validate_inputs(bundle, require_cache=require)
+        bundle["provenance"]["cache"].update(verifiers.verifier_protocol(bundle["provenance"]["cache"]["verifier"]))
+        validate_inputs(bundle)
+
     def test_cli_builds_a_jsonl_bundle(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "rows.jsonl"
@@ -100,6 +134,30 @@ class BuildInputsTest(unittest.TestCase):
             self.assertIn("build_cache", result.stdout)
             self.assertTrue(output.is_file())
             self.assertEqual(json.loads(output.read_text())["provenance"]["split_seed"], 0)
+
+    def test_cli_cache_copy_preserves_verifier_version_and_rejects_old_rewards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            source = folder / "rows.jsonl"
+            source.write_text("".join(json.dumps(row) + "\n" for row in rows("code")))
+            bundle = build_inputs.build("jsonl", rows("code"), split_seed=0, kind="code",
+                ranking_validation=50, cache=None, provenance={"source": "fixture"})
+            bundle["cached_rewards"] = {i: [0, 1] * 4 for i in bundle["candidate_ids"]}
+            bundle["provenance"]["cache"] = {"verifier": "srgc_rebuttal.verifiers:code_reward"}
+            cache, output = folder / "cache.json", folder / "new.json"
+            command = ["build_inputs", "--dataset", "jsonl", "--rows", str(source), "--kind", "code",
+                       "--seed", "0", "--cache", str(cache), "--output", str(output)]
+            cache.write_text(json.dumps(bundle))
+            with patch.object(sys, "argv", command), self.assertRaisesRegex(ValueError, "unverified verifier version"):
+                build_inputs.main()
+            self.assertFalse(output.exists())
+            bundle["provenance"]["cache"].update(verifiers.verifier_protocol("srgc_rebuttal.verifiers:code_reward"))
+            cache.write_text(json.dumps(bundle))
+            with patch.object(sys, "argv", command):
+                build_inputs.main()
+            copied = json.loads(output.read_text())
+            self.assertEqual(copied["provenance"]["cache"]["code_verifier_version"], verifiers.CODE_REWARD_VERSION)
+            self.assertEqual(copied["cached_rewards"], bundle["cached_rewards"])
 
 
 if __name__ == "__main__":

@@ -193,9 +193,18 @@ def main() -> None:
         kind = args.kind
         verifier = DATASETS["math500" if kind == "math" else "mbpp"][1]
     cache = None
+    cache_provenance = None
     if args.cache is not None:
         loaded = json.loads(args.cache.read_text())
         cache = loaded.get("cached_rewards", loaded)
+        cache_provenance = {"source": str(args.cache),
+                            "source_sha256": hashlib.sha256(args.cache.read_bytes()).hexdigest()}
+        if "cached_rewards" in loaded:
+            validate_inputs(loaded)
+            provenance = loaded.get("provenance", {})
+            prior = provenance.get("cache", {}) if isinstance(provenance, dict) else {}
+            if isinstance(prior, dict):
+                cache_provenance.update(prior)
     bundle = build(args.dataset, load_rows(args.dataset, args.rows),
                    split_seed=args.seed if args.split_seed is None else args.split_seed,
                    kind=kind, ranking_validation=args.ranking_validation, cache=cache,
@@ -204,7 +213,7 @@ def main() -> None:
                                **({"dataset_revision": MATH_REVISION, "source_split": "train"}
                                   if args.dataset == "math_train" and args.rows is None else {}),
                                **({"source_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest()} if args.rows else {}),
-                               **({"cache": str(args.cache)} if args.cache else {})})
+                               **({"cache": cache_provenance} if args.cache else {})})
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(bundle, ensure_ascii=False, indent=1) + "\n")
     if cache is not None:

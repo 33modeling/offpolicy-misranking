@@ -586,9 +586,18 @@ update N+1 as the recorded Switch does after its transition. N must be a
 multiple of the 25-update selection interval; 100 and 125 mirror the recorded
 seed-4 and seed-3 transitions.
 
+The boundary refresh at checkpoint N is charged before selecting the SR
+training batch for update N+1. The corrected implementation records
+`fixed-boundary-before-training-v2` in checkpoints and refuses unversioned
+fixed-control resumes. Keep old runs separate; do not relabel their endpoints.
+The launcher requires shared-prefix <= N < total updates. Result exports
+discover all saved `switch_fixed<N>` arms (including 200) for planned seeds
+and apply the same input/code/prefix identity checks to each.
+
 ```bash
 sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed100
 sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed125
+sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200
 sh scripts/run_srgc_sr_refresh.sh math results     # shows fixed arms next to switch / switch_repeat
 ```
 
@@ -601,8 +610,9 @@ next child start, every refresh record also carries the norms and cosines of
 the mean gradients, the trained-four versus random-four validation inner
 products and the candidate cosine spread and top-4 gap
 (`scripts/srgc_direction_records.py`, applied by the training child entry and
-the extra arms; the hashed package is untouched, and records written earlier
-simply lack these fields). Tabulate and plot them with:
+the extra arms; this instrumentation does not alter the package, and records
+written earlier simply lack these fields). The separate 2026-09-29 verifier
+repair intentionally changes the package identity. Tabulate and plot with:
 
 ```bash
 python scripts/srgc_direction_analysis.py --plan <group-storage plan>           # -> <run root>/analysis/direction/
@@ -613,6 +623,11 @@ python scripts/srgc_direction_analysis.py --root <run root> \
 Outputs `direction.csv`, `summary.txt` (per arm and step: D mean/sd and sign
 count across seeds, cos_on - cos_sr, ||g_sr||/||g_on||, ranking gap) and
 `direction.png` when matplotlib is installed (the `.venv-cu126` has it).
+When On-policy or fixed controls have no decision D but all five finite
+norm/cosine terms, analysis reconstructs the diagnostic contrast and labels
+`d_source=reconstructed_diagnostic`. Recorded decisions are retained as
+`d_source=decision`; older records without the decomposition remain missing.
+Analysis never writes a switching decision back into the progress history.
 The mechanistic reading being tested: cos_on - cos_sr shrinks toward zero over
 training while ||g_sr|| stays above ||g_on||, so D turns negative when the
 direction advantage is exhausted; the candidate cosine gaps shrink at the same time.

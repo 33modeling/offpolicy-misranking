@@ -7,6 +7,7 @@ import sys
 import time
 
 import pytest
+import pinned_trainers
 
 import mopps
 import mopps_comparison_gpu as run
@@ -874,7 +875,7 @@ m.time.sleep = unexpected
 m.run_arm = unexpected
 raise SystemExit(m.work(Path(sys.argv[1])))
 """
-    workers = [subprocess.Popen([sys.executable, "-c", script, str(root)],
+    workers = [subprocess.Popen([sys.executable, pinned_trainers.COMMAND, "-c", script, str(root)],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(4)]
     try:
         for worker in workers:

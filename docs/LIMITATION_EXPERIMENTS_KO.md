@@ -35,7 +35,8 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 | --- | --- | --- | --- |
 | P0 | OLMo MATH/MBPP 네 arm | [run_srgc.sh](../scripts/run_srgc.sh) | [run_srgc_rebuttal.py](../scripts/run_srgc_rebuttal.py), [run_experiment.py](../srgc_rebuttal/run_experiment.py), [srgc.py](../srgc_rebuttal/srgc.py) |
 | P0 | 비용·결과·checkpoint | 같은 `run_srgc.sh`의 `results/costs/backup` | [reports.py](../srgc_rebuttal/reports.py), [cost_report.py](../srgc_rebuttal/cost_report.py), [cost_ledger.py](../srgc_rebuttal/cost_ledger.py), [srgc_checkpoint_backup.py](../scripts/srgc_checkpoint_backup.py) |
-| P1 | 동일 prefix의 독립 재현 / fixed-step-200 | **미구현: 실행 명령 없음** | 전용 runner 없음. 기존 `run` 재호출이나 `switch_repeat`로 대체하지 않음 |
+| P1 | 동일 prefix의 독립 재현 | **미구현: 실행 명령 없음** | 전용 replicate runner 없음. 기존 `run` 재호출이나 `switch_repeat`로 대체하지 않음 |
+| P1 | fixed-step-200 전환 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` | `srgc_switch_fixed.py`; checkpoint 200에서 전환하여 update 201부터 SR. 2026-09-29 경계 수정, 새 run 필요 |
 | P2 | 후보 40개 SR 갱신 | [run_srgc_sr_refresh.sh](../scripts/run_srgc_sr_refresh.sh) | [srgc_sr_refresh.py](../scripts/srgc_sr_refresh.py)의 `SRRefreshEngine`, `scope=candidates` |
 | P2 | 반복 전환 | 같은 `run_srgc_sr_refresh.sh` | [srgc_switch_repeat.py](../scripts/srgc_switch_repeat.py)의 `SwitchRepeatEngine`; 위 runner가 호출 |
 | P3 | 전체 pool SR 갱신 | 같은 `run_srgc_sr_refresh.sh` | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=pool` |
@@ -146,7 +147,7 @@ Qwen은 자기 초기 정책으로 cache와 prefix를 새로 만들며 OLMo 결�
 | --- | --- | --- | --- | --- |
 | 1 | P0 | 추가 seeds 5-9의 MATH/MBPP 네 arm 완성 및 전체 비용 수집 | 관측 이득의 재현성과 실제 계산 비용을 함께 검증하는 기본 증거 | 구현됨; 기존 진행 유지, 누락 결과 확인 |
 | 2 | P1 | 동일 prefix에서 SR/Switch의 독립 학습 반복 | 같은 조건의 실행 변동과 Switch 이득을 직접 구분 | 전용 replicate runner 미구현, 구현 우선 |
-| 3 | P1 | 사전 고정 total-step-200 전환 대조 | 전환 자체의 효과와 SR-GC timing rule의 추가 가치를 구분 | 전용 runner 미구현, 2번 다음 구현/실행 |
+| 3 | P1 | 사전 고정 total-step-200 전환 대조 | 전환 자체의 효과와 SR-GC timing rule의 추가 가치를 구분 | `switch_fixed200` 구현 및 경계 수정, GPU 결과는 별도 검증 필요 |
 | 4 | P2 | 후보 40개의 SR 성공률 갱신 `sr_refresh` | 오래된 캐시를 유지하는 전략과 갱신 전략의 성능·비용 비교 | 구현됨; 순수 갱신 효과 주장에는 배치 유지 간격 통제 추가 필요 |
 | 5 | P2 | 반복 전환 `switch_repeat` | 한 번만 전환하고 점검을 끝내는 선택의 성능·비용 trade-off 확인 | 구현됨; 전환 후 scoring 비용 포함 |
 | 6 | P3 | 전체 400개 갱신 `sr_refresh-pool` | 후보 범위를 넓힌 갱신의 추가 이득과 비용 확인 | 구현됨; 4번 다음 확장 |
@@ -177,7 +178,7 @@ Qwen은 자기 초기 정책으로 cache와 prefix를 새로 만들며 OLMo 결�
 | 공통 refresh 절차의 end-to-end 비용 | phase/stage ledger, cache, prefix, continuation, 평가·저장 비용 | 완료/미완료 계측을 구분한 cost export | 구현됨, 실측 결과 미수신 |
 | SR cache refresh | `sr_refresh`, `sr_refresh-pool` | 두 scope 모두 MATH/MBPP seeds 5-9에서 기존 SR와 비교 | 구현됨, 이번 점검에서 신규 GPU 실행 안 함 |
 | 반복 전환 | `switch_repeat` | 동일 seed의 일회 전환 `switch`와 비교 | 구현됨, 이번 점검에서 신규 GPU 실행 안 함 |
-| 고정 schedule 대비 SR-GC timing 가치 | 현재 네 arm 및 두 변형은 이를 직접 검증하지 않음 | 사전 고정 total-step-200 대조, 동일 prefix/평가/길이 | 전용 runner 미구현 |
+| 고정 schedule 대비 SR-GC timing 가치 | 기존 네 arm만으로는 이를 직접 검증하지 않음 | 사전 고정 total-step-200 대조, 동일 prefix/평가/길이 | `switch_fixed200` 구현됨; 실행 완료나 효과 입증을 뜻하지 않음 |
 | 같은 시작 상태의 독립 training replicate | 추가 base seed 실험과 다른 질문 | prefix/캐시를 고정하고 분기 이후 sampling stream만 바꾸는 paired SR/Switch 반복 | 전용 replicate ID/runner 미구현 |
 | 초기 gradient 방향의 인과적 효과 | retrospective 진단 및 objective 비교는 있음 | 방향 정보만 제거/대체하고 나머지를 맞추는 ablation | 전용 matched ablation 미구현 |
 | 다른 backbone에서도 온라인 Switch가 유효한가 | Qwen3.5-9B 전용 온라인 adapter 및 MATH/MBPP 5시드×4arm 준비 | [실행 안내](QWEN35_SRGC_KO.md); Qwen 캐시/prefix 새로 생성, 실제 9B GPU admission 후 실행 | CPU 검증; GPU 결과 미생성. 과거 selection 매트릭스와 별도 실험 |

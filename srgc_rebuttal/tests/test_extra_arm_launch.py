@@ -151,6 +151,26 @@ class ExtraArmLaunchTests(unittest.TestCase):
                 with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()):
                     results(SimpleNamespace(plan=plan, json=True))
 
+    def test_results_discover_all_saved_fixed_controls_and_validate_them(self):
+        plan = self.plan()
+        path, value = self.endpoint(plan, cost=1.0)
+        for step in (75, 200):
+            target = path.with_name(f"switch_fixed{step}-endpoint.json")
+            target.write_text(json.dumps({**value, "arm": f"switch_fixed{step}", "switched_at": step}))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=True))
+        row = json.loads(output.getvalue())["rows"][0]
+        self.assertEqual(row["switch_fixed200"]["switched_at"], 200)
+        self.assertEqual(row["switch_fixed75"]["reward_percent"], 50.0)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=False))
+        self.assertIn("switch_fixed200: step 200 -> sr", output.getvalue())
+        target.write_text(json.dumps({**value, "arm": "switch_fixed200", "input_sha256": "wrong"}))
+        with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()):
+            results(SimpleNamespace(plan=plan, json=True))
+
 
 if __name__ == "__main__":
     unittest.main()

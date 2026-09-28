@@ -123,9 +123,9 @@ def main():
         from srgc_step_checkpoints import worker_main
         extra_plans = []
         if settings.with_dataset:
+            from srgc_pair_inputs import default_plan
             from srgc_shared_storage import route_plan
-            extra = root / "srgc_rebuttal/experiments" / (
-                "mbpp_seeds.json" if settings.with_dataset == "mbpp" else "additional_seeds.json")
+            extra = default_plan(root, settings.with_dataset, os.environ, writing=True)
             extra_plans.append(route_plan(extra, writing=True, start_or_continue=True))
         with ExitStack() as stack:
             stack.enter_context(uniform_log())

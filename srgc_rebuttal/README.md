@@ -1,5 +1,11 @@
 # SR-GC rebuttal: online switching and extra-seed cost experiments
 
+2026-09-29: fixed-switch boundaries, multi-dataset cohort routing, MBPP
+assertion completion, fixed-arm exports and diagnostic D exports were repaired.
+The package identity intentionally changed. Use a separate run for corrected
+experiments and preserve old checkouts/results; see the
+[repair and verification record](../docs/V7_EXPERIMENT_FIXES_2026-09-29.md).
+
 Canonical code repository: `33modeling/offpolicy-misranking`, branch
 `master`. Executable code, tests and input bundles
 are maintained here, not in the manuscript repository. Use the Python entry

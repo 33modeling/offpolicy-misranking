@@ -28,6 +28,7 @@ from .timing import CostMeter, invocation, torch_meter
 from .distributed import initialize, primary
 from .progress import record as progress
 from .existing_runtime import load_model
+from .verifiers import verifier_protocol
 
 DEFAULT_MODEL = "allenai/Olmo-3-1025-7B"
 
@@ -44,7 +45,8 @@ class CacheStore:
         validate_inputs(bundle, require_cache=False)
         self.root = bundle_path.with_suffix(".cache")
         self.candidates = tuple(bundle["candidate_ids"])
-        self.protocol = {**protocol, "candidate_ids": list(self.candidates),
+        self.protocol = {**protocol, **verifier_protocol(protocol.get("verifier")),
+                         "candidate_ids": list(self.candidates),
                          "records_sha256": hashlib.sha256(json.dumps(
                              {i: bundle["records"][i] for i in self.candidates},
                              sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
@@ -153,6 +155,7 @@ def main() -> None:
         parser.error("the experiment requires eight cached responses per candidate")
     protocol = {k: getattr(args, k) for k in
                 ("model", "model_revision", "verifier", "responses", "max_new_tokens", "cache_seed", "attention")}
+    protocol.update(verifier_protocol(args.verifier))
     import torch
     import torch.distributed as dist
     world = plan["world_size"]
@@ -260,6 +263,7 @@ def export_cache(args, bundle, store):
                                      "max_new_tokens": args.max_new_tokens, "cache_seed": args.cache_seed,
                                      "verifier": args.verifier}
     bundle["provenance"]["cache"]["attention"] = args.attention
+    bundle["provenance"]["cache"].update(verifier_protocol(args.verifier))
     responses_path = args.bundle.with_suffix(".cache-responses.jsonl")
     temporary = responses_path.with_suffix(".tmp")
     with temporary.open("w") as handle:

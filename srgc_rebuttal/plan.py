@@ -73,6 +73,12 @@ def validate_inputs(data: dict, *, require_cache: bool = True) -> None:
             raise ValueError("each candidate needs eight existing binary cache rewards")
     if not data.get("provenance"):
         raise ValueError("record prompt formatting, split, cache and verifier provenance")
+    prior = data["provenance"].get("cache", {}) if isinstance(data["provenance"], dict) else {}
+    if cache and isinstance(prior, dict):
+        from .verifiers import verifier_protocol
+        expected = verifier_protocol(prior.get("verifier"))
+        if any(prior.get(key) != value for key, value in expected.items()):
+            raise ValueError("cached code rewards use an unverified verifier version; regenerate in a new run")
 
 
 def digest(path: Path) -> str:

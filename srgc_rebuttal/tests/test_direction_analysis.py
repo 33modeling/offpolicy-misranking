@@ -65,6 +65,46 @@ class DirectionRecordTest(unittest.TestCase):
 
 
 class DirectionAnalysisTest(unittest.TestCase):
+    def test_fixed_diagnostic_requires_finite_terms_and_never_replaces_a_decision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "seed-5"
+            folder.mkdir()
+            base = {"selection_refreshed": True, "checkpoint": 25, "d": None,
+                    "validation_norm": 2.0, "on_mean_norm": 3.0, "sr_mean_norm": 4.0,
+                    "on_mean_cos": 0.5, "sr_mean_cos": 0.25}
+            path = folder / "switch_fixed200-progress.json"
+            path.write_text(json.dumps({"history": [base, {**base, "checkpoint": 50, "d": -9.0},
+                {**base, "checkpoint": 75, "sr_mean_norm": float("nan")},
+                {**base, "checkpoint": 100, "sr_mean_cos": None},
+                {**base, "checkpoint": 125, "sr_mean_norm": 0.0}]}))
+            rows = analysis.refresh_rows(root)
+            self.assertEqual([r["d"] for r in rows], [1.0, -9.0, None, None, 3.0])
+            self.assertEqual(rows[1]["d_source"], "decision")
+            self.assertEqual(rows[-1]["d_source"], "reconstructed_diagnostic")
+            self.assertIn("+0.000(0.000)", analysis.summarize([rows[-1]]))
+
+    def test_on_policy_d_is_reconstructed_without_mutating_decision_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            engine = make("on_policy", RecordedSwitch)
+            engine.run_until(51)
+            folder = root / "seed-3"
+            folder.mkdir()
+            path = folder / "on_policy-progress.json"
+            path.write_text(json.dumps({"history": engine.history}))
+            before = path.read_bytes()
+            rows = analysis.refresh_rows(root)
+            for row in rows:
+                self.assertEqual(row["d_source"], "reconstructed_diagnostic")
+                self.assertAlmostEqual(row["d"], row["on_dot"] - row["sr_dot"])
+            self.assertEqual(len(rows), 3)
+            self.assertTrue(all(record["d"] is None for record in engine.history))
+            self.assertEqual(path.read_bytes(), before)
+            legacy = {"history": [{"selection_refreshed": True, "checkpoint": 75, "d": None}]}
+            path.write_text(json.dumps(legacy))
+            self.assertIsNone(analysis.refresh_rows(root)[0]["d"])
+
     def test_csv_summary_and_legacy_overlay(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -82,7 +122,8 @@ class DirectionAnalysisTest(unittest.TestCase):
             with redirect_stdout(io.StringIO()) as printed:
                 code = analysis.main(["--root", str(root), "--legacy-d", str(legacy), "--out", str(out)])
             self.assertEqual(code, 0)
-            rows = list(__import__("csv").DictReader((out / "direction.csv").open()))
+            with (out / "direction.csv").open() as handle:
+                rows = list(__import__("csv").DictReader(handle))
             recorded = [r for r in rows if r["source"] == "recorded"]
             self.assertEqual({r["seed"] for r in recorded}, {"5", "6"})
             self.assertTrue(all(r["on_mean_cos"] for r in recorded if r["step"] in {"25", "50"}))

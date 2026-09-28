@@ -16,6 +16,23 @@ from srgc_rebuttal.timing import CostMeter
 
 
 class CacheTests(unittest.TestCase):
+    def test_unversioned_code_cache_cannot_resume_or_relabel_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan_path = write_inputs(Path(directory), pending=True)
+            path = input_path(plan_path, load_plan(plan_path), 5)
+            bundle = json.loads(path.read_text())
+            protocol = {"verifier": "srgc_rebuttal.verifiers:code_reward", "cache_seed": 5}
+            store = CacheStore(path, bundle, protocol)
+            store.bind()
+            marker = store.root / "protocol.json"
+            old = json.loads(marker.read_text())
+            self.assertEqual(old.pop("code_verifier_version"), "assertion-completion-v2")
+            marker.write_text(json.dumps(old))
+            before = marker.read_bytes()
+            with self.assertRaisesRegex(ValueError, "settings"):
+                CacheStore(path, bundle, protocol).bind()
+            self.assertEqual(marker.read_bytes(), before)
+
     def test_generation_progress_is_completed_work_and_never_stops_decoding(self):
         now = [0.0]
         callback = GenerationProgress(10, "p1", clock=lambda: now[0])

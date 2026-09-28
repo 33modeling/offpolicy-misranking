@@ -1,8 +1,9 @@
 import io
 import json
 import tempfile
+import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, nullcontext, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -19,6 +20,34 @@ def args():
 
 
 class MultiQueueTest(unittest.TestCase):
+    def test_launcher_resolves_both_dataset_cohorts(self):
+        from scripts import run_srgc_rebuttal
+        root = Path(__file__).resolve().parents[2]
+        with patch.object(sys, "path", [str(root / "scripts"), *sys.path]):
+            for primary, secondary in (("math", "mbpp"), ("mbpp", "math")):
+                for pair in (True, False):
+                    with self.subTest(primary=primary, pair=pair), ExitStack() as stack:
+                        paths = {"math": root / ("pair_seeds.json" if pair else "additional_seeds.json"),
+                                 "mbpp": root / ("mbpp_pair_seeds.json" if pair else "mbpp_seeds.json")}
+                        resolver = stack.enter_context(patch("srgc_pair_inputs.default_plan",
+                            side_effect=lambda root, dataset, env, **kw: paths[dataset]))
+                        stack.enter_context(patch("srgc_rebuttal.existing_runtime.select_python"))
+                        stack.enter_context(patch("srgc_shared_storage.route_plan", side_effect=lambda p, **kw: p))
+                        stack.enter_context(patch("srgc_shared_storage.storage_root", return_value=(root, root)))
+                        for module, method in (("srgc_checkpoint_backup", "automatic_backup"),
+                                ("srgc_log_format", "uniform_log"), ("srgc_process_guard", "process_guard"),
+                                ("srgc_seed_order", "seed_first_queue")):
+                            stack.enter_context(patch(f"{module}.{method}", side_effect=lambda *a, **kw: nullcontext()))
+                        queues = stack.enter_context(patch("srgc_multi_queue.multi_queue",
+                                                          side_effect=lambda *a: nullcontext()))
+                        stack.enter_context(patch("srgc_step_checkpoints.worker_main"))
+                        stack.enter_context(patch.object(sys, "argv", ["run", "worker", "--dataset", primary,
+                                                                      "--with-dataset", secondary]))
+                        run_srgc_rebuttal.main()
+                        self.assertEqual([c.args[1] for c in resolver.call_args_list], [primary, secondary])
+                        self.assertTrue(all(c.kwargs["writing"] for c in resolver.call_args_list))
+                        queues.assert_called_once_with([paths[secondary]])
+
     def fake_child(self, order):
         def run_child(command, log_path, environment, **kwargs):
             plan = Path(command[command.index("--plan") + 1])

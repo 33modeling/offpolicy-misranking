@@ -27,6 +27,16 @@ The code verifier's isolated Python process and resource limits are not a
 security sandbox. Run generated-code experiments on disposable compute with
 no credentials or sensitive files accessible to the verifier account.
 
+The corrected verifier requires successful completion of the assertions, not
+just a zero process exit status. `SystemExit(0)` and `os._exit(0)` cannot pass
+by skipping the tests. Generated caches record
+`code_verifier_version=assertion-completion-v2`; older caches produced by this
+verifier cannot resume or be imported as corrected rewards. Generate them in
+a new run instead of changing their metadata. Historical Pair imports use a
+different verifier and retain their original provenance; they are not claimed
+to have been regraded. See the [repair record](../docs/V7_EXPERIMENT_FIXES_2026-09-29.md)
+for run isolation and verification limits.
+
 The lower-level per-bundle tools below remain available. Their default split
 seed follows `--seed`, unlike the integrated cohort's fixed split seed 0.
 
@@ -109,10 +119,11 @@ python -m srgc_rebuttal.summarize --plan $PLAN
 Verifiers (`srgc_rebuttal/verifiers.py`):
 
 - `math_reward`: the manuscript's math-verify check (re-exported from `run_experiment`).
-- `code_reward`: extracts the last fenced Python block, appends the record's
-  assertions and runs them in an isolated interpreter (`python -I`) with a
+- `code_reward`: extracts the last fenced Python block and executes it, then
+  the record's assertions, in an isolated interpreter (`python -I`) with a
   10 s wall clock, CPU and 1 GB memory limits (`SRGC_CODE_TIMEOUT`,
-  `SRGC_CODE_MEMORY_MB`); any failure, timeout or missing code gives 0.
+  `SRGC_CODE_MEMORY_MB`). A separate completion channel confirms that the
+  assertions finished; any failure, early exit, timeout or missing code gives 0.
 
 Tests: `python -m unittest srgc_rebuttal.tests.test_build_inputs`.
 

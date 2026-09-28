@@ -179,6 +179,11 @@ def run(args):
     if args.seed not in plan["seeds"]:
         raise SystemExit("seed is not in the frozen plan")
     arm = args.arm if getattr(args, "arm", None) else arm_name(args.scope)
+    if re.fullmatch(r"switch_fixed\d+", arm):
+        from scripts.srgc_switch_fixed import fixed_step_of
+        step = fixed_step_of(arm)
+        if not plan["shared_prefix_updates"] <= step < plan["total_updates"] or step % plan["selection_interval"]:
+            raise ValueError("fixed step must be a refresh boundary from the shared prefix to before the endpoint")
     scope = "candidates" if arm == "sr_refresh" else "pool" if arm == "sr_refresh-pool" else None
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
     import torch
@@ -334,7 +339,11 @@ def results(args):
     from srgc_rebuttal.runtime import identity, matches, prefix_ready, run_root
     plan = load_plan(args.plan)
     root = run_root(args.plan, plan)
-    arms = [*plan["arms"], *EXTRA_ARMS]
+    fixed = {p.name.removesuffix("-endpoint.json")
+             for seed in plan["seeds"] for p in (root / f"seed-{seed}").glob("switch_fixed*-endpoint.json")
+             if re.fullmatch(r"switch_fixed\d+-endpoint.json", p.name)}
+    arms = [*plan["arms"], *EXTRA_ARMS,
+            *sorted(fixed - set(EXTRA_ARMS), key=lambda name: int(name.removeprefix("switch_fixed")))]
     rows = []
     for seed in plan["seeds"]:
         row = {"seed": seed}
@@ -370,7 +379,7 @@ def results(args):
             cells.append(f"{value['reward_percent']:15.2f}%" if value else f"{'-':>16}")
         print(f"{row['seed']:>4}  " + "  ".join(cells))
     for row in rows:
-        for arm in ("switch", "switch_repeat", "switch_fixed100", "switch_fixed125"):
+        for arm in (a for a in arms if a in {"switch", "switch_repeat"} or a.startswith("switch_fixed")):
             value = row.get(arm)
             if value and (value.get("transitions") or value.get("switched_at") is not None):
                 moves = value.get("transitions") or [{"step": value["switched_at"], "to": "sr"}]

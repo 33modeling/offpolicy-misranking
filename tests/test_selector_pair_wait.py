@@ -257,7 +257,8 @@ def test_shell_caps_legacy_busy_retries_and_keeps_timeout_nonzero(tmp_path, mode
     for path in (python, sleep, forbidden):
         path.chmod(0o755)
     root, work = tmp_path / "missing-pair", tmp_path / "missing-work"
-    process = subprocess.run(["bash", "scripts/run_selector_pair.sh", mode], cwd=base.ROOT,
+    import pinned_trainers
+    process = subprocess.run(pinned_trainers.legacy_pair_command(mode), cwd=base.ROOT,
         env={**os.environ, "PAIR_PYTHON": str(python), "PAIR_ROOT": str(root), "OM_WORK": str(work),
              "PAIR_TEST_CALLS": str(calls), "PAIR_TEST_GPU": str(tmp_path / "gpu-queried"),
              "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"], "CUDA_VISIBLE_DEVICES": ""},
