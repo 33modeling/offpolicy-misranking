@@ -4,6 +4,11 @@
 대응 원고: V7 `sections/discussion.tex`의 Discussion and Limitations.
 실행 코드는 이 저장소에만 유지한다. 논문 쪽 목록은 `v7/EXPERIMENTS.md`다.
 
+실행할 때는 [통합 명령 모음](REBUTTAL_COMMANDS_KO.md),
+[추가 arm 30개 배정표](REBUTTAL_EXTRA_TASKS.tsv),
+[공식 리뷰 일정과 내부 준비 계획](REVIEW_SCHEDULE_2027_KO.md)을 사용한다.
+아래는 실험 목적·조건·구현 기록을 자세히 설명한다.
+
 **상태:** 저자는 아직 실행하지 않은 실험이 많다고 알렸다. 아래는 구현과 실행
 명령을 확인한 목록이지 GPU 실험 완료 목록이 아니다. 이번 작업에서 새 7B 학습은
 시작하지 않았다. 로컬 `nvidia-smi`는 드라이버 통신 실패를 반환했고, 실제 사용할

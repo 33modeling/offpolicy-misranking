@@ -10,6 +10,12 @@ criterion and result interpretation, including the MBPP off-policy follow-up.
 
 ## SR-GC Rebuttal Experiments
 
+Start with the [experiment command index](docs/REBUTTAL_COMMANDS_KO.md),
+[30 extra-arm task assignments](docs/REBUTTAL_EXTRA_TASKS.tsv), and
+[ICLR 2027 review preparation schedule](docs/REVIEW_SCHEDULE_2027_KO.md).
+These distinguish runnable experiments from pending implementations and
+official review dates from internal preparation targets.
+
 Additional-seed reproduction and stage-level cost measurement live on
 `master`, in [srgc_rebuttal](srgc_rebuttal/README.md).
 The simple entry point is `sh scripts/run_srgc.sh math` or
