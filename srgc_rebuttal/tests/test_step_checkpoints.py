@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import torch
 
+from scripts.srgc_direction_records import FIELDS as DIRECTION_FIELDS
 from srgc_rebuttal import cluster
 from srgc_rebuttal.cluster_queue import Task, TaskQueue
 from srgc_rebuttal.cost_ledger import PhaseLedger
@@ -138,6 +139,10 @@ class StepCheckpointTests(unittest.TestCase):
                     for row in (expected, actual):
                         row.pop("selection_gpu_seconds")
                         row.pop("training_gpu_seconds")
+                    # The adapter adds only the direction diagnostics (scripts/srgc_direction_records.py)
+                    # on refresh records; every experiment field must be identical to the unadapted engine.
+                    diagnostics = {key: actual.pop(key) for key in DIRECTION_FIELDS if key in actual}
+                    self.assertEqual(bool(diagnostics), bool(actual.get("selection_refreshed")) and "on_ids" in actual)
                     self.assertEqual(actual, expected)
                 self.assertEqual(restored.backend.state_dict(), original.backend.state_dict())
                 self.assertEqual(restored.used_training_ids, original.used_training_ids)

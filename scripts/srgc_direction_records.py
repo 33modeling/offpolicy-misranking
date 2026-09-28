@@ -23,6 +23,11 @@ entry and the extra arms), so the hashed package is untouched.
 import numpy as np
 
 
+FIELDS = ("validation_norm", "on_mean_norm", "sr_mean_norm", "on_mean_cos", "sr_mean_cos",
+          "on_random4_expected_dot", "on_top4_dot", "ranking_cos_mean", "ranking_cos_std", "ranking_cos_top4",
+          "on_cos_top4_minus_mean", "ranking_gap4")
+
+
 def _mean(vectors, ids):
     return np.stack([vectors[i] for i in ids]).mean(axis=0)
 
