@@ -75,8 +75,8 @@ class LiveStatusTests(unittest.TestCase):
                         self.assertEqual((row["current_step"], row["completed_steps"]), (current, completed))
                         self.assertEqual(row["status"], "running")
                         text = live.render(report)
-                        self.assertIn("current_step completed_steps", text)
-                        self.assertIn("h100-node", text)
+                        self.assertIn("running now:", text)
+                        self.assertIn("node h100-node", text)
                         if current == 1:
                             self.assertIn("1/25", text)
                             self.assertIn("0/25", text)
@@ -109,7 +109,7 @@ class LiveStatusTests(unittest.TestCase):
             self.assertEqual(row["status"], "recoverable")
             self.assertIsNone(row["current_step"])
             self.assertEqual(row["last_observed_step"], 6)
-            self.assertIn("last_attempt_step=6/25", live.render(report))
+            self.assertIn("last step 6/25", live.render(report))
 
     def test_invalid_phase_does_not_crash_or_invent_a_step(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -135,7 +135,7 @@ class LiveStatusTests(unittest.TestCase):
             self.assertEqual(prefix["completed_steps"], 25)
             cache = next(r for r in report["tasks"] if r["task"] == "seed-5.cache")
             self.assertNotIn("current_step", cache)
-            self.assertIn("CACHE available_prompts=400/400 saved_prompts=0 exported=400", live.render(report))
+            self.assertRegex(live.render(report), r"(?m)^\s*5\s+done\s+done\s")
             self.assertEqual(code_digest(), "1869fe1cf898d4ff3a6d5e9054790836442b5e0b81b485fb04bc27de4ebab20a")
 
     def test_status_hook_restored_after_exit(self):
@@ -158,7 +158,7 @@ class LiveStatusTests(unittest.TestCase):
                 live.main()
             value = json.loads(output.getvalue())
             self.assertEqual(value["errors"], [])
-            self.assertIn("current_step completed_steps", (root / "status.txt").read_text())
+            self.assertIn("SRGC math", (root / "status.txt").read_text())
             self.assertFalse((root / "runs/.queue/protocol.json").exists())
             self.assertIs(reports.snapshot, original_snapshot)
             self.assertIs(reports.render, original_render)
@@ -299,7 +299,7 @@ class ResultsVerificationTests(unittest.TestCase):
                     self.assertFalse(report["complete"])
                     self.assertEqual(report["errors"], [])
                     if action == "status":
-                        self.assertIn("current_step completed_steps", output.read_text())
+                        self.assertIn("SRGC ", output.read_text())
                     else:
                         self.assertEqual(len(list(csv.DictReader(io.StringIO((folder / "runs/results.csv").read_text())))), 20)
                 self.assertEqual({p.name: p.read_bytes() for p in folder.glob("*.json")}, before)

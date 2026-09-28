@@ -513,3 +513,17 @@ golds per seed parse on an idle machine). The training child now installs
 60 s, and a gold that still fails is scored by the original experiment's
 normalized exact match on the response's last `Answer:` line, logged once as
 `VERIFY fallback exact-match gold=...`. Parsable golds keep math-verify.
+
+## One worker for both datasets
+
+```bash
+sh scripts/run_srgc.sh all run      # MATH queue first; MBPP tasks whenever MATH has nothing claimable
+sh scripts/run_srgc.sh all status   # both status reports, MATH then MBPP
+```
+
+`all run` starts one worker per node with `--dataset math --with-dataset mbpp`
+(`scripts/srgc_multi_queue.py`). Checkpoint backups and orphan reaping cover
+both plans; failed tasks retry automatically. `status` prints a per-seed table
+(`done` / `running 3/25` / `waiting` / `failed x3`), the running tasks with
+their step and node, the tasks that need attention with their log path, and
+the live workers.

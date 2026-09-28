@@ -24,6 +24,8 @@ def main():
     options.add_argument("--plan", type=Path)
     options.add_argument("--fresh", nargs="?", const="restart1", metavar="RUN",
                          help="start/join a new group-volume run, ignoring old caches (default name: restart1)")
+    options.add_argument("--with-dataset", choices=("math", "mbpp"), dest="with_dataset",
+                         help="worker only: also serve this dataset's queue when the main one has nothing claimable")
     settings, args = options.parse_known_args(sys.argv[1:])
     dataset = settings.dataset or ("mbpp" if settings.plan and
         json.loads(settings.plan.read_text()).get("dataset") == "mbpp" else "math")
@@ -51,6 +53,10 @@ def main():
             options.error("--dataset and --plan refer to different datasets")
     if settings.fresh and not (action == "storage" or (action == "cluster" and args and args[0] in {"worker", "launch"})):
         options.error("--fresh is supported by worker, launch and storage")
+    if settings.with_dataset and not (action == "cluster" and args and args[0] == "worker"):
+        options.error("--with-dataset is supported by worker only")
+    if settings.with_dataset and (settings.fresh or settings.plan or settings.with_dataset == dataset):
+        options.error("--with-dataset needs the default plans of two different datasets and no --fresh")
     if action in {"backup", "backup-watch"}:
         from srgc_shared_storage import route_plan
         from srgc_checkpoint_backup import main as backup_main
@@ -108,12 +114,26 @@ def main():
         from srgc_live_status import main as status_main
         status_main()
     elif action == "cluster" and args[0] == "worker" and not any(a in {"-h", "--help"} for a in args):
+        from contextlib import ExitStack
         from srgc_checkpoint_backup import automatic_backup
         from srgc_log_format import uniform_log
+        from srgc_multi_queue import multi_queue
         from srgc_process_guard import process_guard
         from srgc_seed_order import seed_first_queue
         from srgc_step_checkpoints import worker_main
-        with uniform_log(), automatic_backup(plan), process_guard(plan), seed_first_queue():
+        extra_plans = []
+        if settings.with_dataset:
+            from srgc_shared_storage import route_plan
+            extra = root / "srgc_rebuttal/experiments" / (
+                "mbpp_seeds.json" if settings.with_dataset == "mbpp" else "additional_seeds.json")
+            extra_plans.append(route_plan(extra, writing=True, start_or_continue=True))
+        with ExitStack() as stack:
+            stack.enter_context(uniform_log())
+            for each in (plan, *extra_plans):
+                stack.enter_context(automatic_backup(each))
+                stack.enter_context(process_guard(each))
+            stack.enter_context(seed_first_queue())
+            stack.enter_context(multi_queue(extra_plans))
             worker_main()
     else:
         runpy.run_module(f"srgc_rebuttal.{actions[action]}", run_name="__main__")

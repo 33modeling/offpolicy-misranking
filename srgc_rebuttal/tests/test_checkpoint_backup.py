@@ -170,6 +170,8 @@ class CheckpointBackupTests(unittest.TestCase):
                     "srgc_shared_storage": storage, "srgc_checkpoint_backup": backup,
                     "srgc_process_guard": Mock(process_guard=lambda plan: nullcontext()),
                     "srgc_log_format": Mock(uniform_log=lambda: nullcontext()),
+                    "srgc_multi_queue": Mock(multi_queue=lambda plans: nullcontext()),
+                    "srgc_seed_order": Mock(seed_first_queue=lambda: nullcontext()),
                     "srgc_step_checkpoints": Mock(worker_main=worker)}), \
                     patch("sys.argv", ["run_srgc_rebuttal.py", "worker", "--dataset", "math"]), \
                     patch("srgc_rebuttal.existing_runtime.select_python"), \

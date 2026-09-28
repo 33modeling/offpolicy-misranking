@@ -3,14 +3,14 @@ set -eu
 cd "$(dirname "$0")/.."
 
 usage() {
-    printf '%s\n' 'usage: sh scripts/run_srgc.sh math|mbpp [run|status|results|costs|backup|backup-watch]'
+    printf '%s\n' 'usage: sh scripts/run_srgc.sh math|mbpp|all [run|status|results|costs|backup|backup-watch]'
 }
 
 DATASET=${1:-}
 MODE=${2:-run}
 case "$DATASET" in
     -h|--help) usage; exit 0 ;;
-    math|mbpp) ;;
+    math|mbpp|all) ;;
     *) usage >&2; exit 2 ;;
 esac
 [ "$#" -le 2 ] || { usage >&2; exit 2; }
@@ -18,7 +18,7 @@ case "$MODE" in run|status|results|costs|backup|backup-watch) ;; *) usage >&2; e
 
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "$DATASET" in
-    math) EXPLICIT=${PAIR_PYTHON:-} ;;
+    math|all) EXPLICIT=${PAIR_PYTHON:-} ;;
     mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;;
 esac
 PY=${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
@@ -37,11 +37,24 @@ if [ "$MODE" = run ]; then
     # Failed tasks are retried automatically (two minutes apart) up to 50 attempts,
     # so a transient fault never leaves a task parked as attempts_exhausted.
     # SRGC_MAX_ATTEMPTS overrides the limit.
-    set -- worker --dataset "$DATASET" --retry-failed --max-attempts "${SRGC_MAX_ATTEMPTS:-50}" --retry-delay 120
+    if [ "$DATASET" = all ]; then
+        # One worker per node serves both queues: MATH first, MBPP when MATH has nothing claimable.
+        set -- worker --dataset math --with-dataset mbpp --retry-failed --max-attempts "${SRGC_MAX_ATTEMPTS:-50}" --retry-delay 120
+        [ -z "${SRGC_RUN_NAME:-}" ] || { printf '%s\n' 'SRGC_RUN_NAME is not supported with all' >&2; exit 2; }
+    else
+        set -- worker --dataset "$DATASET" --retry-failed --max-attempts "${SRGC_MAX_ATTEMPTS:-50}" --retry-delay 120
+    fi
     if [ -n "${SRGC_RUN_NAME:-}" ]; then
         exec "$PY" scripts/run_srgc_rebuttal.py "$@" --fresh "$SRGC_RUN_NAME"
     fi
     exec "$PY" scripts/run_srgc_rebuttal.py "$@"
 fi
 export CUDA_VISIBLE_DEVICES=""
+if [ "$DATASET" = all ]; then
+    rc=0
+    for each in math mbpp; do
+        "$PY" scripts/run_srgc_rebuttal.py "$MODE" --dataset "$each" || rc=$?
+    done
+    exit "$rc"
+fi
 exec "$PY" scripts/run_srgc_rebuttal.py "$MODE" --dataset "$DATASET"

@@ -90,41 +90,114 @@ def snapshot(original, plan_path, **kwargs):
     return report
 
 
-def render(report, *, results=False):
-    lines = [f"SRGC {report['dataset']} STATUS", str(report["output_root"]),
-             "  ".join(f"{key}={value}" for key, value in report["counts"].items()),
-             "seed task       status                current_step completed_steps node"]
-    for row in report["tasks"]:
-        total = row.get("total_steps")
-        def count(value):
-            return "-" if value is None else f"{value}/{total}"
-        lines.append(f"{row['seed']:4} {row['arm']:10} {row['status']:21} "
-                     f"{count(row.get('current_step')):>12} {count(row.get('completed_steps')):>15} "
-                     f"{row.get('host') or '-'}")
+ATTENTION = {"failed", "interrupted", "recoverable", "invalid", "attempts_exhausted"}
+
+
+def cell(row):
+    """Short table cell for one task."""
+    status, total = row["status"], row.get("total_steps")
+    if status == "complete":
+        reward = row.get("reward_percent")
+        return "done" if reward is None else f"done {reward:.1f}%"
+    if status == "running":
         if row["arm"] == "cache" and "cache_saved_prompts" in row:
-            age = row["cache_last_write_age_seconds"]
             available = max(row["cache_saved_prompts"], row["cache_exported_prompts"])
-            lines.append(f"     CACHE available_prompts={available}/{row['cache_total_prompts']} "
-                         f"saved_prompts={row['cache_saved_prompts']} "
-                         f"exported={row['cache_exported_prompts']} "
-                         f"last_write_age={'none' if age is None else f'{age:.0f}s'}")
-        if row.get("phase_stage"):
-            lines.append(f"     phase={row['phase_stage']} phase_record_age={row['progress_age_seconds']:.0f}s")
-        for progress in row.get("progress", []):
-            updated = progress.get("updated")
-            age = (f"{max(0, time.time() - updated):.0f}s"
-                   if isinstance(updated, (int, float)) and math.isfinite(updated) else "unknown")
-            lines.append(f"     observed_work={progress.get('stage')} "
-                         f"prompt={progress.get('prompt', '-')} last_work_age={age}")
-        if row["status"] in {"failed", "interrupted", "recoverable", "invalid"}:
-            if row.get("last_observed_step") is not None:
-                lines.append(f"     last_attempt_step={count(row['last_observed_step'])}")
-            lines.append(f"     log={row['log']}")
-    for worker in report["workers"]:
-        lines.append(f"node={worker.get('host')} {worker['status']} task={worker.get('task')} "
-                     f"heartbeat_age={worker['heartbeat_age_seconds']:.0f}s")
-        if worker.get("error"):
-            lines.append(f"  {worker['error']}")
+            return f"running {available}/{row['cache_total_prompts']}"
+        done = row.get("completed_steps")
+        return f"running {done}/{total}" if done is not None and total else "running"
+    if status.startswith("waiting_for_"):
+        return "waiting"
+    if status == "failed":
+        return f"failed x{row.get('attempt', 0)}"
+    if status == "invalid":
+        return "INVALID"
+    return status.replace("_", " ")
+
+
+def running_detail(row):
+    total = row.get("total_steps")
+    parts = []
+    if row.get("current_step") is not None:
+        parts.append(f"step {row['current_step']}/{total} in progress")
+    if row.get("completed_steps") is not None:
+        parts.append(f"{row['completed_steps']}/{total} done")
+    if row["arm"] == "cache" and "cache_saved_prompts" in row:
+        available = max(row["cache_saved_prompts"], row["cache_exported_prompts"])
+        age = row["cache_last_write_age_seconds"]
+        parts.append(f"{available}/{row['cache_total_prompts']} prompts cached"
+                     + ("" if age is None else f" (last write {age:.0f}s ago)"))
+    if row.get("phase_stage"):
+        parts.append(f"{row['phase_stage'].replace('_', ' ')} ({row['progress_age_seconds']:.0f}s ago)")
+    ages = [max(0, time.time() - p["updated"]) for p in row.get("progress", [])
+            if isinstance(p.get("updated"), (int, float)) and math.isfinite(p["updated"])]
+    if ages:
+        low, high = min(ages), max(ages)
+        span = f"{low:.0f}s" if high - low < 1 else f"{low:.0f}-{high:.0f}s"
+        parts.append(f"gpus {len(ages)} busy (last {span})")
+    if row.get("host"):
+        parts.append(f"node {row['host']}")
+    return " · ".join(parts) or "starting"
+
+
+def attention_detail(row):
+    total = row.get("total_steps")
+    parts = [row["status"].replace("_", " ")]
+    if row.get("attempt"):
+        parts.append(f"{row['attempt']} attempt{'s' if row['attempt'] != 1 else ''}")
+    if row.get("last_observed_step") is not None:
+        parts.append(f"last step {row['last_observed_step']}/{total}")
+    if row.get("host"):
+        parts.append(f"node {row['host']}")
+    parts.append(f"log {row['log']}")
+    return " · ".join(parts)
+
+
+def render(report, *, results=False):
+    tasks = report["tasks"]
+    generated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(report.get("generated", time.time())))
+    counts = {"done": 0, "running": 0, "waiting": 0, "attention": 0, "ready": 0}
+    for row in tasks:
+        status = row["status"]
+        key = ("done" if status == "complete" else "running" if status == "running" else
+               "waiting" if status.startswith("waiting_for_") else "attention" if status in ATTENTION else "ready")
+        counts[key] += 1
+    summary = " · ".join(f"{name} {count}" for name, count in counts.items() if count)
+    if counts["attention"]:
+        summary = summary.replace(f"attention {counts['attention']}", f"needs attention {counts['attention']}")
+    lines = [f"SRGC {report['dataset']} · {generated}" + (" · STOP REQUESTED" if report.get("stop_requested") else ""),
+             str(report["output_root"]), summary or "no tasks", ""]
+    arms = []
+    for row in tasks:
+        if row["arm"] not in arms:
+            arms.append(row["arm"])
+    seeds = []
+    for row in tasks:
+        if row["seed"] not in seeds:
+            seeds.append(row["seed"])
+    table = {(row["seed"], row["arm"]): cell(row) for row in tasks}
+    widths = {arm: max(len(arm), *(len(table.get((seed, arm), "-")) for seed in seeds)) for arm in arms}
+    lines.append("seed  " + "  ".join(f"{arm:<{widths[arm]}}" for arm in arms))
+    for seed in seeds:
+        lines.append(f"{seed:>4}  " + "  ".join(f"{table.get((seed, arm), '-'):<{widths[arm]}}" for arm in arms))
+    running = [row for row in tasks if row["status"] == "running"]
+    if running:
+        lines += ["", "running now:"]
+        lines += [f"  {row['task']:<16} {running_detail(row)}" for row in running]
+    attention = [row for row in tasks if row["status"] in ATTENTION]
+    if attention:
+        lines += ["", "needs attention:"]
+        lines += [f"  {row['task']:<16} {attention_detail(row)}" for row in attention]
+    active = [w for w in report["workers"] if w["status"] in {"preflight", "running", "idle", "heartbeat_stale"}]
+    hidden = len(report["workers"]) - len(active)
+    if active or hidden:
+        lines += ["", "workers:"]
+        for worker in active:
+            what = worker["status"].replace("_", " ") + (f" {worker['task']}" if worker.get("task") else "")
+            lines.append(f"  {str(worker.get('host') or '-'):<24} {what} · heartbeat {worker['heartbeat_age_seconds']:.0f}s ago")
+            if worker.get("error"):
+                lines.append(f"      {worker['error']}")
+        if hidden:
+            lines.append(f"  ({hidden} finished or stopped worker record{'s' if hidden != 1 else ''} not shown)")
     lines.extend(f"WARNING {warning}" for warning in report["warnings"])
     lines.extend(f"ERROR {error}" for error in report["errors"])
     return "\n".join(lines) + "\n"
