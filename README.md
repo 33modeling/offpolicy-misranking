@@ -15,6 +15,11 @@ Start with the [experiment command index](docs/REBUTTAL_COMMANDS_KO.md),
 [ICLR 2027 review preparation schedule](docs/REVIEW_SCHEDULE_2027_KO.md).
 These distinguish runnable experiments from pending implementations and
 official review dates from internal preparation targets.
+The command index includes CPU/GPU allocation and concurrency limits.
+The [experiment results ledger](docs/EXPERIMENT_RESULTS_LEDGER_KO.md) records
+the archived outcomes, their sources, unresolved cost corrections and the
+additional experiments awaiting verified results. The preparation target is
+to complete all planned experiments and V7 before reviews are released.
 
 Additional-seed reproduction and stage-level cost measurement live on
 `master`, in [srgc_rebuttal](srgc_rebuttal/README.md).

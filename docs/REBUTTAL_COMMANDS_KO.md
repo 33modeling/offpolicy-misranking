@@ -2,9 +2,15 @@
 
 확인: 2026-09-28, 실행 코드 기준 `f4da754` / `master`.
 [리뷰 일정](REVIEW_SCHEDULE_2027_KO.md) ·
+[기존 실험과 결과](EXPERIMENT_RESULTS_LEDGER_KO.md) ·
 [실험별 목적·우선순위](LIMITATION_EXPERIMENTS_KO.md) ·
 [Qwen 감사 결과](QWEN35_SRGC_AUDIT_KO.md).
 아래는 실행 명령 목록이며, 원격 GPU 작업의 완료/진행을 확인한 기록은 아니다.
+
+**완료 목표:** E01–E09의 전체 실험과 비용 검증을 마치고, 결과를 반영한 V7
+원고를 **2026-11-04 18:00 KST까지** 준비한 뒤 11월 5일 리뷰 공개를 맞는다.
+P0–P3는 자원 배정 순서이며 P3를 생략한다는 뜻이 아니다.
+CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-결과-수집)에 있다.
 
 ## 1. 무엇을 실행하는지
 
@@ -23,7 +29,9 @@
 구현된 신규 온라인 continuation은 전체 범위 기준 **110개**다
 (OLMo 40 + 추가 arm 30 + Qwen 40). cache/prefix 작업과 과거 진단은 이 수에
 포함하지 않으며, 남은 작업 수라는 뜻도 아니다. E03/E04가 준비되면 P3보다
-먼저 자원을 배정한다. 이미 정상 실행 중인 작업은 유지한다.
+먼저 자원을 배정한다. E03/E04/E09도 전체 완료 범위에 포함하며 구현·설계를
+먼저 끝내야 한다. 과거 완료 실험을 전부 재실행한다는 뜻은 아니다.
+이미 정상 실행 중인 작업은 유지한다.
 
 ## 2. 모든 명령의 공통 준비
 
@@ -212,6 +220,62 @@ checkpoint 백업은 worker가 자동 수행한다. v1 plan/cache/checkpoint는 
 
 ## 6. 여러 노드 배정과 결과 수집
 
+### 6.1. 실험별 GPU와 최대 동시 노드
+
+현재 runner는 **작업 하나 = 노드 하나 = GPU 4장**이다.
+`torchrun --standalone --nproc_per_node=4`와 `world_size=4`를 사용하므로
+한 작업을 여러 노드로 분할하거나 GPU 1장씩으로 쪼개 실행하지 않는다.
+기준 할당은 4×H100 80GB이며 Qwen 9B의 실제 GPU 메모리는 admission 검증이 남아 있다.
+
+아래 최대치는 **서로 독립인 미완료 작업 수로 계산한 병렬 상한**이다.
+실제 장비 확보량, 공유 볼륨 처리량 또는 해당 규모에서 검증된 실행 성능이 아니다.
+prefix 완료·cache 재사용 상태와 이미 끝난 arm 수에 따라 현재 활용 가능한 노드는 줄어든다.
+
+| 실험 | 실행 장치 | 작업당 할당 | cache/prefix만 진행하는 초기 단계 상한 | 모든 해당 prefix 준비 후 continuation 상한 |
+| --- | --- | --- | --- | --- |
+| E01 OLMo MATH | GPU + 노드 CPU | 1노드 / 4 GPU | 5노드 / 20 GPU | **20노드 / 80 GPU** |
+| E02 OLMo MBPP | GPU + 노드 CPU | 1노드 / 4 GPU | 5노드 / 20 GPU | **20노드 / 80 GPU** |
+| E05 후보 SR 갱신, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 별도 prefix 생성 없음; E01/E02 prefix 대기 | **10노드 / 40 GPU** |
+| E06 반복 전환, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
+| E07 pool SR 갱신, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
+| E08 Qwen MATH+MBPP | GPU + 노드 CPU | 1노드 / 4 GPU | 10노드 / 40 GPU | **40노드 / 160 GPU**; 데이터셋당 20노드 |
+| E03 독립 반복 | GPU 예정 | 1노드 / 4 GPU 설계 | OLMo prefix 재사용 예정 | **미구현**; 두 데이터셋×5 seeds×2 arms×R회이면 20R노드 |
+| E04 고정 total-step-200 | GPU 예정 | 1노드 / 4 GPU 설계 | OLMo prefix 재사용 예정 | **미구현**; 두 데이터셋×5 seeds×1 arm이면 10노드 |
+| E09 방향 대조 | GPU 예정 | 1노드 / 4 GPU 설계 | 공통 시작 조건 확정 필요 | **미구현**; 두 데이터셋×5 seeds×C개 추가 조건이면 10C노드 |
+
+- **현재 구현분:** OLMo 기본 40 + 추가 arm 30 + Qwen 40 = 최대 **110노드 / 440 GPU**.
+  전부의 prefix가 준비되고 continuation이 남아 있다는 가정이다. 110노드가 필요하다는 뜻은 아니다.
+- 모두 처음부터 시작하여 아직 continuation이 준비되지 않은 경우, cache/prefix 선행 작업은
+  OLMo 10 + Qwen 10 = 최대 **20노드 / 80 GPU**다. prefix 완료에 따라 arm으로 병렬성이 늘어난다.
+  한 seed의 cache와 prefix를 동시에 별도 노드에 세지 않는다.
+- E03/E04/E09까지 구현하면 위 설계 기준 전체 상한은 **120 + 20R + 10C노드**다.
+  R은 새 독립 반복 수, C는 새 방향 대조 조건 수이며 **아직 확정하지 않았다**.
+  이 숫자를 현재 실행 가능 작업 수나 검증된 노드 규모로 쓰지 않는다.
+
+CPU 코어 수와 시스템 RAM의 실측 최소치는 아직 없다. `4 GPU`는 `4 CPU cores`라는
+뜻이 아니며, GPU 노드의 CPU는 tokenizer·보상 검증·MBPP 실행·checkpoint 복사를 함께
+처리한다. 노드별 첫 실행에서 CPU/RAM, GPU peak, 읽기·쓰기 시간과 실패 여부를 기록한
+뒤 추가 노드를 투입한다. 현장 측정 없이 vCPU/RAM 최소치를 확정하지 않는다.
+
+### 6.2. CPU에서 할 일 / GPU가 필요한 일
+
+| 작업 | GPU | CPU 실행 및 병렬 방식 |
+| --- | --- | --- |
+| 코드 검사·단위 테스트·plan 검사 | 0 | CPU 작업 공간에서 수행; 실제 GPU admission은 별도 |
+| Qwen weight/tokenizer 다운로드, 입력 `prepare`, 패키지 `doctor` | 0 | CPU와 네트워크·group 저장소 사용; 공통 모델 다운로드는 한 번 |
+| reward cache 새 생성 | 작업당 4 | 모델 rollout이므로 CPU 분석 작업으로 분류하지 않음 |
+| prefix·모든 continuation·실행 중 평가 | 작업당 4 | GPU 노드에서 CPU 보상 검증도 함께 수행 |
+| On-policy gradient scoring, SR refresh 응답 생성 | 작업당 4 | 캐시 조회나 D 벡터 산술만을 전체 scoring과 혼동하지 않음 |
+| `status/results/costs`, 저장된 결과 통계·그림 | 0 | group 접근 가능한 CPU 노드/작업 공간 한 곳에서 수집 가능 |
+| checkpoint `backup`/백업 감시 | 0 | 파일 I/O; GPU 작업 수에 추가하지 않음. 모델이 메모리에만 있으면 백업할 수 없음 |
+| V7 표·본문·부록 수정, LaTeX build·PDF 점검 | 0 | CPU 작업 공간에서 모든 실험 결과를 순차 반영 |
+
+CPU 작업은 GPU가 모두 찬 동안에도 병행한다. 별도 CPU 노드 1개에서 수집·분석·원고
+작성을 모아 처리할 수 있고, 반드시 추가 서버가 필요한 것은 아니다. GPU admission,
+실제 새 모델 평가 및 새로운 rollout은 CPU에서 완료한 것으로 표시하지 않는다.
+
+### 6.3. 노드 배정과 그룹 볼륨
+
 | 노드 용도 | 입력할 명령 | 같은 명령을 여러 노드에서 실행 |
 | --- | --- | --- |
 | OLMo MATH | `sh scripts/run_srgc.sh math run` | 가능: 공유 queue |
@@ -225,6 +289,26 @@ GPU lock이 있으면 실제 owner/heartbeat/task 로그를 확인하며 파일�
 필요 노드 수는 고정이 아니다. 1개로 순차 실행할 수 있으며 빈 노드가 늘면
 준비된 작업을 병렬 처리한다. 실행 시간은 첫 완료 작업의 실측 후 갱신한다.
 
+매 배정 시 `min(빈 노드 수, 선행 조건이 충족된 미완료 작업 수)`만큼만 새 worker를
+둔다. P0/P1, P2, P3 순으로 배정하되 모든 실험을 완료 대상으로 유지한다.
+E05–E07은 [30개 배정표](REBUTTAL_EXTRA_TASKS.tsv)의 서로 다른 tuple을 수동 지정한다.
+완료된 노드는 다음 미완료 실험으로 이동하고 모든 작업이 끝났으면 추가 worker를 띄우지 않는다.
+
+| 저장 항목 | 위치 / 사용 방식 |
+| --- | --- |
+| 모델 weight | group의 고정 snapshot, 같은 모델 노드들이 읽기 공유 |
+| cache·입력·prefix·checkpoint·원시 비용 | 해당 모델·데이터셋의 group active root; 로컬 `/tmp`를 실험 원본으로 쓰지 않음 |
+| Qwen 라이브러리 캐시·임시 파일 | `$OM_WORK/qwen-runtime-cache` 아래; 노드별 컴파일 캐시 분리 |
+| 노드별 배정 기록 | dataset/seed/arm, node, code commit, plan/root, 시작·종료·실패 기록 |
+| 수집 결과·표·그림 | group 원본의 hash와 출처를 유지하며 CPU 분석 공간으로 가져옴 |
+
+110노드 동시 실행의 group I/O와 잠금 성능을 실측한 것은 아니다. 많은 노드를
+추가할 때 model load·checkpoint 저장·backup이 병목인지 확인한다. 실제 남은 시간은
+실험 종류별 완료 작업의 wall-time으로 추정하며 selection 비용만 275배 곱하지 않는다.
+전체 완료 목표에는 가장 긴 선행 작업 경로와 E03/E04/E09 구현 시간도 포함한다.
+
+### 6.4. 전체 실험 완료와 V7 반영
+
 결과 수집은 다음 여섯 항목으로 완료 여부를 판단한다:
 
 1. 예정 seed와 모든 비교 arm의 같은 total-step endpoint.
@@ -233,6 +317,12 @@ GPU lock이 있으면 실제 owner/heartbeat/task 로그를 확인하며 파일�
 4. cache/prefix/selection/training/evaluation/저장 비용 receipt; 미계측은 unknown.
 5. code commit, plan/input/prefix hash, node, 시작·종료 시각, 실패·재시도 기록.
 6. V6 제출 결과와 새 결과를 별도 표로 유지. 모델·프로토콜이 다른 실행을 합산 평균하지 않음.
+
+전체 실험 종료 목표는 **10월 25일**, 결과·비용 검증은 **10월 28일**,
+V7 완성 초안은 **11월 1일**, 최종 점검은 **11월 4일 18:00 KST**다.
+실제 자원·wall-time 확인 전의 내부 목표이며, 미완료 실험을 완료 처리하지 않는다.
+실험이 끝나는 대로 V7 표·본문·부록에 반영하고, 리뷰 공개 전 PDF·TeX·변경 요약을
+모두 준비한다. 상세 단계는 [리뷰 준비 일정](REVIEW_SCHEDULE_2027_KO.md)을 따른다.
 
 ## 7. 과거 실험·진단 명령 위치
 
