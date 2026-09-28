@@ -481,3 +481,24 @@ one task queue, with device locks keyed by physical GPU UUID rather than local
 indices `0,1,2,3`. Restart the ordinary command on an affected stopped node;
 healthy workers on other nodes can keep running. A lock still held by a live
 worker must continue to exclude a second worker on those same GPUs.
+
+## Worker log format
+
+Every line a worker prints, including relayed child output, is rewritten to
+`HH:MM:SS TAG     <task> key=value ...` by `scripts/srgc_log_format.py`:
+
+```
+14:02:11 TASK    seed-8.prefix start
+14:03:40 CACHE   rank=0 prompts=12/100 last=41.2s eta=60.1min
+14:09:02 TRAIN   seed-8.prefix update=1/25
+14:09:03 CKPT    seed-8.prefix update=1 saved
+14:09:30 BACKUP  state=copied found=1 saved=1 errors=0
+14:09:31 WORKER  seed-8.prefix running attempt=1 update=1/25 phase=training:started ranks=4/4 last_activity=3-9s pid=3878952 log=...
+14:41:12 TASK    seed-8.prefix done exit=0
+```
+
+`WORKER` lines appear only when their content changes (rank ages excluded),
+with a heartbeat at most every 10 minutes; `BACKUP` lines only when a copy,
+error or state change happens; a step's "running" echo and the per-prompt
+"generating" echo are dropped because the following line already reports them.
+Anything unrecognised is kept verbatim under `LOG`.

@@ -39,7 +39,7 @@ class WorkerStatusTests(unittest.TestCase):
                                 lambda *args: updates.append(args))
             self.assertEqual(sum(state == "running" for state, *_ in updates), 30)
             self.assertEqual(updates[-1][0], "complete")
-            self.assertIn("WORKER state=running task=seed-5.prefix child_pid=123 attempt=1 phase=child_startup",
+            self.assertIn("WORKER RUNNING seed-5.prefix attempt=1 update=0/25 phase=child_startup ranks=0/4 last_activity=- pid=123",
                           output.getvalue())
             self.assertEqual(output.getvalue().count("RUN seed-5.cache\n"), 1)
             self.assertEqual(before, (queue.directory / "protocol.json").read_bytes())
@@ -80,10 +80,10 @@ class WorkerStatusTests(unittest.TestCase):
 
                 with redirect_stdout(output):
                     run_with_status(running, queue, self.args(), {}, (), "test", lambda *args: calls.append(args),
-                                    clock=iter([0, 5, 30]).__next__)
+                                    interval=30, clock=iter([0, 5, 30]).__next__)
                 self.assertEqual(len(calls), 3)
-                self.assertEqual(output.getvalue().count("WORKER state=running"), 2)
-                self.assertIn("phase=selection:started checkpoint=0 rank-0=gradient_scoring", output.getvalue())
+                self.assertEqual(output.getvalue().count("WORKER RUNNING"), 2)
+                self.assertIn("attempt=1 update=0/25 phase=selection:started ranks=1/4 last_activity=", output.getvalue())
                 self.assertEqual(before, (phase.read_bytes(), progress.read_bytes(), queue.receipt(task).read_bytes()))
 
     def test_bad_progress_is_reported_without_interrupting_the_worker(self):
