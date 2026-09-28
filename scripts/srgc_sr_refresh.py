@@ -46,6 +46,25 @@ def arm_name(scope):
     return "sr_refresh" if scope == "candidates" else "sr_refresh-pool"
 
 
+EXTRA_ARMS = ("sr_refresh", "sr_refresh-pool", "switch_repeat")
+
+
+def make_engine(arm, backend, data, config):
+    """Engine for an extra arm (its engine label is the recorded arm name it extends)."""
+    if arm in {"sr_refresh", "sr_refresh-pool"}:
+        return SRRefreshEngine(backend, data["candidate_ids"], data["ranking_validation_ids"], data["cached_rewards"],
+                               arm="sr_refresh", config=config,
+                               refresh_scope="candidates" if arm == "sr_refresh" else "pool"), "sr_refresh"
+    if arm == "switch_repeat":
+        try:
+            from srgc_switch_repeat import SwitchRepeatEngine
+        except ImportError:
+            from scripts.srgc_switch_repeat import SwitchRepeatEngine
+        return SwitchRepeatEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
+                                  data["cached_rewards"], arm="switch_repeat", config=config), "switch_repeat"
+    raise ValueError(f"unknown extra arm {arm!r}")
+
+
 class SRRefreshEngine(Engine):
     """Engine whose ``sr_refresh`` arm re-measures success rates with the current policy."""
 
@@ -148,7 +167,8 @@ def run(args):
     plan = load_plan(args.plan)
     if args.seed not in plan["seeds"]:
         raise SystemExit("seed is not in the frozen plan")
-    arm = arm_name(args.scope)
+    arm = args.arm if getattr(args, "arm", None) else arm_name(args.scope)
+    scope = "candidates" if arm == "sr_refresh" else "pool" if arm == "sr_refresh-pool" else None
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
     import torch
     import torch.distributed as dist
@@ -178,7 +198,7 @@ def run(args):
                     marker = json.loads((folder / "run.json").read_text())
                     if not matches(marker, expected):
                         raise ValueError("the seed's run manifest belongs to a different experiment")
-                    atomic_json(folder / f"{arm}-run.json", {**expected, "arm": arm, "refresh_scope": args.scope,
+                    atomic_json(folder / f"{arm}-run.json", {**expected, "arm": arm, "refresh_scope": scope,
                         "status": "running", "packages": {p: importlib.metadata.version(p)
                                                           for p in ("torch", "transformers", "peft", "math-verify")}})
             except Exception as exc:  # noqa: BLE001 - report on rank 0, abort every rank
@@ -207,8 +227,7 @@ def run(args):
                         training_prompts=plan["training_prompts"], responses=plan["responses"],
                         projection_dim=plan["projection_dim"])
         with meter.phase("preparation", gpu_count=world), meter.stage("selector_setup"):
-            current = SRRefreshEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
-                                      data["cached_rewards"], arm="sr_refresh", config=config, refresh_scope=args.scope)
+            current, engine_arm = make_engine(arm, backend, data, config)
 
         def save(path, engine):
             with meter.phase("checkpoint_save", engine.step, world):
@@ -233,14 +252,14 @@ def run(args):
         checkpoint_path = folder / f"{arm}-latest.pt"
         if primary(checkpoint_path.exists):
             state = load(checkpoint_path)
-            if state["arm"] != "sr_refresh" or not plan["shared_prefix_updates"] <= state["step"] <= plan["total_updates"]:
+            if state["arm"] != engine_arm or not plan["shared_prefix_updates"] <= state["step"] <= plan["total_updates"]:
                 raise ValueError("resume checkpoint has the wrong arm or update count")
             restore(current, state)
         else:
             shared = load(folder / "prefix.pt")
             if shared["arm"] != "on_policy" or shared["step"] != plan["shared_prefix_updates"]:
                 raise ValueError("shared prefix has the wrong arm or update count")
-            restore(current, shared, fork_arm="sr_refresh")
+            restore(current, shared, fork_arm=engine_arm)
         while current.step < plan["total_updates"]:
             current.update()
             progress("update", arm=arm, step=current.step)
@@ -250,7 +269,8 @@ def run(args):
             if current.step % 25 == 0 or current.step == plan["total_updates"]:
                 save(checkpoint_path, current)
                 primary(lambda: atomic_json(folder / f"{arm}-progress.json", {"seed": args.seed, "arm": arm,
-                        "refresh_scope": args.scope, "step": current.step, "switched_at": None,
+                        "refresh_scope": scope, "step": current.step, "switched_at": current.switched_at,
+                        "transitions": getattr(current, "transitions", None),
                         "sampling_protocol": current.SAMPLING_PROTOCOL, "costs": current.costs,
                         "history": current.history}))
         with meter.phase("evaluation", current.step, world):
@@ -260,17 +280,19 @@ def run(args):
         def endpoint():
             ledger = PhaseLedger(folder / "cost-receipts" / arm).totals()
             measured = {**current.costs, **ledger["known_gpu_seconds"]}
-            atomic_json(folder / f"{arm}-endpoint.json", {**expected, "arm": arm, "refresh_scope": args.scope,
+            atomic_json(folder / f"{arm}-endpoint.json", {**expected, "arm": arm, "refresh_scope": scope,
                 "prefix_checkpoint_sha256": prefix_hash, "total_updates": current.step,
-                "shared_prefix_updates": plan["shared_prefix_updates"], "switched_at": None,
+                "shared_prefix_updates": plan["shared_prefix_updates"], "switched_at": current.switched_at,
+                "transitions": getattr(current, "transitions", None),
+                "checks": [{"step": r["checkpoint"], "d": r["d"]} for r in current.history if r.get("d") is not None],
                 "sampling_protocol": current.SAMPLING_PROTOCOL,
                 "reward": sum(per_question.values()) / len(per_question), "per_question_reward": per_question,
                 "costs": measured, "cost_measurement_complete": ledger["complete"], "cost_receipts": ledger,
                 "evaluation_gpu_seconds": ledger["known_gpu_seconds"]["evaluation_gpu_seconds"],
                 "selection_interval": plan["selection_interval"],
                 "selection_steps": [r["checkpoint"] for r in current.history if r["selection_refreshed"]],
-                "refreshed_prompts_per_selection": current.config.scoring_prompts if args.scope == "candidates"
-                                                   else len(current.candidates)})
+                "refreshed_prompts_per_selection": (current.config.scoring_prompts if scope == "candidates"
+                                                    else len(current.candidates) if scope == "pool" else None)})
             atomic_json(folder / f"{arm}-run.json", {**json.loads((folder / f"{arm}-run.json").read_text()),
                                                        "status": "complete"})
         primary(endpoint)
@@ -284,7 +306,7 @@ def results(args):
     from srgc_rebuttal.runtime import run_root
     plan = load_plan(args.plan)
     root = run_root(args.plan, plan)
-    arms = [*plan["arms"], "sr_refresh", "sr_refresh-pool"]
+    arms = [*plan["arms"], *EXTRA_ARMS]
     rows = []
     for seed in plan["seeds"]:
         row = {"seed": seed}
@@ -294,7 +316,8 @@ def results(args):
                 value = json.loads(path.read_text())
                 row[arm] = {"reward_percent": 100 * value["reward"],
                             "selection_gpu_seconds": value["costs"].get("selection_gpu_seconds"),
-                            "training_gpu_seconds": value["costs"].get("training_gpu_seconds")}
+                            "training_gpu_seconds": value["costs"].get("training_gpu_seconds"),
+                            "transitions": value.get("transitions"), "switched_at": value.get("switched_at")}
         rows.append(row)
     if args.json:
         print(json.dumps({"dataset": plan["dataset"], "rows": rows}, indent=2))
@@ -308,7 +331,13 @@ def results(args):
             value = row.get(arm)
             cells.append(f"{value['reward_percent']:15.2f}%" if value else f"{'-':>16}")
         print(f"{row['seed']:>4}  " + "  ".join(cells))
-    print("selection GPU-seconds (refresh rollouts for sr_refresh; scoring for on_policy/switch):")
+    for row in rows:
+        for arm in ("switch", "switch_repeat"):
+            value = row.get(arm)
+            if value and (value.get("transitions") or value.get("switched_at") is not None):
+                moves = value.get("transitions") or [{"step": value["switched_at"], "to": "sr"}]
+                print(f"  seed {row['seed']} {arm}: " + ", ".join(f"step {m['step']} -> {m['to']}" for m in moves))
+    print("selection GPU-seconds (refresh rollouts for sr_refresh; scoring for on_policy/switch/switch_repeat):")
     for row in rows:
         cells = []
         for arm in arms:
@@ -326,6 +355,7 @@ def main():
         if name == "run":
             p.add_argument("--seed", type=int, required=True)
             p.add_argument("--scope", choices=SCOPES, default="candidates")
+            p.add_argument("--arm", choices=EXTRA_ARMS, help="overrides --scope; switch_repeat for repeated transitions")
         else:
             p.add_argument("--json", action="store_true")
     args = parser.parse_args()

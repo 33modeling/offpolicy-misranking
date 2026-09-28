@@ -550,3 +550,21 @@ sh scripts/run_srgc_sr_refresh.sh math results        # rewards and selection GP
 ```
 
 CPU tests: `python -m unittest srgc_rebuttal.tests.test_sr_refresh`.
+
+## Switch with repeated transitions (Limitations: repeated transitions)
+
+`scripts/srgc_switch_repeat.py` adds the arm `switch_repeat`. It starts as the
+recorded Switch arm (same SR-GC rule for On-policy -> SR). After transitioning
+it keeps scoring the 40-vs-40 contrast at every 25-update check and returns to
+On-policy under the mirror rule (two consecutive positive D, or positive /
+non-positive / positive with a positive sum); each transition resets the
+window, and the batch scored at the returning check is the one trained, so no
+scoring is repeated. `endpoint.json` records every transition
+(`transitions: [{step, to}]`; `switched_at` keeps the first one).
+
+```bash
+sh scripts/run_srgc_sr_refresh.sh math 5 switch_repeat   # one seed per node, prefix must be complete
+sh scripts/run_srgc_sr_refresh.sh math results           # rewards, transitions and selection GPU-seconds
+```
+
+CPU tests: `python -m unittest srgc_rebuttal.tests.test_switch_repeat`.
