@@ -527,3 +527,26 @@ both plans; failed tasks retry automatically. `status` prints a per-seed table
 (`done` / `running 3/25` / `waiting` / `failed x3`), the running tasks with
 their step and node, the tasks that need attention with their log path, and
 the live workers.
+
+## SR with refreshed success rates (Limitations: cache refresh)
+
+`scripts/srgc_sr_refresh.py` adds the arm `sr_refresh`: SR's rule (train the
+four prompts whose success rate is closest to 0.5), but the success rates are
+re-measured under the current policy on On-policy's schedule. Every 25 updates
+it draws 40 candidates and generates eight fresh responses each (320 rollouts,
+On-policy's scoring budget without gradients), ranks them by |rate - 0.5| and
+trains the top four until the next refresh. `pool` scope re-measures all 400
+candidates per refresh instead (3200 rollouts; about one cache build each).
+
+The arm forks from the seed's verified shared prefix in the existing run root
+and writes `sr_refresh-{latest.pt,progress.json,endpoint.json}` (or
+`sr_refresh-pool-*`) beside the recorded arms; the queue, the four arms and the
+hashed package are untouched. Run one seed per node once its prefix is done:
+
+```bash
+sh scripts/run_srgc_sr_refresh.sh math 5              # seeds 5..9, candidates scope
+sh scripts/run_srgc_sr_refresh.sh math 5 pool         # optional full-pool variant
+sh scripts/run_srgc_sr_refresh.sh math results        # rewards and selection GPU-seconds per seed
+```
+
+CPU tests: `python -m unittest srgc_rebuttal.tests.test_sr_refresh`.
