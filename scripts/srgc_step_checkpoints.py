@@ -33,8 +33,12 @@ def save_checkpoint(engine, folder, task):
 def checkpoint_engine(base, folder, task, policy, *, total_updates):
     legacy_interval = 5 if task == "prefix" else 25
     phase = "shared-prefix" if task == "prefix" else "continuation"
+    try:
+        from srgc_direction_records import DirectionRecordMixin
+    except ImportError:
+        from scripts.srgc_direction_records import DirectionRecordMixin
 
-    class StepCheckpointEngine(base):
+    class StepCheckpointEngine(DirectionRecordMixin, base):
         def log_step(self, status):
             import torch.distributed as dist
             if not dist.is_initialized() or dist.get_rank() == 0:

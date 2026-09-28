@@ -593,3 +593,26 @@ sh scripts/run_srgc_sr_refresh.sh math results     # shows fixed arms next to sw
 ```
 
 CPU tests: `python -m unittest srgc_rebuttal.tests.test_switch_fixed`.
+
+## Direction-versus-magnitude analysis of the contrast (no GPU)
+
+The SR-GC contrast is D = ||v|| (||g_on|| cos_on - ||g_sr|| cos_sr). From the
+next child start, every refresh record also carries the norms and cosines of
+the mean gradients, the trained-four versus random-four validation inner
+products and the candidate cosine spread and top-4 gap
+(`scripts/srgc_direction_records.py`, applied by the training child entry and
+the extra arms; the hashed package is untouched, and records written earlier
+simply lack these fields). Tabulate and plot them with:
+
+```bash
+python scripts/srgc_direction_analysis.py --plan <group-storage plan>           # -> <run root>/analysis/direction/
+python scripts/srgc_direction_analysis.py --root <run root> \
+    --legacy-d <paper repo>/v7/evidence/2026-09-24/selector-pair-srgc-all-d-1119.txt   # overlay recorded seed 3/4 D
+```
+
+Outputs `direction.csv`, `summary.txt` (per arm and step: D mean/sd and sign
+count across seeds, cos_on - cos_sr, ||g_sr||/||g_on||, ranking gap) and
+`direction.png` when matplotlib is installed (the `.venv-cu126` has it).
+The mechanistic reading being tested: cos_on - cos_sr shrinks toward zero over
+training while ||g_sr|| stays above ||g_on||, so D turns negative when the
+direction advantage is exhausted; the candidate cosine gaps shrink at the same time.

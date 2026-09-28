@@ -25,8 +25,13 @@ sys.path.insert(0, str(REPO))
 
 from srgc_rebuttal.srgc import Engine, TemporalRule, cosine_scores, gradient_contrast, stream_seed, top_ids  # noqa: E402
 
+try:
+    from srgc_direction_records import DirectionRecordMixin
+except ImportError:
+    from scripts.srgc_direction_records import DirectionRecordMixin
 
-class SwitchRepeatEngine(Engine):
+
+class SwitchRepeatEngine(DirectionRecordMixin, Engine):
     ARMS = Engine.ARMS | {"switch_repeat"}
 
     def __init__(self, *args, **kwargs):
@@ -110,6 +115,7 @@ class SwitchRepeatEngine(Engine):
                       selection_gpu_seconds=self.costs["selection_gpu_seconds"] - before["selection_gpu_seconds"],
                       training_gpu_seconds=self.costs["training_gpu_seconds"] - before["training_gpu_seconds"],
                       selector="on_policy" if self.mode == "on" else "sr", metrics=metrics)
+        self._annotate_direction(record)
         self.history.append(record)
         return record
 

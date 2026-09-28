@@ -23,6 +23,11 @@ sys.path.insert(0, str(REPO))
 
 from srgc_rebuttal.srgc import Engine  # noqa: E402
 
+try:
+    from srgc_direction_records import DirectionRecordMixin
+except ImportError:
+    from scripts.srgc_direction_records import DirectionRecordMixin
+
 ARM_PATTERN = re.compile(r"^switch_fixed(\d+)$")
 
 
@@ -33,7 +38,7 @@ def fixed_step_of(arm):
     return int(match.group(1))
 
 
-class SwitchFixedEngine(Engine):
+class SwitchFixedEngine(DirectionRecordMixin, Engine):
     ARMS = Engine.ARMS | {"switch_fixed"}
 
     def __init__(self, *args, fixed_step, **kwargs):
