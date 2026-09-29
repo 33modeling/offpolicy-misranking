@@ -197,11 +197,134 @@ def reap_orphans(plan_path=None, *, grace=30.0, report_gpus=True):
     return pids
 
 
+GPU_FREE_MIB = int(os.environ.get("SRGC_GPU_FREE_MIB", "2000"))
+GPU_WAIT_SECONDS = float(os.environ.get("SRGC_GPU_WAIT_SECONDS", "600"))
+SHM_DIR = Path("/dev/shm")
+
+
+def _nvidia_smi(args):
+    import shutil
+    import subprocess
+    if not shutil.which("nvidia-smi"):
+        return None
+    try:
+        return subprocess.run(["nvidia-smi", *args], capture_output=True, text=True, timeout=20, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def gpu_usage(environment=None):
+    """[(index, used MiB)] for the GPUs visible to the child, or None when nvidia-smi is unavailable."""
+    devices = (environment or os.environ).get("CUDA_VISIBLE_DEVICES")
+    args = ["--query-gpu=index,memory.used", "--format=csv,noheader,nounits"]
+    if devices:
+        args += ["-i", devices]
+    out = _nvidia_smi(args)
+    if out is None:
+        return None
+    usage = []
+    for line in out.splitlines():
+        if "," in line:
+            index, used = (part.strip() for part in line.split(",", 1))
+            try:
+                usage.append((index, int(float(used))))
+            except ValueError:
+                continue
+    return usage
+
+
+def gpu_compute_processes():
+    """[(pid, used MiB)] of every compute process nvidia-smi can see (host pids)."""
+    out = _nvidia_smi(["--query-compute-apps=pid,used_gpu_memory", "--format=csv,noheader,nounits"]) or ""
+    processes = []
+    for line in out.splitlines():
+        if "," in line:
+            pid, used = (part.strip() for part in line.split(",", 1))
+            if pid.isdigit():
+                try:
+                    processes.append((int(pid), int(float(used))))
+                except ValueError:
+                    processes.append((int(pid), -1))
+    return processes
+
+
+def wait_for_free_gpus(environment=None, *, threshold_mib=None, timeout=None, poll=5.0, heartbeat=lambda: None,
+                       usage=gpu_usage, processes=gpu_compute_processes, clock=time.monotonic, sleep=time.sleep):
+    """Block until every visible GPU is below ``threshold_mib`` used; reap SRGC orphans meanwhile.
+
+    Returns True when the GPUs are free, False after ``timeout`` seconds. A child launched onto
+    GPUs that a dying or foreign process still occupies fails with CUDA OOM or an NCCL error
+    minutes later; waiting here turns that into either a clean start or a fast, explained failure.
+    """
+    threshold = GPU_FREE_MIB if threshold_mib is None else threshold_mib
+    limit = GPU_WAIT_SECONDS if timeout is None else timeout
+    started, last_report = clock(), -1e9
+    while True:
+        current = usage(environment)
+        if current is None:
+            return True  # no nvidia-smi: nothing to measure
+        busy = [(index, used) for index, used in current if used > threshold]
+        if not busy:
+            return True
+        now = clock()
+        if now - last_report >= 60:
+            holders = ", ".join(f"pid {pid} {used}MiB" for pid, used in processes()) or "no compute process listed"
+            print(f"GUARD waiting for GPU memory to free: " + " ".join(f"{i}:{u}MiB" for i, u in current)
+                  + f" (threshold {threshold}MiB; {holders})", flush=True)
+            last_report = now
+            reap_orphans(None, grace=10.0, report_gpus=False)
+        if now - started >= limit:
+            return False
+        heartbeat()
+        sleep(poll)
+
+
+def clean_shm(*, shm_dir=None, table=None):
+    """Remove this user's leftover NCCL/torch shared-memory files once no SRGC child is alive.
+
+    Ranks killed with SIGKILL leave ``/dev/shm/nccl-*`` segments behind; a full ``/dev/shm``
+    makes the next NCCL init fail with DistBackendError.
+    """
+    shm_dir = SHM_DIR if shm_dir is None else Path(shm_dir)
+    table = process_table() if table is None else table
+    alive = [pid for pid, (_, uid, cmdline) in table.items()
+             if uid == os.getuid() and pid != os.getpid() and is_target(cmdline)]
+    if alive or not shm_dir.is_dir():
+        return []
+    removed = []
+    for path in list(shm_dir.glob("nccl-*")) + list(shm_dir.glob("torch_*")):
+        try:
+            if path.is_symlink() or path.stat().st_uid != os.getuid():
+                continue
+            if path.is_dir():
+                import shutil
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed.append(path.name)
+        except OSError:
+            continue
+    if removed:
+        print(f"GUARD removed {len(removed)} leftover shared-memory file(s) from {shm_dir}", flush=True)
+    return removed
+
+
 def guarded_run_child(original, plan_path):
     def run_child(command, log_path, environment, **kwargs):
         reap_orphans(plan_path)
+        clean_shm()
         seen = set()
         inner = kwargs.get("heartbeat", lambda pid: None)
+        if not wait_for_free_gpus(environment, heartbeat=lambda: inner(None)):
+            usage = gpu_usage(environment) or []
+            holders = ", ".join(f"pid {pid} {used}MiB" for pid, used in gpu_compute_processes()) or "none listed"
+            message = (f"GPUs still busy after {GPU_WAIT_SECONDS:.0f}s; not starting this attempt. "
+                       f"memory used: {' '.join(f'{i}:{u}MiB' for i, u in usage)}; compute processes: {holders}")
+            Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+            with Path(log_path).open("a") as handle:
+                handle.write(f"GUARD {message}\n")
+            report_failure(log_path, 75)
+            return 75
         def heartbeat(pid):
             # Record the tree while it is still attached; setsid ranks are reparented once the launcher dies.
             seen.update(descendants(pid))

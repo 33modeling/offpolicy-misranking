@@ -697,3 +697,23 @@ Analysis never writes a switching decision back into the progress history.
 The mechanistic reading being tested: cos_on - cos_sr shrinks toward zero over
 training while ||g_sr|| stays above ||g_on||, so D turns negative when the
 direction advantage is exhausted; the candidate cosine gaps shrink at the same time.
+
+## GPU memory is checked before every child (CUDA OOM / NCCL DistBackendError)
+
+A child launched while a dying or foreign process still holds the node's GPUs
+fails minutes later with CUDA out of memory, or with `DistBackendError: NCCL
+error` on the peers of the rank that died. The guard now, before each child:
+
+1. reaps orphaned SRGC processes and removes this user's leftover
+   `/dev/shm/nccl-*` / `torch_*` segments (killed ranks leave them; a full
+   `/dev/shm` breaks the next NCCL init);
+2. waits until every visible GPU is below `SRGC_GPU_FREE_MIB` (2000) used,
+   reporting `GUARD waiting for GPU memory to free: ... (pid N ... MiB)` once a
+   minute, for up to `SRGC_GPU_WAIT_SECONDS` (600);
+3. if the GPUs stay busy, records `GUARD GPUs still busy ...` in the task log and
+   fails the attempt with exit 75 without launching torchrun, so the retry two
+   minutes later starts on free GPUs instead of OOM-ing.
+
+Repeated OOM on a node therefore means a process outside this worker owns the
+GPUs (another launcher, a Qwen worker, a manual `run`/`cache`); the `GUARD`
+line names its pid.

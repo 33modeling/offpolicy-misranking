@@ -213,3 +213,52 @@ class FailureTailTest(unittest.TestCase):
             self.assertIn("FAILED seed-5.prefix | Traceback (most recent call last):", text)
             self.assertIn("FAILED seed-5.prefix | ValueError: boom", text)
             self.assertNotIn("| starting", text)  # trimmed to the traceback
+
+
+class GpuWaitAndShmTest(unittest.TestCase):
+    def test_wait_returns_when_free_and_fails_after_timeout_when_busy(self):
+        import io
+        from contextlib import redirect_stdout
+        free = lambda env: [("0", 100), ("1", 50)]
+        self.assertTrue(guard.wait_for_free_gpus({}, usage=free, processes=lambda: []))
+        self.assertTrue(guard.wait_for_free_gpus({}, usage=lambda env: None))  # no nvidia-smi
+        clock = iter([0, 0, 30, 61, 130, 200]).__next__
+        beats = []
+        with redirect_stdout(io.StringIO()) as out:
+            result = guard.wait_for_free_gpus({}, threshold_mib=2000, timeout=120, poll=0,
+                                              usage=lambda env: [("0", 41000)], processes=lambda: [(4242, 41000)],
+                                              clock=clock, sleep=lambda s: None, heartbeat=lambda: beats.append(1))
+        self.assertFalse(result)
+        self.assertIn("GUARD waiting for GPU memory to free: 0:41000MiB", out.getvalue())
+        self.assertIn("pid 4242 41000MiB", out.getvalue())
+        self.assertGreater(len(beats), 0)
+
+    def test_busy_gpus_make_the_attempt_fail_fast_without_launching(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "seed-5.prefix.log"
+            launched = []
+            with patch.object(guard, "wait_for_free_gpus", return_value=False), \
+                    patch.object(guard, "gpu_usage", return_value=[("0", 41000)]), \
+                    patch.object(guard, "gpu_compute_processes", return_value=[(7, 41000)]), \
+                    redirect_stdout(io.StringIO()) as out:
+                run_child = guard.guarded_run_child(lambda *a, **k: launched.append(a) or 0, PLAN)
+                code = run_child(["python", "-c", "pass"], log, {"CUDA_VISIBLE_DEVICES": "0"})
+            self.assertEqual(code, 75)
+            self.assertEqual(launched, [])
+            self.assertIn("GPUs still busy", log.read_text())
+            self.assertIn("FAILED seed-5.prefix exit=75", out.getvalue())
+
+    def test_shm_cleanup_only_removes_own_files_when_no_child_is_alive(self):
+        with tempfile.TemporaryDirectory() as folder:
+            shm = Path(folder)
+            (shm / "nccl-abc").write_text("x")
+            (shm / "torch_123_456").write_text("x")
+            (shm / "other").write_text("x")
+            alive = {1: (0, os.getuid(), f"python3 -m srgc_rebuttal.run_experiment --plan {PLAN}")}
+            self.assertEqual(guard.clean_shm(shm_dir=shm, table=alive), [])
+            removed = guard.clean_shm(shm_dir=shm, table={})
+            self.assertEqual(sorted(removed), ["nccl-abc", "torch_123_456"])
+            self.assertTrue((shm / "other").exists())
