@@ -109,7 +109,10 @@ def main():
     args += ["--plan", str(plan)]
     if action in {"run", "cache"} and "WORLD_SIZE" not in os.environ and not any(a in {"-h", "--help"} for a in args):
         from srgc_rebuttal.cluster import direct
-        raise SystemExit(direct(action, plan, args))
+        from srgc_process_guard import process_guard
+        # Manual runs get the same orphan reaping, shm cleanup and free-GPU wait as worker children.
+        with process_guard(plan):
+            raise SystemExit(direct(action, plan, args))
     if action in {"status", "results"}:
         args.insert(0, action)
     sys.argv = [f"{Path(__file__).name} {action}", *args]

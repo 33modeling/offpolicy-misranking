@@ -262,3 +262,35 @@ class GpuWaitAndShmTest(unittest.TestCase):
             removed = guard.clean_shm(shm_dir=shm, table={})
             self.assertEqual(sorted(removed), ["nccl-abc", "torch_123_456"])
             self.assertTrue((shm / "other").exists())
+
+
+class SharedLeaseTest(unittest.TestCase):
+    def test_worker_leases_are_also_taken_in_the_canonical_group_namespace(self):
+        from unittest.mock import patch
+        from srgc_rebuttal.runtime import Busy
+        with tempfile.TemporaryDirectory() as folder:
+            group = Path(folder) / "group"
+            (group / "user" / "offpolicy-misranking").mkdir(parents=True)
+            env = {"GROUP_VOLUME": str(group), "OM_USER": "user"}
+            with patch.dict(os.environ, env, clear=False):
+                self.assertEqual(guard.canonical_lock_root(), group / ".srgc-gpu-node-locks")
+                wrapped = guard.shared_device_leases(cluster.device_leases)
+                legacy = Path(folder) / "legacy-locks"
+                with wrapped(legacy, ("GPU-a", "GPU-b")) as fds:
+                    self.assertEqual(len(fds), 4)  # two uuids x two namespaces
+                    self.assertTrue(any(legacy.iterdir()))
+                    self.assertTrue(any((group / ".srgc-gpu-node-locks").iterdir()))
+                    # A Qwen-style worker that only knows the canonical namespace is now excluded.
+                    with self.assertRaises(Busy):
+                        with cluster.device_leases(group / ".srgc-gpu-node-locks", ("GPU-a",)):
+                            pass
+                with cluster.device_leases(group / ".srgc-gpu-node-locks", ("GPU-a",)):
+                    pass  # released after the wrapped context
+            with patch.dict(os.environ, {"GROUP_VOLUME": str(Path(folder) / "missing")}, clear=False):
+                self.assertIsNone(guard.canonical_lock_root())  # no group volume: legacy namespace only
+
+    def test_process_guard_patches_device_leases_and_restores(self):
+        original = cluster.device_leases
+        with guard.process_guard(PLAN):
+            self.assertIsNot(cluster.device_leases, original)
+        self.assertIs(cluster.device_leases, original)

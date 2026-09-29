@@ -360,10 +360,50 @@ def report_failure(log_path, code, lines=40):
         print(f"FAILED {name} | {line}", flush=True)
 
 
+CANONICAL_LOCK_DIR = ".srgc-gpu-node-locks"
+
+
+def canonical_lock_root(environment=None):
+    """``<group volume>/.srgc-gpu-node-locks``: the lease namespace every SRGC launcher (OLMo, Qwen, manual) shares."""
+    try:
+        from srgc_shared_storage import storage_root
+    except ImportError:
+        from scripts.srgc_shared_storage import storage_root
+    try:
+        group, _ = storage_root(environment or os.environ)
+    except ValueError:
+        return None
+    return group / CANONICAL_LOCK_DIR
+
+
+def shared_device_leases(original, environment=None):
+    """Wrap ``cluster.device_leases`` so a lease is also taken in the canonical namespace.
+
+    OLMo workers, manual runs and Qwen workers each used their own lock directory, so two of
+    them could hold "exclusive" leases on the same GPUs and collide (CUDA OOM, NCCL errors).
+    """
+    from contextlib import ExitStack
+
+    @contextmanager
+    def device_leases(root, uuids):
+        roots = {Path(root)}
+        canonical = canonical_lock_root(environment)
+        if canonical is not None:
+            roots.add(canonical)
+        with ExitStack() as stack:
+            fds = []
+            for each in sorted(roots):
+                fds.extend(stack.enter_context(original(each, uuids)))
+            yield tuple(fds)
+    return device_leases
+
+
 @contextmanager
 def process_guard(plan_path):
-    """Patch ``srgc_rebuttal.cluster.run_child`` for the lifetime of a worker."""
+    """Patch ``srgc_rebuttal.cluster.run_child`` (and device leases) for the lifetime of a worker."""
     from srgc_rebuttal import cluster
+    original_leases = cluster.device_leases
+    cluster.device_leases = shared_device_leases(original_leases)
     # worker() checks GPU occupancy and acquires device leases before its first
     # run_child(). An orphan can retain either resource, so cleaning only in
     # run_child() leaves restart blocked before cleanup can ever run.
@@ -377,6 +417,7 @@ def process_guard(plan_path):
         yield
     finally:
         cluster.run_child = original
+        cluster.device_leases = original_leases
 
 
 def main(args=None):

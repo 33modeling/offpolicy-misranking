@@ -717,3 +717,14 @@ error` on the peers of the rank that died. The guard now, before each child:
 Repeated OOM on a node therefore means a process outside this worker owns the
 GPUs (another launcher, a Qwen worker, a manual `run`/`cache`); the `GUARD`
 line names its pid.
+
+## One GPU lease namespace for every launcher
+
+OLMo workers, manual `run`/`cache` and Qwen workers used different lock
+directories for their "exclusive" GPU leases, so two of them could start on the
+same four GPUs and collide (CUDA OOM on one, `NCCL error` on the other's
+ranks). The guard now takes every device lease in the legacy directory **and**
+in the canonical lease namespace `<group volume>/.srgc-gpu-node-locks` (the one
+the Qwen worker already uses), so any SRGC launcher on the node excludes the
+others. Manual `run`/`cache` now go through the same guard (orphan reaping,
+shm cleanup, free-GPU wait) as worker children.
