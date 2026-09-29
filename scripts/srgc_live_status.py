@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 from pathlib import Path
 import time
 
@@ -139,9 +140,25 @@ def running_detail(row):
     return " · ".join(parts) or "starting"
 
 
+def last_error_line(log_path, lines=200):
+    """The most recent line of a task log that looks like an error, or None."""
+    try:
+        tail = Path(log_path).read_text(errors="replace").splitlines()[-lines:]
+    except OSError:
+        return None
+    for line in reversed(tail):
+        stripped = line.strip()
+        if re.search(r"(Error|Exception|error:|out of memory|Killed|Traceback)", stripped) and not stripped.startswith("File "):
+            return stripped[:200]
+    return None
+
+
 def attention_detail(row):
     total = row.get("total_steps")
     parts = [row["status"].replace("_", " ")]
+    error = last_error_line(row.get("log", ""))
+    if error:
+        parts.append(f"last error: {error}")
     if row.get("attempt"):
         parts.append(f"{row['attempt']} attempt{'s' if row['attempt'] != 1 else ''}")
     if row.get("last_observed_step") is not None:

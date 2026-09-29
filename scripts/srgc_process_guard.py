@@ -203,11 +203,34 @@ def guarded_run_child(original, plan_path):
             inner(pid)
         kwargs["heartbeat"] = heartbeat
         try:
-            return original(command, log_path, environment, **kwargs)
+            code = original(command, log_path, environment, **kwargs)
         finally:
             terminate(seen)
             reap_orphans(plan_path, grace=10.0)
+        if code not in (0, None):
+            report_failure(log_path, code)
+        return code
     return run_child
+
+
+def failure_tail(log_path, lines=40):
+    """The last ``lines`` of a child log, trimmed to the last Traceback when one is present."""
+    try:
+        text = Path(log_path).read_text(errors="replace").splitlines()
+    except OSError:
+        return ["(log file not readable)"]
+    tail = text[-lines:]
+    for index in range(len(tail) - 1, -1, -1):
+        if tail[index].startswith("Traceback"):
+            return tail[index:]
+    return tail
+
+
+def report_failure(log_path, code, lines=40):
+    name = Path(log_path).name.removesuffix(".log")
+    print(f"FAILED {name} exit={code} log={log_path}", flush=True)
+    for line in failure_tail(log_path, lines):
+        print(f"FAILED {name} | {line}", flush=True)
 
 
 @contextmanager

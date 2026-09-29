@@ -125,6 +125,17 @@ class LiveStatusTests(unittest.TestCase):
                 report, _ = self.snapshot_row(queue, key)
                 self.assertIn("JSONDecodeError", report["errors"][-1])
 
+    def test_attention_rows_show_the_last_error_line_of_the_task_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "seed-6.prefix.log"
+            log.write_text("[cache] rank=0 ready\nTraceback (most recent call last):\n  File \"x.py\", line 1\n"
+                           "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2 GiB\n")
+            row = {"seed": 6, "arm": "prefix", "task": "seed-6.prefix", "status": "failed", "attempt": 3,
+                   "total_steps": 25, "log": str(log)}
+            detail = live.attention_detail(row)
+            self.assertIn("last error: torch.OutOfMemoryError: CUDA out of memory", detail)
+            self.assertIsNone(live.last_error_line(str(Path(directory) / "missing.log")))
+
     def test_status_starts_with_what_this_node_is_doing(self):
         report = {"dataset": "math", "output_root": "/r", "generated": 0, "counts": {}, "warnings": [], "errors": [],
                   "tasks": [{"seed": 5, "arm": "prefix", "task": "seed-5.prefix", "status": "running", "host": "n1",

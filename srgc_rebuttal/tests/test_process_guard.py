@@ -194,3 +194,22 @@ class ProcessGuardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FailureTailTest(unittest.TestCase):
+    def test_nonzero_child_prints_its_log_tail_as_failed_lines(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "seed-5.prefix.log"
+            command = [sys.executable, "-c", "print('starting'); print('Traceback (most recent call last):'); "
+                       "print('  File x'); print('ValueError: boom'); raise SystemExit(3)"]
+            run_child = guard.guarded_run_child(cluster.run_child, PLAN)
+            with redirect_stdout(io.StringIO()) as out:
+                code = run_child(command, log, dict(os.environ), interval=0.2)
+            self.assertEqual(code, 3)
+            text = out.getvalue()
+            self.assertIn("FAILED seed-5.prefix exit=3 log=", text)
+            self.assertIn("FAILED seed-5.prefix | Traceback (most recent call last):", text)
+            self.assertIn("FAILED seed-5.prefix | ValueError: boom", text)
+            self.assertNotIn("| starting", text)  # trimmed to the traceback
