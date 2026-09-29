@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts.srgc_worker_status import run_with_status
+from scripts.srgc_live_status import this_node_lines
 from srgc_rebuttal import cluster
 from srgc_rebuttal.cluster_queue import Task, TaskQueue
 from srgc_rebuttal.runtime import atomic_json, code_digest
@@ -15,6 +16,15 @@ from srgc_rebuttal.tests.test_cluster import finish_fake, write_inputs
 
 
 class WorkerStatusTests(unittest.TestCase):
+    def test_node_serving_other_dataset_does_not_show_this_datasets_progress(self):
+        report = {"dataset": "math_train", "workers": [{"host": "node", "status": "idle",
+            "heartbeat_age_seconds": 0, "task": None, "active_plan": "/mbpp/plan.json",
+            "active_dataset": "mbpp", "active_task": "seed-5.prefix"}],
+            "tasks": [{"task": "seed-5.prefix", "completed_steps": 20, "total_steps": 25}]}
+        text = "\n".join(this_node_lines(report, host="node", gpu_summary=lambda: None))
+        self.assertIn("serving mbpp:seed-5.prefix", text)
+        self.assertNotIn("20/25", text)
+
     def args(self):
         return SimpleNamespace(retry_failed=True, max_attempts=3, retry_delay=0,
                                heartbeat_seconds=.01, poll_seconds=.01)
@@ -122,7 +132,28 @@ class WorkerStatusTests(unittest.TestCase):
                 with redirect_stdout(output):
                     result = run_with_status(running, queue, self.args(), {}, (), "test", lambda *args: None)
                 self.assertEqual(result, "still running")
-                self.assertIn("NODE status read error · KeyError", output.getvalue())
+            self.assertIn("NODE status read error · KeyError", output.getvalue())
+
+    def test_blocked_secondary_queue_prints_its_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "math").mkdir(); (root / "mbpp").mkdir()
+            primary, secondary = [TaskQueue(write_inputs(root / name)) for name in ("math", "mbpp")]
+            primary._worker_queues = [primary, secondary]
+            with secondary.claim() as task:
+                log = secondary.directory / "logs" / f"{task.key}.log"
+                log.parent.mkdir(parents=True)
+                log.write_text("RuntimeError: MBPP verifier failed\n")
+                secondary.finish(task, 1)
+
+            def blocked(*args):
+                raise RuntimeError("failed task blocks remaining work")
+
+            output = io.StringIO()
+            with redirect_stdout(output), self.assertRaises(RuntimeError):
+                run_with_status(blocked, primary, self.args(), {}, (), "test", lambda *args: None)
+            self.assertIn(str(log), output.getvalue())
+            self.assertIn("MBPP verifier failed", output.getvalue())
 
     def test_experiment_code_identity_is_preserved(self):
         self.assertEqual(code_digest(), "f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b")

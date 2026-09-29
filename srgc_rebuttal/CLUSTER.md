@@ -550,6 +550,20 @@ both plans; failed tasks retry automatically. `status` prints a per-seed table
 their step and node, the tasks that need attention with their log path, and
 the live workers.
 
+The worker writes heartbeats to both queues. Only the active dataset's receipt
+names the task; the other report shows `serving <dataset>:<task>` instead of
+attributing a same-named task to the wrong dataset. A graceful `stop --dataset`
+pauses only that queue, and the worker can keep serving the other one. This also
+works when the preferred MATH queue was already stopped before `all run`.
+If both queues are complete or stopped, no new GPU admission is performed.
+
+Failure summaries include blocked tasks from both queues. Reading a failure or
+status log is bounded to its final 256 KiB (40 lines for failure output, 200
+for the status error search), so a large accumulated task log is not loaded
+into memory. One process guard covers both datasets and reports each child
+failure once. These scheduler/reporting fixes preserve the experiment code
+identity and existing checkpoints; load them when restarting an idle worker.
+
 After an incompatible code update, ordinary `all run` automatically preserves
 the old run and starts/joins a separate run for the current implementation.
 No environment-variable prefix is required. Compatible runs continue unchanged;

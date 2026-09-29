@@ -17,6 +17,11 @@ import signal
 import sys
 import time
 
+try:
+    from srgc_log_tail import tail_lines
+except ImportError:
+    from scripts.srgc_log_tail import tail_lines
+
 TARGET_MARKERS = ("srgc_rebuttal.run_experiment", "srgc_rebuttal.build_cache",
                   "srgc_step_checkpoints.py", "srgc_qwen35_rank.py")
 OWNER_MARKERS = ("run_srgc_rebuttal.py", "srgc_rebuttal.cluster", "run_srgc_qwen35.py")
@@ -216,10 +221,9 @@ def guarded_run_child(original, plan_path):
 def failure_tail(log_path, lines=40):
     """The last ``lines`` of a child log, trimmed to the last Traceback when one is present."""
     try:
-        text = Path(log_path).read_text(errors="replace").splitlines()
+        tail = tail_lines(log_path, lines)
     except OSError:
         return ["(log file not readable)"]
-    tail = text[-lines:]
     for index in range(len(tail) - 1, -1, -1):
         if tail[index].startswith("Traceback"):
             return tail[index:]

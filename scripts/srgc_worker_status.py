@@ -6,6 +6,10 @@ import re
 import time
 
 from srgc_rebuttal.plan import input_path
+try:
+    from srgc_log_tail import tail_lines
+except ImportError:
+    from scripts.srgc_log_tail import tail_lines
 
 
 def activity(queue, task):
@@ -110,7 +114,8 @@ def run_with_status(original, queue, args, environment, gpu_fds, worker_id, upda
     try:
         return original(queue, args, environment, gpu_fds, worker_id, report)
     except RuntimeError:
-        explain_blocked(queue, args)
+        for each in getattr(queue, "_worker_queues", [queue]):
+            explain_blocked(each, args)
         raise
 
 
@@ -128,7 +133,7 @@ def explain_blocked(queue, args, *, lines=40):
         print(f"BLOCKED {row['task']} status={row['status']} attempts={row.get('attempt', 0)} "
               f"exit={row.get('exit_code', '-')} validation_error={row.get('validation_error') or '-'} log={log}", flush=True)
         try:
-            tail = log.read_text(errors="replace").splitlines()[-lines:]
+            tail = tail_lines(log, lines)
         except OSError:
             tail = ["(log file not readable)"]
         for line in tail:

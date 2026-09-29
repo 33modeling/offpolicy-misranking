@@ -3,6 +3,9 @@ import json
 import tempfile
 import sys
 import unittest
+import multiprocessing
+import time
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import ExitStack, nullcontext, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +15,7 @@ from scripts import srgc_multi_queue as multi
 from srgc_rebuttal import cluster
 from srgc_rebuttal.cluster_queue import TaskQueue
 from srgc_rebuttal.tests.test_cluster import finish_fake, write_inputs
+from scripts.srgc_seed_order import seed_first_queue
 
 
 def args():
@@ -19,7 +23,168 @@ def args():
                            heartbeat_seconds=1, stall_seconds=1800)
 
 
+def simulate_multi_worker(primary, secondary, worker_id, barrier):
+    primary, secondary = Path(primary), Path(secondary)
+    queues = {p: TaskQueue(p) for p in (primary, secondary)}
+    options = args()
+    options.plan, options.worker_id = primary, worker_id
+    options.node_lock_root = primary.parent.parent / "devices"
+    jobs = []
+
+    def child(command, log, environment, **kwargs):
+        plan = Path(command[command.index("--plan") + 1])
+        queue = queues[plan]
+        queue.verify()
+        task = next(t for t in queue.tasks if t.key == log.stem)
+        parent = queue.dependency(task)
+        if parent is not None:
+            assert queue.complete(parent)
+        started = time.monotonic()
+        kwargs["heartbeat"](123)
+        for each in queues.values():
+            record = json.loads((each.directory / "workers" / f"{worker_id}.json").read_text())
+            assert record["active_plan"] == str(plan)
+            assert record["task"] == (task.key if each.plan_path == plan else None)
+        if not jobs:
+            barrier.wait(timeout=20)
+        time.sleep(.01)
+        finish_fake(queue, task)
+        jobs.append((plan.parent.name, task.key, started, time.monotonic()))
+        return 0
+
+    with seed_first_queue(), multi.multi_queue([secondary]), \
+            patch.object(cluster, "run_child", child), \
+            patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", tuple(f"{worker_id}-{i}" for i in range(4)))), \
+            patch.object(cluster, "admit", return_value={}), patch.object(cluster, "publish_reports"), \
+            redirect_stdout(io.StringIO()):
+        cluster.worker(options)
+    return jobs
+
+
 class MultiQueueTest(unittest.TestCase):
+    def test_two_processes_drain_sixty_tasks_once_and_publish_both_heartbeats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("math", "mbpp"):
+                (root / name).mkdir()
+            plans = [write_inputs(root / name, pending=True) for name in ("math", "mbpp")]
+            context = multiprocessing.get_context("spawn")
+            with context.Manager() as manager:
+                barrier = manager.Barrier(2)
+                with ProcessPoolExecutor(max_workers=2, mp_context=context) as pool:
+                    futures = [pool.submit(simulate_multi_worker, *map(str, plans), f"node{i}", barrier) for i in range(2)]
+                    jobs = [job for future in futures for job in future.result(timeout=40)]
+            self.assertEqual(len(jobs), 60)
+            self.assertEqual(len({(dataset, task) for dataset, task, *_ in jobs}), 60)
+            active = peak = 0
+            for _, delta in sorted([(start, 1) for _, _, start, _ in jobs] + [(end, -1) for _, _, _, end in jobs]):
+                active += delta
+                peak = max(peak, active)
+            self.assertEqual(peak, 2)
+            for plan in plans:
+                queue = TaskQueue(plan)
+                self.assertTrue(all(queue.complete(task) for task in queue.tasks))
+                for worker in (queue.directory / "workers").glob("*.json"):
+                    self.assertEqual(json.loads(worker.read_text())["status"], "complete")
+
+    def test_completed_queues_need_no_gpu_admission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a").mkdir(); (root / "b").mkdir()
+            queues = [TaskQueue(write_inputs(root / name)) for name in ("a", "b")]
+            for queue in queues:
+                for task in queue.tasks:
+                    if task.arm != "cache":
+                        finish_fake(queue, task)
+            options = args()
+            options.plan, options.worker_id, options.node_lock_root = queues[0].plan_path, "doneworker", root / "devices"
+            with multi.multi_queue([queues[1].plan_path]), patch.object(cluster, "gpu_identity") as gpu, \
+                    patch.object(cluster, "admit") as admit, patch.object(cluster, "publish_reports") as publish:
+                cluster.worker(options)
+            gpu.assert_not_called(); admit.assert_not_called()
+            self.assertEqual(publish.call_count, 2)
+
+    def test_child_error_records_failure_and_releases_task_and_gpu_leases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a").mkdir(); (root / "b").mkdir()
+            a = TaskQueue(write_inputs(root / "a")); b = TaskQueue(write_inputs(root / "b"))
+            options = args()
+            options.plan, options.worker_id, options.node_lock_root = a.plan_path, "errorworker", root / "devices"
+            uuids = ("u0", "u1", "u2", "u3")
+
+            def fail(command, log, environment, **kwargs):
+                kwargs["heartbeat"](123)
+                raise RuntimeError("simulated child timeout")
+
+            with multi.multi_queue([b.plan_path]), patch.object(cluster, "run_child", fail), \
+                    patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", uuids)), \
+                    patch.object(cluster, "admit", return_value={}), redirect_stdout(io.StringIO()), \
+                    self.assertRaisesRegex(RuntimeError, "simulated child timeout"):
+                cluster.worker(options)
+            task = next(t for t in a.tasks if t.key == "seed-5.prefix")
+            self.assertFalse(a.locked(task))
+            self.assertEqual(json.loads(a.receipt(task).read_text())["status"], "failed")
+            with cluster.device_leases(options.node_lock_root, uuids):
+                pass
+            for queue in (a, b):
+                record = json.loads((queue.directory / "workers/errorworker.json").read_text())
+                self.assertEqual(record["status"], "failed")
+                self.assertIn("simulated child timeout", record["error"])
+
+    def test_worker_receipts_follow_the_dataset_that_is_actually_running(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a").mkdir(); (root / "b").mkdir()
+            a = TaskQueue(write_inputs(root / "a")); b = TaskQueue(write_inputs(root / "b"))
+            self.queues = {a.plan_path: a, b.plan_path: b}
+            order = []
+            finish = self.fake_child(order)
+
+            def child(command, log, environment, **kwargs):
+                plan = Path(command[command.index("--plan") + 1])
+                kwargs["heartbeat"](123)
+                for queue in (a, b):
+                    path = queue.directory / "workers/debugworker.json"
+                    self.assertTrue(path.exists(), f"missing worker heartbeat for {queue.plan_path}")
+                    record = json.loads(path.read_text())
+                    self.assertEqual(record["active_plan"], str(plan))
+                    self.assertEqual(record["status"], "running" if queue.plan_path == plan else "idle")
+                    self.assertEqual(record["task"], log.stem if queue.plan_path == plan else None)
+                return finish(command, log, environment, **kwargs)
+
+            options = args()
+            options.plan, options.worker_id, options.node_lock_root = a.plan_path, "debugworker", root / "devices"
+            with multi.multi_queue([b.plan_path]), patch.object(cluster, "run_child", child), \
+                    patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", ("u0", "u1", "u2", "u3"))), \
+                    patch.object(cluster, "admit", return_value={}), patch.object(cluster, "publish_reports"), \
+                    redirect_stdout(io.StringIO()):
+                cluster.worker(options)
+            self.assertEqual(len(order), 50)
+            for queue in (a, b):
+                self.assertEqual(json.loads((queue.directory / "workers/debugworker.json").read_text())["status"], "complete")
+
+    def test_stopping_one_dataset_does_not_prevent_the_other_from_starting(self):
+        from srgc_rebuttal.runtime import atomic_json
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a").mkdir(); (root / "b").mkdir()
+            a = TaskQueue(write_inputs(root / "a")); b = TaskQueue(write_inputs(root / "b"))
+            a.bind(); b.bind()
+            atomic_json(a.directory / "stop.json", {"immediate": False})
+            self.queues = {a.plan_path: a, b.plan_path: b}
+            order = []
+            options = args()
+            options.plan, options.worker_id, options.node_lock_root = a.plan_path, "stopworker", root / "devices"
+            with multi.multi_queue([b.plan_path]), patch.object(cluster, "run_child", self.fake_child(order)), \
+                    patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", ("u0", "u1", "u2", "u3"))), \
+                    patch.object(cluster, "admit", return_value={}), patch.object(cluster, "publish_reports"), \
+                    redirect_stdout(io.StringIO()):
+                cluster.worker(options)
+            self.assertEqual(len(order), 25)
+            self.assertTrue(all(name == "b" for name, _ in order))
+            self.assertFalse(any(a.complete(t) for t in a.tasks if t.arm != "cache"))
+
     def test_launcher_resolves_both_dataset_cohorts(self):
         from scripts import run_srgc_rebuttal
         root = Path(__file__).resolve().parents[2]
@@ -34,10 +199,11 @@ class MultiQueueTest(unittest.TestCase):
                         stack.enter_context(patch("srgc_rebuttal.existing_runtime.select_python"))
                         route = stack.enter_context(patch("srgc_shared_storage.route_plan", side_effect=lambda p, **kw: p))
                         stack.enter_context(patch("srgc_shared_storage.storage_root", return_value=(root, root)))
+                        wrappers = {}
                         for module, method in (("srgc_checkpoint_backup", "automatic_backup"),
                                 ("srgc_log_format", "uniform_log"), ("srgc_process_guard", "process_guard"),
                                 ("srgc_seed_order", "seed_first_queue")):
-                            stack.enter_context(patch(f"{module}.{method}", side_effect=lambda *a, **kw: nullcontext()))
+                            wrappers[module] = stack.enter_context(patch(f"{module}.{method}", side_effect=lambda *a, **kw: nullcontext()))
                         queues = stack.enter_context(patch("srgc_multi_queue.multi_queue",
                                                           side_effect=lambda *a: nullcontext()))
                         stack.enter_context(patch("srgc_step_checkpoints.worker_main"))
@@ -45,6 +211,7 @@ class MultiQueueTest(unittest.TestCase):
                                                                       "--with-dataset", secondary,
                                                                       *(["--fresh", fresh] if fresh else [])]))
                         run_srgc_rebuttal.main()
+                        wrappers["srgc_process_guard"].assert_called_once_with(paths[primary])
                         self.assertEqual([c.args[1] for c in resolver.call_args_list], [primary, secondary])
                         self.assertTrue(all(c.kwargs["writing"] for c in resolver.call_args_list))
                         self.assertEqual([c.args[0] for c in route.call_args_list], [paths[primary], paths[secondary]])
@@ -89,9 +256,11 @@ class MultiQueueTest(unittest.TestCase):
 
     def test_multi_queue_patches_and_restores_run_worker(self):
         original = cluster.run_worker
+        original_entry = cluster.worker
         with multi.multi_queue([]):
             self.assertIsNot(cluster.run_worker, original)
         self.assertIs(cluster.run_worker, original)
+        self.assertIs(cluster.worker, original_entry)
 
 
 if __name__ == "__main__":

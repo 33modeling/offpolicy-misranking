@@ -135,7 +135,9 @@ def main():
             stack.enter_context(uniform_log())
             for each in (plan, *extra_plans):
                 stack.enter_context(automatic_backup(each))
-                stack.enter_context(process_guard(each))
+            # The guard already covers every SRGC child on this node. Nesting
+            # it per dataset repeats teardown and failure reporting.
+            stack.enter_context(process_guard(plan))
             stack.enter_context(seed_first_queue())
             stack.enter_context(multi_queue(extra_plans))
             worker_main()

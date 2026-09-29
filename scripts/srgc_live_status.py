@@ -7,6 +7,10 @@ from pathlib import Path
 import time
 
 from srgc_rebuttal.plan import load_plan
+try:
+    from srgc_log_tail import tail_lines
+except ImportError:
+    from scripts.srgc_log_tail import tail_lines
 
 
 def read_object(path):
@@ -143,7 +147,7 @@ def running_detail(row):
 def last_error_line(log_path, lines=200):
     """The most recent line of a task log that looks like an error, or None."""
     try:
-        tail = Path(log_path).read_text(errors="replace").splitlines()[-lines:]
+        tail = tail_lines(log_path, lines)
     except OSError:
         return None
     for line in reversed(tail):
@@ -193,7 +197,7 @@ def this_node_lines(report, host=None, gpu_summary=gpu_memory_summary):
     if live:
         worker = min(live, key=lambda w: w["heartbeat_age_seconds"])
         task = worker.get("task")
-        what = {"running": f"running {task}", "idle": "idle (nothing claimable)", "preflight": "starting up"}[worker["status"]]
+        what = worker_activity(worker)
         row = next((r for r in report["tasks"] if r["task"] == task), None) if task else None
         if row and row.get("completed_steps") is not None and row.get("total_steps"):
             what += f" · {row['completed_steps']}/{row['total_steps']} done"
@@ -212,6 +216,16 @@ def this_node_lines(report, host=None, gpu_summary=gpu_memory_summary):
     if summary:
         lines.append(f"gpu memory used: {summary}")
     return lines
+
+
+def worker_activity(worker):
+    if worker["status"] == "idle" and worker.get("active_plan") and worker.get("active_task"):
+        return f"serving {worker['active_dataset']}:{worker['active_task']}"
+    if worker["status"] == "idle":
+        return "idle (nothing claimable)"
+    if worker["status"] == "preflight":
+        return "starting up"
+    return worker["status"].replace("_", " ") + (f" {worker['task']}" if worker.get("task") else "")
 
 
 def render(report, *, results=False):
@@ -254,7 +268,7 @@ def render(report, *, results=False):
     if active or hidden:
         lines += ["", "nodes:"]
         for worker in active:
-            what = worker["status"].replace("_", " ") + (f" {worker['task']}" if worker.get("task") else "")
+            what = worker_activity(worker)
             lines.append(f"  {str(worker.get('host') or '-'):<24} {what} · heartbeat {worker['heartbeat_age_seconds']:.0f}s ago")
             if worker.get("error"):
                 lines.append(f"      {worker['error']}")
