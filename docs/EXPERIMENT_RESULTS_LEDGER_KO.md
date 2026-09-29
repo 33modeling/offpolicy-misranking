@@ -232,6 +232,10 @@ plan 준비. [감사 기록](QWEN35_SRGC_AUDIT_KO.md).
 
 ## 11. 새 실험 E01–E09: 아직 확인된 결과가 없는 범위
 
+아래 표는 **2026-09-28 확인 기록**이다. 2026-09-30 명령 점검에서 E04의
+`switch_fixed200` 구현을 확인했다. 최신 실행 가능 범위는
+[명령 모음](REBUTTAL_COMMANDS_KO.md)을 따르며, 새 GPU 결과를 확인했다는 뜻은 아니다.
+
 | 새 실험 | 현재 확인 상태 | 결과 MD에 추가할 것 |
 | --- | --- | --- |
 | E01/E02 OLMo seeds 5–9 | 구현됨; 저자에게 실행 진행을 전달받았으나 최신 완료 export 미수신 | 모든 seed×네 arm endpoint, own-path D, phase 비용 |

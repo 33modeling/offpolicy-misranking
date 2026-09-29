@@ -1,11 +1,11 @@
 # Limitation 후속 실험: 구현 목록과 실행 기록
 
-점검일: 2026-09-28. 코드 기준: `master`, 점검 시작 commit `67c9a7c`.
+구현·명령 점검: 2026-09-30, `master` / `104c1f0`. 아래 날짜별 실행 기록은 보존한다.
 대응 원고: V7 `sections/discussion.tex`의 Discussion and Limitations.
 실행 코드는 이 저장소에만 유지한다. 논문 쪽 목록은 `v7/EXPERIMENTS.md`다.
 
 실행할 때는 [통합 명령 모음](REBUTTAL_COMMANDS_KO.md),
-[추가 arm 30개 배정표](REBUTTAL_EXTRA_TASKS.tsv),
+[추가 arm 40개 배정표](REBUTTAL_EXTRA_TASKS.tsv),
 [공식 리뷰 일정과 내부 준비 계획](REVIEW_SCHEDULE_2027_KO.md)을 사용한다.
 아래는 실험 목적·조건·구현 기록을 자세히 설명한다.
 기존 실험의 수치·완료 범위와 교정이 필요한 비용은
@@ -50,7 +50,7 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 `status/results/costs`는 새 학습을 시작하지 않는다.
 
 ```sh
-# 시작 또는 기존 활성 실험 이어서 실행
+# 같은 코드의 활성 실험 재개; 실험 코드 identity 변경 시 별도 cohort 생성/합류
 sh scripts/run_srgc.sh math run
 sh scripts/run_srgc.sh mbpp run
 
@@ -82,6 +82,10 @@ MBPP는 [mbpp_pair_seeds.json](../srgc_rebuttal/experiments/mbpp_pair_seeds.json
 같은 노드에서는 앞 작업 완료 후 다음 작업을 실행한다.
 
 ```sh
+# P1: total step 200까지 On-policy, update 201부터 SR
+sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_fixed200
+
 # P2: 후보 40개 SR 갱신
 sh scripts/run_srgc_sr_refresh.sh math 5 candidates
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 candidates
@@ -101,7 +105,7 @@ sh scripts/run_srgc_sr_refresh.sh mbpp results
 
 추가 arm에는 `status`/`costs` 명령이 없다. 상태는 콘솔과
 `seed-N/<arm>-progress.json`, 상세 비용은 `seed-N/cost-receipts/<arm>/`를 본다.
-`<arm>`은 `sr_refresh`, `switch_repeat`, `sr_refresh-pool`이다. 결과 요약을 전체
+`<arm>`은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`이다. 결과 요약을 전체
 비용 합계로 해석하지 않는다. 자세한 산출물과 재시작 조건은 아래 3-4절에 있다.
 
 ### Qwen: 별도 환경과 전용 queue
@@ -158,8 +162,8 @@ Qwen은 자기 초기 정책으로 cache와 prefix를 새로 만들며 OLMo 결�
 
 - **기존 실행은 유지:** MATH/MBPP의 정상 작업을 끄거나 처음부터 다시 시작하지 않는다. 새로 배정할 자원이 경쟁하면 주 결과인 MATH의 누락 paired 결과를 먼저 완성하고 MBPP를 완성한다. 이는 MBPP의 기존 진행 중단이나 계획 seed 제외를 뜻하지 않는다.
 - **비용은 1번부터 동시 수집:** 모든 실험에서 cache 생성/재사용, prefix, selection, training, 평가·저장 비용과 불완전 계측을 함께 기록한다. 비용만 뒤로 미루거나 unknown을 0으로 채우지 않는다.
-- **구현은 GPU 작업과 병행:** P0가 도는 동안 2번, 3번의 runner와 회귀 테스트를 우선 준비한다. 새로 할당 가능한 GPU는 준비된 상위 순위 작업에 먼저 배정한다. P1 구현 전 남는 별도 노드는 P2에 쓸 수 있지만 상위 작업을 밀어내지는 않는다.
-- **이미 구현된 것만의 실행 순서:** OLMo 기본 네 arm 및 비용, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, Qwen 온라인 네 arm 순서다. 기존 목록의 30개 추가 continuation 전부를 P1 대조보다 먼저 완료해야 하는 것은 아니다.
+- **구현은 GPU 작업과 병행:** P0가 도는 동안 2번의 replicate runner와 회귀 테스트를 우선 준비하고, 구현된 3번은 prefix가 준비되면 배정한다. 새로 할당 가능한 GPU는 준비된 상위 순위 작업에 먼저 배정한다. 남는 별도 노드는 P2에 쓸 수 있지만 상위 작업을 밀어내지는 않는다.
+- **이미 구현된 것만의 실행 순서:** OLMo 기본 네 arm 및 비용, `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, Qwen 온라인 네 arm 순서다. P2/P3의 추가 continuation을 P1 대조보다 먼저 완료해야 하는 것은 아니다.
 - **seed·비교 조건은 결과와 무관하게 고정:** 계획된 seeds 5-9를 유지하고 모든 결과를 수집한다. 좋은 seed만 골라 다음 실험을 하거나 유리한 결과가 나온 시점에 반복을 종료하지 않는다. P1의 반복 수와 sampling stream은 실행 전에 고정한다.
 - **P0 완료:** 예정된 네 arm/seed의 같은 total step 결과, paired 차이, 자기 경로의 전환 이력과 비용 receipt를 검증한다. 일부 arm만 끝난 평균을 최종 결과로 쓰지 않는다.
 - **P1 완료:** 2번은 동일 prefix·캐시·평가 조건의 SR/Switch 반복을 짝지어 보고하고, 3번은 같은 조건의 고정 전환과 Switch를 직접 비교한다. 결과가 무차이 또는 불리해도 함께 보고하며, 두 실험의 완료를 효과 입증과 동일시하지 않는다.
@@ -234,12 +238,14 @@ scoring 비용이 발생하므로 기존 일회 전환의 미미한 산술 비�
 실행·조회 명령은 문서 상단의 "OLMo: 시작·조회·비용"에 모았다.
 
 주 queue는 seed별 prefix 완료 후 네 continuation을 노드에 배정한다. 동일 명령은
-기존 활성 cohort와 checkpoint를 사용하며 새 replicate를 만들지 않는다.
+실험 코드 identity가 같으면 기존 활성 cohort와 checkpoint를 사용하며 새 replicate를
+만들지 않는다. identity가 바뀌면 이전 실행을 보존하고 새 cohort를 생성/합류한다.
+새 경로는 `[new-run]` 출력과 `automatic-restart.json`에 기록된다.
 Pair seed-3/4 캐시 재사용 plan과 별도 준비 입력 plan을 섞지 않는다. Pair 입력이
 사용되면 seeds 5/7/9는 source seed 3, seeds 6/8은 source seed 4의 데이터/캐시를
 재사용하므로 다섯 독립 데이터 분할이라고 부르지 않는다.
 
-### B. Limitation의 추가 세 arm
+### B. 고정 전환과 Limitation의 추가 arm
 
 해당 seed의 **검증된 prefix가 완료된 다음** 실행한다. 같은 seed의 기본 네 arm이
 모두 끝날 때까지 기다릴 필요는 없지만, 별도의 빈 노드를 사용해야 한다.
@@ -248,14 +254,13 @@ Pair seed-3/4 캐시 재사용 plan과 별도 준비 입력 plan을 섞지 않�
 
 실행 명령과 구현 파일은 문서 상단의 "OLMo 추가 arm: seed별 실행"에 모았다.
 
-추가 실행 목록은 2 datasets x 5 seeds x 3 arms = **30 continuations**다.
-기본 네 arm이나 prefix를 여기에 다시 더해 "30회 새 seed"로 세지 않는다.
+추가 실행 목록은 2 datasets x 5 seeds x 4 arms = **40 continuations**다.
+E04 고정 전환 10개와 E05–E07 30개이며, 기본 네 arm이나 prefix는 포함하지 않는다.
 각 continuation은 prefix 이후 250 updates이며, 각 dataset의 prefix/기본 arm
-진행 상태에 따라 실행 가능한 작업 수가 달라진다. 총 GPU 시간은 실측 없이
-110/40 GPU-h 등으로 확정하지 않는다.
+진행 상태에 따라 실행 가능한 작업 수가 달라진다. 총 GPU 시간은 실측 후 추정한다.
 
-추가 세 arm은 현재 기본 네-arm 자동 queue에 등록되어 있지 않다. 따라서
-`run_srgc.sh all run` 하나로 위 30개가 실행되지는 않는다. 추가 arm별 lease는
+추가 네 arm은 현재 기본 네-arm 자동 queue에 등록되어 있지 않다. 따라서
+`run_srgc.sh all run` 하나로 위 40개가 실행되지는 않는다. 추가 arm별 lease는
 중복 실행을 막지만, 여러 노드가 자동으로 다른 seed/arm을 골라주는 기능은 아니다.
 노드별로 다른 `(dataset, seed, arm)`을 배정한다.
 

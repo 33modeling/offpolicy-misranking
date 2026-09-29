@@ -1,4 +1,14 @@
 experiment_id	dataset	seed	arm	command	node	status	code_commit	active_plan	prefix_sha256	log	endpoint	cost_receipts
+E04	math	5	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	math	6	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh math 6 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	math	7	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh math 7 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	math	8	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh math 8 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	math	9	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh math 9 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	mbpp	5	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	mbpp	6	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh mbpp 6 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	mbpp	7	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh mbpp 7 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	mbpp	8	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh mbpp 8 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
+E04	mbpp	9	switch_fixed200	sh scripts/run_srgc_sr_refresh.sh mbpp 9 switch_fixed200	-	pending_prefix_check	-	-	-	-	-	-
 E05	math	5	sr_refresh	sh scripts/run_srgc_sr_refresh.sh math 5 candidates	-	pending_prefix_check	-	-	-	-	-	-
 E05	math	6	sr_refresh	sh scripts/run_srgc_sr_refresh.sh math 6 candidates	-	pending_prefix_check	-	-	-	-	-	-
 E05	math	7	sr_refresh	sh scripts/run_srgc_sr_refresh.sh math 7 candidates	-	pending_prefix_check	-	-	-	-	-	-

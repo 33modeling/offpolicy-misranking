@@ -1,6 +1,6 @@
 # 리뷰 대비 실험 명령 모음
 
-확인: 2026-09-28, 실행 코드 기준 `f4da754` / `master`.
+확인: 2026-09-30, 실행 코드 기준 `104c1f0` / `master`.
 [리뷰 일정](REVIEW_SCHEDULE_2027_KO.md) ·
 [기존 실험과 결과](EXPERIMENT_RESULTS_LEDGER_KO.md) ·
 [실험별 목적·우선순위](LIMITATION_EXPERIMENTS_KO.md) ·
@@ -19,18 +19,19 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 | E01 / P0 | OLMo MATH, seeds 5–9 × 네 arm | 20 | 자동 queue; cache → prefix → arm |
 | E02 / P0 | OLMo MBPP, seeds 5–9 × 네 arm | 20 | 자동 queue; cache → prefix → arm |
 | E03 / P1 | 동일 prefix의 SR/Switch 독립 반복 | 반복 수 사전 확정 필요 | **미구현, 실행 명령 없음** |
-| E04 / P1 | total-step-200 고정 전환 | 전용 plan 확정 필요 | **미구현, 실행 명령 없음** |
+| E04 / P1 | total-step-200 고정 전환 | MATH 5 + MBPP 5 | `switch_fixed200`; seed별 수동 배정, 해당 prefix 완료 |
 | E05 / P2 | 후보 40개 SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E06 / P2 | 반복 전환 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E07 / P3 | pool 400개 SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E08 / P3 | Qwen3.5-9B 온라인 네 arm | MATH 20 + MBPP 20 | 별도 환경·v2 root; 실제 GPU admission 통과 |
 | E09 / P3 | 초기 gradient 방향 matched ablation | 전용 설계 필요 | **미구현, 실행 명령 없음** |
 
-구현된 신규 온라인 continuation은 전체 범위 기준 **110개**다
-(OLMo 40 + 추가 arm 30 + Qwen 40). cache/prefix 작업과 과거 진단은 이 수에
-포함하지 않으며, 남은 작업 수라는 뜻도 아니다. E03/E04가 준비되면 P3보다
-먼저 자원을 배정한다. E03/E04/E09도 전체 완료 범위에 포함하며 구현·설계를
-먼저 끝내야 한다. 과거 완료 실험을 전부 재실행한다는 뜻은 아니다.
+구현된 신규 온라인 continuation은 전체 범위 기준 **120개**다
+(OLMo 40 + 추가 arm 40 + Qwen 40). cache/prefix 작업과 과거 진단은 이 수에
+포함하지 않으며, 남은 작업 수라는 뜻도 아니다. E04는 prefix 준비 후 P1로
+배정한다. E03/E09도 전체 완료 범위에 포함하며 전용 구현·설계가 남아 있다.
+저장된 gradient의 방향·크기 분석은 CPU에서 가능하지만 E09의 matched ablation을
+대체하지 않는다([6.2절](#62-cpu에서-할-일--gpu가-필요한-일)). 과거 완료 실험을 전부 재실행한다는 뜻은 아니다.
 이미 정상 실행 중인 작업은 유지한다.
 
 ## 2. 모든 명령의 공통 준비
@@ -67,6 +68,7 @@ nvidia-smi
 `run_srgc.sh ... run`에는 같은 사용자의 GPU 프로세스를 정리하는 동작이 있으므로
 **다른 학습이 없는 할당 노드에서만** 실행한다. 상태 조회용 터미널에서 `run`을
 다시 입력하지 않는다. 잠금 파일 삭제, `--fresh`, `SRGC_RUN_NAME` 변경은 재개 방법이 아니다.
+상태·결과 조회와 CPU 분석에는 `nvidia-smi`나 GPU 할당이 필요 없다.
 
 ## 3. E01/E02 — OLMo 기본 네 arm
 
@@ -86,6 +88,17 @@ MATH에서 배정할 작업이 없으면 MBPP를 확인한다.
 ```sh
 sh scripts/run_srgc.sh all run
 ```
+
+기본 plan은 seeds 5–9, 공통 prefix 25 updates, total step 275다.
+On-policy는 25 updates마다 후보 40문제를 다시 선정·채점하고 상위 4문제를 다음
+갱신까지 학습에 사용한다. 기존 seed-3/4 데이터·캐시를 읽을 수 있으면 이를
+가져와 cache 생성 단계를 건너뛰고, 없으면 checkout의 준비된 입력으로 생성한다.
+
+같은 실험 코드이면 위 명령으로 기존 checkpoint를 이어받는다. 실험 코드의
+identity가 달라졌으면 이전 결과를 보존하고 **새 cohort를 자동 생성하거나 합류**한다.
+`[new-run]`과 `automatic-restart.json`에 이전·새 경로가 남는다. 이 경우 기존
+학습 경로의 재개가 아니다. 새 cohort는 자체 생성 캐시를 다시 만들지만 출처가
+검증된 과거 Pair 캐시 import는 유지한다. 모든 참여 노드의 코드와 환경을 맞춘다.
 
 ### 상태 / 결과 / 비용 / 백업
 
@@ -108,11 +121,15 @@ sh scripts/run_srgc.sh mbpp backup-watch
 실제 학습·cache·receipt는 status가 출력하는 group-volume active root를 따른다.
 OLMo TXT 요약은 기존 동작상 홈에도 복사되므로 홈 TXT만 결과 원본으로 보관하지 않는다.
 `all backup-watch`는 첫 watch가 계속 실행되는 동안 둘째로 넘어가지 않으므로 사용하지 않는다.
+worker 자체가 checkpoint 백업을 수행하므로 일반 실행에 별도 watch는 필요 없다.
+`status`의 `serving mbpp:...` 등은 통합 worker가 다른 데이터셋을 처리 중이라는 뜻이다.
 
 ### 정상 중단 / 중단 표시 해제 / 실패 작업 재개
 
-`stop`은 해당 데이터셋의 현재 작업을 마친 뒤 신규 배정을 멈춘다.
-즉시 중단하려면 해당 줄 끝에 `--now`를 추가한다.
+`stop`은 해당 데이터셋의 모든 worker에 적용되며 현재 작업을 마친 뒤 신규 배정을
+멈춘다. 통합 worker는 다른 데이터셋을 계속 처리하므로 둘 다 멈추려면 두 줄을
+실행한다. 즉시 중단하려면 해당 줄 끝에 `--now`를 추가한다. 실행 중인 작업이
+중단되면 그 통합 worker도 종료되지만 다른 데이터셋의 공유 중단 표시는 설정되지 않는다.
 
 ```sh
 "$PAIR_PYTHON" scripts/run_srgc_rebuttal.py stop --dataset math
@@ -136,13 +153,17 @@ SRGC_MAX_ATTEMPTS=3 sh scripts/run_srgc.sh math run
 상한 변경은 누적 attempt 기록을 초기화하지 않는다. 코드를 고치거나 원인을 해결한
 다음 재개하며, hash mismatch를 무시해 기존 실험에 다른 설정을 섞지 않는다.
 
-## 4. E05/E06/E07 — 추가 arm 30개
+## 4. E04/E05/E06/E07 — 추가 arm 40개
 
 기본 네-arm queue와 별도다. 각 seed의 **공통 prefix가 완료되어야** 한다.
 노드별로 서로 다른 `(dataset, seed, arm)`을 배정한다. 아래는 seed 5 예시이며
 5를 6, 7, 8, 9로 바꾼다. 한 줄이 한 작업이다.
 
 ```sh
+# E04: total step 200까지 On-policy, update 201부터 SR
+sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_fixed200
+
 # E05: 후보 40문제 SR 갱신
 sh scripts/run_srgc_sr_refresh.sh math 5 candidates
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 candidates
@@ -156,7 +177,11 @@ sh scripts/run_srgc_sr_refresh.sh math 5 pool
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
 ```
 
-**30개 전체 명령과 노드 배정 칸:** [추가 arm 배정표](REBUTTAL_EXTRA_TASKS.tsv).
+E04의 200은 prefix 이후 추가 update 수가 아니라 **전체 학습 step**이다.
+checkpoint 200의 selection 비용을 포함하고, SR-GC 부호로 전환 시점을 바꾸지 않는다.
+구 경계 구현의 checkpoint는 현재 `fixed-boundary-before-training-v2`에서 재개할 수 없다.
+
+**40개 전체 명령과 노드 배정 칸:** [추가 arm 배정표](REBUTTAL_EXTRA_TASKS.tsv).
 이 표는 자동 실행 파일이 아니다. `pending_prefix_check`는 prefix 미확인 상태다.
 서로 다른 노드가 같은 줄을 선택하지 않도록 node/상태/로그를 기록한다.
 
@@ -171,7 +196,7 @@ sh scripts/run_srgc_sr_refresh.sh mbpp results
 
 상태는 콘솔과 active root의 `seed-N/<arm>-progress.json`,
 `<arm>-run.json`; 완료는 `<arm>-endpoint.json`을 확인한다.
-arm 파일명은 `sr_refresh`, `switch_repeat`, `sr_refresh-pool`이다.
+arm 파일명은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`이다.
 상세 비용은 `seed-N/cost-receipts/<arm>/`, `invocations/<arm>/`에 있다.
 위 results의 selection 요약만으로 전체 GPU 비용을 계산하지 않는다.
 
@@ -192,6 +217,9 @@ sh scripts/run_srgc_qwen35.sh all prepare
 다운로드·입력 준비 후 각 빈 4-H100 노드에서 동일 명령을 실행한다.
 GPU admission을 통과하면 cache → prefix → 네 arm을 자동 배정한다.
 MATH/MBPP 각각 seeds 5–9이며 OLMo reward cache/prefix를 재사용하지 않는다.
+`prepare`는 그 시점의 활성 OLMo plan에서 질문 분할을 가져온다. 비교할 OLMo
+cohort를 먼저 확정하며, 다른 cohort를 지정하는 `--source-plan` 예시는
+[Qwen 실행 안내](QWEN35_SRGC_KO.md)에 있다.
 
 ```sh
 sh scripts/run_srgc_qwen35.sh all run
@@ -235,20 +263,20 @@ prefix 완료·cache 재사용 상태와 이미 끝난 arm 수에 따라 현재 
 | --- | --- | --- | --- | --- |
 | E01 OLMo MATH | GPU + 노드 CPU | 1노드 / 4 GPU | 5노드 / 20 GPU | **20노드 / 80 GPU** |
 | E02 OLMo MBPP | GPU + 노드 CPU | 1노드 / 4 GPU | 5노드 / 20 GPU | **20노드 / 80 GPU** |
+| E04 고정 total-step-200, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 별도 prefix 생성 없음; E01/E02 prefix 대기 | **10노드 / 40 GPU** |
 | E05 후보 SR 갱신, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 별도 prefix 생성 없음; E01/E02 prefix 대기 | **10노드 / 40 GPU** |
 | E06 반복 전환, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
 | E07 pool SR 갱신, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
 | E08 Qwen MATH+MBPP | GPU + 노드 CPU | 1노드 / 4 GPU | 10노드 / 40 GPU | **40노드 / 160 GPU**; 데이터셋당 20노드 |
 | E03 독립 반복 | GPU 예정 | 1노드 / 4 GPU 설계 | OLMo prefix 재사용 예정 | **미구현**; 두 데이터셋×5 seeds×2 arms×R회이면 20R노드 |
-| E04 고정 total-step-200 | GPU 예정 | 1노드 / 4 GPU 설계 | OLMo prefix 재사용 예정 | **미구현**; 두 데이터셋×5 seeds×1 arm이면 10노드 |
 | E09 방향 대조 | GPU 예정 | 1노드 / 4 GPU 설계 | 공통 시작 조건 확정 필요 | **미구현**; 두 데이터셋×5 seeds×C개 추가 조건이면 10C노드 |
 
-- **현재 구현분:** OLMo 기본 40 + 추가 arm 30 + Qwen 40 = 최대 **110노드 / 440 GPU**.
-  전부의 prefix가 준비되고 continuation이 남아 있다는 가정이다. 110노드가 필요하다는 뜻은 아니다.
+- **현재 구현분:** OLMo 기본 40 + 추가 arm 40 + Qwen 40 = 최대 **120노드 / 480 GPU**.
+  전부의 prefix가 준비되고 continuation이 남아 있다는 가정이다. 120노드가 필요하다는 뜻은 아니다.
 - 모두 처음부터 시작하여 아직 continuation이 준비되지 않은 경우, cache/prefix 선행 작업은
   OLMo 10 + Qwen 10 = 최대 **20노드 / 80 GPU**다. prefix 완료에 따라 arm으로 병렬성이 늘어난다.
   한 seed의 cache와 prefix를 동시에 별도 노드에 세지 않는다.
-- E03/E04/E09까지 구현하면 위 설계 기준 전체 상한은 **120 + 20R + 10C노드**다.
+- E03/E09까지 구현하면 위 설계 기준 전체 상한은 **120 + 20R + 10C노드**다.
   R은 새 독립 반복 수, C는 새 방향 대조 조건 수이며 **아직 확정하지 않았다**.
   이 숫자를 현재 실행 가능 작업 수나 검증된 노드 규모로 쓰지 않는다.
 
@@ -274,6 +302,30 @@ CPU 작업은 GPU가 모두 찬 동안에도 병행한다. 별도 CPU 노드 1�
 작성을 모아 처리할 수 있고, 반드시 추가 서버가 필요한 것은 아니다. GPU admission,
 실제 새 모델 평가 및 새로운 rollout은 CPU에서 완료한 것으로 표시하지 않는다.
 
+저장된 SR-GC의 방향·크기 분해는 다음 명령으로 수집한다. `math`를 `mbpp`로
+바꾸면 다른 데이터셋의 현재 활성 plan을 읽는다. 공통 환경 설정 후 코드 레포에서 실행한다.
+
+```sh
+SRGC_ANALYSIS_DATASET=math
+SRGC_ANALYSIS_PLAN=$("$PAIR_PYTHON" - "$SRGC_ANALYSIS_DATASET" <<'PY'
+import os
+from pathlib import Path
+import sys
+sys.path.insert(0, "scripts")
+from srgc_pair_inputs import default_plan
+from srgc_shared_storage import route_plan
+source = default_plan(Path.cwd(), sys.argv[1], os.environ, writing=False)
+print(route_plan(source, writing=False))
+PY
+)
+"$PAIR_PYTHON" scripts/srgc_direction_analysis.py --plan "$SRGC_ANALYSIS_PLAN"
+```
+
+출력은 해당 run root의 `analysis/direction/` 아래 `direction.csv`, `summary.txt`,
+matplotlib 설치 시 `direction.png`다. 분해 기록이 없는 과거 checkpoint는 새로
+계산하지 않는다. `d_source=decision`은 실제 결정 값이고 `reconstructed_diagnostic`은
+저장된 norm/cosine으로 재구성한 진단 값이다. 분석 결과를 온라인 전환 기록으로 쓰지 않는다.
+
 ### 6.3. 노드 배정과 그룹 볼륨
 
 | 노드 용도 | 입력할 명령 | 같은 명령을 여러 노드에서 실행 |
@@ -291,7 +343,7 @@ GPU lock이 있으면 실제 owner/heartbeat/task 로그를 확인하며 파일�
 
 매 배정 시 `min(빈 노드 수, 선행 조건이 충족된 미완료 작업 수)`만큼만 새 worker를
 둔다. P0/P1, P2, P3 순으로 배정하되 모든 실험을 완료 대상으로 유지한다.
-E05–E07은 [30개 배정표](REBUTTAL_EXTRA_TASKS.tsv)의 서로 다른 tuple을 수동 지정한다.
+E04–E07은 [40개 배정표](REBUTTAL_EXTRA_TASKS.tsv)의 서로 다른 tuple을 수동 지정한다.
 완료된 노드는 다음 미완료 실험으로 이동하고 모든 작업이 끝났으면 추가 worker를 띄우지 않는다.
 
 | 저장 항목 | 위치 / 사용 방식 |
@@ -302,10 +354,10 @@ E05–E07은 [30개 배정표](REBUTTAL_EXTRA_TASKS.tsv)의 서로 다른 tuple�
 | 노드별 배정 기록 | dataset/seed/arm, node, code commit, plan/root, 시작·종료·실패 기록 |
 | 수집 결과·표·그림 | group 원본의 hash와 출처를 유지하며 CPU 분석 공간으로 가져옴 |
 
-110노드 동시 실행의 group I/O와 잠금 성능을 실측한 것은 아니다. 많은 노드를
+120노드 동시 실행의 group I/O와 잠금 성능을 실측한 것은 아니다. 많은 노드를
 추가할 때 model load·checkpoint 저장·backup이 병목인지 확인한다. 실제 남은 시간은
 실험 종류별 완료 작업의 wall-time으로 추정하며 selection 비용만 275배 곱하지 않는다.
-전체 완료 목표에는 가장 긴 선행 작업 경로와 E03/E04/E09 구현 시간도 포함한다.
+전체 완료 목표에는 가장 긴 선행 작업 경로와 E03/E09 구현 시간도 포함한다.
 
 ### 6.4. 전체 실험 완료와 V7 반영
 
@@ -342,6 +394,10 @@ V7 완성 초안은 **11월 1일**, 최종 점검은 **11월 4일 18:00 KST**다
 | 기존 Qwen selection 매트릭스 | `scripts/run_qwen35_9b.sh` | [과거 Qwen runbook](QWEN35_9B_RUNBOOK.md); E08 온라인 전환과 다름 |
 | 그 외 모델·MoPPS·gate·E1–E6·CPU 분석 | [전체 진입점 목록](EXPERIMENTS_COMPLETE_GUIDE_KO.md#18-실행결과-명령과-파일) | 각 실험의 옵션·frozen protocol 유지 |
 
-E03/E04/E09는 기존 실행을 다시 호출해서 만들 수 없다. 구현·검증 후 전용
+E03/E09는 기존 실행을 다시 호출해서 만들 수 없다. 구현·검증 후 전용
 명령과 출력 root를 이 문서에 추가한다. 이 문서 작성으로 작업을 자동 시작하거나
 주기적 실행을 등록하지 않았다.
+
+**2026-09-30 점검:** 관련 회귀 테스트 31개, 문서 shell 블록 19개 문법 검사,
+배정표 40개 명령의 인자 전달 검사를 통과했다. CPU 분석 명령은 임시 group 경로의
+합성 기록으로 MATH/MBPP 출력을 확인했다. 실제 GPU 학습·원격 작업 상태 검증은 포함하지 않는다.

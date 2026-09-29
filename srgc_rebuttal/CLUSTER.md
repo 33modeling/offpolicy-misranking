@@ -9,10 +9,12 @@ four allocated H100s. Existing scheduler GPU visibility is preserved.
 Leave healthy running workers alone. After a node failure, repeat the same
 command on the replacement allocation; there is no separate continuation mode.
 The launcher selects the existing Pair/MBPP Python and group-volume storage.
-With no active cohort it initializes the shared `candidate40-v2` cohort once;
-otherwise it rejoins the active cohort and reuses its saved progress. The same
-command starts a new experiment or continues an interrupted one automatically.
-Failed-task retries are enabled within the existing three-attempt limit.
+With no active cohort it initializes the shared `candidate40-v2` cohort once.
+With a matching implementation identity it rejoins the active cohort and reuses
+saved progress; an implementation change starts/joins a separate cohort while
+preserving the old run. The same command handles both cases automatically.
+The shell enables failed-task retries with a 120-second delay and a cumulative
+50-attempt limit, configurable with `SRGC_MAX_ATTEMPTS`.
 Live task/device leases prevent duplicate execution. Old files remain untouched.
 
 Use `sh scripts/run_srgc.sh math status`, `sh scripts/run_srgc.sh math results`
@@ -190,8 +192,9 @@ sh scripts/run_srgc.sh mbpp
 ```
 
 `--fresh` initializes one shared queue per dataset/run name under
-`$OM_WORK/srgc-rebuttal/fresh/`, using only the prompt/split inputs and empty
-reward caches. It does not migrate old cache, checkpoints or queue records.
+`$OM_WORK/srgc-rebuttal/fresh/`, using the prompt/split inputs. Locally generated
+reward caches start empty; complete historical Pair cache imports retain their
+recorded provenance. It does not migrate old checkpoints or queue records.
 The second node joins that queue instead of resetting it. Repeating the same
 name resumes that fresh cohort; choose another name for another clean start.
 Default status/results commands follow the selected fresh cohort. Old files
@@ -222,10 +225,11 @@ For concurrent MATH and MBPP with two workers each, allocate four four-H100
 nodes (sixteen GPUs). Run the MATH worker on nodes 1 and 2,
 and the MBPP worker on nodes 3 and 4. With only two nodes available, one worker
 per dataset is also supported, with less concurrency within each dataset.
-MATH writes to `srgc_rebuttal/runs/additional-seeds/`; MBPP writes to
-`srgc_rebuttal/runs/mbpp-seeds/`. Inputs, cache receipts, checkpoints, task
-leases and result reports are separate; device leases are shared between
-the built-in datasets. `--plan` selects a custom cohort; an explicitly
+The entry point routes the source plans to group storage; use the active run
+paths printed by `status` rather than the checkout's relative run paths.
+Inputs, cache receipts, checkpoints, task leases and result reports are
+separate; device leases are shared between the built-in datasets.
+`--plan` selects a custom cohort; an explicitly
 conflicting `--dataset` is rejected. Two four-GPU nodes are supported; the
 queue also works with one or more nodes. No run-duration estimate is implied.
 
@@ -631,8 +635,9 @@ sh scripts/run_srgc_sr_refresh.sh math results           # rewards, transitions 
 CPU tests: `python -m unittest srgc_rebuttal.tests.test_switch_repeat`.
 
 The [limitation experiment inventory](../docs/LIMITATION_EXPERIMENTS_KO.md)
-records all three extra arms, execution prerequisites, cost boundaries and
-unimplemented controls. Extra arms follow the same active Pair/prepared cohort
+records the fixed-schedule control and three other extra arms, execution
+prerequisites, cost boundaries and unimplemented controls.
+Extra arms follow the same active Pair/prepared cohort
 as the main dataset launcher. Their GPU processes set runtime caches on group
 storage, and results reject mismatched experiment/prefix identities rather than
 combining incompatible endpoints. Missing costs are reported as unknown.

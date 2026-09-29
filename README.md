@@ -11,7 +11,7 @@ criterion and result interpretation, including the MBPP off-policy follow-up.
 ## SR-GC Rebuttal Experiments
 
 Start with the [experiment command index](docs/REBUTTAL_COMMANDS_KO.md),
-[30 extra-arm task assignments](docs/REBUTTAL_EXTRA_TASKS.tsv), and
+[40 extra-arm task assignments](docs/REBUTTAL_EXTRA_TASKS.tsv), and
 [ICLR 2027 review preparation schedule](docs/REVIEW_SCHEDULE_2027_KO.md).
 These distinguish runnable experiments from pending implementations and
 official review dates from internal preparation targets.
