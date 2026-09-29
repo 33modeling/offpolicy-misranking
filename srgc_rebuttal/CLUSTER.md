@@ -728,3 +728,22 @@ in the canonical lease namespace `<group volume>/.srgc-gpu-node-locks` (the one
 the Qwen worker already uses), so any SRGC launcher on the node excludes the
 others. Manual `run`/`cache` now go through the same guard (orphan reaping,
 shm cleanup, free-GPU wait) as worker children.
+
+## Why the first block sits at `update 0/25`, and the attention kernel
+
+A refresh scores about 130 prompts (40 candidates, 40 SR prompts, 50
+validation prompts) with eight 2048-token responses each, one prompt at a time
+per rank, followed by a backward pass per response. The very first block of a
+prefix therefore spends one to three hours at `update 0/25 · selection`
+before the first `TRAIN ... update=1/25` line; the NODE line now shows how far
+the ranks are: `gpus 4/4 busy (scored 12,13,12,11 prompts; last 3-9s)`.
+
+The frozen runner loads the model with **eager** attention (README: "BF16/eager
+OLMo-3 7B"), while the cache builder uses sdpa. Eager attention is several
+times slower than sdpa for 2048-token generation and backward passes.
+`SRGC_ATTENTION=sdpa` (or `flash_attention_2` where installed) makes the
+training child load that kernel instead; the kernel is recorded in every
+checkpoint's `checkpoint_policy.attention` and printed as `ATTENTION ...` at
+child start. Numerics differ at floating-point rounding level only; the
+protocol (sampling, seeds, steps) is unchanged. Set it in the worker's
+environment before `run_srgc.sh ... run` and keep it constant within a run.

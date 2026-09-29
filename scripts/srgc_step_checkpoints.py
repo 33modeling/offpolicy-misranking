@@ -89,8 +89,11 @@ def worker_main():
 def main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from srgc_verifier_fallback import install as install_tolerant_verifier
+    from srgc_child_tuning import apply_attention, count_progress
     from srgc_rebuttal import run_experiment
     install_tolerant_verifier()
+    count_progress()
+    attention = apply_attention()
     from srgc_rebuttal.plan import DEFAULT_PLAN, digest, load_plan
     from srgc_rebuttal.runtime import run_root
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
@@ -101,7 +104,9 @@ def main():
     plan = load_plan(args.plan)
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
     policy = {"interval_updates": 1, "storage_adapter_sha256": digest(Path(__file__)),
-              "legacy_boundary_saves_retained": True}
+              "legacy_boundary_saves_retained": True, "attention": attention}
+    if int(os.environ.get("RANK", "0")) == 0:
+        print(f"ATTENTION {attention} (SRGC_ATTENTION selects sdpa|eager|flash_attention_2)", flush=True)
     original = run_experiment.Engine
     total = plan["shared_prefix_updates"] if args.task == "prefix" else plan["total_updates"]
     run_experiment.Engine = checkpoint_engine(original, folder, args.task, policy, total_updates=total)

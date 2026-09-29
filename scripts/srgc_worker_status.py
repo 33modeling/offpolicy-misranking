@@ -17,10 +17,13 @@ def activity(queue, task):
     receipt = json.loads(queue.receipt(task).read_text())
     started = receipt["started"]
     progress_dir = queue.directory / "progress" / receipt["attempt_id"]
-    ages = []
+    ages, counts, stages = [], [], set()
     for path in sorted(progress_dir.glob("rank-*.json")):
         row = json.loads(path.read_text())
         ages.append(max(0, time.time() - row["updated"]))
+        if isinstance(row.get("count"), int):
+            counts.append(row["count"])
+            stages.add(str(row.get("stage")))
     world = queue.plan.get("world_size", 4)
     if task.arm == "cache":
         phases = input_path(queue.plan_path, queue.plan, task.seed).with_suffix(".cache") / "cost-receipts"
@@ -43,7 +46,13 @@ def activity(queue, task):
     if ages:
         low, high = min(ages), max(ages)
         span = f"{low:.0f}s" if high - low < 1 else f"{low:.0f}-{high:.0f}s"
-        parts.append(f"gpus {len(ages)}/{world} busy (last {span})")
+        done = ""
+        if counts and len(stages) == 1:
+            stage = next(iter(stages))
+            unit = {"gradient_scoring": "scored", "rollout": "generated", "cache_candidate": "cached"}.get(stage)
+            if unit:
+                done = f"{unit} {','.join(str(c) for c in counts)} prompts; "
+        parts.append(f"gpus {len(ages)}/{world} busy ({done}last {span})")
     else:
         parts.append(f"gpus 0/{world} reporting")
     return " · ".join(parts)

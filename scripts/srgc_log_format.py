@@ -41,6 +41,7 @@ RULES = [
     (re.compile(r"^VERIFY (.*)$"), lambda m: ("VERIFY", m[1])),
     (re.compile(r"^BLOCKED (.*)$"), lambda m: ("BLOCKED", m[1])),
     (re.compile(r"^FAILED (.*)$"), lambda m: ("FAILED", m[1])),
+    (re.compile(r"^ATTENTION (.*)$"), lambda m: ("LOG", f"attention {m[1]}")),
     (re.compile(r"^ADMISSION (.*)$"), lambda m: ("ADMIT", m[1].lower())),
 ]
 
