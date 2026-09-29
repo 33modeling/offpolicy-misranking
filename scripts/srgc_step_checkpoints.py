@@ -104,7 +104,10 @@ def main():
     plan = load_plan(args.plan)
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
     policy = {"interval_updates": 1, "storage_adapter_sha256": digest(Path(__file__)),
-              "legacy_boundary_saves_retained": True, "attention": attention}
+              "legacy_boundary_saves_retained": True, "attention": attention,
+              "rollout_cache": "per-prompt rollouts persisted during scoring/evaluation; removed when the block completes"}
+    from srgc_resumable_rollouts import install as install_resumable_rollouts
+    install_resumable_rollouts(folder / "rollout-cache" / args.task)
     if int(os.environ.get("RANK", "0")) == 0:
         print(f"ATTENTION {attention} (SRGC_ATTENTION selects sdpa|eager|flash_attention_2)", flush=True)
     original = run_experiment.Engine

@@ -747,3 +747,19 @@ checkpoint's `checkpoint_policy.attention` and printed as `ATTENTION ...` at
 child start. Numerics differ at floating-point rounding level only; the
 protocol (sampling, seeds, steps) is unchanged. Set it in the worker's
 environment before `run_srgc.sh ... run` and keep it constant within a run.
+
+## Rollouts are saved as they are produced (interrupted blocks resume)
+
+Policy checkpoints exist after every update, but a selection refresh (about
+130 prompts x 8 responses) and the final 300-prompt evaluation had no save
+point inside them, so a CUDA OOM, NCCL failure or GPU pre-emption during those
+hours restarted the block from zero and a repeatedly failing run never left
+`update 0/25`. `scripts/srgc_resumable_rollouts.py` (installed by both training
+entry points) now writes each finished rollout to
+`seed-N/rollout-cache/<task>/<phase>-<seed>/` on the shared run root; a
+restarted attempt loads them and generates only the missing prompts, with the
+same per-prompt sampling seeds. The directory is removed when the block
+completes. Between rollouts the CUDA cache is released, and one CUDA
+out-of-memory on a prompt is retried once after freeing memory. The launchers
+now default `SRGC_ATTENTION=sdpa` (set `SRGC_ATTENTION=eager` to keep the
+frozen runner's kernel); the kernel used is recorded in every checkpoint.

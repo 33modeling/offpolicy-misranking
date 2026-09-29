@@ -21,6 +21,9 @@ if ! command -v "$PY" >/dev/null 2>&1; then
     PY=python3
 fi
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# Training children load the model with this attention kernel (recorded in each checkpoint);
+# sdpa is several times faster than the frozen runner's eager default for 2048-token rollouts.
+export SRGC_ATTENTION=${SRGC_ATTENTION:-sdpa}
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 PLAN=$("$PY" - "$DATASET" <<'PYEOF'
 import os

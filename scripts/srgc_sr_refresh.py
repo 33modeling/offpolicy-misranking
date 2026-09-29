@@ -168,7 +168,10 @@ def run(args):
     from srgc_rebuttal.distributed import initialize, primary
     from srgc_rebuttal.progress import record as progress
     from srgc_rebuttal.existing_runtime import load_model
-    from srgc_rebuttal.torch_backend import TorchBackend
+    try:
+        from srgc_resumable_rollouts import install as install_resumable_rollouts
+    except ImportError:
+        from scripts.srgc_resumable_rollouts import install as install_resumable_rollouts
     try:
         from srgc_verifier_fallback import install as install_tolerant_verifier
         install_tolerant_verifier()
@@ -186,6 +189,7 @@ def run(args):
             raise ValueError("fixed step must be a refresh boundary from the shared prefix to before the endpoint")
     scope = "candidates" if arm == "sr_refresh" else "pool" if arm == "sr_refresh-pool" else None
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
+    TorchBackend = install_resumable_rollouts(folder / "rollout-cache" / arm)
     import torch
     import torch.distributed as dist
     from peft import LoraConfig, get_peft_model
