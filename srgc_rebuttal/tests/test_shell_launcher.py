@@ -44,6 +44,36 @@ class ShellLauncherTests(unittest.TestCase):
             self.assertIn("[startup-cleanup] skipped", result.stderr)
             self.assertEqual(result.stdout.strip(), "{}")
 
+    def test_worker_is_restarted_after_a_crash_but_not_after_an_interrupt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            python = Path(directory) / "python"
+            counter = Path(directory) / "count"
+            # Fails twice (exit 1), then succeeds; each start appends a line.
+            python.write_text("#!/bin/sh\necho start >> '%s'\nn=$(wc -l < '%s')\n[ \"$n\" -ge 3 ] && exit 0\nexit 1\n" % (counter, counter))
+            python.chmod(0o755)
+            env = {k: v for k, v in os.environ.items() if k not in ("CUDA_VISIBLE_DEVICES", "SRGC_SKIP_GPU_CLEANUP")}
+            env.update(PAIR_PYTHON=str(python), SRGC_SKIP_GPU_CLEANUP="1", SRGC_WORKER_RESTART_DELAY="0")
+            result = subprocess.run(["sh", str(SCRIPT), "math", "run"], cwd="/tmp", env=env, text=True,
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(counter.read_text().count("start"), 3)
+            self.assertEqual(result.stderr.count("[worker-restart]"), 2)
+            # An interrupt (130) is not restarted.
+            python.write_text("#!/bin/sh\necho start >> '%s'\nexit 130\n" % counter)
+            counter.write_text("")
+            result = subprocess.run(["sh", str(SCRIPT), "math", "run"], cwd="/tmp", env=env, text=True,
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 130)
+            self.assertEqual(counter.read_text().count("start"), 1)
+            # The restart budget is respected.
+            python.write_text("#!/bin/sh\necho start >> '%s'\nexit 1\n" % counter)
+            counter.write_text("")
+            env["SRGC_WORKER_RESTARTS"] = "3"
+            result = subprocess.run(["sh", str(SCRIPT), "math", "run"], cwd="/tmp", env=env, text=True,
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(counter.read_text().count("start"), 3)
+
     def test_all_runs_one_worker_for_both_queues(self):
         report = self.invoke("all")
         self.assertEqual(report["args"], ["scripts/run_srgc_rebuttal.py", "worker", "--dataset", "math",

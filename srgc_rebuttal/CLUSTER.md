@@ -763,3 +763,27 @@ completes. Between rollouts the CUDA cache is released, and one CUDA
 out-of-memory on a prompt is retried once after freeing memory. The launchers
 now default `SRGC_ATTENTION=sdpa` (set `SRGC_ATTENTION=eager` to keep the
 frozen runner's kernel); the kernel used is recorded in every checkpoint.
+
+## Surviving GPU pre-emption and node faults
+
+What is in place when the operator takes the GPUs away, a rank dies or a node
+goes down mid-task:
+
+- **Nothing finished is repeated.** Policy checkpoints after every update,
+  per-prompt rollout cache inside scoring and evaluation blocks, cache
+  receipts per prompt, and rolling checkpoint backups on the group volume.
+- **The task is released, not lost.** Task and GPU leases are `flock`s that
+  the kernel drops when the process dies; the receipt stays `running`, which
+  `status` shows as `recoverable` and any worker claims immediately.
+- **The worker is supervised.** `run_srgc.sh ... run` restarts the worker after
+  `SRGC_WORKER_RESTART_DELAY` (90 s) whenever it exits with an error, up to
+  `SRGC_WORKER_RESTARTS` (1000) times; Ctrl-C, SIGTERM and usage errors stop
+  it. While the GPUs are gone the worker fails admission and is retried until
+  they return. `run_srgc_sr_refresh.sh` supervises the extra arms the same way
+  (120 s, 50 retries).
+- **Before every child** the guard reaps orphans, cleans `/dev/shm`, waits for
+  free GPU memory and takes leases in the shared namespace, so a returning
+  node cannot collide with another launcher.
+
+Start workers under `nohup`/`tmux` so the supervising shell itself survives
+the terminal: `nohup sh scripts/run_srgc.sh all run > worker.log 2>&1 &`.

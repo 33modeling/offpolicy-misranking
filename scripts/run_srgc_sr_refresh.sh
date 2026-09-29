@@ -59,5 +59,16 @@ if command -v nvidia-smi >/dev/null 2>&1 && [ -z "${SRGC_SKIP_GPU_CLEANUP:-}" ];
     fi
 fi
 echo "[sr-refresh] dataset=$DATASET seed=$TARGET scope=$SCOPE plan=$PLAN" >&2
-exec "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 --max_restarts=0 \
-    scripts/srgc_sr_refresh.py run --plan "$PLAN" --seed "$TARGET" $ARM_ARGS
+# Supervised like the queue worker: a crash (OOM, NCCL, pre-empted GPUs) is retried after a
+# delay and resumes from the arm's checkpoint and rollout cache; Ctrl-C/SIGTERM stop it.
+attempt=0
+while :; do
+    "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 --max_restarts=0 \
+        scripts/srgc_sr_refresh.py run --plan "$PLAN" --seed "$TARGET" $ARM_ARGS && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] || exit 0
+    case "$rc" in 130|143|2) exit "$rc" ;; esac
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt "${SRGC_WORKER_RESTARTS:-50}" ] || exit "$rc"
+    printf '[sr-refresh] exited with %s; retrying in %ss (retry %s)\n' "$rc" "${SRGC_WORKER_RESTART_DELAY:-120}" "$attempt" >&2
+    sleep "${SRGC_WORKER_RESTART_DELAY:-120}"
+done

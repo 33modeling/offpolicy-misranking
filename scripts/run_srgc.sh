@@ -96,10 +96,23 @@ if [ "$MODE" = run ]; then
     else
         set -- worker --dataset "$DATASET" --retry-failed --max-attempts "${SRGC_MAX_ATTEMPTS:-50}" --retry-delay 120
     fi
-    if [ -n "${SRGC_RUN_NAME:-}" ]; then
-        exec "$PY" scripts/run_srgc_rebuttal.py "$@" --fresh "$SRGC_RUN_NAME"
-    fi
-    exec "$PY" scripts/run_srgc_rebuttal.py "$@"
+    [ -z "${SRGC_RUN_NAME:-}" ] || set -- "$@" --fresh "$SRGC_RUN_NAME"
+    # The worker is supervised: when it dies for any reason other than a stop or an
+    # interrupt (GPUs taken away by the operator, driver/NCCL hiccup, node hiccup), it is
+    # restarted after SRGC_WORKER_RESTART_DELAY seconds, up to SRGC_WORKER_RESTARTS times.
+    # A restarted worker resumes from the queue receipts, per-update checkpoints and the
+    # rollout cache, so nothing finished is repeated.
+    attempt=0
+    while :; do
+        "$PY" scripts/run_srgc_rebuttal.py "$@" && rc=0 || rc=$?   # set -e must not abort the supervisor
+        [ "$rc" -ne 0 ] || exit 0
+        case "$rc" in 130|143|2) exit "$rc" ;; esac    # Ctrl-C, SIGTERM, usage error: do not loop
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt "${SRGC_WORKER_RESTARTS:-1000}" ] || exit "$rc"
+        printf '[worker-restart] worker exited with %s; restarting in %ss (restart %s)\n' \
+            "$rc" "${SRGC_WORKER_RESTART_DELAY:-90}" "$attempt" >&2
+        sleep "${SRGC_WORKER_RESTART_DELAY:-90}"
+    done
 fi
 export CUDA_VISIBLE_DEVICES=""
 if [ "$DATASET" = all ]; then
