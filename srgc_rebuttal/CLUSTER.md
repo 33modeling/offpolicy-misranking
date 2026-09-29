@@ -154,6 +154,28 @@ update 275. This is five cache tasks, five prefix tasks and twenty continuations
 Existing verified caches and completed tasks are skipped. A seed can proceed
 as soon as its own dependencies finish; other seeds need not finish first.
 
+The normal worker releases all four continuations as soon as `prefix.pt` and
+`prefix-ready.json` validate the common 25-update model/optimizer checkpoint.
+It does not wait for the prefix producer's process teardown or queue lease to
+close. A bare `prefix-latest.pt`, an incomplete save or an invalid identity/hash
+does not release any arm. Cache handoff still waits for its producer to finish.
+Random, SR, On-policy and Switch have no dependencies on one another; seed
+ordering is a claim preference, not a barrier. Task and GPU leases still prevent
+duplicate work or overlapping GPU allocations.
+
+With `all run`, MATH and MBPP initially provide five independent cache/prefix
+chains each: at most ten useful concurrent tasks until prefixes become ready.
+After publication, up to forty continuations can run across both datasets on
+distinct four-GPU allocations. This is a dependency limit, not a ten-node cap.
+Workers check for newly ready work every two seconds by default; an explicit
+`--poll-seconds` overrides this. Multi-queue idle logs show both datasets and
+task logs read progress from the dataset actually running.
+
+To load scheduler changes, update and restart only idle workers; leave workers
+currently training alone. These scheduler changes preserve experiment code
+identity, caches and checkpoints. Do not start another worker on GPUs still
+leased by an old idle worker.
+
 ## MATH or MBPP
 
 For the first start or for continuing after a node failure, use these same

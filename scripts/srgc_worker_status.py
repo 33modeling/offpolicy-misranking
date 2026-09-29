@@ -82,14 +82,20 @@ def run_with_status(original, queue, args, environment, gpu_fds, worker_id, upda
         update(state, task, child_pid, error)
         try:
             if task is not None and state == "running":
-                if task.key not in announced:
-                    announced.add(task.key)
-                    attempt = json.loads(queue.receipt(task).read_text()).get("attempt", "?")
+                active = getattr(queue, "_active_queue", None) or queue
+                key = (active.plan_path, task.key)
+                if key not in announced:
+                    announced.add(key)
+                    attempt = json.loads(active.receipt(task).read_text()).get("attempt", "?")
                     print(f"NODE running {task.key} · attempt {attempt} · pid {child_pid or '-'} · "
-                          f"log {queue.directory / 'logs' / (task.key + '.log')}", flush=True)
-                line = f"NODE {task.key} {activity(queue, task)}"
+                          f"log {active.directory / 'logs' / (task.key + '.log')}", flush=True)
+                line = f"NODE {task.key} {activity(active, task)}"
             elif state == "idle":
-                line = "NODE idle (nothing claimable) · " + idle_summary(queue.status(max_attempts=args.max_attempts), args.max_attempts)
+                queues = getattr(queue, "_worker_queues", [queue])
+                summaries = [(q.plan["dataset"] + ": " if len(queues) > 1 else "") +
+                             idle_summary(q.status(max_attempts=args.max_attempts), args.max_attempts)
+                             for q in queues]
+                line = "NODE idle (nothing claimable) · " + " | ".join(summaries)
             else:
                 line = f"NODE {state}" + (f" {task.key}" if task else "") + (f" · {error}" if error else "")
         except (OSError, ValueError, KeyError, TypeError) as exc:

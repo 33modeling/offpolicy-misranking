@@ -85,6 +85,9 @@ def main():
                     a == "--node-lock-root" or a.startswith("--node-lock-root=") for a in args):
                 from srgc_shared_storage import storage_root
                 args += ["--node-lock-root", str(storage_root(os.environ)[1] / "gpu-node-locks")]
+            if action == "cluster" and args[0] == "worker" and not any(
+                    a == "--poll-seconds" or a.startswith("--poll-seconds=") for a in args):
+                args += ["--poll-seconds", "2"]
             if action == "cache":
                 from srgc_rebuttal.plan import input_path, load_plan
                 bundle_parser = argparse.ArgumentParser(add_help=False)

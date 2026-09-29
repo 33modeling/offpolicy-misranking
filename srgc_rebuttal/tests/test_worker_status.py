@@ -127,6 +127,36 @@ class WorkerStatusTests(unittest.TestCase):
     def test_experiment_code_identity_is_preserved(self):
         self.assertEqual(code_digest(), "f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b")
 
+    def test_multiple_queues_report_both_totals_and_active_queue_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = [Path(directory) / name for name in ("math", "mbpp")]
+            for root in roots:
+                root.mkdir()
+            primary, secondary = [TaskQueue(write_inputs(root)) for root in roots]
+            # Status labels only; both queues use the synthetic MATH test inputs.
+            secondary.plan["dataset"] = "mbpp"
+            primary._worker_queues = [primary, secondary]
+            output = io.StringIO()
+            with primary.claim() as first, secondary.claim() as second:
+                self.assertEqual(first, second)
+
+                def running(queue, args, env, fds, worker, report):
+                    for active in (primary, secondary):
+                        queue._active_queue = active
+                        report("running", first, 123)
+                    queue._active_queue = None
+                    report("idle")
+
+                with redirect_stdout(output):
+                    run_with_status(running, primary, self.args(), {}, (), "test", lambda *args: None)
+            text = output.getvalue()
+            self.assertNotIn("status read error", text)
+            self.assertEqual(text.count("NODE running seed-5.prefix"), 2)
+            for queue in (primary, secondary):
+                self.assertIn(str(queue.directory / "logs" / "seed-5.prefix.log"), text)
+            self.assertIn("math_train: done ", text)
+            self.assertIn(" | mbpp: done ", text)
+
 
 if __name__ == "__main__":
     unittest.main()

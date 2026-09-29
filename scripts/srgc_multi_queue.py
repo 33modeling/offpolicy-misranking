@@ -15,6 +15,7 @@ import time
 def run_worker_multi(queues, args, environment, gpu_fds, worker_id, update):
     from srgc_rebuttal import cluster
     published = set()
+    queues[0]._worker_queues = queues
     while True:
         if any(cluster.stop_requested(queue) for queue in queues):
             update("stopped")
@@ -38,7 +39,8 @@ def run_worker_multi(queues, args, environment, gpu_fds, worker_id, update):
                             blocked += 1
                     continue
                 claimed = True
-                print(f"RUN {task.key}", flush=True)
+                queues[0]._active_queue = queue
+                print(f"RUN {queue.plan['dataset']}:{task.key}", flush=True)
                 try:
                     cluster.gpu_identity()
                     receipt = json.loads(queue.receipt(task).read_text())
@@ -59,7 +61,8 @@ def run_worker_multi(queues, args, environment, gpu_fds, worker_id, update):
                     queue.finish(task, 130)
                     raise
                 code = queue.finish(task, code)
-                print(f"DONE {task.key} exit={code}", flush=True)
+                print(f"DONE {queue.plan['dataset']}:{task.key} exit={code}", flush=True)
+                queues[0]._active_queue = None
                 update("idle")
             if claimed:
                 break  # re-scan from the first queue so the preferred plan keeps priority
