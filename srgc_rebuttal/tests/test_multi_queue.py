@@ -62,6 +62,84 @@ def simulate_multi_worker(primary, secondary, worker_id, barrier):
 
 
 class MultiQueueTest(unittest.TestCase):
+    def test_timeout_retries_without_losing_worker_and_records_real_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = TaskQueue(write_inputs(Path(directory)))
+            queue.bind()
+            self.queues = {queue.plan_path: queue}
+            order, calls = [], []
+            finish = self.fake_child(order)
+            output = io.StringIO()
+
+            def child(command, log, environment, **kwargs):
+                calls.append(log.stem)
+                self.assertIn("--resume", command)
+                if len(calls) == 1:
+                    raise TimeoutError("no task progress for 1800s")
+                return finish(command, log, environment, **kwargs)
+
+            with patch.object(cluster, "run_child", child), \
+                    patch.object(cluster, "gpu_identity"), patch.object(cluster, "publish_reports"), \
+                    redirect_stdout(output):
+                multi.run_worker_multi([queue], args(), {}, (), "timeoutworker", lambda *a, **kw: None)
+            self.assertTrue(all(queue.complete(t) for t in queue.tasks))
+            attempts = [json.loads(p.read_text()) for p in (queue.directory / "attempts").glob("*.json")]
+            failed = [r for r in attempts if r["status"] == "failed"]
+            self.assertEqual(len(failed), 1)
+            self.assertEqual(failed[0]["exit_code"], 124)
+            self.assertIn("TimeoutError: no task progress for 1800s", output.getvalue())
+            self.assertEqual(calls.count(calls[0]), 2)
+
+    def test_repeated_timeouts_are_bounded_and_other_tasks_finish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = TaskQueue(write_inputs(Path(directory)))
+            queue.bind()
+            self.queues = {queue.plan_path: queue}
+            order = []
+            finish = self.fake_child(order)
+
+            def child(command, log, environment, **kwargs):
+                if log.stem == "seed-5.prefix":
+                    raise TimeoutError("stalled seed 5")
+                return finish(command, log, environment, **kwargs)
+
+            with patch.object(cluster, "run_child", child), \
+                    patch.object(cluster, "gpu_identity"), patch.object(cluster, "publish_reports"), \
+                    redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, "failed task blocks"):
+                multi.run_worker_multi([queue], args(), {}, (), "w1", lambda *a, **kw: None)
+            task = next(t for t in queue.tasks if t.key == "seed-5.prefix")
+            receipt = json.loads(queue.receipt(task).read_text())
+            self.assertEqual(receipt["attempt"], args().max_attempts)
+            self.assertEqual(receipt["exit_code"], 124)
+            self.assertFalse(queue.locked(task))
+            self.assertTrue(all(queue.complete(t) for t in queue.tasks if t.seed != 5))
+
+    def test_nonzero_exit_prints_error_before_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = TaskQueue(write_inputs(Path(directory)))
+            queue.bind()
+            self.queues = {queue.plan_path: queue}
+            order = []
+            finish = self.fake_child(order)
+            output = io.StringIO()
+            failed = False
+
+            def child(command, log, environment, **kwargs):
+                nonlocal failed
+                if not failed:
+                    failed = True
+                    log.parent.mkdir(parents=True, exist_ok=True)
+                    log.write_text("RuntimeError: test child failure\n")
+                    return 1
+                self.assertIn("RuntimeError: test child failure", output.getvalue())
+                return finish(command, log, environment, **kwargs)
+
+            with patch.object(cluster, "run_child", child), \
+                    patch.object(cluster, "gpu_identity"), patch.object(cluster, "publish_reports"), \
+                    redirect_stdout(output):
+                multi.run_worker_multi([queue], args(), {}, (), "w1", lambda *a, **kw: None)
+            self.assertTrue(all(queue.complete(t) for t in queue.tasks))
+
     def test_two_processes_drain_sixty_tasks_once_and_publish_both_heartbeats(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

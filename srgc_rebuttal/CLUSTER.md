@@ -787,3 +787,22 @@ goes down mid-task:
 
 Start workers under `nohup`/`tmux` so the supervising shell itself survives
 the terminal: `nohup sh scripts/run_srgc.sh all run > worker.log 2>&1 &`.
+
+### Task timeouts and failure records
+
+The standard `run_srgc.sh` worker keeps serving other claimable tasks after a
+child progress timeout. It records exit 124 and the timeout message in the
+task log, then retries through the existing queue delay and attempt limit.
+Previously this exception exited the worker and was recorded as exit 130,
+which obscured the difference between a timeout and an interrupt.
+Every failed child now prints its receipt details and the last 40 log lines
+immediately, rather than waiting for the entire queue to become blocked.
+Actual interrupts still stop the worker; task and GPU leases are preserved.
+
+`recoverable` means a task still has a running receipt but no task lease;
+another worker may resume it subject to dependencies and the attempt limit.
+`failed x15` means the latest attempt failed and the cumulative attempt number
+is 15, not that 15 distinct experiments failed. Neither label identifies the
+underlying GPU or training error. Inspect the accompanying error and task log;
+this worker recovery fix does not establish that a particular cluster fault
+has been resolved. Saved checkpoints and the frozen experiment core are unchanged.

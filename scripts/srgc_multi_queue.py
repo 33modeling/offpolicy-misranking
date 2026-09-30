@@ -17,6 +17,20 @@ import uuid
 from srgc_rebuttal.runtime import atomic_json
 
 
+def report_failure(queue, task, code):
+    from scripts.srgc_log_tail import tail_lines
+    receipt = json.loads(queue.receipt(task).read_text())
+    log = queue.directory / "logs" / f"{task.key}.log"
+    print(f"FAILED {queue.plan['dataset']}:{task.key} attempt={receipt['attempt']} "
+          f"exit={code} validation_error={receipt.get('validation_error') or '-'} log={log}", flush=True)
+    try:
+        lines = tail_lines(log, 40)
+    except OSError:
+        lines = ["(task log not readable)"]
+    for line in lines:
+        print(f"FAILED {task.key} | {line}", flush=True)
+
+
 def worker_multi(args, extra_plans):
     """Admit one GPU allocation and keep a truthful worker receipt in each queue."""
     from srgc_rebuttal import cluster
@@ -123,11 +137,21 @@ def run_worker_multi(queues, args, environment, gpu_fds, worker_id, update):
                     queue.finish(task, 130, interrupted=True)
                     update("stopped", task)
                     return
+                except TimeoutError as exc:
+                    # run_child has already terminated its process group. Keep
+                    # this worker alive so other tasks and bounded retries run.
+                    code = 124
+                    log = queue.directory / "logs" / f"{task.key}.log"
+                    log.parent.mkdir(parents=True, exist_ok=True)
+                    with log.open("a") as handle:
+                        handle.write(f"\nTimeoutError: {exc}\n")
                 except BaseException:
                     queue.finish(task, 130)
                     raise
                 code = queue.finish(task, code)
                 print(f"DONE {queue.plan['dataset']}:{task.key} exit={code}", flush=True)
+                if code:
+                    report_failure(queue, task, code)
                 queues[0]._active_queue = None
                 update("idle")
             if claimed:
