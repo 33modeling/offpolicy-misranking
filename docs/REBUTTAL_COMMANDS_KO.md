@@ -1,14 +1,15 @@
 # 리뷰 대비 실험 명령 모음
 
-확인: 2026-09-30, 실행 코드 기준 `104c1f0` / `master`.
+확인: 2026-09-30, 실행 코드 기준 `997cab9` / `master`.
 [리뷰 일정](REVIEW_SCHEDULE_2027_KO.md) ·
 [기존 실험과 결과](EXPERIMENT_RESULTS_LEDGER_KO.md) ·
 [실험별 목적·우선순위](LIMITATION_EXPERIMENTS_KO.md) ·
 [Qwen 감사 결과](QWEN35_SRGC_AUDIT_KO.md).
 아래는 실행 명령 목록이며, 원격 GPU 작업의 완료/진행을 확인한 기록은 아니다.
 
-**완료 목표:** E01–E09의 전체 실험과 비용 검증을 마치고, 결과를 반영한 V7
+**완료 목표:** E01–E10의 전체 실험과 비용 검증을 마치고, 결과를 반영한 V7
 원고를 **2026-11-04 18:00 KST까지** 준비한 뒤 11월 5일 리뷰 공개를 맞는다.
+E10은 실험 목록 MD가 `sr_refresh`의 순수 갱신 효과 분리에 필요하다고 적은 cached-SR 유지 간격 대조다.
 P0–P3는 자원 배정 순서이며 P3를 생략한다는 뜻이 아니다.
 CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-결과-수집)에 있다.
 
@@ -18,18 +19,19 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 | --- | --- | --- | --- |
 | E01 / P0 | OLMo MATH, seeds 5–9 × 네 arm | 20 | 자동 queue; cache → prefix → arm |
 | E02 / P0 | OLMo MBPP, seeds 5–9 × 네 arm | 20 | 자동 queue; cache → prefix → arm |
-| E03 / P1 | 동일 prefix의 SR/Switch 독립 반복 | 반복 수 사전 확정 필요 | **미구현, 실행 명령 없음** |
+| E03 / P1 | 동일 prefix의 SR/Switch 독립 반복 | MATH 20 + MBPP 20 (k=1,2 × sr/switch × 5 seeds) | `replicate<k>-sr`, `replicate<k>-switch`; seed별 수동 배정, 해당 prefix 완료 |
 | E04 / P1 | total-step-200 고정 전환 | MATH 5 + MBPP 5 | `switch_fixed200`; seed별 수동 배정, 해당 prefix 완료 |
 | E05 / P2 | 후보 40개 SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E06 / P2 | 반복 전환 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E07 / P3 | pool 400개 SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E08 / P3 | Qwen3.5-9B 온라인 네 arm | MATH 20 + MBPP 20 | 별도 환경·v2 root; 실제 GPU admission 통과 |
-| E09 / P3 | 초기 gradient 방향 matched ablation | 전용 설계 필요 | **미구현, 실행 명령 없음** |
+| E09 / P3 | 초기 gradient 방향 matched ablation | MATH 15 + MBPP 15 (3조건 × 5 seeds) | `direction_removed`, `direction_magnitude`, `direction_replaced`; seed별 수동 배정, 해당 prefix 완료 |
+| E10 / P3 | 같은 유지 간격의 cached-SR 대조 | MATH 5 + MBPP 5 | `sr_hold`; seed별 수동 배정, 해당 prefix 완료 |
 
-구현된 신규 온라인 continuation은 전체 범위 기준 **120개**다
-(OLMo 40 + 추가 arm 40 + Qwen 40). cache/prefix 작업과 과거 진단은 이 수에
+구현된 신규 온라인 continuation은 전체 범위 기준 **200개**다
+(OLMo 40 + 추가 arm 40 + Qwen 40 + E03 40 + E09 30 + E10 10). cache/prefix 작업과 과거 진단은 이 수에
 포함하지 않으며, 남은 작업 수라는 뜻도 아니다. E04는 prefix 준비 후 P1로
-배정한다. E03/E09도 전체 완료 범위에 포함하며 전용 구현·설계가 남아 있다.
+배정한다. E03/E09/E10은 2026-09-30 `997cab9`에 구현했고 GPU 결과는 없다.
 저장된 gradient의 방향·크기 분석은 CPU에서 가능하지만 E09의 matched ablation을
 대체하지 않는다([6.2절](#62-cpu에서-할-일--gpu가-필요한-일)). 과거 완료 실험을 전부 재실행한다는 뜻은 아니다.
 이미 정상 실행 중인 작업은 유지한다.
@@ -153,7 +155,7 @@ SRGC_MAX_ATTEMPTS=3 sh scripts/run_srgc.sh math run
 상한 변경은 누적 attempt 기록을 초기화하지 않는다. 코드를 고치거나 원인을 해결한
 다음 재개하며, hash mismatch를 무시해 기존 실험에 다른 설정을 섞지 않는다.
 
-## 4. E04/E05/E06/E07 — 추가 arm 40개
+## 4. E03–E07, E09, E10 — 추가 arm 120개
 
 기본 네-arm queue와 별도다. 각 seed의 **공통 prefix가 완료되어야** 한다.
 노드별로 서로 다른 `(dataset, seed, arm)`을 배정한다. 아래는 seed 5 예시이며
@@ -175,13 +177,38 @@ sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_repeat
 # E07: 전체 400문제 SR 갱신
 sh scripts/run_srgc_sr_refresh.sh math 5 pool
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
+
+# E03: 같은 prefix의 독립 반복. k=1,2; 같은 k의 sr/switch가 한 쌍(공통 sampling stream)
+sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr
+sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-switch
+sh scripts/run_srgc_sr_refresh.sh math 5 replicate2-sr
+sh scripts/run_srgc_sr_refresh.sh math 5 replicate2-switch
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate1-sr
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate1-switch
+
+# E09: 방향 정보만 제거/대체한 On-policy 대조 3조건
+sh scripts/run_srgc_sr_refresh.sh math 5 direction_removed
+sh scripts/run_srgc_sr_refresh.sh math 5 direction_magnitude
+sh scripts/run_srgc_sr_refresh.sh math 5 direction_replaced
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 direction_removed
+
+# E10: 갱신 없이 유지 간격만 On-policy와 맞춘 cached-SR 대조
+sh scripts/run_srgc_sr_refresh.sh math 5 sr_hold
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 sr_hold
 ```
+
+E03의 replicate stream은 `sampling_seed(base seed, k)`로 코드에 고정되어 있고
+`seed-N/replicate-<k>/replicate.json`에 기록된다. 기록된 arm은 stream 0이며 `replicate0`은
+거부된다. 같은 stream에서 고정 전환도 돌릴 수 있다(`replicate1-switch_fixed200`)만 배정표의
+사전 고정 목록에는 넣지 않았다. E09의 세 조건은 On-policy와 후보 추출·scoring·유지 간격·
+training stream을 공유하며 선별 규칙만 다르다. `sr_refresh − sr_hold`가 갱신 효과,
+`sr_hold − sr`가 유지 간격 효과다.
 
 E04의 200은 prefix 이후 추가 update 수가 아니라 **전체 학습 step**이다.
 checkpoint 200의 selection 비용을 포함하고, SR-GC 부호로 전환 시점을 바꾸지 않는다.
 구 경계 구현의 checkpoint는 현재 `fixed-boundary-before-training-v2`에서 재개할 수 없다.
 
-**40개 전체 명령과 노드 배정 칸:** [추가 arm 배정표](REBUTTAL_EXTRA_TASKS.tsv).
+**120개 전체 명령과 노드 배정 칸:** [추가 arm 배정표](REBUTTAL_EXTRA_TASKS.tsv).
 이 표는 자동 실행 파일이 아니다. `pending_prefix_check`는 prefix 미확인 상태다.
 서로 다른 노드가 같은 줄을 선택하지 않도록 node/상태/로그를 기록한다.
 
@@ -196,8 +223,10 @@ sh scripts/run_srgc_sr_refresh.sh mbpp results
 
 상태는 콘솔과 active root의 `seed-N/<arm>-progress.json`,
 `<arm>-run.json`; 완료는 `<arm>-endpoint.json`을 확인한다.
-arm 파일명은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`이다.
-상세 비용은 `seed-N/cost-receipts/<arm>/`, `invocations/<arm>/`에 있다.
+arm 파일명은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, `sr_hold`,
+`direction_removed`, `direction_magnitude`, `direction_replaced`이다. 독립 반복은
+`seed-N/replicate-<k>/` 아래에 원래 arm 이름(`sr`, `switch`)으로 같은 파일을 둔다.
+상세 비용은 `seed-N/cost-receipts/<arm>/`, `invocations/<arm>/`(replicate는 그 폴더 아래)에 있다.
 위 results의 selection 요약만으로 전체 GPU 비용을 계산하지 않는다.
 
 ## 5. E08 — Qwen3.5-9B, 별도 v2 실험
@@ -268,16 +297,17 @@ prefix 완료·cache 재사용 상태와 이미 끝난 arm 수에 따라 현재 
 | E06 반복 전환, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
 | E07 pool SR 갱신, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
 | E08 Qwen MATH+MBPP | GPU + 노드 CPU | 1노드 / 4 GPU | 10노드 / 40 GPU | **40노드 / 160 GPU**; 데이터셋당 20노드 |
-| E03 독립 반복 | GPU 예정 | 1노드 / 4 GPU 설계 | OLMo prefix 재사용 예정 | **미구현**; 두 데이터셋×5 seeds×2 arms×R회이면 20R노드 |
-| E09 방향 대조 | GPU 예정 | 1노드 / 4 GPU 설계 | 공통 시작 조건 확정 필요 | **미구현**; 두 데이터셋×5 seeds×C개 추가 조건이면 10C노드 |
+| E03 독립 반복, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 별도 prefix 생성 없음; E01/E02 prefix 대기 | **20노드 / 80 GPU** (k=1,2 × sr/switch × 5 seeds × 2) |
+| E09 방향 대조, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **30노드 / 120 GPU** (3조건 × 5 seeds × 2) |
+| E10 cached-SR 유지 간격 대조, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
 
-- **현재 구현분:** OLMo 기본 40 + 추가 arm 40 + Qwen 40 = 최대 **120노드 / 480 GPU**.
-  전부의 prefix가 준비되고 continuation이 남아 있다는 가정이다. 120노드가 필요하다는 뜻은 아니다.
+- **현재 구현분:** OLMo 기본 40 + 추가 arm 40 + Qwen 40 + E03 40 + E09 30 + E10 10 = 최대 **200노드 / 800 GPU**.
+  전부의 prefix가 준비되고 continuation이 남아 있다는 가정이다. 200노드가 필요하다는 뜻은 아니다.
 - 모두 처음부터 시작하여 아직 continuation이 준비되지 않은 경우, cache/prefix 선행 작업은
   OLMo 10 + Qwen 10 = 최대 **20노드 / 80 GPU**다. prefix 완료에 따라 arm으로 병렬성이 늘어난다.
   한 seed의 cache와 prefix를 동시에 별도 노드에 세지 않는다.
-- E03/E09까지 구현하면 위 설계 기준 전체 상한은 **120 + 20R + 10C노드**다.
-  R은 새 독립 반복 수, C는 새 방향 대조 조건 수이며 **아직 확정하지 않았다**.
+- E03의 반복 수 R=2와 E09의 조건 수 C=3은 2026-09-30에 사전 고정했다. 반복 하나를 더하면
+  20노드, 조건 하나를 더하면 10노드가 늘어난다.
   이 숫자를 현재 실행 가능 작업 수나 검증된 노드 규모로 쓰지 않는다.
 
 CPU 코어 수와 시스템 RAM의 실측 최소치는 아직 없다. `4 GPU`는 `4 CPU cores`라는
@@ -379,7 +409,7 @@ V7 완성 초안은 **11월 1일**, 최종 점검은 **11월 4일 18:00 KST**다
 ## 7. 과거 실험·진단 명령 위치
 
 현재 온라인 실험과 과거 진단은 별개다. 아래는 필요 시 과거 결과를 확인하거나
-해당 frozen protocol을 보충할 때 찾을 위치이며, E01–E09 완료 수에 합치지 않는다.
+해당 frozen protocol을 보충할 때 찾을 위치이며, E01–E10 완료 수에 합치지 않는다.
 
 | 계열 | 실행 / 조회 진입점 | 상세 명세 |
 | --- | --- | --- |
@@ -394,10 +424,14 @@ V7 완성 초안은 **11월 1일**, 최종 점검은 **11월 4일 18:00 KST**다
 | 기존 Qwen selection 매트릭스 | `scripts/run_qwen35_9b.sh` | [과거 Qwen runbook](QWEN35_9B_RUNBOOK.md); E08 온라인 전환과 다름 |
 | 그 외 모델·MoPPS·gate·E1–E6·CPU 분석 | [전체 진입점 목록](EXPERIMENTS_COMPLETE_GUIDE_KO.md#18-실행결과-명령과-파일) | 각 실험의 옵션·frozen protocol 유지 |
 
-E03/E09는 기존 실행을 다시 호출해서 만들 수 없다. 구현·검증 후 전용
-명령과 출력 root를 이 문서에 추가한다. 이 문서 작성으로 작업을 자동 시작하거나
+E03/E09/E10은 기존 실행을 다시 호출해서 만들 수 없다. 전용 명령과 출력 위치는
+[4절](#4-e03e07-e09-e10--추가-arm-120개)에 있다. 이 문서 작성으로 작업을 자동 시작하거나
 주기적 실행을 등록하지 않았다.
 
 **2026-09-30 점검:** 관련 회귀 테스트 31개, 문서 shell 블록 19개 문법 검사,
 배정표 40개 명령의 인자 전달 검사를 통과했다. CPU 분석 명령은 임시 group 경로의
 합성 기록으로 MATH/MBPP 출력을 확인했다. 실제 GPU 학습·원격 작업 상태 검증은 포함하지 않는다.
+
+**2026-09-30 구현 추가 (`997cab9`):** E03 `replicate<k>-<arm>`, E09 `direction_*`, E10 `sr_hold`를
+같은 launcher에 등록했다. 전체 SR-GC 회귀 테스트 318개 통과(torch 환경 9 skipped), frozen core
+hash 불변, launcher 셸 문법 검사 통과. 배정표에 80개 tuple을 추가했다. GPU 실행은 없다.

@@ -230,7 +230,7 @@ Gaussian/binomial/t3 synthetic gain 관측도 보존되어 있다([수치][S25])
 plan 준비. [감사 기록](QWEN35_SRGC_AUDIT_KO.md).
 이 테스트·입력 준비 수를 학습 완료·reward 결과로 세지 않는다.
 
-## 11. 새 실험 E01–E09: 아직 확인된 결과가 없는 범위
+## 11. 새 실험 E01–E10: 아직 확인된 결과가 없는 범위
 
 아래 표는 **2026-09-28 확인 기록**이다. 2026-09-30 명령 점검에서 E04의
 `switch_fixed200` 구현을 확인했다. 최신 실행 가능 범위는
@@ -239,11 +239,12 @@ plan 준비. [감사 기록](QWEN35_SRGC_AUDIT_KO.md).
 | 새 실험 | 현재 확인 상태 | 결과 MD에 추가할 것 |
 | --- | --- | --- |
 | E01/E02 OLMo seeds 5–9 | 구현됨; 저자에게 실행 진행을 전달받았으나 최신 완료 export 미수신 | 모든 seed×네 arm endpoint, own-path D, phase 비용 |
-| E03 독립 반복 | 미구현 | 사전 고정 반복 수·stream, paired 변동 |
-| E04 total-step-200 | 미구현 | 동일 prefix의 고정 전환 vs Switch |
+| E03 독립 반복 | 구현됨 (`997cab9`, k=1,2 사전 고정); GPU 결과 없음 | seed·k별 paired `switch − sr`, seed 내 변동 |
+| E04 total-step-200 | 구현됨 (`switch_fixed200`); GPU 결과 없음 | 동일 prefix의 고정 전환 vs Switch |
 | E05/E06/E07 추가 arm 30개 | 구현됨; GPU 완료 결과 미확인 | seed별 reward, 갱신/복귀 이력, 추가 selection 비용 |
 | E08 Qwen 네 arm 40개 | 준비·CPU 검사 완료; 9B GPU 결과 미확인 | 새 Qwen cache/prefix, 모델별 paired 결과와 비용 |
-| E09 방향 대조 | 미구현 | 대조 조건 사전 고정 및 matched 결과 |
+| E09 방향 대조 | 구현됨 (`997cab9`, 3조건 사전 고정); GPU 결과 없음 | `on_policy` 대비 matched 결과, 실제 cosine과 ablation 점수 |
+| E10 cached-SR 유지 간격 대조 | 구현됨 (`997cab9`); GPU 결과 없음 | `sr_refresh − sr_hold`, `sr_hold − sr` |
 
 현재 환경에서 `/group-volume`을 읽을 수 없어 **로컬에서 못 찾은 결과를
 서버에서도 미완료라고 단정하지 않는다.** 위 상태는 원격 완료 검증 여부다.

@@ -1,6 +1,6 @@
 # Limitation 후속 실험: 구현 목록과 실행 기록
 
-구현·명령 점검: 2026-09-30, `master` / `104c1f0`. 아래 날짜별 실행 기록은 보존한다.
+구현·명령 점검: 2026-09-30, `master` / `997cab9` (E03 독립 반복, E09 방향 ablation, E10 cached-SR 유지 간격 대조 구현 추가). 아래 날짜별 실행 기록은 보존한다.
 대응 원고: V7 `sections/discussion.tex`의 Discussion and Limitations.
 실행 코드는 이 저장소에만 유지한다. 논문 쪽 목록은 `v7/EXPERIMENTS.md`다.
 
@@ -11,7 +11,7 @@
 기존 실험의 수치·완료 범위와 교정이 필요한 비용은
 [실험 결과 기록](EXPERIMENT_RESULTS_LEDGER_KO.md)에 출처와 함께 정리했다.
 
-**2026-09-28 저자 목표 갱신:** 명령 모음의 E01–E09 전체 실험을 완료하고 V7
+**2026-09-28 저자 목표 갱신:** 명령 모음의 E01–E09(09-30에 E10 추가) 전체 실험을 완료하고 V7
 원고까지 준비한 뒤 11월 5일 리뷰 공개를 맞는다. P0–P3는 순서이지 선택적으로
 생략할 목록이 아니다. CPU/GPU·최대 동시 노드 수는
 [자원 표](REBUTTAL_COMMANDS_KO.md#61-실험별-gpu와-최대-동시-노드),
@@ -35,13 +35,14 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 | --- | --- | --- | --- |
 | P0 | OLMo MATH/MBPP 네 arm | [run_srgc.sh](../scripts/run_srgc.sh) | [run_srgc_rebuttal.py](../scripts/run_srgc_rebuttal.py), [run_experiment.py](../srgc_rebuttal/run_experiment.py), [srgc.py](../srgc_rebuttal/srgc.py) |
 | P0 | 비용·결과·checkpoint | 같은 `run_srgc.sh`의 `results/costs/backup` | [reports.py](../srgc_rebuttal/reports.py), [cost_report.py](../srgc_rebuttal/cost_report.py), [cost_ledger.py](../srgc_rebuttal/cost_ledger.py), [srgc_checkpoint_backup.py](../scripts/srgc_checkpoint_backup.py) |
-| P1 | 동일 prefix의 독립 재현 | **미구현: 실행 명령 없음** | 전용 replicate runner 없음. 기존 `run` 재호출이나 `switch_repeat`로 대체하지 않음 |
+| P1 | 동일 prefix의 독립 재현 | `sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr`, `... replicate1-switch` (k=1,2) | [srgc_replicate.py](../scripts/srgc_replicate.py)의 `ReplicateMixin`; 같은 launcher, 출력은 `seed-N/replicate-<k>/` (`997cab9`). 기존 `run` 재호출이나 `switch_repeat`는 대체가 아님 |
 | P1 | fixed-step-200 전환 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` | `srgc_switch_fixed.py`; checkpoint 200에서 전환하여 update 201부터 SR. 2026-09-29 경계 수정, 새 run 필요 |
 | P2 | 후보 40개 SR 갱신 | [run_srgc_sr_refresh.sh](../scripts/run_srgc_sr_refresh.sh) | [srgc_sr_refresh.py](../scripts/srgc_sr_refresh.py)의 `SRRefreshEngine`, `scope=candidates` |
+| P3 | 같은 유지 간격의 cached-SR 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 sr_hold` | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=cached` (`997cab9`) |
 | P2 | 반복 전환 | 같은 `run_srgc_sr_refresh.sh` | [srgc_switch_repeat.py](../scripts/srgc_switch_repeat.py)의 `SwitchRepeatEngine`; 위 runner가 호출 |
 | P3 | 전체 pool SR 갱신 | 같은 `run_srgc_sr_refresh.sh` | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=pool` |
 | P3 | Qwen3.5-9B 온라인 네 arm | [run_srgc_qwen35.sh](../scripts/run_srgc_qwen35.sh) | [run_srgc_qwen35.py](../scripts/run_srgc_qwen35.py), [srgc_qwen35.py](../scripts/srgc_qwen35.py), [srgc_qwen35_rank.py](../scripts/srgc_qwen35_rank.py) |
-| P3 | 초기 gradient 방향 matched ablation | **미구현: 실행 명령 없음** | 전용 runner 없음 |
+| P3 | 초기 gradient 방향 matched ablation | `sh scripts/run_srgc_sr_refresh.sh math 5 direction_removed` (`direction_magnitude`, `direction_replaced`) | [srgc_direction_ablation.py](../scripts/srgc_direction_ablation.py)의 `DirectionAblationEngine` (`997cab9`) |
 
 ### OLMo: 시작·조회·비용
 
@@ -98,15 +99,32 @@ sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_repeat
 sh scripts/run_srgc_sr_refresh.sh math 5 pool
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
 
-# 추가 arm 결과와 selection 비용 요약
+# P1 (E03): 같은 prefix의 독립 반복. k는 1, 2. 같은 k의 sr/switch가 한 쌍(공통 sampling stream)
+sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr
+sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-switch
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate1-sr
+sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate1-switch
+
+# P3 (E09): 방향 정보만 제거/대체한 On-policy 대조 3조건
+sh scripts/run_srgc_sr_refresh.sh math 5 direction_removed
+sh scripts/run_srgc_sr_refresh.sh math 5 direction_magnitude
+sh scripts/run_srgc_sr_refresh.sh math 5 direction_replaced
+
+# P3 (E10): 갱신 없이 유지 간격만 On-policy와 맞춘 cached-SR 대조
+sh scripts/run_srgc_sr_refresh.sh math 5 sr_hold
+
+# 추가 arm 결과와 selection 비용 요약 (독립 반복은 seed·k별 paired 차이로 함께 출력)
 sh scripts/run_srgc_sr_refresh.sh math results
 sh scripts/run_srgc_sr_refresh.sh mbpp results
 ```
 
 추가 arm에는 `status`/`costs` 명령이 없다. 상태는 콘솔과
 `seed-N/<arm>-progress.json`, 상세 비용은 `seed-N/cost-receipts/<arm>/`를 본다.
-`<arm>`은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`이다. 결과 요약을 전체
-비용 합계로 해석하지 않는다. 자세한 산출물과 재시작 조건은 아래 3-4절에 있다.
+`<arm>`은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, `sr_hold`,
+`direction_removed`, `direction_magnitude`, `direction_replaced`이다. 독립 반복은
+`seed-N/replicate-<k>/` 아래에 `replicate.json`(replicate id, sampling seed, prefix hash)과
+원래 arm 이름의 `<arm>-{latest.pt,progress.json,endpoint.json}`, `cost-receipts/<arm>/`를 둔다.
+결과 요약을 전체 비용 합계로 해석하지 않는다. 자세한 산출물과 재시작 조건은 아래 3-4절에 있다.
 
 ### Qwen: 별도 환경과 전용 queue
 
@@ -150,21 +168,21 @@ Qwen은 자기 초기 정책으로 cache와 prefix를 새로 만들며 OLMo 결�
 | 순서 | 우선순위 | 실험/작업 | 먼저 하는 이유 | 준비 상태 |
 | --- | --- | --- | --- | --- |
 | 1 | P0 | 추가 seeds 5-9의 MATH/MBPP 네 arm 완성 및 전체 비용 수집 | 관측 이득의 재현성과 실제 계산 비용을 함께 검증하는 기본 증거 | 구현됨; 기존 진행 유지, 누락 결과 확인 |
-| 2 | P1 | 동일 prefix에서 SR/Switch의 독립 학습 반복 | 같은 조건의 실행 변동과 Switch 이득을 직접 구분 | 전용 replicate runner 미구현, 구현 우선 |
+| 2 | P1 | 동일 prefix에서 SR/Switch의 독립 학습 반복 | 같은 조건의 실행 변동과 Switch 이득을 직접 구분 | 구현됨 (`997cab9`, `replicate<k>-<arm>`); 반복 수 R=2와 stream 유도 규칙을 사전 고정, GPU 미실행 |
 | 3 | P1 | 사전 고정 total-step-200 전환 대조 | 전환 자체의 효과와 SR-GC timing rule의 추가 가치를 구분 | `switch_fixed200` 구현 및 경계 수정, GPU 결과는 별도 검증 필요 |
-| 4 | P2 | 후보 40개의 SR 성공률 갱신 `sr_refresh` | 오래된 캐시를 유지하는 전략과 갱신 전략의 성능·비용 비교 | 구현됨; 순수 갱신 효과 주장에는 배치 유지 간격 통제 추가 필요 |
+| 4 | P2 | 후보 40개의 SR 성공률 갱신 `sr_refresh` | 오래된 캐시를 유지하는 전략과 갱신 전략의 성능·비용 비교 | 구현됨; 순수 갱신 효과 분리용 배치 유지 간격 통제 `sr_hold`도 구현 (`997cab9`, E10) |
 | 5 | P2 | 반복 전환 `switch_repeat` | 한 번만 전환하고 점검을 끝내는 선택의 성능·비용 trade-off 확인 | 구현됨; 전환 후 scoring 비용 포함 |
 | 6 | P3 | 전체 400개 갱신 `sr_refresh-pool` | 후보 범위를 넓힌 갱신의 추가 이득과 비용 확인 | 구현됨; 4번 다음 확장 |
 | 7 | P3 | 다른 backbone에서 동일 온라인 Switch | 모델 의존성과 일반화 검증 | Qwen3.5-9B 전용 온라인 runner 준비; CPU 검증, 9B GPU admission/실험은 대기 |
-| 8 | P3 | 초기 gradient 방향의 matched ablation | 초기 이점에 대한 인과적 설명 보강 | 전용 대조 미구현; 현재 핵심 결과 검증 이후 |
+| 8 | P3 | 초기 gradient 방향의 matched ablation | 초기 이점에 대한 인과적 설명 보강 | 구현됨 (`997cab9`, `direction_removed/magnitude/replaced` 3조건 사전 고정); 핵심 결과 검증 이후 배정 |
 
 ### 자원 배정과 완료 기준
 
 - **기존 실행은 유지:** MATH/MBPP의 정상 작업을 끄거나 처음부터 다시 시작하지 않는다. 새로 배정할 자원이 경쟁하면 주 결과인 MATH의 누락 paired 결과를 먼저 완성하고 MBPP를 완성한다. 이는 MBPP의 기존 진행 중단이나 계획 seed 제외를 뜻하지 않는다.
 - **비용은 1번부터 동시 수집:** 모든 실험에서 cache 생성/재사용, prefix, selection, training, 평가·저장 비용과 불완전 계측을 함께 기록한다. 비용만 뒤로 미루거나 unknown을 0으로 채우지 않는다.
-- **구현은 GPU 작업과 병행:** P0가 도는 동안 2번의 replicate runner와 회귀 테스트를 우선 준비하고, 구현된 3번은 prefix가 준비되면 배정한다. 새로 할당 가능한 GPU는 준비된 상위 순위 작업에 먼저 배정한다. 남는 별도 노드는 P2에 쓸 수 있지만 상위 작업을 밀어내지는 않는다.
-- **이미 구현된 것만의 실행 순서:** OLMo 기본 네 arm 및 비용, `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, Qwen 온라인 네 arm 순서다. P2/P3의 추가 continuation을 P1 대조보다 먼저 완료해야 하는 것은 아니다.
-- **seed·비교 조건은 결과와 무관하게 고정:** 계획된 seeds 5-9를 유지하고 모든 결과를 수집한다. 좋은 seed만 골라 다음 실험을 하거나 유리한 결과가 나온 시점에 반복을 종료하지 않는다. P1의 반복 수와 sampling stream은 실행 전에 고정한다.
+- **구현은 GPU 작업과 병행:** 2번의 replicate runner와 회귀 테스트는 09-30에 준비했고, 3번과 함께 prefix가 준비되면 배정한다. 새로 할당 가능한 GPU는 준비된 상위 순위 작업에 먼저 배정한다. 남는 별도 노드는 P2에 쓸 수 있지만 상위 작업을 밀어내지는 않는다.
+- **구현된 것의 실행 순서:** OLMo 기본 네 arm 및 비용, `replicate<k>-sr`/`replicate<k>-switch`, `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, `sr_hold`, Qwen 온라인 네 arm, `direction_*` 순서다. P2/P3의 추가 continuation을 P1 대조보다 먼저 완료해야 하는 것은 아니다.
+- **seed·비교 조건은 결과와 무관하게 고정:** 계획된 seeds 5-9를 유지하고 모든 결과를 수집한다. 좋은 seed만 골라 다음 실험을 하거나 유리한 결과가 나온 시점에 반복을 종료하지 않는다. P1의 반복 수는 R=2(`replicate1`, `replicate2`), sampling stream은 `sampling_seed(base seed, k)`로 코드에 고정했다. 결과를 본 뒤 반복을 추가하면 그 사실을 표에 남긴다.
 - **P0 완료:** 예정된 네 arm/seed의 같은 total step 결과, paired 차이, 자기 경로의 전환 이력과 비용 receipt를 검증한다. 일부 arm만 끝난 평균을 최종 결과로 쓰지 않는다.
 - **P1 완료:** 2번은 동일 prefix·캐시·평가 조건의 SR/Switch 반복을 짝지어 보고하고, 3번은 같은 조건의 고정 전환과 Switch를 직접 비교한다. 결과가 무차이 또는 불리해도 함께 보고하며, 두 실험의 완료를 효과 입증과 동일시하지 않는다.
 
@@ -183,8 +201,9 @@ Qwen은 자기 초기 정책으로 cache와 prefix를 새로 만들며 OLMo 결�
 | SR cache refresh | `sr_refresh`, `sr_refresh-pool` | 두 scope 모두 MATH/MBPP seeds 5-9에서 기존 SR와 비교 | 구현됨, 이번 점검에서 신규 GPU 실행 안 함 |
 | 반복 전환 | `switch_repeat` | 동일 seed의 일회 전환 `switch`와 비교 | 구현됨, 이번 점검에서 신규 GPU 실행 안 함 |
 | 고정 schedule 대비 SR-GC timing 가치 | 기존 네 arm만으로는 이를 직접 검증하지 않음 | 사전 고정 total-step-200 대조, 동일 prefix/평가/길이 | `switch_fixed200` 구현됨; 실행 완료나 효과 입증을 뜻하지 않음 |
-| 같은 시작 상태의 독립 training replicate | 추가 base seed 실험과 다른 질문 | prefix/캐시를 고정하고 분기 이후 sampling stream만 바꾸는 paired SR/Switch 반복 | 전용 replicate ID/runner 미구현 |
-| 초기 gradient 방향의 인과적 효과 | retrospective 진단 및 objective 비교는 있음 | 방향 정보만 제거/대체하고 나머지를 맞추는 ablation | 전용 matched ablation 미구현 |
+| 같은 시작 상태의 독립 training replicate | 추가 base seed 실험과 다른 질문 | prefix/캐시를 고정하고 분기 이후 sampling stream만 바꾸는 paired SR/Switch 반복 | `replicate<k>-<arm>` 구현됨 (`997cab9`); GPU 미실행 |
+| 초기 gradient 방향의 인과적 효과 | retrospective 진단 및 objective 비교는 있음 | 방향 정보만 제거/대체하고 나머지를 맞추는 ablation | `direction_removed/magnitude/replaced` 구현됨 (`997cab9`); GPU 미실행 |
+| SR 갱신 효과와 배치 유지 간격 효과의 분리 | `sr_refresh`는 갱신과 유지 간격이 동시에 바뀜 | 갱신 없이 유지 간격만 맞춘 cached-SR 대조 | `sr_hold` 구현됨 (`997cab9`); GPU 미실행 |
 | 다른 backbone에서도 온라인 Switch가 유효한가 | Qwen3.5-9B 전용 온라인 adapter 및 MATH/MBPP 5시드×4arm 준비 | [실행 안내](QWEN35_SRGC_KO.md); Qwen 캐시/prefix 새로 생성, 실제 9B GPU admission 후 실행 | CPU 검증; GPU 결과 미생성. 과거 selection 매트릭스와 별도 실험 |
 
 모든 행을 한꺼번에 실행할 수 있는 단일 runner가 있는 것은 아니다. 특히
@@ -207,6 +226,11 @@ total 275 updates, 4-GPU 실행이다. 각 update의 학습은 4문제 x 새 응
 | `sr_refresh` | 25 updates마다 무작위 40개 x 8응답으로 현재 성공률을 다시 구하고 SR 상위 4개 유지 | 계속 성공률 갱신 | 기존 `sr`, `on_policy`와 비교 |
 | `sr_refresh-pool` | 25 updates마다 전체 400개 x 8응답으로 성공률 갱신, 상위 4개 유지 | 계속 전체 pool 갱신 | `sr_refresh`와 범위/비용 비교 |
 | `switch_repeat` | 기존 Switch와 같은 전환 규칙으로 시작 | SR 상태에서도 check를 계속하고 양의 D 확인 시 On-policy로 복귀 가능 | 일회 전환 `switch`와 비교 |
+| `sr_hold` | 25 updates마다 무작위 40개를 **캐시** SR 점수로 정렬해 상위 4개를 다음 refresh까지 유지 (rollout 없음) | 계속 캐시 사용 | `sr_refresh` − `sr_hold` = 갱신 효과, `sr_hold` − `sr` = 유지 간격 효과 |
+| `direction_removed` | On-policy와 같은 refresh·후보 40·SR 비교 40·scoring·validation gradient; 선별만 채점된 40개 중 균등 무작위 4개 | 계속 (전환 없음) | `on_policy`와 비교: 방향·크기 정보 모두 제거, 비용은 동일 |
+| `direction_magnitude` | 같은 절차; 선별을 projected gradient norm 순으로 | 계속 | `on_policy`와 비교: 크기만 남기고 방향 제거 |
+| `direction_replaced` | 같은 절차; validation 방향을 refresh마다 뽑은 무작위 단위 벡터로 대체해 cosine 정렬 | 계속 | `on_policy`와 비교: 방향은 쓰되 validation 정보 없음 |
+| `replicate<k>-<arm>` | `<arm>`(random/sr/on_policy/switch/switch_fixed<N>)과 동일; 분기 이후 sampling stream(후보 추출·응답 생성·tie-break)만 `sampling_seed(base seed, k)`로 교체 | `<arm>`과 동일 | 같은 k의 arm끼리 paired; 평가는 base seed 규칙 유지 |
 
 샘플 중복 금지는 **한 번의 40개 추출 내부**에 적용된다. 이전 update/refresh에서
 쓴 문제가 이후에 다시 나올 수 있다. SR-GC의 SR 비교 40개는 별도의 미사용 문제
@@ -214,7 +238,7 @@ total 275 updates, 4-GPU 실행이다. 각 update의 학습은 4문제 x 새 응
 
 `sr_refresh`와 기존 `sr`는 캐시 갱신 여부뿐 아니라 선택 배치의 유지 간격도
 다르다. 따라서 이 비교를 "갱신 여부만 바꾼 순수 ablation"으로 쓰면 안 된다.
-그 효과만 분리하려면 동일한 배치 유지 간격의 cached-SR 대조가 추가로 필요하다.
+그 효과만 분리하는 동일 유지 간격의 cached-SR 대조가 `sr_hold`(E10)다.
 
 현재 On-policy/Switch scoring은 On 후보 40개와 SR 비교 40개의 합집합 및 단일
 validation 50개를 계산한다. 반면 `sr_refresh`는 후보 성공률만 얻으며 scoring
@@ -254,8 +278,9 @@ Pair seed-3/4 캐시 재사용 plan과 별도 준비 입력 plan을 섞지 않�
 
 실행 명령과 구현 파일은 문서 상단의 "OLMo 추가 arm: seed별 실행"에 모았다.
 
-추가 실행 목록은 2 datasets x 5 seeds x 4 arms = **40 continuations**다.
-E04 고정 전환 10개와 E05–E07 30개이며, 기본 네 arm이나 prefix는 포함하지 않는다.
+추가 실행 목록은 2 datasets x 5 seeds x 12 continuation = **120 continuations**다.
+E04 고정 전환 10개, E05–E07 30개, E03 독립 반복 40개(k=1,2 × sr/switch), E09 방향 대조 30개(3조건),
+E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다.
 각 continuation은 prefix 이후 250 updates이며, 각 dataset의 prefix/기본 arm
 진행 상태에 따라 실행 가능한 작업 수가 달라진다. 총 GPU 시간은 실측 후 추정한다.
 
@@ -278,8 +303,11 @@ E04 고정 전환 10개와 E05–E07 30개이며, 기본 네 arm이나 prefix는
 추가 arm을 자동 집계한다고 안내하지 않는다. 학습 콘솔의 `TRAIN ... step=N/275`,
 활성 root 아래 `seed-N/<arm>-run.json`, `<arm>-progress.json`을 확인한다.
 최종 산출물은 `<arm>-endpoint.json`이며, 상세 비용은 같은 seed 아래
-`cost-receipts/<arm>/`, `invocations/<arm>/`에 남는다. 위 추가 results는
-selection 비용 요약이지 전체 cold-start 비용 합계 보고서가 아니다.
+`cost-receipts/<arm>/`, `invocations/<arm>/`에 남는다. 독립 반복은 같은 파일들을
+`seed-N/replicate-<k>/` 아래에 두고 `replicate.json`에 replicate id·sampling seed·prefix hash를
+남기며, endpoint의 `replicate` 항목이 manifest와 다르면 results가 거부한다. 기존 `backup`은
+기본 네 arm의 checkpoint만 복사하므로 추가 arm·replicate checkpoint는 별도로 보존한다.
+위 추가 results는 selection 비용 요약이지 전체 cold-start 비용 합계 보고서가 아니다.
 
 ## 4. 저장·비용·완료 기준
 
@@ -298,6 +326,9 @@ selection 비용 요약이지 전체 cold-start 비용 합계 보고서가 아�
 3. 사용자가 명시한 Python 경로가 없을 때 system Python으로 조용히 바꾸지 않고 실패하도록 했다.
 4. 추가 results에서 실험 identity/공통 prefix/최종 update 수를 확인하고, 누락 비용은 `unknown`, 불완전 계측은 별도 표시한다.
 5. `switch_repeat`를 서로 다른 module 이름으로 import하여 전체 테스트에서 class identity가 달라지던 문제를 canonical import로 수정했다.
+6. (2026-09-30, `997cab9`) E03 독립 반복: `scripts/srgc_replicate.py`의 `ReplicateMixin`이 update 동안만 `config.seed`를 `sampling_seed(base seed, k)`로 바꾼 config를 쓰게 하여 후보 추출·scoring/training rollout·tie-break stream만 교체한다. SR 캐시 정렬·validation/evaluation 집합·checkpoint의 config·identity 검사는 base seed를 유지한다. 같은 k의 arm은 stream을 공유하고, checkpoint는 replicate id/sampling seed/protocol이 일치해야 재개되며, 기록된 arm의 checkpoint나 다른 replicate에서 분기하지 못한다.
+7. (2026-09-30, `997cab9`) E09 방향 ablation: `scripts/srgc_direction_ablation.py`의 `DirectionAblationEngine`이 On-policy refresh를 선별 단계만 바꿔 재현한다. 후보 40·SR 비교 40·validation gradient·training stream seed가 On-policy와 같음을 테스트로 고정했고, 기록에는 실제 cosine(`ranking_scores`)과 ablation 점수(`ablation_scores`)를 함께 남겨 방향 분해 분석이 그대로 적용된다.
+8. (2026-09-30, `997cab9`) E10 `sr_hold`: `SRRefreshEngine`의 `cached` scope. `sr`와 같은 추출·캐시 정렬 규칙을 쓰되 On-policy처럼 25 updates 유지하며 rollout이 없다. launcher/CLI/results/방향 분석에 세 계열을 등록했고 results는 replicate를 seed·k별 paired 차이로 출력한다.
 
 `srgc_rebuttal/*.py`의 frozen 학습 패키지와 실험 JSON은 바꾸지 않았다.
 점검 전 core SHA-256은
@@ -341,6 +372,8 @@ Limitation 대응과 코드/실험의 이름이 비슷하다는 이유로 서로
 | 2026-09-28 | 전체 CPU 범위 재점검 | torch 필수인 두 항목을 명시적으로 제외하고 나머지 208 tests 실행 | 192개 통과, 선택 의존성 관련 16개 skipped; 나머지 오류 없음 |
 | 2026-09-28 | H100 실행 | 실행하지 않음 | 로컬 드라이버 사용 불가, 실제 대상 노드/빈 allocation 확인 필요 |
 | 2026-09-28 | 우선순위 지정 | P0-P3와 신규 자원/구현 순서 기록 | 문서 변경만 수행; 작업 실행·중단·계획 변경 없음 |
+| 2026-09-30 | E03/E09/E10 구현 (`997cab9`) | `replicate<k>-<arm>`, `direction_*`, `sr_hold` engine·launcher·results·분석 등록, 회귀 테스트 추가 | 전체 SR-GC suite 318개 통과 (proto-ml; torch 환경 9 skipped), frozen core hash 불변, shell 문법 검사 통과 |
+| 2026-09-30 | H100 실행 | 실행하지 않음 | 새 arm의 GPU 결과 없음; 배정표에 80개 tuple 추가 |
 
 두 제외 항목은 `test_build_cache.CacheTests.test_resume_after_last_receipt_exports_without_loading_model_or_regenerating`와
 torch를 import하는 `test_step_checkpoints` 모듈이다. 이 범위를 통과했다고
