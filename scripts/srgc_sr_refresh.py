@@ -17,8 +17,24 @@ writes ``sr_refresh-latest.pt`` / ``sr_refresh-progress.json`` /
 next to the four recorded arms. The hashed ``srgc_rebuttal`` package is not
 modified: the engine variant lives here and is launched through torchrun.
 
+``sr_hold`` is the matching cached-SR control: the same 25-update draw of 40
+candidates and the same four-prompt batch retained until the next refresh, but
+ranked by the frozen cache instead of fresh success rates. ``sr_refresh`` minus
+``sr_hold`` isolates the refresh; ``sr_hold`` minus ``sr`` isolates the batch
+retention interval.
+
+The same entry point runs the other extra arms: ``switch_repeat``,
+``switch_fixed<N>`` (``srgc_switch_fixed``), the matched direction ablations
+``direction_removed`` / ``direction_magnitude`` / ``direction_replaced``
+(``srgc_direction_ablation``) and independent replicates ``replicate<k>-<arm>``
+of a recorded arm or fixed control on a separate post-prefix sampling stream
+(``srgc_replicate``; outputs under ``seed-N/replicate-<k>/``).
+
     sh scripts/run_srgc_sr_refresh.sh math 5              # candidates scope, seed 5
     sh scripts/run_srgc_sr_refresh.sh math 5 pool         # full-pool refresh
+    sh scripts/run_srgc_sr_refresh.sh math 5 sr_hold      # cached SR, 25-update batch retention
+    sh scripts/run_srgc_sr_refresh.sh math 5 direction_removed
+    sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-switch
     sh scripts/run_srgc_sr_refresh.sh math results
 """
 
@@ -40,29 +56,55 @@ sys.path.insert(0, str(REPO))
 
 from srgc_rebuttal.srgc import Engine, cached_sr_set, stream_seed  # noqa: E402
 
-SCOPES = ("candidates", "pool")
+SCOPES = ("candidates", "pool", "cached")
+SCOPE_ARMS = {"candidates": "sr_refresh", "pool": "sr_refresh-pool", "cached": "sr_hold"}
 
 
 def arm_name(scope):
-    return "sr_refresh" if scope == "candidates" else "sr_refresh-pool"
+    return SCOPE_ARMS[scope]
 
 
-EXTRA_ARMS = ("sr_refresh", "sr_refresh-pool", "switch_repeat", "switch_fixed100", "switch_fixed125")
+def scope_of(arm):
+    return next((scope for scope, name in SCOPE_ARMS.items() if name == arm), None)
+
+
+DIRECTION_ARMS = ("direction_removed", "direction_magnitude", "direction_replaced")
+EXTRA_ARMS = ("sr_refresh", "sr_refresh-pool", "sr_hold", "switch_repeat", "switch_fixed100", "switch_fixed125",
+              *DIRECTION_ARMS)
+
+
+def replicate_of(name):
+    from scripts.srgc_replicate import parse_replicate_arm
+    return parse_replicate_arm(name)
 
 
 def extra_arm(name):
-    """argparse type: a listed extra arm or any switch_fixed<N>."""
+    """argparse type: a listed extra arm, any switch_fixed<N>, or replicate<k>-<recorded arm|switch_fixed<N>>."""
     if name in EXTRA_ARMS or re.fullmatch(r"switch_fixed\d+", name):
         return name
-    raise argparse.ArgumentTypeError(f"unknown extra arm {name!r}; use one of {EXTRA_ARMS} or switch_fixed<N>")
+    try:
+        if replicate_of(name):
+            return name
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    raise argparse.ArgumentTypeError(f"unknown extra arm {name!r}; use one of {EXTRA_ARMS}, switch_fixed<N> "
+                                     "or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>>")
 
 
 def make_engine(arm, backend, data, config):
     """Engine for an extra arm (its engine label is the recorded arm name it extends)."""
-    if arm in {"sr_refresh", "sr_refresh-pool"}:
+    if arm in SCOPE_ARMS.values():
         return SRRefreshEngine(backend, data["candidate_ids"], data["ranking_validation_ids"], data["cached_rewards"],
-                               arm="sr_refresh", config=config,
-                               refresh_scope="candidates" if arm == "sr_refresh" else "pool"), "sr_refresh"
+                               arm="sr_refresh", config=config, refresh_scope=scope_of(arm)), "sr_refresh"
+    if arm in DIRECTION_ARMS:
+        from scripts.srgc_direction_ablation import DirectionAblationEngine, mode_of
+        return DirectionAblationEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
+                                       data["cached_rewards"], arm="direction_ablation", config=config,
+                                       mode=mode_of(arm)), "direction_ablation"
+    replicate = replicate_of(arm)
+    if replicate:
+        from scripts.srgc_replicate import make_engine as make_replicate_engine
+        return make_replicate_engine(replicate[0], replicate[1], backend, data, config)
     if arm == "switch_repeat":
         from scripts.srgc_switch_repeat import SwitchRepeatEngine
         return SwitchRepeatEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
@@ -76,18 +118,28 @@ def make_engine(arm, backend, data, config):
 
 
 class SRRefreshEngine(Engine):
-    """Engine whose ``sr_refresh`` arm re-measures success rates with the current policy."""
+    """Engine whose ``sr_refresh`` arm re-measures success rates with the current policy.
+
+    The ``cached`` scope (arm ``sr_hold``) keeps the refresh schedule and batch
+    retention but ranks the drawn 40 by the frozen cache, without any rollout.
+    """
 
     ARMS = Engine.ARMS | {"sr_refresh"}
 
     def __init__(self, *args, refresh_scope="candidates", **kwargs):
         if refresh_scope not in SCOPES:
-            raise ValueError("refresh scope must be candidates or pool")
+            raise ValueError("refresh scope must be candidates, pool or cached")
         self.refresh_scope = refresh_scope
         super().__init__(*args, **kwargs)
 
     def _refresh_ranking(self):
         c = self.config
+        if self.refresh_scope == "cached":
+            ids = self._draw_candidates()
+            with self._timing_scope("candidate_sampling_and_ranking"):
+                eligible = set(ids)
+                ranked = tuple(i for i in self.sr_ranked_ids if i in eligible)  # the SR arm's rule on this draw
+            return ids, None, ranked
         ids = self._draw_candidates() if self.refresh_scope == "candidates" else self.candidates
         with self._timing_scope("sr_refresh_rollouts", section=True):
             means = dict(self.backend.evaluate(ids, seed=stream_seed(c.seed, self.step, "sr-refresh"),
@@ -123,9 +175,10 @@ class SRRefreshEngine(Engine):
             block = list(ranked[:c.scoring_prompts]) if self.refresh_scope == "pool" else list(ids)
             self.active_selection = {"step": self.step, "on_ids": block, "train_ids": list(train_ids)}
             self._end("selection", started)
-            record.update(refreshed_ids=list(ids), refreshed_success_rates={i: float(means[i]) for i in ids},
-                          ranked_ids=list(ranked[:c.scoring_prompts]), selected_ids=list(train_ids),
-                          scored_distinct_prompts=len(ids), scoring_responses_per_prompt=c.responses)
+            record.update(refreshed_ids=list(ids), ranked_ids=list(ranked[:c.scoring_prompts]),
+                          selected_ids=list(train_ids), scored_distinct_prompts=0 if means is None else len(ids),
+                          scoring_responses_per_prompt=0 if means is None else c.responses,
+                          refreshed_success_rates=None if means is None else {i: float(means[i]) for i in ids})
         train_ids = tuple(self.active_selection["train_ids"])
         record["selection_step"] = self.active_selection["step"]
         used, cycle = set(self.used_training_ids), self.sampling_cycle
@@ -142,7 +195,7 @@ class SRRefreshEngine(Engine):
         record.update(completed_updates=self.step, train_ids=list(train_ids),
                       selection_gpu_seconds=self.costs["selection_gpu_seconds"] - before["selection_gpu_seconds"],
                       training_gpu_seconds=self.costs["training_gpu_seconds"] - before["training_gpu_seconds"],
-                      selector="sr_refresh", metrics=metrics)
+                      selector="sr_hold" if self.refresh_scope == "cached" else "sr_refresh", metrics=metrics)
         self.history.append(record)
         return record
 
@@ -181,15 +234,19 @@ def run(args):
     plan = load_plan(args.plan)
     if args.seed not in plan["seeds"]:
         raise SystemExit("seed is not in the frozen plan")
-    arm = args.arm if getattr(args, "arm", None) else arm_name(args.scope)
+    launch_arm = args.arm if getattr(args, "arm", None) else arm_name(args.scope)
+    replicate = replicate_of(launch_arm)
+    arm = replicate[1] if replicate else launch_arm  # the name in checkpoint, progress and endpoint files
     if re.fullmatch(r"switch_fixed\d+", arm):
         from scripts.srgc_switch_fixed import fixed_step_of
         step = fixed_step_of(arm)
         if not plan["shared_prefix_updates"] <= step < plan["total_updates"] or step % plan["selection_interval"]:
             raise ValueError("fixed step must be a refresh boundary from the shared prefix to before the endpoint")
-    scope = "candidates" if arm == "sr_refresh" else "pool" if arm == "sr_refresh-pool" else None
+    scope = scope_of(arm)
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
-    TorchBackend = install_resumable_rollouts(folder / "rollout-cache" / arm)
+    # A replicate keeps its files apart from the recorded arm it repeats.
+    out = folder / f"replicate-{replicate[0]}" if replicate else folder
+    TorchBackend = install_resumable_rollouts(out / "rollout-cache" / arm)
     import torch
     import torch.distributed as dist
     from peft import LoraConfig, get_peft_model
@@ -204,21 +261,25 @@ def run(args):
             expected = identity(args.plan, plan, args.seed)
             if not prefix_ready(folder, expected, plan["shared_prefix_updates"]):
                 raise ValueError("the verified shared prefix must finish before this arm can start")
-            return data, expected, arm_complete(folder, expected, arm, plan["total_updates"])
+            return data, expected, arm_complete(out, expected, arm, plan["total_updates"])
         data, expected, complete = primary(startup)
         if complete:
             if rank == 0:
-                print(f"PASS: {arm} already complete for seed {args.seed}")
+                print(f"PASS: {launch_arm} already complete for seed {args.seed}")
             return
+        prefix_hash = json.loads((folder / "prefix-ready.json").read_text())["checkpoint_sha256"]
         result = [None]
         if rank == 0:
             try:
-                locks.enter_context(lease(folder / f".{arm}.execution.lock"))
+                locks.enter_context(lease(out / f".{arm}.execution.lock"))
                 with lease(folder / ".manifest.lock", wait=True):
                     marker = json.loads((folder / "run.json").read_text())
                     if not matches(marker, expected):
                         raise ValueError("the seed's run manifest belongs to a different experiment")
-                    atomic_json(folder / f"{arm}-run.json", {**expected, "arm": arm, "refresh_scope": scope,
+                    if replicate:
+                        replicate_manifest(out, expected, args.seed, replicate[0], prefix_hash)
+                    atomic_json(out / f"{arm}-run.json", {**expected, "arm": arm, "launch_arm": launch_arm,
+                        "refresh_scope": scope, "replicate": replicate[0] if replicate else None,
                         "status": "running", "packages": {p: importlib.metadata.version(p)
                                                           for p in ("torch", "transformers", "peft", "math-verify")}})
             except Exception as exc:  # noqa: BLE001 - report on rank 0, abort every rank
@@ -226,8 +287,8 @@ def run(args):
         dist.broadcast_object_list(result, src=0)
         if result[0]:
             raise RuntimeError(result[0])
-        meter = torch_meter(lambda event: PhaseLedger(folder / "cost-receipts" / arm).record(event))
-        locks.enter_context(invocation(PhaseLedger(folder / "invocations" / arm), meter, world, invocation_started))
+        meter = torch_meter(lambda event: PhaseLedger(out / "cost-receipts" / arm).record(event))
+        locks.enter_context(invocation(PhaseLedger(out / "invocations" / arm), meter, world, invocation_started))
         with meter.phase("startup", gpu_count=world):
             torch.manual_seed(args.seed)
             with meter.stage("model_and_tokenizer_load"):
@@ -247,7 +308,9 @@ def run(args):
                         training_prompts=plan["training_prompts"], responses=plan["responses"],
                         projection_dim=plan["projection_dim"])
         with meter.phase("preparation", gpu_count=world), meter.stage("selector_setup"):
-            current, engine_arm = make_engine(arm, backend, data, config)
+            current, engine_arm = make_engine(launch_arm, backend, data, config)
+        if replicate and current.replicate_record() != json.loads((out / "replicate.json").read_text())["replicate"]:
+            raise ValueError("the replicate manifest and the engine disagree on the sampling stream")
 
         def save(path, engine):
             with meter.phase("checkpoint_save", engine.step, world):
@@ -268,8 +331,7 @@ def run(args):
             with meter.phase("checkpoint_load", state["step"], world), meter.stage("restore"):
                 engine.load_state_dict(state, **kwargs)
 
-        prefix_hash = json.loads((folder / "prefix-ready.json").read_text())["checkpoint_sha256"]
-        checkpoint_path = folder / f"{arm}-latest.pt"
+        checkpoint_path = out / f"{arm}-latest.pt"
         if primary(checkpoint_path.exists):
             state = load(checkpoint_path)
             if state["arm"] != engine_arm or not plan["shared_prefix_updates"] <= state["step"] <= plan["total_updates"]:
@@ -280,27 +342,31 @@ def run(args):
             if shared["arm"] != "on_policy" or shared["step"] != plan["shared_prefix_updates"]:
                 raise ValueError("shared prefix has the wrong arm or update count")
             restore(current, shared, fork_arm=engine_arm)
+        extras = {"refresh_scope": scope, "launch_arm": launch_arm,
+                  "replicate": current.replicate_record() if replicate else None,
+                  "ablation": getattr(current, "mode", None) if engine_arm == "direction_ablation" else None}
         while current.step < plan["total_updates"]:
             current.update()
-            progress("update", arm=arm, step=current.step)
+            progress("update", arm=launch_arm, step=current.step)
             if rank == 0:
-                print(f"TRAIN seed={args.seed} phase={arm} arm={arm} step={current.step}/{plan['total_updates']} "
+                print(f"TRAIN seed={args.seed} phase={launch_arm} arm={launch_arm} step={current.step}/{plan['total_updates']} "
                       f"status=completed completed={current.step}/{plan['total_updates']}", flush=True)
             if current.step % 25 == 0 or current.step == plan["total_updates"]:
                 save(checkpoint_path, current)
-                primary(lambda: atomic_json(folder / f"{arm}-progress.json", {"seed": args.seed, "arm": arm,
-                        "refresh_scope": scope, "step": current.step, "switched_at": current.switched_at,
+                primary(lambda: atomic_json(out / f"{arm}-progress.json", {"seed": args.seed, "arm": arm, **extras,
+                        "step": current.step, "switched_at": current.switched_at,
                         "transitions": getattr(current, "transitions", None),
                         "sampling_protocol": current.SAMPLING_PROTOCOL, "costs": current.costs,
                         "history": current.history}))
         with meter.phase("evaluation", current.step, world):
+            # The endpoint evaluation keeps the recorded rule and the base seed for every replicate.
             per_question = backend.evaluate(data["evaluation_ids"],
                 seed=stream_seed(args.seed, current.step, "reporting-evaluation"), responses=8)
 
         def endpoint():
-            ledger = PhaseLedger(folder / "cost-receipts" / arm).totals()
+            ledger = PhaseLedger(out / "cost-receipts" / arm).totals()
             measured = {**current.costs, **ledger["known_gpu_seconds"]}
-            atomic_json(folder / f"{arm}-endpoint.json", {**expected, "arm": arm, "refresh_scope": scope,
+            atomic_json(out / f"{arm}-endpoint.json", {**expected, "arm": arm, **extras,
                 "prefix_checkpoint_sha256": prefix_hash, "total_updates": current.step,
                 "shared_prefix_updates": plan["shared_prefix_updates"], "switched_at": current.switched_at,
                 "transitions": getattr(current, "transitions", None),
@@ -312,12 +378,30 @@ def run(args):
                 "selection_interval": plan["selection_interval"],
                 "selection_steps": [r["checkpoint"] for r in current.history if r["selection_refreshed"]],
                 "refreshed_prompts_per_selection": (current.config.scoring_prompts if scope == "candidates"
-                                                    else len(current.candidates) if scope == "pool" else None)})
-            atomic_json(folder / f"{arm}-run.json", {**json.loads((folder / f"{arm}-run.json").read_text()),
-                                                       "status": "complete"})
+                                                    else len(current.candidates) if scope == "pool"
+                                                    else 0 if scope == "cached" else None)})
+            atomic_json(out / f"{arm}-run.json", {**json.loads((out / f"{arm}-run.json").read_text()),
+                                                    "status": "complete"})
         primary(endpoint)
         if rank == 0:
-            print(f"PASS: {arm} seed {args.seed} reward={sum(per_question.values()) / len(per_question):.4f}")
+            print(f"PASS: {launch_arm} seed {args.seed} reward={sum(per_question.values()) / len(per_question):.4f}")
+
+
+def replicate_manifest(out, expected, seed, replicate, prefix_hash):
+    """Write ``replicate.json`` once per replicate folder; a later launch must describe the same replicate."""
+    from scripts.srgc_replicate import REPLICATE_PROTOCOL, sampling_seed
+    from srgc_rebuttal.runtime import atomic_json, matches
+    manifest = {**expected, "prefix_checkpoint_sha256": prefix_hash,
+                "replicate": {"protocol": REPLICATE_PROTOCOL, "id": replicate, "base_seed": seed,
+                              "sampling_seed": sampling_seed(seed, replicate)}}
+    path = out / "replicate.json"
+    if path.exists():
+        saved = json.loads(path.read_text())
+        if not matches(saved, manifest):
+            raise ValueError("the replicate folder belongs to a different experiment, prefix or sampling stream")
+        return saved
+    atomic_json(path, manifest)
+    return manifest
 
 
 def prepare_run_storage(args):
@@ -337,10 +421,59 @@ def prepare_run_storage(args):
     args.plan = route_plan(args.plan, writing=True)
 
 
+def _endpoint(path, plan_path, plan, seed, folder, arm):
+    """Load and validate one endpoint against the seed's identity and verified prefix."""
+    from srgc_rebuttal.runtime import identity, matches, prefix_ready
+    value = json.loads(path.read_text())
+    expected = identity(plan_path, plan, seed)
+    if (not matches(value, expected) or value.get("arm") != arm or
+            value.get("total_updates") != plan["total_updates"] or
+            not prefix_ready(folder, expected, plan["shared_prefix_updates"])):
+        raise ValueError(f"{path}: endpoint identity, prefix or update count differs")
+    prefix = json.loads((folder / "prefix-ready.json").read_text())
+    if value.get("prefix_checkpoint_sha256") != prefix["checkpoint_sha256"]:
+        raise ValueError(f"{path}: endpoint used a different shared prefix")
+    return {"reward_percent": 100 * value["reward"],
+            "selection_gpu_seconds": value["costs"].get("selection_gpu_seconds"),
+            "training_gpu_seconds": value["costs"].get("training_gpu_seconds"),
+            "cost_measurement_complete": value.get("cost_measurement_complete"),
+            "transitions": value.get("transitions"), "switched_at": value.get("switched_at")}
+
+
+def replicate_rows(plan_path, plan, root):
+    """Independent replicates: one row per ``seed-N/replicate-<k>/`` with its arms' endpoints."""
+    from scripts.srgc_replicate import REPLICATE_PROTOCOL, sampling_seed
+    from srgc_rebuttal.runtime import identity, matches
+    rows = []
+    for seed in plan["seeds"]:
+        folder = root / f"seed-{seed}"
+        for manifest in sorted(folder.glob("replicate-*/replicate.json"),
+                               key=lambda p: int(p.parent.name.removeprefix("replicate-"))):
+            replicate = int(manifest.parent.name.removeprefix("replicate-"))
+            saved = json.loads(manifest.read_text())
+            expected = {**identity(plan_path, plan, seed),
+                        "replicate": {"protocol": REPLICATE_PROTOCOL, "id": replicate, "base_seed": seed,
+                                      "sampling_seed": sampling_seed(seed, replicate)}}
+            if not matches(saved, expected):
+                raise ValueError(f"{manifest}: replicate manifest identity or sampling stream differs")
+            prefix = json.loads((folder / "prefix-ready.json").read_text())["checkpoint_sha256"]
+            if saved.get("prefix_checkpoint_sha256") != prefix:
+                raise ValueError(f"{manifest}: replicate used a different shared prefix")
+            row = {"seed": seed, "replicate": replicate, "sampling_seed": saved["replicate"]["sampling_seed"]}
+            for path in sorted(manifest.parent.glob("*-endpoint.json")):
+                arm = path.name.removesuffix("-endpoint.json")
+                value = _endpoint(path, plan_path, plan, seed, folder, arm)
+                if (json.loads(path.read_text()).get("replicate") or {}) != saved["replicate"]:
+                    raise ValueError(f"{path}: endpoint replicate record differs from the manifest")
+                row[arm] = value
+            rows.append(row)
+    return rows
+
+
 def results(args):
-    """Per-seed endpoint rewards of the refresh arm next to the recorded arms, plus costs."""
+    """Per-seed endpoint rewards of the extra arms next to the recorded arms, plus costs and replicates."""
     from srgc_rebuttal.plan import load_plan
-    from srgc_rebuttal.runtime import identity, matches, prefix_ready, run_root
+    from srgc_rebuttal.runtime import run_root
     plan = load_plan(args.plan)
     root = run_root(args.plan, plan)
     fixed = {p.name.removesuffix("-endpoint.json")
@@ -355,32 +488,21 @@ def results(args):
         for arm in arms:
             path = folder / f"{arm}-endpoint.json"
             if path.exists():
-                value = json.loads(path.read_text())
-                expected = identity(args.plan, plan, seed)
-                if (not matches(value, expected) or value.get("arm") != arm or
-                        value.get("total_updates") != plan["total_updates"] or
-                        not prefix_ready(folder, expected, plan["shared_prefix_updates"])):
-                    raise ValueError(f"{path}: endpoint identity, prefix or update count differs")
-                prefix = json.loads((folder / "prefix-ready.json").read_text())
-                if value.get("prefix_checkpoint_sha256") != prefix["checkpoint_sha256"]:
-                    raise ValueError(f"{path}: endpoint used a different shared prefix")
-                row[arm] = {"reward_percent": 100 * value["reward"],
-                            "selection_gpu_seconds": value["costs"].get("selection_gpu_seconds"),
-                            "training_gpu_seconds": value["costs"].get("training_gpu_seconds"),
-                            "cost_measurement_complete": value.get("cost_measurement_complete"),
-                            "transitions": value.get("transitions"), "switched_at": value.get("switched_at")}
+                row[arm] = _endpoint(path, args.plan, plan, seed, folder, arm)
         rows.append(row)
+    replicates = replicate_rows(args.plan, plan, root)
     if args.json:
-        print(json.dumps({"dataset": plan["dataset"], "rows": rows}, indent=2))
+        print(json.dumps({"dataset": plan["dataset"], "rows": rows, "replicates": replicates}, indent=2))
         return
+    width = max(16, *(len(arm) for arm in arms))
     print(f"SR refresh · {plan['dataset']} · {root}")
-    header = "seed  " + "  ".join(f"{arm:>16}" for arm in arms)
+    header = "seed  " + "  ".join(f"{arm:>{width}}" for arm in arms)
     print(header)
     for row in rows:
         cells = []
         for arm in arms:
             value = row.get(arm)
-            cells.append(f"{value['reward_percent']:15.2f}%" if value else f"{'-':>16}")
+            cells.append(f"{value['reward_percent']:{width - 1}.2f}%" if value else f"{'-':>{width}}")
         print(f"{row['seed']:>4}  " + "  ".join(cells))
     for row in rows:
         for arm in (a for a in arms if a in {"switch", "switch_repeat"} or a.startswith("switch_fixed")):
@@ -388,19 +510,41 @@ def results(args):
             if value and (value.get("transitions") or value.get("switched_at") is not None):
                 moves = value.get("transitions") or [{"step": value["switched_at"], "to": "sr"}]
                 print(f"  seed {row['seed']} {arm}: " + ", ".join(f"step {m['step']} -> {m['to']}" for m in moves))
-    print("selection GPU-seconds (refresh rollouts for sr_refresh; scoring for on_policy/switch/switch_repeat):")
+    print("selection GPU-seconds (refresh rollouts for sr_refresh; ranking only for sr_hold; "
+          "scoring for on_policy/switch/switch_repeat/switch_fixed/direction_*):")
     for row in rows:
         cells = []
         for arm in arms:
             value = row.get(arm)
             cost = value.get("selection_gpu_seconds") if value else None
-            cells.append(f"{cost:16.0f}" if cost is not None else f"{'unknown' if value else '-':>16}")
+            cells.append(f"{cost:{width}.0f}" if cost is not None else f"{'unknown' if value else '-':>{width}}")
         print(f"{row['seed']:>4}  " + "  ".join(cells))
     for row in rows:
         for arm in arms:
             value = row.get(arm)
             if value and value["cost_measurement_complete"] is not True:
                 print(f"  seed {row['seed']} {arm}: cost measurement incomplete or unverified")
+    if replicates:
+        print("independent replicates (same verified prefix, separate post-prefix sampling stream; "
+              "the recorded run is stream 0):")
+        for row in replicates:
+            arms_done = [k for k in row if k not in {"seed", "replicate", "sampling_seed"}]
+            cells = ", ".join(f"{arm} {row[arm]['reward_percent']:.2f}%" for arm in arms_done) or "no endpoint yet"
+            line = f"  seed {row['seed']} replicate {row['replicate']} (sampling seed {row['sampling_seed']}): {cells}"
+            if "switch" in row and "sr" in row:
+                line += f"; switch - sr = {row['switch']['reward_percent'] - row['sr']['reward_percent']:+.2f} pp"
+            print(line)
+            for arm in arms_done:
+                value = row[arm]
+                if value.get("transitions") or value.get("switched_at") is not None:
+                    moves = value.get("transitions") or [{"step": value["switched_at"], "to": "sr"}]
+                    print(f"    {arm}: " + ", ".join(f"step {m['step']} -> {m['to']}" for m in moves))
+                if value["cost_measurement_complete"] is not True:
+                    print(f"    {arm}: cost measurement incomplete or unverified")
+        for row in rows:
+            if "switch" in row and "sr" in row:
+                print(f"  seed {row['seed']} recorded (stream 0): switch - sr = "
+                      f"{row['switch']['reward_percent'] - row['sr']['reward_percent']:+.2f} pp")
 
 
 def main():
@@ -413,7 +557,9 @@ def main():
             p.add_argument("--seed", type=int, required=True)
             p.add_argument("--scope", choices=SCOPES, default="candidates")
             p.add_argument("--arm", type=extra_arm,
-                           help="overrides --scope: switch_repeat (repeated transitions) or switch_fixed<N> (fixed schedule)")
+                           help="overrides --scope: sr_hold, switch_repeat, switch_fixed<N>, "
+                                "direction_removed|magnitude|replaced, "
+                                "or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>>")
         else:
             p.add_argument("--json", action="store_true")
     args = parser.parse_args()

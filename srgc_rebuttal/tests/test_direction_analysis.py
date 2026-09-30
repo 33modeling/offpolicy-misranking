@@ -134,6 +134,30 @@ class DirectionAnalysisTest(unittest.TestCase):
             self.assertIn("recorded-on-policy-path", summary)
             self.assertIn("refresh rows", printed.getvalue())
 
+    def test_direction_ablations_and_replicates_are_separate_series(self):
+        from scripts.srgc_direction_ablation import DirectionAblationEngine
+        from scripts.srgc_replicate import ReplicateEngine
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "seed-5"
+            (folder / "replicate-1").mkdir(parents=True)
+            features, answers, candidates, validation, _, cache = make_problem(5)
+            config = Config(seed=5, projection_dim=64)
+            ablation = DirectionAblationEngine(ToyBackend(features, answers, projection_dim=64, seed=5), candidates,
+                                               validation, cache, arm="direction_ablation", config=config, mode="magnitude")
+            ablation.run_until(26)
+            (folder / "direction_magnitude-progress.json").write_text(json.dumps({"history": ablation.history}))
+            replicate = ReplicateEngine(ToyBackend(features, answers, projection_dim=64, seed=5), candidates, validation,
+                                        cache, arm="switch", config=config, replicate=1)
+            replicate.run_until(26)
+            (folder / "replicate-1" / "switch-progress.json").write_text(json.dumps({"history": replicate.history}))
+            (folder / "sr_refresh-progress.json").write_text(json.dumps({"history": []}))
+            rows = analysis.refresh_rows(root)
+            self.assertEqual({(r["arm"], r["seed"]) for r in rows}, {("direction_magnitude", 5), ("replicate1-switch", 5)})
+            self.assertTrue(all(r["on_mean_cos"] is not None for r in rows))
+            self.assertEqual([r["selector"] for r in rows if r["arm"] == "direction_magnitude"], ["direction_magnitude"] * 2)
+            self.assertEqual({r["arm"] for r in analysis.refresh_rows(root, ["replicate1-switch"])}, {"replicate1-switch"})
+
 
 if __name__ == "__main__":
     unittest.main()

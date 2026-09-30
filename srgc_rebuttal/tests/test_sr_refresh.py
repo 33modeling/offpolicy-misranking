@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from scripts.srgc_sr_refresh import SCOPES, SRRefreshEngine, arm_name
-from srgc_rebuttal.srgc import Config, stream_seed
+from srgc_rebuttal.srgc import Config, Engine, stream_seed
 from srgc_rebuttal.toy_backend import ToyBackend, make_problem
 
 
@@ -92,6 +92,33 @@ class SRRefreshTest(unittest.TestCase):
         self.assertTrue(record["selection_refreshed"])
         self.assertEqual(record["selection_step"], 25)
 
+    def test_cached_scope_is_the_sr_rule_with_on_policy_batch_retention(self):
+        engine, backend = make_engine("cached")
+        features, answers, candidates, validation, _, cache = make_problem(3)
+        sr = Engine(EvalToyBackend(features, answers, projection_dim=64, seed=3), candidates, validation, cache,
+                    arm="sr", config=Config(seed=3, projection_dim=64))
+        record, plain = engine.update(), sr.update()
+        self.assertTrue(record["selection_refreshed"])
+        self.assertEqual(record["refreshed_ids"], plain["training_candidate_ids"])  # same stream, same 40
+        self.assertEqual(record["train_ids"], plain["train_ids"])  # same cached ranking of that draw
+        self.assertEqual((backend.evaluate_calls, backend.score_calls), ([], []))  # no rollout, no gradient
+        self.assertIsNone(record["refreshed_success_rates"])
+        self.assertEqual((record["scored_distinct_prompts"], record["scoring_responses_per_prompt"]), (0, 0))
+        self.assertEqual(record["selector"], "sr_hold")
+        engine.run_until(25)
+        sr.run_until(25)
+        self.assertTrue(all(r["train_ids"] == record["train_ids"] for r in engine.history))
+        self.assertGreater(len({tuple(r["train_ids"]) for r in sr.history}), 1)  # SR redraws every update
+        renewed = engine.update()
+        self.assertTrue(renewed["selection_refreshed"])
+        self.assertEqual(backend.evaluate_calls, [])
+        self.assertEqual(arm_name("cached"), "sr_hold")
+        state = engine.state_dict()
+        self.assertEqual(state["refresh_scope"], "cached")
+        with self.assertRaisesRegex(ValueError, "refresh scope"):
+            other, _ = make_engine("candidates")
+            other.load_state_dict(state)
+
     def test_other_arms_are_unchanged(self):
         features, answers, candidates, validation, _, cache = make_problem(1)
         backend = EvalToyBackend(features, answers, projection_dim=64, seed=1)
@@ -99,7 +126,7 @@ class SRRefreshTest(unittest.TestCase):
         record = engine.update()
         self.assertEqual(record["selector"], "sr")
         self.assertEqual(backend.evaluate_calls, [])
-        self.assertEqual(SCOPES, ("candidates", "pool"))
+        self.assertEqual(SCOPES, ("candidates", "pool", "cached"))
 
 
 if __name__ == "__main__":

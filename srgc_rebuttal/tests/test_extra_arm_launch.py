@@ -47,7 +47,7 @@ class ExtraArmLaunchTests(unittest.TestCase):
         bundle.parent.mkdir(parents=True, exist_ok=True)
         bundle.write_text('{"fixture": true}\n')
         folder = run_root(plan, spec) / "seed-5"
-        folder.mkdir(parents=True)
+        folder.mkdir(parents=True, exist_ok=True)
         checkpoint = folder / "prefix.pt"
         checkpoint.write_bytes(b"synthetic checkpoint, not a GPU result")
         expected = identity(plan, spec, 5)
@@ -170,6 +170,114 @@ class ExtraArmLaunchTests(unittest.TestCase):
         target.write_text(json.dumps({**value, "arm": "switch_fixed200", "input_sha256": "wrong"}))
         with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()):
             results(SimpleNamespace(plan=plan, json=True))
+
+    def test_results_list_the_direction_and_cached_sr_controls(self):
+        plan = self.plan()
+        path, value = self.endpoint(plan, cost=1.0)
+        for arm in ("direction_removed", "direction_magnitude", "direction_replaced", "sr_hold"):
+            path.with_name(f"{arm}-endpoint.json").write_text(json.dumps({**value, "arm": arm}))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=True))
+        row = json.loads(output.getvalue())["rows"][0]
+        self.assertEqual({row[arm]["reward_percent"] for arm in ("direction_removed", "direction_magnitude",
+                                                                  "direction_replaced", "sr_hold")}, {50.0})
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=False))
+        self.assertIn("direction_magnitude", output.getvalue().splitlines()[1])
+
+    def replicate(self, plan, replicate=1, rewards=None, manifest_override=None, endpoint_override=None):
+        from scripts.srgc_replicate import REPLICATE_PROTOCOL, sampling_seed
+        folder, expected, prefix = self.prefix(plan)
+        out = folder / f"replicate-{replicate}"
+        out.mkdir(exist_ok=True)
+        record = {"protocol": REPLICATE_PROTOCOL, "id": replicate, "base_seed": 5, "sampling_seed": sampling_seed(5, replicate)}
+        manifest = {**expected, "prefix_checkpoint_sha256": prefix["checkpoint_sha256"], "replicate": record,
+                    **(manifest_override or {})}
+        (out / "replicate.json").write_text(json.dumps(manifest))
+        for arm, reward in (rewards or {"sr": 0.5, "switch": 0.52}).items():
+            (out / f"{arm}-endpoint.json").write_text(json.dumps({**expected, "arm": arm, "total_updates": 275,
+                "prefix_checkpoint_sha256": prefix["checkpoint_sha256"], "reward": reward, "replicate": record,
+                "costs": {"selection_gpu_seconds": 1.0, "training_gpu_seconds": 10}, "cost_measurement_complete": True,
+                **(endpoint_override or {})}))
+        return out
+
+    def test_results_pair_replicate_arms_and_validate_their_manifest(self):
+        plan = self.plan()
+        self.replicate(plan, 1)
+        self.replicate(plan, 2, rewards={"sr": 0.4})
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=True))
+        replicates = json.loads(output.getvalue())["replicates"]
+        self.assertEqual([(r["seed"], r["replicate"]) for r in replicates], [(5, 1), (5, 2)])
+        self.assertAlmostEqual(replicates[0]["switch"]["reward_percent"] - replicates[0]["sr"]["reward_percent"], 2.0)
+        self.assertNotIn("switch", replicates[1])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=False))
+        self.assertIn("seed 5 replicate 1", output.getvalue())
+        self.assertIn("switch - sr = +2.00 pp", output.getvalue())
+        self.assertIn("seed 5 replicate 2", output.getvalue())
+        import shutil
+        from scripts.srgc_replicate import sampling_seed
+        wrong_protocol = {"protocol": "x", "id": 3, "base_seed": 5, "sampling_seed": sampling_seed(5, 3)}
+        for override, message in (({"replicate": wrong_protocol}, "sampling stream"),
+                                  ({"prefix_checkpoint_sha256": "wrong"}, "different shared prefix")):
+            with self.subTest(message=message):
+                out = self.replicate(plan, 3, manifest_override=override)
+                with self.assertRaisesRegex(ValueError, message), contextlib.redirect_stdout(io.StringIO()):
+                    results(SimpleNamespace(plan=plan, json=True))
+                shutil.rmtree(out)
+        self.replicate(plan, 4, endpoint_override={"replicate": {"protocol": "x"}})
+        with self.assertRaisesRegex(ValueError, "replicate record differs"), contextlib.redirect_stdout(io.StringIO()):
+            results(SimpleNamespace(plan=plan, json=True))
+
+    def test_replicate_manifest_is_written_once_and_must_match_later(self):
+        from scripts.srgc_sr_refresh import replicate_manifest
+        plan = self.plan()
+        folder, expected, prefix = self.prefix(plan)
+        out = folder / "replicate-1"
+        out.mkdir()
+        first = replicate_manifest(out, expected, 5, 1, prefix["checkpoint_sha256"])
+        self.assertEqual(json.loads((out / "replicate.json").read_text()), first)
+        self.assertEqual(replicate_manifest(out, expected, 5, 1, prefix["checkpoint_sha256"]), first)
+        with self.assertRaisesRegex(ValueError, "different experiment, prefix or sampling stream"):
+            replicate_manifest(out, expected, 5, 1, "other prefix")
+        with self.assertRaisesRegex(ValueError, "different experiment, prefix or sampling stream"):
+            replicate_manifest(out, {**expected, "input_sha256": "x"}, 5, 1, prefix["checkpoint_sha256"])
+
+    def test_extra_arm_names_accepted_by_the_cli_and_the_shell(self):
+        import argparse
+        from scripts.srgc_sr_refresh import extra_arm
+        for name in ("sr_hold", "direction_removed", "direction_magnitude", "direction_replaced",
+                     "replicate1-sr", "replicate2-switch_fixed200", "switch_fixed75"):
+            self.assertEqual(extra_arm(name), name)
+        for name in ("direction_sideways", "replicate0-sr", "replicate1-sr_refresh", "sr_refresh-cached"):
+            with self.subTest(name=name), self.assertRaises(argparse.ArgumentTypeError):
+                extra_arm(name)
+        fake = self.base / "python"
+        fake.write_text(f"#!{sys.executable}\nimport subprocess, sys\n"
+                        f"raise SystemExit(subprocess.run([{sys.executable!r}, *sys.argv[1:]], "
+                        "input=sys.stdin.read(), text=True).returncode)\n")
+        fake.chmod(0o755)
+        self.plan()
+        env = {**os.environ, **self.environment, "PAIR_PYTHON": str(fake)}
+        env.pop("SRGC_STORAGE_ROOT", None)
+        for token in ("sr_hold", "direction_replaced", "replicate1-switch", "replicate2-switch_fixed200"):
+            with self.subTest(token=token):
+                # A valid third argument passes the launcher's arm check and fails on the non-numeric seed.
+                result = subprocess.run(["sh", str(SCRIPT), "math", "x", token], cwd="/tmp", env=env,
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("seed must be an integer", result.stderr)
+        for token in ("direction_sideways", "replicate-switch", "hold"):
+            with self.subTest(token=token):
+                result = subprocess.run(["sh", str(SCRIPT), "math", "5", token], cwd="/tmp", env=env,
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("third argument", result.stderr)
 
 
 if __name__ == "__main__":

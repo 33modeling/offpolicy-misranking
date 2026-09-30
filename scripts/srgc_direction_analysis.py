@@ -33,17 +33,25 @@ sys.path.insert(0, str(REPO))
 COLUMNS = ["source", "seed", "arm", "step", "d", "d_source", "on_dot", "sr_dot", "validation_norm", "on_mean_norm", "sr_mean_norm",
            "on_mean_cos", "sr_mean_cos", "on_top4_dot", "on_random4_expected_dot", "ranking_cos_mean",
            "ranking_cos_std", "ranking_cos_top4", "on_cos_top4_minus_mean", "ranking_gap4", "selector"]
-ARM_PATTERN = re.compile(r"^(on_policy|switch|switch_repeat|switch_fixed\d+)$")
+ARM_PATTERN = re.compile(r"^(on_policy|switch|switch_repeat|switch_fixed\d+|direction_(removed|magnitude|replaced))$")
 
 
 def refresh_rows(root, arms=None):
     """One row per selection refresh from every ``seed-N/<arm>-progress.json`` under ``root``."""
     rows = []
-    for progress in sorted(Path(root).glob("seed-*/*-progress.json")):
+    # Replicates (seed-N/replicate-<k>/<arm>-progress.json) are separate series, labelled replicate<k>-<arm>.
+    progress_files = [*Path(root).glob("seed-*/*-progress.json"), *Path(root).glob("seed-*/replicate-*/*-progress.json")]
+    for progress in sorted(progress_files):
         arm = progress.name[: -len("-progress.json")]
-        if not ARM_PATTERN.match(arm) or (arms and arm not in arms):
+        if not ARM_PATTERN.match(arm):
             continue
-        seed = int(progress.parent.name.split("-", 1)[1])
+        seed_folder = progress.parent
+        if seed_folder.name.startswith("replicate-"):
+            arm = f"{seed_folder.name.replace('-', '', 1)}-{arm}"
+            seed_folder = seed_folder.parent
+        if arms and arm not in arms:
+            continue
+        seed = int(seed_folder.name.split("-", 1)[1])
         try:
             history = json.loads(progress.read_text()).get("history", [])
         except (OSError, ValueError):
@@ -156,7 +164,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--plan", type=Path, help="plan whose run root is analysed (group-storage path)")
     parser.add_argument("--root", type=Path, help="run root containing seed-N/ folders (overrides --plan)")
-    parser.add_argument("--arms", nargs="*", help="arms to include (default: on_policy, switch, switch_repeat, switch_fixed*)")
+    parser.add_argument("--arms", nargs="*",
+                        help="arms to include (default: on_policy, switch, switch_repeat, switch_fixed*, direction_*, "
+                             "and their replicate<k>- series)")
     parser.add_argument("--legacy-d", nargs="*", type=Path, default=[],
                         help="selector-pair-srgc-all-d exports with the recorded seed 3/4 D series")
     parser.add_argument("--out", type=Path, help="output directory (default: <root>/analysis/direction)")

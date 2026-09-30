@@ -1,17 +1,22 @@
 #!/bin/sh
-# SR with refreshed success rates (Limitations: "cache refresh ... unevaluated").
-#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> [candidates|pool|switch_repeat]   # one seed on this node (4 GPUs)
+# Extra arms forked from a seed's verified shared prefix (one seed, one arm, this node's 4 GPUs):
+#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> [candidates|pool|sr_hold]        # SR success-rate refresh / cached-SR control
+#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> switch_repeat|switch_fixed<N>    # repeated / fixed-schedule transitions
+#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> direction_removed|direction_magnitude|direction_replaced
+#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>>
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp results                    # per-seed rewards next to the recorded arms
 # The seed's shared prefix must already be complete in the group-storage run root.
 set -eu
 cd "$(dirname "$0")/.."
 DATASET=${1:-}; TARGET=${2:-}; SCOPE=${3:-candidates}
-case "$DATASET" in math|mbpp) ;; *) echo "usage: sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed>|results [candidates|pool]" >&2; exit 2 ;; esac
+case "$DATASET" in math|mbpp) ;; *) echo "usage: sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed>|results [candidates|pool|sr_hold|switch_repeat|switch_fixed<N>|direction_<mode>|replicate<k>-<arm>]" >&2; exit 2 ;; esac
 case "$SCOPE" in
     candidates|pool) ARM_ARGS="--scope $SCOPE" ;;
-    switch_repeat) ARM_ARGS="--arm switch_repeat" ;;
+    sr_hold|switch_repeat) ARM_ARGS="--arm $SCOPE" ;;
     switch_fixed[0-9]*) ARM_ARGS="--arm $SCOPE" ;;
-    *) echo "third argument must be candidates, pool, switch_repeat or switch_fixed<N> (e.g. switch_fixed100)" >&2; exit 2 ;;
+    direction_removed|direction_magnitude|direction_replaced) ARM_ARGS="--arm $SCOPE" ;;
+    replicate[0-9]*-*) ARM_ARGS="--arm $SCOPE" ;;
+    *) echo "third argument must be candidates, pool, sr_hold, switch_repeat, switch_fixed<N> (e.g. switch_fixed100), direction_removed|direction_magnitude|direction_replaced, or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>> (e.g. replicate1-switch)" >&2; exit 2 ;;
 esac
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "$DATASET" in math) EXPLICIT=${PAIR_PYTHON:-} ;; mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; esac
