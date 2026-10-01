@@ -165,6 +165,35 @@ class ExtraArmLaunchTests(unittest.TestCase):
                 self.assertTrue(Path(os.environ[key]).is_relative_to(self.group), key)
             self.assertEqual(args.plan, plan)
 
+    def test_startup_streams_input_bundle_without_unbounded_read(self):
+        plan = self.plan()
+        self.prefix(plan)
+        bundle = input_path(plan, load_plan(plan), 5)
+        original = Path.read_bytes
+
+        def read_bytes(path):
+            if path == bundle:
+                raise AssertionError("input bundle must be streamed")
+            return original(path)
+
+        output = io.StringIO()
+        with patch.dict(os.environ, self.environment, clear=True), \
+                patch.object(Path, "read_bytes", read_bytes), contextlib.redirect_stderr(output):
+            prepare_run_storage(SimpleNamespace(plan=plan, seed=5))
+        for stage in ("PLAN reading", "STORAGE resolving", "INPUT checking", "PREFIX verified"):
+            self.assertIn(stage, output.getvalue())
+
+    def test_startup_watchdog_is_cancelled_on_validation_error(self):
+        from scripts import srgc_extra_worker as worker
+        args = SimpleNamespace(plan=self.plan(), seed=5, arm="switch_fixed200", scope="candidates")
+        with patch.object(worker, "prepare_run_storage", side_effect=ValueError("bad prefix")), \
+                patch.object(worker.faulthandler, "dump_traceback_later") as start, \
+                patch.object(worker.faulthandler, "cancel_dump_traceback_later") as stop:
+            with self.assertRaisesRegex(ValueError, "bad prefix"):
+                worker.launch(args)
+        start.assert_called_once()
+        stop.assert_called_once()
+
     def test_extra_worker_refuses_held_execution_lock_before_gpu_startup(self):
         from scripts import srgc_extra_worker as worker
         from srgc_rebuttal.runtime import Busy, lease

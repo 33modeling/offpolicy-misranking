@@ -2,6 +2,7 @@
 """Launch one extra arm with the same device admission and teardown as P0."""
 
 import argparse
+import faulthandler
 import os
 from pathlib import Path
 import socket
@@ -22,7 +23,12 @@ from scripts.srgc_sr_refresh import arm_name, extra_arm, extra_complete, prepare
 def launch(args):
     print(f"START seed-{args.seed}.{args.arm or arm_name(args.scope)}: verifying saved prefix",
           flush=True)
-    prepare_run_storage(args)
+    # A stalled shared-volume read must identify its exact blocking operation.
+    faulthandler.dump_traceback_later(60, repeat=True, file=sys.__stderr__)
+    try:
+        prepare_run_storage(args)
+    finally:
+        faulthandler.cancel_dump_traceback_later()
     plan = load_plan(args.plan)
     name = args.arm or arm_name(args.scope)
     replicate = replicate_of(name)

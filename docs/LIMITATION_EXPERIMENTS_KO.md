@@ -58,6 +58,13 @@ SHA-256 검사는 8 MiB씩 읽고 시작·5초 간격 진행량·완료를 출�
 콘솔에는 `START`, `PREFIX`, `PREFLIGHT`, `ADMISSION`, `RUN` 단계가 표시된다.
 업데이트 후 기존 명령 그대로 실행한다. 이미 학습 중인 작업은 중단하지 않는다.
 
+후속 시작 점검: `START ... verifying saved prefix` 뒤에는 prefix 검사보다 먼저
+입력 bundle의 SHA-256 검사가 있었다. 이 검사도 8 MiB 단위로 바꾸고, plan 읽기,
+공유 경로 확인, 입력 bundle과 prefix 검사를 각각 출력한다. 공유 저장소의 파일
+접근이 막혀도 조용히 기다리지 않도록 시작 검사가 60초를 넘기면 현재 Python
+stack을 자동 출력한다. 원격 노드의 정지 원인을 실측 확인한 것은 아니며,
+체크포인트 불일치나 기존 실행 보호를 무시하지 않는다.
+
 `srgc_sr_refresh.py`의 P1 등 추가 arm에서 `PackageNotFoundError: math-verify`가
 발생한 원인은 P0에 있던 오프라인 verifier 준비가 빠졌기 때문이다. 이제 group
 저장소 경로를 확인한 뒤, NCCL 초기화와 패키지 버전 기록 전에 동일한 hash 검증

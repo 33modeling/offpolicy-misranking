@@ -448,9 +448,11 @@ def prepare_run_storage(args, *, verify_checkpoint=True):
     from scripts.srgc_shared_storage import route_plan, storage_root
     from srgc_rebuttal.plan import load_plan
     from srgc_rebuttal.runtime import run_root
+    print(f"PLAN reading {args.plan}", file=sys.stderr, flush=True)
     plan = load_plan(args.plan)
     if args.seed not in plan["seeds"]:
         raise ValueError("seed is not in the frozen plan")
+    print("STORAGE resolving shared run directory", file=sys.stderr, flush=True)
     group, _ = storage_root(os.environ)
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
     if not folder.is_relative_to(group):
@@ -461,10 +463,15 @@ def prepare_run_storage(args, *, verify_checkpoint=True):
 
 def result_identity(plan_path, plan, seed, *, recorded=False, verify_checkpoint=True):
     """Recorded identities are for read-only reports, never admission or resume."""
-    from srgc_rebuttal.runtime import identity, matches
+    from srgc_rebuttal.runtime import code_digest, matches
     from srgc_rebuttal.runtime import run_root
-    from scripts.srgc_prefix_check import verify_prefix
-    expected = identity(plan_path, plan, seed)
+    from srgc_rebuttal.plan import input_path
+    from scripts.srgc_prefix_check import stream_digest, verify_prefix
+    print(f"INPUT resolving bundle for seed {seed}", file=sys.stderr, flush=True)
+    bundle = input_path(plan_path, plan, seed)
+    expected = {"plan_sha256": stream_digest(plan_path, label="PLAN"),
+                "input_sha256": stream_digest(bundle),
+                "implementation_sha256": code_digest(), "seed": seed}
     folder = run_root(plan_path, plan) / f"seed-{seed}"
     if recorded:
         marker = json.loads((folder / "run.json").read_text())
