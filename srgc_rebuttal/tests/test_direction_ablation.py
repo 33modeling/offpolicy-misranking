@@ -110,6 +110,23 @@ class DirectionAblationTest(unittest.TestCase):
                 trained = stack[[on_ids.index(i) for i in chosen]].mean(axis=0)
                 self.assertAlmostEqual(record["on_top4_dot"], float(np.dot(v, trained)))
 
+    def test_matches_an_engine_that_scores_the_sr_preview_at_every_refresh(self):
+        from scripts.srgc_direction_ablation import SR_PREVIEW_PROTOCOLS
+
+        class PreviewScoringAblation(DirectionAblationEngine):
+            SAMPLING_PROTOCOL = next(iter(SR_PREVIEW_PROTOCOLS))  # the archived P0-cohort engine's protocol
+
+        engine, backend = make("removed", PreviewScoringAblation)
+        record = engine.update()
+        self.assertEqual(len(record["sr_ids"]), 40)
+        self.assertEqual(record["scored_distinct_prompts"], len(set(record["on_ids"]) | set(record["sr_ids"])))
+        self.assertEqual(set(backend.seeds[0][1]), set(record["on_ids"]) | set(record["sr_ids"]))
+        self.assertEqual(engine.used_training_ids, set(record["train_ids"]))  # scoring never marks SR prompts trained
+        plain, plain_backend = make("removed")
+        plain_record = plain.update()
+        self.assertEqual(plain_record["sr_ids"], [])
+        self.assertEqual(set(plain_backend.seeds[0][1]), set(plain_record["on_ids"]))
+
     def test_checkpoint_roundtrip_and_protocol_guards(self):
         engine, _ = make("magnitude")
         engine.run_until(7)

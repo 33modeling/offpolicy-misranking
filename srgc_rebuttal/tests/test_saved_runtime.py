@@ -67,6 +67,30 @@ print("saved runtime fork/resume passed")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("saved runtime fork/resume passed", result.stdout)
 
+    def test_direction_ablation_scores_what_the_saved_on_policy_scores(self):
+        result = self.child('''
+import sys
+from scripts.srgc_saved_runtime import bootstrap
+bootstrap(["--plan", sys.argv[1], "--seed", "5"])
+from srgc_rebuttal.srgc import Config, Engine
+from srgc_rebuttal.toy_backend import ToyBackend, make_problem
+from scripts.srgc_direction_ablation import DirectionAblationEngine
+assert Engine.SAMPLING_PROTOCOL == "random-candidate40-training4-contrast40-v2"
+features, answers, candidates, validation, _, cache = make_problem(5)
+config = Config(seed=5, projection_dim=64)
+reference = ToyBackend(features, answers, projection_dim=64, seed=5)
+Engine(reference, candidates, validation, cache, arm="on_policy", config=config).update()
+for mode in ("removed", "magnitude", "replaced"):
+    backend = ToyBackend(features, answers, projection_dim=64, seed=5)
+    record = DirectionAblationEngine(backend, candidates, validation, cache, arm="direction_ablation",
+                                     config=config, mode=mode).update()
+    assert backend.score_calls == reference.score_calls, mode  # same 40+40 union and validation set
+    assert len(record["sr_ids"]) == 40 and record["scored_distinct_prompts"] == len(set(reference.score_calls[0]))
+print("ablation matches saved on-policy scoring")
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ablation matches saved on-policy scoring", result.stdout)
+
     def test_verified_extra_can_use_parked_prefix_without_unparking_base_queue(self):
         receipt = self.plan.parent.parent / "automatic-restart.json"
         receipt.write_text(json.dumps({"plan": str(self.plan), "previous_plan": "/old/plan.json"}))

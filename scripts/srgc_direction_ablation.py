@@ -9,7 +9,12 @@ that direction information" is only a correlation in the recorded runs. The
 the same scoring rollouts and validation gradients (so
 the scoring cost and the recorded decomposition are matched), the same
 four-prompt batch retained for 25 updates and the same training rollouts - and
-change only what the ranking may use:
+change only what the ranking may use. "The same scoring" follows the engine
+actually loaded: the archived ``contrast40-v2`` engine of the recorded P0
+cohort scores the 40 SR comparison prompts at every On-policy refresh, so the
+ablation scores them too; the current ``v3`` engine scores them only at Switch
+checks, so the ablation scores the 40 candidates only. Either way the control
+costs what that engine's On-policy costs.
 
   direction_removed    no direction and no magnitude: the four trained prompts
                        are drawn uniformly from the scored 40 (seeded tie-break
@@ -46,6 +51,8 @@ except ImportError:
     from scripts.srgc_direction_records import DirectionRecordMixin
 
 MODES = ("removed", "magnitude", "replaced")
+# Engines whose On-policy refresh scores the SR comparison preview as well as the candidates.
+SR_PREVIEW_PROTOCOLS = {"random-candidate40-training4-contrast40-v2"}
 ARMS = tuple(f"direction_{mode}" for mode in MODES)
 
 
@@ -91,20 +98,22 @@ class DirectionAblationEngine(DirectionRecordMixin, Engine):
         if not refresh and self.active_selection is None:
             raise ValueError("mid-block continuation requires the saved selected prompts")
         if refresh:
-            # Identical to On-policy's refresh (same candidates, same validation
-            # gradients) up to the ranking, which is the only ablated step.
+            # Identical to the loaded engine's On-policy refresh (same candidates, same SR preview
+            # when that engine scores one, same validation gradients) up to the ranking.
             started = self._begin("selection")
             on_ids = self._draw_candidates()
-            gradients = self._vectors(on_ids, c.candidate_group_size, "selection")
+            sr_ids = self._sr_comparison() if self.SAMPLING_PROTOCOL in SR_PREVIEW_PROTOCOLS else ()
+            union = tuple(dict.fromkeys((*on_ids, *sr_ids)))
+            gradients = self._vectors(union, c.candidate_group_size, "selection")
             val = self._vectors(self.validation, c.responses, "validation")
             with self._timing_scope("cosine_ranking"):
                 v = np.stack([val[i] for i in self.validation]).mean(axis=0)
                 cosines, scores, train_ids = self._ablated_ranking(on_ids, gradients, v)
             self.active_selection = {"step": self.step, "on_ids": list(on_ids), "train_ids": list(train_ids)}
             self._end("selection", started)
-            record.update(on_ids=list(on_ids), sr_ids=[], ranking_scores=cosines.tolist(),
+            record.update(on_ids=list(on_ids), sr_ids=list(sr_ids), ranking_scores=cosines.tolist(),
                           ablation_scores=scores.tolist(), selected_on_ids=list(train_ids),
-                          scored_distinct_prompts=len(on_ids), validation_ids=list(self.validation),
+                          scored_distinct_prompts=len(union), validation_ids=list(self.validation),
                           scoring_responses_per_prompt=c.responses)
         train_ids = tuple(self.active_selection["train_ids"])
         record["selection_step"] = self.active_selection["step"]
