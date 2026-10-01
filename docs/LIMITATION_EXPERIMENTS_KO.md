@@ -384,6 +384,30 @@ E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다
   `9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7`.
   학습 규칙·입력·seed·기존 결과 변경 없음.
 
+### 2026-10-01 추가 전체 재검수
+
+- 범위: E03 독립 반복, E04 고정 전환, E05/E07 SR 갱신, E06 반복 전환,
+  E09 방향 대조, E10 유지 간격 대조, E08 Qwen 확장과 공통 실행·결과 경로.
+- 추가 arm의 완료 판정을 결과 검증과 통일. 다른 prefix/replicate의 endpoint,
+  잘못된 평가 문항, 평균과 맞지 않는 보상, NaN/Inf·음수 비용을 완료로 인정하지 않음.
+- 결과 하나가 손상돼도 나머지 정상 결과를 출력. 오류는 JSON `errors`와 비정상
+  종료 코드 1로 표시하며, 잘못된 값을 0으로 대체하거나 정상 값으로 포함하지 않음.
+- 과거 코드의 결과는 기록된 run identity로 읽기 전용 조회. 실행·재개 때의
+  current-code 검사는 유지. prefix checksum 검증은 결과 조회 시 seed당 한 번 수행.
+- Qwen 진행 timeout을 124로 남기고 다른 준비 작업을 계속 처리.
+  사용자 중단 130과 일반 실패 1을 구분하고, 중단을 성공 종료로 보고하지 않음.
+- Qwen rank가 OLMo의 `SRGC_ATTENTION` 환경을 물려받지 않고 plan의 eager를 사용.
+  `all results`도 한 데이터셋 오류 때문에 다른 데이터셋 출력을 생략하지 않음.
+- OLMo frozen core hash는 위 값 그대로. **Qwen adapter hash는 변경**되므로 기존
+  Qwen run은 frozen checkout 유지. 수정본으로 새 실험을 할 때만 별도 root에 준비.
+- 문서의 120개 tuple을 실제 shell에 전달하되 학습 실행은 대역 처리하여 명령 전달을 검증.
+  실제 학습·원격 worker·실험 결과는 이번 재검수에서 시작하거나 변경하지 않음.
+- 최종 회귀 테스트: 349개 중 340개 통과, Transformers 4 환경에서 Qwen 9개 건너뜀.
+  별도 Transformers 5 환경에서는 해당 테스트를 포함한 Qwen 33개 모두 CPU에서 통과.
+  작은 모델의 생성·gradient·학습·재개까지 확인했으며 실제 H100 분산 실행은 미검증.
+- 문서 링크·앵커 83개, shell 예제 48개, 수정 Python 파일 9개의 구문 검사 통과.
+  두 launcher의 `sh -n`, `git diff --check` 통과.
+
 ### 이전 점검 기록 (당시 코드 기준)
 
 1. 추가 launcher가 `additional_seeds.json`/`mbpp_seeds.json`을 고정 선택하던 문제를 수정했다. 기본 launcher와 같은 `default_plan()`을 사용하여 활성 Pair 재사용 cohort를 따른다.

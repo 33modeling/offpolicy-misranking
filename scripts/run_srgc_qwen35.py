@@ -87,13 +87,14 @@ def main():
         return
     plans = [args.root.resolve() / "experiments" / f"qwen35-9b-{dataset}.json" for dataset in datasets]
     for plan in plans:
-        spec = validate_extension(plan)
+        spec = validate_extension(plan, read_only=args.action in {"status", "results"})
         from srgc_rebuttal.plan import input_path
         for seed in spec["seeds"]:
             validate_bundle_model(json.loads(input_path(plan, spec, seed).read_text()), spec, seed)
     with runtime_adapter():
         from srgc_rebuttal import cluster
         if args.action != "run":
+            failed_report = False
             for plan in plans:
                 if args.action == "results":
                     from srgc_rebuttal import reports
@@ -104,12 +105,14 @@ def main():
                     print(f"Model: {MODEL}\n" + reports.render(report, results=True))
                     print(f"Saved: {destination}")
                     if report["errors"]:
-                        raise SystemExit(1)
+                        failed_report = True
                 else:
                     sys.argv = [sys.argv[0], args.action, "--plan", str(plan)]
                     if args.action == "stop" and args.now:
                         sys.argv.append("--now")
                     cluster.main()
+            if failed_report:
+                raise SystemExit(1)
             return
         from srgc_checkpoint_backup import automatic_backup
         from srgc_log_format import uniform_log

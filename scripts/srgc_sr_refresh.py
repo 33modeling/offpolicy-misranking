@@ -43,6 +43,7 @@ from contextlib import ExitStack
 import importlib
 import importlib.metadata
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -260,7 +261,7 @@ def run(args):
     prepare_run_storage(args)
     prepare_verifier_runtime()
     from srgc_rebuttal.plan import digest, input_path, load_plan, validate_inputs
-    from srgc_rebuttal.runtime import arm_complete, atomic_json, identity, lease, matches, prefix_ready, run_root
+    from srgc_rebuttal.runtime import atomic_json, identity, lease, matches, prefix_ready, run_root
     from srgc_rebuttal.srgc import Config
     from srgc_rebuttal.cost_ledger import PhaseLedger
     from srgc_rebuttal.timing import invocation, torch_meter
@@ -307,7 +308,7 @@ def run(args):
             expected = identity(args.plan, plan, args.seed)
             if not prefix_ready(folder, expected, plan["shared_prefix_updates"]):
                 raise ValueError("the verified shared prefix must finish before this arm can start")
-            return data, expected, arm_complete(out, expected, arm, plan["total_updates"])
+            return data, expected, extra_complete(args.plan, plan, args.seed, launch_arm)
         data, expected, complete = primary(startup)
         if complete:
             if rank == 0:
@@ -448,7 +449,7 @@ def prepare_run_storage(args):
     """Set cache paths in the GPU process, not just the shell's plan lookup child."""
     from scripts.srgc_shared_storage import route_plan, storage_root
     from srgc_rebuttal.plan import load_plan
-    from srgc_rebuttal.runtime import identity, prefix_ready, run_root
+    from srgc_rebuttal.runtime import run_root
     plan = load_plan(args.plan)
     if args.seed not in plan["seeds"]:
         raise ValueError("seed is not in the frozen plan")
@@ -456,58 +457,140 @@ def prepare_run_storage(args):
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
     if not folder.is_relative_to(group):
         raise ValueError("extra arms require an existing group-volume run; start the main queue first")
-    if not prefix_ready(folder, identity(args.plan, plan, args.seed), plan["shared_prefix_updates"]):
-        raise ValueError("the verified shared prefix must finish before this arm can start")
+    result_identity(args.plan, plan, args.seed)
     args.plan = route_plan(args.plan, writing=True)
 
 
-def _endpoint(path, plan_path, plan, seed, folder, arm):
-    """Load and validate one endpoint against the seed's identity and verified prefix."""
+def result_identity(plan_path, plan, seed, *, recorded=False):
+    """Recorded identities are for read-only reports, never admission or resume."""
     from srgc_rebuttal.runtime import identity, matches, prefix_ready
-    value = json.loads(path.read_text())
+    from srgc_rebuttal.runtime import run_root
     expected = identity(plan_path, plan, seed)
+    folder = run_root(plan_path, plan) / f"seed-{seed}"
+    if recorded:
+        marker = json.loads((folder / "run.json").read_text())
+        stable = {k: v for k, v in expected.items() if k != "implementation_sha256"}
+        if (not isinstance(marker, dict) or not matches(marker, stable) or not isinstance(marker.get("implementation_sha256"), str)
+                or not marker["implementation_sha256"]):
+            raise ValueError(f"{folder}: run identity differs from plan or inputs")
+        expected["implementation_sha256"] = marker["implementation_sha256"]
+    prefix_path = folder / "prefix-ready.json"
+    if not prefix_path.exists():
+        raise ValueError("the verified shared prefix must finish before this arm can start")
+    prefix = json.loads(prefix_path.read_text())
+    if not isinstance(prefix, dict):
+        raise ValueError(f"{folder}: shared prefix receipt is missing or not a JSON object")
+    if not prefix_ready(folder, expected, plan["shared_prefix_updates"]):
+        raise ValueError(f"{folder}: verified shared prefix is missing")
+    return expected, prefix["checkpoint_sha256"]
+
+
+def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None):
+    """Validate the result's provenance, evaluation and finite nonnegative costs."""
+    from srgc_rebuttal.plan import input_path
+    from srgc_rebuttal.runtime import matches
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict):
+        raise ValueError(f"{path}: expected an endpoint JSON object")
+    expected, prefix_hash = verified or result_identity(plan_path, plan, seed)
     if (not matches(value, expected) or value.get("arm") != arm or
             value.get("total_updates") != plan["total_updates"] or
-            not prefix_ready(folder, expected, plan["shared_prefix_updates"])):
+            value.get("shared_prefix_updates") != plan["shared_prefix_updates"]):
         raise ValueError(f"{path}: endpoint identity, prefix or update count differs")
-    prefix = json.loads((folder / "prefix-ready.json").read_text())
-    if value.get("prefix_checkpoint_sha256") != prefix["checkpoint_sha256"]:
+    if value.get("prefix_checkpoint_sha256") != prefix_hash:
         raise ValueError(f"{path}: endpoint used a different shared prefix")
+    def finite_number(number):
+        return type(number) in (float, int) and math.isfinite(number)
+    evaluation_ids = json.loads(input_path(plan_path, plan, seed).read_text())["evaluation_ids"]
+    rewards = value.get("per_question_reward")
+    reward = value.get("reward")
+    if (not isinstance(rewards, dict) or not rewards or set(rewards) != set(evaluation_ids)
+            or any(not finite_number(v) or not 0 <= v <= 1 for v in rewards.values())
+            or not finite_number(reward) or not 0 <= reward <= 1
+            or abs(sum(rewards.values()) / len(rewards) - reward) > 1e-10):
+        raise ValueError(f"{path}: invalid or mismatched evaluation rewards")
+    costs = value.get("costs")
+    if not isinstance(costs, dict) or any(v is not None and (not finite_number(v) or v < 0)
+                                         for v in costs.values()):
+        raise ValueError(f"{path}: costs must be finite nonnegative measurements or null")
     return {"reward_percent": 100 * value["reward"],
-            "selection_gpu_seconds": value["costs"].get("selection_gpu_seconds"),
-            "training_gpu_seconds": value["costs"].get("training_gpu_seconds"),
+            "selection_gpu_seconds": costs.get("selection_gpu_seconds"),
+            "training_gpu_seconds": costs.get("training_gpu_seconds"),
             "cost_measurement_complete": value.get("cost_measurement_complete"),
+            "implementation_sha256": expected["implementation_sha256"],
+            "checkpoint_policy": value.get("checkpoint_policy"),
             "transitions": value.get("transitions"), "switched_at": value.get("switched_at")}
 
 
-def replicate_rows(plan_path, plan, root):
-    """Independent replicates: one row per ``seed-N/replicate-<k>/`` with its arms' endpoints."""
+def checked_replicate_manifest(out, seed, replicate, verified):
     from scripts.srgc_replicate import REPLICATE_PROTOCOL, sampling_seed
-    from srgc_rebuttal.runtime import identity, matches
+    from srgc_rebuttal.runtime import matches
+    manifest = out / "replicate.json"
+    saved = json.loads(manifest.read_text())
+    if not isinstance(saved, dict):
+        raise ValueError(f"{manifest}: expected a replicate JSON object")
+    expected, prefix_hash = verified
+    record = {"protocol": REPLICATE_PROTOCOL, "id": replicate, "base_seed": seed,
+              "sampling_seed": sampling_seed(seed, replicate)}
+    if not matches(saved, {**expected, "replicate": record}):
+        raise ValueError(f"{manifest}: replicate manifest identity or sampling stream differs")
+    if saved.get("prefix_checkpoint_sha256") != prefix_hash:
+        raise ValueError(f"{manifest}: replicate used a different shared prefix")
+    return record
+
+
+def extra_complete(plan_path, plan, seed, name):
+    """Use the same strict result checks before skipping work or publishing success."""
+    from srgc_rebuttal.runtime import run_root
+    replicate = replicate_of(name)
+    arm = replicate[1] if replicate else name
+    folder = run_root(plan_path, plan) / f"seed-{seed}"
+    out = folder / f"replicate-{replicate[0]}" if replicate else folder
+    path = out / f"{arm}-endpoint.json"
+    if not path.exists():
+        return False
+    verified = result_identity(plan_path, plan, seed)
+    _endpoint(path, plan_path, plan, seed, folder, arm, verified=verified)
+    if replicate:
+        record = checked_replicate_manifest(out, seed, replicate[0], verified)
+        if json.loads(path.read_text()).get("replicate") != record:
+            raise ValueError(f"{path}: endpoint replicate record differs from the manifest")
+    return True
+
+
+def replicate_rows(plan_path, plan, root, *, errors=None, context=None):
+    """Independent replicates: one row per ``seed-N/replicate-<k>/`` with its arms' endpoints."""
+    context = context or (lambda seed: result_identity(plan_path, plan, seed, recorded=True))
+    def invalid(path, exc):
+        if errors is None:
+            raise exc
+        errors.append(f"{path}: {type(exc).__name__}: {exc}")
     rows = []
     for seed in plan["seeds"]:
         folder = root / f"seed-{seed}"
-        for manifest in sorted(folder.glob("replicate-*/replicate.json"),
-                               key=lambda p: int(p.parent.name.removeprefix("replicate-"))):
-            replicate = int(manifest.parent.name.removeprefix("replicate-"))
-            saved = json.loads(manifest.read_text())
-            expected = {**identity(plan_path, plan, seed),
-                        "replicate": {"protocol": REPLICATE_PROTOCOL, "id": replicate, "base_seed": seed,
-                                      "sampling_seed": sampling_seed(seed, replicate)}}
-            if not matches(saved, expected):
-                raise ValueError(f"{manifest}: replicate manifest identity or sampling stream differs")
-            prefix = json.loads((folder / "prefix-ready.json").read_text())["checkpoint_sha256"]
-            if saved.get("prefix_checkpoint_sha256") != prefix:
-                raise ValueError(f"{manifest}: replicate used a different shared prefix")
-            row = {"seed": seed, "replicate": replicate, "sampling_seed": saved["replicate"]["sampling_seed"]}
+        for manifest in sorted(folder.glob("replicate-*/replicate.json")):
+            try:
+                match = re.fullmatch(r"replicate-([1-9]\d*)", manifest.parent.name)
+                if not match:
+                    raise ValueError("invalid replicate directory name")
+                replicate = int(match.group(1))
+                verified = context(seed)
+                record = checked_replicate_manifest(manifest.parent, seed, replicate, verified)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                invalid(manifest, exc)
+                continue
+            row = {"seed": seed, "replicate": replicate, "sampling_seed": record["sampling_seed"]}
             for path in sorted(manifest.parent.glob("*-endpoint.json")):
                 arm = path.name.removesuffix("-endpoint.json")
-                value = _endpoint(path, plan_path, plan, seed, folder, arm)
-                if (json.loads(path.read_text()).get("replicate") or {}) != saved["replicate"]:
-                    raise ValueError(f"{path}: endpoint replicate record differs from the manifest")
-                row[arm] = value
+                try:
+                    value = _endpoint(path, plan_path, plan, seed, folder, arm, verified=verified)
+                    if json.loads(path.read_text()).get("replicate") != record:
+                        raise ValueError(f"{path}: endpoint replicate record differs from the manifest")
+                    row[arm] = value
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    invalid(path, exc)
             rows.append(row)
-    return rows
+    return sorted(rows, key=lambda row: (row["seed"], row["replicate"]))
 
 
 def results(args):
@@ -516,6 +599,14 @@ def results(args):
     from srgc_rebuttal.runtime import run_root
     plan = load_plan(args.plan)
     root = run_root(args.plan, plan)
+    errors, warnings, identities = [], [], {}
+    def context(seed):
+        from srgc_rebuttal.runtime import code_digest
+        if seed not in identities:
+            identities[seed] = result_identity(args.plan, plan, seed, recorded=True)
+            if identities[seed][0]["implementation_sha256"] != code_digest():
+                warnings.append(f"seed {seed}: code changed; viewing recorded results only, resume is blocked")
+        return identities[seed]
     fixed = {p.name.removesuffix("-endpoint.json")
              for seed in plan["seeds"] for p in (root / f"seed-{seed}").glob("switch_fixed*-endpoint.json")
              if re.fullmatch(r"switch_fixed\d+-endpoint.json", p.name)}
@@ -528,11 +619,17 @@ def results(args):
         for arm in arms:
             path = folder / f"{arm}-endpoint.json"
             if path.exists():
-                row[arm] = _endpoint(path, args.plan, plan, seed, folder, arm)
+                try:
+                    row[arm] = _endpoint(path, args.plan, plan, seed, folder, arm, verified=context(seed))
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    errors.append(f"{path}: {type(exc).__name__}: {exc}")
         rows.append(row)
-    replicates = replicate_rows(args.plan, plan, root)
+    replicates = replicate_rows(args.plan, plan, root, errors=errors, context=context)
     if args.json:
-        print(json.dumps({"dataset": plan["dataset"], "rows": rows, "replicates": replicates}, indent=2))
+        print(json.dumps({"dataset": plan["dataset"], "output_root": str(root), "rows": rows,
+                          "replicates": replicates, "errors": errors, "warnings": warnings}, indent=2, allow_nan=False))
+        if errors:
+            raise ValueError("; ".join(errors))
         return
     width = max(16, *(len(arm) for arm in arms))
     print(f"SR refresh · {plan['dataset']} · {root}")
@@ -585,6 +682,12 @@ def results(args):
             if "switch" in row and "sr" in row:
                 print(f"  seed {row['seed']} recorded (stream 0): switch - sr = "
                       f"{row['switch']['reward_percent'] - row['sr']['reward_percent']:+.2f} pp")
+    for warning in warnings:
+        print(f"WARNING: {warning}")
+    for error in errors:
+        print(f"ERROR: {error}")
+    if errors:
+        raise ValueError("; ".join(errors))
 
 
 def main():
@@ -603,7 +706,14 @@ def main():
         else:
             p.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    (run if args.command == "run" else results)(args)
+    if args.command == "run":
+        run(args)
+    else:
+        try:
+            results(args)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"INVALID RESULTS: {exc}", file=sys.stderr)
+            raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

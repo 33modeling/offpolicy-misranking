@@ -83,12 +83,18 @@ def drain(queues, args, environment, gpu_fds, worker_id, update):
                         should_stop=lambda: cluster.stop_requested(queue, immediate=True),
                         interval=args.heartbeat_seconds, progress=lambda: cluster.progress_signature(progress_dir),
                         stall_seconds=args.stall_seconds)
+                except TimeoutError as exc:
+                    code = 124
+                    log.parent.mkdir(parents=True, exist_ok=True)
+                    with log.open("a") as handle:
+                        handle.write(f"TIMEOUT: {exc}\n")
+                    print(f"TIMEOUT {label}: {exc}; log={log}", flush=True)
                 except KeyboardInterrupt:
                     queue.finish(task, 130, interrupted=True)
                     update("stopped", active=queue, task=task)
-                    return
+                    raise
                 except BaseException:
-                    queue.finish(task, 130)
+                    queue.finish(task, 1)
                     raise
                 code = queue.finish(task, code)
                 print(f"DONE {label} exit={code}", flush=True)

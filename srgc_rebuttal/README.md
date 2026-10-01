@@ -5,6 +5,11 @@ attention kernel for new arms, preserve existing continuations' kernels,
 and forward shell termination to their owned workers. The frozen core hash
 is unchanged. See the [commands and node allocation guide](../docs/REBUTTAL_COMMANDS_KO.md)
 for all 120 extra-arm commands, restart rules and concurrency limits.
+The follow-up audit also validates completed extra endpoints before skipping
+work, preserves valid partial reports beside corrupt records, and permits
+read-only reporting of older code identities. Qwen timeout/interrupt handling
+and pinned attention were repaired; its adapter hash changes, so existing Qwen
+runs must retain their frozen checkout. See the [Qwen guide](../docs/QWEN35_SRGC_KO.md).
 
 2026-09-29: fixed-switch boundaries, multi-dataset cohort routing, MBPP
 assertion completion, fixed-arm exports and diagnostic D exports were repaired.

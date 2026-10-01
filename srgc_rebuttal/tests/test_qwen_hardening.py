@@ -239,6 +239,51 @@ def simulate_node(plans, group, node, barrier):
 
 
 class MultiNodeRegressionTests(unittest.TestCase):
+    def test_interrupt_and_other_failure_are_not_success_or_same_exit_code(self):
+        import srgc_qwen35_worker as worker
+        from srgc_rebuttal import cluster
+        from contextlib import nullcontext
+        for error, code in ((KeyboardInterrupt(), 130), (RuntimeError("bad runtime"), 1)):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "receipt.json").write_text('{"attempt_id": "test"}')
+                queue = MagicMock(directory=root, plan_path=root / "plan.json", plan={"dataset": "mbpp"})
+                task = SimpleNamespace(key="seed-5.sr")
+                queue.claim.return_value = nullcontext(task)
+                queue.receipt.return_value = root / "receipt.json"
+                args = SimpleNamespace(retry_failed=True, max_attempts=3, retry_delay=0, poll_seconds=.01,
+                                       heartbeat_seconds=.01, stall_seconds=30)
+                with patch.object(cluster, "stop_requested", return_value=False), \
+                        patch.object(cluster, "gpu_identity"), patch.object(cluster, "task_command", return_value=[]), \
+                        patch.object(cluster, "run_child", side_effect=error):
+                    with self.assertRaises(type(error)):
+                        worker.drain([queue], args, {}, (), "test", MagicMock())
+                self.assertEqual(queue.finish.call_args.args, (task, code))
+                self.assertEqual(queue.finish.call_args.kwargs.get("interrupted", False), code == 130)
+
+    def test_timeout_records_124_and_worker_continues_to_other_tasks(self):
+        import srgc_qwen35_worker as worker
+        from srgc_rebuttal import cluster
+        from contextlib import nullcontext
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "receipt.json").write_text('{"attempt_id": "test"}')
+            queue = MagicMock(directory=root, plan_path=root / "plan.json", plan={"dataset": "mbpp"})
+            first, second = SimpleNamespace(key="seed-5.sr"), SimpleNamespace(key="seed-6.sr")
+            queue.claim.side_effect = [nullcontext(first), nullcontext(second), nullcontext(None)]
+            queue.receipt.return_value = root / "receipt.json"
+            queue.status.return_value = [{"status": "complete"}]
+            queue.finish.side_effect = lambda task, code, **kw: code
+            args = SimpleNamespace(retry_failed=True, max_attempts=3, retry_delay=0, poll_seconds=.01,
+                                   heartbeat_seconds=.01, stall_seconds=30)
+            with patch.object(cluster, "stop_requested", return_value=False), \
+                    patch.object(cluster, "gpu_identity"), patch.object(cluster, "task_command", return_value=[]), \
+                    patch.object(cluster, "publish_reports"), \
+                    patch.object(cluster, "run_child", side_effect=[TimeoutError("stalled"), 0]):
+                worker.drain([queue], args, {}, (), "test", MagicMock())
+            self.assertEqual([call.args[1] for call in queue.finish.call_args_list], [124, 0])
+            self.assertIn("stalled", (root / "logs/seed-5.sr.log").read_text())
+
     def test_two_nodes_drain_sixty_tasks_once_with_dataset_correct_status_and_dependencies(self):
         import srgc_qwen35 as qwen
         with tempfile.TemporaryDirectory() as temp:

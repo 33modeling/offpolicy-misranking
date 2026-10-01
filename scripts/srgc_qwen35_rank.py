@@ -22,6 +22,9 @@ def main():
     # concrete plan paths, avoiding four full scans of all historical receipts.
     setup_storage(args.plan.absolute().parent.parent, os.environ, scan_tree=False)
     plan = validate_extension(args.plan)
+    # The generic child accepts SRGC_ATTENTION, but this experiment pins its
+    # kernel in the plan. Do not inherit an OLMo shell's unrelated override.
+    os.environ["SRGC_ATTENTION"] = plan["attention"]
     if args.stage == "cache":
         from srgc_rebuttal.plan import input_path
         cache = argparse.ArgumentParser(add_help=False)

@@ -122,6 +122,52 @@ class QwenProtocolTests(unittest.TestCase):
     def prepared(self):
         return qwen.prepare("math", self.source, self.destination, ChatTokenizer())
 
+    def test_old_adapter_results_are_read_only_and_training_remains_blocked(self):
+        path = self.prepared()
+        before = path.read_bytes()
+        with patch.object(qwen, "adapter_digest", return_value="a" * 64), \
+                patch.object(qwen, "engine_digest", return_value="b" * 64):
+            with self.assertRaisesRegex(ValueError, "adapter differs"):
+                qwen.validate_extension(path)
+            self.assertEqual(qwen.validate_extension(path, read_only=True)["model"], qwen.MODEL)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_rank_keeps_plan_attention_despite_olmo_environment_override(self):
+        import os
+        from contextlib import nullcontext
+        import srgc_qwen35_rank as rank
+        import srgc_step_checkpoints as checkpoints
+        path = self.prepared()
+        def child():
+            self.assertEqual(os.environ["SRGC_ATTENTION"], "eager")
+        with patch.dict(os.environ, {"SRGC_ATTENTION": "sdpa"}), \
+                patch.object(sys, "argv", ["rank", "--stage", "train", "--plan", str(path),
+                                          "--seed", "5", "--task", "random", "--resume"]), \
+                patch("srgc_qwen35_storage.setup_storage"), patch("srgc_verifier_fallback.install"), \
+                patch.object(qwen, "runtime_adapter", side_effect=nullcontext), \
+                patch.object(qwen, "training_adapter", side_effect=nullcontext), \
+                patch.object(checkpoints, "main", side_effect=child) as main:
+            rank.main()
+            main.assert_called_once_with()
+
+    def test_all_results_exports_both_datasets_even_when_one_has_errors(self):
+        from contextlib import nullcontext, redirect_stdout
+        import io
+        import run_srgc_qwen35 as launcher
+        self.prepared()
+        qwen.prepare("mbpp", ROOT / "srgc_rebuttal/experiments/mbpp_seeds.json", self.destination, ChatTokenizer())
+        with patch.object(sys, "argv", ["qwen", "all", "results", "--root", str(self.destination)]), \
+                patch.object(launcher, "setup_storage", return_value=(self.destination, self.destination)), \
+                patch.object(launcher, "runtime_adapter", side_effect=nullcontext), \
+                patch("srgc_rebuttal.reports.snapshot", side_effect=[{"errors": ["invalid math result"]}, {"errors": []}]) as read, \
+                patch("srgc_rebuttal.reports.render", return_value="fixture"), \
+                patch("srgc_rebuttal.reports.export") as export, redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                launcher.main()
+            self.assertEqual(error.exception.code, 1)
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(export.call_count, 2)
+
     def test_preparation_isolates_cache_and_preserves_question_splits(self):
         from srgc_rebuttal.plan import input_path, load_plan
         target = self.prepared()

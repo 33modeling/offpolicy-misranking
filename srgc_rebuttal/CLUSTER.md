@@ -645,6 +645,12 @@ as the main dataset launcher. Their GPU processes set runtime caches on group
 storage, and results reject mismatched experiment/prefix identities rather than
 combining incompatible endpoints. Missing costs are reported as unknown.
 These extra arms are not automatically dispatched by the four-arm queue.
+Their completion check validates the prefix hash, replicate stream and the
+per-question evaluation, not just an endpoint file's presence. Reports retain
+valid rows when another result is malformed, list the errors and exit 1.
+`results --json` includes `output_root`, `errors`, `warnings` and recorded
+implementation hashes. Old results remain readable after a code change;
+this read-only path does not relax training/resume identity checks.
 Use the [node allocation guide](../docs/REBUTTAL_COMMANDS_KO.md#63-노드-배정과-그룹-볼륨)
 and [120-task assignment sheet](../docs/REBUTTAL_EXTRA_TASKS.tsv).
 Each tuple needs one separate four-H100 node. With every required prefix ready,

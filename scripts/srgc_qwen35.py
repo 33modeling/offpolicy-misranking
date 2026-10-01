@@ -218,7 +218,7 @@ def prepare(dataset, source_plan, destination, tokenizer):
     return target
 
 
-def validate_extension(path):
+def validate_extension(path, *, read_only=False):
     from srgc_rebuttal.plan import load_plan
     plan = load_plan(path)
     dataset = {"math_train": "math", "mbpp": "mbpp"}.get(plan.get("dataset"))
@@ -233,6 +233,14 @@ def validate_extension(path):
                 "seeds": [5, 6, 7, 8, 9], "ranking_validation_prompts": 50,
                 "input_pattern": f"../inputs/{dataset}-seed-{{seed}}.json", "output_root": f"../runs/{dataset}",
                 "verifier": "srgc_rebuttal.run_experiment:math_reward" if dataset == "math" else "srgc_rebuttal.verifiers:code_reward"}
+    if read_only:
+        # Reports use the run's recorded identity; this never permits training
+        # with a different adapter or rewrites a prepared experiment's hashes.
+        for key in ("adapter_sha256", "engine_sha256"):
+            value = plan.get(key)
+            if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+                raise ValueError(f"invalid recorded Qwen {key}")
+            expected.pop(key)
     if any(plan.get(k) != v for k, v in expected.items()):
         raise ValueError("Qwen plan/model/adapter differs; do not use the OLMo launcher or reuse a run")
     from srgc_qwen35_storage import validate_plan_paths

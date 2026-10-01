@@ -1,8 +1,10 @@
 import contextlib
+import csv
 import io
 import json
 import os
 import signal
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -47,7 +49,7 @@ class ExtraArmLaunchTests(unittest.TestCase):
         spec = load_plan(plan)
         bundle = input_path(plan, spec, 5)
         bundle.parent.mkdir(parents=True, exist_ok=True)
-        bundle.write_text('{"fixture": true}\n')
+        bundle.write_text(json.dumps({"fixture": True, "evaluation_ids": [f"e{i}" for i in range(300)]}))
         folder = run_root(plan, spec) / "seed-5"
         folder.mkdir(parents=True, exist_ok=True)
         checkpoint = folder / "prefix.pt"
@@ -55,6 +57,7 @@ class ExtraArmLaunchTests(unittest.TestCase):
         expected = identity(plan, spec, 5)
         receipt = {**expected, "completed_updates": 25, "checkpoint_sha256": digest(checkpoint)}
         (folder / "prefix-ready.json").write_text(json.dumps(receipt))
+        (folder / "run.json").write_text(json.dumps(expected))
         return folder, expected, receipt
 
     def test_shell_reports_follow_active_math_and_mbpp_pair_cohorts(self):
@@ -122,6 +125,35 @@ class ExtraArmLaunchTests(unittest.TestCase):
                                 "PAIR_PYTHON": str(self.base / "missing")}, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertIn("Python not found", result.stderr)
+
+    def test_all_120_documented_task_commands_forward_the_right_tuple(self):
+        plans = {dataset: self.plan(dataset) for dataset in ("math", "mbpp")}
+        fake = self.base / "python"
+        fake.write_text(f"#!{sys.executable}\nimport json, subprocess, sys\n"
+                        "if sys.argv[1] == '-':\n"
+                        f"    raise SystemExit(subprocess.run([{sys.executable!r}, *sys.argv[1:]], input=sys.stdin.read(), text=True).returncode)\n"
+                        "print(json.dumps(sys.argv[1:]))\n")
+        fake.chmod(0o755)
+        pgrep = self.base / "pgrep"
+        pgrep.write_text("#!/bin/sh\nexit 1\n")
+        pgrep.chmod(0o755)
+        env = {**os.environ, **self.environment, "PAIR_PYTHON": str(fake), "SWITCH_PYTHON": str(fake),
+               "PATH": str(self.base) + os.pathsep + os.environ["PATH"]}
+        env.pop("SRGC_STORAGE_ROOT", None)
+        with (ROOT / "docs/REBUTTAL_EXTRA_TASKS.tsv").open() as handle:
+            rows = list(csv.DictReader(handle, delimiter="\t"))
+        self.assertEqual(len(rows), 120)
+        self.assertEqual(len({(r["dataset"], r["seed"], r["arm"]) for r in rows}), 120)
+        for row in rows:
+            with self.subTest(dataset=row["dataset"], seed=row["seed"], arm=row["arm"]):
+                command = shlex.split(row["command"])
+                command[1] = str(ROOT / command[1])
+                result = subprocess.run(command, cwd="/tmp", env=env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                scope = {"sr_refresh": "candidates", "sr_refresh-pool": "pool"}.get(row["arm"])
+                option = ["--scope", scope] if scope else ["--arm", row["arm"]]
+                self.assertEqual(json.loads(result.stdout), ["scripts/srgc_extra_worker.py", "--plan",
+                    str(plans[row["dataset"]]), "--seed", row["seed"], *option])
 
     def test_runtime_cache_environment_is_set_in_the_calling_process(self):
         plan = self.plan()
@@ -312,11 +344,71 @@ print('offline verifier ready')
         folder, expected, prefix = self.prefix(plan)
         value = {**expected, "arm": "sr_refresh", "total_updates": 275,
                  "prefix_checkpoint_sha256": prefix["checkpoint_sha256"], "reward": 0.5,
+                 "shared_prefix_updates": 25, "per_question_reward": {f"e{i}": 0.5 for i in range(300)},
                  "costs": {"selection_gpu_seconds": cost, "training_gpu_seconds": 10},
                  "cost_measurement_complete": cost is not None}
         path = folder / "sr_refresh-endpoint.json"
         path.write_text(json.dumps(value))
         return path, value
+
+    def test_completed_extra_refuses_wrong_prefix_before_gpu_startup(self):
+        from scripts import srgc_extra_worker as worker
+        plan = self.plan()
+        path, value = self.endpoint(plan)
+        path.write_text(json.dumps({**value, "prefix_checkpoint_sha256": "wrong"}))
+        args = SimpleNamespace(plan=plan, seed=5, arm=None, scope="candidates")
+        with patch.dict(os.environ, self.environment), patch.object(worker.cluster, "gpu_identity") as gpu:
+            with self.assertRaisesRegex(ValueError, "different shared prefix"):
+                worker.launch(args)
+        gpu.assert_not_called()
+
+    def test_results_reject_invalid_rewards_and_keep_other_endpoints(self):
+        plan = self.plan()
+        path, value = self.endpoint(plan, cost=1.0)
+        path.with_name("sr_hold-endpoint.json").write_text(json.dumps({**value, "arm": "sr_hold"}))
+        for wrong in ({"reward": float("nan")}, {"reward": 0.7}, {"per_question_reward": {"wrong": .5}},
+                      {"per_question_reward": {**value["per_question_reward"], "e0": float("inf")}},
+                      {"costs": {"selection_gpu_seconds": -1}}, {"shared_prefix_updates": 50}):
+            with self.subTest(wrong=wrong):
+                path.write_text(json.dumps({**value, **wrong}))
+                output = io.StringIO()
+                with self.assertRaises(ValueError), contextlib.redirect_stdout(output):
+                    results(SimpleNamespace(plan=plan, json=True))
+                report = json.loads(output.getvalue())
+                self.assertTrue(report["errors"])
+                self.assertNotIn("sr_refresh", report["rows"][0])
+                self.assertEqual(report["rows"][0]["sr_hold"]["reward_percent"], 50)
+
+    def test_results_remain_readable_after_code_change_but_resume_stays_blocked(self):
+        from scripts import srgc_extra_worker as worker
+        plan = self.plan()
+        self.endpoint(plan, cost=1.0)
+        output = io.StringIO()
+        with patch("srgc_rebuttal.runtime.code_digest", return_value="new-code"), \
+                contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=True))
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["rows"][0]["sr_refresh"]["reward_percent"], 50)
+        self.assertTrue(report["warnings"])
+        with patch("srgc_rebuttal.runtime.code_digest", return_value="new-code"), \
+                patch.dict(os.environ, self.environment):
+            with self.assertRaisesRegex(ValueError, "different experiment"):
+                worker.launch(SimpleNamespace(plan=plan, seed=5, arm=None, scope="candidates"))
+
+    def test_corrupt_result_json_does_not_hide_valid_results_and_cli_fails(self):
+        plan = self.plan()
+        path, value = self.endpoint(plan, cost=1.0)
+        path.with_name("sr_hold-endpoint.json").write_text(json.dumps({**value, "arm": "sr_hold"}))
+        for corrupt in ("{broken", "[]", "null"):
+            with self.subTest(corrupt=corrupt):
+                path.write_text(corrupt)
+                result = subprocess.run([sys.executable, str(ROOT / "scripts/srgc_sr_refresh.py"), "results",
+                                         "--plan", str(plan), "--json"], text=True, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report["rows"][0]["sr_hold"]["reward_percent"], 50)
+                self.assertTrue(report["errors"])
+                self.assertNotIn("Traceback", result.stderr)
 
     def test_results_do_not_display_missing_cost_as_zero(self):
         plan = self.plan()
@@ -395,9 +487,19 @@ print('offline verifier ready')
         for arm, reward in (rewards or {"sr": 0.5, "switch": 0.52}).items():
             (out / f"{arm}-endpoint.json").write_text(json.dumps({**expected, "arm": arm, "total_updates": 275,
                 "prefix_checkpoint_sha256": prefix["checkpoint_sha256"], "reward": reward, "replicate": record,
+                "shared_prefix_updates": 25, "per_question_reward": {f"e{i}": reward for i in range(300)},
                 "costs": {"selection_gpu_seconds": 1.0, "training_gpu_seconds": 10}, "cost_measurement_complete": True,
                 **(endpoint_override or {})}))
         return out
+
+    def test_completed_replicate_checks_sampling_stream_before_gpu_startup(self):
+        from scripts import srgc_extra_worker as worker
+        plan = self.plan()
+        self.replicate(plan, endpoint_override={"replicate": {"id": 999}})
+        with patch.dict(os.environ, self.environment), patch.object(worker.cluster, "gpu_identity") as gpu:
+            with self.assertRaisesRegex(ValueError, "replicate record differs"):
+                worker.launch(SimpleNamespace(plan=plan, seed=5, arm="replicate1-switch", scope="candidates"))
+        gpu.assert_not_called()
 
     def test_results_pair_replicate_arms_and_validate_their_manifest(self):
         plan = self.plan()

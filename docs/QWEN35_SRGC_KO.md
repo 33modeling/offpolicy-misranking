@@ -108,6 +108,18 @@ sh scripts/run_srgc_qwen35.sh all run
 OLMo와 동일한 물리 GPU UUID lock을 사용한다. 기존 worker나 lock 파일을
 삭제하는 실행 옵션은 없다. 실패 원인 수정 후에만 `run --retry-failed`를 사용한다.
 
+2026-10-01 재점검: 진행 timeout은 exit 124로 남기고 다음 준비 작업을 처리한다.
+`--retry-failed`일 때만 60초 간격으로 재시도하며 누적 상한은 기본 3회다.
+사용자 중단은 130, 일반 실패는 1로 구분하고 사용자 중단을 성공 종료로 처리하지 않는다.
+각 rank는 `SRGC_ATTENTION` 환경보다 plan의 고정 attention(`eager`)을 우선한다.
+
+이 수정은 Qwen adapter hash를 바꾸므로 이미 시작한 Qwen 실험의 checkout을
+업데이트하지 않는다. 기존 run은 원래 frozen 코드로 재개하고, 수정본으로 새로
+실험하려면 사용하지 않은 root에 `prepare` 후 모든 노드에서 같은 `--root`로 실행한다.
+기존 plan의 hash를 편집하거나 과거 결과를 새 버전으로 재분류하지 않는다.
+새 checkout에서도 `status/results --root`는 과거 plan/입력/실행 identity를 검증해
+조회할 수 있지만, `run/prepare/stop/resume`의 버전 검사는 그대로 유지한다.
+
 `all` worker도 MATH/MBPP별 worker receipt와 로그 경로를 정확히 기록한다.
 전용 root가 다른 Qwen worker끼리도 공통 GPU UUID 잠금을 사용한다.
 정리 대상은 SRGC 실행으로 한정하고 무관한 `torchrun`을 종료하지 않는다.

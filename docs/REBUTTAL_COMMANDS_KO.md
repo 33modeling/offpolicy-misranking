@@ -1,6 +1,6 @@
 # 리뷰 대비 실험 명령 모음
 
-확인: 2026-10-01, 추가 runner 저장·재개·중단 처리 기준 `master`.
+확인: 2026-10-01 재점검, 추가 runner 완료 검증·부분 결과 조회·Qwen 실패 복구 기준 `master`.
 [리뷰 일정](REVIEW_SCHEDULE_2027_KO.md) ·
 [기존 실험과 결과](EXPERIMENT_RESULTS_LEDGER_KO.md) ·
 [실험별 목적·우선순위](LIMITATION_EXPERIMENTS_KO.md) ·
@@ -12,6 +12,24 @@
 E10은 실험 목록 MD가 `sr_refresh`의 순수 갱신 효과 분리에 필요하다고 적은 cached-SR 유지 간격 대조다.
 P0–P3는 자원 배정 순서이며 P3를 생략한다는 뜻이 아니다.
 CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-결과-수집)에 있다.
+
+### 추가 실험 바로 실행
+
+검증된 step-25 prefix가 있는 seed에 배정한다. **아래 한 줄씩 서로 다른 빈
+4-H100 노드에서 실행**한다. `5`는 6-9로, `math`는 `mbpp`로 바꿀 수 있다.
+
+```sh
+sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr
+sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-switch
+sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200
+```
+
+P1 전체는 `replicate1-sr/switch`, `replicate2-sr/switch`, `switch_fixed200`의
+다섯 조건이다. 데이터셋 2개 × seeds 5개 × 조건 5개 = 최대 **50노드**.
+서로 다른 작업은 P0 종료를 기다리지 않는다. 같은 tuple 중복 실행은 금지.
+기본 `sh scripts/run_srgc.sh all run`은 이 추가 실험을 자동 배정하지 않는다.
+전체 조건·명령은 [4절](#4-e03e07-e09-e10--추가-arm-120개),
+노드별 120개 배정 칸은 [TSV](REBUTTAL_EXTRA_TASKS.tsv)에 있다.
 
 ## 1. 무엇을 실행하는지
 
@@ -237,6 +255,24 @@ sh scripts/run_srgc_sr_refresh.sh math results --json
 sh scripts/run_srgc_sr_refresh.sh mbpp results --json
 ```
 
+`results`는 모델/GPU를 시작하지 않는다. 완료 여부를 판단할 때 plan/input/core,
+prefix 해시, 종점 step, 평가 문항별 보상과 평균, replicate stream을 확인한다.
+다른 prefix/replicate의 endpoint를 복사해 놓아도 완료로 인정하지 않는다.
+손상된 결과가 있으면 **정상 결과는 출력하고 오류 경로를 함께 표시**, 종료 코드는 1이다.
+JSON의 `errors`가 비어 있는지 확인한다. 미완료 항목은 없거나 `-`, 누락 비용은
+`null`/`unknown`이며 0으로 채우지 않는다.
+
+코드 변경 후에도 과거 결과는 `run.json`의 기록된 identity로 조회할 수 있다.
+`warnings`의 code-changed 안내는 **조회만 허용**한다는 뜻이며 재개 허용이 아니다.
+활성 cohort가 바뀐 뒤 과거 실행을 조회하려면 그 실행의 plan 경로를 명시한다:
+
+```sh
+"$PAIR_PYTHON" scripts/srgc_sr_refresh.py results --plan "/group-volume/path/to/original-plan.json" --json
+```
+
+기본 `results`는 활성 cohort를 따른다. 파일의 plan/hash를 수정해 다른 cohort를
+합치지 않는다. JSON의 `output_root`와 각 arm의 `implementation_sha256`으로 출처를 확인한다.
+
 상태는 콘솔과 active root의 `seed-N/<arm>-progress.json`,
 `<arm>-run.json`; 완료는 `<arm>-endpoint.json`을 확인한다.
 arm 파일명은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, `sr_hold`,
@@ -281,6 +317,9 @@ sh scripts/run_srgc_qwen35.sh all stop
 중단 표시를 해제한 뒤 다시 실행한다. 즉시 중단은 `all stop --now`다.
 일반 `run`이 실패 작업을 자동 재시도하도록 설정되어 있지는 않다.
 실패 원인을 수정한 뒤에만 `--retry-failed`를 사용한다.
+진행 timeout은 실패 124로 기록하고 worker는 다른 준비된 작업을 계속 처리한다.
+실패 작업 재시도는 `--retry-failed`일 때만 60초 간격으로 수행하며 누적 상한은
+`--max-attempts`다. 학습 자식 실행 중 Ctrl-C/SIGTERM은 중단 130으로 기록하고 worker를 종료한다.
 
 ```sh
 sh scripts/run_srgc_qwen35.sh all resume
@@ -292,6 +331,20 @@ sh scripts/run_srgc_qwen35.sh all run --retry-failed --max-attempts 3
 실험 산출물은 `runs/{math,mbpp}/seed-N/`, TXT는 `reports/`에 저장된다.
 checkpoint 백업은 worker가 자동 수행한다. v1 plan/cache/checkpoint는 v2에서
 재개하지 않는다. 9B GPU 실행은 현장 admission 검증이 남아 있다.
+
+**Qwen 코드 버전 주의:** 이번 실패 복구/attention 고정 수정은 Qwen adapter hash를
+바꾼다. 이미 학습한 Qwen run은 해당 실행의 frozen checkout에서 계속하며, 현재
+코드로 강제 재개하거나 기존 plan hash를 고치지 않는다. 수정본의 새 Qwen 실험은
+별도 root를 명시해 준비한다. 기존 실행을 옮기거나 재시작하라는 명령이 아니다.
+
+```sh
+sh scripts/run_srgc_qwen35.sh all prepare --root "$OM_WORK/srgc-rebuttal/qwen35-9b-audit-20261001"
+sh scripts/run_srgc_qwen35.sh all run --root "$OM_WORK/srgc-rebuttal/qwen35-9b-audit-20261001"
+```
+
+모든 참여 노드가 같은 root를 지정해야 한다. `status/results --root <기존 경로>`는
+새 코드에서도 읽기 전용으로 가능하다. Qwen attention은 plan의 `eager`로 고정하며
+OLMo용 `SRGC_ATTENTION=sdpa` 환경이 남아 있어도 이를 따르지 않는다.
 
 ## 6. 여러 노드 배정과 결과 수집
 

@@ -14,9 +14,9 @@ sys.path.insert(0, str(REPO))
 
 from srgc_rebuttal import cluster  # noqa: E402
 from srgc_rebuttal.plan import load_plan  # noqa: E402
-from srgc_rebuttal.runtime import Busy, arm_complete, atomic_json, identity, lease, run_root  # noqa: E402
+from srgc_rebuttal.runtime import Busy, atomic_json, lease, run_root  # noqa: E402
 from scripts.srgc_process_guard import process_guard  # noqa: E402
-from scripts.srgc_sr_refresh import arm_name, extra_arm, prepare_run_storage, replicate_of, SCOPES  # noqa: E402
+from scripts.srgc_sr_refresh import arm_name, extra_arm, extra_complete, prepare_run_storage, replicate_of, SCOPES  # noqa: E402
 
 
 def launch(args):
@@ -33,8 +33,7 @@ def launch(args):
     root = run_root(args.plan, plan)
     folder = root / f"seed-{args.seed}"
     out = folder / f"replicate-{replicate[0]}" if replicate else folder
-    expected = identity(args.plan, plan, args.seed)
-    if arm_complete(out, expected, arm, plan["total_updates"]):
+    if extra_complete(args.plan, plan, args.seed, name):
         print(f"PASS: {name} already complete for seed {args.seed}", flush=True)
         return 0
 
@@ -43,7 +42,7 @@ def launch(args):
     with process_guard(args.plan), lease(out / f".{arm}.launch.lock") as launch_lock:
         with lease(out / f".{arm}.execution.lock"):
             pass  # Also recognize a live job started by the old raw-torchrun launcher.
-        if arm_complete(out, expected, arm, plan["total_updates"]):
+        if extra_complete(args.plan, plan, args.seed, name):
             return 0
         environment = cluster.child_environment()
         environment.setdefault("NCCL_DEBUG", "WARN")
@@ -73,7 +72,7 @@ def launch(args):
                 code = cluster.run_child(command, log, environment, pass_fds=fds,
                     heartbeat=lambda pid: update("running", child_pid=pid),
                     progress=lambda: cluster.progress_signature(progress))
-                if code == 0 and not arm_complete(out, expected, arm, plan["total_updates"]):
+                if code == 0 and not extra_complete(args.plan, plan, args.seed, name):
                     code = 2
                     record["error"] = "child exited successfully without a verified endpoint"
                 update("complete" if code == 0 else "failed", exit_code=code, finished=time.time())
@@ -100,7 +99,7 @@ def main():
     except Busy as exc:
         print(f"BUSY: existing task or GPU owner holds {exc}; no process stopped, no lock removed", file=sys.stderr)
         return 75
-    except ValueError as exc:
+    except (ValueError, KeyError, TypeError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
