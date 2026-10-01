@@ -115,10 +115,13 @@ On-policy는 25 updates마다 후보 40문제를 다시 선정·채점하고 상
 가져와 cache 생성 단계를 건너뛰고, 없으면 checkout의 준비된 입력으로 생성한다.
 
 같은 실험 코드이면 위 명령으로 기존 checkpoint를 이어받는다. 실험 코드의
-identity가 달라졌으면 이전 결과를 보존하고 **새 cohort를 자동 생성하거나 합류**한다.
-`[new-run]`과 `automatic-restart.json`에 이전·새 경로가 남는다. 이 경우 기존
-학습 경로의 재개가 아니다. 새 cohort는 자체 생성 캐시를 다시 만들지만 출처가
-검증된 과거 Pair 캐시 import는 유지한다. 모든 참여 노드의 코드와 환경을 맞춘다.
+identity가 달라졌으면 **새 cohort를 자동 생성하지 않고 중단**한다. 기존 active
+경로·checkpoint·결과를 그대로 유지하며 재개에는 원래 실행 코드를 사용한다.
+과거 버전이 자동 생성한 실행에 `automatic-restart.json`이 있으면 아래
+`status/results`가 이전 실행까지 찾아 별도 표로 출력한다. JSON에는
+`previous_runs`로 포함하며 서로 다른 실행의 보상·비용은 합치지 않는다.
+저장 경로나 active pointer 검증 실패 시 빈 로컬 결과로 대체하지 않고 오류를 표시한다.
+모든 참여 노드의 코드와 환경을 맞춘다.
 
 ### 상태 / 결과 / 비용 / 백업
 

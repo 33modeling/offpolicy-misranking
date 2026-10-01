@@ -1,7 +1,6 @@
 """Keep large rebuttal artifacts on group storage without changing run identities."""
 
 from contextlib import ExitStack, nullcontext
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -171,7 +170,7 @@ def fresh_plan(source, environment, name, *, _locked=False):
 
 
 def automatic_plan(source, environment):
-    """Join compatible work, or preserve it and start one shared code-version run."""
+    """Continue compatible work; never replace an existing run after an update."""
     group, root = storage_root(environment)
     active = root / f".{source.stem}-active.json"
     with lease(root / ".storage.lock", wait=True):
@@ -198,17 +197,9 @@ def automatic_plan(source, environment):
         current = code_digest()
         if recorded is None or recorded == current:
             return target
-        # Stable across nodes, but distinct for each previous run and code version.
-        origin = hashlib.sha256(str(target).encode()).hexdigest()[:16]
-        name = f"code-{current[:16]}-{origin}"
-        replacement = fresh_plan(target, environment, name, _locked=True)
-        receipt = {"previous_plan": str(target), "previous_implementation_sha256": recorded,
-                   "implementation_sha256": current, "plan": str(replacement),
-                   "old_artifacts_preserved": True, "reason": "implementation changed"}
-        atomic_json(replacement.parent.parent / "automatic-restart.json", receipt)
-        print(f"[new-run] code changed {recorded} -> {current}; old work preserved at "
-              f"{run_root(target, plan)}; starting/joining {run_root(replacement, plan)}", file=sys.stderr, flush=True)
-        return replacement
+        raise ValueError(f"code changed {recorded} -> {current}; refusing to replace the existing run "
+                         f"at {run_root(target, plan)}. No active pointer or results changed. "
+                         "Use the original runtime to resume; status/results remain readable.")
 
 
 def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=False):

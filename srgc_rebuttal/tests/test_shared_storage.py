@@ -43,30 +43,23 @@ class SharedStorageTests(unittest.TestCase):
             input_path(plan, queue.plan, seed).unlink()  # only the active cohort has the real inputs
         return plan, env, target
 
-    def test_plain_run_rolls_changed_code_into_a_new_run_without_touching_old_work(self):
+    def test_plain_run_rejects_changed_code_without_hiding_old_work(self):
         with tempfile.TemporaryDirectory() as directory:
             plan, env, old = self.old_code_run(directory)
             before = {p: p.read_bytes() for p in old.parent.parent.rglob("*") if p.is_file()}
             with patch.dict(os.environ, env):
                 self.assertEqual(storage.route_plan(plan, writing=False), old)
-                target = storage.route_plan(plan, writing=True, start_or_continue=True)
-                self.assertNotEqual(target, old)
-                self.assertIn("code-" + code_digest()[:16], str(target))
-                queue = TaskQueue(target)
-                queue.bind()
-                for seed in queue.plan["seeds"]:
-                    self.assertEqual(json.loads(input_path(target, queue.plan, seed).read_text())["cached_rewards"], {})
-                checkpoint = queue.root / "seed-5/prefix-latest.pt"
-                checkpoint.parent.mkdir(parents=True)
-                checkpoint.write_bytes(b"new progress")
-                self.assertEqual(storage.route_plan(plan, writing=True, start_or_continue=True), target)
-                self.assertEqual(storage.route_plan(plan, writing=False), target)
-                self.assertEqual(checkpoint.read_bytes(), b"new progress")
+                _, root = storage.storage_root(env)
+                pointer = root / f".{plan.stem}-active.json"
+                saved = pointer.read_bytes()
+                with self.assertRaisesRegex(ValueError, "refusing to replace"):
+                    storage.route_plan(plan, writing=True, start_or_continue=True)
+                self.assertEqual(storage.route_plan(plan, writing=False), old)
+                self.assertEqual(pointer.read_bytes(), saved)
+                self.assertEqual(list((root / "fresh").iterdir()), [old.parent.parent.parent])
             self.assertEqual(before, {p: p.read_bytes() for p in old.parent.parent.rglob("*") if p.is_file()})
-            receipt = json.loads((target.parent.parent / "automatic-restart.json").read_text())
-            self.assertEqual(receipt["previous_plan"], str(old))
 
-    def test_two_plain_start_processes_join_the_same_code_replacement(self):
+    def test_two_plain_start_processes_cannot_replace_old_code_run(self):
         with tempfile.TemporaryDirectory() as directory:
             plan, env, old = self.old_code_run(directory)
             code = ("import sys; from pathlib import Path; from scripts.srgc_shared_storage import route_plan; "
@@ -77,11 +70,12 @@ class SharedStorageTests(unittest.TestCase):
             outputs = []
             for child in children:
                 stdout, stderr = child.communicate(timeout=20)
-                self.assertEqual(child.returncode, 0, stderr)
+                self.assertNotEqual(child.returncode, 0)
+                self.assertIn("refusing to replace", stderr)
                 outputs.append(stdout.strip())
             self.assertEqual(outputs[0], outputs[1])
-            self.assertNotEqual(outputs[0], str(old))
-            TaskQueue(Path(outputs[0])).bind()
+            with patch.dict(os.environ, env):
+                self.assertEqual(storage.route_plan(plan, writing=False), old)
 
     def test_automatic_start_then_restart_preserves_cache_checkpoint_and_failed_task(self):
         with tempfile.TemporaryDirectory() as directory:

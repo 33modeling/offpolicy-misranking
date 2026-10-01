@@ -285,6 +285,11 @@ def main():
     reports.snapshot = lambda plan_path, **kwargs: snapshot(original_snapshot, plan_path, **kwargs)
     reports.render = render
     try:
-        reports.main()
+        try:
+            from srgc_run_history import include_previous_runs
+        except ImportError:
+            from scripts.srgc_run_history import include_previous_runs
+        with include_previous_runs():
+            reports.main()
     finally:
         reports.snapshot, reports.render = original_snapshot, original_render

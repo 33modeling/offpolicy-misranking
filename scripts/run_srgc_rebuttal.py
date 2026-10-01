@@ -101,11 +101,7 @@ def main():
                         options.error("--bundle must be an input of the group-storage plan")
                     args = [*remaining, "--bundle", str(target)]
         elif not settings.plan and action != "plan":
-            try:
-                plan = route_plan(plan, writing=False)
-            except ValueError:
-                # Local CPU reports remain usable without a mounted node volume.
-                pass
+            plan = route_plan(plan, writing=False)
     args += ["--plan", str(plan)]
     if action in {"run", "cache"} and "WORLD_SIZE" not in os.environ and not any(a in {"-h", "--help"} for a in args):
         from srgc_rebuttal.cluster import direct
@@ -119,6 +115,11 @@ def main():
     if action == "status":
         from srgc_live_status import main as status_main
         status_main()
+    elif action == "results":
+        from srgc_rebuttal import reports
+        from srgc_run_history import include_previous_runs
+        with include_previous_runs():
+            reports.main()
     elif action == "cluster" and args[0] == "worker" and not any(a in {"-h", "--help"} for a in args):
         from contextlib import ExitStack
         from srgc_checkpoint_backup import automatic_backup
@@ -149,4 +150,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"INVALID: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None

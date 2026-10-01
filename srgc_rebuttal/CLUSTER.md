@@ -569,15 +569,15 @@ into memory. One process guard covers both datasets and reports each child
 failure once. These scheduler/reporting fixes preserve the experiment code
 identity and existing checkpoints; load them when restarting an idle worker.
 
-After an incompatible code update, ordinary `all run` automatically preserves
-the old run and starts/joins a separate run for the current implementation.
-No environment-variable prefix is required. Compatible runs continue unchanged;
-plan changes and corrupt queue identities still fail instead of being ignored.
-The `[new-run]` message reports both paths, and `automatic-restart.json` records
-the transition. Names are deterministic and selection is locked, so concurrent
-nodes join the same replacement without resetting progress. Input records come
-from the prior active cohort, while generated caches are rebuilt; historical
-Pair cache imports keep their existing provenance.
+After an incompatible code update, ordinary `all run` stops without creating a
+replacement or changing the active pointer. Resume the original run with its
+original runtime. Compatible runs continue unchanged; plan changes and corrupt
+queue identities also fail instead of being ignored.
+For transitions made by older launchers, `status/results` follow the saved
+`automatic-restart.json` chain and display previous runs in separate tables
+(JSON: `previous_runs`). They do not merge costs/rewards or move artifacts.
+Invalid storage routing fails visibly instead of falling back to an empty
+local queue. A missing previous run is reported as an error, not as success.
 
 An explicit name remains optional:
 
