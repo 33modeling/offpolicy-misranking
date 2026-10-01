@@ -20,6 +20,8 @@ from scripts.srgc_sr_refresh import arm_name, extra_arm, extra_complete, prepare
 
 
 def launch(args):
+    print(f"START seed-{args.seed}.{args.arm or arm_name(args.scope)}: verifying saved prefix",
+          flush=True)
     prepare_run_storage(args)
     plan = load_plan(args.plan)
     name = args.arm or arm_name(args.scope)
@@ -39,6 +41,7 @@ def launch(args):
 
     # Serialize this tuple across nodes before allocating GPUs. The rank keeps
     # the existing execution lock; never remove or replace that lock file.
+    print("PREFLIGHT checking task ownership and GPU processes", flush=True)
     with process_guard(args.plan), lease(out / f".{arm}.launch.lock") as launch_lock:
         with lease(out / f".{arm}.execution.lock"):
             pass  # Also recognize a live job started by the old raw-torchrun launcher.
@@ -59,6 +62,7 @@ def launch(args):
         with cluster.device_leases(root.parent / "gpu-node-locks", uuids) as gpu_fds:
             fds = (*gpu_fds, launch_lock.fileno())
             try:
+                print(f"ADMISSION checking four GPUs and NCCL log={session / 'admission'}", flush=True)
                 admission = cluster.admit(session / "admission", environment, cluster.run_child,
                     pass_fds=fds, plan=plan, heartbeat=lambda pid: update("preflight", child_pid=pid))
                 progress = session / "progress"

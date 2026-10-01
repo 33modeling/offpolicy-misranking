@@ -267,7 +267,7 @@ class ExtraArmLaunchTests(unittest.TestCase):
                 patch("scripts.srgc_sr_refresh.prepare_verifier_runtime", side_effect=Prepared) as verifier:
             with self.assertRaises(Prepared):
                 run(options)
-        storage.assert_called_once_with(options)
+        storage.assert_called_once_with(options, verify_checkpoint=False)
         verifier.assert_called_once_with()
 
     def test_extra_timeout_records_124_and_releases_launch_lock(self):

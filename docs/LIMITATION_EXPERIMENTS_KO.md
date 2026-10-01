@@ -50,6 +50,14 @@ P0 worker와 P1을 함께 실행하지 않는다. 1노드 순차 실행도 가�
 
 ### 2026-10-01 추가 실험 시작 오류 수정
 
+시작 줄 이후 출력 없이 prefix를 검사하던 경로를 수정했다. 추가 arm의 prefix
+SHA-256 검사는 8 MiB씩 읽고 시작·5초 간격 진행량·완료를 출력한다. 전체 checkpoint를
+한 번에 메모리에 읽지 않는다. torchrun의 네 rank가 시작 전에 같은 파일을 각각
+읽던 중복도 제거했다. supervisor와 분산 초기화 후 rank 0에서 전체 해시를 검증하며,
+나머지 rank는 검증 결과를 받은 뒤 진행한다. 검사 생략이나 frozen core 변경은 없다.
+콘솔에는 `START`, `PREFIX`, `PREFLIGHT`, `ADMISSION`, `RUN` 단계가 표시된다.
+업데이트 후 기존 명령 그대로 실행한다. 이미 학습 중인 작업은 중단하지 않는다.
+
 `srgc_sr_refresh.py`의 P1 등 추가 arm에서 `PackageNotFoundError: math-verify`가
 발생한 원인은 P0에 있던 오프라인 verifier 준비가 빠졌기 때문이다. 이제 group
 저장소 경로를 확인한 뒤, NCCL 초기화와 패키지 버전 기록 전에 동일한 hash 검증

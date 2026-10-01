@@ -258,10 +258,10 @@ def continue_updates(current, out, arm, launch_arm, total_updates, extras, polic
 
 def run(args):
     """Inside torchrun: fork the arm from the shared prefix and run it to the plan's total."""
-    prepare_run_storage(args)
+    prepare_run_storage(args, verify_checkpoint=False)
     prepare_verifier_runtime()
     from srgc_rebuttal.plan import digest, input_path, load_plan, validate_inputs
-    from srgc_rebuttal.runtime import atomic_json, identity, lease, matches, prefix_ready, run_root
+    from srgc_rebuttal.runtime import atomic_json, identity, lease, matches, run_root
     from srgc_rebuttal.srgc import Config
     from srgc_rebuttal.cost_ledger import PhaseLedger
     from srgc_rebuttal.timing import invocation, torch_meter
@@ -305,9 +305,7 @@ def run(args):
         def startup():
             data = json.loads(input_path(args.plan, plan, args.seed).read_text())
             validate_inputs(data)
-            expected = identity(args.plan, plan, args.seed)
-            if not prefix_ready(folder, expected, plan["shared_prefix_updates"]):
-                raise ValueError("the verified shared prefix must finish before this arm can start")
+            expected, _ = result_identity(args.plan, plan, args.seed)
             return data, expected, extra_complete(args.plan, plan, args.seed, launch_arm)
         data, expected, complete = primary(startup)
         if complete:
@@ -445,7 +443,7 @@ def prepare_verifier_runtime():
     verifier_environment(os.environ)
 
 
-def prepare_run_storage(args):
+def prepare_run_storage(args, *, verify_checkpoint=True):
     """Set cache paths in the GPU process, not just the shell's plan lookup child."""
     from scripts.srgc_shared_storage import route_plan, storage_root
     from srgc_rebuttal.plan import load_plan
@@ -457,14 +455,15 @@ def prepare_run_storage(args):
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
     if not folder.is_relative_to(group):
         raise ValueError("extra arms require an existing group-volume run; start the main queue first")
-    result_identity(args.plan, plan, args.seed)
+    result_identity(args.plan, plan, args.seed, verify_checkpoint=verify_checkpoint)
     args.plan = route_plan(args.plan, writing=True)
 
 
-def result_identity(plan_path, plan, seed, *, recorded=False):
+def result_identity(plan_path, plan, seed, *, recorded=False, verify_checkpoint=True):
     """Recorded identities are for read-only reports, never admission or resume."""
-    from srgc_rebuttal.runtime import identity, matches, prefix_ready
+    from srgc_rebuttal.runtime import identity, matches
     from srgc_rebuttal.runtime import run_root
+    from scripts.srgc_prefix_check import verify_prefix
     expected = identity(plan_path, plan, seed)
     folder = run_root(plan_path, plan) / f"seed-{seed}"
     if recorded:
@@ -474,15 +473,9 @@ def result_identity(plan_path, plan, seed, *, recorded=False):
                 or not marker["implementation_sha256"]):
             raise ValueError(f"{folder}: run identity differs from plan or inputs")
         expected["implementation_sha256"] = marker["implementation_sha256"]
-    prefix_path = folder / "prefix-ready.json"
-    if not prefix_path.exists():
-        raise ValueError("the verified shared prefix must finish before this arm can start")
-    prefix = json.loads(prefix_path.read_text())
-    if not isinstance(prefix, dict):
-        raise ValueError(f"{folder}: shared prefix receipt is missing or not a JSON object")
-    if not prefix_ready(folder, expected, plan["shared_prefix_updates"]):
-        raise ValueError(f"{folder}: verified shared prefix is missing")
-    return expected, prefix["checkpoint_sha256"]
+    prefix_hash = verify_prefix(folder, expected, plan["shared_prefix_updates"],
+                                verify_checkpoint=verify_checkpoint)
+    return expected, prefix_hash
 
 
 def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None):
