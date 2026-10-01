@@ -15,6 +15,11 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 
 ## 지금 할 일
 
+**추가 실험은 자동 배정이 아니다. 같은 명령을 5개 노드에 넣으면 5개 작업이 아니라
+같은 작업의 중복 실행이 되어 하나만 시작하고 나머지는 잠금에 걸린다.**
+아래 5노드 표처럼 **노드마다 seed를 다르게** 입력한다. 이미 실행 중인 행은 다시 실행하지 않는다.
+기본 `run_srgc.sh ... run`과 Qwen queue의 자동 배정 방식과 구분한다.
+
 **MATH·MBPP 모두 seeds 5-9, 고정 전환은 `switch_fixed200` 하나다.**
 100·125는 이번 실행 목록이 아니다. 기존 MATH·MBPP 네 arm의 최종 수치는 이미
 제공받았으므로 기본 실험 40개를 일괄 재실행하지 않는다. 저장된 endpoint와 비용을
@@ -40,6 +45,41 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 완료·실행 중인 작업을 빼고 배정한다. Qwen cache/prefix는 별도 선행 작업이다.
 1노드로 순차 실행할 수 있고, 15노드가 있으면 아래 예시처럼 채운다.
 동시 실행 규모에 대한 GPU/공유 저장소 부하 검증 수치는 아니다.
+
+### 5노드에 바로 입력할 명령
+
+고정 전환은 총 10개지만 **노드는 5개만 있어도 된다.** 노드당 한 작업씩 실행한다.
+먼저 아래 MATH 5개를 각각 다른 노드에 배정한다. node 1에서 MATH seed 5가 이미
+돌고 있으면 그대로 두고 node 2-5만 시작한다. 새 터미널은 새 GPU 노드가 아니다.
+
+| 실제 노드 | 첫 작업: 해당 노드에서 이 명령 하나만 실행 |
+| --- | --- |
+| 1 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` |
+| 2 | `sh scripts/run_srgc_sr_refresh.sh math 6 switch_fixed200` |
+| 3 | `sh scripts/run_srgc_sr_refresh.sh math 7 switch_fixed200` |
+| 4 | `sh scripts/run_srgc_sr_refresh.sh math 8 switch_fixed200` |
+| 5 | `sh scripts/run_srgc_sr_refresh.sh math 9 switch_fixed200` |
+
+각 노드의 MATH 작업이 **정상 완료되고 worker가 종료되면**, 그 노드에서 아래 다음
+작업 하나를 실행한다. 다른 네 노드가 끝날 때까지 기다리지 않는다. 이미 해당 MBPP
+작업이 다른 노드에서 실행 중이거나 완료됐다면 중복 배정하지 않는다.
+
+| 실제 노드 | 다음 작업: 그 노드가 빈 뒤 실행 |
+| --- | --- |
+| 1 | `sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_fixed200` |
+| 2 | `sh scripts/run_srgc_sr_refresh.sh mbpp 6 switch_fixed200` |
+| 3 | `sh scripts/run_srgc_sr_refresh.sh mbpp 7 switch_fixed200` |
+| 4 | `sh scripts/run_srgc_sr_refresh.sh mbpp 8 switch_fixed200` |
+| 5 | `sh scripts/run_srgc_sr_refresh.sh mbpp 9 switch_fixed200` |
+
+MBPP부터 시작한 5노드는 그 작업을 유지하고, 끝난 노드에 같은 seed의 미실행 MATH
+작업을 넣어도 된다. 순서는 자원 배정일 뿐 계산 의존성이 아니다.
+fixed 10개가 모두 완료 또는 실행 중이면 빈 노드에는 위 배정 순서의 E03 독립 반복을 넣는다.
+고정 전환과 독립 반복은 같은 prefix만 있으면 동시에 실행 가능하다.
+
+`.switch_fixed200.launch.lock`의 `BUSY`는 파일이 남았다는 이유만으로 발생하지 않는다.
+그 **dataset·seed·arm의 잠금을 다른 프로세스가 보유**한다는 뜻이다.
+다른 시드인데도 막히면 실행 명령과 잠금 전체 경로를 확인하며 파일을 삭제하지 않는다.
 
 ### 15노드 첫 배정
 
