@@ -1,4 +1,4 @@
-# Install into a separate CUDA venv; never upgrade the live OLMo environment.
+# Qwen requirements for the shared CUDA venv; never upgrade it during live jobs.
 # Keep the cluster's CUDA-compatible PyTorch build (no torch replacement here).
 transformers==5.14.1
 peft==0.20.0

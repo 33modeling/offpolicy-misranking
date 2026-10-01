@@ -200,17 +200,16 @@ sh scripts/run_srgc_sr_refresh.sh mbpp results
 원래 arm 이름의 `<arm>-{latest.pt,progress.json,endpoint.json}`, `cost-receipts/<arm>/`를 둔다.
 결과 요약을 전체 비용 합계로 해석하지 않는다. 자세한 산출물과 재시작 조건은 아래 3-4절에 있다.
 
-### Qwen: 별도 환경과 전용 queue
+### Qwen: 공통 Python 환경과 전용 queue
 
 `56be4d1`에서 추가된 전용 온라인 실험이다. 과거 `run_qwen35_9b.sh` selection
-매트릭스와 구분한다. [상세 준비 안내](QWEN35_SRGC_KO.md)와
-[환경 명세](../configs/srgc_qwen35/requirements.txt)를 따르고, OLMo 환경을
-업그레이드하지 않는다. 아래 `QWEN_PYTHON` 예시는 group-volume `OM_WORK`가
-설정되어 있고 별도 Qwen 환경이 이미 준비되어 있을 때 사용한다.
+매트릭스와 구분한다. OLMo와 같은 `PAIR_PYTHON`/`SWITCH_PYTHON` 또는
+공통 `.venv-cu126` 환경을 사용한다. 별도 Qwen 환경 지정은 필요 없다.
+[상세 준비 안내](QWEN35_SRGC_KO.md)와
+[환경 명세](../configs/srgc_qwen35/requirements.txt)를 따른다.
+공유 환경에서 학습 중에는 패키지를 업그레이드하지 않는다.
 
 ```sh
-export QWEN_PYTHON="$OM_WORK/.venv-qwen35/bin/python"
-
 # 모델 준비는 다운로드 가능한 환경에서 1회; doctor는 실제 GPU admission을 대신하지 않음
 sh scripts/run_srgc_qwen35.sh all download
 sh scripts/run_srgc_qwen35.sh all doctor

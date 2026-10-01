@@ -42,7 +42,7 @@ P1 전체는 `replicate1-sr/switch`, `replicate2-sr/switch`, `switch_fixed200`�
 | E05 / P2 | 후보 40개 SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E06 / P2 | 반복 전환 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E07 / P3 | 전체 candidate pool SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
-| E08 / P3 | Qwen3.5-9B 온라인 네 arm | MATH 20 + MBPP 20 | 별도 환경·v2 root; 실제 GPU admission 통과 |
+| E08 / P3 | Qwen3.5-9B 온라인 네 arm | MATH 20 + MBPP 20 | 공통 Python 환경·별도 v2 root; 실제 GPU admission 통과 |
 | E09 / P3 | 초기 gradient 방향 matched ablation | MATH 15 + MBPP 15 (3조건 × 5 seeds) | `direction_removed`, `direction_magnitude`, `direction_replaced`; seed별 수동 배정, 해당 prefix 완료 |
 | E10 / P3 | 같은 유지 간격의 cached-SR 대조 | MATH 5 + MBPP 5 | `sr_hold`; seed별 수동 배정, 해당 prefix 완료 |
 
@@ -76,7 +76,6 @@ export OM_USER=minsoo3.kim
 export OM_WORK="$GROUP_VOLUME/$OM_USER/offpolicy-misranking"
 export PAIR_PYTHON="$OM_WORK/.venv-cu126/bin/python"
 export SWITCH_PYTHON="$OM_WORK/.venv-cu126/bin/python"
-export QWEN_PYTHON="$OM_WORK/.venv-qwen35/bin/python"
 
 test -d "$GROUP_VOLUME"
 df -h "$GROUP_VOLUME"
@@ -291,7 +290,8 @@ arm 파일명은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-p
 
 ## 5. E08 — Qwen3.5-9B, 별도 v2 실험
 
-OLMo Python을 업그레이드하지 않는다. 별도 Qwen CUDA 환경 준비는
+OLMo와 같은 Python 환경을 사용하며 `QWEN_PYTHON` 지정은 필요 없다.
+공유 환경의 실행 중 패키지를 변경하지 않는다. Qwen 패키지 조건은
 [Qwen 실행 안내](QWEN35_SRGC_KO.md)와
 [패키지 목록](../configs/srgc_qwen35/requirements.txt)을 따른다.
 대상은 **post-trained `Qwen/Qwen3.5-9B`**, Base 모델이 아니다.

@@ -39,17 +39,22 @@ On-policy/Switch의 refresh 비용에는 후보 두 집합의 합집합 및 vali
 
 ## 준비와 실행
 
-실행 코드는 `master`. 기존 OLMo Python 환경을 업그레이드하지 말고
-별도 CUDA 환경을 `QWEN_PYTHON`으로 지정한다. 패키지 목록은
+실행 코드는 `master`. OLMo와 같은 Python 환경을 기본으로 사용한다.
+`math/all`은 `PAIR_PYTHON`, `mbpp`는 `SWITCH_PYTHON`을 따르며,
+미지정 시 `${VENV_DIR:-$OM_WORK/.venv-cu126}/bin/python`을 사용한다.
+`QWEN_PYTHON`은 기존 실행의 환경을 명시적으로 유지할 때만 쓰는 override다.
+별도 `.venv-qwen35` 생성이나 환경변수 지정은 필요 없다. 패키지 목록은
 [`configs/srgc_qwen35/requirements.txt`](../configs/srgc_qwen35/requirements.txt).
 CUDA PyTorch는 노드의 검증된 빌드를 유지한다. FLA 0.5.2가 필요하며
 추론뿐 아니라 dense scoring/LoRA 역전파가 실제 GPU admission을 통과해야 한다.
 Transformers 5.14.1 / PEFT 0.20.0 / FLA 0.5.2를 검사하고, 최초 worker의
 PyTorch·CUDA·cuDNN·Python·나머지 패키지 버전을 각 queue에 기록한다.
 다른 환경의 노드나 환경이 바뀐 재시작은 작업을 받기 전에 거부한다.
+공유 환경이 이 버전을 충족하는지는 `doctor`로 확인한다. launcher는 패키지를
+자동 설치하거나 업그레이드하지 않는다. 공유 환경에서 학습이 실행 중이면
+패키지를 바꾸지 않는다. 기존 Qwen 결과의 환경 일치 검사도 유지한다.
 
 ```sh
-export QWEN_PYTHON="$OM_WORK/.venv-qwen35/bin/python"
 sh scripts/run_srgc_qwen35.sh all download
 sh scripts/run_srgc_qwen35.sh all doctor
 sh scripts/run_srgc_qwen35.sh all prepare
