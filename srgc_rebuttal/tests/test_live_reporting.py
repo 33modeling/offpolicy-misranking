@@ -160,7 +160,7 @@ class LiveStatusTests(unittest.TestCase):
             cache = next(r for r in report["tasks"] if r["task"] == "seed-5.cache")
             self.assertNotIn("current_step", cache)
             self.assertRegex(live.render(report), r"(?m)^\s*5\s+done\s+done\s")
-        self.assertEqual(code_digest(), "f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b")
+        self.assertEqual(code_digest(), "9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7")
 
     def test_status_hook_restored_after_exit(self):
         original_snapshot, original_render = reports.snapshot, reports.render

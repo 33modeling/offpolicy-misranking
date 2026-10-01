@@ -214,8 +214,9 @@ class StepCheckpointTests(unittest.TestCase):
                     checkpoints.worker_main()
             self.assertIs(cluster.task_command, original)
 
-    def test_frozen_experiment_digest_unchanged(self):
-        self.assertEqual(code_digest(), "f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b")
+    def test_corrected_experiment_has_a_new_identity(self):
+        self.assertNotEqual(code_digest(), "f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b")
+        self.assertEqual(code_digest(), "9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7")
 
 
 if __name__ == "__main__":

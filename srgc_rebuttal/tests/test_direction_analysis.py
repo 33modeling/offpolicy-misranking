@@ -49,6 +49,9 @@ class DirectionRecordTest(unittest.TestCase):
         self.assertIsNone(record["d"])
         self.assertIn("on_mean_cos", record)
         self.assertIn("ranking_gap4", record)
+        self.assertEqual(record["sr_ids"], [])
+        self.assertNotIn("sr_mean_norm", record)
+        self.assertNotIn("sr_mean_cos", record)
 
     def test_switch_repeat_records_in_both_modes(self):
         engine = make("switch_repeat", SwitchRepeatEngine)
@@ -84,7 +87,7 @@ class DirectionAnalysisTest(unittest.TestCase):
             self.assertEqual(rows[-1]["d_source"], "reconstructed_diagnostic")
             self.assertIn("+0.000(0.000)", analysis.summarize([rows[-1]]))
 
-    def test_on_policy_d_is_reconstructed_without_mutating_decision_records(self):
+    def test_on_policy_without_sr_gradients_has_no_reconstructed_d(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             engine = make("on_policy", RecordedSwitch)
@@ -96,8 +99,10 @@ class DirectionAnalysisTest(unittest.TestCase):
             before = path.read_bytes()
             rows = analysis.refresh_rows(root)
             for row in rows:
-                self.assertEqual(row["d_source"], "reconstructed_diagnostic")
-                self.assertAlmostEqual(row["d"], row["on_dot"] - row["sr_dot"])
+                self.assertIsNone(row["d_source"])
+                self.assertIsNone(row["d"])
+                self.assertIsNone(row["sr_dot"])
+                self.assertIsNotNone(row["on_mean_cos"])
             self.assertEqual(len(rows), 3)
             self.assertTrue(all(record["d"] is None for record in engine.history))
             self.assertEqual(path.read_bytes(), before)

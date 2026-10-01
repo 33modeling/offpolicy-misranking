@@ -32,6 +32,9 @@ class SwitchFixedTest(unittest.TestCase):
             self.assertEqual(len(backend.score_calls), scoring_before + 2)  # no scoring after the transition
             self.assertTrue(all(r["selector"] == "sr" for r in engine.history[100:]))
             self.assertTrue(all(r["d"] is None for r in engine.history))
+            for refresh in (r for r in engine.history if r["selection_refreshed"]):
+                self.assertEqual(refresh["sr_ids"], [])
+                self.assertEqual(refresh["scored_distinct_prompts"], 40)
 
     def test_transition_step_must_sit_on_a_refresh_boundary(self):
         with self.assertRaisesRegex(ValueError, "multiple"):

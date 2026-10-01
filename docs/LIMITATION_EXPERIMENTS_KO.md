@@ -271,7 +271,7 @@ total 275 updates, 4-GPU 실행이다. 각 update의 학습은 4문제 x 새 응
 | `sr_refresh-pool` | 25 updates마다 전체 400개 x 8응답으로 성공률 갱신, 상위 4개 유지 | 계속 전체 pool 갱신 | `sr_refresh`와 범위/비용 비교 |
 | `switch_repeat` | 기존 Switch와 같은 전환 규칙으로 시작 | SR 상태에서도 check를 계속하고 양의 D 확인 시 On-policy로 복귀 가능 | 일회 전환 `switch`와 비교 |
 | `sr_hold` | 25 updates마다 무작위 40개를 **캐시** SR 점수로 정렬해 상위 4개를 다음 refresh까지 유지 (rollout 없음) | 계속 캐시 사용 | `sr_refresh` − `sr_hold` = 갱신 효과, `sr_hold` − `sr` = 유지 간격 효과 |
-| `direction_removed` | On-policy와 같은 refresh·후보 40·SR 비교 40·scoring·validation gradient; 선별만 채점된 40개 중 균등 무작위 4개 | 계속 (전환 없음) | `on_policy`와 비교: 방향·크기 정보 모두 제거, 비용은 동일 |
+| `direction_removed` | On-policy와 같은 refresh·후보 40·scoring·validation gradient; SR 비교 gradient 없음. 선별만 채점된 40개 중 균등 무작위 4개 | 계속 (전환 없음) | `on_policy`와 비교: 방향·크기 정보 모두 제거, 계산 범위 동일 |
 | `direction_magnitude` | 같은 절차; 선별을 projected gradient norm 순으로 | 계속 | `on_policy`와 비교: 크기만 남기고 방향 제거 |
 | `direction_replaced` | 같은 절차; validation 방향을 refresh마다 뽑은 무작위 단위 벡터로 대체해 cosine 정렬 | 계속 | `on_policy`와 비교: 방향은 쓰되 validation 정보 없음 |
 | `replicate<k>-<arm>` | `<arm>`(random/sr/on_policy/switch/switch_fixed<N>)과 동일; 분기 이후 sampling stream(후보 추출·응답 생성·tie-break)만 `sampling_seed(base seed, k)`로 교체 | `<arm>`과 동일 | 같은 k의 arm끼리 paired; 평가는 base seed 규칙 유지 |
@@ -284,8 +284,11 @@ total 275 updates, 4-GPU 실행이다. 각 update의 학습은 4문제 x 새 응
 다르다. 따라서 이 비교를 "갱신 여부만 바꾼 순수 ablation"으로 쓰면 안 된다.
 그 효과만 분리하는 동일 유지 간격의 cached-SR 대조가 `sr_hold`(E10)다.
 
-현재 On-policy/Switch scoring은 On 후보 40개와 SR 비교 40개의 합집합 및 단일
-validation 50개를 계산한다. 반면 `sr_refresh`는 후보 성공률만 얻으며 scoring
+On-policy scoring은 후보 40개와 단일 validation 50개만 계산한다. Switch는
+D를 확인하는 시점에만 SR 비교 40개를 추가하며, 후보와 중복된 문제는 한 번만
+계산한다. 방향 ablation과 고정 시점 전환 대조에도 SR 비교 gradient는 없다.
+수정 전 샘플의 비용 기록은 그대로 보존하며 수정 후 실행과 섞지 않는다.
+반면 `sr_refresh`는 후보 성공률만 얻으며 scoring
 backward/validation 생성은 하지 않는다. 후보 320응답이라는 이유로 총 scoring
 예산이 On-policy와 정확히 같다고 쓰지 않는다. 반복 전환은 SR 상태에서도 이
 scoring 비용이 발생하므로 기존 일회 전환의 미미한 산술 비용과 혼동하지 않는다.

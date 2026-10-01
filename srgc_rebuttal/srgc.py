@@ -201,7 +201,7 @@ class Engine:
     """
 
     ARMS = {"on_policy", "switch", "sr", "random"}
-    SAMPLING_PROTOCOL = "random-candidate40-training4-contrast40-v2"
+    SAMPLING_PROTOCOL = "random-candidate40-training4-switch-only-contrast40-v3"
 
     def __init__(self, backend: Backend, candidate_ids: Sequence[str],
                  validation_ids: Sequence[str], cached_rewards: Mapping[str, Sequence[float]],
@@ -333,7 +333,9 @@ class Engine:
         if refresh:
             started = self._begin("selection")
             on_ids = self._draw_candidates()
-            sr_ids = self._sr_comparison()
+            check_due = (self.arm == "switch" and self.step >= c.first_check and
+                         self.step % c.check_interval == 0)
+            sr_ids = self._sr_comparison() if check_due else ()
             # The 40-vs-40 diagnostic is separate from the four-prompt training batch.
             union = tuple(dict.fromkeys((*on_ids, *sr_ids)))
             gradients = self._vectors(union, c.candidate_group_size, "selection")
@@ -345,8 +347,7 @@ class Engine:
                                     stream_seed(c.seed + 1000, self.step, "online-ties"))
             self.active_selection = {"step": self.step, "on_ids": list(on_ids),
                                      "train_ids": list(train_ids)}
-            if (self.arm == "switch" and self.step >= c.first_check and
-                    self.step % c.check_interval == 0):
+            if check_due:
                 d_started = time.perf_counter()
                 # Pure array arithmetic. No backend call, no generation/backward pass.
                 with self._timing_scope("sr_gc_check"):

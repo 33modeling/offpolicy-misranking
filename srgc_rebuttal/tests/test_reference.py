@@ -141,6 +141,44 @@ class EngineTests(unittest.TestCase):
         backend.strengths = {i: float(len(ids) - n) for n, i in enumerate(engine.sr_ranked_ids)}
         return engine, backend
 
+    def test_on_policy_never_scores_sr_comparison_prompts(self):
+        engine, backend = self.make_engine(arm="on_policy")
+        with patch.object(engine, "_sr_comparison", side_effect=AssertionError("no SR preview")), \
+                patch("srgc_rebuttal.srgc.gradient_contrast", side_effect=AssertionError("no D")):
+            engine.run_until(76)
+        refreshes = [r for r in engine.history if r["selection_refreshed"]]
+        self.assertEqual([r["checkpoint"] for r in refreshes], [25, 50, 75])
+        for record, (ids, _) in zip(refreshes, backend.score_calls[::2], strict=True):
+            self.assertEqual(tuple(record["on_ids"]), ids)
+            self.assertEqual(len(ids), 40)
+            self.assertEqual(record["sr_ids"], [])
+            self.assertEqual(record["scored_distinct_prompts"], 40)
+            self.assertIsNone(record["d"])
+
+    def test_switch_scores_sr_only_when_a_check_is_due(self):
+        engine, backend = self.make_engine(step=0)
+        engine.config = Config(projection_dim=2, first_check=50, check_interval=50)
+        with patch.object(engine, "_sr_comparison", wraps=engine._sr_comparison) as preview:
+            engine.run_until(76)
+        refreshes = [r for r in engine.history if r["selection_refreshed"]]
+        self.assertEqual(preview.call_count, 1)
+        for record, (ids, _) in zip(refreshes, backend.score_calls[::2], strict=True):
+            if record["checkpoint"] == 50:
+                self.assertEqual(len(record["sr_ids"]), 40)
+                self.assertIsNotNone(record["d"])
+                self.assertEqual(set(ids), set(record["on_ids"]) | set(record["sr_ids"]))
+            else:
+                self.assertEqual(record["sr_ids"], [])
+                self.assertEqual(len(ids), 40)
+                self.assertIsNone(record["d"])
+
+    def test_legacy_sr_scoring_checkpoint_cannot_mix_with_corrected_run(self):
+        engine, _ = self.make_engine(arm="on_policy")
+        state = engine.state_dict()
+        state["sampling_protocol"] = "random-candidate40-training4-contrast40-v2"
+        with self.assertRaisesRegex(ValueError, "protocol"):
+            engine.load_state_dict(state)
+
     def test_refresh_and_compare_40_candidates_and_40_sr_prompts(self):
         engine, backend = self.make_engine()
         record = engine.update()
@@ -201,6 +239,8 @@ class EngineTests(unittest.TestCase):
         refreshes = [r["checkpoint"] for r in fork.history if r["selection_refreshed"]]
         self.assertEqual(refreshes, list(range(25, 275, 25)))
         self.assertEqual(len(backend.score_calls), 20)
+        self.assertEqual(sum(len(ids) for ids, _ in backend.score_calls[::2]), 400)
+        self.assertTrue(all(not r["sr_ids"] for r in fork.history if r["selection_refreshed"]))
         self.assertEqual(sum(r["selection_refreshed"] for r in prefix.history), 1)
         self.assertEqual(len(backend.training), 250)
 

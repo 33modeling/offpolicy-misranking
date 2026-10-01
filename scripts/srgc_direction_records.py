@@ -16,8 +16,9 @@ history record:
   four), on_cos_top4_minus_mean, ranking_gap4 (fourth minus fifth cosine).
 
 No training computation changes; the mixin only reads vectors that were
-computed anyway. It is applied from the scripts layer (the training child
-entry and the extra arms), so the hashed package is untouched.
+computed anyway. Without an SR-GC check, only On-policy/validation fields
+are recorded; SR fields are absent, not zero. It is applied from the scripts
+layer (the training child entry and the extra arms).
 """
 
 import numpy as np
@@ -53,20 +54,23 @@ class DirectionRecordMixin:
         selection, validation = stash.get("selection"), stash.get("validation")
         if not record.get("selection_refreshed") or selection is None or validation is None:
             return record
-        on_ids, sr_ids = record.get("on_ids"), record.get("sr_ids")
-        if not on_ids or not sr_ids or not all(i in selection for i in (*on_ids, *sr_ids)):
+        on_ids, sr_ids = record.get("on_ids"), record.get("sr_ids") or []
+        if not on_ids or not all(i in selection for i in (*on_ids, *sr_ids)):
             self._direction_stash = {}
             return record
         v = _mean(validation, list(validation))
-        g_on, g_sr = _mean(selection, on_ids), _mean(selection, sr_ids)
+        g_on = _mean(selection, on_ids)
         scores = record.get("ranking_scores")
         selected = record.get("selected_on_ids") or record.get("train_ids") or []
         fields = {
             "validation_norm": float(np.linalg.norm(v)),
-            "on_mean_norm": float(np.linalg.norm(g_on)), "sr_mean_norm": float(np.linalg.norm(g_sr)),
-            "on_mean_cos": _cos(g_on, v), "sr_mean_cos": _cos(g_sr, v),
+            "on_mean_norm": float(np.linalg.norm(g_on)),
+            "on_mean_cos": _cos(g_on, v),
             "on_random4_expected_dot": float(np.dot(v, g_on)),
         }
+        if sr_ids:
+            g_sr = _mean(selection, sr_ids)
+            fields.update(sr_mean_norm=float(np.linalg.norm(g_sr)), sr_mean_cos=_cos(g_sr, v))
         if selected and all(i in selection for i in selected):
             fields["on_top4_dot"] = float(np.dot(v, _mean(selection, selected)))
         if scores and len(scores) == len(on_ids):

@@ -44,10 +44,12 @@ The existing runner files and methods consulted are recorded in
 2. While On-policy selection is active, draw 40 candidates uniformly without
    replacement within each draw from the 400-prompt pool every 25 updates.
    Previously drawn candidates may reappear at a later refresh. Compute fresh
-   current-policy gradients for these 40 candidates **and the next 40 unused
-   SR prompts**. Generate eight responses per distinct prompt. Reuse a single
-   gradient for overlap; the union has at most 80 prompts. Merely scoring an
-   SR prompt does not mark it as trained.
+   current-policy gradients for these 40 candidates and the validation set.
+   Only Switch at a scheduled SR-GC check additionally scores the next 40
+   unused SR prompts. Generate eight responses per distinct prompt and reuse
+   a single gradient for overlap; a check's union has at most 80 prompts.
+   On-policy and its direction/fixed-time controls never score SR comparison
+   prompts. Merely scoring an SR prompt does not mark it as trained.
 3. Candidate scoring uses two leave-one-out groups of four responses. Each
    gradient sums response-token contributions and averages the eight responses.
    Each validation prompt uses one group of eight. Average validation gradients.
@@ -264,7 +266,8 @@ significance claim or favorable-seed filtering is automated.
 
 ## Time accounting and validation limits
 
-Selection timers include the distinct-prompt union, validation generation,
+Selection timers include the candidate set (plus SR comparison prompts only
+at Switch checks), validation generation,
 gradient computation, projection and ranking. They run on each 25-update refresh,
 and stop after switching. Training is timed separately. Timers synchronize
 the device; GPU-seconds are elapsed seconds multiplied once by allocated GPU

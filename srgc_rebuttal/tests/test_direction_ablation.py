@@ -58,9 +58,10 @@ class DirectionAblationTest(unittest.TestCase):
                 for mine, theirs in zip(refreshes, (r for r in reference.history if r["selection_refreshed"])):
                     self.assertEqual(mine["on_ids"], theirs["on_ids"])  # the candidate draw is stream-determined
                     self.assertEqual(mine["validation_ids"], theirs["validation_ids"])
-                    self.assertEqual(len(mine["sr_ids"]), 40)
-                    self.assertEqual(mine["scored_distinct_prompts"], len(set(mine["on_ids"]) | set(mine["sr_ids"])))
-                    if mine["checkpoint"] == 0:  # identical policy: identical SR preview and true cosines
+                    self.assertEqual(mine["sr_ids"], [])
+                    self.assertEqual(mine["scored_distinct_prompts"], 40)
+                    self.assertNotIn("sr_mean_norm", mine)
+                    if mine["checkpoint"] == 0:  # identical policy: identical true cosines
                         self.assertEqual(mine["sr_ids"], theirs["sr_ids"])
                         self.assertEqual(mine["ranking_scores"], theirs["ranking_scores"])
                     self.assertEqual(len(mine["selected_on_ids"]), 4)
@@ -69,8 +70,8 @@ class DirectionAblationTest(unittest.TestCase):
                     self.assertIn("on_top4_dot", mine)
                     self.assertEqual(mine["ablation"], mode)
                 # Same scoring calls (ids and stream seeds) and same training stream seeds: only the trained ids differ.
-                self.assertEqual([s[2] for s in backend.seeds if s[0] == "score"],
-                                 [s[2] for s in reference_backend.seeds if s[0] == "score"])
+                self.assertEqual([s for s in backend.seeds if s[0] == "score"],
+                                 [s for s in reference_backend.seeds if s[0] == "score"])
                 self.assertEqual([len(s[1]) for s in backend.seeds if s[0] == "score"][1::2],
                                  [len(s[1]) for s in reference_backend.seeds if s[0] == "score"][1::2])  # validation
                 self.assertEqual([s for s in backend.seeds if s[0] == "train"],

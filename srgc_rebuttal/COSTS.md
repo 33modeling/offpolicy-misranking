@@ -34,8 +34,9 @@ on each allocated node; it builds missing caches automatically. MBPP uses
 `worker --dataset mbpp` on each node with the included seed-5--9 inputs.
 The shared-prefix and four-arm schedule is unchanged: selection every 25
 updates, fresh training responses every update, endpoint at total update 275.
-The 2026-09-28 protocol scores 40 On-policy candidates plus the next 40
-unused SR prompts, at most 80 distinct prompts per refresh. SR-GC compares
+On-policy scores 40 candidates and validation prompts. Only a scheduled
+Switch check additionally scores the next 40 unused SR prompts, at most 80
+distinct candidate/SR prompts per check. SR-GC compares
 the means of those 40-prompt sets, not the four-prompt training batches. Random
 and SR draw 40 distinct candidates from the full pool each update, then take
 random four or SR-score top four within that draw; see [README.md](README.md).
@@ -48,7 +49,7 @@ Their CPU candidate sampling/ranking is included in the training phase.
 | Cache build | Tokenization, generation, decode, reward verification, response receipt writes, export, separate startup |
 | Startup | Tokenizer load, model/adapter load, backend setup |
 | Preparation | Cached-SR ranking and selector setup; no fixed Random subset is constructed |
-| Selection | 40-candidate/40-SR union and validation timed separately: generation, reward verification, forward, backward, projection, communication; cosine ranking; 40-vs-40 SR-GC arithmetic |
+| Selection | Candidates and validation timed separately: generation, reward verification, forward, backward, projection, communication; cosine ranking. Only Switch checks add the 40-SR union and 40-vs-40 SR-GC arithmetic |
 | Training | Fresh generation, reward verification, forward, backward, gradient reduction, clipping/optimizer, communication |
 | Evaluation | Fresh generation and reward verification; communication |
 | Checkpoint | Model/optimizer snapshot, write, read and restore |
@@ -58,10 +59,19 @@ Each rank records prompt, response, generated-token, active backward-response
 and zero-advantage-response counts. A skipped zero-advantage backward is not
 charged as a performed backward. The scoring union reuses overlap; validation
 is one reference, not A/B. SR-GC arithmetic reuses gradients and creates no
-extra rollout. The existing protocol also scores the SR comparison set during
-On-policy refreshes; those actual costs are retained, not silently subtracted.
+extra rollout beyond the scored union. On-policy, direction ablations and
+fixed-time controls do not compute SR comparison gradients. The legacy stage
+name `candidate_sr_union` remains readable; without a check it contains only
+the 40 On-policy candidates. Pre-fix receipts that include SR work retain their
+actual costs: aggregated union timings cannot identify an exact SR-only
+subtraction. Do not relabel those runs as corrected costs.
 On switching, scoring and SR-GC checks stop; fresh training continues.
 Selection is not extrapolated by multiplying a one-time measurement by updates.
+
+The corrected engine uses sampling protocol
+`random-candidate40-training4-switch-only-contrast40-v3`. Old checkpoints
+cannot resume into this protocol; keep archived runs and their receipts
+unchanged and use a new run identity for corrected measurements.
 
 ## Accounting rules
 

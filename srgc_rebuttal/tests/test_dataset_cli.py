@@ -45,7 +45,9 @@ class DatasetCLITests(unittest.TestCase):
                         if arm == "sr":
                             self.assertEqual(record["train_ids"], [i for i in engine.sr_ranked_ids if i in candidates][:4])
                         if arm in {"on_policy", "switch"}:
-                            self.assertEqual(len(set(record["sr_ids"])), 40)
+                            # At step zero neither arm performs a Switch check.
+                            self.assertEqual(record["sr_ids"], [])
+                            self.assertEqual(record["scored_distinct_prompts"], 40)
                     self.assertTrue(all(draw == draws[0] for draw in draws))
 
     def test_shipped_mbpp_inputs_are_real_valid_and_queue_ready_without_preparation(self):

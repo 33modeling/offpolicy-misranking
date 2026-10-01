@@ -4,7 +4,7 @@ The recorded Switch arm transitions when the SR-GC temporal rule fires (seed 3
 at 125, seed 4 at 100). Reviewers can ask whether the rule adds anything over
 simply switching at a fixed step. ``switch_fixed<N>`` answers that: it trains
 exactly like On-policy through update N (same 25-update candidate refreshes,
-same scoring of the 40-vs-40 sets, so its pre-transition cost equals Switch's),
+same scoring of the 40 candidates, without SR comparison gradients),
 records no decision, and from update N+1 trains with the fixed SR ranking
 exactly like the recorded Switch does after its transition. ``N`` must be a
 multiple of the selection interval so the transition falls on a refresh

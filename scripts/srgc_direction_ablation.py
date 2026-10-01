@@ -5,8 +5,8 @@ projected scoring gradient and the mean validation gradient, and trains the
 top four for 25 updates. The reading "the early On-policy advantage comes from
 that direction information" is only a correlation in the recorded runs. The
 ``direction_<mode>`` arms keep every other part of On-policy fixed - the same
-25-update refreshes, the same 40 candidates and 40 SR comparison prompts drawn
-from the same stream, the same scoring rollouts and validation gradients (so
+25-update refreshes, the same 40 candidates drawn from the same stream,
+the same scoring rollouts and validation gradients (so
 the scoring cost and the recorded decomposition are matched), the same
 four-prompt batch retained for 25 updates and the same training rollouts - and
 change only what the ranking may use:
@@ -91,22 +91,20 @@ class DirectionAblationEngine(DirectionRecordMixin, Engine):
         if not refresh and self.active_selection is None:
             raise ValueError("mid-block continuation requires the saved selected prompts")
         if refresh:
-            # Identical to On-policy's refresh (same draws, same scored union, same validation
+            # Identical to On-policy's refresh (same candidates, same validation
             # gradients) up to the ranking, which is the only ablated step.
             started = self._begin("selection")
             on_ids = self._draw_candidates()
-            sr_ids = self._sr_comparison()
-            union = tuple(dict.fromkeys((*on_ids, *sr_ids)))
-            gradients = self._vectors(union, c.candidate_group_size, "selection")
+            gradients = self._vectors(on_ids, c.candidate_group_size, "selection")
             val = self._vectors(self.validation, c.responses, "validation")
             with self._timing_scope("cosine_ranking"):
                 v = np.stack([val[i] for i in self.validation]).mean(axis=0)
                 cosines, scores, train_ids = self._ablated_ranking(on_ids, gradients, v)
             self.active_selection = {"step": self.step, "on_ids": list(on_ids), "train_ids": list(train_ids)}
             self._end("selection", started)
-            record.update(on_ids=list(on_ids), sr_ids=list(sr_ids), ranking_scores=cosines.tolist(),
+            record.update(on_ids=list(on_ids), sr_ids=[], ranking_scores=cosines.tolist(),
                           ablation_scores=scores.tolist(), selected_on_ids=list(train_ids),
-                          scored_distinct_prompts=len(union), validation_ids=list(self.validation),
+                          scored_distinct_prompts=len(on_ids), validation_ids=list(self.validation),
                           scoring_responses_per_prompt=c.responses)
         train_ids = tuple(self.active_selection["train_ids"])
         record["selection_step"] = self.active_selection["step"]
