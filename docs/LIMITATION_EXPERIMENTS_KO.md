@@ -1,6 +1,6 @@
 # Limitation 후속 실험: 구현 목록과 실행 기록
 
-구현·명령 점검: 2026-10-01, `master` (추가 runner 매-update 저장, attention 계승, 종료 전달 수정). 아래 날짜별 실행 기록은 보존한다.
+실행 안내 정리: 2026-10-02, `master`. 아래 날짜별 구현·검증 기록은 당시 상태로 보존한다.
 대응 원고: V7 `sections/discussion.tex`의 Discussion and Limitations.
 실행 코드는 이 저장소에만 유지한다. 논문 쪽 목록은 `v7/EXPERIMENTS.md`다.
 
@@ -24,6 +24,30 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 진행 중으로 기록하지 않는다. 기존 작업을 중단하거나 기존 결과를 덮어쓰지 않았다.
 
 ## 코드 위치와 명령 빠른 찾기
+
+### 지금 배정할 순서
+
+MATH·MBPP 모두 seeds 5-9다. 기존 네 arm은 제공받은 결과를 먼저 검증하며 일괄
+재실행하지 않는다. **고정 전환은 두 도메인 모두 `switch_fixed200`**만 배정한다.
+
+| 순서 | 실험 | 두 도메인 작업 수 / 최대 동시 노드 |
+| --- | --- | ---: |
+| 1 | E04 고정 전환 `switch_fixed200` | 10 |
+| 2 | E03 독립 반복 k=1,2의 SR/Switch | 40 |
+| 3 | E05 후보 SR 갱신 `candidates` | 10 |
+| 4 | E06 재전환 `switch_repeat` | 10 |
+| 5 | E10 cached-SR 유지 간격 대조 `sr_hold` | 10 |
+| 6 | E07 전체 pool 갱신 `pool` | 10 |
+| 7 | E08 Qwen 온라인 네 arm | 40; Qwen prefix 이전에는 최대 10 |
+| 8 | E09 방향 대조 3조건 | 30 |
+
+한 작업은 빈 4-H100 노드 하나다. OLMo 추가 arm끼리는 같은 seed의 검증된
+step-25 prefix만 필요하며 서로의 종료를 기다리지 않는다. Qwen은 자체 cache/prefix가 필요하다.
+15노드면 **MATH 고정 전환 5 + MBPP 고정 전환 5 + MATH replicate1-sr 5**로 시작한다.
+완료·실행 중인 항목은 빼고, 노드가 비는 즉시 다음 미실행 작업으로 채운다.
+복사할 명령 15줄과 이후 배정 순서는 [노드별 배정표](REBUTTAL_COMMANDS_KO.md#15노드-첫-배정),
+전체 조건은 [실행 명령](REBUTTAL_COMMANDS_KO.md#4-e03e07-e09-e10--추가-arm-120개)을 따른다.
+작업 수 상한과 현재 남은 작업 수는 다르며, 실제 원격 진행 상태는 조회해야 한다.
 
 ### P0/P1 최대 동시 노드 수
 
@@ -118,7 +142,7 @@ stack을 자동 출력한다. 원격 노드의 정지 원인을 실측 확인한
 | P0 | OLMo MATH/MBPP 네 arm | [run_srgc.sh](../scripts/run_srgc.sh) | [run_srgc_rebuttal.py](../scripts/run_srgc_rebuttal.py), [run_experiment.py](../srgc_rebuttal/run_experiment.py), [srgc.py](../srgc_rebuttal/srgc.py) |
 | P0 | 비용·결과·checkpoint | 같은 `run_srgc.sh`의 `results/costs/backup` | [reports.py](../srgc_rebuttal/reports.py), [cost_report.py](../srgc_rebuttal/cost_report.py), [cost_ledger.py](../srgc_rebuttal/cost_ledger.py), [srgc_checkpoint_backup.py](../scripts/srgc_checkpoint_backup.py) |
 | P1 | 동일 prefix의 독립 재현 | `sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr`, `... replicate1-switch` (k=1,2) | [srgc_replicate.py](../scripts/srgc_replicate.py)의 `ReplicateMixin`; 같은 launcher, 출력은 `seed-N/replicate-<k>/` (`997cab9`). 기존 `run` 재호출이나 `switch_repeat`는 대체가 아님 |
-| P1 | fixed-step-200 전환 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` | `srgc_switch_fixed.py`; checkpoint 200에서 전환하여 update 201부터 SR. 2026-09-29 경계 수정, 새 run 필요 |
+| P1 | fixed-step-200 전환 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` | `srgc_switch_fixed.py`; checkpoint 200에서 전환하여 update 201부터 SR. 수정된 경계 protocol의 checkpoint는 재개 가능; 구 경계 checkpoint와 혼합 금지 |
 | P2 | 후보 40개 SR 갱신 | [run_srgc_sr_refresh.sh](../scripts/run_srgc_sr_refresh.sh) | [srgc_sr_refresh.py](../scripts/srgc_sr_refresh.py)의 `SRRefreshEngine`, `scope=candidates` |
 | P3 | 같은 유지 간격의 cached-SR 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 sr_hold` | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=cached` (`997cab9`) |
 | P2 | 반복 전환 | 같은 `run_srgc_sr_refresh.sh` | [srgc_switch_repeat.py](../scripts/srgc_switch_repeat.py)의 `SwitchRepeatEngine`; 위 runner가 호출 |
@@ -133,7 +157,7 @@ stack을 자동 출력한다. 원격 노드의 정지 원인을 실측 확인한
 `status/results/costs`는 새 학습을 시작하지 않는다.
 
 ```sh
-# 같은 코드의 활성 실험 재개; 실험 코드 identity 변경 시 별도 cohort 생성/합류
+# 같은 코드의 활성 실험 재개; identity 변경 시 새 cohort를 만들지 않고 idle 대기
 sh scripts/run_srgc.sh math run
 sh scripts/run_srgc.sh mbpp run
 
@@ -160,45 +184,10 @@ MBPP는 [mbpp_pair_seeds.json](../srgc_rebuttal/experiments/mbpp_pair_seeds.json
 
 ### OLMo 추가 arm: seed별 실행
 
-해당 seed의 prefix 완료 후 별도 빈 노드에서 실행한다. 아래는 seed 5의 명령이며
-`5`를 `6`, `7`, `8`, `9`로 바꾼다. 한 줄은 한 arm이고 seed 전체 자동 순회가 아니다.
-같은 노드에서는 앞 작업 완료 후 다음 작업을 실행한다.
-
-```sh
-# P1: total step 200까지 On-policy, update 201부터 SR
-sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_fixed200
-
-# P2: 후보 40개 SR 갱신
-sh scripts/run_srgc_sr_refresh.sh math 5 candidates
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 candidates
-
-# P2: 반복 전환
-sh scripts/run_srgc_sr_refresh.sh math 5 switch_repeat
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_repeat
-
-# P3: 전체 pool SR 갱신
-sh scripts/run_srgc_sr_refresh.sh math 5 pool
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
-
-# P1 (E03): 같은 prefix의 독립 반복. k는 1, 2. 같은 k의 sr/switch가 한 쌍(공통 sampling stream)
-sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr
-sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-switch
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate1-sr
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate1-switch
-
-# P3 (E09): 방향 정보만 제거/대체한 On-policy 대조 3조건
-sh scripts/run_srgc_sr_refresh.sh math 5 direction_removed
-sh scripts/run_srgc_sr_refresh.sh math 5 direction_magnitude
-sh scripts/run_srgc_sr_refresh.sh math 5 direction_replaced
-
-# P3 (E10): 갱신 없이 유지 간격만 On-policy와 맞춘 cached-SR 대조
-sh scripts/run_srgc_sr_refresh.sh math 5 sr_hold
-
-# 추가 arm 결과와 selection 비용 요약 (독립 반복은 seed·k별 paired 차이로 함께 출력)
-sh scripts/run_srgc_sr_refresh.sh math results
-sh scripts/run_srgc_sr_refresh.sh mbpp results
-```
+실행 명령은 [통합 명령 모음 4절](REBUTTAL_COMMANDS_KO.md#4-e03e07-e09-e10--추가-arm-120개)에
+MATH·MBPP의 12조건을 빠짐없이 모았다. 각 줄의 seed 5를 6-9로 바꾸어 총 120개를 배정한다.
+해당 seed의 prefix 완료 후 별도 빈 노드에서 실행하며, 기본 queue가 자동 배정하지 않는다.
+한 줄은 한 arm이고 seed 전체 자동 순회가 아니다. 같은 노드에서는 앞 작업이 끝난 뒤 다음 작업을 실행한다.
 
 추가 arm에는 `status`/`costs` 명령이 없다. 상태는 콘솔과
 `seed-N/<arm>-progress.json`, 상세 비용은 `seed-N/cost-receipts/<arm>/`를 본다.
@@ -218,6 +207,7 @@ sh scripts/run_srgc_sr_refresh.sh mbpp results
 공유 환경에서 학습 중에는 패키지를 업그레이드하지 않는다.
 
 ```sh
+unset QWEN_PYTHON
 # 모델 준비는 다운로드 가능한 환경에서 1회; doctor는 실제 GPU admission을 대신하지 않음
 sh scripts/run_srgc_qwen35.sh all download
 sh scripts/run_srgc_qwen35.sh all doctor
@@ -241,31 +231,19 @@ Qwen은 자기 초기 정책으로 cache와 prefix를 새로 만들며 OLMo 결�
 
 ## 우선순위
 
-2026-09-28 지정. 기준은 **핵심 결과의 재현성, SR-GC 시점 선택의 추가 가치,
-비용 비교의 신뢰성**이다. 코드가 이미 있다는 이유만으로 더 중요한 미구현 대조보다
-앞세우지 않는다. 아래 순서는 신규 자원 배정과 구현의 우선순위이며, 진행 중인
-작업의 중단이나 낮은 순위 실험의 취소를 뜻하지 않는다.
-
-| 순서 | 우선순위 | 실험/작업 | 먼저 하는 이유 | 준비 상태 |
-| --- | --- | --- | --- | --- |
-| 1 | P0 | 추가 seeds 5-9의 MATH/MBPP 네 arm 완성 및 전체 비용 수집 | 관측 이득의 재현성과 실제 계산 비용을 함께 검증하는 기본 증거 | 구현됨; 기존 진행 유지, 누락 결과 확인 |
-| 2 | P1 | 동일 prefix에서 SR/Switch의 독립 학습 반복 | 같은 조건의 실행 변동과 Switch 이득을 직접 구분 | 구현됨 (`997cab9`, `replicate<k>-<arm>`); 반복 수 R=2와 stream 유도 규칙을 사전 고정, GPU 미실행 |
-| 3 | P1 | 사전 고정 total-step-200 전환 대조 | 전환 자체의 효과와 SR-GC timing rule의 추가 가치를 구분 | `switch_fixed200` 구현 및 경계 수정, GPU 결과는 별도 검증 필요 |
-| 4 | P2 | 후보 40개의 SR 성공률 갱신 `sr_refresh` | 오래된 캐시를 유지하는 전략과 갱신 전략의 성능·비용 비교 | 구현됨; 순수 갱신 효과 분리용 배치 유지 간격 통제 `sr_hold`도 구현 (`997cab9`, E10) |
-| 5 | P2 | 반복 전환 `switch_repeat` | 한 번만 전환하고 점검을 끝내는 선택의 성능·비용 trade-off 확인 | 구현됨; 전환 후 scoring 비용 포함 |
-| 6 | P3 | 전체 400개 갱신 `sr_refresh-pool` | 후보 범위를 넓힌 갱신의 추가 이득과 비용 확인 | 구현됨; 4번 다음 확장 |
-| 7 | P3 | 다른 backbone에서 동일 온라인 Switch | 모델 의존성과 일반화 검증 | Qwen3.5-9B 전용 온라인 runner 준비; CPU 검증, 9B GPU admission/실험은 대기 |
-| 8 | P3 | 초기 gradient 방향의 matched ablation | 초기 이점에 대한 인과적 설명 보강 | 구현됨 (`997cab9`, `direction_removed/magnitude/replaced` 3조건 사전 고정); 핵심 결과 검증 이후 배정 |
+배정 순서는 문서 앞의 [현재 배정 표](#지금-배정할-순서)로 통일한다.
+P1은 고정 전환과 독립 반복, P2는 후보 SR 갱신과 반복 전환, P3는 유지 간격·pool·
+모델·방향 대조다. 낮은 순위도 완료 대상이며, 정상 실행 중인 작업을 중단하지 않는다.
 
 ### 자원 배정과 완료 기준
 
 - **기존 실행은 유지:** MATH/MBPP의 정상 작업을 끄거나 처음부터 다시 시작하지 않는다. 새로 배정할 자원이 경쟁하면 주 결과인 MATH의 누락 paired 결과를 먼저 완성하고 MBPP를 완성한다. 이는 MBPP의 기존 진행 중단이나 계획 seed 제외를 뜻하지 않는다.
 - **비용은 1번부터 동시 수집:** 모든 실험에서 cache 생성/재사용, prefix, selection, training, 평가·저장 비용과 불완전 계측을 함께 기록한다. 비용만 뒤로 미루거나 unknown을 0으로 채우지 않는다.
-- **구현은 GPU 작업과 병행:** 2번의 replicate runner와 회귀 테스트는 09-30에 준비했고, 3번과 함께 prefix가 준비되면 배정한다. 새로 할당 가능한 GPU는 준비된 상위 순위 작업에 먼저 배정한다. 남는 별도 노드는 P2에 쓸 수 있지만 상위 작업을 밀어내지는 않는다.
-- **구현된 것의 실행 순서:** OLMo 기본 네 arm 및 비용, `replicate<k>-sr`/`replicate<k>-switch`, `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, `sr_hold`, Qwen 온라인 네 arm, `direction_*` 순서다. P2/P3의 추가 continuation을 P1 대조보다 먼저 완료해야 하는 것은 아니다.
+- **prefix 준비 후 바로 배정:** 고정 전환과 독립 반복은 구현돼 있다. 기본 네 arm 완료를 기다리지 않고 해당 seed의 prefix만 검증되면 서로 다른 빈 노드에서 시작한다.
+- **빈 노드에 다음 작업 배정:** 위 1-8번 순서로 미실행 항목을 선택한다. 상위 작업이 모두 실행 중이면 끝날 때까지 노드를 비워 두지 않고 다음 준비된 실험을 넣는다.
 - **seed·비교 조건은 결과와 무관하게 고정:** 계획된 seeds 5-9를 유지하고 모든 결과를 수집한다. 좋은 seed만 골라 다음 실험을 하거나 유리한 결과가 나온 시점에 반복을 종료하지 않는다. P1의 반복 수는 R=2(`replicate1`, `replicate2`), sampling stream은 `sampling_seed(base seed, k)`로 코드에 고정했다. 결과를 본 뒤 반복을 추가하면 그 사실을 표에 남긴다.
 - **P0 완료:** 예정된 네 arm/seed의 같은 total step 결과, paired 차이, 자기 경로의 전환 이력과 비용 receipt를 검증한다. 일부 arm만 끝난 평균을 최종 결과로 쓰지 않는다.
-- **P1 완료:** 2번은 동일 prefix·캐시·평가 조건의 SR/Switch 반복을 짝지어 보고하고, 3번은 같은 조건의 고정 전환과 Switch를 직접 비교한다. 결과가 무차이 또는 불리해도 함께 보고하며, 두 실험의 완료를 효과 입증과 동일시하지 않는다.
+- **P1 완료:** E03은 동일 prefix·캐시·평가 조건의 SR/Switch 반복을 짝지어 보고하고, E04는 같은 조건의 고정 전환과 Switch를 직접 비교한다. 결과가 무차이 또는 불리해도 함께 보고하며, 두 실험의 완료를 효과 입증과 동일시하지 않는다.
 
 6번은 refresh 한 번당 후보 응답 수가 320개에서 3,200개로 늘어난다. 이는
 전체 wall-time이 정확히 10배라는 추정이 아니다. 1-5번이 답하는 핵심 질문을
@@ -388,7 +366,7 @@ E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다
 
 추가 runner에는 별도 `status` 하위 명령이 없다. 기본 queue의 status/results가
 추가 arm을 자동 집계한다고 안내하지 않는다. 학습 콘솔의 `TRAIN ... step=N/275`,
-활성 root 아래 `seed-N/<arm>-run.json`, `<arm>-progress.json`을 확인한다.
+콘솔에 출력된 선택 plan의 run root 아래 `seed-N/<arm>-run.json`, `<arm>-progress.json`을 확인한다.
 최종 산출물은 `<arm>-endpoint.json`이며, 상세 비용은 같은 seed 아래
 `cost-receipts/<arm>/`, `invocations/<arm>/`에 남는다. 독립 반복은 같은 파일들을
 `seed-N/replicate-<k>/` 아래에 두고 `replicate.json`에 replicate id·sampling seed·prefix hash를
