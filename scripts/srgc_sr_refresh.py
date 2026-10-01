@@ -213,6 +213,7 @@ class SRRefreshEngine(Engine):
 def run(args):
     """Inside torchrun: fork the arm from the shared prefix and run it to the plan's total."""
     prepare_run_storage(args)
+    prepare_verifier_runtime()
     from srgc_rebuttal.plan import digest, input_path, load_plan, validate_inputs
     from srgc_rebuttal.runtime import arm_complete, atomic_json, identity, lease, matches, prefix_ready, run_root
     from srgc_rebuttal.srgc import Config
@@ -402,6 +403,12 @@ def replicate_manifest(out, expected, seed, replicate, prefix_hash):
         return saved
     atomic_json(path, manifest)
     return manifest
+
+
+def prepare_verifier_runtime():
+    """Use P0's pinned offline verifier before package receipts or CUDA startup."""
+    from srgc_rebuttal.existing_runtime import verifier_environment
+    verifier_environment(os.environ)
 
 
 def prepare_run_storage(args):

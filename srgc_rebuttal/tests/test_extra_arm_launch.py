@@ -89,6 +89,46 @@ class ExtraArmLaunchTests(unittest.TestCase):
                 self.assertTrue(Path(os.environ[key]).is_relative_to(self.group), key)
             self.assertEqual(args.plan, plan)
 
+    def test_extra_run_prepares_verifier_before_distributed_startup(self):
+        from scripts.srgc_sr_refresh import run
+        options = SimpleNamespace(plan=self.plan(), seed=5)
+        class Prepared(Exception):
+            pass
+        with patch("scripts.srgc_sr_refresh.prepare_run_storage") as storage, \
+                patch("scripts.srgc_sr_refresh.prepare_verifier_runtime", side_effect=Prepared) as verifier:
+            with self.assertRaises(Prepared):
+                run(options)
+        storage.assert_called_once_with(options)
+        verifier.assert_called_once_with()
+
+    def test_extra_runtime_bootstraps_verifier_without_installed_distribution(self):
+        # Isolate site-packages to reproduce the missing distribution without
+        # changing the user's Python environment or installing from the network.
+        command = """
+import importlib.metadata
+import sys
+import types
+sys.path.insert(0, sys.argv[1])
+sys.modules['numpy'] = types.ModuleType('numpy')
+try:
+    importlib.metadata.version('math-verify')
+except importlib.metadata.PackageNotFoundError:
+    pass
+else:
+    raise AssertionError('fixture must start without installed math-verify')
+from scripts.srgc_sr_refresh import prepare_verifier_runtime
+prepare_verifier_runtime()
+from math_verify import parse, verify
+assert verify(parse('1/2'), parse('0.5'))
+assert importlib.metadata.version('math-verify') == '0.9.0'
+print('offline verifier ready')
+"""
+        result = subprocess.run([sys.executable, "-S", "-c", command, str(ROOT)],
+            env={**os.environ, **self.environment, "PYTHONPATH": ""},
+            capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("offline verifier ready", result.stdout)
+
     def test_missing_or_changed_prefix_aborts_before_runtime_cache_creation(self):
         plan = self.plan()
         spec = load_plan(plan)

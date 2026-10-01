@@ -25,6 +25,40 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 
 ## 코드 위치와 명령 빠른 찾기
 
+### P0/P1 최대 동시 노드 수
+
+**한 작업은 4-H100 노드 1개를 사용한다.** 아래는 seeds 5-9, 독립 반복 k=1,2,
+고정 전환 `switch_fixed200` 한 조건 기준이다. 모든 해당 prefix가 준비되고
+아직 끝난 continuation이 없을 때의 작업 수 상한이며, 그 규모의 실측 성능이나
+현재 빈 노드 수를 뜻하지 않는다.
+
+| 대상 | MATH만 | MBPP만 | 두 데이터셋 합계 | 실행 조건 |
+| --- | --- | --- | --- | --- |
+| P0 cache/prefix만 진행 중 | 최대 5노드 | 최대 5노드 | **최대 10노드 / 40 GPU** | seed별 cache -> prefix 순서, 아직 continuation이 준비되지 않은 단계 |
+| P0 기본 네 arm | 최대 20노드 | 최대 20노드 | **최대 40노드 / 160 GPU** | seed별 step-25 prefix 준비 후 Random/SR/On/Switch는 서로 독립 |
+| P1 독립 반복 E03 | 최대 20노드 | 최대 20노드 | **최대 40노드 / 160 GPU** | 5 seeds x k=1,2 x SR/Switch; 각 seed의 prefix만 필요 |
+| P1 고정 전환 E04 | 최대 5노드 | 최대 5노드 | **최대 10노드 / 40 GPU** | 5 seeds x switch_fixed200; 각 seed의 prefix만 필요 |
+| P1 합계 | 최대 25노드 | 최대 25노드 | **최대 50노드 / 200 GPU** | 독립 반복과 고정 전환 사이에 선후 의존성 없음 |
+| P0 continuation + P1 합계 | 최대 45노드 | 최대 45노드 | **최대 90노드 / 360 GPU** | P0 네 arm 완료를 기다릴 필요 없이 해당 prefix 준비 후 병렬 실행 |
+
+P0는 `sh scripts/run_srgc.sh all run`으로 공유 queue에서 자동 배정한다.
+P1은 이 queue에 포함되지 않으므로 **다른 빈 노드에 서로 다른 dataset/seed/arm/k를
+직접 배정**한다. 같은 tuple을 여러 노드에서 중복 실행하지 않는다. 노드 하나에서
+P0 worker와 P1을 함께 실행하지 않는다. 1노드 순차 실행도 가능하다.
+현재 배정 가능 수는 `min(빈 노드 수, prefix가 준비된 미완료·미실행 작업 수)`이며,
+이미 실행 중인 작업은 추가 배정 수에 세지 않는다.
+
+### 2026-10-01 추가 실험 시작 오류 수정
+
+`srgc_sr_refresh.py`의 P1 등 추가 arm에서 `PackageNotFoundError: math-verify`가
+발생한 원인은 P0에 있던 오프라인 verifier 준비가 빠졌기 때문이다. 이제 group
+저장소 경로를 확인한 뒤, NCCL 초기화와 패키지 버전 기록 전에 동일한 hash 검증
+번들을 준비한다. pip 설치, 채점 규칙 변경, frozen core 변경은 없다.
+실패한 작업은 수정 코드를 받은 뒤 기존 명령으로 재개한다. 실행 중인 정상 작업은
+중단하지 않는다. 이 수정은 별도로 보고된 간헐적 NCCL 오류의 원인을 확정한 것이 아니다.
+
+### 저장소와 진입점
+
 - 코드 저장소: [33modeling/offpolicy-misranking](https://github.com/33modeling/offpolicy-misranking), branch **`master`**.
 - 현재 PC의 코드 위치: `/home/kms/dev/offpolicy-misranking`.
 - 현재 PC의 논문 목록: `/home/kms/dev/offpolicy-v3/offpolicy-misranking-paper-v2/v7/EXPERIMENTS.md`.

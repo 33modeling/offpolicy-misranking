@@ -297,12 +297,16 @@ prefix 완료·cache 재사용 상태와 이미 끝난 arm 수에 따라 현재 
 | E06 반복 전환, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
 | E07 pool SR 갱신, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
 | E08 Qwen MATH+MBPP | GPU + 노드 CPU | 1노드 / 4 GPU | 10노드 / 40 GPU | **40노드 / 160 GPU**; 데이터셋당 20노드 |
-| E03 독립 반복, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 별도 prefix 생성 없음; E01/E02 prefix 대기 | **20노드 / 80 GPU** (k=1,2 × sr/switch × 5 seeds × 2) |
+| E03 독립 반복, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 별도 prefix 생성 없음; E01/E02 prefix 대기 | **40노드 / 160 GPU** (k=1,2 × sr/switch × 5 seeds × 2) |
 | E09 방향 대조, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **30노드 / 120 GPU** (3조건 × 5 seeds × 2) |
 | E10 cached-SR 유지 간격 대조, 두 데이터셋 | GPU + 노드 CPU | 1노드 / 4 GPU | 동일 | **10노드 / 40 GPU** |
 
 - **현재 구현분:** OLMo 기본 40 + 추가 arm 40 + Qwen 40 + E03 40 + E09 30 + E10 10 = 최대 **200노드 / 800 GPU**.
   전부의 prefix가 준비되고 continuation이 남아 있다는 가정이다. 200노드가 필요하다는 뜻은 아니다.
+- **P0/P1만:** P0 기본 40 + P1 독립 반복 40 + P1 고정 전환 E04 10 = 최대
+  **90노드 / 360 GPU**. P1만은 최대 **50노드 / 200 GPU**다. 한 데이터셋만 실행하면
+  각각 45노드, 25노드다. 아직 continuation이 준비되지 않은 P0 cache/prefix 단계는
+  두 데이터셋 합계 최대 10노드다. [P0/P1 배정 조건](LIMITATION_EXPERIMENTS_KO.md#p0p1-최대-동시-노드-수).
 - 모두 처음부터 시작하여 아직 continuation이 준비되지 않은 경우, cache/prefix 선행 작업은
   OLMo 10 + Qwen 10 = 최대 **20노드 / 80 GPU**다. prefix 완료에 따라 arm으로 병렬성이 늘어난다.
   한 seed의 cache와 prefix를 동시에 별도 노드에 세지 않는다.
