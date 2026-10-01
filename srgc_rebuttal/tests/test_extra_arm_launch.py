@@ -89,6 +89,99 @@ class ExtraArmLaunchTests(unittest.TestCase):
                 self.assertTrue(Path(os.environ[key]).is_relative_to(self.group), key)
             self.assertEqual(args.plan, plan)
 
+    def test_extra_worker_refuses_held_execution_lock_before_gpu_startup(self):
+        from scripts import srgc_extra_worker as worker
+        from srgc_rebuttal.runtime import Busy, lease
+        plan = self.plan()
+        folder, _, _ = self.prefix(plan)
+        args = SimpleNamespace(plan=plan, seed=5, arm=None, scope="candidates")
+        with patch.dict(os.environ, self.environment), \
+                patch.object(worker, "process_guard", side_effect=lambda _: contextlib.nullcontext()), \
+                patch.object(worker.cluster, "gpu_identity") as gpu, \
+                lease(folder / ".sr_refresh.execution.lock"):
+            with self.assertRaises(Busy):
+                worker.launch(args)
+        gpu.assert_not_called()
+
+    def test_shell_uses_guarded_extra_worker_and_does_not_retry_busy_task(self):
+        plan = self.plan()
+        fake = self.base / "python"
+        calls = self.base / "calls.jsonl"
+        fake.write_text(f"#!{sys.executable}\nimport json, subprocess, sys\n"
+                        f"real = {sys.executable!r}\n"
+                        "if sys.argv[1] == '-':\n"
+                        "    raise SystemExit(subprocess.run([real, *sys.argv[1:]], input=sys.stdin.read(), text=True).returncode)\n"
+                        f"with open({str(calls)!r}, 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                        "raise SystemExit(75)\n")
+        fake.chmod(0o755)
+        pgrep = self.base / "pgrep"
+        pgrep.write_text("#!/bin/sh\nexit 1\n")
+        pgrep.chmod(0o755)
+        env = {**os.environ, **self.environment, "PAIR_PYTHON": str(fake),
+               "PATH": str(self.base) + os.pathsep + os.environ["PATH"],
+               "SRGC_WORKER_RESTART_DELAY": "0", "SRGC_WORKER_RESTARTS": "3"}
+        env.pop("SRGC_STORAGE_ROOT", None)
+        result = subprocess.run(["sh", str(SCRIPT), "math", "5", "replicate1-switch"],
+                                env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 75, result.stderr)
+        commands = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(commands, [["scripts/srgc_extra_worker.py", "--plan", str(plan),
+                                    "--seed", "5", "--arm", "replicate1-switch"]])
+
+    def test_extra_worker_refuses_duplicate_launch_before_gpu_startup(self):
+        from scripts import srgc_extra_worker as worker
+        from srgc_rebuttal.runtime import Busy, lease
+        plan = self.plan()
+        folder, _, _ = self.prefix(plan)
+        args = SimpleNamespace(plan=plan, seed=5, arm="replicate1-switch", scope="candidates")
+        with patch.dict(os.environ, self.environment), \
+                patch.object(worker, "process_guard", side_effect=lambda _: contextlib.nullcontext()), \
+                patch.object(worker.cluster, "gpu_identity") as gpu, \
+                lease(folder / "replicate-1/.switch.launch.lock"):
+            with self.assertRaises(Busy):
+                worker.launch(args)
+        gpu.assert_not_called()
+
+    def test_extra_worker_probes_nccl_propagates_overrides_and_releases_locks(self):
+        from scripts import srgc_extra_worker as worker
+        from srgc_rebuttal.runtime import Busy, lease
+        plan = self.plan()
+        folder, _, _ = self.prefix(plan)
+        args = SimpleNamespace(plan=plan, seed=5, arm="switch_fixed200", scope="candidates")
+        calls = []
+
+        def admit(root, environment, runner, **kwargs):
+            calls.append("admit")
+            self.assertTrue(kwargs["pass_fds"])
+            environment["NCCL_NVLS_ENABLE"] = "0"
+            return {"runtime_overrides": {"NCCL_NVLS_ENABLE": "0"}}
+
+        def child(command, log, environment, **kwargs):
+            calls.append("child")
+            self.assertEqual(environment["NCCL_NVLS_ENABLE"], "0")
+            self.assertIn("switch_fixed200", command)
+            self.assertIn("SRGC_PROGRESS_DIR", environment)
+            self.assertGreater(len(kwargs["pass_fds"]), 1)
+            with self.assertRaises(Busy), lease(folder / ".switch_fixed200.launch.lock"):
+                pass
+            kwargs["heartbeat"](123)
+            return 1
+
+        with patch.dict(os.environ, self.environment), \
+                patch.object(worker, "process_guard", side_effect=lambda _: contextlib.nullcontext()), \
+                patch.object(worker.cluster, "gpu_identity", return_value=("0,1,2,3", ("a", "b", "c", "d"))), \
+                patch.object(worker.cluster, "admit", side_effect=admit), \
+                patch.object(worker.cluster, "run_child", side_effect=child), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(worker.launch(args), 1)
+        self.assertEqual(calls, ["admit", "child"])
+        with lease(folder / ".switch_fixed200.launch.lock"):
+            pass
+        with worker.cluster.device_leases(folder.parent.parent / "gpu-node-locks", ("a", "b", "c", "d")):
+            pass
+        receipt = next((folder / "launches/switch_fixed200").glob("*/worker.json"))
+        self.assertEqual(json.loads(receipt.read_text())["status"], "failed")
+
     def test_extra_run_prepares_verifier_before_distributed_startup(self):
         from scripts.srgc_sr_refresh import run
         options = SimpleNamespace(plan=self.plan(), seed=5)

@@ -76,6 +76,34 @@ class ProcessGuardTest(unittest.TestCase):
         self.assertFalse(guard.is_target(f"python3 -m srgc_rebuttal.run_experiment --plan /other/plan.json", PLAN))
         self.assertTrue(guard.is_target("python3 -m srgc_rebuttal.run_experiment --plan /other/plan.json"))  # any plan when unrestricted
 
+    def test_extra_arm_orphans_are_targets_but_live_launchers_are_protected(self):
+        uid = os.getuid()
+        for owner in ("sh scripts/run_srgc_sr_refresh.sh math 5", "python scripts/srgc_extra_worker.py"):
+            table = {900001: (1, uid, owner),
+                     900002: (900001, uid, "python -m torch.distributed.run scripts/srgc_sr_refresh.py run"),
+                     900003: (900002, uid, "python scripts/srgc_sr_refresh.py run"),
+                     900004: (1, uid, "python scripts/srgc_sr_refresh.py run")}
+            self.assertEqual(guard.orphan_pids(table=table), [900004])
+
+    def test_extra_arm_orphan_execution_lock_is_released_before_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / ".sr_refresh.execution.lock"
+            child = ("import fcntl, time; "
+                     f"handle = open({str(lock)!r}, 'a+'); "
+                     "fcntl.flock(handle, fcntl.LOCK_EX); print('locked', flush=True); time.sleep(120)")
+            proc = subprocess.Popen([sys.executable, "-c", child, "srgc_sr_refresh.py", "run", "--plan", PLAN],
+                                    stdout=subprocess.PIPE, text=True, start_new_session=True)
+            self.procs = [proc]
+            self.assertEqual(proc.stdout.readline().strip(), "locked")
+            with self.assertRaises(Busy), lease(lock):
+                pass
+            with guard.process_guard(PLAN):
+                with lease(lock):
+                    self.assertFalse(alive(proc.pid))
+            proc.wait(timeout=10)
+            proc.stdout.close()
+            self.assertTrue(lock.exists())
+
     def test_orphan_of_plan_is_reaped_but_owned_and_foreign_processes_survive(self):
         self.procs = []
         orphan, _ = spawn("srgc_rebuttal.run_experiment")

@@ -53,25 +53,16 @@ if pgrep -u "$(id -u)" -f 'run_srgc_rebuttal.py worker' >/dev/null 2>&1; then
     echo "[abort] a queue worker (run_srgc.sh ... run) is running on this node; stop it first or use another node" >&2
     exit 75
 fi
-if command -v nvidia-smi >/dev/null 2>&1 && [ -z "${SRGC_SKIP_GPU_CLEANUP:-}" ]; then
-    memory=$(timeout 20 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i "$CUDA_VISIBLE_DEVICES" 2>/dev/null) || {
-        echo "[abort] nvidia-smi could not report GPU memory" >&2; exit 1; }
-    busy=$(printf '%s\n' "$memory" | awk '$1 > 2000 {n++} END {print n+0}')
-    if [ "$busy" -ne 0 ]; then
-        echo "[abort] GPUs are in use on this node (MiB per GPU): $(printf '%s' "$memory" | tr '\n' ' ')" >&2
-        timeout 20 nvidia-smi --query-compute-apps=pid,process_name,used_gpu_memory --format=csv,noheader >&2 || true
-        exit 75
-    fi
-fi
+# The Python launcher reaps orphan ranks before checking occupancy, acquires
+# shared task/device leases, and runs the same NCCL admission as P0.
 echo "[sr-refresh] dataset=$DATASET seed=$TARGET scope=$SCOPE plan=$PLAN" >&2
 # Supervised like the queue worker: a crash (OOM, NCCL, pre-empted GPUs) is retried after a
 # delay and resumes from the arm's checkpoint and rollout cache; Ctrl-C/SIGTERM stop it.
 attempt=0
 while :; do
-    "$PY" -m torch.distributed.run --standalone --nproc_per_node=4 --max_restarts=0 \
-        scripts/srgc_sr_refresh.py run --plan "$PLAN" --seed "$TARGET" $ARM_ARGS && rc=0 || rc=$?
+    "$PY" scripts/srgc_extra_worker.py --plan "$PLAN" --seed "$TARGET" $ARM_ARGS && rc=0 || rc=$?
     [ "$rc" -ne 0 ] || exit 0
-    case "$rc" in 130|143|2) exit "$rc" ;; esac
+    case "$rc" in 130|143|2|75) exit "$rc" ;; esac
     attempt=$((attempt + 1))
     [ "$attempt" -lt "${SRGC_WORKER_RESTARTS:-50}" ] || exit "$rc"
     printf '[sr-refresh] exited with %s; retrying in %ss (retry %s)\n' "$rc" "${SRGC_WORKER_RESTART_DELAY:-120}" "$attempt" >&2

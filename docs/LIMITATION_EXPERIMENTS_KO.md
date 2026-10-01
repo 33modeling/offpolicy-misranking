@@ -57,6 +57,16 @@ P0 worker와 P1을 함께 실행하지 않는다. 1노드 순차 실행도 가�
 실패한 작업은 수정 코드를 받은 뒤 기존 명령으로 재개한다. 실행 중인 정상 작업은
 중단하지 않는다. 이 수정은 별도로 보고된 간헐적 NCCL 오류의 원인을 확정한 것이 아니다.
 
+추가 실험의 `.sr_refresh.execution.lock` 등 잠금 오류도 실행 경로를 수정했다.
+이전 launcher는 `torchrun`을 직접 실행했고 추가 arm의 잔존 rank는 공통 정리 대상에서
+빠져 있었다. 이제 [추가 실험 supervisor](../scripts/srgc_extra_worker.py)가 작업별 launch
+잠금, P0와 공유하는 GPU 잠금, NCCL admission을 거쳐 시작하고 종료 시 자식 rank를 정리한다.
+살아 있는 기존 launcher의 작업은 보존하며, 소유 launcher가 없는 추가 arm 프로세스만
+정리한다. 같은 dataset/seed/arm/k가 이미 실행 중이면 GPU 로딩 전에 `BUSY`와 exit 75로
+종료하고 재시도를 반복하지 않는다. **잠금 파일을 삭제하지 않는다.** 실제 실패 원인은
+`seed-N/launches/<arm>/<attempt>/task.log`와 `worker.json`에 남으며,
+독립 반복은 `seed-N/replicate-<k>/launches/<arm>/` 아래에 남는다.
+
 ### 저장소와 진입점
 
 - 코드 저장소: [33modeling/offpolicy-misranking](https://github.com/33modeling/offpolicy-misranking), branch **`master`**.
