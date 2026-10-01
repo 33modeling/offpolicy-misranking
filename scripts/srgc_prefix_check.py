@@ -44,7 +44,10 @@ def verify_prefix(folder, expected, steps, *, verify_checkpoint=True):
     if not isinstance(receipt, dict):
         raise ValueError(f"{folder}: shared prefix receipt is missing or not a JSON object")
     if not matches(receipt, expected) or receipt.get("completed_updates") != steps:
-        raise ValueError(f"{folder}: prefix belongs to a different experiment")
+        differences = [f"{key}: saved={receipt.get(key)!r}, expected={value!r}"
+                       for key, value in {**expected, "completed_updates": steps}.items()
+                       if receipt.get(key) != value]
+        raise ValueError(f"{folder}: prefix belongs to a different experiment; " + "; ".join(differences))
     checkpoint = folder / "prefix.pt"
     if not checkpoint.is_file():
         raise ValueError(f"{folder}: shared prefix checkpoint differs from its completion receipt")

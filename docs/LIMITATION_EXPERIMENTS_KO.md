@@ -50,6 +50,21 @@ P0 worker와 P1을 함께 실행하지 않는다. 1노드 순차 실행도 가�
 
 ### 2026-10-01 추가 실험 시작 오류 수정
 
+`prefix belongs to a different experiment`가 기존 `f581eb043e89409e...`
+실행에서 발생하는 경우, 현재 `9435e800...` 엔진과 선별 protocol이 다르기 때문이다.
+추가 arm launcher와 학습 rank는 prefix receipt에 맞춰 보존 엔진을 자동 선택한다.
+`scripts/frozen_srgc/f581eb043e89409e.py`는 `723b664`의 `srgc_rebuttal/srgc.py`
+원본이며 파일 해시와 전체 core package 해시를 모두 확인한 뒤 불러온다.
+hash만 바꾸거나 새 엔진에 옛 체크포인트를 강제로 넣지 않는다. 해당 버전의
+On-policy SR 비교 gradient 계산도 그대로 유지하므로 비용은 같은 버전끼리 비교한다.
+명령과 seed-25 prefix는 그대로 사용한다. `RUNTIME saved-prefix f581eb...`가 표시된다.
+완료 prefix를 가진 기존 cohort에 추가 arm만 허용하며, 기본 queue의 자동 재시작,
+새 cohort 생성, active pointer 변경, 기존 결과 덮어쓰기는 하지 않는다.
+다른 입력·plan·seed·checkpoint 또는 알 수 없는 구현 hash는 계속 거부한다.
+검증: 관련 CPU 테스트 59개 통과(보존 엔진 분기·step-200 전환·재개와 두 CLI 포함).
+전체 suite는 367개 중 336개 통과, 27개 skip, 로컬 torch/transformers 미설치로
+4개 오류였다. H100 학습 재개는 로컬에서 실측하지 않았다.
+
 시작 줄 이후 출력 없이 prefix를 검사하던 경로를 수정했다. 추가 arm의 prefix
 SHA-256 검사는 8 MiB씩 읽고 시작·5초 간격 진행량·완료를 출력한다. 전체 checkpoint를
 한 번에 메모리에 읽지 않는다. torchrun의 네 rank가 시작 전에 같은 파일을 각각

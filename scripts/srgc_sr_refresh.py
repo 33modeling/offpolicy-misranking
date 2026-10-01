@@ -55,6 +55,10 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+if __name__ == "__main__" and sys.argv[1:2] == ["run"]:
+    from scripts.srgc_saved_runtime import bootstrap
+    bootstrap(sys.argv[1:])
+
 from srgc_rebuttal.srgc import Engine, cached_sr_set, stream_seed  # noqa: E402
 
 SCOPES = ("candidates", "pool", "cached")
@@ -458,7 +462,7 @@ def prepare_run_storage(args, *, verify_checkpoint=True):
     if not folder.is_relative_to(group):
         raise ValueError("extra arms require an existing group-volume run; start the main queue first")
     result_identity(args.plan, plan, args.seed, verify_checkpoint=verify_checkpoint)
-    args.plan = route_plan(args.plan, writing=True)
+    args.plan = route_plan(args.plan, writing=True, extra_seed=args.seed)
 
 
 def result_identity(plan_path, plan, seed, *, recorded=False, verify_checkpoint=True):

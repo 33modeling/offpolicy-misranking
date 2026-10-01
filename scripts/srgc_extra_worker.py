@@ -13,6 +13,10 @@ import uuid
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+if __name__ == "__main__":
+    from scripts.srgc_saved_runtime import bootstrap
+    bootstrap(sys.argv[1:])
+
 from srgc_rebuttal import cluster  # noqa: E402
 from srgc_rebuttal.plan import load_plan  # noqa: E402
 from srgc_rebuttal.runtime import Busy, atomic_json, lease, run_root  # noqa: E402

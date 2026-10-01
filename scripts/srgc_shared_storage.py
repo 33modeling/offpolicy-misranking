@@ -219,7 +219,7 @@ def automatic_plan(source, environment):
                          "Use the original runtime to resume; status/results remain readable.")
 
 
-def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=False):
+def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=False, extra_seed=None):
     source = source.resolve()
     if start_or_continue and (not writing or migrate or fresh is not None):
         raise ValueError("automatic start/continuation requires writing without fresh or migration")
@@ -230,7 +230,19 @@ def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=
     group, root = storage_root(os.environ)
     plan = load_plan(source)
     active = root / f".{source.stem}-active.json"
-    if start_or_continue:
+    if extra_seed is not None:
+        if not writing or migrate or fresh is not None or start_or_continue or not source.is_relative_to(group):
+            raise ValueError("extra arms require an existing group-storage plan")
+        from scripts.srgc_sr_refresh import result_identity
+        from srgc_rebuttal.runtime import matches
+        expected, _ = result_identity(source, plan, extra_seed, verify_checkpoint=False)
+        marker = json.loads((run_root(source, plan) / f"seed-{extra_seed}" / "run.json").read_text())
+        if not isinstance(marker, dict) or not matches(marker, expected):
+            raise ValueError("the seed's run manifest belongs to a different experiment")
+        # An explicit extra arm may extend a verified saved prefix. It must not
+        # create a replacement, resume the base queue, or follow a new pointer.
+        target = source
+    elif start_or_continue:
         target = automatic_plan(source, os.environ)
     elif fresh is not None:
         target = fresh_plan(source, os.environ, fresh)
@@ -253,7 +265,7 @@ def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=
         if not (root / f".{source.stem}-storage.json").exists():
             return source
     if writing:
-        if fresh is None:
+        if fresh is None and extra_seed is None:
             reject_legacy_replacement(target)
         if any(not p.resolve().is_relative_to(group) for _, p in artifact_pairs(target, target)):
             raise ValueError("active run artifacts resolve outside group storage")
