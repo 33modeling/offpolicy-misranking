@@ -437,6 +437,23 @@ matplotlib 설치 시 `direction.png`다. 분해 기록이 없는 과거 checkpo
 계산하지 않는다. `d_source=decision`은 실제 결정 값이고 `reconstructed_diagnostic`은
 저장된 norm/cosine으로 재구성한 진단 값이다. 분석 결과를 온라인 전환 기록으로 쓰지 않는다.
 
+SR 캐시가 실제로 무엇을 고르는지는 다음 명령으로 본다. 같은 `SRGC_ANALYSIS_PLAN`을 쓴다.
+
+```sh
+"$PAIR_PYTHON" scripts/srgc_cache_analysis.py --plan "$SRGC_ANALYSIS_PLAN"
+```
+
+출력은 run root의 `analysis/sr-cache/` 아래 `summary.txt`, `cache.csv`(후보별 캐시 성공 수·SR 순위·예측 학습 횟수),
+`composition.csv`, `updates.csv`다. seed마다 캐시 성공률 분포(0/8…8/8), 정확히 4/8인 문제 수,
+3/8–5/8 구간 수, 보상 분산이 0이라 GRPO 신호가 없는 0/8·8/8 수를 적고, SR arm이 prefix 이후 endpoint까지
+어떤 문제를 학습하는지를 캐시와 seed만으로 그대로 재현해(SR의 추출·순위는 학습과 무관) 학습 슬롯의 캐시 구간 구성,
+학습된 서로 다른 문제 수, 상위 10문제 점유율, 4/8 문제 중 실제로 학습된 수를 낸다. `seed-N/<arm>-progress.json`이
+있으면 On-policy·Random·Switch·추가 arm·replicate가 실제로 학습한 문제의 캐시 구간 구성과 SR-GC 비교 집합 구성을
+같이 적고, 기록된 SR 이력이 예측 일정과 다른 update 수를 보고한다. update마다 평균 학습 보상·gradient norm과,
+학습 receipt가 있으면 8응답 보상이 전부 같아 advantage가 0인 문제 수(4개 중)를 `updates.csv`에 남긴다.
+update 수는 optimizer step 수일 뿐이므로 학습량은 이 열로 읽는다. 캐시는 클러스터에서 생성되므로 캐시 없는
+로컬 입력 번들에서는 해당 seed를 건너뛴다.
+
 ### 6.3. 노드 배정과 그룹 볼륨
 
 **추가 실험을 15개 노드에 바로 배정하는 예:** MATH seeds 5-9의 prefix가 모두
