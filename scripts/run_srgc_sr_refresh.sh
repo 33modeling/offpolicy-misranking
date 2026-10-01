@@ -14,6 +14,7 @@ case "$DATASET" in math|mbpp) ;; *) echo "usage: sh scripts/run_srgc_sr_refresh.
 if [ "$TARGET" = results ]; then
     case "${3:-}" in ''|--json) ;; *) echo "usage: math|mbpp results [--json]" >&2; exit 2 ;; esac
 else
+case "$TARGET" in ''|*[!0-9]*) echo "seed must be an integer" >&2; exit 2 ;; esac
 case "$SCOPE" in
     candidates|pool) ARM_ARGS="--scope $SCOPE" ;;
     sr_hold|switch_repeat) ARM_ARGS="--arm $SCOPE" ;;
@@ -34,15 +35,18 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 # Extra arms inherit their prefix's attention kernel; resumes keep their own
 # saved kernel. An environment default must not change an existing experiment.
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
-PLAN=$("$PY" - "$DATASET" <<'PYEOF'
+PLAN=$("$PY" - "$DATASET" "$TARGET" <<'PYEOF'
 import os
 import sys
 from pathlib import Path
 sys.path.insert(0, "scripts"); sys.path.insert(0, ".")
 from srgc_shared_storage import route_plan
 from srgc_pair_inputs import default_plan
+from scripts.srgc_extra_plan import select_plan
 source = default_plan(Path.cwd(), sys.argv[1], os.environ, writing=False)
-print(route_plan(source, writing=False))
+target = sys.argv[2]
+plan = route_plan(source, writing=False)
+print(select_plan(plan, None if target == "results" else int(target)))
 PYEOF
 )
 if [ "$TARGET" = results ]; then
@@ -52,7 +56,6 @@ if [ "$TARGET" = results ]; then
     fi
     exec "$PY" scripts/srgc_sr_refresh.py results --plan "$PLAN"
 fi
-case "$TARGET" in ''|*[!0-9]*) echo "seed must be an integer" >&2; exit 2 ;; esac
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 # Never share a node with a queue worker: an extra arm needs all four GPUs.

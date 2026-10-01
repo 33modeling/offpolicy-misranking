@@ -50,6 +50,14 @@ P0 worker와 P1을 함께 실행하지 않는다. 1노드 순차 실행도 가�
 
 ### 2026-10-01 추가 실험 시작 오류 수정
 
+2026-10-02 MBPP 경로 점검: 받은 결과 JSON에서 활성 `code-9435...` 실행은
+미완료이고 이전 `code-f581...` 실행에 완료 결과가 있었다. 추가 launcher는
+해당 seed의 prefix가 현재 경로에 없을 때 `automatic-restart.json`의 기록된
+이전 경로를 확인한다. 같은 plan 설정의 저장된 prefix를 찾으면 그 경로에서
+추가 arm을 실행하며, active pointer와 기존 결과는 바꾸지 않는다. 현재 경로에
+prefix 또는 미완료 prefix checkpoint가 있으면 건너뛰지 않는다. 파일이 손상됐거나
+plan 설정이 다르면 그대로 거부한다. `results`도 같은 이력 조회를 사용한다.
+
 `prefix belongs to a different experiment`가 기존 `f581eb043e89409e...`
 실행에서 발생하는 경우, 현재 `9435e800...` 엔진과 선별 protocol이 다르기 때문이다.
 추가 arm launcher와 학습 rank는 prefix receipt에 맞춰 보존 엔진을 자동 선택한다.

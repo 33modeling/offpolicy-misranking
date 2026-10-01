@@ -184,6 +184,11 @@ SRGC_MAX_ATTEMPTS=3 sh scripts/run_srgc.sh math run
 노드별로 서로 다른 `(dataset, seed, arm)`을 배정한다. 아래는 seed 5 예시이며
 5를 6, 7, 8, 9로 바꾼다. 한 줄이 한 작업이다.
 
+**이번 E04 배정은 MATH·MBPP 모두 `switch_fixed200` 한 조건이다.**
+시드 5-9 전부 step 200까지 On-policy, update 201부터 SR, total step 275에 종료한다.
+`switch_fixed100/125`는 실행기가 지원하는 다른 조건일 뿐 이번 배정에 포함하지 않는다.
+`verified shared prefix must finish`는 fixed 값 오류가 아니라 prefix 경로/완료 문제다.
+
 ```sh
 # E04: total step 200까지 On-policy, update 201부터 SR
 sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200
