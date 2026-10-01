@@ -1,5 +1,11 @@
 # SR-GC rebuttal: online switching and extra-seed cost experiments
 
+2026-10-01: extra-arm launchers now save every update, inherit the prefix's
+attention kernel for new arms, preserve existing continuations' kernels,
+and forward shell termination to their owned workers. The frozen core hash
+is unchanged. See the [commands and node allocation guide](../docs/REBUTTAL_COMMANDS_KO.md)
+for all 120 extra-arm commands, restart rules and concurrency limits.
+
 2026-09-29: fixed-switch boundaries, multi-dataset cohort routing, MBPP
 assertion completion, fixed-arm exports and diagnostic D exports were repaired.
 The package identity intentionally changed. Use a separate run for corrected

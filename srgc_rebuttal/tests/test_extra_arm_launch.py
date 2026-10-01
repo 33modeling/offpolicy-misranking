@@ -2,10 +2,12 @@ import contextlib
 import io
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -35,7 +37,7 @@ class ExtraArmLaunchTests(unittest.TestCase):
             "mbpp_pair_seeds.json" if pair else "mbpp_seeds.json")
         source = ROOT / "srgc_rebuttal/experiments" / name
         plan = self.storage / "fresh/candidate40-v2" / source.stem / "experiments" / name
-        plan.parent.mkdir(parents=True)
+        plan.parent.mkdir(parents=True, exist_ok=True)
         plan.write_bytes(source.read_bytes())
         pointer = self.storage / f".{source.stem}-active.json"
         pointer.write_text(json.dumps({"plan": str(plan), "source_plan_sha256": digest(source)}))
@@ -63,15 +65,57 @@ class ExtraArmLaunchTests(unittest.TestCase):
                         "    raise SystemExit(subprocess.run([real, *sys.argv[1:]], input=sys.stdin.read(), text=True).returncode)\n"
                         "print(json.dumps(sys.argv[1:]))\n")
         fake.chmod(0o755)
-        for dataset in ("math", "mbpp"):
-            with self.subTest(dataset=dataset):
+        for dataset, flags in (("math", []), ("mbpp", []), ("math", ["--json"]), ("mbpp", ["--json"])):
+            with self.subTest(dataset=dataset, flags=flags):
                 plan = self.plan(dataset)
                 env = {**os.environ, **self.environment, "PAIR_PYTHON": str(fake), "SWITCH_PYTHON": str(fake)}
                 env.pop("SRGC_STORAGE_ROOT", None)
-                output = subprocess.run(["sh", str(SCRIPT), dataset, "results"], cwd="/tmp", env=env,
+                output = subprocess.run(["sh", str(SCRIPT), dataset, "results", *flags], cwd="/tmp", env=env,
                                         capture_output=True, text=True, timeout=15)
                 self.assertEqual(output.returncode, 0, output.stderr)
-                self.assertEqual(json.loads(output.stdout), ["scripts/srgc_sr_refresh.py", "results", "--plan", str(plan)])
+                self.assertEqual(json.loads(output.stdout), ["scripts/srgc_sr_refresh.py", "results", "--plan", str(plan), *flags])
+
+    def test_shell_sigterm_stops_owned_worker_and_does_not_retry(self):
+        self.plan()
+        fake = self.base / "python"
+        ready, stopped = self.base / "ready", self.base / "stopped"
+        fake.write_text(f"#!{sys.executable}\nimport os, pathlib, signal, subprocess, sys, time\n"
+                        "if sys.argv[1] == '-':\n"
+                        f"    raise SystemExit(subprocess.run([{sys.executable!r}, *sys.argv[1:]], input=sys.stdin.read(), text=True).returncode)\n"
+                        "def stop(*args):\n"
+                        f"    pathlib.Path({str(stopped)!r}).write_text('stopped')\n"
+                        "    raise SystemExit(143)\n"
+                        "signal.signal(signal.SIGTERM, stop)\n"
+                        f"pathlib.Path({str(ready)!r}).write_text(str(os.getpid()))\n"
+                        "while True: time.sleep(.05)\n")
+        fake.chmod(0o755)
+        pgrep = self.base / "pgrep"
+        pgrep.write_text("#!/bin/sh\nexit 1\n")
+        pgrep.chmod(0o755)
+        env = {**os.environ, **self.environment, "PAIR_PYTHON": str(fake),
+               "PATH": str(self.base) + os.pathsep + os.environ["PATH"]}
+        env.pop("SRGC_STORAGE_ROOT", None)
+        process = subprocess.Popen(["sh", str(SCRIPT), "math", "5", "replicate1-sr"], env=env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 15
+            while not ready.exists() and time.monotonic() < deadline and process.poll() is None:
+                time.sleep(.05)
+            self.assertTrue(ready.exists())
+            process.send_signal(signal.SIGTERM)
+            _, error = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 143, error)
+            self.assertTrue(stopped.exists())
+            self.assertNotIn("retrying", error)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=10)
+            if ready.exists() and not stopped.exists():
+                try:
+                    os.kill(int(ready.read_text()), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
     def test_explicit_missing_python_is_not_silently_replaced(self):
         result = subprocess.run(["sh", str(SCRIPT), "math", "results"], env={**os.environ,
@@ -193,6 +237,25 @@ class ExtraArmLaunchTests(unittest.TestCase):
                 run(options)
         storage.assert_called_once_with(options)
         verifier.assert_called_once_with()
+
+    def test_extra_timeout_records_124_and_releases_launch_lock(self):
+        from scripts import srgc_extra_worker as worker
+        from srgc_rebuttal.runtime import lease
+        plan = self.plan()
+        folder, _, _ = self.prefix(plan)
+        args = SimpleNamespace(plan=plan, seed=5, arm="switch_repeat", scope="candidates")
+        with patch.dict(os.environ, self.environment), \
+                patch.object(worker, "process_guard", side_effect=lambda _: contextlib.nullcontext()), \
+                patch.object(worker.cluster, "gpu_identity", return_value=("0,1,2,3", ("a", "b", "c", "d"))), \
+                patch.object(worker.cluster, "admit", return_value={}), \
+                patch.object(worker.cluster, "run_child", side_effect=TimeoutError("no task progress")), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(worker.launch(args), 124)
+        receipt = json.loads(next((folder / "launches/switch_repeat").glob("*/worker.json")).read_text())
+        self.assertEqual((receipt["status"], receipt["exit_code"]), ("failed", 124))
+        self.assertIn("no task progress", receipt["error"])
+        with lease(folder / ".switch_repeat.launch.lock"):
+            pass
 
     def test_extra_runtime_bootstraps_verifier_without_installed_distribution(self):
         # Isolate site-packages to reproduce the missing distribution without

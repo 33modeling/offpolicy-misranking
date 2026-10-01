@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 
-def save_checkpoint(engine, folder, task):
+def save_checkpoint(engine, folder, task, *, metadata=None):
     import torch
     from srgc_rebuttal.distributed import primary
     path = folder / ("prefix-latest.pt" if task == "prefix" else f"{task}-latest.pt")
@@ -14,6 +14,7 @@ def save_checkpoint(engine, folder, task):
     with meter.phase("checkpoint_save", engine.step, engine.backend.gpu_count):
         with meter.stage("state_snapshot"):
             state = engine.state_dict()
+            state.update(metadata or {})
         def write():
             with meter.stage("write"):
                 temporary = path.with_suffix(".tmp")

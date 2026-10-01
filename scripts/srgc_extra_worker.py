@@ -78,6 +78,10 @@ def launch(args):
                     record["error"] = "child exited successfully without a verified endpoint"
                 update("complete" if code == 0 else "failed", exit_code=code, finished=time.time())
                 return code
+            except TimeoutError as exc:
+                update("failed", exit_code=124, error=str(exc), finished=time.time())
+                print(f"TIMEOUT: {exc}", file=sys.stderr, flush=True)
+                return 124
             except BaseException as exc:
                 update("stopped" if isinstance(exc, KeyboardInterrupt) else "failed",
                        error=f"{type(exc).__name__}: {exc}", finished=time.time())

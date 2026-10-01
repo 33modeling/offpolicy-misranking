@@ -1,11 +1,11 @@
 # Limitation 후속 실험: 구현 목록과 실행 기록
 
-구현·명령 점검: 2026-09-30, `master` / `997cab9` (E03 독립 반복, E09 방향 ablation, E10 cached-SR 유지 간격 대조 구현 추가). 아래 날짜별 실행 기록은 보존한다.
+구현·명령 점검: 2026-10-01, `master` (추가 runner 매-update 저장, attention 계승, 종료 전달 수정). 아래 날짜별 실행 기록은 보존한다.
 대응 원고: V7 `sections/discussion.tex`의 Discussion and Limitations.
 실행 코드는 이 저장소에만 유지한다. 논문 쪽 목록은 `v7/EXPERIMENTS.md`다.
 
 실행할 때는 [통합 명령 모음](REBUTTAL_COMMANDS_KO.md),
-[추가 arm 40개 배정표](REBUTTAL_EXTRA_TASKS.tsv),
+[추가 arm 120개 배정표](REBUTTAL_EXTRA_TASKS.tsv),
 [공식 리뷰 일정과 내부 준비 계획](REVIEW_SCHEDULE_2027_KO.md)을 사용한다.
 아래는 실험 목적·조건·구현 기록을 자세히 설명한다.
 기존 실험의 수치·완료 범위와 교정이 필요한 비용은
@@ -331,8 +331,8 @@ E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다
 각 continuation은 prefix 이후 250 updates이며, 각 dataset의 prefix/기본 arm
 진행 상태에 따라 실행 가능한 작업 수가 달라진다. 총 GPU 시간은 실측 후 추정한다.
 
-추가 네 arm은 현재 기본 네-arm 자동 queue에 등록되어 있지 않다. 따라서
-`run_srgc.sh all run` 하나로 위 40개가 실행되지는 않는다. 추가 arm별 lease는
+추가 arm은 현재 기본 네-arm 자동 queue에 등록되어 있지 않다. 따라서
+`run_srgc.sh all run` 하나로 위 120개가 실행되지는 않는다. 추가 arm별 lease는
 중복 실행을 막지만, 여러 노드가 자동으로 다른 seed/arm을 골라주는 기능은 아니다.
 노드별로 다른 `(dataset, seed, arm)`을 배정한다.
 
@@ -340,9 +340,11 @@ E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다
 
 추가 arm은 동일 명령을 다시 실행하면 같은 arm의 `latest.pt`에서 이어서 진행하고,
 이미 완료된 동일 실험은 재학습하지 않는다. 모델·optimizer·선별 상태를 복구한다.
-**추가 runner의 저장 간격은 25 updates**다. 기본 queue의 매-update 저장 wrapper가
-여기에 자동 적용되는 것은 아니다. 중단 시 마지막 checkpoint 이후의 작업은
-다시 수행될 수 있고, 기존 비용 receipt는 남는다.
+**추가 runner의 저장 간격은 매 update**다. 저장 완료 후 progress JSON도 갱신한다.
+중단 시 저장하지 못한 update는 다시 수행될 수 있고, 기존 비용 receipt는 남는다.
+선별 주기 25 updates와 최종 평가 조건은 그대로다. 새 arm은 prefix의 attention을
+계승하고, 기존 추가 arm은 실제 사용하던 kernel(구 runner는 eager)을 유지한다.
+자세한 중단·재개·15노드 배정 예는 [명령 모음](REBUTTAL_COMMANDS_KO.md)을 따른다.
 
 결과·비용·백업 명령은 문서 상단의 빠른 찾기를 따른다.
 
@@ -367,6 +369,22 @@ E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다
 - 추가 변형의 script 파일 자체는 frozen core hash 대상이 아니다. 실행 코드 commit과 launcher/script hash도 작업 기록에 남기고, 실행 도중 다른 변형 코드로 교체하지 않는다.
 
 ## 5. 이번 코드 점검과 수정
+
+### 2026-10-01 실행기 점검
+
+- 추가 runner가 shell의 attention 설정을 모델에 전달하지 않던 문제 수정.
+  새 arm은 prefix의 kernel을 계승하고, 기존 추가 실행의 eager는 재개 시 유지.
+- 추가 arm과 독립 반복의 checkpoint/progress 저장을 매 update로 변경.
+  fsync와 atomic replace를 적용하고 저장 실패 시 이전 checkpoint/progress 보존.
+- shell SIGTERM을 자기 worker에 전달하고 종료를 기다린 뒤 재시도 없이 중단.
+  진행 timeout은 exit 124로 기록. `results --json`을 shell에서도 지원.
+- 15개 실행 형태의 매-step 저장/재개, 실패 저장, shell 종료 전달 회귀 테스트 추가.
+  전체 suite: 338개 중 329개 통과, 환경 조건에 따른 9개 skipped. 실제 H100 학습은 미실행.
+- frozen core SHA-256 유지:
+  `9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7`.
+  학습 규칙·입력·seed·기존 결과 변경 없음.
+
+### 이전 점검 기록 (당시 코드 기준)
 
 1. 추가 launcher가 `additional_seeds.json`/`mbpp_seeds.json`을 고정 선택하던 문제를 수정했다. 기본 launcher와 같은 `default_plan()`을 사용하여 활성 Pair 재사용 cohort를 따른다.
 2. shell의 plan 조회 subprocess에서 설정한 환경은 torchrun에 전달되지 않는다. 실제 GPU rank에서 group-volume runtime cache 환경을 설정하도록 했다. prefix가 없거나 변경되었으면 모델 로드 전에 중단한다.

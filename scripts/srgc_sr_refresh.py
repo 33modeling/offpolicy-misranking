@@ -8,8 +8,8 @@ the success rates under the CURRENT policy on the same schedule On-policy uses:
 every 25 updates it draws 40 candidates, generates eight fresh responses per
 candidate (320 rollouts, without scoring gradients or validation generation),
 ranks them by |success rate - 0.5| and trains the top four until
-the next refresh. ``--scope pool`` instead re-measures all 400 candidates at
-every refresh (3200 rollouts per refresh; roughly one cache build per refresh).
+the next refresh. ``--scope pool`` instead re-measures the entire input pool at
+every refresh (3200 rollouts for 400 candidates; eight times the actual pool size).
 
 It forks from the seed's verified shared prefix in the existing run root and
 writes ``sr_refresh-latest.pt`` / ``sr_refresh-progress.json`` /
@@ -210,6 +210,51 @@ class SRRefreshEngine(Engine):
         super().load_state_dict(state, fork_arm=fork_arm)
 
 
+def extra_checkpoint_policy(state, *, resuming, previous_run=None):
+    """Keep the kernel of the saved continuation, or inherit its shared prefix.
+
+    Older extra runners ignored SRGC_ATTENTION and always loaded eager, even
+    when their prefix used SDPA. Preserve that kernel on an interrupted run.
+    """
+    from scripts.srgc_child_tuning import ATTENTION_CHOICES
+    from srgc_rebuttal.plan import digest
+    if resuming:
+        attention = state.get("checkpoint_policy", {}).get("attention", "eager")
+        source = "continuation"
+    elif previous_run is not None:
+        attention = previous_run.get("checkpoint_policy", {}).get("attention", "eager")
+        source = "previous-attempt"
+    else:
+        attention = state.get("checkpoint_policy", {}).get("attention", "eager")
+        source = "shared-prefix"
+    if attention not in ATTENTION_CHOICES:
+        raise ValueError(f"unsupported saved attention kernel: {attention!r}")
+    return {"interval_updates": 1, "attention": attention, "attention_source": source,
+            "storage_adapter_sha256": digest(Path(__file__))}
+
+
+def continue_updates(current, out, arm, launch_arm, total_updates, extras, policy):
+    from scripts.srgc_step_checkpoints import save_checkpoint
+    from srgc_rebuttal.distributed import primary
+    from srgc_rebuttal.progress import record as progress
+    from srgc_rebuttal.runtime import atomic_json
+    while current.step < total_updates:
+        primary(lambda: print(f"TRAIN seed={current.config.seed} phase={launch_arm} arm={launch_arm} "
+                              f"step={current.step + 1}/{total_updates} status=running "
+                              f"completed={current.step}/{total_updates}", flush=True))
+        current.update()
+        save_checkpoint(current, out, arm, metadata={"checkpoint_policy": policy})
+        primary(lambda: atomic_json(out / f"{arm}-progress.json", {
+            "seed": current.config.seed, "arm": arm, **extras, "step": current.step,
+            "switched_at": current.switched_at, "transitions": getattr(current, "transitions", None),
+            "sampling_protocol": current.SAMPLING_PROTOCOL, "costs": current.costs,
+            "checkpoint_policy": policy, "history": current.history}))
+        progress("update", arm=launch_arm, step=current.step)
+        primary(lambda: print(f"TRAIN seed={current.config.seed} phase={launch_arm} arm={launch_arm} "
+                              f"step={current.step}/{total_updates} status=completed "
+                              f"completed={current.step}/{total_updates}", flush=True))
+
+
 def run(args):
     """Inside torchrun: fork the arm from the shared prefix and run it to the plan's total."""
     prepare_run_storage(args)
@@ -269,7 +314,7 @@ def run(args):
                 print(f"PASS: {launch_arm} already complete for seed {args.seed}")
             return
         prefix_hash = json.loads((folder / "prefix-ready.json").read_text())["checkpoint_sha256"]
-        result = [None]
+        result = [None, None]
         if rank == 0:
             try:
                 locks.enter_context(lease(out / f".{arm}.execution.lock"))
@@ -279,10 +324,11 @@ def run(args):
                         raise ValueError("the seed's run manifest belongs to a different experiment")
                     if replicate:
                         replicate_manifest(out, expected, args.seed, replicate[0], prefix_hash)
-                    atomic_json(out / f"{arm}-run.json", {**expected, "arm": arm, "launch_arm": launch_arm,
-                        "refresh_scope": scope, "replicate": replicate[0] if replicate else None,
-                        "status": "running", "packages": {p: importlib.metadata.version(p)
-                                                          for p in ("torch", "transformers", "peft", "math-verify")}})
+                    marker_path = out / f"{arm}-run.json"
+                    if marker_path.exists():
+                        result[1] = json.loads(marker_path.read_text())
+                        if not matches(result[1], expected) or result[1].get("arm") != arm:
+                            raise ValueError("the extra arm manifest belongs to a different experiment")
             except Exception as exc:  # noqa: BLE001 - report on rank 0, abort every rank
                 result[0] = f"{type(exc).__name__}: {exc}"
         dist.broadcast_object_list(result, src=0)
@@ -290,10 +336,25 @@ def run(args):
             raise RuntimeError(result[0])
         meter = torch_meter(lambda event: PhaseLedger(out / "cost-receipts" / arm).record(event))
         locks.enter_context(invocation(PhaseLedger(out / "invocations" / arm), meter, world, invocation_started))
+        checkpoint_path = out / f"{arm}-latest.pt"
+        resuming = primary(checkpoint_path.exists)
+        with meter.phase("checkpoint_load", gpu_count=world), meter.stage("read"):
+            state = torch.load(checkpoint_path if resuming else folder / "prefix.pt",
+                               map_location="cpu", weights_only=False)
+        policy = extra_checkpoint_policy(state, resuming=resuming, previous_run=result[1])
+        primary(lambda: atomic_json(out / f"{arm}-run.json", {**expected, "arm": arm, "launch_arm": launch_arm,
+            "refresh_scope": scope, "replicate": replicate[0] if replicate else None,
+            "checkpoint_policy": policy, "status": "running",
+            "packages": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "peft", "math-verify")}}))
+        primary(lambda: print(f"ATTENTION {policy['attention']} source={policy['attention_source']} "
+                              "(saved run/prefix kernel takes precedence over SRGC_ATTENTION)", flush=True))
+        from scripts.srgc_child_tuning import count_progress
+        count_progress()
         with meter.phase("startup", gpu_count=world):
             torch.manual_seed(args.seed)
             with meter.stage("model_and_tokenizer_load"):
-                model, tokenizer = load_model(plan["model"], plan["model_revision"], torch.device("cuda", local_rank))
+                model, tokenizer = load_model(plan["model"], plan["model_revision"], torch.device("cuda", local_rank),
+                                              attention=policy["attention"])
             with meter.stage("adapter_load"):
                 model = get_peft_model(model, LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"],
                                                         lora_dropout=0.0, bias="none", task_type="CAUSAL_LM"))
@@ -313,52 +374,23 @@ def run(args):
         if replicate and current.replicate_record() != json.loads((out / "replicate.json").read_text())["replicate"]:
             raise ValueError("the replicate manifest and the engine disagree on the sampling stream")
 
-        def save(path, engine):
-            with meter.phase("checkpoint_save", engine.step, world):
-                with meter.stage("state_snapshot"):
-                    state = engine.state_dict()
-                def write():
-                    with meter.stage("write"):
-                        temporary = path.with_suffix(".tmp")
-                        torch.save(state, temporary)
-                        temporary.replace(path)
-                primary(write)
-
-        def load(path):
-            with meter.phase("checkpoint_load", gpu_count=world), meter.stage("read"):
-                return torch.load(path, map_location="cpu", weights_only=False)
-
         def restore(engine, state, **kwargs):
             with meter.phase("checkpoint_load", state["step"], world), meter.stage("restore"):
                 engine.load_state_dict(state, **kwargs)
 
-        checkpoint_path = out / f"{arm}-latest.pt"
-        if primary(checkpoint_path.exists):
-            state = load(checkpoint_path)
+        if resuming:
             if state["arm"] != engine_arm or not plan["shared_prefix_updates"] <= state["step"] <= plan["total_updates"]:
                 raise ValueError("resume checkpoint has the wrong arm or update count")
             restore(current, state)
         else:
-            shared = load(folder / "prefix.pt")
-            if shared["arm"] != "on_policy" or shared["step"] != plan["shared_prefix_updates"]:
+            if state["arm"] != "on_policy" or state["step"] != plan["shared_prefix_updates"]:
                 raise ValueError("shared prefix has the wrong arm or update count")
-            restore(current, shared, fork_arm=engine_arm)
+            restore(current, state, fork_arm=engine_arm)
+        del state
         extras = {"refresh_scope": scope, "launch_arm": launch_arm,
                   "replicate": current.replicate_record() if replicate else None,
                   "ablation": getattr(current, "mode", None) if engine_arm == "direction_ablation" else None}
-        while current.step < plan["total_updates"]:
-            current.update()
-            progress("update", arm=launch_arm, step=current.step)
-            if rank == 0:
-                print(f"TRAIN seed={args.seed} phase={launch_arm} arm={launch_arm} step={current.step}/{plan['total_updates']} "
-                      f"status=completed completed={current.step}/{plan['total_updates']}", flush=True)
-            if current.step % 25 == 0 or current.step == plan["total_updates"]:
-                save(checkpoint_path, current)
-                primary(lambda: atomic_json(out / f"{arm}-progress.json", {"seed": args.seed, "arm": arm, **extras,
-                        "step": current.step, "switched_at": current.switched_at,
-                        "transitions": getattr(current, "transitions", None),
-                        "sampling_protocol": current.SAMPLING_PROTOCOL, "costs": current.costs,
-                        "history": current.history}))
+        continue_updates(current, out, arm, launch_arm, plan["total_updates"], extras, policy)
         with meter.phase("evaluation", current.step, world):
             # The endpoint evaluation keeps the recorded rule and the base seed for every replicate.
             per_question = backend.evaluate(data["evaluation_ids"],
@@ -373,6 +405,7 @@ def run(args):
                 "transitions": getattr(current, "transitions", None),
                 "checks": [{"step": r["checkpoint"], "d": r["d"]} for r in current.history if r.get("d") is not None],
                 "sampling_protocol": current.SAMPLING_PROTOCOL,
+                "checkpoint_policy": policy,
                 "reward": sum(per_question.values()) / len(per_question), "per_question_reward": per_question,
                 "costs": measured, "cost_measurement_complete": ledger["complete"], "cost_receipts": ledger,
                 "evaluation_gpu_seconds": ledger["known_gpu_seconds"]["evaluation_gpu_seconds"],

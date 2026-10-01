@@ -1,6 +1,6 @@
 # 리뷰 대비 실험 명령 모음
 
-확인: 2026-09-30, 실행 코드 기준 `997cab9` / `master`.
+확인: 2026-10-01, 추가 runner 저장·재개·중단 처리 기준 `master`.
 [리뷰 일정](REVIEW_SCHEDULE_2027_KO.md) ·
 [기존 실험과 결과](EXPERIMENT_RESULTS_LEDGER_KO.md) ·
 [실험별 목적·우선순위](LIMITATION_EXPERIMENTS_KO.md) ·
@@ -23,7 +23,7 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 | E04 / P1 | total-step-200 고정 전환 | MATH 5 + MBPP 5 | `switch_fixed200`; seed별 수동 배정, 해당 prefix 완료 |
 | E05 / P2 | 후보 40개 SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E06 / P2 | 반복 전환 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
-| E07 / P3 | pool 400개 SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
+| E07 / P3 | 전체 candidate pool SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E08 / P3 | Qwen3.5-9B 온라인 네 arm | MATH 20 + MBPP 20 | 별도 환경·v2 root; 실제 GPU admission 통과 |
 | E09 / P3 | 초기 gradient 방향 matched ablation | MATH 15 + MBPP 15 (3조건 × 5 seeds) | `direction_removed`, `direction_magnitude`, `direction_replaced`; seed별 수동 배정, 해당 prefix 완료 |
 | E10 / P3 | 같은 유지 간격의 cached-SR 대조 | MATH 5 + MBPP 5 | `sr_hold`; seed별 수동 배정, 해당 prefix 완료 |
@@ -174,7 +174,7 @@ sh scripts/run_srgc_sr_refresh.sh mbpp 5 candidates
 sh scripts/run_srgc_sr_refresh.sh math 5 switch_repeat
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_repeat
 
-# E07: 전체 400문제 SR 갱신
+# E07: 해당 입력의 전체 candidate pool SR 갱신
 sh scripts/run_srgc_sr_refresh.sh math 5 pool
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
 
@@ -212,13 +212,29 @@ checkpoint 200의 selection 비용을 포함하고, SR-GC 부호로 전환 시�
 이 표는 자동 실행 파일이 아니다. `pending_prefix_check`는 prefix 미확인 상태다.
 서로 다른 노드가 같은 줄을 선택하지 않도록 node/상태/로그를 기록한다.
 
-같은 명령으로 마지막 저장에서 재개하며 저장 간격은 **25 updates**다.
+같은 명령으로 마지막 저장에서 재개하며 저장 간격은 **매 update**다.
+`latest.pt` 저장이 성공한 뒤 `progress.json`도 갱신한다. 선별 갱신 주기는
+그대로 25 updates이며, 매-step checkpoint 저장과 별개다. 최종 평가만 수행하므로
+`progress.json`의 training metrics를 중간 평가셋 reward로 해석하지 않는다.
 완료된 동일 실험은 재학습하지 않는다. 별도 `stop/resume/status/costs` 하위 명령은 없다.
-중단이 필요하면 해당 실행 터미널의 Ctrl-C를 사용하고 마지막 저장 이후 재수행을 예상한다.
+중단은 해당 터미널의 Ctrl-C 또는 실행 shell에 SIGTERM을 보낸다.
+shell은 자기 worker에 종료를 전달하고 자식 종료를 기다린 뒤 끝나며, 중단 후 재시도하지 않는다.
+실패한 update 및 저장을 마치지 못한 작업은 다시 수행할 수 있다.
+OOM/NCCL 등 실패는 기본 120초 간격, 총 50회 시도까지다. 사용법 오류(2),
+이미 점유된 작업/GPU(75), 사용자 중단(130/143)은 재시도하지 않는다.
+진행 timeout은 124와 오류 내용으로 기록한다. 락 파일을 지우지 않는다.
+
+새 추가 arm은 **prefix의 attention kernel을 계승**한다. 이미 시작한 추가 arm은
+자기 checkpoint/run 기록을 따른다. 구 추가 runner는 `SRGC_ATTENTION=sdpa`를
+전달하지 않아 실제로 eager를 사용했으므로, 그 실행을 재개할 때는 eager를 유지한다.
+환경 변수만 바꿔 기존 실행의 kernel을 바꾸지 않는다. `ATTENTION ... source=...`,
+`checkpoint_policy.attention`으로 실제 설정을 확인한다. 구 결과를 SDPA 결과로 재분류하지 않는다.
 
 ```sh
 sh scripts/run_srgc_sr_refresh.sh math results
 sh scripts/run_srgc_sr_refresh.sh mbpp results
+sh scripts/run_srgc_sr_refresh.sh math results --json
+sh scripts/run_srgc_sr_refresh.sh mbpp results --json
 ```
 
 상태는 콘솔과 active root의 `seed-N/<arm>-progress.json`,
@@ -227,6 +243,8 @@ arm 파일명은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-p
 `direction_removed`, `direction_magnitude`, `direction_replaced`이다. 독립 반복은
 `seed-N/replicate-<k>/` 아래에 원래 arm 이름(`sr`, `switch`)으로 같은 파일을 둔다.
 상세 비용은 `seed-N/cost-receipts/<arm>/`, `invocations/<arm>/`(replicate는 그 폴더 아래)에 있다.
+노드별 실행 로그는 `seed-N/launches/<arm>/<attempt>/task.log`와 `worker.json`이다.
+독립 반복의 로그는 `seed-N/replicate-<k>/launches/<base-arm>/` 아래에 있다.
 위 results의 selection 요약만으로 전체 GPU 비용을 계산하지 않는다.
 
 ## 5. E08 — Qwen3.5-9B, 별도 v2 실험
@@ -361,6 +379,29 @@ matplotlib 설치 시 `direction.png`다. 분해 기록이 없는 과거 checkpo
 저장된 norm/cosine으로 재구성한 진단 값이다. 분석 결과를 온라인 전환 기록으로 쓰지 않는다.
 
 ### 6.3. 노드 배정과 그룹 볼륨
+
+**추가 실험을 15개 노드에 바로 배정하는 예:** MATH seeds 5-9의 prefix가 모두
+검증됐다는 조건에서 다음처럼 서로 다른 작업 15개를 실행한다. 노드 번호는
+배정 예시일 뿐이며, 한 행의 5개 명령을 한 노드에서 동시에 실행하지 않는다.
+
+| 빈 노드 | seed 배정 | 각 노드에서 입력할 명령 (`SEED`를 해당 숫자로 교체) |
+| --- | --- | --- |
+| 1-5 | 각각 5, 6, 7, 8, 9 | `sh scripts/run_srgc_sr_refresh.sh math SEED replicate1-sr` |
+| 6-10 | 각각 5, 6, 7, 8, 9 | `sh scripts/run_srgc_sr_refresh.sh math SEED replicate1-switch` |
+| 11-15 | 각각 5, 6, 7, 8, 9 | `sh scripts/run_srgc_sr_refresh.sh math SEED switch_fixed200` |
+
+위 작업들은 서로 기다리지 않는다. 기본 SR/On/Switch의 종료도 기다리지 않는다.
+필요한 것은 해당 seed의 검증된 `prefix.pt` + `prefix-ready.json`이다.
+노드가 더 있으면 `replicate2-sr`, `replicate2-switch`, MBPP의 같은 작업을 배정한다.
+P1은 데이터셋당 25개, 두 데이터셋 합계 **최대 50개 노드**까지 독립 작업이 있다.
+추가 arm 전체는 **120개 노드**, P0 OLMo까지 합치면 **160개 노드**가 작업 수 상한이다.
+완료·실행 중인 작업은 추가 배정에서 빼며, 공유 저장소의 실제 동시 처리 성능을
+검증한 수치는 아니다. prefix가 없는 seed의 추가 명령은 대기열에 들어가지 않고 중단한다.
+기본 `all run`만 15개 띄우면 추가 arm으로 자동 이동하지 않는다.
+
+이번 수정은 frozen core hash를 바꾸지 않는다. 그렇더라도 과거 버전의 prefix가
+현재 core와 다르면 시작을 거부한다. 기존 cohort의 코드 버전을 확인하고,
+오류를 피하려고 prefix hash를 수정하거나 현재 기본 `run`으로 새 cohort를 만들지 않는다.
 
 | 노드 용도 | 입력할 명령 | 같은 명령을 여러 노드에서 실행 |
 | --- | --- | --- |

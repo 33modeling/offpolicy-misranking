@@ -138,7 +138,7 @@ sh scripts/run_srgc.sh mbpp
 
 There is no separate shell resume mode. The ordinary command detects the
 active cohort, reuses caches/checkpoints and retries failed tasks within the
-existing three-attempt limit. It does not
+shell's default 50-attempt limit (120-second retry delay). It does not
 override an intentional queue stop, exhausted retries, live GPU leases or
 identity mismatches. Normal resume loads `*-latest.pt`; it does not silently
 replace a damaged latest checkpoint with a backup. Restoring a backup requires
@@ -442,8 +442,9 @@ This runner evaluates final rewards at the common terminal update; it does not
 yet reproduce the historical per-checkpoint reward curves or plot PDF/PNG
 exports. It retains selection/check history and per-stage timing receipts.
 
-Dependencies wait for the predecessor's task lease to close, including its
-final timing receipts. The worker stops its owned process group after 1,800
+Cache handoff waits for the predecessor's lease and final timing receipts.
+Continuations can start when the verified prefix is published, without waiting
+for the prefix producer's lease to close. The worker stops its owned process group after 1,800
 seconds without actual task progress (`--stall-seconds` overrides this).
 Worker heartbeats and other tasks cannot reset that clock. Per-rank progress
 is in `.queue/progress/`. Stage model weights beforehand: downloading is not
@@ -495,8 +496,8 @@ the same plan that have no live launcher ancestor. After a child exits it termin
 the whole tree it saw while running. To clean a node by hand before relaunching:
 
 ```bash
-python scripts/srgc_process_guard.py --plan <group-storage plan path> --dry-run   # list
-python scripts/srgc_process_guard.py --plan <group-storage plan path>             # SIGTERM, then SIGKILL after 30 s
+python scripts/srgc_process_guard.py --plan "/group-volume/path/to/plan.json" --dry-run   # list
+python scripts/srgc_process_guard.py --plan "/group-volume/path/to/plan.json"             # SIGTERM, then SIGKILL after 30 s
 ```
 
 The guard lives outside the hashed `srgc_rebuttal` package, so an existing
@@ -600,8 +601,9 @@ four prompts whose success rate is closest to 0.5), but the success rates are
 re-measured under the current policy on On-policy's schedule. Every 25 updates
 it draws 40 candidates and generates eight fresh responses each (320 rollouts,
 without scoring gradients or validation generation), ranks them by |rate - 0.5| and
-trains the top four until the next refresh. `pool` scope re-measures all 400
-candidates per refresh instead (3200 rollouts; about one cache build each).
+trains the top four until the next refresh. `pool` scope re-measures the entire
+input candidate pool (eight rollouts per prompt; 3200 for a 400-prompt pool).
+Imported Pair inputs can have a different pool size; the input bundle is authoritative.
 
 The arm forks from the seed's verified shared prefix in the existing run root
 and writes `sr_refresh-{latest.pt,progress.json,endpoint.json}` (or
@@ -612,6 +614,7 @@ hashed package are untouched. Run one seed per node once its prefix is done:
 sh scripts/run_srgc_sr_refresh.sh math 5              # seeds 5..9, candidates scope
 sh scripts/run_srgc_sr_refresh.sh math 5 pool         # optional full-pool variant
 sh scripts/run_srgc_sr_refresh.sh math results        # rewards and selection GPU-seconds per seed
+sh scripts/run_srgc_sr_refresh.sh math results --json # CPU-only machine-readable output
 ```
 
 CPU tests: `python -m unittest srgc_rebuttal.tests.test_sr_refresh`.
@@ -642,12 +645,31 @@ as the main dataset launcher. Their GPU processes set runtime caches on group
 storage, and results reject mismatched experiment/prefix identities rather than
 combining incompatible endpoints. Missing costs are reported as unknown.
 These extra arms are not automatically dispatched by the four-arm queue.
+Use the [node allocation guide](../docs/REBUTTAL_COMMANDS_KO.md#63-노드-배정과-그룹-볼륨)
+and [120-task assignment sheet](../docs/REBUTTAL_EXTRA_TASKS.tsv).
+Each tuple needs one separate four-H100 node. With every required prefix ready,
+P1 (two paired SR/Switch replicates plus fixed200) has at most 25 concurrent
+tasks per dataset, 50 across MATH and MBPP. All listed OLMo extra arms have
+at most 120 concurrent tasks, or 160 including the 40 P0 continuations.
+These are task-count bounds, not measured cluster scaling or remaining work.
+
+Extra arms save `latest.pt` after every successful update using fsync and atomic
+replacement, then publish `progress.json`. Selection still refreshes every 25
+updates; reward evaluation is still terminal-only. Failed updates/saves may
+repeat work after restart. A new arm inherits its prefix's attention kernel;
+resumes preserve their own saved kernel. Old extra runners always used eager
+despite the shell's SDPA default, so legacy extra continuations retain eager.
+The chosen kernel is printed and stored in `checkpoint_policy` in the run,
+checkpoint, progress and endpoint receipts. `SRGC_ATTENTION` cannot override it.
+Ctrl-C or SIGTERM to the shell terminates its worker and waits for child teardown.
+Busy ownership (75) and usage errors (2) stop without retries; progress timeouts
+record 124. Never delete live lock files to restart.
 
 ## Fixed-schedule switching control (rule versus a preset transition)
 
 `scripts/srgc_switch_fixed.py` adds `switch_fixed<N>`: On-policy through
-update N exactly as the recorded arms (same refreshes and 40-vs-40 scoring, so
-its pre-transition cost equals Switch's), no SR-GC decision, then SR from
+update N with the same 40-candidate and validation scoring as On-policy,
+without SR comparison gradients or an SR-GC decision, then SR from
 update N+1 as the recorded Switch does after its transition. N must be a
 multiple of the 25-update selection interval; 100 and 125 mirror the recorded
 seed-4 and seed-3 transitions.
@@ -681,9 +703,9 @@ written earlier simply lack these fields). The separate 2026-09-29 verifier
 repair intentionally changes the package identity. Tabulate and plot with:
 
 ```bash
-python scripts/srgc_direction_analysis.py --plan <group-storage plan>           # -> <run root>/analysis/direction/
-python scripts/srgc_direction_analysis.py --root <run root> \
-    --legacy-d <paper repo>/v7/evidence/2026-09-24/selector-pair-srgc-all-d-1119.txt   # overlay recorded seed 3/4 D
+python scripts/srgc_direction_analysis.py --plan "/group-volume/path/to/plan.json" # -> <run root>/analysis/direction/
+python scripts/srgc_direction_analysis.py --root "/group-volume/path/to/run-root" \
+    --legacy-d "/path/to/paper-repo/v7/evidence/2026-09-24/selector-pair-srgc-all-d-1119.txt" # recorded seed 3/4 D
 ```
 
 Outputs `direction.csv`, `summary.txt` (per arm and step: D mean/sd and sign
@@ -731,11 +753,12 @@ shm cleanup, free-GPU wait) as worker children.
 
 ## Why the first block sits at `update 0/25`, and the attention kernel
 
-A refresh scores about 130 prompts (40 candidates, 40 SR prompts, 50
-validation prompts) with eight 2048-token responses each, one prompt at a time
-per rank, followed by a backward pass per response. The very first block of a
-prefix therefore spends one to three hours at `update 0/25 · selection`
-before the first `TRAIN ... update=1/25` line; the NODE line now shows how far
+A current On-policy refresh scores 40 candidates and 50 validation prompts.
+Only a scheduled Switch check adds up to 40 SR comparison prompts (overlap is
+scored once). The prefix's first refresh does not score the SR comparison.
+Eight responses per prompt, with at most 2048 generated tokens each, are
+processed per rank, followed by backward passes. Selection can therefore take
+a long time before the first optimizer update; the NODE line shows how far
 the ranks are: `gpus 4/4 busy (scored 12,13,12,11 prompts; last 3-9s)`.
 
 The frozen runner loads the model with **eager** attention (README: "BF16/eager
@@ -750,8 +773,8 @@ environment before `run_srgc.sh ... run` and keep it constant within a run.
 
 ## Rollouts are saved as they are produced (interrupted blocks resume)
 
-Policy checkpoints exist after every update, but a selection refresh (about
-130 prompts x 8 responses) and the final 300-prompt evaluation had no save
+Policy checkpoints exist after every update, but a selection refresh (90 to
+130 prompts x 8 responses with a 50-prompt validation set) and the final evaluation had no save
 point inside them, so a CUDA OOM, NCCL failure or GPU pre-emption during those
 hours restarted the block from zero and a repeatedly failing run never left
 `update 0/25`. `scripts/srgc_resumable_rollouts.py` (installed by both training
@@ -769,9 +792,11 @@ frozen runner's kernel); the kernel used is recorded in every checkpoint.
 What is in place when the operator takes the GPUs away, a rank dies or a node
 goes down mid-task:
 
-- **Nothing finished is repeated.** Policy checkpoints after every update,
+- **Completed saves survive.** Policy checkpoints after every update,
   per-prompt rollout cache inside scoring and evaluation blocks, cache
   receipts per prompt, and rolling checkpoint backups on the group volume.
+  An interrupted update or save can repeat work. The automatic backup watcher
+  covers P0 checkpoints, not extra-arm or replicate checkpoints.
 - **The task is released, not lost.** Task and GPU leases are `flock`s that
   the kernel drops when the process dies; the receipt stays `running`, which
   `status` shows as `recoverable` and any worker claims immediately.

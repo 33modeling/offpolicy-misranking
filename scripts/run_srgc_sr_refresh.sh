@@ -4,12 +4,16 @@
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> switch_repeat|switch_fixed<N>    # repeated / fixed-schedule transitions
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> direction_removed|direction_magnitude|direction_replaced
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>>
-#   sh scripts/run_srgc_sr_refresh.sh math|mbpp results                    # per-seed rewards next to the recorded arms
+#   sh scripts/run_srgc_sr_refresh.sh math|mbpp results [--json]           # per-seed rewards next to the recorded arms
 # The seed's shared prefix must already be complete in the group-storage run root.
 set -eu
 cd "$(dirname "$0")/.."
 DATASET=${1:-}; TARGET=${2:-}; SCOPE=${3:-candidates}
+[ "$#" -le 3 ] || { echo "too many arguments" >&2; exit 2; }
 case "$DATASET" in math|mbpp) ;; *) echo "usage: sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed>|results [candidates|pool|sr_hold|switch_repeat|switch_fixed<N>|direction_<mode>|replicate<k>-<arm>]" >&2; exit 2 ;; esac
+if [ "$TARGET" = results ]; then
+    case "${3:-}" in ''|--json) ;; *) echo "usage: math|mbpp results [--json]" >&2; exit 2 ;; esac
+else
 case "$SCOPE" in
     candidates|pool) ARM_ARGS="--scope $SCOPE" ;;
     sr_hold|switch_repeat) ARM_ARGS="--arm $SCOPE" ;;
@@ -18,6 +22,7 @@ case "$SCOPE" in
     replicate[0-9]*-*) ARM_ARGS="--arm $SCOPE" ;;
     *) echo "third argument must be candidates, pool, sr_hold, switch_repeat, switch_fixed<N> (e.g. switch_fixed100), direction_removed|direction_magnitude|direction_replaced, or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>> (e.g. replicate1-switch)" >&2; exit 2 ;;
 esac
+fi
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "$DATASET" in math) EXPLICIT=${PAIR_PYTHON:-} ;; mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; esac
 PY=${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
@@ -26,9 +31,8 @@ if ! command -v "$PY" >/dev/null 2>&1; then
     PY=python3
 fi
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-# Training children load the model with this attention kernel (recorded in each checkpoint);
-# sdpa is several times faster than the frozen runner's eager default for 2048-token rollouts.
-export SRGC_ATTENTION=${SRGC_ATTENTION:-sdpa}
+# Extra arms inherit their prefix's attention kernel; resumes keep their own
+# saved kernel. An environment default must not change an existing experiment.
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 PLAN=$("$PY" - "$DATASET" <<'PYEOF'
 import os
@@ -43,6 +47,9 @@ PYEOF
 )
 if [ "$TARGET" = results ]; then
     export CUDA_VISIBLE_DEVICES=""
+    if [ "${3:-}" = --json ]; then
+        exec "$PY" scripts/srgc_sr_refresh.py results --plan "$PLAN" --json
+    fi
     exec "$PY" scripts/srgc_sr_refresh.py results --plan "$PLAN"
 fi
 case "$TARGET" in ''|*[!0-9]*) echo "seed must be an integer" >&2; exit 2 ;; esac
@@ -59,12 +66,29 @@ echo "[sr-refresh] dataset=$DATASET seed=$TARGET scope=$SCOPE plan=$PLAN" >&2
 # Supervised like the queue worker: a crash (OOM, NCCL, pre-empted GPUs) is retried after a
 # delay and resumes from the arm's checkpoint and rollout cache; Ctrl-C/SIGTERM stop it.
 attempt=0
+child=
+stop_child() {
+    trap '' INT TERM
+    if [ -n "$child" ]; then
+        kill -TERM "$child" 2>/dev/null || :
+        wait "$child" 2>/dev/null || :
+    fi
+    exit "$1"
+}
+trap 'stop_child 130' INT
+trap 'stop_child 143' TERM
 while :; do
-    "$PY" scripts/srgc_extra_worker.py --plan "$PLAN" --seed "$TARGET" $ARM_ARGS && rc=0 || rc=$?
+    "$PY" scripts/srgc_extra_worker.py --plan "$PLAN" --seed "$TARGET" $ARM_ARGS &
+    child=$!
+    wait "$child" && rc=0 || rc=$?
+    child=
     [ "$rc" -ne 0 ] || exit 0
     case "$rc" in 130|143|2|75) exit "$rc" ;; esac
     attempt=$((attempt + 1))
     [ "$attempt" -lt "${SRGC_WORKER_RESTARTS:-50}" ] || exit "$rc"
     printf '[sr-refresh] exited with %s; retrying in %ss (retry %s)\n' "$rc" "${SRGC_WORKER_RESTART_DELAY:-120}" "$attempt" >&2
-    sleep "${SRGC_WORKER_RESTART_DELAY:-120}"
+    sleep "${SRGC_WORKER_RESTART_DELAY:-120}" &
+    child=$!
+    wait "$child"
+    child=
 done
