@@ -7,7 +7,7 @@ finished). Dependencies, leases, attempts, receipts and the hashed experiment
 package are untouched: this module manages multi-queue scheduling and receipts.
 """
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import json
 import os
 import socket
@@ -15,6 +15,36 @@ import time
 import uuid
 
 from srgc_rebuttal.runtime import atomic_json
+
+
+@contextmanager
+def available_devices(queues, args, environment, base, update):
+    """Wait before admission without claiming work or disturbing the GPU owner."""
+    from srgc_rebuttal import cluster
+    while True:
+        if all(cluster.stop_requested(q) or all(r["status"] == "complete" for r in q.status()) for q in queues):
+            update("stopped" if any(cluster.stop_requested(q) for q in queues) else "complete")
+            yield None
+            return
+        stack = ExitStack()
+        try:
+            devices, uuids = cluster.gpu_identity()
+            lock_root = args.node_lock_root or queues[0].root.parent / "gpu-node-locks"
+            fds = stack.enter_context(cluster.device_leases(lock_root, uuids))
+        except cluster.Busy as exc:
+            stack.close()
+            update("idle", error=str(exc))
+            print(f"NODE idle (GPU allocation already owned): {exc}", flush=True)
+            time.sleep(min(args.poll_seconds, 30))
+            continue
+        except BaseException:
+            stack.close()
+            raise
+        with stack:
+            environment["CUDA_VISIBLE_DEVICES"] = devices
+            base.update(devices=devices, gpu_uuids=uuids)
+            yield fds
+        return
 
 
 def report_failure(queue, task, code):
@@ -72,11 +102,9 @@ def worker_multi(args, extra_plans):
             update("stopped" if any(cluster.stop_requested(q) for q in queues) else "complete")
             return
         environment = cluster.child_environment()
-        devices, uuids = cluster.gpu_identity()
-        environment["CUDA_VISIBLE_DEVICES"] = devices
-        base.update(devices=devices, gpu_uuids=uuids)
-        lock_root = args.node_lock_root or primary.root.parent / "gpu-node-locks"
-        with cluster.device_leases(lock_root, uuids) as gpu_fds:
+        with available_devices(queues, args, environment, base, update) as gpu_fds:
+            if gpu_fds is None:
+                return
             base["admission"] = cluster.admit(primary.directory / "admission" / worker_id,
                 environment, cluster.run_child, pass_fds=gpu_fds, plan=primary.plan,
                 heartbeat=lambda pid: update("preflight", child_pid=pid),
@@ -136,7 +164,7 @@ def run_worker_multi(queues, args, environment, gpu_fds, worker_id, update):
                 except KeyboardInterrupt:
                     queue.finish(task, 130, interrupted=True)
                     update("stopped", task)
-                    return
+                    raise
                 except TimeoutError as exc:
                     # run_child has already terminated its process group. Keep
                     # this worker alive so other tasks and bounded retries run.
@@ -146,7 +174,7 @@ def run_worker_multi(queues, args, environment, gpu_fds, worker_id, update):
                     with log.open("a") as handle:
                         handle.write(f"\nTimeoutError: {exc}\n")
                 except BaseException:
-                    queue.finish(task, 130)
+                    queue.finish(task, 1)
                     raise
                 code = queue.finish(task, code)
                 print(f"DONE {queue.plan['dataset']}:{task.key} exit={code}", flush=True)
@@ -168,7 +196,7 @@ def run_worker_multi(queues, args, environment, gpu_fds, worker_id, update):
 
 @contextmanager
 def multi_queue(extra_plans):
-    """Install multi-queue entry/claim loops; leave single-queue admission intact."""
+    """Use the same ownership-aware admission for one or several queues."""
     from srgc_rebuttal import cluster
     original = cluster.run_worker
     original_entry = cluster.worker
@@ -185,8 +213,7 @@ def multi_queue(extra_plans):
         return run_worker_multi(queues, args, environment, gpu_fds, worker_id, update)
 
     cluster.run_worker = run_worker
-    if extra_plans:
-        cluster.worker = lambda args: worker_multi(args, extra_plans)
+    cluster.worker = lambda args: worker_multi(args, extra_plans)
     try:
         yield
     finally:

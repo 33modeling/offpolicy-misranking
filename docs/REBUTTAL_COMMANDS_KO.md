@@ -356,6 +356,11 @@ OLMo용 `SRGC_ATTENTION=sdpa` 환경이 남아 있어도 이를 따르지 않는
 
 ### 6.1. 실험별 GPU와 최대 동시 노드
 
+같은 GPU 할당에 기본 worker를 다시 실행하면 기존 GPU 소유권을 확인하고 `NODE idle`로 기다린다.
+이 대기에서는 task claim·admission·학습 자식을 시작하지 않는다. 단일 데이터셋과 `all run`에 모두 적용된다.
+독립 작업을 늘리려면 기존 노드에 worker를 겹쳐 띄우는 대신 서로 다른 4-GPU 할당에 실행한다.
+아래 병렬 상한까지 항상 즉시 실행되는 것은 아니며, 공통 cache/prefix 의존성이 먼저 충족되어야 한다.
+
 현재 runner는 **작업 하나 = 노드 하나 = GPU 4장**이다.
 `torchrun --standalone --nproc_per_node=4`와 `world_size=4`를 사용하므로
 한 작업을 여러 노드로 분할하거나 GPU 1장씩으로 쪼개 실행하지 않는다.
@@ -445,14 +450,26 @@ SR 캐시가 실제로 무엇을 고르는지는 다음 명령으로 본다. 같
 
 출력은 run root의 `analysis/sr-cache/` 아래 `summary.txt`, `cache.csv`(후보별 캐시 성공 수·SR 순위·예측 학습 횟수),
 `composition.csv`, `updates.csv`다. seed마다 캐시 성공률 분포(0/8…8/8), 정확히 4/8인 문제 수,
-3/8–5/8 구간 수, 보상 분산이 0이라 GRPO 신호가 없는 0/8·8/8 수를 적고, SR arm이 prefix 이후 endpoint까지
+3/8–5/8 구간 수, 캐시에서 응답 보상이 같았던 0/8·8/8 수를 적고, SR arm이 prefix 이후 endpoint까지
 어떤 문제를 학습하는지를 캐시와 seed만으로 그대로 재현해(SR의 추출·순위는 학습과 무관) 학습 슬롯의 캐시 구간 구성,
-학습된 서로 다른 문제 수, 상위 10문제 점유율, 4/8 문제 중 실제로 학습된 수를 낸다. `seed-N/<arm>-progress.json`이
+예측 학습 문제 수, 상위 10문제 점유율, 4/8 문제 중 예측 선택 문제 수를 낸다. `seed-N/<arm>-progress.json`이
 있으면 On-policy·Random·Switch·추가 arm·replicate가 실제로 학습한 문제의 캐시 구간 구성과 SR-GC 비교 집합 구성을
 같이 적고, 기록된 SR 이력이 예측 일정과 다른 update 수를 보고한다. update마다 평균 학습 보상·gradient norm과,
 학습 receipt가 있으면 8응답 보상이 전부 같아 advantage가 0인 문제 수(4개 중)를 `updates.csv`에 남긴다.
-update 수는 optimizer step 수일 뿐이므로 학습량은 이 열로 읽는다. 캐시는 클러스터에서 생성되므로 캐시 없는
-로컬 입력 번들에서는 해당 seed를 건너뛴다.
+`step`은 업데이트 직전 번호, `completed_updates`는 직후 누적 횟수다. `sample_reward`는 학습 응답 보상이며
+별도 evaluation 보상이 아니다. 캐시의 0/8·8/8 문제라도 새 학습 응답에서는 보상이 달라질 수 있다.
+또한 gradient가 0이라는 기록만으로 optimizer momentum까지 포함한 파라미터 변화가 0이라고 단정하지 않는다.
+
+prefix 이전 기록은 별도 제외 횟수로 표시하고, 요청 구간에서 실제 비교한 SR 업데이트 수와 미기록 수를 함께 적는다.
+중복 step·다른 seed·캐시에 없는 문제·비이진 보상은 오류로 중단한다. 같은 step의 완료 receipt가 여러 개면
+어느 재시도가 저장된 모델에 반영됐는지 확정할 수 없어 해당 신호를 빈칸으로 남긴다. 없는 count도 0으로 채우지 않는다.
+gradient와 receipt의 측정 개수를 각각 표시하며, 구간 평균의 평균이 아니라 측정된 업데이트 전체로 평균을 계산한다.
+기존 progress에 seed/arm 식별 정보가 없으면 검증 불가 경고를 남긴다. 분석은 입력·체크포인트·receipt를 수정하지 않는다.
+
+캐시가 없는 seed는 건너뛰고 종료 코드 1을 반환한다. SR 이력 불일치도 종료 코드 1이다. 손상된 캐시를
+미생성 캐시로 처리하지 않는다. 단일 `--input`의 seed는 입력 provenance에서 읽으며, 없으면 `--seed`가 필요하다.
+기본 arm의 progress JSON은 25-update 간격이므로 진행 중에는 최신 저장 체크포인트보다 뒤처질 수 있다.
+이 분석은 과거 evaluation이나 중간 체크포인트를 새로 만들지 않는다.
 
 ### 6.3. 노드 배정과 그룹 볼륨
 

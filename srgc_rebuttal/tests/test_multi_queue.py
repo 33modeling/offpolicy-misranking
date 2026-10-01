@@ -62,6 +62,38 @@ def simulate_multi_worker(primary, secondary, worker_id, barrier):
 
 
 class MultiQueueTest(unittest.TestCase):
+    def test_busy_gpu_parks_without_admission_or_task_claim(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = TaskQueue(write_inputs(Path(directory)))
+            options = args()
+            options.plan, options.worker_id, options.node_lock_root = queue.plan_path, "waiting", None
+            sleeps = []
+            def wait(seconds):
+                record = json.loads((queue.directory / "workers/waiting.json").read_text())
+                self.assertEqual(record["status"], "idle")
+                self.assertIsNone(record["task"])
+                self.assertFalse(list((queue.directory / "attempts").glob("*.json")))
+                sleeps.append(seconds)
+                cluster.atomic_json(queue.directory / "stop.json", {"immediate": False})
+            with multi.multi_queue([]), patch.object(cluster, "gpu_identity", side_effect=cluster.Busy("owned")), \
+                    patch.object(cluster, "admit") as admit, patch.object(multi.time, "sleep", wait), \
+                    redirect_stdout(io.StringIO()):
+                cluster.worker(options)
+            admit.assert_not_called()
+            self.assertEqual(len(sleeps), 1)
+            self.assertEqual(json.loads((queue.directory / "workers/waiting.json").read_text())["status"], "stopped")
+
+    def test_interrupt_propagates_and_does_not_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = TaskQueue(write_inputs(Path(directory)))
+            queue.bind()
+            with patch.object(cluster, "gpu_identity"), patch.object(cluster, "run_child", side_effect=KeyboardInterrupt), \
+                    redirect_stdout(io.StringIO()), self.assertRaises(KeyboardInterrupt):
+                multi.run_worker_multi([queue], args(), {}, (), "interrupted", lambda *a, **kw: None)
+            attempts = [json.loads(p.read_text()) for p in (queue.directory / "attempts").glob("*.json")]
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["exit_code"], 130)
+
     def test_timeout_retries_without_losing_worker_and_records_real_error(self):
         with tempfile.TemporaryDirectory() as directory:
             queue = TaskQueue(write_inputs(Path(directory)))
@@ -203,6 +235,7 @@ class MultiQueueTest(unittest.TestCase):
             task = next(t for t in a.tasks if t.key == "seed-5.prefix")
             self.assertFalse(a.locked(task))
             self.assertEqual(json.loads(a.receipt(task).read_text())["status"], "failed")
+            self.assertEqual(json.loads(a.receipt(task).read_text())["exit_code"], 1)
             with cluster.device_leases(options.node_lock_root, uuids):
                 pass
             for queue in (a, b):

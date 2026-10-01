@@ -10,8 +10,8 @@ This script reads a seed's input bundle and reports:
 
   * the cache histogram (how many candidates have 0/8 ... 8/8 successes), the
     number at exactly 4/8 (the only prompts with a measured 50% rate), the
-    3/8-5/8 band SR mostly draws from, and the 0/8 and 8/8 prompts whose eight
-    equal rewards give GRPO no advantage signal;
+    3/8-5/8 band, and the 0/8 and 8/8 prompts in the initial cache. Their fresh
+    training responses need not have the same rewards;
   * SR's predicted training schedule from the shared prefix to the endpoint:
     training slots per cache bucket, distinct prompts, how concentrated the
     schedule is, and how many of the exactly-4/8 prompts are ever trained;
@@ -24,7 +24,8 @@ This script reads a seed's input bundle and reports:
     training reward and gradient norm from the history and, from the training
     receipts in ``cost-receipts/<arm>/``, the number of the four prompts whose
     eight responses all earned the same reward (zero GRPO advantage, no
-    gradient). An update count is optimizer steps; this is what they carried.
+    reward-gradient contribution). This is not held-out evaluation, nor proof
+    of a zero parameter change under an optimizer with momentum.
 
     python scripts/srgc_cache_analysis.py --plan <group-storage plan>          # every seed of the plan
     python scripts/srgc_cache_analysis.py --input srgc_rebuttal/inputs/seed-5.json --seed 5 [--folder <seed-5 run folder>]
@@ -37,6 +38,7 @@ Outputs ``summary.txt``, ``cache.csv`` (one row per candidate),
 import argparse
 import csv
 import json
+import math
 import sys
 from collections import Counter
 from pathlib import Path
@@ -48,17 +50,25 @@ sys.path.insert(0, str(REPO))
 
 from srgc_rebuttal.srgc import Config, cached_sr_set, stream_seed  # noqa: E402
 
-SKIP_KEYS = {"seed", "arm", "source", "bucket", "slots"}
+def read_object(path):
+    data = json.loads(Path(path).read_text())
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: expected a JSON object")
+    return data
+
+
+def finite_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def successes_of(cache, responses):
     """Candidate -> number of cached successes; the cache must hold ``responses`` binary rewards each."""
     result = {}
     for prompt, rewards in cache.items():
-        values = [int(r) for r in rewards]
-        if len(values) != responses or any(v not in (0, 1) for v in values):
+        if not isinstance(rewards, (list, tuple)) or len(rewards) != responses or any(
+                not finite_number(v) or v not in (0, 1) for v in rewards):
             raise ValueError(f"{prompt}: cache must contain {responses} binary rewards")
-        result[prompt] = sum(values)
+        result[prompt] = int(sum(rewards))
     return result
 
 
@@ -81,11 +91,15 @@ def sr_schedule(candidates, cache, seed, config, start, total):
 
 
 def composition(ids, successes, responses):
-    counts = Counter(successes[i] for i in ids if i in successes)
+    ids = list(ids)
+    unknown = set(ids) - set(successes)
+    if unknown:
+        raise ValueError(f"recorded prompts are absent from the cache: {sorted(unknown)}")
+    counts = Counter(successes[i] for i in ids)
     return [counts.get(k, 0) for k in range(responses + 1)]
 
 
-def recorded_arms(folder):
+def recorded_arms(folder, seed=None, warnings=None):
     """{arm label: (history, receipts dir)} from ``<arm>-progress.json`` files; replicates are ``replicate<k>-<arm>``."""
     histories = {}
     if folder is None or not Path(folder).is_dir():
@@ -97,29 +111,52 @@ def recorded_arms(folder):
         receipts = path.parent / "cost-receipts" / arm
         if path.parent != folder:
             arm = f"{path.parent.name.replace('-', '', 1)}-{arm}"
-        try:
-            history = json.loads(path.read_text()).get("history", [])
-        except (OSError, ValueError):
-            continue
+        data = read_object(path)
+        if seed is not None and data.get("seed", seed) != seed:
+            raise ValueError(f"{path}: seed differs from input bundle")
+        if data.get("arm", path.stem.removesuffix("-progress")) != path.stem.removesuffix("-progress"):
+            raise ValueError(f"{path}: arm differs from filename")
+        if warnings is not None and ("seed" not in data or "arm" not in data):
+            warnings.append(f"{path}: missing seed/arm metadata; provenance not verified")
+        history = data.get("history")
+        if not isinstance(history, list):
+            raise ValueError(f"{path}: history must be a list")
+        steps = [r.get("checkpoint") if isinstance(r, dict) else None for r in history]
+        if any(type(s) is not int or s < 0 for s in steps) or steps != sorted(set(steps)):
+            raise ValueError(f"{path}: history checkpoints must be unique and increasing")
         if history:
             histories[arm] = (history, receipts)
     return histories
 
 
-def zero_advantage_prompts(receipts, responses):
+def zero_advantage_prompts(receipts, responses, training_prompts=None, warnings=None):
     """step -> prompts whose responses all earned the same reward, from finished training receipts; {} without receipts."""
     result = {}
     if receipts is None or not Path(receipts).is_dir():
         return result
-    for path in Path(receipts).glob("*.json"):
-        try:
-            event = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
+    seen = set()
+    for path in sorted(Path(receipts).glob("*.json")):
+        event = read_object(path)
         if event.get("phase") != "training" or event.get("state") != "finished":
             continue
-        zero = sum(v for k, v in event.get("counts", {}).items() if k.split(".")[-1] == "zero_advantage_responses")
-        result[event["checkpoint"]] = zero / responses
+        step = event.get("checkpoint")
+        if type(step) is not int or step < 0:
+            raise ValueError(f"{path}: invalid training checkpoint")
+        counts = event.get("counts", {})
+        if not isinstance(counts, dict):
+            raise ValueError(f"{path}: invalid training counts")
+        values = [v for k, v in counts.items() if k.split(".")[-1] == "zero_advantage_responses"]
+        if any(not finite_number(v) or v < 0 or v % responses for v in values):
+            raise ValueError(f"{path}: invalid zero-advantage response count")
+        zero = sum(values) / responses if values else None
+        if zero is not None and training_prompts is not None and zero > training_prompts:
+            raise ValueError(f"{path}: zero-advantage count exceeds training batch")
+        # Receipts do not identify which retry produced the persisted optimizer
+        # state. Even equal counts cannot establish that association.
+        result[step] = None if step in seen else zero
+        if warnings is not None and (step in seen or zero is None):
+            warnings.append(f"{path}: step {step} has duplicate receipts or missing counts; signal unknown")
+        seen.add(step)
     return result
 
 
@@ -128,7 +165,17 @@ def update_rows(seed, arm, history, saturated):
     for r in history:
         metrics = r.get("metrics") or {}
         step = r["checkpoint"]
-        rows.append({"seed": seed, "arm": arm, "step": step, "selector": r.get("selector"),
+        if not isinstance(metrics, dict):
+            raise ValueError(f"{arm} step {step}: metrics must be an object")
+        for key in ("sample_reward", "gradient_norm"):
+            value = metrics.get(key)
+            if value is not None and (not finite_number(value) or value < 0 or
+                                      (key == "sample_reward" and value > 1)):
+                raise ValueError(f"{arm} step {step}: invalid {key}")
+        if r.get("completed_updates", step + 1) != step + 1:
+            raise ValueError(f"{arm} step {step}: inconsistent completed_updates")
+        rows.append({"seed": seed, "arm": arm, "step": step, "completed_updates": step + 1,
+                     "selector": r.get("selector"),
                      "sample_reward": metrics.get("sample_reward"), "gradient_norm": metrics.get("gradient_norm"),
                      "zero_advantage_prompts": saturated.get(step)})
     return rows
@@ -139,24 +186,35 @@ def learning_signal(rows, interval):
     blocks = {}
     for row in rows:
         block = blocks.setdefault(row["step"] // interval * interval, {"updates": 0, "reward": [], "zero_gradient": 0,
-                                                                        "saturated": [], })
+                                                                        "saturated": [], "gradient_observed": 0})
         block["updates"] += 1
         if row["sample_reward"] is not None:
             block["reward"].append(row["sample_reward"])
-        if row["gradient_norm"] is not None and row["gradient_norm"] <= 1e-12:
-            block["zero_gradient"] += 1
+        if row["gradient_norm"] is not None:
+            block["gradient_observed"] += 1
+            if row["gradient_norm"] <= 1e-12:
+                block["zero_gradient"] += 1
         if row["zero_advantage_prompts"] is not None:
             block["saturated"].append(row["zero_advantage_prompts"])
     return {start: {"updates": b["updates"],
                     "mean_reward": float(np.mean(b["reward"])) if b["reward"] else None,
                     "zero_gradient_updates": b["zero_gradient"],
+                    "gradient_observed": b["gradient_observed"], "receipt_observed": len(b["saturated"]),
                     "mean_saturated_prompts": float(np.mean(b["saturated"])) if b["saturated"] else None}
             for start, b in sorted(blocks.items())}
 
 
 def analyse_seed(seed, data, config, start, total, folder=None):
     responses = config.responses
+    if not 0 <= start < total or responses <= 0 or responses % 2 or config.selection_interval <= 0:
+        raise ValueError("require 0 <= prefix < total, positive even responses and positive interval")
+    if data.get("provenance", {}).get("experiment_seed", seed) != seed:
+        raise ValueError("seed differs from input provenance")
     candidates = tuple(data["candidate_ids"])
+    if any(not isinstance(i, str) for i in candidates) or len(set(candidates)) != len(candidates):
+        raise ValueError("candidate ids must be unique strings")
+    if not 0 < config.training_prompts <= config.scoring_prompts <= len(candidates):
+        raise ValueError("candidate pool is smaller than the requested sampling batch")
     cache = data["cached_rewards"]
     if set(cache) != set(candidates):
         raise ValueError(f"seed {seed}: the cache does not cover the candidate pool")
@@ -182,16 +240,28 @@ def analyse_seed(seed, data, config, start, total, folder=None):
                      "mean_trained_rate": float(np.mean([successes[i] / responses for i in slots])) if slots else None},
         "rows": [{"seed": seed, "prompt": i, "successes": successes[i], "rate": successes[i] / responses,
                   "sr_rank": rank_of[i], "predicted_sr_train_count": trained.get(i, 0)} for i in candidates],
-        "arms": {}, "sr_mismatch": None,
+        "arms": {}, "sr_mismatch": None, "sr_compared": 0, "warnings": [],
+        "training_prompts": config.training_prompts,
     }
     predicted = {step: batch for step, batch in batches}
     report["updates"] = []
-    for arm, (history, receipts) in recorded_arms(folder).items():
+    for arm, (history, receipts) in recorded_arms(folder, seed, report["warnings"]).items():
+        excluded = sum(r["checkpoint"] < start for r in history)
+        if any(r["checkpoint"] >= total for r in history):
+            raise ValueError(f"{arm}: history extends beyond requested endpoint {total}")
+        history = [r for r in history if r["checkpoint"] >= start]
+        for r in history:
+            ids = r.get("train_ids")
+            if not isinstance(ids, list) or any(not isinstance(i, str) for i in ids) or (
+                    len(ids) != config.training_prompts or len(set(ids)) != len(ids)):
+                raise ValueError(f"{arm} step {r['checkpoint']}: invalid training ids")
         train_slots = [i for r in history for i in r.get("train_ids", [])]
-        rows = update_rows(seed, arm, history, zero_advantage_prompts(receipts, responses))
+        rows = update_rows(seed, arm, history, zero_advantage_prompts(
+            receipts, responses, config.training_prompts, report["warnings"]))
         report["updates"].extend(rows)
         entry = {"updates": len(history), "composition": composition(train_slots, successes, responses),
-                 "mean_trained_rate": float(np.mean([successes[i] / responses for i in train_slots if i in successes]))
+                 "excluded_prefix_updates": excluded, "missing_updates": total - start - len(history),
+                 "mean_trained_rate": float(np.mean([successes[i] / responses for i in train_slots]))
                  if train_slots else None,
                  "distinct": len(set(train_slots)),
                  "signal": learning_signal(rows, config.selection_interval),
@@ -206,7 +276,8 @@ def analyse_seed(seed, data, config, start, total, folder=None):
         if arm == "sr":
             mismatch = sum(1 for r in history if r["checkpoint"] in predicted
                            and tuple(r.get("train_ids", ())) != predicted[r["checkpoint"]])
-            report["sr_mismatch"] = mismatch
+            report["sr_compared"] = len(history)
+            report["sr_mismatch"] = mismatch if history else None
     return report
 
 
@@ -215,7 +286,10 @@ def buckets_line(values, responses):
 
 
 def summarize(reports):
-    lines = []
+    lines = ["Recorded metrics are training metrics, not held-out evaluation.",
+             "Cache buckets describe initial responses, not fresh training rewards."]
+    def rate(value):
+        return "unknown" if value is None else f"{100 * value:.1f}%"
     for r in reports:
         n, k = r["candidates"], r["responses"]
         s = r["schedule"]
@@ -229,27 +303,38 @@ def summarize(reports):
         lines.append(f"  distinct prompts trained {s['distinct']}/{n}   "
                      f"top-10 prompts hold {100 * s['top10_share']:.1f}% of slots   "
                      f"exactly-50% prompts ever trained {s['half_trained']}/{r['exactly_half']}   "
-                     f"mean cached rate of trained prompts {100 * (s['mean_trained_rate'] or 0):.1f}%")
+                     f"mean cached rate of trained prompts {rate(s['mean_trained_rate'])}")
         if r["sr_mismatch"] is not None:
-            lines.append(f"  recorded sr history vs predicted schedule: {r['sr_mismatch']} mismatching updates")
+            lines.append(f"  recorded sr history vs predicted schedule: {r['sr_mismatch']} mismatching updates "
+                         f"out of {r['sr_compared']} compared; {s['updates'] - r['sr_compared']} unobserved")
+        else:
+            lines.append("  recorded sr history vs predicted schedule: not verified (no overlapping history)")
         for arm, entry in r["arms"].items():
             lines.append(f"  {arm:<22} trained ({entry['updates']} updates, {entry['distinct']} distinct, "
-                         f"mean cached rate {100 * (entry['mean_trained_rate'] or 0):.1f}%)  "
+                         f"mean cached rate {rate(entry['mean_trained_rate'])})  "
                          + buckets_line(entry["composition"], k))
+            lines.append(f"  {'':<22} missing updates {entry['missing_updates']}; "
+                         f"excluded shared-prefix updates {entry['excluded_prefix_updates']}")
             if "sr_comparison_composition" in entry:
                 lines.append(f"  {'':<22} SR-GC comparison set  " + buckets_line(entry["sr_comparison_composition"], k))
             if "candidate_composition" in entry:
                 lines.append(f"  {'':<22} drawn candidates      " + buckets_line(entry["candidate_composition"], k))
             blocks = entry["signal"]
             total_zero = sum(b["zero_gradient_updates"] for b in blocks.values())
-            saturated = [b["mean_saturated_prompts"] for b in blocks.values() if b["mean_saturated_prompts"] is not None]
-            note = (f"saturated prompts per update {np.mean(saturated):.2f} of 4 (receipts)" if saturated
-                    else "saturated prompts unknown (no training receipts)")
-            lines.append(f"  {'':<22} learning signal: zero-gradient updates {total_zero}/{entry['updates']}; {note}")
+            measured = sum(b["gradient_observed"] for b in blocks.values())
+            observed = sum(b["receipt_observed"] for b in blocks.values())
+            total_saturated = sum(b["mean_saturated_prompts"] * b["receipt_observed"]
+                                  for b in blocks.values() if b["receipt_observed"])
+            note = (f"saturated prompts per update {total_saturated / observed:.2f} of {r['training_prompts']} "
+                    f"({observed}/{entry['updates']} updates with unambiguous receipts)" if observed
+                    else "saturated prompts unknown (no unambiguous training receipts)")
+            lines.append(f"  {'':<22} learning signal: zero-gradient updates {total_zero}/{measured} measured "
+                         f"({entry['updates'] - measured} unknown); {note}")
             lines.append(f"  {'':<22} per block (start: updates, mean train reward, saturated prompts): " + "; ".join(
                 f"{start}: {b['updates']}, {100 * b['mean_reward']:.1f}%, "
                 + (f"{b['mean_saturated_prompts']:.2f}" if b["mean_saturated_prompts"] is not None else "?")
                 for start, b in blocks.items() if b["mean_reward"] is not None))
+        lines.extend(f"  WARNING: {message}" for message in r["warnings"])
         lines.append("")
     if not reports:
         lines.append("no seed with a complete cache")
@@ -280,7 +365,7 @@ def write_outputs(reports, out):
                 for bucket, value in enumerate(entry["composition"]):
                     writer.writerow([r["seed"], arm, "recorded", f"{bucket}/{k}", value])
     with (out / "updates.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["seed", "arm", "step", "selector", "sample_reward", "gradient_norm",
+        writer = csv.DictWriter(handle, fieldnames=["seed", "arm", "step", "completed_updates", "selector", "sample_reward", "gradient_norm",
                                                     "zero_advantage_prompts"])
         writer.writeheader()
         for r in reports:
@@ -289,16 +374,21 @@ def write_outputs(reports, out):
 
 
 def load_bundle(path):
-    data = json.loads(Path(path).read_text())
+    data = read_object(path)
     cache = data.get("cached_rewards") or {}
-    return data if cache and set(cache) == set(data.get("candidate_ids", [])) else None
+    if not cache:
+        return None
+    if not isinstance(cache, dict) or set(cache) != set(data.get("candidate_ids", [])):
+        raise ValueError(f"{path}: incomplete or invalid cache")
+    return data
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--plan", type=Path, help="frozen plan (group-storage path); analyses every seed with a complete cache")
-    parser.add_argument("--input", type=Path, help="one input bundle (srgc-inputs-v1) instead of a plan")
-    parser.add_argument("--seed", type=int, help="base seed of --input (default: 3)")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--plan", type=Path, help="frozen plan (group-storage path); analyses every seed with a complete cache")
+    source.add_argument("--input", type=Path, help="one input bundle (srgc-inputs-v1) instead of a plan")
+    parser.add_argument("--seed", type=int, help="base seed of --input (default: input provenance)")
     parser.add_argument("--folder", type=Path, help="seed run folder with <arm>-progress.json histories for --input")
     parser.add_argument("--prefix", type=int, default=25, help="shared prefix updates for --input (default 25)")
     parser.add_argument("--total", type=int, default=275, help="endpoint update count for --input (default 275)")
@@ -306,6 +396,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     reports, skipped = [], []
     if args.plan is not None:
+        if args.seed is not None or args.folder is not None or args.prefix != 25 or args.total != 275:
+            parser.error("--seed, --folder, --prefix and --total apply only to --input")
         from srgc_rebuttal.plan import input_path, load_plan
         from srgc_rebuttal.runtime import run_root
         plan = load_plan(args.plan)
@@ -326,7 +418,9 @@ def main(argv=None):
         data = load_bundle(args.input)
         if data is None:
             parser.error(f"{args.input} has no complete cache; the cache is generated on the cluster before training")
-        seed = 3 if args.seed is None else args.seed
+        seed = data.get("provenance", {}).get("experiment_seed") if args.seed is None else args.seed
+        if type(seed) is not int:
+            parser.error("--seed is required when input provenance has no experiment_seed")
         reports.append(analyse_seed(seed, data, Config(seed=seed), args.prefix, args.total, args.folder))
         out = args.out or args.input.resolve().parent / "analysis" / "sr-cache"
     else:
@@ -336,7 +430,7 @@ def main(argv=None):
     if skipped:
         print(f"skipped seeds without a complete cache: {skipped} (the cache is generated on the cluster before training)")
     print(f"-> {out}")
-    return 0
+    return 0 if reports and not skipped and not any(r["sr_mismatch"] for r in reports) else 1
 
 
 if __name__ == "__main__":
