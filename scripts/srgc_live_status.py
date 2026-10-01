@@ -219,6 +219,8 @@ def this_node_lines(report, host=None, gpu_summary=gpu_memory_summary):
 
 
 def worker_activity(worker):
+    if worker["status"] == "idle" and worker.get("idle_reason"):
+        return f"idle ({worker['idle_reason']})"
     if worker["status"] == "idle" and worker.get("active_plan") and worker.get("active_task"):
         return f"serving {worker['active_dataset']}:{worker['active_task']}"
     if worker["status"] == "idle":

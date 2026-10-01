@@ -27,11 +27,11 @@ class ShellLauncherTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
 
-    def test_run_clears_gpu_memory_before_the_worker_unless_skipped(self):
+    def test_run_never_kills_existing_gpu_processes(self):
         script = SCRIPT.read_text()
-        self.assertIn("clear_gpu_memory", script)
-        self.assertIn("--query-compute-apps=pid", script)
-        self.assertIn("kill -TERM", script)
+        self.assertNotIn("clear_gpu_memory", script)
+        self.assertNotIn("kill -TERM", script)
+        self.assertNotIn("kill -KILL", script)
         with tempfile.TemporaryDirectory() as directory:
             python = Path(directory) / "python"
             python.write_text("#!/bin/sh\necho '{}'\n")
@@ -41,7 +41,7 @@ class ShellLauncherTests(unittest.TestCase):
             result = subprocess.run(["sh", str(SCRIPT), "math", "run"], cwd="/tmp", env=env, text=True,
                                     capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("[startup-cleanup] skipped", result.stderr)
+            self.assertNotIn("TERM sent", result.stderr)
             self.assertEqual(result.stdout.strip(), "{}")
 
     def test_worker_is_restarted_after_a_crash_but_not_after_an_interrupt(self):

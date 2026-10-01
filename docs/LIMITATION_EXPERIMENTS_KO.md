@@ -297,9 +297,8 @@ scoring 비용이 발생하므로 기존 일회 전환의 미미한 산술 비�
 
 아래 명령은 **코드 레포 루트, 해당 실험에 할당된 빈 4 x H100 노드**에서 실행한다.
 기존 Pair/MBPP Python 환경을 그대로 쓰며 패키지를 재설치하지 않는다.
-노드마다 하나의 GPU worker만 실행한다. 기본 `run_srgc.sh ... run`에는 시작 시
-동일 사용자 GPU 프로세스를 정리하는 코드가 있으므로, 다른 학습이 도는 노드에서
-추가 실험을 시작하는 용도로 호출하지 않는다.
+노드마다 하나의 GPU worker만 실행한다. 시작 시 기존 GPU 프로세스를 일괄
+종료하던 shell 코드는 제거했다. 다른 학습이 도는 노드에 worker를 추가하지 않는다.
 
 ### A. 기존 네 arm 및 prefix
 
@@ -310,7 +309,8 @@ scoring 비용이 발생하므로 기존 일회 전환의 미미한 산술 비�
 
 주 queue는 seed별 prefix 완료 후 네 continuation을 노드에 배정한다. 동일 명령은
 실험 코드 identity가 같으면 기존 활성 cohort와 checkpoint를 사용하며 새 replicate를
-만들지 않는다. identity가 바뀌면 새 cohort 생성이나 active 경로 변경 없이 중단한다.
+만들지 않는다. identity가 바뀌거나 과거 자동 생성된 중복 cohort이면 새 cohort
+생성이나 active 경로 변경 없이 GPU 실행 전 idle 대기한다. 학습 재시도는 하지 않는다.
 원래 코드로 재개하며, 과거 자동 전환 기록(`automatic-restart.json`)이 있으면
 `status/results`가 이전 실행을 찾아 별도 표로 보여준다. 실행 간 결과는 합치지 않는다.
 Pair seed-3/4 캐시 재사용 plan과 별도 준비 입력 plan을 섞지 않는다. Pair 입력이

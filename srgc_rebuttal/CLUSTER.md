@@ -569,9 +569,13 @@ into memory. One process guard covers both datasets and reports each child
 failure once. These scheduler/reporting fixes preserve the experiment code
 identity and existing checkpoints; load them when restarting an idle worker.
 
-After an incompatible code update, ordinary `all run` stops without creating a
-replacement or changing the active pointer. Resume the original run with its
-original runtime. Compatible runs continue unchanged; plan changes and corrupt
+After an incompatible code update, ordinary `all run` parks in a pre-admission
+idle loop without creating a replacement or changing the active pointer.
+Legacy automatically created replacements are parked too, including explicit
+plan launches. The worker checks again every 10 seconds without claiming tasks,
+launching GPU children or incrementing training attempts. Both datasets must
+pass this check before `all run` admits GPUs. Ctrl-C/SIGTERM ends the idle worker.
+Resume the original run with its original runtime. Compatible runs continue unchanged; plan changes and corrupt
 queue identities also fail instead of being ignored.
 For transitions made by older launchers, `status/results` follow the saved
 `automatic-restart.json` chain and display previous runs in separate tables
@@ -590,9 +594,8 @@ the same new MATH/MBPP queues, never resets them. Old results and checkpoints
 remain in their original roots; code/plan identity checks stay enabled. This
 is a new experiment, not continuation of the old training trajectory. Stop
 workers intended for the old code before updating their checkout.
-The shell's existing GPU cleanup can terminate same-user GPU processes; run
-on a dedicated free node or set `SRGC_SKIP_GPU_CLEANUP=1` to disable cleanup
-and retain normal GPU admission checks.
+The shell no longer terminates existing GPU processes during startup. Use one
+worker per allocated free node; normal GPU admission and ownership checks remain.
 
 ## SR with refreshed success rates (Limitations: cache refresh)
 

@@ -14,6 +14,22 @@ from srgc_rebuttal.cluster_queue import input_info
 from srgc_rebuttal.runtime import atomic_json, code_digest, lease, run_root
 
 
+class RunConflict(ValueError):
+    def __init__(self, plan, message):
+        self.plan = Path(plan)
+        super().__init__(message)
+
+
+def reject_legacy_replacement(target):
+    receipt = target.parent.parent / "automatic-restart.json"
+    if receipt.exists():
+        saved = json.loads(receipt.read_text())
+        if Path(saved["plan"]).resolve() != target.resolve():
+            raise ValueError(f"invalid automatic restart receipt: {receipt}")
+        raise RunConflict(target, f"legacy automatic replacement is parked; original plan: "
+                          f"{saved['previous_plan']}; no new task will be started")
+
+
 def storage_root(environment):
     group = Path(environment.get("GROUP_VOLUME", "/group-volume")).resolve()
     work = Path(environment.get("OM_WORK", str(group / environment.get("OM_USER", "minsoo3.kim") / "offpolicy-misranking")))
@@ -185,6 +201,7 @@ def automatic_plan(source, environment):
         if any(not p.resolve().is_relative_to(group) for _, p in artifact_pairs(target, target)):
             raise ValueError("active run artifacts resolve outside group storage")
         plan = load_plan(target)
+        reject_legacy_replacement(target)
         marker = run_root(target, plan) / ".queue/protocol.json"
         recorded = pointer.get("implementation_sha256")
         if marker.exists():
@@ -197,7 +214,7 @@ def automatic_plan(source, environment):
         current = code_digest()
         if recorded is None or recorded == current:
             return target
-        raise ValueError(f"code changed {recorded} -> {current}; refusing to replace the existing run "
+        raise RunConflict(target, f"code changed {recorded} -> {current}; refusing to replace the existing run "
                          f"at {run_root(target, plan)}. No active pointer or results changed. "
                          "Use the original runtime to resume; status/results remain readable.")
 
@@ -236,6 +253,8 @@ def route_plan(source, *, writing, migrate=False, fresh=None, start_or_continue=
         if not (root / f".{source.stem}-storage.json").exists():
             return source
     if writing:
+        if fresh is None:
+            reject_legacy_replacement(target)
         if any(not p.resolve().is_relative_to(group) for _, p in artifact_pairs(target, target)):
             raise ValueError("active run artifacts resolve outside group storage")
         os.environ.setdefault("OM_WORK", str(group / os.environ.get("OM_USER", "minsoo3.kim") / "offpolicy-misranking"))

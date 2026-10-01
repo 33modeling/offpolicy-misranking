@@ -84,8 +84,8 @@ nvidia-smi
 ```
 
 한 GPU 작업은 **4×H100 80GB 노드 하나**를 사용한다. 여러 노드는 독립 작업을
-나눠 받는다. 같은 노드에 worker를 여러 개 띄우지 않는다. 특히 기존
-`run_srgc.sh ... run`에는 같은 사용자의 GPU 프로세스를 정리하는 동작이 있으므로
+나눠 받는다. 같은 노드에 worker를 여러 개 띄우지 않는다. 시작 시 기존 GPU
+프로세스를 일괄 종료하던 shell 동작은 제거했다.
 **다른 학습이 없는 할당 노드에서만** 실행한다. 상태 조회용 터미널에서 `run`을
 다시 입력하지 않는다. 잠금 파일 삭제, `--fresh`, `SRGC_RUN_NAME` 변경은 재개 방법이 아니다.
 상태·결과 조회와 CPU 분석에는 `nvidia-smi`나 GPU 할당이 필요 없다.
@@ -115,8 +115,11 @@ On-policy는 25 updates마다 후보 40문제를 다시 선정·채점하고 상
 가져와 cache 생성 단계를 건너뛰고, 없으면 checkout의 준비된 입력으로 생성한다.
 
 같은 실험 코드이면 위 명령으로 기존 checkpoint를 이어받는다. 실험 코드의
-identity가 달라졌으면 **새 cohort를 자동 생성하지 않고 중단**한다. 기존 active
-경로·checkpoint·결과를 그대로 유지하며 재개에는 원래 실행 코드를 사용한다.
+identity가 달라졌으면 **새 cohort 없이 worker가 GPU 실행 전 idle 대기**한다.
+10초마다 경로를 재확인하며 학습 시도 횟수를 올리지 않는다. 과거 자동 생성된
+중복 cohort도 같은 방식으로 대기하며 기존 active 경로·checkpoint·결과는 유지한다.
+재개에는 원래 실행 코드를 사용한다. `Ctrl-C`/`SIGTERM`은 대기 worker만 종료한다.
+`all run`도 두 plan의 충돌 검사를 모두 통과하기 전에는 GPU 작업을 시작하지 않는다.
 과거 버전이 자동 생성한 실행에 `automatic-restart.json`이 있으면 아래
 `status/results`가 이전 실행까지 찾아 별도 표로 출력한다. JSON에는
 `previous_runs`로 포함하며 서로 다른 실행의 보상·비용은 합치지 않는다.

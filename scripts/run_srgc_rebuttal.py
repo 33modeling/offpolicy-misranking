@@ -80,7 +80,11 @@ def main():
             original_plan = plan
             auto = (action == "cluster" and args[0] == "worker" and
                     settings.plan is None and settings.fresh is None)
-            plan = route_plan(plan, writing=True, fresh=settings.fresh, start_or_continue=auto)
+            if action == "cluster" and args[0] == "worker":
+                from srgc_idle import wait_for_plan
+                plan = wait_for_plan(plan, route=route_plan, writing=True, fresh=settings.fresh, start_or_continue=auto)
+            else:
+                plan = route_plan(plan, writing=True, fresh=settings.fresh, start_or_continue=auto)
             if action == "cluster" and args[0] == "worker" and not any(
                     a == "--node-lock-root" or a.startswith("--node-lock-root=") for a in args):
                 from srgc_shared_storage import storage_root
@@ -133,8 +137,9 @@ def main():
             from srgc_pair_inputs import default_plan
             from srgc_shared_storage import route_plan
             extra = default_plan(root, settings.with_dataset, os.environ, writing=True)
-            extra_plans.append(route_plan(extra, writing=True, fresh=settings.fresh,
-                                          start_or_continue=settings.fresh is None))
+            from srgc_idle import wait_for_plan
+            extra_plans.append(wait_for_plan(extra, route=route_plan, writing=True, fresh=settings.fresh,
+                                             start_or_continue=settings.fresh is None))
         with ExitStack() as stack:
             stack.enter_context(uniform_log())
             for each in (plan, *extra_plans):
@@ -155,3 +160,5 @@ if __name__ == "__main__":
     except (ValueError, FileNotFoundError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
