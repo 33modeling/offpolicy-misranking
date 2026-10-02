@@ -6,12 +6,16 @@
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>>
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp results [--json]           # per-seed rewards next to the recorded arms
 # The seed's shared prefix must already be complete in the group-storage run root.
+# Automatic planned repeats (same command on each empty node):
+#   sh scripts/run_srgc_sr_refresh.sh all replicate
 set -eu
 cd "$(dirname "$0")/.."
 DATASET=${1:-}; TARGET=${2:-}; SCOPE=${3:-candidates}
 [ "$#" -le 3 ] || { echo "too many arguments" >&2; exit 2; }
-case "$DATASET" in math|mbpp) ;; *) echo "usage: sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed>|results [candidates|pool|sr_hold|switch_repeat|switch_fixed<N>|direction_<mode>|replicate<k>-<arm>]" >&2; exit 2 ;; esac
-if [ "$TARGET" = results ]; then
+case "$DATASET" in math|mbpp) ;; all) [ "$TARGET" = replicate ] || { echo "all supports replicate only" >&2; exit 2; } ;; *) echo "usage: sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed>|results [arm], or all|math|mbpp replicate" >&2; exit 2 ;; esac
+if [ "$TARGET" = replicate ]; then
+    [ "$#" -eq 2 ] || { echo "usage: sh scripts/run_srgc_sr_refresh.sh all|math|mbpp replicate" >&2; exit 2; }
+elif [ "$TARGET" = results ]; then
     case "${3:-}" in ''|--json) ;; *) echo "usage: math|mbpp results [--json]" >&2; exit 2 ;; esac
 else
 case "$TARGET" in ''|*[!0-9]*) echo "seed must be an integer" >&2; exit 2 ;; esac
@@ -21,11 +25,11 @@ case "$SCOPE" in
     switch_fixed[0-9]*) ARM_ARGS="--arm $SCOPE" ;;
     direction_removed|direction_magnitude|direction_replaced) ARM_ARGS="--arm $SCOPE" ;;
     replicate[0-9]*-*) ARM_ARGS="--arm $SCOPE" ;;
-    *) echo "third argument must be candidates, pool, sr_hold, switch_repeat, switch_fixed<N> (e.g. switch_fixed100), direction_removed|direction_magnitude|direction_replaced, or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>> (e.g. replicate1-switch)" >&2; exit 2 ;;
+    *) echo "third argument must be candidates, pool, sr_hold, switch_repeat, switch_fixed<N> (e.g. switch_fixed200), direction_removed|direction_magnitude|direction_replaced, or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>> (e.g. replicate1-switch)" >&2; exit 2 ;;
 esac
 fi
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
-case "$DATASET" in math) EXPLICIT=${PAIR_PYTHON:-} ;; mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; esac
+case "$DATASET" in math|all) EXPLICIT=${PAIR_PYTHON:-} ;; mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; esac
 PY=${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 if ! command -v "$PY" >/dev/null 2>&1; then
     [ -z "$EXPLICIT" ] || { printf 'Python not found: %s\n' "$PY" >&2; exit 2; }
@@ -35,6 +39,11 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 # Extra arms inherit their prefix's attention kernel; resumes keep their own
 # saved kernel. An environment default must not change an existing experiment.
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
+if [ "$TARGET" = replicate ]; then
+    export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
+    export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+    exec "$PY" scripts/srgc_replicate_worker.py --dataset "$DATASET"
+fi
 PLAN=$("$PY" - "$DATASET" "$TARGET" <<'PYEOF'
 import os
 import sys

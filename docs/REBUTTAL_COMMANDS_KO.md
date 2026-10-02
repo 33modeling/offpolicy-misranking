@@ -26,10 +26,32 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 
 ## 지금 할 일
 
-**추가 실험은 자동 배정이 아니다. 같은 명령을 5개 노드에 넣으면 5개 작업이 아니라
-같은 작업의 중복 실행이 되어 하나만 시작하고 나머지는 잠금에 걸린다.**
-아래 5노드 표처럼 **노드마다 seed를 다르게** 입력한다. 이미 실행 중인 행은 다시 실행하지 않는다.
-기본 `run_srgc.sh ... run`과 Qwen queue의 자동 배정 방식과 구분한다.
+### Replicate는 이 명령 하나
+
+**빈 노드마다 아래 같은 명령을 한 번씩 실행한다.** 5노드면 각 노드에 같은 한 줄이다.
+노드당 GPU 4장을 쓰며 한 노드에 worker를 여러 개 띄우지 않는다.
+
+```sh
+sh scripts/run_srgc_sr_refresh.sh all replicate
+```
+
+MATH·MBPP seeds 5-9, 반복 k=1,2, SR/Switch의 **40개 작업을 자동 배정**한다.
+끝난 노드는 다음 작업을 가져가며, 다른 노드가 실행 중인 작업은 건너뛴다.
+이미 수동으로 시작한 replicate도 기존 잠금으로 보호한다. 완료한 작업은 검증 후
+건너뛰며 중단한 작업은 저장 checkpoint에서 재개한다. P0·fixed200·다른 대조는 시작하지 않는다.
+기존 2회 반복 조건은 그대로이며 `replicate1-*`, `replicate2-*`를 따로 입력할 필요 없다.
+최대 40개 독립 작업이지만 5노드로 계속 나눠 처리할 수 있다.
+
+실험 코드 갱신은 worker가 없는 checkout에서만 한다. 같은 GPU를 다른 작업이 사용하면
+claim 없이 `NODE idle`로 대기한다. 작업별 실패는 공유 기록 기준 최대 3회, 120초 간격이며
+그동안 다른 준비된 작업을 처리한다. 중복 점유와 사용자 중단은 실패 횟수에 세지 않는다.
+상태/시도 기록은 `seed-N/replicate-K/launches/<arm>/queue.json`, 학습 로그는 같은 위치의
+`<attempt>/task.log`다. 실패 상한에 도달하면 원인 확인이 필요하며 잠금을 삭제하지 않는다.
+결과 조회는 기존 `math results`, `mbpp results` 명령을 쓴다.
+
+**아래 `math 5 switch_fixed200`처럼 seed를 직접 지정하는 단일 작업 명령은 자동 배정이 아니다.**
+단일 작업 명령을 여러 노드에 똑같이 넣으면 중복 잠금에 걸린다. fixed는 아래 5노드 표처럼
+노드마다 seed를 다르게 입력한다. 이미 실행 중인 행은 다시 실행하지 않는다.
 
 **MATH·MBPP 모두 seeds 5-9, 고정 전환은 `switch_fixed200` 하나다.**
 100·125는 이번 실행 목록이 아니다. **기존 MATH·MBPP P0는 모두 완료**했으므로
@@ -42,7 +64,7 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 | 배정 순서 | ID / 우선순위 | 할 실험과 조건 | MATH 작업 | MBPP 작업 | 최대 동시 노드 | 필요한 선행 작업 |
 | --- | --- | --- | ---: | ---: | ---: | --- |
 | 1 | E04 / P1 | 고정 전환 `switch_fixed200` | 5 | 5 | **10** | 각 seed의 검증된 OLMo step-25 prefix |
-| 2 | E03 / P1 | `replicate1-sr`, `replicate1-switch`, `replicate2-sr`, `replicate2-switch` | 20 | 20 | **40** | 같은 OLMo prefix; 고정 전환 완료는 불필요 |
+| 2 | E03 / P1 | `all replicate`로 k=1,2의 SR/Switch 자동 배정 | 20 | 20 | **40** | 같은 OLMo prefix; 고정 전환 완료는 불필요 |
 | 3 | E05 / P2 | 후보 40개 SR 갱신 `candidates` | 5 | 5 | **10** | 같은 OLMo prefix |
 | 4 | E06 / P2 | 재전환 대조 `switch_repeat` | 5 | 5 | **10** | 같은 OLMo prefix |
 | 5 | E10 / P3 | 갱신 없이 25-update 유지 `sr_hold` | 5 | 5 | **10** | 같은 OLMo prefix; E05의 갱신 효과를 분리할 비교군 |
@@ -108,24 +130,26 @@ MATH·MBPP seeds 5-9의 OLMo prefix가 모두 준비됐고 아래 작업이 아�
 | 8 | MBPP seed 7 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh mbpp 7 switch_fixed200` |
 | 9 | MBPP seed 8 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh mbpp 8 switch_fixed200` |
 | 10 | MBPP seed 9 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh mbpp 9 switch_fixed200` |
-| 11 | MATH seed 5 독립 반복 | `sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr` |
-| 12 | MATH seed 6 독립 반복 | `sh scripts/run_srgc_sr_refresh.sh math 6 replicate1-sr` |
-| 13 | MATH seed 7 독립 반복 | `sh scripts/run_srgc_sr_refresh.sh math 7 replicate1-sr` |
-| 14 | MATH seed 8 독립 반복 | `sh scripts/run_srgc_sr_refresh.sh math 8 replicate1-sr` |
-| 15 | MATH seed 9 독립 반복 | `sh scripts/run_srgc_sr_refresh.sh math 9 replicate1-sr` |
+| 11 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
+| 12 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
+| 13 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
+| 14 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
+| 15 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
 
-노드가 하나 끝날 때마다 다음 미실행 작업 하나를 배정한다. 전체 15개가 끝날 때까지
-기다리지 않는다. 위 첫 배정 이후 E03의 나머지 35개는 아래 순서로 채운다.
+fixed 작업이 끝난 빈 노드에도 `all replicate` 명령을 실행한다. 반복 worker는 작업이
+끝날 때마다 다음 미실행 항목을 자동으로 가져간다. 전체 15개가 끝날 때까지 기다리지 않는다.
+아래는 자동 배정 순서의 기록이며 노드마다 다시 입력할 목록이 아니다.
 
 | 다음 배정 순서 | dataset | 조건 | seeds | 작업 수 |
 | --- | --- | --- | --- | ---: |
-| 1 | math | `replicate1-switch` | 5, 6, 7, 8, 9 | 5 |
-| 2 | mbpp | `replicate1-sr` | 5, 6, 7, 8, 9 | 5 |
-| 3 | mbpp | `replicate1-switch` | 5, 6, 7, 8, 9 | 5 |
-| 4 | math | `replicate2-sr` | 5, 6, 7, 8, 9 | 5 |
-| 5 | math | `replicate2-switch` | 5, 6, 7, 8, 9 | 5 |
-| 6 | mbpp | `replicate2-sr` | 5, 6, 7, 8, 9 | 5 |
-| 7 | mbpp | `replicate2-switch` | 5, 6, 7, 8, 9 | 5 |
+| 1 | math | `replicate1-sr` | 5, 6, 7, 8, 9 | 5 |
+| 2 | math | `replicate1-switch` | 5, 6, 7, 8, 9 | 5 |
+| 3 | mbpp | `replicate1-sr` | 5, 6, 7, 8, 9 | 5 |
+| 4 | mbpp | `replicate1-switch` | 5, 6, 7, 8, 9 | 5 |
+| 5 | math | `replicate2-sr` | 5, 6, 7, 8, 9 | 5 |
+| 6 | math | `replicate2-switch` | 5, 6, 7, 8, 9 | 5 |
+| 7 | mbpp | `replicate2-sr` | 5, 6, 7, 8, 9 | 5 |
+| 8 | mbpp | `replicate2-switch` | 5, 6, 7, 8, 9 | 5 |
 
 그다음 위 전체 배정 표의 3-8번을 따른다. 같은 k의 SR/Switch는 비교 쌍이지
 선후 의존 작업이 아니므로 동시에 실행해도 된다. 10노드만 있으면 고정 전환
@@ -143,7 +167,7 @@ TSV의 초기 `pending_prefix_check`는 현재 노드 상태를 조회한 결과
 | --- | --- | --- | --- |
 | E01 / P0 | OLMo MATH, seeds 5–9 × 네 arm | 20, **완료** | 기록 보존; 신규 배정 없음 |
 | E02 / P0 | OLMo MBPP, seeds 5–9 × 네 arm | 20, **완료** | 기록 보존; 신규 배정 없음 |
-| E03 / P1 | 동일 prefix의 SR/Switch 독립 반복 | MATH 20 + MBPP 20 (k=1,2 × sr/switch × 5 seeds) | `replicate<k>-sr`, `replicate<k>-switch`; seed별 수동 배정, 해당 prefix 완료 |
+| E03 / P1 | 동일 prefix의 SR/Switch 독립 반복 | MATH 20 + MBPP 20 (k=1,2 × sr/switch × 5 seeds) | `sh scripts/run_srgc_sr_refresh.sh all replicate`; 자동 배정, 해당 prefix 완료 |
 | E04 / P1 | total-step-200 고정 전환 | MATH 5 + MBPP 5 | `switch_fixed200`; seed별 수동 배정, 해당 prefix 완료 |
 | E05 / P2 | 후보 40개 SR 갱신 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
 | E06 / P2 | 반복 전환 | MATH 5 + MBPP 5 | seed별 수동 배정; 해당 prefix 완료 |
@@ -290,6 +314,8 @@ SRGC_MAX_ATTEMPTS=3 sh scripts/run_srgc.sh math run
 ## 4. E03–E07, E09, E10 — 추가 arm 120개
 
 기본 네-arm queue와 별도다. 각 seed의 **공통 prefix가 완료되어야** 한다.
+E03은 위 `all replicate` 한 명령으로 자동 배정한다. E03 개별 명령은 TSV에 기존
+실행 기록과 특정 작업 재개용으로 보존하며, 일반 실행 때 각각 입력하지 않는다.
 노드별로 서로 다른 `(dataset, seed, arm)`을 배정한다. 아래는 seed 5 예시이며
 5를 6, 7, 8, 9로 바꾼다. 한 줄이 한 작업이다.
 
@@ -303,15 +329,8 @@ SRGC_MAX_ATTEMPTS=3 sh scripts/run_srgc.sh math run
 sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_fixed200
 
-# E03: 같은 prefix의 독립 반복. 같은 k의 sr/switch가 비교 쌍
-sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr
-sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-switch
-sh scripts/run_srgc_sr_refresh.sh math 5 replicate2-sr
-sh scripts/run_srgc_sr_refresh.sh math 5 replicate2-switch
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate1-sr
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate1-switch
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate2-sr
-sh scripts/run_srgc_sr_refresh.sh mbpp 5 replicate2-switch
+# E03만 자동 배정: 각 빈 노드에 같은 명령 하나. 두 도메인, 두 반복, SR/Switch 모두 포함
+sh scripts/run_srgc_sr_refresh.sh all replicate
 
 # E05: 후보 40문제 SR 갱신
 sh scripts/run_srgc_sr_refresh.sh math 5 candidates
@@ -599,12 +618,12 @@ gradient와 receipt의 측정 개수를 각각 표시하며, 구간 평균의 �
 ### 6.3. 노드 배정과 그룹 볼륨
 
 **15노드 배정은 문서 맨 앞의 [첫 배정 표](#15노드-첫-배정)를 따른다.**
-MATH 고정 전환 5개 + MBPP 고정 전환 5개 + MATH `replicate1-sr` 5개다.
+MATH 고정 전환 5개 + MBPP 고정 전환 5개 + `all replicate` 자동 worker 5개다.
 완료·실행 중인 항목은 제외하고 다음 미실행 작업을 배정한다.
 
 위 작업들은 서로 기다리지 않는다. 기본 SR/On/Switch의 종료도 기다리지 않는다.
 필요한 것은 해당 seed의 검증된 `prefix.pt` + `prefix-ready.json`이다.
-노드가 더 있으면 맨 앞 표의 E03 나머지 35개를 차례로 배정한다.
+노드가 더 있으면 같은 `all replicate` 명령으로 반복 worker를 추가한다.
 P1은 데이터셋당 25개, 두 데이터셋 합계 **최대 50개 노드**까지 독립 작업이 있다.
 OLMo 추가 arm 전체는 **120개 노드**가 작업 수 상한이다. 완료한 P0 40개는 신규 배정에 포함하지 않는다.
 완료·실행 중인 작업은 추가 배정에서 빼며, 공유 저장소의 실제 동시 처리 성능을
@@ -620,7 +639,8 @@ hash를 수정하거나 현재 기본 `run`으로 새 cohort를 만들지 않는
 | OLMo MATH | `sh scripts/run_srgc.sh math run` | 가능: 공유 queue |
 | OLMo MBPP | `sh scripts/run_srgc.sh mbpp run` | 가능: 공유 queue |
 | OLMo 통합 | `sh scripts/run_srgc.sh all run` | 가능: MATH 우선, 이어 MBPP |
-| 추가 arm | 배정표의 서로 다른 한 줄 | 자동 배정 아님: tuple별 배정 필요 |
+| E03 독립 반복 | `sh scripts/run_srgc_sr_refresh.sh all replicate` | 가능: 서로 다른 replicate 작업 자동 배정 |
+| 그 외 추가 arm | 배정표의 서로 다른 한 줄 | 단일 작업 명령: tuple별 배정 필요 |
 | Qwen | `sh scripts/run_srgc_qwen35.sh all run` | 가능: 별도 Qwen 공유 queue |
 
 동일 모델의 노드들은 같은 group mount, active root, 코드와 실행 환경을 사용한다.
@@ -630,7 +650,8 @@ GPU lock이 있으면 실제 owner/heartbeat/task 로그를 확인하며 파일�
 
 매 배정 시 `min(빈 노드 수, 선행 조건이 충족된 미완료 작업 수)`만큼만 새 worker를
 둔다. 완료한 P0는 기록으로 보존하고, P1, P2, P3 순으로 미완료 추가 실험을 배정한다.
-OLMo 추가 arm은 [120개 배정표](REBUTTAL_EXTRA_TASKS.tsv)의 서로 다른 tuple을 수동 지정한다.
+OLMo 추가 arm의 전체 기록은 [120개 배정표](REBUTTAL_EXTRA_TASKS.tsv)에 보존한다.
+E03 40개는 `all replicate`로 자동 배정하고 나머지 80개만 tuple을 수동 지정한다.
 완료된 노드는 다음 미완료 실험으로 이동하고 모든 작업이 끝났으면 추가 worker를 띄우지 않는다.
 
 ### 6.4. 시작 오류가 있을 때

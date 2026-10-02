@@ -38,6 +38,16 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 
 ### 지금 배정할 순서
 
+**E03 독립 반복은 빈 노드마다 이 명령 하나로 실행한다.**
+
+```sh
+sh scripts/run_srgc_sr_refresh.sh all replicate
+```
+
+MATH·MBPP seeds 5-9, k=1,2의 SR/Switch 40개를 자동 배정한다. 같은 명령을 5개
+빈 노드에 한 번씩 실행하면 서로 다른 작업을 맡고, 끝난 노드는 다음 작업을 가져간다.
+기존 수동 replicate는 잠금으로 보호하고 완료 작업은 검증 후 건너뛴다. P0나 fixed200은 실행하지 않는다.
+
 MATH·MBPP 모두 seeds 5-9다. **기존 P0 네 arm은 두 도메인 모두 완료**했으며 재실행하지 않는다.
 **고정 전환은 두 도메인 모두 `switch_fixed200`**만 배정한다.
 
@@ -56,9 +66,9 @@ MATH·MBPP 모두 seeds 5-9다. **기존 P0 네 arm은 두 도메인 모두 완�
 step-25 prefix만 필요하며 서로의 종료를 기다리지 않는다. Qwen은 자체 cache/prefix가 필요하다.
 **5노드면 노드마다 MATH seeds 5, 6, 7, 8, 9를 하나씩 배정하고, 각 작업 완료 후
 같은 노드에 해당 seed의 MBPP를 배정한다.** 이미 실행 중인 작업은 유지한다.
-같은 추가-arm 명령을 여러 노드에 넣으면 자동으로 다음 seed를 고르지 않고 중복 잠금에 걸린다.
+같은 seed를 지정한 단일 작업 명령은 중복 잠금에 걸린다. `all replicate` 자동 배정 명령과 구분한다.
 노드별 정확한 첫 명령과 다음 명령은 [5노드 실행표](REBUTTAL_COMMANDS_KO.md#5노드에-바로-입력할-명령)에 있다.
-15노드면 **MATH 고정 전환 5 + MBPP 고정 전환 5 + MATH replicate1-sr 5**로 시작한다.
+15노드면 **MATH 고정 전환 5 + MBPP 고정 전환 5 + replicate 자동 worker 5**로 시작한다.
 완료·실행 중인 항목은 빼고, 노드가 비는 즉시 다음 미실행 작업으로 채운다.
 복사할 명령 15줄과 이후 배정 순서는 [노드별 배정표](REBUTTAL_COMMANDS_KO.md#15노드-첫-배정),
 전체 조건은 [실행 명령](REBUTTAL_COMMANDS_KO.md#4-e03e07-e09-e10--추가-arm-120개)을 따른다.
@@ -83,8 +93,8 @@ P0 관련 행은 과거 설계 기록으로 보존한다. **P0는 완료했으�
 | P0 continuation + P1 합계 | 최대 45노드 | 최대 45노드 | **최대 90노드 / 360 GPU** | P0 네 arm 완료를 기다릴 필요 없이 해당 prefix 준비 후 병렬 실행 |
 
 완료한 P0의 기존 자동 배정 명령은 `sh scripts/run_srgc.sh all run`이다. 이번에는 실행하지 않는다.
-P1은 이 queue에 포함되지 않으므로 **다른 빈 노드에 서로 다른 dataset/seed/arm/k를
-직접 배정**한다. 같은 tuple을 여러 노드에서 중복 실행하지 않는다. 노드 하나에서
+P1은 기본 queue에 포함되지 않는다. **E03은 `all replicate`로 자동 배정**하고 E04는
+다른 빈 노드에 dataset/seed를 직접 배정한다. 같은 tuple을 중복 실행하지 않는다. 노드 하나에서
 P0 worker와 P1을 함께 실행하지 않는다. 1노드 순차 실행도 가능하다.
 현재 배정 가능 수는 `min(빈 노드 수, prefix가 준비된 미완료·미실행 작업 수)`이며,
 이미 실행 중인 작업은 추가 배정 수에 세지 않는다.
@@ -158,7 +168,7 @@ stack을 자동 출력한다. 원격 노드의 정지 원인을 실측 확인한
 | --- | --- | --- | --- |
 | P0 | OLMo MATH/MBPP 네 arm | [run_srgc.sh](../scripts/run_srgc.sh) | [run_srgc_rebuttal.py](../scripts/run_srgc_rebuttal.py), [run_experiment.py](../srgc_rebuttal/run_experiment.py), [srgc.py](../srgc_rebuttal/srgc.py) |
 | P0 | 비용·결과·checkpoint | 같은 `run_srgc.sh`의 `results/costs/backup` | [reports.py](../srgc_rebuttal/reports.py), [cost_report.py](../srgc_rebuttal/cost_report.py), [cost_ledger.py](../srgc_rebuttal/cost_ledger.py), [srgc_checkpoint_backup.py](../scripts/srgc_checkpoint_backup.py) |
-| P1 | 동일 prefix의 독립 재현 | `sh scripts/run_srgc_sr_refresh.sh math 5 replicate1-sr`, `... replicate1-switch` (k=1,2) | [srgc_replicate.py](../scripts/srgc_replicate.py)의 `ReplicateMixin`; 같은 launcher, 출력은 `seed-N/replicate-<k>/` (`997cab9`). 기존 `run` 재호출이나 `switch_repeat`는 대체가 아님 |
+| P1 | 동일 prefix의 독립 재현 | `sh scripts/run_srgc_sr_refresh.sh all replicate` | [자동 배정](../scripts/srgc_replicate_worker.py), [srgc_replicate.py](../scripts/srgc_replicate.py)의 `ReplicateMixin`; k=1,2, 출력은 `seed-N/replicate-<k>/`. 기존 `run` 재호출이나 `switch_repeat`는 대체가 아님 |
 | P1 | fixed-step-200 전환 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` | `srgc_switch_fixed.py`; checkpoint 200에서 전환하여 update 201부터 SR. 수정된 경계 protocol의 checkpoint는 재개 가능; 구 경계 checkpoint와 혼합 금지 |
 | P2 | 후보 40개 SR 갱신 | [run_srgc_sr_refresh.sh](../scripts/run_srgc_sr_refresh.sh) | [srgc_sr_refresh.py](../scripts/srgc_sr_refresh.py)의 `SRRefreshEngine`, `scope=candidates` |
 | P3 | 같은 유지 간격의 cached-SR 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 sr_hold` | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=cached` (`997cab9`) |
@@ -204,7 +214,8 @@ MBPP는 [mbpp_pair_seeds.json](../srgc_rebuttal/experiments/mbpp_pair_seeds.json
 ### OLMo 추가 arm: seed별 실행
 
 실행 명령은 [통합 명령 모음 4절](REBUTTAL_COMMANDS_KO.md#4-e03e07-e09-e10--추가-arm-120개)에
-MATH·MBPP의 12조건을 빠짐없이 모았다. 각 줄의 seed 5를 6-9로 바꾸어 총 120개를 배정한다.
+MATH·MBPP의 12조건을 빠짐없이 모았다. 총 120개 중 E03 40개는 `all replicate`로 자동 배정한다.
+나머지 80개는 각 줄의 seed 5를 6-9로 바꾸어 배정한다. E03의 개별 명령은 기록/특정 작업 재개용이다.
 해당 seed의 prefix 완료 후 별도 빈 노드에서 실행하며, 기본 queue가 자동 배정하지 않는다.
 한 줄은 한 arm이고 seed 전체 자동 순회가 아니다. 같은 노드에서는 앞 작업이 끝난 뒤 다음 작업을 실행한다.
 
@@ -369,9 +380,9 @@ E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다
 진행 상태에 따라 실행 가능한 작업 수가 달라진다. 총 GPU 시간은 실측 후 추정한다.
 
 추가 arm은 현재 기본 네-arm 자동 queue에 등록되어 있지 않다. 따라서
-`run_srgc.sh all run` 하나로 위 120개가 실행되지는 않는다. 추가 arm별 lease는
-중복 실행을 막지만, 여러 노드가 자동으로 다른 seed/arm을 골라주는 기능은 아니다.
-노드별로 다른 `(dataset, seed, arm)`을 배정한다.
+`run_srgc.sh all run` 하나로 위 120개가 실행되지는 않는다. E03의 `all replicate`는
+40개 반복 작업 중 다른 노드가 맡지 않은 작업을 자동 선택한다. 그 외 추가 arm은
+노드별로 다른 `(dataset, seed, arm)`을 지정하며 기존 lease로 중복 실행을 막는다.
 
 ### C. 재시작·상태·결과
 
