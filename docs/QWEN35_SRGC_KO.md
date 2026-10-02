@@ -140,6 +140,11 @@ OLMo와 동일한 물리 GPU UUID lock을 사용한다. 기존 worker나 lock �
 
 `all` worker도 MATH/MBPP별 worker receipt와 로그 경로를 정확히 기록한다.
 전용 root가 다른 Qwen worker끼리도 공통 GPU UUID 잠금을 사용한다.
+2026-10-02 재점검에서 공통 보호 코드와 Qwen worker가 같은 GPU 잠금을 중복
+획득해 자기 자신에게 `BUSY`가 나는 문제를 수정했다. 같은 프로세스·스레드의
+중첩 호출만 기존 잠금을 재사용한다. 다른 프로세스·스레드의 동일 GPU 획득은 차단한다.
+Qwen worker와 공통 보호 코드를 함께 실행해 admission 호출까지 도달하는 회귀 테스트를 추가했다.
+이 수정은 학습 엔진과 Qwen adapter hash를 변경하지 않는다.
 정리 대상은 SRGC 실행으로 한정하고 무관한 `torchrun`을 종료하지 않는다.
 캐시 완료를 task 잠금 획득 후 다시 확인해 다른 노드와의 완료 경합을 처리한다.
 비용 receipt가 없는 완료 cache는 export 복구부터 수행하고 prefix를 시작하지 않는다.
@@ -152,6 +157,11 @@ optimizer checkpoint는 GPU에서 deep-copy하지 않고 CPU로 복사하며,
 5/25-step 경계 저장도 flush/fsync 후 원자적으로 교체한다.
 
 ## 검증 범위와 결과 보고
+
+2026-10-02 재검증: PyTorch 2.13.0+cpu / Transformers 5.14.1 / PEFT 0.20.0 환경에서
+`srgc_rebuttal/tests` 전체 **428개 통과, 실패·건너뜀 없음**. 공통 보호 코드와 Qwen
+worker의 통합 시작, 중첩 GPU 잠금, 다른 프로세스·스레드의 중복 점유 차단을 포함한다.
+실제 H100 다중 노드 검증을 대신하지 않는다.
 
 CPU의 작은 실제 Qwen hybrid 모델에서 8응답 생성, dense gradient, 양쪽 층의
 LoRA update, optimizer 상태 복원 및 동일 결과 재현을 검사했다. 공식 snapshot의

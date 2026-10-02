@@ -1,4 +1,4 @@
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing
 import os
 import subprocess
@@ -293,6 +293,102 @@ class GpuWaitAndShmTest(unittest.TestCase):
 
 
 class SharedLeaseTest(unittest.TestCase):
+    def test_nested_reuse_does_not_allow_another_thread_or_process(self):
+        with tempfile.TemporaryDirectory() as folder:
+            group = Path(folder)
+            wrapped = guard.shared_device_leases(cluster.device_leases, {'GROUP_VOLUME': str(group)})
+            root = group / 'legacy'
+            def contender():
+                try:
+                    with wrapped(group / 'another-worker', ('GPU-a',)):
+                        return 'acquired'
+                except Busy:
+                    return 'busy'
+            with wrapped(root, ('GPU-a',)):
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    self.assertEqual(pool.submit(contender).result(timeout=5), 'busy')
+                ctx = multiprocessing.get_context('fork')
+                result = ctx.Queue()
+                def child():
+                    result.put(contender())
+                process = ctx.Process(target=child)
+                process.start()
+                try:
+                    self.assertEqual(result.get(timeout=5), 'busy')
+                    process.join(5)
+                    self.assertEqual(process.exitcode, 0)
+                finally:
+                    if process.is_alive():
+                        process.kill()
+                        process.join(5)
+                    result.close()
+                    result.join_thread()
+            self.assertEqual(contender(), 'acquired')
+
+    def test_nested_failure_keeps_outer_lease_and_releases_only_new_ones(self):
+        with tempfile.TemporaryDirectory() as folder:
+            group = Path(folder)
+            wrapped = guard.shared_device_leases(cluster.device_leases, {'GROUP_VOLUME': str(group)})
+            canonical = group / '.srgc-gpu-node-locks'
+            with wrapped(group / 'outer', ('GPU-a',)) as outer:
+                with self.assertRaisesRegex(RuntimeError, 'test failure'):
+                    with wrapped(group / 'inner', ('GPU-a', 'GPU-b')):
+                        raise RuntimeError('test failure')
+                for fd in outer:
+                    os.fstat(fd)
+                with self.assertRaises(Busy), cluster.device_leases(canonical, ('GPU-a',)):
+                    pass
+                with cluster.device_leases(canonical, ('GPU-b',)):
+                    pass
+            with cluster.device_leases(canonical, ('GPU-a', 'GPU-b')):
+                pass
+
+    def test_qwen_explicit_namespaces_do_not_conflict_with_guard(self):
+        with tempfile.TemporaryDirectory() as folder:
+            group = Path(folder)
+            env = {'GROUP_VOLUME': str(group), 'OM_USER': 'user'}
+            original = cluster.device_leases
+            wrapped = guard.shared_device_leases(original, env)
+            canonical = group / '.srgc-gpu-node-locks'
+            legacy = group / 'user/offpolicy-misranking/srgc-rebuttal/gpu-node-locks'
+            uuids = ('GPU-a', 'GPU-b')
+            with wrapped(canonical, uuids) as outer:
+                with wrapped(legacy, uuids) as inner:
+                    self.assertEqual(len(set((*outer, *inner))), 4)
+                    for root in (canonical, legacy):
+                        with self.assertRaises(Busy), original(root, uuids):
+                            pass
+                with self.assertRaises(Busy), original(canonical, uuids):
+                    pass
+                with original(legacy, uuids):
+                    pass
+            with original(canonical, uuids), original(legacy, uuids):
+                pass
+
+    def test_actual_qwen_worker_reaches_admission_inside_guard(self):
+        from types import SimpleNamespace
+        from scripts import srgc_qwen35_worker as qwen, srgc_seed_order
+        with tempfile.TemporaryDirectory() as folder:
+            group = Path(folder)
+            common = group / 'user/offpolicy-misranking/srgc-rebuttal'
+            plan = common / 'experiments/qwen35-9b-math.json'
+            queue = SimpleNamespace(plan_path=plan, directory=common / 'queue', tasks=[],
+                                    plan={'seeds': [5], 'dataset': 'math_train'},
+                                    bind=lambda: None, status=lambda: [{'status': 'ready'}])
+            with patch.dict(os.environ, {'GROUP_VOLUME': str(group), 'OM_USER': 'user'}), \
+                 patch.dict(sys.modules, {'srgc_seed_order': srgc_seed_order}), \
+                 patch('srgc_rebuttal.cluster_queue.TaskQueue', return_value=queue), \
+                 patch.object(cluster, 'gpu_identity', return_value=('0,1,2,3', ('GPU-a', 'GPU-b', 'GPU-c', 'GPU-d'))), \
+                 patch.object(guard, 'reap_orphans'), patch.object(guard, 'gpu_memory_summary', return_value=''), \
+                 patch.object(qwen, 'runtime_signature', return_value={}), \
+                 patch.object(qwen, 'drain') as drain:
+                from unittest.mock import Mock
+                admission = Mock(return_value={})
+                with guard.process_guard(plan):
+                    qwen.worker([plan], SimpleNamespace(), group, common, admission)
+                admission.assert_called_once()
+                drain.assert_called_once()
+
     def test_worker_leases_are_also_taken_in_the_canonical_group_namespace(self):
         from unittest.mock import patch
         from srgc_rebuttal.runtime import Busy

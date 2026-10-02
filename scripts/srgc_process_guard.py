@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import threading
 import time
 
 try:
@@ -384,18 +385,33 @@ def shared_device_leases(original, environment=None):
     them could hold "exclusive" leases on the same GPUs and collide (CUDA OOM, NCCL errors).
     """
     from contextlib import ExitStack
+    held = threading.local()
 
     @contextmanager
     def device_leases(root, uuids):
-        roots = {Path(root)}
+        roots = {Path(root).resolve()}
         canonical = canonical_lock_root(environment)
         if canonical is not None:
-            roots.add(canonical)
+            roots.add(canonical.resolve())
+        previous = (getattr(held, "pid", None), getattr(held, "leases", {}))
+        # A fork inherits thread-local data, but is a different lock owner.
+        active = dict(previous[1]) if previous[0] == os.getpid() else {}
+        ordered_uuids = sorted(set(uuids))
         with ExitStack() as stack:
             fds = []
             for each in sorted(roots):
-                fds.extend(stack.enter_context(original(each, uuids)))
-            yield tuple(fds)
+                for uuid in ordered_uuids:
+                    key = (each, uuid)
+                    # Qwen explicitly takes both namespaces inside this guard.
+                    # Reuse only this thread's nested lease, never another owner.
+                    if key not in active:
+                        active[key] = tuple(stack.enter_context(original(each, (uuid,))))
+                    fds.extend(active[key])
+            held.pid, held.leases = os.getpid(), active
+            try:
+                yield tuple(dict.fromkeys(fds))
+            finally:
+                held.pid, held.leases = previous
     return device_leases
 
 
