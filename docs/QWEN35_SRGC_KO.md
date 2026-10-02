@@ -54,6 +54,10 @@ sh scripts/run_srgc_qwen35.sh math
 이미 준비한 plan은 활성 OLMo cohort가 바뀌어도 다시 만들지 않는다. 기존 결과와
 checkpoint를 보존하며 코드·입력 불일치나 기존 모델 손상은 자동 초기화 없이 중단한다.
 새 root나 다른 모델 실험을 자동으로 추가하지 않는다.
+기존 `runs/<dataset>/`에 기록이 있는데 plan만 없으면 새 plan을 만들지 않고 중단한다.
+이때는 해당 실행의 원래 plan을 복구해야 한다. 다운로드·입력 준비 로그는
+`<Qwen root>/startup-logs/<실행 ID>.log`에 남긴다. 준비 도중 Ctrl-C/SIGTERM으로
+중단하면 자식 프로세스 종료를 확인한 뒤 준비 잠금을 해제하며 학습을 시작하지 않는다.
 
 ### 환경·저장 경로
 

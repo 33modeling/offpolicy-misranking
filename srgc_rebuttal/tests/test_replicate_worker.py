@@ -171,6 +171,32 @@ class ReplicateWorkerTests(unittest.TestCase):
         self.assertIsNone(code)
         self.assertEqual(counts['waiting'], 1)
 
+    def test_waiting_fixed_task_does_not_block_ready_replicate(self):
+        from dataclasses import replace
+        pending = worker.Task('math', 6, 0, 'switch_fixed200', self.plan)
+        ready = replace(self.tasks[0], seed=5)
+        seen = []
+        def finish(task, handle):
+            seen.append(task.key)
+            return self.complete(task, handle)
+        counts, code = worker.sweep([pending, ready], runner=finish)
+        self.assertEqual(code, 0)
+        self.assertEqual(counts['waiting'], 1)
+        self.assertEqual(seen, [ready.key])
+
+    def test_manual_completion_is_validated_after_retry_limit(self):
+        task = worker.Task('math', 5, 0, 'switch_fixed200', self.plan)
+        for _ in range(3):
+            worker.sweep([task], retry_delay=0, runner=lambda *args: 1)
+        atomic_json(task.out / 'switch_fixed200-endpoint.json', {'manual completion': True})
+        seen = []
+        def validate(current, handle):
+            seen.append(current.key)
+            return 0
+        self.assertEqual(worker.sweep([task], runner=validate)[1], 0)
+        self.assertEqual(seen, [task.key])
+        self.assertEqual(worker.sweep([task], runner=lambda *args: self.fail('reran complete task'))[0]['complete'], 1)
+
     def test_busy_gpu_idles_without_claiming(self):
         with patch.object(worker, 'tasks_for', return_value=self.tasks), \
                 patch.object(worker, 'node_available', return_value=False), \
