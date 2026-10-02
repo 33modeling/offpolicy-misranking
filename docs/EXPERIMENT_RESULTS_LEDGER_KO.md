@@ -1,11 +1,11 @@
 # 수행한 실험과 결과 기록
 
-확인일 **2026-09-28**. V7 작성에 사용할 기존 결과와 추가 실험의 현재 확인 상태를
+기존 근거 점검일 **2026-09-28**, P0 완료 상태 갱신일 **2026-10-02**. V7 작성에 사용할 기존 결과와 추가 실험의 확인 상태를
 모은다. [새 실험 명령·CPU/GPU·노드 수](REBUTTAL_COMMANDS_KO.md),
 [전체 실험 후 V7 완성 일정](REVIEW_SCHEDULE_2027_KO.md)과 함께 본다.
 
 원고 저장소 `344856e3f7d4cdc90cba662bfff6d48b19ad8438`의 V7 TeX와 보존 evidence를
-직접 읽었다. 아래 원고 링크는 이 commit에 고정했다. 보존된 JSON의 step-275 보상·비용과
+직접 읽었다. 과거 원고 링크는 이 commit에 고정했고, 새 P0 결과 링크는 11절에 별도로 남겼다. 보존된 JSON의 step-275 보상·비용과
 SR-GC 진단은 일부 재계산했으며, 원격 GPU의 현재 파일을 다시 수집한 것은 아니다.
 과거 답변의 “완료” 표현만으로 새 실험 결과를 채우지 않았다.
 
@@ -230,15 +230,32 @@ Gaussian/binomial/t3 synthetic gain 관측도 보존되어 있다([수치][S25])
 plan 준비. [감사 기록](QWEN35_SRGC_AUDIT_KO.md).
 이 테스트·입력 준비 수를 학습 완료·reward 결과로 세지 않는다.
 
-## 11. 새 실험 E01–E10: 아직 확인된 결과가 없는 범위
+## 11. 새 실험 E01–E10: 완료 및 확인 기록
+
+### P0 완료 기록
+
+**2026-10-02 저자가 P0 MATH·MBPP 모두 완료했다고 확인하고 완료 표시를 요청했다.**
+완료 확인일이며 실제 GPU 작업 종료 시각을 새로 추정한 날짜가 아니다.
+
+| ID / 우선순위 | 실험 | 완료 범위 | 상태 | 결과 근거 |
+| --- | --- | --- | --- | --- |
+| E01 / P0 | OLMo MATH | seeds 5-9 × Random/SR/On-policy/Switch = 20개 | **완료** | [최종 결과](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/70830dc22d2cee0ec57402db9670a6f623fdced7/v7/evidence/2026-10-01/math-final-seeds5-9.md), [선별 시간](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/70830dc22d2cee0ec57402db9670a6f623fdced7/v7/evidence/2026-10-01/math-selection-components.md) |
+| E02 / P0 | OLMo MBPP | seeds 5-9 × Random/SR/On-policy/Switch = 20개 | **완료** | [최종 결과](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/70830dc22d2cee0ec57402db9670a6f623fdced7/v7/evidence/2026-10-01/mbpp-final-seeds5-9.md), [선별 시간](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/70830dc22d2cee0ec57402db9670a6f623fdced7/v7/evidence/2026-10-01/mbpp-selection-components.md) |
+
+P0 총 40개는 완료 목록에 남기고 신규 배정에서 제외한다. 기존 결과·비용·실행 기록과
+아래 당시 확인 이력은 삭제하지 않는다. 다음 실행은 P1 추가 실험이며 기존 step-25 prefix를 재사용한다.
+이 완료 표시는 저자의 실행 완료 확인이다. 원격 원시 파일의 hash와 reward/비용 연결을
+새로 독립 검증했다는 뜻은 아니며, 각 근거 파일의 검증 범위는 그대로 보존한다.
+
+### 이전 확인 이력
 
 아래 표는 **2026-09-28 확인 기록**이다. 2026-09-30 명령 점검에서 E04의
 `switch_fixed200` 구현을 확인했다. 최신 실행 가능 범위는
 [명령 모음](REBUTTAL_COMMANDS_KO.md)을 따르며, 새 GPU 결과를 확인했다는 뜻은 아니다.
 
-| 새 실험 | 현재 확인 상태 | 결과 MD에 추가할 것 |
+| 새 실험 | 당시 확인 상태 | 당시 결과 MD에 추가할 것 |
 | --- | --- | --- |
-| E01/E02 OLMo seeds 5–9 | 구현됨; 저자에게 실행 진행을 전달받았으나 최신 완료 export 미수신 | 모든 seed×네 arm endpoint, own-path D, phase 비용 |
+| E01/E02 OLMo seeds 5–9 | 당시 구현됨; 실행 진행을 전달받았으나 최신 완료 export 미수신. **현재는 위 완료 기록으로 갱신** | 당시 요청: 모든 seed×네 arm endpoint, own-path D, phase 비용 |
 | E03 독립 반복 | 구현됨 (`997cab9`, k=1,2 사전 고정); GPU 결과 없음 | seed·k별 paired `switch − sr`, seed 내 변동 |
 | E04 total-step-200 | 구현됨 (`switch_fixed200`); GPU 결과 없음 | 동일 prefix의 고정 전환 vs Switch |
 | E05/E06/E07 추가 arm 30개 | 구현됨; GPU 완료 결과 미확인 | seed별 reward, 갱신/복귀 이력, 추가 selection 비용 |
@@ -246,8 +263,8 @@ plan 준비. [감사 기록](QWEN35_SRGC_AUDIT_KO.md).
 | E09 방향 대조 | 구현됨 (`997cab9`, 3조건 사전 고정); GPU 결과 없음 | `on_policy` 대비 matched 결과, 실제 cosine과 ablation 점수 |
 | E10 cached-SR 유지 간격 대조 | 구현됨 (`997cab9`); GPU 결과 없음 | `sr_refresh − sr_hold`, `sr_hold − sr` |
 
-현재 환경에서 `/group-volume`을 읽을 수 없어 **로컬에서 못 찾은 결과를
-서버에서도 미완료라고 단정하지 않는다.** 위 상태는 원격 완료 검증 여부다.
+당시 환경에서 `/group-volume`을 읽을 수 없어 **로컬에서 못 찾은 결과를
+서버에서도 미완료라고 단정하지 않았다.** 과거 표는 당시 확인 범위이며 P0의 현재 완료 표시를 취소하지 않는다.
 모든 결과를 수집하고 V7까지 완성한 뒤 리뷰를 맞는 것이 작업 목표다.
 
 ## 12. 그 밖의 보존 연구와 확인 범위
