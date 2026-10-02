@@ -2,6 +2,7 @@
 # Run the same command on each allocated four-H100 node; queues lease tasks.
 set -eu
 cd "$(dirname "$0")/.."
+[ "$#" -gt 0 ] || set -- all
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "${1:-}" in
     math|all) EXPLICIT=${PAIR_PYTHON:-} ;;
@@ -22,4 +23,7 @@ export OPENBLAS_DEFAULT_NUM_THREADS=1 GOTO_NUM_THREADS=1 BLIS_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
 export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+if [ "$#" -eq 1 ]; then
+    exec "$PY" scripts/srgc_qwen35_start.py "$@"
+fi
 exec "$PY" scripts/run_srgc_qwen35.py "$@"

@@ -41,6 +41,16 @@ class QwenShellTests(unittest.TestCase):
             self.assertEqual(value["threads"], "1")
             self.assertEqual(value["args"], ["scripts/run_srgc_qwen35.py", dataset, "status"])
 
+    def test_one_command_starts_both_queues_with_shared_python(self):
+        pair = self.python(self.root / "pair/python", "pair")
+        result = subprocess.run(["sh", str(SCRIPT)], cwd="/tmp",
+                                env={**self.env, "PAIR_PYTHON": pair},
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = json.loads(result.stdout)
+        self.assertEqual(value["python"], "pair")
+        self.assertEqual(value["args"], ["scripts/srgc_qwen35_start.py", "all"])
+
     def test_dataset_specific_interpreters_match_olmo(self):
         pair = self.python(self.root / "pair/python", "pair")
         switch = self.python(self.root / "switch/python", "switch")
@@ -48,6 +58,18 @@ class QwenShellTests(unittest.TestCase):
             result = self.launch(dataset, PAIR_PYTHON=pair, SWITCH_PYTHON=switch)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["python"], expected)
+
+    def test_dataset_only_starts_automatic_queue(self):
+        pair = self.python(self.root / "pair/python", "pair")
+        switch = self.python(self.root / "switch/python", "switch")
+        for dataset, expected in (("math", "pair"), ("mbpp", "switch"), ("all", "pair")):
+            result = subprocess.run(["sh", str(SCRIPT), dataset], cwd="/tmp",
+                                    env={**self.env, "PAIR_PYTHON": pair, "SWITCH_PYTHON": switch},
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            value = json.loads(result.stdout)
+            self.assertEqual(value["python"], expected)
+            self.assertEqual(value["args"], ["scripts/srgc_qwen35_start.py", dataset])
 
     def test_venv_dir_and_explicit_legacy_override(self):
         venv = self.root / "custom"

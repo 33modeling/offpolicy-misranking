@@ -37,7 +37,25 @@ On-policy/Switch의 refresh 비용에는 후보 두 집합의 합집합 및 vali
 명령을 실행하면 공유 queue가 서로 다른 작업을 배정한다. 1개 노드로도
 순차 실행 가능하며, 노드가 늘어나면 독립 시드/arm을 병렬 처리한다.
 
-## 준비와 실행
+## 시작 명령
+
+빈 4-H100 노드마다 아래 명령을 한 번 실행한다. **5개 노드면 같은 명령을 5개
+노드에 각각 실행**한다. MATH/MBPP seeds 5–9, 네 arm의 총 40개 continuation을
+공유 queue에서 나눠 처리한다. 초기 cache/prefix는 최대 10노드, 이후 최대 40노드다.
+
+```sh
+sh scripts/run_srgc_qwen35.sh math
+```
+
+`math`는 MATH 20개, `mbpp`는 MBPP 20개, `all`은 양쪽 40개 continuation을 처리한다.
+데이터셋만 입력하며 시드는 자동 배정한다. 인자 없이 실행하면 `all`과 같다.
+패키지 검사, 없는 모델 다운로드, 없는 입력 준비, GPU admission, 학습 순서로
+진행한다. 다운로드·입력 준비만 공유 잠금으로 직렬 처리하고 학습은 병렬 배정한다.
+이미 준비한 plan은 활성 OLMo cohort가 바뀌어도 다시 만들지 않는다. 기존 결과와
+checkpoint를 보존하며 코드·입력 불일치나 기존 모델 손상은 자동 초기화 없이 중단한다.
+새 root나 다른 모델 실험을 자동으로 추가하지 않는다.
+
+### 환경·저장 경로
 
 실행 코드는 `master`. OLMo와 같은 Python 환경을 기본으로 사용한다.
 `math/all`은 `PAIR_PYTHON`, `mbpp`는 `SWITCH_PYTHON`을 따르며,
@@ -50,29 +68,18 @@ CUDA PyTorch는 노드의 검증된 빌드를 유지한다. FLA 0.5.2가 필요�
 Transformers 5.14.1 / PEFT 0.20.0 / FLA 0.5.2를 검사하고, 최초 worker의
 PyTorch·CUDA·cuDNN·Python·나머지 패키지 버전을 각 queue에 기록한다.
 다른 환경의 노드나 환경이 바뀐 재시작은 작업을 받기 전에 거부한다.
-공유 환경이 이 버전을 충족하는지는 `doctor`로 확인한다. launcher는 패키지를
+공유 환경이 이 버전을 충족하는지는 시작 명령에서 검사한다. launcher는 패키지를
 자동 설치하거나 업그레이드하지 않는다. 공유 환경에서 학습이 실행 중이면
 패키지를 바꾸지 않는다. 기존 Qwen 결과의 환경 일치 검사도 유지한다.
-
-```sh
-sh scripts/run_srgc_qwen35.sh all download
-sh scripts/run_srgc_qwen35.sh all doctor
-sh scripts/run_srgc_qwen35.sh all prepare
-```
 
 `MODELS_DIR` 기본값은 `$GROUP_VOLUME/models`; 모델 경로를 따로 지정하려면
 `SRGC_QWEN_MODEL_PATH`를 사용한다. 기존 다운로드라면 정확한 Hub revision의
 `.om_snapshot.json` 검증이 필요하다. 단순히 폴더 이름이 같은 모델은 허용하지 않는다.
 `prepare`는 활성 OLMo source plan의 질문 분할을 읽되 Qwen 캐시를 비워 둔다.
-비교할 cohort를 명시할 수도 있다:
-
-```sh
-sh scripts/run_srgc_qwen35.sh math prepare --source-plan /absolute/path/to/math-plan.json
-sh scripts/run_srgc_qwen35.sh mbpp prepare --source-plan /absolute/path/to/mbpp-plan.json
-```
-
-모델 가중치 다운로드 전 CPU에서 입력을 준비하려면 `prepare`에
-`--allow-tokenizer-download`를 붙인다. 이 옵션은 고정 revision의 tokenizer만 받는다.
+기존 `all download/doctor/prepare/run` 인터페이스는 수동 점검용으로 유지하지만
+각각 실행할 필요는 없다. 특정 cohort를 비교해야 할 때만 최초 준비 전에
+`math prepare --source-plan <path>` 또는 `mbpp prepare --source-plan <path>`를 사용한다.
+이미 준비된 plan에는 이 옵션을 다시 적용하지 않는다.
 
 기본 결과 위치는 `$OM_WORK/srgc-rebuttal/qwen35-9b-v2`이며
 `SRGC_QWEN_ROOT`로 별도 group-volume 하위 경로를 지정할 수 있다.
@@ -85,10 +92,11 @@ Hugging Face·Torch·Triton·CUDA 캐시와 임시 파일도
 `$OM_WORK/qwen-runtime-cache` 아래에 둔다. 각 rank가 과거 receipt 전체를
 반복 스캔하지 않고 해당 plan의 실제 입력·출력 경로를 검사한다.
 
-```sh
-# 각 빈 4-H100 노드에서 실행. all은 MATH/MBPP 두 queue를 모두 처리한다.
-sh scripts/run_srgc_qwen35.sh all run
+### 조회·중단·재개
 
+아래는 관리 명령이며 추가 실험이나 필수 실행 순서가 아니다.
+
+```sh
 # CPU에서도 조회 가능
 sh scripts/run_srgc_qwen35.sh all status
 sh scripts/run_srgc_qwen35.sh all results
@@ -96,7 +104,7 @@ sh scripts/run_srgc_qwen35.sh all results
 # 현재 작업을 마치고 중단 / 이후 중단 표시 해제
 sh scripts/run_srgc_qwen35.sh all stop
 sh scripts/run_srgc_qwen35.sh all resume
-sh scripts/run_srgc_qwen35.sh all run
+sh scripts/run_srgc_qwen35.sh
 ```
 
 매 worker 시작 시 기존 4-rank NCCL 검사 뒤에 **실제 9B 모델 생성·scoring
@@ -118,12 +126,13 @@ OLMo와 동일한 물리 GPU UUID lock을 사용한다. 기존 worker나 lock �
 사용자 중단은 130, 일반 실패는 1로 구분하고 사용자 중단을 성공 종료로 처리하지 않는다.
 각 rank는 `SRGC_ATTENTION` 환경보다 plan의 고정 attention(`eager`)을 우선한다.
 
-이 수정은 Qwen adapter hash를 바꾸므로 이미 시작한 Qwen 실험의 checkout을
+위 2026-10-01 수정은 Qwen adapter hash를 바꿨으므로 그 전에 시작한 Qwen 실험의 checkout을
 업데이트하지 않는다. 기존 run은 원래 frozen 코드로 재개하고, 수정본으로 새로
 실험하려면 사용하지 않은 root에 `prepare` 후 모든 노드에서 같은 `--root`로 실행한다.
 기존 plan의 hash를 편집하거나 과거 결과를 새 버전으로 재분류하지 않는다.
 새 checkout에서도 `status/results --root`는 과거 plan/입력/실행 identity를 검증해
 조회할 수 있지만, `run/prepare/stop/resume`의 버전 검사는 그대로 유지한다.
+2026-10-02 단일 시작 명령 추가는 adapter/engine hash를 변경하지 않았다.
 
 `all` worker도 MATH/MBPP별 worker receipt와 로그 경로를 정확히 기록한다.
 전용 root가 다른 Qwen worker끼리도 공통 GPU UUID 잠금을 사용한다.

@@ -26,32 +26,35 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 
 ## 지금 할 일
 
-### Replicate는 이 명령 하나
+### 데이터셋만 입력
 
 **빈 노드마다 아래 같은 명령을 한 번씩 실행한다.** 5노드면 각 노드에 같은 한 줄이다.
 노드당 GPU 4장을 쓰며 한 노드에 worker를 여러 개 띄우지 않는다.
 
 ```sh
-sh scripts/run_srgc_sr_refresh.sh all replicate
+sh scripts/run_srgc_sr_refresh.sh math
 ```
 
-MATH·MBPP seeds 5-9, 반복 k=1,2, SR/Switch의 **40개 작업을 자동 배정**한다.
+MBPP는 마지막 인자만 `mbpp`, 두 데이터셋을 함께 처리하려면 `all`로 바꾼다.
+**시드·반복 번호·실험 종류는 입력하지 않는다.** fixed200 → 독립 반복 → 후보 SR 갱신 →
+재전환 → SR 유지 → pool 갱신 → 방향 대조 순서로 아직 맡지 않은 작업을 가져간다.
+데이터셋당 seeds 5-9의 **추가 실험 60개**, `all`은 **120개**를 자동 배정한다.
 끝난 노드는 다음 작업을 가져가며, 다른 노드가 실행 중인 작업은 건너뛴다.
-이미 수동으로 시작한 replicate도 기존 잠금으로 보호한다. 완료한 작업은 검증 후
-건너뛰며 중단한 작업은 저장 checkpoint에서 재개한다. P0·fixed200·다른 대조는 시작하지 않는다.
-기존 2회 반복 조건은 그대로이며 `replicate1-*`, `replicate2-*`를 따로 입력할 필요 없다.
-최대 40개 독립 작업이지만 5노드로 계속 나눠 처리할 수 있다.
+이미 수동으로 시작한 추가 실험도 기존 잠금으로 보호한다. 완료한 작업은 검증 후
+건너뛰며 중단한 작업은 저장 checkpoint에서 재개한다. **완료한 P0는 시작하지 않는다.**
+고정 전환은 200 하나, 독립 반복은 기존 k=1,2의 SR/Switch 조건 그대로다.
+Qwen은 모델이 다르므로 `sh scripts/run_srgc_qwen35.sh math`를 사용한다. 이것도 데이터셋만 입력한다.
 
 실험 코드 갱신은 worker가 없는 checkout에서만 한다. 같은 GPU를 다른 작업이 사용하면
 claim 없이 `NODE idle`로 대기한다. 작업별 실패는 공유 기록 기준 최대 3회, 120초 간격이며
 그동안 다른 준비된 작업을 처리한다. 중복 점유와 사용자 중단은 실패 횟수에 세지 않는다.
-상태/시도 기록은 `seed-N/replicate-K/launches/<arm>/queue.json`, 학습 로그는 같은 위치의
+상태/시도 기록은 `seed-N/launches/<arm>/queue.json`, 반복은 `seed-N/replicate-K/launches/<arm>/queue.json`이다. 학습 로그는 같은 위치의
 `<attempt>/task.log`다. 실패 상한에 도달하면 원인 확인이 필요하며 잠금을 삭제하지 않는다.
 결과 조회는 기존 `math results`, `mbpp results` 명령을 쓴다.
 
-**아래 `math 5 switch_fixed200`처럼 seed를 직접 지정하는 단일 작업 명령은 자동 배정이 아니다.**
-단일 작업 명령을 여러 노드에 똑같이 넣으면 중복 잠금에 걸린다. fixed는 아래 5노드 표처럼
-노드마다 seed를 다르게 입력한다. 이미 실행 중인 행은 다시 실행하지 않는다.
+예전 `math 5 switch_fixed200` 같은 개별 명령은 기록·수동 복구용으로만 남긴다.
+새 배정에는 사용하지 않는다. 한 조건만 처리해야 할 때는 시드 없이 `math switch_fixed200`
+처럼 조건을 붙일 수 있고, 기존 `all replicate`도 유지한다. 평소에는 데이터셋 하나면 충분하다.
 
 **MATH·MBPP 모두 seeds 5-9, 고정 전환은 `switch_fixed200` 하나다.**
 100·125는 이번 실행 목록이 아니다. **기존 MATH·MBPP P0는 모두 완료**했으므로
@@ -64,7 +67,7 @@ claim 없이 `NODE idle`로 대기한다. 작업별 실패는 공유 기록 기�
 | 배정 순서 | ID / 우선순위 | 할 실험과 조건 | MATH 작업 | MBPP 작업 | 최대 동시 노드 | 필요한 선행 작업 |
 | --- | --- | --- | ---: | ---: | ---: | --- |
 | 1 | E04 / P1 | 고정 전환 `switch_fixed200` | 5 | 5 | **10** | 각 seed의 검증된 OLMo step-25 prefix |
-| 2 | E03 / P1 | `all replicate`로 k=1,2의 SR/Switch 자동 배정 | 20 | 20 | **40** | 같은 OLMo prefix; 고정 전환 완료는 불필요 |
+| 2 | E03 / P1 | k=1,2의 SR/Switch 자동 배정 | 20 | 20 | **40** | 같은 OLMo prefix; 고정 전환 완료는 불필요 |
 | 3 | E05 / P2 | 후보 40개 SR 갱신 `candidates` | 5 | 5 | **10** | 같은 OLMo prefix |
 | 4 | E06 / P2 | 재전환 대조 `switch_repeat` | 5 | 5 | **10** | 같은 OLMo prefix |
 | 5 | E10 / P3 | 갱신 없이 25-update 유지 `sr_hold` | 5 | 5 | **10** | 같은 OLMo prefix; E05의 갱신 효과를 분리할 비교군 |
@@ -80,34 +83,16 @@ claim 없이 `NODE idle`로 대기한다. 작업별 실패는 공유 기록 기�
 
 ### 5노드에 바로 입력할 명령
 
-고정 전환은 총 10개지만 **노드는 5개만 있어도 된다.** 노드당 한 작업씩 실행한다.
-먼저 아래 MATH 5개를 각각 다른 노드에 배정한다. node 1에서 MATH seed 5가 이미
-돌고 있으면 그대로 두고 node 2-5만 시작한다. 새 터미널은 새 GPU 노드가 아니다.
+**빈 노드 5개에서 같은 명령을 한 번씩 실행한다.** 시드는 자동 배정된다.
+이미 실행 중인 노드는 그대로 두고 빈 노드에서만 시작한다. 새 터미널은 새 GPU 노드가 아니다.
 
 | 실제 노드 | 첫 작업: 해당 노드에서 이 명령 하나만 실행 |
 | --- | --- |
-| 1 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` |
-| 2 | `sh scripts/run_srgc_sr_refresh.sh math 6 switch_fixed200` |
-| 3 | `sh scripts/run_srgc_sr_refresh.sh math 7 switch_fixed200` |
-| 4 | `sh scripts/run_srgc_sr_refresh.sh math 8 switch_fixed200` |
-| 5 | `sh scripts/run_srgc_sr_refresh.sh math 9 switch_fixed200` |
+| 1-5 각각 | `sh scripts/run_srgc_sr_refresh.sh math` |
 
-각 노드의 MATH 작업이 **정상 완료되고 worker가 종료되면**, 그 노드에서 아래 다음
-작업 하나를 실행한다. 다른 네 노드가 끝날 때까지 기다리지 않는다. 이미 해당 MBPP
-작업이 다른 노드에서 실행 중이거나 완료됐다면 중복 배정하지 않는다.
-
-| 실제 노드 | 다음 작업: 그 노드가 빈 뒤 실행 |
-| --- | --- |
-| 1 | `sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_fixed200` |
-| 2 | `sh scripts/run_srgc_sr_refresh.sh mbpp 6 switch_fixed200` |
-| 3 | `sh scripts/run_srgc_sr_refresh.sh mbpp 7 switch_fixed200` |
-| 4 | `sh scripts/run_srgc_sr_refresh.sh mbpp 8 switch_fixed200` |
-| 5 | `sh scripts/run_srgc_sr_refresh.sh mbpp 9 switch_fixed200` |
-
-MBPP부터 시작한 5노드는 그 작업을 유지하고, 끝난 노드에 같은 seed의 미실행 MATH
-작업을 넣어도 된다. 순서는 자원 배정일 뿐 계산 의존성이 아니다.
-fixed 10개가 모두 완료 또는 실행 중이면 빈 노드에는 위 배정 순서의 E03 독립 반복을 넣는다.
-고정 전환과 독립 반복은 같은 prefix만 있으면 동시에 실행 가능하다.
+MBPP만 맡기려면 `math` 대신 `mbpp`, 양쪽 모두 맡기려면 `all`을 입력한다.
+한 작업이 끝나면 다음 시드·조건을 자동으로 가져간다. 다음 명령을 다시 입력할 필요 없다.
+우선 조건의 작업이 모두 완료 또는 다른 노드에 배정됐으면 다음 조건으로 넘어간다.
 
 `.switch_fixed200.launch.lock`의 `BUSY`는 파일이 남았다는 이유만으로 발생하지 않는다.
 그 **dataset·seed·arm의 잠금을 다른 프로세스가 보유**한다는 뜻이다.
@@ -115,30 +100,16 @@ fixed 10개가 모두 완료 또는 실행 중이면 빈 노드에는 위 배정
 
 ### 15노드 첫 배정
 
-MATH·MBPP seeds 5-9의 OLMo prefix가 모두 준비됐고 아래 작업이 아직 미실행인 경우다.
-**각 행을 서로 다른 빈 노드에서 실행한다. 이 명령들을 한 노드에서 한꺼번에 실행하지 않는다.**
+**빈 노드 15개 각각에서 `sh scripts/run_srgc_sr_refresh.sh all`을 한 번씩 실행한다.**
+양쪽 seeds 5-9의 prefix가 준비됐고 미실행 상태라면 처음 10개는 fixed200,
+그다음 5개는 독립 반복을 맡는다. 기존 실행·완료 상태에 따라 실제 배정은 달라진다.
 
 | 노드 | 실험 | 입력할 명령 |
 | --- | --- | --- |
-| 1 | MATH seed 5 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` |
-| 2 | MATH seed 6 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh math 6 switch_fixed200` |
-| 3 | MATH seed 7 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh math 7 switch_fixed200` |
-| 4 | MATH seed 8 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh math 8 switch_fixed200` |
-| 5 | MATH seed 9 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh math 9 switch_fixed200` |
-| 6 | MBPP seed 5 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh mbpp 5 switch_fixed200` |
-| 7 | MBPP seed 6 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh mbpp 6 switch_fixed200` |
-| 8 | MBPP seed 7 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh mbpp 7 switch_fixed200` |
-| 9 | MBPP seed 8 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh mbpp 8 switch_fixed200` |
-| 10 | MBPP seed 9 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh mbpp 9 switch_fixed200` |
-| 11 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
-| 12 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
-| 13 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
-| 14 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
-| 15 | 독립 반복 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all replicate` |
+| 1-15 각각 | 전체 추가 실험 자동 배정 | `sh scripts/run_srgc_sr_refresh.sh all` |
 
-fixed 작업이 끝난 빈 노드에도 `all replicate` 명령을 실행한다. 반복 worker는 작업이
-끝날 때마다 다음 미실행 항목을 자동으로 가져간다. 전체 15개가 끝날 때까지 기다리지 않는다.
-아래는 자동 배정 순서의 기록이며 노드마다 다시 입력할 목록이 아니다.
+worker는 작업이 끝날 때마다 다음 미실행 항목을 자동으로 가져간다.
+아래는 독립 반복의 조건 기록이며 노드마다 입력할 목록이 아니다.
 
 | 다음 배정 순서 | dataset | 조건 | seeds | 작업 수 |
 | --- | --- | --- | --- | ---: |
@@ -151,7 +122,7 @@ fixed 작업이 끝난 빈 노드에도 `all replicate` 명령을 실행한다. 
 | 7 | mbpp | `replicate2-sr` | 5, 6, 7, 8, 9 | 5 |
 | 8 | mbpp | `replicate2-switch` | 5, 6, 7, 8, 9 | 5 |
 
-그다음 위 전체 배정 표의 3-8번을 따른다. 같은 k의 SR/Switch는 비교 쌍이지
+OLMo의 나머지 조건도 같은 worker가 자동으로 처리한다. Qwen만 별도 launcher를 쓴다. 같은 k의 SR/Switch는 비교 쌍이지
 선후 의존 작업이 아니므로 동시에 실행해도 된다. 10노드만 있으면 고정 전환
 10개부터, 15노드면 위 표, 50노드면 P1 전체를 동시에 배정할 수 있다.
 실제 신규 배정 수는 `min(빈 노드 수, prefix가 준비된 미완료·미실행 작업 수)`다.
@@ -314,15 +285,24 @@ SRGC_MAX_ATTEMPTS=3 sh scripts/run_srgc.sh math run
 ## 4. E03–E07, E09, E10 — 추가 arm 120개
 
 기본 네-arm queue와 별도다. 각 seed의 **공통 prefix가 완료되어야** 한다.
-E03은 위 `all replicate` 한 명령으로 자동 배정한다. E03 개별 명령은 TSV에 기존
-실행 기록과 특정 작업 재개용으로 보존하며, 일반 실행 때 각각 입력하지 않는다.
-노드별로 서로 다른 `(dataset, seed, arm)`을 배정한다. 아래는 seed 5 예시이며
-5를 6, 7, 8, 9로 바꾼다. 한 줄이 한 작업이다.
+시드는 모든 조건에서 자동 배정한다. 아래 명령을 빈 노드마다 한 번 실행한다.
+
+```sh
+sh scripts/run_srgc_sr_refresh.sh math
+```
+
+`mbpp`는 MBPP 60개, `all`은 두 데이터셋 120개를 처리한다. 끝난 노드는 자동으로
+다음 작업을 맡는다. 개별 명령은 TSV에 기존 실행 기록·수동 복구용으로 보존한다.
 
 **이번 E04 배정은 MATH·MBPP 모두 `switch_fixed200` 한 조건이다.**
 시드 5-9 전부 step 200까지 On-policy, update 201부터 SR, total step 275에 종료한다.
 `switch_fixed100/125`는 실행기가 지원하는 다른 조건일 뿐 이번 배정에 포함하지 않는다.
 `verified shared prefix must finish`는 fixed 값 오류가 아니라 prefix 경로/완료 문제다.
+
+### 과거 개별 작업 명령 기록
+
+아래 seed 지정 명령은 자동 배정 이전의 기록이다. 지금 실행할 목록이 아니며,
+데이터셋만 입력하는 위 명령으로 대체한다.
 
 ```sh
 # E04: total step 200까지 On-policy, update 201부터 SR
@@ -348,7 +328,7 @@ sh scripts/run_srgc_sr_refresh.sh mbpp 5 sr_hold
 sh scripts/run_srgc_sr_refresh.sh math 5 pool
 sh scripts/run_srgc_sr_refresh.sh mbpp 5 pool
 
-# E08: Qwen은 별도 queue; 5절의 준비와 실행 명령 사용
+# E08: Qwen은 별도 queue; 5절의 단일 시작 명령 사용
 
 # E09: 방향 정보만 제거/대체한 On-policy 대조 3조건
 sh scripts/run_srgc_sr_refresh.sh math 5 direction_removed
@@ -372,7 +352,7 @@ checkpoint 200의 selection 비용을 포함하고, SR-GC 부호로 전환 시�
 
 **120개 전체 명령과 노드 배정 칸:** [추가 arm 배정표](REBUTTAL_EXTRA_TASKS.tsv).
 이 표는 자동 실행 파일이 아니다. `pending_prefix_check`는 prefix 미확인 상태다.
-서로 다른 노드가 같은 줄을 선택하지 않도록 node/상태/로그를 기록한다.
+실제 자동 배정은 공유 lease와 `launches/<arm>/queue.json`에 기록된다. TSV는 조건·결과 정리용이다.
 
 같은 명령으로 마지막 저장에서 재개하며 저장 간격은 **매 update**다.
 `latest.pt` 저장이 성공한 뒤 `progress.json`도 갱신한다. 선별 갱신 주기는
@@ -430,7 +410,7 @@ arm 파일명은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-p
 독립 반복의 로그는 `seed-N/replicate-<k>/launches/<base-arm>/` 아래에 있다.
 위 results의 selection 요약만으로 전체 GPU 비용을 계산하지 않는다.
 
-## 5. E08 — Qwen3.5-9B, 별도 v2 실험
+## 5. E08 — Qwen3.5-9B 시작 명령 하나
 
 OLMo와 같은 Python 환경을 사용하며 `QWEN_PYTHON` 지정은 필요 없다.
 공유 환경의 실행 중 패키지를 변경하지 않는다. Qwen 패키지 조건은
@@ -439,23 +419,25 @@ OLMo와 같은 Python 환경을 사용하며 `QWEN_PYTHON` 지정은 필요 없�
 대상은 **post-trained `Qwen/Qwen3.5-9B`**, Base 모델이 아니다.
 
 ```sh
-unset QWEN_PYTHON
-export SRGC_QWEN_ROOT="$OM_WORK/srgc-rebuttal/qwen35-9b-v2"
-sh scripts/run_srgc_qwen35.sh all download
-sh scripts/run_srgc_qwen35.sh all doctor
-sh scripts/run_srgc_qwen35.sh all prepare
+sh scripts/run_srgc_qwen35.sh math
 ```
 
-다운로드·입력 준비 후 각 빈 4-H100 노드에서 동일 명령을 실행한다.
-GPU admission을 통과하면 cache → prefix → 네 arm을 자동 배정한다.
+MBPP는 `mbpp`, 양쪽은 `all`로 바꾼다. 시드·arm은 자동 배정한다.
+**빈 4-H100 노드 5개면 각 노드에서 위 명령을 한 번씩 실행한다.** 1개 노드로도 가능하다.
+패키지 검사 → 없는 모델 다운로드 → 없는 입력 준비 → GPU admission → 공유 queue 순서다.
+동시에 시작해도 다운로드·입력 준비는 공유 잠금으로 중복 실행을 막는다.
+준비 잠금은 학습 전에 해제하며 cache → prefix → 네 arm을 노드별로 자동 배정한다.
+초기 cache/prefix는 최대 10노드, continuation은 최대 40노드다.
 MATH/MBPP 각각 seeds 5–9이며 OLMo reward cache/prefix를 재사용하지 않는다.
-`prepare`는 그 시점의 활성 OLMo plan에서 질문 분할을 가져온다. 비교할 OLMo
-cohort를 먼저 확정하며, 다른 cohort를 지정하는 `--source-plan` 예시는
-[Qwen 실행 안내](QWEN35_SRGC_KO.md)에 있다.
+기본 root는 `$OM_WORK/srgc-rebuttal/qwen35-9b-v2` 하나다. 기존 `SRGC_QWEN_ROOT`
+지정은 유지하므로 모든 노드에서 같은 값을 사용한다. 기존 plan·결과·checkpoint는 보존한다.
+입력이 없는 데이터셋만 활성 OLMo plan에서 질문 분할을 가져온다. 이미 준비한 plan은
+그대로 검증해 사용하며, 코드가 다르면 새 root를 자동 생성하거나 hash를 고치지 않고 중단한다.
+패키지는 자동 설치하지 않는다. 별도 모델이나 별도 Python 환경을 추가로 만들 필요는 없다.
 
-```sh
-sh scripts/run_srgc_qwen35.sh all run
-```
+### 조회·중단·실패 복구 전용
+
+아래는 추가 실험이나 필수 실행 순서가 아니다. 필요한 관리 작업만 사용한다.
 
 ```sh
 sh scripts/run_srgc_qwen35.sh all status
@@ -475,21 +457,16 @@ sh scripts/run_srgc_qwen35.sh all resume
 sh scripts/run_srgc_qwen35.sh all run --retry-failed --max-attempts 3
 ```
 
-모든 명령의 `all`을 `math`/`mbpp`로 바꿀 수 있다. 별도 `costs` 명령은 없고
-`results`에 비용 보고가 포함된다. plan은 `$SRGC_QWEN_ROOT/experiments/`,
+관리 명령의 `all`을 `math`/`mbpp`로 바꿀 수 있다. 별도 `costs` 명령은 없고
+`results`에 비용 보고가 포함된다. plan은 `<Qwen root>/experiments/`,
 실험 산출물은 `runs/{math,mbpp}/seed-N/`, TXT는 `reports/`에 저장된다.
 checkpoint 백업은 worker가 자동 수행한다. v1 plan/cache/checkpoint는 v2에서
 재개하지 않는다. 9B GPU 실행은 현장 admission 검증이 남아 있다.
 
-**Qwen 코드 버전 주의:** 이번 실패 복구/attention 고정 수정은 Qwen adapter hash를
-바꾼다. 이미 학습한 Qwen run은 해당 실행의 frozen checkout에서 계속하며, 현재
-코드로 강제 재개하거나 기존 plan hash를 고치지 않는다. 수정본의 새 Qwen 실험은
-별도 root를 명시해 준비한다. 기존 실행을 옮기거나 재시작하라는 명령이 아니다.
-
-```sh
-sh scripts/run_srgc_qwen35.sh all prepare --root "$OM_WORK/srgc-rebuttal/qwen35-9b-audit-20261001"
-sh scripts/run_srgc_qwen35.sh all run --root "$OM_WORK/srgc-rebuttal/qwen35-9b-audit-20261001"
-```
+**이전 버전 기록:** 2026-10-01 실패 복구/attention 수정 때 Qwen adapter hash가
+변경됐다. 당시 안내한 `qwen35-9b-audit-20261001`은 기존 실행과 구분하기 위한
+경로 기록이며, 추가로 돌릴 실험이 아니다. 그 경로로 이미 실행했다면 같은 root와
+frozen checkout을 유지한다. 이번 단일 시작 명령 변경은 adapter/engine hash를 바꾸지 않는다.
 
 모든 참여 노드가 같은 root를 지정해야 한다. `status/results --root <기존 경로>`는
 새 코드에서도 읽기 전용으로 가능하다. Qwen attention은 plan의 `eager`로 고정하며
@@ -618,16 +595,17 @@ gradient와 receipt의 측정 개수를 각각 표시하며, 구간 평균의 �
 ### 6.3. 노드 배정과 그룹 볼륨
 
 **15노드 배정은 문서 맨 앞의 [첫 배정 표](#15노드-첫-배정)를 따른다.**
-MATH 고정 전환 5개 + MBPP 고정 전환 5개 + `all replicate` 자동 worker 5개다.
-완료·실행 중인 항목은 제외하고 다음 미실행 작업을 배정한다.
+각 빈 노드에 `sh scripts/run_srgc_sr_refresh.sh all`을 한 번 실행한다.
+완료·실행 중인 항목은 제외하고 다음 미실행 작업을 자동 배정한다.
 
 위 작업들은 서로 기다리지 않는다. 기본 SR/On/Switch의 종료도 기다리지 않는다.
 필요한 것은 해당 seed의 검증된 `prefix.pt` + `prefix-ready.json`이다.
-노드가 더 있으면 같은 `all replicate` 명령으로 반복 worker를 추가한다.
+노드가 더 있으면 같은 데이터셋 명령으로 worker를 추가한다.
 P1은 데이터셋당 25개, 두 데이터셋 합계 **최대 50개 노드**까지 독립 작업이 있다.
 OLMo 추가 arm 전체는 **120개 노드**가 작업 수 상한이다. 완료한 P0 40개는 신규 배정에 포함하지 않는다.
 완료·실행 중인 작업은 추가 배정에서 빼며, 공유 저장소의 실제 동시 처리 성능을
-검증한 수치는 아니다. prefix가 없는 seed의 추가 명령은 대기열에 들어가지 않고 중단한다.
+검증한 수치는 아니다. 자동 queue는 prefix가 없는 seed를 기다리고 다른 준비된 작업을 처리한다.
+과거의 seed 지정 단일 실행만 prefix가 없으면 중단한다.
 기본 `all run`만 15개 띄우면 추가 arm으로 자동 이동하지 않는다.
 
 추가 launcher는 지원되는 이전 `f581eb...` prefix이면 해시를 검증한 보존 엔진을
@@ -640,8 +618,8 @@ hash를 수정하거나 현재 기본 `run`으로 새 cohort를 만들지 않는
 | OLMo MBPP | `sh scripts/run_srgc.sh mbpp run` | 가능: 공유 queue |
 | OLMo 통합 | `sh scripts/run_srgc.sh all run` | 가능: MATH 우선, 이어 MBPP |
 | E03 독립 반복 | `sh scripts/run_srgc_sr_refresh.sh all replicate` | 가능: 서로 다른 replicate 작업 자동 배정 |
-| 그 외 추가 arm | 배정표의 서로 다른 한 줄 | 단일 작업 명령: tuple별 배정 필요 |
-| Qwen | `sh scripts/run_srgc_qwen35.sh all run` | 가능: 별도 Qwen 공유 queue |
+| 전체 OLMo 추가 arm | `sh scripts/run_srgc_sr_refresh.sh math` (`mbpp` / `all`) | 가능: seed와 조건 자동 배정 |
+| Qwen | `sh scripts/run_srgc_qwen35.sh math` (`mbpp` / `all`) | 가능: 준비 후 Qwen 공유 queue 자동 참여 |
 
 동일 모델의 노드들은 같은 group mount, active root, 코드와 실행 환경을 사용한다.
 GPU lock이 있으면 실제 owner/heartbeat/task 로그를 확인하며 파일을 지우지 않는다.
@@ -651,7 +629,7 @@ GPU lock이 있으면 실제 owner/heartbeat/task 로그를 확인하며 파일�
 매 배정 시 `min(빈 노드 수, 선행 조건이 충족된 미완료 작업 수)`만큼만 새 worker를
 둔다. 완료한 P0는 기록으로 보존하고, P1, P2, P3 순으로 미완료 추가 실험을 배정한다.
 OLMo 추가 arm의 전체 기록은 [120개 배정표](REBUTTAL_EXTRA_TASKS.tsv)에 보존한다.
-E03 40개는 `all replicate`로 자동 배정하고 나머지 80개만 tuple을 수동 지정한다.
+120개 모두 데이터셋만 입력하면 자동 배정한다. TSV의 개별 명령은 기록·수동 복구용이다.
 완료된 노드는 다음 미완료 실험으로 이동하고 모든 작업이 끝났으면 추가 worker를 띄우지 않는다.
 
 ### 6.4. 시작 오류가 있을 때

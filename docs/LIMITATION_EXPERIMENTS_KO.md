@@ -38,15 +38,16 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 
 ### 지금 배정할 순서
 
-**E03 독립 반복은 빈 노드마다 이 명령 하나로 실행한다.**
+**모든 OLMo 추가 실험은 데이터셋만 입력한다. 빈 노드마다 같은 명령을 한 번 실행한다.**
 
 ```sh
-sh scripts/run_srgc_sr_refresh.sh all replicate
+sh scripts/run_srgc_sr_refresh.sh math
 ```
 
-MATH·MBPP seeds 5-9, k=1,2의 SR/Switch 40개를 자동 배정한다. 같은 명령을 5개
-빈 노드에 한 번씩 실행하면 서로 다른 작업을 맡고, 끝난 노드는 다음 작업을 가져간다.
-기존 수동 replicate는 잠금으로 보호하고 완료 작업은 검증 후 건너뛴다. P0나 fixed200은 실행하지 않는다.
+`math` / `mbpp`는 해당 데이터셋 60개, `all`은 양쪽 120개를 처리한다.
+시드 5-9, fixed200, 독립 반복, SR 갱신·재전환·유지·pool·방향 대조를 자동 배정한다.
+같은 명령을 여러 빈 노드에 실행하면 서로 다른 작업을 맡고, 끝난 노드는 다음 작업을 가져간다.
+기존 수동 작업은 잠금으로 보호하고 완료 작업은 검증 후 건너뛴다. 완료한 P0는 실행하지 않는다.
 
 MATH·MBPP 모두 seeds 5-9다. **기존 P0 네 arm은 두 도메인 모두 완료**했으며 재실행하지 않는다.
 **고정 전환은 두 도메인 모두 `switch_fixed200`**만 배정한다.
@@ -64,13 +65,11 @@ MATH·MBPP 모두 seeds 5-9다. **기존 P0 네 arm은 두 도메인 모두 완�
 
 한 작업은 빈 4-H100 노드 하나다. OLMo 추가 arm끼리는 같은 seed의 검증된
 step-25 prefix만 필요하며 서로의 종료를 기다리지 않는다. Qwen은 자체 cache/prefix가 필요하다.
-**5노드면 노드마다 MATH seeds 5, 6, 7, 8, 9를 하나씩 배정하고, 각 작업 완료 후
-같은 노드에 해당 seed의 MBPP를 배정한다.** 이미 실행 중인 작업은 유지한다.
-같은 seed를 지정한 단일 작업 명령은 중복 잠금에 걸린다. `all replicate` 자동 배정 명령과 구분한다.
-노드별 정확한 첫 명령과 다음 명령은 [5노드 실행표](REBUTTAL_COMMANDS_KO.md#5노드에-바로-입력할-명령)에 있다.
-15노드면 **MATH 고정 전환 5 + MBPP 고정 전환 5 + replicate 자동 worker 5**로 시작한다.
-완료·실행 중인 항목은 빼고, 노드가 비는 즉시 다음 미실행 작업으로 채운다.
-복사할 명령 15줄과 이후 배정 순서는 [노드별 배정표](REBUTTAL_COMMANDS_KO.md#15노드-첫-배정),
+**5노드든 15노드든 각 빈 노드에 같은 명령 한 번이면 된다.** 시드와 다음 실험을
+직접 배정하지 않는다. 기존 실행은 유지하며 다른 노드는 다음 미실행 작업을 가져간다.
+양쪽 데이터셋을 처리하려면 `sh scripts/run_srgc_sr_refresh.sh all`을 사용한다.
+5노드 예시는 [5노드 실행표](REBUTTAL_COMMANDS_KO.md#5노드에-바로-입력할-명령),
+15노드 예시는 [노드별 배정표](REBUTTAL_COMMANDS_KO.md#15노드-첫-배정),
 전체 조건은 [실행 명령](REBUTTAL_COMMANDS_KO.md#4-e03e07-e09-e10--추가-arm-120개)을 따른다.
 작업 수 상한과 현재 남은 작업 수는 다르며, 실제 원격 진행 상태는 조회해야 한다.
 
@@ -93,8 +92,7 @@ P0 관련 행은 과거 설계 기록으로 보존한다. **P0는 완료했으�
 | P0 continuation + P1 합계 | 최대 45노드 | 최대 45노드 | **최대 90노드 / 360 GPU** | P0 네 arm 완료를 기다릴 필요 없이 해당 prefix 준비 후 병렬 실행 |
 
 완료한 P0의 기존 자동 배정 명령은 `sh scripts/run_srgc.sh all run`이다. 이번에는 실행하지 않는다.
-P1은 기본 queue에 포함되지 않는다. **E03은 `all replicate`로 자동 배정**하고 E04는
-다른 빈 노드에 dataset/seed를 직접 배정한다. 같은 tuple을 중복 실행하지 않는다. 노드 하나에서
+P1은 기본 queue에 포함되지 않는다. **E03·E04를 포함한 OLMo 추가 실험 전체는 데이터셋만 입력해 자동 배정**한다. 노드 하나에서
 P0 worker와 P1을 함께 실행하지 않는다. 1노드 순차 실행도 가능하다.
 현재 배정 가능 수는 `min(빈 노드 수, prefix가 준비된 미완료·미실행 작업 수)`이며,
 이미 실행 중인 작업은 추가 배정 수에 세지 않는다.
@@ -169,13 +167,13 @@ stack을 자동 출력한다. 원격 노드의 정지 원인을 실측 확인한
 | P0 | OLMo MATH/MBPP 네 arm | [run_srgc.sh](../scripts/run_srgc.sh) | [run_srgc_rebuttal.py](../scripts/run_srgc_rebuttal.py), [run_experiment.py](../srgc_rebuttal/run_experiment.py), [srgc.py](../srgc_rebuttal/srgc.py) |
 | P0 | 비용·결과·checkpoint | 같은 `run_srgc.sh`의 `results/costs/backup` | [reports.py](../srgc_rebuttal/reports.py), [cost_report.py](../srgc_rebuttal/cost_report.py), [cost_ledger.py](../srgc_rebuttal/cost_ledger.py), [srgc_checkpoint_backup.py](../scripts/srgc_checkpoint_backup.py) |
 | P1 | 동일 prefix의 독립 재현 | `sh scripts/run_srgc_sr_refresh.sh all replicate` | [자동 배정](../scripts/srgc_replicate_worker.py), [srgc_replicate.py](../scripts/srgc_replicate.py)의 `ReplicateMixin`; k=1,2, 출력은 `seed-N/replicate-<k>/`. 기존 `run` 재호출이나 `switch_repeat`는 대체가 아님 |
-| P1 | fixed-step-200 전환 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 switch_fixed200` | `srgc_switch_fixed.py`; checkpoint 200에서 전환하여 update 201부터 SR. 수정된 경계 protocol의 checkpoint는 재개 가능; 구 경계 checkpoint와 혼합 금지 |
+| P1 | fixed-step-200 전환 대조 | 데이터셋 단일 명령에 포함 | `srgc_switch_fixed.py`; checkpoint 200에서 전환하여 update 201부터 SR. 수정된 경계 protocol의 checkpoint는 재개 가능; 구 경계 checkpoint와 혼합 금지 |
 | P2 | 후보 40개 SR 갱신 | [run_srgc_sr_refresh.sh](../scripts/run_srgc_sr_refresh.sh) | [srgc_sr_refresh.py](../scripts/srgc_sr_refresh.py)의 `SRRefreshEngine`, `scope=candidates` |
-| P3 | 같은 유지 간격의 cached-SR 대조 | `sh scripts/run_srgc_sr_refresh.sh math 5 sr_hold` | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=cached` (`997cab9`) |
+| P3 | 같은 유지 간격의 cached-SR 대조 | 데이터셋 단일 명령에 포함 | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=cached` (`997cab9`) |
 | P2 | 반복 전환 | 같은 `run_srgc_sr_refresh.sh` | [srgc_switch_repeat.py](../scripts/srgc_switch_repeat.py)의 `SwitchRepeatEngine`; 위 runner가 호출 |
 | P3 | 전체 pool SR 갱신 | 같은 `run_srgc_sr_refresh.sh` | `srgc_sr_refresh.py`의 `SRRefreshEngine`, `scope=pool` |
 | P3 | Qwen3.5-9B 온라인 네 arm | [run_srgc_qwen35.sh](../scripts/run_srgc_qwen35.sh) | [run_srgc_qwen35.py](../scripts/run_srgc_qwen35.py), [srgc_qwen35.py](../scripts/srgc_qwen35.py), [srgc_qwen35_rank.py](../scripts/srgc_qwen35_rank.py) |
-| P3 | 초기 gradient 방향 matched ablation | `sh scripts/run_srgc_sr_refresh.sh math 5 direction_removed` (`direction_magnitude`, `direction_replaced`) | [srgc_direction_ablation.py](../scripts/srgc_direction_ablation.py)의 `DirectionAblationEngine` (`997cab9`) |
+| P3 | 초기 gradient 방향 matched ablation | 데이터셋 단일 명령에 포함 | [srgc_direction_ablation.py](../scripts/srgc_direction_ablation.py)의 `DirectionAblationEngine` (`997cab9`) |
 
 ### OLMo: 시작·조회·비용
 
@@ -211,13 +209,13 @@ MBPP는 [mbpp_pair_seeds.json](../srgc_rebuttal/experiments/mbpp_pair_seeds.json
 활성 cohort를 고른다. 기존 실행을 위해 plan 파일을 수동으로 바꾸지 않는다.
 구체적인 결과 root는 `status` 출력에서 확인한다.
 
-### OLMo 추가 arm: seed별 실행
+### OLMo 추가 arm: 데이터셋별 자동 실행
 
 실행 명령은 [통합 명령 모음 4절](REBUTTAL_COMMANDS_KO.md#4-e03e07-e09-e10--추가-arm-120개)에
-MATH·MBPP의 12조건을 빠짐없이 모았다. 총 120개 중 E03 40개는 `all replicate`로 자동 배정한다.
-나머지 80개는 각 줄의 seed 5를 6-9로 바꾸어 배정한다. E03의 개별 명령은 기록/특정 작업 재개용이다.
-해당 seed의 prefix 완료 후 별도 빈 노드에서 실행하며, 기본 queue가 자동 배정하지 않는다.
-한 줄은 한 arm이고 seed 전체 자동 순회가 아니다. 같은 노드에서는 앞 작업이 끝난 뒤 다음 작업을 실행한다.
+MATH·MBPP의 12조건을 빠짐없이 모았다. `sh scripts/run_srgc_sr_refresh.sh math`로
+MATH 60개를 자동 배정한다. `mbpp`는 MBPP 60개, `all`은 전체 120개다.
+시드 번호·조건을 직접 입력하지 않는다. 해당 seed의 prefix가 없는 작업은 기다리고
+준비된 다른 작업을 처리한다. 기본 P0 queue는 다시 실행하지 않는다.
 
 추가 arm에는 `status`/`costs` 명령이 없다. 상태는 콘솔과
 `seed-N/<arm>-progress.json`, 상세 비용은 `seed-N/cost-receipts/<arm>/`를 본다.
@@ -237,15 +235,19 @@ MATH·MBPP의 12조건을 빠짐없이 모았다. 총 120개 중 E03 40개는 `a
 공유 환경에서 학습 중에는 패키지를 업그레이드하지 않는다.
 
 ```sh
-unset QWEN_PYTHON
-# 모델 준비는 다운로드 가능한 환경에서 1회; doctor는 실제 GPU admission을 대신하지 않음
-sh scripts/run_srgc_qwen35.sh all download
-sh scripts/run_srgc_qwen35.sh all doctor
-sh scripts/run_srgc_qwen35.sh all prepare
+sh scripts/run_srgc_qwen35.sh math
+```
 
-# 각 빈 4-H100 노드에서: MATH/MBPP queue의 작업을 자동 배정
-sh scripts/run_srgc_qwen35.sh all run
+MBPP는 `mbpp`, 양쪽은 `all`로 바꾼다. 시드와 arm은 자동 배정한다.
+**5개 노드면 빈 4-H100 노드마다 위 명령을 한 번씩 실행한다.** 패키지 검사부터
+없는 모델 다운로드·없는 입력 준비·GPU admission·공유 queue까지 자동 진행한다.
+MATH/MBPP seeds 5–9 × 네 arm = 40개 continuation이며 초기 최대 10노드,
+prefix 이후 최대 40노드다. 기존 plan·결과는 보존하고 추가 root를 자동 생성하지 않는다.
+패키지 설치/업그레이드는 자동 수행하지 않는다.
 
+조회 전용 명령이며 실행 순서에 추가할 단계가 아니다:
+
+```sh
 # 결과에는 비용 보고도 포함; 별도 costs 하위 명령은 없음
 sh scripts/run_srgc_qwen35.sh all status
 sh scripts/run_srgc_qwen35.sh all results
@@ -368,10 +370,10 @@ Pair seed-3/4 캐시 재사용 plan과 별도 준비 입력 plan을 섞지 않�
 
 해당 seed의 **검증된 prefix가 완료된 다음** 실행한다. 같은 seed의 기본 네 arm이
 모두 끝날 때까지 기다릴 필요는 없지만, 별도의 빈 노드를 사용해야 한다.
-아래 한 줄은 한 seed의 한 arm만 실행한다. `5`를 `6`, `7`, `8`, `9`로 바꾸어
-각 seed를 실행한다. 같은 노드에서는 앞 명령이 끝난 다음 다음 명령을 실행한다.
+데이터셋만 입력하면 seeds 5-9와 미완료 조건을 자동으로 순회한다.
+과거 seed 지정 명령은 기록·수동 복구용으로만 보존한다.
 
-실행 명령과 구현 파일은 문서 상단의 "OLMo 추가 arm: seed별 실행"에 모았다.
+실행 명령과 구현 파일은 문서 상단의 "OLMo 추가 arm: 데이터셋별 자동 실행"에 모았다.
 
 추가 실행 목록은 2 datasets x 5 seeds x 12 continuation = **120 continuations**다.
 E04 고정 전환 10개, E05–E07 30개, E03 독립 반복 40개(k=1,2 × sr/switch), E09 방향 대조 30개(3조건),
@@ -380,9 +382,8 @@ E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다
 진행 상태에 따라 실행 가능한 작업 수가 달라진다. 총 GPU 시간은 실측 후 추정한다.
 
 추가 arm은 현재 기본 네-arm 자동 queue에 등록되어 있지 않다. 따라서
-`run_srgc.sh all run` 하나로 위 120개가 실행되지는 않는다. E03의 `all replicate`는
-40개 반복 작업 중 다른 노드가 맡지 않은 작업을 자동 선택한다. 그 외 추가 arm은
-노드별로 다른 `(dataset, seed, arm)`을 지정하며 기존 lease로 중복 실행을 막는다.
+`run_srgc.sh all run` 하나로 위 120개가 실행되지는 않는다.
+`run_srgc_sr_refresh.sh all`이 120개 전체를 자동 배정하며 기존 lease로 중복 실행을 막는다.
 
 ### C. 재시작·상태·결과
 

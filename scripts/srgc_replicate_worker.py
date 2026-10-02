@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Distribute the planned SR/Switch replicates without modifying the P0 queue."""
+"""Distribute planned extra experiments without modifying the completed P0 queue."""
 
 import argparse
 from contextlib import ExitStack
@@ -23,6 +23,25 @@ from scripts.srgc_extra_plan import select_plan  # noqa: E402
 from scripts.srgc_pair_inputs import default_plan  # noqa: E402
 from scripts.srgc_shared_storage import route_plan  # noqa: E402
 
+SCOPES = ("all", "switch_fixed200", "replicate", "candidates", "switch_repeat",
+          "sr_hold", "pool", "direction", "direction_removed", "direction_magnitude",
+          "direction_replaced")
+
+
+def conditions(scope):
+    groups = {
+        "switch_fixed200": [(0, "switch_fixed200")],
+        "replicate": [(k, arm) for k in (1, 2) for arm in ("sr", "switch")],
+        "candidates": [(0, "sr_refresh")], "switch_repeat": [(0, "switch_repeat")],
+        "sr_hold": [(0, "sr_hold")], "pool": [(0, "sr_refresh-pool")],
+        "direction": [(0, f"direction_{mode}") for mode in ("removed", "magnitude", "replaced")],
+    }
+    if scope == "all":
+        return [condition for group in groups.values() for condition in group]
+    if scope.startswith("direction_") and scope in SCOPES:
+        return [(0, scope)]
+    return groups[scope]
+
 
 @dataclass(frozen=True)
 class Task:
@@ -34,7 +53,7 @@ class Task:
 
     @property
     def name(self):
-        return f"replicate{self.repeat}-{self.arm}"
+        return f"replicate{self.repeat}-{self.arm}" if self.repeat else self.arm
 
     @property
     def key(self):
@@ -46,14 +65,14 @@ class Task:
 
     @property
     def out(self):
-        return self.folder / f"replicate-{self.repeat}"
+        return self.folder / f"replicate-{self.repeat}" if self.repeat else self.folder
 
     @property
     def receipt(self):
         return self.out / "launches" / self.arm / "queue.json"
 
 
-def tasks_for(dataset):
+def tasks_for(dataset, scope="replicate"):
     datasets = ("math", "mbpp") if dataset == "all" else (dataset,)
     plans = {}
     for name in datasets:
@@ -62,7 +81,7 @@ def tasks_for(dataset):
         for seed in range(5, 10):
             plans[name, seed] = select_plan(active, seed)
     return [Task(name, seed, repeat, arm, plans[name, seed])
-            for repeat in (1, 2) for name in datasets for arm in ("sr", "switch")
+            for repeat, arm in conditions(scope) for name in datasets
             for seed in range(5, 10)]
 
 
@@ -70,8 +89,9 @@ def signature(task):
     """Invalidate a successful validation when any of its saved inputs changes."""
     paths = [task.plan, input_path(task.plan, load_plan(task.plan), task.seed),
              task.folder / "prefix-ready.json", task.folder / "prefix.pt", task.folder / "run.json",
-             task.out / "replicate.json",
              task.out / f"{task.arm}-endpoint.json"]
+    if task.repeat:
+        paths.insert(-1, task.out / "replicate.json")
     result = []
     for path in paths:
         try:
@@ -130,7 +150,7 @@ def node_available():
         _, uuids = cluster.gpu_identity()
         root = canonical_lock_root()
         if root is None:
-            raise ValueError("replicate queue requires group storage")
+            raise ValueError("extra experiment queue requires group storage")
         with cluster.device_leases(root, uuids):
             pass
     except Busy:
@@ -200,13 +220,14 @@ def sweep(tasks, *, max_attempts=3, retry_delay=120, runner=run_task, now=time.t
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=("all", "math", "mbpp"), required=True)
+    parser.add_argument("--scope", choices=SCOPES, default="replicate")
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--poll", type=float, default=10)
     args = parser.parse_args(argv)
     if args.max_attempts < 1 or args.poll <= 0:
         parser.error("max-attempts and poll must be positive")
-    tasks = tasks_for(args.dataset)
-    print(f"REPLICATE {args.dataset}: {len(tasks)} tasks, seeds 5-9, k=1,2, SR/Switch only; P0 unchanged", flush=True)
+    tasks = tasks_for(args.dataset) if args.scope == "replicate" else tasks_for(args.dataset, args.scope)
+    print(f"EXTRAS {args.dataset} scope={args.scope}: {len(tasks)} tasks, seeds 5-9 automatic; P0 unchanged", flush=True)
     while True:
         if not node_available():
             print("NODE idle: this allocation already has a GPU owner; no task claimed", flush=True)
@@ -218,7 +239,7 @@ def main(argv=None):
         if code is not None and code != 75:
             continue
         if counts["complete"] == len(tasks):
-            print("PASS: all planned replicates complete", flush=True)
+            print("PASS: all requested extra experiments complete", flush=True)
             return 0
         if code is None and counts["complete"] + counts["failed"] == len(tasks):
             print(f"FAILED: {counts['failed']} task(s) reached the retry limit; inspect launches/<arm>/queue.json", flush=True)

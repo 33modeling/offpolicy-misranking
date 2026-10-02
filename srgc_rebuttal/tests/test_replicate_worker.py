@@ -1,3 +1,4 @@
+import csv
 import json
 import multiprocessing
 import os
@@ -75,6 +76,58 @@ class ReplicateWorkerTests(unittest.TestCase):
             if process.is_alive():
                 process.terminate()
                 process.join()
+
+    def test_all_extra_tasks_match_recorded_120_rows_and_priority(self):
+        with patch.object(worker, 'default_plan', return_value=self.plan), \
+                patch.object(worker, 'route_plan', side_effect=lambda p, **kw: p), \
+                patch.object(worker, 'select_plan', side_effect=lambda p, s: p):
+            tasks = worker.tasks_for('all', 'all')
+            with (ROOT / 'docs/REBUTTAL_EXTRA_TASKS.tsv').open() as handle:
+                expected = {(r['dataset'], int(r['seed']), r['arm']) for r in csv.DictReader(handle, delimiter='\t')}
+            self.assertEqual({(t.dataset, t.seed, t.name) for t in tasks}, expected)
+            self.assertEqual(len(tasks), 120)
+            self.assertEqual(len({t.key for t in tasks}), 120)
+            self.assertTrue(all(t.name == 'switch_fixed200' for t in tasks[:10]))
+            self.assertTrue(all(t.repeat in (1, 2) for t in tasks[10:50]))
+            self.assertEqual(len(worker.tasks_for('math', 'all')), 60)
+            self.assertEqual(len(worker.tasks_for('mbpp', 'all')), 60)
+
+    def test_all_scopes_use_existing_worker_arm_names(self):
+        from scripts.srgc_sr_refresh import extra_arm
+        for scope in worker.SCOPES:
+            for repeat, arm in worker.conditions(scope):
+                task = worker.Task('math', 5, repeat, arm, self.plan)
+                self.assertEqual(extra_arm(task.name), task.name)
+                if not repeat:
+                    self.assertEqual(task.out, task.folder)
+
+    def test_fixed_task_completion_and_manual_lock_are_respected(self):
+        task = worker.Task('math', 5, 0, 'switch_fixed200', self.plan)
+        with lease(task.folder / '.switch_fixed200.launch.lock'):
+            counts, code = worker.sweep([task], runner=lambda *a: self.fail('duplicate fixed started'))
+            self.assertEqual(counts['busy'], 1)
+        def finish(current, handle):
+            atomic_json(current.out / f'{current.arm}-endpoint.json', {'fixture': True})
+            return 0
+        self.assertEqual(worker.sweep([task], runner=finish)[1], 0)
+        counts, code = worker.sweep([task], runner=lambda *a: self.fail('fixed rerun'))
+        self.assertEqual(counts['complete'], 1)
+        self.assertIsNone(code)
+        self.assertFalse((task.out / 'replicate.json').exists())
+
+    def test_dataset_only_shell_and_scoped_queues_need_no_seed(self):
+        fake = self.fixture.base / 'python'
+        fake.write_text(f'#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        fake.chmod(0o755)
+        env = {**os.environ, 'PAIR_PYTHON': str(fake), 'SWITCH_PYTHON': str(fake)}
+        for dataset in ('math', 'mbpp', 'all'):
+            for scope in (None, 'switch_fixed200', 'candidates', 'switch_repeat', 'sr_hold', 'pool', 'direction'):
+                args = [dataset] + ([scope] if scope else [])
+                result = subprocess.run(['sh', str(SCRIPT), *args], cwd='/tmp', env=env,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), ['scripts/srgc_replicate_worker.py',
+                                 '--dataset', dataset, '--scope', scope or 'all'])
 
     def test_manual_launch_lock_is_respected(self):
         task = self.tasks[0]
