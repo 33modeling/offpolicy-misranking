@@ -1,0 +1,29 @@
+{
+  "runtime_sha256": "9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7",
+  "findings": {
+    "F1": {
+      "removed": [
+        "torch_unrelated_live"
+      ],
+      "file_still_exists": false,
+      "open_handle_still_readable": true
+    },
+    "F2": {
+      "saved_attention": "sdpa",
+      "resumed_attention": "eager",
+      "resume_rejected": false,
+      "step": 1
+    },
+    "F3": {
+      "claimed_after_three_user_interrupts": false,
+      "status": "attempts_exhausted",
+      "attempt": 3,
+      "last_exit_code": 130
+    },
+    "F4": {
+      "test": "assert False",
+      "normal_reward": 0.0,
+      "bypass_reward": 1.0
+    }
+  }
+}
