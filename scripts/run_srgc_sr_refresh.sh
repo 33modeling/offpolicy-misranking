@@ -1,7 +1,8 @@
 #!/bin/sh
 # Automatic extra experiments, seeds 5-9, same command on each empty 4-GPU node:
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp|all
-# Optional scope: math|mbpp|all switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction
+# Optional scope: math|mbpp|all support|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction
+# Read-only status: math|mbpp|all status [scope]
 # Historical single-job interface (preserved, not required for automatic dispatch):
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> [candidates|pool|sr_hold]        # SR success-rate refresh / cached-SR control
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> switch_repeat|switch_fixed<N>    # repeated / fixed-schedule transitions
@@ -19,10 +20,17 @@ case "$DATASET" in math|mbpp|all) ;; *) echo "usage: sh scripts/run_srgc_sr_refr
 QUEUE_SCOPE=
 case "$TARGET" in
     auto) QUEUE_SCOPE=all ;;
-    switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) QUEUE_SCOPE=$TARGET ;;
+    support|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) QUEUE_SCOPE=$TARGET ;;
 esac
 if [ -n "$QUEUE_SCOPE" ]; then
     [ "$#" -le 2 ] || { echo "automatic dispatch takes only dataset and optional scope; omit seed" >&2; exit 2; }
+elif [ "$TARGET" = status ]; then
+    case "${3:-all}" in
+        all|support|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) ;;
+        *) echo "unknown status scope" >&2; exit 2 ;;
+    esac
+elif [ "$TARGET" = support_results ]; then
+    [ "$#" -eq 2 ] || { echo "support_results takes only dataset" >&2; exit 2; }
 elif [ "$TARGET" = results ]; then
     [ "$DATASET" != all ] || { echo "results requires math or mbpp" >&2; exit 2; }
     case "${3:-}" in ''|--json) ;; *) echo "usage: math|mbpp results [--json]" >&2; exit 2 ;; esac
@@ -31,11 +39,11 @@ else
 case "$TARGET" in ''|*[!0-9]*) echo "seed must be an integer" >&2; exit 2 ;; esac
 case "$SCOPE" in
     candidates|pool) ARM_ARGS="--scope $SCOPE" ;;
-    sr_hold|switch_repeat) ARM_ARGS="--arm $SCOPE" ;;
+    sr_hold|sr_refresh_matched|switch_repeat) ARM_ARGS="--arm $SCOPE" ;;
     switch_fixed[0-9]*) ARM_ARGS="--arm $SCOPE" ;;
     direction_removed|direction_magnitude|direction_replaced) ARM_ARGS="--arm $SCOPE" ;;
     replicate[0-9]*-*) ARM_ARGS="--arm $SCOPE" ;;
-    *) echo "third argument must be candidates, pool, sr_hold, switch_repeat, switch_fixed<N> (e.g. switch_fixed200), direction_removed|direction_magnitude|direction_replaced, or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>> (e.g. replicate1-switch)" >&2; exit 2 ;;
+    *) echo "third argument must be candidates, pool, sr_hold, sr_refresh_matched, switch_repeat, switch_fixed<N> (e.g. switch_fixed200), direction_removed|direction_magnitude|direction_replaced, or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>> (e.g. replicate1-switch)" >&2; exit 2 ;;
 esac
 fi
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
@@ -49,6 +57,14 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 # Extra arms inherit their prefix's attention kernel; resumes keep their own
 # saved kernel. An environment default must not change an existing experiment.
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
+if [ "$TARGET" = support_results ]; then
+    export CUDA_VISIBLE_DEVICES=""
+    exec "$PY" scripts/srgc_support_report.py --dataset "$DATASET"
+fi
+if [ "$TARGET" = status ]; then
+    export CUDA_VISIBLE_DEVICES=""
+    exec "$PY" scripts/srgc_extra_status.py --dataset "$DATASET" --scope "${3:-all}"
+fi
 if [ -n "$QUEUE_SCOPE" ]; then
     export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
     export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}

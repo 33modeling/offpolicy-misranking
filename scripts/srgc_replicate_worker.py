@@ -23,12 +23,15 @@ from scripts.srgc_extra_plan import select_plan  # noqa: E402
 from scripts.srgc_pair_inputs import default_plan  # noqa: E402
 from scripts.srgc_shared_storage import route_plan  # noqa: E402
 
-SCOPES = ("all", "switch_fixed200", "replicate", "candidates", "switch_repeat",
+SUPPORT_ARMS = ("direction_removed", "sr_hold", "sr_refresh_matched")
+SCOPES = ("all", "support", "switch_fixed200", "replicate", "candidates", "switch_repeat",
           "sr_hold", "pool", "direction", "direction_removed", "direction_magnitude",
           "direction_replaced")
 
 
 def conditions(scope):
+    if scope == "support":
+        return [(0, arm) for arm in SUPPORT_ARMS]
     groups = {
         "switch_fixed200": [(0, "switch_fixed200")],
         "replicate": [(k, arm) for k in (1, 2) for arm in ("sr", "switch")],

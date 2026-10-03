@@ -1,6 +1,6 @@
 # Limitation 후속 실험: 구현 목록과 실행 기록
 
-실행 안내 정리: 2026-10-02, `master`. 아래 날짜별 구현·검증 기록은 당시 상태로 보존한다.
+실행 안내 정리: 2026-10-03, `master`. 아래 날짜별 구현·검증 기록은 당시 상태로 보존한다.
 대응 원고: V7 `sections/discussion.tex`의 Discussion and Limitations.
 실행 코드는 이 저장소에만 유지한다. 논문 쪽 목록은 `v7/EXPERIMENTS.md`다.
 
@@ -10,6 +10,55 @@
 아래는 실험 목적·조건·구현 기록을 자세히 설명한다.
 기존 실험의 수치·완료 범위와 교정이 필요한 비용은
 [실험 결과 기록](EXPERIMENT_RESULTS_LEDGER_KO.md)에 출처와 함께 정리했다.
+
+## 2026-10-03 우선 보조 실험
+
+고정 시점 200은 늦게 전환하는 대조 한 점이다. D에 따른 전환의 필요성을 그 한 점으로
+판정하지 않는다. 먼저 On-policy와 SR의 차이를 선별 기준·배치 유지·보상 갱신으로 나눠 확인한다.
+
+| 질문 | 새로 배정할 arm | 비교 쌍 (왼쪽 - 오른쪽) | 맞추는 조건 |
+| --- | --- | --- | --- |
+| gradient 순위의 이득 | `direction_removed` | `on_policy - direction_removed` | 같은 gradient/scoring 절차와 후보 추출, 25-update 유지; 순위만 무작위 |
+| 유지 간격의 영향 | `sr_hold` | `sr_hold - sr` | 같은 cached SR 점수; 4개 문제 유지 간격을 비교 |
+| 같은 유지 간격의 선별 기준 | 위 `sr_hold` 재사용 | `sr_hold - on_policy` | 후보 40개·4개 선택·25-update 유지; SR 대 gradient |
+| 보상 갱신의 이득 | `sr_refresh_matched` | `sr_refresh_matched - sr_hold` | 후보·유지 간격·전체 pool의 고정 동점 순서; 보상만 갱신 |
+
+공통 step-25 prefix에서 total 275 updates까지 이어간다. MATH·MBPP 각 seeds 5-9,
+총 3조건 × 5 seeds × 2 datasets = 30개. 기존 유효한 `direction_removed`·`sr_hold`는 건너뛴다.
+후보 40개, 학습 4개, 문제당 8응답, 유지 25 updates. fresh SR은 현재 후보의 응답을
+새로 생성해 성공률을 구하며 validation gradient/backward를 사용하지 않는다.
+`direction_removed`는 gradient 계산을 그대로 수행하므로 낮은 비용의 Random 대조로 쓰지 않는다.
+같은 sampling seed라도 모델이 달라지면 응답은 달라진다.
+
+기존 `sr_refresh`의 동점 키는 후보 묶음 내에서 배정됐고, `sr_hold`는 전체 pool의 키를
+사용했다. 따라서 과거 `sr_refresh - sr_hold`에는 동점 처리 차이가 포함된다.
+새 `sr_refresh_matched`는 보상이 같으면 후보 순서가 달라도 `sr_hold`와 같은 순위를 만든다.
+기존 결과를 재명명하지 않으며 새 endpoint와 checkpoint에 tie protocol을 기록하고 재개 때 검사한다.
+
+빈 노드마다 `sh scripts/run_srgc_support.sh math` 한 번. `mbpp`/`all`도 지원한다.
+한 작업은 4 GPU, 최대 15노드/데이터셋·양쪽 30노드. 모두 미완료이고 prefix가 준비됐을 때의 상한이다.
+5노드든 15노드든 각 노드에 같은 명령을 입력한다. 상태는 마지막에 `status`, 결과는 `results`를 붙인다.
+기존 fixed200·독립 반복·Qwen은 이 queue에 포함되지 않으며 이미 실행 중인 작업은 유지한다.
+[현재 명령과 상태 해석](REBUTTAL_COMMANDS_KO.md#지금-할-일-선별-기준유지-간격보상-갱신-대조)을 따른다.
+
+결과는 같은 학습 시드끼리의 최종 평가 차이와 평균·표본 SD, 유효 쌍 수를 보고한다.
+불리한 시드도 포함하고 누락을 0으로 대체하지 않는다. 평가 응답들을 독립 학습 시드로 세지 않는다.
+저장된 선택 이력의 고유 문제 수·반복도·학습 지표는 보조 분석이며 held-out 중간 평가가 아니다.
+이 대조만으로 D의 전환 시점이 최적이라고 결론내리거나 관찰된 차이를 모든 코딩/수학 도메인에
+일반화하지 않는다. 이번 변경은 코드·실행 안내이며 원고 결과나 주장을 바꾸지 않는다.
+
+### 이번 코드 검증
+
+`python3 -m unittest srgc_rebuttal.tests.test_support_experiments`: **15개 통과**.
+동일 보상일 때 cached/fresh SR 순위 일치, 동점 순서, 현재/과거 prefix에서 재개,
+프로토콜 혼합 거부, 30개 배정과 기존 120개 유지, 읽기 전용 상태, 시드 쌍 집계,
+잘못된 endpoint 제외, 실행·상태·결과 명령의 인자 전달을 확인했다.
+
+`python3 -m unittest discover -s srgc_rebuttal/tests -v`: 수집된 **430개 중 399개 통과,
+27개 skip, 4개 의존성 오류**. 오류는 `torch` 부재 3개와 `transformers` 부재 1개다.
+전체 수집 후 추가한 과거 prefix 재개 테스트는 위 15개 단독 실행에 포함했다.
+shell 문법·Python 컴파일·diff 검사를 통과했다. frozen core와 기존 plan은 수정하지 않았다.
+실제 H100 학습·NCCL 다중 노드 부하 검증은 하지 않았다.
 
 **2026-09-28 저자 목표 갱신:** 명령 모음의 E01–E09(09-30에 E10 추가) 전체 실험을 완료하고 V7
 원고까지 준비한 뒤 11월 5일 리뷰 공개를 맞는다. P0–P3는 순서이지 선택적으로
@@ -36,7 +85,9 @@ H100 노드의 접속 정보와 빈 allocation은 확인되지 않았다. 원격
 
 ## 코드 위치와 명령 빠른 찾기
 
-### 지금 배정할 순서
+### 기존 전체 배정 순서 (2026-10-02 기록)
+
+아래 120개는 보존된 전체 계획이다. 현재 우선 배정은 맨 위의 support 30개를 따른다.
 
 **모든 OLMo 추가 실험은 데이터셋만 입력한다. 빈 노드마다 같은 명령을 한 번 실행한다.**
 
@@ -217,7 +268,8 @@ MATH 60개를 자동 배정한다. `mbpp`는 MBPP 60개, `all`은 전체 120개�
 시드 번호·조건을 직접 입력하지 않는다. 해당 seed의 prefix가 없는 작업은 기다리고
 준비된 다른 작업을 처리한다. 기본 P0 queue는 다시 실행하지 않는다.
 
-추가 arm에는 `status`/`costs` 명령이 없다. 상태는 콘솔과
+추가 arm 상태는 `sh scripts/run_srgc_sr_refresh.sh all status`로 조회한다.
+현재 보조 30개만 보려면 `sh scripts/run_srgc_support.sh all status`를 쓴다. 별도 `costs` 명령은 없다. 원시 기록은
 `seed-N/<arm>-progress.json`, 상세 비용은 `seed-N/cost-receipts/<arm>/`를 본다.
 `<arm>`은 `switch_fixed200`, `sr_refresh`, `switch_repeat`, `sr_refresh-pool`, `sr_hold`,
 `direction_removed`, `direction_magnitude`, `direction_replaced`이다. 독립 반복은
@@ -317,7 +369,7 @@ total 275 updates, 4-GPU 실행이다. 각 update의 학습은 4문제 x 새 응
 | `sr_refresh` | 25 updates마다 무작위 40개 x 8응답으로 현재 성공률을 다시 구하고 SR 상위 4개 유지 | 계속 성공률 갱신 | 기존 `sr`, `on_policy`와 비교 |
 | `sr_refresh-pool` | 25 updates마다 전체 400개 x 8응답으로 성공률 갱신, 상위 4개 유지 | 계속 전체 pool 갱신 | `sr_refresh`와 범위/비용 비교 |
 | `switch_repeat` | 기존 Switch와 같은 전환 규칙으로 시작 | SR 상태에서도 check를 계속하고 양의 D 확인 시 On-policy로 복귀 가능 | 일회 전환 `switch`와 비교 |
-| `sr_hold` | 25 updates마다 무작위 40개를 **캐시** SR 점수로 정렬해 상위 4개를 다음 refresh까지 유지 (rollout 없음) | 계속 캐시 사용 | `sr_refresh` − `sr_hold` = 갱신 효과, `sr_hold` − `sr` = 유지 간격 효과 |
+| `sr_hold` | 25 updates마다 무작위 40개를 **캐시** SR 점수로 정렬해 상위 4개를 다음 refresh까지 유지 (선별 rollout 없음) | 계속 캐시 사용 | 갱신 비교는 동점 순서까지 맞춘 `sr_refresh_matched - sr_hold`, 유지 간격 비교는 `sr_hold - sr` |
 | `direction_removed` | On-policy와 같은 refresh·후보 40·scoring·validation gradient; SR 비교 gradient 없음. 선별만 채점된 40개 중 균등 무작위 4개 | 계속 (전환 없음) | `on_policy`와 비교: 방향·크기 정보 모두 제거, 계산 범위 동일 |
 | `direction_magnitude` | 같은 절차; 선별을 projected gradient norm 순으로 | 계속 | `on_policy`와 비교: 크기만 남기고 방향 제거 |
 | `direction_replaced` | 같은 절차; validation 방향을 refresh마다 뽑은 무작위 단위 벡터로 대체해 cosine 정렬 | 계속 | `on_policy`와 비교: 방향은 쓰되 validation 정보 없음 |
@@ -397,8 +449,8 @@ E10 `sr_hold` 10개이며, 기본 네 arm이나 prefix는 포함하지 않는다
 
 결과·비용·백업 명령은 문서 상단의 빠른 찾기를 따른다.
 
-추가 runner에는 별도 `status` 하위 명령이 없다. 기본 queue의 status/results가
-추가 arm을 자동 집계한다고 안내하지 않는다. 학습 콘솔의 `TRAIN ... step=N/275`,
+추가 runner의 `sh scripts/run_srgc_sr_refresh.sh all status`를 사용한다.
+기본 P0 queue의 status/results와 구분한다. 학습 콘솔의 `TRAIN ... step=N/275`,
 콘솔에 출력된 선택 plan의 run root 아래 `seed-N/<arm>-run.json`, `<arm>-progress.json`을 확인한다.
 최종 산출물은 `<arm>-endpoint.json`이며, 상세 비용은 같은 seed 아래
 `cost-receipts/<arm>/`, `invocations/<arm>/`에 남는다. 독립 반복은 같은 파일들을

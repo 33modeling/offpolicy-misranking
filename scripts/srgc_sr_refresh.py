@@ -19,9 +19,10 @@ modified: the engine variant lives here and is launched through torchrun.
 
 ``sr_hold`` is the matching cached-SR control: the same 25-update draw of 40
 candidates and the same four-prompt batch retained until the next refresh, but
-ranked by the frozen cache instead of fresh success rates. ``sr_refresh`` minus
-``sr_hold`` isolates the refresh; ``sr_hold`` minus ``sr`` isolates the batch
-retention interval.
+ranked by the frozen cache instead of fresh success rates. The historical
+``sr_refresh`` uses different tie keys; use ``sr_refresh_matched`` to compare
+fresh and cached rewards with the same per-prompt tie order. ``sr_hold``
+versus ``sr`` tests the batch retention interval.
 
 The same entry point runs the other extra arms: ``switch_repeat``,
 ``switch_fixed<N>`` (``srgc_switch_fixed``), the matched direction ablations
@@ -70,12 +71,14 @@ def arm_name(scope):
 
 
 def scope_of(arm):
+    if arm == "sr_refresh_matched":
+        return "candidates"
     return next((scope for scope, name in SCOPE_ARMS.items() if name == arm), None)
 
 
 DIRECTION_ARMS = ("direction_removed", "direction_magnitude", "direction_replaced")
 EXTRA_ARMS = ("sr_refresh", "sr_refresh-pool", "sr_hold", "switch_repeat", "switch_fixed100", "switch_fixed125",
-              *DIRECTION_ARMS)
+              *DIRECTION_ARMS, "sr_refresh_matched")
 
 
 def replicate_of(name):
@@ -98,6 +101,11 @@ def extra_arm(name):
 
 def make_engine(arm, backend, data, config):
     """Engine for an extra arm (its engine label is the recorded arm name it extends)."""
+    if arm == "sr_refresh_matched":
+        from scripts.srgc_sr_matched import MatchedSRRefreshEngine
+        return MatchedSRRefreshEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
+                                     data["cached_rewards"], arm="sr_refresh", config=config,
+                                     refresh_scope="candidates"), "sr_refresh"
     if arm in SCOPE_ARMS.values():
         return SRRefreshEngine(backend, data["candidate_ids"], data["ranking_validation_ids"], data["cached_rewards"],
                                arm="sr_refresh", config=config, refresh_scope=scope_of(arm)), "sr_refresh"
@@ -158,8 +166,11 @@ class SRRefreshEngine(Engine):
                 raise ValueError(f"{i}: success rate is not a multiple of 1/{c.responses}")
             rewards[i] = [1.0] * successes + [0.0] * (c.responses - successes)
         with self._timing_scope("sr_refresh_ranking"):
-            ranked = cached_sr_set(ids, rewards, len(ids), c.seed, c.responses)
+            ranked = self._rank_refreshed(ids, rewards)
         return ids, means, ranked
+
+    def _rank_refreshed(self, ids, rewards):
+        return cached_sr_set(ids, rewards, len(ids), self.config.seed, self.config.responses)
 
     def update(self):
         if self.arm != "sr_refresh":
@@ -393,6 +404,8 @@ def run(args):
         extras = {"refresh_scope": scope, "launch_arm": launch_arm,
                   "replicate": current.replicate_record() if replicate else None,
                   "ablation": getattr(current, "mode", None) if engine_arm == "direction_ablation" else None}
+        if arm == "sr_refresh_matched":
+            extras["sr_tie_protocol"] = current.SR_TIE_PROTOCOL
         continue_updates(current, out, arm, launch_arm, plan["total_updates"], extras, policy)
         with meter.phase("evaluation", current.step, world):
             # The endpoint evaluation keeps the recorded rule and the base seed for every replicate.
@@ -503,6 +516,10 @@ def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None):
         raise ValueError(f"{path}: endpoint identity, prefix or update count differs")
     if value.get("prefix_checkpoint_sha256") != prefix_hash:
         raise ValueError(f"{path}: endpoint used a different shared prefix")
+    if arm == "sr_refresh_matched":
+        from scripts.srgc_sr_matched import MatchedSRRefreshEngine
+        if value.get("sr_tie_protocol") != MatchedSRRefreshEngine.SR_TIE_PROTOCOL:
+            raise ValueError(f"{path}: matched SR tie protocol differs")
     def finite_number(number):
         return type(number) in (float, int) and math.isfinite(number)
     evaluation_ids = json.loads(input_path(plan_path, plan, seed).read_text())["evaluation_ids"]

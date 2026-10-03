@@ -1,11 +1,65 @@
 # 추가 실험 실행 순서와 노드 배정
 
-정리: 2026-10-02, 코드 `master` 기준. 이번 배정 조건과 실행기가 지원하는 다른 옵션을 구분한다.
+정리: 2026-10-03, 코드 `master` 기준. 현재 권장 보조 실험과 기존 전체 실행 목록을 구분한다.
 [리뷰 일정](REVIEW_SCHEDULE_2027_KO.md) ·
 [기존 실험과 결과](EXPERIMENT_RESULTS_LEDGER_KO.md) ·
 [실험별 목적·우선순위](LIMITATION_EXPERIMENTS_KO.md) ·
 [Qwen 감사 결과](QWEN35_SRGC_AUDIT_KO.md).
 P0 완료 상태는 2026-10-02 저자 확인을 반영했다. 추가 실험의 원격 진행 상태를 실시간 조회한 문서는 아니다.
+
+## 지금 할 일: 선별 기준·유지 간격·보상 갱신 대조
+
+고정 200 하나로는 D에 따른 전환이 필요한지 입증할 수 없다. 우선 아래 세 조건으로
+On-policy와 SR의 성능 차이가 어디에서 생기는지 확인한다. **기존 fixed200·반복 실행은
+중단하지 않으며, 기존 120개 queue의 동작도 바꾸지 않았다.** 새 배정에는 다음 명령을 쓴다.
+
+```sh
+sh scripts/run_srgc_support.sh math
+```
+
+MBPP는 `mbpp`, 양쪽은 `all`. **빈 4-GPU 노드마다 같은 명령을 한 번씩 실행**한다.
+시드·조건은 자동 배정된다. 1노드 순차 실행부터 5노드·15노드 분산 실행까지 같은 명령이다.
+한 노드에 worker를 여러 개 띄우지 않는다. 공통 환경 설정은 아래 2절을 따른다.
+
+| 순서 | 실행 조건 | 비교 대상 | 확인할 질문 |
+| --- | --- | --- | --- |
+| 1 | `direction_removed` | 기존 `on_policy` | 후보 추출·gradient 계산·25-update 유지 간격을 맞춰도 gradient 순위가 무작위 순위보다 좋은가? |
+| 2 | `sr_hold` | 기존 `sr`, `on_policy` | SR의 매-update 재선별과 25-update 유지 사이에 차이가 있는가? 같은 유지 간격에서 SR과 gradient 순위는 어떻게 다른가? |
+| 3 | `sr_refresh_matched` | `sr_hold` | 후보·유지 간격·동점 순서를 맞추고 보상만 새로 구하면 성능이 개선되는가? |
+
+각 조건은 MATH·MBPP seeds 5-9. **15개/데이터셋, 총 30개이며 현재 남은 수는 아니다.**
+검증된 기존 `direction_removed`·`sr_hold` 결과는 재사용한다. 모든 prefix가 준비되고
+미완료 작업이 남아 있을 때 최대 **15노드/데이터셋, 양쪽 30노드(120 GPU)**까지 독립 배정이 가능하다.
+실제 배정 수는 `min(빈 노드, 준비된 미완료·미실행 작업)`이며 이 규모의 부하 실측은 하지 않았다.
+각 arm은 해당 seed의 step-25 prefix만 필요하고, 다른 arm 종료를 기다리지 않는다.
+P0 재학습, fixed200, 독립 반복, Qwen은 이 queue에서 시작하지 않는다.
+
+상태·결과는 GPU 없이 조회한다. 실행 중인 터미널과 별도 터미널에서 조회해도 새 학습이 시작되지 않는다.
+
+```sh
+sh scripts/run_srgc_support.sh all status
+sh scripts/run_srgc_support.sh all results
+```
+
+`status`는 저장 step/275, 시도 수, host, 실패 로그 위치를 표시하며 잠금을 바꾸지 않는다.
+`reported_running`은 최근 heartbeat 기록이지 원격 프로세스 생존 확인이 아니다.
+`stale_worker`도 자동 종료·재배정 판단이 아니다. `complete`는 queue가 검증한 파일들의
+stat 서명이 그대로인 경우이며, 파일만 있는 결과는 `endpoint_unverified`로 구분한다.
+`results`는 plan/input/prefix/endpoint를 검증하고 같은 시드끼리 reward 차이의 평균·표본 SD와
+유효 쌍 수 `n/5`를 출력한다. 누락은 0으로 채우지 않는다. prefix 해시 확인에는 CPU I/O 시간이 든다.
+비용 열은 endpoint의 **기록된 전체 selection/training GPU-h**로, 원고 Table 5의 후보 선별 비용
+추정치나 cold-start 총비용이 아니다. 비용 누락도 별도로 표시한다.
+
+공통 조건은 total 275 updates, 후보 40개, 학습 문제 4개, 문제당 응답 8개, 선별 주기 25 updates다.
+`direction_removed`는 비용 대조를 위해 gradient도 계산한다. 값싼 Random 방법이 아니다.
+학습 모델이 달라진 뒤에도 동일 응답을 쓰는 비교가 아니라, 같은 추출 규칙·시드·예산을 쓰는 비교다.
+**이 세 대조만으로 D의 최적성이나 초기 단계의 인과 효과를 입증했다고 쓰지 않는다.**
+최종 평가를 비교하며 training progress를 중간 평가셋 성능으로 해석하지 않는다.
+
+기존 `sr_refresh`는 후보별 동점 키를 매 후보 묶음에서 배정해 `sr_hold`와 달랐다.
+새 `sr_refresh_matched`는 전체 pool의 고정 동점 순서를 공유한다. 기존 arm/checkpoint는 보존하고,
+새 결과에는 `fresh-sr-global-cached-ties-v1`을 기록한다. 두 arm의 결과를 섞지 않는다.
+상세 조건과 해석 범위는 [실험 목록](LIMITATION_EXPERIMENTS_KO.md#2026-10-03-우선-보조-실험)에 있다.
 
 ## 완료한 실험
 
@@ -18,13 +72,16 @@ P0 완료 상태는 2026-10-02 저자 확인을 반영했다. 추가 실험의 �
 P1부터 배정하며 P0나 공통 prefix를 다시 만들지 않는다.
 완료 확인일은 실제 작업 종료 시각이 아니다. [결과와 완료 기록](EXPERIMENT_RESULTS_LEDGER_KO.md#p0-완료-기록)에 근거를 남겼다.
 
-**완료 목표:** E01–E10의 전체 실험과 비용 검증을 마치고, 결과를 반영한 V7
+**2026-10-02 전체 계획 기록:** E01–E10의 전체 실험과 비용 검증을 마치고, 결과를 반영한 V7
 원고를 **2026-11-04 18:00 KST까지** 준비한 뒤 11월 5일 리뷰 공개를 맞는다.
-E10은 실험 목록 MD가 `sr_refresh`의 순수 갱신 효과 분리에 필요하다고 적은 cached-SR 유지 간격 대조다.
+E10은 cached-SR 유지 간격 대조다. 보상 갱신 비교에는 위의 동점 순서 교정을 적용한다.
 P0–P3는 자원 배정 순서이며 P3를 생략한다는 뜻이 아니다.
 CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-결과-수집)에 있다.
 
-## 지금 할 일
+## 기존 120개 전체 배정 (2026-10-02 기록)
+
+아래 우선순위와 노드 예시는 기존 전체 계획의 기록이다. **새 권장 배정은 문서 맨 위의
+support 30개**이며, 아래 명령은 의도적으로 기존 전체 목록을 실행할 때만 사용한다.
 
 ### 데이터셋만 입력
 
@@ -343,8 +400,8 @@ E03의 replicate stream은 `sampling_seed(base seed, k)`로 코드에 고정되�
 `seed-N/replicate-<k>/replicate.json`에 기록된다. 기록된 arm은 stream 0이며 `replicate0`은
 거부된다. 이번 배정은 k=1,2의 SR/Switch만이며 다른 replicate 조건은 추가하지 않는다.
 E09의 세 조건은 On-policy와 후보 추출·scoring·유지 간격·
-training stream을 공유하며 선별 규칙만 다르다. `sr_refresh − sr_hold`가 갱신 효과,
-`sr_hold − sr`가 유지 간격 효과다.
+training stream을 공유하며 선별 규칙만 다르다. 갱신 효과 비교는 동점 순서도 맞춘
+`sr_refresh_matched − sr_hold`, 유지 간격 비교는 `sr_hold − sr`를 사용한다.
 
 E04의 200은 prefix 이후 추가 update 수가 아니라 **전체 학습 step**이다.
 checkpoint 200의 selection 비용을 포함하고, SR-GC 부호로 전환 시점을 바꾸지 않는다.
@@ -358,7 +415,9 @@ checkpoint 200의 selection 비용을 포함하고, SR-GC 부호로 전환 시�
 `latest.pt` 저장이 성공한 뒤 `progress.json`도 갱신한다. 선별 갱신 주기는
 그대로 25 updates이며, 매-step checkpoint 저장과 별개다. 최종 평가만 수행하므로
 `progress.json`의 training metrics를 중간 평가셋 reward로 해석하지 않는다.
-완료된 동일 실험은 재학습하지 않는다. 별도 `stop/resume/status/costs` 하위 명령은 없다.
+완료된 동일 실험은 재학습하지 않는다. `sh scripts/run_srgc_sr_refresh.sh all status`는
+기존 120개 상태를, `sh scripts/run_srgc_support.sh all status`는 현재 보조 30개 상태를 조회한다.
+별도 `stop/resume/costs` 하위 명령은 없다.
 중단은 해당 터미널의 Ctrl-C 또는 실행 shell에 SIGTERM을 보낸다.
 shell은 자기 worker에 종료를 전달하고 자식 종료를 기다린 뒤 끝나며, 중단 후 재시도하지 않는다.
 실패한 update 및 저장을 마치지 못한 작업은 다시 수행할 수 있다.
