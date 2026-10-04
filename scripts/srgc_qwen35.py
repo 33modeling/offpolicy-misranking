@@ -148,7 +148,7 @@ def attach_adapter(model, config, original):
 
 def make_bundle(source, tokenizer, *, source_plan, source_sha256):
     from srgc_rebuttal.plan import validate_inputs
-    validate_inputs(source, require_cache=False)
+    validate_inputs(source, require_cache=False, recorded_rewards=True)
     bundle = copy.deepcopy(source)
     bundle["cached_rewards"] = {}
     for record in bundle["records"].values():
@@ -199,7 +199,7 @@ def prepare(dataset, source_plan, destination, tokenizer):
             for seed in plan["seeds"]:
                 data = json.loads(input_path(target, plan, seed).read_text())
                 validate_inputs(data, require_cache=False)
-                info, _ = input_info(input_path(source_plan, original, seed))
+                info, _ = input_info(input_path(source_plan, original, seed), recorded_rewards=True)
                 if data["provenance"]["source_data_sha256"] != info["source_sha256"]:
                     raise ValueError("source cohort changed; refusing to reset the Qwen run")
             return target
@@ -208,7 +208,7 @@ def prepare(dataset, source_plan, destination, tokenizer):
             path = input_path(source_plan, original, seed)
             built[seed] = make_bundle(json.loads(path.read_text()), tokenizer,
                                       source_plan=source_plan, source_sha256=digest(path))
-            built[seed]["provenance"]["source_data_sha256"] = input_info(path)[0]["source_sha256"]
+            built[seed]["provenance"]["source_data_sha256"] = input_info(path, recorded_rewards=True)[0]["source_sha256"]
         for seed, bundle in built.items():
             path = input_path(target, plan, seed)
             if path.exists() and json.loads(path.read_text()) != bundle:

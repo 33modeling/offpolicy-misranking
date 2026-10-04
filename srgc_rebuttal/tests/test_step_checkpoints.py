@@ -216,7 +216,8 @@ class StepCheckpointTests(unittest.TestCase):
 
     def test_corrected_experiment_has_a_new_identity(self):
         self.assertNotEqual(code_digest(), "f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b")
-        self.assertEqual(code_digest(), "9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7")
+        self.assertNotEqual(code_digest(), "9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7")
+        self.assertEqual(code_digest(), "b5dd86cfbe7b3b50691834233578f81d45fb0ca82a843d96dab474154be33ac2")
 
 
 if __name__ == "__main__":

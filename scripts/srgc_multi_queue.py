@@ -141,7 +141,7 @@ def run_worker_multi(queues, args, environment, gpu_fds, worker_id, update):
                         finished += 1
                     else:
                         retryable = args.retry_failed and any(row["status"] == "failed" and
-                            row.get("attempt", 0) < args.max_attempts for row in status)
+                            row.get("retry_attempt", row.get("attempt", 0)) < args.max_attempts for row in status)
                         if not retryable and not any(row["status"] in {"running", "ready", "recoverable", "interrupted"}
                                                      for row in status):
                             blocked += 1

@@ -24,10 +24,10 @@ class Task:
         return f"seed-{self.seed}.{self.arm}"
 
 
-def input_info(path, *, recorded_rewards=False):
+def input_info(path):
     raw = path.read_bytes()
     data = json.loads(raw)
-    validate_inputs(data, require_cache=False, recorded_rewards=recorded_rewards)
+    validate_inputs(data, require_cache=False)
     source = {k: v for k, v in data.items() if k != "cached_rewards"}
     if isinstance(source["provenance"], dict):
         source["provenance"] = {k: v for k, v in source["provenance"].items() if k != "cache"}
@@ -35,14 +35,6 @@ def input_info(path, *, recorded_rewards=False):
     return {"input_sha256": hashlib.sha256(raw).hexdigest(),
             "source_sha256": hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest(),
             "pending_cache": not complete}, data
-
-
-def retry_attempts(record):
-    """Launch IDs stay monotonic; intentional interruptions do not spend retries."""
-    if "retry_attempt" in record:
-        return record["retry_attempt"]
-    previous = record.get("attempt", 0)
-    return max(0, previous - int(record.get("status") == "interrupted"))
 
 
 class TaskQueue:
@@ -192,7 +184,7 @@ class TaskQueue:
                 except Busy:
                     continue
                 previous = json.loads(self.receipt(task).read_text()) if self.receipt(task).exists() else {}
-                attempts = retry_attempts(previous)
+                attempts = previous.get("attempt", 0)
                 if attempts >= max_attempts:
                     continue
                 if previous.get("status") == "failed" and (not retry_failed or attempts >= max_attempts or
@@ -204,8 +196,7 @@ class TaskQueue:
                     atomic_json(self.directory / "attempts" / f"{previous['attempt_id']}.json",
                                 {**previous, "status": "abandoned", "recovered": time.time()})
                 record = {"task": task.key, "status": "running", "host": socket.gethostname(),
-                          "pid": os.getpid(), "worker_id": worker_id,
-                          "attempt": previous.get("attempt", 0) + 1, "retry_attempt": attempts + 1,
+                          "pid": os.getpid(), "worker_id": worker_id, "attempt": attempts + 1,
                           "attempt_id": uuid.uuid4().hex, "started": time.time()}
                 atomic_json(self.receipt(task), record)
                 self.claim_fds = (handle.fileno(),)
@@ -226,9 +217,7 @@ class TaskQueue:
         except Exception as exc:
             exit_code = exit_code or 2
             error = f"{type(exc).__name__}: {exc}"
-        refunded = bool(interrupted and exit_code != 0 and error is None)
-        record = {**previous, "status": "complete" if exit_code == 0 else "interrupted" if refunded else "failed",
-                  "retry_attempt": max(0, retry_attempts(previous) - int(refunded)),
+        record = {**previous, "status": "complete" if exit_code == 0 else "interrupted" if interrupted else "failed",
                   "exit_code": exit_code, "finished": time.time(), "validation_error": error}
         atomic_json(self.directory / "attempts" / f"{previous['attempt_id']}.json", record)
         atomic_json(self.receipt(task), record)
@@ -245,11 +234,11 @@ class TaskQueue:
                 state = "complete"
             elif not self.ready(task):
                 state = f"waiting_for_{self.dependency(task).arm}"
-            elif max_attempts is not None and retry_attempts(record) >= max_attempts:
+            elif max_attempts is not None and record.get("attempt", 0) >= max_attempts:
                 state = "attempts_exhausted"
             elif record.get("status") == "running":
                 state = "recoverable"
             else:
                 state = record.get("status", "ready")
-            rows.append({**record, "task": task.key, "status": state, "retry_attempt": retry_attempts(record)})
+            rows.append({**record, "task": task.key, "status": state})
         return rows

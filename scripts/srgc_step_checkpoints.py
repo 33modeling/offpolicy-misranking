@@ -6,6 +6,30 @@ from pathlib import Path
 import sys
 
 
+def saved_attention(state):
+    from scripts.srgc_child_tuning import ATTENTION_CHOICES
+    policy = state.get("checkpoint_policy", {})
+    if not isinstance(policy, dict):
+        raise ValueError("invalid saved checkpoint attention policy")
+    attention = policy.get("attention", "eager")
+    if attention not in ATTENTION_CHOICES:
+        raise ValueError(f"unsupported saved attention kernel: {attention!r}")
+    return attention
+
+
+def checkpoint_attention(folder, task, configured):
+    """Resolve the kernel inside the runner's execution lease, before model load."""
+    import torch
+    paths = [folder / f"{task}-latest.pt"]
+    if task != "prefix":
+        paths.append(folder / "prefix.pt")
+    for path in paths:
+        if path.is_file():
+            state = torch.load(path, map_location="cpu", weights_only=False)
+            return saved_attention(state), path.name
+    return configured or "eager", "new-run"
+
+
 def save_checkpoint(engine, folder, task, *, metadata=None):
     import torch
     from srgc_rebuttal.distributed import primary
@@ -51,6 +75,13 @@ def checkpoint_engine(base, folder, task, policy, *, total_updates):
         def state_dict(self):
             return {**super().state_dict(), "checkpoint_policy": dict(policy)}
 
+        def load_state_dict(self, state, **kwargs):
+            expected = saved_attention(state)
+            actual = policy.get("attention", "eager")
+            if actual != expected:
+                raise ValueError(f"checkpoint attention mismatch: saved={expected}, model={actual}")
+            return super().load_state_dict(state, **kwargs)
+
         def update(self):
             self.log_step("running")
             result = super().update()
@@ -90,11 +121,11 @@ def worker_main():
 def main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from srgc_verifier_fallback import install as install_tolerant_verifier
-    from srgc_child_tuning import apply_attention, count_progress
+    from srgc_child_tuning import configured_attention, count_progress
     from srgc_rebuttal import run_experiment
     install_tolerant_verifier()
     count_progress()
-    attention = apply_attention()
+    attention = configured_attention()
     from srgc_rebuttal.plan import DEFAULT_PLAN, digest, load_plan
     from srgc_rebuttal.runtime import run_root
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
@@ -105,19 +136,28 @@ def main():
     plan = load_plan(args.plan)
     folder = run_root(args.plan, plan) / f"seed-{args.seed}"
     policy = {"interval_updates": 1, "storage_adapter_sha256": digest(Path(__file__)),
-              "legacy_boundary_saves_retained": True, "attention": attention,
+              "legacy_boundary_saves_retained": True, "attention": attention or "eager",
               "rollout_cache": "per-prompt rollouts persisted during scoring/evaluation; removed when the block completes"}
     from srgc_resumable_rollouts import install as install_resumable_rollouts
     install_resumable_rollouts(folder / "rollout-cache" / args.task)
-    if int(os.environ.get("RANK", "0")) == 0:
-        print(f"ATTENTION {attention} (SRGC_ATTENTION selects sdpa|eager|flash_attention_2)", flush=True)
     original = run_experiment.Engine
+    original_loader = run_experiment.load_model
+    task = args.task
+    def load_model(*args, **kwargs):
+        from srgc_rebuttal.distributed import primary
+        effective, source = primary(lambda: checkpoint_attention(folder, task, attention))
+        policy.update(attention=effective, attention_source=source)
+        if int(os.environ.get("RANK", "0")) == 0:
+            print(f"ATTENTION {effective} source={source}", flush=True)
+        return original_loader(*args, **{**kwargs, "attention": effective})
     total = plan["shared_prefix_updates"] if args.task == "prefix" else plan["total_updates"]
     run_experiment.Engine = checkpoint_engine(original, folder, args.task, policy, total_updates=total)
+    run_experiment.load_model = load_model
     try:
         run_experiment.main()
     finally:
         run_experiment.Engine = original
+        run_experiment.load_model = original_loader
 
 
 if __name__ == "__main__":

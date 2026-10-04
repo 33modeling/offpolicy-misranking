@@ -223,7 +223,7 @@ def run_worker(queue, args, environment, gpu_fds, worker_id, update):
                     update("complete")
                     return
                 retryable = args.retry_failed and any(row["status"] == "failed" and
-                    row.get("retry_attempt", row.get("attempt", 0)) < args.max_attempts for row in status)
+                    row.get("attempt", 0) < args.max_attempts for row in status)
                 if not retryable and not any(row["status"] in {"running", "ready", "recoverable", "interrupted"}
                                              for row in status):
                     raise RuntimeError("failed task blocks remaining work; inspect logs before retry")

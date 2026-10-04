@@ -118,6 +118,10 @@ class BuildInputsTest(unittest.TestCase):
         for require in (True, False):
             with self.assertRaisesRegex(ValueError, "unverified verifier version"):
                 validate_inputs(bundle, require_cache=require)
+        bundle["provenance"]["cache"]["code_verifier_version"] = "assertion-completion-v2"
+        for require in (True, False):
+            with self.assertRaisesRegex(ValueError, "unverified verifier version"):
+                validate_inputs(bundle, require_cache=require)
         bundle["provenance"]["cache"].update(verifiers.verifier_protocol(bundle["provenance"]["cache"]["verifier"]))
         validate_inputs(bundle)
 

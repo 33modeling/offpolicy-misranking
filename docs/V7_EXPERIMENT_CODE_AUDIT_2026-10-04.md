@@ -1,5 +1,9 @@
 # Experiment code audit October 4 2026
 
+Follow-up: [runtime repairs and verification](V7_EXPERIMENT_FIXES_2026-10-04.md).
+The findings and reproduction evidence below describe the pre-repair code and
+are preserved as an audit record, not the current repair status.
+
 Reviewed code: `master` at `d22d533c8ae3698327e088cbd0582bbfff1520a3`.
 Four defects were independently reproduced. This is a review record, not a
 repair or certification of archived experiment results. Training code, frozen

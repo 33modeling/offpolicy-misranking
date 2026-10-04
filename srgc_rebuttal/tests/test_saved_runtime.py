@@ -4,9 +4,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
-from scripts.srgc_saved_runtime import SAVED_ENGINE, SAVED_HASH, ENGINE_HASH, engine_digest
+from scripts import srgc_saved_runtime as saved_runtime
+from scripts.srgc_saved_runtime import (ARCHIVED_MODULES, PREVIOUS_HASH, SAVED_ENGINE,
+                                      SAVED_HASH, ENGINE_HASH, engine_digest)
 from srgc_rebuttal import runtime
 from srgc_rebuttal.tests import test_extra_arm_launch
 
@@ -37,6 +41,65 @@ class SavedRuntimeTests(unittest.TestCase):
         source = SAVED_ENGINE.read_bytes()
         self.assertEqual(hashlib.sha256(source).hexdigest(), ENGINE_HASH)
         self.assertEqual(engine_digest(Path(runtime.__file__).parent, source), SAVED_HASH)
+
+    def test_previous_release_matches_its_original_full_package_hash(self):
+        package = Path(runtime.__file__).parent
+        self.assertEqual(engine_digest(package, (package / "srgc.py").read_bytes()), PREVIOUS_HASH)
+
+    def test_both_saved_releases_load_verified_old_support_modules_and_verifier(self):
+        for release in (SAVED_HASH, PREVIOUS_HASH):
+            with self.subTest(release=release):
+                path = self.folder / "prefix-ready.json"
+                receipt = json.loads(path.read_text())
+                receipt["implementation_sha256"] = release
+                path.write_text(json.dumps(receipt))
+                result = self.child('''
+import sys
+from pathlib import Path
+from scripts.srgc_saved_runtime import bootstrap, ARCHIVED_MODULES
+bootstrap(["--plan", sys.argv[1], "--seed", "5"])
+from srgc_rebuttal import cluster, cluster_queue, code_check, verifiers, plan, reports
+from srgc_rebuttal.runtime import code_digest
+assert code_digest() == RELEASE
+for module in (cluster, cluster_queue, code_check, verifiers, plan, reports):
+    assert Path(module.__file__).parent == ARCHIVED_MODULES, module.__file__
+assert verifiers.CODE_REWARD_VERSION == "assertion-completion-v2"
+assert verifiers.code_reward({"answer": "assert add(2, 3) == 5"}, "def add(a, b): return a + b") == 1
+print("saved reward protocol retained")
+'''.replace("RELEASE", repr(release)))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("saved reward protocol retained", result.stdout)
+
+    def test_changed_archive_is_rejected_before_activation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory)
+            for path in ARCHIVED_MODULES.iterdir():
+                if path.is_file():
+                    (archive / path.name).write_bytes(path.read_bytes())
+            verifier = archive / "verifiers.py"
+            verifier.write_bytes(verifier.read_bytes() + b"\n# modified\n")
+            with patch.object(saved_runtime, "ARCHIVED_MODULES", archive):
+                with self.assertRaisesRegex(ValueError, "verifiers.py"):
+                    engine_digest(Path(runtime.__file__).parent, SAVED_ENGINE.read_bytes())
+
+    def test_late_activation_fails_without_mutating_loaded_modules_or_digest(self):
+        result = self.child('''
+import sys
+from srgc_rebuttal import runtime, verifiers, srgc
+import srgc_rebuttal
+from scripts.srgc_saved_runtime import activate
+from pathlib import Path
+before = (list(srgc_rebuttal.__path__), runtime.code_digest, srgc_rebuttal.Engine, srgc)
+try:
+    activate(Path(sys.argv[1]), 5)
+except ValueError as error:
+    assert "before importing" in str(error)
+else:
+    raise AssertionError("must not overwrite a loaded verifier")
+assert before == (list(srgc_rebuttal.__path__), runtime.code_digest, srgc_rebuttal.Engine, srgc_rebuttal.srgc)
+assert verifiers.CODE_REWARD_VERSION == "parent-checked-values-v3"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_saved_engine_forks_and_resumes_fixed200_with_original_scoring(self):
         result = self.child('''

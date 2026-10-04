@@ -4,6 +4,10 @@
 대응 원고: V7 `sections/discussion.tex`의 Discussion and Limitations.
 실행 코드는 이 저장소에만 유지한다. 논문 쪽 목록은 `v7/EXPERIMENTS.md`다.
 
+2026-10-04: [코드 수정·검증 기록](V7_EXPERIMENT_FIXES_2026-10-04.md).
+기존 prefix의 추가 실험은 당시 채점 버전을 유지한다. 신규 v3 MBPP 채점과 기존 v2 결과를
+섞지 않으며, P0 결과나 실행 중 작업을 덮어쓰지 않는다. [실행 시 적용 범위](REBUTTAL_COMMANDS_KO.md#2026-10-04-코드-수정과-기존-실행).
+
 실행할 때는 [통합 명령 모음](REBUTTAL_COMMANDS_KO.md),
 [추가 arm 120개 배정표](REBUTTAL_EXTRA_TASKS.tsv),
 [공식 리뷰 일정과 내부 준비 계획](REVIEW_SCHEDULE_2027_KO.md)을 사용한다.

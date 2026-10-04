@@ -60,16 +60,9 @@ def snapshot(plan_path, *, include_costs=False):
         bundle_path = input_path(plan_path, plan, seed)
         expected = {"seed": seed, "plan_sha256": digest(plan_path)}
         try:
-            info, bundle = input_info(bundle_path, recorded_rewards=True)
+            info, bundle = input_info(bundle_path)
             expected["input_sha256"] = info["input_sha256"]
             cached = not info["pending_cache"]
-            prior = bundle["provenance"].get("cache", {}) if isinstance(bundle["provenance"], dict) else {}
-            if bundle.get("cached_rewards") and isinstance(prior, dict):
-                from .verifiers import verifier_protocol
-                for key, current in verifier_protocol(prior.get("verifier")).items():
-                    if prior.get(key) != current:
-                        warnings.append(f"seed {seed}: recorded {key}={prior.get(key)!r}, current={current!r}; "
-                                        "display only, not eligible for current training")
         except (OSError, ValueError, KeyError, TypeError) as exc:
             errors.append(f"seed {seed} inputs: {type(exc).__name__}: {exc}")
             cached, bundle = False, None

@@ -279,7 +279,7 @@ class GpuWaitAndShmTest(unittest.TestCase):
             self.assertIn("GPUs still busy", log.read_text())
             self.assertIn("FAILED seed-5.prefix exit=75", out.getvalue())
 
-    def test_shm_cleanup_only_removes_own_files_when_no_child_is_alive(self):
+    def test_shm_cleanup_preserves_unproven_ownership_even_without_srgc_children(self):
         with tempfile.TemporaryDirectory() as folder:
             shm = Path(folder)
             (shm / "nccl-abc").write_text("x")
@@ -288,7 +288,9 @@ class GpuWaitAndShmTest(unittest.TestCase):
             alive = {1: (0, os.getuid(), f"python3 -m srgc_rebuttal.run_experiment --plan {PLAN}")}
             self.assertEqual(guard.clean_shm(shm_dir=shm, table=alive), [])
             removed = guard.clean_shm(shm_dir=shm, table={})
-            self.assertEqual(sorted(removed), ["nccl-abc", "torch_123_456"])
+            self.assertEqual(removed, [])
+            self.assertTrue((shm / "nccl-abc").exists())
+            self.assertTrue((shm / "torch_123_456").exists())
             self.assertTrue((shm / "other").exists())
 
 

@@ -282,33 +282,13 @@ def wait_for_free_gpus(environment=None, *, threshold_mib=None, timeout=None, po
 
 
 def clean_shm(*, shm_dir=None, table=None):
-    """Remove this user's leftover NCCL/torch shared-memory files once no SRGC child is alive.
+    """Preserve shared files whose experiment ownership cannot be established.
 
-    Ranks killed with SIGKILL leave ``/dev/shm/nccl-*`` segments behind; a full ``/dev/shm``
-    makes the next NCCL init fail with DistBackendError.
+    A filename and UID do not prove that a segment is stale or belongs to SRGC.
+    Keep this entry point for older launchers, but never sweep a shared namespace.
+    Owned process-tree termination below still releases those processes' mappings.
     """
-    shm_dir = SHM_DIR if shm_dir is None else Path(shm_dir)
-    table = process_table() if table is None else table
-    alive = [pid for pid, (_, uid, cmdline) in table.items()
-             if uid == os.getuid() and pid != os.getpid() and is_target(cmdline)]
-    if alive or not shm_dir.is_dir():
-        return []
-    removed = []
-    for path in list(shm_dir.glob("nccl-*")) + list(shm_dir.glob("torch_*")):
-        try:
-            if path.is_symlink() or path.stat().st_uid != os.getuid():
-                continue
-            if path.is_dir():
-                import shutil
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-            removed.append(path.name)
-        except OSError:
-            continue
-    if removed:
-        print(f"GUARD removed {len(removed)} leftover shared-memory file(s) from {shm_dir}", flush=True)
-    return removed
+    return []
 
 
 def guarded_run_child(original, plan_path):

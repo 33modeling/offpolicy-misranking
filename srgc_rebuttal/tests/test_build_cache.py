@@ -26,7 +26,7 @@ class CacheTests(unittest.TestCase):
             store.bind()
             marker = store.root / "protocol.json"
             old = json.loads(marker.read_text())
-            self.assertEqual(old.pop("code_verifier_version"), "assertion-completion-v2")
+            self.assertEqual(old.pop("code_verifier_version"), "parent-checked-values-v3")
             marker.write_text(json.dumps(old))
             before = marker.read_bytes()
             with self.assertRaisesRegex(ValueError, "settings"):

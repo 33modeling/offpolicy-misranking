@@ -35,8 +35,7 @@ def input_path(plan_path: Path, plan: dict, seed: int) -> Path:
     return (plan_path.parent / plan["input_pattern"].format(seed=seed)).resolve()
 
 
-def validate_inputs(data: dict, *, require_cache: bool = True, recorded_rewards: bool = False) -> None:
-    """Recorded rewards are inspectable, but only the current protocol can train."""
+def validate_inputs(data: dict, *, require_cache: bool = True) -> None:
     if data.get("schema") != "srgc-inputs-v1":
         raise ValueError("expected srgc-inputs-v1 data")
     records = data["records"]
@@ -75,7 +74,7 @@ def validate_inputs(data: dict, *, require_cache: bool = True, recorded_rewards:
     if not data.get("provenance"):
         raise ValueError("record prompt formatting, split, cache and verifier provenance")
     prior = data["provenance"].get("cache", {}) if isinstance(data["provenance"], dict) else {}
-    if cache and isinstance(prior, dict) and not recorded_rewards:
+    if cache and isinstance(prior, dict):
         from .verifiers import verifier_protocol
         expected = verifier_protocol(prior.get("verifier"))
         if any(prior.get(key) != value for key, value in expected.items()):

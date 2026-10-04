@@ -156,7 +156,7 @@ class WorkerStatusTests(unittest.TestCase):
             self.assertIn("MBPP verifier failed", output.getvalue())
 
     def test_corrected_experiment_code_identity_is_preserved(self):
-        self.assertEqual(code_digest(), "9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7")
+        self.assertEqual(code_digest(), "b5dd86cfbe7b3b50691834233578f81d45fb0ca82a843d96dab474154be33ac2")
 
     def test_multiple_queues_report_both_totals_and_active_queue_progress(self):
         with tempfile.TemporaryDirectory() as directory:

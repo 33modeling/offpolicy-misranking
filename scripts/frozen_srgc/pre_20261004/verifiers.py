@@ -1,9 +1,10 @@
 """Binary reward verifiers selectable from a plan's ``verifier`` field.
 
 ``math_reward`` is the manuscript's MATH verifier (math-verify). ``code_reward``
-evaluates MBPP test expressions in a time-limited child, then compares returned
-literal values with expected answers in the parent. Bad responses score zero;
-unusable records and infrastructure failures raise instead of becoming rewards.
+executes the record's test assertions against the response's Python code block
+in a separate, time-limited interpreter, as in the MBPP experiments. Both return
+exactly 0.0 or 1.0 and never raise on a bad response; they raise only when the
+*record* itself is unusable, so bad inputs stop before training.
 """
 from __future__ import annotations
 
@@ -13,17 +14,16 @@ import math
 from pathlib import Path
 import re
 import resource
+import secrets
 import signal
 import subprocess
 import sys
 import tempfile
 
 from .run_experiment import math_reward  # noqa: F401  (re-exported for plans)
-from .code_assertions import check_returned_values, prepare_assertions
 
 CODE_BLOCK = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
-CODE_REWARD_VERSION = "parent-checked-values-v3"
-CODE_RESULT_BYTES = 1 << 20
+CODE_REWARD_VERSION = "assertion-completion-v2"
 
 
 def verifier_protocol(name):
@@ -45,43 +45,42 @@ def extract_code(response: str) -> str:
 def _limits() -> None:
     resource.setrlimit(resource.RLIMIT_AS, (CODE_MEMORY_BYTES, CODE_MEMORY_BYTES))
     resource.setrlimit(resource.RLIMIT_CPU, (int(CODE_TIMEOUT_SECONDS) + 1, int(CODE_TIMEOUT_SECONDS) + 1))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (CODE_RESULT_BYTES, CODE_RESULT_BYTES))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (1 << 20, 1 << 20))
 
 
 def code_reward(record: dict, response: str) -> float:
     tests = str(record["answer"]).strip()
     if not tests.startswith("assert"):
         raise ValueError("code records need test assertions in 'answer'; fix input before training")
-    expressions, expected, constants_pass = prepare_assertions(tests)
     code = extract_code(response)
     if not code:
         return 0.0
-    with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryFile() as results:
+    with tempfile.TemporaryDirectory() as folder:
         path = os.path.join(folder, "candidate.json")
         with open(path, "w") as handle:
-            json.dump({"code": code, "expressions": expressions}, handle)
-        writer = results.fileno()
+            json.dump({"code": code, "tests": tests}, handle)
+        reader, writer = os.pipe()
+        token = secrets.token_hex(16).encode("ascii")
         process = None
         try:
+            os.set_blocking(reader, False)
             runner = Path(__file__).with_name("code_check.py")
             process = subprocess.Popen([sys.executable, "-I", "-B", str(runner), path,
-                str(writer)], cwd=folder, pass_fds=(writer,),
+                str(writer), token.decode("ascii")], cwd=folder, pass_fds=(writer,),
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
                 preexec_fn=_limits, env={"PATH": os.environ.get("PATH", ""), "PYTHONHASHSEED": "0"})
             if process.wait(timeout=CODE_TIMEOUT_SECONDS) != 0:
                 return 0.0
-            results.seek(0)
-            payload = results.read(CODE_RESULT_BYTES + 1)
-            if len(payload) > CODE_RESULT_BYTES:
-                return 0.0
             try:
-                report = json.loads(payload)
-            except (ValueError, RecursionError, MemoryError):
-                return 0.0
-            return float(check_returned_values(report, expected, constants_pass))
+                completed = os.read(reader, len(token) + 1)
+            except BlockingIOError:
+                completed = b""
+            return float(completed == token)
         except subprocess.TimeoutExpired:
             return 0.0
         finally:
+            os.close(reader)
+            os.close(writer)
             if process is not None:
                 # A timed-out generated program must not leave descendants behind.
                 try:
