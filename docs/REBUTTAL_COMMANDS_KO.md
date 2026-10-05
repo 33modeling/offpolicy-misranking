@@ -11,10 +11,14 @@ sh scripts/run_srgc_sr_refresh.sh math results
 sh scripts/run_srgc_sr_refresh.sh mbpp results
 ```
 
-출력의 처음과 끝에 `RESULT DIRECTORY`로 실제 실행 폴더를 표시하고,
-끝의 `RESULT FILES`에 검증된 원본 JSON의 절대 경로를 표시한다.
-fixed200와 `replicate-1/2` 결과를 포함한다. `--json` 출력에도 `result_files`가 있다.
-조회만으로 별도 보고서 파일을 생성하지 않으며, 결과가 없으면 경로 목록을 꾸며내지 않는다.
+`results`만 실행하면 fixed200와 `replicate-1/2`를 포함한 검증된 JSON을 자동 수집한다.
+통합 파일은 **`<실행 폴더>/results/results.json`**이다. 요약뿐 아니라 `source_results`에
+문항별 보상·비용·출처가 든 원본 JSON 내용도 포함한다. 이 파일 하나로 결과를 전달할 수 있다.
+개별 JSON 사본은 `results/exports/<수집 시각-ID>/raw/seed-N/` 아래에 모은다.
+출력 끝의 **`COLLECTED JSON`**, **`COLLECTED FILES`**가 실제 저장 위치다.
+`--json`도 동일하게 저장하고 stdout에는 유효한 JSON만 출력한다. 별도 리다이렉션은 필요 없다.
+원본과 이전 수집본은 변경하지 않는다. 오류가 있는 결과는 제외하고 통합 파일에 오류를 기록한다.
+미완료·누락 결과를 0으로 채우거나 모두 완료됐다고 표시하지 않는다.
 
 빈 4-H100 노드의 신규 배정: MATH 먼저, MBPP는 `math` 대신 `mbpp`.
 

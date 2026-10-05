@@ -526,7 +526,7 @@ def result_identity(plan_path, plan, seed, *, recorded=False, verify_checkpoint=
     return expected, prefix_hash
 
 
-def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None):
+def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None, raw_records=None):
     """Validate the result's provenance, evaluation and finite nonnegative costs."""
     from srgc_rebuttal.plan import input_path
     from srgc_rebuttal.runtime import matches
@@ -567,6 +567,8 @@ def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None):
     if not isinstance(costs, dict) or any(v is not None and (not finite_number(v) or v < 0)
                                          for v in costs.values()):
         raise ValueError(f"{path}: costs must be finite nonnegative measurements or null")
+    if raw_records is not None:
+        raw_records[str(path)] = value
     return {"reward_percent": 100 * value["reward"],
             "selection_gpu_seconds": costs.get("selection_gpu_seconds"),
             "training_gpu_seconds": costs.get("training_gpu_seconds"),
@@ -612,7 +614,7 @@ def extra_complete(plan_path, plan, seed, name):
     return True
 
 
-def replicate_rows(plan_path, plan, root, *, errors=None, context=None):
+def replicate_rows(plan_path, plan, root, *, errors=None, context=None, raw_records=None):
     """Independent replicates: one row per ``seed-N/replicate-<k>/`` with its arms' endpoints."""
     context = context or (lambda seed: result_identity(plan_path, plan, seed, recorded=True))
     def invalid(path, exc):
@@ -637,7 +639,8 @@ def replicate_rows(plan_path, plan, root, *, errors=None, context=None):
             for path in sorted(manifest.parent.glob("*-endpoint.json")):
                 arm = path.name.removesuffix("-endpoint.json")
                 try:
-                    value = _endpoint(path, plan_path, plan, seed, folder, arm, verified=verified)
+                    value = _endpoint(path, plan_path, plan, seed, folder, arm, verified=verified,
+                                      raw_records=raw_records)
                     if json.loads(path.read_text()).get("replicate") != record:
                         raise ValueError(f"{path}: endpoint replicate record differs from the manifest")
                     row[arm] = value
@@ -645,6 +648,32 @@ def replicate_rows(plan_path, plan, root, *, errors=None, context=None):
                     invalid(path, exc)
             rows.append(row)
     return sorted(rows, key=lambda row: (row["seed"], row["replicate"]))
+
+
+def collect_result_json(root, report, raw_records):
+    """Publish a self-contained report and isolated copies of validated records."""
+    import uuid
+    from srgc_rebuttal.runtime import atomic_json
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    destination = root / "results"
+    bundle = destination / "exports" / f"{stamp}-{uuid.uuid4().hex[:12]}"
+    report["collection"] = {"directory": str(bundle), "report_path": str(destination / "results.json"),
+                            "bundle_report_path": str(bundle / "results.json"),
+                            "raw_directory": str(bundle / "raw"),
+                            "file_count": len(report["result_files"]),
+                            "validation_errors": len(report["errors"])}
+    report["source_results"] = {}
+    for item in report["result_files"]:
+        relative = Path(item["path"]).relative_to(root)
+        raw = raw_records[item["path"]]
+        target = bundle / "raw" / relative
+        atomic_json(target, raw)
+        item["collected_path"] = str(target)
+        report["source_results"][relative.as_posix()] = raw
+    # Publish only after every copy succeeds. Concurrent collectors keep separate bundles.
+    atomic_json(bundle / "results.json", report)
+    atomic_json(destination / "results.json", report)
+    return report
 
 
 def results(args):
@@ -655,7 +684,7 @@ def results(args):
     root = run_root(args.plan, plan)
     if not args.json:
         print(f"RESULT DIRECTORY: {root}", flush=True)
-    errors, warnings, identities = [], [], {}
+    errors, warnings, identities, raw_records = [], [], {}, {}
     def context(seed):
         from srgc_rebuttal.runtime import code_digest
         if seed not in identities:
@@ -676,11 +705,12 @@ def results(args):
             path = folder / f"{arm}-endpoint.json"
             if path.exists():
                 try:
-                    row[arm] = _endpoint(path, args.plan, plan, seed, folder, arm, verified=context(seed))
+                    row[arm] = _endpoint(path, args.plan, plan, seed, folder, arm, verified=context(seed),
+                                         raw_records=raw_records)
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     errors.append(f"{path}: {type(exc).__name__}: {exc}")
         rows.append(row)
-    replicates = replicate_rows(args.plan, plan, root, errors=errors, context=context)
+    replicates = replicate_rows(args.plan, plan, root, errors=errors, context=context, raw_records=raw_records)
     result_files = [
         {"seed": row["seed"], "replicate": 0, "arm": arm,
          "path": str(root / f"seed-{row['seed']}" / f"{arm}-endpoint.json")}
@@ -691,10 +721,12 @@ def results(args):
          "path": str(root / f"seed-{row['seed']}" / f"replicate-{row['replicate']}" / f"{arm}-endpoint.json")}
         for row in replicates for arm in row if arm not in {"seed", "replicate", "sampling_seed"}
     )
+    report = collect_result_json(root, {"dataset": plan["dataset"], "output_root": str(root), "rows": rows,
+        "replicates": replicates, "result_files": result_files, "errors": errors, "warnings": warnings}, raw_records)
     if args.json:
-        print(json.dumps({"dataset": plan["dataset"], "output_root": str(root), "rows": rows,
-                          "replicates": replicates, "result_files": result_files,
-                          "errors": errors, "warnings": warnings}, indent=2, allow_nan=False))
+        print(json.dumps(report, indent=2, allow_nan=False))
+        print(f"COLLECTED JSON: {report['collection']['report_path']}", file=sys.stderr, flush=True)
+        print(f"COLLECTED FILES: {report['collection']['directory']}", file=sys.stderr, flush=True)
         if errors:
             raise ValueError("; ".join(errors))
         return
@@ -759,7 +791,8 @@ def results(args):
         print(f"  {item['path']}")
     if not result_files:
         print("  No validated result files yet.")
-    print("REPORT OUTPUT: stdout; no separate report file created automatically.")
+    print(f"COLLECTED JSON: {report['collection']['report_path']}")
+    print(f"COLLECTED FILES: {report['collection']['directory']} ({len(result_files)} originals)")
     if errors:
         raise ValueError("; ".join(errors))
 

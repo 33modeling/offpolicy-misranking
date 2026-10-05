@@ -514,7 +514,7 @@ print('offline verifier ready')
                 fixed.write_text(json.dumps({**value, "arm": "switch_fixed200", "switched_at": 200}))
                 replicate = self.replicate(plan)
                 before = {str(p): (p.read_bytes(), p.stat().st_mtime_ns)
-                          for p in self.storage.rglob("*") if p.is_file()}
+                          for p in self.storage.rglob("*") if p.is_file() and "results" not in p.parts}
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
                     results(SimpleNamespace(plan=plan, json=False))
@@ -530,8 +530,19 @@ print('offline verifier ready')
                 self.assertEqual({item["path"] for item in report["result_files"]},
                                  {str(path), str(fixed), str(replicate / "sr-endpoint.json"),
                                   str(replicate / "switch-endpoint.json")})
+                saved = Path(report["collection"]["report_path"])
+                self.assertEqual(saved, path.parent.parent / "results/results.json")
+                self.assertEqual(json.loads(saved.read_text()), report)
+                self.assertIn("COLLECTED JSON:", text)
+                self.assertIn("COLLECTED FILES:", text)
+                self.assertEqual(len(report["source_results"]), 4)
+                for item in report["result_files"]:
+                    original = json.loads(Path(item["path"]).read_text())
+                    self.assertEqual(json.loads(Path(item["collected_path"]).read_text()), original)
+                    relative = Path(item["path"]).relative_to(path.parent.parent).as_posix()
+                    self.assertEqual(report["source_results"][relative], original)
                 after = {str(p): (p.read_bytes(), p.stat().st_mtime_ns)
-                         for p in self.storage.rglob("*") if p.is_file()}
+                         for p in self.storage.rglob("*") if p.is_file() and "results" not in p.parts}
                 self.assertEqual(before, after)
 
     def test_results_show_directory_without_inventing_missing_result_files(self):
@@ -545,6 +556,46 @@ print('offline verifier ready')
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=True))
         self.assertEqual(json.loads(output.getvalue())["result_files"], [])
+
+    def test_result_collection_excludes_invalid_json_and_keeps_prior_bundles(self):
+        plan = self.plan()
+        path, value = self.endpoint(plan)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            results(SimpleNamespace(plan=plan, json=True))
+        first = json.loads(out.getvalue())
+        original_bundle = Path(first["collection"]["bundle_report_path"])
+        original_bytes = original_bundle.read_bytes()
+        invalid = path.with_name("sr_hold-endpoint.json")
+        invalid.write_text(json.dumps({**value, "arm": "sr_hold", "reward": .9}))
+        out = io.StringIO()
+        with self.assertRaises(ValueError), contextlib.redirect_stdout(out):
+            results(SimpleNamespace(plan=plan, json=True))
+        second = json.loads(out.getvalue())
+        self.assertEqual(second["collection"]["validation_errors"], 1)
+        self.assertEqual(len(second["source_results"]), 1)
+        self.assertNotEqual(first["collection"]["directory"], second["collection"]["directory"])
+        self.assertEqual(original_bundle.read_bytes(), original_bytes)
+        self.assertFalse(any("sr_hold" in key for key in second["source_results"]))
+
+    def test_collection_failure_does_not_replace_previous_combined_json(self):
+        from scripts.srgc_sr_refresh import collect_result_json
+        from srgc_rebuttal import runtime
+        root = self.base / "collection"
+        source = root / "seed-5/sr-endpoint.json"
+        report = dict(result_files=[{"path": str(source)}], errors=[])
+        first = collect_result_json(root, report, {str(source): {"fixture": 1}})
+        saved = Path(first["collection"]["report_path"])
+        before = saved.read_bytes()
+        actual = runtime.atomic_json
+        def fail_copy(path, value):
+            if "raw" in path.parts:
+                raise OSError("fixture disk full")
+            return actual(path, value)
+        with patch.object(runtime, "atomic_json", side_effect=fail_copy), self.assertRaises(OSError):
+            collect_result_json(root, dict(result_files=[{"path": str(source)}], errors=[]),
+                                {str(source): {"fixture": 2}})
+        self.assertEqual(saved.read_bytes(), before)
 
     def replicate(self, plan, replicate=1, rewards=None, manifest_override=None, endpoint_override=None):
         from scripts.srgc_replicate import REPLICATE_PROTOCOL, sampling_seed
