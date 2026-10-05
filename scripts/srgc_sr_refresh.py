@@ -77,8 +77,9 @@ def scope_of(arm):
 
 
 DIRECTION_ARMS = ("direction_removed", "direction_magnitude", "direction_replaced")
+RULE_ARMS = ("switch_single", "switch_consecutive")
 EXTRA_ARMS = ("sr_refresh", "sr_refresh-pool", "sr_hold", "switch_repeat", "switch_fixed100", "switch_fixed125",
-              *DIRECTION_ARMS, "sr_refresh_matched")
+              *DIRECTION_ARMS, "sr_refresh_matched", *RULE_ARMS)
 
 
 def replicate_of(name):
@@ -101,6 +102,11 @@ def extra_arm(name):
 
 def make_engine(arm, backend, data, config):
     """Engine for an extra arm (its engine label is the recorded arm name it extends)."""
+    if arm in RULE_ARMS:
+        from scripts.srgc_switch_rules import SwitchRuleEngine
+        return SwitchRuleEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
+                                data["cached_rewards"], arm="switch_rule", config=config,
+                                rule_arm=arm), "switch_rule"
     if arm == "sr_refresh_matched":
         from scripts.srgc_sr_matched import MatchedSRRefreshEngine
         return MatchedSRRefreshEngine(backend, data["candidate_ids"], data["ranking_validation_ids"],
@@ -406,6 +412,12 @@ def run(args):
                   "ablation": getattr(current, "mode", None) if engine_arm == "direction_ablation" else None}
         if arm == "sr_refresh_matched":
             extras["sr_tie_protocol"] = current.SR_TIE_PROTOCOL
+        if arm in RULE_ARMS:
+            from scripts.srgc_switch_rules import RULE_PROTOCOL
+            extras.update(rule_arm=arm, rule_protocol=RULE_PROTOCOL)
+        if engine_arm == "switch_fixed":
+            extras.update(fixed_step=current.fixed_step,
+                          fixed_transition_protocol=current.TRANSITION_PROTOCOL)
         continue_updates(current, out, arm, launch_arm, plan["total_updates"], extras, policy)
         with meter.phase("evaluation", current.step, world):
             # The endpoint evaluation keeps the recorded rule and the base seed for every replicate.
@@ -520,6 +532,10 @@ def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None):
         from scripts.srgc_sr_matched import MatchedSRRefreshEngine
         if value.get("sr_tie_protocol") != MatchedSRRefreshEngine.SR_TIE_PROTOCOL:
             raise ValueError(f"{path}: matched SR tie protocol differs")
+    if arm in RULE_ARMS:
+        from scripts.srgc_switch_rules import RULE_PROTOCOL
+        if value.get("rule_arm") != arm or value.get("rule_protocol") != RULE_PROTOCOL:
+            raise ValueError(f"{path}: switch rule endpoint protocol differs")
     def finite_number(number):
         return type(number) in (float, int) and math.isfinite(number)
     evaluation_ids = json.loads(input_path(plan_path, plan, seed).read_text())["evaluation_ids"]

@@ -24,7 +24,10 @@ from scripts.srgc_pair_inputs import default_plan  # noqa: E402
 from scripts.srgc_shared_storage import route_plan  # noqa: E402
 
 SUPPORT_ARMS = ("direction_removed", "sr_hold", "sr_refresh_matched")
-SCOPES = ("all", "support", "switch_fixed200", "replicate", "candidates", "switch_repeat",
+TIMING_STEPS = (50, 100, 150, 200, 250)
+TIMING_ARMS = tuple(f"switch_fixed{step}" for step in TIMING_STEPS)
+RULE_ARMS = ("switch_single", "switch_consecutive")
+SCOPES = ("all", "support", "switch_validation", "timing", "rules", "switch_fixed200", "replicate", "candidates", "switch_repeat",
           "sr_hold", "pool", "direction", "direction_removed", "direction_magnitude",
           "direction_replaced")
 
@@ -32,6 +35,10 @@ SCOPES = ("all", "support", "switch_fixed200", "replicate", "candidates", "switc
 def conditions(scope):
     if scope == "support":
         return [(0, arm) for arm in SUPPORT_ARMS]
+    if scope in {"switch_validation", "timing", "rules"}:
+        arms = {"switch_validation": (*TIMING_ARMS, *RULE_ARMS),
+                "timing": TIMING_ARMS, "rules": RULE_ARMS}[scope]
+        return [(0, arm) for arm in arms]
     groups = {
         "switch_fixed200": [(0, "switch_fixed200")],
         "replicate": [(k, arm) for k in (1, 2) for arm in ("sr", "switch")],

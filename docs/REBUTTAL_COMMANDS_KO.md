@@ -1,5 +1,22 @@
 # 추가 실험 실행 순서와 노드 배정
 
+## 2026-10-06 전환 시점·규칙 대조 추가
+
+[새 실험 계획과 비용 정의](SWITCH_ADDITIONAL_EXPERIMENTS_2026-10-06.md).
+기존 support 30개와 전체 120개 queue는 유지한다. 추가 validation queue는
+고정 시점 50/100/150/200/250과 single/consecutive 규칙을 MATH·MBPP seeds 5-9에
+배정한다. 총 70개 중 기존 fixed200 10개를 포함하며 검증된 완료 결과는 재사용한다.
+기존 목록에 없는 고유 조건은 60개다. 현재 미완료 수나 GPU 완료 결과가 아니다.
+
+```sh
+sh scripts/run_srgc_switch_validation.sh all
+sh scripts/run_srgc_switch_validation.sh all status
+sh scripts/run_srgc_switch_validation.sh all results
+```
+
+빈 4-H100 노드마다 첫 명령을 한 번 실행한다. `all` 대신 `math`/`mbpp`도 가능하다.
+새 학습을 시작하지 않은 구현·계획 추가다. 기존 healthy job은 중단하지 않는다.
+
 정리: 2026-10-03, 코드 `master` 기준. 현재 권장 보조 실험과 기존 전체 실행 목록을 구분한다.
 [리뷰 일정](REVIEW_SCHEDULE_2027_KO.md) ·
 [기존 실험과 결과](EXPERIMENT_RESULTS_LEDGER_KO.md) ·

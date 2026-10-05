@@ -1,5 +1,9 @@
 # Limitation 후속 실험: 구현 목록과 실행 기록
 
+2026-10-06 추가: [전환 시점·반복 확인 실험 E11-E13](SWITCH_ADDITIONAL_EXPERIMENTS_2026-10-06.md).
+고정 5시점, 새 own-path 규칙 2개, 시드 교차 검증과 최초 SR cache를 포함한 비용 보고를
+구현했다. support 30개와 기존 120개 계획은 그대로다. 신규 GPU 결과는 아직 없다.
+
 실행 안내 정리: 2026-10-03, `master`. 아래 날짜별 구현·검증 기록은 당시 상태로 보존한다.
 대응 원고: V7 `sections/discussion.tex`의 Discussion and Limitations.
 실행 코드는 이 저장소에만 유지한다. 논문 쪽 목록은 `v7/EXPERIMENTS.md`다.

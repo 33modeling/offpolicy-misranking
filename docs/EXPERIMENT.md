@@ -1,5 +1,9 @@
 # RLVR Experiment Contract
 
+Switch follow-up (2026-10-06): [timing, temporal-rule and cost experiment plan](SWITCH_ADDITIONAL_EXPERIMENTS_2026-10-06.md).
+This is a separately dispatched extension of the saved P0 prefixes, not a change
+to the historical experiment contract below or a report of new GPU results.
+
 ## GRPO policy update
 
 At optimizer step `t`, every one of four distributed ranks selects one prompt

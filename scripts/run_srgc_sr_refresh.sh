@@ -20,17 +20,17 @@ case "$DATASET" in math|mbpp|all) ;; *) echo "usage: sh scripts/run_srgc_sr_refr
 QUEUE_SCOPE=
 case "$TARGET" in
     auto) QUEUE_SCOPE=all ;;
-    support|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) QUEUE_SCOPE=$TARGET ;;
+    support|switch_validation|timing|rules|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) QUEUE_SCOPE=$TARGET ;;
 esac
 if [ -n "$QUEUE_SCOPE" ]; then
     [ "$#" -le 2 ] || { echo "automatic dispatch takes only dataset and optional scope; omit seed" >&2; exit 2; }
 elif [ "$TARGET" = status ]; then
     case "${3:-all}" in
-        all|support|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) ;;
+        all|support|switch_validation|timing|rules|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) ;;
         *) echo "unknown status scope" >&2; exit 2 ;;
     esac
-elif [ "$TARGET" = support_results ]; then
-    [ "$#" -eq 2 ] || { echo "support_results takes only dataset" >&2; exit 2; }
+elif [ "$TARGET" = support_results ] || [ "$TARGET" = switch_validation_results ] || [ "$TARGET" = switch_validation_json ]; then
+    [ "$#" -eq 2 ] || { echo "$TARGET takes only dataset" >&2; exit 2; }
 elif [ "$TARGET" = results ]; then
     [ "$DATASET" != all ] || { echo "results requires math or mbpp" >&2; exit 2; }
     case "${3:-}" in ''|--json) ;; *) echo "usage: math|mbpp results [--json]" >&2; exit 2 ;; esac
@@ -39,7 +39,7 @@ else
 case "$TARGET" in ''|*[!0-9]*) echo "seed must be an integer" >&2; exit 2 ;; esac
 case "$SCOPE" in
     candidates|pool) ARM_ARGS="--scope $SCOPE" ;;
-    sr_hold|sr_refresh_matched|switch_repeat) ARM_ARGS="--arm $SCOPE" ;;
+    sr_hold|sr_refresh_matched|switch_repeat|switch_single|switch_consecutive) ARM_ARGS="--arm $SCOPE" ;;
     switch_fixed[0-9]*) ARM_ARGS="--arm $SCOPE" ;;
     direction_removed|direction_magnitude|direction_replaced) ARM_ARGS="--arm $SCOPE" ;;
     replicate[0-9]*-*) ARM_ARGS="--arm $SCOPE" ;;
@@ -61,6 +61,15 @@ if [ "$TARGET" = support_results ]; then
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" scripts/srgc_support_report.py --dataset "$DATASET"
 fi
+case "$TARGET" in
+    switch_validation_results|switch_validation_json)
+        export CUDA_VISIBLE_DEVICES=""
+        if [ "$TARGET" = switch_validation_json ]; then
+            exec "$PY" scripts/srgc_switch_validation_report.py --dataset "$DATASET" --json
+        fi
+        exec "$PY" scripts/srgc_switch_validation_report.py --dataset "$DATASET"
+        ;;
+esac
 if [ "$TARGET" = status ]; then
     export CUDA_VISIBLE_DEVICES=""
     exec "$PY" scripts/srgc_extra_status.py --dataset "$DATASET" --scope "${3:-all}"

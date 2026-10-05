@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO))
 COLUMNS = ["source", "seed", "arm", "step", "d", "d_source", "on_dot", "sr_dot", "validation_norm", "on_mean_norm", "sr_mean_norm",
            "on_mean_cos", "sr_mean_cos", "on_top4_dot", "on_random4_expected_dot", "ranking_cos_mean",
            "ranking_cos_std", "ranking_cos_top4", "on_cos_top4_minus_mean", "ranking_gap4", "selector"]
-ARM_PATTERN = re.compile(r"^(on_policy|switch|switch_repeat|switch_fixed\d+|direction_(removed|magnitude|replaced))$")
+ARM_PATTERN = re.compile(r"^(on_policy|switch|switch_repeat|switch_single|switch_consecutive|switch_fixed\d+|direction_(removed|magnitude|replaced))$")
 
 
 def refresh_rows(root, arms=None):
