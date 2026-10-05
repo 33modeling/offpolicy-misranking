@@ -502,7 +502,49 @@ print('offline verifier ready')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=False))
-        self.assertIn("direction_magnitude", output.getvalue().splitlines()[1])
+        self.assertTrue(any(line.startswith("seed  ") and "direction_magnitude" in line
+                            for line in output.getvalue().splitlines()))
+
+    def test_results_show_absolute_original_and_replicate_paths_for_both_datasets(self):
+        for dataset in ("math", "mbpp"):
+            with self.subTest(dataset=dataset):
+                plan = self.plan(dataset)
+                path, value = self.endpoint(plan)
+                fixed = path.with_name("switch_fixed200-endpoint.json")
+                fixed.write_text(json.dumps({**value, "arm": "switch_fixed200", "switched_at": 200}))
+                replicate = self.replicate(plan)
+                before = {str(p): (p.read_bytes(), p.stat().st_mtime_ns)
+                          for p in self.storage.rglob("*") if p.is_file()}
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    results(SimpleNamespace(plan=plan, json=False))
+                text = output.getvalue()
+                self.assertTrue(text.startswith(f"RESULT DIRECTORY: {path.parent.parent}\n"))
+                self.assertIn("RESULT FILES (validated originals):", text)
+                for original in (path, fixed, replicate / "sr-endpoint.json", replicate / "switch-endpoint.json"):
+                    self.assertIn(str(original), text)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    results(SimpleNamespace(plan=plan, json=True))
+                report = json.loads(output.getvalue())
+                self.assertEqual({item["path"] for item in report["result_files"]},
+                                 {str(path), str(fixed), str(replicate / "sr-endpoint.json"),
+                                  str(replicate / "switch-endpoint.json")})
+                after = {str(p): (p.read_bytes(), p.stat().st_mtime_ns)
+                         for p in self.storage.rglob("*") if p.is_file()}
+                self.assertEqual(before, after)
+
+    def test_results_show_directory_without_inventing_missing_result_files(self):
+        plan = self.plan()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=False))
+        self.assertIn(f"RESULT DIRECTORY: {run_root(plan, load_plan(plan))}", output.getvalue())
+        self.assertIn("No validated result files yet.", output.getvalue())
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results(SimpleNamespace(plan=plan, json=True))
+        self.assertEqual(json.loads(output.getvalue())["result_files"], [])
 
     def replicate(self, plan, replicate=1, rewards=None, manifest_override=None, endpoint_override=None):
         from scripts.srgc_replicate import REPLICATE_PROTOCOL, sampling_seed

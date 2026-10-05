@@ -11,6 +11,11 @@ sh scripts/run_srgc_sr_refresh.sh math results
 sh scripts/run_srgc_sr_refresh.sh mbpp results
 ```
 
+출력의 처음과 끝에 `RESULT DIRECTORY`로 실제 실행 폴더를 표시하고,
+끝의 `RESULT FILES`에 검증된 원본 JSON의 절대 경로를 표시한다.
+fixed200와 `replicate-1/2` 결과를 포함한다. `--json` 출력에도 `result_files`가 있다.
+조회만으로 별도 보고서 파일을 생성하지 않으며, 결과가 없으면 경로 목록을 꾸며내지 않는다.
+
 빈 4-H100 노드의 신규 배정: MATH 먼저, MBPP는 `math` 대신 `mbpp`.
 
 ```sh

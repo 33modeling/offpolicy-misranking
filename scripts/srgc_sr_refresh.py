@@ -653,6 +653,8 @@ def results(args):
     from srgc_rebuttal.runtime import run_root
     plan = load_plan(args.plan)
     root = run_root(args.plan, plan)
+    if not args.json:
+        print(f"RESULT DIRECTORY: {root}", flush=True)
     errors, warnings, identities = [], [], {}
     def context(seed):
         from srgc_rebuttal.runtime import code_digest
@@ -679,9 +681,20 @@ def results(args):
                     errors.append(f"{path}: {type(exc).__name__}: {exc}")
         rows.append(row)
     replicates = replicate_rows(args.plan, plan, root, errors=errors, context=context)
+    result_files = [
+        {"seed": row["seed"], "replicate": 0, "arm": arm,
+         "path": str(root / f"seed-{row['seed']}" / f"{arm}-endpoint.json")}
+        for row in rows for arm in arms if arm in row
+    ]
+    result_files.extend(
+        {"seed": row["seed"], "replicate": row["replicate"], "arm": arm,
+         "path": str(root / f"seed-{row['seed']}" / f"replicate-{row['replicate']}" / f"{arm}-endpoint.json")}
+        for row in replicates for arm in row if arm not in {"seed", "replicate", "sampling_seed"}
+    )
     if args.json:
         print(json.dumps({"dataset": plan["dataset"], "output_root": str(root), "rows": rows,
-                          "replicates": replicates, "errors": errors, "warnings": warnings}, indent=2, allow_nan=False))
+                          "replicates": replicates, "result_files": result_files,
+                          "errors": errors, "warnings": warnings}, indent=2, allow_nan=False))
         if errors:
             raise ValueError("; ".join(errors))
         return
@@ -740,6 +753,13 @@ def results(args):
         print(f"WARNING: {warning}")
     for error in errors:
         print(f"ERROR: {error}")
+    print(f"\nRESULT DIRECTORY: {root}")
+    print("RESULT FILES (validated originals):")
+    for item in result_files:
+        print(f"  {item['path']}")
+    if not result_files:
+        print("  No validated result files yet.")
+    print("REPORT OUTPUT: stdout; no separate report file created automatically.")
     if errors:
         raise ValueError("; ".join(errors))
 
