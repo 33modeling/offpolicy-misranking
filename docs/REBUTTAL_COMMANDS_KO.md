@@ -1,6 +1,29 @@
 # 추가 실험 실행 순서와 노드 배정
 
-## 2026-10-06 전환 시점·규칙 대조 추가
+## 현재 우선순위: 단계별 학습 원인 진단 (2026-10-06 재조정)
+
+기존 P1 결과를 먼저 확인하고 미완료분만 마무리한다. **신규 배정 1순위는 초반 On-policy와
+후반 SR의 학습 효과를 분리하는 GRPO 개입 실험**이다. RLOO와 단일 음수 전환 대조를
+앞세우지 않는다. [V7 재분석·조건·우선순위·비용](STAGE_MECHANISM_EXPERIMENTS_2026-10-06.md).
+
+```sh
+sh scripts/run_srgc_sr_refresh.sh math results
+sh scripts/run_srgc_sr_refresh.sh mbpp results
+```
+
+빈 4-H100 노드의 신규 배정: MATH 먼저, MBPP는 `math` 대신 `mbpp`.
+
+```sh
+sh scripts/run_srgc_mechanism.sh math
+sh scripts/run_srgc_mechanism.sh math status
+sh scripts/run_srgc_mechanism.sh math results
+```
+
+그다음 support 대조, 고정 전환 grid, 다른 모델 순이다. `switch_single` /
+`switch_consecutive` 신규 배정은 보류한다. 기존 실험 중단·P0 재실행·원고 수정은 하지 않는다.
+mechanism은 별도 t0 경로이며 5개 seed 작업/도메인이다. 아래 예전 queue의 순서는 보존 기록이다.
+
+## 2026-10-06 전환 시점·규칙 대조 추가 (후순위 계획)
 
 [새 실험 계획과 비용 정의](SWITCH_ADDITIONAL_EXPERIMENTS_2026-10-06.md).
 기존 support 30개와 전체 120개 queue는 유지한다. 추가 validation queue는
@@ -9,7 +32,7 @@
 기존 목록에 없는 고유 조건은 60개다. 현재 미완료 수나 GPU 완료 결과가 아니다.
 
 ```sh
-sh scripts/run_srgc_switch_validation.sh all
+sh scripts/run_srgc_switch_validation.sh all timing
 sh scripts/run_srgc_switch_validation.sh all status
 sh scripts/run_srgc_switch_validation.sh all results
 ```
@@ -35,10 +58,10 @@ MBPP 완료 신호 위조 문제를 수정했다. [변경·검증 기록](V7_EXP
 고정 checkout에서 진행하며, 수정된 채점의 신규 실험은 별도 출력과 새 보상 캐시가 필요하다.
 기존 실험을 다시 돌리라는 안내가 아니며, 데이터셋만 입력하는 아래 배정 명령은 유지한다.
 
-## 지금 할 일: 선별 기준·유지 간격·보상 갱신 대조
+## 2순위: 선별 기준·유지 간격·보상 갱신 대조
 
 고정 200 하나로는 D에 따른 전환이 필요한지 입증할 수 없다. 우선 아래 세 조건으로
-On-policy와 SR의 성능 차이가 어디에서 생기는지 확인한다. **기존 fixed200·반복 실행은
+On-policy와 SR의 성능 차이가 어디에서 생기는지 확인한다. 현재 신규 배정 순서는 맨 위를 따른다. **기존 fixed200·반복 실행은
 중단하지 않으며, 기존 120개 queue의 동작도 바꾸지 않았다.** 새 배정에는 다음 명령을 쓴다.
 
 ```sh
@@ -109,7 +132,7 @@ CPU/GPU 구분과 최대 동시 노드 수는 [6절](#6-여러-노드-배정과-
 ## 기존 120개 전체 배정 (2026-10-02 기록)
 
 아래 우선순위와 노드 예시는 기존 전체 계획의 기록이다. **새 권장 배정은 문서 맨 위의
-support 30개**이며, 아래 명령은 의도적으로 기존 전체 목록을 실행할 때만 사용한다.
+단계별 mechanism 진단**이며, 아래 명령은 의도적으로 기존 전체 목록을 실행할 때만 사용한다.
 
 ### 데이터셋만 입력
 

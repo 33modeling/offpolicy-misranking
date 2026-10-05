@@ -31,6 +31,10 @@ def inspect(task, *, now=None):
     row = dict(task=task.key, dataset=task.dataset, seed=task.seed, arm=task.name,
                plan=str(task.plan), output=str(out), state="waiting", step=None,
                total=plan["total_updates"], attempt=0, host="-", age_seconds=None, log=None)
+    mechanism = task.arm == "stage_mechanism"
+    if mechanism:
+        from scripts.srgc_stage_mechanism import TOTAL_WORK
+        row["total"] = TOTAL_WORK
     try:
         queue = read_object(task.receipt)
         if type(queue.get("attempt", 0)) is not int or queue.get("attempt", 0) < 0:
@@ -41,9 +45,13 @@ def inspect(task, *, now=None):
             if progress.get("seed") != task.seed or progress.get("arm") != task.arm:
                 raise ValueError(f"{progress_path}: seed or arm mismatch")
             step = progress.get("step")
-            if type(step) is not int or not plan["shared_prefix_updates"] <= step <= row["total"]:
+            minimum = 0 if mechanism else plan["shared_prefix_updates"]
+            if type(step) is not int or not minimum <= step <= row["total"]:
                 raise ValueError(f"{progress_path}: invalid completed step")
             row.update(step=step, age_seconds=max(0, int(now - progress_path.stat().st_mtime)))
+            if mechanism:
+                row.update(stage=progress.get("stage"), mode=progress.get("mode"),
+                           branch_updates=progress.get("branch_updates"), phase=progress.get("phase"))
         worker_paths = list((out / "launches" / task.arm).glob("*/worker.json"))
         latest = max(worker_paths, key=lambda p: p.stat().st_mtime) if worker_paths else None
         worker = read_object(latest) if latest else {}
@@ -103,6 +111,9 @@ def main(argv=None):
                   f"{step:>7} {row['attempt']:>3} {age:>7} {row['host']}")
             if row.get("error"):
                 print(f"  ERROR: {row['error']}")
+            if row["arm"] == "stage_mechanism":
+                print(f"  physical work updates; policy stage={row.get('stage')} mode={row.get('mode')} "
+                      f"branch_updates={row.get('branch_updates')} phase={row.get('phase')}")
             if row.get("log") and row['state'] in ("failed", "invalid", "stale_worker"):
                 print(f"  log: {row['log']}")
         print("TOTAL " + " ".join(f"{key}={value}" for key, value in sorted(counts.items())))

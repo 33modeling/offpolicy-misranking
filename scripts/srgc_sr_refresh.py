@@ -89,7 +89,7 @@ def replicate_of(name):
 
 def extra_arm(name):
     """argparse type: a listed extra arm, any switch_fixed<N>, or replicate<k>-<recorded arm|switch_fixed<N>>."""
-    if name in EXTRA_ARMS or re.fullmatch(r"switch_fixed\d+", name):
+    if name == "stage_mechanism" or name in EXTRA_ARMS or re.fullmatch(r"switch_fixed\d+", name):
         return name
     try:
         if replicate_of(name):
@@ -389,6 +389,18 @@ def run(args):
                         first_check=plan["first_check"], scoring_prompts=plan["scoring_prompts_per_set"],
                         training_prompts=plan["training_prompts"], responses=plan["responses"],
                         projection_dim=plan["projection_dim"])
+        if arm == "stage_mechanism":
+            from scripts.srgc_stage_mechanism import run_study
+            if (config.scoring_prompts, config.training_prompts, config.responses,
+                    config.selection_interval, config.objective) != (40, 4, 8, 25, "grpo"):
+                raise ValueError("stage mechanism requires the 40/4/8, 25-update GRPO protocol")
+            if resuming and not matches(state, expected):
+                raise ValueError("mechanism resume identity differs from plan/input/runtime")
+            # New t0 study: the prefix selects the archived runtime/kernel only.
+            # Never restore prefix weights into the initial-policy experiment.
+            run_study(backend, data, config, out=out, expected=expected, policy=policy,
+                      state=state if resuming else None, prefix_hash=prefix_hash)
+            return
         with meter.phase("preparation", gpu_count=world), meter.stage("selector_setup"):
             current, engine_arm = make_engine(launch_arm, backend, data, config)
         if replicate and current.replicate_record() != json.loads((out / "replicate.json").read_text())["replicate"]:
@@ -522,6 +534,11 @@ def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None):
     if not isinstance(value, dict):
         raise ValueError(f"{path}: expected an endpoint JSON object")
     expected, prefix_hash = verified or result_identity(plan_path, plan, seed)
+    if arm == "stage_mechanism":
+        from scripts.srgc_stage_report import validate_endpoint
+        data = json.loads(input_path(plan_path, plan, seed).read_text())
+        validate_endpoint(value, expected, prefix_hash, data)
+        return value
     if (not matches(value, expected) or value.get("arm") != arm or
             value.get("total_updates") != plan["total_updates"] or
             value.get("shared_prefix_updates") != plan["shared_prefix_updates"]):

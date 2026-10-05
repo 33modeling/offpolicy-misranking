@@ -27,12 +27,14 @@ SUPPORT_ARMS = ("direction_removed", "sr_hold", "sr_refresh_matched")
 TIMING_STEPS = (50, 100, 150, 200, 250)
 TIMING_ARMS = tuple(f"switch_fixed{step}" for step in TIMING_STEPS)
 RULE_ARMS = ("switch_single", "switch_consecutive")
-SCOPES = ("all", "support", "switch_validation", "timing", "rules", "switch_fixed200", "replicate", "candidates", "switch_repeat",
+SCOPES = ("all", "support", "mechanism", "switch_validation", "timing", "rules", "switch_fixed200", "replicate", "candidates", "switch_repeat",
           "sr_hold", "pool", "direction", "direction_removed", "direction_magnitude",
           "direction_replaced")
 
 
 def conditions(scope):
+    if scope == "mechanism":
+        return [(0, "stage_mechanism")]
     if scope == "support":
         return [(0, arm) for arm in SUPPORT_ARMS]
     if scope in {"switch_validation", "timing", "rules"}:
@@ -100,6 +102,8 @@ def signature(task):
     paths = [task.plan, input_path(task.plan, load_plan(task.plan), task.seed),
              task.folder / "prefix-ready.json", task.folder / "prefix.pt", task.folder / "run.json",
              task.out / f"{task.arm}-endpoint.json"]
+    if task.arm == "stage_mechanism":
+        paths.append(REPO / "scripts/srgc_stage_mechanism.py")
     if task.repeat:
         paths.insert(-1, task.out / "replicate.json")
     result = []
