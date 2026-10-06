@@ -271,6 +271,7 @@ class AuditRegressionTests(unittest.TestCase):
             for seed in spec["seeds"]:
                 path = input_path(plan, spec, seed)
                 bundle = json.loads(path.read_text())
+                bundle["dataset"] = "mbpp"
                 bundle["provenance"] = {"cache": {"verifier": spec["verifier"],
                     "code_verifier_version": "assertion-completion-v2"}}
                 path.write_text(json.dumps(bundle))
