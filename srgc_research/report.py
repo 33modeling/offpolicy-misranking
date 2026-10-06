@@ -7,7 +7,7 @@ import math
 from srgc_rebuttal.runtime import atomic_json
 
 from .design import Condition, tasks
-from .storage import validate_artifacts, validate_endpoint
+from .storage import read_manifest, validate_artifacts, validate_endpoint
 
 
 def paired_questions(left, right):
@@ -150,7 +150,7 @@ def collect(root, datasets, scope):
                 report["pending"].extend(str(folder / c.key / "endpoint.json") for c in tasks(scope))
                 continue
             try:
-                manifest = json.loads((folder / "manifest.json").read_text())
+                manifest = read_manifest(folder / "manifest.json", dataset, seed)
             except (OSError, ValueError) as exc:
                 report["errors"].append(f"{folder}: {exc}")
                 continue

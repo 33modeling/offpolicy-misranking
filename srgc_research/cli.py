@@ -17,6 +17,7 @@ from .storage import (
     configure_cache,
     freeze,
     prepare,
+    read_manifest,
     root,
     verify_inputs,
     verify_runtime,
@@ -133,17 +134,23 @@ def run_queue(folders, scope, *, poll=30, max_attempts=3, retry_delay=120):
                             waiting = True
                             continue
                         atomic_json(receipt, {"status": "running", "attempts": attempts, "started": time.time()})
+                        error = None
                         try:
                             code = launch(folder, condition, manifest, handle)
                         except Busy:
                             code = 75
+                        except TimeoutError as exc:
+                            # run_child already reaped its process group and released GPU leases.
+                            code, error = 124, str(exc)
+                            print(f"TIMEOUT {condition.key}: {error}", file=sys.stderr, flush=True)
                         except KeyboardInterrupt:
                             atomic_json(receipt, {"status": "interrupted", "attempts": attempts})
                             raise
                         if code == 0 and not complete(folder, manifest, condition):
                             raise ValueError("worker exited without a validated endpoint")
                         atomic_json(receipt, {"status": "complete" if code == 0 else "busy" if code == 75 else "failed",
-                            "attempts": attempts + (code not in (0, 75)), "finished": time.time(), "exit_code": code})
+                            "attempts": attempts + (code not in (0, 75)), "finished": time.time(), "exit_code": code,
+                            "error": error})
                         if code == 75:
                             print("BUSY: this node is occupied; existing work was not stopped", flush=True)
                             return 75
@@ -165,16 +172,25 @@ def status(root_path, datasets, scope):
         for seed in range(5, 10):
             folder = root_path / dataset / f"seed-{seed}"
             marker = folder / "manifest.json"
-            manifest = json.loads(marker.read_text()) if marker.exists() else None
+            manifest, manifest_error = None, None
+            try:
+                if marker.exists():
+                    manifest = read_manifest(marker, dataset, seed)
+            except (OSError, ValueError, TypeError) as exc:
+                manifest_error = str(exc)
             for condition in tasks(scope):
                 out, state = folder / condition.key, "not-started"
                 details = {}
                 try:
+                    if manifest_error:
+                        raise ValueError(manifest_error)
                     if manifest and complete(folder, manifest, condition):
                         state = "complete"
                     elif manifest:
                         if (out / "progress.json").exists():
                             details = json.loads((out / "progress.json").read_text())
+                            if not isinstance(details, dict):
+                                raise ValueError(f"invalid progress record: {out / 'progress.json'}")
                             state = "checkpointed"
                         if not dependencies(folder, condition, manifest):
                             state = "waiting-prerequisite"
@@ -186,8 +202,11 @@ def status(root_path, datasets, scope):
                         receipt = out / "queue.json"
                         if state != "running" and receipt.exists():
                             receipt = json.loads(receipt.read_text())
+                            if not isinstance(receipt, dict):
+                                raise ValueError(f"invalid queue record: {out / 'queue.json'}")
                             if receipt.get("status") == "failed":
                                 state = "failed"
+                                details["error"] = receipt.get("error")
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     state, details = "invalid", {"error": str(exc)}
                 rows.append({"dataset": dataset, "seed": seed, "task": condition.key, "status": state,

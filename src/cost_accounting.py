@@ -57,13 +57,22 @@ def stage_durations(events: list[dict]) -> dict:
         return {"stages": {}, "attempts": 0, "wall_seconds_all_attempts": None, "complete": False}
     starts = [i for i, e in enumerate(events) if e["stage"] == 1]
     attempt = events[starts[-1]:] if starts else events
-    stages = {}
+    stages, unknown = {}, set()
     for current, following in zip(attempt, attempt[1:]):
         name = STAGE_NAMES.get(current["stage"], str(current["stage"]))
-        stages[name] = stages.get(name, 0.0) + (following["time"] - current["time"]).total_seconds()
+        elapsed = (following["time"] - current["time"]).total_seconds()
+        if following["stage"] not in (current["stage"], current["stage"] + 1) or elapsed < 0:
+            unknown.add(name)
+            continue
+        stages[name] = stages.get(name, 0.0) + elapsed
     complete = attempt[-1]["stage"] == attempt[-1]["total"]
+    if not complete:
+        unknown.add(STAGE_NAMES.get(attempt[-1]["stage"], str(attempt[-1]["stage"])))
+    for name in unknown:
+        stages.pop(name, None)
+    elapsed = (events[-1]["time"] - events[0]["time"]).total_seconds()
     return {"stages": stages, "attempts": len(starts), "complete": complete,
-            "wall_seconds_all_attempts": (events[-1]["time"] - events[0]["time"]).total_seconds(),
+            "wall_seconds_all_attempts": elapsed if elapsed >= 0 else None,
             "labels": {STAGE_NAMES.get(e["stage"], str(e["stage"])): e["label"] for e in attempt}}
 
 
@@ -91,16 +100,19 @@ def stage_durations_from_artifacts(run: Path, drift: int) -> dict:
         if name == "grpo" and drift <= 0:
             continue
         times = [(run / f.format(drift=drift)).stat().st_mtime for f in files if (run / f.format(drift=drift)).is_file()]
-        if times:
-            ends.append((name, max(times)))
+        # Keep missing boundaries in place: never bridge two different phases.
+        ends.append((name, max(times) if len(times) == len(files) else None))
     stages = {}
     for (name, end), (_, previous) in zip(ends[1:], ends):
+        if end is None or previous is None:
+            continue
         low, high = STAGE_WINDOWS.get(name, (0, float("inf")))
         if low <= end - previous <= high:
             stages[name] = end - previous
-    complete = bool(ends) and ends[-1][0] == "done"
+    complete = ends[-1][1] is not None
+    elapsed = ends[-1][1] - ends[0][1] if ends[-1][1] is not None and ends[0][1] is not None else None
     return {"stages": stages, "attempts": 0, "complete": complete,
-            "wall_seconds_all_attempts": (ends[-1][1] - ends[0][1]) if len(ends) > 1 else None, "labels": {}}
+            "wall_seconds_all_attempts": elapsed if elapsed is not None and elapsed >= 0 else None, "labels": {}}
 
 
 def point_costs(run: Path) -> dict | None:
@@ -156,7 +168,10 @@ def step_seconds(stats: Path) -> list[float]:
         if line.strip():
             row = json.loads(line)
             if "step_seconds" in row:
-                values.append(float(row["step_seconds"]))
+                value = row["step_seconds"]
+                if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                    raise ValueError(f"invalid step timer in {stats}")
+                values.append(float(value))
     return values
 
 

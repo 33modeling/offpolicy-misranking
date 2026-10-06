@@ -114,6 +114,13 @@ def verify_inputs(folder, manifest):
     return data
 
 
+def read_manifest(path, dataset, seed):
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict) or value.get("dataset") != dataset or value.get("seed") != seed:
+        raise ValueError("manifest dataset/seed differs from its directory")
+    return value
+
+
 def analysis_settings(dataset):
     target = os.environ.get(f"SRGC_RESEARCH_{dataset.upper()}_TARGET")
     target = float(target) if target else None
@@ -217,7 +224,8 @@ def validate_endpoint(value, manifest, condition):
             rewards = row["per_question_reward"]
             if not rewards or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in rewards.values()):
                 raise ValueError("invalid endpoint evaluation")
-            if abs(sum(rewards.values()) / len(rewards) - row["reward"]) > 1e-10:
+            if (type(row["reward"]) not in (int, float) or not math.isfinite(row["reward"]) or
+                    abs(sum(rewards.values()) / len(rewards) - row["reward"]) > 1e-10):
                 raise ValueError("endpoint aggregate reward differs")
             if set(rewards) != set(manifest["evaluation_ids"]):
                 raise ValueError("endpoint evaluation IDs differ from fixed input")

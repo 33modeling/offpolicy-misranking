@@ -135,7 +135,7 @@ def test_stage_fallback_from_artifact_timestamps_and_resumed_eval_shard(tmp_path
     (run / "policy_step_400").mkdir()
     base = 1_700_000_000
     for name, minutes in (("prompts.json", 0), ("rollouts_behavior_train.jsonl", 30), ("policy_step_400/policy_train.json", 90),
-                          ("rollouts_fresh_train.jsonl", 210), ("oracle_micro_groups.pt", 450), ("scores_offpolicy.json", 510),
+                          ("rollouts_fresh_train.jsonl", 210), ("oracle_micro_groups.pt", 450), ("val_gradient.pt", 450), ("scores_offpolicy.json", 510),
                           ("report.json", 511), ("DONE", 512)):
         path = run / name
         if not path.exists():
