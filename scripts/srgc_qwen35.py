@@ -51,6 +51,10 @@ def specification():
 
 
 def runtime_packages():
+    from srgc_rebuttal.existing_runtime import verifier_environment
+    # Admission already uses this pinned offline bundle; attach it before
+    # startup/worker metadata checks as well, without changing the shared venv.
+    verifier_environment(os.environ)
     from packaging.version import Version
     versions = {name: importlib.metadata.version(name) for name in
                 ("torch", "transformers", "peft", "numpy", "math-verify")}

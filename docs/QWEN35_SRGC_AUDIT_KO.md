@@ -2,6 +2,13 @@
 
 ## 2026-10-06 재점검
 
+- 후속 시작 오류: `math-verify`가 설치되지 않은 Python에서 package metadata
+  검사 전에 저장소의 오프라인 verifier를 연결하도록 순서를 수정했다. 패키지가
+  없는 `python -S`에서 같은 오류를 재현하고, 수정 후 실제 verifier import,
+  metadata 조회, 수식 동치 채점, 자식 프로세스 경로 전달을 검사했다.
+  기존 admission과 같은 고정 wheel을 사용하며 pip·공유 venv 수정은 없다.
+  후속 회귀 검사: 시작·shell·runtime identity·누락 의존성 **28개 및 8개
+  subtest 통과**. 로그: `/tmp/qwen-math-verify-fix-20261006.log`.
 - 수동 `download`가 자동 시작과 같은 모델 잠금을 사용하도록 통일했다.
   명시적 모델 경로를 존중하고, 검증에 실패한 기존 snapshot은 교체하지 않는다.
 - 마지막 endpoint 저장 뒤 중단된 worker를 다시 실행하면, GPU admission이나
