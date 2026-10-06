@@ -158,17 +158,24 @@ class QwenDiagnosticsTests(unittest.TestCase):
     def test_run_wraps_admission_without_changing_arguments_or_leaking_patch(self):
         expected = ["diagnostics", "all", "run", "--root", "/example"]
         original = lambda *args, **kwargs: 17
-        launcher = SimpleNamespace(admit_with_smoke=original)
+        original_command = lambda queue, task: ["command"]
+        adapter = SimpleNamespace(task_command=original_command)
+        launcher = SimpleNamespace(admit_with_smoke=original,
+                                   runtime_adapter=SimpleNamespace(__module__="fake_qwen_adapter"))
 
         def run():
             self.assertEqual(sys.argv, expected)
             self.assertIsNot(launcher.admit_with_smoke, original)
+            self.assertIsNot(adapter.task_command, original_command)
+            self.assertEqual(adapter.task_command(None, None), ["command"])
             return launcher.admit_with_smoke(None, Path("/example"), {}, None)
 
         launcher.main = run
-        with patch.object(sys, "argv", expected), patch.dict(sys.modules, {"run_srgc_qwen35": launcher}):
+        with patch.object(sys, "argv", expected), patch.dict(sys.modules, {
+                "run_srgc_qwen35": launcher, "fake_qwen_adapter": adapter}):
             self.assertEqual(diagnostics.main(), 17)
         self.assertIs(launcher.admit_with_smoke, original)
+        self.assertIs(adapter.task_command, original_command)
 
     def test_error_mode_follows_latest_recovery_receipt(self):
         with tempfile.TemporaryDirectory() as directory:

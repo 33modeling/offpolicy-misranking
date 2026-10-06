@@ -12,6 +12,19 @@ FAILURE_PREFIX = "Qwen generation/backward admission failed: "
 LOG_WINDOW_BYTES = 256 * 1024
 RANK_ENTRY = Path(__file__).resolve().with_name("srgc_qwen35_rank.py")
 SMOKE_ENTRY = RANK_ENTRY.with_name("srgc_qwen35_smoke.py")
+RUNTIME_ENTRY = RANK_ENTRY.with_name("srgc_qwen35_rank_runtime.py")
+
+
+def with_rank_runtime(original_task_command):
+    @wraps(original_task_command)
+    def task_command(*args, **kwargs):
+        command = original_task_command(*args, **kwargs)
+        if any(flag == "--stage" and value in {"cache", "train"}
+               for flag, value in zip(command, command[1:])):
+            return [str(RUNTIME_ENTRY) if str(arg) == str(RANK_ENTRY) else arg for arg in command]
+        return command
+
+    return task_command
 
 
 def _fabric_failure(root, error):

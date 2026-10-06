@@ -24,9 +24,10 @@ except ImportError:
     from scripts.srgc_log_tail import tail_lines
 
 TARGET_MARKERS = ("srgc_rebuttal.run_experiment", "srgc_rebuttal.build_cache",
-                  "srgc_step_checkpoints.py", "srgc_qwen35_rank.py", "srgc_sr_refresh.py")
+                  "srgc_step_checkpoints.py", "srgc_qwen35_rank.py", "srgc_qwen35_smoke.py",
+                  "srgc_qwen35_rank_runtime.py", "srgc_sr_refresh.py")
 OWNER_MARKERS = ("run_srgc_rebuttal.py", "srgc_rebuttal.cluster", "run_srgc_qwen35.py",
-                 "srgc_extra_worker.py", "run_srgc_sr_refresh.sh")
+                 "srgc_qwen35_diagnostics.py", "srgc_extra_worker.py", "run_srgc_sr_refresh.sh")
 
 
 def _read(path):

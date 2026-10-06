@@ -131,6 +131,15 @@ Hugging Face·Torch·Triton·CUDA 캐시와 임시 파일도
 `$OM_WORK/qwen-runtime-cache` 아래에 둔다. 각 rank가 과거 receipt 전체를
 반복 스캔하지 않고 해당 plan의 실제 입력·출력 경로를 검사한다.
 
+2026-10-06: `l2norm_fwd_kernel.cubin`과 `__triton_launcher.so`를 읽지 못한
+실패에 대응해 컴파일 캐시를 노드뿐 아니라 rank별로 분리했다. 스모크와 실제
+cache/train은 모두 `nodes/<host>/rank-runtime-v1/rank-<0..3>/` 아래에서
+Triton·Inductor·extension·CUDA 캐시 및 임시 디렉터리를 사용한다.
+기존 공유 캐시를 삭제하지 않으며 새 경로는 같은 노드/rank에서 재사용한다.
+첫 실행은 새 캐시에 커널을 다시 컴파일한다. 모델/Hugging Face 캐시는 계속
+공유하고 기존 plan·queue·checkpoint와 adapter/engine hash는 변경하지 않는다.
+파일시스템 자체의 장애까지 수리하는 것은 아니며, 원격 GPU 검증은 별도다.
+
 ### 조회·중단·재개
 
 아래는 관리 명령이며 추가 실험이나 필수 실행 순서가 아니다.

@@ -3,10 +3,29 @@ from pathlib import Path
 
 import pytest
 
-from scripts.srgc_qwen35_admission import FAILURE_PREFIX, RANK_ENTRY, SMOKE_ENTRY, with_smoke_recovery
+from scripts.srgc_qwen35_admission import (
+    FAILURE_PREFIX, RANK_ENTRY, RUNTIME_ENTRY, SMOKE_ENTRY, with_rank_runtime, with_smoke_recovery,
+)
 
 
 CUDA802 = "transport/nvls.cc:254 NCCL WARN Cuda failure 802 'system not yet initialized'"
+
+
+@pytest.mark.parametrize("stage", ["cache", "train", "smoke"])
+def test_production_commands_use_rank_cache_entry_without_mutating_original(stage):
+    command = ["python", "-m", "torch.distributed.run", "--nproc_per_node=4", str(RANK_ENTRY),
+               "--stage", stage, "--plan", "/saved/plan.json", "--seed", "5", "--resume"]
+    calls = []
+
+    def original(queue, task):
+        calls.append((queue, task))
+        return command
+
+    result = with_rank_runtime(original)("queue", "task")
+    assert calls == [("queue", "task")]
+    assert str(RANK_ENTRY) in command
+    assert result == [str(RUNTIME_ENTRY) if item == str(RANK_ENTRY) and stage != "smoke" else item
+                      for item in command]
 
 
 def fake_admission(outcomes):

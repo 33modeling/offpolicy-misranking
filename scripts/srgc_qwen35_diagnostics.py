@@ -151,12 +151,14 @@ def main():
     if len(sys.argv) > 2 and sys.argv[2] == "run":
         from unittest.mock import patch
         try:
-            from srgc_qwen35_admission import with_smoke_recovery
+            from srgc_qwen35_admission import with_rank_runtime, with_smoke_recovery
         except ModuleNotFoundError as exc:
             if exc.name != "srgc_qwen35_admission":
                 raise
-            from scripts.srgc_qwen35_admission import with_smoke_recovery
-        with patch.object(launcher, "admit_with_smoke", with_smoke_recovery(launcher.admit_with_smoke)):
+            from scripts.srgc_qwen35_admission import with_rank_runtime, with_smoke_recovery
+        adapter = importlib.import_module(launcher.runtime_adapter.__module__)
+        with patch.object(launcher, "admit_with_smoke", with_smoke_recovery(launcher.admit_with_smoke)), \
+                patch.object(adapter, "task_command", with_rank_runtime(adapter.task_command)):
             return run_with_diagnostics(launcher.main)
     return run_with_diagnostics(launcher.main)
 

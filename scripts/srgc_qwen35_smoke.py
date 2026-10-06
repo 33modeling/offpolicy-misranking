@@ -105,7 +105,8 @@ def main():
     sys.path.insert(0, str(REPO / "scripts"))
     import srgc_qwen35
     from srgc_qwen35_rank import main as rank_main
-    with patch.object(srgc_qwen35, "smoke", lightweight_smoke):
+    from srgc_qwen35_rank_runtime import isolated_storage
+    with isolated_storage(), patch.object(srgc_qwen35, "smoke", lightweight_smoke):
         return rank_main()
 
 

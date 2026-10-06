@@ -1,5 +1,24 @@
 # Qwen3.5-9B 실행 코드 추가 감사
 
+## 2026-10-06 Triton 캐시 파일 누락
+
+- 실제 rank 로그에서 같은 노드 캐시 아래 `l2norm_fwd_kernel.cubin`의
+  `FileNotFoundError`와 `__triton_launcher.so`의 `ImportError: No such file or
+  directory`를 확인했다. 일반적인 NCCL 초기화 메시지가 아니라 생성된 커널
+  파일의 가용성 문제다. 이 로그만으로 파일 삭제 주체나 NFS 장애를 단정하지 않는다.
+- 기존 저장소 설정은 노드별 경로를 만들지만 네 rank가 Triton 캐시 하나를
+  공유했다. 별도 운영 entry에서 원래 저장소 검사를 먼저 수행한 뒤 rank별
+  새 namespace를 적용한다. 기존 캐시는 삭제하지 않고 입력·결과도 건드리지 않는다.
+- 스모크와 실제 cache/train에 모두 적용했다. rank별 Triton·Inductor·extension·
+  CUDA 캐시와 임시 경로는 같은 노드/rank에서 재사용해 작업마다 불필요하게
+  재컴파일하지 않는다. 모델/HF 캐시는 그대로 공유한다.
+- 원래 rank entry의 plan 검증, 모델/선별/학습 코드와 adapter/engine hash는
+  유지한다. 새 캐시에서 첫 컴파일이 발생하므로 초기 실행 비용은 추가될 수 있다.
+  실제 H100/NFS에서 파일 누락이 재발하지 않는지는 로컬 CPU 검사로 보증하지 않는다.
+- Qwen 회귀 검사 135개 및 22개 subtest 통과. 별도 rank-cache/process-guard
+  검사 33개도 통과했다(일부 중복 포함). 새 실행 entry의 살아 있는 부모를
+  보호하고 실제 고아 프로세스만 구분하는지 확인했다. 원격 GPU 작업은 실행하지 않았다.
+
 ## 2026-10-06 시작 검사 부하 수정
 
 - 이전 Qwen 검사는 평가용 입력까지 포함해 가장 긴 prompt를 고르고 합성 응답
