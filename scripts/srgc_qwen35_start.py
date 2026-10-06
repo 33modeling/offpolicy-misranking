@@ -156,6 +156,7 @@ def main():
         raise SystemExit(2)
     print("QWEN joining shared queue: cache -> prefix -> Random/SR/On-policy/Switch", flush=True)
     command = controller(args.dataset, "run", root)
+    command[1] = str(REPO / "scripts/srgc_qwen35_diagnostics.py")
     os.execv(command[0], command)
 
 

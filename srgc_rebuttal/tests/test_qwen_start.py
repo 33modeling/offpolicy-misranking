@@ -141,6 +141,14 @@ class QwenStartTests(unittest.TestCase):
             self.assertEqual(stopped.exception.code, 130)
             execute.assert_not_called()
 
+    def test_start_preserves_admission_diagnostics_after_exec(self):
+        with patch.object(sys, "argv", ["start", "math"]), \
+             patch.object(start, "default_root", return_value=self.root), \
+             patch.object(start, "prepare_missing"), patch.object(os, "execv") as execute:
+            start.main()
+        execute.assert_called_once_with(sys.executable, [sys.executable,
+            str(ROOT / "scripts/srgc_qwen35_diagnostics.py"), "math", "run", "--root", str(self.root)])
+
     def test_bad_packages_stop_before_model_download(self):
         self.runtime_packages.side_effect = ImportError("missing package")
         with patch.object(start, "ensure_model") as model:
@@ -290,6 +298,7 @@ class QwenStartTests(unittest.TestCase):
             start.main()
             prepare.assert_called_once_with(("math", "mbpp"), self.root, os.environ)
             command = start.controller("all", "run", self.root)
+            command[1] = str(ROOT / "scripts/srgc_qwen35_diagnostics.py")
             execute.assert_called_once_with(sys.executable, command)
 
 

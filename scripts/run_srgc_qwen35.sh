@@ -26,4 +26,4 @@ export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:Tr
 if [ "$#" -eq 1 ]; then
     exec "$PY" scripts/srgc_qwen35_start.py "$@"
 fi
-exec "$PY" scripts/run_srgc_qwen35.py "$@"
+exec "$PY" scripts/srgc_qwen35_diagnostics.py "$@"

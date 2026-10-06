@@ -136,6 +136,9 @@ Hugging Face·Torch·Triton·CUDA 캐시와 임시 파일도
 아래는 관리 명령이며 추가 실험이나 필수 실행 순서가 아니다.
 
 ```sh
+# 마지막 Qwen GPU 검사 실패 원인만 조회. 모델 로드·학습·파일 변경 없음.
+sh scripts/run_srgc_qwen35.sh all error
+
 # CPU에서도 조회 가능
 sh scripts/run_srgc_qwen35.sh all status
 sh scripts/run_srgc_qwen35.sh all results
@@ -145,6 +148,12 @@ sh scripts/run_srgc_qwen35.sh all stop
 sh scripts/run_srgc_qwen35.sh all resume
 sh scripts/run_srgc_qwen35.sh
 ```
+
+`qwen-smoke.log`의 `admission failed`는 실제 Qwen 생성·역전파 검사 실패다.
+`error` 명령은 선택한 데이터셋의 마지막 검사 로그에서 원래 rank 예외를 출력한다.
+시작 명령도 같은 원인을 예외 메시지 아래에 붙인다. 이 출력 보강은 adapter/engine
+hash를 바꾸지 않으므로 검사에서 멈춘 기존 plan·queue를 다시 만들 필요가 없다.
+로그를 확인하지 않고 GPU 검사를 생략하거나 OOM·CUDA 오류를 성공으로 처리하지 않는다.
 
 매 worker 시작 시 기존 4-rank NCCL 검사 뒤에 **실제 9B 모델 생성·scoring
 역전파·GRPO update**를 검사한다. 이 검사의 보상은 backward 확인용 합성
