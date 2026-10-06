@@ -151,6 +151,10 @@ sh scripts/run_srgc_qwen35.sh
 
 `qwen-smoke.log`의 `admission failed`는 실제 Qwen 생성·역전파 검사 실패다.
 `error` 명령은 선택한 데이터셋의 마지막 검사 로그에서 원래 rank 예외를 출력한다.
+`ChildFailedError`, `launcher/api.py`의 `launch_agent`, worker의 `admission(...)`
+줄만으로는 실패 원인을 알 수 없다. `srgc_qwen35_smoke.py FAILED`는 경량 검사가
+실제로 실행됐다는 증거이며, 해결 여부의 증거는 아니다. 원인은 그 앞의 rank 예외,
+NCCL 경고 및 마지막 `[qwen-smoke]` 단계에서 확인한다.
 시작 명령도 같은 원인을 예외 메시지 아래에 붙인다. 이 출력 보강은 adapter/engine
 hash를 바꾸지 않으므로 검사에서 멈춘 기존 plan·queue를 다시 만들 필요가 없다.
 로그를 확인하지 않고 GPU 검사를 생략하거나 OOM·CUDA 오류를 성공으로 처리하지 않는다.

@@ -14,6 +14,19 @@ from scripts import srgc_qwen35_diagnostics as diagnostics
 
 
 class QwenDiagnosticsTests(unittest.TestCase):
+    def test_triton_file_failure_keeps_original_path_and_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "qwen-smoke.log"
+            log.write_text('[rank0]:   File "/venv/triton/compiler/compiler.py", line 382, in __init__\n'
+                           '[rank0]:   File "/usr/local/lib/python3.12/pathlib.py", line 1013, in open\n'
+                           "[rank0]: FileNotFoundError: [Errno 2] No such file or directory: '/cache/kernel.cubin'\n"
+                           "torch.distributed.elastic.multiprocessing.errors.ChildFailedError:\n")
+            details = diagnostics.failure_details(log)
+            self.assertIn("/venv/triton/compiler/compiler.py", details)
+            self.assertIn("pathlib.py", details)
+            self.assertIn("/cache/kernel.cubin", details)
+            self.assertNotIn("ChildFailedError", details)
+
     def test_wrapper_preserves_failure_and_exposes_rank_exception(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "qwen-smoke.log"
@@ -66,6 +79,70 @@ class QwenDiagnosticsTests(unittest.TestCase):
             diagnostics.run_with_diagnostics(lambda: (_ for _ in ()).throw(failure))
         self.assertIs(caught.exception, failure)
         self.assertIn("Unable to read log", "\n".join(caught.exception.__notes__))
+
+    def test_summary_keeps_protocol_stage_frames_and_multiline_cuda_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "qwen-smoke.log"
+            protocol = '[qwen-smoke] {"stage": "init", "rank": "0", "protocol": "candidate-readiness-v1"}'
+            stage = '[qwen-smoke] {"stage": "startup_collective", "rank": "0"}'
+            original = "\n".join([
+                protocol, stage,
+                '[rank0]:   File "/repo/scripts/srgc_qwen35_smoke.py", line 49, in lightweight_smoke',
+                '[rank0]:   File "/site/torch/distributed/distributed_c10d.py", line 2074, in _new_process_group_helper',
+                "node:123 [0] transport/nvls.cc:254 NCCL WARN Cuda failure 802 'system not yet initialized'",
+                "[rank0]: torch.distributed.DistBackendError: NCCL error in: NCCLUtils.cpp:77",
+                "[rank0]: Last error:",
+                "[rank0]: Cuda failure 802 'system not yet initialized'",
+                "torch.distributed.elastic.multiprocessing.errors.ChildFailedError:",
+            ])
+            log.write_text(original)
+            failure = RuntimeError(diagnostics.FAILURE_PREFIX + str(log))
+            with self.assertRaises(RuntimeError) as caught:
+                diagnostics.run_with_diagnostics(lambda: (_ for _ in ()).throw(failure))
+            self.assertIs(caught.exception, failure)
+            details = "\n".join(failure.__notes__)
+            for evidence in (protocol, stage, "srgc_qwen35_smoke.py", "distributed_c10d.py",
+                             "NCCL WARN", "Last error:", "Cuda failure 802"):
+                self.assertIn(evidence, details)
+            self.assertNotIn("ChildFailedError", details)
+            self.assertEqual(log.read_text(), original)
+
+    def test_stage_summary_keeps_protocol_and_only_latest_stage_per_rank(self):
+        lines = [json.dumps({"stage": stage, "rank": str(rank), **extra})
+                 for stage, extra in (("init", {"protocol": "candidate-readiness-v1"}),
+                                      ("model_load", {}), ("scoring", {}))
+                 for rank in range(4)]
+        selected = diagnostics.stage_details(["[qwen-smoke] " + line for line in lines])
+        self.assertEqual(len(selected), 8)
+        self.assertEqual(sum('"protocol"' in line for line in selected), 4)
+        self.assertEqual(sum('"scoring"' in line for line in selected), 4)
+        self.assertFalse(any('"model_load"' in line for line in selected))
+
+    def test_protocol_survives_large_log_but_old_exception_is_not_repeated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "qwen-smoke.log"
+            log.write_text('[qwen-smoke] {"stage":"init","rank":"0","protocol":"candidate-readiness-v1"}\n'
+                           + "RuntimeError: stale failure\n" + "noise\n" * 60000
+                           + '[qwen-smoke] {"stage":"update","rank":"0"}\n'
+                           + "[rank0]: RuntimeError: current failure\n")
+            details = diagnostics.failure_details(log)
+            self.assertIn("candidate-readiness-v1", details)
+            self.assertIn('"stage":"update"', details)
+            self.assertIn("current failure", details)
+            self.assertNotIn("stale failure", details)
+
+    def test_tiny_preflight_failure_uses_exact_recorded_log_and_preserves_exception(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "preflight.log"
+            log.write_text("[rank1]: RuntimeError: NCCL initialization failed\n"
+                           "[rank1]: Last error:\n[rank1]: Cuda failure 802 'system not yet initialized'\n")
+            failure = RuntimeError(f"four-GPU admission failed (exit=78); inspect {log}")
+            with self.assertRaises(RuntimeError) as caught:
+                diagnostics.run_with_diagnostics(lambda: (_ for _ in ()).throw(failure))
+            self.assertIs(caught.exception, failure)
+            details = "\n".join(failure.__notes__)
+            self.assertIn(f"Four-GPU admission log: {log}", details)
+            self.assertIn("Cuda failure 802", details)
 
     def test_normal_action_keeps_arguments_and_return_value(self):
         expected = ["diagnostics", "all", "status", "--root", "/example"]

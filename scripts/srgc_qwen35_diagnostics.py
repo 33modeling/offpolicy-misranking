@@ -21,15 +21,58 @@ FAILURE_PREFIX = "Qwen generation/backward admission failed: "
 EXCEPTION_LINE = re.compile(
     r"^(?:\[rank\d+\]:\s*)?(?:[\w.]*?(?:Error|Exception)|KeyboardInterrupt|SystemExit):"
 )
+PREFLIGHT_FAILURE = re.compile(r"^four-GPU admission failed \(exit=[^)]*\); inspect (.+/preflight\.log)$")
+TRACE_FRAME = re.compile(
+    r'File "[^"]*/(?:srgc_qwen35_smoke|srgc_qwen35|distributed|distributed_c10d|selection_nccl_preflight'
+    r'|pathlib|triton/(?:compiler/compiler|runtime/autotuner|runtime/cache))\.py", line \d+, in '
+)
+
+
+def stage_details(lines):
+    protocols, latest = {}, {}
+    for line in lines:
+        marker = "[qwen-smoke] "
+        if marker not in line:
+            continue
+        try:
+            record = json.loads(line.split(marker, 1)[1])
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(record, dict) or not isinstance(record.get("stage"), str):
+            continue
+        rank = str(record.get("rank"))
+        latest[rank] = line
+        if record.get("protocol"):
+            protocols[rank] = line
+    return list(dict.fromkeys([*list(protocols.values())[-4:], *list(latest.values())[-4:]]))
 
 
 def failure_details(path):
-    """Prefer recorded Python exceptions to torchrun's secondary failure report."""
+    """Preserve stage and original CUDA evidence around torchrun's summary."""
     path = Path(path)
+    log_label = "Four-GPU admission log" if path.name == "preflight.log" else "Qwen smoke log"
     try:
         lines = tail_lines(path, lines=2000)
+        # Protocol markers precede model startup and can fall outside the tail.
+        with path.open("rb") as handle:
+            head = handle.read(64 * 1024).decode("utf-8", errors="replace").splitlines()
     except OSError as exc:
-        return f"Qwen smoke log: {path}\nUnable to read log: {exc}"
+        return f"{log_label}: {path}\nUnable to read log: {exc}"
+    sections = []
+    stages = stage_details([*head, *lines])
+    if stages:
+        sections.extend(["Recorded smoke protocol and latest stages:", *stages])
+    frames = list(dict.fromkeys(
+        re.sub(r"^\[rank\d+\]:\s*", "", line.strip()) for line in lines if TRACE_FRAME.search(line)
+    ))
+    if frames:
+        sections.extend(["Relevant traceback frames:", *frames[-8:]])
+    warnings = list(dict.fromkeys(line for line in lines if "nccl warn" in line.lower()))
+    cuda_errors = list(dict.fromkeys(line for line in lines if re.search(
+        r"Last error:|Cuda failure|CUDA_ERROR_SYSTEM_NOT_READY|system not yet initialized", line, re.IGNORECASE)))
+    evidence = list(dict.fromkeys([*warnings[-8:], *cuda_errors[-12:]]))
+    if evidence:
+        sections.extend(["Original NCCL/CUDA details:", *evidence])
     exceptions = list(dict.fromkeys(
         line for line in lines
         if EXCEPTION_LINE.match(line.strip()) and "ChildFailedError" not in line
@@ -39,7 +82,7 @@ def failure_details(path):
     else:
         label = "No Python exception found in the bounded log tail. Last recorded lines:"
         selected = [line for line in lines if "ChildFailedError" not in line][-25:]
-    return "\n".join([f"Qwen smoke log: {path}", label, *selected])
+    return "\n".join([f"{log_label}: {path}", *sections, label, *selected])
 
 
 def run_with_diagnostics(entrypoint):
@@ -47,8 +90,14 @@ def run_with_diagnostics(entrypoint):
         return entrypoint()
     except RuntimeError as exc:
         message = str(exc)
+        preflight = PREFLIGHT_FAILURE.fullmatch(message)
         if message.startswith(FAILURE_PREFIX):
             detail = failure_details(message[len(FAILURE_PREFIX):])
+        elif preflight:
+            detail = failure_details(preflight.group(1))
+        else:
+            raise
+        if detail:
             if hasattr(exc, "add_note"):
                 exc.add_note(detail)
             else:
