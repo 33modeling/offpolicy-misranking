@@ -1,38 +1,129 @@
-# Switch 신규 실험 아이디어
+# Switch 신규 실험: 목적·우선순위·실행 계획
 
 2026-10-06. [최근 논문 12편 조사](RECENT_PAPER_EXPERIMENT_SURVEY_2026-10-06.md)를 바탕으로 한 설계안.
-**아이디어 문서이며 구현·실행 완료 목록이 아니다. 실행 명령은 아직 없다.**
-N01-N08은 제안 식별자이며 기존 E01-E16이나 실행 scope를 대체하지 않는다.
+**현재 상태: 설계 정리, 코드 초안 작성 중. 검증 완료·GPU 실행 완료가 아니다.**
+사용자 요청에 따라 MD를 먼저 정리한다. N01-N08은 신규 실험 식별자이며
+기존 E01-E16과 진행 중인 `mechanism`을 대체하지 않는다.
 
-## 먼저 결정할 것
+핵심 질문은 세 가지다. 더 저렴한 gradient 선별과 비교해도 전환이 유용한가,
+선별 점수가 실제 학습 효과로 이어지는 관계가 단계별로 어떻게 달라지는가,
+결과가 특정 reference·후보·batch 규모에 의존하는가를 확인한다.
+성능과 비용을 함께 평가하며 SR-GC는 전환을 돕는 보조 지표로 유지한다.
 
-추가 실험의 목적은 실험 수를 늘리는 것이 아니라 다음 질문에 답하는 것이다.
+## 지금 할 것과 기다릴 것
 
-1. 더 저렴한 gradient 선별법과 비교해도 전환이 유용한가?
-2. 선별 점수의 초기 이득이 실제 학습 효과로 이어지고, 그 연결이 이후에 어떻게 달라지는가?
-3. 결과가 특정 reference, 후보 수, 학습 batch에만 의존하지 않는가?
+| 구분 | 실험 | 먼저 하는 이유·시작 조건 |
+| --- | --- | --- |
+| 신규 학습 우선 | **N01: 저비용 gradient 선별 대조** | 비싼 기존 scorer 때문에만 Switch가 유리한지 직접 확인 |
+| 기존 결과로 병행 | **N08: 문제별 개선·퇴행 분석** | 받은 평가 JSON으로 평균 뒤의 차이를 확인; 새 학습 불필요 |
+| 직접 한계 대응 | **N04: 실제 reference 교체**, **N05: 후보·batch 규모** | reference 구성과 작은 학습 규모에 대한 의존성을 각각 검증 |
+| 메커니즘 결과 수신 후 | **N02: 실제 gradient·optimizer 진단**, **N03: 점수 구간별 학습** | 진행 중인 E14-E16을 먼저 해석한 뒤, 기존 결과로 답하지 못하는 부분만 추가 |
+| 관측 차이 확인 후 | **N07: 구성 matched 대조** | 성공률·재노출 등의 차이가 실제로 있는 축을 통제 |
+| 다음 외부 비교군 | **N06: ARCUS 계열 대조** | gradient 없는 동적 curriculum과 비교; 구현 충실도 검증이 먼저 필요 |
 
-성능과 비용을 함께 본다. SR-GC는 전환을 돕는 보조 지표로 유지하며,
-상관계수 하나가 높다는 사실로 학습 성능을 대신 설명하지 않는다.
-MATH와 MBPP에서 같은 단계별 패턴이 나온다고 미리 가정하지 않는다.
+위 순서는 신규 작업 배정 기준이다. 기존 실험을 중단·재배정하지 않는다.
+`fixed200`은 채택 제외를 유지하고, `replicate`는 보조 결과로만 둔다.
 
-## 우선순위와 차별점
+## 실행 조건 한눈에 보기
 
-| 순서 | 아이디어 | 해결할 질문 | 기존 실험과 다른 점 | 추가 작업 |
-| --- | --- | --- | --- | --- |
-| 신규 우선 | N01. 저비용 gradient 선별과 비교 | 비싼 비교군 때문에만 Switch가 유리한가? | LESSER 계열 외부 비교군 | scorer 구현 + 실제 학습·시간 측정 |
-| 메커니즘 보강 | N02. 배치 gradient와 실제 optimizer update | cosine이 보여 주는 방향이 실제 업데이트에도 남는가? | 공통 gradient·Adam 이력 제거 진단 | checkpoint 기반 gradient/update 측정 |
-| 메커니즘 보강 | N03. 점수 구간별 실제 학습 효용 | 높은 점수가 좋은 학습 batch를 뜻하는가? | 상·중·하 구간의 학습 효과와 시간축 | 동일 상태의 짧은 분기 학습 |
-| 직접 한계 대응 | N04. 실제 reference 집합 교체 | 특정 reference 문제 구성에 의존하는가? | A/B 응답 재추출이 아닌 문제 집합 교체 | 고정 상태 진단, 이후 자체 경로 학습 |
-| 직접 범위 확장 | N05. 후보·선택 규모 분리 | 작은 후보/batch 조건만의 현상인가? | 후보 수와 실제 학습량을 별도 조작 | 필요한 조건만 선별해 학습 |
-| 다음 외부 대조 | N06. ARCUS 계열과 비교 | 비-gradient online curriculum과도 경쟁력이 있는가? | 고정 cache SR와 다른 동적 성공률 추정 | sampler 구현 + 전체 경로 학습 |
-| 관측 후 개입 | N07. 난도·다양성·노출량 통제 | selector 자체보다 고른 데이터 구성이 원인인가? | 분포를 맞춘 선택 대조 | 선택 이력 분석 + 조건부 짧은 학습 |
-| 병행 평가 | N08. 문제별 개선·퇴행과 해결 범위 | 평균 성능 뒤에 무엇이 개선·손상되는가? | 새 seed 반복이 아닌 오류 구조·coverage 평가 | 원시 평가 재분석, 필요 시 추가 평가 |
+공통 기준은 MATH·MBPP, 기존 OLMo/GRPO 환경, seeds 5-9, 응답 8개다.
+전체 경로 비교는 **t0에서 시작**하고, On-policy 재선별 간격은 25로 둔다.
+기본 후보 40개는 매 선별 시점 400개 pool에서 중복 없이 뽑는다. 선택한 학습 문제는 4개다.
+SR-GC는 **40 대 40, 실행당 reference 하나**를 유지한다.
 
-우선순위는 **핵심 주장에 대한 직접성, 기존 결과로 답할 수 없는 정도, 필요한 추가 계산**으로 정했다.
-N02와 N03은 진행 중인 메커니즘 결과를 먼저 받은 뒤 부족한 부분만 확장한다.
-N08은 필요한 원시 평가가 있으면 새 학습 없이 병행할 수 있다.
-이 표는 실행 queue를 바꾸거나 진행 중인 실험을 중단하라는 지시가 아니다.
+| ID | 비교·개입 | 고정할 조건 | 핵심 출력 |
+| --- | --- | --- | --- |
+| N01 | 기존 On-policy / 출력층 feature 선별 / Switch | scorer 이외 모델·학습·응답·평가 조건 | reward 곡선, 선별·학습 시간, 목표·GPU 예산별 성능 |
+| N02 | On-policy / SR / Random의 실제 학습 gradient·Adam update | 동일 checkpoint·optimizer, 학습 batch 크기 | raw·centered gradient, 실제·zero-gradient 차감 update, 평가 변화 |
+| N03 | 점수 4구간별 4문제 / top-4 / Random-4 | 동일 상태에서 분기, 분기 내 선택 문제 유지 | 학습 전 및 1·5·25 updates 후 reward |
+| N04 | reference 3집합, 각 집합으로 자체 Switch 경로 | reference 크기, 후보, 학습·평가 조건 | reference별 SR-GC·순위 변동, 전환 시점·reward·비용 |
+| N05 | 후보 40/80/160에서 4개 선택; 별도로 후보 40에서 4/8/16개 학습 | 한 번에 한 축만 변경 | reward, prompt·응답·token 노출, GPU 비용 |
+| N06 | ARCUS-adapted / Switch | 모델·pool·GRPO·평가·응답 cap | 생성량, 유효 group 비율, 성능·비용 |
+| N07 | gradient top-4 / Random / 성공률 또는 재노출 분포 matched Random | 동일 상태·batch 크기, 한 번에 한 구성 축 | matched 전후 학습 이득·구성·비용 |
+| N08 | 동일 seed·평가 문제의 방법별 결과 | 평가 ID·설정·실험 출처 | 문제별 증가·감소, 원시 응답이 있을 때만 pass@k |
+
+N02·N03·N04 고정 상태 진단·N07의 비교 시점은 0/100/400이다.
+**이 진단의 학습 경로와 본 실험의 275-update 경로는 다른 작업**이며, 비용도 합치지 않는다.
+기존 메커니즘 checkpoint를 검증 없이 가져오지 않는다. 현재 초안의 별도 `anchors` 작업은
+t0부터 400 updates까지 진행해 비교 상태를 만든다. 따라서 기존 결과 수신 전에 이 작업을
+새로 배정하지 않으며, 재사용 가능한 checkpoint가 있는지 먼저 확인한다.
+
+N04는 100문제 validation pool에서 기존 reference와 같은 크기의 서로 다른 세 집합을 만든다.
+현재 50문제 reference라면 세 집합을 모두 서로 겹치지 않게 만들 수 없으므로 실제 겹침을 기록한다.
+후보·최종 evaluation 문제를 reference에 섞지 않으며, 없는 topic 라벨을 만들어 맞추지 않는다.
+
+## 코드와 검증 상태
+
+| 항목 | 위치 또는 상태 |
+| --- | --- |
+| 저장소·브랜치 | 코드 저장소 `offpolicy-misranking`, `master`; 논문 저장소에는 추가하지 않음 |
+| 신규 코드 경로 | `srgc_research/` 및 `scripts/run_srgc_research.sh` 초안 |
+| 기존 코드 보호 | 기존 `srgc_rebuttal/` 및 E14-E16 실행 코드 수정 없음 |
+| 실행·상태·결과 수집 | 신규 경로에 작성 중; 기존 통합 dispatcher에 연결된 것으로 안내하지 않음 |
+| 자동 재개 검증 | 최초 CPU 테스트에서 재개 전후 평가 원시 기록 동일성 실패 확인; 수정·재검증 필요 |
+| GPU 검증·실험 | H100/NCCL 실행 검증 및 신규 실험 실행하지 않음 |
+| 배포 상태 | 신규 실행 코드는 아직 검증·커밋·push 완료 아님; **지금 실행하지 않음** |
+
+실행 가능으로 바꾸기 전에 확인할 항목은 실제 scorer 수식, optimizer 상태 복구,
+분산 결과 일치, 노드 중단 후 자동 재개, 비용 합계, `status/results`와 원본 JSON 수집이다.
+이 문서를 먼저 게시했다고 코드까지 배포된 것으로 기록하지 않는다.
+
+## 명령 형식
+
+**아래는 구현 검증 후 사용할 예정인 명령이다. 현재 실행 승인 목록이 아니다.**
+저장소 루트에서 `sh`로 실행하며, 별도 Python 옵션이나 `resume` 명령을 요구하지 않는다.
+
+| 실험 | 실행 명령 형식 |
+| --- | --- |
+| N01 | `sh scripts/run_srgc_research.sh math n01 run` |
+| N02 | `sh scripts/run_srgc_research.sh math n02 run` |
+| N03 | `sh scripts/run_srgc_research.sh math n03 run` |
+| N04 | `sh scripts/run_srgc_research.sh math n04 run` |
+| N05 | `sh scripts/run_srgc_research.sh math n05 run` |
+| N06 | `sh scripts/run_srgc_research.sh math n06 run` |
+| N07 | `sh scripts/run_srgc_research.sh math n07 run` |
+| N08 | `sh scripts/run_srgc_research.sh math n08 results /path/results.json` |
+
+MATH는 `math`, MBPP는 `mbpp`를 쓴다. N01-N07은 `all`로 양쪽 배정도 계획하되,
+양쪽 환경이 다른 경우 interpreter 선택까지 검증한 뒤 안내한다. N08은 데이터셋별 JSON을 각각 분석한다.
+
+상태·결과 명령은 해당 ID를 유지하고 마지막 인자만 바꾼다.
+
+```sh
+sh scripts/run_srgc_research.sh math n01 status
+sh scripts/run_srgc_research.sh math n01 results
+sh scripts/run_srgc_research.sh mbpp n01 results
+```
+
+빈 4-H100 노드에서 선택한 scope 하나만 실행하며, 여러 노드에서는 같은 명령으로
+seed·조건을 중복 없이 배정하도록 한다. 실험 전체를 무조건 동시에 실행하는 기본값은 두지 않는다.
+N05는 조건 15개/seed라 비용이 크다. 다른 scope와 같은 크기의 작업으로 안내하지 않는다.
+노드 권장 수·예상 시간은 파일럿 계측 전 확정하지 않는다.
+
+## 결과와 비용 기록
+
+신규 작업의 기본 저장 루트는 `$SRGC_STORAGE_ROOT/literature-v1`이다.
+`SRGC_STORAGE_ROOT` 미지정 시 기존 그룹 볼륨의 `$OM_WORK/srgc-rebuttal` 아래를 사용한다.
+user volume으로 대체하지 않으며 기존 결과 디렉터리에 덮어쓰지 않는다.
+
+| 산출물 | 신규 루트 아래 위치 |
+| --- | --- |
+| 실험 출처·고정 입력 | `<dataset>/seed-<N>/manifest.json`, `inputs.json` |
+| 최초 SR 캐시 | `<dataset>/seed-<N>/sr-cache.json` |
+| 작업 결과·전체 원시 기록 | `<dataset>/seed-<N>/<condition>/endpoint.json` |
+| 중단 복구 지점 | `<dataset>/seed-<N>/<condition>/state-latest.pt` |
+| 세부 비용·실행 로그 | `<dataset>/seed-<N>/<condition>/cost-receipts/`, `task.log` |
+| 수집 JSON | `exports/<dataset>-<scope>-results.json` |
+| N08 분석 | 입력 JSON 옆 `<입력파일명>-n08.json` |
+
+`results` 출력에는 저장 경로가 보여야 하며 수집 JSON 안에 원본 결과를 포함한다.
+미완료·오류·비용 누락은 완료 결과와 구분한다.
+
+비용은 **최초 SR 캐시 / 선별용 후보·reference 생성 / gradient·feature 계산 /
+정렬 / 학습 / 평가 / 저장 I/O**로 나눈다. SR 캐시 생성 비용과 점수 정렬 비용을 섞지 않는다.
+최초 캐시는 seed·데이터셋별 별도 신규 측정 후 재사용하며, 기존 실행의 cache를 삭제·재생성하지 않는다.
+Cold-start 비교에는 최초 캐시를 한 번 넣고, 재사용 비교에서는 이미 준비된 비용을 분리해 보여 준다.
+연구용 반복 reference·centering·optimizer 진단 비용을 실제 Switch의 온라인 비용에 넣지 않는다.
 
 ## N01. Gradient 선별을 싸게 해도 전환할 이유가 남는가?
 
@@ -269,8 +360,7 @@ Switch의 학습 단계별 원인을 이 분석만으로 입증하지는 않는�
 - Qwen 모델 확장, matched cache refresh, 재전환 등은 [기존 실행 안내](LIMITATION_EXPERIMENTS_KO.md)에 있다.
   N01-N08과 같은 이름이나 완료 상태를 붙이지 않는다.
 - Fixed200 채택 제외와 동일-prefix replicate의 보조 위치는 유지한다. 원본 결과는 삭제하지 않는다.
-- 이번 작업은 이 아이디어 문서와 안내 링크만 추가한다. 코드·환경·queue·cache·checkpoint,
-  V6/V7 원고·PDF·웹 게시본은 수정하지 않는다.
-- 구현을 시작할 때는 별도 실험 식별자와 결과 경로를 사용하고 `run/status/results`,
-  자동 재개, 비용 누락 검사와 기존 runtime 호환 검증을 함께 갖춘다.
-  아직 없는 실행 명령을 사용 가능한 것처럼 안내하지 않는다.
+- 신규 코드는 별도 실험 식별자·결과 경로로 작성 중이다. 기존 환경·queue·cache·checkpoint와
+  V6/V7 원고·PDF·웹 게시본은 변경하지 않는다.
+- `run/status/results`, 자동 재개, 비용 누락 검사와 기존 runtime 호환 검증을 마친 뒤에만
+  실행 가능한 코드로 게시한다. 현재 검증 상태는 위 표가 기준이다.
