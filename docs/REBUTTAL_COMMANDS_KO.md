@@ -3,6 +3,10 @@
 코드 저장소 `master` 기준. [실험 목록·우선순위](LIMITATION_EXPERIMENTS_KO.md) · [결과 기록](EXPERIMENT_RESULTS_LEDGER_KO.md).
 명령은 코드 저장소 루트에서 실행한다. 실행 중인 checkout에는 pull하지 않는다.
 
+**2026-10-06 결정:** fixed200은 비교 분석·논문 반영에서 제외한다. 코드·원본 결과는 보존한다.
+메커니즘은 저자 결과 전달 대기다. 받은 replicate 결과는 MATH seed 5 / 반복 1의 SR 37.9583%만 있으며,
+Switch 짝과 MBPP replicate 결과는 없다. 결과 수집에 포함된 것과 완성된 비교 쌍은 구분한다.
+
 ## 통합 명령
 
 형식은 `sh scripts/run_srgc_experiments.sh 데이터셋 실험 [run|status|results]`다.
@@ -17,6 +21,7 @@ sh scripts/run_srgc_experiments.sh all mechanism results
 
 실험 이름은 `mechanism`, `qwen`, `timing`, `rules`, `support`, `pool`, `switch_repeat`,
 `direction`, `fixed200`, `replicate`, `candidates`, `sr_hold`, `p0`다.
+이는 구현된 명령 목록이며, 채택에서 제외한 `fixed200`의 실행 권고가 아니다.
 `all replicate results`는 MATH·MBPP를 각각 수집한다. 한쪽 오류가 다른 쪽 수집을 막지 않는다.
 실행 환경·모델·seed·캐시 경로·재개는 기존 검증된 runner를 따른다.
 
@@ -38,6 +43,7 @@ sh scripts/run_srgc_sr_refresh.sh mbpp results
 
 통합 JSON의 `source_results`에는 문항별 보상·비용·출처를 포함한 원본 내용이 들어 있다.
 fixed200와 replicate-1/2를 포함해 검증된 추가 실험 결과를 수집하며 원본과 이전 수집본은 보존한다.
+fixed200이 수집되어도 비교 분석·논문에 채택하지 않는다.
 오류 파일은 제외하고 `errors`에 기록한다. 누락은 0으로 채우지 않는다.
 `--json`도 파일을 저장하며 stdout에는 JSON, stderr에는 저장 경로를 출력한다.
 
@@ -60,7 +66,7 @@ MATH를 먼저 배정한다. MBPP는 `math`를 `mbpp`로, 양쪽 자동 배정�
 | 순서 | 실험 | 실행 명령 |
 | --- | --- | --- |
 | 1 | 한 backbone 한계: Qwen 재현 | `sh scripts/run_srgc_qwen35.sh math` |
-| 2 | 공통 prefix의 전환 시점 | `sh scripts/run_srgc_switch_validation.sh math timing` |
+| 2 | 공통 prefix의 전환 시점 | 기존 `timing`은 fixed200을 포함하므로 신규 통합 실행 안내에서 제외 |
 | 2 | temporal confirmation 규칙 | `sh scripts/run_srgc_switch_validation.sh math rules` |
 | 3 | SR 캐시 갱신: 유지·동점 일치 대조 | `sh scripts/run_srgc_support.sh math` |
 | 3 | SR 전체 pool 갱신 | `sh scripts/run_srgc_sr_refresh.sh math pool` |
@@ -116,10 +122,10 @@ P0 비용 조회는 `sh scripts/run_srgc.sh all costs`다.
 | 실험 | 데이터셋 하나 | MATH + MBPP |
 | --- | ---: | ---: |
 | 원인 진단 | 최대 5노드 | 최대 10노드 |
-| fixed200 | 최대 5노드 | 최대 10노드 |
+| fixed200 | 채택 제외 | 신규 배정 안내 제외 |
 | 보조 독립 반복 | 최대 20노드 | 최대 40노드 |
 | support | 최대 15노드 | 최대 30노드 |
-| 고정 전환 5시점 | 최대 25노드 | 최대 50노드 |
+| 기존 고정 전환 5시점 구현(fixed200 포함) | 최대 25노드 | 최대 50노드 |
 | 확인 규칙 2조건 | 최대 10노드 | 최대 20노드 |
 | 전체 pool 갱신 | 최대 5노드 | 최대 10노드 |
 | 재전환 | 최대 5노드 | 최대 10노드 |
@@ -128,7 +134,8 @@ P0 비용 조회는 `sh scripts/run_srgc.sh all costs`다.
 | Qwen 네 arm 학습 | 최대 20노드 | 최대 40노드 |
 
 한 작업은 4 H100을 사용한다. 표는 모든 작업이 준비되고 미완료일 때의 독립 배정 상한이며,
-권장 노드 수나 현재 남은 수가 아니다. fixed200은 고정 전환 grid에서도 재사용한다.
+권장 노드 수나 현재 남은 수가 아니다. 5시점 수치는 fixed200을 포함한 기존 구현의 규모다.
+fixed200은 채택에서 제외했으며, 진행 중인 작업이나 자동 배정 코드는 이번 기록에서 수정하지 않는다.
 원인 진단은 한 seed 안의 시점·branch를 순차 실행한다. seed당 물리적 update 850회는
 공통 경로 400회와 진단 branch 450회의 합이며, 단일 정책의 850-step 학습이 아니다.
 

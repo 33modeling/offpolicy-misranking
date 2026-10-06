@@ -4,18 +4,28 @@
 **V6에 적힌 한계별 대응 실험과, 별도로 요청한 메커니즘 실험을 구분한다. 동일-prefix replicate는 보조다.**
 코드는 `master`에 있으며 아래 명령은 코드 저장소 루트에서 실행한다.
 
+## 2026-10-06 결정과 결과 수신 상태
+
+- **fixed200 제외:** 200 updates까지 On-policy, 201부터 SR로 바꾸는 고정 전환 대조는 비교 분석·논문 반영 대상에서 제외한다. 온라인 `switch` 결과는 유지한다.
+- **보존:** fixed200 원본 결과·코드·진행 중인 작업은 삭제하거나 변경하지 않는다. 기존 수집본에 포함되어 있어도 채택한 결과로 세지 않는다.
+- **메커니즘 결과 대기:** 저자가 결과가 나오면 전달하기로 했다. 전달받은 뒤 E14-E16의 단계별 보상 증가·대조 효과·비용을 분석한다. 결과를 받기 전에는 완료나 원인 규명으로 기록하지 않는다.
+- **replicate 일부 수신:** 받은 `results.json`에는 MATH seed 5 / replicate 1의 SR **37.9583%**만 있다. 짝인 Switch 결과는 없고 seed 6 / replicate 1은 설정 정보만 있다. `results_mbpp.json`에는 replicate 결과가 없다. 현재 수집본의 완성된 SR/Switch 비교 쌍은 **0개**다.
+
+수신본 식별: MATH `7718fdcf0f22475d…`, MBPP `2c4bc214b5af506e…` (SHA-256).
+이는 전달받은 파일의 상태이며 원격 노드의 현재 완료 여부를 확인한 것은 아니다.
+
 ## 우선순위
 
 | 순서 | V6에 명시된 한계 | 대응 실험 | 구현·진행 구분 |
 | --- | --- | --- | --- |
 | 완료 확인 | MATH·학습 seed 범위 제한; question bootstrap은 training-seed 변동을 측정하지 않음 | E01·E02: MATH·MBPP seeds 5-9 네 arm | P0 40개 완료, 결과·비용 검증; 재실행하지 않음 |
 | 신규 1 | 온라인 전환을 한 backbone에서만 평가 | E08: Qwen3.5-9B의 네 arm | 구현됨, 실제 진행은 status 확인 |
-| 2 | 공통 prefix의 중간 전환 시점·temporal confirmation 비교 부족 | E04·E11: 고정 전환 5시점; E12: 단일/연속 음수 규칙 | 구현됨; fixed200 재사용, 규칙 대조도 직접 대응 실험 |
+| 2 | 공통 prefix의 중간 전환 시점·temporal confirmation 비교 부족 | E11: 고정 전환 시점; E12: 단일/연속 음수 규칙 | fixed200 채택 제외; 나머지 조건·규칙 대조는 유지 |
 | 3 | SR-cache refresh 미검증 | E05·E07·E10: 기존 cache vs matched 후보 갱신·pool 갱신 | 구현됨; 동점·유지 간격을 맞춘 support 대조 우선 |
 | 4 | 학습 중 재전환이 필요할 수 있으나 선별 비용 증가 | E06: 단방향 Switch vs `switch_repeat` | 구현됨; 재전환 횟수·성능·추가 비용 비교 |
 | 5 | local signal의 reference 민감성·불확실성; 장기 보상 예측 한계 | E09 방향 정보 대조, 기존 A/B 진단 검토 | 부분 대응만 구현됨; 직접 reference 변경·불확실성 규칙은 아래 미구현 항목 |
 | 보조 | 같은 출발점 이후 학습 변동을 더 자세히 확인 | E03: 동일-prefix SR/Switch replicate | 기존 결과 수집, 신규 배정은 직접 대응 실험 이후 |
-| 별도 요청·병행 | 초반 On-policy·후반 SR의 원인을 추가 설명 | E14-E16: 메커니즘 개입 | 저자 요청 실험; MATH 5노드, MBPP 5노드까지 독립 배정 |
+| 별도 요청·병행 | 초반 On-policy·후반 SR의 원인을 추가 설명 | E14-E16: 메커니즘 개입 | 저자 결과 전달 대기; 기존 실행은 유지 |
 
 기존 결과 수집은 GPU 재실행 없이 먼저 할 수 있다. **결과 수집과 replicate 신규 실행은 별개**다.
 과거 문서의 P0/P1/P2는 운영용 분류였으며 V6의 실험명이나 중요도 등급이 아니다. 여기서는 V6 항목과 실험 ID로 구분한다.
@@ -67,25 +77,28 @@ sh scripts/run_srgc_qwen35.sh all results
 **왜 필요한가:** Switch가 계속 On-policy를 쓰는 것보다 좋다는 결과만으로는 SR-GC가 필요한지
 알 수 없다. 아무 고정 시점에 SR로 바꿔도 비슷한지, 상태를 보고 고른 시점이 더 유리한지 비교해야 한다.
 
-**비교:** E11은 fixed50/100/150/200/250와 기존 Switch를 비교한다.
-fixedN은 update N까지 On-policy, N+1부터 SR이다. step-25 prefix에서 total step 275까지 이어가며,
-기존 fixed200 결과는 검증 후 재사용한다. 전체 50개, 최대 25노드/데이터셋이다.
+**비교:** 기존 E11 구현은 fixed50/100/150/200/250와 온라인 Switch를 비교한다.
+fixedN은 update N까지 On-policy, N+1부터 SR이다. step-25 prefix에서 total step 275까지 이어간다.
+**현재 채택 대상에서는 fixed200을 제외한다.** 나머지 시점 조건은 변경하지 않는다.
+전체 50개, 최대 25노드/데이터셋은 fixed200을 포함한 기존 구현의 규모이지 현재 채택 수가 아니다.
 
-**실행·상태·결과**
+**상태·결과 조회**
 
 ```sh
-sh scripts/run_srgc_switch_validation.sh math timing
 sh scripts/run_srgc_sr_refresh.sh all status timing
 sh scripts/run_srgc_switch_validation.sh all results
 ```
 
 `timing`은 고정 시점만 배정한다. 마지막 인자를 생략하면 규칙 대조를 포함한 70개 queue를 실행한다. 위 status는 고정 시점만,
 results는 규칙 대조를 포함한 전체 validation 결과를 보고한다.
+코드는 변경하지 않았으므로 기존 `timing` 통합 실행은 여전히 fixed200을 배정할 수 있다.
+제외 결정과 맞지 않는 통합 실행을 신규 배정 명령으로 안내하지 않는다.
 
 **볼 결과:** 각 고정 시점 대비 Switch의 seed별 보상·비용·실제 선별 횟수.
 E13은 전체 grid로 균등 시점 기대값과 LOSO를 함께 계산한다. LOSO는 나머지 네 seed에서
 시점을 정해 제외한 seed에 적용하므로 평가할 seed에 맞춘 사후 최적 시점 선택을 피한다.
-추가 GPU 작업은 없으며 전체 grid가 검증되어야 집계한다.
+추가 GPU 작업은 없으며 전체 grid가 검증되어야 집계한다. 기존 E13은 fixed200을 포함한
+5시점 집계를 전제로 하므로, 현재 제외 결정을 반영하지 않은 집계는 논문 근거로 사용하지 않는다.
 [상세 설계](SWITCH_ADDITIONAL_EXPERIMENTS_2026-10-06.md) ·
 [고정 전환 코드](../scripts/srgc_switch_fixed.py) · [분석 코드](../scripts/srgc_switch_validation_report.py).
 
@@ -96,7 +109,8 @@ E13은 전체 grid로 균등 시점 기대값과 LOSO를 함께 계산한다. LO
 
 **비교:** E12는 `switch_single`, `switch_consecutive`와 기존 Switch다.
 각 방법의 자기 학습 경로에서 단일 reference와 기존 40 대 40으로 점검한다.
-총 20개다. 고정 시점과 합하면 70개이며 기존 fixed200 10개를 포함한다. 점검 간격은 25로 유지하므로 간격 최적화 실험은 아니다.
+총 20개다. 기존 통합 queue의 70개에는 채택에서 제외한 fixed200 10개도 포함되어 있다.
+점검 간격은 25로 유지하므로 간격 최적화 실험은 아니다.
 
 ```sh
 sh scripts/run_srgc_switch_validation.sh math rules
@@ -211,8 +225,11 @@ replicate는 같은 prefix 이후 무작위성만 바꾸므로 전체 학습 see
 기존 결과는 먼저 수집하되 replicate 신규 GPU 배정은 위 직접 대응 실험 이후로 둔다.
 
 **비교:** E03은 동일 step-25 prefix에서 SR/Switch를 독립 sampling stream k=1,2로 반복한다.
-E04는 fixed200과 기존 Switch를 비교한다. 두 데이터셋 합계 40 + 10개다.
-fixed200은 2절의 전환 시점 실험에 포함해 재사용한다.
+같은 초기 모델·optimizer 상태, 데이터·캐시·평가 조건에서 이후 후보 추출과 응답 생성의 난수만 바꾼다.
+SR·온라인 Switch의 차이가 이후 샘플링에 따라 얼마나 변하는지 확인하는 실험이며 fixed200 대조가 아니다.
+온라인 Switch의 규칙은 유지하지만, 학습 경로가 달라지면 실제 전환 시점도 달라질 수 있다.
+E03의 설계 규모는 두 데이터셋 합계 40개다. E04 fixed200 10개는 과거 구현 규모로만 남기며
+비교 분석·논문 반영에서 제외한다. 현재 replicate 수신 상태는 위 결정 기록과 같다.
 
 **먼저 결과 수집**
 
@@ -232,18 +249,19 @@ sh scripts/run_srgc_sr_refresh.sh all status replicate
 sh scripts/run_srgc_sr_refresh.sh all status switch_fixed200
 ```
 
-**선택 실행:** fixed200은 2절의 직접 대응 실험이다. replicate는 보조 실험을 배정할 때만 실행한다.
+**선택 실행:** replicate는 보조 실험을 배정할 때만 실행한다. fixed200은 신규 실행 안내에서 제외한다.
 
 ```sh
 sh scripts/run_srgc_sr_refresh.sh math replicate
-sh scripts/run_srgc_sr_refresh.sh math switch_fixed200
 ```
 
 **볼 결과:** seed별 SR/Switch 보상 차이, 반복별 차이의 일관성, 실제 전환 시점과 비용.
-노드 상한은 반복 20개/데이터셋, fixed200 5개/데이터셋이다.
+replicate의 노드 상한은 반복 20개/데이터셋이다. 수신된 SR 한 개를 완성된 비교 쌍으로 세지 않는다.
 [실행 코드](../scripts/run_srgc_sr_refresh.sh) · [자동 배정](../scripts/srgc_replicate_worker.py).
 
 ## 7. 별도 요청: 초반·후반 메커니즘
+
+**현재 상태:** 저자 결과 전달 대기. 결과가 전달되면 분석하며, 이 기록 때문에 기존 작업을 재실행하지 않는다.
 
 **위치:** 저자가 별도로 요청한 실험이다. V6 limitation 대응과 구분해 병행하며,
 다른 실험이 끝날 때까지 기다릴 필요가 없다. 이미 진행 중인 작업도 그대로 유지한다.
