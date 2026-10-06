@@ -3,7 +3,7 @@
 코드 저장소 `master` 기준. [실험 목록·우선순위](LIMITATION_EXPERIMENTS_KO.md) · [결과 기록](EXPERIMENT_RESULTS_LEDGER_KO.md).
 명령은 코드 저장소 루트에서 실행한다. 실행 중인 checkout에는 pull하지 않는다.
 
-## 1. 기존 P1 결과 수집
+## 1. 기존 추가 실험 결과 수집
 
 ```sh
 sh scripts/run_srgc_sr_refresh.sh math results
@@ -24,19 +24,16 @@ fixed200와 replicate-1/2를 포함해 검증된 추가 실험 결과를 수집�
 오류 파일은 제외하고 `errors`에 기록한다. 누락은 0으로 채우지 않는다.
 `--json`도 파일을 저장하며 stdout에는 JSON, stderr에는 저장 경로를 출력한다.
 
-**P1 상태 확인**
+**독립 반복·fixed200 상태 확인**
 
 ```sh
 sh scripts/run_srgc_sr_refresh.sh all status switch_fixed200
 sh scripts/run_srgc_sr_refresh.sh all status replicate
 ```
 
-미완료분을 이어갈 때는 빈 노드마다 아래에서 **한 명령만** 실행한다.
-
-```sh
-sh scripts/run_srgc_sr_refresh.sh all switch_fixed200
-sh scripts/run_srgc_sr_refresh.sh all replicate
-```
+결과 수집을 이유로 replicate를 새로 배정하지 않는다. 동일-prefix 반복은 보조 실험이다.
+신규 배정 기준은 [V6 Limitations 대응표](LIMITATION_EXPERIMENTS_KO.md#우선순위)다.
+과거 P1은 운영용 묶음이며 V6의 실험명이나 우선순위가 아니다.
 
 ## 2. 신규 실험 실행
 
@@ -45,14 +42,23 @@ MATH를 먼저 배정한다. MBPP는 `math`를 `mbpp`로, 양쪽 자동 배정�
 
 | 순서 | 실험 | 실행 명령 |
 | --- | --- | --- |
-| 1 | 초반 On-policy·후반 SR 원인 진단 | `sh scripts/run_srgc_mechanism.sh math` |
-| 2 | 선별 기준·배치 유지·보상 갱신 대조 | `sh scripts/run_srgc_support.sh math` |
-| 3 | 고정 전환 시점 비교 | `sh scripts/run_srgc_switch_validation.sh math timing` |
-| 4 | Qwen 모델 일반화 | `sh scripts/run_srgc_qwen35.sh math` |
+| 1 | 한 backbone 한계: Qwen 재현 | `sh scripts/run_srgc_qwen35.sh math` |
+| 2 | 공통 prefix의 전환 시점 | `sh scripts/run_srgc_switch_validation.sh math timing` |
+| 2 | temporal confirmation 규칙 | `sh scripts/run_srgc_switch_validation.sh math rules` |
+| 3 | SR 캐시 갱신: 유지·동점 일치 대조 | `sh scripts/run_srgc_support.sh math` |
+| 3 | SR 전체 pool 갱신 | `sh scripts/run_srgc_sr_refresh.sh math pool` |
+| 4 | 재전환과 추가 선별 비용 | `sh scripts/run_srgc_sr_refresh.sh math switch_repeat` |
+| 5 | reference 방향 정보의 부분 대조 | `sh scripts/run_srgc_sr_refresh.sh math direction` |
+| 보조 | 같은 prefix 이후 학습 반복 | `sh scripts/run_srgc_sr_refresh.sh math replicate` |
+| 별도 요청·병행 | 초반·후반 메커니즘 | `sh scripts/run_srgc_mechanism.sh math` |
 
 고정 전환 명령의 `timing`을 생략하면 규칙 대조까지 포함한 70개 queue가 실행된다.
-`switch_single`·`switch_consecutive`와 추가 RLOO의 신규 배정은 보류한다.
-기존 queue와 진행 중인 작업은 유지한다.
+규칙 대조는 V6의 confirmation 한계에 대응한다. 점검 간격 최적화는 포함하지 않는다.
+추가 RLOO는 배정하지 않는다. 기존 queue와 진행 중인 작업은 유지한다.
+
+메커니즘은 요청된 실험이며 V6 대응 실험 이후로 미루지 않는다. MATH 최대 5노드,
+MBPP 최대 5노드, 양쪽 최대 10노드다. 양쪽을 자동 배정하려면 빈 노드마다
+`sh scripts/run_srgc_mechanism.sh all`을 한 번 실행한다.
 
 ## 3. 상태와 결과 조회
 
@@ -61,6 +67,10 @@ MATH를 먼저 배정한다. MBPP는 `math`를 `mbpp`로, 양쪽 자동 배정�
 | 원인 진단 | `sh scripts/run_srgc_mechanism.sh all status` | `sh scripts/run_srgc_mechanism.sh all results` |
 | support | `sh scripts/run_srgc_support.sh all status` | `sh scripts/run_srgc_support.sh all results` |
 | 고정 전환 | `sh scripts/run_srgc_sr_refresh.sh all status timing` | `sh scripts/run_srgc_switch_validation.sh all results` |
+| 확인 규칙 | `sh scripts/run_srgc_sr_refresh.sh all status rules` | `sh scripts/run_srgc_switch_validation.sh all results` |
+| 전체 pool 갱신 | `sh scripts/run_srgc_sr_refresh.sh all status pool` | 1절의 데이터셋별 `results` |
+| 재전환 | `sh scripts/run_srgc_sr_refresh.sh all status switch_repeat` | 1절의 데이터셋별 `results` |
+| 방향 정보 대조 | `sh scripts/run_srgc_sr_refresh.sh all status direction` | 1절의 데이터셋별 `results` |
 | Qwen | `sh scripts/run_srgc_qwen35.sh all status` | `sh scripts/run_srgc_qwen35.sh all results` |
 | 완료한 P0 | `sh scripts/run_srgc.sh all status` | `sh scripts/run_srgc.sh all results` |
 
@@ -79,10 +89,14 @@ P0 비용 조회는 `sh scripts/run_srgc.sh all costs`다.
 | 실험 | 데이터셋 하나 | MATH + MBPP |
 | --- | ---: | ---: |
 | 원인 진단 | 최대 5노드 | 최대 10노드 |
-| P1 fixed200 | 최대 5노드 | 최대 10노드 |
-| P1 독립 반복 | 최대 20노드 | 최대 40노드 |
+| fixed200 | 최대 5노드 | 최대 10노드 |
+| 보조 독립 반복 | 최대 20노드 | 최대 40노드 |
 | support | 최대 15노드 | 최대 30노드 |
 | 고정 전환 5시점 | 최대 25노드 | 최대 50노드 |
+| 확인 규칙 2조건 | 최대 10노드 | 최대 20노드 |
+| 전체 pool 갱신 | 최대 5노드 | 최대 10노드 |
+| 재전환 | 최대 5노드 | 최대 10노드 |
+| 방향 정보 3조건 | 최대 15노드 | 최대 30노드 |
 | Qwen cache/prefix 준비 | 최대 5노드 | 최대 10노드 |
 | Qwen 네 arm 학습 | 최대 20노드 | 최대 40노드 |
 

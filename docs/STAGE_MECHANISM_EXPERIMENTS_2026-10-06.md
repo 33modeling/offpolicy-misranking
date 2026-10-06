@@ -20,8 +20,9 @@ RLOO를 추가하는 실험이 아니다. GRPO를 유지하고 선별 정보만 
 
 ## 실행 순서
 
-이 실험은 신규 GPU 1순위이며 MATH부터 배정한다.
-전체 순서는 [실험 목록](LIMITATION_EXPERIMENTS_KO.md#우선순위),
+이 실험은 저자가 별도로 요청한 메커니즘 검증이다. V6 limitation 대응과 병행 가능하며
+임의로 후순위로 내리거나 기존 작업을 중단하지 않는다. MATH 최대 5노드, MBPP 최대 5노드다.
+V6 대응과의 구분은 [실험 목록](LIMITATION_EXPERIMENTS_KO.md#우선순위),
 명령과 노드 배정은 [실행 안내](REBUTTAL_COMMANDS_KO.md)를 따른다.
 아래 명령은 mechanism queue만 배정한다. 기존 P1·support와 진행 중인 작업은 유지한다.
 
