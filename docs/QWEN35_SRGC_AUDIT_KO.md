@@ -1,5 +1,32 @@
 # Qwen3.5-9B 실행 코드 추가 감사
 
+## 2026-10-06 시작 검사 부하 수정
+
+- 이전 Qwen 검사는 평가용 입력까지 포함해 가장 긴 prompt를 고르고 합성 응답
+  8개에 각각 2,048토큰 역전파를 강제했다. OLMo의 작은 NCCL 검사 뒤에 추가된
+  이 경로는 실제 작업에 필요하지 않은 최장 평가 입력의 역전파까지 시작 조건으로
+  요구했다. 아래 9월의 최장 입력 검사 기록은 현재 동작이 아닌 과거 기록이다.
+- 일반 shell 시작의 Qwen smoke만 `srgc_qwen35_smoke.py`로 교체했다.
+  현재 plan 첫 seed의 학습 후보 중 짧은 입력 하나를 사용하며, 실제 생성과
+  합성 역전파 응답은 각각 최대/고정 32토큰이다. 응답 수 8개와 동일한 모델,
+  adapter, scoring/GRPO backend를 유지하고, startup object collective는
+  모델 로딩 전에 수행한다. 실패를 성공으로 처리하거나 검사를 생략하지 않는다.
+- 평가·validation 및 다른 dataset/seed의 입력으로 부하를 늘리지 않는다.
+  실제 실험의 최대 응답 길이 2,048토큰과 입력·학습 설정은 그대로다.
+  짧은 시작 검사는 최대 길이의 GPU 메모리 용량을 보증하지 않는다.
+- `init`, `startup_collective`, `model_load`, `rollout`, `scoring`, `update`,
+  `final_barrier`를 rank별 로그에 남긴다. 새 entry는 smoke 외의 stage를 거부하며
+  cache/train 명령은 수정하지 않는다. 아래 CUDA 802 복구는 새 검사에 적용된다.
+- adapter/engine hash는 아래 기록과 같으며 기존 plan·queue·checkpoint를
+  초기화하지 않는다. 원격 GPU 작업을 시작하거나 중단하지 않았다.
+
+원격 CUDA 802의 직접 원인이 이 부하였다고 확정한 수정은 아니다.
+실제 H100에서 새 검사가 통과하는지는 이 CPU 환경에서 검증하지 못했다.
+검증: Qwen/NCCL 회귀 검사 197개 및 22개 subtest와 새 workload 검사 7개 통과.
+GPU 검사 3개는 skip이며, 기존 multiprocessing fork 경고 5건이 있었다.
+모의 smoke에서 입력 분리·32토큰 제한·단계 순서·실패 전파를 확인했고,
+실제 학습 및 cache 명령은 기존 entry를 유지하는지 별도로 검사했다.
+
 ## 2026-10-06 Qwen NCCL 802 복구
 
 - 작은 NCCL 검사 뒤 실제 Qwen 생성·역전파 검사에서 CUDA 802가 발생하면

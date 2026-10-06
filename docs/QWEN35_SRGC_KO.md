@@ -185,9 +185,16 @@ OOM·다른 CUDA 오류·사용자 중단에는 이 복구를 적용하지 않�
 역전파·GRPO update**를 검사한다. 이 검사의 보상은 backward 확인용 합성
 보상이며 실험 cache/결과에 기록하지 않는다. 실패하면 cache 학습을 시작하지
 않고 `.queue/admission/.../qwen-smoke.log`를 확인하도록 중단한다.
-짧은 예제만 검사하지 않고 준비된 두 데이터셋에서 가장 긴 prompt와
-2,048-token 합성 응답으로 역전파를 검사한다. rank별 peak allocated/reserved
-메모리를 로그에 남기고, 성공·실패한 admission의 GPU 시간을 별도 JSON에 보존한다.
+2026-10-06부터 시작 검사는 현재 plan 첫 seed의 학습 후보 중 짧은 입력 하나로
+제한한다. 평가·validation 문제나 다른 데이터셋의 최장 입력을 가져오지 않는다.
+실제 생성은 응답 8개·최대 32토큰, 합성 역전파 응답도 32토큰이다.
+**2,048토큰 역전파를 시작 조건으로 강제하지 않는다.** 실제 학습의 응답 수와
+최대 길이 2,048토큰은 그대로이며, 짧은 검사의 통과가 그 최대 길이의 메모리
+용량을 보증하지는 않는다. 모델 로딩 전 object collective 순서도 학습과 맞췄다.
+`[qwen-smoke]` 단계 로그와 rank별 peak allocated/reserved 메모리를 남기고,
+성공·실패한 admission의 GPU 시간을 별도 JSON에 보존한다.
+이 변경은 별도 시작 검사 entry에만 적용하므로 기존 plan·queue를 초기화하거나
+adapter/engine hash를 바꾸지 않는다. 기존 shell 명령에 자동 적용된다.
 이미 완료된 queue를 다시 조회·실행할 때 모델 admission을 반복하지 않는다.
 
 학습은 매 update 저장하고 공통 prefix의 모델/optimizer를 네 arm이 공유한다.

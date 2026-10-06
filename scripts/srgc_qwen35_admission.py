@@ -10,6 +10,8 @@ import sys
 
 FAILURE_PREFIX = "Qwen generation/backward admission failed: "
 LOG_WINDOW_BYTES = 256 * 1024
+RANK_ENTRY = Path(__file__).resolve().with_name("srgc_qwen35_rank.py")
+SMOKE_ENTRY = RANK_ENTRY.with_name("srgc_qwen35_smoke.py")
 
 
 def _fabric_failure(root, error):
@@ -111,6 +113,8 @@ def with_smoke_recovery(original_admit_with_smoke):
 
         def diagnostic_child(command, log_path, child_environment, **child_kwargs):
             if any(flag == "--stage" and value == "smoke" for flag, value in zip(command, command[1:])):
+                # Replace only the operational probe, not the pinned training entry.
+                command = [str(SMOKE_ENTRY) if str(arg) == str(RANK_ENTRY) else arg for arg in command]
                 child_environment = dict(child_environment)
                 child_environment.setdefault("NCCL_DEBUG", "INFO")
                 child_environment.setdefault("NCCL_DEBUG_SUBSYS", "ALL")

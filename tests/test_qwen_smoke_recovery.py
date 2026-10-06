@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.srgc_qwen35_admission import FAILURE_PREFIX, with_smoke_recovery
+from scripts.srgc_qwen35_admission import FAILURE_PREFIX, RANK_ENTRY, SMOKE_ENTRY, with_smoke_recovery
 
 
 CUDA802 = "transport/nvls.cc:254 NCCL WARN Cuda failure 802 'system not yet initialized'"
@@ -39,6 +39,35 @@ def test_normal_admission_is_unchanged(tmp_path):
     assert "smoke_recovery" not in result
     assert environment == {"EXPLICIT": "setting"}
     assert not (tmp_path / "admission/qwen-admission.initial.json").exists()
+
+
+@pytest.mark.parametrize("stage", ["smoke", "train", "cache"])
+def test_only_smoke_uses_lightweight_entry_without_changing_launch_settings(tmp_path, stage):
+    command = ["python", "-m", "torch.distributed.run", "--standalone", "--nproc_per_node=4",
+               "--max_restarts=0", str(RANK_ENTRY), "--stage", stage, "--plan", "/saved/plan.json"]
+    original_command = list(command)
+    environment = {"SRGC_QWEN_PLAN": "/saved/plan.json", "NCCL_NVLS_ENABLE": "0"}
+    seen = []
+
+    def child(args, log, env, **kwargs):
+        seen.append((args, log, env, kwargs))
+        return 0
+
+    def original(original_admit, root, env, run_child, **kwargs):
+        return run_child(command, root / "qwen-smoke.log", env, **kwargs)
+
+    heartbeat = lambda pid: None
+    stop = lambda: False
+    options = {"pass_fds": (3, 4), "heartbeat": heartbeat, "should_stop": stop, "timeout": 3600}
+    result = with_smoke_recovery(original)(None, tmp_path, environment, child, **options)
+    expected = [str(SMOKE_ENTRY) if arg == str(RANK_ENTRY) and stage == "smoke" else arg
+                for arg in original_command]
+    assert result == 0
+    assert seen[0][0] == expected
+    assert seen[0][3] == options
+    assert seen[0][2]["SRGC_QWEN_PLAN"] == "/saved/plan.json"
+    assert command == original_command
+    assert "NCCL_DEBUG" not in environment
 
 
 @pytest.mark.parametrize("log", ["ChildFailedError", "CUDA error: 802", "ncclUnhandledCudaError",
