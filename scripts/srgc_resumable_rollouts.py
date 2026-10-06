@@ -130,11 +130,16 @@ class ResumableRolloutMixin:
                 break
             except _oom_types() as exc:
                 attempts += 1
-                self._release_cuda()
                 if attempts > 1:
                     raise
-                print(f"RESUME CUDA out of memory on {prompt_id}; freed cache, retrying once ({exc})", flush=True)
-                time.sleep(5)
+                message = str(exc)
+            # Leave the exception scope first: its traceback owns the failed
+            # rollout's tensors, which empty_cache cannot release while live.
+            import gc
+            gc.collect()
+            self._release_cuda()
+            print(f"RESUME CUDA out of memory on {prompt_id}; freed cache, retrying once ({message})", flush=True)
+            time.sleep(5)
         self._save_rollout(path, sequences, rewards, start)
         self.generated_rollouts += 1
         self._release_cuda()

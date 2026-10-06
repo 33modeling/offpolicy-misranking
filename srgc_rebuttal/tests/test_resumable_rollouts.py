@@ -43,6 +43,48 @@ def _to_int(sequence):
 
 
 class ResumableRolloutTest(unittest.TestCase):
+    def test_launch_failure_is_never_retried_as_oom(self):
+        from unittest.mock import patch
+        error = RuntimeError("CUDA error: unspecified launch failure")
+        with tempfile.TemporaryDirectory() as folder:
+            backend = resumable.make_resumable(FakeBackend, Path(folder))()
+            backend._resumable_dir = backend._resumable("score", 1)
+            with patch.object(FakeBackend, "_rollout", side_effect=error) as rollout, \
+                    patch.object(backend, "_release_cuda") as release:
+                with self.assertRaises(RuntimeError) as raised:
+                    backend._rollout("p1", 8, 1)
+            self.assertIs(raised.exception, error)
+            rollout.assert_called_once()
+            release.assert_not_called()
+            self.assertFalse(list(Path(folder).rglob("*.npz")))
+
+    def test_oom_frame_is_released_before_cache_cleanup(self):
+        import weakref
+        from unittest.mock import patch
+        from srgc_rebuttal.timing import StageTimer
+        held = []
+        meter = StageTimer()
+        meter.begin()
+
+        class Backend(FakeBackend):
+            def _rollout(self, prompt_id, responses, seed):
+                with meter.stage("generation"):
+                    if not held:
+                        allocation = np.ones(8)
+                        held.append(weakref.ref(allocation))
+                        raise FakeOOM("CUDA out of memory")
+                    return super()._rollout(prompt_id, responses, seed)
+
+        with tempfile.TemporaryDirectory() as folder:
+            backend = resumable.make_resumable(Backend, Path(folder))()
+            backend._resumable_dir = backend._resumable("score", 1)
+
+            def cleanup():
+                self.assertIsNone(held[0](), "failed rollout traceback retains allocations")
+
+            with patch.object(backend, "_release_cuda", side_effect=cleanup), patch.object(resumable.time, "sleep"):
+                backend._rollout("p1", 8, 1)
+
     def setUp(self):
         self._oom = resumable._oom_types
         resumable._oom_types = lambda: (FakeOOM,)

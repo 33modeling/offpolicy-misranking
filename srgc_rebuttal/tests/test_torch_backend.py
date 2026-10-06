@@ -78,6 +78,52 @@ class ModelBackendTests(unittest.TestCase):
         for a, b in zip(sequences, second):
             torch.testing.assert_close(a, b)
 
+    def test_cpu_rollout_does_not_seed_other_devices(self):
+        from unittest.mock import patch
+        before = torch.get_rng_state().clone()
+        with patch.object(torch.cuda, "manual_seed_all") as seed_all:
+            self.backend._rollout("p0", 8, 19)
+        seed_all.assert_not_called()
+        torch.testing.assert_close(torch.get_rng_state(), before)
+
+    def test_generation_error_survives_rng_restore_failure(self):
+        from unittest.mock import patch
+        failure = RuntimeError("original generation failure")
+        with patch.object(self.backend.model, "generate", side_effect=failure), \
+                patch.object(torch.random, "set_rng_state", side_effect=RuntimeError("restore failure")):
+            with self.assertRaises(RuntimeError) as raised:
+                self.backend._rollout("p0", 8, 19)
+        self.assertIs(raised.exception, failure)
+        self.assertIn("prompt=p0", " ".join(getattr(failure, "__notes__", [])))
+
+    def test_dense_buffers_are_released_before_next_rollout(self):
+        import weakref
+        from unittest.mock import patch
+        buffers = []
+        original = self.backend._project
+
+        def project(name, gradient):
+            buffers.append(weakref.ref(gradient))
+            return original(name, gradient)
+
+        def rollout(*args, **kwargs):
+            self.assertTrue(all(ref() is None for ref in buffers),
+                            "previous prompt's dense gradients survived into generation")
+            return self.deterministic_rollout(*args, **kwargs)
+
+        self.backend._rollout = rollout
+        # A Mock would itself retain tensors in call_args_list.
+        with patch.object(self.backend, "_project", new=project):
+            self.backend.score_gradients(["p0", "p1"], responses=8, group_size=4, seed=1)
+
+    def test_snapshot_does_not_deepcopy_optimizer_tensors_on_device(self):
+        from unittest.mock import patch
+        self.backend._rollout = self.deterministic_rollout
+        self.backend.train(["p0"], responses=8, objective="grpo", seed=1)
+        with patch.object(torch.Tensor, "__deepcopy__", side_effect=AssertionError("device deepcopy")):
+            state = self.backend.state_dict()
+        self.assertTrue(state["optimizer"]["state"])
+
     def test_measured_generation_scoring_training_and_evaluation_reconcile(self):
         meter = self.backend.cost_meter
         events = []

@@ -58,11 +58,13 @@ import sys
 from pathlib import Path
 from scripts.srgc_saved_runtime import bootstrap, ARCHIVED_MODULES
 bootstrap(["--plan", sys.argv[1], "--seed", "5"])
-from srgc_rebuttal import cluster, cluster_queue, code_check, verifiers, plan, reports
+from srgc_rebuttal import cluster, cluster_queue, code_check, verifiers, plan, reports, timing
 from srgc_rebuttal.runtime import code_digest
 assert code_digest() == RELEASE
-for module in (cluster, cluster_queue, code_check, verifiers, plan, reports):
+for module in (cluster, cluster_queue, code_check, verifiers, plan, reports, timing):
     assert Path(module.__file__).parent == ARCHIVED_MODULES, module.__file__
+import importlib.util
+assert Path(importlib.util.find_spec("srgc_rebuttal.torch_backend").origin).parent == ARCHIVED_MODULES
 assert verifiers.CODE_REWARD_VERSION == "assertion-completion-v2"
 assert verifiers.code_reward({"answer": "assert add(2, 3) == 5"}, "def add(a, b): return a + b") == 1
 print("saved reward protocol retained")

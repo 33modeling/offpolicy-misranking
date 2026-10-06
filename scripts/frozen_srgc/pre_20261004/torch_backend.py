@@ -19,7 +19,6 @@ from .objectives import grpo_advantages, loo_advantages
 from .srgc import stream_seed
 from .timing import timed, torch_meter
 from .progress import record as progress
-from .torch_state import cpu_snapshot, rollout_rng
 
 
 class TorchBackend:
@@ -81,18 +80,16 @@ class TorchBackend:
         start = inputs["input_ids"].shape[1]
         if not start:
             raise ValueError("empty tokenized prompt")
+        devices = [self.device.index] if self.device.type == "cuda" else []
         draw_seed = stream_seed(seed, self.rank, prompt_id) % (2**63 - 1)
-        try:
-            with self.cost_meter.stage("generation"), rollout_rng(self.device, draw_seed), torch.no_grad():
-                generated = self.model.generate(**inputs, do_sample=True, temperature=1.0,
-                    top_p=1.0, top_k=0, num_return_sequences=responses,
-                    max_new_tokens=self.max_new_tokens, use_cache=True,
-                    pad_token_id=self.tokenizer.pad_token_id, eos_token_id=self.tokenizer.eos_token_id)
-        except BaseException as exc:
-            if hasattr(exc, "add_note"):
-                exc.add_note(f"rollout rank={self.rank} device={self.device} prompt={prompt_id} "
-                             f"responses={responses} seed={draw_seed}")
-            raise
+        with self.cost_meter.stage("generation"), torch.random.fork_rng(devices=devices), torch.no_grad():
+            torch.manual_seed(draw_seed)
+            if self.device.type == "cuda":
+                torch.cuda.manual_seed(draw_seed)
+            generated = self.model.generate(**inputs, do_sample=True, temperature=1.0,
+                top_p=1.0, top_k=0, num_return_sequences=responses,
+                max_new_tokens=self.max_new_tokens, use_cache=True,
+                pad_token_id=self.tokenizer.pad_token_id, eos_token_id=self.tokenizer.eos_token_id)
         sequences, rewards = [], []
         eos = self.tokenizer.eos_token_id
         eos_ids = {eos} if isinstance(eos, int) else set(eos or [])
@@ -187,7 +184,6 @@ class TorchBackend:
                 advantages = loo_advantages(rewards, group_size)
                 projected = np.zeros(self.projection_dim, dtype=np.float64)
                 accumulated = [None] * len(params)
-                value = None
                 active = [i for i, a in enumerate(advantages) if a != 0]
                 self.cost_meter.count("zero_advantage_responses", responses - len(active))
                 for offset in range(0, len(active), self.logprob_micro_batch):
@@ -210,9 +206,6 @@ class TorchBackend:
                 for (name, _), gradient in zip(self.score_parameters, accumulated):
                     if gradient is not None:
                         projected += self._project(name, gradient)
-                # Free dense per-prompt derivatives before allocating the next
-                # generation KV cache (including the loop variables' aliases).
-                del accumulated, gradient, value, sequences
                 result[prompt_id] = projected
                 if not np.isfinite(projected).all():
                     raise FloatingPointError(f"nonfinite scoring gradient for {prompt_id}")
@@ -275,8 +268,8 @@ class TorchBackend:
         return self._gather(result)
 
     def state_dict(self) -> dict:
-        return {"trainable": {n: cpu_snapshot(p) for n, p in self.train_parameters},
-                "optimizer": cpu_snapshot(self.optimizer.state_dict()),
+        return {"trainable": {n: p.detach().cpu().clone() for n, p in self.train_parameters},
+                "optimizer": copy.deepcopy(self.optimizer.state_dict()),
                 "projection_dim": self.projection_dim, "projection_seed": self.projection_seed,
                 "score_names": [n for n, _ in self.score_parameters]}
 

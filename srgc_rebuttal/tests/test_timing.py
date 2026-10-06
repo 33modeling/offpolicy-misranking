@@ -20,6 +20,22 @@ class Clock:
 
 
 class TimingTests(unittest.TestCase):
+    def test_async_failure_unwinds_stages_and_preserves_unfinished_receipt(self):
+        from unittest.mock import Mock
+        failure = RuntimeError("CUDA error: unspecified launch failure")
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = PhaseLedger(Path(directory))
+            sync = Mock(side_effect=[None, None, failure])
+            meter = CostMeter(synchronize=sync, record=ledger.record)
+            with self.assertRaises(RuntimeError) as raised:
+                with meter.phase("selection", 25):
+                    with meter.stage("scoring"), meter.stage("generation"):
+                        pass
+            self.assertIs(raised.exception, failure)
+            self.assertEqual(meter.stack, [])
+            self.assertFalse(ledger.totals()["complete"])
+            self.assertEqual(sync.call_count, 3)
+
     def test_live_costs_survive_partial_cache_phase_without_double_counting(self):
         from srgc_rebuttal.runtime import atomic_json
         with tempfile.TemporaryDirectory() as directory:

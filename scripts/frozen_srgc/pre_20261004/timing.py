@@ -39,21 +39,20 @@ class StageTimer:
         self.stack.append(frame)
         try:
             yield
-            self.synchronize()
-        except BaseException as exc:
+        except BaseException:
             # Do not replace the original CUDA/verification error with another
             # synchronize failure. Its containing phase stays unfinished.
-            if hasattr(exc, "add_note"):
-                exc.add_note(f"timing stage={frame[0]} rank={getattr(self, 'rank', 0)}")
-            raise
-        finally:
             self.stack.pop()
-        elapsed = self.clock() - frame[1]
-        if self.stack:
-            self.stack[-1][2] += elapsed
-        row = self.stages.setdefault(frame[0], {"wall_seconds": 0.0, "calls": 0})
-        row["wall_seconds"] += max(0.0, elapsed - frame[2])
-        row["calls"] += 1
+            raise
+        else:
+            self.synchronize()
+            elapsed = self.clock() - frame[1]
+            self.stack.pop()
+            if self.stack:
+                self.stack[-1][2] += elapsed
+            row = self.stages.setdefault(frame[0], {"wall_seconds": 0.0, "calls": 0})
+            row["wall_seconds"] += max(0.0, elapsed - frame[2])
+            row["calls"] += 1
 
     def count(self, name, value=1):
         if self.active:
