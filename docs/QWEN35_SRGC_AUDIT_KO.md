@@ -2,22 +2,109 @@
 
 ## 2026-10-06 Triton 캐시 파일 누락
 
-- 실제 rank 로그에서 같은 노드 캐시 아래 `l2norm_fwd_kernel.cubin`의
-  `FileNotFoundError`와 `__triton_launcher.so`의 `ImportError: No such file or
-  directory`를 확인했다. 일반적인 NCCL 초기화 메시지가 아니라 생성된 커널
-  파일의 가용성 문제다. 이 로그만으로 파일 삭제 주체나 NFS 장애를 단정하지 않는다.
-- 기존 저장소 설정은 노드별 경로를 만들지만 네 rank가 Triton 캐시 하나를
-  공유했다. 별도 운영 entry에서 원래 저장소 검사를 먼저 수행한 뒤 rank별
-  새 namespace를 적용한다. 기존 캐시는 삭제하지 않고 입력·결과도 건드리지 않는다.
-- 스모크와 실제 cache/train에 모두 적용했다. rank별 Triton·Inductor·extension·
-  CUDA 캐시와 임시 경로는 같은 노드/rank에서 재사용해 작업마다 불필요하게
-  재컴파일하지 않는다. 모델/HF 캐시는 그대로 공유한다.
-- 원래 rank entry의 plan 검증, 모델/선별/학습 코드와 adapter/engine hash는
-  유지한다. 새 캐시에서 첫 컴파일이 발생하므로 초기 실행 비용은 추가될 수 있다.
-  실제 H100/NFS에서 파일 누락이 재발하지 않는지는 로컬 CPU 검사로 보증하지 않는다.
-- Qwen 회귀 검사 135개 및 22개 subtest 통과. 별도 rank-cache/process-guard
-  검사 33개도 통과했다(일부 중복 포함). 새 실행 entry의 살아 있는 부모를
-  보호하고 실제 고아 프로세스만 구분하는지 확인했다. 원격 GPU 작업은 실행하지 않았다.
+**현재 확인한 진행 상태:** `9ac3a6f` 적용 후 사용자가 초기 정책의 응답·보상
+캐시 작업이 진행 중이라고 보고했다. 이는 아래 커널 컴파일 캐시와 다른
+**실험용 response/reward cache**다. 캐시 완료, prefix/arm 학습 시작·완료,
+최종 reward 또는 모든 노드의 장애 해소를 확인한 기록은 아니다.
+
+### 관측과 원인 구분
+
+사용자가 제공한 실제 rank 로그에서 다음 원래 예외를 확인했다.
+
+| 관측 위치 | 직접 확인한 실패 | 경로 범위 |
+| --- | --- | --- |
+| rank 2 | `FileNotFoundError`: `l2norm_fwd_kernel.cubin`을 열지 못함 | 기존 `qwen-runtime-cache/nodes/<host>/triton/` 아래 생성된 커널 파일 |
+| rank 0 | `ImportError: No such file or directory`: `__triton_launcher.so`를 불러오지 못함 | 같은 구조의 노드별 Triton 캐시 아래 생성된 launcher 파일 |
+| 바깥 launcher | `srgc_qwen35_smoke.py FAILED`, `ChildFailedError`, `launch_agent` | 자식 rank 실패를 전달하는 요약이며 원래 원인 자체는 아님 |
+
+위 경로의 `<host>`는 노드별 부분을 생략한 표기다. 제공된 로그 조각의
+rank 0 `scoring` 시각 `10:30:46`, 오류 시각 `10:31:01`, launcher 요약 시각
+`10:31:56`을 단일 실행의 연속 측정으로 합치지 않는다. 조각 사이의 host와
+admission/attempt ID가 일치하는지 확인하지 못했으므로, 이 시각으로 실패까지
+걸린 시간을 계산하거나 특정 rank가 최초 원인이라고 단정하지 않는다.
+
+직접 확인한 원인은 **실행에 필요한 생성 커널/launcher 파일을 해당 경로에서
+읽을 수 없었다는 것**이다. [기존 저장 경로 설정](../scripts/srgc_qwen35_storage.py)은
+노드별 경로만 만들었으므로 그 노드의 네 rank가 하나의 Triton 캐시를 공유했다.
+여러 rank의 컴파일·파일 접근 경합을 줄이는 방향으로 수정했지만, 실제 파일의
+삭제 주체, 정확한 경합 순서, 공유 파일시스템/NFS의 장애 여부는 입증하지 못했다.
+
+앞서 보고된 `NCCLUtils.cpp:77`, NCCL 2.26.2의 CUDA 802 오류와 이번 파일 누락이
+같은 원인인지는 확인하지 못했다. 다른 rank가 종료된 뒤의 통신 오류인지,
+별개의 CUDA 초기화 문제인지도 이 로그만으로 결정할 수 없다. 따라서
+CUDA 802를 모두 컴파일 캐시 문제로 재분류하거나, 반대로 노드/Fabric 문제로
+확정하지 않는다.
+
+Qwen과 OLMo의 실행 경로도 구분한다. [Qwen adapter](../scripts/srgc_qwen35.py)는
+hybrid/DeltaNet 경로와 `fla-core==0.5.2`를 사용하고,
+[모델별 환경 검사](../src/model_matrix.py)의 FLA 요구도 Qwen 분기에 있다.
+이번 누락 파일은 그 실행에서 필요한 Triton 생성물이다. OLMo 실행이 진행된다는
+사실만으로 Qwen의 FLA/컴파일 경로를 검증할 수 없으며, OLMo가 모든 Triton·
+공유 캐시 문제에 영향을 받지 않는다는 뜻도 아니다.
+
+### 대응 순서
+
+| 커밋 | 변경과 확인 범위 |
+| --- | --- |
+| [`7698a3c`](https://github.com/33modeling/offpolicy-misranking/commit/7698a3c4a5d5eb336f3d7e3b31c5a745b335fe3b) | 해당 smoke 로그에 NCCL과 CUDA 802가 함께 있을 때만 NVLS/cuMem/P2P 설정을 최대 세 단계 추가하며 작은 검사와 모델 검사를 다시 수행. 원인을 확정하거나 성공을 보증한 변경은 아님 |
+| [`bea9a73`](https://github.com/33modeling/offpolicy-misranking/commit/bea9a7352bd1ee1a711c5946db91c0585b147686) | 최장 입력·2,048토큰 역전파 시작 조건을 후보 입력·32토큰 readiness 검사로 축소하고 단계 로그 추가. CUDA 802가 과도한 부하 때문이었다는 검증은 아님 |
+| [`597bdbd`](https://github.com/33modeling/offpolicy-misranking/commit/597bdbd8eedee0c6dfd9f74ee7691e80cd47c034) | 요약에서 빠지던 protocol/단계, 관련 traceback, NCCL 경고와 `Last error` 후속 줄 보존. 진단 출력 수정이며 CUDA 오류 자체의 치료는 아님 |
+| [`9ac3a6f`](https://github.com/33modeling/offpolicy-misranking/commit/9ac3a6f038e1ac4abae9904f5793cd0755495ea0) | 확인된 생성 파일 누락에 대응해 smoke와 실제 cache/train의 컴파일 캐시를 새 노드/rank별 namespace로 분리. 새 entry도 process guard에 등록 |
+
+진단 과정의 부족한 점도 남긴다. 초기에는 바깥 NCCL/launcher 요약에 무게를
+두었고, 원래 rank의 파일 누락 예외를 보기 전에 통신 복구와 smoke 부하를
+조정했다. 또한 기존 요약 필터가 단계 표식과 여러 줄 CUDA 오류를 버려
+새 코드가 실행돼도 같은 요약만 보이게 했다. 이후에는 **원래 rank 예외와
+발생 단계부터 확인하고, 그 근거에 맞는 범위만 수정**하는 순서로 바꿨다.
+로컬 CPU 회귀 통과를 실제 H100/FLA 컴파일 또는 공유 파일시스템 검증으로
+해석하지 않는다.
+
+### 적용 범위와 보존
+
+[rank runtime entry](../scripts/srgc_qwen35_rank_runtime.py)는 원래 저장 경로
+검사를 수행한 뒤 Torch/모델 backend를 불러오기 전에 다음 경로를 설정한다.
+
+```text
+$OM_WORK/qwen-runtime-cache/nodes/<host>/rank-runtime-v1/rank-<0..3>/
+  triton/       TRITON_CACHE_DIR
+  inductor/     TORCHINDUCTOR_CACHE_DIR
+  extensions/   TORCH_EXTENSIONS_DIR
+  cuda/         CUDA_CACHE_PATH
+  tmp/          TMPDIR
+```
+
+일반 shell의 자동 시작과 명시적 `run` 모두 적용된다. smoke는 짧은 검사 entry
+안에서, cache/train은 rank runtime entry를 거쳐 원래 rank 실행기로 들어간다.
+같은 노드/rank의 새 경로는 작업 간 재사용하고, 첫 컴파일에는 추가 시간이 들 수
+있다. 모델/Hugging Face 캐시는 계속 공유한다. 기존 컴파일 캐시는 삭제하지 않으며
+plan·queue·입력·response/reward cache·checkpoint·결과와 adapter/engine hash를
+바꾸지 않는다. 실패한 검사를 성공으로 처리하거나 GPU admission을 생략하지 않는다.
+기록된 admission 비용에는 실패한 시도도 포함하고, receipt가 없는 시간은
+`cost_accounting_complete=false`로 구분한다.
+
+Qwen 회귀 검사 **135개 및 22개 subtest**, 별도 rank-cache/process-guard 검사
+**33개**가 통과했다. 두 검사 묶음은 일부 중복되므로 168개의 서로 다른 검사로
+합산하지 않는다. rank별 경로 분리, 실제 adapter의 task-command 연결·복원,
+살아 있는 새 entry의 부모 보호와 고아 프로세스 구분을 CPU에서 검사했다.
+사용자의 후속 캐시 진행 보고와 이 로컬 검사 결과를 별도로 기록하며, 이 감사에서
+원격 GPU 작업을 실행·중단하거나 실제 H100/NFS 재발 방지 시험을 수행하지 않았다.
+
+### 다시 실패할 때
+
+```sh
+# 마지막 Qwen 모델 검사 로그 조회만 수행한다. 모델 로드·GPU 작업·파일 변경 없음.
+sh scripts/run_srgc_qwen35.sh all error
+```
+
+`[qwen-rank-cache] rank=... triton=...`으로 새 rank 경로를 확인하고,
+`[qwen-smoke]`의 `candidate-readiness-v1` 및 마지막 단계와 원래 rank 예외를
+함께 읽는다. `init`, `startup_collective`, `model_load`, `rollout`, `scoring`,
+`update`, `final_barrier`는 진행 구분이며, 단계 출력 하나가 전체 성공을 뜻하지 않는다.
+요약만으로 부족하면 출력된 `.queue/admission/<worker>/qwen-smoke.log` 또는
+receipt가 가리키는 `recovery-XX/qwen-smoke.log` 원본을 보존한다. 작은 NCCL 검사
+자체가 실패한 경우에는 해당 오류가 가리키는 `preflight.log`를 먼저 확인한다.
+여러 노드의 자료를 비교할 때 host·rank·worker/attempt ID·코드 커밋을 함께
+기록한다. 기존 캐시·plan·hash·잠금 파일을 지우거나 초기화하는 절차로 대체하지 않는다.
 
 ## 2026-10-06 시작 검사 부하 수정
 
@@ -35,7 +122,9 @@
   짧은 시작 검사는 최대 길이의 GPU 메모리 용량을 보증하지 않는다.
 - `init`, `startup_collective`, `model_load`, `rollout`, `scoring`, `update`,
   `final_barrier`를 rank별 로그에 남긴다. 새 entry는 smoke 외의 stage를 거부하며
-  cache/train 명령은 수정하지 않는다. 아래 CUDA 802 복구는 새 검사에 적용된다.
+  `bea9a73` 당시에는 cache/train 명령을 수정하지 않았다. 이후 `9ac3a6f`에서
+  위의 캐시 분리 entry를 cache/train에도 연결했다. 아래 CUDA 802 복구는 짧은
+  검사에도 적용된다.
 - adapter/engine hash는 아래 기록과 같으며 기존 plan·queue·checkpoint를
   초기화하지 않는다. 원격 GPU 작업을 시작하거나 중단하지 않았다.
 
@@ -44,7 +133,7 @@
 검증: Qwen/NCCL 회귀 검사 197개 및 22개 subtest와 새 workload 검사 7개 통과.
 GPU 검사 3개는 skip이며, 기존 multiprocessing fork 경고 5건이 있었다.
 모의 smoke에서 입력 분리·32토큰 제한·단계 순서·실패 전파를 확인했고,
-실제 학습 및 cache 명령은 기존 entry를 유지하는지 별도로 검사했다.
+당시 실제 학습 및 cache 명령은 기존 entry를 유지하는지 별도로 검사했다.
 
 ## 2026-10-06 Qwen NCCL 802 복구
 

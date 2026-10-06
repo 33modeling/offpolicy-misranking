@@ -1,5 +1,13 @@
 # Qwen3.5-9B 온라인 전환 확장
 
+2026-10-06 컴파일 캐시 장애 후속: rank 로그의 `l2norm_fwd_kernel.cubin` 누락과
+`__triton_launcher.so` 로드 실패에 대응한 `9ac3a6f` 적용 뒤, 사용자가
+**실험의 초기 응답·보상 캐시 작업이 진행 중**이라고 보고했다. 컴파일 캐시 생성과
+구분하며, 실험 캐시 완료나 prefix/arm 학습 시작·완료를 확인한 것은 아니다.
+관측, 수정 순서, 검증 범위와 미확정 원인은 [상세 장애 기록](QWEN35_SRGC_AUDIT_KO.md)에
+정리했다. 이 후속 운영 수정은 기존 plan·입력·checkpoint와 adapter/engine hash를
+변경하지 않는다. 아래의 이전 adapter 변경 기록과 구분한다.
+
 2026-10-06 Pair 입력 이름 수정: 기존 Pair MATH 입력의 `math500` 표기를
 `math_train` plan과 다르다는 이유로 거부하던 검사를 수정했다. 원래 Pair 출처가
 기록된 입력만 허용하며 문제·정답·분할·50개 reference는 바꾸지 않는다.
@@ -138,7 +146,11 @@ Triton·Inductor·extension·CUDA 캐시 및 임시 디렉터리를 사용한다
 기존 공유 캐시를 삭제하지 않으며 새 경로는 같은 노드/rank에서 재사용한다.
 첫 실행은 새 캐시에 커널을 다시 컴파일한다. 모델/Hugging Face 캐시는 계속
 공유하고 기존 plan·queue·checkpoint와 adapter/engine hash는 변경하지 않는다.
-파일시스템 자체의 장애까지 수리하는 것은 아니며, 원격 GPU 검증은 별도다.
+이는 실행용 커널 **컴파일 캐시**의 분리이며 400문제의 응답·보상을 저장하는
+**실험 캐시**를 지우거나 새로 만드는 변경이 아니다. rank 2의 `.cubin` 누락과
+rank 0의 launcher `.so` 로드 실패는 확인했지만, 정확한 파일 경합·삭제 주체나
+NFS 장애는 확정하지 못했다. 파일시스템 자체의 장애까지 수리하는 것은 아니며,
+원격 GPU 검증은 별도다. 기존 공유 캐시나 plan/hash/잠금을 삭제해 우회하지 않는다.
 
 ### 조회·중단·재개
 
@@ -164,15 +176,24 @@ sh scripts/run_srgc_qwen35.sh
 줄만으로는 실패 원인을 알 수 없다. `srgc_qwen35_smoke.py FAILED`는 경량 검사가
 실제로 실행됐다는 증거이며, 해결 여부의 증거는 아니다. 원인은 그 앞의 rank 예외,
 NCCL 경고 및 마지막 `[qwen-smoke]` 단계에서 확인한다.
+요약은 `candidate-readiness-v1` protocol, rank별 마지막 단계, 관련 traceback,
+원래 NCCL 경고와 `Last error` 후속 줄도 보존한다. 원본 로그의
+`[qwen-rank-cache] rank=... triton=...`은 새 rank별 컴파일 경로를 보여 준다.
+서로 다른 로그의 시각만 이어 붙이지 말고 host·rank·worker/attempt ID와 커밋을
+함께 확인한다. 작은 NCCL 검사 자체가 실패하면 그 오류가 가리키는 `preflight.log`를
+먼저 읽는다. `error` 명령은 마지막 Qwen 모델 검사 로그를 조회한다.
 시작 명령도 같은 원인을 예외 메시지 아래에 붙인다. 이 출력 보강은 adapter/engine
 hash를 바꾸지 않으므로 검사에서 멈춘 기존 plan·queue를 다시 만들 필요가 없다.
 로그를 확인하지 않고 GPU 검사를 생략하거나 OOM·CUDA 오류를 성공으로 처리하지 않는다.
 
-### 가중치 로딩 후 NCCL CUDA 802
+### Qwen 시작 검사에서 NCCL CUDA 802
 
 작은 NCCL 검사가 통과해도 실제 Qwen 검사에서
 `ncclUnhandledCudaError`와 `Cuda failure 802 'system not yet initialized'`가
 발생할 수 있다. 일반적인 `unhandled CUDA error`만으로 원인을 판단하지 않는다.
+초기화 단계와 가중치 로딩 이후를 실제 rank traceback/단계 로그로 구분한다.
+앞서 보고된 CUDA 802와 이후 확인된 Triton 생성 파일 누락이 같은 원인인지는
+입증하지 못했으므로, 모든 802를 파일 누락이나 노드/Fabric 장애로 단정하지 않는다.
 
 현재 시작 명령은 **해당 Qwen 검사 로그에 NCCL 오류와 CUDA 802가 함께 기록된
 경우에만** 기존 NCCL 복구 순서인 `NCCL_NVLS_ENABLE=0`, `NCCL_CUMEM_ENABLE=0`,
@@ -196,8 +217,8 @@ OOM·다른 CUDA 오류·사용자 중단에는 이 복구를 적용하지 않�
 
 매 worker 시작 시 기존 4-rank NCCL 검사 뒤에 **실제 9B 모델 생성·scoring
 역전파·GRPO update**를 검사한다. 이 검사의 보상은 backward 확인용 합성
-보상이며 실험 cache/결과에 기록하지 않는다. 실패하면 cache 학습을 시작하지
-않고 `.queue/admission/.../qwen-smoke.log`를 확인하도록 중단한다.
+보상이며 실험 cache/결과에 기록하지 않는다. 실패하면 초기 응답·보상 캐시 작업을
+시작하지 않고 `.queue/admission/.../qwen-smoke.log`를 확인하도록 중단한다.
 2026-10-06부터 시작 검사는 현재 plan 첫 seed의 학습 후보 중 짧은 입력 하나로
 제한한다. 평가·validation 문제나 다른 데이터셋의 최장 입력을 가져오지 않는다.
 실제 생성은 응답 8개·최대 32토큰, 합성 역전파 응답도 32토큰이다.
