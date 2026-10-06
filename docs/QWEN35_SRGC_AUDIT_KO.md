@@ -1,5 +1,34 @@
 # Qwen3.5-9B 실행 코드 추가 감사
 
+## 2026-10-06 재점검
+
+- 수동 `download`가 자동 시작과 같은 모델 잠금을 사용하도록 통일했다.
+  명시적 모델 경로를 존중하고, 검증에 실패한 기존 snapshot은 교체하지 않는다.
+- 마지막 endpoint 저장 뒤 중단된 worker를 다시 실행하면, GPU admission이나
+  학습 없이 완료 manifest와 결과·비용 요약을 복구한다. 중단 표시된 queue는 유지한다.
+- 여러 dataset queue에 참여할 때 모든 기존 환경 정보를 먼저 검사한다.
+  하나의 환경이 다르다는 이유로 거부된 노드가 다른 queue에 환경 정보를 남기지 않는다.
+- 수동 `prepare`도 기존 run의 plan이 사라졌으면 입력이나 plan을 새로 만들지 않는다.
+  기존 plan 복구가 필요하며 checkpoint·결과 파일은 그대로 보존한다.
+- 실제 실행에 쓰이는 rollout 재개, attention 설정, 방향 진단 기록 helper를
+  Qwen adapter hash에 포함했다. helper가 바뀌면 기존 plan으로 학습 재개는
+  거부하지만, 저장된 identity로 과거 결과를 조회하는 기능은 유지한다.
+
+검증: `/home/nsh/.venvs/proto-ml/bin/python -m pytest srgc_rebuttal/tests -q`
+전체 **696개 및 313개 subtest 통과, 실패·skip 없음**. 두 프로세스의 60개 작업
+배정, 다운로드 잠금, 완료 결과 복구, 작은 실제 Qwen 모델의 생성·gradient·LoRA
+update를 포함한다. Python 3.12의 multiprocessing fork 관련 경고 6건이 있으며
+로그는 `/tmp/qwen-debug-final-20261006.log`에 남겼다. shell 구문, Python 구문,
+`git diff --check`도 통과했다. 환경은 PyTorch 2.13.0+cpu / Transformers 5.14.1 /
+PEFT 0.20.0이며 실제 9B GPU 검증은 아니다.
+
+선별 규칙·응답 수·학습 업데이트 수는 바꾸지 않았다. 아래 9월 검증 기록은
+당시 코드의 기록이다. 이번 수정은 adapter hash를 바꾸므로 기존 Qwen 실험은
+원래 checkout으로 유지한다. 원격 실험을 시작·중단하지 않았으며 실제 H100
+9B 메모리·FLA/CUDA·NCCL 검증은 여전히 worker admission에서 수행해야 한다.
+
+## 2026-09-28 감사
+
 2026-09-28. 대상은 `scripts/run_srgc_qwen35.py`에서 시작하는 Qwen 온라인
 전환 확장과 이 실행이 사용하는 process guard다. 실행 방법은
 [Qwen 실행 안내](QWEN35_SRGC_KO.md)에 있다.

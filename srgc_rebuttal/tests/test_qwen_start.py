@@ -12,6 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import srgc_qwen35_start as start
+import run_srgc_qwen35 as launcher
 from srgc_rebuttal.runtime import lease
 
 
@@ -153,7 +154,10 @@ class QwenStartTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 start.prepare_missing(("math",), self.root, self.env)
             self.assertEqual(run.call_count, 1)
-            self.assertEqual(run.call_args.args[0][3], "download")
+            self.assertEqual(run.call_args.args[0], [
+                sys.executable, str(ROOT / "src/model_matrix.py"),
+                "--config", str(ROOT / "configs/qwen35_9b_grpo.json"),
+                "--models-dir", self.env["MODELS_DIR"], "download", "qwen3.5-9b-posttrained"])
 
     def test_existing_invalid_model_is_not_downloaded_over(self):
         (self.root / "models/qwen").mkdir(parents=True)
@@ -182,6 +186,72 @@ class QwenStartTests(unittest.TestCase):
             start.ensure_model(self.root, self.env)
             self.assertEqual(run.call_count, 1)
             self.assertEqual(verify.call_count, 2)
+
+    def test_manual_download_reuses_startup_validation_and_lock(self):
+        model = self.root / "explicit-model"
+        model.mkdir()
+        environment = {**self.env, "SRGC_QWEN_MODEL_PATH": str(model)}
+        with patch.dict(os.environ, environment), \
+             patch.object(sys, "argv", ["run", "all", "download", "--root", str(self.root)]), \
+             patch.object(launcher, "setup_storage", return_value=(self.root, self.root)), \
+             patch.object(subprocess, "call", side_effect=AssertionError("unlocked download")), \
+             patch.object(start, "model_path", side_effect=ValueError("bad snapshot")), \
+             patch.object(start, "run_preparation") as run:
+            with self.assertRaisesRegex(ValueError, "bad snapshot"):
+                launcher.main()
+        run.assert_not_called()
+        self.assertTrue(model.is_dir())
+
+    def test_manual_download_preserves_failure_and_interruption_codes(self):
+        for failure, code in ((subprocess.CalledProcessError(7, "download"), 7),
+                              (subprocess.CalledProcessError(-15, "download"), 143),
+                              (KeyboardInterrupt(), 130)):
+            with self.subTest(code=code), \
+                 patch.object(sys, "argv", ["run", "all", "download", "--root", str(self.root)]), \
+                 patch.object(launcher, "setup_storage", return_value=(self.root, self.root)), \
+                 patch.object(start, "ensure_model", side_effect=failure):
+                with self.assertRaises(SystemExit) as stopped:
+                    launcher.main()
+                self.assertEqual(stopped.exception.code, code)
+
+    def test_manual_and_automatic_downloads_share_the_model_lease(self):
+        ctx = multiprocessing.get_context("fork")
+        entered, release = ctx.Event(), ctx.Event()
+        calls = self.root / "download-calls.txt"
+        destination = self.root / "models/qwen"
+        def downloaded(command, root, environment, **kwargs):
+            self.assertTrue(kwargs["pass_fds"])
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError("test release timeout")
+            with calls.open("a") as handle:
+                handle.write("download\n")
+            destination.mkdir()
+        with patch.dict(os.environ, self.env), \
+             patch.object(sys, "argv", ["run", "all", "download", "--root", str(self.root / "other-run")]), \
+             patch.object(launcher, "setup_storage", return_value=(self.root, self.root)), \
+             patch.object(subprocess, "call", side_effect=AssertionError("unlocked download")), \
+             patch.object(start, "specification", return_value={"local_directory": "qwen"}), \
+             patch.object(start, "model_path", side_effect=lambda *args: str(destination) if destination.is_dir() else self.fail("model missing")), \
+             patch.object(start, "run_preparation", side_effect=downloaded):
+            automatic = ctx.Process(target=start.ensure_model, args=(self.root, self.env))
+            manual = ctx.Process(target=launcher.main)
+            workers = (automatic, manual)
+            try:
+                automatic.start()
+                self.assertTrue(entered.wait(10))
+                manual.start()
+                release.set()
+                for worker in workers:
+                    worker.join(10)
+                    self.assertEqual(worker.exitcode, 0)
+            finally:
+                release.set()
+                for worker in workers:
+                    if worker.is_alive():
+                        worker.terminate()
+                        worker.join(10)
+        self.assertEqual(calls.read_text().splitlines(), ["download"])
 
     def test_two_processes_prepare_once_and_release_lock(self):
         ctx = multiprocessing.get_context("fork")

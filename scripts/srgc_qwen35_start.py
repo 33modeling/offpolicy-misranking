@@ -52,7 +52,10 @@ def ensure_model(root, environment, *, pass_fds=()):
             if "SRGC_QWEN_MODEL_PATH" in environment:
                 raise FileNotFoundError(f"explicit Qwen model path does not exist: {destination}")
             print(f"QWEN downloading pinned model: {destination}", flush=True)
-            run_preparation(controller("all", "download", root), root, environment,
+            command = [sys.executable, str(REPO / "src/model_matrix.py"),
+                       "--config", str(REPO / "configs/qwen35_9b_grpo.json"),
+                       "--models-dir", str(models), "download", "qwen3.5-9b-posttrained"]
+            run_preparation(command, root, environment,
                             pass_fds=(*pass_fds, guard.fileno()))
         # Never replace an existing, unverified snapshot automatically.
         model_path(MODEL, REVISION, environment)

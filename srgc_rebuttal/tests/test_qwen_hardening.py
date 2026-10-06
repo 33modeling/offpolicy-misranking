@@ -312,8 +312,10 @@ class MultiNodeRegressionTests(unittest.TestCase):
             import srgc_qwen35_worker as worker
             from srgc_rebuttal import cluster
             args = SimpleNamespace()
-            with qwen.runtime_adapter(), patch.object(cluster, "gpu_identity", side_effect=AssertionError("unnecessary GPU admission")):
+            with qwen.runtime_adapter(), patch.object(cluster, "gpu_identity", side_effect=AssertionError("unnecessary GPU admission")), \
+                    patch.object(cluster, "publish_reports") as publish:
                 worker.worker(plans, args, root, root / "common", lambda *a, **k: None)
+            self.assertEqual(publish.call_count, 2)
 
     def test_runtime_mismatch_is_rejected_before_work(self):
         from srgc_qwen35_worker import bind_runtime

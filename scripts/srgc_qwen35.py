@@ -22,7 +22,9 @@ TARGETS = ("q_proj", "v_proj", "in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj
 ADAPTER_FILES = ("scripts/srgc_qwen35.py", "scripts/run_srgc_qwen35.py",
                  "scripts/srgc_qwen35_rank.py", "scripts/srgc_verifier_fallback.py",
                  "scripts/srgc_step_checkpoints.py", "scripts/srgc_qwen35_memory.py",
-                 "scripts/srgc_qwen35_storage.py", "scripts/srgc_qwen35_worker.py", "src/model_matrix.py")
+                 "scripts/srgc_qwen35_storage.py", "scripts/srgc_qwen35_worker.py",
+                 "scripts/srgc_resumable_rollouts.py", "scripts/srgc_child_tuning.py",
+                 "scripts/srgc_direction_records.py", "src/model_matrix.py")
 
 
 def adapter_digest():
@@ -203,6 +205,10 @@ def prepare(dataset, source_plan, destination, tokenizer):
                 if data["provenance"]["source_data_sha256"] != info["source_sha256"]:
                     raise ValueError("source cohort changed; refusing to reset the Qwen run")
             return target
+        saved_run = destination / "runs" / dataset
+        if saved_run.exists() and (not saved_run.is_dir() or any(saved_run.iterdir())):
+            raise ValueError(f"missing plan {target} with existing run {saved_run}; "
+                             "restore the original plan; refusing to prepare a replacement")
         built = {}
         for seed in plan["seeds"]:
             path = input_path(source_plan, original, seed)

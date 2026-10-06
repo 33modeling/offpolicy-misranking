@@ -12,13 +12,17 @@ from srgc_rebuttal.runtime import atomic_json, lease
 
 
 def bind_runtime(queues, signature):
-    for queue in queues:
-        path = queue.directory / "runtime.json"
-        with lease(path.with_suffix(".lock"), wait=True):
+    paths = sorted({(queue.directory / "runtime.json").resolve() for queue in queues})
+    with ExitStack() as locks:
+        # Check every queue before binding any of them to this node's runtime.
+        for path in paths:
+            locks.enter_context(lease(path.with_suffix(".lock"), wait=True))
+        for path in paths:
             if path.exists():
                 if json.loads(path.read_text()) != signature:
                     raise ValueError(f"node runtime differs from this experiment: {path}")
-            else:
+        for path in paths:
+            if not path.exists():
                 atomic_json(path, signature)
 
 
@@ -127,8 +131,12 @@ def worker(plans, args, group, common_root, admission):
 
     update("preflight")
     try:
-        if all(cluster.stop_requested(q) or all(r["status"] == "complete" for r in q.status()) for q in queues):
-            update("stopped" if any(cluster.stop_requested(q) for q in queues) else "complete")
+        stopped = {q.plan_path for q in queues if cluster.stop_requested(q)}
+        if all(q.plan_path in stopped or all(r["status"] == "complete" for r in q.status()) for q in queues):
+            for queue in queues:
+                if queue.plan_path not in stopped:
+                    cluster.publish_reports(queue)
+            update("stopped" if stopped else "complete")
             return
         environment = cluster.child_environment()
         environment["SRGC_QWEN_PLAN"] = str(plans[0])

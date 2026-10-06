@@ -1,5 +1,12 @@
 # Qwen3.5-9B 온라인 전환 확장
 
+2026-10-06 재점검: 수동 다운로드에도 공유 잠금과 기존 모델 보호를 적용했다.
+완료 직후 중단된 worker는 재실행 시 GPU 학습 없이 결과 요약을 복구한다.
+여러 queue의 환경 검사를 모두 통과한 뒤 환경 정보를 기록하며, 재개에 사용하는
+rollout·attention·진단 기록 코드도 adapter hash에 포함한다.
+이번 수정은 adapter hash를 바꾸므로 **새 실험에서 사용한다. 기존 Qwen 실험은
+당시 checkout과 root를 유지하며, 기존 plan/hash/잠금을 삭제하거나 바꾸지 않는다.**
+
 2026-10-04 코드 수정: 사용자 중단은 재시도 한도에서 제외하고, 새 MBPP 채점은
 `parent-checked-values-v3`로 구분한다. 기존 root를 새 코드로 자동 재개하거나
 이전 보상 캐시를 v3로 재명명하지 않는다. 기존 작업은 당시 checkout을 유지한다.
@@ -45,12 +52,21 @@ On-policy/Switch의 refresh 비용에는 후보 두 집합의 합집합 및 vali
 
 ## 시작 명령
 
-빈 4-H100 노드마다 아래 명령을 한 번 실행한다. **5개 노드면 같은 명령을 5개
-노드에 각각 실행**한다. MATH/MBPP seeds 5–9, 네 arm의 총 40개 continuation을
-공유 queue에서 나눠 처리한다. 초기 cache/prefix는 최대 10노드, 이후 최대 40노드다.
+빈 4-H100 노드마다 원하는 데이터셋의 명령을 한 번 실행한다. **5개 노드면 같은
+명령을 5개 노드에 각각 실행**한다. 선택한 데이터셋의 seeds 5–9와 네 arm을
+공유 queue에서 자동 배정한다. 한 데이터셋은 초기 cache/prefix 최대 5노드,
+네 arm이 준비된 뒤 최대 20노드다. `all`은 양쪽 합계 초기 최대 10노드,
+이후 최대 40노드이며, 선행 작업 진행 상태에 따라 일부 노드는 대기할 수 있다.
 
 ```sh
+# MATH
 sh scripts/run_srgc_qwen35.sh math
+
+# MBPP
+sh scripts/run_srgc_qwen35.sh mbpp
+
+# 두 데이터셋을 같은 queue worker에서 처리
+sh scripts/run_srgc_qwen35.sh all
 ```
 
 `math`는 MATH 20개, `mbpp`는 MBPP 20개, `all`은 양쪽 40개 continuation을 처리한다.
