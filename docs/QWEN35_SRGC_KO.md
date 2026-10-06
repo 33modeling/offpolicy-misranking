@@ -4,7 +4,7 @@
 `parent-checked-values-v3`로 구분한다. 기존 root를 새 코드로 자동 재개하거나
 이전 보상 캐시를 v3로 재명명하지 않는다. 기존 작업은 당시 checkout을 유지한다.
 [수정·검증 기록](V7_EXPERIMENT_FIXES_2026-10-04.md)과
-[현재 실행 안내](REBUTTAL_COMMANDS_KO.md#2026-10-04-코드-수정과-기존-실행) 참고.
+[현재 실행 안내](REBUTTAL_COMMANDS_KO.md#5-실행-환경과-보존-원칙) 참고.
 
 2026-09-28 준비. 대상은 **`Qwen/Qwen3.5-9B` post-trained**이며
 `Qwen3.5-9B-Base`와 다른 모델이다. 고정 revision은

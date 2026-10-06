@@ -640,9 +640,8 @@ sh scripts/run_srgc_sr_refresh.sh math results           # rewards, transitions 
 
 CPU tests: `python -m unittest srgc_rebuttal.tests.test_switch_repeat`.
 
-The [limitation experiment inventory](../docs/LIMITATION_EXPERIMENTS_KO.md)
-records the fixed-schedule control and three other extra arms, execution
-prerequisites, cost boundaries and unimplemented controls.
+The [experiment inventory](../docs/LIMITATION_EXPERIMENTS_KO.md)
+records current priorities, conditions, implementation status and cost boundaries.
 Extra arms follow the same active Pair/prepared cohort
 as the main dataset launcher. Their GPU processes set runtime caches on group
 storage, and results reject mismatched experiment/prefix identities rather than
@@ -652,9 +651,13 @@ Their completion check validates the prefix hash, replicate stream and the
 per-question evaluation, not just an endpoint file's presence. Reports retain
 valid rows when another result is malformed, list the errors and exit 1.
 `results --json` includes `output_root`, `errors`, `warnings` and recorded
-implementation hashes. Old results remain readable after a code change;
-this read-only path does not relax training/resume identity checks.
-Use the [node allocation guide](../docs/REBUTTAL_COMMANDS_KO.md#63-노드-배정과-그룹-볼륨)
+implementation hashes. Extra-arm `results` also saves a self-contained
+`<run root>/results/results.json` and timestamped copies of validated endpoint
+JSON files under `results/exports/`, without modifying the originals.
+It prints `COLLECTED JSON` and `COLLECTED FILES` with the saved paths.
+Old results remain readable after a code change; reporting does not relax
+training/resume identity checks.
+Use the [node allocation guide](../docs/REBUTTAL_COMMANDS_KO.md#4-노드-배정)
 and [120-task assignment sheet](../docs/REBUTTAL_EXTRA_TASKS.tsv).
 Each tuple needs one separate four-H100 node. With every required prefix ready,
 P1 (two paired SR/Switch replicates plus fixed200) has at most 25 concurrent

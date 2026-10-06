@@ -4,10 +4,8 @@
 기존 MATH/MBPP P0 seeds 5-9 완료 기록은 유지한다. 원격 노드의 현재 진행 상태는
 이번 작업에서 조회하지 않았으므로, 아래 개수를 현재 미완료 개수로 해석하지 않는다.
 
-**동일 날짜 후속 요청에 따른 재조정:** 기존 P1 결과 확인 후 신규 배정은
-[단계별 학습 원인 진단 E14-E16](STAGE_MECHANISM_EXPERIMENTS_2026-10-06.md), support,
-아래 E11 고정 전환 순이다. E12 단일 음수/연속 음수 규칙은 신규 배정 보류한다.
-이 문서의 규칙 구현을 삭제하거나 기존 실행을 중단하지 않는다.
+전체 순서는 [실험 목록](LIMITATION_EXPERIMENTS_KO.md#우선순위)을 따른다.
+E11 고정 전환은 신규 3순위, E12 규칙 대조는 신규 배정 보류다. 기존 실행은 유지한다.
 
 ## 1. 무엇을 검증하는가
 
@@ -17,12 +15,11 @@ Switch의 질문은 좋은 선별 점수가 실제 학습 이득을 계속 보�
 그 논문들의 response 재작성 방법을 이번 prompt-selection 실험에 섞지 않는다.
 Echo의 clipping 원인을 Switch의 원인으로 가정하지 않는다.
 
-| 우선순위 | 질문 | 조건 | MATH + MBPP 작업 수 | 구현 |
-| --- | --- | --- | ---: | --- |
-| 2 | 선별 순위, 배치 유지, 보상 갱신 중 무엇이 차이를 만드는가? | 기존 `direction_removed`, `sr_hold`, `sr_refresh_matched` | 30 | 기존 support queue 재사용 |
-| 3 / E11 | SR-GC 전환이 단순 고정 일정보다 유리한가? | `switch_fixed50/100/150/200/250` vs 기존 `switch` | 50 | 기존 fixed engine + 새 timing queue |
-| 보류 / E12 | 반복 확인이 단일 음수 신호보다 유용한가? 현재 규칙의 예외 분기가 필요한가? | `switch_single`, `switch_consecutive` vs 기존 `switch` | 20 | 새 own-path rule engine |
-| 분석 / E13 | 전환 시점을 임의로 골라도 비슷한가? 다른 시드로 정한 고정 일정과 비교하면 어떤가? | 균등 시점 기대값, leave-one-seed-out 고정 일정 | 추가 GPU 작업 0 | 새 CPU 결과 집계 |
+| ID | 질문 | 조건 | MATH + MBPP 작업 수 |
+| --- | --- | --- | ---: |
+| E11 | SR-GC 전환이 고정 일정보다 유리한가 | `switch_fixed50/100/150/200/250` vs 기존 `switch` | 50 |
+| E12 | 반복 확인과 현재 규칙의 예외 분기가 필요한가 | `switch_single`, `switch_consecutive` vs 기존 `switch` | 20 |
+| E13 | 임의 시점이나 다른 시드로 정한 시점과 비교하면 어떤가 | 균등 시점 기대값, LOSO 고정 일정 | 추가 GPU 0 |
 
 새 validation queue는 E11+E12 **70개**다. 기존 fixed200 10개가 포함되며 검증된
 완료 결과는 다시 학습하지 않는다. 따라서 기존 전체 계획에 없는 고유 조건은
@@ -137,7 +134,7 @@ budget 실험이나 목표 성능 도달 시간 실험으로 바꾸어 부르지
 
 ```sh
 sh scripts/run_srgc_switch_validation.sh all timing
-sh scripts/run_srgc_switch_validation.sh all status
+sh scripts/run_srgc_sr_refresh.sh all status timing
 sh scripts/run_srgc_switch_validation.sh all results
 ```
 
@@ -145,6 +142,7 @@ sh scripts/run_srgc_switch_validation.sh all results
 현재 권장은 `timing`만 실행하는 명령이다. `rules`는 후순위 명시 실행에만 사용한다.
 마지막 인자를 생략하면 기존 통합 70개 queue를 실행하므로 현재 우선순위에서는 생략하지 않는다.
 `json`은 결과·원값·단계별 비용·검증 오류를 JSON으로 출력한다.
+위 status는 고정 시점만 조회한다. results는 규칙 대조를 포함한 전체 validation을 보고한다.
 `status/results/json`은 CPU 읽기 전용이며 학습, cache 생성, 잠금 변경을 하지 않는다.
 진행 표의 `reported_running`은 heartbeat 기록이며 원격 프로세스 생존 확인은 아니다.
 
@@ -153,7 +151,8 @@ sh scripts/run_srgc_switch_validation.sh all results
 새 retry/잠금/환경 구현을 만들지 않고 기존 task/GPU lease와 supervisor를 재사용한다.
 정상 실행 중인 노드에 pull하거나 worker를 하나 더 띄우지 않는다.
 
-노드 상한은 모든 prefix가 준비되고 미완료인 경우 **35노드/도메인, 양쪽 70노드**다.
+`timing`의 노드 상한은 모든 prefix가 준비되고 미완료인 경우 **25노드/도메인, 양쪽 50노드**다.
+보류 중인 규칙 대조까지 포함한 전체 queue의 상한은 35노드/도메인, 양쪽 70노드다.
 4노드라면 각 노드에 같은 명령을 실행하여 4개씩 처리한다. 이는 작업 독립성의
 상한이지 실제 필요 노드 수 또는 이 규모의 공유 볼륨/NCCL 부하 검증 결과가 아니다.
 현재 남은 수와 소요 시간은 실제 status와 새 phase 로그를 확보한 뒤 산정한다.
