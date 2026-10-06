@@ -1,5 +1,12 @@
 # Qwen3.5-9B 온라인 전환 확장
 
+2026-10-06 Pair 입력 이름 수정: 기존 Pair MATH 입력의 `math500` 표기를
+`math_train` plan과 다르다는 이유로 거부하던 검사를 수정했다. 원래 Pair 출처가
+기록된 입력만 허용하며 문제·정답·분할·50개 reference는 바꾸지 않는다.
+`ded3d11`에서 이 오류로 멈춘 MATH 준비본은 **실행 기록·캐시가 전혀 없을 때만**
+원본 plan을 보관하고 현재 adapter로 연결한다. 입력 파일은 수정하지 않는다.
+실행이 시작된 실험이나 알 수 없는 코드 버전은 자동 복구하지 않는다.
+
 2026-10-06 시작 오류 수정: `No package metadata was found for math-verify`는
 Qwen의 패키지 검사보다 오프라인 verifier 연결이 늦어서 발생했다. 이제 기존
 OLMo와 같은 검증된 `math-verify==0.9.0` 묶음을 `$OM_WORK/runtime-deps`에

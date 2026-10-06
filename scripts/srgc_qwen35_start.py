@@ -19,7 +19,10 @@ from srgc_qwen35 import (MODEL, REVISION, model_path, runtime_packages,
 from srgc_qwen35_storage import default_root, setup_storage
 from srgc_rebuttal import cluster
 from srgc_rebuttal.plan import input_path
-from srgc_rebuttal.runtime import lease
+from srgc_rebuttal.runtime import atomic_json, atomic_text, lease
+
+# ded3d11 prepared Pair MATH inputs but rejected their legacy dataset label.
+REJECTED_PAIR_ADAPTER = "7384c4923081f109b77cdb61d704d9b1b5284233208f440288d54966eb458073"
 
 
 def controller(dataset, action, root):
@@ -31,6 +34,47 @@ def validate_saved(plan):
     spec = validate_extension(plan)
     for seed in spec["seeds"]:
         validate_bundle_model(json.loads(input_path(plan, spec, seed).read_text()), spec, seed)
+
+
+def repair_rejected_pair_plan(plan):
+    """Repair only the known pre-training label failure, never a started run."""
+    from srgc_qwen35 import adapter_digest, engine_digest
+    from srgc_rebuttal.plan import digest, validate_inputs
+    try:
+        saved = json.loads(plan.read_text())
+    except (OSError, ValueError):
+        return False
+    if (saved.get("adapter_sha256") != REJECTED_PAIR_ADAPTER or
+            saved.get("dataset") != "math_train" or saved.get("engine_sha256") != engine_digest()):
+        return False
+    root = plan.parent.parent
+    with lease(root / ".math-prepare.lock", wait=True):
+        if json.loads(plan.read_text()) != saved:
+            raise ValueError("Qwen plan changed during preparation repair")
+        spec = validate_extension(plan, read_only=True)
+        run = root / "runs/math"
+        if run.exists() and (not run.is_dir() or any(run.iterdir())):
+            raise ValueError("Qwen run already has execution records; preserve its original checkout")
+        legacy = False
+        for seed in spec["seeds"]:
+            bundle = input_path(plan, spec, seed)
+            data = json.loads(bundle.read_text())
+            cache = bundle.with_suffix(".cache")
+            if data.get("cached_rewards") or (cache.exists() and (not cache.is_dir() or any(cache.iterdir()))):
+                raise ValueError("Qwen cache already started; refusing to change the prepared plan")
+            validate_inputs(data, require_cache=False)
+            validate_bundle_model(data, spec, seed)
+            legacy |= data.get("dataset") == "math500"
+        if not legacy:
+            return False
+        backup = plan.with_name(f"{plan.stem}.before-math-label-fix-{digest(plan)[:16]}.json")
+        if not backup.exists():
+            atomic_text(backup, plan.read_text())
+        elif json.loads(backup.read_text()) != saved:
+            raise ValueError("Qwen preparation backup differs; refusing to overwrite it")
+        atomic_json(plan, {**spec, "adapter_sha256": adapter_digest()})
+        print(f"QWEN repaired unstarted Pair MATH preparation; inputs unchanged; original plan: {backup}", flush=True)
+    return True
 
 
 def run_preparation(command, root, environment, *, pass_fds=()):
@@ -69,7 +113,12 @@ def prepare_missing(datasets, root, environment):
     with lease(root / ".start-prepare.lock", wait=True) as guard:
         for dataset, plan in plans.items():
             if plan.exists():
-                validate_saved(plan)
+                try:
+                    validate_saved(plan)
+                except ValueError:
+                    if not repair_rejected_pair_plan(plan):
+                        raise
+                    validate_saved(plan)
             else:
                 saved_run = root / "runs" / dataset
                 if saved_run.exists() and (not saved_run.is_dir() or any(saved_run.iterdir())):

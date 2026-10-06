@@ -219,6 +219,7 @@ def prepare(dataset, source_plan, destination, tokenizer):
             built[seed] = make_bundle(json.loads(path.read_text()), tokenizer,
                                       source_plan=source_plan, source_sha256=digest(path))
             built[seed]["provenance"]["source_data_sha256"] = input_info(path, recorded_rewards=True)[0]["source_sha256"]
+            validate_bundle_model(built[seed], plan, seed)
         for seed, bundle in built.items():
             path = input_path(target, plan, seed)
             if path.exists() and json.loads(path.read_text()) != bundle:
@@ -260,8 +261,19 @@ def validate_extension(path, *, read_only=False):
 
 def validate_bundle_model(data, plan, seed):
     provenance = data.get("provenance", {})
-    if data.get("dataset") != plan["dataset"] or len(data.get("ranking_validation_ids", [])) != 50:
-        raise ValueError("bundle dataset/reference size differs from the Qwen plan")
+    source = provenance.get("source_provenance", {})
+    # Pair imports retain their historical math500 label under a math_train plan.
+    # Their original split provenance must remain intact; GSM8K is not an alias.
+    pair_math = (plan["dataset"] == "math_train" and data.get("dataset") == "math500"
+                 and isinstance(source, dict) and source.get("prompt_format") == "olmo_rlzero_math"
+                 and bool(source.get("source_run")) and type(source.get("reused_from_seed")) is int)
+    if data.get("dataset") != plan["dataset"] and not pair_math:
+        raise ValueError(f"bundle dataset {data.get('dataset')!r} differs from the Qwen plan "
+                         f"{plan['dataset']!r}; only provenance-backed Pair math500 inputs are an alias")
+    reference_count = len(data.get("ranking_validation_ids", []))
+    if reference_count != 50:
+        raise ValueError(f"bundle ranking-validation reference size {reference_count} differs from "
+                         "the Qwen plan (expected 50)")
     if (provenance.get("model"), provenance.get("model_revision")) != (MODEL, REVISION):
         raise ValueError("input bundle is not prepared for the pinned Qwen model")
     if provenance.get("qwen_extension") != "qwen35-9b-v2" or provenance.get("generation_micro_batch") != 2:

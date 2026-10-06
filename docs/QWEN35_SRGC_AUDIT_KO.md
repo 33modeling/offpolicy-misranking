@@ -2,6 +2,15 @@
 
 ## 2026-10-06 재점검
 
+- Pair 입력 후속 오류: importer는 기존 MATH 입력을 `math500`으로 기록하지만
+  plan은 `math_train`을 사용한다. Qwen의 단순 문자열 비교를 Pair 출처가 확인된
+  기존 이름의 호환 검사로 바꾸고, 다른 데이터셋과 reference 개수 오류는 구분한다.
+  실제 Pair importer → Qwen 준비 → queue 검증 경로를 테스트했다. 새 입력은 모두
+  검증한 뒤 저장하며, 문제·정답·분할·원본 데이터 이름은 바꾸지 않는다.
+  `ded3d11`의 알려진 adapter hash로 준비만 된 MATH plan은 실행 기록·cache가
+  없을 때 원본 plan을 보관하고 복구한다. 미확인 hash나 진행 기록이 있으면 거부한다.
+  Qwen 관련 회귀 검사 **71개 및 22개 subtest 통과**, 실패·skip 없음.
+  로그: `/tmp/qwen-bundle-fix-20261006.log`.
 - 후속 시작 오류: `math-verify`가 설치되지 않은 Python에서 package metadata
   검사 전에 저장소의 오프라인 verifier를 연결하도록 순서를 수정했다. 패키지가
   없는 `python -S`에서 같은 오류를 재현하고, 수정 후 실제 verifier import,
