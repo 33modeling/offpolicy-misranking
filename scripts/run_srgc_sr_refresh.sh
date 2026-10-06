@@ -29,7 +29,7 @@ elif [ "$TARGET" = status ]; then
         all|support|mechanism|switch_validation|timing|rules|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) ;;
         *) echo "unknown status scope" >&2; exit 2 ;;
     esac
-elif [ "$TARGET" = support_results ] || [ "$TARGET" = mechanism_results ] || [ "$TARGET" = mechanism_json ] || [ "$TARGET" = switch_validation_results ] || [ "$TARGET" = switch_validation_json ]; then
+elif [ "$TARGET" = support_results ] || [ "$TARGET" = support_json ] || [ "$TARGET" = mechanism_results ] || [ "$TARGET" = mechanism_json ] || [ "$TARGET" = switch_validation_results ] || [ "$TARGET" = switch_validation_json ]; then
     [ "$#" -eq 2 ] || { echo "$TARGET takes only dataset" >&2; exit 2; }
 elif [ "$TARGET" = results ]; then
     [ "$DATASET" != all ] || { echo "results requires math or mbpp" >&2; exit 2; }
@@ -57,8 +57,11 @@ export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 # Extra arms inherit their prefix's attention kernel; resumes keep their own
 # saved kernel. An environment default must not change an existing experiment.
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
-if [ "$TARGET" = support_results ]; then
+if [ "$TARGET" = support_results ] || [ "$TARGET" = support_json ]; then
     export CUDA_VISIBLE_DEVICES=""
+    if [ "$TARGET" = support_json ]; then
+        exec "$PY" scripts/srgc_support_report.py --dataset "$DATASET" --json
+    fi
     exec "$PY" scripts/srgc_support_report.py --dataset "$DATASET"
 fi
 case "$TARGET" in

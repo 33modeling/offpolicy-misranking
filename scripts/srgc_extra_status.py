@@ -94,10 +94,15 @@ def main(argv=None):
     rows, errors = [], []
     for dataset in (("math", "mbpp") if args.dataset == "all" else (args.dataset,)):
         try:
-            for task in tasks_for(dataset, args.scope):
-                rows.append(inspect(task))
+            tasks = tasks_for(dataset, args.scope)
         except (OSError, ValueError, TypeError, KeyError) as exc:
             errors.append(f"{dataset}: {exc}")
+            continue
+        for task in tasks:
+            try:
+                rows.append(inspect(task))
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                errors.append(f"{task.key}: {exc}")
     counts = dict(Counter(row["state"] for row in rows))
     if args.json:
         print(json.dumps(dict(scope=args.scope, counts=counts, rows=rows, errors=errors), indent=2))

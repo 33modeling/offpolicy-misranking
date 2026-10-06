@@ -5,6 +5,7 @@ import argparse
 from contextlib import ExitStack
 from dataclasses import dataclass
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -188,7 +189,21 @@ def sweep(tasks, *, max_attempts=3, retry_delay=120, runner=run_task, now=time.t
             except Busy:
                 counts["busy"] += 1
                 continue
-            previous = json.loads(task.receipt.read_text()) if task.receipt.exists() else {}
+            try:
+                previous = json.loads(task.receipt.read_text()) if task.receipt.exists() else {}
+                if (not isinstance(previous, dict) or type(previous.get("attempt", 0)) is not int
+                        or previous.get("attempt", 0) < 0):
+                    raise ValueError("invalid queue receipt or attempt count")
+                for field in ("started", "finished"):
+                    if field in previous and (type(previous[field]) not in (int, float)
+                            or not math.isfinite(previous[field]) or previous[field] < 0):
+                        raise ValueError(f"invalid queue {field} timestamp")
+            except (OSError, ValueError, TypeError) as exc:
+                # Preserve the damaged record for inspection; never reset its
+                # retry budget or prevent other independent tasks from running.
+                print(f"INVALID {task.key} receipt={task.receipt}: {exc}", file=sys.stderr, flush=True)
+                counts["failed"] += 1
+                continue
             fingerprint = signature(task)
             if (previous.get("status") == "complete" and fingerprint is not None
                     and previous.get("verified_files") == fingerprint):

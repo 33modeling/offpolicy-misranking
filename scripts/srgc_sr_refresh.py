@@ -538,6 +538,8 @@ def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None, raw_re
         from scripts.srgc_stage_report import validate_endpoint
         data = json.loads(input_path(plan_path, plan, seed).read_text())
         validate_endpoint(value, expected, prefix_hash, data)
+        if raw_records is not None:
+            raw_records[str(path)] = value
         return value
     if (not matches(value, expected) or value.get("arm") != arm or
             value.get("total_updates") != plan["total_updates"] or
@@ -567,6 +569,11 @@ def _endpoint(path, plan_path, plan, seed, folder, arm, *, verified=None, raw_re
     if not isinstance(costs, dict) or any(v is not None and (not finite_number(v) or v < 0)
                                          for v in costs.values()):
         raise ValueError(f"{path}: costs must be finite nonnegative measurements or null")
+    policy = value.get("checkpoint_policy")
+    if policy is not None:
+        from scripts.srgc_child_tuning import ATTENTION_CHOICES
+        if not isinstance(policy, dict) or policy.get("attention") not in ATTENTION_CHOICES:
+            raise ValueError(f"{path}: invalid checkpoint attention policy")
     if raw_records is not None:
         raw_records[str(path)] = value
     return {"reward_percent": 100 * value["reward"],
@@ -606,10 +613,11 @@ def extra_complete(plan_path, plan, seed, name):
     if not path.exists():
         return False
     verified = result_identity(plan_path, plan, seed)
-    _endpoint(path, plan_path, plan, seed, folder, arm, verified=verified)
+    captured = {}
+    _endpoint(path, plan_path, plan, seed, folder, arm, verified=verified, raw_records=captured)
     if replicate:
         record = checked_replicate_manifest(out, seed, replicate[0], verified)
-        if json.loads(path.read_text()).get("replicate") != record:
+        if captured[str(path)].get("replicate") != record:
             raise ValueError(f"{path}: endpoint replicate record differs from the manifest")
     return True
 
@@ -639,11 +647,14 @@ def replicate_rows(plan_path, plan, root, *, errors=None, context=None, raw_reco
             for path in sorted(manifest.parent.glob("*-endpoint.json")):
                 arm = path.name.removesuffix("-endpoint.json")
                 try:
+                    captured = {}
                     value = _endpoint(path, plan_path, plan, seed, folder, arm, verified=verified,
-                                      raw_records=raw_records)
-                    if json.loads(path.read_text()).get("replicate") != record:
+                                      raw_records=captured)
+                    if captured[str(path)].get("replicate") != record:
                         raise ValueError(f"{path}: endpoint replicate record differs from the manifest")
                     row[arm] = value
+                    if raw_records is not None:
+                        raw_records.update(captured)
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     invalid(path, exc)
             rows.append(row)

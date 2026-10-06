@@ -24,6 +24,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import time
+import zipfile
 
 import numpy as np
 
@@ -68,10 +69,20 @@ class ResumableRolloutMixin:
 
     def _load_rollout(self, path):
         with np.load(path, allow_pickle=False) as data:
-            count = int(data["count"])
+            count_value, start_value = data["count"], data["start"]
+            if (count_value.shape or start_value.shape or count_value.dtype.kind not in "iu"
+                    or start_value.dtype.kind not in "iu"):
+                raise ValueError("invalid cached rollout count or prompt length")
+            count, start = int(count_value), int(start_value)
+            if count < 1 or start < 1 or count > len(data.files):
+                raise ValueError("invalid cached rollout dimensions")
             sequences = [data[f"seq{i}"] for i in range(count)]
             rewards = data["rewards"].astype(np.float64)
-            start = int(data["start"])
+            if rewards.shape != (count,) or not np.isfinite(rewards).all() or not np.isin(rewards, [0., 1.]).all():
+                raise ValueError("invalid cached rollout rewards")
+            if any(s.ndim != 1 or s.dtype.kind not in "iu" or len(s) < start or (s < 0).any()
+                   for s in sequences):
+                raise ValueError("invalid cached token sequences")
         device = getattr(self, "device", None)
         if device is not None and getattr(device, "type", "") in {"cuda", "cpu"}:
             try:
@@ -88,8 +99,11 @@ class ResumableRolloutMixin:
         handle, temporary = tempfile.mkstemp(prefix=".writing-", suffix=".npz", dir=path.parent)
         os.close(handle)
         try:
-            np.savez(temporary, count=np.int64(len(sequences)), rewards=np.asarray(rewards, dtype=np.float64),
-                     start=np.int64(start), **arrays)
+            with open(temporary, "wb") as output:
+                np.savez(output, count=np.int64(len(sequences)), rewards=np.asarray(rewards, dtype=np.float64),
+                         start=np.int64(start), **arrays)
+                output.flush()
+                os.fsync(output.fileno())
             os.replace(temporary, path)
         finally:
             if os.path.exists(temporary):
@@ -103,9 +117,11 @@ class ResumableRolloutMixin:
         if path.exists():
             try:
                 sequences, rewards, start = self._load_rollout(path)
+                if len(sequences) != responses:
+                    raise ValueError("cached rollout response count differs")
                 self.resumed_rollouts += 1
                 return sequences, rewards, start
-            except (OSError, ValueError, KeyError) as exc:
+            except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile) as exc:
                 print(f"RESUME unreadable cached rollout {path.name}: {exc}; regenerating", flush=True)
         attempts = 0
         while True:

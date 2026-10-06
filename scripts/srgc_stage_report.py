@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.srgc_stage_mechanism import ARM, HORIZON, MODES, PROTOCOL, STAGES, TOTAL_WORK, code_hash, select_sets
+from scripts.srgc_stage_mechanism import ARM, HORIZON, MODES, PROTOCOL, STAGES, TOTAL_WORK, code_hash, correlation, select_sets
 from srgc_rebuttal.srgc import top_ids
 
 CONTRASTS = (("on_policy", "direction_shuffle"), ("on_policy", "random"),
@@ -23,6 +23,13 @@ def finite(value):
 
 
 def validate_endpoint(value, expected, prefix_hash, data):
+    try:
+        _validate_endpoint(value, expected, prefix_hash, data)
+    except (TypeError, KeyError, IndexError, AttributeError) as exc:
+        raise ValueError(f"malformed mechanism endpoint: {exc}") from exc
+
+
+def _validate_endpoint(value, expected, prefix_hash, data):
     fields = dict(**expected, arm=ARM, protocol=PROTOCOL, study_code_sha256=code_hash(),
                   prefix_checkpoint_sha256=prefix_hash, stages=list(STAGES), horizon=HORIZON,
                   modes=list(MODES), carrier_updates=STAGES[-1], total_work_updates=TOTAL_WORK,
@@ -50,6 +57,9 @@ def validate_endpoint(value, expected, prefix_hash, data):
             for field in ("cosines", "dots", "norms"):
                 if len(b[field]) != 40 or not all(finite(v) for v in b[field]):
                     raise ValueError("invalid diagnostic scores")
+            if (any(abs(v) > 1 + 1e-10 for v in b["cosines"]) or any(v < 0 for v in b["norms"])
+                    or not finite(b["validation_norm"]) or b["validation_norm"] < 0):
+                raise ValueError("invalid diagnostic cosine or norm")
             if set(b["rewards"]) != set(ids) or set(b["success_rates"]) != set(ids):
                 raise ValueError("incomplete diagnostic rewards")
             for i in ids:
@@ -62,6 +72,32 @@ def validate_endpoint(value, expected, prefix_hash, data):
                            seed=expected["seed"], step=m["stage"], k=4, tie_order=tie_order)
         if m["selected"] != sets or m["cached_success_rates"] != cached:
             raise ValueError("selection differs from registered A-only intervention")
+        b = m["B"]
+        repeat = select_sets(ids, cached, b["success_rates"], b["cosines"],
+                             seed=expected["seed"], step=m["stage"], k=4, tie_order=tie_order)["on_policy"]
+        corr = correlation(m["A"]["cosines"], b["cosines"])
+        observed_corr = m["score_correlation"]
+        if ((corr is None and observed_corr is not None) or
+                (corr is not None and (not finite(observed_corr) or abs(observed_corr - corr) > 1e-10))):
+            raise ValueError("incorrect diagnostic score correlation")
+        overlap = len(set(sets["on_policy"]) & set(repeat)) / 4
+        if not finite(m["top4_overlap_fraction"]) or m["top4_overlap_fraction"] != overlap:
+            raise ValueError("incorrect diagnostic top-four overlap")
+        if set(m["selected_diagnostics"]) != set(MODES):
+            raise ValueError("missing selected diagnostics")
+        for mode, selected in sets.items():
+            indices = [ids.index(i) for i in selected]
+            measured = dict(
+                independent_cosine=statistics.mean(b["cosines"][j] for j in indices),
+                independent_dot=statistics.mean(b["dots"][j] for j in indices),
+                independent_norm=statistics.mean(b["norms"][j] for j in indices),
+                current_success_rate=statistics.mean(b["success_rates"][i] for i in selected),
+                current_mixed_group_fraction=statistics.mean(0 < sum(b["rewards"][i]) < 8 for i in selected),
+                cache_current_absolute_gap=statistics.mean(abs(cached[i] - b["success_rates"][i]) for i in selected))
+            for field, expected_value in measured.items():
+                actual = m["selected_diagnostics"][mode][field]
+                if not finite(actual) or not math.isclose(actual, expected_value, rel_tol=1e-10, abs_tol=1e-10):
+                    raise ValueError(f"incorrect selected diagnostic: {mode}/{field}")
         chosen[m["stage"]] = sets
     baselines = {}
     for row in rows:
@@ -179,7 +215,9 @@ def collect(dataset):
                 row["inclusive_study_cost"] = measured(task.out / "invocations" / ARM)
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 errors.append(f"{path}: {exc}")
-    return dict(rows=rows, summaries=summarize(rows), errors=errors)
+    sources = {str(Path(row["output"]) / f"{ARM}-endpoint.json"): row["result"]
+               for row in rows if row["result"] is not None}
+    return dict(rows=rows, summaries=summarize(rows), errors=errors, source_results=sources)
 
 
 def main(argv=None):
@@ -187,7 +225,13 @@ def main(argv=None):
     parser.add_argument("--dataset", choices=("math", "mbpp", "all"), required=True)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    from scripts.srgc_result_collection import publish, print_paths
     report = collect(args.dataset)
+    try:
+        publish(report, "mechanism")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        print(f"COLLECTION ERROR: {exc}", file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps(report, indent=2, allow_nan=False))
     else:
@@ -223,6 +267,7 @@ def main(argv=None):
         print("Successful-action charges omit discarded attempts; full phase/invocation ledgers include measured retries.")
         for error in report["errors"]:
             print(f"ERROR: {error}")
+    print_paths(report, json_output=args.json)
     return 1 if report["errors"] else 0
 
 

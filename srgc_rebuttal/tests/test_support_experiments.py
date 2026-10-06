@@ -183,6 +183,7 @@ class SupportQueueAndStatusTests(unittest.TestCase):
 
     def test_support_report_excludes_invalid_results_and_keeps_healthy_arms(self):
         _, value = self.fixture.endpoint(self.plan)
+        value["checkpoint_policy"] = {"attention": "eager"}
         atomic_json(self.folder / 'on_policy-endpoint.json', {**value, 'arm': 'on_policy'})
         atomic_json(self.folder / 'sr_hold-endpoint.json', {**value, 'arm': 'sr_hold', 'seed': 6})
         atomic_json(self.folder / 'direction_removed-endpoint.json', {**value, 'arm': 'direction_removed'})
@@ -223,7 +224,9 @@ assert resumed.backend.score_calls == []
     def test_report_pairs_training_seeds_and_does_not_fill_missing_with_zero(self):
         def row(dataset, seed, **values):
             return dict(dataset=dataset, seed=seed,
-                        arms={key: {'reward_percent': value} for key, value in values.items()})
+                        arms={key: {'reward_percent': value, 'implementation_sha256': 'runtime',
+                                    'checkpoint_policy': {'attention': 'eager'}}
+                              for key, value in values.items()})
         results = report.summarize([
             row('math', 5, on_policy=40, direction_removed=30),
             row('math', 6, on_policy=31, direction_removed=35),

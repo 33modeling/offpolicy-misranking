@@ -144,7 +144,9 @@ sh scripts/run_srgc_switch_validation.sh all results
 마지막 인자를 생략하면 두 대조를 합친 70개 queue를 실행한다. 필요한 scope를 명시한다.
 `json`은 결과·원값·단계별 비용·검증 오류를 JSON으로 출력한다.
 위 status는 고정 시점만 조회한다. results는 규칙 대조를 포함한 전체 validation을 보고한다.
-`status/results/json`은 CPU 읽기 전용이며 학습, cache 생성, 잠금 변경을 하지 않는다.
+`status`는 CPU 읽기 전용이다. `results/json`은
+`<run root>/results/switch_validation/results.json`과 같은 폴더의 `exports/`에 수집본을 저장한다.
+학습, cache 생성, 원본 변경, 잠금 변경은 하지 않는다. 실제 경로는 `COLLECTED JSON / COLLECTED FILES`에 표시한다.
 진행 표의 `reported_running`은 heartbeat 기록이며 원격 프로세스 생존 확인은 아니다.
 
 검증된 완료 결과는 skip한다. 중단된 작업은 같은 명령으로 model/optimizer/선별 상태를

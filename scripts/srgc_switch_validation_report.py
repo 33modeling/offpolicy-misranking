@@ -191,7 +191,7 @@ def summarize(rows):
 
 
 def collect(dataset):
-    rows, errors, warnings = [], [], []
+    rows, errors, warnings, sources = [], [], [], {}
     for name in (("math", "mbpp") if dataset == "all" else (dataset,)):
         try:
             tasks = tasks_for(name, "switch_validation")
@@ -203,7 +203,7 @@ def collect(dataset):
             if task.seed in seen:
                 continue
             seen.add(task.seed)
-            row = dict(dataset=name, seed=task.seed, plan=str(task.plan), arms={})
+            row = dict(dataset=name, seed=task.seed, plan=str(task.plan), output=str(task.folder), arms={})
             rows.append(row)
             try:
                 plan = load_plan(task.plan)
@@ -214,8 +214,10 @@ def collect(dataset):
                 verified = result_identity(task.plan, plan, task.seed, recorded=True)
                 for arm, path in present.items():
                     try:
-                        value = _endpoint(path, task.plan, plan, task.seed, task.folder, arm, verified=verified)
-                        raw = json.loads(path.read_text())
+                        captured = {}
+                        value = _endpoint(path, task.plan, plan, task.seed, task.folder, arm,
+                                          verified=verified, raw_records=captured)
+                        raw = captured[str(path)]
                         validate_control(raw, plan, task.folder, arm)
                         try:
                             value["checkpoint_policy"] = recorded_policy(
@@ -229,6 +231,7 @@ def collect(dataset):
                         value.update(check_count=len(raw.get("checks", [])),
                                      selection_count=len(raw.get("selection_steps", [])))
                         row["arms"][arm] = value
+                        sources[str(path)] = raw
                     except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
                         errors.append(f"{path}: {exc}")
                 if row["arms"]:
@@ -240,7 +243,8 @@ def collect(dataset):
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 errors.append(f"{task.key}: {exc}")
     return dict(protocol="switch-timing-rules-20261006-v1", timing_steps=TIMING_STEPS,
-                expected_seeds=SEEDS, rows=rows, summaries=summarize(rows), errors=errors, warnings=warnings)
+                expected_seeds=SEEDS, rows=rows, summaries=summarize(rows), errors=errors, warnings=warnings,
+                source_results=sources)
 
 
 def number(value):
@@ -256,7 +260,13 @@ def main(argv=None):
     parser.add_argument("--dataset", choices=("math", "mbpp", "all"), required=True)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    from scripts.srgc_result_collection import publish, print_paths
     report = collect(args.dataset)
+    try:
+        publish(report, "switch_validation")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        print(f"COLLECTION ERROR: {exc}", file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps(report, indent=2, allow_nan=False))
     else:
@@ -264,6 +274,7 @@ def main(argv=None):
         print("GPU-h columns: selection training preparation evaluation checkpoint startup | core | inclusive | cold")
         for row in report["rows"]:
             shared = row.get("shared_costs", {})
+            print(f"output={row['output']}")
             print(f"{row['dataset']} seed={row['seed']} cache_build={hours(shared.get('cache_build_gpu_seconds'))} "
                   f"prefix_inclusive={hours(shared.get('prefix_inclusive_gpu_seconds'))} GPU-h")
             for arm in ARMS:
@@ -295,6 +306,7 @@ def main(argv=None):
             print(f"WARNING: {warning}")
         for error in report["errors"]:
             print(f"ERROR: {error}")
+    print_paths(report, json_output=args.json)
     return 1 if report["errors"] else 0
 
 

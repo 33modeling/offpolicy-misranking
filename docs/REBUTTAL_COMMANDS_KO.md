@@ -3,6 +3,23 @@
 코드 저장소 `master` 기준. [실험 목록·우선순위](LIMITATION_EXPERIMENTS_KO.md) · [결과 기록](EXPERIMENT_RESULTS_LEDGER_KO.md).
 명령은 코드 저장소 루트에서 실행한다. 실행 중인 checkout에는 pull하지 않는다.
 
+## 통합 명령
+
+형식은 `sh scripts/run_srgc_experiments.sh 데이터셋 실험 [run|status|results]`다.
+실험을 생략하거나 전체 학습을 암묵적으로 시작하지 않는다. 기존 개별 sh 명령도 유지한다.
+
+```sh
+sh scripts/run_srgc_experiments.sh list
+sh scripts/run_srgc_experiments.sh all mechanism
+sh scripts/run_srgc_experiments.sh all mechanism status
+sh scripts/run_srgc_experiments.sh all mechanism results
+```
+
+실험 이름은 `mechanism`, `qwen`, `timing`, `rules`, `support`, `pool`, `switch_repeat`,
+`direction`, `fixed200`, `replicate`, `candidates`, `sr_hold`, `p0`다.
+`all replicate results`는 MATH·MBPP를 각각 수집한다. 한쪽 오류가 다른 쪽 수집을 막지 않는다.
+실행 환경·모델·seed·캐시 경로·재개는 기존 검증된 runner를 따른다.
+
 ## 1. 기존 추가 실험 결과 수집
 
 ```sh
@@ -74,8 +91,18 @@ MBPP 최대 5노드, 양쪽 최대 10노드다. 양쪽을 자동 배정하려면
 | Qwen | `sh scripts/run_srgc_qwen35.sh all status` | `sh scripts/run_srgc_qwen35.sh all results` |
 | 완료한 P0 | `sh scripts/run_srgc.sh all status` | `sh scripts/run_srgc.sh all results` |
 
-조회는 GPU 학습을 시작하지 않는다. 원인 진단·support·고정 전환 results는 화면 출력이며,
-1절처럼 JSON을 자동 수집하지 않는다. Qwen은 보고서를 저장하고 `Saved:` 경로를 표시한다.
+조회는 GPU 학습을 시작하지 않는다. 원인 진단·support·전환 비교 results/json은 원본을 포함한
+통합 JSON과 개별 사본을 자동 저장한다. `status`는 읽기 전용이다.
+
+| 결과 | 통합 JSON 위치 |
+| --- | --- |
+| 메커니즘 | `<run root>/results/mechanism/results.json` |
+| support | `<run root>/results/support/results.json` |
+| 고정 전환·규칙 | `<run root>/results/switch_validation/results.json` |
+
+각 폴더의 `exports/<수집 시각-ID>/raw/`에 검증된 원본 사본을 보존한다.
+`COLLECTED JSON / COLLECTED FILES`가 실제 경로다. 기존 1절의 통합 파일과 덮어쓰지 않는다.
+Qwen은 기존 보고서를 저장하고 `Saved:` 경로를 표시한다.
 고정 전환 결과 보고서는 규칙 대조도 함께 표시하지만, 표의 상태 명령은 `timing`만 조회한다.
 원인 진단 JSON 출력은 `sh scripts/run_srgc_mechanism.sh all json`,
 P0 비용 조회는 `sh scripts/run_srgc.sh all costs`다.
@@ -123,3 +150,17 @@ P0 비용 조회는 `sh scripts/run_srgc.sh all costs`다.
 - [원인 진단 상세](STAGE_MECHANISM_EXPERIMENTS_2026-10-06.md): E14-E16의 개입·평가·비용.
 - [전환 시점 상세](SWITCH_ADDITIONAL_EXPERIMENTS_2026-10-06.md): E11-E13의 조건·분석.
 - [정리 전 실행 기록](https://github.com/33modeling/offpolicy-misranking/blob/340bf7e7c7cad3f8a0a9bc229489ff9d4aa430a5/docs/REBUTTAL_COMMANDS_KO.md): 과거 120개 배정표·운영 기록.
+
+## 7. 실행 코드 점검
+
+- 통합 실행부를 새로 작성했다. 기존 학습 엔진·동결 runtime·실험 조건과 메커니즘 코드 해시는 유지한다.
+- support는 같은 runtime·attention끼리만 paired 집계한다. 미확인 조건은 원값만 표시한다.
+- 메커니즘 상관·overlap·선택 집합 진단값을 원본 점수·보상에서 재계산해 검증한다.
+- 손상된 rollout의 개수·토큰·보상을 검사하고 재생성한다. 캐시 저장은 flush/fsync 후 교체한다.
+- 잘못된 status 항목·queue receipt가 다른 정상 작업을 가리지 않게 수정했다. 손상 기록의 retry 횟수를 초기화하지 않는다.
+- 결과는 검증한 같은 JSON 객체를 수집한다. 저장 중 실패하면 기존 최신 수집본을 유지한다.
+- CPU 4-rank 메커니즘 학습·분기·재개와 2-rank 저장 실패 전파를 확인했다. 실제 H100/NCCL 실측은 별도다.
+
+2026-10-06 검증: 전체 `srgc_rebuttal/tests` **668 passed / 9 skipped / 305 subtests passed**.
+9개 skip은 로컬 Transformers 4.57.6에 Qwen3.5 모델 클래스가 없어서 발생한 기존 모델 테스트다.
+H100 실행 환경을 변경하거나 패키지를 새로 설치하지 않았다. CPU 분산 점검은 GPU 실측이 아니다.

@@ -128,13 +128,10 @@ sh scripts/run_srgc_mechanism.sh math json
 원본은 기존 active group-volume run의 `seed-N/stage_mechanism-endpoint.json`이다.
 중간 상태는 `stage_mechanism-progress.json`, 재개 파일은 `stage_mechanism-latest.pt`,
 phase 비용은 `cost-receipts/stage_mechanism/`, inclusive 비용은 `invocations/stage_mechanism/`이다.
-`results` 첫 부분에 seed별 실제 `output=` 경로를 표시한다. `results/json`은 화면 출력이며
-별도 파일을 자동 생성하지 않는다. 기본 그룹 경로에서 JSON을 추출하려면 다음을 쓴다.
-
-```sh
-sh scripts/run_srgc_mechanism.sh math json > /group-volume/minsoo3.kim/offpolicy-misranking/mechanism-math-results.json
-sh scripts/run_srgc_mechanism.sh mbpp json > /group-volume/minsoo3.kim/offpolicy-misranking/mechanism-mbpp-results.json
-```
+`results` 첫 부분에 seed별 실제 `output=` 경로를 표시한다. `results/json`은
+`<run root>/results/mechanism/results.json`과 `exports/<수집 시각-ID>/raw/`에
+통합 JSON·검증된 원본 사본을 자동 저장한다. `COLLECTED JSON / COLLECTED FILES`로 위치를 확인한다.
+`json`의 stdout에는 JSON만, 저장 경로는 stderr에 출력한다. 별도 리다이렉션은 필요 없다.
 
 한 작업은 한 seed의 모든 시점·대조를 담당한다. **5작업/도메인, 총 10작업**이며
 최대 동시 독립 배정은 5노드/도메인, 양쪽 10노드다. 한 seed 안에서는 모델을 공유하여
@@ -148,7 +145,8 @@ GPU 시간은 실제 로그 전에는 단정하지 않는다. `status`는 물리
 매 학습 update와 진단 단계 완료 시 group-volume에 checkpoint한다. 같은 명령을 다시
 실행하면 모델·optimizer·측정값·진단 진행 위치를 복구한다. scoring/evaluation 응답은 기존
 prompt별 rollout cache를 재사용한다. 사용자 볼륨 저장이나 migration은 추가하지 않는다.
-`status/results/json`은 읽기 전용이다. 정상 실행 중인 checkout에 pull하거나 worker를 중복 실행하지 않는다.
+`status`는 읽기 전용이고 `results/json`은 수집본만 저장한다. 학습·원본·잠금을 바꾸지 않는다.
+정상 실행 중인 checkout에 pull하거나 worker를 중복 실행하지 않는다.
 과거 MBPP prefix에 연결된 실행은 그 당시 채점기 버전을 유지한다. v3 결과와 혼합하지 않는다.
 
 ## 코드 위치와 검증

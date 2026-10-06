@@ -26,6 +26,10 @@ V6 대응 실험은 위 순서로 정리한다. 별도로 요청한 메커니즘
 
 ## 공통 실행 방법
 
+통합 실행부는 `sh scripts/run_srgc_experiments.sh 데이터셋 실험 [run|status|results]`다.
+예: `sh scripts/run_srgc_experiments.sh all mechanism`. 가능한 이름은
+`sh scripts/run_srgc_experiments.sh list`로 확인한다. 아래 기존 개별 명령도 계속 사용할 수 있다.
+
 - 빈 **4-H100 노드마다 선택한 실행 명령 하나**를 실행한다. seed·조건은 자동 배정된다.
 - 아래 실행 예시는 MATH다. `math`를 `mbpp`로 바꾸면 MBPP, `all`로 바꾸면 양쪽을 배정한다.
 - 단, 기존 P1/추가 arm의 `results`는 `all`을 받지 않는다. MATH·MBPP를 각각 조회한다.
@@ -269,7 +273,10 @@ sh scripts/run_srgc_mechanism.sh all results
 
 **볼 결과:** 단계별 실제 평가 보상 증가, 방향/SR 점수 shuffle 효과, 혼합 보상 group 비율,
 캐시-현재 성공률 차이, A/B 반복성과 학습 이득의 관계. 진단 비용과 운영 비용은 분리한다.
-JSON 화면 출력은 `sh scripts/run_srgc_mechanism.sh all json`이다.
+JSON 출력은 `sh scripts/run_srgc_mechanism.sh all json`이다. results/json 모두
+`<run root>/results/mechanism/results.json`에 원본을 포함한 수집본을 자동 저장한다.
+support와 전환 비교도 각각 `results/support/`, `results/switch_validation/`에 자동 저장한다.
+실제 경로는 `COLLECTED JSON / COLLECTED FILES`에서 확인한다.
 원본은 `<run root>/seed-N/stage_mechanism-endpoint.json`, results의 `output=`으로 위치를 확인한다.
 
 **규모:** 5개 seed 작업/데이터셋, 양쪽 최대 10노드. seed당 물리적 update는
