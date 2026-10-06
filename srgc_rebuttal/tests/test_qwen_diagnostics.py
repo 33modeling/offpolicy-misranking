@@ -2,6 +2,7 @@
 
 from contextlib import redirect_stdout
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -76,6 +77,36 @@ class QwenDiagnosticsTests(unittest.TestCase):
         with patch.object(sys, "argv", expected), \
                 patch.dict(sys.modules, {"run_srgc_qwen35": SimpleNamespace(main=run)}):
             self.assertEqual(diagnostics.main(), 17)
+
+    def test_run_wraps_admission_without_changing_arguments_or_leaking_patch(self):
+        expected = ["diagnostics", "all", "run", "--root", "/example"]
+        original = lambda *args, **kwargs: 17
+        launcher = SimpleNamespace(admit_with_smoke=original)
+
+        def run():
+            self.assertEqual(sys.argv, expected)
+            self.assertIsNot(launcher.admit_with_smoke, original)
+            return launcher.admit_with_smoke(None, Path("/example"), {}, None)
+
+        launcher.main = run
+        with patch.object(sys, "argv", expected), patch.dict(sys.modules, {"run_srgc_qwen35": launcher}):
+            self.assertEqual(diagnostics.main(), 17)
+        self.assertIs(launcher.admit_with_smoke, original)
+
+    def test_error_mode_follows_latest_recovery_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            admission = root / "runs/math/.queue/admission/worker"
+            latest = admission / "recovery-01/qwen-smoke.log"
+            latest.parent.mkdir(parents=True)
+            (admission / "qwen-smoke.log").write_text("RuntimeError: first failure\n")
+            latest.write_text("RuntimeError: recovery failure\n")
+            (admission / "qwen-admission.json").write_text(json.dumps({"qwen_smoke_log": str(latest)}))
+            output = io.StringIO()
+            with redirect_stdout(output):
+                diagnostics.show_errors("math", root)
+            self.assertIn("recovery failure", output.getvalue())
+            self.assertNotIn("first failure", output.getvalue())
 
     def test_tail_read_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:

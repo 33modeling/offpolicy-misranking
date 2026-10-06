@@ -155,6 +155,32 @@ sh scripts/run_srgc_qwen35.sh
 hash를 바꾸지 않으므로 검사에서 멈춘 기존 plan·queue를 다시 만들 필요가 없다.
 로그를 확인하지 않고 GPU 검사를 생략하거나 OOM·CUDA 오류를 성공으로 처리하지 않는다.
 
+### 가중치 로딩 후 NCCL CUDA 802
+
+작은 NCCL 검사가 통과해도 실제 Qwen 검사에서
+`ncclUnhandledCudaError`와 `Cuda failure 802 'system not yet initialized'`가
+발생할 수 있다. 일반적인 `unhandled CUDA error`만으로 원인을 판단하지 않는다.
+
+현재 시작 명령은 **해당 Qwen 검사 로그에 NCCL 오류와 CUDA 802가 함께 기록된
+경우에만** 기존 NCCL 복구 순서인 `NCCL_NVLS_ENABLE=0`, `NCCL_CUMEM_ENABLE=0`,
+`NCCL_P2P_DISABLE=1`을 한 단계씩 추가한다. 이미 명시된 설정은 바꾸지 않는다.
+각 단계마다 작은 NCCL 검사와 실제 Qwen 생성·역전파 검사를 모두 다시 실행한다.
+최대 세 번의 추가 검사 후에도 실패하면 중단하며, 학습 작업은 배정하지 않는다.
+OOM·다른 CUDA 오류·사용자 중단에는 이 복구를 적용하지 않는다.
+
+검사에서는 NCCL INFO 로그를 기본으로 사용하되 사용자가 지정한 로그 설정은
+유지한다. 성공한 통신 설정만 학습에 전달하고, 실패한 검사 receipt의 비용도 합산한다.
+각 시도의 원본 로그·receipt를 보존하며 최상위 `qwen-admission.json`에 합산 비용과
+마지막 검사 경로를 기록한다. 중단으로 receipt가 남지 않은 시도는
+`cost_accounting_complete=false`로 표시하며, 이때 비용 합계는 하한이다.
+이 운영 경로 수정은 adapter/engine hash나 입력을
+바꾸지 않는다. 다만 통신 방식에 따라 실행시간과 부동소수점 합산 순서는 달라질
+수 있으므로 각 worker의 실제 설정을 결과와 함께 보존한다.
+
+이 복구는 시스템 장애 수리를 보장하지 않는다. 모든 단계에서 802가 계속되면
+호스트 드라이버·CUDA 라이브러리·NVSwitch/Fabric 상태를 관리자가 점검해야 한다.
+[NVIDIA CUDA 초기화 안내](https://docs.nvidia.com/nim/large-language-models/2.0.13/troubleshooting/cuda-driver.html).
+
 매 worker 시작 시 기존 4-rank NCCL 검사 뒤에 **실제 9B 모델 생성·scoring
 역전파·GRPO update**를 검사한다. 이 검사의 보상은 backward 확인용 합성
 보상이며 실험 cache/결과에 기록하지 않는다. 실패하면 cache 학습을 시작하지

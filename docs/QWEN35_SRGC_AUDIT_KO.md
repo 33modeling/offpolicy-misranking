@@ -1,5 +1,30 @@
 # Qwen3.5-9B 실행 코드 추가 감사
 
+## 2026-10-06 Qwen NCCL 802 복구
+
+- 작은 NCCL 검사 뒤 실제 Qwen 생성·역전파 검사에서 CUDA 802가 발생하면
+  바로 종료하던 경로에 제한된 복구를 추가했다. 현재 smoke 로그에 NCCL과
+  CUDA 802가 함께 확인된 경우에만 기존 NVLS/cuMem/P2P 복구 단계를 사용한다.
+- 각 단계는 별도 디렉터리에서 작은 검사와 실제 모델 검사를 모두 다시 수행한다.
+  최대 세 번 추가 검사하며, 통과 전에는 학습 작업을 배정하지 않는다.
+  명시된 NCCL 설정, OOM·다른 오류·사용자 중단은 자동 변경하거나 우회하지 않는다.
+- 원본 receipt와 시도별 로그를 보존한다. 성공한 설정은 학습 환경에 전달하고
+  실패한 시도를 포함해 기록된 비용을 합산한다. 중단으로 receipt가 없으면
+  `cost_accounting_complete=false`로 표시하며 이 합계는 하한이다.
+- shell의 자동 시작과 명시적 `run`이 모두 복구 wrapper를 사용한다.
+  `error` 명령은 최종 recovery 로그를 표시하며 GPU 작업을 시작하지 않는다.
+- 이번 수정은 실행 wrapper에만 적용했다. adapter hash는
+  `20e90f784b19afa6602b839ff2f7934eb207f03868a4052896edc9355b7ffd8b`,
+  engine hash는
+  `12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960`으로
+  수정 전과 같다. 기존 plan·queue·입력·checkpoint를 다시 만들지 않는다.
+  통신 설정 변경은 실행시간과 부동소수점 합산 순서에 영향을 줄 수 있다.
+
+검증: Qwen 회귀 검사, smoke 복구, NCCL preflight/runtime 검사에서
+**194개 및 22개 subtest 통과, GPU 검사 3개 skip**. multiprocessing fork
+관련 경고 5건이 있었다. 실제 H100에서 802 해소 여부는 검증하지 못했다.
+모든 단계가 실패하면 노드의 드라이버·CUDA 라이브러리·fabric 점검이 필요하다.
+
 ## 2026-10-06 재점검
 
 - Pair 입력 후속 오류: importer는 기존 MATH 입력을 `math500`으로 기록하지만

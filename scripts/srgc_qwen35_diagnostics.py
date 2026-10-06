@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Read Qwen admission failures without changing the pinned experiment runtime."""
+"""Diagnose and recover Qwen admission without changing the pinned runtime."""
 
 import argparse
+import importlib
+import json
 import os
 from pathlib import Path
 import re
@@ -68,6 +70,15 @@ def show_errors(dataset, root):
         except OSError as exc:
             print(f"{name}: unable to inspect smoke logs: {exc}")
             continue
+        receipt = latest.parent / "qwen-admission.json"
+        if receipt.is_file():
+            try:
+                recorded = json.loads(receipt.read_text()).get("qwen_smoke_log")
+                candidate = Path(recorded).resolve() if recorded else latest
+                if candidate.is_relative_to(latest.parent.resolve()) and candidate.is_file():
+                    latest = candidate
+            except (OSError, ValueError, TypeError):
+                pass
         print(failure_details(latest))
         found = True
     return found
@@ -83,12 +94,22 @@ def main():
         show_errors(args.dataset, args.root)
         return
     try:
-        from run_srgc_qwen35 import main as run_main
+        launcher = importlib.import_module("run_srgc_qwen35")
     except ModuleNotFoundError as exc:
         if exc.name != "run_srgc_qwen35":
             raise
-        from scripts.run_srgc_qwen35 import main as run_main
-    return run_with_diagnostics(run_main)
+        launcher = importlib.import_module("scripts.run_srgc_qwen35")
+    if len(sys.argv) > 2 and sys.argv[2] == "run":
+        from unittest.mock import patch
+        try:
+            from srgc_qwen35_admission import with_smoke_recovery
+        except ModuleNotFoundError as exc:
+            if exc.name != "srgc_qwen35_admission":
+                raise
+            from scripts.srgc_qwen35_admission import with_smoke_recovery
+        with patch.object(launcher, "admit_with_smoke", with_smoke_recovery(launcher.admit_with_smoke)):
+            return run_with_diagnostics(launcher.main)
+    return run_with_diagnostics(launcher.main)
 
 
 if __name__ == "__main__":
