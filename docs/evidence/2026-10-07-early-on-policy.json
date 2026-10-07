@@ -1,0 +1,296 @@
+{
+  "schema": "srgc-early-on-policy-evidence-v1",
+  "scope": "Archived MATH fixed-100-update results, seeds 0-2; descriptive evidence, not a causal result or current mechanism output",
+  "source": {
+    "repository": "33modeling/offpolicy-misranking-paper-v2",
+    "commit": "16c95cb213980f5efdebaf777c25d884fcb9b054",
+    "path": "v3/evidence/2026-09-14/e5-results-20260913T232454Z.txt",
+    "sha256": "deb950f35a9b1d28daf8f4305d2a03a94e761c6130ddec339dc4b9351b8fc3d5"
+  },
+  "rows": [
+    {
+      "stage": 0,
+      "seed": 0,
+      "random_reward": 0.2575,
+      "on_policy_reward": 0.27125,
+      "sr_reward": 0.25125,
+      "on_minus_random_pp": 1.375,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -0.33333333333333337,
+        3.125
+      ],
+      "on_minus_sr_pp": 2.0000000000000018,
+      "cross_half_score_gain_sd": 0.163
+    },
+    {
+      "stage": 0,
+      "seed": 1,
+      "random_reward": 0.2575,
+      "on_policy_reward": 0.255,
+      "sr_reward": 0.2575,
+      "on_minus_random_pp": -0.25,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -1.9166666666666665,
+        1.4166666666666665
+      ],
+      "on_minus_sr_pp": -0.2500000000000002,
+      "cross_half_score_gain_sd": 0.276
+    },
+    {
+      "stage": 0,
+      "seed": 2,
+      "random_reward": 0.2658333333333333,
+      "on_policy_reward": 0.27208333333333334,
+      "sr_reward": 0.25416666666666665,
+      "on_minus_random_pp": 0.625,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -1.0833333333333335,
+        2.3333333333333335
+      ],
+      "on_minus_sr_pp": 1.7916666666666692,
+      "cross_half_score_gain_sd": 0.024
+    },
+    {
+      "stage": 100,
+      "seed": 0,
+      "random_reward": 0.27791666666666665,
+      "on_policy_reward": 0.28791666666666665,
+      "sr_reward": 0.28458333333333335,
+      "on_minus_random_pp": 1.0,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -0.625,
+        2.5416666666666665
+      ],
+      "on_minus_sr_pp": 0.33333333333332993,
+      "cross_half_score_gain_sd": -0.127
+    },
+    {
+      "stage": 100,
+      "seed": 1,
+      "random_reward": 0.2825,
+      "on_policy_reward": 0.2925,
+      "sr_reward": 0.28583333333333333,
+      "on_minus_random_pp": 1.0,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -0.75,
+        2.833333333333333
+      ],
+      "on_minus_sr_pp": 0.6666666666666654,
+      "cross_half_score_gain_sd": 0.144
+    },
+    {
+      "stage": 100,
+      "seed": 2,
+      "random_reward": 0.265,
+      "on_policy_reward": 0.2683333333333333,
+      "sr_reward": 0.28958333333333336,
+      "on_minus_random_pp": 0.33333333333333337,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -1.4177083333333322,
+        2.0416666666666665
+      ],
+      "on_minus_sr_pp": -2.1250000000000044,
+      "cross_half_score_gain_sd": -0.084
+    },
+    {
+      "stage": 400,
+      "seed": 0,
+      "random_reward": 0.33958333333333335,
+      "on_policy_reward": 0.3283333333333333,
+      "sr_reward": 0.3441666666666667,
+      "on_minus_random_pp": -1.125,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -2.7916666666666665,
+        0.5833333333333334
+      ],
+      "on_minus_sr_pp": -1.5833333333333366,
+      "cross_half_score_gain_sd": 0.098
+    },
+    {
+      "stage": 400,
+      "seed": 1,
+      "random_reward": 0.33416666666666667,
+      "on_policy_reward": 0.3433333333333333,
+      "sr_reward": 0.35208333333333336,
+      "on_minus_random_pp": 0.9166666666666666,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -0.7083333333333333,
+        2.5416666666666665
+      ],
+      "on_minus_sr_pp": -0.8750000000000036,
+      "cross_half_score_gain_sd": 0.072
+    },
+    {
+      "stage": 400,
+      "seed": 2,
+      "random_reward": 0.3275,
+      "on_policy_reward": 0.3333333333333333,
+      "sr_reward": 0.3570833333333333,
+      "on_minus_random_pp": 0.5833333333333334,
+      "on_minus_random_question_bootstrap_ci_pp": [
+        -1.2083333333333333,
+        2.3333333333333335
+      ],
+      "on_minus_sr_pp": -2.374999999999999,
+      "cross_half_score_gain_sd": -0.275
+    }
+  ],
+  "stage_summary": [
+    {
+      "stage": 0,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "mean_on_minus_random_pp": 0.5833333333333334,
+      "mean_on_minus_sr_pp": 1.180555555555557,
+      "mean_cross_half_score_gain_sd": 0.15433333333333335,
+      "on_higher_than_random_seeds": [
+        0,
+        2
+      ],
+      "on_higher_than_sr_seeds": [
+        0,
+        2
+      ]
+    },
+    {
+      "stage": 100,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "mean_on_minus_random_pp": 0.7777777777777778,
+      "mean_on_minus_sr_pp": -0.37500000000000305,
+      "mean_cross_half_score_gain_sd": -0.02233333333333334,
+      "on_higher_than_random_seeds": [
+        0,
+        1,
+        2
+      ],
+      "on_higher_than_sr_seeds": [
+        0,
+        1
+      ]
+    },
+    {
+      "stage": 400,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "mean_on_minus_random_pp": 0.125,
+      "mean_on_minus_sr_pp": -1.6111111111111132,
+      "mean_cross_half_score_gain_sd": -0.03500000000000001,
+      "on_higher_than_random_seeds": [
+        1,
+        2
+      ],
+      "on_higher_than_sr_seeds": []
+    }
+  ],
+  "score_only_rows": [
+    {
+      "seed": 0,
+      "stage": 0,
+      "cross_half_score_gain_sd": 0.163,
+      "score_correlation": -0.001,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 0,
+      "stage": 100,
+      "cross_half_score_gain_sd": -0.127,
+      "score_correlation": -0.031,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 0,
+      "stage": 25,
+      "cross_half_score_gain_sd": 0.434,
+      "score_correlation": 0.11,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 0,
+      "stage": 400,
+      "cross_half_score_gain_sd": 0.098,
+      "score_correlation": 0.035,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 1,
+      "stage": 0,
+      "cross_half_score_gain_sd": 0.276,
+      "score_correlation": 0.08,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 1,
+      "stage": 100,
+      "cross_half_score_gain_sd": 0.144,
+      "score_correlation": 0.054,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 1,
+      "stage": 25,
+      "cross_half_score_gain_sd": 0.058,
+      "score_correlation": 0.054,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 1,
+      "stage": 400,
+      "cross_half_score_gain_sd": 0.072,
+      "score_correlation": 0.048,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 2,
+      "stage": 0,
+      "cross_half_score_gain_sd": 0.024,
+      "score_correlation": -0.011,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 2,
+      "stage": 100,
+      "cross_half_score_gain_sd": -0.084,
+      "score_correlation": 0.075,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 2,
+      "stage": 25,
+      "cross_half_score_gain_sd": 0.281,
+      "score_correlation": 0.066,
+      "source_precision": "rounded to three decimals"
+    },
+    {
+      "seed": 2,
+      "stage": 400,
+      "cross_half_score_gain_sd": -0.275,
+      "score_correlation": -0.044,
+      "source_precision": "rounded to three decimals"
+    }
+  ],
+  "limits": [
+    "Cross-half score gain uses an independent sample and scorer-specific SD units; it is not reward gain or actual LoRA/AdamW update alignment.",
+    "No early selected-prompt distributions or response texts are present in this export.",
+    "Pointwise question-bootstrap intervals condition on trained policies; they do not measure training-seed variability.",
+    "A seed-level association between the score and reward does not isolate a causal direction effect.",
+    "The split-sample scores come from full-pool diagnostics; matching seed and stage does not establish that the scoring samples are the actual selection records used by the learning run."
+  ],
+  "algebra_verification": {
+    "groups": 900,
+    "dimension": 11,
+    "group_size": 8,
+    "epsilon": 0.0001,
+    "max_absolute_residual": 1.1102230246251565e-16,
+    "scope": "Synthetic arithmetic verification of GRPO reward-gradient factorization at ratio=1; not an experiment outcome"
+  }
+}
