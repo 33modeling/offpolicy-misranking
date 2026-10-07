@@ -1,0 +1,1620 @@
+{
+  "schema": "srgc-rollout-analysis-bundle-v1",
+  "reports": [
+    {
+      "source": {
+        "path": "/home/kms/results.json",
+        "sha256": "7718fdcf0f22475d8b9dd931036bc4cf476515f89cfe90569dc2f414f1fa422c"
+      },
+      "schema": "srgc-endpoint-receipt-diagnostics-v1",
+      "dataset": "math",
+      "measurement": "cumulative instrumented attempts, not deduplicated training groups",
+      "responses_per_update_assumption": 32,
+      "raw_trace_available": false,
+      "stage_resolved": false,
+      "all_correct_vs_all_wrong_available": false,
+      "groups": null,
+      "rows": [
+        {
+          "dataset": "math",
+          "seed": 5,
+          "arm": "on_policy",
+          "source_key": "seed-5/on_policy-endpoint.json",
+          "reward_pct": 40.125,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 568,
+          "recorded_generated_tokens": 8487405,
+          "zero_advantage_response_pct": 7.1,
+          "tokens_per_response": 1060.925625,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "9b2382de6b6c272bfcec0e60b2901950e4c91fa78386bb0541efac23d40880d5",
+          "input_sha256": "736531ff645e36ca075ba1f6e3a7906ae9afaaaf96e2ed65fdde6a886c04b171",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 5,
+          "arm": "random",
+          "source_key": "seed-5/random-endpoint.json",
+          "reward_pct": 39.08333333333333,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 2688,
+          "recorded_generated_tokens": 8792853,
+          "zero_advantage_response_pct": 33.6,
+          "tokens_per_response": 1099.106625,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "9b2382de6b6c272bfcec0e60b2901950e4c91fa78386bb0541efac23d40880d5",
+          "input_sha256": "736531ff645e36ca075ba1f6e3a7906ae9afaaaf96e2ed65fdde6a886c04b171",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 5,
+          "arm": "sr",
+          "source_key": "seed-5/sr-endpoint.json",
+          "reward_pct": 36.791666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1008,
+          "recorded_generated_tokens": 6927158,
+          "zero_advantage_response_pct": 12.6,
+          "tokens_per_response": 865.89475,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "9b2382de6b6c272bfcec0e60b2901950e4c91fa78386bb0541efac23d40880d5",
+          "input_sha256": "736531ff645e36ca075ba1f6e3a7906ae9afaaaf96e2ed65fdde6a886c04b171",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 5,
+          "arm": "switch",
+          "source_key": "seed-5/switch-endpoint.json",
+          "reward_pct": 37.5,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1048,
+          "recorded_generated_tokens": 7321517,
+          "zero_advantage_response_pct": 13.1,
+          "tokens_per_response": 915.189625,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "9b2382de6b6c272bfcec0e60b2901950e4c91fa78386bb0541efac23d40880d5",
+          "input_sha256": "736531ff645e36ca075ba1f6e3a7906ae9afaaaf96e2ed65fdde6a886c04b171",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 6,
+          "arm": "on_policy",
+          "source_key": "seed-6/on_policy-endpoint.json",
+          "reward_pct": 39.875,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 592,
+          "recorded_generated_tokens": 7997101,
+          "zero_advantage_response_pct": 7.4,
+          "tokens_per_response": 999.637625,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "2ede7a527d5a8b9d26dbdf32a01bfbda198bcb99f0a3889cea295847d01a163b",
+          "input_sha256": "d2dee78e3a13a580156fac2d45e5f83878fabab06a78441eccae00315cb51b1e",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 6,
+          "arm": "random",
+          "source_key": "seed-6/random-endpoint.json",
+          "reward_pct": 38.208333333333336,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 2520,
+          "recorded_generated_tokens": 9317755,
+          "zero_advantage_response_pct": 31.5,
+          "tokens_per_response": 1164.719375,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "2ede7a527d5a8b9d26dbdf32a01bfbda198bcb99f0a3889cea295847d01a163b",
+          "input_sha256": "d2dee78e3a13a580156fac2d45e5f83878fabab06a78441eccae00315cb51b1e",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 6,
+          "arm": "sr",
+          "source_key": "seed-6/sr-endpoint.json",
+          "reward_pct": 42.625,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 992,
+          "recorded_generated_tokens": 7328363,
+          "zero_advantage_response_pct": 12.4,
+          "tokens_per_response": 916.045375,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "2ede7a527d5a8b9d26dbdf32a01bfbda198bcb99f0a3889cea295847d01a163b",
+          "input_sha256": "d2dee78e3a13a580156fac2d45e5f83878fabab06a78441eccae00315cb51b1e",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 6,
+          "arm": "switch",
+          "source_key": "seed-6/switch-endpoint.json",
+          "reward_pct": 41.41666666666667,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 872,
+          "recorded_generated_tokens": 7259930,
+          "zero_advantage_response_pct": 10.9,
+          "tokens_per_response": 907.49125,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "2ede7a527d5a8b9d26dbdf32a01bfbda198bcb99f0a3889cea295847d01a163b",
+          "input_sha256": "d2dee78e3a13a580156fac2d45e5f83878fabab06a78441eccae00315cb51b1e",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 7,
+          "arm": "on_policy",
+          "source_key": "seed-7/on_policy-endpoint.json",
+          "reward_pct": 37.625,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1128,
+          "recorded_generated_tokens": 8012071,
+          "zero_advantage_response_pct": 14.1,
+          "tokens_per_response": 1001.508875,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "04936c8095495a88599efdb02a30cb1c8ba14b97d76fb96ba07542067b06492a",
+          "input_sha256": "990f23a5745055c33097298777788aa3858cc5f10bfd4a1a02b8a169aaaddfa2",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "math",
+          "seed": 7,
+          "arm": "random",
+          "source_key": "seed-7/random-endpoint.json",
+          "reward_pct": 37.666666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 2528,
+          "recorded_generated_tokens": 8869153,
+          "zero_advantage_response_pct": 31.6,
+          "tokens_per_response": 1108.644125,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "04936c8095495a88599efdb02a30cb1c8ba14b97d76fb96ba07542067b06492a",
+          "input_sha256": "990f23a5745055c33097298777788aa3858cc5f10bfd4a1a02b8a169aaaddfa2",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 7,
+          "arm": "sr",
+          "source_key": "seed-7/sr-endpoint.json",
+          "reward_pct": 39.791666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1136,
+          "recorded_generated_tokens": 7152755,
+          "zero_advantage_response_pct": 14.2,
+          "tokens_per_response": 894.094375,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "04936c8095495a88599efdb02a30cb1c8ba14b97d76fb96ba07542067b06492a",
+          "input_sha256": "990f23a5745055c33097298777788aa3858cc5f10bfd4a1a02b8a169aaaddfa2",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 7,
+          "arm": "switch",
+          "source_key": "seed-7/switch-endpoint.json",
+          "reward_pct": 38.208333333333336,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 864,
+          "recorded_generated_tokens": 7682802,
+          "zero_advantage_response_pct": 10.8,
+          "tokens_per_response": 960.35025,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "04936c8095495a88599efdb02a30cb1c8ba14b97d76fb96ba07542067b06492a",
+          "input_sha256": "990f23a5745055c33097298777788aa3858cc5f10bfd4a1a02b8a169aaaddfa2",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 8,
+          "arm": "on_policy",
+          "source_key": "seed-8/on_policy-endpoint.json",
+          "reward_pct": 39.375,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 592,
+          "recorded_generated_tokens": 8466017,
+          "zero_advantage_response_pct": 7.4,
+          "tokens_per_response": 1058.252125,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "b90642f14baff615b0d4a9fdd46abf581fbed40b28d64ac66858a4e4275c75b0",
+          "input_sha256": "677bbfbf2a3df877ae5ce9ce2a727703a78e6608d732802302a4e5938275c4ed",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 8,
+          "arm": "random",
+          "source_key": "seed-8/random-endpoint.json",
+          "reward_pct": 38.416666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 2328,
+          "recorded_generated_tokens": 8950992,
+          "zero_advantage_response_pct": 29.1,
+          "tokens_per_response": 1118.874,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "b90642f14baff615b0d4a9fdd46abf581fbed40b28d64ac66858a4e4275c75b0",
+          "input_sha256": "677bbfbf2a3df877ae5ce9ce2a727703a78e6608d732802302a4e5938275c4ed",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 8,
+          "arm": "sr",
+          "source_key": "seed-8/sr-endpoint.json",
+          "reward_pct": 38.166666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 744,
+          "recorded_generated_tokens": 7175130,
+          "zero_advantage_response_pct": 9.3,
+          "tokens_per_response": 896.89125,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "b90642f14baff615b0d4a9fdd46abf581fbed40b28d64ac66858a4e4275c75b0",
+          "input_sha256": "677bbfbf2a3df877ae5ce9ce2a727703a78e6608d732802302a4e5938275c4ed",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 8,
+          "arm": "switch",
+          "source_key": "seed-8/switch-endpoint.json",
+          "reward_pct": 38.375,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 792,
+          "recorded_generated_tokens": 7522071,
+          "zero_advantage_response_pct": 9.9,
+          "tokens_per_response": 940.258875,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "b90642f14baff615b0d4a9fdd46abf581fbed40b28d64ac66858a4e4275c75b0",
+          "input_sha256": "677bbfbf2a3df877ae5ce9ce2a727703a78e6608d732802302a4e5938275c4ed",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 9,
+          "arm": "on_policy",
+          "source_key": "seed-9/on_policy-endpoint.json",
+          "reward_pct": 40.33333333333333,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1000,
+          "recorded_generated_tokens": 8957009,
+          "zero_advantage_response_pct": 12.5,
+          "tokens_per_response": 1119.626125,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "7ed8d1ea60bff91daa24cb8ca1c4d3121812b7b84332725d0990c7bbe540612f",
+          "input_sha256": "e725ccd8d86f5898301879a0ce3a4de7115dfa5e7b88b879783f824a3d2571be",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 9,
+          "arm": "random",
+          "source_key": "seed-9/random-endpoint.json",
+          "reward_pct": 38.333333333333336,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 2480,
+          "recorded_generated_tokens": 9045658,
+          "zero_advantage_response_pct": 31.0,
+          "tokens_per_response": 1130.70725,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "7ed8d1ea60bff91daa24cb8ca1c4d3121812b7b84332725d0990c7bbe540612f",
+          "input_sha256": "e725ccd8d86f5898301879a0ce3a4de7115dfa5e7b88b879783f824a3d2571be",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "math",
+          "seed": 9,
+          "arm": "sr",
+          "source_key": "seed-9/sr-endpoint.json",
+          "reward_pct": 38.5,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1328,
+          "recorded_generated_tokens": 7059188,
+          "zero_advantage_response_pct": 16.6,
+          "tokens_per_response": 882.3985,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "7ed8d1ea60bff91daa24cb8ca1c4d3121812b7b84332725d0990c7bbe540612f",
+          "input_sha256": "e725ccd8d86f5898301879a0ce3a4de7115dfa5e7b88b879783f824a3d2571be",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "math",
+          "seed": 9,
+          "arm": "switch",
+          "source_key": "seed-9/switch-endpoint.json",
+          "reward_pct": 40.541666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1272,
+          "recorded_generated_tokens": 7346212,
+          "zero_advantage_response_pct": 15.9,
+          "tokens_per_response": 918.2765,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "7ed8d1ea60bff91daa24cb8ca1c4d3121812b7b84332725d0990c7bbe540612f",
+          "input_sha256": "e725ccd8d86f5898301879a0ce3a4de7115dfa5e7b88b879783f824a3d2571be",
+          "cost_measurement_complete": true
+        }
+      ],
+      "aggregates": {
+        "random": {
+          "reward_pct": {
+            "n": 5,
+            "mean": 38.34166666666667,
+            "sample_sd": 0.5072392597844388
+          },
+          "zero_advantage_response_pct": {
+            "n": 5,
+            "mean": 31.36,
+            "sample_sd": 1.607171428317465
+          },
+          "tokens_per_response": {
+            "n": 5,
+            "mean": 1124.410275,
+            "sample_sd": 25.416392185857365
+          }
+        },
+        "sr": {
+          "reward_pct": {
+            "n": 5,
+            "mean": 39.175,
+            "sample_sd": 2.204280872907686
+          },
+          "zero_advantage_response_pct": {
+            "n": 5,
+            "mean": 13.02,
+            "sample_sd": 2.6743223440714847
+          },
+          "tokens_per_response": {
+            "n": 5,
+            "mean": 891.06485,
+            "sample_sd": 18.545829344449317
+          }
+        },
+        "on_policy": {
+          "reward_pct": {
+            "n": 5,
+            "mean": 39.46666666666667,
+            "sample_sd": 1.0898840407227826
+          },
+          "zero_advantage_response_pct": {
+            "n": 5,
+            "mean": 9.7,
+            "sample_sd": 3.3369147426927164
+          },
+          "tokens_per_response": {
+            "n": 5,
+            "mean": 1047.990075,
+            "sample_sd": 49.75646480119445
+          }
+        },
+        "switch": {
+          "reward_pct": {
+            "n": 5,
+            "mean": 39.208333333333336,
+            "sample_sd": 1.67834450509357
+          },
+          "zero_advantage_response_pct": {
+            "n": 5,
+            "mean": 12.120000000000001,
+            "sample_sd": 2.41909073827337
+          },
+          "tokens_per_response": {
+            "n": 5,
+            "mean": 928.3133,
+            "sample_sd": 21.654034804922876
+          }
+        }
+      },
+      "paired": [
+        {
+          "seed": 5,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.0416666666666714,
+            "zero_advantage_response_pct": -26.5,
+            "tokens_per_response": -38.18099999999981
+          }
+        },
+        {
+          "seed": 5,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 3.3333333333333357,
+            "zero_advantage_response_pct": -5.5,
+            "tokens_per_response": 195.03087500000004
+          }
+        },
+        {
+          "seed": 5,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 2.625,
+            "zero_advantage_response_pct": -6.0,
+            "tokens_per_response": 145.7360000000001
+          }
+        },
+        {
+          "seed": 5,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 2.2916666666666643,
+            "zero_advantage_response_pct": 21.0,
+            "tokens_per_response": 233.21187499999985
+          }
+        },
+        {
+          "seed": 5,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.5833333333333286,
+            "zero_advantage_response_pct": 20.5,
+            "tokens_per_response": 183.91699999999992
+          }
+        },
+        {
+          "seed": 5,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.7083333333333357,
+            "zero_advantage_response_pct": -0.5,
+            "tokens_per_response": -49.294874999999934
+          }
+        },
+        {
+          "seed": 6,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.6666666666666643,
+            "zero_advantage_response_pct": -24.1,
+            "tokens_per_response": -165.08174999999994
+          }
+        },
+        {
+          "seed": 6,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -2.75,
+            "zero_advantage_response_pct": -5.0,
+            "tokens_per_response": 83.59224999999992
+          }
+        },
+        {
+          "seed": 6,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -1.5416666666666714,
+            "zero_advantage_response_pct": -3.5,
+            "tokens_per_response": 92.14637499999992
+          }
+        },
+        {
+          "seed": 6,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -4.416666666666664,
+            "zero_advantage_response_pct": 19.1,
+            "tokens_per_response": 248.67399999999986
+          }
+        },
+        {
+          "seed": 6,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -3.2083333333333357,
+            "zero_advantage_response_pct": 20.6,
+            "tokens_per_response": 257.22812499999986
+          }
+        },
+        {
+          "seed": 6,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.2083333333333286,
+            "zero_advantage_response_pct": 1.5,
+            "tokens_per_response": 8.554124999999999
+          }
+        },
+        {
+          "seed": 7,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.0416666666666643,
+            "zero_advantage_response_pct": -17.5,
+            "tokens_per_response": -107.13525000000004
+          }
+        },
+        {
+          "seed": 7,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -2.1666666666666643,
+            "zero_advantage_response_pct": -0.09999999999999964,
+            "tokens_per_response": 107.41449999999998
+          }
+        },
+        {
+          "seed": 7,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.5833333333333357,
+            "zero_advantage_response_pct": 3.299999999999999,
+            "tokens_per_response": 41.15862500000003
+          }
+        },
+        {
+          "seed": 7,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -2.125,
+            "zero_advantage_response_pct": 17.400000000000002,
+            "tokens_per_response": 214.54975000000002
+          }
+        },
+        {
+          "seed": 7,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.5416666666666714,
+            "zero_advantage_response_pct": 20.8,
+            "tokens_per_response": 148.29387500000007
+          }
+        },
+        {
+          "seed": 7,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.5833333333333286,
+            "zero_advantage_response_pct": 3.3999999999999986,
+            "tokens_per_response": -66.25587499999995
+          }
+        },
+        {
+          "seed": 8,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.9583333333333357,
+            "zero_advantage_response_pct": -21.700000000000003,
+            "tokens_per_response": -60.621875000000045
+          }
+        },
+        {
+          "seed": 8,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.2083333333333357,
+            "zero_advantage_response_pct": -1.9000000000000004,
+            "tokens_per_response": 161.36087499999996
+          }
+        },
+        {
+          "seed": 8,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.0,
+            "zero_advantage_response_pct": -2.5,
+            "tokens_per_response": 117.99324999999999
+          }
+        },
+        {
+          "seed": 8,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.25,
+            "zero_advantage_response_pct": 19.8,
+            "tokens_per_response": 221.98275
+          }
+        },
+        {
+          "seed": 8,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.0416666666666643,
+            "zero_advantage_response_pct": 19.200000000000003,
+            "tokens_per_response": 178.61512500000003
+          }
+        },
+        {
+          "seed": 8,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.2083333333333357,
+            "zero_advantage_response_pct": -0.5999999999999996,
+            "tokens_per_response": -43.367624999999975
+          }
+        },
+        {
+          "seed": 9,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.999999999999993,
+            "zero_advantage_response_pct": -18.5,
+            "tokens_per_response": -11.081124999999929
+          }
+        },
+        {
+          "seed": 9,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.8333333333333286,
+            "zero_advantage_response_pct": -4.100000000000001,
+            "tokens_per_response": 237.227625
+          }
+        },
+        {
+          "seed": 9,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.2083333333333357,
+            "zero_advantage_response_pct": -3.4000000000000004,
+            "tokens_per_response": 201.34962499999995
+          }
+        },
+        {
+          "seed": 9,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.1666666666666643,
+            "zero_advantage_response_pct": 14.399999999999999,
+            "tokens_per_response": 248.30874999999992
+          }
+        },
+        {
+          "seed": 9,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -2.2083333333333286,
+            "zero_advantage_response_pct": 15.1,
+            "tokens_per_response": 212.43074999999988
+          }
+        },
+        {
+          "seed": 9,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -2.0416666666666643,
+            "zero_advantage_response_pct": 0.7000000000000011,
+            "tokens_per_response": -35.87800000000004
+          }
+        }
+      ],
+      "issues": [],
+      "collection_errors": [],
+      "collection_warnings": [
+        "seed 5: code changed; viewing recorded results only, resume is blocked",
+        "seed 6: code changed; viewing recorded results only, resume is blocked",
+        "seed 7: code changed; viewing recorded results only, resume is blocked",
+        "seed 8: code changed; viewing recorded results only, resume is blocked",
+        "seed 9: code changed; viewing recorded results only, resume is blocked"
+      ]
+    },
+    {
+      "source": {
+        "path": "/home/kms/results_mbpp.json",
+        "sha256": "2c4bc214b5af506ea3e46228da6614b9b54ee6430625b955e405738db56b1d01"
+      },
+      "schema": "srgc-endpoint-receipt-diagnostics-v1",
+      "dataset": "mbpp",
+      "measurement": "cumulative instrumented attempts, not deduplicated training groups",
+      "responses_per_update_assumption": 32,
+      "raw_trace_available": false,
+      "stage_resolved": false,
+      "all_correct_vs_all_wrong_available": false,
+      "groups": null,
+      "rows": [
+        {
+          "dataset": "mbpp",
+          "seed": 5,
+          "arm": "on_policy",
+          "source_key": "seed-5/on_policy-endpoint.json",
+          "reward_pct": 35.16666666666667,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 880,
+          "recorded_generated_tokens": 6711735,
+          "zero_advantage_response_pct": 11.0,
+          "tokens_per_response": 838.966875,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "3b1a5b90b5edf277b072db77504bcba45ed1c0d906247af6b20e6d98c789dd05",
+          "input_sha256": "3df8a2aaf534196757fdda7ffc8586207829ae2285be1771c3575d9afe8ba2fb",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 5,
+          "arm": "random",
+          "source_key": "seed-5/random-endpoint.json",
+          "reward_pct": 34.25,
+          "recorded_responses": 8960,
+          "recorded_zero_advantage_responses": 3048,
+          "recorded_generated_tokens": 8192968,
+          "zero_advantage_response_pct": 34.017857142857146,
+          "tokens_per_response": 914.39375,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": false,
+          "prefix_checkpoint_sha256": "3b1a5b90b5edf277b072db77504bcba45ed1c0d906247af6b20e6d98c789dd05",
+          "input_sha256": "3df8a2aaf534196757fdda7ffc8586207829ae2285be1771c3575d9afe8ba2fb",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 5,
+          "arm": "sr",
+          "source_key": "seed-5/sr-endpoint.json",
+          "reward_pct": 41.125,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 416,
+          "recorded_generated_tokens": 5564725,
+          "zero_advantage_response_pct": 5.2,
+          "tokens_per_response": 695.590625,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "3b1a5b90b5edf277b072db77504bcba45ed1c0d906247af6b20e6d98c789dd05",
+          "input_sha256": "3df8a2aaf534196757fdda7ffc8586207829ae2285be1771c3575d9afe8ba2fb",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 5,
+          "arm": "switch",
+          "source_key": "seed-5/switch-endpoint.json",
+          "reward_pct": 42.041666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 696,
+          "recorded_generated_tokens": 5347863,
+          "zero_advantage_response_pct": 8.7,
+          "tokens_per_response": 668.482875,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "3b1a5b90b5edf277b072db77504bcba45ed1c0d906247af6b20e6d98c789dd05",
+          "input_sha256": "3df8a2aaf534196757fdda7ffc8586207829ae2285be1771c3575d9afe8ba2fb",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 6,
+          "arm": "on_policy",
+          "source_key": "seed-6/on_policy-endpoint.json",
+          "reward_pct": 35.833333333333336,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1408,
+          "recorded_generated_tokens": 7451004,
+          "zero_advantage_response_pct": 17.6,
+          "tokens_per_response": 931.3755,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "e258c0c26d5809754775c2681772e69e6139115c112df49dad3a8e7e447fbfd8",
+          "input_sha256": "87d80e95ef16d2a1c64827878eed7e3aeeb721c8d661bf286196041fe5581e77",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 6,
+          "arm": "random",
+          "source_key": "seed-6/random-endpoint.json",
+          "reward_pct": 36.375,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 2552,
+          "recorded_generated_tokens": 6870652,
+          "zero_advantage_response_pct": 31.9,
+          "tokens_per_response": 858.8315,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "e258c0c26d5809754775c2681772e69e6139115c112df49dad3a8e7e447fbfd8",
+          "input_sha256": "87d80e95ef16d2a1c64827878eed7e3aeeb721c8d661bf286196041fe5581e77",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 6,
+          "arm": "sr",
+          "source_key": "seed-6/sr-endpoint.json",
+          "reward_pct": 46.0,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 584,
+          "recorded_generated_tokens": 5240365,
+          "zero_advantage_response_pct": 7.3,
+          "tokens_per_response": 655.045625,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "e258c0c26d5809754775c2681772e69e6139115c112df49dad3a8e7e447fbfd8",
+          "input_sha256": "87d80e95ef16d2a1c64827878eed7e3aeeb721c8d661bf286196041fe5581e77",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 6,
+          "arm": "switch",
+          "source_key": "seed-6/switch-endpoint.json",
+          "reward_pct": 35.5,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 552,
+          "recorded_generated_tokens": 7096539,
+          "zero_advantage_response_pct": 6.9,
+          "tokens_per_response": 887.067375,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "e258c0c26d5809754775c2681772e69e6139115c112df49dad3a8e7e447fbfd8",
+          "input_sha256": "87d80e95ef16d2a1c64827878eed7e3aeeb721c8d661bf286196041fe5581e77",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 7,
+          "arm": "on_policy",
+          "source_key": "seed-7/on_policy-endpoint.json",
+          "reward_pct": 39.25,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 912,
+          "recorded_generated_tokens": 6143224,
+          "zero_advantage_response_pct": 11.4,
+          "tokens_per_response": 767.903,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "7af47dd78d0f75f535e1ec3af52cdddf0fa4777fb7f6dda70ea9f3ddff6e958a",
+          "input_sha256": "95c876a97597633312f0646568067d5b7312b950fa2836844c11e9dab96f8eaf",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 7,
+          "arm": "random",
+          "source_key": "seed-7/random-endpoint.json",
+          "reward_pct": 33.29166666666667,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 3000,
+          "recorded_generated_tokens": 7131699,
+          "zero_advantage_response_pct": 37.5,
+          "tokens_per_response": 891.462375,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "7af47dd78d0f75f535e1ec3af52cdddf0fa4777fb7f6dda70ea9f3ddff6e958a",
+          "input_sha256": "95c876a97597633312f0646568067d5b7312b950fa2836844c11e9dab96f8eaf",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 7,
+          "arm": "sr",
+          "source_key": "seed-7/sr-endpoint.json",
+          "reward_pct": 40.416666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 408,
+          "recorded_generated_tokens": 5490064,
+          "zero_advantage_response_pct": 5.1,
+          "tokens_per_response": 686.258,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "7af47dd78d0f75f535e1ec3af52cdddf0fa4777fb7f6dda70ea9f3ddff6e958a",
+          "input_sha256": "95c876a97597633312f0646568067d5b7312b950fa2836844c11e9dab96f8eaf",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 7,
+          "arm": "switch",
+          "source_key": "seed-7/switch-endpoint.json",
+          "reward_pct": 40.91666666666667,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 760,
+          "recorded_generated_tokens": 5674134,
+          "zero_advantage_response_pct": 9.5,
+          "tokens_per_response": 709.26675,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "7af47dd78d0f75f535e1ec3af52cdddf0fa4777fb7f6dda70ea9f3ddff6e958a",
+          "input_sha256": "95c876a97597633312f0646568067d5b7312b950fa2836844c11e9dab96f8eaf",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 8,
+          "arm": "on_policy",
+          "source_key": "seed-8/on_policy-endpoint.json",
+          "reward_pct": 35.875,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1024,
+          "recorded_generated_tokens": 6039276,
+          "zero_advantage_response_pct": 12.8,
+          "tokens_per_response": 754.9095,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "2a9427364ff73b8d3aa829dee334017c8cb83c2cb23cc54bbf122d9a3d850969",
+          "input_sha256": "bdb8ced81f302f560797d7a89f088194bb2714bcfda46ee17937f1e55b24698c",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 8,
+          "arm": "random",
+          "source_key": "seed-8/random-endpoint.json",
+          "reward_pct": 34.208333333333336,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 2720,
+          "recorded_generated_tokens": 7034775,
+          "zero_advantage_response_pct": 34.0,
+          "tokens_per_response": 879.346875,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "2a9427364ff73b8d3aa829dee334017c8cb83c2cb23cc54bbf122d9a3d850969",
+          "input_sha256": "bdb8ced81f302f560797d7a89f088194bb2714bcfda46ee17937f1e55b24698c",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 8,
+          "arm": "sr",
+          "source_key": "seed-8/sr-endpoint.json",
+          "reward_pct": 39.08333333333333,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 344,
+          "recorded_generated_tokens": 6394159,
+          "zero_advantage_response_pct": 4.3,
+          "tokens_per_response": 799.269875,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "2a9427364ff73b8d3aa829dee334017c8cb83c2cb23cc54bbf122d9a3d850969",
+          "input_sha256": "bdb8ced81f302f560797d7a89f088194bb2714bcfda46ee17937f1e55b24698c",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 8,
+          "arm": "switch",
+          "source_key": "seed-8/switch-endpoint.json",
+          "reward_pct": 38.208333333333336,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 448,
+          "recorded_generated_tokens": 6028766,
+          "zero_advantage_response_pct": 5.6,
+          "tokens_per_response": 753.59575,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "2a9427364ff73b8d3aa829dee334017c8cb83c2cb23cc54bbf122d9a3d850969",
+          "input_sha256": "bdb8ced81f302f560797d7a89f088194bb2714bcfda46ee17937f1e55b24698c",
+          "cost_measurement_complete": false
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 9,
+          "arm": "on_policy",
+          "source_key": "seed-9/on_policy-endpoint.json",
+          "reward_pct": 38.083333333333336,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 1656,
+          "recorded_generated_tokens": 7529567,
+          "zero_advantage_response_pct": 20.7,
+          "tokens_per_response": 941.195875,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "b4d6f372414011a4356602bae3f52b91aa112bcb8e377be351cb3f64f9ecd78d",
+          "input_sha256": "e0529ad361be97d252640733289555458f89dc69f658fa5514040c1cf0084ebb",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 9,
+          "arm": "random",
+          "source_key": "seed-9/random-endpoint.json",
+          "reward_pct": 36.291666666666664,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 3056,
+          "recorded_generated_tokens": 7300055,
+          "zero_advantage_response_pct": 38.2,
+          "tokens_per_response": 912.506875,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "b4d6f372414011a4356602bae3f52b91aa112bcb8e377be351cb3f64f9ecd78d",
+          "input_sha256": "e0529ad361be97d252640733289555458f89dc69f658fa5514040c1cf0084ebb",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 9,
+          "arm": "sr",
+          "source_key": "seed-9/sr-endpoint.json",
+          "reward_pct": 35.70833333333333,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 512,
+          "recorded_generated_tokens": 7129800,
+          "zero_advantage_response_pct": 6.4,
+          "tokens_per_response": 891.225,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "b4d6f372414011a4356602bae3f52b91aa112bcb8e377be351cb3f64f9ecd78d",
+          "input_sha256": "e0529ad361be97d252640733289555458f89dc69f658fa5514040c1cf0084ebb",
+          "cost_measurement_complete": true
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 9,
+          "arm": "switch",
+          "source_key": "seed-9/switch-endpoint.json",
+          "reward_pct": 37.875,
+          "recorded_responses": 8000,
+          "recorded_zero_advantage_responses": 904,
+          "recorded_generated_tokens": 7079944,
+          "zero_advantage_response_pct": 11.3,
+          "tokens_per_response": 884.993,
+          "total_updates": 275,
+          "shared_prefix_updates": 25,
+          "expected_responses_assuming_fixed_workload": 8000,
+          "receipt_matches_assumed_workload": true,
+          "prefix_checkpoint_sha256": "b4d6f372414011a4356602bae3f52b91aa112bcb8e377be351cb3f64f9ecd78d",
+          "input_sha256": "e0529ad361be97d252640733289555458f89dc69f658fa5514040c1cf0084ebb",
+          "cost_measurement_complete": true
+        }
+      ],
+      "aggregates": {
+        "random": {
+          "reward_pct": {
+            "n": 5,
+            "mean": 34.88333333333333,
+            "sample_sd": 1.3782789187162994
+          },
+          "zero_advantage_response_pct": {
+            "n": 5,
+            "mean": 35.12357142857143,
+            "sample_sd": 2.6451963585923464
+          },
+          "tokens_per_response": {
+            "n": 5,
+            "mean": 891.308275,
+            "sample_sd": 23.346089335830158
+          }
+        },
+        "sr": {
+          "reward_pct": {
+            "n": 5,
+            "mean": 40.46666666666666,
+            "sample_sd": 3.7285730440001386
+          },
+          "zero_advantage_response_pct": {
+            "n": 5,
+            "mean": 5.66,
+            "sample_sd": 1.184483009586883
+          },
+          "tokens_per_response": {
+            "n": 5,
+            "mean": 745.477825,
+            "sample_sd": 97.86409818901126
+          }
+        },
+        "on_policy": {
+          "reward_pct": {
+            "n": 5,
+            "mean": 36.84166666666667,
+            "sample_sd": 1.7391528908574352
+          },
+          "zero_advantage_response_pct": {
+            "n": 5,
+            "mean": 14.700000000000001,
+            "sample_sd": 4.260281680828158
+          },
+          "tokens_per_response": {
+            "n": 5,
+            "mean": 846.87015,
+            "sample_sd": 87.7404271967443
+          }
+        },
+        "switch": {
+          "reward_pct": {
+            "n": 5,
+            "mean": 38.90833333333333,
+            "sample_sd": 2.59931214191584
+          },
+          "zero_advantage_response_pct": {
+            "n": 5,
+            "mean": 8.4,
+            "sample_sd": 2.224859546128699
+          },
+          "tokens_per_response": {
+            "n": 5,
+            "mean": 780.68115,
+            "sample_sd": 100.77335864908537
+          }
+        }
+      },
+      "paired": [
+        {
+          "seed": 5,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.9166666666666714,
+            "zero_advantage_response_pct": -23.017857142857146,
+            "tokens_per_response": -75.426875
+          }
+        },
+        {
+          "seed": 5,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -5.958333333333329,
+            "zero_advantage_response_pct": 5.8,
+            "tokens_per_response": 143.3762499999999
+          }
+        },
+        {
+          "seed": 5,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -6.874999999999993,
+            "zero_advantage_response_pct": 2.3000000000000007,
+            "tokens_per_response": 170.48399999999992
+          }
+        },
+        {
+          "seed": 5,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -6.875,
+            "zero_advantage_response_pct": 28.817857142857147,
+            "tokens_per_response": 218.8031249999999
+          }
+        },
+        {
+          "seed": 5,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -7.791666666666664,
+            "zero_advantage_response_pct": 25.317857142857147,
+            "tokens_per_response": 245.91087499999992
+          }
+        },
+        {
+          "seed": 5,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.9166666666666643,
+            "zero_advantage_response_pct": -3.499999999999999,
+            "tokens_per_response": 27.10775000000001
+          }
+        },
+        {
+          "seed": 6,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.5416666666666643,
+            "zero_advantage_response_pct": -14.299999999999997,
+            "tokens_per_response": 72.54399999999998
+          }
+        },
+        {
+          "seed": 6,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -10.166666666666664,
+            "zero_advantage_response_pct": 10.3,
+            "tokens_per_response": 276.329875
+          }
+        },
+        {
+          "seed": 6,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.3333333333333357,
+            "zero_advantage_response_pct": 10.700000000000001,
+            "tokens_per_response": 44.30812500000002
+          }
+        },
+        {
+          "seed": 6,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -9.625,
+            "zero_advantage_response_pct": 24.599999999999998,
+            "tokens_per_response": 203.78587500000003
+          }
+        },
+        {
+          "seed": 6,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.875,
+            "zero_advantage_response_pct": 25.0,
+            "tokens_per_response": -28.235874999999965
+          }
+        },
+        {
+          "seed": 6,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 10.5,
+            "zero_advantage_response_pct": 0.39999999999999947,
+            "tokens_per_response": -232.02175
+          }
+        },
+        {
+          "seed": 7,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 5.958333333333329,
+            "zero_advantage_response_pct": -26.1,
+            "tokens_per_response": -123.55937499999993
+          }
+        },
+        {
+          "seed": 7,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -1.1666666666666643,
+            "zero_advantage_response_pct": 6.300000000000001,
+            "tokens_per_response": 81.64499999999998
+          }
+        },
+        {
+          "seed": 7,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -1.6666666666666714,
+            "zero_advantage_response_pct": 1.9000000000000004,
+            "tokens_per_response": 58.63625000000002
+          }
+        },
+        {
+          "seed": 7,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -7.124999999999993,
+            "zero_advantage_response_pct": 32.4,
+            "tokens_per_response": 205.2043749999999
+          }
+        },
+        {
+          "seed": 7,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -7.625,
+            "zero_advantage_response_pct": 28.0,
+            "tokens_per_response": 182.19562499999995
+          }
+        },
+        {
+          "seed": 7,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -0.5000000000000071,
+            "zero_advantage_response_pct": -4.4,
+            "tokens_per_response": -23.008749999999964
+          }
+        },
+        {
+          "seed": 8,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.6666666666666643,
+            "zero_advantage_response_pct": -21.2,
+            "tokens_per_response": -124.43737499999997
+          }
+        },
+        {
+          "seed": 8,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -3.2083333333333286,
+            "zero_advantage_response_pct": 8.5,
+            "tokens_per_response": -44.360374999999976
+          }
+        },
+        {
+          "seed": 8,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -2.3333333333333357,
+            "zero_advantage_response_pct": 7.200000000000001,
+            "tokens_per_response": 1.3137500000000273
+          }
+        },
+        {
+          "seed": 8,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -4.874999999999993,
+            "zero_advantage_response_pct": 29.7,
+            "tokens_per_response": 80.077
+          }
+        },
+        {
+          "seed": 8,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -4.0,
+            "zero_advantage_response_pct": 28.4,
+            "tokens_per_response": 125.751125
+          }
+        },
+        {
+          "seed": 8,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.8749999999999929,
+            "zero_advantage_response_pct": -1.2999999999999998,
+            "tokens_per_response": 45.674125000000004
+          }
+        },
+        {
+          "seed": 9,
+          "left": "on_policy",
+          "right": "random",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 1.7916666666666714,
+            "zero_advantage_response_pct": -17.500000000000004,
+            "tokens_per_response": 28.688999999999965
+          }
+        },
+        {
+          "seed": 9,
+          "left": "on_policy",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 2.375000000000007,
+            "zero_advantage_response_pct": 14.299999999999999,
+            "tokens_per_response": 49.97087499999998
+          }
+        },
+        {
+          "seed": 9,
+          "left": "on_policy",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.2083333333333357,
+            "zero_advantage_response_pct": 9.399999999999999,
+            "tokens_per_response": 56.20287499999995
+          }
+        },
+        {
+          "seed": 9,
+          "left": "random",
+          "right": "sr",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": 0.5833333333333357,
+            "zero_advantage_response_pct": 31.800000000000004,
+            "tokens_per_response": 21.281875000000014
+          }
+        },
+        {
+          "seed": 9,
+          "left": "random",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -1.5833333333333357,
+            "zero_advantage_response_pct": 26.900000000000002,
+            "tokens_per_response": 27.513874999999985
+          }
+        },
+        {
+          "seed": 9,
+          "left": "sr",
+          "right": "switch",
+          "reported_prefix_and_input_match": true,
+          "difference_left_minus_right": {
+            "reward_pct": -2.1666666666666714,
+            "zero_advantage_response_pct": -4.9,
+            "tokens_per_response": 6.231999999999971
+          }
+        }
+      ],
+      "issues": [],
+      "collection_errors": [],
+      "collection_warnings": [
+        "seed 5: code changed; viewing recorded results only, resume is blocked",
+        "seed 6: code changed; viewing recorded results only, resume is blocked",
+        "seed 7: code changed; viewing recorded results only, resume is blocked",
+        "seed 8: code changed; viewing recorded results only, resume is blocked",
+        "seed 9: code changed; viewing recorded results only, resume is blocked"
+      ]
+    }
+  ],
+  "analyzer_sha256": "55346cee1fcd4989530cc47f140fa54a118e7caa0c973a505904a50bc52ed944"
+}
