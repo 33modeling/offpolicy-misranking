@@ -90,6 +90,10 @@ if [ -n "$QUEUE_SCOPE" ]; then
     if [ "$QUEUE_SCOPE" = replicate ]; then
         exec "$PY" scripts/srgc_replicate_worker.py --dataset "$DATASET"
     fi
+    if [ "$QUEUE_SCOPE" = mechanism ]; then
+        exec "$PY" scripts/srgc_replicate_worker.py --dataset "$DATASET" --scope "$QUEUE_SCOPE" \
+            --max-attempts "${SRGC_MECHANISM_MAX_ATTEMPTS:-${SRGC_MAX_ATTEMPTS:-50}}"
+    fi
     exec "$PY" scripts/srgc_replicate_worker.py --dataset "$DATASET" --scope "$QUEUE_SCOPE"
 fi
 PLAN=$("$PY" - "$DATASET" "$TARGET" <<'PYEOF'

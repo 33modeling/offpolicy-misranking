@@ -384,6 +384,8 @@ def test_shell_dispatch_without_extra_python_options(tmp_path, dataset, action):
     expected = ['scripts/'+name, '--dataset', dataset]
     if action in ('run', 'status'):
         expected += ['--scope', 'mechanism']
+    if action == 'run':
+        expected += ['--max-attempts', os.environ.get('SRGC_MECHANISM_MAX_ATTEMPTS', os.environ.get('SRGC_MAX_ATTEMPTS', '50'))]
     if action == 'json':
         expected += ['--json']
     assert args == expected

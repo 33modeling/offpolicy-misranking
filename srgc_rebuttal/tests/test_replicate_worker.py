@@ -236,6 +236,38 @@ class ReplicateWorkerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), ['scripts/srgc_replicate_worker.py', '--dataset', dataset])
 
+    def test_mechanism_shell_retry_budget_and_override(self):
+        fake = self.fixture.base / 'python'
+        fake.write_text(f'#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        fake.chmod(0o755)
+        env = {k: v for k, v in os.environ.items()
+               if k not in ('SRGC_MAX_ATTEMPTS', 'SRGC_MECHANISM_MAX_ATTEMPTS')}
+        env['PAIR_PYTHON'] = str(fake)
+        for settings, expected in (({}, '50'), ({'SRGC_MAX_ATTEMPTS': '8'}, '8'),
+                ({'SRGC_MAX_ATTEMPTS': '8', 'SRGC_MECHANISM_MAX_ATTEMPTS': '12'}, '12')):
+            result = subprocess.run(['sh', str(ROOT / 'scripts/run_srgc_mechanism.sh'), 'all'],
+                                    env={**env, **settings}, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), ['scripts/srgc_replicate_worker.py',
+                '--dataset', 'all', '--scope', 'mechanism', '--max-attempts', expected])
+
+    def test_mechanism_default_resumes_task_exhausted_at_three_attempts(self):
+        task = worker.Task('math', 5, 0, 'stage_mechanism', self.plan)
+        atomic_json(task.receipt, {'status': 'failed', 'attempt': 3, 'finished': 0, 'exit_code': 124})
+        seen = []
+        def resume(current, handle):
+            seen.append(json.loads(current.receipt.read_text())['attempt'])
+            atomic_json(current.out / f'{current.arm}-endpoint.json', {'fixture': True})
+            return 0
+        real_sweep = worker.sweep
+        with patch.object(worker, 'tasks_for', return_value=[task]), \
+                patch.object(worker, 'node_available', return_value=True), \
+                patch.object(worker, 'sweep', side_effect=lambda tasks, **kw:
+                             real_sweep(tasks, runner=resume, **kw)):
+            self.assertEqual(worker.main(['--dataset', 'math', '--scope', 'mechanism']), 0)
+        self.assertEqual(seen, [4])
+        self.assertEqual(json.loads(task.receipt.read_text())['status'], 'complete')
+
     def test_run_task_forwards_sigterm_and_waits_for_child(self):
         fake = self.fixture.base / 'python'
         ready, stopped = self.fixture.base / 'ready', self.fixture.base / 'stopped'

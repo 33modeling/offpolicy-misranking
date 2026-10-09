@@ -213,6 +213,9 @@ def sweep(tasks, *, max_attempts=3, retry_delay=120, runner=run_task, now=time.t
             endpoint_exists = (task.out / f"{task.arm}-endpoint.json").exists()
             changed_endpoint = endpoint_exists and fingerprint != previous.get("failed_files")
             if attempts >= max_attempts and not changed_endpoint:
+                print(f"RETRY LIMIT {task.key}: attempts={attempts}/{max_attempts} "
+                      f"last_exit={previous.get('exit_code', 'unknown')} receipt={task.receipt} "
+                      f"logs={task.out / 'launches' / task.arm}", file=sys.stderr, flush=True)
                 counts["failed"] += 1
                 continue
             if (previous.get("status") == "failed" and not changed_endpoint
@@ -250,9 +253,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=("all", "math", "mbpp"), required=True)
     parser.add_argument("--scope", choices=SCOPES, default="replicate")
-    parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument("--max-attempts", type=int, default=None)
     parser.add_argument("--poll", type=float, default=10)
     args = parser.parse_args(argv)
+    if args.max_attempts is None:
+        args.max_attempts = 50 if args.scope == "mechanism" else 3
     if args.max_attempts < 1 or args.poll <= 0:
         parser.error("max-attempts and poll must be positive")
     tasks = tasks_for(args.dataset) if args.scope == "replicate" else tasks_for(args.dataset, args.scope)

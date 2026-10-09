@@ -843,3 +843,42 @@ is 15, not that 15 distinct experiments failed. Neither label identifies the
 underlying GPU or training error. Inspect the accompanying error and task log;
 this worker recovery fix does not establish that a particular cluster fault
 has been resolved. Saved checkpoints and the frozen experiment core are unchanged.
+
+### Mechanism retry budget
+
+`sh scripts/run_srgc_mechanism.sh all` now allows 50 total task attempts,
+matching the primary SRGC launcher, instead of the extra queue's three-attempt
+default. Set `SRGC_MECHANISM_MAX_ATTEMPTS` to override this scope only, or
+`SRGC_MAX_ATTEMPTS` as the fallback. Direct Python launches with
+`--scope mechanism` also default to 50; other extra scopes retain three.
+The budget includes previously recorded attempts: an existing task stopped
+after three failures can resume at attempt four without deleting its receipt.
+Retry exhaustion reports the task, attempt count, last exit code and log directory.
+
+Retries do not change model settings, token budgets, seeds, intervention horizons,
+saved runtimes or endpoint validation. Missing/failed tasks remain missing
+results. Increasing attempts does not repair a deterministic training error;
+inspect the reported worker/task logs before interpreting an incomplete study.
+
+Mechanism limit review (2026-10-09):
+
+| Limit | Effect on experiment | Action |
+|---|---|---|
+| Three task attempts | Leaves missing seed endpoints after transient failures; never substitutes zero reward | Raise mechanism-only budget to 50 and retain previous attempt history |
+| 1,800 seconds without recorded progress | Aborts and resumes a stalled child; does not directly change a reward | Retain watchdog; actual timeout evidence is needed before changing it |
+| 2,048 generated tokens per response in the MATH/MBPP plans | May truncate a response and change reward, gradients and selected prompts | Preserve the recorded protocol; truncation frequency requires actual rollouts |
+| MBPP verifier: 10 seconds, 1 GiB, 1 MiB result payload (current runtime defaults) | Generated code exceeding a limit receives zero reward | Preserve verifier conditions and saved-runtime versions; changing these requires a separate reward-protocol study |
+| Three stages, six modes, 25 branch updates | Defines the intervention rather than an execution failure | Preserve all branches and paired comparisons |
+
+Training emits progress after rollouts, gradient scoring and policy updates, so
+the watchdog is not a total wall-time cap on the study. Historical prefixes may
+select a pinned verifier/cluster implementation; audit that saved runtime and
+its recorded environment rather than assuming the current defaults were used.
+Retrying the same checkpoint preserves learning conditions but increases actual
+compute cost; report invocation ledgers, including failed attempts. A subset of
+completed seeds must not be described as the complete five-seed study.
+
+This review is based on code and recorded plans. The local workspace has no
+`/group-volume` mount, so it does not establish which limit caused the user's
+node failures, how often responses were truncated, or how many valid seed
+endpoints were produced.
