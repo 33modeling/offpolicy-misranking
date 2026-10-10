@@ -27,4 +27,7 @@ if [ "$#" -le 1 ] || { [ "$#" -eq 2 ] && [ "$ACTION" = collect ]; }; then
     exec "$PY" -m srgc_research.dispatch.information_queue "$DATASET"
 fi
 
+if [ "$ACTION" = collect ]; then
+    exec "$PY" -m srgc_research.dispatch.information_run "$@"
+fi
 exec "$PY" -m srgc_research.information_cli "$@"

@@ -294,6 +294,161 @@ def test_failed_task_cools_down_and_other_tasks_continue(tasks):
     assert queue.sweep([first], runner=lambda *_: pytest.fail("failed retry budget ignored"))[0]["failed"] == 1
 
 
+def old_failure(task, **extra):
+    row = {"task": task.key, "identity": task.identity, "status": "failed",
+           "attempt": 3, "started": 10, "finished": 20, "exit_code": 1, **extra}
+    atomic_json(task.receipt, row)
+    return row
+
+
+def test_updated_dispatcher_resumes_exhausted_failure_and_preserves_phases(tasks):
+    task = tasks[0]
+    previous = old_failure(task)
+    atomic_json(task.output / "manifest.json", {"identity": task.identity})
+    phase = task.output / "score-A.pt"
+    phase.write_bytes(b"already measured; do not overwrite")
+    def runner(current, handle):
+        assert current == task and phase.read_bytes() == b"already measured; do not overwrite"
+        return 143
+    assert queue.sweep([task], runner=runner, available=lambda: True)[1] == 143
+    row = queue.read_receipt(task)
+    assert row["attempt"] == 0 and row["dispatch_revision"] == queue.DISPATCH_REVISION
+    assert queue.read_object(Path(row["previous_receipt"])) == previous
+    assert phase.read_bytes() == b"already measured; do not overwrite"
+
+
+def test_updated_dispatcher_has_only_one_shared_new_budget(tasks):
+    task = tasks[0]
+    old_failure(task, dispatch_revision="older code")
+    for attempt in (1, 2, 3):
+        assert queue.sweep([task], runner=lambda *_: 9, available=lambda: True, retry_delay=0)[1] == 9
+        assert queue.read_receipt(task)["attempt"] == attempt
+    assert queue.sweep([task], runner=lambda *_: pytest.fail("budget was reset twice"))[0]["failed"] == 1
+    assert len(list((task.root / ".queue/history" / task.key).glob("*.json"))) == 1
+
+
+def exhausted_worker(task, event, results):
+    event.wait(10)
+    def runner(current, _handle):
+        results.put(current.key)
+        time.sleep(.03)
+        return 9
+    for _ in range(5):
+        queue.sweep([task], runner=runner, available=lambda: True, retry_delay=0)
+        time.sleep(.03)
+
+
+def test_concurrent_nodes_do_not_each_reset_the_retry_budget(tasks):
+    task = tasks[0]
+    old_failure(task)
+    ctx = multiprocessing.get_context("fork")
+    event, results = ctx.Event(), ctx.Queue()
+    workers = [ctx.Process(target=exhausted_worker, args=(task, event, results)) for _ in range(6)]
+    try:
+        for worker in workers:
+            worker.start()
+        event.set()
+        for worker in workers:
+            worker.join(10)
+            assert worker.exitcode == 0
+        assert [results.get(timeout=2) for _ in range(3)] == [task.key] * 3
+        assert results.empty()
+        assert queue.read_receipt(task)["attempt"] == 3
+        assert len(list((task.root / ".queue/history" / task.key).glob("*.json"))) == 1
+    finally:
+        for worker in workers:
+            if worker.is_alive():
+                worker.kill()
+                worker.join()
+
+
+def test_changed_identity_is_never_reset_even_after_dispatcher_update(tasks):
+    task = tasks[0]
+    before = old_failure(task)
+    atomic_json(task.output / "manifest.json", {"identity": {**task.identity, "seed": 99}})
+    counts, code = queue.sweep([task], runner=lambda *_: pytest.fail("changed measurement restarted"))
+    assert counts["failed"] == 1 and code is None
+    assert queue.read_receipt(task) == before
+    assert not (task.root / ".queue/history").exists()
+
+
+def test_startup_stderr_is_logged_outside_measurement_and_saved_in_receipt(tasks, monkeypatch, capsys):
+    task = tasks[0]
+    monkeypatch.setattr(queue, "command_for", lambda _: [sys.executable, "-c",
+        "import sys; print('starting'); print('ERROR: missing local model', file=sys.stderr); sys.exit(1)"])
+    assert queue.sweep([task], available=lambda: True)[1] == 1
+    row = queue.read_receipt(task)
+    path = Path(row["attempt_log"])
+    assert not path.is_relative_to(task.output)
+    assert "starting" in path.read_text() and "ERROR: missing local model" in path.read_text()
+    assert row["error"] == "ERROR: missing local model"
+    printed = capsys.readouterr()
+    assert "starting" in printed.out and "missing local model" in printed.err
+    assert str(path) in printed.err
+
+
+def test_real_collector_startup_error_is_visible_and_does_not_pollute_measurement(tmp_path, monkeypatch):
+    plan = queue.REPO / "srgc_rebuttal/experiments/additional_seeds.json"
+    # The prepared inputs intentionally have no completed SR cache. Exercise
+    # the actual CLI and its validation, without a fake collector or GPUs.
+    inputs = queue.REPO / "srgc_rebuttal/inputs/seed-7.json"
+    task = queue.Task("math", 7, plan, inputs, tmp_path / "selection-information",
+                      queue.digest(plan), queue.digest(inputs))
+    monkeypatch.setenv("GROUP_VOLUME", str(tmp_path))
+    monkeypatch.setenv("PAIR_PYTHON", sys.executable)
+    monkeypatch.setenv("OM_WORK", str(tmp_path / "work"))
+    assert queue.sweep([task], available=lambda: True)[1] == 1
+    row = queue.read_receipt(task)
+    assert "candidate cache is incomplete" in row["error"]
+    assert "candidate cache is incomplete" in Path(row["attempt_log"]).read_text()
+    assert {p.name for p in task.output.iterdir()} == {".dispatch.lock", ".execution.lock"}
+
+
+def test_launch_oserror_is_a_recorded_failure_not_an_abandoned_running_task(tasks, monkeypatch):
+    task = tasks[0]
+    monkeypatch.setattr(queue, "command_for", lambda _: ["/nonexistent/information-python"])
+    assert queue.sweep([task], available=lambda: True)[1] == 1
+    row = queue.read_receipt(task)
+    assert row["status"] == "failed" and row["attempt"] == 1
+    assert "cannot start collector" in row["error"]
+
+
+def test_old_rank_log_reports_original_error_without_requiring_gpu_imports(tasks, capsys):
+    task = tasks[0]
+    old_failure(task, dispatch_revision=queue.DISPATCH_REVISION)
+    task.output.mkdir(parents=True, exist_ok=True)
+    (task.output / "task.log").write_text("[rank0]: torch.OutOfMemoryError: CUDA out of memory\nChildFailedError: ranks failed\n")
+    assert queue.sweep([task])[0]["failed"] == 1
+    assert "torch.OutOfMemoryError" in capsys.readouterr().err
+
+
+def test_node_cleanup_leaves_other_experiment_ranks_alone(monkeypatch):
+    from scripts import srgc_process_guard as guard
+    from srgc_rebuttal import cluster
+    def reap():
+        assert not guard.is_target("python -m srgc_rebuttal.run_experiment --plan other.json")
+        assert not guard.is_target("python scripts/srgc_qwen35_rank.py")
+        assert guard.is_target("python /frozen/srgc_research/information_rank.py --output measurement")
+    monkeypatch.setattr(guard, "reap_orphans", reap)
+    monkeypatch.setattr(cluster, "gpu_identity", lambda: (_ for _ in ()).throw(Busy("occupied")))
+    assert not queue.node_available()
+
+
+def test_information_child_scopes_cleanup_and_restores_markers(monkeypatch):
+    from scripts import srgc_process_guard as guard
+    from srgc_research.dispatch import information_run
+    original = guard.TARGET_MARKERS, guard.OWNER_MARKERS
+    def collect(argv):
+        assert argv == ["math", "collect"]
+        assert guard.TARGET_MARKERS == information_run.TARGETS
+        assert "srgc_research.dispatch.information_run" in guard.OWNER_MARKERS
+        assert not guard.is_target("python scripts/srgc_qwen35_rank.py")
+        return 9
+    monkeypatch.setattr(information_run.information_cli, "main", collect)
+    assert information_run.main(["math", "collect"]) == 9
+    assert (guard.TARGET_MARKERS, guard.OWNER_MARKERS) == original
+
+
 def test_zero_exit_without_real_endpoint_is_failure(tasks):
     assert queue.sweep(tasks, runner=lambda *_: 0, available=lambda: True)[1] == 1
     assert queue.read_object(tasks[0].receipt)["status"] == "failed"

@@ -40,12 +40,14 @@ if sys.argv[1:3] == ["-m", "srgc_research.dispatch.information_queue"]:
     queue.read_measurement = lambda folder: (queue.read_object(folder / "endpoint.json"), {})
     queue.sweep = partial(queue.sweep, retry_delay=0)
     sys.exit(queue.main(sys.argv[3:]))
-if sys.argv[1:3] != ["-m", "srgc_research.information_cli"]:
+if sys.argv[1] != "-m" or sys.argv[2] not in {"srgc_research.information_cli", "srgc_research.dispatch.information_run"}:
     os.execv("/usr/bin/python3", ["/usr/bin/python3", *sys.argv[1:]])
 with Path(os.environ["WRAPPER_TEST_LOG"]).open("a") as handle:
     handle.write(json.dumps({"runner": Path(sys.argv[0]).name, "args": sys.argv[1:],
                             "cuda": os.environ.get("CUDA_VISIBLE_DEVICES")}) + "\\n")
 code = int(os.environ.get("WRAPPER_TEST_COLLECT_EXIT", "0")) if sys.argv[4] == "collect" else 0
+if code:
+    print("ERROR: " + os.environ.get("WRAPPER_TEST_ERROR", "test collector failure"), file=sys.stderr, flush=True)
 if sys.argv[4] == "collect" and "--plan" in sys.argv and code == 0:
     from srgc_research.dispatch.information_queue import Task, PHASES, digest, atomic_json
     arg = lambda flag: sys.argv[sys.argv.index(flag) + 1]
@@ -151,6 +153,39 @@ def test_failed_collect_returns_failure_after_independent_tasks_are_attempted(wr
     result, calls = run("all", overrides={"WRAPPER_TEST_COLLECT_EXIT": "9"})
     assert result.returncode == 1
     assert len(calls) == 30 and all(c["args"][3] == "collect" for c in calls)
+    assert "ERROR: test collector failure" in result.stderr and "log:" in result.stderr
+
+
+def test_old_exhausted_receipts_resume_after_update_and_keep_prior_failures(wrapper):
+    run, work, _ = wrapper
+    result, calls = run("all", overrides={"WRAPPER_TEST_COLLECT_EXIT": "9"})
+    assert result.returncode == 1 and len(calls) == 30
+    receipts = list((work / "selection-information/.queue").glob("*.json"))
+    previous = []
+    for path in receipts:
+        row = json.loads(path.read_text())
+        row.pop("dispatch_revision")  # Receipts written by the old dispatcher.
+        path.write_text(json.dumps(row))
+        previous.append(row)
+    result, calls = run("all")
+    assert result.returncode == 0 and len(calls) == 40, result.stderr
+    assert "RETRY" in result.stdout
+    archived = [json.loads(p.read_text()) for p in (work / "selection-information/.queue/history").rglob("*.json")]
+    assert sorted(archived, key=lambda r: r["task"]) == sorted(previous, key=lambda r: r["task"])
+    assert len(list((work / "selection-information/.queue/logs").rglob("*.log"))) == 40
+    assert not list(work.rglob("*.html"))
+
+
+def test_current_exhausted_receipts_show_cause_without_infinite_retries(wrapper):
+    run, work, _ = wrapper
+    result, calls = run("all", overrides={"WRAPPER_TEST_COLLECT_EXIT": "9",
+                                          "WRAPPER_TEST_ERROR": "candidate cache is incomplete"})
+    assert result.returncode == 1 and len(calls) == 30
+    before = {p: p.read_bytes() for p in (work / "selection-information/.queue/logs").rglob("*.log")}
+    result, calls = run("all")
+    assert result.returncode == 1 and len(calls) == 30
+    assert "candidate cache is incomplete" in result.stderr and "FAILED math.seed-7.t0:" in result.stderr
+    assert {p: p.read_bytes() for p in before} == before
 
 
 @pytest.mark.parametrize("dataset,action", [("math", "collect"), ("mbpp", "collect"),

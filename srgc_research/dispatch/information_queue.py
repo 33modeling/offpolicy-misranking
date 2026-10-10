@@ -1,6 +1,7 @@
 """Claim independent information measurements across nodes on shared storage."""
 
 import argparse
+import hashlib
 import math
 import os
 import signal
@@ -8,11 +9,13 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
 from scripts.srgc_extra_plan import select_plan
+from scripts.srgc_log_tail import tail_lines
 from scripts.srgc_pair_inputs import PLANS
 from scripts.srgc_shared_storage import route_plan, storage_root
 from srgc_rebuttal.existing_runtime import python_path
@@ -26,8 +29,15 @@ from srgc_research.information_report import (
     read_object,
 )
 
+from .information_run import OWNERS, TARGETS
+
 REPO = Path(__file__).resolve().parents[2]
 SEEDS = (7, 5, 6, 8, 9)
+# A shared code revision, rather than a per-node/run token, grants one fresh
+# retry budget after an operational fix. Scientific identities stay unchanged.
+DISPATCH_REVISION = hashlib.sha256(b"".join(
+    path.read_bytes() for path in (Path(__file__), Path(__file__).with_name("information_run.py"),
+                                  REPO / "scripts/run_srgc_information.sh"))).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -105,15 +115,17 @@ def tasks_for(dataset):
 
 
 def command_for(task):
-    return [python_path(task.dataset, os.environ), "-m", "srgc_research.information_cli",
+    return [python_path(task.dataset, os.environ), "-m", "srgc_research.dispatch.information_run",
             task.dataset, "collect", "--plan", str(task.plan), "--inputs", str(task.inputs),
             "--seed", str(task.seed), "--stage", "0", "--attention", "sdpa",
             "--output", str(task.output)]
 
 
 def run_task(task, handle):
-    """Retain the claim in the child and forward shutdown to its own launcher."""
+    """Persist startup errors, retain the claim, and forward owned shutdown."""
     child, stopped = None, []
+    log_path = Path(read_receipt(task)["attempt_log"])
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def stop(sig, _frame):
         stopped.append(sig)
@@ -125,12 +137,25 @@ def run_task(task, handle):
 
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
-        child = subprocess.Popen(command_for(task), cwd=REPO, start_new_session=True,
-                                 pass_fds=(handle.fileno(),))
-        if stopped:
-            stop(stopped[0], None)
-        code = child.wait()
-        return 128 + stopped[0] if stopped else (code if code >= 0 else 128 - code)
+        # Keep a real file as the child's output: it remains writable if a node
+        # launcher dies, while the inherited claim still prevents a duplicate.
+        with log_path.open("x") as log, log_path.open(errors="replace") as reader:
+            def relay():
+                while chunk := reader.read(65536):
+                    sys.stdout.write(chunk)
+                    sys.stdout.flush()
+            child = subprocess.Popen(command_for(task), cwd=REPO, start_new_session=True,
+                                     pass_fds=(handle.fileno(),), stdout=log, stderr=subprocess.STDOUT)
+            if stopped:
+                stop(stopped[0], None)
+            while True:
+                relay()
+                try:
+                    code = child.wait(timeout=.2)
+                    relay()
+                    return 128 + stopped[0] if stopped else (code if code >= 0 else 128 - code)
+                except subprocess.TimeoutExpired:
+                    pass
     finally:
         if child is not None and child.poll() is None:
             stop(signal.SIGTERM, None)
@@ -143,9 +168,7 @@ def node_available():
     from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
     markers = guard.TARGET_MARKERS, guard.OWNER_MARKERS
-    guard.TARGET_MARKERS = (*markers[0], "srgc_research/information_rank.py")
-    guard.OWNER_MARKERS = (*markers[1], "srgc_research.information_cli",
-                           "srgc_research.dispatch.information_queue")
+    guard.TARGET_MARKERS, guard.OWNER_MARKERS = TARGETS, OWNERS
     try:
         guard.reap_orphans()
         _, uuids = cluster.gpu_identity()
@@ -215,6 +238,38 @@ def verified_signature(task):
     return before
 
 
+def failure_detail(task, receipt):
+    """Recover both new startup logs and older rank logs without GPU imports."""
+    paths = ([Path(receipt["attempt_log"])] if receipt.get("attempt_log") else [])
+    paths.append(task.output / "task.log")
+    if receipt.get("error"):
+        return receipt["error"], str(paths[0])
+    for path in paths:
+        # Queue metadata must never authorize reading unrelated files.
+        if not path.resolve().is_relative_to(task.root.resolve()) or not path.is_file():
+            continue
+        try:
+            lines = tail_lines(path, 80)
+        except OSError:
+            continue
+        errors = [line.strip() for line in lines if any(marker in line for marker in (
+            "ERROR:", "Error:", "Exception:", "No module named", "FAILED", "GUARD refused"))]
+        specific = [line for line in errors if "ChildFailedError" not in line and "FAILED" not in line]
+        if specific or errors:
+            detail = (specific or errors)[-1]
+        else:
+            detail = next((line.strip() for line in reversed(lines) if line.strip()), "")
+        if detail:
+            return detail[-2000:], str(path)
+    return receipt.get("error") or f"collector exited with code {receipt.get('exit_code', '?')}", (
+        receipt.get("attempt_log") or str(task.output / "task.log"))
+
+
+def report_failure(task, receipt):
+    error, log = failure_detail(task, receipt)
+    print(f"FAILED {task.key}: {error}\n  log: {log}", file=sys.stderr, flush=True)
+
+
 def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120, now=time.time):
     runner = run_task if runner is None else runner
     available = node_available if available is None else available
@@ -251,11 +306,22 @@ def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120
                 counts["failed"] += 1
                 continue
             attempts = previous.get("attempt", 0)
+            if previous.get("status") == "failed" and previous.get("dispatch_revision") != DISPATCH_REVISION:
+                # Archive under the same claim, only after identity/evidence
+                # validation. Multiple nodes cannot replenish it repeatedly.
+                history = task.root / ".queue" / "history" / task.key / f"{uuid.uuid4().hex}.json"
+                atomic_json(history, previous)
+                previous = {**previous, "attempt": 0, "dispatch_revision": DISPATCH_REVISION,
+                            "previous_receipt": str(history), "finished": 0}
+                atomic_json(task.receipt, previous)
+                attempts = 0
+                print(f"RETRY {task.key}: dispatcher updated; saved phases retained", flush=True)
             # Node loss does not spend a failure retry; saved phases stay intact.
             if previous.get("status") == "running":
                 attempts = max(0, attempts - 1)
             if attempts >= max_attempts:
                 counts["failed"] += 1
+                report_failure(task, previous)
                 continue
             if previous.get("status") == "failed" and now() < previous["finished"] + retry_delay:
                 counts["waiting"] += 1
@@ -263,23 +329,35 @@ def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120
             if not available():
                 return counts, 75
             record = {"task": task.key, "identity": task.identity, "host": socket.gethostname(),
-                      "pid": os.getpid(), "status": "running", "attempt": attempts + 1, "started": now()}
+                      "pid": os.getpid(), "status": "running", "attempt": attempts + 1, "started": now(),
+                      "dispatch_revision": DISPATCH_REVISION,
+                      "previous_receipt": previous.get("previous_receipt"),
+                      "attempt_log": str(task.root / ".queue" / "logs" / task.key / f"{uuid.uuid4().hex}.log")}
             atomic_json(task.receipt, record)
             print(f"TASK {task.key} host={record['host']} attempt={record['attempt']}", flush=True)
-            code = runner(task, handle)
+            error = None
+            try:
+                code = runner(task, handle)
+            except (OSError, subprocess.SubprocessError) as exc:
+                error, code = f"cannot start collector: {exc}", 1
             fingerprint = None
             if code == 0:
                 try:
                     fingerprint = verified_signature(task)
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     print(f"INVALID {task.key} completion: {exc}", file=sys.stderr, flush=True)
-                    code = 1
+                    error, code = str(exc), 1
             status = "busy" if code == 75 else "interrupted" if code in (130, 143) else (
                 "complete" if code == 0 else "failed")
-            atomic_json(task.receipt, {**record, "status": status, "exit_code": code, "finished": now(),
+            record = {**record, "status": status, "exit_code": code, "finished": now(),
                 "attempt": attempts if status in {"busy", "interrupted"} else attempts + 1,
-                "verified_files": fingerprint})
+                "verified_files": fingerprint}
+            if status == "failed":
+                record["error"] = error or failure_detail(task, record)[0]
+            atomic_json(task.receipt, record)
             print(f"TASK {task.key} {status} exit={code}", flush=True)
+            if status == "failed":
+                report_failure(task, record)
             return counts, code
     return counts, None
 
@@ -301,13 +379,13 @@ def main(argv=None):
                 print("COMPLETE: all requested information measurements", flush=True)
                 return 0
             if code is None and counts["complete"] + counts["failed"] == len(tasks):
-                print(f"FAILED: {counts['failed']} measurement(s); inspect selection-information/.queue", flush=True)
+                print(f"FAILED: {counts['failed']} measurement(s); errors and log paths shown above", flush=True)
                 return 1
             print(f"WAIT: {counts}", flush=True)
             time.sleep(10)
     except KeyboardInterrupt:
         return 130
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
         return 2
 
