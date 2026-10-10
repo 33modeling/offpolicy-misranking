@@ -1,13 +1,13 @@
 # Current Experiment Allocations
 
-## 현재 실행 중 — 2026-10-10
+## 현재 실험 — 2026-10-10
 
-사용자가 현재 실행 중이라고 확인한 실험은 아래 네 종류다.
+사용자가 진행 상태를 확인한 실험은 아래 네 종류다.
 원격 프로세스나 완료 여부를 직접 확인한 기록은 아니다. 노드 수는 미확인이다.
 
 | 실험 | 모델·측정 | 실행 명령 |
 | --- | --- | --- |
-| information | 같은 checkpoint에서 On-policy·SR의 선택 문제, 성공률, 실제 GRPO update 비교 | `sh scripts/run_srgc_information.sh all` |
+| information | 사용자 보고: 전체 측정 완료. 같은 checkpoint에서 On-policy·SR의 선택 문제, 성공률, 실제 GRPO update 비교 | `sh scripts/run_srgc_information.sh all results` |
 | Qwen | Qwen3.5-9B SRGC | `bash scripts/run_srgc_qwen35.sh all` |
 | Gemma | Gemma 4 12B PT SRGC | `bash scripts/run_srgc_gemma4.sh all` |
 | Llama | Llama 3.1 8B Instruct SRGC | `bash scripts/run_srgc_llama31.sh all` |
@@ -17,6 +17,9 @@
 `BACKUP` 로그는 백업 상태이며 학습 완료나 GPU 사용 여부를 뜻하지 않는다.
 Information 전체 완료는 `sh scripts/run_srgc_information.sh all status`의
 검증된 측정 `10/10`을 기준으로 확인한다.
+사용자가 information 전체 완료를 보고했다. 결과 추출은 `all results` 한 줄이며,
+MATH·MBPP와 모든 seed·저장된 stage를 `<OM_WORK>/results/information-results.json`
+하나에 담는다. 파일 내부의 `coverage`, `pending`, `errors`로 실제 수집 상태를 확인한다.
 
 ## 이전 실행 기록 — 2026-09-25
 

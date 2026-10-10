@@ -4,8 +4,8 @@ set -eu
 cd "$(dirname "$0")/.."
 DATASET=${1:-math}
 ACTION=${2:-collect}
-case "$DATASET" in math|mbpp|all) ;; *) echo "usage: sh scripts/run_srgc_information.sh [math|mbpp|all] [collect|status|report options]" >&2; exit 2 ;; esac
-case "$ACTION" in collect|status|report) ;; *) echo "action must be collect, status or report" >&2; exit 2 ;; esac
+case "$DATASET" in math|mbpp|all) ;; *) echo "usage: sh scripts/run_srgc_information.sh [math|mbpp|all] [collect|status|results|report options]" >&2; exit 2 ;; esac
+case "$ACTION" in collect|status|results|report) ;; *) echo "action must be collect, status, results or report" >&2; exit 2 ;; esac
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 export OM_WORK="$WORK"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -29,6 +29,9 @@ fi
 
 if [ "$ACTION" = collect ]; then
     exec "$PY" -m srgc_research.dispatch.information_run "$@"
+fi
+if [ "$ACTION" = results ]; then
+    exec "$PY" -m srgc_research.dispatch.information_results "$@"
 fi
 if [ "$ACTION" = status ] && { [ "$#" -eq 2 ] || { [ "$#" -eq 3 ] && [ "$3" = --json ]; }; }; then
     exec "$PY" -m srgc_research.dispatch.information_status "$@"
