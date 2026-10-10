@@ -21,6 +21,12 @@ Information 전체 완료는 `sh scripts/run_srgc_information.sh all status`의
 MATH·MBPP와 모든 seed·저장된 stage를 `<OM_WORK>/results/information-results.json`
 하나에 담는다. 파일 내부의 `coverage`, `pending`, `errors`로 실제 수집 상태를 확인한다.
 
+2026-10-10 다운로드된 information JSON을 확인했다. OLMo-3-7B의 MATH·MBPP,
+seed 5–9, t0 측정 10/10이 완료되어 있고 `pending`과 `errors`는 비어 있다.
+중기·후기 측정은 포함되어 있지 않다. GPU 비용 ledger는 10개 모두 미완료다.
+실제 선택 문제·응답·업데이트와 seed별 비교는
+[Information 결과 분석](INFORMATION_RESULTS_2026-10-10.md)에 기록했다.
+
 ## 이전 실행 기록 — 2026-09-25
 
 Recorded: 2026-09-25 04:21 KST (2026-09-24 19:21 UTC).
