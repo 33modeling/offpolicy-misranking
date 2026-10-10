@@ -10,6 +10,9 @@ from .storage import group_work, inside
 
 # Public Hub tree at 0e9e39f249a16976918f6564b8830bc894c89659.
 # Gated LFS hashes are not public; record the actual local shard SHA256 below.
+# tokenizer_config.json may be reserialized by save_pretrained. Its effective
+# tokenizer must remain compatible with the pinned tokenizer.json; record its
+# actual bytes rather than treating its serialized size as a model identity.
 OFFICIAL_FILES = {
     "config.json": (855, "0bb6fd75b3ad2fe988565929f329945262c2814e"),
     "generation_config.json": (184, "cc7276afd599de091142c6ed3005faf8a74aa257"),
@@ -22,6 +25,73 @@ OFFICIAL_FILES = {
     "model-00003-of-00004.safetensors": (4915916176, None),
     "model-00004-of-00004.safetensors": (1168138808, None),
 }
+
+LLAMA_SPECIAL_TOKENS = {
+    "<|begin_of_text|>": 128000,
+    "<|end_of_text|>": 128001,
+    "<|start_header_id|>": 128006,
+    "<|end_header_id|>": 128007,
+    "<|eot_id|>": 128009,
+}
+
+
+def validate_tokenizer_metadata(path, config):
+    """Accept local serialization changes, while checking what HF really loads."""
+    try:
+        metadata = json.loads((path / "tokenizer_config.json").read_text())
+        if not isinstance(metadata, dict):
+            raise TypeError("tokenizer_config.json must contain an object")
+        if metadata.get("tokenizer_class") not in {
+            None,
+            "PreTrainedTokenizerFast",
+            "LlamaTokenizer",
+            "LlamaTokenizerFast",
+        } or metadata.get("auto_map"):
+            raise ValueError("expected the local fast Llama tokenizer")
+        from tokenizers import Tokenizer
+        from transformers import AutoTokenizer
+
+        reference = Tokenizer.from_file(str(path / "tokenizer.json"))
+        tokenizer = AutoTokenizer.from_pretrained(
+            path, local_files_only=True, trust_remote_code=False
+        )
+        if (
+            not tokenizer.is_fast
+            or tokenizer.get_vocab() != reference.get_vocab()
+            or len(tokenizer) != config.get("vocab_size")
+        ):
+            raise ValueError("token vocabulary differs from tokenizer.json/model")
+        for token, token_id in LLAMA_SPECIAL_TOKENS.items():
+            if tokenizer.encode(token, add_special_tokens=False) != [token_id]:
+                raise ValueError(f"wrong Llama special token: {token}")
+        if tokenizer.bos_token_id != 128000 or tokenizer.eos_token_id != 128009:
+            raise ValueError("wrong Llama Instruct BOS/EOS tokens")
+        if tokenizer.pad_token_id is not None and not (
+            0 <= tokenizer.pad_token_id < len(tokenizer)
+        ):
+            raise ValueError("Llama pad token is outside the model vocabulary")
+        prompt = "SRGC tokenizer readiness: 2 + 2?"
+        rendered = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        if (
+            not rendered.startswith("<|begin_of_text|>")
+            or rendered.count("<|begin_of_text|>") != 1
+            or f"<|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|>"
+            not in rendered
+            or not rendered.endswith(
+                "<|start_header_id|>assistant<|end_header_id|>\n\n"
+            )
+        ):
+            raise ValueError("missing or incompatible Llama Instruct chat template")
+        if tokenizer.encode(rendered, add_special_tokens=False) != reference.encode(
+            rendered, add_special_tokens=False
+        ).ids:
+            raise ValueError("chat tokenization differs from tokenizer.json")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+        raise ValueError(f"Invalid local Llama tokenizer metadata: {error}") from error
 
 
 def find_snapshot(environment):
@@ -88,12 +158,18 @@ def resolve_snapshot(environment):
     for name in ("chat_template.jinja", "added_tokens.json"):
         if (path / name).is_file():
             files.append(name)
+    files += sorted(
+        str(file.relative_to(path))
+        for file in (path / "chat_templates").glob("*.jinja")
+        if file.is_file()
+    )
     for name in files:
         inside(path / name, group)
         if not (path / name).is_file():
             raise ValueError(f"Incomplete Llama snapshot: {path / name}")
         if (
             name in OFFICIAL_FILES
+            and name != "tokenizer_config.json"
             and (path / name).stat().st_size != OFFICIAL_FILES[name][0]
         ):
             raise ValueError(f"Llama file size differs from pinned snapshot: {name}")
@@ -119,10 +195,18 @@ def resolve_snapshot(environment):
             )
         if saved and saved.get("fingerprint") == before:
             return path, saved["snapshot_sha256"]
+        tokenizer_metadata = (path / "tokenizer_config.json").read_bytes()
+        tokenizer_blob = hashlib.sha1(
+            f"blob {len(tokenizer_metadata)}\0".encode() + tokenizer_metadata
+        ).hexdigest()
+        if tokenizer_blob != OFFICIAL_FILES["tokenizer_config.json"][1]:
+            validate_tokenizer_metadata(path, config)
         records = {}
         for name in files:
             file = path / name
             expected_blob = OFFICIAL_FILES.get(name, (None, None))[1]
+            if name == "tokenizer_config.json":
+                expected_blob = None
             sha = hashlib.sha256()
             blob = (
                 hashlib.sha1(f"blob {file.stat().st_size}\0".encode())
