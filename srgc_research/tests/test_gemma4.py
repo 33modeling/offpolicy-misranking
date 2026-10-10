@@ -218,7 +218,7 @@ def test_one_command_and_status_shortcut_use_shared_python(tmp_path):
         )
         assert json.loads(result.stdout) == [
             "-m",
-            "srgc_research.dispatch.gemma4.entry",
+            "srgc_research.dispatch.gemma_run",
             *expected,
         ]
 
