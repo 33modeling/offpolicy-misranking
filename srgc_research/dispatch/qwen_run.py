@@ -31,8 +31,13 @@ def main(argv=None):
     if args[1] != "run":
         raise ValueError("resume-first launcher accepts run only")
     diagnostics = importlib.import_module("srgc_qwen35_diagnostics")
+    worker = importlib.import_module("srgc_qwen35_worker")
+    from .qwen_resume import ResumeFirst
+    from .resume_drain import resume_worker
     with patch.object(sys, "argv", [str(REPO / "scripts/srgc_qwen35_diagnostics.py"), *args]), \
-            resume_first_worker():
+            resume_first_worker(), \
+            resume_worker(worker, ResumeFirst, pattern="qwen35-9b-{dataset}.json",
+                          env_key="SRGC_QWEN_PLANS", label="QWEN"):
         return diagnostics.main()
 
 

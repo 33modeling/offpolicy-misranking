@@ -30,4 +30,7 @@ fi
 if [ "$ACTION" = collect ]; then
     exec "$PY" -m srgc_research.dispatch.information_run "$@"
 fi
+if [ "$ACTION" = status ] && { [ "$#" -eq 2 ] || { [ "$#" -eq 3 ] && [ "$3" = --json ]; }; }; then
+    exec "$PY" -m srgc_research.dispatch.information_status "$@"
+fi
 exec "$PY" -m srgc_research.information_cli "$@"

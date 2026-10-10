@@ -24,10 +24,15 @@ def main(argv=None):
 
     from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
-    from srgc_research.dispatch.model_resume import failure_footer
+    from srgc_research.dispatch.gemma4 import worker
+    from srgc_research.dispatch.model_resume import GemmaResumeFirst, failure_footer
+    from srgc_research.dispatch.resume_drain import resume_worker
 
     identity = cluster.gpu_identity
     with ExitStack() as stack:
+        stack.enter_context(patch.object(cli, "resume_first_worker", lambda: resume_worker(
+            worker, GemmaResumeFirst, pattern="gemma4-12b-pt-{dataset}.json",
+            env_key="SRGC_GEMMA_PLANS", label="GEMMA")))
         stack.enter_context(patch.object(guard, "OWNER_MARKERS", (
             *guard.OWNER_MARKERS, "srgc_research.dispatch.gemma_run", "srgc_research.dispatch.gemma4.entry",
         )))

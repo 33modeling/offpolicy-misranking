@@ -1,5 +1,25 @@
 # Current Experiment Allocations
 
+## 현재 실행 중 — 2026-10-10
+
+사용자가 현재 실행 중이라고 확인한 실험은 아래 네 종류다.
+원격 프로세스나 완료 여부를 직접 확인한 기록은 아니다. 노드 수는 미확인이다.
+
+| 실험 | 모델·측정 | 실행 명령 |
+| --- | --- | --- |
+| information | 같은 checkpoint에서 On-policy·SR의 선택 문제, 성공률, 실제 GRPO update 비교 | `sh scripts/run_srgc_information.sh all` |
+| Qwen | Qwen3.5-9B SRGC | `bash scripts/run_srgc_qwen35.sh all` |
+| Gemma | Gemma 4 12B PT SRGC | `bash scripts/run_srgc_gemma4.sh all` |
+| Llama | Llama 3.1 8B Instruct SRGC | `bash scripts/run_srgc_llama31.sh all` |
+
+기존 결과·입력·optimizer checkpoint를 보존한다. 진행 중인 실험의 학습 코드나
+설정을 바꾸지 않는다. 중단된 기존 작업을 먼저 재개하고 새 작업은 그 뒤에 시작한다.
+`BACKUP` 로그는 백업 상태이며 학습 완료나 GPU 사용 여부를 뜻하지 않는다.
+Information 전체 완료는 `sh scripts/run_srgc_information.sh all status`의
+검증된 측정 `10/10`을 기준으로 확인한다.
+
+## 이전 실행 기록 — 2026-09-25
+
 Recorded: 2026-09-25 04:21 KST (2026-09-24 19:21 UTC).
 Source: the user's explicit report in the current conversation, not a remote
 process-health check. This is a handoff snapshot, not live status.

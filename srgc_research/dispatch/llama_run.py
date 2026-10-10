@@ -167,11 +167,15 @@ def clean_start(*, identity=None):
 def main(argv=None):
     from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
-    from srgc_research.dispatch.llama31 import cli, resume
+    from srgc_research.dispatch.llama31 import cli, resume, worker
     from srgc_research.dispatch.model_resume import LlamaResumeFirst, failure_footer
+    from srgc_research.dispatch.resume_drain import resume_worker
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
     original, started = cluster.gpu_identity, False
     with ExitStack() as stack:
+        stack.enter_context(patch.object(cli, "resume_first_worker", lambda: resume_worker(
+            worker, LlamaResumeFirst, pattern="llama31-8b-{dataset}.json",
+            env_key="SRGC_LLAMA_PLANS", label="LLAMA")))
         def gpu_identity():
             nonlocal started
             if not started:
