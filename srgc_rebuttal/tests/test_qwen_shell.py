@@ -39,7 +39,15 @@ class QwenShellTests(unittest.TestCase):
             value = json.loads(result.stdout)
             self.assertEqual(value["python"], "shared")
             self.assertEqual(value["threads"], "1")
-            self.assertEqual(value["args"], ["scripts/srgc_qwen35_diagnostics.py", dataset, "status"])
+            self.assertEqual(value["args"], ["-m", "srgc_research.dispatch.qwen_status", dataset, "status"])
+
+    def test_status_shortcut_reads_both_queues_without_starting_a_worker(self):
+        self.python(self.work / ".venv-cu126/bin/python", "shared")
+        result = subprocess.run(["sh", str(SCRIPT), "status"], cwd="/tmp",
+                                env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["args"],
+                         ["-m", "srgc_research.dispatch.qwen_status", "all", "status"])
 
     def test_error_command_uses_read_only_diagnostics_entry(self):
         self.python(self.work / ".venv-cu126/bin/python", "shared")

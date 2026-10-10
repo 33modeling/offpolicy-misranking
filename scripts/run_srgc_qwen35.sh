@@ -3,6 +3,10 @@
 set -eu
 cd "$(dirname "$0")/.."
 [ "$#" -gt 0 ] || set -- all
+if [ "${1:-}" = status ]; then
+    shift
+    set -- all status "$@"
+fi
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "${1:-}" in
     math|all) EXPLICIT=${PAIR_PYTHON:-} ;;
@@ -25,5 +29,8 @@ export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 if [ "$#" -eq 1 ]; then
     exec "$PY" scripts/srgc_qwen35_start.py "$@"
+fi
+if [ "${2:-}" = status ]; then
+    exec "$PY" -m srgc_research.dispatch.qwen_status "$@"
 fi
 exec "$PY" scripts/srgc_qwen35_diagnostics.py "$@"
