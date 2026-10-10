@@ -28,9 +28,12 @@ export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
 export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 if [ "$#" -eq 1 ]; then
-    exec "$PY" scripts/srgc_qwen35_start.py "$@"
+    exec "$PY" -m srgc_research.dispatch.qwen_run "$@"
 fi
 if [ "${2:-}" = status ]; then
     exec "$PY" -m srgc_research.dispatch.qwen_status "$@"
+fi
+if [ "${2:-}" = run ]; then
+    exec "$PY" -m srgc_research.dispatch.qwen_run "$@"
 fi
 exec "$PY" scripts/srgc_qwen35_diagnostics.py "$@"

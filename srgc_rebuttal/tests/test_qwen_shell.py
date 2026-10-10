@@ -65,7 +65,7 @@ class QwenShellTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         value = json.loads(result.stdout)
         self.assertEqual(value["python"], "pair")
-        self.assertEqual(value["args"], ["scripts/srgc_qwen35_start.py", "all"])
+        self.assertEqual(value["args"], ["-m", "srgc_research.dispatch.qwen_run", "all"])
 
     def test_dataset_specific_interpreters_match_olmo(self):
         pair = self.python(self.root / "pair/python", "pair")
@@ -85,7 +85,7 @@ class QwenShellTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             value = json.loads(result.stdout)
             self.assertEqual(value["python"], expected)
-            self.assertEqual(value["args"], ["scripts/srgc_qwen35_start.py", dataset])
+            self.assertEqual(value["args"], ["-m", "srgc_research.dispatch.qwen_run", dataset])
 
     def test_venv_dir_and_explicit_legacy_override(self):
         venv = self.root / "custom"
