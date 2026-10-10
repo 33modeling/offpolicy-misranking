@@ -1,8 +1,8 @@
 # Information 실험 결과 분석 — 2026-10-10
 
-MATH에서는 On-policy가 SR보다 probe 개선 방향에 더 잘 맞는 업데이트를 만들었다. SR이 정답과 오답이 섞인 문제를 더 많이 골랐는데도 나타난 차이다. 성공률만으로는 업데이트의 방향을 설명하지 못한다는 단서가 있다.
+MATH에서는 실제 AdamW 업데이트와 고정 probe의 음의 loss gradient 사이의 cosine이 On-policy에서 더 높게 측정되었다. SR이 정답과 오답이 섞인 문제를 더 많이 골랐는데도 나타난 차이다. 다만 이 값을 곧바로 “더 좋은 업데이트 방향”이라고 해석해서는 안 된다.
 
-다만 실제 업데이트 후 probe loss는 On-policy가 평균적으로 더 좋지 않았다. MBPP에서는 업데이트 방향 차이도 작다. 이번 결과는 **초기 On-policy 우위의 원인을 입증한 결과가 아니라, 문제 선택과 실제 업데이트 사이의 차이를 보여준 초기 상태의 관측**으로 보는 것이 맞다.
+실제 업데이트 후 probe loss는 On-policy가 평균적으로 더 좋지 않았다. 1차 근사는 20회 모두 loss 감소를 예측했지만 실제 감소는 6회뿐이었다. 이 불일치의 원인을 검증하지 않은 상태에서 cosine을 성능 개선의 근거로 사용하지 않는다. MBPP에서는 cosine 차이도 작다. 이번 결과는 초기 상태의 진단 기록이며, 초기 On-policy 우위의 원인을 입증하지 못했다.
 
 ## 1. 분석 대상과 완료 범위
 
@@ -147,6 +147,10 @@ On-policy가 SR보다 실제 loss가 낮았던 경우는 두 dataset 모두 2/5�
 
 1차 예측은 20개 업데이트 모두 음수였다. 그러나 실제 변화가 음수인 경우는 6개뿐이다. **국소 gradient 정렬과 실제 finite-step loss 변화가 자주 반대 부호를 보인다.** 이것은 이번 결과를 해석할 때 반드시 남겨야 하는 문제다.
 
+같은 미분 가능한 loss와 같은 상태에서 `g_probe · Δθ < 0`이면, 실제 이동량을 충분히 작게 줄였을 때 loss가 감소해야 한다. 전체 step에서의 불일치를 설명하려면 우선 이 국소 관계가 실제 계산에서도 성립하는지 확인해야 한다. 현재 사용한 `Δθ`는 SGD 근사가 아니라 실제 AdamW 이동량이다. 따라서 “Adam이 gradient 방향을 바꿨다”는 말만으로 이 부호 불일치를 설명할 수 없다.
+
+구체적인 검증 대상은 고정 weights·probe·old logps를 유지한 상태에서 `θ + αΔθ`의 loss를 비교하는 것이다. `α`를 줄일 때 `[L(θ+αΔθ)-L(θ)]/α`가 `g_probe · Δθ`에 접근하는지 확인한다. 맞으면 전체 step의 1차 근사 한계를 조사하고, 맞지 않으면 수치 정밀도·gradient/loss 계산·상태 복원을 조사한다. 이번 로컬 분석에는 원본 checkpoint tensor와 7B 실행 환경이 없어 이 검증을 수행하지 않았다. 원인을 특정하지 않는다.
+
 Probe loss의 초기값이 거의 0인 것은 정답률이 0이어서가 아니다. 같은 policy의 old log probability를 기준으로 ratio가 1이고, 문제별로 중심화한 GRPO advantage의 합이 0이기 때문이다. 이 loss는 cross-entropy와도 다르다.
 
 이 JSON만으로 부호 불일치의 원인을 특정할 수는 없다. 곡률과 ratio clipping, 실제 step 크기, forward 계산의 수치 정밀도 등을 구분하려면 저장된 weights·응답을 이용한 재계산이 필요하다. Gradient clipping이 없었다는 사실은 **surrogate objective의 ratio clipping**이 없었다는 뜻은 아니다. Probe loss 악화를 곧바로 새 rollout 정답률의 악화로 바꾸어 해석해서도 안 된다.
@@ -224,7 +228,7 @@ On-policy가 고른 네 문제가 모두 좋았던 것은 아니다. 나이 문�
 
 **초반부터 SR을 사용하면 학습 신호가 없나?** 그렇지 않다. SR은 MATH 17/20개, MBPP 19/20개 선택 문제에서 실제 GRPO gradient를 확보했다. MATH에서는 mixed 문제 확보도 On-policy보다 좋았다.
 
-**그런데 On-policy가 잡는 다른 정보가 있나?** MATH에서는 실제 업데이트의 probe 방향 정렬이 더 높았다. 특히 seed 7의 실제 선택 문제를 보면 성공률이 비슷해도 gradient norm과 probe 정렬이 크게 다르다. 성공률 기반 선별과 방향 기반 선별이 같은 정보를 잡지는 않는다는 관측이다.
+**그런데 On-policy가 잡는 다른 정보가 있나?** MATH에서 실제 업데이트의 probe gradient cosine이 더 높게 측정되었다. 특히 seed 7의 실제 선택 문제를 보면 성공률이 비슷해도 gradient norm과 cosine이 크게 다르다. 선택된 정보가 다른 것은 관측되지만, cosine과 실제 loss의 관계를 검증하기 전에는 그 정보가 더 유용하다고 결론 내리지 않는다.
 
 **그 차이가 초반 학습 성능 우위를 설명하나?** 아직 부족하다. 실제 probe loss에서 일관된 우위가 없고, scoring 순위가 불안정하며, adapter의 첫 update만 측정했다. 장기 학습 결과와 연결하려면 실제 continuation이 갈라지는 checkpoint에서 같은 내용을 확인해야 한다.
 
@@ -232,7 +236,17 @@ On-policy가 고른 네 문제가 모두 좋았던 것은 아니다. 나이 문�
 
 논문에 현재 쓸 수 있는 문장은 다음 정도다.
 
-> 초기 OLMo-3-7B의 MATH 진단에서 성공률 기반 선택은 정답·오답이 혼재한 문제를 더 많이 확보했지만, On-policy 선택의 실제 GRPO/AdamW 업데이트는 독립 probe의 국소 개선 방향에 평균적으로 더 잘 정렬되었다. 그러나 이 차이는 seed 간 변동이 크고 실제 한 단계 probe loss 개선으로 이어지지 않았으며, MBPP에서는 뚜렷한 차이가 관측되지 않았다.
+> 초기 OLMo-3-7B의 MATH 진단에서 성공률 기반 선택은 정답·오답이 혼재한 문제를 더 많이 확보했고, On-policy의 실제 GRPO/AdamW 업데이트는 독립 probe의 음의 loss gradient와 더 높은 평균 cosine을 보였다. 그러나 1차 예측과 실제 loss 변화가 빈번하게 반대 부호를 보여 이 지표를 유용한 업데이트의 근거로 해석하지 않았다. MBPP에서는 cosine 차이도 작았다.
+
+## 11. LESS와의 관계
+
+[LESS 원문](https://arxiv.org/html/2402.04333v3)의 §2는 validation loss 변화의 1차 Taylor 근사에서 출발한다. §3.1은 단순 SGD gradient 대신 Adam 상태를 반영한 업데이트 특징을 사용하고, §4는 warmup checkpoint들의 특징을 합쳐 데이터를 선택한다. 선택한 데이터로 실제 instruction tuning을 수행한 뒤 downstream 성능을 평가한다. 초기 한 번의 cosine만으로 성능을 판정한 논문이 아니다.
+
+부록 I는 validation loss 감소가 항상 accuracy 증가로 이어지지는 않는다고 명시하고 실험을 제시한다. 이 논문은 모든 개별 step에서 cosine이 높으면 정답률이 반드시 오른다는 보편 보장을 주장하지 않는다.
+
+이번 측정은 warmup 없이 t0에서 dense LOO 점수로 선택하고 LoRA GRPO/AdamW로 한 번 업데이트했다. LESS의 재현 실험이 아니다. 특히 이번에는 accuracy와 loss 사이의 관계를 논하기 전에, **동일 probe의 1차 loss 감소 예측과 실제 loss 증가 사이의 불일치**를 먼저 검증해야 한다. 이 결과로 LESS가 거짓이라고 판단할 근거는 없다.
+
+§2·§3.1·§4와 부록 I의 내용을 구분해서 해석한다. 추가 방법 확인 출처는 [저자들의 구현](https://github.com/princeton-nlp/LESS)이다.
 
 ## 분석 출처
 
