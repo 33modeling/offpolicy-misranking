@@ -1,5 +1,6 @@
 """Four CPU/Gloo ranks: actual gradients, resume and shared failure handling."""
 
+import argparse
 import shutil
 import tempfile
 from datetime import timedelta
@@ -13,25 +14,31 @@ from srgc_rebuttal.cost_ledger import PhaseLedger
 from srgc_rebuttal.distributed import primary
 from srgc_rebuttal.timing import torch_meter
 from srgc_rebuttal.torch_backend import TorchBackend
+from srgc_research.dispatch.information_gradients import aligned_problem_gradients
 from srgc_research.dispatch.information_meter import InformationPhaseLedger
 from srgc_research.information import InformationStudy
 from srgc_research.information_report import read_measurement, write_report
 from srgc_research.tests.test_information import setup_measurement
-from srgc_research.tests.test_research import equal_tree, study_backend
+from srgc_research.tests.test_information_gradients import precision_backend
+from srgc_research.tests.test_research import equal_tree
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-dtype", choices=("bf16", "fp32"), default="bf16")
+    args = parser.parse_args()
     torch.set_num_threads(1)
     dist.init_process_group("gloo", timeout=timedelta(seconds=90))
     folder = Path(primary(lambda: tempfile.mkdtemp(prefix="srgc-information-four-rank-")))
     try:
-        backend = study_backend()
+        backend = precision_backend(torch.bfloat16 if args.base_dtype == "bf16" else torch.float32)
         data, config, identity = primary(lambda: setup_measurement(folder, backend))
         backend.records = data["records"]
         ledger = InformationPhaseLedger(folder / "cost-receipts")
         backend.cost_meter = torch_meter(PhaseLedger(folder / "cost-receipts").record, cuda=False)
         initial = backend.state_dict()
-        with patch.object(TorchBackend, "_rollout", side_effect=backend.generate_test_rollout):
+        with patch.object(TorchBackend, "_rollout", side_effect=backend.generate_test_rollout), \
+                aligned_problem_gradients():
             value = InformationStudy(backend, data, config, 0, folder, identity, probe_prompts=1)
             try:
                 value.run()
@@ -92,7 +99,7 @@ def main():
         norm = float(measured["vectors"]["gradient_before_clip"].norm())
         dist.all_gather_object(replicas, norm)
         assert all(n == replicas[0] for n in replicas)
-        primary(lambda: print("PASS: 4-rank diagnostic ledger failure reproduced and resumed without rescoring; serial update agreement, GRPO gradients, restore, resume and disk-failure propagation", flush=True))
+        primary(lambda: print(f"PASS: 4-rank {args.base_dtype}/FP32 LoRA full pipeline, diagnostic recovery without rescoring, gradient reconstruction, serial update agreement, restore, resume and disk-failure propagation", flush=True))
     finally:
         primary(lambda: shutil.rmtree(folder))
         primary(lambda: shutil.rmtree(folder.with_name(folder.name + "-report"), ignore_errors=True))

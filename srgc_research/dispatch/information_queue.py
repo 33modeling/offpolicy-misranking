@@ -32,9 +32,9 @@ from .information_run import OWNERS, TARGETS
 
 REPO = Path(__file__).resolve().parents[2]
 SEEDS = (7, 5, 6, 8, 9)
-# Diagnostic ledger recovery generation. Bump only for collector
+# GRPO problem-gradient recovery generation. Bump only for collector
 # execution fixes: improving diagnostics must not relaunch exhausted GPU jobs.
-DISPATCH_REVISION = "dabfb7dc5483d140a0964e6a4bb531cf648e500f025d9a70b44d71e41c67dd81"
+DISPATCH_REVISION = "a08c4318cbcb748c012769e7201804fcc3ed30b5fd691a86f43ba6c3a2aa49a7"
 
 
 @dataclass(frozen=True)

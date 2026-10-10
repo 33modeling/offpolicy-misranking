@@ -23,8 +23,10 @@ def main(argv=None):
     # This sibling adapter is deliberately outside the hashed scientific
     # package. Imports made by the rank continue to use its frozen PYTHONPATH.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from information_gradients import aligned_problem_gradients
     from information_meter import diagnostic_costs
-    with diagnostic_costs(), patch.object(sys, "argv", [str(target), "--output", str(args.output)]):
+    with diagnostic_costs(), aligned_problem_gradients(), \
+            patch.object(sys, "argv", [str(target), "--output", str(args.output)]):
         runpy.run_path(str(target), run_name="__main__")
     return 0
 

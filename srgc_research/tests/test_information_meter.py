@@ -112,6 +112,8 @@ print("FROZEN_LEDGER:", cost_ledger.__file__)
 
 @pytest.mark.parametrize("fault", [None, "different-rank", "tampered-code"])
 def test_real_subprocess_registers_frozen_ledger_and_verifies_code_before_execution(frozen_rank, fault):
+    if fault is None:
+        pytest.importorskip("torch")
     output, runtime, target = frozen_rank
     ledger_source = runtime / "srgc_rebuttal/cost_ledger.py"
     before = ledger_source.read_bytes()
@@ -121,7 +123,8 @@ def test_real_subprocess_registers_frozen_ledger_and_verifies_code_before_execut
         target.write_text("raise AssertionError('must not execute changed code')")
     result = subprocess.run([sys.executable, str(RANK_WRAPPER), "--rank-script", str(target),
                              "--output", str(output)], capture_output=True, text=True, timeout=20, check=False,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(runtime), str(runtime / "src"))),
+        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(runtime), str(runtime / "src"),
+                                                        os.environ.get("PYTHONPATH", ""))),
              "PYTHONDONTWRITEBYTECODE": "1"})
     if fault:
         assert result.returncode != 0
