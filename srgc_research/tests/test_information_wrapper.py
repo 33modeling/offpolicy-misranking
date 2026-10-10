@@ -22,7 +22,8 @@ def wrapper(tmp_path):
         plan = json.loads((REPO / "srgc_rebuttal/experiments" / filename).read_text())
         plan["input_pattern"] = f"../inputs/{dataset}-custom-{{seed}}.json"
         (source / "experiments" / filename).write_text(json.dumps(plan))
-        (source / "inputs" / f"{dataset}-custom-7.json").write_text("{}")
+        for seed in (5, 6, 7, 8, 9):
+            (source / "inputs" / f"{dataset}-custom-{seed}.json").write_text("{}")
     binary = tmp_path / "bin"
     binary.mkdir()
     logger = binary / "runner"
@@ -31,13 +32,33 @@ import json
 import os
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path.cwd()))
+if sys.argv[1:3] == ["-m", "srgc_research.dispatch.information_queue"]:
+    from functools import partial
+    from srgc_research.dispatch import information_queue as queue
+    queue.node_available = lambda: True
+    queue.read_measurement = lambda folder: (queue.read_object(folder / "endpoint.json"), {})
+    queue.sweep = partial(queue.sweep, retry_delay=0)
+    sys.exit(queue.main(sys.argv[3:]))
 if sys.argv[1:3] != ["-m", "srgc_research.information_cli"]:
     os.execv("/usr/bin/python3", ["/usr/bin/python3", *sys.argv[1:]])
 with Path(os.environ["WRAPPER_TEST_LOG"]).open("a") as handle:
     handle.write(json.dumps({"runner": Path(sys.argv[0]).name, "args": sys.argv[1:],
                             "cuda": os.environ.get("CUDA_VISIBLE_DEVICES")}) + "\\n")
-sys.exit(int(os.environ.get("WRAPPER_TEST_COLLECT_EXIT", "0"))
-         if sys.argv[4] == "collect" else 0)
+code = int(os.environ.get("WRAPPER_TEST_COLLECT_EXIT", "0")) if sys.argv[4] == "collect" else 0
+if sys.argv[4] == "collect" and "--plan" in sys.argv and code == 0:
+    from srgc_research.dispatch.information_queue import Task, PHASES, digest, atomic_json
+    arg = lambda flag: sys.argv[sys.argv.index(flag) + 1]
+    output, plan, inputs = Path(arg("--output")), Path(arg("--plan")), Path(arg("--inputs"))
+    task = Task(sys.argv[3], int(arg("--seed")), plan, inputs, output.parents[2], digest(plan), digest(inputs))
+    atomic_json(output / "manifest.json", {"identity": task.identity})
+    (output / "plan.json").write_bytes(plan.read_bytes())
+    (output / "inputs.json").write_bytes(inputs.read_bytes())
+    for phase in PHASES:
+        atomic_json(output / f"{phase}.json", {"artifacts": []})
+    atomic_json(output / "endpoint.json", {"identity": task.identity,
+        "phases": {phase: f"{phase}.json" for phase in PHASES}})
+sys.exit(code)
 ''')
     logger.chmod(0o755)
     for name in ("python3", "pair-python", "switch-python"):
@@ -66,7 +87,7 @@ def test_one_command_defaults_collect_only(wrapper, args, dataset, runner):
     result, calls = run(*args)
     assert result.returncode == 0, result.stderr
     assert "action must" not in result.stderr
-    assert len(calls) == 1
+    assert len(calls) == 5
     call = calls[0]
     assert call["runner"] == runner and call["args"][2:4] == [dataset, "collect"]
     args = call["args"]
@@ -79,12 +100,13 @@ def test_one_command_defaults_collect_only(wrapper, args, dataset, runner):
     assert not list(work.rglob("*.html"))
 
 
-def test_all_runs_both_datasets_sequentially_without_reports(wrapper):
+def test_all_dispatches_ten_independent_tasks_without_reports(wrapper):
     run, work, _ = wrapper
     result, calls = run("all")
     assert result.returncode == 0, result.stderr
-    assert [c["args"][2:4] for c in calls] == [["math", "collect"], ["mbpp", "collect"]]
-    assert [c["runner"] for c in calls] == ["pair-python", "switch-python"]
+    assert [c["args"][2:4] for c in calls] == [["math", "collect"], ["mbpp", "collect"]] * 5
+    assert [c["runner"] for c in calls] == ["pair-python", "switch-python"] * 5
+    assert [int(c["args"][c["args"].index("--seed") + 1]) for c in calls] == [7, 7, 5, 5, 6, 6, 8, 8, 9, 9]
     assert not list(work.rglob("*.html"))
 
 
@@ -96,11 +118,39 @@ def test_all_missing_second_input_never_starts_first_measurement(wrapper):
     assert calls == []
 
 
-def test_failed_collect_returns_failure_and_stops_all(wrapper):
+def test_missing_later_seed_is_found_before_first_gpu_job(wrapper):
+    run, _, source = wrapper
+    (source / "inputs/math-custom-9.json").unlink()
+    result, calls = run("all")
+    assert result.returncode == 2 and "math-custom-9" in result.stderr and calls == []
+
+
+def test_collect_without_options_uses_shared_queue(wrapper):
+    run, _, _ = wrapper
+    result, calls = run("math", "collect")
+    assert result.returncode == 0 and len(calls) == 5
+
+
+def test_restart_skips_completed_tasks_without_another_collector_launch(wrapper):
+    run, work, _ = wrapper
+    assert run("all")[0].returncode == 0
+    before = {p: p.read_bytes() for p in work.rglob("*.pt")}
+    result, calls = run("all")
+    assert result.returncode == 0 and len(calls) == 10
+    assert {p: p.read_bytes() for p in work.rglob("*.pt")} == before
+
+
+def test_missing_second_interpreter_is_found_before_first_gpu_job(wrapper):
+    run, _, _ = wrapper
+    result, calls = run("all", overrides={"SWITCH_PYTHON": "/missing/switch-python"})
+    assert result.returncode == 2 and "SWITCH_PYTHON" in result.stderr and calls == []
+
+
+def test_failed_collect_returns_failure_after_independent_tasks_are_attempted(wrapper):
     run, _, _ = wrapper
     result, calls = run("all", overrides={"WRAPPER_TEST_COLLECT_EXIT": "9"})
-    assert result.returncode == 9
-    assert len(calls) == 1 and calls[0]["args"][3] == "collect"
+    assert result.returncode == 1
+    assert len(calls) == 30 and all(c["args"][3] == "collect" for c in calls)
 
 
 @pytest.mark.parametrize("dataset,action", [("math", "collect"), ("mbpp", "collect"),
@@ -143,7 +193,9 @@ def test_active_fresh_plan_is_used_without_top_level_plan(wrapper, dataset, name
     plan = json.loads(plan_path.read_text())
     input_path = (plan_path.parent / plan["input_pattern"].format(seed=7)).resolve()
     input_path.parent.mkdir(parents=True)
-    input_path.write_text("{}")
+    for seed in (5, 6, 7, 8, 9):
+        path = (plan_path.parent / plan["input_pattern"].format(seed=seed)).resolve()
+        path.write_text("{}")
     pointer = source / f".{template.stem}-active.json"
     pointer.write_text(json.dumps({"plan": str(plan_path), "source_plan_sha256": hashlib.sha256(template.read_bytes()).hexdigest()}))
     # Reproduce the missing path from the user's node exactly.
@@ -152,7 +204,7 @@ def test_active_fresh_plan_is_used_without_top_level_plan(wrapper, dataset, name
     before = {p: p.read_bytes() for p in source.rglob("*") if p.is_file()}
     result, calls = run(dataset)
     assert result.returncode == 0, result.stderr
-    assert len(calls) == 1
+    assert len(calls) == 5
     args = calls[0]["args"]
     assert args[args.index("--plan") + 1] == str(plan_path)
     assert args[args.index("--inputs") + 1] == str(input_path)
@@ -196,6 +248,10 @@ def test_saved_previous_run_is_selected_without_changing_active_pointer(wrapper)
     old_input = (old.parent / plan["input_pattern"].format(seed=7)).resolve()
     old_input.parent.mkdir(parents=True)
     old_input.write_text("{}")
+    for seed in (5, 6, 7, 8, 9):
+        path = (active.parent / plan["input_pattern"].format(seed=seed)).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
     old_prefix = (old.parent / plan["output_root"] / "seed-7/prefix.pt").resolve()
     old_prefix.parent.mkdir(parents=True)
     old_prefix.write_bytes(b"old checkpoint must remain intact")

@@ -69,6 +69,23 @@ def collect_batch(backend):
     return records, probe, probe_gradient(backend, probe)
 
 
+def test_shared_queue_audits_real_measurement_and_rejects_changed_tensors(measured):
+    from srgc_research.dispatch import information_queue as queue
+    endpoint, _ = read_measurement(measured)
+    task = SimpleNamespace(output=measured, receipt=measured.parent / "queue.json",
+        identity=endpoint["identity"], key="math.seed-5.t0", plan=measured / "plan.json",
+        inputs=measured / "inputs.json", plan_sha256=digest(measured / "plan.json"),
+        input_sha256=digest(measured / "inputs.json"))
+    counts, code = queue.sweep([task], available=lambda: pytest.fail("completed measurement admitted GPUs"))
+    assert code is None and counts["complete"] == 1
+    assert queue.sweep([task])[0]["complete"] == 1
+    phase = json.loads((measured / "score-A.json").read_text())
+    tensor = measured / phase["artifacts"][0]["file"]
+    tensor.write_bytes(b"damaged measurement evidence")
+    counts, code = queue.sweep([task], runner=lambda *_: pytest.fail("corrupt tensors overwritten"))
+    assert code is None and counts["failed"] == 1
+
+
 def test_update_equals_direct_grpo_adam_step_and_restores_moments(backend):
     with patch.object(TorchBackend, "_rollout", side_effect=backend.generate_test_rollout):
         backend.train(["p0", "p1"], responses=8, objective="grpo", seed=19)
