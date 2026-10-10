@@ -162,7 +162,8 @@ def clean_start(*, identity=None):
 def main(argv=None):
     from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
-    from srgc_research.dispatch.llama31 import cli
+    from srgc_research.dispatch.llama31 import cli, resume
+    from srgc_research.dispatch.model_resume import LlamaResumeFirst, failure_footer
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
     original, started = cluster.gpu_identity, False
     with ExitStack() as stack:
@@ -176,7 +177,19 @@ def main(argv=None):
             return original()
         stack.enter_context(patch.object(guard, "OWNER_MARKERS", (*guard.OWNER_MARKERS, *OWNER_MARKERS)))
         stack.enter_context(patch.object(cluster, "gpu_identity", gpu_identity))
-        return cli.main(args)
+        stack.enter_context(patch.object(resume, "ResumeFirst", LlamaResumeFirst))
+        try:
+            return cli.main(args)
+        except (OSError, ValueError, TypeError, RuntimeError, ImportError, subprocess.CalledProcessError):
+            from srgc_research.dispatch.llama31.storage import default_root
+
+            root = default_root(os.environ)
+            if "--root" in args and args.index("--root") + 1 < len(args):
+                root = Path(args[args.index("--root") + 1])
+            root = next((Path(arg.split("=", 1)[1]) for arg in args if arg.startswith("--root=")), root)
+            names = ("math", "mbpp") if args[0] == "all" else (args[0],)
+            failure_footer(root, [root / "experiments" / f"llama31-8b-{name}.json" for name in names], "LLAMA")
+            raise
 
 
 if __name__ == "__main__":
