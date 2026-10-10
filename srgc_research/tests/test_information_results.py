@@ -16,7 +16,7 @@ from srgc_research.tests import test_information_wrapper as wrappers
 backend, measured, wrapper = fixtures.backend, fixtures.measured, wrappers.wrapper
 
 
-def test_both_datasets_and_raw_phase_responses_fit_one_file(tmp_path, measured, backend):
+def test_both_datasets_and_essential_updates_fit_one_file(tmp_path, measured, backend):
     root = tmp_path / "selection-information"
     shutil.copytree(measured, root / "math/seed-5/t0")
     mbpp = root / "mbpp/seed-5/t0"
@@ -34,7 +34,11 @@ def test_both_datasets_and_raw_phase_responses_fit_one_file(tmp_path, measured, 
     assert set(result["datasets"]) == {"math", "mbpp"} and not result["complete"]
     assert len(result["measurements"]) == 2 and len(result["pending"]) == 8
     assert {r["dataset"] for r in result["selected_problems"]} == {"math", "mbpp"}
-    assert all(m["phases"]["score-A"]["responses"] for m in result["measurements"])
+    assert result["format"] == "compact"
+    assert all("phases" not in measurement and "endpoint" not in measurement for measurement in result["measurements"])
+    assert all(row["response_updates"] for row in result["selected_problems"])
+    assert not {"sequence_ids", "logps_before", "logps_after", "raw_samples", "parameter_updates"} & set(files[0].read_text().split('"'))
+    assert files[0].stat().st_size < 150_000
     assert before == {p: p.read_bytes() for p in before}
     assert not list(tmp_path.rglob("*.html")) and not list(tmp_path.rglob("*.csv"))
 
@@ -97,3 +101,30 @@ def test_result_directory_cannot_redirect_output_over_sources(tmp_path):
     with pytest.raises(ValueError, match="escapes"):
         export.export(work=work)
     assert list(elsewhere.iterdir()) == []
+
+
+def test_large_response_arrays_and_duplicate_text_are_removed_without_changing_metrics():
+    identity = {"dataset": "math", "seed": 7, "stage": 0, "input_sha256": "a" * 64}
+    sample = {"response": 0, "reward": 1, "completion_tokens": 20_000, "mean_logp_change": .01,
+              "sequence_ids": list(range(20_000)), "logps_before": [-2.0] * 20_000,
+              "logps_after": [-1.99] * 20_000, "text": "response " * 20_000}
+    row = {**identity, "id": "p1", "question": "chosen problem", "prompt": "duplicate problem",
+           "answer": "2", "training_success_rate": .5, "loss_gradient_norm": .25, "raw_samples": [sample] * 8}
+    original = {"measurements": [{"dataset": "math", "seed": 7, "stage": 0,
+        "endpoint": {"identity": identity, "configuration": {"responses": 8}},
+        "phases": {"score-A": {"responses": {"p1": [sample] * 100}}}}],
+        "selected_problems": [row], "candidate_information": [row],
+        "batch_updates": [{**identity, "update_norm": .003}],
+        "parameter_updates": [{"name": "layer0", "unused_detail": sample}]}
+    result = export.compact(original)
+    assert len(json.dumps(result)) < 4_000
+    selected = result["selected_problems"][0]
+    assert selected["training_success_rate"] == .5 and selected["loss_gradient_norm"] == .25
+    assert selected["question"] == "chosen problem" and selected["answer"] == "2"
+    assert result["batch_updates"][0]["update_norm"] == .003
+    assert result["candidate_information"][0]["id"] == "p1"
+    assert "question" not in result["candidate_information"][0]
+    assert "input_sha256" not in selected
+    assert result["measurements"][0]["identity"]["input_sha256"] == "a" * 64
+    assert original["selected_problems"][0]["raw_samples"][0]["sequence_ids"]
+    assert export.compact(result) == result

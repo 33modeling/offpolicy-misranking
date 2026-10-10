@@ -7,11 +7,54 @@ from unittest.mock import patch
 from srgc_research import information_report as report
 
 from .information_queue import SEEDS
-from .result_export import save_result, work_root
+from .result_export import export_lock, save_result, work_root
+
+
+def compact(result):
+    """Keep the information needed to compare selections and actual updates."""
+    measurements, identity_fields = [], set()
+    for item in result.get("measurements", []):
+        endpoint = item.get("endpoint", {})
+        identity = endpoint.get("identity", item.get("identity", {}))
+        identity_fields.update(identity)
+        entry = {key: item[key] for key in ("dataset", "seed", "stage", "source") if key in item}
+        entry.update(identity=identity, configuration=endpoint.get("configuration", item.get("configuration", {})))
+        costs = item.get("costs", endpoint.get("cost_receipts"))
+        if costs:
+            entry["costs"] = {key: costs[key] for key in ("complete", "total_gpu_seconds", "known_gpu_seconds") if key in costs}
+            entry["costs"]["unfinished_phase_count"] = costs.get("unfinished_phase_count", len(costs.get("unfinished_phases", [])))
+        measurements.append(entry)
+    identity_fields.difference_update({"dataset", "seed", "stage"})
+
+    def row_data(row, *, candidate=False):
+        excluded = identity_fields | {"prompt", "raw_samples", "raw_response_source", "weight_tensor_source"}
+        if candidate:
+            excluded |= {"question", "answer"}
+        value = {key: value for key, value in row.items() if key not in excluded}
+        if not candidate and "question" in row and not value.get("question"):
+            value["question"] = row.get("prompt")
+        if "raw_samples" in row:
+            value["response_updates"] = [{key: sample[key] for key in (
+                "response", "reward", "completion_tokens", "mean_logp_change") if key in sample}
+                for sample in row["raw_samples"]]
+        return value
+
+    value = {key: item for key, item in result.items() if key not in {
+        "measurements", "selected_problems", "batch_updates", "candidate_information", "parameter_updates"}}
+    value.update(export_schema="srgc-information-results-v2", format="compact", measurements=measurements,
+                 selected_problems=[row_data(row) for row in result.get("selected_problems", [])],
+                 batch_updates=[row_data(row) for row in result.get("batch_updates", [])],
+                 candidate_information=[row_data(row, candidate=True) for row in result.get("candidate_information", [])])
+    return value
 
 
 def export(dataset="all", *, work=None):
     work = work_root() if work is None else work.resolve()
+    with export_lock("information", work):
+        return _export(dataset, work=work)
+
+
+def _export(dataset, *, work):
     root = work / "selection-information"
     names = ("math", "mbpp") if dataset == "all" else (dataset,)
     expected = {(name, seed, 0) for name in names for seed in SEEDS}
@@ -37,6 +80,7 @@ def export(dataset="all", *, work=None):
             result["pending"].append({**task, "status": "partial" if (folder / "manifest.json").exists() else "not-started"})
             continue
         try:
+            print(f"READ information {name} seed={seed} stage={stage}", flush=True)
             endpoint, phases = report.read_measurement(folder)
             if any(endpoint["identity"].get(k) != v for k, v in (("dataset", name), ("seed", seed), ("stage", stage))):
                 raise ValueError("measurement identity differs from its dataset/seed/stage directory")
@@ -66,7 +110,7 @@ def export(dataset="all", *, work=None):
         done = sorted(seed for dataset_name, seed, stage in completed if dataset_name == name and stage == 0)
         result["datasets"][name] = {"completed_initial_seeds": done, "planned_initial_seeds": sorted(SEEDS),
                                     "stages": sorted({stage for dataset_name, _, stage in locations if dataset_name == name})}
-    save_result("information", result, work=work)
+    save_result("information", compact(result), work=work)
     coverage = result["coverage"]
     print(f"INFORMATION {coverage['completed_initial_measurements']}/{coverage['planned_initial_measurements']} "
           f"initial measurements; saved stages={len(completed)}; "

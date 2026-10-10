@@ -1,9 +1,10 @@
 """One atomic, consolidated JSON artifact per experiment."""
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
-from srgc_rebuttal.runtime import atomic_json
+from srgc_rebuttal.runtime import atomic_json, lease
 
 
 def work_root(environment=None):
@@ -20,4 +21,15 @@ def save_result(name, result, *, work=None):
         raise ValueError("result destination escapes the experiment workspace")
     atomic_json(destination, result)
     print(f"RESULT: {destination}", flush=True)
+    print(f"SIZE: {destination.stat().st_size / (1024 * 1024):.2f} MiB", flush=True)
     return destination
+
+
+@contextmanager
+def export_lock(name, work):
+    work = Path(work).resolve()
+    path = work / ".result-export-locks" / f"{name}.lock"
+    if not path.resolve().is_relative_to(work):
+        raise ValueError("result lock escapes the experiment workspace")
+    with lease(path, wait=True):
+        yield
