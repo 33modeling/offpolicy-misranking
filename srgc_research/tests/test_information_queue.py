@@ -519,10 +519,10 @@ def test_main_drains_queue_and_returns_failure_for_failed_tasks(tasks, monkeypat
     assert queue.main(["all"]) == 1
 
 
-def test_footer_update_shows_existing_errors_last_without_relaunching_775_failures(tasks, monkeypatch, capsys):
+def test_footer_shows_existing_errors_last_without_relaunching_current_failures(tasks, monkeypatch, capsys):
     before = {}
     for task in tasks:
-        old_failure(task, dispatch_revision="b65eb6b11488e6f5c5b1761ec30e8616a09b5f4514788ee48d40f0902cf94cd6",
+        old_failure(task, dispatch_revision=queue.DISPATCH_REVISION,
                     error=f"ERROR: actual startup failure for {task.key}")
         before[task.receipt] = task.receipt.read_bytes()
     monkeypatch.setattr(queue, "tasks_for", lambda _: tasks)

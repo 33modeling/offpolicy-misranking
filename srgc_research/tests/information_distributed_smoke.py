@@ -9,8 +9,11 @@ from unittest.mock import patch
 import torch
 import torch.distributed as dist
 
+from srgc_rebuttal.cost_ledger import PhaseLedger
 from srgc_rebuttal.distributed import primary
+from srgc_rebuttal.timing import torch_meter
 from srgc_rebuttal.torch_backend import TorchBackend
+from srgc_research.dispatch.information_meter import InformationPhaseLedger
 from srgc_research.information import InformationStudy
 from srgc_research.information_report import read_measurement, write_report
 from srgc_research.tests.test_information import setup_measurement
@@ -25,15 +28,31 @@ def main():
         backend = study_backend()
         data, config, identity = primary(lambda: setup_measurement(folder, backend))
         backend.records = data["records"]
+        ledger = InformationPhaseLedger(folder / "cost-receipts")
+        backend.cost_meter = torch_meter(PhaseLedger(folder / "cost-receipts").record, cuda=False)
         initial = backend.state_dict()
         with patch.object(TorchBackend, "_rollout", side_effect=backend.generate_test_rollout):
             value = InformationStudy(backend, data, config, 0, folder, identity, probe_prompts=1)
-            result = value.run()
+            try:
+                value.run()
+            except RuntimeError as exc:
+                assert "unknown metered phase" in str(exc)
+            else:
+                raise AssertionError("historical ledger did not reproduce the reported failure")
+            saved = {name: (folder / name).read_bytes() for phase in ("score-A", "score-B")
+                     for name in (f"{phase}.json", f"{phase}.pt")}
+            backend.cost_meter = torch_meter(ledger.record, cuda=False)
+            with patch.object(backend, "score_gradients", side_effect=AssertionError("saved scoring repeated")):
+                result = value.run()
+            assert {name: (folder / name).read_bytes() for name in saved} == saved
         replicas = [None] * dist.get_world_size()
         dist.all_gather_object(replicas, result)
         assert all(r == replicas[0] for r in replicas)
         equal_tree(initial, backend.state_dict())
         read_measurement(folder)
+        costs = primary(ledger.totals)
+        assert costs["complete"] and costs["recorded_phases"] == 5
+        assert "diagnostic_gpu_seconds" in costs["known_gpu_seconds"]
         with patch.object(TorchBackend, "_rollout", side_effect=AssertionError("resume regenerated")), \
                 patch.object(backend, "train", side_effect=AssertionError("resume retrained")):
             assert value.run() == result
@@ -73,7 +92,7 @@ def main():
         norm = float(measured["vectors"]["gradient_before_clip"].norm())
         dist.all_gather_object(replicas, norm)
         assert all(n == replicas[0] for n in replicas)
-        primary(lambda: print("PASS: 4-rank/serial update agreement, selection, exact responses, GRPO gradients, AdamW deltas, restore, resume, report and disk-failure propagation", flush=True))
+        primary(lambda: print("PASS: 4-rank diagnostic ledger failure reproduced and resumed without rescoring; serial update agreement, GRPO gradients, restore, resume and disk-failure propagation", flush=True))
     finally:
         primary(lambda: shutil.rmtree(folder))
         primary(lambda: shutil.rmtree(folder.with_name(folder.name + "-report"), ignore_errors=True))

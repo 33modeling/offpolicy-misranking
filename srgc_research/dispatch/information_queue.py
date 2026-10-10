@@ -32,9 +32,9 @@ from .information_run import OWNERS, TARGETS
 
 REPO = Path(__file__).resolve().parents[2]
 SEEDS = (7, 5, 6, 8, 9)
-# Keep the recovery generation of commit 775de2e. Bump only for collector
+# Diagnostic ledger recovery generation. Bump only for collector
 # execution fixes: improving diagnostics must not relaunch exhausted GPU jobs.
-DISPATCH_REVISION = "b65eb6b11488e6f5c5b1761ec30e8616a09b5f4514788ee48d40f0902cf94cd6"
+DISPATCH_REVISION = "dabfb7dc5483d140a0964e6a4bb531cf648e500f025d9a70b44d71e41c67dd81"
 
 
 @dataclass(frozen=True)

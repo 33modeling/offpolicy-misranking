@@ -4,6 +4,7 @@ import json
 import sys
 from contextlib import nullcontext
 from dataclasses import asdict
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -225,6 +226,35 @@ def test_actual_generation_works_without_rollout_replacement(tmp_path, backend):
     value.run()
     equal_tree(initial, backend.state_dict())
     read_measurement(tmp_path)
+
+
+def test_real_cost_ledger_failure_resumes_saved_scores_after_diagnostic_registration(tmp_path, backend):
+    from srgc_rebuttal.cost_ledger import PhaseLedger
+    from srgc_rebuttal.timing import torch_meter
+    from srgc_research.dispatch.information_meter import InformationPhaseLedger
+    data, config, identity = setup_measurement(tmp_path, backend)
+    ledger_root = tmp_path / "cost-receipts"
+    backend.cost_meter = torch_meter(PhaseLedger(ledger_root).record, cuda=False)
+    initial = backend.state_dict()
+    study = InformationStudy(backend, data, config, 0, tmp_path, identity, probe_prompts=1)
+    with patch.object(TorchBackend, "_rollout", side_effect=backend.generate_test_rollout), \
+            pytest.raises(ValueError, match="unknown metered phase"):
+        study.run()
+    equal_tree(initial, backend.state_dict())
+    saved = {name: (tmp_path / name).read_bytes() for phase in ("score-A", "score-B")
+             for name in (f"{phase}.json", f"{phase}.pt")}
+    assert not (tmp_path / "probe.json").exists()
+    ledger = InformationPhaseLedger(ledger_root)
+    backend.cost_meter = torch_meter(ledger.record, cuda=False)
+    with patch.object(TorchBackend, "_rollout", side_effect=backend.generate_test_rollout), \
+            patch.object(backend, "score_gradients", side_effect=AssertionError("saved scoring repeated")):
+        study.run()
+    assert {name: (tmp_path / name).read_bytes() for name in saved} == saved
+    equal_tree(initial, backend.state_dict())
+    read_measurement(tmp_path)
+    costs = ledger.totals()
+    assert costs["complete"] and costs["recorded_phases"] == 5
+    assert "diagnostic_gpu_seconds" in costs["known_gpu_seconds"]
 
 
 def test_partial_receipt_cannot_change_selection_without_hash_failure(tmp_path, backend):
@@ -481,6 +511,30 @@ def test_launcher_resume_has_unique_admission_and_requires_valid_endpoint(collec
         with pytest.raises(FileNotFoundError):
             collect(collect_args)
     assert len(admissions) == 2 and admissions[0] != admissions[1]
+
+
+def test_public_launcher_routes_frozen_ranks_through_diagnostic_registration(collect_args):
+    from scripts import srgc_process_guard as guard
+    from srgc_rebuttal import cluster
+    from srgc_research.dispatch import information_run
+    args = collect_args
+    commands = []
+    def child(command, log, env, **kwargs):
+        commands.append(command)
+        manifest = json.loads((args.output / "manifest.json").read_text())
+        assert str(information_run.RANK_WRAPPER) in command
+        index = command.index("--rank-script")
+        assert command[index + 1] == str(Path(manifest["runtime"]) / "srgc_research/information_rank.py")
+        assert env["PYTHONPATH"].split(":")[0] == manifest["runtime"]
+        return 9
+    with patch.object(guard, "process_guard", return_value=nullcontext()), \
+            patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", ("a", "b", "c", "d"))), \
+            patch.object(cluster, "device_leases", side_effect=lambda *a: nullcontext(())), \
+            patch.object(cluster, "admit"), patch.object(cluster, "run_child", side_effect=child), \
+            patch("srgc_rebuttal.existing_runtime.python_path", return_value=sys.executable):
+        assert information_run.main(["math", "collect", "--plan", str(args.plan), "--inputs", str(args.inputs),
+            "--seed", "5", "--stage", "0", "--attention", "sdpa", "--output", str(args.output)]) == 9
+    assert len(commands) == 1
 
 
 def test_incomplete_costs_do_not_turn_unknown_gpu_time_into_zero(measured):
