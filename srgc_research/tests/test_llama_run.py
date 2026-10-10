@@ -168,3 +168,77 @@ def test_preparation_failure_never_cleans_up_gpu_processes():
             pytest.raises(ValueError, match="bad downloaded model"):
         run.main(["all"])
     cleanup.assert_not_called()
+
+
+def test_later_task_waits_for_delayed_gpu_release_without_stopping_another_job(capsys):
+    before = adapter.adapter_digest()
+
+    def cli_start(arguments):
+        assert cluster.gpu_identity() == ("0,1,2,3", UUIDS)
+        assert cluster.gpu_identity() == ("0,1,2,3", UUIDS)
+        return 0
+
+    with patch.object(run, "clean_start", side_effect=lambda **kwargs: nullcontext()), \
+            patch.object(cluster, "gpu_identity", side_effect=[
+                ("0,1,2,3", UUIDS), Busy("memory is still being released"),
+                Busy("memory is still being released"), ("0,1,2,3", UUIDS),
+            ]), patch.object(cli, "main", side_effect=cli_start), \
+            patch.object(run.time, "sleep") as sleep, patch.object(run, "cleanup_processes") as cleanup:
+        assert run.main(["all"]) == 0
+    assert sleep.call_count == 2
+    cleanup.assert_not_called()
+    assert "waiting for GPU memory release" in capsys.readouterr().out
+    assert adapter.adapter_digest() == before
+
+
+def test_permanent_gpu_occupancy_has_a_bounded_timeout(tmp_path):
+    checks = 0
+
+    def identity():
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            return "0,1,2,3", UUIDS
+        raise Busy("still occupied")
+
+    def cli_start(arguments):
+        cluster.gpu_identity()
+        return cluster.gpu_identity()
+
+    with patch.object(run, "clean_start", side_effect=lambda **kwargs: nullcontext()), \
+            patch.object(cluster, "gpu_identity", side_effect=identity), \
+            patch.object(cli, "main", side_effect=cli_start), \
+            patch.object(run.time, "monotonic", side_effect=[0, 31]), \
+            patch.object(run, "cleanup_processes") as cleanup, \
+            pytest.raises(TimeoutError, match="GPU memory release.*30s"):
+        run.main(["all", "run", "--root", str(tmp_path)])
+    assert checks == 2
+    cleanup.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["smoke", "preflight"])
+def test_admission_traceback_is_printed_after_backup_messages(tmp_path, capsys, kind):
+    path = tmp_path / "runs/math/.queue/admission/session" / f"{kind}.log"
+    path.parent.mkdir(parents=True)
+    path.write_text("[rank2]: RuntimeError: actual admission failure\n")
+    message = (f"Llama generation/backward admission failed: {path}" if kind == "smoke"
+               else f"four-GPU admission failed (exit=1); inspect {path}")
+
+    def failure(arguments):
+        print("BACKUP final=true")
+        raise RuntimeError(message)
+
+    with patch.object(cli, "main", side_effect=failure), pytest.raises(RuntimeError, match="admission failed"):
+        run.main(["all", "run", "--root", str(tmp_path)])
+    text = capsys.readouterr().out
+    assert text.index("LLAMA ADMISSION FAILURE DETAILS") > text.index("BACKUP final=true")
+    assert text.endswith("[rank2]: RuntimeError: actual admission failure\n")
+
+
+def test_gpu_hardware_or_query_error_is_not_retried():
+    def invalid_identity():
+        raise ValueError("invalid GPU")
+
+    with patch.object(run.time, "sleep") as sleep, pytest.raises(ValueError, match="invalid GPU"):
+        run.released_gpu_identity(invalid_identity)
+    sleep.assert_not_called()

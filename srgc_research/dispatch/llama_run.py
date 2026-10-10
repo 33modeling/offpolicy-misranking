@@ -159,6 +159,51 @@ def clean_start(*, identity=None):
             yield
 
 
+def released_gpu_identity(identity, *, timeout=30):
+    """Allow delayed CUDA teardown between tasks without killing another job."""
+    from srgc_rebuttal.runtime import Busy
+
+    try:
+        return identity()
+    except Busy as error:
+        reason = str(error)
+    started = time.monotonic()
+    print(f"LLAMA waiting for GPU memory release (up to {timeout}s): {reason}", flush=True)
+    while time.monotonic() - started < timeout:
+        time.sleep(1)
+        try:
+            result = identity()
+        except Busy:
+            continue
+        print("LLAMA GPU memory release complete; continuing existing queue", flush=True)
+        return result
+    # The worker records this as a failed attempt and applies its bounded
+    # retry/resume policy, instead of exiting on a transient occupancy check.
+    raise TimeoutError(f"GPU memory release did not finish within {timeout}s; allocated devices remain busy")
+
+
+def admission_failure_footer(error, root):
+    """Print the actual admission traceback after backup shutdown messages."""
+    from scripts.srgc_log_tail import tail_lines
+
+    message = str(error)
+    if message.startswith("Llama generation/backward admission failed: "):
+        name = message.split(": ", 1)[1]
+    elif message.startswith("four-GPU admission failed (") and "; inspect " in message:
+        name = message.split("; inspect ", 1)[1]
+    else:
+        return
+    path = Path(name)
+    if not path.resolve().is_relative_to(Path(root).resolve()):
+        return
+    print("\nLLAMA ADMISSION FAILURE DETAILS", flush=True)
+    try:
+        for line in tail_lines(path, lines=40):
+            print(line, flush=True)
+    except OSError as read_error:
+        print(f"log unavailable: {read_error}", flush=True)
+
+
 def main(argv=None):
     from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
@@ -174,21 +219,24 @@ def main(argv=None):
                 # Cleanup starts only when it actually requests GPU admission.
                 stack.enter_context(clean_start(identity=original))
                 started = True
-            return original()
+            return released_gpu_identity(original)
         stack.enter_context(patch.object(guard, "OWNER_MARKERS", (*guard.OWNER_MARKERS, *OWNER_MARKERS)))
         stack.enter_context(patch.object(cluster, "gpu_identity", gpu_identity))
         stack.enter_context(patch.object(resume, "ResumeFirst", LlamaResumeFirst))
         try:
             return cli.main(args)
-        except (OSError, ValueError, TypeError, RuntimeError, ImportError, subprocess.CalledProcessError):
+        except (OSError, ValueError, TypeError, RuntimeError, ImportError, subprocess.CalledProcessError) as error:
             from srgc_research.dispatch.llama31.storage import default_root
 
             root = default_root(os.environ)
             if "--root" in args and args.index("--root") + 1 < len(args):
                 root = Path(args[args.index("--root") + 1])
             root = next((Path(arg.split("=", 1)[1]) for arg in args if arg.startswith("--root=")), root)
-            names = ("math", "mbpp") if args[0] == "all" else (args[0],)
-            failure_footer(root, [root / "experiments" / f"llama31-8b-{name}.json" for name in names], "LLAMA")
+            # A dataset-only worker also respects the other dataset's resume
+            # backlog, so print its failures when they are the blocking cause.
+            plans = [root / "experiments" / f"llama31-8b-{name}.json" for name in ("math", "mbpp")]
+            failure_footer(root, plans, "LLAMA")
+            admission_failure_footer(error, root)
             raise
 
 
