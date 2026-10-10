@@ -32,9 +32,9 @@ from .information_run import OWNERS, TARGETS
 
 REPO = Path(__file__).resolve().parents[2]
 SEEDS = (7, 5, 6, 8, 9)
-# GRPO problem-gradient recovery generation. Bump only for collector
+# Actual-backward contribution recovery generation. Bump only for collector
 # execution fixes: improving diagnostics must not relaunch exhausted GPU jobs.
-DISPATCH_REVISION = "a08c4318cbcb748c012769e7201804fcc3ed30b5fd691a86f43ba6c3a2aa49a7"
+DISPATCH_REVISION = "0e554bc70c95af786ad918c64f8c3e6d838422a7b795731cf737d3e8e42d8da6"
 
 
 @dataclass(frozen=True)

@@ -301,7 +301,7 @@ def test_one_command_and_status_shortcut_use_shared_python(tmp_path):
         )
         assert json.loads(result.stdout) == [
             "-m",
-            "srgc_research.dispatch.llama31.cli",
+            "srgc_research.dispatch.llama_run",
             *expected,
         ]
 

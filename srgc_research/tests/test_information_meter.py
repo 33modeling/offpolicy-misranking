@@ -136,3 +136,42 @@ def test_real_subprocess_registers_frozen_ledger_and_verifies_code_before_execut
         totals = InformationPhaseLedger(output / "cost-receipts").totals()
         assert totals["complete"] and totals["known_gpu_seconds"]["diagnostic_gpu_seconds"] == 0.
     assert ledger_source.read_bytes() == before
+
+
+def test_actual_frozen_subprocess_collects_gradients_from_the_real_backward(frozen_rank):
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    output, runtime, target = frozen_rank
+    repo = RANK_WRAPPER.parents[2]
+    target.write_text(f'''
+from pathlib import Path
+import srgc_research, srgc_rebuttal
+srgc_research.__path__.append({str(repo / "srgc_research")!r})
+srgc_rebuttal.__path__.append({str(repo / "srgc_rebuttal")!r})
+from srgc_research import information
+from srgc_research.tests.test_information_gradients import precision_backend, batch
+from srgc_research.tests.test_research import equal_tree
+backend = precision_backend()
+backend.logit_chunk_tokens = 8
+records, probe, gradient = batch(backend, 4)
+initial = backend.state_dict()
+result, tensors = information.inspect_update(backend, records, seed=29,
+    probe=probe, probe_loss_gradient=gradient)
+equal_tree(initial, backend.state_dict())
+assert result["metrics"]["problem_gradient_definition"] == "actual-GRPO-backward-contributions"
+assert Path(information.__file__).is_relative_to({str(runtime)!r})
+assert "collector.gradients()" in tensors["problem_gradient_adapter"]["measured_inspect_source"]
+print("PASS: actual frozen rank wrapper, BF16/FP32 LoRA, multi-chunk backward")
+''')
+    record = json.loads((runtime / "runtime.json").read_text())
+    record["files"]["srgc_research/information_rank.py"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    sha = hashlib.sha256(json.dumps(record["files"], sort_keys=True).encode()).hexdigest()
+    (runtime / "runtime.json").write_text(json.dumps({**record, "sha256": sha}))
+    (output / "manifest.json").write_text(json.dumps({"runtime": str(runtime),
+        "identity": {"measurement_sha256": sha}}))
+    result = subprocess.run([sys.executable, str(RANK_WRAPPER), "--rank-script", str(target),
+        "--output", str(output)], capture_output=True, text=True, timeout=30, check=False,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(runtime), str(runtime / "src"),
+            os.environ.get("PYTHONPATH", ""))), "PYTHONDONTWRITEBYTECODE": "1"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS: actual frozen rank wrapper" in result.stdout

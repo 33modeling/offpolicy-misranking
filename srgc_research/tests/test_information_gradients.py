@@ -72,10 +72,11 @@ def test_reported_mixed_precision_error_reproduces_then_same_checkpoint_complete
     backend.load_state_dict(initial)
     assert result["metrics"]["problem_gradient_reconstruction_error_norm"] <= result["metrics"][
         "problem_gradient_reconstruction_tolerance"]
-    assert result["metrics"]["problem_gradient_definition"] == "actual-GRPO-micro-batches-and-global-normalization"
+    assert result["metrics"]["problem_gradient_definition"] == "actual-GRPO-backward-contributions"
     adapter = tensors["problem_gradient_adapter"]
     assert hashlib.sha256(adapter["source"].encode()).hexdigest() == adapter["sha256"]
     assert result["metrics"]["problem_gradient_adapter_sha256"] == adapter["sha256"]
+    assert hashlib.sha256(adapter["measured_inspect_source"].encode()).hexdigest() == adapter["measured_inspect_sha256"]
 
 
 @pytest.mark.parametrize("base_dtype,adapter_dtype,micro,prompts", [
@@ -109,11 +110,11 @@ def test_real_normalization_mismatch_still_fails_and_restores_weights():
     records, probe, gradient = batch(backend, 4)
     initial = backend.state_dict()
     from srgc_research.dispatch import information_gradients
-    original = information_gradients.problem_gradient
+    original = information_gradients.BackwardContributions.gradients
     def wrong(*args, **kwargs):
-        return 2 * original(*args, **kwargs)
-    with aligned_problem_gradients(), patch.object(information_gradients, "problem_gradient", wrong), \
-            pytest.raises(FloatingPointError, match="per-problem gradients do not reconstruct"):
+        return {rid: 2 * gradient for rid, gradient in original(*args, **kwargs).items()}
+    with aligned_problem_gradients(), patch.object(information_gradients.BackwardContributions, "gradients", wrong), \
+            pytest.raises(FloatingPointError, match="per-problem gradients do not reconstruct.*error=.*tolerance="):
         information.inspect_update(backend, records, seed=29, probe=probe, probe_loss_gradient=gradient)
     equal_tree(initial, backend.state_dict())
     assert backend.replay is None
@@ -141,3 +142,86 @@ def test_probe_objective_is_preserved_and_patch_is_restored_on_failure():
         torch.testing.assert_close(information.probe_gradient(backend, probe), expected, rtol=0, atol=0)
         raise RuntimeError("stop")
     assert information.probe_gradient is original_probe and information.inspect_update is original_inspect
+
+
+def test_nonrepeatable_backward_uses_the_actual_step_not_another_forward():
+    backend = precision_backend()
+    records, probe, gradient = batch(backend, 4)
+    initial = backend.state_dict()
+    original = backend._logps_batch
+    calls = []
+
+    def nonrepeatable(sequences, start):
+        values = original(sequences, start)
+        if torch.is_grad_enabled():
+            calls.append(len(sequences))
+            # Reproduce derivatives that differ between separate executions,
+            # without changing forward log probabilities or the chosen data.
+            scale = 1. + .03 * len(calls)
+            values = [value.detach() + scale * (value - value.detach()) for value in values]
+        return values
+
+    # The immediately preceding fix still calculated derivatives separately.
+    # Reproduce its failure, then replay this same checkpoint using capture.
+    original_probe = information.probe_gradient
+    def separate_probe(backend, selected, *, distributed=True):
+        if distributed:
+            return original_probe(backend, selected, distributed=True)
+        return problem_gradient(backend, selected, batch_prompts=len(records))
+    with patch.object(backend, "_logps_batch", side_effect=nonrepeatable), \
+            patch.object(information, "probe_gradient", separate_probe), \
+            pytest.raises(FloatingPointError, match="per-problem gradients do not reconstruct"):
+        information.inspect_update(backend, records, seed=29, probe=probe, probe_loss_gradient=gradient)
+    equal_tree(initial, backend.state_dict())
+    calls.clear()
+    with patch.object(backend, "_logps_batch", side_effect=nonrepeatable), aligned_problem_gradients():
+        result, tensors = information.inspect_update(backend, records, seed=29, probe=probe,
+                                                     probe_loss_gradient=gradient)
+        assert len(calls) == 16  # Four problems, eight responses, micro-batch two.
+        calls.clear()
+        with backend.replaying(records):
+            backend.train(list(records), responses=8, objective="grpo", seed=29)
+        equal_tree(tensors["backend_after"], backend.state_dict())
+    backend.load_state_dict(initial)
+    assert result["metrics"]["problem_gradient_reconstruction_error_norm"] <= result["metrics"][
+        "problem_gradient_reconstruction_tolerance"]
+
+
+@pytest.mark.parametrize("fault", ["backward", "optimizer", "post-logps"])
+def test_actual_capture_hooks_and_replay_are_removed_on_failure(fault):
+    backend = precision_backend()
+    records, probe, gradient = batch(backend, 4)
+    initial = backend.state_dict()
+    hooks_before = [len(parameter._backward_hooks or {}) for _, parameter in backend.train_parameters]
+    original_rollout = backend._rollout
+    if fault == "backward":
+        original = backend._logps_batch
+        def broken(*args, **kwargs):
+            if torch.is_grad_enabled():
+                raise RuntimeError("injected backward failure")
+            return original(*args, **kwargs)
+        context = patch.object(backend, "_logps_batch", side_effect=broken)
+    elif fault == "optimizer":
+        original = backend.optimizer.step
+        calls = []
+        def broken(*args, **kwargs):
+            calls.append(1)
+            result = original(*args, **kwargs)
+            if len(calls) == 2:
+                raise RuntimeError("injected optimizer failure")
+            return result
+        context = patch.object(backend.optimizer, "step", side_effect=broken)
+    else:
+        original = information.log_probabilities
+        calls = []
+        def broken(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("injected post-logps failure")
+            return original(*args, **kwargs)
+        context = patch.object(information, "log_probabilities", side_effect=broken)
+    with aligned_problem_gradients(), context, pytest.raises(RuntimeError, match="injected"):
+        information.inspect_update(backend, records, seed=29, probe=probe, probe_loss_gradient=gradient)
+    equal_tree(initial, backend.state_dict())
+    assert backend.replay is None and backend._rollout == original_rollout
+    assert [len(parameter._backward_hooks or {}) for _, parameter in backend.train_parameters] == hooks_before
