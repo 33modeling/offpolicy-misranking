@@ -56,6 +56,18 @@ Probe 정렬과 loss 변화는 고정된 독립 응답에 대한 진단이며, �
 
 ## 실행
 
+초기 MATH 분석은 아래 한 줄로 실행한다.
+
+```sh
+sh scripts/run_srgc_information.sh math
+```
+
+기본값은 seed 7, t0, SDPA다. 기존 공유 저장소에서 plan과 input을 읽고,
+`<OM_WORK>/selection-information/math/seed-7/t0`에 측정 JSON·tensor를 저장한다.
+MBPP는 `math` 대신 `mbpp`, 두 dataset을 차례로 수집하려면 `all`을 사용한다.
+인자를 생략하면 `math`다. 중단 후 같은 명령으로 재개한다.
+**기본 명령은 HTML을 만들지 않는다.** 보고서는 별도로 요청하고 `report`를 실행할 때만 만든다.
+
 코드는 `master`에서 실행한다. GPU 수집은 기존 환경의 4×H100 admission과
 공유 GPU lock을 사용한다. 입력은 cache를 포함한 원래 `srgc-inputs-v1` bundle이어야 한다.
 일반 Engine checkpoint 또는 StageStudy의 저장된 `anchor`를 읽는다.
@@ -139,6 +151,7 @@ sh scripts/run_srgc_information.sh all report \
 
 ```sh
 python -m pytest -q srgc_research/tests/test_information.py
+python -m pytest -q srgc_research/tests/test_information_wrapper.py
 python -m pytest -q srgc_research/tests srgc_rebuttal/tests
 python -m torch.distributed.run --standalone --nproc_per_node=4 \
   --max_restarts=0 -m srgc_research.tests.information_distributed_smoke
@@ -157,3 +170,7 @@ CPU 검증과 H100/NCCL 실험은 구분한다. 이 변경의 검증 중에는 �
 shell syntax 검사도 통과했다. 검증 환경은 Python 3.12, Torch 2.14.0 CPU,
 Transformers 4.57.6, PEFT 0.21.0이다. 현재 장비에서 NVIDIA driver를 사용할 수 없어
 H100/NCCL과 7B 모델의 실제 GPU 메모리·실행 시간은 확인하지 않았다.
+
+간단 실행 명령의 추가 검증은 12개 테스트가 통과했다. 인자 생략·dataset별 Python 선택,
+두 dataset의 순차 실행·실패 중단·입력 누락·공백이 있는 경로·명시 인자 전달을 검사했다.
+기본 명령에서 `report`가 호출되지 않는 것도 확인했다.
