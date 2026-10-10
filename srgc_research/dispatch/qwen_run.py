@@ -16,6 +16,10 @@ def main(argv=None):
     sys.path.insert(0, str(REPO / "scripts"))
     if args[0] not in {"all", "math", "mbpp"}:
         raise ValueError("dataset must be math, mbpp or all")
+    if len(args) > 1 and args[1] == "results":
+        from .model_results import main as results
+
+        return results(["qwen35", *args])
     if len(args) == 1:
         start = importlib.import_module("srgc_qwen35_start")
         original_exec = os.execv
@@ -37,7 +41,7 @@ def main(argv=None):
     with patch.object(sys, "argv", [str(REPO / "scripts/srgc_qwen35_diagnostics.py"), *args]), \
             resume_first_worker(), \
             resume_worker(worker, ResumeFirst, pattern="qwen35-9b-{dataset}.json",
-                          env_key="SRGC_QWEN_PLANS", label="QWEN"):
+                          env_key="SRGC_QWEN_PLANS", label="QWEN", result_model="qwen35"):
         return diagnostics.main()
 
 

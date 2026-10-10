@@ -12,7 +12,7 @@ from scripts import srgc_process_guard as guard
 from srgc_rebuttal import cluster
 from srgc_rebuttal.runtime import Busy, atomic_json
 from srgc_research.dispatch import gemma_run as run
-from srgc_research.dispatch import model_launch
+from srgc_research.dispatch import model_launch, model_results
 from srgc_research.dispatch.gemma4 import adapter, diagnostics, entry
 from srgc_research.tests.test_gemma4 import prepared
 
@@ -45,11 +45,17 @@ def test_delayed_gpu_release_continues_the_gemma_queue_and_restores_hooks(capsys
 @pytest.mark.parametrize("args", [["all", "status"], ["status"], ["math", "prepare"],
                                   ["all", "results"], ["all", "stop"], ["all", "doctor"]])
 def test_nontraining_actions_do_not_install_gpu_recovery(args):
-    with patch.object(run, "released_gpu_identity") as wait, patch.object(entry, "main", return_value=0) as original:
+    with patch.object(run, "released_gpu_identity") as wait, patch.object(entry, "main", return_value=0) as original, \
+            patch.object(model_results, "export", return_value=0) as export:
         assert run.main(args) == 0
         wait.assert_not_called()
         expected = ["all", "status"] if args == ["status"] else args
-        original.assert_called_once_with(expected)
+        if expected[1] == "results":
+            original.assert_not_called()
+            assert export.call_args.args[:2] == ("gemma4", "all")
+        else:
+            original.assert_called_once_with(expected)
+            export.assert_not_called()
 
 
 @pytest.mark.parametrize("owner", ["srgc_research.dispatch.gemma_run", "srgc_research.dispatch.gemma4.entry"])

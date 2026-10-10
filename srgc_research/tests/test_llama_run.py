@@ -14,6 +14,7 @@ from scripts import srgc_process_guard as guard
 from srgc_rebuttal import cluster
 from srgc_rebuttal.runtime import Busy
 from srgc_research.dispatch import llama_run as run
+from srgc_research.dispatch import model_results
 from srgc_research.dispatch.llama31 import adapter, cli
 
 UUIDS = ("GPU-a", "GPU-b", "GPU-c", "GPU-d")
@@ -156,9 +157,15 @@ def test_only_training_start_routes_through_cleanup(args, clean):
         return 0
     with patch.object(run, "clean_start", side_effect=lambda **kwargs: nullcontext()) as cleanup, \
             patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", UUIDS)), \
-            patch.object(cli, "main", side_effect=cli_start) as original:
+            patch.object(cli, "main", side_effect=cli_start) as original, \
+            patch.object(model_results, "main", return_value=0) as export:
         assert run.main(args) == 0
-        original.assert_called_once_with(args or ["all"])
+        if len(args) > 1 and args[1] == "results":
+            original.assert_not_called()
+            export.assert_called_once_with(["llama31", *args])
+        else:
+            original.assert_called_once_with(args or ["all"])
+            export.assert_not_called()
         assert cleanup.call_count == int(clean)
 
 

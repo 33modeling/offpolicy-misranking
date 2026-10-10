@@ -27,6 +27,24 @@ seed 5–9, t0 측정 10/10이 완료되어 있고 `pending`과 `errors`는 비�
 실제 선택 문제·응답·업데이트와 seed별 비교는
 [Information 결과 분석](INFORMATION_RESULTS_2026-10-10.md)에 기록했다.
 
+네 실험의 결과 추출은 각 실행 script에 `all results`를 붙여 실행한다.
+MATH·MBPP와 seed별 결과를 `<OM_WORK>/results/`의 실험별 JSON 하나에 합친다.
+
+| 실험 | 결과 파일 |
+| --- | --- |
+| information | `information-results.json` |
+| Qwen | `qwen35-results.json` |
+| Gemma | `gemma4-results.json` |
+| Llama | `llama31-results.json` |
+
+기본 형식은 compact다. Information은 선택·성공률·실제 update·응답별 scalar 변화,
+세 모델은 seed별 최종 reward·문제별 평가 reward·전환 기록·측정된 비용을 담는다.
+Token·log probability 배열, 학습 응답 원문, worker heartbeat와 rank progress는 넣지 않는다.
+파일 경로와 크기를 출력하며, 같은 실험의 반복 추출은 같은 JSON을 원자적으로 갱신한다.
+두 노드가 동시에 추출하면 snapshot 수집부터 쓰기까지 직렬화한다.
+미완료 결과와 미측정 비용은 완료값으로 바꾸지 않는다.
+현재 GPU 작업을 재시작할 필요 없이 갱신된 script의 `all results`로 추출할 수 있다.
+
 ## 이전 실행 기록 — 2026-09-25
 
 Recorded: 2026-09-25 04:21 KST (2026-09-24 19:21 UTC).

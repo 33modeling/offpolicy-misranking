@@ -3,7 +3,7 @@
 import copy
 import json
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from unittest.mock import patch
 
 from srgc_rebuttal.runtime import lease
@@ -151,11 +151,18 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
 
 
 @contextmanager
-def resume_worker(worker, factory, *, pattern, env_key, label):
+def resume_worker(worker, factory, *, pattern, env_key, label, result_model=None):
     """Replace operational dispatch while leaving every frozen adapter intact."""
     def run(queues, args, environment, gpu_fds, worker_id, update):
         return drain(worker, factory, pattern, env_key, label, queues, copy.copy(args),
                      environment, gpu_fds, worker_id, update)
 
-    with patch.object(worker, "drain", run):
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(worker, "drain", run))
+        if result_model is not None:
+            from srgc_rebuttal import cluster
+
+            from .model_results import publish
+
+            stack.enter_context(patch.object(cluster, "publish_reports", lambda queue: publish(result_model, queue)))
         yield

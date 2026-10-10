@@ -171,11 +171,15 @@ def main(argv=None):
     from srgc_research.dispatch.model_resume import LlamaResumeFirst, failure_footer
     from srgc_research.dispatch.resume_drain import resume_worker
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
+    if len(args) > 1 and args[1] == "results":
+        from .model_results import main as results
+
+        return results(["llama31", *args])
     original, started = cluster.gpu_identity, False
     with ExitStack() as stack:
         stack.enter_context(patch.object(cli, "resume_first_worker", lambda: resume_worker(
             worker, LlamaResumeFirst, pattern="llama31-8b-{dataset}.json",
-            env_key="SRGC_LLAMA_PLANS", label="LLAMA")))
+            env_key="SRGC_LLAMA_PLANS", label="LLAMA", result_model="llama31")))
         def gpu_identity():
             nonlocal started
             if not started:

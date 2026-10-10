@@ -19,6 +19,10 @@ def main(argv=None):
     if args[0] == "status":
         args = ["all", "status", *args[1:]]
     options = cli.parse_args(args)
+    if options.action == "results":
+        from .model_results import export
+
+        return export("gemma4", options.dataset, root=options.root)
     if options.action not in {"run", "resume"}:
         return entry.main(args)
 
@@ -32,7 +36,7 @@ def main(argv=None):
     with ExitStack() as stack:
         stack.enter_context(patch.object(cli, "resume_first_worker", lambda: resume_worker(
             worker, GemmaResumeFirst, pattern="gemma4-12b-pt-{dataset}.json",
-            env_key="SRGC_GEMMA_PLANS", label="GEMMA")))
+            env_key="SRGC_GEMMA_PLANS", label="GEMMA", result_model="gemma4")))
         stack.enter_context(patch.object(guard, "OWNER_MARKERS", (
             *guard.OWNER_MARKERS, "srgc_research.dispatch.gemma_run", "srgc_research.dispatch.gemma4.entry",
         )))

@@ -3,9 +3,14 @@
 set -eu
 cd "$(dirname "$0")/.."
 [ "$#" -gt 0 ] || set -- all
-if [ "${1:-}" = status ]; then
+if [ "${1:-}" = status ] || [ "${1:-}" = results ]; then
+    ACTION=$1
     shift
-    set -- all status "$@"
+    set -- all "$ACTION" "$@"
+fi
+if [ "${2:-}" = results ]; then
+    export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+    exec python3 -m srgc_research.dispatch.model_results gemma4 "$@"
 fi
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 case "${1:-}" in
