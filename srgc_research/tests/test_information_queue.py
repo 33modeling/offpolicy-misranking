@@ -519,6 +519,49 @@ def test_main_drains_queue_and_returns_failure_for_failed_tasks(tasks, monkeypat
     assert queue.main(["all"]) == 1
 
 
+def test_footer_update_shows_existing_errors_last_without_relaunching_775_failures(tasks, monkeypatch, capsys):
+    before = {}
+    for task in tasks:
+        old_failure(task, dispatch_revision="b65eb6b11488e6f5c5b1761ec30e8616a09b5f4514788ee48d40f0902cf94cd6",
+                    error=f"ERROR: actual startup failure for {task.key}")
+        before[task.receipt] = task.receipt.read_bytes()
+    monkeypatch.setattr(queue, "tasks_for", lambda _: tasks)
+    monkeypatch.setattr(queue, "run_task", lambda *_: pytest.fail("display change relaunched failed GPU work"))
+    monkeypatch.setattr(queue, "node_available", lambda: pytest.fail("displaying errors admitted GPUs"))
+    assert queue.main(["all"]) == 1
+    stdout = capsys.readouterr().out
+    footer = stdout.split("INFORMATION FAILURE DETAILS\n")[-1]
+    assert "FAILED: 10 measurement(s)" in stdout
+    assert len(footer.strip().splitlines()) == 10
+    assert footer.strip().endswith(f"{tasks[-1].key}: ERROR: actual startup failure for {tasks[-1].key}")
+    assert ".queue" not in footer and "log:" not in footer
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_footer_includes_validation_failures_without_existing_receipts(tasks, monkeypatch, capsys):
+    tasks[0].inputs.write_text("changed source data")
+    monkeypatch.setattr(queue, "tasks_for", lambda _: tasks)
+    monkeypatch.setattr(queue, "node_available", lambda: pytest.fail("invalid inputs admitted GPUs"))
+    assert queue.main(["all"]) == 1
+    footer = capsys.readouterr().out.split("INFORMATION FAILURE DETAILS\n")[-1]
+    assert len(footer.strip().splitlines()) == 10
+    assert "source plan or cached inputs changed" in footer
+    assert not any(task.receipt.exists() for task in tasks)
+
+
+def test_successful_retry_is_removed_from_failure_footer(tasks, capsys):
+    task = tasks[0]
+    failures = {}
+    assert queue.sweep([task], runner=lambda *_: 9, available=lambda: True, failures=failures)[1] == 9
+    assert task.key in failures
+    assert queue.sweep([task], runner=completed_runner, available=lambda: True,
+                       failures=failures, retry_delay=0)[1] == 0
+    assert not failures
+    capsys.readouterr()
+    queue.failure_summary([task], failures)
+    assert task.key not in capsys.readouterr().out
+
+
 def test_each_dataset_uses_its_existing_interpreter(tasks, monkeypatch):
     monkeypatch.setenv("PAIR_PYTHON", sys.executable)
     monkeypatch.setenv("SWITCH_PYTHON", "/missing/switch-python")

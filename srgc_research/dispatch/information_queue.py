@@ -1,7 +1,6 @@
 """Claim independent information measurements across nodes on shared storage."""
 
 import argparse
-import hashlib
 import math
 import os
 import signal
@@ -33,11 +32,9 @@ from .information_run import OWNERS, TARGETS
 
 REPO = Path(__file__).resolve().parents[2]
 SEEDS = (7, 5, 6, 8, 9)
-# A shared code revision, rather than a per-node/run token, grants one fresh
-# retry budget after an operational fix. Scientific identities stay unchanged.
-DISPATCH_REVISION = hashlib.sha256(b"".join(
-    path.read_bytes() for path in (Path(__file__), Path(__file__).with_name("information_run.py"),
-                                  REPO / "scripts/run_srgc_information.sh"))).hexdigest()
+# Keep the recovery generation of commit 775de2e. Bump only for collector
+# execution fixes: improving diagnostics must not relaunch exhausted GPU jobs.
+DISPATCH_REVISION = "b65eb6b11488e6f5c5b1761ec30e8616a09b5f4514788ee48d40f0902cf94cd6"
 
 
 @dataclass(frozen=True)
@@ -270,7 +267,27 @@ def report_failure(task, receipt):
     print(f"FAILED {task.key}: {error}\n  log: {log}", file=sys.stderr, flush=True)
 
 
-def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120, now=time.time):
+def failure_summary(tasks, failures):
+    """End stdout with the actual causes, so the visible footer can be copied."""
+    rows = []
+    for task in tasks:
+        error = failures.get(task.key)
+        if error is None:
+            try:
+                receipt = read_receipt(task)
+                if receipt.get("status") == "failed":
+                    error = failure_detail(task, receipt)[0]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                error = str(exc)
+        if error is not None:
+            # Keep each cause on its own line, including multi-line exceptions.
+            error = " ".join(str(error).splitlines())
+            rows.append(f"{task.key}: {error}")
+    print("\nINFORMATION FAILURE DETAILS\n" + "\n".join(rows), flush=True)
+
+
+def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120, now=time.time,
+          failures=None):
     runner = run_task if runner is None else runner
     available = node_available if available is None else available
     counts = {"complete": 0, "busy": 0, "waiting": 0, "failed": 0}
@@ -300,9 +317,13 @@ def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120
                             "status": "complete", "attempt": previous.get("attempt", 0),
                             "verified_files": fingerprint})
                     counts["complete"] += 1
+                    if failures is not None:
+                        failures.pop(task.key, None)
                     continue
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 print(f"INVALID {task.key}: {exc}", file=sys.stderr, flush=True)
+                if failures is not None:
+                    failures[task.key] = str(exc)
                 counts["failed"] += 1
                 continue
             attempts = previous.get("attempt", 0)
@@ -322,6 +343,8 @@ def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120
             if attempts >= max_attempts:
                 counts["failed"] += 1
                 report_failure(task, previous)
+                if failures is not None:
+                    failures[task.key] = failure_detail(task, previous)[0]
                 continue
             if previous.get("status") == "failed" and now() < previous["finished"] + retry_delay:
                 counts["waiting"] += 1
@@ -358,6 +381,10 @@ def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120
             print(f"TASK {task.key} {status} exit={code}", flush=True)
             if status == "failed":
                 report_failure(task, record)
+                if failures is not None:
+                    failures[task.key] = record["error"]
+            elif status == "complete" and failures is not None:
+                failures.pop(task.key, None)
             return counts, code
     return counts, None
 
@@ -368,9 +395,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         tasks = tasks_for(args.dataset)
+        failures = {}
         print(f"INFORMATION {args.dataset}: {len(tasks)} shared tasks, seeds 5–9, stage 0", flush=True)
         while True:
-            counts, code = sweep(tasks)
+            counts, code = sweep(tasks, failures=failures)
             if code in (130, 143):
                 return code
             if code is not None and code != 75:
@@ -379,7 +407,8 @@ def main(argv=None):
                 print("COMPLETE: all requested information measurements", flush=True)
                 return 0
             if code is None and counts["complete"] + counts["failed"] == len(tasks):
-                print(f"FAILED: {counts['failed']} measurement(s); errors and log paths shown above", flush=True)
+                print(f"FAILED: {counts['failed']} measurement(s)", flush=True)
+                failure_summary(tasks, failures)
                 return 1
             print(f"WAIT: {counts}", flush=True)
             time.sleep(10)

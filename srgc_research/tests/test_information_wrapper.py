@@ -185,6 +185,10 @@ def test_current_exhausted_receipts_show_cause_without_infinite_retries(wrapper)
     result, calls = run("all")
     assert result.returncode == 1 and len(calls) == 30
     assert "candidate cache is incomplete" in result.stderr and "FAILED math.seed-7.t0:" in result.stderr
+    footer = result.stdout.split("INFORMATION FAILURE DETAILS\n")[-1]
+    assert len(footer.strip().splitlines()) == 10
+    assert footer.strip().endswith("mbpp.seed-9.t0: ERROR: candidate cache is incomplete")
+    assert ".queue" not in footer and "log:" not in footer
     assert {p: p.read_bytes() for p in before} == before
 
 
