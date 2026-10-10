@@ -21,7 +21,7 @@ from srgc_rebuttal.runtime import code_digest
 REPO = Path(__file__).resolve().parents[2]
 ARMS = ("cache", "prefix", "on_policy", "switch", "sr", "random")
 HEADERS = ("Cache", "Prefix", "On-policy", "Switch", "SR", "Random")
-LIVE_WORKERS = {"running", "preflight", "idle"}
+LIVE_WORKERS = {"running", "preflight", "idle", "serving_other_dataset"}
 
 
 def load_reports(dataset, root, environment):
@@ -116,23 +116,37 @@ def node_rows(snapshots):
             key = (worker.get("host", "-"), worker.get("worker_id", worker.get("pid")))
             row = {**worker, "label": report["label"], "task_row": next(
                 (task for task in report["tasks"] if task["task"] == worker.get("task")), None)}
+            # A shared worker writes an idle receipt to the inactive dataset.
+            # In a dataset-only view this still describes a busy allocation.
+            if row["status"] == "idle" and row.get("active_dataset"):
+                row["status"] = "serving_other_dataset"
             previous = sessions.get(key)
             if previous is not None:
                 current_age = row.get("heartbeat_age_seconds", float("inf"))
                 previous_age = previous.get("heartbeat_age_seconds", float("inf"))
                 if abs(current_age - previous_age) <= 5:
-                    priority = {"running": 3, "preflight": 2, "idle": 1}
+                    priority = {"running": 4, "serving_other_dataset": 3, "preflight": 2, "idle": 1}
                     if priority.get(previous["status"], 0) > priority.get(row["status"], 0):
                         continue
                 elif current_age > previous_age:
                     continue
             sessions[key] = row
     nodes = {}
+
+    def activity(row):
+        # A newer idle launcher must not hide a different live session whose
+        # task lease proves it is actually running on this host.
+        if row["status"] == "running" and row["task_row"] and row["task_row"]["status"] == "running":
+            return 3
+        if row["status"] == "serving_other_dataset":
+            return 2
+        return int(row["status"] in LIVE_WORKERS)
+
     for row in sessions.values():
         host = row.get("host", "-")
         previous = nodes.get(host)
-        if previous is None or row.get("heartbeat_age_seconds", float("inf")) < previous.get(
-                "heartbeat_age_seconds", float("inf")):
+        if previous is None or (activity(row), -row.get("heartbeat_age_seconds", float("inf"))) > (
+                activity(previous), -previous.get("heartbeat_age_seconds", float("inf"))):
             nodes[host] = row
     return sorted(nodes.values(), key=lambda row: (row["status"] not in LIVE_WORKERS, row.get("host", "-")))
 
@@ -156,7 +170,66 @@ def progress(task):
             parts.append(f"last progress {age(task.get('progress_age_seconds'))} ago")
     if not parts:
         parts.append("starting; progress not recorded yet")
+    ranks = []
+    for row in task.get("progress", []):
+        updated = row.get("updated")
+        if isinstance(updated, (int, float)) and math.isfinite(updated) and row.get("stage"):
+            rank = f"r{row['rank']} " if type(row.get("rank")) is int else ""
+            ranks.append(f"{rank}{row['stage']} ({age(time.time() - updated)} ago)")
+    if ranks:
+        parts.append("rank progress: " + "; ".join(ranks))
     return " | ".join(parts)
+
+
+def resume_backlog(snapshots, root):
+    """Inspect the dispatch marker without claiming jobs or changing receipts."""
+    path = Path(root) / ".dispatch/resume-first.json"
+    if not path.exists():
+        return [], None
+    try:
+        saved = live.read_object(path)
+        entries = saved.get("tasks")
+        if saved.get("schema") != "qwen-resume-first-v1" or not isinstance(entries, list):
+            raise ValueError("invalid resume-first marker")
+        lookup = {(report["label"], task["task"]): task for report in snapshots for task in report["tasks"]}
+        visible = {report["label"] for report in snapshots}
+        pending = {}
+        for entry in entries:
+            if not isinstance(entry, list) or len(entry) != 2 or any(not isinstance(value, str) for value in entry):
+                raise ValueError("invalid resume-first task")
+            plan, key = entry
+            if Path(plan).parent.resolve() != (Path(root) / "experiments").resolve():
+                raise ValueError("resume-first plan is outside this experiment")
+            label = "MATH" if Path(plan).name.endswith("-math.json") else "MBPP" if Path(plan).name.endswith("-mbpp.json") else None
+            if label is None:
+                raise ValueError("unrecognized resume-first dataset")
+            task = lookup.get((label, key))
+            if task is None and label in visible:
+                raise ValueError("resume-first task is absent from this dataset report")
+            if task is None or task["status"] != "complete":
+                pending[(label, key)] = task or {"status": "outside_view"}
+        return list(pending.values()), None
+    except (OSError, ValueError, TypeError) as error:
+        return [], f"resume-first status unavailable: {error}"
+
+
+def idle_reason(node, snapshots, backlog):
+    if node.get("idle_reason"):
+        return " ".join(str(node["idle_reason"]).split())
+    if backlog:
+        counts = Counter(row["status"] for row in backlog)
+        return (f"resume-first: {len(backlog)} unfinished, {counts['running']} running; "
+                "fresh tasks blocked")
+    tasks = [row for report in snapshots for row in report["tasks"]]
+    if any(report.get("stop_requested") for report in snapshots):
+        return "stop requested"
+    if tasks and all(row["status"] == "complete" for row in tasks):
+        return "tasks complete; worker finishing"
+    if any(row["status"] in {"ready", "recoverable", "interrupted"} for row in tasks):
+        return "ready/resume work recorded; waiting for claim"
+    if any(row["status"] in live.ATTENTION for row in tasks):
+        return "failed/unavailable tasks; see ATTENTION"
+    return "waiting for cache/prefix or another node"
 
 
 def render(snapshots, root, *, host=None, now=None):
@@ -178,19 +251,29 @@ def render(snapshots, root, *, host=None, now=None):
         labels = ", ".join(report["label"] for report in snapshots if report.get("stop_requested"))
         lines.append(f"STOP REQUESTED: {labels}")
     nodes = node_rows(snapshots)
+    backlog, backlog_error = resume_backlog(snapshots, root)
+    if backlog_error:
+        lines.append(backlog_error)
     if nodes:
         live_nodes = sum(row["status"] in LIVE_WORKERS for row in nodes)
         stale_nodes = sum(row["status"] == "heartbeat_stale" for row in nodes)
-        lines += ["", f"NODES  {live_nodes} active | {stale_nodes} stale | {len(nodes) - live_nodes - stale_nodes} stopped"]
+        node_counts = Counter(row["status"] for row in nodes)
+        lines += ["", (f"NODES  {live_nodes} active | {stale_nodes} stale | {len(nodes) - live_nodes - stale_nodes} stopped"
+                       f" | RUN {node_counts['running'] + node_counts['serving_other_dataset']} | IDLE {node_counts['idle']}"
+                       f" | ADMISSION {node_counts['preflight']}")]
         rows = []
         for node in nodes:
-            state = {"running": "RUN", "preflight": "ADMISSION", "heartbeat_stale": "STALE"}.get(
+            state = {"running": "RUN", "serving_other_dataset": "RUN OTHER", "preflight": "ADMISSION", "heartbeat_stale": "STALE"}.get(
                 node["status"], node["status"].upper())
             current = f"{node['label']} {node['task']}" if node.get("task") else "-"
+            reason = idle_reason(node, snapshots, backlog) if node["status"] == "idle" else "-"
+            if node["status"] == "serving_other_dataset":
+                current = str(node["active_dataset"])
+                reason = "shared worker is running the other dataset"
             rows.append([("* " if node.get("host") == host else "") + node.get("host", "-"), state,
                          current, cell(node["task_row"]).removeprefix("RUN ") if node["task_row"] else "-",
-                         age(node.get("heartbeat_age_seconds"))])
-        lines += table(("Node", "State", "Task", "Progress", "Heartbeat"), rows)
+                         age(node.get("heartbeat_age_seconds")), reason])
+        lines += table(("Node", "State", "Task", "Progress", "Heartbeat", "Wait reason"), rows)
     else:
         lines += ["", "NODES  no worker records"]
     for report in snapshots:
@@ -233,6 +316,7 @@ def render(snapshots, root, *, host=None, now=None):
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
     lines += ["", "Seed table: RUN = active lease; STALE = node heartbeat older than 60s.",
               "Update counts show completed work; cache counts show saved prompts.",
+              "Node IDLE = dispatcher waiting; rank progress and heartbeat are not GPU utilization.",
               f"Root: {root}"]
     return "\n".join(lines)
 

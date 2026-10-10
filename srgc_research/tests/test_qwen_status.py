@@ -253,3 +253,88 @@ def test_status_code_is_excluded_from_training_and_measurement_runtime_identitie
     from srgc_research.storage import runtime_files
     assert "srgc_research/dispatch/qwen_status.py" not in runtime_files()
     assert "scripts/run_srgc_qwen35.sh" not in qwen.ADAPTER_FILES
+
+
+def test_new_idle_session_does_not_hide_a_verified_running_session(prepared):
+    _, directory, _ = running_prefix(prepared)
+    atomic_json(directory / "workers/new-idle.json", {
+        "worker_id": "new-idle", "host": "h100-A", "heartbeat": time.time(),
+        "status": "idle", "task": None,
+    })
+    with lease(directory / "leases/seed-7.prefix.lock"):
+        nodes = status.node_rows(prepared.read())
+        assert len(nodes) == 1 and nodes[0]["status"] == "running"
+        assert nodes[0]["worker_id"] == "shared-worker"
+        text = status.render(prepared.read(), prepared.root)
+        assert "| RUN 1 | IDLE 0 | ADMISSION 0" in text
+
+
+def test_dataset_only_view_marks_the_shared_worker_as_busy_elsewhere(prepared):
+    running_prefix(prepared)
+    nodes = status.node_rows(prepared.read("mbpp"))
+    assert len(nodes) == 1 and nodes[0]["status"] == "serving_other_dataset"
+    text = status.render(prepared.read("mbpp"), prepared.root)
+    assert "RUN OTHER" in text and "math_train" in text
+    assert "| RUN 1 | IDLE 0" in text
+    assert "shared worker is running the other dataset" in text
+
+
+def test_resume_first_wait_reason_uses_current_task_evidence_and_is_read_only(prepared):
+    snapshots = prepared.read()
+    marker = prepared.root / ".dispatch/resume-first.json"
+    atomic_json(marker, {"schema": "qwen-resume-first-v1", "tasks": [
+        [str(prepared.plans["math"]), "seed-7.cache"],
+        [str(prepared.plans["mbpp"]), "seed-8.cache"],
+    ]})
+    # A completed task can remain in the marker until the next dispatch pass.
+    next(row for row in snapshots[0]["tasks"] if row["task"] == "seed-7.cache")["status"] = "complete"
+    next(row for row in snapshots[1]["tasks"] if row["task"] == "seed-8.cache")["status"] = "running"
+    snapshots[0]["workers"] = [{"host": "h100-idle", "worker_id": "idle", "status": "idle",
+                                "heartbeat_age_seconds": 1, "task": None}]
+    before = files(prepared.root)
+    with patch.dict(sys.modules, {"torch": None, "transformers": None, "peft": None}):
+        text = status.render(snapshots, prepared.root)
+    assert "resume-first: 1 unfinished, 1 running; fresh tasks blocked" in text
+    assert "Wait reason" in text and "| RUN 0 | IDLE 1" in text
+    assert files(prepared.root) == before
+
+
+def test_resume_backlog_in_other_dataset_is_visible_in_dataset_only_view(prepared):
+    atomic_json(prepared.root / ".dispatch/resume-first.json", {
+        "schema": "qwen-resume-first-v1",
+        "tasks": [[str(prepared.plans["mbpp"]), "seed-8.cache"]],
+    })
+    backlog, error = status.resume_backlog(prepared.read("math"), prepared.root)
+    assert error is None and backlog == [{"status": "outside_view"}]
+
+
+@pytest.mark.parametrize("entries", [None, ["bad-entry"], [["/another/experiments/math.json", "seed-8.cache"]]])
+def test_invalid_resume_diagnostics_are_visible_without_breaking_status(prepared, entries):
+    atomic_json(prepared.root / ".dispatch/resume-first.json", {
+        "schema": "qwen-resume-first-v1", "tasks": entries,
+    })
+    text = status.render(prepared.read(), prepared.root)
+    assert "resume-first status unavailable:" in text and "0/60 completed" in text
+
+
+def test_rank_progress_does_not_infer_gpu_utilization_or_invent_rank_ids():
+    task = {"arm": "on_policy", "progress": [
+        {"stage": "generation", "updated": 980},
+        {"stage": "gradient_scoring", "updated": 975, "rank": 3},
+    ]}
+    with patch.object(status.time, "time", return_value=1000):
+        text = status.progress(task)
+    assert "rank progress: generation (20s ago); r3 gradient_scoring (25s ago)" in text
+    assert "r0" not in text and "busy" not in text
+
+
+def test_status_only_fix_preserves_all_model_and_information_runtime_identities():
+    from srgc_research.dispatch.gemma4 import adapter as gemma
+    from srgc_research.dispatch.llama31 import adapter as llama
+    from srgc_research.storage import runtime_files
+
+    assert llama.adapter_digest() == "1a7ae6ecf3b7fd24643797c97ce56750d32a9e49678125d8ddd2eabb5b61b53a"
+    assert llama.engine_digest() == "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960"
+    assert qwen.adapter_digest() == "20e90f784b19afa6602b839ff2f7934eb207f03868a4052896edc9355b7ffd8b"
+    assert "srgc_research/dispatch/qwen_status.py" not in gemma.SHARED_FILES
+    assert "srgc_research/dispatch/qwen_status.py" not in runtime_files()
