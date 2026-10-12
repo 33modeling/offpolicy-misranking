@@ -63,6 +63,12 @@ sh scripts/run_srgc_gemma4.sh all status
 출력한다. `math status`/`mbpp status`로 범위를 제한할 수 있다. `results`도
 동일한 축약형·데이터셋 선택을 지원한다.
 
+275는 마지막 학습 update이며, 이후 300문항 × 8응답의 최종 평가가 남는다.
+2026-10-12 공통 status는 이 구간을 `EVAL`로 구분하고, 해당 평가 cache의 저장
+문항 수를 확인할 수 있으면 `EVAL 120/300 saved`처럼 표시한다. 저장 파일 수만으로
+완료를 판정하지 않는다. 실행 순서와 현재 노드에서 확인할 항목은
+[Qwen 275 이후 최종 평가](QWEN35_FINAL_EVALUATION_2026-10-12.md)에 정리했다.
+
 ## READY 작업이 있는데 IDLE로 멈추는 배정 오류 — 2026-10-12
 
 Qwen 3.5, Llama, Gemma의 공통 배정기가 공유 resume backlog를 모든 새 작업의

@@ -53,6 +53,10 @@ def _cell(task):
         if task["arm"] == "cache" and "cache_saved_prompts" in task:
             count = max(task["cache_saved_prompts"], task["cache_exported_prompts"])
             return f"RUN {count}/{task['cache_total_prompts']}"
+        if task.get("phase_stage") == "evaluation":
+            evaluation = task.get("final_evaluation", {})
+            saved = evaluation.get("saved_prompts")
+            return f"EVAL {saved}/{evaluation['total_prompts']} saved" if saved is not None else "EVAL"
         done, total = task.get("completed_steps"), task.get("total_steps")
         return f"RUN {done}/{total}" if done is not None and total else "RUN"
     if state.startswith("waiting_for_"):
@@ -135,6 +139,16 @@ def progress(task):
         if task.get("phase_stage"):
             parts.append(task["phase_stage"].replace("_", " "))
             parts.append(f"last progress {age(task.get('progress_age_seconds'))} ago")
+        evaluation = task.get("final_evaluation")
+        if evaluation:
+            saved, total = evaluation["saved_prompts"], evaluation["total_prompts"]
+            if saved is None:
+                parts.append(f"{total} evaluation prompts; saved count unavailable")
+            else:
+                parts.append(f"{saved}/{total} evaluation prompts saved")
+            parts.append(f"{evaluation['responses_per_prompt']} responses/prompt")
+            if evaluation.get("read_error"):
+                parts.append(f"evaluation cache read error: {evaluation['read_error']}")
     if not parts:
         parts.append("starting; progress not recorded yet")
     ranks = []

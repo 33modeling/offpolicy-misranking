@@ -14,6 +14,7 @@ from unittest.mock import patch
 from scripts import srgc_live_status as live
 from srgc_rebuttal import reports
 from srgc_rebuttal.plan import input_path
+from srgc_rebuttal.srgc import stream_seed
 
 CONFIGS = {
     "qwen35": ("scripts.srgc_qwen35", "scripts.srgc_qwen35_storage", "qwen35-9b"),
@@ -40,6 +41,37 @@ def initial_accuracy(data, responses):
         return None
     rewards = [reward for values in cache.values() for reward in values]
     return {"responses": len(rewards), "success_percent": 100 * sum(rewards) / len(rewards)}
+
+
+def final_evaluation_progress(report, plan, seed, data):
+    """Observe saved rollouts, without treating their presence as a valid endpoint."""
+    # run_experiment.evaluate uses eight responses and this stream, independently
+    # of the training/scoring caches. Read names only: token arrays can be large.
+    responses = 8
+    expected = {f"{hashlib.sha256(rid.encode()).hexdigest()[:24]}-{responses}.npz"
+                for rid in data["evaluation_ids"]}
+    evaluation_seed = stream_seed(seed, plan["total_updates"], "reporting-evaluation")
+    for row in report["tasks"]:
+        if (row["seed"] != seed or row["status"] != "running"
+                or row.get("phase_stage") != "evaluation"):
+            continue
+        progress = {"saved_prompts": None, "total_prompts": len(data["evaluation_ids"]),
+                    "responses_per_prompt": responses}
+        directory = (Path(report["output_root"]) / f"seed-{seed}" / "rollout-cache"
+                     / row["arm"] / f"eval-{evaluation_seed}")
+        try:
+            with os.scandir(directory) as entries:
+                count = sum(entry.name in expected and entry.is_file(follow_symlinks=False)
+                            for entry in entries)
+            # Evaluation removes this directory before writing its endpoint.
+            # Absence during that transition means unknown, not zero completed.
+            if directory.is_dir():
+                progress["saved_prompts"] = count
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            progress["read_error"] = str(error)
+        row["final_evaluation"] = progress
 
 
 def load_reports(model, dataset, root, environment):
@@ -77,6 +109,7 @@ def load_reports(model, dataset, root, environment):
                     accuracy = initial_accuracy(data, plan["responses"])
                     if accuracy is not None:
                         report["initial_candidate_accuracy"].append({"seed": seed, **accuracy})
+                    final_evaluation_progress(report, plan, seed, data)
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     report["errors"].append(f"seed {seed} {LABELS[model]} inputs: {error}")
                     for row in report["tasks"]:

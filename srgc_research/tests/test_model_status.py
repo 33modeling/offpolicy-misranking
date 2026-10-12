@@ -3,13 +3,16 @@
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 from srgc_rebuttal.plan import input_path, load_plan
-from srgc_rebuttal.runtime import atomic_json
+from srgc_rebuttal.runtime import atomic_json, lease
+from srgc_rebuttal.srgc import stream_seed
 from srgc_research.tests.test_model_results import (
     cohort as cohort,  # noqa: PLC0414 -- Re-export a pytest fixture.
 )
@@ -107,6 +110,72 @@ def test_valid_partial_cache_is_pending_and_has_no_premature_success_rate(cohort
     assert code == 0 and report["prepared"] and len(report["tasks"]) == 30
     assert report["initial_candidate_accuracy"] == []
     assert report["errors"] == []
+    assert saved(cohort) == before
+
+
+def test_final_evaluation_counts_only_this_stream_and_waits_for_valid_endpoint(cohort, capsys):
+    from scripts.srgc_resumable_rollouts import ResumableRolloutMixin, _key
+    from srgc_research.dispatch import qwen_status as status
+
+    folder = finish(cohort, "math")
+    endpoint = folder / "on_policy-endpoint.json"
+    endpoint_bytes = endpoint.read_bytes()
+    endpoint.unlink()
+    plan = load_plan(cohort.plans["math"])
+    bundle = json.loads(input_path(cohort.plans["math"], plan, 5).read_text())
+    ids = bundle["evaluation_ids"]
+    queue = folder.parent / ".queue"
+    atomic_json(queue / "tasks/seed-5.on_policy.json", {
+        "status": "running", "attempt": 1, "task": "seed-5.on_policy", "started": time.time() - 5})
+    atomic_json(folder / "cost-receipts/on_policy/eval.json", {
+        "phase": "evaluation", "state": "started", "checkpoint": plan["total_updates"]})
+    evaluation_seed = stream_seed(5, plan["total_updates"], "reporting-evaluation")
+    parent = folder / "rollout-cache/on_policy"
+    cache = parent / f"eval-{evaluation_seed}"
+    writer = ResumableRolloutMixin()
+
+    def check_pending(expected):
+        before = saved(cohort)
+        code, value = read_status(cohort, capsys)
+        assert code == 0
+        report = value["datasets"][0]
+        task = next(row for row in report["tasks"] if row["task"] == "seed-5.on_policy")
+        assert task["status"] == "running" and task["completed_steps"] == 275
+        assert task["reward_percent"] is None and not report["complete"]
+        assert task["final_evaluation"] == {
+            "saved_prompts": expected, "total_prompts": len(ids), "responses_per_prompt": 8}
+        assert status.cell(task) == ("EVAL" if expected is None else f"EVAL {expected}/300 saved")
+        assert "evaluation" in status.progress(task) and "8 responses/prompt" in status.progress(task)
+        assert saved(cohort) == before
+
+    with lease(queue / "leases/seed-5.on_policy.lock"):
+        # No cache can mean generation has not saved a whole prompt yet.
+        check_pending(None)
+        for rid in ids[:2]:
+            writer._save_rollout(cache / _key(rid, 8), [[1, 2]] * 8, [0, 1] * 4, 1)
+        writer._save_rollout(cache / _key(ids[2], 4), [[1, 2]] * 4, [0, 1] * 2, 1)
+        writer._save_rollout(cache / _key("unknown-evaluation-prompt", 8), [[1, 2]] * 8, [0, 1] * 4, 1)
+        (cache / ".writing-incomplete.npz").write_bytes(b"unfinished")
+        (cache / _key(ids[2], 8)).mkdir()
+        writer._save_rollout(parent / f"eval-{evaluation_seed + 1}" / _key(ids[2], 8),
+                             [[1, 2]] * 8, [0, 1] * 4, 1)
+        check_pending(2)
+        (cache / _key(ids[2], 8)).rmdir()
+        for rid in ids[2:]:
+            writer._save_rollout(cache / _key(rid, 8), [[1, 2]] * 8, [0, 1] * 4, 1)
+        # Even every saved rollout is insufficient to declare the task complete.
+        check_pending(300)
+        shutil.rmtree(cache)
+        # Cleanup precedes the endpoint write, so its absence cannot imply 0/300.
+        check_pending(None)
+        endpoint.write_bytes(endpoint_bytes)
+        # An active lease still means the worker has not finished the task.
+        check_pending(None)
+    before = saved(cohort)
+    code, value = read_status(cohort, capsys)
+    task = next(row for row in value["datasets"][0]["tasks"] if row["task"] == "seed-5.on_policy")
+    assert code == 0 and task["status"] == "complete"
+    assert status.cell(task) == "DONE 50.0%" and "final_evaluation" not in task
     assert saved(cohort) == before
 
 
