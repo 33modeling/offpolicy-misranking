@@ -14,10 +14,11 @@ from srgc_rebuttal import reports
 
 from .model_status import CONFIGS, load_reports
 from .result_export import export_lock, save_result
+from .reward_curve_results import collect as collect_reward_curve
 
 
 def compact(result):
-    """Retain final outcomes, switching decisions, identities and measured costs."""
+    """Retain outcomes, scalar reward curves, identities and measured costs."""
     def fields(value, names):
         return {key: value[key] for key in names if key in value}
 
@@ -50,6 +51,7 @@ def compact(result):
                 "selection_interval", "selection_steps", "checks"))
             row["endpoints"].append(entry)
         row["costs"] = []
+        row["reward_curves"] = snapshot.get("reward_curves", [])
         for cost in snapshot.get("costs", []):
             entry = fields(cost, ("seed", "experiment_accounting"))
             entry["arms"] = {arm: fields(value, ("complete", *reports.COST_FIELDS, "known_completed_phase_gpu_seconds"))
@@ -85,8 +87,22 @@ def _export(model, dataset, *, root, environment):
     root = storage.inside(storage.default_root(environment) if root is None else root, group)
     storage.validate_tree(root)
     names = ("math", "mbpp") if dataset == "all" else (dataset,)
-    versions = {path: file_version(path) for name in names
-                for path in (root / "runs" / name).glob("seed-*/*-endpoint.json")}
+    patterns = ("seed-*/*-endpoint.json", "seed-*/*-progress.json", "seed-*/run.json",
+                "seed-*/reward-curves/*/protocol.json", "seed-*/reward-curves/*/training.json",
+                "seed-*/reward-curves/*/step-*.json")
+    versions = {path: file_version(path) for name in names for pattern in patterns
+                for path in (root / "runs" / name).glob(pattern)}
+
+    def read_stable(path):
+        before = versions.get(path)
+        if before is None and not path.exists():
+            return None
+        if before is None or file_version(path) != before:
+            raise ValueError("reward records changed during result inspection; rerun results")
+        value = json.loads(path.read_bytes())
+        if file_version(path) != before:
+            raise ValueError("reward records changed during result inspection; rerun results")
+        return value
     original = reports.snapshot
 
     def with_costs(path, **kwargs):
@@ -104,6 +120,7 @@ def _export(model, dataset, *, root, environment):
         snapshot["requested_dataset"] = name
         plan_path = root / "experiments" / f"{prefix}-{name}.json"
         endpoints = []
+        plan = None
         try:
             plan = adapter.validate_extension(plan_path, read_only=True)
             snapshot["plan"] = plan
@@ -133,6 +150,35 @@ def _export(model, dataset, *, root, environment):
                     row[field] = None
                 snapshot["errors"].append(f"{row['task']}: {error}")
         snapshot["endpoints"] = endpoints
+        snapshot["reward_curves"] = []
+        if plan is not None:
+            from srgc_rebuttal.plan import digest, input_path
+
+            identity = hashlib.sha256((adapter.engine_digest() + adapter.adapter_digest()).encode()).hexdigest()
+            for row in snapshot["tasks"]:
+                if row["arm"] not in plan["arms"] or row["status"] == "invalid":
+                    continue
+                folder = root / "runs" / name / f"seed-{row['seed']}"
+                try:
+                    bundle_path = input_path(plan_path, plan, row["seed"])
+                    data = json.loads(bundle_path.read_text())
+                    expected = {"seed": row["seed"], "plan_sha256": digest(plan_path),
+                                "input_sha256": digest(bundle_path), "implementation_sha256": identity}
+                    curve = collect_reward_curve(folder, row["arm"], plan, expected, data["evaluation_ids"], read_stable)
+                    endpoint = next((e for e in endpoints if e["seed"] == row["seed"] and e["arm"] == row["arm"]), None)
+                    if endpoint is not None:
+                        value = endpoint["endpoint"]["reward"]
+                        curve["held_out_rewards"].append({"step": plan["total_updates"], "reward": value,
+                            "reward_percent": 100 * value, "kind": "fixed_held_out_evaluation",
+                            "source": endpoint["source"], "responses_per_prompt": 8,
+                            "question_count": len(data["evaluation_ids"]), "shared_prefix": False})
+                    curve["held_out_rewards"].sort(key=lambda point: point["step"])
+                    measured = {p["step"] for p in curve["held_out_rewards"]}
+                    curve["missing_held_out_steps"] = [step for step in range(25, plan["total_updates"] + 1, 25) if step not in measured]
+                    curve["training_reward_is_held_out"] = False
+                    snapshot["reward_curves"].append(curve)
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    snapshot["errors"].append(f"{row['task']} reward curve: {error}")
         snapshot["counts"] = dict(Counter(row["status"] for row in snapshot["tasks"]))
         for arm, statistics in snapshot.get("arm_statistics", {}).items():
             rows = [row for row in snapshot["tasks"] if row["arm"] == arm]

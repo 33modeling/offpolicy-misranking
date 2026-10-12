@@ -1,0 +1,170 @@
+"""Intermediate measurements must survive export/resume without changing learning."""
+import json
+import random
+from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+
+from srgc_rebuttal.runtime import atomic_json
+from srgc_rebuttal.srgc import Config, Engine
+from srgc_rebuttal.tests.test_reference import ScriptedBackend
+from srgc_research.dispatch import reward_curves as curves
+from srgc_research.dispatch.reward_curve_results import collect
+from srgc_research.tests.test_model_results import cohort, finish, read_result
+from srgc_research.dispatch import model_results
+
+
+def history(start=26, stop=50):
+    return [{"checkpoint": step-1, "completed_updates": step, "selector": "sr",
+             "metrics": {"sample_reward": .5}, "raw_responses": ["never export"]}
+            for step in range(start, stop+1)]
+
+
+@pytest.mark.parametrize("bad", [[], history(27), history(stop=49), [None]])
+def test_missing_or_noncontiguous_training_history_is_rejected(bad):
+    with pytest.raises(ValueError):
+        curves.training_points(bad, start=25, stop=50)
+
+
+@pytest.mark.parametrize("model", ["gemma4", "llama31"])
+def test_only_training_rank_is_wrapped(model):
+    cmd = ["python", "runner.py", "--module", f"srgc_research.dispatch.{model}.rank", "--stage", "train", "--task", "sr"]
+    changed = curves.recording_command(cmd)
+    assert changed[3:6] == ["srgc_research.dispatch.reward_curve_rank", "--model", model]
+    assert changed[6:] == cmd[4:]
+    assert curves.recording_command([x if x != "train" else "cache" for x in cmd]) == [x if x != "train" else "cache" for x in cmd]
+
+
+def test_existing_history_is_exported_for_all_models_without_gpu(cohort):
+    folder = finish(cohort, "math")
+    atomic_json(folder / "on_policy-progress.json", {"seed": 5, "arm": "on_policy", "step": 50,
+        "sampling_protocol": Engine.SAMPLING_PROTOCOL, "history": history()})
+    assert model_results.export(cohort.model, "math", environment=cohort.env) == 0
+    row = next(x for x in read_result(cohort)["datasets"]["math"]["reward_curves"] if x["seed"] == 5 and x["arm"] == "on_policy")
+    assert len(row["training_rewards"]) == 25
+    assert row["training_windows_25"][0]["reward_percent"] == 50
+    assert [p["step"] for p in row["held_out_rewards"]] == [275]
+    assert row["missing_held_out_steps"] == list(range(25, 275, 25))
+    assert "raw_responses" not in json.dumps(row)
+
+
+def make_engine(folder, measured):
+    torch = pytest.importorskip("torch")
+    from srgc_rebuttal.timing import torch_meter
+
+    class Backend(ScriptedBackend):
+        def __init__(self):
+            super().__init__()
+            self.model = torch.nn.Linear(1, 1)
+            self.device = torch.device("cpu")
+            self.cost_meter = torch_meter(cuda=False)
+            self.evaluations = []
+        def train(self, ids, **kwargs):
+            self.parameter += random.random() + np.random.random() + torch.rand(()).item()
+            self.optimizer_steps += 1
+            return {"sample_reward": .5}
+        def evaluate(self, ids, *, seed, responses):
+            self.evaluations.append((list(ids), seed, responses, self.model.training))
+            random.random(); np.random.random(); torch.rand(10)
+            return {rid: .5 for rid in ids}
+        def state_dict(self):
+            return {**super().state_dict(), "optimizer": {"steps": self.optimizer_steps}}
+
+    backend = Backend()
+    ids = [f"s{i}" for i in range(40)] + [f"o{i}" for i in range(360)]
+    cache = {i: [0, 1]*4 for i in ids}
+    plan = {"shared_prefix_updates": 25, "total_updates": 275}
+    data = {"evaluation_ids": ["held-a", "held-b"]}
+    identity = {"seed": 3, "plan_sha256": "a"*64, "input_sha256": "b"*64, "implementation_sha256": "c"*64}
+    atomic_json(folder / "run.json", identity)
+    base = curves.recording_engine(Engine, folder, "sr", folder / "plan.json", plan, data) if measured else Engine
+    engine = base(backend, ids, ["v"], cache, arm="sr", config=Config(projection_dim=2), step=25)
+    return engine, backend, plan, data, identity
+
+
+def seed_rng():
+    import torch
+    random.seed(98); np.random.seed(98); torch.manual_seed(98)
+
+
+def test_actual_boundaries_are_durable_and_do_not_change_training(tmp_path):
+    torch = pytest.importorskip("torch")
+    seed_rng(); plain, baseline, *_ = make_engine(tmp_path / "plain", False); plain.run_until(50)
+    seed_rng(); engine, backend, plan, data, identity = make_engine(tmp_path / "measured", True); engine.run_until(50)
+    assert backend.parameter == baseline.parameter
+    assert backend.optimizer_steps == baseline.optimizer_steps == 25
+    assert backend.model.training
+    assert len(backend.evaluations) == 2
+    assert all(ids == data["evaluation_ids"] and n == 8 and mode is False for ids, _, n, mode in backend.evaluations)
+    folder = tmp_path / "measured"
+    state = torch.load(folder / "reward-curves/sr/step-50.pt", weights_only=False)
+    assert state["step"] == 50 and state["evaluation_only"]
+    assert "optimizer" not in state["backend"]
+    assert state["backend"]["parameter"] == backend.parameter
+    row = collect(folder, "sr", plan, identity, data["evaluation_ids"], lambda p: json.loads(p.read_text()) if p.exists() else None)
+    assert [p["step"] for p in row["held_out_rewards"]] == [25, 50]
+    assert len(row["training_rewards"]) == 25
+    assert all(c["scope"] == "all_attempts_at_this_step" for c in row["diagnostic_costs"])
+    engine.capture_boundary()
+    assert len(backend.evaluations) == 2
+    checkpoint = folder / "reward-curves/sr/step-50.pt"
+    checkpoint.write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="binding"):
+        engine.capture_boundary()
+
+
+def test_final_boundary_is_archived_without_repeating_final_eval(tmp_path):
+    torch = pytest.importorskip("torch")
+    engine, backend, *_ = make_engine(tmp_path, True)
+    engine.step = 275
+    engine.capture_boundary()
+    assert backend.evaluations == []
+    assert (tmp_path / "reward-curves/sr/step-275.pt").exists()
+
+
+def test_interrupted_checkpoint_is_replaced_from_actual_weights(tmp_path):
+    pytest.importorskip("torch")
+    engine, backend, *_ = make_engine(tmp_path, True)
+    point = tmp_path / "reward-curves/prefix/step-25.pt"
+    point.parent.mkdir(parents=True)
+    point.write_bytes(b"unfinished archive")
+    engine.capture_boundary()
+    assert len(backend.evaluations) == 1
+    assert (point.with_suffix(".json")).exists()
+
+@pytest.mark.parametrize("model", ["gemma4", "llama31"])
+def test_public_rank_installs_recording_on_the_frozen_checkpoint_factory(tmp_path, model):
+    import sys
+    from types import SimpleNamespace
+    from scripts import srgc_step_checkpoints as checkpoints
+    from srgc_research.dispatch import reward_curve_rank
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(json.dumps({"evaluation_ids": ["held"]}))
+    observed = []
+    def original(base, *args, **kwargs):
+        return base
+    def frozen_main():
+        import srgc_step_checkpoints as legacy
+        cls = legacy.checkpoint_engine(Engine, tmp_path, "sr", {}, total_updates=275)
+        observed.append(cls)
+        assert "--model" not in sys.argv
+    with patch.object(checkpoints, "checkpoint_engine", original), \
+            patch("srgc_rebuttal.plan.load_plan", return_value={"shared_prefix_updates": 25, "total_updates": 275}), \
+            patch("srgc_rebuttal.plan.input_path", return_value=bundle), \
+            patch.object(reward_curve_rank.importlib, "import_module", return_value=SimpleNamespace(main=frozen_main)), \
+            patch.object(sys, "argv", ["rank", "--model", model, "--plan", str(tmp_path / "plan.json"), "--seed", "3", "--task", "sr", "--stage", "train"]):
+        reward_curve_rank.main()
+        assert checkpoints.checkpoint_engine is original
+    assert len(observed) == 1 and issubclass(observed[0], Engine)
+    assert hasattr(observed[0], "capture_boundary")
+
+
+def test_saved_measurement_cannot_be_reused_for_different_actual_weights(tmp_path):
+    pytest.importorskip("torch")
+    engine, backend, *_ = make_engine(tmp_path, True)
+    engine.capture_boundary()
+    backend.parameter += 1
+    with pytest.raises(ValueError, match="resumed learner"):
+        engine.capture_boundary()

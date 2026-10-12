@@ -265,4 +265,10 @@ def resume_worker(worker, factory, *, pattern, env_key, label, result_model=None
             from .model_results import publish
 
             stack.enter_context(patch.object(cluster, "publish_reports", lambda queue: publish(result_model, queue)))
+            if result_model in {"gemma4", "llama31"}:
+                from .reward_curves import recording_command
+
+                original_child = cluster.run_child
+                stack.enter_context(patch.object(cluster, "run_child", lambda command, *args, **kwargs:
+                    original_child(recording_command(command), *args, **kwargs)))
         yield
