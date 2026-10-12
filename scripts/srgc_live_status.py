@@ -3,10 +3,11 @@
 import json
 import math
 import re
-from pathlib import Path
 import time
+from pathlib import Path
 
 from srgc_rebuttal.plan import load_plan
+
 try:
     from srgc_log_tail import tail_lines
 except ImportError:
@@ -16,7 +17,7 @@ except ImportError:
 def read_object(path):
     value = json.loads(path.read_text())
     if not isinstance(value, dict):
-        raise ValueError("expected a JSON object")
+        raise TypeError("expected a JSON object")
     return value
 
 
@@ -35,6 +36,78 @@ def latest_phase(directory, started):
     return read_object(path), modified / 1e9
 
 
+def switch_info(row):
+    """Describe recorded switch boundaries, never infer them from a schedule."""
+    arm = row.get("arm", "").rsplit("-", 1)[-1]
+    if not (arm in {"switch", "switch_single", "switch_consecutive", "switch_repeat", "switch_fixed"}
+            or re.fullmatch(r"switch_fixed\d+", arm)):
+        return None
+    state = row.get("status", row.get("state"))
+    result = {"state": "NOT RECORDED", "step": None, "first_sr_update": None,
+              "selector": "-", "transitions": []}
+    if state == "invalid":
+        return {**result, "state": "INVALID RECORD"}
+    total = row.get("total_steps", row.get("total", row.get("total_updates")))
+    completed = row.get("completed_steps", row.get("step"))
+
+    def valid_step(value):
+        return (type(value) is int and value >= 0
+                and (type(total) is not int or value <= total)
+                and (type(completed) is not int or value <= completed))
+
+    switched = row.get("switched_at")
+    if switched is not None and not valid_step(switched):
+        return {**result, "state": "INVALID RECORD"}
+    transitions = row.get("transitions")
+    if transitions is not None:
+        if not isinstance(transitions, list):
+            return {**result, "state": "INVALID RECORD"}
+        for move in transitions:
+            if (not isinstance(move, dict) or not valid_step(move.get("step"))
+                    or not isinstance(move.get("to"), str) or move["to"] not in {"sr", "on", "on_policy"}
+                    or result["transitions"] and move["step"] <= result["transitions"][-1]["step"]):
+                return {**result, "state": "INVALID RECORD", "transitions": []}
+            result["transitions"].append({"step": move["step"],
+                "to": "on_policy" if move["to"] == "on" else move["to"]})
+        if result["transitions"]:
+            first = result["transitions"][0]
+            if first["to"] != "sr" or switched is not None and switched != first["step"]:
+                return {**result, "state": "INVALID RECORD", "transitions": []}
+            switched = first["step"]
+    if switched is not None:
+        return {**result, "state": "SWITCHED", "step": switched,
+                "first_sr_update": switched + 1 if type(total) is not int or switched < total else None,
+                "selector": result["transitions"][-1]["to"] if result["transitions"] else "sr"}
+    if row.get("switch_recorded", state == "complete" and "switched_at" in row):
+        return {**result, "state": "NEVER SWITCHED" if state == "complete" else "NOT YET",
+                "selector": "on_policy"}
+    if state in {"ready", "waiting", "waiting_prefix"} or str(state).startswith("waiting_for_"):
+        result["state"] = "PENDING"
+    return result
+
+
+def switch_detail(row):
+    info = switch_info(row)
+    if info is None:
+        return None
+    if info["step"] is None:
+        return f"switch {info['state'].lower()}"
+    first = info["first_sr_update"]
+    text = (f"switch after update {info['step']} | first SR update {first if first is not None else '-'}"
+            f" | selector {info['selector']}")
+    if len(info["transitions"]) > 1:
+        text += " | transitions " + "; ".join(
+            f"after {move['step']} -> {move['to']}" for move in info["transitions"])
+    return text
+
+
+def switch_cell(row, text):
+    info = switch_info(row)
+    if info and info["step"] is not None:
+        return f"{text} SW@{info['step']}"
+    return text
+
+
 def snapshot(original, plan_path, **kwargs):
     report = original(plan_path, **kwargs)
     plan = load_plan(plan_path)
@@ -43,6 +116,10 @@ def snapshot(original, plan_path, **kwargs):
         if row["arm"] == "cache":
             continue
         total = plan["shared_prefix_updates"] if row["arm"] == "prefix" else plan["total_updates"]
+        if switch_info(row) is not None:
+            # snapshot() only sets step from a saved progress/validated endpoint.
+            # Phase receipts alone cannot establish that no switch happened.
+            row["switch_recorded"] = row["step"] is not None
         row.update(total_steps=total, current_step=None, completed_steps=row["step"],
                    phase_stage=None, last_observed_step=None, progress_source=None,
                    progress_age_seconds=None)
@@ -98,7 +175,7 @@ def snapshot(original, plan_path, **kwargs):
 ATTENTION = {"failed", "interrupted", "recoverable", "invalid", "attempts_exhausted"}
 
 
-def cell(row):
+def _cell(row):
     """Short table cell for one task."""
     status, total = row["status"], row.get("total_steps")
     if status == "complete":
@@ -117,6 +194,10 @@ def cell(row):
     if status == "invalid":
         return "INVALID"
     return status.replace("_", " ")
+
+
+def cell(row):
+    return switch_cell(row, _cell(row))
 
 
 def running_detail(row):
@@ -141,6 +222,9 @@ def running_detail(row):
         parts.append(f"gpus {len(ages)} busy (last {span})")
     if row.get("host"):
         parts.append(f"node {row['host']}")
+    decision = switch_detail(row)
+    if decision:
+        parts.append(decision)
     return " · ".join(parts) or "starting"
 
 
@@ -257,6 +341,11 @@ def render(report, *, results=False):
     lines.append("seed  " + "  ".join(f"{arm:<{widths[arm]}}" for arm in arms))
     for seed in seeds:
         lines.append(f"{seed:>4}  " + "  ".join(f"{table.get((seed, arm), '-'):<{widths[arm]}}" for arm in arms))
+    decisions = [(row, switch_detail(row)) for row in tasks if switch_info(row) is not None]
+    if decisions:
+        lines += ["", "switch decisions (completed-update boundaries):"]
+        lines += [f"  {row['task']:<16} {detail}" for row, detail in decisions]
+        lines.append("  SW@N = switch after update N; first SR training update is N+1.")
     running = [row for row in tasks if row["status"] == "running"]
     if running:
         lines += ["", "running now:"]
@@ -271,7 +360,7 @@ def render(report, *, results=False):
         lines += ["", "nodes:"]
         for worker in active:
             what = worker_activity(worker)
-            lines.append(f"  {str(worker.get('host') or '-'):<24} {what} · heartbeat {worker['heartbeat_age_seconds']:.0f}s ago")
+            lines.append(f"  {worker.get('host') or '-'!s:<24} {what} · heartbeat {worker['heartbeat_age_seconds']:.0f}s ago")
             if worker.get("error"):
                 lines.append(f"      {worker['error']}")
         if hidden:

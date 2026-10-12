@@ -42,7 +42,7 @@ def bar(done, total, width=16):
     return "[" + "#" * filled + "-" * (width - filled) + "]"
 
 
-def cell(task):
+def _cell(task):
     if task is None:
         return "-"
     state = task["status"]
@@ -61,6 +61,10 @@ def cell(task):
         return f"ERROR x{task.get('attempt', 0)}"
     return {"ready": "READY", "recoverable": "RESUME", "interrupted": "STOPPED",
             "invalid": "INVALID", "attempts_exhausted": "RETRY LIMIT"}.get(state, state.upper())
+
+
+def cell(task):
+    return "-" if task is None else live.switch_cell(task, _cell(task))
 
 
 def table(headers, rows):
@@ -141,6 +145,9 @@ def progress(task):
             ranks.append(f"{rank}{row['stage']} ({age(time.time() - updated)} ago)")
     if ranks:
         parts.append("rank progress: " + "; ".join(ranks))
+    decision = live.switch_detail(task)
+    if decision:
+        parts.append(decision)
     return " | ".join(parts)
 
 
@@ -253,6 +260,17 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lookup = {(row["seed"], row["arm"]): row for row in rows}
         lines += table(("Seed", *HEADERS), [[seed, *(cell(lookup.get((seed, arm))) for arm in ARMS)]
                                             for seed in seeds])
+        switching = [row for row in rows if live.switch_info(row) is not None]
+        if switching:
+            lines.append(f"{report['label']} SWITCH DECISIONS")
+            decisions = []
+            for row in switching:
+                info = live.switch_info(row)
+                decisions.append([row["seed"], info["state"],
+                    info["step"] if info["step"] is not None else "-",
+                    info["first_sr_update"] if info["first_sr_update"] is not None else "-",
+                    info["selector"]])
+            lines += table(("Seed", "Decision", "Switch after update", "First SR update", "Selector"), decisions)
         values = report.get("initial_candidate_accuracy", [])
         if include_initial and values:
             lines.append(f"{report['label']} initial candidate success (8 responses/prompt): " +
@@ -283,6 +301,8 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
     lines += ["", "Seed table: RUN = active lease; STALE = node heartbeat older than 60s.",
               "Update counts show completed work; cache counts show saved prompts.",
+              "SW@N = switch after completed update N; first SR training update is N+1.",
+              "NOT RECORDED = no trustworthy switch progress yet; NEVER SWITCHED = validated final result.",
               "Node IDLE = dispatcher waiting; rank progress and heartbeat are not GPU utilization.",
               f"Root: {root}"]
     return "\n".join(lines)

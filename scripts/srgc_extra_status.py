@@ -2,14 +2,15 @@
 """Read extra-arm progress without claiming jobs, touching locks or loading GPUs."""
 
 import argparse
-from collections import Counter
 import json
-from pathlib import Path
 import sys
 import time
+from collections import Counter
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.srgc_live_status import switch_detail
 from scripts.srgc_replicate_worker import SCOPES, signature, tasks_for
 from srgc_rebuttal.plan import load_plan
 
@@ -20,7 +21,7 @@ def read_object(path):
     except FileNotFoundError:
         return {}
     if not isinstance(value, dict):
-        raise ValueError(f"{path}: expected a JSON object")
+        raise TypeError(f"{path}: expected a JSON object")
     return value
 
 
@@ -28,9 +29,9 @@ def inspect(task, *, now=None):
     now = time.time() if now is None else now
     plan = load_plan(task.plan)
     out = task.out
-    row = dict(task=task.key, dataset=task.dataset, seed=task.seed, arm=task.name,
-               plan=str(task.plan), output=str(out), state="waiting", step=None,
-               total=plan["total_updates"], attempt=0, host="-", age_seconds=None, log=None)
+    row = {"task": task.key, "dataset": task.dataset, "seed": task.seed, "arm": task.name,
+           "plan": str(task.plan), "output": str(out), "state": "waiting", "step": None,
+           "total": plan["total_updates"], "attempt": 0, "host": "-", "age_seconds": None, "log": None}
     mechanism = task.arm == "stage_mechanism"
     if mechanism:
         from scripts.srgc_stage_mechanism import TOTAL_WORK
@@ -49,6 +50,8 @@ def inspect(task, *, now=None):
             if type(step) is not int or not minimum <= step <= row["total"]:
                 raise ValueError(f"{progress_path}: invalid completed step")
             row.update(step=step, age_seconds=max(0, int(now - progress_path.stat().st_mtime)))
+            row.update(switched_at=progress.get("switched_at"), transitions=progress.get("transitions"),
+                       switch_recorded="switched_at" in progress or "transitions" in progress)
             if mechanism:
                 row.update(stage=progress.get("stage"), mode=progress.get("mode"),
                            branch_updates=progress.get("branch_updates"), phase=progress.get("phase"))
@@ -62,6 +65,11 @@ def inspect(task, *, now=None):
         if (queue.get("status") == "complete" and fingerprint is not None
                 and queue.get("verified_files") == fingerprint):
             row.update(state="complete", step=row["total"])
+            final = read_object(out / f"{task.arm}-endpoint.json")
+            if signature(task) != fingerprint:
+                raise ValueError("endpoint changed during status inspection; rerun status")
+            row.update(switched_at=final.get("switched_at"), transitions=final.get("transitions"),
+                       switch_recorded="switched_at" in final or "transitions" in final)
         elif endpoint:
             row["state"] = "endpoint_unverified"
         else:
@@ -105,7 +113,7 @@ def main(argv=None):
                 errors.append(f"{task.key}: {exc}")
     counts = dict(Counter(row["state"] for row in rows))
     if args.json:
-        print(json.dumps(dict(scope=args.scope, counts=counts, rows=rows, errors=errors), indent=2))
+        print(json.dumps({"scope": args.scope, "counts": counts, "rows": rows, "errors": errors}, indent=2))
     else:
         print(f"EXTRAS status scope={args.scope} (read-only; worker states are reported, not live lock checks)")
         print(f"{'dataset':7} {'seed':>4} {'arm':28} {'state':23} {'step':>7} {'try':>3} {'age(s)':>7} host")
@@ -119,6 +127,9 @@ def main(argv=None):
             if row["arm"] == "stage_mechanism":
                 print(f"  physical work updates; policy stage={row.get('stage')} mode={row.get('mode')} "
                       f"branch_updates={row.get('branch_updates')} phase={row.get('phase')}")
+            decision = switch_detail(row)
+            if decision:
+                print(f"  {decision}")
             if row.get("log") and row['state'] in ("failed", "invalid", "stale_worker"):
                 print(f"  log: {row['log']}")
         print("TOTAL " + " ".join(f"{key}={value}" for key, value in sorted(counts.items())))
