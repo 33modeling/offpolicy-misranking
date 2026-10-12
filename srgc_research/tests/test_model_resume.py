@@ -90,9 +90,12 @@ def test_failure_tracebacks_are_printed_at_the_bottom(queues, capsys):
 def test_llama_wrapper_installs_recovery_without_changing_adapter(tmp_path):
     from srgc_research.dispatch import llama_run
     from srgc_research.dispatch.llama31 import adapter, cli, resume
+    from srgc_research.dispatch.ready_dispatch import (
+        LlamaResumeFirst as ReadyLlamaResumeFirst,
+    )
 
     before = adapter.adapter_digest()
-    with patch.object(cli, "main", side_effect=lambda args: int(resume.ResumeFirst is not LlamaResumeFirst)):
+    with patch.object(cli, "main", side_effect=lambda args: int(resume.ResumeFirst is not ReadyLlamaResumeFirst)):
         assert llama_run.main(["all", "status"]) == 0
     assert adapter.adapter_digest() == before
 

@@ -218,8 +218,8 @@ def idle_reason(node, snapshots, backlog):
         return " ".join(str(node["idle_reason"]).split())
     if backlog:
         counts = Counter(row["status"] for row in backlog)
-        return (f"resume-first: {len(backlog)} unfinished, {counts['running']} running; "
-                "fresh tasks blocked")
+        return (f"resume priority: {len(backlog)} unfinished, {counts['running']} running; "
+                "independent READY work may run on free nodes")
     tasks = [row for report in snapshots for row in report["tasks"]]
     if any(report.get("stop_requested") for report in snapshots):
         return "stop requested"

@@ -168,7 +168,8 @@ def main(argv=None):
     from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
     from srgc_research.dispatch.llama31 import cli, resume, worker
-    from srgc_research.dispatch.model_resume import LlamaResumeFirst, failure_footer
+    from srgc_research.dispatch.model_resume import failure_footer
+    from srgc_research.dispatch.ready_dispatch import LlamaResumeFirst
     from srgc_research.dispatch.resume_drain import resume_worker
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
     if len(args) > 1 and args[1] == "results":

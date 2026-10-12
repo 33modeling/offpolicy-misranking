@@ -36,7 +36,7 @@ def main(argv=None):
         raise ValueError("resume-first launcher accepts run only")
     diagnostics = importlib.import_module("srgc_qwen35_diagnostics")
     worker = importlib.import_module("srgc_qwen35_worker")
-    from .qwen_resume import ResumeFirst
+    from .ready_dispatch import ResumeFirst
     from .resume_drain import resume_worker
     with patch.object(sys, "argv", [str(REPO / "scripts/srgc_qwen35_diagnostics.py"), *args]), \
             resume_first_worker(), \

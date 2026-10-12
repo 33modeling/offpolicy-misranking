@@ -117,6 +117,14 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
             continue
         with lease(manager.marker.with_suffix(".lock"), wait=True):
             pending = manager.pending()
+            # Keep stopped work in the persisted backlog, but do not make a
+            # different dataset wait for a job this launcher cannot run.
+            pending = {key for key in pending if not cluster.stop_requested(manager.tasks[key][0])}
+            failures = manager.failure_counts()
+            owned = sum(manager.owned(*manager.tasks[key]) for key in pending)
+            possible = any(not manager.tasks[key][0].complete(manager.tasks[key][1]) and
+                           manager.spent(key, failures) < args.max_attempts and
+                           manager.tasks[key][0].ready(manager.tasks[key][1]) for key in pending)
         complete = True
         for queue in requested:
             if cluster.stop_requested(queue):
@@ -130,7 +138,9 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         if complete and not pending:
             progress("stopped" if any(cluster.stop_requested(q) for q in requested) else "complete")
             return
-        owned = sum(manager.owned(*manager.tasks[key]) for key in pending)
+        if pending and not owned and not possible:
+            jobs = ", ".join(f"{manager.tasks[key][0].plan['dataset']}:{key[1]}" for key in sorted(pending))
+            raise RuntimeError(f"{label} unfinished tasks reached the real failure limit; inspect task logs: {jobs}")
         if pending:
             jobs = ", ".join(f"{manager.tasks[key][0].plan['dataset']}:{key[1]}" for key in sorted(pending))
             reason = f"resume backlog={len(pending)} owned={owned}; {jobs}"

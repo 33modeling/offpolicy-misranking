@@ -294,7 +294,7 @@ def test_resume_first_wait_reason_uses_current_task_evidence_and_is_read_only(pr
     before = files(prepared.root)
     with patch.dict(sys.modules, {"torch": None, "transformers": None, "peft": None}):
         text = status.render(snapshots, prepared.root)
-    assert "resume-first: 1 unfinished, 1 running; fresh tasks blocked" in text
+    assert "resume priority: 1 unfinished, 1 running; independent READY work may run on free nodes" in text
     assert "Wait reason" in text and "| RUN 0 | IDLE 1" in text
     assert files(prepared.root) == before
 

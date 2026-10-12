@@ -29,7 +29,8 @@ def main(argv=None):
     from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
     from srgc_research.dispatch.gemma4 import worker
-    from srgc_research.dispatch.model_resume import GemmaResumeFirst, failure_footer
+    from srgc_research.dispatch.model_resume import failure_footer
+    from srgc_research.dispatch.ready_dispatch import GemmaResumeFirst
     from srgc_research.dispatch.resume_drain import resume_worker
 
     identity = cluster.gpu_identity

@@ -14,8 +14,11 @@ from srgc_rebuttal.cluster_queue import Task, TaskQueue
 from srgc_rebuttal.runtime import atomic_json, lease
 from srgc_rebuttal.tests.test_cluster import finish_fake, write_inputs
 from srgc_research.dispatch import qwen_run, resume_drain
-from srgc_research.dispatch.model_resume import GemmaResumeFirst, LlamaResumeFirst
-from srgc_research.dispatch.qwen_resume import ResumeFirst
+from srgc_research.dispatch.ready_dispatch import (
+    GemmaResumeFirst,
+    LlamaResumeFirst,
+    ResumeFirst,
+)
 from srgc_research.tests.test_qwen_resume import abandoned
 
 
@@ -107,7 +110,7 @@ def test_sibling_real_failure_is_retried_before_any_fresh_requested_job(model):
     assert any(row["status"] == "failed" and row["exit_code"] == 9 for row in history)
 
 
-def test_active_sibling_owner_is_preserved_and_idle_reason_is_visible(model, capsys):
+def test_active_sibling_owner_does_not_idle_a_worker_with_ready_work(model, capsys):
     old = Task(9, "sr")
     mbpp = model.queues[1]
     abandoned(mbpp, old)
@@ -116,10 +119,78 @@ def test_active_sibling_owner_is_preserved_and_idle_reason_is_visible(model, cap
             patch.object(resume_drain.time, "sleep", side_effect=KeyboardInterrupt), \
             pytest.raises(KeyboardInterrupt):
         model.run()
-    assert model.jobs == []
+    assert model.jobs == [("math", "seed-5.prefix")]
     assert "owned=1" in model.updates[-1][1]["idle_reason"]
     assert "mbpp:seed-9.sr" in capsys.readouterr().out
-    assert not model.queues[0].receipt(Task(5, "prefix")).exists()
+    assert model.queues[0].complete(Task(5, "prefix"))
+    assert json.loads(mbpp.receipt(old).read_text())["attempt"] == 3
+
+
+def test_ready_arm_runs_while_another_arm_in_the_same_dataset_is_owned(model):
+    math = model.queues[0]
+    running, ready = Task(5, "on_policy"), Task(5, "sr")
+    math.tasks = [running, ready]
+    abandoned(math, running)
+    model.factory(model.queues).pending()
+    with lease(math.directory / "leases" / f"{running.key}.lock"), \
+            patch.object(resume_drain.time, "sleep", side_effect=KeyboardInterrupt), \
+            pytest.raises(KeyboardInterrupt):
+        model.run()
+    assert model.jobs == [("math", ready.key)]
+    assert math.complete(ready) and not math.complete(running)
+    assert json.loads(math.receipt(running).read_text())["attempt"] == 3
+
+
+def test_active_prefix_still_blocks_its_own_arms_but_not_other_seeds(model):
+    math = model.queues[0]
+    running, independent = Task(5, "prefix"), Task(6, "prefix")
+    math.tasks = [Task(5, "on_policy"), Task(5, "sr"), independent, running]
+    abandoned(math, running)
+    model.factory(model.queues).pending()
+    with lease(math.directory / "leases" / f"{running.key}.lock"), \
+            patch.object(resume_drain.time, "sleep", side_effect=KeyboardInterrupt), \
+            pytest.raises(KeyboardInterrupt):
+        model.run()
+    assert model.jobs == [("math", independent.key)]
+    assert not math.receipt(Task(5, "on_policy")).exists()
+    assert not math.receipt(Task(5, "sr")).exists()
+
+
+def test_two_idle_nodes_claim_distinct_ready_jobs_while_a_resume_is_owned(model):
+    math, mbpp = model.queues
+    math.tasks = [Task(5, "prefix"), Task(6, "prefix")]
+    old = Task(9, "sr")
+    abandoned(mbpp, old)
+    model.factory(model.queues).pending()
+    context = multiprocessing.get_context("fork")
+    ready, results = context.Barrier(2), context.Queue()
+
+    def claim_one():
+        ready.wait(10)
+        with model.factory(model.queues).claim(math, retry_failed=True, retry_delay=0) as task:
+            results.put(task.key if task else None)
+            if task:
+                time.sleep(.1)
+                finish_fake(math, task)
+                math.finish(task, 0)
+
+    nodes = [context.Process(target=claim_one) for _ in range(2)]
+    with lease(mbpp.directory / "leases" / f"{old.key}.lock"):
+        try:
+            for node in nodes:
+                node.start()
+            for node in nodes:
+                node.join(10)
+                assert node.exitcode == 0
+            jobs = [results.get(timeout=2) for _ in nodes]
+            assert sorted(jobs) == ["seed-5.prefix", "seed-6.prefix"]
+            assert not results.qsize()
+        finally:
+            for node in nodes:
+                if node.is_alive():
+                    node.kill()
+                    node.join()
+    assert json.loads(mbpp.receipt(old).read_text())["attempt"] == 3
 
 
 @pytest.mark.parametrize("code", (130, 143))
@@ -137,13 +208,18 @@ def test_interruption_keeps_checkpoint_and_refunds_attempt_without_retrying(mode
     assert model.updates[-1][0] == "stopped"
 
 
-def test_retry_budget_remains_bounded_when_sibling_fails_repeatedly(model):
+def test_retry_budget_is_bounded_without_blocking_independent_ready_work(model):
     old = Task(9, "sr")
     abandoned(model.queues[1], old)
+    def child(queue, task, log, **kwargs):
+        if queue.plan["dataset"] == "mbpp":
+            return 9
+        finish_fake(queue, task)
+        return 0
     with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
-        model.run(lambda *a, **kw: 9)
-    assert model.jobs == [("mbpp", old.key)] * 3
-    assert not model.queues[0].receipt(Task(5, "prefix")).exists()
+        model.run(child)
+    assert model.jobs == [("mbpp", old.key)] * 3 + [("math", "seed-5.prefix")]
+    assert model.queues[0].complete(Task(5, "prefix"))
 
 
 def test_different_sibling_snapshot_is_rejected_before_any_launch(model):
@@ -207,7 +283,7 @@ def test_two_dataset_only_nodes_share_sibling_backlog_without_duplicate_jobs(mod
                 node.join()
 
 
-def test_cooldown_is_visible_without_starting_new_work(model, capsys):
+def test_cooldown_does_not_block_independent_ready_work(model, capsys):
     old = Task(9, "sr")
     mbpp = model.queues[1]
     abandoned(mbpp, old, state="failed", attempt=1)
@@ -217,8 +293,42 @@ def test_cooldown_is_visible_without_starting_new_work(model, capsys):
     with patch.object(resume_drain.time, "sleep", side_effect=KeyboardInterrupt), \
             pytest.raises(KeyboardInterrupt):
         model.run()
-    assert model.jobs == []
+    assert model.jobs == [("math", "seed-5.prefix")]
     assert "retry in" in capsys.readouterr().out
+
+
+def test_cooling_task_lease_is_free_while_an_independent_job_runs(model):
+    math = model.queues[0]
+    old, ready = Task(9, "sr"), Task(5, "prefix")
+    math.tasks = [old, ready]
+    abandoned(math, old, state="failed", attempt=1)
+    atomic_json(math.receipt(old), {**json.loads(math.receipt(old).read_text()), "finished": time.time()})
+    model.options.retry_delay = 120
+
+    def child(queue, task, log, **kwargs):
+        assert task == ready
+        assert not math.locked(old), "skipped task lease must not be held for the next job's lifetime"
+        finish_fake(queue, task)
+        return 0
+
+    with patch.object(resume_drain.time, "sleep", side_effect=KeyboardInterrupt), \
+            pytest.raises(KeyboardInterrupt):
+        model.run(child)
+    assert model.jobs == [("math", ready.key)]
+
+
+def test_stopped_sibling_backlog_does_not_block_requested_ready_work(model):
+    math, mbpp = model.queues
+    old = Task(9, "sr")
+    abandoned(mbpp, old)
+    before = mbpp.receipt(old).read_bytes()
+    with patch.object(cluster, "stop_requested", side_effect=lambda queue, **kw: queue.plan_path == mbpp.plan_path), \
+            patch.object(resume_drain.time, "sleep", side_effect=AssertionError("ready work was left idle")):
+        model.run()
+    assert model.jobs == [("math", "seed-5.prefix")]
+    assert math.complete(Task(5, "prefix"))
+    assert mbpp.receipt(old).read_bytes() == before
+    assert model.updates[-1][0] == "complete"
 
 
 def test_public_model_entry_installs_and_restores_operational_drain(model):

@@ -13,7 +13,8 @@
 | Llama | Llama 3.1 8B Instruct SRGC | `bash scripts/run_srgc_llama31.sh all` |
 
 기존 결과·입력·optimizer checkpoint를 보존한다. 진행 중인 실험의 학습 코드나
-설정을 바꾸지 않는다. 중단된 기존 작업을 먼저 재개하고 새 작업은 그 뒤에 시작한다.
+설정을 바꾸지 않는다. 재개할 수 있는 기존 작업을 먼저 배정한다. 그 작업이 다른
+노드에서 실행 중이거나 재시도 대기 중이면 빈 노드가 독립적인 READY 작업을 수행한다.
 `BACKUP` 로그는 백업 상태이며 학습 완료나 GPU 사용 여부를 뜻하지 않는다.
 Information 전체 완료는 `sh scripts/run_srgc_information.sh all status`의
 검증된 측정 `10/10`을 기준으로 확인한다.
@@ -44,6 +45,38 @@ Token·log probability 배열, 학습 응답 원문, worker heartbeat와 rank pr
 두 노드가 동시에 추출하면 snapshot 수집부터 쓰기까지 직렬화한다.
 미완료 결과와 미측정 비용은 완료값으로 바꾸지 않는다.
 현재 GPU 작업을 재시작할 필요 없이 갱신된 script의 `all results`로 추출할 수 있다.
+
+## READY 작업이 있는데 IDLE로 멈추는 배정 오류 — 2026-10-12
+
+Qwen 3.5, Llama, Gemma의 공통 배정기가 공유 resume backlog를 모든 새 작업의
+완료 장벽으로 사용했다. 재개 작업을 다른 노드가 실행하고 있어도 READY 작업이
+배정되지 않았다. 재시도 대기 중이거나 중지된 다른 데이터셋의 backlog도 같은
+대기를 만들었다. 세 모델의 실제 queue/lease를 사용하는 로컬 테스트에서 재현했다.
+
+현재 실행 entry는 별도 `ready_dispatch.py`에서 재개 작업을 우선 배정하고,
+당장 재개할 작업이 없으면 요청한 데이터셋의 독립적인 READY 작업을 배정한다.
+`math`/`mbpp` 명령은 다른 데이터셋의 기존 미완료 작업만 복구하며 그쪽의 새 작업을
+자동으로 시작하지 않는다. `all`은 두 데이터셋의 READY 작업을 모두 배정한다.
+실패 한도에 도달한 작업은 반복하지 않고, 나머지 독립 작업을 처리한 뒤 실패한
+작업 이름을 출력하며 종료한다. 요청하지 않은 데이터셋의 stop 기록은 유지한다.
+
+고정된 engine·모델 adapter·기존 resume 코드의 파일과 해시는 유지한다.
+실험 plan, 입력, 결과, optimizer checkpoint, 과거 실패 기록과 retry budget을
+초기화하지 않는다. 실행 중인 Python worker는 배정기를 다시 import하지 않으므로
+업데이트된 코드로 **IDLE worker를 종료하고 기존 시작 명령으로 다시 실행**해야 한다.
+정상 학습 중인 노드는 해당 작업을 마친 뒤 재시작한다.
+
+```sh
+git pull --ff-only origin master
+# 해당 모델의 IDLE worker를 Ctrl-C로 종료한 뒤 같은 노드에서 실행
+sh scripts/run_srgc_qwen35.sh all
+sh scripts/run_srgc_llama31.sh all
+sh scripts/run_srgc_gemma4.sh all
+```
+
+위 세 시작 명령은 각 모델에 할당된 별도 노드에서 해당 명령 하나만 실행한다.
+원격 노드의 실제 재시작과 GPU 진행은 로컬 queue 테스트와 별도로 확인해야 한다.
+원인, 보존한 코드 해시와 검증 범위는 [수정 기록](SRGC_READY_IDLE_FIX_2026-10-12.md)에 있다.
 
 ## 이전 실행 기록 — 2026-09-25
 
