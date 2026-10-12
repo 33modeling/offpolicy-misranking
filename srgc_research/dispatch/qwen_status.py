@@ -1,7 +1,6 @@
 """Read-only terminal dashboard for Qwen SRGC queues and their recorded progress."""
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -10,13 +9,9 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
-from unittest.mock import patch
 
 from scripts import srgc_live_status as live
-from scripts.srgc_qwen35_storage import default_root, group_work, inside, validate_tree
-from srgc_rebuttal import reports
-from srgc_rebuttal.plan import input_path
-from srgc_rebuttal.runtime import code_digest
+from scripts.srgc_qwen35_storage import default_root
 
 REPO = Path(__file__).resolve().parents[2]
 ARMS = ("cache", "prefix", "on_policy", "switch", "sr", "random")
@@ -26,41 +21,9 @@ LIVE_WORKERS = {"running", "preflight", "idle", "serving_other_dataset"}
 
 def load_reports(dataset, root, environment):
     """Use recorded identities without importing model packages or binding queues."""
-    group, _ = group_work(environment)
-    root = inside(root, group)
-    validate_tree(root)
-    # Existing Qwen validation helpers use the scripts directory for imports.
-    scripts_path = str(REPO / "scripts")
-    if scripts_path not in sys.path:
-        sys.path.insert(0, scripts_path)
-    from scripts import srgc_qwen35 as qwen
+    from .model_status import load_reports as load
 
-    expected_digest = hashlib.sha256((code_digest() + qwen.adapter_digest()).encode()).hexdigest()
-    result = []
-    for name in ("math", "mbpp") if dataset == "all" else (dataset,):
-        plan_path = root / "experiments" / f"qwen35-9b-{name}.json"
-        try:
-            plan = qwen.validate_extension(plan_path, read_only=True)
-            with patch.object(reports, "code_digest", return_value=expected_digest):
-                report = live.snapshot(reports.snapshot, plan_path)
-            for seed in plan["seeds"]:
-                try:
-                    qwen.validate_bundle_model(live.read_object(input_path(plan_path, plan, seed)), plan, seed)
-                except (OSError, ValueError, KeyError, TypeError) as exc:
-                    report["errors"].append(f"seed {seed} Qwen inputs: {exc}")
-                    for task in report["tasks"]:
-                        if task["seed"] == seed:
-                            task["status"] = "invalid"
-            report["complete"] = report["complete"] and not report["errors"]
-            report["counts"] = dict(Counter(task["status"] for task in report["tasks"]))
-            report["prepared"] = True
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            report = {"dataset": name, "output_root": str(root / "runs" / name), "tasks": [],
-                      "workers": [], "errors": [str(exc)], "warnings": [], "complete": False,
-                      "prepared": False, "stop_requested": False, "generated": time.time()}
-        report["label"] = "MATH" if name == "math" else "MBPP"
-        result.append(report)
-    return result
+    return load("qwen35", dataset, root, environment)
 
 
 def age(seconds):
@@ -232,7 +195,7 @@ def idle_reason(node, snapshots, backlog):
     return "waiting for cache/prefix or another node"
 
 
-def render(snapshots, root, *, host=None, now=None):
+def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_initial=False):
     host = socket.gethostname() if host is None else host
     now = time.time() if now is None else now
     tasks = [task for report in snapshots for task in report["tasks"]]
@@ -240,7 +203,7 @@ def render(snapshots, root, *, host=None, now=None):
     done, total = counts["complete"], len(tasks)
     waiting = sum(count for state, count in counts.items() if state.startswith("waiting_for_"))
     issues = sum(counts[state] for state in live.ATTENTION)
-    lines = [f"Qwen3.5-9B | SRGC | {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}",
+    lines = [f"{model} | SRGC | {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}",
         (f"Tasks {bar(done, total)} {done}/{total} completed"
          f" | RUN {counts['running']} | READY {counts['ready']} | WAIT {waiting} | ISSUE {issues}"),
         f"Local node: {host}"]
@@ -290,6 +253,10 @@ def render(snapshots, root, *, host=None, now=None):
         lookup = {(row["seed"], row["arm"]): row for row in rows}
         lines += table(("Seed", *HEADERS), [[seed, *(cell(lookup.get((seed, arm))) for arm in ARMS)]
                                             for seed in seeds])
+        values = report.get("initial_candidate_accuracy", [])
+        if include_initial and values:
+            lines.append(f"{report['label']} initial candidate success (8 responses/prompt): " +
+                         " | ".join(f"seed {row['seed']} {row['success_percent']:.1f}%" for row in values))
     running = [(report["label"], row) for report in snapshots for row in report["tasks"]
                if row["status"] == "running"]
     if running:
@@ -334,7 +301,7 @@ def main(argv=None):
             print(json.dumps({"model": "Qwen/Qwen3.5-9B", "root": str(args.root.resolve()),
                               "datasets": snapshots}, indent=2))
         else:
-            print(render(snapshots, args.root.resolve()))
+            print(render(snapshots, args.root.resolve(), include_initial=True))
         return int(any(report["errors"] for report in snapshots))
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"STATUS ERROR: {exc}", file=sys.stderr)

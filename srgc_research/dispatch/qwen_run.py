@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from .model_launch import released_gpu_identity
 from .qwen_resume import resume_first_worker
 
 REPO = Path(__file__).resolve().parents[2]
@@ -14,8 +15,14 @@ REPO = Path(__file__).resolve().parents[2]
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
     sys.path.insert(0, str(REPO / "scripts"))
+    if args[0] in {"status", "results"}:
+        args = ["all", *args]
     if args[0] not in {"all", "math", "mbpp"}:
         raise ValueError("dataset must be math, mbpp or all")
+    if len(args) > 1 and args[1] == "status":
+        from .model_status import main as status
+
+        return status(["qwen35", *args])
     if len(args) > 1 and args[1] == "results":
         from .model_results import main as results
 
@@ -36,9 +43,13 @@ def main(argv=None):
         raise ValueError("resume-first launcher accepts run only")
     diagnostics = importlib.import_module("srgc_qwen35_diagnostics")
     worker = importlib.import_module("srgc_qwen35_worker")
+    from srgc_rebuttal import cluster
+
     from .ready_dispatch import ResumeFirst
     from .resume_drain import resume_worker
+    identity = cluster.gpu_identity
     with patch.object(sys, "argv", [str(REPO / "scripts/srgc_qwen35_diagnostics.py"), *args]), \
+            patch.object(cluster, "gpu_identity", lambda: released_gpu_identity(identity, label="QWEN")), \
             resume_first_worker(), \
             resume_worker(worker, ResumeFirst, pattern="qwen35-9b-{dataset}.json",
                           env_key="SRGC_QWEN_PLANS", label="QWEN", result_model="qwen35"):
@@ -47,7 +58,9 @@ def main(argv=None):
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
     except (OSError, ValueError, TypeError, RuntimeError) as exc:
         print(f"QWEN resume refused: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

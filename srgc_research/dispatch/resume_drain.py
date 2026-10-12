@@ -3,16 +3,15 @@
 import copy
 import json
 import time
+import uuid
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from unittest.mock import patch
 
 from srgc_rebuttal.runtime import lease
 
 
-def drain(worker, factory, pattern, env_key, label, requested, args, environment,
-          gpu_fds, worker_id, update):
-    from srgc_rebuttal import cluster
-
+def cohort_for(requested, factory, pattern):
     cohort = list(requested)
     for name in ("math", "mbpp"):
         path = requested[0].plan_path.parent / pattern.format(dataset=name)
@@ -20,15 +19,96 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
             cohort.append(type(requested[0])(path))
     manager = factory(cohort)
     cohort = list(manager.queues.values())
+    if len({q.plan.get("model_snapshot_sha256") for q in cohort}) != 1:
+        raise ValueError("sibling datasets use different local model snapshots")
+    return manager, cohort
+
+
+def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, common_root, admission):
+    """Check the full resume cohort before completion, runtime binding or admission."""
+    from scripts.srgc_seed_order import seed_first
+    from srgc_rebuttal import cluster
+    from srgc_rebuttal.cluster_queue import TaskQueue
+
+    requested = [TaskQueue(plan) for plan in plans]
+    for queue in requested:
+        queue.tasks = seed_first(queue.tasks, queue.plan["seeds"])
+    manager, cohort = cohort_for(requested, factory, pattern)
+    for queue in cohort:
+        queue.bind()
+    worker_id = uuid.uuid4().hex
+    metadata = {"started": time.time()}
+
+    def update(state, **details):
+        worker.write_worker(cohort, worker_id, state, **metadata, **details)
+
+    update("preflight")
+    try:
+        stopped = {q.plan_path for q in requested if cluster.stop_requested(q)}
+        if len(stopped) == len(requested):
+            update("stopped")
+            return
+        with lease(manager.marker.with_suffix(".lock"), wait=True):
+            pending = {key for key in manager.pending() if not cluster.stop_requested(manager.tasks[key][0])}
+        if not pending and all(q.plan_path in stopped or
+                               all(q.complete(task) for task in q.tasks) for q in requested):
+            for queue in requested:
+                if queue.plan_path not in stopped:
+                    cluster.publish_reports(queue)
+            update("stopped" if stopped else "complete")
+            return
+        environment = cluster.child_environment()
+        environment[env_key.removesuffix("S")] = str(plans[0])
+        environment[env_key] = json.dumps([str(q.plan_path) for q in cohort])
+        identity = cohort[0].plan.get("model_snapshot_sha256")
+        if identity is not None:
+            environment[env_key.removesuffix("_PLANS") + "_MODEL_SHA256"] = identity
+        signature = worker.runtime_signature()
+        # Refuse incompatible saved runtimes before GPU admission (including
+        # Llama's allocated-process cleanup). bind_runtime rechecks under locks.
+        for queue in cohort:
+            path = queue.directory / "runtime.json"
+            if path.is_file() and json.loads(path.read_text()) != signature:
+                raise ValueError(f"node runtime differs from this experiment: {path}")
+        devices, uuids = cluster.gpu_identity()
+        environment["CUDA_VISIBLE_DEVICES"] = devices
+        metadata.update(devices=devices, gpu_uuids=uuids)
+        with ExitStack() as locks:
+            roots = {Path(common_root) / "gpu-node-locks", Path(group) / ".srgc-gpu-node-locks"}
+            fds = tuple(fd for root in sorted(roots)
+                        for fd in locks.enter_context(cluster.device_leases(root, uuids)))
+            worker.bind_runtime(cohort, signature)
+            metadata["admission"] = admission(cluster.admit,
+                requested[0].directory / "admission" / worker_id, environment, cluster.run_child,
+                pass_fds=fds, plan=requested[0].plan,
+                heartbeat=lambda pid: update("preflight", child_pid=pid),
+                should_stop=lambda: all(cluster.stop_requested(q) for q in requested))
+            code = drain(worker, factory, pattern, env_key, label, requested, args, environment,
+                         fds, worker_id, update, manager=manager)
+            if code is not None:
+                raise SystemExit(code)
+    except BaseException as error:
+        interrupted = (isinstance(error, KeyboardInterrupt) or
+                       isinstance(error, SystemExit) and error.code in (130, 143))
+        update("stopped" if interrupted else "failed",
+               error=f"{type(error).__name__}: {error}")
+        raise
+
+
+def drain(worker, factory, pattern, env_key, label, requested, args, environment,
+          gpu_fds, worker_id, update, *, manager=None):
+    from srgc_rebuttal import cluster
+
+    if manager is None:
+        manager, cohort = cohort_for(requested, factory, pattern)
+    else:
+        cohort = list(manager.queues.values())
     siblings = [q for q in cohort if q not in requested]
     for queue in siblings:
         queue.bind()
     runtime = requested[0].directory / "runtime.json"
     if siblings and runtime.is_file():
         worker.bind_runtime(cohort, json.loads(runtime.read_text()))
-    snapshots = {q.plan.get("model_snapshot_sha256") for q in cohort}
-    if len(snapshots) != 1:
-        raise ValueError("sibling datasets use different local model snapshots")
     environment = {**environment, env_key: json.dumps([str(q.plan_path) for q in cohort])}
     metadata_path = requested[0].directory / "workers" / f"{worker_id}.json"
     metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
@@ -96,12 +176,17 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                     except BaseException:
                         queue.finish(task, 1)
                         raise
+                    if code < 0:
+                        code = 128 - code
                     interrupted = code in (130, 143)
                     code = queue.finish(task, code, interrupted=interrupted)
+                    # An interrupted process can also expose corrupted inputs
+                    # or evidence. finish deliberately records that as failed.
+                    interrupted = interrupted and manager.receipt(queue, task).get("status") == "interrupted"
                     print(f"DONE {task_label} exit={code}", flush=True)
                     if interrupted:
                         progress("stopped", active=queue, task=task)
-                        return
+                        return code
                     if code:
                         from scripts.srgc_log_tail import tail_lines
                         try:
@@ -167,8 +252,13 @@ def resume_worker(worker, factory, *, pattern, env_key, label, result_model=None
         return drain(worker, factory, pattern, env_key, label, queues, copy.copy(args),
                      environment, gpu_fds, worker_id, update)
 
+    def start(plans, args, group, common_root, admission):
+        return worker_loop(worker, factory, pattern, env_key, label, plans, copy.copy(args),
+                           group, common_root, admission)
+
     with ExitStack() as stack:
         stack.enter_context(patch.object(worker, "drain", run))
+        stack.enter_context(patch.object(worker, "worker", start))
         if result_model is not None:
             from srgc_rebuttal import cluster
 

@@ -3,24 +3,17 @@
 import argparse
 import hashlib
 import importlib
-import io
 import json
 import os
 import time
 from collections import Counter
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 from srgc_rebuttal import reports
 
+from .model_status import CONFIGS, load_reports
 from .result_export import export_lock, save_result
-
-CONFIGS = {
-    "qwen35": ("scripts.srgc_qwen35", "scripts.srgc_qwen35_storage", "qwen35-9b"),
-    "gemma4": ("srgc_research.dispatch.gemma4.adapter", "srgc_research.dispatch.gemma4.storage", "gemma4-12b-pt"),
-    "llama31": ("srgc_research.dispatch.llama31.adapter", "srgc_research.dispatch.llama31.storage", "llama31-8b"),
-}
 
 
 def compact(result):
@@ -100,17 +93,7 @@ def _export(model, dataset, *, root, environment):
         return original(path, **{**kwargs, "include_costs": True})
 
     with patch.object(reports, "snapshot", with_costs):
-        if model == "qwen35":
-            from . import qwen_status
-
-            with patch.object(qwen_status, "code_digest", adapter.engine_digest):
-                snapshots = qwen_status.load_reports(dataset, root, environment)
-        else:
-            status = importlib.import_module(adapter_name.removesuffix("adapter") + "status")
-            output = io.StringIO()
-            with redirect_stdout(output), patch.object(status, "code_digest", adapter.engine_digest):
-                status.show(dataset, root, environment, as_json=True)
-            snapshots = json.loads(output.getvalue())["datasets"]
+        snapshots = load_reports(model, dataset, root, environment)
     result = {"export_schema": "srgc-model-results-v1", "experiment": model,
               "model": adapter.MODEL, "model_revision": adapter.REVISION,
               "generated": time.time(), "source_root": str(root), "complete": False,

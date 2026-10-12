@@ -189,7 +189,7 @@ def test_automatic_publication_uses_the_same_artifact(cohort):
     from srgc_rebuttal import cluster
 
     queue = SimpleNamespace(plan_path=cohort.plans["math"])
-    worker = SimpleNamespace(drain=lambda *a: None)
+    worker = SimpleNamespace(drain=lambda *a: None, worker=lambda *a: None)
     previous = cluster.publish_reports
     with patch.dict(os.environ, cohort.env, clear=True), \
             resume_drain.resume_worker(worker, None, pattern="unused", env_key="unused", label="unused", result_model=cohort.model):

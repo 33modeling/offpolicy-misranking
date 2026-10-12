@@ -35,6 +35,7 @@ SEEDS = (7, 5, 6, 8, 9)
 # Actual-backward contribution recovery generation. Bump only for collector
 # execution fixes: improving diagnostics must not relaunch exhausted GPU jobs.
 DISPATCH_REVISION = "0e554bc70c95af786ad918c64f8c3e6d838422a7b795731cf737d3e8e42d8da6"
+SHUTDOWN_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -125,10 +126,14 @@ def run_task(task, handle):
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def stop(sig, _frame):
-        stopped.append(sig)
+        if not stopped:
+            stopped.extend((sig, time.monotonic()))
+        terminate(signal.SIGTERM)
+
+    def terminate(sig):
         if child is not None:
             try:
-                os.killpg(child.pid, signal.SIGTERM)
+                os.killpg(child.pid, sig)
             except ProcessLookupError:
                 pass
 
@@ -147,6 +152,8 @@ def run_task(task, handle):
                 stop(stopped[0], None)
             while True:
                 relay()
+                if stopped and time.monotonic() - stopped[1] >= SHUTDOWN_SECONDS:
+                    terminate(signal.SIGKILL)
                 try:
                     code = child.wait(timeout=.2)
                     relay()
@@ -154,11 +161,21 @@ def run_task(task, handle):
                 except subprocess.TimeoutExpired:
                     pass
     finally:
-        if child is not None and child.poll() is None:
-            stop(signal.SIGTERM, None)
-            child.wait()
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
+        try:
+            if child is not None:
+                # A launcher may exit before its ranks. Reap the entire owned
+                # session before releasing the inherited shared-file claim.
+                terminate(signal.SIGTERM)
+                try:
+                    child.wait(timeout=SHUTDOWN_SECONDS)
+                except subprocess.TimeoutExpired:
+                    terminate(signal.SIGKILL)
+                    child.wait()
+                finally:
+                    terminate(signal.SIGKILL)
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
 
 
 def node_available():
@@ -361,8 +378,14 @@ def sweep(tasks, *, runner=None, available=None, max_attempts=3, retry_delay=120
             error = None
             try:
                 code = runner(task, handle)
+            except KeyboardInterrupt:
+                code = 130
             except (OSError, subprocess.SubprocessError) as exc:
                 error, code = f"cannot start collector: {exc}", 1
+            except Exception as exc:  # noqa: BLE001 -- Persist failures at the collector boundary.
+                error, code = f"collector error ({type(exc).__name__}): {exc}", 1
+            if code < 0:
+                code = 128 - code
             fingerprint = None
             if code == 0:
                 try:

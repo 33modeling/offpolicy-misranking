@@ -3,6 +3,9 @@
 import importlib
 import json
 import multiprocessing
+import signal
+import subprocess
+import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,6 +14,7 @@ import pytest
 
 from srgc_rebuttal import cluster
 from srgc_rebuttal.cluster_queue import Task, TaskQueue
+from srgc_rebuttal.plan import input_path
 from srgc_rebuttal.runtime import atomic_json, lease
 from srgc_rebuttal.tests.test_cluster import finish_fake, write_inputs
 from srgc_research.dispatch import qwen_run, resume_drain
@@ -74,7 +78,69 @@ def model(request, tmp_path, monkeypatch):
             worker.drain(selected or [queues[0]], options, {}, (), worker_id,
                          lambda state, **details: updates.append((state, details)))
     return SimpleNamespace(queues=queues, run=run, jobs=jobs, updates=updates,
-                           factory=factory, worker=worker, options=options)
+                           factory=factory, worker=worker, options=options,
+                           pattern=pattern, env_key=env_key)
+
+
+def run_worker(model, monkeypatch, tmp_path, *, child=None, admission=None):
+    from srgc_rebuttal import cluster_queue
+
+    queues = {q.plan_path: q for q in model.queues}
+    monkeypatch.setattr(cluster_queue, "TaskQueue", lambda path: queues[path.resolve()])
+
+    def complete(command, log, environment, **kwargs):
+        queue, task = command
+        model.jobs.append((queue.plan["dataset"], task.key))
+        if child:
+            return child(queue, task, **kwargs)
+        finish_fake(queue, task)
+        return 0
+
+    with patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", ("a", "b", "c", "d"))), \
+            patch.object(cluster, "task_command", side_effect=lambda q, t: (q, t)), \
+            patch.object(cluster, "run_child", side_effect=complete), \
+            patch.object(cluster, "publish_reports") as publish, \
+            patch.object(model.worker, "runtime_signature", return_value={"test": "runtime"}), \
+            resume_drain.resume_worker(model.worker, model.factory, pattern=model.pattern,
+                                      env_key=model.env_key, label="TEST"):
+        model.worker.worker([model.queues[0].plan_path], model.options, tmp_path, tmp_path,
+                            admission or (lambda *a, **kw: {"passed": True}))
+    return publish
+
+
+def test_worker_checks_sibling_backlog_even_when_requested_dataset_is_complete(model, monkeypatch, tmp_path):
+    finish_fake(model.queues[0], Task(5, "prefix"))
+    old = Task(9, "sr")
+    abandoned(model.queues[1], old)
+    run_worker(model, monkeypatch, tmp_path)
+    assert model.jobs == [("mbpp", old.key)]
+    assert model.queues[1].complete(old)
+
+
+def test_completed_worker_does_not_request_gpu_or_admission(model, monkeypatch, tmp_path):
+    finish_fake(model.queues[0], Task(5, "prefix"))
+    monkeypatch.setattr(cluster, "child_environment", lambda: pytest.fail("completed worker requested GPU setup"))
+    run_worker(model, monkeypatch, tmp_path,
+               admission=lambda *a, **kw: pytest.fail("completed worker requested admission"))
+    assert model.jobs == []
+
+
+def test_worker_binds_sibling_runtime_before_admission(model, monkeypatch, tmp_path):
+    atomic_json(model.queues[1].directory / "runtime.json", {"incompatible": "runtime"})
+    monkeypatch.setattr(cluster, "device_leases", lambda *a: pytest.fail("incompatible runtime requested GPUs"))
+    with pytest.raises(ValueError, match="runtime differs"):
+        run_worker(model, monkeypatch, tmp_path,
+                   admission=lambda *a, **kw: pytest.fail("incompatible cohort admitted"))
+    assert not (model.queues[0].directory / "runtime.json").exists()
+
+
+def test_worker_propagates_child_interruption_and_keeps_stopped_receipt(model, monkeypatch, tmp_path):
+    with pytest.raises(SystemExit) as stopped:
+        run_worker(model, monkeypatch, tmp_path, child=lambda *a, **kw: -signal.SIGTERM)
+    assert stopped.value.code == 143
+    receipts = list((model.queues[0].directory / "workers").glob("*.json"))
+    assert len(receipts) == 1
+    assert json.loads(receipts[0].read_text())["status"] == "stopped"
 
 
 def test_dataset_only_worker_actually_finishes_sibling_resume_before_new_work(model):
@@ -193,7 +259,7 @@ def test_two_idle_nodes_claim_distinct_ready_jobs_while_a_resume_is_owned(model)
     assert json.loads(mbpp.receipt(old).read_text())["attempt"] == 3
 
 
-@pytest.mark.parametrize("code", (130, 143))
+@pytest.mark.parametrize("code", (130, 143, -2, -15))
 def test_interruption_keeps_checkpoint_and_refunds_attempt_without_retrying(model, code):
     old = Task(9, "sr")
     mbpp = model.queues[1]
@@ -204,8 +270,27 @@ def test_interruption_keeps_checkpoint_and_refunds_attempt_without_retrying(mode
     assert model.jobs == [("mbpp", old.key)]
     row = json.loads(mbpp.receipt(old).read_text())
     assert row["status"] == "interrupted" and row["retry_attempt"] == 0
+    assert row["exit_code"] == (128 - code if code < 0 else code)
     assert checkpoint.read_bytes() == b"saved optimizer checkpoint"
     assert model.updates[-1][0] == "stopped"
+
+
+def test_input_validation_failure_during_interruption_is_never_reported_as_stopped(model):
+    old = Task(9, "sr")
+    mbpp = model.queues[1]
+    abandoned(mbpp, old)
+
+    def corrupt(queue, task, log, **kwargs):
+        path = input_path(queue.plan_path, queue.plan, task.seed)
+        path.write_bytes(path.read_bytes() + b"\n")
+        return 143
+
+    with pytest.raises(ValueError, match="frozen inputs changed"):
+        model.run(corrupt)
+    row = json.loads(mbpp.receipt(old).read_text())
+    assert row["status"] == "failed" and row["retry_attempt"] == 1
+    assert "frozen inputs changed" in row["validation_error"]
+    assert all(state != "stopped" for state, _ in model.updates)
 
 
 def test_retry_budget_is_bounded_without_blocking_independent_ready_work(model):
@@ -229,9 +314,12 @@ def test_different_sibling_snapshot_is_rejected_before_any_launch(model):
     # Bind a disjoint protocol just as a separately prepared sibling would do.
     mbpp.directory.joinpath("protocol.json").unlink()
     atomic_json(mbpp.plan_path, plan)
+    atomic_json(model.queues[0].directory / "runtime.json", {"test": "runtime"})
     with pytest.raises(ValueError, match="different local model snapshots"):
         model.run()
     assert model.jobs == []
+    assert not (mbpp.directory / "protocol.json").exists()
+    assert not (mbpp.directory / "runtime.json").exists()
 
 
 def test_heartbeat_callbacks_keep_their_original_dataset_and_task(model):
@@ -339,8 +427,13 @@ def test_public_model_entry_installs_and_restores_operational_drain(model):
 
     worker = model.worker
     original_drain = worker.drain
+    original_worker = worker.worker
 
     def invoke_worker(*unused):
+        # CLI imports this function locally before entering its resume context.
+        # Install it in the outer entry before that import can capture a stale
+        # worker with the premature completion check.
+        assert worker.worker is not original_worker
         if worker.__name__.endswith("gemma4.worker"):
             with gemma_cli.resume_first_worker():
                 worker.drain([], model.options, {}, (), "test", lambda *_: None)
@@ -365,3 +458,36 @@ def test_public_model_entry_installs_and_restores_operational_drain(model):
     actual.assert_called_once()
     assert actual.call_args.args[:2] == (worker, model.factory)
     assert worker.drain is original_drain
+    assert worker.worker is original_worker
+
+
+def test_qwen_module_propagates_results_failure_to_the_shell():
+    script = (
+        "import runpy,sys; from srgc_research.dispatch import model_results; "
+        "model_results.main=lambda args: 7; "
+        "sys.argv=['qwen','all','results']; "
+        "runpy.run_module('srgc_research.dispatch.qwen_run',run_name='__main__')"
+    )
+    result = subprocess.run([sys.executable, "-c", script], cwd=qwen_run.REPO,
+                            capture_output=True, text=True, timeout=20, check=False)
+    assert result.returncode == 7, result.stderr
+
+
+def test_qwen_transition_waits_for_delayed_gpu_release_and_restores_hooks(monkeypatch, capsys):
+    from srgc_rebuttal.runtime import Busy
+    from srgc_research.dispatch import model_launch
+
+    monkeypatch.syspath_prepend(str(qwen_run.REPO / "scripts"))
+    diagnostics = importlib.import_module("srgc_qwen35_diagnostics")
+    expected = ("0,1,2,3", ("a", "b", "c", "d"))
+    def run():
+        assert cluster.gpu_identity() == expected
+        assert cluster.gpu_identity() == expected
+        return 0
+    with patch.object(cluster, "gpu_identity", side_effect=[expected, Busy("CUDA release pending"), expected]) as identity, \
+            patch.object(diagnostics, "main", side_effect=run), \
+            patch.object(model_launch.time, "sleep") as sleep:
+        assert qwen_run.main(["all", "run"]) == 0
+        assert cluster.gpu_identity is identity
+    sleep.assert_called_once_with(1)
+    assert "QWEN GPU memory release complete" in capsys.readouterr().out

@@ -2,7 +2,7 @@
 
 import subprocess
 import sys
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,13 +16,17 @@ def main(argv=None):
     from srgc_research.dispatch.gemma4 import cli, diagnostics, entry
 
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
-    if args[0] == "status":
-        args = ["all", "status", *args[1:]]
-    options = cli.parse_args(args)
-    if options.action == "results":
-        from .model_results import export
+    if args[0] in {"status", "results"}:
+        args = ["all", *args]
+    if len(args) > 1 and args[1] == "status":
+        from .model_status import main as status
 
-        return export("gemma4", options.dataset, root=options.root)
+        return status(["gemma4", *args])
+    if len(args) > 1 and args[1] == "results":
+        from .model_results import main as results
+
+        return results(["gemma4", *args])
+    options = cli.parse_args(args)
     if options.action not in {"run", "resume"}:
         return entry.main(args)
 
@@ -35,9 +39,10 @@ def main(argv=None):
 
     identity = cluster.gpu_identity
     with ExitStack() as stack:
-        stack.enter_context(patch.object(cli, "resume_first_worker", lambda: resume_worker(
+        stack.enter_context(resume_worker(
             worker, GemmaResumeFirst, pattern="gemma4-12b-pt-{dataset}.json",
-            env_key="SRGC_GEMMA_PLANS", label="GEMMA", result_model="gemma4")))
+            env_key="SRGC_GEMMA_PLANS", label="GEMMA", result_model="gemma4"))
+        stack.enter_context(patch.object(cli, "resume_first_worker", nullcontext))
         stack.enter_context(patch.object(guard, "OWNER_MARKERS", (
             *guard.OWNER_MARKERS, "srgc_research.dispatch.gemma_run", "srgc_research.dispatch.gemma4.entry",
         )))

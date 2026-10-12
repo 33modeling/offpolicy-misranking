@@ -46,6 +46,23 @@ Token·log probability 배열, 학습 응답 원문, worker heartbeat와 rank pr
 미완료 결과와 미측정 비용은 완료값으로 바꾸지 않는다.
 현재 GPU 작업을 재시작할 필요 없이 갱신된 script의 `all results`로 추출할 수 있다.
 
+2026-10-12부터 Qwen·Llama·Gemma의 공개 `status`와 `results`는 같은 snapshot
+loader를 사용한다. 상태 표, JSON 항목, seed별 초기 캐시 성공률, 최종 reward,
+비용 누락과 오류 판정 기준이 같다. 초기 캐시 성공률은 400개 후보의 각 8개
+응답으로 구하며, 최종 held-out 평가 reward와 별도로 표시한다.
+한 seed의 입력/캐시가 잘못됐으면 그 seed를 INVALID로 표시하고 나머지 작업은
+계속 보여준다. 조회는 학습을 시작하거나 기존 실험 기록을 수정하지 않는다.
+
+```sh
+sh scripts/run_srgc_qwen35.sh all status
+sh scripts/run_srgc_llama31.sh all status
+sh scripts/run_srgc_gemma4.sh all status
+```
+
+`status`만 쓰면 `all status`이며 `--json`을 붙이면 같은 snapshot을 JSON으로
+출력한다. `math status`/`mbpp status`로 범위를 제한할 수 있다. `results`도
+동일한 축약형·데이터셋 선택을 지원한다.
+
 ## READY 작업이 있는데 IDLE로 멈추는 배정 오류 — 2026-10-12
 
 Qwen 3.5, Llama, Gemma의 공통 배정기가 공유 resume backlog를 모든 새 작업의
@@ -77,6 +94,13 @@ sh scripts/run_srgc_gemma4.sh all
 위 세 시작 명령은 각 모델에 할당된 별도 노드에서 해당 명령 하나만 실행한다.
 원격 노드의 실제 재시작과 GPU 진행은 로컬 queue 테스트와 별도로 확인해야 한다.
 원인, 보존한 코드 해시와 검증 범위는 [수정 기록](SRGC_READY_IDLE_FIX_2026-10-12.md)에 있다.
+
+같은 날 추가 점검에서 worker 시작 시 다른 데이터셋의 기존 backlog를 확인하기
+전에 완료로 종료하는 경로도 수정했다. 두 데이터셋의 model snapshot/runtime을
+먼저 검증하고 실행하며, Qwen도 작업 사이 GPU 메모리 해제를 최대 30초 기다린다.
+SIGINT/SIGTERM 중단은 실패 재시도에서 제외하고 shell에도 중단 코드로 전달한다.
+Information queue는 collector 예외를 failed 기록에 남기고, 종료 신호를 무시하는
+자식은 최대 30초 뒤 해당 process group을 정리한다. 기존 retry revision은 유지한다.
 
 ## 이전 실행 기록 — 2026-09-25
 

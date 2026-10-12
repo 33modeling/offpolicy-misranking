@@ -333,9 +333,13 @@ def exhausted_worker(task, event, results):
         results.put(current.key)
         time.sleep(.03)
         return 9
-    for _ in range(5):
-        queue.sweep([task], runner=runner, available=lambda: True, retry_delay=0)
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        counts, code = queue.sweep([task], runner=runner, available=lambda: True, retry_delay=0)
+        if code is None and counts["failed"] == 1:
+            return
         time.sleep(.03)
+    raise AssertionError("shared retry budget did not reach exhaustion")
 
 
 def test_concurrent_nodes_do_not_each_reset_the_retry_budget(tasks):
@@ -411,6 +415,108 @@ def test_launch_oserror_is_a_recorded_failure_not_an_abandoned_running_task(task
     row = queue.read_receipt(task)
     assert row["status"] == "failed" and row["attempt"] == 1
     assert "cannot start collector" in row["error"]
+
+
+def test_unexpected_collector_exception_exhausts_one_shared_budget(tasks):
+    def broken(*args):
+        raise ValueError("invalid collector command")
+
+    for _ in range(3):
+        assert queue.sweep(tasks[:1], runner=broken, available=lambda: True, retry_delay=0)[1] == 1
+    counts, code = queue.sweep(tasks[:1], runner=broken, available=lambda: True, retry_delay=0)
+    assert code is None and counts["failed"] == 1
+    row = queue.read_receipt(tasks[0])
+    assert row["attempt"] == 3 and row["status"] == "failed"
+    assert "ValueError" in row["error"] and "invalid collector command" in row["error"]
+
+
+@pytest.mark.parametrize("code", [-signal.SIGINT, -signal.SIGTERM])
+def test_signal_exit_is_recorded_as_interruption_and_refunds_attempt(tasks, code):
+    assert queue.sweep(tasks[:1], runner=lambda *a: code, available=lambda: True)[1] == 128 - code
+    row = queue.read_receipt(tasks[0])
+    assert row["status"] == "interrupted" and row["attempt"] == 0
+
+
+def test_keyboard_interrupt_records_interruption_before_releasing_claim(tasks):
+    def interrupted(*args):
+        raise KeyboardInterrupt
+
+    assert queue.sweep(tasks[:1], runner=interrupted, available=lambda: True)[1] == 130
+    assert queue.read_receipt(tasks[0])["status"] == "interrupted"
+    assert queue.read_receipt(tasks[0])["attempt"] == 0
+    with lease(tasks[0].receipt.with_suffix(".lock")):
+        pass
+
+
+def test_sigterm_escalates_for_a_collector_ignoring_shutdown(tasks, monkeypatch, tmp_path):
+    task, ready = tasks[0], tmp_path / "ready"
+    monkeypatch.setattr(queue, "SHUTDOWN_SECONDS", .1)
+    monkeypatch.setattr(queue, "command_for", lambda _: [sys.executable, "-c",
+        ("import signal,sys,time; from pathlib import Path; "
+         "signal.signal(signal.SIGTERM, signal.SIG_IGN); Path(sys.argv[1]).touch(); time.sleep(20)"), str(ready)])
+    ctx = multiprocessing.get_context("fork")
+
+    def worker():
+        _, code = queue.sweep([task], available=lambda: True)
+        sys.exit(code)
+
+    parent = ctx.Process(target=worker)
+    parent.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert ready.exists()
+        os.kill(parent.pid, signal.SIGTERM)
+        parent.join(5)
+        assert parent.exitcode == 143
+        assert queue.read_receipt(task)["status"] == "interrupted"
+        assert queue.read_receipt(task)["attempt"] == 0
+        with lease(task.receipt.with_suffix(".lock")):
+            pass
+    finally:
+        if parent.is_alive():
+            parent.kill()
+            parent.join()
+
+
+def test_exited_launcher_does_not_leave_a_live_rank_or_held_claim(tasks, monkeypatch, tmp_path):
+    task, ready = tasks[0], tmp_path / "rank-pid"
+    script = tmp_path / "leader.py"
+    script.write_text(
+        "import subprocess,sys,time\nfrom pathlib import Path\n"
+        "code = 'import os,signal,sys,time; from pathlib import Path; "
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN); Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(20)'\n"
+        "subprocess.Popen([sys.executable,'-c',code,sys.argv[1]],pass_fds=(int(sys.argv[2]),))\n"
+        "while not Path(sys.argv[1]).exists(): time.sleep(.01)\n"
+    )
+    monkeypatch.setattr(queue, "command_for", lambda _: [sys.executable, str(script), str(ready),
+                         str(queue.read_receipt(task)["claim_fd"])])
+
+    def runner(current, handle):
+        atomic_json(current.receipt, {**queue.read_receipt(current), "claim_fd": handle.fileno()})
+        return queue.run_task(current, handle)
+
+    pid = None
+    try:
+        assert queue.sweep([task], runner=runner, available=lambda: True)[1] == 1  # No endpoint.
+        pid = int(ready.read_text())
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            stat = Path(f"/proc/{pid}/stat")
+            if not stat.exists() or stat.read_text().rsplit(") ", 1)[1].startswith("Z"):
+                break
+            time.sleep(.01)
+        else:
+            pytest.fail("owned rank survived its launcher")
+        with lease(task.receipt.with_suffix(".lock")):
+            pass
+    finally:
+        if pid is not None:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_old_rank_log_reports_original_error_without_requiring_gpu_imports(tasks, capsys):

@@ -6,10 +6,8 @@ from pathlib import Path
 import sys
 import tempfile
 import copy
-import multiprocessing
 import time
 from contextlib import contextmanager
-from concurrent.futures import ProcessPoolExecutor
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch, MagicMock
@@ -18,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import run_srgc_qwen35 as launcher
 from srgc_rebuttal.tests import test_qwen_extension as model_tests
+from srgc_rebuttal.tests.test_cluster import parallel_workers
 HAS_QWEN = model_tests.HAS_QWEN
 
 
@@ -290,12 +289,9 @@ class MultiNodeRegressionTests(unittest.TestCase):
             root = Path(temp)
             plans = [qwen.prepare(dataset, ROOT / "srgc_rebuttal/experiments" / source, root / "experiment", model_tests.ChatTokenizer())
                      for dataset, source in (("math", "additional_seeds.json"), ("mbpp", "mbpp_seeds.json"))]
-            context = multiprocessing.get_context("spawn")
-            with context.Manager() as manager:
-                barrier = manager.Barrier(2)
-                with ProcessPoolExecutor(max_workers=2, mp_context=context) as pool:
-                    futures = [pool.submit(simulate_node, [str(p) for p in plans], str(root), node, barrier) for node in range(2)]
-                    jobs = [job for future in futures for job in future.result(timeout=90)]
+            jobs = [job for result in parallel_workers(simulate_node,
+                    [([str(p) for p in plans], str(root), node) for node in range(2)], timeout=90)
+                    for job in result]
             self.assertEqual(len(jobs), 60)
             self.assertEqual(len({(dataset, key) for dataset, key, *_ in jobs}), 60)
             times = {(d, k): (s, e) for d, k, s, e in jobs}

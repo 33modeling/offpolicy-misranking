@@ -21,6 +21,25 @@ from srgc_rebuttal.plan import DEFAULT_PLAN, digest
 from srgc_rebuttal.runtime import Busy, atomic_json, finalize_seed, lease
 
 
+def initialize_barrier(barrier):
+    global simulation_barrier
+    simulation_barrier = barrier
+
+
+def simulate_with_barrier(worker, arguments):
+    return worker(*arguments, simulation_barrier)
+
+
+def parallel_workers(worker, arguments, *, timeout=30):
+    """Use spawned processes and shared-memory synchronization, without a server."""
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=len(arguments), mp_context=context,
+                             initializer=initialize_barrier,
+                             initargs=(context.Barrier(len(arguments)),)) as pool:
+        futures = [pool.submit(simulate_with_barrier, worker, row) for row in arguments]
+        return [future.result(timeout=timeout) for future in futures]
+
+
 def write_inputs(root, *, pending=False):
     plan = json.loads(DEFAULT_PLAN.read_text())
     plan.update(output_root="runs", input_pattern="inputs-{seed}.json")
@@ -100,12 +119,8 @@ class QueueTests(unittest.TestCase):
     def test_four_processes_execute_25_tasks_once_and_respect_prefix_dependencies(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = write_inputs(Path(directory))
-            context = multiprocessing.get_context("spawn")
-            with context.Manager() as manager:
-                barrier = manager.Barrier(4)
-                with ProcessPoolExecutor(max_workers=4, mp_context=context) as pool:
-                    futures = [pool.submit(simulate_worker, str(plan), barrier) for _ in range(4)]
-                    jobs = [job for future in futures for job in future.result(timeout=30)]
+            jobs = [job for result in parallel_workers(simulate_worker, [(str(plan),)] * 4)
+                    for job in result]
             self.assertEqual(len(jobs), 25)
             self.assertEqual(len({key for key, _, _ in jobs}), 25)
             times = {key: (start, end) for key, start, end in jobs}
@@ -161,12 +176,8 @@ class QueueTests(unittest.TestCase):
     def test_two_nodes_execute_all_30_tasks_from_pending_caches_once(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = write_inputs(Path(directory), pending=True)
-            context = multiprocessing.get_context("spawn")
-            with context.Manager() as manager:
-                barrier = manager.Barrier(2)
-                with ProcessPoolExecutor(max_workers=2, mp_context=context) as pool:
-                    futures = [pool.submit(simulate_worker, str(plan), barrier) for _ in range(2)]
-                    jobs = [j for f in futures for j in f.result(timeout=30)]
+            jobs = [job for result in parallel_workers(simulate_worker, [(str(plan),)] * 2)
+                    for job in result]
             self.assertEqual(len(jobs), 30)
             self.assertEqual(len({key for key, _, _ in jobs}), 30)
             times = {key: (start, end) for key, start, end in jobs}

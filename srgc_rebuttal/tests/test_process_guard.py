@@ -1,4 +1,4 @@
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 import os
 import subprocess
@@ -12,7 +12,7 @@ from unittest.mock import patch
 from scripts import srgc_process_guard as guard
 from srgc_rebuttal import cluster
 from srgc_rebuttal.runtime import Busy, lease
-from srgc_rebuttal.tests.test_cluster import simulate_worker, write_inputs
+from srgc_rebuttal.tests.test_cluster import parallel_workers, simulate_worker, write_inputs
 
 PLAN = "/tmp/srgc-guard-test/experiments/additional_seeds.json"
 
@@ -38,7 +38,7 @@ def alive(pid):
         return False
 
 
-def simulate_guarded_node(plan, barrier, node):
+def simulate_guarded_node(plan, node, barrier):
     # Both allocations expose local indices 0..3 but have different physical UUIDs.
     with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1,2,3"}), \
             guard.process_guard(plan), \
@@ -199,12 +199,8 @@ class ProcessGuardTest(unittest.TestCase):
     def test_two_allocations_share_queue_without_sharing_device_locks_or_tasks(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = write_inputs(Path(directory), pending=True)
-            context = multiprocessing.get_context("spawn")
-            with context.Manager() as manager:
-                barrier = manager.Barrier(2)
-                with ProcessPoolExecutor(max_workers=2, mp_context=context) as pool:
-                    futures = [pool.submit(simulate_guarded_node, str(plan), barrier, node) for node in range(2)]
-                    jobs = [job for future in futures for job in future.result(timeout=30)]
+            jobs = [job for result in parallel_workers(simulate_guarded_node,
+                    [(str(plan), node) for node in range(2)]) for job in result]
             self.assertEqual(len(jobs), 30)
             self.assertEqual(len({key for key, _, _ in jobs}), 30)
             times = {key: (start, end) for key, start, end in jobs}

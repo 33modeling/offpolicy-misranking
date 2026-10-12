@@ -95,8 +95,10 @@ def test_llama_wrapper_installs_recovery_without_changing_adapter(tmp_path):
     )
 
     before = adapter.adapter_digest()
+    original = resume.ResumeFirst
     with patch.object(cli, "main", side_effect=lambda args: int(resume.ResumeFirst is not ReadyLlamaResumeFirst)):
-        assert llama_run.main(["all", "status"]) == 0
+        assert llama_run.main(["all", "run"]) == 0
+    assert resume.ResumeFirst is original
     assert adapter.adapter_digest() == before
 
 

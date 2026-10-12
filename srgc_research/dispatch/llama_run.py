@@ -6,7 +6,7 @@ import signal
 import subprocess
 import sys
 import time
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -172,15 +172,22 @@ def main(argv=None):
     from srgc_research.dispatch.ready_dispatch import LlamaResumeFirst
     from srgc_research.dispatch.resume_drain import resume_worker
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
+    if args[0] in {"status", "results"}:
+        args = ["all", *args]
+    if len(args) > 1 and args[1] == "status":
+        from .model_status import main as status
+
+        return status(["llama31", *args])
     if len(args) > 1 and args[1] == "results":
         from .model_results import main as results
 
         return results(["llama31", *args])
     original, started = cluster.gpu_identity, False
     with ExitStack() as stack:
-        stack.enter_context(patch.object(cli, "resume_first_worker", lambda: resume_worker(
+        stack.enter_context(resume_worker(
             worker, LlamaResumeFirst, pattern="llama31-8b-{dataset}.json",
-            env_key="SRGC_LLAMA_PLANS", label="LLAMA", result_model="llama31")))
+            env_key="SRGC_LLAMA_PLANS", label="LLAMA", result_model="llama31"))
+        stack.enter_context(patch.object(cli, "resume_first_worker", nullcontext))
         def gpu_identity():
             nonlocal started
             if not started:

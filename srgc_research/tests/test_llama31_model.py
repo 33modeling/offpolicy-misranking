@@ -54,6 +54,20 @@ def reference_snapshot(tmp_path_factory):
         chat_template=CHAT_TEMPLATE,
     )
     tokenizer.save_pretrained(path)
+    # Exercise the pinned Llama metadata format, independently of the HF
+    # version generating this fixture (HF 5 renames the generic fast backend
+    # and omits the legacy decoder table).
+    config_path = path / "tokenizer_config.json"
+    metadata = json.loads(config_path.read_text())
+    metadata["tokenizer_class"] = "PreTrainedTokenizerFast"
+    metadata["added_tokens_decoder"] = {
+        str(token_id): {"content": str(token), **{
+            name: getattr(token, name)
+            for name in ("lstrip", "rstrip", "normalized", "single_word", "special")
+        }}
+        for token_id, token in tokenizer.added_tokens_decoder.items()
+    }
+    config_path.write_text(json.dumps(metadata))
     (path / "config.json").write_text(
         json.dumps({"model_type": "llama", "vocab_size": 128256})
     )

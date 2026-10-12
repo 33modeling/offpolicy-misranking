@@ -188,7 +188,15 @@ def test_logps_and_gradients_match_native_softcapped_forward(dtype):
     ga = torch.autograd.grad(sum(value.sum() for value in actual), params)
     gb = torch.autograd.grad(sum(value.sum() for value in expected), params)
     for a, b in zip(ga, gb):
-        torch.testing.assert_close(a, b, rtol=0.02 if dtype == torch.bfloat16 else 1e-5, atol=2e-3 if dtype == torch.bfloat16 else 1e-6)
+        if dtype == torch.bfloat16:
+            torch.testing.assert_close(a, b, rtol=0.02, atol=2e-3)
+        else:
+            # Chunked GEMMs and gather-logsumexp round differently from the
+            # dense log-softmax backward. Bound the tensor norm in FP32 eps,
+            # including coordinates near zero where relative error explodes.
+            error = (a - b).double().norm()
+            bound = 32 * torch.finfo(dtype).eps * b.double().norm() + 1e-7
+            assert error <= bound, (error, bound)
     for index, layer in enumerate(backend.model.get_base_model().model.layers):
         names = {name for name, module in layer.self_attn.named_children() if hasattr(module, "lora_A")}
         assert names == ({"q_proj", "v_proj"} if index % 2 == 0 else {"q_proj", "k_proj"})

@@ -3,9 +3,7 @@ import json
 import tempfile
 import sys
 import unittest
-import multiprocessing
 import time
-from concurrent.futures import ProcessPoolExecutor
 from contextlib import ExitStack, nullcontext, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +12,7 @@ from unittest.mock import patch
 from scripts import srgc_multi_queue as multi
 from srgc_rebuttal import cluster
 from srgc_rebuttal.cluster_queue import TaskQueue
-from srgc_rebuttal.tests.test_cluster import finish_fake, write_inputs
+from srgc_rebuttal.tests.test_cluster import finish_fake, parallel_workers, write_inputs
 from scripts.srgc_seed_order import seed_first_queue
 
 
@@ -178,12 +176,8 @@ class MultiQueueTest(unittest.TestCase):
             for name in ("math", "mbpp"):
                 (root / name).mkdir()
             plans = [write_inputs(root / name, pending=True) for name in ("math", "mbpp")]
-            context = multiprocessing.get_context("spawn")
-            with context.Manager() as manager:
-                barrier = manager.Barrier(2)
-                with ProcessPoolExecutor(max_workers=2, mp_context=context) as pool:
-                    futures = [pool.submit(simulate_multi_worker, *map(str, plans), f"node{i}", barrier) for i in range(2)]
-                    jobs = [job for future in futures for job in future.result(timeout=40)]
+            jobs = [job for result in parallel_workers(simulate_multi_worker,
+                    [(*map(str, plans), f"node{i}") for i in range(2)], timeout=40) for job in result]
             self.assertEqual(len(jobs), 60)
             self.assertEqual(len({(dataset, task) for dataset, task, *_ in jobs}), 60)
             active = peak = 0
