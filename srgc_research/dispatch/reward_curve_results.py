@@ -70,6 +70,28 @@ def collect(folder, arm, plan, expected, ids, read):
             points = proposed
             sources.append(str(training_path))
 
+    prefix_points = []
+    prefix_protocol = protocol_for("prefix")
+    prefix_path = folder / "reward-curves/prefix/training.json"
+    prefix_training = read(prefix_path)
+    if prefix_training is not None:
+        if prefix_protocol is None or any(prefix_training.get(k) != v for k, v in prefix_protocol.items()):
+            raise ValueError("shared-prefix scalar rewards lack their protocol")
+        step = prefix_training["step"]
+        proposed = prefix_training["points"]
+        if (type(step) is not int or not 0 <= step <= plan["shared_prefix_updates"] or
+                not isinstance(proposed, list) or any(not isinstance(p, dict) for p in proposed) or
+                [p.get("step") for p in proposed] != list(range(1, step + 1))):
+            raise ValueError("shared-prefix training rewards have missing or duplicate updates")
+        for point in proposed:
+            reward = finite_reward(point["reward"])
+            if (point.get("kind") != "selected_training_batch" or point.get("reward_percent") != 100 * reward or
+                    point.get("selector") != "on_policy"):
+                raise ValueError("shared-prefix training reward kind/units/selector differ")
+            prefix_points.append({k: point[k] for k in ("step", "reward", "reward_percent", "selector", "kind")})
+        sources.append(str(prefix_path))
+    all_points = [{**p, "shared_prefix": True} for p in prefix_points] + points
+
     for name in ("prefix", arm):
         bound = protocol_for(name)
         if bound is None:
@@ -97,6 +119,7 @@ def collect(folder, arm, plan, expected, ids, read):
                               "shared_prefix": name == "prefix", "responses_per_prompt": RESPONSES,
                               "question_count": len(ids), "extension_sha256": bound["extension_sha256"]}
             costs.append({"step": step, "arm": name, "scope": row.get("cost_scope"), "costs": row.get("cost_receipts")})
-    return {"seed": expected["seed"], "arm": arm, "training_rewards": points,
-            "training_windows_25": windows(points), "training_sources": sources,
+    return {"seed": expected["seed"], "arm": arm, "training_rewards": all_points,
+            "shared_prefix_training_recorded_updates": len(prefix_points),
+            "training_windows_25": windows(all_points), "training_sources": sources,
             "held_out_rewards": list(held_out.values()), "diagnostic_costs": costs}

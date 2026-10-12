@@ -168,3 +168,27 @@ def test_saved_measurement_cannot_be_reused_for_different_actual_weights(tmp_pat
     backend.parameter += 1
     with pytest.raises(ValueError, match="resumed learner"):
         engine.capture_boundary()
+
+
+def test_shared_prefix_training_reward_is_included_at_step_25(cohort):
+    from srgc_rebuttal.plan import load_plan, input_path
+    folder = finish(cohort, "math")
+    plan = load_plan(cohort.plans["math"])
+    data = json.loads(input_path(cohort.plans["math"], plan, 5).read_text())
+    identity = json.loads((folder / "run.json").read_text())
+    identity.pop("status")
+    protocol = {**identity, "schema": curves.SCHEMA, "arm": "prefix", "extension_sha256": "e"*64,
+                "interval_updates": 25, "responses_per_prompt": 8, "question_count": len(data["evaluation_ids"]),
+                "evaluation_ids_sha256": curves.fingerprint(data["evaluation_ids"]), "stream": "reporting-evaluation",
+                "training_batch_reward_is_held_out": False}
+    rows = history(1, 25)
+    for row in rows: row["selector"] = "on_policy"
+    points = curves.training_points(rows, start=0, stop=25)
+    atomic_json(folder / "reward-curves/prefix/protocol.json", protocol)
+    atomic_json(folder / "reward-curves/prefix/training.json", {**protocol, "step": 25, "points": points})
+    assert model_results.export(cohort.model, "math", environment=cohort.env) == 0
+    row = next(x for x in read_result(cohort)["datasets"]["math"]["reward_curves"] if x["seed"] == 5 and x["arm"] == "on_policy")
+    assert row["shared_prefix_training_recorded_updates"] == 25
+    assert [p["step"] for p in row["training_rewards"]] == list(range(1, 26))
+    assert all(p["shared_prefix"] for p in row["training_rewards"])
+    assert row["training_windows_25"][0]["end_step"] == 25

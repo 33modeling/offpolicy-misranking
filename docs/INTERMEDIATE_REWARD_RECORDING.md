@@ -28,4 +28,6 @@
 
 `sh scripts/run_srgc_gemma4.sh results`, `sh scripts/run_srgc_llama31.sh results`의 공개 results 명령은 기존 단일 compact JSON에 `datasets.DATASET.reward_curves`를 추가한다. Qwen의 **이미 저장된 progress history**도 같은 export 경로에서 보존한다. Qwen에 새로운 중간 held-out 평가를 설치하는 변경은 아니다.
 
+shared prefix의 scalar 기록이 있으면 1–25도 각 arm의 `training_rewards`와 25-step 구간 평균에 포함한다. `shared_prefix: true`로 공통 학습 구간임을 표시하고, `shared_prefix_training_recorded_updates`로 기록된 개수를 알린다.
+
 각 curve에 `training_rewards`, `training_windows_25`, `held_out_rewards`, `missing_held_out_steps`, `diagnostic_costs`가 있다. reward는 0–1, `reward_percent`는 0–100이다. 원시 응답·token/logprob 배열은 compact 결과에 넣지 않는다. 파일이 검사 도중 바뀌거나 run identity가 맞지 않으면 오류를 표시하고 results 재실행이 필요하다.
