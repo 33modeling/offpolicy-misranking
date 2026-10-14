@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.srgc_live_status import switch_detail
 from scripts.srgc_replicate_worker import SCOPES, signature, tasks_for
+from scripts.srgc_time_status import attach_scope
+from scripts.srgc_time_status import render as render_times
 from srgc_rebuttal.plan import load_plan
 
 
@@ -90,7 +92,7 @@ def inspect(task, *, now=None):
                 row["state"] = "waiting_prefix"
     except (OSError, ValueError, TypeError, KeyError) as exc:
         row.update(state="invalid", error=str(exc))
-    return row
+    return attach_scope(row, out, arm=task.arm)
 
 
 def main(argv=None):
@@ -133,6 +135,8 @@ def main(argv=None):
             if row.get("log") and row['state'] in ("failed", "invalid", "stale_worker"):
                 print(f"  log: {row['log']}")
         print("TOTAL " + " ".join(f"{key}={value}" for key, value in sorted(counts.items())))
+        for dataset in sorted({row["dataset"] for row in rows}):
+            print("\n".join(render_times({"rows": [row for row in rows if row["dataset"] == dataset]}, label=dataset)))
         print("endpoint_unverified = result file present, not validated by this read-only command")
         print("age(s) = time since the last saved progress; '-' = no saved progress")
         for error in errors:

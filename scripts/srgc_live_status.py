@@ -169,7 +169,8 @@ def snapshot(original, plan_path, **kwargs):
             row.update(step=None, completed_steps=None, current_step=None)
             report["errors"].append(f"{row['task']} live progress: {type(exc).__name__}: {exc}")
     report["complete"] = report["complete"] and not report["errors"]
-    return report
+    from scripts.srgc_time_status import attach
+    return attach(report, plan_path, plan)
 
 
 ATTENTION = {"failed", "interrupted", "recoverable", "invalid", "attempts_exhausted"}
@@ -346,6 +347,8 @@ def render(report, *, results=False):
         lines += ["", "switch decisions (completed-update boundaries):"]
         lines += [f"  {row['task']:<16} {detail}" for row, detail in decisions]
         lines.append("  SW@N = switch after update N; first SR training update is N+1.")
+    from scripts.srgc_time_status import render as render_times
+    lines.extend(render_times(report))
     running = [row for row in tasks if row["status"] == "running"]
     if running:
         lines += ["", "running now:"]

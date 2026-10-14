@@ -289,6 +289,8 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         if include_initial and values:
             lines.append(f"{report['label']} initial candidate success (8 responses/prompt): " +
                          " | ".join(f"seed {row['seed']} {row['success_percent']:.1f}%" for row in values))
+        from scripts.srgc_time_status import render as render_times
+        lines.extend(render_times(report, label=report["label"]))
     running = [(report["label"], row) for report in snapshots for row in report["tasks"]
                if row["status"] == "running"]
     if running:

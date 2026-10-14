@@ -7,6 +7,8 @@ import os
 from collections import Counter
 from pathlib import Path
 
+from scripts.srgc_time_status import attach_scope
+from scripts.srgc_time_status import render as render_times
 from srgc_research.information_cli import status
 from srgc_research.information_report import PHASES, read_object
 
@@ -62,7 +64,8 @@ def inspect(root, dataset, seed):
             row["state"] = "resume"
     except (OSError, ValueError, KeyError, TypeError) as error:
         row.update(state="invalid", error=str(error))
-    return row
+    row["arm"] = "information-t0"
+    return attach_scope(row, output)
 
 
 def main(argv=None):
@@ -91,6 +94,8 @@ def main(argv=None):
             if row["error"]:
                 print(f"  {row['error']}")
         print("COMPLETE: all requested information measurements" if complete else "INCOMPLETE: measurements remain")
+        for name in names:
+            print("\n".join(render_times({"rows": [row for row in rows if row["dataset"] == name]}, label=name)))
     return int(bool(counts.get("invalid") or counts.get("failed")))
 
 

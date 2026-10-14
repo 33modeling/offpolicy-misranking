@@ -1,5 +1,45 @@
 # SRGC status의 전환 시점 표시
 
+## GPU 시간 표시
+
+2026-10-14부터 Qwen·Llama·Gemma의 MATH/MBPP, 공통 OLMo SRGC,
+추가 arm·메커니즘·replicate·고정 전환·규칙·support, 정보 측정,
+현재 등록된 N01–N07 연구 실험 및 기존 new-seed status에 GPU 시간 표를 추가했다.
+학습 코드·모델 adapter·기존 frozen runtime은 바꾸지 않고 저장된 비용 receipt를 읽는다.
+
+`GPU TIMES (GPU-hours)`는 seed·arm별 Prep/Select/Train/Eval/Check/Start,
+`S+T+P`와 `Phases`를 표시한다. S+T+P는 준비+선별+학습이며 평가·checkpoint·startup을
+제외한다. Phases는 scope의 기록된 모든 phase 비용이다. cache와 prefix, 공통 startup은
+한 seed에서 공유하는 별도 비용으로 표시하며 네 continuation에 중복 합산하지 않는다.
+GPU-hour는 GPU-seconds/3600으로 계산하며 wall-hour와 다르다. invocation과 그 안에
+포함된 phase 비용을 더하지 않는다.
+
+| 표시 | 의미 |
+| --- | --- |
+| `COMPLETE` | 완료 scope와 비용 측정이 확인됨 |
+| `PARTIAL`, `>=` | 완료된 receipt까지의 누적 비용 하한; 실행 중 timer는 추정하지 않음 |
+| `MISSING`, `-` | 시간 미측정·미수신; 0으로 대체하지 않음 |
+| `INVALID` | 비용 자료를 읽거나 검증할 수 없음; 보상·진행 상태와 구분 |
+
+같은 데이터셋·arm의 모든 seed가 COMPLETE일 때만 S+T+P 평균과 표본 SD를 표시한다.
+JSON에는 `timing.gpu_seconds`와 `timing.gpu_hours`의 정확한 값, 측정 상태와
+회계 범위를 함께 넣는다. 보상 평가와 학습-batch 보상 기록은 변경하지 않는다.
+
+```sh
+sh scripts/run_srgc_qwen35.sh all status
+sh scripts/run_srgc_llama31.sh all status
+sh scripts/run_srgc_gemma4.sh all status
+sh scripts/run_srgc_qwen35.sh math status --json
+sh scripts/run_srgc.sh all status
+sh scripts/run_srgc_sr_refresh.sh all status all
+sh scripts/run_srgc_research.sh all n01 status --json
+sh scripts/run_srgc_information.sh all status --json
+```
+
+동결된 package 내부의 과거 `reports`를 편집하지 않고 공개 status entry에서 표시한다.
+진행 중인 학습 checkout이나 plan을 새 코드로 교체하지 않는다. GPU 시간 조회는
+학습·캐시 생성·GPU 모델 로드·결과 재작성·새 작업 배정을 실행하지 않는다.
+
 Qwen3.5, Llama3.1, Gemma4의 공개 status 명령과 공통 SRGC status,
 추가 switch 실험의 status에 저장된 전환 시점을 표시한다.
 

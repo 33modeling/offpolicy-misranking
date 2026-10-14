@@ -14,4 +14,7 @@ fi
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+if [ "${3:-run}" = status ]; then
+    exec "$PY" scripts/srgc_research_status.py "$@"
+fi
 exec "$PY" -m srgc_research.cli "$@"

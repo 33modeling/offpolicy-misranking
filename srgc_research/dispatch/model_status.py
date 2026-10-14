@@ -117,6 +117,8 @@ def load_reports(model, dataset, root, environment):
                             row.update(status="invalid", reward_percent=None, cost_complete=False)
                             for field in reports.COST_FIELDS:
                                 row[field] = None
+                            from scripts.srgc_time_status import invalid
+                            invalid(row, "model-specific input validation failed")
             report["complete"] = report["complete"] and not report["errors"]
             report["counts"] = dict(Counter(row["status"] for row in report["tasks"]))
             for arm, statistics in report.get("arm_statistics", {}).items():

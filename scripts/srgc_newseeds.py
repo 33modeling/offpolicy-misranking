@@ -19,11 +19,11 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 SCHEMA = "srgc-newseeds/v1"
 ARMS = ("fresh_r", "passrate_beta")
@@ -324,6 +324,7 @@ def arm_status(out: Path, arm: str, drift: int, now: float, steps: int = 100) ->
 
 def status(root: Path, now: float | None = None) -> dict:
     import time
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     now = time.time() if now is None else now
     states, totals = [], {"decisions": 0, "parents": 0, "arms_done": 0, "arms": 0, "results": 0}
     for drift in STATE_STEPS:
@@ -333,6 +334,10 @@ def status(root: Path, now: float | None = None) -> dict:
             decision = read(decision_path) if decision_path.is_file() else None
             parent = _shards(out, "before")
             arms = [arm_status(out, arm, drift, now) for arm in STATUS_ARMS]
+            from scripts.srgc_time_status import attach_scope
+            for arm in arms:
+                arm["seed"] = seed
+                attach_scope(arm, out / arm["arm"])
             ready = (out / "downstream_results.csv").is_file()
             totals["decisions"] += decision is not None
             totals["parents"] += parent == 4
@@ -363,6 +368,8 @@ def status_text(data: dict) -> str:
         for arm in state["arms"]:
             flag = "  <- no update for over 30 min" if arm["stalled"] else ""
             lines.append(f"  {arm['arm']:14s} {arm['state']:7s} {arm['detail']:26s} last update {arm['last_update']}{flag}")
+        from scripts.srgc_time_status import render as render_times
+        lines.extend(render_times({"rows": state["arms"]}, label=state["state"]))
     if not data["complete"]:
         waiting = [f"{s['state']}/{a['arm']}" for s in data["states"] for a in s["arms"] if a["state"] == "WAIT"]
         if waiting:
