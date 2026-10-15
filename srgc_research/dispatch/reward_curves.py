@@ -23,7 +23,8 @@ def fingerprint(value):
 
 
 def extension_digest():
-    paths = (Path(__file__), Path(__file__).with_name("reward_curve_rank.py"))
+    paths = (Path(__file__), Path(__file__).with_name("reward_curve_rank.py"),
+             Path(__file__).with_name("rollout_records.py"))
     return hashlib.sha256(b"".join(p.read_bytes() for p in paths)).hexdigest()
 
 
@@ -35,12 +36,12 @@ def finite_reward(value):
 
 def training_points(history, *, start, stop):
     if not isinstance(history, list):
-        raise ValueError("training history must be a list")
+        raise ValueError("training history must be a list")  # noqa: TRY004 - validation contract
     points = []
     previous = start
     for item in history:
         if not isinstance(item, dict):
-            raise ValueError("training history records must be objects")
+            raise ValueError("training history records must be objects")  # noqa: TRY004 - validation contract
         step = item.get("completed_updates")
         if type(step) is not int or step != previous + 1 or item.get("checkpoint") != step - 1 or step > stop:
             raise ValueError("training reward steps are not a contiguous completed-update history")
@@ -68,8 +69,13 @@ def windows(points):
 
 
 def recording_command(command):
-    """Wrap only Gemma/Llama training ranks, retaining their pinned arguments."""
+    """Wrap training ranks, retaining pinned model arguments and cache/smoke entries."""
     command = list(command)
+    if "--stage" in command and command[command.index("--stage") + 1] == "train":
+        for index, argument in enumerate(command):
+            if Path(argument).name in {"srgc_qwen35_rank.py", "srgc_qwen35_rank_runtime.py"}:
+                return [*command[:index], str(Path(__file__).resolve().parents[2] /
+                        "scripts/srgc_qwen35_reward_curve_rank.py"), *command[index + 1:]]
     for model in ("gemma4", "llama31"):
         module = f"srgc_research.dispatch.{model}.rank"
         if module not in command or "--stage" not in command or command[command.index("--stage") + 1] != "train":
@@ -143,10 +149,10 @@ def equal_state(left, right):
 
 
 def recording_engine(base, folder, task, plan_path, plan, data):
+    from srgc_rebuttal.cost_ledger import PhaseLedger
     from srgc_rebuttal.distributed import primary
     from srgc_rebuttal.plan import digest
     from srgc_rebuttal.srgc import stream_seed
-    from srgc_rebuttal.cost_ledger import PhaseLedger
     from srgc_rebuttal.timing import torch_meter
 
     folder = Path(folder)
@@ -226,6 +232,7 @@ def recording_engine(base, folder, task, plan_path, plan, data):
 
                     def write():
                         import os
+
                         import torch
                         temporary = checkpoint.with_suffix(".tmp")
                         try:
@@ -264,7 +271,10 @@ def recording_engine(base, folder, task, plan_path, plan, data):
             # A resumed boundary may predate this extension or have interrupted
             # its measurement. Evaluate its actual weights before changing them.
             self.capture_boundary()
-            result = super().update()
+            from .rollout_records import capture, save
+            with capture(self.backend) as groups:
+                result = super().update()
+            save(self, groups, folder, task, plan, data, self.protocol(task), result)
             self.save_training_rewards()
             self.capture_boundary()
             return result

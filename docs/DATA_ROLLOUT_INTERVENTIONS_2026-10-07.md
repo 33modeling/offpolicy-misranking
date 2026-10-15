@@ -187,7 +187,15 @@ fixed200 재도입, 기존 메커니즘의 shuffle/fresh-SR 재실행으로 대�
 
 ## 사용할 수 있는 CPU 분석 명령
 
-현재 구현은 [`rollout_distribution.py`](../srgc_research/rollout_distribution.py)다.
+2026-10-16 추가: results와 영구 rollout JSON.gz를 함께 지원하는 단계별 분석기는
+[`stage_rollout_analysis.py`](../srgc_research/stage_rollout_analysis.py)다.
+25-update 분포, 실제 측정된 학습/평가 보상, Switch 경계 상대 step과 누락을 내보낸다.
+Qwen/Gemma/Llama 이후 실행의 보존 경로와 사용법은
+[단계별 분석·기록 가이드](STAGE_ROLLOUT_ANALYSIS_KO.md)에 정리했다.
+기존 endpoint만으로 누락된 보상 곡선이나 group 분포를 만들지 않는다.
+
+누적 receipts와 정규화 trace를 각각 분석하는 기존 구현은
+[`rollout_distribution.py`](../srgc_research/rollout_distribution.py)다.
 endpoint receipts와 원시 rollout을 서로 다른 명령으로 처리하고, 입력·기존 출력을 덮어쓰지 않는다.
 
 ```sh

@@ -386,6 +386,29 @@ def test_explicit_run_enters_existing_diagnostics_with_hooks(monkeypatch):
     assert worker.drain is original
 
 
+def test_public_qwen_run_routes_training_to_durable_recorder(monkeypatch):
+    from scripts import srgc_process_guard as guard
+
+    monkeypatch.syspath_prepend(str(qwen_run.REPO / "scripts"))
+    adapter = importlib.import_module("srgc_qwen35")
+    diagnostics = importlib.import_module("srgc_qwen35_diagnostics")
+    original = adapter.task_command
+    targets = guard.TARGET_MARKERS
+    command = ["python", "-m", "torch.distributed.run", "/repo/scripts/srgc_qwen35_rank.py",
+               "--stage", "train", "--plan", "/frozen/plan.json", "--seed", "5", "--task", "sr"]
+
+    def entry():
+        assert "srgc_qwen35_reward_curve_rank.py" in guard.TARGET_MARKERS
+        result = adapter.task_command(None, None)
+        assert result[3].endswith("srgc_qwen35_reward_curve_rank.py")
+        assert result[:3] == command[:3] and result[4:] == command[4:]
+
+    with patch.object(adapter, "task_command", return_value=command), patch.object(diagnostics, "main", side_effect=entry):
+        qwen_run.main(["math", "run"])
+    assert adapter.task_command is original
+    assert guard.TARGET_MARKERS == targets
+
+
 def test_new_dispatch_does_not_change_pinned_runtime_hashes():
     from scripts.srgc_qwen35 import ADAPTER_FILES
     from srgc_research.storage import runtime_files

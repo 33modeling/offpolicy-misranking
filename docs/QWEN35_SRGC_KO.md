@@ -276,6 +276,13 @@ optimizer checkpoint는 GPU에서 deep-copy하지 않고 CPU로 복사하며,
 
 ## 검증 범위와 결과 보고
 
+2026-10-16 기록 확장: 공개 `qwen_run`의 training child에도 매 업데이트 학습
+보상·영구 rollout과 25-update 고정 held-out 평가·가중치 보존을 연결했다.
+기존 frozen adapter/rank 및 학습 엔진은 변경하지 않았다. 기존 실행에서 누락된
+중간 평가는 자동 복구되지 않는다. 측정 확장 hash가 달라진 진행 중 실행은
+당시 runtime을 유지한다. 자세한 보존 경로, 분석 명령과 CPU 검증 범위는
+[단계별 rollout·보상 분석 가이드](STAGE_ROLLOUT_ANALYSIS_KO.md)를 따른다.
+
 2026-10-02 재검증: PyTorch 2.13.0+cpu / Transformers 5.14.1 / PEFT 0.20.0 환경에서
 `srgc_rebuttal/tests` 전체 **428개 통과, 실패·건너뜀 없음**. 공통 보호 코드와 Qwen
 worker의 통합 시작, 중첩 GPU 잠금, 다른 프로세스·스레드의 중복 점유 차단을 포함한다.

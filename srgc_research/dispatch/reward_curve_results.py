@@ -1,11 +1,18 @@
 """Read recorded intermediate rewards without importing a GPU runtime."""
 
-import json
 
 from srgc_rebuttal.plan import digest
 from srgc_rebuttal.srgc import Engine
 
-from .reward_curves import SCHEMA, INTERVAL, RESPONSES, finite_reward, fingerprint, training_points, windows
+from .reward_curves import (
+    INTERVAL,
+    RESPONSES,
+    SCHEMA,
+    fingerprint,
+    finite_reward,
+    training_points,
+    windows,
+)
 
 
 def collect(folder, arm, plan, expected, ids, read):
@@ -33,7 +40,7 @@ def collect(folder, arm, plan, expected, ids, read):
         if protocol is None:
             return None
         if not isinstance(protocol, dict):
-            raise ValueError("measurement protocol must be an object")
+            raise ValueError("measurement protocol must be an object")  # noqa: TRY004 - protocol validation contract
         if (any(protocol.get(k) != v for k, v in expected.items()) or
                 protocol.get("schema") != SCHEMA or protocol.get("arm") != name or
                 protocol.get("interval_updates") != INTERVAL or
@@ -119,7 +126,51 @@ def collect(folder, arm, plan, expected, ids, read):
                               "shared_prefix": name == "prefix", "responses_per_prompt": RESPONSES,
                               "question_count": len(ids), "extension_sha256": bound["extension_sha256"]}
             costs.append({"step": step, "arm": name, "scope": row.get("cost_scope"), "costs": row.get("cost_receipts")})
+    rollout_groups, rollout_sources, recording_costs = [], [], []
+    recorded_training = {p["step"]: p["reward"] for p in all_points}
+    for name in ("prefix", arm):
+        bound = protocol_for(name)
+        if bound is None:
+            continue
+        for path in sorted((folder / "reward-curves" / name / "rollouts").glob("step-*.json.gz")):
+            trace = read(path)
+            if trace is None:
+                continue
+            from .rollout_records import SCHEMA as TRACE_SCHEMA
+            from .rollout_records import compact_groups
+            step = trace.get("step")
+            if (trace.get("schema") != TRACE_SCHEMA or trace.get("seed") != expected["seed"] or
+                    trace.get("arm") != name or trace.get("protocol_sha256") != fingerprint(bound) or
+                    trace.get("model") != plan.get("model", "unrecorded") or trace.get("dataset") != plan.get("dataset") or
+                    trace.get("identity") != {k: expected[k] for k in ("plan_sha256", "input_sha256", "implementation_sha256")} or
+                    type(step) is not int or path.name != f"step-{step}.json.gz" or step not in recorded_training):
+                raise ValueError("rollout trace is not bound to recorded training")
+            groups = compact_groups(trace)
+            training_groups = [g for g in groups if g.get("phase") == "training"]
+            history = trace.get("history_record", {})
+            if (len(training_groups) != plan.get("training_prompts", 4) or
+                    len({g.get("prompt_id") for g in training_groups}) != len(training_groups) or
+                    set(history.get("train_ids", [])) != {g.get("prompt_id") for g in training_groups} or
+                    history.get("completed_updates") != step or history.get("checkpoint") != step - 1 or
+                    any(len(g["responses"]) != RESPONSES or g.get("phase") not in {"training", "selection", "diagnostic"} or
+                    g.get("arm") != name or
+                    g.get("update") != (step if g.get("phase") == "training" else step - 1) for g in groups)):
+                raise ValueError("rollout trace group identity differs from its update")
+            means = [sum(r["reward"] for r in g["responses"]) / len(g["responses"]) for g in training_groups]
+            if abs(sum(means) / len(means) - recorded_training[step]) > 1e-10:
+                raise ValueError("rollout rewards differ from the recorded training reward")
+            rollout_groups.extend({**g, "shared_prefix": name == "prefix"} for g in groups)
+            rollout_sources.append({"path": str(path), "sha256": digest(path), "step": step, "arm": name})
+        cost_dir = folder / "reward-curves" / name / "rollout-costs"
+        if cost_dir.exists():
+            from srgc_rebuttal.cost_ledger import PhaseLedger
+            recording_costs.append({"arm": name, "scope": "rollout-recording-only", "costs": PhaseLedger(cost_dir).totals()})
     return {"seed": expected["seed"], "arm": arm, "training_rewards": all_points,
+            "identity": dict(expected),
             "shared_prefix_training_recorded_updates": len(prefix_points),
             "training_windows_25": windows(all_points), "training_sources": sources,
-            "held_out_rewards": list(held_out.values()), "diagnostic_costs": costs}
+            "held_out_rewards": list(held_out.values()), "diagnostic_costs": costs,
+            "rollout_groups": rollout_groups, "rollout_sources": rollout_sources,
+            "missing_training_rollout_steps": [p["step"] for p in all_points if not any(
+                g["phase"] == "training" and g["update"] == p["step"] for g in rollout_groups)],
+            "rollout_recording_costs": recording_costs}

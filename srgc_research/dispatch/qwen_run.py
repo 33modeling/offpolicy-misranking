@@ -43,12 +43,18 @@ def main(argv=None):
         raise ValueError("resume-first launcher accepts run only")
     diagnostics = importlib.import_module("srgc_qwen35_diagnostics")
     worker = importlib.import_module("srgc_qwen35_worker")
+    adapter = importlib.import_module("srgc_qwen35")
+    from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
 
     from .ready_dispatch import ResumeFirst
     from .resume_drain import resume_worker
+    from .reward_curves import recording_command
     identity = cluster.gpu_identity
+    original_task_command = adapter.task_command
     with patch.object(sys, "argv", [str(REPO / "scripts/srgc_qwen35_diagnostics.py"), *args]), \
+            patch.object(guard, "TARGET_MARKERS", (*guard.TARGET_MARKERS, "srgc_qwen35_reward_curve_rank.py")), \
+            patch.object(adapter, "task_command", lambda *a, **kw: recording_command(original_task_command(*a, **kw))), \
             patch.object(cluster, "gpu_identity", lambda: released_gpu_identity(identity, label="QWEN")), \
             resume_first_worker(), \
             resume_worker(worker, ResumeFirst, pattern="qwen35-9b-{dataset}.json",

@@ -1,0 +1,229 @@
+"""Actual returned groups survive cache cleanup and failed/resumed updates."""
+
+import json
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+
+from scripts.srgc_resumable_rollouts import make_resumable
+from scripts.srgc_step_checkpoints import checkpoint_engine
+from srgc_rebuttal.runtime import atomic_json
+from srgc_rebuttal.srgc import Config, Engine
+from srgc_rebuttal.tests.test_reference import ScriptedBackend
+from srgc_research.dispatch import rollout_records
+from srgc_research.dispatch.reward_curve_results import collect
+from srgc_research.dispatch.reward_curves import recording_engine
+from srgc_research.tests.test_model_results import (
+    cohort as cohort,  # noqa: PLC0414 - pytest fixture registration
+)
+from srgc_research.tests.test_model_results import finish, read_result
+
+
+class RawBackend(ScriptedBackend):
+    def __init__(self):
+        super().__init__()
+        torch = pytest.importorskip("torch")
+        from srgc_rebuttal.timing import torch_meter
+        self.model = torch.nn.Linear(1, 1)
+        self.device = torch.device("cpu")
+        self.cost_meter = torch_meter(cuda=False)
+        self.rollout_calls = []
+
+    def _rollout(self, prompt_id, responses, seed):
+        self.rollout_calls.append((prompt_id, responses, seed))
+        return [np.array([99, 98, seed % 97, i]) for i in range(responses)], np.array([0., 1.] * 4), 2
+
+    def _gather(self, local):
+        return local
+
+    def score_gradients(self, ids, **kwargs):
+        for rid in ids:
+            self._rollout(rid, kwargs["responses"], kwargs["seed"])
+        return super().score_gradients(ids, **kwargs)
+
+    def train(self, ids, **kwargs):
+        for rid in ids:
+            self._rollout(rid, kwargs["responses"], kwargs["seed"])
+        return super().train(ids, **kwargs)
+
+    def evaluate(self, ids, *, seed, responses):
+        return {rid: .5 for rid in ids}
+
+
+def make(folder, *, measured=True, arm="on_policy"):
+    ids = [f"p{i}" for i in range(400)]
+    cache = {rid: [0, 1] * 4 for rid in ids}
+    data = {"evaluation_ids": ["held"], "cached_rewards": cache}
+    plan = {"model": "cpu-fixture", "dataset": "math", "shared_prefix_updates": 25,
+            "total_updates": 275, "training_prompts": 4}
+    identity = {"seed": 3, "plan_sha256": "a" * 64, "input_sha256": "b" * 64, "implementation_sha256": "c" * 64}
+    atomic_json(folder / "run.json", identity)
+    backend = make_resumable(RawBackend, folder / "rollout-cache")()
+    base = recording_engine(Engine, folder, arm, folder / "plan.json", plan, data) if measured else Engine
+    base = checkpoint_engine(base, folder, arm, {}, total_updates=275)
+    engine = base(backend, ids, ["reference"], cache, arm=arm, config=Config(projection_dim=2), step=25)
+    return engine, plan, data, identity
+
+
+def read(path):
+    if not path.exists():
+        return None
+    return rollout_records.read(path) if path.suffix == ".gz" else json.loads(path.read_text())
+
+
+def test_no_extra_generation_and_successful_groups_survive_cleanup_and_resume(tmp_path):
+    torch = pytest.importorskip("torch")
+    plain, *_ = make(tmp_path / "plain", measured=False)
+    plain.update()
+    folder = tmp_path / "recorded"
+    engine, plan, data, identity = make(folder)
+    engine.update()
+    assert engine.backend.rollout_calls == plain.backend.rollout_calls
+    assert engine.backend.parameter == plain.backend.parameter
+    assert not list((folder / "rollout-cache").rglob("*.npz"))
+    path = folder / "reward-curves/on_policy/rollouts/step-26.json.gz"
+    trace = read(path)
+    assert len(trace["groups"]) == 45  # 40 candidates, one reference, four applied prompts.
+    assert {g["phase"] for g in trace["groups"]} == {"selection", "diagnostic", "training"}
+    for group in trace["groups"]:
+        assert len(group["responses"]) == 8
+        assert all(len(r["token_ids"]) == 2 for r in group["responses"])
+        assert group["cached_success_rate"] == .5 if group["phase"] != "diagnostic" else "cached_success_rate" not in group
+    rows = collect(folder, "on_policy", plan, identity, data["evaluation_ids"], read)
+    assert len(rows["rollout_groups"]) == 45
+    assert rows["missing_training_rollout_steps"] == []
+    assert rows["rollout_sources"][0]["step"] == 26
+    assert "token_ids" not in json.dumps(rows)
+    assert all(r["completion_tokens"] == 2 for g in rows["rollout_groups"] for r in g["responses"])
+    state = torch.load(folder / "on_policy-latest.pt", weights_only=False)
+    restored, *_ = make(folder)
+    restored.load_state_dict(state)
+    restored.update()
+    assert len(read(folder / "reward-curves/on_policy/rollouts/step-27.json.gz")["groups"]) == 4
+    assert len(collect(folder, "on_policy", plan, identity, data["evaluation_ids"], read)["training_rewards"]) == 2
+
+
+def test_export_failure_cannot_advance_resume_checkpoint(tmp_path):
+    pytest.importorskip("torch")
+    engine, *_ = make(tmp_path)
+    with patch.object(rollout_records, "publish", side_effect=OSError("disk full")), pytest.raises(OSError, match="disk full"):
+        engine.update()
+    assert not (tmp_path / "on_policy-latest.pt").exists()
+
+
+def test_retry_after_trace_write_reuses_identical_responses_despite_timing_changes(tmp_path):
+    pytest.importorskip("torch")
+    engine, *_ = make(tmp_path)
+    with patch.object(engine, "save_training_rewards", side_effect=OSError("interrupted scalar write")), pytest.raises(OSError):
+        engine.update()
+    path = tmp_path / "reward-curves/on_policy/rollouts/step-26.json.gz"
+    assert path.exists() and not (tmp_path / "on_policy-latest.pt").exists()
+    original = path.read_bytes()
+    restored, *_ = make(tmp_path)
+    restored.update()
+    assert path.read_bytes() == original
+    assert (tmp_path / "on_policy-latest.pt").exists()
+
+
+@pytest.mark.parametrize("damage", ["reward", "tokens", "batch", "protocol"])
+def test_corrupt_durable_groups_are_rejected(tmp_path, damage):
+    pytest.importorskip("torch")
+    engine, plan, data, identity = make(tmp_path)
+    engine.update()
+    path = tmp_path / "reward-curves/on_policy/rollouts/step-26.json.gz"
+    trace = read(path)
+    if damage == "reward":
+        trace["groups"][0]["responses"][0]["reward"] = .2
+    elif damage == "tokens":
+        trace["groups"][0]["responses"][0]["token_ids"] = []
+    elif damage == "batch":
+        trace["history_record"]["train_ids"] = ["different"]
+    else:
+        trace["protocol_sha256"] = "d" * 64
+    path.unlink()
+    rollout_records.publish(path, trace)
+    with pytest.raises(ValueError):
+        collect(tmp_path, "on_policy", plan, identity, data["evaluation_ids"], read)
+
+
+def test_atomic_archive_reuse_and_conflicting_retry(tmp_path):
+    path = tmp_path / "step-1.json.gz"
+    rollout_records.publish(path, {"reward": 1})
+    original = path.read_bytes()
+    rollout_records.publish(path, {"reward": 1})
+    assert path.read_bytes() == original
+    with pytest.raises(ValueError, match="differs"):
+        rollout_records.publish(path, {"reward": 0})
+    assert path.read_bytes() == original
+
+
+def test_compact_export_retains_rewards_and_lengths_for_each_model(cohort):
+    from srgc_rebuttal.plan import input_path, load_plan
+    from srgc_research.dispatch import model_results, reward_curves
+    folder = finish(cohort, "math")
+    plan = load_plan(cohort.plans["math"])
+    data = json.loads(input_path(cohort.plans["math"], plan, 5).read_text())
+    identity = read(folder / "run.json")
+    identity.pop("status")
+    protocol = {**identity, "schema": reward_curves.SCHEMA, "arm": "on_policy", "extension_sha256": "e" * 64,
+                "interval_updates": 25, "responses_per_prompt": 8, "question_count": len(data["evaluation_ids"]),
+                "evaluation_ids_sha256": reward_curves.fingerprint(data["evaluation_ids"]),
+                "stream": "reporting-evaluation", "training_batch_reward_is_held_out": False}
+    ids = data["candidate_ids"][:4]
+    history = {"checkpoint": 25, "completed_updates": 26, "selector": "on_policy",
+               "train_ids": ids, "metrics": {"sample_reward": .5}}
+    atomic_json(folder / "reward-curves/on_policy/protocol.json", protocol)
+    atomic_json(folder / "reward-curves/on_policy/training.json", {**protocol, "step": 26,
+                "points": reward_curves.training_points([history], start=25, stop=26)})
+    trace = {"schema": rollout_records.SCHEMA, "model": plan["model"], "dataset": plan["dataset"],
+             "seed": 5, "arm": "on_policy", "step": 26, "protocol_sha256": reward_curves.fingerprint(protocol),
+             "identity": {k: identity[k] for k in ("plan_sha256", "input_sha256", "implementation_sha256")},
+             "history_record": history,
+             "groups": [{"arm": "on_policy", "phase": "training", "update": 26, "prompt_id": rid,
+                         "responses": [{"reward": i % 2, "token_ids": [10, 20, i]} for i in range(8)]} for rid in ids]}
+    rollout_records.publish(folder / "reward-curves/on_policy/rollouts/step-26.json.gz", trace)
+    assert model_results.export(cohort.model, "math", environment=cohort.env) == 0
+    curves = read_result(cohort)["datasets"]["math"]["reward_curves"]
+    row = next(c for c in curves if c["seed"] == 5 and c["arm"] == "on_policy")
+    assert len(row["rollout_groups"]) == 4 and len(row["rollout_sources"]) == 1
+    assert all(r["completion_tokens"] == 3 for g in row["rollout_groups"] for r in g["responses"])
+    assert "token_ids" not in json.dumps(row)
+
+
+def distributed_writer(rank, folder):
+    from datetime import timedelta
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import torch.distributed as dist
+
+    from srgc_rebuttal.torch_backend import TorchBackend
+
+    folder = Path(folder)
+    dist.init_process_group("gloo", init_method=f"file://{folder / 'rendezvous'}",
+                            rank=rank, world_size=4, timeout=timedelta(seconds=20))
+    try:
+        class Backend(RawBackend):
+            _gather = TorchBackend._gather
+        backend = Backend()
+        backend.world = 4
+        engine = SimpleNamespace(backend=backend, step=26, config=Config(), switched_at=None)
+        record = {"checkpoint": 25, "completed_updates": 26, "selector": "sr",
+                  "train_ids": [f"p{i}" for i in range(4)], "metrics": {"sample_reward": .5}}
+        with rollout_records.capture(backend) as groups:
+            backend.train([f"p{rank}"], responses=8, seed=17)
+        plan = {"dataset": "math", "model": "cpu-distributed-fixture", "total_updates": 275, "shared_prefix_updates": 25}
+        protocol = {"plan_sha256": "a" * 64, "input_sha256": "b" * 64, "implementation_sha256": "c" * 64}
+        rollout_records.save(engine, groups, folder, "sr", plan, {}, protocol, record)
+    finally:
+        dist.destroy_process_group()
+
+
+def test_four_rank_export_keeps_all_training_prompts(tmp_path):
+    torch = pytest.importorskip("torch")
+    torch.multiprocessing.start_processes(distributed_writer, args=(str(tmp_path),),
+                                         nprocs=4, join=True, start_method="fork")
+    trace = rollout_records.read(tmp_path / "reward-curves/sr/rollouts/step-26.json.gz")
+    assert {g["prompt_id"] for g in trace["groups"]} == {f"p{i}" for i in range(4)}
+    assert all(len(g["responses"]) == 8 for g in trace["groups"])

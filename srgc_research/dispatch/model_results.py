@@ -1,6 +1,7 @@
 """Consolidate SRGC model results without training, downloads or extra exports."""
 
 import argparse
+import gzip
 import hashlib
 import importlib
 import json
@@ -89,7 +90,7 @@ def _export(model, dataset, *, root, environment):
     names = ("math", "mbpp") if dataset == "all" else (dataset,)
     patterns = ("seed-*/*-endpoint.json", "seed-*/*-progress.json", "seed-*/run.json",
                 "seed-*/reward-curves/*/protocol.json", "seed-*/reward-curves/*/training.json",
-                "seed-*/reward-curves/*/step-*.json")
+                "seed-*/reward-curves/*/step-*.json", "seed-*/reward-curves/*/rollouts/step-*.json.gz")
     versions = {path: file_version(path) for name in names for pattern in patterns
                 for path in (root / "runs" / name).glob(pattern)}
 
@@ -99,7 +100,8 @@ def _export(model, dataset, *, root, environment):
             return None
         if before is None or file_version(path) != before:
             raise ValueError("reward records changed during result inspection; rerun results")
-        value = json.loads(path.read_bytes())
+        payload = path.read_bytes()
+        value = json.loads(gzip.decompress(payload) if path.suffix == ".gz" else payload)
         if file_version(path) != before:
             raise ValueError("reward records changed during result inspection; rerun results")
         return value

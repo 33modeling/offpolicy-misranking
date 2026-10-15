@@ -10,10 +10,13 @@ import pytest
 from srgc_rebuttal.runtime import atomic_json
 from srgc_rebuttal.srgc import Config, Engine
 from srgc_rebuttal.tests.test_reference import ScriptedBackend
+from srgc_research.dispatch import model_results
 from srgc_research.dispatch import reward_curves as curves
 from srgc_research.dispatch.reward_curve_results import collect
-from srgc_research.tests.test_model_results import cohort, finish, read_result
-from srgc_research.dispatch import model_results
+from srgc_research.tests.test_model_results import (
+    cohort as cohort,  # noqa: PLC0414 - pytest fixture registration
+)
+from srgc_research.tests.test_model_results import finish, read_result
 
 
 def history(start=26, stop=50):
@@ -116,7 +119,7 @@ def test_actual_boundaries_are_durable_and_do_not_change_training(tmp_path):
 
 
 def test_final_boundary_is_archived_without_repeating_final_eval(tmp_path):
-    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch")
     engine, backend, *_ = make_engine(tmp_path, True)
     engine.step = 275
     engine.capture_boundary()
@@ -134,10 +137,11 @@ def test_interrupted_checkpoint_is_replaced_from_actual_weights(tmp_path):
     assert len(backend.evaluations) == 1
     assert (point.with_suffix(".json")).exists()
 
-@pytest.mark.parametrize("model", ["gemma4", "llama31"])
+@pytest.mark.parametrize("model", ["gemma4", "llama31", "qwen35"])
 def test_public_rank_installs_recording_on_the_frozen_checkpoint_factory(tmp_path, model):
     import sys
     from types import SimpleNamespace
+
     from scripts import srgc_step_checkpoints as checkpoints
     from srgc_research.dispatch import reward_curve_rank
     bundle = tmp_path / "bundle.json"
@@ -153,12 +157,26 @@ def test_public_rank_installs_recording_on_the_frozen_checkpoint_factory(tmp_pat
     with patch.object(checkpoints, "checkpoint_engine", original), \
             patch("srgc_rebuttal.plan.load_plan", return_value={"shared_prefix_updates": 25, "total_updates": 275}), \
             patch("srgc_rebuttal.plan.input_path", return_value=bundle), \
-            patch.object(reward_curve_rank.importlib, "import_module", return_value=SimpleNamespace(main=frozen_main)), \
+            patch.object(reward_curve_rank.importlib, "import_module", return_value=SimpleNamespace(main=frozen_main)) as entry, \
             patch.object(sys, "argv", ["rank", "--model", model, "--plan", str(tmp_path / "plan.json"), "--seed", "3", "--task", "sr", "--stage", "train"]):
         reward_curve_rank.main()
         assert checkpoints.checkpoint_engine is original
+        entry.assert_called_once_with("scripts.srgc_qwen35_rank_runtime" if model == "qwen35"
+                                      else f"srgc_research.dispatch.{model}.rank")
     assert len(observed) == 1 and issubclass(observed[0], Engine)
     assert hasattr(observed[0], "capture_boundary")
+
+
+@pytest.mark.parametrize("entry", ["srgc_qwen35_rank.py", "srgc_qwen35_rank_runtime.py"])
+def test_qwen_training_arguments_and_nontraining_entries_are_preserved(entry):
+    command = ["python", "-m", "torch.distributed.run", "--nproc_per_node", "4",
+               f"/repo/scripts/{entry}", "--stage", "train", "--plan", "/frozen/plan.json", "--seed", "5", "--task", "switch"]
+    wrapped = curves.recording_command(command)
+    assert Path(wrapped[5]).name == "srgc_qwen35_reward_curve_rank.py"
+    assert wrapped[:5] == command[:5] and wrapped[6:] == command[6:]
+    for stage in ("cache", "smoke"):
+        other = [stage if arg == "train" else arg for arg in command]
+        assert curves.recording_command(other) == other
 
 
 def test_saved_measurement_cannot_be_reused_for_different_actual_weights(tmp_path):
@@ -171,7 +189,7 @@ def test_saved_measurement_cannot_be_reused_for_different_actual_weights(tmp_pat
 
 
 def test_shared_prefix_training_reward_is_included_at_step_25(cohort):
-    from srgc_rebuttal.plan import load_plan, input_path
+    from srgc_rebuttal.plan import input_path, load_plan
     folder = finish(cohort, "math")
     plan = load_plan(cohort.plans["math"])
     data = json.loads(input_path(cohort.plans["math"], plan, 5).read_text())
