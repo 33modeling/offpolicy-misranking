@@ -60,6 +60,32 @@ cohort의 Switch 경계에 맞춰 비교하되, 그 arm이 실제로 전환했�
 번호다. 원래 주 학습의 global step으로 합치지 않는다. 이 분석은 관찰 분석이며
 난도나 gradient alignment가 성능 개선의 원인임을 입증하지 않는다.
 
+## 기존 실행의 세부 GPU 시간 내보내기
+
+`results`는 저장된 비용 원장을 읽어서 arm별 `exclusive_stages`와 `counts`도
+JSON에 보존한다. 생성·forward·backward·gradient projection·통신·대기 시간을
+각각 GPU-seconds 그대로 내보내며, 이미 기록된 응답 수와 생성 토큰 수도 유지한다.
+계획에 기록된 생성/gradient microbatch·logit chunk·checkpointing·attention 설정과
+endpoint에 실제 저장된 `checkpoint_policy`도 보존한다. 설정이 기록되지 않았으면
+기본값으로 채우지 않는다.
+
+```bash
+bash scripts/run_srgc_qwen35.sh all results
+bash scripts/run_srgc_llama31.sh all results
+bash scripts/run_srgc_gemma4.sh all results
+```
+
+기존 공통 결과 파일 `$OM_WORK/results/{qwen35,llama31,gemma4}-results.json`을
+다시 내보내면 된다. 이 작업은 CPU에서 원장을 읽고 결과 파일만 갱신하며 학습·생성·
+평가를 실행하거나 cache·checkpoint·진행 중인 task를 변경하지 않는다. 이미 완료된
+실험도 원장이 남아 있으면 재학습 없이 상세 비용을 복구할 수 있다.
+
+`costs[].arms.<arm>.exclusive_stages`는 측정된 항목이며 `counts`는 그 항목의
+기록된 작업량이다. 준비·평가·저장·통신·대기 등을 나눠 동일한 **비용 항목 범위**를
+비교할 수 있지만, 생성 배치 차이에 따른 반사실적 실행 시간을 이 값만으로
+계산할 수 있다는 뜻은 아니다. `PARTIAL`/null은 그대로 유지한다. 기록이 없으면
+0이나 추정값으로 대체하지 않으며, 전체 GPU 시간과 단계별 GPU 시간을 중복 합산하지 않는다.
+
 ## 이후 실행에서 보존하는 파일
 
 공개 런처 `qwen_run`, `gemma_run`, `llama_run`의 training child는 공통

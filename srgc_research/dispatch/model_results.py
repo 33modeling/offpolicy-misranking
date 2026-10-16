@@ -26,7 +26,8 @@ def compact(result):
     def ledger(value):
         if value is None:
             return None
-        row = fields(value, ("complete", "total_gpu_seconds", "known_gpu_seconds", "recorded_phases"))
+        row = fields(value, ("complete", "total_gpu_seconds", "known_gpu_seconds", "recorded_phases",
+                             "exclusive_stages", "counts"))
         row["unfinished_phase_count"] = value.get("unfinished_phase_count", len(value.get("unfinished_phases", [])))
         return row
 
@@ -41,7 +42,9 @@ def compact(result):
             "shared_prefix_updates", "total_updates", "world_size", "objective", "responses", "training_prompts",
             "ranking_validation_prompts", "scoring_prompts_per_set", "selection_protocol", "selection_interval",
             "check_interval", "first_check", "projection_dim", "projection_seed", "max_new_tokens", "verifier",
-            "primary_outcome", "primary_contrasts"))
+            "primary_outcome", "primary_contrasts", "generation_micro_batch", "logprob_micro_batch",
+            "logit_chunk_tokens", "gradient_checkpointing", "attention", "checkpoint_snapshot",
+            "lora_targets", "thinking", "extension", "adapter_sha256", "engine_sha256"))
         row["endpoints"] = []
         for item in snapshot.get("endpoints", []):
             entry = fields(item, ("seed", "arm", "source", "sha256"))
@@ -49,13 +52,14 @@ def compact(result):
                 "seed", "arm", "plan_sha256", "input_sha256", "implementation_sha256", "prefix_checkpoint_sha256",
                 "total_updates", "shared_prefix_updates", "switched_at", "sampling_protocol",
                 "sr_gc_comparison_prompts_per_set", "reward", "per_question_reward", "cost_measurement_complete",
-                "selection_interval", "selection_steps", "checks"))
+                "selection_interval", "selection_steps", "checks", "checkpoint_policy"))
             row["endpoints"].append(entry)
         row["costs"] = []
         row["reward_curves"] = snapshot.get("reward_curves", [])
         for cost in snapshot.get("costs", []):
             entry = fields(cost, ("seed", "experiment_accounting"))
-            entry["arms"] = {arm: fields(value, ("complete", *reports.COST_FIELDS, "known_completed_phase_gpu_seconds"))
+            entry["arms"] = {arm: fields(value, ("complete", *reports.COST_FIELDS, "known_completed_phase_gpu_seconds",
+                                                "exclusive_stages", "counts"))
                              for arm, value in cost.get("arms", {}).items()}
             entry["shared_prefix"] = ledger(cost.get("shared_prefix"))
             entry["shared_all_task_startup_and_load"] = ledger(cost.get("shared_all_task_startup_and_load"))
