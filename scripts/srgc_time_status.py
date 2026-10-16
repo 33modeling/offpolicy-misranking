@@ -1,5 +1,6 @@
 """Display recorded GPU costs without changing experiment runtimes or receipts."""
 
+import copy
 import json
 import math
 import statistics
@@ -14,6 +15,13 @@ KEYS = (*COMPONENTS, "primary", "phases")
 ARM_FIELDS = {key: f"{key}_gpu_seconds" for key in COMPONENTS}
 ARM_FIELDS.update(primary="selection_training_preparation_gpu_seconds",
                   phases="continuation_phases_gpu_seconds")
+EXECUTION_SETTINGS = ("world_size", "generation_micro_batch", "logprob_micro_batch", "logit_chunk_tokens",
+                      "gradient_checkpointing", "attention", "max_new_tokens", "responses")
+STAGE_COLUMNS = (("Gen", ("generation",)), ("Fwd", ("forward",)), ("Bwd", ("backward",)),
+                 ("Project", ("gradient_projection",)), ("Comm", ("communication", "gradient_reduction")),
+                 ("Residual", ("unattributed_and_wait",)))
+COUNT_COLUMNS = (("Prompts", "prompts"), ("Responses", "responses"), ("Tokens", "generated_tokens"),
+                 ("FwdResp", "forward_responses"), ("BwdResp", "backward_responses"))
 
 
 def finite(value):
@@ -24,7 +32,7 @@ def finite(value):
     return float(value)
 
 
-def timing(record="MISSING", values=None, *, error=None, accounting="exclusive phase costs"):
+def timing(record="MISSING", values=None, *, error=None, accounting="exclusive phase costs", details=None):
     values = values or {}
     seconds = {key: None if values.get(key) is None else finite(values[key]) for key in KEYS}
     result = {"record": record, "gpu_seconds": seconds,
@@ -32,6 +40,29 @@ def timing(record="MISSING", values=None, *, error=None, accounting="exclusive p
               "lower_bound": record == "PARTIAL", "accounting": accounting}
     if error:
         result["error"] = str(error)
+    if details is not None and record in {"COMPLETE", "PARTIAL"}:
+        for field in ("exclusive_stages", "counts"):
+            if field not in details:
+                continue
+            measurements = details[field]
+            if not isinstance(measurements, dict):
+                raise TypeError(f"{field} must be an object")
+            for name, value in measurements.items():
+                if not isinstance(name, str) or "." not in name:
+                    raise ValueError(f"{field} must identify the recorded phase and metric")
+                if field == "exclusive_stages":
+                    if not isinstance(value, dict):
+                        raise TypeError("stage measurement must be an object")
+                    finite(value["gpu_seconds"])
+                    for key in ("rank_wall_seconds", "calls"):
+                        if key in value:
+                            finite(value[key])
+                else:
+                    finite(value)
+            result[field] = copy.deepcopy(measurements)
+        if "exclusive_stages" in result:
+            result["exclusive_stage_gpu_hours"] = {
+                name: value["gpu_seconds"] / 3600 for name, value in result["exclusive_stages"].items()}
     return result
 
 
@@ -44,8 +75,9 @@ def from_arm(cost, *, completed):
         raise TypeError("completed phase costs must be an object")
     known = {key: finite(value) for key, value in known.items()}
     if complete:
-        return timing("COMPLETE", {key: cost.get(field) for key, field in ARM_FIELDS.items()})
-    if not any(known.values()) and not cost.get("unfinished_phases"):
+        return timing("COMPLETE", {key: cost.get(field) for key, field in ARM_FIELDS.items()}, details=cost)
+    if not any(known.values()) and not cost.get("unfinished_phases") and not any(
+            cost.get(field) for field in ("exclusive_stages", "counts")):
         return timing()
     values = {key: known.get(f"{key}_gpu_seconds") for key in COMPONENTS}
     values["checkpoint"] = sum(known.get(f"{key}_gpu_seconds", 0) for key in
@@ -55,7 +87,7 @@ def from_arm(cost, *, completed):
     primary = sum(known.get(f"{key}_gpu_seconds", 0) for key in ("preparation", "selection", "training"))
     total = sum(known.values())
     values.update(primary=primary if primary else None, phases=total if total else None)
-    return timing("PARTIAL", values)
+    return timing("PARTIAL", values, details=cost)
 
 
 def from_ledger(ledger, *, completed, accounting="exclusive phase costs"):
@@ -74,7 +106,7 @@ def from_ledger(ledger, *, completed, accounting="exclusive phase costs"):
                             ("preparation", "selection", "training")) if complete or any(
         known.get(f"{key}_gpu_seconds") for key in ("preparation", "selection", "training")) else None
     values["phases"] = ledger.get("total_gpu_seconds") if complete else sum(known.values()) or None
-    return timing("COMPLETE" if complete else "PARTIAL", values, accounting=accounting)
+    return timing("COMPLETE" if complete else "PARTIAL", values, accounting=accounting, details=ledger)
 
 
 def invalid(row, message=None):
@@ -109,6 +141,7 @@ def attach_scope(row, directory, *, arm=None):
 
 def attach(report, plan_path, plan):
     """Use the same validated cost reader as results; incomplete costs stay partial."""
+    report["recorded_execution_settings"] = {key: copy.deepcopy(plan[key]) for key in EXECUTION_SETTINGS if key in plan}
     by_seed = {row["seed"]: row for row in report.get("costs", [])}
     root = Path(report["output_root"])
     shared = []
@@ -164,10 +197,54 @@ def table_lines(rows):
         numbers = ["-" if value["gpu_hours"].get(key) is None else
                    (">=" if value["lower_bound"] else "") + f"{value['gpu_hours'][key]:.3f}" for key in KEYS]
         cells.append([str(row.get("seed", "-")), str(row.get("arm", row.get("task", "-"))), value["record"], *numbers])
-    widths = [max(len(str(header)), *(len(row[i]) for row in cells)) for i, header in enumerate(headers)]
+    return aligned_table(headers, cells)
+
+
+def aligned_table(headers, cells):
+    widths = [max([len(str(header)), *(len(str(row[i])) for row in cells)]) for i, header in enumerate(headers)]
     return ["  ".join(str(cell).ljust(width) for cell, width in zip(headers, widths)),
             "  ".join("-" * width for width in widths),
-            *("  ".join(cell.ljust(width) for cell, width in zip(row, widths)) for row in cells)]
+            *("  ".join(str(cell).ljust(width) for cell, width in zip(row, widths)) for row in cells)]
+
+
+def detail_lines(rows):
+    """Show existing measurements by phase/section, without adding them to totals."""
+    stages, counts = [], []
+    for row in rows:
+        value = row.get("timing", {})
+        if row.get("status", row.get("state")) == "invalid" or value.get("record") not in {"COMPLETE", "PARTIAL"}:
+            continue
+        prefix = ">=" if value["lower_bound"] else ""
+        identity = [row.get("seed", "-"), row.get("arm", row.get("task", "-")), value["record"]]
+        scopes = {}
+        for name, measurement in value.get("exclusive_stages", {}).items():
+            scope, stage = name.rsplit(".", 1)
+            scopes.setdefault(scope, {})[stage] = measurement["gpu_seconds"]
+        covered = {name for _, names in STAGE_COLUMNS for name in names}
+        for scope, metrics in sorted(scopes.items()):
+            groups = [names for _, names in STAGE_COLUMNS] + [tuple(name for name in metrics if name not in covered)]
+            cells = ["-" if not any(name in metrics for name in names) else
+                     prefix + f"{sum(metrics[name] for name in names if name in metrics) / 3600:.3f}" for names in groups]
+            stages.append([*identity, scope, *cells])
+        scopes = {}
+        for name, measurement in value.get("counts", {}).items():
+            scope, counter = name.rsplit(".", 1)
+            scopes.setdefault(scope, {})[counter] = measurement
+        covered = {name for _, name in COUNT_COLUMNS}
+        for scope, metrics in sorted(scopes.items()):
+            cells = ["-" if name not in metrics else prefix + str(metrics[name]) for _, name in COUNT_COLUMNS]
+            other = ", ".join(f"{name}={prefix}{count}" for name, count in sorted(metrics.items()) if name not in covered)
+            counts.append([*identity, scope, *cells, other or "-"])
+    lines = []
+    if stages:
+        lines += ["", "GPU STAGES (GPU-hours; recorded phase/section only)",
+                  *aligned_table(("Seed", "Arm", "Record", "Phase/section", *(name for name, _ in STAGE_COLUMNS), "Other"), stages),
+                  "Comm includes gradient reduction; Residual = unattributed_and_wait, not measured GPU idle time.",
+                  "Other sums remaining recorded stages. Stage coverage may be incomplete; details/calls are retained in JSON."]
+    if counts:
+        lines += ["", "RECORDED WORK (finished receipts; prompt/response counts include repeated exposures)",
+                  *aligned_table(("Seed", "Arm", "Record", "Phase/section", *(name for name, _ in COUNT_COLUMNS), "Other"), counts)]
+    return lines
 
 
 def render(report, *, label=None):
@@ -176,6 +253,12 @@ def render(report, *, label=None):
         return []
     lines = ["", f"{label or report.get('label', report.get('dataset', ''))} GPU TIMES (GPU-hours)".strip(),
              *table_lines(rows)]
+    settings = report.get("recorded_execution_settings", {})
+    for keys in (EXECUTION_SETTINGS[:4], EXECUTION_SETTINGS[4:]):
+        recorded = [f"{key}={json.dumps(settings[key], ensure_ascii=False, sort_keys=True)}" for key in keys if key in settings]
+        if recorded:
+            lines.append("RECORDED PLAN SETTINGS: " + " | ".join(recorded))
+    lines.extend(detail_lines(rows))
     for row in rows:
         if row.get("timing", {}).get("error"):
             lines.append(f"TIME ERROR seed {row.get('seed', '-')} {row.get('arm', row.get('task', '-'))}: "

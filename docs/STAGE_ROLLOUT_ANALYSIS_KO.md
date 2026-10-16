@@ -86,6 +86,29 @@ bash scripts/run_srgc_gemma4.sh all results
 계산할 수 있다는 뜻은 아니다. `PARTIAL`/null은 그대로 유지한다. 기록이 없으면
 0이나 추정값으로 대체하지 않으며, 전체 GPU 시간과 단계별 GPU 시간을 중복 합산하지 않는다.
 
+### status에서 바로 확인
+
+Qwen·Llama·Gemma의 `status`도 같은 원장을 직접 읽는다. `results`를 먼저 만들거나
+학습·평가를 다시 실행할 필요가 없다. 기존 GPU TIMES 표 아래에 다음을 표시한다.
+
+- `RECORDED PLAN SETTINGS`: 계획에 실제 저장된 GPU 수, 생성/gradient microbatch,
+  logit chunk, checkpointing, attention, 생성 길이 제한, 문제당 응답 수.
+- `GPU STAGES`: seed·arm·phase/section별 생성, forward, backward, projection, 통신,
+  잔여 시간과 그 밖의 기록된 단계의 GPU-hours. 선별의 candidate/reference,
+  학습, 평가를 서로 합치지 않는다. `Comm`에는 gradient reduction을 포함하고
+  `Residual`은 `unattributed_and_wait`다. 잔여 시간을 측정된 GPU idle로 해석하지 않는다.
+- `RECORDED WORK`: 같은 범위에서 기록된 prompt·응답·생성 token·forward/backward
+  응답 수. prompt 수는 중복 노출을 포함하며 고유 데이터 개수가 아니다.
+
+`status --json`의 각 task `timing`은 원래 `exclusive_stages`(GPU-seconds,
+rank-wall seconds, calls)와 `counts`를 보존하고 `exclusive_stage_gpu_hours`를
+함께 제공한다. dataset의 `recorded_execution_settings`는 기록된 계획 설정이다.
+설정이 없는 항목은 현재 코드의 기본값으로 채우지 않는다.
+부분 측정은 `PARTIAL`/`>=`, 미측정 단계는 `-`로 표시한다. 세부 단계 기록이 없는
+과거 원장은 합계만 표시하며, 일부 세부 기록이 있다고 모든 phase의 세부 시간이
+측정됐다고 간주하지 않는다. 상세 표를 기존 합계에 다시 더하지 않는다.
+이 조회는 원장·입력·checkpoint·학습 상태를 쓰거나 기존 runtime identity를 바꾸지 않는다.
+
 ## 이후 실행에서 보존하는 파일
 
 공개 런처 `qwen_run`, `gemma_run`, `llama_run`의 training child는 공통
