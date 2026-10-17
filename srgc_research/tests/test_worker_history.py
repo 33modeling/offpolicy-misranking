@@ -125,3 +125,14 @@ def test_all_public_models_hide_expired_workers_keep_owned_work_and_preserve_fil
         assert saved(cohort) == before
     assert json.loads((queue / "workers/expired.json").read_text())["worker_id"] == "expired"
     assert checkpoint.read_bytes() == b"checkpoint evidence must survive status"
+
+
+def test_yielded_model_workers_expire_without_removing_the_saved_receipt(tmp_path):
+    path=tmp_path/'workers/yielded.json'
+    atomic_json(path,{'status':'yielded','heartbeat':0})
+    original=path.read_bytes()
+    value=report(tmp_path,[worker('handoff',901,state='yielded')])
+    prune_workers([value])
+    assert not value['workers']
+    assert value['worker_history']['hidden_worker_ids']==['handoff']
+    assert path.read_bytes()==original

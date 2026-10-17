@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 import time
 import uuid
 from contextlib import ExitStack, contextmanager
@@ -24,6 +25,36 @@ def cohort_for(requested, factory, pattern):
     if len({q.plan.get("model_snapshot_sha256") for q in cohort}) != 1:
         raise ValueError("sibling datasets use different local model snapshots")
     return manager, cohort
+
+
+def runnable(manager, requested, pending, args):
+    """Inspect readiness without claiming tasks or admitting GPUs."""
+    from srgc_rebuttal import cluster
+    failures = manager.failure_counts()
+    active = {key for key in pending if not cluster.stop_requested(manager.tasks[key][0])}
+    owned = sum(manager.owned(*manager.tasks[key]) for key in active)
+    possible = any(not manager.tasks[key][0].complete(manager.tasks[key][1]) and
+                   manager.spent(key, failures) < args.max_attempts and
+                   manager.tasks[key][0].ready(manager.tasks[key][1]) for key in active)
+    if active and not owned and not possible:
+        jobs = ', '.join(f'{manager.tasks[key][0].plan["dataset"]}:{key[1]}' for key in sorted(active))
+        raise RuntimeError(f'unfinished tasks reached the real failure limit; inspect task logs: {jobs}')
+    for queue in manager.queues.values():
+        if cluster.stop_requested(queue):
+            continue
+        for task in queue.tasks:
+            key = (str(queue.plan_path.resolve()), task.key)
+            if queue not in requested and key not in pending:
+                continue
+            if queue.complete(task) or not queue.ready(task) or manager.owned(queue, task):
+                continue
+            row = manager.receipt(queue, task)
+            if manager.spent(key, failures) >= args.max_attempts:
+                continue
+            if row.get('status') == 'failed' and time.time() < row.get('finished', 0) + args.retry_delay:
+                continue
+            return True
+    return False
 
 
 def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, common_root, admission):
@@ -59,6 +90,13 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
                     cluster.publish_reports(queue)
             update("stopped" if stopped else "complete")
             return
+        if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1':
+            from .model_chain import YIELD
+            with lease(manager.marker.with_suffix('.lock'), wait=True):
+                ready = runnable(manager, requested, pending, args)
+            if not ready:
+                update('yielded', idle_reason='no claimable tasks; checking next model')
+                raise SystemExit(YIELD)
         environment = cluster.child_environment()
         environment[env_key.removesuffix("S")] = str(plans[0])
         environment[env_key] = json.dumps([str(q.plan_path) for q in cohort])
@@ -90,6 +128,12 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
             if code is not None:
                 raise SystemExit(code)
     except BaseException as error:
+        from srgc_rebuttal.runtime import Busy
+
+        from .model_chain import BUSY, YIELD, enabled
+        if enabled() and (isinstance(error, Busy) or isinstance(error, SystemExit) and error.code == YIELD):
+            update('yielded', idle_reason=str(error))
+            raise SystemExit(BUSY if isinstance(error, Busy) else YIELD) from None
         interrupted = (isinstance(error, KeyboardInterrupt) or
                        isinstance(error, SystemExit) and error.code in (130, 137, 143))
         update("stopped" if interrupted else "failed",
@@ -243,6 +287,11 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                 reason += f"; retry in {min(cooling):.0f}s"
         else:
             reason = "waiting for task leases, cache or prefix completion"
+        if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1':
+            from .model_chain import YIELD
+            progress('yielded', idle_reason=reason)
+            print(f'YIELD {label}: {reason}; checking next model', flush=True)
+            raise SystemExit(YIELD)
         progress("idle", idle_reason=reason)
         print(f"IDLE {label}: {reason}", flush=True)
         time.sleep(min(args.poll_seconds, 30))

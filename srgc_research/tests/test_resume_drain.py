@@ -540,3 +540,41 @@ def test_qwen_transition_waits_for_delayed_gpu_release_and_restores_hooks(monkey
         assert cluster.gpu_identity is identity
     sleep.assert_called_once_with(1)
     assert "QWEN GPU memory release complete" in capsys.readouterr().out
+
+
+def test_model_chain_yields_peer_owned_backlog_after_finishing_ready_work(model, monkeypatch):
+    from srgc_research.dispatch.model_chain import YIELD
+    monkeypatch.setenv('SRGC_MODEL_CHAIN_CHILD', '1')
+    old = Task(9, 'sr')
+    sibling = model.queues[1]
+    abandoned(sibling, old)
+    before = sibling.receipt(old).read_bytes()
+    assert model.factory(model.queues).pending()
+    with lease(sibling.directory / 'leases' / f'{old.key}.lock'), \
+            patch.object(resume_drain.time, 'sleep', side_effect=AssertionError('model must hand off, not sleep')), \
+            pytest.raises(SystemExit) as stopped:
+        model.run()
+    assert stopped.value.code == YIELD
+    assert model.jobs == [('math', 'seed-5.prefix')]
+    assert sibling.receipt(old).read_bytes() == before
+    assert model.updates[-1][0] == 'yielded'
+
+
+def test_model_chain_owned_work_yields_before_gpu_admission(model, monkeypatch, tmp_path):
+    from srgc_research.dispatch.model_chain import YIELD
+    monkeypatch.setenv('SRGC_MODEL_CHAIN_CHILD', '1')
+    queue = model.queues[0]
+    with lease(queue.directory / 'leases' / 'seed-5.prefix.lock'), \
+            patch.object(cluster, 'gpu_identity', side_effect=AssertionError('must not request GPUs')), \
+            pytest.raises(SystemExit) as stopped:
+        run_worker(model, monkeypatch, tmp_path,
+                   admission=lambda *a, **kw: pytest.fail('owned work requested admission'))
+    assert stopped.value.code == YIELD
+    assert model.jobs == []
+    rows = list((queue.directory / 'workers').glob('*.json'))
+    assert json.loads(rows[0].read_text())['status'] == 'yielded'
+
+
+def test_model_chain_does_not_hide_an_exhausted_resume_as_idle(model,monkeypatch):
+    monkeypatch.setenv('SRGC_MODEL_CHAIN_CHILD','1')
+    test_retry_budget_is_bounded_without_blocking_independent_ready_work(model)

@@ -148,8 +148,10 @@ def main(argv=None):
         root = storage.default_root(os.environ) if args.root is None else args.root
         snapshots = load_reports(args.model, args.dataset, root, os.environ)
         if args.json:
+            from .model_chain import snapshot as chain_snapshot
+
             adapter = importlib.import_module(CONFIGS[args.model][0])
-            print(json.dumps({"model": adapter.MODEL, "root": str(root.resolve()), "datasets": snapshots}, indent=2))
+            print(json.dumps({"model": adapter.MODEL, "root": str(root.resolve()), "datasets": snapshots, "model_chain": chain_snapshot()}, indent=2))
         else:
             from .qwen_status import render
 

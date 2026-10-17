@@ -325,6 +325,8 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
               "NOT RECORDED = no trustworthy switch progress yet; NEVER SWITCHED = validated final result.",
               "Node IDLE = dispatcher waiting; rank progress and heartbeat are not GPU utilization.",
               f"Root: {root}"]
+    from .model_chain import render_status
+    lines.extend(render_status(now=now))
     return "\n".join(lines)
 
 
@@ -338,8 +340,10 @@ def main(argv=None):
     try:
         snapshots = load_reports(args.dataset, args.root, os.environ)
         if args.json:
+            from .model_chain import snapshot as chain_snapshot
+
             print(json.dumps({"model": "Qwen/Qwen3.5-9B", "root": str(args.root.resolve()),
-                              "datasets": snapshots}, indent=2))
+                              "datasets": snapshots, "model_chain": chain_snapshot()}, indent=2))
         else:
             print(render(snapshots, args.root.resolve(), include_initial=True))
         return int(any(report["errors"] for report in snapshots))

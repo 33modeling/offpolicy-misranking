@@ -182,6 +182,8 @@ def main(argv=None):
         from .model_results import main as results
 
         return results(["llama31", *args])
+    from .model_chain import enabled
+
     original, started = cluster.gpu_identity, False
     with ExitStack() as stack:
         stack.enter_context(resume_worker(
@@ -193,9 +195,10 @@ def main(argv=None):
             if not started:
                 # The pinned worker checks stopped/completed queues first.
                 # Cleanup starts only when it actually requests GPU admission.
-                stack.enter_context(clean_start(identity=original))
+                if not enabled():
+                    stack.enter_context(clean_start(identity=original))
                 started = True
-            return released_gpu_identity(original)
+            return original() if enabled() else released_gpu_identity(original)
         stack.enter_context(patch.object(guard, "OWNER_MARKERS", (*guard.OWNER_MARKERS, *OWNER_MARKERS)))
         stack.enter_context(patch.object(cluster, "gpu_identity", gpu_identity))
         stack.enter_context(patch.object(resume, "ResumeFirst", LlamaResumeFirst))

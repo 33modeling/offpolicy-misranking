@@ -30,4 +30,11 @@ export OPENBLAS_DEFAULT_NUM_THREADS=1 GOTO_NUM_THREADS=1 BLIS_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
 export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+# Training commands share one model queue; read-only/control actions stay model-specific.
+if [ "${SRGC_MODEL_CHAIN:-1}" = 1 ] && [ "${SRGC_MODEL_CHAIN_CHILD:-0}" != 1 ]; then
+    case "${1:-}:${2:-run}" in
+        all:run|math:run|mbpp:run|all:resume|math:resume|mbpp:resume)
+            exec "$PY" -m srgc_research.dispatch.model_chain --start llama31 "$@" ;;
+    esac
+fi
 exec "$PY" -m srgc_research.dispatch.llama_run "$@"

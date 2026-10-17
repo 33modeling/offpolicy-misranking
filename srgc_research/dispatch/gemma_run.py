@@ -37,6 +37,7 @@ def main(argv=None):
     from srgc_research.dispatch.ready_dispatch import GemmaResumeFirst
     from srgc_research.dispatch.resume_drain import resume_worker
 
+    from .model_chain import enabled
     identity = cluster.gpu_identity
     with ExitStack() as stack:
         stack.enter_context(resume_worker(
@@ -46,7 +47,7 @@ def main(argv=None):
         stack.enter_context(patch.object(guard, "OWNER_MARKERS", (
             *guard.OWNER_MARKERS, "srgc_research.dispatch.gemma_run", "srgc_research.dispatch.gemma4.entry",
         )))
-        stack.enter_context(patch.object(cluster, "gpu_identity", lambda: released_gpu_identity(identity, label="GEMMA")))
+        stack.enter_context(patch.object(cluster, "gpu_identity", lambda: identity() if enabled() else released_gpu_identity(identity, label="GEMMA")))
         # Print once after the entry's backup contexts have closed, including
         # failures in the other dataset's resume backlog.
         stack.enter_context(patch.object(diagnostics, "failure_footer", lambda *args: None))

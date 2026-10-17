@@ -7,7 +7,7 @@ from pathlib import Path
 from srgc_rebuttal.reports import locked
 
 RETENTION_SECONDS = 15 * 60
-_EXPIRED_STATES = {"heartbeat_stale", "failed", "stopped", "complete"}
+_EXPIRED_STATES = {"heartbeat_stale", "failed", "stopped", "complete", "yielded"}
 
 
 def prune_workers(snapshots, *, gpu_lock_roots=(), retention_seconds=RETENTION_SECONDS):

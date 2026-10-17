@@ -216,11 +216,9 @@ def test_one_command_and_status_shortcut_use_shared_python(tmp_path):
             text=True,
             check=True,
         )
-        assert json.loads(result.stdout) == [
-            "-m",
-            "srgc_research.dispatch.gemma_run",
-            *expected,
-        ]
+        entry = (["-m", "srgc_research.dispatch.gemma_run"] if args == ["status"] else
+                 ["-m", "srgc_research.dispatch.model_chain", "--start", "gemma4"])
+        assert json.loads(result.stdout) == [*entry, *expected]
 
 
 def test_explicit_python_failure_never_uses_another_venv(tmp_path):

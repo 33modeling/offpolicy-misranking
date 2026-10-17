@@ -47,6 +47,7 @@ def main(argv=None):
     from scripts import srgc_process_guard as guard
     from srgc_rebuttal import cluster
 
+    from .model_chain import enabled
     from .ready_dispatch import ResumeFirst
     from .resume_drain import resume_worker
     from .reward_curves import recording_command
@@ -55,7 +56,7 @@ def main(argv=None):
     with patch.object(sys, "argv", [str(REPO / "scripts/srgc_qwen35_diagnostics.py"), *args]), \
             patch.object(guard, "TARGET_MARKERS", (*guard.TARGET_MARKERS, "srgc_qwen35_reward_curve_rank.py")), \
             patch.object(adapter, "task_command", lambda *a, **kw: recording_command(original_task_command(*a, **kw))), \
-            patch.object(cluster, "gpu_identity", lambda: released_gpu_identity(identity, label="QWEN")), \
+            patch.object(cluster, "gpu_identity", lambda: identity() if enabled() else released_gpu_identity(identity, label="QWEN")), \
             resume_first_worker(), \
             resume_worker(worker, ResumeFirst, pattern="qwen35-9b-{dataset}.json",
                           env_key="SRGC_QWEN_PLANS", label="QWEN", result_model="qwen35"):
