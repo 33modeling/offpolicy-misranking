@@ -320,6 +320,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     if warnings:
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
     lines += ["", "Seed table: RUN = active lease; STALE = node heartbeat older than 60s.",
+              "ERROR xN = lifetime launch number; runnable errors are retried before other work with a bounded recovery budget.",
               "Update counts show completed work; cache counts show saved prompts.",
               "SW@N = switch after completed update N; first SR training update is N+1.",
               "NOT RECORDED = no trustworthy switch progress yet; NEVER SWITCHED = validated final result.",

@@ -177,6 +177,99 @@ def test_sibling_real_failure_is_retried_before_any_fresh_requested_job(model):
     assert any(row["status"] == "failed" and row["exit_code"] == 9 for row in history)
 
 
+@pytest.mark.parametrize("archived_history", (False, True))
+def test_error_x4_is_recovered_before_other_resumes_and_fresh_tasks(model, archived_history):
+    math, mbpp = model.queues
+    interrupted, failed = Task(8, "sr"), Task(9, "switch")
+    math.tasks = [interrupted, Task(5, "prefix")]
+    abandoned(math, interrupted, attempt=99)
+    abandoned(mbpp, failed, attempt=4, state="failed")
+    checkpoint = mbpp.root / "seed-9/switch-latest.pt"
+    checkpoint.write_bytes(b"saved optimizer and selector state")
+    old = json.loads(mbpp.receipt(failed).read_text())
+    if archived_history:
+        for attempt in range(1, 5):
+            attempt_id = old["attempt_id"] if attempt == 4 else f"earlier-{failed.key}-{attempt}"
+            atomic_json(mbpp.directory / "attempts" / f"{attempt_id}.json",
+                        {**old, "attempt": attempt, "retry_attempt": attempt, "attempt_id": attempt_id})
+    archives = {p: p.read_bytes() for p in (mbpp.directory / "attempts").glob("*.json")}
+    observed = []
+
+    def complete(queue, task, log, **kwargs):
+        observed.append(json.loads(queue.receipt(task).read_text()))
+        finish_fake(queue, task)
+        return 0
+
+    model.run(complete)
+    assert model.jobs == [("mbpp", failed.key), ("math", interrupted.key), ("math", "seed-5.prefix")]
+    assert observed[0]["attempt"] == 5 and observed[0]["retry_attempt"] == 1
+    assert observed[0]["resume_first"]
+    assert checkpoint.read_bytes() == b"saved optimizer and selector state"
+    assert json.loads((mbpp.directory / "attempts" / f"{old['attempt_id']}.json").read_text()) == old
+    assert all(path.read_bytes() == data for path, data in archives.items())
+    assert model.updates[-1][0] == "complete"
+
+
+def test_failed_arm_beats_an_earlier_interrupted_arm_in_the_same_dataset(model):
+    queue = model.queues[0]
+    interrupted, failed = Task(9, "on_policy"), Task(8, "sr")
+    queue.tasks = [interrupted, failed]
+    abandoned(queue, interrupted, attempt=99)
+    abandoned(queue, failed, attempt=4, state="failed")
+    model.run()
+    assert model.jobs == [("math", failed.key), ("math", interrupted.key)]
+
+
+def test_old_error_gets_only_one_bounded_recovery_budget_across_worker_restarts(model):
+    task = Task(9, "sr")
+    queue = model.queues[1]
+    abandoned(queue, task, attempt=4, state="failed")
+
+    def fail(queue, task, log, **kwargs):
+        if queue.plan["dataset"] == "mbpp":
+            return 9
+        finish_fake(queue, task)
+        return 0
+
+    with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
+        model.run(fail)
+    assert model.jobs == [("mbpp", task.key)] * 3 + [("math", "seed-5.prefix")]
+    receipt = json.loads(queue.receipt(task).read_text())
+    assert receipt["attempt"] == 7 and receipt["retry_attempt"] == 3
+    budget = model.factory(model.queues).root / ".dispatch" / f"{model.factory.retry_revision}.json"
+    before = budget.read_bytes()
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
+            model.run(fail)
+    assert len(model.jobs) == 4
+    assert budget.read_bytes() == before
+    history = [json.loads(p.read_text()) for p in (queue.directory / "attempts").glob("*.json")]
+    assert sorted(row["attempt"] for row in history if row["status"] == "failed") == [4, 5, 6, 7]
+
+
+def test_chain_startup_recovers_error_x4_before_gpu_admission_can_skip_model(model, monkeypatch, tmp_path):
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    failed = Task(9, "sr")
+    abandoned(model.queues[1], failed, attempt=4, state="failed")
+    run_worker(model, monkeypatch, tmp_path)
+    assert model.jobs == [("mbpp", failed.key), ("math", "seed-5.prefix")]
+    assert model.queues[1].complete(failed)
+
+
+def test_corrupt_inputs_are_refused_before_renewing_old_error_budget(model):
+    queue = model.queues[1]
+    task = Task(9, "sr")
+    abandoned(queue, task, attempt=4, state="failed")
+    before = queue.receipt(task).read_bytes()
+    path = input_path(queue.plan_path, queue.plan, task.seed)
+    path.write_bytes(path.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="frozen inputs changed"):
+        model.run()
+    assert not model.jobs
+    assert queue.receipt(task).read_bytes() == before
+    assert not (model.factory(model.queues).root / ".dispatch" / f"{model.factory.retry_revision}.json").exists()
+
+
 def test_active_sibling_owner_does_not_idle_a_worker_with_ready_work(model, capsys):
     old = Task(9, "sr")
     mbpp = model.queues[1]

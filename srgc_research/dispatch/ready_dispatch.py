@@ -11,11 +11,20 @@ from srgc_rebuttal.runtime import Busy, atomic_json, lease
 
 from .model_resume import GemmaResumeFirst as FrozenGemmaResumeFirst
 from .model_resume import LlamaResumeFirst as FrozenLlamaResumeFirst
-from .qwen_resume import ResumeFirst as FrozenResumeFirst
+from .model_resume import ModelResumeFirst as FrozenBudgetedResumeFirst
 
 
 class ReadyClaims:
-    """Resume runnable backlog first, then claim independent ready tasks."""
+    """Retry existing errors first, then resume other work and claim fresh tasks."""
+
+    # Grant one shared recovery budget for errors stranded by older dispatchers.
+    # This revision is fixed, so new workers/restarts cannot renew it repeatedly.
+    retry_revision = "failed-first-resume-budget-20261017-v1"
+
+    def priority(self, key, pending):
+        if self.receipt(*self.tasks[key]).get("status") == "failed":
+            return 0
+        return 1 if key in pending else 2
 
     def spent(self, key, failures):
         row = self.receipt(*self.tasks[key])
@@ -31,7 +40,7 @@ class ReadyClaims:
             with lease(self.marker.with_suffix(".lock"), wait=True):
                 pending = self.pending()
                 failures = self.failure_counts()
-                runnable = False
+                runnable_priority = 2
                 for key in pending:
                     candidate_queue, candidate = self.tasks[key]
                     if stop_requested(candidate_queue):
@@ -40,14 +49,16 @@ class ReadyClaims:
                     eligible = (not candidate_queue.complete(candidate) and
                                 not self.owned(candidate_queue, candidate) and
                                 self.spent(key, failures) < max_attempts and candidate_queue.ready(candidate))
-                    runnable = runnable or (eligible and (row.get("status") != "failed" or
-                        (retry_failed and time.time() >= row.get("finished", 0) + retry_delay)))
+                    if eligible and (row.get("status") != "failed" or
+                            (retry_failed and time.time() >= row.get("finished", 0) + retry_delay)):
+                        runnable_priority = min(runnable_priority, self.priority(key, pending))
                 # A running, cooling or exhausted resume is not a completion
                 # barrier. Preserve resume priority whenever it can be claimed.
-                tasks = sorted(queue.tasks, key=lambda task: (str(queue.plan_path.resolve()), task.key) not in pending)
+                tasks = sorted(queue.tasks, key=lambda task:
+                               self.priority((str(queue.plan_path.resolve()), task.key), pending))
                 for task in tasks:
                     key = (str(queue.plan_path.resolve()), task.key)
-                    if runnable and key not in pending:
+                    if self.priority(key, pending) > runnable_priority:
                         continue
                     if stop_requested(queue):
                         break
@@ -101,8 +112,8 @@ class ReadyClaims:
                 queue.claim_fds = previous_fds
 
 
-class ResumeFirst(ReadyClaims, FrozenResumeFirst):
-    pass
+class ResumeFirst(ReadyClaims, FrozenBudgetedResumeFirst):
+    model_label = "Qwen3.5"
 
 
 class LlamaResumeFirst(ReadyClaims, FrozenLlamaResumeFirst):
