@@ -1,5 +1,35 @@
 # Switch 신규 실험: 목적·우선순위·실행 계획
 
+## 2026-10-18 추가 목록: 기존 실험과 겹치지 않는 질문
+
+GitHub `master`의 기존 실험 목록·구현·수신 결과와 V7을 대조하여 **N12–N18 일곱 항목**을 추가했다.
+이번 항목은 **설계 제안이며 전용 분석·GPU runner 구현 또는 실행 완료를 뜻하지 않는다.**
+아래 N01–N08의 구현 검증과 N09–N11의 설계 상태는 각각 2026-10-06/07 당시 기록이다.
+기존 queue를 추가하거나 진행 중인 작업을 재시작한 변경은 아니다.
+
+| 검토 순서 | ID·추가 질문 | 기존과 다른 점 | 먼저 필요한 작업 |
+| --- | --- | --- | --- |
+| 1 | [N12 데이터 구성 변화와 같은 문제의 학습 변화 분리](#n12) | 25-update 분포 집계에 고정 구성으로 표준화한 비교를 추가 | 저장 rollout·cache·ID 확인; CPU 재분석부터 |
+| 2 | [N13 SR-GC의 40개 평균과 실제 선택 4개의 차이](#n13) | 전환 신호가 비교하는 대상과 실제 학습 배치가 다른 문제를 직접 점검 | 문제별 projected gradient 보존 여부 확인 |
+| 3 | [N14 rollout 잡음과 불확실성을 고려한 전환](#n14) | 기존 단일/연속 음수 대조를 넘어 부호의 측정 변동을 분리 | 같은 상태의 독립 응답·gradient 진단 |
+| 4 | [N15 On-policy 선택 4개를 25 updates 유지하는 효과](#n15) | SR cache의 노후화와 별개로 현재 gradient 순위의 유효기간 검사 | optimizer를 포함한 분기 상태 확인 |
+| 5 | [N16 On-policy와 SR 사용량을 맞춘 순서 교환](#n16) | 두 방법의 사용 update 수를 같게 두고 적용 순서 변경 | 공통 t25에서 두 경로를 별도 실행 |
+| 6 | [N17 다른 모델·과제에서 가져온 전환 시점](#n17) | 같은 과제의 seed 교차 검증 대신 cohort 사이의 전이 검사 | 채택한 고정 시점의 source/target 실측 결과 |
+| 7 | [N18 학습 도중 문제 분포를 바꾸는 개입](#n18) | 동일 pool의 반복 대신 환경 변화를 의도적으로 만들어 적응성 검사 | 별도 입력 manifest·새 실험 경로 설계 |
+
+**당장 우선할 묶음은 N12와 N13이다.** N12는 MATH와 MBPP에서 선택하는 문제와
+학습 신호가 실제로 어떻게 다른지, N13은 그 차이를 SR-GC가 제대로 대변하는지를 묻는다.
+N14–N16은 관측한 차이를 설명하거나 개입으로 확인할 때 확장한다. N17은 전이 주장,
+N18은 변화하는 데이터 환경에 대한 별도 검증으로 두며 새 전체 학습을 한꺼번에 배정하지 않는다.
+
+E11–E13의 고정 전환·규칙 대조, E14–E16의 shuffle/fresh-SR 메커니즘,
+N01–N08의 gradient·reference·batch 진단, N09–N11의 난도·다양성·응답 배분은
+기존 계획으로 유지한다. N14는 기존 문서에 남아 있던 **미구현 불확실성 규칙을 구체화**한 것이다.
+기존 실험을 새 번호로 다시 세거나 seed만 늘리는 목록이 아니다.
+공통 출처·추출·기록 조건은 [추가 목록의 실행 전 확인](#followup-contract)을 따른다.
+
+---
+
 2026-10-07의 구체적 분석 목표는 **초반 On-policy의 학습 성능 이득이 생기는 이유**다.
 [기존 근거와 원인 분석 순서](STAGE_MECHANISM_EXPERIMENTS_2026-10-06.md#초반에-왜-이득이-나는지-확인할-분석)에 따라
 선택 문제·실제 학습 보상을 먼저 분석하고 N07/N02를 필요한 부분에 적용한다.
@@ -414,3 +444,289 @@ Switch의 학습 단계별 원인을 이 분석만으로 입증하지는 않는�
 - 신규 코드는 별도 실험 식별자·결과 경로에 구현했다. 기존 환경·queue·cache·checkpoint와
   V6/V7 원고·PDF·웹 게시본은 변경하지 않는다.
 - CPU 검증과 실제 GPU 실험 완료를 구분한다. 원고에 신규 성능·시간 값을 넣은 상태가 아니다.
+
+---
+
+<a id="followup-contract"></a>
+
+## N12–N18의 근거와 실행 전 확인
+
+**점검한 출처.** 코드 저장소의 확인 기준은
+[`2cc2f9e`](https://github.com/33modeling/offpolicy-misranking/tree/2cc2f9ee3bb14e708622d4bf9c0fef5522a2f4ca)다.
+[기존 한계 대응 E01–E16](LIMITATION_EXPERIMENTS_KO.md),
+[전체 실험 명세와 Pair](EXPERIMENTS_COMPLETE_GUIDE_KO.md),
+[N09–N11](DATA_ROLLOUT_INTERVENTIONS_2026-10-07.md),
+[Information t0 결과](INFORMATION_RESULTS_2026-10-10.md),
+[저장 rollout 분석·기록 명세](STAGE_ROLLOUT_ANALYSIS_KO.md),
+[현재 선별·학습 구현](../srgc_rebuttal/srgc.py)을 읽었다.
+원고는 GitHub와 일치하는 V7
+[`01c105e`](https://github.com/33modeling/offpolicy-misranking-paper-v2/tree/01c105e6f9452a91d44a794f39b5858f9777912c/v7)의
+[SR-GC 정의](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/01c105e6f9452a91d44a794f39b5858f9777912c/v7/overleaf/sections/sr_gc_method.tex),
+[한계](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/01c105e6f9452a91d44a794f39b5858f9777912c/v7/overleaf/sections/discussion.tex),
+[결론](https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/01c105e6f9452a91d44a794f39b5858f9777912c/v7/overleaf/sections/conclusion.tex)을 확인했다.
+
+V7에는 Qwen MATH seed 5–9 endpoint가 반영돼 있지만 Qwen MBPP는 결과 미수신으로
+기록돼 있다. 저자가 말한 MATH의 이른 전환·MBPP의 늦은 전환은 **검증할 관측·가설**이다.
+Qwen MBPP 원본과 중간 곡선을 받기 전에는 두 과제의 전환 차이를 확인된 결과로 쓰지 않는다.
+Information의 현재 수신 결과는 OLMo t0 진단이다. 그 결과에서 cosine과 실제 probe loss
+변화가 일치하지 않았으므로 cosine·mixed 비율 하나로 초반 우위의 원인을 확정하지 않는다.
+
+| 항목 | 이번 추가 설계의 기본값·조건 |
+| --- | --- |
+| 범위 | 먼저 OLMo MATH seed 5의 자료·실행 가능성을 점검한다. 이 pilot은 탐색으로 표시하고, 본 비교로 확장할 때 동일 설계의 seeds 5–9 전부를 보고한다. 모델·과제 확장은 별도 cohort로 둔다. |
+| 주 경로 | 검증된 공통 t25 이후 total t275까지의 protocol을 우선 재사용한다. N01–N08의 별도 t0/100/400 경로와 합치지 않는다. |
+| 상태 진단 시점 | 기본 t25/125/250. 결과를 보고 유리한 시점으로 교체하지 않으며, 별도 전환 전후 탐색은 사후 분석으로 표시한다. |
+| 분기에 필요한 상태 | 실제 가중치와 optimizer moments·step, selector 상태, sampling/RNG·동점 순서, plan/input/runtime hash를 함께 확인한다. 평가용 weights-only `.pt`는 학습 재개의 대체물이 아니다. optimizer가 없으면 `MISSING_OPTIMIZER`로 두고 해당 분기를 보류한다. |
+| pool | 해당 실행의 input manifest에 저장된 candidate ID 전체를 사용한다. 과거 OLMo MBPP의 512개와 현재 다른 runner의 pool 크기를 일괄 400개로 가정하지 않는다. candidate/reference/held-out ID는 분리한다. |
+| 후보와 학습 | 별도 개입이 없는 한 후보는 40개, 실제 학습은 4문제×8개 fresh 응답이다. 후보 추출·문제 유지·재추출 시점은 각 항목에 적는다. 과거 응답 재사용은 진단으로 구분한다. |
+| 중간 기록 | 모든 신규 학습 arm/model에서 매 update 학습 배치 보상과 최소 25 updates마다 고정 held-out 보상·재평가 가능한 checkpoint를 보존한다. 분기 시작/종료도 평가한다. 기존 기록 주기가 다르면 섞지 않고 그대로 표시한다. |
+| 원시 기록 | 후보·선택·reference·평가 ID, 응답별 reward/token·sampling seed, 사용한 gradient/vector, 종료 이유와 비용 receipt의 출처를 남긴다. 재시도·공통 prefix를 중복 집계하지 않으며 학습 보상과 held-out 보상을 별도 내보낸다. |
+| 누락 처리 | compact export만 보고 미저장으로 판정하지 않는다. 원래 progress/history·rollout JSON.gz·checkpoint를 확인한다. 없는 평가·vector·log-probability는 `null`/미측정이며 보간하지 않는다. |
+| 자원·비용 | 아래 update/응답 수는 설계 수량이며 GPU-hours 예측이 아니다. 실제 생성·scoring gradient·학습·평가·cache·저장 비용을 분리하고, 계측이 겹치는 phase/stage를 더하지 않는다. |
+| 실행 상태 | N12–N18 전용 구현·명령·신규 결과는 아직 없다. 기존 CPU 분석기는 기초 CSV만 제공하며 아래 추가 분석까지 구현됐다는 뜻이 아니다. 진행 중인 MATH→MBPP 작업·frozen runtime은 변경하지 않는다. |
+
+<a id="n12"></a>
+
+## N12. 데이터 구성 변화와 같은 문제의 학습 변화를 분리하기
+
+**질문:** 후반 mixed-reward group이 줄거나 늘어나는 이유가 다른 문제를 골랐기 때문인가,
+같은 문제에 대한 정책의 응답 분포가 변했기 때문인가? MATH와 MBPP의 전환 차이가
+어떤 데이터 구성 변화와 함께 나타나는가?
+
+**먼저 저장 자료로 하는 분석.** 각 arm의 실제 학습 group을 25-update 창으로 나눈다.
+초기 cache의 정답 수 0/8, 1–3/8, 4/8, 5–7/8, 8/8을 고정 strata로 사용한다.
+이는 초기 정책의 유한 표본 성공률이며 실제 난도 label이 아니다. 한 문제를 반복 학습한
+group도 실제 노출 횟수로 세되 고유 문제 수는 따로 보고한다.
+
+각 stratum의 mixed 비율을 구한 뒤, 해당 seed의 **전체 candidate pool에서 사전에 정한
+stratum 비중**으로 가중한 표준화 mixed 비율을 계산한다. 실제 선택 비중으로 계산한
+원래 mixed 비율과 나란히 비교한다. pool 비중이 양수인 stratum의 학습 기록이 없으면 전체 표준화 값은
+미측정으로 두며, 남은 strata만 재정규화해 완전한 비교처럼 제시하지 않는다.
+성공률·응답 길이에도 같은 비교를 적용하고 원본 topic/level이 있을 때만 해당 축을 추가한다.
+
+**같은 문제를 보는 보완 진단.** 기록만으로 문제 구성과 상태 변화를 구분하기 어려울 때는
+candidate pool에서 진단용 20문제를 균등·중복 없이 **한 번** 뽑아 ID를 고정한다.
+각 arm의 t25/125/250 정책에서 같은 20문제에 각각 8개의 새 응답을 생성한다.
+20문제는 학습 pool 안의 진단 패널이며 고정 held-out 평가셋이 아니다. 이 응답·결과를
+선별이나 학습에 사용하지 않는다. 시점마다 문제를 다시 뽑지 않고 응답만 새로 뽑는다.
+공통 t25가 같은 정책이면 측정은 한 번만 수행·계상한다. 이 단계는 학습 없이 추가 추론이 필요하다.
+
+**출력·판정.** 원래/표준화 mixed 비율과 정답 수 histogram, 고유 문제·재노출 수,
+같은 문제의 성공률·길이 변화, 실제 held-out 곡선을 별도 패널로 만든다.
+표준화 후 차이가 줄면 초기 성공률 구성의 기여를 시사하고, 고정 패널에서도 변하면
+같은 문제의 정책 변화도 관측된 것이다. 두 결과 모두 관찰 근거이며 초기 성공률 bins
+안의 차이까지 통제하거나 인과를 증명하지 않는다.
+
+**기존과 차이·비용.** N07과 기존 `windows25.csv`의 구성 집계를 재사용하되
+고정 비중 표준화와 고정 문제 패널을 추가한다. CPU 1단계는 새 생성·학습이 없다.
+보완 패널의 추가 응답 수는 `20×8×실제로 다른 정책 checkpoint 수`이며 별도 계측한다.
+
+<a id="n13"></a>
+
+## N13. SR-GC의 40개 평균과 실제 선택 4개는 같은 판단을 주는가?
+
+**질문:** 후보 40개 평균이 SR 비교 40개보다 불리해졌다는 신호가,
+그 후보에서 gradient로 고른 상위 4개도 불리하다는 뜻인가?
+V7은 두 대상이 다르다고 명시하지만 그 차이의 크기는 아직 직접 비교하지 않았다.
+
+**동일 상태·동일 후보 진단.** 실제 check의 후보 `C40`, SR 비교 `S40`, reference ID와
+문제별 projected gradient `g`, 평균 reference gradient `v`를 사용한다.
+같은 `C40`에서 기존 cosine 상위 4개 `ON4`와 기존 cached-SR 순서의 상위 4개 `SR4`를 고른다.
+동점 순서는 해당 실행의 기록을 따른다. 후보를 새로 뽑거나 SR4를 전체 pool 상위 4개로 바꾸지 않는다.
+
+```text
+D40 = dot(v, mean(g[C40]) - mean(g[S40]))   # 원래 SR-GC
+D4  = dot(v, mean(g[ON4]) - mean(g[SR4]))   # 같은 후보의 선택 배치 진단
+```
+
+`S40`은 실제 진단 집합 그대로이며 `SR4`와 동일한 대상이 아니다.
+현재 구현의 SR 비교 집합은 이미 학습 배치에 사용된 ID 이력을 고려하지만,
+실제 SR 학습 배치는 그 update의 후보 40개 안에서 cache 순서로 4개를 고른다.
+따라서 진단 집합·학습 후보·학습 사용 이력을 각각 보존한다. 진단 preview로 학습 이력을 소비하지 않는다.
+
+**언제·무엇을 재사용하는가.** 우선 기존 check 전부에서 자료 coverage를 점검한다.
+원시 projected vector가 보존돼 있으면 CPU에서 재계산할 수 있다. 저장된 `d`, cosine,
+reward, token ID만으로는 D4를 복원할 수 없다. vector가 없으면 t25/125/250의 검증된
+정책으로 별도 scoring 진단을 실행하고 새 측정으로 표시한다. reference는 실행당 원래 50개
+하나이며 새 reference 집합을 만들지 않는다. 원래 응답을 정확히 재사용한 경우와
+새 응답으로 재측정한 경우는 별도 결과다.
+
+독립 scoring B가 있다면 A로 고른 **같은 ON4/SR4**를 B의 gradient로 다시 비교한다.
+B에서 다시 top-4를 골라 A의 선택을 검증한 것처럼 쓰지 않는다. 동일 상태의 실제
+1-update 분기·독립 평가가 이미 있다면 연결하고, 없으면 효용의 직접 측정은 미확인으로 둔다.
+25-update 분기 결과와의 관계는 더 긴 경로에 대한 보조 분석으로 분리한다.
+
+**출력·판정.** D40/D4 부호 일치·불일치 수, ON4/SR4 ID overlap, A/B 차이,
+전환 시점 주변의 실제 평가 변화, 유효 비교 수를 출력한다.
+D40<0인데 D4>0인 사례가 많으면 후보 평균과 선택 배치 사이의 간극을 보여 준다.
+D4가 더 잘 맞아도 AdamW의 실제 update나 장기 reward 예측력이 입증된 것은 아니다.
+**기존 SR-GC 정의나 진행 중인 Switch의 규칙을 D4로 교체하지 않는다.**
+
+**기존과 차이·비용.** N02는 실제 optimizer 이동, E16은 선택 점수의 재현성을 본다.
+여기서는 SR-GC가 비교하는 집합과 학습에 쓰는 집합의 차이를 직접 검증한다.
+새 scoring이 필요하면 후보/SR 합집합과 reference의 생성·backward 비용을 계상한다.
+
+<a id="n14"></a>
+
+## N14. 부호 변화가 rollout 잡음인가, 반복되는 상대 우위 변화인가?
+
+**질문:** SR-GC가 0 근처에서 바뀔 때 실제 상대 우위가 변한 것인가,
+후보 응답과 reference 응답의 재추출만으로도 그 정도 변동이 생기는가?
+기존 t0 Information 결과는 A/B에서 둘을 함께 재추출했으므로 두 잡음원을 분리하지 못했다.
+
+**학습 없는 1단계.** t25/125/250의 같은 정책에서 후보 C40, 실제 SR 비교 S40,
+reference 50개 ID를 고정한다. 후보/SR 합집합의 독립 응답·gradient를 A1/A2로 두 번,
+같은 reference의 독립 응답·gradient를 B1/B2로 두 번 얻는다. 문제당 응답은 매번 8개다.
+같은 acquisition 안에서 겹치는 후보/SR 문제는 한 번 계산하여 재사용한다.
+`D(A1,B1)`, `D(A1,B2)`, `D(A2,B1)`, `D(A2,B2)`를 계산하여 각각 어느 재추출에서 부호가 바뀌는지 본다.
+네 조합은 gradient를 공유하므로 독립 반복 네 개나 training seed 네 개로 세지 않는다.
+문제 ID와 reference 구성은 바꾸지 않는다. N04의 reference 집합 교체와 다른 진단이다.
+
+**불확실성 규칙으로 확장할 조건.** 부호 변동이 확인되고 원시 vector가 있을 때만
+문제 단위 재표집을 이용한 조건부 구간을 설계한다. 후보/SR overlap의 기여 상쇄와
+reference가 공통 방향이라는 의존 구조를 보존한다. 재표집 1,000회·구간 수준·처리할
+퇴화 사례를 개발 자료에서 고정한다. 이는 측정된 문제/응답에 조건부인 구간이며
+두 번의 acquisition만으로 명목 coverage가 검증됐다고 주장하지 않는다.
+
+실제 새 학습 비교를 한다면 **두 연속 check에서 D<0인 `switch_consecutive`**와
+**두 연속 check에서 구간 상한<0인 규칙**을 주 비교로 둔다. 둘 다 check 간격 25와
+40대40·단일 reference를 유지해 temporal rule까지 동시에 바뀌지 않게 한다.
+기존 Switch는 보조 대조로 둔다. threshold와 구간 수준을 최종 held-out reward에 맞춰 고르지 않는다.
+한 경로의 D를 replay하여 다른 규칙의 최종 reward를 추정하지 않고, 각 규칙을 자기 경로에서 실행한다.
+
+**출력·판정·비용.** 후보/reference 재추출에 따른 부호 변동, 실제 전환 지연,
+미전환 수, 최종 reward와 추가 scoring 비용을 함께 보고한다.
+불확실성 규칙이 늦게 전환해 성능·비용이 나빠지는 경우도 결과다.
+진단용 A/B 비용과 배포 규칙에 필요한 획득·재표집 비용을 구분한다.
+기존 E12의 단일/연속 음수 실험을 이미 신뢰구간 규칙의 검증이라고 부르지 않는다.
+
+<a id="n15"></a>
+
+## N15. On-policy로 고른 4개를 25 updates 유지하는 동안 순위가 낡는가?
+
+**질문:** 후반 On-policy의 이득이 줄어드는 이유 중 하나가 25-update 동안 같은
+선택 문제를 유지하는 운영 방식인가? 초기 SR cache의 노후화와 별개의 질문이다.
+
+**추출·분기.** 우선 공통 t25에서 후보 40개를 한 번 뽑는다. 같은 모델·optimizer와
+같은 후보 ID에서 두 arm을 각각 25 updates 실행한다. t125/t250 확장은 완전한 optimizer
+상태가 있을 때만 같은 설계로 한다. 각 branch 동안 후보 40개는 그대로 유지한다.
+
+| Arm | 문제 선별 시점 | 실제 학습 |
+| --- | --- | --- |
+| Hold-25 | 분기 시작 때 cosine top-4를 한 번 선택 | 같은 4문제로 25 updates, 매 update 새 8응답 |
+| Refresh-5 | 분기 내부 update 0/5/10/15/20 직전 현재 정책으로 같은 40개를 재평가 | 각 5-update 구간의 top-4로 학습, 매 update 새 8응답 |
+
+둘 다 reference 50개 ID·학습률·objective·학습량을 유지한다. Refresh-5는 매 refresh
+scoring 응답을 새로 생성한다. 후보까지 새로 뽑지 않아 후보 접근 범위 확대를 섞지 않는다.
+이는 **후보를 고정한 국소 cadence 진단**이며 기존 전체 On-policy 경로를 그대로 재현한 것은 아니다.
+Hold-25의 중간 순위도 측정하려면 별도 진단으로 기록하며 그 비용을 운영비에 숨기지 않는다.
+
+**출력·판정.** 선택 ID turnover, 시작 top-4의 이후 점수, 실제 학습 mixed 비율,
+분기 전후 고정 held-out reward, 생성 token과 선별/학습 비용을 비교한다.
+Refresh-5가 좋아지면 선택 유지 간격이 해당 상태의 성능에 기여한다는 근거다.
+순위만 바뀌고 reward가 같으면 자주 재선별해야 한다는 근거가 아니다.
+SR의 cache 갱신 효과나 더 싼 GPU 실행이라고 해석하지 않는다.
+
+**규모.** seed·anchor당 두 arm 합계 50 branch updates다. 첫 pilot은 t25 하나이며,
+세 anchor로 확장하면 150 updates다. 추가 scorer·평가 비용은 이 수량에 포함되지 않는다.
+N05의 후보/batch 규모 변화 및 E05/E07/E10의 SR 갱신과 구분한다.
+
+<a id="n16"></a>
+
+## N16. On-policy와 SR 사용량이 같아도 적용 순서가 중요한가?
+
+**질문:** Switch의 성능이 두 baseline 보상의 평균처럼 결정되는가,
+앞선 학습 경로가 뒤의 selector 효용을 바꾸는가?
+먼저 기존 곡선의 같은 측정 step에서 `Switch−On-policy`, `Switch−SR`를 표시한다.
+두 baseline 사이에 있다는 수학적 제약은 없으며, 관측된 범위를 넘었는지는 실제 값으로만 판정한다.
+
+**추가 개입.** 같은 seed의 검증된 t25 모델·optimizer에서 아래 두 경로를 실행한다.
+
+| 경로 | updates 26–150: 125회 | updates 151–275: 125회 |
+| --- | --- | --- |
+| ON→SR | On-policy | SR |
+| SR→ON | SR | On-policy |
+
+두 경로 모두 On-policy 125회, SR 125회다. On-policy는 25 updates마다 40개를
+새로 뽑아 top-4를 유지하고, SR은 매 update 후보 40개를 새로 뽑아 cached-SR top-4를 고른다.
+어느 구간이든 실제 학습은 매 update 4×8 fresh 응답이다. 전환 시 모델·optimizer를
+유지하고 재초기화하지 않는다. SR→ON은 새 대조 arm이며 기존 단방향 Switch를 변경한 것이 아니다.
+SR-GC로 시점을 정하지 않으며 기존 cache와 원래 reference를 사용한다.
+
+**비교·판정.** 같은 protocol의 계속 On-policy·계속 SR·adaptive Switch 결과가 있다면
+같은 종료점/중간 평가에서 나란히 비교한다. 순서 간 차이는 사용량이 같아도 경로가
+중요하다는 근거다. 같은 문제·응답 노출이나 같은 GPU 비용까지 맞춘 것은 아니다.
+OP/SR 순서가 선택 데이터와 정책을 함께 바꾸므로 순수 optimizer 효과나 양의 시너지로 단정하지 않는다.
+Switch가 두 baseline보다 높다는 endpoint만으로 적절한 전환 신호의 기여까지 입증하지 않는다.
+
+**규모·기존과 차이.** 새 두 경로는 seed당 500 continuation updates다.
+E11은 ON→SR의 시점을 바꾸며 두 방법의 사용량도 바뀐다. 이 설계는 사용량을 고정한
+순서 대조다. 기존 fixed150과 ON→SR이 시작 상태·runtime·학습 절차까지 같으면 그 경로는
+검증 후 재사용한다. `fixed200`은 재도입하지 않는다.
+
+<a id="n17"></a>
+
+## N17. 다른 모델·과제에서 정한 전환 시점도 그대로 통하는가?
+
+**질문:** 한 과제에서 좋은 전환 시점을 알아도 다른 과제나 backbone에 그대로 적용할 수 있는가?
+상대 우위의 시점을 미리 알기 어렵다는 V7 결론을 **cohort 사이의 전이**로 검사한다.
+
+**source에서 한 번 선택.** 기존 채택 대상 fixed50/100/150/250 중 source cohort의
+평균 최종 reward가 가장 높은 시점 하나를 고른다. 동률은 이른 시점으로 정한다.
+source에 채택한 grid가 빠져 있으면 `INCOMPLETE_SOURCE_GRID`로 두며 최선값을 지어내지 않는다.
+선택 기준·source 파일 hash·선택한 시점·동결 시각을 target 분석 전에 저장한다.
+
+**target에서 변경 없이 적용.** 1차 비교는 같은 모델의 MATH→MBPP이고,
+2차는 같은 과제의 OLMo→Qwen/Llama/Gemma다. 한 번에 모델과 과제를 모두 바꾸지 않는다.
+target 자체의 t25 prefix·cache·reference·입력 pool·token 설정을 사용하되 source의
+전환 update만 가져온다. target reward를 보고 시점을 다시 고르지 않는다.
+target에서 그 시점으로 실제 학습한 결과와 기존 adaptive Switch를 비교한다.
+해당 fixed 경로가 없으면 별도 실행이 필요한 항목으로 남기며 두 baseline 곡선을 이어 붙이지 않는다.
+
+**출력·판정.** source에서 고른 시점, target의 실제 Switch 경계, 방법별 최종 reward·
+실측 비용, 같은 target seed의 paired 차이를 표로 만든다.
+전이한 일정이 나빠지고 adaptive가 유지되면 그 source/target 범위에서 적응 판단의 가치를 지지한다.
+고정 시점도 잘 통하면 그 사실을 보고한다. 이미 target 결과를 본 경우는 사후 전이 분석으로
+표시하고 새로운 독립 검증이라고 부르지 않는다. Qwen MBPP 등 미수신 자료는 대기 상태다.
+
+**기존과 차이·비용.** E13은 같은 cohort 안의 leave-one-seed-out이다.
+여기서는 과제 또는 모델 전체를 target으로 남긴다. 실제로 맞는 fixed 결과가 모두 있으면
+추가 학습 없이 분석할 수 있지만, 누락 경로가 있으면 그 수와 비용을 별도로 산정한다.
+다른 모델의 절대 GPU 시간을 같게 만들거나 실행 속도 차이를 가상으로 빼지 않는다.
+
+<a id="n18"></a>
+
+## N18. 학습 중 문제 분포가 바뀌어도 전환 전략이 유효한가?
+
+**질문:** 기존처럼 같은 후보 모집단을 유지할 때뿐 아니라, 학습 도중 사용할 수 있는
+문제가 바뀔 때도 단방향 Switch가 유효한가? 다시 On-policy가 필요한 상황도 있는가?
+
+**문제 집합을 미리 고정.** 같은 과제의 원래 candidate pool을 초기 cache 성공률이
+낮은 절반 L과 높은 절반 H로 나눈다. 동점은 사전 고정 순서로 처리하고 실제 histogram을 저장한다.
+두 집합은 겹치지 않으며 각각 최소 40개여야 한다. 초기 성공률의 차이를 조작하는 것이지
+현재 모델의 정확한 난도를 안다고 가정하지 않는다. prompt 길이·실제 topic 구성이 다르면
+함께 보고하고, matching에 실패한 조건을 난도만 통제한 비교라고 부르지 않는다.
+
+**분포를 바꾸는 시점.** 공통 t25에서 시작하여 updates 26–150에는 L, 151–275에는 H만
+후보로 허용하는 L→H와 반대 H→L을 각각 만든다. 두 phase는 125 updates씩이다.
+각 phase 안에서 후보 40개는 기존 간격/규칙으로 새로 추출하며, 경계 직후 후보·active selection을
+새 모집단에 맞춰 갱신한다. 초기 cache는 새로 만들지 않고 해당 집합의 기록을 읽는다.
+reference 50개와 고정 held-out ID는 전 구간 유지한다. SR 비교 40개도 현재 허용 집합에서 구성한다.
+
+**대조군.** 각 분포 순서에서 계속 On-policy, 계속 SR, 기존 단방향 Switch,
+E06 계열의 `switch_repeat`를 별도 입력·실험 ID로 비교한다.
+On-policy와 전환 전 Switch의 기본 재선별/check 간격은 25, 학습은 4×8 fresh 응답이다.
+재전환 arm은 자기 경로에서 SR 이후에도 정해진 check를 실제 수행하고 비용을 기록한다.
+현재 E06의 전환·확인 규칙을 명시하여 재사용하되 새 분포에서 실제 실행해야 한다.
+과거 E06 결과를 새 입력의 결과로 복사하거나 그 queue를 덮어쓰지 않는다.
+
+**출력·판정.** 분포 경계 전후의 선택 ID·현재 성공률·mixed group·SR-GC,
+고정 held-out reward와 재적응 지연, 전환 횟수·전체 비용을 비교한다.
+단방향 Switch가 새 분포에서 회복하지 못하고 재전환이 도움이 되면 단방향 규칙의 한계다.
+재전환 비용만 늘면 단방향 유지의 실용적 근거가 된다. Switch가 항상 좋아야 한다는
+판정 기준이나 실패 사례를 제외하는 규칙을 만들지 않는다.
+
+**규모·위치.** 두 분포 순서×네 arm×250 continuation updates로 seed당 2,000 updates다.
+학습량이 큰 후속 개입이므로 N12–N17의 결과와 자원 여유를 확인한 뒤 검토한다.
+N09의 같은 checkpoint·난도 matched 비교, 기존의 정적인 MATH/MBPP mixed-pool과 다른 실험이다.
+새 manifest와 별도 결과 경로에서만 설계하며 현재 학습 입력은 수정하지 않는다.

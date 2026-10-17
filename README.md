@@ -21,6 +21,13 @@ the archived outcomes, their sources, unresolved cost corrections and the
 additional experiments awaiting verified results. The preparation target is
 to complete all planned experiments and V7 before reviews are released.
 
+The [follow-up experiment list](docs/NEW_EXPERIMENT_IDEAS_2026-10-06.md)
+adds seven proposals (N12–N18, 2026-10-18), covering data composition,
+SR-GC's scoring sets versus selected batches, measurement uncertainty,
+selection refresh, selector order, schedule transfer, and distribution changes.
+These entries are designs, with sampling and recording requirements; they do
+not add runnable commands or launch GPU experiments.
+
 Additional-seed reproduction and stage-level cost measurement live on
 `master`, in [srgc_rebuttal](srgc_rebuttal/README.md).
 The simple entry point is `sh scripts/run_srgc.sh math` or
