@@ -1,0 +1,45 @@
+"""Cross-model resume ordering inspects receipts, never model weights or CUDA."""
+
+import sys
+from unittest.mock import patch
+
+from srgc_rebuttal.plan import load_plan
+from srgc_rebuttal.runtime import atomic_json, lease, run_root
+from srgc_research.dispatch.resume_inventory import signature
+from srgc_research.tests.test_model_results import (
+    cohort as cohort,  # noqa: PLC0414 -- Validate every model's prepared layout.
+)
+from srgc_research.tests.test_model_results import saved
+
+
+def test_saved_failure_is_found_without_writing_state_or_loading_model_packages(cohort):
+    output = run_root(cohort.plans['math'], load_plan(cohort.plans['math']))
+    atomic_json(output / '.queue/tasks/seed-5.sr.json', {'task': 'seed-5.sr', 'status': 'failed', 'attempt': 99})
+    checkpoint = output / 'seed-5/sr-latest.pt'
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_bytes(b'opaque checkpoint; never deserialize during scheduling')
+    before = saved(cohort)
+    with patch.dict(sys.modules, {'torch': None, 'transformers': None, 'peft': None}):
+        first = signature(cohort.model, 'math', cohort.env)
+        assert first
+        assert signature(cohort.model, 'mbpp', cohort.env) is None
+    assert saved(cohort) == before
+    checkpoint.write_bytes(b'new fully committed checkpoint')
+    assert signature(cohort.model, 'math', cohort.env) != first
+
+
+def test_live_task_lease_excludes_running_work_from_abandoned_inventory(cohort):
+    output = run_root(cohort.plans['math'], load_plan(cohort.plans['math']))
+    atomic_json(output / '.queue/tasks/seed-5.sr.json', {'task': 'seed-5.sr', 'status': 'running'})
+    with lease(output / 'seed-5/.sr.execution.lock'):
+        assert signature(cohort.model, 'math', cohort.env) is None
+    assert signature(cohort.model, 'math', cohort.env)
+
+
+def test_custom_root_is_used_without_touching_the_default_model_root(cohort, tmp_path):
+    empty = {**cohort.env, {'qwen35': 'SRGC_QWEN_ROOT', 'llama31': 'SRGC_LLAMA_ROOT',
+                          'gemma4': 'SRGC_GEMMA_ROOT'}[cohort.model]: str(tmp_path / 'missing')}
+    output = run_root(cohort.plans['math'], load_plan(cohort.plans['math']))
+    atomic_json(output / '.queue/tasks/seed-5.prefix.json', {'task': 'seed-5.prefix', 'status': 'interrupted'})
+    assert signature(cohort.model, 'math', empty) is None
+    assert signature(cohort.model, 'math', empty, root=cohort.root)

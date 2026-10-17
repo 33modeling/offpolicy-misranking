@@ -146,7 +146,59 @@ def test_explicit_mbpp_source_plan_and_interpreter_scope_are_preserved_during_ma
     assert all(args == ['mbpp'] for model, phase, args in jobs if model != 'llama31')
 
 
-@pytest.mark.parametrize('code',[130,137,143])
+def test_all_stopped_models_recover_before_any_model_opens_fresh_work(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {'llama31': 'saved-llama', 'gemma4': 'saved-gemma'}
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    jobs = []
+    def runner(command, environment, heartbeat):
+        model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, recovery))
+        if recovery:
+            pending.pop(model)
+        else:
+            assert not pending, 'fresh work began while an abandoned model still needed recovery'
+        return 0
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None, runner=runner) == 0
+    assert jobs == [('llama31', True), ('gemma4', True),
+                    ('qwen35', False), ('llama31', False), ('gemma4', False)]
+
+
+def test_cooling_model_recovery_is_revisited_instead_of_starting_other_fresh_models(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {'llama31': 'stopped-model'}
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    jobs, waits = [], []
+    def runner(command, environment, heartbeat):
+        model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, recovery))
+        if recovery and len(jobs) == 1:
+            return chain.YIELD
+        if recovery:
+            pending.clear()
+        else:
+            assert not pending
+        return 0
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: waits.append(n)) == 0
+    assert jobs[:2] == [('llama31', True), ('llama31', True)]
+    assert len(waits) == 1
+
+
+def test_stale_completed_receipt_does_not_create_an_endless_recovery_pass(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: 'stale-cache' if model == 'qwen35' else None)
+    jobs = []
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=lambda cmd, env, beat: jobs.append((model_of(cmd), env['SRGC_RESUME_ONLY'])) or 0,
+                       sleep=lambda n: pytest.fail('completed recovery slept')) == 0
+    assert jobs == [('qwen35', '1'), ('qwen35', '0'), ('llama31', '0'), ('gemma4', '0')]
+
+
+@pytest.mark.parametrize('code',[130,143])
 def test_interruption_stops_chain_without_starting_another_model(code):
     calls=[]
     assert chain.drain(list(chain.MODELS),'all',['all'],{},lambda *a,**kw:None,
@@ -231,3 +283,28 @@ def test_parent_waiting_sigterm_records_stop_and_restores_handler(tmp_path,monke
     assert signal.getsignal(signal.SIGTERM)==previous
     rows=list((tmp_path/'work/srgc-rebuttal/.model-chain/workers').glob('*.json'))
     row=json.loads(rows[0].read_text());assert row['status']=='stopped';assert row['exit_code']==143
+
+
+def test_forcibly_killed_worker_is_restarted_before_any_fresh_model():
+    jobs, waits = [], []
+    def runner(command, environment, heartbeat):
+        jobs.append(model_of(command))
+        return 137 if len(jobs) <= 5 else 0
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: waits.append(n)) == 0
+    assert jobs == ['qwen35'] * 6 + ['llama31', 'gemma4']
+    assert len(waits) == 5
+
+
+def test_surviving_coordinator_retries_a_real_sigkill_child(tmp_path):
+    attempts = []
+    def runner(command, environment, heartbeat):
+        attempts.append(model_of(command))
+        if len(attempts) == 1:
+            def kill_child(pid):
+                os.kill(pid, signal.SIGKILL)
+            return chain.run_child([sys.executable, '-c', 'import time;time.sleep(60)'], environment, kill_child)
+        return 0
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], os.environ, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: None) == 0
+    assert attempts == ['qwen35', 'qwen35', 'llama31', 'gemma4']

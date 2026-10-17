@@ -101,13 +101,25 @@ def drain(order, dataset, initial, environment, update, *, runner=run_child, pol
 
 
 def drain_phase(order, dataset, initial, environment, update, *, runner=run_child, poll_seconds=10, sleep=time.sleep):
+    from .resume_inventory import signature
+
     states = {name: 'pending' for name in order}
     failures = {}
     child_env = {**environment, 'SRGC_MODEL_CHAIN_CHILD': '1'}
     resumed = set()
+    recovered = {}
+    root_parser = argparse.ArgumentParser(add_help=False)
+    root_parser.add_argument('--root', type=Path)
+    custom_root, _ = root_parser.parse_known_args(initial)
+    def saved_work(model):
+        return signature(model, environment['SRGC_DATASET_PHASE'], environment,
+                         root=custom_root.root if model == order[0] else None)
     while True:
         busy = False
-        for model in order:
+        killed = False
+        recovery = {model: saved_work(model) for model in order if states[model] not in {'finished', 'failed'}}
+        recovery = {model: value for model, value in recovery.items() if value is not None and recovered.get(model) != value}
+        for model in recovery or order:
             if states[model] in {'finished', 'failed'}:
                 continue
             args = (list(initial) if model == order[0] else
@@ -117,21 +129,29 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
             if args and len(args)>1 and args[1]=='resume':
                 resumed.add(model)
             command = child_command(model, dataset, args)
-            print(f'MODEL START {model} dataset={environment["SRGC_DATASET_PHASE"]}', flush=True)
+            resume_only = model in recovery
+            attempt_env = {**child_env, 'SRGC_RESUME_ONLY': '1' if resume_only else '0'}
+            print(f'MODEL START {model} dataset={environment["SRGC_DATASET_PHASE"]} resume_only={resume_only}', flush=True)
             states[model] = 'running'
-            update('running', model=model, models=dict(states))
+            update('running', model=model, resume_only=resume_only, models=dict(states))
             try:
-                code = runner(command, dict(child_env), lambda pid, current=model: update(
-                    'running', model=current, child_pid=pid, models=dict(states)))
+                code = runner(command, dict(attempt_env), lambda pid, current=model, mode=resume_only: update(
+                    'running', model=current, resume_only=mode, child_pid=pid, models=dict(states)))
                 # The legacy Qwen resume action clears stop markers and exits;
                 # continue into its actual queue only after that explicit action.
                 if model == 'qwen35' and args and len(args) > 1 and args[1] == 'resume' and code == 0:
                     command = child_command(model, dataset, [dataset, 'run', *args[2:]])
-                    code = runner(command, dict(child_env), lambda pid, current=model: update(
-                        'running', model=current, child_pid=pid, models=dict(states)))
+                    code = runner(command, dict(attempt_env), lambda pid, current=model, mode=resume_only: update(
+                        'running', model=current, resume_only=mode, child_pid=pid, models=dict(states)))
             except (OSError, subprocess.SubprocessError) as error:
                 print(f'MODEL FAILED {model}: {error}', file=sys.stderr, flush=True)
                 code = 2
+            if code == 137:
+                states[model] = 'waiting'
+                update('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
+                       idle_reason='worker was forcibly killed; resuming saved work')
+                killed = True
+                break
             if code >= 128:
                 update('stopped', model=model, exit_code=code, models=dict(states))
                 return code
@@ -139,6 +159,9 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
                 update('stopped', model=model, exit_code=code, models=dict(states))
                 return code
             states[model] = 'finished' if code == 0 else 'waiting' if code in (YIELD, BUSY) else 'failed'
+            if code == 0 and resume_only:
+                recovered[model] = saved_work(model)
+                states[model] = 'pending'
             if states[model] == 'failed':
                 failures[model] = code
             print(f'MODEL {model} {states[model]} exit={code}; checking next model', flush=True)
@@ -149,10 +172,16 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
         if all(state in {'finished', 'failed'} for state in states.values()):
             update('failed' if failures else 'finished', models=dict(states), failures=failures)
             return 2 if failures else 0
+        if recovery and not busy and not killed and all(states[model] in {'pending', 'failed'} for model in recovery):
+            if failures:
+                update('failed', models=dict(states), failures=failures)
+                return 2
+            continue  # Recovery finished; proceed directly to the normal queues.
         # Sleep only after every eligible model has been checked, or the entire
         # local GPU allocation is owned. Never spin on peer leases/retry delays.
-        reason = 'GPU allocation owned' if busy else 'all unfinished model queues waiting on peers or retry delay'
-        update('waiting', models=dict(states), idle_reason=reason, failures=dict(failures))
+        reason = ('worker forcibly killed; retrying saved work' if killed else 'GPU allocation owned' if busy
+                  else 'all unfinished model queues waiting on peers or retry delay')
+        update('waiting', models=dict(states), idle_reason=reason, failures=dict(failures), resume_only=bool(recovery) or killed)
         print(f'MODEL WAIT: {reason}; retry in {poll_seconds}s', flush=True)
         sleep(poll_seconds)
 
@@ -249,8 +278,9 @@ def render_status(environment=None, *, now=None):
     for row in sorted(rows, key=lambda r:r['host']):
         current = row.get('model') or '-'
         dataset = row.get('active_dataset') or row.get('dataset') or '-'
+        mode = ' RESUME' if row.get('resume_only') else ''
         order = ' -> '.join(row.get('order') or [])
-        lines.append(f"{row['host']} {row['status'].upper()} model={current} dataset={dataset} | {order}")
+        lines.append(f"{row['host']} {row['status'].upper()} model={current} dataset={dataset}{mode} | {order}")
     return lines
 
 

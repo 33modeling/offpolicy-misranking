@@ -82,7 +82,7 @@ def model(request, tmp_path, monkeypatch):
                            pattern=pattern, env_key=env_key)
 
 
-def run_worker(model, monkeypatch, tmp_path, *, child=None, admission=None, selected=None):
+def run_worker(model, monkeypatch, tmp_path, *, child=None, admission=None, selected=None, probe=None):
     from srgc_rebuttal import cluster_queue
 
     queues = {q.plan_path: q for q in model.queues}
@@ -96,7 +96,7 @@ def run_worker(model, monkeypatch, tmp_path, *, child=None, admission=None, sele
         finish_fake(queue, task)
         return 0
 
-    with patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", ("a", "b", "c", "d"))), \
+    with patch.object(cluster, "gpu_identity", return_value=("0,1,2,3", ("a", "b", "c", "d")), side_effect=probe), \
             patch.object(cluster, "task_command", side_effect=lambda q, t: (q, t)), \
             patch.object(cluster, "run_child", side_effect=complete), \
             patch.object(cluster, "publish_reports") as publish, \
@@ -202,7 +202,7 @@ def test_mbpp_error_x4_is_recovered_after_all_math_work(model, archived_history)
 
     model.run(complete)
     assert model.jobs == [("math", interrupted.key), ("math", "seed-5.prefix"), ("mbpp", failed.key)]
-    assert observed[-1]["attempt"] == 5 and observed[-1]["retry_attempt"] == 1
+    assert observed[-1]["attempt"] == 5
     assert observed[-1]["resume_first"]
     assert checkpoint.read_bytes() == b"saved optimizer and selector state"
     assert json.loads((mbpp.directory / "attempts" / f"{old['attempt_id']}.json").read_text()) == old
@@ -220,31 +220,28 @@ def test_failed_arm_beats_an_earlier_interrupted_arm_in_the_same_dataset(model):
     assert model.jobs == [("math", failed.key), ("math", interrupted.key)]
 
 
-def test_old_error_gets_only_one_bounded_recovery_budget_across_worker_restarts(model):
+def test_old_error_continues_past_three_failures_and_finishes(model):
     task = Task(9, "sr")
     queue = model.queues[1]
     abandoned(queue, task, attempt=4, state="failed")
 
     def fail(queue, task, log, **kwargs):
-        if queue.plan["dataset"] == "mbpp":
+        if queue.plan["dataset"] == "mbpp" and sum(name == "mbpp" for name, _ in model.jobs) <= 5:
             return 9
         finish_fake(queue, task)
         return 0
 
-    with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
-        model.run(fail)
-    assert model.jobs == [("math", "seed-5.prefix")] + [("mbpp", task.key)] * 3
+    model.run(fail)
+    assert model.jobs == [("math", "seed-5.prefix")] + [("mbpp", task.key)] * 6
     receipt = json.loads(queue.receipt(task).read_text())
-    assert receipt["attempt"] == 7 and receipt["retry_attempt"] == 3
+    assert receipt["attempt"] == 10 and receipt["status"] == "complete"
     budget = model.factory(model.queues).root / ".dispatch" / f"{model.factory.retry_revision}.json"
-    before = budget.read_bytes()
+    assert not budget.exists()
     for _ in range(2):
-        with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
-            model.run(fail)
-    assert len(model.jobs) == 4
-    assert budget.read_bytes() == before
+        model.run(fail)
+    assert len(model.jobs) == 7
     history = [json.loads(p.read_text()) for p in (queue.directory / "attempts").glob("*.json")]
-    assert sorted(row["attempt"] for row in history if row["status"] == "failed") == [4, 5, 6, 7]
+    assert sorted(row["attempt"] for row in history if row["status"] == "failed") == [4, 5, 6, 7, 8, 9]
 
 
 def test_chain_startup_recovers_error_x4_before_gpu_admission_can_skip_model(model, monkeypatch, tmp_path):
@@ -409,7 +406,7 @@ def test_repeated_kills_do_not_exhaust_retries_and_next_launch_resumes(model):
                    for p in (queue.directory / "attempts").glob("*.json"))
 
 
-def test_torchrun_rank_sigkill_resumes_but_explicit_oom_uses_failure_budget(model):
+def test_torchrun_rank_sigkill_and_explicit_oom_both_resume_without_attempt_cap(model):
     finish_fake(model.queues[0], Task(5, "prefix"))
     task = Task(9, "sr")
     queue = model.queues[1]
@@ -431,25 +428,28 @@ def test_torchrun_rank_sigkill_resumes_but_explicit_oom_uses_failure_budget(mode
             return 0
         with log.open("a") as handle:
             handle.write("CUDA out of memory\nexitcode : -9\n")
+        if sum(name == "mbpp" for name, _ in model.jobs) > 5:
+            finish_fake(queue, task)
+            return 0
         return 137
 
-    with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
-        model.run(oom)
+    model.run(oom)
     row = json.loads(queue.receipt(task).read_text())
-    assert row["status"] == "failed" and row["retry_attempt"] == 3
+    assert row["status"] == "complete"
+    assert sum(json.loads(p.read_text())["status"] == "failed"
+               for p in (queue.directory / "attempts").glob("*.json")) == 4
 
 
-def test_retry_budget_is_bounded_without_blocking_independent_ready_work(model):
+def test_repeated_worker_errors_are_retried_until_the_saved_task_finishes(model):
     old = Task(9, "sr")
     abandoned(model.queues[1], old)
     def child(queue, task, log, **kwargs):
-        if queue.plan["dataset"] == "mbpp":
+        if queue.plan["dataset"] == "mbpp" and sum(name == "mbpp" for name, _ in model.jobs) <= 4:
             return 9
         finish_fake(queue, task)
         return 0
-    with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
-        model.run(child)
-    assert model.jobs == [("math", "seed-5.prefix")] + [("mbpp", old.key)] * 3
+    model.run(child)
+    assert model.jobs == [("math", "seed-5.prefix")] + [("mbpp", old.key)] * 5
     assert model.queues[0].complete(Task(5, "prefix"))
 
 
@@ -531,7 +531,7 @@ def test_cooldown_does_not_block_independent_ready_work(model, capsys):
     assert "retry in" in capsys.readouterr().out
 
 
-def test_cooling_task_lease_is_free_while_an_independent_job_runs(model):
+def test_cooling_interrupted_task_keeps_its_lease_free_and_blocks_fresh_work(model):
     math = model.queues[0]
     old, ready = Task(9, "sr"), Task(5, "prefix")
     math.tasks = [old, ready]
@@ -539,16 +539,12 @@ def test_cooling_task_lease_is_free_while_an_independent_job_runs(model):
     atomic_json(math.receipt(old), {**json.loads(math.receipt(old).read_text()), "finished": time.time()})
     model.options.retry_delay = 120
 
-    def child(queue, task, log, **kwargs):
-        assert task == ready
-        assert not math.locked(old), "skipped task lease must not be held for the next job's lifetime"
-        finish_fake(queue, task)
-        return 0
-
     with patch.object(resume_drain.time, "sleep", side_effect=KeyboardInterrupt), \
             pytest.raises(KeyboardInterrupt):
-        model.run(child)
-    assert model.jobs == [("math", ready.key)]
+        model.run()
+    assert model.jobs == []
+    assert not math.locked(old)
+    assert not math.receipt(ready).exists()
 
 
 def test_stopped_sibling_backlog_does_not_block_requested_ready_work(model):
@@ -672,6 +668,25 @@ def test_model_chain_owned_work_yields_before_gpu_admission(model, monkeypatch, 
     assert json.loads(rows[0].read_text())['status'] == 'yielded'
 
 
-def test_model_chain_does_not_hide_an_exhausted_resume_as_idle(model,monkeypatch):
+def test_model_chain_keeps_retrying_error_tasks_without_an_attempt_limit(model,monkeypatch):
     monkeypatch.setenv('SRGC_MODEL_CHAIN_CHILD','1')
-    test_retry_budget_is_bounded_without_blocking_independent_ready_work(model)
+    test_repeated_worker_errors_are_retried_until_the_saved_task_finishes(model)
+
+
+def test_temporary_gpu_query_failure_yields_and_next_worker_resumes_old_task_first(model, monkeypatch, tmp_path):
+    from srgc_research.dispatch.model_chain import BUSY
+
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "math")
+    queue = model.queues[0]
+    old, fresh = Task(9, "sr"), Task(5, "prefix")
+    queue.tasks = [fresh, old]
+    abandoned(queue, old, attempt=99, state="failed")
+    before = queue.receipt(old).read_bytes()
+    error = subprocess.CalledProcessError(9, ["nvidia-smi", "--query-gpu=uuid"])
+    with pytest.raises(SystemExit) as stopped:
+        run_worker(model, monkeypatch, tmp_path, probe=error)
+    assert stopped.value.code == BUSY and not model.jobs
+    assert queue.receipt(old).read_bytes() == before
+    run_worker(model, monkeypatch, tmp_path)
+    assert model.jobs == [("math", old.key), ("math", fresh.key)]

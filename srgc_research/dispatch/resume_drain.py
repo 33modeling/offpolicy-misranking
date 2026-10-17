@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import subprocess
 import time
 import uuid
 from contextlib import ExitStack, contextmanager
@@ -53,13 +54,11 @@ def cohort_for(requested, factory, pattern):
 def runnable(manager, requested, pending, args):
     """Inspect readiness without claiming tasks or admitting GPUs."""
     from srgc_rebuttal import cluster
-    failures = manager.failure_counts()
     active = {key for key in phase_pending(manager, pending)
-              if not cluster.stop_requested(manager.tasks[key][0])}
-    owned = sum(manager.owned(*manager.tasks[key]) for key in active)
-    possible = any(not manager.tasks[key][0].complete(manager.tasks[key][1]) and
-                   manager.spent(key, failures) < args.max_attempts and
-                   manager.tasks[key][0].ready(manager.tasks[key][1]) for key in active)
+              if not cluster.stop_requested(manager.tasks[key][0])
+              and manager.dataset_allowed(manager.tasks[key][0])
+              and not manager.tasks[key][0].complete(manager.tasks[key][1])
+              and not manager.owned(*manager.tasks[key])}
     for queue in manager.queues.values():
         if cluster.stop_requested(queue) or not manager.dataset_allowed(queue):
             continue
@@ -67,17 +66,16 @@ def runnable(manager, requested, pending, args):
             key = (str(queue.plan_path.resolve()), task.key)
             if queue not in requested and key not in pending:
                 continue
+            if os.environ.get("SRGC_RESUME_ONLY") == "1" and key not in pending:
+                continue
+            if active and key not in active:
+                continue
             if queue.complete(task) or not queue.ready(task) or manager.owned(queue, task):
                 continue
             row = manager.receipt(queue, task)
-            if manager.spent(key, failures) >= args.max_attempts:
-                continue
             if row.get('status') == 'failed' and time.time() < row.get('finished', 0) + args.retry_delay:
                 continue
             return True
-    if active and not owned and not possible:
-        jobs = ', '.join(f'{manager.tasks[key][0].plan["dataset"]}:{key[1]}' for key in sorted(active))
-        raise RuntimeError(f'unfinished tasks reached the real failure limit; inspect task logs: {jobs}')
     return False
 
 
@@ -111,6 +109,9 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
         with lease(manager.marker.with_suffix(".lock"), wait=True):
             pending = {key for key in phase_pending(manager, manager.pending())
                        if not cluster.stop_requested(manager.tasks[key][0])}
+        if os.environ.get("SRGC_RESUME_ONLY") == "1" and not pending:
+            update("yielded", idle_reason="unfinished tasks recovered; fresh work deferred")
+            return
         if not pending and all(q.plan_path in stopped or
                                all(q.complete(task) for task in q.tasks) for q in requested):
             for queue in requested:
@@ -161,6 +162,12 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
         from srgc_rebuttal.runtime import Busy
 
         from .model_chain import BUSY, PAUSED, YIELD, enabled
+        command = getattr(error, "cmd", ())
+        if (enabled() and isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired))
+                and isinstance(command, (list, tuple)) and command and Path(command[0]).name == "nvidia-smi"):
+            update("yielded", error=f"{type(error).__name__}: {error}",
+                   idle_reason="GPU query failed; waiting for allocated GPUs to return")
+            raise SystemExit(BUSY) from None
         if enabled() and isinstance(error, SystemExit) and error.code == PAUSED:
             update("stopped", idle_reason="requested dataset is paused; later datasets remain blocked")
             raise
@@ -206,6 +213,12 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         if all(cluster.stop_requested(q) for q in requested):
             progress("stopped")
             return stop_code()
+        if os.environ.get("SRGC_RESUME_ONLY") == "1":
+            with lease(manager.marker.with_suffix(".lock"), wait=True):
+                remaining = phase_pending(manager, manager.pending())
+            if not remaining:
+                progress("yielded", idle_reason="unfinished tasks recovered; fresh work deferred")
+                return
         pending = None
         claimed = False
         for queue in cohort:
@@ -223,8 +236,8 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
             try:
                 if not queue.tasks:
                     continue
-                with manager.claim(queue, retry_failed=True, max_attempts=args.max_attempts,
-                                   retry_delay=args.retry_delay, worker_id=worker_id) as task:
+                with manager.claim(queue, retry_failed=True, retry_delay=args.retry_delay,
+                                   worker_id=worker_id) as task:
                     if task is None:
                         continue
                     claimed = True
@@ -286,11 +299,7 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
             # Keep stopped work in the persisted backlog, but do not make a
             # different dataset wait for a job this launcher cannot run.
             pending = {key for key in pending if not cluster.stop_requested(manager.tasks[key][0])}
-            failures = manager.failure_counts()
             owned = sum(manager.owned(*manager.tasks[key]) for key in pending)
-            possible = any(not manager.tasks[key][0].complete(manager.tasks[key][1]) and
-                           manager.spent(key, failures) < args.max_attempts and
-                           manager.tasks[key][0].ready(manager.tasks[key][1]) for key in pending)
         complete = True
         for queue in requested:
             if cluster.stop_requested(queue):
@@ -304,9 +313,6 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         if complete and not pending:
             progress("stopped" if any(cluster.stop_requested(q) for q in requested) else "complete")
             return stop_code() if any(cluster.stop_requested(q) for q in requested) else None
-        if pending and not owned and not possible:
-            jobs = ", ".join(f"{manager.tasks[key][0].plan['dataset']}:{key[1]}" for key in sorted(pending))
-            raise RuntimeError(f"{label} unfinished tasks reached the real failure limit; inspect task logs: {jobs}")
         if pending:
             jobs = ", ".join(f"{manager.tasks[key][0].plan['dataset']}:{key[1]}" for key in sorted(pending))
             reason = f"resume backlog={len(pending)} owned={owned}; {jobs}"

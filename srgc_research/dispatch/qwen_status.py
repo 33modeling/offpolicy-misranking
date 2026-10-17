@@ -320,7 +320,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     if warnings:
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
     lines += ["", "Seed table: RUN = active lease; STALE = node heartbeat older than 60s.",
-              "ERROR xN = lifetime launch number; errors are retried first within the active dataset.",
+              "ERROR xN = lifetime launch number, never a retry limit; unfinished tasks resume before fresh work.",
               "Dataset order: all selected models finish MATH before any MBPP work.",
               "Update counts show completed work; cache counts show saved prompts.",
               "SW@N = switch after completed update N; first SR training update is N+1.",
