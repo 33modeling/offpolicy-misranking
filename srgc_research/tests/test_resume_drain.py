@@ -82,7 +82,7 @@ def model(request, tmp_path, monkeypatch):
                            pattern=pattern, env_key=env_key)
 
 
-def run_worker(model, monkeypatch, tmp_path, *, child=None, admission=None):
+def run_worker(model, monkeypatch, tmp_path, *, child=None, admission=None, selected=None):
     from srgc_rebuttal import cluster_queue
 
     queues = {q.plan_path: q for q in model.queues}
@@ -103,7 +103,7 @@ def run_worker(model, monkeypatch, tmp_path, *, child=None, admission=None):
             patch.object(model.worker, "runtime_signature", return_value={"test": "runtime"}), \
             resume_drain.resume_worker(model.worker, model.factory, pattern=model.pattern,
                                       env_key=model.env_key, label="TEST"):
-        model.worker.worker([model.queues[0].plan_path], model.options, tmp_path, tmp_path,
+        model.worker.worker([q.plan_path for q in selected or [model.queues[0]]], model.options, tmp_path, tmp_path,
                             admission or (lambda *a, **kw: {"passed": True}))
     return publish
 
@@ -144,14 +144,14 @@ def test_worker_propagates_child_interruption_and_keeps_stopped_receipt(model, m
     assert json.loads(receipts[0].read_text())["status"] == "stopped"
 
 
-def test_dataset_only_worker_actually_finishes_sibling_resume_before_new_work(model):
+def test_dataset_only_worker_finishes_math_before_sibling_resume(model):
     math, mbpp = model.queues
     old = Task(9, "sr")
     abandoned(mbpp, old, attempt=99)
     prefix = mbpp.root / "seed-9/prefix.pt"
     before = prefix.read_bytes()
     model.run()
-    assert model.jobs == [("mbpp", old.key), ("math", "seed-5.prefix")]
+    assert model.jobs == [("math", "seed-5.prefix"), ("mbpp", old.key)]
     assert mbpp.complete(old) and math.complete(Task(5, "prefix"))
     assert prefix.read_bytes() == before
     assert not mbpp.receipt(Task(5, "prefix")).exists()
@@ -160,25 +160,25 @@ def test_dataset_only_worker_actually_finishes_sibling_resume_before_new_work(mo
     assert row["status"] == "complete"
 
 
-def test_sibling_real_failure_is_retried_before_any_fresh_requested_job(model):
+def test_sibling_real_failure_is_retried_after_math_finishes(model):
     old = Task(9, "sr")
     abandoned(model.queues[1], old)
 
     def child(queue, task, log, **kwargs):
-        if len(model.jobs) == 1:
+        if queue.plan["dataset"] == "mbpp" and sum(name == "mbpp" for name, _ in model.jobs) == 1:
             log.parent.mkdir(parents=True, exist_ok=True)
             log.write_text("RuntimeError: real failed attempt\n")
             return 9
         finish_fake(queue, task)
         return 0
     model.run(child)
-    assert model.jobs == [("mbpp", old.key), ("mbpp", old.key), ("math", "seed-5.prefix")]
+    assert model.jobs == [("math", "seed-5.prefix"), ("mbpp", old.key), ("mbpp", old.key)]
     history = [json.loads(path.read_text()) for path in (model.queues[1].directory / "attempts").glob("*.json")]
     assert any(row["status"] == "failed" and row["exit_code"] == 9 for row in history)
 
 
 @pytest.mark.parametrize("archived_history", (False, True))
-def test_error_x4_is_recovered_before_other_resumes_and_fresh_tasks(model, archived_history):
+def test_mbpp_error_x4_is_recovered_after_all_math_work(model, archived_history):
     math, mbpp = model.queues
     interrupted, failed = Task(8, "sr"), Task(9, "switch")
     math.tasks = [interrupted, Task(5, "prefix")]
@@ -201,9 +201,9 @@ def test_error_x4_is_recovered_before_other_resumes_and_fresh_tasks(model, archi
         return 0
 
     model.run(complete)
-    assert model.jobs == [("mbpp", failed.key), ("math", interrupted.key), ("math", "seed-5.prefix")]
-    assert observed[0]["attempt"] == 5 and observed[0]["retry_attempt"] == 1
-    assert observed[0]["resume_first"]
+    assert model.jobs == [("math", interrupted.key), ("math", "seed-5.prefix"), ("mbpp", failed.key)]
+    assert observed[-1]["attempt"] == 5 and observed[-1]["retry_attempt"] == 1
+    assert observed[-1]["resume_first"]
     assert checkpoint.read_bytes() == b"saved optimizer and selector state"
     assert json.loads((mbpp.directory / "attempts" / f"{old['attempt_id']}.json").read_text()) == old
     assert all(path.read_bytes() == data for path, data in archives.items())
@@ -233,7 +233,7 @@ def test_old_error_gets_only_one_bounded_recovery_budget_across_worker_restarts(
 
     with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
         model.run(fail)
-    assert model.jobs == [("mbpp", task.key)] * 3 + [("math", "seed-5.prefix")]
+    assert model.jobs == [("math", "seed-5.prefix")] + [("mbpp", task.key)] * 3
     receipt = json.loads(queue.receipt(task).read_text())
     assert receipt["attempt"] == 7 and receipt["retry_attempt"] == 3
     budget = model.factory(model.queues).root / ".dispatch" / f"{model.factory.retry_revision}.json"
@@ -252,7 +252,7 @@ def test_chain_startup_recovers_error_x4_before_gpu_admission_can_skip_model(mod
     failed = Task(9, "sr")
     abandoned(model.queues[1], failed, attempt=4, state="failed")
     run_worker(model, monkeypatch, tmp_path)
-    assert model.jobs == [("mbpp", failed.key), ("math", "seed-5.prefix")]
+    assert model.jobs == [("math", "seed-5.prefix"), ("mbpp", failed.key)]
     assert model.queues[1].complete(failed)
 
 
@@ -355,6 +355,7 @@ def test_two_idle_nodes_claim_distinct_ready_jobs_while_a_resume_is_owned(model)
 
 @pytest.mark.parametrize("code", (130, 137, 143, -2, -9, -15))
 def test_interruption_keeps_checkpoint_and_refunds_attempt_without_retrying(model, code):
+    finish_fake(model.queues[0], Task(5, "prefix"))
     old = Task(9, "sr")
     mbpp = model.queues[1]
     abandoned(mbpp, old)
@@ -370,6 +371,7 @@ def test_interruption_keeps_checkpoint_and_refunds_attempt_without_retrying(mode
 
 
 def test_input_validation_failure_during_interruption_is_never_reported_as_stopped(model):
+    finish_fake(model.queues[0], Task(5, "prefix"))
     old = Task(9, "sr")
     mbpp = model.queues[1]
     abandoned(mbpp, old)
@@ -388,6 +390,7 @@ def test_input_validation_failure_during_interruption_is_never_reported_as_stopp
 
 
 def test_repeated_kills_do_not_exhaust_retries_and_next_launch_resumes(model):
+    finish_fake(model.queues[0], Task(5, "prefix"))
     task = Task(9, "sr")
     queue = model.queues[1]
     abandoned(queue, task)
@@ -407,6 +410,7 @@ def test_repeated_kills_do_not_exhaust_retries_and_next_launch_resumes(model):
 
 
 def test_torchrun_rank_sigkill_resumes_but_explicit_oom_uses_failure_budget(model):
+    finish_fake(model.queues[0], Task(5, "prefix"))
     task = Task(9, "sr")
     queue = model.queues[1]
     abandoned(queue, task)
@@ -445,7 +449,7 @@ def test_retry_budget_is_bounded_without_blocking_independent_ready_work(model):
         return 0
     with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
         model.run(child)
-    assert model.jobs == [("mbpp", old.key)] * 3 + [("math", "seed-5.prefix")]
+    assert model.jobs == [("math", "seed-5.prefix")] + [("mbpp", old.key)] * 3
     assert model.queues[0].complete(Task(5, "prefix"))
 
 
@@ -473,7 +477,7 @@ def test_heartbeat_callbacks_keep_their_original_dataset_and_task(model):
         finish_fake(queue, task)
         return 0
     model.run(child)
-    callbacks[0](321)
+    callbacks[1](321)
     assert model.updates[-1][1]["active"].plan["dataset"] == "mbpp"
     assert model.updates[-1][1]["task"] == Task(9, "sr")
 

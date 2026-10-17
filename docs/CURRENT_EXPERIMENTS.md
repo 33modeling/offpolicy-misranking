@@ -1,7 +1,8 @@
 # Qwen·Llama·Gemma 연결 실행 — 2026-10-17
 
-현재 공개 학습 시작 명령은 모델을 연결한다. Qwen은 Llama→Gemma, Llama는
-Gemma→Qwen으로 이어지고, 각 모델 안에서는 기존 MATH/MBPP 공유 큐를 사용한다.
+현재 공개 학습 시작 명령은 **선택한 모든 모델의 MATH 완료 후 MBPP** 순서로
+연결한다. Qwen 시작은 Qwen/Llama/Gemma MATH를 완료한 뒤 같은 순서의 MBPP로
+이어진다. MATH 실행 잠금·남은 평가·오류 재시도·일시 중지는 MBPP 전환을 막는다.
 자세한 동작·보존 범위·기존 IDLE worker 적용 방법은
 [모델 연결 실행](SRGC_MODEL_CHAIN.md)을 따른다. 아래 2026-10-12 기록의
 “모델마다 별도 노드에서 해당 명령 하나”는 당시 동작이며 현재 기본값은 연결 실행이다.

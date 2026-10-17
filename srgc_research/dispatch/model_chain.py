@@ -19,6 +19,7 @@ MODELS = ('qwen35', 'llama31', 'gemma4')
 SCRIPTS = {name: f'run_srgc_{name}.sh' for name in MODELS}
 YIELD = 76
 BUSY = 75
+PAUSED = 77
 
 
 def enabled(environment=None):
@@ -80,21 +81,43 @@ def run_child(command, environment, heartbeat):
 
 
 def drain(order, dataset, initial, environment, update, *, runner=run_child, poll_seconds=10, sleep=time.sleep):
+    """Complete every model's MATH before launching any model's MBPP."""
+    phases = ('math',) if dataset == 'math' else ('math', 'mbpp')
+    # Preserve CLI scope, tokenizer/source-plan arguments and interpreter choice.
+    # An all command prepares both plans before the first phase. An explicit
+    # mbpp command can use its already prepared MATH sibling via phase_queues.
+    command_dataset = dataset
+    arguments = list(initial)
+    arguments[0] = command_dataset
+    for phase in phases:
+        def progress(status, *, current=phase, **details):
+            update(status, active_dataset=current, **details)
+        code = drain_phase(order, command_dataset, arguments,
+                           {**environment, 'SRGC_DATASET_PHASE': phase}, progress,
+                           runner=runner, poll_seconds=poll_seconds, sleep=sleep)
+        if code:
+            return code
+    return 0
+
+
+def drain_phase(order, dataset, initial, environment, update, *, runner=run_child, poll_seconds=10, sleep=time.sleep):
     states = {name: 'pending' for name in order}
     failures = {}
     child_env = {**environment, 'SRGC_MODEL_CHAIN_CHILD': '1'}
-    first_attempt = True
+    resumed = set()
     while True:
         busy = False
         for model in order:
             if states[model] in {'finished', 'failed'}:
                 continue
-            args = list(initial) if model == order[0] else None
-            if args and not first_attempt and len(args)>1 and args[1]=='resume':
+            args = (list(initial) if model == order[0] else
+                    [dataset, 'resume'] if len(initial)>1 and initial[1]=='resume' else None)
+            if args and model in resumed and len(args)>1 and args[1]=='resume':
                 args[1]='run'
-            first_attempt = False
+            if args and len(args)>1 and args[1]=='resume':
+                resumed.add(model)
             command = child_command(model, dataset, args)
-            print(f'MODEL START {model} dataset={dataset}', flush=True)
+            print(f'MODEL START {model} dataset={environment["SRGC_DATASET_PHASE"]}', flush=True)
             states[model] = 'running'
             update('running', model=model, models=dict(states))
             try:
@@ -110,6 +133,9 @@ def drain(order, dataset, initial, environment, update, *, runner=run_child, pol
                 print(f'MODEL FAILED {model}: {error}', file=sys.stderr, flush=True)
                 code = 2
             if code >= 128:
+                update('stopped', model=model, exit_code=code, models=dict(states))
+                return code
+            if code == PAUSED:
                 update('stopped', model=model, exit_code=code, models=dict(states))
                 return code
             states[model] = 'finished' if code == 0 else 'waiting' if code in (YIELD, BUSY) else 'failed'
@@ -222,8 +248,9 @@ def render_status(environment=None, *, now=None):
     lines = ['MODEL QUEUE']
     for row in sorted(rows, key=lambda r:r['host']):
         current = row.get('model') or '-'
+        dataset = row.get('active_dataset') or row.get('dataset') or '-'
         order = ' -> '.join(row.get('order') or [])
-        lines.append(f"{row['host']} {row['status'].upper()} model={current} | {order}")
+        lines.append(f"{row['host']} {row['status'].upper()} model={current} dataset={dataset} | {order}")
     return lines
 
 

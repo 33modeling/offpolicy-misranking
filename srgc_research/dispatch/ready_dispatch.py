@@ -21,6 +21,19 @@ class ReadyClaims:
     # This revision is fixed, so new workers/restarts cannot renew it repeatedly.
     retry_revision = "failed-first-resume-budget-20261017-v1"
 
+    def dataset_allowed(self, queue):
+        phase = os.environ.get("SRGC_DATASET_PHASE")
+        if phase is not None and phase not in {"math", "mbpp"}:
+            raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
+        if phase and queue.plan["dataset"] != phase:
+            return False
+        if queue.plan["dataset"] == "mbpp":
+            # A completed endpoint can still be owned while its writer exits.
+            # Do not cross the dataset barrier until those leases are released.
+            return all(q.complete(task) and not self.owned(q, task)
+                       for q, task in self.tasks.values() if q.plan["dataset"] == "math")
+        return True
+
     def priority(self, key, pending):
         if self.receipt(*self.tasks[key]).get("status") == "failed":
             return 0
@@ -40,10 +53,12 @@ class ReadyClaims:
             with lease(self.marker.with_suffix(".lock"), wait=True):
                 pending = self.pending()
                 failures = self.failure_counts()
+                allowed = {key for key, candidate_queue in self.queues.items()
+                           if self.dataset_allowed(candidate_queue)}
                 runnable_priority = 2
                 for key in pending:
                     candidate_queue, candidate = self.tasks[key]
-                    if stop_requested(candidate_queue):
+                    if stop_requested(candidate_queue) or key[0] not in allowed:
                         continue
                     row = self.receipt(candidate_queue, candidate)
                     eligible = (not candidate_queue.complete(candidate) and
@@ -54,8 +69,9 @@ class ReadyClaims:
                         runnable_priority = min(runnable_priority, self.priority(key, pending))
                 # A running, cooling or exhausted resume is not a completion
                 # barrier. Preserve resume priority whenever it can be claimed.
-                tasks = sorted(queue.tasks, key=lambda task:
-                               self.priority((str(queue.plan_path.resolve()), task.key), pending))
+                tasks = (sorted(queue.tasks, key=lambda task:
+                                self.priority((str(queue.plan_path.resolve()), task.key), pending))
+                         if str(queue.plan_path.resolve()) in allowed else [])
                 for task in tasks:
                     key = (str(queue.plan_path.resolve()), task.key)
                     if self.priority(key, pending) > runnable_priority:

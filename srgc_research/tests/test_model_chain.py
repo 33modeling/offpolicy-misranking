@@ -26,15 +26,17 @@ attempt=json.loads(path.read_text())['attempt']+1 if path.exists() else 1
 path.write_text(json.dumps({'attempt':attempt,'model':model}))
 raise SystemExit(76 if model=='qwen35' and attempt==1 else 0)
 ''')
-    jobs, states, sleeps = [], [], []
+    jobs, states, sleeps, phases = [], [], [], []
     def runner(command, environment, heartbeat):
         model = model_of(command)
         jobs.append(model)
+        phases.append(environment['SRGC_DATASET_PHASE'])
         return chain.run_child([sys.executable, str(script), str(tmp_path), model], environment, heartbeat)
     assert chain.drain(list(chain.MODELS), 'all', ['all'], os.environ,
                        lambda *a, **kw: states.append((a, kw)), runner=runner,
                        sleep=lambda seconds: sleeps.append(seconds)) == 0
-    assert jobs == ['qwen35', 'llama31', 'gemma4', 'qwen35']
+    assert jobs == ['qwen35', 'llama31', 'gemma4', 'qwen35', 'qwen35', 'llama31', 'gemma4']
+    assert phases == ['math'] * 4 + ['mbpp'] * 3
     assert len(sleeps) == 1
     assert states[-1][0] == ('finished',)
     assert all(value=='finished' for value in states[-1][1]['models'].values())
@@ -45,9 +47,9 @@ def test_llama_first_rotates_to_gemma_before_qwen():
     jobs = []
     assert order == ['llama31', 'gemma4', 'qwen35']
     assert chain.drain(order, 'mbpp', ['mbpp'], {}, lambda *a, **kw: None,
-                       runner=lambda cmd, env, beat: jobs.append(model_of(cmd)) or 0,
+                       runner=lambda cmd, env, beat: jobs.append((model_of(cmd), env['SRGC_DATASET_PHASE'])) or 0,
                        sleep=lambda n: pytest.fail('completed chain slept')) == 0
-    assert jobs == order
+    assert jobs == [(model, phase) for phase in ('math', 'mbpp') for model in order]
 
 
 @pytest.mark.parametrize('order', ['llama31,llama31', 'qwen35,unknown', '', 'qwen35,gemma4'])
@@ -84,6 +86,66 @@ def test_failed_model_does_not_hide_gemma_and_retains_failure_exit():
     assert states[-1][1]['failures']=={'llama31':2}
 
 
+def test_math_failures_block_mbpp_after_other_models_finish():
+    jobs = []
+    def runner(command, environment, heartbeat):
+        model = model_of(command)
+        jobs.append((model, environment['SRGC_DATASET_PHASE']))
+        return 2 if model == 'llama31' else 0
+    assert chain.drain(list(chain.MODELS), 'all', ['all'], {}, lambda *a, **kw: None, runner=runner) == 2
+    assert jobs == [(model, 'math') for model in chain.MODELS]
+
+
+def test_math_pause_stops_before_any_mbpp_or_other_model_launch():
+    jobs, states = [], []
+    assert chain.drain(list(chain.MODELS), 'all', ['all'], {},
+                       lambda *a, **kw: states.append((a, kw)),
+                       runner=lambda cmd, env, beat: jobs.append(env['SRGC_DATASET_PHASE']) or chain.PAUSED) == chain.PAUSED
+    assert jobs == ['math']
+    assert states[-1][0] == ('stopped',)
+
+
+def test_repeated_peer_owned_math_yields_cannot_start_mbpp_early():
+    jobs, sleeps = [], []
+    counts = {model: 0 for model in chain.MODELS}
+    def runner(command, environment, heartbeat):
+        model, phase = model_of(command), environment['SRGC_DATASET_PHASE']
+        jobs.append((model, phase))
+        counts[model] += phase == 'math'
+        return chain.YIELD if phase == 'math' and model == 'qwen35' and counts[model] < 3 else 0
+    assert chain.drain(list(chain.MODELS), 'all', ['all'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: sleeps.append(n)) == 0
+    assert jobs[:5] == [('qwen35', 'math'), ('llama31', 'math'), ('gemma4', 'math'),
+                       ('qwen35', 'math'), ('qwen35', 'math')]
+    assert jobs[5:] == [(model, 'mbpp') for model in chain.MODELS]
+    assert len(sleeps) == 2
+
+
+def test_all_resume_preserves_root_across_phases_and_clears_each_models_stop_once():
+    jobs = []
+    initial = ['all', 'resume', '--root', '/group/custom-qwen', '--max-attempts', '1']
+    def runner(command, environment, heartbeat):
+        jobs.append((model_of(command), environment['SRGC_DATASET_PHASE'], command[2:]))
+        return 0
+    assert chain.drain(list(chain.MODELS), 'all', initial, {}, lambda *a, **kw: None, runner=runner) == 0
+    for phase in ('math', 'mbpp'):
+        phase_jobs = [(model, args) for model, dataset, args in jobs if dataset == phase]
+        assert phase_jobs == [('qwen35', initial), ('qwen35', ['all', 'run', *initial[2:]]),
+                              ('llama31', ['all', 'resume']), ('gemma4', ['all', 'resume'])]
+
+
+def test_explicit_mbpp_source_plan_and_interpreter_scope_are_preserved_during_math_phase():
+    initial = ['mbpp', 'run', '--source-plan', '/group/code-plan.json', '--root', '/group/custom-llama']
+    jobs = []
+    def runner(command, environment, heartbeat):
+        jobs.append((model_of(command), environment['SRGC_DATASET_PHASE'], command[2:]))
+        return 0
+    assert chain.drain(chain.order_for('llama31'), 'mbpp', initial, {}, lambda *a, **kw: None, runner=runner) == 0
+    assert [(phase, args) for model, phase, args in jobs if model == 'llama31'] == [
+        ('math', initial), ('mbpp', initial)]
+    assert all(args == ['mbpp'] for model, phase, args in jobs if model != 'llama31')
+
+
 @pytest.mark.parametrize('code',[130,137,143])
 def test_interruption_stops_chain_without_starting_another_model(code):
     calls=[]
@@ -99,7 +161,7 @@ def test_qwen_resume_clears_only_requested_stop_then_runs_the_same_root():
                        runner=lambda cmd,*a:jobs.append(cmd) or 0)==0
     assert jobs[0][2:]==initial
     assert jobs[1][2:]==['math','run','--root','/group/custom-qwen']
-    assert jobs[2][2:]==['math']
+    assert jobs[2][2:]==['math','resume']
 
 
 @pytest.mark.parametrize('model',chain.MODELS)
