@@ -134,10 +134,11 @@ def test_worker_binds_sibling_runtime_before_admission(model, monkeypatch, tmp_p
     assert not (model.queues[0].directory / "runtime.json").exists()
 
 
-def test_worker_propagates_child_interruption_and_keeps_stopped_receipt(model, monkeypatch, tmp_path):
+@pytest.mark.parametrize("signal_number", (signal.SIGTERM, signal.SIGKILL))
+def test_worker_propagates_child_interruption_and_keeps_stopped_receipt(model, monkeypatch, tmp_path, signal_number):
     with pytest.raises(SystemExit) as stopped:
-        run_worker(model, monkeypatch, tmp_path, child=lambda *a, **kw: -signal.SIGTERM)
-    assert stopped.value.code == 143
+        run_worker(model, monkeypatch, tmp_path, child=lambda *a, **kw: -signal_number)
+    assert stopped.value.code == 128 + signal_number
     receipts = list((model.queues[0].directory / "workers").glob("*.json"))
     assert len(receipts) == 1
     assert json.loads(receipts[0].read_text())["status"] == "stopped"
@@ -259,7 +260,7 @@ def test_two_idle_nodes_claim_distinct_ready_jobs_while_a_resume_is_owned(model)
     assert json.loads(mbpp.receipt(old).read_text())["attempt"] == 3
 
 
-@pytest.mark.parametrize("code", (130, 143, -2, -15))
+@pytest.mark.parametrize("code", (130, 137, 143, -2, -9, -15))
 def test_interruption_keeps_checkpoint_and_refunds_attempt_without_retrying(model, code):
     old = Task(9, "sr")
     mbpp = model.queues[1]
@@ -291,6 +292,54 @@ def test_input_validation_failure_during_interruption_is_never_reported_as_stopp
     assert row["status"] == "failed" and row["retry_attempt"] == 1
     assert "frozen inputs changed" in row["validation_error"]
     assert all(state != "stopped" for state, _ in model.updates)
+
+
+def test_repeated_kills_do_not_exhaust_retries_and_next_launch_resumes(model):
+    task = Task(9, "sr")
+    queue = model.queues[1]
+    abandoned(queue, task)
+    checkpoint = queue.root / "seed-9/sr-latest.pt"
+    checkpoint.write_bytes(b"last fully saved update")
+    for _ in range(5):
+        model.run(lambda *a, **kw: -signal.SIGKILL)
+        row = json.loads(queue.receipt(task).read_text())
+        assert row["status"] == "interrupted" and row["retry_attempt"] == 0
+        assert row["resume_first"]
+        assert checkpoint.read_bytes() == b"last fully saved update"
+    model.run()
+    assert queue.complete(task)
+    assert model.jobs[:6] == [("mbpp", task.key)] * 6
+    assert not any(json.loads(p.read_text())["status"] == "failed"
+                   for p in (queue.directory / "attempts").glob("*.json"))
+
+
+def test_torchrun_rank_sigkill_resumes_but_explicit_oom_uses_failure_budget(model):
+    task = Task(9, "sr")
+    queue = model.queues[1]
+    abandoned(queue, task)
+
+    def killed(queue, task, log, **kwargs):
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a") as handle:
+            handle.write("exitcode : -9\nSignal 9 (SIGKILL) received\n")
+        return 1
+
+    model.run(killed)
+    assert json.loads(queue.receipt(task).read_text())["status"] == "interrupted"
+    assert model.updates[-1][0] == "stopped"
+
+    def oom(queue, task, log, **kwargs):
+        if queue.plan["dataset"] != "mbpp":
+            finish_fake(queue, task)
+            return 0
+        with log.open("a") as handle:
+            handle.write("CUDA out of memory\nexitcode : -9\n")
+        return 137
+
+    with pytest.raises(RuntimeError, match="failure limit|bounded retries"):
+        model.run(oom)
+    row = json.loads(queue.receipt(task).read_text())
+    assert row["status"] == "failed" and row["retry_attempt"] == 3
 
 
 def test_retry_budget_is_bounded_without_blocking_independent_ready_work(model):

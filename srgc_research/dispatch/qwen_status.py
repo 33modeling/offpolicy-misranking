@@ -63,7 +63,7 @@ def _cell(task):
         return "WAIT " + state.removeprefix("waiting_for_")
     if state == "failed":
         return f"ERROR x{task.get('attempt', 0)}"
-    return {"ready": "READY", "recoverable": "RESUME", "interrupted": "STOPPED",
+    return {"ready": "READY", "recoverable": "RESUME", "interrupted": "RESUME",
             "invalid": "INVALID", "attempts_exhausted": "RETRY LIMIT"}.get(state, state.upper())
 
 
@@ -107,7 +107,7 @@ def node_rows(snapshots):
     def activity(row):
         # A newer idle launcher must not hide a different live session whose
         # task lease proves it is actually running on this host.
-        if row["status"] == "running" and row["task_row"] and row["task_row"]["status"] == "running":
+        if row["status"] in {"running", "heartbeat_stale"} and row["task_row"] and row["task_row"]["status"] == "running":
             return 3
         if row["status"] == "serving_other_dataset":
             return 2
@@ -260,6 +260,10 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines += table(("Node", "State", "Task", "Progress", "Heartbeat", "Wait reason"), rows)
     else:
         lines += ["", "NODES  no worker records"]
+    hidden = {worker_id for report in snapshots
+              for worker_id in report.get("worker_history", {}).get("hidden_worker_ids", [])}
+    if hidden:
+        lines.append(f"HISTORY  {len(hidden)} expired unowned worker sessions hidden; receipts and logs retained")
     for report in snapshots:
         rows = report["tasks"]
         if not report.get("prepared", True):

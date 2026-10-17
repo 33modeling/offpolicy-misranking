@@ -155,7 +155,46 @@ checkpoint만 앞서 나가는 것을 막는다. 동일한 완료 기록은 재�
 과거 가중치가 남아 있다면 이후 재평가는 가능하지만, 원래 실행 중 측정한 값과
 구분해서 기록해야 한다.
 
-## 이번 검증 범위
+## 노드 강제 종료 후 이어 실행 (2026-10-17)
+
+Qwen·Llama·Gemma 공개 런처는 기존 plan과 seed 폴더를 그대로 사용한다.
+새 노드를 할당받은 후 **같은 실행 명령**을 다시 실행하면, 기존 체크포인트가
+있는 미완료 작업을 우선 가져와 마지막으로 완전히 저장한 update 다음부터
+이어 실행한다. 실행 중인 노드 자체를 다시 할당하는 기능은 아니다.
+
+- `<arm>-latest.pt`와 `prefix-latest.pt`에는 모델·optimizer·선별된 문제,
+  이미 학습 배치에 사용한 문제 ID·sampling cycle·SR-GC 시간 창과 Switch 경계가
+  함께 저장된다. 저장이 끝나기 전 중단된 update만 다시 수행한다.
+- 임시 `.tmp` 저장 도중 강제 종료돼도 기존 `.pt`를 먼저 덮어쓰지 않는다.
+  재시작 시 완성된 `.pt`를 읽고 다음 정상 저장에서 남은 임시 파일을 교체한다.
+- SIGKILL(-9/137), SIGTERM, 인터럽트 및 torchrun이 보고한 root rank의
+  SIGKILL은 `interrupted`로 남겨 실제 오류 재시도 예산을 소모하지 않는다.
+  현재 시도의 로그에 명시적인 OOM이 있으면 실제 실패로 남긴다. 과거 시도의
+  로그를 현재 오류 판정에 섞지 않는다. 입력/증거 검증 오류도 실패로 유지한다.
+- 부모가 죽었어도 자식이 실행 잠금을 보유하면 다른 worker가 같은 작업을
+  중복 실행하지 않는다. 이미 완료한 작업과 저장된 평가 응답은 재사용한다.
+- status의 `RESUME`는 복구 가능한 중단 작업이다. 60초 넘게 heartbeat가
+  없으면 `STALE`로 경고하고, **15분 넘었으며 실행·GPU 잠금의 소유 증거가 없는
+  worker 표시**는 일반 목록에서 숨긴다. 최근 stale 및 잠금이 살아 있는 작업은
+  유지한다. 오래된 종료 세션에도 같은 보존 기간을 적용한다. 재할당된 GPU의
+  새 세션 때문에 이전의 종료 세션을 계속 살아 있다고 판단하지 않는다.
+- status는 원본 worker receipt·시도 이력·로그·체크포인트·보상 기록을
+  삭제하거나 수정하지 않는다. JSON의 `worker_history`와 화면의 `HISTORY`에
+  숨긴 수를 표시한다. 세 모델에 같은 기준을 적용한다.
+
+CPU에서 실제 프로세스를 checkpoint 임시 저장 도중 SIGKILL로 종료해
+prefix·Random·SR·On-policy·Switch의 복구를 검사했다. 마지막 `.pt` 보존,
+optimizer 복원, 중복 없는 update history와 선별/Switch 상태가 중단 없는
+실행과 일치한다. 세 모델의 반복 SIGKILL·torchrun rank 종료·OOM 재시도 및
+읽기 전용 status 검사도 포함한다. GPU 재학습이나 이미 실행 중인 프로세스의
+코드를 교체한 검증은 아니다. frozen learner/adapter/recording hash는 유지한다.
+
+관련 회귀 237개 통과 후 공유 worker의 두 dataset heartbeat 차이를 추가
+보완하고 status 검사 51개를 통과했다. 수정 Python 파일의 Ruff 검사와
+공백 검사를 통과했다. 세 모델 adapter·공통 engine·보상 기록 확장 hash는
+수정 전 commit과 직접 비교해 일치함을 확인했다.
+
+## 기존 보상 기록 확장 검증
 
 CPU 시험에서 실제 반환된 응답 캡처, 완료된 재시작 캐시 삭제 후 영구 기록 유지,
 중간 재시작, 기록 실패 시 checkpoint 전진 방지, 오염된 reward/token/protocol 거부,

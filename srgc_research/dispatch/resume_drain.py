@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 from srgc_rebuttal.runtime import lease
 
+from .preemption import interruption_code, log_position
+
 
 def cohort_for(requested, factory, pattern):
     cohort = list(requested)
@@ -89,7 +91,7 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
                 raise SystemExit(code)
     except BaseException as error:
         interrupted = (isinstance(error, KeyboardInterrupt) or
-                       isinstance(error, SystemExit) and error.code in (130, 143))
+                       isinstance(error, SystemExit) and error.code in (130, 137, 143))
         update("stopped" if interrupted else "failed",
                error=f"{type(error).__name__}: {error}")
         raise
@@ -151,6 +153,7 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                     task_label = f"{label} {queue.plan['dataset']}:{task.key}"
                     log = queue.directory / "logs" / f"{task.key}.log"
                     print(f"RUN {task_label} log={log}", flush=True)
+                    log_start = log_position(log)
                     try:
                         cluster.gpu_identity()
                         row = manager.receipt(queue, task)
@@ -176,9 +179,9 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                     except BaseException:
                         queue.finish(task, 1)
                         raise
-                    if code < 0:
-                        code = 128 - code
-                    interrupted = code in (130, 143)
+                    signal_code = interruption_code(code, log, log_start)
+                    code = signal_code if signal_code is not None else (128 - code if code < 0 else code)
+                    interrupted = signal_code is not None
                     code = queue.finish(task, code, interrupted=interrupted)
                     # An interrupted process can also expose corrupted inputs
                     # or evidence. finish deliberately records that as failed.

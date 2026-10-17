@@ -129,6 +129,9 @@ def load_reports(model, dataset, root, environment):
                     statistics["mean_selection_training_preparation_gpu_seconds"] = None
         report["label"] = "MATH" if name == "math" else "MBPP"
         snapshots.append(report)
+    from .worker_history import prune_workers
+
+    prune_workers(snapshots, gpu_lock_roots=(Path(group) / ".srgc-gpu-node-locks", root / "gpu-node-locks"))
     return snapshots
 
 
