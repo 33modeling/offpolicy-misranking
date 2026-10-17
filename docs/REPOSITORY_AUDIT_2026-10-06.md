@@ -1,5 +1,65 @@
 # 전체 코드 저장소 점검
 
+## 2026-10-18 재점검
+
+기준 commit은 `1435fb356ade48b39982b53159d840e51a5fcdf8`다. 추적 중인 전체 소스의
+정적 검사와 회귀 검사를 수행하고, 수동 검토는 재개·작업 순서·실행 잠금·중간 보상·
+status/results 경계에 집중했다. 모든 파일의 모든 줄을 수동으로 읽었다는 뜻은 아니다.
+진행 중인 실험의 학습 조건·동결 runtime·모델 adapter·입력·결과는 보존했다.
+
+| 재현한 문제 | 영향 | 수정 |
+| --- | --- | --- |
+| `all resume`의 데이터셋 전환 시 재적용 | MATH 실행 중 새로 건 MBPP 중지 요청이 MBPP 진입 때 다시 지워질 수 있음 | 한 coordinator 실행에서 모델마다 resume를 한 번만 적용하고, 다음 데이터셋은 run으로 진입 |
+| 잘못된 coordinator worker JSON | 배열/문자열 기록 하나로 status가 종료되거나 잘못된 started/device 정보가 정상 세션 선택에 간섭 | JSON object·시간·모델·장치·순서 필드를 검사하고 잘못된 기록만 조회에서 제외; 원본 파일 보존 |
+| 손상된 중간 rollout archive | 잘린 gzip, 잘못된 압축 데이터, 배열 형태의 trace/training/group/history 때문에 results 전체 또는 자동 게시가 예외로 중단 | 읽기 경계에서 검증 오류로 변환하고 해당 arm의 curve 오류로 기록; 정상 endpoint와 다른 arm은 partial export에 보존 |
+| 긴 경로의 status 화면 | 80열에서 ROOT 경로가 여러 줄을 차지해 화면 길이 제한을 넘거나, 미준비 화면의 경로가 폭을 초과 | ROOT 표시를 한 줄로 제한하고 긴 경로는 축약; 경로 안의 연속 공백과 JSON의 전체 경로는 보존 |
+
+수정 위치는 [모델 연결 실행](../srgc_research/dispatch/model_chain.py)과
+[결과 내보내기](../srgc_research/dispatch/model_results.py),
+[기존 실험 현황판](../scripts/selection_switch_status.py)이다. 중지 요청 재현은 세 모델,
+archive 손상 재현은 여섯 손상 유형×세 모델을 검사한다. 정상 endpoint를 invalid나 0점으로
+바꾸지 않고, 손상 파일도 자동 삭제·수정하지 않는다. 관련 회귀는
+[연결 실행 테스트](../srgc_research/tests/test_model_chain.py)와
+[rollout 보존·내보내기 테스트](../srgc_research/tests/test_rollout_records.py),
+[현황판 테스트](../tests/test_selection_switch_status.py)에 추가했다.
+
+정적 검사: Python **762개** AST 파싱, JSON **39개** 파싱, Shell **118개**의 실제
+interpreter 기준 문법 검사와 ShellCheck error 검사 통과. `_mbpp_experiments.sh`는
+Bash에서 source하는 파일로 검사했다. 운영 확장 파일은 Ruff 검사를 통과했고,
+기존 현황판 파일·handoff 테스트에는 기존 대비 새 Ruff 진단이 없다. 전체 변경의 공백 검사를 통과했다.
+기존 소스 전체의 스타일 경고를 동결 코드에 일괄 적용하지 않았다.
+
+동결 learner·세 모델 adapter·기존 resume 모듈·checkpoint/rollout·보상 기록 확장을
+포함한 **63개 소스 파일**은 기준 commit과 바이트/해시가 같다. 새 실험을 실행하거나,
+원격 노드의 실행 중인 Python에 수정 사항을 적용한 작업은 아니다.
+
+전수 검사 후반의 Gemma/Llama 기본 Python 선택 실패 두 건은 앞선 Pair handoff 테스트가
+`PAIR_PYTHON`·GPU 환경 변수를 남긴 데서 발생했다. 각 테스트를 따로 실행하면 두 건 모두
+통과하지만 handoff와 같은 프로세스에서 실행하면 **98개 통과·2개 실패**로 재현됐다.
+[handoff 테스트](../tests/test_selector_pair_handoff.py)에 테스트별 환경 복원을 추가했다.
+실제 handoff가 검증한 owner의 interpreter와 GPU 설정을 재시작에 전달하는 동작은 보존했다.
+
+| 검사 | 확인한 결과 | 범위 |
+| --- | --- | --- |
+| 저장소 전체 1차 회귀 | **6,183 passed, 16 skipped, 330 subtests passed, 3 failed**, 수집 오류 0 | 전체 검사에서 긴 경로 화면 실패 1건과 테스트 환경 누수 2건을 발견; 아래 최종 검사에서 해결 확인 |
+| 수정 후 최종 결합 회귀 | **585 passed, 1 skipped, 실패·오류 0** | handoff 이후 모델 런처를 같은 프로세스에서 검사; 앞선 세 실패와 재개·SIGKILL·status/results·rollout·중간 보상·분석 회귀를 모두 포함 |
+
+전수 검사에서 제외한 16개는 명시적 CUDA 장치가 필요한 15개와 RLOO에 적용되지 않는
+nested-curve meter 검사 1개다. 최종 결합의 제외 항목도 같은 RLOO 검사다.
+현황판의 신규 12개 회귀는 전수 수집 이후 추가되어 최종 결합 검사에 포함했다.
+두 실행의 중복 테스트 수는 합산하지 않는다. 최종 추가 회귀는 총 **43개**다.
+검사 원본은 `/tmp/offpolicy-source-audit-final-v3.xml`과
+`/tmp/offpolicy-source-audit-final-focused.xml`에 남겼다.
+
+검증 환경은 Python 3.12, PyTorch 2.13 CPU, Transformers 5.14.1, PEFT 0.20.0이며,
+gate 의존성은 선언된 별도 CPU 패키지 경로를 사용했다. 실험 노드의 환경을 변경하지 않았다.
+로컬 CPU 검사와 실제 H100/NCCL 검증을 구분한다. 중간 학습 배치 보상과 고정 held-out
+보상은 기존처럼 별도로 보존·내보낸다. 사용자 미추적 CFCS 테스트·hotfix 파일은 커밋에서 제외한다.
+
+---
+
+아래는 2026-10-06 점검 당시의 보존 기록이다.
+
 기준: `master`의 `e9ef3f5129b405c2b0b49c8a1fa49cae9e7ce8f8` 이후 작업 트리.
 대상은 Pair, MBPP, Qwen, 기존 SR-GC, 추가 실험 N01-N08, 비용·상태·결과 수집 도구다.
 논문 저장소·PDF·웹 게시본과 실제 실험 결과는 수정하지 않는다.

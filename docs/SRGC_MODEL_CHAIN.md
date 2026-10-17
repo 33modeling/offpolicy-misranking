@@ -17,7 +17,7 @@ sh scripts/run_srgc_llama31.sh all
 
 전환은 새 자식 프로세스로 실행하므로 모델별 Python·Gemma 패키지 overlay·CUDA 상태가 섞이지 않는다. 자동 Llama 전환에서는 수동 시작의 GPU 프로세스 정리를 호출하지 않는다. 기존 다른 작업의 GPU 소유권은 공유 lease로 보호한다. **누적 실패 3회 등의 재개 제한은 없다.** 서버가 GPU를 강제로 종료해 ERROR가 쌓여도 횟수만으로 복구를 막지 않는다. 과거 예산 파일도 실행 조건으로 사용하지 않는다. 기본 재시도 간격 60초 뒤 미완료 작업을 계속 재시도하며 실패 이력은 보존한다. 입력·모델 identity 오류나 명시적인 일시 중지는 별도로 보고하고, 완료로 간주하지 않는다. Ctrl-C/SIGTERM은 소유한 자식에게 전달하고 전체 연결 실행을 멈춘다.
 
-`status`·`results`·`stop`·`doctor`·`prepare` 등은 기존처럼 해당 모델에만 적용된다. 각 모델의 text/JSON status에 공통 `MODEL QUEUE`/`model_chain` 상태와 현재 `dataset=math/mbpp`를 표시한다. heartbeat가 오래된 기록은 STALE로 구분한다. 단계의 완료 여부는 검증된 task·endpoint 및 실행 잠금으로 판단한다. 중지된 단계는 별도 종료 코드로 기록하여 성공/완료와 구분한다. `all resume`는 각 모델의 해당 단계 중지를 해제하되, 재방문할 때 중지 해제를 반복하지 않는다.
+`status`·`results`·`stop`·`doctor`·`prepare` 등은 기존처럼 해당 모델에만 적용된다. 각 모델의 text/JSON status에 공통 `MODEL QUEUE`/`model_chain` 상태와 현재 `dataset=math/mbpp`를 표시한다. heartbeat가 오래된 기록은 STALE로 구분한다. 단계의 완료 여부는 검증된 task·endpoint 및 실행 잠금으로 판단한다. 중지된 단계는 별도 종료 코드로 기록하여 성공/완료와 구분한다. `all resume`는 한 coordinator 실행에서 모델마다 한 번만 중지를 해제한다. 재방문하거나 MATH에서 MBPP로 넘어갈 때 다시 해제하지 않아, MATH 실행 중 새로 건 MBPP 중지 요청을 보존한다. 잘못된 coordinator JSON은 해당 기록만 조회에서 제외하고 다른 정상 세션을 계속 표시한다.
 
 운영 상태는 `$SRGC_STORAGE_ROOT/.model-chain/workers/`에 별도로 기록한다. 기본 경로는 `$OM_WORK/srgc-rebuttal/.model-chain/workers/`다. 고정 engine·모델 adapter·plan·입력·기존 결과·체크포인트는 변경하지 않는다. 기존 중간 reward 기록과 25-update 고정 held-out 평가 확장도 같은 실행기를 통해 유지한다. 학습 배치 reward와 held-out reward는 기존처럼 분리해서 export한다.
 
@@ -28,3 +28,5 @@ sh scripts/run_srgc_llama31.sh all
 2026-10-17 검증: 세 모델의 단계 전환·오류 재시도·peer 실행 잠금·중지·원래 명령 인자 보존에 대한 최종 검사 179개를 통과했다. 공통 status·중간 보상·실제 SIGKILL 복구·셸 진입점도 회귀 검사했다. 수정 Python 파일의 Ruff/공백 검사를 통과했고, 세 모델 adapter·공통 engine·보상 기록 확장·동결 runtime 파일은 수정 전과 동일함을 확인했다.
 
 2026-10-18 수정: 실패 횟수 제한을 제거했다. 살아 있는 coordinator는 SIGKILL/137로 종료된 worker를 다시 실행한다. 일시적인 `nvidia-smi` 실패도 재확인한다. 이미 coordinator 자체가 종료된 경우에는 같은 공개 명령을 다시 실행해 저장된 작업부터 복구한다. 관련 회귀 316개 통과 후 실제 SIGKILL child 재시작·GPU 조회 복구를 추가해 최종 운영 검사 201개를 통과했다. 과거 실패 이력과 예산 파일은 삭제하지 않았고, 학습·보상 기록 hash를 유지했다.
+
+같은 날 [전체 코드 재점검](REPOSITORY_AUDIT_2026-10-06.md)에서 데이터셋 전환 시 resume 재적용과 잘못된 coordinator 기록의 오류 격리를 추가로 수정했다. 손상된 중간 rollout의 results 오류도 해당 arm에 격리하며 정상 endpoint와 다른 arm의 결과를 유지한다.

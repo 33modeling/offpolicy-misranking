@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import signal
 import socket
@@ -89,24 +90,29 @@ def drain(order, dataset, initial, environment, update, *, runner=run_child, pol
     command_dataset = dataset
     arguments = list(initial)
     arguments[0] = command_dataset
+    resumed = set()
     for phase in phases:
         def progress(status, *, current=phase, **details):
             update(status, active_dataset=current, **details)
         code = drain_phase(order, command_dataset, arguments,
                            {**environment, 'SRGC_DATASET_PHASE': phase}, progress,
-                           runner=runner, poll_seconds=poll_seconds, sleep=sleep)
+                           runner=runner, poll_seconds=poll_seconds, sleep=sleep,
+                           resumed=resumed)
         if code:
             return code
     return 0
 
 
-def drain_phase(order, dataset, initial, environment, update, *, runner=run_child, poll_seconds=10, sleep=time.sleep):
+def drain_phase(order, dataset, initial, environment, update, *, runner=run_child,
+                poll_seconds=10, sleep=time.sleep, resumed=None):
     from .resume_inventory import signature
 
     states = {name: 'pending' for name in order}
     failures = {}
     child_env = {**environment, 'SRGC_MODEL_CHAIN_CHILD': '1'}
-    resumed = set()
+    # An explicit resume authorizes clearing existing stop markers once per
+    # model for this invocation. A later phase must respect newly placed stops.
+    resumed = set() if resumed is None else resumed
     recovered = {}
     root_parser = argparse.ArgumentParser(add_help=False)
     root_parser.add_argument('--root', type=Path)
@@ -249,11 +255,21 @@ def snapshot(environment=None, *, now=None):
     for path in paths:
         try:
             row = json.loads(path.read_text())
+            if not isinstance(row, dict):
+                continue
             if row.get('status') not in {'running','switching','waiting','finished','stopped','failed'}:
                 continue
-            if row.get('order') and (not isinstance(row['order'],list) or any(m not in MODELS for m in row['order'])):
+            order = row.get('order')
+            if order is not None and (not isinstance(order, list) or any(m not in MODELS for m in order)):
                 continue
-            age = now - float(row['heartbeat'])
+            if row.get('model') is not None and row['model'] not in MODELS:
+                continue
+            if not isinstance(row.get('devices', ''), str):
+                continue
+            if any(type(row.get(name)) not in (int, float) or not math.isfinite(row[name])
+                   or row[name] < 0 for name in ('heartbeat', 'started')):
+                continue
+            age = now - row['heartbeat']
             if not 0 <= age <= 86400:
                 continue
             row['heartbeat_age_seconds'] = age

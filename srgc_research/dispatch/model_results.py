@@ -7,6 +7,7 @@ import importlib
 import json
 import os
 import time
+import zlib
 from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
@@ -105,7 +106,21 @@ def _export(model, dataset, *, root, environment):
         if before is None or file_version(path) != before:
             raise ValueError("reward records changed during result inspection; rerun results")
         payload = path.read_bytes()
-        value = json.loads(gzip.decompress(payload) if path.suffix == ".gz" else payload)
+        try:
+            value = json.loads(gzip.decompress(payload) if path.suffix == ".gz" else payload)
+            if not isinstance(value, dict):
+                raise TypeError("expected a JSON object")
+            if path.suffix == ".gz":
+                groups = value.get("groups")
+                if not isinstance(groups, list) or any(not isinstance(group, dict) for group in groups):
+                    raise TypeError("rollout groups must be an array of JSON objects")
+                if not isinstance(value.get("history_record"), dict):
+                    raise TypeError("rollout history must be a JSON object")
+        except (OSError, EOFError, ValueError, TypeError, zlib.error) as error:
+            # A corrupt archive is local to this arm's reward records. Keep
+            # successful endpoints and other arms in the partial export, and
+            # never let automatic publication turn this into a learner crash.
+            raise ValueError(f"invalid reward record {path}: {error}") from error
         if file_version(path) != before:
             raise ValueError("reward records changed during result inspection; rerun results")
         return value

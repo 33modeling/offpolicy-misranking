@@ -9,6 +9,13 @@ GPU 강제 종료로 ERROR가 누적돼도 재개를 막지 않도록 실패 횟
 [모델 연결 실행](SRGC_MODEL_CHAIN.md)을 따른다. 아래 2026-10-12 기록의
 “모델마다 별도 노드에서 해당 명령 하나”는 당시 동작이며 현재 기본값은 연결 실행이다.
 
+2026-10-18 [전체 코드 재점검](REPOSITORY_AUDIT_2026-10-06.md): `all resume`는 모델마다
+한 번만 적용하여 MATH 실행 중 새로 건 MBPP 중지 요청을 보존한다. 잘못된 coordinator
+기록 하나로 status 전체가 종료되지 않도록 검사한다. 손상된 중간 rollout은 해당 arm의
+curve 오류로 표시하고 정상 endpoint·다른 arm은 results에 유지한다. 기존 실험 현황판의
+긴 ROOT 경로도 한 줄 안에서 표시하며 JSON의 전체 경로와 경로 안 공백을 유지한다. 학습·기록 runtime과
+현재 실험 조건은 보존하며 원격 worker에 수정이 적용됐다는 뜻은 아니다.
+
 # Current Experiment Allocations
 
 ## 현재 실험 — 2026-10-10

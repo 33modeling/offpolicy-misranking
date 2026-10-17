@@ -1,5 +1,6 @@
 """Actual returned groups survive cache cleanup and failed/resumed updates."""
 
+import gzip
 import json
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ from srgc_research.dispatch.reward_curves import recording_engine
 from srgc_research.tests.test_model_results import (
     cohort as cohort,  # noqa: PLC0414 - pytest fixture registration
 )
-from srgc_research.tests.test_model_results import finish, read_result
+from srgc_research.tests.test_model_results import finish, read_result, saved
 
 
 class RawBackend(ScriptedBackend):
@@ -158,9 +159,9 @@ def test_atomic_archive_reuse_and_conflicting_retry(tmp_path):
     assert path.read_bytes() == original
 
 
-def test_compact_export_retains_rewards_and_lengths_for_each_model(cohort):
+def export_records(cohort):
     from srgc_rebuttal.plan import input_path, load_plan
-    from srgc_research.dispatch import model_results, reward_curves
+    from srgc_research.dispatch import reward_curves
     folder = finish(cohort, "math")
     plan = load_plan(cohort.plans["math"])
     data = json.loads(input_path(cohort.plans["math"], plan, 5).read_text())
@@ -183,12 +184,59 @@ def test_compact_export_retains_rewards_and_lengths_for_each_model(cohort):
              "groups": [{"arm": "on_policy", "phase": "training", "update": 26, "prompt_id": rid,
                          "responses": [{"reward": i % 2, "token_ids": [10, 20, i]} for i in range(8)]} for rid in ids]}
     rollout_records.publish(folder / "reward-curves/on_policy/rollouts/step-26.json.gz", trace)
+    return folder
+
+
+def test_compact_export_retains_rewards_and_lengths_for_each_model(cohort):
+    from srgc_research.dispatch import model_results
+
+    export_records(cohort)
     assert model_results.export(cohort.model, "math", environment=cohort.env) == 0
     curves = read_result(cohort)["datasets"]["math"]["reward_curves"]
     row = next(c for c in curves if c["seed"] == 5 and c["arm"] == "on_policy")
     assert len(row["rollout_groups"]) == 4 and len(row["rollout_sources"]) == 1
     assert all(r["completion_tokens"] == 3 for g in row["rollout_groups"] for r in g["responses"])
     assert "token_ids" not in json.dumps(row)
+
+
+@pytest.mark.parametrize('damage', ('truncated_gzip', 'invalid_deflate', 'trace_array',
+                                    'training_array', 'group_array', 'history_array'))
+def test_bad_reward_archive_preserves_endpoints_and_other_arms_in_partial_export(cohort, damage):
+    from srgc_research.dispatch import model_results
+
+    folder = export_records(cohort)
+    finish(cohort, 'math', arm='sr', reward=.625)
+    assert model_results.export(cohort.model, 'math', environment=cohort.env) == 0
+    path = folder / 'reward-curves/on_policy/rollouts/step-26.json.gz'
+    if damage == 'truncated_gzip':
+        path.write_bytes(path.read_bytes()[:-4])
+    elif damage == 'invalid_deflate':
+        payload = path.read_bytes()
+        path.write_bytes(payload[:10] + b'\x06' + payload[11:])
+    elif damage == 'trace_array':
+        path.write_bytes(gzip.compress(b'[]'))
+    elif damage == 'training_array':
+        atomic_json(folder / 'reward-curves/on_policy/training.json', [])
+    else:
+        trace = read(path)
+        if damage == 'group_array':
+            trace['groups'][0] = []
+        else:
+            trace['history_record'] = []
+        path.write_bytes(gzip.compress(json.dumps(trace).encode()))
+    before = saved(cohort)
+    assert model_results.export(cohort.model, 'math', environment=cohort.env) == 1
+    result = read_result(cohort)
+    snapshot = result['datasets']['math']
+    assert not result['complete'] and result['errors']
+    assert any('invalid reward record' in error for error in result['errors'])
+    assert {row['arm']: row['endpoint']['reward'] for row in snapshot['endpoints']} == {
+        'on_policy': .5, 'sr': .625}
+    assert all(row['status'] == 'complete' for row in snapshot['tasks']
+               if row['seed'] == 5 and row['arm'] in {'on_policy', 'sr'})
+    sr = next(row for row in snapshot['reward_curves'] if row['seed'] == 5 and row['arm'] == 'sr')
+    assert sr['held_out_rewards'][0]['reward'] == .625
+    assert saved(cohort) == before
 
 
 def distributed_writer(rank, folder):

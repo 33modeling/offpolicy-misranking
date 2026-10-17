@@ -24,6 +24,16 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/selector_pair_handoff.py"
 
 
+@pytest.fixture(autouse=True)
+def isolated_handoff_environment():
+    # Production handoff intentionally preserves the owner's Python/devices
+    # for exec. Each simulation must restore them before another launcher test.
+    previous = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(previous)
+
+
 @pytest.fixture
 def handoff(monkeypatch):
     spec = importlib.util.spec_from_file_location("selector_pair_handoff_test", SCRIPT)

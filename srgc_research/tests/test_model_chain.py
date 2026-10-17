@@ -128,10 +128,33 @@ def test_all_resume_preserves_root_across_phases_and_clears_each_models_stop_onc
         jobs.append((model_of(command), environment['SRGC_DATASET_PHASE'], command[2:]))
         return 0
     assert chain.drain(list(chain.MODELS), 'all', initial, {}, lambda *a, **kw: None, runner=runner) == 0
-    for phase in ('math', 'mbpp'):
-        phase_jobs = [(model, args) for model, dataset, args in jobs if dataset == phase]
-        assert phase_jobs == [('qwen35', initial), ('qwen35', ['all', 'run', *initial[2:]]),
-                              ('llama31', ['all', 'resume']), ('gemma4', ['all', 'resume'])]
+    math_jobs = [(model, args) for model, dataset, args in jobs if dataset == 'math']
+    assert math_jobs == [('qwen35', initial), ('qwen35', ['all', 'run', *initial[2:]]),
+                         ('llama31', ['all', 'resume']), ('gemma4', ['all', 'resume'])]
+    mbpp_jobs = [(model, args) for model, dataset, args in jobs if dataset == 'mbpp']
+    assert mbpp_jobs == [('qwen35', ['all', 'run', *initial[2:]]),
+                         ('llama31', ['all', 'run']), ('gemma4', ['all', 'run'])]
+
+
+@pytest.mark.parametrize('model', chain.MODELS)
+def test_new_mbpp_pause_is_preserved_after_initial_all_resume(model):
+    paused, jobs = False, []
+
+    def runner(command, environment, heartbeat):
+        nonlocal paused
+        phase, args = environment['SRGC_DATASET_PHASE'], command[2:]
+        jobs.append((phase, args))
+        if args[1] == 'resume':
+            paused = False  # Public resume clears the operator's stop marker.
+        if phase == 'math':
+            paused = True  # A new MBPP stop arrives while MATH is completing.
+            return 0
+        return chain.PAUSED if paused else 0
+
+    assert chain.drain([model], 'all', ['all', 'resume'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: pytest.fail('paused chain slept')) == chain.PAUSED
+    assert sum(args[1] == 'resume' for _, args in jobs) == 1
+    assert jobs[-1] == ('mbpp', ['all', 'run'])
 
 
 def test_explicit_mbpp_source_plan_and_interpreter_scope_are_preserved_during_math_phase():
@@ -270,6 +293,27 @@ def test_status_reports_active_gemma_and_marks_old_heartbeat_stale(tmp_path):
     assert (root/'abc.json').read_bytes()==before
     atomic_json(root/'bad.json',{'heartbeat':'bad'})
     assert len(chain.snapshot(environment,now=105))==1
+
+
+@pytest.mark.parametrize('bad', [None, [], ['worker'], 7, 'worker',
+                               {'started': 'bad'}, {'heartbeat': 'bad'},
+                               {'order': 'llama31'}, {'model': {}}, {'devices': []}])
+def test_status_isolates_malformed_coordinator_receipts(tmp_path, bad):
+    from srgc_rebuttal.runtime import atomic_json
+
+    root = tmp_path / 'work/srgc-rebuttal/.model-chain/workers'
+    environment = {'GROUP_VOLUME': str(tmp_path), 'OM_WORK': str(tmp_path / 'work')}
+    valid = {'worker_id': 'valid', 'host': 'node-a', 'pid': 123, 'started': 10,
+             'heartbeat': 100, 'status': 'running', 'model': 'gemma4',
+             'order': list(chain.MODELS), 'devices': '0,1,2,3'}
+    payload = {**valid, 'worker_id': 'bad', **bad} if isinstance(bad, dict) else bad
+    atomic_json(root / 'bad.json', payload)
+    atomic_json(root / 'valid.json', valid)
+    before = {p: p.read_bytes() for p in root.iterdir()}
+    rows = chain.snapshot(environment, now=105)
+    assert len(rows) == 1 and rows[0]['worker_id'] == 'valid'
+    assert 'RUNNING model=gemma4' in '\n'.join(chain.render_status(environment, now=105))
+    assert {p: p.read_bytes() for p in root.iterdir()} == before
 
 
 def test_parent_waiting_sigterm_records_stop_and_restores_handler(tmp_path,monkeypatch):

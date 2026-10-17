@@ -212,6 +212,47 @@ def test_terminal_layout_has_bounded_lines(tmp_path, width):
     assert len(output.splitlines()) < 65
 
 
+@pytest.mark.parametrize('width', [80, 100, 120])
+@pytest.mark.parametrize('compact', [False, True])
+def test_long_storage_path_has_one_bounded_root_line_without_changing_json(tmp_path, width, compact):
+    four_nodes(tmp_path, time.time())
+    data = status.snapshot(tmp_path)
+    root = str(tmp_path / ('long-storage-segment/' * 12) / 'selection-switch-mbpp-quality-v1')
+    data['root'] = root
+    renderer = status.render_compact if compact else status.render
+    output = renderer(data, width=width)
+    root_lines = [line for line in output.splitlines() if line.startswith('ROOT')]
+    assert len(root_lines) == 1
+    assert root_lines[0].endswith('...') and len(root_lines[0]) <= width
+    assert all(len(line) <= width for line in output.splitlines())
+    assert len(output.splitlines()) < (15 if compact else 65)
+    assert data['root'] == root
+
+
+@pytest.mark.parametrize('compact', [False, True])
+def test_unprepared_long_storage_path_is_bounded(tmp_path, compact):
+    root = str(tmp_path / ('long-storage-segment/' * 12) / 'selection-switch-mbpp-quality-v1')
+    data = {'root': root, 'prepared': False}
+    renderer = status.render_compact if compact else status.render
+    output = renderer(data, width=80)
+    assert 'NOT PREPARED' in output
+    assert all(len(line) <= 80 for line in output.splitlines())
+    assert len(output.splitlines()) <= 3
+    assert data['root'] == root
+
+
+@pytest.mark.parametrize('compact', [False, True])
+@pytest.mark.parametrize('prepared', [False, True])
+def test_storage_path_display_preserves_repeated_spaces(tmp_path, compact, prepared):
+    four_nodes(tmp_path, time.time())
+    data = status.snapshot(tmp_path) if prepared else {'prepared': False}
+    root = str(tmp_path / 'folder  with  spaces')
+    data['root'] = root
+    renderer = status.render_compact if compact else status.render
+    assert root in renderer(data, width=500)
+    assert data['root'] == root
+
+
 def test_status_launcher_is_read_only_and_does_not_migrate_runtime(tmp_path):
     four_nodes(tmp_path, time.time())
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}

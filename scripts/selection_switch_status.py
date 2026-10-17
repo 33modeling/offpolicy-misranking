@@ -557,8 +557,9 @@ def duration(seconds):
     return f"{seconds//60}m{seconds%60:02}s" if seconds >= 60 else f"{seconds}s"
 
 
-def clip(value, width):
-    value = " ".join(str(value).split())
+def clip(value, width, *, normalize=True):
+    value = (" ".join(str(value).split()) if normalize else
+             str(value).replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t"))
     return value if len(value) <= width else value[:width-3] + "..."
 
 
@@ -571,7 +572,7 @@ def render_compact(data, *, width=120):
     """One suite-sized block, so MBPP's three suites fit in one status view."""
     root = data["root"]
     label = suite_label(root, data.get("protocol"))
-    lines = [f"SUITE {label}", f"ROOT {root}"]
+    lines = [f"SUITE {label}", clip(f"ROOT {root}", width, normalize=False)]
     if not data.get("prepared"):
         return "\n".join([*lines, "NOT PREPARED (no saved suite manifest at this root)"])
     tasks = execution_tasks(data.get("tasks", []))
@@ -610,7 +611,7 @@ def render_compact(data, *, width=120):
 
 def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
     if not data["prepared"]:
-        return f"NOT PREPARED  {data['root']}"
+        return clip(f"NOT PREPARED  {data['root']}", width, normalize=False)
     tasks = execution_tasks(data["tasks"])
     branch_counts = Counter(task["status"] for task in tasks if task["kind"] == "branch")
     prefix_done = sum(task["status"] == "DONE" for task in tasks if task["kind"] == "prefix")
@@ -620,7 +621,7 @@ def render(data, *, all_tasks=False, width=120, local_gpus=True, nodes=True):
                     for task in tasks if task["kind"] == "branch")
     stamp = datetime.fromtimestamp(data["updated"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines = [f"SELECTION SWITCH [{suite_label(data['root'], data.get('protocol'))}]  {stamp}",
-             f"ROOT  {data['root']}",
+             clip(f"ROOT  {data['root']}", width, normalize=False),
              node_view.render_summary(data.get("nodes", []), all_nodes=all_tasks),
              f"WORK  {data['active_nodes']} active  |  {len(data['waiting_nodes'])} waiting  |  {data['stale_nodes']} stale",
              f"PROGRESS  Prefix {prefix_done}/15 segments  |  Dev {development_done}/18  |  Test {test_done}/30",
