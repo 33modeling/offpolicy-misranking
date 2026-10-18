@@ -57,7 +57,7 @@ worker 재시작 확인 간격은 기본 10초이며, 실제 실패 task의 기�
 공통 학습 engine, 세 모델 adapter와 고정 실행 hash, 25-update 보상 기록 확장은 수정하지 않았다.
 
 공개 `sh scripts/run_srgc_llama31.sh all` 진입점에서 실제 자식 프로세스를 사용한
-CPU 통합 검사는 `Llama ERROR x4 → 같은 작업 반복 재시도 → Gemma ERROR x99 복구
+CPU 통합 검사는 `Llama 실패 작업(실행 이력 4회) → 같은 작업 반복 재시도 → Gemma 실패 작업(실행 이력 99회) 복구
 → 남은 MATH → MBPP` 순서와 checkpoint 바이트 보존을 검사한다. GPU worker는
 시험 대역이며 H100 학습을 실행한 검사가 아니다. 이 환경에는 원격 `/group-volume`과
 실행 콘솔이 없으므로 서버에서 실제로 발생한 traceback 및 재개 적용은 별도 확인이 필요하다.
@@ -94,7 +94,7 @@ MBPP를 막는 MATH 완료 장벽 네 지점을 함께 수정했다. 이 수정�
 - endpoint가 저장됐어도 해당 작업의 queue/execution lease가 유지되면 worker 시작 검사와
   drain 종료 검사 모두 완료로 반환하지 않는다. 기존 ERROR backlog가 없는 경우도 검사한다.
 
-실제 adapter 준비 plan 검사는 세 모델 각각 MATH 선택·ERROR x99 배정·MBPP 선행 금지와
+실제 adapter 준비 plan 검사는 세 모델 각각 MATH 선택·실행 이력 99회인 실패 작업 배정·MBPP 선행 금지와
 실제 cache 자식 명령 생성, SIGKILL 뒤 두 번 재개, 과거 실패 기록·plan 바이트 보존을 확인한다.
 자식 GPU 계산은 CPU 시험 대역으로 교체하므로 원격 H100 실행을 확인한 검사는 아니다.
 

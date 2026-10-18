@@ -179,7 +179,7 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
             update('yielded', idle_reason=str(error))
             raise SystemExit(BUSY if isinstance(error, Busy) else YIELD) from None
         interrupted = (isinstance(error, KeyboardInterrupt) or
-                       isinstance(error, SystemExit) and error.code in (130, 137, 143))
+                       isinstance(error, SystemExit) and error.code in (129, 130, 137, 143))
         update("stopped" if interrupted else "failed",
                error=f"{type(error).__name__}: {error}")
         raise

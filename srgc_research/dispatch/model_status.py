@@ -24,6 +24,30 @@ CONFIGS = {
 LABELS = {"qwen35": "Qwen3.5-9B", "llama31": "Llama-3.1-8B-Instruct", "gemma4": "Gemma-4-12B-PT"}
 
 
+def interrupted_receipts(report):
+    """Interpret old signal exits without rewriting receipts or retry history."""
+    for row in report["tasks"]:
+        if row["status"] != "failed":
+            continue
+        path = Path(report["output_root"]) / ".queue/tasks" / f"{row['task']}.json"
+        try:
+            receipt = live.read_object(path)
+        except (OSError, ValueError, TypeError) as error:
+            report["errors"].append(f"{row['task']} interruption status: {error}")
+            continue
+        if receipt.get("status") != "failed":
+            continue
+        code = receipt.get("exit_code")
+        row["validation_error"] = receipt.get("validation_error")
+        if type(code) is not int or row["validation_error"]:
+            continue
+        normalized = 128 - code if code < 0 else code
+        # HUP/INT/TERM identify a terminated session. SIGKILL/137 may be OOM,
+        # so an old ambiguous failure must retain its ERROR and original log.
+        if normalized in (129, 130, 143):
+            row.update(status="interrupted", receipt_status="failed", exit_code=code)
+
+
 def initial_accuracy(data, responses):
     cache = data.get("cached_rewards", {})
     candidates = data["candidate_ids"]
@@ -101,6 +125,7 @@ def load_reports(model, dataset, root, environment):
                       "prepared": False, "stop_requested": False, "generated": time.time()}
         else:
             report["prepared"] = True
+            interrupted_receipts(report)
             report["initial_candidate_accuracy"] = []
             for seed in plan["seeds"]:
                 try:

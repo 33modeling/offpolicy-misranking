@@ -191,7 +191,7 @@ def _cell(row):
     if status.startswith("waiting_for_"):
         return "waiting"
     if status == "failed":
-        return f"failed x{row.get('attempt', 0)}"
+        return "failed"
     if status == "invalid":
         return "INVALID"
     return status.replace("_", " ")

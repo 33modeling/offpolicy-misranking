@@ -30,6 +30,19 @@ def read_status(cohort, capsys):
     return code, json.loads(capsys.readouterr().out)
 
 
+def test_each_public_model_status_recognizes_a_legacy_node_interruption(cohort, capsys):
+    directory = cohort.root / 'runs/math/.queue'
+    atomic_json(directory / 'tasks/seed-5.cache.json', {'task': 'seed-5.cache', 'status': 'failed',
+                'attempt': 30, 'exit_code': 143})
+    before = saved(cohort)
+    code, value = read_status(cohort, capsys)
+    assert code == 0
+    row = next(row for row in value['datasets'][0]['tasks'] if row['task'] == 'seed-5.cache')
+    assert row['status'] == 'interrupted' and row['receipt_status'] == 'failed'
+    assert row['attempt'] == 30
+    assert saved(cohort) == before
+
+
 def test_public_status_and_results_share_validated_tasks_and_initial_cache_statistics(cohort, capsys):
     from srgc_research.dispatch.model_results import export
 

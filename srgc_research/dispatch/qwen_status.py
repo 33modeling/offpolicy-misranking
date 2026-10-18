@@ -17,6 +17,8 @@ REPO = Path(__file__).resolve().parents[2]
 ARMS = ("cache", "prefix", "on_policy", "switch", "sr", "random")
 HEADERS = ("Cache", "Prefix", "On-policy", "Switch", "SR", "Random")
 LIVE_WORKERS = {"running", "preflight", "idle", "serving_other_dataset"}
+RESUMABLE = {"recoverable", "interrupted"}
+ERRORS = {"failed", "invalid", "attempts_exhausted"}
 
 
 def load_reports(dataset, root, environment):
@@ -62,13 +64,20 @@ def _cell(task):
     if state.startswith("waiting_for_"):
         return "WAIT " + state.removeprefix("waiting_for_")
     if state == "failed":
-        return f"ERROR x{task.get('attempt', 0)}"
+        return "ERROR"
     return {"ready": "READY", "recoverable": "RESUME", "interrupted": "RESUME",
             "invalid": "INVALID", "attempts_exhausted": "RETRY LIMIT"}.get(state, state.upper())
 
 
 def cell(task):
     return "-" if task is None else live.switch_cell(task, _cell(task))
+
+
+def worker_error(node):
+    message = " ".join(str(node.get("error") or "").split())
+    expected = {"KeyboardInterrupt", "KeyboardInterrupt:",
+                *(f"SystemExit: {code}" for code in (129, 130, 137, 143))}
+    return "" if node["status"] == "stopped" and message in expected else message
 
 
 def table(headers, rows):
@@ -223,10 +232,12 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     counts = Counter(task["status"] for task in tasks)
     done, total = counts["complete"], len(tasks)
     waiting = sum(count for state, count in counts.items() if state.startswith("waiting_for_"))
-    issues = sum(counts[state] for state in live.ATTENTION)
+    issues = sum(counts[state] for state in ERRORS)
+    resumable = sum(counts[state] for state in RESUMABLE)
     lines = [f"{model} | SRGC | {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}",
         (f"Tasks {bar(done, total)} {done}/{total} completed"
-         f" | RUN {counts['running']} | READY {counts['ready']} | WAIT {waiting} | ISSUE {issues}"),
+         f" | RUN {counts['running']} | READY {counts['ready']} | WAIT {waiting}"
+         f" | RESUME {resumable} | ERROR {issues}"),
         f"Local node: {host}"]
     error_count = sum(len(report["errors"]) for report in snapshots)
     if error_count:
@@ -301,26 +312,32 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines += ["", "RUNNING"]
         for label, row in running:
             lines.append(f"  {label} {row['task']} | node {row.get('host') or '-'} | {progress(row)}")
+    pending = [(report["label"], row) for report in snapshots for row in report["tasks"]
+               if row["status"] in RESUMABLE]
+    if pending:
+        lines += ["", "RESUME PENDING"]
+        for label, row in pending:
+            reason = "worker lease released" if row["status"] == "recoverable" else "execution interrupted"
+            lines.append(f"  {label} {row['task']} | RESUME | node {row.get('host') or '-'} | {reason}")
     attention = [(report["label"], row) for report in snapshots for row in report["tasks"]
-                 if row["status"] in live.ATTENTION]
+                 if row["status"] in ERRORS]
     errors = [(report["label"], error) for report in snapshots for error in dict.fromkeys(report["errors"])]
-    worker_errors = [node for node in nodes if node.get("error")]
+    worker_errors = [(node, message) for node in nodes if (message := worker_error(node))]
     if attention or errors or worker_errors:
         lines += ["", "ATTENTION"]
         for label, row in attention:
-            reason = live.last_error_line(row.get("log", ""))
+            reason = row.get("validation_error") or live.last_error_line(row.get("log", ""))
             lines.append(f"  {label} {row['task']} | {cell(row)}" + (f" | {reason}" if reason else ""))
             if row.get("log"):
                 lines.append(f"    log: {row['log']}")
-        for node in worker_errors:
-            message = " ".join(str(node["error"]).split())
+        for node, message in worker_errors:
             lines.append(f"  node {node.get('host', '-')} | {message}")
         lines += [f"  {label} | {error}" for label, error in errors]
     warnings = [(report["label"], warning) for report in snapshots for warning in dict.fromkeys(report["warnings"])]
     if warnings:
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
     lines += ["", "Seed table: RUN = active lease; STALE = node heartbeat older than 60s.",
-              "ERROR xN = lifetime launch number, never a retry limit; unfinished tasks resume before fresh work.",
+              "RESUME = interrupted work awaiting a worker; ERROR = failed execution (see ATTENTION).",
               "Dataset order: all selected models finish MATH before any MBPP work.",
               "Update counts show completed work; cache counts show saved prompts.",
               "SW@N = switch after completed update N; first SR training update is N+1.",

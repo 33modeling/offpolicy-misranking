@@ -17,7 +17,7 @@ def log_position(path):
 def interruption_code(code, path, start):
     """Return a signal exit code, leaving application errors and explicit OOM alone."""
     normalized = 128 - code if code < 0 else code
-    if normalized in (130, 143):
+    if normalized in (129, 130, 143):
         return normalized
     if normalized not in (1, 137):
         return None

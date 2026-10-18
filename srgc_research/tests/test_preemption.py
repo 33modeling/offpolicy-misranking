@@ -15,7 +15,7 @@ from srgc_research.dispatch.preemption import interruption_code, log_position
     (-9, "slurmstepd: Detected 1 oom_kill event", None),
     (1, "Sending process closing signal SIGKILL\nRoot Cause (first observed failure):\nexitcode : 1\nValueError: bad input", None),
     (1, "Sending process closing signal SIGTERM\nRoot Cause (first observed failure):\nexitcode : -9\nSignal 9 (SIGKILL)", 137),
-    (-15, "", 143), (-2, "", 130),
+    (-15, "", 143), (-2, "", 130), (-1, "", 129), (129, "", 129),
 ])
 def test_signal_and_oom_classification(tmp_path, code, message, expected):
     log = tmp_path / "job.log"

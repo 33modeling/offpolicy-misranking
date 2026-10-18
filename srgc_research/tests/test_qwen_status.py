@@ -216,7 +216,8 @@ def test_failed_tasks_show_last_exception_and_log_path(prepared):
     log.parent.mkdir(parents=True)
     log.write_text("Traceback (most recent call last):\ntorch.OutOfMemoryError: CUDA out of memory\n")
     text = status.render(prepared.read("math"), prepared.root)
-    assert "ERROR x3" in text and "torch.OutOfMemoryError: CUDA out of memory" in text
+    assert "ERROR x" not in text and "ERROR 1" in text
+    assert "torch.OutOfMemoryError: CUDA out of memory" in text
     assert f"log: {log}" in text
 
 

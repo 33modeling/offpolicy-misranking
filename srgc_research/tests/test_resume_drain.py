@@ -379,7 +379,7 @@ def test_two_idle_nodes_claim_distinct_ready_jobs_while_a_resume_is_owned(model)
     assert json.loads(mbpp.receipt(old).read_text())["attempt"] == 3
 
 
-@pytest.mark.parametrize("code", (130, 137, 143, -2, -9, -15))
+@pytest.mark.parametrize("code", (129, 130, 137, 143, -1, -2, -9, -15))
 def test_interruption_keeps_checkpoint_and_refunds_attempt_without_retrying(model, code):
     finish_fake(model.queues[0], Task(5, "prefix"))
     old = Task(9, "sr")

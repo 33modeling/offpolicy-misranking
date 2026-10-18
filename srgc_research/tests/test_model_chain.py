@@ -452,11 +452,12 @@ def test_parent_waiting_sigterm_records_stop_and_restores_handler(tmp_path,monke
     row=json.loads(rows[0].read_text());assert row['status']=='stopped';assert row['exit_code']==143
 
 
-def test_forcibly_killed_worker_is_restarted_before_any_fresh_model():
+@pytest.mark.parametrize('code', [129, 137])
+def test_forcibly_killed_worker_is_restarted_before_any_fresh_model(code):
     jobs, waits = [], []
     def runner(command, environment, heartbeat):
         jobs.append(model_of(command))
-        return 137 if len(jobs) <= 5 else 0
+        return code if len(jobs) <= 5 else 0
     assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: waits.append(n)) == 0
     # A successful recovery pass returns before that model's fresh queue.

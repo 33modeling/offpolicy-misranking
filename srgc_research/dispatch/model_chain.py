@@ -164,12 +164,12 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
             except (OSError, subprocess.SubprocessError) as error:
                 print(f'MODEL FAILED {model}: {error}', file=sys.stderr, flush=True)
                 code = 2
-            if code == 137:
+            if code in (129, 137):
                 retry_model = model
                 retrying.add(model)
                 states[model] = 'waiting'
                 update('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
-                       idle_reason='worker was forcibly killed; resuming saved work')
+                       idle_reason='worker interrupted; resuming saved work')
                 killed = True
                 break
             if code in (130, 143):
@@ -222,7 +222,7 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
         # Sleep only after every eligible model has been checked, or the entire
         # local GPU allocation is owned. Never spin on peer leases/retry delays.
         reason = ('worker failed; retrying saved work before fresh work' if retry
-                  else 'worker forcibly killed; retrying saved work' if killed else 'GPU allocation owned' if busy
+                  else 'worker interrupted; retrying saved work' if killed else 'GPU allocation owned' if busy
                   else 'all unfinished model queues waiting on peers or retry delay')
         update('waiting', model=retry_model, models=dict(states), idle_reason=reason, failures=dict(failures),
                resume_only=bool(recovery) or killed or retry)
