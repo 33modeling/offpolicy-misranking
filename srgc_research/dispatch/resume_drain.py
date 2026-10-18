@@ -4,13 +4,14 @@ import copy
 import json
 import os
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from srgc_rebuttal.runtime import lease
+from srgc_rebuttal.runtime import Busy, lease
 
 from .datasets import dataset_name
 from .preemption import interruption_code, log_position
@@ -225,6 +226,7 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                 return
         pending = None
         claimed = False
+        waiting_on_gpu = False
         for queue in cohort:
             if cluster.stop_requested(queue) or not manager.dataset_allowed(queue):
                 continue
@@ -267,6 +269,13 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                         with log.open("a") as handle:
                             handle.write(f"TIMEOUT: {error}\n")
                         print(f"TIMEOUT {task_label}: {error}", flush=True)
+                    except Busy as error:
+                        # GPU teardown can outlive a failed launcher. No rank
+                        # has started here, so this must not become a new ERROR.
+                        code = 75
+                        log.parent.mkdir(parents=True, exist_ok=True)
+                        with log.open("a") as handle:
+                            handle.write(f"GPU WAIT: {error}\n")
                     except (OSError, subprocess.SubprocessError) as error:
                         # A transient fork/exec or GPU-query failure still owns
                         # a real task receipt. Finish that attempt and let the
@@ -286,26 +295,36 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                     signal_code = interruption_code(code, log, log_start)
                     code = signal_code if signal_code is not None else (128 - code if code < 0 else code)
                     interrupted = signal_code is not None
-                    code = queue.finish(task, code, interrupted=interrupted)
+                    waiting_on_gpu = code == 75
+                    code = queue.finish(task, code, interrupted=interrupted or waiting_on_gpu)
                     # An interrupted process can also expose corrupted inputs
                     # or evidence. finish deliberately records that as failed.
                     interrupted = interrupted and manager.receipt(queue, task).get("status") == "interrupted"
+                    waiting_on_gpu = waiting_on_gpu and manager.receipt(queue, task).get("status") == "interrupted"
                     print(f"DONE {task_label} exit={code}", flush=True)
+                    if waiting_on_gpu:
+                        reason = f"GPU allocation is not ready; task not started; retrying saved work; log={log}"
+                        progress("idle", active=queue, task=task, idle_reason=reason)
+                        if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1':
+                            raise Busy(reason)
                     if interrupted:
                         progress("stopped", active=queue, task=task)
                         return code
-                    if code:
+                    if code and not waiting_on_gpu:
                         from scripts.srgc_log_tail import tail_lines
                         try:
                             print("\n".join(tail_lines(log, 25)), flush=True)
                         except OSError:
                             pass
-                    progress("idle")
+                    if not waiting_on_gpu:
+                        progress("idle")
             finally:
                 queue.tasks = tasks
             if claimed:
                 break
         if claimed:
+            if waiting_on_gpu:
+                time.sleep(min(args.poll_seconds, 30))
             continue
         with lease(manager.marker.with_suffix(".lock"), wait=True):
             pending = phase_pending(manager, manager.pending())
@@ -365,10 +384,17 @@ def resume_worker(worker, factory, *, pattern, env_key, label, result_model=None
         stack.enter_context(patch.object(worker, "drain", run))
         stack.enter_context(patch.object(worker, "worker", start))
         if result_model is not None:
+            from scripts import srgc_process_guard as guard
             from srgc_rebuttal import cluster
 
             from .model_results import publish
+            from .process_recovery import recording_guard
 
+            # Qwen's frozen CLI imports the guard by its historical top-level
+            # name. Both names must share the same target/owner protections.
+            stack.enter_context(patch.dict(sys.modules, {'srgc_process_guard': guard}))
+            stack.enter_context(patch.object(guard, 'process_guard',
+                recording_guard(guard.process_guard, guard, result_model)))
             stack.enter_context(patch.object(cluster, "publish_reports", lambda queue: publish(result_model, queue)))
             if result_model in {"gemma4", "llama31"}:
                 from .reward_curves import recording_command

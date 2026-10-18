@@ -116,3 +116,29 @@ Git에 추적된 관련 코드와 변경 이력을 다음 실행 순서로 대�
 526개와 subtest 18개를 통과했다. 마지막 캐시 인계·완료 잠금 수정 후 영향받는 실제
 plan/배정 검사를 200개 다시 실행해 통과했다(앞선 검사와 중복 포함).
 Ruff와 공백 검사도 통과했다. 원격 학습 노드 실행 및 H100/NCCL 실측은 미확인이다.
+
+## 2026-10-18 한 번 실패한 arm의 실행 잠금 복구
+
+사용자가 seed 5 On-policy 재개 실패와 반복 ERROR를 보고했다. 실제 서버 traceback은
+아직 받지 못했으며, 다음 차단 경로는 로컬의 실제 자식 프로세스와 실행 lease로 재현했다.
+
+Llama/Gemma의 학습 명령은 보상 기록을 위해 `reward_curve_rank --model ...`로 감싸지만,
+동결 CLI의 orphan 정리 대상은 원래 `llama31.rank`/`gemma4.rank`뿐이었다. 실패한 rank가
+독립 세션으로 남으면 실행 잠금과 GPU 메모리를 계속 소유하여 같은 arm을 다시 잡지 못한다.
+Qwen은 top-level `srgc_process_guard` import와 `scripts.srgc_process_guard`가 서로 다른
+module 객체가 될 수 있어, 새 target/owner 보호가 실제 guard에 적용되지 않는 경로가 있었다.
+
+운영 `resume_worker`에서 guard에 들어가는 시점에 현재 모델의 기록 rank를 등록한다.
+두 import 이름도 같은 guard를 사용하게 묶는다. 원래 guard 파일·adapter·학습 hash는
+보존한다. 살아 있는 launcher의 rank 및 다른 사용자의 프로세스는 기존 보호를 유지한다.
+시작 로그의 `GUARD recorded-rank recovery active model=...`로 새 경로 적용을 확인한다.
+
+추가로 GPU 점유 검사 또는 guard 대기 코드 75로 자식 실행이 시작되지 않은 경우는
+재개 가능한 중단으로 남긴다. 학습 ERROR로 누적하지 않는다. 모델 연결 실행은 GPU 잠금을
+반환하여 재확인하고, 단일 모델 실행은 폴링 간격 뒤 같은 저장 작업부터 재개한다.
+입력 검증 실패나 실제 GPU 자식의 일반 오류는 ERROR로 유지하며 실패 이력을 삭제하지 않는다.
+
+세 모델 × On-policy/Switch/SR/Random/Prefix의 실제 프로세스 정리·실행 lease 해제·
+동일 arm 40→41번째 배정과 기존 checkpoint 바이트 보존을 검사했다. 공개 entry hook,
+live-owner 보호, import 복원, GPU 미시작 재시도 관련 검사 38개를 통과했다.
+이는 원격 GPU에서 optimizer update가 실제 전진한 것을 확인한 결과는 아니다.

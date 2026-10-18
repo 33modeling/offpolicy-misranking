@@ -15,7 +15,7 @@ import pytest
 from srgc_rebuttal import cluster
 from srgc_rebuttal.cluster_queue import Task, TaskQueue
 from srgc_rebuttal.plan import input_path
-from srgc_rebuttal.runtime import atomic_json, lease
+from srgc_rebuttal.runtime import Busy, atomic_json, lease
 from srgc_rebuttal.tests.test_cluster import finish_fake, write_inputs
 from srgc_research.dispatch import qwen_run, resume_drain
 from srgc_research.dispatch.ready_dispatch import (
@@ -719,3 +719,47 @@ def test_temporary_gpu_query_failure_yields_and_next_worker_resumes_old_task_fir
     assert queue.receipt(old).read_bytes() == before
     run_worker(model, monkeypatch, tmp_path)
     assert model.jobs == [("math", old.key), ("math", fresh.key)]
+
+
+@pytest.mark.parametrize('blocked_at', ('gpu_probe', 'guard_wait'))
+def test_busy_gpu_does_not_record_an_unstarted_retry_as_a_training_error(model, monkeypatch, tmp_path, blocked_at):
+    from srgc_research.dispatch.model_chain import BUSY
+
+    monkeypatch.setenv('SRGC_MODEL_CHAIN_CHILD', '1')
+    monkeypatch.setenv('SRGC_DATASET_PHASE', 'math')
+    queue = model.queues[0]
+    old, fresh = Task(5, 'on_policy'), Task(6, 'prefix')
+    queue.tasks = [fresh, old]
+    abandoned(queue, old, state='failed', attempt=40)
+    probe = [('0,1,2,3', ('a', 'b', 'c', 'd')), Busy('previous CUDA context is still releasing')] if blocked_at == 'gpu_probe' else None
+    blocked_children = []
+    def unavailable(*args, **kwargs):
+        blocked_children.append(True)
+        assert len(blocked_children) == 1, 'busy guard entered a repeated failure loop'
+        return BUSY if blocked_at == 'guard_wait' else 0
+    with pytest.raises(SystemExit) as yielded:
+        run_worker(model, monkeypatch, tmp_path, probe=probe,
+                   child=unavailable)
+    assert yielded.value.code == BUSY
+    record = json.loads(queue.receipt(old).read_text())
+    assert record['status'] == 'interrupted', 'an attempt without a started GPU task was recorded as failed'
+    attempts = [json.loads(path.read_text()) for path in (queue.directory / 'attempts').glob('*.json')]
+    assert len([row for row in attempts if row['status'] == 'failed']) == 1
+    assert not queue.receipt(fresh).exists()
+    model.jobs.clear()
+    run_worker(model, monkeypatch, tmp_path)
+    assert model.jobs == [('math', old.key), ('math', fresh.key)]
+
+
+def test_single_model_retry_waits_for_gpu_release_then_resumes_saved_arm(model, monkeypatch, tmp_path):
+    monkeypatch.delenv('SRGC_MODEL_CHAIN_CHILD', raising=False)
+    monkeypatch.setenv('SRGC_DATASET_PHASE', 'math')
+    queue = model.queues[0]
+    old, fresh = Task(5, 'on_policy'), Task(6, 'prefix')
+    queue.tasks = [fresh, old]
+    abandoned(queue, old, state='failed', attempt=40)
+    free = ('0,1,2,3', ('a', 'b', 'c', 'd'))
+    run_worker(model, monkeypatch, tmp_path, probe=[free, Busy('CUDA teardown pending'), free, free])
+    assert model.jobs == [('math', old.key), ('math', fresh.key)]
+    attempts = [json.loads(path.read_text()) for path in (queue.directory / 'attempts').glob('*.json')]
+    assert len([row for row in attempts if row['status'] == 'failed']) == 1
