@@ -18,6 +18,12 @@ curve 오류로 표시하고 정상 endpoint·다른 arm은 results에 유지한
 
 # Current Experiment Allocations
 
+2026-10-18 **N12·N13 코드 추가**: [기존 checkpoint 진단·실행 안내](N12_N13_CHECKPOINT_DIAGNOSTICS.md).
+저장 rollout의 초기 cache 구성 표준화와 고정 20문제 패널, SR-GC 40대40/같은 후보의 선택
+4대4 및 독립 B 비교를 별도 모듈에 구현했다. optimizer 없는 평가 archive도 추론/scoring에
+재사용하며 학습 update는 하지 않는다. 실제 서버의 t25/t125/t250 파일 잔존과 H100 실측은
+미확인이다. 기존 queue·계산·저장 runtime은 보존한다.
+
 ## 현재 실험 — 2026-10-10
 
 사용자가 진행 상태를 확인한 실험은 아래 네 종류다.

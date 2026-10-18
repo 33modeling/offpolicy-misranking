@@ -3,7 +3,9 @@
 ## 2026-10-18 추가 목록: 기존 실험과 겹치지 않는 질문
 
 GitHub `master`의 기존 실험 목록·구현·수신 결과와 V7을 대조하여 **N12–N18 일곱 항목**을 추가했다.
-이번 항목은 **설계 제안이며 전용 분석·GPU runner 구현 또는 실행 완료를 뜻하지 않는다.**
+2026-10-18 후속 요청으로 **N12·N13의 전용 CPU 분석·checkpoint 진단·추론/scoring 코드를 구현했다.**
+[실행·checkpoint 재사용 안내](N12_N13_CHECKPOINT_DIAGNOSTICS.md)를 따른다. 로컬 CPU 검증과
+실제 H100 실험은 구분하며 신규 GPU 측정을 실행한 상태는 아니다. **N14–N18은 설계 제안이다.**
 아래 N01–N08의 구현 검증과 N09–N11의 설계 상태는 각각 2026-10-06/07 당시 기록이다.
 기존 queue를 추가하거나 진행 중인 작업을 재시작한 변경은 아니다.
 
@@ -483,11 +485,14 @@ Information의 현재 수신 결과는 OLMo t0 진단이다. 그 결과에서 co
 | 원시 기록 | 후보·선택·reference·평가 ID, 응답별 reward/token·sampling seed, 사용한 gradient/vector, 종료 이유와 비용 receipt의 출처를 남긴다. 재시도·공통 prefix를 중복 집계하지 않으며 학습 보상과 held-out 보상을 별도 내보낸다. |
 | 누락 처리 | compact export만 보고 미저장으로 판정하지 않는다. 원래 progress/history·rollout JSON.gz·checkpoint를 확인한다. 없는 평가·vector·log-probability는 `null`/미측정이며 보간하지 않는다. |
 | 자원·비용 | 아래 update/응답 수는 설계 수량이며 GPU-hours 예측이 아니다. 실제 생성·scoring gradient·학습·평가·cache·저장 비용을 분리하고, 계측이 겹치는 phase/stage를 더하지 않는다. |
-| 실행 상태 | N12–N18 전용 구현·명령·신규 결과는 아직 없다. 기존 CPU 분석기는 기초 CSV만 제공하며 아래 추가 분석까지 구현됐다는 뜻이 아니다. 진행 중인 MATH→MBPP 작업·frozen runtime은 변경하지 않는다. |
+| 실행 상태 | N12·N13은 `srgc_research/followup/`에 CPU 분석·checkpoint 감사·추론/scoring을 구현했다. 신규 GPU 실측은 미실행이다. N14–N18은 미구현 설계다. 진행 중인 MATH→MBPP 작업·frozen runtime은 변경하지 않는다. |
 
 <a id="n12"></a>
 
 ## N12. 데이터 구성 변화와 같은 문제의 학습 변화를 분리하기
+
+**구현:** [N12·N13 실행 안내](N12_N13_CHECKPOINT_DIAGNOSTICS.md). `n12-report`, `n12-panel`,
+`n12-panels`, `collect --experiment n12`를 사용한다. optimizer 없는 평가 archive도 진단 가능하다.
 
 **질문:** 후반 mixed-reward group이 줄거나 늘어나는 이유가 다른 문제를 골랐기 때문인가,
 같은 문제에 대한 정책의 응답 분포가 변했기 때문인가? MATH와 MBPP의 전환 차이가
@@ -524,6 +529,10 @@ candidate pool에서 진단용 20문제를 균등·중복 없이 **한 번** 뽑
 <a id="n13"></a>
 
 ## N13. SR-GC의 40개 평균과 실제 선택 4개는 같은 판단을 주는가?
+
+**구현:** [N12·N13 실행 안내](N12_N13_CHECKPOINT_DIAGNOSTICS.md). `n13-report`,
+`collect --experiment n13`를 사용한다. 저장 projected vector는 CPU 재계산하고,
+vector가 없으면 검증한 기존 weights에서 새 scoring을 별도 비용으로 측정한다.
 
 **질문:** 후보 40개 평균이 SR 비교 40개보다 불리해졌다는 신호가,
 그 후보에서 gradient로 고른 상위 4개도 불리하다는 뜻인가?
