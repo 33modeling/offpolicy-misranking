@@ -107,7 +107,7 @@ def test_math_errors_are_retried_past_three_attempts_without_falling_through_to_
 def test_paused_math_is_not_reported_complete_and_does_not_admit_mbpp(model, monkeypatch, tmp_path):
     monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
     monkeypatch.setenv("SRGC_DATASET_PHASE", "math")
-    with patch.object(cluster, "stop_requested", side_effect=lambda q, **kw: q.plan["dataset"] == "math"), \
+    with patch.object(cluster, "stop_requested", side_effect=lambda q, **kw: q.plan["dataset"] == "math_train"), \
             pytest.raises(SystemExit) as stopped:
         run_worker(model, monkeypatch, tmp_path,
                    admission=lambda *a, **kw: pytest.fail("paused MATH admitted a child"))

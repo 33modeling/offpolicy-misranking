@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from srgc_rebuttal.runtime import lease
 
+from .datasets import dataset_name
 from .preemption import interruption_code, log_position
 
 
@@ -21,7 +22,7 @@ def phase_queues(queues):
         return queues
     if phase not in {"math", "mbpp"}:
         raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
-    selected = [queue for queue in queues if queue.plan["dataset"] == phase]
+    selected = [queue for queue in queues if dataset_name(queue.plan) == phase]
     if not selected:
         raise ValueError(f"no {phase} plan in requested queues")
     return selected
@@ -29,7 +30,9 @@ def phase_queues(queues):
 
 def phase_pending(manager, pending):
     phase = os.environ.get("SRGC_DATASET_PHASE")
-    return {key for key in pending if phase is None or manager.tasks[key][0].plan["dataset"] == phase}
+    if phase is not None and phase not in {"math", "mbpp"}:
+        raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
+    return {key for key in pending if phase is None or dataset_name(manager.tasks[key][0].plan) == phase}
 
 
 def stop_code():

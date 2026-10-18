@@ -11,6 +11,7 @@ from pathlib import Path
 
 from srgc_rebuttal.runtime import Busy, atomic_json, lease
 
+from .datasets import dataset_name
 from .model_resume import GemmaResumeFirst as FrozenGemmaResumeFirst
 from .model_resume import LlamaResumeFirst as FrozenLlamaResumeFirst
 from .model_resume import ModelResumeFirst as FrozenBudgetedResumeFirst
@@ -31,13 +32,13 @@ class ReadyClaims:
         phase = os.environ.get("SRGC_DATASET_PHASE")
         if phase is not None and phase not in {"math", "mbpp"}:
             raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
-        if phase and queue.plan["dataset"] != phase:
+        if phase and dataset_name(queue.plan) != phase:
             return False
-        if queue.plan["dataset"] == "mbpp":
+        if dataset_name(queue.plan) == "mbpp":
             # A completed endpoint can still be owned while its writer exits.
             # Do not cross the dataset barrier until those leases are released.
             return all(q.complete(task) and not self.owned(q, task)
-                       for q, task in self.tasks.values() if q.plan["dataset"] == "math")
+                       for q, task in self.tasks.values() if dataset_name(q.plan) == "math")
         return True
 
     def priorities(self, pending):

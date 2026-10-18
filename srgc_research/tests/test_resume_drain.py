@@ -44,7 +44,7 @@ def model(request, tmp_path, monkeypatch):
         folder.mkdir()
         source = write_inputs(folder)
         plan = json.loads(source.read_text())
-        plan.update(dataset=dataset, output_root=str(folder / "runs"),
+        plan.update(dataset="math_train" if dataset == "math" else "mbpp", output_root=str(folder / "runs"),
                     input_pattern=str(folder / "inputs-{seed}.json"))
         if dataset == "mbpp":
             plan["verifier"] = "srgc_rebuttal.verifiers:code_reward"
@@ -61,7 +61,7 @@ def model(request, tmp_path, monkeypatch):
     def run(child=None, selected=None, worker_id="test"):
         def complete(command, log, environment, **kwargs):
             queue, task = command
-            jobs.append((queue.plan["dataset"], task.key))
+            jobs.append(("math" if queue.plan["dataset"] == "math_train" else "mbpp", task.key))
             assert queue.claim_fds
             assert set(json.loads(environment[env_key])) == {str(q.plan_path) for q in queues}
             kwargs["heartbeat"](123)
@@ -90,7 +90,7 @@ def run_worker(model, monkeypatch, tmp_path, *, child=None, admission=None, sele
 
     def complete(command, log, environment, **kwargs):
         queue, task = command
-        model.jobs.append((queue.plan["dataset"], task.key))
+        model.jobs.append(("math" if queue.plan["dataset"] == "math_train" else "mbpp", task.key))
         if child:
             return child(queue, task, **kwargs)
         finish_fake(queue, task)
@@ -521,7 +521,7 @@ def test_two_dataset_only_nodes_share_sibling_backlog_without_duplicate_jobs(mod
     def worker(number):
         ready.wait(10)
         def child(queue, task, log, **kwargs):
-            results.put((queue.plan["dataset"], task.key))
+            results.put(("math" if queue.plan["dataset"] == "math_train" else "mbpp", task.key))
             time.sleep(.15)
             finish_fake(queue, task)
             return 0
