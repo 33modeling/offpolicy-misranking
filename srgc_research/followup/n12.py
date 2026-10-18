@@ -210,7 +210,9 @@ def panel_report(bundle, records, seed):
         if document.get("source", {}).get("stage") not in (25, 125, 250):
             raise ValueError("panel measurement requires its actual completed-update stage")
         policies[key] = acquisition
-        context_key = (*key, document["source"]["stage"], document["source"]["arm"])
+        # Shared-prefix weights may be published by any arm; they are one context.
+        arm = "prefix" if document["source"].get("shared_prefix") else document["source"]["arm"]
+        context_key = (*key, document["source"]["stage"], arm)
         if context_key in contexts:
             duplicates += 1
         else:

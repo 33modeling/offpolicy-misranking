@@ -778,3 +778,74 @@ def test_gemma_disables_optional_media_before_importing_peft(tmp_path):
     with patch("srgc_research.dispatch.gemma4.runtime.disable_optional_media") as disabled, \
             patch("builtins.__import__", side_effect=importing), pytest.raises(StopBeforeModelLoad):
         make_backend(tmp_path / "plan.json", {"extension": "gemma4-12b-pt-v1"}, {}, {}, torch.device("cpu"), None)
+
+
+@pytest.mark.parametrize("publisher", ["sr", "random", "switch"])
+def test_shared_prefix_archive_published_by_a_continuation_arm_is_usable(source, tmp_path, publisher):
+    # reward_curves.capture_boundary lets the first continuation arm publish
+    # reward-curves/prefix/step-25.pt when the prefix task did not; the saved
+    # Engine arm is then that fork although the weights are the shared prefix.
+    archive = tmp_path / "reward-curves" / "prefix" / "step-25.pt"
+    archive.parent.mkdir(parents=True)
+    state = copy.deepcopy(source.state)
+    state.update(step=25, arm=publisher, evaluation_only=True)
+    del state["backend"]["optimizer"]
+    protocol = {**source.marker, "arm": "prefix"}
+    state["reward_curve_binding"] = {"protocol_sha256": fingerprint(protocol), "step": 25}
+    write(archive.parent / "protocol.json", protocol)
+    torch.save(state, archive)
+    _, _, _, info = checkpoints.load_source(archive, source.bundle, source.plan_path, 5)
+    assert info["shared_prefix"] and info["stage"] == 25
+    report = checkpoints.inventory([archive], source.bundle, source.plan_path, 5)
+    assert all(r["present"] for r in report["requested_stage_coverage"] if r["stage"] == 25)
+    # A prefix protocol never vouches for a later continuation state.
+    state["step"] = 125
+    state["reward_curve_binding"] = {"protocol_sha256": fingerprint(protocol), "step": 125}
+    torch.save(state, archive)
+    with pytest.raises(ValueError, match="arm differs"):
+        checkpoints.load_source(archive, source.bundle, source.plan_path, 5)
+
+
+def test_shared_prefix_contexts_from_different_publishers_are_one_panel_row(source, tmp_path):
+    backend = diagnostic_backend(tmp_path)
+    fixed = n12.panel(source.data, source.identity["input_sha256"], 5)
+    output = tmp_path / "measurement"
+    result = {**n12_acquire(backend, source.data, fixed, source.identity), "source": {"stage": 25, "arm": "on_policy"}}
+    write(output / "panel-measurement.json.gz", result)
+    for arm, checkpoint in (("on_policy", "a" * 64), ("sr", "b" * 64)):
+        n12.record_context(output, source.identity, {**source.identity, "stage": 25, "arm": arm, "attention": None,
+                                                    "checkpoint_sha256": checkpoint, "shared_prefix": True})
+    report = n12.panel_report(source.bundle, [output / "panel-measurement.json.gz"], 5)
+    assert len(report["rows"]) == 20 and {r["arm"] for r in report["rows"]} == {"prefix"}
+    assert report["arm_stage_contexts"] == 1 and report["duplicate_policy_records_removed"] == 1
+
+
+def test_backup_of_shared_prefix_keeps_its_prefix_identity(source, tmp_path):
+    source.state["step"] = 25
+    prefix = source.checkpoint.with_name("prefix.pt")
+    torch.save(source.state, prefix)
+    target = tmp_path / "checkpoint-backups" / "seed-5" / "prefix" / file_hash(prefix) / "checkpoint.pt"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(prefix.read_bytes())
+    write(target.parent / "receipt.json", {"schema": "srgc-checkpoint-backup-v1", "sha256": file_hash(target),
+                                          "identity": source.marker, "source": str(prefix)})
+    _, _, _, native = checkpoints.load_source(prefix, source.bundle, source.plan_path, 5)
+    _, _, _, backup = checkpoints.load_source(target, source.bundle, source.plan_path, 5)
+    assert native["shared_prefix"] and backup["shared_prefix"]
+    report = checkpoints.inventory([target], source.bundle, source.plan_path, 5)
+    assert all(r["present"] for r in report["requested_stage_coverage"] if r["stage"] == 25)
+    # The latest file of a continuation arm is never relabelled as the prefix.
+    latest = target.parent.parent.parent / "on_policy-latest" / file_hash(prefix) / "checkpoint.pt"
+    latest.parent.mkdir(parents=True)
+    latest.write_bytes(prefix.read_bytes())
+    write(latest.parent / "receipt.json", {"schema": "srgc-checkpoint-backup-v1", "sha256": file_hash(latest),
+                                          "identity": source.marker, "source": str(source.checkpoint)})
+    assert not checkpoints.load_source(latest, source.bundle, source.plan_path, 5)[3]["shared_prefix"]
+
+
+def test_fixed_panel_records_its_generation_seed(source, tmp_path):
+    backend = diagnostic_backend(tmp_path)
+    fixed = n12.panel(source.data, source.identity["input_sha256"], 5)
+    result = n12_acquire(backend, source.data, fixed, source.identity)
+    assert {seed for _, _, seed in backend.calls} == {result["generation_seed"]}
+    assert result["generation_world_size"] == backend.world

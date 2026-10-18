@@ -246,3 +246,41 @@ prompt 도중 강제 종료와 응답 재사용, 출력 덮어쓰기 거부를 �
 관련 **155 tests 통과**. Ruff와 diff 공백 검사도 통과했다. `6230307` 기준 learner,
 scripts, 기존 모델/기록 dispatch와 backend·study·information·storage 소스는 변경하지 않았다.
 실제 H100·NCCL 및 원격 노드 실행은 이 검증에 포함하지 않는다.
+
+## 2026-10-19 점검 수정
+
+문서의 실험 정의와 코드를 다시 대조했다. D40/D4 식, C40·S40 preview(원래 `candidate-draw`
+stream과 학습 사용 ID 이력), C40 안 cached-SR 순위의 SR4, 원래 `online-ties` stream의 ON4,
+reference 50개 평균 `v`, B에서 A 선택 고정, 고정 20문제 panel, 전체 pool 비중 표준화는
+문서와 일치했다. 아래 세 가지를 실패 테스트로 먼저 재현한 뒤 수정했다.
+
+- **continuation arm이 게시한 공통 prefix archive 거부:** `reward_curves.capture_boundary`는
+  prefix 작업이 t25 archive를 남기지 않았거나 측정이 끊긴 경우, 처음 t25에 도달한 continuation
+  arm이 `reward-curves/prefix/step-25.pt`를 게시하게 한다. 이때 저장 Engine의 arm은 그
+  fork(sr/random/switch)인데 감사·collect는 `on_policy`만 허용해 같은 prefix weights를
+  "arm differs"로 거부했다. prefix protocol의 t25는 저장 arm과 무관하게 공통 prefix로 받는다.
+  t125/t250은 여전히 protocol arm 일치를 요구한다. `n12-panels`는 공통 prefix context를 arm과
+  무관하게 하나로 묶어 t25 행이 게시 arm 수만큼 중복되지 않게 했다.
+- **prefix backup의 공통 prefix 표시 누락:** `checkpoint-backups/.../checkpoint.pt`는 파일명이
+  바뀌므로 `prefix.pt` backup도 공통 prefix로 표시되지 않았다. 감사의 t25 coverage가
+  on_policy만 present로 나오고 panel 행 arm도 prefix가 아니었다. receipt에 기록된 원래
+  `source` 파일명으로 판정한다. `<arm>-latest.pt` backup은 계속 prefix로 보지 않는다.
+- **N12 생성 seed 미기록:** 위 안내는 생성 seed를 파일에 기록한다고 했으나
+  `panel-measurement.json.gz`에 없었다. `generation_seed`와 rank 분할 수
+  `generation_world_size`를 남긴다. 응답별 draw는 `stream_seed(generation_seed, rank, prompt)`다.
+
+진단 코드 파일이 바뀌어 measurement hash가 달라진다. 10-18 코드로 이미 만든 진단 artifact는
+덮어쓰지 않고 별도 identity로 남는다. `n12-panels`의 t25 기준은 같은 measurement hash 안에서만
+연결되므로, 새 코드로 t125/t250을 측정하면 t25도 새 코드로 다시 측정한다.
+
+검증: `test_followup.py` 73개(신규 4개 함수, 6 case)와 `test_stage_rollout_analysis.py` 9개,
+**82 tests 통과**, Ruff·diff 검사 통과. 로컬 CPU 검증이며 원격 H100/NCCL 실측이 아니다.
+`src/`, `srgc_rebuttal` engine, 세 모델 adapter, checkpoint·보상 기록 모듈은 변경하지 않았다.
+
+확인하지 못한 것(코드 변경 없음):
+
+- 서버의 실제 t25/t125/t250 파일 존재와 모델별(OLMo/Qwen3.5/Gemma4/Llama3.1) 실제 load·생성·scoring.
+- 시작 조정 TCPStore 대기 한도는 60초다. rank 0의 원본 읽기·사본 보존이 이보다 길면 다른 rank가
+  시간 초과로 종료한다. 사본 쓰기는 원자적이므로 같은 명령의 재시도는 안전하다.
+- 원래 worker가 설정하던 MATH 검증기 overlay(`verifier_environment`)와 확장 모델의
+  `setup_storage` cache 경로를 진단 진입점은 설정하지 않는다. 원래 실험과 같은 환경에서 실행한다.

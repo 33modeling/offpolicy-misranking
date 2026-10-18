@@ -68,7 +68,10 @@ def source_state(saved, data, plan, seed, *, input_hash, plan_hash, protocol=Non
             raise ValueError("evaluation archive requires its original matching reward-curve protocol.json")
         source = protocol
         binding_kind = "reward_curve_protocol"
-        if protocol.get("arm") != state["arm"] and not (protocol.get("arm") == "prefix" and stage == 25 and state["arm"] == "on_policy"):
+        # reward_curves.capture_boundary lets whichever arm first reaches t25
+        # publish reward-curves/prefix/step-25.pt, so its Engine arm may be
+        # that continuation fork although the weights are the shared prefix.
+        if protocol.get("arm") != state["arm"] and not (protocol.get("arm") == "prefix" and stage == 25):
             raise ValueError("checkpoint arm differs from its bound evaluation protocol")
     elif all(saved.get(k) == v for k, v in expected_identity.items()):
         source = saved
@@ -164,6 +167,8 @@ def load_source(checkpoint, bundle, plan_path, seed):
                                       protocol=protocol, marker=marker)
     if backup_receipt is not None:
         capabilities["identity_binding"] = "backup_receipt_checksum_and_engine_contract"
+    # A checksum backup keeps the original file name only in its receipt.
+    published = Path(backup_receipt.get("source", "")).name if backup_receipt is not None else checkpoint.name
     point = checkpoint.with_suffix(".json")
     if state.get("evaluation_only") and point.exists():
         row = read(point)
@@ -172,7 +177,7 @@ def load_source(checkpoint, bundle, plan_path, seed):
     return state, data, plan, {**capabilities, "checkpoint": str(checkpoint.resolve()), "checkpoint_sha256": before,
                               "input_sha256": input_hash, "plan_sha256": plan_hash,
                               "shared_prefix": state["step"] == 25 and ((protocol or {}).get("arm") == "prefix" or
-                                  (marker or {}).get("shared_prefix") is True or checkpoint.name in {"prefix.pt", "prefix-latest.pt"}),
+                                  (marker or {}).get("shared_prefix") is True or published in {"prefix.pt", "prefix-latest.pt"}),
                               "policy_sha256": weights_hash(state, plan, input_hash)}
 
 

@@ -76,6 +76,8 @@ def n12_acquire(backend, data, fixed_panel, identity):
                      **measured, **records[prompt]})
     return {"schema": "srgc-n12-panel-measurement-v1", "identity": identity, "panel": fixed_panel, "groups": rows,
             "kind": "training_pool_fixed_panel", "used_for_training_or_selection": False,
+            # Per-prompt draws are stream_seed(generation_seed, rank, prompt) over rank::world shards.
+            "generation_seed": seed, "generation_world_size": backend.world,
             "acquisition": "fresh_responses_from_archived_weights", "response_count": 160,
             "is_fixed_held_out_evaluation": False}
 
