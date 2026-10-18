@@ -16,7 +16,7 @@ def model_of(command):
     return Path(command[1]).stem.removeprefix('run_srgc_')
 
 
-def test_real_child_processes_continue_llama_to_gemma_and_revisit_yielded_qwen(tmp_path):
+def test_real_child_processes_finish_yielded_qwen_before_llama_and_gemma(tmp_path):
     script = tmp_path / 'worker.py'
     script.write_text('''import json,os,sys
 from pathlib import Path
@@ -35,7 +35,7 @@ raise SystemExit(76 if model=='qwen35' and attempt==1 else 0)
     assert chain.drain(list(chain.MODELS), 'all', ['all'], os.environ,
                        lambda *a, **kw: states.append((a, kw)), runner=runner,
                        sleep=lambda seconds: sleeps.append(seconds)) == 0
-    assert jobs == ['qwen35', 'llama31', 'gemma4', 'qwen35', 'qwen35', 'llama31', 'gemma4']
+    assert jobs == ['qwen35', 'qwen35', 'llama31', 'gemma4', 'qwen35', 'llama31', 'gemma4']
     assert phases == ['math'] * 4 + ['mbpp'] * 3
     assert len(sleeps) == 1
     assert states[-1][0] == ('finished',)
@@ -50,6 +50,81 @@ def test_llama_first_rotates_to_gemma_before_qwen():
                        runner=lambda cmd, env, beat: jobs.append((model_of(cmd), env['SRGC_DATASET_PHASE'])) or 0,
                        sleep=lambda n: pytest.fail('completed chain slept')) == 0
     assert jobs == [(model, phase) for phase in ('math', 'mbpp') for model in order]
+
+
+@pytest.mark.parametrize('code', (1, 2, 124, 134, 139, 129, 137, chain.BUSY, chain.YIELD))
+def test_llama_error_stays_on_llama_until_recovery_and_all_remaining_work_finish(monkeypatch, code):
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {'llama31': 'llama-error-x40', 'gemma4': 'gemma-error-x99'}
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    monkeypatch.setattr(resume_inventory, 'failed_signature', lambda model, *a, **kw: pending.get(model))
+    jobs, completed, waits = [], set(), []
+
+    def runner(command, environment, heartbeat):
+        model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, recovery))
+        if model == 'gemma4':
+            assert 'llama31' in completed, 'Gemma launched with unfinished Llama work'
+        if model == 'qwen35':
+            assert 'gemma4' in completed
+        if model == 'llama31' and len(jobs) <= 5:
+            return code
+        if recovery:
+            pending.pop(model, None)
+        else:
+            assert model not in pending
+            completed.add(model)
+        return 0
+
+    assert chain.drain(chain.order_for('llama31'), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: waits.append(n)) == 0
+    assert jobs[:7] == [('llama31', True)] * 6 + [('llama31', False)]
+    assert jobs[7:] == [('gemma4', True), ('gemma4', False), ('qwen35', False)]
+    assert len(waits) == 5
+
+
+def test_later_gemma_error_does_not_jump_ahead_of_unfinished_llama(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {'gemma4': 'gemma-error'}
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    monkeypatch.setattr(resume_inventory, 'failed_signature', lambda model, *a, **kw: pending.get(model))
+    jobs = []
+
+    def runner(command, environment, heartbeat):
+        model = model_of(command)
+        jobs.append((model, environment['SRGC_RESUME_ONLY']))
+        if environment['SRGC_RESUME_ONLY'] == '1':
+            pending.pop(model)
+        return 0
+
+    assert chain.drain(chain.order_for('llama31'), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda _: None) == 0
+    assert jobs == [('llama31', '0'), ('gemma4', '1'), ('gemma4', '0'), ('qwen35', '0')]
+
+
+def test_zero_exit_with_new_failed_receipt_cannot_advance_to_gemma(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    pending, jobs = {}, []
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    monkeypatch.setattr(resume_inventory, 'failed_signature', lambda model, *a, **kw: pending.get(model))
+
+    def runner(command, environment, heartbeat):
+        model = model_of(command)
+        jobs.append((model, environment['SRGC_RESUME_ONLY']))
+        if len(jobs) == 1:
+            pending['llama31'] = 'unresolved-error'
+        elif model == 'llama31':
+            pending.clear()
+        else:
+            assert not pending, 'Gemma launched despite a saved Llama ERROR'
+        return 0
+
+    assert chain.drain(chain.order_for('llama31'), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda _: None) == 0
+    assert jobs[:3] == [('llama31', '0'), ('llama31', '1'), ('llama31', '0')]
 
 
 @pytest.mark.parametrize('order', ['llama31,llama31', 'qwen35,unknown', '', 'qwen35,gemma4'])
@@ -71,29 +146,29 @@ def test_yield_preserves_initial_root_and_flags_and_does_not_spend_failure_budge
     assert chain.drain(chain.order_for('llama31'), 'math', initial, {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: None) == 0
     assert jobs[0][2:] == initial
-    assert jobs[-1][2:] == initial
-    assert all(command[2:]==['math'] for command in jobs[1:3])
+    assert jobs[1][2:] == initial
+    assert all(command[2:]==['math'] for command in jobs[2:])
 
 
-def test_failed_model_does_not_hide_gemma_and_retains_failure_exit():
+def test_failed_model_without_saved_work_stops_before_gemma_and_retains_failure_exit():
     jobs=[];states=[]
     def runner(command, environment, heartbeat):
         model=model_of(command);jobs.append(model)
         return 2 if model=='llama31' else 0
     assert chain.drain(chain.order_for('llama31'),'all',['all'],{},
                        lambda *a,**kw:states.append((a,kw)),runner=runner)==2
-    assert jobs==['llama31','gemma4','qwen35']
+    assert jobs==['llama31']
     assert states[-1][1]['failures']=={'llama31':2}
 
 
-def test_math_failures_block_mbpp_after_other_models_finish():
+def test_math_failure_blocks_later_models_and_mbpp():
     jobs = []
     def runner(command, environment, heartbeat):
         model = model_of(command)
         jobs.append((model, environment['SRGC_DATASET_PHASE']))
         return 2 if model == 'llama31' else 0
     assert chain.drain(list(chain.MODELS), 'all', ['all'], {}, lambda *a, **kw: None, runner=runner) == 2
-    assert jobs == [(model, 'math') for model in chain.MODELS]
+    assert jobs == [('qwen35', 'math'), ('llama31', 'math')]
 
 
 @pytest.mark.parametrize('start', chain.MODELS)
@@ -101,7 +176,7 @@ def test_math_failures_block_mbpp_after_other_models_finish():
 def test_failed_saved_model_retries_past_four_errors_before_any_fresh_model(monkeypatch, start, failure_code):
     from srgc_research.dispatch import resume_inventory
 
-    pending = {'llama31': 'unchanged-checkpoint'}
+    pending = {start: 'unchanged-checkpoint'}
     monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
     jobs, waits, states = [], [], []
 
@@ -119,9 +194,9 @@ def test_failed_saved_model_retries_past_four_errors_before_any_fresh_model(monk
     assert chain.drain(chain.order_for(start), 'all', ['all'], {},
                        lambda *a, **kw: states.append((a, kw)), runner=runner,
                        sleep=lambda n: waits.append(n)) == 0
-    assert jobs[:6] == [('llama31', 'math', True)] * 6
+    assert jobs[:6] == [(start, 'math', True)] * 6
     assert len(waits) == 5
-    assert all(details['model'] == 'llama31' for (status,), details in states if status == 'waiting')
+    assert all(details['model'] == start for (status,), details in states if status == 'waiting')
     assert states[-1][1]['failures'] == {}
 
 
@@ -168,7 +243,7 @@ def test_real_error_child_is_restarted_and_keeps_checkpoint_bytes(tmp_path, monk
         receipt.unlink(missing_ok=True)
         return 0
 
-    assert chain.drain(list(chain.MODELS), 'math', ['math'], os.environ, lambda *a, **kw: None,
+    assert chain.drain(chain.order_for('gemma4'), 'math', ['math'], os.environ, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: None) == 0
     assert jobs[:2] == [('gemma4', '1'), ('gemma4', '1')]
     assert checkpoint.read_bytes() == b'last saved optimizer and selector state'
@@ -193,8 +268,7 @@ def test_repeated_peer_owned_math_yields_cannot_start_mbpp_early():
         return chain.YIELD if phase == 'math' and model == 'qwen35' and counts[model] < 3 else 0
     assert chain.drain(list(chain.MODELS), 'all', ['all'], {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: sleeps.append(n)) == 0
-    assert jobs[:5] == [('qwen35', 'math'), ('llama31', 'math'), ('gemma4', 'math'),
-                       ('qwen35', 'math'), ('qwen35', 'math')]
+    assert jobs[:5] == [('qwen35', 'math')] * 3 + [('llama31', 'math'), ('gemma4', 'math')]
     assert jobs[5:] == [(model, 'mbpp') for model in chain.MODELS]
     assert len(sleeps) == 2
 
@@ -247,7 +321,7 @@ def test_explicit_mbpp_source_plan_and_interpreter_scope_are_preserved_during_ma
     assert all(args == ['mbpp'] for model, phase, args in jobs if model != 'llama31')
 
 
-def test_all_stopped_models_recover_before_any_model_opens_fresh_work(monkeypatch):
+def test_each_model_recovers_and_finishes_its_full_queue_before_next_model(monkeypatch):
     from srgc_research.dispatch import resume_inventory
 
     pending = {'llama31': 'saved-llama', 'gemma4': 'saved-gemma'}
@@ -259,14 +333,14 @@ def test_all_stopped_models_recover_before_any_model_opens_fresh_work(monkeypatc
         if recovery:
             pending.pop(model)
         else:
-            assert not pending, 'fresh work began while an abandoned model still needed recovery'
+            assert model not in pending, 'current model opened fresh work before its recovery'
         return 0
     assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None, runner=runner) == 0
-    assert jobs == [('llama31', True), ('gemma4', True),
-                    ('qwen35', False), ('llama31', False), ('gemma4', False)]
+    assert jobs == [('qwen35', False), ('llama31', True), ('llama31', False),
+                    ('gemma4', True), ('gemma4', False)]
 
 
-def test_error_model_is_recovered_before_earlier_interrupted_model(monkeypatch):
+def test_later_error_model_waits_for_earlier_interrupted_model_to_finish(monkeypatch):
     from srgc_research.dispatch import resume_inventory
 
     pending = {'qwen35': 'interrupted', 'gemma4': 'error-x99'}
@@ -281,15 +355,16 @@ def test_error_model_is_recovered_before_earlier_interrupted_model(monkeypatch):
         if recovery:
             pending.pop(model)
         else:
-            assert not pending
+            assert model not in pending
         return 0
 
     assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: None) == 0
-    assert jobs[:2] == [('gemma4', True), ('qwen35', True)]
+    assert jobs == [('qwen35', True), ('qwen35', False), ('llama31', False),
+                    ('gemma4', True), ('gemma4', False)]
 
 
-def test_failed_llama_recovery_does_not_starve_other_existing_model_errors(monkeypatch):
+def test_failed_llama_recovery_blocks_existing_gemma_errors_until_llama_finishes(monkeypatch):
     from srgc_research.dispatch import resume_inventory
 
     pending = {'llama31': 'saved-llama-error', 'gemma4': 'saved-gemma-error'}
@@ -304,16 +379,17 @@ def test_failed_llama_recovery_does_not_starve_other_existing_model_errors(monke
             attempts.append(True)
             if len(attempts) == 1:
                 return 2
-            assert 'gemma4' not in pending, 'another ERROR model was starved by repeated Llama recovery'
+            assert 'gemma4' in pending, 'Gemma ERROR ran before Llama recovery finished'
         if recovery:
             pending.pop(model)
         else:
-            assert not pending, 'fresh work overtook unfinished ERROR recovery'
+            assert model not in pending, 'current model fresh work overtook its own ERROR recovery'
         return 0
 
     assert chain.drain(chain.order_for('llama31'), 'math', ['math'], {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: None) == 0
-    assert jobs[:3] == [('llama31', True), ('gemma4', True), ('llama31', True)]
+    assert jobs == [('llama31', True), ('llama31', True), ('llama31', False),
+                    ('gemma4', True), ('gemma4', False), ('qwen35', False)]
 
 
 def test_success_exit_cannot_hide_an_unchanged_failed_receipt(monkeypatch):
@@ -327,15 +403,15 @@ def test_success_exit_cannot_hide_an_unchanged_failed_receipt(monkeypatch):
     def runner(command, environment, heartbeat):
         model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
         jobs.append((model, recovery))
-        if recovery and len(jobs) > 1:
+        if recovery and sum(current == model for current, _ in jobs) > 1:
             pending.pop(model)
         if not recovery:
-            assert not pending
+            assert model not in pending
         return 0
 
     assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: None) == 0
-    assert jobs[:2] == [('llama31', True), ('llama31', True)]
+    assert jobs[:3] == [('qwen35', False), ('llama31', True), ('llama31', True)]
 
 
 def test_cooling_model_recovery_is_revisited_instead_of_starting_other_fresh_models(monkeypatch):
@@ -354,7 +430,7 @@ def test_cooling_model_recovery_is_revisited_instead_of_starting_other_fresh_mod
         else:
             assert not pending
         return 0
-    assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
+    assert chain.drain(chain.order_for('llama31'), 'math', ['math'], {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: waits.append(n)) == 0
     assert jobs[:2] == [('llama31', True), ('llama31', True)]
     assert len(waits) == 1

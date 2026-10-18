@@ -131,7 +131,7 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
             with lease(manager.marker.with_suffix('.lock'), wait=True):
                 ready = runnable(manager, requested, pending, args)
             if not ready:
-                update('yielded', idle_reason='no claimable tasks; checking next model')
+                update('yielded', idle_reason='no claimable tasks; waiting to resume this model')
                 raise SystemExit(YIELD)
         environment = cluster.child_environment()
         environment[env_key.removesuffix("S")] = str(plans[0])
@@ -315,9 +315,8 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
 
                         print(failure_details(log, start=log_start), flush=True)
                         if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1':
-                            # Hand the real failure back to the coordinator so
-                            # other saved model errors get their recovery turn.
-                            # The task/device contexts close before it restarts.
+                            # Release task/device contexts before the coordinator
+                            # restarts this model. Later models remain blocked.
                             progress("failed", active=queue, task=task,
                                      error=f"child exit={code}; log={log}")
                             return code
@@ -367,7 +366,7 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1':
             from .model_chain import YIELD
             progress('yielded', idle_reason=reason)
-            print(f'YIELD {label}: {reason}; checking next model', flush=True)
+            print(f'YIELD {label}: {reason}; waiting to resume this model', flush=True)
             raise SystemExit(YIELD)
         progress("idle", idle_reason=reason)
         print(f"IDLE {label}: {reason}", flush=True)
