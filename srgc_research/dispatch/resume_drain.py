@@ -116,7 +116,8 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
             update("yielded", idle_reason="unfinished tasks recovered; fresh work deferred")
             return
         if not pending and all(q.plan_path in stopped or
-                               all(q.complete(task) for task in q.tasks) for q in requested):
+                               all(q.complete(task) and not manager.owned(q, task)
+                                   for task in q.tasks) for q in requested):
             for queue in requested:
                 if queue.plan_path not in stopped:
                     cluster.publish_reports(queue)
@@ -316,7 +317,7 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         for queue in requested:
             if cluster.stop_requested(queue):
                 continue
-            if all(queue.complete(task) for task in queue.tasks):
+            if all(queue.complete(task) and not manager.owned(queue, task) for task in queue.tasks):
                 if queue.plan_path not in published:
                     cluster.publish_reports(queue)
                     published.add(queue.plan_path)

@@ -9,6 +9,13 @@ GPU 강제 종료로 ERROR가 누적돼도 재개를 막지 않도록 실패 횟
 [모델 연결 실행](SRGC_MODEL_CHAIN.md)을 따른다. 아래 2026-10-12 기록의
 “모델마다 별도 노드에서 해당 명령 하나”는 당시 동작이며 현재 기본값은 연결 실행이다.
 
+2026-10-18 **`no math plan in requested queues` 수정**: 실제 plan의 `math_train`과
+CLI의 `math`를 배정 판단에서만 매핑한다. 같은 오류가 있던 복구 backlog 필터와
+MBPP 선행 금지 조건까지 함께 고쳤고 `04ce845`를 우선 push했다. 추가 점검에서
+캐시 인계 파일이 없는 ERROR 복구 누락, endpoint 저장 뒤 실행 lease가 남았을 때의
+조기 완료도 수정했다. 실제 adapter가 준비한 세 모델 plan으로 검사하며 원본 plan,
+입력, 학습·보상 기록 runtime hash는 유지한다. [상세 수정·검사](SRGC_MODEL_CHAIN.md).
+
 2026-10-18 **ERROR 우선 재개 재수정**: 내부 배정기의 실패 한도 제거와 별개로,
 바깥 coordinator가 오류 코드 1·2로 종료된 모델을 재시도하지 않는 버그를 재현·수정했다.
 기존 미완료 작업이 남으면 복구 전용 실행을 유지하고, ERROR 모델을 다른 중단 모델보다

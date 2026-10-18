@@ -73,3 +73,46 @@ CPU 통합 검사는 `Llama ERROR x4 → 같은 작업 반복 재시도 → Gemm
 git pull --ff-only origin master
 sh scripts/run_srgc_llama31.sh all
 ```
+
+## 2026-10-18 실제 MATH plan 이름과 완료 경계 수정
+
+사용자가 보고한 `LLAMA refused: no math plan in requested queues`를 실제 plan 이름으로
+재현했다. Qwen·Llama·Gemma adapter가 만드는 plan은 `dataset: math_train`인데,
+운영 배정기는 CLI 단계 이름 `math`와 직접 비교했다. 앞선 합성 queue 시험이 plan의
+데이터셋 이름을 `math`로 바꿔 이 문제를 놓쳤다. 이제 기존 시험도 실제 `math_train`을
+사용하고, 실제 세 adapter가 준비한 plan으로 별도 통합 검사를 수행한다.
+
+`datasets.py`는 배정 판단에만 `math_train → math`를 적용한다. plan JSON·입력·체크포인트의
+원래 이름과 hash는 유지한다. MATH queue 선택, 복구 backlog 필터, 현재 단계 배정,
+MBPP를 막는 MATH 완료 장벽 네 지점을 함께 수정했다. 이 수정은 `04ce845`로 우선 push했다.
+
+추가 점검에서 다음 두 경계도 수정했다.
+
+- 캐시 보상 배열만 있고 `cost-summary.json` 인계가 없거나 bundle hash가 다르면,
+  실제 모델 queue와 동일하게 미완료로 판단한다. coordinator의 ERROR 우선 복구에서
+  해당 캐시를 누락하지 않는다. 비용 합계의 측정 완료 여부와 캐시 인계 여부는 구분한다.
+- endpoint가 저장됐어도 해당 작업의 queue/execution lease가 유지되면 worker 시작 검사와
+  drain 종료 검사 모두 완료로 반환하지 않는다. 기존 ERROR backlog가 없는 경우도 검사한다.
+
+실제 adapter 준비 plan 검사는 세 모델 각각 MATH 선택·ERROR x99 배정·MBPP 선행 금지와
+실제 cache 자식 명령 생성, SIGKILL 뒤 두 번 재개, 과거 실패 기록·plan 바이트 보존을 확인한다.
+자식 GPU 계산은 CPU 시험 대역으로 교체하므로 원격 H100 실행을 확인한 검사는 아니다.
+
+Git에 추적된 관련 코드와 변경 이력을 다음 실행 순서로 대조했다.
+
+| 구간 | 점검한 코드·계약 |
+| --- | --- |
+| 공개 명령 → 모델 연결 | 세 `run_srgc_*.sh`, `model_chain.py`, 모델별 run entry의 Python·인자·root·중지 전달 |
+| 기존 plan → 공유 배정 | 모델 adapter·storage의 실제 plan 이름, `ready_dispatch.py`, `resume_drain.py`, `resume_inventory.py`의 phase·복구·완료 조건 |
+| task → GPU 자식 | 모델별 `task_command`·rank entry의 plan·seed·cache/train 명령과 학습 `--resume` 전달 |
+| 중단 → 저장 복구 | `run_experiment.py`, `srgc_step_checkpoints.py`, rollout 저장·checkpoint backup의 원자적 저장·기존 optimizer 상태 복구 |
+| 기록 → 조회·export | `reward_curve_rank.py`, 보상 기록·조회 모듈, 공통 model status/results의 원래 dataset·실험 identity 보존 |
+
+공통 engine 30개 파일, Qwen adapter 구성 12개, Llama 구성 23개, Gemma 구성 27개와
+학습 checkpoint·보상 기록 3개 파일의 바이트를 수정 전 Git과 비교했다(그룹 간 중복 포함).
+이번 운영 수정으로 고정 학습/adapter/기록 hash가 달라지지 않았음을 확인했다.
+
+관련 실행·재개·모델 entry·status/results·보상 기록·rollout·checkpoint backup 회귀
+526개와 subtest 18개를 통과했다. 마지막 캐시 인계·완료 잠금 수정 후 영향받는 실제
+plan/배정 검사를 200개 다시 실행해 통과했다(앞선 검사와 중복 포함).
+Ruff와 공백 검사도 통과했다. 원격 학습 노드 실행 및 H100/NCCL 실측은 미확인이다.

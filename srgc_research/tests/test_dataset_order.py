@@ -87,6 +87,33 @@ def test_owned_completed_math_yields_before_admission_and_keeps_mbpp_blocked(mod
     assert not model.jobs
 
 
+def test_owned_completed_math_yields_even_without_any_error_backlog(model, monkeypatch, tmp_path):
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "math")
+    math = model.queues[0]
+    task = math.tasks[0]
+    finish_fake(math, task)
+    with lease(math.directory / "leases" / f"{task.key}.lock"), pytest.raises(SystemExit) as stopped:
+        run_worker(model, monkeypatch, tmp_path,
+                   admission=lambda *a, **kw: pytest.fail("owned endpoint requested GPU admission"))
+    assert stopped.value.code == YIELD
+    assert not model.jobs
+
+
+def test_drain_does_not_publish_completion_before_final_math_lease_release(model, monkeypatch):
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "math")
+    math = model.queues[0]
+    task = math.tasks[0]
+    finish_fake(math, task)
+    with lease(math.directory / "leases" / f"{task.key}.lock"), pytest.raises(SystemExit) as stopped:
+        model.run()
+    assert stopped.value.code == YIELD
+    assert not any(state == "complete" for state, details in model.updates)
+    model.run()
+    assert model.updates[-1][0] == "complete"
+
+
 def test_math_errors_are_retried_past_three_attempts_without_falling_through_to_mbpp(model, monkeypatch):
     monkeypatch.setenv("SRGC_DATASET_PHASE", "math")
     math, mbpp = model.queues

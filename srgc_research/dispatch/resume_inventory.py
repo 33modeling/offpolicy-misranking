@@ -49,12 +49,11 @@ def _signature(model, dataset, environment, *, root, failed_only):
                 info, _ = input_info(bundle)
                 if info["pending_cache"]:
                     return False
-                protocol = output / ".queue" / "protocol.json"
-                if protocol.is_file() and json.loads(protocol.read_text())["inputs"][str(seed)]["pending_cache"]:
-                    cost = bundle.with_suffix(".cache") / "cost-summary.json"
-                    receipt = json.loads(cost.read_text())
-                    return isinstance(receipt, dict) and receipt.get("bundle_sha256") == info["input_sha256"]
-                return True
+                # All three model adapters require this handoff even if the
+                # queue was first bound after rewards had already been written.
+                cost = bundle.with_suffix(".cache") / "cost-summary.json"
+                receipt = json.loads(cost.read_text())
+                return isinstance(receipt, dict) and receipt.get("bundle_sha256") == info["input_sha256"]
             except (OSError, ValueError, KeyError, TypeError):
                 return False  # Dispatch validates incomplete or malformed evidence.
         if arm == "prefix":
