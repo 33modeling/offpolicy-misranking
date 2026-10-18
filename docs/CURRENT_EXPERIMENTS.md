@@ -24,6 +24,11 @@ curve 오류로 표시하고 정상 endpoint·다른 arm은 results에 유지한
 재사용하며 학습 update는 하지 않는다. 실제 서버의 t25/t125/t250 파일 잔존과 H100 실측은
 미확인이다. 기존 queue·계산·저장 runtime은 보존한다.
 
+같은 날 N12·N13 재디버깅으로 완료 직전 종료 후 비용 파일 충돌, 같은 weights 재사용 시
+stage 누락, 학습 draw 및 역사 check 중복 집계를 수정했다. 여러 rank의 CPU preflight 결정과
+오류 전달, 원본 사본 고정, 완료 evidence 검증도 강화했다. 4-worker CPU 시작 검증과 실제
+H100/NCCL 측정은 구분한다. 상세 내역은 위 checkpoint 진단 안내를 따른다.
+
 ## 현재 실험 — 2026-10-10
 
 사용자가 진행 상태를 확인한 실험은 아래 네 종류다.

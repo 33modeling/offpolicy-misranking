@@ -2,6 +2,9 @@
 
 import copy
 import json
+import os
+import subprocess
+import sys
 from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -357,17 +360,15 @@ def test_completed_collect_verifies_evidence_before_gpu_or_base_load(source, tmp
     args = SimpleNamespace(checkpoint=source.checkpoint, bundle=source.bundle, plan=source.plan_path,
                            seed=5, experiment="n12", output_root=tmp_path / "diagnostics", a_only=False)
     _, _, _, actual = checkpoints.load_source(source.checkpoint, source.bundle, source.plan_path, 5)
-    identity = {k: actual[k] for k in ("input_sha256", "plan_sha256", "policy_sha256", "seed", "source_implementation_sha256")}
+    identity = {k: actual[k] for k in ("input_sha256", "plan_sha256", "policy_sha256", "seed", "source_implementation_sha256", "attention")}
     identity.update(measurement_sha256="e" * 64, experiment="n12", independent_B=True)
     output = args.output_root / "n12" / fingerprint(identity)
     write(output / "evidence.json", {"measured": True})
     write(output / "endpoint.json", {"identity": identity, "artifact_sha256": {"evidence.json": file_hash(output / "evidence.json")}})
     with patch("srgc_research.followup.measure.measurement_hash", return_value="e" * 64), \
-            patch("srgc_rebuttal.distributed.initialize", side_effect=AssertionError("loaded GPU")):
+            patch("srgc_rebuttal.distributed.initialize", side_effect=AssertionError("loaded GPU")), \
+            pytest.raises(ValueError, match="required artifacts"):
         collect(args)
-        (output / "evidence.json").write_text("{}")
-        with pytest.raises(ValueError, match="evidence changed"):
-            collect(args)
 
 
 @pytest.mark.parametrize(("extension", "expected"), [("qwen35-9b-v2", "qwen35"), ("gemma4-12b-pt-v1", "gemma4"),
@@ -551,6 +552,20 @@ def test_collect_freezes_source_and_can_resume_from_the_frozen_checkpoint(source
         args.checkpoint = frozen
         collect(args)
         assert make.call_count == 1 and len(backend.calls) == expected_calls
+        bad_result = copy.deepcopy(endpoint)
+        if experiment == "n13":
+            bad_result["result"]["d4_A"] += 1
+        else:
+            bad_result["result"]["response_count"] = 0
+        endpoint_path.write_text(json.dumps(bad_result))
+        with pytest.raises(ValueError, match="result differs"):
+            collect(args)
+        missing_evidence = copy.deepcopy(endpoint)
+        del missing_evidence["artifact_sha256"]["source-checkpoint.pt"]
+        endpoint_path.write_text(json.dumps(missing_evidence))
+        with pytest.raises(ValueError, match="required artifacts"):
+            collect(args)
+        assert make.call_count == 1
 
 
 def test_new_phase_labels_reconcile_with_original_cost_receipts(tmp_path):
@@ -567,3 +582,199 @@ def test_new_phase_labels_reconcile_with_original_cost_receipts(tmp_path):
     assert set(totals["diagnostic_phases"]) == {"n13_scoring_A", "n13_scoring_B"}
     assert totals["counts"]["selection.responses"] == 16
     assert not totals["diagnostic_phases_additive_to_phase_totals"]
+
+
+@pytest.mark.parametrize("experiment", ["n12", "n13"])
+@pytest.mark.parametrize("cleanup_failure", [False, True])
+def test_kill_after_cost_snapshot_can_finish_without_new_rollouts(source, tmp_path, experiment, cleanup_failure):
+    from srgc_research.followup import measure
+
+    source.plan["world_size"] = 0
+    source.plan_path.write_text(json.dumps(source.plan))
+    source.marker["plan_sha256"] = file_hash(source.plan_path)
+    (source.checkpoint.parent / "run.json").write_text(json.dumps(source.marker))
+    args = SimpleNamespace(checkpoint=source.checkpoint, bundle=source.bundle, plan=source.plan_path,
+                           seed=5, experiment=experiment, output_root=tmp_path / "diagnostics", a_only=False)
+    backend = diagnostic_backend(tmp_path)
+    original_write = measure.write
+
+    def interrupted(path, value):
+        if path.name == "endpoint.json" and (path.parent / "costs.json").exists():
+            raise RuntimeError("node killed after cost snapshot")
+        original_write(path, value)
+
+    def make(*arguments):
+        backend.cost_meter = arguments[-1]
+        return backend
+
+    with patch("srgc_research.followup.measure.measurement_hash", return_value="e" * 64), \
+            patch("srgc_rebuttal.distributed.initialize", return_value=(0, 0)), \
+            patch("torch.distributed.destroy_process_group", side_effect=[RuntimeError("NCCL cleanup failure"), None] if cleanup_failure else None), \
+            patch("scripts.srgc_verifier_fallback.install"), \
+            patch("srgc_research.followup.measure.make_backend", side_effect=make):
+        with patch.object(measure, "write", side_effect=interrupted), pytest.raises(RuntimeError, match="node killed") as failure:
+            collect(args)
+        if cleanup_failure:
+            assert any("cleanup also failed" in note for note in failure.value.__notes__)
+        calls = len(backend.calls)
+        assert calls > 0 and not list(args.output_root.rglob("endpoint.json"))
+        collect(args)
+        assert len(backend.calls) == calls
+        endpoint = read(next(args.output_root.rglob("endpoint.json")))
+        assert endpoint["optimizer_updates"] == 0 and endpoint["costs"]["recorded_phases"] >= 4
+
+
+def test_training_draw_duplicate_is_not_a_four_prompt_batch(source, tmp_path):
+    groups = []
+    for prompt, draw in (("p1", 0), ("p1", 1), ("p2", 0), ("p3", 0)):
+        groups.append({**group(4, prompt=prompt), "draw": draw, "cached_success_rate": int(prompt[1:]) / 8})
+    document = trace(groups)
+    document["identity"]["input_sha256"] = file_hash(source.bundle)
+    document["history_record"] = {"checkpoint": 25, "completed_updates": 26, "train_ids": ["p1", "p2", "p3", "p4"]}
+    path = tmp_path / "duplicate-draw.json"
+    write(path, document)
+    with pytest.raises(ValueError, match="training.*(draw|duplicate)"):
+        n12.report(source.bundle, [path])
+
+
+def test_same_policy_preserves_each_arm_stage_without_generating_again(source, tmp_path):
+    source.plan["world_size"] = 0
+    source.plan_path.write_text(json.dumps(source.plan))
+    source.marker["plan_sha256"] = file_hash(source.plan_path)
+    (source.checkpoint.parent / "run.json").write_text(json.dumps(source.marker))
+    args = SimpleNamespace(checkpoint=source.checkpoint, bundle=source.bundle, plan=source.plan_path,
+                           seed=5, experiment="n12", output_root=tmp_path / "diagnostics", a_only=False)
+    backend = diagnostic_backend(tmp_path)
+
+    def make(*arguments):
+        backend.cost_meter = arguments[-1]
+        return backend
+
+    with patch("srgc_research.followup.measure.measurement_hash", return_value="e" * 64), \
+            patch("srgc_rebuttal.distributed.initialize", return_value=(0, 0)), \
+            patch("torch.distributed.destroy_process_group"), \
+            patch("scripts.srgc_verifier_fallback.install"), \
+            patch("srgc_research.followup.measure.make_backend", side_effect=make) as mocked:
+        collect(args)
+        source.state.update(step=250, arm="sr")
+        torch.save(source.state, source.checkpoint)
+        collect(args)
+        assert mocked.call_count == 1 and len(backend.calls) == 20
+        endpoints = list(args.output_root.rglob("endpoint.json"))
+        assert len(endpoints) == 1
+        report = n12.panel_report(source.bundle, endpoints, 5)
+        assert {(r["stage"], r["arm"]) for r in report["rows"]} == {(125, "on_policy"), (250, "sr")}
+        assert len(report["rows"]) == 40 and report["distinct_measured_policies"] == 1
+        assert report["response_count"] == 160
+        source.state["checkpoint_policy"] = {"attention": "sdpa"}
+        torch.save(source.state, source.checkpoint)
+        collect(args)
+        assert mocked.call_count == 2 and len(backend.calls) == 40
+        report = n12.panel_report(source.bundle, list(args.output_root.rglob("endpoint.json")), 5)
+        assert report["response_count"] == 320 and {r["attention"] for r in report["rows"]} == {"eager", "sdpa"}
+
+
+def test_historical_progress_endpoint_overlap_is_counted_once(tmp_path):
+    identity = {k: "a" * 64 for k in ("input_sha256", "plan_sha256", "implementation_sha256")}
+    endpoint = {**identity, "seed": 5, "arm": "switch", "checks": [{"step": 25, "d": -.4}]}
+    archive = {"source_results": {"seed-5/switch-endpoint.json": endpoint, "seed-5/switch-progress.json": endpoint}}
+    path = tmp_path / "overlap.json"
+    write(path, archive)
+    main(["n13-report", str(path), "--output-dir", str(tmp_path / "report")])
+    report = read(tmp_path / "report" / "report.json")
+    assert report["coverage"]["unmeasured"] == 1 and report["duplicate_historical_checks_removed"] == 1
+    archive["source_results"]["seed-5/switch-progress.json"] = {**endpoint, "checks": [{"step": 25, "d": .2}]}
+    path.write_text(json.dumps(archive))
+    with pytest.raises(SystemExit):
+        main(["n13-report", str(path), "--output-dir", str(tmp_path / "conflicting")])
+
+
+@pytest.mark.parametrize("damage", ["attention_none", "attention_unknown", "float_config", "string_score_names"])
+def test_malformed_checkpoint_is_rejected_in_inventory(source, damage):
+    if damage == "attention_none":
+        source.state["checkpoint_policy"] = None
+    elif damage == "attention_unknown":
+        source.state["checkpoint_policy"] = {"attention": "unknown-kernel"}
+    elif damage == "float_config":
+        source.state["config"]["candidate_group_size"] = 4.
+    else:
+        source.state["backend"]["score_names"] = "weight"
+    torch.save(source.state, source.checkpoint)
+    report = checkpoints.inventory([source.checkpoint], source.bundle, source.plan_path, 5)
+    assert report["rows"][0]["status"] == "invalid_or_other_run"
+
+
+def test_equal_rewards_cannot_join_different_prefix_trajectories():
+    analysis = Analysis()
+    identity = {"input_sha256": "a" * 64, "plan_sha256": "b" * 64, "implementation_sha256": "c" * 64}
+    for prefix in ("d" * 64, "e" * 64):
+        context = analysis.context({"model": "fixture", "dataset": "math", "seed": 5},
+            {**identity, "prefix_checkpoint_sha256": prefix, "seed": 5, "arm": "on_policy"}, {"path": "source", "sha256": "f" * 64})
+        analysis.curve(context, 125, .4, "held_out", "source")
+        analysis.curve(context, 150, .6, "held_out", "source")
+    row = {"stage": 125, "seed": 5, "identity": {**identity, "source_implementation_sha256": "c" * 64, "arm": "on_policy"}}
+    result = n13.nearby_evaluation(row, analysis)
+    assert result["held_out_gain_next_25"] is None and result["evaluation_link_issue"]
+    row["identity"]["prefix_checkpoint_sha256"] = "d" * 64
+    assert n13.nearby_evaluation(row, analysis)["held_out_gain_next_25"] == pytest.approx(.2)
+
+
+@pytest.mark.parametrize("value", [True, "1"])
+def test_projected_vectors_do_not_coerce_booleans_or_strings(value):
+    document = contrast_document()
+    document["blocks"]["A"]["gradients"]["c0"] = [value, value]
+    with pytest.raises(ValueError, match="numeric values"):
+        n13.compare(document)
+
+
+@pytest.mark.parametrize("case", ["complete", "root_error", "rank_error"])
+def test_four_worker_cpu_startup_agrees_before_cuda(tmp_path, case):
+    output = tmp_path / case
+    output.mkdir()
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
+    command = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc_per_node=4", "--max_restarts=0",
+               "--module", "srgc_research.tests.followup_startup_smoke", "--case", case, "--output", str(output)]
+    process = subprocess.run(command, env=env, capture_output=True, text=True, timeout=90, check=False)
+    assert process.returncode == 0, process.stderr[-4000:]
+    rows = [read(output / f"rank-{rank}.json") for rank in range(4)]
+    assert all(not r["cuda_initialized"] and not r["group_initialized"] for r in rows)
+    if case == "complete":
+        assert all(r["result"]["complete"] is True and r["workers"] == 4 for r in rows)
+        assert read(output / "root-called.json")["rank"] == 0
+    else:
+        assert len({r["error"] for r in rows}) == 1
+        assert ("root checkpoint corrupted" if case == "root_error" else "rank 2 source checksum differs") in rows[0]["error"]
+
+
+@pytest.mark.parametrize("damage", ["missing_records", "invalid_reference"])
+def test_checkpoint_source_requires_usable_generation_records(source, damage):
+    if damage == "missing_records":
+        del source.data["records"]
+    else:
+        source.data["records"]["v0"] = None
+    source.bundle.write_text(json.dumps(source.data))
+    source.marker["input_sha256"] = file_hash(source.bundle)
+    (source.checkpoint.parent / "run.json").write_text(json.dumps(source.marker))
+    with pytest.raises((ValueError, TypeError), match="prompt/verifier records"):
+        checkpoints.load_source(source.checkpoint, source.bundle, source.plan_path, 5)
+
+
+def test_gemma_disables_optional_media_before_importing_peft(tmp_path):
+    import builtins
+
+    from srgc_research.followup.measure import make_backend
+
+    class StopBeforeModelLoad(Exception):
+        pass
+
+    original = builtins.__import__
+
+    def importing(name, *args, **kwargs):
+        if name == "peft":
+            assert disabled.call_count == 1
+            raise StopBeforeModelLoad
+        return original(name, *args, **kwargs)
+
+    with patch("srgc_research.dispatch.gemma4.runtime.disable_optional_media") as disabled, \
+            patch("builtins.__import__", side_effect=importing), pytest.raises(StopBeforeModelLoad):
+        make_backend(tmp_path / "plan.json", {"extension": "gemma4-12b-pt-v1"}, {}, {}, torch.device("cpu"), None)

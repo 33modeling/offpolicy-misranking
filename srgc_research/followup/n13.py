@@ -1,5 +1,6 @@
 """N13: original candidate40/SR40 versus A-selected ON4/SR4 projected contrasts."""
 
+import math
 import re
 
 import numpy as np
@@ -40,7 +41,10 @@ def vectors(block, candidate_ids, sr_ids, reference_ids, dimension):
     if set(mapping) != set(candidate_ids) | set(sr_ids) or set(references) != set(reference_ids):
         raise ValueError("gradient coverage must match the exact candidate/SR union and original reference IDs")
     def checked(value):
-        vector = np.asarray(value, dtype=np.float64)
+        raw = np.asarray(value)
+        if raw.dtype.kind not in {"i", "u", "f"}:
+            raise ValueError("projected vectors must contain numeric values, not booleans or strings")
+        vector = raw.astype(np.float64)
         if vector.shape != (dimension,) or not np.isfinite(vector).all():
             raise ValueError("projected vector must be finite and match the saved projection dimension")
         return vector
@@ -50,6 +54,9 @@ def vectors(block, candidate_ids, sr_ids, reference_ids, dimension):
 def compare(document):
     """Never reconstruct unrecorded vectors from scalar D, cosine or rewards."""
     if document.get("schema") != "srgc-n13-vectors-v1":
+        value = document.get("d")
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value)):
+            raise ValueError("recorded historical D must be finite")
         return {"status": "unmeasured", "reason": "Original projected vectors with source/ID bindings were not supplied.",
                 "d40_A": None, "d4_A": None, "d40_B": None, "d4_B": None,
                 "identity": document.get("identity", {}), "seed": document.get("seed"), "arm": document.get("arm"),
@@ -73,7 +80,7 @@ def compare(document):
     blocks = document.get("blocks", {})
     if "A" not in blocks:
         return {"status": "unmeasured", "reason": "Scoring A vectors are missing.", "d40_A": None, "d4_A": None,
-                "d40_B": None, "d4_B": None}
+                "d40_B": None, "d4_B": None, "identity": identity, "stage": document["stage"], "seed": document["seed"]}
     gradient_a, reference_a = vectors(blocks["A"], candidates, comparison, reference, dimension)
     scores = cosine_scores(np.stack([gradient_a[i] for i in candidates]), reference_a)
     selected_on = list(top_ids(candidates, scores, 4, stream_seed(document["seed"] + 1000, document["stage"], "online-ties")))
@@ -117,12 +124,19 @@ def nearby_evaluation(row, analysis):
     implementation = identity.get("source_implementation_sha256", identity.get("implementation_sha256"))
     stage, arm = row.get("stage"), identity.get("arm", row.get("arm"))
     result = {"nearby_held_out_points": [], "held_out_gain_next_25": None, "evaluation_link_is_causal": False,
-              "recorded_switch_boundary": None}
+              "recorded_switch_boundary": None, "evaluation_link_issue": None, "checkpoint_weight_match_verified": False}
     if stage is None or arm is None or not implementation or not identity.get("input_sha256") or not identity.get("plan_sha256"):
         return result
     matches = {key for key, cohort in analysis.cohorts.items() if cohort["seed"] == row.get("seed") and
                cohort["input_sha256"] == identity["input_sha256"] and cohort["plan_sha256"] == identity["plan_sha256"] and
                cohort["implementation_sha256"] == implementation}
+    if identity.get("prefix_checkpoint_sha256"):
+        matches = {key for key in matches if analysis.cohorts[key]["prefix_checkpoint_sha256"] == identity["prefix_checkpoint_sha256"]}
+    relevant = {p["cohort_id"] for p in analysis.curves.values() if p["cohort_id"] in matches and
+                p["kind"] == "held_out" and p["anchor_step"] is None and p["arm"] == arm}
+    if len(relevant) > 1:
+        result["evaluation_link_issue"] = "Multiple prefix/trajectory cohorts match; no reward curve was joined."
+        return result
     points = {}
     for p in analysis.curves.values():
         if (p["cohort_id"] in matches and p["kind"] == "held_out" and p["anchor_step"] is None and

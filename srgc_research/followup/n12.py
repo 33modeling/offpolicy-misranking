@@ -3,11 +3,12 @@
 import math
 import random
 from collections import Counter, defaultdict
+from pathlib import Path
 
 from srgc_research.rollout_distribution import group_report
 from srgc_research.stage_rollout_analysis import Analysis
 
-from .common import file_hash, fingerprint, pool, read, seed_value
+from .common import file_hash, fingerprint, pool, read_bound, seed_value, write
 
 STRATA = ("0/8", "1-3/8", "4/8", "5-7/8", "8/8")
 
@@ -64,18 +65,18 @@ def standardized_window(rows, counts):
 
 
 def report(bundle, records, *, model=None, dataset=None):
-    data = read(bundle)
+    data, input_hash = read_bound(bundle)
     _, _, counts = pool(data)
-    input_hash = file_hash(bundle)
     analysis = Analysis(model=model, dataset=dataset)
     seen = set()
     for path in records:
-        source = {"path": str(path), "sha256": file_hash(path)}
+        document, sha = read_bound(path)
+        source = {"path": str(path), "sha256": sha}
         if source["sha256"] in seen:
             raise ValueError("duplicate source payload")
         seen.add(source["sha256"])
         analysis.sources.append(source)
-        analysis.document(read(path), source)
+        analysis.document(document, source)
     raw = analysis.result()
     cohorts = [c for c in raw["cohorts"] if c["input_sha256"] == input_hash]
     matching = {c["cohort_id"] for c in cohorts}
@@ -86,10 +87,12 @@ def report(bundle, records, *, model=None, dataset=None):
         prompt = g["prompt_id"]
         if prompt not in counts or g["responses"] != 8:
             raise ValueError("training group is outside the bound pool or does not have eight responses")
+        if g["draw"] != 0:
+            raise ValueError("training group draw must be zero; repeated draws are not additional applied prompts")
         if g["cached_success_rate"] is not None and g["cached_success_rate"] != counts[prompt] / 8:
             raise ValueError("recorded initial cache differs from the bound input bundle")
         selected = analysis.selections.get(analysis.key(g, g["update"]))
-        if selected and prompt not in selected["selected_ids"]:
+        if selected and (prompt not in selected["selected_ids"] or len(selected["selected_ids"]) != 4):
             raise ValueError("training group was not in the actually applied batch")
         if g["selected_for_training"] is False:
             raise ValueError("training group explicitly marked unused")
@@ -105,6 +108,8 @@ def report(bundle, records, *, model=None, dataset=None):
     windows = []
     for (cohort, arm, end), groups in sorted(buckets.items()):
         updates = Counter(g["update"] for g in groups)
+        if len({(g["update"], g["prompt_id"]) for g in groups}) != len(groups):
+            raise ValueError("training group duplicate within an applied update")
         if any(n > 4 for n in updates.values()):
             raise ValueError("more than four applied training groups per update")
         windows.append({"cohort_id": cohort, "arm": arm, "start_step": end - 24, "end_step": end,
@@ -126,7 +131,7 @@ def metadata_breakdown(data, rows, counts):
         labels = {}
         for prompt in counts:
             record = data.get("records", {}).get(prompt, {})
-            value = record.get("subject", record.get("topic")) if axis == "topic" else record.get("level")
+            value = (record.get("subject") or record.get("topic")) if axis == "topic" else record.get("level")
             if value is not None:
                 if (not isinstance(value, (str, int, float)) or isinstance(value, bool) or
                         (isinstance(value, float) and not math.isfinite(value))):
@@ -139,16 +144,51 @@ def metadata_breakdown(data, rows, counts):
     return result
 
 
+def record_context(output, identity, source):
+    """One acquisition may describe several arms/stages without generating again."""
+    output = Path(output)
+    fields = ("stage", "arm", "seed", "input_sha256", "plan_sha256", "policy_sha256", "attention",
+              "checkpoint_sha256", "source_implementation_sha256", "shared_prefix")
+    context = {key: source.get(key) for key in fields}
+    document = {"schema": "srgc-n12-panel-context-v1", "identity": identity, "source": context,
+                "measurement_file": "../panel-measurement.json.gz", "measurement_sha256": file_hash(output / "panel-measurement.json.gz")}
+    path = output / "contexts" / f"{fingerprint(context)}.json"
+    write(path, document)
+    return path
+
+
+def panel_views(path):
+    path = Path(path)
+    document, sha = read_bound(path)
+    if document.get("schema") == "srgc-n12-panel-context-v1":
+        target = (path.parent / document["measurement_file"]).resolve()
+        if target != (path.parent.parent / "panel-measurement.json.gz").resolve():
+            raise ValueError("panel context must reference its own immutable measurement")
+        measured, measurement_sha = read_bound(target)
+        if measurement_sha != document["measurement_sha256"] or measured["identity"] != document["identity"]:
+            raise ValueError("panel context measurement hash/identity differs")
+        for key in ("policy_sha256", "input_sha256", "plan_sha256", "seed"):
+            if document["source"].get(key) != document["identity"].get(key):
+                raise ValueError("panel context policy/input/plan/seed differs")
+        return [({**measured, "source": document["source"]}, {"path": str(path), "sha256": sha})]
+    contexts = sorted((path.parent / "contexts").glob("*.json"))
+    if contexts:
+        identity = document.get("identity")
+        views = [view for context in contexts for view in panel_views(context)]
+        if any(view[0].get("identity") != identity for view in views):
+            raise ValueError("panel context directory contains a different acquisition identity")
+        return views
+    if document.get("result", {}).get("schema") == "srgc-n12-panel-measurement-v1":
+        document = document["result"]
+    return [(document, {"path": str(path), "sha256": sha})]
+
+
 def panel_report(bundle, records, seed):
-    data = read(bundle)
-    input_hash = file_hash(bundle)
+    data, input_hash = read_bound(bundle)
     expected = panel(data, input_hash, seed)
     _, _, counts = pool(data)
-    policies, sources, duplicates = {}, [], 0
-    for path in records:
-        document = read(path)
-        if document.get("result", {}).get("schema") == "srgc-n12-panel-measurement-v1":
-            document = document["result"]
+    policies, sources, contexts, duplicates = {}, [], {}, 0
+    for document, origin in [view for path in records for view in panel_views(path)]:
         if document.get("schema") != "srgc-n12-panel-measurement-v1" or document.get("panel") != expected:
             raise ValueError("panel measurement is not bound to the original fixed 20-prompt panel")
         identity = document["identity"]
@@ -157,12 +197,10 @@ def panel_report(bundle, records, seed):
         policy = identity.get("policy_sha256")
         if not isinstance(policy, str) or len(policy) != 64:
             raise ValueError("panel measurement needs a policy weight identity")
-        key = (identity.get("plan_sha256"), identity.get("measurement_sha256"), policy)
-        if key in policies:
-            if policies[key] != document:
-                raise ValueError("the same policy has conflicting panel acquisitions; do not double-count it")
-            duplicates += 1
-            continue
+        key = (identity.get("plan_sha256"), identity.get("measurement_sha256"), identity.get("attention"), policy)
+        acquisition = {k: v for k, v in document.items() if k != "source"}
+        if key in policies and policies[key] != acquisition:
+            raise ValueError("the same policy has conflicting panel acquisitions; do not double-count it")
         groups = document.get("groups", [])
         if len(groups) != 20 or {g["prompt_id"] for g in groups} != set(expected["prompt_ids"]):
             raise ValueError("panel measurement must cover the same 20 distinct prompts")
@@ -171,28 +209,39 @@ def panel_report(bundle, records, seed):
                 raise ValueError("panel group response count or initial cache differs")
         if document.get("source", {}).get("stage") not in (25, 125, 250):
             raise ValueError("panel measurement requires its actual completed-update stage")
-        policies[key] = document
-        sources.append({"path": str(path), "sha256": file_hash(path)})
+        policies[key] = acquisition
+        context_key = (*key, document["source"]["stage"], document["source"]["arm"])
+        if context_key in contexts:
+            duplicates += 1
+        else:
+            contexts[context_key] = document["source"]
+            sources.append(origin)
     baselines = {}
-    for (plan_hash, code_hash, _), document in policies.items():
-        if document["source"]["stage"] == 25:
-            base_key = (plan_hash, code_hash)
-            if base_key in baselines:
+    for plan_hash, code_hash, attention, policy, stage, _ in contexts:
+        document = policies[(plan_hash, code_hash, attention, policy)]
+        if stage == 25:
+            base_key = (plan_hash, code_hash, attention)
+            if base_key in baselines and baselines[base_key][0] != policy:
                 raise ValueError("multiple different t25 policies; shared-prefix lineage must be resolved")
-            baselines[base_key] = {g["prompt_id"]: group_report(g) for g in document["groups"]}
+            baselines[base_key] = (policy, {g["prompt_id"]: group_report(g) for g in document["groups"]})
     rows = []
-    for (plan_hash, code_hash, policy), document in policies.items():
-        base = baselines.get((plan_hash, code_hash), {})
+    for (plan_hash, code_hash, attention, policy, stage, arm), source in contexts.items():
+        document = policies[(plan_hash, code_hash, attention, policy)]
+        base = baselines.get((plan_hash, code_hash, attention), (None, {}))[1]
         for g in document["groups"]:
             measured = group_report(g)
             baseline = base.get(g["prompt_id"])
+            length = sum(measured["response_token_lengths"]) / 8 if measured["response_token_lengths"] is not None else None
+            baseline_length = sum(baseline["response_token_lengths"]) / 8 if baseline and baseline["response_token_lengths"] is not None else None
             rows.append({"policy_sha256": policy, "plan_sha256": plan_hash, "measurement_sha256": code_hash,
-                         "arm": "prefix" if document["source"]["stage"] == 25 else document["source"]["arm"],
-                         "stage": document["source"]["stage"], "prompt_id": g["prompt_id"],
+                         "arm": "prefix" if source.get("shared_prefix") else arm,
+                         "stage": stage, "prompt_id": g["prompt_id"],
+                         "attention": attention,
                          "initial_successes": g["initial_successes"], "success_rate": measured["observed_success_fraction"],
-                         "mixed": measured["outcome"] == "mixed", "mean_completion_tokens": sum(measured["response_token_lengths"]) / 8,
+                         "mixed": measured["outcome"] == "mixed", "mean_completion_tokens": length,
                          "success_rate_change_from_t25": measured["observed_success_fraction"] - baseline["observed_success_fraction"] if baseline else None,
-                         "mean_length_change_from_t25": (sum(measured["response_token_lengths"]) - sum(baseline["response_token_lengths"])) / 8 if baseline else None})
+                         "mean_length_change_from_t25": length - baseline_length if length is not None and baseline_length is not None else None})
     return {"schema": "srgc-n12-fixed-panel-report-v1", "panel": expected, "sources": sources, "rows": rows,
             "distinct_measured_policies": len(policies), "duplicate_policy_records_removed": duplicates,
+            "arm_stage_contexts": len(contexts),
             "response_count": 160 * len(policies), "is_held_out_evaluation": False}

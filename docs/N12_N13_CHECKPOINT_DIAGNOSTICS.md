@@ -5,6 +5,38 @@ N12의 저장 rollout 표준화·고정 20문제 패널과 N13의 40대40/선택
 검증했다. H100에서 새 측정을 실행한 상태는 아니다. 기존 learner, 세 모델 adapter,
 진행 중인 queue, 원본 입력·checkpoint·결과와 frozen runtime은 변경하지 않는다.
 
+## 2026-10-18 재디버깅
+
+- **종료 직전 중단:** `costs.json`을 저장한 뒤 endpoint 전에 종료하면, 다음 attempt의 비용이
+  늘어 기존 immutable 비용 파일과 충돌하던 버그를 재현·수정했다. 미완 작업의 파생 비용
+  snapshot만 실행 잠금 안에서 갱신하고 완료 endpoint에는 최종 SHA를 기록한다.
+  성공한 응답·A/B vector는 재사용한다. NCCL 정리 오류도 원래 실패 원인을 덮어쓰지 않는다.
+- **여러 rank의 시작 결정:** 원본 읽기·완료 확인·사본 보존을 rank 0이 실행 잠금 안에서
+  수행하고 torchrun TCPStore로 모든 rank에 같은 결정/오류를 전달한다. 각 rank는 같은
+  고정 사본과 코드 hash를 검사한 뒤 NCCL을 초기화한다. 완료 확인에는 CUDA가 필요 없다.
+- **같은 weights의 시점 누락:** t125와 t250 또는 여러 arm이 같은 정책을 공유하면 측정은
+  한 번 재사용하고 `contexts/*.json`에 각각의 실제 stage·arm·checkpoint SHA를 남긴다.
+  `n12-panels`는 이 목록을 자동으로 읽고 시점별 행을 유지하며 응답·비용을 중복 계상하지 않는다.
+  attention kernel이 다른 측정은 별도 identity·집계로 유지한다.
+- **잘못된 완료 표시:** 필수 source/phase 파일, 파일 SHA, 실제 vector/panel 결과와 endpoint
+  요약, 비용 coverage가 맞아야 완료로 처리한다. 일부 checksum 항목만 남긴 endpoint나
+  원시 기록과 다른 D4 요약은 GPU를 로드하기 전에 거부한다.
+- **집계와 출처:** 학습 group의 재추출 draw·중복 문제를 별도 적용 문제로 세지 않는다.
+  progress/endpoint에 중복된 같은 SR-GC check는 한 번만 세고 서로 다른 D는 거부한다.
+  보상이 같아도 prefix lineage가 다른 평가 곡선을 연결하지 않는다. JSON hash는 실제 읽은
+  payload에 묶는다. 잘못된 attention/config/scoring 이름과 생성용 prompt 누락도 미리 검사한다.
+- **Gemma 의존성 순서:** 기존 Gemma의 optional media 비활성화를 PEFT import보다 먼저
+  적용한다. 불필요한 media 라이브러리의 ABI 오류가 먼저 발생할 수 있던 순서를 수정했다.
+
+재디버깅 최종 검증: **175 tests 통과**, Ruff·diff 검사 통과. 실제 소형 LoRA gradient,
+완료 직전 중단과 정리 실패, 원시 결과/완료 요약 불일치, 동일 weights의 다중 context,
+4-worker CPU TCPStore의 완료·rank 0 오류·다른 rank 오류 전달을 검사했다.
+기존 learner·모델 adapter·queue·원시 기록 소스는 `5ead62e`와 동일하다.
+이 검증은 실제 H100/NCCL 실험 완료를 의미하지 않는다.
+
+이 수정은 별도 진단 코드에 한정한다. 신규 measurement hash가 달라지므로 이전 진단
+artifact를 새 측정으로 덮어쓰지 않는다. 기존 학습/기록 runtime과 원본 실험은 그대로다.
+
 ## 기존 checkpoint를 쓸 수 있나?
 
 **저장된 가중치가 맞으면 두 실험 모두 학습을 처음부터 다시 돌릴 필요가 없다.**
@@ -118,6 +150,8 @@ pin이 다르면 진행하지 않는다. 새 runtime을 기존 frozen 디렉터�
 각 정책에서는 문제당 **새 응답 8개**를 생성한다. 학습/선별/held-out 평가에 사용하지 않는다.
 공통 t25는 위 prefix 명령 한 번으로 측정한다. 동일 정책 weights와 진단 설정이면
 다른 checkpoint 파일명으로 다시 호출해도 완료 artifact를 검증한 뒤 기존 측정을 반환한다.
+각 호출의 stage·arm은 `contexts/*.json`에 남겨 동일 weights인 두 시점도 그래프/CSV에서
+누락하지 않는다. 응답 수는 acquisition당 160이며 context 수를 곱하지 않는다.
 
 나머지 arm의 t125/t250 `.pt`로 같은 `collect` 명령의 `--checkpoint`만 바꾼다.
 `panel-measurement.json.gz`의 응답별 reward·full/response token·초기 stratum을 보존한다.
@@ -193,7 +227,9 @@ implementation·seed·arm의 실제 held-out 기록을 연결할 수 있다. 현
 `--output-root`에서 재개할 수 있다. 원본 plan/input은 같은 파일을 사용한다.
 copy 도중 원본이 preflight와 달라졌거나 rank별 정책이 다르면 혼합 측정을 막는다.
 
-`cost-receipts/`, `costs.json`은 source 사본 보존·startup·N12 inference/N13 A·B scoring의 추가 비용이다.
+원본 사본은 CPU preflight에서 먼저 보존한다. `cost-receipts/`, `costs.json`은 GPU 초기화
+이후의 사본 확인·startup·N12 inference/N13 A·B scoring phase 비용이다. CPU preflight를
+포함한 전체 할당 시간의 실측으로 부르지 않는다.
 기존 학습 GPU-hours에 섞지 않는다. 중단 attempt의 미완 receipt가 있으면
 `cost_measurement_complete=false`로 남겨 비용이 완전하다고 보고하지 않는다.
 추론/scoring만 하는 실험으로 새 training curve를 만들지 않는다.
@@ -206,7 +242,7 @@ phase 비용을 바꿔 보고하지 않는다.
 optimizer 없는 weights 읽기, 실제 소형 LoRA dense gradient, RNG/Adam/weights 불변,
 prompt 도중 강제 종료와 응답 재사용, 출력 덮어쓰기 거부를 검사한다.
 
-2026-10-18 최종 검증: 신규 진단과 기존 stage 분석·rollout/중간 보상 기록·Information
+2026-10-18 최초 구현 검증: 신규 진단과 기존 stage 분석·rollout/중간 보상 기록·Information
 관련 **155 tests 통과**. Ruff와 diff 공백 검사도 통과했다. `6230307` 기준 learner,
 scripts, 기존 모델/기록 dispatch와 backend·study·information·storage 소스는 변경하지 않았다.
 실제 H100·NCCL 및 원격 노드 실행은 이 검증에 포함하지 않는다.

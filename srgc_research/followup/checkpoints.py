@@ -3,12 +3,13 @@
 import pickle
 from pathlib import Path
 
-from .common import file_hash, fingerprint, pool, seed_value
+from .common import file_hash, fingerprint, ids, pool, seed_value
 
 
 def source_state(saved, data, plan, seed, *, input_hash, plan_hash, protocol=None, marker=None):
     """Validate Engine/anchor sources; reward-curve archives intentionally lack Adam."""
-    from srgc_rebuttal.srgc import Engine, cached_sr_set
+    from scripts.srgc_step_checkpoints import saved_attention
+    from srgc_rebuttal.srgc import Config, Engine, cached_sr_set
 
     seed_value(seed)
     if not isinstance(saved, dict):
@@ -19,9 +20,22 @@ def source_state(saved, data, plan, seed, *, input_hash, plan_hash, protocol=Non
     if not isinstance(state, dict):
         raise TypeError("checkpoint has no completed Engine/anchor state")
     candidates, reference, _ = pool(data)
+    records = data.get("records")
+    if not isinstance(records, dict):
+        raise TypeError("checkpoint diagnostics require original formatted prompt/verifier records")
+    for prompt in candidates + reference:
+        record = records.get(prompt)
+        if (not isinstance(record, dict) or not isinstance(record.get("prompt"), str) or
+                not record["prompt"].strip() or not record.get("answer")):
+            raise ValueError("checkpoint diagnostics require valid prompt/verifier records for every candidate/reference")
     config = state.get("config", {})
     if not isinstance(config, dict):
         raise TypeError("checkpoint configuration must be an object")
+    for key in ("seed", "responses", "training_prompts", "scoring_prompts", "projection_dim", "selection_interval",
+                "check_interval", "first_check", "candidate_group_size"):
+        if type(config.get(key)) is not int:
+            raise ValueError(f"checkpoint configuration must use integer {key}")
+    Config(**config)
     stage = state.get("step")
     if type(stage) is not int or stage < 0 or config.get("seed") != seed or state.get("arm") not in Engine.ARMS:
         raise ValueError("checkpoint stage/seed is invalid")
@@ -36,6 +50,8 @@ def source_state(saved, data, plan, seed, *, input_hash, plan_hash, protocol=Non
         raise ValueError("N12/N13 require the eight-response, candidate40/training4 GRPO protocol")
     if list(state.get("candidates", [])) != candidates or list(state.get("validation", [])) != reference:
         raise ValueError("checkpoint candidate/reference IDs differ from the source bundle")
+    if len(candidates) < 40:
+        raise ValueError("checkpoint candidate pool is smaller than 40")
     expected_rank = list(cached_sr_set(candidates, data["cached_rewards"], len(candidates), seed, 8))
     if list(state.get("sr_ranked_ids", [])) != expected_rank:
         raise ValueError("checkpoint cached-SR ranking differs from the source bundle")
@@ -52,6 +68,8 @@ def source_state(saved, data, plan, seed, *, input_hash, plan_hash, protocol=Non
             raise ValueError("evaluation archive requires its original matching reward-curve protocol.json")
         source = protocol
         binding_kind = "reward_curve_protocol"
+        if protocol.get("arm") != state["arm"] and not (protocol.get("arm") == "prefix" and stage == 25 and state["arm"] == "on_policy"):
+            raise ValueError("checkpoint arm differs from its bound evaluation protocol")
     elif all(saved.get(k) == v for k, v in expected_identity.items()):
         source = saved
         binding_kind = "checkpoint_envelope"
@@ -67,7 +85,9 @@ def source_state(saved, data, plan, seed, *, input_hash, plan_hash, protocol=Non
             not backend.get("score_names") or backend.get("projection_dim") != config["projection_dim"] or
             backend.get("projection_seed") != plan.get("projection_seed")):
         raise ValueError("checkpoint has no compatible policy weights/projection layout")
-    attention = state.get("checkpoint_policy", {}).get("attention") or plan.get("attention", "eager")
+    ids(backend["score_names"], "checkpoint scoring parameter names")
+    policy = state.get("checkpoint_policy", saved.get("checkpoint_policy", {"attention": plan.get("attention", "eager")}))
+    attention = saved_attention({"checkpoint_policy": policy})
     if plan.get("attention") and attention != plan["attention"]:
         raise ValueError("saved attention differs from plan")
     return state, {"stage": stage, "arm": state.get("arm"), "seed": seed,
@@ -151,7 +171,8 @@ def load_source(checkpoint, bundle, plan_path, seed):
             raise ValueError("archived point/checkpoint SHA or step binding differs")
     return state, data, plan, {**capabilities, "checkpoint": str(checkpoint.resolve()), "checkpoint_sha256": before,
                               "input_sha256": input_hash, "plan_sha256": plan_hash,
-                              "shared_prefix": state["step"] == 25 and ((protocol or {}).get("arm") == "prefix" or checkpoint.name in {"prefix.pt", "prefix-latest.pt"}),
+                              "shared_prefix": state["step"] == 25 and ((protocol or {}).get("arm") == "prefix" or
+                                  (marker or {}).get("shared_prefix") is True or checkpoint.name in {"prefix.pt", "prefix-latest.pt"}),
                               "policy_sha256": weights_hash(state, plan, input_hash)}
 
 

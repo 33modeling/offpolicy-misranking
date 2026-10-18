@@ -5,7 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from . import n12, n13
-from .common import csv_file, file_hash, fingerprint, new_output, read, write
+from .common import csv_file, fingerprint, new_output, read_bound, write
 
 
 def main(argv=None):
@@ -55,17 +55,19 @@ def main(argv=None):
         elif args.command == "n12-report":
             report = n12.report(args.bundle, args.records, model=args.model, dataset=args.dataset)
         elif args.command == "n12-panel":
-            report = n12.panel(read(args.bundle), file_hash(args.bundle), args.seed)
+            document, sha = read_bound(args.bundle)
+            report = n12.panel(document, sha, args.seed)
         elif args.command == "n12-panels":
             report = n12.panel_report(args.bundle, args.records, args.seed)
         else:
-            rows, seen, units = [], set(), set()
+            rows, seen, units, historical = [], set(), set(), {}
+            duplicates = 0
             for path in args.records:
-                payload = file_hash(path)
+                archive, payload = read_bound(path)
                 if payload in seen:
                     raise ValueError("duplicate vector/scalar input payload")
                 seen.add(payload)
-                for document in n13.records(read(path)):
+                for document in n13.records(archive):
                     row = n13.compare(document)
                     if row["status"] == "measured":
                         identity = row["identity"]
@@ -76,18 +78,30 @@ def main(argv=None):
                         if unit in units:
                             raise ValueError("duplicate policy/checkpoint scoring acquisition; do not count overlapping exports twice")
                         units.add(unit)
+                    elif row.get("recorded_historical_d") is not None:
+                        identity = row.get("identity", {})
+                        if all(identity.get(k) for k in ("input_sha256", "plan_sha256", "implementation_sha256")):
+                            unit = fingerprint({"identity": identity, "seed": row["seed"], "arm": row["arm"], "stage": row["stage"]})
+                            if unit in historical:
+                                if historical[unit] != row["recorded_historical_d"]:
+                                    raise ValueError("conflicting overlapping historical SR-GC checks")
+                                duplicates += 1
+                                continue
+                            historical[unit] = row["recorded_historical_d"]
                     row.update(source=str(path), source_sha256=payload)
                     rows.append(row)
             cohorts = defaultdict(list)
             from srgc_research.stage_rollout_analysis import Analysis
             rewards = Analysis()
             for path in args.reward_records:
-                rewards.document(read(path), {"path": str(path), "sha256": file_hash(path)})
+                document, sha = read_bound(path)
+                rewards.document(document, {"path": str(path), "sha256": sha})
             for row in rows:
                 row.update(n13.nearby_evaluation(row, rewards))
                 identity = row.get("identity", {})
                 cohorts[fingerprint({k: identity.get(k) for k in ("input_sha256", "plan_sha256", "measurement_sha256")})].append(row)
             report = {"schema": "srgc-n13-report-v1", "rows": rows, "coverage": n13.aggregate(rows),
+                      "duplicate_historical_checks_removed": duplicates,
                       "cohort_coverage": {key: n13.aggregate(values) for key, values in cohorts.items()},
                       "actual_optimizer_utility_measured": False, "changes_live_switch_rule": False}
         output = new_output(args.output_dir, sources)

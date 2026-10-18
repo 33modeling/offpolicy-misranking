@@ -23,6 +23,10 @@ def file_hash(path):
 def read(path):
     path = Path(path)
     payload = path.read_bytes()
+    return decode(path, payload)
+
+
+def decode(path, payload):
     value = json.loads(gzip.decompress(payload) if path.suffix == ".gz" else payload)
     if not isinstance(value, dict):
         raise TypeError("expected a JSON object")
@@ -38,8 +42,10 @@ def ids(values, name, count=None):
 
 
 def read_bound(path):
-    before = file_hash(path)
-    value = read(path)
+    path = Path(path)
+    payload = path.read_bytes()
+    before = hashlib.sha256(payload).hexdigest()
+    value = decode(path, payload)
     if file_hash(path) != before:
         raise ValueError("source JSON changed while reading")
     return value, before

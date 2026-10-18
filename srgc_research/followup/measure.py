@@ -13,8 +13,9 @@ from srgc_research.rollout_distribution import group_report
 
 from .checkpoints import load_source, load_weights
 from .common import copy_bound, file_hash, fingerprint, pool, read, write
+from .coordination import Coordinator
 from .costs import DiagnosticLedger
-from .n12 import panel, stratum
+from .n12 import panel, record_context, stratum
 from .n13 import compare
 
 
@@ -145,11 +146,15 @@ def profile_name(plan):
 
 def make_backend(plan_path, plan, data, source, device, meter):
     import torch
+
+    profile = profile_name(plan)
+    if profile == "gemma4":
+        from srgc_research.dispatch.gemma4.runtime import disable_optional_media
+        disable_optional_media()
     from peft import LoraConfig, get_peft_model
 
     from srgc_rebuttal import existing_runtime, torch_backend
 
-    profile = profile_name(plan)
     adapter = None
     if profile == "olmo3":
         if "olmo" not in plan["model"].lower():
@@ -176,6 +181,101 @@ def make_backend(plan_path, plan, data, source, device, meter):
         logprob_micro_batch=plan.get("logprob_micro_batch", 2), logit_chunk_tokens=plan.get("logit_chunk_tokens", 512), cost_meter=meter)
 
 
+def required_artifacts(identity):
+    files = {"costs.json", "source-checkpoint.pt", "source-inputs.json", "source-plan.json", "run.json", "manifest.json"}
+    if identity["experiment"] == "n12":
+        files.add("panel-measurement.json.gz")
+    else:
+        files.update(("vectors.json.gz", "score-A.json.gz"))
+        if identity["independent_B"]:
+            files.add("score-B.json.gz")
+    return files
+
+
+def verify_endpoint(output, identity):
+    saved = read(output / "endpoint.json")
+    if (saved.get("schema") != "srgc-checkpoint-diagnostics-v1" or saved.get("identity") != identity or
+            saved.get("optimizer_updates") != 0 or not isinstance(saved.get("artifact_sha256"), dict) or
+            not isinstance(saved.get("source"), dict) or
+            not required_artifacts(identity) <= set(saved["artifact_sha256"])):
+        raise ValueError("completed diagnostic identity/schema or required artifacts differ")
+    if saved["source"].get("identity_binding") == "reward_curve_protocol" and "protocol.json" not in saved["artifact_sha256"]:
+        raise ValueError("completed evaluation archive is missing its original protocol")
+    for filename, expected in saved["artifact_sha256"].items():
+        target = output / filename
+        if target.resolve().parent != output.resolve() or file_hash(target) != expected:
+            raise ValueError("completed diagnostic evidence changed or escapes its directory")
+    for name, key in (("source-inputs.json", "input_sha256"), ("source-plan.json", "plan_sha256")):
+        if saved["artifact_sha256"][name] != identity[key]:
+            raise ValueError("completed diagnostic source hashes differ")
+    if saved["artifact_sha256"]["source-checkpoint.pt"] != saved["source"]["checkpoint_sha256"]:
+        raise ValueError("completed policy checkpoint hash differs")
+    if read(output / "costs.json") != saved.get("costs"):
+        raise ValueError("completed diagnostic cost snapshot differs")
+    if saved.get("cost_measurement_complete") != saved["costs"]["complete"]:
+        raise ValueError("completed diagnostic cost coverage differs")
+    if identity["experiment"] == "n12":
+        result = read(output / "panel-measurement.json.gz")
+    else:
+        result = compare(read(output / "vectors.json.gz"))
+        if result["status"] != "measured":
+            raise ValueError("completed N13 diagnostic has no measured scoring A")
+    if result != saved.get("result") or result.get("identity") != identity:
+        raise ValueError("completed diagnostic result differs from measured evidence")
+    return saved
+
+
+def prepare_source(args, holder):
+    """Rank zero freezes sources and decides completion while holding one lease."""
+    from srgc_rebuttal.runtime import lease
+
+    state, _data, _plan, requested = load_source(args.checkpoint, args.bundle, args.plan, args.seed)
+    if state["step"] not in (25, 125, 250):
+        raise ValueError("N12/N13 checkpoint stages are 25/125/250 completed updates")
+    if not re.fullmatch(r"[0-9a-f]{64}", requested.get("source_implementation_sha256") or ""):
+        raise ValueError("source run must record its scientific implementation SHA")
+    identity = {k: requested[k] for k in ("input_sha256", "plan_sha256", "policy_sha256", "seed", "source_implementation_sha256", "attention")}
+    identity.update(measurement_sha256=measurement_hash(), experiment=args.experiment, independent_B=not args.a_only)
+    if args.experiment == "n13":
+        if not requested["n13_rescoring_weights_and_sets_usable"]:
+            raise ValueError("N13 requires the original 50-prompt reference")
+        identity.update(checkpoint_sha256=requested["checkpoint_sha256"], arm=requested["arm"])
+    output = Path(args.output_root).resolve() / args.experiment / fingerprint(identity)
+    if any(Path(p).resolve().is_relative_to(Path(args.output_root).resolve()) and Path(p).resolve() != output / name
+           for p, name in ((args.checkpoint, "source-checkpoint.pt"), (args.bundle, "source-inputs.json"), (args.plan, "source-plan.json"))):
+        raise ValueError("diagnostic output root must be separate from its sources")
+    lock = lease(output / ".execution.lock")
+    lock.__enter__()
+    holder["lock"] = lock
+    metadata = {"output": str(output), "identity": identity, "request_source": requested}
+    if (output / "endpoint.json").exists():
+        verify_endpoint(output, identity)
+        if args.experiment == "n12":
+            record_context(output, identity, requested)
+        return {**metadata, "complete": True}
+    source = requested
+    if (output / "manifest.json").exists():
+        manifest = read(output / "manifest.json")
+        if manifest.get("identity") != identity:
+            raise ValueError("saved diagnostic manifest identity differs")
+        source = manifest["source"]
+    # Publish all source sidecars before the checkpoint. No rank can read an
+    # incomplete frozen source until this coordinated preparation returns.
+    for original, name, expected in ((args.bundle, "source-inputs.json", source["input_sha256"]),
+                                     (args.plan, "source-plan.json", source["plan_sha256"])):
+        copy_bound(original, output / name, expected)
+    binding = {"seed": source["seed"], "input_sha256": source["input_sha256"], "plan_sha256": source["plan_sha256"],
+        "implementation_sha256": source["source_implementation_sha256"], "schema": "srgc-followup-source-binding-v1",
+        "source_checkpoint_sha256": source["checkpoint_sha256"], "shared_prefix": source["shared_prefix"]}
+    write(output / "run.json", binding)
+    protocol_path = Path(source["checkpoint"]).parent / "protocol.json"
+    if protocol_path.exists() and not (output / "protocol.json").exists():
+        write(output / "protocol.json", read(protocol_path))
+    copy_bound(args.checkpoint, output / "source-checkpoint.pt", source["checkpoint_sha256"])
+    write(output / "manifest.json", {"identity": identity, "source": source})
+    return {**metadata, "complete": False, "source": source}
+
+
 def collect(args):
     """torchrun entry. Existing valid phases are verified before loading the base."""
     import torch
@@ -183,72 +283,41 @@ def collect(args):
 
     from scripts.srgc_verifier_fallback import install
     from srgc_rebuttal.distributed import initialize, primary
-    from srgc_rebuttal.runtime import lease
+    from srgc_rebuttal.runtime import atomic_json
     from srgc_rebuttal.timing import torch_meter
 
-    state, data, plan, source = load_source(args.checkpoint, args.bundle, args.plan, args.seed)
-    if state["step"] not in (25, 125, 250):
-        raise ValueError("N12/N13 checkpoint stages are 25/125/250 completed updates")
-    if not re.fullmatch(r"[0-9a-f]{64}", source.get("source_implementation_sha256") or ""):
-        raise ValueError("source run must record its scientific implementation SHA")
-    identity = {k: source[k] for k in ("input_sha256", "plan_sha256", "policy_sha256", "seed", "source_implementation_sha256")}
-    identity.update(measurement_sha256=measurement_hash(), experiment=args.experiment, independent_B=not args.a_only)
-    # N12 shares the exact same policy once, even if filenames or arm labels
-    # differ. N13 additionally binds selector progress to the source checkpoint.
-    if args.experiment == "n13":
-        if not source["n13_rescoring_weights_and_sets_usable"]:
-            raise ValueError("N13 requires the original 50-prompt reference")
-        identity["checkpoint_sha256"] = source["checkpoint_sha256"]
-        identity["arm"] = source["arm"]
-    output = Path(args.output_root).resolve() / args.experiment / fingerprint(identity)
-    if any(Path(p).resolve().is_relative_to(Path(args.output_root).resolve()) and Path(p).resolve() != output / name
-           for p, name in ((args.checkpoint, "source-checkpoint.pt"), (args.bundle, "source-inputs.json"), (args.plan, "source-plan.json"))):
-        raise ValueError("diagnostic output root must be separate from its sources")
-    endpoint = output / "endpoint.json"
-    if endpoint.exists():
-        saved = read(endpoint)
-        if saved.get("identity") != identity:
-            raise ValueError("completed diagnostic identity differs")
-        for filename, expected in saved["artifact_sha256"].items():
-            if file_hash(output / filename) != expected:
-                raise ValueError("completed diagnostic evidence changed")
-        print(f"COMPLETE (reused, no model load): {endpoint}")
-        return
-    _, local = initialize(plan["world_size"])
-    lock = lease(output / ".execution.lock")
-    acquired = False
+    coordinator, holder, initialized = Coordinator(), {}, False
     try:
-        if dist.is_initialized():
-            identities = [None] * dist.get_world_size()
-            dist.all_gather_object(identities, fingerprint(identity))
-            if len(set(identities)) != 1:
-                raise ValueError("source policy changed between ranks; use an immutable archived checkpoint")
-        primary(lambda: lock.__enter__() and None)
-        acquired = True
-        if (output / "manifest.json").exists():
-            if read(output / "manifest.json").get("identity") != identity:
-                raise ValueError("saved diagnostic manifest identity differs")
-            source = read(output / "manifest.json")["source"]
-        else:
-            primary(lambda: write(output / "manifest.json", {"identity": identity, "source": source}))
+        prepared = coordinator.root(lambda: prepare_source(args, holder))
+        output, identity = Path(prepared["output"]), prepared["identity"]
+        endpoint = output / "endpoint.json"
+        if prepared["complete"]:
+            if coordinator.rank == 0:
+                print(f"COMPLETE (reused, no model load): {endpoint}")
+            return
+        def load_frozen():
+            state, data, plan, frozen = load_source(output / "source-checkpoint.pt", output / "source-inputs.json", output / "source-plan.json", args.seed)
+            if any(frozen[k] != identity[k] for k in ("input_sha256", "plan_sha256", "policy_sha256", "attention")):
+                raise ValueError("frozen diagnostic source differs from its measurement identity")
+            if frozen["checkpoint_sha256"] != prepared["source"]["checkpoint_sha256"]:
+                raise ValueError("frozen diagnostic checkpoint checksum changed")
+            if measurement_hash() != identity["measurement_sha256"]:
+                raise ValueError("measurement code differs between ranks")
+            holder.update(state=state, data=data, plan=plan)
+            return frozen["checkpoint_sha256"]
+        checks = coordinator.validate(load_frozen)
+        if len(set(checks)) != 1:
+            raise ValueError("frozen source changed between ranks")
+        state, data, plan, source = holder["state"], holder["data"], holder["plan"], prepared["source"]
+        _, local = initialize(plan["world_size"])
+        initialized = True
         ledger = DiagnosticLedger(output / "cost-receipts")
         meter = torch_meter(ledger.record)
         with meter.phase("source_snapshot", state["step"], plan["world_size"]):
-            def preserve_sources():
-                for original, name, expected in ((args.checkpoint, "source-checkpoint.pt", source["checkpoint_sha256"]),
-                    (args.bundle, "source-inputs.json", source["input_sha256"]), (args.plan, "source-plan.json", source["plan_sha256"])):
-                    copy_bound(original, output / name, expected)
-                binding = {"seed": source["seed"], "input_sha256": source["input_sha256"], "plan_sha256": source["plan_sha256"],
-                    "implementation_sha256": source["source_implementation_sha256"], "schema": "srgc-followup-source-binding-v1",
-                    "source_checkpoint_sha256": source["checkpoint_sha256"]}
-                write(output / "run.json", binding)
-                protocol_path = Path(args.checkpoint).parent / "protocol.json"
-                if protocol_path.exists():
-                    write(output / "protocol.json", read(protocol_path))
-            primary(preserve_sources)
+            primary(lambda: file_hash(output / "source-checkpoint.pt"))
         install()
         with meter.phase("startup", state["step"], plan["world_size"]):
-            backend = make_backend(args.plan, plan, data, source, torch.device("cuda", local), meter)
+            backend = make_backend(output / "source-plan.json", plan, data, source, torch.device("cuda", local), meter)
             load_weights(backend, state["backend"])
             backend.rollout_cache_root = output / "resume-rollouts"
         if args.experiment == "n12":
@@ -264,17 +333,30 @@ def collect(args):
             result = n13_acquire(backend, state, data, identity, output, independent=not args.a_only)
             artifacts = ["vectors.json.gz", "score-A.json.gz", *([] if args.a_only else ["score-B.json.gz"])]
         costs = primary(ledger.totals)
-        primary(lambda: write(output / "costs.json", costs))
+        # Derived costs may grow across interrupted attempts until endpoint is
+        # committed. Scientific artifacts remain immutable.
+        primary(lambda: atomic_json(output / "costs.json", costs))
         artifacts.append("costs.json")
         artifacts.extend(("source-checkpoint.pt", "source-inputs.json", "source-plan.json", "run.json", "manifest.json"))
         if (output / "protocol.json").exists():
             artifacts.append("protocol.json")
-        primary(lambda: write(output / "endpoint.json", {"identity": identity, "source": source, "result": result,
+        primary(lambda: write(output / "endpoint.json", {"schema": "srgc-checkpoint-diagnostics-v1", "identity": identity, "source": source, "result": result,
             "costs": costs, "costs_separate_from_training": True, "optimizer_updates": 0,
             "cost_measurement_complete": costs["complete"], "base_model_and_gpu_runtime_verified": True,
             "artifact_sha256": {name: file_hash(output / name) for name in artifacts}}))
+        if args.experiment == "n12":
+            primary(lambda: record_context(output, identity, prepared["request_source"]))
         primary(lambda: print(f"COMPLETE: {endpoint}") and None)
     finally:
-        if acquired:
-            primary(lambda: lock.__exit__(*sys.exc_info()))
-        dist.destroy_process_group()
+        original_error = sys.exc_info()
+        try:
+            if initialized:
+                try:
+                    dist.destroy_process_group()
+                except Exception as error:
+                    if original_error[1] is None:
+                        raise
+                    original_error[1].add_note(f"Distributed cleanup also failed: {error}")
+        finally:
+            if coordinator.rank == 0 and "lock" in holder:
+                holder["lock"].__exit__(*original_error)
