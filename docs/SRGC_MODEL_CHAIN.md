@@ -142,3 +142,13 @@ module 객체가 될 수 있어, 새 target/owner 보호가 실제 guard에 적�
 동일 arm 40→41번째 배정과 기존 checkpoint 바이트 보존을 검사했다. 공개 entry hook,
 live-owner 보호, import 복원, GPU 미시작 재시도 관련 검사 38개를 통과했다.
 이는 원격 GPU에서 optimizer update가 실제 전진한 것을 확인한 결과는 아니다.
+
+모델 연결의 복구 전용 순회도 점검했다. 한 모델이 일반 오류로 재실패하면 같은 순회의
+다른 모델에 남아 있는 ERROR도 복구 기회를 받는다. Llama 하나만 반복하며 Gemma의
+기존 오류까지 막던 경우를 재현·수정했다. 모든 기존 복구 작업이 끝날 때까지 새 seed와
+MBPP 선행은 계속 금지한다. 공개 Llama shell의 실제 자식 프로세스 검사도 두 모델의
+오류 재시도·원래 checkpoint 보존·MATH 완료 뒤 MBPP 전환을 확인한다.
+
+프로세스 정리·GPU 대기·배정·체크포인트·중간 보상·rollout 기록 관련 회귀 434개와
+subtest 18개를 통과했다. 마지막 모델 간 복구 배정 수정 후 coordinator·공개 shell
+검사 72개도 다시 통과했다(앞선 검사와 중복 포함). 동결 코드와 저장 기록은 초기화하지 않았다.

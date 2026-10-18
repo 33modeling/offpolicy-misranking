@@ -289,6 +289,33 @@ def test_error_model_is_recovered_before_earlier_interrupted_model(monkeypatch):
     assert jobs[:2] == [('gemma4', True), ('qwen35', True)]
 
 
+def test_failed_llama_recovery_does_not_starve_other_existing_model_errors(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {'llama31': 'saved-llama-error', 'gemma4': 'saved-gemma-error'}
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    monkeypatch.setattr(resume_inventory, 'failed_signature', lambda model, *a, **kw: pending.get(model))
+    jobs, attempts = [], []
+
+    def runner(command, environment, heartbeat):
+        model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, recovery))
+        if model == 'llama31' and recovery:
+            attempts.append(True)
+            if len(attempts) == 1:
+                return 2
+            assert 'gemma4' not in pending, 'another ERROR model was starved by repeated Llama recovery'
+        if recovery:
+            pending.pop(model)
+        else:
+            assert not pending, 'fresh work overtook unfinished ERROR recovery'
+        return 0
+
+    assert chain.drain(chain.order_for('llama31'), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: None) == 0
+    assert jobs[:3] == [('llama31', True), ('gemma4', True), ('llama31', True)]
+
+
 def test_success_exit_cannot_hide_an_unchanged_failed_receipt(monkeypatch):
     from srgc_research.dispatch import resume_inventory
 

@@ -64,7 +64,7 @@ raise SystemExit(code)
     assert result.returncode == 0, result.stdout + result.stderr
     launches = [json.loads(line) for line in (tmp_path / 'launches.jsonl').read_text().splitlines()]
     assert launches[:6] == [[model, 'math', '1', code]
-                            for model in ('llama31', 'gemma4') for code in (2, 2, 0)]
+                            for code in (2, 2, 0) for model in ('llama31', 'gemma4')]
     assert launches[6:9] == [[model, 'math', '0', 0] for model in ('llama31', 'gemma4', 'qwen35')]
     assert launches[9:] == [[model, 'mbpp', '0', 0] for model in ('llama31', 'gemma4', 'qwen35')]
     for model in ('llama31', 'gemma4'):

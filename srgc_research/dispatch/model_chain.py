@@ -189,6 +189,8 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
                        idle_reason='worker failed with unfinished work; retrying saved task before fresh work')
                 print(f'MODEL RETRY {model} exit={code}; saved work remains; retry_limit=none', flush=True)
                 retry = True
+                if resume_only:
+                    continue  # Other saved model errors must also get a recovery turn.
                 break
             states[model] = 'finished' if code == 0 else 'waiting' if code in (YIELD, BUSY) else 'failed'
             if code == 0 and resume_only:
@@ -199,7 +201,7 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
                     retry = True
                     update('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
                            idle_reason='worker exited successfully but failed task remains; retrying saved work')
-                    break
+                    continue
                 retrying.discard(model)
                 failures.pop(model, None)
                 recovered[model] = saved_work(model)
