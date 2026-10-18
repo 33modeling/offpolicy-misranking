@@ -96,6 +96,84 @@ def test_math_failures_block_mbpp_after_other_models_finish():
     assert jobs == [(model, 'math') for model in chain.MODELS]
 
 
+@pytest.mark.parametrize('start', chain.MODELS)
+@pytest.mark.parametrize('failure_code', (1, 2, 124, 134, 139))
+def test_failed_saved_model_retries_past_four_errors_before_any_fresh_model(monkeypatch, start, failure_code):
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {'llama31': 'unchanged-checkpoint'}
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    jobs, waits, states = [], [], []
+
+    def runner(command, environment, heartbeat):
+        model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, environment['SRGC_DATASET_PHASE'], recovery))
+        if recovery and len(jobs) <= 5:
+            return failure_code
+        if recovery:
+            pending.pop(model)
+        else:
+            assert not pending, 'fresh work started before ERROR recovery finished'
+        return 0
+
+    assert chain.drain(chain.order_for(start), 'all', ['all'], {},
+                       lambda *a, **kw: states.append((a, kw)), runner=runner,
+                       sleep=lambda n: waits.append(n)) == 0
+    assert jobs[:6] == [('llama31', 'math', True)] * 6
+    assert len(waits) == 5
+    assert all(details['model'] == 'llama31' for (status,), details in states if status == 'waiting')
+    assert states[-1][1]['failures'] == {}
+
+
+def test_new_task_error_restarts_same_model_in_recovery_mode_before_fresh_work(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    pending, jobs = {}, []
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+
+    def runner(command, environment, heartbeat):
+        model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, recovery))
+        if len(jobs) == 1:
+            pending[model] = 'saved-error'
+            return 1
+        if recovery:
+            pending.pop(model)
+        else:
+            assert not pending
+        return 0
+
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: None) == 0
+    assert jobs[:2] == [('qwen35', False), ('qwen35', True)]
+
+
+def test_real_error_child_is_restarted_and_keeps_checkpoint_bytes(tmp_path, monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    checkpoint = tmp_path / 'sr-latest.pt'
+    checkpoint.write_bytes(b'last saved optimizer and selector state')
+    receipt = tmp_path / 'failed.json'
+    receipt.write_text('{}')
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw:
+                        'saved-error' if model == 'gemma4' and receipt.exists() else None)
+    jobs = []
+
+    def runner(command, environment, heartbeat):
+        model = model_of(command)
+        jobs.append((model, environment['SRGC_RESUME_ONLY']))
+        assert checkpoint.read_bytes() == b'last saved optimizer and selector state'
+        if len(jobs) == 1:
+            return chain.run_child([sys.executable, '-c', 'raise SystemExit(2)'], environment, heartbeat)
+        receipt.unlink(missing_ok=True)
+        return 0
+
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], os.environ, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: None) == 0
+    assert jobs[:2] == [('gemma4', '1'), ('gemma4', '1')]
+    assert checkpoint.read_bytes() == b'last saved optimizer and selector state'
+
+
 def test_math_pause_stops_before_any_mbpp_or_other_model_launch():
     jobs, states = [], []
     assert chain.drain(list(chain.MODELS), 'all', ['all'], {},
@@ -186,6 +264,51 @@ def test_all_stopped_models_recover_before_any_model_opens_fresh_work(monkeypatc
     assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None, runner=runner) == 0
     assert jobs == [('llama31', True), ('gemma4', True),
                     ('qwen35', False), ('llama31', False), ('gemma4', False)]
+
+
+def test_error_model_is_recovered_before_earlier_interrupted_model(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {'qwen35': 'interrupted', 'gemma4': 'error-x99'}
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    monkeypatch.setattr(resume_inventory, 'failed_signature', lambda model, *a, **kw:
+                        pending.get(model) if model == 'gemma4' else None)
+    jobs = []
+
+    def runner(command, environment, heartbeat):
+        model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, recovery))
+        if recovery:
+            pending.pop(model)
+        else:
+            assert not pending
+        return 0
+
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: None) == 0
+    assert jobs[:2] == [('gemma4', True), ('qwen35', True)]
+
+
+def test_success_exit_cannot_hide_an_unchanged_failed_receipt(monkeypatch):
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {'llama31': 'failed-task'}
+    monkeypatch.setattr(resume_inventory, 'signature', lambda model, *a, **kw: pending.get(model))
+    monkeypatch.setattr(resume_inventory, 'failed_signature', lambda model, *a, **kw: pending.get(model))
+    jobs = []
+
+    def runner(command, environment, heartbeat):
+        model, recovery = model_of(command), environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, recovery))
+        if recovery and len(jobs) > 1:
+            pending.pop(model)
+        if not recovery:
+            assert not pending
+        return 0
+
+    assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: None) == 0
+    assert jobs[:2] == [('llama31', True), ('llama31', True)]
 
 
 def test_cooling_model_recovery_is_revisited_instead_of_starting_other_fresh_models(monkeypatch):
@@ -336,7 +459,8 @@ def test_forcibly_killed_worker_is_restarted_before_any_fresh_model():
         return 137 if len(jobs) <= 5 else 0
     assert chain.drain(list(chain.MODELS), 'math', ['math'], {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: waits.append(n)) == 0
-    assert jobs == ['qwen35'] * 6 + ['llama31', 'gemma4']
+    # A successful recovery pass returns before that model's fresh queue.
+    assert jobs == ['qwen35'] * 7 + ['llama31', 'gemma4']
     assert len(waits) == 5
 
 
@@ -351,4 +475,4 @@ def test_surviving_coordinator_retries_a_real_sigkill_child(tmp_path):
         return 0
     assert chain.drain(list(chain.MODELS), 'math', ['math'], os.environ, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: None) == 0
-    assert attempts == ['qwen35', 'qwen35', 'llama31', 'gemma4']
+    assert attempts == ['qwen35', 'qwen35', 'qwen35', 'llama31', 'gemma4']

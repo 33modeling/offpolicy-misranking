@@ -30,3 +30,46 @@ sh scripts/run_srgc_llama31.sh all
 2026-10-18 수정: 실패 횟수 제한을 제거했다. 살아 있는 coordinator는 SIGKILL/137로 종료된 worker를 다시 실행한다. 일시적인 `nvidia-smi` 실패도 재확인한다. 이미 coordinator 자체가 종료된 경우에는 같은 공개 명령을 다시 실행해 저장된 작업부터 복구한다. 관련 회귀 316개 통과 후 실제 SIGKILL child 재시작·GPU 조회 복구를 추가해 최종 운영 검사 201개를 통과했다. 과거 실패 이력과 예산 파일은 삭제하지 않았고, 학습·보상 기록 hash를 유지했다.
 
 같은 날 [전체 코드 재점검](REPOSITORY_AUDIT_2026-10-06.md)에서 데이터셋 전환 시 resume 재적용과 잘못된 coordinator 기록의 오류 격리를 추가로 수정했다. 손상된 중간 rollout의 results 오류도 해당 arm에 격리하며 정상 endpoint와 다른 arm의 결과를 유지한다.
+
+## 2026-10-18 ERROR 우선 재개 재수정
+
+실패 횟수 제한은 내부 task 배정에서만 제거돼 있었다. 바깥 model coordinator는
+SIGKILL/137 외의 오류 코드 1·2 등으로 worker가 종료되면 그 모델을 `failed`로
+고정하여 같은 실행에서 다시 시도하지 않았다. 저장된 작업이 있어도 다른 모델의
+새 작업으로 넘어가거나, 복구 전용 실행 전체를 종료하는 경로를 재현했다.
+
+- 현재 데이터셋에서 실행 잠금이 없는 **ERROR → 다른 중단 작업 → 새 작업** 순으로
+  모델을 선택한다. Llama 시작도 Gemma·Qwen의 기존 ERROR를 함께 확인한다.
+- worker가 오류로 종료되고 기존 미완료 receipt/checkpoint가 있거나 이미 복구 전용
+  실행이면, 그 모델을 복구 대기 상태로 남겨 횟수 제한 없이 다시 실행한다.
+  다른 노드가 해당 작업을 가져가도 복구 전용 모드를 유지하여 새 seed를 열지 않는다.
+- 복구 worker의 종료 코드가 0이어도 실행 잠금 없는 ERROR receipt가 남아 있으면
+  완료로 간주하지 않는다. 재시도 대상 모델은 `MODEL QUEUE`의 `WAITING ... RESUME`에도
+  유지한다. 기존 실패 이력은 보존하고, 복구 성공 후 coordinator의 활성 오류만 해제한다.
+- 오류 작업의 cache/prefix가 미완료이면 해당 선행 작업도 ERROR 우선순위를 상속한다.
+  task 시작 중 `OSError`·subprocess 오류는 실패 receipt와 로그를 저장하고 같은 배정기에서
+  다시 시도한다. receipt 없이 저장된 일부 cache prompt도 복구 대상으로 찾는다.
+  반대로 이미 완료된 cache의 옛 ERROR receipt는 새 복구 작업으로 세지 않는다.
+
+worker 재시작 확인 간격은 기본 10초이며, 실제 실패 task의 기본 재시도 간격은 60초다.
+명시적인 stop·Ctrl-C/SIGTERM, MATH 완료 전 MBPP 금지, 다른 노드의 실행 잠금은 유지한다.
+입력·모델을 바꿔 오류를 숨기거나 결과·checkpoint·rollout을 초기화하지 않는다.
+공통 학습 engine, 세 모델 adapter와 고정 실행 hash, 25-update 보상 기록 확장은 수정하지 않았다.
+
+공개 `sh scripts/run_srgc_llama31.sh all` 진입점에서 실제 자식 프로세스를 사용한
+CPU 통합 검사는 `Llama ERROR x4 → 같은 작업 반복 재시도 → Gemma ERROR x99 복구
+→ 남은 MATH → MBPP` 순서와 checkpoint 바이트 보존을 검사한다. GPU worker는
+시험 대역이며 H100 학습을 실행한 검사가 아니다. 이 환경에는 원격 `/group-volume`과
+실행 콘솔이 없으므로 서버에서 실제로 발생한 traceback 및 재개 적용은 별도 확인이 필요하다.
+
+최종 CPU 회귀 검사 400개와 subtest 10개를 통과했다. 이후 종료 코드 124·134·139도
+운영자 중지와 구분하여 복구하도록 보강하고, 관련 coordinator·공개 셸 검사 70개를
+재실행해 통과했다(앞선 검사와 중복 포함). Ruff·공백 검사도 통과했다.
+
+원격의 이전 worker에는 코드가 자동 주입되지 않는다. 정상 학습 중인 worker를 건드리지
+않고, 종료됐거나 IDLE인 이전 worker를 종료한 뒤 갱신된 checkout에서 같은 시작 명령을 쓴다.
+
+```sh
+git pull --ff-only origin master
+sh scripts/run_srgc_llama31.sh all
+```

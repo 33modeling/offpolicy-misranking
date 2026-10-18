@@ -263,6 +263,15 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                         with log.open("a") as handle:
                             handle.write(f"TIMEOUT: {error}\n")
                         print(f"TIMEOUT {task_label}: {error}", flush=True)
+                    except (OSError, subprocess.SubprocessError) as error:
+                        # A transient fork/exec or GPU-query failure still owns
+                        # a real task receipt. Finish that attempt and let the
+                        # same retry-first loop resume it without exiting.
+                        code = 1
+                        log.parent.mkdir(parents=True, exist_ok=True)
+                        with log.open("a") as handle:
+                            handle.write(f"LAUNCH ERROR: {type(error).__name__}: {error}\n")
+                        print(f"LAUNCH ERROR {task_label}: {error}", flush=True)
                     except KeyboardInterrupt:
                         queue.finish(task, 130, interrupted=True)
                         progress("stopped", active=queue, task=task)

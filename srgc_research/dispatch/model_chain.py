@@ -105,7 +105,7 @@ def drain(order, dataset, initial, environment, update, *, runner=run_child, pol
 
 def drain_phase(order, dataset, initial, environment, update, *, runner=run_child,
                 poll_seconds=10, sleep=time.sleep, resumed=None):
-    from .resume_inventory import signature
+    from .resume_inventory import failed_signature, signature
 
     states = {name: 'pending' for name in order}
     failures = {}
@@ -114,18 +114,30 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
     # model for this invocation. A later phase must respect newly placed stops.
     resumed = set() if resumed is None else resumed
     recovered = {}
+    retrying = set()
     root_parser = argparse.ArgumentParser(add_help=False)
     root_parser.add_argument('--root', type=Path)
     custom_root, _ = root_parser.parse_known_args(initial)
     def saved_work(model):
         return signature(model, environment['SRGC_DATASET_PHASE'], environment,
                          root=custom_root.root if model == order[0] else None)
+    def saved_errors(model):
+        return failed_signature(model, environment['SRGC_DATASET_PHASE'], environment,
+                                root=custom_root.root if model == order[0] else None)
     while True:
         busy = False
         killed = False
+        retry = False
+        retry_model = None
         recovery = {model: saved_work(model) for model in order if states[model] not in {'finished', 'failed'}}
-        recovery = {model: value for model, value in recovery.items() if value is not None and recovered.get(model) != value}
-        for model in recovery or order:
+        errors = {model for model in recovery if recovery[model] is not None and saved_errors(model) is not None}
+        recovery = {model: value for model, value in recovery.items()
+                    if value is not None and (recovered.get(model) != value or model in errors)}
+        # Retain recovery mode even if a peer acquires the saved task between
+        # scans. A worker failure must not admit that model's fresh work.
+        recovery.update({model: saved_work(model) for model in retrying})
+        candidates = sorted(recovery, key=lambda model: (model not in retrying, model not in errors)) if recovery else order
+        for model in candidates:
             if states[model] in {'finished', 'failed'}:
                 continue
             args = (list(initial) if model == order[0] else
@@ -153,19 +165,43 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
                 print(f'MODEL FAILED {model}: {error}', file=sys.stderr, flush=True)
                 code = 2
             if code == 137:
+                retry_model = model
+                retrying.add(model)
                 states[model] = 'waiting'
                 update('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
                        idle_reason='worker was forcibly killed; resuming saved work')
                 killed = True
                 break
-            if code >= 128:
+            if code in (130, 143):
                 update('stopped', model=model, exit_code=code, models=dict(states))
                 return code
             if code == PAUSED:
                 update('stopped', model=model, exit_code=code, models=dict(states))
                 return code
+            if code not in (0, YIELD, BUSY) and (resume_only or saved_work(model) is not None):
+                retry_model = model
+                retrying.add(model)
+                recovered.pop(model, None)
+                states[model] = 'waiting'
+                failures[model] = code
+                update('waiting', model=model, exit_code=code, models=dict(states),
+                       failures=dict(failures), resume_only=True,
+                       idle_reason='worker failed with unfinished work; retrying saved task before fresh work')
+                print(f'MODEL RETRY {model} exit={code}; saved work remains; retry_limit=none', flush=True)
+                retry = True
+                break
             states[model] = 'finished' if code == 0 else 'waiting' if code in (YIELD, BUSY) else 'failed'
             if code == 0 and resume_only:
+                if saved_errors(model) is not None:
+                    retry_model = model
+                    retrying.add(model)
+                    states[model] = 'waiting'
+                    retry = True
+                    update('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
+                           idle_reason='worker exited successfully but failed task remains; retrying saved work')
+                    break
+                retrying.discard(model)
+                failures.pop(model, None)
                 recovered[model] = saved_work(model)
                 states[model] = 'pending'
             if states[model] == 'failed':
@@ -178,16 +214,18 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
         if all(state in {'finished', 'failed'} for state in states.values()):
             update('failed' if failures else 'finished', models=dict(states), failures=failures)
             return 2 if failures else 0
-        if recovery and not busy and not killed and all(states[model] in {'pending', 'failed'} for model in recovery):
+        if recovery and not busy and not killed and not retry and all(states[model] in {'pending', 'failed'} for model in recovery):
             if failures:
                 update('failed', models=dict(states), failures=failures)
                 return 2
             continue  # Recovery finished; proceed directly to the normal queues.
         # Sleep only after every eligible model has been checked, or the entire
         # local GPU allocation is owned. Never spin on peer leases/retry delays.
-        reason = ('worker forcibly killed; retrying saved work' if killed else 'GPU allocation owned' if busy
+        reason = ('worker failed; retrying saved work before fresh work' if retry
+                  else 'worker forcibly killed; retrying saved work' if killed else 'GPU allocation owned' if busy
                   else 'all unfinished model queues waiting on peers or retry delay')
-        update('waiting', models=dict(states), idle_reason=reason, failures=dict(failures), resume_only=bool(recovery) or killed)
+        update('waiting', model=retry_model, models=dict(states), idle_reason=reason, failures=dict(failures),
+               resume_only=bool(recovery) or killed or retry)
         print(f'MODEL WAIT: {reason}; retry in {poll_seconds}s', flush=True)
         sleep(poll_seconds)
 

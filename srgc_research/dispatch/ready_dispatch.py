@@ -40,10 +40,21 @@ class ReadyClaims:
                        for q, task in self.tasks.values() if q.plan["dataset"] == "math")
         return True
 
-    def priority(self, key, pending):
-        if self.receipt(*self.tasks[key]).get("status") == "failed":
-            return 0
-        return 1 if key in pending else 2
+    def priorities(self, pending):
+        priorities = {key: 1 if key in pending else 2 for key in self.tasks}
+        for key in pending:
+            queue, task = self.tasks[key]
+            if self.receipt(queue, task).get("status") != "failed":
+                continue
+            priorities[key] = 0
+            # Recover missing cache/prefix evidence for the failed seed before
+            # unrelated interrupted work; the ERROR itself may not be ready yet.
+            parent = queue.dependency(task)
+            while parent is not None:
+                if not queue.complete(parent):
+                    priorities[(key[0], parent.key)] = 0
+                parent = queue.dependency(parent)
+        return priorities
 
     def spent(self, key, failures):
         row = self.receipt(*self.tasks[key])
@@ -58,6 +69,7 @@ class ReadyClaims:
         with ExitStack() as locks:
             with lease(self.marker.with_suffix(".lock"), wait=True):
                 pending = self.pending()
+                priorities = self.priorities(pending)
                 failures = self.failure_counts()
                 allowed = {key for key, candidate_queue in self.queues.items()
                            if self.dataset_allowed(candidate_queue)}
@@ -75,17 +87,17 @@ class ReadyClaims:
                                 not self.owned(candidate_queue, candidate) and candidate_queue.ready(candidate))
                     if eligible and (row.get("status") != "failed" or
                             (retry_failed and time.time() >= row.get("finished", 0) + retry_delay)):
-                        runnable_priority = min(runnable_priority, self.priority(key, pending))
+                        runnable_priority = min(runnable_priority, priorities[key])
                 # An unowned unfinished task remains ahead of fresh work even
                 # while its retry delay is running. Failure counts are history.
                 tasks = (sorted(queue.tasks, key=lambda task:
-                                self.priority((str(queue.plan_path.resolve()), task.key), pending))
+                                priorities[(str(queue.plan_path.resolve()), task.key)])
                          if str(queue.plan_path.resolve()) in allowed else [])
                 for task in tasks:
                     key = (str(queue.plan_path.resolve()), task.key)
                     if os.environ.get("SRGC_RESUME_ONLY") == "1" and key not in pending:
                         continue
-                    if self.priority(key, pending) > runnable_priority:
+                    if priorities[key] > runnable_priority:
                         continue
                     if stop_requested(queue):
                         break

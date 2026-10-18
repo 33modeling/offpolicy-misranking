@@ -160,6 +160,35 @@ def test_dataset_only_worker_finishes_math_before_sibling_resume(model):
     assert row["status"] == "complete"
 
 
+def test_error_prerequisite_recovers_before_an_independent_interrupted_task(model):
+    math = model.queues[0]
+    interrupted, failed = Task(8, "sr"), Task(9, "switch")
+    abandoned(math, interrupted, state="interrupted")
+    abandoned(math, failed, state="failed", attempt=99)
+    (math.root / "seed-9/prefix-ready.json").unlink()
+    math.tasks = [interrupted, Task(9, "prefix"), failed]
+    with model.factory(model.queues).claim(math, retry_failed=True, retry_delay=0) as task:
+        assert task == Task(9, "prefix")
+
+
+def test_launch_exception_retries_saved_task_without_abandoning_worker(model):
+    math = model.queues[0]
+    old, fresh = Task(9, "sr"), Task(5, "prefix")
+    abandoned(math, old, state="failed", attempt=99)
+    math.tasks = [fresh, old]
+
+    def child(queue, task, log, **kwargs):
+        if len(model.jobs) == 1:
+            raise OSError("temporary process launch failure")
+        finish_fake(queue, task)
+        return 0
+
+    model.run(child)
+    assert model.jobs == [("math", old.key), ("math", old.key), ("math", fresh.key)]
+    history = [json.loads(p.read_text()) for p in (math.directory / "attempts").glob("*.json")]
+    assert any(row["status"] == "failed" for row in history)
+
+
 def test_sibling_real_failure_is_retried_after_math_finishes(model):
     old = Task(9, "sr")
     abandoned(model.queues[1], old)
