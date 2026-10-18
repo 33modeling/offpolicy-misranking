@@ -91,8 +91,14 @@ class ReadyClaims:
                         runnable_priority = min(runnable_priority, priorities[key])
                 # An unowned unfinished task remains ahead of fresh work even
                 # while its retry delay is running. Failure counts are history.
-                tasks = (sorted(queue.tasks, key=lambda task:
-                                priorities[(str(queue.plan_path.resolve()), task.key)])
+                def retry_order(task):
+                    key = (str(queue.plan_path.resolve()), task.key)
+                    row = self.receipt(queue, task)
+                    # A repeatedly failing arm must not starve the other old
+                    # ERRORs. Keep ERROR/dependency priority, oldest retry first.
+                    return priorities[key], row.get("finished", 0) if row.get("status") == "failed" else 0
+
+                tasks = (sorted(queue.tasks, key=retry_order)
                          if str(queue.plan_path.resolve()) in allowed else [])
                 for task in tasks:
                     key = (str(queue.plan_path.resolve()), task.key)

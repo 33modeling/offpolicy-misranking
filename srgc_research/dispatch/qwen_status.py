@@ -13,6 +13,8 @@ from pathlib import Path
 from scripts import srgc_live_status as live
 from scripts.srgc_qwen35_storage import default_root
 
+from .rank_failures import last_error_line
+
 REPO = Path(__file__).resolve().parents[2]
 ARMS = ("cache", "prefix", "on_policy", "switch", "sr", "random")
 HEADERS = ("Cache", "Prefix", "On-policy", "Switch", "SR", "Random")
@@ -326,7 +328,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     if attention or errors or worker_errors:
         lines += ["", "ATTENTION"]
         for label, row in attention:
-            reason = row.get("validation_error") or live.last_error_line(row.get("log", ""))
+            reason = row.get("validation_error") or last_error_line(row.get("log", ""))
             lines.append(f"  {label} {row['task']} | {cell(row)}" + (f" | {reason}" if reason else ""))
             if row.get("log"):
                 lines.append(f"    log: {row['log']}")

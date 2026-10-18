@@ -152,3 +152,60 @@ MBPP 선행은 계속 금지한다. 공개 Llama shell의 실제 자식 프로�
 프로세스 정리·GPU 대기·배정·체크포인트·중간 보상·rollout 기록 관련 회귀 434개와
 subtest 18개를 통과했다. 마지막 모델 간 복구 배정 수정 후 coordinator·공개 shell
 검사 72개도 다시 통과했다(앞선 검사와 중복 포함). 동결 코드와 저장 기록은 초기화하지 않았다.
+
+## 2026-10-18 ChildFailedError의 원인 기록과 학습 실패 후 복구 순회
+
+사용자가 세 모델에서 `torch.distributed.elastic.multiprocessing.errors.ChildFailedError`가
+반복된다고 보고했다. 이 예외는 torchrun의 자식 종료 요약이며, 그 문구만으로는 실제
+rank의 Python 예외 또는 종료 신호를 특정할 수 없다. 서버의 안쪽 traceback은 아직
+확인하지 못했다. 아래 변경을 모든 서버 오류의 원인 해결로 해석하면 안 된다.
+
+기존 공통 drain은 학습 자식의 일반 실패를 내부에서 계속 재시도했다. 모델 연결의
+복구 순회까지 제어가 돌아오지 않아 다른 모델의 ERROR가 막힐 수 있었다. 연결 실행은
+실패 receipt를 보존한 뒤 실제 실패 코드를 coordinator로 돌려준다. task 및 GPU lease는
+context를 빠져나오며 반환한다. coordinator가 다른 모델의 기존 오류에도 재개 차례를
+준 뒤 저장 작업을 다시 시도한다. 운영상 횟수 제한이나 오류 이력 초기화는 없다.
+
+같은 모델 안에서도 같은 우선순위의 ERROR는 마지막 실패 시각이 오래된 순서로 잡는다.
+한 arm이 재실패해도 다른 기존 ERROR보다 계속 먼저 선택되지 않는다. ERROR와 그
+선행 cache/prefix를 먼저 복구하는 조건, 기존 작업이 남으면 새 작업을 막는 조건,
+MATH 완료 후 MBPP를 시작하는 조건은 유지한다. 수정 전 배정 코드로 세 모델의
+arm 기아 현상을 각각 재현했다.
+
+`rank_runtime.py`는 동결 rank 및 보상 기록 entry 바깥에 PyTorch elastic의 `record`
+처리를 설치한다. cache/smoke/train의 원래 인자와 모델 코드는 그대로 실행한다.
+`SRGC RANK START`에 모델, rank, seed/task를 포함한 실제 인자와 error file 경로가
+출력된다. 학습 attempt의 `progress/<attempt_id>/elastic-errors/` 아래에 rank별
+`error.json`을 보관한다. admission 로그도 해당 로그 폴더의 `elastic-errors/` 아래에
+보관한다. 종료된 새 wrapper도 orphan 정리 대상에 등록하여 실행 잠금을 남기지 않는다.
+
+실패 후 마지막 25줄만 재출력하던 대신 해당 attempt의 제한된 로그 구간에서 안쪽 예외와
+elastic root cause를 함께 출력한다. 세 모델 공통 status도 `ChildFailedError`보다 실제
+rank 예외를 우선 표시한다. SIGKILL처럼 Python 예외가 없는 종료는 신호 기록을 보여주며
+없는 Python 원인을 만들어내지 않는다. 실제 실패를 성공으로 처리하지 않는다.
+
+서로 다른 모델의 orphan도 점검했다. 이전 모델의 죽은 rank가 GPU를 점유한 상태에서
+다른 모델로 재개하면, 모델 전용 target 목록에는 그 rank가 없어 GPU BUSY가 계속될
+수 있었다. 운영 guard가 세 모델의 native/기록/오류 기록 rank를 함께 인식하게 하고,
+세 모델의 살아 있는 launcher도 함께 보호한다. 다른 UID와 살아 있는 owner 아래의
+rank는 정리하지 않는다. 이 교차 모델 누락을 세 모델에서 재현하고 실제 프로세스의
+실행 lease 해제 및 checkpoint 보존도 검사한다.
+
+검증에서는 각 모델 경로로 실제 torchrun 4개 프로세스와 Gloo를 실행했다. SRGC Engine과
+작은 CPU AdamW backend로 Prefix/On-policy/Switch/SR/Random checkpoint를 저장한 후
+rank 2를 실패시켰다. 원래 예외가 공유 attempt의 error.json에 남는 것을 확인했다.
+다음 실행에서 Prefix는 1→2, 네 continuation은 26→27 업데이트로 전진했으며, 가중치,
+optimizer, selection 상태가 중단 없는 기준 실행과 정확히 일치했다. 이 검사는 CPU
+통합 검사이고 Qwen/Llama/Gemma 모델의 H100/NCCL 학습 재개를 실측한 결과는 아니다.
+
+고정 engine·모델 adapter·체크포인트·보상 기록 파일의 바이트는 변경하지 않았다.
+학습 batch reward와 고정 held-out reward 구분, 25-update 간격 기록, 기존 checkpoint와
+rollout trace 검증도 유지한다. 이미 실행 중인 Python worker는 메모리에 예전 코드를
+가지고 있으므로 pull만으로 그 내부 무한 재시도 경로가 교체되지는 않는다. launcher를
+Ctrl+C로 종료한 뒤 `git pull --ff-only origin master`를 하고 기존 실행 명령으로 다시
+시작해야 한다. checkpoint를 지우거나 seed를 처음부터 다시 만들 필요는 없다.
+
+이번 공통 실행·재개·status/results·보상·rollout·checkpoint 회귀 561개와 subtest 18개를
+통과했다. 마지막 교차 모델 orphan 수정 후 관련 검사 90개와 Qwen/오류 기록 검사
+41개도 다시 통과했다(앞선 검사와 중복 포함). 동결 파일 78개의 바이트와 세 모델의
+adapter digest가 수정 전 `d2b4cd2`와 같은 것을 확인했고 Ruff/공백 검사도 통과했다.

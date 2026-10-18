@@ -30,10 +30,23 @@ def test_recording_guard_uses_one_module_and_preserves_live_rank_owners(cohort):
               f'srgc_research.dispatch.reward_curve_rank --model {cohort.model}')
     legacy = object()
     owner = 'run_srgc_qwen35.py'
+    other_model = {'qwen35': 'gemma4', 'gemma4': 'llama31', 'llama31': 'qwen35'}[cohort.model]
+    other_owner = {'qwen35': 'srgc_research.dispatch.qwen_run',
+                   'gemma4': 'srgc_research.dispatch.gemma_run',
+                   'llama31': 'srgc_research.dispatch.llama_run'}[other_model]
+    other_native = ('srgc_qwen35_rank.py' if other_model == 'qwen35' else
+                    f'srgc_research.dispatch.{other_model}.rank')
     table = {900001: (1, 1, f'python {owner} all'),
              900002: (900001, 1, f'python {marker} --task on_policy'),
              900003: (1, 1, f'python {marker} --task on_policy'),
-             900004: (1, 2, f'python {marker} --task on_policy')}
+             900004: (1, 2, f'python {marker} --task on_policy'),
+             900005: (1, 1, f'python -m srgc_research.dispatch.rank_runtime --model {cohort.model}'),
+             900006: (900001, 1, f'python -m srgc_research.dispatch.rank_runtime --model {cohort.model}'),
+             900007: (1, 1, f'python -m {other_owner} all'),
+             900008: (1, 1, f'python -m srgc_research.dispatch.rank_runtime --model {other_model}'),
+             900009: (900007, 1, f'python -m srgc_research.dispatch.rank_runtime --model {other_model}'),
+             900010: (1, 1, f'python -m {other_native} --task on_policy'),
+             900011: (900007, 1, f'python -m {other_native} --task on_policy')}
     with patch.dict(sys.modules, {'srgc_process_guard': legacy}), \
             patch.object(guard.os, 'getuid', return_value=1), \
             patch.object(guard, 'TARGET_MARKERS', ()), \
@@ -42,13 +55,14 @@ def test_recording_guard_uses_one_module_and_preserves_live_rank_owners(cohort):
                     env_key='unused', label='test', result_model=cohort.model):
             assert importlib.import_module('srgc_process_guard') is guard
             with guard.process_guard(cohort.plans['math']):
-                assert guard.orphan_pids(table=table) == [900003]
+                assert guard.orphan_pids(table=table) == [900003, 900005, 900008, 900010]
         assert sys.modules['srgc_process_guard'] is legacy
         assert guard.TARGET_MARKERS == ()
 
 
 @pytest.mark.parametrize('arm', ('on_policy', 'switch', 'sr', 'random', 'prefix'))
-def test_failed_rank_releases_execution_lock_and_same_arm_resumes(cohort, arm, monkeypatch):
+@pytest.mark.parametrize('entry', ('recording', 'diagnostic', 'other_model'))
+def test_failed_rank_releases_execution_lock_and_same_arm_resumes(cohort, arm, monkeypatch, entry):
     folder = finish(cohort, 'math', arm='random' if arm != 'random' else 'sr')
     plan = load_plan(cohort.plans['math'])
     bundle = input_path(cohort.plans['math'], plan, 5)
@@ -61,6 +75,11 @@ def test_failed_rank_releases_execution_lock_and_same_arm_resumes(cohort, arm, m
     task = Task(5, arm)
     marker = ('srgc_qwen35_reward_curve_rank.py' if cohort.model == 'qwen35'
               else 'srgc_research.dispatch.reward_curve_rank')
+    target_model = cohort.model
+    if entry in {'diagnostic', 'other_model'}:
+        marker = 'srgc_research.dispatch.rank_runtime'
+    if entry == 'other_model':
+        target_model = {'qwen35': 'gemma4', 'gemma4': 'llama31', 'llama31': 'qwen35'}[cohort.model]
     native = {'qwen35': 'srgc_qwen35_rank.py', 'llama31': 'srgc_research.dispatch.llama31.rank',
               'gemma4': 'srgc_research.dispatch.gemma4.rank'}[cohort.model]
     original_orphans = guard.orphan_pids
@@ -76,7 +95,7 @@ def test_failed_rank_releases_execution_lock_and_same_arm_resumes(cohort, arm, m
                 'p.parent.mkdir(parents=True,exist_ok=True); f=p.open("a+"); '
                 'fcntl.flock(f,fcntl.LOCK_EX); print("READY",flush=True); time.sleep(60)')
         child = subprocess.Popen([sys.executable, '-u', '-c', code, str(lock), marker,
-            '--model', cohort.model, '--plan', str(queue.plan_path), '--seed', '5', '--task', arm],
+            '--model', target_model, '--plan', str(queue.plan_path), '--seed', '5', '--task', arm],
             start_new_session=True, stdout=subprocess.PIPE, text=True)
         try:
             assert child.stdout.readline().strip() == 'READY'

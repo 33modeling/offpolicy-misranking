@@ -206,6 +206,60 @@ def test_sibling_real_failure_is_retried_after_math_finishes(model):
     assert any(row["status"] == "failed" and row["exit_code"] == 9 for row in history)
 
 
+def test_repeated_child_failure_does_not_starve_other_old_errors_in_same_model(model):
+    queue = model.queues[0]
+    failed, other, fresh = Task(5, "on_policy"), Task(5, "sr"), Task(6, "prefix")
+    queue.tasks = [failed, other, fresh]
+    abandoned(queue, failed, attempt=40, state="failed")
+    abandoned(queue, other, attempt=4, state="failed")
+    checkpoint = queue.root / "seed-5/on_policy-latest.pt"
+    checkpoint.write_bytes(b"unchanged optimizer checkpoint")
+
+    def child(queue, task, log, **kwargs):
+        if task == failed and sum(key == failed.key for _, key in model.jobs) == 1:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text("[rank2]: RuntimeError: actual failed training child\n"
+                           "torch.distributed.elastic.multiprocessing.errors.ChildFailedError:\n")
+            return 1
+        finish_fake(queue, task)
+        return 0
+
+    model.run(child)
+    assert model.jobs == [("math", task.key) for task in (failed, other, failed, fresh)]
+    assert checkpoint.read_bytes() == b"unchanged optimizer checkpoint"
+    assert json.loads(queue.receipt(failed).read_text())["attempt"] == 42
+
+
+def test_failed_training_rank_returns_to_model_chain_after_releasing_task_lease(model, monkeypatch):
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "math")
+    queue = model.queues[0]
+    task, fresh = Task(5, "on_policy"), Task(6, "prefix")
+    queue.tasks = [task, fresh]
+    abandoned(queue, task, attempt=40, state="failed")
+
+    def fail(queue, task, log, **kwargs):
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("[rank2]: RuntimeError: original rank failure\n"
+                       "torch.distributed.elastic.multiprocessing.errors.ChildFailedError:\n")
+        return 1
+
+    with patch.object(cluster, "gpu_identity"), \
+            patch.object(cluster, "task_command", side_effect=lambda q, t: (q, t)), \
+            patch.object(cluster, "run_child", side_effect=lambda command, log, env, **kw: fail(*command, log)), \
+            patch.object(cluster, "publish_reports"):
+        result = resume_drain.drain(model.worker, model.factory, model.pattern, model.env_key,
+            "TEST", [queue], model.options, {}, (), "test", lambda *a, **kw: None)
+    assert result == 1
+    assert json.loads(queue.receipt(task).read_text())["attempt"] == 41
+    assert not queue.receipt(fresh).exists()
+    with lease(queue.directory / "leases" / f"{task.key}.lock"):
+        pass
+    # Same saved task is immediately eligible on the next recovery turn.
+    with model.factory(model.queues).claim(queue, retry_failed=True, retry_delay=0) as selected:
+        assert selected == task
+
+
 @pytest.mark.parametrize("archived_history", (False, True))
 def test_mbpp_error_x4_is_recovered_after_all_math_work(model, archived_history):
     math, mbpp = model.queues
@@ -699,7 +753,24 @@ def test_model_chain_owned_work_yields_before_gpu_admission(model, monkeypatch, 
 
 def test_model_chain_keeps_retrying_error_tasks_without_an_attempt_limit(model,monkeypatch):
     monkeypatch.setenv('SRGC_MODEL_CHAIN_CHILD','1')
-    test_repeated_worker_errors_are_retried_until_the_saved_task_finishes(model)
+    old = Task(9, "sr")
+    queue = model.queues[1]
+    abandoned(queue, old)
+
+    def child(queue, task, log, **kwargs):
+        if queue.plan["dataset"] == "mbpp" and sum(name == "mbpp" for name, _ in model.jobs) <= 4:
+            return 9
+        finish_fake(queue, task)
+        return 0
+
+    # Each failure releases this worker's leases and returns to model_chain.
+    # Subsequent recovery turns keep retrying the saved task without a cap.
+    for turn in range(5):
+        model.run(child)
+        assert sum(name == "mbpp" for name, _ in model.jobs) == turn + 1
+    assert model.jobs == [("math", "seed-5.prefix")] + [("mbpp", old.key)] * 5
+    assert queue.complete(old)
+    assert json.loads(queue.receipt(old).read_text())["attempt"] == 8
 
 
 def test_temporary_gpu_query_failure_yields_and_next_worker_resumes_old_task_first(model, monkeypatch, tmp_path):

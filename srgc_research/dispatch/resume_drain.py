@@ -311,11 +311,16 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                         progress("stopped", active=queue, task=task)
                         return code
                     if code and not waiting_on_gpu:
-                        from scripts.srgc_log_tail import tail_lines
-                        try:
-                            print("\n".join(tail_lines(log, 25)), flush=True)
-                        except OSError:
-                            pass
+                        from .rank_failures import failure_details
+
+                        print(failure_details(log, start=log_start), flush=True)
+                        if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1':
+                            # Hand the real failure back to the coordinator so
+                            # other saved model errors get their recovery turn.
+                            # The task/device contexts close before it restarts.
+                            progress("failed", active=queue, task=task,
+                                     error=f"child exit={code}; log={log}")
+                            return code
                     if not waiting_on_gpu:
                         progress("idle")
             finally:
@@ -389,6 +394,7 @@ def resume_worker(worker, factory, *, pattern, env_key, label, result_model=None
 
             from .model_results import publish
             from .process_recovery import recording_guard
+            from .rank_runtime import diagnostic_child
 
             # Qwen's frozen CLI imports the guard by its historical top-level
             # name. Both names must share the same target/owner protections.
@@ -396,10 +402,7 @@ def resume_worker(worker, factory, *, pattern, env_key, label, result_model=None
             stack.enter_context(patch.object(guard, 'process_guard',
                 recording_guard(guard.process_guard, guard, result_model)))
             stack.enter_context(patch.object(cluster, "publish_reports", lambda queue: publish(result_model, queue)))
-            if result_model in {"gemma4", "llama31"}:
-                from .reward_curves import recording_command
-
-                original_child = cluster.run_child
-                stack.enter_context(patch.object(cluster, "run_child", lambda command, *args, **kwargs:
-                    original_child(recording_command(command), *args, **kwargs)))
+            original_child = cluster.run_child
+            stack.enter_context(patch.object(cluster, "run_child",
+                diagnostic_child(original_child, result_model)))
         yield
