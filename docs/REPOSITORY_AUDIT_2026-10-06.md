@@ -1,5 +1,47 @@
 # 전체 코드 저장소 점검
 
+## 2026-10-19 V7 실험 코드 재점검
+
+기준 commit은 `031e2ea5d9578ed1e7cf09e06d1c89588c211e22`다. 현재 V7 실행 코드의
+`srgc_research/tests`와 `srgc_rebuttal/tests` 전체를 실행하고, 수동 검토는 모델별
+배정·재개, 25-update 선별, SR-GC, 분산 응답 저장과 결과·재시작 비용 추출에 집중했다.
+이 기록은 아래 10월 18일 저장소 전체 검사와 범위가 다르다.
+
+| 재현한 문제 | 영향 | 수정·검증 |
+| --- | --- | --- |
+| rank별 응답 기록 검증 실패 | 한 rank가 토큰 변환 또는 응답 수 검사에서 먼저 종료하면 다른 rank는 원래 원인 대신 Gloo 통신 오류를 받음 | 기존 응답 gather 한 번으로 오류도 전달하고 모든 rank에서 같은 검증 오류로 종료. 4개 실제 CPU 프로세스·두 손상 유형으로 수정 전 실패와 수정 후 전달을 확인 |
+| OLMo 이전 실행 결과의 텍스트 누락 | 이전 reward는 JSON에 남지만 새 stdout 표와 저장 txt에서 빠져 완료 결과를 놓칠 수 있음 | `PREVIOUS RUN`과 원본 plan 경로·이전 결과를 별도 표시. 현재 미완료 결과와 합치지 않으며 txt/JSON 동시 보존을 검사 |
+
+분산 저장 실패 시 응답 archive를 게시하지 않고 해당 phase 비용은 미완료로 남긴다.
+성공한 저장 경로의 추가 gather·모델 호출·응답 생성은 없다. 기록 확장의 새 버전은
+기존 별도 receipt로 연결하며, 기존 protocol·archive·checkpoint를 덮어쓰지 않는다.
+RuntimeError 등 치명적 CUDA 예외는 추가 gather 없이 원래 예외 그대로 전파한다.
+이 동작은 별도 fault-injection 검사로 확인했으며, 이 수정이 사용자가 보고한 원격
+`CUDA unspecified launch failure`의 원인이라는 뜻은 아니다.
+
+On-policy 기본 선별은 25 updates마다 후보 40개에서 상위 4개를 고르고, 각 update는
+선택 문제 4개에 새 응답 8개씩을 사용한다. SR-GC의 비교 집합과 학습 배치를 구분하고,
+두 연속 음수 및 음수·비음수·음수 창의 합 부호 규칙을 그대로 둔다. 학습 엔진·Qwen/Llama/Gemma
+adapter 해시, plan, 입력, 원고, 캐시, optimizer checkpoint와 실험 결과는 변경하지 않는다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 수정 전 두 실험 패키지 전체 회귀 | 1,961 passed · 324 subtests passed · 1 failed. 실패는 OLMo 이전 실행 텍스트 누락으로 재현·수정 |
+| 새 분산 저장 재현 | 수정 전 두 손상 유형 모두 실패: rank 2의 검증 오류가 다른 rank에서 통신 오류로 바뀜 |
+| 수정 후 핵심 회귀(실제 로컬 디스크) | 4 passed · 4 subtests passed. 두 분산 손상 유형, CUDA RuntimeError 보존, 이전 실행 stdout/txt/JSON 분리 보존 |
+| 수정 후 두 실험 패키지 전체 회귀 | **1,964 passed · 325 subtests passed · 실패·제외 0** (442.10초) |
+| 정적·보존 검사 | Python 298개 AST · shell launcher 16개 문법 · 변경 공백 · 문서 상대 링크 14개 통과. 세 모델의 engine/adapter 해시 동일 |
+
+전체 회귀의 마지막 실행은 pytest 임시 fixture를 메모리 파일시스템에 두어 로컬 디스크의
+fsync 대기를 줄였다. 저장 함수·fsync·원자적 교체·실제 파일 잠금 검사는 그대로 실행했으며,
+별도 핵심 회귀는 실제 로컬 디스크에서도 통과했다. 중복·중단한 검사 실행은 최종 통과 수에
+더하지 않았다. Python 3.12·CPU PyTorch 2.13.0·Transformers 5.14.1·PEFT 0.20.0 환경이다.
+GPU가 없는 CPU 환경이며 실제 H100/NCCL, 9B/12B GPU 메모리 사용량과 실제 그룹 볼륨의
+노드 간 잠금은 검증하지 않았다. 원격 학습 프로세스를 중단하거나 재실행하지 않았다.
+67개 경고는 CPU 분산 검사에서 발생한 Python 3.12의 멀티스레드 `fork` 사용 폐기 예정 경고다.
+
+
+
 ## 2026-10-18 재점검
 
 기준 commit은 `1435fb356ade48b39982b53159d840e51a5fcdf8`다. 추적 중인 전체 소스의

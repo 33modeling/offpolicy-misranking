@@ -43,6 +43,16 @@ sh scripts/run_srgc_llama31.sh mbpp resume --root /group-volume/minsoo3.kim/offp
 현재 검사는 실제 설정 차이가 있으면 `changed fields:` 뒤에 해당 필드를 명시한다.
 기록 코드 해시만 바뀐 경우는 허용하며, 기존 protocol·reward·checkpoint는 보존한다.
 이 동작은 MBPP seed 8 Random·seed 9 On-policy의 저장 경로에서도 검증한다.
+## 분산 응답 저장 오류 전달
+
+2026-10-19 점검에서 한 rank의 응답 토큰·개수 검증 실패가 다른 rank에는 통신 오류로
+나타나는 문제를 재현했다. 현재 기록 확장은 기존 응답 gather에서 원래 오류를 함께
+전달해 모든 rank가 같은 원인으로 종료한다. 실패한 archive는 게시하지 않고 미완료
+비용을 0으로 채우지 않는다. 정상 저장에는 추가 collective나 모델 호출을 넣지 않았다.
+치명적 CUDA RuntimeError는 추가 gather 없이 원래 예외를 전파한다.
+기존 learner·adapter와 결과는 보존하며 이미 실행 중인 프로세스에는 자동 적용되지 않는다.
+[점검·검증 기록](REPOSITORY_AUDIT_2026-10-06.md#2026-10-19-v7-실험-코드-재점검).
+
 
 ## 제출한 OLMo에 맞춘 시간 집계
 

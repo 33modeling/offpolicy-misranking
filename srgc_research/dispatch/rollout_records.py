@@ -89,26 +89,38 @@ def save(engine, local, folder, task, plan, data, protocol, record):
         reference = set(record.get("validation_ids", []))
         selected = set(record.get("train_ids", []))
         local_rows = {}
-        for phase, prompt, sequences, rewards, start in local:
-            identity = (phase, prompt)
-            if identity in local_rows:
-                raise ValueError("duplicate successful rollout within one update")
-            if (len(sequences) != engine.config.responses or len(sequences) != len(rewards) or
-                    any(float(r) not in (0., 1.) for r in rewards)):
-                raise ValueError("invalid rollout rewards during trace export")
-            scope = [name for name, ids in (("on_candidates", candidates), ("sr_comparison", comparisons),
-                                           ("reference", reference)) if prompt in ids]
-            current_phase = "diagnostic" if phase == "selection" and prompt in reference else phase
-            row = {"arm": task, "phase": current_phase, "update": engine.step if phase == "training" else record["checkpoint"],
-                   "prompt_id": prompt, "draw": 0, "scoring_scope": scope,
-                   "selected_for_training": prompt in selected, "selector": record.get("selector"),
-                   "responses": [{"reward": float(r), "token_ids": as_tokens(sequence, start)}
-                                 for sequence, r in zip(sequences, rewards, strict=True)]}
-            cached = data.get("cached_rewards", {}).get(prompt)
-            if cached is not None and len(cached):
-                row["cached_success_rate"] = sum(cached) / len(cached)
-            local_rows[identity] = row
+        try:
+            for phase, prompt, sequences, rewards, start in local:
+                identity = (phase, prompt)
+                if identity in local_rows:
+                    raise ValueError("duplicate successful rollout within one update")
+                if (len(sequences) != engine.config.responses or len(sequences) != len(rewards) or
+                        any(float(r) not in (0., 1.) for r in rewards)):
+                    raise ValueError("invalid rollout rewards during trace export")
+                scope = [name for name, ids in (("on_candidates", candidates), ("sr_comparison", comparisons),
+                                               ("reference", reference)) if prompt in ids]
+                current_phase = "diagnostic" if phase == "selection" and prompt in reference else phase
+                row = {"arm": task, "phase": current_phase, "update": engine.step if phase == "training" else record["checkpoint"],
+                       "prompt_id": prompt, "draw": 0, "scoring_scope": scope,
+                       "selected_for_training": prompt in selected, "selector": record.get("selector"),
+                       "responses": [{"reward": float(r), "token_ids": as_tokens(sequence, start)}
+                                     for sequence, r in zip(sequences, rewards, strict=True)]}
+                cached = data.get("cached_rewards", {}).get(prompt)
+                if cached is not None and len(cached):
+                    row["cached_success_rate"] = sum(cached) / len(cached)
+                local_rows[identity] = row
+        except (TypeError, ValueError, KeyError, IndexError, OverflowError) as error:
+            if getattr(engine.backend, "world", 1) == 1:
+                raise
+            # Use the same gather as successful exports. A local conversion or
+            # validation failure must reach peers before any rank leaves it.
+            local_rows = {("__trace_error__", meter.rank):
+                          f"{type(error).__name__}: {error}"}
         rows = engine.backend._gather(local_rows)
+        errors = [f"rank {key[1]}: {value}" for key, value in rows.items()
+                  if key[0] == "__trace_error__"]
+        if errors:
+            raise ValueError("rollout trace export failed: " + "; ".join(errors))
         actual = {row["prompt_id"] for row in rows.values() if row["phase"] == "training"}
         if actual != selected:
             raise ValueError("saved training groups do not match the applied training batch")

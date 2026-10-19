@@ -28,9 +28,16 @@ def main(argv=None):
     report['plan'] = plan
     if args.action == 'results':
         destination = args.output or Path.home() / f'srgc-rebuttal-{dataset}-results.txt'
-        reports.export(report, destination)
-    print(json.dumps(report, indent=2, allow_nan=False) if args.json else render({
-        'model': plan['model'], 'datasets': {dataset: report}, 'errors': report['errors']}), flush=True)
+        with include_previous_runs():
+            reports.export(report, destination)
+    if args.json:
+        output = json.dumps(report, indent=2, allow_nan=False)
+    else:
+        output = render({'model': plan['model'], 'datasets': {dataset: report}, 'errors': report['errors']})
+        for prior in report.get('previous_runs', []):
+            output += f"\nPREVIOUS RUN (read-only): {prior['plan_path']}\n"
+            output += reports.render(prior, results=True)
+    print(output, flush=True)
     if args.action == 'results' and not args.json:
         print(f'\nJSON: {destination.with_suffix(".json")}', flush=True)
     return int(bool(report['errors']))

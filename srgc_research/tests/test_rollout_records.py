@@ -303,7 +303,7 @@ def test_completed_arm_records_must_not_change_during_export(cohort):
                for error in read_result(cohort)["errors"])
 
 
-def distributed_writer(rank, folder):
+def distributed_writer(rank, folder, damage=None):
     from datetime import timedelta
     from pathlib import Path
     from types import SimpleNamespace
@@ -327,7 +327,21 @@ def distributed_writer(rank, folder):
             backend.train([f"p{rank}"], responses=8, seed=17)
         plan = {"dataset": "math", "model": "cpu-distributed-fixture", "total_updates": 275, "shared_prefix_updates": 25}
         protocol = {"plan_sha256": "a" * 64, "input_sha256": "b" * 64, "implementation_sha256": "c" * 64}
-        rollout_records.save(engine, groups, folder, "sr", plan, {}, protocol, record)
+        if rank == 2 and damage == "tokens":
+            groups[0][2][0][-1] = -1
+        elif rank == 2 and damage == "responses":
+            phase, prompt, sequences, rewards, start = groups[0]
+            groups[0] = (phase, prompt, sequences[:-1], rewards, start)
+        try:
+            rollout_records.save(engine, groups, folder, "sr", plan, {}, protocol, record)
+        except Exception as error:
+            if damage is None:
+                raise
+            atomic_json(folder / f"rank-{rank}-error.json", {
+                "type": type(error).__name__, "error": str(error)})
+        else:
+            if damage is not None:
+                raise AssertionError("damaged rank published a successful rollout record")
     finally:
         dist.destroy_process_group()
 
@@ -339,3 +353,43 @@ def test_four_rank_export_keeps_all_training_prompts(tmp_path):
     trace = rollout_records.read(tmp_path / "reward-curves/sr/rollouts/step-26.json.gz")
     assert {g["prompt_id"] for g in trace["groups"]} == {f"p{i}" for i in range(4)}
     assert all(len(g["responses"]) == 8 for g in trace["groups"])
+
+
+@pytest.mark.parametrize("damage, message", [
+    ("tokens", "response-only integer tokens"),
+    ("responses", "invalid rollout rewards"),
+])
+def test_rank_local_trace_failure_reaches_every_rank_before_publication(tmp_path, damage, message):
+    """A rank-local export error must not become a peer collective failure."""
+    torch = pytest.importorskip("torch")
+    torch.multiprocessing.start_processes(distributed_writer, args=(str(tmp_path), damage),
+                                         nprocs=4, join=True, start_method="fork")
+    errors = [json.loads((tmp_path / f"rank-{rank}-error.json").read_text()) for rank in range(4)]
+    assert all(row["type"] == "ValueError" and message in row["error"] for row in errors), errors
+    assert not (tmp_path / "reward-curves/sr/rollouts/step-26.json.gz").exists()
+    from srgc_rebuttal.cost_ledger import PhaseLedger
+
+    cost = PhaseLedger(tmp_path / "reward-curves/sr/rollout-costs").totals()
+    assert not cost["complete"] and cost["total_gpu_seconds"] is None
+    assert len(cost["unfinished_phases"]) == 1
+
+
+def test_fatal_runtime_error_is_preserved_without_another_collective(tmp_path):
+    """A poisoned CUDA context must not mask its first error in a gather."""
+    from types import SimpleNamespace
+
+    backend = RawBackend()
+    backend.world = 2
+    engine = SimpleNamespace(backend=backend, step=26, config=Config(), switched_at=None)
+    with rollout_records.capture(backend) as groups:
+        backend.train(["p0"], responses=8, seed=17)
+    record = {"checkpoint": 25, "completed_updates": 26, "selector": "sr", "train_ids": ["p0"]}
+    plan = {"dataset": "math", "model": "cpu-fault-fixture", "total_updates": 275, "shared_prefix_updates": 25}
+    protocol = {"plan_sha256": "a" * 64, "input_sha256": "b" * 64, "implementation_sha256": "c" * 64}
+    original = RuntimeError("CUDA error: unspecified launch failure")
+    with patch.object(rollout_records, "as_tokens", side_effect=original), \
+            patch.object(backend, "_gather") as gather:
+        with pytest.raises(RuntimeError) as caught:
+            rollout_records.save(engine, groups, tmp_path, "sr", plan, {}, protocol, record)
+    assert caught.value is original
+    gather.assert_not_called()

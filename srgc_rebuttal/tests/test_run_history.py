@@ -91,6 +91,17 @@ class RunHistoryTests(unittest.TestCase):
                         else:
                             self.assertIn("PREVIOUS RUN", run.stdout)
                             self.assertIn(str(old), run.stdout)
+                        if action == "results":
+                            destination = Path(directory) / f"{action}.txt"
+                            text = destination.read_text()
+                            self.assertIn("PREVIOUS RUN", text)
+                            self.assertIn(str(old), text)
+                            exported = json.loads(destination.with_suffix(".json").read_text())
+                            current = next(r for r in exported["tasks"] if r["task"] == "seed-5.sr")
+                            prior = next(r for r in exported["previous_runs"][0]["tasks"]
+                                         if r["task"] == "seed-5.sr")
+                            self.assertIsNone(current["reward_percent"])
+                            self.assertEqual(prior["reward_percent"], 50)
 
 
 if __name__ == "__main__":
