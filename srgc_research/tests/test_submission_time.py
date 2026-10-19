@@ -8,6 +8,7 @@ import pytest
 
 from srgc_rebuttal.srgc import Engine
 from srgc_research.dispatch import model_results
+from srgc_research.dispatch.model_result_transfer import records
 from srgc_research.dispatch.submission_time import (
     BASELINE,
     collect,
@@ -128,6 +129,7 @@ def test_three_models_status_and_compact_results_keep_two_time_views_without_wri
         assert model_results.export(cohort.model, environment=cohort.env) == 0
     result = read_result(cohort)['datasets'][dataset]
     exported = next(r for r in result['tasks'] if r['task'] == 'seed-5.on_policy')
+    exported['submission_timing']['update_timers'] = records(exported['submission_timing']['update_timers'])
     assert exported['submission_timing'] == row['submission_timing']
     assert exported['timing'] == {'record': row['timing']['record']} == {'record': 'MISSING'}
     assert result['submission_time_basis'] == report['submission_time_basis']

@@ -108,7 +108,11 @@ MBPP 최대 5노드, 양쪽 최대 10노드다. 양쪽을 자동 배정하려면
 
 각 폴더의 `exports/<수집 시각-ID>/raw/`에 검증된 원본 사본을 보존한다.
 `COLLECTED JSON / COLLECTED FILES`가 실제 경로다. 기존 1절의 통합 파일과 덮어쓰지 않는다.
-Qwen은 기존 보고서를 저장하고 `Saved:` 경로를 표시한다.
+Qwen·Llama·Gemma의 `all results`는 화면 표와 작은 전달용 JSON을 함께 제공하고
+마지막 `JSON:`에 저장 경로를 표시한다. `--json`을 붙여도 화면 표는 유지한다.
+응답별 상세 기록은 원래 run 폴더에 남기며, `--full`을 붙인 경우에만 별도 큰 파일로
+내보낸다. 타이머·재시작 원시 시간과 모든 측정 scalar 보상은 기본 파일에도 포함한다.
+[기록 형식과 시간 집계](INTERMEDIATE_REWARD_RECORDING.md)를 참고한다.
 고정 전환 결과 보고서는 규칙 대조도 함께 표시하지만, 표의 상태 명령은 `timing`만 조회한다.
 원인 진단 JSON 출력은 `sh scripts/run_srgc_mechanism.sh all json`,
 P0 비용 조회는 `sh scripts/run_srgc.sh all costs`다.

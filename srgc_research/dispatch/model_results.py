@@ -90,15 +90,15 @@ def file_version(path):
     return stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
 
 
-def export(model, dataset="all", *, root=None, environment=None, text=False):
+def export(model, dataset="all", *, root=None, environment=None, text=False, full=False):
     environment = os.environ if environment is None else environment
     storage = importlib.import_module(CONFIGS[model][1])
     _, work = storage.group_work(environment)
     with export_lock(model, work):
-        return _export(model, dataset, root=root, environment=environment, text=text)
+        return _export(model, dataset, root=root, environment=environment, text=text, full=full)
 
 
-def _export(model, dataset, *, root, environment, text=False):
+def _export(model, dataset, *, root, environment, text=False, full=False):
     environment = os.environ if environment is None else environment
     adapter_name, storage_name, prefix = CONFIGS[model]
     adapter, storage = importlib.import_module(adapter_name), importlib.import_module(storage_name)
@@ -234,7 +234,11 @@ def _export(model, dataset, *, root, environment, text=False):
     result["complete"] = not result["errors"] and all(snapshot["complete"] for snapshot in snapshots)
     result["coverage"] = {"completed_continuations": completed, "planned_continuations": planned}
     artifact = compact(result)
-    destination = save_result(model, artifact, work=work, quiet=text)
+    if not full:
+        from .model_result_transfer import compact as transfer
+
+        artifact = transfer(artifact)
+    destination = save_result(f"{model}-full" if full else model, artifact, work=work, quiet=text, dense=not full)
     if text:
         from .model_result_text import render
 
@@ -266,9 +270,10 @@ def main(argv=None):
     # Existing launch commands may retain status/runner switches. They do not
     # authorize training when the selected action is results.
     parser.add_argument("--json", action="store_true", help="retained for compatibility; results always save JSON and print tables")
+    parser.add_argument("--full", action="store_true", help="export response-level details to a separate large JSON; default is a small transfer JSON")
     args = parser.parse_args(argv)
     try:
-        return export(args.model, args.dataset, root=args.root, text=True)
+        return export(args.model, args.dataset, root=args.root, text=True, full=args.full)
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"ERROR: {error}", flush=True)
         return 1

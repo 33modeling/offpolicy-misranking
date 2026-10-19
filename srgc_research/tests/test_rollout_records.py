@@ -189,12 +189,13 @@ def export_records(cohort):
     return folder
 
 
-def test_compact_export_retains_rewards_and_lengths_for_each_model(cohort):
+def test_full_export_retains_rewards_and_lengths_for_each_model(cohort):
     from srgc_research.dispatch import model_results
 
     export_records(cohort)
-    assert model_results.export(cohort.model, "math", environment=cohort.env) == 0
-    curves = read_result(cohort)["datasets"]["math"]["reward_curves"]
+    assert model_results.export(cohort.model, "math", environment=cohort.env, full=True) == 0
+    artifact = json.loads((cohort.work / "results" / f"{cohort.model}-full-results.json").read_text())
+    curves = artifact["datasets"]["math"]["reward_curves"]
     row = next(c for c in curves if c["seed"] == 5 and c["arm"] == "on_policy")
     assert len(row["rollout_groups"]) == 4 and len(row["rollout_sources"]) == 1
     assert all(r["completion_tokens"] == 3 for g in row["rollout_groups"] for r in g["responses"])

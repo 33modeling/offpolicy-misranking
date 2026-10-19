@@ -98,6 +98,34 @@ MATH·MBPP별 seed 보상, 전환 시점, 제출 OLMo 기준 GPU 시간, 평균�
 항상 확인할 수 있다. 표를 복사하거나 해당 JSON을 전달하면 된다. `--json`을 붙여도
 모델별 공개 결과 명령의 화면 표를 숨기지 않는다. 자동 결과 저장·학습 worker의 기존 동작은 유지한다.
 
+Qwen·Llama·Gemma의 기본 JSON은 **전달용 작은 파일**이다. 응답별 생성 기록,
+긴 원본 경로의 반복, receipt별 단계 상세를 기본 파일에 중복으로 넣지 않는다.
+측정한 scalar 학습 reward, 25-update 구간, 고정 held-out 평가, 결측 정보,
+최종 update 타이머와 재시작별 원시 시간은 그대로 유지한다. 수치를 반올림하지 않는다.
+기본 저장 위치는 `<OM_WORK>/results/qwen35-results.json`이며 모델명만 달라진다.
+
+응답별 reward·길이 등 상세 기록이 필요한 경우만 `--full`을 붙인다.
+별도 `qwen35-full-results.json`에 저장하므로 전달용 파일을 덮어쓰지 않는다.
+원래 run 폴더의 응답 archive·receipt·checkpoint는 어느 모드에서도 수정하지 않는다.
+
+```sh
+sh scripts/run_srgc_qwen35.sh all results
+sh scripts/run_srgc_qwen35.sh all results --full
+```
+
+기본 파일의 `transfer_schema`는 `srgc-model-transfer-v1`이다. `update_timers`와
+재시작의 `source_receipts`·`retained_receipts`·`discarded_completed_attempts`는
+`{"columns": [...], "rows": [...]}` 표로 저장한다. 각 row의 위치는 columns와 대응하며
+`null`은 미기록이다. Python에서는
+`srgc_research.dispatch.model_result_transfer.records(table)`로 객체 목록을 읽는다.
+scalar 학습 reward와 held-out 평가는 별도 목록을 유지한다.
+
+크기 회귀 검증은 2 datasets × 5 seeds × 4 arms × 250 updates의 합성 기록으로 수행한다.
+응답별 상세를 넣은 이전 pretty JSON 96,415,782 bytes가 기본 파일 4,022,344 bytes로
+줄었으며 모든 update 타이머·재시작 receipt·scalar 보상을 유지했다. 실제 GPU 노드의
+파일 크기는 기록 수에 따라 다르다. 전달 파일만으로 receipt를 복원해 차감 전·차감·잔여
+시간이 원래 대조 결과와 일치하는지도 검사한다.
+
 기존 Qwen MATH·MBPP의 사용자 제공 GPU 시간 요약표만으로는 최종 경로의 update별 비용을
 복원할 수 없다. GPU 노드에서 위 `results`를 다시 내보내 실제 `*-progress.json`을 읽어야
 새 기준의 값을 얻는다. 요약표만 보고 134.35 또는 142.88 GPU-hours를 임의 조정하지 않는다.
@@ -127,8 +155,10 @@ MATH·MBPP별 seed 보상, 전환 시점, 제출 OLMo 기준 GPU 시간, 평균�
   자동 기록 변경은 다음 정상 시작에 적용되며 실행 중인 학습을 중단하지 않는다.
 
 JSON의 `tasks[].submission_timing.restart_accounting.source_receipts`에는 재계산에 필요한
-phase·checkpoint·ID·상태·wall-seconds·GPU 수·GPU-seconds와 기록된 단계별 비용을 보존한다.
+phase·checkpoint·ID·상태·wall-seconds·GPU 수·GPU-seconds를 보존한다.
+`source_file`은 해당 seed/arm receipt 폴더의 파일명이며 사본도 각각 보존한다.
 `update_timers`의 최종 update 기록과 함께 전달하므로 합계 표만 있는 경우와 구분한다.
+receipt별 단계 상세는 원시 파일과 명시적인 `--full` 결과에 남긴다.
 
 과거 합계 표만으로는 어느 update를 몇 번 다시 수행했는지 알 수 없다. 공개 `results`가
 GPU 노드의 원시 progress/receipt를 읽어 차감과 대조를 계산한다. 코드 push는 원격

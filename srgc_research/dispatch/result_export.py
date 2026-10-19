@@ -1,10 +1,11 @@
 """One atomic, consolidated JSON artifact per experiment."""
 
+import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
 
-from srgc_rebuttal.runtime import atomic_json, lease
+from srgc_rebuttal.runtime import atomic_json, atomic_text, lease
 
 
 def work_root(environment=None):
@@ -14,12 +15,15 @@ def work_root(environment=None):
                                               "offpolicy-misranking"))).resolve()
 
 
-def save_result(name, result, *, work=None, quiet=False):
+def save_result(name, result, *, work=None, quiet=False, dense=False):
     work = work_root() if work is None else Path(work).resolve()
     destination = work / "results" / f"{name}-results.json"
     if not destination.resolve().is_relative_to(work):
         raise ValueError("result destination escapes the experiment workspace")
-    atomic_json(destination, result)
+    if dense:
+        atomic_text(destination, json.dumps(result, separators=(",", ":"), allow_nan=False) + "\n")
+    else:
+        atomic_json(destination, result)
     if not quiet:
         print(f"RESULT: {destination}", flush=True)
         print(f"SIZE: {destination.stat().st_size / (1024 * 1024):.2f} MiB", flush=True)
