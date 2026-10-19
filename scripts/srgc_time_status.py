@@ -251,7 +251,7 @@ def render(report, *, label=None):
     rows = [*report.get("tasks", report.get("rows", [])), *report.get("shared_timing", [])]
     if not rows:
         return []
-    lines = ["", f"{label or report.get('label', report.get('dataset', ''))} GPU TIMES (GPU-hours)".strip(),
+    lines = ["", f"{label or report.get('label', report.get('dataset', ''))} GPU TIMES (GPU-hours) [all recorded attempts, including restarted/replayed work]".strip(),
              *table_lines(rows)]
     settings = report.get("recorded_execution_settings", {})
     for keys in (EXECUTION_SETTINGS[:4], EXECUTION_SETTINGS[4:]):

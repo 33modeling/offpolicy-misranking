@@ -39,6 +39,36 @@ def excluded_time(report, seeds):
     return [[seed, *[measured(seed, arm) for arm in ('cache', 'prefix', *ARMS)]] for seed in seeds]
 
 
+def restart_table(report):
+    rows, errors = [], []
+    for row in report['tasks']:
+        timing = row.get('submission_timing', {})
+        audit = timing.get('restart_accounting', {})
+        if row.get('status') == 'invalid' or timing.get('record') == 'INVALID':
+            continue
+        duplicate_count = timing.get('duplicate_history_entries', 0)
+        if duplicate_count:
+            duplicate_costs = timing.get('duplicate_history_gpu_seconds', {})
+            duplicate_values = [duplicate_costs.get(k) for k in ('selection_gpu_seconds', 'training_gpu_seconds')]
+            removed_history = math.fsum(duplicate_values) / 3600 if all(v is not None for v in duplicate_values) else None
+            errors.append(f"HISTORY COPIES REMOVED seed-{row['seed']}.{row['arm']}: {duplicate_count} entries, "
+                          f"{cell(removed_history)} GPU-hours of duplicated exported timers; not added to receipt removal.")
+        if audit.get('error'):
+            errors.append(f"RESTART TIME ERROR seed-{row['seed']}.{row['arm']}: {audit['error']}")
+        before = audit.get('recorded_before_gpu_seconds')
+        if before is None:
+            continue
+        def hours(key, audit=audit):
+            value = audit.get(key)
+            prefix = '>=' if value is not None and audit.get('removal_is_lower_bound') and key != 'retained_gpu_seconds' else ''
+            return prefix + cell(None if value is None else value / 3600)
+        rows.append([row['seed'], row['arm'], hours('recorded_before_gpu_seconds'), hours('removed_gpu_seconds'),
+                     hours('retained_gpu_seconds'), timing.get('duplicate_history_entries', 0), audit.get('record', '-')])
+    return (["", 'RESTART TIME CORRECTION (GPU-hours; selection + training; SR prep added once in Total)',
+             *aligned_table(('Seed', 'Arm', 'Before', 'Removed', 'Retained', 'History copies', 'Audit'), rows),
+             'Before - Removed = Retained for matched completed receipts; unfinished attempts remain unknown.'] if rows else []) + errors
+
+
 def render(result):
     lines = [f"MODEL: {result['model']}"]
     for name, report in result['datasets'].items():
@@ -89,6 +119,7 @@ def render(result):
         window = f"; updates {basis['first_update']}--{basis['last_update']}" if basis else ''
         lines += ['', f'{label} GPU TIME (GPU-hours; submitted OLMo basis{window})',
                   *aligned_table(('Seed', 'Random total', 'SR total', 'On select', 'On total', 'Switch select', 'Switch total'), rows)]
+        lines.extend(restart_table(report))
         lines += ['', f'{label} EXCLUDED GPU TIME (GPU-hours; cache/prefix shared once; other columns = evaluation + checkpoint I/O + startup)',
                   *aligned_table(('Seed', 'Cache', 'Prefix', 'On other', 'Switch other', 'SR other', 'Random other'),
                                  excluded_time(report, seeds))]

@@ -85,6 +85,7 @@ def test_no_extra_generation_and_successful_groups_survive_cleanup_and_resume(tm
     assert not list((folder / "rollout-cache").rglob("*.npz"))
     path = folder / "reward-curves/on_policy/rollouts/step-26.json.gz"
     trace = read(path)
+    assert 'timing_receipt_ids' not in trace['history_record']
     assert len(trace["groups"]) == 45  # 40 candidates, one reference, four applied prompts.
     assert {g["phase"] for g in trace["groups"]} == {"selection", "diagnostic", "training"}
     for group in trace["groups"]:
@@ -98,6 +99,7 @@ def test_no_extra_generation_and_successful_groups_survive_cleanup_and_resume(tm
     assert "token_ids" not in json.dumps(rows)
     assert all(r["completion_tokens"] == 2 for g in rows["rollout_groups"] for r in g["responses"])
     state = torch.load(folder / "on_policy-latest.pt", weights_only=False)
+    assert set(state['history'][-1]['timing_receipt_ids']) == {'selection', 'training'}
     restored, *_ = make(folder)
     restored.load_state_dict(state)
     restored.update()

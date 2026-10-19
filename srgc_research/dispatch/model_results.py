@@ -107,6 +107,7 @@ def _export(model, dataset, *, root, environment, text=False):
     storage.validate_tree(root)
     names = ("math", "mbpp") if dataset == "all" else (dataset,)
     patterns = ("seed-*/*-endpoint.json", "seed-*/*-progress.json", "seed-*/run.json",
+                "seed-*/cost-receipts/*/*.json",
                 "seed-*/reward-curves/*/protocol.json", "seed-*/reward-curves/*/training.json",
                 "seed-*/reward-curves/*/recording-extensions/*.json",
                 "seed-*/reward-curves/*/step-*.json", "seed-*/reward-curves/*/rollouts/step-*.json.gz")

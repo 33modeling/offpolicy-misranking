@@ -99,12 +99,14 @@ def test_invalid_times_are_rejected(tmp_path, field, bad):
         history_costs(doc['history'], start=25, stop=275)
 
 
-def test_duplicate_and_shifted_update_histories_are_rejected(tmp_path):
+def test_exact_duplicate_history_is_counted_once_and_gaps_or_conflicts_fail(tmp_path):
     path = progress(tmp_path, 'random')
     original = json.loads(path.read_text())['history']
-    for records in ([original[0], *original], original[1:]):
-        with pytest.raises(ValueError, match='contiguous'):
-            history_costs(records, start=25, stop=275)
+    assert history_costs([original[0], *original, *original], start=25, stop=275) == history_costs(original, start=25, stop=275)
+    with pytest.raises(ValueError, match='contiguous'):
+        history_costs(original[1:], start=25, stop=275)
+    with pytest.raises(ValueError, match='conflicting'):
+        history_costs([*original, {**original[0], 'training_gpu_seconds': 999.}], start=25, stop=275)
 
 
 @pytest.mark.parametrize('dataset', ('math', 'mbpp'))

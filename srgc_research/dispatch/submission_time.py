@@ -42,10 +42,30 @@ def ranges(steps):
     return result
 
 
-def history_costs(history, *, start, stop):
-    """Retain one recorded cost per completed update; never infer missing timers."""
+def unique_history(history):
+    """Exact re-export copies are one update; conflicting branches are not guesses."""
     if not isinstance(history, list):
         raise TypeError("timed training history must be a list")
+    seen, records, duplicates = {}, [], []
+    for record in history:
+        if not isinstance(record, dict):
+            raise TypeError("timed update must be an object")
+        step = record.get('completed_updates')
+        if type(step) is not int:
+            raise ValueError('timed updates must be contiguous on the retained trajectory')
+        if step in seen:
+            if record != seen[step]:
+                raise ValueError('conflicting retained records for the same update')
+            duplicates.append(record)
+            continue
+        seen[step] = record
+        records.append(record)
+    return records, duplicates
+
+
+def history_costs(history, *, start, stop):
+    """Retain one recorded cost per completed update; never infer missing timers."""
+    history, _ = unique_history(history)
     points = []
     previous = start
     for record in history:
@@ -57,6 +77,12 @@ def history_costs(history, *, start, stop):
         point = {"step": step, "checkpoint": step - 1}
         for field in FIELDS:
             point[field] = number(record[field]) if field in record else None
+        if 'timing_receipt_ids' in record:
+            ids = record['timing_receipt_ids']
+            if not isinstance(ids, dict) or any(k not in {'selection', 'training'} or not isinstance(v, str) or not v
+                                                for k, v in ids.items()):
+                raise ValueError('invalid retained update timing receipt IDs')
+            point['timing_receipt_ids'] = dict(ids)
         points.append(point)
         previous = step
     if previous != stop:
@@ -78,7 +104,11 @@ def checked_progress(folder, arm, plan, seed, read):
     if type(step) is not int or not plan["shared_prefix_updates"] <= step <= plan["total_updates"]:
         raise ValueError("timed progress step is outside the frozen plan")
     points = history_costs(progress.get("history"), start=plan["shared_prefix_updates"], stop=step)
-    return {"path": str(path), "step": step, "points": points, "costs": progress.get("costs", {})}
+    _, duplicates = unique_history(progress['history'])
+    return {"path": str(path), "step": step, "points": points, "costs": progress.get("costs", {}),
+            'duplicate_history_entries': len(duplicates),
+            'duplicate_history_gpu_seconds': {field: math.fsum(number(r[field]) for r in duplicates)
+                                             if all(field in r for r in duplicates) else None for field in FIELDS}}
 
 
 def collect(folder, arm, plan, seed, *, read=read_json):
@@ -109,6 +139,15 @@ def collect(folder, arm, plan, seed, *, read=read_json):
               "primary": sum(known.values()) + preparation if complete else None}
     missing = {field: [step for step in range(start + 1, stop + 1)
                        if not any(p["step"] == step and p[field] is not None for p in points)] for field in FIELDS}
+    from .restart_costs import reconcile
+
+    try:
+        restart = reconcile(folder, arm, points, start=start, stop=stop, read=read,
+                            expected_gpus=plan.get('world_size')) if progress else {'record': 'MISSING'}
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        # A damaged all-attempt ledger must never be used for numerical
+        # subtraction. The separately validated retained history remains valid.
+        restart = {'record': 'INVALID', 'error': str(error), 'removed_gpu_seconds': None}
     return {"record": "COMPLETE" if complete else "PARTIAL" if measured else "MISSING",
             "seed": seed, "arm": arm, "first_update": start + 1, "last_update": stop,
             "recorded_through_update": progress["step"] if progress else None,
@@ -119,7 +158,10 @@ def collect(folder, arm, plan, seed, *, read=read_json):
             "missing_update_timer_ranges": {field: ranges(steps) for field, steps in missing.items()},
             "missing_update_timer_counts": {field: len(steps) for field, steps in missing.items()},
             "source": progress["path"] if progress else None,
-            "preparation_source": preparation_source, "update_timers": points}
+            "preparation_source": preparation_source, "update_timers": points,
+            'restart_accounting': restart,
+            'duplicate_history_entries': progress['duplicate_history_entries'] if progress else 0,
+            'duplicate_history_gpu_seconds': progress['duplicate_history_gpu_seconds'] if progress else {}}
 
 
 def summaries(tasks, seeds, arms):
@@ -152,6 +194,7 @@ def attach(report, plan_path, plan, *, read=read_json):
         "selection_work": "required candidate/reference gradients and rollout generation are included, not diagnostics to subtract",
         "selection_scope": "full selection timers, including scored rollouts, validation, gradients and overhead",
         "missing": "null; no scaling of candidate-only estimates or incomplete histories",
+        'restart_accounting': 'one retained update per seed/arm/checkpoint; exact history copies removed; finished attempt receipts reconciled separately',
     }
     plan_path = Path(plan_path)
     for row in report["tasks"]:
@@ -168,6 +211,11 @@ def attach(report, plan_path, plan, *, read=read_json):
                 if not isinstance(marker, dict) or any(marker.get(k) != v for k, v in expected.items()):
                     raise ValueError("timed progress is not bound to this plan/input/seed")
                 row["submission_timing"] = collect(folder, row["arm"], plan, row["seed"], read=read)
+                restart_error = row['submission_timing'].get('restart_accounting', {}).get('error')
+                if restart_error:
+                    message = f"seed {row['seed']} {row['arm']} restart accounting: {restart_error}"
+                    if message not in report.setdefault('errors', []):
+                        report['errors'].append(message)
             else:
                 # A file without a run identity must not become a measured total.
                 row["submission_timing"] = collect(folder, row["arm"], plan, row["seed"], read=lambda _: None)
@@ -202,10 +250,13 @@ def render(report):
             means.append(f"{arm} {values['mean_gpu_hours']:.3f}" +
                          (f" +/- {values['sample_sd_gpu_hours']:.3f}" if values['sample_sd_gpu_hours'] is not None else '') +
                          f" (n={values['timed_seeds']})")
+    from .model_result_text import restart_table
+
     return ["", f"SUBMITTED OLMO TIME BASIS (GPU-hours; updates {basis['first_update']}--{basis['last_update']})",
             *aligned_table(("Seed", "Arm", "Record", "Updates", "SR prep", "Select", "Train", "Total"), cells),
             *(["Submitted-basis mean +/- sample SD (GPU-h): " + " | ".join(means)] if means else []),
             "One retained timer per update; common SR preparation charged once. Original all-attempt costs remain in GPU TIMES.",
             "Missing timers/preparation keep Total unknown; incomplete subtotals do not establish a full-run time.",
+            *restart_table(report),
             *[f"SUBMISSION TIME ERROR seed {r['seed']} {r['arm']}: {r['submission_timing']['error']}"
               for r in report['tasks'] if r.get('submission_timing', {}).get('error')]]

@@ -87,6 +87,12 @@ def finite_reward(value):
 def training_points(history, *, start, stop):
     if not isinstance(history, list):
         raise ValueError("training history must be a list")  # noqa: TRY004 - validation contract
+    from .submission_time import unique_history
+
+    try:
+        history, _ = unique_history(history)
+    except TypeError as error:
+        raise ValueError(str(error)) from error
     points = []
     previous = start
     for item in history:
@@ -324,8 +330,20 @@ def recording_engine(base, folder, task, plan_path, plan, data):
             # its measurement. Evaluate its actual weights before changing them.
             self.capture_boundary()
             from .rollout_records import capture, save
-            with capture(self.backend) as groups:
+            meter = self.backend.cost_meter
+            original_record, receipts = meter.record, {}
+
+            def record_cost(event):
+                original_record(event)
+                if event.get('state') == 'finished' and event.get('phase') in {'selection', 'training'}:
+                    receipts[event['phase']] = event['id']
+
+            from unittest.mock import patch
+
+            with patch.object(meter, 'record', record_cost), capture(self.backend) as groups:
                 result = super().update()
+            if receipts:
+                result['timing_receipt_ids'] = receipts
             save(self, groups, folder, task, plan, data, self.protocol(task), result)
             self.save_training_rewards()
             self.capture_boundary()

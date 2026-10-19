@@ -101,6 +101,34 @@ MATH·MBPP별 seed 보상, 전환 시점, 제출 OLMo 기준 GPU 시간, 평균�
 복원할 수 없다. GPU 노드에서 위 `results`를 다시 내보내 실제 `*-progress.json`을 읽어야
 새 기준의 값을 얻는다. 요약표만 보고 134.35 또는 142.88 GPU-hours를 임의 조정하지 않는다.
 
+## 중단·재시작 비용 차감
+
+기존 endpoint의 `costs`는 learner 누적 타이머에 전체 phase ledger를 합쳐 쓰므로,
+재시작 전후에 완료된 재수행 phase도 포함한다. 이 endpoint 합계를 최종 경로의 시간으로
+쓰지 않는다. Random·SR·On-policy·Switch, MATH·MBPP, Qwen·Llama·Gemma 및 OLMo
+추가 seed 보고서 모두 같은 `submission_timing` reader를 사용한다.
+
+- 최종 `*-progress.json`의 완료 update마다 학습·선별 타이머를 한 번만 합산한다.
+  내용이 완전히 같은 update 사본은 제거한다. 같은 update의 내용이 충돌하거나 구간이
+  빠졌으면 시간이나 보상을 임의 선택하지 않는다. 보상 내보내기도 동일한 사본 제거를 쓴다.
+- 전체 완료 selection/training receipt를 phase·checkpoint·시간으로 최종 update와 대조한다.
+  현재 기록 확장으로 실행한 update는 실제 receipt ID도 history/checkpoint에 저장한다.
+  같은 ID의 같은 완료 receipt 사본은 한 번만 센다. ID가 같고 내용이 다르면 오류다.
+- `RESTART TIME CORRECTION`은 `Before`, `Removed`, `Retained`를 표시한다.
+  대응이 모두 확인되면 `Before - Removed = Retained`가 일치해야 한다.
+  이 표는 학습+선별만 비교하며 SR 준비는 최종 합계에 한 번 더한다.
+  history 사본의 중복 시간과 receipt 재수행 시간을 서로 더해 두 번 빼지 않는다.
+- 시작만 남은 phase는 지속 시간을 모른다. 종료되지 않은 phase가 있으면 알려진 비용만
+  하한으로 표시한다. 최종 update와 매칭되지 않거나 원시 receipt가 없으면 차감액은
+  `-`이며, 최종 합계에서 추정 차감하지 않는다. GPU-seconds/3600 이외에 GPU 수나
+  재시작 횟수로 다시 나누지 않는다.
+- 실패·재시작의 실제 소비 비용, 원래 endpoint, receipt, checkpoint는 그대로 보존한다.
+  자동 기록 변경은 다음 정상 시작에 적용되며 실행 중인 학습을 중단하지 않는다.
+
+과거 합계 표만으로는 어느 update를 몇 번 다시 수행했는지 알 수 없다. 공개 `results`가
+GPU 노드의 원시 progress/receipt를 읽어 차감과 대조를 계산한다. 코드 push는 원격
+노드의 새 계산 결과를 수신·검증한 것과 구분한다.
+
 ## 다른 실험도 터미널에서 바로 복사
 
 기존 공개 `results` 명령을 그대로 사용한다. 파일 경로나 파일 크기만 출력하던 경로를

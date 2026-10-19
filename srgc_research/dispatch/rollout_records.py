@@ -119,7 +119,7 @@ def save(engine, local, folder, task, plan, data, protocol, record):
                     # A retry can have different timing receipts for identical
                     # generated responses. Timing stays in the cost ledgers.
                     "history_record": {k: v for k, v in record.items()
-                                       if not k.endswith(("_gpu_seconds", "_wall_seconds"))},
+                                       if not k.endswith(("_gpu_seconds", "_wall_seconds")) and k != 'timing_receipt_ids'},
                     "protocol_sha256": hashlib.sha256(json.dumps(protocol, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                     "identity": {k: protocol[k] for k in ("plan_sha256", "input_sha256", "implementation_sha256")},
                     "groups": [rows[key] for key in sorted(rows)]}
