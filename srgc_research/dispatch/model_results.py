@@ -234,11 +234,12 @@ def _export(model, dataset, *, root, environment, text=False):
     result["complete"] = not result["errors"] and all(snapshot["complete"] for snapshot in snapshots)
     result["coverage"] = {"completed_continuations": completed, "planned_continuations": planned}
     artifact = compact(result)
-    save_result(model, artifact, work=work, quiet=text)
+    destination = save_result(model, artifact, work=work, quiet=text)
     if text:
         from .model_result_text import render
 
         print(render(artifact), flush=True)
+        print(f"\nJSON: {destination}", flush=True)
     else:
         print(f"{model.upper()} {completed}/{planned} continuations; "
               f"{'COMPLETE' if result['complete'] else 'INCOMPLETE'}", flush=True)
@@ -264,10 +265,10 @@ def main(argv=None):
     parser.add_argument("--root", type=Path)
     # Existing launch commands may retain status/runner switches. They do not
     # authorize training when the selected action is results.
-    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--json", action="store_true", help="retained for compatibility; results always save JSON and print tables")
     args = parser.parse_args(argv)
     try:
-        return export(args.model, args.dataset, root=args.root, text=not args.json)
+        return export(args.model, args.dataset, root=args.root, text=True)
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"ERROR: {error}", flush=True)
         return 1

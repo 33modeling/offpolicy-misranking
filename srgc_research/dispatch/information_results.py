@@ -112,10 +112,11 @@ def _export(dataset, *, work, text=False):
         result["datasets"][name] = {"completed_initial_seeds": done, "planned_initial_seeds": sorted(SEEDS),
                                     "stages": sorted({stage for dataset_name, _, stage in locations if dataset_name == name})}
     artifact = compact(result)
-    save_result("information", artifact, work=work, quiet=text)
+    destination = save_result("information", artifact, work=work, quiet=text)
     if text:
         from srgc_research.report_text import information as render_results
         print(render_results(artifact), flush=True)
+        print(f"\nJSON: {destination}", flush=True)
         return int(bool(result['errors']))
     coverage = result["coverage"]
     print(f"INFORMATION {coverage['completed_initial_measurements']}/{coverage['planned_initial_measurements']} "

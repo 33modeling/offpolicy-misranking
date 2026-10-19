@@ -21,7 +21,7 @@ def reconcile(folder, arm, points, *, start, stop, read, expected_gpus=None):
     if not paths:
         return {'record': 'MISSING', 'recorded_before_gpu_seconds': None, 'removed_gpu_seconds': None,
                 'retained_gpu_seconds': None, 'unfinished_receipts': 0, 'duplicate_receipt_copies': 0}
-    events, copies, duplicate_seconds, unfinished = {}, 0, 0., []
+    events, copies, duplicate_seconds, unfinished, sources = {}, 0, 0., [], []
     for path in paths:
         row = read(path)
         if row is None:
@@ -37,6 +37,13 @@ def reconcile(folder, arm, points, *, start, stop, read, expected_gpus=None):
             raise ValueError('restart receipt lacks phase checkpoint or identity')
         if not start <= checkpoint < stop:
             continue
+        source = {key: row[key] for key in ('id', 'phase', 'checkpoint', 'gpu_count', 'state',
+                                            'wall_seconds', 'gpu_seconds', 'stages', 'counts') if key in row}
+        source['source_file'] = str(path)
+        if 'rank_timings' in row:
+            source['rank_timings'] = [{key: part[key] for key in ('wall_seconds', 'local_gpu_count') if key in part}
+                                      for part in row['rank_timings']]
+        sources.append(source)
         state = row.get('state')
         if state not in {'started', 'finished'}:
             raise ValueError('invalid restart receipt state')
@@ -114,6 +121,7 @@ def reconcile(folder, arm, points, *, start, stop, read, expected_gpus=None):
             'duplicate_receipt_gpu_seconds': duplicate_seconds,
             'discarded_completed_attempts': replayed, 'retained_receipts': matches,
             'unmatched_retained_updates': missing,
+            'source_receipts': sources,
             'source_files': [str(path) for path in paths],
             'identity': 'bound seed/arm run folder; phase checkpoint, duration and recorded receipt ID when available',
             'scope': 'selection and training only; preparation, evaluation, checkpoints and startup remain separate'}

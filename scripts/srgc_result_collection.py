@@ -52,9 +52,9 @@ def publish(report, scope):
 
 
 def print_paths(report, *, json_output=False):
-    if not json_output:
-        return
     stream = sys.stderr if json_output else sys.stdout
     for collection in report.get("collections", []):
         print(f"COLLECTED JSON: {collection['report_path']}", file=stream)
+        if not json_output:
+            continue
         print(f"COLLECTED FILES: {collection['directory']} ({collection['file_count']} originals)", file=stream)

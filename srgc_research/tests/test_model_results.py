@@ -171,14 +171,15 @@ def test_endpoint_replacement_during_snapshot_is_reported_and_excluded(cohort):
 def test_public_shell_results_uses_cpu_and_does_not_need_model_interpreter(cohort):
     script = {"qwen35": "run_srgc_qwen35.sh", "gemma4": "run_srgc_gemma4.sh", "llama31": "run_srgc_llama31.sh"}[cohort.model]
     env = {**cohort.env, "QWEN_PYTHON": "/missing", "GEMMA_PYTHON": "/missing", "LLAMA_PYTHON": "/missing"}
-    for args in (("all", "results"), ("results",)):
+    for args in (("all", "results"), ("results",), ("all", "results", "--json")):
         result = subprocess.run(["sh", str(REPO / "scripts" / script), *args], cwd="/tmp", env=env,
                                 capture_output=True, text=True, timeout=30, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
         assert "MODEL:" in result.stdout
         assert "MATH FINAL REWARD (%)" in result.stdout
         assert "MBPP GPU TIME (GPU-hours; submitted OLMo basis" in result.stdout
-        assert "RESULT:" not in result.stdout and '.json' not in result.stdout
+        destination = cohort.work / 'results' / f'{cohort.model}-results.json'
+        assert f'JSON: {destination}' in result.stdout and destination.is_file()
     assert [p.name for p in (cohort.work / "results").iterdir()] == [f"{cohort.model}-results.json"]
 
 

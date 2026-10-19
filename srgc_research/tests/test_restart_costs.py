@@ -55,6 +55,8 @@ def test_restarts_at_same_checkpoint_subtract_finished_replays_once(tmp_path):
     assert audit['removed_gpu_seconds'] == 28.
     assert audit['retained_gpu_seconds'] == 8.
     assert audit['duplicate_receipt_copies'] == 1
+    assert len(audit['source_receipts']) == 6
+    assert all(row['gpu_seconds'] == row['wall_seconds'] * row['gpu_count'] for row in audit['source_receipts'])
     assert len(audit['discarded_completed_attempts']) == 3
     assert before == {p: p.read_bytes() for p in before}
 

@@ -94,8 +94,9 @@ sh scripts/run_srgc_gemma4.sh all results
 
 **전달할 때는 파일을 열거나 JSON을 복사하지 않는다.** 공개 `results` 명령은 터미널에
 MATH·MBPP별 seed 보상, 전환 시점, 제출 OLMo 기준 GPU 시간, 평균·SD를 짧은 표로 바로 출력한다.
-출력 전체를 선택해 복사해서 대화에 붙여넣으면 된다. 기존 단일 원본 결과 파일은 내부적으로
-계속 보존하며 자동 결과 저장·학습 worker의 기존 동작은 유지한다.
+화면 표와 JSON 파일을 동시에 제공하며, 끝의 `JSON: /절대/경로/...json`에서 파일 위치도
+항상 확인할 수 있다. 표를 복사하거나 해당 JSON을 전달하면 된다. `--json`을 붙여도
+모델별 공개 결과 명령의 화면 표를 숨기지 않는다. 자동 결과 저장·학습 worker의 기존 동작은 유지한다.
 
 기존 Qwen MATH·MBPP의 사용자 제공 GPU 시간 요약표만으로는 최종 경로의 update별 비용을
 복원할 수 없다. GPU 노드에서 위 `results`를 다시 내보내 실제 `*-progress.json`을 읽어야
@@ -125,15 +126,19 @@ MATH·MBPP별 seed 보상, 전환 시점, 제출 OLMo 기준 GPU 시간, 평균�
 - 실패·재시작의 실제 소비 비용, 원래 endpoint, receipt, checkpoint는 그대로 보존한다.
   자동 기록 변경은 다음 정상 시작에 적용되며 실행 중인 학습을 중단하지 않는다.
 
+JSON의 `tasks[].submission_timing.restart_accounting.source_receipts`에는 재계산에 필요한
+phase·checkpoint·ID·상태·wall-seconds·GPU 수·GPU-seconds와 기록된 단계별 비용을 보존한다.
+`update_timers`의 최종 update 기록과 함께 전달하므로 합계 표만 있는 경우와 구분한다.
+
 과거 합계 표만으로는 어느 update를 몇 번 다시 수행했는지 알 수 없다. 공개 `results`가
 GPU 노드의 원시 progress/receipt를 읽어 차감과 대조를 계산한다. 코드 push는 원격
 노드의 새 계산 결과를 수신·검증한 것과 구분한다.
 
 ## 다른 실험도 터미널에서 바로 복사
 
-기존 공개 `results` 명령을 그대로 사용한다. 파일 경로나 파일 크기만 출력하던 경로를
-측정값 표로 바꿨다. 내부 원본·자체 완결 결과 묶음은 유지하며, 명시적인 `json` 또는
-`--json` 출력도 그대로 보존한다.
+기존 공개 `results` 명령을 그대로 사용한다. 화면에 측정값 표를 출력하고 JSON 파일도
+함께 저장하며, 마지막에 JSON 경로를 표시한다. 원본·자체 완결 결과 묶음은 유지한다.
+N01–N08 및 추가 대조군의 명시적 JSON stdout 모드는 기계 판독용으로 유지한다.
 
 | 대상 | 명령 예시 |
 | --- | --- |

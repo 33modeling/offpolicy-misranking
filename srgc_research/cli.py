@@ -243,6 +243,8 @@ def main(argv=None):
         atomic_json(target, report)
         from .report_text import research as render_results
         print(json.dumps(report, indent=2) if args.action == "json" else render_results(report))
+        if args.action == 'results':
+            print(f"\nJSON: {target}", flush=True)
         for error in report["errors"]:
             print(error, file=sys.stderr)
         return int(bool(report["errors"]))
@@ -263,6 +265,8 @@ def main(argv=None):
         report = collect(root_path, datasets, args.scope)
         from .report_text import research as render_results
         print(json.dumps(report, indent=2) if args.action == "json" else render_results(report))
+        if args.action == 'results':
+            print(f"\nJSON: {report['result_path']}", flush=True)
         for error in report["errors"]:
             print(error, file=sys.stderr)
         return int(bool(report["errors"]))

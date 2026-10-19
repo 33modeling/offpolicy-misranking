@@ -537,6 +537,7 @@ print('offline verifier ready')
                 self.assertEqual(json.loads(saved.read_text()), report)
                 self.assertNotIn("COLLECTED JSON:", text)
                 self.assertNotIn("COLLECTED FILES:", text)
+                self.assertIn(f'JSON: {saved}', text)
                 self.assertEqual(len(report["source_results"]), 4)
                 for item in report["result_files"]:
                     original = json.loads(Path(item["path"]).read_text())
@@ -552,7 +553,7 @@ print('offline verifier ready')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=False))
-        self.assertNotIn(str(run_root(plan, load_plan(plan))), output.getvalue())
+        self.assertIn(f'JSON: {run_root(plan, load_plan(plan)) / "results/results.json"}', output.getvalue())
         self.assertIn("No validated endpoints yet.", output.getvalue())
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

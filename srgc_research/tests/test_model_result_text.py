@@ -61,17 +61,20 @@ def test_unmeasured_or_invalid_costs_are_not_printed_as_full_totals(failure):
     assert '123.456' not in render(data)
 
 
-def test_public_results_is_copyable_without_opening_any_result_file(cohort, capsys):
+@pytest.mark.parametrize('flags', [[], ['--json']])
+def test_public_results_saves_json_and_prints_tables_and_destination(cohort, capsys, flags):
     folder = finish(cohort, 'math')
     progress(folder, 'on_policy')
     before = saved(cohort)
     with patch.dict(os.environ, cohort.env, clear=True):
-        assert main([cohort.model, 'all', 'results', '--root', str(cohort.root)]) == 0
+        assert main([cohort.model, 'all', 'results', '--root', str(cohort.root), *flags]) == 0
     output = capsys.readouterr().out
     assert output.startswith('MODEL: ')
     assert 'MATH FINAL REWARD (%)' in output and 'MBPP FINAL REWARD (%)' in output
     assert 'MATH GPU TIME' in output and '0.389' in output
-    assert '.json' not in output and 'SIZE:' not in output and 'RESULT:' not in output
+    destination = cohort.work / 'results' / f'{cohort.model}-results.json'
+    assert output.endswith(f'JSON: {destination}\n') and destination.is_file()
+    assert 'SIZE:' not in output and 'RESULT:' not in output
     assert str(cohort.root) not in output
     assert saved(cohort) == before
     # Keep the original machine-readable evidence as an internal artifact.

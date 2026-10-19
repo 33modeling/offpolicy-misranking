@@ -31,4 +31,6 @@ def main(argv=None):
         reports.export(report, destination)
     print(json.dumps(report, indent=2, allow_nan=False) if args.json else render({
         'model': plan['model'], 'datasets': {dataset: report}, 'errors': report['errors']}), flush=True)
+    if args.action == 'results' and not args.json:
+        print(f'\nJSON: {destination.with_suffix(".json")}', flush=True)
     return int(bool(report['errors']))

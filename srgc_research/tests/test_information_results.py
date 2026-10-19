@@ -30,7 +30,8 @@ def test_both_datasets_and_essential_updates_fit_one_file(tmp_path, measured, ba
     output = capsys.readouterr().out
     assert 'INFORMATION 2/10' in output and 'MATH' in output and 'MBPP' in output
     assert 'ACTUAL BATCH UPDATES' in output and 'Gradient norm' in output
-    assert 'RESULT:' not in output and 'READ information' not in output and '.json' not in output
+    assert 'READ information' not in output
+    assert f'JSON: {tmp_path / "results/information-results.json"}' in output
     files = list((tmp_path / "results").iterdir())
     assert [p.name for p in files] == ["information-results.json"]
     result = json.loads(files[0].read_text())
@@ -85,7 +86,7 @@ def test_public_one_line_command_needs_no_input_flags_or_gpu_environment(wrapper
     destination = work / "results/information-results.json"
     assert "INFORMATION 0/10" in result.stdout
     assert "SAME-STATE INFORMATION" in result.stdout and "ACTUAL BATCH UPDATES" in result.stdout
-    assert ".json" not in result.stdout and "RESULT:" not in result.stdout
+    assert f'JSON: {destination}' in result.stdout
     assert len(json.loads(destination.read_text())["pending"]) == 10
     assert list((work / "results").iterdir()) == [destination]
 

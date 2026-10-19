@@ -760,6 +760,7 @@ def results(args):
         return
     from srgc_research.report_text import extra as render_results
     print(render_results(report))
+    print(f"\nJSON: {report['collection']['report_path']}", flush=True)
     if errors:
         raise ValueError('; '.join(errors))
     return
