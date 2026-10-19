@@ -122,6 +122,8 @@ def _export(model, dataset, *, root, environment, text=False, full=False):
             seed = int(folder.removeprefix("seed-"))
         except ValueError:
             return True
+        if not parts:
+            return True
         if parts == ["run.json"]:
             return False  # Its status changes when the seed's last arm completes.
         if parts[0] in {"cost-receipts", "reward-curves"}:
