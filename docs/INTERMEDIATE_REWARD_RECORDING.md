@@ -214,4 +214,6 @@ N01–N08 및 추가 대조군의 명시적 JSON stdout 모드는 기계 판독�
 
 shared prefix의 scalar 기록이 있으면 1–25도 각 arm의 `training_rewards`와 25-step 구간 평균에 포함한다. `shared_prefix: true`로 공통 학습 구간임을 표시하고, `shared_prefix_training_recorded_updates`로 기록된 개수를 알린다.
 
-각 curve에 `training_rewards`, `training_windows_25`, `held_out_rewards`, `missing_held_out_steps`, `diagnostic_costs`가 있다. reward는 0–1, `reward_percent`는 0–100이다. 원시 응답·token/logprob 배열은 compact 결과에 넣지 않는다. 파일이 검사 도중 바뀌거나 run identity가 맞지 않으면 오류를 표시하고 results 재실행이 필요하다.
+각 curve에 `training_rewards`, `training_windows_25`, `held_out_rewards`, `missing_held_out_steps`, `diagnostic_costs`가 있다. reward는 0–1, `reward_percent`는 0–100이다. 원시 응답·token/logprob 배열은 compact 결과에 넣지 않는다. 완료된 arm의 파일이 검사 도중 바뀌거나 run identity가 맞지 않으면 오류를 표시하고 results 재실행이 필요하다.
+
+학습 중인 arm은 results를 읽는 동안에도 `training.json`, progress, 비용 receipt, 응답 기록을 계속 쓴다. 2026-10-19 이전에는 이 정상적인 갱신도 `reward records changed during result inspection` 오류로 표시했기 때문에, 학습 중 results는 재실행해도 같은 오류와 종료 코드 1이 반복될 수 있었다. 현재는 status가 complete인 arm만 이 불변 검사를 유지하고, 진행 중인 arm은 원자적으로 교체된 파일의 현재 버전을 읽는다. 진행 중인 update가 scalar reward보다 먼저 저장한 응답 기록은 그 update의 reward가 기록될 때까지 export에서 제외한다. 학습·기록 코드와 저장 파일은 바꾸지 않는다.

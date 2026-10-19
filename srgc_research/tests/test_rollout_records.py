@@ -161,31 +161,40 @@ def test_atomic_archive_reuse_and_conflicting_retry(tmp_path):
     assert path.read_bytes() == original
 
 
-def export_records(cohort):
+def export_records(cohort, arm="on_policy", *, complete=True):
     from srgc_rebuttal.plan import input_path, load_plan
+    from srgc_rebuttal.runtime import run_root
     from srgc_research.dispatch import reward_curves
-    folder = finish(cohort, "math")
     plan = load_plan(cohort.plans["math"])
+    # A running arm has no endpoint; it shares the seed folder of a finished one.
+    folder = (finish(cohort, "math", arm=arm) if complete
+              else run_root(cohort.plans["math"], plan) / "seed-5")
     data = json.loads(input_path(cohort.plans["math"], plan, 5).read_text())
     identity = read(folder / "run.json")
     identity.pop("status")
-    protocol = {**identity, "schema": reward_curves.SCHEMA, "arm": "on_policy", "extension_sha256": "e" * 64,
+    protocol = {**identity, "schema": reward_curves.SCHEMA, "arm": arm, "extension_sha256": "e" * 64,
                 "interval_updates": 25, "responses_per_prompt": 8, "question_count": len(data["evaluation_ids"]),
                 "evaluation_ids_sha256": reward_curves.fingerprint(data["evaluation_ids"]),
                 "stream": "reporting-evaluation", "training_batch_reward_is_held_out": False}
     ids = data["candidate_ids"][:4]
-    history = {"checkpoint": 25, "completed_updates": 26, "selector": "on_policy",
+    history = {"checkpoint": 25, "completed_updates": 26, "selector": arm,
                "train_ids": ids, "metrics": {"sample_reward": .5}}
-    atomic_json(folder / "reward-curves/on_policy/protocol.json", protocol)
-    atomic_json(folder / "reward-curves/on_policy/training.json", {**protocol, "step": 26,
+    atomic_json(folder / f"reward-curves/{arm}/protocol.json", protocol)
+    atomic_json(folder / f"reward-curves/{arm}/training.json", {**protocol, "step": 26,
                 "points": reward_curves.training_points([history], start=25, stop=26)})
-    trace = {"schema": rollout_records.SCHEMA, "model": plan["model"], "dataset": plan["dataset"],
-             "seed": 5, "arm": "on_policy", "step": 26, "protocol_sha256": reward_curves.fingerprint(protocol),
-             "identity": {k: identity[k] for k in ("plan_sha256", "input_sha256", "implementation_sha256")},
-             "history_record": history,
-             "groups": [{"arm": "on_policy", "phase": "training", "update": 26, "prompt_id": rid,
-                         "responses": [{"reward": i % 2, "token_ids": [10, 20, i]} for i in range(8)]} for rid in ids]}
-    rollout_records.publish(folder / "reward-curves/on_policy/rollouts/step-26.json.gz", trace)
+
+    def trace(step):
+        record = {**history, "checkpoint": step - 1, "completed_updates": step}
+        return {"schema": rollout_records.SCHEMA, "model": plan["model"], "dataset": plan["dataset"],
+                "seed": 5, "arm": arm, "step": step, "protocol_sha256": reward_curves.fingerprint(protocol),
+                "identity": {k: identity[k] for k in ("plan_sha256", "input_sha256", "implementation_sha256")},
+                "history_record": record,
+                "groups": [{"arm": arm, "phase": "training", "update": step, "prompt_id": rid,
+                            "responses": [{"reward": i % 2, "token_ids": [10, 20, i]} for i in range(8)]}
+                           for rid in ids]}
+    rollout_records.publish(folder / f"reward-curves/{arm}/rollouts/step-26.json.gz", trace(26))
+    if not complete:
+        return folder, trace
     return folder
 
 
@@ -240,6 +249,58 @@ def test_bad_reward_archive_preserves_endpoints_and_other_arms_in_partial_export
     sr = next(row for row in snapshot['reward_curves'] if row['seed'] == 5 and row['arm'] == 'sr')
     assert sr['held_out_rewards'][0]['reward'] == .625
     assert saved(cohort) == before
+
+
+def test_running_arm_can_advance_during_export_without_errors(cohort):
+    from srgc_rebuttal import reports
+    from srgc_research.dispatch import model_results
+    from srgc_research.tests.test_restart_costs import event
+    from srgc_research.tests.test_submission_time import progress
+
+    export_records(cohort)
+    folder, trace = export_records(cohort, "random", complete=False)
+    progress(folder, "random", step=26)
+    event(folder, "random", "training-25", 25, 4.)
+    original = reports.snapshot
+
+    def training_continues(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if result["dataset"] in {"math", "math_train"}:
+            # The running update saves its responses before its scalar reward,
+            # and its new phase receipt appears after the file inventory.
+            rollout_records.publish(folder / "reward-curves/random/rollouts/step-27.json.gz", trace(27))
+            event(folder, "random", "training-26", 26, 4., state="started")
+        return result
+    with patch.object(reports, "snapshot", side_effect=training_continues):
+        assert model_results.export(cohort.model, "math", environment=cohort.env, full=True) == 0
+    artifact = json.loads((cohort.work / "results" / f"{cohort.model}-full-results.json").read_text())
+    assert artifact["errors"] == []
+    snapshot = artifact["datasets"]["math"]
+    curve = next(c for c in snapshot["reward_curves"] if c["seed"] == 5 and c["arm"] == "random")
+    assert [p["step"] for p in curve["training_rewards"] if not p.get("shared_prefix")] == [26]
+    assert [s["step"] for s in curve["rollout_sources"]] == [26]
+    timing = next(t for t in snapshot["tasks"] if t["seed"] == 5 and t["arm"] == "random")["submission_timing"]
+    assert timing["restart_accounting"]["unfinished_receipts"] == 1
+    assert timing["restart_accounting"]["removed_gpu_seconds"] is None
+
+
+def test_completed_arm_records_must_not_change_during_export(cohort):
+    from srgc_rebuttal import reports
+    from srgc_research.dispatch import model_results
+
+    folder = export_records(cohort)
+    path = folder / "reward-curves/on_policy/training.json"
+    original = reports.snapshot
+
+    def rewrite(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if result["dataset"] in {"math", "math_train"}:
+            atomic_json(path, json.loads(path.read_text()))
+        return result
+    with patch.object(reports, "snapshot", side_effect=rewrite):
+        assert model_results.export(cohort.model, "math", environment=cohort.env) == 1
+    assert any("seed-5.on_policy reward curve" in error and "changed during result inspection" in error
+               for error in read_result(cohort)["errors"])
 
 
 def distributed_writer(rank, folder):

@@ -16,7 +16,7 @@ from .reward_curves import (
 )
 
 
-def collect(folder, arm, plan, expected, ids, read):
+def collect(folder, arm, plan, expected, ids, read, *, live=False):
     directory = folder / "reward-curves" / arm
     points, sources, held_out, costs = [], [], {}, []
     progress_path = folder / f"{arm}-progress.json"
@@ -144,6 +144,9 @@ def collect(folder, arm, plan, expected, ids, read):
             from .rollout_records import SCHEMA as TRACE_SCHEMA
             from .rollout_records import compact_groups
             step = trace.get("step")
+            if live and type(step) is int and step > max(recorded_training, default=0):
+                # A running update saves its responses just before its scalar reward.
+                continue
             if (trace.get("schema") != TRACE_SCHEMA or trace.get("seed") != expected["seed"] or
                     trace.get("arm") != name or trace.get("protocol_sha256") != fingerprint(bound) or
                     trace.get("model") != plan.get("model", "unrecorded") or trace.get("dataset") != plan.get("dataset") or

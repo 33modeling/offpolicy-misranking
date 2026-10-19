@@ -113,14 +113,28 @@ def _export(model, dataset, *, root, environment, text=False, full=False):
                 "seed-*/reward-curves/*/step-*.json", "seed-*/reward-curves/*/rollouts/step-*.json.gz")
     versions = {path: file_version(path) for name in names for pattern in patterns
                 for path in (root / "runs" / name).glob(pattern)}
+    finished, continuations = set(), {}
 
-    def read_stable(path):
-        before = versions.get(path)
-        if before is None and not path.exists():
-            return None
-        if before is None or file_version(path) != before:
-            raise ValueError("reward records changed during result inspection; rerun results")
-        payload = path.read_bytes()
+    def settled(path):
+        """Only a complete continuation's records must stay fixed during export."""
+        try:
+            name, folder, *parts = path.relative_to(root / "runs").parts
+            seed = int(folder.removeprefix("seed-"))
+        except ValueError:
+            return True
+        if parts == ["run.json"]:
+            return False  # Its status changes when the seed's last arm completes.
+        if parts[0] in {"cost-receipts", "reward-curves"}:
+            owner = parts[1]
+        else:
+            owner = parts[0].removesuffix("-endpoint.json").removesuffix("-progress.json")
+        if owner == "prefix":
+            # Each arm can publish the shared-prefix evaluation when it starts.
+            arms = continuations.get((name, seed), set())
+            return bool(arms) and all((name, seed, arm) in finished for arm in arms)
+        return (name, seed, owner) in finished
+
+    def parse(path, payload):
         try:
             value = json.loads(gzip.decompress(payload) if path.suffix == ".gz" else payload)
             if not isinstance(value, dict):
@@ -136,6 +150,26 @@ def _export(model, dataset, *, root, environment, text=False, full=False):
             # successful endpoints and other arms in the partial export, and
             # never let automatic publication turn this into a learner crash.
             raise ValueError(f"invalid reward record {path}: {error}") from error
+        return value
+
+    def read_stable(path):
+        if not settled(path):
+            # A running arm keeps writing while results are read. Its files are
+            # replaced atomically, so read one whole current version instead.
+            for _ in range(3):
+                current = file_version(path)
+                if current is None:
+                    return None
+                payload = path.read_bytes()
+                if file_version(path) == current:
+                    return parse(path, payload)
+            raise ValueError("reward records changed during result inspection; rerun results")
+        before = versions.get(path)
+        if before is None and not path.exists():
+            return None
+        if before is None or file_version(path) != before:
+            raise ValueError("reward records changed during result inspection; rerun results")
+        value = parse(path, path.read_bytes())
         if file_version(path) != before:
             raise ValueError("reward records changed during result inspection; rerun results")
         return value
@@ -146,6 +180,13 @@ def _export(model, dataset, *, root, environment, text=False, full=False):
 
     with patch.object(reports, "snapshot", with_costs):
         snapshots = load_reports(model, dataset, root, environment)
+    for name, snapshot in zip(names, snapshots, strict=True):
+        for row in snapshot["tasks"]:
+            if row["arm"] in {"cache", "prefix"}:
+                continue
+            continuations.setdefault((name, row["seed"]), set()).add(row["arm"])
+            if row["status"] == "complete":
+                finished.add((name, row["seed"], row["arm"]))
     result = {"export_schema": "srgc-model-results-v1", "experiment": model,
               "model": adapter.MODEL, "model_revision": adapter.REVISION,
               "generated": time.time(), "source_root": str(root), "complete": False,
@@ -204,7 +245,8 @@ def _export(model, dataset, *, root, environment, text=False, full=False):
                     data = json.loads(bundle_path.read_text())
                     expected = {"seed": row["seed"], "plan_sha256": digest(plan_path),
                                 "input_sha256": digest(bundle_path), "implementation_sha256": identity}
-                    curve = collect_reward_curve(folder, row["arm"], plan, expected, data["evaluation_ids"], read_stable)
+                    curve = collect_reward_curve(folder, row["arm"], plan, expected, data["evaluation_ids"], read_stable,
+                                                 live=row["status"] != "complete")
                     endpoint = next((e for e in endpoints if e["seed"] == row["seed"] and e["arm"] == row["arm"]), None)
                     if endpoint is not None:
                         value = endpoint["endpoint"]["reward"]
