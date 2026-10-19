@@ -15,7 +15,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 DATASET=${1:-}; TARGET=${2:-auto}; SCOPE=${3:-candidates}
-[ "$#" -le 3 ] || { echo "too many arguments" >&2; exit 2; }
+[ "$#" -le 4 ] || { echo "too many arguments" >&2; exit 2; }
+[ "$#" -le 3 ] || [ "$TARGET" = results ] || { echo "too many arguments" >&2; exit 2; }
 case "$DATASET" in math|mbpp|all) ;; *) echo "usage: sh scripts/run_srgc_sr_refresh.sh math|mbpp|all [scope]" >&2; exit 2 ;; esac
 QUEUE_SCOPE=
 case "$TARGET" in
@@ -29,11 +30,26 @@ elif [ "$TARGET" = status ]; then
         all|support|mechanism|switch_validation|timing|rules|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) ;;
         *) echo "unknown status scope" >&2; exit 2 ;;
     esac
-elif [ "$TARGET" = support_results ] || [ "$TARGET" = support_json ] || [ "$TARGET" = mechanism_results ] || [ "$TARGET" = mechanism_json ] || [ "$TARGET" = switch_validation_results ] || [ "$TARGET" = switch_validation_json ]; then
+elif [ "$TARGET" = support_results ] || [ "$TARGET" = support_json ] || [ "$TARGET" = mechanism_results ] || [ "$TARGET" = mechanism_json ] || [ "$TARGET" = switch_validation_results ] || [ "$TARGET" = switch_validation_json ] || [ "$TARGET" = timing_results ] || [ "$TARGET" = timing_json ] || [ "$TARGET" = rules_results ] || [ "$TARGET" = rules_json ]; then
     [ "$#" -eq 2 ] || { echo "$TARGET takes only dataset" >&2; exit 2; }
 elif [ "$TARGET" = results ]; then
-    [ "$DATASET" != all ] || { echo "results requires math or mbpp" >&2; exit 2; }
-    case "${3:-}" in ''|--json) ;; *) echo "usage: math|mbpp results [--json]" >&2; exit 2 ;; esac
+    REPORT_SCOPE=${3:-all}
+    REPORT_JSON=0
+    if [ "$REPORT_SCOPE" = --json ]; then REPORT_SCOPE=all; REPORT_JSON=1; fi
+    case "$REPORT_SCOPE" in
+        all|support|mechanism|switch_validation|timing|rules|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced) ;;
+        *) echo "unknown result scope" >&2; exit 2 ;;
+    esac
+    case "${4:-}" in '' ) ;; --json) REPORT_JSON=1 ;; *) echo "fourth argument must be --json" >&2; exit 2 ;; esac
+    if [ "$DATASET" = all ]; then
+        [ "$REPORT_JSON" -eq 0 ] || { echo "JSON stdout requires math or mbpp" >&2; exit 2; }
+        report_rc=0
+        for report_dataset in math mbpp; do
+            sh "$0" "$report_dataset" results "$REPORT_SCOPE" || report_rc=$?
+            case "$report_rc" in 130|143) exit "$report_rc" ;; esac
+        done
+        exit "$report_rc"
+    fi
 else
 [ "$DATASET" != all ] || { echo "manual seed requires math or mbpp" >&2; exit 2; }
 case "$TARGET" in ''|*[!0-9]*) echo "seed must be an integer" >&2; exit 2 ;; esac
@@ -50,7 +66,10 @@ WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy
 case "$DATASET" in math|all) EXPLICIT=${PAIR_PYTHON:-} ;; mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; esac
 PY=${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 if ! command -v "$PY" >/dev/null 2>&1; then
-    [ -z "$EXPLICIT" ] || { printf 'Python not found: %s\n' "$PY" >&2; exit 2; }
+    case "$TARGET" in
+        status|results|support_results|support_json|mechanism_results|mechanism_json|switch_validation_results|switch_validation_json|timing_results|timing_json|rules_results|rules_json) ;;
+        *) [ -z "$EXPLICIT" ] || { printf 'Python not found: %s\n' "$PY" >&2; exit 2; } ;;
+    esac
     PY=python3
 fi
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -65,6 +84,14 @@ if [ "$TARGET" = support_results ] || [ "$TARGET" = support_json ]; then
     exec "$PY" scripts/srgc_support_report.py --dataset "$DATASET"
 fi
 case "$TARGET" in
+    timing_results|timing_json|rules_results|rules_json)
+        export CUDA_VISIBLE_DEVICES=""
+        report_scope=${TARGET%_*}
+        case "$TARGET" in
+            *_json) exec "$PY" scripts/srgc_switch_validation_report.py --dataset "$DATASET" --scope "$report_scope" --json ;;
+            *) exec "$PY" scripts/srgc_switch_validation_report.py --dataset "$DATASET" --scope "$report_scope" ;;
+        esac
+        ;;
     mechanism_results|mechanism_json)
         export CUDA_VISIBLE_DEVICES=""
         if [ "$TARGET" = mechanism_json ]; then
@@ -112,10 +139,10 @@ PYEOF
 )
 if [ "$TARGET" = results ]; then
     export CUDA_VISIBLE_DEVICES=""
-    if [ "${3:-}" = --json ]; then
-        exec "$PY" scripts/srgc_sr_refresh.py results --plan "$PLAN" --json
+    if [ "$REPORT_JSON" -eq 1 ]; then
+        exec "$PY" scripts/srgc_sr_refresh.py results --plan "$PLAN" --report-scope "$REPORT_SCOPE" --json
     fi
-    exec "$PY" scripts/srgc_sr_refresh.py results --plan "$PLAN"
+    exec "$PY" scripts/srgc_sr_refresh.py results --plan "$PLAN" --report-scope "$REPORT_SCOPE"
 fi
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}

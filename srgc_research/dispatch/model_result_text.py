@@ -1,5 +1,6 @@
 """Small, copyable terminal tables for measured model outcomes and GPU times."""
 
+import math
 import statistics
 
 from scripts.srgc_time_status import aligned_table
@@ -10,6 +11,32 @@ NAMES = ("On-policy", "Switch", "SR", "Random")
 
 def cell(value):
     return "-" if value is None else f"{value:.3f}"
+
+
+def excluded_time(report, seeds):
+    """Show known excluded phases, never subtract overlapping session timers.
+
+    A partial ledger supplies a lower bound, not a complete excluded duration.
+    Missing phase receipts do not establish a zero. Diagnostic measurements
+    remain in their separate ledgers and are never added to primary costs.
+    """
+    lookup = {(r['seed'], r['arm']): r for r in report['tasks']}
+
+    def measured(seed, arm):
+        row = lookup.get((seed, arm), {})
+        timing = row.get('timing', {})
+        if row.get('status') == 'invalid' or timing.get('record') not in {'COMPLETE', 'PARTIAL'}:
+            return '-'
+        hours = timing.get('gpu_hours', {})
+        fields = ('phases',) if arm in {'cache', 'prefix'} else ('evaluation', 'checkpoint', 'startup')
+        values = [hours.get(key) for key in fields]
+        if not any(value is not None for value in values):
+            return '-'
+        value = math.fsum(v for v in values if v is not None)
+        lower = timing['record'] == 'PARTIAL' or any(v is None for v in values)
+        return ('>=' if lower else '') + cell(value)
+
+    return [[seed, *[measured(seed, arm) for arm in ('cache', 'prefix', *ARMS)]] for seed in seeds]
 
 
 def render(result):
@@ -42,9 +69,12 @@ def render(result):
                 return '-', '-'
             return cell(statistics.mean(values)), cell(statistics.stdev(values)) if len(values) > 1 else '-'
 
-        rows = [[seed, *[cell(reward(seed, arm)) for arm in ARMS],
-                 lookup.get((seed, 'switch'), {}).get('switched_at') if
-                 lookup.get((seed, 'switch'), {}).get('switched_at') is not None else '-'] for seed in seeds]
+        def transition(seed, lookup=lookup):
+            row = lookup.get((seed, 'switch'), {})
+            value = row.get('switched_at')
+            return value if row.get('status') != 'invalid' and value is not None else '-'
+
+        rows = [[seed, *[cell(reward(seed, arm)) for arm in ARMS], transition(seed)] for seed in seeds]
         summaries = [mean_sd([reward(seed, arm) for seed in seeds]) for arm in ARMS]
         rows += [['Mean', *[v[0] for v in summaries], '-'], ['SD', *[v[1] for v in summaries], '-']]
         lines += ['', f'{label} FINAL REWARD (%)',
@@ -59,6 +89,9 @@ def render(result):
         window = f"; updates {basis['first_update']}--{basis['last_update']}" if basis else ''
         lines += ['', f'{label} GPU TIME (GPU-hours; submitted OLMo basis{window})',
                   *aligned_table(('Seed', 'Random total', 'SR total', 'On select', 'On total', 'Switch select', 'Switch total'), rows)]
+        lines += ['', f'{label} EXCLUDED GPU TIME (GPU-hours; cache/prefix shared once; other columns = evaluation + checkpoint I/O + startup)',
+                  *aligned_table(('Seed', 'Cache', 'Prefix', 'On other', 'Switch other', 'SR other', 'Random other'),
+                                 excluded_time(report, seeds))]
         accuracy = report.get('initial_candidate_accuracy', [])
         if accuracy:
             lines += [f'{label} initial candidate success: ' + ' | '.join(
@@ -69,6 +102,7 @@ def render(result):
                 lines.append(f"TIME ERROR {label} seed-{row['seed']}.{row['arm']}: {error}")
     lines += ['', 'Total = retained-update training + full selection + one common SR subset preparation.',
               'Cache, prefix, evaluation, checkpoints, startup and discarded attempts excluded; all-attempt costs retained separately.',
+              'Separate reward-curve evaluation/recording is also excluded. Excluded values are not added to Total; >= is a recorded lower bound.',
               'SD = sample standard deviation across planned seeds; - = unavailable/incomplete.']
     lines.extend(f'ERROR: {error}' for error in result.get('errors', []))
     return '\n'.join(lines)

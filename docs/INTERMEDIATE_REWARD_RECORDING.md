@@ -81,6 +81,17 @@ sh scripts/run_srgc_gemma4.sh all results
 `tasks[].submission_timing`에도 동일한 기준, update별 원기록, 결측 목록, 출처를 남긴다.
 기존 `timing`과 실행 설정도 compact JSON에서 보존한다.
 
+`results`에는 `EXCLUDED GPU TIME`도 함께 나온다. 공통 캐시·prefix를 seed별 한 번 표시하고,
+각 arm의 평가·checkpoint 입출력·시작 비용을 별도 열로 표시한다. 이 값들은 비교 합계에
+들어가지 않는다. 일부 phase만 기록됐으면 `>=`, 기록이 없으면 `-`다. 별도 reward-curve
+평가와 응답 기록 비용 역시 비교 합계 밖에 있다. 포괄적 session 시간을 update 타이머에
+더하거나, 원래부터 제외된 평가 비용을 비교 합계에서 다시 빼지 않는다.
+
+제출본의 고정 update 비교와 고정 allocation 비교는 집계 범위가 다르다. 이 표의 기준은
+`v6/overleaf/sections/pair_common_step_costs.tex`의 250-update continuation이다.
+실제 선별에 쓰는 후보·reference gradient, 응답 생성과 선별 단계 부대 비용은 포함한다.
+측정된 학습·선별 시간을 불필요한 비용으로 간주해 수치를 임의로 줄이지 않는다.
+
 **전달할 때는 파일을 열거나 JSON을 복사하지 않는다.** 공개 `results` 명령은 터미널에
 MATH·MBPP별 seed 보상, 전환 시점, 제출 OLMo 기준 GPU 시간, 평균·SD를 짧은 표로 바로 출력한다.
 출력 전체를 선택해 복사해서 대화에 붙여넣으면 된다. 기존 단일 원본 결과 파일은 내부적으로
@@ -89,6 +100,28 @@ MATH·MBPP별 seed 보상, 전환 시점, 제출 OLMo 기준 GPU 시간, 평균�
 기존 Qwen MATH·MBPP의 사용자 제공 GPU 시간 요약표만으로는 최종 경로의 update별 비용을
 복원할 수 없다. GPU 노드에서 위 `results`를 다시 내보내 실제 `*-progress.json`을 읽어야
 새 기준의 값을 얻는다. 요약표만 보고 134.35 또는 142.88 GPU-hours를 임의 조정하지 않는다.
+
+## 다른 실험도 터미널에서 바로 복사
+
+기존 공개 `results` 명령을 그대로 사용한다. 파일 경로나 파일 크기만 출력하던 경로를
+측정값 표로 바꿨다. 내부 원본·자체 완결 결과 묶음은 유지하며, 명시적인 `json` 또는
+`--json` 출력도 그대로 보존한다.
+
+| 대상 | 명령 예시 |
+| --- | --- |
+| OLMo 추가 seed | `sh scripts/run_srgc.sh all results` |
+| OLMo 시간 조회만 | `sh scripts/run_srgc.sh all costs` |
+| Qwen / Llama / Gemma | 위 모델별 `all results` |
+| N01–N07 | `sh scripts/run_srgc_research.sh all n01 results` (번호 선택) |
+| N08 기존 결과 분석 | `sh scripts/run_srgc_research.sh math n08 results /path/results.json` |
+| 정보량·실제 update | `sh scripts/run_srgc_information.sh all results` |
+| 개별 추가 실험 | `sh scripts/run_srgc_experiments.sh all pool results` (`direction`, `replicate`, `timing`, `rules` 등 선택) |
+
+`pool`·`direction`·`timing`·`rules`·`replicate` 결과는 선택한 대조군과 공통 baseline만
+읽고, 해당 scope의 별도 결과 폴더에 저장한다. 관계없는 실험의 손상된 endpoint나 replicate가
+선택한 결과를 막지 않는다. `all results`는 MATH 오류가 있어도 MBPP 조회를 계속하며 최종
+실패 코드를 유지한다. 보고서 조회는 학습용 Python 경로가 없어도 CPU Python으로 실행한다.
+실제 학습의 interpreter 검사와 실험 identity 검사는 유지한다.
 
 ## 무엇을 언제 저장하는가
 

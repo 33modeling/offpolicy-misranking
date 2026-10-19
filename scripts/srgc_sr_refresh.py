@@ -622,7 +622,7 @@ def extra_complete(plan_path, plan, seed, name):
     return True
 
 
-def replicate_rows(plan_path, plan, root, *, errors=None, context=None, raw_records=None):
+def replicate_rows(plan_path, plan, root, *, errors=None, context=None, raw_records=None, allowed=None):
     """Independent replicates: one row per ``seed-N/replicate-<k>/`` with its arms' endpoints."""
     context = context or (lambda seed: result_identity(plan_path, plan, seed, recorded=True))
     def invalid(path, exc):
@@ -638,6 +638,8 @@ def replicate_rows(plan_path, plan, root, *, errors=None, context=None, raw_reco
                 if not match:
                     raise ValueError("invalid replicate directory name")
                 replicate = int(match.group(1))
+                if allowed is not None and not any(k == replicate for k, _ in allowed):
+                    continue
                 verified = context(seed)
                 record = checked_replicate_manifest(manifest.parent, seed, replicate, verified)
             except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -646,6 +648,8 @@ def replicate_rows(plan_path, plan, root, *, errors=None, context=None, raw_reco
             row = {"seed": seed, "replicate": replicate, "sampling_seed": record["sampling_seed"]}
             for path in sorted(manifest.parent.glob("*-endpoint.json")):
                 arm = path.name.removesuffix("-endpoint.json")
+                if allowed is not None and (replicate, arm) not in allowed:
+                    continue
                 try:
                     captured = {}
                     value = _endpoint(path, plan_path, plan, seed, folder, arm, verified=verified,
@@ -664,9 +668,12 @@ def replicate_rows(plan_path, plan, root, *, errors=None, context=None, raw_reco
 def collect_result_json(root, report, raw_records):
     """Publish a self-contained report and isolated copies of validated records."""
     import uuid
+
     from srgc_rebuttal.runtime import atomic_json
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     destination = root / "results"
+    if report.get('scope', 'all') != 'all':
+        destination = destination / report['scope']
     bundle = destination / "exports" / f"{stamp}-{uuid.uuid4().hex[:12]}"
     report["collection"] = {"directory": str(bundle), "report_path": str(destination / "results.json"),
                             "bundle_report_path": str(bundle / "results.json"),
@@ -693,8 +700,14 @@ def results(args):
     from srgc_rebuttal.runtime import run_root
     plan = load_plan(args.plan)
     root = run_root(args.plan, plan)
-    if not args.json:
-        print(f"RESULT DIRECTORY: {root}", flush=True)
+    scope = getattr(args, 'report_scope', 'all')
+    requested = None
+    if scope != 'all':
+        from scripts.srgc_replicate_worker import SCOPES as report_scopes
+        from scripts.srgc_replicate_worker import conditions
+        if scope not in report_scopes:
+            raise ValueError('unknown result scope')
+        requested = set(conditions(scope))
     errors, warnings, identities, raw_records = [], [], {}, {}
     def context(seed):
         from srgc_rebuttal.runtime import code_digest
@@ -708,6 +721,8 @@ def results(args):
              if re.fullmatch(r"switch_fixed\d+-endpoint.json", p.name)}
     arms = [*plan["arms"], *EXTRA_ARMS,
             *sorted(fixed - set(EXTRA_ARMS), key=lambda name: int(name.removeprefix("switch_fixed")))]
+    if requested is not None:
+        arms = list(dict.fromkeys([*plan['arms'], *(arm for repeat, arm in sorted(requested) if repeat == 0)]))
     rows = []
     for seed in plan["seeds"]:
         row = {"seed": seed}
@@ -721,7 +736,9 @@ def results(args):
                 except (OSError, ValueError, KeyError, TypeError) as exc:
                     errors.append(f"{path}: {type(exc).__name__}: {exc}")
         rows.append(row)
-    replicates = replicate_rows(args.plan, plan, root, errors=errors, context=context, raw_records=raw_records)
+    replicates = (replicate_rows(args.plan, plan, root, errors=errors, context=context,
+                                raw_records=raw_records, allowed=requested)
+                  if requested is None or any(repeat for repeat, _ in requested) else [])
     result_files = [
         {"seed": row["seed"], "replicate": 0, "arm": arm,
          "path": str(root / f"seed-{row['seed']}" / f"{arm}-endpoint.json")}
@@ -732,7 +749,7 @@ def results(args):
          "path": str(root / f"seed-{row['seed']}" / f"replicate-{row['replicate']}" / f"{arm}-endpoint.json")}
         for row in replicates for arm in row if arm not in {"seed", "replicate", "sampling_seed"}
     )
-    report = collect_result_json(root, {"dataset": plan["dataset"], "output_root": str(root), "rows": rows,
+    report = collect_result_json(root, {"dataset": plan["dataset"], "output_root": str(root), "scope": scope, "rows": rows,
         "replicates": replicates, "result_files": result_files, "errors": errors, "warnings": warnings}, raw_records)
     if args.json:
         print(json.dumps(report, indent=2, allow_nan=False))
@@ -741,71 +758,11 @@ def results(args):
         if errors:
             raise ValueError("; ".join(errors))
         return
-    width = max(16, *(len(arm) for arm in arms))
-    print(f"SR refresh · {plan['dataset']} · {root}")
-    header = "seed  " + "  ".join(f"{arm:>{width}}" for arm in arms)
-    print(header)
-    for row in rows:
-        cells = []
-        for arm in arms:
-            value = row.get(arm)
-            cells.append(f"{value['reward_percent']:{width - 1}.2f}%" if value else f"{'-':>{width}}")
-        print(f"{row['seed']:>4}  " + "  ".join(cells))
-    for row in rows:
-        for arm in (a for a in arms if a in {"switch", "switch_repeat"} or a.startswith("switch_fixed")):
-            value = row.get(arm)
-            if value and (value.get("transitions") or value.get("switched_at") is not None):
-                moves = value.get("transitions") or [{"step": value["switched_at"], "to": "sr"}]
-                print(f"  seed {row['seed']} {arm}: " + ", ".join(f"step {m['step']} -> {m['to']}" for m in moves))
-    print("selection GPU-seconds (refresh rollouts for sr_refresh; ranking only for sr_hold; "
-          "scoring for on_policy/switch/switch_repeat/switch_fixed/direction_*):")
-    for row in rows:
-        cells = []
-        for arm in arms:
-            value = row.get(arm)
-            cost = value.get("selection_gpu_seconds") if value else None
-            cells.append(f"{cost:{width}.0f}" if cost is not None else f"{'unknown' if value else '-':>{width}}")
-        print(f"{row['seed']:>4}  " + "  ".join(cells))
-    for row in rows:
-        for arm in arms:
-            value = row.get(arm)
-            if value and value["cost_measurement_complete"] is not True:
-                print(f"  seed {row['seed']} {arm}: cost measurement incomplete or unverified")
-    if replicates:
-        print("independent replicates (same verified prefix, separate post-prefix sampling stream; "
-              "the recorded run is stream 0):")
-        for row in replicates:
-            arms_done = [k for k in row if k not in {"seed", "replicate", "sampling_seed"}]
-            cells = ", ".join(f"{arm} {row[arm]['reward_percent']:.2f}%" for arm in arms_done) or "no endpoint yet"
-            line = f"  seed {row['seed']} replicate {row['replicate']} (sampling seed {row['sampling_seed']}): {cells}"
-            if "switch" in row and "sr" in row:
-                line += f"; switch - sr = {row['switch']['reward_percent'] - row['sr']['reward_percent']:+.2f} pp"
-            print(line)
-            for arm in arms_done:
-                value = row[arm]
-                if value.get("transitions") or value.get("switched_at") is not None:
-                    moves = value.get("transitions") or [{"step": value["switched_at"], "to": "sr"}]
-                    print(f"    {arm}: " + ", ".join(f"step {m['step']} -> {m['to']}" for m in moves))
-                if value["cost_measurement_complete"] is not True:
-                    print(f"    {arm}: cost measurement incomplete or unverified")
-        for row in rows:
-            if "switch" in row and "sr" in row:
-                print(f"  seed {row['seed']} recorded (stream 0): switch - sr = "
-                      f"{row['switch']['reward_percent'] - row['sr']['reward_percent']:+.2f} pp")
-    for warning in warnings:
-        print(f"WARNING: {warning}")
-    for error in errors:
-        print(f"ERROR: {error}")
-    print(f"\nRESULT DIRECTORY: {root}")
-    print("RESULT FILES (validated originals):")
-    for item in result_files:
-        print(f"  {item['path']}")
-    if not result_files:
-        print("  No validated result files yet.")
-    print(f"COLLECTED JSON: {report['collection']['report_path']}")
-    print(f"COLLECTED FILES: {report['collection']['directory']} ({len(result_files)} originals)")
+    from srgc_research.report_text import extra as render_results
+    print(render_results(report))
     if errors:
-        raise ValueError("; ".join(errors))
+        raise ValueError('; '.join(errors))
+    return
 
 
 def main():
@@ -823,6 +780,7 @@ def main():
                                 "or replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>>")
         else:
             p.add_argument("--json", action="store_true")
+            p.add_argument("--report-scope", default='all')
     args = parser.parse_args()
     if args.command == "run":
         run(args)

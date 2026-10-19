@@ -241,8 +241,8 @@ def main(argv=None):
         target = args.archive.with_name(args.archive.stem + "-n08.json")
         report["result_path"] = str(target)
         atomic_json(target, report)
-        print(json.dumps(report, indent=2) if args.action == "json" else
-              f"RESULT {target}\npaired comparisons={len(report['comparisons'])} errors={len(report['errors'])}")
+        from .report_text import research as render_results
+        print(json.dumps(report, indent=2) if args.action == "json" else render_results(report))
         for error in report["errors"]:
             print(error, file=sys.stderr)
         return int(bool(report["errors"]))
@@ -261,8 +261,8 @@ def main(argv=None):
     if args.action in {"results", "json"}:
         from .report import collect
         report = collect(root_path, datasets, args.scope)
-        print(json.dumps(report, indent=2) if args.action == "json" else
-              f"RESULT {report['result_path']}\ncomplete={len(report['rows'])} pending={len(report['pending'])} errors={len(report['errors'])}")
+        from .report_text import research as render_results
+        print(json.dumps(report, indent=2) if args.action == "json" else render_results(report))
         for error in report["errors"]:
             print(error, file=sys.stderr)
         return int(bool(report["errors"]))

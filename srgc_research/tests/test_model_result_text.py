@@ -42,7 +42,7 @@ def test_two_dataset_tables_keep_rewards_and_submitted_costs_separate():
     assert 'Switch after' in text and 'Mean' in text and 'SD' in text
     assert 'submitted OLMo basis; updates 26--275' in text
     assert '1.250' in text and '999.000' not in text
-    assert len(text.splitlines()) < 55
+    assert len(text.splitlines()) < 80
     assert '{' not in text and '.json' not in text and 'RESULT:' not in text
     assert data == before
 
@@ -78,3 +78,30 @@ def test_public_results_is_copyable_without_opening_any_result_file(cohort, caps
     artifact = read_result(cohort)
     task = next(r for r in artifact['datasets']['math']['tasks'] if r['task'] == 'seed-5.on_policy')
     assert task['submission_timing']['gpu_seconds']['primary'] == 1400.
+
+
+def test_invalid_transition_is_hidden_with_invalid_reward():
+    data = result()
+    row = next(r for r in data['datasets']['math']['tasks'] if r['arm'] == 'switch')
+    row.update(status='invalid', switched_at=987654)
+    assert '987654' not in render(data)
+
+
+def test_excluded_phases_are_visible_without_changing_the_comparison_total():
+    from srgc_research.dispatch.model_result_text import excluded_time
+
+    data = result()
+    report = data['datasets']['math']
+    row = report['tasks'][0]
+    row['timing'] = {'record': 'COMPLETE', 'gpu_hours': {
+        'selection': 99., 'training': 99., 'preparation': 99.,
+        'evaluation': 10., 'checkpoint': 2., 'startup': 1., 'phases': 310.}}
+    report['tasks'] += [{'seed': 5, 'arm': arm, 'status': 'complete', 'timing': {
+        'record': 'COMPLETE', 'gpu_hours': {'phases': hours}}} for arm, hours in (('cache', 21.), ('prefix', 3.))]
+    report['tasks'][1]['timing'] = {'record': 'PARTIAL', 'gpu_hours': {'evaluation': 4., 'checkpoint': None, 'startup': .5}}
+    assert excluded_time(report, [5]) == [[5, '21.000', '3.000', '13.000', '>=4.500', '-', '-']]
+    before = copy.deepcopy(data)
+    output = render(data)
+    assert 'EXCLUDED GPU TIME' in output and '13.000' in output and '>=4.500' in output
+    assert '310.000' not in output and '1.250' in output
+    assert data == before

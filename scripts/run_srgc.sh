@@ -23,7 +23,10 @@ case "$DATASET" in
 esac
 PY=${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 if ! command -v "$PY" >/dev/null 2>&1; then
-    [ -z "$EXPLICIT" ] || { printf 'Python not found: %s\n' "$PY" >&2; exit 2; }
+    case "$MODE" in
+        status|results|costs|backup|backup-watch) ;;
+        *) [ -z "$EXPLICIT" ] || { printf 'Python not found: %s\n' "$PY" >&2; exit 2; } ;;
+    esac
     PY=python3
 fi
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

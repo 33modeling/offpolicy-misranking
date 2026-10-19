@@ -8,7 +8,10 @@ WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy
 case "$DATASET" in mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; *) EXPLICIT=${PAIR_PYTHON:-} ;; esac
 PY=${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}
 if ! command -v "$PY" >/dev/null 2>&1; then
-    [ -z "$EXPLICIT" ] || { printf 'Python not found: %s\n' "$PY" >&2; exit 2; }
+    case "${3:-run}" in
+        status|results|json) ;;
+        *) [ -z "$EXPLICIT" ] || { printf 'Python not found: %s\n' "$PY" >&2; exit 2; } ;;
+    esac
     PY=python3
 fi
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

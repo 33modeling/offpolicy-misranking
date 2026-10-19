@@ -225,7 +225,7 @@ def main(argv=None):
     parser.add_argument("--dataset", choices=("math", "mbpp", "all"), required=True)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    from scripts.srgc_result_collection import publish, print_paths
+    from scripts.srgc_result_collection import print_paths, publish
     report = collect(args.dataset)
     try:
         publish(report, "mechanism")
@@ -238,7 +238,7 @@ def main(argv=None):
         print("MECHANISM: same-state 25-update GRPO interventions; study costs, not deployed-strategy totals")
         for row in report["rows"]:
             value = row["result"]
-            print(f"{row['dataset']} seed={row['seed']} output={row['output']}")
+            print(f"{row['dataset']} seed={row['seed']}")
             if value is None:
                 print("  pending")
                 continue

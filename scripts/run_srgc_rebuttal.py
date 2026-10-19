@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Additional-seed experiment entry point; run/cache automatically launch four GPU ranks."""
 
-import os
 import argparse
 import json
-from pathlib import Path
+import os
 import runpy
-import subprocess
 import sys
+from pathlib import Path
 
 
 def main():
@@ -30,7 +29,6 @@ def main():
     dataset = settings.dataset or ("mbpp" if settings.plan and
         json.loads(settings.plan.read_text()).get("dataset") == "mbpp" else "math")
     from srgc_rebuttal.existing_runtime import select_python
-    select_python(dataset)
     if args in (["--help"], ["-h"]):
         parser = argparse.ArgumentParser(description=__doc__, parents=[options])
         parser.add_argument("action", nargs="?", default="run", choices=[*actions, "worker", "launch", "commands", "stop", "resume"])
@@ -40,6 +38,8 @@ def main():
     if args and args[0] in {"worker", "launch", "commands", "stop", "resume"}:
         args.insert(0, "cluster")
     action = args.pop(0) if args and args[0] in actions else "run"
+    if action in {"run", "cache", "prepare", "cluster"}:
+        select_python(dataset)
     writing = action in {"run", "cache", "prepare"} or (action == "cluster" and args and args[0] in {"worker", "launch", "resume"})
     if settings.plan:
         plan = settings.plan
@@ -58,8 +58,8 @@ def main():
     if settings.with_dataset and (settings.plan or settings.with_dataset == dataset):
         options.error("--with-dataset needs the default plans of two different datasets")
     if action in {"backup", "backup-watch"}:
-        from srgc_shared_storage import route_plan
         from srgc_checkpoint_backup import main as backup_main
+        from srgc_shared_storage import route_plan
         if not settings.plan and not any(a in {"-h", "--help"} for a in args):
             plan = route_plan(plan, writing=False)
         backup_main([*args, "--plan", str(plan), *(["--watch"] if action == "backup-watch" else [])])
@@ -108,8 +108,9 @@ def main():
             plan = route_plan(plan, writing=False)
     args += ["--plan", str(plan)]
     if action in {"run", "cache"} and "WORLD_SIZE" not in os.environ and not any(a in {"-h", "--help"} for a in args):
-        from srgc_rebuttal.cluster import direct
         from srgc_process_guard import process_guard
+
+        from srgc_rebuttal.cluster import direct
         # Manual runs get the same orphan reaping, shm cleanup and free-GPU wait as worker children.
         with process_guard(plan):
             raise SystemExit(direct(action, plan, args))
@@ -120,12 +121,14 @@ def main():
         from srgc_live_status import main as status_main
         status_main()
     elif action == "results":
-        from srgc_rebuttal import reports
-        from srgc_run_history import include_previous_runs
-        with include_previous_runs():
-            reports.main()
+        from srgc_research.dispatch.olmo_results import main as results_main
+        raise SystemExit(results_main(args))
+    elif action == "costs":
+        from srgc_research.dispatch.olmo_results import main as results_main
+        raise SystemExit(results_main(["costs", *args]))
     elif action == "cluster" and args[0] == "worker" and not any(a in {"-h", "--help"} for a in args):
         from contextlib import ExitStack
+
         from srgc_checkpoint_backup import automatic_backup
         from srgc_log_format import uniform_log
         from srgc_multi_queue import multi_queue

@@ -145,6 +145,11 @@ def attach(report, plan_path, plan, *, read=read_json):
         "excluded": ["cache creation", "shared prefix", "evaluation", "checkpointing", "startup",
                      "separate diagnostic measurements", "discarded/replayed update attempts"],
         "all_attempt_costs": "original timing/phase totals remain separate and unchanged",
+        "submitted_sources": ["v6/overleaf/sections/pair_common_step_costs.tex",
+                              "v6/overleaf/sections/accounting.tex",
+                              "v6/evidence/2026-09-26/scoring-cost-calculation-clarification.md"],
+        "scope": "matched-update continuation; not fixed-allocation or end-to-end elapsed time",
+        "selection_work": "required candidate/reference gradients and rollout generation are included, not diagnostics to subtract",
         "selection_scope": "full selection timers, including scored rollouts, validation, gradients and overhead",
         "missing": "null; no scaling of candidate-only estimates or incomplete histories",
     }

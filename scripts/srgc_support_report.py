@@ -107,7 +107,7 @@ def main(argv=None):
     parser.add_argument("--dataset", choices=("math", "mbpp", "all"), required=True)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    from scripts.srgc_result_collection import publish, print_paths
+    from scripts.srgc_result_collection import print_paths, publish
     report = collect(args.dataset)
     try:
         publish(report, "support")
@@ -120,7 +120,6 @@ def main(argv=None):
         print("SUPPORT results: validated endpoints; selection costs include all recorded selection work")
         print(f"{'dataset':7} {'seed':>4} {'arm':24} {'reward%':>9} {'select GPU-h':>12} {'train GPU-h':>12}")
         for row in report["rows"]:
-            print(f"{row['dataset']} seed={row['seed']} output={row['output']}")
             for arm in ARMS:
                 value = row["arms"].get(arm, {})
                 hours = [value.get(key) / 3600 if value.get(key) is not None else None

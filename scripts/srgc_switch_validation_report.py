@@ -190,11 +190,15 @@ def summarize(rows):
     return result
 
 
-def collect(dataset):
+def collect(dataset, scope='switch_validation'):
+    if scope not in {'switch_validation', 'timing', 'rules'}:
+        raise ValueError('unknown switch result scope')
+    selected_arms = ARMS if scope == 'switch_validation' else (
+        'random', 'sr', 'on_policy', 'switch', *(TIMING_ARMS if scope == 'timing' else RULE_ARMS))
     rows, errors, warnings, sources = [], [], [], {}
     for name in (("math", "mbpp") if dataset == "all" else (dataset,)):
         try:
-            tasks = tasks_for(name, "switch_validation")
+            tasks = tasks_for(name, scope)
         except (OSError, ValueError, TypeError, KeyError) as exc:
             errors.append(f"{name}: {exc}")
             continue
@@ -207,7 +211,7 @@ def collect(dataset):
             rows.append(row)
             try:
                 plan = load_plan(task.plan)
-                present = {arm: task.folder / f"{arm}-endpoint.json" for arm in ARMS
+                present = {arm: task.folder / f"{arm}-endpoint.json" for arm in selected_arms
                            if (task.folder / f"{arm}-endpoint.json").is_file()}
                 if not present:
                     continue
@@ -242,8 +246,13 @@ def collect(dataset):
                         errors.append(f"{name}/seed-{task.seed} cost: {exc}")
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 errors.append(f"{task.key}: {exc}")
-    return dict(protocol="switch-timing-rules-20261006-v1", timing_steps=TIMING_STEPS,
-                expected_seeds=SEEDS, rows=rows, summaries=summarize(rows), errors=errors, warnings=warnings,
+    summaries = summarize(rows)
+    if scope != 'switch_validation':
+        allowed = set(selected_arms) | ({'uniform_grid_expectation', 'loso_fixed'} if scope == 'timing' else set())
+        for summary in summaries:
+            summary['comparisons'] = [c for c in summary['comparisons'] if c['right'] in allowed]
+    return dict(protocol="switch-timing-rules-20261006-v1", timing_steps=TIMING_STEPS, scope=scope, arms=selected_arms,
+                expected_seeds=SEEDS, rows=rows, summaries=summaries, errors=errors, warnings=warnings,
                 source_results=sources)
 
 
@@ -259,11 +268,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=("math", "mbpp", "all"), required=True)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument('--scope', choices=('switch_validation', 'timing', 'rules'), default='switch_validation')
     args = parser.parse_args(argv)
-    from scripts.srgc_result_collection import publish, print_paths
-    report = collect(args.dataset)
+    from scripts.srgc_result_collection import print_paths, publish
+    report = collect(args.dataset) if args.scope == 'switch_validation' else collect(args.dataset, scope=args.scope)
     try:
-        publish(report, "switch_validation")
+        publish(report, args.scope)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         print(f"COLLECTION ERROR: {exc}", file=sys.stderr)
         return 1
@@ -274,10 +284,9 @@ def main(argv=None):
         print("GPU-h columns: selection training preparation evaluation checkpoint startup | core | inclusive | cold")
         for row in report["rows"]:
             shared = row.get("shared_costs", {})
-            print(f"output={row['output']}")
             print(f"{row['dataset']} seed={row['seed']} cache_build={hours(shared.get('cache_build_gpu_seconds'))} "
                   f"prefix_inclusive={hours(shared.get('prefix_inclusive_gpu_seconds'))} GPU-h")
-            for arm in ARMS:
+            for arm in report.get('arms', ARMS):
                 value = row["arms"].get(arm, {})
                 cost = value.get("cost", {})
                 columns = " ".join(hours(cost.get(f"{phase}_gpu_seconds")) for phase in

@@ -48,13 +48,13 @@ def compact(result):
     return value
 
 
-def export(dataset="all", *, work=None):
+def export(dataset="all", *, work=None, text=False):
     work = work_root() if work is None else work.resolve()
     with export_lock("information", work):
-        return _export(dataset, work=work)
+        return _export(dataset, work=work, text=text)
 
 
-def _export(dataset, *, work):
+def _export(dataset, *, work, text=False):
     root = work / "selection-information"
     names = ("math", "mbpp") if dataset == "all" else (dataset,)
     expected = {(name, seed, 0) for name in names for seed in SEEDS}
@@ -80,7 +80,8 @@ def _export(dataset, *, work):
             result["pending"].append({**task, "status": "partial" if (folder / "manifest.json").exists() else "not-started"})
             continue
         try:
-            print(f"READ information {name} seed={seed} stage={stage}", flush=True)
+            if not text:
+                print(f"READ information {name} seed={seed} stage={stage}", flush=True)
             endpoint, phases = report.read_measurement(folder)
             if any(endpoint["identity"].get(k) != v for k, v in (("dataset", name), ("seed", seed), ("stage", stage))):
                 raise ValueError("measurement identity differs from its dataset/seed/stage directory")
@@ -110,7 +111,12 @@ def _export(dataset, *, work):
         done = sorted(seed for dataset_name, seed, stage in completed if dataset_name == name and stage == 0)
         result["datasets"][name] = {"completed_initial_seeds": done, "planned_initial_seeds": sorted(SEEDS),
                                     "stages": sorted({stage for dataset_name, _, stage in locations if dataset_name == name})}
-    save_result("information", compact(result), work=work)
+    artifact = compact(result)
+    save_result("information", artifact, work=work, quiet=text)
+    if text:
+        from srgc_research.report_text import information as render_results
+        print(render_results(artifact), flush=True)
+        return int(bool(result['errors']))
     coverage = result["coverage"]
     print(f"INFORMATION {coverage['completed_initial_measurements']}/{coverage['planned_initial_measurements']} "
           f"initial measurements; saved stages={len(completed)}; "
@@ -126,7 +132,7 @@ def main(argv=None):
     parser.add_argument("action", choices=("results",))
     args = parser.parse_args(argv)
     try:
-        return export(args.dataset)
+        return export(args.dataset, text=True)
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"ERROR: {error}", flush=True)
         return 1

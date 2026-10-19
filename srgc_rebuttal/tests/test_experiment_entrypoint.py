@@ -30,7 +30,7 @@ def test_every_experiment_has_an_explicit_existing_runner(dataset, experiment, a
 def test_old_all_results_runs_both_datasets_even_when_first_fails():
     with patch.object(cli.subprocess, "call", side_effect=[1, 0]) as run:
         assert cli.main(["all", "replicate", "results"]) == 1
-    assert [call.args[0][-2:] for call in run.call_args_list] == [["math", "results"], ["mbpp", "results"]]
+    assert [call.args[0][-3:] for call in run.call_args_list] == [["math", "results", "replicate"], ["mbpp", "results", "replicate"]]
 
 
 def test_single_command_exec_preserves_environment_and_signals():

@@ -16,7 +16,7 @@ from srgc_research.tests import test_information_wrapper as wrappers
 backend, measured, wrapper = fixtures.backend, fixtures.measured, wrappers.wrapper
 
 
-def test_both_datasets_and_essential_updates_fit_one_file(tmp_path, measured, backend):
+def test_both_datasets_and_essential_updates_fit_one_file(tmp_path, measured, backend, capsys):
     root = tmp_path / "selection-information"
     shutil.copytree(measured, root / "math/seed-5/t0")
     mbpp = root / "mbpp/seed-5/t0"
@@ -26,7 +26,11 @@ def test_both_datasets_and_essential_updates_fit_one_file(tmp_path, measured, ba
     with patch.object(TorchBackend, "_rollout", side_effect=backend.generate_test_rollout):
         InformationStudy(backend, data, config, 0, mbpp, identity, probe_prompts=1).run()
     before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    assert export.export(work=tmp_path) == 0
+    assert export.export(work=tmp_path, text=True) == 0
+    output = capsys.readouterr().out
+    assert 'INFORMATION 2/10' in output and 'MATH' in output and 'MBPP' in output
+    assert 'ACTUAL BATCH UPDATES' in output and 'Gradient norm' in output
+    assert 'RESULT:' not in output and 'READ information' not in output and '.json' not in output
     files = list((tmp_path / "results").iterdir())
     assert [p.name for p in files] == ["information-results.json"]
     result = json.loads(files[0].read_text())
@@ -79,7 +83,9 @@ def test_public_one_line_command_needs_no_input_flags_or_gpu_environment(wrapper
     assert result.returncode == 0, result.stderr
     assert calls == []
     destination = work / "results/information-results.json"
-    assert f"RESULT: {destination}" in result.stdout
+    assert "INFORMATION 0/10" in result.stdout
+    assert "SAME-STATE INFORMATION" in result.stdout and "ACTUAL BATCH UPDATES" in result.stdout
+    assert ".json" not in result.stdout and "RESULT:" not in result.stdout
     assert len(json.loads(destination.read_text())["pending"]) == 10
     assert list((work / "results").iterdir()) == [destination]
 

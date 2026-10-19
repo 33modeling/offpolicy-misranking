@@ -76,7 +76,7 @@ class ExtraArmLaunchTests(unittest.TestCase):
                 output = subprocess.run(["sh", str(SCRIPT), dataset, "results", *flags], cwd="/tmp", env=env,
                                         capture_output=True, text=True, timeout=15)
                 self.assertEqual(output.returncode, 0, output.stderr)
-                self.assertEqual(json.loads(output.stdout), ["scripts/srgc_sr_refresh.py", "results", "--plan", str(plan), *flags])
+                self.assertEqual(json.loads(output.stdout), ["scripts/srgc_sr_refresh.py", "results", "--plan", str(plan), "--report-scope", "all", *flags])
 
     def test_shell_sigterm_stops_owned_worker_and_does_not_retry(self):
         self.plan()
@@ -120,8 +120,8 @@ class ExtraArmLaunchTests(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
-    def test_explicit_missing_python_is_not_silently_replaced(self):
-        result = subprocess.run(["sh", str(SCRIPT), "math", "results"], env={**os.environ,
+    def test_training_explicit_missing_python_is_not_silently_replaced(self):
+        result = subprocess.run(["sh", str(SCRIPT), "math", "5", "pool"], env={**os.environ,
                                 "PAIR_PYTHON": str(self.base / "missing")}, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertIn("Python not found", result.stderr)
@@ -445,8 +445,9 @@ print('offline verifier ready')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=False))
-        self.assertIn("unknown", output.getvalue())
-        self.assertIn("cost measurement incomplete or unverified", output.getvalue())
+        self.assertIn("- = unmeasured", output.getvalue())
+        row = next(line.split() for line in output.getvalue().splitlines() if 'sr_refresh ' in line)
+        self.assertEqual(row[4], '-')
 
     def test_results_keep_real_zero_cost_and_json_completeness(self):
         plan = self.plan()
@@ -483,7 +484,8 @@ print('offline verifier ready')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=False))
-        self.assertIn("switch_fixed200: step 200 -> sr", output.getvalue())
+        row = next(line.split() for line in output.getvalue().splitlines() if 'switch_fixed200 ' in line)
+        self.assertEqual(row[-1], '200')
         target.write_text(json.dumps({**value, "arm": "switch_fixed200", "input_sha256": "wrong"}))
         with self.assertRaises(ValueError), contextlib.redirect_stdout(io.StringIO()):
             results(SimpleNamespace(plan=plan, json=True))
@@ -502,10 +504,10 @@ print('offline verifier ready')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=False))
-        self.assertTrue(any(line.startswith("seed  ") and "direction_magnitude" in line
+        self.assertTrue(any(line.split()[:3] == ['5', '0', 'direction_magnitude']
                             for line in output.getvalue().splitlines()))
 
-    def test_results_show_absolute_original_and_replicate_paths_for_both_datasets(self):
+    def test_copyable_results_keep_original_and_replicate_paths_in_internal_artifact(self):
         for dataset in ("math", "mbpp"):
             with self.subTest(dataset=dataset):
                 plan = self.plan(dataset)
@@ -519,10 +521,10 @@ print('offline verifier ready')
                 with contextlib.redirect_stdout(output):
                     results(SimpleNamespace(plan=plan, json=False))
                 text = output.getvalue()
-                self.assertTrue(text.startswith(f"RESULT DIRECTORY: {path.parent.parent}\n"))
-                self.assertIn("RESULT FILES (validated originals):", text)
+                self.assertIn("EXTRA RESULTS (all)", text)
+                self.assertIn("Reward %", text)
                 for original in (path, fixed, replicate / "sr-endpoint.json", replicate / "switch-endpoint.json"):
-                    self.assertIn(str(original), text)
+                    self.assertNotIn(str(original), text)
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
                     results(SimpleNamespace(plan=plan, json=True))
@@ -533,8 +535,8 @@ print('offline verifier ready')
                 saved = Path(report["collection"]["report_path"])
                 self.assertEqual(saved, path.parent.parent / "results/results.json")
                 self.assertEqual(json.loads(saved.read_text()), report)
-                self.assertIn("COLLECTED JSON:", text)
-                self.assertIn("COLLECTED FILES:", text)
+                self.assertNotIn("COLLECTED JSON:", text)
+                self.assertNotIn("COLLECTED FILES:", text)
                 self.assertEqual(len(report["source_results"]), 4)
                 for item in report["result_files"]:
                     original = json.loads(Path(item["path"]).read_text())
@@ -545,13 +547,13 @@ print('offline verifier ready')
                          for p in self.storage.rglob("*") if p.is_file() and "results" not in p.parts}
                 self.assertEqual(before, after)
 
-    def test_results_show_directory_without_inventing_missing_result_files(self):
+    def test_results_show_pending_without_inventing_missing_result_files(self):
         plan = self.plan()
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=False))
-        self.assertIn(f"RESULT DIRECTORY: {run_root(plan, load_plan(plan))}", output.getvalue())
-        self.assertIn("No validated result files yet.", output.getvalue())
+        self.assertNotIn(str(run_root(plan, load_plan(plan))), output.getvalue())
+        self.assertIn("No validated endpoints yet.", output.getvalue())
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=True))
@@ -637,9 +639,11 @@ print('offline verifier ready')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             results(SimpleNamespace(plan=plan, json=False))
-        self.assertIn("seed 5 replicate 1", output.getvalue())
-        self.assertIn("switch - sr = +2.00 pp", output.getvalue())
-        self.assertIn("seed 5 replicate 2", output.getvalue())
+        text = output.getvalue()
+        self.assertTrue(any(line.split()[:3] == ['5', '1', 'switch'] for line in text.splitlines()))
+        self.assertIn("Switch - SR (pp)", text)
+        self.assertTrue(any(line.split() == ['5', '1', '2'] for line in text.splitlines()))
+        self.assertTrue(any(line.split()[:3] == ['5', '2', 'sr'] for line in text.splitlines()))
         import shutil
         from scripts.srgc_replicate import sampling_seed
         wrong_protocol = {"protocol": "x", "id": 3, "base_seed": 5, "sampling_seed": sampling_seed(5, 3)}

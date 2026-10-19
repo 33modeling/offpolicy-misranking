@@ -2,11 +2,11 @@
 """Explicit experiment dispatch; never start an entire suite implicitly."""
 
 import argparse
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import subprocess
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -22,6 +22,9 @@ class Experiment:
 EXPERIMENTS = {
     "mechanism": Experiment("run_srgc_mechanism.sh", None, 5, "Requested stage-wise GRPO interventions"),
     "qwen": Experiment("run_srgc_qwen35.sh", None, 20, "V6: another online backbone; preparation has 5 seed tasks"),
+    "llama": Experiment("run_srgc_llama31.sh", None, 20, "Llama online arms on MATH and MBPP"),
+    "gemma": Experiment("run_srgc_gemma4.sh", None, 20, "Gemma online arms on MATH and MBPP"),
+    "information": Experiment("run_srgc_information.sh", None, 5, "Same-state selection and update measurements"),
     "timing": Experiment("run_srgc_switch_validation.sh", "timing", 25, "V6: common-prefix switching times"),
     "rules": Experiment("run_srgc_switch_validation.sh", "rules", 10, "V6: temporal confirmation"),
     "support": Experiment("run_srgc_support.sh", None, 15, "V6: matched SR refresh and retention controls"),
@@ -55,19 +58,23 @@ def commands(dataset, experiment, action):
         datasets = ("math", "mbpp") if dataset == "all" else (dataset,)
         if action == "json" and dataset == "all":
             raise ValueError("JSON stdout requires math or mbpp; use 'all results' to collect both files")
-        flags = ["--json"] if action == "json" else []
+        flags = [spec.scope, *(["--json"] if action == "json" else [])]
         return [[*runner, name, "results", *flags] for name in datasets]
     if experiment in {"timing", "rules"}:
         if action == "run":
             return [[*runner, dataset, spec.scope]]
         if action == "status":
             return [["sh", str(REPO / "scripts/run_srgc_sr_refresh.sh"), dataset, "status", spec.scope]]
+        if action in {'results', 'json'}:
+            return [["sh", str(REPO / "scripts/run_srgc_sr_refresh.sh"), dataset, f"{experiment}_{action}"]]
     if action == "json":
         if experiment == "support":
             return [["sh", str(REPO / "scripts/run_srgc_sr_refresh.sh"), dataset, "support_json"]]
-        if experiment in {"qwen", "p0"}:
+        if experiment in {"qwen", "llama", "gemma", "information", "p0"}:
             raise ValueError(f"{experiment} uses its existing results exporter, not JSON stdout")
-    return [[*runner, dataset] if action == "run" and experiment == "qwen" else [*runner, dataset, action]]
+    if experiment == 'information' and action == 'run':
+        return [[*runner, dataset, 'collect']]
+    return [[*runner, dataset] if action == "run" and experiment in {"qwen", "llama", "gemma"} else [*runner, dataset, action]]
 
 
 def main(argv=None):
