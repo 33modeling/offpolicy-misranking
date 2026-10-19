@@ -276,6 +276,9 @@ def render(report, *, label=None):
         means.append(f"{arm} {statistics.mean(values):.3f}" + (f" +/- {sd:.3f}" if sd is not None else "") + f" (n={len(values)})")
     if means:
         lines.append("S+T+P mean +/- sample SD (GPU-h): " + " | ".join(means))
+    from srgc_research.dispatch.submission_time import render as render_submission_time
+
+    lines.extend(render_submission_time(report))
     lines += ["COMPLETE = measured scope; PARTIAL/>= = finished-receipt lower bound; - = unmeasured; INVALID = unreadable/invalid timing.",
               "S+T+P = prep + selection + training. Phases include evaluation/checkpoints/startup; cache/prefix are separate shared costs.",
               "GPU-h is allocated GPU time, not wall hours; nested invocation and phase totals are never added."]

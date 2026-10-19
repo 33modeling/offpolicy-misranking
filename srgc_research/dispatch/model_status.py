@@ -153,6 +153,10 @@ def load_reports(model, dataset, root, environment):
                     statistics["mean_reward_percent"] = None
                     statistics["mean_selection_training_preparation_gpu_seconds"] = None
         report["label"] = "MATH" if name == "math" else "MBPP"
+        if report["prepared"]:
+            from .submission_time import attach as attach_submission_time
+
+            attach_submission_time(report, path, plan)
         snapshots.append(report)
     from .worker_history import prune_workers
 

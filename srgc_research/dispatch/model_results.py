@@ -24,6 +24,18 @@ def compact(result):
     def fields(value, names):
         return {key: value[key] for key in names if key in value}
 
+    def task(value):
+        row = fields(value, ("seed", "arm", "task", "status", "step", "reward_percent", "switched_at",
+                             "cost_complete", *reports.COST_FIELDS))
+        for name in ("timing", "submission_timing"):
+            if name not in value:
+                continue
+            measured = value[name]
+            # MISSING already identifies all time values as unknown. Avoid
+            # repeating empty timers and the same 250-update missing range per task.
+            row[name] = ({"record": "MISSING"} if measured.get("record") == "MISSING" else measured)
+        return row
+
     def ledger(value):
         if value is None:
             return None
@@ -35,9 +47,10 @@ def compact(result):
     datasets = {}
     for name, snapshot in result["datasets"].items():
         row = fields(snapshot, ("dataset", "requested_dataset", "label", "prepared", "complete", "counts",
-                                "arm_statistics", "initial_candidate_accuracy", "plan_path", "errors", "warnings"))
-        row["tasks"] = [fields(task, ("seed", "arm", "task", "status", "step", "reward_percent", "switched_at",
-                                     "cost_complete", *reports.COST_FIELDS)) for task in snapshot["tasks"]]
+                                "arm_statistics", "initial_candidate_accuracy", "plan_path", "errors", "warnings",
+                                "submission_time_basis", "submission_time_statistics", "recorded_execution_settings",
+                                "timing_units", "timing_accounting"))
+        row["tasks"] = [task(item) for item in snapshot["tasks"]]
         row["plan"] = fields(snapshot.get("plan", {}), (
             "schema", "protocol_revision", "dataset", "model", "model_revision", "seeds", "arms", "split_seed",
             "shared_prefix_updates", "total_updates", "world_size", "objective", "responses", "training_prompts",
@@ -175,6 +188,10 @@ def _export(model, dataset, *, root, environment):
         snapshot["reward_curves"] = []
         if plan is not None:
             from srgc_rebuttal.plan import digest, input_path
+
+            from .submission_time import attach as attach_submission_time
+
+            attach_submission_time(snapshot, plan_path, plan, read=read_stable)
 
             identity = hashlib.sha256((adapter.engine_digest() + adapter.adapter_digest()).encode()).hexdigest()
             for row in snapshot["tasks"]:

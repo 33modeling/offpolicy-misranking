@@ -118,7 +118,9 @@ def test_raw_endpoint_arrays_are_excluded_without_changing_rewards(cohort):
     assert export.export(cohort.model, environment=cohort.env) == 0
     result = read_result(cohort)
     text = (cohort.work / "results" / f"{cohort.model}-results.json").read_text()
-    assert len(text.encode()) < 150000
+    # Includes the fixed submitted-OLMo accounting metadata and both timing views;
+    # the large raw token/logprob arrays above must still be excluded.
+    assert len(text.encode()) < 180000
     for name in ("math", "mbpp"):
         endpoint = result["datasets"][name]["endpoints"][0]["endpoint"]
         assert endpoint["reward"] == .5 and len(endpoint["per_question_reward"]) == 300

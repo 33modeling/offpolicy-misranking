@@ -30,6 +30,61 @@ sh scripts/run_srgc_llama31.sh math resume --root /group-volume/minsoo3.kim/offp
 완료 순서와 실패 작업 재시도 정책을 유지하며, learner를 처음부터 다시 학습하지 않는다.
 수정 코드를 push한 것만으로 원격 노드의 프로세스가 업데이트되거나 재개된 것은 아니다.
 
+MATH뿐 아니라 MBPP의 `seed-8.random`, `seed-9.on_policy`에도 같은 수정이 적용된다.
+위 두 MBPP 작업에서 기존 오류가 남아 있다면 해당 노드 checkout을 업데이트한 뒤
+같은 root에서 MBPP를 재개한다. 다른 노드의 정상 학습을 중단할 필요는 없다.
+
+```sh
+git pull --ff-only origin master
+git log -1 --oneline
+sh scripts/run_srgc_llama31.sh mbpp resume --root /group-volume/minsoo3.kim/offpolicy-misranking/srgc-rebuttal/llama31-8b-v1
+```
+
+현재 검사는 실제 설정 차이가 있으면 `changed fields:` 뒤에 해당 필드를 명시한다.
+기록 코드 해시만 바뀐 경우는 허용하며, 기존 protocol·reward·checkpoint는 보존한다.
+이 동작은 MBPP seed 8 Random·seed 9 On-policy의 저장 경로에서도 검증한다.
+
+## 제출한 OLMo에 맞춘 시간 집계
+
+OLMo 제출본 `3d144ee666e480766e253d06221f6e29feaef25e`의 수치와 집계는 고정한다.
+Qwen·Llama·Gemma의 공개 `status`와 `results`에 같은 비교 기준의
+`submission_timing`을 별도로 제공한다. 기존 `GPU TIMES`와 원시 비용 기록은 유지한다.
+
+| 항목 | 제출본과 맞추는 기준 |
+| --- | --- |
+| 비교 구간 | 공통 25 updates 이후의 26–275, 총 250개 완료 update |
+| 학습 | 재개된 최종 학습 경로의 `history[].training_gpu_seconds`를 update별 한 번씩 합산 |
+| 선별 | 같은 경로의 `history[].selection_gpu_seconds` 전체 합계. 후보 생성·gradient·validation·연산·부대 비용을 포함한 선별 타이머 |
+| SR 준비 | 초기 보상 캐시에서 부분집합을 준비한 SR의 기록값을 SR·Switch에 동일하게 한 번 부과 |
+| 합계 | 학습 + 누적 선별 + 공통 SR 부분집합 준비 |
+| 제외 | 캐시 생성, 공통 prefix, 평가, checkpoint 저장·불러오기, 시작 비용, 별도 진단 측정, 최종 경로에 남지 않은 재시도 update |
+| 단위 | 이미 기록된 GPU-seconds를 3,600으로 한 번 나눔. GPU 4개를 다시 곱하거나 나누지 않음 |
+| 누락 | update 타이머 또는 공통 SR 준비가 누락되면 최종 합계는 `null`. 미완료 구간을 전체 구간으로 확대하지 않음 |
+
+원래 phase 합계는 **완료된 재시도를 포함한 실제 소비 비용**이다. 제출 기준의 최종 경로
+시간과 구분해 그대로 보존한다. 두 합계의 차이를 전부 재시도 시간이라고 단정하지 않는다.
+중간 held-out 평가와 응답 저장도 별도 진단·기록 비용으로 남긴다.
+
+OLMo seed 5–9의 후보 쪽 시간 추정치는 validation·대기 등을 제외하므로 이 합계의
+대체값으로 사용하지 않는다. 시간 집계를 통일하는 것이 응답 길이, 선별 주기,
+모델별 실행 설정까지 동일하게 만드는 것은 아니다.
+
+```sh
+sh scripts/run_srgc_qwen35.sh all status
+sh scripts/run_srgc_qwen35.sh all results
+sh scripts/run_srgc_llama31.sh all results
+sh scripts/run_srgc_gemma4.sh all results
+```
+
+`status`는 `SUBMITTED OLMO TIME BASIS` 표에 구간·기록한 update 수·SR 준비·선별·학습·합계를
+표시한다. 기존 단일 결과 JSON의 `datasets.DATASET.submission_time_basis`와
+`tasks[].submission_timing`에도 동일한 기준, update별 원기록, 결측 목록, 출처를 남긴다.
+기존 `timing`과 실행 설정도 compact JSON에서 보존한다.
+
+기존 Qwen MATH·MBPP의 사용자 제공 GPU 시간 요약표만으로는 최종 경로의 update별 비용을
+복원할 수 없다. GPU 노드에서 위 `results`를 다시 내보내 실제 `*-progress.json`을 읽어야
+새 기준의 값을 얻는다. 요약표만 보고 134.35 또는 142.88 GPU-hours를 임의 조정하지 않는다.
+
 ## 무엇을 언제 저장하는가
 
 | 기록 | 시점 | 계산 대상 | 저장 위치 |

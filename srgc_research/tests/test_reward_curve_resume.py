@@ -25,9 +25,10 @@ def protocol():
             "stream": "reporting-evaluation", "training_batch_reward_is_held_out": False}
 
 
-def test_recorder_update_retains_original_protocol_and_adds_separate_receipt(tmp_path):
-    path = tmp_path / 'reward-curves/random/protocol.json'
-    original = protocol()
+@pytest.mark.parametrize('seed,arm', [(5, 'random'), (8, 'random'), (9, 'on_policy')])
+def test_recorder_update_retains_original_protocol_and_adds_separate_receipt(tmp_path, seed, arm):
+    path = tmp_path / f'runs/mbpp/seed-{seed}/reward-curves/{arm}/protocol.json'
+    original = {**protocol(), 'seed': seed, 'arm': arm}
     atomic_json(path, original)
     before = path.read_bytes(), path.stat().st_mtime_ns
     proposed = {**original, "extension_sha256": "f" * 64}
