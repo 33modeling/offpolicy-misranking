@@ -1,6 +1,34 @@
 # Gemma / Llama 중간 reward 기록
 
-공개 실행 진입점의 Gemma·Llama **train 작업**은 이제 별도 기록 확장을 설치한다. 기존 frozen learner·adapter 파일과 구현 식별 해시는 바꾸지 않는다. 기록 확장은 자체 SHA-256을 `protocol.json`에 저장한다. 기존에 이미 떠 있는 프로세스에는 소스 파일을 갱신해도 자동 적용되지 않는다. 실행 중인 작업을 임의로 중단하지 말고, 다음 정상 재시작에서 현재 공개 진입점을 사용한다.
+공개 실행 진입점의 Qwen·Gemma·Llama **train 작업**은 별도 기록 확장을 설치한다. 기존 frozen learner·adapter 파일과 구현 식별 해시는 바꾸지 않는다. 최초 기록 확장의 SHA-256은 `protocol.json`에 보존하며, 이후 기록 코드의 버전은 별도 receipt로 구분한다. 기존에 이미 떠 있는 프로세스에는 소스 파일을 갱신해도 자동 적용되지 않는다. 실행 중인 정상 작업을 임의로 중단하지 말고, 다음 정상 재시작에서 현재 공개 진입점을 사용한다.
+
+## `reward curve protocol changed` 재개 오류 수정
+
+이전 검사는 기록용 Python 파일의 해시까지 `protocol.json`과 완전히 같아야 한다고 요구했다.
+따라서 응답 저장 기능을 추가하는 등 기록 코드만 업데이트해도 기존 Llama/Gemma 실행이
+`reward curve protocol changed`에서 멈출 수 있었다. 현재는 다음처럼 구분한다.
+
+- `seed`, arm, plan·input·frozen learner 해시, 평가 ID·문항 수, 응답 수, 기록 간격,
+  평가 stream과 reward 종류는 그대로 일치해야 한다. 실제 차이는 GPU update 전에
+  차이 난 필드와 함께 오류로 보고한다.
+- 기록 코드의 해시만 달라졌다면 기존 `protocol.json`을 덮어쓰지 않고
+  `reward-curves/ARM/recording-extensions/SHA256.json`에 현재 기록 코드와 원본
+  protocol의 연결을 남긴다. 새로운 point·응답 기록은 작성한 코드 버전을 별도로 표시한다.
+- 기존 평가 point·checkpoint·응답 gzip은 해시와 실제 weights를 검증한 뒤 그대로 재사용한다.
+  응답 파일을 쓴 직후 중단된 update도 동일 응답으로 재시도하면 원본 바이트와 작성 버전을
+  보존한다. 과거 학습 batch reward와 새 held-out 평가를 서로 대체하지 않는다.
+
+오류가 난 노드에서 현재 코드로 업데이트한 다음 기존 root를 그대로 재개한다.
+`prepare`, root 초기화, `protocol.json` 삭제, checkpoint 삭제는 하지 않는다.
+
+```sh
+git pull --ff-only origin master
+sh scripts/run_srgc_llama31.sh math resume --root /group-volume/minsoo3.kim/offpolicy-misranking/srgc-rebuttal/llama31-8b-v1
+```
+
+이 명령은 해당 노드의 기존 실행 checkout에서 사용한다. 공개 launcher는 기존 모델·데이터셋
+완료 순서와 실패 작업 재시도 정책을 유지하며, learner를 처음부터 다시 학습하지 않는다.
+수정 코드를 push한 것만으로 원격 노드의 프로세스가 업데이트되거나 재개된 것은 아니다.
 
 ## 무엇을 언제 저장하는가
 
@@ -26,7 +54,7 @@
 
 ## 결과 파일
 
-`sh scripts/run_srgc_gemma4.sh results`, `sh scripts/run_srgc_llama31.sh results`의 공개 results 명령은 기존 단일 compact JSON에 `datasets.DATASET.reward_curves`를 추가한다. Qwen의 **이미 저장된 progress history**도 같은 export 경로에서 보존한다. Qwen에 새로운 중간 held-out 평가를 설치하는 변경은 아니다.
+`sh scripts/run_srgc_gemma4.sh results`, `sh scripts/run_srgc_llama31.sh results`의 공개 results 명령은 기존 단일 compact JSON에 `datasets.DATASET.reward_curves`를 추가한다. Qwen의 **이미 저장된 progress history**도 같은 export 경로에서 보존한다. 현재 Qwen·Gemma·Llama의 기록 진입점은 모두 이후 25-update 경계의 평가를 저장한다. 과거에 측정하지 않은 held-out 값은 채워 넣지 않는다.
 
 shared prefix의 scalar 기록이 있으면 1–25도 각 arm의 `training_rewards`와 25-step 구간 평균에 포함한다. `shared_prefix: true`로 공통 학습 구간임을 표시하고, `shared_prefix_training_recorded_updates`로 기록된 개수를 알린다.
 

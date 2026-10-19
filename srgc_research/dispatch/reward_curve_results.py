@@ -10,6 +10,7 @@ from .reward_curves import (
     SCHEMA,
     fingerprint,
     finite_reward,
+    recording_extension,
     training_points,
     windows,
 )
@@ -59,6 +60,7 @@ def collect(folder, arm, plan, expected, ids, read):
     if training is not None:
         if protocol is None or any(training.get(k) != v for k, v in protocol.items()):
             raise ValueError("scalar training rewards lack their measurement protocol")
+        recording_extension(directory, protocol, training, read)
         proposed = training["points"]
         step = training["step"]
         if type(step) is not int or not plan["shared_prefix_updates"] <= step <= plan["total_updates"]:
@@ -84,6 +86,7 @@ def collect(folder, arm, plan, expected, ids, read):
     if prefix_training is not None:
         if prefix_protocol is None or any(prefix_training.get(k) != v for k, v in prefix_protocol.items()):
             raise ValueError("shared-prefix scalar rewards lack their protocol")
+        recording_extension(folder / "reward-curves/prefix", prefix_protocol, prefix_training, read)
         step = prefix_training["step"]
         proposed = prefix_training["points"]
         if (type(step) is not int or not 0 <= step <= plan["shared_prefix_updates"] or
@@ -118,13 +121,15 @@ def collect(folder, arm, plan, expected, ids, read):
                     row.get("question_count") != len(ids)):
                 raise ValueError("held-out curve point differs from its bound protocol")
             validate_evaluation(row, ids)
+            writer = recording_extension(path.parent, bound, row, read)
             checkpoint = path.with_suffix(".pt")
             if not checkpoint.is_file() or row.get("checkpoint_sha256") != digest(checkpoint):
                 raise ValueError("held-out curve checkpoint is missing or changed")
             held_out[step] = {"step": step, "reward": row["reward"], "reward_percent": 100 * row["reward"],
                               "kind": "fixed_held_out_evaluation", "source": str(path),
                               "shared_prefix": name == "prefix", "responses_per_prompt": RESPONSES,
-                              "question_count": len(ids), "extension_sha256": bound["extension_sha256"]}
+                              "question_count": len(ids), "extension_sha256": writer,
+                              "protocol_extension_sha256": bound["extension_sha256"]}
             costs.append({"step": step, "arm": name, "scope": row.get("cost_scope"), "costs": row.get("cost_receipts")})
     rollout_groups, rollout_sources, recording_costs = [], [], []
     recorded_training = {p["step"]: p["reward"] for p in all_points}
@@ -146,6 +151,7 @@ def collect(folder, arm, plan, expected, ids, read):
                     type(step) is not int or path.name != f"step-{step}.json.gz" or step not in recorded_training):
                 raise ValueError("rollout trace is not bound to recorded training")
             groups = compact_groups(trace)
+            writer = recording_extension(path.parent.parent, bound, trace, read)
             training_groups = [g for g in groups if g.get("phase") == "training"]
             history = trace.get("history_record", {})
             if (len(training_groups) != plan.get("training_prompts", 4) or
@@ -160,7 +166,8 @@ def collect(folder, arm, plan, expected, ids, read):
             if abs(sum(means) / len(means) - recorded_training[step]) > 1e-10:
                 raise ValueError("rollout rewards differ from the recorded training reward")
             rollout_groups.extend({**g, "shared_prefix": name == "prefix"} for g in groups)
-            rollout_sources.append({"path": str(path), "sha256": digest(path), "step": step, "arm": name})
+            rollout_sources.append({"path": str(path), "sha256": digest(path), "step": step, "arm": name,
+                                    "extension_sha256": writer})
         cost_dir = folder / "reward-curves" / name / "rollout-costs"
         if cost_dir.exists():
             from srgc_rebuttal.cost_ledger import PhaseLedger

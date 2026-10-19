@@ -123,7 +123,24 @@ def save(engine, local, folder, task, plan, data, protocol, record):
                     "protocol_sha256": hashlib.sha256(json.dumps(protocol, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                     "identity": {k: protocol[k] for k in ("plan_sha256", "input_sha256", "implementation_sha256")},
                     "groups": [rows[key] for key in sorted(rows)]}
-        primary(lambda: publish(directory / "rollouts" / f"step-{engine.step}.json.gz", document))
+        if hasattr(engine, "recording_extension_sha256"):
+            document["recording_extension_sha256"] = engine.recording_extension_sha256
+        def write():
+            from .reward_curves import recording_extension
+
+            path = directory / "rollouts" / f"step-{engine.step}.json.gz"
+            if path.exists():
+                existing = read(path)
+                recording_extension(directory, protocol, existing)
+                # An interrupted update may already have published its identical
+                # responses using the previous recorder. Keep those original bytes
+                # and attribution; publish still rejects every scientific change.
+                document.pop("recording_extension_sha256", None)
+                if "recording_extension_sha256" in existing:
+                    document["recording_extension_sha256"] = existing["recording_extension_sha256"]
+            publish(path, document)
+
+        primary(write)
 
 
 def read(path):

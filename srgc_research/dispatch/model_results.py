@@ -95,6 +95,7 @@ def _export(model, dataset, *, root, environment):
     names = ("math", "mbpp") if dataset == "all" else (dataset,)
     patterns = ("seed-*/*-endpoint.json", "seed-*/*-progress.json", "seed-*/run.json",
                 "seed-*/reward-curves/*/protocol.json", "seed-*/reward-curves/*/training.json",
+                "seed-*/reward-curves/*/recording-extensions/*.json",
                 "seed-*/reward-curves/*/step-*.json", "seed-*/reward-curves/*/rollouts/step-*.json.gz")
     versions = {path: file_version(path) for name in names for pattern in patterns
                 for path in (root / "runs" / name).glob(pattern)}

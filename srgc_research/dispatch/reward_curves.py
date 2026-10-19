@@ -1,7 +1,7 @@
 """Durable scalar rewards and separately metered held-out checkpoint curves.
 
 This operational extension does not modify the frozen learner or its identity.
-Its own implementation hash is bound to each measurement protocol.
+Measurement settings stay fixed; recording implementations have separate receipts.
 """
 
 import hashlib
@@ -26,6 +26,56 @@ def extension_digest():
     paths = (Path(__file__), Path(__file__).with_name("reward_curve_rank.py"),
              Path(__file__).with_name("rollout_records.py"))
     return hashlib.sha256(b"".join(p.read_bytes() for p in paths)).hexdigest()
+
+
+def extension_receipt(protocol, writer):
+    for value in (writer, protocol.get("extension_sha256")):
+        if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+            raise ValueError("invalid reward recording extension SHA-256")
+    return {"schema": "srgc-reward-recording-extension-v1",
+            "protocol_sha256": fingerprint(protocol),
+            "protocol_extension_sha256": protocol["extension_sha256"],
+            "extension_sha256": writer}
+
+
+def bind_protocol(path, proposed, writer):
+    """Keep the original protocol/checkpoint bindings across recorder-only fixes."""
+    path = Path(path)
+    with lease(path.with_name(".protocol.lock"), wait=True):
+        saved = json.loads(path.read_text()) if path.exists() else proposed
+        if not isinstance(saved, dict):
+            raise TypeError(f"reward curve protocol changed: {path}; expected an object")
+        changed = sorted(key for key in saved.keys() | proposed.keys()
+                         if key != "extension_sha256" and
+                         (key not in saved or key not in proposed or saved[key] != proposed[key]))
+        if changed or saved.keys() != proposed.keys():
+            raise ValueError(f"reward curve protocol changed: {path}; changed fields: {', '.join(changed)}")
+        receipt = extension_receipt(saved, writer)
+        receipt_path = path.parent / "recording-extensions" / f"{writer}.json"
+        if receipt_path.exists() and json.loads(receipt_path.read_text()) != receipt:
+            raise ValueError(f"reward recording extension receipt changed: {receipt_path}")
+        if not path.exists():
+            atomic_json(path, saved)
+        if not receipt_path.exists():
+            atomic_json(receipt_path, receipt)
+        return saved
+
+
+def recording_extension(directory, protocol, document, read=None):
+    """Validate a new writer receipt; legacy records keep their original attribution."""
+    if "recording_extension_sha256" not in document:
+        extension_receipt(protocol, protocol["extension_sha256"])
+        return protocol["extension_sha256"]
+    writer = document["recording_extension_sha256"]
+    expected = extension_receipt(protocol, writer)
+    path = Path(directory) / "recording-extensions" / f"{writer}.json"
+    if read is None:
+        receipt = json.loads(path.read_text()) if path.exists() else None
+    else:
+        receipt = read(path)
+    if receipt != expected:
+        raise ValueError(f"reward recording extension receipt is missing or changed: {path}")
+    return writer
 
 
 def finite_reward(value):
@@ -156,34 +206,31 @@ def recording_engine(base, folder, task, plan_path, plan, data):
     from srgc_rebuttal.timing import torch_meter
 
     folder = Path(folder)
+    writer = extension_digest()
 
     class RecordingEngine(base):
+        recording_extension_sha256 = writer
+
         def protocol(self, name):
             marker = json.loads((folder / "run.json").read_text())
             identity = {k: marker[k] for k in ("seed", "plan_sha256", "input_sha256", "implementation_sha256")}
             protocol = {"schema": SCHEMA, **identity, "arm": name,
-                        "extension_sha256": extension_digest(), "interval_updates": INTERVAL,
+                        "extension_sha256": writer, "interval_updates": INTERVAL,
                         "responses_per_prompt": RESPONSES,
                         "evaluation_ids_sha256": fingerprint(data["evaluation_ids"]),
                         "question_count": len(data["evaluation_ids"]),
                         "stream": "reporting-evaluation", "training_batch_reward_is_held_out": False}
             path = folder / "reward-curves" / name / "protocol.json"
 
-            def bind():
-                if path.exists() and json.loads(path.read_text()) != protocol:
-                    raise ValueError(f"reward curve protocol changed: {path}")
-                if not path.exists():
-                    atomic_json(path, protocol)
-                return protocol
-
-            return primary(bind)
+            return primary(lambda: bind_protocol(path, protocol, writer))
 
         def save_training_rewards(self):
             protocol = self.protocol(task)
             start = 0 if task == "prefix" else plan["shared_prefix_updates"]
             points = training_points(self.history, start=start, stop=self.step)
             primary(lambda: atomic_json(folder / "reward-curves" / task / "training.json", {
-                **protocol, "step": self.step, "points": points, "windows_25": windows(points)}))
+                **protocol, "recording_extension_sha256": writer,
+                "step": self.step, "points": points, "windows_25": windows(points)}))
 
         def capture_boundary(self):
             if self.step == 0 or self.step % INTERVAL:
@@ -203,6 +250,7 @@ def recording_engine(base, folder, task, plan_path, plan, data):
                 def existing():
                     if point_path.exists():
                         row = json.loads(point_path.read_text())
+                        recording_extension(directory, protocol, row)
                         if any(row.get(k) != v for k, v in binding.items()) or not checkpoint.exists() or row.get("checkpoint_sha256") != digest(checkpoint):
                             raise ValueError("saved reward curve point/checkpoint binding changed")
                         validate_evaluation(row, data["evaluation_ids"])
@@ -229,6 +277,7 @@ def recording_engine(base, folder, task, plan_path, plan, data):
                     state["backend"].pop("optimizer", None)
                     state["evaluation_only"] = True
                     state["reward_curve_binding"] = binding
+                    state["recording_extension_sha256"] = writer
 
                     def write():
                         import os
@@ -256,6 +305,7 @@ def recording_engine(base, folder, task, plan_path, plan, data):
                 finally:
                     self.backend.cost_meter = original_meter
                 point = {**binding, "schema": SCHEMA, "arm": name, "seed": self.config.seed,
+                         "recording_extension_sha256": writer,
                          "kind": "fixed_held_out_evaluation", "responses_per_prompt": RESPONSES,
                          "question_count": len(data["evaluation_ids"]), "per_question_reward": per_question,
                          "reward": sum(per_question.values()) / len(per_question),
@@ -268,6 +318,8 @@ def recording_engine(base, folder, task, plan_path, plan, data):
                                       f"held_out={100 * point['reward']:.4f}% saved={point_path}", flush=True))
 
         def update(self):
+            # Validate before any sampling/optimizer work, including on resumes.
+            self.protocol(task)
             # A resumed boundary may predate this extension or have interrupted
             # its measurement. Evaluate its actual weights before changing them.
             self.capture_boundary()
