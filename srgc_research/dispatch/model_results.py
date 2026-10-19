@@ -90,15 +90,15 @@ def file_version(path):
     return stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
 
 
-def export(model, dataset="all", *, root=None, environment=None):
+def export(model, dataset="all", *, root=None, environment=None, text=False):
     environment = os.environ if environment is None else environment
     storage = importlib.import_module(CONFIGS[model][1])
     _, work = storage.group_work(environment)
     with export_lock(model, work):
-        return _export(model, dataset, root=root, environment=environment)
+        return _export(model, dataset, root=root, environment=environment, text=text)
 
 
-def _export(model, dataset, *, root, environment):
+def _export(model, dataset, *, root, environment, text=False):
     environment = os.environ if environment is None else environment
     adapter_name, storage_name, prefix = CONFIGS[model]
     adapter, storage = importlib.import_module(adapter_name), importlib.import_module(storage_name)
@@ -232,11 +232,17 @@ def _export(model, dataset, *, root, environment):
         result["warnings"].extend(f"{name}: {warning}" for warning in snapshot["warnings"])
     result["complete"] = not result["errors"] and all(snapshot["complete"] for snapshot in snapshots)
     result["coverage"] = {"completed_continuations": completed, "planned_continuations": planned}
-    save_result(model, compact(result), work=work)
-    print(f"{model.upper()} {completed}/{planned} continuations; "
-          f"{'COMPLETE' if result['complete'] else 'INCOMPLETE'}", flush=True)
-    for error in result["errors"]:
-        print(f"ERROR: {error}", flush=True)
+    artifact = compact(result)
+    save_result(model, artifact, work=work, quiet=text)
+    if text:
+        from .model_result_text import render
+
+        print(render(artifact), flush=True)
+    else:
+        print(f"{model.upper()} {completed}/{planned} continuations; "
+              f"{'COMPLETE' if result['complete'] else 'INCOMPLETE'}", flush=True)
+        for error in result["errors"]:
+            print(f"ERROR: {error}", flush=True)
     return int(bool(result["errors"]))
 
 
@@ -260,7 +266,7 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
-        return export(args.model, args.dataset, root=args.root)
+        return export(args.model, args.dataset, root=args.root, text=not args.json)
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"ERROR: {error}", flush=True)
         return 1

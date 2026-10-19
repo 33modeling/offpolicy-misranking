@@ -81,6 +81,11 @@ sh scripts/run_srgc_gemma4.sh all results
 `tasks[].submission_timing`에도 동일한 기준, update별 원기록, 결측 목록, 출처를 남긴다.
 기존 `timing`과 실행 설정도 compact JSON에서 보존한다.
 
+**전달할 때는 파일을 열거나 JSON을 복사하지 않는다.** 공개 `results` 명령은 터미널에
+MATH·MBPP별 seed 보상, 전환 시점, 제출 OLMo 기준 GPU 시간, 평균·SD를 짧은 표로 바로 출력한다.
+출력 전체를 선택해 복사해서 대화에 붙여넣으면 된다. 기존 단일 원본 결과 파일은 내부적으로
+계속 보존하며 자동 결과 저장·학습 worker의 기존 동작은 유지한다.
+
 기존 Qwen MATH·MBPP의 사용자 제공 GPU 시간 요약표만으로는 최종 경로의 update별 비용을
 복원할 수 없다. GPU 노드에서 위 `results`를 다시 내보내 실제 `*-progress.json`을 읽어야
 새 기준의 값을 얻는다. 요약표만 보고 134.35 또는 142.88 GPU-hours를 임의 조정하지 않는다.

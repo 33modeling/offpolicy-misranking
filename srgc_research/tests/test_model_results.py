@@ -175,7 +175,10 @@ def test_public_shell_results_uses_cpu_and_does_not_need_model_interpreter(cohor
         result = subprocess.run(["sh", str(REPO / "scripts" / script), *args], cwd="/tmp", env=env,
                                 capture_output=True, text=True, timeout=30, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "RESULT:" in result.stdout
+        assert "MODEL:" in result.stdout
+        assert "MATH FINAL REWARD (%)" in result.stdout
+        assert "MBPP GPU TIME (GPU-hours; submitted OLMo basis" in result.stdout
+        assert "RESULT:" not in result.stdout and '.json' not in result.stdout
     assert [p.name for p in (cohort.work / "results").iterdir()] == [f"{cohort.model}-results.json"]
 
 

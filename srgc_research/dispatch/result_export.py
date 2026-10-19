@@ -14,14 +14,15 @@ def work_root(environment=None):
                                               "offpolicy-misranking"))).resolve()
 
 
-def save_result(name, result, *, work=None):
+def save_result(name, result, *, work=None, quiet=False):
     work = work_root() if work is None else Path(work).resolve()
     destination = work / "results" / f"{name}-results.json"
     if not destination.resolve().is_relative_to(work):
         raise ValueError("result destination escapes the experiment workspace")
     atomic_json(destination, result)
-    print(f"RESULT: {destination}", flush=True)
-    print(f"SIZE: {destination.stat().st_size / (1024 * 1024):.2f} MiB", flush=True)
+    if not quiet:
+        print(f"RESULT: {destination}", flush=True)
+        print(f"SIZE: {destination.stat().st_size / (1024 * 1024):.2f} MiB", flush=True)
     return destination
 
 
