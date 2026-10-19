@@ -82,7 +82,7 @@ def run_child(command, environment, heartbeat):
 
 
 def drain(order, dataset, initial, environment, update, *, runner=run_child, poll_seconds=10, sleep=time.sleep):
-    """Complete every model's MATH before launching any model's MBPP."""
+    """Finish one model's MATH and then its MBPP before launching the next model."""
     phases = ('math',) if dataset == 'math' else ('math', 'mbpp')
     # Preserve CLI scope, tokenizer/source-plan arguments and interpreter choice.
     # An all command prepares both plans before the first phase. An explicit
@@ -91,23 +91,29 @@ def drain(order, dataset, initial, environment, update, *, runner=run_child, pol
     arguments = list(initial)
     arguments[0] = command_dataset
     resumed = set()
-    for phase in phases:
-        def progress(status, *, current=phase, **details):
-            update(status, active_dataset=current, **details)
-        code = drain_phase(order, command_dataset, arguments,
-                           {**environment, 'SRGC_DATASET_PHASE': phase}, progress,
-                           runner=runner, poll_seconds=poll_seconds, sleep=sleep,
-                           resumed=resumed)
-        if code:
-            return code
+    # Model order is the outer barrier: Llama MATH -> Llama MBPP -> Gemma MATH
+    # -> Gemma MBPP ... Unfinished MBPP ERRORs of a model block the next model.
+    for model in order:
+        for phase in phases:
+            def progress(status, *, current=phase, **details):
+                update(status, active_dataset=current, **details)
+            code = drain_phase([model], command_dataset, arguments,
+                               {**environment, 'SRGC_DATASET_PHASE': phase}, progress,
+                               runner=runner, poll_seconds=poll_seconds, sleep=sleep,
+                               resumed=resumed, start=order[0])
+            if code:
+                return code
     return 0
 
 
 def drain_phase(order, dataset, initial, environment, update, *, runner=run_child,
-                poll_seconds=10, sleep=time.sleep, resumed=None):
+                poll_seconds=10, sleep=time.sleep, resumed=None, start=None):
     """Finish each model in order; failures and waiting never advance models."""
     from .resume_inventory import failed_signature, signature
 
+    # The starting model keeps the original CLI arguments and custom root even
+    # when the caller drains one model at a time.
+    start = order[0] if start is None else start
     states = {name: 'pending' for name in order}
     failures = {}
     child_env = {**environment, 'SRGC_MODEL_CHAIN_CHILD': '1'}
@@ -121,10 +127,10 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
     custom_root, _ = root_parser.parse_known_args(initial)
     def saved_work(model):
         return signature(model, environment['SRGC_DATASET_PHASE'], environment,
-                         root=custom_root.root if model == order[0] else None)
+                         root=custom_root.root if model == start else None)
     def saved_errors(model):
         return failed_signature(model, environment['SRGC_DATASET_PHASE'], environment,
-                                root=custom_root.root if model == order[0] else None)
+                                root=custom_root.root if model == start else None)
     while True:
         busy = False
         killed = False
@@ -145,7 +151,7 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
         for model in candidates:
             if states[model] in {'finished', 'failed'}:
                 continue
-            args = (list(initial) if model == order[0] else
+            args = (list(initial) if model == start else
                     [dataset, 'resume'] if len(initial)>1 and initial[1]=='resume' else None)
             if args and model in resumed and len(args)>1 and args[1]=='resume':
                 args[1]='run'

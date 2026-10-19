@@ -1,9 +1,9 @@
 # Qwen → Llama → Gemma 자동 연결
 
-공개 학습 시작 명령은 **선택한 모든 모델의 MATH 완료 → 선택한 모든 모델의 MBPP** 순서로 실행한다. Qwen 시작의 기본 순서는 `Qwen MATH → Llama MATH → Gemma MATH → Qwen MBPP → Llama MBPP → Gemma MBPP`다. Llama 시작은 각 데이터셋 안에서 `llama31 → gemma4 → qwen35`, Gemma 시작은 `gemma4 → qwen35 → llama31` 순서를 따른다.
+공개 학습 시작 명령은 **모델 단위**로 실행한다(2026-10-19 사용자 결정). 한 모델의 MATH와 MBPP를 모두 끝낸 뒤 다음 모델로 간다. Qwen 시작의 기본 순서는 `Qwen MATH → Qwen MBPP → Llama MATH → Llama MBPP → Gemma MATH → Gemma MBPP`다. Llama 시작은 `llama31 → gemma4 → qwen35`, Gemma 시작은 `gemma4 → qwen35 → llama31` 모델 순서를 따르며, 각 모델 안에서는 MATH 다음 MBPP다.
 
-**2026-10-19 현재 정책: 현재 모델을 끝낸 뒤 다음 모델로 간다.** Llama 시작이면
-Llama의 해당 데이터셋 ERROR·중단 작업·남은 학습·최종 평가가 모두 끝나기 전에는
+**2026-10-19 현재 정책: 현재 모델을 MATH·MBPP 모두 끝낸 뒤 다음 모델로 간다.** Llama 시작이면
+Llama MATH와 Llama MBPP의 ERROR·중단 작업·남은 학습·최종 평가가 모두 끝나기 전에는
 Gemma를 시작하지 않는다. 다른 모델의 기존 ERROR도 이 순서를 앞지르지 않는다.
 
 ```sh
@@ -246,3 +246,26 @@ ERROR 등 11개 순서 위반을 재현한 뒤 수정했다. 공개 Llama shell�
 공개 shell의 MATH/MBPP 순서 확인을 보강한 뒤 coordinator·shell 83개도 다시 통과했다
 (중복 포함). Ruff/공백 검사를 통과했고 동결 학습·모델 adapter·checkpoint·보상 기록
 모듈은 수정하지 않았다. 원격 GPU의 실제 학습 실행을 확인한 검사는 아니다.
+
+## 2026-10-19 모델 단위 순서로 변경 (Llama MBPP ERROR가 Gemma를 막도록)
+
+사용자가 594eec9 이후에도 "Llama ERROR를 남기고 Gemma가 시작된다"고 다시 보고했다.
+594eec9는 데이터셋 안에서만 모델 완료를 장벽으로 삼고, 바깥 순서는 여전히 모든 모델의
+MATH를 먼저 도는 데이터셋 단위였다. 그래서 Llama MATH가 끝나면 Llama MBPP에 ERROR나
+미완료 작업이 남아 있어도 Gemma MATH가 시작됐다. 기존 검사는 ERROR를 MATH에만 두어
+이 경로를 놓쳤다.
+
+사용자 결정에 따라 바깥 순서를 모델 단위로 바꿨다. `drain`이 모델마다 MATH와 MBPP를
+차례로 `drain_phase`에 넘기며, 시작 모델의 원래 인자·`--root`·resume 해제 1회 규칙은
+그대로 유지한다. 모델 안의 MATH 선행 조건(`dataset_allowed`), ERROR 우선 복구,
+재시도 횟수 무제한, peer lease·cooldown 대기, 중지 신호 처리는 바꾸지 않았다.
+
+재현 검사 `test_llama_mbpp_error_blocks_gemma_math_until_llama_mbpp_finishes`는 수정 전
+코드에서 "later model launched while Llama MBPP still had an ERROR"로 실패하고 수정 후
+통과한다. 공개 Llama shell의 실제 자식 프로세스 검사도 `Llama MATH 복구 → Llama MATH 전체
+→ Llama MBPP → Gemma MATH 복구 → Gemma MATH 전체 → Gemma MBPP → Qwen MATH → Qwen MBPP`
+순서를 확인한다. `srgc_research/tests` 1,098개가 통과했고 Ruff·공백 검사도 통과했다.
+CPU 검사이며 원격 H100 실행을 확인한 것은 아니다.
+
+이미 떠 있는 coordinator는 예전 순서를 메모리에 갖고 있다. 정상 학습 중인 task는
+그대로 두고, 그 노드의 연결 실행을 Ctrl+C로 멈춘 뒤 pull하고 같은 명령으로 다시 시작한다.

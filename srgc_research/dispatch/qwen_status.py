@@ -340,7 +340,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
     lines += ["", "Seed table: RUN = active lease; STALE = node heartbeat older than 60s.",
               "RESUME = interrupted work awaiting a worker; ERROR = failed execution (see ATTENTION).",
-              "Dataset order: all selected models finish MATH before any MBPP work.",
+              "Dataset order: each model finishes its MATH and then its MBPP before the next model starts.",
               "Model order: finish the current model, including ERROR recovery and evaluation, before the next model.",
               "Update counts show completed work; cache counts show saved prompts.",
               "SW@N = switch after completed update N; first SR training update is N+1.",

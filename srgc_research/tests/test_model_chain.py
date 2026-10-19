@@ -35,21 +35,21 @@ raise SystemExit(76 if model=='qwen35' and attempt==1 else 0)
     assert chain.drain(list(chain.MODELS), 'all', ['all'], os.environ,
                        lambda *a, **kw: states.append((a, kw)), runner=runner,
                        sleep=lambda seconds: sleeps.append(seconds)) == 0
-    assert jobs == ['qwen35', 'qwen35', 'llama31', 'gemma4', 'qwen35', 'llama31', 'gemma4']
-    assert phases == ['math'] * 4 + ['mbpp'] * 3
+    assert jobs == ['qwen35', 'qwen35', 'qwen35', 'llama31', 'llama31', 'gemma4', 'gemma4']
+    assert phases == ['math', 'math', 'mbpp', 'math', 'mbpp', 'math', 'mbpp']
     assert len(sleeps) == 1
     assert states[-1][0] == ('finished',)
     assert all(value=='finished' for value in states[-1][1]['models'].values())
 
 
-def test_llama_first_rotates_to_gemma_before_qwen():
+def test_llama_first_finishes_each_model_before_gemma_then_qwen():
     order = chain.order_for('llama31')
     jobs = []
     assert order == ['llama31', 'gemma4', 'qwen35']
     assert chain.drain(order, 'mbpp', ['mbpp'], {}, lambda *a, **kw: None,
                        runner=lambda cmd, env, beat: jobs.append((model_of(cmd), env['SRGC_DATASET_PHASE'])) or 0,
                        sleep=lambda n: pytest.fail('completed chain slept')) == 0
-    assert jobs == [(model, phase) for phase in ('math', 'mbpp') for model in order]
+    assert jobs == [(model, phase) for model in order for phase in ('math', 'mbpp')]
 
 
 @pytest.mark.parametrize('code', (1, 2, 124, 134, 139, 129, 137, chain.BUSY, chain.YIELD))
@@ -82,6 +82,40 @@ def test_llama_error_stays_on_llama_until_recovery_and_all_remaining_work_finish
     assert jobs[:7] == [('llama31', True)] * 6 + [('llama31', False)]
     assert jobs[7:] == [('gemma4', True), ('gemma4', False), ('qwen35', False)]
     assert len(waits) == 5
+
+
+def test_llama_mbpp_error_blocks_gemma_math_until_llama_mbpp_finishes(monkeypatch):
+    """Reported 2026-10-19: Llama MATH done, Llama MBPP ERROR left, Gemma MATH started."""
+    from srgc_research.dispatch import resume_inventory
+
+    pending = {('llama31', 'mbpp'): 'llama-mbpp-error', ('gemma4', 'math'): 'gemma-old-error'}
+    lookup = lambda model, dataset, *a, **kw: pending.get((model, dataset))
+    monkeypatch.setattr(resume_inventory, 'signature', lookup)
+    monkeypatch.setattr(resume_inventory, 'failed_signature', lookup)
+    jobs, completed, waits = [], set(), []
+
+    def runner(command, environment, heartbeat):
+        model, phase = model_of(command), environment['SRGC_DATASET_PHASE']
+        recovery = environment['SRGC_RESUME_ONLY'] == '1'
+        jobs.append((model, phase, recovery))
+        if model != 'llama31':
+            assert {('llama31', 'math'), ('llama31', 'mbpp')} <= completed, \
+                'later model launched while Llama MBPP still had an ERROR'
+        if (model, phase) == ('llama31', 'mbpp') and recovery and jobs.count(jobs[-1]) <= 3:
+            return 1  # the same arm keeps failing first; retry without a limit
+        if recovery:
+            pending.pop((model, phase), None)
+        else:
+            assert (model, phase) not in pending
+            completed.add((model, phase))
+        return 0
+
+    assert chain.drain(chain.order_for('llama31'), 'all', ['all'], {}, lambda *a, **kw: None,
+                       runner=runner, sleep=lambda n: waits.append(n)) == 0
+    assert jobs[:6] == [('llama31', 'math', False)] + [('llama31', 'mbpp', True)] * 4 + [('llama31', 'mbpp', False)]
+    assert jobs[6:] == [('gemma4', 'math', True), ('gemma4', 'math', False), ('gemma4', 'mbpp', False),
+                        ('qwen35', 'math', False), ('qwen35', 'mbpp', False)]
+    assert len(waits) == 3
 
 
 def test_later_gemma_error_does_not_jump_ahead_of_unfinished_llama(monkeypatch):
@@ -168,7 +202,7 @@ def test_math_failure_blocks_later_models_and_mbpp():
         jobs.append((model, environment['SRGC_DATASET_PHASE']))
         return 2 if model == 'llama31' else 0
     assert chain.drain(list(chain.MODELS), 'all', ['all'], {}, lambda *a, **kw: None, runner=runner) == 2
-    assert jobs == [('qwen35', 'math'), ('llama31', 'math')]
+    assert jobs == [('qwen35', 'math'), ('qwen35', 'mbpp'), ('llama31', 'math')]
 
 
 @pytest.mark.parametrize('start', chain.MODELS)
@@ -268,8 +302,8 @@ def test_repeated_peer_owned_math_yields_cannot_start_mbpp_early():
         return chain.YIELD if phase == 'math' and model == 'qwen35' and counts[model] < 3 else 0
     assert chain.drain(list(chain.MODELS), 'all', ['all'], {}, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: sleeps.append(n)) == 0
-    assert jobs[:5] == [('qwen35', 'math')] * 3 + [('llama31', 'math'), ('gemma4', 'math')]
-    assert jobs[5:] == [(model, 'mbpp') for model in chain.MODELS]
+    assert jobs[:4] == [('qwen35', 'math')] * 3 + [('qwen35', 'mbpp')]
+    assert jobs[4:] == [(model, phase) for model in ('llama31', 'gemma4') for phase in ('math', 'mbpp')]
     assert len(sleeps) == 2
 
 

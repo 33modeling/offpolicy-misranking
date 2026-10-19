@@ -8,7 +8,7 @@ import sys
 from srgc_research.dispatch import model_chain
 
 
-def test_llama_shell_finishes_llama_before_starting_failed_gemma(tmp_path):
+def test_llama_shell_finishes_llama_math_and_mbpp_before_starting_failed_gemma(tmp_path):
     driver = tmp_path / 'python'
     driver.write_text('#!' + sys.executable + '\n' + '''
 import json, os, sys
@@ -38,8 +38,9 @@ row = json.loads(path.read_text()) if path.is_file() else {'attempt': 0}
 if recovery == '0':
     assert not path.is_file() or row['status'] != 'failed', 'fresh work overtook this model ERROR recovery'
 if model == 'gemma4':
-    assert json.loads((root / f'llama31.{phase}.json').read_text())['status'] == 'complete'
-    assert (root / f'llama31.full.{phase}').exists(), 'Gemma ran before full Llama completion'
+    for dataset in ('math', 'mbpp'):
+        assert json.loads((root / f'llama31.{dataset}.json').read_text())['status'] == 'complete'
+        assert (root / f'llama31.full.{dataset}').exists(), 'Gemma ran before full Llama MATH and MBPP'
 attempt = row['attempt'] + 1
 checkpoint = root / f'{model}.{phase}.pt'
 if not checkpoint.exists():
@@ -68,9 +69,10 @@ raise SystemExit(code)
     assert result.returncode == 0, result.stdout + result.stderr
     launches = [json.loads(line) for line in (tmp_path / 'launches.jsonl').read_text().splitlines()]
     assert launches[:4] == [['llama31', 'math', '1', code] for code in (2, 2, 0)] + [['llama31', 'math', '0', 0]]
-    assert launches[4:8] == [['gemma4', 'math', '1', code] for code in (2, 2, 0)] + [['gemma4', 'math', '0', 0]]
-    assert launches[8] == ['qwen35', 'math', '0', 0]
-    assert launches[9:] == [[model, 'mbpp', '0', 0] for model in ('llama31', 'gemma4', 'qwen35')]
+    assert launches[4] == ['llama31', 'mbpp', '0', 0]
+    assert launches[5:9] == [['gemma4', 'math', '1', code] for code in (2, 2, 0)] + [['gemma4', 'math', '0', 0]]
+    assert launches[9] == ['gemma4', 'mbpp', '0', 0]
+    assert launches[10:] == [['qwen35', phase, '0', 0] for phase in ('math', 'mbpp')]
     for model in ('llama31', 'gemma4'):
         assert (tmp_path / f'{model}.math.pt').read_bytes() == b'saved optimizer, selector and RNG state'
     records = list((tmp_path / 'work/srgc-rebuttal/.model-chain/workers').glob('*.json'))

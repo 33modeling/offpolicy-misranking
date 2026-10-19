@@ -1,13 +1,12 @@
 # Qwen·Llama·Gemma 연결 실행 — 2026-10-19
 
-현재 공개 학습 시작 명령은 **선택한 모든 모델의 MATH 완료 후 MBPP** 순서로
-연결한다. Qwen 시작은 Qwen/Llama/Gemma MATH를 완료한 뒤 같은 순서의 MBPP로
-이어진다. MATH 실행 잠금·남은 평가·오류 재시도·일시 중지는 MBPP 전환을 막는다.
-현재 데이터셋에서 각 모델을 완전히 끝내야 다음 모델을 실행한다. Llama 시작이면
-Llama ERROR·중단 작업·남은 학습·최종 평가를 끝낸 뒤 Gemma로 간다. 실패나 GPU/peer
-대기 때문에 다음 모델로 넘어가지 않는다. 복구 전용 worker의 성공만으로도 전환하지
-않으며, 같은 모델의 남은 전체 작업이 끝나야 전환한다. ERROR 우선 복구는 현재 모델
-안에서 적용한다. 뒤 모델의 ERROR가 현재 모델의 순서를 앞지르지 않는다.
+현재 공개 학습 시작 명령은 **모델 단위**로 연결한다(2026-10-19 사용자 결정).
+한 모델의 MATH를 ERROR·중단 작업·남은 학습·최종 평가까지 끝내고, 이어서 같은 모델의
+MBPP도 모두 끝낸 뒤에야 다음 모델을 실행한다. Llama 시작은 `Llama MATH → Llama MBPP
+→ Gemma MATH → Gemma MBPP → Qwen MATH → Qwen MBPP`, Qwen 시작은 `Qwen MATH → Qwen MBPP
+→ Llama MATH → Llama MBPP → Gemma MATH → Gemma MBPP`다. 모델 안에서는 MATH 완료 전
+MBPP를 시작하지 않는다. 실패·GPU/peer 대기·복구 전용 worker의 성공만으로는 다음
+모델로 넘어가지 않으며, ERROR 우선 복구는 현재 모델·현재 데이터셋 안에서 적용한다.
 GPU 강제 종료로 ERROR가 누적돼도 재개를 막지 않도록 실패 횟수 한도를 제거했다.
 자세한 동작·보존 범위·기존 IDLE worker 적용 방법은
 [모델 연결 실행](SRGC_MODEL_CHAIN.md)을 따른다. 아래 2026-10-12 기록의
