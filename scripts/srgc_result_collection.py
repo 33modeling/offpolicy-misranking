@@ -11,7 +11,7 @@ from srgc_rebuttal.runtime import atomic_json
 
 
 def publish(report, scope):
-    if scope not in {"mechanism", "support", "switch_validation"}:
+    if scope not in {"mechanism", "support", "switch_validation", "timing", "rules"}:
         raise ValueError("unknown result collection scope")
     roots = set()
     for row in report["rows"]:
@@ -55,6 +55,4 @@ def print_paths(report, *, json_output=False):
     stream = sys.stderr if json_output else sys.stdout
     for collection in report.get("collections", []):
         print(f"COLLECTED JSON: {collection['report_path']}", file=stream)
-        if not json_output:
-            continue
         print(f"COLLECTED FILES: {collection['directory']} ({collection['file_count']} originals)", file=stream)
