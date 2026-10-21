@@ -29,7 +29,10 @@ REPO = Path(__file__).resolve().parents[2]
 
 @pytest.fixture(params=("qwen35", "gemma4", "llama31"))
 def cohort(request, tmp_path):
-    model = request.param
+    return make_cohort(request.param, tmp_path)
+
+
+def make_cohort(model, tmp_path):
     work = tmp_path / "work with spaces"
     root = work / "srgc-rebuttal" / model
     names = export.CONFIGS[model]
@@ -39,11 +42,18 @@ def cohort(request, tmp_path):
         if model == "qwen35":
             filename = "additional_seeds.json" if name == "math" else "mbpp_seeds.json"
             plans[name] = qwen.prepare(name, REPO / "srgc_rebuttal/experiments" / filename, root, ChatTokenizer())
+        elif model == "gemma4_text":
+            filename = "additional_seeds.json" if name == "math" else "mbpp_seeds.json"
+            plans[name] = adapter.prepare(name, REPO / "srgc_rebuttal/experiments" / filename,
+                                           root, None, snapshot_sha256="a" * 64)
         else:
             prepare = gemma_prepared if model == "gemma4" else llama_prepared
             plans[name] = prepare(root, name)
-    env_key = {"qwen35": "SRGC_QWEN_ROOT", "gemma4": "SRGC_GEMMA_ROOT", "llama31": "SRGC_LLAMA_ROOT"}[model]
+    env_key = {"qwen35": "SRGC_QWEN_ROOT", "gemma4": "SRGC_GEMMA_ROOT",
+               "gemma4_text": "SRGC_GEMMA_TEXT_ROOT", "llama31": "SRGC_LLAMA_ROOT"}[model]
     env = {**os.environ, "GROUP_VOLUME": str(tmp_path), "OM_WORK": str(work), env_key: str(root)}
+    if model == "gemma4":
+        env["SRGC_GEMMA_LEGACY_PROTOCOL"] = "1"
     return SimpleNamespace(model=model, work=work, root=root, plans=plans, env=env, adapter=adapter)
 
 
@@ -56,6 +66,16 @@ def finish(cohort, dataset, seed=5, arm="on_policy", reward=.5):
     bundle["provenance"]["cache"] = {"model": cohort.adapter.MODEL, "model_revision": cohort.adapter.REVISION,
         "responses": 8, "max_new_tokens": plan["max_new_tokens"], "cache_seed": seed,
         "verifier": plan["verifier"], "attention": "eager"}
+    if cohort.model == "gemma4_text":
+        from srgc_research.dispatch.gemma4_text.protocol import (
+            CODE_VERIFIER,
+            CODE_VERSION,
+            sampling,
+        )
+
+        bundle["provenance"]["cache"].update(gemma_extension="gemma4-12b-text-v2", sampling=sampling())
+        if plan["verifier"] == CODE_VERIFIER:
+            bundle["provenance"]["cache"]["code_verifier_version"] = CODE_VERSION
     atomic_json(bundle_path, bundle)
     identity = {"seed": seed, "plan_sha256": digest(path), "input_sha256": digest(bundle_path),
         "implementation_sha256": hashlib.sha256((cohort.adapter.engine_digest() + cohort.adapter.adapter_digest()).encode()).hexdigest()}
@@ -169,7 +189,8 @@ def test_endpoint_replacement_during_snapshot_is_reported_and_excluded(cohort):
 
 
 def test_public_shell_results_uses_cpu_and_does_not_need_model_interpreter(cohort):
-    script = {"qwen35": "run_srgc_qwen35.sh", "gemma4": "run_srgc_gemma4.sh", "llama31": "run_srgc_llama31.sh"}[cohort.model]
+    script = {"qwen35": "run_srgc_qwen35.sh", "gemma4": "run_srgc_gemma4.sh",
+              "gemma4_text": "run_srgc_gemma4_recovery.sh", "llama31": "run_srgc_llama31.sh"}[cohort.model]
     env = {**cohort.env, "QWEN_PYTHON": "/missing", "GEMMA_PYTHON": "/missing", "LLAMA_PYTHON": "/missing"}
     for args in (("all", "results"), ("results",), ("all", "results", "--json")):
         result = subprocess.run(["sh", str(REPO / "scripts" / script), *args], cwd="/tmp", env=env,

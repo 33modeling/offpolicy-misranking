@@ -22,6 +22,8 @@ def _signature(model, dataset, environment, *, root, failed_only):
     # No CUDA/model imports, checkpoint deserialization or queue mutation.
     from .model_status import CONFIGS
 
+    if model == "gemma4" and environment.get("SRGC_GEMMA_TEXT_PROTOCOL") == "1":
+        model = "gemma4_text"
     _, storage_name, prefix = CONFIGS[model]
     storage = importlib.import_module(storage_name)
     root = Path(root) if root is not None else storage.default_root(environment)

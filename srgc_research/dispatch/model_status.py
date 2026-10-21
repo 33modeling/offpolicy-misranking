@@ -19,9 +19,11 @@ from srgc_rebuttal.srgc import stream_seed
 CONFIGS = {
     "qwen35": ("scripts.srgc_qwen35", "scripts.srgc_qwen35_storage", "qwen35-9b"),
     "gemma4": ("srgc_research.dispatch.gemma4.adapter", "srgc_research.dispatch.gemma4.storage", "gemma4-12b-pt"),
+    "gemma4_text": ("srgc_research.dispatch.gemma4_text.adapter", "srgc_research.dispatch.gemma4_text.storage", "gemma4-12b-text"),
     "llama31": ("srgc_research.dispatch.llama31.adapter", "srgc_research.dispatch.llama31.storage", "llama31-8b"),
 }
 LABELS = {"qwen35": "Qwen3.5-9B", "llama31": "Llama-3.1-8B-Instruct", "gemma4": "Gemma-4-12B-PT"}
+LABELS["gemma4_text"] = "Gemma-4-12B-PT (text-v2)"
 
 
 def interrupted_receipts(report):

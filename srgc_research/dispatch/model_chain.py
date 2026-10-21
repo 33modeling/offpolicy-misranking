@@ -279,7 +279,10 @@ def main(argv=None):
     try:
         with lease(directory / 'nodes' / f'{key}.lock'):
             try:
-                return drain(order, initial[0], initial, os.environ, update, poll_seconds=poll)
+                environment = {**os.environ, 'SRGC_GEMMA_TEXT_PROTOCOL':
+                               '0' if os.environ.get('SRGC_GEMMA_LEGACY_PROTOCOL') == '1'
+                               else os.environ.get('SRGC_GEMMA_TEXT_PROTOCOL', '1')}
+                return drain(order, initial[0], initial, environment, update, poll_seconds=poll)
             except KeyboardInterrupt:
                 code = 128 + stopped[-1] if stopped else 130
                 update('stopped', exit_code=code)

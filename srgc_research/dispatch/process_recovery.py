@@ -3,11 +3,12 @@
 from contextlib import contextmanager
 from unittest.mock import patch
 
-MODELS = ('qwen35', 'llama31', 'gemma4')
+MODELS = ('qwen35', 'llama31', 'gemma4', 'gemma4_text')
 RANK_MARKERS = (
     'srgc_qwen35_rank.py', 'srgc_qwen35_rank_runtime.py',
     'srgc_qwen35_reward_curve_rank.py', 'srgc_qwen35_smoke.py',
     'srgc_research.dispatch.llama31.rank', 'srgc_research.dispatch.gemma4.rank',
+    'srgc_research.dispatch.gemma4_text.rank',
     *(f'srgc_research.dispatch.reward_curve_rank --model {name}' for name in MODELS),
     *(f'srgc_research.dispatch.rank_runtime --model {name}' for name in MODELS),
 )
@@ -16,6 +17,7 @@ OWNER_MARKERS = (
     'srgc_research.dispatch.llama_run', 'srgc_research.dispatch.llama31.cli',
     'srgc_research.dispatch.gemma_run', 'srgc_research.dispatch.gemma4.entry',
     'srgc_research.dispatch.gemma4.cli',
+    'srgc_research.dispatch.gemma4_text.entry', 'srgc_research.dispatch.gemma4_text.cli',
     'srgc_research.dispatch.information_queue', 'srgc_research.dispatch.information_run',
     'srgc_research.information_cli',
 )

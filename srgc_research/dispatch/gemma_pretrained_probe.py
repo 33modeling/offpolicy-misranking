@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import time
+from pathlib import Path
 
 from .gemma4.adapter import MODEL, REVISION
 
@@ -36,7 +36,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--snapshot', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
-    parser.add_argument('--mode', choices=('native', 'adapter'), required=True)
+    parser.add_argument('--mode', choices=('native', 'adapter', 'corrected'), required=True)
+    parser.add_argument('--sample', action='store_true', help='temperature=1, top-p=1, top-k=0 sampling; still only a short diagnostic')
+    parser.add_argument('--responses', type=int, default=1)
     parser.add_argument('--tokens', type=int, default=32)
     parser.add_argument('--threads', type=int, default=8)
     parser.add_argument('--gpu-offload', action='store_true', help='stage BF16 weights in CPU memory and execute on CUDA with Accelerate')
@@ -46,13 +48,22 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not 1 <= args.tokens <= 128 or not 1 <= args.threads <= 16:
         parser.error('tokens must be 1..128 and threads 1..16')
+    if not 1 <= args.responses <= 8 or (args.responses != 1 and not args.sample):
+        parser.error('responses must be 1..8; multiple responses require --sample')
     args.output_dir.mkdir(parents=True, exist_ok=False)
     from .gemma4.runtime import disable_optional_media
     disable_optional_media()
     import torch
     import transformers
-    from transformers import AutoTokenizer, Gemma4UnifiedForConditionalGeneration, Gemma4UnifiedForCausalLM
-    from .gemma4.model import OFFICIAL_FILES, load_text_model, PromptTokenizer
+    from transformers import (
+        AutoTokenizer,
+        Gemma4UnifiedForCausalLM,
+        Gemma4UnifiedForConditionalGeneration,
+    )
+
+    from .gemma4.model import OFFICIAL_FILES, PromptTokenizer, load_text_model
+    if args.mode == 'corrected':
+        from .gemma4_text.model import load_text_model
 
     torch.set_num_threads(args.threads)
     provenance = json.loads((args.snapshot / 'download-provenance.json').read_text())
@@ -66,13 +77,14 @@ def main(argv=None):
     dtype = torch.bfloat16 if args.gpu_offload else torch.float32
     report = {'model': MODEL, 'revision': REVISION, 'mode': args.mode, 'device': 'cuda with CPU weight offload' if args.gpu_offload else 'cpu',
               'dtype': str(dtype), 'torch': torch.__version__, 'transformers': transformers.__version__,
-              'measurement': 'actual pretrained checkpoint loading and short greedy output; not init accuracy',
+              'measurement': 'actual pretrained checkpoint loading and short diagnostic output; not init accuracy',
+              'sampled': args.sample, 'responses': args.responses, 'max_new_tokens': args.tokens,
               'cases': []}
     report['official_generation_config'] = json.loads((args.snapshot / 'generation_config.json').read_text())
-    report['probe_generation_suppress_tokens'] = report['official_generation_config'].get('suppress_tokens') if args.official_suppression else None
+    report['probe_generation_suppress_tokens'] = report['official_generation_config'].get('suppress_tokens') if args.official_suppression or args.mode == 'corrected' else None
     print('LOADING ' + json.dumps(report), flush=True)
     start = time.monotonic()
-    if args.mode == 'adapter':
+    if args.mode in {'adapter', 'corrected'}:
         if args.gpu_offload:
             from unittest.mock import patch
             original = Gemma4UnifiedForCausalLM.from_pretrained
@@ -132,12 +144,22 @@ def main(argv=None):
         print('PREFILL ' + json.dumps(row, ensure_ascii=False), flush=True)
         if case['generate'] or args.generate_real:
             with torch.inference_mode():
-                output = model.generate(**inputs, do_sample=False, max_new_tokens=args.tokens,
+                output = model.generate(**inputs, do_sample=args.sample, num_return_sequences=args.responses,
+                    temperature=1.0, max_new_tokens=args.tokens,
                     pad_token_id=0, eos_token_id=1, logits_to_keep=1, use_cache=True,
                     suppress_tokens=report['probe_generation_suppress_tokens'], top_p=1.0, top_k=0)
             suffix = output[0, inputs['input_ids'].shape[1]:].tolist()
             row.update(generated_token_ids=suffix, text=native_tokenizer.decode(suffix, skip_special_tokens=True),
                        stopped_at_eos=1 in suffix, reached_short_probe_limit=len(suffix) == args.tokens and 1 not in suffix)
+            if args.responses > 1:
+                suffixes = []
+                for sequence in output:
+                    ids = sequence[inputs['input_ids'].shape[1]:].tolist()
+                    if 1 in ids:
+                        ids = ids[:ids.index(1) + 1]
+                    suffixes.append(ids)
+                row['generated_response_token_ids'] = suffixes
+                row['response_texts'] = [native_tokenizer.decode(ids, skip_special_tokens=True) for ids in suffixes]
             if args.mode == 'native' and not args.official_suppression and any(token in suppressed for token in suffix):
                 with torch.inference_mode():
                     filtered = model.generate(**inputs, do_sample=False, max_new_tokens=args.tokens,

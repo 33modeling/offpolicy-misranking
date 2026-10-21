@@ -58,7 +58,8 @@ def compact(result):
             "check_interval", "first_check", "projection_dim", "projection_seed", "max_new_tokens", "verifier",
             "primary_outcome", "primary_contrasts", "generation_micro_batch", "logprob_micro_batch",
             "logit_chunk_tokens", "gradient_checkpointing", "attention", "checkpoint_snapshot",
-            "lora_targets", "thinking", "extension", "adapter_sha256", "engine_sha256"))
+            "lora_targets", "thinking", "extension", "sampling", "model_snapshot_sha256",
+            "adapter_sha256", "engine_sha256"))
         row["endpoints"] = []
         for item in snapshot.get("endpoints", []):
             entry = fields(item, ("seed", "arm", "source", "sha256"))

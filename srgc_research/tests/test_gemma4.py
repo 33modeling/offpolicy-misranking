@@ -216,7 +216,7 @@ def test_one_command_and_status_shortcut_use_shared_python(tmp_path):
             text=True,
             check=True,
         )
-        entry = (["-m", "srgc_research.dispatch.gemma_run"] if args == ["status"] else
+        entry = (["-m", "srgc_research.dispatch.gemma4_text.entry"] if args == ["status"] else
                  ["-m", "srgc_research.dispatch.model_chain", "--start", "gemma4"])
         assert json.loads(result.stdout) == [*entry, *expected]
 

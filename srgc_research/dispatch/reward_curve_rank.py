@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 def main():
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--model", choices=("gemma4", "llama31", "qwen35"), required=True)
+    parser.add_argument("--model", choices=("gemma4", "gemma4_text", "llama31", "qwen35"), required=True)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--task", required=True)

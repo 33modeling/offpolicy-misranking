@@ -132,7 +132,7 @@ def recording_command(command):
             if Path(argument).name in {"srgc_qwen35_rank.py", "srgc_qwen35_rank_runtime.py"}:
                 return [*command[:index], str(Path(__file__).resolve().parents[2] /
                         "scripts/srgc_qwen35_reward_curve_rank.py"), *command[index + 1:]]
-    for model in ("gemma4", "llama31"):
+    for model in ("gemma4", "gemma4_text", "llama31"):
         module = f"srgc_research.dispatch.{model}.rank"
         if module not in command or "--stage" not in command or command[command.index("--stage") + 1] != "train":
             continue

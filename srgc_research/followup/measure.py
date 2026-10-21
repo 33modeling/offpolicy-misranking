@@ -140,7 +140,8 @@ def n13_acquire(backend, state, data, identity, output, *, independent=True):
 
 def profile_name(plan):
     extension = plan.get("extension", "")
-    profiles = {"qwen35-9b-v2": "qwen35", "gemma4-12b-pt-v1": "gemma4", "llama31-8b-v1": "llama31"}
+    profiles = {"qwen35-9b-v2": "qwen35", "gemma4-12b-pt-v1": "gemma4",
+                "gemma4-12b-text-v2": "gemma4_text", "llama31-8b-v1": "llama31"}
     if extension and extension not in profiles:
         raise ValueError("unsupported model extension; use the matching original diagnostic adapter")
     return profiles.get(extension, "olmo3")
@@ -150,7 +151,7 @@ def make_backend(plan_path, plan, data, source, device, meter):
     import torch
 
     profile = profile_name(plan)
-    if profile == "gemma4":
+    if profile in {"gemma4", "gemma4_text"}:
         from srgc_research.dispatch.gemma4.runtime import disable_optional_media
         disable_optional_media()
     from peft import LoraConfig, get_peft_model
@@ -172,7 +173,8 @@ def make_backend(plan_path, plan, data, source, device, meter):
         adapter.validate_bundle_model(data, plan, source["seed"])
         load_model = adapter.load_model
         memory = importlib.import_module("scripts.srgc_qwen35_memory" if profile == "qwen35" else f"srgc_research.dispatch.{profile}.memory")
-        base = getattr(memory, {"qwen35": "QwenBackend", "gemma4": "GemmaBackend", "llama31": "LlamaBackend"}[profile])
+        base = getattr(memory, {"qwen35": "QwenBackend", "gemma4": "GemmaBackend",
+                                "gemma4_text": "GemmaBackend", "llama31": "LlamaBackend"}[profile])
     torch.manual_seed(source["seed"])
     model, tokenizer = load_model(plan["model"], plan["model_revision"], device, attention=source["attention"])
     lora = LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"], lora_dropout=0., bias="none", task_type="CAUSAL_LM")

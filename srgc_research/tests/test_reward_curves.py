@@ -31,7 +31,7 @@ def test_missing_or_noncontiguous_training_history_is_rejected(bad):
         curves.training_points(bad, start=25, stop=50)
 
 
-@pytest.mark.parametrize("model", ["gemma4", "llama31"])
+@pytest.mark.parametrize("model", ["gemma4", "gemma4_text", "llama31"])
 def test_only_training_rank_is_wrapped(model):
     cmd = ["python", "runner.py", "--module", f"srgc_research.dispatch.{model}.rank", "--stage", "train", "--task", "sr"]
     changed = curves.recording_command(cmd)
@@ -137,7 +137,7 @@ def test_interrupted_checkpoint_is_replaced_from_actual_weights(tmp_path):
     assert len(backend.evaluations) == 1
     assert (point.with_suffix(".json")).exists()
 
-@pytest.mark.parametrize("model", ["gemma4", "llama31", "qwen35"])
+@pytest.mark.parametrize("model", ["gemma4", "gemma4_text", "llama31", "qwen35"])
 def test_public_rank_installs_recording_on_the_frozen_checkpoint_factory(tmp_path, model):
     import sys
     from types import SimpleNamespace
