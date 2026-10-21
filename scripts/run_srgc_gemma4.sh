@@ -3,7 +3,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 [ "$#" -gt 0 ] || set -- all
-if [ "${1:-}" = status ] || [ "${1:-}" = results ]; then
+if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ]; then
     ACTION=$1
     shift
     set -- all "$ACTION" "$@"
@@ -30,6 +30,12 @@ export OPENBLAS_DEFAULT_NUM_THREADS=1 GOTO_NUM_THREADS=1 BLIS_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
 export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+if [ "${2:-}" = audit ]; then
+    export CUDA_VISIBLE_DEVICES=""
+    AUDIT_DATASET=$1
+    shift 2
+    exec "$PY" -m srgc_research.dispatch.gemma_initial_audit "$AUDIT_DATASET" "$@"
+fi
 # Training commands share one model queue; read-only/control actions stay model-specific.
 if [ "${SRGC_MODEL_CHAIN:-1}" = 1 ] && [ "${SRGC_MODEL_CHAIN_CHILD:-0}" != 1 ]; then
     case "${1:-}:${2:-run}" in

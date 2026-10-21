@@ -16,8 +16,12 @@ def main(argv=None):
     from srgc_research.dispatch.gemma4 import cli, diagnostics, entry
 
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
-    if args[0] in {"status", "results"}:
+    if args[0] in {"status", "results", "audit"}:
         args = ["all", *args]
+    if len(args) > 1 and args[1] == "audit":
+        from .gemma_initial_audit import main as audit
+
+        return audit([args[0], *args[2:]])
     if len(args) > 1 and args[1] == "status":
         from .model_status import main as status
 
