@@ -24,7 +24,7 @@ def check_saved_preflight(options):
 
     datasets = ("math", "mbpp") if options.dataset == "all" else (options.dataset,)
     phase = os.environ.get("SRGC_DATASET_PHASE")
-    if phase in {"math", "mbpp"}:
+    if phase in {"math", "mbpp"} and os.environ.get("SRGC_CACHE_ONLY") != "1":
         datasets = tuple(name for name in datasets if name == phase)
     for dataset in datasets:
         path = options.root / "experiments" / f"gemma4-12b-text-{dataset}.json"
@@ -64,7 +64,7 @@ def scoped_admission(original):
 
         plans = json.loads(environment.get("SRGC_GEMMA_PLANS", "null")) or [environment["SRGC_GEMMA_PLAN"]]
         phase = environment.get("SRGC_DATASET_PHASE")
-        if phase is not None:
+        if phase is not None and environment.get("SRGC_CACHE_ONLY") != "1":
             if phase not in {"math", "mbpp"}:
                 raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
             selected = "math_train" if phase == "math" else "mbpp"
@@ -171,6 +171,22 @@ def main(argv=None):
                 if enabled() else released_gpu_identity(identity, label="GEMMA")))
         try:
             check_saved_preflight(options)
+            if (options.action in {"run", "resume"} and options.dataset == "all"
+                    and os.environ.get("SRGC_GEMMA_CACHE_FIRST") == "1"
+                    and os.environ.get("SRGC_DATASET_PHASE") in {None, "math"}):
+                # Both datasets' independent initial-policy caches precede the
+                # training barrier. Every node shares the existing task leases.
+                # Explicit resume was already applied above; never clear a new
+                # stop request again between cache and training.
+                if options.action == "resume":
+                    args[1] = "run"
+                print("GEMMA preparing all MATH and MBPP initial caches before MATH training", flush=True)
+                with patch.dict(os.environ, {"SRGC_CACHE_ONLY": "1"}):
+                    check_saved_preflight(options)
+                    code = entry.main(args)
+                    if code:
+                        return code
+                print("GEMMA all initial caches complete; checking MATH work", flush=True)
             return entry.main(args)
         except (subprocess.CalledProcessError, OSError, ValueError, TypeError, RuntimeError, ImportError) as error:
             plans = [Path(options.root) / "experiments" / f"gemma4-12b-text-{name}.json"

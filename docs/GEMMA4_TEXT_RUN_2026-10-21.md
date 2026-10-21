@@ -44,7 +44,8 @@ git pull --ff-only origin master
 sh scripts/run_srgc_gemma4.sh all
 ```
 
-이 시작 명령이 새 입력 준비 → 소량 검사 → 새 캐시 → 새 prefix → 네 arm을 진행한다.
+이 시작 명령이 새 입력 준비 → 소량 검사 → **MATH·MBPP 모든 초기 캐시** → MATH prefix·네 arm
+→ MBPP prefix·네 arm을 진행한다. [캐시 우선 배정](GEMMA4_CACHE_FIRST_2026-10-21.md).
 기존 모델 연결 순서를 유지하며, Gemma만 진행하려면 `SRGC_MODEL_CHAIN=0`을 지정한다.
 소량 검사만 실행하고 끝내려면 `all preflight`를 사용할 수 있다. 기본 결과 위치는
 `$OM_WORK/srgc-rebuttal/gemma4-12b-text-v3`다. 필요한 경우

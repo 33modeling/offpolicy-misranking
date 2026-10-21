@@ -18,6 +18,8 @@ from .preemption import interruption_code, log_position
 
 
 def phase_queues(queues):
+    if os.environ.get("SRGC_CACHE_ONLY") == "1":
+        return queues
     phase = os.environ.get("SRGC_DATASET_PHASE")
     if phase is None:
         return queues
@@ -30,6 +32,8 @@ def phase_queues(queues):
 
 
 def phase_pending(manager, pending):
+    if os.environ.get("SRGC_CACHE_ONLY") == "1":
+        return {key for key in pending if manager.tasks[key][1].arm == "cache"}
     phase = os.environ.get("SRGC_DATASET_PHASE")
     if phase is not None and phase not in {"math", "mbpp"}:
         raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
@@ -63,14 +67,20 @@ def runnable(manager, requested, pending, args):
               and manager.dataset_allowed(manager.tasks[key][0])
               and not manager.tasks[key][0].complete(manager.tasks[key][1])
               and not manager.owned(*manager.tasks[key])}
+    if os.environ.get("SRGC_CACHE_ONLY") == "1":
+        active = {key for key in active if manager.receipt(*manager.tasks[key]).get("status") != "failed"
+                  or time.time() >= manager.receipt(*manager.tasks[key]).get("finished", 0) + args.retry_delay}
     for queue in manager.queues.values():
         if cluster.stop_requested(queue) or not manager.dataset_allowed(queue):
             continue
         for task in queue.tasks:
+            if os.environ.get("SRGC_CACHE_ONLY") == "1" and task.arm != "cache":
+                continue
             key = (str(queue.plan_path.resolve()), task.key)
             if queue not in requested and key not in pending:
                 continue
-            if os.environ.get("SRGC_RESUME_ONLY") == "1" and key not in pending:
+            if (os.environ.get("SRGC_RESUME_ONLY") == "1"
+                    and os.environ.get("SRGC_CACHE_ONLY") != "1" and key not in pending):
                 continue
             if active and key not in active:
                 continue
@@ -93,6 +103,11 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
     for queue in requested:
         queue.tasks = seed_first(queue.tasks, queue.plan["seeds"])
     manager, cohort = cohort_for(requested, factory, pattern)
+    if os.environ.get("SRGC_CACHE_ONLY") == "1":
+        # Construct the full manager first so historical backlog entries remain
+        # valid. Restrict only this worker's runnable tasks, never plan contents.
+        for queue in cohort:
+            queue.tasks = [task for task in queue.tasks if task.arm == "cache"]
     requested = phase_queues(cohort) if os.environ.get("SRGC_DATASET_PHASE") is not None else requested
     for queue in cohort:
         queue.bind()
@@ -113,7 +128,8 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
         with lease(manager.marker.with_suffix(".lock"), wait=True):
             pending = {key for key in phase_pending(manager, manager.pending())
                        if not cluster.stop_requested(manager.tasks[key][0])}
-        if os.environ.get("SRGC_RESUME_ONLY") == "1" and not pending:
+        if (os.environ.get("SRGC_RESUME_ONLY") == "1"
+                and os.environ.get("SRGC_CACHE_ONLY") != "1" and not pending):
             update("yielded", idle_reason="unfinished tasks recovered; fresh work deferred")
             return
         if not pending and all(q.plan_path in stopped or
@@ -218,7 +234,7 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         if all(cluster.stop_requested(q) for q in requested):
             progress("stopped")
             return stop_code()
-        if os.environ.get("SRGC_RESUME_ONLY") == "1":
+        if os.environ.get("SRGC_RESUME_ONLY") == "1" and os.environ.get("SRGC_CACHE_ONLY") != "1":
             with lease(manager.marker.with_suffix(".lock"), wait=True):
                 remaining = phase_pending(manager, manager.pending())
             if not remaining:

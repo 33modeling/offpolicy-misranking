@@ -34,8 +34,9 @@ class RunControl:
                 inside(path, self.root)
 
     def requested(self, *, immediate=False):
+        active = self.datasets if os.environ.get("SRGC_CACHE_ONLY") == "1" else self.active
         return any(cluster.stop_requested(SimpleNamespace(directory=path.parent), immediate=immediate)
-                   for dataset in self.active for path in self.paths[dataset])
+                   for dataset in active for path in self.paths[dataset])
 
     def check(self):
         if self.requested():

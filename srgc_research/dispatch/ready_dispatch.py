@@ -29,6 +29,8 @@ class ReadyClaims:
         return FrozenResumeFirst.failure_counts(self)
 
     def dataset_allowed(self, queue):
+        if os.environ.get("SRGC_CACHE_ONLY") == "1":
+            return True
         phase = os.environ.get("SRGC_DATASET_PHASE")
         if phase is not None and phase not in {"math", "mbpp"}:
             raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
@@ -70,6 +72,8 @@ class ReadyClaims:
         with ExitStack() as locks:
             with lease(self.marker.with_suffix(".lock"), wait=True):
                 pending = self.pending()
+                if os.environ.get("SRGC_CACHE_ONLY") == "1":
+                    pending = {key for key in pending if self.tasks[key][1].arm == "cache"}
                 priorities = self.priorities(pending)
                 failures = self.failure_counts()
                 allowed = {key for key, candidate_queue in self.queues.items()
@@ -78,7 +82,7 @@ class ReadyClaims:
                            and not stop_requested(self.tasks[key][0])
                            and not self.tasks[key][0].complete(self.tasks[key][1])
                            and not self.owned(*self.tasks[key])}
-                runnable_priority = 1 if backlog else 2
+                runnable_priority = 1 if backlog and os.environ.get("SRGC_CACHE_ONLY") != "1" else 2
                 for key in pending:
                     candidate_queue, candidate = self.tasks[key]
                     if stop_requested(candidate_queue) or key[0] not in allowed:
@@ -101,8 +105,11 @@ class ReadyClaims:
                 tasks = (sorted(queue.tasks, key=retry_order)
                          if str(queue.plan_path.resolve()) in allowed else [])
                 for task in tasks:
+                    if os.environ.get("SRGC_CACHE_ONLY") == "1" and task.arm != "cache":
+                        continue
                     key = (str(queue.plan_path.resolve()), task.key)
-                    if os.environ.get("SRGC_RESUME_ONLY") == "1" and key not in pending:
+                    if (os.environ.get("SRGC_RESUME_ONLY") == "1"
+                            and os.environ.get("SRGC_CACHE_ONLY") != "1" and key not in pending):
                         continue
                     if priorities[key] > runnable_priority:
                         continue

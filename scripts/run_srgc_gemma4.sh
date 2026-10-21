@@ -7,6 +7,7 @@ if [ "${SRGC_GEMMA_LEGACY_PROTOCOL:-0}" = 1 ]; then
 else
     export SRGC_GEMMA_TEXT_PROTOCOL=${SRGC_GEMMA_TEXT_PROTOCOL:-1}
 fi
+export SRGC_GEMMA_CACHE_FIRST=${SRGC_GEMMA_CACHE_FIRST:-${SRGC_GEMMA_TEXT_PROTOCOL}}
 [ "$#" -gt 0 ] || set -- all
 if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ] || [ "${1:-}" = stop ] || [ "${1:-}" = resume ] || [ "${1:-}" = prepare ] || [ "${1:-}" = doctor ] || [ "${1:-}" = preflight ]; then
     ACTION=$1
