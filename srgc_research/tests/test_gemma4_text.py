@@ -22,8 +22,13 @@ from srgc_research.dispatch.gemma4_text import adapter, cli, model, preflight, s
 from srgc_research.dispatch.gemma4_text.memory import GemmaBackend
 from srgc_research.dispatch.gemma4_text.protocol import (
     CODE_VERIFIER,
+    EXTENSION,
+    PREVIOUS_EXTENSION,
+    PROMPT_FORMAT,
     SUPPRESS_TOKENS,
+    completion_cue,
     mask_logits,
+    prompt_prefix,
     sampling,
 )
 from srgc_research.dispatch.gemma4_text.verifier import code_reward, extract_code
@@ -55,8 +60,14 @@ def test_corrected_cohort_identity_and_cache_cannot_mix_with_v1(tmp_path, datase
     assert plan["verifier"] == (CODE_VERIFIER if dataset == "mbpp" else load_plan(old)["verifier"])
     old_bundle = json.loads(input_path(old, load_plan(old), 5).read_text())
     bundle = json.loads(input_path(new, plan, 5).read_text())
-    for name in ("records", "candidate_ids", "ranking_validation_ids", "evaluation_ids"):
+    for name in ("candidate_ids", "ranking_validation_ids", "evaluation_ids"):
         assert bundle[name] == old_bundle[name]
+    assert bundle["provenance"]["prompt_format"] == PROMPT_FORMAT
+    assert plan["prompt_completion"] == completion_cue(dataset)
+    assert plan["prompt_prefix"] == prompt_prefix(dataset)
+    for candidate, record in old_bundle["records"].items():
+        assert bundle["records"][candidate] == {
+            **record, "prompt": prompt_prefix(dataset) + record["prompt"] + completion_cue(dataset)}
     assert bundle["cached_rewards"] == {}
     assert bundle["provenance"]["sampling"] == sampling()
     with pytest.raises(ValueError):
@@ -80,6 +91,48 @@ def test_existing_v1_inputs_and_results_are_never_replaced(tmp_path):
         prepare(tmp_path)
     assert all(path.read_bytes() == content for path, content in before.items())
     assert old.is_file()
+
+
+@pytest.mark.parametrize("dataset", ["math", "mbpp"])
+def test_v2_inputs_remain_readable_but_cannot_resume_or_be_reprepared_as_v3(tmp_path, dataset):
+    path = prepare(tmp_path, dataset)
+    plan = load_plan(path)
+    plan["extension"] = PREVIOUS_EXTENSION
+    plan.pop("prompt_completion")
+    plan.pop("prompt_prefix")
+    plan["adapter_sha256"] = "b" * 64
+    for seed in plan["seeds"]:
+        source = input_path(path, plan, seed)
+        data = json.loads(source.read_text())
+        for record in data["records"].values():
+            record["prompt"] = record["prompt"].removeprefix(prompt_prefix(dataset)).removesuffix(completion_cue(dataset))
+        data["provenance"].update(gemma_extension=PREVIOUS_EXTENSION,
+                                  prompt_format="gemma4_pt_plain_text_single_bos")
+        data["provenance"].pop("prompt_completion")
+        data["provenance"].pop("prompt_prefix")
+        atomic_json(source, data)
+    atomic_json(path, plan)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert adapter.validate_extension(path, read_only=True) == plan
+    for seed in plan["seeds"]:
+        adapter.validate_bundle_model(json.loads(input_path(path, plan, seed).read_text()), plan, seed)
+    with pytest.raises(ValueError, match="plan/model/adapter differs"):
+        adapter.validate_extension(path)
+    with pytest.raises(ValueError, match="new output directory"):
+        prepare(tmp_path, dataset)
+    assert {p: p.read_bytes() for p in before} == before
+
+
+@pytest.mark.parametrize("dataset", ["math", "mbpp"])
+def test_missing_response_cue_is_rejected_in_every_task_split(tmp_path, dataset):
+    path = prepare(tmp_path, dataset)
+    plan = load_plan(path)
+    source = json.loads(input_path(path, plan, 5).read_text())
+    for split in ("candidate_ids", "ranking_validation_ids", "evaluation_ids"):
+        data = copy.deepcopy(source)
+        data["records"][data[split][0]]["prompt"] = "missing the solution cue"
+        with pytest.raises(ValueError, match="recorded solution cue"):
+            adapter.validate_bundle_model(data, plan, 5)
 
 
 @pytest.mark.parametrize("response", [
@@ -264,7 +317,7 @@ def test_runtime_routes_cache_training_and_reports_and_restores_shared_code(tmp_
     assert cluster_queue.TaskQueue is queue
     env = {"GROUP_VOLUME": str(tmp_path), "OM_WORK": str(tmp_path / "work"),
            "SRGC_GEMMA_ROOT": str(tmp_path / "old-v1")}
-    assert storage.default_root(env).name == "gemma4-12b-text-v2"
+    assert storage.default_root(env).name == EXTENSION
 
 
 def test_new_status_and_result_export_never_replace_archived_result(tmp_path, capsys):
@@ -308,7 +361,7 @@ def test_corrected_public_results_needs_no_model_interpreter(tmp_path):
 
     cohort = make_cohort("gemma4_text", tmp_path)
     env = {**cohort.env, "GEMMA_PYTHON": "/missing", "SRGC_GEMMA_LEGACY_PROTOCOL": "0"}
-    for script in ("run_srgc_gemma4.sh", "run_srgc_gemma4_recovery.sh"):
+    for script in ("run_srgc_gemma4.sh",):
         result = subprocess.run(["sh", str(REPO / "scripts" / script), "results"], cwd="/tmp",
                                 env=env, capture_output=True, text=True, timeout=30, check=False)
         assert result.returncode == 0, result.stdout + result.stderr

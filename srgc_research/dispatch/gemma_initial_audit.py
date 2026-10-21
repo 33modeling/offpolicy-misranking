@@ -103,7 +103,8 @@ def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
     path = below(plan_path.parent / plan["input_pattern"].format(seed=seed), root)
     data = read_object(path)
     provenance = data.get('provenance', {})
-    if (provenance.get('model'), provenance.get('model_revision'), provenance.get('prompt_format')) != (MODEL, REVISION, 'gemma4_pt_plain_text_single_bos'):
+    if ((provenance.get('model'), provenance.get('model_revision')) != (MODEL, REVISION)
+            or provenance.get('prompt_format') not in {'gemma4_pt_plain_text_single_bos', 'gemma4_pt_solution_single_bos'}):
         raise ValueError('input bundle has a different model or prompt format')
     candidates = data["candidate_ids"]
     if not isinstance(candidates, list) or not candidates or len(set(candidates)) != len(candidates):

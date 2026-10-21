@@ -39,13 +39,14 @@ def main(argv=None):
     parser.add_argument('--mode', choices=('native', 'adapter', 'corrected'), required=True)
     parser.add_argument('--sample', action='store_true', help='temperature=1, top-p=1, top-k=0 sampling; still only a short diagnostic')
     parser.add_argument('--responses', type=int, default=1)
+    parser.add_argument('--seed', type=int, default=0, help='fixed generation seed for repeatable sampling diagnostics')
     parser.add_argument('--tokens', type=int, default=32)
     parser.add_argument('--threads', type=int, default=8)
     parser.add_argument('--gpu-offload', action='store_true', help='stage BF16 weights in CPU memory and execute on CUDA with Accelerate')
     parser.add_argument('--case', action='append', help='restrict to exact diagnostic case IDs')
     parser.add_argument('--generate-real', action='store_true', help='also generate on selected real candidate prompts; still not an init accuracy estimate')
     parser.add_argument('--official-suppression', action='store_true', help='restore only the two official modality-token suppressions in this separate diagnostic')
-    parser.add_argument('--solution-cue', action='store_true', help='diagnostic only: append a Solution cue; never modify an experiment input')
+    parser.add_argument('--solution-cue', action='store_true', help='diagnostic only: apply the PT response cue and Python formatting example; never modify experiment inputs')
     parser.add_argument('--score', action='store_true', help='score generated text with the task verifier, separately from experiment records')
     parser.add_argument('--stream', action='store_true', help='show raw decode text as it is generated; one response only')
     args = parser.parse_args(argv)
@@ -55,6 +56,8 @@ def main(argv=None):
         parser.error('responses must be 1..8; multiple responses require --sample')
     if args.stream and args.responses != 1:
         parser.error('--stream requires one response')
+    if not 0 <= args.seed < 2**63:
+        parser.error('seed must be a nonnegative signed 64-bit integer')
     args.output_dir.mkdir(parents=True, exist_ok=False)
     from .gemma4.runtime import disable_optional_media
     disable_optional_media()
@@ -85,6 +88,7 @@ def main(argv=None):
               'measurement': 'actual pretrained checkpoint loading and short diagnostic output; not init accuracy',
               'sampled': args.sample, 'responses': args.responses, 'max_new_tokens': args.tokens,
               'diagnostic_solution_cue': args.solution_cue,
+              'generation_seed': args.seed,
               'cases': []}
     report['official_generation_config'] = json.loads((args.snapshot / 'generation_config.json').read_text())
     report['probe_generation_suppress_tokens'] = report['official_generation_config'].get('suppress_tokens') if args.official_suppression or args.mode == 'corrected' else None
@@ -129,7 +133,9 @@ def main(argv=None):
     for case in selected:
         case = dict(case)
         if args.solution_cue:
-            case['prompt'] += '\n\nSolution:\n'
+            from .gemma4_text.protocol import completion_cue, prompt_prefix
+            dataset = case.get('dataset', 'math')
+            case['prompt'] = prompt_prefix(dataset) + case['prompt'] + completion_cue(dataset)
         started = time.monotonic()
         native_ids = native_tokenizer.encode(case['prompt'], add_special_tokens=True)
         adapter_ids = wrapped.encode(case['prompt'], add_special_tokens=True)
@@ -156,6 +162,9 @@ def main(argv=None):
             if args.stream:
                 from transformers import TextStreamer
                 extra['streamer'] = TextStreamer(native_tokenizer, skip_prompt=True, skip_special_tokens=False)
+            torch.manual_seed(args.seed)
+            if args.gpu_offload:
+                torch.cuda.manual_seed(args.seed)
             with torch.inference_mode():
                 output = model.generate(**inputs, do_sample=args.sample, num_return_sequences=args.responses,
                     temperature=1.0, max_new_tokens=args.tokens,

@@ -1,4 +1,4 @@
-"""Exercise public text-v2 startup, phase boundaries and real stop receipts."""
+"""Exercise public text-v3 startup, phase boundaries and real stop receipts."""
 
 import json
 import os
@@ -230,7 +230,7 @@ def test_failure_footer_is_printed_once_after_backup_cleanup(tmp_path, capsys):
     from srgc_research.dispatch import model_resume
 
     def fail(args):
-        model_resume.failure_footer(tmp_path, [], "GEMMA TEXT V2")
+        model_resume.failure_footer(tmp_path, [], "GEMMA TEXT V3")
         print("BACKUP final=true")
         raise RuntimeError("injected admission failure")
     def footer(*args):

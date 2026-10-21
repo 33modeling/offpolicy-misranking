@@ -10,6 +10,7 @@ from ..gemma4.storage import (
     validate_plan_paths,
     validate_tree,
 )
+from .protocol import EXTENSION
 
 __all__ = ["default_root", "group_work", "inside", "setup_storage",
            "validate_plan_paths", "validate_tree"]
@@ -23,4 +24,4 @@ def default_root(environment=None):
     if work == group or not work.is_relative_to(group):
         work = group / environment.get("OM_USER", "minsoo3.kim") / "offpolicy-misranking"
     return Path(environment.get("SRGC_GEMMA_TEXT_ROOT",
-                                str(work / "srgc-rebuttal/gemma4-12b-text-v2")))
+                                str(work / "srgc-rebuttal" / EXTENSION)))

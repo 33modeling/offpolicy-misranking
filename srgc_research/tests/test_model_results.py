@@ -73,7 +73,7 @@ def finish(cohort, dataset, seed=5, arm="on_policy", reward=.5):
             sampling,
         )
 
-        bundle["provenance"]["cache"].update(gemma_extension="gemma4-12b-text-v2", sampling=sampling())
+        bundle["provenance"]["cache"].update(gemma_extension=plan["extension"], sampling=sampling())
         if plan["verifier"] == CODE_VERIFIER:
             bundle["provenance"]["cache"]["code_verifier_version"] = CODE_VERSION
     atomic_json(bundle_path, bundle)
@@ -190,7 +190,7 @@ def test_endpoint_replacement_during_snapshot_is_reported_and_excluded(cohort):
 
 def test_public_shell_results_uses_cpu_and_does_not_need_model_interpreter(cohort):
     script = {"qwen35": "run_srgc_qwen35.sh", "gemma4": "run_srgc_gemma4.sh",
-              "gemma4_text": "run_srgc_gemma4_recovery.sh", "llama31": "run_srgc_llama31.sh"}[cohort.model]
+              "gemma4_text": "run_srgc_gemma4.sh", "llama31": "run_srgc_llama31.sh"}[cohort.model]
     env = {**cohort.env, "QWEN_PYTHON": "/missing", "GEMMA_PYTHON": "/missing", "LLAMA_PYTHON": "/missing"}
     for args in (("all", "results"), ("results",), ("all", "results", "--json")):
         result = subprocess.run(["sh", str(REPO / "scripts" / script), *args], cwd="/tmp", env=env,

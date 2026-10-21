@@ -72,7 +72,7 @@ def validate_gate(plan_path):
     rows = [read_receipt(root / f"{hashlib.sha256(candidate.encode()).hexdigest()}.json",
                          protocol, candidate) for candidate in protocol["candidate_ids"]]
     if any(row is None for row in rows):
-        raise ValueError("Gemma preflight is missing; run the recovery launcher first")
+        raise ValueError("Gemma preflight is missing; run scripts/run_srgc_gemma4.sh all preflight first")
     expected = summarize(protocol, rows)
     saved = json.loads((root / "summary.json").read_text())
     if saved != expected or not expected["passed"]:

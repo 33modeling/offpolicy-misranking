@@ -2,11 +2,6 @@
 # Same command on each four-GPU node: local weights, shared queues, resume first.
 set -eu
 cd "$(dirname "$0")/.."
-# Retain the old spelling as an alias; ordinary commands use this same launcher.
-if [ "${1:-}" = recover ]; then
-    shift
-    export SRGC_GEMMA_LEGACY_PROTOCOL=0 SRGC_GEMMA_TEXT_PROTOCOL=1 SRGC_MODEL_CHAIN=0
-fi
 if [ "${SRGC_GEMMA_LEGACY_PROTOCOL:-0}" = 1 ]; then
     export SRGC_GEMMA_TEXT_PROTOCOL=0
 else

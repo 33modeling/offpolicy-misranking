@@ -373,6 +373,7 @@ def test_completed_collect_verifies_evidence_before_gpu_or_base_load(source, tmp
 
 @pytest.mark.parametrize(("extension", "expected"), [("qwen35-9b-v2", "qwen35"), ("gemma4-12b-pt-v1", "gemma4"),
                                                    ("gemma4-12b-text-v2", "gemma4_text"),
+                                                   ("gemma4-12b-text-v3", "gemma4_text"),
                                                    ("llama31-8b-v1", "llama31"), (None, "olmo3")])
 def test_profiles_match_existing_pinned_adapters(extension, expected):
     assert profile_name({"extension": extension}) == expected

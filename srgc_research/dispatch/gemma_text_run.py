@@ -1,4 +1,4 @@
-"""Operational fixes around the immutable Gemma text-v2 experiment protocol."""
+"""Operational fixes around the immutable Gemma text-v3 experiment protocol."""
 
 import hashlib
 import json
@@ -150,7 +150,7 @@ def main(argv=None):
             # its unfiltered MATH/MBPP completion check active.
             stack.enter_context(resume_worker(
                 worker, GemmaTextResumeFirst, pattern="gemma4-12b-text-{dataset}.json",
-                env_key="SRGC_GEMMA_PLANS", label="GEMMA TEXT V2", result_model="gemma4_text"))
+                env_key="SRGC_GEMMA_PLANS", label="GEMMA TEXT V3", result_model="gemma4_text"))
             stack.enter_context(patch.object(cli, "resume_first_worker", nullcontext))
             stack.enter_context(patch.object(guard, "OWNER_MARKERS", (
                 *guard.OWNER_MARKERS, "srgc_research.dispatch.gemma_text_run")))
@@ -162,7 +162,7 @@ def main(argv=None):
         except (subprocess.CalledProcessError, OSError, ValueError, TypeError, RuntimeError, ImportError) as error:
             plans = [Path(options.root) / "experiments" / f"gemma4-12b-text-{name}.json"
                      for name in ("math", "mbpp")]
-            failure_footer(options.root, plans, "GEMMA TEXT V2")
+            failure_footer(options.root, plans, "GEMMA TEXT V3")
             admission_failure_footer(error, options.root, label="GEMMA", model_name="Gemma")
             raise
 

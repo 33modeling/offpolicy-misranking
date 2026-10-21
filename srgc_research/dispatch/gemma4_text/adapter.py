@@ -14,7 +14,16 @@ import sys
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .protocol import CODE_VERIFIER, CODE_VERSION, sampling
+from .protocol import (
+    CODE_VERIFIER,
+    CODE_VERSION,
+    EXTENSION,
+    PREVIOUS_EXTENSION,
+    PROMPT_FORMAT,
+    completion_cue,
+    prompt_prefix,
+    sampling,
+)
 
 REPO = Path(__file__).resolve().parents[3]
 MODEL = "google/gemma-4-12B"
@@ -153,15 +162,21 @@ def make_bundle(source, tokenizer, *, source_plan, source_sha256):
             raise ValueError(
                 "source is already chat-rendered; provide the OLMo source plan"
             )
+        # The PT checkpoint completes text. End the instruction document with
+        # an explicit start of the response, consistently for every split/arm.
+        record["prompt"] = (prompt_prefix(source["dataset"]) + record["prompt"]
+                            + completion_cue(source["dataset"]))
     bundle["provenance"] = {
         "source_plan": str(source_plan),
         "source_bundle_sha256": source_sha256,
         "source_provenance": copy.deepcopy(source["provenance"]),
         "model": MODEL,
         "model_revision": REVISION,
-        "gemma_extension": "gemma4-12b-text-v2",
+        "gemma_extension": EXTENSION,
         "generation_micro_batch": 2,
-        "prompt_format": "gemma4_pt_plain_text_single_bos",
+        "prompt_format": PROMPT_FORMAT,
+        "prompt_completion": completion_cue(source["dataset"]),
+        "prompt_prefix": prompt_prefix(source["dataset"]),
         "sampling": sampling(),
         "cache": "pending: Gemma initial-policy rewards; source rewards are NOT reused",
     }
@@ -194,7 +209,9 @@ def prepare(dataset, source_plan, destination, tokenizer, *, snapshot_sha256):
         "model_initialization": "pretrained",
         "model_loader": "Gemma4UnifiedForCausalLM",
         "model_snapshot_sha256": snapshot_sha256,
-        "extension": "gemma4-12b-text-v2",
+        "extension": EXTENSION,
+        "prompt_completion": completion_cue(dataset),
+        "prompt_prefix": prompt_prefix(dataset),
         "adapter_sha256": adapter_digest(),
         "engine_sha256": engine_digest(),
         "generation_micro_batch": 2,
@@ -270,7 +287,9 @@ def validate_extension(path, *, read_only=False):
         "model_revision": REVISION,
         "model_initialization": "pretrained",
         "model_loader": "Gemma4UnifiedForCausalLM",
-        "extension": "gemma4-12b-text-v2",
+        "extension": EXTENSION,
+        "prompt_completion": completion_cue(dataset),
+        "prompt_prefix": prompt_prefix(dataset),
         "adapter_sha256": adapter_digest(),
         "lora_targets": list(TARGETS),
         "lora_target_policy": "q_and_value_path:sliding_qv_global_qk",
@@ -305,6 +324,10 @@ def validate_extension(path, *, read_only=False):
             ):
                 raise ValueError(f"invalid recorded Gemma {key}")
             expected.pop(key)
+        if plan.get("extension") == PREVIOUS_EXTENSION:
+            expected["extension"] = PREVIOUS_EXTENSION
+            expected.pop("prompt_completion")
+            expected.pop("prompt_prefix")
     if any(plan.get(k) != v for k, v in expected.items()):
         raise ValueError(
             "Gemma plan/model/adapter differs; do not use the OLMo launcher or reuse a run"
@@ -348,13 +371,23 @@ def validate_bundle_model(data, plan, seed):
         )
     if (provenance.get("model"), provenance.get("model_revision")) != (MODEL, REVISION):
         raise ValueError("input bundle is not prepared for the pinned Gemma model")
+    extension = plan.get("extension")
+    previous = extension == PREVIOUS_EXTENSION
     if (
-        provenance.get("gemma_extension") != "gemma4-12b-text-v2"
+        extension not in (EXTENSION, PREVIOUS_EXTENSION)
+        or provenance.get("gemma_extension") != extension
         or provenance.get("generation_micro_batch") != 2
-        or provenance.get("prompt_format") != "gemma4_pt_plain_text_single_bos"
+        or provenance.get("prompt_format") != ("gemma4_pt_plain_text_single_bos" if previous else PROMPT_FORMAT)
         or provenance.get("sampling") != sampling()
     ):
         raise ValueError("bundle uses a different Gemma generation protocol")
+    cue = completion_cue(plan["dataset"])
+    prefix = prompt_prefix(plan["dataset"])
+    if not previous and (provenance.get("prompt_completion") != cue
+                         or provenance.get("prompt_prefix") != prefix
+                         or any(not record["prompt"].startswith(prefix) or not record["prompt"].endswith(cue)
+                                for record in data["records"].values())):
+        raise ValueError("Gemma PT inputs must consistently include the recorded solution cue")
     forbidden = ("<|im_start|>", "<|begin_of_text|>", "<|turn>", "<|think|>", "<bos>")
     if any(marker in record["prompt"] for record in data["records"].values() for marker in forbidden):
         raise ValueError("Gemma PT bundle contains chat/thinking/BOS control tokens")
@@ -367,7 +400,7 @@ def validate_bundle_model(data, plan, seed):
             "cache_seed": seed,
             "verifier": plan["verifier"],
             "attention": "eager",
-            "gemma_extension": "gemma4-12b-text-v2",
+            "gemma_extension": extension,
             "sampling": sampling(),
         }
         if plan["verifier"] == CODE_VERIFIER:
@@ -437,7 +470,7 @@ def runtime_adapter():
 
     def verifier_protocol(name):
         value = {**original_verifier_protocol(name),
-                 "gemma_extension": "gemma4-12b-text-v2", "sampling": sampling()}
+                 "gemma_extension": EXTENSION, "sampling": sampling()}
         if name == CODE_VERIFIER:
             value["code_verifier_version"] = CODE_VERSION
         return value
@@ -454,7 +487,7 @@ def runtime_adapter():
                 bundle,
                 {
                     **protocol,
-                    "gemma_extension": "gemma4-12b-text-v2",
+                    "gemma_extension": EXTENSION,
                     "generation_micro_batch": 2,
                     "adapter_sha256": adapter_digest(),
                     "sampling": sampling(),

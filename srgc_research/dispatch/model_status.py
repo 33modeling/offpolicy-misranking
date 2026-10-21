@@ -23,7 +23,7 @@ CONFIGS = {
     "llama31": ("srgc_research.dispatch.llama31.adapter", "srgc_research.dispatch.llama31.storage", "llama31-8b"),
 }
 LABELS = {"qwen35": "Qwen3.5-9B", "llama31": "Llama-3.1-8B-Instruct", "gemma4": "Gemma-4-12B-PT"}
-LABELS["gemma4_text"] = "Gemma-4-12B-PT (text-v2)"
+LABELS["gemma4_text"] = "Gemma-4-12B-PT (text-v3)"
 
 
 def interrupted_receipts(report):

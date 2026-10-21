@@ -1,9 +1,23 @@
 """The same restricted text distribution is used for sampling and GRPO scoring."""
 
-EXTENSION = "gemma4-12b-text-v2"
+EXTENSION = "gemma4-12b-text-v3"
+PREVIOUS_EXTENSION = "gemma4-12b-text-v2"
+COMPLETION_CUE = "\n\nSolution:\n"
+CODE_INDENTATION_INSTRUCTION = "\n\nUse valid Python indentation: indent each function body with four spaces."
+CODE_FORMAT_EXAMPLE = ("Python function formatting example:\n```python\n"
+                       "def identity(value):\n    return value\n```\n\n")
+PROMPT_FORMAT = "gemma4_pt_solution_single_bos"
 SUPPRESS_TOKENS = (258883, 258882)  # Official PT <audio|> and <image|>.
 CODE_VERIFIER = "srgc_research.dispatch.gemma4_text.verifier:code_reward"
 CODE_VERSION = "parent-checked-values-v3-fence-language-line-v1"
+
+
+def completion_cue(dataset):
+    return (CODE_INDENTATION_INSTRUCTION if dataset == "mbpp" else "") + COMPLETION_CUE
+
+
+def prompt_prefix(dataset):
+    return CODE_FORMAT_EXAMPLE if dataset == "mbpp" else ""
 
 
 def sampling():

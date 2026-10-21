@@ -38,7 +38,7 @@ def main(argv=None):
 
         plans = [options.root / "experiments" / f"gemma4-12b-text-{name}.json"
                  for name in ("math", "mbpp")]
-        failure_footer(options.root, plans, "GEMMA TEXT V2")
+        failure_footer(options.root, plans, "GEMMA TEXT V3")
         raise
 
 
