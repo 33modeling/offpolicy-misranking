@@ -99,12 +99,15 @@ def alternate_code_score(record, text):
     return code_reward(record, '\n'.join(lines[1:]))
 
 
-def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
+def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0,
+               model=MODEL, revision=REVISION,
+               prompt_formats=('gemma4_pt_plain_text_single_bos', 'gemma4_pt_solution_single_bos'),
+               strict_receipts=False):
     path = below(plan_path.parent / plan["input_pattern"].format(seed=seed), root)
     data = read_object(path)
     provenance = data.get('provenance', {})
-    if ((provenance.get('model'), provenance.get('model_revision')) != (MODEL, REVISION)
-            or provenance.get('prompt_format') not in {'gemma4_pt_plain_text_single_bos', 'gemma4_pt_solution_single_bos'}):
+    if ((provenance.get('model'), provenance.get('model_revision')) != (model, revision)
+            or provenance.get('prompt_format') not in prompt_formats):
         raise ValueError('input bundle has a different model or prompt format')
     candidates = data["candidate_ids"]
     if not isinstance(candidates, list) or not candidates or len(set(candidates)) != len(candidates):
@@ -126,6 +129,11 @@ def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
     if protocol is not None and protocol.get('cache_seed') != seed:
         raise ValueError('saved cache has a different sampling seed')
     records = data["records"]
+    if strict_receipts and protocol is not None:
+        expected_hash = hashlib.sha256(json.dumps({i: records[i] for i in candidates},
+            sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        if protocol.get('candidate_ids') != candidates or protocol.get('records_sha256') != expected_hash:
+            raise ValueError('raw cache protocol does not match candidate records')
     metrics = Counter()
     evidence = []
     errors = []
@@ -138,6 +146,11 @@ def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
         if not receipt_path.is_file():
             continue
         receipt = read_object(receipt_path)
+        if strict_receipts:
+            from srgc_rebuttal.srgc import stream_seed
+
+            if protocol is None or receipt.get('sampling_seed') != (stream_seed(seed, 0, f'cache:{candidate}') & 0x7FFFFFFFFFFFFFFF):
+                raise ValueError('raw response has no matching cache protocol or sampling seed')
         rewards, texts = receipt.get('rewards'), receipt.get('responses')
         if receipt.get('id') != candidate or not isinstance(rewards, list) or not isinstance(texts, list) or len(rewards) != count or len(texts) != count or any(type(r) not in (int, float) or r not in (0, 1) for r in rewards) or any(not isinstance(t, str) for t in texts):
             raise ValueError('invalid raw initial response receipt: ' + str(receipt_path))
@@ -257,8 +270,8 @@ def audit(root, dataset='all', *, samples=1, rescore=0, tokenizer_dir=None):
     return result
 
 
-def render(result):
-    lines = ['GEMMA INITIAL-POLICY AUDIT', result['measurement'],
+def render(result, *, title='GEMMA INITIAL-POLICY AUDIT'):
+    lines = [title, result['measurement'],
              'Dataset  Seed  Cache prompts  Raw prompts  Bundle success  Raw success']
     if 'tokenizer' in result:
         lines.insert(2, 'TOKENIZER ' + json.dumps(result['tokenizer'], ensure_ascii=False))

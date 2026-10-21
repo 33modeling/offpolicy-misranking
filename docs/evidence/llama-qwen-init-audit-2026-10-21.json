@@ -1,0 +1,286 @@
+{
+  "date": "2026-10-21",
+  "kind": "Code and tokenizer verification; not a new training/accuracy experiment",
+  "source_base_commit": "64ea3b5d5e5571f1013173dca05c4e798ffdebb3",
+  "source_sha256": {
+    "srgc_research/dispatch/gemma_initial_audit.py": "23f5b0ea35e3407ac2b2c9b119c75a3cff05516f26718698218649d881dce66d",
+    "srgc_research/dispatch/instruct_initial_audit.py": "5339c3b98e7f7fba42989dcf12261a6f1e205d4b4212dc6d422d1a0f0e0ced20",
+    "srgc_research/tests/test_instruct_initial_audit.py": "47eeb2b2d7fe8c444fc72578cae530cdb0f233991bf89a5aedb26453315761cc"
+  },
+  "native_tokenizer_checks": [
+    {
+      "model": "Qwen/Qwen3.5-9B",
+      "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+      "transformers": "5.14.1",
+      "asset_files": {
+        "config.json": {
+          "size": 3126,
+          "sha256": "d0883072e01861ed0b2d47be3c16c36a8e81c224c7ffaa310c6558fb3f932b05",
+          "git_blob_sha1": "273ce437e01baf96a07cd9eb3d5f48bac8d7c657",
+          "pinned_file_matches": true
+        },
+        "tokenizer.json": {
+          "size": 12807982,
+          "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+          "git_blob_sha1": "3db80ca5ce55ecec79ba2de55e6bce256d32bc78",
+          "pinned_file_matches": true
+        },
+        "tokenizer_config.json": {
+          "size": 16710,
+          "sha256": "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8",
+          "git_blob_sha1": "eda48d3e75a8e59a8479ee4ec8b37f76e711d9c1",
+          "pinned_file_matches": true
+        },
+        "chat_template.jinja": {
+          "size": 7756,
+          "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+          "git_blob_sha1": "a585dec894e63da457d9440ec6aa7caa16d20860",
+          "pinned_file_matches": true
+        }
+      },
+      "bos": null,
+      "eos": 248046,
+      "pad": 248044,
+      "native_generation_eos": null,
+      "prompt_comparisons": [
+        {
+          "dataset": "math",
+          "seed": 5,
+          "records": 800,
+          "exact_token_matches": 800
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 5,
+          "records": 800,
+          "exact_token_matches": 800
+        }
+      ],
+      "measurement": "Tokenization check only; no full model inference or accuracy measurement"
+    },
+    {
+      "model": "meta-llama/Llama-3.1-8B-Instruct",
+      "revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+      "transformers": "5.14.1",
+      "asset_files": {
+        "config.json": {
+          "size": 855,
+          "sha256": "29e4c210b0d6ac178b16b2a255a568bdb23b581e50ca1ef6a6d071dd85704e6e",
+          "git_blob_sha1": "0bb6fd75b3ad2fe988565929f329945262c2814e",
+          "pinned_file_matches": true
+        },
+        "tokenizer.json": {
+          "size": 9085657,
+          "sha256": "79e3e522635f3171300913bb421464a87de6222182a0570b9b2ccba2a964b2b4",
+          "git_blob_sha1": "5cc5f00a5b203e90a27a3bd60d1ec393b07971e8",
+          "pinned_file_matches": true
+        },
+        "tokenizer_config.json": {
+          "size": 50870,
+          "sha256": "24e8a6dc2547164b7002e3125f10b415105644fcf02bf9ad8b674c87b1eaaed6",
+          "git_blob_sha1": "421cda369d1e01e742b01d82e3a39c7cc82a8586",
+          "pinned_file_matches": false
+        },
+        "generation_config.json": {
+          "size": 184,
+          "sha256": "189fb0c0d7fd8a527db217c0a60a0e013f0394cd8800f9697a666a9e75e5f7fd",
+          "git_blob_sha1": "cc7276afd599de091142c6ed3005faf8a74aa257",
+          "pinned_file_matches": true
+        },
+        "special_tokens_map.json": {
+          "size": 296,
+          "sha256": "6f38c73729248f6c127296386e3cdde96e254636cc58b4169d3fd32328d9a8ec",
+          "git_blob_sha1": "02ee80b6196926a5ad790a004d9efd6ab1ba6542",
+          "pinned_file_matches": true
+        }
+      },
+      "bos": 128000,
+      "eos": 128009,
+      "pad": null,
+      "native_generation_eos": [
+        128001,
+        128008,
+        128009
+      ],
+      "prompt_comparisons": [
+        {
+          "dataset": "math",
+          "seed": 5,
+          "records": 800,
+          "exact_token_matches": 800
+        },
+        {
+          "dataset": "mbpp",
+          "seed": 5,
+          "records": 800,
+          "exact_token_matches": 800
+        }
+      ],
+      "measurement": "Tokenization check only; no full model inference or accuracy measurement"
+    }
+  ],
+  "tokenizer_asset_provenance": {
+    "qwen": {
+      "model": "Qwen/Qwen3.5-9B",
+      "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+      "files": {
+        "config.json": {
+          "size": 3126,
+          "sha256": "d0883072e01861ed0b2d47be3c16c36a8e81c224c7ffaa310c6558fb3f932b05",
+          "git_blob_sha1": "273ce437e01baf96a07cd9eb3d5f48bac8d7c657"
+        },
+        "tokenizer_config.json": {
+          "size": 16710,
+          "sha256": "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8",
+          "git_blob_sha1": "eda48d3e75a8e59a8479ee4ec8b37f76e711d9c1"
+        },
+        "tokenizer.json": {
+          "size": 12807982,
+          "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+          "git_blob_sha1": "3db80ca5ce55ecec79ba2de55e6bce256d32bc78"
+        },
+        "chat_template.jinja": {
+          "size": 7756,
+          "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+          "git_blob_sha1": "a585dec894e63da457d9440ec6aa7caa16d20860"
+        },
+        "merges.txt": {
+          "size": 3353259,
+          "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+          "git_blob_sha1": "a494e019ca1502219fd0128658b979e5f05ae8e8"
+        },
+        "vocab.json": {
+          "size": 6722759,
+          "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+          "git_blob_sha1": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176"
+        }
+      },
+      "errors": {}
+    },
+    "llama": {
+      "model": "NousResearch/Meta-Llama-3.1-8B-Instruct",
+      "revision": "d10aef7999a2b5ba950ab3974312feeedbfe0b77",
+      "files": {
+        "tokenizer.json": {
+          "size": 9085657,
+          "git_blob_sha1": "5cc5f00a5b203e90a27a3bd60d1ec393b07971e8",
+          "matches_official_pin": true
+        },
+        "tokenizer_config.json": {
+          "size": 50870,
+          "git_blob_sha1": "421cda369d1e01e742b01d82e3a39c7cc82a8586",
+          "matches_official_pin": false
+        },
+        "special_tokens_map.json": {
+          "size": 296,
+          "git_blob_sha1": "02ee80b6196926a5ad790a004d9efd6ab1ba6542",
+          "matches_official_pin": true
+        },
+        "config.json": {
+          "size": 855,
+          "git_blob_sha1": "0bb6fd75b3ad2fe988565929f329945262c2814e",
+          "matches_official_pin": true
+        },
+        "generation_config.json": {
+          "size": 184,
+          "git_blob_sha1": "cc7276afd599de091142c6ed3005faf8a74aa257",
+          "matches_official_pin": true
+        }
+      }
+    },
+    "direct_llama_access": {
+      "http_status": 401,
+      "credentials_not_requested_or_modified": true
+    },
+    "rejected_public_variant": {
+      "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+      "revision": "a2856192dd7c25b842431f39c179a6c2c2f627d1",
+      "purpose": "public tokenizer mirror; compare exact official pinned file Git blob hashes",
+      "files": {
+        "config.json": {
+          "size": 956,
+          "sha256": "073b48b1c601acd5e592000aaf13131055f26bb22e8fc71befced9b9213b6799",
+          "git_blob_sha1": "007f63fa6cc2e38ad19b8ed2066a74c0d2146d0d"
+        },
+        "generation_config.json": {
+          "size": 239,
+          "sha256": "280388b9a56fc9ad1f05d9096dc399ff6b5cf4a9c0a0a48d9ccc1dbc15290f7f",
+          "git_blob_sha1": "36757c2d3b16784e61fee3bd00b157719f22e809"
+        },
+        "tokenizer_config.json": {
+          "size": 55493,
+          "sha256": "4d18eae3017839b17cb3598f589b62ec212652d183582ee0fc33a4f1e8b3da67",
+          "git_blob_sha1": "df9f7c982cc0add6ab016b5d8e42e2609f59dec8"
+        },
+        "tokenizer.json": {
+          "size": 17209920,
+          "sha256": "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b",
+          "git_blob_sha1": "475b31150454dc05e90b9c4c1adbd699f4e2774b"
+        },
+        "special_tokens_map.json": {
+          "size": 454,
+          "sha256": "94e708c3f5e64acf85bbe5ad01467a1248faadb73e83b41793087ecced586e8f",
+          "git_blob_sha1": "3c1d04911c269b925af977a3151c9704e990e4d0"
+        }
+      }
+    }
+  },
+  "mbpp_code_fence_counterexample": {
+    "kind": "synthetic assertion verification, not a model benchmark",
+    "rows": [
+      {
+        "format": "standard",
+        "response": "```python\ndef identity(value):\n    return value\n```",
+        "original_extracted": "def identity(value):\n    return value",
+        "original_reward": 1.0,
+        "format_only_diagnostic_reward": 1.0
+      },
+      {
+        "format": "prompt_literal",
+        "response": "```\npython\ndef identity(value):\n    return value\n```",
+        "original_extracted": "python\ndef identity(value):\n    return value",
+        "original_reward": 0.0,
+        "format_only_diagnostic_reward": 1.0
+      }
+    ]
+  },
+  "tests": {
+    "existing_model_cache_generation_backward_resume": {
+      "passed": 180,
+      "subtests_passed": 16,
+      "warnings": 6,
+      "log": "scientific-tests.log"
+    },
+    "read_only_auditor_and_gemma_compatibility": {
+      "passed": 26,
+      "log": "audit-tests.log"
+    },
+    "separate_gemma_cache_first_publication": {
+      "commit": "64ea3b5d5e5571f1013173dca05c4e798ffdebb3",
+      "regression_tests_passed": 281,
+      "log": "/home/kms/reports/gemma-operational-audit-2026-10-21/cache-first-final-tests.log"
+    }
+  },
+  "scientific_preservation": {
+    "checked_files": 89,
+    "changed_files": [],
+    "qwen_adapter": "20e90f784b19afa6602b839ff2f7934eb207f03868a4052896edc9355b7ffd8b",
+    "llama_adapter": "1a7ae6ecf3b7fd24643797c97ce56750d32a9e49678125d8ddd2eabb5b61b53a",
+    "gemma_text_adapter": "2c0dfb6a80114fd87a98af0610a8740d3f2353535586888fdd519422c257c157",
+    "engine": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960"
+  },
+  "limits": {
+    "full_8b_or_9b_inference_performed": false,
+    "remote_raw_response_cache_available": false,
+    "actual_false_negative_frequency": null,
+    "new_model_accuracy": null,
+    "training_results_or_manuscript_modified": false
+  },
+  "raw_record_directory": "/home/kms/reports/llama-qwen-token-audit-2026-10-21",
+  "native_probe_script_sha256": "84a67a30e201f7cde4869e4af40cf8d5f8ad529123514625991763a11c1c7f35",
+  "raw_log_sha256": {
+    "scientific-tests.log": "fb04edc8f06fa4e2e032716cb2382ad5cb14cc16d9a03514e95e892b86f8e3ac",
+    "audit-tests.log": "fb357123cac3caadac644896a2b90c0f5b47ff2c71a262b28a4af680b1035e8d",
+    "native-prompt-check.log": "677af756a54ebc2cc1df42c4f63fda9c6b4909f8778d2ba7db6068e83f5008d3"
+  }
+}
