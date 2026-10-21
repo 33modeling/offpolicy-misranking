@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import argparse
 import ast
-from collections import Counter
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import re
 import sys
+from collections import Counter
+from pathlib import Path
 
 MODEL = "google/gemma-4-12B"
 REVISION = "023679ed352de9bb66cc873c9009ce3482585c08"
@@ -48,7 +48,7 @@ def tokenizer_report(path=None):
 def read_object(path):
     value = json.loads(path.read_text())
     if not isinstance(value, dict):
-        raise ValueError(f"expected an object: {path}")
+        raise TypeError(f"expected an object: {path}")
     return value
 
 
@@ -79,17 +79,20 @@ def features(text, dataset):
     return result
 
 
-def _rescore(record, response, dataset):
+def _rescore(record, response, dataset, *, verifier=None):
     if dataset == "math":
         from scripts.srgc_verifier_fallback import tolerant_math_reward
         return tolerant_math_reward(record, response)
-    from srgc_rebuttal.verifiers import code_reward
+    if verifier == 'srgc_research.dispatch.gemma4_text.verifier:code_reward':
+        from .gemma4_text.verifier import code_reward
+    else:
+        from srgc_rebuttal.verifiers import code_reward
     return code_reward(record, response)
 
 
 def alternate_code_score(record, text):
     """Separate format diagnostic; never replace a recorded experiment reward."""
-    from srgc_rebuttal.verifiers import extract_code, code_reward
+    from srgc_rebuttal.verifiers import code_reward, extract_code
     lines = extract_code(text).splitlines()
     if not lines or lines[0].strip() != 'python':
         return None
@@ -152,7 +155,7 @@ def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
             if len(rescored) < rescore:
                 row = {'candidate': candidate, 'response_index': index, 'recorded_reward': reward}
                 try:
-                    value = float(_rescore(record, text, dataset))
+                    value = float(_rescore(record, text, dataset, verifier=plan.get('verifier')))
                     if not math.isfinite(value) or value not in (0, 1):
                         raise ValueError('verifier returned a nonbinary reward')
                     row['current_reward'] = value
@@ -160,7 +163,7 @@ def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
                         errors.append(f'rescore differs: {candidate} response {index}')
                     if dataset == 'mbpp' and value == 0 and traits['literal_python_language_line']:
                         row['diagnostic_score_without_literal_python_line'] = alternate_code_score(record, text)
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 - report verifier errors without changing recorded rewards
                     row['error'] = type(error).__name__ + ': ' + str(error)
                     errors.append(f'rescore error: {candidate} response {index}: ' + row['error'])
                 rescored.append(row)
@@ -173,18 +176,74 @@ def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
             'recorded_sampling': plan.get('sampling'), 'prompt_format': data.get('provenance', {}).get('prompt_format')}
 
 
+def audit_preflight(root, plan_path, plan, dataset, *, samples=1, rescore=0):
+    """Read the recorded small panel separately from full initial-cache accuracy."""
+    from .gemma4_text import preflight
+
+    data = read_object(below(plan_path.parent / plan['input_pattern'].format(seed=plan['seeds'][0]), root))
+    protocol = preflight.identity(plan_path, plan, data)
+    directory = below(preflight.folder(plan_path, plan), root)
+    rows, examples, rescored, errors = [], [], [], []
+    traits = Counter()
+    for candidate in protocol['candidate_ids']:
+        path = below(directory / (hashlib.sha256(candidate.encode()).hexdigest() + '.json'), root)
+        row = preflight.read_receipt(path, protocol, candidate)
+        if row is None:
+            continue
+        rows.append(row)
+        record = data['records'][candidate]
+        for index, (text, reward, tokens) in enumerate(zip(row['responses'], row['rewards'], row['token_ids'])):
+            traits.update({key: int(value) for key, value in features(text, dataset).items()})
+            traits['answer_label_only'] += bool(re.fullmatch(r'\s*Answer\s*:\s*', text, re.IGNORECASE))
+            traits['eos_responses'] += 1 in tokens
+            traits['length_limit_responses'] += len(tokens) == protocol['max_new_tokens'] and 1 not in tokens
+            if len(examples) < samples:
+                examples.append({'candidate': candidate, 'response_index': index, 'reward': reward,
+                                 'text': text[:500], 'tokens': len(tokens), 'eos': 1 in tokens})
+            if len(rescored) < rescore:
+                item = {'candidate': candidate, 'response_index': index, 'recorded_reward': reward}
+                try:
+                    value = float(_rescore(record, text, dataset, verifier=plan.get('verifier')))
+                    if not math.isfinite(value) or value not in (0, 1):
+                        raise ValueError('verifier returned a nonbinary reward')
+                    item['current_reward'] = value
+                    if value != reward:
+                        errors.append(f'preflight rescore differs: {candidate} response {index}')
+                except Exception as error:  # noqa: BLE001 - report verifier errors without changing recorded rewards
+                    item['error'] = type(error).__name__ + ': ' + str(error)
+                    errors.append(f'preflight rescore error: {candidate} response {index}: ' + item['error'])
+                rescored.append(item)
+    complete = len(rows) == len(protocol['candidate_ids'])
+    summary = preflight.summarize(protocol, rows) if complete else None
+    saved = directory / 'summary.json'
+    if saved.is_file() and (summary is None or read_object(saved) != summary):
+        errors.append('preflight summary differs from raw receipts')
+    return {'dataset': dataset, 'directory': str(directory), 'complete': complete,
+            'measurement': 'fixed small preflight panel; not full initial-cache accuracy',
+            'summary': summary, 'features': dict(traits), 'samples': examples,
+            'rescore': rescored, 'errors': errors}
+
+
 def audit(root, dataset='all', *, samples=1, rescore=0, tokenizer_dir=None):
     root = Path(root).resolve()
     if not root.is_dir():
         raise ValueError('Gemma experiment directory is unavailable: ' + str(root))
     result = {'model': MODEL, 'measurement': 'initial training-candidate cache; not held-out evaluation',
-              'tokenizer': tokenizer_report(tokenizer_dir), 'datasets': [], 'errors': []}
+              'tokenizer': tokenizer_report(tokenizer_dir), 'datasets': [], 'preflight': [], 'errors': []}
     for name in ('math', 'mbpp') if dataset == 'all' else (dataset,):
-        plan_path = below(root / 'experiments' / f'gemma4-12b-pt-{name}.json', root)
+        current = root / 'experiments' / f'gemma4-12b-text-{name}.json'
+        archived = root / 'experiments' / f'gemma4-12b-pt-{name}.json'
         try:
+            if current.is_file() and archived.is_file():
+                raise ValueError('ambiguous Gemma protocols in one experiment root')
+            plan_path = below(current if current.is_file() else archived, root)
             plan = read_object(plan_path)
             if (plan.get('model'), plan.get('model_revision')) != (MODEL, REVISION):
                 raise ValueError('not the recorded Gemma 4 12B PT plan')
+            if current.is_file():
+                panel = audit_preflight(root, plan_path, plan, name, samples=samples, rescore=rescore)
+                result['preflight'].append(panel)
+                result['errors'].extend(f"{name}: {error}" for error in panel['errors'])
             for seed in plan['seeds']:
                 if type(seed) is not int:
                     raise ValueError('invalid seed')
@@ -202,6 +261,15 @@ def render(result):
              'Dataset  Seed  Cache prompts  Raw prompts  Bundle success  Raw success']
     if 'tokenizer' in result:
         lines.insert(2, 'TOKENIZER ' + json.dumps(result['tokenizer'], ensure_ascii=False))
+    for panel in result.get('preflight', []):
+        summary = panel['summary']
+        detail = (f"{summary['correct']:g}/{summary['responses']} correct; "
+                  f"{'PASS' if summary['passed'] else 'PAUSED'}" if summary else 'incomplete')
+        lines.append(f"PREFLIGHT {panel['dataset']}: {detail}; not full initial-cache accuracy")
+        lines.append('  Raw responses: ' + panel['directory'])
+        lines.append('  Observed: ' + json.dumps(panel['features'], ensure_ascii=False))
+        lines.extend('  SAMPLE ' + json.dumps(row, ensure_ascii=False) for row in panel['samples'])
+        lines.extend('  RESCORE ' + json.dumps(row, ensure_ascii=False) for row in panel['rescore'])
     for row in result['datasets']:
         success = '-' if row['initial_success_percent'] is None else f"{row['initial_success_percent']:.3f}%"
         raw_success = '-' if row['raw_success_percent'] is None else f"{row['raw_success_percent']:.3f}%"
@@ -234,7 +302,10 @@ def main(argv=None):
     if not 0 <= args.samples <= 20 or not 0 <= args.rescore <= 100:
         parser.error('samples must be 0..20 and rescore must be 0..100')
     if args.root is None:
-        from .gemma4.storage import default_root
+        if os.environ.get('SRGC_GEMMA_LEGACY_PROTOCOL') == '1' or os.environ.get('SRGC_GEMMA_TEXT_PROTOCOL') == '0':
+            from .gemma4.storage import default_root
+        else:
+            from .gemma4_text.storage import default_root
         args.root = default_root(os.environ)
     result = audit(args.root, args.dataset, samples=args.samples, rescore=args.rescore, tokenizer_dir=args.tokenizer_dir)
     print(render(result))

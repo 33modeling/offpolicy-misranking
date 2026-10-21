@@ -1,9 +1,9 @@
 """Read-only initial-cache diagnosis, including real shell argument routing."""
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -110,7 +110,7 @@ def test_entry_and_shell_are_gpu_free_and_preserve_paths(experiment, tmp_path, m
     before = file_bytes(experiment)
     output = tmp_path / 'audit with spaces.json'
     repo = Path(__file__).resolve().parents[2]
-    completed = subprocess.run(['sh', str(repo / 'scripts/run_srgc_gemma4.sh'), 'audit', '--root', str(experiment), '--output', str(output)], cwd=repo, capture_output=True, text=True, timeout=20)
+    completed = subprocess.run(['sh', str(repo / 'scripts/run_srgc_gemma4.sh'), 'audit', '--root', str(experiment), '--output', str(output)], cwd=repo, capture_output=True, text=True, timeout=20, check=False)
     assert completed.returncode == 0, completed.stderr
     assert 'GEMMA INITIAL-POLICY AUDIT' in completed.stdout
     assert json.loads(output.read_text())['datasets'][0]['initial_success_percent'] == 12.5
@@ -170,3 +170,31 @@ def test_literal_language_line_rescore_is_only_a_diagnostic(experiment):
     assert row['rescore'][0]['diagnostic_score_without_literal_python_line'] == 1
     assert not row['errors']
     assert file_bytes(experiment) == before
+
+
+def test_text_panel_is_audited_without_being_reported_as_initial_cache_accuracy(tmp_path, monkeypatch):
+    from srgc_research.tests.test_gemma4_text import write_panel
+    from srgc_research.tests.test_model_results import make_cohort
+
+    cohort = make_cohort('gemma4_text', tmp_path)
+    for key in ('GROUP_VOLUME', 'OM_WORK'):
+        monkeypatch.setenv(key, cohort.env[key])
+    directory = write_panel(cohort.plans['math'], success=False)
+    before = file_bytes(cohort.root)
+    report = audit.audit(cohort.root, 'math', samples=2)
+    assert not report['errors']
+    panel = report['preflight'][0]
+    assert panel['complete'] and panel['summary']['responses'] == 64
+    assert panel['summary']['correct'] == 0 and not panel['summary']['passed']
+    assert len(panel['samples']) == 2 and panel['directory'] == str(directory)
+    assert all(row['initial_success_percent'] is None for row in report['datasets'])
+    assert 'PREFLIGHT math: 0/64 correct; PAUSED' in audit.render(report)
+    assert file_bytes(cohort.root) == before
+
+
+def test_text_audit_rescores_with_the_corrected_mbpp_verifier():
+    record = {'answer': 'assert add(2,3) == 5'}
+    response = '```\npython\ndef add(a,b):\n    return a+b\n```'
+    assert audit._rescore(record, response, 'mbpp') == 0
+    assert audit._rescore(record, response, 'mbpp',
+                         verifier='srgc_research.dispatch.gemma4_text.verifier:code_reward') == 1

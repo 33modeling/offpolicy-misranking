@@ -1,0 +1,25 @@
+{
+  "model": "google/gemma-4-12B",
+  "revision": "023679ed352de9bb66cc873c9009ce3482585c08",
+  "gpu": "NVIDIA GeForce RTX 3050",
+  "scope": "actual pretrained checkpoint loading and short diagnostic output; not init accuracy",
+  "prompt_tokens_equal": true,
+  "generated_text": "\n\nAnswer:",
+  "generated_token_ids": [
+    108,
+    7925,
+    236787,
+    1
+  ],
+  "stopped_at_eos": true,
+  "actual_response_reward": 0.0,
+  "verifier_control_reward": 1.0,
+  "max_new_tokens": 128,
+  "measured_seconds": 23.566768263000995,
+  "schema": "gemma4-local-preflight-diagnosis-v1",
+  "weight_sha256": "fe054ae05ff7f44318fd8ae90d58992531455c7ed31356704088f0f2d8c8009a",
+  "source_commit": "564dd39de3d411eb9df85d05909505fe0d97b582",
+  "case_id": "math_train-6b07de8f60714bbd",
+  "decoding": "greedy, one response, official suppression, BF16 CPU weight offload with CUDA execution",
+  "conclusion": "Reproduced an immediate EOS after the answer label with no answer. The same verifier gives one to the explicit correct answer. This single-case diagnosis is not recovered initial accuracy."
+}

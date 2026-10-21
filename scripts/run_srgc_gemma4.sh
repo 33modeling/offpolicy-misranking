@@ -2,11 +2,10 @@
 # Same command on each four-GPU node: local weights, shared queues, resume first.
 set -eu
 cd "$(dirname "$0")/.."
-# Explicit recovery selects a fresh text-v2 protocol and separate root. The
-# historical entry remains available for read-only inspection/reproduction.
+# Retain the old spelling as an alias; ordinary commands use this same launcher.
 if [ "${1:-}" = recover ]; then
     shift
-    exec sh scripts/run_srgc_gemma4_recovery.sh "$@"
+    export SRGC_GEMMA_LEGACY_PROTOCOL=0 SRGC_GEMMA_TEXT_PROTOCOL=1 SRGC_MODEL_CHAIN=0
 fi
 if [ "${SRGC_GEMMA_LEGACY_PROTOCOL:-0}" = 1 ]; then
     export SRGC_GEMMA_TEXT_PROTOCOL=0
@@ -14,15 +13,22 @@ else
     export SRGC_GEMMA_TEXT_PROTOCOL=${SRGC_GEMMA_TEXT_PROTOCOL:-1}
 fi
 [ "$#" -gt 0 ] || set -- all
-if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ] || [ "${1:-}" = stop ]; then
+if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ] || [ "${1:-}" = stop ] || [ "${1:-}" = resume ] || [ "${1:-}" = prepare ] || [ "${1:-}" = doctor ] || [ "${1:-}" = preflight ]; then
     ACTION=$1
     shift
     set -- all "$ACTION" "$@"
 fi
 if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ]; then
     case "${2:-run}" in
-        status|results|stop|prepare|doctor|preflight)
-            exec sh scripts/run_srgc_gemma4_recovery.sh "$@" ;;
+        results|status)
+            export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+            if [ "$2" = results ]; then
+                exec python3 -m srgc_research.dispatch.model_results gemma4_text "$@"
+            fi
+            exec python3 -m srgc_research.dispatch.model_status gemma4_text "$@" ;;
+        stop)
+            export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+            exec python3 -m srgc_research.dispatch.gemma_text_run "$@" ;;
     esac
 fi
 if [ "${2:-}" = results ]; then
@@ -61,6 +67,6 @@ if [ "${SRGC_MODEL_CHAIN:-1}" = 1 ] && [ "${SRGC_MODEL_CHAIN_CHILD:-0}" != 1 ]; 
     esac
 fi
 if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ]; then
-    exec sh scripts/run_srgc_gemma4_recovery.sh "$@"
+    exec "$PY" -m srgc_research.dispatch.gemma_text_run "$@"
 fi
 exec "$PY" -m srgc_research.dispatch.gemma_run "$@"

@@ -30,7 +30,8 @@ def admission_failure_footer(error, root, *, label="LLAMA", model_name="Llama"):
     from scripts.srgc_log_tail import tail_lines
 
     message = str(error)
-    if message.startswith(f"{model_name} generation/backward admission failed: "):
+    if message.startswith((f"{model_name} generation/backward admission failed: ",
+                           f"{model_name} init preflight failed; full cache/training paused: ")):
         name = message.split(": ", 1)[1]
     elif message.startswith("four-GPU admission failed (") and "; inspect " in message:
         name = message.split("; inspect ", 1)[1]

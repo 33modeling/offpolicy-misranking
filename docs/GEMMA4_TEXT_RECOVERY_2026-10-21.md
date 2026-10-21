@@ -32,12 +32,12 @@
 ```sh
 git pull --ff-only origin master
 # 먼저 소량 검사만 실행하고 끝내기
-sh scripts/run_srgc_gemma4.sh recover all preflight
+sh scripts/run_srgc_gemma4.sh all preflight
 # 같은 검사를 재사용하고 Gemma의 캐시 → prefix → 네 arm을 진행
-sh scripts/run_srgc_gemma4.sh recover all
+SRGC_MODEL_CHAIN=0 sh scripts/run_srgc_gemma4.sh all
 ```
 
-`recover all`은 Gemma만 실행한다. 기존 `sh scripts/run_srgc_gemma4.sh all`은 수정본을
+`SRGC_MODEL_CHAIN=0`은 Gemma만 실행한다. 기존 `sh scripts/run_srgc_gemma4.sh all`은 수정본을
 사용하면서 기존 모델 연결 순서를 유지한다. 기본 결과 위치는
 `$OM_WORK/srgc-rebuttal/gemma4-12b-text-v2`다. 필요한 경우
 `SRGC_GEMMA_TEXT_ROOT`로 **새 전용 경로**를 지정한다. 이전 v1 root를 지정하면
@@ -48,7 +48,7 @@ sh scripts/run_srgc_gemma4.sh status
 sh scripts/run_srgc_gemma4.sh results
 sh scripts/run_srgc_gemma4.sh stop --now
 sh scripts/run_srgc_gemma4.sh all stop --now
-sh scripts/run_srgc_gemma4.sh recover all resume
+SRGC_MODEL_CHAIN=0 sh scripts/run_srgc_gemma4.sh all resume
 # 원래 실험을 읽기만 하기
 SRGC_GEMMA_LEGACY_PROTOCOL=1 sh scripts/run_srgc_gemma4.sh all status
 ```
@@ -56,6 +56,34 @@ SRGC_GEMMA_LEGACY_PROTOCOL=1 sh scripts/run_srgc_gemma4.sh all status
 검사 결과는 새 root의 `preflight/<dataset>/summary.json`과 문제별 receipt에 남는다.
 검사 로그는 startup/admission 디렉터리의 `gemma-preflight-*.log`다.
 입력·설정이 같을 때 완료한 응답은 재사용하며, 손상·누락·다른 프로토콜은 거부한다.
+
+`zero correct responses in the small panel`은 실제 8문제 × 8응답이 모두 오답이라는
+검사 결과다. `preflight.py`의 `primary(finish)`와 `distributed.py`의 `raise`는 이 결과를
+각 rank에 전달하는 위치다. 이 메시지만으로 CUDA/NCCL 고장이나 채점 오류를 단정하지 않는다.
+같은 실패 기록이 있으면 일반 시작 명령이 CPU에서 원시 기록과 summary를 대조하고,
+GPU 검사나 전체 캐시·학습을 실행하기 전에 멈춘다. 파일은 삭제하지 않는다.
+실행기가 종료되어도 외부 배치 시스템에서 예약한 GPU 할당 시간까지 연장되거나
+자동 반환되는 것은 아니다.
+
+다음 기존 명령으로 현재 text-v2의 작은 검사와 전체 초기 캐시를 구분해서 확인하고,
+저장된 응답을 같은 CPU verifier로 다시 채점할 수 있다. JSON 출력은 `--output`으로
+실험 폴더 밖의 새 파일에 추가 저장할 수 있다. 원래 응답·보상을 수정하지 않는다.
+
+```sh
+sh scripts/run_srgc_gemma4.sh audit --samples 2 --rescore 64
+```
+
+일반 실행은 `run_srgc_gemma4.sh` 한 곳에서 처리한다. 별도 `recover` 명령을 요구하지
+않으며, 이전 이름은 기존 명령과의 호환을 위한 alias로만 남긴다.
+
+후속 로컬 실제 12B 검사에서는 정답이 6인 기존 MATH 후보에 대해 greedy 생성 상한을
+128로 주었지만 4토큰 `\n\nAnswer:` 뒤 EOS로 종료했다. 실제 응답 보상은 0,
+같은 verifier에 `Answer: 6`을 넣은 대조 보상은 1이었다. 이는 해당 응답에서 답을
+생성하지 않는 증상을 재현한 것이며 전체 초기 정답률이나 정답률 회복의 측정은 아니다.
+[원시 토큰·대조 채점](evidence/gemma4-local-preflight-diagnosis-2026-10-21.json)을 보존한다.
+기존 진단 모듈의 `--score`는 task verifier 결과를 출력하고 `--stream`은 한 응답의
+생성 텍스트를 즉시 표시한다. `--solution-cue`는 별도 진단 출력 안에서만 풀이 시작
+문구를 비교하며 실험 입력·프로토콜을 변경하지 않는다.
 
 ## 실제 모델 검사와 한계
 
@@ -104,7 +132,7 @@ V7 원고에 Gemma 결과를 추가하거나 수치를 바꾸지 않는다.
   GPU 요청 없이 해당 단계를 종료하는지 검사했다.
 - 연결 실행의 사전 점검은 현재 데이터셋만 검사한다. MBPP 단계에서도 첫 번째 MATH
   plan으로 smoke를 실행하거나 두 데이터셋의 후보 검사를 다시 요청하던 경로를 막는다.
-  두 과제를 직접 요청한 `recover all`의 검사 범위는 유지한다.
+  두 과제를 직접 요청한 `all preflight`의 검사 범위는 유지한다.
 - 별도 `preflight` 실행도 실제 중지 요청 파일을 확인한다. `--now`를 자식 실행 중
   감시하고, 취소된 검사는 실패와 구분해 저장한다. 이미 통과한 smoke와 시간은 보존한다.
 - `status`, `stop --now`, `all stop --now`는 모델용 Python이 없는 조건에서도 시스템

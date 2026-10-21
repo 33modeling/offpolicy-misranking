@@ -86,12 +86,13 @@ def test_active_new_and_original_gemma_launchers_are_never_reaped(owner):
     assert guard.OWNER_MARKERS == original
 
 
-@pytest.mark.parametrize("kind", ["smoke", "preflight"])
+@pytest.mark.parametrize("kind", ["smoke", "preflight", "initial_panel"])
 def test_admission_exception_is_printed_once_below_backup_shutdown(tmp_path, capsys, kind):
     path = tmp_path / "runs/math/.queue/admission/session" / f"{kind}.log"
     path.parent.mkdir(parents=True)
     path.write_text("[rank1]: RuntimeError: actual Gemma admission failure\n")
     message = (f"Gemma generation/backward admission failed: {path}" if kind == "smoke"
+               else f"Gemma init preflight failed; full cache/training paused: {path}" if kind == "initial_panel"
                else f"four-GPU admission failed (exit=1); inspect {path}")
 
     def fail(args):
@@ -99,7 +100,7 @@ def test_admission_exception_is_printed_once_below_backup_shutdown(tmp_path, cap
         print("BACKUP final=true")
         raise RuntimeError(message)
 
-    with patch.object(entry, "main", side_effect=fail), pytest.raises(RuntimeError, match="admission failed"):
+    with patch.object(entry, "main", side_effect=fail), pytest.raises(RuntimeError, match="(?:admission|preflight) failed"):
         run.main(["all", "run", "--root", str(tmp_path)])
     text = capsys.readouterr().out
     assert text.count("GEMMA ADMISSION FAILURE DETAILS") == 1

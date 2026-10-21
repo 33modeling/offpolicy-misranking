@@ -16,6 +16,7 @@ from srgc_research.dispatch import gemma_text_run as run
 from srgc_research.dispatch import model_results
 from srgc_research.dispatch.gemma4 import worker
 from srgc_research.dispatch.gemma4_text import adapter, cli, entry, model, runtime
+from srgc_research.tests.test_gemma4_text import write_panel
 from srgc_research.tests.test_model_results import make_cohort
 
 REPO = Path(__file__).resolve().parents[2]
@@ -153,6 +154,51 @@ def test_wrapper_restores_live_hooks_and_preserves_frozen_adapter():
     assert worker.worker is old_worker and cluster.run_child is old_child
     assert srgc_process_guard.OWNER_MARKERS == old_owner
     assert adapter.adapter_digest() == before
+
+
+def test_failed_saved_panel_stops_before_model_import_or_gpu_admission(tmp_path, monkeypatch, capsys):
+    cohort = make_cohort("gemma4_text", tmp_path)
+    for key, value in cohort.env.items():
+        if key in {"GROUP_VOLUME", "OM_WORK"}:
+            monkeypatch.setenv(key, value)
+    directory = write_panel(cohort.plans["math"], success=False)
+    before = {p: p.read_bytes() for p in cohort.root.rglob("*") if p.is_file()}
+    with patch.object(entry, "main", side_effect=AssertionError("GPU/model entry must not run")), \
+            pytest.raises(ValueError, match="no GPU diagnostics launched"):
+        run.main(["math", "preflight", "--root", str(cohort.root)])
+    assert {p: p.read_bytes() for p in before} == before
+    text = capsys.readouterr().out
+    assert "0/64 correct" in text and str(directory) in text
+    assert "Answer: 6" in text
+
+
+def test_passed_partial_and_phase_excluded_panels_do_not_block_dispatch(tmp_path, monkeypatch):
+    cohort = make_cohort("gemma4_text", tmp_path)
+    for key in ("GROUP_VOLUME", "OM_WORK"):
+        monkeypatch.setenv(key, cohort.env[key])
+    options = cli.parse_args(["all", "preflight", "--root", str(cohort.root)])
+    write_panel(cohort.plans["math"], success=True)
+    run.check_saved_preflight(options)
+    directory = write_panel(cohort.plans["mbpp"], success=False)
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "math")
+    run.check_saved_preflight(options)
+    monkeypatch.delenv("SRGC_DATASET_PHASE")
+    receipt = next(p for p in directory.glob("*.json") if p.name != "summary.json")
+    receipt.unlink()
+    run.check_saved_preflight(options)
+
+
+def test_saved_panel_guard_rejects_an_altered_summary_instead_of_trusting_the_zero_flag(tmp_path, monkeypatch):
+    cohort = make_cohort("gemma4_text", tmp_path)
+    for key in ("GROUP_VOLUME", "OM_WORK"):
+        monkeypatch.setenv(key, cohort.env[key])
+    directory = write_panel(cohort.plans["math"], success=True)
+    summary = directory / "summary.json"
+    value = json.loads(summary.read_text())
+    value["passed"] = False
+    atomic_json(summary, value)
+    with pytest.raises(ValueError, match="summary differs"):
+        run.check_saved_preflight(cli.parse_args(["math", "preflight", "--root", str(cohort.root)]))
 
 
 def test_delayed_gpu_release_and_live_owner_protection_are_restored(capsys):

@@ -45,11 +45,16 @@ def main(argv=None):
     parser.add_argument('--case', action='append', help='restrict to exact diagnostic case IDs')
     parser.add_argument('--generate-real', action='store_true', help='also generate on selected real candidate prompts; still not an init accuracy estimate')
     parser.add_argument('--official-suppression', action='store_true', help='restore only the two official modality-token suppressions in this separate diagnostic')
+    parser.add_argument('--solution-cue', action='store_true', help='diagnostic only: append a Solution cue; never modify an experiment input')
+    parser.add_argument('--score', action='store_true', help='score generated text with the task verifier, separately from experiment records')
+    parser.add_argument('--stream', action='store_true', help='show raw decode text as it is generated; one response only')
     args = parser.parse_args(argv)
-    if not 1 <= args.tokens <= 128 or not 1 <= args.threads <= 16:
-        parser.error('tokens must be 1..128 and threads 1..16')
+    if not 1 <= args.tokens <= 2048 or not 1 <= args.threads <= 16:
+        parser.error('tokens must be 1..2048 and threads 1..16')
     if not 1 <= args.responses <= 8 or (args.responses != 1 and not args.sample):
         parser.error('responses must be 1..8; multiple responses require --sample')
+    if args.stream and args.responses != 1:
+        parser.error('--stream requires one response')
     args.output_dir.mkdir(parents=True, exist_ok=False)
     from .gemma4.runtime import disable_optional_media
     disable_optional_media()
@@ -79,6 +84,7 @@ def main(argv=None):
               'dtype': str(dtype), 'torch': torch.__version__, 'transformers': transformers.__version__,
               'measurement': 'actual pretrained checkpoint loading and short diagnostic output; not init accuracy',
               'sampled': args.sample, 'responses': args.responses, 'max_new_tokens': args.tokens,
+              'diagnostic_solution_cue': args.solution_cue,
               'cases': []}
     report['official_generation_config'] = json.loads((args.snapshot / 'generation_config.json').read_text())
     report['probe_generation_suppress_tokens'] = report['official_generation_config'].get('suppress_tokens') if args.official_suppression or args.mode == 'corrected' else None
@@ -121,6 +127,9 @@ def main(argv=None):
             parser.error('unknown diagnostic case')
         selected = [case for case in selected if case['id'] in args.case]
     for case in selected:
+        case = dict(case)
+        if args.solution_cue:
+            case['prompt'] += '\n\nSolution:\n'
         started = time.monotonic()
         native_ids = native_tokenizer.encode(case['prompt'], add_special_tokens=True)
         adapter_ids = wrapped.encode(case['prompt'], add_special_tokens=True)
@@ -143,11 +152,15 @@ def main(argv=None):
         row['official_suppressed_probability_mass'] = sum(row['official_suppressed_token_probabilities'].values())
         print('PREFILL ' + json.dumps(row, ensure_ascii=False), flush=True)
         if case['generate'] or args.generate_real:
+            extra = {}
+            if args.stream:
+                from transformers import TextStreamer
+                extra['streamer'] = TextStreamer(native_tokenizer, skip_prompt=True, skip_special_tokens=False)
             with torch.inference_mode():
                 output = model.generate(**inputs, do_sample=args.sample, num_return_sequences=args.responses,
                     temperature=1.0, max_new_tokens=args.tokens,
                     pad_token_id=0, eos_token_id=1, logits_to_keep=1, use_cache=True,
-                    suppress_tokens=report['probe_generation_suppress_tokens'], top_p=1.0, top_k=0)
+                    suppress_tokens=report['probe_generation_suppress_tokens'], top_p=1.0, top_k=0, **extra)
             suffix = output[0, inputs['input_ids'].shape[1]:].tolist()
             row.update(generated_token_ids=suffix, text=native_tokenizer.decode(suffix, skip_special_tokens=True),
                        stopped_at_eos=1 in suffix, reached_short_probe_limit=len(suffix) == args.tokens and 1 not in suffix)
@@ -160,6 +173,14 @@ def main(argv=None):
                     suffixes.append(ids)
                 row['generated_response_token_ids'] = suffixes
                 row['response_texts'] = [native_tokenizer.decode(ids, skip_special_tokens=True) for ids in suffixes]
+            if args.score:
+                from .gemma_initial_audit import _rescore
+                dataset = case.get('dataset', 'math')
+                verifier = ('srgc_research.dispatch.gemma4_text.verifier:code_reward'
+                            if args.mode == 'corrected' and dataset == 'mbpp' else None)
+                texts = row.get('response_texts', [row['text']])
+                row['probe_rewards'] = [_rescore(case, text, dataset, verifier=verifier) for text in texts]
+                print('PROBE REWARD ' + json.dumps(row['probe_rewards']) + ' (diagnostic only; not full init accuracy)', flush=True)
             if args.mode == 'native' and not args.official_suppression and any(token in suppressed for token in suffix):
                 with torch.inference_mode():
                     filtered = model.generate(**inputs, do_sample=False, max_new_tokens=args.tokens,

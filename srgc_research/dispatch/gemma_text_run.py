@@ -1,6 +1,8 @@
 """Operational fixes around the immutable Gemma text-v2 experiment protocol."""
 
+import hashlib
 import json
+import os
 import subprocess
 import sys
 from contextlib import ExitStack, nullcontext
@@ -12,6 +14,47 @@ from srgc_rebuttal.plan import load_plan
 from srgc_rebuttal.runtime import atomic_json, run_root
 
 from .model_launch import admission_failure_footer, released_gpu_identity
+
+
+def check_saved_preflight(options):
+    """Do not repeat CUDA diagnostics for an unchanged, fully recorded zero panel."""
+    from srgc_rebuttal.plan import input_path
+
+    from .gemma4_text import adapter, preflight
+
+    datasets = ("math", "mbpp") if options.dataset == "all" else (options.dataset,)
+    phase = os.environ.get("SRGC_DATASET_PHASE")
+    if phase in {"math", "mbpp"}:
+        datasets = tuple(name for name in datasets if name == phase)
+    for dataset in datasets:
+        path = options.root / "experiments" / f"gemma4-12b-text-{dataset}.json"
+        if not path.is_file():
+            continue
+        plan = adapter.validate_extension(path)
+        directory = preflight.folder(path, plan)
+        if not (directory / "summary.json").is_file():
+            continue
+        bundle = json.loads(input_path(path, plan, plan["seeds"][0]).read_text())
+        adapter.validate_bundle_model(bundle, plan, plan["seeds"][0])
+        protocol = preflight.identity(path, plan, bundle)
+        rows = [preflight.read_receipt(directory / f"{hashlib.sha256(candidate.encode()).hexdigest()}.json",
+                                       protocol, candidate)
+                for candidate in protocol["candidate_ids"]]
+        if any(row is None for row in rows):
+            continue
+        report = preflight.summarize(protocol, rows)
+        if json.loads((directory / "summary.json").read_text()) != report:
+            raise ValueError(f"Gemma preflight summary differs from its raw receipts: {directory}")
+        if report["passed"]:
+            continue
+        print(f"GEMMA PREFLIGHT {dataset}: {report['correct']:g}/{report['responses']} correct, "
+              f"empty={report['empty_responses']}; saved results verified on CPU", flush=True)
+        print(f"Raw responses: {directory}", flush=True)
+        for row in rows[:2]:
+            print(f"  {row['id']}: " + json.dumps(row["responses"][:2], ensure_ascii=False)[:700], flush=True)
+        raise ValueError(f"Gemma preflight has zero correct responses in the saved {dataset} panel; "
+                         "no GPU diagnostics launched and no full cache/training launched. "
+                         "Unchanged results are not rerun; raw responses and the original experiment are preserved.")
 
 
 def scoped_admission(original):
@@ -114,6 +157,7 @@ def main(argv=None):
             stack.enter_context(patch.object(cluster, "gpu_identity", lambda: identity()
                 if enabled() else released_gpu_identity(identity, label="GEMMA")))
         try:
+            check_saved_preflight(options)
             return entry.main(args)
         except (subprocess.CalledProcessError, OSError, ValueError, TypeError, RuntimeError, ImportError) as error:
             plans = [Path(options.root) / "experiments" / f"gemma4-12b-text-{name}.json"
