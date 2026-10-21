@@ -2,6 +2,8 @@
 
 ## 확인 범위와 결론
 
+이후 실제 Gemma 4 12B 가중치의 GPU 검사에서 이미지 종료 토큰 반복을 재현했다. 아래는 그 전의 토크나이저 검사 기록이다. 실제 가중치 검사와 확인된 오류는 [실물 재현 보고서](GEMMA4_PRETRAINED_REPRODUCTION_2026-10-21.md)를 먼저 참조한다.
+
 사용자가 보고한 학습 전 1%대 성공률의 원인은 아직 확정하지 않았다. 이 PC에는 해당 원격 Gemma 실행의 초기 응답 receipt가 없다. 낮은 값을 PT 모델의 정상 성능이나 구현 오류로 단정하지 않는다. 다음 검사는 공식 파일과 로컬 소스의 정합성을 확인한 것이며, 실제 12B 가중치/H100 생성 검증을 대신하지 않는다.
 
 - 고정 모델: `google/gemma-4-12B`, revision `023679ed352de9bb66cc873c9009ce3482585c08`.
@@ -42,7 +44,9 @@ sh scripts/run_srgc_gemma4.sh math audit --rescore 3
 sh scripts/run_srgc_gemma4.sh all audit --output /path/outside-experiment/gemma-initial-audit.json
 ```
 
-MATH 재채점은 초기 cache plan의 원래 math_reward를 사용하며 training fallback으로 바꾸지 않는다. 현재 환경에서 재채점 값이 달라지면 recorded reward를 수정하지 않고 차이/오류를 보고한다. 라이브러리 환경 차이도 따로 확인해야 한다. 초기 응답 텍스트는 이미 skip_special_tokens로 decode됐으므로 EOS·오디오/이미지 특수 토큰의 실제 생성 여부와 토큰 제한 도달 여부는 텍스트만으로 복원할 수 없다.
+MATH 재채점은 Gemma `rank.py`가 cache 단계에서도 설치하는 `tolerant_math_reward`를 사용한다. 초기 문서의 “fallback은 training에만 적용된다”는 설명은 잘못이어서 바로잡았다. 현재 환경에서 재채점 값이 달라지면 recorded reward를 수정하지 않고 차이/오류를 보고한다. 라이브러리 환경 차이도 따로 확인해야 한다. 초기 응답 텍스트는 이미 skip_special_tokens로 decode됐으므로 EOS·오디오/이미지 특수 토큰의 실제 생성 여부와 토큰 제한 도달 여부는 텍스트만으로 복원할 수 없다.
+
+MBPP 원본 프롬프트는 언어명 `python`을 여는 fence의 다음 줄에 쓰는 형식도 지시한다. 그 형태를 문자 그대로 따른 정상 함수는 기존 verifier에서 `python` 식을 실행하다 실패할 수 있다. 단순 정답 함수로 기존 점수 0, 언어명 줄만 제거한 진단 점수 1을 재현했다. 실제 Gemma 초기 응답에 이 형태가 얼마나 있는지는 아직 확인하지 못했다. audit은 `literal_python_language_line` 개수를 세고, 명시적인 `--rescore`에서 이 형태의 별도 진단 점수를 표시한다. 원래 보상이나 verifier는 변경하지 않는다.
 
 학습 engine과 `dispatch/gemma4/` 안의 44개 고정 Python 파일, 원래 plan·입력·cache·checkpoint·결과는 변경하지 않았다. 새 audit 코드는 고정 adapter의 digest 대상 밖에 두었다. 원고와 교정 사이트는 변경하지 않았다.
 

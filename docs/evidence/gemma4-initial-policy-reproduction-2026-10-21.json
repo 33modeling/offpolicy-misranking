@@ -1,0 +1,162 @@
+{
+  "scope": "actual Gemma 4 12B PT on RTX 3050, BF16 with CPU weight offload; short greedy diagnosis, not 400-prompt init success",
+  "model": "google/gemma-4-12B",
+  "revision": "023679ed352de9bb66cc873c9009ce3482585c08",
+  "weight_sha256": "fe054ae05ff7f44318fd8ae90d58992531455c7ed31356704088f0f2d8c8009a",
+  "runtime": {
+    "torch": "2.13.0+cu130",
+    "transformers": "5.19.0",
+    "gpu": "NVIDIA GeForce RTX 3050",
+    "dtype": "torch.bfloat16",
+    "device": "cuda with CPU weight offload"
+  },
+  "loader_comparison": [
+    {
+      "id": "plain-completion",
+      "tokens_equal": true,
+      "logits_exact_equal": true,
+      "max_abs_difference": 0.0,
+      "generated_tokens_equal": true,
+      "text": " 5\n\n5 + 4 = 9\n\n9 + 5 =",
+      "suppressed_probability_mass": 5.2540533371780995e-06
+    },
+    {
+      "id": "rlzero-simple-math",
+      "tokens_equal": true,
+      "logits_exact_equal": true,
+      "max_abs_difference": 0.0,
+      "generated_tokens_equal": true,
+      "text": "\n\nAnswer: 5",
+      "suppressed_probability_mass": 7.463591411571713e-08
+    },
+    {
+      "id": "math_train-6b07de8f60714bbd",
+      "tokens_equal": true,
+      "logits_exact_equal": true,
+      "max_abs_difference": 0.0,
+      "generated_tokens_equal": true,
+      "text": null,
+      "suppressed_probability_mass": 0.0003993898319101241
+    },
+    {
+      "id": "mbpp-d7d46003b327405e",
+      "tokens_equal": true,
+      "logits_exact_equal": true,
+      "max_abs_difference": 0.0,
+      "generated_tokens_equal": true,
+      "text": null,
+      "suppressed_probability_mass": 0.04229904711321626
+    }
+  ],
+  "reproduction": {
+    "candidate": "math_train-6b07de8f60714bbd",
+    "source_bundle_sha256": "503edf7c2ffb07a4993d1e2045f054c0074667f15c4ade41e2879c85281cdf66",
+    "prompt": "Solve the following problem step by step. The last line of your response should be the answer to the problem in form Answer: $Answer (without quotes) where $Answer is the answer to the problem.\n\nMickey's age is 4 years less than $300\\%$ of Jerry's age. If Mickey is 14 years old, how old is Jerry?\n\nRemember to put your answer on its own line after \"Answer:\"",
+    "gold": "$\\boxed{6}$",
+    "decoding": "greedy; same max_new_tokens=64 in both variants",
+    "without_official_suppression": {
+      "token_ids": [
+        108,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882,
+        258882
+      ],
+      "token_counts": {
+        "108": 1,
+        "258882": 63
+      },
+      "text": "\n\n",
+      "eos": false,
+      "reward": 0
+    },
+    "with_official_suppression": {
+      "suppressed_ids": [
+        258883,
+        258882
+      ],
+      "token_ids": [
+        108,
+        7925,
+        236787,
+        1
+      ],
+      "text": "\n\nAnswer:",
+      "eos": true,
+      "reward": 0
+    }
+  },
+  "prompt_counterfactuals": [
+    {
+      "id": "real-math-qa-completion",
+      "text": " Jerry is 4 years old.\nQuestion: The sum of the ages of",
+      "reward": 0
+    },
+    {
+      "id": "real-math-two-shot-completion",
+      "text": " 4 years old\n\nQuestion: If $x = 2$ and $",
+      "reward": 0
+    }
+  ],
+  "conclusion": "The modality-token generation defect is reproduced. Suppression removes that loop but does not establish recovered accuracy. Actual remote init receipts and a corrected protocol need validation; original Gemma results are not cleared.",
+  "preservation": "No frozen Gemma model/engine files, original inputs, caches, rewards, checkpoints or manuscript were changed."
+}

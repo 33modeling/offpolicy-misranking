@@ -69,6 +69,7 @@ def features(text, dataset):
         blocks = FENCE.findall(text)
         result["python_fence"] = bool(blocks)
         code = (blocks[-1] if blocks else text).strip()
+        result["literal_python_language_line"] = bool(code.splitlines() and code.splitlines()[0].strip() == "python")
         try:
             tree = ast.parse(code)
             result["python_syntax_error"] = False
@@ -80,10 +81,19 @@ def features(text, dataset):
 
 def _rescore(record, response, dataset):
     if dataset == "math":
-        from srgc_rebuttal.run_experiment import math_reward
-        return math_reward(record, response)
+        from scripts.srgc_verifier_fallback import tolerant_math_reward
+        return tolerant_math_reward(record, response)
     from srgc_rebuttal.verifiers import code_reward
     return code_reward(record, response)
+
+
+def alternate_code_score(record, text):
+    """Separate format diagnostic; never replace a recorded experiment reward."""
+    from srgc_rebuttal.verifiers import extract_code, code_reward
+    lines = extract_code(text).splitlines()
+    if not lines or lines[0].strip() != 'python':
+        return None
+    return code_reward(record, '\n'.join(lines[1:]))
 
 
 def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
@@ -148,6 +158,8 @@ def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0):
                     row['current_reward'] = value
                     if value != reward:
                         errors.append(f'rescore differs: {candidate} response {index}')
+                    if dataset == 'mbpp' and value == 0 and traits['literal_python_language_line']:
+                        row['diagnostic_score_without_literal_python_line'] = alternate_code_score(record, text)
                 except Exception as error:
                     row['error'] = type(error).__name__ + ': ' + str(error)
                     errors.append(f'rescore error: {candidate} response {index}: ' + row['error'])

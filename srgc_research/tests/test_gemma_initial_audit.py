@@ -150,3 +150,23 @@ def test_rescore_errors_are_reported_without_replacing_saved_rewards(experiment)
     assert 'current_reward' not in row['rescore'][0]
     assert row['errors']
     assert file_bytes(experiment) == before
+
+
+def test_literal_language_line_rescore_is_only_a_diagnostic(experiment):
+    path = experiment / 'inputs/mbpp-seed-5.json'
+    data = json.loads(path.read_text())
+    candidate = data['candidate_ids'][0]
+    data['records'][candidate]['answer'] = 'assert add(2,3) == 5'
+    data['cached_rewards'][candidate] = [0] * 8
+    path.write_text(json.dumps(data))
+    receipt_path = path.with_suffix('.cache') / (hashlib.sha256(candidate.encode()).hexdigest() + '.json')
+    receipt = json.loads(receipt_path.read_text())
+    receipt.update(rewards=[0] * 8, responses=['```\npython\ndef add(a,b):\n    return a+b\n```'] * 8)
+    receipt_path.write_text(json.dumps(receipt))
+    before = file_bytes(experiment)
+    row = audit.audit(experiment, 'mbpp', rescore=1)['datasets'][0]
+    assert row['features']['literal_python_language_line'] == 8
+    assert row['rescore'][0]['recorded_reward'] == row['rescore'][0]['current_reward'] == 0
+    assert row['rescore'][0]['diagnostic_score_without_literal_python_line'] == 1
+    assert not row['errors']
+    assert file_bytes(experiment) == before
