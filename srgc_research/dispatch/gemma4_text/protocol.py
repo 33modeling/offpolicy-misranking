@@ -1,6 +1,6 @@
 """The same restricted text distribution is used for sampling and GRPO scoring."""
 
-EXTENSION = "gemma4-12b-text-v3"
+EXTENSION = "gemma4-12b-text-v4"
 PREVIOUS_EXTENSION = "gemma4-12b-text-v2"
 COMPLETION_CUE = "\n\nSolution:\n"
 CODE_INDENTATION_INSTRUCTION = "\n\nUse valid Python indentation: indent each function body with four spaces."

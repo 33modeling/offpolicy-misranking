@@ -8,6 +8,7 @@ from srgc_rebuttal.timing import timed
 from ..gemma4.memory import GemmaBackend as OriginalBackend
 from ..gemma4.memory import bounded_generate, durable_checkpoints
 from .protocol import SUPPRESS_TOKENS, mask_logits
+from .stopping import trim_padding
 
 __all__ = ["GemmaBackend", "bounded_generate", "durable_checkpoints"]
 
@@ -17,6 +18,13 @@ class GemmaBackend(OriginalBackend):
         super().__init__(*args, **kwargs)
         if self.model.generation_config.suppress_tokens != list(SUPPRESS_TOKENS):
             raise ValueError("Gemma generation and training must use the same text distribution")
+
+    def _rollout(self, prompt_id, responses, seed):
+        # Rows ended by the answer stop rule carry the batch padding; the
+        # sampled response is the part before it (see stopping.py).
+        sequences, rewards, start = super()._rollout(prompt_id, responses, seed)
+        pad = self.tokenizer.pad_token_id
+        return [trim_padding(sequence, start, pad) for sequence in sequences], rewards, start
 
     @timed("forward")
     def _logps_batch(self, sequences, start):

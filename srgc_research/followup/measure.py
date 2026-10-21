@@ -141,7 +141,7 @@ def n13_acquire(backend, state, data, identity, output, *, independent=True):
 def profile_name(plan):
     extension = plan.get("extension", "")
     profiles = {"qwen35-9b-v2": "qwen35", "gemma4-12b-pt-v1": "gemma4",
-                "gemma4-12b-text-v2": "gemma4_text", "gemma4-12b-text-v3": "gemma4_text",
+                "gemma4-12b-text-v2": "gemma4_text", "gemma4-12b-text-v3": "gemma4_text", "gemma4-12b-text-v4": "gemma4_text",
                 "llama31-8b-v1": "llama31"}
     if extension and extension not in profiles:
         raise ValueError("unsupported model extension; use the matching original diagnostic adapter")
