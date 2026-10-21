@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
@@ -144,6 +145,190 @@ def test_status_and_stop_work_without_model_python_and_without_resetting_data(tm
     for dataset in ("math", "mbpp"):
         row = json.loads((cohort.root / f"runs/{dataset}/.queue/stop.json").read_text())
         assert row["immediate"]
+
+
+@pytest.mark.parametrize("prepared", ["math", "mbpp"])
+def test_public_stop_handles_a_partially_prepared_cohort(tmp_path, prepared):
+    cohort = make_cohort("gemma4_text", tmp_path)
+    missing = "mbpp" if prepared == "math" else "math"
+    cohort.plans[missing].unlink()
+    # Stopping must not bind/rewrite a historical or mismatching queue identity.
+    identity = cohort.root / f"runs/{prepared}/.queue/protocol.json"
+    atomic_json(identity, {"implementation_sha256": "older-running-code"})
+    before = {p: p.read_bytes() for p in cohort.root.rglob("*") if p.is_file()}
+    result = subprocess.run(["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), "stop", "--now"],
+                            cwd="/tmp", env={**cohort.env, "GEMMA_PYTHON": "/missing-model-python",
+                                "SRGC_GEMMA_LEGACY_PROTOCOL": "0", "SRGC_GEMMA_TEXT_PROTOCOL": "1"},
+                            capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert all(p.read_bytes() == value for p, value in before.items())
+    assert json.loads((identity.parent / "stop.json").read_text())["immediate"]
+
+
+@pytest.mark.parametrize("args, expected", [
+    (["all", "--root", "/a path"], ["all", "run", "--root", "/a path"]),
+    (["math", "--retry-failed"], ["math", "run", "--retry-failed"]),
+    (["--root", "/a path"], ["all", "run", "--root", "/a path"]),
+])
+@pytest.mark.parametrize("model_name", ["qwen35", "llama31", "gemma4"])
+def test_implicit_run_with_options_keeps_model_chaining(tmp_path, args, expected, model_name):
+    driver = tmp_path / "python"
+    driver.write_text("#!" + sys.executable + "\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+    driver.chmod(0o755)
+    name = {"qwen35": "QWEN", "llama31": "LLAMA", "gemma4": "GEMMA"}[model_name]
+    env = {**os.environ, name + "_PYTHON": str(driver), "SRGC_MODEL_CHAIN": "1",
+           "SRGC_MODEL_CHAIN_CHILD": "0", "SRGC_GEMMA_LEGACY_PROTOCOL": "0"}
+    result = subprocess.run(["sh", str(REPO / f"scripts/run_srgc_{model_name}.sh"), *args],
+                            env=env, capture_output=True, text=True, timeout=30, check=True)
+    assert json.loads(result.stdout) == ["-m", "srgc_research.dispatch.model_chain", "--start", model_name,
+                                        *expected]
+
+
+def test_initial_preparation_observes_stop_and_tears_down_its_real_child(tmp_path, monkeypatch):
+    cohort = make_cohort("gemma4_text", tmp_path)
+    cohort.plans["math"].unlink()
+    for key in ("GROUP_VOLUME", "OM_WORK", "SRGC_GEMMA_TEXT_ROOT"):
+        monkeypatch.setenv(key, cohort.env[key])
+    monkeypatch.setattr(cli, "resolve_snapshot", lambda env: (tmp_path, "a" * 64))
+    monkeypatch.setattr(adapter, "runtime_packages", dict)
+    real_child, started = cluster.run_child, []
+
+    def child(command, log, env, **kwargs):
+        assert "should_stop" in kwargs, "input preparation has no cancellation callback"
+        def stop(pid):
+            started.append(pid)
+            result = subprocess.run(["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), "math", "stop", "--now"],
+                                    env=env, capture_output=True, text=True, timeout=30, check=False)
+            assert result.returncode == 0, result.stdout + result.stderr
+        return real_child([sys.executable, "-c", "import time; time.sleep(60)"], log, env,
+                          **kwargs, interval=.01, heartbeat=stop)
+
+    monkeypatch.setattr(cluster, "run_child", child)
+    monkeypatch.setattr(entry, "main", lambda args: cli.prepare_missing(["math"], cohort.root, os.environ))
+    with pytest.raises(KeyboardInterrupt):
+        run.main(["math", "--root", str(cohort.root)])
+    assert len(started) == 1
+    with pytest.raises(ProcessLookupError):
+        os.kill(started[0], 0)
+    assert not cohort.plans["math"].exists()
+    assert not (cohort.root / "runs/math").exists()
+
+
+def test_stop_before_any_plan_blocks_startup_and_explicit_resume_can_prepare(tmp_path, monkeypatch):
+    root = tmp_path / "work/empty experiment"
+    monkeypatch.setenv("GROUP_VOLUME", str(tmp_path))
+    monkeypatch.setenv("OM_WORK", str(tmp_path / "work"))
+    monkeypatch.delenv("SRGC_DATASET_PHASE", raising=False)
+    assert run.main(["stop", "--now", "--root", str(root)]) == 0
+    assert not (root / "runs").exists()
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    result = subprocess.run(["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), "status", "--json",
+                             "--root", str(root)], env={**os.environ, "GEMMA_PYTHON": "/missing"},
+                            capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 1  # Plans remain unprepared, not completed.
+    reports = json.loads(result.stdout)["datasets"]
+    assert all(row["stop_requested"] and not row["prepared"] for row in reports)
+    assert {path: path.read_bytes() for path in before} == before
+    with patch.object(entry, "main", side_effect=AssertionError("stopped startup reached model loading")), \
+            pytest.raises(KeyboardInterrupt):
+        run.main(["all", "--root", str(root)])
+    def resume(args):
+        assert not list(root.rglob("stop.json"))
+        return 0
+    with patch.object(entry, "main", side_effect=resume):
+        assert run.main(["resume", "--root", str(root)]) == 0
+    assert not (root / "runs").exists()
+
+
+def test_stop_can_replace_a_damaged_marker_and_cannot_downgrade_an_immediate_stop(tmp_path, monkeypatch):
+    from srgc_research.dispatch.gemma_text_control import RunControl
+
+    root = tmp_path / "work/experiment"
+    monkeypatch.setenv("GROUP_VOLUME", str(tmp_path))
+    monkeypatch.setenv("OM_WORK", str(tmp_path / "work"))
+    control = RunControl(cli.parse_args(["math", "stop", "--root", str(root)]))
+    marker = root / ".startup-control/math/stop.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("broken JSON")
+    assert control.stop(immediate=False) == 0
+    assert not json.loads(marker.read_text())["immediate"]
+    control.stop(immediate=True)
+    control.stop(immediate=False)
+    assert json.loads(marker.read_text())["immediate"]
+
+
+def test_resume_of_incompatible_plan_does_not_remove_any_stop_receipts(tmp_path, monkeypatch):
+    cohort = make_cohort("gemma4_text", tmp_path)
+    for key in ("GROUP_VOLUME", "OM_WORK"):
+        monkeypatch.setenv(key, cohort.env[key])
+    assert run.main(["all", "stop", "--now", "--root", str(cohort.root)]) == 0
+    plan = json.loads(cohort.plans["mbpp"].read_text())
+    plan["adapter_sha256"] = "b" * 64
+    atomic_json(cohort.plans["mbpp"], plan)
+    before = {p: p.read_bytes() for p in cohort.root.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError), patch.object(entry, "main", side_effect=AssertionError("model loading")):
+        run.main(["all", "resume", "--root", str(cohort.root)])
+    assert all(p.read_bytes() == value for p, value in before.items())
+
+
+def test_future_dataset_stop_does_not_block_the_current_chain_phase(tmp_path, monkeypatch):
+    cohort = make_cohort("gemma4_text", tmp_path)
+    atomic_json(cohort.root / "runs/mbpp/.queue/stop.json", {"immediate": True})
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "math")
+    with patch.object(entry, "main", return_value=0):
+        assert run.main(["all", "--root", str(cohort.root)]) == 0
+    assert json.loads((cohort.root / "runs/mbpp/.queue/stop.json").read_text())["immediate"]
+
+
+def test_graceful_preparation_stop_preserves_finished_plan_and_skips_the_next_stage(tmp_path, monkeypatch):
+    cohort = make_cohort("gemma4_text", tmp_path)
+    saved_plans = {dataset: path.read_bytes() for dataset, path in cohort.plans.items()}
+    for path in cohort.plans.values():
+        path.unlink()
+    for key in ("GROUP_VOLUME", "OM_WORK"):
+        monkeypatch.setenv(key, cohort.env[key])
+    monkeypatch.delenv("SRGC_DATASET_PHASE", raising=False)
+    monkeypatch.setattr(cli, "resolve_snapshot", lambda env: (tmp_path, "a" * 64))
+    monkeypatch.setattr(adapter, "runtime_packages", dict)
+    calls = []
+    def child(command, log, env, **kwargs):
+        calls.append(command)
+        cohort.plans["math"].write_bytes(saved_plans["math"])
+        assert run.main(["all", "stop", "--root", str(cohort.root)]) == 0
+        assert not kwargs["should_stop"](), "graceful stop interrupted the current stage"
+        return 0
+    monkeypatch.setattr(cluster, "run_child", child)
+    monkeypatch.setattr(entry, "main", lambda args: cli.prepare_missing(["math", "mbpp"], cohort.root, os.environ))
+    with pytest.raises(KeyboardInterrupt):
+        run.main(["all", "--root", str(cohort.root)])
+    assert len(calls) == 1
+    assert cohort.plans["math"].read_bytes() == saved_plans["math"]
+    assert not cohort.plans["mbpp"].exists()
+
+
+@pytest.mark.parametrize("args", [["--help"], ["all", "--help"], ["math", "run", "--help"]])
+def test_public_help_does_not_require_the_model_python(args):
+    result = subprocess.run(["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), *args],
+                            env={**os.environ, "GEMMA_PYTHON": "/missing-model-python",
+                                 "SRGC_GEMMA_LEGACY_PROTOCOL": "0", "SRGC_GEMMA_TEXT_PROTOCOL": "1"},
+                            capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "usage:" in result.stdout
+
+
+@pytest.mark.parametrize("model_name, name", [("qwen35", "QWEN"), ("llama31", "LLAMA")])
+@pytest.mark.parametrize("args", [["--help"], ["all", "--help"], ["all", "run", "--help"]])
+def test_help_never_enters_the_training_chain(tmp_path, model_name, name, args):
+    driver = tmp_path / "python"
+    driver.write_text("#!" + sys.executable + "\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+    driver.chmod(0o755)
+    result = subprocess.run(["sh", str(REPO / f"scripts/run_srgc_{model_name}.sh"), *args],
+                            env={**os.environ, name + "_PYTHON": str(driver),
+                                 "SRGC_MODEL_CHAIN": "1", "SRGC_MODEL_CHAIN_CHILD": "0"},
+                            capture_output=True, text=True, check=True, timeout=30)
+    module = "qwen_run" if model_name == "qwen35" else "llama_run"
+    assert json.loads(result.stdout) == ["-m", f"srgc_research.dispatch.{module}",
+                                        "all", "run", "--help"]
 
 
 def test_wrapper_restores_live_hooks_and_preserves_frozen_adapter():

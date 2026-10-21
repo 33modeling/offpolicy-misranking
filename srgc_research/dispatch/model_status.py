@@ -154,6 +154,13 @@ def load_reports(model, dataset, root, environment):
                 if statistics["completed_seeds"] != statistics["planned_seeds"]:
                     statistics["mean_reward_percent"] = None
                     statistics["mean_selection_training_preparation_gpu_seconds"] = None
+        if model == "gemma4_text":
+            # Initial preparation can be cancelled before a plan/queue exists.
+            # Report that stop even when the plan is still missing or invalid.
+            report["stop_requested"] |= any(path.is_file() for path in (
+                root / f".startup-control/{name}/stop.json",
+                root / f"runs/{name}/.queue/stop.json",
+            ))
         report["label"] = "MATH" if name == "math" else "MBPP"
         if report["prepared"]:
             from .submission_time import attach as attach_submission_time

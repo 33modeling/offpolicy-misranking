@@ -8,6 +8,17 @@ if [ "${1:-}" = status ] || [ "${1:-}" = results ]; then
     shift
     set -- all "$ACTION" "$@"
 fi
+# Keep default-action option forms on the same route as an explicit run.
+case "${1:-}" in
+    --help|-h) set -- all run "$@" ;;
+    -*) set -- all "$@" ;;
+esac
+case "${1:-}:${2:-}" in
+    all:-*|math:-*|mbpp:-*)
+        DATASET=$1
+        shift
+        set -- "$DATASET" run "$@" ;;
+esac
 if [ "${2:-}" = results ]; then
     export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
     exec python3 -m srgc_research.dispatch.model_results qwen35 "$@"
@@ -33,6 +44,9 @@ export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1
 export OMP_THREAD_LIMIT=1 RAYON_NUM_THREADS=1
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 # Training commands share one model queue; read-only/control actions stay model-specific.
+for SRGC_ARGUMENT in "$@"; do
+    case "$SRGC_ARGUMENT" in --help|-h) SRGC_MODEL_CHAIN=0 ;; esac
+done
 if [ "${SRGC_MODEL_CHAIN:-1}" = 1 ] && [ "${SRGC_MODEL_CHAIN_CHILD:-0}" != 1 ]; then
     case "${1:-}:${2:-run}" in
         all:run|math:run|mbpp:run|all:resume|math:resume|mbpp:resume)

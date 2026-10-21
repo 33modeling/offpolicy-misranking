@@ -127,7 +127,19 @@ def main(argv=None):
     if args[0] in {"status", "results", "stop", "resume", "doctor", "prepare", "preflight"}:
         args = ["all", *args]
     options = cli.parse_args(args)
-    if options.action in {"status", "results", "stop", "prepare", "doctor"}:
+    if options.action in {"status", "results", "doctor"}:
+        return entry.main(args)
+
+    from .gemma_text_control import RunControl
+
+    control = RunControl(options)
+    if options.action == "stop":
+        return control.stop(immediate=options.now)
+    if options.action == "resume":
+        control.resume()
+    else:
+        control.check()
+    if options.action == "prepare":
         return entry.main(args)
 
     from scripts import srgc_process_guard as guard
@@ -143,6 +155,7 @@ def main(argv=None):
     with ExitStack() as stack:
         # The outer handler prints once after the entry's backup scopes close.
         stack.enter_context(patch("srgc_research.dispatch.model_resume.failure_footer", lambda *a: None))
+        stack.enter_context(patch.object(cli, "prepare_missing", control.preparing(cli.prepare_missing)))
         stack.enter_context(patch.object(cli, "admit_with_smoke", scoped_admission(cli.admit_with_smoke)))
         if options.action in {"run", "resume"}:
             # Install before cli.main binds `from ...worker import worker`.

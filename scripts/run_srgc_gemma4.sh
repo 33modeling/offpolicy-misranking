@@ -13,6 +13,28 @@ if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ] || [ 
     shift
     set -- all "$ACTION" "$@"
 fi
+# The Python CLI permits an omitted dataset/action before options. Normalize
+# those forms before selecting the model-chain or model-specific entry point.
+case "${1:-}" in
+    --help|-h) ;;
+    -*) set -- all "$@" ;;
+esac
+case "${1:-}:${2:-}" in
+    all:-*|math:-*|mbpp:-*)
+        DATASET=$1
+        shift
+        set -- "$DATASET" run "$@" ;;
+esac
+for GEMMA_ARGUMENT in "$@"; do
+    case "$GEMMA_ARGUMENT" in
+    --help|-h)
+        SRGC_MODEL_CHAIN=0
+        export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1
+        if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ] && [ "${2:-}" != audit ]; then
+            exec python3 -m srgc_research.dispatch.gemma_text_run "$@"
+        fi ;;
+    esac
+done
 if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ]; then
     case "${2:-run}" in
         results|status)

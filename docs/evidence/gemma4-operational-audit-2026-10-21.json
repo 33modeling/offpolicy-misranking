@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-21",
+  "kind": "operational code verification, not a new research experiment",
+  "baseline_commit": "85c514c07d837df3a0280a27e722c00e2ab995ea",
+  "source_files_sha256": {
+    "scripts/run_srgc_gemma4.sh": "9637833051e03ecb8dccade51cf423d0c781a0ac84cfd960fb259ee97a6ba3bc",
+    "scripts/run_srgc_llama31.sh": "ea07f3de034924d3981d792d054499f040a263bb52a9d27acbae4f312c45a874",
+    "scripts/run_srgc_qwen35.sh": "ea9f2eb8f404a3fc479260d01a2a271cef61ca73a74809196b46502131c28366",
+    "srgc_research/dispatch/gemma_text_control.py": "1f94632b0cada6d4049f091c71a2e37aa4c26adeee97c50b2506c854ebe8ae2f",
+    "srgc_research/dispatch/gemma_text_run.py": "e536c7f3ad0a7f031803b55d979e5446c79c28d290c517d1be589973b5850e84",
+    "srgc_research/dispatch/model_status.py": "1dd556eda9326be48bef50bea459bb8b4ebf2e5bb5bd0a315af95750b3ba96d8",
+    "srgc_research/tests/test_gemma_text_recheck.py": "90c2c8432fe164ddf197fea19f491b93d9586eedcec1f484caebb0696f88030d"
+  },
+  "reproduced_before_fix": {
+    "gemma_partial_stop_implicit_run_preparation_cancel": {
+      "failed_tests": 6,
+      "log": "reproduced-failures.log"
+    },
+    "qwen_llama_implicit_run": {
+      "failed_tests": 6,
+      "gemma_already_fixed_passes": 3,
+      "log": "chain-reproduced-failures.log"
+    }
+  },
+  "final_tests": {
+    "passed": 349,
+    "failed": 0,
+    "warnings": 6,
+    "seconds": 161.05,
+    "warning": "Existing Python 3.12 multiprocessing fork warnings in multi-node result export fixtures",
+    "log": "final-publication-tests.log",
+    "log_sha256": "cab3c6191634cba8b728f70b1a8a16eb015bdea3f181e6c1976d52280eaf042c",
+    "scope": "Gemma profile/model/runtime, operational startup/cancellation, model-chain routing, results/status, followup regressions"
+  },
+  "real_child_cancellation": {
+    "control": "public shell math stop --now during initial preparation",
+    "execution": "CPU sleep process using the real owned-process-group runner",
+    "verified": [
+      "exit by cancellation",
+      "PID no longer alive",
+      "no plan or run created"
+    ],
+    "full_model_loaded": false
+  },
+  "checks": {
+    "ruff": "passed",
+    "shell_syntax_all_three_launchers": "passed",
+    "python_ast": "passed",
+    "git_diff_check": "passed"
+  },
+  "scientific_preservation": {
+    "baseline_commit": "85c514c07d837df3a0280a27e722c00e2ab995ea",
+    "frozen_scientific_files_checked": 71,
+    "changed_frozen_files": [],
+    "gemma_text_v3_adapter_sha256": "2c0dfb6a80114fd87a98af0610a8740d3f2353535586888fdd519422c257c157",
+    "engine_sha256": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960",
+    "legacy_adapter_sha256": "ba0a57d8ffa8802bb52c04b307ccad38a50f232132f0a58345176e3a33a552b1",
+    "scope": "Operational controls only; no experiment or GPU training launched"
+  },
+  "benchmark_measurements": {
+    "new_experiment_launched": false,
+    "full_gemma_preflight": null,
+    "full_initial_accuracy": null,
+    "h100_training": null,
+    "reward_or_time_results_modified": false,
+    "test_fixture_provenance": "Prepared synthetic/fixture cohorts and tiny CPU model tests; no new benchmark observation",
+    "prior_real_cuda_evidence": "docs/evidence/gemma4-pt-completion-diagnosis-2026-10-21.json"
+  },
+  "raw_record_directory": "/home/kms/reports/gemma-operational-audit-2026-10-21"
+}
