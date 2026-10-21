@@ -1095,5 +1095,361 @@
       }
     ],
     "source_sha256": "b39a683bdd604daeb690b1cc4461cb569f73c990c842cfda7e60d5ed61516fb5"
-  }
+  },
+  "whole_data_stability": {
+    "scope": "Descriptive synthesis across six observed model/dataset cohorts. Highest reported five-seed arm mean per cohort is a retrospective reference, not a deployable oracle or statistical guarantee.",
+    "rows": [
+      {
+        "cohort": "OLMo/math",
+        "means": {
+          "random": 36.74166666666667,
+          "sr": 39.375,
+          "on_policy": 39.458333333333336,
+          "switch": 40.94166666666666
+        },
+        "rank": {
+          "random": 4,
+          "sr": 3,
+          "on_policy": 2,
+          "switch": 1
+        },
+        "shortfall_from_best_mean_pp": {
+          "random": 4.199999999999996,
+          "sr": 1.5666666666666629,
+          "on_policy": 1.4833333333333272,
+          "switch": 0.0
+        }
+      },
+      {
+        "cohort": "OLMo/mbpp",
+        "means": {
+          "random": 34.88333333333333,
+          "sr": 41.05833333333334,
+          "on_policy": 36.84166666666667,
+          "switch": 41.108333333333334
+        },
+        "rank": {
+          "random": 4,
+          "sr": 2,
+          "on_policy": 3,
+          "switch": 1
+        },
+        "shortfall_from_best_mean_pp": {
+          "random": 6.225000000000001,
+          "sr": 0.04999999999999716,
+          "on_policy": 4.266666666666666,
+          "switch": 0.0
+        }
+      },
+      {
+        "cohort": "Qwen/math",
+        "means": {
+          "random": 78.96,
+          "sr": 81.98,
+          "on_policy": 80.74,
+          "switch": 82.1
+        },
+        "rank": {
+          "random": 4,
+          "sr": 2,
+          "on_policy": 3,
+          "switch": 1
+        },
+        "shortfall_from_best_mean_pp": {
+          "random": 3.1400000000000006,
+          "sr": 0.11999999999999034,
+          "on_policy": 1.3599999999999994,
+          "switch": 0.0
+        }
+      },
+      {
+        "cohort": "Qwen/mbpp",
+        "means": {
+          "random": 81.82,
+          "sr": 82.02,
+          "on_policy": 84.22,
+          "switch": 83.34
+        },
+        "rank": {
+          "random": 4,
+          "sr": 3,
+          "on_policy": 1,
+          "switch": 2
+        },
+        "shortfall_from_best_mean_pp": {
+          "random": 2.4000000000000057,
+          "sr": 2.200000000000003,
+          "on_policy": 0.0,
+          "switch": 0.8799999999999955
+        }
+      },
+      {
+        "cohort": "Llama/math",
+        "means": {
+          "random": 60.82,
+          "sr": 65.32,
+          "on_policy": 64.28,
+          "switch": 64.48
+        },
+        "rank": {
+          "random": 4,
+          "sr": 1,
+          "on_policy": 3,
+          "switch": 2
+        },
+        "shortfall_from_best_mean_pp": {
+          "random": 4.499999999999993,
+          "sr": 0.0,
+          "on_policy": 1.039999999999992,
+          "switch": 0.8399999999999892
+        }
+      },
+      {
+        "cohort": "Llama/mbpp",
+        "means": {
+          "random": 62.04,
+          "sr": 62.9,
+          "on_policy": 61.34,
+          "switch": 63.18
+        },
+        "rank": {
+          "random": 3,
+          "sr": 2,
+          "on_policy": 4,
+          "switch": 1
+        },
+        "shortfall_from_best_mean_pp": {
+          "random": 1.1400000000000006,
+          "sr": 0.28000000000000114,
+          "on_policy": 1.8399999999999963,
+          "switch": 0.0
+        }
+      }
+    ],
+    "summary": {
+      "random": {
+        "ranks": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          3
+        ],
+        "mean_rank": 3.8333333333333335,
+        "maximum_shortfall_pp": 6.225000000000001,
+        "mean_shortfall_pp": 3.6008333333333327
+      },
+      "on_policy": {
+        "ranks": [
+          2,
+          3,
+          3,
+          1,
+          3,
+          4
+        ],
+        "mean_rank": 2.6666666666666665,
+        "maximum_shortfall_pp": 4.266666666666666,
+        "mean_shortfall_pp": 1.6649999999999967
+      },
+      "sr": {
+        "ranks": [
+          3,
+          2,
+          2,
+          3,
+          1,
+          2
+        ],
+        "mean_rank": 2.1666666666666665,
+        "maximum_shortfall_pp": 2.200000000000003,
+        "mean_shortfall_pp": 0.7027777777777757
+      },
+      "switch": {
+        "ranks": [
+          1,
+          1,
+          1,
+          2,
+          2,
+          1
+        ],
+        "mean_rank": 1.3333333333333333,
+        "maximum_shortfall_pp": 0.8799999999999955,
+        "mean_shortfall_pp": 0.2866666666666641
+      }
+    }
+  },
+  "whole_data_costs": {
+    "source": "/home/kms/dev/offpolicy-misranking-paper-v2/v7/evidence/2026-10-19/qwen-four-gpu-times.csv",
+    "source_sha256": "c4a68ca6498933fa1d3415bb847b35918ff4790c0148566d38db484a27a6b517",
+    "scope": "Descriptive supplied-time summaries, not universal GPU-hour savings or audited complete end-to-end timing. Retains original partial audit labels.",
+    "llama": "Source timings include partial lower bounds and all recorded/restarted attempts; no comparable five-seed aggregate is computed.",
+    "qwen": {
+      "math": {
+        "recorded_mean_elapsed_hours": {
+          "random": 19.2856,
+          "sr": 21.83445,
+          "on_policy": 33.58695,
+          "switch": 27.372049999999998
+        },
+        "switch_to_on_ratio_of_means": 0.8149608702189391,
+        "mean_elapsed_reduction_fraction": 0.18503912978106085,
+        "seedwise_switch_to_on_ratios": {
+          "5": 0.8207958480096321,
+          "6": 0.7770830282618245,
+          "7": 0.7821573927833799,
+          "8": 0.978715649275208,
+          "9": 0.721863659082513
+        },
+        "maximum_observed_seed_ratio": 0.978715649275208,
+        "covered_scope": "Author-approved selection+training+preparation from the shared prefix; excludes initial cache creation, shared prefix, evaluation, checkpoint/startup, and does not treat PARTIAL audits as complete.",
+        "row_timing_quality": [
+          {
+            "seed": "5",
+            "arm": "on_policy",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "5",
+            "arm": "switch",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "6",
+            "arm": "on_policy",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "6",
+            "arm": "switch",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "7",
+            "arm": "on_policy",
+            "original_phase_record": "COMPLETE",
+            "restart_audit": "COMPLETE"
+          },
+          {
+            "seed": "7",
+            "arm": "switch",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "8",
+            "arm": "on_policy",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "8",
+            "arm": "switch",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "9",
+            "arm": "on_policy",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "9",
+            "arm": "switch",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          }
+        ]
+      },
+      "mbpp": {
+        "recorded_mean_elapsed_hours": {
+          "random": 20.68695,
+          "sr": 19.7898,
+          "on_policy": 35.7198,
+          "switch": 31.8041
+        },
+        "switch_to_on_ratio_of_means": 0.8903773257409056,
+        "mean_elapsed_reduction_fraction": 0.10962267425909444,
+        "seedwise_switch_to_on_ratios": {
+          "5": 1.0165355327412875,
+          "6": 1.022420518000954,
+          "7": 0.8160456644186638,
+          "8": 0.7723586895179255,
+          "9": 0.8123195584489102
+        },
+        "maximum_observed_seed_ratio": 1.022420518000954,
+        "covered_scope": "Author-approved selection+training+preparation from the shared prefix; excludes initial cache creation, shared prefix, evaluation, checkpoint/startup, and does not treat PARTIAL audits as complete.",
+        "row_timing_quality": [
+          {
+            "seed": "5",
+            "arm": "on_policy",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "5",
+            "arm": "switch",
+            "original_phase_record": "COMPLETE",
+            "restart_audit": "COMPLETE"
+          },
+          {
+            "seed": "6",
+            "arm": "on_policy",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "6",
+            "arm": "switch",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "PARTIAL"
+          },
+          {
+            "seed": "7",
+            "arm": "on_policy",
+            "original_phase_record": "COMPLETE",
+            "restart_audit": "COMPLETE"
+          },
+          {
+            "seed": "7",
+            "arm": "switch",
+            "original_phase_record": "COMPLETE",
+            "restart_audit": "COMPLETE"
+          },
+          {
+            "seed": "8",
+            "arm": "on_policy",
+            "original_phase_record": "COMPLETE",
+            "restart_audit": "COMPLETE"
+          },
+          {
+            "seed": "8",
+            "arm": "switch",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "COMPLETE"
+          },
+          {
+            "seed": "9",
+            "arm": "on_policy",
+            "original_phase_record": "PARTIAL",
+            "restart_audit": "COMPLETE"
+          },
+          {
+            "seed": "9",
+            "arm": "switch",
+            "original_phase_record": "COMPLETE",
+            "restart_audit": "COMPLETE"
+          }
+        ]
+      }
+    }
+  },
+  "primary_analysis": "Across-model/task stability of performance and selection+training cost under changing selector advantages. Endpoint seed sensitivity and the old-state signal diagnostic are supplementary."
 }
