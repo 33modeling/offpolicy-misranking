@@ -18,6 +18,7 @@ OWNER_MARKERS = (
     'srgc_research.dispatch.gemma_run', 'srgc_research.dispatch.gemma4.entry',
     'srgc_research.dispatch.gemma4.cli',
     'srgc_research.dispatch.gemma4_text.entry', 'srgc_research.dispatch.gemma4_text.cli',
+    'srgc_research.dispatch.gemma_text_run',
     'srgc_research.dispatch.information_queue', 'srgc_research.dispatch.information_run',
     'srgc_research.information_cli',
 )

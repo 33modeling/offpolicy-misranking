@@ -29,6 +29,7 @@ if sys.argv[1:3] == ['-m', 'srgc_research.dispatch.model_chain']:
 modules = {'srgc_research.dispatch.llama_run': 'llama31',
            'srgc_research.dispatch.gemma_run': 'gemma4',
            'srgc_research.dispatch.gemma4_text.entry': 'gemma4',
+           'srgc_research.dispatch.gemma_text_run': 'gemma4',
            'srgc_research.dispatch.qwen_run': 'qwen35'}
 assert sys.argv[1] == '-m', sys.argv
 model = modules[sys.argv[2]]

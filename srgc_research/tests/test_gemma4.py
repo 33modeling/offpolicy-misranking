@@ -195,7 +195,7 @@ def test_admission_failure_is_recorded_before_any_training(tmp_path):
     assert receipt["allocated_gpu_seconds"] >= 2
 
 
-def test_one_command_and_status_shortcut_use_shared_python(tmp_path):
+def test_one_command_and_dataset_selection_use_shared_python(tmp_path):
     python = tmp_path / "work/.venv-cu126/bin/python"
     python.parent.mkdir(parents=True)
     python.write_text(
@@ -206,7 +206,6 @@ def test_one_command_and_status_shortcut_use_shared_python(tmp_path):
     for args, expected in [
         ([], ["all"]),
         (["math"], ["math"]),
-        (["status"], ["all", "status"]),
     ]:
         result = subprocess.run(
             ["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), *args],
@@ -216,8 +215,7 @@ def test_one_command_and_status_shortcut_use_shared_python(tmp_path):
             text=True,
             check=True,
         )
-        entry = (["-m", "srgc_research.dispatch.gemma4_text.entry"] if args == ["status"] else
-                 ["-m", "srgc_research.dispatch.model_chain", "--start", "gemma4"])
+        entry = ["-m", "srgc_research.dispatch.model_chain", "--start", "gemma4"]
         assert json.loads(result.stdout) == [*entry, *expected]
 
 

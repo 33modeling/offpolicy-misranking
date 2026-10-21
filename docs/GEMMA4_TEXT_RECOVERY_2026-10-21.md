@@ -46,6 +46,7 @@ sh scripts/run_srgc_gemma4.sh recover all
 ```sh
 sh scripts/run_srgc_gemma4.sh status
 sh scripts/run_srgc_gemma4.sh results
+sh scripts/run_srgc_gemma4.sh stop --now
 sh scripts/run_srgc_gemma4.sh all stop --now
 sh scripts/run_srgc_gemma4.sh recover all resume
 # 원래 실험을 읽기만 하기
@@ -90,3 +91,32 @@ V7 원고에 Gemma 결과를 추가하거나 수치를 바꾸지 않는다.
 - 기존 Gemma·Llama·공통 engine의 Python 55개는 수정 전 SHA256과 동일하다.
   Ruff, 변경 Python 파싱, shell 구문, diff 검사를 통과했다.
 - 실제 사전학습 12B 검사는 위 짧은 CUDA 생성 검사이며, H100/NCCL 실측과 구분한다.
+
+## 시작·중지 경로 재점검
+
+후속 재점검에서 아래 운영 경로를 수정했다. 생성·채점·학습 프로토콜은 그대로이며,
+이미 준비한 text-v2 입력과 checkpoint를 이 수정 때문에 다시 만들 필요는 없다.
+
+- 시작 함수가 재개 배정기 설치보다 먼저 연결되어, 모델 연결 실행에서 MATH를 끝내고도
+  아직 실행할 수 없는 MBPP를 기다릴 수 있었다. 공개 명령은 이제 별도 운영 진입점
+  `srgc_research.dispatch.gemma_text_run`에서 배정기를 먼저 설치한다. MATH가 완료되고
+  MBPP가 남은 조건에서 기존 진입점의 불필요한 GPU 요청을 재현하고, 새 진입점이
+  GPU 요청 없이 해당 단계를 종료하는지 검사했다.
+- 연결 실행의 사전 점검은 현재 데이터셋만 검사한다. MBPP 단계에서도 첫 번째 MATH
+  plan으로 smoke를 실행하거나 두 데이터셋의 후보 검사를 다시 요청하던 경로를 막는다.
+  두 과제를 직접 요청한 `recover all`의 검사 범위는 유지한다.
+- 별도 `preflight` 실행도 실제 중지 요청 파일을 확인한다. `--now`를 자식 실행 중
+  감시하고, 취소된 검사는 실패와 구분해 저장한다. 이미 통과한 smoke와 시간은 보존한다.
+- `status`, `stop --now`, `all stop --now`는 모델용 Python이 없는 조건에서도 시스템
+  Python으로 실행한다. 새 진입점의 살아 있는 자식은 고아 프로세스 정리에서 보호한다.
+
+운영 진입점은 frozen adapter 바깥에 있다. 재점검 로그와 과학 코드 58개의 SHA256 보존
+확인은 `/home/kms/reports/gemma-recheck-2026-10-21/`에 보관한다. 이 검사는 실행 제어의
+회귀 검사이며 원격 H100의 전체 init 정답률을 새로 측정한 결과가 아니다.
+
+최종 코드의 전체 CPU 검사에서 **2,023 tests, 325 subtests가 통과**했다(431.51초).
+기존 fork 관련 경고 67건이 남았으며 테스트 실패는 없다. 일반 디스크에서 별도 실행한
+운영 경로 검사 11개도 통과했다. 전체 검사와 겹치므로 합산하지 않는다.
+사전 점검의 GPU 실행 설정이 실제 작업 환경에 전달되는지, 오류 안내가 백업 정리 뒤
+한 번 출력되는지까지 검사했다. 변경한 소스 8개의 해시는 전체 검사 시작·종료 시 같다.
+Ruff, shell 구문과 diff 검사도 통과했다.

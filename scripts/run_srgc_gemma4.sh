@@ -14,7 +14,7 @@ else
     export SRGC_GEMMA_TEXT_PROTOCOL=${SRGC_GEMMA_TEXT_PROTOCOL:-1}
 fi
 [ "$#" -gt 0 ] || set -- all
-if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ]; then
+if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ] || [ "${1:-}" = stop ]; then
     ACTION=$1
     shift
     set -- all "$ACTION" "$@"
