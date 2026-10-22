@@ -68,6 +68,7 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--tokens', type=int, default=2048)
     parser.add_argument('--prompts', type=int, default=2)
+    parser.add_argument('--offset', type=int, default=0, help='fixed candidate slice start; recorded in the diagnostic')
     parser.add_argument('--responses', type=int, default=1)
     parser.add_argument('--seed', type=int, default=5)
     parser.add_argument('--profiles', default='comparison,official')
@@ -78,7 +79,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     profiles = args.profiles.split(',')
     if (not 1 <= args.prompts <= 8 or not 1 <= args.tokens <= 2048
-            or not 1 <= args.responses <= 8 or args.threads < 1 or args.seed < 0
+            or not 1 <= args.responses <= 8 or args.threads < 1 or args.seed < 0 or args.offset < 0
+            or (args.canaries and args.offset != 0)
             or not profiles or len(set(profiles)) != len(profiles)
             or any(profile not in {'comparison', 'official', 'greedy'} for profile in profiles)):
         parser.error('invalid panel size, seed, threads or sampling profiles')
@@ -102,6 +104,7 @@ def main(argv=None):
               'dtype': 'bfloat16', 'attention': 'eager', 'thinking': 'off',
               'max_new_tokens': args.tokens, 'requested_responses': args.responses,
               'seed': args.seed, 'profiles': profiles, 'training_updates': 0,
+              'candidate_offset': args.offset,
               'cpu_threads': args.threads,
               'panel_kind': 'synthetic_canaries' if args.canaries else 'fixed_candidates',
               'scope': ('synthetic instruction/verifier controls; not benchmark accuracy' if args.canaries else
@@ -150,7 +153,10 @@ def main(argv=None):
             bundle_bytes = (json.dumps(canary_bundle(dataset), sort_keys=True).encode()
                             if args.canaries else bundle_path.read_bytes())
             bundle = json.loads(bundle_bytes)
-            for candidate in bundle['candidate_ids'][:args.prompts]:
+            selected = bundle['candidate_ids'][args.offset:args.offset + args.prompts]
+            if not selected:
+                raise ValueError('diagnostic slice contains no candidate prompts')
+            for candidate in selected:
                 record = dict(bundle['records'][candidate])
                 source_prompt = record['prompt']
                 record['prompt'] = tokenizer.apply_chat_template(
