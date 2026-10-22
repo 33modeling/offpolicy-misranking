@@ -1,9 +1,10 @@
-"""Read-only IT status stays visible during preparation and fixed-panel checks."""
+"""IT status bootstraps absent plans and preserves already recorded work."""
 
 import hashlib
 import json
 import os
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from srgc_rebuttal.plan import input_path, load_plan
 from srgc_rebuttal.runtime import atomic_json, lease
 from srgc_research.dispatch import model_status
+from srgc_research.dispatch import gemma_it_bootstrap as bootstrap
 from srgc_research.dispatch.gemma4_it import preflight
 from srgc_research.tests.test_model_results import make_cohort, saved
 
@@ -63,21 +65,172 @@ def test_missing_it_plans_show_preparing_and_separate_historical_pt_path(tmp_pat
     assert old.read_bytes() == old_bytes
 
 
-def test_public_status_on_a_fully_empty_it_root_identifies_required_preparation(tmp_path):
+@pytest.mark.parametrize("action", ["status", "results"])
+def test_public_inspection_automatically_prepares_a_fully_empty_it_root(tmp_path, action):
     import subprocess
-    from pathlib import Path
-    root = tmp_path / "work/srgc-rebuttal/gemma4-12b-it-v1"
-    environment = {**os.environ, "GROUP_VOLUME": str(tmp_path), "OM_WORK": str(tmp_path / "work"),
-                   "SRGC_GEMMA_IT_ROOT": str(root), "GEMMA_PYTHON": "/missing",
-                   "SRGC_GEMMA_LEGACY_PROTOCOL": "0", "SRGC_GEMMA_IT_PROTOCOL": "1"}
     repo = Path(__file__).resolve().parents[2]
-    result = subprocess.run(["sh", str(repo / "scripts/run_srgc_gemma4.sh"), "status"],
-                            cwd="/tmp", env=environment, capture_output=True, text=True, timeout=30)
+    root = tmp_path / "work/srgc-rebuttal/gemma4-12b-it-v1"
+    interpreter = tmp_path / "preparation python"
+    interpreter.write_text(f"#!{sys.executable}\n" + '''
+import os, sys
+from pathlib import Path
+from srgc_research.dispatch.gemma4_it import adapter
+from srgc_research.tests.test_model_results import GemmaITTokenizer
+assert sys.argv[1:5] == ['-m', 'srgc_research.dispatch.gemma_it_run', 'all', 'prepare'], sys.argv
+assert os.environ['CUDA_VISIBLE_DEVICES'] == ''
+assert os.environ['SRGC_MODEL_CHAIN'] == '0'
+assert os.environ['SRGC_GEMMA_IT_PROTOCOL'] == '1'
+assert os.environ['SRGC_GEMMA_LEGACY_PROTOCOL'] == '0'
+root = Path(sys.argv[sys.argv.index('--root') + 1])
+repo = Path(adapter.REPO)
+for name, source in [('math','additional_seeds.json'), ('mbpp','mbpp_seeds.json')]:
+    adapter.prepare(name, repo / 'srgc_rebuttal/experiments' / source, root,
+                    GemmaITTokenizer(), snapshot_sha256='a' * 64)
+print('real cohort preparation completed; no generation or training')
+''')
+    interpreter.chmod(0o755)
+    environment = {**os.environ, "GROUP_VOLUME": str(tmp_path), "OM_WORK": str(tmp_path / "work"),
+                   "SRGC_GEMMA_IT_ROOT": str(root), "GEMMA_PYTHON": str(interpreter),
+                   "PYTHONPATH": os.pathsep.join((str(repo), os.environ.get("PYTHONPATH", ""))),
+                   "SRGC_GEMMA_LEGACY_PROTOCOL": "0", "SRGC_GEMMA_IT_PROTOCOL": "1"}
+    assert not root.exists()
+    command = ["sh", str(repo / "scripts/run_srgc_gemma4.sh"), action, "--json"]
+    result = subprocess.run(command, cwd="/tmp", env=environment,
+                            capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "MATH  NOT INITIALIZED" in result.stdout and "MBPP  NOT INITIALIZED" in result.stdout
-    assert "all prepare --root" in result.stdout
-    assert "No such file" not in result.stdout and "READ ERRORS" not in result.stdout
-    assert not root.exists()  # Status must not invent a plan or fabricate a run.
+    assert "automatically preparing missing IT plans" in result.stderr
+    assert "real cohort preparation completed" in result.stderr
+    if action == "status":
+        assert all(row["prepared"] for row in json.loads(result.stdout)["datasets"])
+    else:
+        exported = json.loads((tmp_path / "work/results/gemma4_it-results.json").read_text())
+        assert all(row["prepared"] for row in exported["datasets"].values())
+    for name in ("math", "mbpp"):
+        path = root / "experiments" / f"gemma4-12b-it-{name}.json"
+        plan = load_plan(path)
+        for seed in plan["seeds"]:
+            assert json.loads(input_path(path, plan, seed).read_text())["cached_rewards"] == {}
+        assert not (root / "runs" / name).exists()
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    environment["GEMMA_PYTHON"] = "/missing"
+    repeated = subprocess.run(command, cwd="/tmp", env=environment,
+                              capture_output=True, text=True, timeout=30)
+    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    assert "automatically preparing" not in repeated.stderr
+    assert before == {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("explicit_it", [False, True])
+def test_automatic_preparation_only_creates_the_missing_dataset(tmp_path, capsys, explicit_it):
+    from srgc_research.tests.test_model_results import GemmaITTokenizer
+    from srgc_research.dispatch.gemma4_it import adapter
+    cohort = make_cohort("gemma4_it", tmp_path)
+    cohort.plans["mbpp"].unlink()
+    previous = tmp_path / "previous-pt-model"
+    atomic_json(previous / "generation_config.json", {"eos_token_id": 1})
+    previous_bytes = (previous / "generation_config.json").read_bytes()
+    cohort.env.update(SRGC_GEMMA_MODEL_PATH=str(previous), SRGC_GEMMA_MODEL_SHA256="old-PT-parent")
+    if explicit_it:
+        cohort.env["SRGC_GEMMA_IT_MODEL_PATH"] = str(tmp_path / "explicit-it")
+    before = saved(cohort)
+    calls = []
+
+    def prepare(command, log, environment, **options):
+        assert command[2:4] == ["mbpp", "prepare"]
+        assert "SRGC_GEMMA_MODEL_SHA256" not in environment
+        if explicit_it:
+            assert environment["SRGC_GEMMA_IT_MODEL_PATH"] == cohort.env["SRGC_GEMMA_IT_MODEL_PATH"]
+        else:
+            assert "SRGC_GEMMA_MODEL_PATH" not in environment
+        calls.append(command)
+        adapter.prepare("mbpp", adapter.REPO / "srgc_rebuttal/experiments/mbpp_seeds.json",
+                        cohort.root, GemmaITTokenizer(), snapshot_sha256="a" * 64)
+        print("preparing MBPP inputs")
+        return 0
+
+    with patch.object(bootstrap.cluster, "run_child", side_effect=prepare):
+        code, output = run_status(cohort, capsys, "--json")
+    assert code == 0 and len(calls) == 1
+    assert all(row["prepared"] for row in json.loads(output.out)["datasets"])
+    assert "preparing MBPP inputs" in output.err
+    assert all(path.read_bytes() == data for path, data in before.items())
+    assert (previous / "generation_config.json").read_bytes() == previous_bytes
+
+
+@pytest.mark.parametrize("case", ["peer", "stopped"])
+def test_automatic_preparation_respects_another_inspector_and_stop_markers(tmp_path, capsys, case):
+    from contextlib import nullcontext
+    cohort = make_cohort("gemma4_it", tmp_path)
+    for path in cohort.plans.values():
+        path.unlink()
+    if case == "stopped":
+        atomic_json(cohort.root / ".startup-control/math/stop.json", {"immediate": True})
+    context = lease(bootstrap.preparation_lock(cohort.root)) if case == "peer" else nullcontext()
+    with context, patch.object(bootstrap.cluster, "run_child", side_effect=AssertionError("duplicate preparation")):
+        code, output = run_status(cohort, capsys, "--json")
+    assert code == 0
+    rows = json.loads(output.out)["datasets"]
+    assert not any(row["prepared"] for row in rows)
+    if case == "peer":
+        assert all(row["preparing"] for row in rows)
+    else:
+        assert rows[0]["stop_requested"]
+
+
+@pytest.mark.parametrize("child_code", [0, 2])
+@pytest.mark.parametrize("action", ["status", "results"])
+def test_failed_automatic_preparation_does_not_claim_initialized(tmp_path, capsys, child_code, action):
+    from srgc_research.dispatch import model_results
+    cohort = make_cohort("gemma4_it", tmp_path)
+    for path in cohort.plans.values():
+        path.unlink()
+    with patch.object(bootstrap.cluster, "run_child", return_value=child_code):
+        if action == "status":
+            code, output = run_status(cohort, capsys, "--json")
+            assert code == 2 and output.out == ""
+        else:
+            with patch.dict(os.environ, cohort.env, clear=True):
+                code = model_results.main(["gemma4_it", "--root", str(cohort.root)])
+            output = capsys.readouterr()
+            assert code == 1 and "ERROR:" in output.out
+            assert not (cohort.work / "results/gemma4_it-results.json").exists()
+    error = output.out + output.err
+    if child_code == 0:
+        assert "did not create required IT plans" in error
+    else:
+        assert "preparation failed" in error
+    assert not any(path.exists() for path in cohort.plans.values())
+
+
+def test_automatic_preparation_cannot_repurpose_a_pt_cohort(tmp_path, capsys):
+    cohort = make_cohort("gemma4", tmp_path)
+    before = saved(cohort)
+    with patch.object(bootstrap.cluster, "run_child", side_effect=AssertionError("replaced a PT experiment")):
+        code, output = run_status(cohort, capsys)
+    assert code == 2 and "another model's experiment plan" in output.err
+    assert saved(cohort) == before
+
+
+@pytest.mark.parametrize("action", ["run", "prepare"])
+@pytest.mark.parametrize("explicit_it", [False, True])
+def test_regular_it_commands_also_handle_an_old_pt_path_automatically(tmp_path, monkeypatch, action, explicit_it):
+    from srgc_research.dispatch import gemma_it_run
+    previous = tmp_path / "pt-model"
+    atomic_json(previous / "generation_config.json", {"eos_token_id": 1})
+    before = (previous / "generation_config.json").read_bytes()
+    monkeypatch.setenv("GROUP_VOLUME", str(tmp_path))
+    monkeypatch.setenv("OM_WORK", str(tmp_path / "work"))
+    monkeypatch.setenv("SRGC_GEMMA_MODEL_PATH", str(previous))
+    monkeypatch.delenv("SRGC_GEMMA_IT_MODEL_PATH", raising=False)
+    if explicit_it:
+        monkeypatch.setenv("SRGC_GEMMA_IT_MODEL_PATH", str(tmp_path / "it-model"))
+    with patch.object(gemma_it_run, "run", return_value=0):
+        assert gemma_it_run.main(["all", action, "--root", str(tmp_path / "work/it-root")]) == 0
+    if explicit_it:
+        assert os.environ["SRGC_GEMMA_IT_MODEL_PATH"] == str(tmp_path / "it-model")
+    else:
+        assert "SRGC_GEMMA_MODEL_PATH" not in os.environ
+    assert (previous / "generation_config.json").read_bytes() == before
 
 
 def test_missing_it_plan_with_saved_queue_work_is_still_an_error(tmp_path, capsys):

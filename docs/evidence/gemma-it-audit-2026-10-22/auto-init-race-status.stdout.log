@@ -1,0 +1,49 @@
+{
+  "model": "google/gemma-4-12B-it",
+  "root": "/home/kms/reports/gemma-it-auto-prepare-2026-10-22/race-root",
+  "datasets": [
+    {
+      "dataset": "math",
+      "output_root": "/home/kms/reports/gemma-it-auto-prepare-2026-10-22/race-root/runs/math",
+      "tasks": [],
+      "workers": [],
+      "errors": [],
+      "warnings": [],
+      "complete": false,
+      "prepared": false,
+      "stop_requested": false,
+      "generated": 1792641264.361567,
+      "initialization_state": "not_initialized",
+      "missing_plan": "/home/kms/reports/gemma-it-auto-prepare-2026-10-22/race-root/experiments/gemma4-12b-it-math.json",
+      "preparing": true,
+      "label": "MATH",
+      "worker_history": {
+        "retention_seconds": 900,
+        "hidden_worker_ids": [],
+        "hidden_count": 0
+      }
+    },
+    {
+      "dataset": "mbpp",
+      "output_root": "/home/kms/reports/gemma-it-auto-prepare-2026-10-22/race-root/runs/mbpp",
+      "tasks": [],
+      "workers": [],
+      "errors": [],
+      "warnings": [],
+      "complete": false,
+      "prepared": false,
+      "stop_requested": false,
+      "generated": 1792641264.3616974,
+      "initialization_state": "not_initialized",
+      "missing_plan": "/home/kms/reports/gemma-it-auto-prepare-2026-10-22/race-root/experiments/gemma4-12b-it-mbpp.json",
+      "preparing": true,
+      "label": "MBPP",
+      "worker_history": {
+        "retention_seconds": 900,
+        "hidden_worker_ids": [],
+        "hidden_count": 0
+      }
+    }
+  ],
+  "model_chain": []
+}

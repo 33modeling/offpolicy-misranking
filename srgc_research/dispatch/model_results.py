@@ -95,6 +95,10 @@ def export(model, dataset="all", *, root=None, environment=None, text=False, ful
     environment = os.environ if environment is None else environment
     storage = importlib.import_module(CONFIGS[model][1])
     _, work = storage.group_work(environment)
+    if model == "gemma4_it":
+        from .gemma_it_bootstrap import ensure_plans
+
+        ensure_plans(storage.default_root(environment) if root is None else root, dataset, environment)
     with export_lock(model, work):
         return _export(model, dataset, root=root, environment=environment, text=text, full=full)
 
@@ -301,7 +305,7 @@ def publish(model, queue):
     """Exporting results cannot turn a successful GPU task into a failed task."""
     try:
         return export(model, root=queue.plan_path.parent.parent)
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         print(f"RESULT export failed for {model}: {error}; rerun results", flush=True)
         return 1
 
@@ -319,7 +323,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return export(args.model, args.dataset, root=args.root, text=True, full=args.full)
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         print(f"ERROR: {error}", flush=True)
         return 1
 

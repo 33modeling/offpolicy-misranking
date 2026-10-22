@@ -1,0 +1,4 @@
+GEMMA selecting pinned IT weights instead of the previous PT path
+GEMMA automatically preparing missing IT plans (math, mbpp); no training launched; log=/home/kms/reports/gemma-it-auto-prepare-2026-10-22/legacy-path-root/startup-logs/auto-prepare-565e0463eeb8443fae2974e40aa5f0d0.log
+GEMMA prepared/verified: /home/kms/reports/gemma-it-auto-prepare-2026-10-22/legacy-path-root/experiments/gemma4-12b-it-math.json; no training launched
+GEMMA prepared/verified: /home/kms/reports/gemma-it-auto-prepare-2026-10-22/legacy-path-root/experiments/gemma4-12b-it-mbpp.json; no training launched

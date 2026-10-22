@@ -295,8 +295,13 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
             if report.get("initialization_state") == "not_initialized":
                 state = "PREPARING" if report.get("preparing") else "NOT INITIALIZED"
                 lines += ["", f"{report['label']}  {state} | IT experiment plan has not been created",
-                          f"  Plan: {report['missing_plan']}",
-                          f"  Prepare inputs (no training): {report['prepare_command']}"]
+                          f"  Plan: {report['missing_plan']}"]
+                if report.get("stop_requested"):
+                    lines.append("  Automatic preparation is stopped by the recorded stop request.")
+                elif report.get("preparing"):
+                    lines.append("  Automatic preparation is already in progress.")
+                else:
+                    lines.append("  Status/results automatically initialize missing plans on inspection.")
             else:
                 lines += ["", f"{report['label']}  NOT PREPARED / UNREADABLE"]
             continue

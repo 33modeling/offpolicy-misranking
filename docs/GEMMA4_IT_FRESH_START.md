@@ -30,8 +30,9 @@ Llama or OLMo. Do not run `reset` independently on every node.
 
 The IT snapshot is discovered in shared model storage, or fetched at its pinned
 revision before GPU admission when absent. Explicit `SRGC_GEMMA_IT_MODEL_PATH`
-(or the older generic `SRGC_GEMMA_MODEL_PATH`) must point to IT weights.
-Unset a generic variable pointing to PT before starting the IT command.
+selects IT weights. A generic `SRGC_GEMMA_MODEL_PATH` pointing to IT is also supported.
+An old generic PT model-path override is discarded automatically for IT setup
+and run commands; an explicit IT path keeps precedence.
 Model files, tokenizer vocabulary and official chat template are checked against
 pinned hashes. Existing PT weights are not renamed or overwritten.
 
@@ -64,28 +65,37 @@ bash scripts/run_srgc_gemma4.sh stop --now
 bash scripts/run_srgc_gemma4.sh resume
 ```
 
-`status` and `results` remain CPU-only, with compact terminal output and JSON
-export. `status` immediately prints the model and root being read, skips a full
+`status` and `results` automatically create missing IT plans and their actual
+source-cohort inputs through the normal preparation launcher before inspection.
+No separate `prepare` command is required. The first invocation verifies or
+fetches the pinned model/tokenizer and sets up its isolated packages using the
+same Python selection as the Gemma run command. Preparation performs no model
+generation, GPU admission or training. Its progress and failures stream to stderr,
+keeping `status --json` stdout valid JSON; raw output is retained in `startup-logs`.
+Concurrent inspections share one preparation lease; an active run's preparation
+or a recorded stop request is respected. Once plans exist, status remains a
+read-only CPU operation and does not need the model Python or model dependencies.
+The old PT files are preserved when selecting the IT model.
+
+`status` immediately prints the model and root being read, skips a full
 recursive walk of rollout/checkpoint storage, and shows the preparation lease
 and fixed-panel progress (including a saved PASS/PAUSED result verified against
 the raw receipts). Known historical PT roots are listed separately with their
-inspection command; their scores are never folded into IT status. A missing plan
-is still reported as incomplete. Historical text-v3 PT inspection uses
+inspection command; their scores are never folded into IT status.
+Historical text-v3 PT inspection uses
 `SRGC_GEMMA_IT_PROTOCOL=0 SRGC_GEMMA_TEXT_PROTOCOL=1` plus its original root;
 original PT inspection uses `SRGC_GEMMA_LEGACY_PROTOCOL=1` plus its original root.
 Use the experiment's pinned code for exact reproduction.
 
-Updating the repository does not create an IT experiment. In an empty IT root,
-`status` reports `NOT INITIALIZED`; it cannot read an IT plan or show IT rewards
-before preparation. To create both required plans and seed bundles without
-launching training, run:
+From an empty IT root, the ordinary status command now creates both plans and
+all seed bundles automatically, then prints the real prepared status:
 
 ```sh
-bash scripts/run_srgc_gemma4.sh all prepare
 bash scripts/run_srgc_gemma4.sh status
 ```
 
-`all prepare` uses the pinned IT snapshot and official tokenizer. It creates
+The automatic preparation uses the pinned IT snapshot and official tokenizer.
+It creates
 `experiments/gemma4-12b-it-math.json`, `experiments/gemma4-12b-it-mbpp.json` and
 their actual source-cohort inputs under the displayed IT root. These are
 runtime experiment plans, not files supplied by `git pull` and not audit JSONs.

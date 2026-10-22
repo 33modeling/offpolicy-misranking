@@ -208,6 +208,9 @@ def main(argv=None):
     options = cli.parse_args(args)
     if options.action in {"status", "results", "stop", "doctor"}:
         return run(args)
+    from .gemma_it_bootstrap import discard_previous_pt_path
+
+    discard_previous_pt_path(os.environ)
     with session(options.root, reset=options.action == "reset"):
         if options.action == "reset":
             args[1] = "run"
@@ -216,12 +219,6 @@ def main(argv=None):
             with patch.dict(os.environ, {"SRGC_CACHE_ONLY": "0", "SRGC_RESUME_ONLY": "0",
                                          "SRGC_GEMMA_CACHE_FIRST": "1"}):
                 phase = os.environ.pop("SRGC_DATASET_PHASE", None)
-                old_path = os.environ.get("SRGC_GEMMA_MODEL_PATH")
-                if old_path and not os.environ.get("SRGC_GEMMA_IT_MODEL_PATH"):
-                    native = Path(old_path) / "generation_config.json"
-                    if native.is_file() and json.loads(native.read_text()).get("eos_token_id") == 1:
-                        os.environ.pop("SRGC_GEMMA_MODEL_PATH")
-                        print("GEMMA reset discards the old PT model-path override; selecting pinned IT weights", flush=True)
                 try:
                     return run(args)
                 finally:

@@ -190,21 +190,15 @@ def load_reports(model, dataset, root, environment):
                       "prepared": False, "stop_requested": False, "generated": time.time()}
             if (model == "gemma4_it" and isinstance(error, FileNotFoundError)
                     and error.filename == str(path) and not path.exists()):
-                run = root / "runs" / name
-                saved_work = ((run / ".queue/protocol.json").exists()
-                              or any((run / ".queue/tasks").glob("*.json"))
-                              or any(run.glob("seed-*"))
-                              or any((root / "inputs").glob(f"{name}-seed-*.cache"))
-                              or any((root / "inputs").glob(f"{name}-seed-*.cache-responses.jsonl")))
-                if not saved_work:
+                from .gemma_it_bootstrap import has_saved_work
+
+                if not has_saved_work(root, name):
                     # A newly selected IT root has no experiment until prepare
                     # or run creates it. Status must identify that state rather
                     # than treat it as an unreadable existing experiment.
                     report["errors"] = []
                     report["initialization_state"] = "not_initialized"
                     report["missing_plan"] = str(path)
-                    report["prepare_command"] = shlex.join([
-                        "bash", "scripts/run_srgc_gemma4.sh", "all", "prepare", "--root", str(root)])
                 else:
                     report["errors"] = [f"experiment plan is missing while saved work exists: {path}; "
                                         "restore the original plan; existing work was preserved"]
@@ -245,7 +239,10 @@ def load_reports(model, dataset, root, environment):
                 root / f"runs/{name}/.queue/stop.json",
             ))
         if model == "gemma4_it":
-            report["preparing"] = reports.locked(root / ".start-prepare.lock")
+            from .gemma_it_bootstrap import preparation_lock
+
+            report["preparing"] = (reports.locked(root / ".start-prepare.lock")
+                                   or reports.locked(preparation_lock(root)))
             if report["prepared"]:
                 try:
                     report["preflight"] = it_preflight_status(root, path, plan)
@@ -278,6 +275,10 @@ def main(argv=None):
         root = storage.default_root(os.environ) if args.root is None else args.root
         if not args.json:
             print(f"Reading {LABELS[args.model]} status | Root: {root.resolve()}", file=sys.stderr, flush=True)
+        if args.model == "gemma4_it":
+            from .gemma_it_bootstrap import ensure_plans
+
+            ensure_plans(root, args.dataset, os.environ)
         snapshots = load_reports(args.model, args.dataset, root, os.environ)
         if args.json:
             from .model_chain import snapshot as chain_snapshot
@@ -294,7 +295,10 @@ def main(argv=None):
                           f"  python3 -m srgc_research.dispatch.model_status {old_model} --root {shlex.quote(str(old_root))}",
                           flush=True)
         return int(any(report["errors"] for report in snapshots))
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except KeyboardInterrupt:
+        print("STATUS: Gemma initialization stopped", file=sys.stderr, flush=True)
+        return 130
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         print(f"STATUS ERROR: {error}", file=sys.stderr)
         return 2
 

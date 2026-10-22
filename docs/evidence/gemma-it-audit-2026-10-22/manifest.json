@@ -191,10 +191,64 @@
     "commit": "00086aeb4e36455d5ed1c684b71b3e02ce8da97d",
     "verified": "Local prepared-cohort and missing-plan tests; no remote H100 status invocation was available.",
     "changes": "Announce the selected model/root immediately, skip recursive raw-rollout/checkpoint scanning, show preparation and validated fixed-panel progress, list historical PT roots separately.",
-    "followup": "The earlier status-only guidance omitted initialization. Plan JSONs are produced at runtime by prepare/run, not installed by git pull. An unused missing IT root now reports NOT INITIALIZED with its exact creation command; missing plans with saved queue/cache/checkpoint work remain errors and preserve all existing records."
+    "followup": "Superseded by user-requested automatic initialization: status/results now call the normal prepare launcher themselves for missing IT plans. No separate prepare command is required. Existing plans stay read-only; saved work, PT identities and stop requests are preserved."
   },
   "code_fix_limits": {
     "cpu_recorder": "Uses actual backend GPU allocation for recording phases; real four-GPU training still records four allocated GPUs. No historical timing records or checkpoints were changed.",
     "gpu_offload_diagnostic": "Optional GPU-offload probe rebinds bounded generation to the execution device so OOM retries restore the CUDA RNG. Actual new measurements in this audit used CPU only; no successful GPU-offload performance measurement is claimed."
+  },
+  "automatic_initialization": {
+    "scope": "Technical execution checks only; zero new model generations, optimizer updates or scientific accuracy measurements.",
+    "implementation": "srgc_research/dispatch/gemma_it_bootstrap.py; called by model_status.main and model_results.export",
+    "actual_public_command": "sh scripts/run_srgc_gemma4.sh status --json",
+    "initial_state": "Default IT experiment root absent; no pre-created plans or bundles.",
+    "verified_plans": {
+      "math": {
+        "sha256": "e1dc0235231b2e45518fbaf630c28ea7c70c25555c1711f3bc6446e5960e810a",
+        "seeds": [
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "model": "google/gemma-4-12B-it",
+        "snapshot_sha256": "30324262f5f783e9598266358314addab7802514b1f200ec40aadf983d370a63",
+        "source_plan_sha256": "fe73a83015d4124ec8de822db16064311e66a012ded12ada04ed470cc2e15b8f"
+      },
+      "mbpp": {
+        "sha256": "73a0483fc3c98352dd08866e04c0093a171fc8e78ae5814d739fe190637b4fa2",
+        "seeds": [
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "model": "google/gemma-4-12B-it",
+        "snapshot_sha256": "30324262f5f783e9598266358314addab7802514b1f200ec40aadf983d370a63",
+        "source_plan_sha256": "e2e04fc65cb529784edc0eb305863c31e74b9f11b2fb3133f42ad80a64af2ac6"
+      }
+    },
+    "actual_outcome": "One status invocation selected the normal model Python, verified the pinned actual 12B IT snapshot, generated both real plans and all ten seed bundles, then returned valid status JSON. All candidate rewards remained empty and no runs directory or training was created.",
+    "concurrent_outcome": "A second actual status with an unavailable model Python returned both datasets as preparing while the first held the preparation lease. Exactly one preparation child ran. Subsequent inspection left all recorded root files byte-identical.",
+    "final_scoped_outcome": "After sharing the ordinary startup lock, actual math status on another absent root created only the requested MATH plan and returned valid JSON.",
+    "regression_tests": "120 passed in the affected integration suite; final 48 passed across bootstrap/status/results and Gemma IT tests after startup-lock and path migration changes. Includes both public inspection actions on empty roots, partial preparation, pure JSON stdout, failed initialization, stops, peer leases, PT-cohort protection and automatic PT-path handling for regular run/prepare.",
+    "limitations": "Execution verified locally using the actual pinned IT snapshot. No remote H100 invocation or new model performance measurement was made.",
+    "stale_pt_environment_outcome": "An actual status with no explicit IT model path, a previous generic PT path and a stale PT parent digest discovered the pinned actual IT snapshot in normal model storage, created both IT plans and returned valid status JSON. The previous PT metadata remained byte-identical. Ordinary IT run/prepare now apply the same automatic path selection; explicit IT paths retain precedence.",
+    "raw_status_logs": {
+      "auto-init-first-status.stdout.log.gz": {
+        "uncompressed_sha256": "69c806fd0d17ae8b5d2d77fcacf509a197ef87b6a4b67273fdf34ff7f3d2b93e",
+        "encoding": "gzip; original stdout bytes preserved"
+      },
+      "auto-init-final-math.stdout.log.gz": {
+        "uncompressed_sha256": "20efac87886a4d744ce3fb1f908683ebe40efd0bb67fe7dba6a2b18da4424742",
+        "encoding": "gzip; original stdout bytes preserved"
+      },
+      "auto-init-legacy-path.stdout.log.gz": {
+        "uncompressed_sha256": "f1b2410ec9cc5cb6df0bbc5ae74f4e5e820614bcac40eed060414c0f02732065",
+        "encoding": "gzip; original stdout bytes preserved"
+      }
+    }
   }
 }
