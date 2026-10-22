@@ -292,7 +292,13 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
             if panel.get("path"):
                 lines.append(f"  Fixed small panel; full initial-cache accuracy is separate. Records: {panel['path']}")
         if not report.get("prepared", True):
-            lines += ["", f"{report['label']}  NOT PREPARED / UNREADABLE"]
+            if report.get("initialization_state") == "not_initialized":
+                state = "PREPARING" if report.get("preparing") else "NOT INITIALIZED"
+                lines += ["", f"{report['label']}  {state} | IT experiment plan has not been created",
+                          f"  Plan: {report['missing_plan']}",
+                          f"  Prepare inputs (no training): {report['prepare_command']}"]
+            else:
+                lines += ["", f"{report['label']}  NOT PREPARED / UNREADABLE"]
             continue
         finished = Counter(row["arm"] for row in rows if row["status"] == "complete")
         train_total = sum(row["arm"] not in {"cache", "prefix"} for row in rows)

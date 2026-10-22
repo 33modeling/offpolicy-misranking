@@ -64,7 +64,9 @@
     "recorded_response_replay": "All 6 saved completed responses: exact token decoding, source data hashes, source implementation digests, IT prompt and seed checks, verifier rewards all matched. No new generations; replay-verification.json and verify_probes.py.",
     "audit_test_correction": "An earlier new test expected zero for a partial initial cache; corrected to require full-cache accuracy null and raw-subset accuracy zero. Retained failed test output is code-test evidence, not a scientific measurement.",
     "it_results_recording_integration": "87 passed; it-results-integration-fixed-tests.log. Includes all 25-update archives/exports, IT diagnostics, all-model results and CPU recorder behavior on a CUDA-capable host.",
-    "retained_integration_failure": "Initial integration run: 62 passed, 1 failed; CPU recorder auto-detected host CUDA and mismatched its zero-GPU backend allocation. Fixed recorder to use actual backend allocation; added a CUDA-host/CPU-backend regression. The original failure log is retained in it-results-integration-tests.log."
+    "retained_integration_failure": "Initial integration run: 62 passed, 1 failed; CPU recorder auto-detected host CUDA and mismatched its zero-GPU backend allocation. Fixed recorder to use actual backend allocation; added a CUDA-host/CPU-backend regression. The original failure log is retained in it-results-integration-tests.log.",
+    "missing_plan_followup": "Actual public shell all prepare from an empty local root created both IT plans and all ten real source-cohort bundles; public status on the same root then returned success without missing-file errors. No model generation or training. Raw public-prepare.log and public-status-after-prepare.log retained. Status-only missing-plan tests: 51 passed; this validates local behavior, not the user execution node.",
+    "missing_plan_final_focused": "7 passed after the final saved-response guard; final-missing-plan-tests.log. Public status on an entirely absent root returned NOT INITIALIZED with prepare guidance; public-status-before-prepare.log. No runtime plan was invented by status."
   },
   "guard_changes": {
     "minimum_small_panel_success_percent": 25.0,
@@ -188,7 +190,8 @@
   "status_fix": {
     "commit": "00086aeb4e36455d5ed1c684b71b3e02ce8da97d",
     "verified": "Local prepared-cohort and missing-plan tests; no remote H100 status invocation was available.",
-    "changes": "Announce the selected model/root immediately, skip recursive raw-rollout/checkpoint scanning, show preparation and validated fixed-panel progress, list historical PT roots separately."
+    "changes": "Announce the selected model/root immediately, skip recursive raw-rollout/checkpoint scanning, show preparation and validated fixed-panel progress, list historical PT roots separately.",
+    "followup": "The earlier status-only guidance omitted initialization. Plan JSONs are produced at runtime by prepare/run, not installed by git pull. An unused missing IT root now reports NOT INITIALIZED with its exact creation command; missing plans with saved queue/cache/checkpoint work remain errors and preserve all existing records."
   },
   "code_fix_limits": {
     "cpu_recorder": "Uses actual backend GPU allocation for recording phases; real four-GPU training still records four allocated GPUs. No historical timing records or checkpoints were changed.",

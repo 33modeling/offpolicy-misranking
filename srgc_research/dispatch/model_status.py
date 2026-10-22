@@ -188,6 +188,26 @@ def load_reports(model, dataset, root, environment):
             report = {"dataset": name, "output_root": str(root / "runs" / name), "tasks": [],
                       "workers": [], "errors": [str(error)], "warnings": [], "complete": False,
                       "prepared": False, "stop_requested": False, "generated": time.time()}
+            if (model == "gemma4_it" and isinstance(error, FileNotFoundError)
+                    and error.filename == str(path) and not path.exists()):
+                run = root / "runs" / name
+                saved_work = ((run / ".queue/protocol.json").exists()
+                              or any((run / ".queue/tasks").glob("*.json"))
+                              or any(run.glob("seed-*"))
+                              or any((root / "inputs").glob(f"{name}-seed-*.cache"))
+                              or any((root / "inputs").glob(f"{name}-seed-*.cache-responses.jsonl")))
+                if not saved_work:
+                    # A newly selected IT root has no experiment until prepare
+                    # or run creates it. Status must identify that state rather
+                    # than treat it as an unreadable existing experiment.
+                    report["errors"] = []
+                    report["initialization_state"] = "not_initialized"
+                    report["missing_plan"] = str(path)
+                    report["prepare_command"] = shlex.join([
+                        "bash", "scripts/run_srgc_gemma4.sh", "all", "prepare", "--root", str(root)])
+                else:
+                    report["errors"] = [f"experiment plan is missing while saved work exists: {path}; "
+                                        "restore the original plan; existing work was preserved"]
         else:
             report["prepared"] = True
             interrupted_receipts(report)

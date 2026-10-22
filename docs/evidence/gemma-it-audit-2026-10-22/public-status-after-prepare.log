@@ -1,0 +1,186 @@
+Reading Gemma-4-12B-IT (thinking off) status | Root: /home/kms/reports/gemma-it-missing-plan-2026-10-22/public-root
+Gemma-4-12B-IT (thinking off) | SRGC | 2026-10-22 12:02:00
+Tasks [----------------] 0/60 completed | RUN 0 | READY 10 | WAIT 50 | RESUME 0 | ERROR 0
+Local node: jieun-500TGA-500SGA
+
+NODES  no worker records
+
+MATH PREFLIGHT NOT STARTED | 0/8 prompts recorded
+  Fixed small panel; full initial-cache accuracy is separate. Records: /home/kms/reports/gemma-it-missing-plan-2026-10-22/public-root/preflight/math_train
+
+MATH  [----------------] train 0/20 | cache 0/5 | prefix 0/5
+Seed  Cache  Prefix      On-policy    Switch       SR           Random
+----  -----  ----------  -----------  -----------  -----------  -----------
+5     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+6     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+7     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+8     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+9     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+MATH SWITCH DECISIONS
+Seed  Decision  Switch after update  First SR update  Selector
+----  --------  -------------------  ---------------  --------
+5     PENDING   -                    -                -
+6     PENDING   -                    -                -
+7     PENDING   -                    -                -
+8     PENDING   -                    -                -
+9     PENDING   -                    -                -
+
+MATH GPU TIMES (GPU-hours) [all recorded attempts, including restarted/replayed work]
+Seed  Arm        Record   Prep  Select  Train  Eval  Check  Start  S+T+P  Phases
+----  ---------  -------  ----  ------  -----  ----  -----  -----  -----  ------
+5     cache      MISSING  -     -       -      -     -      -      -      -     
+5     prefix     MISSING  -     -       -      -     -      -      -      -     
+5     random     MISSING  -     -       -      -     -      -      -      -     
+5     sr         MISSING  -     -       -      -     -      -      -      -     
+5     on_policy  MISSING  -     -       -      -     -      -      -      -     
+5     switch     MISSING  -     -       -      -     -      -      -      -     
+6     cache      MISSING  -     -       -      -     -      -      -      -     
+6     prefix     MISSING  -     -       -      -     -      -      -      -     
+6     random     MISSING  -     -       -      -     -      -      -      -     
+6     sr         MISSING  -     -       -      -     -      -      -      -     
+6     on_policy  MISSING  -     -       -      -     -      -      -      -     
+6     switch     MISSING  -     -       -      -     -      -      -      -     
+7     cache      MISSING  -     -       -      -     -      -      -      -     
+7     prefix     MISSING  -     -       -      -     -      -      -      -     
+7     random     MISSING  -     -       -      -     -      -      -      -     
+7     sr         MISSING  -     -       -      -     -      -      -      -     
+7     on_policy  MISSING  -     -       -      -     -      -      -      -     
+7     switch     MISSING  -     -       -      -     -      -      -      -     
+8     cache      MISSING  -     -       -      -     -      -      -      -     
+8     prefix     MISSING  -     -       -      -     -      -      -      -     
+8     random     MISSING  -     -       -      -     -      -      -      -     
+8     sr         MISSING  -     -       -      -     -      -      -      -     
+8     on_policy  MISSING  -     -       -      -     -      -      -      -     
+8     switch     MISSING  -     -       -      -     -      -      -      -     
+9     cache      MISSING  -     -       -      -     -      -      -      -     
+9     prefix     MISSING  -     -       -      -     -      -      -      -     
+9     random     MISSING  -     -       -      -     -      -      -      -     
+9     sr         MISSING  -     -       -      -     -      -      -      -     
+9     on_policy  MISSING  -     -       -      -     -      -      -      -     
+9     switch     MISSING  -     -       -      -     -      -      -      -     
+RECORDED PLAN SETTINGS: world_size=4 | generation_micro_batch=2 | logprob_micro_batch=1 | logit_chunk_tokens=64
+RECORDED PLAN SETTINGS: gradient_checkpointing="nonreentrant" | attention="eager" | max_new_tokens=2048 | responses=8
+
+SUBMITTED OLMO TIME BASIS (GPU-hours; updates 26--275)
+Seed  Arm        Record   Updates  SR prep  Select  Train  Total
+----  ---------  -------  -------  -------  ------  -----  -----
+5     random     MISSING  0/250    0.000    -       -      -    
+5     sr         MISSING  0/250    -        -       -      -    
+5     on_policy  MISSING  0/250    0.000    -       -      -    
+5     switch     MISSING  0/250    -        -       -      -    
+6     random     MISSING  0/250    0.000    -       -      -    
+6     sr         MISSING  0/250    -        -       -      -    
+6     on_policy  MISSING  0/250    0.000    -       -      -    
+6     switch     MISSING  0/250    -        -       -      -    
+7     random     MISSING  0/250    0.000    -       -      -    
+7     sr         MISSING  0/250    -        -       -      -    
+7     on_policy  MISSING  0/250    0.000    -       -      -    
+7     switch     MISSING  0/250    -        -       -      -    
+8     random     MISSING  0/250    0.000    -       -      -    
+8     sr         MISSING  0/250    -        -       -      -    
+8     on_policy  MISSING  0/250    0.000    -       -      -    
+8     switch     MISSING  0/250    -        -       -      -    
+9     random     MISSING  0/250    0.000    -       -      -    
+9     sr         MISSING  0/250    -        -       -      -    
+9     on_policy  MISSING  0/250    0.000    -       -      -    
+9     switch     MISSING  0/250    -        -       -      -    
+One retained timer per update; common SR preparation charged once. Original all-attempt costs remain in GPU TIMES.
+Missing timers/preparation keep Total unknown; incomplete subtotals do not establish a full-run time.
+COMPLETE = measured scope; PARTIAL/>= = finished-receipt lower bound; - = unmeasured; INVALID = unreadable/invalid timing.
+S+T+P = prep + selection + training. Phases include evaluation/checkpoints/startup; cache/prefix are separate shared costs.
+GPU-h is allocated GPU time, not wall hours; nested invocation and phase totals are never added.
+
+MBPP PREFLIGHT NOT STARTED | 0/8 prompts recorded
+  Fixed small panel; full initial-cache accuracy is separate. Records: /home/kms/reports/gemma-it-missing-plan-2026-10-22/public-root/preflight/mbpp
+
+MBPP  [----------------] train 0/20 | cache 0/5 | prefix 0/5
+Seed  Cache  Prefix      On-policy    Switch       SR           Random
+----  -----  ----------  -----------  -----------  -----------  -----------
+5     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+6     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+7     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+8     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+9     READY  WAIT cache  WAIT prefix  WAIT prefix  WAIT prefix  WAIT prefix
+MBPP SWITCH DECISIONS
+Seed  Decision  Switch after update  First SR update  Selector
+----  --------  -------------------  ---------------  --------
+5     PENDING   -                    -                -
+6     PENDING   -                    -                -
+7     PENDING   -                    -                -
+8     PENDING   -                    -                -
+9     PENDING   -                    -                -
+
+MBPP GPU TIMES (GPU-hours) [all recorded attempts, including restarted/replayed work]
+Seed  Arm        Record   Prep  Select  Train  Eval  Check  Start  S+T+P  Phases
+----  ---------  -------  ----  ------  -----  ----  -----  -----  -----  ------
+5     cache      MISSING  -     -       -      -     -      -      -      -     
+5     prefix     MISSING  -     -       -      -     -      -      -      -     
+5     random     MISSING  -     -       -      -     -      -      -      -     
+5     sr         MISSING  -     -       -      -     -      -      -      -     
+5     on_policy  MISSING  -     -       -      -     -      -      -      -     
+5     switch     MISSING  -     -       -      -     -      -      -      -     
+6     cache      MISSING  -     -       -      -     -      -      -      -     
+6     prefix     MISSING  -     -       -      -     -      -      -      -     
+6     random     MISSING  -     -       -      -     -      -      -      -     
+6     sr         MISSING  -     -       -      -     -      -      -      -     
+6     on_policy  MISSING  -     -       -      -     -      -      -      -     
+6     switch     MISSING  -     -       -      -     -      -      -      -     
+7     cache      MISSING  -     -       -      -     -      -      -      -     
+7     prefix     MISSING  -     -       -      -     -      -      -      -     
+7     random     MISSING  -     -       -      -     -      -      -      -     
+7     sr         MISSING  -     -       -      -     -      -      -      -     
+7     on_policy  MISSING  -     -       -      -     -      -      -      -     
+7     switch     MISSING  -     -       -      -     -      -      -      -     
+8     cache      MISSING  -     -       -      -     -      -      -      -     
+8     prefix     MISSING  -     -       -      -     -      -      -      -     
+8     random     MISSING  -     -       -      -     -      -      -      -     
+8     sr         MISSING  -     -       -      -     -      -      -      -     
+8     on_policy  MISSING  -     -       -      -     -      -      -      -     
+8     switch     MISSING  -     -       -      -     -      -      -      -     
+9     cache      MISSING  -     -       -      -     -      -      -      -     
+9     prefix     MISSING  -     -       -      -     -      -      -      -     
+9     random     MISSING  -     -       -      -     -      -      -      -     
+9     sr         MISSING  -     -       -      -     -      -      -      -     
+9     on_policy  MISSING  -     -       -      -     -      -      -      -     
+9     switch     MISSING  -     -       -      -     -      -      -      -     
+RECORDED PLAN SETTINGS: world_size=4 | generation_micro_batch=2 | logprob_micro_batch=1 | logit_chunk_tokens=64
+RECORDED PLAN SETTINGS: gradient_checkpointing="nonreentrant" | attention="eager" | max_new_tokens=2048 | responses=8
+
+SUBMITTED OLMO TIME BASIS (GPU-hours; updates 26--275)
+Seed  Arm        Record   Updates  SR prep  Select  Train  Total
+----  ---------  -------  -------  -------  ------  -----  -----
+5     random     MISSING  0/250    0.000    -       -      -    
+5     sr         MISSING  0/250    -        -       -      -    
+5     on_policy  MISSING  0/250    0.000    -       -      -    
+5     switch     MISSING  0/250    -        -       -      -    
+6     random     MISSING  0/250    0.000    -       -      -    
+6     sr         MISSING  0/250    -        -       -      -    
+6     on_policy  MISSING  0/250    0.000    -       -      -    
+6     switch     MISSING  0/250    -        -       -      -    
+7     random     MISSING  0/250    0.000    -       -      -    
+7     sr         MISSING  0/250    -        -       -      -    
+7     on_policy  MISSING  0/250    0.000    -       -      -    
+7     switch     MISSING  0/250    -        -       -      -    
+8     random     MISSING  0/250    0.000    -       -      -    
+8     sr         MISSING  0/250    -        -       -      -    
+8     on_policy  MISSING  0/250    0.000    -       -      -    
+8     switch     MISSING  0/250    -        -       -      -    
+9     random     MISSING  0/250    0.000    -       -      -    
+9     sr         MISSING  0/250    -        -       -      -    
+9     on_policy  MISSING  0/250    0.000    -       -      -    
+9     switch     MISSING  0/250    -        -       -      -    
+One retained timer per update; common SR preparation charged once. Original all-attempt costs remain in GPU TIMES.
+Missing timers/preparation keep Total unknown; incomplete subtotals do not establish a full-run time.
+COMPLETE = measured scope; PARTIAL/>= = finished-receipt lower bound; - = unmeasured; INVALID = unreadable/invalid timing.
+S+T+P = prep + selection + training. Phases include evaluation/checkpoints/startup; cache/prefix are separate shared costs.
+GPU-h is allocated GPU time, not wall hours; nested invocation and phase totals are never added.
+
+Seed table: RUN = active lease; STALE = node heartbeat older than 60s.
+RESUME = interrupted work awaiting a worker; ERROR = failed execution (see ATTENTION).
+Dataset order: each model finishes its MATH and then its MBPP before the next model starts.
+Model order: finish the current model, including ERROR recovery and evaluation, before the next model.
+Update counts show completed work; cache counts show saved prompts.
+SW@N = switch after completed update N; first SR training update is N+1.
+NOT RECORDED = no trustworthy switch progress yet; NEVER SWITCHED = validated final result.
+Node IDLE = dispatcher waiting; rank progress and heartbeat are not GPU utilization.
+Root: /home/kms/reports/gemma-it-missing-plan-2026-10-22/public-root

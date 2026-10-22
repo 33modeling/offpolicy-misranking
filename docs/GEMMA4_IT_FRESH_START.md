@@ -75,6 +75,25 @@ is still reported as incomplete. Historical text-v3 PT inspection uses
 original PT inspection uses `SRGC_GEMMA_LEGACY_PROTOCOL=1` plus its original root.
 Use the experiment's pinned code for exact reproduction.
 
+Updating the repository does not create an IT experiment. In an empty IT root,
+`status` reports `NOT INITIALIZED`; it cannot read an IT plan or show IT rewards
+before preparation. To create both required plans and seed bundles without
+launching training, run:
+
+```sh
+bash scripts/run_srgc_gemma4.sh all prepare
+bash scripts/run_srgc_gemma4.sh status
+```
+
+`all prepare` uses the pinned IT snapshot and official tokenizer. It creates
+`experiments/gemma4-12b-it-math.json`, `experiments/gemma4-12b-it-mbpp.json` and
+their actual source-cohort inputs under the displayed IT root. These are
+runtime experiment plans, not files supplied by `git pull` and not audit JSONs.
+The ordinary `all` command also prepares missing plans before GPU admission.
+If a custom `--root` was used, use the same root for status. A missing plan with
+saved queue/cache/checkpoint work remains an error requiring the original plan;
+status does not manufacture a replacement experiment over existing work.
+
 Primary references: [Google model card](https://ai.google.dev/gemma/docs/core/model_card_4),
 [pinned IT repository](https://huggingface.co/google/gemma-4-12B-it/tree/707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7).
 

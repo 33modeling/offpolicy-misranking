@@ -1,0 +1,24 @@
+Reading Gemma-4-12B-IT (thinking off) status | Root: /home/kms/reports/gemma-it-missing-plan-2026-10-22/empty-status-root
+Gemma-4-12B-IT (thinking off) | SRGC | 2026-10-22 12:03:03
+Tasks [----------------] 0/0 completed | RUN 0 | READY 0 | WAIT 0 | RESUME 0 | ERROR 0
+Local node: jieun-500TGA-500SGA
+
+NODES  no worker records
+
+MATH  NOT INITIALIZED | IT experiment plan has not been created
+  Plan: /home/kms/reports/gemma-it-missing-plan-2026-10-22/empty-status-root/experiments/gemma4-12b-it-math.json
+  Prepare inputs (no training): bash scripts/run_srgc_gemma4.sh all prepare --root /home/kms/reports/gemma-it-missing-plan-2026-10-22/empty-status-root
+
+MBPP  NOT INITIALIZED | IT experiment plan has not been created
+  Plan: /home/kms/reports/gemma-it-missing-plan-2026-10-22/empty-status-root/experiments/gemma4-12b-it-mbpp.json
+  Prepare inputs (no training): bash scripts/run_srgc_gemma4.sh all prepare --root /home/kms/reports/gemma-it-missing-plan-2026-10-22/empty-status-root
+
+Seed table: RUN = active lease; STALE = node heartbeat older than 60s.
+RESUME = interrupted work awaiting a worker; ERROR = failed execution (see ATTENTION).
+Dataset order: each model finishes its MATH and then its MBPP before the next model starts.
+Model order: finish the current model, including ERROR recovery and evaluation, before the next model.
+Update counts show completed work; cache counts show saved prompts.
+SW@N = switch after completed update N; first SR training update is N+1.
+NOT RECORDED = no trustworthy switch progress yet; NEVER SWITCHED = validated final result.
+Node IDLE = dispatcher waiting; rank progress and heartbeat are not GPU utilization.
+Root: /home/kms/reports/gemma-it-missing-plan-2026-10-22/empty-status-root

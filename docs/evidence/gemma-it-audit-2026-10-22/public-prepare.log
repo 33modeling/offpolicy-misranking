@@ -1,0 +1,96 @@
+GEMMA runtime: preparing isolated packages; existing Torch/venvs stay unchanged
+Collecting transformers==5.19.0
+  Using cached transformers-5.19.0-py3-none-any.whl.metadata (32 kB)
+Collecting peft==0.21.0
+  Using cached peft-0.21.0-py3-none-any.whl.metadata (15 kB)
+Collecting accelerate==1.10.1
+  Using cached accelerate-1.10.1-py3-none-any.whl.metadata (19 kB)
+Collecting huggingface-hub==2.2.0
+  Using cached huggingface_hub-2.2.0-py3-none-any.whl.metadata (16 kB)
+Collecting tokenizers==0.23.3
+  Using cached tokenizers-0.23.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (9.8 kB)
+Collecting safetensors==0.8.0
+  Using cached safetensors-0.8.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.2 kB)
+Collecting numpy==2.5.3
+  Using cached numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+Collecting packaging==26.3
+  Using cached packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Collecting pyyaml==6.0.3
+  Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting regex==2026.9.29
+  Using cached regex-2026.9.29-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+Collecting typer==0.27.3
+  Using cached typer-0.27.3-py3-none-any.whl.metadata (16 kB)
+Collecting tqdm==4.70.1
+  Using cached tqdm-4.70.1-py3-none-any.whl.metadata (57 kB)
+Collecting filelock==4.1.0
+  Using cached filelock-4.1.0-py3-none-any.whl.metadata (2.0 kB)
+Collecting fsspec==2026.9.0
+  Using cached fsspec-2026.9.0-py3-none-any.whl.metadata (10 kB)
+Collecting hf-xet==1.7.0
+  Using cached hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (4.9 kB)
+Collecting httpx2==2.13.1
+  Using cached httpx2-2.13.1-py3-none-any.whl.metadata (9.8 kB)
+Collecting httpcore2==2.13.1
+  Using cached httpcore2-2.13.1-py3-none-any.whl.metadata (26 kB)
+Collecting typing-extensions==4.16.0
+  Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting click==8.5.0
+  Using cached click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+Collecting anyio==4.15.1
+  Using cached anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+Collecting idna==3.20
+  Using cached idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+Collecting truststore==0.10.4
+  Using cached truststore-0.10.4-py3-none-any.whl.metadata (4.4 kB)
+Collecting h11==0.16.0
+  Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting shellingham==1.5.4
+  Using cached shellingham-1.5.4-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting rich==15.0.0
+  Using cached rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+Collecting annotated-doc==0.0.5
+  Using cached annotated_doc-0.0.5-py3-none-any.whl.metadata (6.5 kB)
+Collecting markdown-it-py==4.2.0
+  Using cached markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting pygments==2.21.0
+  Using cached pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting mdurl==0.1.2
+  Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Collecting psutil==7.0.0
+  Using cached psutil-7.0.0-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (22 kB)
+Using cached transformers-5.19.0-py3-none-any.whl (12.6 MB)
+Using cached peft-0.21.0-py3-none-any.whl (832 kB)
+Using cached accelerate-1.10.1-py3-none-any.whl (374 kB)
+Using cached huggingface_hub-2.2.0-py3-none-any.whl (839 kB)
+Using cached tokenizers-0.23.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.4 MB)
+Using cached safetensors-0.8.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (516 kB)
+Using cached numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+Using cached packaging-26.3-py3-none-any.whl (129 kB)
+Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+Using cached regex-2026.9.29-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+Using cached typer-0.27.3-py3-none-any.whl (123 kB)
+Using cached tqdm-4.70.1-py3-none-any.whl (80 kB)
+Using cached filelock-4.1.0-py3-none-any.whl (133 kB)
+Using cached fsspec-2026.9.0-py3-none-any.whl (221 kB)
+Using cached hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.2 MB)
+Using cached httpx2-2.13.1-py3-none-any.whl (95 kB)
+Using cached httpcore2-2.13.1-py3-none-any.whl (83 kB)
+Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Using cached click-8.5.0-py3-none-any.whl (125 kB)
+Using cached anyio-4.15.1-py3-none-any.whl (132 kB)
+Using cached idna-3.20-py3-none-any.whl (69 kB)
+Using cached truststore-0.10.4-py3-none-any.whl (18 kB)
+Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+Using cached shellingham-1.5.4-py2.py3-none-any.whl (9.8 kB)
+Using cached rich-15.0.0-py3-none-any.whl (310 kB)
+Using cached annotated_doc-0.0.5-py3-none-any.whl (5.3 kB)
+Using cached markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+Using cached pygments-2.21.0-py3-none-any.whl (1.3 MB)
+Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Using cached psutil-7.0.0-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl (277 kB)
+Installing collected packages: typing-extensions, typer, truststore, transformers, tqdm, tokenizers, shellingham, safetensors, rich, regex, pyyaml, pygments, psutil, peft, packaging, numpy, mdurl, markdown-it-py, idna, huggingface-hub, httpx2, httpcore2, hf-xet, h11, fsspec, filelock, click, anyio, annotated-doc, accelerate
+
+Successfully installed accelerate-1.10.1 annotated-doc-0.0.5 anyio-4.15.1 click-8.5.0 filelock-4.1.0 fsspec-2026.9.0 h11-0.16.0 hf-xet-1.7.0 httpcore2-2.13.1 httpx2-2.13.1 huggingface-hub-2.2.0 idna-3.20 markdown-it-py-4.2.0 mdurl-0.1.2 numpy-2.5.3 packaging-26.3 peft-0.21.0 psutil-7.0.0 pygments-2.21.0 pyyaml-6.0.3 regex-2026.9.29 rich-15.0.0 safetensors-0.8.0 shellingham-1.5.4 tokenizers-0.23.3 tqdm-4.70.1 transformers-5.19.0 truststore-0.10.4 typer-0.27.3 typing-extensions-4.16.0
+GEMMA prepared/verified: /home/kms/reports/gemma-it-missing-plan-2026-10-22/public-root/experiments/gemma4-12b-it-math.json; no training launched
+GEMMA prepared/verified: /home/kms/reports/gemma-it-missing-plan-2026-10-22/public-root/experiments/gemma4-12b-it-mbpp.json; no training launched
