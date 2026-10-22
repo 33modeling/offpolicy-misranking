@@ -350,7 +350,7 @@ def test_normal_public_command_selects_corrected_protocol_and_explicit_legacy_is
     env.pop("SRGC_GEMMA_TEXT_PROTOCOL", None)
     command = ["sh", "scripts/run_srgc_gemma4.sh", "all"]
     fixed = subprocess.run(command, cwd=REPO, env=env, capture_output=True, text=True, check=True)
-    assert json.loads(fixed.stdout)[1] == "srgc_research.dispatch.gemma_text_run"
+    assert json.loads(fixed.stdout)[1] == "srgc_research.dispatch.gemma_it_run"
     legacy = subprocess.run(command, cwd=REPO, env={**env, "SRGC_GEMMA_LEGACY_PROTOCOL": "1"},
                             capture_output=True, text=True, check=True)
     assert json.loads(legacy.stdout)[1] == "srgc_research.dispatch.gemma_run"

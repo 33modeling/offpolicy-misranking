@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 MODULE = "srgc_research.dispatch.rank_runtime"
-MODELS = ("qwen35", "llama31", "gemma4", "gemma4_text")
+MODELS = ("qwen35", "llama31", "gemma4", "gemma4_text", "gemma4_it")
 
 
 def diagnostic_command(command, model):
@@ -20,7 +20,7 @@ def diagnostic_command(command, model):
         return command
     modules = {"srgc_research.dispatch.reward_curve_rank",
                "srgc_research.dispatch.llama31.rank", "srgc_research.dispatch.gemma4.rank",
-               "srgc_research.dispatch.gemma4_text.rank"}
+               "srgc_research.dispatch.gemma4_text.rank", "srgc_research.dispatch.gemma4_it.rank"}
     scripts = {"srgc_qwen35_rank.py", "srgc_qwen35_rank_runtime.py",
                "srgc_qwen35_reward_curve_rank.py", "srgc_qwen35_smoke.py"}
     for index, argument in enumerate(command):

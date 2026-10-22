@@ -101,6 +101,7 @@ def test_entry_and_shell_are_gpu_free_and_preserve_paths(experiment, tmp_path, m
         assert gemma_run.main(['math', 'audit', '--root', str(experiment)]) == 0
         entry.assert_called_once_with(['math', '--root', str(experiment)])
     monkeypatch.setenv('GEMMA_PYTHON', sys.executable)
+    monkeypatch.setenv('SRGC_GEMMA_LEGACY_PROTOCOL', '1')
     monkeypatch.setenv('PYTHONDONTWRITEBYTECODE', '1')
     trap = tmp_path / 'gpu-import-trap'
     for name in ['torch', 'transformers', 'peft']:

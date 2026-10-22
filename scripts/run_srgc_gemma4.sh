@@ -3,13 +3,15 @@
 set -eu
 cd "$(dirname "$0")/.."
 if [ "${SRGC_GEMMA_LEGACY_PROTOCOL:-0}" = 1 ]; then
+    export SRGC_GEMMA_IT_PROTOCOL=0
     export SRGC_GEMMA_TEXT_PROTOCOL=0
 else
+    export SRGC_GEMMA_IT_PROTOCOL=${SRGC_GEMMA_IT_PROTOCOL:-1}
     export SRGC_GEMMA_TEXT_PROTOCOL=${SRGC_GEMMA_TEXT_PROTOCOL:-1}
 fi
-export SRGC_GEMMA_CACHE_FIRST=${SRGC_GEMMA_CACHE_FIRST:-${SRGC_GEMMA_TEXT_PROTOCOL}}
+export SRGC_GEMMA_CACHE_FIRST=${SRGC_GEMMA_CACHE_FIRST:-1}
 [ "$#" -gt 0 ] || set -- all
-if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ] || [ "${1:-}" = stop ] || [ "${1:-}" = resume ] || [ "${1:-}" = prepare ] || [ "${1:-}" = doctor ] || [ "${1:-}" = preflight ]; then
+if [ "${1:-}" = status ] || [ "${1:-}" = results ] || [ "${1:-}" = audit ] || [ "${1:-}" = stop ] || [ "${1:-}" = resume ] || [ "${1:-}" = prepare ] || [ "${1:-}" = doctor ] || [ "${1:-}" = preflight ] || [ "${1:-}" = reset ]; then
     ACTION=$1
     shift
     set -- all "$ACTION" "$@"
@@ -31,12 +33,28 @@ for GEMMA_ARGUMENT in "$@"; do
     --help|-h)
         SRGC_MODEL_CHAIN=0
         export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1
+        if [ "${SRGC_GEMMA_IT_PROTOCOL:-0}" = 1 ]; then
+            exec python3 -m srgc_research.dispatch.gemma_it_run "$@"
+        fi
         if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ] && [ "${2:-}" != audit ]; then
             exec python3 -m srgc_research.dispatch.gemma_text_run "$@"
         fi ;;
     esac
 done
-if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ]; then
+if [ "${SRGC_GEMMA_IT_PROTOCOL:-0}" = 1 ]; then
+    case "${2:-run}" in
+        results|status)
+            export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+            if [ "$2" = results ]; then
+                exec python3 -m srgc_research.dispatch.model_results gemma4_it "$@"
+            fi
+            exec python3 -m srgc_research.dispatch.model_status gemma4_it "$@" ;;
+        stop)
+            export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+            exec python3 -m srgc_research.dispatch.gemma_it_run "$@" ;;
+    esac
+fi
+if [ "${SRGC_GEMMA_IT_PROTOCOL:-0}" != 1 ] && [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ]; then
     case "${2:-run}" in
         results|status)
             export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -49,7 +67,7 @@ if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ]; then
             exec python3 -m srgc_research.dispatch.gemma_text_run "$@" ;;
     esac
 fi
-if [ "${2:-}" = results ]; then
+if [ "${SRGC_GEMMA_IT_PROTOCOL:-0}" != 1 ] && [ "${2:-}" = results ]; then
     export CUDA_VISIBLE_DEVICES="" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
     exec python3 -m srgc_research.dispatch.model_results gemma4 "$@"
 fi
@@ -75,6 +93,9 @@ if [ "${2:-}" = audit ]; then
     export CUDA_VISIBLE_DEVICES=""
     AUDIT_DATASET=$1
     shift 2
+    if [ "${SRGC_GEMMA_IT_PROTOCOL:-0}" = 1 ]; then
+        exec "$PY" -m srgc_research.dispatch.gemma4_it.audit "$AUDIT_DATASET" "$@"
+    fi
     exec "$PY" -m srgc_research.dispatch.gemma_initial_audit "$AUDIT_DATASET" "$@"
 fi
 # Training commands share one model queue; read-only/control actions stay model-specific.
@@ -83,6 +104,9 @@ if [ "${SRGC_MODEL_CHAIN:-1}" = 1 ] && [ "${SRGC_MODEL_CHAIN_CHILD:-0}" != 1 ]; 
         all:run|math:run|mbpp:run|all:resume|math:resume|mbpp:resume)
             exec "$PY" -m srgc_research.dispatch.model_chain --start gemma4 "$@" ;;
     esac
+fi
+if [ "${SRGC_GEMMA_IT_PROTOCOL:-0}" = 1 ]; then
+    exec "$PY" -m srgc_research.dispatch.gemma_it_run "$@"
 fi
 if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ]; then
     exec "$PY" -m srgc_research.dispatch.gemma_text_run "$@"

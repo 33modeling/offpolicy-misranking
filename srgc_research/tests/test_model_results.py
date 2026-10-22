@@ -27,6 +27,13 @@ from srgc_research.tests.test_qwen_status import ChatTokenizer
 REPO = Path(__file__).resolve().parents[2]
 
 
+class GemmaITTokenizer:
+    def apply_chat_template(self, messages, **kwargs):
+        from srgc_research.dispatch.gemma4_it.protocol import completion_cue, prompt_prefix
+        assert kwargs == {"tokenize": False, "add_generation_prompt": True, "enable_thinking": False}
+        return prompt_prefix("math") + messages[0]["content"].strip() + "<turn|>\n" + completion_cue("math")
+
+
 @pytest.fixture(params=("qwen35", "gemma4", "llama31"))
 def cohort(request, tmp_path):
     return make_cohort(request.param, tmp_path)
@@ -42,18 +49,23 @@ def make_cohort(model, tmp_path):
         if model == "qwen35":
             filename = "additional_seeds.json" if name == "math" else "mbpp_seeds.json"
             plans[name] = qwen.prepare(name, REPO / "srgc_rebuttal/experiments" / filename, root, ChatTokenizer())
-        elif model == "gemma4_text":
+        elif model in {"gemma4_text", "gemma4_it"}:
             filename = "additional_seeds.json" if name == "math" else "mbpp_seeds.json"
             plans[name] = adapter.prepare(name, REPO / "srgc_rebuttal/experiments" / filename,
-                                           root, None, snapshot_sha256="a" * 64)
+                                           root, (GemmaITTokenizer() if model == "gemma4_it" else None), snapshot_sha256="a" * 64)
         else:
             prepare = gemma_prepared if model == "gemma4" else llama_prepared
             plans[name] = prepare(root, name)
     env_key = {"qwen35": "SRGC_QWEN_ROOT", "gemma4": "SRGC_GEMMA_ROOT",
-               "gemma4_text": "SRGC_GEMMA_TEXT_ROOT", "llama31": "SRGC_LLAMA_ROOT"}[model]
+               "gemma4_text": "SRGC_GEMMA_TEXT_ROOT", "gemma4_it": "SRGC_GEMMA_IT_ROOT", "llama31": "SRGC_LLAMA_ROOT"}[model]
     env = {**os.environ, "GROUP_VOLUME": str(tmp_path), "OM_WORK": str(work), env_key: str(root)}
     if model == "gemma4":
         env["SRGC_GEMMA_LEGACY_PROTOCOL"] = "1"
+    elif model == "gemma4_text":
+        env["SRGC_GEMMA_IT_PROTOCOL"] = "0"
+        env["SRGC_GEMMA_TEXT_PROTOCOL"] = "1"
+    elif model == "gemma4_it":
+        env["SRGC_GEMMA_IT_PROTOCOL"] = "1"
     return SimpleNamespace(model=model, work=work, root=root, plans=plans, env=env, adapter=adapter)
 
 
@@ -66,12 +78,9 @@ def finish(cohort, dataset, seed=5, arm="on_policy", reward=.5):
     bundle["provenance"]["cache"] = {"model": cohort.adapter.MODEL, "model_revision": cohort.adapter.REVISION,
         "responses": 8, "max_new_tokens": plan["max_new_tokens"], "cache_seed": seed,
         "verifier": plan["verifier"], "attention": "eager"}
-    if cohort.model == "gemma4_text":
-        from srgc_research.dispatch.gemma4_text.protocol import (
-            CODE_VERIFIER,
-            CODE_VERSION,
-            sampling,
-        )
+    if cohort.model in {"gemma4_text", "gemma4_it"}:
+        protocol = importlib.import_module(f"srgc_research.dispatch.{cohort.model}.protocol")
+        CODE_VERIFIER, CODE_VERSION, sampling = protocol.CODE_VERIFIER, protocol.CODE_VERSION, protocol.sampling
 
         bundle["provenance"]["cache"].update(gemma_extension=plan["extension"], sampling=sampling())
         if plan["verifier"] == CODE_VERIFIER:

@@ -184,11 +184,20 @@ def test_implicit_run_with_options_keeps_model_chaining(tmp_path, args, expected
                                         *expected]
 
 
-def test_initial_preparation_observes_stop_and_tears_down_its_real_child(tmp_path, monkeypatch):
-    cohort = make_cohort("gemma4_text", tmp_path)
+@pytest.mark.parametrize("profile", ["gemma4_text", "gemma4_it"])
+def test_initial_preparation_observes_stop_and_tears_down_its_real_child(tmp_path, monkeypatch, profile):
+    import importlib
+    module = "srgc_research.dispatch."
+    adapter = importlib.import_module(module + profile + ".adapter")
+    cli = importlib.import_module(module + profile + ".cli")
+    entry = importlib.import_module(module + profile + ".entry")
+    run = importlib.import_module(module + ("gemma_it_run" if profile == "gemma4_it" else "gemma_text_run"))
+    cohort = make_cohort(profile, tmp_path)
     cohort.plans["math"].unlink()
-    for key in ("GROUP_VOLUME", "OM_WORK", "SRGC_GEMMA_TEXT_ROOT"):
-        monkeypatch.setenv(key, cohort.env[key])
+    for key in ("GROUP_VOLUME", "OM_WORK", "SRGC_GEMMA_TEXT_ROOT", "SRGC_GEMMA_IT_ROOT",
+                "SRGC_GEMMA_TEXT_PROTOCOL", "SRGC_GEMMA_IT_PROTOCOL"):
+        if key in cohort.env:
+            monkeypatch.setenv(key, cohort.env[key])
     monkeypatch.setattr(cli, "resolve_snapshot", lambda env: (tmp_path, "a" * 64))
     monkeypatch.setattr(adapter, "runtime_packages", dict)
     real_child, started = cluster.run_child, []

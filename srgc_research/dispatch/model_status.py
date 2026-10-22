@@ -17,6 +17,7 @@ from srgc_rebuttal.plan import input_path
 from srgc_rebuttal.srgc import stream_seed
 
 CONFIGS = {
+    "gemma4_it": ("srgc_research.dispatch.gemma4_it.adapter", "srgc_research.dispatch.gemma4_it.storage", "gemma4-12b-it"),
     "qwen35": ("scripts.srgc_qwen35", "scripts.srgc_qwen35_storage", "qwen35-9b"),
     "gemma4": ("srgc_research.dispatch.gemma4.adapter", "srgc_research.dispatch.gemma4.storage", "gemma4-12b-pt"),
     "gemma4_text": ("srgc_research.dispatch.gemma4_text.adapter", "srgc_research.dispatch.gemma4_text.storage", "gemma4-12b-text"),
@@ -24,6 +25,7 @@ CONFIGS = {
 }
 LABELS = {"qwen35": "Qwen3.5-9B", "llama31": "Llama-3.1-8B-Instruct", "gemma4": "Gemma-4-12B-PT"}
 LABELS["gemma4_text"] = "Gemma-4-12B-PT (text-v3)"
+LABELS["gemma4_it"] = "Gemma-4-12B-IT (thinking off)"
 
 
 def interrupted_receipts(report):
@@ -154,7 +156,7 @@ def load_reports(model, dataset, root, environment):
                 if statistics["completed_seeds"] != statistics["planned_seeds"]:
                     statistics["mean_reward_percent"] = None
                     statistics["mean_selection_training_preparation_gpu_seconds"] = None
-        if model == "gemma4_text":
+        if model in {"gemma4_text", "gemma4_it"}:
             # Initial preparation can be cancelled before a plan/queue exists.
             # Report that stop even when the plan is still missing or invalid.
             report["stop_requested"] |= any(path.is_file() for path in (
