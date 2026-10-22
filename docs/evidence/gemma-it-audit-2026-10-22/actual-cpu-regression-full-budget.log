@@ -1,0 +1,31 @@
+Verifying actual IT checkpoint
+Loading weights:   0%|          | 0/666 [00:00<?, ?it/s]Loading weights: 100%|██████████| 666/666 [00:00<00:00, 7906.46it/s]
+[transformers] [1mGemma4UnifiedForCausalLM LOAD REPORT[0m from: /home/kms/models/gemma-4-12B-it
+Key                                            | Status     |  | 
+-----------------------------------------------+------------+--+-
+model.vision_embedder.patch_dense.bias         | UNEXPECTED |  | 
+model.vision_embedder.pos_norm.bias            | UNEXPECTED |  | 
+model.vision_embedder.patch_ln1.bias           | UNEXPECTED |  | 
+model.vision_embedder.patch_ln2.bias           | UNEXPECTED |  | 
+model.embed_vision.embedding_projection.weight | UNEXPECTED |  | 
+model.vision_embedder.patch_ln2.weight         | UNEXPECTED |  | 
+model.vision_embedder.pos_embedding            | UNEXPECTED |  | 
+model.vision_embedder.pos_norm.weight          | UNEXPECTED |  | 
+model.vision_embedder.patch_ln1.weight         | UNEXPECTED |  | 
+model.vision_embedder.patch_dense.weight       | UNEXPECTED |  | 
+model.embed_audio.embedding_projection.weight  | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+Generating math math_train-6b07de8f60714bbd comparison n=1
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=1
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=18
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=35
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=52
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=70
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=89
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=109
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=163
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=218
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=272
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=326

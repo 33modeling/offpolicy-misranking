@@ -93,14 +93,30 @@
           "success_percent": 0.0
         }
       },
-      "error": null
+      "error": {
+        "type": "KeyboardInterrupt",
+        "message": ""
+      }
     },
     {
       "artifact": "actual-cpu-official.json",
       "complete": false,
-      "measured_cases": 0,
-      "summary_of_completed_cases": {},
-      "error": null
+      "measured_cases": 1,
+      "summary_of_completed_cases": {
+        "math:official": {
+          "prompts": 1,
+          "responses": 1,
+          "correct": 0.0,
+          "empty": 0,
+          "truncated": 1,
+          "suppressed_tokens": 0,
+          "success_percent": 0.0
+        }
+      },
+      "error": {
+        "type": "KeyboardInterrupt",
+        "message": ""
+      }
     },
     {
       "artifact": "actual-cpu-canaries.json",
@@ -135,5 +151,6 @@
       "summary_of_completed_cases": {},
       "error": null
     }
-  ]
+  ],
+  "bounded_control_status": "Stopped after both matched MATH draws hit the artificial 512-token diagnostic cap. Both completed MATH responses scored zero and were truncated; MBPP draws had no completed receipts and remain unmeasured. This is not full-cache performance."
 }

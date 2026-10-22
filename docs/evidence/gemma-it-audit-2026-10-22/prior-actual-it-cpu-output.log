@@ -1,0 +1,20 @@
+Loading actual IT checkpoint
+Loading weights:   0%|          | 0/666 [00:00<?, ?it/s]Loading weights: 100%|██████████| 666/666 [00:00<00:00, 12001.02it/s]
+[transformers] [1mGemma4UnifiedForCausalLM LOAD REPORT[0m from: /home/kms/reports/gemma-it-reset-2026-10-22/diagnostic-snapshot
+Key                                            | Status     |  | 
+-----------------------------------------------+------------+--+-
+model.vision_embedder.pos_embedding            | UNEXPECTED |  | 
+model.vision_embedder.patch_ln2.weight         | UNEXPECTED |  | 
+model.vision_embedder.pos_norm.bias            | UNEXPECTED |  | 
+model.vision_embedder.patch_ln1.weight         | UNEXPECTED |  | 
+model.vision_embedder.patch_ln2.bias           | UNEXPECTED |  | 
+model.vision_embedder.pos_norm.weight          | UNEXPECTED |  | 
+model.embed_vision.embedding_projection.weight | UNEXPECTED |  | 
+model.embed_audio.embedding_projection.weight  | UNEXPECTED |  | 
+model.vision_embedder.patch_ln1.bias           | UNEXPECTED |  | 
+model.vision_embedder.patch_dense.bias         | UNEXPECTED |  | 
+model.vision_embedder.patch_dense.weight       | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+Generating math math_train-0042a7ac128d8224

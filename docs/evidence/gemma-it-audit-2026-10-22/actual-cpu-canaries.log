@@ -1,0 +1,26 @@
+Verifying actual IT checkpoint
+Loading weights:   0%|          | 0/666 [00:00<?, ?it/s]Loading weights: 100%|██████████| 666/666 [00:00<00:00, 7832.65it/s]
+[transformers] [1mGemma4UnifiedForCausalLM LOAD REPORT[0m from: /home/kms/models/gemma-4-12B-it
+Key                                            | Status     |  | 
+-----------------------------------------------+------------+--+-
+model.vision_embedder.patch_dense.bias         | UNEXPECTED |  | 
+model.vision_embedder.patch_dense.weight       | UNEXPECTED |  | 
+model.embed_vision.embedding_projection.weight | UNEXPECTED |  | 
+model.vision_embedder.patch_ln2.bias           | UNEXPECTED |  | 
+model.vision_embedder.pos_norm.bias            | UNEXPECTED |  | 
+model.vision_embedder.patch_ln1.bias           | UNEXPECTED |  | 
+model.vision_embedder.pos_norm.weight          | UNEXPECTED |  | 
+model.vision_embedder.pos_embedding            | UNEXPECTED |  | 
+model.embed_audio.embedding_projection.weight  | UNEXPECTED |  | 
+model.vision_embedder.patch_ln1.weight         | UNEXPECTED |  | 
+model.vision_embedder.patch_ln2.weight         | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+Generating math synthetic-math-instruction-canary-v1 greedy n=1
+[cache] rank=0 prompt=synthetic-math-instruction-canary-v1 generated_steps=1
+{"dataset": "math", "candidate": "synthetic-math-instruction-canary-v1", "profile": "greedy", "rewards": [1.0], "tokens": [7], "seconds": 47.09032585300156}
+Generating mbpp synthetic-mbpp-instruction-canary-v1 greedy n=1
+[cache] rank=0 prompt=synthetic-mbpp-instruction-canary-v1 generated_steps=1
+{"dataset": "mbpp", "candidate": "synthetic-mbpp-instruction-canary-v1", "profile": "greedy", "rewards": [1.0], "tokens": [20], "seconds": 64.64585600199644}
+{"math:greedy": {"correct": 1.0, "empty": 0, "prompts": 1, "responses": 1, "success_percent": 100.0, "suppressed_tokens": 0, "truncated": 0}, "mbpp:greedy": {"correct": 1.0, "empty": 0, "prompts": 1, "responses": 1, "success_percent": 100.0, "suppressed_tokens": 0, "truncated": 0}}

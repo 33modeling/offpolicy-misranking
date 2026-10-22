@@ -1,0 +1,38 @@
+.........................F.............................................. [ 91%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+___ test_it_audit_checks_real_cache_store_receipts_without_changing_records ____
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-64/test_it_audit_checks_real_cach0')
+
+    def test_it_audit_checks_real_cache_store_receipts_without_changing_records(tmp_path):
+        from srgc_rebuttal import build_cache
+        from srgc_research.dispatch.gemma4_it.audit import audit
+        from srgc_research.tests.test_model_results import make_cohort
+        cohort = make_cohort('gemma4_it', tmp_path)
+        path = cohort.plans['math']
+        plan = adapter.validate_extension(path)
+        data_path = input_path(path, plan, 5)
+        bundle = json.loads(data_path.read_text())
+        candidate = bundle['candidate_ids'][0]
+        protocol = {key: plan[key] for key in
+                    ('model', 'model_revision', 'verifier', 'responses', 'max_new_tokens', 'attention')}
+        protocol['cache_seed'] = 5
+        with adapter.runtime_adapter():
+            cache = build_cache.CacheStore(data_path, bundle, protocol)
+            cache.bind()
+            cache.write(candidate, [0] * 8, ['Answer: -999999999'] * 8, 0.1)
+        bundle['cached_rewards'][candidate] = [0] * 8
+        atomic_json(data_path, bundle)
+        before = {p: p.read_bytes() for p in cohort.root.rglob('*') if p.is_file()}
+        result = audit(cohort.root, rescore=1)
+        assert not result['errors']
+        row = next(row for row in result['datasets'] if row['dataset'] == 'math' and row['seed'] == 5)
+        assert not row['errors'] and row['features']['responses'] == 8
+>       assert row['initial_success_percent'] == 0
+E       assert None == 0
+
+srgc_research/tests/test_gemma_it.py:411: AssertionError
+=========================== short test summary info ============================
+FAILED srgc_research/tests/test_gemma_it.py::test_it_audit_checks_real_cache_store_receipts_without_changing_records
+1 failed, 78 passed in 39.67s

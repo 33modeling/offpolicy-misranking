@@ -1,0 +1,11 @@
+{
+  "action": "SIGINT to these audit-owned bounded diagnostic processes only",
+  "pids": [
+    2726925,
+    2734817
+  ],
+  "reason": "Both matched MATH draws were truncated at 512 tokens, below the actual 2048-token protocol. Preserve those completed negative controls and prioritize the full-budget historical regression rather than continue the nonrepresentative short-budget MBPP draws.",
+  "measured_mbpp_512": "pending raw receipts; do not infer rewards for unfinished generation",
+  "unrelated_gpu_experiment": "unchanged",
+  "full_budget_regression": "continues"
+}

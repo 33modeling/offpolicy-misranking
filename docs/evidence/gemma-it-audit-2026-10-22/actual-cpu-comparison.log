@@ -1,0 +1,138 @@
+Verifying actual IT checkpoint
+[gemma-model] verifying chat_template.jinja
+[gemma-model] verifying config.json
+[gemma-model] verifying generation_config.json
+[gemma-model] verifying model.safetensors
+[gemma-model] verifying tokenizer.json
+[gemma-model] verifying tokenizer_config.json
+Loading weights:   0%|          | 0/666 [00:00<?, ?it/s]Loading weights: 100%|██████████| 666/666 [00:00<00:00, 9946.51it/s]
+[transformers] [1mGemma4UnifiedForCausalLM LOAD REPORT[0m from: /home/kms/models/gemma-4-12B-it
+Key                                            | Status     |  | 
+-----------------------------------------------+------------+--+-
+model.vision_embedder.patch_ln2.bias           | UNEXPECTED |  | 
+model.vision_embedder.pos_norm.weight          | UNEXPECTED |  | 
+model.vision_embedder.patch_ln1.weight         | UNEXPECTED |  | 
+model.vision_embedder.pos_norm.bias            | UNEXPECTED |  | 
+model.vision_embedder.patch_dense.weight       | UNEXPECTED |  | 
+model.embed_audio.embedding_projection.weight  | UNEXPECTED |  | 
+model.vision_embedder.patch_dense.bias         | UNEXPECTED |  | 
+model.vision_embedder.patch_ln2.weight         | UNEXPECTED |  | 
+model.vision_embedder.patch_ln1.bias           | UNEXPECTED |  | 
+model.embed_vision.embedding_projection.weight | UNEXPECTED |  | 
+model.vision_embedder.pos_embedding            | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+Generating math math_train-0042a7ac128d8224 comparison n=1
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=1
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=49
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=96
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=138
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=179
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=219
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=262
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=300
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=332
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=363
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=391
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=419
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=446
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=476
+[cache] rank=0 prompt=math_train-0042a7ac128d8224 generated_steps=506
+{"dataset": "math", "candidate": "math_train-0042a7ac128d8224", "profile": "comparison", "rewards": [0.0], "tokens": [512], "seconds": 526.4215916870162}
+Generating mbpp mbpp-0b3915cd51d4c2fb comparison n=1
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=1
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=32
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=62
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=95
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=127
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=155
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=183
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=214
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=241
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=271
+[cache] rank=0 prompt=mbpp-0b3915cd51d4c2fb generated_steps=303
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4_it/probe.py", line 182, in <module>
+    'source_bundle_sha256': hashlib.sha256(bundle_bytes).hexdigest(),
+^^^^
+  File "/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4_it/probe.py", line 151, in main
+    continue
+            
+  File "/home/kms/dev/offpolicy-misranking/srgc_rebuttal/build_cache.py", line 120, in generate_rewards
+    generated = model.generate(**inputs, do_sample=True, temperature=1.0, top_p=1.0, top_k=0,
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4_it/probe.py", line 123, in capture
+    atomic_json(args.output, report)
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4/memory.py", line 58, in generate
+    original(
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/generation/utils.py", line 2982, in generate
+    result = decoding_method(
+             ^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/generation/utils.py", line 3210, in _sample
+    outputs = model_forward(**model_inputs, return_dict=True)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/utils/generic.py", line 943, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/models/gemma4_unified/modeling_gemma4_unified.py", line 718, in forward
+    outputs: Gemma4UnifiedTextModelOutputWithPast = self.model(
+                                                    ^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/utils/generic.py", line 1081, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/utils/output_capturing.py", line 287, in wrapper
+    outputs = func(self, *args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/models/gemma4_unified/modeling_gemma4_unified.py", line 649, in forward
+    hidden_states = decoder_layer(
+                    ^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/modeling_layers.py", line 110, in __call__
+    return super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/models/gemma4_unified/modeling_gemma4_unified.py", line 494, in forward
+    hidden_states, _ = self.self_attn(
+                       ^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kms/reports/gemma4-tokenizer-audit-2026-10-21/packages/transformers/models/gemma4_unified/modeling_gemma4_unified.py", line 443, in forward
+    attn_output = self.o_proj(attn_output)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nsh/.venvs/proto-ml-cuda/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

@@ -600,5 +600,9 @@
     "top_p": 0.95,
     "transformers_version": "5.10.0.dev0"
   },
-  "device": "cpu"
+  "device": "cpu",
+  "error": {
+    "type": "KeyboardInterrupt",
+    "message": ""
+  }
 }

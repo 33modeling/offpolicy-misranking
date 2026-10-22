@@ -1,0 +1,120 @@
+........................................................................ [ 15%]
+.........F.............................................................. [ 30%]
+...F.................................................................... [ 45%]
+........................................................................ [ 60%]
+........................................................................ [ 75%]
+........................................................................ [ 90%]
+..............................................                           [100%]
+=================================== FAILURES ===================================
+_____________ test_entry_and_shell_are_gpu_free_and_preserve_paths _____________
+
+experiment = PosixPath('/tmp/pytest-of-kms/pytest-62/test_entry_and_shell_are_gpu_f0/experiment with spaces')
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-62/test_entry_and_shell_are_gpu_f0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x72192412fec0>
+
+    def test_entry_and_shell_are_gpu_free_and_preserve_paths(experiment, tmp_path, monkeypatch):
+        with patch.object(audit, 'main', return_value=0) as entry:
+            assert gemma_run.main(['math', 'audit', '--root', str(experiment)]) == 0
+            entry.assert_called_once_with(['math', '--root', str(experiment)])
+        monkeypatch.setenv('GEMMA_PYTHON', sys.executable)
+        monkeypatch.setenv('PYTHONDONTWRITEBYTECODE', '1')
+        trap = tmp_path / 'gpu-import-trap'
+        for name in ['torch', 'transformers', 'peft']:
+            (trap / name).mkdir(parents=True)
+            (trap / name / '__init__.py').write_text("raise RuntimeError('audit imported GPU/model packages')\n")
+        monkeypatch.setenv('PYTHONPATH', str(trap))
+        before = file_bytes(experiment)
+        output = tmp_path / 'audit with spaces.json'
+        repo = Path(__file__).resolve().parents[2]
+        completed = subprocess.run(['sh', str(repo / 'scripts/run_srgc_gemma4.sh'), 'audit', '--root', str(experiment), '--output', str(output)], cwd=repo, capture_output=True, text=True, timeout=20, check=False)
+>       assert completed.returncode == 0, completed.stderr
+E       AssertionError: 
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['sh', '/home/kms/dev/offpolicy-misranking/scripts/run_srgc_gemma4.sh', 'audit', '--root', '/tmp...ms/pytest-62/test_entry_and_shell_are_gpu_f0/experiment with spaces/experiments/gemma4-12b-it-mbpp.json'\n", stderr='').returncode
+
+srgc_research/tests/test_gemma_initial_audit.py:114: AssertionError
+_____ test_initial_preparation_observes_stop_and_tears_down_its_real_child _____
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-62/test_initial_preparation_obser0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x72187ea5d8b0>
+
+    def test_initial_preparation_observes_stop_and_tears_down_its_real_child(tmp_path, monkeypatch):
+        cohort = make_cohort("gemma4_text", tmp_path)
+        cohort.plans["math"].unlink()
+        for key in ("GROUP_VOLUME", "OM_WORK", "SRGC_GEMMA_TEXT_ROOT"):
+            monkeypatch.setenv(key, cohort.env[key])
+        monkeypatch.setattr(cli, "resolve_snapshot", lambda env: (tmp_path, "a" * 64))
+        monkeypatch.setattr(adapter, "runtime_packages", dict)
+        real_child, started = cluster.run_child, []
+    
+        def child(command, log, env, **kwargs):
+            assert "should_stop" in kwargs, "input preparation has no cancellation callback"
+            def stop(pid):
+                started.append(pid)
+                result = subprocess.run(["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), "math", "stop", "--now"],
+                                        env=env, capture_output=True, text=True, timeout=30, check=False)
+                assert result.returncode == 0, result.stdout + result.stderr
+            return real_child([sys.executable, "-c", "import time; time.sleep(60)"], log, env,
+                              **kwargs, interval=.01, heartbeat=stop)
+    
+        monkeypatch.setattr(cluster, "run_child", child)
+        monkeypatch.setattr(entry, "main", lambda args: cli.prepare_missing(["math"], cohort.root, os.environ))
+        with pytest.raises(KeyboardInterrupt):
+>           run.main(["math", "--root", str(cohort.root)])
+
+srgc_research/tests/test_gemma_text_recheck.py:209: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+srgc_research/dispatch/gemma_text_run.py:190: in main
+    return entry.main(args)
+           ^^^^^^^^^^^^^^^^
+srgc_research/tests/test_gemma_text_recheck.py:207: in <lambda>
+    monkeypatch.setattr(entry, "main", lambda args: cli.prepare_missing(["math"], cohort.root, os.environ))
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+srgc_research/dispatch/gemma_text_control.py:96: in prepare
+    result = original(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+srgc_research/dispatch/gemma4_text/cli.py:87: in prepare_missing
+    validate_saved(path, identity)
+srgc_research/dispatch/gemma4_text/cli.py:37: in validate_saved
+    plan = adapter.validate_extension(path)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+srgc_research/dispatch/gemma4_text/adapter.py:281: in validate_extension
+    plan = load_plan(path)
+           ^^^^^^^^^^^^^^^
+srgc_rebuttal/plan.py:16: in load_plan
+    plan = json.loads(path.read_text())
+                      ^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/pathlib.py:1029: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/tmp/pytest-of-kms/pytest-62/test_initial_preparation_obser0/work with spaces/srgc-rebuttal/gemma4_text/experiments/gemma4-12b-text-math.json')
+mode = 'r', buffering = -1, encoding = 'locale', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/tmp/pytest-of-kms/pytest-62/test_initial_preparation_obser0/work with spaces/srgc-rebuttal/gemma4_text/experiments/gemma4-12b-text-math.json'
+
+/usr/lib/python3.12/pathlib.py:1015: FileNotFoundError
+----------------------------- Captured stdout call -----------------------------
+GEMMA preparing math; log=/tmp/pytest-of-kms/pytest-62/test_initial_preparation_obser0/work with spaces/srgc-rebuttal/gemma4_text/startup-logs/4e6114b1fa954563930bd92480d20ea2.log
+=============================== warnings summary ===============================
+srgc_research/tests/test_model_results.py: 6 warnings
+srgc_research/tests/test_resume_drain.py: 12 warnings
+  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=2728894) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED srgc_research/tests/test_gemma_initial_audit.py::test_entry_and_shell_are_gpu_free_and_preserve_paths
+FAILED srgc_research/tests/test_gemma_text_recheck.py::test_initial_preparation_observes_stop_and_tears_down_its_real_child
+2 failed, 476 passed, 18 warnings in 247.27s (0:04:07)
