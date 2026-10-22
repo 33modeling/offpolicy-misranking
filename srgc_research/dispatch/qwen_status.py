@@ -18,7 +18,8 @@ from .rank_failures import last_error_line
 REPO = Path(__file__).resolve().parents[2]
 ARMS = ("cache", "prefix", "on_policy", "switch", "sr", "random")
 HEADERS = ("Cache", "Prefix", "On-policy", "Switch", "SR", "Random")
-LIVE_WORKERS = {"running", "preflight", "idle", "serving_other_dataset"}
+LIVE_WORKERS = {"running", "preflight", "idle", "serving_other_dataset",
+                "launching", "waiting", "switching"}
 RESUMABLE = {"recoverable", "interrupted"}
 ERRORS = {"failed", "invalid", "attempts_exhausted"}
 
@@ -90,8 +91,13 @@ def table(headers, rows):
     return [line(headers), line(["-" * width for width in widths]), *(line(row) for row in rows)]
 
 
-def node_rows(snapshots):
-    """Collapse the two dataset receipts and show the newest session per host."""
+def heartbeat_age(row):
+    value = row.get("heartbeat_age_seconds")
+    return value if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else float("inf")
+
+
+def node_rows(snapshots, *, coordinators=(), model=None, root=None):
+    """Merge worker, held-task and coordinator evidence once per host."""
     sessions = {}
     for report in snapshots:
         for worker in report["workers"]:
@@ -104,8 +110,8 @@ def node_rows(snapshots):
                 row["status"] = "serving_other_dataset"
             previous = sessions.get(key)
             if previous is not None:
-                current_age = row.get("heartbeat_age_seconds", float("inf"))
-                previous_age = previous.get("heartbeat_age_seconds", float("inf"))
+                current_age = heartbeat_age(row)
+                previous_age = heartbeat_age(previous)
                 if abs(current_age - previous_age) <= 5:
                     priority = {"running": 4, "serving_other_dataset": 3, "preflight": 2, "idle": 1}
                     if priority.get(previous["status"], 0) > priority.get(row["status"], 0):
@@ -113,11 +119,52 @@ def node_rows(snapshots):
                 elif current_age > previous_age:
                     continue
             sessions[key] = row
+    for report in snapshots:
+        for task in report["tasks"]:
+            # reports.snapshot marks RUN only while an execution/task lease is
+            # held. A missing/stale worker receipt must not hide that owner.
+            host = task.get("host")
+            if task["status"] != "running" or not host or host == "-":
+                continue
+            owner = task.get("worker_id")
+            matches = [(key, row) for key, row in sessions.items()
+                       if key[0] == host and row.get("task") == task["task"]
+                       and row["label"] == report["label"]]
+            key = ((host, owner) if owner else min(matches, key=lambda item: heartbeat_age(item[1]))[0]
+                   if matches else (host, f"task:{task['task']}"))
+            worker = sessions.get(key, {})
+            sessions[key] = {**worker, "host": host, "worker_id": owner or worker.get("worker_id"),
+                             "status": "running", "source": "task_lease",
+                             "heartbeat_stale": bool(worker) and heartbeat_age(worker) > 60,
+                             "task": task["task"], "task_row": task, "label": report["label"]}
+    family = "gemma4" if model and model.startswith("gemma4") else model
+    for coordinator in coordinators:
+        if coordinator.get("model") != family or family is None:
+            continue
+        if coordinator.get("status_model") not in {None, model}:
+            continue
+        if coordinator.get("root") and (root is None or Path(coordinator["root"]).resolve() != Path(root).resolve()):
+            continue
+        state = {"running": "launching", "waiting": "waiting", "switching": "switching",
+                 "stale": "heartbeat_stale", "finished": "complete",
+                 "stopped": "stopped", "failed": "failed"}.get(coordinator["status"])
+        if state is None or (state not in LIVE_WORKERS and heartbeat_age(coordinator) > 900):
+            continue
+        reason = coordinator.get("idle_reason") or ("model launcher active; dataset worker not registered"
+                 if state in LIVE_WORKERS else "model launcher " + state)
+        if not coordinator.get("root"):
+            reason += "; experiment root not recorded"
+        row = {**coordinator, "status": state, "source": "model_chain", "task": None,
+               "task_row": None, "label": str(coordinator.get("active_dataset") or "model").upper(),
+               "idle_reason": reason}
+        sessions[(row["host"], "model-chain:" + str(row.get("worker_id", row.get("pid"))))] = row
     nodes = {}
 
     def activity(row):
         # A newer idle launcher must not hide a different live session whose
         # task lease proves it is actually running on this host.
+        if row.get("source") == "task_lease":
+            return 4
         if row["status"] in {"running", "heartbeat_stale"} and row["task_row"] and row["task_row"]["status"] == "running":
             return 3
         if row["status"] == "serving_other_dataset":
@@ -127,8 +174,8 @@ def node_rows(snapshots):
     for row in sessions.values():
         host = row.get("host", "-")
         previous = nodes.get(host)
-        if previous is None or (activity(row), -row.get("heartbeat_age_seconds", float("inf"))) > (
-                activity(previous), -previous.get("heartbeat_age_seconds", float("inf"))):
+        if previous is None or (activity(row), -heartbeat_age(row)) > (
+                activity(previous), -heartbeat_age(previous)):
             nodes[host] = row
     return sorted(nodes.values(), key=lambda row: (row["status"] not in LIVE_WORKERS, row.get("host", "-")))
 
@@ -227,7 +274,8 @@ def idle_reason(node, snapshots, backlog):
     return "waiting for cache/prefix or another node"
 
 
-def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_initial=False):
+def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_initial=False,
+           status_model="qwen35", coordinators=None):
     host = socket.gethostname() if host is None else host
     now = time.time() if now is None else now
     tasks = [task for report in snapshots for task in report["tasks"]]
@@ -236,18 +284,24 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     waiting = sum(count for state, count in counts.items() if state.startswith("waiting_for_"))
     issues = sum(counts[state] for state in ERRORS)
     resumable = sum(counts[state] for state in RESUMABLE)
+    from .model_chain import snapshot as chain_snapshot
+
+    coordinators = chain_snapshot(now=now) if coordinators is None else coordinators
+    nodes = node_rows(snapshots, coordinators=coordinators, model=status_model, root=root)
+    local = next((row for row in nodes if row["host"] == host), None)
+    local_state = (f"ACTIVE ({local['status'].upper()})" if local["status"] in LIVE_WORKERS
+                   else local["status"].upper()) if local else "NOT REGISTERED"
     lines = [f"{model} | SRGC | {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}",
         (f"Tasks {bar(done, total)} {done}/{total} completed"
          f" | RUN {counts['running']} | READY {counts['ready']} | WAIT {waiting}"
          f" | RESUME {resumable} | ERROR {issues}"),
-        f"Local node: {host}"]
+        f"Local node: {host} | {local_state}"]
     error_count = sum(len(report["errors"]) for report in snapshots)
     if error_count:
         lines.insert(2, f"READ ERRORS: {error_count}; inspect ATTENTION below")
     if any(report.get("stop_requested") for report in snapshots):
         labels = ", ".join(report["label"] for report in snapshots if report.get("stop_requested"))
         lines.append(f"STOP REQUESTED: {labels}")
-    nodes = node_rows(snapshots)
     backlog, backlog_error = resume_backlog(snapshots, root)
     if backlog_error:
         lines.append(backlog_error)
@@ -257,19 +311,32 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         node_counts = Counter(row["status"] for row in nodes)
         lines += ["", (f"NODES  {live_nodes} active | {stale_nodes} stale | {len(nodes) - live_nodes - stale_nodes} stopped"
                        f" | RUN {node_counts['running'] + node_counts['serving_other_dataset']} | IDLE {node_counts['idle']}"
-                       f" | ADMISSION {node_counts['preflight']}")]
+                       f" | ADMISSION {node_counts['preflight']}"
+                       f" | LAUNCH {node_counts['launching']} | WAIT {node_counts['waiting']}"
+                       f" | HANDOFF {node_counts['switching']}")]
         rows = []
         for node in nodes:
             state = {"running": "RUN", "serving_other_dataset": "RUN OTHER", "preflight": "ADMISSION", "heartbeat_stale": "STALE"}.get(
                 node["status"], node["status"].upper())
             current = f"{node['label']} {node['task']}" if node.get("task") else "-"
             reason = idle_reason(node, snapshots, backlog) if node["status"] == "idle" else "-"
+            heartbeat = age(node.get("heartbeat_age_seconds"))
+            if node.get("source") == "task_lease":
+                reason = "task lease held"
+                if node.get("heartbeat_stale"):
+                    reason += "; worker heartbeat stale"
+                    heartbeat += " STALE"
+                elif not math.isfinite(heartbeat_age(node)):
+                    reason += "; worker heartbeat not recorded"
+            if node.get("source") == "model_chain":
+                current = f"{node['model']} {node['label']} launcher"
+                reason = node["idle_reason"]
             if node["status"] == "serving_other_dataset":
                 current = str(node["active_dataset"])
                 reason = "shared worker is running the other dataset"
             rows.append([("* " if node.get("host") == host else "") + node.get("host", "-"), state,
                          current, cell(node["task_row"]).removeprefix("RUN ") if node["task_row"] else "-",
-                         age(node.get("heartbeat_age_seconds")), reason])
+                         heartbeat, reason])
         lines += table(("Node", "State", "Task", "Progress", "Heartbeat", "Wait reason"), rows)
     else:
         lines += ["", "NODES  no worker records"]
@@ -368,10 +435,12 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
               "Update counts show completed work; cache counts show saved prompts.",
               "SW@N = switch after completed update N; first SR training update is N+1.",
               "NOT RECORDED = no trustworthy switch progress yet; NEVER SWITCHED = validated final result.",
+              "Node active includes live launchers; RUN requires worker/task evidence. LAUNCH/WAIT/HANDOFF are separate.",
+              "A held task lease remains active when its worker heartbeat is stale or missing; the heartbeat issue stays visible.",
               "Node IDLE = dispatcher waiting; rank progress and heartbeat are not GPU utilization.",
               f"Root: {root}"]
     from .model_chain import render_status
-    lines.extend(render_status(now=now))
+    lines.extend(render_status(now=now, rows=coordinators))
     return "\n".join(lines)
 
 
@@ -387,8 +456,11 @@ def main(argv=None):
         if args.json:
             from .model_chain import snapshot as chain_snapshot
 
+            coordinators = chain_snapshot()
             print(json.dumps({"model": "Qwen/Qwen3.5-9B", "root": str(args.root.resolve()),
-                              "datasets": snapshots, "model_chain": chain_snapshot()}, indent=2))
+                              "datasets": snapshots, "model_chain": coordinators,
+                              "nodes": node_rows(snapshots, coordinators=coordinators,
+                                                 model="qwen35", root=args.root)}, indent=2))
         else:
             print(render(snapshots, args.root.resolve(), include_initial=True))
         return int(any(report["errors"] for report in snapshots))

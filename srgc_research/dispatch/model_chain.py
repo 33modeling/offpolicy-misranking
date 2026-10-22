@@ -268,9 +268,43 @@ def main(argv=None):
     metadata = {'worker_id':identity, 'host':socket.gethostname(), 'pid':os.getpid(),
                 'started':time.time(), 'dataset':initial[0], 'order':order,
                 'devices':os.environ.get('CUDA_VISIBLE_DEVICES','0,1,2,3')}
+    root_parser = argparse.ArgumentParser(add_help=False)
+    root_parser.add_argument('--root', type=Path)
+    explicit, _ = root_parser.parse_known_args(initial)
+    environment = {**os.environ, 'SRGC_GEMMA_TEXT_PROTOCOL':
+                   '0' if os.environ.get('SRGC_GEMMA_LEGACY_PROTOCOL') == '1'
+                   else os.environ.get('SRGC_GEMMA_TEXT_PROTOCOL', '1')}
+    latest = [None, {}]
 
     def update(status, **details):
-        atomic_json(record, {**metadata, 'status': status, 'heartbeat': time.time(), **details})
+        import importlib
+        from .model_status import CONFIGS
+
+        model = details.get('model', latest[1].get('model'))
+        for field in ('model', 'active_dataset'):
+            if field not in details and field in latest[1]:
+                details[field] = latest[1][field]
+        scope = {}
+        if model in MODELS:
+            selected = model
+            if model == 'gemma4' and environment.get('SRGC_GEMMA_LEGACY_PROTOCOL') != '1':
+                selected = ('gemma4_it' if environment.get('SRGC_GEMMA_IT_PROTOCOL', '1') == '1'
+                            else 'gemma4_text' if environment.get('SRGC_GEMMA_TEXT_PROTOCOL', '1') == '1'
+                            else 'gemma4')
+            storage = importlib.import_module(CONFIGS[selected][1])
+            root = explicit.root if model == options.start and explicit.root else storage.default_root(environment)
+            scope = {'status_model': selected, 'root': str(root.resolve())}
+        latest[:] = [status, dict(details)]
+        atomic_json(record, {**metadata, **scope, 'status': status, 'heartbeat': time.time(), **details})
+
+    def pause(seconds):
+        # Polling can take 60s while coordinator staleness starts at 30s.
+        # Keep waiting/handoff evidence fresh without launching another job.
+        while seconds > 0:
+            step = min(5, seconds)
+            time.sleep(step)
+            update(latest[0], **latest[1])
+            seconds -= step
     stopped = []
     def interrupt(sig, frame):
         stopped.append(sig)
@@ -279,10 +313,8 @@ def main(argv=None):
     try:
         with lease(directory / 'nodes' / f'{key}.lock'):
             try:
-                environment = {**os.environ, 'SRGC_GEMMA_TEXT_PROTOCOL':
-                               '0' if os.environ.get('SRGC_GEMMA_LEGACY_PROTOCOL') == '1'
-                               else os.environ.get('SRGC_GEMMA_TEXT_PROTOCOL', '1')}
-                return drain(order, initial[0], initial, environment, update, poll_seconds=poll)
+                return drain(order, initial[0], initial, environment, update,
+                             poll_seconds=poll, sleep=pause)
             except KeyboardInterrupt:
                 code = 128 + stopped[-1] if stopped else 130
                 update('stopped', exit_code=code)
@@ -320,6 +352,11 @@ def snapshot(environment=None, *, now=None):
                 continue
             if row.get('model') is not None and row['model'] not in MODELS:
                 continue
+            if row.get('root') is not None and not isinstance(row['root'], str):
+                continue
+            if row.get('status_model') is not None and row['status_model'] not in {
+                    'qwen35', 'llama31', 'gemma4', 'gemma4_it', 'gemma4_text'}:
+                continue
             if not isinstance(row.get('devices', ''), str):
                 continue
             if any(type(row.get(name)) not in (int, float) or not math.isfinite(row[name])
@@ -342,8 +379,8 @@ def snapshot(environment=None, *, now=None):
     return list(sessions.values())
 
 
-def render_status(environment=None, *, now=None):
-    rows = snapshot(environment, now=now)
+def render_status(environment=None, *, now=None, rows=None):
+    rows = snapshot(environment, now=now) if rows is None else rows
     if not rows:
         return []
     lines = ['MODEL QUEUE']

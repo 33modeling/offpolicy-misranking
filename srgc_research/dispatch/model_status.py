@@ -280,15 +280,21 @@ def main(argv=None):
 
             ensure_plans(root, args.dataset, os.environ)
         snapshots = load_reports(args.model, args.dataset, root, os.environ)
-        if args.json:
-            from .model_chain import snapshot as chain_snapshot
+        from .model_chain import snapshot as chain_snapshot
+        from .qwen_status import node_rows
 
+        coordinators = chain_snapshot()
+        if args.json:
             adapter = importlib.import_module(CONFIGS[args.model][0])
-            print(json.dumps({"model": adapter.MODEL, "root": str(root.resolve()), "datasets": snapshots, "model_chain": chain_snapshot()}, indent=2))
+            print(json.dumps({"model": adapter.MODEL, "root": str(root.resolve()),
+                              "datasets": snapshots, "model_chain": coordinators,
+                              "nodes": node_rows(snapshots, coordinators=coordinators,
+                                                 model=args.model, root=root)}, indent=2))
         else:
             from .qwen_status import render
 
-            print(render(snapshots, root.resolve(), model=LABELS[args.model], include_initial=True), flush=True)
+            print(render(snapshots, root.resolve(), model=LABELS[args.model], include_initial=True,
+                         status_model=args.model, coordinators=coordinators), flush=True)
             if args.model == "gemma4_it":
                 for old_model, old_root in historical_gemma_roots(root, os.environ):
                     print(f"Historical PT records: {old_root}\n"
