@@ -128,7 +128,7 @@ def test_reset_refuses_another_models_root_without_touching_it(tmp_path, monkeyp
     assert not (root / '.startup-control').exists()
 
 
-def test_reset_runs_both_caches_before_training_and_clears_chain_scope(tmp_path, monkeypatch):
+def test_reset_runs_math_before_mbpp_cache_and_clears_chain_scope(tmp_path, monkeypatch):
     monkeypatch.setenv('GROUP_VOLUME', str(tmp_path))
     monkeypatch.setenv('OM_WORK', str(tmp_path / 'work'))
     monkeypatch.setenv('SRGC_DATASET_PHASE', 'mbpp')
@@ -139,7 +139,8 @@ def test_reset_runs_both_caches_before_training_and_clears_chain_scope(tmp_path,
         return 0
     with patch.object(entry, 'main', side_effect=stage):
         assert run.main(['all', 'reset', '--root', str(tmp_path / 'fresh')]) == 0
-    assert stages == [('1', None, '0'), ('0', None, '0')]
+    assert stages == [('1', 'math', '0'), ('0', 'math', '0'),
+                      ('1', 'mbpp', '0'), ('0', 'mbpp', '0')]
     assert os.environ['SRGC_DATASET_PHASE'] == 'mbpp' and os.environ['SRGC_RESUME_ONLY'] == '1'
 
 

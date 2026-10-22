@@ -29,13 +29,13 @@ class ReadyClaims:
         return FrozenResumeFirst.failure_counts(self)
 
     def dataset_allowed(self, queue):
-        if os.environ.get("SRGC_CACHE_ONLY") == "1":
-            return True
-        phase = os.environ.get("SRGC_DATASET_PHASE")
-        if phase is not None and phase not in {"math", "mbpp"}:
-            raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
+        from .resume_drain import active_dataset_phase
+
+        phase = active_dataset_phase()
         if phase and dataset_name(queue.plan) != phase:
             return False
+        if os.environ.get("SRGC_CACHE_ONLY") == "1":
+            return True
         if dataset_name(queue.plan) == "mbpp":
             # A completed endpoint can still be owned while its writer exits.
             # Do not cross the dataset barrier until those leases are released.

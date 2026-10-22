@@ -23,8 +23,10 @@ def check_saved_preflight(options):
     from .gemma4_it import adapter, preflight
 
     datasets = ("math", "mbpp") if options.dataset == "all" else (options.dataset,)
-    phase = os.environ.get("SRGC_DATASET_PHASE")
-    if phase in {"math", "mbpp"} and os.environ.get("SRGC_CACHE_ONLY") != "1":
+    from .resume_drain import active_dataset_phase
+
+    phase = active_dataset_phase()
+    if phase is not None:
         datasets = tuple(name for name in datasets if name == phase)
     for dataset in datasets:
         path = options.root / "experiments" / f"gemma4-12b-it-{dataset}.json"
@@ -65,10 +67,10 @@ def scoped_admission(original):
         from srgc_rebuttal import cluster
 
         plans = json.loads(environment.get("SRGC_GEMMA_PLANS", "null")) or [environment["SRGC_GEMMA_PLAN"]]
-        phase = environment.get("SRGC_DATASET_PHASE")
-        if phase is not None and environment.get("SRGC_CACHE_ONLY") != "1":
-            if phase not in {"math", "mbpp"}:
-                raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
+        from .resume_drain import active_dataset_phase
+
+        phase = active_dataset_phase(environment)
+        if phase is not None:
             selected = "math_train" if phase == "math" else "mbpp"
             plans = [path for path in plans if load_plan(Path(path))["dataset"] == selected]
             if not plans:
@@ -132,6 +134,20 @@ def run(argv=None):
     if options.action in {"status", "results", "doctor"}:
         return entry.main(args)
 
+    if (options.action in {"run", "resume"} and options.dataset == "all"
+            and os.environ.get("SRGC_DATASET_PHASE") is None
+            and os.environ.get("SRGC_CACHE_ONLY") != "1"):
+        # A direct/reset launch has no outer model-chain phase. Give it the
+        # same cache -> MATH -> MBPP order without a cross-dataset cache barrier.
+        for phase in ("math", "mbpp"):
+            with patch.dict(os.environ, {"SRGC_DATASET_PHASE": phase}):
+                code = run(args)
+            if code:
+                return code
+            if options.action == "resume":
+                args[1] = "run"  # Clear old stops once; respect later requests.
+        return 0
+
     from .gemma_it_control import RunControl
 
     control = RunControl(options)
@@ -175,20 +191,21 @@ def run(argv=None):
             check_saved_preflight(options)
             if (options.action in {"run", "resume"} and options.dataset == "all"
                     and os.environ.get("SRGC_GEMMA_CACHE_FIRST") == "1"
-                    and os.environ.get("SRGC_DATASET_PHASE") in {None, "math"}):
-                # Both datasets' independent initial-policy caches precede the
-                # training barrier. Every node shares the existing task leases.
+                    and os.environ.get("SRGC_CACHE_ONLY") != "1"):
+                # Cache only the active dataset. Missing/owned MBPP caches
+                # must never hold a MATH prefix or learner behind a barrier.
                 # Explicit resume was already applied above; never clear a new
                 # stop request again between cache and training.
                 if options.action == "resume":
                     args[1] = "run"
-                print("GEMMA preparing all MATH and MBPP initial caches before MATH training", flush=True)
-                with patch.dict(os.environ, {"SRGC_CACHE_ONLY": "1"}):
+                phase = os.environ.get("SRGC_DATASET_PHASE", "math")
+                print(f"GEMMA preparing {phase.upper()} initial caches before {phase.upper()} training", flush=True)
+                with patch.dict(os.environ, {"SRGC_CACHE_ONLY": "1", "SRGC_CACHE_DATASET": phase}):
                     check_saved_preflight(options)
                     code = entry.main(args)
                     if code:
                         return code
-                print("GEMMA all initial caches complete; checking MATH work", flush=True)
+                print(f"GEMMA {phase.upper()} initial caches complete; starting {phase.upper()} work", flush=True)
             return entry.main(args)
         except (subprocess.CalledProcessError, OSError, ValueError, TypeError, RuntimeError, ImportError) as error:
             plans = [Path(options.root) / "experiments" / f"gemma4-12b-it-{name}.json"
@@ -215,7 +232,7 @@ def main(argv=None):
         if options.action == "reset":
             args[1] = "run"
             # An explicit fresh start must not inherit a chain's resume-only or
-            # single-dataset phase, nor accidentally skip the other cache.
+            # single-dataset phase. Each dataset's cache precedes its training.
             with patch.dict(os.environ, {"SRGC_CACHE_ONLY": "0", "SRGC_RESUME_ONLY": "0",
                                          "SRGC_GEMMA_CACHE_FIRST": "1"}):
                 phase = os.environ.pop("SRGC_DATASET_PHASE", None)

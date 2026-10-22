@@ -17,14 +17,19 @@ from .datasets import dataset_name
 from .preemption import interruption_code, log_position
 
 
+def active_dataset_phase(environment=None):
+    environment = os.environ if environment is None else environment
+    key = "SRGC_CACHE_DATASET" if environment.get("SRGC_CACHE_ONLY") == "1" else "SRGC_DATASET_PHASE"
+    phase = environment.get(key)
+    if phase is not None and phase not in {"math", "mbpp"}:
+        raise ValueError(f"{key} must be math or mbpp")
+    return phase
+
+
 def phase_queues(queues):
-    if os.environ.get("SRGC_CACHE_ONLY") == "1":
-        return queues
-    phase = os.environ.get("SRGC_DATASET_PHASE")
+    phase = active_dataset_phase()
     if phase is None:
         return queues
-    if phase not in {"math", "mbpp"}:
-        raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
     selected = [queue for queue in queues if dataset_name(queue.plan) == phase]
     if not selected:
         raise ValueError(f"no {phase} plan in requested queues")
@@ -32,12 +37,11 @@ def phase_queues(queues):
 
 
 def phase_pending(manager, pending):
-    if os.environ.get("SRGC_CACHE_ONLY") == "1":
-        return {key for key in pending if manager.tasks[key][1].arm == "cache"}
-    phase = os.environ.get("SRGC_DATASET_PHASE")
-    if phase is not None and phase not in {"math", "mbpp"}:
-        raise ValueError("SRGC_DATASET_PHASE must be math or mbpp")
-    return {key for key in pending if phase is None or dataset_name(manager.tasks[key][0].plan) == phase}
+    phase = active_dataset_phase()
+    cache_only = os.environ.get("SRGC_CACHE_ONLY") == "1"
+    return {key for key in pending
+            if (not cache_only or manager.tasks[key][1].arm == "cache")
+            and (phase is None or dataset_name(manager.tasks[key][0].plan) == phase)}
 
 
 def stop_code():
@@ -108,7 +112,8 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
         # valid. Restrict only this worker's runnable tasks, never plan contents.
         for queue in cohort:
             queue.tasks = [task for task in queue.tasks if task.arm == "cache"]
-    requested = phase_queues(cohort) if os.environ.get("SRGC_DATASET_PHASE") is not None else requested
+    requested = phase_queues(cohort) if (os.environ.get("SRGC_DATASET_PHASE") is not None
+                                        or active_dataset_phase() is not None) else requested
     for queue in cohort:
         queue.bind()
     worker_id = uuid.uuid4().hex
@@ -210,7 +215,8 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         manager, cohort = cohort_for(requested, factory, pattern)
     else:
         cohort = list(manager.queues.values())
-    requested = phase_queues(cohort) if os.environ.get("SRGC_DATASET_PHASE") is not None else requested
+    requested = phase_queues(cohort) if (os.environ.get("SRGC_DATASET_PHASE") is not None
+                                        or active_dataset_phase() is not None) else requested
     siblings = [q for q in cohort if q not in requested]
     for queue in siblings:
         queue.bind()

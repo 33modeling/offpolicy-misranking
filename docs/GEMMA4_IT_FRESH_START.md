@@ -45,7 +45,10 @@ updates. The two official modality suppressions apply equally to generation
 and normalized training log probabilities. These comparison settings differ
 from the model card's native top-k/top-p and thinking-enabled benchmarks.
 
-Both MATH and MBPP initial caches finish before MATH training. For each dataset,
+MATH initial caches finish first and immediately release MATH prefix/training.
+MATH never waits for MBPP caches, MBPP cache leases or MBPP preflight. MBPP caches
+and training follow MATH completion. This ordering also applies to direct and
+fresh-start commands without an outer model-chain phase. For each dataset,
 the fixed eight-prompt/eight-response preflight must reach at least 25% success
 and contain no empty responses before full caching or training. One correct draw
 out of 64 no longer passes. This 25% floor is an operational guard against a
