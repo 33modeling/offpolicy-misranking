@@ -131,7 +131,14 @@ def main(argv=None):
             report['weight_placement'] = 'CPU offload; GPU execution'
         else:
             report['device'] = 'cpu'
-        original = model.generate
+        if args.gpu_offload:
+            from ..gemma4.memory import bounded_generate
+            # The loader's CPU wrapper captured CPU RNG. Rebind the native
+            # method so an offloaded GPU OOM retry also restores CUDA RNG.
+            original = bounded_generate(type(model).generate.__get__(model, type(model)),
+                                        torch.device(device))
+        else:
+            original = model.generate
         captured = []
         active = None
 

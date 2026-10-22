@@ -1,0 +1,14 @@
+........................................................................ [ 82%]
+...............                                                          [100%]
+=============================== warnings summary ===============================
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[qwen35]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[qwen35]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[gemma4]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[gemma4]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[llama31]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[llama31]
+  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=2821687) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+87 passed, 6 warnings in 33.02s

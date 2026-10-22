@@ -1,0 +1,124 @@
+{
+  "scope": "CPU replay checks of saved responses; no new generations or updates",
+  "verification_source_commit": "00086aeb4e36455d5ed1c684b71b3e02ce8da97d",
+  "verification_script_sha256": "3af4be6d2c06c4db558e9c11fb3b051952797e884ad23c8575f96a7e3fdfe887",
+  "runs": [
+    {
+      "artifact": "actual-cpu-comparison.json",
+      "sha256": "a0b5ad90b39f55545ed630ac976f3715f43ff4cdae5041d6258df5c59d11f52f",
+      "source_digests_verified": true,
+      "complete": false,
+      "cases": [
+        {
+          "dataset": "math",
+          "candidate": "math_train-0042a7ac128d8224",
+          "profile": "comparison",
+          "responses": [
+            {
+              "recorded_reward": 0.0,
+              "rescored_reward": 0.0,
+              "tokens": 512,
+              "stopped": false,
+              "empty": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "artifact": "actual-cpu-official.json",
+      "sha256": "b4b00d56365ebbe5b3e776ef4dad8b4d07beeaba03d2bebba6678c7b98abeb5f",
+      "source_digests_verified": true,
+      "complete": false,
+      "cases": [
+        {
+          "dataset": "math",
+          "candidate": "math_train-0042a7ac128d8224",
+          "profile": "official",
+          "responses": [
+            {
+              "recorded_reward": 0.0,
+              "rescored_reward": 0.0,
+              "tokens": 512,
+              "stopped": false,
+              "empty": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "artifact": "actual-cpu-canaries.json",
+      "sha256": "e0cccb08f9370158079c93cff3723eee796172dee859706c5a242ad545f14a5e",
+      "source_digests_verified": true,
+      "complete": true,
+      "cases": [
+        {
+          "dataset": "math",
+          "candidate": "synthetic-math-instruction-canary-v1",
+          "profile": "greedy",
+          "responses": [
+            {
+              "recorded_reward": 1.0,
+              "rescored_reward": 1.0,
+              "tokens": 7,
+              "stopped": true,
+              "empty": false
+            }
+          ]
+        },
+        {
+          "dataset": "mbpp",
+          "candidate": "synthetic-mbpp-instruction-canary-v1",
+          "profile": "greedy",
+          "responses": [
+            {
+              "recorded_reward": 1.0,
+              "rescored_reward": 1.0,
+              "tokens": 20,
+              "stopped": true,
+              "empty": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "artifact": "actual-cpu-regression-full-budget.json",
+      "sha256": "834489f9c0a4153c16cd2170bbe89271481103d12cd1e730b737623b4d381bf1",
+      "source_digests_verified": true,
+      "complete": true,
+      "cases": [
+        {
+          "dataset": "math",
+          "candidate": "math_train-6b07de8f60714bbd",
+          "profile": "comparison",
+          "responses": [
+            {
+              "recorded_reward": 1.0,
+              "rescored_reward": 1.0,
+              "tokens": 386,
+              "stopped": true,
+              "empty": false
+            }
+          ]
+        },
+        {
+          "dataset": "mbpp",
+          "candidate": "mbpp-d7d46003b327405e",
+          "profile": "comparison",
+          "responses": [
+            {
+              "recorded_reward": 1.0,
+              "rescored_reward": 1.0,
+              "tokens": 682,
+              "stopped": true,
+              "empty": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "all_checks_passed": true
+}

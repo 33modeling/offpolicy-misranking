@@ -1,0 +1,63 @@
+...........F...................................................          [100%]
+=================================== FAILURES ===================================
+_ test_it_training_records_all_25_update_boundaries_and_exports_separate_rewards _
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-70/test_it_training_records_all_20')
+
+    def test_it_training_records_all_25_update_boundaries_and_exports_separate_rewards(tmp_path):
+        from srgc_rebuttal.srgc import Engine
+        from srgc_research.dispatch import model_results, reward_curves
+        from srgc_research.dispatch.reward_curve_results import collect
+        from srgc_research.tests.test_model_results import finish, make_cohort, read_result
+        from srgc_research.tests.test_reward_curves import history, make_engine
+    
+        cohort = make_cohort("gemma4_it", tmp_path / "profile")
+        with adapter.runtime_adapter():
+            q = __import__("srgc_rebuttal.cluster_queue", fromlist=["TaskQueue"]).TaskQueue(cohort.plans["math"])
+            command = adapter.task_command(q, next(task for task in q.tasks if task.arm == "sr"))
+        recorded = reward_curves.recording_command(command)
+        assert recorded[recorded.index("--model") + 1] == "gemma4_it"
+        engine, _, plan, data, binding = make_engine(tmp_path / "recording", True)
+>       engine.run_until(275)
+
+srgc_research/tests/test_gemma_it.py:179: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+srgc_rebuttal/srgc.py:400: in run_until
+    self.update()
+srgc_research/dispatch/reward_curves.py:331: in update
+    self.capture_boundary()
+srgc_research/dispatch/reward_curves.py:279: in capture_boundary
+    with meter.phase("checkpoint_save", self.step, self.backend.gpu_count):
+/usr/lib/python3.12/contextlib.py:144: in __exit__
+    next(self.gen)
+srgc_rebuttal/timing.py:162: in phase
+    self.end_phase()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <srgc_rebuttal.timing.CostMeter object at 0x7b599e5c6150>
+
+    def end_phase(self):
+        self.synchronize_all()
+        parts = self.gather(self.finish(self.local_gpu_count))
+        report = aggregate_ranks(parts)
+        if report["gpu_count"] != self.event["gpu_count"]:
+>           raise ValueError("rank allocation differs from phase allocation")
+E           ValueError: rank allocation differs from phase allocation
+
+srgc_rebuttal/timing.py:136: ValueError
+----------------------------- Captured stdout call -----------------------------
+GEMMA dataset=math_train task=seed-5.sr plan=/tmp/pytest-of-kms/pytest-70/test_it_training_records_all_20/profile/work with spaces/srgc-rebuttal/gemma4_it/experiments/gemma4-12b-it-math.json
+=============================== warnings summary ===============================
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[qwen35]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[qwen35]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[gemma4]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[gemma4]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[llama31]
+srgc_research/tests/test_model_results.py::test_two_nodes_serialize_snapshot_and_publish_to_the_same_file[llama31]
+  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=2817440) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED srgc_research/tests/test_gemma_it.py::test_it_training_records_all_25_update_boundaries_and_exports_separate_rewards
+1 failed, 62 passed, 6 warnings in 30.84s

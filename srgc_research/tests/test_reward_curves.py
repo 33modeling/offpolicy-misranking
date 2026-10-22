@@ -127,6 +127,25 @@ def test_final_boundary_is_archived_without_repeating_final_eval(tmp_path):
     assert (tmp_path / "reward-curves/sr/step-275.pt").exists()
 
 
+def test_cpu_recording_uses_no_gpu_allocation_even_on_a_cuda_host(tmp_path):
+    torch = pytest.importorskip("torch")
+    engine, backend, *_ = make_engine(tmp_path, True)
+    assert backend.gpu_count == 0
+    with patch.object(torch.cuda, "is_available", return_value=True), \
+            patch.object(torch.cuda, "synchronize", side_effect=AssertionError("CPU recorder touched CUDA")):
+        engine.capture_boundary()
+    directory = tmp_path / "reward-curves/prefix"
+    point = json.loads((directory / "step-25.json").read_text())
+    assert point["reward"] == .5
+    receipts = list((directory / "cost-receipts/step-25").glob("*.json"))
+    assert receipts
+    for path in receipts:
+        event = json.loads(path.read_text())
+        assert event["gpu_count"] == 0
+        if event["state"] == "finished":
+            assert event["gpu_seconds"] == 0
+
+
 def test_interrupted_checkpoint_is_replaced_from_actual_weights(tmp_path):
     pytest.importorskip("torch")
     engine, backend, *_ = make_engine(tmp_path, True)

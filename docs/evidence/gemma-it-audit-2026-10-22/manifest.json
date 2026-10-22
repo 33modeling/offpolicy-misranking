@@ -1,6 +1,6 @@
 {
   "schema": "gemma4-it-pipeline-audit-v1",
-  "status": "in_progress",
+  "status": "bounded_diagnosis_complete",
   "hypotheses": [
     "The official IT chat template, one BOS, all three stop IDs and modality suppression remove the known PT-path formatting failures; test actual responses, not only toy-model execution.",
     "Comparison sampling (top-k 0, top-p 1) may differ from native sampling (top-k 64, top-p .95); paired fixed-candidate controls are diagnostic, not a capability ranking.",
@@ -58,7 +58,13 @@
     "initial_regression_suite": "476 passed, 2 failed due to historical tests using the new IT default; retained in regression-tests.log. Both failures were fixed and the old/new cancellation cases all passed (3 tests).",
     "audit_regression_suite": "79 passed; includes preflight rescoring and complete/partial cache distinction.",
     "latest_it_suite": "27 passed, including FP32/BF16 native log-probability/gradient comparison, all official end tokens, reset/cache isolation, checkpoint/export cadence and verifier controls.",
-    "source_pin_checks": "All four run source digests match their implementation commits."
+    "source_pin_checks": "All four run source digests match their implementation commits.",
+    "final_model_it_suite": "42 passed; final-model-it-tests.log",
+    "status_regression_suite": "49 passed; status-regression-tests.log. CPU-only startup/partial/PASS/PAUSED/invalid-panel status, no recursive rollout walk, historical-path separation and plan-path containment.",
+    "recorded_response_replay": "All 6 saved completed responses: exact token decoding, source data hashes, source implementation digests, IT prompt and seed checks, verifier rewards all matched. No new generations; replay-verification.json and verify_probes.py.",
+    "audit_test_correction": "An earlier new test expected zero for a partial initial cache; corrected to require full-cache accuracy null and raw-subset accuracy zero. Retained failed test output is code-test evidence, not a scientific measurement.",
+    "it_results_recording_integration": "87 passed; it-results-integration-fixed-tests.log. Includes all 25-update archives/exports, IT diagnostics, all-model results and CPU recorder behavior on a CUDA-capable host.",
+    "retained_integration_failure": "Initial integration run: 62 passed, 1 failed; CPU recorder auto-detected host CUDA and mismatched its zero-GPU backend allocation. Fixed recorder to use actual backend allocation; added a CUDA-host/CPU-backend regression. The original failure log is retained in it-results-integration-tests.log."
   },
   "guard_changes": {
     "minimum_small_panel_success_percent": 25.0,
@@ -146,11 +152,46 @@
     },
     {
       "artifact": "actual-cpu-regression-full-budget.json",
-      "complete": false,
-      "measured_cases": 0,
-      "summary_of_completed_cases": {},
+      "complete": true,
+      "measured_cases": 2,
+      "summary_of_completed_cases": {
+        "math:comparison": {
+          "prompts": 1,
+          "responses": 1,
+          "correct": 1.0,
+          "empty": 0,
+          "truncated": 0,
+          "suppressed_tokens": 0,
+          "success_percent": 100.0
+        },
+        "mbpp:comparison": {
+          "prompts": 1,
+          "responses": 1,
+          "correct": 1.0,
+          "empty": 0,
+          "truncated": 0,
+          "suppressed_tokens": 0,
+          "success_percent": 100.0
+        }
+      },
       "error": null
     }
   ],
-  "bounded_control_status": "Stopped after both matched MATH draws hit the artificial 512-token diagnostic cap. Both completed MATH responses scored zero and were truncated; MBPP draws had no completed receipts and remain unmeasured. This is not full-cache performance."
+  "bounded_control_status": "Stopped after both matched MATH draws hit the artificial 512-token diagnostic cap. Both completed MATH responses scored zero and were truncated; MBPP draws had no completed receipts and remain unmeasured. This is not full-cache performance.",
+  "completion_scope": "Actual-weight fixed regression and synthetic controls complete; 512-token paired controls stopped with censoring recorded. Full initial caches, held-out evaluation and training have not been run.",
+  "measured_findings": [
+    "Synthetic arithmetic/code canaries both passed with greedy generation and a 64-token cap. This is a basic instruction/verifier check only.",
+    "The fixed offset-1 MATH age regression produced Answer: 6, reward 1, 386 tokens, stopped normally within the actual 2048-token budget. The paired MBPP range-sum regression passed its original tests, reward 1, 682 tokens, stopped normally. Each is one prompt and one sampled response; neither is a population accuracy estimate.",
+    "Matched offset-0 MATH controls at an artificial 512-token cap both truncated and scored zero. They are a different question from the offset-1 full-budget regression, so the two slices cannot identify a causal token-budget or sampler effect. MBPP had no completed receipt in either stopped control and remains unmeasured.",
+    "None of the six completed saved diagnostic responses was blank or contained suppressed modality IDs. This does not establish that such failures are impossible on the full cohort."
+  ],
+  "status_fix": {
+    "commit": "00086aeb4e36455d5ed1c684b71b3e02ce8da97d",
+    "verified": "Local prepared-cohort and missing-plan tests; no remote H100 status invocation was available.",
+    "changes": "Announce the selected model/root immediately, skip recursive raw-rollout/checkpoint scanning, show preparation and validated fixed-panel progress, list historical PT roots separately."
+  },
+  "code_fix_limits": {
+    "cpu_recorder": "Uses actual backend GPU allocation for recording phases; real four-GPU training still records four allocated GPUs. No historical timing records or checkpoints were changed.",
+    "gpu_offload_diagnostic": "Optional GPU-offload probe rebinds bounded generation to the execution device so OOM retries restore the CUDA RNG. Actual new measurements in this audit used CPU only; no successful GPU-offload performance measurement is claimed."
+  }
 }

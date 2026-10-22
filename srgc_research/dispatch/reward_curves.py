@@ -272,7 +272,8 @@ def recording_engine(base, folder, task, plan_path, plan, data):
                 if primary(existing):
                     return
                 receipts = directory / "cost-receipts" / f"step-{self.step}"
-                meter = torch_meter(lambda event: PhaseLedger(receipts).record(event))
+                meter = torch_meter(lambda event: PhaseLedger(receipts).record(event),
+                                    cuda=self.backend.gpu_count > 0)
 
                 # A checkpoint without a completed point may be a partial write
                 # from a failed attempt. Replace it from these actual weights.

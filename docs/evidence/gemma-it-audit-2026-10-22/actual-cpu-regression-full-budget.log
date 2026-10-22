@@ -29,3 +29,22 @@ Generating math math_train-6b07de8f60714bbd comparison n=1
 [cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=218
 [cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=272
 [cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=326
+[cache] rank=0 prompt=math_train-6b07de8f60714bbd generated_steps=378
+{"dataset": "math", "candidate": "math_train-6b07de8f60714bbd", "profile": "comparison", "rewards": [1.0], "tokens": [386], "seconds": 420.74795659197844}
+Generating mbpp mbpp-d7d46003b327405e comparison n=1
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=1
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=57
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=112
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=166
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=219
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=269
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=320
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=370
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=420
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=469
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=517
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=564
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=610
+[cache] rank=0 prompt=mbpp-d7d46003b327405e generated_steps=657
+{"dataset": "mbpp", "candidate": "mbpp-d7d46003b327405e", "profile": "comparison", "rewards": [1.0], "tokens": [682], "seconds": 477.38519151500077}
+{"math:comparison": {"correct": 1.0, "empty": 0, "prompts": 1, "responses": 1, "success_percent": 100.0, "suppressed_tokens": 0, "truncated": 0}, "mbpp:comparison": {"correct": 1.0, "empty": 0, "prompts": 1, "responses": 1, "success_percent": 100.0, "suppressed_tokens": 0, "truncated": 0}}

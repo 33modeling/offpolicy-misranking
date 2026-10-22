@@ -100,6 +100,25 @@ The optional `--gpu-offload` is a local memory workaround, not the H100 protocol
 Smaller prompt/response/token budgets must be reported as such. A truncated
 answer is retained and counted; it is never silently removed from the denominator.
 
+The [2026-10-22 recorded audit](evidence/gemma-it-audit-2026-10-22/manifest.json)
+includes actual BF16 CPU generation from the pinned 12B IT weights. With the
+comparison sampler and the full 2,048-token budget, the fixed MATH age regression
+returned the correct answer 6 in 386 tokens, and the fixed MBPP inclusive-range
+sum regression passed its original tests in 682 tokens. Both stopped normally.
+Each has one sampled response; this deliberately chosen regression pair is not
+an estimate of full-cohort accuracy. Separate 64-token greedy arithmetic/code
+canaries also passed. No diagnostic performed optimizer updates.
+
+Both matched native/comparison controls on a different MATH geometry question
+hit the artificial 512-token cap and scored zero. Their subsequent MBPP draws
+were interrupted without completed receipts and remain unmeasured. Different
+question slices prevent attributing the full-budget results to the longer budget
+or the sampler. Full initial-cache accuracy and held-out performance remain
+unmeasured. All six completed saved responses were independently decoded and
+rescored; data hashes and exact implementation digests were checked. See
+[replay evidence](evidence/gemma-it-audit-2026-10-22/replay-verification.json) and
+the adjacent `verify_probes.py` for reproduction without new generation.
+
 The diagnostic panel is candidate data. Its score is neither fixed held-out
 evaluation nor full initial-cache accuracy. Even a successful panel cannot
 certify that the full cache will reach 70%. Measure the full cache separately.
