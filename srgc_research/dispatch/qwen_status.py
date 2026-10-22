@@ -279,6 +279,18 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines.append(f"HISTORY  {len(hidden)} expired unowned worker sessions hidden; receipts and logs retained")
     for report in snapshots:
         rows = report["tasks"]
+        if report.get("preparing"):
+            lines += ["", f"{report['label']} PREPARING | initial model/input preparation lease is active"]
+        panel = report.get("preflight")
+        if panel:
+            detail = (f"{panel['saved_prompts']}/{panel['total_prompts']} prompts recorded"
+                      if "saved_prompts" in panel else "see ATTENTION")
+            if "success_percent" in panel:
+                detail += (f" | {panel['correct']:g}/{panel['responses']} correct ({panel['success_percent']:.2f}%)"
+                           f" | empty {panel['empty_responses']} | truncated {panel['truncated_responses']}")
+            lines += ["", f"{report['label']} PREFLIGHT {panel['state']} | {detail}"]
+            if panel.get("path"):
+                lines.append(f"  Fixed small panel; full initial-cache accuracy is separate. Records: {panel['path']}")
         if not report.get("prepared", True):
             lines += ["", f"{report['label']}  NOT PREPARED / UNREADABLE"]
             continue

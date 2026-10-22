@@ -5,6 +5,7 @@ import hashlib
 import importlib
 import json
 import os
+import shlex
 import sys
 import time
 from collections import Counter
@@ -26,6 +27,63 @@ CONFIGS = {
 LABELS = {"qwen35": "Qwen3.5-9B", "llama31": "Llama-3.1-8B-Instruct", "gemma4": "Gemma-4-12B-PT"}
 LABELS["gemma4_text"] = "Gemma-4-12B-PT (text-v3)"
 LABELS["gemma4_it"] = "Gemma-4-12B-IT (thinking off)"
+
+
+def it_preflight_status(root, path, plan):
+    """Read the fixed panel on CPU, validating its summary against raw receipts."""
+    from .gemma4_it import preflight
+
+    data = live.read_object(input_path(path, plan, plan["seeds"][0]))
+    protocol = preflight.identity(path, plan, data)
+    directory = preflight.folder(path, plan)
+    from .gemma4_it.storage import inside
+
+    inside(directory, root)
+    rows = []
+    for candidate in protocol["candidate_ids"]:
+        receipt = inside(directory / f"{hashlib.sha256(candidate.encode()).hexdigest()}.json", root)
+        row = preflight.read_receipt(receipt, protocol, candidate)
+        if row is not None:
+            rows.append(row)
+    result = {"state": "PARTIAL" if rows else "NOT STARTED", "saved_prompts": len(rows),
+              "total_prompts": len(protocol["candidate_ids"]), "path": str(directory)}
+    summary = inside(directory / "summary.json", root)
+    if len(rows) == result["total_prompts"]:
+        expected = preflight.summarize(protocol, rows)
+        if summary.is_file():
+            if live.read_object(summary) != expected:
+                raise ValueError(f"preflight summary differs from raw receipts: {summary}")
+            result.update(state="PASS" if expected["passed"] else "PAUSED", **expected)
+        else:
+            result["state"] = "AWAITING SUMMARY"
+    elif summary.is_file():
+        raise ValueError(f"preflight summary has incomplete raw receipts: {summary}")
+    return result
+
+
+def historical_gemma_roots(root, environment):
+    """Locate old PT plans without scanning or folding them into IT statistics."""
+    from .gemma4_it.storage import group_work, inside
+
+    group, work = group_work(environment)
+    parent = work / "srgc-rebuttal"
+    candidates = {parent / "gemma4-12b-pt-v1", parent / "gemma4-12b-text-v3"}
+    candidates.update(Path(environment[key]) for key in ("SRGC_GEMMA_ROOT", "SRGC_GEMMA_TEXT_ROOT")
+                      if environment.get(key))
+    found = []
+    for candidate in sorted(candidates):
+        try:
+            candidate = inside(candidate, group)
+        except ValueError:
+            continue
+        if candidate == root.resolve():
+            continue
+        for model, prefix in (("gemma4_text", "gemma4-12b-text"), ("gemma4", "gemma4-12b-pt")):
+            if any((candidate / "experiments" / f"{prefix}-{name}.json").is_file()
+                   for name in ("math", "mbpp")):
+                found.append((model, candidate))
+                break
+    return found
 
 
 def interrupted_receipts(report):
@@ -113,7 +171,10 @@ def load_reports(model, dataset, root, environment):
     adapter, storage = importlib.import_module(adapter_name), importlib.import_module(storage_name)
     group, _ = storage.group_work(environment)
     root = storage.inside(root, group)
-    storage.validate_tree(root)
+    # Status reads validated plans and bounded metadata paths. Walking every
+    # rollout/checkpoint first can stall shared-storage status before any output.
+    # validate_extension below retains each adapter's plan-path containment checks.
+    storage.inside(root / "experiments", root)
     # engine_digest remains the original engine even inside runtime_adapter().
     identity = hashlib.sha256((adapter.engine_digest() + adapter.adapter_digest()).encode()).hexdigest()
     snapshots = []
@@ -163,6 +224,15 @@ def load_reports(model, dataset, root, environment):
                 root / f".startup-control/{name}/stop.json",
                 root / f"runs/{name}/.queue/stop.json",
             ))
+        if model == "gemma4_it":
+            report["preparing"] = reports.locked(root / ".start-prepare.lock")
+            if report["prepared"]:
+                try:
+                    report["preflight"] = it_preflight_status(root, path, plan)
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    report["preflight"] = {"state": "INVALID"}
+                    report["errors"].append(f"preflight: {error}")
+                    report["complete"] = False
         report["label"] = "MATH" if name == "math" else "MBPP"
         if report["prepared"]:
             from .submission_time import attach as attach_submission_time
@@ -186,6 +256,8 @@ def main(argv=None):
     try:
         storage = importlib.import_module(CONFIGS[args.model][1])
         root = storage.default_root(os.environ) if args.root is None else args.root
+        if not args.json:
+            print(f"Reading {LABELS[args.model]} status | Root: {root.resolve()}", file=sys.stderr, flush=True)
         snapshots = load_reports(args.model, args.dataset, root, os.environ)
         if args.json:
             from .model_chain import snapshot as chain_snapshot
@@ -195,7 +267,12 @@ def main(argv=None):
         else:
             from .qwen_status import render
 
-            print(render(snapshots, root.resolve(), model=LABELS[args.model], include_initial=True))
+            print(render(snapshots, root.resolve(), model=LABELS[args.model], include_initial=True), flush=True)
+            if args.model == "gemma4_it":
+                for old_model, old_root in historical_gemma_roots(root, os.environ):
+                    print(f"Historical PT records: {old_root}\n"
+                          f"  python3 -m srgc_research.dispatch.model_status {old_model} --root {shlex.quote(str(old_root))}",
+                          flush=True)
         return int(any(report["errors"] for report in snapshots))
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"STATUS ERROR: {error}", file=sys.stderr)
