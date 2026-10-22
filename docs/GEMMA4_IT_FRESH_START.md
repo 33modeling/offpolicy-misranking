@@ -96,6 +96,11 @@ answer is retained and counted; it is never silently removed from the denominato
 The diagnostic panel is candidate data. Its score is neither fixed held-out
 evaluation nor full initial-cache accuracy. Even a successful panel cannot
 certify that the full cache will reach 70%. Measure the full cache separately.
+`--canaries --profiles greedy --tokens 64` instead checks two explicitly labeled
+synthetic arithmetic/code instructions. These positive controls are never pooled
+with candidate or held-out scores. The read-only audit also exports the raw
+preflight panel, recognizes every official stop token, and can rescore saved
+responses to expose a mismatch between recorded rewards and the actual verifier.
 For caching without training or model-chain transitions, use:
 
 ```sh

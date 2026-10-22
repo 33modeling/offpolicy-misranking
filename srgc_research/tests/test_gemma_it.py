@@ -354,3 +354,76 @@ def test_it_diagnostic_controls_retain_stops_and_suppression_and_preserve_raw_re
     with pytest.raises(SystemExit):
         probe.main(['--snapshot', str(tmp_path), '--output', str(path)])
     assert path.read_text() == 'original experiment'
+
+
+def test_it_audit_exports_preflight_and_detects_misrecorded_rewards_with_turn_eos(tmp_path):
+    import hashlib
+    from srgc_research.dispatch.gemma4_it.audit import audit
+    from srgc_research.tests.test_model_results import make_cohort
+    cohort = make_cohort('gemma4_it', tmp_path)
+    path = cohort.plans['math']
+    plan = adapter.validate_extension(path)
+    bundle = json.loads(input_path(path, plan, 5).read_text())
+    protocol = preflight.identity(path, plan, bundle)
+    folder = preflight.folder(path, plan)
+    rows = []
+    for index, candidate in enumerate(protocol['candidate_ids']):
+        # Deliberately wrong, mislabeled fixture: rescore must expose the error.
+        row = {'protocol': protocol, 'id': candidate, 'responses': ['Answer: -999999999'] * 8,
+               'rewards': [1] * 8, 'token_ids': [[9, 106 if index % 2 else 50]] * 8}
+        atomic_json(folder / f'{hashlib.sha256(candidate.encode()).hexdigest()}.json', row)
+        rows.append(row)
+    atomic_json(folder / 'summary.json', preflight.summarize(protocol, rows))
+    result = audit(cohort.root, rescore=1)
+    panel = next(row for row in result['preflight'] if row['dataset'] == 'math')
+    assert panel['complete'] and panel['summary']['responses'] == 64
+    assert panel['features']['eos_responses'] == 64
+    assert panel['features']['length_limit_responses'] == 0
+    assert panel['rescore'][0]['current_reward'] == 0
+    assert any('preflight rescore differs' in error for error in result['errors'])
+    assert all(row['initial_success_percent'] is None for row in result['datasets'])
+
+
+def test_it_audit_checks_real_cache_store_receipts_without_changing_records(tmp_path):
+    from srgc_rebuttal import build_cache
+    from srgc_research.dispatch.gemma4_it.audit import audit
+    from srgc_research.tests.test_model_results import make_cohort
+    cohort = make_cohort('gemma4_it', tmp_path)
+    path = cohort.plans['math']
+    plan = adapter.validate_extension(path)
+    data_path = input_path(path, plan, 5)
+    bundle = json.loads(data_path.read_text())
+    candidate = bundle['candidate_ids'][0]
+    protocol = {key: plan[key] for key in
+                ('model', 'model_revision', 'verifier', 'responses', 'max_new_tokens', 'attention')}
+    protocol['cache_seed'] = 5
+    with adapter.runtime_adapter():
+        cache = build_cache.CacheStore(data_path, bundle, protocol)
+        cache.bind()
+        cache.write(candidate, [0] * 8, ['Answer: -999999999'] * 8, 0.1)
+    bundle['cached_rewards'][candidate] = [0] * 8
+    atomic_json(data_path, bundle)
+    before = {p: p.read_bytes() for p in cohort.root.rglob('*') if p.is_file()}
+    result = audit(cohort.root, rescore=1)
+    assert not result['errors']
+    row = next(row for row in result['datasets'] if row['dataset'] == 'math' and row['seed'] == 5)
+    assert not row['errors'] and row['features']['responses'] == 8
+    assert row['initial_success_percent'] is None  # The full candidate cache is still missing.
+    assert row['raw_success_percent'] == 0
+    assert not row['raw_coverage_complete']
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_synthetic_canaries_are_distinct_from_candidates_and_use_real_verifiers():
+    from scripts.srgc_verifier_fallback import tolerant_math_reward
+    from srgc_research.dispatch.gemma4_it.probe import canary_bundle
+    from srgc_research.dispatch.gemma4_it.verifier import code_reward
+    math = canary_bundle('math')
+    candidate = math['candidate_ids'][0]
+    assert candidate.startswith('synthetic-')
+    assert tolerant_math_reward(math['records'][candidate], 'Answer: 391') == 1
+    assert tolerant_math_reward(math['records'][candidate], 'Answer: 392') == 0
+    code = canary_bundle('mbpp')
+    record = code['records'][code['candidate_ids'][0]]
+    assert code_reward(record, '```python\ndef add_one(x):\n    return x + 1\n```') == 1
+    assert code_reward(record, '```python\ndef add_one(x):\n    return x\n```') == 0

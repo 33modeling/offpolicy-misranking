@@ -14,6 +14,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+def canary_bundle(dataset):
+    """Basic instruction/verifier controls, explicitly separate from benchmark data."""
+    record = ({'prompt': 'Compute 17 * 23. Reply with only Answer: NUMBER.', 'answer': '391'}
+              if dataset == 'math' else
+              {'prompt': 'Return only a Python code block defining add_one(x), which returns x + 1.',
+               'answer': 'assert add_one(2) == 3\nassert add_one(-5) == -4\nassert add_one(0) == 1'})
+    candidate = f'synthetic-{dataset}-instruction-canary-v1'
+    return {'candidate_ids': [candidate], 'records': {candidate: record}}
+
+
 def generation_options(profile, kwargs, native):
     options = dict(kwargs)
     if profile == 'official':
@@ -64,6 +74,7 @@ def main(argv=None):
     parser.add_argument('--dataset', choices=('all', 'math', 'mbpp'), default='all')
     parser.add_argument('--threads', type=int, default=8)
     parser.add_argument('--gpu-offload', action='store_true')
+    parser.add_argument('--canaries', action='store_true', help='synthetic instruction controls, not benchmark prompts')
     args = parser.parse_args(argv)
     profiles = args.profiles.split(',')
     if (not 1 <= args.prompts <= 8 or not 1 <= args.tokens <= 2048
@@ -91,7 +102,10 @@ def main(argv=None):
               'dtype': 'bfloat16', 'attention': 'eager', 'thinking': 'off',
               'max_new_tokens': args.tokens, 'requested_responses': args.responses,
               'seed': args.seed, 'profiles': profiles, 'training_updates': 0,
-              'scope': 'fixed small candidate panel; not full initial-cache accuracy or held-out evaluation',
+              'cpu_threads': args.threads,
+              'panel_kind': 'synthetic_canaries' if args.canaries else 'fixed_candidates',
+              'scope': ('synthetic instruction/verifier controls; not benchmark accuracy' if args.canaries else
+                        'fixed small candidate panel; not full initial-cache accuracy or held-out evaluation'),
               'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
               'adapter_sha256': adapter_digest(), 'engine_sha256': engine_digest(),
               'cases': [], 'summary': {}, 'complete': False}
@@ -133,7 +147,8 @@ def main(argv=None):
             if args.dataset not in {'all', dataset}:
                 continue
             bundle_path = REPO / 'srgc_rebuttal/inputs' / filename
-            bundle_bytes = bundle_path.read_bytes()
+            bundle_bytes = (json.dumps(canary_bundle(dataset), sort_keys=True).encode()
+                            if args.canaries else bundle_path.read_bytes())
             bundle = json.loads(bundle_bytes)
             for candidate in bundle['candidate_ids'][:args.prompts]:
                 record = dict(bundle['records'][candidate])
@@ -156,7 +171,8 @@ def main(argv=None):
                         raise ValueError('raw token receipts do not cover every generated response')
                     row = {'dataset': dataset, 'candidate': candidate, 'profile': profile,
                            'sampling_seed': candidate_seed(args.seed, candidate),
-                           'source_bundle': str(bundle_path.relative_to(REPO)),
+                           'source_bundle': None if args.canaries else str(bundle_path.relative_to(REPO)),
+                           'source_definition': 'canary_bundle:v1' if args.canaries else None,
                            'source_bundle_sha256': hashlib.sha256(bundle_bytes).hexdigest(),
                            'source_prompt': source_prompt, 'prompt': record['prompt'],
                            'gold': record['answer'], 'responses': texts, 'rewards': rewards,

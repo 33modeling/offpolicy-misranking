@@ -190,9 +190,13 @@ def audit_seed(root, plan_path, plan, dataset, seed, *, samples=1, rescore=0,
             'recorded_sampling': plan.get('sampling'), 'prompt_format': data.get('provenance', {}).get('prompt_format')}
 
 
-def audit_preflight(root, plan_path, plan, dataset, *, samples=1, rescore=0):
+def audit_preflight(root, plan_path, plan, dataset, *, samples=1, rescore=0,
+                    preflight_module=None, eos_tokens=(1,)):
     """Read the recorded small panel separately from full initial-cache accuracy."""
-    from .gemma4_text import preflight
+    if preflight_module is None:
+        from .gemma4_text import preflight
+    else:
+        preflight = preflight_module
 
     data = read_object(below(plan_path.parent / plan['input_pattern'].format(seed=plan['seeds'][0]), root))
     protocol = preflight.identity(plan_path, plan, data)
@@ -209,11 +213,12 @@ def audit_preflight(root, plan_path, plan, dataset, *, samples=1, rescore=0):
         for index, (text, reward, tokens) in enumerate(zip(row['responses'], row['rewards'], row['token_ids'])):
             traits.update({key: int(value) for key, value in features(text, dataset).items()})
             traits['answer_label_only'] += bool(re.fullmatch(r'\s*Answer\s*:\s*', text, re.IGNORECASE))
-            traits['eos_responses'] += 1 in tokens
-            traits['length_limit_responses'] += len(tokens) == protocol['max_new_tokens'] and 1 not in tokens
+            stopped = any(token in eos_tokens for token in tokens)
+            traits['eos_responses'] += stopped
+            traits['length_limit_responses'] += len(tokens) == protocol['max_new_tokens'] and not stopped
             if len(examples) < samples:
                 examples.append({'candidate': candidate, 'response_index': index, 'reward': reward,
-                                 'text': text[:500], 'tokens': len(tokens), 'eos': 1 in tokens})
+                                 'text': text[:500], 'tokens': len(tokens), 'eos': stopped})
             if len(rescored) < rescore:
                 item = {'candidate': candidate, 'response_index': index, 'recorded_reward': reward}
                 try:

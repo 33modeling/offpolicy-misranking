@@ -6,8 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from .. import gemma_initial_audit as shared
+from . import preflight
 from .adapter import MODEL, REVISION, validate_extension
-from .protocol import PROMPT_FORMAT
+from .protocol import EOS_TOKENS, PROMPT_FORMAT
 from .storage import default_root
 from .verifier import code_reward
 
@@ -20,11 +21,16 @@ def audit(root, dataset='all', *, samples=1, rescore=0):
         path = root / 'experiments' / f'gemma4-12b-it-{name}.json'
         try:
             plan = validate_extension(path, read_only=True)
-            for seed in plan['seeds']:
-                original = shared._rescore
-                with patch.object(shared, '_rescore', lambda record, response, dataset, **kwargs:
-                                  code_reward(record, response) if dataset == 'mbpp'
-                                  else original(record, response, dataset, **kwargs)):
+            original = shared._rescore
+            with patch.object(shared, '_rescore', lambda record, response, dataset, **kwargs:
+                              code_reward(record, response) if dataset == 'mbpp'
+                              else original(record, response, dataset, **kwargs)):
+                panel = shared.audit_preflight(root, path, plan, name,
+                    samples=samples, rescore=rescore, preflight_module=preflight,
+                    eos_tokens=EOS_TOKENS)
+                result['preflight'].append(panel)
+                result['errors'].extend(f"{name}: {error}" for error in panel['errors'])
+                for seed in plan['seeds']:
                     result['datasets'].append(shared.audit_seed(root, path, plan, name, seed,
                         samples=samples, rescore=rescore, model=MODEL, revision=REVISION,
                         prompt_formats=(PROMPT_FORMAT,), strict_receipts=True))
