@@ -1,0 +1,25 @@
+{
+  "model": "google/gemma-4-12B-it",
+  "stop_ids": [
+    1,
+    106,
+    50
+  ],
+  "datasets": {
+    "math": {
+      "prompt_records_checked": 4000,
+      "maximum_prompt_tokens": 1215,
+      "beyond_131072_with_response_budget": 0,
+      "duplicate_bos": 0,
+      "cached_source_rewards_reused": 0
+    },
+    "mbpp": {
+      "prompt_records_checked": 4000,
+      "maximum_prompt_tokens": 3798,
+      "beyond_131072_with_response_budget": 0,
+      "duplicate_bos": 0,
+      "cached_source_rewards_reused": 0
+    }
+  },
+  "scientific_accuracy": "not measured by this tokenizer audit"
+}

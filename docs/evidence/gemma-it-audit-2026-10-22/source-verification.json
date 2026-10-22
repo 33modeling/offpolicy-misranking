@@ -1,0 +1,37 @@
+{
+  "scope": "code provenance only; not a model-accuracy measurement",
+  "runs": [
+    {
+      "file": "actual-cpu-comparison.json",
+      "reported_base_commit": "55028e2985fd49b0d3b69bd670c771495161dbb3",
+      "verified_implementation_commit": "67a66631ed18de0cb2ec048f77fb9f9b6d6a6174",
+      "adapter_sha256": "9e50b124a4864bfd7269136726aae3f0d8189c905580fc987eff90da4040b794",
+      "engine_sha256": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960",
+      "explanation": "The first two runs started on uncommitted code. Recorded content hashes exactly match the implementation commit linked here; recorded measurements are unchanged."
+    },
+    {
+      "file": "actual-cpu-official.json",
+      "reported_base_commit": "55028e2985fd49b0d3b69bd670c771495161dbb3",
+      "verified_implementation_commit": "67a66631ed18de0cb2ec048f77fb9f9b6d6a6174",
+      "adapter_sha256": "9e50b124a4864bfd7269136726aae3f0d8189c905580fc987eff90da4040b794",
+      "engine_sha256": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960",
+      "explanation": "The first two runs started on uncommitted code. Recorded content hashes exactly match the implementation commit linked here; recorded measurements are unchanged."
+    },
+    {
+      "file": "actual-cpu-canaries.json",
+      "reported_base_commit": "70d20d67580518435a335203d3017f0aecad76eb",
+      "verified_implementation_commit": "70d20d67580518435a335203d3017f0aecad76eb",
+      "adapter_sha256": "e4242aaab77fac87dabc83f79347e6f25d5de6742392dbc9ca891baebd6b24d5",
+      "engine_sha256": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960",
+      "explanation": "Recorded content hashes match the source commit."
+    },
+    {
+      "file": "actual-cpu-regression-full-budget.json",
+      "reported_base_commit": "3d529e2d31e9872ee21cb2d4d130ea1e91698e0e",
+      "verified_implementation_commit": "3d529e2d31e9872ee21cb2d4d130ea1e91698e0e",
+      "adapter_sha256": "be17c075fe5ce5d5828e539285959d4a4f2c5d927d5e679937d456a16940051e",
+      "engine_sha256": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960",
+      "explanation": "Recorded content hashes match the source commit."
+    }
+  ]
+}

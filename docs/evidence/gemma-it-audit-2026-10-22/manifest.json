@@ -1,0 +1,139 @@
+{
+  "schema": "gemma4-it-pipeline-audit-v1",
+  "status": "in_progress",
+  "hypotheses": [
+    "The official IT chat template, one BOS, all three stop IDs and modality suppression remove the known PT-path formatting failures; test actual responses, not only toy-model execution.",
+    "Comparison sampling (top-k 0, top-p 1) may differ from native sampling (top-k 64, top-p .95); paired fixed-candidate controls are diagnostic, not a capability ranking.",
+    "Short token budgets can lower measured reward by truncating valid reasoning. Keep 512-token diagnostics separate from the actual 2048-token protocol."
+  ],
+  "model": {
+    "repository": "google/gemma-4-12B-it",
+    "revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+    "weight_bytes": 23919549408,
+    "verified_weight_sha256": "5a84cb313260ac447237b890387116dfa8682e49a6b44bc585ae8353abbff18d",
+    "context_tokens_from_pinned_config": 262144
+  },
+  "data_and_transformation": {
+    "source": "srgc_rebuttal/inputs/seed-5.json and mbpp-seed-5.json",
+    "transformation": "Official IT chat template; no question, answer or split changes; original cached rewards cleared for new IT cohorts.",
+    "controls": "Synthetic arithmetic/code canaries are separate from actual candidate slices. Offset 1 MATH is the historical PT failure case (age problem); offset 1 MBPP is a corresponding fixed regression case. This is deliberately a regression panel, not a representative sample."
+  },
+  "design": {
+    "seed": 5,
+    "draws_per_candidate_per_profile": 1,
+    "training_updates": 0,
+    "thinking": "off",
+    "dtype": "bfloat16",
+    "attention": "eager",
+    "device": "CPU",
+    "budget_note": "512 for bounded offset-0 diagnostics, 2048 for offset-1 regression, 64 for synthetic canaries. The actual experiment budget remains 2048.",
+    "pairing": "Same candidate IDs and candidate_seed(5,id) for comparison/native controls; no conclusions from one stochastic draw per prompt."
+  },
+  "metric_definitions": {
+    "reward": "Binary reward from the production MATH or parent-checked MBPP verifier.",
+    "success_percent": "100 * sum(recorded binary rewards) / recorded response count within the named diagnostic group only.",
+    "empty": "Decoded response is blank after stripping whitespace.",
+    "truncated": "Last generated token is not any official stop ID [1,106,50].",
+    "suppressed_tokens": "Count of generated official suppressed modality IDs [258883,258882]."
+  },
+  "full_initial_cache_accuracy": {
+    "status": "not_measured",
+    "value": null
+  },
+  "fixed_held_out_evaluation": {
+    "status": "not_measured",
+    "value": null
+  },
+  "training_batch_reward_curve": {
+    "status": "not_applicable",
+    "reason": "No optimizer updates were performed."
+  },
+  "checkpoints": {
+    "status": "not_applicable",
+    "reason": "No training; reproduction uses the pinned and verified original IT checkpoint. No learned checkpoint exists."
+  },
+  "code_provenance": "source-verification.json maps every run to its exact implementation commit using both recorded source digests. Raw reports retain their original source_commit field.",
+  "technical_checks": {
+    "tokenizer_records": 8000,
+    "initial_regression_suite": "476 passed, 2 failed due to historical tests using the new IT default; retained in regression-tests.log. Both failures were fixed and the old/new cancellation cases all passed (3 tests).",
+    "audit_regression_suite": "79 passed; includes preflight rescoring and complete/partial cache distinction.",
+    "latest_it_suite": "27 passed, including FP32/BF16 native log-probability/gradient comparison, all official end tokens, reset/cache isolation, checkpoint/export cadence and verifier controls.",
+    "source_pin_checks": "All four run source digests match their implementation commits."
+  },
+  "guard_changes": {
+    "minimum_small_panel_success_percent": 25.0,
+    "empty_responses_allowed": 0,
+    "interpretation": "Conservative operational floor; does not certify 70% full-cache accuracy. Failure pauses caching/training."
+  },
+  "prior_failed_attempts": [
+    {
+      "artifact_prefix": "prior-actual-it-output",
+      "status": "failed",
+      "observed": "CUDA out of memory; zero saved responses."
+    },
+    {
+      "artifact_prefix": "prior-actual-it-cpu-output",
+      "status": "incomplete",
+      "observed": "Zero saved responses; reason for termination not recorded. Not a successful measurement."
+    }
+  ],
+  "runs": [
+    {
+      "artifact": "actual-cpu-comparison.json",
+      "complete": false,
+      "measured_cases": 1,
+      "summary_of_completed_cases": {
+        "math:comparison": {
+          "prompts": 1,
+          "responses": 1,
+          "correct": 0.0,
+          "empty": 0,
+          "truncated": 1,
+          "suppressed_tokens": 0,
+          "success_percent": 0.0
+        }
+      },
+      "error": null
+    },
+    {
+      "artifact": "actual-cpu-official.json",
+      "complete": false,
+      "measured_cases": 0,
+      "summary_of_completed_cases": {},
+      "error": null
+    },
+    {
+      "artifact": "actual-cpu-canaries.json",
+      "complete": true,
+      "measured_cases": 2,
+      "summary_of_completed_cases": {
+        "math:greedy": {
+          "prompts": 1,
+          "responses": 1,
+          "correct": 1.0,
+          "empty": 0,
+          "truncated": 0,
+          "suppressed_tokens": 0,
+          "success_percent": 100.0
+        },
+        "mbpp:greedy": {
+          "prompts": 1,
+          "responses": 1,
+          "correct": 1.0,
+          "empty": 0,
+          "truncated": 0,
+          "suppressed_tokens": 0,
+          "success_percent": 100.0
+        }
+      },
+      "error": null
+    },
+    {
+      "artifact": "actual-cpu-regression-full-budget.json",
+      "complete": false,
+      "measured_cases": 0,
+      "summary_of_completed_cases": {},
+      "error": null
+    }
+  ]
+}

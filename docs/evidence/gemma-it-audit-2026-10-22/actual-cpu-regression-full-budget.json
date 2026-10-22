@@ -1,0 +1,62 @@
+{
+  "schema": "gemma4-it-candidate-diagnostic-v2",
+  "model": "google/gemma-4-12B-it",
+  "revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+  "torch": "2.13.0+cu126",
+  "transformers": "5.19.0",
+  "dtype": "bfloat16",
+  "attention": "eager",
+  "thinking": "off",
+  "max_new_tokens": 2048,
+  "requested_responses": 1,
+  "seed": 5,
+  "profiles": [
+    "comparison"
+  ],
+  "training_updates": 0,
+  "candidate_offset": 1,
+  "cpu_threads": 4,
+  "panel_kind": "fixed_candidates",
+  "scope": "fixed small candidate panel; not full initial-cache accuracy or held-out evaluation",
+  "source_commit": "3d529e2d31e9872ee21cb2d4d130ea1e91698e0e",
+  "adapter_sha256": "be17c075fe5ce5d5828e539285959d4a4f2c5d927d5e679937d456a16940051e",
+  "engine_sha256": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960",
+  "cases": [],
+  "summary": {},
+  "complete": false,
+  "snapshot_sha256": "30324262f5f783e9598266358314addab7802514b1f200ec40aadf983d370a63",
+  "comparison_sampling": {
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": 0,
+    "eos_token_id": [
+      1,
+      106,
+      50
+    ],
+    "pad_token_id": 0,
+    "suppress_tokens": [
+      258883,
+      258882
+    ]
+  },
+  "official_generation_config": {
+    "bos_token_id": 2,
+    "do_sample": true,
+    "eos_token_id": [
+      1,
+      106,
+      50
+    ],
+    "pad_token_id": 0,
+    "suppress_tokens": [
+      258883,
+      258882
+    ],
+    "temperature": 1.0,
+    "top_k": 64,
+    "top_p": 0.95,
+    "transformers_version": "5.10.0.dev0"
+  },
+  "device": "cpu"
+}
