@@ -182,28 +182,48 @@ def node_rows(snapshots, *, coordinators=(), model=None, root=None):
 
 def progress(task):
     parts = []
+    def fraction(done, total):
+        if (type(done) is int and type(total) is int and total > 0
+                and 0 <= done <= total):
+            return f"{bar(done, total)} {100 * done / total:.1f}%"
+        return "progress not recorded"
+
     if task["arm"] == "cache":
         if "cache_saved_prompts" in task:
             count = max(task["cache_saved_prompts"], task["cache_exported_prompts"])
-            parts.append(f"{count}/{task['cache_total_prompts']} prompts")
+            total = task["cache_total_prompts"]
+            parts.append(f"{count}/{total} prompts {fraction(count, total)}")
             write_age = task.get("cache_last_write_age_seconds")
             if write_age is not None:
                 parts.append(f"last write {age(write_age)} ago")
     else:
+        evaluating = task.get("phase_stage") == "evaluation"
+        evaluation = task.get("final_evaluation")
+        if evaluating:
+            if task.get("evaluation_step") is not None:
+                parts.append(f"eval at update {task['evaluation_step']}")
+            if evaluation:
+                saved, total = evaluation["saved_prompts"], evaluation["total_prompts"]
+                if saved is None:
+                    parts.append(f"EVAL ?/{total} prompts | awaiting saved progress")
+                else:
+                    parts.append(f"EVAL {saved}/{total} prompts {fraction(saved, total)}")
+                    if saved == total:
+                        parts.append("awaiting evaluation record" if task.get("evaluation_step") is not None
+                                     else "awaiting endpoint")
+            else:
+                parts.append("EVAL progress not recorded")
         if task.get("current_step") is not None:
             parts.append(f"update {task['current_step']}/{task['total_steps']} in progress")
         if task.get("completed_steps") is not None:
-            parts.append(f"{task['completed_steps']}/{task['total_steps']} completed")
+            done, total = task["completed_steps"], task["total_steps"]
+            parts.append(f"TRAIN {done}/{total} completed" + ("" if evaluating else f" {fraction(done, total)}"))
+        elif not evaluating and task.get("total_steps"):
+            parts.append(f"TRAIN ?/{task['total_steps']} completed | progress not recorded")
         if task.get("phase_stage"):
             parts.append(task["phase_stage"].replace("_", " "))
             parts.append(f"last progress {age(task.get('progress_age_seconds'))} ago")
-        evaluation = task.get("final_evaluation")
         if evaluation:
-            saved, total = evaluation["saved_prompts"], evaluation["total_prompts"]
-            if saved is None:
-                parts.append(f"{total} evaluation prompts; saved count unavailable")
-            else:
-                parts.append(f"{saved}/{total} evaluation prompts saved")
             parts.append(f"{evaluation['responses_per_prompt']} responses/prompt")
             if evaluation.get("read_error"):
                 parts.append(f"evaluation cache read error: {evaluation['read_error']}")
@@ -219,7 +239,7 @@ def progress(task):
         parts.append("rank progress: " + "; ".join(ranks))
     decision = live.switch_detail(task)
     if decision:
-        parts.append(decision)
+        parts.append(decision.split(" | transitions ", 1)[0])
     return " | ".join(parts)
 
 
@@ -340,10 +360,6 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines += table(("Node", "State", "Task", "Progress", "Heartbeat", "Wait reason"), rows)
     else:
         lines += ["", "NODES  no worker records"]
-    hidden = {worker_id for report in snapshots
-              for worker_id in report.get("worker_history", {}).get("hidden_worker_ids", [])}
-    if hidden:
-        lines.append(f"HISTORY  {len(hidden)} expired unowned worker sessions hidden; receipts and logs retained")
     for report in snapshots:
         rows = report["tasks"]
         if report.get("preparing"):
@@ -379,7 +395,10 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines += ["", (f"{report['label']}  {bar(train_done, train_total)} train {train_done}/{train_total}"
                        f" | cache {finished['cache']}/{len(seeds)} | prefix {finished['prefix']}/{len(seeds)}")]
         lookup = {(row["seed"], row["arm"]): row for row in rows}
-        lines += table(("Seed", *HEADERS), [[seed, *(cell(lookup.get((seed, arm))) for arm in ARMS)]
+        def current_cell(row):
+            return live.switch_cell(row, "DONE") if row and row["status"] == "complete" else cell(row)
+
+        lines += table(("Seed", *HEADERS), [[seed, *(current_cell(lookup.get((seed, arm))) for arm in ARMS)]
                                             for seed in seeds])
         switching = [row for row in rows if live.switch_info(row) is not None]
         if switching:
@@ -392,12 +411,6 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                     info["first_sr_update"] if info["first_sr_update"] is not None else "-",
                     info["selector"]])
             lines += table(("Seed", "Decision", "Switch after update", "First SR update", "Selector"), decisions)
-        values = report.get("initial_candidate_accuracy", [])
-        if include_initial and values:
-            lines.append(f"{report['label']} initial candidate success (8 responses/prompt): " +
-                         " | ".join(f"seed {row['seed']} {row['success_percent']:.1f}%" for row in values))
-        from scripts.srgc_time_status import render as render_times
-        lines.extend(render_times(report, label=report["label"]))
     running = [(report["label"], row) for report in snapshots for row in report["tasks"]
                if row["status"] == "running"]
     if running:
@@ -428,19 +441,12 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     warnings = [(report["label"], warning) for report in snapshots for warning in dict.fromkeys(report["warnings"])]
     if warnings:
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
-    lines += ["", "Seed table: RUN = active lease; STALE = node heartbeat older than 60s.",
-              "RESUME = interrupted work awaiting a worker; ERROR = failed execution (see ATTENTION).",
-              "Dataset order: each model finishes its MATH and then its MBPP before the next model starts.",
-              "Model order: finish the current model, including ERROR recovery and evaluation, before the next model.",
-              "Update counts show completed work; cache counts show saved prompts.",
-              "SW@N = switch after completed update N; first SR training update is N+1.",
-              "NOT RECORDED = no trustworthy switch progress yet; NEVER SWITCHED = validated final result.",
-              "Node active includes live launchers; RUN requires worker/task evidence. LAUNCH/WAIT/HANDOFF are separate.",
-              "A held task lease remains active when its worker heartbeat is stale or missing; the heartbeat issue stays visible.",
-              "Node IDLE = dispatcher waiting; rank progress and heartbeat are not GPU utilization.",
+    lines += ["", "TRAIN = completed updates; EVAL = saved prompts. ? = progress not recorded.",
+              "RUN = active lease; LAUNCH/WAIT/HANDOFF = live dispatcher. SW@N = switch after update N.",
               f"Root: {root}"]
     from .model_chain import render_status
-    lines.extend(render_status(now=now, rows=coordinators))
+    lines.extend(render_status(now=now, rows=[row for row in coordinators
+                                            if row["status"] in {"running", "switching", "waiting", "stale"}]))
     return "\n".join(lines)
 
 
@@ -453,17 +459,30 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         snapshots = load_reports(args.dataset, args.root, os.environ)
+        from .status_current import print_current, save_current
+
+        destination, save_error = None, None
+        try:
+            destination = save_current("qwen35", args.dataset, args.root, snapshots, os.environ)
+        except (OSError, ValueError, TypeError) as error:
+            save_error = str(error)
+            print(f"STATUS SAVE ERROR: {error}", file=sys.stderr, flush=True)
         if args.json:
             from .model_chain import snapshot as chain_snapshot
 
             coordinators = chain_snapshot()
             print(json.dumps({"model": "Qwen/Qwen3.5-9B", "root": str(args.root.resolve()),
                               "datasets": snapshots, "model_chain": coordinators,
+                              "saved_results": str(destination) if destination else None,
+                              **({"save_error": save_error} if save_error else {}),
                               "nodes": node_rows(snapshots, coordinators=coordinators,
                                                  model="qwen35", root=args.root)}, indent=2))
         else:
-            print(render(snapshots, args.root.resolve(), include_initial=True))
-        return int(any(report["errors"] for report in snapshots))
+            text = render(snapshots, args.root.resolve())
+            if destination:
+                text += f"\nSaved GPU time/results: {destination}"
+            print_current(text)
+        return int(bool(save_error) or any(report["errors"] for report in snapshots))
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"STATUS ERROR: {exc}", file=sys.stderr)
         return 2

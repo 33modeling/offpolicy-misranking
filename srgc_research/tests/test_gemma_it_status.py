@@ -59,8 +59,8 @@ def test_missing_it_plans_show_preparing_and_separate_historical_pt_path(tmp_pat
     assert "MATH PREPARING" in output.out and "MBPP PREPARING" in output.out
     assert "IT experiment plan has not been created" in output.out
     assert "No such file" not in output.out and "READ ERRORS" not in output.out
-    assert f"Historical PT records: {old_root}" in output.out
-    assert "model_status gemma4 --root" in output.out
+    assert "Historical PT records:" not in output.out
+    assert "model_status gemma4 --root" not in output.out
     assert "initial candidate success" not in output.out
     assert old.read_bytes() == old_bytes
 

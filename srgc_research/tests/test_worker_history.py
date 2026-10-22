@@ -120,7 +120,7 @@ def test_all_public_models_hide_expired_workers_keep_owned_work_and_preserve_fil
         recoverable = next(r for r in result["tasks"] if r["task"] == "seed-5.switch")
         assert recoverable["status"] == "recoverable"
         text = render(value["datasets"], cohort.root)
-        assert "HISTORY  1 expired unowned worker sessions hidden" in text
+        assert "HISTORY" not in text
         assert "recent" in text and "owner" in text and "RESUME" in text
         assert saved(cohort) == before
     assert json.loads((queue / "workers/expired.json").read_text())["worker_id"] == "expired"

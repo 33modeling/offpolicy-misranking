@@ -111,7 +111,10 @@ def test_one_command_renders_dashboard_and_shortcut_without_gpu_packages(prepare
                             cwd="/tmp", env=prepared.env, capture_output=True, text=True, timeout=20, check=False)
     assert result.returncode == 0, result.stderr
     assert "On-policy" in result.stdout and "0/60 completed" in result.stdout
-    assert files(prepared.root.parent.parent) == before
+    after = files(prepared.root.parent.parent)
+    assert set(after) - set(before) == {"status/qwen35-latest.json"}
+    assert {name: after[name] for name in before} == before
+    assert json.loads(after["status/qwen35-latest.json"])["dataset_scope"] == "all"
 
 
 def test_running_prefix_counts_only_completed_updates_and_deduplicates_shared_node(prepared):
@@ -233,6 +236,8 @@ def test_stale_worker_and_admission_failure_remain_visible(prepared):
 
 
 def test_json_uses_same_snapshot_and_bad_data_returns_nonzero(prepared, monkeypatch, capsys):
+    monkeypatch.setenv("GROUP_VOLUME", prepared.env["GROUP_VOLUME"])
+    monkeypatch.setenv("OM_WORK", prepared.env["OM_WORK"])
     read = status.load_reports
     monkeypatch.setattr(status, "load_reports", lambda dataset, root, env: read(dataset, root, prepared.env))
     assert status.main(["math", "status", "--root", str(prepared.root), "--json"]) == 0

@@ -1,11 +1,11 @@
-"""One read-only status loader for Qwen, Llama and Gemma experiment queues."""
+"""Load current model status and replace its GPU-time/result snapshot."""
 
 import argparse
 import hashlib
 import importlib
 import json
+import math
 import os
-import shlex
 import sys
 import time
 from collections import Counter
@@ -129,6 +129,37 @@ def initial_accuracy(data, responses):
     return {"responses": len(rewards), "success_percent": 100 * sum(rewards) / len(rewards)}
 
 
+def checkpoint_evaluation_progress(report, plan, seed):
+    """Observe this task's separate checkpoint evaluator, never an older attempt."""
+    folder = Path(report["output_root"]) / f"seed-{seed}"
+    for row in report["tasks"]:
+        if row["seed"] != seed or row["status"] != "running" or row["arm"] == "cache":
+            continue
+        path = Path(report["output_root"]) / ".queue/tasks" / f"{row['task']}.json"
+        if not path.is_file():
+            continue
+        started = live.read_object(path).get("started")
+        if type(started) not in (int, float) or not math.isfinite(started):
+            continue
+        scope = "shared-prefix" if row["arm"] == "prefix" else row["arm"]
+        primary = live.latest_phase(folder / "cost-receipts" / scope, started)
+        directory = folder / "reward-curves" / row["arm"]
+        candidates = [item for path in (directory / "cost-receipts").glob("step-*")
+                      if (item := live.latest_phase(path, started)) is not None]
+        if not candidates:
+            continue
+        event, modified = max(candidates, key=lambda item: item[1])
+        step = event.get("checkpoint")
+        if (event.get("phase") != "evaluation" or event.get("state") not in {"started", "finished"}
+                or type(step) is not int or not 0 < step < plan["total_updates"]
+                or step % 25 or (directory / f"step-{step}.json").is_file()
+                or (primary is not None and primary[1] > modified)):
+            continue
+        row.update(phase_stage="evaluation", step=step, completed_steps=step, current_step=None,
+                   evaluation_step=step, progress_source="checkpoint_evaluation_receipt",
+                   progress_age_seconds=max(0, time.time() - modified))
+
+
 def final_evaluation_progress(report, plan, seed, data):
     """Observe saved rollouts, without treating their presence as a valid endpoint."""
     # run_experiment.evaluate uses eight responses and this stream, independently
@@ -136,13 +167,13 @@ def final_evaluation_progress(report, plan, seed, data):
     responses = 8
     expected = {f"{hashlib.sha256(rid.encode()).hexdigest()[:24]}-{responses}.npz"
                 for rid in data["evaluation_ids"]}
-    evaluation_seed = stream_seed(seed, plan["total_updates"], "reporting-evaluation")
     for row in report["tasks"]:
         if (row["seed"] != seed or row["status"] != "running"
                 or row.get("phase_stage") != "evaluation"):
             continue
         progress = {"saved_prompts": None, "total_prompts": len(data["evaluation_ids"]),
                     "responses_per_prompt": responses}
+        evaluation_seed = stream_seed(seed, row.get("evaluation_step", plan["total_updates"]), "reporting-evaluation")
         directory = (Path(report["output_root"]) / f"seed-{seed}" / "rollout-cache"
                      / row["arm"] / f"eval-{evaluation_seed}")
         try:
@@ -213,6 +244,11 @@ def load_reports(model, dataset, root, environment):
                     accuracy = initial_accuracy(data, plan["responses"])
                     if accuracy is not None:
                         report["initial_candidate_accuracy"].append({"seed": seed, **accuracy})
+                    try:
+                        checkpoint_evaluation_progress(report, plan, seed)
+                    except (OSError, ValueError, KeyError, TypeError) as error:
+                        report["errors"].append(f"seed {seed} checkpoint eval progress: {error}")
+                        report["complete"] = False
                     final_evaluation_progress(report, plan, seed, data)
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     report["errors"].append(f"seed {seed} {LABELS[model]} inputs: {error}")
@@ -282,25 +318,32 @@ def main(argv=None):
         snapshots = load_reports(args.model, args.dataset, root, os.environ)
         from .model_chain import snapshot as chain_snapshot
         from .qwen_status import node_rows
+        from .status_current import print_current, save_current
 
         coordinators = chain_snapshot()
+        destination, save_error = None, None
+        try:
+            destination = save_current(args.model, args.dataset, root, snapshots, os.environ)
+        except (OSError, ValueError, TypeError) as error:
+            save_error = str(error)
+            print(f"STATUS SAVE ERROR: {error}", file=sys.stderr, flush=True)
         if args.json:
             adapter = importlib.import_module(CONFIGS[args.model][0])
             print(json.dumps({"model": adapter.MODEL, "root": str(root.resolve()),
                               "datasets": snapshots, "model_chain": coordinators,
+                              "saved_results": str(destination) if destination else None,
+                              **({"save_error": save_error} if save_error else {}),
                               "nodes": node_rows(snapshots, coordinators=coordinators,
                                                  model=args.model, root=root)}, indent=2))
         else:
             from .qwen_status import render
 
-            print(render(snapshots, root.resolve(), model=LABELS[args.model], include_initial=True,
-                         status_model=args.model, coordinators=coordinators), flush=True)
-            if args.model == "gemma4_it":
-                for old_model, old_root in historical_gemma_roots(root, os.environ):
-                    print(f"Historical PT records: {old_root}\n"
-                          f"  python3 -m srgc_research.dispatch.model_status {old_model} --root {shlex.quote(str(old_root))}",
-                          flush=True)
-        return int(any(report["errors"] for report in snapshots))
+            text = render(snapshots, root.resolve(), model=LABELS[args.model],
+                          status_model=args.model, coordinators=coordinators)
+            if destination:
+                text += f"\nSaved GPU time/results: {destination}"
+            print_current(text)
+        return int(bool(save_error) or any(report["errors"] for report in snapshots))
     except KeyboardInterrupt:
         print("STATUS: Gemma initialization stopped", file=sys.stderr, flush=True)
         return 130
