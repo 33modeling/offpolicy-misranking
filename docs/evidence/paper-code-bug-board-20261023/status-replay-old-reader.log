@@ -1,0 +1,352 @@
+FFFFFFFFFFFF....F                                                        [100%]
+=================================== FAILURES ===================================
+______ test_old_eval_does_not_hide_next_optimizer_update[gemma4_it-tied] _______
+
+cohort = namespace(model='gemma4_it', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_old_eval_does_not_hide_ne0/work with s...rch.dispatch.gemma4_it.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4_it/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d0830080>
+clock_order = 'tied'
+
+    @pytest.mark.parametrize("clock_order", ["tied", "eval_newer"])
+    def test_old_eval_does_not_hide_next_optimizer_update(cohort, capsys, clock_order):
+        folder, queue = active(cohort)
+        training = folder / "cost-receipts/on_policy/train.json"
+        evaluation = folder / "reward-curves/on_policy/cost-receipts/step-50/eval.json"
+        atomic_json(training, {"phase": "training", "state": "started", "checkpoint": 50})
+        atomic_json(evaluation, {"phase": "evaluation", "state": "started", "checkpoint": 50})
+        stamp = time.time_ns()
+        os.utime(training, ns=(stamp, stamp))
+        eval_stamp = stamp + (1000000 if clock_order == "eval_newer" else 0)
+        os.utime(evaluation, ns=(eval_stamp, eval_stamp))
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+>           assert row["phase_stage"] == "training"
+E           AssertionError: assert 'evaluation' == 'training'
+E             
+E             - training
+E             + evaluation
+
+srgc_research/tests/test_status_phase_diagnosis.py:49: AssertionError
+___ test_old_eval_does_not_hide_next_optimizer_update[gemma4_it-eval_newer] ____
+
+cohort = namespace(model='gemma4_it', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_old_eval_does_not_hide_ne1/work with s...rch.dispatch.gemma4_it.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4_it/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d07cbfb0>
+clock_order = 'eval_newer'
+
+    @pytest.mark.parametrize("clock_order", ["tied", "eval_newer"])
+    def test_old_eval_does_not_hide_next_optimizer_update(cohort, capsys, clock_order):
+        folder, queue = active(cohort)
+        training = folder / "cost-receipts/on_policy/train.json"
+        evaluation = folder / "reward-curves/on_policy/cost-receipts/step-50/eval.json"
+        atomic_json(training, {"phase": "training", "state": "started", "checkpoint": 50})
+        atomic_json(evaluation, {"phase": "evaluation", "state": "started", "checkpoint": 50})
+        stamp = time.time_ns()
+        os.utime(training, ns=(stamp, stamp))
+        eval_stamp = stamp + (1000000 if clock_order == "eval_newer" else 0)
+        os.utime(evaluation, ns=(eval_stamp, eval_stamp))
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+>           assert row["phase_stage"] == "training"
+E           AssertionError: assert 'evaluation' == 'training'
+E             
+E             - training
+E             + evaluation
+
+srgc_research/tests/test_status_phase_diagnosis.py:49: AssertionError
+________ test_old_eval_does_not_hide_next_optimizer_update[qwen35-tied] ________
+
+cohort = namespace(model='qwen35', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_old_eval_does_not_hide_ne2/work with spac...ttal/qwen35'}, adapter=<module 'scripts.srgc_qwen35' from '/home/kms/dev/offpolicy-misranking/scripts/srgc_qwen35.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d04cbec0>
+clock_order = 'tied'
+
+    @pytest.mark.parametrize("clock_order", ["tied", "eval_newer"])
+    def test_old_eval_does_not_hide_next_optimizer_update(cohort, capsys, clock_order):
+        folder, queue = active(cohort)
+        training = folder / "cost-receipts/on_policy/train.json"
+        evaluation = folder / "reward-curves/on_policy/cost-receipts/step-50/eval.json"
+        atomic_json(training, {"phase": "training", "state": "started", "checkpoint": 50})
+        atomic_json(evaluation, {"phase": "evaluation", "state": "started", "checkpoint": 50})
+        stamp = time.time_ns()
+        os.utime(training, ns=(stamp, stamp))
+        eval_stamp = stamp + (1000000 if clock_order == "eval_newer" else 0)
+        os.utime(evaluation, ns=(eval_stamp, eval_stamp))
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+>           assert row["phase_stage"] == "training"
+E           AssertionError: assert 'evaluation' == 'training'
+E             
+E             - training
+E             + evaluation
+
+srgc_research/tests/test_status_phase_diagnosis.py:49: AssertionError
+_____ test_old_eval_does_not_hide_next_optimizer_update[qwen35-eval_newer] _____
+
+cohort = namespace(model='qwen35', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_old_eval_does_not_hide_ne3/work with spac...ttal/qwen35'}, adapter=<module 'scripts.srgc_qwen35' from '/home/kms/dev/offpolicy-misranking/scripts/srgc_qwen35.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d05a35f0>
+clock_order = 'eval_newer'
+
+    @pytest.mark.parametrize("clock_order", ["tied", "eval_newer"])
+    def test_old_eval_does_not_hide_next_optimizer_update(cohort, capsys, clock_order):
+        folder, queue = active(cohort)
+        training = folder / "cost-receipts/on_policy/train.json"
+        evaluation = folder / "reward-curves/on_policy/cost-receipts/step-50/eval.json"
+        atomic_json(training, {"phase": "training", "state": "started", "checkpoint": 50})
+        atomic_json(evaluation, {"phase": "evaluation", "state": "started", "checkpoint": 50})
+        stamp = time.time_ns()
+        os.utime(training, ns=(stamp, stamp))
+        eval_stamp = stamp + (1000000 if clock_order == "eval_newer" else 0)
+        os.utime(evaluation, ns=(eval_stamp, eval_stamp))
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+>           assert row["phase_stage"] == "training"
+E           AssertionError: assert 'evaluation' == 'training'
+E             
+E             - training
+E             + evaluation
+
+srgc_research/tests/test_status_phase_diagnosis.py:49: AssertionError
+_______ test_old_eval_does_not_hide_next_optimizer_update[llama31-tied] ________
+
+cohort = namespace(model='llama31', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_old_eval_does_not_hide_ne4/work with spa...esearch.dispatch.llama31.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/llama31/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d03db890>
+clock_order = 'tied'
+
+    @pytest.mark.parametrize("clock_order", ["tied", "eval_newer"])
+    def test_old_eval_does_not_hide_next_optimizer_update(cohort, capsys, clock_order):
+        folder, queue = active(cohort)
+        training = folder / "cost-receipts/on_policy/train.json"
+        evaluation = folder / "reward-curves/on_policy/cost-receipts/step-50/eval.json"
+        atomic_json(training, {"phase": "training", "state": "started", "checkpoint": 50})
+        atomic_json(evaluation, {"phase": "evaluation", "state": "started", "checkpoint": 50})
+        stamp = time.time_ns()
+        os.utime(training, ns=(stamp, stamp))
+        eval_stamp = stamp + (1000000 if clock_order == "eval_newer" else 0)
+        os.utime(evaluation, ns=(eval_stamp, eval_stamp))
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+>           assert row["phase_stage"] == "training"
+E           AssertionError: assert 'evaluation' == 'training'
+E             
+E             - training
+E             + evaluation
+
+srgc_research/tests/test_status_phase_diagnosis.py:49: AssertionError
+____ test_old_eval_does_not_hide_next_optimizer_update[llama31-eval_newer] _____
+
+cohort = namespace(model='llama31', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_old_eval_does_not_hide_ne5/work with spa...esearch.dispatch.llama31.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/llama31/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d0382510>
+clock_order = 'eval_newer'
+
+    @pytest.mark.parametrize("clock_order", ["tied", "eval_newer"])
+    def test_old_eval_does_not_hide_next_optimizer_update(cohort, capsys, clock_order):
+        folder, queue = active(cohort)
+        training = folder / "cost-receipts/on_policy/train.json"
+        evaluation = folder / "reward-curves/on_policy/cost-receipts/step-50/eval.json"
+        atomic_json(training, {"phase": "training", "state": "started", "checkpoint": 50})
+        atomic_json(evaluation, {"phase": "evaluation", "state": "started", "checkpoint": 50})
+        stamp = time.time_ns()
+        os.utime(training, ns=(stamp, stamp))
+        eval_stamp = stamp + (1000000 if clock_order == "eval_newer" else 0)
+        os.utime(evaluation, ns=(eval_stamp, eval_stamp))
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+>           assert row["phase_stage"] == "training"
+E           AssertionError: assert 'evaluation' == 'training'
+E             
+E             - training
+E             + evaluation
+
+srgc_research/tests/test_status_phase_diagnosis.py:49: AssertionError
+________ test_old_eval_does_not_hide_next_optimizer_update[gemma4-tied] ________
+
+cohort = namespace(model='gemma4', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_old_eval_does_not_hide_ne6/work with spac..._research.dispatch.gemma4.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d05cd5e0>
+clock_order = 'tied'
+
+    @pytest.mark.parametrize("clock_order", ["tied", "eval_newer"])
+    def test_old_eval_does_not_hide_next_optimizer_update(cohort, capsys, clock_order):
+        folder, queue = active(cohort)
+        training = folder / "cost-receipts/on_policy/train.json"
+        evaluation = folder / "reward-curves/on_policy/cost-receipts/step-50/eval.json"
+        atomic_json(training, {"phase": "training", "state": "started", "checkpoint": 50})
+        atomic_json(evaluation, {"phase": "evaluation", "state": "started", "checkpoint": 50})
+        stamp = time.time_ns()
+        os.utime(training, ns=(stamp, stamp))
+        eval_stamp = stamp + (1000000 if clock_order == "eval_newer" else 0)
+        os.utime(evaluation, ns=(eval_stamp, eval_stamp))
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+>           assert row["phase_stage"] == "training"
+E           AssertionError: assert 'evaluation' == 'training'
+E             
+E             - training
+E             + evaluation
+
+srgc_research/tests/test_status_phase_diagnosis.py:49: AssertionError
+_____ test_old_eval_does_not_hide_next_optimizer_update[gemma4-eval_newer] _____
+
+cohort = namespace(model='gemma4', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_old_eval_does_not_hide_ne7/work with spac..._research.dispatch.gemma4.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d05ce5a0>
+clock_order = 'eval_newer'
+
+    @pytest.mark.parametrize("clock_order", ["tied", "eval_newer"])
+    def test_old_eval_does_not_hide_next_optimizer_update(cohort, capsys, clock_order):
+        folder, queue = active(cohort)
+        training = folder / "cost-receipts/on_policy/train.json"
+        evaluation = folder / "reward-curves/on_policy/cost-receipts/step-50/eval.json"
+        atomic_json(training, {"phase": "training", "state": "started", "checkpoint": 50})
+        atomic_json(evaluation, {"phase": "evaluation", "state": "started", "checkpoint": 50})
+        stamp = time.time_ns()
+        os.utime(training, ns=(stamp, stamp))
+        eval_stamp = stamp + (1000000 if clock_order == "eval_newer" else 0)
+        os.utime(evaluation, ns=(eval_stamp, eval_stamp))
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+>           assert row["phase_stage"] == "training"
+E           AssertionError: assert 'evaluation' == 'training'
+E             
+E             - training
+E             + evaluation
+
+srgc_research/tests/test_status_phase_diagnosis.py:49: AssertionError
+_ test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease[gemma4_it] _
+
+cohort = namespace(model='gemma4_it', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_saved_valid_endpoint_is_f0/work with s...rch.dispatch.gemma4_it.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4_it/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d03d82f0>
+
+    def test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease(cohort, capsys):
+        folder, queue = active(cohort, endpoint=True)
+        atomic_json(folder / "cost-receipts/on_policy/eval.json", {
+            "phase": "evaluation", "state": "started", "checkpoint": 275})
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+            assert row["status"] == "running"  # The writer still owns the task.
+>           assert row["phase_stage"] == "finalizing" and row["endpoint_ready"]
+E           AssertionError: assert ('evaluation' == 'finalizing'
+E             
+E             - finalizing
+E             + evaluation)
+
+srgc_research/tests/test_status_phase_diagnosis.py:65: AssertionError
+_ test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease[qwen35] _
+
+cohort = namespace(model='qwen35', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_saved_valid_endpoint_is_f1/work with spac...ttal/qwen35'}, adapter=<module 'scripts.srgc_qwen35' from '/home/kms/dev/offpolicy-misranking/scripts/srgc_qwen35.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d07c9370>
+
+    def test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease(cohort, capsys):
+        folder, queue = active(cohort, endpoint=True)
+        atomic_json(folder / "cost-receipts/on_policy/eval.json", {
+            "phase": "evaluation", "state": "started", "checkpoint": 275})
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+            assert row["status"] == "running"  # The writer still owns the task.
+>           assert row["phase_stage"] == "finalizing" and row["endpoint_ready"]
+E           AssertionError: assert ('evaluation' == 'finalizing'
+E             
+E             - finalizing
+E             + evaluation)
+
+srgc_research/tests/test_status_phase_diagnosis.py:65: AssertionError
+_ test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease[llama31] _
+
+cohort = namespace(model='llama31', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_saved_valid_endpoint_is_f2/work with spa...esearch.dispatch.llama31.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/llama31/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d05a0140>
+
+    def test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease(cohort, capsys):
+        folder, queue = active(cohort, endpoint=True)
+        atomic_json(folder / "cost-receipts/on_policy/eval.json", {
+            "phase": "evaluation", "state": "started", "checkpoint": 275})
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+            assert row["status"] == "running"  # The writer still owns the task.
+>           assert row["phase_stage"] == "finalizing" and row["endpoint_ready"]
+E           AssertionError: assert ('evaluation' == 'finalizing'
+E             
+E             - finalizing
+E             + evaluation)
+
+srgc_research/tests/test_status_phase_diagnosis.py:65: AssertionError
+_ test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease[gemma4] _
+
+cohort = namespace(model='gemma4', work=PosixPath('/tmp/pytest-of-kms/pytest-109/test_saved_valid_endpoint_is_f3/work with spac..._research.dispatch.gemma4.adapter' from '/home/kms/dev/offpolicy-misranking/srgc_research/dispatch/gemma4/adapter.py'>)
+capsys = <_pytest.capture.CaptureFixture object at 0x7767d05a1220>
+
+    def test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease(cohort, capsys):
+        folder, queue = active(cohort, endpoint=True)
+        atomic_json(folder / "cost-receipts/on_policy/eval.json", {
+            "phase": "evaluation", "state": "started", "checkpoint": 275})
+        before = saved(cohort)
+        with lease(queue / "leases/seed-5.on_policy.lock"):
+            value = inspect(cohort, capsys)
+            row = next(r for r in value["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+            assert row["status"] == "running"  # The writer still owns the task.
+>           assert row["phase_stage"] == "finalizing" and row["endpoint_ready"]
+E           AssertionError: assert ('evaluation' == 'finalizing'
+E             
+E             - finalizing
+E             + evaluation)
+
+srgc_research/tests/test_status_phase_diagnosis.py:65: AssertionError
+_____ test_model_queue_footer_does_not_mix_other_roots_and_model_protocols _____
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-109/test_model_queue_footer_does_n0')
+
+    def test_model_queue_footer_does_not_mix_other_roots_and_model_protocols(tmp_path):
+        root = tmp_path / "gemma-it"
+        base = {"status": "running", "model": "gemma4", "status_model": "gemma4_it",
+                "root": str(root), "heartbeat_age_seconds": 0, "active_dataset": "math",
+                "order": ["gemma4", "qwen35", "llama31"], "started": time.time()}
+        coordinators = [
+            {**base, "host": "current-gemma-node"},
+            {**base, "host": "other-root-node", "root": str(tmp_path / "old-run")},
+            {**base, "host": "old-pt-node", "status_model": "gemma4_text"},
+            {**base, "host": "qwen-node", "model": "qwen35", "status_model": "qwen35"},
+        ]
+        text = status.render([], root, status_model="gemma4_it", coordinators=coordinators)
+        assert "current-gemma-node" in text
+>       assert "other-root-node" not in text and "old-pt-node" not in text and "qwen-node" not in text
+E       AssertionError: assert ('other-root-node' not in 'Qwen3.5-9B ...5 -> llama31'
+E         
+E         'other-root-node' is contained here:
+E           > llama31
+E           other-root-node RUNNING model=gemma4 dataset=math | gemma4 -> qwen35 -> llama31
+E         ? +++++++++++++++
+E           qwen-node RUNNING model=qwen35 dataset=math | gemma4 -> qwen35 -> llama31)
+
+srgc_research/tests/test_status_phase_diagnosis.py:108: AssertionError
+=========================== short test summary info ============================
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_old_eval_does_not_hide_next_optimizer_update[gemma4_it-tied]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_old_eval_does_not_hide_next_optimizer_update[gemma4_it-eval_newer]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_old_eval_does_not_hide_next_optimizer_update[qwen35-tied]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_old_eval_does_not_hide_next_optimizer_update[qwen35-eval_newer]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_old_eval_does_not_hide_next_optimizer_update[llama31-tied]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_old_eval_does_not_hide_next_optimizer_update[llama31-eval_newer]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_old_eval_does_not_hide_next_optimizer_update[gemma4-tied]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_old_eval_does_not_hide_next_optimizer_update[gemma4-eval_newer]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease[gemma4_it]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease[qwen35]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease[llama31]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease[gemma4]
+FAILED srgc_research/tests/test_status_phase_diagnosis.py::test_model_queue_footer_does_not_mix_other_roots_and_model_protocols
+13 failed, 4 passed in 6.05s
