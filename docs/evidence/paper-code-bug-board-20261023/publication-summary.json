@@ -1,0 +1,20 @@
+{
+  "url": "https://77modeling.pages.dev/paper-code-bugs/",
+  "source_board_commit": "9dd5b1083bbe77504f5ca384f6189b6eab4d23c7",
+  "raw_test_logs_commit": "8420b26183431c7d0ca61bf239ca0b2a71b8803a",
+  "site_source_board_commit": "2810a5869940bd89beeb05aec87d7b1cd596ced6",
+  "verified_production_commit": "6d05ebefc4124dd7b26a95ddeb3dcc21232b4cfe",
+  "verified_local_index_commit": "7d4c35559bf6fd5638585f5a7eaa22475f450ff3",
+  "github_runtime_issue": "https://github.com/33modeling/offpolicy-misranking/issues/1#issuecomment-6359121879",
+  "runtime_issue_status": "OPEN",
+  "detailed_incidents": 25,
+  "fix_commit_records": 98,
+  "full_available_commit_records": 1094,
+  "audit_through": "9588bf85ba582c1ef316b337fe6ad52c21095ea0",
+  "retention": "existing incidents, event prefixes, original archive and old general-board IDs retained",
+  "actual_remote_learning_health": null,
+  "reported_scores_are_comparable_verified_measurements": false,
+  "local_servers_started": false,
+  "ports_opened": false,
+  "publication": "Observed successful production already included pushed board source; verified without replacing newer production."
+}

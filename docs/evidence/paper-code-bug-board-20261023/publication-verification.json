@@ -1,0 +1,24 @@
+{
+  "url": "https://77modeling.pages.dev/paper-code-bugs/",
+  "hubCard": true,
+  "hubSearch": true,
+  "subjectIllustrationLoaded": true,
+  "incidents": 25,
+  "fixCommitRecords": 98,
+  "allCommitRecords": 1094,
+  "publishedHashesMatchSource": {
+    "app.js": "55d38fe9e45c8b083b5fd0547d970afc9f6ddf4e3d876d0675f27cb3ee9a01d1",
+    "styles.css": "8da39f81adb993486ea687eb21c6c6890a70f3330ec3da6eeeff1c87da8d6bff",
+    "incidents.json": "5999e60d0e0755c7a9d3eb1f047f520fba8162779dbd7dac64279bf31cba62cb",
+    "data.json": "1bf732dc3ae8edb6833fd790e25240d5adf8eb447bd65362fe83dd10370006cb",
+    "commits.json": "0e85dbfb7bb095d0fb5875842ca9b14d695fa5f439d5d6e1e720b23b7dcf4d46",
+    "archive/2026-10-23-initial.json": "1bf732dc3ae8edb6833fd790e25240d5adf8eb447bd65362fe83dd10370006cb"
+  },
+  "oldGeneralBoardItems": 336,
+  "currentGeneralBoardItems": 337,
+  "oldGeneralBoardIdsPreserved": true,
+  "eventHistory": {
+    "before": 1769,
+    "after": 1770
+  }
+}
