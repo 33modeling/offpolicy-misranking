@@ -60,6 +60,12 @@ counts. Its small-panel results are not full initial-cache accuracy. No 70%
 accuracy assertion is inferred from a model-card score on another dataset.
 Training retains rewards and checkpoints at least every 25 updates and exports
 training-batch rewards separately from fixed held-out reward curves.
+Boundary optimizer checkpoints are saved before the long intermediate evaluation.
+After interruption, restoring that boundary completes its missing evaluation before
+training continues, including the already-exhausted update-25 prefix loop.
+The status table distinguishes checkpoint `EVAL … @50` from `FINAL EVAL … @275`;
+only a validated endpoint becomes `DONE`. See the
+[boundary-resume verification](GEMMA4_EVAL_RESUME_2026-10-23.md).
 
 ```sh
 bash scripts/run_srgc_gemma4.sh status

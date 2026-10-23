@@ -204,7 +204,7 @@ def equal_state(left, right):
     return type(left) is type(right) and left == right
 
 
-def recording_engine(base, folder, task, plan_path, plan, data):
+def recording_engine(base, folder, task, plan_path, plan, data, *, save_resume=None):
     from srgc_rebuttal.cost_ledger import PhaseLedger
     from srgc_rebuttal.distributed import primary
     from srgc_rebuttal.plan import digest
@@ -216,6 +216,15 @@ def recording_engine(base, folder, task, plan_path, plan, data):
 
     class RecordingEngine(base):
         recording_extension_sha256 = writer
+
+        def load_state_dict(self, state, **kwargs):
+            result = super().load_state_dict(state, **kwargs)
+            if save_resume is not None:
+                # A boundary checkpoint can precede its held-out measurement.
+                # Finish that measurement even when the runner's training loop
+                # is already exhausted (notably prefix update 25).
+                self.capture_boundary()
+            return result
 
         def protocol(self, name):
             marker = json.loads((folder / "run.json").read_text())
@@ -347,6 +356,11 @@ def recording_engine(base, folder, task, plan_path, plan, data):
                 result['timing_receipt_ids'] = receipts
             save(self, groups, folder, task, plan, data, self.protocol(task), result)
             self.save_training_rewards()
+            if save_resume is not None and self.step % INTERVAL == 0:
+                # Raw training groups and scalars are durable. Persist the
+                # optimizer before the long evaluation, so an interrupted eval
+                # resumes these weights rather than redoing the last update.
+                save_resume(self)
             self.capture_boundary()
             return result
 

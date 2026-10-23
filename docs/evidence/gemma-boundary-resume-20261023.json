@@ -1,0 +1,98 @@
+{
+  "baseline_commit": "20d15e58dd861e2b2418996e32a8866653c2d99d",
+  "scope": "Technical CPU optimizer/checkpoint/status regressions only. No Gemma weights or remote GPU experiment were run.",
+  "reported_remote_symptom": "RUN -> EVAL -> RUN -> EVAL without observed DONE; remote seed/arm/update/logs not available",
+  "baseline_failure_injection": [
+    {
+      "task": "prefix",
+      "evaluation_update": 25,
+      "recorded_training_update": 25,
+      "in_memory_optimizer_updates": 25,
+      "resumable_checkpoint_update": 24
+    },
+    {
+      "task": "on_policy",
+      "evaluation_update": 50,
+      "recorded_training_update": 50,
+      "in_memory_optimizer_updates": 25,
+      "resumable_checkpoint_update": 49
+    }
+  ],
+  "fix": [
+    "persist model and optimizer at recorded 25-update boundaries before held-out evaluation",
+    "complete pending boundary evaluation on restore even when prefix training loop is exhausted",
+    "label intermediate evaluation step, final evaluation and launch attempt separately"
+  ],
+  "execution_fixture": {
+    "model": "torch.nn.Linear(1, 1)",
+    "optimizer": "AdamW",
+    "device": "cpu",
+    "seed": 5,
+    "prefix_updates": 25,
+    "total_updates": 275,
+    "continuation_updates": 250,
+    "arms": [
+      "random",
+      "sr",
+      "on_policy",
+      "switch"
+    ],
+    "evaluation_rewards": "synthetic; not scientific measurements"
+  },
+  "verified": {
+    "restored_weights_and_optimizer_match_uninterrupted_execution": true,
+    "boundary_failure_does_not_repeat_completed_optimizer_update": true,
+    "all_four_arms_reach_275": true,
+    "original_runner_endpoints_and_status_done": true,
+    "final_endpoint_failure_resumes_at_275_with_zero_new_optimizer_updates": true,
+    "scalar_export_failure_does_not_advance_checkpoint": true,
+    "scientific_gemma_accuracy": null,
+    "remote_training_progress": null
+  },
+  "test_runs": [
+    {
+      "raw_log": "/home/kms/reports/gemma-boundary-resume-2026-10-23/boundary-tests.log",
+      "passed": 10,
+      "failed": 0,
+      "seconds": 42.34
+    },
+    {
+      "raw_log": "/home/kms/reports/gemma-boundary-resume-2026-10-23/targeted-tests.log",
+      "passed": 121,
+      "failed": 0,
+      "seconds": 37.27
+    },
+    {
+      "raw_log": "/home/kms/reports/gemma-boundary-resume-2026-10-23/runner-completion-final.log",
+      "passed": 1,
+      "failed": 0,
+      "seconds": 60.25
+    },
+    {
+      "raw_log": "/home/kms/reports/gemma-boundary-resume-2026-10-23/regression-tests-fixed.log",
+      "passed": 121,
+      "failed": 4,
+      "seconds": 91.96,
+      "failure_reason": "Prior EVAL-only UI expectations in test_qwen_status and test_model_status; updated to intentional FINAL EVAL @275 labels."
+    },
+    {
+      "raw_log": "/home/kms/reports/gemma-boundary-resume-2026-10-23/status-label-tests.log",
+      "passed": 44,
+      "failed": 0,
+      "seconds": 27.55,
+      "resolves_all_failures_in": "test_qwen_status.py and test_model_status.py"
+    }
+  ],
+  "earlier_test_setup_failures_retained": [
+    "regression-tests.log: nonexistent test filename; no tests collected",
+    "runner-completion.log: CPU fixture allocation mismatch",
+    "runner-completion-fixed.log: CPU fixture gradient projection dimension mismatch"
+  ],
+  "final_unique_checks": 257,
+  "count_method": "11 boundary/completion + 121 recorder/status-current + 125 status/node/rank/kill regression; the final rerun of 44 status cases replaces their earlier UI-expectation failures.",
+  "frozen_digests_unchanged": {
+    "adapter": "adb962509386e02d8ed4265d1b7f3e82f9ea6b2ff124feb8d49e706eb6c33d82",
+    "engine": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960"
+  },
+  "publication_limitation": "Repository publication does not modify an already-running remote process; its current training and reported repetition remain unverified."
+}

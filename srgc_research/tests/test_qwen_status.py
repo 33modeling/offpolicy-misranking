@@ -155,7 +155,7 @@ def test_final_evaluation_at_275_is_running_until_endpoint_exists(prepared):
     with lease(directory / "leases/seed-7.on_policy.lock"):
         snapshot = prepared.read("math")[0]
         task = next(task for task in snapshot["tasks"] if task["arm"] == "on_policy" and task["seed"] == 7)
-        assert status.cell(task) == "EVAL"
+        assert status.cell(task) == "FINAL EVAL @275"
         assert task["reward_percent"] is None and not snapshot["complete"]
         assert "evaluation" in status.progress(task)
 

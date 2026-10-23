@@ -157,7 +157,8 @@ def test_final_evaluation_counts_only_this_stream_and_waits_for_valid_endpoint(c
         assert task["reward_percent"] is None and not report["complete"]
         assert task["final_evaluation"] == {
             "saved_prompts": expected, "total_prompts": len(ids), "responses_per_prompt": 8}
-        assert status.cell(task) == ("EVAL" if expected is None else f"EVAL {expected}/300 saved")
+        assert status.cell(task) == ("FINAL EVAL @275" if expected is None
+                                     else f"FINAL EVAL {expected}/300 saved @275")
         assert "evaluation" in status.progress(task) and "8 responses/prompt" in status.progress(task)
         assert saved(cohort) == before
 

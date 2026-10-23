@@ -120,6 +120,35 @@ def test_unknown_training_progress_is_not_reported_as_zero_percent():
     assert "TRAIN ?/275 completed" in text and "0.0%" not in text
 
 
+def test_status_distinguishes_checkpoint_eval_from_final_eval_and_task_completion():
+    row = {"status": "running", "arm": "on_policy", "phase_stage": "evaluation",
+           "completed_steps": 50, "total_steps": 275, "evaluation_step": 50,
+           "attempt": 3, "final_evaluation": {"saved_prompts": 300,
+                                                "total_prompts": 300, "responses_per_prompt": 8}}
+    assert qwen_status.cell(row) == "EVAL 300/300 saved @50"
+    text = qwen_status.progress(row)
+    assert "checkpoint eval at update 50/275" in text
+    assert "then resume training at update 51" in text and "attempt 3" in text
+    assert "awaiting evaluation record" in text and "DONE" not in text
+
+    del row["evaluation_step"]
+    row["completed_steps"] = 275
+    assert qwen_status.cell(row) == "FINAL EVAL 300/300 saved @275"
+    text = qwen_status.progress(row)
+    assert "final eval at update 275/275" in text and "awaiting endpoint" in text
+    assert "then resume training" not in text and "DONE" not in text
+    row.update(status="complete", reward_percent=50.)
+    assert qwen_status.cell(row) == "DONE 50.0%"
+
+
+def test_prefix_checkpoint_eval_names_the_following_completion_step():
+    row = {"status": "running", "arm": "prefix", "phase_stage": "evaluation",
+           "completed_steps": 25, "total_steps": 25, "evaluation_step": 25}
+    text = qwen_status.progress(row)
+    assert "checkpoint eval at update 25/25" in text
+    assert "then publish prefix completion" in text and "update 26" not in text
+
+
 def test_gpu_results_keep_unknown_partial_zero_and_invalid_values_distinct():
     from srgc_research.dispatch.status_current import render_results
 

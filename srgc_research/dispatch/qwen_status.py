@@ -61,7 +61,11 @@ def _cell(task):
         if task.get("phase_stage") == "evaluation":
             evaluation = task.get("final_evaluation", {})
             saved = evaluation.get("saved_prompts")
-            return f"EVAL {saved}/{evaluation['total_prompts']} saved" if saved is not None else "EVAL"
+            label = "EVAL" if task.get("evaluation_step") is not None else "FINAL EVAL"
+            step = task.get("evaluation_step", task.get("completed_steps"))
+            suffix = f" @{step}" if type(step) is int else ""
+            return (f"{label} {saved}/{evaluation['total_prompts']} saved{suffix}"
+                    if saved is not None else label + suffix)
         done, total = task.get("completed_steps"), task.get("total_steps")
         return f"RUN {done}/{total}" if done is not None and total else "RUN"
     if state.startswith("waiting_for_"):
@@ -201,7 +205,14 @@ def progress(task):
         evaluation = task.get("final_evaluation")
         if evaluating:
             if task.get("evaluation_step") is not None:
-                parts.append(f"eval at update {task['evaluation_step']}")
+                step = task['evaluation_step']
+                parts.append(f"checkpoint eval at update {step}/{task['total_steps']}")
+                if step < task['total_steps']:
+                    parts.append(f"then resume training at update {step + 1}")
+                elif task['arm'] == 'prefix':
+                    parts.append("then publish prefix completion")
+            else:
+                parts.append(f"final eval at update {task.get('completed_steps', '?')}/{task['total_steps']}")
             if evaluation:
                 saved, total = evaluation["saved_prompts"], evaluation["total_prompts"]
                 if saved is None:
@@ -229,6 +240,8 @@ def progress(task):
                 parts.append(f"evaluation cache read error: {evaluation['read_error']}")
     if not parts:
         parts.append("starting; progress not recorded yet")
+    if type(task.get("attempt")) is int and task["attempt"] > 0:
+        parts.append(f"attempt {task['attempt']}")
     ranks = []
     for row in task.get("progress", []):
         updated = row.get("updated")

@@ -26,7 +26,8 @@ def main():
 
     def factory(base, folder, task, policy, *, total_updates):
         # Publish responses/scalars before advancing the durable resume point.
-        base = recording_engine(base, folder, task, args.plan, plan, data)
+        base = recording_engine(base, folder, task, args.plan, plan, data,
+                                save_resume=lambda engine: checkpoints.save_checkpoint(engine, folder, task))
         return original(base, folder, task, policy, total_updates=total_updates)
 
     index = sys.argv.index("--model")
